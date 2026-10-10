@@ -295,7 +295,13 @@ export function analyzeKafkaResource(
           partition: partition.partition,
         });
       }
-      if (!partition.committedOffset) {
+      // 初始空分区尚无消息可提交；只在消费者已稳定持有分区时视为正常空闲。
+      const initialEmptyPartition =
+        group?.state === "Stable" &&
+        (partition.members?.length ?? 0) > 0 &&
+        partition.lowOffset === "0" &&
+        partition.highOffset === "0";
+      if (!partition.committedOffset && !initialEmptyPartition) {
         issues.push({
           code: "committed_missing",
           message: `Partition ${partition.partition} 没有可用 committed next offset。`,

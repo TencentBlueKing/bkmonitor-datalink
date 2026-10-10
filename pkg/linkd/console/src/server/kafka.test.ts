@@ -51,6 +51,40 @@ describe("Kafka infrastructure snapshot", () => {
     expect(output.partitions[0].lag).toBeUndefined();
   });
 
+  it("accepts an assigned, never-written partition without inventing a commit", () => {
+    const result = analyzeKafkaResource("input", group("Stable"), [
+      partition({
+        lowOffset: "0",
+        highOffset: "0",
+        committedOffset: undefined,
+        lag: undefined,
+        members: ["member-a"],
+      }),
+    ]);
+    expect(result.status).toBe("available");
+    expect(result.issues).toEqual([]);
+    expect(result.partitions[0].committedOffset).toBeUndefined();
+    expect(result.partitions[0].lag).toBeUndefined();
+  });
+
+  it.each([
+    { lowOffset: "8", highOffset: "8", members: ["member-a"] },
+    { lowOffset: "0", highOffset: "1", members: ["member-a"] },
+    { lowOffset: undefined, highOffset: "0", members: ["member-a"] },
+    { lowOffset: "0", highOffset: "0", members: [] },
+  ])(
+    "retains missing-commit diagnostics outside the initial empty state: %o",
+    (values) => {
+      const result = analyzeKafkaResource("input", group("Stable"), [
+        partition({ ...values, committedOffset: undefined }),
+      ]);
+      expect(result.status).toBe("partial");
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({ code: "committed_missing" }),
+      );
+    },
+  );
+
   it.each([
     ["Empty", "group_empty"],
     ["Dead", "group_dead"],

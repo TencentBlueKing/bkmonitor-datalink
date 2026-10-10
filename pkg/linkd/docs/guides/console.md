@@ -406,6 +406,7 @@ Redis 与 Lifecycle 均已配置时任务默认启用，`control_plane.redis_str
 再用 Kafka Admin 查询输入 topic 和各个 Kafka hook 的输出 topic。Leader、replicas/ISR 来自 topic metadata，
 High/Low 来自 topic offset 查询，Committed 来自 consumer group 的已提交位点；Lag 使用整数精度计算
 `max(High - Committed, 0)`。Owner 来自 Kafka consumer group 的实际成员分配，不再用调度器分区数拼接健康快照。
+Stable group 已分配且 High/Low 均为 0 的初始空分区可以没有提交位点，不据此标记 `partial`；Committed 与 Lag 仍保持未知。已有消息、非零历史位点、缺少元数据或未分配的分区继续保留缺少提交位点的诊断。
 没有已提交位点时保持“未知”，不会补成 0；查询失败显示不可用，不回退为 `AVAILABLE`。
 
 控制面的 `GET /api/v1/event-sources` 和 `GET /api/v1/event-sources/{id}` 默认脱敏；显式添加

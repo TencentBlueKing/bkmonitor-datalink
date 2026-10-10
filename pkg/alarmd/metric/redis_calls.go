@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 // Redis load is the one budget nobody can currently attribute: the instance
@@ -36,6 +38,7 @@ import (
 // connection load join on the same label.
 var redisClientNames = map[string]struct{}{
 	"source": {}, "runtime": {}, "cmdb": {}, "dynamic_config": {}, "target_group": {}, "legacy_output": {}, "legacy_pod_cache": {}, "diagnostics": {},
+	"linkd": {},
 }
 
 // RedisClientHealth is what this process has last seen of one Redis client:
@@ -149,6 +152,11 @@ var redisCommandNames = map[string]struct{}{
 	"zadd": {}, "zcard": {}, "zrange": {}, "zrangebyscore": {}, "zrem": {}, "zremrangebyrank": {},
 	"smembers": {}, "sadd": {}, "srem": {}, "scan": {}, "hscan": {},
 	"multi": {}, "exec": {}, "ping": {}, "select": {}, "info": {}, "unlink": {},
+	// What the observation jobs on the diagnostics client issue: bounded
+	// reads of a published value and of a record list, and the list writes.
+	// Outside the list they all read as "other", which is where every one of
+	// that client's failures sat.
+	"getrange": {}, "lrange": {}, "lpush": {}, "ltrim": {},
 }
 
 type redisCallMetrics struct {
@@ -163,6 +171,21 @@ type redisCallMetrics struct {
 	// pool counts one acquisition per attempt, so attempts minus operations is
 	// the number of retries.
 	operations *prometheus.CounterVec
+	// reasons says why the operations of a client failed. failures says which
+	// command, and on the runtime and control plane clients that was all there
+	// was: a timeout, a connection cut while idle and a Sentinel with no master
+	// read the same. It counts operations, as operations does, so the two
+	// divide into a failure rate per client; a pipeline is one operation and
+	// its first failing member decides the reason. The words are the ones the
+	// diagnostic clients are counted by (redisfailure), so the two readings
+	// join.
+	reasons *prometheus.CounterVec
+	// callerOperations and callerReasons are operations and reasons again,
+	// by the job that made the call (redisfailure.Callers), for calls whose
+	// context names one. Several observation jobs share the diagnostics
+	// client, and its failures by reason could not say whose they were.
+	callerOperations *prometheus.CounterVec
+	callerReasons    *prometheus.CounterVec
 }
 
 func newRedisCallMetrics() redisCallMetrics {
@@ -171,8 +194,44 @@ func newRedisCallMetrics() redisCallMetrics {
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_operation_total",
 		Help: "Redis operations issued, counting one per call or pipeline batch rather than per command.",
 	}, []string{"client"})
+	reasons := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_failure_reason_total",
+		Help: "Redis operations that failed, by client and by why, one per call or pipeline batch; a batch's first " +
+			"failing member decides the reason: connection_closed, connection_refused, sentinel_unreachable, timeout, " +
+			"pool_timeout, canceled, server_error, malformed_reply, other. The empty-result signal and a NOSCRIPT " +
+			"reply are not failures and are not counted. Every cell exists from startup, so a zero is a count.",
+	}, []string{"client", "reason"})
+	for client := range redisClientNames {
+		for _, reason := range redisfailure.Reasons {
+			reasons.WithLabelValues(client, reason)
+		}
+	}
+	for _, reason := range redisfailure.Reasons {
+		reasons.WithLabelValues("other", reason)
+	}
+	callerOperations := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_caller_operation_total",
+		Help: "Redis operations issued by a named job on a client, one per call or pipeline batch, for the jobs that " +
+			"share one client: on the diagnostics client directory_read, diagnostic_write, " +
+			"diagnostic_read, cost_projection; on the source and runtime clients (one client when the deployment " +
+			"points both at one Redis) strategy_source, legacy_effective_time, control_plane, ownership, runtime_state, " +
+			"query_cooldown, fleet, linkd; cmdb_cache, target_group and dynamic_config on whichever client they share; " +
+			"store_census on the source and runtime clients.",
+	}, []string{"client", "caller"})
+	callerReasons := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_caller_failure_reason_total",
+		Help: "Redis operations of a named job that failed, by why, counted as redis_failure_reason_total is. The " +
+			"diagnostics client's cells exist from startup, so a zero is a count.",
+	}, []string{"client", "caller", "reason"})
+	for _, caller := range redisfailure.Callers {
+		callerOperations.WithLabelValues("diagnostics", caller)
+		for _, reason := range redisfailure.Reasons {
+			callerReasons.WithLabelValues("diagnostics", caller, reason)
+		}
+	}
 	return redisCallMetrics{
 		operations: operations,
+		reasons:    reasons,
 		calls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_command_total",
 			Help: "Redis commands issued by this process by bounded command name and pipelining.",
@@ -186,11 +245,61 @@ func newRedisCallMetrics() redisCallMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_command_failure_total",
 			Help: "Redis commands that returned an error, excluding the empty-result signal. A NOSCRIPT reply to EVALSHA is counted here as the error reply it is, and is not a dependency failure: the client answers it with EVAL, and the fleet page keeps it apart as a script cache miss.",
 		}, labels),
+		callerOperations: callerOperations, callerReasons: callerReasons,
 	}
 }
 
 func (m redisCallMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.calls, m.duration, m.failures, m.operations}
+	return []prometheus.Collector{m.calls, m.duration, m.failures, m.operations, m.reasons, m.callerOperations, m.callerReasons}
+}
+
+// failureReason is why an operation failed, or "" when it did not. The
+// empty-result signal is an answer, and a NOSCRIPT reply is a script cache
+// miss the caller answers with EVAL; neither is the dependency failing.
+func failureReason(err error) string {
+	if err == nil || err == redis.Nil || noScriptReply(err) {
+		return ""
+	}
+	return redisfailure.Reason(err)
+}
+
+// callFailureReason is failureReason for an operation made under ctx. A call
+// issued with its caller's deadline already past failed on the caller's
+// clock, whatever it says: the dialer and go-redis set every connection's
+// deadline from ctx.Deadline(), so each dial fails at once, and asking each
+// Sentinel that way go-redis gives up in the words of a Sentinel outage - an
+// operation that never reached the network read as Sentinels down. It is
+// named by the context: canceled for a cancelled caller, timeout otherwise,
+// including the moment a deadline has passed and the context's timer has not
+// yet fired, when ctx.Err() is still nil. A call that failed with time left
+// keeps its own words, sentinel_unreachable included: a Sentinel that hangs
+// past a caller's deadline shorter than the read timeout is an outage, not
+// the caller's clock. What no rule tells apart: go-redis's pool, after
+// PoolSize dial failures, answers new callers with the last dial error until
+// a redial succeeds, on contexts that still have time - milliseconds while
+// the Sentinels are well.
+func callFailureReason(ctx context.Context, err error) string {
+	reason := failureReason(err)
+	if reason == "" {
+		return reason
+	}
+	if start, ok := ctx.Value(redisCallStartKey{}).(redisCallStart); ok && start.spent {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return redisfailure.Reason(ctxErr)
+		}
+		return redisfailure.Timeout
+	}
+	return reason
+}
+
+// spentAtIssue says ctx gave its call no time: cancelled, or its deadline
+// reached by the wall clock the dialer checks it against.
+func spentAtIssue(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	deadline, ok := ctx.Deadline()
+	return ok && !time.Now().Before(deadline)
 }
 
 func boundedRedisCommand(name string) string {
@@ -240,18 +349,29 @@ func (r *Recorder) RedisClientHealth(client string) (RedisClientHealth, bool) {
 
 type redisCallStartKey struct{}
 
+// redisCallStart is when an operation was issued, and whether its caller's
+// context gave it no time then (spentAtIssue).
+type redisCallStart struct {
+	at    time.Time
+	spent bool
+}
+
 func (h *RedisCallHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
 	if h == nil {
 		return ctx, nil
 	}
 	h.metrics.operations.WithLabelValues(h.client).Inc()
-	return context.WithValue(ctx, redisCallStartKey{}, h.now()), nil
+	return context.WithValue(ctx, redisCallStartKey{}, redisCallStart{at: h.now(), spent: spentAtIssue(ctx)}), nil
 }
 
+// AfterProcess counts the operation for its caller here rather than before:
+// a client's hooks run in the order added, and a caller a later hook names
+// (the bundle's per-job clones) is in the context only from then on.
 func (h *RedisCallHook) AfterProcess(ctx context.Context, cmd redis.Cmder) error {
 	if h == nil {
 		return nil
 	}
+	h.callerOperation(ctx)
 	h.record(ctx, boundedRedisCommand(cmd.Name()), "false", cmd.Err())
 	return nil
 }
@@ -261,7 +381,7 @@ func (h *RedisCallHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmd
 		return ctx, nil
 	}
 	h.metrics.operations.WithLabelValues(h.client).Inc()
-	return context.WithValue(ctx, redisCallStartKey{}, h.now()), nil
+	return context.WithValue(ctx, redisCallStartKey{}, redisCallStart{at: h.now(), spent: spentAtIssue(ctx)}), nil
 }
 
 // AfterProcessPipeline counts every member of the batch, because the Redis
@@ -272,7 +392,9 @@ func (h *RedisCallHook) AfterProcessPipeline(ctx context.Context, cmds []redis.C
 	if h == nil {
 		return nil
 	}
+	h.callerOperation(ctx)
 	var failed error
+	reason := ""
 	for index, cmd := range cmds {
 		name := boundedRedisCommand(cmd.Name())
 		h.metrics.calls.WithLabelValues(h.client, name, "true").Inc()
@@ -282,12 +404,33 @@ func (h *RedisCallHook) AfterProcessPipeline(ctx context.Context, cmds []redis.C
 				failed = err
 			}
 		}
+		if reason == "" {
+			reason = callFailureReason(ctx, cmd.Err())
+		}
 		if index == 0 {
 			h.observeDuration(ctx, name, "true")
 		}
 	}
+	if reason != "" {
+		h.metrics.reasons.WithLabelValues(h.client, reason).Inc()
+		h.callerFailure(ctx, reason)
+	}
 	h.health.note(h.client, h.now(), failed)
 	return nil
+}
+
+// callerOperation and callerFailure count an operation, and its failure, for
+// the job its context names; nothing for a call that names none.
+func (h *RedisCallHook) callerOperation(ctx context.Context) {
+	if caller := redisfailure.Caller(ctx); caller != "" {
+		h.metrics.callerOperations.WithLabelValues(h.client, caller).Inc()
+	}
+}
+
+func (h *RedisCallHook) callerFailure(ctx context.Context, reason string) {
+	if caller := redisfailure.Caller(ctx); caller != "" {
+		h.metrics.callerReasons.WithLabelValues(h.client, caller, reason).Inc()
+	}
 }
 
 func (h *RedisCallHook) record(ctx context.Context, name, pipelined string, err error) {
@@ -295,14 +438,18 @@ func (h *RedisCallHook) record(ctx context.Context, name, pipelined string, err 
 	if err != nil && err != redis.Nil {
 		h.metrics.failures.WithLabelValues(h.client, name, pipelined).Inc()
 	}
+	if reason := callFailureReason(ctx, err); reason != "" {
+		h.metrics.reasons.WithLabelValues(h.client, reason).Inc()
+		h.callerFailure(ctx, reason)
+	}
 	h.health.note(h.client, h.now(), err)
 	h.observeDuration(ctx, name, pipelined)
 }
 
 func (h *RedisCallHook) observeDuration(ctx context.Context, name, pipelined string) {
-	started, ok := ctx.Value(redisCallStartKey{}).(time.Time)
+	started, ok := ctx.Value(redisCallStartKey{}).(redisCallStart)
 	if !ok {
 		return
 	}
-	h.metrics.duration.WithLabelValues(h.client, name, pipelined).Observe(h.now().Sub(started).Seconds())
+	h.metrics.duration.WithLabelValues(h.client, name, pipelined).Observe(h.now().Sub(started.at).Seconds())
 }

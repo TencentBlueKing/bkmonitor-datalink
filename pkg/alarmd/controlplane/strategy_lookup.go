@@ -52,6 +52,13 @@ type StrategyLookup struct {
 	// withheld is not retained - its Plan is the current one - so any other
 	// non-accepted disposition beside a Plan says nothing about retention.
 	Retained bool
+	// Global says the source marks the strategy global (is_global_strategy),
+	// whatever the round did with it - accepted, refused as a strategy this
+	// build cannot run across businesses, or withheld for another reason.
+	// It is the source's word for the strategy, read from the round's
+	// GlobalStrategies, so a withheld global strategy is marked as surely as
+	// one that runs.
+	Global bool
 }
 
 // StrategyPlanRef is where one Plan of a strategy runs, and under what.
@@ -76,6 +83,56 @@ type strategyIndex struct {
 	groups       []QueryGroup
 	plans        map[string][]strategyPlanAt
 	dispositions map[string][]ObjectDisposition
+
+	// global is the strategies the source marks global (withGlobal).
+	global map[string]bool
+	// observation is the source observation the round compiled
+	// (withObservation), for the directory to name.
+	observation string
+	// identities is every Plan identity the publication has, in the order a
+	// directory page reads them. Built on the first page that lists every
+	// strategy, not on every round: most readers ask for one strategy.
+	identitiesOnce sync.Once
+	identities     []execution.PlanIdentity
+}
+
+// withObservation records the source observation the round compiled.
+func (index *strategyIndex) withObservation(observation string) *strategyIndex {
+	if index != nil {
+		index.observation = observation
+	}
+	return index
+}
+
+// allIdentities is every Plan identity of the publication, once, sorted.
+func (index *strategyIndex) allIdentities() []execution.PlanIdentity {
+	index.identitiesOnce.Do(func() {
+		seen := make(map[execution.PlanIdentity]bool)
+		for groupIndex := range index.groups {
+			for planIndex := range index.groups[groupIndex].Plans {
+				identity := index.groups[groupIndex].Plans[planIndex].Identity
+				if !seen[identity] {
+					seen[identity] = true
+					index.identities = append(index.identities, identity)
+				}
+			}
+		}
+		sort.Slice(index.identities, func(i, j int) bool { return lessPlanIdentity(index.identities[i], index.identities[j]) })
+	})
+	return index.identities
+}
+
+// withGlobal marks the strategies the round recorded as global, for the
+// lookup to answer Global from. Nil records leave the index as it was.
+func (index *strategyIndex) withGlobal(records []GlobalStrategy) *strategyIndex {
+	if index == nil || len(records) == 0 {
+		return index
+	}
+	index.global = make(map[string]bool, len(records))
+	for _, record := range records {
+		index.global[record.SourceID] = true
+	}
+	return index
 }
 
 type strategyPlanAt struct{ group, plan int }
@@ -124,6 +181,7 @@ func (index *strategyIndex) lookup(strategyID string) StrategyLookup {
 	})
 	answer.Dispositions = append([]ObjectDisposition(nil), index.dispositions[strategyID]...)
 	answer.Found = len(answer.Plans) > 0 || len(answer.Dispositions) > 0
+	answer.Global = index.global[strategyID]
 	for _, disposition := range answer.Dispositions {
 		if len(answer.Plans) > 0 && retainingDisposition(disposition.Disposition) {
 			answer.Retained = true
@@ -171,6 +229,17 @@ func (reconciler *SourceReconciler) LookupStrategy(strategyID string) StrategyLo
 	return reconciler.strategies.lookup(strategyID)
 }
 
+// publishedIndex is the index of the publication this process last made,
+// or nil when it holds none of its own.
+func (reconciler *SourceReconciler) publishedIndex() *strategyIndex {
+	if reconciler == nil {
+		return nil
+	}
+	reconciler.strategies.mu.RLock()
+	defer reconciler.strategies.mu.RUnlock()
+	return reconciler.strategies.index
+}
+
 // StepDown forgets the index: called on every tick this process runs as a
 // follower, so a Leader that lost its lease stops answering from the
 // publication it made in its term. Without it a former Leader kept
@@ -178,9 +247,19 @@ func (reconciler *SourceReconciler) LookupStrategy(strategyID string) StrategyLo
 // hand-over read as "the source never listed it", from a replica no longer
 // in a position to say. The next round this process completes as Leader
 // builds the index again.
+//
+// It forgets the reusable round too. The round a new term starts with has to
+// build, not stand on a Catalog from before another Leader may have
+// published: the activation check would refuse most of those, and a term
+// boundary is not where that should rest on one check.
+//
+// Safe from any goroutine: the lease can be lost on a path other than the
+// round's. The index goes at once, under its lock; the reusable round is
+// the round's own field, and the next round drops it before reading it.
 func (reconciler *SourceReconciler) StepDown() {
 	if reconciler == nil {
 		return
 	}
 	reconciler.strategies.replace(nil)
+	reconciler.steppedDown.Store(true)
 }

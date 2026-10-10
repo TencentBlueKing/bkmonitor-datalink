@@ -70,6 +70,82 @@ type CLIConfig struct {
 	EnvironmentName string `yaml:"environment_name"`
 	PublicBaseURL   string `yaml:"public_base_url"`
 	AdminKey        string `yaml:"admin_key" json:"-"`
+	// AdminKeySecret says where the deployment keeps AdminKey, so that the
+	// login page can show the one command that reads it. It is never read
+	// from the file; see resolveAdminKeySecret.
+	AdminKeySecret CLIAdminKeySecret `yaml:"-" json:"-"`
+}
+
+// CLIAdminKeySecret names the Secret that holds the administrator key:
+// the namespace, the Secret and the key inside it. Names only, never the
+// key's value. Any of them may be empty when the process could not learn
+// it; the login page then leaves that part of the command for the operator
+// to fill in rather than guessing it.
+type CLIAdminKeySecret struct {
+	Namespace string
+	Name      string
+	Key       string
+}
+
+// The Secret's name and key are handed over by the chart that references
+// the Secret, beside the key itself. alarmd has no other way to know them:
+// the key arrives as a value, not as a reference.
+const (
+	CLIAdminKeySecretNameEnvironment = "ALARMD_CLI_ADMIN_KEY_SECRET_NAME"
+	CLIAdminKeySecretKeyEnvironment  = "ALARMD_CLI_ADMIN_KEY_SECRET_KEY"
+	// PodNamespaceEnvironment is read only when the ServiceAccount's
+	// namespace file is not mounted.
+	PodNamespaceEnvironment = "POD_NAMESPACE"
+)
+
+// serviceAccountNamespacePath is the namespace file Kubernetes mounts in
+// every Pod with a ServiceAccount token. A variable so tests can point it
+// at a file of their own.
+var serviceAccountNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// resolveAdminKeySecret fills AdminKeySecret: the namespace from the Pod's
+// own namespace file, or POD_NAMESPACE when the file is not there, and the
+// Secret's name and key from the environment. Nothing here can fail
+// startup; a name that cannot be read stays empty.
+func (c *CLIConfig) resolveAdminKeySecret() {
+	namespace := ""
+	if raw, err := os.ReadFile(serviceAccountNamespacePath); err == nil {
+		namespace = strings.TrimSpace(string(raw))
+	}
+	if namespace == "" {
+		namespace = strings.TrimSpace(os.Getenv(PodNamespaceEnvironment))
+	}
+	c.AdminKeySecret = CLIAdminKeySecret{
+		Namespace: namespace,
+		Name:      strings.TrimSpace(os.Getenv(CLIAdminKeySecretNameEnvironment)),
+		Key:       strings.TrimSpace(os.Getenv(CLIAdminKeySecretKeyEnvironment)),
+	}
+}
+
+// ObserveNamespacesEnvironment lists the other namespaces alarmd's
+// dependencies run in, separated by commas or spaces, as the chart renders
+// them beside the Role it grants alarmd in each. The workload read covers
+// them besides its own namespace and the ones its dependencies' addresses
+// name. It is read when asked, not decoded into the configuration: it is a
+// fact about where the deployment put things, handed over by the chart like
+// the administrator key's Secret.
+const ObserveNamespacesEnvironment = "ALARMD_OBSERVE_NAMESPACES"
+
+// ObservedNamespaces is ObserveNamespacesEnvironment split into names, in the
+// order given. Empty and repeated entries are dropped; a name that is not a
+// namespace name is kept, for the read to report it rather than skip it.
+func ObservedNamespaces() []string {
+	var names []string
+	seen := map[string]bool{}
+	for _, name := range strings.FieldsFunc(os.Getenv(ObserveNamespacesEnvironment), func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	}) {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // CLIAdminKeyEnvironment carries the administrator key when the deployment
@@ -592,6 +668,7 @@ func Load(path string) (Config, error) {
 	if err := cfg.CLI.resolveAdminKeyFromEnvironment(); err != nil {
 		return Config{}, err
 	}
+	cfg.CLI.resolveAdminKeySecret()
 	if err := cfg.PhaseTwo.migratePlatformSettings(); err != nil {
 		return Config{}, err
 	}

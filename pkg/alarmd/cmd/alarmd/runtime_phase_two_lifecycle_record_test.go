@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 func lifecycleTestRecord(t *testing.T, replica string) (*lifecycleRecord, config.Config, redis.UniversalClient) {
@@ -130,5 +131,20 @@ func TestTheApplicationWritesItsStartAndStop(t *testing.T) {
 	if len(reading.Entries) != 2 || reading.Entries[1].Event != "start" || reading.Entries[0].Event != "stop" ||
 		reading.Entries[0].Reason != lifecycleStopSignal || reading.Entries[0].Replica != "pod-app" {
 		t.Fatalf("entries %+v, want a start then a stop on the signal", reading.Entries)
+	}
+}
+
+// A start or stop the store did not take is reported by why: the record is
+// what later reads as an unclean restart, and a write that never landed
+// must be told from one that did.
+func TestALifecycleWriteTheStoreDidNotTakeSaysWhy(t *testing.T) {
+	dead := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
+	t.Cleanup(func() { _ = dead.Close() })
+	var heard []string
+	record := &lifecycleRecord{client: dead, key: "alarmd.lifecycle", replica: "replica", build: "test", now: time.Now,
+		failed: func(reason string) { heard = append(heard, reason) }}
+	record.start()
+	if len(heard) != 1 || heard[0] != redisfailure.ConnectionRefused {
+		t.Fatalf("heard %v, want one connection_refused", heard)
 	}
 }

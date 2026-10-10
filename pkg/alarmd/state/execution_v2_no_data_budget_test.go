@@ -54,7 +54,7 @@ func TestAMemoryTooLargeForOneValueIsWritten(t *testing.T) {
 			"this test is not exercising the size that used to be refused",
 			len(encoded), store.options.MaxValueBytes)
 	}
-	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -93,7 +93,7 @@ func TestNoDataApplyGroupRefusalCarriesBothNumbers(t *testing.T) {
 			GroupKey: fmt.Sprintf("data_set_id=%d", index), LastSeen: 940, FirstAbsent: 980,
 		})
 	}
-	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{noDataMutationV2(t, 0, groups...)},
 	})
 	if err != nil {
@@ -159,7 +159,7 @@ func TestApplyWritesTheHashAndNeverTheWholeMemoryRecord(t *testing.T) {
 	// write path would have refused it had it still been reading it.
 	backend.values[blobKey] = make([]byte, 5000)
 
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(),
 		Items: []execution.PlanNoDataMutation{noDataMutationV2(t, 0,
 			execution.NoDataGroupMemory{GroupKey: "a", FirstAbsent: 940})},
@@ -238,7 +238,7 @@ func TestEveryNoDataRefusalShapeIsPublished(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, mutation := test.build(t)
-			applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+			applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 				Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 			})
 			if err != nil {
@@ -333,7 +333,7 @@ func TestEveryNoDataApplyStatusTheStoreReturnsIsPublished(t *testing.T) {
 			build: func(t *testing.T) (*ExecutionStore, execution.PlanNoDataMutation) {
 				store := generationStore(t, &casMemoryBackend{values: make(map[string][]byte)})
 				mutation := noDataMutationV2(t, 0, oneGroup)
-				if _, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+				if _, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 					Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 				}); err != nil {
 					t.Fatal(err)
@@ -347,7 +347,7 @@ func TestEveryNoDataApplyStatusTheStoreReturnsIsPublished(t *testing.T) {
 			build: func(t *testing.T) (*ExecutionStore, execution.PlanNoDataMutation) {
 				backend := &casMemoryBackend{values: make(map[string][]byte)}
 				store := generationStore(t, backend)
-				if _, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+				if _, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 					Contract: frozenRef(), Items: []execution.PlanNoDataMutation{noDataMutationV2(t, 0, oneGroup)},
 				}); err != nil {
 					t.Fatal(err)
@@ -364,7 +364,7 @@ func TestEveryNoDataApplyStatusTheStoreReturnsIsPublished(t *testing.T) {
 			build: func(t *testing.T) (*ExecutionStore, execution.PlanNoDataMutation) {
 				backend := &casMemoryBackend{values: make(map[string][]byte)}
 				store := generationStore(t, backend)
-				if _, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+				if _, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 					Contract: frozenRef(), Items: []execution.PlanNoDataMutation{noDataMutationV2(t, 0, oneGroup)},
 				}); err != nil {
 					t.Fatal(err)
@@ -383,7 +383,7 @@ func TestEveryNoDataApplyStatusTheStoreReturnsIsPublished(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, mutation := test.build(t)
-			applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+			applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 				Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 			})
 			if err != nil {

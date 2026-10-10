@@ -36,6 +36,12 @@ type ControlBatchStore interface {
 	ReadControlBatch(context.Context, []execution.QueryGroupIdentity, string) ([]ownership.ControlRead, error)
 }
 
+// ControlBudgetStore is a control store that reads a batch within what a
+// caller admits (LoadProgressWithin).
+type ControlBudgetStore interface {
+	ReadControlWithin(context.Context, []execution.QueryGroupIdentity, string, func(uint64) bool) ([]ownership.ControlRead, int, error)
+}
+
 type ContinuousSlotResolver interface {
 	NextSlotAfter(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.EvaluationTime, error)
 }
@@ -85,7 +91,10 @@ func (store *Store) LoadProgress(ctx context.Context, identity execution.Progres
 	return store.decodeLoaded(identity, raw, missing)
 }
 
-// LoadProgressBatch loads the Progress of many Query Groups. Every entry of
+// LoadProgressBatch loads the Progress of many Query Groups, bounded by
+// count alone: the production readers of batches read within bytes
+// (LoadProgressWithin), and this serves a store that cannot say how long its
+// records are. Every entry of
 // the result is filled: a per-identity error is returned in place, so one
 // unreadable or invalid Progress does not hide the others. A transport
 // failure of a whole batch is reported on every identity of that batch.
@@ -122,9 +131,87 @@ func (store *Store) LoadProgressBatch(ctx context.Context, identities []executio
 		return results, errs
 	}
 	for offset, index := range positions {
-		results[index], errs[index] = store.decodeLoaded(identities[index], reads[offset].Raw, reads[offset].Missing)
+		results[index], errs[index] = store.decodeRead(identities[index], reads[offset])
 	}
 	return results, errs
+}
+
+// decodeRead is one entry of a batched read: its own error, or its record.
+func (store *Store) decodeRead(identity execution.ProgressIdentity, read ownership.ControlRead) (execution.ProgressLoadResult, error) {
+	if read.Err != nil {
+		return execution.ProgressLoadResult{}, read.Err
+	}
+	return store.decodeLoaded(identity, read.Raw, read.Missing)
+}
+
+// LoadProgressWithin is LoadProgressBatch over the longest prefix of
+// identities whose records admit accepts, one record's length at a time in
+// order, with read how many of identities that was; the rest are left for
+// another read. A batch's replies are held at once, and a record carrying an
+// unfinished range may be a megabyte (MaxExpiredRangeProjectionBytes): a
+// batch bounded by count alone is bounded in memory only by count times
+// that. What a refusal means is admit's -- none read, or the first read
+// anyway. A store that cannot say how long its records are reads the whole
+// batch; a failure to read the lengths or the records fails every identity
+// of the batch.
+func (store *Store) LoadProgressWithin(ctx context.Context, identities []execution.ProgressIdentity, admit func(uint64) bool) (
+	[]execution.ProgressLoadResult, []error, int) {
+	budgeted, ok := store.options.Control.(ControlBudgetStore)
+	if !ok {
+		results, errs := store.LoadProgressBatch(ctx, identities)
+		return results, errs, len(identities)
+	}
+	results, errs := make([]execution.ProgressLoadResult, len(identities)), make([]error, len(identities))
+	// An identity that names no Query Group is an error in its place and no
+	// read; the prefix admitted is of the ones that can be read.
+	queryGroups := make([]execution.QueryGroupIdentity, 0, len(identities))
+	positions := make([]int, 0, len(identities))
+	for index, identity := range identities {
+		if _, err := store.namespace(identity); err != nil {
+			errs[index] = err
+			continue
+		}
+		queryGroups = append(queryGroups, identity.QueryGroup)
+		positions = append(positions, index)
+	}
+	if len(queryGroups) == 0 {
+		return results, errs, len(identities)
+	}
+	reads, admitted, err := budgeted.ReadControlWithin(ctx, queryGroups, store.options.Prefix+":progress", func(length uint64) bool {
+		return admit(recordCharge(length))
+	})
+	if err != nil {
+		for index := range errs {
+			if errs[index] == nil {
+				errs[index] = err
+			}
+		}
+		return results, errs, len(identities)
+	}
+	read := len(identities)
+	if admitted < len(positions) {
+		read = positions[admitted]
+	}
+	for offset := 0; offset < admitted; offset++ {
+		index := positions[offset]
+		results[index], errs[index] = store.decodeRead(identities[index], reads[offset])
+		// Let the raw record go as soon as it is decoded: the batch then
+		// holds its decoded records and what is still raw, not both whole.
+		reads[offset] = ownership.ControlRead{}
+	}
+	return results[:read], errs[:read], read
+}
+
+// recordCharge is what a record of length bytes is admitted as: 3/2 of it,
+// the charge the object cache puts on what it decodes. Read and decoded one
+// after another, a batch holds each record raw and then decoded. Decoded, a
+// record without an unfinished range is about 0.8 of its length; one with a
+// range, measured from 2 plans to the 4,380 that reach the record's 1 MiB
+// bound, is 0.67 to 1.31 of it, the highest tooth at 299 plans, where the
+// plans' slice has just grown past what it holds (1.45 under the race
+// detector). None is above the charge.
+func recordCharge(length uint64) uint64 {
+	return length + length/2
 }
 
 func (store *Store) decodeLoaded(identity execution.ProgressIdentity, raw []byte, missing bool) (execution.ProgressLoadResult, error) {

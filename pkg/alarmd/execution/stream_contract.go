@@ -229,6 +229,18 @@ func DeriveStreamingCompletion(
 // is the level the answer usually lives at: the cause says a Level could not be
 // decided, the reason says whether that is the data not reaching this window or
 // something that clears on its own.
+// DeriveStreamingCompletionAttribution is DeriveStreamingCompletionDetail
+// with the scope the cause was found in.
+func DeriveStreamingCompletionAttribution(
+	header InternalExecutionHeader,
+	bindings []NamedInputBinding,
+	result EvaluationResult,
+) (CompletionKind, CompletionAttribution, error) {
+	return DeriveCompletionAttribution(InternalExecution{
+		Contract: header.Contract, DuePlans: header.DuePlans, Requirements: header.Requirements, Inputs: bindings,
+	}, result)
+}
+
 func DeriveStreamingCompletionDetail(
 	header InternalExecutionHeader,
 	bindings []NamedInputBinding,
@@ -255,6 +267,14 @@ type ProviderCompletion struct {
 	RouteFacts      ProviderRouteFacts
 	PartialEvidence *PartialEvidence
 	Stats           ProviderStats
+	// Withheld is how many series the provider returned that every Plan the
+	// query feeds refused, and WithheldOutsideTarget how many of them every
+	// Plan refused as outside its monitoring target, decided on facts that
+	// were all there (admission.DefinitelyOutside). Both are zero where no
+	// target filters. A query whose every series was withheld completes
+	// EMPTY, as it would had none been returned; these say it was not.
+	Withheld              uint64
+	WithheldOutsideTarget uint64
 }
 
 type ProviderSeriesSink interface {
@@ -327,6 +347,14 @@ type PhysicalQueryCompletion struct {
 	RouteFacts      ProviderRouteFacts
 	PartialEvidence *PartialEvidence
 	Stats           ProviderStats
+	// Withheld is how many series the provider returned that every Plan the
+	// query feeds refused, and WithheldOutsideTarget how many of them every
+	// Plan refused as outside its monitoring target, decided on facts that
+	// were all there (admission.DefinitelyOutside). Both are zero where no
+	// target filters. A query whose every series was withheld completes
+	// EMPTY, as it would had none been returned; these say it was not.
+	Withheld              uint64
+	WithheldOutsideTarget uint64
 }
 
 type QueryExecutionCompletion struct {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 type Backend interface {
@@ -68,6 +69,8 @@ type StoreOptions struct {
 	MinTTL        time.Duration
 	MaxTTL        time.Duration
 	RestartMargin time.Duration
+	// ReadHoldBound extends only key lifetime, never the retained data window.
+	ReadHoldBound time.Duration
 	Observer      Observer
 }
 
@@ -168,7 +171,8 @@ func NewStore(options StoreOptions) (*Store, error) {
 	if options.Limits.MaxLoadedBytes < options.Codec.limits.MaxEncodedBytes {
 		return nil, fmt.Errorf("%w: loaded bytes cannot admit one maximum state", ErrStateBudget)
 	}
-	if options.MinTTL <= 0 || options.MaxTTL < options.MinTTL || options.RestartMargin < 0 {
+	if options.MinTTL <= 0 || options.MaxTTL < options.MinTTL || options.RestartMargin < 0 ||
+		options.ReadHoldBound < 0 || options.ReadHoldBound.Milliseconds() > execution.MaxReadHoldMillis {
 		return nil, fmt.Errorf("state: invalid TTL limits")
 	}
 	return &Store{options: options}, nil
@@ -393,7 +397,7 @@ func (store *Store) admitWriteWindow(item LoadedWindow) (int, time.Duration, err
 	if err != nil {
 		return 0, 0, err
 	}
-	ttl, err := StateTTL(item.Requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL)
+	ttl, err := StateTTL(item.Requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.options.ReadHoldBound)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -573,7 +577,17 @@ func writesBytes(writes []BackendWrite) int {
 	return total
 }
 
-func StateTTL(requirements []LevelRequirement, restartMargin, minimum, maximum time.Duration) (time.Duration, error) {
+func StateTTL(requirements []LevelRequirement, restartMargin, minimum, maximum time.Duration, readHoldBound ...time.Duration) (time.Duration, error) {
+	var hold time.Duration
+	if len(readHoldBound) > 1 {
+		return 0, fmt.Errorf("state: invalid read hold lifetime")
+	}
+	if len(readHoldBound) == 1 {
+		hold = readHoldBound[0]
+	}
+	if hold < 0 || hold.Milliseconds() > execution.MaxReadHoldMillis {
+		return 0, fmt.Errorf("state: invalid read hold lifetime")
+	}
 	if len(requirements) == 0 || restartMargin < 0 || minimum <= 0 || maximum < minimum {
 		return 0, fmt.Errorf("state: invalid TTL inputs")
 	}
@@ -617,7 +631,11 @@ func StateTTL(requirements []LevelRequirement, restartMargin, minimum, maximum t
 			offset = required
 		}
 	}
-	return offset, nil
+	// The read hold only lengthens the key's life past a horizon the offset
+	// already outlives; near the ceiling it gets what is left below it. The
+	// retention fits without it, and refusing it here refused, every round,
+	// a Plan that fits -- one that would then stop remembering.
+	return min(offset+hold, maximum), nil
 }
 
 // longestStep is the step the offset keeps the expiry away from: the longest

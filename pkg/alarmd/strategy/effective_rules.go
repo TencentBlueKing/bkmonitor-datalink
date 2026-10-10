@@ -56,6 +56,11 @@ type compiledEffectiveRules struct {
 	calendars map[int64][]compiledCalendarItem
 	digest    string
 	bytes     int
+
+	// deleted are the calendars the writer marked deleted, compiled above as
+	// empty ones. Kept apart only for EffectiveTimeCalendars; resolution
+	// reads them as the empty calendars they are.
+	deleted map[int64]struct{}
 }
 
 // The reasons compileEffectiveRules refuses a snapshot with. The codes live in
@@ -74,6 +79,15 @@ const (
 	ReasonEffectiveTimeCalendarItemsMissing  = contract.ReasonEffectiveTimeCalendarItemsMissing
 	ReasonEffectiveTimeInvalid               = contract.ReasonEffectiveTimeInvalid
 	ReasonEffectiveTimeCalendarMissing       = contract.ReasonEffectiveTimeCalendarMissing
+	ReasonEffectiveTimeItemDuplicate         = contract.ReasonEffectiveTimeItemDuplicate
+	ReasonEffectiveTimeItemInvalid           = contract.ReasonEffectiveTimeItemInvalid
+	ReasonEffectiveTimeItemTimeInvalid       = contract.ReasonEffectiveTimeItemTimeInvalid
+	ReasonEffectiveTimeTimeKindInvalid       = contract.ReasonEffectiveTimeTimeKindInvalid
+	ReasonEffectiveTimeTimezoneInvalid       = contract.ReasonEffectiveTimeTimezoneInvalid
+	ReasonEffectiveTimeRepeatInvalid         = contract.ReasonEffectiveTimeRepeatInvalid
+	ReasonEffectiveTimeRepeatListInvalid     = contract.ReasonEffectiveTimeRepeatListInvalid
+	ReasonEffectiveTimeRepeatEveryInvalid    = contract.ReasonEffectiveTimeRepeatEveryInvalid
+	ReasonEffectiveTimeRepeatUntilInvalid    = contract.ReasonEffectiveTimeRepeatUntilInvalid
 )
 
 // EffectiveTimeTerminalReasons is every reason this compiler refuses a Plan
@@ -86,6 +100,7 @@ func EffectiveTimeTerminalReasons() []string {
 		ReasonEffectiveTimeCalendarDuplicate, ReasonEffectiveTimeCalendarNotPresent,
 		ReasonEffectiveTimeCalendarItemsMissing, ReasonEffectiveTimeInvalid,
 		ReasonEffectiveTimeCalendarMissing,
+		ReasonEffectiveTimeItemDuplicate, ReasonEffectiveTimeItemInvalid, ReasonEffectiveTimeItemTimeInvalid, ReasonEffectiveTimeTimeKindInvalid, ReasonEffectiveTimeTimezoneInvalid, ReasonEffectiveTimeRepeatInvalid, ReasonEffectiveTimeRepeatListInvalid, ReasonEffectiveTimeRepeatEveryInvalid, ReasonEffectiveTimeRepeatUntilInvalid,
 	}
 }
 
@@ -150,7 +165,27 @@ func compileEffectiveRules(raw json.RawMessage, tenant string) (*compiledEffecti
 		if _, exists := rules.calendars[calendar.ID]; exists {
 			return nil, errors.New(ReasonEffectiveTimeCalendarDuplicate)
 		}
-		if calendar.Status != "PRESENT" {
+		switch calendar.Status {
+		case "PRESENT":
+		case "DELETED":
+			// A calendar deleted after the strategy named it. The writer keeps
+			// the snapshot READY and marks the calendar deleted; Python reads a
+			// deleted calendar as its cache key lapsing, which it decodes as an
+			// empty list. So it is a calendar with nothing in it, never hit:
+			// named among the rest days it pauses nothing, and named as the
+			// only alert days the strategy is not effective - "configured and
+			// not hit", as Python has it. Its items are not read whatever they
+			// hold, since Python stops refreshing a deleted calendar.
+			//
+			// Refusing it refused the whole strategy for as long as the
+			// calendar stayed deleted, which is for ever.
+			rules.calendars[calendar.ID] = []compiledCalendarItem{}
+			if rules.deleted == nil {
+				rules.deleted = make(map[int64]struct{}, 1)
+			}
+			rules.deleted[calendar.ID] = struct{}{}
+			continue
+		default:
 			return nil, errors.New(ReasonEffectiveTimeCalendarNotPresent)
 		}
 		if calendar.Items == nil {
@@ -160,7 +195,7 @@ func compileEffectiveRules(raw json.RawMessage, tenant string) (*compiledEffecti
 		ids := make(map[int64]struct{}, len(calendar.Items))
 		for _, item := range calendar.Items {
 			if _, duplicate := ids[item.ID]; duplicate {
-				return nil, errors.New("EFFECTIVE_TIME_ITEM_DUPLICATE")
+				return nil, errors.New(ReasonEffectiveTimeItemDuplicate)
 			}
 			ids[item.ID] = struct{}{}
 			compiled, err := compileCalendarItem(item)
@@ -176,11 +211,11 @@ func compileEffectiveRules(raw json.RawMessage, tenant string) (*compiledEffecti
 
 func ruleLocation(name string) (*time.Location, error) {
 	if name == "" || name == "Local" {
-		return nil, errors.New("EFFECTIVE_TIME_TIMEZONE_INVALID")
+		return nil, errors.New(ReasonEffectiveTimeTimezoneInvalid)
 	}
 	location, err := time.LoadLocation(name)
 	if err != nil {
-		return nil, errors.New("EFFECTIVE_TIME_TIMEZONE_INVALID")
+		return nil, errors.New(ReasonEffectiveTimeTimezoneInvalid)
 	}
 	return location, nil
 }
@@ -188,19 +223,19 @@ func ruleLocation(name string) (*time.Location, error) {
 func compileCalendarItem(item effectiveItem) (compiledCalendarItem, error) {
 	var result compiledCalendarItem
 	if item.ID <= 0 || item.Start == nil || item.End == nil {
-		return result, errors.New("EFFECTIVE_TIME_ITEM_INVALID")
+		return result, errors.New(ReasonEffectiveTimeItemInvalid)
 	}
 	result.start, result.end = *item.Start, *item.End
 	result.daily = item.TimeKind == "DAILY_SECONDS"
 	if !result.daily && item.TimeKind != "UNIX_SECONDS" {
-		return result, errors.New("EFFECTIVE_TIME_TIME_KIND_INVALID")
+		return result, errors.New(ReasonEffectiveTimeTimeKindInvalid)
 	}
 	if result.daily {
 		if result.start < 0 || result.start >= 86400 || result.end < 0 || result.end >= 86400 {
-			return result, errors.New("EFFECTIVE_TIME_ITEM_TIME_INVALID")
+			return result, errors.New(ReasonEffectiveTimeItemTimeInvalid)
 		}
 	} else if result.end < result.start || result.start < -62135596800 || result.end > 253402300799 {
-		return result, errors.New("EFFECTIVE_TIME_ITEM_TIME_INVALID")
+		return result, errors.New(ReasonEffectiveTimeItemTimeInvalid)
 	}
 	var err error
 	result.location, err = ruleLocation(item.Timezone)
@@ -209,24 +244,24 @@ func compileCalendarItem(item effectiveItem) (compiledCalendarItem, error) {
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(item.Repeat, &fields) != nil || fields == nil {
-		return result, errors.New("EFFECTIVE_TIME_REPEAT_INVALID")
+		return result, errors.New(ReasonEffectiveTimeRepeatInvalid)
 	}
 	if len(fields) == 0 {
 		return result, nil
 	}
 	if json.Unmarshal(item.Repeat, &result.repeat) != nil || result.repeat.Interval <= 0 {
-		return result, errors.New("EFFECTIVE_TIME_REPEAT_INVALID")
+		return result, errors.New(ReasonEffectiveTimeRepeatInvalid)
 	}
 	for _, key := range []string{"every", "exclude_date"} {
 		if raw, exists := fields[key]; exists {
 			var numbers []json.RawMessage
 			if json.Unmarshal(raw, &numbers) != nil || string(raw) == "null" {
-				return result, errors.New("EFFECTIVE_TIME_REPEAT_LIST_INVALID")
+				return result, errors.New(ReasonEffectiveTimeRepeatListInvalid)
 			}
 			for _, number := range numbers {
 				var value int64
 				if len(number) == 0 || string(number) == "null" || json.Unmarshal(number, &value) != nil {
-					return result, errors.New("EFFECTIVE_TIME_REPEAT_LIST_INVALID")
+					return result, errors.New(ReasonEffectiveTimeRepeatListInvalid)
 				}
 			}
 		}
@@ -241,18 +276,18 @@ func compileCalendarItem(item effectiveItem) (compiledCalendarItem, error) {
 	case "year":
 		low, high = 1, 12
 	default:
-		return result, errors.New("EFFECTIVE_TIME_REPEAT_INVALID")
+		return result, errors.New(ReasonEffectiveTimeRepeatInvalid)
 	}
 	if result.repeat.Freq == "day" && len(result.repeat.Every) > 0 {
-		return result, errors.New("EFFECTIVE_TIME_REPEAT_EVERY_INVALID")
+		return result, errors.New(ReasonEffectiveTimeRepeatEveryInvalid)
 	}
 	for _, n := range result.repeat.Every {
 		if n < low || n > high {
-			return result, errors.New("EFFECTIVE_TIME_REPEAT_EVERY_INVALID")
+			return result, errors.New(ReasonEffectiveTimeRepeatEveryInvalid)
 		}
 	}
 	if result.repeat.Until != nil && *result.repeat.Until < 0 {
-		return result, errors.New("EFFECTIVE_TIME_REPEAT_UNTIL_INVALID")
+		return result, errors.New(ReasonEffectiveTimeRepeatUntilInvalid)
 	}
 	if len(result.repeat.Exclude) > 0 {
 		result.encodingLocation, err = ruleLocation(result.repeat.EncodingTimezone)
@@ -265,6 +300,22 @@ func compileCalendarItem(item effectiveItem) (compiledCalendarItem, error) {
 		}
 	}
 	return result, nil
+}
+
+// EffectiveTimeCalendars visits every calendar the Plan's effective-time
+// snapshot names, with whether the writer marked it deleted. One deleted
+// calendar reads as an empty one, as Python reads it; every calendar a
+// deployment names reading deleted at once is the writer's calendar source
+// gone, not a deletion, and only a reader of many Plans can tell the two
+// apart. A Plan without a snapshot visits nothing.
+func (p *CompiledPlan) EffectiveTimeCalendars(visit func(id int64, deleted bool)) {
+	if p == nil || p.effectiveRules == nil {
+		return
+	}
+	for id := range p.effectiveRules.calendars {
+		_, deleted := p.effectiveRules.deleted[id]
+		visit(id, deleted)
+	}
 }
 
 // ResolveEffectiveTime evaluates the frozen Plan at an explicit second, also

@@ -12,10 +12,12 @@ package fleet
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	model "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -57,6 +59,26 @@ const (
 	// that was written, a group that goes absent after that is never recorded
 	// as first absent, and its no-data alert never fires.
 	KindNoDataMemoryRefused = "NO_DATA_MEMORY_REFUSED"
+	// KindReadBeforeComplete is an object the late-data lookback found read
+	// before its data was complete, in two of its latest three classified
+	// samples - read early or partially revised. Its
+	// rounds complete; its results are read from data that was not all
+	// there, and the strategy's time_delay is what moves the read.
+	KindReadBeforeComplete = "READ_BEFORE_COMPLETE"
+	// KindReadHeld is an object whose reads alarmd holds for it: its
+	// measured arrival age is past what its time_delay waits, so its Slots
+	// are read that much later than the time_delay says. Its rounds complete
+	// and read the data whole; the time_delay that would need no hold is
+	// still the strategy owner's to set.
+	KindReadHeld = "READ_HELD"
+	// KindLatePastRound is an object whose late series had crossed their
+	// Slots in two supplemented windows in a row: the supplement recovered
+	// none of them, and only a longer time_delay reads them.
+	KindLatePastRound = "LATE_PAST_ROUND"
+	// KindLateSeriesMissed is an object read directed with series its
+	// supplements could not recover in windows they recovered part of: a
+	// residual miss, the data's to look at.
+	KindLateSeriesMissed = "LATE_SERIES_MISSED"
 	// KindRetainedShareApproaching is an object whose latest completed Slot
 	// held at least RetainedShareApproachPercent of the retained pool's
 	// one-object share. Its rounds complete and its results stand; the row is
@@ -204,6 +226,17 @@ func blockedOutcome(outcome string) bool {
 	return inVocabulary(outcome, BlockedOutcomes)
 }
 
+// sourceRefusal is a blocked outcome the Slot source or the view raised: the
+// round was refused before it ran, and the source answering again ends it.
+// A panic or an unclassified error is the round's own and is not.
+func sourceRefusal(outcome string) bool {
+	switch outcome {
+	case "source_blocked", "source_error", "source_retry", "view_not_executable":
+		return true
+	}
+	return false
+}
+
 // failedExecution reports whether a round reached execution and did not finish.
 // Without this, a query group whose every execution fails is invisible: it
 // reports execute_returned, which is not blocked, and commits no progress, so
@@ -236,7 +269,10 @@ type queryGroupState struct {
 	// happens, and only the first is listed.
 	emptyRuns  int
 	emptySince time.Time
-	sawData    bool
+	// emptiedByTarget says the latest empty round's query returned data the
+	// monitoring target selected none of.
+	emptiedByTarget bool
+	sawData         bool
 	// emptySinceSlot and lastEmptySlot bound the run of empty completions on
 	// the source's own clock: the Slot of the first empty round of the run and
 	// of the latest. The "every round" line gates on their distance, Slot to
@@ -263,6 +299,19 @@ type queryGroupState struct {
 	// pace cannot make the next ordinary one look like a hole; a hole clears
 	// it along with the run's start, because a hole is not a pace.
 	emptyStride int64
+	// firstEmptySlot is the Slot of the first empty round this process
+	// watched for the object. recordRun is the run of empty rounds the
+	// object's record carries, held until this process's own run can take
+	// its start (joinRecordedRun), and recordRead whether the record has been
+	// read at all. A restore that came after a round had already determined
+	// the object used to be dropped whole, and the object then waited out an
+	// hour of its own rounds after every release: on a live deployment about
+	// a third of the "every round" line at once, a different third each
+	// rollout, because which objects' first rounds beat their restore changed
+	// with every one.
+	firstEmptySlot int64
+	recordRun      *recordedEmptyRun
+	recordRead     bool
 	// lastDataSlot is the Slot records were last seen at, on the source's
 	// clock: the other end of the data side's hour. Zero until a round with
 	// records is watched or restored; sawData without it is a round that
@@ -284,6 +333,9 @@ type queryGroupState struct {
 	// renewal that reached the store. Positive evidence, kept apart from the
 	// refusals above; the row carries the Plan attempted most recently.
 	upkeep map[StrategyRef]*NoDataMemoryUpkeep
+	// stateRefusals is the latest refused state admission of each of this
+	// object's Plans not admitted since, by Plan.
+	stateRefusals map[StrategyRef]*StateAdmissionRefusal
 	// noDataTracking is what the last deciding no-data round of each of this
 	// object's Plans counted, by Plan. Replaced whole on every deciding
 	// round; a Plan that stops deciding keeps its last word, dated.
@@ -295,8 +347,8 @@ type queryGroupState struct {
 	// to each of this object's Plans, by Plan, from the Plan's evaluation
 	// lines.
 	planSeries map[StrategyRef]*PlanSeriesMatched
-	// rounds is the object's recent completions, oldest first, at most
-	// RecentRoundsKept of them: what each hole on a window is read against
+	// rounds is the object's completions in minute order, every one from
+	// windowStart (keptRounds): what each hole on a window is read against
 	// to say whose minute it is. slotOffset is the object's distance from a
 	// Slot to the record minute it evaluates, from the latest round that
 	// reported one, so a round that carried no record can still be matched
@@ -304,6 +356,19 @@ type queryGroupState struct {
 	rounds          []roundMark
 	slotOffset      int64
 	slotOffsetKnown bool
+	// firstSlot is the Slot of the first round this process remembered for
+	// the object, kept after that round rolls out of rounds: what
+	// rememberedSince tells a hole this process never saw from one it forgot.
+	firstSlot int64
+	// windowStart is where the object's windows start, the latest the
+	// worker said: no hole of theirs is older, so no round older is kept.
+	// Zero while the worker has said nothing (an older worker).
+	windowStart int64
+	// heldThrough is the latest minute whose round was let go to make room
+	// because the observation memory line refused the rounds more
+	// (Tracker.roundRoom): a hole at or before it that reads NOT_IN_MEMORY
+	// is the line's doing, not the window's, while it is inside the window.
+	heldThrough int64
 	// worstWindow is the key of the window the worst pair belonged to on
 	// the last round, so the round-over-round counters know when the pair
 	// moved to another window.
@@ -380,6 +445,8 @@ type queryGroupState struct {
 	// causeReason is the cause's own reason, which is where the answer to
 	// "whose problem is this" actually lives.
 	causeReason string
+	// causeScope is where that cause was found (CauseScope).
+	causeScope *CauseScope
 	// coverage is the evidence behind causeReason when that reason is about
 	// the detection window. It is kept beside the reason and cleared with it,
 	// because a shortfall left over from an earlier round would be read as
@@ -548,6 +615,25 @@ func boundedErrorTail(text string) string {
 	return "..." + text[cut:]
 }
 
+// roundFiledUnder is the reason a completed round is filed under: the reason
+// of its cause, except for a round whose cause is GAP_GUARD_WARMING. That
+// round answered whole; its reason is why an earlier round's gap opened the
+// guard it is still waiting on, and filed under it every hole of the minute,
+// on every series of the Query Group, read as the backend failing then - a
+// Query Group whose one Plan was warming a guard read as a query failing
+// every round. It is filed under the cause.
+func roundFiledUnder(cause, reason string) string {
+	if slices.Contains(FiledCauses, cause) {
+		return cause
+	}
+	return reason
+}
+
+// FiledCauses are the completion causes a round is filed under in place of
+// its reason (roundFiledUnder): a vocabulary of its own beside the reason
+// catalogue, since these words reach the checks as a round's reason.
+var FiledCauses = []string{string(model.CauseGapGuardWarming)}
+
 // undecidableReason is a completion reason that means the detection window
 // could not decide recovery, rather than that anything went wrong.
 //
@@ -568,7 +654,25 @@ func boundedErrorTail(text string) string {
 // says the data arrived, stopped, and came back -- a hole in a stream that was
 // flowing, which is a question about the data rather than about how long the
 // series lives. Folding it in would answer that question by assumption.
+//
+// GAP_GUARD_WARMING is here. A round filed under it (roundFiledUnder) answered
+// whole, and its Level waits only for a guard an earlier gap opened: the
+// window's history is short, WARMING or GAPPED, State advances, and the guard
+// clears once enough whole rounds pass. The hole is not a question left open
+// the way a bare HISTORY_GAPPED leaves one: the gap was a round of its own,
+// reported under its own reason, and a run that holds that round has seen
+// something wrong and stays in the anomaly column.
 func undecidableReason(reason string) bool {
+	return windowNeverFillsReason(reason) || reason == string(model.CauseGapGuardWarming)
+}
+
+// windowNeverFillsReason is the undecidable reason that can mean a series
+// does not live long enough to fill its window, which is what the summary's
+// never-fills count tells the reader. A warming guard is undecidable too, but
+// its window fills once the guard's rounds pass; counted there, a Query Group
+// warming a guard would be told back as a strategy whose series are too
+// short-lived.
+func windowNeverFillsReason(reason string) bool {
 	return reason == "HISTORY_WARMING"
 }
 
@@ -650,7 +754,10 @@ func noActionReason(reason string) bool {
 // produced them: a process restart resets them. That is why every anomaly it
 // produces is labelled as such, rather than presented as an absolute age.
 type Tracker struct {
-	next           observability.Observer
+	next observability.Observer
+	// admitRounds is the observation memory line's admission for the rounds
+	// kept past RecentRoundsKept (SetRoundAdmission); nil admits all.
+	admitRounds    func(bytes uint64) bool
 	replica        string
 	degradedRounds int
 	blockedRounds  int
@@ -784,6 +891,17 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	if queryGroup == "" {
 		return
 	}
+	// A supplement is not a round of the object. It evaluates, for a Slot
+	// already completed, the series that arrived late; it completes no Slot
+	// and commits no Progress, and its execute outcome reads "incomplete" by
+	// construction. Read as a round, a supplemented object whose own rounds
+	// end degraded was put on DEFECT as this deployment's, and its latest
+	// round was moved back to the supplemented Slot. Supplements are the
+	// lookback's to count (lookback_supplement_*, lookback.get); the rows
+	// here are rounds.
+	if observation.Operation == observability.OperationSupplement {
+		return
+	}
 
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
@@ -897,6 +1015,14 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 			refusal.Reason, refusal.Record, refusal.Groups, refusal.Limit
 		memory.LastAt = at
 		memory.Refusals++
+	}
+	// A Plan's state refused at admission, with the store's sentence; not a
+	// round either -- the round ends terminal and reports that on its own.
+	// A later round admitting the Plan ends it. A clean chunk of the same
+	// round does not: a record over the limit refuses its own chunk and
+	// leaves the others admitted.
+	if observation.Stage == observability.StageStateAdmission && observation.StateApplyChunk != nil && plan.StrategyID != "" {
+		tracker.noteStateAdmission(state, plan, observation, trace.EvaluationTime, at)
 	}
 	// What the last read said the memory was stored as. On every read of a
 	// Plan with a memory, so the row can say what it has -- and, once the
@@ -1110,6 +1236,10 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		seen := at
 		state.lastFailure = &FailureRef{Stage: failure.Stage, Category: failure.Category,
 			Code: failure.Code, Detail: failure.Detail, At: &seen, Slot: trace.EvaluationTime}
+		if timing := failure.Timing; timing != nil {
+			copied := *timing
+			state.lastFailure.Timing = &copied
+		}
 		state.lastFailureSlot = trace.EvaluationTime
 		if internalFailure(failure.Category) {
 			copy := *state.lastFailure
@@ -1245,7 +1375,20 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		// Every completion, healthy or not, goes on the ring the holes are
 		// read against: a healthy round is exactly the one a later hole at
 		// its minute has to be matched to.
-		rememberRound(state, trace.EvaluationTime, completion, observation.ProgressCompletionReason,
+		roundReason := roundFiledUnder(observation.ProgressCompletionCause, observation.ProgressCompletionReason)
+		// A terminal Slot names no cause -- the derivation reports none for
+		// TERMINAL -- and its own reason, the deterministic one the progress
+		// record keeps, travels as this observation's reason code. Filed
+		// under nothing, every terminal Slot read as an unclassified defect
+		// of this deployment: a Slot finalized SNAPSHOT_UNAVAILABLE after a
+		// backlog said "program defect" for the whole of its object's period.
+		if roundReason == "" && terminalCompletion(completion) {
+			if reason := string(observation.ReasonCode); reason != "" && reason != string(observability.ReasonNone) {
+				roundReason = reason
+			}
+		}
+		tracker.roundRoom(state, observation.HistoryCoverage)
+		rememberRound(state, trace.EvaluationTime, completion, roundReason,
 			observation.HistoryCoverage, observation.PrimaryInput)
 		// A round completed in this process speaks for the object; the
 		// summary it was restored from is history now.
@@ -1253,11 +1396,12 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.configChanged = state.completedRevisions.known() && state.seenRevisions.known() &&
 			state.seenRevisions != state.completedRevisions
 		state.completedRevisions = state.seenRevisions
-		tracker.noteReason(state, completion+"/"+observation.ProgressCompletionReason, at)
+		tracker.noteReason(state, completion+"/"+roundReason, at)
 		// The no-data run is kept apart from the anomaly run: an empty
 		// completion is healthy for the equation and ends any anomaly run, and
 		// a round with records -- degraded or not -- ends the empty run.
 		if completion == "FULL_EMPTY_COMPLETED" {
+			state.emptiedByTarget = observation.PrimaryInput != nil && observation.PrimaryInput.EmptiedByTarget
 			if state.emptyRuns == 0 {
 				state.emptySince = at
 				state.emptySinceFrom = SinceSnapshotContinuity
@@ -1321,7 +1465,12 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 				state.emptySinceSlot = trace.EvaluationTime
 				state.emptySlotFrom = SinceSnapshotContinuity
 			}
+			if state.firstEmptySlot == 0 {
+				state.firstEmptySlot = trace.EvaluationTime
+			}
 			state.lastEmptySlot = trace.EvaluationTime
+			// A record read before this first empty round is joined now.
+			tracker.joinRecordedRun(state)
 		} else {
 			state.emptyRuns = 0
 			if completion == "FULL_COMPLETED" {
@@ -1353,14 +1502,15 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		// would mark the run for the others -- so an object interrupted by a
 		// config edit would be filed as a fault, which is the shape of bug
 		// this flag exists to prevent, pointing the other way.
-		if !noActionReason(observation.ProgressCompletionReason) {
+		if !noActionReason(roundReason) {
 			state.sawSomethingWrong = true
 		}
 		state.degradedRuns++
 		state.currentKind = KindDegradedRun
 		state.reasonCode = completion
 		state.cause = observation.ProgressCompletionCause
-		state.causeReason = observation.ProgressCompletionReason
+		state.causeReason = roundReason
+		state.causeScope = causeScopeOf(observation.ProgressCompletionScope)
 		// A round whose reading the observer refused carries no windows, and
 		// that is not the same as a round with no windows short. It holds
 		// every run counter below as it stands -- neither extending a run
@@ -1484,17 +1634,53 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 				Abnormal: facts.Abnormal, AbnormalOnIncomplete: facts.AbnormalOnIncomplete,
 				NoProgressRounds: state.noProgressRounds, UnchangedRounds: state.unchangedRounds,
 				WorstWindow: worstWindow, WorstWindowChanged: worstWindowChanged,
-				Windows: windowRows(state.rounds, facts),
+				Windows: windowRows(state.rounds, facts, rememberedSince(state), heldInWindow(state)),
 			}
 			if len(state.coverage.Windows) > 0 {
 				state.coverage.RoundsRemembered, state.coverage.RoundsKept = len(state.rounds), RecentRoundsKept
+				if state.windowStart > 0 {
+					// Kept by the window, not by a count: every round from
+					// where the windows start is kept.
+					state.coverage.RoundsKept = len(state.rounds)
+				}
+				if held := heldInWindow(state); held > 0 {
+					at := time.Unix(held, 0).UTC()
+					state.coverage.RoundsHeldThrough = &at
+				}
 			}
+			state.coverage.UnlistedHolesAnswered = unlistedHolesAnswered(state.rounds, facts)
+			state.coverage.UnlistedHolesBeforeThisProcess = unlistedHolesBeforeThisProcess(state.rounds, facts, rememberedSince(state))
 			// The previous count is the previous window's, and is named as
 			// such only when it is this window's.
 			if hadReading && facts.Short != 0 && !worstWindowChanged {
 				state.coverage.PreviousWorstValid, state.coverage.PreviousKnown = previous, true
 			}
 		}
+	case runOutcome == "source_not_due":
+		// The source answered that the Slot under the cursor is not due: the
+		// view let the round through and nothing is owed. A blocked run the
+		// source or the view started is over -- a Slot still stuck behind a
+		// refusal would be due -- and read on, a view that refused for
+		// seconds at startup counted as this deployment's own until the
+		// object's next round, hours for a long period. Only the standing
+		// ends: the run counters keep what happened, and a restored
+		// conclusion stays, since nothing completed.
+		if state.currentKind == KindBlockedRun && sourceRefusal(state.reasonCode) {
+			state.currentKind, state.reasonCode, state.blockedRuns = "", "", 0
+			state.sawSomethingWrong = false
+			// The run is over, so its start is too: a refusal after this
+			// starts its own run and its own streak, not the old one's.
+			state.inAnomalyRun, state.runStartedAt, state.sinceFrom = false, time.Time{}, ""
+			state.failingSince = time.Time{}
+			state.reasonKey = ""
+			// The refusal's words, which described the run that ended.
+			if state.lastError != nil && state.lastError.EvaluationTime == 0 {
+				state.lastError = nil
+			}
+		}
+		// Otherwise as any round that neither completed nor was blocked (the
+		// default below): it neither starts nor clears a run.
+		return
 	case runOutcome == "ownership_rejected":
 		// The fence refused this replica's round: the object is another
 		// replica's now, or the store could not confirm whose it is. Either
@@ -1516,6 +1702,21 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.blockedRuns++
 		state.currentKind = KindBlockedRun
 		state.reasonCode = runOutcome
+		// The words the Slot source or the view refused the round with. A
+		// round that never ran has no slot_completed to carry them, so the
+		// row said source_error for a Query Group failing the same retention
+		// check about once a second, the sentence only on a pod log that a
+		// busy replica rotates in minutes. Stamped with the reason's own
+		// time, so the reading takes them as this round's. The Slot is not
+		// known here; Attempts counts the same words in a row instead.
+		if observation.Err != nil {
+			text := boundedErrorText(observability.SanitizeErrorText(observation.Err.Error()))
+			attempts := 1
+			if state.lastError != nil && state.lastError.EvaluationTime == 0 && state.lastError.Text == text {
+				attempts = state.lastError.Attempts + 1
+			}
+			state.lastError = &LastError{Text: text, Type: fmt.Sprintf("%T", observation.Err), At: at, Attempts: attempts}
+		}
 		// A round that never reached the window is not a window declining to
 		// decide. It is a round that did not happen.
 		state.sawSomethingWrong = true
@@ -1604,6 +1805,7 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 	state.cooldownExposed = false
 	state.cause = ""
 	state.causeReason = ""
+	state.causeScope = nil
 	state.coverage = nil
 	state.coverageRejected = nil
 	state.shortRounds = 0
@@ -1779,7 +1981,7 @@ func (tracker *Tracker) rowOf(queryGroup string, state *queryGroupState) Anomaly
 		QueryCooldown: state.queryCooldown,
 		DemotedSince:  state.demotedSince,
 		Kind:          state.currentKind,
-		ReasonCode:    state.reasonCode, Cause: state.cause, CauseReason: state.causeReason,
+		ReasonCode:    state.reasonCode, Cause: state.cause, CauseReason: state.causeReason, CauseScope: state.causeScope,
 		Coverage:         state.coverage,
 		CoverageRejected: state.coverageRejected,
 		Since:            state.runStartedAt,
@@ -1807,6 +2009,7 @@ func (tracker *Tracker) rowOf(queryGroup string, state *queryGroupState) Anomaly
 	}
 	anomaly.PlanSeries = planSeriesRows(state)
 	anomaly.NoDataMemoryUpkeep = latestUpkeep(state)
+	anomaly.StateAdmissionRefusal = latestStateRefusal(state)
 	anomaly.NoDataTracking = noDataTrackingRows(state)
 	anomaly.WireFormats = wireFormatRows(state)
 	// The holder of the latest round's Slot, when that round gave it up. The
@@ -1993,6 +2196,173 @@ func (tracker *Tracker) Tracked() int {
 	return len(tracker.groups)
 }
 
+// RoundMemoryBuckets are the upper bounds RoundMemoryFacts.Objects counts
+// objects under by the rounds they keep, the last one unbounded: a window
+// of a few positions, of an hour, of a day at the minute, and longer.
+var RoundMemoryBuckets = []string{"le_16", "le_64", "le_256", "le_1440", "gt_1440"}
+
+// RoundMemoryFacts is what the tracker holds to read holes by: objects by
+// the rounds each keeps (RoundMemoryBuckets), the rounds and the bytes held
+// for them over all objects -- the slices' capacity, what the heap holds --
+// the most any one object keeps, and how many objects keep theirs by the
+// window their worker named rather than by the last RecentRoundsKept.
+// Largest names the object keeping MaxRounds; nil while no object keeps
+// any.
+type RoundMemoryFacts struct {
+	Objects     map[string]int
+	Rounds      int
+	Bytes       uint64
+	MaxRounds   int
+	WindowSized int
+	// HeldByLine is the objects that let a round their windows still name
+	// go because the memory line refused them more room.
+	HeldByLine int
+	Largest    *LargestRoundMemory
+}
+
+// LargestRoundMemory is the object keeping the most rounds, named so the
+// reading answers which one and not only how many: its Query Group, the
+// strategies it runs (sorted, the first largestStrategiesListed of
+// StrategiesTotal), the rounds it keeps, and where its windows start -- the
+// span that sets how many it keeps once they fill; absent for an object whose
+// worker named no start, which keeps the last RecentRoundsKept. Of objects keeping as
+// many, the one with the least key, so the name does not change from one
+// reading to the next while the counts do not.
+type LargestRoundMemory struct {
+	QueryGroup      string        `json:"query_group"`
+	Strategies      []StrategyRef `json:"strategies"`
+	StrategiesTotal int           `json:"strategies_total"`
+	Rounds          int           `json:"rounds"`
+	WindowStart     *time.Time    `json:"window_start,omitempty"`
+}
+
+// largestStrategiesListed bounds the strategies named for the largest
+// object; the total counts them all.
+const largestStrategiesListed = 4
+
+// RoundMemorySummary is what a replica publishes of its RoundMemoryFacts:
+// the rounds over every object it runs, the bytes they hold, and the object
+// keeping the most. The counts are also metrics; only the snapshot can name
+// the object.
+type RoundMemorySummary struct {
+	Rounds  int                 `json:"rounds"`
+	Bytes   uint64              `json:"bytes"`
+	Largest *LargestRoundMemory `json:"largest,omitempty"`
+}
+
+// Summary is the part of the reading a replica publishes.
+func (facts RoundMemoryFacts) Summary() RoundMemorySummary {
+	return RoundMemorySummary{Rounds: facts.Rounds, Bytes: facts.Bytes, Largest: facts.Largest}
+}
+
+// RoundMemory reads what the tracker holds for the holes, at the moment it
+// is asked: one pass over the table under its lock.
+func (tracker *Tracker) RoundMemory() RoundMemoryFacts {
+	facts := RoundMemoryFacts{Objects: make(map[string]int, len(RoundMemoryBuckets))}
+	for _, bucket := range RoundMemoryBuckets {
+		facts.Objects[bucket] = 0
+	}
+	if tracker == nil {
+		return facts
+	}
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	largestKey := ""
+	var largest *queryGroupState
+	for key, state := range tracker.groups {
+		kept := len(state.rounds)
+		if kept > facts.MaxRounds || (kept == facts.MaxRounds && key < largestKey) {
+			largestKey, largest = key, state
+		}
+		switch {
+		case kept <= 16:
+			facts.Objects["le_16"]++
+		case kept <= 64:
+			facts.Objects["le_64"]++
+		case kept <= 256:
+			facts.Objects["le_256"]++
+		case kept <= 1440:
+			facts.Objects["le_1440"]++
+		default:
+			facts.Objects["gt_1440"]++
+		}
+		facts.Rounds += kept
+		facts.Bytes += uint64(cap(state.rounds)) * uint64(unsafe.Sizeof(roundMark{}))
+		facts.MaxRounds = max(facts.MaxRounds, kept)
+		if state.windowStart > 0 {
+			facts.WindowSized++
+		}
+		if heldInWindow(state) > 0 {
+			facts.HeldByLine++
+		}
+	}
+	if largest != nil {
+		named := &LargestRoundMemory{QueryGroup: largestKey, Rounds: len(largest.rounds), StrategiesTotal: len(largest.strategies)}
+		strategies := make([]StrategyRef, 0, len(largest.strategies))
+		for strategy := range largest.strategies {
+			strategies = append(strategies, strategy)
+		}
+		sortStrategies(strategies)
+		named.Strategies = strategies[:min(len(strategies), largestStrategiesListed)]
+		if largest.windowStart > 0 {
+			start := time.Unix(largest.windowStart, 0).UTC()
+			named.WindowStart = &start
+		}
+		facts.Largest = named
+	}
+	return facts
+}
+
+// SetRoundAdmission puts the rounds kept past RecentRoundsKept under the
+// process's observation memory line: admit is asked for the bytes before an
+// object's rounds grow, and a refusal keeps them at what they hold.
+func (tracker *Tracker) SetRoundAdmission(admit func(bytes uint64) bool) {
+	if tracker == nil {
+		return
+	}
+	tracker.mu.Lock()
+	tracker.admitRounds = admit
+	tracker.mu.Unlock()
+}
+
+// roundRoom makes room for one more round of the object before it is
+// remembered. The rounds before where the incoming round's windows start go
+// first, as remembering it would drop them anyway: room they free is not
+// asked for and costs no round the windows name. Rounds up to
+// RecentRoundsKept are the fixed few every object has always kept and are
+// not asked for. Past them a full slice grows by half again, asked of the
+// memory line first; refused, it keeps its size and lets its oldest round
+// go, and the object remembers the minute it let go (heldThrough). Caller
+// holds tracker.mu.
+func (tracker *Tracker) roundRoom(state *queryGroupState, coverage *observability.HistoryCoverageFacts) {
+	if coverage != nil && coverage.WindowStart > 0 {
+		state.rounds = keptRounds(state.rounds, coverage.WindowStart)
+	}
+	held := cap(state.rounds)
+	if len(state.rounds) < held || held < RecentRoundsKept {
+		return
+	}
+	grown := held + held/2
+	bytes := uint64(grown-held) * uint64(unsafe.Sizeof(roundMark{}))
+	if tracker.admitRounds == nil || tracker.admitRounds(bytes) {
+		rounds := make([]roundMark, len(state.rounds), grown)
+		copy(rounds, state.rounds)
+		state.rounds = rounds
+		return
+	}
+	state.heldThrough = max(state.heldThrough, state.rounds[0].end)
+	state.rounds = state.rounds[:copy(state.rounds, state.rounds[1:])]
+}
+
+// heldInWindow is the latest minute the line made the object let go of,
+// while the object's windows still reach it; zero when none does.
+func heldInWindow(state *queryGroupState) int64 {
+	if state.heldThrough <= 0 || state.windowStart <= 0 || state.heldThrough < state.windowStart {
+		return 0
+	}
+	return state.heldThrough
+}
+
 // recordStrategy adds the strategy a trace names to an object's set, one entry
 // per strategy. Observations of one round do not all carry both halves of the
 // identity -- a trace that names the strategy and not its business arrived
@@ -2092,9 +2462,13 @@ func (tracker *Tracker) NoData() []Anomaly {
 			// object in such a run is on its own line, not on this one.
 			anomaly.Kind = KindEmptyEveryRound
 			anomaly.Since, anomaly.SinceFrom = time.Unix(state.emptySinceSlot, 0).UTC(), state.emptySlotFrom
+			cause := EmptyEveryRoundCauseUnknown
+			if state.emptiedByTarget {
+				cause = EmptyEveryRoundCauseOutsideTarget
+			}
 			anomaly.EmptyEveryRound = &EmptyEveryRoundFacts{
 				Rounds: state.emptyRuns, Since: anomaly.Since, NeverSawData: true, SinceIsLowerBound: true,
-				Cause: EmptyEveryRoundCauseUnknown,
+				Cause: cause,
 			}
 		default:
 			continue
@@ -2162,6 +2536,53 @@ func latestUpkeep(state *queryGroupState) *NoDataMemoryUpkeep {
 	}
 	copied := *latest
 	copied.Plans = len(state.upkeep)
+	return &copied
+}
+
+// noteStateAdmission records a refused admission of the Plan, or ends its
+// record when a later round's admission went through.
+func (tracker *Tracker) noteStateAdmission(state *queryGroupState, plan StrategyRef, observation observability.Observation, slot int64, at time.Time) {
+	switch observation.Result {
+	case observability.ResultTerminal:
+		if state.stateRefusals == nil {
+			state.stateRefusals = map[StrategyRef]*StateAdmissionRefusal{}
+		}
+		refusal := state.stateRefusals[plan]
+		if refusal == nil {
+			refusal = &StateAdmissionRefusal{Plan: plan, FirstAt: at}
+			state.stateRefusals[plan] = refusal
+		}
+		refusal.Reason = string(observation.ReasonCode)
+		refusal.Rules = append([]string(nil), observation.StateApplyChunk.RefusalRules...)
+		refusal.Text = boundedErrorText(observation.StateApplyChunk.RefusalText)
+		refusal.EvaluationTime, refusal.LastAt = slot, at
+		refusal.Refusals++
+	case observability.Result(observability.ResultSuccess):
+		if refusal := state.stateRefusals[plan]; refusal != nil && refusal.EvaluationTime != slot {
+			delete(state.stateRefusals, plan)
+		}
+	}
+}
+
+// latestStateRefusal is the object's refused admission as the row carries
+// it: the Plan refused most recently, with how many Plans are refused.
+func latestStateRefusal(state *queryGroupState) *StateAdmissionRefusal {
+	var latest *StateAdmissionRefusal
+	for _, candidate := range state.stateRefusals {
+		// Ties to the smaller strategy, so the row does not depend on the
+		// map's order.
+		if latest == nil || candidate.LastAt.After(latest.LastAt) ||
+			(candidate.LastAt.Equal(latest.LastAt) && (candidate.Plan.StrategyID < latest.Plan.StrategyID ||
+				(candidate.Plan.StrategyID == latest.Plan.StrategyID && candidate.Plan.BusinessID < latest.Plan.BusinessID))) {
+			latest = candidate
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	copied := *latest
+	copied.Rules = append([]string(nil), latest.Rules...)
+	copied.Plans = len(state.stateRefusals)
 	return &copied
 }
 
@@ -2300,7 +2721,8 @@ func (tracker *Tracker) memoryRowOf(queryGroup string, state *queryGroupState) A
 		QueryGroup: queryGroup, Kind: KindNoDataMemoryRefused, ReasonCode: memory.Reason,
 		Since: first, SinceFrom: SinceSnapshotContinuity, Replica: tracker.replica,
 		ReasonSince: first, ReasonLastAt: memory.LastAt, Consecutive: refusals,
-		NoDataMemory: &memory, NoDataMemoryUpkeep: latestUpkeep(state), Strategies: strategies,
+		NoDataMemory: &memory, NoDataMemoryUpkeep: latestUpkeep(state), StateAdmissionRefusal: latestStateRefusal(state),
+		Strategies: strategies,
 		// The object's rounds complete; the row says when the last did, so
 		// the loss reads as the memory's and not as the round's.
 		LastHealthyAt: state.lastHealthyAt,

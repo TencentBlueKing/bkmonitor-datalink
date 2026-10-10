@@ -62,7 +62,7 @@ func TestRuntimeExecutableCatalogMeasuresRetainedPoints(t *testing.T) {
 	// the expectation cannot drift from the derivation it is checking.
 	compiled := runtimeClosureCompile(t, plan.Plan, 2)
 	var wantRequired, wantRetention uint64
-	for _, level := range compiled.Levels() {
+	for _, level := range compiled.Levels().All() {
 		wantRequired += uint64(level.StateRequirement().RequiredDetectHistoryPoints)
 		wantRetention += uint64(level.StateRequirement().RetentionPoints)
 	}

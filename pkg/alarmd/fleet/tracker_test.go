@@ -52,7 +52,7 @@ func TestQueryGroupIsTakenFromTheContextWhenTheObservationOmitsIt(t *testing.T) 
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{
-		QueryGroupKey: "qg-from-context", StrategyID: "8930", BusinessID: "2",
+		QueryGroupKey: "qg-from-context", StrategyID: "854", BusinessID: "2",
 	})
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE"})
@@ -92,7 +92,7 @@ func TestStrategyAssociationComesFromObservationsWithoutAnOutcome(t *testing.T) 
 	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "qg-1"})
 	// Evaluation names the strategy but reports no outcome.
 	tracker.Observe(ctx, observability.Observation{
-		Trace: observability.TraceFields{StrategyID: "8930", BusinessID: "2"},
+		Trace: observability.TraceFields{StrategyID: "854", BusinessID: "2"},
 	})
 	// The rounds that follow report an outcome and name no strategy.
 	for round := 0; round < DefaultDegradedRounds; round++ {
@@ -102,7 +102,7 @@ func TestStrategyAssociationComesFromObservationsWithoutAnOutcome(t *testing.T) 
 	if len(anomalies) != 1 {
 		t.Fatalf("anomalies = %+v, want one", anomalies)
 	}
-	if len(anomalies[0].Strategies) != 1 || anomalies[0].Strategies[0].StrategyID != "8930" ||
+	if len(anomalies[0].Strategies) != 1 || anomalies[0].Strategies[0].StrategyID != "854" ||
 		anomalies[0].Strategies[0].BusinessID != "2" {
 		t.Fatalf("strategies = %+v, want the strategy learned from the evaluation observation", anomalies[0].Strategies)
 	}
@@ -117,7 +117,7 @@ func TestTraceFieldsAreMergedNotReplaced(t *testing.T) {
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(ctx, observability.Observation{
 			ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE",
-			Trace:                  observability.TraceFields{StrategyID: "8930", BusinessID: "2"},
+			Trace:                  observability.TraceFields{StrategyID: "854", BusinessID: "2"},
 		})
 	}
 	anomalies := tracker.Anomalies()
@@ -133,7 +133,7 @@ func TestHealthyCompletionsKeepAQueryGroupOffTheList(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	for _, kind := range []string{"FULL_COMPLETED", "FULL_EMPTY_COMPLETED", "FULL_COMPLETED"} {
-		tracker.Observe(context.Background(), completion("qg-1", kind, "8930"))
+		tracker.Observe(context.Background(), completion("qg-1", kind, "854"))
 	}
 	if anomalies := tracker.Anomalies(); len(anomalies) != 0 {
 		t.Fatalf("anomalies = %+v, want none; empty results are a correct business answer", anomalies)
@@ -146,14 +146,14 @@ func TestDegradedRunsMustReachTheThresholdBeforeBeingReported(t *testing.T) {
 	// Seen healthy once, before the run: the continuity label means this process
 	// watched the object go wrong, which it cannot claim about one whose first
 	// conclusive round was already the bad one.
-	tracker.Observe(context.Background(), completion("qg-1", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-1", "FULL_COMPLETED", "854"))
 	for round := 0; round < DefaultDegradedRounds-1; round++ {
-		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "854"))
 	}
 	if anomalies := tracker.Anomalies(); len(anomalies) != 0 {
 		t.Fatalf("anomalies = %+v, want none below the threshold", anomalies)
 	}
-	tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+	tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "854"))
 	anomalies := tracker.Anomalies()
 	if len(anomalies) != 1 || anomalies[0].Kind != KindDegradedRun {
 		t.Fatalf("anomalies = %+v, want one degraded run", anomalies)
@@ -164,7 +164,7 @@ func TestDegradedRunsMustReachTheThresholdBeforeBeingReported(t *testing.T) {
 	if anomalies[0].SinceFrom != SinceSnapshotContinuity {
 		t.Fatalf("since source = %q, want the continuity label", anomalies[0].SinceFrom)
 	}
-	if len(anomalies[0].Strategies) != 1 || anomalies[0].Strategies[0].StrategyID != "8930" {
+	if len(anomalies[0].Strategies) != 1 || anomalies[0].Strategies[0].StrategyID != "854" {
 		t.Fatalf("strategies = %+v, want the observed strategy", anomalies[0].Strategies)
 	}
 }
@@ -176,7 +176,7 @@ func TestThresholdCountsRoundsNotElapsedTime(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		tracker.Observe(context.Background(), completion("slow", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+		tracker.Observe(context.Background(), completion("slow", "COMPLETED_WITH_UNAVAILABLE", "854"))
 		at.at = at.at.Add(10 * time.Minute)
 	}
 	slow := tracker.Anomalies()
@@ -184,7 +184,7 @@ func TestThresholdCountsRoundsNotElapsedTime(t *testing.T) {
 	at = &clock{at: now}
 	fast := newTracker(t, at)
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		fast.Observe(context.Background(), completion("fast", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+		fast.Observe(context.Background(), completion("fast", "COMPLETED_WITH_UNAVAILABLE", "854"))
 		at.at = at.at.Add(10 * time.Second)
 	}
 	if len(slow) != 1 || len(fast.Anomalies()) != 1 {
@@ -196,12 +196,12 @@ func TestOneHealthyRoundClearsTheRun(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "854"))
 	}
 	if len(tracker.Anomalies()) != 1 {
 		t.Fatal("query group did not reach the threshold")
 	}
-	tracker.Observe(context.Background(), completion("qg-1", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-1", "FULL_COMPLETED", "854"))
 	if anomalies := tracker.Anomalies(); len(anomalies) != 0 {
 		t.Fatalf("anomalies = %+v, want the run cleared by a healthy round", anomalies)
 	}
@@ -240,7 +240,7 @@ func TestRoundsTheViewDidNotAllowAreBlockedRuns(t *testing.T) {
 	if anomalies[0].Finding.Check != CheckDependencyDown {
 		t.Fatalf("a round the view did not allow is under %s, want %s", anomalies[0].Finding.Check, CheckDependencyDown)
 	}
-	tracker.Observe(context.Background(), completion("qg-1", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-1", "FULL_COMPLETED", "854"))
 	if anomalies := tracker.Anomalies(); len(anomalies) != 0 {
 		t.Fatalf("anomalies = %+v, want the run cleared once the view allowed a round", anomalies)
 	}
@@ -263,8 +263,8 @@ func TestForgetDropsQueryGroupsThisReplicaNoLongerOwns(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
-		tracker.Observe(context.Background(), completion("qg-2", "COMPLETED_WITH_UNAVAILABLE", "8931"))
+		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "854"))
+		tracker.Observe(context.Background(), completion("qg-2", "COMPLETED_WITH_UNAVAILABLE", "855"))
 	}
 	tracker.Forget(map[string]struct{}{"qg-1": {}})
 	anomalies := tracker.Anomalies()
@@ -283,7 +283,7 @@ func TestObservationsAreForwardedUnchanged(t *testing.T) {
 	tracker := NewTracker(observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 		seen = append(seen, observation)
 	}), "pod-a", at.Now)
-	sent := completion("qg-1", "FULL_COMPLETED", "8930")
+	sent := completion("qg-1", "FULL_COMPLETED", "854")
 	tracker.Observe(context.Background(), sent)
 	if len(seen) != 1 || seen[0].ProgressCompletionKind != sent.ProgressCompletionKind {
 		t.Fatalf("forwarded = %+v, want the observation unchanged", seen)
@@ -295,7 +295,7 @@ func TestTableIsBoundedAndTheBoundIsObservable(t *testing.T) {
 	tracker := newTracker(t, at)
 	tracker.maxTracked = 2
 	for _, queryGroup := range []string{"qg-1", "qg-2", "qg-3"} {
-		tracker.Observe(context.Background(), completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "8930"))
+		tracker.Observe(context.Background(), completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "854"))
 	}
 	if tracker.Tracked() != 2 {
 		t.Fatalf("tracked = %d, want the table bounded at 2", tracker.Tracked())
@@ -326,7 +326,7 @@ func TestObjectsWhoseRoundsAreAllInconclusiveStayUndetermined(t *testing.T) {
 func TestAConclusiveRoundDeterminesTheObject(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
-	tracker.Observe(context.Background(), completion("qg-healthy", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-healthy", "FULL_COMPLETED", "854"))
 	tracker.Observe(context.Background(), runOutcome("qg-blocked", "source_blocked"))
 	if got := tracker.Determined(); got != 2 {
 		t.Fatalf("determined = %d, want both objects accounted for", got)
@@ -427,7 +427,7 @@ func TestAnomalyCarriesWhichConditionCausedTheUnavailableCompletion(t *testing.T
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		observation := completion("qg-waiting", "COMPLETED_WITH_UNAVAILABLE", "8930")
+		observation := completion("qg-waiting", "COMPLETED_WITH_UNAVAILABLE", "854")
 		observation.ProgressCompletionCause = "DATA_NOT_READY"
 		tracker.Observe(context.Background(), observation)
 	}
@@ -438,11 +438,11 @@ func TestAnomalyCarriesWhichConditionCausedTheUnavailableCompletion(t *testing.T
 
 	// A recovered object must not keep explaining itself with the run that
 	// ended: the cause described that run, not this one.
-	tracker.Observe(context.Background(), completion("qg-waiting", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-waiting", "FULL_COMPLETED", "854"))
 	if got := tracker.Anomalies(); len(got) != 0 {
 		t.Fatalf("recovered object still reported: %+v", got)
 	}
-	observation := completion("qg-waiting", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	observation := completion("qg-waiting", "COMPLETED_WITH_UNAVAILABLE", "854")
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(context.Background(), observation)
 	}
@@ -455,7 +455,7 @@ func TestAnomalyCarriesWhichConditionCausedTheUnavailableCompletion(t *testing.T
 // is the only combination that reaches the tracker's coverage path: a healthy
 // completion resets the run before the counts are read.
 func coverageCompletion(queryGroup string, levels, short, valid, required uint32) observability.Observation {
-	observation := completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "8930")
+	observation := completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "854")
 	observation.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	observation.ProgressCompletionReason = "HISTORY_WARMING"
 	empty := uint32(0)
@@ -635,7 +635,7 @@ func TestARoundWithoutCoverageEndsTheShortRun(t *testing.T) {
 	for round := 0; round < DefaultDegradedRounds+4; round++ {
 		tracker.Observe(context.Background(), coverageCompletion("qg-short", 3, 1, 2, 14))
 	}
-	plain := completion("qg-short", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	plain := completion("qg-short", "COMPLETED_WITH_UNAVAILABLE", "854")
 	plain.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	tracker.Observe(context.Background(), plain)
 	// A degraded round with no reason at all is not an undecidable one, so the
@@ -685,7 +685,7 @@ func TestARefusedCoverageStandsOnTheRowWhereTheReadingWouldBe(t *testing.T) {
 	for round := 0; round < DefaultDegradedRounds+1; round++ {
 		tracker.Observe(context.Background(), refused)
 	}
-	tracker.Observe(context.Background(), completion("qg-refused", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-refused", "FULL_COMPLETED", "854"))
 	if listed := append(tracker.Anomalies(), tracker.Undecidable()...); len(listed) != 0 {
 		t.Fatalf("rows after a healthy round = %+v, want the object gone", listed)
 	}
@@ -762,7 +762,7 @@ func TestAWindowThatCannotDecideRecoveryIsNotAnAnomaly(t *testing.T) {
 func TestOneRoundOfWarmingDoesNotExcuseARunThatWasAlreadyFailing(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
-	failing := completion("qg-mixed", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	failing := completion("qg-mixed", "COMPLETED_WITH_UNAVAILABLE", "854")
 	failing.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	failing.ProgressCompletionReason = "STATE_FACT_CONTRADICTS_OUTCOME"
 	for round := 0; round < DefaultDegradedRounds; round++ {
@@ -782,7 +782,7 @@ func TestOneRoundOfWarmingDoesNotExcuseARunThatWasAlreadyFailing(t *testing.T) {
 	}
 	// And a healthy round does clear it, so the flag is not a one-way trap that
 	// keeps an object out of the undecidable column for the life of the process.
-	tracker.Observe(context.Background(), completion("qg-mixed", HealthyCompletions[0], "8930"))
+	tracker.Observe(context.Background(), completion("qg-mixed", HealthyCompletions[0], "854"))
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(context.Background(), coverageCompletion("qg-mixed", 3, 1, 2, 14))
 	}
@@ -926,7 +926,7 @@ func TestEmptyRoundsAreCountedApartFromShortRounds(t *testing.T) {
 func TestARoundSuppressedByItsOwnScheduleIsNotAnAnomaly(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
-	drift := completion("qg-drift", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	drift := completion("qg-drift", "COMPLETED_WITH_UNAVAILABLE", "854")
 	drift.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	drift.ProgressCompletionReason = "EFFECTIVE_TIME_INACTIVE"
 	for round := 0; round < DefaultDegradedRounds; round++ {
@@ -956,7 +956,7 @@ func TestARoundSuppressedByItsOwnScheduleIsNotAnAnomaly(t *testing.T) {
 func TestOneNoActionReasonDoesNotMarkTheRunForTheOtherColumn(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
-	drift := completion("qg-both", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	drift := completion("qg-both", "COMPLETED_WITH_UNAVAILABLE", "854")
 	drift.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	drift.ProgressCompletionReason = "EFFECTIVE_TIME_INACTIVE"
 
@@ -973,7 +973,7 @@ func TestOneNoActionReasonDoesNotMarkTheRunForTheOtherColumn(t *testing.T) {
 	}
 
 	// And a genuine failure in the run still wins, in either order.
-	failing := completion("qg-mixed", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	failing := completion("qg-mixed", "COMPLETED_WITH_UNAVAILABLE", "854")
 	failing.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	failing.ProgressCompletionReason = "STATE_FACT_CONTRADICTS_OUTCOME"
 	for round := 0; round < DefaultDegradedRounds; round++ {
@@ -1032,7 +1032,7 @@ func TestTheByDesignColumnHoldsOnlyDeclaredReasons(t *testing.T) {
 func TestAStrategyOutsideItsActiveWindowIsNotOnTheToDoList(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
-	inactive := completion("qg-offhours", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	inactive := completion("qg-offhours", "COMPLETED_WITH_UNAVAILABLE", "854")
 	inactive.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	inactive.ProgressCompletionReason = "EFFECTIVE_TIME_INACTIVE"
 	// Far more rounds than the listing threshold: this is a state an object
@@ -1054,7 +1054,7 @@ func TestAStrategyOutsideItsActiveWindowIsNotOnTheToDoList(t *testing.T) {
 func TestAnUnresolvableScheduleIsStillAFault(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
-	unknown := completion("qg-badtz", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	unknown := completion("qg-badtz", "COMPLETED_WITH_UNAVAILABLE", "854")
 	unknown.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	unknown.ProgressCompletionReason = "EFFECTIVE_TIME_UNKNOWN"
 	for round := 0; round < DefaultDegradedRounds; round++ {
@@ -1087,7 +1087,7 @@ func TestAnUnresolvableScheduleIsStillAFault(t *testing.T) {
 func TestConfigDriftStaysOnTheToDoListBecauseItIsNotEvidenceOfAChange(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
-	drift := completion("qg-drift", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	drift := completion("qg-drift", "COMPLETED_WITH_UNAVAILABLE", "854")
 	drift.ProgressCompletionCause = "CONFIG_DRIFT"
 	drift.ProgressCompletionReason = "CONFIG_DRIFT"
 	for round := 0; round < DefaultDegradedRounds; round++ {
@@ -1150,7 +1150,7 @@ func TestAnObjectThatLostASpanOfSlotsIsVisibleEvenThoughItIsRunningFine(t *testi
 	// once, which is the whole difficulty -- if the loss were cleared by the
 	// next healthy round it would be visible for less time than it takes to
 	// look at the page.
-	tracker.Observe(context.Background(), completion("qg-pruned", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-pruned", "FULL_COMPLETED", "854"))
 	if _, ok := tracker.PrunedSkips()["qg-pruned"]; !ok {
 		t.Fatal("a healthy round cleared the lost span; the object being fine now is not the same " +
 			"as the span having been evaluated, and it never will be")
@@ -1182,8 +1182,8 @@ func TestGapSkipsAreRetainedPastTheRoundsThatFollow(t *testing.T) {
 	skip(100)
 	skip(160)
 	skip(220)
-	tracker.Observe(context.Background(), completion("qg-skip", "FULL_COMPLETED", "8930"))
-	tracker.Observe(context.Background(), completion("qg-skip", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-skip", "FULL_COMPLETED", "854"))
+	tracker.Observe(context.Background(), completion("qg-skip", "FULL_COMPLETED", "854"))
 	skips := tracker.GapSkips()
 	got, retained := skips["qg-skip"]
 	if !retained || got.FirstSlot != 100 || got.LastSlot != 220 || got.Slots != 3 || got.Replica != "pod-a" {
@@ -1198,7 +1198,7 @@ func TestGapSkipsAreRetainedPastTheRoundsThatFollow(t *testing.T) {
 		t.Errorf("a skip after a normal round = %+v, want a new span starting at 400", got)
 	}
 	// An object with no skips has no record.
-	tracker.Observe(context.Background(), completion("qg-fine", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-fine", "FULL_COMPLETED", "854"))
 	if _, present := tracker.GapSkips()["qg-fine"]; present {
 		t.Error("an object that never skipped has a skip record")
 	}
@@ -1220,32 +1220,32 @@ func TestNoDataIsListedOnlyAfterDataStopped(t *testing.T) {
 	minute := time.Minute
 	// Never had data: not on the data side's line however many rounds.
 	for round := 0; round < DefaultDegradedRounds+2; round++ {
-		tracker.Observe(context.Background(), emptyAt("qg-silent-by-nature", "8930", at.at.Add(time.Duration(round)*minute)))
+		tracker.Observe(context.Background(), emptyAt("qg-silent-by-nature", "854", at.at.Add(time.Duration(round)*minute)))
 	}
 	// Had data, then stopped: sixty-one empty minutes.
-	tracker.Observe(context.Background(), dataAt("qg-stopped", "8930", at.at))
+	tracker.Observe(context.Background(), dataAt("qg-stopped", "854", at.at))
 	at.at = at.at.Add(minute)
 	stoppedSince := at.at
 	for round := 0; round <= 60; round++ {
-		tracker.Observe(context.Background(), emptyAt("qg-stopped", "8930", stoppedSince.Add(time.Duration(round)*minute)))
+		tracker.Observe(context.Background(), emptyAt("qg-stopped", "854", stoppedSince.Add(time.Duration(round)*minute)))
 	}
 	// Had data, empty for one round short of the threshold.
-	tracker.Observe(context.Background(), dataAt("qg-blip", "8930", at.at))
+	tracker.Observe(context.Background(), dataAt("qg-blip", "854", at.at))
 	for round := 0; round < DefaultDegradedRounds-1; round++ {
-		tracker.Observe(context.Background(), emptyAt("qg-blip", "8930", at.at.Add(time.Duration(round+1)*minute)))
+		tracker.Observe(context.Background(), emptyAt("qg-blip", "854", at.at.Add(time.Duration(round+1)*minute)))
 	}
 	// Had data, empty for the threshold of rounds, three minutes: the count
 	// is met and the hour is not. This is the source that reports every ten
 	// minutes, three minutes after a report.
-	tracker.Observe(context.Background(), dataAt("qg-three-minutes", "8930", at.at))
+	tracker.Observe(context.Background(), dataAt("qg-three-minutes", "854", at.at))
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		tracker.Observe(context.Background(), emptyAt("qg-three-minutes", "8930", at.at.Add(time.Duration(round+1)*minute)))
+		tracker.Observe(context.Background(), emptyAt("qg-three-minutes", "854", at.at.Add(time.Duration(round+1)*minute)))
 	}
 	// Had data, two empty rounds spanning the hour: a slow object, the hour
 	// is met and the count is not.
-	tracker.Observe(context.Background(), dataAt("qg-slow", "8930", at.at))
-	tracker.Observe(context.Background(), emptyAt("qg-slow", "8930", at.at.Add(35*minute)))
-	tracker.Observe(context.Background(), emptyAt("qg-slow", "8930", at.at.Add(70*minute)))
+	tracker.Observe(context.Background(), dataAt("qg-slow", "854", at.at))
+	tracker.Observe(context.Background(), emptyAt("qg-slow", "854", at.at.Add(35*minute)))
+	tracker.Observe(context.Background(), emptyAt("qg-slow", "854", at.at.Add(70*minute)))
 	listed := tracker.NoData()
 	if len(listed) != 1 || listed[0].QueryGroup != "qg-stopped" {
 		t.Fatalf("no-data = %+v, want only qg-stopped: the count alone (qg-three-minutes) and the hour alone (qg-slow) list nothing", listed)
@@ -1268,9 +1268,9 @@ func TestNoDataIsListedOnlyAfterDataStopped(t *testing.T) {
 	// later it is the data side's, measured from the last report.
 	slot := at.at
 	for report := 0; report < 12; report++ {
-		tracker.Observe(context.Background(), dataAt("qg-every-ten-minutes", "8931", slot))
+		tracker.Observe(context.Background(), dataAt("qg-every-ten-minutes", "855", slot))
 		for round := 1; round < 10; round++ {
-			tracker.Observe(context.Background(), emptyAt("qg-every-ten-minutes", "8931", slot.Add(time.Duration(round)*minute)))
+			tracker.Observe(context.Background(), emptyAt("qg-every-ten-minutes", "855", slot.Add(time.Duration(round)*minute)))
 		}
 		slot = slot.Add(10 * minute)
 		rows := tracker.NoData()
@@ -1283,7 +1283,7 @@ func TestNoDataIsListedOnlyAfterDataStopped(t *testing.T) {
 	}
 	lastReport := slot.Add(-10 * minute)
 	for round := 1; round <= 60; round++ {
-		tracker.Observe(context.Background(), emptyAt("qg-every-ten-minutes", "8931", lastReport.Add(time.Duration(round)*minute)))
+		tracker.Observe(context.Background(), emptyAt("qg-every-ten-minutes", "855", lastReport.Add(time.Duration(round)*minute)))
 		_, listed := rowsOfKind(tracker.NoData(), KindNoData)["qg-every-ten-minutes"]
 		if want := round >= 60; listed != want {
 			t.Fatalf("%d minutes after the last report: listed = %v, want %v -- the hour is measured from the Slot records were last seen at", round, listed, want)
@@ -1291,19 +1291,19 @@ func TestNoDataIsListedOnlyAfterDataStopped(t *testing.T) {
 	}
 
 	// Records coming back end the run.
-	tracker.Observe(context.Background(), dataAt("qg-stopped", "8930", stoppedSince.Add(61*minute)))
+	tracker.Observe(context.Background(), dataAt("qg-stopped", "854", stoppedSince.Add(61*minute)))
 	if len(tracker.NoData()) != 1 {
 		t.Errorf("no-data = %+v after records returned, want only the ten-minute source that stopped", tracker.NoData())
 	}
 	// A degraded round with records ends it too: the query answered with
 	// something, and that something is what the degraded row is about.
 	for round := 0; round <= 60; round++ {
-		tracker.Observe(context.Background(), emptyAt("qg-stopped", "8930", stoppedSince.Add(time.Duration(62+round)*minute)))
+		tracker.Observe(context.Background(), emptyAt("qg-stopped", "854", stoppedSince.Add(time.Duration(62+round)*minute)))
 	}
 	if _, listed := rowsOfKind(tracker.NoData(), KindNoData)["qg-stopped"]; !listed {
 		t.Fatal("qg-stopped is not listed after another hour of empty rounds")
 	}
-	tracker.Observe(context.Background(), completion("qg-stopped", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+	tracker.Observe(context.Background(), completion("qg-stopped", "COMPLETED_WITH_UNAVAILABLE", "854"))
 	if _, listed := rowsOfKind(tracker.NoData(), KindNoData)["qg-stopped"]; listed {
 		t.Errorf("no-data = %+v after a degraded round with records, want qg-stopped off the line", tracker.NoData())
 	}
@@ -1335,16 +1335,24 @@ func TestEveryPublishedWindowCountReachesTheRow(t *testing.T) {
 		case reflect.Slice:
 			// The named windows cross into the row's own richer rows, read
 			// against the object's rounds; window_holes_test.go holds that.
-			if source.Type().Field(i).Name != "Windows" {
+			// The missing minutes are read against the same rounds into one
+			// word on the row (unlistedHolesAnswered).
+			switch source.Type().Field(i).Name {
+			case "Windows":
+			case "MissingMinutes":
+				field.Set(reflect.ValueOf([]int64{int64(500 + i)}))
+			default:
 				t.Fatalf("%s is a slice this test has no fixture for; decide how it crosses", source.Type().Field(i).Name)
 			}
+		case reflect.Bool:
+			field.SetBool(true)
 		default:
 			t.Fatalf("%s is neither a uint32 nor a string; decide how it crosses", source.Type().Field(i).Name)
 		}
 	}
 	facts.Levels = 200
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		observation := completion("qg-coverage", "COMPLETED_WITH_UNAVAILABLE", "8930")
+		observation := completion("qg-coverage", "COMPLETED_WITH_UNAVAILABLE", "854")
 		copied := facts
 		observation.HistoryCoverage = &copied
 		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
@@ -1364,7 +1372,8 @@ func TestEveryPublishedWindowCountReachesTheRow(t *testing.T) {
 	rowOnly := map[string]bool{"ShortRounds": true, "RefusedRounds": true, "Held": true, "EmptyRounds": true, "FreshRounds": true, "HeldFullRounds": true,
 		"ConstrainedRounds": true, "ResumedRounds": true,
 		"PreviousWorstValid": true, "PreviousKnown": true, "NoProgressRounds": true, "UnchangedRounds": true, "Measure": true,
-		"WorstWindow": true, "WorstWindowChanged": true, "Windows": true, "RoundsRemembered": true, "RoundsKept": true}
+		"WorstWindow": true, "WorstWindowChanged": true, "Windows": true, "RoundsRemembered": true, "RoundsKept": true, "RoundsHeldThrough": true,
+		"UnlistedHolesAnswered": true, "UnlistedHolesBeforeThisProcess": true}
 	for i := 0; i < published.NumField(); i++ {
 		name := published.Type().Field(i).Name
 		if rowOnly[name] {
@@ -1383,8 +1392,12 @@ func TestEveryPublishedWindowCountReachesTheRow(t *testing.T) {
 	for i := 0; i < source.NumField(); i++ {
 		name := source.Type().Field(i).Name
 		// End is read into the object's round ring, where every hole is
-		// matched against it, and not rendered on its own.
-		if name == "End" {
+		// matched against it, and not rendered on its own. The missing-minute
+		// union and its two companions are read against that ring into
+		// UnlistedHolesAnswered and UnlistedHolesBeforeThisProcess, and not
+		// rendered on their own either.
+		switch name {
+		case "End", "WindowStart", "MissingMinutes", "MissingMinutesTruncated", "ShortUnusable":
 			continue
 		}
 		if !published.FieldByName(name).IsValid() {
@@ -1402,7 +1415,7 @@ func TestTheReasonClockResetsWhenTheReasonChangesNotWhenTheRoundRepeats(t *testi
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	degraded := func(reason string) {
-		observation := completion("qg-clock", "COMPLETED_WITH_UNAVAILABLE", "8930")
+		observation := completion("qg-clock", "COMPLETED_WITH_UNAVAILABLE", "854")
 		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", reason
 		tracker.Observe(context.Background(), observation)
 		at.at = at.at.Add(time.Minute)
@@ -1486,7 +1499,7 @@ func TestTheLastErrorTravelsToTheRowWithItsSlotAndAttempts(t *testing.T) {
 	// terminal observation: the query, the commit, then slot_completed with
 	// the same error. Only the terminal one counts, or one round reads as
 	// three attempts.
-	tracker.Observe(context.Background(), completion("qg-stuck", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-stuck", "FULL_COMPLETED", "854"))
 	for round := 0; round < 3; round++ {
 		// As the emitters send them: the query's carries its failure facts,
 		// the commit's names the strategy from the context; either is enough
@@ -1502,7 +1515,7 @@ func TestTheLastErrorTravelsToTheRowWithItsSlotAndAttempts(t *testing.T) {
 			Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
 			Result: observability.Result(observability.ResultFailed),
 			Err:    errors.New("alarmd state: gap guard conflict: expected 41 got 43"),
-			Trace:  observability.TraceFields{QueryGroupKey: "qg-stuck", StrategyID: "8930", EvaluationTime: 1_700_000_180},
+			Trace:  observability.TraceFields{QueryGroupKey: "qg-stuck", StrategyID: "854", EvaluationTime: 1_700_000_180},
 		})
 		fail(1_700_000_180, "alarmd state: gap guard conflict: expected 41 got 43")
 	}
@@ -1510,7 +1523,7 @@ func TestTheLastErrorTravelsToTheRowWithItsSlotAndAttempts(t *testing.T) {
 		t.Fatalf("three rounds each carrying the error on three observations = %+v, want attempts 3, not 9", last)
 	}
 	// A healthy round ends the run and the error with it.
-	tracker.Observe(context.Background(), completion("qg-stuck", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-stuck", "FULL_COMPLETED", "854"))
 	if len(tracker.Anomalies()) != 0 {
 		t.Fatalf("still anomalous after a healthy round: %+v", tracker.Anomalies())
 	}
@@ -1538,16 +1551,16 @@ func TestACarriedConfigDriftIsNotAConfigLineButARealOneIs(t *testing.T) {
 		tracker.Observe(context.Background(), observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageSlotStarted,
 			Result: observability.Result(observability.ResultStarted),
-			Trace: observability.TraceFields{QueryGroupKey: queryGroup, StrategyID: "1074", BusinessID: "7",
+			Trace: observability.TraceFields{QueryGroupKey: queryGroup, StrategyID: "846", BusinessID: "7",
 				SnapshotRevision: snapshot, QueryRevision: query, ScheduleRevision: schedule, EvaluationTime: 1_700_000_000},
 		})
-		observation := completion(queryGroup, "COMPLETED_WITH_PARTIAL_GAP", "1074")
+		observation := completion(queryGroup, "COMPLETED_WITH_PARTIAL_GAP", "846")
 		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "CONFIG_DRIFT"
 		observation.HistoryCoverage = &observability.HistoryCoverageFacts{Levels: 3, Short: 1, Guarded: 3, WorstValid: 5, WorstRequired: 9}
 		tracker.Observe(context.Background(), observation)
 	}
 	for i := 0; i < DefaultDegradedRounds+1; i++ {
-		round("qg-1074", "snap-a", "query-a", "schedule-a")
+		round("qg-846", "snap-a", "query-a", "schedule-a")
 	}
 	rows := tracker.Anomalies()
 	if len(rows) != 1 || rows[0].ConfigChanged {
@@ -1564,7 +1577,7 @@ func TestACarriedConfigDriftIsNotAConfigLineButARealOneIs(t *testing.T) {
 
 	// The counterexample: one revision moves. That round's CONFIG_DRIFT is a
 	// drift, and the configuration line is where it goes.
-	round("qg-1074", "snap-a", "query-b", "schedule-a")
+	round("qg-846", "snap-a", "query-b", "schedule-a")
 	rows = tracker.Anomalies()
 	if len(rows) != 1 || !rows[0].ConfigChanged {
 		t.Fatalf("rows = %+v, want the row to say its revisions moved", rows)
@@ -1575,7 +1588,7 @@ func TestACarriedConfigDriftIsNotAConfigLineButARealOneIs(t *testing.T) {
 	}
 	// And the round after, on the new revisions with nothing moving again:
 	// carried once more.
-	round("qg-1074", "snap-a", "query-b", "schedule-a")
+	round("qg-846", "snap-a", "query-b", "schedule-a")
 	rows = tracker.Anomalies()
 	Attribute(rows, now)
 	if rows[0].ConfigChanged || rows[0].Finding.Check != CheckWindowUndecided {
@@ -1597,10 +1610,10 @@ func TestTheConvergingRoundIsNotALineOnTheRealPath(t *testing.T) {
 		tracker.Observe(context.Background(), observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageSlotStarted,
 			Result: observability.Result(observability.ResultStarted),
-			Trace: observability.TraceFields{QueryGroupKey: "qg-1074", StrategyID: "1074", BusinessID: "7",
+			Trace: observability.TraceFields{QueryGroupKey: "qg-846", StrategyID: "846", BusinessID: "7",
 				SnapshotRevision: "snap-a", QueryRevision: "query-a", ScheduleRevision: "schedule-a", EvaluationTime: 1_700_000_000},
 		})
-		observation := completion("qg-1074", "COMPLETED_WITH_PARTIAL_GAP", "1074")
+		observation := completion("qg-846", "COMPLETED_WITH_PARTIAL_GAP", "846")
 		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "CONFIG_DRIFT"
 		observation.HistoryCoverage = &observability.HistoryCoverageFacts{Levels: 3, Short: short, Guarded: 3, WorstValid: 9 - short, WorstRequired: 9}
 		tracker.Observe(context.Background(), observation)
@@ -1657,10 +1670,10 @@ func TestASkipCarriesTheLastStepBeforeItWhenItWasThisSlots(t *testing.T) {
 		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
 		Result:       observability.Result(observability.ResultFailed),
 		QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "admission", Code: "QUERY_PERMIT_DEADLINE"},
-		Trace:        observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "8721", EvaluationTime: slot},
+		Trace:        observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "853", EvaluationTime: slot},
 	})
 	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "GAP_SKIPPED",
-		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "8721", EvaluationTime: slot}})
+		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "853", EvaluationTime: slot}})
 	skip := tracker.GapSkips()["qg-late"]
 	if skip.Reason != "QUERY_PERMIT_DEADLINE" || skip.ReasonCategory != "admission" {
 		t.Fatalf("skip = %+v, want the admission refusal of this Slot as its last step", skip)
@@ -1668,9 +1681,9 @@ func TestASkipCarriesTheLastStepBeforeItWhenItWasThisSlots(t *testing.T) {
 	// A later Slot skipped with nothing tried on it: the earlier failure is
 	// not this skip's, and the record says nothing was tried.
 	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "FULL_COMPLETED",
-		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "8721", EvaluationTime: slot + 10}})
+		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "853", EvaluationTime: slot + 10}})
 	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "GAP_SKIPPED",
-		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "8721", EvaluationTime: slot + 20}})
+		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "853", EvaluationTime: slot + 20}})
 	if skip := tracker.GapSkips()["qg-late"]; skip.Reason != "" || skip.FirstSlot != slot+20 {
 		t.Fatalf("a skip with nothing tried on its Slot = %+v, want no reason on a new record", skip)
 	}
@@ -1740,7 +1753,7 @@ func TestAnInternalFailureIsASecondFactUnderDefect(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	observe := func(o observability.Observation) {
-		o.Trace.QueryGroupKey, o.Trace.StrategyID = "qg-8326", "8326"
+		o.Trace.QueryGroupKey, o.Trace.StrategyID = "qg-862", "862"
 		tracker.Observe(context.Background(), o)
 	}
 	observe(observability.Observation{QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "completion_contract",
@@ -1764,7 +1777,7 @@ func TestAnInternalFailureIsASecondFactUnderDefect(t *testing.T) {
 		len(byCode[CheckDefect].Groups) != 1 || byCode[CheckDefect].Groups[0].Key != "GAP_SCOPE_REASON_CONFLICT" {
 		t.Fatalf("reports = %+v, want the object on the refusal line and on DEFECT folded on the conflict", reports)
 	}
-	if listed := UnderCheck(CheckDefect, "GAP_SCOPE_REASON_CONFLICT", view, now); len(listed) != 1 || listed[0].QueryGroup != "qg-8326" {
+	if listed := UnderCheck(CheckDefect, "GAP_SCOPE_REASON_CONFLICT", view, now); len(listed) != 1 || listed[0].QueryGroup != "qg-862" {
 		t.Fatalf("under DEFECT/GAP_SCOPE_REASON_CONFLICT = %v, want the pool object", names(listed))
 	}
 	// A healthy completion clears it: the next run, failing on the backend
@@ -1777,7 +1790,7 @@ func TestAnInternalFailureIsASecondFactUnderDefect(t *testing.T) {
 		observe(observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE", ProgressCompletionCause: "query_failed"})
 	}
 	listed := tracker.Anomalies()
-	if len(listed) != 1 || listed[0].QueryGroup != "qg-8326" {
+	if len(listed) != 1 || listed[0].QueryGroup != "qg-862" {
 		t.Fatalf("after the next failing run the object is not listed: %+v", listed)
 	}
 	if listed[0].Internal != nil {
@@ -1789,7 +1802,7 @@ func TestAnInternalFailureIsASecondFactUnderDefect(t *testing.T) {
 // series already applied at this Slot's version, or none of their State
 // loadable.
 func partialRound(queryGroup string, resumed, constrained uint32) observability.Observation {
-	observation := completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "8930")
+	observation := completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "854")
 	observation.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	observation.ProgressCompletionReason = "HISTORY_WARMING"
 	observation.HistoryCoverage = &observability.HistoryCoverageFacts{Resumed: resumed, Constrained: constrained}
@@ -1847,7 +1860,7 @@ func TestThePartialRoundRunsAreCountedAndEndOnTheFirstOrdinaryRound(t *testing.T
 
 	// A healthy round resets the object's run, and the next partial round
 	// starts its count over rather than continuing the one before it.
-	tracker.Observe(context.Background(), completion("qg-partial", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-partial", "FULL_COMPLETED", "854"))
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(context.Background(), partialRound("qg-partial", 0, 249))
 	}
@@ -1914,7 +1927,7 @@ func TestARefusedReadingHoldsTheShortRunRatherThanEndingIt(t *testing.T) {
 	// A round that carried no reading at all -- not refused, just none --
 	// still breaks the comparison, as it always did: the next read round has
 	// nothing to compare with.
-	plain := completion("qg-refused", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	plain := completion("qg-refused", "COMPLETED_WITH_UNAVAILABLE", "854")
 	plain.ProgressCompletionCause, plain.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
 	tracker.Observe(context.Background(), plain)
 	tracker.Observe(context.Background(), coverageCompletion("qg-refused", 3, 1, 2, required))

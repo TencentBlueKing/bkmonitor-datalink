@@ -308,7 +308,10 @@ func pruneOutputContextRevisions(schedule *execution.FrozenQueryGroupSchedule, r
 			maxOffset = offset
 		}
 	}
-	keep := int64(retention.MaxReplayAge/time.Second) + int64(retention.TerminalDelay/time.Second) + maxOffset
+	// A Slot can be read as much as the read hold bound later than its
+	// schedule says, as SegmentKeepUntilUnixMilli takes it.
+	keep := int64(retention.MaxReplayAge/time.Second) + int64(retention.TerminalDelay/time.Second) + maxOffset +
+		int64(retention.ReadHoldBound/time.Second)
 	folded := 0
 	revisions := schedule.Segment.OutputContextRevisions
 	for len(revisions) > 0 && int64(revisions[0].Since)+keep < now.Unix() {

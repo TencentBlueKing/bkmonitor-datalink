@@ -56,6 +56,11 @@ func RejectionStandingOf(plan PlanContext, facts *Facts, filter, reason string) 
 		if facts == nil || facts.HostFactsUnavailable || plan.TargetPlan == nil || plan.TargetPlan.Members == nil {
 			return StandingCacheUnavailable
 		}
+		// A selector that could not answer is facts not read, as a
+		// resolution that is not definitive is below.
+		if reason == TargetPlanReasonSelectorUnavailable {
+			return StandingCacheUnavailable
+		}
 		if reason != TargetPlanReasonOutOfTarget {
 			return StandingIndefinite
 		}

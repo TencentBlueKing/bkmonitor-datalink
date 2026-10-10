@@ -123,6 +123,83 @@ func TestACooldownTransitionCarriesAResultAndAReason(t *testing.T) {
 	}
 }
 
+// A cooldown line names the reason its query failed with, not the backend's
+// word for every failure: a Query Group whose table does not route enters
+// the pool for that, an extension carries the latest failure's reason, the
+// exit carries the reason it resumed from, and the record carries it across
+// a restart. A record kept before records carried one says the reason was
+// not recorded.
+func TestACooldownLineCarriesTheReasonItsQueryFailedWith(t *testing.T) {
+	now := time.Unix(100, 0)
+	store := newMemoryCooldownStore()
+	var seen []observability.Observation
+	newRunner := func() *Runner {
+		runner := &Runner{queryGroup: "qg", now: func() time.Time { return now }, flights: &FlightCoordinator{
+			limits:   RecoveryLimits{QueryUnavailableCooldown: true},
+			observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { seen = append(seen, o) }),
+		}}
+		runner = runner.WithQueryCooldownStore(store)
+		runner.restoreQueryCooldown(context.Background(), fenceAt(1))
+		return runner
+	}
+	failed := func(reason string) execution.SlotExecutionResult {
+		return execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityUnavailable,
+			QueryUnavailableReason: execution.ReasonCode(reason)}
+	}
+	lastLine := func() (string, observability.ReasonCode) {
+		t.Helper()
+		for index := len(seen) - 1; index >= 0; index-- {
+			if seen[index].QueryCooldown != nil {
+				normalized := observability.NormalizeObservation(seen[index])
+				if unclassified(normalized.ReasonCode) {
+					t.Fatalf("%s line normalizes to %q", seen[index].QueryCooldown.Event, normalized.ReasonCode)
+				}
+				return seen[index].QueryCooldown.Event, normalized.ReasonCode
+			}
+		}
+		t.Fatal("no cooldown line")
+		return "", ""
+	}
+	slot := frozenSlot("qg")
+	runner := newRunner()
+	for i := 0; i < unavailableThreshold; i++ {
+		slot.Contract.Slot.EvaluationTime++
+		runner.recordQueryAvailability(context.Background(), slot, failed(contract.ReasonQueryTargetMissing), 60)
+	}
+	if event, reason := lastLine(); event != QueryCooldownEntered || reason != contract.ReasonQueryTargetMissing {
+		t.Fatalf("entry = %s/%s, want entered for %s", event, reason, contract.ReasonQueryTargetMissing)
+	}
+	slot.Contract.Slot.EvaluationTime++
+	runner.recordQueryAvailability(context.Background(), slot, failed(contract.ReasonQueryUnavailable), 60)
+	if event, reason := lastLine(); event != QueryCooldownExtended || reason != contract.ReasonQueryUnavailable {
+		t.Fatalf("extension = %s/%s, want extended for the latest failure, %s", event, reason, contract.ReasonQueryUnavailable)
+	}
+	if record := store.records["qg"]; record.Reason != contract.ReasonQueryUnavailable {
+		t.Fatalf("record reason = %q, want %s kept with the pool", record.Reason, contract.ReasonQueryUnavailable)
+	}
+
+	// A restart comes back in the pool for the reason it was in it, and
+	// leaves it from that reason.
+	runner = newRunner()
+	if event, reason := lastLine(); event != QueryCooldownRestored || reason != contract.ReasonQueryUnavailable {
+		t.Fatalf("restore = %s/%s, want restored for %s", event, reason, contract.ReasonQueryUnavailable)
+	}
+	slot.Contract.Slot.EvaluationTime++
+	runner.recordQueryAvailability(context.Background(), slot, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60)
+	if event, reason := lastLine(); event != QueryCooldownRecovered || reason != contract.ReasonQueryUnavailable {
+		t.Fatalf("exit = %s/%s, want recovered from %s", event, reason, contract.ReasonQueryUnavailable)
+	}
+
+	// A record kept before records carried a reason.
+	record := store.records["qg"]
+	record.Until, record.Reason = now.Add(time.Minute), ""
+	store.records["qg"] = record
+	newRunner()
+	if event, reason := lastLine(); event != QueryCooldownRestored || reason != observability.ReasonCode(execution.ReasonQueryReasonUnrecorded) {
+		t.Fatalf("restore of a record without a reason = %s/%s, want %s", event, reason, execution.ReasonQueryReasonUnrecorded)
+	}
+}
+
 // A round that reached the builder and got its range is the denominator the
 // refusals are read against, not a refusal: its line says success with the
 // word, where the refusal words say degraded.

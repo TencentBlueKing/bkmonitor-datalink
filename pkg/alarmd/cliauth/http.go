@@ -178,7 +178,7 @@ func (m *Manager) handleGrants(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	issued, _, err := resultRecord(result)
+	issued, _, err := m.resultRecord(result)
 	if err != nil {
 		return err
 	}
@@ -279,7 +279,7 @@ func (m *Manager) handleExchange(w http.ResponseWriter, r *http.Request) error {
 		m.count(CountExchangeRejected)
 		return failure("grant_not_bound", "A loopback login takes only a code issued for its own challenge; this code was issued for copying. Use auth login with it, or authorize the listening CLI from the page.", 401)
 	}
-	record, _, err := resultRecord(result)
+	record, _, err := m.resultRecord(result)
 	if ErrorCode(err) == "auth_expired_or_revoked" {
 		m.count(CountExchangeRejected)
 		return failure("grant_invalid_or_expired", "The grant is invalid, expired, or already used; obtain a new code.", 401)

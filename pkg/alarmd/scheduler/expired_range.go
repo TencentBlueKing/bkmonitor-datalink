@@ -85,7 +85,9 @@ func (source *ProductionSlotSource) buildExpiredRange(ctx context.Context, first
 		if at.UnixMilli() < first.EarliestQueryDeadlineUnixMilli {
 			return FrozenSlot{}, refusedRange(observability.RangeGateDeadlineNotReached), nil
 		}
-		headSteps := (at.Unix() - int64(start)) / spec.EvaluationIntervalSeconds
+		// Counted on the clock the first Slot's read hold shifts, as
+		// replayDistance counts: its grid points are read that much later.
+		headSteps := (at.Add(-time.Duration(first.Contract.ReadHoldMillis)*time.Millisecond).Unix() - int64(start)) / spec.EvaluationIntervalSeconds
 		if schedule.Segment.End != nil {
 			endSteps := (int64(*schedule.Segment.End) - 1 - int64(start)) / spec.EvaluationIntervalSeconds
 			if endSteps < headSteps {
@@ -139,8 +141,17 @@ func (source *ProductionSlotSource) buildExpiredRange(ctx context.Context, first
 		return FrozenSlot{}, rangeBuildRefusal{}, ErrSlotContractDrift
 	}
 	last := execution.EvaluationTime(int64(start) + steps*spec.EvaluationIntervalSeconds)
+	// last is frozen here for the first time: with the Query Group's current
+	// read hold, as Next would freeze it.
+	hold, err := source.slotReadHoldMillis(ctx, schedule, nil, last, first.Dispatch.OwnerFence)
+	if err != nil || hold != first.Contract.ReadHoldMillis {
+		// The range arithmetic uses one hold. A transition is handled by
+		// the existing single-Slot path rather than sealing a false suffix.
+		return FrozenSlot{}, refusedRange(observability.RangeGateFreezeFailed), nil
+	}
 	freeze := execution.FreezeSlotContractRequest{QueryGroup: source.queryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
-		ScheduleSegmentStart: schedule.Segment.Start, EvaluationTime: last, DuePlans: schedule.DuePlanRefs(last)}
+		ScheduleSegmentStart: schedule.Segment.Start, EvaluationTime: last, DuePlans: schedule.DuePlanRefs(last),
+		ReadHoldMillis: hold}
 	fact, err := source.catalog.FreezeSlotContract(ctx, freeze)
 	if err != nil {
 		return FrozenSlot{}, refusedRange(observability.RangeGateFreezeFailed), nil

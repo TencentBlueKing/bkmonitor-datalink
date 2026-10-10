@@ -26,6 +26,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet/ui"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
@@ -33,6 +35,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/storecensus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
@@ -88,15 +91,19 @@ type phaseTwoApplicationDependencies struct {
 }
 
 // httpSurface is what the listener needs from the configuration: where the
-// side listeners bind and whether the public surface is restricted.
+// side listeners bind, whether the public surface is restricted, and where
+// the login page says the administrator key is kept (names only).
 type httpSurface struct {
-	Diagnostics string
-	Internal    string
-	Restricted  bool
+	Diagnostics    string
+	Internal       string
+	Restricted     bool
+	AdminKeySecret ui.AdminKeySecret
 }
 
 func httpSurfaceOf(cfg config.Config) httpSurface {
-	return httpSurface{Diagnostics: cfg.HTTP.DiagnosticsListen, Internal: cfg.HTTP.InternalListen, Restricted: cfg.PublicSurfaceRestrictionRequested()}
+	secret := cfg.CLI.AdminKeySecret
+	return httpSurface{Diagnostics: cfg.HTTP.DiagnosticsListen, Internal: cfg.HTTP.InternalListen, Restricted: cfg.PublicSurfaceRestrictionRequested(),
+		AdminKeySecret: ui.AdminKeySecret{Namespace: secret.Namespace, Name: secret.Name, Key: secret.Key}}
 }
 
 type runtimeModeDependencies struct {
@@ -109,7 +116,8 @@ func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {
 		configureCPU: configurePhaseTwoCPU, lifecycle: newLifecycleRecord,
 		run: runPhaseTwoApplication, openBundle: openProductionPhaseTwoBundle,
 		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, surface httpSurface) (httpRuntime, error) {
-			options := []httpservice.Option{httpservice.WithDiagnosticsAddress(surface.Diagnostics), httpservice.WithInternalAddress(surface.Internal)}
+			options := []httpservice.Option{httpservice.WithDiagnosticsAddress(surface.Diagnostics), httpservice.WithInternalAddress(surface.Internal),
+				httpservice.WithAdminKeySecret(surface.AdminKeySecret)}
 			if surface.Restricted {
 				options = append(options, httpservice.WithRestrictedPublicSurface())
 			}
@@ -223,6 +231,14 @@ func runPhaseTwoApplicationWithDependencies(
 	contract.SetCanonicalShadowStride(cfg.PhaseTwo.Canonical.Stride())
 	logger.Info("canonical_encoder", contract.CanonicalMode(), 0, 0,
 		slog.Uint64("shadow_sample_stride", cfg.PhaseTwo.Canonical.Stride()))
+	// A series delivery digest assembled from its shared parts that differed
+	// from the generic one: counted on canonical_encoding_records_shadow_total
+	// and said here at most once a minute. The generic digest was returned.
+	contract.SetRecordsDigestDivergenceReporter(func(divergence contract.RecordsDigestDivergence) {
+		logger.Warn("canonical_encoder", "records_digest_differed", divergence.Records, 0,
+			slog.String("domain", divergence.Domain), slog.String("served", divergence.Served),
+			slog.String("established", divergence.Established))
+	})
 
 	server, err := dependencies.newHTTP(recorder, application, httpSurfaceOf(cfg))
 	if err != nil {
@@ -237,6 +253,9 @@ func runPhaseTwoApplicationWithDependencies(
 	var lifecycle *lifecycleRecord
 	if dependencies.lifecycle != nil {
 		lifecycle = dependencies.lifecycle(cfg)
+	}
+	if lifecycle != nil {
+		lifecycle.failed = func(reason string) { recorder.ObserveDiagnosticRedisFailure("lifecycle", reason) }
 	}
 	defer lifecycle.close()
 	lifecycle.start()
@@ -555,6 +574,11 @@ type phaseTwoWorkerBundleDependencies struct {
 	// the strategy's scope, from what this replica's own admission step
 	// turned away. Every replica runs its own.
 	RunTargetScopeClose func(context.Context)
+	// Lookback is the late-data lookback on the query path, nil when this
+	// process does not run it. The bundle runs its rechecks and drops the
+	// samples of a Query Group the moment it stops owning it.
+	Lookback  *lookback.Engine
+	ReadHolds *productionReadHolds
 	// RefreshPlatformSettings reads the platform's dynamic configuration
 	// into the process copy and brings what evaluates by it up to date; run
 	// once at start and then once a minute.
@@ -576,6 +600,11 @@ type phaseTwoWorkerBundleDependencies struct {
 	// maintenance goroutines and read by nothing in execution.
 	ViewClient   *viewstream.Client
 	PublishFleet func(context.Context)
+	// MeasureStores takes a census of what the stores this process writes to
+	// hold, by key family (package storecensus), while it is the Control
+	// Leader, and forgets the last one when it is not: one census for the
+	// deployment, not one per replica.
+	MeasureStores func(ctx context.Context, leading bool)
 	// ApplyObservationWindows makes the windows opened through that API take
 	// effect on this replica. It runs on the reconcile tick rather than on a
 	// timer of its own, so opening a window is bounded by a cadence the
@@ -592,6 +621,10 @@ type phaseTwoWorkerBundleDependencies struct {
 	ActivationBlocked func() controlplane.ActivationBlockedReading
 	CloseResources    func(context.Context) error
 	Now               func() time.Time
+
+	// ActivationHeader is the Control Leader's standing on a missing
+	// activation header; nil where there is no repository.
+	ActivationHeader func() controlplane.ActivationHeaderReading
 }
 
 type phaseTwoWorkerBundle struct {
@@ -669,8 +702,16 @@ type phaseTwoWorkerBundle struct {
 	maintenanceCtx context.Context
 	cancelMaintain context.CancelFunc
 	cancelControl  context.CancelFunc
-	maintenanceWG  sync.WaitGroup
-	inflightWG     sync.WaitGroup
+	// cancelViewClient stops this Worker's side of the view stream alone,
+	// under the maintenance context that Shutdown cancels with the rest.
+	cancelViewClient context.CancelFunc
+	maintenanceWG    sync.WaitGroup
+	inflightWG       sync.WaitGroup
+	// flightReleased carries the Query Groups whose flight, held by a
+	// supplement or maintenance, turned a Slot away, once the hold ends
+	// (scheduler.FlightCoordinator.OnTurnedAwayReleased): the dispatcher runs
+	// the Slot then instead of at its next turn.
+	flightReleased chan execution.QueryGroupIdentity
 	shutdownOnce   sync.Once
 	shutdownErr    error
 	// dependencyDegraded is set while a control or Ownership Store call fails
@@ -799,6 +840,12 @@ type phaseTwoRunnerDispatcher struct {
 	lastQueued map[execution.QueryGroupIdentity]phaseTwoRunnerGeneration
 	queued     map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
 	active     map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle
+	// turnedAway is each Query Group whose round a supplement or maintenance
+	// turned away from its flight, waiting for that hold to end; released
+	// each whose hold ended before its round's return was handled. Both are
+	// cleared at every generation, whose walk offers any round left.
+	turnedAway map[execution.QueryGroupIdentity]phaseTwoScheduledRunner
+	released   map[execution.QueryGroupIdentity]struct{}
 	normal     []phaseTwoQueuedRunner
 	delayed    []phaseTwoQueuedRunner
 	// queueSequence numbers queue entries in order of queueing; normalDirty
@@ -891,6 +938,20 @@ type phaseTwoRotationFacts struct {
 	generation uint64
 }
 
+// flightReleasedNotices is how many released holds wait for the dispatcher
+// at once. A notice that does not fit is dropped: the Slot it was for runs
+// at its next turn, one scheduler tick later, as it did before notices.
+const flightReleasedNotices = 256
+
+// noticeFlightReleased tells the dispatcher a Query Group's flight is free
+// again after it turned a Slot away. It never blocks.
+func (bundle *phaseTwoWorkerBundle) noticeFlightReleased(queryGroup execution.QueryGroupIdentity) {
+	select {
+	case bundle.flightReleased <- queryGroup:
+	default:
+	}
+}
+
 func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*phaseTwoWorkerBundle, error) {
 	if dependencies.Health == nil || dependencies.Control == nil || dependencies.Ownership == nil ||
 		dependencies.Observer == nil || dependencies.Now == nil {
@@ -900,14 +961,18 @@ func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*ph
 		return nil, err
 	}
 	bundle := &phaseTwoWorkerBundle{dependencies: dependencies, outputSinkReady: true,
-		assigned: make(map[execution.QueryGroupIdentity]struct{}),
-		runners:  make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
-		liveness: newPhaseTwoLiveness(dependencies.Now, dependencies.Recorder)}
+		flightReleased: make(chan execution.QueryGroupIdentity, flightReleasedNotices),
+		assigned:       make(map[execution.QueryGroupIdentity]struct{}),
+		runners:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
+		liveness:       newPhaseTwoLiveness(dependencies.Now, dependencies.Recorder)}
 	if dependencies.Recorder != nil {
 		dependencies.Recorder.SetOwnedQueryGroups(0)
 		dependencies.Recorder.SetControlSourceSource(bundle.controlSourceStats)
 		dependencies.Recorder.SetLeaderRoundSource(bundle.leaderRoundStats)
 		dependencies.Recorder.SetCatalogCompositionSource(bundle.catalogComposition)
+		if dependencies.Lookback != nil {
+			dependencies.Recorder.SetLookbackSource(func() lookback.Stats { return productionLookbackStats(dependencies.Lookback, dependencies.ReadHolds) })
+		}
 	}
 	return bundle, nil
 }
@@ -1212,6 +1277,8 @@ func newPhaseTwoRunnerDispatcher(
 		lastQueued:    make(map[execution.QueryGroupIdentity]phaseTwoRunnerGeneration),
 		queued:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
 		active:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
+		turnedAway:    make(map[execution.QueryGroupIdentity]phaseTwoScheduledRunner),
+		released:      make(map[execution.QueryGroupIdentity]struct{}),
 		preferDelayed: true, oneShot: oneShot,
 	}
 }
@@ -1441,6 +1508,10 @@ func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan
 			if canceled == nil {
 				dispatcher.beginGeneration()
 			}
+		case queryGroup := <-dispatcher.bundle.flightReleased:
+			if canceled == nil {
+				dispatcher.flightReleased(queryGroup)
+			}
 		case <-retryReady:
 		case <-ctxDone:
 			canceled = ctx.Err()
@@ -1464,6 +1535,8 @@ func (dispatcher *phaseTwoRunnerDispatcher) beginGeneration() {
 		dispatcher.auditCursor = ""
 	}
 	dispatcher.generation++
+	clear(dispatcher.turnedAway)
+	clear(dispatcher.released)
 	// One header comparison for the whole replica, once per tick. It is here
 	// rather than per Query Group because the header is global: a publication
 	// stamps it regardless of which Query Groups it touched, so one reading
@@ -1948,13 +2021,26 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 			return
 		}
 		if !result.attempted {
+			var outcome observability.Result = observability.ResultFailed
+			reason := observability.ReasonInternalUnknown
+			yielded := heldByYield(result.err)
+			switch yielded {
+			case scheduler.FlightHeldBySupplement:
+				outcome, reason = observability.ResultSkipped, observability.ReasonHeldBySupplement
+			case scheduler.FlightHeldByMaintenance:
+				outcome, reason = observability.ResultSkipped, observability.ReasonHeldByMaintenance
+			}
 			observeRuntime(ctx, dispatcher.bundle.dependencies.Observer, observability.Observation{
 				Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
-				Result: observability.ResultFailed, ReasonCode: observability.ReasonInternalUnknown,
+				Result: outcome, ReasonCode: reason,
 				Direction: observability.DirectionInternal,
 				Trace:     observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)},
 				Err:       result.err,
 			})
+			if yielded != "" && requeue {
+				dispatcher.turnedAwayByHold(scheduled)
+				return
+			}
 		}
 	}
 	if result.admissionDenied {
@@ -1999,6 +2085,61 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 	// ranked it behind every Slot with a deadline, and a ten-second Slot with
 	// five seconds left waited behind the minute's Slots with fifty-five.
 	dispatcher.delayed = append(dispatcher.delayed, dispatcher.queueEntry(scheduled, readyAt))
+	dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
+}
+
+// heldByYield is what held the flight a round was turned away from, when
+// that is a supplement or maintenance -- a yield by design -- and empty
+// otherwise.
+func heldByYield(err error) string {
+	var inFlight *scheduler.SlotInFlightError
+	if !errors.As(err, &inFlight) {
+		return ""
+	}
+	switch inFlight.HeldBy {
+	case scheduler.FlightHeldBySupplement, scheduler.FlightHeldByMaintenance:
+		return inFlight.HeldBy
+	}
+	return ""
+}
+
+// turnedAwayByHold takes a round a supplement or maintenance turned away.
+// It is not queued again at once, as a deferred return is: its Runner still
+// says it is ready, and it would be turned away again for as long as the
+// hold lasts. It runs when the hold ends -- at once, if the end was heard
+// before this return -- or at its next turn.
+func (dispatcher *phaseTwoRunnerDispatcher) turnedAwayByHold(scheduled phaseTwoScheduledRunner) {
+	if _, ended := dispatcher.released[scheduled.queryGroup]; ended {
+		delete(dispatcher.released, scheduled.queryGroup)
+		dispatcher.queueNow(scheduled)
+		return
+	}
+	dispatcher.turnedAway[scheduled.queryGroup] = scheduled
+}
+
+// flightReleased takes the end of a hold that turned a round away: the round
+// is queued now, or, when its return has not been handled yet, the end is
+// kept for it.
+func (dispatcher *phaseTwoRunnerDispatcher) flightReleased(queryGroup execution.QueryGroupIdentity) {
+	scheduled, waiting := dispatcher.turnedAway[queryGroup]
+	if !waiting {
+		dispatcher.released[queryGroup] = struct{}{}
+		return
+	}
+	delete(dispatcher.turnedAway, queryGroup)
+	dispatcher.queueNow(scheduled)
+}
+
+// queueNow puts a round in the recovery queue ready now, unless its Runner
+// is no longer the current one, it is queued or running already, or the
+// queue is full; its next turn offers it then.
+func (dispatcher *phaseTwoRunnerDispatcher) queueNow(scheduled phaseTwoScheduledRunner) {
+	if !dispatcher.bundle.isCurrentScheduledRunner(scheduled) || dispatcher.queued[scheduled.queryGroup] != nil ||
+		dispatcher.active[scheduled.queryGroup] != nil ||
+		len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
+		return
+	}
+	dispatcher.delayed = append(dispatcher.delayed, dispatcher.queueEntry(scheduled, dispatcher.bundle.schedulerNow()))
 	dispatcher.queued[scheduled.queryGroup] = scheduled.lifecycle
 }
 
@@ -2463,6 +2604,13 @@ func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 		bundle.maintenanceWG.Add(1)
 		go func() { defer bundle.maintenanceWG.Done(); bundle.dependencies.RunEffectiveTime(bundle.maintenanceCtx) }()
 	}
+	if bundle.dependencies.Lookback != nil {
+		bundle.maintenanceWG.Add(1)
+		go func() {
+			defer bundle.maintenanceWG.Done()
+			runLookback(bundle.maintenanceCtx, bundle.dependencies.Lookback)
+		}()
+	}
 	bundle.maintenanceWG.Add(1)
 	go bundle.maintainRegistration()
 	if bundle.dependencies.PublishFleet != nil {
@@ -2477,9 +2625,35 @@ func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 		bundle.maintenanceWG.Add(1)
 		go bundle.refreshPlatformSettings()
 	}
-	if bundle.dependencies.ViewClient != nil {
+	if bundle.dependencies.MeasureStores != nil {
 		bundle.maintenanceWG.Add(1)
-		go bundle.runViewClient()
+		go bundle.measureStores()
+	}
+	if bundle.dependencies.ViewClient != nil {
+		var viewCtx context.Context
+		viewCtx, bundle.cancelViewClient = context.WithCancel(bundle.maintenanceCtx)
+		bundle.maintenanceWG.Add(1)
+		go bundle.runViewClient(viewCtx)
+	}
+}
+
+// measureStores takes a census of the stores once every storecensus.Interval,
+// on the Control Leader. The first is an interval after the start, not at
+// it: a starting process has rounds to catch up on first.
+func (bundle *phaseTwoWorkerBundle) measureStores() {
+	defer bundle.maintenanceWG.Done()
+	ticker := time.NewTicker(storecensus.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-bundle.maintenanceCtx.Done():
+			return
+		case <-ticker.C:
+			bundle.mu.RLock()
+			leading := bundle.controlLeader
+			bundle.mu.RUnlock()
+			bundle.dependencies.MeasureStores(bundle.maintenanceCtx, leading)
+		}
 	}
 }
 
@@ -2637,6 +2811,11 @@ func (bundle *phaseTwoWorkerBundle) maintainRegistration() {
 		case <-bundle.maintenanceCtx.Done():
 			return
 		case <-ticker.C:
+		}
+		if holds := bundle.dependencies.ReadHolds; holds != nil {
+			ctx, cancel := context.WithTimeout(bundle.maintenanceCtx, interval)
+			holds.renew(ctx)
+			cancel()
 		}
 		err := renewPhaseTwoWithinInterval(bundle.maintenanceCtx, interval, func(attemptCtx context.Context) error {
 			return bundle.register(attemptCtx, ownership.WorkerReady)
@@ -2943,6 +3122,23 @@ func (bundle *phaseTwoWorkerBundle) ownedQueryGroups() []execution.QueryGroupIde
 	return owned
 }
 
+// ownedLeases is the owned Query Groups with the timeline revision each
+// lease names, read from memory, for the cost roster. A Runner without a
+// lease to read is owned and not accepting.
+func (bundle *phaseTwoWorkerBundle) ownedLeases() []ownedLease {
+	bundle.mu.RLock()
+	defer bundle.mu.RUnlock()
+	owned := make([]ownedLease, 0, len(bundle.runners))
+	for queryGroup, lifecycle := range bundle.runners {
+		lease := ownedLease{queryGroup: queryGroup}
+		if runner, ok := lifecycle.runner.(maintenanceRunner); ok {
+			_, lease.revision, lease.accepting = runner.maintenanceLease()
+		}
+		owned = append(owned, lease)
+	}
+	return owned
+}
+
 // setRunnerLocked and removeRunnerLocked are the only ways the owned Runner
 // set changes. Both keep what is derived from that set - the owned count and
 // the dispatcher's ordered view - in step with it, which is why no caller
@@ -2958,6 +3154,9 @@ func (bundle *phaseTwoWorkerBundle) setRunnerLocked(
 func (bundle *phaseTwoWorkerBundle) removeRunnerLocked(queryGroup execution.QueryGroupIdentity) {
 	delete(bundle.runners, queryGroup)
 	bundle.setOwnedQueryGroupsLocked()
+	// A Query Group no longer owned is no longer rechecked. The lookback
+	// never takes the bundle's lock under its own, so this order is safe.
+	bundle.dependencies.Lookback.Forget(queryGroup)
 }
 
 // setOwnedQueryGroupsLocked follows every change to the owned Runner set, so

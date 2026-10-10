@@ -10,12 +10,15 @@
 package fleet
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // One reason code, several lines, several owners -- decided on the counts.
@@ -222,12 +225,19 @@ func TestARejectedQueryIsNotFiledAsTheBackendsAvailability(t *testing.T) {
 		{"degraded on a provider status naming a missing target", degraded("response=status_space_table_id_field_is_not_exists"),
 			CheckQueryTargetMissing, OwnerStrategy},
 		{"cooldown on a not-found status", cooldown("response=status_table_not_found"), CheckQueryTargetMissing, OwnerStrategy},
-		// A status this build has no reading of stays on this side of the
-		// page: refused, by whom is not decided.
-		{"cooldown on an unknown provider status", cooldown("response=status_other"), CheckQueryRefused, OwnerUndetermined},
-		// An HTTP 4xx is the same statement in the transport's vocabulary,
-		// and names nothing.
-		{"cooldown on a 4xx", cooldown("http_status=400"), CheckQueryRefused, OwnerUndetermined},
+		// The same refusal named at the source: the round's own reason says
+		// the target is missing, with no detail needed to read it.
+		{"degraded under the target-missing word", Anomaly{Kind: KindDegradedRun, CauseReason: "QUERY_TARGET_MISSING"},
+			CheckQueryTargetMissing, OwnerStrategy},
+		// A status this build has no reading of: refused, and the query is
+		// what was refused. It is the strategy's line: on one deployment every
+		// refused query the platform's own detector sent for the same strategy
+		// was refused the same way (a condition value the storage rejects, an
+		// expression that does not parse). A query this deployment built wrong
+		// would read here too, which only comparing the two requests tells.
+		{"cooldown on an unknown provider status", cooldown("response=status_other"), CheckQueryRefused, OwnerStrategy},
+		// An HTTP 4xx is the same statement in the transport's vocabulary.
+		{"cooldown on a 4xx", cooldown("http_status=400"), CheckQueryRefused, OwnerStrategy},
 		// A timeout or a 5xx is the backend not answering: the data's.
 		{"cooldown on a timeout", cooldown("transport=timeout"), CheckBackendNotAnswering, OwnerUndetermined},
 		{"degraded on a 503", degraded("http_status=503"), CheckBackendNotAnswering, OwnerUndetermined},
@@ -242,6 +252,87 @@ func TestARejectedQueryIsNotFiledAsTheBackendsAvailability(t *testing.T) {
 				t.Errorf("finding = %s/%s, want %s/%s", got.Check, got.Owner, testCase.check, testCase.owner)
 			}
 		})
+	}
+}
+
+// A query timeout is read by whose time ran out. A round that failed on a
+// query whose deadline passed while this deployment was still delivering
+// what had arrived is its own - DEFECT, a timeout at the query step with no
+// dependency - whichever word the round ended with: the failure reaches the
+// row as the grammar publishes it, category other and code OTHER, and only
+// its detail says where the time went. Read by the round's word it was an
+// unnamed failure at no step, or from a source error a dependency down at
+// the configuration step. A timeout that ran out inside a read of the body
+// is the backend's, as before the answer began. A round that went on to
+// complete is read by its completion, and a delivery timeout from an earlier
+// Slot decides nothing for this round.
+func TestADeliveryTimeoutIsThisDeploymentsNotTheBackends(t *testing.T) {
+	observe := func(tracker *Tracker, at *clock, facts observability.QueryFailureFacts, runOutcome string, rounds int) {
+		for round := 0; round < rounds; round++ {
+			slot := int64(1000 + 60*round)
+			reported := facts
+			tracker.Observe(context.Background(), observability.NormalizeObservation(observability.Observation{
+				Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed,
+				ReasonCode: observability.ReasonInternalUnknown, Err: errors.New("context deadline exceeded"), QueryFailure: &reported,
+				Trace: observability.TraceFields{QueryGroupKey: "qg-1", EvaluationTime: slot}}))
+			at.at = at.at.Add(time.Millisecond)
+			if runOutcome == "" {
+				tracker.Observe(context.Background(), observability.Observation{ExecuteOutcome: "error", ReasonCode: "internal_unknown",
+					Err: errors.New("alarmd worker: query: context deadline exceeded"), Trace: observability.TraceFields{QueryGroupKey: "qg-1", EvaluationTime: slot}})
+			} else {
+				tracker.Observe(context.Background(), observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageRunnerReturned,
+					Result: observability.ResultTerminal, RunOutcome: runOutcome, Err: errors.New("alarmd worker: query: context deadline exceeded"),
+					Trace: observability.TraceFields{QueryGroupKey: "qg-1", EvaluationTime: slot}})
+			}
+			at.at = at.at.Add(time.Minute)
+		}
+	}
+	// What the client reports for its own delivery; the grammar publishes the
+	// code as OTHER whatever it is given, which is why the client gives OTHER.
+	delivery := observability.QueryFailureFacts{Stage: "execute", Category: "other", Code: "QUERY_TIMEOUT", Detail: "delivery=timeout"}
+	backend := observability.QueryFailureFacts{Stage: "execute", Category: "provider_transport", Code: "QUERY_TIMEOUT", Detail: "body=timeout"}
+	for _, testCase := range []struct {
+		name       string
+		facts      observability.QueryFailureFacts
+		runOutcome string
+		check      Check
+		dependency Dependency
+	}{
+		{"delivery ran out, execution error", delivery, "", CheckDefect, DependencyNone},
+		{"delivery ran out, source error", delivery, "source_error", CheckDefect, DependencyNone},
+		{"a body read ran out", backend, "", CheckBackendNotAnswering, DependencyUnlocated},
+	} {
+		at := &clock{at: now}
+		tracker := newTracker(t, at)
+		observe(tracker, at, testCase.facts, testCase.runOutcome, DefaultBlockedRounds+1)
+		rows := tracker.Anomalies()
+		Attribute(rows, at.at)
+		if len(rows) != 1 {
+			t.Fatalf("%s: rows = %+v, want the one object", testCase.name, rows)
+		}
+		got := rows[0]
+		if got.Failure == nil || got.Failure.Detail != testCase.facts.Detail || (testCase.facts.Category == "other" && got.Failure.Code != "OTHER") {
+			t.Fatalf("%s: failure = %+v, want the reported detail, and OTHER for category other", testCase.name, got.Failure)
+		}
+		if got.Finding.Check != testCase.check || got.Blocked == nil || got.Blocked.Stage != StageQuery || got.Blocked.Dependency != testCase.dependency ||
+			got.Blocked.Class != ClassTimeout {
+			t.Errorf("%s: finding %s/%s blocked %+v, want %s, a timeout at the query step, dependency %s", testCase.name, got.Finding.Check, got.Finding.Owner, got.Blocked,
+				testCase.check, testCase.dependency)
+		}
+	}
+
+	failedAt := now.Add(-time.Second)
+	completed := []Anomaly{{Kind: KindDegradedRun, ReasonCode: "COMPLETED_WITH_UNAVAILABLE", CauseReason: "HISTORY_GAPPED", ReasonLastAt: now, RoundSlot: 1060,
+		Failure: &FailureRef{Stage: "execute", Category: "other", Code: "OTHER", Detail: "delivery=timeout", At: &failedAt, Slot: 1060}}}
+	Attribute(completed, now)
+	if got := completed[0]; got.Finding.Check == CheckDefect || got.Blocked == nil || got.Blocked.Code != "HISTORY_GAPPED" || got.Blocked.Class == ClassTimeout {
+		t.Errorf("a round that completed after a delivery timeout = %s / %+v, want its completion's cause to decide", got.Finding.Check, got.Blocked)
+	}
+	stale := []Anomaly{{Kind: KindBlockedRun, ReasonCode: "source_error", ReasonLastAt: now, RoundSlot: 1060,
+		Failure: &FailureRef{Stage: "execute", Category: "other", Code: "OTHER", Detail: "delivery=timeout", At: &failedAt, Slot: 1000}}}
+	Attribute(stale, now)
+	if got := stale[0]; got.Finding.Check == CheckDefect || (got.Blocked != nil && got.Blocked.Class == ClassTimeout) {
+		t.Errorf("an earlier Slot's delivery timeout = %s / %+v, want it to decide nothing for this round", got.Finding.Check, got.Blocked)
 	}
 }
 
@@ -458,11 +549,11 @@ func TestAReasonHeldByAGuardIsAWindowQuestionNotAConfigOne(t *testing.T) {
 		// No guard: CONFIG_DRIFT is this round's own finding and reads as
 		// the configuration question it is.
 		"not held": {Anomaly{Kind: KindDegradedRun, Cause: "CONFIG_DRIFT", CauseReason: "CONFIG_DRIFT",
-			Coverage: &HistoryCoverage{Levels: 3}}, CheckConfigUnresolved, "1854"},
+			Coverage: &HistoryCoverage{Levels: 3}}, CheckConfigUnresolved, "847"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			item := testCase.anomaly
-			item.Strategies = []StrategyRef{{StrategyID: "1854", BusinessID: "7"}}
+			item.Strategies = []StrategyRef{{StrategyID: "847", BusinessID: "7"}}
 			list := []Anomaly{item}
 			Attribute(list, now)
 			if list[0].Finding.Check != testCase.check {
@@ -530,5 +621,230 @@ func TestAGuardHeldRoundReadsAsTheWindowsNotAsItsTriggerWord(t *testing.T) {
 	if list[0].Finding.Check != CheckDefect || list[0].Blocked == nil || list[0].Blocked.Code != "STATE_READ_TIMEOUT" ||
 		list[0].Blocked.Class == ClassUnlocated {
 		t.Fatalf("defect under a guard: check %q reading %+v, want DEFECT with the defect's own reading", list[0].Finding.Check, list[0].Blocked)
+	}
+}
+
+// A code the catalog files as a missing piece of the source reads as one at
+// run time too: a strategy withheld for it and a Plan that met it after
+// admission land on the same line and go to the same owner. Every code of
+// the table is put to the catalog's own classification, so a code moved on
+// one side and not the other fails here.
+func TestACodeTheCatalogFilesAsSourceIncompleteLandsThereAtRunTime(t *testing.T) {
+	matched := 0
+	for code, verdict := range codeChecks {
+		disposition, known := controlplane.CompilerTerminalDisposition(code)
+		if !known || string(disposition) != dispositionSourceIncomplete {
+			continue
+		}
+		matched++
+		if verdict.check != sourceChecks[dispositionSourceIncomplete] {
+			t.Errorf("%s: the catalog files it %s, the fleet lands it on %s", code, disposition, verdict.check)
+		}
+	}
+	if matched == 0 {
+		t.Fatal("no code of the table is one the catalog files as SOURCE_INCOMPLETE")
+	}
+}
+
+// A terminal Slot is filed under the deterministic reason its progress record
+// keeps, since it names no cause of its own; a Slot finalized
+// SNAPSHOT_UNAVAILABLE reads as the snapshot that was not there, a Plan past
+// its budget as the Plan, and a terminal with no reason at all stays the
+// unclassified defect it is. Any other completion keeps its cause's reason
+// and never borrows the observation's.
+func TestATerminalSlotIsFiledUnderItsOwnReason(t *testing.T) {
+	at := time.Date(2026, 9, 28, 6, 7, 35, 0, time.UTC)
+	complete := func(tracker *Tracker, queryGroup, kind, cause, causeReason, reason string) Anomaly {
+		tracker.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
+			Result: observability.ResultTerminal, ReasonCode: observability.ReasonCode(reason),
+			ProgressCompletionKind: kind, ProgressCompletionCause: cause, ProgressCompletionReason: causeReason,
+			Trace: observability.TraceFields{QueryGroupKey: queryGroup, StrategyID: "848", BusinessID: "10", EvaluationTime: 1790424000},
+		})
+		for _, row := range tracker.Anomalies() {
+			if row.QueryGroup == queryGroup {
+				return row
+			}
+		}
+		return Anomaly{}
+	}
+	tracker := NewTracker(nil, "pod-a", func() time.Time { return at })
+	for queryGroup, want := range map[string]Check{"qg-snapshot": CheckDependencyDown, "qg-budget": CheckPlanUnevaluable} {
+		reason := map[string]string{"qg-snapshot": "SNAPSHOT_UNAVAILABLE", "qg-budget": "PLAN_BUDGET_EXCEEDED"}[queryGroup]
+		row := complete(tracker, queryGroup, "COMPLETED_WITH_TERMINAL", "", "", reason)
+		if row.CauseReason != reason {
+			t.Fatalf("%s: cause reason = %q, want the terminal's own %q", queryGroup, row.CauseReason, reason)
+		}
+		if check, decided := codeVerdict(row); !decided || check != want {
+			t.Fatalf("%s: check = %q (decided %v), want %q", queryGroup, check, decided, want)
+		}
+	}
+	row := complete(tracker, "qg-bare", "COMPLETED_WITH_TERMINAL", "", "", string(observability.ReasonNone))
+	if _, decided := codeVerdict(row); decided || row.CauseReason != "" {
+		t.Fatalf("a terminal with no reason = %+v, want it left unclassified", row)
+	}
+	for _, degraded := range []struct{ causeReason, want string }{{"QUERY_TIMEOUT", "QUERY_TIMEOUT"}, {"", ""}} {
+		tracker := NewTracker(nil, "pod-a", func() time.Time { return at })
+		var row Anomaly
+		for round := 0; round < DefaultDegradedRounds; round++ {
+			row = complete(tracker, "qg-degraded", "COMPLETED_WITH_UNAVAILABLE", "PRIMARY_INPUT_UNAVAILABLE", degraded.causeReason, "SNAPSHOT_UNAVAILABLE")
+		}
+		if row.QueryGroup == "" || row.CauseReason != degraded.want {
+			t.Fatalf("a degraded Slot = %+v, want its cause's reason %q and never the observation's", row, degraded.want)
+		}
+	}
+}
+
+// A window's verdict says whose the shortfall is only as far as its holes do:
+// an empty answer is the query's, and a window with no hole on record is
+// nobody's yet, not the data's by default.
+func TestAWindowVerdictIsTheDatasOnlyOnMinutesAnsweredWithoutTheSeries(t *testing.T) {
+	for name, tc := range map[string]struct {
+		counts WindowHoleCounts
+		want   WindowVerdict
+	}{
+		"answered without the series":  {WindowHoleCounts{AnsweredWithoutSeries: 3}, VerdictDataAbsentWhenQueried},
+		"an empty answer among them":   {WindowHoleCounts{AnsweredWithoutSeries: 3, AnsweredEmpty: 1}, VerdictQueryAnsweredEmpty},
+		"no hole on record":            {WindowHoleCounts{}, VerdictUnknown},
+		"one round this side missed":   {WindowHoleCounts{AnsweredWithoutSeries: 3, InputIncomplete: 1}, VerdictInputIncomplete},
+		"a minute not remembered":      {WindowHoleCounts{AnsweredWithoutSeries: 3, NotInMemory: 1}, VerdictUnknown},
+		"a minute let go for the line": {WindowHoleCounts{AnsweredWithoutSeries: 3, HeldByLine: 1}, VerdictUnknown},
+	} {
+		if got := verdictOf(tc.counts); got != tc.want {
+			t.Errorf("%s: verdict = %s, want %s", name, got, tc.want)
+		}
+	}
+}
+
+// A window line is the data's when every short window is short only by
+// minutes the query answered whole -- without the series, or with nothing at
+// all -- however the row came to the window line: by its own reason's counts,
+// or held under a guard. One window that says anything else, a list cut short
+// with nothing said about the rest, or minutes not all read, and the row stays
+// where it was.
+func TestAWindowLineIsTheDatasOnlyWhenEveryWindowIsSparse(t *testing.T) {
+	sparse := func(missing uint32) WindowRow {
+		return WindowRow{Verdict: VerdictDataAbsentWhenQueried, MissingTotal: missing, HolesBy: WindowHoleCounts{AnsweredWithoutSeries: missing}}
+	}
+	gapped := func(windows ...WindowRow) Anomaly {
+		return Anomaly{Kind: KindDegradedRun, CauseReason: "HISTORY_GAPPED", Coverage: &HistoryCoverage{
+			Levels: 4, Short: 2, WorstValid: 3, WorstRequired: 5, ShortRounds: 9, Windows: windows}}
+	}
+	guarded := func(windows ...WindowRow) Anomaly {
+		return Anomaly{Kind: KindDegradedRun, ReasonCode: "COMPLETED_WITH_UNAVAILABLE", Cause: "GAP_GUARD_WARMING", CauseReason: "GAP_GUARD_WARMING",
+			Coverage: &HistoryCoverage{Levels: 4, Short: 2, WorstValid: 3, WorstRequired: 5, ShortRounds: 9, Guarded: 2, Windows: windows}}
+	}
+	incomplete := WindowRow{Verdict: VerdictInputIncomplete, MissingTotal: 2, HolesBy: WindowHoleCounts{AnsweredWithoutSeries: 1, InputIncomplete: 1}}
+	empty := WindowRow{Verdict: VerdictQueryAnsweredEmpty, MissingTotal: 2, HolesBy: WindowHoleCounts{AnsweredEmpty: 2}}
+	partlyRead := WindowRow{Verdict: VerdictDataAbsentWhenQueried, MissingTotal: 5, HolesBy: WindowHoleCounts{AnsweredWithoutSeries: 2}}
+	for name, tc := range map[string]struct {
+		row  Anomaly
+		want Check
+	}{
+		"gapped, every window sparse":       {gapped(sparse(2), sparse(1)), CheckSeriesSparse},
+		"gapped, one window incomplete":     {gapped(sparse(2), incomplete), CheckSeriesDataMissing},
+		"gapped, one window answered empty": {gapped(sparse(2), empty), CheckSeriesSparse},
+		"gapped, the list cut short":        {gapped(sparse(2)), CheckSeriesDataMissing},
+		"gapped, minutes not all read":      {gapped(sparse(2), partlyRead), CheckSeriesDataMissing},
+		"guarded, every window sparse":      {guarded(sparse(2), sparse(1)), CheckSeriesSparse},
+		"guarded, one window incomplete":    {guarded(sparse(2), incomplete), CheckWindowUndecided},
+	} {
+		check, under, _ := checkOf(tc.row, ScheduleOnTime)
+		if check != tc.want || !under {
+			t.Errorf("%s: check = %s (under %v), want %s", name, check, under, tc.want)
+		}
+	}
+	if answers := checkAnswers[CheckSeriesSparse]; answers.Owner != OwnerData || answers.Owner.actionRequired() {
+		t.Errorf("SERIES_SPARSE is owned by %s, want the data owner and no action item for this deployment", answers.Owner)
+	}
+}
+
+// A window short only at minutes the strategy was outside its active hours
+// is under no line, as a round outside its hours is, whichever window line
+// the row reached: its own reason's counts, a guard it is held under, or the
+// configuration's line a guard's stored CONFIG_DRIFT files it under. A hole
+// at another minute, a hole not named, or a short window not named, and the
+// row keeps its line.
+func TestAWindowShortOnlyOutsideActiveHoursIsUnderNoLine(t *testing.T) {
+	window := func(by WindowHoleCounts, verdict WindowVerdict, reasons ...string) WindowRow {
+		row := WindowRow{Verdict: verdict, HolesBy: by,
+			MissingTotal: by.AnsweredWithoutSeries + by.AnsweredEmpty + by.InputIncomplete + by.PrimaryUnrecorded + by.NotInMemory}
+		for _, reason := range reasons {
+			row.Holes = append(row.Holes, WindowHole{Reason: reason})
+		}
+		return row
+	}
+	off := contract.ReasonEffectiveTimeInactive
+	answered := func(reasons ...string) WindowRow {
+		return window(WindowHoleCounts{AnsweredWithoutSeries: uint32(len(reasons))}, VerdictDataAbsentWhenQueried, reasons...)
+	}
+	incomplete := func(reasons ...string) WindowRow {
+		return window(WindowHoleCounts{InputIncomplete: uint32(len(reasons))}, VerdictInputIncomplete, reasons...)
+	}
+	coverage := func(guarded uint32, windows ...WindowRow) *HistoryCoverage {
+		return &HistoryCoverage{Levels: 4, Short: uint32(len(windows)), WorstValid: 3, WorstRequired: 5, ShortRounds: 9, Guarded: guarded, Windows: windows}
+	}
+	drift := func(windows ...WindowRow) Anomaly {
+		return Anomaly{Kind: KindDegradedRun, ReasonCode: "COMPLETED_WITH_UNAVAILABLE", CauseReason: "CONFIG_DRIFT", Coverage: coverage(uint32(len(windows)), windows...)}
+	}
+	gapped := func(windows ...WindowRow) Anomaly {
+		return Anomaly{Kind: KindDegradedRun, CauseReason: "HISTORY_GAPPED", Coverage: coverage(0, windows...)}
+	}
+	guarded := func(windows ...WindowRow) Anomaly {
+		return Anomaly{Kind: KindDegradedRun, ReasonCode: "COMPLETED_WITH_UNAVAILABLE", Cause: "GAP_GUARD_WARMING", CauseReason: "GAP_GUARD_WARMING",
+			Coverage: coverage(uint32(len(windows)), windows...)}
+	}
+	uncounted := func(windows ...WindowRow) Anomaly {
+		row := drift(windows...)
+		row.Coverage.Levels = 0
+		return row
+	}
+	for name, tc := range map[string]struct {
+		outside, kept Anomaly
+		line          Check
+	}{
+		"SERIES_SPARSE: a guard's CONFIG_DRIFT, the series answered without": {
+			drift(answered(off, off), answered(off)), drift(answered(off, "LEVEL_OUTCOME_UNKNOWN"), answered(off)), CheckSeriesSparse},
+		"SERIES_DATA_MISSING: gapped, a window incomplete": {
+			gapped(answered(off, off), incomplete(off)), gapped(answered(off, off), incomplete("")), CheckSeriesDataMissing},
+		"WINDOW_UNDECIDED: held under a gap guard": {
+			guarded(incomplete(off, off), incomplete(off)), guarded(incomplete(off, off), incomplete("FULL_COMPLETED")), CheckWindowUndecided},
+		"CONFIG_UNRESOLVED: a guard's CONFIG_DRIFT without counts": {
+			uncounted(answered(off), answered(off)), uncounted(answered(off), answered("")), CheckConfigUnresolved},
+	} {
+		if check, under, _ := checkOf(tc.kept, ScheduleOnTime); check != tc.line || !under {
+			t.Fatalf("%s: with an in-hours hole the row is under %s (%v), want %s", name, check, under, tc.line)
+		}
+		if check, under, _ := checkOf(tc.outside, ScheduleOnTime); check != "" || under {
+			t.Fatalf("%s: outside its active hours the row is under %s, want no line", name, check)
+		}
+	}
+	unnamedHole := drift(answered(off, off), answered(off))
+	unnamedHole.Coverage.Windows[0].MissingTotal++
+	unnamedWindow := drift(answered(off, off), answered(off))
+	unnamedWindow.Coverage.Short++
+	for name, row := range map[string]Anomaly{"a hole not named": unnamedHole, "a short window not named": unnamedWindow} {
+		if check, under, _ := checkOf(row, ScheduleOnTime); check == "" || !under {
+			t.Fatalf("%s: the row left its line on what it did not name", name)
+		}
+	}
+}
+
+// A Plan detected more often than it aggregates, over a table whose storage
+// answered on its own grid, completes every round with its primary input
+// unavailable for that reason. The line is the strategy's: the definition
+// cannot be evaluated as written here, and its owner removes the step.
+func TestAStepTheStorageCannotReadIsTheStrategysUnevaluablePlan(t *testing.T) {
+	row := Anomaly{Kind: KindDegradedRun, ReasonCode: "COMPLETED_WITH_UNAVAILABLE", Cause: "PRIMARY_INPUT_UNAVAILABLE",
+		CauseReason: "DETECT_INTERVAL_STORAGE_NOT_SLIDING"}
+	check, under, unclassified := checkOf(row, ScheduleOnTime)
+	if check != CheckPlanUnevaluable || !under || unclassified {
+		t.Fatalf("check = %s (under %v, unclassified %v), want %s", check, under, unclassified, CheckPlanUnevaluable)
+	}
+	if answers := checkAnswers[CheckPlanUnevaluable]; answers.Owner != OwnerStrategy {
+		t.Fatalf("%s is owned by %s, want the strategy", CheckPlanUnevaluable, answers.Owner)
+	}
+	if pair := checkWords[CheckPlanUnevaluable]; pair.Action != ActionStrategyEdit {
+		t.Fatalf("%s asks %s, want the strategy's owner to change it", CheckPlanUnevaluable, pair.Action)
 	}
 }

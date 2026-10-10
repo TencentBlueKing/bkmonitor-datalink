@@ -8,11 +8,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -25,6 +27,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/evidenceroute"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/k8sread"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obevidence"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -52,6 +56,53 @@ type cliControlBinding struct {
 	// PublicWindows serves /api/windows on a restricted public surface
 	// (fleet.NewPublicWindowsHandler). Nil leaves the route unserved there.
 	PublicWindows http.Handler
+	// RedisFailures, when set, hears an unanswered call of the CLI's own
+	// Redis clients -- evidence, auth -- by its reason, with the error's
+	// bounded text where the answer cannot carry it (auth).
+	RedisFailures func(client, reason, detail string)
+	// RedisDialRetries, when set, hears each second dial of the CLI's own
+	// Redis clients -- evidence, auth -- by why the first dial failed.
+	RedisDialRetries func(client, reason string)
+	// Lookback is this process's late-data lookback, nil when it does not
+	// run one, and LookbackStanding why; read by lookback.get.
+	Lookback         *lookback.Engine
+	LookbackStanding lookbackStanding
+	ReadHolds        *productionReadHolds
+	// Maintenance is the effective-time maintenance, bound once the loop is
+	// built; read by maintenance.get.
+	Maintenance *maintenanceSource
+}
+
+// cliRedisFailures counts an unanswered call of a CLI client by its reason,
+// and for the authorization store, whose public answer carries the reason
+// only, also logs the error's bounded text as a limited auth_store line.
+func cliRedisFailures(recorder *metric.Recorder, observer observability.Observer) func(client, reason, detail string) {
+	return func(client, reason, detail string) {
+		recorder.ObserveDiagnosticRedisFailure(client, reason)
+		if client != "auth" {
+			return
+		}
+		observeRuntime(context.Background(), observer, observability.Observation{
+			Component: observability.ComponentRuntime, Stage: observability.StageAuthStore,
+			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			ReasonCode: observability.ReasonContractRetryable, Err: fmt.Errorf("authorization store %s: %s", reason, detail),
+		})
+	}
+}
+
+// cliRedisOptions are one CLI Redis client's options: a small pool that
+// connects on first use, whose dials are tried a second time when the first
+// fails (withDialRetry), counted under the client's name.
+func cliRedisOptions(connection config.RedisConnectionConfig, name string, retries func(client, reason string)) *redis.UniversalOptions {
+	options := observationRedisOptions(connection)
+	options.PoolSize = 2
+	options.MinIdleConns = 0
+	withDialRetry(options, goRedisDial(options), func(reason string) {
+		if retries != nil {
+			retries(name, reason)
+		}
+	})
+	return options
 }
 
 // cliLifecycleOperation reads every replica's start and stop record, which
@@ -94,6 +145,13 @@ func cliRuntimeOperation(facts func() *observability.RuntimeConfigFacts, setting
 // public surface is publicAPI's. A CLI that fails to come up leaves the
 // surface open, since restricting it would leave no way in.
 func buildPhaseTwoCLI(cfg config.Config, native http.Handler, catalog *controlplane.RedisCatalogRepository, progressStore *progress.Store, settings *platformsettings.Cache, facts func() *observability.RuntimeConfigFacts, control cliControlBinding) (handler http.Handler, closeCLI func() error, restricted bool) {
+	failed := func(client string) func(string) {
+		return func(reason string) {
+			if control.RedisFailures != nil {
+				control.RedisFailures(client, reason, "")
+			}
+		}
+	}
 	var clients []redis.UniversalClient
 	var closeQuery func()
 	closeClients := func() error {
@@ -106,29 +164,34 @@ func buildPhaseTwoCLI(cfg config.Config, native http.Handler, catalog *controlpl
 		}
 		return errors.Join(errs...)
 	}
-	newClient := func(connection config.RedisConnectionConfig) redis.UniversalClient {
-		options := observationRedisOptions(connection)
-		options.PoolSize = 2
-		options.MinIdleConns = 0
-		client := redis.NewUniversalClient(options)
-		clients = append(clients, client)
-		return client
+	clientFor := func(name string) func(config.RedisConnectionConfig) redis.UniversalClient {
+		return func(connection config.RedisConnectionConfig) redis.UniversalClient {
+			client := redis.NewUniversalClient(cliRedisOptions(connection, name, control.RedisDialRetries))
+			clients = append(clients, client)
+			return client
+		}
 	}
+	newClient := clientFor("evidence")
 	if !cfg.CLI.Enabled {
 		// No channel, but the public diagnosis still carries the deployment
 		// section, read through the same operations the CLI's would use. So
 		// a process with the CLI off builds the evidence clients too; they
 		// connect on first use, a first-page diagnosis, and hold nothing
 		// before it.
-		store, workload, _ := deploymentReads(cfg, catalog, progressStore, newClient)
+		store, workload, _ := deploymentReads(cfg, catalog, progressStore, newClient, failed("evidence"))
 		return obchannel.WithDeploymentSection(native, append(store, workload...)), closeClients, false
 	}
 	// Authentication has its own pool, so an evidence read cannot occupy it.
-	manager, err := cliauth.New(cliauth.Options{Redis: newClient(cfg.RuntimeStoreRedis()), Prefix: cfg.Redis.StatePrefix, EnvironmentID: cfg.CLI.EnvironmentID, EnvironmentName: cfg.CLI.EnvironmentName, PublicBaseURL: cfg.CLI.PublicBaseURL, AdminKey: cfg.CLI.AdminKey})
+	manager, err := cliauth.New(cliauth.Options{Redis: clientFor("auth")(cfg.RuntimeStoreRedis()), Prefix: cfg.Redis.StatePrefix, EnvironmentID: cfg.CLI.EnvironmentID, EnvironmentName: cfg.CLI.EnvironmentName, PublicBaseURL: cfg.CLI.PublicBaseURL, AdminKey: cfg.CLI.AdminKey,
+		OnStoreFailure: func(reason, detail string) {
+			if control.RedisFailures != nil {
+				control.RedisFailures("auth", reason, detail)
+			}
+		}})
 	if err != nil {
 		return composeCLI(native, nil, nil), closeClients, false
 	}
-	store, workload, diagnosticRuntime := deploymentReads(cfg, catalog, progressStore, newClient)
+	store, workload, diagnosticRuntime := deploymentReads(cfg, catalog, progressStore, newClient, failed("evidence"))
 	// Route discovery is evidence I/O too. Reuse the diagnostic runtime pool,
 	// never the production ownership connection or its startup readiness path.
 	routingStore, err := ownership.NewRedisStoreWithClient(diagnosticRuntime, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "ownership"))
@@ -137,6 +200,8 @@ func buildPhaseTwoCLI(cfg config.Config, native http.Handler, catalog *controlpl
 	}
 	ops := append(obchannel.NativeOperations(native), store...)
 	ops = append(ops, cliRuntimeOperation(facts, settings))
+	ops = append(ops, cliLookbackOperation(control.Lookback, control.LookbackStanding, control.ReadHolds))
+	ops = append(ops, cliMaintenanceOperation(control.Maintenance))
 	ops = append(ops, cliLifecycleOperation(diagnosticRuntime, lifecycleRecordKey(cfg)))
 	ops = append(ops, workload...)
 	ops = append(ops, obchannel.MetricsOperations(control.Metrics)...)
@@ -152,7 +217,7 @@ func buildPhaseTwoCLI(cfg config.Config, native http.Handler, catalog *controlpl
 		&http.Client{Transport: queryTransport, Timeout: obchannel.RequestTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }})
 	ops = append(ops, obchannel.SlotOperations(obchannel.SlotOptions{Resolve: newCLISlotResolver(cfg, diagnosticRuntime),
-		Evidence: newCLISlotEvidenceReader(cfg, diagnosticRuntime), UQ: queryClient})...)
+		Evidence: newCLISlotEvidenceReader(cfg, diagnosticRuntime), UQ: queryClient, LatestPublication: cliLatestPublication(catalog)})...)
 	var router *evidenceroute.Router
 	// The diagnosis composes the reads above, so it is registered last.
 	ops = append(ops, obchannel.DiagnoseOperation(native, ops))
@@ -187,13 +252,13 @@ func buildPhaseTwoCLI(cfg config.Config, native http.Handler, catalog *controlpl
 // same ones. It also returns the diagnostic runtime pool, which the CLI's
 // route discovery reuses.
 func deploymentReads(cfg config.Config, catalog *controlplane.RedisCatalogRepository, progressStore *progress.Store,
-	newClient func(config.RedisConnectionConfig) redis.UniversalClient) (store, workload []obchannel.Operation, diagnosticRuntime redis.UniversalClient) {
+	newClient func(config.RedisConnectionConfig) redis.UniversalClient, failed func(reason string)) (store, workload []obchannel.Operation, diagnosticRuntime redis.UniversalClient) {
 	bind := func(role string, connection config.RedisConnectionConfig, prefix string) obevidence.RedisBinding {
 		return obevidence.RedisBinding{Client: newClient(connection), Location: obevidence.Location{Role: role, Address: redisAddress(connection), Mode: connection.Mode, DB: connection.DB, Prefix: prefix}}
 	}
 	options := obevidence.Options{Catalog: catalog, Progress: progressStore}
 	options.SourceStrategy = bind("strategy_cache", cfg.StrategySourceRedis(), cfg.PhaseTwo.Control.StrategyCachePrefix)
-	options.CMDBCache = bind("cmdb_cache", cfg.CMDBCacheRedis(), "")
+	options.CMDBCache = bind("cmdb_cache", cfg.CMDBCacheRedis(), cfg.PlatformKeyPrefix())
 	// Catalog and progress share a diagnostic runtime pool, not detector I/O.
 	runtimeConnection := cfg.RuntimeStoreRedis()
 	diagnosticRuntime = newClient(runtimeConnection)
@@ -212,7 +277,41 @@ func deploymentReads(cfg config.Config, catalog *controlplane.RedisCatalogReposi
 	// The owner chain starts at this Pod: its hostname is its name, whatever
 	// the worker id is configured to.
 	podName, _ := os.Hostname()
-	return obchannel.StoreOperations(obevidence.New(options)), obchannel.K8sOperations(k8sread.New(k8sread.Options{PodName: podName})), diagnosticRuntime
+	// Every binding reports an unanswered read by its reason.
+	for _, binding := range []*obevidence.RedisBinding{&options.SourceStrategy, &options.CMDBCache, &options.Published,
+		&options.QueryProgress, &options.QueryCooldown, &options.TargetGroup, &options.DynamicConfig} {
+		binding.OnFailure = failed
+	}
+	return obchannel.StoreOperations(obevidence.New(options)),
+		obchannel.K8sOperations(k8sread.New(k8sread.Options{PodName: podName}), workloadDependencies(cfg), config.ObservedNamespaces),
+		diagnosticRuntime
+}
+
+// workloadDependencies is every address this process connects to, taken
+// from the same endpoint list the first screen shows, one entry per host:
+// the workload read derives a namespace from each and connects to none of
+// them. A sentinel deployment's address is its master name followed by the
+// sentinels; each sentinel is an entry. An endpoint the configuration does
+// not name adds nothing.
+func workloadDependencies(cfg config.Config) []k8sread.Dependency {
+	var dependencies []k8sread.Dependency
+	// The same endpoints the bundle resolves, the compatibility output's
+	// service Redis included: every address this process connects to.
+	for _, endpoint := range resolveEndpoints(cfg, endpointSharing{compatOutputPresent: true}) {
+		if !endpoint.Configured || endpoint.Address == "" {
+			continue
+		}
+		address := endpoint.Address
+		if at := strings.Index(address, "@"); endpoint.Kind == "redis" && at >= 0 {
+			address = address[at+1:]
+		}
+		for _, host := range strings.Split(address, ",") {
+			if host = strings.TrimSpace(host); host != "" {
+				dependencies = append(dependencies, k8sread.Dependency{Name: endpoint.Role, Address: host})
+			}
+		}
+	}
+	return dependencies
 }
 
 // publicSurfaceStanding is what the replica says about its public surface

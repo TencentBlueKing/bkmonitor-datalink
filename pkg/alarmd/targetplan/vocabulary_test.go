@@ -22,8 +22,8 @@ import (
 // sets: no consumer reads these lists in order, so reordering one changes
 // nothing and must not fail here.
 func TestTheClosedWordsArePinnedByTheirSpelling(t *testing.T) {
-	if got, want := sorted(targetplan.SelectorKindStatic, targetplan.SelectorKindGroup, targetplan.SelectorKindTopology),
-		sorted("static", "dynamic_group", "dynamic_topology"); !reflect.DeepEqual(got, want) {
+	if got, want := sorted(targetplan.SelectorKindStatic, targetplan.SelectorKindGroup, targetplan.SelectorKindTopology, targetplan.SelectorKindExclude),
+		sorted("static", "dynamic_group", "dynamic_topology", "exclude"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("selector kinds = %v, want %v", got, want)
 	}
 	states := make([]string, 0, len(targetplan.SelectorStates))
@@ -43,7 +43,8 @@ func TestTheClosedWordsArePinnedByTheirSpelling(t *testing.T) {
 	if got, want := sorted(targetplan.SelectorReasons...), sorted(
 		"none", "key_missing", "json_invalid", "structure_invalid", "model_mismatch", "read_failed",
 		"stale", "index_unavailable", "node_missing", "node_in_other_business", "members_dropped", "source_unwired",
-		"model_representation_unresolved",
+		"model_representation_unresolved", "emptied_held", "tenant_mismatch", "address_unresolved", "address_ambiguous",
+		"index_incomplete", "excluded_absent",
 	); !reflect.DeepEqual(got, want) {
 		t.Fatalf("selector reasons = %v, want %v", got, want)
 	}

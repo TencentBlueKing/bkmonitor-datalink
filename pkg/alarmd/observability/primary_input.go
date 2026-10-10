@@ -23,6 +23,9 @@ package observability
 type PrimaryInputFacts struct {
 	Completeness string `json:"completeness"`
 	DataState    string `json:"data_state,omitempty"`
+	// EmptiedByTarget says an EMPTY primary returned data the monitoring
+	// target selected none of: the data was there, outside the target.
+	EmptiedByTarget bool `json:"emptied_by_target,omitempty"`
 }
 
 // PrimaryCompletenesses and PrimaryDataStates are the closed lists a
@@ -47,6 +50,9 @@ func normalizePrimaryInputFacts(facts *PrimaryInputFacts) *PrimaryInputFacts {
 		return nil
 	}
 	copied := *facts
+	// Emptied by the target is a claim about an empty primary and nothing
+	// else.
+	copied.EmptiedByTarget = copied.EmptiedByTarget && copied.DataState == "EMPTY"
 	return &copied
 }
 

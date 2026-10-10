@@ -97,6 +97,28 @@ func (bundle *phaseTwoWorkerBundle) noteActivationLocked(outcome *phaseTwoActiva
 	state.lastFailure = text
 }
 
+// activationHeaderFleetFacts is a missing activation header while this
+// replica holds the control leadership and has not written the header back.
+// Nil on every other replica: only the leader looks, and a replica that lost
+// the leadership keeps the standing it last had, which is not the
+// deployment's any more.
+func (bundle *phaseTwoWorkerBundle) activationHeaderFleetFacts() *fleet.ActivationHeaderFacts {
+	bundle.mu.RLock()
+	leader := bundle.controlLeader
+	bundle.mu.RUnlock()
+	if !leader || bundle.dependencies.ActivationHeader == nil {
+		return nil
+	}
+	reading := bundle.dependencies.ActivationHeader()
+	if !reading.Missing {
+		return nil
+	}
+	return &fleet.ActivationHeaderFacts{
+		MissingSeconds: bundle.dependencies.Now().Sub(reading.MissingSince).Seconds(),
+		LastRebuild:    string(reading.LastRebuild),
+	}
+}
+
 // activationFleetFacts is what the fleet snapshot publishes. Nil before any
 // attempt, which every replica but the leader is. Behind is the one fact the
 // verdict reads once it has held past the bound: the fleet is executing a

@@ -335,6 +335,12 @@ func (f *TargetFlow) Observe(ctx context.Context, o Observation) {
 	if f == nil {
 		return
 	}
+	// A supplement is not a run of the object: it came with no flow, and its
+	// records filed under the supplemented Slot read as runs with no run id
+	// that decided "incomplete".
+	if o.Operation == OperationSupplement {
+		return
+	}
 	if o.Stage == StageStatePreflight || o.Stage == StageStateApplied {
 		if ctx != nil {
 			if v, ok := ctx.Value(targetFlowContextKey{}).(*targetFlowContext); ok && v.flow == f && (o.Trace.QueryGroupKey == "" || o.Trace.QueryGroupKey == v.queryGroup) {

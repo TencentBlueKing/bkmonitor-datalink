@@ -30,6 +30,10 @@ const (
 	// names cannot be routed. It is a statement about the data, not about
 	// whether the query ran.
 	spaceTableIDFieldIsNotExists = "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"
+	// headerSkipSpace asks the provider to route without a space. The
+	// provider reads only whether it is non-empty.
+	headerSkipSpace = "X-Bk-Scope-Skip-Space"
+	skipSpaceValue  = "alarmd"
 )
 
 // dataExistenceStatusCodes are the status codes that describe the data rather
@@ -138,7 +142,9 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 		ctx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 	}
-	return client.execute(callerCtx, ctx, queryIdentity{Spec: attempt.Spec, AttemptNo: attempt.AttemptNo}, sink, nil)
+	return client.execute(callerCtx, ctx, queryIdentity{Spec: attempt.Spec, AttemptNo: attempt.AttemptNo,
+		Budget: queryBudget{StartUnixMilli: attempt.BudgetStartUnixMilli, ReadyAtUnixMilli: attempt.ReadyAtUnixMilli,
+			DeadlineUnixMilli: attempt.DeadlineUnixMilli}}, sink, nil)
 }
 
 // queryIdentity carries provider-local accounting only. Diagnostic reads do
@@ -146,6 +152,39 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 type queryIdentity struct {
 	Spec      execution.PhysicalQuerySpec
 	AttemptNo uint32
+	// Budget is the Slot query's, which a failure is timed against; zero
+	// for a read that is not a Slot's, which then reports no timing.
+	Budget queryBudget
+}
+
+// queryBudget is a Slot query's budget as its attempt carries it: where it
+// began, when the window could first be read, and the deadline it ends at.
+type queryBudget struct{ StartUnixMilli, ReadyAtUnixMilli, DeadlineUnixMilli int64 }
+
+// scopeHeaders are the headers that say whose data a query reads: the
+// tenant always, and then either the strategy's space or, for a global
+// business Plan, the request to skip the space.
+//
+// Never both. The provider still applies the filters a space registers for
+// a table whenever a space is named, skipped or not - a shared table's
+// bk_biz_id filter among them - so a global query that also named its
+// space would read the global business's own data and nothing else.
+func scopeHeaders(facts execution.QueryPlanFacts) map[string]string {
+	if facts.GlobalBusiness {
+		return map[string]string{headerTenant: facts.TenantID, headerSkipSpace: skipSpaceValue}
+	}
+	return map[string]string{headerTenant: facts.TenantID, headerSpace: facts.SpaceScope}
+}
+
+// bodySpace is the space_uid the structured request body carries. The
+// provider takes the body's space whenever the header names none, so a
+// global business Plan leaves it empty as well as the header; the body's
+// space alone would scope the query exactly as the header would.
+func bodySpace(facts execution.QueryPlanFacts) string {
+	if facts.GlobalBusiness {
+		return ""
+	}
+	return facts.SpaceScope
 }
 
 func buildWireRequest(spec execution.PhysicalQuerySpec) (string, []byte, error) {
@@ -186,8 +225,9 @@ func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdent
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(headerQuerySource, client.querySource)
-	request.Header.Set(headerTenant, attempt.Spec.PlanFacts.TenantID)
-	request.Header.Set(headerSpace, attempt.Spec.PlanFacts.SpaceScope)
+	for name, value := range scopeHeaders(attempt.Spec.PlanFacts) {
+		request.Header.Set(name, value)
+	}
 	started := client.now()
 	response, err := client.httpClient.Do(request)
 	if err != nil {
@@ -200,34 +240,115 @@ func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdent
 		}
 		completion := client.unavailableCompletion(attempt, reason, execution.TransportRouteDetail(classifyTransportFailure(err)))
 		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
+		completion.RouteFacts.Attempts[0].Timing = attemptTiming(attempt.Budget, started, client.now(), 0)
 		return completion, nil
 	}
+	answered := client.now()
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		// The body is drained and discarded on purpose: UQ error bodies can echo
 		// the request (table ids, conditions, dimension values) and must not be
 		// parsed for business state or copied into logs. The status code alone
-		// is the bounded diagnostic detail.
-		discarded, _ := io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		// is the bounded diagnostic detail. A diagnostic read -- an operator
+		// asking why the provider refused this query -- keeps the body's start,
+		// sanitized, for its own answer alone.
 		if scanned != nil {
-			scanned.Bytes = uint64(discarded)
+			body, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyRead))
+			scanned.Bytes, scanned.errorExcerpt = uint64(len(body)), providerErrorExcerpt(body)
+		} else {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, errorBodyRead))
 		}
 		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable), execution.HTTPStatusRouteDetail(response.StatusCode))
 		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
+		completion.RouteFacts.Attempts[0].Timing = attemptTiming(attempt.Budget, started, client.now(), 0)
 		return completion, nil
 	}
-	counted := &countingReader{reader: response.Body}
+	counted := &countingReader{reader: response.Body, now: client.now}
 	completion, err := client.decodeQuery(ctx, &boundedReader{reader: counted, maximum: client.limits.MaxBodyBytes}, attempt, sink, scanned)
 	if scanned != nil {
 		scanned.Bytes = counted.bytes
 		scanned.Complete = err == nil
 	}
 	if err != nil {
-		return execution.ProviderCompletion{}, err
+		return execution.ProviderCompletion{}, client.bodyFailure(callerCtx, ctx, attempt, err, counted, started, answered)
 	}
 	completion.Stats.Bytes = counted.bytes
 	completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
 	return completion, nil
+}
+
+// bodyFailure names a query whose answer began and whose body did not
+// arrive in full: the deadline passed while it was being read or delivered,
+// or the connection under it broke. Unnamed, it read as an unclassified
+// internal error with no detail, the same as a defect of alarmd's own,
+// while the same timeout before the answer began was named and timed.
+//
+// A deadline is named for whoever held the time when it passed. Inside a
+// read begun before it, alarmd was waiting on the backend: the backend's
+// timeout, body=timeout. Between reads, or in a read begun after it - which
+// only finds out - alarmd was still decoding or delivering what had arrived:
+// delivery=timeout, alarmd's own, never the backend's. That one is category
+// other, whose code the failure grammar publishes as OTHER whatever it is
+// given, so it is given OTHER here: the detail is what names it.
+//
+// It stays an error. Series already handed on were delivered, and a
+// completion cannot describe a body that stopped partway. A failure that
+// names itself - a response budget, a sink's own - keeps its name, and a
+// caller that gave up keeps its error, as it does before the answer.
+func (client *Client) bodyFailure(callerCtx, ctx context.Context, attempt queryIdentity, err error, body *countingReader, started, answered time.Time) error {
+	var declared interface{ QueryFailure() (string, string) }
+	if callerCtx.Err() != nil || errors.As(err, &declared) {
+		return err
+	}
+	deadline, bounded := ctx.Deadline()
+	passed := func(at time.Time) bool { return bounded && !at.Before(deadline) }
+	broken := body.failed != nil && errors.Is(err, body.failed)
+	category, code := "provider_transport", contract.ReasonQueryTimeout
+	var detail string
+	switch {
+	case broken && passed(body.failedAt):
+		detail = execution.BodyRouteDetail(execution.TransportFailureTimeout)
+		if passed(body.failedBegan) {
+			category, code, detail = "other", "OTHER", execution.DeliveryTimeoutRouteDetail
+		}
+	case broken:
+		class := classifyTransportFailure(body.failed)
+		if class != execution.TransportFailureTimeout {
+			code = contract.ReasonQueryUnavailable
+		}
+		detail = execution.BodyRouteDetail(class)
+	case errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded):
+		category, code, detail = "other", "OTHER", execution.DeliveryTimeoutRouteDetail
+	default:
+		return err
+	}
+	failed := client.now()
+	// What was not spent waiting - for the answer to begin, or inside a read
+	// of its body - was alarmd's own decoding and delivery.
+	local := failed.Sub(answered) - body.waited
+	return &bodyFailureError{err: err, category: category, code: code, detail: detail,
+		timing: attemptTiming(attempt.Budget, started, failed, local)}
+}
+
+// attemptTiming splits a failed Slot query's budget where its window could
+// be read and where its request went out (see execution.AttemptTiming). The
+// request's start is taken to the millisecond before splitting, so the
+// three parts add up to the budget exactly; elapsed is on the monotonic
+// clock, and local is the part of it alarmd spent on the answer itself.
+// Nil for a read that is not a Slot's.
+func attemptTiming(budget queryBudget, started, failed time.Time, local time.Duration) *execution.AttemptTiming {
+	if budget.StartUnixMilli <= 0 || budget.DeadlineUnixMilli <= 0 {
+		return nil
+	}
+	readable := max(budget.StartUnixMilli, budget.ReadyAtUnixMilli)
+	sent := started.UnixMilli()
+	return &execution.AttemptTiming{
+		SettleMillis:    readable - budget.StartUnixMilli,
+		StartLateMillis: sent - readable,
+		BudgetMillis:    budget.DeadlineUnixMilli - sent,
+		ElapsedMillis:   failed.Sub(started).Milliseconds(),
+		LocalMillis:     local.Milliseconds(),
+	}
 }
 
 func (client *Client) unavailableCompletion(attempt queryIdentity, reason execution.ReasonCode, detail string) execution.ProviderCompletion {
@@ -301,6 +422,16 @@ func providerResultRef(attempt queryIdentity) execution.ProviderResultRef {
 type countingReader struct {
 	reader io.Reader
 	bytes  uint64
+
+	// The reads are timed: the time spent inside them is the time spent
+	// waiting on the backend for the body. failed is the first error a read
+	// returned other than the body's end, and failedBegan and failedAt are
+	// when that read began and returned.
+	now         func() time.Time
+	waited      time.Duration
+	failed      error
+	failedBegan time.Time
+	failedAt    time.Time
 }
 
 type boundedReader struct {
@@ -327,8 +458,14 @@ func (reader *boundedReader) Read(buffer []byte) (int, error) {
 }
 
 func (reader *countingReader) Read(buffer []byte) (int, error) {
+	began := reader.now()
 	count, err := reader.reader.Read(buffer)
+	returned := reader.now()
+	reader.waited += returned.Sub(began)
 	reader.bytes += uint64(count)
+	if err != nil && err != io.EOF && reader.failed == nil {
+		reader.failed, reader.failedBegan, reader.failedAt = err, began, returned
+	}
 	return count, err
 }
 
@@ -350,31 +487,23 @@ func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
 		if err != nil {
 			return request{}, err
 		}
-		var sourceConditions *conditions
-		if source.SourceConditions != nil {
-			mapped, err := mapConditions(*source.SourceConditions)
-			if err != nil {
-				return request{}, err
-			}
-			sourceConditions = &mapped
-		}
 		offsetForward, err := parseQueryBool("offset_forward", source.OffsetForward)
 		if err != nil {
 			return request{}, err
 		}
 		queries = append(queries, queryClause{
-			FieldSemantics: source.FieldSemantics, DataSource: source.DataSource, TableID: source.TableID, FieldName: source.FieldName,
+			DataSource: source.DataSource, TableID: source.TableID, FieldName: source.FieldName,
 			Driver: source.Driver, TimeField: source.TimeField, IsRegexp: source.IsRegexp,
 			ReferenceName: source.ReferenceName, Functions: functions, TimeAggregation: timeAggregation,
 			Dimensions: append([]string(nil), source.Dimensions...),
-			Conditions: queryConditions, SourceConditions: sourceConditions,
-			Offset: source.Offset, OffsetForward: offsetForward,
+			Conditions: queryConditions,
+			Offset:     source.Offset, OffsetForward: offsetForward,
 			KeepColumns: append([]string(nil), source.KeepColumns...), QueryString: source.QueryString,
 		})
 	}
 	return request{TSDBMap: spec.PlanFacts.TSDBMap, QueryList: queries, MetricMerge: spec.PlanFacts.MetricMerge,
 		StartTime: strconv.FormatInt(spec.ProviderRange.Start, 10), EndTime: strconv.FormatInt(spec.ProviderRange.End, 10),
-		Step: durationString(spec.PlanFacts.StepMillis), SpaceUID: spec.PlanFacts.SpaceScope,
+		Step: durationString(spec.PlanFacts.StepMillis), SpaceUID: bodySpace(spec.PlanFacts),
 		DownSampleRange: string(spec.PlanFacts.DownSampleRange), Timezone: spec.PlanFacts.Timezone,
 		NotTimeAlign: spec.PlanFacts.NotTimeAlign}, nil
 }
@@ -514,6 +643,9 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 	var isPartial *bool
 	var resultTableIDs []string
 	var totalSeries, totalRecords, nullIdentityFields uint64
+	// offGrid is a series of an unaligned query that came back bucketed on
+	// some grid other than its request's own (errOffRequestGrid).
+	offGrid := false
 	receivedAt := client.now().Unix()
 	for decoder.More() {
 		if err := ctx.Err(); err != nil {
@@ -558,6 +690,10 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 				}
 				totalRecords += uint64(len(series.Values))
 				batch, nullFields, err := normalizeSeries(attempt.Spec, ref, series, receivedAt)
+				if errors.Is(err, errOffRequestGrid) {
+					offGrid = true
+					continue
+				}
 				if err != nil {
 					return execution.ProviderCompletion{}, err
 				}
@@ -628,7 +764,14 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 			// sink; the completion keeps their DataState and Delivery only so
 			// that delivery conservation holds. The consumer never receives them:
 			// every binding of an UNAVAILABLE completion is UNKNOWN.
-			unavailable := client.responseContractUnavailable(attempt, execution.ResponseStatusRouteDetail(status.Code),
+			// A table or field that does not route in the space is named for
+			// what it is: the strategy's data is not where it points, which no
+			// retry and no backend recovery changes.
+			reason := execution.ReasonCode(contract.ReasonQueryUnavailable)
+			if _, targetMissing := dataExistenceStatusCodes[status.Code]; targetMissing {
+				reason = execution.ReasonCode(contract.ReasonQueryTargetMissing)
+			}
+			unavailable := client.responseContractUnavailable(attempt, reason, execution.ResponseStatusRouteDetail(status.Code),
 				dataState, delivery, resultTableIDs, stats)
 			unavailable.RouteFacts.Status = &execution.ProviderStatusFact{Code: status.Code}
 			return unavailable, nil
@@ -646,9 +789,17 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 		passthroughDetail = execution.ResponseStatusRouteDetail(status.Code)
 		passthroughStatus = &execution.ProviderStatusFact{Code: status.Code, Allowed: true}
 	}
+	if offGrid {
+		// No point of it is used: a bucket starting anywhere but where the
+		// window starts covers part of the window and part of another, and
+		// reads as a detection at the wrong time. The strategy's step cannot
+		// be read from this table's storage.
+		return client.responseContractUnavailable(attempt, execution.ReasonCode(contract.ReasonDetectIntervalStorageNotSliding),
+			execution.ResponseRouteDetail(execution.ResponseFailureOffRequestGrid), dataState, delivery, resultTableIDs, stats), nil
+	}
 	if isPartial == nil {
-		return client.responseContractUnavailable(attempt, execution.ResponseRouteDetail(execution.ResponseFailureIsPartialMissing),
-			dataState, delivery, resultTableIDs, stats), nil
+		return client.responseContractUnavailable(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable),
+			execution.ResponseRouteDetail(execution.ResponseFailureIsPartialMissing), dataState, delivery, resultTableIDs, stats), nil
 	}
 	completeness := execution.CompletenessFull
 	if *isPartial || status != nil && status.Code == queryTSPartial {
@@ -700,13 +851,14 @@ func usableDespiteStatus(code string, delivery execution.SeriesDelivery) bool {
 // series already streamed to the sink so the completion conserves them.
 func (client *Client) responseContractUnavailable(
 	attempt queryIdentity,
+	reason execution.ReasonCode,
 	detail string,
 	dataState execution.DataState,
 	delivery execution.SeriesDelivery,
 	resultTableIDs []string,
 	stats execution.ProviderStats,
 ) execution.ProviderCompletion {
-	completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable), detail)
+	completion := client.unavailableCompletion(attempt, reason, detail)
 	completion.DataState = dataState
 	completion.Delivery = delivery
 	completion.RouteFacts.ResultTableIDs = append([]string(nil), resultTableIDs...)
@@ -784,10 +936,14 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 			}
 		}
 	}
-	dimensionDigest, err := contract.DeriveDimensionIdentityDigestV2(spec.PlanFacts.TenantID, spec.PlanFacts.BusinessID, identityFields)
+	// The identity keeps the canonical encoding of its fields: every record
+	// carries the same fields, and the series' delivery digest takes their
+	// encoding from here rather than making it again.
+	identity, err := contract.EncodeDimensionIdentityV2(spec.PlanFacts.TenantID, spec.PlanFacts.BusinessID, identityFields)
 	if err != nil {
 		return execution.ProviderSeriesBatch{}, 0, err
 	}
+	dimensionDigest := identity.Digest
 	records := make([]contract.CanonicalRecordV2, 0, len(source.Values))
 	lastTime := int64(-1)
 	for _, row := range source.Values {
@@ -809,6 +965,9 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 		if sourceTime < spec.AcceptedRange.Start || sourceTime >= spec.AcceptedRange.End {
 			continue
 		}
+		if spec.PlanFacts.NotTimeAlign && !onRequestGrid(spec, sourceTime) {
+			return execution.ProviderSeriesBatch{}, 0, errOffRequestGrid
+		}
 		recordID, err := contract.DeriveRecordIDV2(dimensionDigest, sourceTime)
 		if err != nil {
 			return execution.ProviderSeriesBatch{}, 0, err
@@ -820,7 +979,7 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 			Dimensions:        dimensions, ReceivedTime: receivedAt})
 	}
 	dataset := execution.NewDataset(records)
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-provider-series-delivery-v1", records)
+	digest, err := contract.DeriveSeriesRecordsDigestV2("alarmd-provider-series-delivery-v1", records, identity)
 	if err != nil {
 		return execution.ProviderSeriesBatch{}, 0, err
 	}
@@ -883,4 +1042,21 @@ func stripTableSuffix(value string) string {
 		}
 	}
 	return value[:index]
+}
+
+// errOffRequestGrid is a series of an unaligned query - a Plan detected more
+// often than it aggregates - with a point that is not where its request's
+// buckets are: the storage bucketed on its own grid, the aggregation
+// interval's from the epoch, whatever start it was asked for.
+var errOffRequestGrid = errors.New("alarmd access uq: unaligned query answered off its request's grid")
+
+// onRequestGrid says whether an unaligned query's point sits where its
+// request's buckets start: the accepted range's start plus a whole number of
+// data steps.
+func onRequestGrid(spec execution.PhysicalQuerySpec, sourceTime int64) bool {
+	step := spec.PlanFacts.StepMillis / 1000
+	if step <= 0 {
+		return true
+	}
+	return (sourceTime-spec.AcceptedRange.Start)%step == 0
 }

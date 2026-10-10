@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"maps"
 	"sort"
 	"time"
 )
@@ -102,25 +103,22 @@ func rowGapSkipped(anomaly Anomaly) bool {
 // of every column, one entry per period seen on either side, ordered by
 // period. Rows are counted once each: a column is a partition of the objects.
 func Cohorts(view *View, columns [][]Anomaly) []CohortView {
+	return cohortsOf(view.Schedule, cohortRowsOf(columns))
+}
+
+// cohortRowsOf is the rows' side of Cohorts by period: what one replica's
+// rows add (ReplicaPart) and what replicas' add up to (mergeCohortRows). A
+// map is made only once a row puts something in it, as Cohorts reads them.
+func cohortRowsOf(columns [][]Anomaly) map[int64]*CohortView {
 	byInterval := map[int64]*CohortView{}
-	cohortOf := func(interval int64) *CohortView {
-		cohort, ok := byInterval[interval]
-		if !ok {
-			cohort = &CohortView{IntervalSeconds: interval}
-			byInterval[interval] = cohort
-		}
-		return cohort
-	}
-	published := view.Schedule != nil && len(view.Schedule.Cohorts) > 0
-	if published {
-		for _, census := range view.Schedule.Cohorts {
-			cohort := cohortOf(census.IntervalSeconds)
-			cohort.Objects, cohort.Cooling, cohort.Overdue = census.Objects, census.Cooling, census.Overdue
-		}
-	}
 	for _, rows := range columns {
 		for _, anomaly := range rows {
-			cohort := cohortOf(intervalOf(anomaly))
+			interval := intervalOf(anomaly)
+			cohort, ok := byInterval[interval]
+			if !ok {
+				cohort = &CohortView{IntervalSeconds: interval}
+				byInterval[interval] = cohort
+			}
 			cohort.Listed++
 			if rowGapSkipped(anomaly) {
 				cohort.GapSkipped++
@@ -140,6 +138,55 @@ func Cohorts(view *View, columns [][]Anomaly) []CohortView {
 			cohort.ByOwner[anomaly.Finding.Owner]++
 		}
 	}
+	return byInterval
+}
+
+// mergeCohortRows adds one replica's rows' side into another's.
+func mergeCohortRows(into, from map[int64]*CohortView) {
+	for interval, part := range from {
+		cohort, ok := into[interval]
+		if !ok {
+			cohort = &CohortView{IntervalSeconds: interval}
+			into[interval] = cohort
+		}
+		cohort.Listed += part.Listed
+		cohort.GapSkipped += part.GapSkipped
+		cohort.InCooldown += part.InCooldown
+		if part.ByCheck != nil && cohort.ByCheck == nil {
+			cohort.ByCheck = map[Check]int{}
+		}
+		for check, n := range part.ByCheck {
+			cohort.ByCheck[check] += n
+		}
+		if part.ByOwner != nil && cohort.ByOwner == nil {
+			cohort.ByOwner = map[Owner]int{}
+		}
+		for owner, n := range part.ByOwner {
+			cohort.ByOwner[owner] += n
+		}
+	}
+}
+
+// cohortsOf joins the census with the rows' side.
+func cohortsOf(schedule *ScheduleCensus, rows map[int64]*CohortView) []CohortView {
+	byInterval := map[int64]*CohortView{}
+	published := schedule != nil && len(schedule.Cohorts) > 0
+	if published {
+		for _, census := range schedule.Cohorts {
+			byInterval[census.IntervalSeconds] = &CohortView{IntervalSeconds: census.IntervalSeconds,
+				Objects: census.Objects, Cooling: census.Cooling, Overdue: census.Overdue}
+		}
+	}
+	for interval, part := range rows {
+		cohort, ok := byInterval[interval]
+		if !ok {
+			cohort = &CohortView{IntervalSeconds: interval}
+			byInterval[interval] = cohort
+		}
+		cohort.Listed, cohort.GapSkipped, cohort.InCooldown = part.Listed, part.GapSkipped, part.InCooldown
+		// Copied, so the reading and the part it came from are not one map.
+		cohort.ByCheck, cohort.ByOwner = maps.Clone(part.ByCheck), maps.Clone(part.ByOwner)
+	}
 	cohorts := make([]CohortView, 0, len(byInterval))
 	for _, cohort := range byInterval {
 		cohort.ListedOnly = !published
@@ -152,36 +199,75 @@ func Cohorts(view *View, columns [][]Anomaly) []CohortView {
 // Cooling is the first-screen arithmetic for objects in a query cooldown, from
 // the same rows and census as Cohorts.
 func Cooling(view *View, columns [][]Anomaly, now time.Time) CoolingFacts {
-	facts := CoolingFacts{}
-	if view.Schedule != nil {
-		facts.Objects = view.Schedule.Cooling
-	}
-	for _, rows := range columns {
-		for _, anomaly := range rows {
+	return coolingOf(view.Schedule, coolingRowsOf(columns, now), now)
+}
+
+// coolingRows is the rows' side of Cooling, in the shape that adds across
+// replicas: the earliest moment a cooling row's reason is dated from is
+// kept, and the reader measures it at its own time.
+type coolingRows struct {
+	Listed   int           `json:"listed"`
+	Extended int           `json:"extended"`
+	ByOwner  map[Owner]int `json:"by_owner,omitempty"`
+	ByCheck  map[Check]int `json:"by_check,omitempty"`
+	Oldest   time.Time     `json:"oldest"`
+}
+
+func coolingRowsOf(columns [][]Anomaly, now time.Time) coolingRows {
+	rows := coolingRows{}
+	for _, list := range columns {
+		for _, anomaly := range list {
 			if !rowInCooldown(anomaly) {
 				continue
 			}
-			facts.Listed++
+			rows.Listed++
 			if anomaly.QueryCooldown != nil && anomaly.QueryCooldown.Event == "extended" {
-				facts.Extended++
+				rows.Extended++
 			}
-			if facts.ByOwner == nil {
-				facts.ByOwner, facts.ByCheck = map[Owner]int{}, map[Check]int{}
+			if rows.ByOwner == nil {
+				rows.ByOwner, rows.ByCheck = map[Owner]int{}, map[Check]int{}
 			}
-			facts.ByOwner[anomaly.Finding.Owner]++
+			rows.ByOwner[anomaly.Finding.Owner]++
 			if anomaly.Finding.Check != "" {
-				facts.ByCheck[anomaly.Finding.Check]++
+				rows.ByCheck[anomaly.Finding.Check]++
 			}
 			since := anomaly.ReasonSince
 			if since.IsZero() {
 				since = anomaly.Since
 			}
-			if !since.IsZero() && now.After(since) {
-				if age := now.Sub(since).Seconds(); age > facts.OldestSinceSeconds {
-					facts.OldestSinceSeconds = age
-				}
+			if !since.IsZero() && now.After(since) && (rows.Oldest.IsZero() || since.Before(rows.Oldest)) {
+				rows.Oldest = since
 			}
 		}
+	}
+	return rows
+}
+
+// mergeCoolingRows adds one replica's rows' side into another's.
+func mergeCoolingRows(into *coolingRows, from coolingRows) {
+	into.Listed += from.Listed
+	into.Extended += from.Extended
+	if from.ByOwner != nil && into.ByOwner == nil {
+		into.ByOwner, into.ByCheck = map[Owner]int{}, map[Check]int{}
+	}
+	for owner, n := range from.ByOwner {
+		into.ByOwner[owner] += n
+	}
+	for check, n := range from.ByCheck {
+		into.ByCheck[check] += n
+	}
+	if !from.Oldest.IsZero() && (into.Oldest.IsZero() || from.Oldest.Before(into.Oldest)) {
+		into.Oldest = from.Oldest
+	}
+}
+
+func coolingOf(schedule *ScheduleCensus, rows coolingRows, now time.Time) CoolingFacts {
+	facts := CoolingFacts{Listed: rows.Listed, Extended: rows.Extended, ByOwner: maps.Clone(rows.ByOwner), ByCheck: maps.Clone(rows.ByCheck)}
+	if schedule != nil {
+		facts.Objects = schedule.Cooling
+	}
+	if !rows.Oldest.IsZero() {
+		facts.OldestSinceSeconds = now.Sub(rows.Oldest).Seconds()
 	}
 	return facts
 }

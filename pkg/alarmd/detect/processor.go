@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -254,6 +255,11 @@ type legacyStrategy struct {
 		Connector string `json:"connector"`
 	} `json:"detects"`
 }
+
+// LegacyStrategySource is what the threshold processor decodes the legacy
+// strategy document into. The operator evidence walks it for the keys alarmd
+// reads.
+func LegacyStrategySource() reflect.Type { return reflect.TypeOf(legacyStrategy{}) }
 
 func loadThresholdPlan(strategy *contract.TriggerStrategyIR) (*thresholdPlan, error) {
 	legacyJSON, err := strategy.LegacyJSON()

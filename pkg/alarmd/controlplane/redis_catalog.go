@@ -79,6 +79,21 @@ type SourceAuditState struct {
 type PlanActivationRecord struct {
 	Fact        execution.PlanActivationFact `json:"fact"`
 	Publication SnapshotPublicationRef       `json:"publication"`
+	// PreviousReadHold locates this Plan's lateness evidence after a query
+	// identity change. It is observational metadata, not activation identity.
+	PreviousReadHold *ReadHoldPredecessorRef `json:"previous_read_hold,omitempty"`
+}
+
+type ReadHoldPredecessorRef struct {
+	QueryGroup execution.QueryGroupIdentity `json:"query_group"`
+	ClosedAt   execution.EvaluationTime     `json:"closed_at"`
+	// PreviousSlot is the Plan's last legal Slot in the Segment it left and
+	// CompletionOffsetMillis its completion offset there, both from the
+	// closed schedule: the deadline the new group's first Slots must not read
+	// ahead of, known without reading the old group's timeline or content.
+	// Zero when that Segment held no Slot of the Plan.
+	PreviousSlot           execution.EvaluationTime `json:"previous_slot,omitempty"`
+	CompletionOffsetMillis int64                    `json:"completion_offset_ms,omitempty"`
 }
 
 // Equal compares by content; the fact carries a pointer, see
@@ -130,6 +145,7 @@ type RedisCatalogRepository struct {
 	// RebuildActivationBody; see lastGoodActivation.
 	lastGood      lastGoodActivation
 	rebuilds      activationRebuildCounts
+	header        activationHeaderStanding
 	blocked       blockedCounts
 	objectCatalog objectCatalogState
 	catalogIndex  catalogIndex
@@ -226,11 +242,15 @@ func (repository *RedisCatalogRepository) Ping(ctx context.Context) error {
 // Activation header names, and of nothing else. The Snapshot and the Active
 // Set are content-addressed, so their presence is all the script needs to
 // know about them; the two small mappings are compared by value, and a header
-// that moved means another Activation owns the objects now. The reply carries
-// the Active Set's size for the renewal facts, so the caller never reads it
-// to learn that.
+// that moved means another Activation owns the objects now. A header that is
+// not there at all is told apart from one that moved (-2): nothing moves on
+// from it by itself, and the Control Leader writes it back from the body
+// (RebuildActivationHeader). The reply carries the Active Set's size for the
+// renewal facts, so the caller never reads it to learn that.
 const renewCurrentActivationObjectsScript = `
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then return {0, 0} end
+local header = redis.call('GET', KEYS[1])
+if not header then return {-2, 0} end
+if header ~= ARGV[1] then return {0, 0} end
 if redis.call('EXISTS', KEYS[2]) == 0 or redis.call('GET', KEYS[3]) ~= ARGV[3] or
    redis.call('GET', KEYS[4]) ~= ARGV[4] or redis.call('EXISTS', KEYS[5]) == 0 then return {-1, 0} end
 redis.call('PEXPIRE', KEYS[2], ARGV[2])
@@ -302,11 +322,20 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 			return err
 		}
 		repository.renewObjectCatalog(ctx, state.Current.SnapshotRevision)
+		// The renewal compared the header and found it: whatever this
+		// process last saw of a missing header is over. Without this a
+		// header another writer put back while a rebuild conflicted stayed
+		// "missing" on the fleet until the next activation asked.
+		repository.header.present()
 		metricResult = "success"
 		queryGroups, objectBytes = len(groups), int(activeBytes)
 		return nil
 	case 0:
+		repository.header.conflict(ActivationRenewalHeaderMoved)
 		return ErrActivationConflict
+	case -2:
+		repository.header.conflict(ActivationRenewalHeaderMissing)
+		return ErrActivationHeaderMissing
 	default:
 		return ErrSnapshotUnavailable
 	}

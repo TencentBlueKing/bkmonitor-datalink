@@ -178,7 +178,7 @@ func TestPhaseTwoWorkerBundleRunSurvivesControlDependencyFailuresAndRecovers(t *
 				if err != nil {
 					t.Fatalf("Run(cancel) error = %v", err)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(signalWaitBound):
 				t.Fatal("Run did not stop after cancellation")
 			}
 

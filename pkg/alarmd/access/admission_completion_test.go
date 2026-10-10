@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
@@ -86,12 +87,23 @@ func executeScoped(
 	hosts ...string,
 ) (execution.QueryExecutionCompletion, *recordingConsumer, []execution.SeriesDelivery) {
 	t.Helper()
+	return executeScopedThrough(t, scopedChain(), scope, hosts...)
+}
+
+// executeScopedThrough is executeScoped with the admission chain given.
+func executeScopedThrough(
+	t *testing.T,
+	chain *admission.Chain,
+	scope *contract.TargetScopeV2,
+	hosts ...string,
+) (execution.QueryExecutionCompletion, *recordingConsumer, []execution.SeriesDelivery) {
+	t.Helper()
 	contractRef, frozen := frozenExecution(t)
 	frozen.DuePlans[0].CompiledPlan = compilePlanForStrategy(t, "1001", scope)
 	contractRef = bindFrozenDueDigest(t, contractRef, frozen)
 
 	source, err := NewSource(staticFrozenPlan{plan: frozen}, &hostStreamingProvider{hosts: hosts},
-		&recordingQueryPermits{}, Config{MinReadyDelay: time.Second, Admission: scopedChain()})
+		&recordingQueryPermits{}, Config{MinReadyDelay: time.Second, Admission: chain})
 	if err != nil {
 		t.Fatal(err)
 	}

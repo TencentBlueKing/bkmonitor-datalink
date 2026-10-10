@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -447,6 +448,35 @@ func TestTheProductionListenerIsSettledByTheRuntime(t *testing.T) {
 	cfg.CLI.Enabled, cfg.CLI.AdminKey = true, strings.Repeat("k", 40)
 	if !httpSurfaceOf(cfg).Restricted {
 		t.Error("the configuration's request does not reach the listener")
+	}
+}
+
+// The login page is public, and it names where the administrator key is
+// kept so the command to read it can be pasted as it stands. The production
+// listener carries the configuration's names to it -- the namespace, the
+// Secret and its key -- and never the key itself, in any spelling.
+func TestTheLoginPageNamesTheAdminKeySecretButNeverTheKey(t *testing.T) {
+	const key = "sample-admin-key-0123456789abcdef0123456789abcdef"
+	cfg := config.Default()
+	cfg.CLI.Enabled, cfg.CLI.AdminKey = true, key
+	cfg.CLI.AdminKeySecret = config.CLIAdminKeySecret{Namespace: "ops-alarmd", Name: "alarmd-cli-admin", Key: "admin-key"}
+	runtime, err := defaultPhaseTwoApplicationDependencies().newHTTP(metric.NewRecorder(metric.BuildInfo{}),
+		observability.NewHealthTracker(observability.HealthSnapshot{}), httpSurfaceOf(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/cli", "/cli.html"} {
+		got := publicCall(runtime.(*httpservice.Server).Handler(), http.MethodGet, path)
+		page := html.UnescapeString(got.Body.String())
+		if got.Code != http.StatusOK ||
+			!strings.Contains(page, `kubectl -n ops-alarmd get secret alarmd-cli-admin -o jsonpath='{.data.admin-key}' | base64 -d`) {
+			t.Fatalf("%s = %d: the page does not give this deployment's command", path, got.Code)
+		}
+		for _, spelling := range []string{key, base64.StdEncoding.EncodeToString([]byte(key)), key[:16]} {
+			if strings.Contains(page, spelling) || strings.Contains(got.Body.String(), spelling) {
+				t.Fatalf("%s carries the administrator key (%q)", path, spelling)
+			}
+		}
 	}
 }
 

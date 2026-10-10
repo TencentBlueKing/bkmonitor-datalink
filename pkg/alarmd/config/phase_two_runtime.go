@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
@@ -55,7 +54,6 @@ type PhaseTwoRuntimeFilterConfig struct {
 }
 
 type PhaseTwoLegacyQueryRuntimeConfig struct {
-	FTAEventStorage *execution.QueryStorage `yaml:"fta_event_storage"`
 	// Deprecated: the four keys below are the platform's own settings and
 	// live under phase_two.platform_settings, which the platform's dynamic
 	// configuration distribution overrides at run time. They are still
@@ -378,33 +376,17 @@ type PhaseTwoNoDataConfig struct {
 	TrackingHorizonSeconds *int64 `yaml:"tracking_horizon_seconds,omitempty"`
 }
 
-// PhaseTwoObservationConfig is the operator's allocation to the strategy
-// directory, the cost candidates and the criterion samples: the diagnostics
-// that read the control plane and write the diagnostic store on their own
-// account, beyond what detection needs.
+// PhaseTwoObservationConfig is what older values carry for the diagnostics
+// that read the control plane and write the diagnostic store beyond what
+// detection needs: the cost candidates, the criterion samples, the late-data
+// lookback's series tables.
 //
-// MemoryPercent is the share of the container's memory limit they may hold,
-// from which every other bound of theirs is derived (config.DeriveObservationCapacity).
-// Zero -- the default -- leaves them off: the directory cold read of a
-// ten-thousand-Plan catalogue and the per-tick cost summary were measured
-// on synthetic populations only, and the ruling is that they are switched on
-// by an operator who has been given the measured budget for that deployment,
-// not by whichever container happens to know its limit. An operator turning
-// them on says how much, and nothing here says "unlimited".
+// MemoryPercent was their share of the container's memory. It is read and
+// not used: observation memory takes no share of its own and grows while the
+// process stays within its soft memory limit with room left for detection's
+// budgets (package memoryline). A value still set is logged once at startup.
 type PhaseTwoObservationConfig struct {
 	MemoryPercent int `yaml:"memory_percent"`
-}
-
-// ObservationMemoryPercentMax bounds the allocation: a quarter of the
-// container is the point past which the diagnostics are competing with the
-// detection they are supposed to describe.
-const ObservationMemoryPercentMax = 25
-
-func (c PhaseTwoObservationConfig) validate() error {
-	if c.MemoryPercent < 0 || c.MemoryPercent > ObservationMemoryPercentMax {
-		return fmt.Errorf("phase_two.observation.memory_percent %d must be between 0 (off) and %d", c.MemoryPercent, ObservationMemoryPercentMax)
-	}
-	return nil
 }
 
 func (c PhaseTwoNoDataConfig) validate() error {
@@ -586,9 +568,6 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	}
 	if err := platformsettings.ValidateKeyPrefix(c.PlatformSettings.RedisKeyPrefix); err != nil {
 		return fmt.Errorf("phase_two platform_settings.redis_key_prefix: %w", err)
-	}
-	if err := c.Observation.validate(); err != nil {
-		return err
 	}
 	if err := c.NoData.validate(); err != nil {
 		return err

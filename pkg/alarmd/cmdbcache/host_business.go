@@ -43,6 +43,41 @@ func (lookup *HostBusinessLookup) LookupHostBusiness(identity string) (string, b
 	return facts.BusinessID, true
 }
 
+// LookupAddressBusiness returns the business of the one host at an ip_cloud
+// address of a tenant, and false when the index holds none there, or more
+// than one: an address two hosts share names neither's business.
+func (lookup *HostBusinessLookup) LookupAddressBusiness(tenantID, address string) (string, bool) {
+	if lookup == nil || lookup.store == nil {
+		return "", false
+	}
+	host, count := lookup.store.Current().AddressHost(tenantID, address)
+	if count != 1 || host == nil {
+		return "", false
+	}
+	return host.BusinessID, true
+}
+
+// LookupClusterBusiness returns the business the platform published for one
+// BCS cluster, from the current snapshot, and false when it published none.
+// It is asked when a global business Plan's event on Kubernetes data names
+// no business of its own.
+func (lookup *HostBusinessLookup) LookupClusterBusiness(clusterID string) (string, bool) {
+	if lookup == nil || lookup.store == nil {
+		return "", false
+	}
+	return lookup.store.Current().LookupClusterBusiness(clusterID)
+}
+
+// LookupNamespaceBusiness returns the business the platform published for
+// one namespace of one BCS cluster, from the current snapshot, and false
+// when it published none.
+func (lookup *HostBusinessLookup) LookupNamespaceBusiness(clusterID, namespace string) (string, bool) {
+	if lookup == nil || lookup.store == nil {
+		return "", false
+	}
+	return lookup.store.Current().LookupNamespaceBusiness(clusterID, namespace)
+}
+
 // HostIndexResolved reports whether there is an index behind those answers.
 //
 // It exists because the safe direction above is only safe for one host. Asked

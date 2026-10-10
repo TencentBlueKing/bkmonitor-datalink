@@ -69,36 +69,23 @@ func TestPollingPromQLDynamicIdentityAndImmutableSourceFacts(t *testing.T) {
 	}
 }
 
-func TestPollingFTASourceConditionsRemainSeparate(t *testing.T) {
-	storage := execution.QueryStorage{TableID: "fta.events", StorageID: "17", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__", TimeField: execution.QueryTimeField{Name: "time", Type: "date", Unit: "millisecond"}, SourceType: "event"}
-	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{FTAEventStorage: &storage})
-	storage.DB = "mutated"
-	source := pollingTestSource(`{"data_source_label":"bk_fta","data_type_label":"event","alert_name":"__EVENT_PLUGIN__zabbix","alias":"a","agg_interval":60,"agg_dimension":["tags.env"],"agg_condition":[{"key":"tags.env","method":"include","value":["prod"]}]}`)
-	facts, err := planner.CompilePrimaryQuery(context.Background(), source)
+// FTA event sources are refused by name, whatever their configuration: the
+// FTA query is not supported, and nothing in the compiler's facts turns it on.
+func TestAnFTASourceIsRefusedAsUnsupported(t *testing.T) {
+	planner, err := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := facts.QueryList[0]
-	if q.FieldSemantics != "fta_event_tags/v1" || len(q.Conditions.Fields) != 1 || q.Conditions.Fields[0].Operator != "contains" || q.SourceConditions == nil || len(q.SourceConditions.Fields) != 3 {
-		t.Fatalf("query=%+v", q)
-	}
-	if facts.TSDBMap["a"][0].DB != "bkfta_event_*_read" {
-		t.Fatal("runtime routing was mutable")
-	}
-	if q.SourceConditions.Fields[2].Field != "plugin_id" || q.SourceConditions.Fields[2].Values[0].StringValue != "zabbix" {
-		t.Fatalf("intrinsic=%+v", q.SourceConditions)
-	}
-	missing, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
-	_, err = missing.CompilePrimaryQuery(context.Background(), source)
-	var failure *QueryPlanCompileError
-	if !errors.As(err, &failure) || failure.Disposition != DispositionSourceIncomplete {
-		t.Fatalf("missing route=%v", err)
-	}
-	storage.TimeField.Unit = "second"
-	invalid, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{FTAEventStorage: &storage})
-	_, err = invalid.CompilePrimaryQuery(context.Background(), source)
-	if !errors.As(err, &failure) || failure.Reason != "QUERY_FTA_EVENT_STORAGE_INVALID" {
-		t.Fatalf("wrong ES bucket units=%v", err)
+	for _, config := range []string{
+		`{"data_source_label":"bk_fta","data_type_label":"event","alert_name":"__EVENT_PLUGIN__zabbix","alias":"a","agg_interval":60,"agg_dimension":["tags.env"],"agg_condition":[{"key":"tags.env","method":"include","value":["prod"]}]}`,
+		`{"data_source_label":"bk_fta","data_type_label":"event","alert_name":"CPUHigh","agg_interval":120}`,
+		`{"data_source_label":"bk_fta","data_type_label":"event","agg_interval":30}`,
+	} {
+		_, err := planner.CompilePrimaryQuery(context.Background(), pollingTestSource(config))
+		var failure *QueryPlanCompileError
+		if !errors.As(err, &failure) || failure.Disposition != DispositionUnsupported || failure.Reason != "QUERY_FTA_UNSUPPORTED" {
+			t.Fatalf("%s: %v, want UNSUPPORTED_PHASE2_CAPABILITY QUERY_FTA_UNSUPPORTED", config, err)
+		}
 	}
 }
 
@@ -125,49 +112,6 @@ func TestPollingBKDataLocalTimeBoundary(t *testing.T) {
 	}
 	if facts.QueryList[0].TimeField != "dtEventTimeStamp" {
 		t.Fatalf("query=%+v", facts.QueryList)
-	}
-}
-
-func TestFTATypedRangeBoundsBeforeStringWire(t *testing.T) {
-	conditions, err := compileFTAConditions([]legacyCondition{
-		{Key: "tags.x", Method: "gt", Value: json.RawMessage(`[2,10]`)},
-		{Key: "tags.x", Method: "lt", Value: json.RawMessage(`[2,10]`)},
-		{Key: "time", Method: "gte", Value: json.RawMessage(`[1700000000000]`)},
-		{Key: "tags.x", Method: "gt", Value: json.RawMessage(`["2","10"]`)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, want := range []string{"10", "2", "1700000000", "2"} {
-		if conditions.Fields[i].Values[0].StringValue != want {
-			t.Fatalf("field %d=%+v want %s", i, conditions.Fields[i], want)
-		}
-	}
-}
-
-func TestFTARejectsMismatchedMinuteBuckets(t *testing.T) {
-	route := execution.QueryStorage{TableID: "events", StorageID: "17", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__", TimeField: execution.QueryTimeField{Name: "time", Type: "date", Unit: "millisecond"}}
-	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{FTAEventStorage: &route})
-	for _, interval := range []int64{30, 90, 120, 0} {
-		config, _ := json.Marshal(map[string]any{"data_source_label": "bk_fta", "data_type_label": "event", "alert_name": "CPUHigh", "agg_interval": interval})
-		facts, err := planner.CompilePrimaryQuery(context.Background(), pollingTestSource(string(config)))
-		if interval == 30 || interval == 90 {
-			var failure *QueryPlanCompileError
-			if !errors.As(err, &failure) || failure.Reason != "QUERY_FTA_INTERVAL_INVALID" {
-				t.Fatalf("interval=%d error=%v", interval, err)
-			}
-			continue
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		wantStep, wantWindow := int64(120000), "120s"
-		if interval == 0 {
-			wantStep, wantWindow = 60000, "60s"
-		}
-		if facts.StepMillis != wantStep || facts.QueryList[0].TimeAggregation.Window != wantWindow {
-			t.Fatalf("interval=%d facts=%+v", interval, facts)
-		}
 	}
 }
 

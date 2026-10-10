@@ -35,7 +35,7 @@ func TestPrepareAlwaysEffectiveTimeFactsDeduplicatesRequirementDigestWithoutDrop
 	}
 	wantConsumers := 0
 	for _, due := range plans {
-		wantConsumers += len(due.CompiledPlan.Levels())
+		wantConsumers += due.CompiledPlan.Levels().Len()
 	}
 	if len(prepared) != wantConsumers {
 		t.Fatalf("prepared consumers = %d, want %d", len(prepared), wantConsumers)
@@ -315,7 +315,7 @@ func TestPrepareEffectiveTimeFactsPreservesDifferentLevelRequirements(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, level := range compiled.Levels() {
+	for _, level := range compiled.Levels().All() {
 		fact := facts[execution.ConsumerRef{Plan: identity, LevelID: level.Definition().LevelID, HasLevel: true}]
 		want := strategy.EffectiveTimeActive
 		if level.Definition().LevelID == 2 {

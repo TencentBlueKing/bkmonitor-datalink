@@ -38,6 +38,9 @@ func TestResolvedEndpointsNameSharingAndCarryNoCredential(t *testing.T) {
 		Username: "alarmd", Password: "top-secret", SentinelPassword: "sentinel-secret", DB: 8}
 	cfg.Redis.StatePrefix = "alarmd:phase2:g2:runtime:v1"
 	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "bk_monitorv3.ee.cache"
+	// Apart from the platform prefix, so the strategy row is seen to name
+	// the one its reader uses.
+	cfg.PhaseTwo.Control.StrategyCachePrefix = "bk_monitorv3.ee.strategy"
 	cfg.Kafka.Brokers = []string{"kafka-0:9092", "kafka-1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "0bkmonitor_backend_event"
 	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query:10205"
@@ -65,10 +68,10 @@ func TestResolvedEndpointsNameSharingAndCarryNoCredential(t *testing.T) {
 		t.Errorf("state redis = %+v", state)
 	}
 	strategy := byRole[fleet.EndpointStrategyCache]
-	if strategy.DB == nil || *strategy.DB != 0 || strategy.Prefix != "bk_monitorv3.ee.cache" || strategy.SharedWith != "" {
+	if strategy.DB == nil || *strategy.DB != 0 || strategy.Prefix != "bk_monitorv3.ee.strategy" || strategy.SharedWith != "" {
 		t.Errorf("strategy cache = %+v", strategy)
 	}
-	if cmdb := byRole[fleet.EndpointCMDBCache]; cmdb.SharedWith != fleet.EndpointStrategyCache {
+	if cmdb := byRole[fleet.EndpointCMDBCache]; cmdb.SharedWith != fleet.EndpointStrategyCache || cmdb.Prefix != "bk_monitorv3.ee.cache" {
 		t.Errorf("cmdb cache does not say it shares the strategy cache's connection: %+v", cmdb)
 	}
 	if dynamic := byRole[fleet.EndpointDynamicConfig]; dynamic.Configured || dynamic.Address != "" {
@@ -624,4 +627,45 @@ func TestOpenAlertIndexReadDoesNotBecomeWriterHeartbeat(t *testing.T) {
 		}
 	}
 	t.Fatal("missing open alert endpoint")
+}
+
+// The workload read's dependencies are the endpoint list's addresses, one
+// per host: each sentinel of a sentinel deployment (the master name is not an
+// address), each Kafka broker, the query backend's URL, and nothing for an
+// endpoint the configuration does not name. No credential rides along.
+func TestWorkloadDependenciesAreTheEndpointsHostsOnePerHost(t *testing.T) {
+	cfg := config.Default()
+	cfg.Redis.RedisConnectionConfig = config.RedisConnectionConfig{Mode: config.RedisModeSentinel, MasterName: "mymaster",
+		SentinelAddress: []string{"sentinel-0.storage.svc.cluster.local:26379", "sentinel-1.storage.svc.cluster.local:26379"},
+		Password:        "top-secret", SentinelPassword: "sentinel-secret"}
+	cfg.Kafka.Brokers = []string{"kafka-0.queue.svc:9092", "192.0.2.20:9092"}
+	cfg.PhaseTwo.Access.UQEndpoint = "http://query-http.monitoring.svc.cluster.local:10205"
+	// The compatibility output's service Redis is an address this process
+	// connects to like any other, and is read like one.
+	cfg.Kafka.LegacyAdapter.ServiceRedis = config.RedisConnectionConfig{Mode: config.RedisModeStandalone,
+		Address: "compat-redis.legacy.svc:6379"}
+	got := map[string]bool{}
+	for _, dependency := range workloadDependencies(cfg) {
+		got[dependency.Name+" "+dependency.Address] = true
+		if strings.Contains(dependency.Address, "secret") || strings.Contains(dependency.Address, "@") {
+			t.Fatalf("dependency %+v carries more than a host", dependency)
+		}
+	}
+	for _, want := range []string{
+		fleet.EndpointStateRedis + " sentinel-0.storage.svc.cluster.local:26379",
+		fleet.EndpointStateRedis + " sentinel-1.storage.svc.cluster.local:26379",
+		fleet.EndpointOutputKafka + " kafka-0.queue.svc:9092",
+		fleet.EndpointOutputKafka + " 192.0.2.20:9092",
+		fleet.EndpointQueryBackend + " http://query-http.monitoring.svc.cluster.local:10205",
+		fleet.EndpointCompatOutput + " compat-redis.legacy.svc:6379",
+	} {
+		if !got[want] {
+			t.Errorf("missing dependency %q in %v", want, got)
+		}
+	}
+	for key := range got {
+		if strings.HasPrefix(key, fleet.EndpointLinkdConsole+" ") {
+			t.Errorf("an unconfigured linkd Console added %q", key)
+		}
+	}
 }

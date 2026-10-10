@@ -140,6 +140,9 @@ func TestEveryIdentifiedButtonIsWired(t *testing.T) {
 // which looks exactly like a deployment that has no such data.
 func TestEveryCapacityFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "cap", reflect.TypeOf(fleet.CapacityView{}))
+	// Each replica's row reads that replica's own capacity, whose names are
+	// per replica and differ from the deployment's summed ones.
+	assertFieldsExist(t, "rcap", reflect.TypeOf(fleet.Capacity{}))
 }
 
 // The same failure on the other response, and it shipped too: the records panel
@@ -501,6 +504,15 @@ func TestEveryReplicaFieldThePageReadsExistsInTheAPI(t *testing.T) {
 // renders a sentence that omits a whole bucket of objects without saying so.
 func TestEverySummaryFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "summary", reflect.TypeOf(fleet.Summary{}))
+}
+
+// The first screen's count of strategies, read as three names of its own:
+// a misspelled count there renders "undefined 条策略", or no state at all,
+// on the line a reader sets beside the CLI's diagnose.
+func TestEveryStrategyCountFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "countRead", reflect.TypeOf(fleet.DiagnosisSummaryResponse{}))
+	assertFieldsExist(t, "countUniverse", reflect.TypeOf(fleet.DiagnosisUniverse{}))
+	assertFieldsExist(t, "strategyTally", reflect.TypeOf(fleet.DiagnosisSummary{}))
 }
 
 // The anomaly row is the busiest object on the page -- every cell in the table

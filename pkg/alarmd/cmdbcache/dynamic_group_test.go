@@ -12,6 +12,7 @@ import (
 	"sort"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/go-redis/redis/v8"
 
@@ -19,25 +20,92 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 )
 
-// groupClient serves MGET from a map and can fail the transport on demand.
+// testGroupReadBound is a read bound none of these tests' documents come
+// near, unless the test is about the bound.
+const testGroupReadBound = 1 << 20
+
+// groupClient serves pipelines of STRLENs and GETs from a map, counting the
+// STRLENs and recording the keys of each pipeline of GETs. It fails the
+// transport on demand: every pipeline while err is set, or the pipeline of
+// GETs numbered failAt (from 1). A key in answered is answered with that
+// error, as Redis answers a key of another type.
+//
+// Each GET answers with bytes of its own, as go-redis hands a reply's bytes
+// over without a copy, and the next pipeline overwrites them: a reader that
+// still held a window's documents when it read the next would decode
+// garbage.
 type groupClient struct {
-	values map[string]string
-	err    error
-	calls  [][]string
+	values   map[string]string
+	answered map[string]error
+	err      error
+	failAt   int
+	calls    [][]string
+	strlens  int
+	previous [][]byte
 }
 
-func (client *groupClient) MGet(_ context.Context, keys ...string) *redis.SliceCmd {
-	client.calls = append(client.calls, append([]string(nil), keys...))
-	if client.err != nil {
-		return redis.NewSliceResult(nil, client.err)
+// answeredError is Redis answering a command with an error.
+type answeredError string
+
+func (err answeredError) Error() string { return string(err) }
+func (answeredError) RedisError()       {}
+
+type groupPipeline struct {
+	redis.Pipeliner
+	client *groupClient
+	gets   []string
+}
+
+func (pipe *groupPipeline) StrLen(_ context.Context, key string) *redis.IntCmd {
+	pipe.client.strlens++
+	if err := pipe.client.answered[key]; err != nil {
+		return redis.NewIntResult(0, err)
 	}
-	values := make([]any, len(keys))
-	for index, key := range keys {
-		if value, found := client.values[key]; found {
-			values[index] = value
+	return redis.NewIntResult(int64(len(pipe.client.values[key])), pipe.client.err)
+}
+
+func (pipe *groupPipeline) Get(_ context.Context, key string) *redis.StringCmd {
+	pipe.gets = append(pipe.gets, key)
+	if err := pipe.client.answered[key]; err != nil {
+		return redis.NewStringResult("", err)
+	}
+	value, found := pipe.client.values[key]
+	if !found {
+		return redis.NewStringResult("", redis.Nil)
+	}
+	own := []byte(value)
+	pipe.client.previous = append(pipe.client.previous, own)
+	return redis.NewStringResult(unsafe.String(unsafe.SliceData(own), len(own)), pipe.client.err)
+}
+
+func (client *groupClient) Pipelined(_ context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	for _, value := range client.previous {
+		for index := range value {
+			value[index] = 'x'
 		}
 	}
-	return redis.NewSliceResult(values, nil)
+	client.previous = client.previous[:0]
+	pipe := &groupPipeline{client: client}
+	if err := fn(pipe); err != nil {
+		return nil, err
+	}
+	if len(pipe.gets) == 0 {
+		return nil, client.err
+	}
+	client.calls = append(client.calls, pipe.gets)
+	if len(client.calls) == client.failAt {
+		return nil, errors.New("connection reset")
+	}
+	return nil, client.err
+}
+
+// gets is how many keys the client has been sent GETs for.
+func (client *groupClient) gets() int {
+	total := 0
+	for _, call := range client.calls {
+		total += len(call)
+	}
+	return total
 }
 
 const hostGroup = `{"model_id":"cw-Host","bk_obj_id":"cw-Host","model_inst_ids":["101","102","103"],
@@ -124,7 +192,8 @@ func TestTheGroupStoreReadsOnFirstReferenceAndKeepsSnapshotsAcrossAFailedRefresh
 		t.Fatal(err)
 	}
 	now := time.Unix(1000, 0)
-	store, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: func() time.Time { return now }})
+	store, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound,
+		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +202,7 @@ func TestTheGroupStoreReadsOnFirstReferenceAndKeepsSnapshotsAcrossAFailedRefresh
 		t.Fatalf("first lookup = %+v", lookup)
 	}
 	if len(client.calls) != 1 || !reflect.DeepEqual(client.calls[0], []string{"cw_prefix:dynamic_group:1001"}) {
-		t.Fatalf("calls = %v, want one MGET of the writer's key", client.calls)
+		t.Fatalf("calls = %v, want one pipeline reading the writer's key", client.calls)
 	}
 	now = now.Add(30 * time.Second)
 	if again := store.Group(context.Background(), "1001", time.Minute); len(client.calls) != 1 || again.Age != 30*time.Second {
@@ -168,11 +237,11 @@ func TestTheGroupStoreReadsOnFirstReferenceAndKeepsSnapshotsAcrossAFailedRefresh
 		t.Fatalf("lookup after the key went missing = %+v, want unavailable key_missing from a fresh read", gone)
 	}
 	if last := client.calls[len(client.calls)-1]; !reflect.DeepEqual(last, []string{"cw_prefix:dynamic_group:1001", "cw_prefix:dynamic_group:2002"}) {
-		t.Fatalf("refresh read %v, want every referenced id in one MGET", last)
+		t.Fatalf("refresh read %v, want every referenced id in one pipeline", last)
 	}
 }
 
-// per's table as a test. Plans on 60 s to 900 s periods ask for their
+// The review's table as a test. Plans on 60 s to 900 s periods ask for their
 // group every Slot for an hour under per-minute refreshes: each group costs
 // exactly one read on a Slot path, its first, whatever the period - the
 // reference is kept for max(the staleness bound, twice the Plan's period)
@@ -187,7 +256,8 @@ func TestAGroupCostsItsPlanOneSlotReadWhateverThePeriodAndAgesOutAfterIt(t *test
 	}
 	reader, _ := NewGroupReader(client, "cw:")
 	now := time.Unix(1000, 0)
-	store, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: func() time.Time { return now }})
+	store, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound,
+		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +329,8 @@ func TestAGroupSharedByAShortAndALongPlanKeepsTheLongPlansHorizon(t *testing.T) 
 	client := &groupClient{values: map[string]string{"cw:dynamic_group:shared": hostGroup}}
 	reader, _ := NewGroupReader(client, "cw:")
 	now := time.Unix(1000, 0)
-	store, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: func() time.Time { return now }})
+	store, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound,
+		Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}

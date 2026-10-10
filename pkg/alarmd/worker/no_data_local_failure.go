@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
@@ -84,8 +85,13 @@ func noDataLocalOutcome(err error) (nodata.SlotOutcome, bool) {
 // carries the error the Slot no longer carries: before this, the same fact
 // arrived as a failed Slot, which at least named itself loudly. Containing the
 // failure without saying anything would be the quieter, worse trade.
+//
+// It is timed from the start of the no-data round it failed in, the work
+// this evaluation did; untimed, it read as an evaluation whose cost nobody
+// measured.
 func (stream *streamedExecution) observeNoDataLocalFailure(
 	ctx context.Context,
+	started time.Time,
 	due execution.DuePlan,
 	outcome nodata.SlotOutcome,
 	err error,
@@ -94,6 +100,7 @@ func (stream *streamedExecution) observeNoDataLocalFailure(
 	stream.coordinator.ports.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
 		Result: observability.ResultDegraded, Operation: observability.Operation(stream.request.Operation),
+		Duration: time.Since(started), DurationKnown: true,
 		Direction:       observability.DirectionInternal,
 		ReasonCode:      observability.ReasonCode(outcome),
 		EvaluationOwner: costEvaluationOwner(due.Identity),

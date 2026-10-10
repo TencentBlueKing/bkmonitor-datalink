@@ -53,7 +53,10 @@ func PublicHealth(full HealthResponse) PublicHealthResponse {
 		PublishedVersion:  full.PublishedVersion, ReplicasNotReady: full.ReplicasNotReady,
 		DependenciesReplicas: full.DependenciesReplicas,
 		Cohorts:              cohortList(full.Cohorts),
-		Builds:               []BuildGroup{}, OutputProtocols: []OutputProtocolGroup{},
+		// The note beside the counts above while a handover can make them run
+		// high: a count, no object named.
+		Handover: full.Handover,
+		Builds:   []BuildGroup{}, OutputProtocols: []OutputProtocolGroup{}, Retentions: []RetentionGroup{},
 		Degradations: []Degradation{}, Dependencies: []Endpoint{},
 		Gaps: []Gap{}, PerReplica: []ReplicaView{},
 	}}

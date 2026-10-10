@@ -36,6 +36,10 @@ type LogAdmission struct {
 	Suppressed        uint64
 	SuppressedEvicted uint64
 	Sampled           bool
+	// Candidate is an observation the policy writes a line for when its
+	// limiter lets it: counted as a line written or a line held back. A
+	// routine success the policy never writes is not one.
+	Candidate bool
 }
 
 // PacingLogSample is the log budget of a reason that is the normal pacing of

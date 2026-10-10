@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
@@ -27,7 +28,8 @@ func TestQueryCooldownDispersesSynchronizedPopulation(t *testing.T) {
 }
 
 func unavailableResult() execution.SlotExecutionResult {
-	return execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityUnavailable}
+	return execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityUnavailable,
+		QueryUnavailableReason: execution.ReasonCode(contract.ReasonQueryUnavailable)}
 }
 
 func TestQueryCooldownAcrossSlotsAndRecovery(t *testing.T) {

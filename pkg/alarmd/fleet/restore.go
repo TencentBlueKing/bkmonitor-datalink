@@ -79,6 +79,7 @@ type RestoredTargetResolution struct {
 	NodesMissing    []string                  `json:"nodes_missing,omitempty"`
 	NodesForeign    []string                  `json:"nodes_foreign,omitempty"`
 	StaleAgeSeconds int64                     `json:"stale_age_seconds,omitempty"`
+	ExcludedAbsent  int                       `json:"excluded_absent,omitempty"`
 }
 
 // RestoredSelectorFailure names one selector that did not answer whole.
@@ -141,6 +142,12 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 	defer tracker.mu.Unlock()
 	state := tracker.groups[queryGroup]
 	if state != nil && state.determined {
+		// Everything but one fact: how long the object had been empty before
+		// this process started is what no round of its own can have watched,
+		// and which comes first -- this read or the object's first round --
+		// is a race every release reruns.
+		state.recordRead = true
+		tracker.noteRecordedRun(state, restored)
 		return false
 	}
 	if state == nil {
@@ -150,6 +157,7 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 		state = &queryGroupState{strategies: map[StrategyRef]struct{}{}}
 	}
 	state.determined = true
+	state.recordRead = true
 	state.lastCompleted = restored.LastCompletion
 	// A committed round that completed with records is records seen, as far
 	// as this process can vouch for anything it did not watch: it is what

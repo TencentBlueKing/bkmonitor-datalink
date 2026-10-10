@@ -66,6 +66,8 @@ func capacitySnapshotSource(
 		for _, value := range occupancy.HeldSeconds {
 			seconds += value
 		}
+		held += occupancy.LookbackInflight
+		seconds += occupancy.LookbackHeldSeconds
 		usage := config.ReadContainerUsage()
 		capacity := &fleet.Capacity{
 			PermitsHeld: held, PermitBudget: occupancy.Budget, PermitSeconds: seconds,

@@ -90,7 +90,7 @@ func TestNoDataMemoryRoundTripsThroughTheStore(t *testing.T) {
 	}
 
 	mutation := noDataMutationV2(t, 0, execution.NoDataGroupMemory{GroupKey: "a", FirstAbsent: 940})
-	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: planRetention(retentionEvery(5, time.Minute)),
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -131,7 +131,7 @@ func TestNoDataMemoryRoundTripsThroughTheStore(t *testing.T) {
 	}
 
 	// Replaying the same mutation is recognised rather than written twice.
-	repeat, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	repeat, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -204,7 +204,7 @@ func TestNoDataApplyRefusesToOverwriteARecordItCannotRead(t *testing.T) {
 	future := futureHashHeader(t)
 	backend.hashes = map[string]map[string][]byte{key: {noDataHeaderField: future}}
 
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(),
 		Items:    []execution.PlanNoDataMutation{noDataMutationV2(t, 9, execution.NoDataGroupMemory{GroupKey: "a", LastSeen: 940})},
 	})
@@ -244,7 +244,7 @@ func TestNoDataApplyConflictsOnAStaleMarkerRevision(t *testing.T) {
 	ctx := context.Background()
 
 	first := noDataMutationV2(t, 0, execution.NoDataGroupMemory{GroupKey: "a", LastSeen: 940})
-	if _, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	if _, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{first},
 	}); err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ func TestNoDataApplyConflictsOnAStaleMarkerRevision(t *testing.T) {
 		PresentAsOf: noDataPresentAsOf,
 		Memory:      []execution.NoDataGroupMemory{{GroupKey: "b", LastSeen: 1000}},
 	})
-	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{stale},
 	})
 	if err != nil {
@@ -462,7 +462,7 @@ func TestTwoPiecesOfOneStrategyKeepSeparateNoDataMemories(t *testing.T) {
 			ScheduleRevision: "plan-r1", RosterVersion: "TARGET_STATIC/1",
 			PresentAsOf: noDataPresentAsOf, Memory: []execution.NoDataGroupMemory{{GroupKey: group, FirstAbsent: 940}},
 		})
-		applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+		applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 			Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 		})
 		if err != nil {
@@ -529,7 +529,7 @@ func TestTwoPiecesOfOneStrategyKeepSeparateGapMarkers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		applied, err := store.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
+		applied, err := store.ApplyGap(ctx, execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
 		if err != nil || applied.Items[0].Status != execution.GapGuardApplied {
 			t.Fatalf("piece %d ApplyGap(open) = (%+v, %v); under a shared key the second piece's open conflicts with the first's",
 				index, applied, err)

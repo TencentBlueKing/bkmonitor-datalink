@@ -242,7 +242,7 @@ func TestObservationRegistryReadFailuresAndEmptyRegistry(t *testing.T) {
 
 func TestObservationRegistryDisabledCommandsAndTimeout(t *testing.T) {
 	store, reader, at, limits := newObservationRegistryRedis(t, "a")
-	limits.Bytes = 0
+	limits.Bytes = -1
 	if disabled := store.ReadObservationRegistry(context.Background(), reader, at, 0, limits); disabled.Complete || disabled.Reason != "disabled" || disabled.ReadCommands != 0 {
 		t.Fatalf("disabled registry performed reads: %+v", disabled)
 	}
@@ -290,5 +290,21 @@ func TestObservationRegistryRealRedisDoesNotCleanRegistry(t *testing.T) {
 	}
 	if size, err := store.client.ZCard(ctx, store.workerRegistryKey()).Result(); err != nil || size != 3 {
 		t.Fatalf("diagnostic reader changed registry: size=%d err=%v", size, err)
+	}
+}
+
+// Zero bounds leave the read to the registry itself: every registration,
+// as far as the timeout reaches, and a complete denominator. Negative
+// bounds, or no timeout, are not a read.
+func TestObservationRegistryWithoutCountBoundsReadsEveryRegistration(t *testing.T) {
+	store, reader, at, _ := newObservationRegistryRedis(t, "a", "b", "c", "d", "e")
+	got := store.ReadObservationRegistry(context.Background(), reader, at, 0, ObservationRegistryLimits{Timeout: time.Second})
+	if !got.Complete || got.Reason != "" || got.ScannedRows != 5 || len(got.ReadyIDs) != 5 || reader.page.Count != 5 || got.NextOffset != 0 {
+		t.Fatalf("unbounded read = %+v, want every registration and a complete denominator", got)
+	}
+	for _, limits := range []ObservationRegistryLimits{{Timeout: 0}, {Rows: -1, Timeout: time.Second}, {Bytes: -1, Timeout: time.Second}, {Commands: -1, Timeout: time.Second}} {
+		if disabled := store.ReadObservationRegistry(context.Background(), reader, at, 0, limits); disabled.Reason != "disabled" {
+			t.Fatalf("limits %+v = %+v, want disabled", limits, disabled)
+		}
 	}
 }

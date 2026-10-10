@@ -121,7 +121,7 @@ func TestTheSourceStandingsFoldWithheldGroupsUnderTheirOwners(t *testing.T) {
 			{StrategyID: "2", Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_OBJECT_INCOMPLETE"},
 			{StrategyID: "3", Scope: "LEVEL", LevelID: 1, Disposition: "CONFIG_REJECTED", Reason: "LEVEL_INVALID", FieldPath: "items[0]"},
 			{StrategyID: "4", Disposition: "STALE_CONFIG", Reason: "LEVEL_INVALID"},
-			{StrategyID: "5", Disposition: "UNSUPPORTED_PHASE2_CAPABILITY", Reason: "SNAPSHOT_RETENTION_INSUFFICIENT"},
+			{StrategyID: "5", Disposition: "UNSUPPORTED_PHASE2_CAPABILITY", Reason: "QUERY_SOURCE_NOT_MIGRATED"},
 		})
 	view := &View{Source: source, SourceReplica: "pod-a",
 		// A blocked-source degradation must not also become a REPLICA_DEGRADED fold.
@@ -160,14 +160,16 @@ func TestTheSourceStandingsFoldWithheldGroupsUnderTheirOwners(t *testing.T) {
 	if level := keys["LEVEL_INVALID"]; len(level.Samples) != 1 || level.Samples[0].FieldPath != "items[0]" || level.Samples[0].LevelID != 1 {
 		t.Errorf("the compiler refusal lost its field or level: %+v", level.Samples)
 	}
-	if byCode[CheckCapabilityUnsupported].Owner != OwnerAlarmd {
-		t.Errorf("CAPABILITY_UNSUPPORTED owner = %s, want ALARMD", byCode[CheckCapabilityUnsupported].Owner)
+	if byCode[CheckCapabilityUnsupported].Owner != OwnerCapability {
+		t.Errorf("CAPABILITY_UNSUPPORTED owner = %s, want CAPABILITY", byCode[CheckCapabilityUnsupported].Owner)
 	}
-	// The first screen's arithmetic: the platform's line is to act on, the
-	// strategy's is governance, and neither adds objects.
+	// The first screen's arithmetic: the platform's line is to act on; the
+	// strategy's and a declared capability's are governance, since nobody
+	// acts on a build that does not have the capability yet; none adds
+	// objects.
 	todo := SummarizeTodo(reports, nil, view, at)
-	if todo.Checks != 2 || todo.Governance != 1 || todo.Objects != 0 {
-		t.Errorf("todo = checks %d governance %d objects %d, want 2 1 0", todo.Checks, todo.Governance, todo.Objects)
+	if todo.Checks != 1 || todo.Governance != 2 || todo.Objects != 0 {
+		t.Errorf("todo = checks %d governance %d objects %d, want 1 2 0", todo.Checks, todo.Governance, todo.Objects)
 	}
 }
 

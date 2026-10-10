@@ -142,6 +142,25 @@ var PackedRuleNames = []string{
 	PackedRuleIdentityKeyUnderivable, PackedRuleLegacyRecordIDTooLong, PackedRuleTwoRecordsOneSourceTime,
 }
 
+// The ways a runtime write is refused as STATE_BUDGET_EXCEEDED, named for the
+// same reason the packed rules are: one reason, several limits, and a line
+// that carries only the reason does not say which was reached.
+const (
+	// RuntimeRuleLifetimePastCeiling is the Plan's runtime state lifetime
+	// past the store's ceiling: every mutation of the Plan is refused.
+	RuntimeRuleLifetimePastCeiling = "lifetime_past_ceiling"
+	// RuntimeRuleValueOverLimit is one record that frames and is larger than
+	// the store's value limit.
+	RuntimeRuleValueOverLimit = "value_over_limit"
+	// RuntimeRuleValueNotEncodable is one record the framing itself refused
+	// for a reason that is not a contract rule.
+	RuntimeRuleValueNotEncodable = "value_not_encodable"
+)
+
+// RuntimeBudgetRuleNames is every rule a runtime write can be refused by as
+// STATE_BUDGET_EXCEEDED.
+var RuntimeBudgetRuleNames = []string{RuntimeRuleLifetimePastCeiling, RuntimeRuleValueOverLimit, RuntimeRuleValueNotEncodable}
+
 // PackedContractRefusal is a framed write refused by one named rule. The
 // sentence stays for a human reading the error; the rule is what the line
 // carries.

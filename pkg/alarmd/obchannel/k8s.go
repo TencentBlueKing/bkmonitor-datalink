@@ -14,16 +14,27 @@ import (
 // replica, so it has nothing to say when none is running.
 const k8sBoundary = "Read through the answering replica's own ServiceAccount; with every replica down this path cannot answer and kubectl is the only reader."
 
+// workloadsBoundary is said on every workload read: what it can and cannot
+// see, whatever the answer holds.
+const workloadsBoundary = "Covers alarmd's own namespace, the namespaces its dependencies' in-cluster addresses name, and the namespaces the deployment lists (ALARMD_OBSERVE_NAMESPACES, each with a Role granting the read); a workload elsewhere - one alarmd does not connect to, such as the strategy cache's writer reached only through Redis - is not seen until it runs in one of them. A dependency addressed by a bare Service name is placed in alarmd's own namespace (origin short_name), where a Pod's resolver looks it up first; one a hostAliases entry or the node's search domains send elsewhere is placed there all the same."
+
 // K8sOperations reads alarmd's own workload from the Kubernetes API: its
 // Pods, the events on it, and a bounded log tail. Any replica answers, the
 // entry one by default, so a crashing replica can be read from a healthy one.
-func K8sOperations(reader *k8sread.Reader) []Operation {
+// k8s.workloads reads further, and only what it names: the workloads and
+// recent rollouts of alarmd's namespace, of the namespaces its dependencies'
+// addresses name, and of the ones the deployment lists (configured is read
+// at each call).
+func K8sOperations(reader *k8sread.Reader, dependencies []k8sread.Dependency, configured func() []string) []Operation {
 	pod := Field{Type: "string", Description: "alarmd 的 Pod 名。", Source: "k8s.pods pods[].name", Pattern: "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$", MinLength: 1, MaxLength: 253}
 	container := Field{Type: "string", Description: "容器名；省略时取 Pod 唯一的容器，多个容器时取 alarmd。", Source: "k8s.pods pods[].containers[].name", Pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", MinLength: 1, MaxLength: 63}
 	minLines, maxLines := int64(1), int64(k8sread.MaxLogLines)
 	maxScan, maxSince := int64(k8sread.MaxScanLines), int64(k8sread.MaxLogSinceSeconds)
 	substring := Field{Type: "string", MinLength: 1, MaxLength: k8sread.MaxLogFilterBytes}
+	minWindow, maxWindow := int64(1), int64(k8sread.MaxWindowHours)
 	limits := map[string]any{"max_pods": k8sread.MaxPods, "max_events": k8sread.MaxEvents, "max_replica_sets": k8sread.MaxReplicaSets,
+		"max_namespaces": k8sread.MaxNamespaces, "max_namespace_pods": k8sread.MaxNamespacePods, "max_namespace_replica_sets": k8sread.MaxNamespaceReplicaSets,
+		"max_workloads": k8sread.MaxWorkloads, "max_rollouts": k8sread.MaxRollouts,
 		"max_log_lines": k8sread.MaxLogLines, "max_log_bytes": k8sread.MaxLogBytes,
 		"max_scan_bytes": k8sread.MaxScanBytes, "max_log_line_bytes": k8sread.MaxLogLineBytes, "verbs": "GET only", "scope": "the Deployment this replica belongs to"}
 	ops := []Operation{
@@ -72,6 +83,41 @@ func K8sOperations(reader *k8sread.Reader) []Operation {
 		ops[i].EvidenceScope = "deployment_workload"
 		ops[i].Limits = limits
 	}
+	ops = append(ops, Operation{ID: "k8s.workloads",
+		Summary:      "读取 alarmd 所在命名空间、依赖地址所在命名空间和部署列出的命名空间里的全部工作负载，按最近一次发布倒序；每个 Deployment 给出最近几次发布（ReplicaSet）和最近一次镜像从什么变成什么，并标出是否在窗口内。只读镜像和时间，不读 env、Secret、ConfigMap。",
+		Fields:       map[string]Field{"window_hours": {Type: "integer", Description: "多近的发布算最近，默认 24 小时。", Minimum: &minWindow, Maximum: &maxWindow}},
+		OutputSchema: SchemaOf(k8sread.WorkloadsResult{}), EvidenceScope: "namespace_workloads", Limits: limits,
+		Examples: []Params{{}, {"window_hours": int64(6)}},
+		Run: func(ctx context.Context, p Params) Outcome {
+			var listed []string
+			if configured != nil {
+				listed = configured()
+			}
+			result, err := reader.Workloads(ctx, dependencies, listed, int(p.Int("window_hours", k8sread.DefaultWindowHours)))
+			out := k8sOutcome(result, err)
+			if err != nil {
+				return out
+			}
+			out.Limitations = append(out.Limitations, workloadsBoundary)
+			for _, section := range result.Namespaces {
+				if len(section.Failures) > 0 {
+					out.Complete = false
+					out.Limitations = append(out.Limitations, "Namespace "+section.Namespace+": a list failed (see its failures); a workload missing from it is not a workload that is not there.")
+				}
+				if section.PodsTruncated || section.ReplicaSetsTruncated || section.WorkloadsTruncated {
+					out.Complete = false
+					out.Limitations = append(out.Limitations, "Namespace "+section.Namespace+": more objects than the bound; the section is cut.")
+				}
+			}
+			if len(result.NamespacesTruncated) > 0 {
+				out.Complete = false
+				out.Limitations = append(out.Limitations, "More namespaces than the bound; result.namespaces_truncated were not read.")
+			}
+			if len(result.Unresolved) > 0 {
+				out.Limitations = append(out.Limitations, "Dependencies in result.unresolved name no namespace (or are not a namespace name); their workloads were not read.")
+			}
+			return out
+		}})
 	return ops
 }
 

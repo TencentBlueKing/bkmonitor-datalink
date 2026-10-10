@@ -26,17 +26,17 @@ func (evaluator *Evaluator) PreparePlan(plan *strategy.CompiledPlan) (PreparedPl
 		return PreparedPlan{}, errors.New("alarmd detect: prepared plan is not SERIES")
 	}
 	levels := plan.Levels()
-	for i := range levels {
-		if i > 0 && levels[i-1].Definition().LevelID >= levels[i].Definition().LevelID {
+	for i := range levels.All() {
+		if i > 0 && levels.At(i-1).Definition().LevelID >= levels.At(i).Definition().LevelID {
 			return PreparedPlan{}, fmt.Errorf("alarmd detect: compiled levels are not ordered and unique")
 		}
 	}
-	bound := boundPlan{execution: PlanExecution{Plan: plan}, levels: make([]boundLevel, len(levels))}
+	bound := boundPlan{execution: PlanExecution{Plan: plan}, levels: make([]boundLevel, levels.Len())}
 	projectionKeys := make(map[projectionKey]struct{})
-	for levelIndex, level := range levels {
+	for levelIndex, level := range levels.All() {
 		bound.levels[levelIndex] = boundLevel{
 			compiled: level, detectors: make([]boundDetector, len(level.Detectors())),
-			algorithms: make([]boundAlgorithm, len(level.Algorithms())),
+			algorithms: make([]boundAlgorithm, level.Algorithms().Len()),
 		}
 		for detectorIndex, spec := range level.Detectors() {
 			detector, ok := evaluator.registry.resolve(DetectorKey{Kind: spec.Kind(), Version: spec.Version()})
@@ -52,7 +52,7 @@ func (evaluator *Evaluator) PreparePlan(plan *strategy.CompiledPlan) (PreparedPl
 			projectionKeys[projectionKey{valueRef: spec.ValueRef(), normalizerRef: spec.NormalizerRef()}] = struct{}{}
 		}
 		standardIndex := 0
-		for algorithmIndex, algorithm := range level.Algorithms() {
+		for algorithmIndex, algorithm := range level.Algorithms().All() {
 			binding := boundAlgorithm{compiled: algorithm}
 			if algorithm.Kind() == strategy.DetectorKindThreshold {
 				if standardIndex >= len(bound.levels[levelIndex].detectors) {

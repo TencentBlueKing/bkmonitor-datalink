@@ -194,6 +194,24 @@ type Stats struct {
 	// before it is not "own" here, and "no own lookup" says only that none
 	// of the alerts sent since reached the gate.
 	GateSince time.Time
+	// SentDepartures counts why alerts left Added since the process
+	// started, every path in SentDepartures present. OwnOpen is how many
+	// alerts this process opened and has not sent the RECOVERY for --
+	// the alerts the gate treats as its own -- and OwnOpenDepartures why
+	// alerts left that record; OwnOpenRefusals how many times a first
+	// ABNORMAL found the record full -- a count of refusals, not of alerts:
+	// an alert still firing is refused again every round it is sent.
+	// The own-open fields are known only under the index protocol, which
+	// OwnOpenKnown says.
+	SentDepartures    map[string]uint64
+	OwnOpenKnown      bool
+	OwnOpen           int
+	OwnOpenDepartures map[string]uint64
+	OwnOpenRefusals   uint64
+	// RecoveriesResent counts RECOVERY events the broker took for an alert
+	// whose earlier RECOVERY the ledger still held: sent again because the
+	// consumer's set still carried the alert once the ledger let it through.
+	RecoveriesResent uint64
 }
 
 type member struct {
@@ -203,6 +221,11 @@ type member struct {
 
 type stamped struct {
 	at time.Time
+	// resent is a RECOVERY whose alert the ledger already held closed when
+	// the broker took it: the recovery went out again. Such an entry waits
+	// longer before it lets the alert through again (removalHides), so a
+	// consumer that is behind gets each recovery at most once more.
+	resent bool
 }
 
 // Cache is this process's copy of the consumer's open alert set. It
@@ -235,10 +258,18 @@ type Cache struct {
 	added     map[member]stamped
 	removed   map[member]stamped
 
-	evictions   uint64
-	refreshes   map[string]uint64
-	unavailable map[UnavailableReason]uint64
-	lookups     map[Answer]uint64
+	evictions uint64
+	// recoveriesResent: see Stats.RecoveriesResent.
+	recoveriesResent uint64
+	// sentDepartures and openDepartures count why alerts left added and
+	// index.opened; openRefusals the times index.opened was full when an
+	// alert not in it was sent -- refusals, not alerts.
+	// See departures.go.
+	sentDepartures, openDepartures map[string]uint64
+	openRefusals                   uint64
+	refreshes                      map[string]uint64
+	unavailable                    map[UnavailableReason]uint64
+	lookups                        map[Answer]uint64
 	// lastAnswer, ownLookups, ownHeld and the two samples are the gate's
 	// lookups as recordGate keeps them.
 	lastAnswer    Answer
@@ -425,11 +456,17 @@ func (cache *Cache) Acknowledged(events []contract.TriggerEventV1) {
 			delete(cache.removed, m)
 			cache.noteOpened(m, now)
 		case contract.TriggerEventRecovery:
-			cache.removed[m] = stamped{at: now}
-			delete(cache.added, m)
-			if cache.index != nil {
-				delete(cache.index.opened, m)
+			// A RECOVERY for an alert the ledger still holds closed is the
+			// same recovery sent again; the entry remembers it. Departures
+			// do not count it: the alert left added and opened with the
+			// first one, and both leave* are no-ops for it now.
+			_, resending := cache.removed[m]
+			if resending {
+				cache.recoveriesResent++
 			}
+			cache.removed[m] = stamped{at: now, resent: resending}
+			cache.leaveSent(m, DepartureRecoveryAcked)
+			cache.leaveOpen(m, DepartureRecoveryAcked)
 		}
 	}
 	cache.boundLocal()
@@ -459,7 +496,7 @@ func (cache *Cache) boundLocal() {
 		if entry.removed {
 			delete(cache.removed, entry.m)
 		} else {
-			delete(cache.added, entry.m)
+			cache.leaveSent(entry.m, DepartureEvicted)
 		}
 		cache.evictions++
 	}
@@ -555,7 +592,7 @@ func (cache *Cache) becomeAuthoritative(now time.Time, heartbeat Heartbeat, keys
 	retention := LocalRetentionCycles * heartbeat.Cycle
 	for m, s := range cache.added {
 		if now.Sub(s.at) > retention {
-			delete(cache.added, m)
+			cache.leaveSent(m, DepartureNotResent)
 		}
 	}
 	for m, s := range cache.removed {
@@ -579,7 +616,7 @@ func (cache *Cache) Stats() Stats {
 		Mode: ModeNeverLoaded, Available: cache.available, UnavailableReason: cache.reason,
 		LoadedAt: cache.loadedAt, Heartbeat: cache.heartbeat,
 		Tracked: len(cache.tracked), Loaded: len(cache.loaded), Added: len(cache.added), Removed: len(cache.removed),
-		Evictions: cache.evictions,
+		Evictions: cache.evictions, RecoveriesResent: cache.recoveriesResent,
 		Refreshes: make(map[string]uint64, len(cache.refreshes)), Unavailable: make(map[UnavailableReason]uint64, len(cache.unavailable)),
 		Lookups: make(map[Answer]uint64, len(cache.lookups)),
 	}

@@ -21,16 +21,15 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 const testAdminKey = "fixture-only-administrator-key-0123456789abcdef"
 
 func startRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	path, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	path := redistest.Server(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -498,5 +497,31 @@ func TestRedisErrorsAreSafeAndFailClosed(t *testing.T) {
 	var public *Error
 	if !errors.As(err, &public) || public.HTTPStatus != 503 {
 		t.Fatal("safe error unavailable to caller")
+	}
+}
+
+// A store call nobody answered fails as auth_store_unavailable naming why,
+// and the reason is reported to the manager's counter.
+func TestAnUnansweredStoreSaysWhy(t *testing.T) {
+	dead := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
+	t.Cleanup(func() { _ = dead.Close() })
+	var heard []string
+	m, err := New(Options{Redis: dead, Prefix: "test-alarmd", EnvironmentID: "test-env", EnvironmentName: "Test environment",
+		PublicBaseURL: "https://example.test/alarmd/", AdminKey: testAdminKey, Now: func() time.Time { return time.Unix(1, 0) },
+		OnStoreFailure: func(reason, detail string) { heard = append(heard, reason, detail) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.ActivePairings(context.Background())
+	var failure *Error
+	if !errors.As(err, &failure) || failure.Code != "auth_store_unavailable" || failure.Reason != "connection_refused" {
+		t.Fatalf("error %#v", err)
+	}
+	if len(heard) != 2 || heard[0] != "connection_refused" || !strings.Contains(heard[1], "127.0.0.1:1") {
+		t.Fatalf("heard %v", heard)
+	}
+	encoded, _ := json.Marshal(failure)
+	if !strings.Contains(string(encoded), `"reason":"connection_refused"`) || strings.Contains(string(encoded), "127.0.0.1") {
+		t.Fatalf("the answer should carry the reason and not the text: %s", encoded)
 	}
 }

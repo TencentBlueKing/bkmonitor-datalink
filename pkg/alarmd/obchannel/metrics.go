@@ -12,11 +12,13 @@ package obchannel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -31,12 +33,29 @@ import (
 // read targeted at it. Counters only the Leader moves (source refresh,
 // cutover) are read with control_leader, without first finding its name.
 
+// A reader who does not know a family's exact name had nowhere to find it:
+// metrics.get takes full names only, and an agent guessed one that does not
+// exist. metrics.list names every family the process registers, with its
+// type and help, so the name is copied rather than guessed.
+//
+// Registered is not the same as gathered. A gather drops a family with no
+// series, and a failure counter has none until its first failure -- which
+// is exactly when "has it ever happened" is the question. Both reads take
+// the registered names from the registry's descriptions, so such a family
+// is listed with no series and read as registered but never recorded,
+// rather than as a name the process does not have.
+
 // MetricNamePattern is the names metrics.get accepts: alarmd's own families.
 var MetricNamePattern = regexp.MustCompile(`^bkmonitor_alarmd_[a-z0-9_]+$`)
 
 // MaxMetricNames bounds one read's names, MaxMetricSeries each family's
 // series and MaxMetricLabelFilters the label filter.
 const (
+	// MaxListedFamilies bounds metrics.list, and MaxListedHelpBytes each
+	// family's help text in it.
+	MaxListedFamilies  = 400
+	MaxListedHelpBytes = 320
+
 	MaxMetricNames        = 20
 	MaxMetricSeries       = 500
 	MaxMetricLabelFilters = 8
@@ -65,16 +84,44 @@ type MetricFamily struct {
 	Truncated bool           `json:"truncated,omitempty"`
 }
 
-// MetricsResult is one read. Absent names the families this process has
-// not registered -- a name that is not there is said, not answered empty.
+// MetricsResult is one read. Absent names the families this process does
+// not register; Unrecorded the ones it registers that have no series yet --
+// a counter that has not moved since the process started, which is a zero,
+// not a missing name. When the registry cannot describe itself the two
+// cannot be told apart and every missing family is Absent.
 type MetricsResult struct {
-	Families []MetricFamily `json:"families"`
-	Absent   []string       `json:"absent,omitempty"`
+	Families   []MetricFamily `json:"families"`
+	Absent     []string       `json:"absent,omitempty"`
+	Unrecorded []string       `json:"unrecorded,omitempty"`
 	// GatherError is the registry's error when some collector failed and
 	// the rest answered. A family that collector owns is then missing from
-	// Families and listed under Absent, and Absent no longer proves the
-	// family is not registered.
+	// Families: under Unrecorded when the registry describes it, under
+	// Absent when it cannot describe itself. Either way it was not read,
+	// and Unrecorded no longer proves the counter has not moved.
 	GatherError string `json:"gather_error,omitempty"`
+}
+
+// MetricFamilyEntry is one family metrics.list names: what metrics.get takes
+// as its name, the family's type and help, and how many series it has now.
+// A family with no series has no type to report: a description does not
+// carry one, and the name is not a reliable guess.
+type MetricFamilyEntry struct {
+	Name   string `json:"name"`
+	Type   string `json:"type,omitempty"`
+	Help   string `json:"help,omitempty"`
+	Series int    `json:"series"`
+}
+
+// MetricsListResult is the families the answering process registers, in
+// name order. Truncated says more matched than MaxListedFamilies.
+type MetricsListResult struct {
+	// Described is false when the registry could not describe itself and
+	// only families that have series are listed.
+	Described   bool                `json:"described"`
+	Families    []MetricFamilyEntry `json:"families"`
+	Matched     int                 `json:"matched"`
+	Truncated   bool                `json:"truncated,omitempty"`
+	GatherError string              `json:"gather_error,omitempty"`
 }
 
 // MetricsOperations reads the answering process's registry.
@@ -83,7 +130,7 @@ func MetricsOperations(gatherer prometheus.Gatherer) []Operation {
 	filter := Field{Type: "string", Pattern: `^[a-zA-Z_][a-zA-Z0-9_]*=.{0,256}$`, MinLength: 2, MaxLength: 320}
 	fields := map[string]Field{
 		"names": {Type: "array", Items: &one, MaxItems: MaxMetricNames, UniqueItems: true,
-			Description: "指标族全名，含 bkmonitor_alarmd_ 前缀，从 /metrics 或设计文档的注册表抄，不自行拼写。", Source: "注册表（pkg/alarmd/metric）"},
+			Description: "指标族全名，含 bkmonitor_alarmd_ 前缀，从 metrics.list 抄，不自行拼写。", Source: "metrics.list families[].name"},
 		"labels": {Type: "array", Items: &filter, MaxItems: MaxMetricLabelFilters, UniqueItems: true,
 			Description: "可选：按标签精确匹配筛选序列，每项写成 name=value，只保留每项都相等的序列。"},
 	}
@@ -93,9 +140,43 @@ func MetricsOperations(gatherer prometheus.Gatherer) []Operation {
 		}
 		return Availability{Available: true}
 	}
-	return []Operation{{
+	list := Operation{
+		ID:            "metrics.list",
+		Summary:       "列出应答进程注册的 alarmd 指标族：名字、类型、说明和当前序列数；metrics.get 的名字从这里抄，不要猜。",
+		EvidenceScope: "process",
+		Targetable:    true,
+		Fields: map[string]Field{
+			"contains": {Type: "string", MinLength: 1, MaxLength: 64, Pattern: `^[A-Za-z0-9_ ]+$`,
+				Description: "可选：只列名字或说明里含这段文字的族（不区分大小写），例如 recovery、cooldown。"},
+		},
+		OutputSchema: SchemaOf(MetricsListResult{}),
+		Limits:       map[string]any{"families": MaxListedFamilies, "help_bytes": MaxListedHelpBytes, "scope": "answering_replica"},
+		Examples:     []Params{{}, {"contains": "recovery"}},
+		Availability: available,
+		Run: func(ctx context.Context, p Params) Outcome {
+			if gatherer == nil {
+				return Outcome{Error: &Failure{Code: "metrics_not_wired", Message: "This process has no metrics registry wired to the channel."}}
+			}
+			result, err := listMetrics(gatherer, p.String("contains"))
+			if err != nil {
+				return Outcome{Error: &Failure{Code: "metrics_unreadable", Message: "The metrics registry could not be gathered."}}
+			}
+			out := Outcome{Value: result, Complete: !result.Truncated && result.GatherError == "",
+				Summary:     fmt.Sprintf("应答进程注册了 %d 个匹配的 alarmd 指标族", result.Matched),
+				Limitations: []string{"Families are this process's registry; another replica is read by targeting it. A family a failed collector owns is listed with no series; see gather_error."}}
+			if result.Truncated {
+				out.Limitations = append(out.Limitations, "More families match than are listed; narrow with contains.")
+			}
+			if !result.Described {
+				out.Complete = false
+				out.Limitations = append(out.Limitations, "The registry could not describe itself: only families that have series are listed, and a registered family with none is missing here.")
+			}
+			return out
+		},
+	}
+	return []Operation{list, {
 		ID:            "metrics.get",
-		Summary:       "按名字读取应答进程自己的 alarmd 指标当前值（计数器、仪表、直方图）；速率要读两次相减，其他副本要指定实例再读，control_leader=true 直接读当前 Control Leader。",
+		Summary:       "按名字读取应答进程自己的 alarmd 指标当前值（计数器、仪表、直方图）；名字用 metrics.list 查；速率要读两次相减，其他副本要指定实例再读，control_leader=true 直接读当前 Control Leader。",
 		EvidenceScope: "process",
 		Targetable:    true,
 		Fields:        fields,
@@ -130,6 +211,15 @@ func MetricsOperations(gatherer prometheus.Gatherer) []Operation {
 			if result.GatherError != "" {
 				out.Limitations = append(out.Limitations, "Some collectors failed; absent families may be registered but unread: "+result.GatherError)
 			}
+			if len(result.Absent) > 0 {
+				out.Next = append(out.Next, Call{Operation: "metrics.list", Params: Params{}, Reason: "有名字不在应答进程的注册表里；从这里查到确切的族名再读。"})
+			}
+			switch {
+			case len(result.Unrecorded) > 0 && result.GatherError != "":
+				out.Limitations = append(out.Limitations, "Unrecorded families are registered and were not read: a collector failed, so one may simply have gone unread rather than never moved; see gather_error.")
+			case len(result.Unrecorded) > 0:
+				out.Limitations = append(out.Limitations, "Unrecorded families are registered and have no series since this process started: a counter there has not moved.")
+			}
 			for _, family := range result.Families {
 				if family.Truncated {
 					out.Complete = false
@@ -139,6 +229,97 @@ func MetricsOperations(gatherer prometheus.Gatherer) []Operation {
 			return out
 		},
 	}}
+}
+
+// listMetrics names the registered alarmd families, filtered by contains.
+func listMetrics(gatherer prometheus.Gatherer, contains string) (MetricsListResult, error) {
+	families, err := gatherer.Gather()
+	if err != nil && len(families) == 0 {
+		return MetricsListResult{}, err
+	}
+	result := MetricsListResult{Families: []MetricFamilyEntry{}}
+	if err != nil {
+		result.GatherError = err.Error()
+		if len(result.GatherError) > 512 {
+			result.GatherError = result.GatherError[:512] + "..."
+		}
+	}
+	needle := strings.ToLower(contains)
+	all := map[string]MetricFamilyEntry{}
+	described, ok := describedFamilies(gatherer)
+	result.Described = ok
+	for name, help := range described {
+		all[name] = MetricFamilyEntry{Name: name, Help: help}
+	}
+	for _, family := range families {
+		all[family.GetName()] = MetricFamilyEntry{Name: family.GetName(), Type: family.GetType().String(), Help: family.GetHelp(), Series: len(family.GetMetric())}
+	}
+	entries := []MetricFamilyEntry{}
+	for name, entry := range all {
+		if !MetricNamePattern.MatchString(name) {
+			continue
+		}
+		if needle != "" && !strings.Contains(strings.ToLower(name), needle) && !strings.Contains(strings.ToLower(entry.Help), needle) {
+			continue
+		}
+		if len(entry.Help) > MaxListedHelpBytes {
+			cut := MaxListedHelpBytes
+			for cut > 0 && !utf8.RuneStart(entry.Help[cut]) {
+				cut--
+			}
+			entry.Help = entry.Help[:cut] + "..."
+		}
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	result.Matched = len(entries)
+	if len(entries) > MaxListedFamilies {
+		entries, result.Truncated = entries[:MaxListedFamilies], true
+	}
+	result.Families = entries
+	return result, nil
+}
+
+// describer is a gatherer that can also say what it registers, as a
+// prometheus.Registry can.
+type describer interface {
+	Describe(chan<- *prometheus.Desc)
+}
+
+// descPattern reads the name and help out of a description. client_golang
+// exposes neither field; its String form quotes both, and a description in
+// another form is left out rather than guessed at.
+var descPattern = regexp.MustCompile(`^Desc\{fqName: ("(?:[^"\\]|\\.)*"), help: ("(?:[^"\\]|\\.)*"),`)
+
+// describedFamilies is every family the gatherer describes, name to help;
+// false when it cannot describe itself.
+func describedFamilies(gatherer prometheus.Gatherer) (map[string]string, bool) {
+	registry, ok := gatherer.(describer)
+	if !ok {
+		return nil, false
+	}
+	descs := make(chan *prometheus.Desc, 64)
+	go func() {
+		registry.Describe(descs)
+		close(descs)
+	}()
+	families := map[string]string{}
+	for desc := range descs {
+		match := descPattern.FindStringSubmatch(desc.String())
+		if match == nil {
+			continue
+		}
+		name, err := strconv.Unquote(match[1])
+		if err != nil {
+			continue
+		}
+		help, err := strconv.Unquote(match[2])
+		if err != nil {
+			continue
+		}
+		families[name] = help
+	}
+	return families, true
 }
 
 func metricNames(p Params) []string {
@@ -183,10 +364,15 @@ func readMetrics(gatherer prometheus.Gatherer, names []string, labels map[string
 		byName[family.GetName()] = family
 	}
 	result := MetricsResult{Families: []MetricFamily{}, GatherError: gatherError}
+	described, _ := describedFamilies(gatherer)
 	for _, name := range names {
 		family, ok := byName[name]
 		if !ok {
-			result.Absent = append(result.Absent, name)
+			if _, registered := described[name]; registered {
+				result.Unrecorded = append(result.Unrecorded, name)
+			} else {
+				result.Absent = append(result.Absent, name)
+			}
 			continue
 		}
 		out := MetricFamily{Name: name, Type: family.GetType().String(), Help: family.GetHelp(), Series: []MetricSeries{}}

@@ -282,7 +282,7 @@ func TestAWriteReadsTheHeaderAndNotTheRecord(t *testing.T) {
 	}
 	backend.commands = nil
 
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(),
 		Items: []execution.PlanNoDataMutation{noDataMutationFrom(t, execution.PlanNoDataMemoryUpdate{
 			DerivedFrom: execution.NoDataRepresentationPerGroup, LoadedApplyVersion: coexistenceApplyVersion(0),

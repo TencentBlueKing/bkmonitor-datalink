@@ -85,7 +85,7 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 	for _, definition := range catalogue {
 		known[definition.Code] = true
 	}
-	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions, ResultContractRefusals} {
+	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions, ResultContractRefusals, FiledCauses} {
 		for _, word := range vocabulary {
 			known[word] = true
 		}

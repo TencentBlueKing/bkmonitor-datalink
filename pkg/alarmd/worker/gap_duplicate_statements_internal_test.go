@@ -198,7 +198,7 @@ func TestAGapRefusalNamesTheApplySiteItCameFrom(t *testing.T) {
 			}
 			mutation := gapStatement("7", "aa", 3)
 			err := coordinator.applyGap(context.Background(), execution.OperationNormal,
-				execution.FrozenExecutionContractRef{}, []execution.PlanGapMutation{mutation}, site)
+				execution.FrozenExecutionContractRef{}, []execution.PlanGapMutation{mutation}, execution.GenerationRetention{Unknown: true}, site)
 			if err == nil {
 				t.Fatal("a refused apply returned no error")
 			}

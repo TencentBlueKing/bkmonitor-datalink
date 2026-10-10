@@ -143,11 +143,11 @@ func DeriveStateRetentionRequirement(plan *strategy.CompiledPlan) ([]StateRetent
 		return nil, errors.New("alarmd execution: compiled Plan is required to derive State retention")
 	}
 	levels := plan.Levels()
-	if len(levels) == 0 {
+	if levels.Len() == 0 {
 		return nil, errors.New("alarmd execution: Plan has no Level to derive State retention from")
 	}
-	requirements := make([]StateRetentionRequirement, len(levels))
-	for index, level := range levels {
+	requirements := make([]StateRetentionRequirement, levels.Len())
+	for index, level := range levels.All() {
 		requirements[index] = StateRetentionRequirement{
 			LevelID:            level.Definition().LevelID,
 			RetentionPoints:    level.StateRequirement().RetentionPoints,
@@ -191,8 +191,8 @@ func DeriveRuntimeLevelContractRefs(plan *strategy.CompiledPlan) ([]RuntimeLevel
 		return nil, errors.New("alarmd execution: compiled state contract is required")
 	}
 	levels := plan.Levels()
-	refs := make([]RuntimeLevelContractRef, len(levels))
-	for index, level := range levels {
+	refs := make([]RuntimeLevelContractRef, levels.Len())
+	for index, level := range levels.All() {
 		definition := level.Definition()
 		fingerprints := level.Fingerprints()
 		compatibility, err := contract.DeriveCanonicalDigestV2("alarmd-level-state-compatibility-v1", struct {

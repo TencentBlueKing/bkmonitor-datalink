@@ -89,6 +89,13 @@ type objectReadCache struct {
 	bytes      int
 	maxEntries int
 	maxBytes   int
+	// working is what the cache is about to hold (cacheWorkingSet), in
+	// stored bytes like bytes.
+	working cacheWorkingSet
+	// hits, misses and evictions are its outcomes since it was configured.
+	hits, misses, evictions uint64
+	// decoded is the running process's reading of the decoded charge.
+	decoded decodedSampler
 }
 
 func newObjectReadCache(maxEntries, maxBytes int) *objectReadCache {
@@ -104,20 +111,37 @@ func (cache *objectReadCache) lookup(key string) (any, int, bool) {
 	defer cache.mu.Unlock()
 	element, ok := cache.entries[key]
 	if !ok {
+		cache.misses++
 		return nil, 0, false
 	}
+	cache.hits++
 	cache.order.MoveToFront(element)
 	entry := element.Value.(*objectCacheEntry)
 	return entry.value, entry.bytes, true
 }
 
-func (cache *objectReadCache) store(key string, value any, bytes int) {
-	if cache == nil || cache.maxEntries <= 0 || cache.maxBytes <= 0 || bytes > cache.maxBytes {
-		return
+// announce is entries a reader is about to read from Redis and store here
+// (cacheWorkingSet); the reader defers settle on what it returns.
+func (cache *objectReadCache) announce(entries int) *cacheReading {
+	if cache == nil {
+		return nil
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	return cache.working.announceLocked(&cache.mu, entries)
+}
+
+// store keeps value under key, struck from reading, the announcement it was
+// read under.
+func (cache *objectReadCache) store(reading *cacheReading, key string, value any, bytes int) {
+	if cache == nil || cache.maxEntries <= 0 || cache.maxBytes <= 0 || bytes > cache.maxBytes {
+		return
+	}
+	cache.decoded.observe(value, bytes)
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
 	if element, ok := cache.entries[key]; ok {
+		cache.working.storedLocked(reading, 0)
 		cache.order.MoveToFront(element)
 		return
 	}
@@ -127,9 +151,11 @@ func (cache *objectReadCache) store(key string, value any, bytes int) {
 		cache.order.Remove(oldest)
 		delete(cache.entries, entry.key)
 		cache.bytes -= entry.bytes
+		cache.evictions++
 	}
 	cache.entries[key] = cache.order.PushFront(&objectCacheEntry{key: key, bytes: bytes, value: value})
 	cache.bytes += bytes
+	cache.working.storedLocked(reading, bytes)
 }
 
 type objectReadFlight struct {
@@ -162,6 +188,88 @@ func (repository *RedisCatalogRepository) ConfigureObjectCache(maxEntries, maxBy
 	}
 	repository.objectCache.Store(newObjectReadCache(maxEntries, maxBytes))
 	return nil
+}
+
+// TimelineCacheBudget is the control timeline cache as a detection budget of
+// observation memory (package memoryline): its working set
+// (cacheWorkingSet) and what it holds, in decoded bytes
+// (cachedTimelineBytes).
+func (repository *RedisCatalogRepository) TimelineCacheBudget() (size, held uint64) {
+	if repository == nil || repository.controlCache == nil {
+		return 0, 0
+	}
+	return repository.controlCache.timelineBudget()
+}
+
+// ObjectCacheBudget is the catalog object cache as a detection budget of
+// observation memory: its working set (cacheWorkingSet) and what it holds,
+// charged as the objects decoded from the stored bytes it counts
+// (decodedObjectBytes).
+func (repository *RedisCatalogRepository) ObjectCacheBudget() (size, held uint64) {
+	cache := repository.objects()
+	if cache == nil {
+		return 0, 0
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return uint64(decodedObjectBytes(cache.working.sizeLocked(cache.bytes, cache.maxBytes))),
+		uint64(decodedObjectBytes(max(cache.bytes, 0)))
+}
+
+// ObjectCacheStats is the catalog object cache's outcomes and occupancy,
+// in stored bytes.
+type ObjectCacheStats struct {
+	Hits, Misses, Evictions uint64
+	Occupancy               ControlTimelineCacheOccupancy
+}
+
+// ObjectCacheStats reads the object cache in force, zero before one is
+// configured.
+func (repository *RedisCatalogRepository) ObjectCacheStats() ObjectCacheStats {
+	cache := repository.objects()
+	if cache == nil {
+		return ObjectCacheStats{}
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return ObjectCacheStats{
+		Hits: cache.hits, Misses: cache.misses, Evictions: cache.evictions,
+		Occupancy: ControlTimelineCacheOccupancy{
+			Entries: cache.order.Len(), Bytes: cache.bytes,
+			MaxEntries: cache.maxEntries, MaxBytes: cache.maxBytes, Evictions: cache.evictions,
+		},
+	}
+}
+
+// decodedObjectBytes is the heap the object cache's entries take for stored
+// bytes of them: the decoded Query Group objects, and each entry's list
+// element and map slot. The cache counts stored bytes, so its unused budget
+// in stored bytes is this much heap still to come.
+//
+// Measured 2026-09-29 by TestDecodedQueryGroupObjectHeapFootprint: retained
+// heap per decoded copy (32 copies held across two collections each side)
+// against its payload, worst of three: 0.84 at one Plan, 1.04
+// at three, 1.34 at eighteen - the tallest tooth, where the Plans slice's
+// doubling lands past a size class - and 1.29 at eighty. Under -race every
+// reading rises by about 0.1 and the tooth reaches 1.46. Three halves covers
+// both, with the entry's overhead, which is under a tenth of the smallest
+// object.
+func decodedObjectBytes(stored int) int {
+	return stored * decodedObjectBytesNumerator / decodedObjectBytesDenominator
+}
+
+const (
+	decodedObjectBytesNumerator   = 3
+	decodedObjectBytesDenominator = 2
+)
+
+// DecodedObjectReading is the object cache's sampled reading of its decoded
+// charge (decodedSampler), zero before a cache is configured.
+func (repository *RedisCatalogRepository) DecodedObjectReading() DecodedObjectReading {
+	if cache := repository.objects(); cache != nil {
+		return cache.decoded.reading()
+	}
+	return DecodedObjectReading{}
 }
 
 // objects is the object cache in force, nil before one is configured; every
@@ -223,13 +331,15 @@ func (repository *RedisCatalogRepository) loadObject(
 		}
 		return flight.value, flight.bytes, flight.err
 	}
+	reading := repository.objects().announce(1)
+	defer reading.settle()
 	flight.value, flight.bytes, flight.err = repository.readObject(ctx, kind, key, domain, digest, decode)
 	flights.mu.Lock()
 	delete(flights.byKey, key)
 	flights.mu.Unlock()
 	close(flight.done)
 	if flight.err == nil {
-		repository.objects().store(key, flight.value, flight.bytes)
+		repository.objects().store(reading, key, flight.value, flight.bytes)
 	}
 	return flight.value, flight.bytes, flight.err
 }
@@ -392,7 +502,7 @@ func AssembleQueryGroup(object QueryGroupObject, contexts map[execution.PlanIden
 				NoData:                plan.NoData,
 				EffectiveTimeSnapshot: append(json.RawMessage(nil), plan.EffectiveTimeSnapshot...),
 				StrategyIR:            strategyIR, WireFormat: context.WireFormat, SignalType: context.SignalType,
-				TerminalReasonCode: plan.TerminalReasonCode,
+				TerminalReasonCode: plan.TerminalReasonCode, GlobalBusiness: context.GlobalBusiness,
 			},
 			StateGeneration: plan.StateGeneration, ScheduleSpec: plan.ScheduleSpec, ScheduleRevision: plan.ScheduleRevision,
 			RequirementTemplates: plan.RequirementTemplates, QueryPlans: plan.QueryPlans,
@@ -426,32 +536,50 @@ func (repository *RedisCatalogRepository) LoadSegmentQueryGroup(
 	at execution.EvaluationTime,
 	fallback func(context.Context) (QueryGroup, error),
 ) (QueryGroup, error) {
+	group, _, err := repository.LoadSegmentQueryGroupContent(ctx, segment, at, fallback)
+	return group, err
+}
+
+// LoadSegmentQueryGroupContent is LoadSegmentQueryGroup saying whether the
+// group was assembled from the content the Segment names. Only then is every
+// byte of its Plans and dataset contract in the Query Group object the
+// Segment names at the evaluation time and in each Plan's output context it
+// names there, both read by digest and checked against it; a group served
+// from the Snapshot is not, and says false.
+func (repository *RedisCatalogRepository) LoadSegmentQueryGroupContent(
+	ctx context.Context,
+	segment execution.ScheduleSegmentFact,
+	at execution.EvaluationTime,
+	fallback func(context.Context) (QueryGroup, error),
+) (QueryGroup, bool, error) {
 	if repository == nil || fallback == nil {
-		return QueryGroup{}, errors.New("alarmd controlplane: Segment Query Group read requires a fallback")
+		return QueryGroup{}, false, errors.New("alarmd controlplane: Segment Query Group read requires a fallback")
 	}
 	if !segment.Contains(at) {
-		return QueryGroup{}, errors.New("alarmd controlplane: Segment Query Group read is outside the Segment")
+		return QueryGroup{}, false, errors.New("alarmd controlplane: Segment Query Group read is outside the Segment")
 	}
 	segment = segment.At(at)
 	if segment.ObjectDigest == "" {
 		repository.observeObjectRead(ctx, objectReadKindSegment, segmentReadLegacySegment)
 		repository.localView.forget(segment.QueryGroup)
-		return fallback(ctx)
+		group, err := fallback(ctx)
+		return group, false, err
 	}
 	group, entry, result, err := repository.loadSegmentQueryGroupByContent(ctx, segment)
 	if err == nil {
 		repository.observeObjectRead(ctx, objectReadKindSegment, segmentReadObject)
 		repository.localView.record(segment.QueryGroup, entry)
-		return group, nil
+		return group, true, nil
 	}
 	if result == "" {
-		return QueryGroup{}, err
+		return QueryGroup{}, false, err
 	}
 	repository.observeObjectRead(ctx, objectReadKindSegment, result)
 	// Served from the Snapshot, not by content: the Query Group leaves the
 	// view until a Slot is read by content again.
 	repository.localView.forget(segment.QueryGroup)
-	return fallback(ctx)
+	group, err = fallback(ctx)
+	return group, false, err
 }
 
 // loadSegmentQueryGroupByContent returns the assembled Query Group and what

@@ -49,6 +49,11 @@ type startupWaiter struct {
 	recorder         *metric.Recorder
 	logger           *observability.Logger
 	health           *phaseTwoApplicationHealth
+	// pause waits out one backoff and returns early with ctx's error. Nil is
+	// a timer; a test that asks which delays were chosen passes one that
+	// records them, since a gap read off the wall clock also measures how
+	// late the scheduler woke the goroutine.
+	pause func(ctx context.Context, delay time.Duration) error
 }
 
 func newStartupWaiter(recorder *metric.Recorder, logger *observability.Logger, health *phaseTwoApplicationHealth) startupWaiter {
@@ -90,16 +95,26 @@ func (waiter startupWaiter) await(ctx context.Context, dependency string, attemp
 				State: observability.HealthStarting, Reasons: []observability.ReasonCode{observability.ReasonCode(contract.ReasonRedisUnavailable)},
 			})
 		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return fmt.Errorf("startup stopped while waiting on %s: %w", dependency, errors.Join(ctx.Err(), err))
-		case <-timer.C:
+		if pauseErr := waiter.sleep(ctx, delay); pauseErr != nil {
+			return fmt.Errorf("startup stopped while waiting on %s: %w", dependency, errors.Join(pauseErr, err))
 		}
 		if delay *= 2; delay > ceiling {
 			delay = ceiling
 		}
+	}
+}
+
+func (waiter startupWaiter) sleep(ctx context.Context, delay time.Duration) error {
+	if waiter.pause != nil {
+		return waiter.pause(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

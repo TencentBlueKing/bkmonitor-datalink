@@ -78,6 +78,15 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonEffectiveTimeCalendarIdentity:      {ReasonEffectiveTimeCalendarIdentity, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonEffectiveTimeCalendarDuplicate:     {ReasonEffectiveTimeCalendarDuplicate, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonEffectiveTimeCalendarItemsMissing:  {ReasonEffectiveTimeCalendarItemsMissing, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeItemDuplicate:         {ReasonEffectiveTimeItemDuplicate, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeItemInvalid:           {ReasonEffectiveTimeItemInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeItemTimeInvalid:       {ReasonEffectiveTimeItemTimeInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeTimeKindInvalid:       {ReasonEffectiveTimeTimeKindInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeTimezoneInvalid:       {ReasonEffectiveTimeTimezoneInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeRepeatInvalid:         {ReasonEffectiveTimeRepeatInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeRepeatListInvalid:     {ReasonEffectiveTimeRepeatListInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeRepeatEveryInvalid:    {ReasonEffectiveTimeRepeatEveryInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeRepeatUntilInvalid:    {ReasonEffectiveTimeRepeatUntilInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonCompilerTerminalUnclassified:       {ReasonCompilerTerminalUnclassified, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	// Deterministic for the same reason: the target's shape and the no-data
 	// dimensions are both frozen, so every round would reach this answer again.
@@ -104,6 +113,12 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonQueryEmpty:       {ReasonQueryEmpty, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryTimeout:     {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryUnavailable: {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryTargetMissing: {
+		ReasonQueryTargetMissing, ReasonClassCoverage, reasonQueryDomainsV2,
+	},
+	ReasonDetectIntervalStorageNotSliding: {
+		ReasonDetectIntervalStorageNotSliding, ReasonClassCoverage, reasonQueryDomainsV2,
+	},
 	ReasonReadinessBudgetInvalid: {
 		ReasonReadinessBudgetInvalid, ReasonClassCoverage, reasonQueryDomainsV2,
 	},

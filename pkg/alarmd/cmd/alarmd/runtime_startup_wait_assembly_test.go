@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -27,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -116,10 +116,7 @@ func runningGoroutines(function string) bool {
 // kubelet's backoff decided when it tried again. Now it stays up, not ready
 // under the dependency's name, and joins once that Redis answers.
 func TestAssemblyWaitsForARedisThatIsNotUpAndJoinsWhenItAnswers(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	f := newStartupWaitFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/automaxprocs/maxprocs"
 
@@ -156,11 +157,38 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 			DynamicGroupKeyPrefix:     targetGroupPrefix(cfg),
 			PlatformSettingsKeyPrefix: cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix,
 		},
+		Linkd: observability.RuntimeLinkdFacts{
+			ConsoleConfigured: cfg.PhaseTwo.Linkd.ConsoleURL != "",
+			EventSourceID:     cfg.PhaseTwo.Linkd.EventSourceID, HookName: cfg.PhaseTwo.Linkd.HookName,
+			AbsentCloseSend: cfg.PhaseTwo.Linkd.AbsentCloseSend,
+		},
+		Retention: phaseTwoRuntimeRetention(cfg),
 	}
 	// Digest the exact logged safe values, with the digest field still empty.
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-config-v2", facts)
 	facts.Digest = digest
 	return facts, err
+}
+
+// phaseTwoRuntimeRetention is the retention lengths from the functions the
+// deployment is assembled with, and their inputs, so the facts cannot say
+// one thing while the Slot source and admission use another.
+func phaseTwoRuntimeRetention(cfg config.Config) observability.RuntimeRetentionFacts {
+	seconds := func(duration time.Duration) int64 { return int64(duration / time.Second) }
+	reserve := cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
+	return observability.RuntimeRetentionFacts{
+		CatalogSeconds:                    seconds(phaseTwoCatalogRetention(cfg)),
+		ObjectLimitSeconds:                seconds(phaseTwoObjectRetentionLimit(cfg)),
+		SnapshotMinimumSeconds:            seconds(phaseTwoSnapshotMinimumRetention(cfg, phaseTwoMaxSupportedEvaluationInterval-reserve)),
+		CatalogKeyCadenceSeconds:          seconds(phaseTwoMaxSupportedEvaluationInterval),
+		CatalogTTLSeconds:                 seconds(cfg.PhaseTwo.Control.CatalogTTL.Duration()),
+		RedisMaxTTLSeconds:                seconds(cfg.Redis.MaxTTL.Duration()),
+		RedisRestartMarginSeconds:         seconds(cfg.Redis.RestartMargin.Duration()),
+		DownstreamExecutionReserveSeconds: seconds(reserve),
+		PublicationDelayAllowanceSeconds:  seconds(phaseTwoPublicationDelayAllowance(cfg)),
+		MaxReplayAgeSeconds:               seconds(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()),
+		PostRecoveryTerminalDelaySeconds:  seconds(phaseTwoPostRecoveryTerminalDelay(cfg)),
+	}
 }
 
 // phaseTwoRuntimeCapacity takes the container inputs as well as the

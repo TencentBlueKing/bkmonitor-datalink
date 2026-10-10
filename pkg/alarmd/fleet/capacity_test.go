@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -75,10 +76,72 @@ func TestCapacityNamesCeilingsTheReplicasDisagreeOn(t *testing.T) {
 	for _, name := range view.Capacity.Disagreement {
 		disagreement[name] = true
 	}
-	for _, want := range []string{"permit_budget", "cpu_cores", "memory_limit", "state_mutations"} {
+	for _, want := range []string{"permit_budget_per_replica", "cpu_cores_per_replica", "memory_limit_bytes_per_replica", "state_mutations"} {
 		if !disagreement[want] {
 			t.Fatalf("%q disagreement was not reported: %+v", want, view.Capacity.Disagreement)
 		}
+	}
+}
+
+// The deployment's memory use is summed and its limit is one replica's, and a
+// raw reader divided the one by the other: four replicas each at about a
+// quarter of a 4 GiB limit read as nearly full. The per-replica share is done
+// per replica - the fullest named - and the names say which figure is summed
+// and which is one replica's.
+func TestTheFullestReplicasMemoryShareIsItsOwnNotTheSumOverOneLimit(t *testing.T) {
+	at := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	limit := uint64(4 << 30)
+	used := map[string]uint64{"pod-a": 921 << 20, "pod-b": 1053 << 20, "pod-c": 1576 << 20, "pod-d": 1784 << 20}
+	var snapshots []Snapshot
+	for _, pod := range []string{"pod-a", "pod-b", "pod-c", "pod-d"} {
+		snapshots = append(snapshots, capacitySnapshot(pod, at, &Capacity{MemoryUsed: used[pod], MemoryLimit: limit, MemoryLimitKnown: true, MemorySource: "pod_limit"}))
+	}
+	view := Aggregate(Expectation{QueryGroups: 20, Known: true}, snapshots, []string{"pod-a", "pod-b", "pod-c", "pod-d"}, at, time.Minute)
+	capacity := view.Capacity
+	want := float64(1784<<20) / float64(limit)
+	if capacity.MemoryUsedShareMaxReplica != "pod-d" || capacity.MemoryUsedShareMax != want {
+		t.Fatalf("fullest replica = %s at %.3f, want pod-d at %.3f", capacity.MemoryUsedShareMaxReplica, capacity.MemoryUsedShareMax, want)
+	}
+	if misread := float64(capacity.MemoryUsed) / float64(capacity.MemoryLimit); misread < 0.9 || capacity.MemoryUsedShareMax > 0.5 {
+		t.Fatalf("setup: the summed use over one limit reads %.2f and the fullest replica %.2f; the case is the one that misled", misread, capacity.MemoryUsedShareMax)
+	}
+	raw, err := json.Marshal(capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"memory_used_bytes_total", "memory_limit_bytes_per_replica", "memory_used_share_max", "memory_used_share_max_replica"} {
+		if fields[name] == nil {
+			t.Errorf("capacity carries no %q: %v", name, fields)
+		}
+	}
+	for _, name := range []string{"memory_used_bytes", "memory_limit_bytes"} {
+		if _, present := fields[name]; present {
+			t.Errorf("capacity still carries %q, a name that does not say whether it is summed or one replica's", name)
+		}
+	}
+
+	// Two replicas at one share name the same one whichever is read first.
+	for _, order := range [][]string{{"pod-a", "pod-b"}, {"pod-b", "pod-a"}} {
+		tied := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
+			capacitySnapshot("pod-a", at, &Capacity{MemoryUsed: 1 << 30, MemoryLimit: limit, MemoryLimitKnown: true}),
+			capacitySnapshot("pod-b", at, &Capacity{MemoryUsed: 1 << 30, MemoryLimit: limit, MemoryLimitKnown: true}),
+		}, order, at, time.Minute).Capacity
+		if tied.MemoryUsedShareMaxReplica != "pod-a" {
+			t.Fatalf("read in order %v, the tie named %s, want pod-a", order, tied.MemoryUsedShareMaxReplica)
+		}
+	}
+
+	// A replica that does not know its limit has no share, and none known
+	// leaves the field out rather than reading zero.
+	unknown := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
+		capacitySnapshot("pod-a", at, &Capacity{MemoryUsed: 1 << 30, MemoryLimit: limit}),
+	}, []string{"pod-a"}, at, time.Minute).Capacity
+	if unknown.MemoryUsedShareMax != 0 || unknown.MemoryUsedShareMaxReplica != "" {
+		t.Fatalf("a replica with no known limit gave a share: %+v", unknown)
 	}
 }
 

@@ -30,7 +30,7 @@ func TestMaintenanceEffectiveTimeRequiresEveryLevelInactive(t *testing.T) {
 	plan.NoData = &contract.NoDataConfigV1{Continuous: 1, Level: 2}
 	plan.EffectiveTimeSnapshot = json.RawMessage(`{"schema_version":1,"status":"READY","business_timezone":"UTC","calendars":[]}`)
 	compiled := mustCompilePlan(t, newTestCompiler(t), plan)
-	if compiled.NoDataLevel().EffectiveTimeRequirementDigest() != compiled.Levels()[1].EffectiveTimeRequirementDigest() {
+	if compiled.NoDataLevel().EffectiveTimeRequirementDigest() != compiled.Levels().At(1).EffectiveTimeRequirementDigest() {
 		t.Fatal("no-data did not inherit its matching level")
 	}
 	for _, tt := range []struct {
@@ -249,7 +249,7 @@ func TestInvalidCalendarInputsAreRejected(t *testing.T) {
 			t.Fatalf("accepted %s", repeat)
 		}
 	}
-	for _, mutate := range []func(*effectiveSnapshot){func(s *effectiveSnapshot) { s.Calendars[0].TenantID = "other" }, func(s *effectiveSnapshot) { s.Calendars[0].Status = "DELETED" }, func(s *effectiveSnapshot) { s.Calendars[0].Items = nil }, func(s *effectiveSnapshot) { s.BusinessTimezone = "" }} {
+	for _, mutate := range []func(*effectiveSnapshot){func(s *effectiveSnapshot) { s.Calendars[0].TenantID = "other" }, func(s *effectiveSnapshot) { s.Calendars[0].Status = "ARCHIVED" }, func(s *effectiveSnapshot) { s.Calendars[0].Items = nil }, func(s *effectiveSnapshot) { s.BusinessTimezone = "" }} {
 		var snapshot effectiveSnapshot
 		if err := json.Unmarshal(snapshotForItems([]effectiveItem{}), &snapshot); err != nil {
 			t.Fatal(err)
@@ -259,5 +259,90 @@ func TestInvalidCalendarInputsAreRejected(t *testing.T) {
 		if _, err := compileEffectiveRules(raw, "tenant-a"); err == nil {
 			t.Fatal("invalid snapshot accepted")
 		}
+	}
+}
+
+// A calendar the writer marks deleted is read as Python reads one: an empty
+// calendar, never hit, whatever items it still carries. Named among the rest
+// days it pauses nothing; named as the only alert days the strategy is not
+// effective. A calendar present with an item at the moment is the other side
+// of each. A status that is neither is still refused, by name.
+func TestADeletedCalendarIsReadAsAnEmptyCalendar(t *testing.T) {
+	hit := []effectiveItem{ruleItem(100, 200, "UNIX_SECONDS", "UTC", `{}`)}
+	for _, testCase := range []struct {
+		name, role, status string
+		want               string
+	}{
+		{name: "alert days, present and hit", role: "active_calendars", status: "PRESENT", want: EffectiveTimeActive},
+		{name: "alert days, deleted", role: "active_calendars", status: "DELETED", want: EffectiveTimeInactive},
+		{name: "rest days, present and hit", role: "calendars", status: "PRESENT", want: EffectiveTimeInactive},
+		{name: "rest days, deleted", role: "calendars", status: "DELETED", want: EffectiveTimeActive},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan := validPlan()
+			plan.StrategyRef.TenantID = "tenant-a"
+			plan.StrategyIR.StrategyRef.TenantID = "tenant-a"
+			plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+				"time_ranges": []any{map[string]any{"start": "00:00", "end": "23:59"}}, testCase.role: []int{7}})
+			raw, err := json.Marshal(effectiveSnapshot{SchemaVersion: 1, Status: "READY", BusinessTimezone: "UTC",
+				Calendars: []effectiveCalendar{{ID: 7, TenantID: "tenant-a", Status: testCase.status, Items: hit}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan.EffectiveTimeSnapshot = raw
+			fact, err := mustCompilePlan(t, newTestCompiler(t), plan).ResolveEffectiveTime(context.Background(), 150)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fact.Status() != testCase.want {
+				t.Fatalf("status = %s, want %s", fact.Status(), testCase.want)
+			}
+		})
+	}
+	var snapshot effectiveSnapshot
+	if err := json.Unmarshal(snapshotForItems(hit), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Calendars[0].Status = "ARCHIVED"
+	raw, _ := json.Marshal(snapshot)
+	if _, err := compileEffectiveRules(raw, "tenant-a"); err == nil || err.Error() != ReasonEffectiveTimeCalendarNotPresent {
+		t.Fatalf("unknown calendar status: err = %v, want %s", err, ReasonEffectiveTimeCalendarNotPresent)
+	}
+}
+
+// Every refusal the snapshot's items and timezone can raise is a code the
+// compiler lists as its own, and so one the catalog classifies. They were
+// literals the list did not carry, and every strategy refused for one was
+// filed as COMPILER_TERMINAL_UNCLASSIFIED with the real code only in the
+// detail. One input per code, so a code that leaves the list goes red here.
+func TestEveryEffectiveTimeItemRefusalIsAListedReason(t *testing.T) {
+	listed := map[string]bool{}
+	for _, reason := range EffectiveTimeTerminalReasons() {
+		listed[reason] = true
+	}
+	item := func(mutate func(*effectiveItem)) effectiveItem {
+		value := ruleItem(0, 86400, "UNIX_SECONDS", "UTC", `{}`)
+		mutate(&value)
+		return value
+	}
+	for want, input := range map[string]effectiveItem{
+		ReasonEffectiveTimeItemInvalid:        item(func(i *effectiveItem) { i.Start = nil }),
+		ReasonEffectiveTimeTimeKindInvalid:    item(func(i *effectiveItem) { i.TimeKind = "HOURLY" }),
+		ReasonEffectiveTimeItemTimeInvalid:    item(func(i *effectiveItem) { end := int64(-1); i.End = &end }),
+		ReasonEffectiveTimeTimezoneInvalid:    item(func(i *effectiveItem) { i.Timezone = "Local" }),
+		ReasonEffectiveTimeRepeatInvalid:      item(func(i *effectiveItem) { i.Repeat = json.RawMessage(`{"freq":"hour","interval":1}`) }),
+		ReasonEffectiveTimeRepeatListInvalid:  item(func(i *effectiveItem) { i.Repeat = json.RawMessage(`{"freq":"week","interval":1,"every":[null]}`) }),
+		ReasonEffectiveTimeRepeatEveryInvalid: item(func(i *effectiveItem) { i.Repeat = json.RawMessage(`{"freq":"month","interval":1,"every":[32]}`) }),
+		ReasonEffectiveTimeRepeatUntilInvalid: item(func(i *effectiveItem) { i.Repeat = json.RawMessage(`{"freq":"day","interval":1,"until":-1}`) }),
+	} {
+		_, err := compileCalendarItem(input)
+		if err == nil || err.Error() != want || !listed[err.Error()] {
+			t.Errorf("%s: err = %v, want it and listed", want, err)
+		}
+	}
+	duplicate := []effectiveItem{ruleItem(0, 86400, "UNIX_SECONDS", "UTC", `{}`), ruleItem(0, 86400, "UNIX_SECONDS", "UTC", `{}`)}
+	if _, err := compileEffectiveRules(snapshotForItems(duplicate), "tenant-a"); err == nil ||
+		err.Error() != ReasonEffectiveTimeItemDuplicate || !listed[err.Error()] {
+		t.Errorf("duplicate item: err = %v, want %s and listed", err, ReasonEffectiveTimeItemDuplicate)
 	}
 }

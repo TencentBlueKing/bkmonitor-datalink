@@ -316,9 +316,13 @@ func TestAControlLoopFailingOnADependencyStaysAlive(t *testing.T) {
 	waitForHealth(t, health, "the outage on the page", func(snapshot observability.HealthSnapshot) bool {
 		return hasReason(snapshot.Reasons, phaseTwoControlDependencyReason)
 	})
+	// The moved clock ages every loop, so the dispatch loop has to turn under
+	// it too before the probe is read; waiting on the control loop alone
+	// raced the dispatch loop's next tick.
 	clock.advance(controlLoopStallBound + time.Minute)
 	waitUntil(t, 5*time.Second, "the failing control loop keeps turning", func() bool {
-		return livenessTurnAge(bundle.liveness, livenessLoopControl) < time.Second
+		return livenessTurnAge(bundle.liveness, livenessLoopControl) < time.Second &&
+			livenessTurnAge(bundle.liveness, livenessLoopDispatch) < time.Second
 	})
 	if got := stalledLoops(bundle.liveness); len(got) != 0 {
 		t.Fatalf("a dependency outage failed liveness: stalled %v", got)

@@ -79,7 +79,7 @@ func TestTheWritersHostPlansResolveThroughTheHostCacheAndTheDatabasePlanIsNamedU
 		"cw:dynamic_group:2001": `{"model_id":"cw-MySQL","model_inst_ids":["mysql-prod-01"],"member_list":[{"model_id":"cw-MySQL","model_inst_id":"mysql-prod-01"}]}`,
 	}}
 	reader, _ := NewGroupReader(client, "cw:")
-	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: clock})
+	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestAHostCacheWithoutTheCanonicalIdentityLeavesHostMembersUnresolvedByName(
 	now := time.Unix(1000, 0)
 	clock := func() time.Time { return now }
 	reader, _ := NewGroupReader(&groupClient{values: map[string]string{}}, "cw:")
-	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: clock})
+	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}

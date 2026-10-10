@@ -250,18 +250,6 @@ func lossRecords(view *View, now time.Time, visit func(queryGroup string, check,
 // the page prints come from one reading. Bookkeeping records are not losses
 // of detection and are left out, as the lines leave them out.
 func LossCensus(view *View, now time.Time) (byLoss map[Loss]int, graceUnknown int) {
-	byLoss = make(map[Loss]int, len(Losses))
-	for _, loss := range Losses {
-		byLoss[loss] = 0
-	}
-	lossRecords(view, now, func(_ string, check, _ Check, _ string, skip SkippedSpan, loss Loss, unknown bool) {
-		if check == CheckBookkeepingAbandoned {
-			return
-		}
-		byLoss[loss]++
-		if unknown && now.Sub(skip.At) <= RecentSkipWindow {
-			graceUnknown++
-		}
-	})
+	_, byLoss, graceUnknown = lossesOfView(view, now)
 	return byLoss, graceUnknown
 }

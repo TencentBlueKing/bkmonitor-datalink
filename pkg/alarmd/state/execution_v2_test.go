@@ -287,7 +287,7 @@ func TestApplyGapRejectsInvalidIdentityWithoutCallingStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation}})
+	result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation}})
 	if err != nil || result.Items[0].Status != execution.GapGuardRejected {
 		t.Fatalf("ApplyGap(invalid identity) = (%+v, %v)", result, err)
 	}
@@ -448,7 +448,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
+	apply, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
 	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
 		t.Fatalf("ApplyGap(open) = (%+v, %v)", apply, err)
 	}
@@ -462,7 +462,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	}
 	key, _ := PlanGapKeyV2("alarmd", identity)
 	original := append([]byte(nil), backend.values[key]...)
-	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{conflicting}})
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{conflicting}})
 	if err != nil || apply.Items[0].Status != execution.GapGuardConflict || string(backend.values[key]) != string(original) {
 		t.Fatalf("ApplyGap(same version, different digest) = (%+v, %v)", apply, err)
 	}
@@ -476,7 +476,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{warmed}})
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{warmed}})
 	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
 		t.Fatalf("ApplyGap(warmup) = (%+v, %v)", apply, err)
 	}
@@ -490,7 +490,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{cleared}})
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{cleared}})
 	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
 		t.Fatalf("ApplyGap(clear) = (%+v, %v)", apply, err)
 	}
@@ -526,7 +526,7 @@ func TestGapOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := append([]byte(nil), backend.values[badKey]...)
-	applied, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{badMutation}})
+	applied, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{badMutation}})
 	if err != nil || applied.Items[0].Status != execution.GapGuardRejected || string(backend.values[badKey]) != string(original) {
 		t.Fatalf("ApplyGap(oversize) = (%+v, %v)", applied, err)
 	}

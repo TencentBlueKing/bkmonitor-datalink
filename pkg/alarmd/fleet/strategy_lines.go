@@ -44,6 +44,10 @@ type StrategyLine struct {
 	// the reach, the state word, the action word -- and one evidence clause
 	// the check's rule supplies. Nothing else is appended.
 	Line string `json:"line"`
+	// TimeDelayAdvice is beside the sentence, not in it: the time_delay
+	// that would read the strategy's data whole, whatever check decides
+	// the line.
+	TimeDelayAdvice *TimeDelayAdvice `json:"time_delay_advice,omitempty"`
 }
 
 // StrategyListResponse is GET /api/strategies.
@@ -113,6 +117,7 @@ type strategyFold struct {
 	deciding Anomaly
 	rank     int
 	objects  map[string]struct{}
+	advice   *TimeDelayAdvice
 }
 
 // StrategyLines folds every listed row into one line per strategy, most
@@ -135,6 +140,7 @@ func StrategyLines(view *View, now time.Time) []StrategyLine {
 				folds[ref] = fold
 			}
 			fold.objects[row.QueryGroup] = struct{}{}
+			fold.advice = fold.advice.with(row)
 			if !row.Since.IsZero() && (fold.line.Since == nil || row.Since.Before(*fold.line.Since)) {
 				since := row.Since
 				fold.line.Since, fold.line.SinceFrom, fold.line.SinceBasis = &since, row.SinceFrom, sinceBasisOf(row.SinceFrom)
@@ -143,10 +149,9 @@ func StrategyLines(view *View, now time.Time) []StrategyLine {
 				last := row.LastHealthyAt
 				fold.line.LastGoodAt = &last
 			}
-			// The deciding row: the most severe check; among equals the
-			// earliest onset, so the sentence does not change with the
-			// order rows were walked in.
-			if rank < fold.rank || (rank == fold.rank && !row.Since.IsZero() && (fold.deciding.Since.IsZero() || row.Since.Before(fold.deciding.Since))) {
+			// The deciding row, by decidesBefore, so the sentence does not
+			// change with the order rows were walked in.
+			if decidesBefore(rank, row, fold.rank, fold.deciding) {
 				fold.rank, fold.deciding = rank, row
 				fold.line.Standing, fold.line.DecidingObject = standing, row.QueryGroup
 			}
@@ -156,6 +161,7 @@ func StrategyLines(view *View, now time.Time) []StrategyLine {
 	for _, fold := range folds {
 		fold.line.Objects = len(fold.objects)
 		fold.line.Line = strategyLineOf(fold.line, fold.deciding)
+		fold.line.TimeDelayAdvice = fold.advice
 		lines = append(lines, fold.line)
 	}
 	sort.Slice(lines, func(i, j int) bool {
@@ -190,6 +196,25 @@ func foldRank(check Check, loss Loss) int {
 	return rank
 }
 
+// decidesBefore reports whether a row of rank decides a strategy's line ahead
+// of the row deciding it so far: the more severe check; among equals the
+// earlier onset, a row with no onset after every row with one; among those
+// the object first by identity. Neither the order rows are walked in nor the
+// replica a row came from decides which of two equal rows the line shows,
+// which is what lets each replica fold its own rows and the folds agree.
+func decidesBefore(rank int, row Anomaly, bestRank int, best Anomaly) bool {
+	if rank != bestRank {
+		return rank < bestRank
+	}
+	switch {
+	case row.Since.IsZero() != best.Since.IsZero():
+		return !row.Since.IsZero()
+	case !row.Since.Equal(best.Since):
+		return row.Since.Before(best.Since)
+	}
+	return row.QueryGroup < best.QueryGroup
+}
+
 // lineRank is foldRank read back from the line, for ordering the list.
 func lineRank(line StrategyLine) int {
 	loss := Loss("")
@@ -218,6 +243,9 @@ func strategyLineOf(line StrategyLine, deciding Anomaly) string {
 // its holes fall. Other checks supply none in this batch; the slot stays
 // empty rather than filled from prose.
 func evidenceClause(row Anomaly) string {
+	if row.Kind == KindReadHeld {
+		return readHeldClause(row.ReadHold)
+	}
 	coverage := row.Coverage
 	if coverage == nil || coverage.Short == 0 {
 		return ""
@@ -226,22 +254,18 @@ func evidenceClause(row Anomaly) string {
 	if len(coverage.Windows) == 0 {
 		return clause
 	}
-	var data, incomplete, unusable, unknown uint32
-	for _, window := range coverage.Windows {
-		data += window.HolesBy.AnsweredWithoutSeries + window.HolesBy.AnsweredEmpty
-		incomplete += window.HolesBy.InputIncomplete
-		unusable += window.HolesBy.Unusable
-		unknown += window.HolesBy.NotInMemory + window.HolesBy.PrimaryUnrecorded
-	}
+	groups := holeGroupsOf(coverage.Windows, nil)
 	switch {
-	case incomplete > 0:
-		return clause + fmt.Sprintf("，缺的分钟里 %d 分钟本侧没查全", incomplete)
-	case unusable > 0:
-		return clause + fmt.Sprintf("，%d 分钟的记录检测用不了", unusable)
-	case unknown > 0:
-		return clause + fmt.Sprintf("，缺的分钟里 %d 分钟说不出是谁的", unknown)
+	case groups.Incomplete > 0:
+		return clause + fmt.Sprintf("，缺的分钟里 %d 分钟本侧没查全", groups.Incomplete)
+	case groups.Unusable > 0:
+		return clause + fmt.Sprintf("，%d 分钟的记录检测用不了", groups.Unusable)
+	case groups.Unknown > 0:
+		return clause + fmt.Sprintf("，缺的分钟里 %d 分钟说不出是谁的", groups.Unknown)
+	case groups.Before > 0:
+		return clause + fmt.Sprintf("，缺的分钟里 %d 分钟早于本副本接手这个对象，窗口滑过后再判", groups.Before)
 	default:
-		return clause + fmt.Sprintf("，缺的 %d 分钟查询都正常返回、序列不在结果里", data)
+		return clause + fmt.Sprintf("，缺的 %d 分钟查询都正常返回、序列不在结果里", groups.Data)
 	}
 }
 

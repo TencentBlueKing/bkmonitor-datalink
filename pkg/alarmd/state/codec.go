@@ -11,7 +11,6 @@ package state
 
 import (
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -340,14 +339,26 @@ func (codec *Codec) Decode(blob []byte) (*Window, error) {
 	return &Window{levels: levels, points: points}, nil
 }
 
+// decodeDigest32 reads a digest isSHA256Hex accepts into its 32 bytes, in
+// place: the characters are known to be lowercase hexadecimal, so each pair
+// is two nibbles and nothing is allocated.
 func decodeDigest32(value string) ([32]byte, error) {
 	var result [32]byte
 	if !isSHA256Hex(value) {
 		return result, fmt.Errorf("state: digest must be 64 lowercase hexadecimal characters")
 	}
-	decoded, _ := hex.DecodeString(value)
-	copy(result[:], decoded)
+	for index := range result {
+		result[index] = lowerHexNibble(value[2*index])<<4 | lowerHexNibble(value[2*index+1])
+	}
 	return result, nil
+}
+
+// lowerHexNibble is the value of one character isSHA256Hex accepted.
+func lowerHexNibble(c byte) byte {
+	if c <= '9' {
+		return c - '0'
+	}
+	return c - 'a' + 10
 }
 
 func appendUvarint(destination []byte, value uint64) []byte {

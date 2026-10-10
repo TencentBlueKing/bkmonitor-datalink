@@ -51,9 +51,17 @@ func TestEveryWindowCountReachesTheObservation(t *testing.T) {
 		case reflect.Slice:
 			// The named windows cross field by field below, since the two
 			// sides are different types; here they only have to be present.
-			if value.Type().Field(i).Name != "Windows" {
+			// The missing minutes are the same type on both sides and cross
+			// as themselves.
+			switch value.Type().Field(i).Name {
+			case "Windows":
+			case "MissingMinutes":
+				field.Set(reflect.ValueOf([]int64{int64(300 + i), int64(360 + i)}))
+			default:
 				t.Fatalf("%s is a slice this test has no fixture for; decide how it crosses", value.Type().Field(i).Name)
 			}
+		case reflect.Bool:
+			field.SetBool(true)
 		default:
 			t.Fatalf("%s is neither a uint32 nor a string; a field of another kind needs a decision "+
 				"about how it crosses, not a silent skip", value.Type().Field(i).Name)

@@ -116,7 +116,13 @@ func TestNoSingleFieldFactSetIsSwallowedAsNoCoverage(t *testing.T) {
 		case reflect.String:
 			target.SetString("QUERY_REFUSED")
 		case reflect.Slice:
-			target.Set(reflect.ValueOf([]HistoryWindowFact{namedWindow()}))
+			if target.Type().Elem().Kind() == reflect.Int64 {
+				target.Set(reflect.ValueOf([]int64{1_788_000_000}))
+			} else {
+				target.Set(reflect.ValueOf([]HistoryWindowFact{namedWindow()}))
+			}
+		case reflect.Bool:
+			target.SetBool(true)
 		default:
 			t.Fatalf("%s: no lone value for kind %s; give the kind one here so the field is checked", name, target.Kind())
 		}

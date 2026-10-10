@@ -49,23 +49,21 @@ type QueryConditions struct {
 }
 
 type QueryClause struct {
-	SourceConditions *QueryConditions `json:"SourceConditions,omitempty"`
-	FieldSemantics   string           `json:"FieldSemantics,omitempty"`
-	DataSource       string
-	Driver           string
-	TableID          string
-	FieldName        string
-	TimeField        string
-	IsRegexp         bool
-	ReferenceName    string
-	Functions        []QueryFunction
-	TimeAggregation  QueryFunction
-	Dimensions       []string
-	Conditions       QueryConditions
-	Offset           string
-	OffsetForward    string
-	KeepColumns      []string
-	QueryString      string
+	DataSource      string
+	Driver          string
+	TableID         string
+	FieldName       string
+	TimeField       string
+	IsRegexp        bool
+	ReferenceName   string
+	Functions       []QueryFunction
+	TimeAggregation QueryFunction
+	Dimensions      []string
+	Conditions      QueryConditions
+	Offset          string
+	OffsetForward   string
+	KeepColumns     []string
+	QueryString     string
 }
 
 // PromQLQuery preserves the independent UQ PromQL endpoint contract.
@@ -171,6 +169,13 @@ type QueryPlanFacts struct {
 	// matcher is a cutover of that group and nothing else. A pointer so that
 	// the facts of an unsplit Plan serialize exactly as they did.
 	Shard *ShardRef `json:"Shard,omitempty"`
+	// GlobalBusiness says the query reads every business of its tenant: the
+	// provider is asked to skip the space rather than scope the query to
+	// SpaceScope, which stays the strategy's own space and is not sent. It
+	// changes what the query returns, so it is part of the revision and of
+	// the Query Group's identity. Omitted when false, so every other Plan's
+	// facts serialize exactly as they did.
+	GlobalBusiness bool `json:"GlobalBusiness,omitempty"`
 }
 
 func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
@@ -203,15 +208,6 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 		return QueryPlanFacts{}, err
 	}
 	for _, clause := range facts.QueryList {
-		if clause.SourceConditions != nil && clause.FieldSemantics != "fta_event_tags/v1" {
-			return QueryPlanFacts{}, errors.New("alarmd execution: source conditions require FTA semantics")
-		}
-		if clause.FieldSemantics != "" && clause.FieldSemantics != "fta_event_tags/v1" {
-			return QueryPlanFacts{}, errors.New("alarmd execution: unsupported query field semantics")
-		}
-		if clause.FieldSemantics != "" && len(facts.TSDBMap[clause.ReferenceName]) == 0 {
-			return QueryPlanFacts{}, errors.New("alarmd execution: field semantics require registered ES routing")
-		}
 		if clause.Driver == "" || clause.TimeField == "" {
 			return QueryPlanFacts{}, errors.New("alarmd execution: incomplete query clause")
 		}
@@ -227,9 +223,6 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 			}
 		}
 		conditionGroups := []QueryConditions{clause.Conditions}
-		if clause.SourceConditions != nil {
-			conditionGroups = append(conditionGroups, *clause.SourceConditions)
-		}
 		for _, group := range conditionGroups {
 			if len(group.Connectors) != 0 && len(group.Connectors)+1 != len(group.Fields) {
 				return QueryPlanFacts{}, errors.New("alarmd execution: invalid source condition connectors")

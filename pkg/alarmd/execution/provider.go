@@ -128,6 +128,15 @@ type QueryAttempt struct {
 	AttemptNo         uint32
 	DeadlineUnixMilli int64
 	RecoveryPermit    *RecoveryPermit
+
+	// BudgetStartUnixMilli is where the budget that ends at the deadline
+	// began: the Slot's evaluation time for a normal query, and the
+	// operation's arrival for a retry, replay or probe, whose deadline is
+	// counted from there. ReadyAtUnixMilli is when the query's window could
+	// first be read; up to it the budget is a settling wait by design. They
+	// only time a failure (see AttemptTiming); zero leaves it untimed.
+	BudgetStartUnixMilli int64
+	ReadyAtUnixMilli     int64
 }
 
 func (attempt QueryAttempt) Validate() error {
@@ -172,14 +181,65 @@ type RouteAttemptFact struct {
 	Result     RouteAttemptResult
 	ReasonCode ReasonCode
 	Detail     string
+	// Timing is when a failed attempt ran against the time it was given;
+	// nil where the attempt did not measure it.
+	Timing *AttemptTiming
+}
+
+// AttemptTiming reads a query that did not come back against its budget,
+// all from timestamps the attempt already holds. The budget runs from the
+// attempt's budget start to its deadline (see QueryAttempt), and the numbers
+// split it at the moment the window could be read and the moment the
+// request went out:
+//
+//   - SettleMillis, from the budget start to when the window could be read:
+//     the settling wait the Plan puts in the budget by design, zero for a
+//     recovery that arrives after it;
+//   - StartLateMillis, from then to the request: the part of the budget
+//     lost before the query began - a queue, a permit, a Slot run late;
+//   - BudgetMillis, from the request to the deadline: what the query was
+//     given, zero or less when it began at or past its deadline;
+//   - ElapsedMillis, from the request to its failure: what it used;
+//   - LocalMillis, the part of that alarmd spent decoding and delivering
+//     what had arrived of the answer, zero for a failure before any answer.
+//     The rest of Elapsed was waiting on the backend.
+//
+// The first three add up to the whole budget exactly. Elapsed close to the
+// budget, with little lost before it and little of it local, is a backend
+// that did not answer in time; most of it local is alarmd's own delivery
+// that did not keep up; a large StartLate leaving a small budget is a query
+// begun late; and a small whole is a budget short to begin with.
+//
+// The deadline is the attempt's, not the caller's: a caller whose own
+// deadline runs out first ends the query as an error, not as a failed
+// attempt, so its deadline never times one.
+type AttemptTiming struct {
+	SettleMillis    int64
+	StartLateMillis int64
+	BudgetMillis    int64
+	ElapsedMillis   int64
+	LocalMillis     int64
 }
 
 const (
 	RouteDetailKindHTTPStatus = "http_status"
 	RouteDetailKindTransport  = "transport"
 	RouteDetailKindResponse   = "response"
+	// RouteDetailKindBody is a transport failure after the answer began: the
+	// response's status was read and its body did not arrive in full.
+	RouteDetailKindBody = "body"
+	// RouteDetailKindDelivery is a query whose deadline passed while alarmd
+	// was decoding and delivering what had arrived of the answer: the time
+	// ran out on this side, with the backend not the one being waited on.
+	RouteDetailKindDelivery = "delivery"
+	// DeliveryTimeoutRouteDetail is the one detail of that kind.
+	DeliveryTimeoutRouteDetail = RouteDetailKindDelivery + "=" + TransportFailureTimeout
 
 	ResponseFailureIsPartialMissing = "is_partial_missing"
+	// ResponseFailureOffRequestGrid is an unaligned query - a Plan detected
+	// more often than it aggregates - answered with buckets on a grid other
+	// than its request's.
+	ResponseFailureOffRequestGrid = "off_request_grid"
 	// ResponseFailureStatusPrefix precedes the lower-cased UQ status code of a
 	// 200 response whose status field reports a deterministic backend failure
 	// (for example "response=status_space_table_id_field_is_not_exists").
@@ -215,11 +275,17 @@ func TransportRouteDetail(class string) string {
 	}
 }
 
+// BodyRouteDetail encodes a transport failure while a response's body was
+// being read, in the same bounded classes as TransportRouteDetail.
+func BodyRouteDetail(class string) string {
+	return RouteDetailKindBody + strings.TrimPrefix(TransportRouteDetail(class), RouteDetailKindTransport)
+}
+
 // ResponseRouteDetail encodes a 200 response that violated the wire contract
 // (for example a missing is_partial flag) as attempt detail.
 func ResponseRouteDetail(class string) string {
 	switch class {
-	case ResponseFailureIsPartialMissing:
+	case ResponseFailureIsPartialMissing, ResponseFailureOffRequestGrid:
 		return RouteDetailKindResponse + "=" + class
 	default:
 		return RouteDetailKindResponse + "=other"

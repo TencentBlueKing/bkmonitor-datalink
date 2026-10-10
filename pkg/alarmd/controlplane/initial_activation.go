@@ -146,7 +146,7 @@ func compilePublishedActivation(
 
 func requiredFullSlots(plan *strategy.CompiledPlan) uint32 {
 	var required uint32
-	for _, level := range plan.Levels() {
+	for _, level := range plan.Levels().All() {
 		if level.RequiredDetectHistoryPoints() > required {
 			required = level.RequiredDetectHistoryPoints()
 		}

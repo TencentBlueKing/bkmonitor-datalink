@@ -29,7 +29,7 @@ func TestTheObjectCacheCanBeConfiguredWhileItIsRead(t *testing.T) {
 			defer group.Done()
 			for round := 0; round < rounds; round++ {
 				key := "k" + strconv.Itoa(round%16)
-				repository.objects().store(key, reader, 8)
+				repository.objects().store(nil, key, reader, 8)
 				if value, size, ok := repository.objects().lookup(key); ok && (size != 8 || value == nil) {
 					t.Errorf("lookup of %s came back (%v, %d)", key, value, size)
 					return

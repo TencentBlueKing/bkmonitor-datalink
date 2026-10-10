@@ -63,7 +63,6 @@ type LegacyRuntimeFilterFact struct {
 // present in a cached strategy document. A nil slice or pointer means that the
 // fact was not observed; an explicitly empty slice is a valid observed value.
 type LegacyQueryRuntimeFacts struct {
-	FTAEventStorage       *execution.QueryStorage
 	AccessBKData          *bool
 	BKDataCMDBLevelTables []string
 	SystemDiskFilter      LegacyRuntimeFilterFact
@@ -73,10 +72,6 @@ type LegacyQueryRuntimeFacts struct {
 func NewLegacyPrimaryQueryCompiler(providerRoute execution.ProviderRouteRef, timezone string, runtimeFacts LegacyQueryRuntimeFacts) (*LegacyPrimaryQueryCompiler, error) {
 	if providerRoute == "" || timezone == "" {
 		return nil, errors.New("alarmd controlplane: provider route and timezone are required")
-	}
-	if runtimeFacts.FTAEventStorage != nil {
-		storage := *runtimeFacts.FTAEventStorage
-		runtimeFacts.FTAEventStorage = &storage
 	}
 	runtimeFacts.BKDataCMDBLevelTables = cloneStringsPreservingNil(runtimeFacts.BKDataCMDBLevelTables)
 	runtimeFacts.SystemDiskFilter.Values = cloneStringsPreservingNil(runtimeFacts.SystemDiskFilter.Values)
@@ -236,8 +231,8 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 			// with a document of a few hundred keys and a word.
 			return execution.QueryPlanFacts{}, atQueryConfig(queryConfigRejected("QUERY_CONFIG_INVALID", err), index)
 		}
-		if !pollingSourceSupported(config) {
-			return execution.QueryPlanFacts{}, atQueryConfig(queryUnsupported("QUERY_SOURCE_NOT_MIGRATED", nil), index)
+		if err := configSourceUnsupported(config); err != nil {
+			return execution.QueryPlanFacts{}, atQueryConfig(err, index)
 		}
 		config.AggDimensions = canonicalDimensionStrings(config.AggDimensions)
 		// Python alarm Access does not pass cached query_config.filter_dict to
@@ -250,7 +245,6 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		return compiler.compilePromQL(source, configs[0])
 	}
 	queryList := make([]execution.QueryClause, 0, len(configs))
-	storages := map[string][]execution.QueryStorage{}
 	aliases := map[string]string{}
 	sourceSemantics := make([]string, 0, len(configs))
 	identitySet := make(map[string]struct{})
@@ -268,11 +262,6 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		}
 		queryList = append(queryList, clauses...)
 		sourceSemantics = append(sourceSemantics, config.DataSourceLabel+"/"+config.DataTypeLabel)
-		for _, clause := range clauses {
-			if clause.FieldSemantics != "" {
-				storages[clause.ReferenceName] = []execution.QueryStorage{*compiler.runtimeFacts.FTAEventStorage}
-			}
-		}
 		if config.DataSourceLabel == "custom" && config.DataTypeLabel == "event" || config.DataSourceLabel == "bk_monitor" && config.DataTypeLabel == "log" {
 			for _, field := range config.AggDimensions {
 				if monitorEventField(field) != field {
@@ -316,7 +305,22 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 	if err != nil {
 		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_NORMALIZATION_INVALID", err)
 	}
-	delay, err := pollingQueryDelay(source, configs, stepSeconds)
+	delayUnit := stepSeconds
+	sliding := source.DetectStepSeconds > 0
+	if sliding {
+		delayUnit = queryDelayUnit(source.DetectStepSeconds, stepSeconds)
+		// A detection every step reads the aggregation window ending at its
+		// own time, which is on no aggregation grid: the query must start
+		// its bucket where the request starts, and label it there.
+		for index := range queryList {
+			offset, forward, err := slidingClauseOffset(queryList[index].Offset, queryList[index].OffsetForward == "true", stepSeconds)
+			if err != nil {
+				return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_TIME_SHIFT_INVALID", err)
+			}
+			queryList[index].Offset, queryList[index].OffsetForward = offset, strconv.FormatBool(forward)
+		}
+	}
+	delay, err := pollingQueryDelay(source, configs, delayUnit)
 	if err != nil {
 		return execution.QueryPlanFacts{}, err
 	}
@@ -336,19 +340,20 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		}
 	}
 	facts, err := execution.BuildQueryPlanFacts(execution.QueryPlanFacts{
-		SourceSemantics: sourceSemantics, TSDBMap: storages, QueryDelaySeconds: delay,
+		SourceSemantics: sourceSemantics, QueryDelaySeconds: delay,
 		Provider:         execution.ProviderUQ,
 		ProviderRouteRef: compiler.providerRoute,
 		TenantID:         source.Identity.TenantID,
 		BusinessID:       source.Identity.BusinessID,
 		SpaceScope:       source.Identity.SpaceScope,
+		GlobalBusiness:   source.Identity.GlobalBusiness,
 		QueryList:        queryList,
 		MetricMerge:      metricMerge,
 		StepMillis:       stepSeconds * 1000,
 		AlignmentMillis:  stepSeconds * 1000,
 		DownSampleRange:  execution.DownSampleNone,
 		Timezone:         compiler.timezone,
-		NotTimeAlign:     false,
+		NotTimeAlign:     sliding,
 		Normalization:    normalization,
 	})
 	if err != nil {
@@ -392,10 +397,25 @@ func decodeLegacyQueryConfig(raw json.RawMessage) (legacyQueryConfig, error) {
 	if config.AggInterval < 0 {
 		return config, errors.New("query interval is invalid")
 	}
+	// A config that carries no agg_interval queries at 60 seconds: every
+	// Python data source this compiler stands in for reads it as
+	// query_config.get("agg_interval", 60) (bkmonitor/data_source/data_source).
+	// Decoded straight into the field it was 0, which the aggregation reads
+	// as Python's "1h" for an interval that is present and 0 - an hour's
+	// window where Python has a minute's.
+	var carried struct {
+		AggInterval json.RawMessage `json:"agg_interval"`
+	}
+	if err := json.Unmarshal(raw, &carried); err != nil {
+		return config, err
+	}
+	if len(carried.AggInterval) == 0 {
+		config.AggInterval = pythonDefaultAggInterval
+	}
 	return config, nil
 }
 
-func (compiler *LegacyPrimaryQueryCompiler) compileLegacyQueryConfig(config legacyQueryConfig) ([]execution.QueryClause, error) {
+func (compiler *LegacyPrimaryQueryCompiler) compileLegacyQueryConfig(config legacyQueryConfig, dialect conditionDialect) ([]execution.QueryClause, error) {
 	dimensions := append([]string{}, config.AggDimensions...)
 	conditionsSource := append([]legacyCondition(nil), config.AggConditions...)
 	if filter, matched, err := compiler.runtimeFilter(config); err != nil {
@@ -421,9 +441,9 @@ func (compiler *LegacyPrimaryQueryCompiler) compileLegacyQueryConfig(config lega
 			config.TimeField = "dtEventTimeStamp"
 		}
 	}
-	conditions, err := compileConditions(conditionsSource)
+	conditions, err := compileConditions(conditionsSource, dialect)
 	if err != nil {
-		return nil, queryConfigRejected("QUERY_CONDITION_INVALID", err)
+		return nil, err
 	}
 	method := config.AggMethod
 	if method == "" {
@@ -587,33 +607,91 @@ func compileAggregation(rawMethod string, interval int64, dimensions []string) (
 		execution.QueryFunction{Method: method + "_over_time", Window: strconv.FormatInt(window, 10) + "s", Position: position, Arguments: append([]execution.QueryScalar(nil), arguments...)}, nil
 }
 
-func compileConditions(source []legacyCondition) (execution.QueryConditions, error) {
+// conditionDialect is how one family of the platform's data sources turns
+// agg_condition into the conditions it sends to UQ. Metric sources
+// (TimeSeriesDataSource.to_unify_query_config) and log and event sources
+// (_parse_conditions) map methods to operators differently, and only the
+// log and event sources rewrite a wildcard method and the values of an
+// existence check.
+type conditionDialect struct {
+	operators map[string]string
+	logSource bool
+}
+
+var (
+	metricConditions = conditionDialect{operators: map[string]string{
+		"reg": "req", "nreg": "nreq", "include": "req", "exclude": "nreq", "eq": "contains", "neq": "ncontains"}}
+	logConditions = conditionDialect{logSource: true, operators: map[string]string{
+		"reg": "req", "regexp": "req", "is one of": "eq", "is not one of": "ne", "contains match phrase": "contains",
+		"not contains match phrase": "ncontains", "=": "eq", "!=": "ne", "is": "eq", "is not": "ne", ">": "gt", ">=": "gte",
+		"<": "lt", "<=": "lte", "nreg": "nreq", "neq": "ne", "exists": "existed", "nexists": "nexisted",
+		"include": "contains", "exclude": "ncontains"}}
+)
+
+// compileConditions compiles agg_condition into the conditions the platform's
+// detector sends to UQ, less the ones UQ drops before it reads any of them. A
+// condition with no value, other than an existence check, is ignored there
+// together with the connector in front of it (unify-query
+// query/structured/condition.go, AnalysisConditions). Dropping it here
+// instead of sending it leaves the query the same bytes as one written
+// without it, which is what UQ reads either way; refusing it withheld
+// strategies the platform runs.
+//
+// The one shape that cannot be dropped this way is a first remaining
+// condition joined by "or" to dropped ones before it. UQ keeps an empty group
+// in front of that "or", and what an empty group matches is up to the
+// storage: every series in VictoriaMetrics (AllConditions.VMString), nothing
+// in BkSql, which leaves the group out (AllConditions.BkSql). The strategy is
+// refused by name rather than given either meaning.
+func compileConditions(source []legacyCondition, dialect conditionDialect) (execution.QueryConditions, error) {
 	result := execution.QueryConditions{Fields: make([]execution.QueryConditionField, 0, len(source)), Connectors: make([]string, 0, max(0, len(source)-1))}
-	operatorMapping := map[string]string{"reg": "req", "nreg": "nreq", "include": "req", "exclude": "nreq", "eq": "contains", "neq": "ncontains"}
 	for index, condition := range source {
 		if condition.Key == "" || condition.Method == "" {
-			return execution.QueryConditions{}, errors.New("condition key and method are required")
+			return execution.QueryConditions{}, queryConfigRejected("QUERY_CONDITION_INVALID", errors.New("condition key and method are required"))
 		}
 		values, err := pythonStringValues(condition.Value)
-		if err != nil || len(values) == 0 {
-			return execution.QueryConditions{}, errors.New("condition values must be scalar")
+		if err != nil {
+			return execution.QueryConditions{}, queryConfigRejected("QUERY_CONDITION_INVALID", errors.New("condition values must be scalar"))
 		}
-		typed := make([]execution.QueryScalar, 0, len(values))
-		for _, value := range values {
-			typed = append(typed, execution.QueryScalar{Kind: execution.QueryScalarString, StringValue: value})
+		field := execution.QueryConditionField{Field: condition.Key, Operator: condition.Method}
+		if mapped := dialect.operators[condition.Method]; mapped != "" {
+			field.Operator = mapped
 		}
-		operator := condition.Method
-		if mapped := operatorMapping[operator]; mapped != "" {
-			operator = mapped
-		}
-		result.Fields = append(result.Fields, execution.QueryConditionField{Field: condition.Key, Operator: operator, Values: typed})
-		if index > 0 {
-			connector := condition.Connector
-			if connector == "" {
-				connector = "and"
+		existence := field.Operator == "existed" || field.Operator == "nexisted"
+		if dialect.logSource {
+			switch {
+			case existence:
+				values = []string{""}
+			case field.Operator == "wildcard" || field.Operator == "nwildcard":
+				field.Operator = map[string]string{"wildcard": "contains", "nwildcard": "ncontains"}[field.Operator]
+				field.Wildcard = "true"
 			}
-			result.Connectors = append(result.Connectors, connector)
 		}
+		if len(values) == 0 {
+			if existence {
+				// UQ keeps a metric's existence check with no value, and alarmd's
+				// query contract has no condition without one.
+				return execution.QueryConditions{}, queryConfigRejected("QUERY_CONDITION_INVALID", errors.New("condition values must be scalar"))
+			}
+			continue
+		}
+		// The platform joins with "or" only on "or" and with "and" on anything
+		// else (_filter_dict_to_conditions); UQ refuses any other word.
+		connector := "and"
+		if condition.Connector == "or" {
+			connector = "or"
+		}
+		if len(result.Fields) > 0 {
+			result.Connectors = append(result.Connectors, connector)
+		} else if index > 0 && connector == "or" {
+			return execution.QueryConditions{}, queryConfigRejected("QUERY_CONDITION_EMPTY_GROUP",
+				fmt.Errorf("condition %d is joined by or to conditions with no value before it", index))
+		}
+		field.Values = make([]execution.QueryScalar, 0, len(values))
+		for _, value := range values {
+			field.Values = append(field.Values, execution.QueryScalar{Kind: execution.QueryScalarString, StringValue: value})
+		}
+		result.Fields = append(result.Fields, field)
 	}
 	return result, nil
 }
@@ -955,6 +1033,37 @@ func queryConfigRejected(reason string, err error) error {
 // atQueryConfig names the query config a refusal is about. The refusal is
 // built by the two constructors above so the fleet's vocabulary guard, which
 // reads their calls, keeps seeing every word; this only adds where.
+// configSourceUnsupported names a query config whose source this build does
+// not compile. FTA event sources are not supported, and nothing turns them
+// back on: the query they need names fields the query service does not hold,
+// and without them it reads every alert of the table.
+func configSourceUnsupported(config legacyQueryConfig) error {
+	if config.DataSourceLabel == "bk_fta" {
+		return queryUnsupported("QUERY_FTA_UNSUPPORTED", nil)
+	}
+	if !pollingSourceSupported(config) {
+		return queryUnsupported("QUERY_SOURCE_NOT_MIGRATED", nil)
+	}
+	return nil
+}
+
+// querySourceUnsupported is configSourceUnsupported for a raw query config,
+// for the catalog's item check. A config that does not decode, or does not
+// name both its labels, is not judged here: the writer publishes neither
+// (runtime_cache_contract.py requires both labels), and the query compiler
+// refuses them by name.
+func querySourceUnsupported(raw json.RawMessage) (string, bool) {
+	config, err := decodeLegacyQueryConfig(raw)
+	if err != nil || config.DataSourceLabel == "" || config.DataTypeLabel == "" {
+		return "", false
+	}
+	var failure *QueryPlanCompileError
+	if errors.As(configSourceUnsupported(config), &failure) {
+		return failure.Reason, true
+	}
+	return "", false
+}
+
 func atQueryConfig(err error, index int) error {
 	var failure *QueryPlanCompileError
 	if errors.As(err, &failure) {

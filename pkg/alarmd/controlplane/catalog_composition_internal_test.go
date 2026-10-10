@@ -101,8 +101,8 @@ func TestComposeCatalogPartitionsAndPreCreatesEverySupportedSource(t *testing.T)
 			t.Fatalf("%q has no Plan series", semantics)
 		}
 	}
-	if composition.QueryGroups["bk_fta/event"] != 0 {
-		t.Fatalf("bk_fta/event=%d, want a pre-created zero", composition.QueryGroups["bk_fta/event"])
+	if composition.QueryGroups["prometheus/time_series"] != 0 {
+		t.Fatalf("prometheus/time_series=%d, want a pre-created zero", composition.QueryGroups["prometheus/time_series"])
 	}
 
 	groups := 0

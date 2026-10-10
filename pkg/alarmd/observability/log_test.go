@@ -626,3 +626,34 @@ func TestTheSplitGatesReplicaListIsCopiedAndBounded(t *testing.T) {
 		t.Fatal("the observation shares the round's slice")
 	}
 }
+
+// A takeover replay's line carries what became of the Slot, how old it was
+// and how long after the takeover: without them a Slot given up on for its
+// age cannot be told from one replayed, and neither can be named.
+func TestLoggingObserverWritesReplayTakeoverFacts(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentScheduler, Stage: StageReplayTakeover, Result: ResultSuccess,
+		Trace:          TraceFields{QueryGroupKey: "qg-taken-over", EvaluationTime: 1_700_124_000},
+		ReplayTakeover: &ReplayTakeoverFacts{Outcome: ReplayTakeoverAgeExceeded, AgeSeconds: 601.5, TakeoverOffsetSeconds: 42},
+	})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode replay takeover log: %v; log=%s", err, output.String())
+	}
+	facts, _ := event["replay_takeover"].(map[string]any)
+	if facts["outcome"] != "age_exceeded" || facts["age_seconds"] != 601.5 || facts["takeover_offset_seconds"] != float64(42) ||
+		event["query_group_key"] != "qg-taken-over" {
+		t.Fatalf("replay takeover line = %#v, want the outcome, age and offset beside the Query Group", event)
+	}
+}

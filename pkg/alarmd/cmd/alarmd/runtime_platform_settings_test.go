@@ -12,11 +12,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
@@ -164,5 +168,53 @@ func TestPlatformSettingsChangeReachesThePlansOnTheNextRound(t *testing.T) {
 	}
 	if after.SnapshotRevision == before.SnapshotRevision {
 		t.Fatal("a plan compiled by another setting must move the Catalog revision")
+	}
+}
+
+// The strategy compiler a process evaluates Plans with lays the aggregation
+// boundaries of a Plan detected more often than it aggregates in the zone
+// the deployment's queries are laid in, and a zone that is none is refused.
+func TestThePlanCompilerLaysBoundariesInTheQueriesTimeZone(t *testing.T) {
+	for _, zone := range []string{"Asia/Shanghai", "UTC"} {
+		cfg := config.Default()
+		cfg.PhaseTwo.Control.Timezone = zone
+		compiler, err := newPlanCompiler(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := compiler.BoundaryLocation(); got == nil || got.String() != zone {
+			t.Fatalf("control timezone %s: boundary location %v", zone, got)
+		}
+	}
+	cfg := config.Default()
+	cfg.PhaseTwo.Control.Timezone = "Mars/Olympus"
+	if _, err := newPlanCompiler(cfg); err == nil {
+		t.Fatal("a control timezone that is no time zone built a compiler")
+	}
+}
+
+// Every compiler a process evaluates Plans with is newPlanCompiler's: one
+// built anywhere else would lay a stepped Plan's boundaries in UTC whatever
+// zone its queries are laid in.
+func TestEveryPlanCompilerIsBuiltWithTheQueriesTimeZone(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no sources to scan (%v)", err)
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if file == "runtime_platform_settings.go" {
+			want = 1
+		}
+		if got := strings.Count(string(source), "strategy.NewCompiler("); got != want {
+			t.Fatalf("%s builds %d strategy compilers itself, want %d: build them with newPlanCompiler", file, got, want)
+		}
 	}
 }

@@ -701,3 +701,24 @@ func TestSteppingDownAsLeaderTakesTheLeaderReadingsOffTheScrape(t *testing.T) {
 		t.Fatalf("a replica that leads again does not publish its readings:\n%s", scraped)
 	}
 }
+
+// Both build series exist from the start, and a round counts under its word.
+func TestSourceRefreshBuildsAreCountedFromZero(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	counts := func() map[string]float64 {
+		result := map[string]float64{}
+		for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_source_refresh_build_total") {
+			result[m.Label[0].GetValue()] = m.GetCounter().GetValue()
+		}
+		return result
+	}
+	if got := counts(); len(got) != 2 || got["reused"] != 0 || got["rebuilt"] != 0 {
+		t.Fatalf("before any round = %v, want both words at zero", got)
+	}
+	r.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,
+		Stage: observability.StageSnapshotRefreshed, Result: observability.ResultSuccess,
+		SourceRefresh: &observability.SourceRefreshFacts{Status: "UNCHANGED", Build: observability.SourceRefreshReused}})
+	if got := counts(); got["reused"] != 1 || got["rebuilt"] != 0 {
+		t.Fatalf("after one reused round = %v", got)
+	}
+}

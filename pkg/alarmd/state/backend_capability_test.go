@@ -74,7 +74,7 @@ func TestAMissingBackendCapabilityIsNotReportedAsTheStoreBeingDown(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gapResult, err := store.ApplyGap(ctx, execution.GapGuardApplyRequest{
+	gapResult, err := store.ApplyGap(ctx, execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanGapMutation{gap},
 	})
 	if err != nil {
@@ -85,7 +85,7 @@ func TestAMissingBackendCapabilityIsNotReportedAsTheStoreBeingDown(t *testing.T)
 	}
 
 	noData := noDataMutationV2(t, 0, execution.NoDataGroupMemory{GroupKey: "a", LastSeen: 940})
-	noDataResult, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	noDataResult, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{noData},
 	})
 	if err != nil {
@@ -169,7 +169,7 @@ func TestARoutingFailureStillReadsAsTheStoreBeingUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	mutation := noDataMutationV2(t, 0, execution.NoDataGroupMemory{GroupKey: "a", LastSeen: 940})
-	result, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	result, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {

@@ -43,7 +43,7 @@ func TestFleetVerdictCountsByKindAndKeepsTheOldest(t *testing.T) {
 		},
 	}
 
-	verdict := fleetVerdictOf(view, at)
+	verdict := verdictOfRows(view, at)
 
 	if verdict.Health != string(fleet.HealthDegraded) || verdict.Covered != 949 ||
 		verdict.Determined != 941 || verdict.Unknown != 8 || verdict.Expected == nil {
@@ -88,7 +88,7 @@ func TestFleetVerdictCountsByKindAndKeepsTheOldest(t *testing.T) {
 // that it does not land in OTHER.
 func TestAnOverdueObjectReachesTheExportUnderItsOwnKind(t *testing.T) {
 	at := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-	verdict := fleetVerdictOf(fleet.View{
+	verdict := verdictOfRows(fleet.View{
 		Health: fleet.HealthDegraded,
 		Anomalies: []fleet.Anomaly{
 			{QueryGroup: "parked", Kind: fleet.KindOverdueWake, ReasonCode: fleet.ReasonWakeMissed,
@@ -113,7 +113,7 @@ func TestAnOverdueObjectReachesTheExportUnderItsOwnKind(t *testing.T) {
 // An unreadable denominator travels as absent, not as zero.
 func TestFleetVerdictKeepsAnUnreadableDenominatorAbsent(t *testing.T) {
 	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
-	verdict := fleetVerdictOf(fleet.View{
+	verdict := verdictOfRows(fleet.View{
 		Health: fleet.HealthUnknown, Covered: 12, Determined: 12,
 		Gaps: []fleet.Gap{{Kind: fleet.GapDenominatorUnavailable}},
 	}, at)
@@ -132,7 +132,7 @@ func TestFleetVerdictKeepsAnUnreadableDenominatorAbsent(t *testing.T) {
 // response has no budget.
 func TestFleetVerdictClosesTheLabelSet(t *testing.T) {
 	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
-	verdict := fleetVerdictOf(fleet.View{
+	verdict := verdictOfRows(fleet.View{
 		Health: fleet.HealthDegraded,
 		Anomalies: []fleet.Anomaly{
 			{QueryGroup: "a", Kind: "A_KIND_FROM_THE_FUTURE", Since: at.Add(-time.Minute)},
@@ -166,7 +166,7 @@ func TestFleetVerdictClosesTheLabelSet(t *testing.T) {
 // exactly the objects nobody can speak for yet.
 func TestFleetVerdictLeavesUnclassifiedFailuresOut(t *testing.T) {
 	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
-	verdict := fleetVerdictOf(fleet.View{
+	verdict := verdictOfRows(fleet.View{
 		Health: fleet.HealthDegraded,
 		Anomalies: []fleet.Anomaly{
 			{QueryGroup: "a", Kind: fleet.KindDegradedRun, Since: at.Add(-time.Minute)},
@@ -197,7 +197,7 @@ func TestFleetVerdictLeavesUnclassifiedFailuresOut(t *testing.T) {
 // empty.
 func TestTheVerdictCarriesEveryColumnOfTheSplit(t *testing.T) {
 	at := time.Unix(1_700_000_000, 0)
-	verdict := fleetVerdictOf(fleet.View{
+	verdict := verdictOfRows(fleet.View{
 		Health: fleet.HealthDegraded, Covered: 979, Determined: 979, Unknown: 0,
 		// Adds up to Determined, the way Aggregate computes it by subtraction.
 		// A fixture that does not add up cannot check the identity it is here
@@ -234,7 +234,7 @@ func TestTheVerdictCarriesEveryColumnOfTheSplit(t *testing.T) {
 // same order.
 func TestEveryCheckLineAndDegradationKindIsExportedEvenWhenDown(t *testing.T) {
 	at := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
-	verdict := fleetVerdictOf(fleet.View{Health: fleet.HealthHealthy}, at)
+	verdict := verdictOfRows(fleet.View{Health: fleet.HealthHealthy}, at)
 
 	codes := fleet.Checks()
 	if len(verdict.Checks) != len(codes) {
@@ -297,7 +297,7 @@ func TestAStandingReachesTheExportUnderItsOwnCode(t *testing.T) {
 	fleet.Attribute(view.Anomalies, at)
 	fleet.Decide(&view, at, time.Hour)
 
-	verdict := fleetVerdictOf(view, at)
+	verdict := verdictOfRows(view, at)
 
 	for code, want := range map[string]int{
 		string(fleet.CheckCutoverFailing):     1,
@@ -338,4 +338,10 @@ func TestAStandingReachesTheExportUnderItsOwnCode(t *testing.T) {
 			t.Errorf("fleet_checks{code=%s} = %d, page line prints %d", count.Value, count.Count, page[count.Value])
 		}
 	}
+}
+
+// verdictOfRows is the export of a view built from rows, its rows counted
+// into the part the way a replica counts its own when it publishes.
+func verdictOfRows(view fleet.View, at time.Time) metric.FleetVerdict {
+	return fleetVerdictOf(view, fleet.ReplicaPartOf(view, at), at)
 }

@@ -217,8 +217,9 @@ func TestBeginResolvesEachTargetPlanOnceForBothViews(t *testing.T) {
 
 // The leader's three-way assertion for a plan one of whose selectors could
 // not be read: the static member's record is still admitted, a record the
-// unread group would have named is rejected as outside the target - not as
-// unresolved - and absence is paused by the selector's name. All three read
+// unread group would have named is rejected - not as unresolved, and not as
+// outside the target either, which this Slot cannot say, but as a selector
+// that could not answer - and absence is paused by the selector's name. All three read
 // the same holder, handed to the filter directly: that the holder reaches
 // the source through ResolvedTargets whatever its state is the two tests
 // above's to guard, not this one's.
@@ -236,8 +237,8 @@ func TestAnUnreadableSelectorPausesAbsenceAndNotTheStaticMembers(t *testing.T) {
 	if decision := filter.Admit(context, record("101")); !decision.Admit {
 		t.Fatalf("the static member was not admitted: %+v", decision)
 	}
-	if decision := filter.Admit(context, record("202")); decision.Admit || decision.Reason != admission.TargetPlanReasonOutOfTarget {
-		t.Fatalf("a record of the unread group = %+v, want out_of_target, not unresolved", decision)
+	if decision := filter.Admit(context, record("202")); decision.Admit || decision.Reason != admission.TargetPlanReasonSelectorUnavailable {
+		t.Fatalf("a record of the unread group = %+v, want target_selector_unavailable, neither unresolved nor out_of_target", decision)
 	}
 	plan := &contract.EvaluationPlanV2{PlanID: "1", NoData: &contract.NoDataConfigV1{Continuous: 3, Level: 2, AggDimension: []string{"bk_host_id"}},
 		TargetPlan: &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleHostID, Identity: identity, StaticKeys: []string{"101"}, DynamicGroups: []string{"1001"}}}
@@ -245,5 +246,37 @@ func TestAnUnreadableSelectorPausesAbsenceAndNotTheStaticMembers(t *testing.T) {
 		Completeness: execution.CompletenessFull, TargetResolution: target.absenceView(), Memory: map[string]nodata.GroupMemory{}})
 	if err != nil || outcome != nodata.OutcomeSkippedTargetSelectorUnavailable || len(result.Verdicts) != 0 {
 		t.Fatalf("absence = %q %v verdicts %v, want paused by the selector's name", outcome, err, result.Verdicts)
+	}
+}
+
+// A resolution one of whose selectors could not answer is unavailable to the
+// admission filter, and a record outside its members is refused as not
+// known to be outside the target; one whose selectors all answered, members
+// dropped in validation included, refuses it as out of the target. Read
+// through the filter, so the resolution this worker hands over is the one
+// that says so.
+func TestAnUnavailableResolutionRefusesOutsideItsMembersAsNotKnown(t *testing.T) {
+	identity := contract.TargetPlanIdentityV1{Dimensions: []string{"bk_host_id"}, HostIdentity: true}
+	for state, want := range map[targetplan.SelectorState]string{
+		targetplan.SelectorOK:          admission.TargetPlanReasonOutOfTarget,
+		targetplan.SelectorIncomplete:  admission.TargetPlanReasonOutOfTarget,
+		targetplan.SelectorUnavailable: admission.TargetPlanReasonSelectorUnavailable,
+	} {
+		resolution := &targetplan.Resolution{Static: map[string]struct{}{"101": {}}, Selectors: []targetplan.SelectorResult{
+			{Kind: targetplan.SelectorKindGroup, ID: "1001", State: state, Reason: targetplan.ReasonNone, Members: map[string]struct{}{"102": {}}}}}
+		resolution.Compose()
+		target := newResolvedTarget(resolution)
+		if target.Unavailable() != (state == targetplan.SelectorUnavailable) {
+			t.Fatalf("%s selector: Unavailable() = %v", state, target.Unavailable())
+		}
+		plan := admission.PlanContext{TargetPlan: &admission.TargetPlanContext{Identity: identity, Members: target}}
+		record := &admission.Facts{Dimensions: map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"303"`)}}
+		if decision := (admission.TargetPlanFilter{}).Admit(plan, record); decision.Admit || decision.Reason != want {
+			t.Fatalf("%s selector: host outside the members = %+v, want refused as %s", state, decision, want)
+		}
+	}
+	var none *resolvedTarget
+	if none.Unavailable() {
+		t.Fatal("a nil resolution read as unavailable")
 	}
 }

@@ -24,6 +24,11 @@ type StateApplyChunkFacts struct {
 	// repeats. The reason says the record could not be stored; this says which
 	// of the ways it could not, which is which producer to go and read.
 	RefusalRules []string `json:"refusal_rules,omitempty"`
+	// RefusalText is the store's sentence for the first refusal in the chunk,
+	// with the numbers the rule does not carry: the lifetime required against
+	// the ceiling, the bytes encoded against the limit. Empty when nothing
+	// was refused or the store said nothing more than the rule.
+	RefusalText string `json:"refusal_text,omitempty"`
 	// LegacyRecordIDs is how many points across this chunk's records carried an
 	// id the derivation could not rebuild. Zero on every chunk whose state was
 	// written by a build that derived them, which is the population this says

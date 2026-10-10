@@ -42,6 +42,7 @@ type openAlertSetCollector struct {
 	evictions   *prometheus.Desc
 	sent        *prometheus.Desc
 	disjoint    *prometheus.Desc
+	resent      *prometheus.Desc
 }
 
 func newOpenAlertSetCollector() *openAlertSetCollector {
@@ -99,6 +100,12 @@ func newOpenAlertSetCollector() *openAlertSetCollector {
 				"open_alert_set_sent_alerts); it ends when one of them is found or none is left open. Every lookup against such sets would miss and hold the recovery, so "+
 				"while this is 1 the gate answers from what this process sent instead, and fleet health degrades "+
 				"with OPEN_ALERT_SET_DISJOINT."),
+		resent: descriptor("open_alert_set_recovery_resent_total",
+			"RECOVERY events the broker took for an alert whose earlier RECOVERY this process still held closed: "+
+				"sent again because the consumer's set still carried the alert once the ledger let it through - the "+
+				"first time after the next read of the set past the local retention, after that only after a "+
+				"calibration. Each one the consumer had already processed arrives there as an event with no open "+
+				"alert to act on."),
 	}
 }
 
@@ -124,6 +131,7 @@ func (c *openAlertSetCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.evictions
 	ch <- c.sent
 	ch <- c.disjoint
+	ch <- c.resent
 }
 
 func (c *openAlertSetCollector) Collect(ch chan<- prometheus.Metric) {
@@ -165,4 +173,5 @@ func (c *openAlertSetCollector) Collect(ch chan<- prometheus.Metric) {
 		disjoint = 1
 	}
 	ch <- prometheus.MustNewConstMetric(c.disjoint, prometheus.GaugeValue, disjoint)
+	ch <- prometheus.MustNewConstMetric(c.resent, prometheus.CounterValue, float64(stats.RecoveriesResent))
 }

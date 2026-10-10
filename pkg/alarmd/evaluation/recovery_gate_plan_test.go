@@ -54,8 +54,8 @@ func TestEvaluatorSendsARecoveryBesideAnUnavailableLevelAndCountsIt(t *testing.T
 				p.StrategyIR.Levels[1].RecoveryPlan.Config = json.RawMessage(`{"enabled":true,"consecutive_windows":2}`)
 			})
 			history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{
-				{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
-				{LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+				{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+				{LevelID: 6, DetectFingerprint: plan.Levels().At(1).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
 			}}}
 			req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
 			if arm.siblingWarm {
@@ -112,8 +112,8 @@ func TestResultContractPinsTheHoldAcrossLevels(t *testing.T) {
 		t.Helper()
 		plan := compiledTwoLevels(t)
 		history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{
-			{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
-			{LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+			{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+			{LevelID: 6, DetectFingerprint: plan.Levels().At(1).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
 		}}}
 		req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
 		result, err := newEvaluator(t).Evaluate(context.Background(), req)
@@ -152,8 +152,8 @@ func TestResultContractPinsTheHoldAcrossLevels(t *testing.T) {
 		// ABNORMAL with one RECOVERY sibling, and the gate is never consulted.
 		plan := compiledTwoLevelsWithThresholds(t, "50", "5")
 		history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{
-			{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
-			{LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+			{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+			{LevelID: 6, DetectFingerprint: plan.Levels().At(1).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
 		}}}
 		req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
 		result, err := newEvaluator(t).Evaluate(context.Background(), req)
@@ -221,7 +221,7 @@ func requestFixtureTwoLevels(t *testing.T, plan *strategy.CompiledPlan, value js
 	records := []contract.CanonicalRecordV2{{RecordID: strings.Repeat("b", 64), SourceTime: 100, BusinessID: "2", DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)}, Values: map[string]json.RawMessage{"value": value}, Dimensions: map[string]json.RawMessage{}, ReceivedTime: 100}}
 	id := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
 	due := execution.DuePlan{Identity: id, CompiledPlan: plan, StateGeneration: "state-v1", StateApplyEpoch: 1, ScheduleRevision: "plan-schedule", CompletionDeadlineUnixMilli: 200000}
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	consumers := make([]execution.ConsumerRef, len(levels))
 	requirementConsumers := make([]execution.DataRequirementConsumer, len(levels))
 	for i, level := range levels {

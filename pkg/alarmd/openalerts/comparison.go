@@ -44,8 +44,11 @@ type Comparison struct {
 	// OwnEventSourceID is this deployment's source as the last successful
 	// calibration named it; empty until one has.
 	OwnEventSourceID string
-	// Sent counts the keys this process sent and still holds as open,
-	// SentShapes their shapes; MemberShapes the shapes of the members the
+	// Sent counts the keys whose ABNORMAL this process sent within the
+	// local retention -- an alert still firing is sent every round and
+	// stays; one no longer sent leaves at the next calibration whether or
+	// not it recovered, so a fall in Sent is not alerts closing (see
+	// departures.go and Stats.SentDepartures). SentShapes their shapes; MemberShapes the shapes of the members the
 	// link holds for the strategies this process tracks.
 	Sent         int
 	SentShapes   map[string]int

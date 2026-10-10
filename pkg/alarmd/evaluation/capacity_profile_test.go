@@ -66,7 +66,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 				}
 			}
 			provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(func(context.Context, string, string, string) (*time.Location, error) { return time.UTC, nil }))
-			freshFacts, resolveErr := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{TenantID: "tenant", BusinessID: "2", EvaluationTime: 1000080, Requirement: plan.Levels()[0].EffectiveTimeRequirement()}})
+			freshFacts, resolveErr := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{TenantID: "tenant", BusinessID: "2", EvaluationTime: 1000080, Requirement: plan.Levels().At(0).EffectiveTimeRequirement()}})
 			if resolveErr != nil {
 				t.Fatal(resolveErr)
 			}
@@ -125,7 +125,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			var raw []byte
 			for n := 1; n <= int(shape.window); n++ {
 				point := execution.StateHistoryPoint{RecordID: fmt.Sprintf("%064d", n), SourceTime: int64(1000020 - (cfg.Limits.Codec.MaxPoints-n+1)*60)}
-				for _, level := range plan.Levels() {
+				for _, level := range plan.Levels().All() {
 					point.Levels = append(point.Levels, execution.StateLevelFact{LevelID: level.Definition().LevelID, DetectFingerprint: level.Fingerprints().Detect, Result: execution.LevelFactAnomalous})
 				}
 				candidate := append(history, point)

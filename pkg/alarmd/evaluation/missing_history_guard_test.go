@@ -16,7 +16,7 @@ func TestMissingHistoryFromFullPersistsCurrentFactAndConvergesAfterReplay(t *tes
 	history := []execution.StateHistoryPoint{}
 	for _, timestamp := range []int64{600, 660} {
 		record := g4Record(timestamp, "80", nil)
-		history = append(history, execution.StateHistoryPoint{RecordID: record.RecordID, SourceTime: timestamp, Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous}}})
+		history = append(history, execution.StateHistoryPoint{RecordID: record.RecordID, SourceTime: timestamp, Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous}}})
 	}
 	request := requestFixtureForPlan(t, plan, []contract.CanonicalRecordV2{g4Record(720, "80", nil)}, history)
 	request.State.Items[0].Levels[0].LastProcessedEventTime = 660

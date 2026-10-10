@@ -20,15 +20,14 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 // Use the publisher's literal keys rather than deriving fixtures from DBKey:
 // the producer and consumer must agree even when fields belong to different domains.
 func TestRedisSourceReadsPlatformDomainSettings(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
 	client := redis.NewClient(&redis.Options{Addr: address})
@@ -107,10 +106,7 @@ func TestRedisSourceReadsPlatformDomainSettings(t *testing.T) {
 // present field comes back as the raw JSON the platform wrote, null
 // included, so that "no override" and "present and empty" stay apart.
 func TestRedisSourceReadsTheProtocolKeysInOneTransaction(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
 	client := redis.NewClient(&redis.Options{Addr: address, DialTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second})

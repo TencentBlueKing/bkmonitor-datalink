@@ -135,7 +135,8 @@ func newAbsentStrategyClose(bundle *phaseTwoWorkerBundle, control absentCloseCon
 			MaxSnapshotAge:   5 * controlplane.SourceFullReadInterval,
 			MaxLinkHealthAge: absentCloseMaxLinkHealthAge,
 			// A strategy list that lost a fifth of its entries is the fact;
-			// see RefusalSnapshotShrunk.
+			// see RefusalSnapshotShrunk. Only against a writer that has not
+			// stated it holds failed strategies (Round.WriterHoldsLastGood).
 			MaxSnapshotShrinkRatio: 0.2, MinSnapshotForShrink: 20,
 			MaxCloseStrategies: 8,
 		},
@@ -184,7 +185,8 @@ func (loop *absentStrategyClose) Difference() map[string]int {
 		"send_armed":            boolSide(loop.send),
 		"snapshot_age_seconds":  last.snapshotAge, "max_snapshot_age_seconds": int(loop.bounds.MaxSnapshotAge / time.Second),
 		"link_health_age_seconds": last.linkAge, "max_link_health_age_seconds": int(loop.bounds.MaxLinkHealthAge / time.Second),
-		"link_pending": last.linkPending,
+		"link_pending":           last.linkPending,
+		"writer_holds_last_good": boolSide(last.counts.WriterHoldsLastGood),
 	}
 }
 
@@ -254,6 +256,7 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 		SnapshotObservation: observed.Observation, PreviousSnapshotStrategies: loop.previousSnapshot,
 		After: loop.lastDecided, Now: now,
 	}
+	round.WriterHoldsLastGood = haveSnapshot && observed.HoldsLastGood
 	sizes := absentRoundSizes{identities: len(round.Identities)}
 	if haveSnapshot {
 		round.SnapshotAgeSeconds = int64(now.Sub(observed.ReadAt) / time.Second)

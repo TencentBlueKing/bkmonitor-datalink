@@ -26,11 +26,11 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 		return EvaluationResultV2{}, err
 	}
 	result := EvaluationResultV2{
-		LevelOutcomes: make([]LevelOutcomeV2, 0, len(levels)),
-		Counts:        EvaluationCountsV2{Levels: uint64(len(levels))},
+		LevelOutcomes: make([]LevelOutcomeV2, 0, levels.Len()),
+		Counts:        EvaluationCountsV2{Levels: uint64(levels.Len())},
 	}
-	levelResults := make([]contract.LevelResultV1, 0, len(levels))
-	for index, level := range levels {
+	levelResults := make([]contract.LevelResultV1, 0, levels.Len())
+	for index, level := range levels.All() {
 		eligibility, err := EvaluateStateEligibilityV2(
 			request.EvaluationTime, level, request.Record.LevelFacts[index], request.EffectiveTimeFacts[index].Fact,
 		)
@@ -112,6 +112,24 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 				return result, nil
 			}
 		}
+		// An event the Plan's protocol has no message for is decided and not
+		// built: under the compatibility protocol that is every RECOVERY, one
+		// per healthy series per round, and building it was most of this
+		// function's cost for an envelope thrown away as soon as it existed.
+		// The rule and the context are the ones the envelope would have
+		// carried, so it is not built exactly where the sink would have left
+		// it without a message. What building it also did no longer happens
+		// for these records: its invariants are not checked, so one that
+		// would have failed no longer fails the Slot.
+		// A detection between two aggregation boundaries of a Plan detected
+		// more often than it aggregates has no message on that protocol
+		// either: its window is none of the buckets the consumer counts.
+		if format := request.Plan.WireFormat(); contract.NoMessageForAt(format, result.RecordResult,
+			request.Plan.LegacyOutput() != nil && request.Plan.PublishesCompatibleProtocol(),
+			request.Plan.CompatibleOffBoundary(request.RecordRef.SourceTime)) {
+			result.WithoutMessageFormat = format
+			return result, nil
+		}
 		event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
 			StrategyRef: snapshotRef,
 			DedupeMD5:   dedupeMD5,
@@ -153,7 +171,17 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 					return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("actual anomaly timestamps disagree with trigger evidence"))
 				}
 			}
-			event.LegacyOutput = &contract.LegacyEventContext{Configuration: legacy, AnomalyTimestamps: append([]int64{}, timestamps...)}
+			// The anomalies the consumer is told of are the ones at windows it
+			// counts: a Plan detected more often than it aggregates names only
+			// those on the aggregation boundaries, the windows it would have
+			// read had it been detected once an interval.
+			kept := make([]int64, 0, len(timestamps))
+			for _, ts := range timestamps {
+				if !request.Plan.CompatibleOffBoundary(ts) {
+					kept = append(kept, ts)
+				}
+			}
+			event.LegacyOutput = &contract.LegacyEventContext{Configuration: legacy, AnomalyTimestamps: kept}
 		}
 		event.WireFormat = request.Plan.WireFormat()
 		event.SignalType = request.Plan.SignalType()
@@ -220,44 +248,44 @@ func EvaluateStateEligibilityV2(
 	return StateEligibilityV2{stateDisposition: effectiveDisposition}, nil
 }
 
-func validateRequestV2(request EvaluationRequestV2) ([]strategy.CompiledLevel, error) {
+func validateRequestV2(request EvaluationRequestV2) (strategy.LevelList, error) {
 	if request.Plan == nil || !request.Limits.valid() || request.TenantID == "" || request.BusinessID == "" ||
 		request.Record.RecordID == "" || request.Record.SourceTime < 0 || request.EvaluationTime < 0 || request.ExecutionID == "" ||
 		request.RecordRef.RecordID != request.Record.RecordID || request.RecordRef.SourceTime != request.Record.SourceTime ||
 		request.RecordRef.Dimensions == nil || request.Observed.Values == nil {
-		return nil, invariantV2("validate request", 0, errors.New("missing identity, value, time, or budget"))
+		return strategy.LevelList{}, invariantV2("validate request", 0, errors.New("missing identity, value, time, or budget"))
 	}
 	levels := request.Plan.Levels()
-	if len(levels) == 0 || uint32(len(levels)) > request.Limits.MaxLevels || uint32(len(levels)) > request.Limits.MaxLevelResultsPerEvent ||
-		len(request.Record.LevelFacts) != len(levels) || len(request.Histories) != len(levels) || len(request.EffectiveTimeFacts) != len(levels) {
-		return nil, invariantV2("align Level inputs", 0, errors.New("Level input cardinality mismatch"))
+	if levels.Len() == 0 || uint32(levels.Len()) > request.Limits.MaxLevels || uint32(levels.Len()) > request.Limits.MaxLevelResultsPerEvent ||
+		len(request.Record.LevelFacts) != levels.Len() || len(request.Histories) != levels.Len() || len(request.EffectiveTimeFacts) != levels.Len() {
+		return strategy.LevelList{}, invariantV2("align Level inputs", 0, errors.New("Level input cardinality mismatch"))
 	}
 	var computeCost uint64
-	for index, level := range levels {
+	for index, level := range levels.All() {
 		definition := level.Definition()
-		if definition.LevelID == 0 || (index > 0 && definition.LevelID <= levels[index-1].Definition().LevelID) ||
+		if definition.LevelID == 0 || (index > 0 && definition.LevelID <= levels.At(index-1).Definition().LevelID) ||
 			request.Record.LevelFacts[index].Definition.LevelID != definition.LevelID || request.Histories[index].LevelID != definition.LevelID ||
 			request.EffectiveTimeFacts[index].LevelID != definition.LevelID || request.Histories[index].View == nil {
-			return nil, invariantV2("align Level inputs", definition.LevelID, errors.New("Level inputs must be sorted, unique, and aligned"))
+			return strategy.LevelList{}, invariantV2("align Level inputs", definition.LevelID, errors.New("Level inputs must be sorted, unique, and aligned"))
 		}
 		triggerPlan, recoveryPlan := level.Trigger(), level.Recovery()
 		required, ok := requiredHistoryPointsV2(triggerPlan, recoveryPlan)
 		if !ok || triggerPlan.WindowSize > request.Limits.MaxTriggerWindowSize ||
 			recoveryPlan.ConsecutiveWindows > request.Limits.MaxRecoveryConsecutiveWindows ||
 			required > request.Limits.MaxRequiredHistoryPoints || required != level.RequiredDetectHistoryPoints() {
-			return nil, invariantV2("admit Level plan", definition.LevelID, errors.New("compiled window exceeds admitted shape"))
+			return strategy.LevelList{}, invariantV2("admit Level plan", definition.LevelID, errors.New("compiled window exceeds admitted shape"))
 		}
 		levelCost := uint64(1)
 		if recoveryPlan.Enabled {
 			levelCost += uint64(recoveryPlan.ConsecutiveWindows)
 		}
 		if math.MaxUint64-computeCost < levelCost {
-			return nil, invariantV2("admit compute", definition.LevelID, errors.New("compute cost overflow"))
+			return strategy.LevelList{}, invariantV2("admit compute", definition.LevelID, errors.New("compute cost overflow"))
 		}
 		computeCost += levelCost
 	}
 	if computeCost > request.Limits.MaxComputeCost {
-		return nil, invariantV2("admit compute", 0, errors.New("compute cost exceeds admitted limit"))
+		return strategy.LevelList{}, invariantV2("admit compute", 0, errors.New("compute cost exceeds admitted limit"))
 	}
 	return levels, nil
 }
@@ -627,8 +655,8 @@ func recoveryGateV2(outcomes []LevelOutcomeV2) RecoveryGateV2 {
 //
 // Two shapes do not ask the set. A Plan that does not publish the alert
 // consumer's protocol is not gated: the set is that consumer's, and the
-// The Python compatibility protocol carries no RECOVERY message (the sink
-// drops it). A caller that passed no
+// Python compatibility protocol carries no RECOVERY message, so its envelope
+// is not built at all. A caller that passed no
 // set has no gate; that is the state before the gate existed and is named
 // as such, so a worker that stops passing the set shows up as a count
 // rather than as recoveries quietly going out again.

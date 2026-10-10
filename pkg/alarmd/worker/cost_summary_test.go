@@ -57,16 +57,24 @@ func TestCostSummaryObservesRealWorkerWithoutChangingExecution(t *testing.T) {
 	}
 }
 
-func TestCostCompletionOnlyOwnsIdentityWithoutInventingTimer(t *testing.T) {
+// A Plan decided from its completions alone is evaluated all the same: its
+// decision is timed, not left as a duration nobody measured - which is what
+// the cost summary counted as an unknown wall, one a round for every Plan
+// without a series - and not given anything but its own time either: no
+// longer than the Slot it was decided in.
+func TestCostCompletionOnlyOwnsIdentityAndTimesItsDecision(t *testing.T) {
 	plans, requirements := baseDuePlanAndRequirements()
 	f, request := newCompletionOnlyFixture(t, plans, requirements, nil)
+	began := time.Now()
 	if _, err := f.coordinator.Execute(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
+	slot := time.Since(began)
 	for _, o := range *f.observations {
 		if o.Stage == observability.StageEvaluationCompleted {
-			if o.EvaluationOwner.TenantID != plans[0].Identity.TenantID || o.EvaluationOwner.StrategyID != plans[0].Identity.StrategyID || !o.EvaluationRecordsKnown || o.DurationKnown || o.Duration != 0 {
-				t.Fatalf("completion-only facts fabricated/missing: %+v", o)
+			if o.EvaluationOwner.TenantID != plans[0].Identity.TenantID || o.EvaluationOwner.StrategyID != plans[0].Identity.StrategyID || !o.EvaluationRecordsKnown ||
+				!o.DurationKnown || o.Duration < 0 || o.Duration > slot {
+				t.Fatalf("completion-only facts = %+v, want its owner, its records known, and its decision timed within the %v Slot", o, slot)
 			}
 			return
 		}

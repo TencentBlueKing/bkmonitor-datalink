@@ -20,7 +20,7 @@ import (
 
 func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
 	compiler := newTestCompiler(t)
-	always := mustCompilePlan(t, compiler, validPlan()).Levels()[0]
+	always := mustCompilePlan(t, compiler, validPlan()).Levels().At(0)
 	if requirement := always.EffectiveTimeRequirement(); requirement.Kind() != EffectiveTimeAlways || len(requirement.Digest()) != 64 {
 		t.Fatalf("ALWAYS requirement = %+v", requirement)
 	}
@@ -31,7 +31,7 @@ func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
 		"active_calendars": []any{},
 		"calendars":        []any{},
 	})
-	staticLevel := mustCompilePlan(t, compiler, staticPlan).Levels()[0]
+	staticLevel := mustCompilePlan(t, compiler, staticPlan).Levels().At(0)
 	static := staticLevel.EffectiveTimeRequirement()
 	if static.Kind() != EffectiveTimeStaticSchedule || static.TimezoneRef() != "BUSINESS_LOCAL" || len(static.TimeRanges()) != 1 {
 		t.Fatalf("STATIC_SCHEDULE requirement = %+v", static)
@@ -49,7 +49,7 @@ func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
 		"active_calendars": []any{int64(9), int64(3)},
 		"calendars":        []any{int64(8)},
 	})
-	calendar := mustCompilePlan(t, compiler, calendarPlan).Levels()[0].EffectiveTimeRequirement()
+	calendar := mustCompilePlan(t, compiler, calendarPlan).Levels().At(0).EffectiveTimeRequirement()
 	if calendar.Kind() != EffectiveTimeCalendar || !equalInt64s(calendar.ActiveCalendarIDs(), []int64{3, 9}) || !equalInt64s(calendar.InactiveCalendarIDs(), []int64{8}) {
 		t.Fatalf("CALENDAR requirement = %+v", calendar)
 	}
@@ -62,7 +62,7 @@ func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
 
 func TestCompilerCanonicalizesNoCalendarFullDayUptimeToAlways(t *testing.T) {
 	compiler := newTestCompiler(t)
-	want := mustCompilePlan(t, compiler, validPlan()).Levels()[0].EffectiveTimeRequirement()
+	want := mustCompilePlan(t, compiler, validPlan()).Levels().At(0).EffectiveTimeRequirement()
 	tests := []struct {
 		name       string
 		timeRanges []any
@@ -79,7 +79,7 @@ func TestCompilerCanonicalizesNoCalendarFullDayUptimeToAlways(t *testing.T) {
 				"active_calendars": []any{},
 				"calendars":        []any{},
 			})
-			requirement := mustCompilePlan(t, compiler, plan).Levels()[0].EffectiveTimeRequirement()
+			requirement := mustCompilePlan(t, compiler, plan).Levels().At(0).EffectiveTimeRequirement()
 			if requirement.Kind() != EffectiveTimeAlways {
 				t.Fatalf("effective-time kind = %q, want %q", requirement.Kind(), EffectiveTimeAlways)
 			}
@@ -101,8 +101,8 @@ func TestCompilerIncludesTimeRangeContentInEffectiveTimeDigest(t *testing.T) {
 		"time_ranges": []any{map[string]any{"start": "10:00", "end": "18:00"}},
 	})
 
-	firstRequirement := mustCompilePlan(t, compiler, first).Levels()[0].EffectiveTimeRequirement()
-	secondRequirement := mustCompilePlan(t, compiler, second).Levels()[0].EffectiveTimeRequirement()
+	firstRequirement := mustCompilePlan(t, compiler, first).Levels().At(0).EffectiveTimeRequirement()
+	secondRequirement := mustCompilePlan(t, compiler, second).Levels().At(0).EffectiveTimeRequirement()
 	if firstRequirement.Digest() == secondRequirement.Digest() {
 		t.Fatal("different time ranges produced the same effective-time requirement digest")
 	}
@@ -150,7 +150,7 @@ func TestAMalformedTimeRangeIsReadAsPythonReadsIt(t *testing.T) {
 				t.Fatalf("a malformed range refused the Level: %+v", terminals)
 			}
 			compiled, _ := result.Plan()
-			requirement := compiled.Levels()[0].EffectiveTimeRequirement()
+			requirement := compiled.Levels().At(0).EffectiveTimeRequirement()
 			if tt.always {
 				// The whole day with no calendar is no schedule at all, as a
 				// configured 00:00-23:59 is.
@@ -191,7 +191,7 @@ func TestStaticScheduleProviderReturnsBoundedFacts(t *testing.T) {
 	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
 		"time_ranges": []any{map[string]any{"start": "09:00", "end": "17:00"}},
 	})
-	requirement := mustCompilePlan(t, newTestCompiler(t), plan).Levels()[0].EffectiveTimeRequirement()
+	requirement := mustCompilePlan(t, newTestCompiler(t), plan).Levels().At(0).EffectiveTimeRequirement()
 	provider := NewStaticScheduleProvider(TimezoneResolverFunc(func(_ context.Context, ref, _, _ string) (*time.Location, error) {
 		if ref != "BUSINESS_LOCAL" {
 			t.Fatalf("timezone ref = %q", ref)
@@ -222,7 +222,7 @@ func TestStaticScheduleProviderSeparatesUnknownFromRetryableFailure(t *testing.T
 	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
 		"time_ranges": []any{map[string]any{"start": "09:00", "end": "17:00"}},
 	})
-	requirement := mustCompilePlan(t, newTestCompiler(t), plan).Levels()[0].EffectiveTimeRequirement()
+	requirement := mustCompilePlan(t, newTestCompiler(t), plan).Levels().At(0).EffectiveTimeRequirement()
 	request := []EffectiveTimeRequest{{
 		TenantID: "default", BusinessID: "2", EvaluationTime: 1725000000, Requirement: requirement,
 	}}
@@ -266,10 +266,10 @@ func equalInt64s(left, right []int64) bool {
 // schedule: the level compiles to the same ALWAYS requirement as no uptime.
 func TestAnEmptyUptimeIsAlwaysInEffect(t *testing.T) {
 	compiler := newTestCompiler(t)
-	want := mustCompilePlan(t, compiler, validPlan()).Levels()[0].EffectiveTimeRequirement()
+	want := mustCompilePlan(t, compiler, validPlan()).Levels().At(0).EffectiveTimeRequirement()
 	plan := validPlan()
 	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{})
-	requirement := mustCompilePlan(t, compiler, plan).Levels()[0].EffectiveTimeRequirement()
+	requirement := mustCompilePlan(t, compiler, plan).Levels().At(0).EffectiveTimeRequirement()
 	if requirement.Kind() != EffectiveTimeAlways || requirement.Digest() != want.Digest() {
 		t.Fatalf("empty uptime compiled to %q %q, want ALWAYS %q", requirement.Kind(), requirement.Digest(), want.Digest())
 	}

@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -1089,7 +1090,7 @@ func TestProductionPhaseTwoBundleKeepsHealthyQueryGroupWhenSiblingInitialFreezeL
 	ctx := context.Background()
 	installTwoPhaseTwoStrategies(t, ctx, redisClient)
 
-	base := time.Now().Unix()
+	base := phaseTwoClockAhead(1)
 	var clock atomic.Int64
 	clock.Store(base * 1000)
 	now := func() time.Time { return time.UnixMilli(clock.Load()) }
@@ -1231,8 +1232,7 @@ func TestProductionPhaseTwoBundleDrainsExpiredRetiredBacklogWithoutProjection(t 
 	ctx := context.Background()
 	installTwoPhaseTwoStrategies(t, ctx, redisClient)
 
-	base := time.Now().Unix()
-	base -= base % 60
+	base := phaseTwoClockAhead(60)
 	var clock atomic.Int64
 	clock.Store(base * 1000)
 	now := func() time.Time { return time.UnixMilli(clock.Load()) }
@@ -1487,7 +1487,7 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 		// Query enters UQ; R is enforced at this shared inner boundary.
 	case <-secondEntered:
 		t.Fatal("owned Query Groups used copied recovery permit budgets or bypassed recovery-aware SlotSource")
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("replay sibling did not reach the shared query-permit queue")
 	}
 	release()
@@ -1507,7 +1507,7 @@ func TestProductionPhaseTwoBundleCommitsBudgetExhaustedRecoveryCompletionWithout
 	ctx := context.Background()
 	installTwoPhaseTwoStrategies(t, ctx, redisClient)
 
-	base := time.Now().Unix()
+	base := phaseTwoClockAhead(1)
 	var clock atomic.Int64
 	clock.Store(time.Unix(base, 0).UnixMilli())
 	now := func() time.Time { return time.UnixMilli(clock.Load()) }
@@ -1616,7 +1616,7 @@ func TestProductionPhaseTwoBundleLetsNormalUseRemainingProcessPermitDuringRecove
 	ctx := context.Background()
 	installTwoPhaseTwoStrategies(t, ctx, redisClient)
 
-	base := time.Now().Unix()
+	base := phaseTwoClockAhead(1)
 	var clock atomic.Int64
 	// Keep the configured one-millisecond readiness boundary due without
 	// changing the integer-second Slot identities exercised below.
@@ -1715,8 +1715,13 @@ func TestProductionPhaseTwoBundleLetsNormalUseRemainingProcessPermitDuringRecove
 		queryGroupsByStrategy[schedule.Plans[0].Identity.StrategyID] = queryGroup
 	}
 	normalRunner := settledRunner(bundle, queryGroupsByStrategy["1002"])
-	if _, attempted, runErr := normalRunner.RunOne(ctx); runErr != nil || !attempted {
-		t.Fatalf("prepare normal Query Group attempted=%t error=%v", attempted, runErr)
+	// The preparation has to have been answered, not only attempted: a round
+	// that timed out before its query was sent leaves this Query Group's Slot
+	// to the tick below as well, and the tick then waits on a recovery query
+	// that never comes instead of saying why.
+	prepared, attempted, runErr := normalRunner.RunOne(ctx)
+	if runErr != nil || !attempted || !prepared.Completed || prepared.Result != observability.ResultSuccess {
+		t.Fatalf("prepare normal Query Group = (%+v, attempted %t, %v), want its Slot answered", prepared, attempted, runErr)
 	}
 	setup.Store(false)
 	observationsMu.Lock()
@@ -2181,10 +2186,7 @@ func assertObservedOrder(t *testing.T, got, want []observability.Stage) {
 // if it keeps happening, instead of into a result somewhere else in the test.
 func startPhaseTwoRedis(t *testing.T) (string, *redis.Client) {
 	t.Helper()
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	var refusals []string
 	for attempt := 0; attempt < 5; attempt++ {
 		address, client, refused := startOwnPhaseTwoRedis(t, executable, "")
@@ -2537,10 +2539,7 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 // hold it - which is the state in which the fixture used to hand the foreign
 // server to the test.
 func TestPhaseTwoRedisFixtureRefusesAServerItDidNotStart(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	occupiedAddress, occupied := startPhaseTwoRedis(t)
 	_, port, err := net.SplitHostPort(occupiedAddress)
 	if err != nil {
@@ -2557,6 +2556,25 @@ func TestPhaseTwoRedisFixtureRefusesAServerItDidNotStart(t *testing.T) {
 	if !strings.Contains(refused, port) {
 		t.Fatalf("refusal %q does not name the port it was refused on", refused)
 	}
+}
+
+// phaseTwoClockAhead is the first multiple of period at least a minute ahead
+// of the real clock, for a case that freezes its injected clock there.
+//
+// It is the contract phaseTwoProductionExternalDependencies.Now states: an
+// injected clock only ever goes ahead of the real one, because a Slot's query
+// deadline is derived from it and measured against the real clock. A base
+// taken from the current second, or rounded down to a period, leaves a
+// strategy on a one-second interval about a second before its deadline is in
+// the real past. Under the whole suite with the race detector that second is
+// gone before the query is sent: the round completes as QUERY_TIMEOUT without
+// reaching the query backend, a case waiting for the query waits until its
+// bound, and a case asserting that no query was made passes without the
+// query ever having had the chance. A minute is several times the longest
+// such case takes.
+func phaseTwoClockAhead(period int64) int64 {
+	start := time.Now().Unix() + 60
+	return start + (period-start%period)%period
 }
 
 // phaseTwoQueryableSlotBoundary picks the Slot boundary these production tests

@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -19,6 +18,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 // runtimeStateUpgradeFixture is Runtime State an earlier release wrote
@@ -49,10 +49,7 @@ type runtimeStateUpgradeFixture struct {
 // this build means to stop reading must turn this into a named refusal, not
 // a silent miss.
 func TestRuntimeStateWrittenByAnEarlierReleaseLoads(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	paths, err := filepath.Glob("testdata/runtime-state-upgrade/*.json")
 	if err != nil || len(paths) < 2 {
 		t.Fatalf("fixtures %v: %v", paths, err)

@@ -167,8 +167,43 @@ func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
 	// broke - because such a row read as WINDOW_UNDECIDED, the line for
 	// counts that are known and say nothing yet, and sent the reader to wait
 	// for counts that would never arrive.
-	if got := len(Checks()); got != 30 || len(checkAnswers) != 30 {
-		t.Errorf("the check table has %d rows in order and %d answered, want 30: a new check has to "+
+	// Thirty-one: CAPABILITY_UNLISTED is a named standing - the capability
+	// disposition split on the closed list of capabilities the build
+	// declares (DeclaredCapabilities). A declared one is the capability
+	// owner's and waits for a build; any other reason under that
+	// disposition stays this deployment's, which one line with one owner
+	// could not say.
+	// Thirty-two: SERIES_SPARSE is a rule over a dimension the rows already
+	// carry - each short window's verdict from its holes - because a window
+	// short only by minutes the query answered without the series is the
+	// data's, and it sat on the undetermined list as this deployment's.
+	// Thirty-three: READ_BEFORE_COMPLETE is a rule over a dimension the rows
+	// did not carry before - the late-data lookback's reading that a
+	// window was read before its data was complete, twice in a row -
+	// because such an object's rounds complete and its results are read
+	// from data that was not all there, and only the strategy's time_delay
+	// moves the read (user, 09-29: whole-window lateness is time_delay's).
+	// Thirty-four and thirty-five: LATE_PAST_ROUND and LATE_SERIES_MISSED are
+	// rules over a dimension the rows did not carry before - what the
+	// lookback's supplements could not recover - because a series later than
+	// the next round is decided without its data. Whole windows of such
+	// series are time_delay's, the strategy's, like a window read early; the
+	// tail of a window the supplement recovered in part is the data's, since
+	// a longer time_delay would slow the whole object for a few series
+	// (09-29 ruling).
+	// Thirty-six: EMPTY_AFTER_TARGET is a rule over a dimension the rows did
+	// not carry before - the cause of an empty run, read from the round's
+	// primary - because a run whose query returned series the target
+	// selected none of has the data, and EMPTY_EVERY_ROUND's "data absent"
+	// sends its owner to the source instead of the target.
+	// Thirty-seven: READ_HELD is a rule over a dimension the rows did not
+	// carry before - the read hold alarmd keeps for an object on its
+	// measured arrival age - because such an object's rounds read its data
+	// whole, later than its time_delay says, and the time_delay that would
+	// need no hold stays the strategy owner's to set (user, 09-30: the
+	// advice stays with the owner while alarmd holds the read).
+	if got := len(Checks()); got != 37 || len(checkAnswers) != 37 {
+		t.Errorf("the check table has %d rows in order and %d answered, want 37: a new check has to "+
 			"be a rule over the existing dimensions or a named standing, and the design says which", got, len(checkAnswers))
 	}
 	seen := map[Check]bool{}
@@ -236,13 +271,26 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 		CheckQueryTargetMissing:  {Kind: KindQueryCooldown, Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "response=status_space_table_id_field_is_not_exists"}},
 		CheckNoDataPersistent:    {Kind: KindNoData},
 		CheckEmptyEveryRound:     {Kind: KindEmptyEveryRound, EmptyEveryRound: &EmptyEveryRoundFacts{Rounds: 240, NeverSawData: true, Cause: EmptyEveryRoundCauseUnknown}},
+		CheckEmptyAfterTarget:    {Kind: KindEmptyEveryRound, EmptyEveryRound: &EmptyEveryRoundFacts{Rounds: 240, NeverSawData: true, Cause: EmptyEveryRoundCauseOutsideTarget}},
 		CheckNoDataMemoryRefused: {Kind: KindNoDataMemoryRefused, ReasonCode: "STATE_BUDGET_EXCEEDED"},
 		CheckRetainedShareApproaching: {Kind: KindRetainedShareApproaching,
 			RetainedShare: &RetainedShareFacts{RetainedBytes: 96, ShareBytes: 100, PercentOfShare: 96}},
+		CheckReadBeforeComplete: {Kind: KindReadBeforeComplete,
+			ReadEarly: &ReadEarlyFacts{StepSeconds: 60, CurrentDelaySeconds: 60, SuggestedDelaySeconds: 180}},
+		CheckReadHeld: {Kind: KindReadHeld,
+			ReadHold: &ReadHoldFacts{Millis: 99_000, ArrivalAgeMillis: 160_000, HeldSince: 1_790_000_000, DelaySeconds: 60, SuggestedDelaySeconds: 180}},
+		CheckLatePastRound: {Kind: KindLatePastRound,
+			LatePastRound: &LatePastRoundFacts{StepSeconds: 60, CurrentDelaySeconds: 60, SuggestedDelaySeconds: 300}},
+		CheckLateSeriesMissed: {Kind: KindLateSeriesMissed, LateSeriesMissed: &LateSeriesMissedFacts{Windows: 2, CrossedSeries: 3}},
 		CheckSeriesChurning: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
 			Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40, Fresh: 4, ShortFresh: 4, FreshRounds: 40}},
 		CheckSeriesDataMissing: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
 			Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40}},
+		// The same row whose one short window is short only by minutes the
+		// query answered without the series.
+		CheckSeriesSparse: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
+			Levels: 9, Short: 1, WorstValid: 2, WorstRequired: 9, ShortRounds: 40, Windows: []WindowRow{{
+				Verdict: VerdictDataAbsentWhenQueried, MissingTotal: 2, HolesBy: WindowHoleCounts{AnsweredWithoutSeries: 2}}}}},
 		CheckWindowUndecided: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
 			Levels: 3, Short: 2, Empty: 2, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40}},
 		CheckCoverageReadingRefused: {Kind: KindDegradedRun, CauseReason: "HISTORY_GAPPED",
@@ -275,7 +323,10 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 		CheckSourceIncomplete: {Source: NewSourceFacts(at, map[string]int{"ACCEPTED": 3, "SOURCE_INCOMPLETE": 1},
 			[]WithheldObject{{StrategyID: "7", Scope: "STRATEGY", Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_IDENTITY_UNAVAILABLE"}}), SourceReplica: "pod-a"},
 		CheckCapabilityUnsupported: {Source: NewSourceFacts(at, map[string]int{"ACCEPTED": 3, "UNSUPPORTED_PHASE2_CAPABILITY": 1},
-			[]WithheldObject{{StrategyID: "8", Scope: "STRATEGY", Disposition: "UNSUPPORTED_PHASE2_CAPABILITY", Reason: "SNAPSHOT_RETENTION_INSUFFICIENT"}}), SourceReplica: "pod-a"},
+			[]WithheldObject{{StrategyID: "8", Scope: "STRATEGY", Disposition: "UNSUPPORTED_PHASE2_CAPABILITY", Reason: "ALGORITHM_NOT_MIGRATED"}}), SourceReplica: "pod-a"},
+		// The same disposition for a reason the build does not declare.
+		CheckCapabilityUnlisted: {Source: NewSourceFacts(at, map[string]int{"ACCEPTED": 3, "UNSUPPORTED_PHASE2_CAPABILITY": 1},
+			[]WithheldObject{{StrategyID: "8", Scope: "STRATEGY", Disposition: "UNSUPPORTED_PHASE2_CAPABILITY", Reason: "EVALUATION_STEP_INCONSISTENT"}}), SourceReplica: "pod-a"},
 		CheckConfigRejected: {Source: NewSourceFacts(at, map[string]int{"ACCEPTED": 3, "CONFIG_REJECTED": 1, "STALE_CONFIG": 1},
 			[]WithheldObject{{StrategyID: "9", Scope: "LEVEL", LevelID: 2, Disposition: "CONFIG_REJECTED", Reason: "LEVEL_INVALID", FieldPath: "items[0].algorithms[0]"},
 				{StrategyID: "10", Scope: "STRATEGY", Disposition: "STALE_CONFIG", Reason: "LEVEL_INVALID"}}), SourceReplica: "pod-a"},
@@ -618,7 +669,7 @@ func TestRetainedRecordsAreConsequenceOngoingOrHistory(t *testing.T) {
 	// In the demoted pool on a refusal: its record is the refusal's consequence.
 	demoted := []Anomaly{{QueryGroup: "qg-refused", Replica: "pod-b", Kind: KindQueryCooldown,
 		Failure:    &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "response=status_space_table_id_field_is_not_exists"},
-		Strategies: []StrategyRef{{StrategyID: "2864", BusinessID: "7"}}}}
+		Strategies: []StrategyRef{{StrategyID: "850", BusinessID: "7"}}}}
 	Attribute(anomalies, at)
 	Attribute(demoted, at)
 	view := &View{Anomalies: anomalies, Demoted: demoted,
@@ -855,11 +906,11 @@ func TestRetainedRecordsCarryTheirStrategiesOntoRowsAndFolds(t *testing.T) {
 	at := time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)
 	view := &View{
 		GapSkips: map[string]SkippedSpan{"qg-gap": {FirstSlot: 1, LastSlot: 2, Slots: 2, At: at.Add(-time.Minute), Replica: "pod-a",
-			Strategies: []StrategyRef{{StrategyID: "1854", BusinessID: "7"}}}},
+			Strategies: []StrategyRef{{StrategyID: "847", BusinessID: "7"}}}},
 		PrunedSkips: map[string]PrunedSkip{"qg-pruned": {From: 1, To: 900, At: at.Add(-time.Hour), Replica: "pod-a",
 			Strategies: []StrategyRef{{StrategyID: "2001", BusinessID: "9"}}}},
 	}
-	for check, want := range map[Check]string{CheckDetectionAbandoned: "1854", CheckTimelinePruned: "2001"} {
+	for check, want := range map[Check]string{CheckDetectionAbandoned: "847", CheckTimelinePruned: "2001"} {
 		rows := UnderCheck(check, "", view, now)
 		if len(rows) != 1 || len(rows[0].Strategies) != 1 || rows[0].Strategies[0].StrategyID != want {
 			t.Fatalf("%s rows = %+v, want one row naming strategy %s", check, rows, want)

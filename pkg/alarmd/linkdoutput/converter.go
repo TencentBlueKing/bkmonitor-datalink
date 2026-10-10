@@ -190,6 +190,19 @@ type Converter struct {
 	onUnmappedSeverity func(level uint32)
 }
 
+// labelBusiness is the business an alert is filed under: the business a
+// global business Plan attributed the event to, and the Plan's own business
+// for every other event. Only the label moves. The consumer matches a
+// label business that differs from the strategy's when the strategy's
+// business is global, and enriches from the label business; the alert id
+// and the strategy reference stay the Plan's.
+func labelBusiness(event *contract.TriggerEventV1) string {
+	if event.AttributedBusinessID != "" {
+		return event.AttributedBusinessID
+	}
+	return event.BusinessID
+}
+
 // NewConverter builds a converter. It takes no clock: see Converter.
 func NewConverter(onUnmappedSeverity func(level uint32)) (*Converter, error) {
 	return &Converter{onUnmappedSeverity: onUnmappedSeverity}, nil
@@ -220,9 +233,9 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 	if err != nil {
 		return Event{}, reject(RuleLevelsInvalid, err)
 	}
-	businessID, err := strconv.ParseInt(event.BusinessID, 10, 64)
+	businessID, err := strconv.ParseInt(labelBusiness(event), 10, 64)
 	if err != nil {
-		return Event{}, reject(RuleBusinessIdentity, fmt.Errorf("alarmd linkdoutput: business identity %q: %w", event.BusinessID, err))
+		return Event{}, reject(RuleBusinessIdentity, fmt.Errorf("alarmd linkdoutput: business identity %q: %w", labelBusiness(event), err))
 	}
 	evaluations, err := converter.evaluations(event)
 	if err != nil {

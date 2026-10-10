@@ -113,6 +113,7 @@ const (
 	StageSlotSourceCompleted    = "slot_source_completed"
 	StageScheduleCursorAdvanced = "schedule_cursor_advanced"
 	StageReplayExpired          = "replay_expired"
+	StageReplayTakeover         = "replay_takeover"
 	StageRangeDistanceExpired   = "range_distance_expired"
 	StageRangeGateDecided       = "range_gate_decided"
 	StageSlotWait               = "slot_wait"
@@ -285,6 +286,7 @@ const (
 	OperationRetry              = "retry"
 	OperationReplay             = "replay"
 	OperationProbe              = "probe"
+	OperationSupplement         = "supplement"
 	OperationOther              = "_other"
 
 	DirectionInput    Direction = "input"
@@ -359,6 +361,12 @@ const (
 	// ReasonInternalUnknown is chosen by a site that has looked at the failure
 	// and has nothing finer to say about it.
 	ReasonInternalUnknown ReasonCode = "internal_unknown"
+	// ReasonHeldBySupplement and ReasonHeldByMaintenance are a round turned
+	// away from its Query Group's flight while a supplement of a completed
+	// Slot, or a maintenance write, held it: a yield by design, the round run
+	// again the moment the hold ends.
+	ReasonHeldBySupplement  ReasonCode = "held_by_supplement"
+	ReasonHeldByMaintenance ReasonCode = "held_by_maintenance"
 	// ReasonNotReported is not chosen by anyone: it is what a failing
 	// observation gets when its emitting site reported no reason at all.
 	//
@@ -948,11 +956,22 @@ type ScheduleCutoverFacts struct {
 	TimelinesRead   int
 	RevisionsFolded int
 	ContentSource   string
+	// ReadHoldLinks counts the moved Plans' links to the groups they left,
+	// by ScheduleCutoverReadHoldLinks.
+	ReadHoldLinks map[string]int
 }
 
 // ScheduleCutoverDecisions is the closed vocabulary of what a publication
 // cutover does with one Query Group.
 var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "legacy_cut", "retired", "added", "blocked", "reopened", "retired_unwritten"}
+
+// ScheduleCutoverReadHoldLinks is the closed vocabulary of what a cutover
+// does with a Plan's link to the Query Group it left: linked (the state
+// generation is unchanged), linked_generation_unknown (a generation could
+// not be read; linked to keep ordering), generation_changed (no state
+// shared, no link), and the carried links it stops carrying because they
+// name the group they are in or are past their lifetime.
+var ScheduleCutoverReadHoldLinks = []string{"linked", "linked_generation_unknown", "generation_changed", "dropped_self", "dropped_expired"}
 
 // ReplayExpiryFacts describe one Slot the scheduler gave up replaying.
 //
@@ -1256,6 +1275,31 @@ var ReplayExpiryReasons = []string{
 	"REPLAY_AGE_EXCEEDED", "REPLAY_DISTANCE_EXCEEDED", "REPLAY_WAIT_EXCEEDS_DISTANCE", "REPLAY_RANGE_EXPIRED",
 }
 
+// ReplayTakeoverFacts is one Slot evaluated before this process took its
+// Query Group over from another owner (scheduler.TakeoverClock): replayed,
+// because nobody here could have run it and it is within the replay age, or
+// past the replay age and given up on like any Slot that old. The distance
+// rule does not apply to it. TakeoverOffsetSeconds is how long after the
+// takeover the Slot was first classified. One is reported per Slot and
+// outcome, however many times the Slot is classified: a Slot retried after a
+// failed replay is not reported again, and one replayed and later given up
+// on for its age is reported under each. A Query Group the degraded pool
+// holds reports none: its Slots are given up on for distance as before.
+type ReplayTakeoverFacts struct {
+	Outcome               string  `json:"outcome"`
+	AgeSeconds            float64 `json:"age_seconds"`
+	TakeoverOffsetSeconds float64 `json:"takeover_offset_seconds"`
+}
+
+// The outcomes of a Slot due before a takeover, closed.
+const (
+	ReplayTakeoverReplayed    = "replayed"
+	ReplayTakeoverAgeExceeded = "age_exceeded"
+)
+
+// ReplayTakeoverOutcomes is every outcome, for the metric to pre-create.
+var ReplayTakeoverOutcomes = []string{ReplayTakeoverReplayed, ReplayTakeoverAgeExceeded}
+
 // ObjectCatalogFacts describe one write or renewal of the content-addressed
 // Query Group objects, output contexts and the manifest that names them for
 // one publication. Written counts objects the operation created, Present
@@ -1467,6 +1511,7 @@ type ByteConstraintFacts struct {
 	PoolUnknown    []string         `json:"pool_unknown,omitempty"`
 	Unread         int              `json:"unread"`
 	Unsettled      []string         `json:"unsettled,omitempty"`
+	UnreadEstimate uint64           `json:"unread_estimate_bytes"`
 	Overloaded     []string         `json:"overloaded,omitempty"`
 	Unplaceable    []string         `json:"unplaceable,omitempty"`
 	PlannedMoves   int              `json:"planned_moves"`
@@ -1872,6 +1917,9 @@ type SourceRefreshFacts struct {
 	ReadMode       SourceReadMode
 	ReadReason     SourceReadReason
 	StrategiesRead int
+	// Build says whether the round built its Catalog or reused the previous
+	// round's (SourceRefreshBuilds); empty for a producer that does not say.
+	Build SourceRefreshBuild
 	// ChangeSignalPresent says the source offered a change signal this round;
 	// ChangeSignalAgeSeconds is how long ago its publisher moved it, by the
 	// reporting process's clock, and means nothing when not present.
@@ -1882,6 +1930,11 @@ type SourceRefreshFacts struct {
 	// from their facts; non-zero only across a change of the revision
 	// formula, when it is the whole population of retained Plans.
 	RetainedStaleRevisions int
+	// LastGoodIdentityChanged is how many last-good Plans the round's Catalog
+	// refused to retain because the source now states another tenant,
+	// business, space or global switch for the strategy; non-zero when a
+	// writer's numbering started over and a number names another strategy.
+	LastGoodIdentityChanged int
 }
 
 // SourceReadMode and SourceReadReason mirror the control plane's vocabulary
@@ -1929,6 +1982,19 @@ func ValidSourceReadOutcome(mode SourceReadMode, reason SourceReadReason) bool {
 	}
 	return false
 }
+
+// SourceRefreshBuild mirrors the control plane's word for whether a refresh
+// round built its Catalog or stood on the previous round's. Closed: the
+// metric is labelled by it.
+type SourceRefreshBuild string
+
+const (
+	SourceRefreshRebuilt SourceRefreshBuild = "rebuilt"
+	SourceRefreshReused  SourceRefreshBuild = "reused"
+)
+
+// SourceRefreshBuilds is every build word, one pre-created series each.
+var SourceRefreshBuilds = []SourceRefreshBuild{SourceRefreshRebuilt, SourceRefreshReused}
 
 // ControlSourceRole is what this process is to the control plane's source
 // refresh. Only the leader refreshes; a follower reads what the leader
@@ -2273,6 +2339,9 @@ type Observation struct {
 	// population -- on a running deployment, 61 of 62 objects sharing a label
 	// that could not say whose problem they were.
 	ProgressCompletionReason string
+	// ProgressCompletionScope is where that cause was found: the Plan, and the
+	// Level or the physical query. Nil when the completion carried no cause.
+	ProgressCompletionScope *CompletionScopeFacts
 	// HistoryCoverage says how far short of the required window the series in
 	// this run actually were. HISTORY_WARMING alone cannot tell a series two
 	// rounds into its life, which converges by itself, from a series whose
@@ -2343,6 +2412,7 @@ type Observation struct {
 	ActiveQGSet           *ActiveQGSetFacts
 	ScheduleCutover       *ScheduleCutoverFacts
 	ReplayExpiry          *ReplayExpiryFacts
+	ReplayTakeover        *ReplayTakeoverFacts
 	// HeldBy is what the round before this one did with the Query Group. It
 	// sits on the Observation rather than inside one cohort's fact bundle:
 	// it first shipped inside ShortPeriodCompletionFacts, and every Query
@@ -3282,6 +3352,9 @@ func NormalizeReason(reason ReasonCode, result Result) ReasonCode {
 	if _, ok := absentCloseReasonSet[reason]; ok {
 		return reason
 	}
+	if _, ok := completionAttributionReasonSet[reason]; ok {
+		return reason
+	}
 	return ReasonOther
 }
 
@@ -3468,11 +3541,13 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
 	{ComponentScheduler, StageSlotCompleted}, {ComponentScheduler, StageQueryAdmission},
+	{ComponentRuntime, StageAuthStore},
 	{ComponentScheduler, StageQueryCooldown}, {ComponentScheduler, StageRunnerReturned}, {ComponentScheduler, StageDispatcherSnapshot}, {ComponentScheduler, StageQueryPermitWait},
 	{ComponentScheduler, StageExpiredRangeReturned},
 	{ComponentScheduler, StageDispatchTurnaway},
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
 	{ComponentScheduler, StageScheduleCursorAdvanced}, {ComponentScheduler, StageReplayExpired},
+	{ComponentScheduler, StageReplayTakeover},
 	{ComponentScheduler, StageRangeDistanceExpired},
 	{ComponentScheduler, StageRangeGateDecided},
 	{ComponentScheduler, StageSlotWait},
@@ -3518,7 +3593,7 @@ var metricOperations = []Operation{
 	OperationSample, OperationTransition, OperationOther,
 }
 
-var phaseTwoOperations = []Operation{OperationNormal, OperationRetry, OperationReplay, OperationProbe}
+var phaseTwoOperations = []Operation{OperationNormal, OperationRetry, OperationReplay, OperationProbe, OperationSupplement}
 var allOperations = append(append([]Operation(nil), metricOperations...), phaseTwoOperations...)
 
 var allDirections = []Direction{DirectionInput, DirectionOutput, DirectionInternal, DirectionOther}
@@ -3568,6 +3643,13 @@ const (
 	// replica starts - and not a store failure, which is what "unavailable"
 	// read as when the two were one word.
 	EffectiveCloseViewNotExecutable ReasonCode = "view_not_executable"
+	// EffectiveCloseCalendarDeletionUnsettled is a close held back for a
+	// Plan that reads a calendar deleted before the deletion settled: the
+	// calendar has not read deleted in every snapshot that names it for
+	// long enough, or every calendar this replica's Plans name read deleted
+	// at once, recently - the writer's calendar source gone, not a
+	// deletion. One per Plan with alerts to close, per step.
+	EffectiveCloseCalendarDeletionUnsettled ReasonCode = "calendar_deletion_unsettled"
 )
 
 // EffectiveCloseOutcomes is every outcome, for the metric to pre-create each
@@ -3576,7 +3658,7 @@ var EffectiveCloseOutcomes = []ReasonCode{
 	EffectiveCloseAcked, EffectiveClosePrecheckFailed, EffectiveCloseSendFailed,
 	EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
 	EffectiveCloseEffectiveTimeUnknown, EffectiveCloseLegacyUnavailable, EffectiveCloseUnavailable, EffectiveCloseUnsupportedRunner,
-	EffectiveCloseViewNotExecutable,
+	EffectiveCloseViewNotExecutable, EffectiveCloseCalendarDeletionUnsettled,
 }
 
 // Maintenance details are bounded log reasons, not new metric label dimensions.

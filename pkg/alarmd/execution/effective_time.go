@@ -34,7 +34,7 @@ func validateEffectiveTimeFacts(input InternalExecution, plans map[PlanIdentity]
 		if !ok {
 			continue
 		}
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			identity := factIdentity{
 				Consumer: ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true},
 				Series:   item.Identity.SeriesIdentityDigest,

@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -161,20 +162,39 @@ type fleetPublisher struct {
 	// just started can speak for it without waiting to watch a fresh round.
 	// Nil disables it, and the replica then reports every object as unknown
 	// until each completes one -- the behaviour a restart used to force.
-	restore func(context.Context, execution.QueryGroupIdentity) (fleet.RestoredState, error)
+	// It reads a batch at a time, a state or an error per object, in order.
+	restore func(context.Context, []execution.QueryGroupIdentity) ([]fleet.RestoredState, []error)
 	// staleAfter is how far behind an object's Progress cursor may be before
 	// its persisted completion stops being evidence about now.
 	staleAfter time.Duration
-	// restoreBudget bounds how many objects one publish may restore. Reading
-	// every owned object at once would turn every restart into a burst against
-	// the control plane at exactly the moment the process is least settled;
-	// spreading it over the publish ticks costs a few more seconds of unknown
-	// and no burst at all.
+	// restoreBudget bounds how many objects one publish may restore
+	// (fleetRestoreBudgetPerPublish). Reading every owned object at once would
+	// turn every restart into a burst against the control plane at exactly the
+	// moment the process is least settled; spreading it over the publish
+	// ticks costs a few more seconds of unknown and no burst at all.
 	restoreBudget int
 	// capacity reports this replica's own limits and how much of them is in
 	// use, so the page can answer "how close are we" from the same read that
 	// produced the verdict instead of waiting on collection.
 	capacity func() *fleet.Capacity
+	// readEarly is the late-data lookback's report of the owned objects read
+	// before their data was complete, by object. Nil on a process that runs
+	// no lookback, and the snapshot then carries no such line.
+	readEarly func() map[string]fleet.ReadEarlyFacts
+	readHolds func() map[string]fleet.ReadHoldFacts
+	// holdOf is a Query Group's read hold as the lookback's group page knows
+	// it, for the overdue episodes; nil without read holds, and an episode's
+	// hold is then unknown. onOverdue hears an episode begin (began) and end.
+	holdOf    func(string) (int64, bool)
+	onOverdue func(episode fleet.OverdueEpisode, began bool)
+	// overdueOpen is the episodes begun and not ended, by object;
+	// overdueEpisodes the latest ended ones, at most fleet.MaxOverdueEpisodes,
+	// which the next snapshot carries. Only publishOnce touches them.
+	overdueOpen     map[string]fleet.OverdueEpisode
+	overdueEpisodes []fleet.OverdueEpisode
+	// lateSeries is what the lookback's supplements could not recover, by
+	// kind; nil without a lookback.
+	lateSeries func() (map[string]fleet.LatePastRoundFacts, map[string]fleet.LateSeriesMissedFacts)
 	// applied is the Activation record revision this replica executes by,
 	// published on every snapshot so the page can compare it with what the
 	// control plane published.
@@ -218,6 +238,9 @@ type fleetPublisher struct {
 	// has not attempted it, which is every follower; the aggregate then
 	// takes the one replica that has.
 	activation func() *fleet.ActivationFacts
+	// activationHeader is a missing activation header the control leader has
+	// not written back; nil on every follower and while the header is there.
+	activationHeader func() *fleet.ActivationHeaderFacts
 	// source and endpoints are the leader's last source round and every
 	// replica's resolved external systems; both nil-safe, both optional so
 	// the tests that build a publisher by hand keep working.
@@ -257,6 +280,10 @@ type fleetPublisher struct {
 	// each Plan by the control leader anyway. Nil on a publisher built by
 	// hand, and the snapshot then carries no choice.
 	outputProtocol *fleet.OutputProtocolFacts
+	// retention is the retention lengths this process runs with and their
+	// inputs, read once at assembly for the same reason. Nil on a publisher
+	// built by hand, and the snapshot then carries none.
+	retention *observability.RuntimeRetentionFacts
 }
 
 // fleetOverdueWakeCeiling bounds how many parked objects one publish carries.
@@ -291,7 +318,9 @@ func publisherOverdue(
 	return anomalies, &facts
 }
 
-// restoreOwned seeds owned objects without conclusive evidence.
+// restoreOwned seeds owned objects without conclusive evidence, and reads
+// once the record of each one determined here without records, whose run
+// of empty rounds the record may date from before this process started.
 //
 // It runs before the snapshot is built, so the first publish after a restart
 // already carries what the control plane knew, instead of reporting the whole
@@ -303,26 +332,48 @@ func (publisher *fleetPublisher) restoreOwned(ctx context.Context, owned []execu
 	if publisher.restoreAttempts == nil {
 		publisher.restoreAttempts = make(map[execution.QueryGroupIdentity]int, len(owned))
 	}
-	spent := 0
+	wanted := make([]execution.QueryGroupIdentity, 0, min(len(owned), publisher.restoreBudget))
 	for _, queryGroup := range owned {
-		if spent >= publisher.restoreBudget {
-			return
+		if len(wanted) >= publisher.restoreBudget {
+			break
 		}
 		if publisher.restoreAttempts[queryGroup] >= fleetRestoreMaxAttempts {
 			continue
 		}
-		if publisher.tracker.HasConclusion(string(queryGroup)) {
+		// An object this process has already determined is still read once
+		// while it has not seen records: its record may date its run of empty
+		// rounds from before this process started.
+		if !publisher.tracker.WantsRestore(string(queryGroup)) {
 			publisher.restoreAttempts[queryGroup] = fleetRestoreMaxAttempts
 			continue
 		}
-		spent++
-		publisher.restoreAttempts[queryGroup]++
-		state, err := publisher.restore(ctx, queryGroup)
-		if err != nil {
-			continue
+		wanted = append(wanted, queryGroup)
+	}
+	if len(wanted) == 0 {
+		return
+	}
+	// One read for all of them: the publish waits on one batch, not on a
+	// round trip per object. The read answers for a prefix of them -- as far
+	// as the memory line had room -- and an object it did not get to is no
+	// attempt spent: it is the next publish's. Nor is one whose record the
+	// read did not get -- Redis answering its key with an error, or the read
+	// not reaching Redis (errRestoreUnread): a Redis loading its dataset for
+	// three publishes would otherwise use up every object's attempts, and
+	// none would be restored in this term of ownership.
+	states, errs := publisher.restore(ctx, wanted)
+	for index, queryGroup := range wanted {
+		if index >= len(errs) || index >= len(states) {
+			break
 		}
-		publisher.restoreAttempts[queryGroup] = fleetRestoreMaxAttempts
-		publisher.tracker.Restore(string(queryGroup), state, at, publisher.staleAfter)
+		var unread *errRestoreUnread
+		switch {
+		case errs[index] == nil:
+			publisher.restoreAttempts[queryGroup] = fleetRestoreMaxAttempts
+			publisher.tracker.Restore(string(queryGroup), states[index], at, publisher.staleAfter)
+		case errors.As(errs[index], &unread):
+		default:
+			publisher.restoreAttempts[queryGroup]++
+		}
 	}
 }
 
@@ -331,9 +382,123 @@ func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 	// The outcome is reported either way, including success. Reporting only
 	// failures would leave the observer unable to tell recovery from silence,
 	// and silence is exactly what a broken publisher produces.
-	err := publisher.store.Publish(ctx, snapshot)
+	// With its summary and owned list, which the health route and the
+	// verdict read instead of every snapshot; the rows are decided by the
+	// same bound the readers decide by.
+	summary, err := publisher.store.PublishSummarized(ctx, snapshot, publisher.staleAfter)
+	if err == nil {
+		publisher.noteOverdue(summary.Part.Overdue, publisher.overdueHidden(snapshot, summary.Part), snapshot.TakenAt)
+	}
 	if publisher.observe != nil {
 		publisher.observe(err)
+	}
+}
+
+// noteOverdue takes the objects this publish found overdue: one not overdue
+// at the last begins an episode, with its read hold now; one overdue at the
+// last and not now ends its episode, kept for the next snapshots. An object
+// handed to another replica is no longer on this one's rows and ends here.
+// One the rows may have left out while it is still overdue (hidden) is not
+// overdue no more, and its episode stays open: ended, it would begin and be
+// counted again when it is back on them.
+func (publisher *fleetPublisher) noteOverdue(objects []fleet.OverdueObject, hidden func(string) bool, at time.Time) {
+	current := make(map[string]bool, len(objects))
+	for _, object := range objects {
+		current[object.QueryGroup] = true
+		if _, open := publisher.overdueOpen[object.QueryGroup]; open {
+			continue
+		}
+		episode := fleet.OverdueEpisode{OverdueObject: object, Replica: publisher.replica, Onset: at}
+		if publisher.holdOf != nil {
+			episode.ReadHoldMillis, episode.ReadHoldKnown = publisher.holdOf(object.QueryGroup)
+		}
+		if publisher.overdueOpen == nil {
+			publisher.overdueOpen = map[string]fleet.OverdueEpisode{}
+		}
+		publisher.overdueOpen[object.QueryGroup] = episode
+		if publisher.onOverdue != nil {
+			publisher.onOverdue(episode, true)
+		}
+	}
+	for queryGroup, episode := range publisher.overdueOpen {
+		if current[queryGroup] || (hidden != nil && hidden(queryGroup)) {
+			continue
+		}
+		delete(publisher.overdueOpen, queryGroup)
+		episode.Clear = at
+		publisher.overdueEpisodes = append(publisher.overdueEpisodes, episode)
+		if extra := len(publisher.overdueEpisodes) - fleet.MaxOverdueEpisodes; extra > 0 {
+			publisher.overdueEpisodes = append([]fleet.OverdueEpisode(nil), publisher.overdueEpisodes[extra:]...)
+		}
+		if publisher.onOverdue != nil {
+			publisher.onOverdue(episode, false)
+		}
+	}
+}
+
+// overdueHidden says which objects a publish's rows may have left out while
+// they are still overdue; nil when the rows are whole. A row column cut to
+// its budget may have left out any of them. The due index lists only its
+// oldest wakes, and counts every wake passed, the rounds out and not yet
+// back with them; past that list, an object is still overdue when the index
+// holds its wake a whole period late. Asked only of the objects with an
+// episode open and not on the rows, one index read each.
+func (publisher *fleetPublisher) overdueHidden(snapshot fleet.Snapshot, part fleet.ReplicaPart) func(string) bool {
+	switch {
+	case part.Truncated != 0:
+		return func(string) bool { return true }
+	case snapshot.Overdue == nil || !snapshot.Overdue.Truncated:
+		return nil
+	case publisher.schedule == nil:
+		return func(string) bool { return true }
+	}
+	at := snapshot.TakenAt
+	return func(queryGroup string) bool {
+		wake := publisher.schedule.WakeOf(queryGroup)
+		return wake.Known && fleet.OverdueWake{QueryGroup: queryGroup, WakeAt: wake.DueAt, IntervalSeconds: wake.IntervalSeconds}.LateAt(at)
+	}
+}
+
+// evaluatingStrategies is every strategy seen evaluating on the given
+// objects, once each, in order.
+func evaluatingStrategies(owned []execution.QueryGroupIdentity, strategies func(string) []fleet.StrategyRef) []fleet.StrategyRef {
+	seen := map[fleet.StrategyRef]bool{}
+	list := []fleet.StrategyRef{}
+	for _, queryGroup := range owned {
+		for _, ref := range strategies(string(queryGroup)) {
+			if !seen[ref] {
+				seen[ref] = true
+				list = append(list, ref)
+			}
+		}
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].StrategyID != list[j].StrategyID {
+			return list[i].StrategyID < list[j].StrategyID
+		}
+		return list[i].BusinessID < list[j].BusinessID
+	})
+	return list
+}
+
+// overdueEpisodeObserver logs an overdue episode's beginning and end with the
+// object and its hold, and counts each beginning by its hold.
+func overdueEpisodeObserver(logger *observability.Logger, recorder *metric.Recorder) func(fleet.OverdueEpisode, bool) {
+	return func(episode fleet.OverdueEpisode, began bool) {
+		if began {
+			recorder.FleetOverdueEpisodeBegan(episode.HoldClass())
+		}
+		if logger == nil {
+			return
+		}
+		result := "ended"
+		if began {
+			result = "began"
+		}
+		logger.Warn("fleet_overdue_episode", result, 0, 0, slog.String("query_group", episode.QueryGroup),
+			slog.String("hold", episode.HoldClass()), slog.Int64("read_hold_ms", episode.ReadHoldMillis),
+			slog.Time("due_at", episode.DueAt), slog.Int64("interval_seconds", episode.IntervalSeconds),
+			slog.Time("onset", episode.Onset), slog.Int("strategies", len(episode.Strategies)))
 	}
 }
 
@@ -341,6 +506,13 @@ func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 // so the two types can differ in package without differing in content.
 func fleetBuildFacts(build metric.BuildInfo) fleet.BuildFacts {
 	return fleet.BuildFacts{Version: build.Version, Commit: build.Commit, SchemaVersion: build.SchemaVersion}
+}
+
+// fleetRetentionFacts is the runtime profile's retention section, for the
+// fleet snapshot.
+func fleetRetentionFacts(cfg config.Config) *observability.RuntimeRetentionFacts {
+	facts := phaseTwoRuntimeRetention(cfg)
+	return &facts
 }
 
 // fleetOutputProtocolFacts is the choice this process runs with: the word the
@@ -457,6 +629,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.activation != nil {
 		snapshot.Activation = publisher.activation()
 	}
+	if publisher.activationHeader != nil {
+		snapshot.ActivationHeader = publisher.activationHeader()
+	}
 	if publisher.rebalance != nil {
 		snapshot.Rebalance = publisher.rebalance()
 	}
@@ -485,6 +660,14 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 		facts := *publisher.outputProtocol
 		snapshot.OutputProtocol = &facts
 	}
+	if publisher.retention != nil {
+		facts := *publisher.retention
+		snapshot.Retention = &facts
+	}
+	// What the tracker keeps to read holes by, and the object keeping the
+	// most: the metrics carry the counts, only the snapshot can name it.
+	roundMemory := publisher.tracker.RoundMemory().Summary()
+	snapshot.RoundMemory = &roundMemory
 	// And the objects whose rounds end without a basis to decide recovery.
 	// Beside the anomalies for a different reason than the pool: not "this is
 	// somebody else's fault" but "this is not a fault". Counting them as
@@ -528,6 +711,31 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// And the objects nearing their one-object share of the retained pool:
 	// rounds completing, and the next few percent of growth refused whole.
 	snapshot.RetainedShare = publisher.tracker.RetainedShare()
+	// And the objects the lookback found read before their data was
+	// complete: rounds completing, from data that was not all there.
+	if publisher.readEarly != nil {
+		snapshot.ReadEarly = publisher.tracker.ReadEarly(publisher.readEarly())
+	}
+	if publisher.readHolds != nil {
+		snapshot.ReadHolds = publisher.readHolds()
+		// And the objects whose reads alarmd holds on a measured arrival
+		// age: rounds completing whole, later than their time_delay says,
+		// and the time_delay that would need no hold for the owner to set.
+		snapshot.ReadHeld = publisher.tracker.ReadHeld(snapshot.ReadHolds)
+	}
+	snapshot.OverdueEpisodes = append([]fleet.OverdueEpisode(nil), publisher.overdueEpisodes...)
+	// Which strategies evaluate on the objects this replica holds, for its
+	// summary to count the running ones by: a strategy on no row of its is
+	// running here.
+	if publisher.strategies != nil {
+		snapshot.EvaluatingStrategies, snapshot.EvaluatingStrategiesKnown = evaluatingStrategies(owned, publisher.strategies), true
+	}
+	// And the objects whose late series the lookback's supplements could
+	// not recover: past their round, or the tail of a window recovered in
+	// part.
+	if publisher.lateSeries != nil {
+		snapshot.LateSeries = publisher.tracker.LateSeries(publisher.lateSeries())
+	}
 	// And the problems whose objects recovered within the hour: the evidence
 	// the RECOVERED reading is made of, which nothing on the current lines
 	// carries once the objects have left them.
@@ -544,7 +752,7 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.schedule != nil {
 		census := publisher.schedule.Census(at, len(owned))
 		snapshot.Schedule = &census
-		for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Demoted, snapshot.Undecidable, snapshot.ByDesign, snapshot.NoData, snapshot.NoDataMemory, snapshot.RetainedShare} {
+		for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Demoted, snapshot.Undecidable, snapshot.ByDesign, snapshot.NoData, snapshot.NoDataMemory, snapshot.RetainedShare, snapshot.ReadEarly, snapshot.ReadHeld} {
 			for index := range column {
 				wake := publisher.schedule.WakeOf(column[index].QueryGroup)
 				column[index].Wake = &wake
@@ -674,8 +882,10 @@ const fleetVerdictScrapeCeiling = 5 * time.Second
 // it as a metric; computing it twice would let them drift, and the drift shows
 // up as "the page says fine, the alert is firing" at the worst possible moment.
 //
-// Cost is one control plane read per scrape -- the same read the object API
-// already performs, against a snapshot set the size of the replica count.
+// Cost is one read of the replicas' summaries per scrape -- the read the
+// health route makes, shared with it when both come together -- against a
+// summary set the size of the replica count. A replica that published no
+// summary, or one without the scrape's counts, is read from its snapshot.
 func fleetVerdictSource(
 	service *fleet.Service,
 	now func() time.Time,
@@ -685,89 +895,45 @@ func fleetVerdictSource(
 	return func() metric.FleetVerdict {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
+		// The replicas' summaries, each decided at the moment its replica
+		// published it -- the read the health route makes -- so the page and
+		// the alert rules read one verdict, and the breakdowns by kind,
+		// failure, line and loss are the parts' counts of the same rows it was
+		// settled on.
+		view, part := service.Summarized(ctx, stallAfter)
 		at := now()
-		view := service.View(ctx)
-		// The same call the HTTP path makes, so the two never mark or settle
-		// differently: it used to mark stalling on the anomaly list alone
-		// while the page marked every column.
-		fleet.Decide(&view, at, stallAfter)
 		// A scrape decides the verdict too, and it is the one that runs
 		// whether or not anybody is looking: it keeps the record current.
-		service.RecordVerdict(&view, at)
-		return fleetVerdictOf(view, at)
+		service.RecordSummarizedVerdict(&view, part, at)
+		return fleetVerdictOf(view, part, at)
 	}
 }
 
-func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
+// fleetVerdictOf is the export of a view of the replicas' summaries and the
+// part their rows add up to. The verdict and what the replicas say of
+// themselves -- workers, gaps, degradations -- are the view's; what is
+// counted from rows is the part's, counted on each replica at the moment it
+// published (fleet.MetricRows). A part without those counts while replicas
+// were counted says nothing of the rows: their families are left out rather
+// than exported as none. With no replica counted there are no rows, and
+// they read as none.
+func fleetVerdictOf(view fleet.View, part fleet.ReplicaPart, at time.Time) metric.FleetVerdict {
 	verdict := metric.FleetVerdict{
 		Health: string(view.Health), Expected: view.Expected,
 		Covered: view.Covered, Determined: view.Determined, Unknown: view.Unknown,
 		Healthy: view.Healthy, Anomalous: view.AnomaliesTotal, Demoted: view.DemotedTotal,
 		Undecidable: view.UndecidableTotal, ByDesign: view.ByDesignTotal,
 	}
-	// Counted by closed label, never by object: a per-object series would put the
-	// Query Group identity into a label and break the cardinality budget that
-	// every other family here respects. The JSON API keeps reporting the real
-	// value -- a response has no budget and the reader deserves the true one.
-	kinds := newCountIndex()
-	failures := newCountIndex()
-	cooldown := 0
-	for _, anomaly := range view.Anomalies {
-		if anomaly.QueryCooldown != nil {
-			cooldown++
-		}
-		if anomaly.Stalled {
-			verdict.Stalled++
-		}
-		kinds.add(fleet.MetricKind(anomaly.Kind), at.Sub(anomaly.Since).Seconds())
-		// Objects whose last round failed before it could be classified are
-		// absent here rather than bucketed as "other": inventing a category for
-		// them would report a cause nobody established.
-		if anomaly.Failure != nil && anomaly.Failure.Category != "" {
-			failures.add(fleet.MetricFailureCategory(anomaly.Failure.Category), 0)
-		}
-	}
-	// An object holding a query cooldown is in the demoted list, not the
-	// anomaly list: the tracker places every object in exactly one of the two,
-	// and the cooldown is what decides which. Walking the anomaly list alone
-	// therefore read zero from any tracker of this build while the object page
-	// listed dozens of demoted objects. Both lists are walked, and the
-	// evidence is still required: a demoted object without a cooldown would be
-	// a defect in the tracker, not a cooldown object.
-	for _, demoted := range view.Demoted {
-		if demoted.QueryCooldown != nil {
-			cooldown++
-		}
-	}
-	verdict.Anomalies = kinds.counts()
-	if view.Covered > 0 {
-		verdict.QueryCooldown = &cooldown
-	}
-	verdict.Failures = failures.counts()
 	verdict.Workers = []metric.FleetCount{
 		{Value: "acked", Count: view.Workers.Acked},
 		{Value: "lagging", Count: view.Workers.Lagging},
 		{Value: "unknown", Count: view.Workers.Unknown},
 	}
-
 	gaps := newCountIndex()
 	for _, gap := range view.Gaps {
 		gaps.add(fleet.MetricGapKind(gap.Kind), 0)
 	}
 	verdict.Gaps = gaps.counts()
-
-	// The first screen's lines, by the same call the page makes, and the
-	// whole closed table rather than the lines that are up: a line that is
-	// down is exported at zero. Absent would read the same as a build
-	// without the family, and an alert on "this line is up" needs to see it
-	// go down.
-	lines := map[fleet.Check]int{}
-	for _, report := range fleet.Report(&view, at).Checks {
-		lines[report.Code] = report.LineCount()
-	}
-	for _, code := range fleet.Checks() {
-		verdict.Checks = append(verdict.Checks, metric.FleetCount{Value: string(code), Count: lines[code]})
-	}
 	replicas := map[fleet.DegradationKind]int{}
 	for _, degradation := range view.Degradations {
 		replicas[degradation.Kind]++
@@ -775,15 +941,80 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 	for _, kind := range fleet.DegradationKinds {
 		verdict.Degradations = append(verdict.Degradations, metric.FleetCount{Value: string(kind), Count: replicas[kind]})
 	}
-	// The retained records by what each is, the same walk the lines make,
-	// every kind at least at zero; and how many recent ones were judged
-	// against no restart anchor.
-	losses, graceUnknown := fleet.LossCensus(&view, at)
-	for _, loss := range fleet.Losses {
-		verdict.Losses = append(verdict.Losses, metric.FleetCount{Value: string(loss), Count: losses[loss]})
+	if objects, known := fleet.HandoverObjects(&view); known {
+		verdict.HandoverObjects = &objects
 	}
-	verdict.Losses = append(verdict.Losses, metric.FleetCount{Value: "GRACE_UNKNOWN", Count: graceUnknown})
+
+	if running, known := fleet.RunningStrategiesOf(&view, part); known {
+		for _, word := range fleet.StateWords {
+			verdict.RunningStrategies = append(verdict.RunningStrategies, metric.FleetCount{Value: string(word), Count: running[word]})
+		}
+	}
+	rows := part.Metrics
+	if rows == nil {
+		if len(view.Replicas) > 0 {
+			verdict.RowsUnknown = true
+			return verdict
+		}
+		rows = &fleet.MetricRows{}
+	}
+	verdict.Stalled = rows.Stalled
+	// Counted by closed label, never by object: a per-object series would put the
+	// Query Group identity into a label and break the cardinality budget that
+	// every other family here respects. The JSON API keeps reporting the real
+	// value -- a response has no budget and the reader deserves the true one.
+	// The parts keep kinds and failure categories as the rows carry them; they
+	// are bounded to the closed labels here, as they were when this read the
+	// rows, and kinds that fold into one label add up and keep the earliest
+	// since. Read in a fixed order, so two scrapes of an unchanged deployment
+	// export the same series in the same order.
+	kinds := newCountIndex()
+	for _, kind := range sortedKeys(rows.Kinds) {
+		counted := rows.Kinds[kind]
+		kinds.addCount(fleet.MetricKind(kind), counted.Count, at.Sub(counted.Since).Seconds())
+	}
+	verdict.Anomalies = kinds.counts()
+	// Objects whose last round failed before it could be classified are
+	// absent here rather than bucketed as "other": inventing a category for
+	// them would report a cause nobody established.
+	failures := newCountIndex()
+	for _, category := range sortedKeys(rows.Failures) {
+		failures.addCount(fleet.MetricFailureCategory(category), rows.Failures[category], 0)
+	}
+	verdict.Failures = failures.counts()
+	// An object holding a query cooldown is in the demoted list, not the
+	// anomaly list: the tracker places every object in exactly one of the two,
+	// and the cooldown is what decides which. The parts count both lists.
+	if view.Covered > 0 {
+		cooldown := rows.Cooldown
+		verdict.QueryCooldown = &cooldown
+	}
+	// The first screen's lines, by the count the page's lines print, and the
+	// whole closed table rather than the lines that are up: a line that is
+	// down is exported at zero. Absent would read the same as a build
+	// without the family, and an alert on "this line is up" needs to see it
+	// go down.
+	lines := fleet.CheckLines(&view, part, at)
+	for _, code := range fleet.Checks() {
+		verdict.Checks = append(verdict.Checks, metric.FleetCount{Value: string(code), Count: lines[code]})
+	}
+	// The retained records by what each is, every kind at least at zero; and
+	// how many recent ones were judged against no restart anchor.
+	for _, loss := range fleet.Losses {
+		verdict.Losses = append(verdict.Losses, metric.FleetCount{Value: string(loss), Count: rows.Losses[loss]})
+	}
+	verdict.Losses = append(verdict.Losses, metric.FleetCount{Value: "GRACE_UNKNOWN", Count: rows.GraceUnknown})
 	return verdict
+}
+
+// sortedKeys is a map's keys in order.
+func sortedKeys[K ~string, V any](values map[K]V) []K {
+	keys := make([]K, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(left, right int) bool { return keys[left] < keys[right] })
+	return keys
 }
 
 // countIndex keeps first-seen order so two scrapes of an unchanged deployment
@@ -798,13 +1029,18 @@ func newCountIndex() *countIndex {
 }
 
 func (index *countIndex) add(value string, ageSeconds float64) {
+	index.addCount(value, 1, ageSeconds)
+}
+
+// addCount adds n members, the oldest of them ageSeconds old.
+func (index *countIndex) addCount(value string, n int, ageSeconds float64) {
 	count, seen := index.byValue[value]
 	if !seen {
 		count = &metric.FleetCount{Value: value}
 		index.byValue[value] = count
 		index.order = append(index.order, value)
 	}
-	count.Count++
+	count.Count += n
 	// The oldest member is what says how bad it is; the newest would hide the
 	// object that has been broken since this morning.
 	if ageSeconds > count.OldestAgeSeconds {

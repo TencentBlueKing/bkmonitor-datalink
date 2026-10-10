@@ -63,12 +63,18 @@ type verdictHistory struct {
 	full    bool
 }
 
-// RecordVerdict notes the verdict just decided on view, keeping it when it
-// differs from the last one noted. Callers call it after Decide on the
-// paths that decide the verdict for a reader: the health route and the
-// verdict metric's scrape.
-func (service *Service) RecordVerdict(view *View, at time.Time) {
-	if service == nil || view == nil {
+// RecordSummarizedVerdict notes the verdict just decided on a view of the
+// replicas' summaries (Summarized), keeping it when it differs from the last
+// one noted. The rows stayed with the replicas, so what they count is the
+// merged part's. The paths that decide the verdict for a reader call it:
+// the health route and the verdict metric's scrape, which read the same
+// summaries.
+func (service *Service) RecordSummarizedVerdict(view *View, part ReplicaPart, at time.Time) {
+	service.recordVerdict(view, at, part.Attribution)
+}
+
+func (service *Service) recordVerdict(view *View, at time.Time, attribution AttributionTally) {
+	if service == nil || view == nil || viewUnread(view) {
 		return
 	}
 	history := &service.verdicts
@@ -85,7 +91,7 @@ func (service *Service) RecordVerdict(view *View, at time.Time) {
 	}
 	change := VerdictChange{At: at, From: history.last, To: view.Health,
 		Degradations: distinctDegradations(view.Degradations), Gaps: distinctGaps(view.Gaps),
-		Ours: OursCount(view.Anomalies), Unattributed: UnattributedCount(view.Anomalies),
+		Ours: attribution.Ours, Unattributed: attribution.Unknown,
 		Anomalies: view.AnomaliesTotal, Covered: view.Covered, Determined: view.Determined}
 	history.last = view.Health
 	history.changes[history.next] = change
@@ -160,4 +166,23 @@ func distinctGaps(gaps []Gap) []GapKind {
 	}
 	sort.Slice(kinds, func(i, j int) bool { return kinds[i] < kinds[j] })
 	return kinds
+}
+
+// viewUnread reports whether a view is short of what its verdict is decided
+// from because this process did not read it: the registry of replicas, the
+// snapshots -- the whole read, a read its caller stopped waiting for, or one
+// replica's -- or the memory line deferred them. Such a view says UNKNOWN,
+// and the verdict exported from it says so and is alerted on, but it is no
+// verdict of the deployment: the record of the deployment's verdicts does
+// not take it, and a diagnosis over it is not kept. What the reads found --
+// a replica missing, a snapshot stale, the denominator unavailable -- is the
+// deployment's, and is recorded.
+func viewUnread(view *View) bool {
+	for _, gap := range view.Gaps {
+		switch gap.Kind {
+		case GapRegistryUnavailable, GapSnapshotsUnreadable, GapSnapshotsDeferred:
+			return true
+		}
+	}
+	return false
 }

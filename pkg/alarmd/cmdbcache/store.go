@@ -35,6 +35,8 @@ type Store struct {
 	interval time.Duration
 	now      func() time.Time
 
+	refusalsChanged func(RefusedRecords)
+
 	mutex     sync.RWMutex
 	index     *Index
 	lastError error
@@ -51,6 +53,11 @@ type StoreOptions struct {
 	MaxAge time.Duration
 	// Now is injectable so the age rules are testable without sleeping.
 	Now func() time.Time
+	// RefusalsChanged, when set, is called after a refresh whose load
+	// refused a different number of records than the index it replaced -
+	// counted from none for the first load - so what the writer got wrong
+	// is said when it appears, changes or clears, and not on every refresh.
+	RefusalsChanged func(RefusedRecords)
 }
 
 func NewStore(reader indexLoader, options StoreOptions) (*Store, error) {
@@ -67,7 +74,8 @@ func NewStore(reader indexLoader, options StoreOptions) (*Store, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Store{reader: reader, maxAge: options.MaxAge, interval: options.RefreshInterval, now: now}, nil
+	return &Store{reader: reader, maxAge: options.MaxAge, interval: options.RefreshInterval, now: now,
+		refusalsChanged: options.RefusalsChanged}, nil
 }
 
 // Current returns the index in force, or nil before the first successful load.
@@ -78,6 +86,14 @@ func (store *Store) Current() *Index {
 	store.mutex.RLock()
 	defer store.mutex.RUnlock()
 	return store.index
+}
+
+// targetIndex pins the held snapshot and the result of its latest refresh
+// together. Exclusions must not treat a failed read as an absent member.
+func (store *Store) targetIndex() (*Index, error) {
+	store.mutex.RLock()
+	defer store.mutex.RUnlock()
+	return store.index, store.lastError
 }
 
 // HostIndexResolved reports whether this store can answer about hosts at all.
@@ -108,15 +124,21 @@ func (store *Store) HostIndexResolved() bool {
 func (store *Store) Refresh(ctx context.Context) error {
 	index, err := store.reader.Load(ctx, store.now())
 	store.mutex.Lock()
-	defer store.mutex.Unlock()
 	if err != nil {
 		store.lastError = err
 		store.failures++
+		store.mutex.Unlock()
 		return err
 	}
+	changed := !index.Refused().SameCounts(store.index.Refused())
+	index.carryOptional(store.index)
 	store.index = index
 	store.lastError = nil
 	store.refreshes++
+	store.mutex.Unlock()
+	if changed && store.refusalsChanged != nil {
+		store.refusalsChanged(index.Refused())
+	}
 	return nil
 }
 
@@ -136,6 +158,20 @@ type Health struct {
 	DegradedReason    string
 	ConsecutiveErrors uint64
 	Refreshes         uint64
+	// ClusterBusinessMapping and NamespaceBusinessMapping describe the BCS
+	// cluster and cluster + namespace -> business mappings the held index
+	// read. Zero held is not a degradation of the store - a writer that does
+	// not publish a mapping yet is a real state - but every global business
+	// event that would have used one is then counted as unmapped. A read
+	// failure is not a store failure either: the hosts refreshed, and the
+	// held entries are the last read that succeeded.
+	ClusterBusinessMapping   MappingStats
+	NamespaceBusinessMapping MappingStats
+	// Refused is what the load that built the held index read of the host
+	// and service instance hashes and could not use. It is not a
+	// degradation of the store: each such record is taken as absent, and an
+	// index whose every host was refused is index_empty.
+	Refused RefusedRecords
 }
 
 func (store *Store) Health() Health {
@@ -154,6 +190,9 @@ func (store *Store) Health() Health {
 	health.Loaded = true
 	health.Hosts = store.index.Hosts()
 	health.ServiceInstances = store.index.ServiceInstances()
+	health.ClusterBusinessMapping = store.index.ClusterBusinessStats()
+	health.NamespaceBusinessMapping = store.index.NamespaceBusinessStats()
+	health.Refused = store.index.Refused()
 	health.Age = now.Sub(store.index.BuiltAt())
 	if source := store.index.SourceRefreshedAt(); !source.IsZero() {
 		health.SourceAge = now.Sub(source)

@@ -132,7 +132,7 @@ func newMaintenanceTestFixture(t *testing.T, snapshot string, at time.Time, aler
 		t.Fatal(err)
 	}
 	compiled, ok := result.Plan()
-	if !ok || len(compiled.Levels()) == 0 {
+	if !ok || compiled.Levels().Len() == 0 {
 		t.Fatalf("compile terminal=%+v levels=%+v", result.PlanTerminal(), result.LevelTerminals())
 	}
 	source := maintenanceTestIndex{alerts: alerts}

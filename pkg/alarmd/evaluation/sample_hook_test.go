@@ -112,7 +112,7 @@ func TestSeriesSampleExplainsRecoveryGateAndTwoLevels(t *testing.T) {
 		p.StrategyIR.StrategyRef.SnapshotRevision = 7
 		p.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
 	})
-	history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous}, {LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous}}}}
+	history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous}, {LevelID: 6, DetectFingerprint: plan.Levels().At(1).Fingerprints().Detect, Result: execution.LevelFactAnomalous}}}}
 	req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
 	req.OpenAlerts = openAlertSetStub{}
 	_, sample := equivalentSample(t, req)

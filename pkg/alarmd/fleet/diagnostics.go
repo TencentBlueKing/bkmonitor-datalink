@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -122,7 +123,7 @@ func (store *DiagnosticStore) Run(ctx context.Context) {
 func (store *DiagnosticStore) writeOnce(ctx context.Context, write diagnosticWrite) {
 	// A short deadline of its own: the pipeline is not waiting on this, but a
 	// write that hangs would stall every record behind it.
-	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	writeCtx, cancel := context.WithTimeout(redisfailure.WithCaller(ctx, redisfailure.CallerDiagnosticWrite), 2*time.Second)
 	defer cancel()
 	key := store.key(write.queryGroup)
 	perObject := store.perObject
@@ -190,6 +191,7 @@ func (store *DiagnosticStore) Health() DiagnosticHealth {
 
 // Load returns the most recent records for one object, newest first.
 func (store *DiagnosticStore) Load(ctx context.Context, queryGroup string, limit int) ([]json.RawMessage, error) {
+	ctx = redisfailure.WithCaller(ctx, redisfailure.CallerDiagnosticRead)
 	if store == nil {
 		return nil, errors.New("alarmd fleet: diagnostics are not wired")
 	}
@@ -221,6 +223,7 @@ func (store *DiagnosticStore) sampleKey(queryGroup string) string {
 // LoadSeriesSamples is explicitly opt-in and bounded by the assigned retained
 // count. WindowID in each record distinguishes closed/reopened generations.
 func (store *DiagnosticStore) LoadSeriesSamples(ctx context.Context, queryGroup string, limit int) ([]json.RawMessage, error) {
+	ctx = redisfailure.WithCaller(ctx, redisfailure.CallerDiagnosticRead)
 	if store == nil || store.samples == nil {
 		return nil, errors.New("alarmd fleet: series samples are not wired")
 	}

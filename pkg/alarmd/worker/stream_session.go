@@ -89,6 +89,9 @@ type streamedExecution struct {
 	effects  effectCounts
 	gapFacts uint64
 	began    bool
+	// supplement is set on a supplement execution and nil on every Slot.
+	// See supplement.go.
+	supplement *supplementRun
 }
 
 // slotPhase says which part of a Slot a stretch of wall clock was spent in.
@@ -381,14 +384,26 @@ func streamedRetainedSize(bindings []execution.NamedInputBinding, delivery execu
 		compact[index].Dataset = nil
 		compact[index].View = nil
 	}
-	encoded, err := json.Marshal(struct {
+	// Only the length is wanted, so the encoding is counted rather than kept:
+	// Marshal copies out a document that was read once for its length. The
+	// encoder escapes as Marshal does and ends with a newline Marshal does not
+	// write, which is taken off so the size is the one Marshal gave.
+	var counted encodedLength
+	if err := json.NewEncoder(&counted).Encode(struct {
 		Bindings []execution.NamedInputBinding
 		Delivery execution.SeriesDelivery
-	}{Bindings: compact, Delivery: delivery})
-	if err != nil {
+	}{Bindings: compact, Delivery: delivery}); err != nil {
 		return 0, err
 	}
-	return uint64(len(encoded)) + delivery.Bytes, nil
+	return uint64(counted) - 1 + delivery.Bytes, nil
+}
+
+// encodedLength is a writer that keeps only how many bytes it was given.
+type encodedLength uint64
+
+func (length *encodedLength) Write(p []byte) (int, error) {
+	*length += encodedLength(len(p))
+	return len(p), nil
 }
 
 func prepareNamedInputIndex(header execution.InternalExecutionHeader) (preparedNamedInputIndex, error) {
@@ -406,10 +421,10 @@ func prepareNamedInputIndex(header execution.InternalExecutionHeader) (preparedN
 		}]strategy.SeriesFoldPolicy),
 	}
 	for _, due := range header.DuePlans {
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			consumer := execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}
 			prepared.consumersByPlan[due.Identity] = append(prepared.consumersByPlan[due.Identity], consumer)
-			for _, algorithm := range level.Algorithms() {
+			for _, algorithm := range level.Algorithms().All() {
 				policy, declared := algorithm.SeriesFoldPolicy()
 				if !declared {
 					continue
@@ -564,9 +579,15 @@ func gapPreflightForHeader(header execution.InternalExecutionHeader) ([]executio
 		if err != nil {
 			return nil, err
 		}
+		// The Plan's own retention, so the load renews the marker to the
+		// lifetime its write gives it rather than to the floor.
+		retention, err := execution.DeriveStateRetentionRequirement(due.CompiledPlan)
+		if err != nil {
+			return nil, err
+		}
 		items = append(items, execution.PlanGapLoadItem{
 			Identity:     due.GapIdentity(),
-			ApplyVersion: version, ScheduleRevision: due.ScheduleRevision,
+			ApplyVersion: version, ScheduleRevision: due.ScheduleRevision, Retention: retention,
 		})
 	}
 	return items, nil
@@ -757,7 +778,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 			binding.Completeness = execution.CompletenessUnavailable
 			binding.DataState = execution.DataStateUnknown
 			binding.Disposition = execution.AccessUnavailable
-			binding.ReasonCode = physicalFailureReason(item.RouteFacts)
+			binding.ReasonCode, binding.UnavailableAttribution = physicalFailureReason(item.RouteFacts)
 			binding.PartialEvidence = nil
 		default:
 			return completionContractError(codeInvalidCompleteness, "alarmd worker: invalid physical completion completeness")
@@ -798,7 +819,9 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		return left.RequirementID < right.RequirementID
 	})
 	for _, due := range stream.header.DuePlans {
-		if len(stream.planSeries[due.Identity]) == 0 {
+		// A supplement decides nothing for a Plan without series: that
+		// judgement was the Slot's, on the Slot's own read.
+		if len(stream.planSeries[due.Identity]) == 0 && stream.supplement == nil {
 			if err := stream.validateCompletionOnlyExactSet(due, completionBindings, completion.PhysicalQueries); err != nil {
 				return err
 			}
@@ -812,7 +835,9 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	}
 	if err := stream.evaluateSeries(ctx, completion, preparedSeriesEvaluations); err != nil {
 		var exceeded *provisionalBudgetExceededError
-		if errors.As(err, &exceeded) && exceeded.slot {
+		// A supplement over its budget fails as it is: the replacement opens
+		// a gap on every Plan, and a supplement moves no marker.
+		if errors.As(err, &exceeded) && exceeded.slot && stream.supplement == nil {
 			return stream.completeBeyondSlotBudget(ctx)
 		}
 		return err
@@ -853,6 +878,9 @@ func (stream *streamedExecution) evaluateSeries(
 	// the Slot's intent, and every later count is measured against it.
 	stream.seriesCensus.Due += len(preparedSeriesEvaluations)
 	for _, prepared := range preparedSeriesEvaluations {
+		if stream.supplement != nil && !stream.supplementTakes(prepared) {
+			continue
+		}
 		if incomplete := primaryIncompleteBindings(prepared.inputs); len(incomplete) != 0 {
 			if err := flush(); err != nil {
 				return err
@@ -880,6 +908,10 @@ func (stream *streamedExecution) evaluateSeries(
 	if err := flush(); err != nil {
 		return err
 	}
+	if stream.supplement != nil {
+		// Absence and the Plans without series were the Slot's to decide.
+		return nil
+	}
 	// Absence is decided after the Slot's own series, because which groups
 	// reported is the evidence it is decided from. The synthetic series it
 	// produces then go through the same batch as everything above.
@@ -894,11 +926,12 @@ func (stream *streamedExecution) evaluateSeries(
 		if len(stream.planSeries[due.Identity]) != 0 {
 			continue
 		}
+		started := time.Now()
 		result, err := stream.noSeriesPlanResult(due)
 		if err != nil {
 			return err
 		}
-		stream.observeCompletionOnlyPlan(ctx, due, result)
+		stream.observeCompletionOnlyPlan(ctx, started, due, result)
 		if err := stream.mergeProvisional(ctx, result, 0); err != nil {
 			return err
 		}
@@ -977,6 +1010,10 @@ func (stream *streamedExecution) loadGaps(ctx context.Context) error {
 	result, reason := summarizeGapLoad(stream.gaps)
 	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded,
 		stream.request.Operation, started, result, reason, observability.Counts{Keys: int64(len(stream.gaps.Items))}, nil)
+	if stream.supplement != nil {
+		stream.gaps, err = guardsAsOfSlot(stream.header, stream.gaps)
+		return err
+	}
 	stream.observeGapProgress(ctx)
 	return nil
 }
@@ -1024,6 +1061,12 @@ func (stream *streamedExecution) loadNoDataMemory(ctx context.Context) error {
 		observability.Counts{Keys: int64(len(stream.noData.Items))}, nil)
 	stream.observeNoDataRepresentations(ctx)
 	stream.observeNoDataRenewals(ctx)
+	if stream.supplement != nil {
+		// Read for what it recorded at the Slot, not to judge absence: a
+		// supplement's series are a subset, and every group outside it would
+		// read as absent.
+		return nil
+	}
 	return stream.resolveNoDataRosterHosts()
 }
 
@@ -1151,11 +1194,12 @@ func (stream *streamedExecution) completeWithoutSeries(
 	stream.evaluated = execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
 		ReasonCode: observability.ReasonNone}
 	for _, due := range stream.header.DuePlans {
+		started := time.Now()
 		planResult, err := stream.noSeriesPlanResult(due)
 		if err != nil {
 			return err
 		}
-		stream.observeCompletionOnlyPlan(ctx, due, planResult)
+		stream.observeCompletionOnlyPlan(ctx, started, due, planResult)
 		if err := stream.mergeProvisional(ctx, planResult, 0); err != nil {
 			return err
 		}
@@ -1165,6 +1209,7 @@ func (stream *streamedExecution) completeWithoutSeries(
 
 func (stream *streamedExecution) observeCompletionOnlyProbe(ctx context.Context) {
 	for _, due := range stream.header.DuePlans {
+		started := time.Now()
 		result := execution.EvaluationResult{Contract: stream.header.Contract,
 			Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone}
 		for _, binding := range planBindings(stream.bindings, due.Identity) {
@@ -1173,7 +1218,7 @@ func (stream *streamedExecution) observeCompletionOnlyProbe(ctx context.Context)
 				break
 			}
 		}
-		stream.observeCompletionOnlyPlan(ctx, due, result)
+		stream.observeCompletionOnlyPlan(ctx, started, due, result)
 	}
 }
 
@@ -1183,14 +1228,13 @@ func (stream *streamedExecution) observeCompletionOnlyProbe(ctx context.Context)
 // EMPTY; a PARTIAL or UNAVAILABLE PRIMARY completion opens the Plan gap with
 // the completion reasons of that same set.
 //
-// A FULL EMPTY Plan also recovers its standing marker's Plan scopes. That is
-// the only place it can happen: with no series the evaluator is never called,
-// so the recovery that rides on a state mutation never runs, and a Plan whose
-// source has gone empty keeps a marker for as long as it stays empty --
-// holding every Level at UNKNOWN with the marker's reason on the first round
-// the data comes back, for the whole warmup, after a source that was healthy
-// the entire time. Level scopes are left alone: they ask for that series'
-// history to have moved, and an empty source has no such thing to show.
+// A FULL EMPTY Plan whose every input was whole also recovers its standing
+// marker, every scope of it. That is the only place it can happen: with no
+// series the evaluator is never called, so the recovery that rides on a state
+// mutation never runs, and a Plan whose source has gone empty - or that
+// matches no series at all - kept a marker for as long as that lasted. Why a
+// whole round with nothing in it counts for Level scopes too is on
+// execution.PlanGapRecoveryMutation.
 func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (execution.EvaluationResult, error) {
 	bindings := stream.noSeriesBindings(due)
 	primary, found := firstNonFullPrimary(bindings)
@@ -1200,7 +1244,7 @@ func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (exec
 		}
 		plan := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided}
 		if emptySourceSlotIsWholeInput(bindings, due.Identity) {
-			recovery, err := execution.PlanGapRecoveryMutation(stream.header.Contract, due, stream.gaps, execution.GapRecoverPlanScopeOnly)
+			recovery, err := execution.PlanGapRecoveryMutation(stream.header.Contract, due, stream.gaps)
 			if err != nil {
 				return execution.EvaluationResult{}, err
 			}
@@ -1359,7 +1403,7 @@ func (stream *streamedExecution) completedBinding(
 	case execution.CompletenessUnavailable:
 		binding.DataState = execution.DataStateUnknown
 		binding.Disposition = execution.AccessUnavailable
-		binding.ReasonCode = physicalFailureReason(completed.RouteFacts)
+		binding.ReasonCode, binding.UnavailableAttribution = physicalFailureReason(completed.RouteFacts)
 	default:
 		return execution.NamedInputBinding{}, namedInputError(codePhysicalCompletenessInvalid, "invalid physical completion completeness")
 	}
@@ -1551,6 +1595,9 @@ func (stream *streamedExecution) evaluateCompletedSeriesBatch(ctx context.Contex
 		if outcome != "" {
 			outcomes[outcome]++
 		}
+		if stream.supplement != nil && stream.supplementReached(view) {
+			continue
+		}
 		if err := stream.evaluateLoadedSeries(ctx, entry, view); err != nil {
 			return err
 		}
@@ -1633,6 +1680,9 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	retained, err := evaluationRetainedSize(loaded, execution.EvaluationResult{})
 	if err != nil {
 		return fmt.Errorf("alarmd worker: measure evaluated retention: %w", err)
+	}
+	if stream.supplement != nil {
+		stream.noteSupplementEvaluated(due, series, inputs, &evaluated)
 	}
 	if err := stream.mergeProvisional(ctx, evaluated, retained); err != nil {
 		return err
@@ -1801,8 +1851,14 @@ func recoveryGateFacts(due execution.DuePlan, evaluated execution.EvaluationResu
 	return facts
 }
 
+// observeCompletionOnlyPlan reports a Plan decided without a series, from
+// its completions alone. The decision is the Plan's evaluation this round,
+// short as it is, and is timed like any other: a completion that carried no
+// duration read as an evaluation whose cost nobody measured, and every Plan
+// without a series left one such line a round.
 func (stream *streamedExecution) observeCompletionOnlyPlan(
 	ctx context.Context,
+	started time.Time,
 	due execution.DuePlan,
 	evaluated execution.EvaluationResult,
 ) {
@@ -1811,6 +1867,7 @@ func (stream *streamedExecution) observeCompletionOnlyPlan(
 		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
 		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
+		Duration: time.Since(started), DurationKnown: true,
 		EvaluationOwner: costEvaluationOwner(due.Identity), EvaluationRecordsKnown: true,
 		Trace:             observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID},
 		AlgorithmInputs:   stream.completionOnlyAlgorithmInputFacts(due),
@@ -1834,9 +1891,9 @@ func (stream *streamedExecution) algorithmObservationFacts(
 	if due.CompiledPlan == nil || len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
 		return nil, nil
 	}
-	levels := make(map[uint32][]observedAlgorithm, len(due.CompiledPlan.Levels()))
-	for _, level := range due.CompiledPlan.Levels() {
-		for _, algorithm := range level.Algorithms() {
+	levels := make(map[uint32][]observedAlgorithm, due.CompiledPlan.Levels().Len())
+	for _, level := range due.CompiledPlan.Levels().All() {
+		for _, algorithm := range level.Algorithms().All() {
 			observed, ok := observeAlgorithm(algorithm)
 			if ok {
 				levels[level.Definition().LevelID] = append(levels[level.Definition().LevelID], observed)
@@ -1935,9 +1992,9 @@ func (stream *streamedExecution) completionOnlyAlgorithmInputFacts(
 	}
 	bindings := planBindings(stream.bindings, due.Identity)
 	facts := make([]observability.AlgorithmInputFact, 0)
-	for _, level := range due.CompiledPlan.Levels() {
+	for _, level := range due.CompiledPlan.Levels().All() {
 		levelID := level.Definition().LevelID
-		for _, compiled := range level.Algorithms() {
+		for _, compiled := range level.Algorithms().All() {
 			algorithm, observed := observeAlgorithm(compiled)
 			if !observed {
 				continue
@@ -2206,7 +2263,7 @@ func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan executi
 }
 
 // emptySourceSlotIsWholeInput says whether a Plan that produced no series is
-// evidence that its input was whole this round. That is what a Plan scope's
+// evidence that its input was whole this round. That is what a marker's
 // warmup counts, and it is a narrower question than the one that decides the
 // Plan completed: a round whose dependency query was UNAVAILABLE still
 // completes FULL EMPTY, because with no PRIMARY record there was nothing for
@@ -2219,18 +2276,7 @@ func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan executi
 // So: FULL EMPTY as the completion judged it, and on top of that every binding
 // of this Plan whole and available, dependencies included.
 func emptySourceSlotIsWholeInput(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) bool {
-	if !planCompletedFullEmpty(bindings, plan) {
-		return false
-	}
-	for _, binding := range bindings {
-		if binding.Consumer.Plan != plan {
-			continue
-		}
-		if binding.Completeness != execution.CompletenessFull || binding.Disposition != execution.AccessAvailable {
-			return false
-		}
-	}
-	return true
+	return planCompletedFullEmpty(bindings, plan) && execution.PlanInputsWhole(bindings, plan)
 }
 
 // completionGapMutationFor builds the Plan gap mutation for a set of
@@ -2322,7 +2368,7 @@ func requiredFullSlots(plan *strategy.CompiledPlan) uint32 {
 		return 0
 	}
 	var required uint32
-	for _, level := range plan.Levels() {
+	for _, level := range plan.Levels().All() {
 		if points := level.RequiredDetectHistoryPoints(); points > required {
 			required = points
 		}
@@ -2331,12 +2377,12 @@ func requiredFullSlots(plan *strategy.CompiledPlan) uint32 {
 }
 
 // physicalFailureReason picks the code an unavailable physical completion
-// carries; the walk and the fallback live in execution.AttributeUnavailable.
-// Where the code came from is counted by providerUnavailableFacts when the
-// completion is observed, not bound here.
-func physicalFailureReason(facts execution.ProviderRouteFacts) execution.ReasonCode {
-	code, _ := execution.AttributeUnavailable(facts, execution.ReasonCode(contract.ReasonQueryUnavailable))
-	return code
+// carries and where it came from; the walk and the fallback live in
+// execution.AttributeUnavailable. The binding keeps both: the code for what
+// reads bindings, the attribution for the completion, which names a
+// fallback as the fallback.
+func physicalFailureReason(facts execution.ProviderRouteFacts) (execution.ReasonCode, execution.UnavailableAttribution) {
+	return execution.AttributeUnavailable(facts, execution.ReasonCode(contract.ReasonQueryUnavailable))
 }
 
 func provisionalResult(result execution.EvaluationResult) (observability.Result, execution.ReasonCode) {

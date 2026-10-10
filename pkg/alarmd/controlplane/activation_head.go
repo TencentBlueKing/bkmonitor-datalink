@@ -119,9 +119,14 @@ func (repository *RedisCatalogRepository) LoadActivationHead(ctx context.Context
 // batch is a few MB at most.
 const openSegmentReadBatch = 256
 
-// readOpenSegments reads the open Segment of each Query Group. A Query Group
-// with no timeline, or none open (retired, closed), is left out: it runs
-// nothing, which is exactly what the answer is about.
+// readOpenSegments reads the open Segment of each Query Group and hands it
+// to visit as its timeline is decoded, one at a time. Each caller keeps what
+// it uses of a Segment - its Plan records, or only the content it names -
+// and the rest goes with the decoded timeline, which only the timeline cache
+// keeps, within its bound: a read of the whole active set holds at once what
+// its caller keeps, not every Segment. A Query Group with no timeline, or
+// none open (retired, closed), is not visited: it runs nothing, which is
+// exactly what the answer is about.
 //
 // A timeline that does not decode is not left out. Taken for absent, a Query
 // Group of the current publication would pass for one to add, and the
@@ -131,7 +136,8 @@ const openSegmentReadBatch = 256
 // deleting the key lets the next cutover open it again.
 func (repository *RedisCatalogRepository) readOpenSegments(
 	ctx context.Context, identities []execution.QueryGroupIdentity, version controlVersion,
-) (map[execution.QueryGroupIdentity]persistedScheduleSegment, error) {
+	visit func(execution.QueryGroupIdentity, persistedScheduleSegment) error,
+) error {
 	// Read live, not from the timeline cache: the cache is keyed by the
 	// activation header, and a timeline can be rewritten under an unchanged
 	// header (the repair subcommand does). What this answers decides what
@@ -140,16 +146,21 @@ func (repository *RedisCatalogRepository) readOpenSegments(
 	// or a cutover in progress - and what it reads refreshes the cache.
 	repository.adoptControlVersion(ctx, version)
 	counters := &repository.controlReads.timeline
-	result := make(map[execution.QueryGroupIdentity]persistedScheduleSegment, len(identities))
-	accept := func(identity execution.QueryGroupIdentity, timeline persistedScheduleTimeline) {
+	accept := func(identity execution.QueryGroupIdentity, timeline persistedScheduleTimeline) error {
 		if timeline.RetiredAt != nil || len(timeline.Segments) == 0 {
-			return
+			return nil
 		}
 		if open := timeline.Segments[len(timeline.Segments)-1]; open.Schedule.Segment.End == nil {
-			result[identity] = open
+			return visit(identity, open)
 		}
+		return nil
 	}
 	missing := identities
+	var reading *cacheReading
+	if version.known {
+		reading = repository.controlCache.announceTimelines(len(missing))
+		defer reading.settle()
+	}
 	for start := 0; start < len(missing); start += openSegmentReadBatch {
 		batch := missing[start:min(start+openSegmentReadBatch, len(missing))]
 		replies := make([]*redis.StringCmd, len(batch))
@@ -159,7 +170,7 @@ func (repository *RedisCatalogRepository) readOpenSegments(
 			}
 			return nil
 		}); err != nil && !errors.Is(err, redis.Nil) {
-			return nil, activationDependencyIO(err)
+			return activationDependencyIO(err)
 		}
 		for index, identity := range batch {
 			payload, err := replies[index].Bytes()
@@ -167,22 +178,24 @@ func (repository *RedisCatalogRepository) readOpenSegments(
 				continue
 			}
 			if err != nil {
-				return nil, activationDependencyIO(err)
+				return activationDependencyIO(err)
 			}
 			timeline, err := decodeScheduleTimeline(identity, payload)
 			if err != nil {
-				return nil, &DeterministicScheduleError{Err: fmt.Errorf(
+				return &DeterministicScheduleError{Err: fmt.Errorf(
 					"the timeline of Query Group %s does not decode (%w); a cutover in progress cannot tell what it runs "+
 						"until the key is repaired or deleted, after which it is opened again", identity, err)}
 			}
 			counters.misses.Add(1)
 			if version.known {
-				repository.controlCache.storeTimeline(version.header, identity, timeline, len(payload))
+				repository.controlCache.storeTimeline(reading, version.header, identity, timeline, len(payload))
 			}
-			accept(identity, timeline)
+			if err := accept(identity, timeline); err != nil {
+				return err
+			}
 		}
 	}
-	return result, nil
+	return nil
 }
 
 // openSegmentRefs is the output context refs in force on a Segment: the
@@ -205,28 +218,29 @@ func openSegmentRefs(segment persistedScheduleSegment) []execution.OutputContext
 // A draining Query Group has retired its timeline and has no open Segment,
 // so it is not asked about.
 func (repository *RedisCatalogRepository) activeOpenSegments(
-	ctx context.Context, state ActivationState,
-) (map[execution.QueryGroupIdentity]persistedScheduleSegment, error) {
+	ctx context.Context, state ActivationState, visit func(execution.QueryGroupIdentity, persistedScheduleSegment) error,
+) error {
 	version, err := repository.readControlVersion(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return repository.activeOpenSegmentsAt(ctx, state, version)
+	return repository.activeOpenSegmentsAt(ctx, state, version, visit)
 }
 
 // activeOpenSegmentsAt is activeOpenSegments under a header the caller
 // already read.
 func (repository *RedisCatalogRepository) activeOpenSegmentsAt(
 	ctx context.Context, state ActivationState, version controlVersion,
-) (map[execution.QueryGroupIdentity]persistedScheduleSegment, error) {
+	visit func(execution.QueryGroupIdentity, persistedScheduleSegment) error,
+) error {
 	identities, err := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if state.CutoverProgress != nil {
 		manifest, err := repository.LoadCatalogManifest(ctx, state.Current.SnapshotRevision)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		seen := make(map[execution.QueryGroupIdentity]struct{}, len(identities)+len(manifest.QueryGroups))
 		for _, identity := range identities {
@@ -239,7 +253,7 @@ func (repository *RedisCatalogRepository) activeOpenSegmentsAt(
 			}
 		}
 	}
-	return repository.readOpenSegments(ctx, identities, version)
+	return repository.readOpenSegments(ctx, identities, version, visit)
 }
 
 // materializeActivationPlans gives a head body back its Plan records, from
@@ -253,21 +267,20 @@ func (repository *RedisCatalogRepository) activeOpenSegmentsAt(
 func (repository *RedisCatalogRepository) materializeActivationPlans(
 	ctx context.Context, state ActivationState, version controlVersion,
 ) (ActivationState, error) {
-	segments, err := repository.activeOpenSegmentsAt(ctx, state, version)
-	if err != nil {
-		return ActivationState{}, err
-	}
-	plans := make([]PlanActivationRecord, 0, len(segments))
+	var plans []PlanActivationRecord
 	seen := make(map[execution.PlanKey]struct{})
-	for _, segment := range segments {
+	if err := repository.activeOpenSegmentsAt(ctx, state, version, func(_ execution.QueryGroupIdentity, segment persistedScheduleSegment) error {
 		for _, record := range segment.Plans {
 			if _, duplicate := seen[record.Fact.Key()]; duplicate {
-				return ActivationState{}, &PersistedActivationCorruptError{
+				return &PersistedActivationCorruptError{
 					Err: fmt.Errorf("Plan %v is open in two Query Groups", record.Fact.Key())}
 			}
 			seen[record.Fact.Key()] = struct{}{}
 			plans = append(plans, record)
 		}
+		return nil
+	}); err != nil {
+		return ActivationState{}, err
 	}
 	sort.Slice(plans, func(i, j int) bool { return lessPlanIdentity(plans[i].Fact.Plan, plans[j].Fact.Plan) })
 	state.SchemaVersion = activationSchemaVersion
@@ -287,22 +300,21 @@ func (repository *RedisCatalogRepository) materializeActivationPlans(
 func (repository *RedisCatalogRepository) activatedContentFromOpenSegments(
 	ctx context.Context, activation ActivationState,
 ) (activatedContent, error) {
-	segments, err := repository.activeOpenSegments(ctx, activation)
-	if err != nil {
-		return activatedContent{}, err
-	}
 	content := activatedContent{
-		groups:   make(map[execution.QueryGroupIdentity]QueryGroup, len(segments)),
-		digests:  make(map[execution.QueryGroupIdentity]execution.ObjectDigest, len(segments)),
+		groups:   make(map[execution.QueryGroupIdentity]QueryGroup),
+		digests:  make(map[execution.QueryGroupIdentity]execution.ObjectDigest),
 		contexts: make(map[execution.PlanIdentity]execution.OutputContextDigest),
 		complete: true, source: "open_segments",
 	}
-	for identity, segment := range segments {
+	if err := repository.activeOpenSegments(ctx, activation, func(identity execution.QueryGroupIdentity, segment persistedScheduleSegment) error {
 		content.groups[identity] = QueryGroup{Identity: identity}
 		content.digests[identity] = segment.Schedule.Segment.ObjectDigest
 		for _, ref := range openSegmentRefs(segment) {
 			content.contexts[ref.Plan] = ref.Digest
 		}
+		return nil
+	}); err != nil {
+		return activatedContent{}, err
 	}
 	return content, nil
 }
@@ -319,18 +331,17 @@ func (repository *RedisCatalogRepository) ApplyCutoverProgress(
 	if state.CutoverProgress == nil {
 		return content, nil
 	}
-	segments, err := repository.activeOpenSegments(ctx, state)
-	if err != nil {
-		return nil, err
-	}
-	running := make(map[execution.QueryGroupIdentity]ContentEntry, len(segments))
-	for identity, segment := range segments {
+	running := make(map[execution.QueryGroupIdentity]ContentEntry)
+	if err := repository.activeOpenSegments(ctx, state, func(identity execution.QueryGroupIdentity, segment persistedScheduleSegment) error {
 		plans := make([]execution.PlanKey, 0, len(segment.Plans))
 		for _, record := range segment.Plans {
 			plans = append(plans, record.Fact.Key())
 		}
 		running[identity] = ContentEntry{Digest: segment.Schedule.Segment.ObjectDigest, Plans: plans,
 			Refs: append([]execution.OutputContextRef(nil), openSegmentRefs(segment)...)}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return running, nil
 }

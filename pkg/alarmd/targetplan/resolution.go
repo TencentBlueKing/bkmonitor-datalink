@@ -32,6 +32,7 @@ const (
 	SelectorKindStatic   = "static"
 	SelectorKindGroup    = "dynamic_group"
 	SelectorKindTopology = "dynamic_topology"
+	SelectorKindExclude  = "exclude"
 )
 
 // The reasons a selector is unavailable or incomplete, closed. They are
@@ -45,10 +46,14 @@ const (
 	ReasonReadFailed       = "read_failed"
 	ReasonStale            = "stale"
 	ReasonIndexUnavailable = "index_unavailable"
-	ReasonNodeMissing      = "node_missing"
-	ReasonNodeForeign      = "node_in_other_business"
-	ReasonMembersDropped   = "members_dropped"
-	ReasonSourceUnwired    = "source_unwired"
+	ReasonIndexIncomplete  = "index_incomplete"
+	// ReasonExcludedAbsent counts exclusions absent from a complete host
+	// snapshot. The selector stays OK or OKEmpty and the plan remains usable.
+	ReasonExcludedAbsent = "excluded_absent"
+	ReasonNodeMissing    = "node_missing"
+	ReasonNodeForeign    = "node_in_other_business"
+	ReasonMembersDropped = "members_dropped"
+	ReasonSourceUnwired  = "source_unwired"
 	// ReasonModelUnresolved is a static selector of a model_inst_id plan read
 	// by host identity whose members the host cache knows no host for: a
 	// model that is not the host model, or a host cache the writer has not
@@ -58,13 +63,34 @@ const (
 	// such a plan as read by host identity and refuses nothing, so a
 	// catalog disposition never carries the model question.
 	ReasonModelUnresolved = "model_representation_unresolved"
+	// ReasonEmptiedHeld is a dynamic group read empty that the store does not
+	// yet believe - waiting a writer cycle, or held as the writer's emptying -
+	// past the staleness bound, or first read empty during such a wait: the
+	// snapshot before is no longer served, and the group is not read as empty
+	// either.
+	ReasonEmptiedHeld = "emptied_held"
+	// ReasonGroupTenantMismatch is a dynamic group an ip_cloud plan references
+	// that is not the plan's tenant's, or names no tenant: its members would
+	// be read as addresses inside the wrong tenant.
+	ReasonGroupTenantMismatch = "tenant_mismatch"
+	// ReasonAddressUnresolved is an ip_cloud selector none of whose hosts
+	// has a target address inside the plan's tenant: the host cache carries
+	// none for them yet - its writer puts one on a host only once it has
+	// refreshed with the source's whole address - or they are another
+	// tenant's. Not an empty target.
+	ReasonAddressUnresolved = "address_unresolved"
+	// ReasonAddressAmbiguous is an ip_cloud member at an address another
+	// host of the tenant shares: the address names neither host, and the
+	// member is left out rather than matched against both.
+	ReasonAddressAmbiguous = "address_ambiguous"
 )
 
 // SelectorReasons is the closed list, for the metric.
 var SelectorReasons = []string{
 	ReasonNone, ReasonKeyMissing, ReasonJSONInvalid, ReasonStructureInvalid, ReasonModelMismatch, ReasonReadFailed,
 	ReasonStale, ReasonIndexUnavailable, ReasonNodeMissing, ReasonNodeForeign, ReasonMembersDropped, ReasonSourceUnwired,
-	ReasonModelUnresolved,
+	ReasonModelUnresolved, ReasonEmptiedHeld, ReasonGroupTenantMismatch, ReasonAddressUnresolved, ReasonAddressAmbiguous,
+	ReasonIndexIncomplete, ReasonExcludedAbsent,
 }
 
 // SelectorResult is one selector's answer: its members in the plan's key
@@ -74,7 +100,7 @@ type SelectorResult struct {
 	ID    string
 	State SelectorState
 	// Reason is the closed word behind an Unavailable or Incomplete state,
-	// and "none" otherwise.
+	// "excluded_absent" for normal missing exclusions, and "none" otherwise.
 	Reason string
 	// Members are keys, in the plan's identity form, shared with the source
 	// snapshot and never written.
@@ -122,10 +148,15 @@ type Failure struct {
 // admission filter asks Contains; the no-data round reads State and
 // Members; both read the same value, which is the point.
 type Resolution struct {
-	Static    map[string]struct{}
-	Selectors []SelectorResult
-	State     ResolutionState
-	Failures  []Failure
+	Static map[string]struct{}
+	// Excluded uses the same keys as Static and selector members. When its
+	// identity cannot be resolved, neither admission nor absence may use
+	// the included set, because doing so would widen the configured target.
+	Excluded             map[string]struct{}
+	ExclusionUnavailable bool
+	Selectors            []SelectorResult
+	State                ResolutionState
+	Failures             []Failure
 	// NodesMissing lists topology references whose node the cache does not
 	// list; NodesForeign those whose node holds hosts under another
 	// business only. Both reach the object row's target_resolutions; how
@@ -136,11 +167,14 @@ type Resolution struct {
 	StaleAge time.Duration
 }
 
-// Contains answers the admission filter: the key is in the static set or in
-// any selector's members. An unavailable selector has no members and so
-// admits nothing through it, which is what "no match" means for records.
+// Contains answers the admission filter from the included sources minus
+// exclusions. Failed inclusion selectors add no members; an unresolved
+// exclusion makes the whole target unavailable and admits nothing.
 func (resolution *Resolution) Contains(key string) bool {
-	if resolution == nil {
+	if resolution == nil || resolution.ExclusionUnavailable {
+		return false
+	}
+	if _, excluded := resolution.Excluded[key]; excluded {
 		return false
 	}
 	if _, found := resolution.Static[key]; found {
@@ -154,11 +188,11 @@ func (resolution *Resolution) Contains(key string) bool {
 	return false
 }
 
-// Members is the union of every member key, sorted, for the no-data
-// roster. Read only under a Complete state; the roster never sees a lower
-// bound.
+// Members is the sorted union minus exclusions, shared by admission and
+// the no-data roster. Only a Complete resolution can judge absence; an
+// unresolved exclusion returns no members to either consumer.
 func (resolution *Resolution) Members() []string {
-	if resolution == nil {
+	if resolution == nil || resolution.ExclusionUnavailable {
 		return nil
 	}
 	union := make(map[string]struct{}, len(resolution.Static))
@@ -172,7 +206,9 @@ func (resolution *Resolution) Members() []string {
 	}
 	members := make([]string, 0, len(union))
 	for key := range union {
-		members = append(members, key)
+		if _, excluded := resolution.Excluded[key]; !excluded {
+			members = append(members, key)
+		}
 	}
 	sort.Strings(members)
 	return members
@@ -190,12 +226,18 @@ func (resolution *Resolution) Compose() {
 		switch selector.State {
 		case SelectorUnavailable:
 			resolution.State = ResolutionUnavailable
-			resolution.Failures = append(resolution.Failures, Failure{Kind: selector.Kind, ID: selector.ID, Reason: selector.Reason})
+			resolution.Failures = append(resolution.Failures, Failure{Kind: selector.Kind, ID: selector.ID, Reason: selector.Reason, Dropped: selector.Dropped, Kept: selector.Kept})
 		case SelectorIncomplete:
 			if resolution.State != ResolutionUnavailable {
 				resolution.State = ResolutionIncomplete
 			}
-			resolution.Failures = append(resolution.Failures, Failure{Kind: selector.Kind, ID: selector.ID, Reason: ReasonMembersDropped, Dropped: selector.Dropped, Kept: selector.Kept})
+			// Members were dropped; the selector says why when it knows more
+			// than that (an address two hosts share).
+			reason := selector.Reason
+			if reason == "" || reason == ReasonNone {
+				reason = ReasonMembersDropped
+			}
+			resolution.Failures = append(resolution.Failures, Failure{Kind: selector.Kind, ID: selector.ID, Reason: reason, Dropped: selector.Dropped, Kept: selector.Kept})
 		}
 		if selector.NodeMissing {
 			resolution.NodesMissing = append(resolution.NodesMissing, selector.ID)

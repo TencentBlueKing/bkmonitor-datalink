@@ -69,3 +69,41 @@ func TestLoggingObserverWritesStateApplyChunkAttributes(t *testing.T) {
 		}
 	}
 }
+
+// The admission line of a refused Plan says which rule refused it and the
+// store's sentence with its numbers; a line with nothing refused carries
+// neither.
+func TestTheAdmissionLineCarriesTheRefusalRulesAndSentence(t *testing.T) {
+	t.Parallel()
+
+	const sentence = "state: runtime state budget exceeded: required TTL 840h0m0s exceeds maximum 720h0m0s"
+	logged := func(facts *StateApplyChunkFacts, result Result) map[string]any {
+		t.Helper()
+		var output bytes.Buffer
+		limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy, err := NewBoundedLogPolicy(limiter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+			Component: ComponentState, Stage: StageStateAdmission, Result: result, Operation: OperationNormal,
+			Direction: DirectionInternal, ReasonCode: ReasonCode("STATE_BUDGET_EXCEEDED"), StateApplyChunk: facts,
+		})
+		var event map[string]any
+		if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+			t.Fatalf("decode admission log: %v; log=%s", err, output.String())
+		}
+		return event
+	}
+	refused := logged(&StateApplyChunkFacts{Count: 1, RefusalRules: []string{"lifetime_past_ceiling"}, RefusalText: sentence}, ResultTerminal)
+	if refused["state_refusal_rules"] != "lifetime_past_ceiling" || refused["state_refusal_text"] != sentence {
+		t.Fatalf("refused line = %#v, want the rule and the sentence", refused)
+	}
+	admitted := logged(&StateApplyChunkFacts{Count: 1}, ResultSuccess)
+	if _, found := admitted["state_refusal_text"]; found {
+		t.Fatalf("admitted line = %#v, want no refusal sentence", admitted)
+	}
+}

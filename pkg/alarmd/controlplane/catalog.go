@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -26,6 +28,17 @@ type SourceIdentity struct {
 	TenantID   string
 	BusinessID string
 	SpaceScope string
+	// GlobalBusiness is the strategy document's is_global_strategy: the
+	// strategy's own switch saying it queries every business of the tenant
+	// and files each alert under the business it is about. It is the
+	// strategy's, and says nothing about which business the strategy lives
+	// in: the writer resolves it, and a strategy it does not claim reads as
+	// ordinary. Absent in the document is false.
+	//
+	// Omitted when false: the source facts digest hashes this struct, and a
+	// field every strategy serialized would move the digest - and with it
+	// the observation id - of every strategy on the upgrade.
+	GlobalBusiness bool `json:"GlobalBusiness,omitempty"`
 }
 
 type SourceStrategy struct {
@@ -42,14 +55,19 @@ type SourceStrategy struct {
 
 type PrimaryQuerySource struct {
 	TimeDelaySeconds int64
-	Identity         SourceIdentity
-	StrategyID       string
-	ItemID           string
-	QueryMD5         string
-	Expression       string
-	IdentityFields   []string
-	Functions        []json.RawMessage
-	QueryConfigs     []json.RawMessage
+	// DetectStepSeconds is a configured detection step (itemDetectStep),
+	// zero when the item runs at its aggregation interval. A non-zero step
+	// has the query read windows that start where its request starts, and
+	// rounds the delay to the step.
+	DetectStepSeconds int64
+	Identity          SourceIdentity
+	StrategyID        string
+	ItemID            string
+	QueryMD5          string
+	Expression        string
+	IdentityFields    []string
+	Functions         []json.RawMessage
+	QueryConfigs      []json.RawMessage
 }
 
 type PrimaryQueryCompiler interface {
@@ -279,6 +297,60 @@ const (
 // reads it.
 const ReasonEffectiveTimeRangeInvalid = "EFFECTIVE_TIME_RANGE_INVALID"
 
+// ReasonAggIntervalDefaulted names a Plan whose query configs carry no
+// aggregation interval, or a 0 among them, read as the 60 seconds Python
+// reads it as (itemInterval).
+const ReasonAggIntervalDefaulted = "AGG_INTERVAL_DEFAULTED"
+
+// The item fields a strategy cannot be compiled without, each refused under
+// its own name with the field it names, as a rejected configuration (the
+// last good Plan stays). They used to be one word, filed as PLAN_INVALID, and
+// judged before the query's source: a data type this build cannot compile,
+// which the writer publishes with no query_md5, read as a configuration
+// error. See itemRefusal.
+//
+// An empty expression is not among them. The platform's query reads it as
+// its queries' reference names joined by "or" (UnifyQuery.query_data), which
+// for the one query an item carries is that query itself, and
+// compileMetricMerge reads it the same way. A writer that publishes the
+// expression the strategy was declared with publishes it empty for every
+// single-query item.
+const (
+	ReasonItemQueryConfigsMissing = "ITEM_QUERY_CONFIGS_MISSING"
+	ReasonItemQueryMD5Missing     = "ITEM_QUERY_MD5_MISSING"
+	ReasonItemAlgorithmsMissing   = "ITEM_ALGORITHMS_MISSING"
+)
+
+// itemRefusal is what refuses an item before its target and Plan are
+// compiled, in the order that names it rightly. No query config leaves
+// nothing to judge. Then the query's source: a data source this build cannot
+// compile is a capability fact whatever else the item carries, and the
+// writer leaves query_md5 empty for exactly those types
+// (runtime_cache_projector.py writes it for time_series, log, custom and FTA
+// events only). Only a supported item that still lacks a field is a
+// configuration left incomplete.
+func itemRefusal(sourceID string, item legacyItem) (ObjectDisposition, bool) {
+	rejected := func(reason, field string) (ObjectDisposition, bool) {
+		return ObjectDisposition{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: reason, FieldPath: field}, true
+	}
+	if len(item.QueryConfigs) == 0 {
+		return rejected(ReasonItemQueryConfigsMissing, "items[0].query_configs")
+	}
+	for index, raw := range item.QueryConfigs {
+		if reason, unsupported := querySourceUnsupported(raw); unsupported {
+			return ObjectDisposition{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionUnsupported, Reason: reason,
+				FieldPath: fmt.Sprintf("items[0].query_configs[%d]", index)}, true
+		}
+	}
+	switch {
+	case item.QueryMD5 == "":
+		return rejected(ReasonItemQueryMD5Missing, "items[0].query_md5")
+	case len(item.Algorithms) == 0:
+		return rejected(ReasonItemAlgorithmsMissing, "items[0].algorithms")
+	}
+	return ObjectDisposition{}, false
+}
+
 // ReasonPriorityIgnored names a Plan compiled from a strategy that takes
 // part in priority arbitration, run as the standalone strategy it is. The
 // arbitration belongs to the platform's alert pipeline, so a lower-priority
@@ -322,12 +394,18 @@ func borrowedLegacyDetect(first legacyDetect) legacyDetect {
 // for a decoder's sentence, not for a document.
 const dispositionDetailMaxBytes = 256
 
-// dispositionDetail bounds a refusal's text for the audit.
+// dispositionDetail bounds a refusal's text for the audit, on a rune
+// boundary: the text can quote a document written in any language, and a
+// cut through a character would reach the reader as a replacement mark.
 func dispositionDetail(text string) string {
 	if len(text) <= dispositionDetailMaxBytes {
 		return text
 	}
-	return text[:dispositionDetailMaxBytes]
+	cut := dispositionDetailMaxBytes
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
 }
 
 type ObjectDisposition struct {
@@ -368,6 +446,13 @@ type Catalog struct {
 	// retain because their persisted facts no longer hold under this binary,
 	// under either refusal. Zero on every build within one release.
 	RetainedStaleRevisions int
+	// LastGoodIdentityChanged counts the last-good Plans this build did not
+	// retain because the source now states another identity for the
+	// strategy (LAST_GOOD_IDENTITY_CHANGED): at build time for a document
+	// that did not compile, and at runtime compile for one that compiled and
+	// was then refused whole or in part. Zero while every writer keeps its
+	// numbering.
+	LastGoodIdentityChanged int
 	// Retention is what this build's Levels ask the state store to keep,
 	// measured off the compiled Levels rather than modelled from the shapes in
 	// the strategy documents. It is the only place the whole compiled
@@ -382,6 +467,30 @@ type Catalog struct {
 	// is decoded strictly, and a field an older reader does not know would
 	// make it refuse the whole publication.
 	ObjectRetention time.Duration
+	// GlobalStrategies is one record per strategy the source marks global
+	// (SourceIdentity.GlobalBusiness), in source order: the word it was
+	// refused for as a global strategy and the source its query reads. Nil
+	// when the source marks none, so a Catalog of a deployment without global
+	// strategies is the one it always was. Whether it runs is not recorded
+	// here: the runtime check and the deployment's admission can still
+	// withhold a strategy this build compiled, and each replaces its ACCEPTED
+	// disposition when it does, so the dispositions are where that is read.
+	GlobalStrategies []GlobalStrategy
+}
+
+// GlobalStrategy is what one round did with a strategy the source marks
+// global. The dispositions say it too, one record per scope and level; this
+// says it once per strategy, with the query source the dispositions do not
+// carry, so the global composition counts strategies and not records.
+type GlobalStrategy struct {
+	SourceID string
+	// Refusal is the GLOBAL_STRATEGY_UNSUPPORTED word (GlobalBusinessQueryKind
+	// and the rest) when this build refused to run it as a global strategy,
+	// whether or not a last good Plan was retained for it; empty otherwise.
+	Refusal string
+	// QuerySource is GlobalQuerySource of its compiled query; empty when the
+	// round withheld it before its query was compiled.
+	QuerySource string
 }
 
 // CatalogRetention sums the retained window of every Level the runtime
@@ -416,6 +525,21 @@ type CatalogRetention struct {
 	LevelsWithSlackRecoveryDominant int
 }
 
+// BuildCatalog builds the Catalog a round publishes. It is a pure function of
+// these inputs and nothing else; SourceReconciler.reusableFor lets a round
+// stand on the previous one's Catalog when each is held still, and names what
+// holds each. An input added here has to be added there:
+//
+//   - Strategies: the observation (held by a skipped read);
+//   - the round key - OutputProtocol, the planner's round identity,
+//     TargetSources, NoDataPolicy (catalogRoundKey, the candidate cache's own);
+//   - LastGood and PreviousDispositions (held by the activation head and
+//     this process being the one writer);
+//   - PendingAbsences (none after an UNCHANGED round);
+//   - Now: read only for the absence grace (absenceGraceEnd).
+//
+// The deployment's admission and the runtime retention that follow it read
+// the Catalog, LastGood and static configuration only.
 func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	if request.Planner == nil || request.Strategies == nil {
 		return Catalog{}, errors.New("alarmd controlplane: incomplete catalog build request")
@@ -483,7 +607,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	// strategy whose document cannot currently be compiled. It leaves the
 	// Catalog, named and counted, until its document compiles again, and
 	// the other strategies keep evaluating.
-	retainLastGood := func(sourceID string) (bool, error) {
+	retainLastGood := func(sourceID string, current *SourceIdentity) (bool, error) {
 		entry, ok := lastGood[sourceID]
 		if !ok {
 			return false, nil
@@ -494,10 +618,28 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			catalog.RetainedStaleRevisions++
 			return false, nil
 		}
+		if !lastGoodIdentityHolds(current, entry) {
+			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "PLAN",
+				Disposition: DispositionConfigRejected, Reason: reasonLastGoodIdentityChanged})
+			catalog.LastGoodIdentityChanged++
+			return false, nil
+		}
 		if err := addPlan(entry.facts, entry.plan); err != nil {
 			return false, err
 		}
 		return true, nil
+	}
+	// Every source leaves the loop below through one of these calls, once:
+	// the global composition counts strategies, and a path that skipped it
+	// would make the outcomes stop adding up to the strategies the source
+	// marks global.
+	recordGlobal := func(source SourceStrategy, candidate sourceCandidate) {
+		if !source.Identity.GlobalBusiness {
+			return
+		}
+		catalog.GlobalStrategies = append(catalog.GlobalStrategies, GlobalStrategy{
+			SourceID: source.SourceID, Refusal: candidate.globalRefusal, QuerySource: candidate.querySource,
+		})
 	}
 	observed := make(map[string]struct{}, len(request.Strategies))
 	for _, source := range request.Strategies {
@@ -511,11 +653,12 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 				(disposition.Disposition != DispositionSourceIncomplete && disposition.Disposition != DispositionConfigRejected) {
 				return Catalog{}, errors.New("alarmd controlplane: invalid source disposition")
 			}
+			recordGlobal(source, sourceCandidate{})
 			if compiled := compileTargetPlanDocument(source); compiled.refusal != nil {
 				catalog.Dispositions = append(catalog.Dispositions, disposition, *compiled.refusal)
 				continue
 			}
-			retained, err := retainLastGood(source.SourceID)
+			retained, err := retainLastGood(source.SourceID, statedIdentity(source))
 			if err != nil {
 				return Catalog{}, err
 			}
@@ -526,14 +669,22 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			continue
 		}
 		candidate, err := request.Cache.build(ctx, planner, source, request.OutputProtocol, request.TargetSources, request.NoDataPolicy)
+		recordGlobal(source, candidate)
 		if err != nil {
 			if len(candidate.dispositions) > 0 {
 				catalog.Dispositions = append(catalog.Dispositions, candidate.dispositions...)
 			} else {
-				catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: "PLAN_INVALID"})
+				// The word is the catch-all's; the text is what went wrong. A
+				// strategy refused as PLAN_INVALID alone had to be compiled again
+				// offline to learn that its expression was empty. The text is
+				// deterministic for one document - the candidate cache returns
+				// the same error for it every round - so it cannot keep a
+				// pending candidate from confirming.
+				catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN",
+					Disposition: DispositionConfigRejected, Reason: "PLAN_INVALID", Detail: dispositionDetail(err.Error())})
 			}
 			if shouldRetainLastGood(candidate.dispositions) {
-				retained, retainErr := retainLastGood(source.SourceID)
+				retained, retainErr := retainLastGood(source.SourceID, statedIdentity(source))
 				if retainErr != nil {
 					return Catalog{}, retainErr
 				}
@@ -565,6 +716,18 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 		now = time.Now()
 	}
 	absentSince := indexAbsentSince(request.PreviousDispositions, request.PendingAbsences)
+	// An active set read whole and empty, with strategies running, is a
+	// source that lost its content - a writer that published an empty list
+	// or a store that answered with none - not a deployment whose every
+	// strategy was deleted at once. Removing them after the grace would stop
+	// every detection the deployment runs on one bad read, so nothing is
+	// removed on it: every strategy keeps executing under PENDING_REMOVAL,
+	// named ACTIVE_SET_EMPTY, until the set lists strategies again. The
+	// absent-alert close refuses the same round for the same reason
+	// (absentalerts.RefusalSnapshotEmpty). A set that shrank is not held:
+	// a bulk deletion is a real one, and a writer's single refusals are
+	// deletions to alarmd.
+	activeSetEmpty := len(observed) == 0 && len(lastGood) > 0
 	for sourceID := range lastGood {
 		if _, found := observed[sourceID]; found {
 			continue
@@ -573,12 +736,23 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 		if !graced {
 			since = now.Unix()
 		}
+		if activeSetEmpty {
+			retained, err := retainLastGood(sourceID, nil)
+			if err != nil {
+				return Catalog{}, err
+			}
+			if retained {
+				catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "STRATEGY",
+					Disposition: DispositionPendingRemoval, Reason: "ACTIVE_SET_EMPTY", AbsentSince: since})
+			}
+			continue
+		}
 		if now.Unix()-since >= int64(AbsenceGracePeriod/time.Second) {
 			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "STRATEGY",
 				Disposition: DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET", AbsentSince: since})
 			continue
 		}
-		retained, err := retainLastGood(sourceID)
+		retained, err := retainLastGood(sourceID, nil)
 		if err != nil {
 			return Catalog{}, err
 		}
@@ -621,6 +795,35 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 // compilerForRound resolves the compiler the round compiles with. A
 // round-scoped compiler hands out one frozen over its facts as they are now;
 // any other compiler is its own round compiler with an empty identity.
+// catalogRoundKey is everything a round's Catalog depends on besides its
+// observation, its last good publication and the clock: the key the candidate
+// cache empties itself by (beginRound), in one string.
+func catalogRoundKey(planner PrimaryQueryCompiler, protocol string, sources TargetSources, policy NoDataPolicy) (string, error) {
+	_, compilerIdentity, err := compilerForRound(planner)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join([]string{protocol, compilerIdentity, sources.key(), policy.key()}, "\x00"), nil
+}
+
+// absenceGraceEnd is the first moment a Catalog built from these dispositions
+// changes with every input the same: the earliest end of the grace a strategy
+// absent from the source serves under PENDING_REMOVAL before it leaves. Zero
+// when none is serving one.
+func absenceGraceEnd(dispositions []ObjectDisposition) time.Time {
+	var end time.Time
+	for _, disposition := range dispositions {
+		if disposition.Scope != "STRATEGY" || disposition.Disposition != DispositionPendingRemoval || disposition.AbsentSince <= 0 {
+			continue
+		}
+		at := time.Unix(disposition.AbsentSince, 0).Add(AbsenceGracePeriod)
+		if end.IsZero() || at.Before(end) {
+			end = at
+		}
+	}
+	return end
+}
+
 func compilerForRound(planner PrimaryQueryCompiler) (PrimaryQueryCompiler, string, error) {
 	scoped, ok := planner.(RoundScopedCompiler)
 	if !ok {
@@ -912,6 +1115,13 @@ type sourceCandidate struct {
 	facts        execution.QueryPlanFacts
 	plan         FrozenPlan
 	dispositions []ObjectDisposition
+
+	// querySource and globalRefusal are the candidate's GlobalStrategy
+	// fields: set once its query is compiled and when it is refused as a
+	// global strategy, and kept on a refused candidate too, which has no
+	// facts.
+	querySource   string
+	globalRefusal string
 }
 
 func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source SourceStrategy, outputProtocol string, sources TargetSources, policy NoDataPolicy) (sourceCandidate, error) {
@@ -954,8 +1164,11 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		return sourceCandidate{dispositions: []ObjectDisposition{{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported, Reason: "UNSUPPORTED_MULTI_ITEM_STRATEGY"}}}, errors.New("alarmd controlplane: multiple Item strategies unsupported in phase two")
 	}
 	item := legacy.Items[0]
-	if item.ID <= 0 || item.QueryMD5 == "" || item.Expression == "" || len(item.QueryConfigs) == 0 || len(item.Algorithms) == 0 {
-		return candidate, errors.New("INCOMPLETE_SERIES_THRESHOLD_ITEM")
+	if refusal, refused := itemRefusal(source.SourceID, item); refused {
+		return sourceCandidate{dispositions: []ObjectDisposition{refusal}}, fmt.Errorf("alarmd controlplane: %s at %s", refusal.Reason, refusal.FieldPath)
+	}
+	if item.ID <= 0 {
+		return candidate, errors.New("alarmd controlplane: item id must be positive")
 	}
 	// The monitoring target is resolved before anything else is compiled, and
 	// a target this compiler cannot honour is reported as an unsupported
@@ -991,9 +1204,12 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	default:
 		scope, err := compileTargetScope(item.Target.groups, item.QueryConfigs)
 		if err != nil {
+			// The reason word says the target was refused; only the error says
+			// which of its fields, methods or values, and it is the one thing
+			// the writer's side needs to find the target to fix.
 			return sourceCandidate{dispositions: []ObjectDisposition{{
 				SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
-				Reason: targetScopeDispositionReason(err),
+				Reason: targetScopeDispositionReason(err), FieldPath: "items[0].target", Detail: dispositionDetail(err.Error()),
 			}}}, err
 		}
 		targetScope = scope
@@ -1007,6 +1223,13 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		Identity: source.Identity, StrategyID: source.SourceID, ItemID: strconv.FormatInt(item.ID, 10),
 		TimeDelaySeconds: item.TimeDelay, QueryMD5: item.QueryMD5, Expression: primaryExpression, IdentityFields: identityFields,
 		Functions: functions, QueryConfigs: append([]json.RawMessage(nil), item.QueryConfigs...),
+	}
+	// The step decides how the query reads; compilePlan reads it again and
+	// is where a step that cannot run is refused and a warned one noted.
+	if aggregation, _, err := itemInterval(item); err == nil {
+		if step, err := itemDetectStep(item, aggregation); err == nil && step.Configured {
+			querySource.DetectStepSeconds = step.Seconds
+		}
 	}
 	facts, err := planner.CompilePrimaryQuery(ctx, querySource)
 	if err != nil {
@@ -1023,8 +1246,14 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		}
 		return candidate, fmt.Errorf("QUERY_PLAN_INVALID: %w", err)
 	}
+	candidate.querySource = GlobalQuerySource(facts)
 	if err := validateQueryIdentity(source.Identity, facts); err != nil {
 		return candidate, err
+	}
+	if refusal, word := globalBusinessRefusal(source.SourceID, source.Identity, targetScope, facts); refusal != nil {
+		candidate.dispositions = append(candidate.dispositions, *refusal)
+		candidate.globalRefusal = word
+		return candidate, errors.New(ReasonGlobalStrategyUnsupported + ": " + refusal.Detail)
 	}
 	compiledInputs := compiledPlanInputs{primary: facts}
 	for _, label := range itemDataTypes(item) {
@@ -1070,6 +1299,17 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 			Reason: "OUTPUT_PROTOCOL_REQUIRES_STRATEGY_REVISION",
 		})
 		return candidate, errors.New("OUTPUT_PROTOCOL_REQUIRES_STRATEGY_REVISION")
+	}
+	if source.Identity.GlobalBusiness && format == contract.WireFormatPythonCompatible {
+		// The compatible event is filed under the strategy's business by the
+		// platform's own pipeline, which has no field for the business an
+		// alert is about: every alert of a global strategy would land on
+		// the global business, the one outcome the attribution exists to
+		// prevent.
+		refusal := globalBusinessUnsupported(source.SourceID, GlobalBusinessOutputProtocol, "", candidate.querySource)
+		candidate.dispositions = append(candidate.dispositions, refusal)
+		candidate.globalRefusal = GlobalBusinessOutputProtocol
+		return candidate, errors.New(ReasonGlobalStrategyUnsupported + ": " + refusal.Detail)
 	}
 	plan.WireFormat = format
 	// Beside the wire format and for the same reason: the sink writes one
@@ -1315,10 +1555,44 @@ func validateQueryIdentity(identity SourceIdentity, facts execution.QueryPlanFac
 	if err := facts.Validate(); err != nil {
 		return err
 	}
-	if facts.TenantID != identity.TenantID || facts.BusinessID != identity.BusinessID || facts.SpaceScope != identity.SpaceScope {
+	if identityOfFacts(facts) != identity {
 		return errors.New("alarmd controlplane: query plan identity differs from control facts")
 	}
 	return nil
+}
+
+// identityOfFacts is the source identity a Plan's query facts were built
+// for: the one derivation both the compile-time check and the last-good
+// check read.
+func identityOfFacts(facts execution.QueryPlanFacts) SourceIdentity {
+	return SourceIdentity{TenantID: facts.TenantID, BusinessID: facts.BusinessID, SpaceScope: facts.SpaceScope,
+		GlobalBusiness: facts.GlobalBusiness}
+}
+
+// reasonLastGoodIdentityChanged: the source now states another tenant,
+// business, space or global switch for the strategy than its last-good Plan
+// was built for. The number is the same and the strategy is not -- a writer
+// whose numbering started over names another strategy with it -- so the old
+// Plan is not run under the new one's name.
+const reasonLastGoodIdentityChanged = "LAST_GOOD_IDENTITY_CHANGED"
+
+// lastGoodIdentityHolds reports whether a last-good Plan may stand in for
+// the strategy the source names now. current is that identity, nil where
+// there is no document to read one from (the active set no longer lists the
+// strategy) or the document states none that validates: nothing says the
+// strategy changed, and the last good definition is kept as before.
+func lastGoodIdentityHolds(current *SourceIdentity, entry lastGoodPlan) bool {
+	return current == nil || identityOfFacts(entry.facts) == *current
+}
+
+// statedIdentity is the identity a source document states for its
+// strategy, or nil when it states none that validates.
+func statedIdentity(source SourceStrategy) *SourceIdentity {
+	if source.Identity.validate() != nil {
+		return nil
+	}
+	identity := source.Identity
+	return &identity
 }
 
 func lessPlanIdentity(left, right execution.PlanIdentity) bool {
@@ -1344,13 +1618,19 @@ type legacyStrategy struct {
 	Detects               []legacyDetect  `json:"detects"`
 }
 type legacyItem struct {
-	TimeDelay    int64             `json:"time_delay"`
-	ID           int64             `json:"id"`
-	QueryMD5     string            `json:"query_md5"`
-	Expression   string            `json:"expression"`
-	Functions    []json.RawMessage `json:"functions"`
-	QueryConfigs []json.RawMessage `json:"query_configs"`
-	Algorithms   []legacyAlgorithm `json:"algorithms"`
+	TimeDelay int64 `json:"time_delay"`
+	// DetectInterval is the item's detection step in seconds, absent for
+	// the aggregation interval (itemDetectStep). Raw and omitted when absent:
+	// a strategy without update_time takes its revision from a digest of
+	// this struct, and a field that encoded itself when absent would move
+	// every such revision.
+	DetectInterval json.RawMessage   `json:"detect_interval,omitempty"`
+	ID             int64             `json:"id"`
+	QueryMD5       string            `json:"query_md5"`
+	Expression     string            `json:"expression"`
+	Functions      []json.RawMessage `json:"functions"`
+	QueryConfigs   []json.RawMessage `json:"query_configs"`
+	Algorithms     []legacyAlgorithm `json:"algorithms"`
 	// Unit is deliberately absent from this struct. The strategy cache has no
 	// unit on an item: Python's Item.unit is a derived property that walks
 	// query_configs and takes the first non-empty one, so reading a "unit" key
@@ -1642,6 +1922,45 @@ type legacyDetect struct {
 	Trigger   legacyTrigger   `json:"trigger_config"`
 	Recovery  json.RawMessage `json:"recovery_config"`
 }
+
+// sameLegacyDetect reports whether two detects of one level say the same
+// thing. The platform keys detects by level and keeps the last it reads
+// (get_trigger_configs, get_recovery_configs), so a level written twice with
+// the same content is one trigger, and a writer that publishes one detect per
+// algorithm writes exactly that whenever a level has two algorithms. Two that
+// differ are still two triggers at one level, which is refused.
+func sameLegacyDetect(left, right legacyDetect) bool {
+	if left.Level != right.Level || left.Connector != right.Connector ||
+		left.Trigger.Count != right.Trigger.Count || left.Trigger.CheckWindow != right.Trigger.CheckWindow {
+		return false
+	}
+	if (left.Priority == nil) != (right.Priority == nil) || (left.Priority != nil && *left.Priority != *right.Priority) {
+		return false
+	}
+	return sameJSONValue(left.Trigger.Uptime, right.Trigger.Uptime) && sameJSONValue(left.Recovery, right.Recovery)
+}
+
+// sameJSONValue compares two raw JSON values by what they decode to, so key
+// order and spacing do not make one detect two. Absent and null are the same
+// value; a value that does not decode is equal to nothing.
+func sameJSONValue(left, right json.RawMessage) bool {
+	decode := func(raw json.RawMessage) (any, bool) {
+		if len(bytes.TrimSpace(raw)) == 0 {
+			return nil, true
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		return value, true
+	}
+	leftValue, leftOK := decode(left)
+	rightValue, rightOK := decode(right)
+	return leftOK && rightOK && reflect.DeepEqual(leftValue, rightValue)
+}
+
 type legacyTrigger struct {
 	Count       uint32          `json:"count"`
 	CheckWindow uint32          `json:"check_window"`
@@ -1649,6 +1968,36 @@ type legacyTrigger struct {
 }
 type legacyRecovery struct {
 	CheckWindow uint32 `json:"check_window"`
+}
+
+// onlyKeysThePlatformReads drops the keys of a legacy object that Python does
+// not read. Python reads these objects key by key and passes over the rest,
+// and writers carry keys of their own beside the ones it reads (one writes a
+// calendar list of its own into every uptime); the compiler decodes them
+// strictly, so a key left in refused the whole Level. An object that carries nothing
+// else comes back byte for byte, and its plans do not change. So does one
+// carrying none of the keys, which Python fails on (a non-empty uptime without
+// time_ranges is a KeyError), and so does what is not an object: the compiler
+// refuses both, as before.
+func onlyKeysThePlatformReads(raw json.RawMessage, keys []string) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || len(fields) == 0 {
+		return raw
+	}
+	read := make(map[string]json.RawMessage, len(keys))
+	for _, key := range keys {
+		if value, ok := fields[key]; ok {
+			read[key] = value
+		}
+	}
+	if len(read) == len(fields) || len(read) == 0 {
+		return raw
+	}
+	encoded, err := json.Marshal(read)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }
 
 func decodeLegacyStrategy(document json.RawMessage) (legacyStrategy, error) {
@@ -1660,6 +2009,9 @@ func decodeLegacyStrategy(document json.RawMessage) (legacyStrategy, error) {
 	}
 	if value.ID <= 0 || value.BusinessID == 0 || len(value.Items) == 0 {
 		return value, errors.New("alarmd controlplane: incomplete legacy strategy")
+	}
+	for index := range value.Detects {
+		value.Detects[index].Trigger.Uptime = onlyKeysThePlatformReads(value.Detects[index].Trigger.Uptime, strategy.UptimeKeys())
 	}
 	if len(value.SnapshotRevision) != 0 {
 		var revision int64
@@ -1713,7 +2065,8 @@ func compileTargetPlanDocument(source SourceStrategy) compiledTargetPlan {
 			continue
 		}
 		field := fmt.Sprintf("items[%d].target_plan", index)
-		plan, refusal := targetplan.Decode(item.TargetPlan, targetplan.Options{ObjectIdentities: objectIdentityPairs(item.QueryConfigs)})
+		plan, refusal := targetplan.Decode(item.TargetPlan, targetplan.Options{TenantID: source.Identity.TenantID,
+			ObjectIdentities: objectIdentityPairs(item.QueryConfigs)})
 		if refusal != nil {
 			if refusal.Path != "" {
 				field += "." + refusal.Path
@@ -1772,9 +2125,19 @@ func compilePlan(
 	targetPlan *contract.TargetPlanV1,
 	policy NoDataPolicy,
 ) (contract.EvaluationPlanV2, planCompileFacts, []ObjectDisposition, error) {
-	interval, err := itemInterval(item)
+	interval, intervalDefaulted, err := itemInterval(item)
 	if err != nil {
 		return contract.EvaluationPlanV2{}, planCompileFacts{}, nil, err
+	}
+	// interval is the aggregation interval: the query window and every
+	// window an algorithm reads. step is how often the item is detected:
+	// the schedule, the trigger's step and the offset of the previous
+	// detection. The two are one number unless the item configures a
+	// detect_interval this build can run.
+	step, err := itemDetectStep(item, interval)
+	if err != nil {
+		return contract.EvaluationPlanV2{}, planCompileFacts{}, []ObjectDisposition{{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigRejected,
+			Reason: ReasonDetectIntervalInvalid, FieldPath: "items[0].detect_interval", Detail: dispositionDetail(err.Error())}}, fmt.Errorf("alarmd controlplane: %s", ReasonDetectIntervalInvalid)
 	}
 	strategyID := strconv.FormatInt(source.ID, 10)
 	revision := source.UpdateTime.String()
@@ -1808,7 +2171,7 @@ func compilePlan(
 	detectByLevel := make(map[uint32]legacyDetect, len(source.Detects))
 	duplicateDetect := make(map[uint32]struct{})
 	for _, detect := range source.Detects {
-		if _, duplicate := detectByLevel[detect.Level]; duplicate {
+		if earlier, seen := detectByLevel[detect.Level]; seen && !sameLegacyDetect(earlier, detect) {
 			duplicateDetect[detect.Level] = struct{}{}
 		}
 		detectByLevel[detect.Level] = detect
@@ -1831,6 +2194,14 @@ func compilePlan(
 	}
 	levels := make([]contract.LevelIRV2, 0, len(levelIDs))
 	dispositions := make([]ObjectDisposition, 0)
+	if intervalDefaulted {
+		dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigNormalized,
+			Reason: ReasonAggIntervalDefaulted, FieldPath: "items[0].query_configs[*].agg_interval",
+			Detail: fmt.Sprintf("agg_interval=%d", pythonDefaultAggInterval)})
+	}
+	if warning := step.warningDisposition(sourceID, interval); warning != nil {
+		dispositions = append(dispositions, *warning)
+	}
 	for _, rawLevel := range levelIDs {
 		levelID := uint32(rawLevel)
 		detect, ok := detectByLevel[levelID]
@@ -1842,8 +2213,9 @@ func compilePlan(
 			// level and takes its default. See borrowedLegacyDetect. The first
 			// one is taken whatever it holds, and one that cannot trigger is
 			// refused below as the missing trigger it is, not lent. Nor is one
-			// whose own level is written twice: the platform would lend the
-			// last of the two, and two triggers at one level are refused here.
+			// whose own level is written twice with different content: the
+			// platform would lend the last of the two, and two triggers at one
+			// level are refused here (sameLegacyDetect).
 			if _, twice := duplicateDetect[source.Detects[0].Level]; !twice {
 				detect, ok, borrowed = borrowedLegacyDetect(source.Detects[0]), true, true
 			}
@@ -1862,17 +2234,19 @@ func compilePlan(
 				break
 			}
 			if err := validateCanonicalAlgorithmQuery(raw.Type, item.QueryConfigs); err != nil {
-				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "ALGORITHM_QUERY_INVALID"})
+				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "ALGORITHM_QUERY_INVALID",
+					Detail: dispositionDetail(err.Error())})
 				invalid = true
 				break
 			}
-			config, err := compileAlgorithmConfig(raw, unit, levelID, projection, dataset.IdentityFields, interval, &levelInputs)
+			config, err := compileAlgorithmConfig(raw, unit, levelID, projection, dataset.IdentityFields, interval, step.Seconds, &levelInputs)
 			if err != nil {
 				reason := "ALGORITHM_CONFIG_INVALID"
 				if raw.Type == strategy.DetectorKindThreshold {
 					reason = "THRESHOLD_CONFIG_INVALID"
 				}
-				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: reason})
+				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: reason,
+					Detail: dispositionDetail(err.Error())})
 				invalid = true
 				break
 			}
@@ -1899,10 +2273,15 @@ func compilePlan(
 		}
 		recoveryConfig, recoveryEnabled, err := decodeLegacyRecovery(detect.Recovery)
 		if err != nil || (recoveryEnabled && recoveryConfig.CheckWindow == 0) {
-			dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "RECOVERY_CONFIG_INVALID"})
+			detail := "recovery_config.check_window is 0"
+			if err != nil {
+				detail = dispositionDetail(err.Error())
+			}
+			dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "RECOVERY_CONFIG_INVALID",
+				Detail: detail})
 			continue
 		}
-		triggerFields := map[string]any{"required_anomalies": detect.Trigger.Count, "step_seconds": interval, "window_size": detect.Trigger.CheckWindow}
+		triggerFields := map[string]any{"required_anomalies": detect.Trigger.Count, "step_seconds": step.Seconds, "window_size": detect.Trigger.CheckWindow}
 		if len(detect.Trigger.Uptime) > 0 && string(detect.Trigger.Uptime) != "null" {
 			triggerFields["uptime"] = detect.Trigger.Uptime
 			triggerFields["timezone_ref"] = "BUSINESS_LOCAL"
@@ -1929,12 +2308,13 @@ func compilePlan(
 	if len(levels) == 0 {
 		return contract.EvaluationPlanV2{}, planCompileFacts{}, dispositions, errors.New("alarmd controlplane: no executable level")
 	}
-	semantics := contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: uint32(interval), AggregationInterval: uint32(interval), EvaluationInterval: uint32(interval), LatenessTolerance: uint32(interval * 2)}
+	semantics := contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: uint32(interval), AggregationInterval: uint32(interval), EvaluationInterval: uint32(step.Seconds), LatenessTolerance: uint32(step.Seconds * 2)}
 	ir := contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2, Minor: 0}, RequiredFeatures: []string{}, StrategyRef: ref, ExecutionSemantics: semantics, InputProjection: projection, Levels: levels}
 	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection, SourceCompatibility: &contract.SourceCompatibilityV2{ItemID: strconv.FormatInt(item.ID, 10)}, StrategyIR: ir}
 	plan.TargetScope = targetScope
 	plan.EffectiveTimeSnapshot = append(json.RawMessage(nil), source.EffectiveTimeSnapshot...)
 	plan.TargetPlan = targetPlan
+	plan.GlobalBusiness = identity.GlobalBusiness
 	// A no-data configuration this build cannot compile suspends no-data
 	// detection for this Plan and nothing else.
 	//
@@ -1967,7 +2347,7 @@ func compilePlan(
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: dataset.DynamicDimensions, DimensionFields: append([]string{}, dataset.IdentityFields...)}
 		plan.SubjectFacts = frozenSubjectFacts(source, item)
 	}
-	scheduleSpec, refusal, err := planScheduleSpec(sourceID, plan, interval)
+	scheduleSpec, refusal, err := planScheduleSpec(sourceID, plan, step.Seconds)
 	if err != nil {
 		if refusal != nil {
 			dispositions = append(dispositions, *refusal)
@@ -2033,6 +2413,7 @@ func compileAlgorithmConfig(
 	projection contract.InputProjectionV2,
 	identityFields []string,
 	interval int64,
+	step int64,
 	inputs *compiledPlanInputs,
 ) (json.RawMessage, error) {
 	if raw.Type == strategy.DetectorKindThreshold {
@@ -2046,7 +2427,7 @@ func compileAlgorithmConfig(
 		DimensionFields: append([]string(nil), projection.DimensionFields...),
 		IdentityFields:  append([]string(nil), identityFields...),
 	}
-	requirements, err := inputs.buildRequirements(raw.Type, levelID, interval, inputProjection)
+	requirements, err := inputs.buildRequirements(raw.Type, levelID, interval, step, inputProjection)
 	if err != nil {
 		return nil, err
 	}
@@ -2055,7 +2436,7 @@ func compileAlgorithmConfig(
 		if err := json.Unmarshal(raw.Config, &parameters); err != nil {
 			return nil, err
 		}
-		offsets, err := strategy.TraditionalHistoryOffsets(raw.Type, parameters, interval)
+		offsets, err := strategy.TraditionalHistoryOffsets(raw.Type, parameters, step)
 		if err != nil {
 			return nil, err
 		}
@@ -2107,7 +2488,7 @@ func compileAlgorithmConfig(
 	}
 	if strategy.IsTraditionalComparison(raw.Type) {
 		var sourceConfig map[string]json.RawMessage
-		if err := json.Unmarshal(raw.Config, &sourceConfig); err != nil {
+		if err := json.Unmarshal(onlyKeysThePlatformReads(raw.Config, strategy.TraditionalComparisonKeys()), &sourceConfig); err != nil {
 			return nil, err
 		}
 		for key, value := range map[string]any{"data_unit": unit, "algorithm_unit": raw.UnitPrefix, "precision": 6, "missing_history_as_zero": inputs.missingHistoryAsZero, "input_projection": algorithmProjection, "requirements": algorithmRequirements} {
@@ -2209,6 +2590,7 @@ func (inputs *compiledPlanInputs) buildRequirements(
 	kind string,
 	levelID uint32,
 	interval int64,
+	step int64,
 	projection execution.InputProjection,
 ) ([]execution.DataRequirementTemplate, error) {
 	if err := inputs.primary.Validate(); err != nil {
@@ -2235,11 +2617,13 @@ func (inputs *compiledPlanInputs) buildRequirements(
 		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 			DatasetName: "previous", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
 			LogicalQueryRef: primaryRef,
-			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - 2*interval, EndOffsetSeconds: -inputs.primary.QueryDelaySeconds - interval, HalfOpen: true},
-			StepMillis:      inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
+			// The previous point is the previous detection, a step back, read
+			// over a whole aggregation window.
+			RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - step - interval, EndOffsetSeconds: -inputs.primary.QueryDelaySeconds - step, HalfOpen: true},
+			StepMillis:     inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
 			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
-			InputProjection: projection, PointOffsetsSeconds: []int64{interval},
-			NamedPoints: []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: interval}},
+			InputProjection: projection, PointOffsetsSeconds: []int64{step},
+			NamedPoints: []execution.NamedInputPoint{{Name: "previous", OffsetSeconds: step}},
 		})
 		if err != nil {
 			return nil, err
@@ -2257,9 +2641,9 @@ func (inputs *compiledPlanInputs) buildRequirements(
 			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - (1500 + interval), EndOffsetSeconds: -inputs.primary.QueryDelaySeconds, HalfOpen: true},
 			StepMillis:      inputs.osRestartHistory.StepMillis, AlignmentMillis: inputs.osRestartHistory.AlignmentMillis,
 			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
-			InputProjection: projection, PointOffsetsSeconds: []int64{interval, 600, 1500},
+			InputProjection: projection, PointOffsetsSeconds: []int64{step, 600, 1500},
 			NamedPoints: []execution.NamedInputPoint{
-				{Name: "previous", OffsetSeconds: interval}, {Name: "previous_10m", OffsetSeconds: 600},
+				{Name: "previous", OffsetSeconds: step}, {Name: "previous_10m", OffsetSeconds: 600},
 				{Name: "previous_25m", OffsetSeconds: 1500},
 			},
 		})
@@ -2336,29 +2720,51 @@ func isAlwaysActiveUptime(raw json.RawMessage) bool {
 		(uptime.TimeRanges[0].Start == "00:00:00" && uptime.TimeRanges[0].End == "23:59:59"))
 }
 
-func itemInterval(item legacyItem) (int64, error) {
+// pythonDefaultAggInterval is the 60 seconds Python reads a missing or zero
+// aggregation interval as (CONST_MINUTES).
+const pythonDefaultAggInterval = 60
+
+// itemInterval is the strategy's period, computed as Python's
+// Strategy.get_interval computes it (alarm_backends/core/control/strategy.py):
+//
+//	for query_config in items[0]["query_configs"]:
+//	    if "agg_interval" not in query_config: continue
+//	    ... min_interval = the least of those that carry one ...
+//	return min_interval or CONST_MINUTES
+//
+// A config without the key sits out; one that carries 0 takes part, makes the
+// least 0, and 0 or 60 is 60. So none carried, or a 0 among them, is 60, and
+// defaulted says so. A null sits out too - Python's first-value branch keeps
+// it None - which the writers never publish; a negative or non-integer value
+// is refused by name, where Python would run on it.
+func itemInterval(item legacyItem) (interval int64, defaulted bool, err error) {
 	if len(item.QueryConfigs) == 0 {
-		return 0, errors.New("alarmd controlplane: invalid query config")
+		return 0, false, errors.New("alarmd controlplane: invalid query config")
 	}
 	var minimum int64
+	carried := false
 	for _, raw := range item.QueryConfigs {
 		var query struct {
-			AggInterval json.Number `json:"agg_interval"`
+			AggInterval json.RawMessage `json:"agg_interval"`
 		}
-		decoder := json.NewDecoder(strings.NewReader(string(raw)))
-		decoder.UseNumber()
-		if decoder.Decode(&query) != nil {
-			return 0, errors.New("alarmd controlplane: invalid query config")
+		if json.Unmarshal(raw, &query) != nil {
+			return 0, false, errors.New("alarmd controlplane: invalid query config")
 		}
-		interval, err := strconv.ParseInt(query.AggInterval.String(), 10, 64)
-		if err != nil || interval <= 0 {
-			return 0, errors.New("alarmd controlplane: positive aggregation interval is required")
+		if len(query.AggInterval) == 0 || string(query.AggInterval) == "null" {
+			continue
 		}
-		if minimum == 0 || interval < minimum {
-			minimum = interval
+		value, parseErr := strconv.ParseInt(string(query.AggInterval), 10, 64)
+		if parseErr != nil || value < 0 {
+			return 0, false, errors.New("alarmd controlplane: aggregation interval must be a non-negative integer")
+		}
+		if !carried || value < minimum {
+			minimum, carried = value, true
 		}
 	}
-	return minimum, nil
+	if minimum == 0 {
+		return pythonDefaultAggInterval, true, nil
+	}
+	return minimum, false, nil
 }
 
 func thresholdConfig(raw legacyAlgorithm, unit string) (json.RawMessage, error) {

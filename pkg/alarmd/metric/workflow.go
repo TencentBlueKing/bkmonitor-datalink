@@ -9,6 +9,7 @@ import (
 type workflowMetrics struct {
 	ranges, expiredSlots   *prometheus.CounterVec
 	run, execute, progress *prometheus.CounterVec
+	progressCauses         *prometheus.CounterVec
 	attempted              prometheus.Counter
 	active, ready, delayed prometheus.Gauge
 	permitWait             *prometheus.HistogramVec
@@ -27,15 +28,22 @@ func newWorkflowMetrics() workflowMetrics {
 		run:          counter("run_one_return_total", "RunOne exits including panic, classified once by actual control flow.", "outcome"),
 		execute:      counter("execute_return_total", "Executor returns; not successful Slot completions.", "outcome"),
 		progress:     counter("progress_completed_total", "Acknowledged Progress commit observations by existing completion kind.", "kind"),
-		attempted:    prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "run_one_attempted_total", Help: "Returned attempted=true, including source retries without Execute."}),
-		active:       gauge("scheduler_active_executions", "Worker task occupancy, including preparation and execution, excluding pending result delivery."),
-		ready:        gauge("scheduler_ready_runners", "Runners in the outer ready queue."),
-		delayed:      gauge("scheduler_delayed_runners", "Runners in the outer delayed queue."),
-		permitWait:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "query_permit_wait_seconds", Help: "Actual query admission call wall duration including immediate grants and failures; parallel waits are not additive Slot time.", Buckets: []float64{0.001, 0.01, 0.1, 1, 5, 15, 30, 60}}, []string{"queue_kind"}),
+		progressCauses: prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem,
+			Name: "progress_completion_causes_total",
+			Help: "Acknowledged Slots that completed short of whole - COMPLETED_WITH_UNAVAILABLE, COMPLETED_WITH_PARTIAL_GAP - by " +
+				"the cause the completion carried (the most actionable of what the round hit) and that cause's reason: " +
+				"which Plan, Level or query it was and when are on the progress_committed line (completion_strategy, " +
+				"completion_level, completion_query). NONE is a completion that carried no cause."},
+			[]string{"completion_kind", "cause", "reason"}),
+		attempted:  prometheus.NewCounter(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "run_one_attempted_total", Help: "Returned attempted=true, including source retries without Execute."}),
+		active:     gauge("scheduler_active_executions", "Worker task occupancy, including preparation and execution, excluding pending result delivery."),
+		ready:      gauge("scheduler_ready_runners", "Runners in the outer ready queue."),
+		delayed:    gauge("scheduler_delayed_runners", "Runners in the outer delayed queue."),
+		permitWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "query_permit_wait_seconds", Help: "Actual query admission call wall duration including immediate grants and failures; parallel waits are not additive Slot time.", Buckets: []float64{0.001, 0.01, 0.1, 1, 5, 15, 30, 60}}, []string{"queue_kind"}),
 	}
 }
 func (m workflowMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.run, m.execute, m.progress, m.attempted, m.active, m.ready, m.delayed, m.permitWait, m.ranges, m.expiredSlots}
+	return []prometheus.Collector{m.run, m.execute, m.progress, m.progressCauses, m.attempted, m.active, m.ready, m.delayed, m.permitWait, m.ranges, m.expiredSlots}
 }
 func (m workflowMetrics) observe(o observability.Observation) {
 	switch {
@@ -62,12 +70,20 @@ func (m workflowMetrics) observe(o observability.Observation) {
 			}
 		}
 	case o.Component == observability.ComponentScheduler && o.Stage == observability.StageSlotCompleted:
-		if observability.ValidExecuteOutcome(o.ExecuteOutcome) {
+		// A round's outcome; a supplement completes no Slot and is counted by
+		// the lookback (lookback_supplement_windows_total).
+		if observability.ValidExecuteOutcome(o.ExecuteOutcome) && o.Operation != observability.OperationSupplement {
 			m.execute.WithLabelValues(o.ExecuteOutcome).Inc()
 		}
 	case o.Component == observability.ComponentProgress && o.Stage == observability.StageProgressCommitted:
 		if phaseTwoWorkCompleted(o) && observability.ValidProgressCompletionKind(o.ProgressCompletionKind) {
 			m.progress.WithLabelValues(o.ProgressCompletionKind).Inc()
+			switch o.ProgressCompletionKind {
+			case "COMPLETED_WITH_UNAVAILABLE", "COMPLETED_WITH_PARTIAL_GAP":
+				m.progressCauses.WithLabelValues(o.ProgressCompletionKind,
+					observability.NormalizeProgressCompletionCause(o.ProgressCompletionCause),
+					string(observability.NormalizeReason(observability.ReasonCode(o.ProgressCompletionReason), observability.ResultDegraded))).Inc()
+			}
 		}
 	case o.Component == observability.ComponentScheduler && o.Stage == observability.StageDispatcherSnapshot:
 		if f := o.Dispatcher; f != nil && f.Active >= 0 && f.Ready >= 0 && f.Delayed >= 0 {

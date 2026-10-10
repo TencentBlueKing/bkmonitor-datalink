@@ -121,6 +121,14 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		return ActivationState{}, errors.New("alarmd controlplane: valid Schedule activation publication is required")
 	}
 	failureClass = ActivationFailureClassDependencyIO
+	// A body without its header reads as an activation to every reader, and
+	// every guarded write compares against the header: without it each
+	// cutover below is refused on every round. It is written back first, as
+	// the body describes it; with both gone this does nothing and the first
+	// activation below takes over, as before.
+	if _, err := reconciler.repository.RebuildActivationHeader(ctx); err != nil {
+		return ActivationState{}, err
+	}
 	previous, err := reconciler.repository.LoadActivation(ctx)
 	if errors.Is(err, ErrActivationBodyMissing) {
 		// The header is here without its body. The first activation refuses

@@ -112,7 +112,7 @@ func PrepareSeriesEvaluationInputBuilder(header InternalExecutionHeader) (*Serie
 		queries:   make(map[PhysicalQueryDigest]PlannedPhysicalQueryRef, len(header.RequiredPhysicalQueries)),
 	}
 	for _, due := range header.DuePlans {
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			builder.consumers[ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}] = preparedSeriesEvaluationConsumer{}
 		}
 	}

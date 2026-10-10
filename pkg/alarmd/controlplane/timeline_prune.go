@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisbatch"
 )
 
 // A Schedule timeline is rewritten whole on every publication cutover, and
@@ -83,6 +84,16 @@ func progressFloor(progress *execution.ScheduleProgress) execution.EvaluationTim
 type ScheduleActivationProgressBatchReader interface {
 	ScheduleActivationProgressReader
 	LoadProgressBatch(context.Context, []execution.ProgressIdentity) ([]execution.ProgressLoadResult, []error)
+}
+
+// ScheduleActivationProgressBudgetReader is the batched form that reads a
+// batch within what the caller admits, one record's length at a time, and
+// says how many of the batch it read. A batch's replies are held at once and
+// a Progress record carrying an unfinished range may be a megabyte, so the
+// cutover reads in batches bounded by bytes (pruneTimelines).
+type ScheduleActivationProgressBudgetReader interface {
+	ScheduleActivationProgressReader
+	LoadProgressWithin(context.Context, []execution.ProgressIdentity, func(uint64) bool) ([]execution.ProgressLoadResult, []error, int)
 }
 
 // deadSegmentPrefix counts the leading closed Segments of a timeline whose
@@ -162,6 +173,23 @@ func (repository *RedisCatalogRepository) pruneTimelines(
 	for index, candidate := range candidates {
 		identities[index] = execution.ProgressIdentity{QueryGroup: updates[candidate.update].next.QueryGroup}
 	}
+	if budgeted, ok := progress.(ScheduleActivationProgressBudgetReader); ok {
+		// Batches of at most the timeline cache's bytes, and at least one
+		// record each: detection is never refused, and each batch is pruned
+		// before the next is read, so what is held at once is one batch.
+		bound := repository.cutoverReadBound()
+		for start := 0; start < len(identities); {
+			loads, errs, read := budgeted.LoadProgressWithin(ctx, identities[start:], redisbatch.FirstThenWithin(bound))
+			if read <= 0 || len(loads) != read || len(errs) != read {
+				return errors.New("alarmd controlplane: batched Progress load returned the wrong shape")
+			}
+			if err := pruneFromProgress(updates, candidates[start:start+read], loads, errs, facts); err != nil {
+				return err
+			}
+			start += read
+		}
+		return nil
+	}
 	var loads []execution.ProgressLoadResult
 	var errs []error
 	if batched, ok := progress.(ScheduleActivationProgressBatchReader); ok {
@@ -175,6 +203,24 @@ func (repository *RedisCatalogRepository) pruneTimelines(
 	if len(loads) != len(candidates) || len(errs) != len(candidates) {
 		return errors.New("alarmd controlplane: batched Progress load returned the wrong shape")
 	}
+	return pruneFromProgress(updates, candidates, loads, errs, facts)
+}
+
+// cutoverReadBound is the most bytes one batch of a cutover's reads holds at
+// once, of timelines or of Progress: the timeline cache's bound, derived
+// from the container (config.DeriveControlTimelineCache), which the
+// timelines the cutover reads already take.
+func (repository *RedisCatalogRepository) cutoverReadBound() int {
+	if repository.controlCache == nil {
+		return controlTimelineCacheDefaultMaxBytes
+	}
+	return repository.controlCache.timelineByteBound()
+}
+
+// pruneFromProgress prunes each candidate from its Progress, loads and errs
+// in the candidates' order.
+func pruneFromProgress(updates []scheduleTimelineUpdate, candidates []pruneCandidate, loads []execution.ProgressLoadResult, errs []error,
+	facts *cutoverFacts) error {
 	for index, candidate := range candidates {
 		switch {
 		case errs[index] != nil:
@@ -219,6 +265,7 @@ type cutoverFacts struct {
 	payloadBytes    int
 	timelineBytes   []int
 	decisions       map[string]int
+	readHoldLinks   map[string]int
 	read            int
 	revisionsFolded int
 	contentSource   string
@@ -228,7 +275,7 @@ type cutoverFacts struct {
 }
 
 func newCutoverFacts() *cutoverFacts {
-	return &cutoverFacts{started: time.Now(), skipped: make(map[string]int), decisions: make(map[string]int)}
+	return &cutoverFacts{started: time.Now(), skipped: make(map[string]int), decisions: make(map[string]int), readHoldLinks: make(map[string]int)}
 }
 
 func (facts *cutoverFacts) decided(decision contentCutoverDecision) {
@@ -289,7 +336,7 @@ func (repository *RedisCatalogRepository) observeCutover(ctx context.Context, fa
 			Timelines: len(facts.timelineBytes), PayloadBytes: facts.payloadBytes,
 			MaxTimelineBytes: largest, TimelineBytes: facts.timelineBytes, SegmentsPruned: facts.pruned,
 			PrunesSkipped: facts.skipped, Duration: time.Since(facts.started),
-			QueryGroups: facts.decisions, TimelinesRead: facts.read, RevisionsFolded: facts.revisionsFolded,
+			QueryGroups: facts.decisions, ReadHoldLinks: facts.readHoldLinks, TimelinesRead: facts.read, RevisionsFolded: facts.revisionsFolded,
 			ContentSource: facts.contentSource,
 		},
 	})

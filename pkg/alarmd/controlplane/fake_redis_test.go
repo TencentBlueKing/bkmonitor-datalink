@@ -19,12 +19,29 @@ type scopeRedis struct {
 	gets, mgets, strlens int
 	roundTrips           int
 	getError             error
+	// answered is, per key, the error Redis answers it with, as it answers
+	// a key holding another type; the other keys of its pipeline read.
+	answered map[string]error
+	// onGet, when set, sees every key read, before the reply.
+	onGet func(key string)
 }
+
+// answeredError is Redis answering a command with an error.
+type answeredError string
+
+func (err answeredError) Error() string { return string(err) }
+func (answeredError) RedisError()       {}
 
 func (c *scopeRedis) Get(ctx context.Context, k string) *redis.StringCmd {
 	c.gets++
+	if c.onGet != nil {
+		c.onGet(k)
+	}
 	if c.getError != nil {
 		return redis.NewStringResult("", c.getError)
+	}
+	if err := c.answered[k]; err != nil {
+		return redis.NewStringResult("", err)
 	}
 	v, ok := c.values[k]
 	if !ok {
@@ -37,6 +54,9 @@ func (c *scopeRedis) StrLen(ctx context.Context, k string) *redis.IntCmd {
 	c.strlens++
 	if c.getError != nil {
 		return redis.NewIntResult(0, c.getError)
+	}
+	if err := c.answered[k]; err != nil {
+		return redis.NewIntResult(0, err)
 	}
 	return redis.NewIntResult(int64(len(c.values[k])), ctx.Err())
 }

@@ -36,7 +36,7 @@ func TestASlotGivenUpOnNamesWhatHeldTheRoundBefore(t *testing.T) {
 	ctx := withHeldBy(context.Background(), held)
 	deadline := int64(slot)*1000 + 25_000
 
-	if _, _, err := source.classifyRecovery(ctx, slot, deadline, time.Unix(int64(slot)+46, 0)); err != nil {
+	if _, _, err := source.classifyRecovery(ctx, slot, deadline, 0, time.Unix(int64(slot)+46, 0), execution.OwnerFence{}); err != nil {
 		t.Fatalf("classifyRecovery() error = %v", err)
 	}
 	if len(observer.facts) != 1 {

@@ -32,7 +32,7 @@ func TestFleetVerdictCountsCooldownObjectsInBothColumns(t *testing.T) {
 		{name: "in the demoted list", view: fleet.View{Covered: 1, Determined: 1, Demoted: []fleet.Anomaly{held}, DemotedTotal: 1}},
 	} {
 		t.Run(column.name, func(t *testing.T) {
-			verdict := fleetVerdictOf(column.view, at)
+			verdict := verdictOfRows(column.view, at)
 			if verdict.QueryCooldown == nil {
 				t.Fatal("cooldown count absent for a covered view")
 			}
@@ -43,7 +43,7 @@ func TestFleetVerdictCountsCooldownObjectsInBothColumns(t *testing.T) {
 	}
 
 	withoutEvidence := fleet.View{Covered: 1, Determined: 1, Demoted: []fleet.Anomaly{{QueryGroup: "bare", Kind: fleet.KindQueryCooldown, Since: at}}}
-	if verdict := fleetVerdictOf(withoutEvidence, at); verdict.QueryCooldown == nil || *verdict.QueryCooldown != 0 {
+	if verdict := verdictOfRows(withoutEvidence, at); verdict.QueryCooldown == nil || *verdict.QueryCooldown != 0 {
 		t.Fatalf("a demoted object carrying no cooldown evidence was counted as a cooldown object: %+v", verdict.QueryCooldown)
 	}
 }

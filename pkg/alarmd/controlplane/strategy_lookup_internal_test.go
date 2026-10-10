@@ -101,3 +101,26 @@ func TestRetainedIsTheCompilersWordForALastGoodPlanKeptInPlace(t *testing.T) {
 		t.Fatalf("a strategy with no Plan = %+v, want found and not retained", answer)
 	}
 }
+
+// The lookup answers Global from the round's global records, for a strategy
+// whatever it compiled to - a Plan, only dispositions, or nothing recorded -
+// and not for any other; an index without records marks none.
+func TestTheStrategyLookupAnswersGlobalFromTheRoundsRecords(t *testing.T) {
+	groups := []QueryGroup{{Identity: "qg-a",
+		Plans: []FrozenPlan{{Identity: execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "7"}}}}}
+	dispositions := []ObjectDisposition{
+		{SourceID: "7", Scope: "PLAN", Disposition: DispositionAccepted},
+		{SourceID: "8", Scope: "PLAN", Disposition: DispositionUnsupported, Reason: ReasonGlobalStrategyUnsupported},
+		{SourceID: "9", Scope: "PLAN", Disposition: DispositionAccepted},
+	}
+	index := buildStrategyIndex(SnapshotPublicationRef{SnapshotRevision: "rev"}, groups, dispositions).
+		withGlobal([]GlobalStrategy{{SourceID: "7"}, {SourceID: "8", Refusal: GlobalBusinessQueryKind}})
+	for id, want := range map[string]bool{"7": true, "8": true, "9": false, "4242": false} {
+		if got := index.lookup(id).Global; got != want {
+			t.Fatalf("lookup(%s).Global = %t, want %t", id, got, want)
+		}
+	}
+	if plain := buildStrategyIndex(SnapshotPublicationRef{}, groups, dispositions).withGlobal(nil); plain.lookup("7").Global {
+		t.Fatal("an index without global records marked a strategy global")
+	}
+}

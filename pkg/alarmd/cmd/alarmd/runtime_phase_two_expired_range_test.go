@@ -32,6 +32,28 @@ type expiredRangeBundleFixture struct {
 	events         *recordingPhaseTwoEventSink
 }
 
+// heldSince makes the fixture's process the owner of every Query Group from
+// at: the backlog a clock jump opens after it is this owner's own falling
+// behind, which the distance rule gives up on as a range. Without it the
+// jump is the first round this process holds them, a takeover, and the
+// Slots inside the replay age are replayed instead (scheduler.TakeoverClock).
+func (f expiredRangeBundleFixture) heldSince(t *testing.T, at time.Time) {
+	t.Helper()
+	f.bundle.mu.RLock()
+	defer f.bundle.mu.RUnlock()
+	for queryGroup, lifecycle := range f.bundle.runners {
+		group, ok := lifecycle.runner.(*productionPhaseTwoQueryGroup)
+		if !ok {
+			t.Fatalf("%s runs as %T, not a production Query Group", queryGroup, lifecycle.runner)
+		}
+		lease, held := group.session.Current()
+		if !held {
+			t.Fatalf("%s holds no lease", queryGroup)
+		}
+		f.production.takeovers.Anchor(queryGroup, lease.Fence, at)
+	}
+}
+
 func TestExpiredRangeSharesF2WithHealthyFull(t *testing.T) {
 	testExpiredRangeSharesF2WithHealthyFull(t, false)
 }
@@ -84,6 +106,7 @@ func testExpiredRangeSharesF2WithHealthyFull(t *testing.T, distance bool) {
 	if hot == "" || healthy == "" {
 		t.Fatal("fixture requires distinct hot and healthy groups")
 	}
+	f.heldSince(t, time.Unix(f.base, 0))
 	slot = f.base + 1800
 	f.clock.Store(slot*1000 + 100)
 	first, attempted, err := settledRunner(f.bundle, hot).RunOne(ctx)

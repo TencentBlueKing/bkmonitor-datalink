@@ -88,3 +88,47 @@ func TestPhaseTwoRuntimeObserverKeepsOneLinePerReasonAndQueryGroup(t *testing.T)
 	// Group, not per reason code, and a Query Group spending its own budget
 	// must not consume anyone else's.
 }
+
+// The process's observer reports its own lines: the recorder beside it reads
+// log_lines_total from the logging half, written for every line in the log
+// and limited for every one its limiter held back.
+func TestPhaseTwoRuntimeObserverReportsItsLinesByStage(t *testing.T) {
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	observer, err := newPhaseTwoRuntimeObserver(recorder, observability.New("alarmd", &output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "query-group-a"})
+	for round := 0; round <= phaseTwoDiagnosticLogMaxEvents; round++ {
+		observer.Observe(ctx, observability.Observation{
+			Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+			Result: observability.Result(observability.ResultFailed), ReasonCode: observability.ReasonInternalUnknown,
+			Err: errors.New("alarmd worker: duplicate completion binding"),
+		})
+	}
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "bkmonitor_alarmd_log_lines_total" {
+			continue
+		}
+		for _, sample := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range sample.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["stage"] == string(observability.StageQueryCompleted) {
+				counts[labels["admission"]] = sample.GetCounter().GetValue()
+			}
+		}
+	}
+	lines := len(strings.Split(strings.TrimSpace(output.String()), "\n"))
+	if counts["written"] != float64(lines) || counts["written"] != phaseTwoDiagnosticLogMaxEvents || counts["limited"] != 1 {
+		t.Fatalf("query_completed written %v limited %v, %d lines in the log; want the lines written and the one held back",
+			counts["written"], counts["limited"], lines)
+	}
+}

@@ -19,13 +19,12 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 func TestRedisBackendStoreRoundTripTTLAndReconnect(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	server := startRedisServer(t, executable, address)
 

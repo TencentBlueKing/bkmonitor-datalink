@@ -105,6 +105,12 @@ func TestTheEvidenceClauseSaysWhereTheHolesFall(t *testing.T) {
 		"incomplete first": {shortWindows(6, 9, VerdictInputIncomplete, VerdictPointsUnusable), "最差窗口 6/9，缺的分钟里 1 分钟本侧没查全"},
 		"unusable next":    {shortWindows(6, 9, VerdictPointsUnusable, VerdictUnknown), "最差窗口 6/9，1 分钟的记录检测用不了"},
 		"unknown last":     {shortWindows(6, 9, VerdictUnknown, VerdictDataAbsentWhenQueried), "最差窗口 6/9，缺的分钟里 1 分钟说不出是谁的"},
+		"held by the line": {func() *HistoryCoverage {
+			coverage := shortWindows(6, 9, VerdictDataAbsentWhenQueried)
+			coverage.Windows[0].HolesBy = WindowHoleCounts{AnsweredWithoutSeries: 2, HeldByLine: 1}
+			coverage.Windows[0].Verdict = VerdictUnknown
+			return coverage
+		}(), "最差窗口 6/9，缺的分钟里 1 分钟说不出是谁的"},
 	} {
 		if got := evidenceClause(Anomaly{Coverage: testCase.coverage}); got != testCase.want {
 			t.Errorf("%s: clause = %q, want %q", name, got, testCase.want)
@@ -126,7 +132,7 @@ func TestTheStrategyListIsServedWithItsWords(t *testing.T) {
 	snapshots[1].OwnedObjects = []string{"qg-two-strategies"}
 	row := anomaly("qg-two-strategies")
 	row.Replica = "pod-b"
-	row.Strategies = []StrategyRef{{StrategyID: "8930", BusinessID: "2"}, {StrategyID: "8931", BusinessID: "2"}}
+	row.Strategies = []StrategyRef{{StrategyID: "854", BusinessID: "2"}, {StrategyID: "855", BusinessID: "2"}}
 	snapshots[1].Anomalies = []Anomaly{row}
 	snapshots[1].TotalAnomalies = 1
 	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 2, Known: true, IDs: []string{"qg-other", "qg-two-strategies"}}},
@@ -145,7 +151,9 @@ func TestTheStrategyListIsServedWithItsWords(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Words.State) != len(StateWords) || len(body.Words.Action) != len(ActionWords) || len(body.Words.Health) != 3 {
+	// The states rendered are every word a row can carry, the diagnosis's
+	// UNKNOWN among them.
+	if len(body.Words.State) != len(DiagnosisVerdicts()) || len(body.Words.Action) != len(ActionWords) || len(body.Words.Health) != 3 {
 		t.Fatalf("words = %+v, want the whole vocabulary on the response", body.Words)
 	}
 	if body.Summary.Strategies != 2 || body.Summary.Lead == nil {
@@ -154,7 +162,7 @@ func TestTheStrategyListIsServedWithItsWords(t *testing.T) {
 	if body.Listed != 1 || body.Total != 2 || !body.Truncated {
 		t.Fatalf("listed/total/truncated = %d/%d/%v, want 1 of the 2 lines the row's two strategies make, and said so", body.Listed, body.Total, body.Truncated)
 	}
-	if body.Strategies[0].StrategyID != "8930" || body.Strategies[0].Line == "" {
+	if body.Strategies[0].StrategyID != "854" || body.Strategies[0].Line == "" {
 		t.Fatalf("line = %+v", body.Strategies[0])
 	}
 	for _, bad := range []string{"/api/strategies?state=MOSTLY_FINE", "/api/strategies?action=SHRUG", "/api/strategies?limit=0"} {

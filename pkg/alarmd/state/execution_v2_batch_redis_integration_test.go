@@ -8,7 +8,6 @@ package state
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
@@ -63,10 +63,7 @@ type redisBatchFixture struct {
 
 func newRedisBatchFixture(t *testing.T) *redisBatchFixture {
 	t.Helper()
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
 	raw := redis.NewClient(&redis.Options{Addr: address, DialTimeout: time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, PoolSize: 4})

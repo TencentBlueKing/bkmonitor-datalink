@@ -12,6 +12,8 @@ package fleet
 import (
 	"strings"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // Blocked is the one shape every failure on a row is read in: which step of
@@ -51,6 +53,14 @@ type Blocked struct {
 	// Effect is what the failure did to the detection.
 	Retrying bool   `json:"retrying"`
 	Effect   Effect `json:"effect"`
+	// Timing is this round's failed query read against its budget, when it
+	// measured it: the settling wait by design, how late after it the query
+	// began, what was left to its deadline then, and what it used. It is
+	// what the Dependency above cannot say for a timeout: a backend slow to
+	// answer uses its whole budget having begun on time, a query begun late
+	// had little left, and a budget short to begin with is small in all
+	// three added together. See observability.QueryTiming.
+	Timing *observability.QueryTiming `json:"timing,omitempty"`
 }
 
 // Stage is the step of the work a failure stopped at.
@@ -315,7 +325,12 @@ var failureFacets = map[string]facets{
 	// or a partial answer does not say where the time went.
 	"QUERY_TIMEOUT":     {StageQuery, ClassTimeout, ""},
 	"QUERY_UNAVAILABLE": {StageQuery, ClassUnavailable, ""},
-	"QUERY_PARTIAL":     {StageQuery, ClassUnavailable, ""},
+	// Answered and refused: the table or field does not route in the space.
+	"QUERY_TARGET_MISSING": {StageQuery, ClassRefused, ""},
+	// The answer came back bucketed on the aggregation grid, which a Plan
+	// detected every step cannot use: refused for the strategy's step.
+	"DETECT_INTERVAL_STORAGE_NOT_SLIDING": {StageQuery, ClassRefused, ""},
+	"QUERY_PARTIAL":                       {StageQuery, ClassUnavailable, ""},
 	// The backend answered, completely, with nothing: the dependency data is
 	// not there. Not unavailable -- the query succeeded -- and where the data
 	// went is not this deployment's to say.
@@ -327,6 +342,10 @@ var failureFacets = map[string]facets{
 	// The window: the detection ran and could not decide.
 	"HISTORY_GAPPED":  {StageEvaluate, ClassUnlocated, ""},
 	"HISTORY_WARMING": {StageEvaluate, ClassUnlocated, ""},
+	// A Level held by a guard an earlier round's gap opened, on a round that
+	// answered whole: where it stops is evaluation, and what holds it is the
+	// guard's warmup, not a dependency.
+	"GAP_GUARD_WARMING": {StageEvaluate, ClassUnlocated, ""},
 
 	// The strategy's own configuration.
 	"CONFIG_DRIFT":            {StageConfig, ClassConfig, DependencyNone},
@@ -348,6 +367,17 @@ var failureFacets = map[string]facets{
 	"EFFECTIVE_TIME_CALENDAR_IDENTITY_INVALID": {StageConfig, ClassConfig, DependencyControlSource},
 	"EFFECTIVE_TIME_CALENDAR_DUPLICATE":        {StageConfig, ClassConfig, DependencyControlSource},
 	"EFFECTIVE_TIME_CALENDAR_ITEMS_MISSING":    {StageConfig, ClassConfig, DependencyControlSource},
+	// A calendar item or the business timezone in the snapshot that does not
+	// parse: arrived from the control source, and readable, and wrong.
+	"EFFECTIVE_TIME_ITEM_DUPLICATE":       {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_ITEM_INVALID":         {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_ITEM_TIME_INVALID":    {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_TIME_KIND_INVALID":    {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_TIMEZONE_INVALID":     {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_REPEAT_INVALID":       {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_REPEAT_LIST_INVALID":  {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_REPEAT_EVERY_INVALID": {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_REPEAT_UNTIL_INVALID": {StageConfig, ClassConfig, DependencyControlSource},
 	// A terminal this build cannot classify. Config's stage, because it is a
 	// definition this build refused; the compiler's own code travels with the
 	// disposition for the reader who has to find out which part.
@@ -424,7 +454,9 @@ var dependencySignatures = []struct {
 // no failure: a normal object, or one whose data stopped, which is not
 // this deployment stuck anywhere.
 func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
-	if anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound || anomaly.Kind == KindRetainedShareApproaching {
+	if anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound || anomaly.Kind == KindRetainedShareApproaching ||
+		anomaly.Kind == KindReadBeforeComplete || anomaly.Kind == KindReadHeld || anomaly.Kind == KindLatePastRound ||
+		anomaly.Kind == KindLateSeriesMissed {
 		return nil
 	}
 	// A span every Slot of which an earlier attempt executed, or an object
@@ -513,6 +545,15 @@ func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
 		if blocked.Code == "" {
 			blocked.Code = anomaly.Failure.Code
 		}
+	}
+	// A round that failed on a query whose deadline passed while this
+	// deployment was still delivering what had arrived ran out of time on
+	// this side: a timeout at the query step, with no dependency named - not
+	// the unlocated step its OTHER code gives, nor the configuration a
+	// source error reads as.
+	if deliveryTimedOutThisRound(anomaly) {
+		blocked.Stage, blocked.Class = StageQuery, ClassTimeout
+		blocked.Dependency, blocked.DependencyEvidence = DependencyNone, dependencyByCode
 	}
 	// A failure writing the round's events is read by its words, not by its
 	// code: the code says the ACK did not come and nothing about why. The
@@ -607,6 +648,12 @@ func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
 		blocked.Text = anomaly.Failure.Detail
 	case failureCurrent && anomaly.Failure.Text != "":
 		blocked.Text = anomaly.Failure.Text
+	}
+	// Only this round's failure: a kept failure's timing is an earlier
+	// round's, and read as this one's it would time the wrong query.
+	if failureCurrent && anomaly.Failure.Timing != nil {
+		timing := *anomaly.Failure.Timing
+		blocked.Timing = &timing
 	}
 	if !latest.IsZero() {
 		at := latest

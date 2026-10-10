@@ -204,10 +204,18 @@ func (reconciler *SourceReconciler) DepartedStrategies() ([]DepartedStrategy, ui
 // round's observation has to be unable to confirm anything the previous
 // round saw. Two reads never share a moment; two rounds reusing one read
 // always do.
+//
+// HoldsLastGood is the publisher's statement, read with this observation's
+// change signal (SourceChangeSignal.HoldsLastGoodFor), that a strategy this
+// list does not name left it for a fact about the strategy itself, not
+// because publishing it failed. It is true only when the statement names the
+// very strategy_ids bytes this observation was read from; see
+// sourceRoundMemory.holdsLastGood.
 type ObservedSnapshot struct {
-	Strategies  []DepartedStrategy
-	Observation string
-	ReadAt      time.Time
+	Strategies    []DepartedStrategy
+	Observation   string
+	ReadAt        time.Time
+	HoldsLastGood bool
 }
 
 // ObservedSnapshot returns the last observation, and whether there is one.
@@ -217,7 +225,8 @@ func (reconciler *SourceReconciler) ObservedSnapshot() (ObservedSnapshot, bool) 
 	if reconciler == nil || reconciler.memory == nil || len(reconciler.memory.cycle.strategies) == 0 {
 		return ObservedSnapshot{}, false
 	}
-	observed := ObservedSnapshot{Observation: reconciler.memory.readAt.UTC().Format(time.RFC3339Nano), ReadAt: reconciler.memory.readAt}
+	observed := ObservedSnapshot{Observation: reconciler.memory.readAt.UTC().Format(time.RFC3339Nano), ReadAt: reconciler.memory.readAt,
+		HoldsLastGood: reconciler.memory.holdsLastGood}
 	for _, strategy := range reconciler.memory.cycle.strategies {
 		business, err := strconv.ParseInt(strategy.Identity.BusinessID, 10, 64)
 		if err != nil {

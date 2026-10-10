@@ -154,4 +154,5 @@ func (cache *Cache) gateStats(stats *Stats) {
 		}
 	}
 	stats.RecentOwnHeld = cache.recentOwnHeld.ordered()
+	cache.departureStats(stats)
 }

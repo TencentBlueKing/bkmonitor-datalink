@@ -6,6 +6,7 @@
 package progress
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -1207,5 +1208,86 @@ func TestLoadProgressBatchKeepsEveryEntryInPlace(t *testing.T) {
 	single, singleErrs := mustStore(t, plain).LoadProgressBatch(context.Background(), []execution.ProgressIdentity{found})
 	if singleErrs[0] != nil || single[0].Status != execution.ProgressFound || *single[0].Progress != persisted {
 		t.Fatalf("fallback entry=(%+v, %v)", single[0], singleErrs[0])
+	}
+}
+
+// budgetControlFake is batchControlFake reading within what is admitted,
+// with keys Redis answers with an error of their own.
+type budgetControlFake struct {
+	batchControlFake
+	refused map[execution.QueryGroupIdentity]bool
+	asked   [][]execution.QueryGroupIdentity
+}
+
+func (fake *budgetControlFake) ReadControlWithin(_ context.Context, groups []execution.QueryGroupIdentity, _ string,
+	admit func(uint64) bool) ([]ownership.ControlRead, int, error) {
+	fake.asked = append(fake.asked, append([]execution.QueryGroupIdentity(nil), groups...))
+	reads := []ownership.ControlRead{}
+	for _, group := range groups {
+		if fake.refused[group] {
+			if !admit(0) {
+				break
+			}
+			reads = append(reads, ownership.ControlRead{Err: errors.New("WRONGTYPE")})
+			continue
+		}
+		value, ok := fake.values[group]
+		if !admit(uint64(len(value))) {
+			break
+		}
+		if !ok {
+			reads = append(reads, ownership.ControlRead{Missing: true})
+			continue
+		}
+		reads = append(reads, ownership.ControlRead{Raw: value})
+	}
+	return reads, len(reads), nil
+}
+
+// A read within what is admitted answers for the identities up to the first
+// record refused, each in its own place: an identity naming no Query Group
+// is its error without a read, a key Redis answered with an error is that
+// entry's error, and the record refused and every one after it are left.
+func TestLoadProgressWithinAnswersThePrefixAdmittedInPlace(t *testing.T) {
+	found := execution.ProgressIdentity{QueryGroup: "found"}
+	persisted := execution.ScheduleProgress{Identity: found, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull}
+	after := execution.ProgressIdentity{QueryGroup: "after"}
+	fake := &budgetControlFake{batchControlFake: batchControlFake{values: map[execution.QueryGroupIdentity][]byte{
+		"found": mustEncode(t, persisted),
+		"big":   bytes.Repeat([]byte("x"), 10_000),
+		"after": mustEncode(t, execution.ScheduleProgress{Identity: after, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull}),
+	}}, refused: map[execution.QueryGroupIdentity]bool{"broken": true}}
+	store := mustStore(t, fake)
+	spent, charges := uint64(0), []uint64{}
+	within := func(size uint64) bool {
+		charges = append(charges, size)
+		if spent+size > 1_000 {
+			return false
+		}
+		spent += size
+		return true
+	}
+	identities := []execution.ProgressIdentity{found, {}, {QueryGroup: "broken"}, {QueryGroup: "big"}, after}
+	results, errs, read := store.LoadProgressWithin(context.Background(), identities, within)
+	if read != 3 || len(results) != 3 || len(errs) != 3 {
+		t.Fatalf("read %d with %d results, want the three before the record refused", read, len(results))
+	}
+	if errs[0] != nil || results[0].Progress == nil || *results[0].Progress != persisted {
+		t.Fatalf("found entry (%+v, %v)", results[0], errs[0])
+	}
+	if errs[1] == nil || errs[2] == nil || errs[2].Error() != "WRONGTYPE" {
+		t.Fatalf("errors %v and %v, want the incomplete identity's and the key's own", errs[1], errs[2])
+	}
+	if len(fake.asked) != 1 || len(fake.asked[0]) != 4 {
+		t.Fatalf("asked %v, want one read of the four identities that name a Query Group", fake.asked)
+	}
+	// Each record is admitted as 3/2 of its length: held raw, then decoded.
+	if length := uint64(len(fake.values["found"])); len(charges) != 3 || charges[0] != length+length/2 || charges[2] != 15_000 {
+		t.Fatalf("admitted as %v, want 3/2 of each record's length (found is %d bytes, big 10,000)", charges, length)
+	}
+	// Without the budgeted store the whole batch is read.
+	plain := &batchControlFake{values: fake.values}
+	if _, _, read := mustStore(t, plain).LoadProgressWithin(context.Background(), identities, within); read != len(identities) {
+		t.Fatalf("read %d without the budgeted store, want all %d", read, len(identities))
 	}
 }

@@ -583,7 +583,7 @@ func runtimeClosureG4Plan(t *testing.T, strategyID, businessID string, levels ..
 		}
 		config, err := compileAlgorithmConfig(
 			legacyAlgorithm{Level: level.levelID, Type: level.kind, Config: rawConfig}, "percent", level.levelID,
-			projection, runtimeClosureDatasetContract().IdentityFields, 60, inputs,
+			projection, runtimeClosureDatasetContract().IdentityFields, 60, 60, inputs,
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -692,7 +692,7 @@ func runtimeClosureCompile(t *testing.T, plan contract.EvaluationPlanV2, wantLev
 		t.Fatal(err)
 	}
 	compiled, ok := result.Plan()
-	if !ok || len(compiled.Levels()) != wantLevels {
+	if !ok || compiled.Levels().Len() != wantLevels {
 		t.Fatalf("Compile() plan=%+v terminals=%+v, want %d retained Levels", compiled, result.LevelTerminals(), wantLevels)
 	}
 	return compiled
@@ -773,7 +773,7 @@ func assertRuntimeCatalogPlans(
 				t.Fatalf("compile retained Plan %s: %v", plan.Identity.StrategyID, err)
 			}
 			compiled, ok := result.Plan()
-			if !ok || result.PlanTerminal() != nil || len(result.LevelTerminals()) != 0 || len(compiled.Levels()) == 0 {
+			if !ok || result.PlanTerminal() != nil || len(result.LevelTerminals()) != 0 || compiled.Levels().Len() == 0 {
 				t.Fatalf("retained Plan %s is not executable: result=%+v", plan.Identity.StrategyID, result)
 			}
 		}

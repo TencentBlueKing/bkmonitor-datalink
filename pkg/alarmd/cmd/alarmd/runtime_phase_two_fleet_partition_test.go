@@ -128,3 +128,62 @@ func TestOverdueRowsDoNotRepeatAnObjectAmongThemselves(t *testing.T) {
 		t.Errorf("kept %d rows for one object, want 1", len(kept))
 	}
 }
+
+// The lookback's report of objects read early is on the published snapshot,
+// under the strategies the tracker saw evaluate on them; a publisher with no
+// lookback publishes no such line.
+func TestThePublishedSnapshotCarriesTheObjectsReadEarly(t *testing.T) {
+	at := time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
+	now := func() time.Time { return at }
+	tracker := fleet.NewTracker(nil, "replica-1", now)
+	tracker.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
+		ExecuteOutcome: "COMPLETED", Result: observability.ResultSuccess,
+		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "4101", BusinessID: "2", EvaluationTime: at.Unix()},
+	})
+	publisher := fleetPublisher{tracker: tracker, replica: "replica-1", now: now,
+		owned: func() []execution.QueryGroupIdentity { return []execution.QueryGroupIdentity{"qg-late"} }}
+	if snapshot := publisher.snapshot(context.Background()); len(snapshot.ReadEarly) != 0 {
+		t.Fatalf("a publisher without a lookback published %+v", snapshot.ReadEarly)
+	}
+	publisher.readEarly = func() map[string]fleet.ReadEarlyFacts {
+		return map[string]fleet.ReadEarlyFacts{"qg-late": {StepSeconds: 60, CurrentDelaySeconds: 60, SuggestedDelaySeconds: 180, Since: at}}
+	}
+	snapshot := publisher.snapshot(context.Background())
+	if len(snapshot.ReadEarly) != 1 || snapshot.ReadEarly[0].QueryGroup != "qg-late" || snapshot.ReadEarly[0].ReadEarly.SuggestedDelaySeconds != 180 ||
+		len(snapshot.ReadEarly[0].Strategies) != 1 {
+		t.Fatalf("snapshot read_early %+v", snapshot.ReadEarly)
+	}
+}
+
+// The lookback's report of late series its supplements could not recover is
+// on the published snapshot, one row per object by kind; a publisher with no
+// lookback publishes none.
+func TestThePublishedSnapshotCarriesTheUnrecoveredLateSeries(t *testing.T) {
+	at := time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
+	now := func() time.Time { return at }
+	tracker := fleet.NewTracker(nil, "replica-1", now)
+	for _, queryGroup := range []string{"qg-past", "qg-tail"} {
+		tracker.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
+			ExecuteOutcome: "COMPLETED", Result: observability.ResultSuccess,
+			Trace: observability.TraceFields{QueryGroupKey: queryGroup, StrategyID: "4101", BusinessID: "2", EvaluationTime: at.Unix()},
+		})
+	}
+	publisher := fleetPublisher{tracker: tracker, replica: "replica-1", now: now,
+		owned: func() []execution.QueryGroupIdentity { return []execution.QueryGroupIdentity{"qg-past", "qg-tail"} }}
+	if snapshot := publisher.snapshot(context.Background()); len(snapshot.LateSeries) != 0 {
+		t.Fatalf("a publisher without a lookback published %+v", snapshot.LateSeries)
+	}
+	publisher.lateSeries = func() (map[string]fleet.LatePastRoundFacts, map[string]fleet.LateSeriesMissedFacts) {
+		return map[string]fleet.LatePastRoundFacts{"qg-past": {StepSeconds: 60, CurrentDelaySeconds: 60, SuggestedDelaySeconds: 300, Since: at}},
+			map[string]fleet.LateSeriesMissedFacts{"qg-tail": {Windows: 1, CrossedSeries: 2, Since: at}}
+	}
+	kinds := map[string]string{}
+	for _, row := range publisher.snapshot(context.Background()).LateSeries {
+		kinds[row.QueryGroup] = row.Kind
+	}
+	if kinds["qg-past"] != fleet.KindLatePastRound || kinds["qg-tail"] != fleet.KindLateSeriesMissed || len(kinds) != 2 {
+		t.Fatalf("snapshot late_series kinds %v", kinds)
+	}
+}

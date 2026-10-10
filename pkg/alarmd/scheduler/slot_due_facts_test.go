@@ -126,7 +126,7 @@ func TestRunnerBoundsFollowTheReturnPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRunner() error = %v", err)
 		}
-		release, acquired := flights.tryAcquire("query-group-1")
+		release, _, acquired := flights.tryAcquireAs("query-group-1", FlightHeldBySlot)
 		if !acquired {
 			t.Fatal("could not hold the single-flight gate")
 		}

@@ -45,6 +45,8 @@ type Broker interface {
 	Archive(ctx context.Context, msg *task.TaskMessage, errMsg string) error
 	// ForwardIfReady forward task
 	ForwardIfReady(qnames ...string) error
+	// RecoverExpired moves active tasks with expired leases back to pending atomically.
+	RecoverExpired(cutoff time.Time, qnames ...string) (int, error)
 	// DeleteExpiredCompletedTasks Task retention related method
 	DeleteExpiredCompletedTasks(qname string) error
 	// ListLeaseExpired Lease related methods

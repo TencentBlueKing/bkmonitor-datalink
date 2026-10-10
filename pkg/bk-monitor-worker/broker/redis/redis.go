@@ -569,7 +569,13 @@ for _, id in ipairs(ids) do
       redis.call("RPUSH", KEYS[3], id)
       redis.call("HSET", taskKey, "state", "pending", "pending_since", ARGV[3])
       recovered = recovered + 1
+    else
+      -- Drop orphaned leases so they cannot fill every bounded scan.
+      redis.call("ZREM", KEYS[2], id)
     end
+  else
+    -- Completed or missing tasks must not hide later expired active tasks.
+    redis.call("ZREM", KEYS[2], id)
   end
 end
 return recovered`)

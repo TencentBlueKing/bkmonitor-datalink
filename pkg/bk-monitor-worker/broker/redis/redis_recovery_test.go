@@ -11,6 +11,7 @@ package redis
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -62,4 +63,40 @@ func TestRecoverExpiredOnlyRequeuesExpiredActiveTasks(t *testing.T) {
 	count, err = broker.RecoverExpired(now, queue)
 	require.NoError(t, err)
 	require.Zero(t, count)
+}
+
+func TestRecoverExpiredClearsStaleLeaseHead(t *testing.T) {
+	server, err := miniredis.Run()
+	require.NoError(t, err)
+	defer server.Close()
+
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+	broker := &RDB{client: client}
+	ctx := context.Background()
+	queue := "default"
+	now := time.Now()
+
+	for i := 0; i < 100; i++ {
+		id := fmt.Sprintf("stale-%03d", i)
+		require.NoError(t, client.HSet(ctx, common.TaskKey(queue, id), "state", "completed").Err())
+		require.NoError(t, client.ZAdd(ctx, common.LeaseKey(queue), &redis.Z{
+			Score: float64(now.Add(-2 * time.Hour).Unix()), Member: id,
+		}).Err())
+	}
+	require.NoError(t, client.HSet(ctx, common.TaskKey(queue, "expired"), "state", "active").Err())
+	require.NoError(t, client.ZAdd(ctx, common.LeaseKey(queue), &redis.Z{
+		Score: float64(now.Add(-time.Hour).Unix()), Member: "expired",
+	}).Err())
+	require.NoError(t, client.LPush(ctx, common.ActiveKey(queue), "expired").Err())
+
+	count, err := broker.RecoverExpired(now, queue)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	require.Equal(t, int64(1), client.ZCard(ctx, common.LeaseKey(queue)).Val())
+
+	count, err = broker.RecoverExpired(now, queue)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	require.Equal(t, []string{"expired"}, client.LRange(ctx, common.PendingKey(queue), 0, -1).Val())
 }

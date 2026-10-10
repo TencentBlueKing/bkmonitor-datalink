@@ -138,13 +138,18 @@ type SourceValues struct {
 	MetaInfo   string `json:"meta_info"`
 }
 
-// MetricLibraryQuery 描述指标库查询条件。
-type MetricLibraryQuery struct {
+// MetricQuery 优先按指标 ID 定位；无 ID 时仅接受唯一的目录反查结果。
+type MetricQuery struct {
+	// MetricID 是 metric 主键，0 表示发布材料未提供目录 ID。
+	MetricID int64
+	// SpaceUID 仅限制无 ID 反查；业务空间同时可见平台层 *。
+	SpaceUID        string
 	TenantID        string
 	TableID         string
 	FieldName       string
 	ObjectModelCode string
-	FieldTag        CWStrategyFieldTag
+	// FieldTag 的 derived_metric 按目录 kind=derived 定义名反查。
+	FieldTag CWStrategyFieldTag
 }
 
 // MetricMetadata 是指标丰富和展示所需的元数据。
@@ -158,7 +163,7 @@ type MetricMetadata struct {
 	Dimensions      []MetricDimension
 }
 
-// MetricDimension 是 MonitorMetricLibrary.dimension_list 中的展示定义。
+// MetricDimension 将指标目录 dimensions[].id/name 投影为丰富展示定义。
 type MetricDimension struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`

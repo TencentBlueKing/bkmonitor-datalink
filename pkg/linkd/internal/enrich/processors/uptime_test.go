@@ -208,7 +208,7 @@ func (processorUptimeStrategy) GetByStrategyID(context.Context, models.StrategyQ
 
 type processorUptimeMetric struct{}
 
-func (processorUptimeMetric) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (processorUptimeMetric) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	return models.MetricMetadata{}, false, nil
 }
 

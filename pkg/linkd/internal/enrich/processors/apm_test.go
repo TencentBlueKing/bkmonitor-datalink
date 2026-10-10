@@ -317,7 +317,7 @@ type apmTestReader struct {
 	applicationReads   *int
 }
 
-func (r apmTestReader) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (r apmTestReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	return models.MetricMetadata{FieldName: "duration", FieldCNName: "请求量"}, true, nil
 }
 

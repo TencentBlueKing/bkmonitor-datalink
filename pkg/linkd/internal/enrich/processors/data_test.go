@@ -38,8 +38,8 @@ func TestDATAFailureMatrix(t *testing.T) {
 	}{
 		{name: "strategy missing", reader: dataSliceReader{strategyMissing: true}, wantDep: rules.DependencyKingeyeStrategy, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},
 		{name: "strategy error", reader: dataSliceReader{strategyErr: errors.New("strategy unavailable")}, wantDep: rules.DependencyKingeyeStrategy, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},
-		{name: "metric missing", reader: dataSliceReader{model: "cw-Others", metricMissing: true}, wantDep: rules.DependencyMetricLibrary, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},
-		{name: "metric error", reader: dataSliceReader{model: "cw-Others", metricErr: errors.New("metric unavailable")}, wantDep: rules.DependencyMetricLibrary, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},
+		{name: "metric missing", reader: dataSliceReader{model: "cw-Others", metricMissing: true}, wantDep: rules.DependencyMetricCatalog, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},
+		{name: "metric error", reader: dataSliceReader{model: "cw-Others", metricErr: errors.New("metric unavailable")}, wantDep: rules.DependencyMetricCatalog, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},
 		{name: "model missing", reader: dataSliceReader{model: "cw-MySQL", modelMissing: true}, dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-MySQL"), rules.FieldModelInstID: domain.NewStringScalar("17")}, wantDep: rules.DependencyOneModel, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},
 		{name: "instance error", reader: dataSliceReader{model: "cw-MySQL", instanceErr: errors.New("instance unavailable")}, dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-MySQL"), rules.FieldModelInstID: domain.NewStringScalar("17")}, wantDep: rules.DependencyOneModel, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},
 		{name: "invalid identity", reader: dataSliceReader{model: "cw-MySQL"}, dimensions: domain.DimensionMap{rules.FieldModelID: domain.NewStringScalar("cw-Redis"), rules.FieldModelInstID: dataNumber(t, 17)}, wantCode: enrich.DiagnosticCodeInvalidField, wantStatus: domain.EnrichStatusPartial},
@@ -549,7 +549,7 @@ type dataSliceReader struct {
 	instance           enrich.Instance
 	found              bool
 	query              enrich.InstanceQuery
-	metricQuery        models.MetricLibraryQuery
+	metricQuery        models.MetricQuery
 	metricValueMapping []models.MetricValueMapping
 	metricUnit         string
 	strategy           models.CWStrategy
@@ -594,7 +594,7 @@ func (r *dataSliceReader) GetByStrategyID(ctx context.Context, _ models.Strategy
 	return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(r.model), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "CPU", TableID: table, FieldName: query.MetricField, FieldTag: derivedTag(r.derived), StrategyItem: &models.CWStrategyItem{Expression: "A", QueryConfigs: []models.StrategyQueryConfig{query}}}}, true, nil
 }
 
-func (r *dataSliceReader) FindMetricLibrary(ctx context.Context, query models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (r *dataSliceReader) FindMetric(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
 	if r.cancelReads {
 		return models.MetricMetadata{}, false, ctx.Err()
 	}
@@ -644,4 +644,48 @@ func (r *dataSliceReader) GetUptimeTask(_ context.Context, _, id string) (models
 
 func (*dataSliceReader) GetAlarmSource(context.Context, string, string) (models.AlarmSource, bool, error) {
 	return models.AlarmSource{Id: "built_in_bk", Name: "鲸眼监控"}, true, nil
+}
+
+func TestMetricDefinitionIDReachesAllProcessors(t *testing.T) {
+	t.Parallel()
+	for _, processor := range []enrich.Processor{Resource{}, Display{}, Metric{}} {
+		t.Run(processor.Name(), func(t *testing.T) {
+			t.Parallel()
+			var query models.StrategyQueryConfig
+			if err := json.Unmarshal([]byte(`{"metric_ref_id":42,"metric_id":"bk_monitor.system.cpu.usage","result_table_id":"system.cpu","metric_field":"usage"}`), &query); err != nil {
+				t.Fatal(err)
+			}
+			reader := &dataSliceReader{model: "cw-Others", strategy: models.CWStrategy{BKBizID: func() *int64 { v := int64(2); return &v }(), ObjectModelCode: optionalModelCode("cw-Others"), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "CPU", StrategyItem: &models.CWStrategyItem{QueryConfigs: []models.StrategyQueryConfig{query}}}}}
+			scope, err := enrich.NewScope(processorBaseTargetAlert(t, domain.DimensionMap{}), enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = processor.Process(context.Background(), scope); err != nil {
+				t.Fatal(err)
+			}
+			if reader.metricQuery.MetricID != 42 || reader.metricQuery.TenantID != "tenant-a" || reader.metricQuery.SpaceUID != "" {
+				t.Fatalf("query=%#v", reader.metricQuery)
+			}
+		})
+	}
+}
+
+func TestMetricDefinitionQueryUsesPublishedIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		strategy models.CWStrategy
+		query    models.StrategyQueryConfig
+		want     models.MetricQuery
+	}{
+		{name: "normal", query: models.StrategyQueryConfig{MetricRefID: 42, ResultTableID: "system.cpu", MetricField: "usage"}, want: models.MetricQuery{MetricID: 42, TableID: "system.cpu", FieldName: "usage", ObjectModelCode: "cw-Host"}},
+		{name: "spec fallback", strategy: models.CWStrategy{Spec: models.CWStrategySpec{TableID: "system.cpu"}}, query: models.StrategyQueryConfig{MetricField: "usage"}, want: models.MetricQuery{TableID: "system.cpu", FieldName: "usage", ObjectModelCode: "cw-Host"}},
+		{name: "derived", strategy: models.CWStrategy{Spec: models.CWStrategySpec{FieldTag: models.CWStrategyFieldTagDerivedMetric, FieldName: "derived_usage"}}, query: models.StrategyQueryConfig{ResultTableID: "physical", MetricField: "input"}, want: models.MetricQuery{FieldName: "derived_usage", FieldTag: models.CWStrategyFieldTagDerivedMetric, ObjectModelCode: "cw-Host"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := metricDefinitionQuery(tc.strategy, tc.query, "cw-Host"); got != tc.want {
+				t.Fatalf("query=%#v want=%#v", got, tc.want)
+			}
+		})
+	}
 }

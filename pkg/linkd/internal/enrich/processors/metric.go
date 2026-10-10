@@ -86,14 +86,14 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	metricName := cleanMetricName(strategy, projection, query)
 	unit, err := cleanUnit(ctx, scope, strategy, query)
 	if err != nil {
-		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricLibrary)
+		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricCatalog)
 	}
 	aggregateFunc := cleanAggregateFunc(strategy)
 	timeInterval := cleanTimeInterval(strategy)
 	metricQueryParams := buildMetricQueryParams(projection, strategy, scope.Event().Dimensions, ids.BizID)
 	displayName, err := cleanItem(ctx, scope, strategy, projection, query)
 	if err != nil {
-		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricLibrary)
+		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricCatalog)
 	}
 	whereCondition := cleanWhereCondition(scope.Event().Dimensions)
 	values.DisplayName = displayName
@@ -404,23 +404,13 @@ func cleanUnit(
 		// 日志关键字
 		return "", nil
 	}
-	tableID := query.ResultTableID
-	if tableID == "" {
-		tableID = strategy.Spec.TableID
-	}
-	fieldName := query.MetricField
 	isDerivedMetric := strategy.Kind != models.CWStrategyKindCloud &&
 		strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric
-	if isDerivedMetric {
-		fieldName = strategy.Spec.FieldName
+	modelCode := ""
+	if strategy.ObjectModelCode != nil {
+		modelCode = *strategy.ObjectModelCode
 	}
-	metricQuery := models.MetricLibraryQuery{TableID: tableID, FieldName: fieldName}
-	if isDerivedMetric {
-		// KAC 的衍生指标查询按 field_name 和 derived_metric 标签定位，不限定 table_id。
-		metricQuery.TableID = ""
-		metricQuery.FieldTag = models.CWStrategyFieldTagDerivedMetric
-	}
-	metadata, found, err := scope.MetricLibrary(ctx, metricQuery)
+	metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, modelCode)
 	if err != nil {
 		return "", err
 	}
@@ -491,10 +481,6 @@ func cleanItem(
 	projection models.StrategyItemProjection,
 	query models.StrategyQueryConfig,
 ) (string, error) {
-	// if strategy.Spec.AliasName != "" {
-	// 	// 别名优先
-	// 	return strategy.Spec.AliasName, nil
-	// }
 	if strategy.Spec.StrategyItem != nil && len(strategy.Spec.StrategyItem.QueryConfigs) != 0 ||
 		strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
 		// 基于数据或多指标
@@ -508,15 +494,37 @@ func cleanItem(
 		// 系统事件
 		return projection.Name, nil
 	}
-	metadata, found, err := scope.MetricLibrary(ctx, models.MetricLibraryQuery{
-		TableID: tableID, FieldName: query.MetricField, ObjectModelCode: *strategy.ObjectModelCode,
-	})
+	metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, *strategy.ObjectModelCode)
 	if err != nil {
 		return "", err
 	}
 	if found && metadata.FieldCNName != "" {
 		return metadata.FieldCNName, nil
 	}
-	// MonitorMetric 表已经废弃；未命中 MetricLibrary 时沿用最终 metric_field 回退。
+	// 未命中指标目录时沿用发布材料的 metric_field。
 	return query.MetricField, nil
+}
+
+// 日志主题查询可能没有目录引用；此时展示沿用日志配置与原始维度，不能把缺少
+// 物理表当成目录故障。其他指标仍要求完整身份；日志显式引用的目录失败也不掩盖。
+func metricDefinitionMetadata(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, query models.StrategyQueryConfig, modelCode string) (models.MetricMetadata, bool, error) {
+	locator := metricDefinitionQuery(strategy, query, modelCode)
+	if rules.IsLogDisplay(rules.ClassifyDisplay(strategy)) && locator.MetricID == 0 && locator.TableID == "" && locator.FieldTag != models.CWStrategyFieldTagDerivedMetric {
+		return models.MetricMetadata{}, false, nil
+	}
+	return scope.MetricMetadata(ctx, locator)
+}
+
+// 定义查询统一从发布材料提取，避免单位、文案、维度和资源分别定位到不同的指标行。
+func metricDefinitionQuery(strategy models.CWStrategy, query models.StrategyQueryConfig, modelCode string) models.MetricQuery {
+	result := models.MetricQuery{MetricID: query.MetricRefID, TableID: query.ResultTableID, FieldName: query.MetricField, ObjectModelCode: modelCode}
+	if result.TableID == "" {
+		result.TableID = strategy.Spec.TableID
+	}
+	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
+		result.TableID = ""
+		result.FieldName = strategy.Spec.FieldName
+		result.FieldTag = models.CWStrategyFieldTagDerivedMetric
+	}
+	return result
 }

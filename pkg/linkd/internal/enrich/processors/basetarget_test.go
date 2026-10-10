@@ -275,7 +275,7 @@ func (processorBaseTargetAlarmSource) GetAlarmSource(context.Context, string, st
 
 type processorBaseTargetMetric struct{}
 
-func (processorBaseTargetMetric) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (processorBaseTargetMetric) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	return models.MetricMetadata{}, false, nil
 }
 

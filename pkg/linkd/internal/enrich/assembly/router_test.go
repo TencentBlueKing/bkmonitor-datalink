@@ -440,9 +440,9 @@ func (baseCollectCWStrategy) GetByStrategyID(
 
 type baseCollectMetric struct{}
 
-func (baseCollectMetric) FindMetricLibrary(
+func (baseCollectMetric) FindMetric(
 	ctx context.Context,
-	query models.MetricLibraryQuery,
+	query models.MetricQuery,
 ) (models.MetricMetadata, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return models.MetricMetadata{}, false, err
@@ -530,9 +530,9 @@ func (baseCollectOneModel) FindInstance(
 
 type sampleMetric struct{}
 
-func (sampleMetric) FindMetricLibrary(
+func (sampleMetric) FindMetric(
 	ctx context.Context,
-	query models.MetricLibraryQuery,
+	query models.MetricQuery,
 ) (models.MetricMetadata, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return models.MetricMetadata{}, false, err
@@ -598,7 +598,7 @@ func (panicSources) GetAlarmSource(context.Context, string, string) (models.Alar
 	panic("data source called")
 }
 
-func (panicSources) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (panicSources) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	panic("data source called")
 }
 

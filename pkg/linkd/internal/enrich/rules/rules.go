@@ -37,7 +37,7 @@ const (
 const (
 	DependencyKingeyeStrategy = "kingeye_strategy"
 	DependencyBusiness        = "business"
-	DependencyMetricLibrary   = "metric_library"
+	DependencyMetricCatalog   = "metric_catalog"
 	DependencyOneModel        = "onemodel"
 	DependencyAlarmSource     = "alarm_source"
 	DependencyLogTheme        = "log_theme"

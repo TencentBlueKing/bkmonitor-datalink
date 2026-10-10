@@ -66,6 +66,6 @@ func strategyForProcessorBusiness(bizID int64) models.CWStrategy {
 
 type emptyMetricReader struct{}
 
-func (emptyMetricReader) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (emptyMetricReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	return models.MetricMetadata{}, false, nil
 }

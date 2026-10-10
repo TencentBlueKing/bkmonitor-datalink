@@ -54,6 +54,9 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Event.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 优先保留旧清洗的同名 extra_data 值；未提供时使用来源丰富值或 Event.SourceEventID，不替代来源原始身份 |
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及本次告警观测数据的查询参数；指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
+| metricset（指标来源） | Kingeye 新指标目录的来源登记表；来源编码不是指标身份，指标定义与主引用存放在 metric 表 |
+| metric_id（指标目录身份） | Kingeye metric 表的租户内可读取主键；策略 query_config 使用 metric_ref_id 携带它，与检测面的字符串 metric_id 不同 |
+| 指标目录定义查询 | Enrich 按事件租户读取 metric 的名称、单位、模型、枚举和维度；优先 ID，无 ID 时按来源业务空间与平台层反查唯一的原生物理引用；不执行时序取数 |
 | 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；新发布链中前者为 SplitRecord 主键，后者为 `source_resource_version`。两个字段均参与运行时读取校验，不能用旧策略 ID 或 Config status 版本替代。 |
 | 鲸眼策略配置 | Linkd 从 Kingeye MySQL `alarm_strategy_set_split_record` 的同版本发布材料构造的只读丰富视图；分类、展示和指标查询复用 `resolved_strategies[*].spec`，不读取旧配置表。 |
 | StrategySetSplitRecord（策略拆分发布当前态） | Kingeye 表 `alarm_strategy_set_split_record`；默认与覆盖分别使用自身主键作为运行时策略 ID，覆盖通过 `parent_id` 关联默认记录。payload 保存编译后的配置与检测材料；它是当前态，不保证历史版本保留。 |

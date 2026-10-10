@@ -12,6 +12,7 @@ package processors
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"linkd/internal/domain"
@@ -19,6 +20,43 @@ import (
 	"linkd/internal/enrich/models"
 	"linkd/internal/enrich/rules"
 )
+
+func TestLogDisplayWithoutCatalogReference(t *testing.T) {
+	t.Parallel()
+	for _, itemType := range []models.CWMonitorItemType{models.CWMonitorItemTypeLog, models.CWMonitorItemTypeLogKeyword} {
+		t.Run(string(itemType), func(t *testing.T) {
+			strategy := &logTestReader{strategy: logStrategy(itemType, "error")}
+			metric := &unavailableLogMetricReader{}
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: strategy, Metric: metric})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := chain.Enrich(t.Context(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != domain.EnrichStatusSucceeded || metric.calls != 0 {
+				t.Fatalf("status=%s catalog calls=%d", result.Status, metric.calls)
+			}
+			// 显式目录 ID 仍应读取；依赖失败不能被日志分支掩盖。
+			strategy.strategy.Spec.StrategyItem.QueryConfigs[0].MetricRefID = 123
+			result, err = chain.Enrich(t.Context(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != domain.EnrichStatusPartial || metric.calls != 1 {
+				t.Fatalf("status=%s catalog calls=%d", result.Status, metric.calls)
+			}
+		})
+	}
+}
+
+type unavailableLogMetricReader struct{ calls int }
+
+func (r *unavailableLogMetricReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
+	r.calls++
+	return models.MetricMetadata{}, false, errors.New("catalog unavailable")
+}
 
 func TestLogInvalidRelatedInfoReturnsPartial(t *testing.T) {
 	t.Parallel()
@@ -253,7 +291,7 @@ func (r *logTestReader) GetByStrategyID(context.Context, models.StrategyQuery) (
 	return r.strategy, true, nil
 }
 
-func (*logTestReader) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (*logTestReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	return models.MetricMetadata{}, false, nil
 }
 

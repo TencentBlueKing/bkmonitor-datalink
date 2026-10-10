@@ -39,7 +39,7 @@ func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 	if isGlobal, found, err := sources.Business.IsGlobalBusiness(context.Background(), "tenant", 1); !isGlobal || !found || err != nil {
 		t.Fatalf("business is_global=%t found=%t err=%v", isGlobal, found, err)
 	}
-	if _, found, err := sources.Metric.FindMetricLibrary(context.Background(), models.MetricLibraryQuery{}); found || err != nil {
+	if _, found, err := sources.Metric.FindMetric(context.Background(), models.MetricQuery{}); found || err != nil {
 		t.Fatalf("metric found=%t err=%v", found, err)
 	}
 	if _, found, err := sources.Model.GetModelByCode(context.Background(), "tenant", "cw-Host"); !found || err != nil {
@@ -98,7 +98,7 @@ func (testBusinessReader) IsGlobalBusiness(context.Context, string, int64) (bool
 
 type testMetricReader struct{}
 
-func (testMetricReader) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (testMetricReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	return models.MetricMetadata{}, false, nil
 }
 

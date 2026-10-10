@@ -34,6 +34,8 @@ type StrategyQueryConfig struct {
 	Functions       json.RawMessage   `json:"functions"`
 	Unit            string            `json:"unit"`
 	Alias           string            `json:"alias"`
+	// MetricRefID 引用指标目录主键；MetricID 仍保留检测面的字符串标识。
+	MetricRefID     int64             `json:"metric_ref_id"`
 	MetricID        string            `json:"metric_id"`
 	MetricSource    string            `json:"metric_source"`
 	SourceConfig    domain.JSONObject `json:"source_config"`

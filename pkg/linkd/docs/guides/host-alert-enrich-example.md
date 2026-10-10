@@ -302,8 +302,8 @@ domain.Event{
 | --- | --- | --- |
 | `strategy` | `labels.strategy_id`、`labels.strategy_version`、`labels.bk_biz_id` | BK Strategy Snapshot、CW Strategy；实例策略 URL 还使用 OneModel |
 | `resource` | 三个必需标签、`dimensions`、`extra_data.additional_dimensions` | CW Strategy、OneModel |
-| `display` | `subject_name`、`dimensions`、`extra_data.additional_dimensions`、`content` | CW Strategy、BK Strategy Snapshot、MetricLibrary、Resource Context |
-| `metric` | 三个必需标签、`dimensions`、`extra_data.anomaly_begin_time` | CW Strategy、BK Strategy Snapshot、MetricLibrary |
+| `display` | `subject_name`、`dimensions`、`extra_data.additional_dimensions`、`content` | CW Strategy、BK Strategy Snapshot、指标目录、Resource Context |
+| `metric` | 三个必需标签、`dimensions`、`extra_data.anomaly_begin_time` | CW Strategy、BK Strategy Snapshot、指标目录 |
 | `source` | `bk_tenant_id`、`event_source_id`、`source_event_id` | AlarmSource |
 
 ## 5. 主机实例定位
@@ -441,19 +441,24 @@ OneModel Client 会在查询中强制追加 `bk_tenant_id` 和 `model_id`，按 
 
 ### 6.4 指标库
 
-`home_application_monitormetriclibrary` 需要包含类似记录：
+`metric` 需要包含类似指标定义（对应来源另登记在 `metricset`）：
 
 ```text
-bk_tenant_id      = tenant-1
-table_id          = system.cpu
-field_name        = usage
-object_model_code = cw-Host
-field_cn_name     = CPU 使用率
-unit              = percent
-is_deleted        = false
+bk_tenant_id    = tenant-1
+space_uid       = *
+metricset_code  = system.cpu
+metric_name     = usage
+kind            = native
+result_table_id = system.cpu
+physical_field  = usage
+model_id        = cw-Host
+display_name    = CPU 使用率
+unit            = percent
+value_mapping   = []
+dimensions      = [{"id":"bk_target_ip","name":"目标IP"}]
 ```
 
-MonitorMetric 表已经废弃，指标名称、单位和维度元数据统一读取 MonitorMetricLibrary。
+指标名称、单位和维度元数据统一读取 metricset 体系中的 `metric` 表。
 
 ### 6.5 告警源
 
@@ -601,7 +606,7 @@ Strategy 输出沿用 Kafka labels 中的策略身份字段名：
 | 对应版本的平台策略快照未命中或内容非法 | 相关策略处理器产生 `dependency_invalid=kingeye_strategy`；文案模式使用明确的发布身份/版本错误 |
 | CW Strategy 未命中 | 相关 Processor 产生 `dependency_invalid=kingeye_strategy` |
 | OneModel 查询失败 | resource 产生 `dependency_invalid=onemodel` |
-| MetricLibrary 查询失败 | display/metric 产生 `dependency_invalid=metric_library` |
+| 指标目录查询失败 | display/metric 产生 `dependency_invalid=metric_catalog` |
 | AlarmSource 查询失败 | source 产生 `dependency_invalid=alarm_source` |
 | 部分 Processor 成功、部分失败 | 顶层 `enrich_status=partial` |
 
@@ -629,7 +634,7 @@ go test ./internal/enrich/assembly \
 - EventSource 配置；
 - 平台策略和鲸眼策略；
 - OneModel 主机实例；
-- MonitorMetricLibrary；
+- 指标目录；
 - AlarmSource；
 - Event 丰富后由 Lifecycle 创建 Alert；
 - 五个 Enrich Processor 的关键输出断言。

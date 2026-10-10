@@ -14,6 +14,8 @@ package enrich
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -47,7 +49,7 @@ func TestScopeCachesReadersByStableQueryKey(t *testing.T) {
 	}
 	for range 2 {
 		_, _, _ = scope.ModelByCode(ctx, "cw-Service")
-		_, _, _ = scope.MetricLibrary(ctx, models.MetricLibraryQuery{TableID: "service.metric", FieldName: "available"})
+		_, _, _ = scope.MetricMetadata(ctx, models.MetricQuery{TableID: "service.metric", FieldName: "available"})
 		_, _, _ = scope.CollectConfig(ctx, "collect-1")
 		_, _, _ = scope.UptimeTask(ctx, "7")
 		_, _, _ = scope.UptimeNode(ctx, "0:10.0.0.8")
@@ -85,6 +87,7 @@ type scopeCacheReader struct {
 	instanceIDs   []string
 	modelCalls    int
 	metricCalls   int
+	metricQueries []models.MetricQuery
 	collectCalls  int
 	uptimeCalls   int
 	nodeCalls     int
@@ -103,8 +106,12 @@ func (r *scopeCacheReader) GetModelByCode(_ context.Context, tenantID, modelCode
 	return Model{TenantID: tenantID, ModelID: modelCode, ModelCode: modelCode}, true, nil
 }
 
-func (r *scopeCacheReader) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (r *scopeCacheReader) FindMetric(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
 	r.metricCalls++
+	r.metricQueries = append(r.metricQueries, query)
+	if err := ctx.Err(); err != nil {
+		return models.MetricMetadata{}, false, err
+	}
 	return models.MetricMetadata{}, true, nil
 }
 
@@ -131,4 +138,40 @@ func (r *scopeCacheReader) FindRelatedHost(context.Context, string, string, stri
 func (r *scopeCacheReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
 	r.topologyCalls++
 	return models.ResourceTopology{}, true, nil
+}
+
+func TestMetricScopeEnforcesTenantSpaceAndCachesID(t *testing.T) {
+	t.Parallel()
+	reader := &scopeCacheReader{}
+	scope, err := NewScope(testAlert(), Sources{Metric: reader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []models.MetricQuery{
+		{TenantID: "untrusted", MetricID: 42, TableID: "old-table"},
+		{TenantID: "other", MetricID: 42, ObjectModelCode: "other-model"},
+		{TenantID: "untrusted", SpaceUID: "bkcc__99", TableID: "system.cpu", FieldName: "usage"},
+	} {
+		if _, _, err = scope.MetricMetadata(context.Background(), query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reader.metricCalls != 2 {
+		t.Fatalf("calls=%d", reader.metricCalls)
+	}
+	if reader.metricQueries[0] != (models.MetricQuery{TenantID: scope.Event().BKTenantID, MetricID: 42}) {
+		t.Fatalf("ID query=%#v", reader.metricQueries[0])
+	}
+	ids, diagnostics := ValidateRequiredIDs(scope.Event())
+	if len(diagnostics) != 0 {
+		t.Fatal(diagnostics)
+	}
+	if reader.metricQueries[1].TenantID != scope.Event().BKTenantID || reader.metricQueries[1].SpaceUID != fmt.Sprintf("bkcc__%d", ids.BizID) {
+		t.Fatalf("physical query=%#v", reader.metricQueries[1])
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err = scope.MetricMetadata(ctx, models.MetricQuery{MetricID: 42}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cached cancellation=%v", err)
+	}
 }

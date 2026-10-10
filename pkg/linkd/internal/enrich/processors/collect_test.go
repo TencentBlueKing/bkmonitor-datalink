@@ -190,7 +190,7 @@ func (processorCollectStrategy) GetByStrategyID(context.Context, models.Strategy
 
 type processorCollectMetric struct{}
 
-func (processorCollectMetric) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (processorCollectMetric) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	return models.MetricMetadata{Dimensions: []models.MetricDimension{
 		{Key: rules.FieldBKCollectConfigID, Name: "采集任务"},
 		{Key: rules.FieldBKBizID, Name: "业务"},

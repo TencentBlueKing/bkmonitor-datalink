@@ -115,7 +115,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		}
 	}
 	if err != nil {
-		return failedDependency(rules.DependencyMetricLibrary), nil
+		return failedDependency(rules.DependencyMetricCatalog), nil
 	}
 	additional, err := additionalDimensions(alert.ExtraData)
 	if err != nil {
@@ -134,7 +134,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 	if classification.Main == rules.MainData && uptimeResult == nil {
 		mapping, mappingErr := dataMetricMetadata(ctx, scope, strategy, projection)
 		if mappingErr != nil {
-			return failedDependency(rules.DependencyMetricLibrary), nil
+			return failedDependency(rules.DependencyMetricCatalog), nil
 		}
 		metricMetadata = mapping
 	}
@@ -144,7 +144,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		dimensions, err = buildDisplayDimensions(ctx, scope, strategy, projection, alertDimensions, additional)
 	}
 	if err != nil {
-		return failedDependency(rules.DependencyMetricLibrary), nil
+		return failedDependency(rules.DependencyMetricCatalog), nil
 	}
 	title := cleanDisplayTitle(classification.Main, strategy, alert, objectName, itemName)
 	dimensionText := buildDimensionText(
@@ -218,13 +218,7 @@ func dataMetricMetadata(ctx context.Context, scope *enrich.Scope, strategy model
 	if strategy.ObjectModelCode != nil {
 		objectModelCode = *strategy.ObjectModelCode
 	}
-	metricQuery := models.MetricLibraryQuery{TableID: query.ResultTableID, FieldName: query.MetricField, ObjectModelCode: objectModelCode}
-	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
-		metricQuery.TableID = ""
-		metricQuery.FieldName = strategy.Spec.FieldName
-		metricQuery.FieldTag = models.CWStrategyFieldTagDerivedMetric
-	}
-	metadata, found, err := scope.MetricLibrary(ctx, metricQuery)
+	metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, objectModelCode)
 	if err != nil || !found {
 		return models.MetricMetadata{}, err
 	}
@@ -439,9 +433,7 @@ func buildDisplayDimensions(
 	if strategy.ObjectModelCode != nil {
 		objectModelCode = *strategy.ObjectModelCode
 	}
-	metadata, found, err := scope.MetricLibrary(ctx, models.MetricLibraryQuery{
-		TableID: query.ResultTableID, FieldName: query.MetricField, ObjectModelCode: objectModelCode,
-	})
+	metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, objectModelCode)
 	if err != nil {
 		return nil, err
 	}

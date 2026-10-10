@@ -30,7 +30,7 @@ DATA 多业务材料先验证各份完整 spec 相等，再按 Kingeye 投影规
 | `is_default`、`monitor_template_id`、`config_id` | 生成策略标识及详情 URL |
 | `spec.strategy_item.expression`、`spec.strategy_item.functions`、`spec.strategy_item.agg_method`、`spec.strategy_item.agg_interval`、`spec.strategy_item.agg_condition`、`spec.strategy_item.agg_dimension`、`spec.strategy_item.query_configs` | 生成指标、维度、过滤条件及 `metric_query_params` |
 
-完整丰富还会读取独立的 MetricLibrary、业务空间、OneModel 实例、模型与拓扑、采集/拨测配置及告警源；这些数据由各自 Reader 提供。
+完整丰富还会读取独立的 指标目录、业务空间、OneModel 实例、模型与拓扑、采集/拨测配置及告警源；这些数据由各自 Reader 提供。
 
 ## 版本约束
 

@@ -109,7 +109,7 @@ func processResource(ctx context.Context, scope *enrich.Scope) (enrich.Processor
 	return resourceScenarioResult(scope, result.Resource, result.ResourceDiagnostics, classification.BaseTarget != rules.BaseTargetBasic)
 }
 
-// processDataResource 先迁移普通时序中有权威 MetricLibrary 模型、无实例身份的用例。
+// processDataResource 先迁移普通时序中有权威指标目录模型、无实例身份的用例。
 // 资源身份由指标库确定；没有已确认的实例定位字段时保留空 model_inst_id。
 func processDataResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, bizID int64) (enrich.ProcessorResult, error) {
 	projection, err := strategy.StrategyItemProjection()
@@ -128,15 +128,15 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		return processAPMResource(ctx, scope, strategy, query, bizID)
 	}
 	modelCode := dataObjectModelCode(strategy, scope.Event().Dimensions)
-	metadata, found, readErr := scope.MetricLibrary(ctx, models.MetricLibraryQuery{TableID: query.ResultTableID, FieldName: query.MetricField, ObjectModelCode: modelCode})
+	metadata, found, readErr := metricDefinitionMetadata(ctx, scope, strategy, query, modelCode)
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
 	if readErr != nil || !found || metadata.ObjectModelCode == "" {
-		return failedDependency(rules.DependencyMetricLibrary), nil
+		return failedDependency(rules.DependencyMetricCatalog), nil
 	}
 	if modelCode != "" && modelCode != metadata.ObjectModelCode {
-		return failedDependency(rules.DependencyMetricLibrary), nil
+		return failedDependency(rules.DependencyMetricCatalog), nil
 	}
 	values := models.ResourceValues{ModelID: metadata.ObjectModelCode, BKBizID: bizID, DynamicGroupID: []string{}}
 	business, businessFound, businessErr := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: fmt.Sprint(bizID)})

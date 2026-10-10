@@ -89,9 +89,9 @@ type BusinessReader interface {
 	IsGlobalBusiness(ctx context.Context, tenantID string, bizID int64) (bool, bool, error)
 }
 
-// MetricReader 只读取 Kingeye MonitorMetricLibrary；MonitorMetric 表已经废弃。
+// MetricReader 只读取 Kingeye 指标目录的元数据，不执行时序取数。
 type MetricReader interface {
-	FindMetricLibrary(ctx context.Context, query models.MetricLibraryQuery) (models.MetricMetadata, bool, error)
+	FindMetric(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error)
 }
 
 // CloudResourceReader 按租户、云平台、资源类型和资源实例读取云资源。
@@ -282,7 +282,7 @@ type requestCache struct {
 	logThemes       map[int64]logThemeResult
 	instances       map[string]instanceResult
 	models          map[string]modelResult
-	metrics         map[models.MetricLibraryQuery]metricResult
+	metrics         map[models.MetricQuery]metricResult
 	apmApplications map[apmApplicationQuery]apmApplicationResult
 	collectConfigs  map[string]collectConfigResult
 	uptimeTasks     map[string]uptimeTaskResult
@@ -310,7 +310,7 @@ func NewScope(event domain.Event, sources Sources) (*Scope, error) {
 func newRequestCache() *requestCache {
 	return &requestCache{
 		instances: make(map[string]instanceResult), models: make(map[string]modelResult),
-		metrics: make(map[models.MetricLibraryQuery]metricResult), collectConfigs: make(map[string]collectConfigResult),
+		metrics: make(map[models.MetricQuery]metricResult), collectConfigs: make(map[string]collectConfigResult),
 		apmApplications: make(map[apmApplicationQuery]apmApplicationResult),
 		uptimeTasks:     make(map[string]uptimeTaskResult), uptimeNodes: make(map[string]uptimeNodeResult),
 		relatedHosts: make(map[string]instanceResult), topologies: make(map[string]topologyResult), logThemes: make(map[int64]logThemeResult),
@@ -388,10 +388,22 @@ func (s *Scope) IsGlobalBusiness(ctx context.Context, bizID int64) (bool, bool, 
 	return s.business.isGlobal, s.business.found, s.business.err
 }
 
-// MetricLibrary 惰性读取并复用本次调用的指标库结果。
-// MonitorMetric 表已经废弃，指标展示名称统一通过该入口查询 MetricLibrary。
-func (s *Scope) MetricLibrary(ctx context.Context, query models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+// MetricMetadata 按事件租户和业务作用域读取并复用本次调用的指标目录结果。
+func (s *Scope) MetricMetadata(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return models.MetricMetadata{}, false, err
+	}
 	query.TenantID = s.event.BKTenantID
+	if query.MetricID > 0 {
+		// ID 已完整表达身份，物理位置或模型冗余不参与点查与缓存键。
+		query = models.MetricQuery{TenantID: query.TenantID, MetricID: query.MetricID}
+	} else {
+		ids, diagnostics := ValidateRequiredIDs(s.event)
+		if len(diagnostics) != 0 {
+			return models.MetricMetadata{}, false, fmt.Errorf("metric lookup requires valid source business")
+		}
+		query.SpaceUID = fmt.Sprintf("bkcc__%d", ids.BizID)
+	}
 	if result, exists := s.metrics[query]; exists {
 		return result.value, result.found, result.err
 	}
@@ -399,7 +411,7 @@ func (s *Scope) MetricLibrary(ctx context.Context, query models.MetricLibraryQue
 	if s.sources.Metric == nil {
 		result.err = fmt.Errorf("metric reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.Metric.FindMetricLibrary(ctx, query)
+		result.value, result.found, result.err = s.sources.Metric.FindMetric(ctx, query)
 	}
 	if ctx.Err() == nil {
 		s.metrics[query] = result

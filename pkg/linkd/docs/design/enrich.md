@@ -273,7 +273,7 @@ EventSource 的 `enrich.content_mode=bkmonitor_description` 已在创建准备�
 
 ### 6.4 metric
 
-适用场景：DATA、日志和其他带指标查询的链路。Metric 读取策略和 MetricLibrary 投影；Cloud/K8s/APM 的专用指标仍以真实契约为准。
+适用场景：DATA、日志和其他带指标查询的链路。Metric 读取策略和指标目录投影；Cloud/K8s/APM 的专用指标仍以真实契约为准。
 
 ```text
 display_name
@@ -326,6 +326,20 @@ meta_info
 
 所有查询应显式携带 `bk_tenant_id`，区分 found、not found、查询错误和非法响应，并传播 Context。
 
+### 指标定义的数据源
+
+2026-10-09 按 Kingeye 当前源码接入 metricset 指标目录。Kingeye `base/domains/metric/models.py` 中，`metricset` 仅登记来源，`metric` 持有定义和主引用；Python 消费方经 `kingeye.base.metric.get_metric/list_metrics_by_ids` 按租户和主键读取。Linkd 的 `MetricClient` 在既有只读 MySQL 连接上读取同一张 `metric` 表，不回退旧 `home_application_monitormetriclibrary`。
+
+- 发布材料 `query_configs[].metric_ref_id` 对应目录 `metric.id`，优先用于定义点查；检测面的字符串 `metric_id` 仍只是检测标识，不转换为目录 ID。ID 未命中不回退同名或同物理字段。
+- 没有目录 ID 的发布材料按 `kind=native`、`physical_field`、`result_table_id` 或 `data_label` 反查；只查来源业务空间 `bkcc__<Event.Labels.bk_biz_id>` 和平台层 `*`。显式模型必须精确匹配，不沿用旧库跨模型 first() 回退。无 ID 的旧衍生材料按 `kind=derived + metric_name` 反查。最多读取两条，多义返回依赖失败。
+- `model_id/metric_name/display_name/description/unit/value_mapping` 映射为既有丰富元数据；`dimensions[].id/name` 映射为维度 key/name。定义全名与来源编码不用于推断指标身份，不从带点编码拆取来源。
+- 定义查询不按 `enabled/ref_status` 过滤，已触发告警仍可展示停用或失效指标的定义。时序取数与 `metric_query_params` 继续使用已发布的检测参数，本次没有替换时序查询协议。
+- Scope 强制事件租户，按指标 ID 或完整反查条件复用单次丰富结果；Client 使用 5 秒超时、两条候选上限，两个 JSON 列分别限 1 MiB，并精确复核返回身份。NULL、畸形或超限 JSON 按 `metric_catalog` 依赖失败处理。
+
+日志查询没有目录 ID、物理表或衍生定义引用时，展示沿用日志配置与原始维度，不发起目录查询；显式目录引用的失败仍按依赖失败处理。其他指标不放宽完整引用要求。
+
+本次验证覆盖数据库驱动边界的真实 GORM SQL/Scan，并在 test-bkee5 对 22 条活跃告警的最新事件只读重放 Strategy/Resource/Display/Metric：16 条全部成功，4 条缺少主机身份使 Resource 部分成功，2 条数据集策略缺少目录 ID/物理表导致 Display/Metric 失败。命中的 16 次定义读取（含真实 `metric_ref_id=2162`）与独立 SQL 快照一致。详细证据和边界见 [真实环境验证](../research/2026-10-09-metric-catalog-live-validation.md)。无 ID 且同物理引用有多个候选的材料仍需要上游补齐 `metric_ref_id`，不自动挑选一行；本次不代表服务部署或完整生命周期验证。
+
 ### 7.2 接口存在，生产能力待补
 
 | 能力 | 当前事实 | 影响 |
@@ -374,7 +388,7 @@ Scope 当前按稳定查询键复用：
 
 - CW Strategy、Business、AlarmSource；
 - OneModel Instance；
-- Model、MetricLibrary、CollectConfig、UptimeTask/Node、APMApplication；
+- Model、指标目录、CollectConfig、UptimeTask/Node、APMApplication；
 - RelatedHost 与 HostTopology；
 - Collect/Uptime/BaseTarget 场景结果。
 
@@ -531,7 +545,7 @@ Event.Dimensions.task_id
 当前已覆盖普通时序 `cw-Others`、system 主机与 uptimecheck 的基础资源定位：
 
 - `MetricReader` 投影 `object_model_code`，用于 DATA 对象分类；
-- MetricLibrary 同步读取 `value_mapping`，DATA 单指标且无函数时将匹配数值追加枚举名称，多指标、函数和衍生指标保留原始内容；
+- 指标目录同步读取 `value_mapping`，DATA 单指标且无函数时将匹配数值追加枚举名称，多指标、函数和衍生指标保留原始内容；
 - 策略无 `object_model_code` 时，按指标库模型回退；
 - 无实例身份的 `cw-Others` 告警保留模型代码、模型名称、来源业务和 `cw_labels`；
 - 业务名称可从同租户 OneModel `cw-biz` 实例读取；
@@ -539,7 +553,7 @@ Event.Dimensions.task_id
 - KAC `basic_data` 转换 fixture 验证完整五 Processor payload；
 - system 主机按 `bk_target_host_id` 优先，随后以 `bk_target_ip + bk_target_cloud_id` 查询 OneModel `cw-Host`；
 - uptimecheck 结果表复用 `uptime.Enrich`，按 `task_id` 定位任务数据库主键；
-- 普通 OneModel 单模型在标准 Event 明确提供 `model_id + model_inst_id` 且模型与 MetricLibrary 一致时查询 OneModel；`model_inst_id` 按不透明字符串原值使用，实例成功才生成实例标签；
+- 普通 OneModel 单模型在标准 Event 明确提供 `model_id + model_inst_id` 且模型与指标目录一致时查询 OneModel；`model_inst_id` 按不透明字符串原值使用，实例成功才生成实例标签；
 - `data_ordinary_onemodel` 是依据统一实例身份规格构造的派生 fixture，真实普通实例 KAC 样例仍待取证；
 - 上游缺少显式 canonical 模型／实例身份时保留模型和业务并返回 Resource partial；身份冲突或查询未命中时 Resource failed。
 
@@ -548,13 +562,13 @@ Event.Dimensions.task_id
 - system 主机和 uptimecheck 的身份规则来自 Kingeye Converter 源码，目前由合成五 Processor 测试保护；现有 KAC `source_data` 只有 `basic_data` 一份 DATA 原始样例；
 - hardware_ 与多模型结果表已经收敛为 canonical `model_id + model_inst_id` 定位；旧数值模型主键字段只作迁移诊断，真实样例仍待补充；
 - Cloud、APM、K8s 的专用资源定位进入各自场景；
-- 枚举指标 `value_mapping` 已从 MetricLibrary 读取，并在 DATA 单指标、无函数场景中为展示 content 的数值追加 `(mapped_value)`；多指标、函数和衍生指标保持原始内容；
-- 当前值、阈值、算法等级和单位生成展示内容已支持静态阈值场景：算法级别的 `algorithmUnit` 优先，`NONE` 清空单位，MetricLibrary `bytes/percent/percentunit` 使用 KAC 映射；枚举映射继续按精确数值处理；
+- 枚举指标 `value_mapping` 已从指标目录读取，并在 DATA 单指标、无函数场景中为展示 content 的数值追加 `(mapped_value)`；多指标、函数和衍生指标保持原始内容；
+- 当前值、阈值、算法等级和单位生成展示内容已支持静态阈值场景：算法级别的 `algorithmUnit` 优先，`NONE` 清空单位，指标目录 `bytes/percent/percentunit` 使用 KAC 映射；枚举映射继续按精确数值处理；
 - 环比、同比和无数据内容已按 Kingeye 的算法分支建立确定性转换：环比/同比只处理可定位的数值片段，无数据文案保留原文；
 - custom event、alert、FTA 的 Metric 查询投影已覆盖字段、结果表和事件过滤器翻译；
 - PromQL 查询保留原始 PromQL，并按 Kingeye 的冒号段规则提取结果表与指标字段；
 - 函数指标保留策略级和 query 级 `functions`，Metric name 为空，并关闭函数场景的枚举映射；
-- 派生失败矩阵覆盖策略未命中／错误、MetricLibrary 未命中／错误、模型未命中、实例依赖错误、非法 canonical 身份、混合 Processor 最终 partial 和 Context 取消；
+- 派生失败矩阵覆盖策略未命中／错误、指标目录未命中／错误、模型未命中、实例依赖错误、非法 canonical 身份、混合 Processor 最终 partial 和 Context 取消；
 - 普通时序、多指标、衍生指标、custom event、alert、FTA、日志查询等 fixture。
 
 
@@ -692,7 +706,7 @@ Processor Observation 顺序与配置顺序一致。指标不使用 `Diagnostic.
 ```text
 CWStrategy
 Business
-MetricLibrary
+指标目录
 Model
 AlarmSource
 OneModel
@@ -738,7 +752,7 @@ linkd.enrich.datasource.duration
 - Strategy、Business、Metric、AlarmSource、CollectConfig、Uptime Task/Node、OneModel 实例 Reader 测试；
 - BaseTarget 六个二级分支的显式分类和独立场景链路；
 - 四个通用 BaseTarget 分支的场景模块、完整五 Processor 本地 payload、缓存和 DataSource 契约测试；
-- DATA `basic_data` 原始 KAC 样例转换 fixture 验证 `MetricLibrary.object_model_code` 模型回退、`cw-Others` 空实例和业务标签；`data_ordinary_onemodel` 为基于统一实例规格的派生五 Processor fixture；
+- DATA `basic_data` 原始 KAC 样例转换 fixture 验证 `metric.model_id` 模型回退、`cw-Others` 空实例和业务标签；`data_ordinary_onemodel` 为基于统一实例规格的派生五 Processor fixture；
 - NoData `__NO_DATA_DIMENSION__` 分类与 `model_id + model_inst_id` 规范身份 fixture；标准 Cleaner 对已进入 `dimensions` 的标记有保留测试，分类测试覆盖标记真值、假值、缺失及分支优先级，Processor 测试覆盖模型冲突、缺字段、非法实例、实例未命中和模型依赖失败；
 - 模型／实例／租户响应身份不匹配、关联主机未命中／身份非法、拓扑未命中，以及查询期间 Context 取消与取消后同 Scope 重试的 BaseTarget 回归测试；
 - 标准事件 `dimensions` 中 NoData 标记到 Alert.Enrich 的本地全链路测试，以及原始 `event.tags` 单独携带标记时的分类边界测试；
@@ -769,7 +783,7 @@ BaseTarget 二级分支收口实施已完成。以下事项列为**迁移尾声�
 | 旧线程池和 Kafka 推送 | 使用 Linkd Runtime 与 FinalHook |
 | 旧监控原始回调 Cleaner | 当前从有效 Standard Event 开始 |
 | `bk_service_id`、大写 `Namespace` 空占位 | 排除 |
-| MonitorMetric 表 | 使用 MonitorMetricLibrary |
+| MonitorMetric / MonitorMetricLibrary 表 | 使用新指标目录的 metric 表 |
 | KAC 隐式租户和已知参数错位 | 使用 Linkd 显式契约 |
 
 ## 14. 后续迁移顺序
@@ -840,21 +854,21 @@ NoData 迁移已完成：
 已完成：
 
 1. `basic_data` KAC 样例转换 fixture，保留 `cw-Others`、空实例和业务标签语义；
-2. MetricLibrary 数据源读取 `object_model_code`，并用于 DATA 资源模型回退；
+2. 指标目录数据源读取 `metric.model_id`，并用于 DATA 资源模型回退；
 3. DATA Resource 保留模型、业务和标签，不伪造实例身份；
 4. system 主机使用目标主机 ID 或 IP+云区域定位 OneModel；uptimecheck 复用 `task_id` 任务定位；
 5. 普通 OneModel 仅按显式 `model_id + model_inst_id` 原值查询，已覆盖成功、模型冲突、非法数字、未命中和响应身份不匹配；
 6. `data_ordinary_onemodel` 派生 fixture 验证完整五 Processor payload，真实普通 DATA 样例仍待取证；
-7. `hardware_` 与多模型结果表统一要求 canonical `model_id + model_inst_id`，MetricLibrary 按模型精确投影，OneModel 按实例原值查询；
+7. `hardware_` 与多模型结果表统一要求 canonical `model_id + model_inst_id`，指标目录按模型精确投影，OneModel 按实例原值查询；
 8. 旧 `object_model_id + obj_model_inst_id`、`cw_object_model_id + cw_object_model_inst_id` 只保留为待迁移输入诊断字段，不恢复 Meta API 或数值主键推断；
-9. MetricLibrary 读取 `value_mapping`，DATA 单指标无函数时对告警内容中的匹配数值追加枚举名称；多指标、函数、衍生指标和无法精确匹配的内容保持原值。
+9. 指标目录读取 `value_mapping`，DATA 单指标无函数时对告警内容中的匹配数值追加枚举名称；多指标、函数、衍生指标和无法精确匹配的内容保持原值。
 10. 衍生指标按 `field_tag=derived_metric`、策略 `field_name` 和无结果表约束读取元数据；Metric 输出保留表达式和 `field_tag`。
 11. 多指标输出保留全部 query configs、别名、表达式和各自查询条件；Metric name 为空，Metric unique ID 沿用首个 query 的物理字段。
-12. DATA 静态阈值展示优先使用告警等级对应算法的 `algorithmUnit`；`NONE` 表示清除单位；算法未覆盖时使用 MetricLibrary 单位映射。阈值和当前值支持数值单位追加。
+12. DATA 静态阈值展示优先使用告警等级对应算法的 `algorithmUnit`；`NONE` 表示清除单位；算法未覆盖时使用指标目录单位映射。阈值和当前值支持数值单位追加。
 13. 环比／同比内容按 Kingeye 分支识别可定位数值并进行枚举映射，无数据周期文案保留来源文本；custom event、alert、FTA 查询类型使用对应字段和结果表翻译。
 14. PromQL 查询保留原始表达式，并按 `segment:...:metric` 约定投影结果表与指标字段；真实 PromQL 形态仍待样例补充。
 15. 函数指标保留策略级和 query 级函数配置；Metric name 为空，函数和多指标场景关闭枚举映射，函数计算结果由上游查询链提供。
-16. DATA 派生失败矩阵覆盖策略、MetricLibrary、模型、实例、身份校验和 Context 取消；单个 Resource failed 与其他 Processor 成功时最终状态为 partial，Event 输入保持不变。
+16. DATA 派生失败矩阵覆盖策略、指标目录、模型、实例、身份校验和 Context 取消；单个 Resource failed 与其他 Processor 成功时最终状态为 partial，Event 输入保持不变。
 
 下一阶段：**在无真实场景数据的约束下，先补齐日志、Cloud、K8s、APM 的派生 fixture、跨场景失败矩阵和生产装配边界；真实外部 Reader 按契约确认结果接入。**
 

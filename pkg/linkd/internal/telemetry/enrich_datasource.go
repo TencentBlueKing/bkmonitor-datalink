@@ -23,7 +23,7 @@ import (
 const (
 	enrichDataSourceCWStrategy      = "cw_strategy"
 	enrichDataSourceBusiness        = "business"
-	enrichDataSourceMetricLibrary   = "metric_library"
+	enrichDataSourceMetricCatalog   = "metric_catalog"
 	enrichDataSourceModel           = "onemodel_model"
 	enrichDataSourceAlarmSource     = "alarm_source"
 	enrichDataSourceCollectConfig   = "collect_config"
@@ -149,10 +149,10 @@ type observedMetricReader struct {
 	metrics *instruments
 }
 
-func (r *observedMetricReader) FindMetricLibrary(ctx context.Context, query models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (r *observedMetricReader) FindMetric(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
 	startedAt := time.Now()
-	value, found, err := r.next.FindMetricLibrary(ctx, query)
-	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceMetricLibrary, "find_metric_library", startedAt, found, err)
+	value, found, err := r.next.FindMetric(ctx, query)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceMetricCatalog, "find_metric", startedAt, found, err)
 	return value, found, err
 }
 

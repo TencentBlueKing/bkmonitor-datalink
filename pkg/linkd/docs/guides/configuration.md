@@ -564,8 +564,8 @@ linkd run all-in-one --config /etc/linkd/linkd.yaml
 | --- | --- | --- |
 | `strategy` | `mysql`、`onemodel` | CW Strategy、OneModel |
 | `resource` | `mysql`、`onemodel` | CW Strategy、OneModel |
-| `display` | `mysql` | CW Strategy、MetricLibrary |
-| `metric` | `mysql` | CW Strategy、MetricLibrary |
+| `display` | `mysql` | CW Strategy、指标目录 |
+| `metric` | `mysql` | CW Strategy、指标目录 |
 | `source` | `mysql` | AlarmSource |
 | `cmdb` | `onemodel` | 实例与关联查询 |
 | `cmdb` / `fields` 的 display 转换 | 额外需要 `mysql`、`kingeye_display` | 模型元数据与展示缓存 |

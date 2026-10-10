@@ -16,6 +16,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-10-09-metric-catalog-live-validation.md](2026-10-09-metric-catalog-live-validation.md) | test-bkee5 22 条真实活跃告警的指标目录读取、四个丰富 Processor 只读重放与缺失引用边界 |
 | [2026-09-30-kac-policy-matching.md](2026-09-30-kac-policy-matching.md) | KAC 条件 DSL、分析器、时间端点和分组编码与 Linkd 的真实 ES 对照 |
 | [2026-09-22-kingeye-alarm-source-enrichment.md](2026-09-22-kingeye-alarm-source-enrichment.md) | Kingeye 告警源 CMDB/常规字段丰富的配置、执行顺序、依赖、失败边界及 Linkd 待确认事项 |
 | [2026-09-09-elasticsearch-version-compatibility.md](2026-09-09-elasticsearch-version-compatibility.md) | ES 7.10+/8/9 API 差异、列表空结果根因及真实协议矩阵 |

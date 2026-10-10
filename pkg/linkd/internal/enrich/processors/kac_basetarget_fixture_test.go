@@ -365,7 +365,7 @@ func (r *kacFixtureReader) FindHostTopology(_ context.Context, tenantID, hostID 
 		BKSetName: v.BKSetName, BKModuleID: v.BKModuleID, BKModuleName: v.BKModuleName}, true, nil
 }
 
-func (r *kacFixtureReader) FindMetricLibrary(context.Context, models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
+func (r *kacFixtureReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
 	metadata := r.fixture.Metric
 	if metadata.ObjectModelCode == "" && r.fixture.Branch != "data" {
 		metadata.ObjectModelCode = r.fixture.Model.ModelCode

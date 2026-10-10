@@ -61,6 +61,7 @@ http:
   write_timeout: 30s
   query:
     max_routing: 10
+    shared_schema_v1_enabled: false
     content_type: application/x-protobuf
     content_encoding: snappy
     raw:

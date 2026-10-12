@@ -320,14 +320,6 @@ bk-collector:
       config:
         bytes_per_second: 0
         burst_bytes: 0
-{%- if extra_vars is defined and extra_vars.traffic_limiter_redis_addrs is defined and extra_vars.traffic_limiter_redis_addrs %}
-        redis:
-          mode: {{ extra_vars.traffic_limiter_redis_mode | default('standalone', true) | tojson }}
-          db: {{ extra_vars.traffic_limiter_redis_db | default(0, true) }}
-          key: {{ extra_vars.traffic_limiter_redis_key | default('bkcollector.traffic_limiter', true) | tojson }}
-          addrs: {{ extra_vars.traffic_limiter_redis_addrs | tojson }}
-          password: {{ extra_vars.traffic_limiter_redis_password | default('', true) | tojson }}
-{%- endif %}
 
     # TracesDeriver: 指标派生处理器
     - name: "traces_deriver/delta"

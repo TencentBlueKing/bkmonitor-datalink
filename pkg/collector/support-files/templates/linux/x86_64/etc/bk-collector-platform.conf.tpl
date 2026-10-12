@@ -106,6 +106,27 @@ processor:
       burst: {{ qps_config.qps }}
 {%- endif %}
 
+{% if traffic_limiter_config is defined %}
+  - name: "{{ traffic_limiter_config.get('name', 'traffic_limiter/gcra') }}"
+    config:
+      bytes_per_second: {{ traffic_limiter_config.get('bytes_per_second', 0) }}
+      burst_bytes: {{ traffic_limiter_config.get('burst_bytes', 0) }}
+      {%- if traffic_limiter_config.weights is defined %}
+      weights:
+        traces: {{ traffic_limiter_config.weights.get('traces', 1) }}
+        metrics: {{ traffic_limiter_config.weights.get('metrics', 1) }}
+        logs: {{ traffic_limiter_config.weights.get('logs', 1) }}
+      {%- endif %}
+      {%- if traffic_limiter_config.redis is defined and traffic_limiter_config.redis.get('addrs') %}
+      redis:
+        mode: {{ traffic_limiter_config.redis.get('mode', 'standalone') | tojson }}
+        db: {{ traffic_limiter_config.redis.get('db', 0) }}
+        key: {{ traffic_limiter_config.redis.get('key', 'bkcollector.traffic_limiter') | tojson }}
+        addrs: {{ traffic_limiter_config.redis.addrs | tojson }}
+        password: {{ traffic_limiter_config.redis.get('password', '') | tojson }}
+      {%- endif %}
+{%- endif %}
+
 {% if field_normalizer_config is defined %}
   - name: "{{ field_normalizer_config.name }}"
     config:

@@ -246,15 +246,6 @@
           config:
             bytes_per_second: 0
             burst_bytes: 0
-            {{- $redis := (.Values.trafficLimiter | default dict).redis | default dict }}
-            {{- if $redis.addrs }}
-            redis:
-              mode: {{ $redis.mode | default "standalone" }}
-              db: {{ $redis.db | default 0 }}
-              key: {{ $redis.key | default "bkcollector.traffic_limiter" }}
-              addrs:{{ toYaml $redis.addrs | nindent 16 }}
-              password: {{ $redis.password | default "" | quote }}
-            {{- end }}
 
         # TracesDeriver: 指标派生处理器
         - name: "traces_deriver/delta"

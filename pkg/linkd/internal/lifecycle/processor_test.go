@@ -323,6 +323,14 @@ func TestCloseAlert(t *testing.T) {
 	if err != nil || !retry.AlreadyClosed {
 		t.Fatalf("retry=%#v,%v", retry, err)
 	}
+	if retry.Alert.EndOperation == nil || retry.Alert.EndOperation.ID != command.OperationID {
+		t.Fatalf("end operation = %#v", retry.Alert.EndOperation)
+	}
+	other := command
+	other.OperationID = "op-2"
+	if _, err := processor.CloseAlert(context.Background(), other); !errors.Is(err, store.ErrInvalidTransition) {
+		t.Fatalf("different operation id must conflict: %v", err)
+	}
 }
 
 func TestCloseAlertRetryRepairsCacheAfterCAS(t *testing.T) {

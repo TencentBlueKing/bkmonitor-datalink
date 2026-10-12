@@ -56,3 +56,21 @@ Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也
 清理由 Linkd 推进，KAC 不再直接修改兼容告警的生命周期字段。
 
 KAC 收到 close 动作后只执行后续处置，不再次据此生成关闭命令，避免终结操作回流。
+
+## KAC 集成入口
+
+KAC 使用 `BKAPP_KAC_LINKD_API_URL` 调用 `POST /api/v1/integrations/kac/alerts/{alert_id}/close`。
+此入口当前不校验 token；`bk_tenant_id` 只限定读写范围，不构成调用方身份验证。部署时须将控制面限制在受信内部网络。
+
+请求字段与管理入口相同。接口同步执行单个 Alert 的状态转换；返回 200 时，`alert.status` 为 `closed`，
+`alert.close_operation_id` 是已保存的 `Alert.end_operation.id`，须与请求的 `operation_id` 一致。
+响应中的 `alert` 只包含 `bk_tenant_id`、`alert_id`、`status`、`close_operation_id`，不返回告警正文或扩展数据。
+`already_closed=true` 表示同一命令此前已生效，并在本次补齐缓存、Hook 和流水。
+
+`GET /api/v1/integrations/kac/alerts/{alert_id}?bk_tenant_id={tenant_id}` 返回同样的最小快照，
+供 KAC 在 409 或不确定结果后核对关闭身份。只有状态和操作 ID 都匹配，才可认定本命令已关闭目标。
+KAC 在超时、429 或 5xx 后复用原命令重试；接口每次只关闭一条 Alert。
+
+集成入口错误响应为 `{ "error_code": "...", "message": "..." }`：400 `invalid_command`、
+403 `tenant_mismatch`、404 `not_found`、409 `invalid_transition` / `version_conflict` / `source_unpublished`、
+429 `busy`、502 `result_uncertain`、503 `unavailable`。

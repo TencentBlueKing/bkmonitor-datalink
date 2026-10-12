@@ -35,6 +35,7 @@ import (
 // CloseError 提供管理接口的错误分类；不向客户端暴露基础设施错误和凭据。
 type CloseError struct {
 	Status  int
+	Code    string
 	Message string
 }
 
@@ -50,25 +51,47 @@ type closeSourceReader interface {
 type AlertCloser struct {
 	slots chan struct{}
 	run   func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error)
+	read  func(context.Context, string, string) (domain.Alert, error)
 }
 
 // NewAlertCloser 创建控制面专用的有界关闭入口，不启动消费者或修改存储 schema。
 func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime) *AlertCloser {
-	return &AlertCloser{slots: make(chan struct{}, 4), run: func(ctx context.Context, command lifecycle.CloseAlertCommand) (result lifecycle.CloseAlertResult, err error) {
+	closer := &AlertCloser{slots: make(chan struct{}, 4)}
+	closer.run = func(ctx context.Context, command lifecycle.CloseAlertCommand) (result lifecycle.CloseAlertResult, err error) {
 		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, command.BKTenantID, command.AlertID, nil, func(p *lifecycle.Processor) error {
 			var err error
 			result, err = p.CloseAlert(ctx, command)
 			return err
 		})
 		return result, err
-	}}
+	}
+	closer.read = func(ctx context.Context, tenantID, alertID string) (alert domain.Alert, readErr error) {
+		if cfg.Storage == nil {
+			return alert, &CloseError{Status: 503, Code: "unavailable", Message: "storage is not configured"}
+		}
+		runtime, err := storeassembly.OpenExisting(ctx, *cfg.Storage, 4)
+		if err != nil {
+			return alert, err
+		}
+		defer storeassembly.JoinCloseError(&readErr, runtime)
+		reader := runtime.Repository.GetAlert
+		if current, ok := runtime.Repository.(store.LifecycleAlertStore); ok {
+			reader = current.GetAlertCurrent
+		}
+		stored, err := reader(ctx, tenantID, alertID)
+		if err != nil {
+			return alert, err
+		}
+		return stored.Alert.Clone(), nil
+	}
+	return closer
 }
 
 // withAlertProcessor 为人工关闭、屏蔽检查和合并步骤共用实时读取、租户校验、Hook 与同一租约边界。
 func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, tenant, alertID string, configure func(store.Repository) []lifecycle.ProcessorOption, run func(*lifecycle.Processor) error) (runErr error) {
 
 	if cfg.Storage == nil || cfg.Lifecycle == nil || cfg.Storage.Redis == nil {
-		return &CloseError{503, "lifecycle is not configured"}
+		return &CloseError{Status: 503, Code: "unavailable", Message: "lifecycle is not configured"}
 	}
 	runtime, err := storeassembly.OpenExisting(ctx, *cfg.Storage, 4)
 	if err != nil {
@@ -88,7 +111,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 		return err
 	}
 	if source.Published <= 0 {
-		return &CloseError{409, "event source has no published configuration"}
+		return &CloseError{Status: 409, Code: "source_unpublished", Message: "event source has no published configuration"}
 	}
 	version := source.Published
 	if source.Deleted {
@@ -99,7 +122,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 		return err
 	}
 	if release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != tenant {
-		return &CloseError{403, "event source tenant mismatch"}
+		return &CloseError{Status: 403, Code: "tenant_mismatch", Message: "event source tenant mismatch"}
 	}
 	hooks, closeHooks, err := openHooksWithSeverity(release.Spec.Hooks, metrics, severity)
 	if err != nil {
@@ -150,10 +173,10 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 // CloseAlert 在固定预算内执行一次显式关闭命令；失败可能发生在 CAS 已成功之后。
 func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 	if ctx == nil {
-		return lifecycle.CloseAlertResult{}, &CloseError{400, "context is required"}
+		return lifecycle.CloseAlertResult{}, &CloseError{Status: 400, Code: "invalid_command", Message: "context is required"}
 	}
 	if command.Validate() != nil || domain.ValidateIdentityPart("bk_tenant_id", command.BKTenantID, 64) != nil || len(command.AlertID) > domain.EntityIDMaxBytes || len(command.OperationID) > 128 || len(command.OperatorID) > 256 || command.EffectiveAt.After(time.Now().Add(5*time.Minute)) {
-		return lifecycle.CloseAlertResult{}, &CloseError{400, "invalid close command"}
+		return lifecycle.CloseAlertResult{}, &CloseError{Status: 400, Code: "invalid_command", Message: "invalid close command"}
 	}
 	select {
 	case <-ctx.Done():
@@ -164,7 +187,7 @@ func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAle
 	case s.slots <- struct{}{}:
 		defer func() { <-s.slots }()
 	default:
-		return lifecycle.CloseAlertResult{}, &CloseError{429, "close capacity exceeded"}
+		return lifecycle.CloseAlertResult{}, &CloseError{Status: 429, Code: "busy", Message: "close capacity exceeded"}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -177,15 +200,50 @@ func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAle
 		return result, classified
 	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, eventsource.ErrNotFound) {
-		return result, &CloseError{404, "alert or source not found"}
+		return result, &CloseError{Status: 404, Code: "not_found", Message: "alert or source not found"}
 	}
 	if errors.Is(err, scheduler.ErrLockBusy) {
-		return result, &CloseError{429, "alert is being processed; retry the same operation"}
+		return result, &CloseError{Status: 429, Code: "busy", Message: "alert is being processed; retry the same operation"}
 	}
-	if errors.Is(err, store.ErrInvalidTransition) || errors.Is(err, store.ErrVersionConflict) {
-		return result, &CloseError{409, "alert state changed; refresh before another operation"}
+	if errors.Is(err, store.ErrInvalidTransition) {
+		return result, &CloseError{Status: 409, Code: "invalid_transition", Message: "alert state changed; refresh before another operation"}
 	}
-	return result, &CloseError{502, "close result uncertain; retry the same operation"}
+	if errors.Is(err, store.ErrVersionConflict) {
+		return result, &CloseError{Status: 409, Code: "version_conflict", Message: "alert version changed; retry the same operation"}
+	}
+	return result, &CloseError{Status: 502, Code: "result_uncertain", Message: "close result uncertain; retry the same operation"}
+}
+
+// CloseKACAlert 复用正式关闭命令；KAC 的鉴权边界由 HTTP 入口单独处理。
+func (s *AlertCloser) CloseKACAlert(ctx context.Context, command lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+	return s.CloseAlert(ctx, command)
+}
+
+// GetAlert 读取指定租户的当前快照，供 KAC 在不确定响应后核对稳定操作身份。
+func (s *AlertCloser) GetAlert(ctx context.Context, tenantID, alertID string) (domain.Alert, error) {
+	if ctx == nil || domain.ValidateIdentityPart("bk_tenant_id", tenantID, 64) != nil || alertID == "" || len(alertID) > domain.EntityIDMaxBytes {
+		return domain.Alert{}, &CloseError{Status: 400, Code: "invalid_command", Message: "invalid alert identity"}
+	}
+	select {
+	case s.slots <- struct{}{}:
+		defer func() { <-s.slots }()
+	default:
+		return domain.Alert{}, &CloseError{Status: 429, Code: "busy", Message: "close capacity exceeded"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	alert, err := s.read(ctx, tenantID, alertID)
+	if err == nil {
+		return alert, nil
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return domain.Alert{}, &CloseError{Status: 404, Code: "not_found", Message: "alert not found"}
+	}
+	var classified *CloseError
+	if errors.As(err, &classified) {
+		return domain.Alert{}, classified
+	}
+	return domain.Alert{}, &CloseError{Status: 502, Code: "result_uncertain", Message: "alert lookup failed"}
 }
 
 func withAlertLease(ctx context.Context, locker scheduler.Locker, key string, run func() error) (err error) {

@@ -39,6 +39,7 @@ type API struct {
 	Tasks        interface{ Snapshot() taskstate.Snapshot }
 	OneModel     *queryservice.Service
 	AlertCloser  AlertCloser
+	KACCloser    KACCloser
 	SourceAlerts *SourceAlerts
 	Previewer    interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
@@ -69,6 +70,8 @@ type API struct {
 func (a *API) Handler() http.Handler {
 	verifier, verifierErr := internaltoken.New(a.Config.JWT.SecretKey, nil)
 	mux := http.NewServeMux()
+	const kacCloseRoute = "POST /api/v1/integrations/kac/alerts/{id}/close"
+	const kacGetRoute = "GET /api/v1/integrations/kac/alerts/{id}"
 	mux.HandleFunc("GET /api/v1/control-plane/tasks", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if a.Tasks == nil {
@@ -91,6 +94,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
 	mux.HandleFunc("GET /api/v1/alerts", a.listSourceAlerts)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/close", a.closeAlert)
+	mux.HandleFunc(kacCloseRoute, a.closeKACAlert)
+	mux.HandleFunc(kacGetRoute, a.getKACAlert)
 	mux.HandleFunc("GET /api/v1/event-sources", a.list)
 	mux.HandleFunc("GET /api/v1/event-sources/{id}", a.get)
 	mux.HandleFunc("PUT /api/v1/event-sources/{id}", a.put)
@@ -138,6 +143,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/heartbeat", a.beat)
 	mux.HandleFunc("GET /internal/releases/{id}/{version}", a.workerRelease)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, route := mux.Handler(r)
+		kacRequest := (r.Method == http.MethodPost && route == kacCloseRoute) || (r.Method == http.MethodGet && route == kacGetRoute)
 		if strings.HasPrefix(r.URL.Path, "/internal/") {
 			// 调度接口不能因共享管理 JWT 而绕过 Worker 的独立身份边界。
 			provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -145,7 +152,7 @@ func (a *API) Handler() http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-		} else {
+		} else if !kacRequest {
 			if verifierErr != nil {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return

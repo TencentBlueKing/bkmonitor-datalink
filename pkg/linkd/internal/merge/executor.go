@@ -449,6 +449,10 @@ func (e *Executor) completeLateMember(ctx context.Context, current StoredDecisio
 			return err
 		}
 	}
-	actual, err := e.Operations.ReleaseMergeWindow(ctx, d.TenantID, member.Alert.AlertID, d.WindowID)
+	reason := "conditions_not_met"
+	if d.Outcome == "succeeded" {
+		reason = "member_not_selected"
+	}
+	actual, err := e.Operations.ReleaseMergeWindowWithReason(ctx, d.TenantID, member.Alert.AlertID, d.WindowID, reason)
 	return validateReleasedMember(d.TenantID, member.Alert.AlertID, d.WindowID, actual, err)
 }

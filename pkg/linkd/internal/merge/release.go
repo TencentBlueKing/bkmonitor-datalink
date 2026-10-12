@@ -22,7 +22,7 @@ import (
 // MemberReleaser 必须取得与事件处理相同的 fingerprint lease，再实时读取成员并释放指定窗口。
 // 成功仅在状态、流水和当前输出步骤完成后返回；找不到从未落库的候选可返回 store.ErrNotFound。
 type MemberReleaser interface {
-	ReleaseMergeWindow(context.Context, string, string, string) (store.StoredAlert, error)
+	ReleaseMergeWindowWithReason(context.Context, string, string, string, string) (store.StoredAlert, error)
 }
 
 // ReleaseStep 处理失败裁决中的一个候选，再 CAS 推进持久化前缀；最多执行一个成员操作。
@@ -49,7 +49,7 @@ func (j *Journal) ReleaseStep(ctx context.Context, tenant, id string, releaser M
 		return j.Complete(ctx, current, nil, at)
 	}
 	member := d.WaitMemberIDs[d.Progress.MemberOffset]
-	released, err := releaser.ReleaseMergeWindow(ctx, tenant, member, d.WindowID)
+	released, err := releaser.ReleaseMergeWindowWithReason(ctx, tenant, member, d.WindowID, "conditions_not_met")
 	if err := validateReleasedMember(tenant, member, d.WindowID, released, err); err != nil {
 		return StoredDecision{}, err
 	}

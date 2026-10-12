@@ -44,13 +44,22 @@ type AlertAdmission struct {
 	CauseID    string     `json:"cause_id,omitempty"`
 }
 
+// PolicyPeriod 是实际命中的屏蔽生效时段，端点按策略时区求值后保存为 UTC。
+type PolicyPeriod struct {
+	From  time.Time `json:"from"`
+	Until time.Time `json:"until"`
+}
+
 // ShieldBinding 是 Alert 内有界的活动关系摘要；历史关系通过业务流水保留。
 // SourceEventID/Severity 指向建立关系时已经冻结的事件视图，不使用后续 Event 刷新。
 type ShieldBinding struct {
+	// Periods 保存建立绑定时实际命中的 UTC 时段，静态配置由准确策略发布提供。
+	Periods []PolicyPeriod `json:"periods,omitempty"`
 	// Origin 为空表示 Event 匹配；manual 表示指定告警快捷绑定，不按普通条件解除。
-	Origin      string `json:"origin,omitempty"`
-	OperationID string `json:"operation_id,omitempty"`
-	OperatorID  string `json:"operator_id,omitempty"`
+	Origin          string `json:"origin,omitempty"`
+	OperationID     string `json:"operation_id,omitempty"`
+	OperatorDisplay string `json:"operator_display,omitempty"`
+	OperatorID      string `json:"operator_id,omitempty"`
 	// MainCandidate 保存待处理主的冻结 Event 引用；nil 表示使用主 Alert 的 opening 快照。
 	MainCandidate *DependencyMain `json:"main_candidate,omitempty"`
 	ActivationID  string          `json:"activation_id,omitempty"`
@@ -78,6 +87,11 @@ func (s AlertShield) Clone() AlertShield {
 		s.Bindings = nil
 	}
 	for i := range s.Bindings {
+		s.Bindings[i].Periods = slices.Clone(s.Bindings[i].Periods)
+		for j := range s.Bindings[i].Periods {
+			s.Bindings[i].Periods[j].From = normalizeTime(s.Bindings[i].Periods[j].From)
+			s.Bindings[i].Periods[j].Until = normalizeTime(s.Bindings[i].Periods[j].Until)
+		}
 		s.Bindings[i].BoundAt = normalizeTime(s.Bindings[i].BoundAt)
 		if s.Bindings[i].MainCandidate != nil {
 			v := *s.Bindings[i].MainCandidate
@@ -123,16 +137,27 @@ func (s AlertShield) Validate(alertID string, status AlertStatus) error {
 	}
 	seen := map[string]bool{}
 	for _, b := range s.Bindings {
+		if len(b.Periods) > 64 {
+			return fmt.Errorf("shield period budget exceeded")
+		}
+		for _, period := range b.Periods {
+			if period.From.IsZero() || period.Until.IsZero() || period.Until.Before(period.From) {
+				return fmt.Errorf("invalid shield period")
+			}
+		}
 		raw, err := hex.DecodeString(b.BindingID)
 		if err != nil || len(raw) != 32 || seen[b.BindingID] || b.BoundAt.IsZero() || b.SourceEventID == "" || len(b.SourceEventID) > EntityIDMaxBytes || b.Severity == "" || len(b.Severity) > 32 || len(b.Reason) > 4096 {
 			return fmt.Errorf("invalid shield binding")
 		}
 		switch b.Origin {
 		case "":
-			if b.OperationID != "" || b.OperatorID != "" {
+			if b.OperationID != "" || b.OperatorID != "" || b.OperatorDisplay != "" {
 				return fmt.Errorf("matched binding cannot carry manual operation")
 			}
 		case "manual":
+			if len(b.OperatorDisplay) > 256 {
+				return fmt.Errorf("manual operator display exceeds budget")
+			}
 			if b.Type != "time_shield" || ValidateIdentityPart("operation", b.OperationID, 128) != nil || b.OperatorID == "" || len(b.OperatorID) > 256 {
 				return fmt.Errorf("invalid manual shield operation")
 			}
@@ -231,6 +256,8 @@ func ValidateAlertPolicyReplacement(current, replacement Alert) error {
 // AlertPolicyChange 是控制面 CAS 后仍需补齐的状态输出和流水意图。它不触发处置。
 // 保留在 Alert 上，直到同一 fingerprint lease 内完成日志和输出尝试；后续业务变更须先完成它。
 type AlertPolicyChange struct {
+	// LogVersion 固定本次流水格式；零值的既有意图仍输出原 payload 和身份。
+	LogVersion  int             `json:"log_version,omitempty"`
 	OperationID string          `json:"operation_id"`
 	EffectiveAt time.Time       `json:"effective_at"`
 	Before      []ShieldBinding `json:"before,omitempty"`
@@ -251,6 +278,9 @@ func (c *AlertPolicyChange) Clone() *AlertPolicyChange {
 func (c *AlertPolicyChange) Validate(a Alert) error {
 	if c == nil {
 		return nil
+	}
+	if c.LogVersion < 0 || c.LogVersion > 2 {
+		return fmt.Errorf("invalid policy log version")
 	}
 	err := ValidateIdentityPart("policy operation", c.OperationID, 128)
 	if err != nil || c.EffectiveAt.IsZero() || (len(c.Before) == 0 && len(c.After) == 0) || len(c.Before) > 16 || len(c.After) > 16 || !reflect.DeepEqual(c.After, a.Shield.Bindings) {

@@ -42,6 +42,8 @@ type FieldMapping struct {
 
 // CommonSpec 保存三类策略公共配置；租户和策略身份在发布信封中提供。
 type CommonSpec struct {
+	// FieldLabels 是发布时的分组字段展示名，不参与匹配或读取原始字段值。
+	FieldLabels   map[string]string          `json:"field_labels,omitempty"`
 	Name          string                     `json:"name"`
 	Enabled       bool                       `json:"is_enable"`
 	UpdatedAt     time.Time                  `json:"updated_at"`
@@ -185,6 +187,14 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 		result.Common = result.Merge.CommonSpec
 		policies = result.Merge.Policy
 		canonical = result.Merge
+	}
+	if len(result.Common.FieldLabels) > 32 {
+		return nil, fmt.Errorf("field_labels exceeds 32 entries")
+	}
+	for key, label := range result.Common.FieldLabels {
+		if key == "" || len(key) > 128 || label == "" || len(label) > 256 {
+			return nil, fmt.Errorf("invalid field label")
+		}
 	}
 	if strings.TrimSpace(result.Common.Name) == "" || len(result.Common.Name) > 256 || result.Common.UpdatedAt.IsZero() || result.Common.SpaceCode == "" || len(result.Common.SpaceCode) > 128 {
 		return nil, fmt.Errorf("name, updated_at and bounded space_code are required")

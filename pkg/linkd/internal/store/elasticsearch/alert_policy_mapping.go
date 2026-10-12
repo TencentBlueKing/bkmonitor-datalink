@@ -28,12 +28,12 @@ func alertPolicyProperties() map[string]map[string]any {
 		"projection":            {"properties": map[string]any{"targets": opaqueObjectProperty()}},
 		"revision":              {"type": "long"},
 		"merge_work":            {"type": "boolean"},
-		"merge_change":          {"properties": map[string]any{"kind": keywordProperty(), "relation_id": keywordProperty(), "operation_id": keywordProperty(), "window_id": keywordProperty(), "effective_at": dateNanosProperty(), "before": opaqueObjectProperty(), "after": opaqueObjectProperty(), "action_ready": map[string]any{"type": "boolean"}}},
+		"merge_change":          {"properties": map[string]any{"log_params": opaqueObjectProperty(), "kind": keywordProperty(), "relation_id": keywordProperty(), "operation_id": keywordProperty(), "window_id": keywordProperty(), "effective_at": dateNanosProperty(), "before": opaqueObjectProperty(), "after": opaqueObjectProperty(), "action_ready": map[string]any{"type": "boolean"}}},
 		"merge":                 {"properties": map[string]any{"role": keywordProperty(), "state": keywordProperty(), "pending": opaqueObjectProperty(), "relation_ids": keywordProperty(), "operation_id": keywordProperty(), "relations_ready": map[string]any{"type": "boolean"}}},
 		"shield":                {"properties": map[string]any{"active": map[string]any{"type": "boolean"}, "next_check_at": dateNanosProperty(), "bindings": opaqueObjectProperty()}},
 		"admission":             {"properties": map[string]any{"admitted_at": dateNanosProperty(), "severity": keywordProperty(), "cause_type": keywordProperty(), "cause_id": keywordProperty()}},
 		"policy_tags":           {"type": "long"},
-		"policy_change":         {"properties": map[string]any{"operation_id": keywordProperty(), "effective_at": dateNanosProperty(), "before": opaqueObjectProperty(), "after": opaqueObjectProperty()}},
+		"policy_change":         {"properties": map[string]any{"log_version": map[string]any{"type": "integer"}, "operation_id": keywordProperty(), "effective_at": dateNanosProperty(), "before": opaqueObjectProperty(), "after": opaqueObjectProperty()}},
 	}
 }
 

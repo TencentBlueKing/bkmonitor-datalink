@@ -201,6 +201,9 @@ func (p *Processor) commitMergeRelationChange(ctx context.Context, current store
 		next.Admission = domain.AlertAdmission{AdmittedAt: &at, Severity: next.Severity, CauseType: AlertChangeCauseSystemOperation, CauseID: operation}
 	}
 	next.MergeChange = &domain.AlertMergeChange{Kind: kind, RelationID: r.ID, OperationID: operation, WindowID: r.WindowID, EffectiveAt: next.UpdateAt, Before: current.Alert.Merge.Clone(), After: next.Merge.Clone(), ActionReady: ready}
+	if err := freezeMergeFlow(next.MergeChange, &r); err != nil {
+		return store.StoredAlert{}, err
+	}
 	if err := freezeAction(&next, current.Alert.Revision+1, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: operation}, ready); err != nil {
 		return store.StoredAlert{}, err
 	}

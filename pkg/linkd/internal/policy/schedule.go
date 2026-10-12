@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 	_ "time/tzdata" // 容器镜像没有系统 zoneinfo 时仍保持策略时区语义。
+
+	"linkd/internal/domain"
 )
 
 // ActiveTime 保留 KAC 生效时间配置；周期时段不能跨午夜，所有端点按秒包含。
@@ -220,4 +222,27 @@ func (s *Schedule) Occurrence(at time.Time) (string, error) {
 	raw, _ := json.Marshal(parts)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// Periods 返回当前匹配的具体时段；周期配置按当前本地日期展开，顺序沿用已冻结配置。
+func (s *Schedule) Periods(at time.Time) []domain.PolicyPeriod {
+	if s == nil {
+		return nil
+	}
+	periods := []domain.PolicyPeriod{}
+	local := at.In(s.zone)
+	for _, rule := range s.intervals {
+		single := &Schedule{zone: s.zone, intervals: []activeInterval{rule}}
+		if !single.Active(at) {
+			continue
+		}
+		start, end := rule.start, rule.end
+		if rule.period != "once" {
+			y, m, d := local.Date()
+			start = time.Date(y, m, d, rule.open/3600, (rule.open%3600)/60, rule.open%60, 0, s.zone)
+			end = time.Date(y, m, d, rule.close/3600, (rule.close%3600)/60, rule.close%60, 0, s.zone)
+		}
+		periods = append(periods, domain.PolicyPeriod{From: start.UTC(), Until: end.UTC()})
+	}
+	return periods
 }

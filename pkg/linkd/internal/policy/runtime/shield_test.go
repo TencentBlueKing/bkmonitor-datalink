@@ -244,7 +244,7 @@ func TestPartialUnshieldHistoryKeepsRetainedBindingAndCompleteTransition(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		b := domain.ShieldBinding{Policy: domain.PolicyVersion{ID: release.ID, Version: release.Version, Digest: release.Compiled.Digest}, Type: "time_shield", SourceEventID: opening.Event.EventID, Severity: "warning", BoundAt: clock.at, Reason: c.Shield.Reason, ActivationID: activation}
+		b := domain.ShieldBinding{Periods: c.Schedule.Periods(clock.at), Policy: domain.PolicyVersion{ID: release.ID, Version: release.Version, Digest: release.Compiled.Digest}, Type: "time_shield", SourceEventID: opening.Event.EventID, Severity: "warning", BoundAt: clock.at, Reason: c.Shield.Reason, ActivationID: activation}
 		b.BindingID = shieldBindingID("tenant", id, b)
 		multiple.Shield.Bindings = append(multiple.Shield.Bindings, b)
 	}

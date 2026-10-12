@@ -145,6 +145,32 @@ func TestPolicyHTTPPublicationAndTenantScope(t *testing.T) {
 	}
 }
 
+func TestPolicyHTTPOriginSurvivesExactReleaseRead(t *testing.T) {
+	docs := &policyDocuments{rows: map[string]policyDocument{}}
+	handler := (&API{Policies: policy.NewService(docs), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()
+	var body map[string]any
+	if err := json.Unmarshal([]byte(policyRequestBody()), &body); err != nil {
+		t.Fatal(err)
+	}
+	body["origin"] = map[string]any{"system": "kac", "policy_type": "converge", "policy_id": "policy", "snapshot_id": "123"}
+	raw, _ := json.Marshal(body)
+	w := policyHTTP(t, handler, http.MethodPut, "/api/v1/policies/suppression/p1", string(raw))
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	w = policyHTTP(t, handler, http.MethodGet, "/api/v1/policies/suppression/p1/releases/1?bk_tenant_id=tenant", "")
+	var release policy.Release
+	if err := json.Unmarshal(w.Body.Bytes(), &release); err != nil || w.Code != 200 || release.Origin == nil || release.Origin.SnapshotID != "123" {
+		t.Fatal("HTTP dropped published source", w.Code, err)
+	}
+	body["origin"].(map[string]any)["snapshot_id"] = "456"
+	raw, _ = json.Marshal(body)
+	w = policyHTTP(t, handler, http.MethodPut, "/api/v1/policies/suppression/p1", string(raw))
+	if w.Code != 409 {
+		t.Fatal("retry replaced source reference", w.Code)
+	}
+}
+
 func TestPolicyHTTPRejectsInvalidBodiesAndWorkerCredentials(t *testing.T) {
 	docs := &policyDocuments{rows: map[string]policyDocument{}}
 	handler := (&API{Policies: policy.NewService(docs), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()

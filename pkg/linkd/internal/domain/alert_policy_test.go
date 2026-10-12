@@ -73,3 +73,36 @@ func TestAlertPolicyStatesAreIndependentAndBindingsImmutable(t *testing.T) {
 		t.Fatal("terminal shield remained active")
 	}
 }
+
+func TestShieldPeriodsCloneAndValidation(t *testing.T) {
+	a := validAlert()
+	period := domain.PolicyPeriod{From: a.UpdateAt, Until: a.UpdateAt.Add(time.Hour)}
+	binding := domain.ShieldBinding{BindingID: strings.Repeat("a", 64), Policy: domain.PolicyVersion{ID: "policy", Version: 1, Digest: strings.Repeat("c", 64)}, Type: "time_shield", SourceEventID: a.TriggerEventID, Severity: a.Severity, BoundAt: a.UpdateAt, ActivationID: strings.Repeat("b", 64), Periods: []domain.PolicyPeriod{period}}
+	next := a.UpdateAt.Add(time.Minute)
+	a.Shield = domain.AlertShield{Active: true, Bindings: []domain.ShieldBinding{binding}, NextCheckAt: &next}
+	if err := a.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	clone := a.Clone()
+	a.Shield.Bindings[0].Periods[0].Until = a.UpdateAt
+	if !clone.Shield.Bindings[0].Periods[0].Until.Equal(period.Until) {
+		t.Fatal("cloned binding shares periods")
+	}
+	for _, tc := range []struct {
+		name    string
+		periods []domain.PolicyPeriod
+	}{
+		{"missing start", []domain.PolicyPeriod{{Until: period.Until}}},
+		{"missing end", []domain.PolicyPeriod{{From: period.From}}},
+		{"reversed", []domain.PolicyPeriod{{From: period.Until, Until: period.From}}},
+		{"over budget", make([]domain.PolicyPeriod, 65)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invalid := clone.Clone()
+			invalid.Shield.Bindings[0].Periods = tc.periods
+			if invalid.Validate() == nil {
+				t.Fatal("invalid execution periods accepted")
+			}
+		})
+	}
+}

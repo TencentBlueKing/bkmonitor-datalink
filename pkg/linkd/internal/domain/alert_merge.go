@@ -222,6 +222,8 @@ func (m *AlertMerge) ReleaseWindow(id string) (*AlertMerge, bool) {
 // AlertMergeChange 保存控制面释放窗口、建立成员关系或开放父关系后尚待完成的流水/输出；与 Alert CAS 一起写入。
 // 新事件和直接关闭必须先完成该意图，避免用后续快照重试旧操作。
 type AlertMergeChange struct {
+	// LogParams 在业务 CAS 前冻结；nil 的旧意图保留旧流水格式。
+	LogParams   JSONObject  `json:"log_params,omitempty"`
 	Kind        string      `json:"kind"`
 	RelationID  string      `json:"relation_id,omitempty"`
 	OperationID string      `json:"operation_id"`
@@ -238,6 +240,7 @@ func (c *AlertMergeChange) Clone() *AlertMergeChange {
 		return nil
 	}
 	v := *c
+	v.LogParams = c.LogParams.Clone()
 	v.Before = c.Before.Clone()
 	v.After = c.After.Clone()
 	v.EffectiveAt = normalizeTime(c.EffectiveAt)
@@ -248,6 +251,12 @@ func (c *AlertMergeChange) Clone() *AlertMergeChange {
 func (c *AlertMergeChange) Validate(a Alert) error {
 	if c == nil {
 		return nil
+	}
+	if c.LogParams != nil {
+		_, err := c.LogParams.Normalize()
+		if err != nil {
+			return fmt.Errorf("invalid merge log params")
+		}
 	}
 	if err := ValidateIdentityPart("merge operation", c.OperationID, 128); err != nil {
 		return err

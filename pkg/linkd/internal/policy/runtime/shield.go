@@ -168,7 +168,7 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 			record("skipped", "policy_tag_budget")
 			continue
 		}
-		binding := domain.ShieldBinding{Policy: domain.PolicyVersion{ID: ref.ID, Version: ref.Version, Digest: ref.Digest}, Type: "time_shield", SourceEventID: event.EventID, Severity: evaluation.Severity, BoundAt: snapshot.EvaluatedAt, Reason: frozen.Compiled.Shield.Reason}
+		binding := domain.ShieldBinding{Periods: frozen.Compiled.Schedule.Periods(snapshot.EvaluatedAt), Policy: domain.PolicyVersion{ID: ref.ID, Version: ref.Version, Digest: ref.Digest}, Type: "time_shield", SourceEventID: event.EventID, Severity: evaluation.Severity, BoundAt: snapshot.EvaluatedAt, Reason: frozen.Compiled.Shield.Reason}
 		activation, err := frozen.Compiled.Schedule.Occurrence(snapshot.EvaluatedAt)
 		if err != nil {
 			record("skipped", "activation_unavailable")
@@ -176,6 +176,14 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 		}
 		binding.ActivationID = activation
 		binding.BindingID = shieldBindingID(event.BKTenantID, alert.AlertID, binding)
+		// 既有绑定的展示事实与身份一样不可变；不对旧绑定回填元数据。
+		for _, existing := range alert.Shield.Bindings {
+			if existing.BindingID == binding.BindingID {
+				binding = existing
+				break
+			}
+		}
+
 		next := snapshot.EvaluatedAt.Add(5 * time.Second)
 		result.Shield = domain.AlertShield{Active: true, Bindings: []domain.ShieldBinding{binding}, NextCheckAt: &next}
 		result.Tags = append(result.Tags, frozen.Compiled.Shield.AlarmTags...)

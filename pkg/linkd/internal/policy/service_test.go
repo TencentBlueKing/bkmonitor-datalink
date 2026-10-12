@@ -243,6 +243,70 @@ func TestPublicationEveryWriteFailureCanRetry(t *testing.T) {
 	}
 }
 
+func TestOriginIsFrozenWithReleaseAndIndependentOfCompilation(t *testing.T) {
+	d := newTestDocuments()
+	s := NewService(d)
+	r := testRequest()
+	r.Origin = &PolicyOrigin{System: "kac", PolicyType: "converge", PolicyID: "policy", SnapshotID: "123"}
+	first := mustApply(t, s, r)
+	if first.Origin == nil || *first.Origin != *r.Origin {
+		t.Fatal("origin not published")
+	}
+	r.Origin.SnapshotID = "456"
+	if first.Origin.SnapshotID != "123" {
+		t.Fatal("origin shared caller memory")
+	}
+	if _, err := s.Apply(t.Context(), r); !errors.Is(err, ErrConflict) {
+		t.Fatal("same operation accepted different origin", err)
+	}
+	r.ExpectedVersion, r.OperationID = 1, "different-origin"
+	second := mustApply(t, s, r)
+	if second.Compiled.Digest != first.Compiled.Digest || second.RequestDigest == first.RequestDigest {
+		t.Fatal("origin affected compilation or was absent from request identity")
+	}
+	old, err := s.GetRelease(t.Context(), r.Scope, r.ID, 1)
+	if err != nil || old.Origin.SnapshotID != "123" {
+		t.Fatal("old source reference changed", err)
+	}
+	current, err := s.Get(t.Context(), r.Scope, r.ID)
+	if err != nil || current.Origin.SnapshotID != "456" {
+		t.Fatal("current origin differs from published release", err)
+	}
+	deleted, err := s.Delete(t.Context(), r.Scope, r.ID, 2, "delete-origin")
+	if err != nil || deleted.Origin.SnapshotID != "456" {
+		t.Fatal("deletion lost source", err)
+	}
+}
+
+func TestOriginValidationAndPublicationRecovery(t *testing.T) {
+	for _, bad := range []PolicyOrigin{{}, {System: "kac", PolicyType: "shield", PolicyID: "p", SnapshotID: "bad\n"}, {System: "kac", PolicyType: "shield", PolicyID: strings.Repeat("p", 81), SnapshotID: "1"}} {
+		r := testRequest()
+		r.Origin = &bad
+		if _, err := NewService(newTestDocuments()).Apply(t.Context(), r); !errors.Is(err, ErrInvalid) {
+			t.Fatal("invalid origin accepted", err)
+		}
+	}
+	for _, after := range []bool{false, true} {
+		for n := 1; n <= 4; n++ {
+			d := newTestDocuments()
+			if after {
+				d.failAfter = n
+			} else {
+				d.failBefore = n
+			}
+			s := NewService(d)
+			r := testRequest()
+			r.Origin = &PolicyOrigin{System: "kac", PolicyType: "converge", PolicyID: "p", SnapshotID: "99"}
+			_, _ = s.Apply(t.Context(), r)
+			d.failAfter, d.failBefore = 0, 0
+			retried := mustApply(t, s, r)
+			if retried.Origin == nil || retried.Origin.SnapshotID != "99" || retried.Version != 1 {
+				t.Fatal("interruption separated origin from release", after, n)
+			}
+		}
+	}
+}
+
 func TestPendingPublicationRecoveryAndPagination(t *testing.T) {
 	d := newTestDocuments()
 	s := NewService(d)

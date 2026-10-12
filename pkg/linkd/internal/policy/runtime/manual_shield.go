@@ -60,7 +60,7 @@ func (s *Shielder) BindManual(ctx context.Context, a domain.Alert, c lifecycle.S
 	}
 	raw, _ := json.Marshal([]string{"manual-shield-binding", c.TenantID, c.AlertID, c.OperationID})
 	sum := sha256.Sum256(raw)
-	binding := domain.ShieldBinding{BindingID: hex.EncodeToString(sum[:]), Origin: "manual", OperationID: c.OperationID, OperatorID: c.OperatorID, Policy: c.Policy, Type: "time_shield", SourceEventID: a.TriggerEventID, Severity: a.Severity, BoundAt: c.EffectiveAt, ActivationID: activation, Reason: frozen.Compiled.Shield.Reason}
+	binding := domain.ShieldBinding{Periods: frozen.Compiled.Schedule.Periods(c.EffectiveAt), BindingID: hex.EncodeToString(sum[:]), Origin: "manual", OperationID: c.OperationID, OperatorID: c.OperatorID, OperatorDisplay: c.OperatorDisplay, Policy: c.Policy, Type: "time_shield", SourceEventID: a.TriggerEventID, Severity: a.Severity, BoundAt: c.EffectiveAt, ActivationID: activation, Reason: frozen.Compiled.Shield.Reason}
 	shield := a.Shield.Clone()
 	shield.Bindings = append(shield.Bindings, binding)
 	shield.Active = true

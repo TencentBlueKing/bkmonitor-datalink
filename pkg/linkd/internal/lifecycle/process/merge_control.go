@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"linkd/internal/config"
@@ -36,11 +37,15 @@ func NewMergeOperator(cfg config.Config, sources closeSourceReader, relations li
 			return []lifecycle.ProcessorOption{lifecycle.WithMergeRelations(relations)}
 		}, func(p *lifecycle.Processor) error {
 			var e error
-			switch kind {
+			action, reason, _ := strings.Cut(kind, ":")
+			switch action {
 			case "finish":
 				result, e = p.FinishMergeChanges(ctx, tenant, id)
 			case "release":
-				result, e = p.ReleaseMergeWindow(ctx, tenant, id, reference)
+				if reason == "" {
+					reason = "window_released"
+				}
+				result, e = p.ReleaseMergeWindowWithReason(ctx, tenant, id, reference, reason)
 			case "member_link":
 				result, e = p.LinkMergeMember(ctx, tenant, id, reference)
 			case "parent_ready":
@@ -78,6 +83,11 @@ func (r *MergeOperator) execute(ctx context.Context, kind, tenant, id, reference
 // ReleaseMergeWindow 完成指定窗口释放，基础存储、取消和租约冲突交由裁决重试。
 func (r *MergeOperator) ReleaseMergeWindow(ctx context.Context, tenant, id, window string) (store.StoredAlert, error) {
 	return r.execute(ctx, "release", tenant, id, window)
+}
+
+// ReleaseMergeWindowWithReason 将确认的业务原因带入同一 fingerprint lease，不在输出重试时重新裁决。
+func (r *MergeOperator) ReleaseMergeWindowWithReason(ctx context.Context, tenant, id, window, reason string) (store.StoredAlert, error) {
+	return r.execute(ctx, "release:"+reason, tenant, id, window)
 }
 
 // LinkMergeMember 在成员租约内确认真实父并写入成员关系。

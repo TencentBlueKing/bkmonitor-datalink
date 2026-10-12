@@ -11,6 +11,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestManualShieldImmediateRetryExpiryAndDependencyFailure(t *testing.T) {
 	release := timeShieldRelease(t)
 	directory.releases = []policy.Release{release}
 	// 前一轮目录还缓存空策略；快捷绑定必须读取刚发布的版本，不等新 Event 或目录刷新。
-	command := lifecycle.ShieldCommand{TenantID: "tenant", AlertID: id, OperationID: "manual-op", OperatorID: "admin", ExpectedRevision: current.Alert.Revision, Policy: domain.PolicyVersion{ID: release.ID, Version: release.Version, Digest: release.Compiled.Digest}, EffectiveAt: clock.at}
+	command := lifecycle.ShieldCommand{TenantID: "tenant", AlertID: id, OperationID: "manual-op", OperatorID: "admin", OperatorDisplay: "张三", ExpectedRevision: current.Alert.Revision, Policy: domain.PolicyVersion{ID: release.ID, Version: release.Version, Digest: release.Compiled.Digest}, EffectiveAt: clock.at}
 	applied, err := p.BindShield(t.Context(), command)
 	if err != nil || !applied.Alert.Shield.Active || applied.Alert.Status != domain.AlertStatusActive || applied.Alert.Shield.Bindings[0].Origin != "manual" || applied.Alert.LatestEventID != opening.Event.EventID || len(action.calls) != 1 {
 		t.Fatal("immediate binding", applied, err)
@@ -94,6 +95,17 @@ func TestManualShieldImmediateRetryExpiryAndDependencyFailure(t *testing.T) {
 	for _, row := range logs.Logs {
 		if row.OperationKind == domain.OperationKindShield {
 			found = true
+			var bindings []struct {
+				domain.ShieldBinding
+				Periods []domain.PolicyPeriod `json:"periods"`
+			}
+			if json.Unmarshal(row.Params["bindings"], &bindings) != nil || len(bindings) != 1 || len(bindings[0].Periods) != 1 || bindings[0].OperatorDisplay != "张三" || bindings[0].Policy != command.Policy || bindings[0].Reason != "" {
+				t.Fatal("manual business facts missing", string(row.Params["bindings"]))
+			}
+			var operation string
+			if json.Unmarshal(row.Params["request_operation_id"], &operation) != nil || operation != command.OperationID {
+				t.Fatal("manual request correlation lost")
+			}
 			if row.OperatorKind != domain.OperatorKindUser {
 				t.Fatal("manual actor lost")
 			}
@@ -113,7 +125,7 @@ func TestManualShieldRejectsStalePolicyAndPreservesOtherBindings(t *testing.T) {
 	opening := mustProcessAggregation(t, repo, p, shieldEvent("opening", clock))
 	id := opening.Event.RelatedAlertIDs[0]
 	current, _ := repo.GetAlert(t.Context(), "tenant", id)
-	command := lifecycle.ShieldCommand{TenantID: "tenant", AlertID: id, OperationID: "manual", OperatorID: "admin", ExpectedRevision: current.Alert.Revision, Policy: domain.PolicyVersion{ID: release.ID, Version: 1, Digest: release.Compiled.Digest}, EffectiveAt: clock.at}
+	command := lifecycle.ShieldCommand{TenantID: "tenant", AlertID: id, OperationID: "manual", OperatorID: "admin", OperatorDisplay: "张三", ExpectedRevision: current.Alert.Revision, Policy: domain.PolicyVersion{ID: release.ID, Version: 1, Digest: release.Compiled.Digest}, EffectiveAt: clock.at}
 	bad := command
 	bad.Policy.Version = 2
 	if _, err := p.BindShield(t.Context(), bad); !errors.Is(err, policy.ErrConflict) {

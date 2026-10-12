@@ -29,6 +29,7 @@ type ShieldCommand struct {
 	TenantID         string               `json:"bk_tenant_id"`
 	AlertID          string               `json:"alert_id"`
 	OperationID      string               `json:"operation_id"`
+	OperatorDisplay  string               `json:"operator_display,omitempty"`
 	OperatorID       string               `json:"operator_id"`
 	ExpectedRevision int64                `json:"expected_revision"`
 	Policy           domain.PolicyVersion `json:"policy"`
@@ -37,6 +38,9 @@ type ShieldCommand struct {
 
 // Validate 校验命令身份和策略引用，不执行外部查询。
 func (c ShieldCommand) Validate() error {
+	if len(c.OperatorDisplay) > 256 {
+		return store.ErrInvalidArgument
+	}
 	if domain.ValidateIdentityPart("tenant", c.TenantID, 64) != nil || c.AlertID == "" || len(c.AlertID) > domain.EntityIDMaxBytes || domain.ValidateIdentityPart("operation", c.OperationID, 128) != nil || strings.TrimSpace(c.OperatorID) == "" || len(c.OperatorID) > 256 || c.ExpectedRevision < 1 || c.ExpectedRevision >= 1<<53 || c.Policy.Validate() != nil || c.EffectiveAt.IsZero() {
 		return store.ErrInvalidArgument
 	}
@@ -110,7 +114,7 @@ func (p *Processor) BindShield(ctx context.Context, c ShieldCommand) (ShieldComm
 		next.PolicyTags = slices.Compact(next.PolicyTags)
 		next.LastShieldOperation = &domain.AlertShieldOperation{ID: c.OperationID, RequestHash: hash}
 		next.UpdateAt = nextAlertUpdateTime(now, a.UpdateAt)
-		next.PolicyChange = &domain.AlertPolicyChange{OperationID: digestStrings("manual-shield", c.TenantID, c.AlertID, c.OperationID), EffectiveAt: next.UpdateAt, Before: a.Shield.Clone().Bindings, After: next.Shield.Clone().Bindings}
+		next.PolicyChange = &domain.AlertPolicyChange{LogVersion: 2, OperationID: digestStrings("manual-shield", c.TenantID, c.AlertID, c.OperationID), EffectiveAt: next.UpdateAt, Before: a.Shield.Clone().Bindings, After: next.Shield.Clone().Bindings}
 		updated, err := p.compareAndSetAlert(ctx, current, next)
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue

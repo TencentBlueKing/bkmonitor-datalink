@@ -57,6 +57,10 @@ func TestElasticsearchAddsPolicyFieldsToExistingAlertWithoutRewritingRows(t *tes
 				children := old["properties"].(map[string]any)
 				delete(children, "kind")
 				delete(children, "relation_id")
+				delete(children, "log_params")
+				oldPolicy := alertPolicyProperties()["policy_change"]
+				delete(oldPolicy["properties"].(map[string]any), "log_version")
+				properties["policy_change"] = oldPolicy
 				properties["merge_change"] = old
 			}
 			body, err := json.Marshal(map[string]any{"settings": map[string]any{"number_of_shards": 1, "number_of_replicas": 0}, "mappings": map[string]any{"dynamic": "strict", "_meta": schemaMetadata{ManagedBy: managedByLinkd, Entity: entityAlert, SchemaVersion: currentSchemaVersion}, "properties": properties}})

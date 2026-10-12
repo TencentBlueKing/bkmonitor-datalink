@@ -11,7 +11,6 @@ package lifecycle
 
 import (
 	"context"
-	"encoding/json"
 	"reflect"
 	"slices"
 	"time"
@@ -92,33 +91,11 @@ func (p *Processor) planAdmission(ctx context.Context, event domain.Event, snaps
 			plan.PolicyDecision.Shield = result.Decision
 		}
 		if !reflect.DeepEqual(before.Bindings, a.Shield.Bindings) {
-			kind, reason := domain.OperationKindShield, "shield_matched"
-			if !a.Shield.Active {
-				kind, reason = domain.OperationKindUnshield, "shield_released"
-			}
-			extra := map[string]string{}
-			if len(a.Shield.Bindings) > 0 {
-				extra["binding_id"] = a.Shield.Bindings[0].BindingID
-				extra["policy_id"] = a.Shield.Bindings[0].Policy.ID
-			} else if len(before.Bindings) > 0 {
-				extra["binding_id"] = before.Bindings[0].BindingID
-			}
-			log, err := eventAlertLog(event, *a, kind, reason, a.UpdateAt, extra)
+			logs, err := eventShieldFlowLogs(event, *a, before.Bindings, a.Shield.Bindings)
 			if err != nil {
 				return err
 			}
-			// 保存整个绑定变更，不能只记第一条关系，供多策略屏蔽历史逐项回查。
-			beforeBindings, err := json.Marshal(before.Bindings)
-			if err != nil {
-				return err
-			}
-			afterBindings, err := json.Marshal(a.Shield.Bindings)
-			if err != nil {
-				return err
-			}
-			log.Params["before_bindings"] = beforeBindings
-			log.Params["after_bindings"] = afterBindings
-			plan.Logs = append(plan.Logs, log)
+			plan.Logs = append(plan.Logs, logs...)
 		}
 		if !a.Shield.Active {
 			if err := p.planMerge(ctx, event, evaluation, snapshot, plan, a); err != nil {

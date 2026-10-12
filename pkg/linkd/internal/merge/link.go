@@ -71,7 +71,7 @@ func (j *Journal) LinkStep(ctx context.Context, tenant, id string, parent store.
 				return StoredDecision{}, err
 			}
 		} else {
-			released, err := ops.ReleaseMergeWindow(ctx, tenant, member, d.WindowID)
+			released, err := ops.ReleaseMergeWindowWithReason(ctx, tenant, member, d.WindowID, "member_not_selected")
 			if err := validateReleasedMember(tenant, member, d.WindowID, released, err); err != nil {
 				return StoredDecision{}, err
 			}

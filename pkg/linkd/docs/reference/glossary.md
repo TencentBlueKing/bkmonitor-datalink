@@ -16,6 +16,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | 术语            | 定义                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------- |
 | Internal-Token | Kingeye 兼容的内部 HTTP JWT 认证头，认证调用身份；不替代租户授权或业务幂等，详见 [协议](contracts/internal-token.md) |
+| 策略发布来源（PolicyOrigin） | 与不可变 Release 同次保存的外部系统、策略类型/ID及准确快照引用，继承发布租户；参与请求幂等，不参与策略编译和执行，详见 [策略 API](contracts/policy-api.md#策略展示元信息) |
 | plugins.kac.jwt | KAC 动作投递的部署级 JWT 签名配置；secret_key 与 KAC 的 BKAPP_JWT_SECRET_KEY 相同，username 默认 admin，每次请求及重试重新签发五分钟有效的 JWT，不保存预生成 Token |
 | RawEventMessage | MQ 无关的接入信封，保存稳定 record ID、租户、来源、接收时间和原始 payload                         |
 | lane            | 消息队列的确认与所有权分片；Kafka 中对应 topic partition，不表达 fingerprint 业务串行范围         |
@@ -86,6 +87,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | recovered       | 与活动 Alert 同级的 resolved 判定使其进入的终态                                                           |
 | closed          | 同级来源关闭、__ALL__ 全级别来源关闭、直接关闭或 close_and_create 等级升级使 Alert 进入的终态                                                   |
 | AlertLog        | 独立、确定性标识的不可变流水，记录状态操作、抑制和最终输出结果                                    |
+| PolicyPeriod | 屏蔽绑定建立时实际命中的生效时段，按策略时区计算并固定为 UTC 起止；策略名称、字段展示名等静态信息由准确 Release 提供 |
 | VersionToken    | Repository 专属 CAS 令牌；可进入内部处理计划以恢复原版本 CAS，不进入领域 Event/Alert JSON 或外部消息                                              |
 | accepted        | 事件级表示至少产生一项 Alert 变更；判定级表示该级别被接受并关联 Alert                                                                |
 | suppressed      | 判定级表示低等级触发被抑制或旧级别终结被升级替代；事件级表示无 Alert 变更但存在抑制，关联实施抑制的 Alert                            |

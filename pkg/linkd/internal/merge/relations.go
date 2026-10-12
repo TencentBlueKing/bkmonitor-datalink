@@ -93,7 +93,7 @@ func (j *Journal) ensureRelation(ctx context.Context, tenant, id string, parent 
 	if !ending && p.Status != domain.AlertStatusActive {
 		return StoredRelation{}, store.ErrInvalidTransition
 	}
-	r := domain.MergeRelation{ID: id, TenantID: tenant, WindowID: d.WindowID, GroupKey: d.GroupKey, Policy: domain.PolicyVersion{ID: d.Policy.ID, Version: d.Policy.Version, Digest: d.Policy.Compiled.Digest}, ParentAlertID: p.AlertID, ParentFingerprint: p.Fingerprint, WaitMemberIDs: slices.Clone(d.WaitMemberIDs), State: "preparing", CreatedAt: d.FrozenAt, UpdatedAt: at}
+	r := domain.MergeRelation{ParentTitle: p.Title, ID: id, TenantID: tenant, WindowID: d.WindowID, GroupKey: d.GroupKey, Policy: domain.PolicyVersion{ID: d.Policy.ID, Version: d.Policy.Version, Digest: d.Policy.Compiled.Digest}, ParentAlertID: p.AlertID, ParentFingerprint: p.Fingerprint, WaitMemberIDs: slices.Clone(d.WaitMemberIDs), State: "preparing", CreatedAt: d.FrozenAt, UpdatedAt: at}
 	for _, member := range d.MemberIDs {
 		r.Members = append(r.Members, domain.MergeRelationMember{AlertID: member, State: "pending"})
 	}
@@ -117,6 +117,8 @@ func (j *Journal) ensureRelation(ctx context.Context, tenant, id string, parent 
 	if err != nil {
 		return StoredRelation{}, err
 	}
+	// 已创建关系的标题是首次建联事实；重试不随父告警更新而改写，也不回填旧关系。
+	r.ParentTitle = actual.Relation.ParentTitle
 	if !reflect.DeepEqual(relationFacts(actual.Relation), relationFacts(r)) {
 		return StoredRelation{}, policy.ErrConflict
 	}

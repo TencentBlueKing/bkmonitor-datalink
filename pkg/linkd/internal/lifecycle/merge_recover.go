@@ -76,6 +76,9 @@ func (p *Processor) RecoverMergeParent(ctx context.Context, tenant, id, relation
 		operation := digestStrings("merge-parent-recover", tenant, id, relation)
 		next.PolicyChange = terminalShieldChange(current.Alert, next.UpdateAt, operation)
 		next.MergeChange = &domain.AlertMergeChange{Kind: "parent_recover", RelationID: relation, OperationID: operation, WindowID: r.WindowID, EffectiveAt: next.UpdateAt, Before: current.Alert.Merge.Clone(), After: next.Merge.Clone(), ActionReady: next.Admission.AdmittedAt != nil}
+		if err := freezeMergeFlow(next.MergeChange, &r); err != nil {
+			return store.StoredAlert{}, err
+		}
 		if err := freezeAction(&next, current.Alert.Revision+1, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: operation}, next.Admission.AdmittedAt != nil); err != nil {
 			return store.StoredAlert{}, err
 		}

@@ -110,3 +110,26 @@ func TestScheduleOccurrenceUsesConfiguredRecurrence(t *testing.T) {
 		t.Fatal("inactive schedule has an activation")
 	}
 }
+
+func TestSchedulePeriodsKeepMatchedUTCInterval(t *testing.T) {
+	at := time.Date(2026, 10, 12, 2, 30, 0, 0, time.UTC)
+	schedule, err := CompileSchedule("Asia/Shanghai", []ActiveTime{{Period: "everyday", OpenClock: "10:00:00", CloseClock: "11:00:00"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	periods := schedule.Periods(at)
+	if len(periods) != 1 || !periods[0].From.Equal(at.Add(-30*time.Minute)) || !periods[0].Until.Equal(at.Add(30*time.Minute)) {
+		t.Fatal("lost concrete period", periods)
+	}
+	periods[0].Until = at
+	if !schedule.Periods(at)[0].Until.Equal(at.Add(30 * time.Minute)) {
+		t.Fatal("periods share mutable schedule state")
+	}
+	if len(schedule.Periods(at.Add(2*time.Hour))) != 0 {
+		t.Fatal("inactive period fabricated")
+	}
+	var missing *Schedule
+	if len(missing.Periods(at)) != 0 {
+		t.Fatal("nil schedule fabricated a period")
+	}
+}

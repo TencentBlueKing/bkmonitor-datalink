@@ -257,6 +257,7 @@ Event 必须属于请求租户且已有完成的丰富结果；读取已有 Even
   "bk_tenant_id": "tenant-a",
   "operation_id": "quick-shield-1",
   "operator_id": "admin",
+  "operator_display": "张三",
   "expected_revision": 3,
   "policy": {"id": "maintenance", "version": 1, "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
   "effective_at": "2026-10-08T08:00:00Z"
@@ -280,3 +281,14 @@ Alert.shield、last_shield_operation 与 policy_change 输出意图同次保存�
 
 HTTP 400/401/403/404/409/429/503 分别表示参数、鉴权、租户、对象缺失、冲突、繁忙和未配置；
 超时或依赖异常按接口错误返回，状态可能已保存，不能按失败响应推断操作未生效。
+
+
+## 策略展示元信息
+
+发布信封可选 `origin` 保存外部配置的准确来源引用：`system`、`policy_type`、`policy_id`、`snapshot_id` 均为非空有界字符串。它与 Spec 在同一不可变 Release 中保存，参与完整请求摘要及幂等冲突校验，不进入 Spec、编译摘要或匹配/分组计算；原生策略可不提供。当前发布 Record 同步保存对应来源，停止/删除沿用被停止/删除版本的来源。旧 Release 不回填。来源租户沿用发布信封的 `bk_tenant_id`。
+
+KAC 在同一份冻结配置上生成完整 `alarm_policy_snapshot` 和 Linkd Spec，传入 `origin={system:"kac",policy_type:"shield|merge|converge",policy_id:"KAC策略ID",snapshot_id:"准确快照ID"}`。Linkd 只保存引用，不访问 KAC。流转接口依据 AlertLog 精确策略版本取得 Release，再核对来源与当前租户的 KAC 快照内容后恢复原有策略快照跳转。
+
+三类 Spec 的公共可选字段 `field_labels` 保存分组字段的发布时展示名，最多 32 项，key 至多 128 字节、非空展示名至多 256 字节；不参与条件匹配、分组值计算或来源字段读取。KAC 发布器从当前租户字段目录取得名称，Linkd 保存于准确不可变 Release，运行状态不再复制这些字段，时间线查询不访问当前目录。
+
+快捷屏蔽命令可选 `operator_display` 保存操作时姓名，最多 256 字节；它与 `operator_id` 一起参与完整命令幂等核对，重试不能更换。未提供时显示操作人身份。绑定及日志仅保存冻结展示事实，不把它们当作当前用户或策略配置。新流水格式与旧待输出意图边界见[策略流转业务事实](policy-flow-records.md)。

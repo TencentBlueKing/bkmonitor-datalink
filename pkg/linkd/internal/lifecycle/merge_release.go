@@ -23,6 +23,16 @@ import (
 // ReleaseMergeWindow 在 fingerprint lease 内释放一个失败/丢失窗口，不重跑任何策略或 Enrich。
 // 调用方先确认裁决失败或原截止时间已过；成功关系及其他窗口继续阻塞。输出中断时意图保留在 Alert。
 func (p *Processor) ReleaseMergeWindow(ctx context.Context, tenant, id, window string) (store.StoredAlert, error) {
+	return p.ReleaseMergeWindowWithReason(ctx, tenant, id, window, "window_released")
+}
+
+// ReleaseMergeWindowWithReason 固定控制面已经确认的释放原因；重试首先完成既有意图。
+func (p *Processor) ReleaseMergeWindowWithReason(ctx context.Context, tenant, id, window, reason string) (store.StoredAlert, error) {
+	switch reason {
+	case "window_released", "conditions_not_met", "window_missing", "member_not_selected":
+	default:
+		return store.StoredAlert{}, store.ErrInvalidArgument
+	}
 	if ctx == nil {
 		return store.StoredAlert{}, fmt.Errorf("merge release requires context")
 	}
@@ -37,7 +47,7 @@ func (p *Processor) ReleaseMergeWindow(ctx context.Context, tenant, id, window s
 		local := *p
 		local.severity = table
 		local.configDigest = digest
-		return local.ReleaseMergeWindow(ctx, tenant, id, window)
+		return local.ReleaseMergeWindowWithReason(ctx, tenant, id, window, reason)
 	}
 	for range maxCASAttempts {
 		if err := ctx.Err(); err != nil {
@@ -76,6 +86,10 @@ func (p *Processor) ReleaseMergeWindow(ctx context.Context, tenant, id, window s
 			replacement.Admission = domain.AlertAdmission{AdmittedAt: &at, Severity: replacement.Severity, CauseType: AlertChangeCauseSystemOperation, CauseID: operation}
 		}
 		replacement.MergeChange = &domain.AlertMergeChange{Kind: "release", OperationID: operation, WindowID: window, EffectiveAt: replacement.UpdateAt, Before: current.Alert.Merge.Clone(), After: replacement.Merge.Clone(), ActionReady: ready}
+		if err := freezeMergeFlow(replacement.MergeChange, nil); err != nil {
+			return store.StoredAlert{}, err
+		}
+		replacement.MergeChange.LogParams["reason_code"], _ = json.Marshal(reason)
 		if err := freezeAction(&replacement, current.Alert.Revision+1, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: operation}, ready); err != nil {
 			return store.StoredAlert{}, err
 		}
@@ -134,7 +148,19 @@ func (p *Processor) finishMergeChange(ctx context.Context, current store.StoredA
 		}
 	}
 	relation, _ := json.Marshal(intent.RelationID)
-	logs := []domain.AlertLog{{LogID: digestStrings("merge-change-log", intent.Kind, intent.OperationID), BKTenantID: current.Alert.BKTenantID, AlertID: current.Alert.AlertID, OperatorKind: domain.OperatorKindSystem, OperationKind: kind, CreatedTime: intent.EffectiveAt, Params: domain.JSONObject{"operation_id": operation, "window_id": window, "relation_id": relation}}}
+	params := domain.JSONObject{"operation_id": operation, "window_id": window, "relation_id": relation}
+	logID := digestStrings("merge-change-log", intent.Kind, intent.OperationID)
+	if intent.LogParams != nil {
+		for key, value := range intent.LogParams {
+			params[key] = append(json.RawMessage(nil), value...)
+		}
+		namespace := "policy-flow-log-v1"
+		if string(intent.LogParams["display_version"]) == "2" {
+			namespace = "policy-flow-log-v2"
+		}
+		logID = digestStrings(namespace, logID)
+	}
+	logs := []domain.AlertLog{{LogID: logID, BKTenantID: current.Alert.BKTenantID, AlertID: current.Alert.AlertID, OperatorKind: domain.OperatorKindSystem, OperationKind: kind, CreatedTime: intent.EffectiveAt, Params: params}}
 	hookLogs, err := p.runHooks(ctx, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: intent.OperationID}, current.Alert, outcome, intent.ActionReady)
 	if err != nil {
 		return store.StoredAlert{}, err

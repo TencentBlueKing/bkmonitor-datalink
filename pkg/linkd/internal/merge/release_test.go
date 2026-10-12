@@ -30,7 +30,7 @@ import (
 
 type releaseFunc func(context.Context, string, string, string) (store.StoredAlert, error)
 
-func (f releaseFunc) ReleaseMergeWindow(ctx context.Context, tenant, id, window string) (store.StoredAlert, error) {
+func (f releaseFunc) ReleaseMergeWindowWithReason(ctx context.Context, tenant, id, window, reason string) (store.StoredAlert, error) {
 	return f(ctx, tenant, id, window)
 }
 

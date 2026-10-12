@@ -11,6 +11,7 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"linkd/internal/domain"
@@ -68,6 +69,18 @@ func (p *Processor) planMerge(ctx context.Context, event domain.Event, evaluatio
 				return err
 			}
 			log.LogID = digestStrings("merge-wait-log", event.BKTenantID, event.EventID, alert.AlertID, step.Wait.WindowID)
+			policy, err := json.Marshal(step.Wait.Policy)
+			if err != nil {
+				return err
+			}
+			duration, _ := json.Marshal(int64(step.Wait.Deadline.Sub(step.Wait.StartedAt).Seconds()))
+			deadline, _ := json.Marshal(step.Wait.Deadline)
+			log.Params["policy"] = policy
+			log.Params["display_version"] = json.RawMessage("2")
+			log.Params["duration_seconds"] = duration
+			log.Params["deadline"] = deadline
+			log.Params["change_kind"] = json.RawMessage(`"wait"`)
+			log.LogID = digestStrings("policy-flow-log-v2", log.LogID)
 			plan.Logs = append(plan.Logs, log)
 		}
 	}

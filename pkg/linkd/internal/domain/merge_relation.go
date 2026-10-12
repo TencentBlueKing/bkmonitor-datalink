@@ -25,6 +25,7 @@ type MergeRelationMember struct {
 // MergeRelation 是一个裁决操作的有界父子关系组；完整成员不放在 Alert 的摘要字段中。
 // preparing 允许部分写入，ready 要求所有成员已确认且父/成员的查询引用已建立。
 type MergeRelation struct {
+	ParentTitle       string                `json:"parent_title,omitempty"`
 	ID                string                `json:"id"`
 	TenantID          string                `json:"bk_tenant_id"`
 	WindowID          string                `json:"window_id"`
@@ -58,6 +59,9 @@ func (r MergeRelation) Clone() MergeRelation {
 
 // Validate 限制作用域、固定成员集合和准备阶段的完整性，不把 preparing 解释成已经合并。
 func (r MergeRelation) Validate() error {
+	if len(r.ParentTitle) > 256 {
+		return fmt.Errorf("merge parent title exceeds budget")
+	}
 	if ValidateIdentityPart("tenant", r.TenantID, 64) != nil || r.Policy.Validate() != nil || r.ParentAlertID == "" || len(r.ParentAlertID) > EntityIDMaxBytes || r.ParentFingerprint == "" || len(r.ParentFingerprint) > 128 || r.CreatedAt.IsZero() || r.UpdatedAt.Before(r.CreatedAt) {
 		return fmt.Errorf("invalid merge relation scope")
 	}

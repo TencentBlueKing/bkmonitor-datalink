@@ -405,6 +405,12 @@ func (s *Shielder) newDependencyBinding(ctx context.Context, event domain.Event,
 
 	b := domain.ShieldBinding{Policy: domain.PolicyVersion{ID: f.Release.ID, Version: f.Release.Version, Digest: f.Release.Compiled.Digest}, Type: "rely_shield", Mode: f.Compiled.Shield.ShieldMode, SourceEventID: event.EventID, Severity: evaluation.Severity, BoundAt: at, Reason: f.Compiled.Shield.Reason, MainAlertID: main.alert.AlertID, MainCandidate: main.candidate}
 	b.BindingID = shieldBindingID(event.BKTenantID, alert.AlertID, b)
+	for _, existing := range alert.Shield.Bindings {
+		if existing.BindingID == b.BindingID {
+			b = existing
+			break
+		}
+	}
 	return &b, nil, "", nil
 }
 

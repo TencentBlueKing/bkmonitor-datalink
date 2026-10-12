@@ -11,6 +11,7 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -185,5 +186,147 @@ func TestSuppressionDecisionResumesSavedPlanWithoutCallingRedis(t *testing.T) {
 	}
 	if _, err := p.ProcessEvent(t.Context(), pending); err != nil || len(s.checks) != 1 {
 		t.Fatalf("saved plan re-evaluated %v", err)
+	}
+}
+
+type suppressionOutputFailure struct {
+	store.Repository
+	mode   string
+	failed bool
+}
+
+func (r *suppressionOutputFailure) AppendAlertLogs(ctx context.Context, logs []domain.AlertLog) ([]store.AppendAlertLogItemResult, error) {
+	if !r.failed && r.mode == "bulk failure" {
+		r.failed = true
+		return nil, errors.New("injected bulk failure")
+	}
+	results, err := r.Repository.AppendAlertLogs(ctx, logs)
+	if err == nil && len(results) > 0 && !r.failed && r.mode == "committed item failure" {
+		r.failed = true
+		results[0].Err = errors.New("injected item failure after create")
+	}
+	return results, err
+}
+
+func (r *suppressionOutputFailure) CompareAndSetEventResult(ctx context.Context, tenant, id string, version store.VersionToken, result store.EventResult) (store.StoredEvent, error) {
+	if !r.failed && r.mode == "terminal CAS failure" && result.State != domain.EventProcessStateUnprocessed {
+		r.failed = true
+		return store.StoredEvent{}, errors.New("injected terminal CAS failure")
+	}
+	return r.Repository.CompareAndSetEventResult(ctx, tenant, id, version, result)
+}
+
+func TestAggregationSuppressionWritesOwnerLogAndRetriesFrozenDecision(t *testing.T) {
+	for _, mode := range []string{"success", "bulk failure", "committed item failure", "terminal CAS failure"} {
+		t.Run(mode, func(t *testing.T) {
+			base := memory.New()
+			opening := testEvent("owner-opening", "warning")
+			opening.Fingerprint = "owner-fingerprint"
+			ownerResult := persistAndProcess(t, base, newTestProcessor(t, base, NoopFinalHook{}), opening)
+			ownerID := ownerResult.AlertIDs[0]
+			ownerBefore, err := base.GetAlert(t.Context(), opening.BKTenantID, ownerID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeLogs, err := base.ListAlertLogs(t.Context(), opening.BKTenantID, ownerID, store.PageRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := &suppressionOutputFailure{Repository: base, mode: mode}
+			hook := &recordingHook{}
+			p := newTestProcessor(t, repo, hook)
+			snapshot := suppressionTestSnapshot()
+			window := &store.SuppressionWindow{WindowID: strings.Repeat("b", 64), GroupKey: strings.Repeat("c", 64), Epoch: opening.EventID, OwnerEventID: opening.EventID, OwnerAlertID: ownerID, OwnerSourceID: opening.EventSourceID, OwnerFingerprint: opening.Fingerprint, StartedAtMillis: snapshot.EvaluatedAt.UnixMilli(), ExpiresAtMillis: snapshot.EvaluatedAt.Add(time.Minute).UnixMilli()}
+			s := &testSuppressor{check: func(e domain.EventEvaluation) (store.SuppressionEvaluation, error) {
+				return store.SuppressionEvaluation{Severity: e.Severity, Suppressed: true, ReasonCode: "aggregation_suppressed", RelatedAlertID: ownerID, Steps: []store.SuppressionStep{{Policy: snapshot.Releases[0], Scheme: "aggregation", Outcome: "suppressed", ReasonCode: "aggregation_suppressed", Window: window}}}, nil
+			}}
+			withSuppression(p, s)
+			event := testEvent("suppressed-member", "warning")
+			created, err := repo.CreateEvent(t.Context(), event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := p.ProcessEvent(t.Context(), created.StoredEvent)
+			if mode != "success" {
+				if err == nil {
+					t.Fatal("output failure was ignored")
+				}
+				pending := mustGetStoredEvent(t, base, event)
+				if pending.Processing.State != domain.EventProcessStateUnprocessed || pending.Processing.Plan == nil || len(pending.Processing.Plan.Logs) != 1 {
+					t.Fatal("lost retryable log plan")
+				}
+				s.check = func(domain.EventEvaluation) (store.SuppressionEvaluation, error) {
+					return store.SuppressionEvaluation{}, errors.New("must not reevaluate")
+				}
+				result, err = p.ProcessEvent(t.Context(), pending)
+			}
+			if err != nil || result.EventState != domain.EventProcessStateSuppressed || !reflect.DeepEqual(result.AlertIDs, []string{ownerID}) || len(s.checks) != 1 || len(hook.inputs) != 0 {
+				t.Fatalf("suppression result %+v checks=%v err=%v", result, s.checks, err)
+			}
+			logs, err := base.ListAlertLogs(t.Context(), event.BKTenantID, ownerID, store.PageRequest{})
+			if err != nil || len(logs.Logs) != len(beforeLogs.Logs)+1 {
+				t.Fatalf("owner logs %+v err=%v", logs, err)
+			}
+			var policyLog domain.AlertLog
+			for _, log := range logs.Logs {
+				if log.OperationKind == domain.OperationKindSuppress {
+					policyLog = log
+				}
+			}
+			if policyLog.AlertID != ownerID || policyLog.BKTenantID != event.BKTenantID || !policyLog.CreatedTime.Equal(event.CreateAt) {
+				t.Fatalf("wrong log scope %+v", policyLog)
+			}
+			var eventID string
+			if json.Unmarshal(policyLog.Params["event_id"], &eventID) != nil || eventID != event.EventID {
+				t.Fatal("lost member event identity")
+			}
+			var step store.SuppressionStep
+			if json.Unmarshal(policyLog.Params["suppression"], &step) != nil || step.Policy != snapshot.Releases[0] || step.Window.OwnerAlertID != ownerID {
+				t.Fatal("lost frozen policy/window")
+			}
+			otherTenant, err := base.ListAlertLogs(t.Context(), "other-tenant", ownerID, store.PageRequest{})
+			if err != nil || len(otherTenant.Logs) != 0 {
+				t.Fatal("tenant log leakage", err)
+			}
+			ownerAfter, err := base.GetAlert(t.Context(), event.BKTenantID, ownerID)
+			if err != nil || !reflect.DeepEqual(ownerBefore, ownerAfter) {
+				t.Fatal("suppression changed owner lifecycle", err)
+			}
+			if _, err := p.ProcessEvent(t.Context(), mustGetStoredEvent(t, base, event)); err != nil {
+				t.Fatal(err)
+			}
+			again, err := base.ListAlertLogs(t.Context(), event.BKTenantID, ownerID, store.PageRequest{})
+			if err != nil || len(again.Logs) != len(logs.Logs) || len(s.checks) != 1 {
+				t.Fatal("replay duplicated suppression", err)
+			}
+		})
+	}
+}
+
+func TestPolicySuppressionLogIdentityAndNoAlertBoundary(t *testing.T) {
+	event := testEvent("event", "warning")
+	clip, _ := belowThreshold(event.Evaluations[0])
+	logs, err := policySuppressionLogs(event, clip)
+	if err != nil || len(logs) != 0 {
+		t.Fatal("clip invented an alert log", err)
+	}
+	result := store.SuppressionEvaluation{Severity: "warning", RelatedAlertID: "real-owner", ReasonCode: "aggregation_suppressed", Steps: []store.SuppressionStep{{Outcome: "suppressed", Scheme: "aggregation", Policy: suppressionTestSnapshot().Releases[0], Window: &store.SuppressionWindow{OwnerAlertID: "real-owner"}}}}
+	first, err := policySuppressionLogs(event, result)
+	if err != nil || len(first) != 1 {
+		t.Fatal(err)
+	}
+	for _, edit := range []func(*domain.Event, *store.SuppressionEvaluation){
+		func(e *domain.Event, _ *store.SuppressionEvaluation) { e.BKTenantID = "other-tenant" },
+		func(_ *domain.Event, r *store.SuppressionEvaluation) { r.Severity = "critical" },
+		func(_ *domain.Event, r *store.SuppressionEvaluation) { r.RelatedAlertID = "another-owner" },
+		func(_ *domain.Event, r *store.SuppressionEvaluation) { r.Steps[0].Policy.Version++ },
+	} {
+		e, r := event.Clone(), result
+		r.Steps = append([]store.SuppressionStep(nil), result.Steps...)
+		edit(&e, &r)
+		different, err := policySuppressionLogs(e, r)
+		if err != nil || len(different) != 1 || different[0].LogID == first[0].LogID {
+			t.Fatal("suppression identities collided", err)
+		}
 	}
 }

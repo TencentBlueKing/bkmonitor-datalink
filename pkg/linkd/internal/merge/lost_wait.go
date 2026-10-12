@@ -71,7 +71,7 @@ func (j *Journal) ReleaseLostWait(ctx context.Context, current store.StoredAlert
 		}
 		return false, nil
 	}
-	released, err := releaser.ReleaseMergeWindow(ctx, a.BKTenantID, a.AlertID, window)
+	released, err := releaser.ReleaseMergeWindowWithReason(ctx, a.BKTenantID, a.AlertID, window, "window_missing")
 	// 这里的成员曾真实落库，与失败裁决中的 reserved 候选不同；缺失不能被解释为清理成功。
 	if errors.Is(err, store.ErrNotFound) {
 		return false, err

@@ -70,9 +70,49 @@ func (s Scope) prefix() string {
 
 func (s Scope) key(id string) string { return s.prefix() + id }
 
+// PolicyOrigin 固定外部配置的来源身份，租户继承 Release.Scope，不参与策略执行。
+type PolicyOrigin struct {
+	// System 是发布方提供的稳定来源系统标识，不用于选择运行处理器。
+	System string `json:"system"`
+	// PolicyType 使用来源系统的类型命名，可与 Linkd Kind 不同。
+	PolicyType string `json:"policy_type"`
+	// PolicyID 是来源策略身份，作用域沿用发布租户。
+	PolicyID string `json:"policy_id"`
+	// SnapshotID 是与本份 Spec 对应的来源快照身份，不解释其内部编码。
+	SnapshotID string `json:"snapshot_id"`
+}
+
+func (o *PolicyOrigin) validate() error {
+	if o == nil {
+		return nil
+	}
+	for _, field := range []struct {
+		name, value string
+		limit       int
+	}{
+		{"origin system", o.System, 32}, {"origin policy type", o.PolicyType, 32},
+		{"origin policy id", o.PolicyID, 80}, {"origin snapshot id", o.SnapshotID, 128},
+	} {
+		if err := domain.ValidateIdentityPart(field.name, field.value, field.limit); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalid, err)
+		}
+	}
+	return nil
+}
+
+func clonePolicyOrigin(origin *PolicyOrigin) *PolicyOrigin {
+	if origin == nil {
+		return nil
+	}
+	copy := *origin
+	return &copy
+}
+
 // Release 是不可变配置与编译摘要。CreatedAt 来自持久化操作意图，重试不使用当前时间生成身份。
 type Release struct {
 	Scope
+	// Origin 与本次发布同时持久化；缺失表示原生配置或没有准确来源的旧发布。
+	Origin        *PolicyOrigin   `json:"origin,omitempty"`
 	ID            string          `json:"id"`
 	Version       int64           `json:"version"`
 	OperationID   string          `json:"operation_id"`
@@ -86,6 +126,8 @@ type Release struct {
 // Record 的 Pending 先于不可变发布保存；Published 只指向已经确认可读的 Release。
 type Record struct {
 	Scope
+	// Origin 对应 Published 指向的准确来源；草稿来源只保存在 Pending。
+	Origin    *PolicyOrigin   `json:"origin,omitempty"`
 	ID        string          `json:"id"`
 	Revision  int64           `json:"revision"`
 	Published int64           `json:"published"`
@@ -98,6 +140,8 @@ type Record struct {
 // ApplyRequest 使用 expected_version 防止旧同步覆盖新版本，operation_id 实现跨重试幂等。
 type ApplyRequest struct {
 	Scope
+	// Origin 参与请求身份校验；重试不得更换外部快照引用。
+	Origin          *PolicyOrigin   `json:"origin,omitempty"`
 	SchemaVersion   int             `json:"schema_version"`
 	ID              string          `json:"id"`
 	ExpectedVersion int64           `json:"expected_version"`
@@ -145,6 +189,9 @@ func (s *Service) Apply(ctx context.Context, request ApplyRequest) (Release, err
 		return Release{}, err
 	}
 	if err := request.Validate(); err != nil {
+		return Release{}, err
+	}
+	if err := request.Origin.validate(); err != nil {
 		return Release{}, err
 	}
 	if err := validatePolicyID(request.ID); err != nil {
@@ -200,7 +247,7 @@ func (s *Service) Apply(ctx context.Context, request ApplyRequest) (Release, err
 	if current.Revision != request.ExpectedVersion {
 		return Release{}, ErrConflict
 	}
-	pending := Release{Scope: request.Scope, ID: request.ID, Version: op.Version, OperationID: request.OperationID, RequestDigest: digest, Spec: compiled.Canonical, Compiled: compiled.Summary, Deleted: request.Deleted, CreatedAt: op.CreatedAt}
+	pending := Release{Scope: request.Scope, Origin: clonePolicyOrigin(request.Origin), ID: request.ID, Version: op.Version, OperationID: request.OperationID, RequestDigest: digest, Spec: compiled.Canonical, Compiled: compiled.Summary, Deleted: request.Deleted, CreatedAt: op.CreatedAt}
 	current.Revision = op.Version
 	current.Pending = &pending
 	body, err := json.Marshal(current)
@@ -389,6 +436,7 @@ func (s *Service) finish(ctx context.Context, record Record, token string) (Rele
 		return Release{}, err
 	}
 	record.Published = release.Version
+	record.Origin = clonePolicyOrigin(release.Origin)
 	record.Compiled = release.Compiled
 	record.Spec = release.Spec
 	record.Deleted = release.Deleted
@@ -463,12 +511,14 @@ func (s *Service) Delete(ctx context.Context, scope Scope, id string, expected i
 	}
 	// 使用被删除版本的快照，使重试不受后续编辑的 Spec 变化影响。
 	spec := record.Spec
+	origin := record.Origin
 	if record.Published > expected {
 		release, err := s.GetRelease(ctx, scope, id, expected)
 		if err != nil {
 			return Release{}, err
 		}
 		spec = release.Spec
+		origin = release.Origin
 	}
-	return s.Apply(ctx, ApplyRequest{Scope: scope, SchemaVersion: 1, ID: id, ExpectedVersion: expected, OperationID: operationID, Spec: spec, Deleted: true})
+	return s.Apply(ctx, ApplyRequest{Scope: scope, Origin: clonePolicyOrigin(origin), SchemaVersion: 1, ID: id, ExpectedVersion: expected, OperationID: operationID, Spec: spec, Deleted: true})
 }

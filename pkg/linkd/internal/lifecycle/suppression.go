@@ -11,8 +11,10 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 
 	"linkd/internal/domain"
 	"linkd/internal/store"
@@ -84,6 +86,11 @@ func (p *Processor) selectNewAlert(ctx context.Context, event domain.Event, snap
 		if result.RelatedAlertID != "" {
 			ids = append(ids, result.RelatedAlertID)
 			plan.RelatedAlertIDs = append(plan.RelatedAlertIDs, result.RelatedAlertID)
+			logs, err := policySuppressionLogs(event, result)
+			if err != nil {
+				return -1, err
+			}
+			plan.Logs = append(plan.Logs, logs...)
 		}
 		setEvaluationResult(plan, i, domain.EventProcessStateSuppressed, string(OutcomeAlertSuppressed), result.ReasonCode, ids)
 		plan.State = domain.EventProcessStateSuppressed
@@ -93,6 +100,40 @@ func (p *Processor) selectNewAlert(ctx context.Context, event domain.Event, snap
 		}
 	}
 	return -1, nil
+}
+
+// policySuppressionLogs 只记录冻结裁决明确关联到真实主告警的抑制。
+// 防抖门槛前没有 Alert；其历史保留在 Event，不伪造身份或追补到后来创建的告警。
+// 流水随 EventPlan 固定，稳定身份允许 Bulk 部分失败后重试，不重新执行策略计数。
+func policySuppressionLogs(event domain.Event, result store.SuppressionEvaluation) ([]domain.AlertLog, error) {
+	logs := []domain.AlertLog{}
+	for _, step := range result.Steps {
+		if step.Outcome != "suppressed" || step.Window == nil {
+			continue
+		}
+		log, err := eventAlertLog(event, domain.Alert{AlertID: result.RelatedAlertID}, domain.OperationKindSuppress,
+			result.ReasonCode, event.CreateAt, map[string]string{"severity": result.Severity})
+		if err != nil {
+			return nil, err
+		}
+		log.LogID = digestStrings("policy-suppression-log", event.BKTenantID, event.EventID, result.RelatedAlertID,
+			result.Severity, step.Policy.ID, strconv.FormatInt(step.Policy.Version, 10), step.Policy.Digest, step.Scheme)
+		policy, err := json.Marshal(step.Policy)
+		if err != nil {
+			return nil, err
+		}
+		// 裁决和重复策略引用保持原结构；静态信息由接口按准确发布版本读取。
+		decision, err := json.Marshal(step)
+		if err != nil {
+			return nil, err
+		}
+		log.Params["policy"] = policy
+		log.Params["suppression"] = decision
+		log.Params["display_version"] = json.RawMessage("2")
+		log.LogID = digestStrings("policy-flow-log-v2", log.LogID)
+		logs = append(logs, log)
+	}
+	return logs, nil
 }
 
 func (p *Processor) clearSuppression(ctx context.Context, alert domain.Alert) error {

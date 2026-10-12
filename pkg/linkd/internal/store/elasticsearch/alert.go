@@ -426,11 +426,7 @@ func (r *Repository) compareAndSetAlertFromSnapshot(ctx context.Context, current
 		return store.StoredAlert{}, err
 	}
 	alertID := current.Alert.AlertID
-	normalized, err := replacement.Normalize()
-	if err != nil {
-		return store.StoredAlert{}, fmt.Errorf("%w: normalize replacement alert: %w", store.ErrInvalidArgument, err)
-	}
-	normalized, err = domain.PrepareAlertReplacement(current.Alert, normalized)
+	normalized, err := domain.PrepareAlertReplacementFromSnapshot(current.Alert, replacement)
 	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q: %w", store.ErrInvalidTransition, alertID, err)
 	}

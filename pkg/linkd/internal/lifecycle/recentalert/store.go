@@ -222,7 +222,16 @@ func (s *Store) Repair(ctx context.Context, stored store.StoredAlert) error {
 }
 
 func (s *Store) putCurrent(ctx context.Context, stored store.StoredAlert, operation string) error {
-	payload, err := encode(stored)
+	return s.putCurrentUsing(ctx, stored, operation, encode)
+}
+
+// PutCurrentFromSnapshot 编码可信 Repository 快照，跳过动态 JSON 的重复规范化。
+func (s *Store) PutCurrentFromSnapshot(ctx context.Context, stored store.StoredAlert) error {
+	return s.putCurrentUsing(ctx, stored, "put_current", encodeSnapshot)
+}
+
+func (s *Store) putCurrentUsing(ctx context.Context, stored store.StoredAlert, operation string, encoder func(store.StoredAlert) ([]byte, error)) error {
+	payload, err := encoder(stored)
 	if err != nil {
 		s.observer.Operation(ctx, operation, "invalid")
 		return err
@@ -241,7 +250,16 @@ func (s *Store) putCurrent(ctx context.Context, stored store.StoredAlert, operat
 }
 
 func (s *Store) putTerminalAs(ctx context.Context, stored store.StoredAlert, operation string) error {
-	payload, err := encode(stored)
+	return s.putTerminalUsing(ctx, stored, operation, encode)
+}
+
+// PutTerminalFromSnapshot 保留终态检查及双 key 原子写入，载荷由 Repository 保证合法。
+func (s *Store) PutTerminalFromSnapshot(ctx context.Context, stored store.StoredAlert) error {
+	return s.putTerminalUsing(ctx, stored, "put_terminal", encodeSnapshot)
+}
+
+func (s *Store) putTerminalUsing(ctx context.Context, stored store.StoredAlert, operation string, encoder func(store.StoredAlert) ([]byte, error)) error {
+	payload, err := encoder(stored)
 	if err != nil || !recoverableTerminal(stored.Alert) {
 		s.observer.Operation(ctx, operation, "invalid")
 		if err != nil {
@@ -297,10 +315,19 @@ func encode(stored store.StoredAlert) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode recent alert cache: %w", err)
 	}
+	stored.Alert = alert
+	return encodeSnapshot(stored)
+}
+
+// encodeSnapshot 不接收外部构造载荷；仍检查状态、token、实际编码和缓存上限。
+func encodeSnapshot(stored store.StoredAlert) ([]byte, error) {
+	if err := stored.Alert.ValidateState(); err != nil {
+		return nil, fmt.Errorf("encode recent alert cache: %w", err)
+	}
 	if stored.Version.IsZero() {
 		return nil, fmt.Errorf("encode recent alert cache: version must not be empty")
 	}
-	payload, err := json.Marshal(document{SchemaVersion: SchemaVersion, Alert: alert, Version: stored.Version.String()})
+	payload, err := json.Marshal(document{SchemaVersion: SchemaVersion, Alert: stored.Alert, Version: stored.Version.String()})
 	if err != nil {
 		return nil, fmt.Errorf("encode recent alert cache: %w", err)
 	}

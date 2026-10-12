@@ -83,6 +83,12 @@ func (a Alert) Normalize() (Alert, error) {
 	if err != nil {
 		return Alert{}, err
 	}
+	return a.normalizePayload()
+}
+
+// normalizePayload 只在外部输入或动态载荷发生变化时扫描 JSON。
+func (a Alert) normalizePayload() (Alert, error) {
+	var err error
 	a.ExtraData, err = a.ExtraData.Normalize()
 	if err != nil {
 		return Alert{}, fmt.Errorf("alert extra_data: %w", err)
@@ -99,7 +105,10 @@ func (a Alert) Normalize() (Alert, error) {
 
 // NormalizeState 隔离计划中的快照并统一时间、空集合，不重解析已冻结的业务 JSON。
 func (a Alert) NormalizeState() (Alert, error) {
-	a = a.Clone()
+	return a.Clone().normalizeState()
+}
+
+func (a Alert) normalizeState() (Alert, error) {
 	slices.Sort(a.PolicyTags)
 	a.PolicyTags = slices.Compact(a.PolicyTags)
 	a.Dimensions = a.Dimensions.Normalize()
@@ -120,6 +129,14 @@ func (a Alert) NormalizeState() (Alert, error) {
 
 // Clone 返回不共享动态字段的 Alert 副本。
 func (a Alert) Clone() Alert {
+	a = a.cloneState()
+	a.ExtraData = a.ExtraData.Clone()
+	a.Enrich = a.Enrich.Clone()
+	return a
+}
+
+// cloneState 隔离可变状态；动态 JSON 仅由可信不可变快照路径共享。
+func (a Alert) cloneState() Alert {
 	a.ActionPending = a.ActionPending.Clone()
 	a.Projection = a.Projection.Clone()
 	a.PolicyChange = a.PolicyChange.Clone()
@@ -131,8 +148,6 @@ func (a Alert) Clone() Alert {
 	a.PolicyTags = slices.Clone(a.PolicyTags)
 	a.Dimensions = a.Dimensions.Clone()
 	a.Labels = a.Labels.Clone()
-	a.ExtraData = a.ExtraData.Clone()
-	a.Enrich = a.Enrich.Clone()
 	a.EndAt = normalizeOptionalTime(a.EndAt)
 	a.EndOperation = a.EndOperation.clone()
 	return a
@@ -376,6 +391,11 @@ func ValidateAlertReplacement(current, replacement Alert) error {
 	if err := replacement.Validate(); err != nil {
 		return fmt.Errorf("replacement alert: %w", err)
 	}
+	return validateAlertReplacementTransition(current, replacement)
+}
+
+// validateAlertReplacementTransition 的双方已完成字段校验，只检查本次状态转换。
+func validateAlertReplacementTransition(current, replacement Alert) error {
 	if alertPolicyBookkeeping(current, replacement) {
 		return nil
 	}
@@ -394,8 +414,8 @@ func ValidateAlertReplacement(current, replacement Alert) error {
 	if err := ValidateAlertPolicyReplacement(current, replacement); err != nil {
 		return err
 	}
-	left := current.Clone()
-	right := replacement.Clone()
+	// 只替换结构体字段，不修改任何底层 map/slice；比较无需复制 JSON 载荷。
+	left, right := current, replacement
 	clearLifecycle := func(alert *Alert) {
 		alert.Revision = 0
 		alert.Projection = AlertProjection{}

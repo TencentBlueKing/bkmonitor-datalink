@@ -186,6 +186,15 @@ func (p *EventPlan) Validate() error {
 // ApplyEventResult 将一次计划或终态 CAS 投影为新快照，保持来源事实不变。
 // 计划一旦存在只能原样重试、在未产生副作用时由 Lifecycle 撤销，或提交它的完整最终结果。
 func ApplyEventResult(current StoredEvent, result EventResult) (domain.Event, EventProcessing, error) {
+	return applyEventResult(current, result, false)
+}
+
+// ApplyEventResultFromSnapshot 共享可信快照的不可变 Event 载荷，处理结果仍拥有独立状态。
+func ApplyEventResultFromSnapshot(current StoredEvent, result EventResult) (domain.Event, EventProcessing, error) {
+	return applyEventResult(current, result, true)
+}
+
+func applyEventResult(current StoredEvent, result EventResult, snapshot bool) (domain.Event, EventProcessing, error) {
 	if current.Processing.State != domain.EventProcessStateUnprocessed {
 		return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: event already processed", ErrInvalidTransition)
 	}
@@ -224,7 +233,12 @@ func ApplyEventResult(current StoredEvent, result EventResult) (domain.Event, Ev
 			return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: final result differs from saved plan", ErrInvalidTransition)
 		}
 	}
-	updated, err := current.Event.WithRelatedAlertIDs(result.RelatedAlertIDs)
+	var updated domain.Event
+	if snapshot {
+		updated, err = current.Event.WithRelatedAlertIDsFromSnapshot(result.RelatedAlertIDs)
+	} else {
+		updated, err = current.Event.WithRelatedAlertIDs(result.RelatedAlertIDs)
+	}
 	if err != nil {
 		return domain.Event{}, EventProcessing{}, err
 	}

@@ -71,28 +71,15 @@ func (p *Processor) compareAndSetAlert(
 	replacement domain.Alert,
 ) (store.StoredAlert, error) {
 	var updated store.StoredAlert
-	replacement, err := domain.PrepareAlertReplacement(current.Alert, replacement)
-	if err != nil {
-		return store.StoredAlert{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
-	}
+	var err error
 	if repository, ok := p.repository.(store.LifecycleAlertSnapshotStore); ok {
 		updated, err = repository.CompareAndSetAlertFromSnapshot(ctx, current, replacement)
-	} else if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
-		updated, err = repository.CompareAndSetAlertAfterActiveLookup(
-			ctx,
-			current.Alert.BKTenantID,
-			current.Alert.AlertID,
-			current.Version,
-			replacement,
-		)
 	} else {
-		updated, err = p.repository.CompareAndSetAlert(
-			ctx,
-			current.Alert.BKTenantID,
-			current.Alert.AlertID,
-			current.Version,
-			replacement,
-		)
+		replacement, err = domain.PrepareAlertReplacement(current.Alert, replacement)
+		if err != nil {
+			return store.StoredAlert{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
+		}
+		updated, err = p.compareAndSetAlertWithoutSnapshot(ctx, current, replacement)
 	}
 	if !errors.Is(err, store.ErrVersionConflict) {
 		return updated, err
@@ -101,6 +88,19 @@ func (p *Processor) compareAndSetAlert(
 		return store.StoredAlert{}, errors.Join(err, repairErr)
 	}
 	return store.StoredAlert{}, err
+}
+
+func (p *Processor) compareAndSetAlertWithoutSnapshot(ctx context.Context, current store.StoredAlert, replacement domain.Alert) (store.StoredAlert, error) {
+	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
+		return repository.CompareAndSetAlertAfterActiveLookup(
+			ctx,
+			current.Alert.BKTenantID,
+			current.Alert.AlertID,
+			current.Version,
+			replacement,
+		)
+	}
+	return p.repository.CompareAndSetAlert(ctx, current.Alert.BKTenantID, current.Alert.AlertID, current.Version, replacement)
 }
 
 func (p *Processor) repairRecentAlert(ctx context.Context, bkTenantID, alertID string) error {

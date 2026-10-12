@@ -159,7 +159,7 @@ func NewProcessor(
 	}
 	processor := &Processor{
 		contentBuilder: SourceContentBuilder{},
-		upgradePolicy:  "close_and_create", repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
+		upgradePolicy:  "close_and_create", repository: repository, recentAlerts: snapshotWrites(recentAlerts), idGenerator: idGenerator, enricher: enricher,
 		enrichObserver: noopEnrichObserver{}, finalHooks: append([]NamedFinalHook(nil), finalHooks...), severity: severity, clock: clock, logger: logger,
 	}
 	for _, option := range options {

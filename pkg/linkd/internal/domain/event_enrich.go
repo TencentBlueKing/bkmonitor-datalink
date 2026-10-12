@@ -171,6 +171,15 @@ func (e EventEnrichment) ForSeverity(severity string) (EvaluationEnrich, bool) {
 
 // WithEnrichment 只追加完整丰富结果；相同结果可幂等核对，不允许重算覆盖。
 func (e Event) WithEnrichment(result EventEnrichment) (Event, error) {
+	return e.withEnrichment(result, true)
+}
+
+// WithEnrichmentFromSnapshot 冻结新结果而共享未变来源字段；双方快照都必须保持不可变。
+func (e Event) WithEnrichmentFromSnapshot(result EventEnrichment) (Event, error) {
+	return e.withEnrichment(result, false)
+}
+
+func (e Event) withEnrichment(result EventEnrichment, isolate bool) (Event, error) {
 	normalized, err := result.Normalize(e.Evaluations)
 	if err != nil {
 		return Event{}, err
@@ -181,7 +190,9 @@ func (e Event) WithEnrichment(result EventEnrichment) (Event, error) {
 	if e.EnrichStatus != "" && e.EnrichStatus != EnrichStatusPending && !reflect.DeepEqual(e.EventEnrichment, normalized) {
 		return Event{}, fmt.Errorf("event enrich is immutable after completion")
 	}
-	e = e.Clone()
+	if isolate {
+		e = e.Clone()
+	}
 	e.EventEnrichment = normalized
 	return e, nil
 }

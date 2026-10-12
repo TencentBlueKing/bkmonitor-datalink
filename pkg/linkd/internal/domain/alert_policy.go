@@ -204,7 +204,7 @@ func ValidateAlertPolicyReplacement(current, replacement Alert) error {
 		if !reflect.DeepEqual(replacement.MergeChange.Before, current.Merge) {
 			return fmt.Errorf("merge change before differs from current state")
 		}
-		before, after := current.Clone(), replacement.Clone()
+		before, after := current, replacement
 		before.Merge = after.Merge.Clone()
 		before.MergeChange = after.MergeChange.Clone()
 		before.UpdateAt = after.UpdateAt
@@ -300,7 +300,7 @@ func (c *AlertPolicyChange) Validate(a Alert) error {
 // alertPolicyBookkeeping 只允许完成已记录的输出意图或向后安排复查，不改变业务快照和 UpdateAt。
 // 后续投影 ACK 也必须走独立白名单，不能借普通终态替换放开业务字段。
 func alertPolicyBookkeeping(current, replacement Alert) bool {
-	before, after := current.Clone(), replacement.Clone()
+	before, after := current, replacement
 	changed := false
 	if before.ActionPending != nil && after.ActionPending == nil {
 		before.ActionPending = nil

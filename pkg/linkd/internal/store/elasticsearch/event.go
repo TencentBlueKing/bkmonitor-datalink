@@ -866,7 +866,7 @@ func (r *Repository) CompareAndSetLifecycleEventResultFromSnapshot(ctx context.C
 		return store.StoredEvent{}, err
 	}
 	eventID := current.Event.EventID
-	updated, processing, err := store.ApplyEventResult(current, result)
+	updated, processing, err := store.ApplyEventResultFromSnapshot(current, result)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
@@ -901,7 +901,7 @@ func (r *Repository) CompareAndSetLifecycleEventResultFromSnapshot(ctx context.C
 		}
 		return store.StoredEvent{}, fmt.Errorf("update lifecycle event %q: %w", eventID, err)
 	}
-	return storedEventFromIndexResponse(updated, processing, version.DocumentID, response)
+	return storedEventSnapshotFromIndexResponse(updated, processing, version.DocumentID, response)
 }
 
 func (r *Repository) loadEvents(
@@ -1058,6 +1058,17 @@ func storedEventFromIndexResponse(
 	return store.StoredEvent{Event: event.Clone(), Processing: processing.Clone(), Version: version}, nil
 }
 
+func storedEventSnapshotFromIndexResponse(event domain.Event, processing store.EventProcessing, id string, response indexResponse) (store.StoredEvent, error) {
+	if response.ID != id || response.Index == "" {
+		return store.StoredEvent{}, fmt.Errorf("elasticsearch event write returned an unexpected identity")
+	}
+	version, err := encodeVersion(versionPayload{Index: response.Index, DocumentID: response.ID, SeqNo: response.SeqNo, PrimaryTerm: response.PrimaryTerm})
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	return store.StoredEvent{Event: event, Processing: processing, Version: version}, nil
+}
+
 func isResponseStatus(err error, statusCode int) bool {
 	var response *responseError
 	return errors.As(err, &response) && response.StatusCode == statusCode
@@ -1095,20 +1106,16 @@ func (r *Repository) CompareAndSetEventEnrichmentFromSnapshot(ctx context.Contex
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
-	updated, err := store.ApplyEventEnrichment(current, result)
+	updated, err := store.ApplyEventEnrichmentFromSnapshot(current, result)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
-	document, err := encodeEventDocument(updated, current.Processing)
+	body, documentBytes, err := encodeEnrichmentUpdate(updated, current.Processing)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
-	if len(document) > r.config.MaxDocumentBytes {
+	if documentBytes > r.config.MaxDocumentBytes {
 		return store.StoredEvent{}, fmt.Errorf("%w: enriched event exceeds document budget", store.ErrInvalidArgument)
-	}
-	body, err := json.Marshal(map[string]any{"doc": updated.EventEnrichment})
-	if err != nil {
-		return store.StoredEvent{}, err
 	}
 	if len(body) > r.config.MaxDocumentBytes {
 		return store.StoredEvent{}, fmt.Errorf("%w: event enrichment exceeds document budget", store.ErrInvalidArgument)
@@ -1131,5 +1138,5 @@ func (r *Repository) CompareAndSetEventEnrichmentFromSnapshot(ctx context.Contex
 		}
 		return store.StoredEvent{}, fmt.Errorf("update event enrichment: %w", err)
 	}
-	return storedEventFromIndexResponse(updated, current.Processing, version.DocumentID, response)
+	return storedEventSnapshotFromIndexResponse(updated, current.Processing, version.DocumentID, response)
 }

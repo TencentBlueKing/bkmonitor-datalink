@@ -174,7 +174,8 @@ func advanceProjectionRequirements(current Alert, next *Alert) error {
 }
 
 func validateProjectionBusinessReplacement(current, next Alert) error {
-	expected := next.Clone()
+	expected := next
+	expected.Projection = next.Projection.Clone()
 	if err := advanceProjectionRequirements(current, &expected); err != nil {
 		return err
 	}
@@ -207,7 +208,8 @@ func projectionACKOnly(before, after AlertProjection) bool {
 // revision、目标绑定和 required_revision 仍属于比较范围，不能用新业务快照确认旧计划完成。
 func SameAlertBusinessSnapshot(a, b Alert) bool {
 	strip := func(v Alert) Alert {
-		v = v.Clone()
+		// 仅投影水位在比较副本上原地修改；其余载荷保持只读。
+		v.Projection = v.Projection.Clone()
 		v.PolicyChange = nil
 		v.MergeChange = nil
 		v.ActionPending = nil

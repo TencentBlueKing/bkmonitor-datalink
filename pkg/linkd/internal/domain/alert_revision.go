@@ -9,7 +9,10 @@
 
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 // ValidateAlertCreation 只校验创建阶段的状态、版本和初始同步水位；调用方须先规范化并完成字段校验。
 func ValidateAlertCreation(a Alert) error {
@@ -34,7 +37,20 @@ func PrepareAlertReplacement(current, replacement Alert) (Alert, error) {
 	if err := current.Validate(); err != nil {
 		return Alert{}, err
 	}
-	next := replacement.Clone()
+	return prepareAlertReplacement(current, replacement, false)
+}
+
+// PrepareAlertReplacementFromSnapshot 复用同一 Repository 已规范化且保持不可变的 current 载荷。
+// replacement 的动态 JSON 或聚合状态不同仍完整校验；不能用于外部构造的 current。
+func PrepareAlertReplacementFromSnapshot(current, replacement Alert) (Alert, error) {
+	if err := current.ValidateState(); err != nil {
+		return Alert{}, err
+	}
+	return prepareAlertReplacement(current, replacement, true)
+}
+
+func prepareAlertReplacement(current, replacement Alert, trusted bool) (Alert, error) {
+	next := replacement.cloneState()
 	revision := current.Revision
 	if next.UpdateAt.After(current.UpdateAt) {
 		if revision >= 1<<53-1 {
@@ -51,11 +67,22 @@ func PrepareAlertReplacement(current, replacement Alert) (Alert, error) {
 			return Alert{}, err
 		}
 	}
-	next, err := next.Normalize()
+	next, err := next.normalizeState()
 	if err != nil {
 		return Alert{}, err
 	}
-	if err := ValidateAlertReplacement(current, next); err != nil {
+	unchanged := trusted && next.EnrichStatus == current.EnrichStatus &&
+		reflect.DeepEqual(next.ExtraData, current.ExtraData) && reflect.DeepEqual(next.Enrich, current.Enrich)
+	if unchanged {
+		// 绑定到可信快照的载荷，不能保留调用方另行构造的可变 map/RawMessage。
+		next.ExtraData, next.Enrich = current.ExtraData, current.Enrich
+	} else {
+		next, err = next.normalizePayload()
+		if err != nil {
+			return Alert{}, err
+		}
+	}
+	if err := validateAlertReplacementTransition(current, next); err != nil {
 		return Alert{}, err
 	}
 	return next, nil

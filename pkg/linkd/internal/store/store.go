@@ -60,7 +60,8 @@ type LifecycleEventStore interface {
 
 // LifecycleEventSnapshotStore 复用同一 Repository 的完整读取或成功写入快照，省略 CAS 前置 GET。
 // current 必须保持不可变且包含完整来源字段，供丰富提交检查文档预算。版本冲突仍须重读并重裁决。
-// 该能力仅用于内部调用链，不接受外部构造快照；实现返回新快照，不缓存或修改 current。
+// 该能力仅用于内部调用链，不接受外部构造快照；实现返回新状态，未变载荷可共享且双方均不可变。
+// 不缓存或修改 current；需要可变副本时必须显式 Clone。
 type LifecycleEventSnapshotStore interface {
 	CompareAndSetEventEnrichmentFromSnapshot(ctx context.Context, current StoredEvent, result domain.EventEnrichment) (StoredEvent, error)
 	CompareAndSetLifecycleEventResultFromSnapshot(ctx context.Context, current StoredEvent, result EventResult) (StoredEvent, error)
@@ -99,6 +100,7 @@ type LifecycleAlertStore interface {
 
 // LifecycleAlertSnapshotStore 在既有快照上校验 Alert 替换并直接条件写入，不重复读取。
 // current 只能来自同一 Repository 的可信读取、成功写入或其 Recent Alert 缓存，且不得就地修改。
+// Repository 统一准备业务版本及投影要求；调用方无需再次 PrepareAlertReplacement。
 // 写入仍保护业务 revision、投影确认和创建事实；ES 冲突不能通过替换版本 token 绕过。
 type LifecycleAlertSnapshotStore interface {
 	CompareAndSetAlertFromSnapshot(ctx context.Context, current StoredAlert, replacement domain.Alert) (StoredAlert, error)

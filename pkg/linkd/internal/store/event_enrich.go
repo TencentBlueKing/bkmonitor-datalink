@@ -18,10 +18,25 @@ import (
 // ApplyEventEnrichment 在各后端共享同一完成性检查。已有计划或最终处理结果禁止补写丰富。
 // 必须在后端的单对象 CAS 边界内调用，不能用读取成功代替并发版本验证。
 func ApplyEventEnrichment(current StoredEvent, result domain.EventEnrichment) (domain.Event, error) {
+	return applyEventEnrichment(current, result, false)
+}
+
+// ApplyEventEnrichmentFromSnapshot 只供不可变生命周期快照使用，共享未变的来源载荷。
+func ApplyEventEnrichmentFromSnapshot(current StoredEvent, result domain.EventEnrichment) (domain.Event, error) {
+	return applyEventEnrichment(current, result, true)
+}
+
+func applyEventEnrichment(current StoredEvent, result domain.EventEnrichment, snapshot bool) (domain.Event, error) {
 	if current.Processing.State != domain.EventProcessStateUnprocessed || current.Processing.Plan != nil || current.Processing.PolicyContext != nil {
 		return domain.Event{}, fmt.Errorf("%w: enrichment must precede lifecycle plan", ErrInvalidTransition)
 	}
-	updated, err := current.Event.WithEnrichment(result)
+	var updated domain.Event
+	var err error
+	if snapshot {
+		updated, err = current.Event.WithEnrichmentFromSnapshot(result)
+	} else {
+		updated, err = current.Event.WithEnrichment(result)
+	}
 	if err != nil {
 		return domain.Event{}, fmt.Errorf("%w: event enrichment: %w", ErrInvalidArgument, err)
 	}

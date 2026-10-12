@@ -30,24 +30,30 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 	observer := (&Runtime{metrics: metrics}).LifecyclePhaseObserver()
 	for _, attemptErr := range []error{nil, errors.New("failed attempt")} {
 		observer.Finished(t.Context(), lifecycle.PhaseObservation{
-			Phases: []lifecycle.PhaseDuration{{Phase: "enrich", Duration: 2 * time.Millisecond}, {Phase: "final_hook", Duration: 0}}, Err: attemptErr,
+			Phases: []lifecycle.PhaseDuration{{Phase: "enrich", Duration: 2 * time.Millisecond, BatchWait: time.Millisecond, StorageQueue: time.Millisecond / 2}, {Phase: "final_hook", Duration: 0}}, Err: attemptErr,
 		})
 	}
 	var data metricdata.ResourceMetrics
 	if err := reader.Collect(t.Context(), &data); err != nil {
 		t.Fatal(err)
 	}
+	seen := 0
 	for _, scope := range data.ScopeMetrics {
 		for _, metric := range scope.Metrics {
-			if metric.Name != "linkd.lifecycle.event.phase.duration" {
+			if metric.Name != "linkd.lifecycle.event.phase.duration" && metric.Name != "linkd.lifecycle.event.phase.execution_duration" && metric.Name != "linkd.lifecycle.event.phase.wait_duration" {
 				continue
 			}
+			seen++
+			wantPoints, wantAttrs := 4, 2
+			if metric.Name == "linkd.lifecycle.event.phase.wait_duration" {
+				wantPoints, wantAttrs = 8, 3
+			}
 			histogram, ok := metric.Data.(metricdata.Histogram[float64])
-			if !ok || len(histogram.DataPoints) != 4 {
+			if !ok || len(histogram.DataPoints) != wantPoints {
 				t.Fatalf("unexpected phase data: %#v", metric.Data)
 			}
 			for _, point := range histogram.DataPoints {
-				if point.Count != 1 || point.Attributes.Len() != 2 {
+				if point.Count != 1 || point.Attributes.Len() != wantAttrs {
 					t.Fatalf("unexpected sample: %#v", point)
 				}
 				phase, _ := point.Attributes.Value("linkd.phase")
@@ -56,6 +62,19 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 					t.Fatal(outcome)
 				}
 				want := 0.002
+				if metric.Name == "linkd.lifecycle.event.phase.execution_duration" {
+					want = 0.0005
+				}
+				if metric.Name == "linkd.lifecycle.event.phase.wait_duration" {
+					kind, _ := point.Attributes.Value("linkd.wait_kind")
+					if kind.AsString() == "batch_wait" {
+						want = 0.001
+					} else if kind.AsString() == "storage_queue" {
+						want = 0.0005
+					} else {
+						t.Fatal(kind)
+					}
+				}
 				if phase.AsString() == "final_hook" {
 					want = 0
 				}
@@ -63,8 +82,9 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 					t.Fatalf("phase %s sum=%v", phase.AsString(), point.Sum)
 				}
 			}
-			return
 		}
 	}
-	t.Fatal("missing phase metric")
+	if seen != 3 {
+		t.Fatalf("phase metric families=%d", seen)
+	}
 }

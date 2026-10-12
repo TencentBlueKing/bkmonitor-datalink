@@ -33,6 +33,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		started := time.Now()
 		local.phaseTiming = &phaseTiming{started: started, last: started}
 		p = &local
+		ctx = store.WithWaitObserver(ctx, local.phaseTiming.observeWait)
 		defer func() { p.phaseObserver.Finished(ctx, p.phaseTiming.observation(time.Now(), result, err)) }()
 	}
 	// Processor 被多个 fingerprint 并发使用，复制接收者而不是原地改写共享字段。

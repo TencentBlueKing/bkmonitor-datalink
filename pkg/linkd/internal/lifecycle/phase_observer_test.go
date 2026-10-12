@@ -182,3 +182,31 @@ func assertPhaseSample(t *testing.T, sample PhaseObservation) {
 		t.Fatalf("sum=%v total=%v", sum, sample.Duration)
 	}
 }
+
+func TestPhaseTimingAttributesWaitToInnermostStage(t *testing.T) {
+	start := time.Now()
+	timing := &phaseTiming{started: start, last: start}
+	timing.change(phaseEnrich, start)
+	timing.observeWait(store.WaitBatch, 2*time.Millisecond)
+	timing.observeWait(store.WaitStorageQueue, time.Millisecond)
+	timing.change(phaseEventCommit, start.Add(5*time.Millisecond))
+	timing.observeWait(store.WaitBatch, 3*time.Millisecond)
+	timing.change(phaseEnrich, start.Add(9*time.Millisecond))
+	timing.observeWait(store.WaitBatch, time.Millisecond)
+	sample := timing.observation(start.Add(12*time.Millisecond), ProcessResult{}, nil)
+	var execution, batch, queue time.Duration
+	for _, p := range sample.Phases {
+		execution += p.Duration - p.BatchWait - p.StorageQueue
+		batch += p.BatchWait
+		queue += p.StorageQueue
+		if p.Phase == "enrich" && (p.Duration != 8*time.Millisecond || p.BatchWait != 3*time.Millisecond || p.StorageQueue != time.Millisecond) {
+			t.Fatalf("enrich=%#v", p)
+		}
+		if p.Phase == "event_commit" && (p.Duration != 4*time.Millisecond || p.BatchWait != 3*time.Millisecond) {
+			t.Fatalf("commit=%#v", p)
+		}
+	}
+	if execution != 5*time.Millisecond || batch != 6*time.Millisecond || queue != time.Millisecond || execution+batch+queue != sample.Duration {
+		t.Fatalf("execution=%v batch=%v queue=%v sample=%v", execution, batch, queue, sample.Duration)
+	}
+}

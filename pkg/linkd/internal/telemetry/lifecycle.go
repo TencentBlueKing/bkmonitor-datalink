@@ -37,6 +37,18 @@ func (o *lifecyclePhaseObserver) Finished(ctx context.Context, sample lifecycle.
 	outcome := lifecycleMetricOutcome(sample.Result, sample.Err)
 	// 所有环节每次都记一个样本，零耗时也记录，保证均值使用同一批 Event 尝试。
 	for _, phase := range sample.Phases {
+		execution := max(0, phase.Duration-phase.BatchWait-phase.StorageQueue)
+		o.metrics.lifecyclePhaseExecutionDuration.Record(ctx, execution.Seconds(), metric.WithAttributes(
+			attribute.String("linkd.phase", phase.Phase), attribute.String("linkd.outcome", outcome),
+		))
+		for _, wait := range [...]struct {
+			kind     string
+			duration time.Duration
+		}{{"batch_wait", phase.BatchWait}, {"storage_queue", phase.StorageQueue}} {
+			o.metrics.lifecyclePhaseWaitDuration.Record(ctx, wait.duration.Seconds(), metric.WithAttributes(
+				attribute.String("linkd.phase", phase.Phase), attribute.String("linkd.outcome", outcome), attribute.String("linkd.wait_kind", wait.kind),
+			))
+		}
 		o.metrics.lifecyclePhaseDuration.Record(ctx, phase.Duration.Seconds(), metric.WithAttributes(
 			attribute.String("linkd.phase", phase.Phase), attribute.String("linkd.outcome", outcome),
 		))

@@ -14,7 +14,7 @@ function panel(
   values: (number | null)[] = [40, 5, 10, 15, 20, 8, 2],
 ): MetricPanel {
   return {
-    id: "lifecycle-phase-average",
+    id: "lifecycle-phase-execution-average",
     title: "分段",
     kind: "stat",
     unit: "ms",
@@ -34,15 +34,66 @@ function panel(
     })),
   };
 }
-it("shows one weighted total, proportional segments and interactive phase details", () => {
+function waitPanel(batch = 0, queue = 0): MetricPanel {
+  const p = panel();
+  return {
+    ...p,
+    id: "lifecycle-phase-wait-average",
+    series: p.series.flatMap((s) =>
+      ["batch_wait", "storage_queue"].map((kind) => ({
+        ...s,
+        labels: { ...s.labels, linkd_wait_kind: kind },
+        points: [[10, kind === "batch_wait" ? batch : queue]],
+      })),
+    ),
+  };
+}
+it("separates execution, intentional batching and storage queues with the same Event denominator", () => {
   render(
     <LifecycleDurationBreakdown
-      panels={[panel()]}
+      panels={[panel(), waitPanel(10, 2)]}
       loading={false}
       error={false}
     />,
   );
   expect(screen.getByText("100.00 ms")).toBeVisible();
+  expect(screen.getByText("70.00 ms")).toBeVisible();
+  expect(screen.getByText("14.00 ms")).toBeVisible();
+  expect(screen.getByText("184.00 ms")).toBeVisible();
+  expect(
+    within(screen.getByRole("group")).getByRole("button", {
+      name: "Event 丰富 40.00 ms 40.0%",
+    }),
+  ).toBeVisible();
+});
+it.each(["missing", "stale", "duplicate", "negative"])(
+  "does not subtract incomplete %s wait samples",
+  (scenario) => {
+    const w = waitPanel();
+    if (scenario === "missing") w.series.pop();
+    if (scenario === "stale") w.series[0].points[0][0] = 9;
+    if (scenario === "duplicate") w.series.push(w.series[0]);
+    if (scenario === "negative") w.series[0].points[0][1] = -1;
+    render(
+      <LifecycleDurationBreakdown
+        panels={[panel(), w]}
+        loading={false}
+        error={false}
+      />,
+    );
+    expect(screen.queryByRole("group")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("暂无完整");
+  },
+);
+it("shows one weighted total, proportional segments and interactive phase details", () => {
+  render(
+    <LifecycleDurationBreakdown
+      panels={[panel(), waitPanel()]}
+      loading={false}
+      error={false}
+    />,
+  );
+  expect(screen.getAllByText("100.00 ms")).toHaveLength(2);
   const chart = screen.getByRole("group", { name: "各环节耗时占比" });
   const enrich = within(chart).getByRole("button", {
     name: "Event 丰富 40.00 ms 40.0%",
@@ -56,7 +107,7 @@ it("shows one weighted total, proportional segments and interactive phase detail
 it("keeps an unexecuted phase at zero without inflating its bar", () => {
   render(
     <LifecycleDurationBreakdown
-      panels={[panel([100, 0, 0, 0, 0, 0, 0])]}
+      panels={[panel([100, 0, 0, 0, 0, 0, 0]), waitPanel()]}
       loading={false}
       error={false}
     />,
@@ -86,7 +137,11 @@ it.each([
   if (scenario === "unavailable") p.status = "unavailable";
   if (scenario === "zero") p.series.forEach((s) => (s.points[0][1] = 0));
   render(
-    <LifecycleDurationBreakdown panels={[p]} loading={false} error={false} />,
+    <LifecycleDurationBreakdown
+      panels={[p, waitPanel()]}
+      loading={false}
+      error={false}
+    />,
   );
   expect(screen.queryByRole("group")).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent(

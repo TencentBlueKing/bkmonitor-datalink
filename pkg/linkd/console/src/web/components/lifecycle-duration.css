@@ -16,6 +16,7 @@
   line-height: 1.7;
 }
 .lifecycle-duration-summary {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -112,6 +113,10 @@
   margin-top: 5px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+.lifecycle-duration-legend small span {
+  display: block;
+  white-space: nowrap;
 }
 .lifecycle-duration-legend b {
   margin-left: auto;

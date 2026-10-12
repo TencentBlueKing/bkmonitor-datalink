@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"linkd/internal/store"
 )
 
 // WriteBatchConfig 限制单个 Lifecycle runtime 的合批等待和资源使用。
@@ -62,6 +64,7 @@ type batchReply struct {
 }
 
 type batchCall struct {
+	timing     batchCallTiming
 	ctx        context.Context
 	operations []batchOperation
 	body       []byte
@@ -126,6 +129,20 @@ func (b *WriteBatchTransport) Perform(req *http.Request) (*http.Response, error)
 		return b.next.Perform(req)
 	}
 	admitted := time.Now()
+	var admissionEnded time.Time
+	var call *batchCall
+	defer func() {
+		at := time.Now()
+		if admissionEnded.IsZero() {
+			admissionEnded = at
+		}
+		store.ObserveWait(req.Context(), store.WaitStorageQueue, admissionEnded.Sub(admitted))
+		if call != nil {
+			batch, queue := call.timing.waits(at)
+			store.ObserveWait(req.Context(), store.WaitBatch, batch)
+			store.ObserveWait(req.Context(), store.WaitStorageQueue, queue)
+		}
+	}()
 	select {
 	case b.slots <- struct{}{}:
 	case <-req.Context().Done():
@@ -133,12 +150,14 @@ func (b *WriteBatchTransport) Perform(req *http.Request) (*http.Response, error)
 	case <-b.ctx.Done():
 		return nil, b.ctx.Err()
 	}
+	admissionEnded = time.Now()
 	if err := b.ctx.Err(); err != nil {
 		<-b.slots
 		return nil, err
 	}
 	c := &batchCall{ctx: req.Context(), read: read, bulk: bulk, queued: time.Now(), reply: make(chan batchReply, 1)}
-	b.phase(batchKind(read), "admission", time.Since(admitted))
+	call = c
+	b.phase(batchKind(read), "admission", admissionEnded.Sub(admitted))
 	if req.Body != nil {
 		data, err := io.ReadAll(io.LimitReader(req.Body, defaultMaxRequestBytes+1))
 		_ = req.Body.Close()
@@ -224,6 +243,7 @@ func (b *WriteBatchTransport) Perform(req *http.Request) (*http.Response, error)
 		return nil, err
 	}
 	// 已取得调用 slot，queue 容量等于总 slot 数，因此此发送不会等待。
+	c.timing.enqueue(time.Now())
 	if c.read {
 		b.readQueue <- c
 	} else {
@@ -281,6 +301,7 @@ func (b *WriteBatchTransport) run(queue <-chan *batchCall, wait time.Duration) {
 			return
 		case first = <-queue:
 		}
+		first.timing.collect(time.Now())
 		calls := []*batchCall{first}
 		kind := batchKind(first.read)
 		reason := "deadline"
@@ -296,6 +317,7 @@ func (b *WriteBatchTransport) run(queue <-chan *batchCall, wait time.Duration) {
 			// timer 与非空队列随机竞争，否则执行槽位拥堵时会退化为大量微小批次。
 			select {
 			case c := <-queue:
+				c.timing.collect(time.Now())
 				calls = append(calls, c)
 				count += len(c.operations)
 				size += batchCollectBytes(c)
@@ -312,6 +334,7 @@ func (b *WriteBatchTransport) run(queue <-chan *batchCall, wait time.Duration) {
 			case <-timer.C:
 				break collect
 			case c := <-queue:
+				c.timing.collect(time.Now())
 				calls = append(calls, c)
 				count += len(c.operations)
 				size += batchCollectBytes(c)
@@ -324,6 +347,10 @@ func (b *WriteBatchTransport) run(queue <-chan *batchCall, wait time.Duration) {
 			reason = "bytes"
 		} else if wait == 0 {
 			reason = "ready"
+		}
+		collectedAt := time.Now()
+		for _, call := range calls {
+			call.timing.ready(collectedAt)
 		}
 		b.phase(kind, "collect", time.Since(first.queued))
 		if b.observer != nil {
@@ -358,6 +385,10 @@ type batchItem struct {
 }
 
 func (b *WriteBatchTransport) execute(calls []*batchCall) {
+	started := time.Now()
+	for _, call := range calls {
+		call.timing.execute(started)
+	}
 	for _, read := range []bool{true, false} {
 		var refs []operationRef
 		results := map[*batchCall][]batchItem{}

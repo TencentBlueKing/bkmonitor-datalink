@@ -19,6 +19,15 @@ Bulk update，只修改 `related_alert_ids` 和 `processing`。公共 Event 查�
 未满则在首项期限到达时发送，不等待写期限；
 读写共享执行并发上限。实际批次大小还受调用方并发与写入依赖限制。完整配置见[配置指南](../guides/configuration.md)。
 
+Console 的单 Event 耗时分布默认显示扣除存储等待后的执行时间，并同时显示主动合批等待、
+存储排队和完整处理时间。执行时间仍包含网络/下游 I/O、编解码及业务处理，不等同于 CPU 时间。
+合批等待按每次逻辑调用实际进入收集窗口的时刻记账；取得调用容量、队列调度及执行槽位的等待
+归入存储排队，两者不重叠。一个 Bulk 调用拆成多个物理批次时，等待只按该调用经历的区间记一次，
+不按文档数累加。失败和取消也记录返回之前的等待；记录在原调用 goroutine 完成后归入当时的独占环节。
+原 `linkd.lifecycle.event.phase.duration` 继续保留完整耗时；新增 `phase.execution_duration` 与
+`phase.wait_duration`（`linkd.wait_kind=batch_wait|storage_queue`）每次尝试为每个环节记录零或实际样本，
+保持相同分母。不能用物理批次均值直接扣减 Event 均值；缺少新指标的旧 Worker 显示数据不完整。
+
 Lifecycle 负责把已经持久化的 unprocessed Event 裁决为 Alert 创建、推进、终结、等级升级、抑制或
 孤儿结果，并写回 EventProcessing。它不接收原始 MQ payload，也不负责 Cleaner 的 Event 创建和 ACK。
 

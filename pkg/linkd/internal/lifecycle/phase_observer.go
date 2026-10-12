@@ -12,6 +12,8 @@ package lifecycle
 import (
 	"context"
 	"time"
+
+	"linkd/internal/store"
 )
 
 // PhaseDuration 是单次 ProcessEvent 中一个环节的独占耗时；未执行的环节为零。
@@ -20,6 +22,9 @@ type PhaseDuration struct {
 	Phase string
 	// Duration 不含嵌套环节的耗时。
 	Duration time.Duration
+	// BatchWait 与 StorageQueue 属于 Duration，扣除两者后才是执行时间。
+	BatchWait    time.Duration
+	StorageQueue time.Duration
 }
 
 // PhaseObservation 覆盖一次 Event 尝试，包括失败、重放和尝试内的 CAS 重试。
@@ -59,6 +64,7 @@ const (
 // 返回时恢复父环节，避免 executePlan 与其内部 Hook / Event 写入重复计时。
 // 不挂在共享 Processor 上，其他 fingerprint 的并发调用拥有独立实例。
 type phaseTiming struct {
+	waits     [phaseCount][2]time.Duration
 	durations [phaseCount]time.Duration
 	current   int
 	last      time.Time
@@ -80,12 +86,25 @@ func (p *Processor) measurePhase(phase int) func() {
 	return func() { t.change(parent, time.Now()) }
 }
 
+// observeWait 由同步存储调用在原 goroutine 返回前上报，归入当时最内层环节。
+func (t *phaseTiming) observeWait(kind store.WaitKind, duration time.Duration) {
+	switch kind {
+	case store.WaitBatch:
+		t.waits[t.current][0] += duration
+	case store.WaitStorageQueue:
+		t.waits[t.current][1] += duration
+	}
+}
+
 func (t *phaseTiming) observation(at time.Time, result ProcessResult, err error) PhaseObservation {
 	t.change(phaseOther, at)
 	names := [...]string{"other", "enrich", "policy_snapshot", "plan", "event_commit", "apply", "final_hook"}
 	phases := make([]PhaseDuration, phaseCount)
 	for i, name := range names {
-		phases[i] = PhaseDuration{Phase: name, Duration: t.durations[i]}
+		duration := t.durations[i]
+		batch := min(duration, t.waits[i][0])
+		queue := min(duration-batch, t.waits[i][1])
+		phases[i] = PhaseDuration{Phase: name, Duration: duration, BatchWait: batch, StorageQueue: queue}
 	}
 	return PhaseObservation{Phases: phases, Duration: at.Sub(t.started), Result: result, Err: err}
 }

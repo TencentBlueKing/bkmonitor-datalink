@@ -64,6 +64,19 @@ describe("PrometheusConnector", () => {
         .get("query")
         ?.includes("linkd_lifecycle_event_phase_duration"),
     )!;
+    for (const metric of ["execution_duration", "wait_duration"]) {
+      const query = urls.find((u) =>
+        u.searchParams
+          .get("query")
+          ?.includes(`linkd_lifecycle_event_phase_${metric}`),
+      )!;
+      expect(query.pathname).toBe("/api/v1/query");
+      expect(query.searchParams.get("query")).toContain(`[3600s]`);
+      expect(query.searchParams.get("query")).toContain(
+        `phase_${metric}_seconds_count`,
+      );
+      expect(query.searchParams.get("query")).not.toContain("write_batch");
+    }
     expect(url.pathname).toBe("/api/v1/query");
     expect(url.searchParams.get("query")).toBe(
       '1000 * sum(increase(linkd_lifecycle_event_phase_duration_seconds_sum{instance="worker-a"}[3600s])) by (linkd_phase) / sum(increase(linkd_lifecycle_event_phase_duration_seconds_count{instance="worker-a"}[3600s])) by (linkd_phase)',
@@ -190,7 +203,7 @@ describe("PrometheusConnector", () => {
       result.panels.find((p) => p.id === "lifecycle-batch-phases")?.series[0]
         .name,
     ).toBe("write · connection");
-    expect(totals).toHaveLength(3);
+    expect(totals).toHaveLength(5);
     expect(
       totals.every(
         (u) =>
@@ -487,7 +500,7 @@ describe("PrometheusConnector", () => {
           (query) =>
             !query.includes("linkd_elasticsearch_write_batch_batches_total") &&
             !query.includes("linkd_elasticsearch_write_batch_items_total") &&
-            !query.includes("linkd_lifecycle_event_phase_duration"),
+            !query.includes("linkd_lifecycle_event_phase_"),
         )
         .every((query) => query.includes("[60s]")),
     ).toBe(true);

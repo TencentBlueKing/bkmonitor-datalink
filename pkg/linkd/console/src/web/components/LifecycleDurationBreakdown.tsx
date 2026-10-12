@@ -25,7 +25,8 @@ const phases = [
     id: "event_commit",
     label: "计划与结果写入",
     color: "#4db9cf",
-    detail: "保存 Event 执行计划和最终处理结果，包含写入等待。",
+    detail:
+      "保存 Event 执行计划和最终处理结果，扣除主动合批与存储排队，保留实际写入耗时。",
   },
   {
     id: "apply",
@@ -58,7 +59,9 @@ export function LifecycleDurationBreakdown({
   error: boolean;
 }) {
   const [selected, setSelected] = useState<string>();
-  const panel = panels.find((p) => p.id === "lifecycle-phase-average");
+  const panel = panels.find(
+    (p) => p.id === "lifecycle-phase-execution-average",
+  );
   // 后端先按耗时和次数跨 Worker 加权；前端不平均 Worker 均值，也不回退到历史末值。
   const values = phases.map((phase) => {
     const series =
@@ -66,8 +69,34 @@ export function LifecycleDurationBreakdown({
     const point = series.length === 1 ? series[0].points.at(-1) : undefined;
     return { ...phase, value: point?.[1], timestamp: point?.[0] };
   });
+  const waitPanel = panels.find((p) => p.id === "lifecycle-phase-wait-average");
+  const waits = phases.flatMap((phase) =>
+    ["batch_wait", "storage_queue"].map((kind) => {
+      const series =
+        waitPanel?.series.filter(
+          (s) =>
+            s.labels.linkd_phase === phase.id &&
+            s.labels.linkd_wait_kind === kind,
+        ) ?? [];
+      const point = series.length === 1 ? series[0].points.at(-1) : undefined;
+      return {
+        phase: phase.id,
+        kind,
+        value: point?.[1],
+        timestamp: point?.[0],
+      };
+    }),
+  );
   const complete =
     panel?.status === "available" &&
+    waitPanel?.status === "available" &&
+    waits.every(
+      (v) =>
+        typeof v.value === "number" &&
+        Number.isFinite(v.value) &&
+        v.value >= 0 &&
+        v.timestamp === values[0].timestamp,
+    ) &&
     values.every(
       (v) =>
         typeof v.value === "number" &&
@@ -78,12 +107,24 @@ export function LifecycleDurationBreakdown({
   const total = complete
     ? values.reduce((sum, v) => sum + (v.value ?? 0), 0)
     : 0;
-  const available = complete && Number.isFinite(total) && total > 0;
+  const waitTotal = (kind: string) =>
+    complete
+      ? waits
+          .filter((v) => v.kind === kind)
+          .reduce((sum, v) => sum + (v.value ?? 0), 0)
+      : 0;
+  const phaseWait = (phase: string, kind: string) =>
+    waits.find((v) => v.phase === phase && v.kind === kind)?.value ?? 0;
+  const batchWait = waitTotal("batch_wait");
+  const storageQueue = waitTotal("storage_queue");
+  const available =
+    complete && Number.isFinite(total) && total + batchWait + storageQueue > 0;
   const largest = values.reduce((a, b) =>
     (b.value ?? 0) > (a.value ?? 0) ? b : a,
   );
   const active = values.find((v) => v.id === selected) ?? largest;
-  const percent = (value: number) => `${((value / total) * 100).toFixed(1)}%`;
+  const percent = (value: number) =>
+    `${(total > 0 ? (value / total) * 100 : 0).toFixed(1)}%`;
 
   return (
     <section
@@ -96,8 +137,8 @@ export function LifecycleDurationBreakdown({
           <p className="eyebrow">EVENT · TIME BREAKDOWN</p>
           <h2>单 Event 平均处理耗时分布</h2>
           <p>
-            所选时间范围内的每次处理尝试均值，包含失败与重放。各环节独占计时，占比合计
-            100%。
+            所选时间范围内的每次处理尝试均值，包含失败与重放。各环节仅统计执行耗时，主动合批与存储排队单独展示；执行耗时包含实际
+            I/O，并非 CPU 时间。
           </p>
         </div>
       </header>
@@ -105,11 +146,23 @@ export function LifecycleDurationBreakdown({
         <>
           <div className="lifecycle-duration-summary">
             <div>
-              <span>平均总耗时</span>
+              <span>平均执行耗时</span>
               <strong>{duration(total)}</strong>
             </div>
+            <div>
+              <span>主动合批等待</span>
+              <strong>{duration(batchWait)}</strong>
+            </div>
+            <div>
+              <span>存储排队</span>
+              <strong>{duration(storageQueue)}</strong>
+            </div>
+            <div>
+              <span>平均总耗时</span>
+              <strong>{duration(total + batchWait + storageQueue)}</strong>
+            </div>
             <p>
-              耗时最多 <b>{largest.label}</b>
+              执行耗时最多 <b>{largest.label}</b>
               <strong>{percent(largest.value ?? 0)}</strong>
             </p>
           </div>
@@ -152,7 +205,15 @@ export function LifecycleDurationBreakdown({
                   />
                   <span>
                     {v.label}
-                    <small>{duration(v.value ?? 0)}</small>
+                    <small>
+                      <span>执行 {duration(v.value ?? 0)}</span>
+                      <span>
+                        合批 {duration(phaseWait(v.id, "batch_wait"))}
+                      </span>
+                      <span>
+                        排队 {duration(phaseWait(v.id, "storage_queue"))}
+                      </span>
+                    </small>
                   </span>
                   <b>{percent(v.value ?? 0)}</b>
                 </button>
@@ -171,12 +232,12 @@ export function LifecycleDurationBreakdown({
               ? "环节耗时加载失败，请刷新重试。"
               : complete
                 ? "当前范围内没有可计算的处理耗时。"
-                : "暂无完整环节耗时数据，请确认 Worker 已上报分段指标且所选范围内有处理样本。"}
+                : "暂无完整执行与等待耗时数据，请确认 Worker 已上报新分段指标且所选范围内有处理样本。"}
         </div>
       )}
       <p className="lifecycle-duration-note">
-        统计范围为 ProcessEvent 开始至返回；不包含 Cleaner、Mailbox 排队、Signal
-        调度及异步下游处理。
+        平均总耗时 = 执行耗时 + 主动合批等待 + 存储排队。统计范围为 ProcessEvent
+        开始至返回；不包含 Cleaner、Mailbox 排队、Signal 调度及异步下游处理。
       </p>
     </section>
   );

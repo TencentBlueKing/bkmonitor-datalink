@@ -65,14 +65,16 @@ type instruments struct {
 	cleanerBackpressurePaused      metric.Int64Gauge
 	cleanerBackpressureTransitions metric.Int64Counter
 
-	lifecycleResults             metric.Int64Counter
-	lifecyclePhaseDuration       metric.Float64Histogram
-	lifecycleMailboxOps          metric.Int64Counter
-	lifecycleDrained             metric.Int64Histogram
-	lifecycleLeaseOps            metric.Int64Counter
-	lifecycleRecentAlertCacheOps metric.Int64Counter
-	finalHookOperations          metric.Int64Counter
-	finalHookDuration            metric.Float64Histogram
+	lifecycleResults                metric.Int64Counter
+	lifecyclePhaseDuration          metric.Float64Histogram
+	lifecyclePhaseExecutionDuration metric.Float64Histogram
+	lifecyclePhaseWaitDuration      metric.Float64Histogram
+	lifecycleMailboxOps             metric.Int64Counter
+	lifecycleDrained                metric.Int64Histogram
+	lifecycleLeaseOps               metric.Int64Counter
+	lifecycleRecentAlertCacheOps    metric.Int64Counter
+	finalHookOperations             metric.Int64Counter
+	finalHookDuration               metric.Float64Histogram
 
 	enrichAttempts             metric.Int64Counter
 	enrichAttemptDuration      metric.Float64Histogram
@@ -135,6 +137,18 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	if result.lifecyclePhaseDuration, err = meter.Float64Histogram(
 		"linkd.lifecycle.event.phase.duration", describeMetric("Event 环节独占耗时", "lifecycle", "latency", "linkd.phase", "linkd.outcome"),
 		metric.WithUnit("s"), metric.WithDescription("单次 ProcessEvent 的独占分段耗时；每次尝试为所有环节记录样本，未执行的环节为零"),
+	); err != nil {
+		return nil, err
+	}
+	if result.lifecyclePhaseExecutionDuration, err = meter.Float64Histogram(
+		"linkd.lifecycle.event.phase.execution_duration", describeMetric("Event 环节执行耗时", "lifecycle", "latency", "linkd.phase", "linkd.outcome"),
+		metric.WithUnit("s"), metric.WithDescription("扣除逻辑调用的主动合批与存储排队；包含实际 I/O 和编解码，不等同于 CPU 时间"),
+	); err != nil {
+		return nil, err
+	}
+	if result.lifecyclePhaseWaitDuration, err = meter.Float64Histogram(
+		"linkd.lifecycle.event.phase.wait_duration", describeMetric("Event 环节存储等待", "lifecycle", "latency", "linkd.phase", "linkd.outcome", "linkd.wait_kind"),
+		metric.WithUnit("s"), metric.WithDescription("每次 Event 尝试按环节记录 batch_wait 和 storage_queue，未等待也记录零样本"),
 	); err != nil {
 		return nil, err
 	}

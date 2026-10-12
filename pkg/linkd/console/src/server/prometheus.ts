@@ -422,6 +422,30 @@ const panelDefinitions: PanelDefinition[] = [
       `1000 * sum(increase(linkd_lifecycle_event_phase_duration_seconds_sum${selector}[${window}])) by (linkd_phase) / sum(increase(linkd_lifecycle_event_phase_duration_seconds_count${selector}[${window}])) by (linkd_phase)`,
   },
   {
+    id: "lifecycle-phase-execution-average",
+    title: "单 Event 执行耗时分布",
+    unit: "ms",
+    kind: "stat",
+    rangeTotal: true,
+    processWide: true,
+    description:
+      "每次 Event 尝试的独占执行耗时，扣除主动合批和存储排队，保留实际 I/O、编解码及业务处理。",
+    query: (selector, window) =>
+      `1000 * sum(increase(linkd_lifecycle_event_phase_execution_duration_seconds_sum${selector}[${window}])) by (linkd_phase) / sum(increase(linkd_lifecycle_event_phase_execution_duration_seconds_count${selector}[${window}])) by (linkd_phase)`,
+  },
+  {
+    id: "lifecycle-phase-wait-average",
+    title: "单 Event 存储等待",
+    unit: "ms",
+    kind: "stat",
+    rangeTotal: true,
+    processWide: true,
+    description:
+      "按每条 Event 的逻辑调用区分主动合批与存储排队；与执行耗时使用相同尝试分母，不能用物理批次均值代替。",
+    query: (selector, window) =>
+      `1000 * sum(increase(linkd_lifecycle_event_phase_wait_duration_seconds_sum${selector}[${window}])) by (linkd_phase, linkd_wait_kind) / sum(increase(linkd_lifecycle_event_phase_wait_duration_seconds_count${selector}[${window}])) by (linkd_phase, linkd_wait_kind)`,
+  },
+  {
     id: "lifecycle-results",
     title: "Lifecycle 裁决速率",
     unit: "event/s",

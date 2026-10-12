@@ -78,7 +78,7 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
         step: 15,
         panels: [
           {
-            id: "lifecycle-phase-average",
+            id: "lifecycle-phase-execution-average",
             title: "单 Event 平均处理耗时分布",
             unit: "ms",
             kind: "stat",
@@ -96,6 +96,28 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
               labels: { linkd_phase: phase },
               points: [[1788630165, value]],
             })),
+          },
+          {
+            id: "lifecycle-phase-wait-average",
+            title: "存储等待",
+            unit: "ms",
+            kind: "stat",
+            status: "available",
+            series: [
+              "enrich",
+              "policy_snapshot",
+              "plan",
+              "event_commit",
+              "apply",
+              "final_hook",
+              "other",
+            ].flatMap((phase) =>
+              ["batch_wait", "storage_queue"].map((kind) => ({
+                name: `${phase} ${kind}`,
+                labels: { linkd_phase: phase, linkd_wait_kind: kind },
+                points: [[1788630165, kind === "batch_wait" ? 5 : 1]],
+              })),
+            ),
           },
           line("final-hook-success-ratio", "FinalHook 成功率", "%", {
             "source-a · active-by-strategy": 75,
@@ -153,6 +175,9 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
     exact: true,
   });
   await expect(breakdown.getByText("100.00 ms", { exact: true })).toBeVisible();
+  await expect(breakdown.getByText("35.00 ms", { exact: true })).toBeVisible();
+  await expect(breakdown.getByText("7.00 ms", { exact: true })).toBeVisible();
+  await expect(breakdown.getByText("142.00 ms", { exact: true })).toBeVisible();
   const bar = breakdown.getByRole("group", { name: "各环节耗时占比" });
   await expect(bar.getByRole("button")).toHaveCount(7);
   await bar.getByRole("button", { name: /Hook 输出/ }).focus();

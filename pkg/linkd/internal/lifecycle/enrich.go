@@ -70,7 +70,7 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 	var updated store.StoredEvent
 	var persistErr error
 	if failureReason == "" {
-		updated, persistErr = p.repository.CompareAndSetEventEnrichment(ctx, event.BKTenantID, event.EventID, stored.Version, snapshot)
+		updated, persistErr = p.writeEventEnrichment(ctx, stored, snapshot)
 		if errors.Is(persistErr, store.ErrInvalidArgument) {
 			failureReason = "invalid_enrich_data"
 		}
@@ -79,7 +79,7 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 		p.logger.WarnContext(ctx, "event enrich degraded", "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "reason_code", failureReason)
 		result = failedEnrichResult(event)
 		snapshot = domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest}
-		updated, persistErr = p.repository.CompareAndSetEventEnrichment(ctx, event.BKTenantID, event.EventID, stored.Version, snapshot)
+		updated, persistErr = p.writeEventEnrichment(ctx, stored, snapshot)
 	}
 	observation.Outcome = enrichMetricOutcome(failureReason)
 	observation.Status = snapshot.EnrichStatus
@@ -87,6 +87,13 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 		observation.PayloadBytes = int64(len(encoded))
 	}
 	return updated, persistErr
+}
+
+func (p *Processor) writeEventEnrichment(ctx context.Context, stored store.StoredEvent, result domain.EventEnrichment) (store.StoredEvent, error) {
+	if repo, ok := p.repository.(store.LifecycleEventSnapshotStore); ok {
+		return repo.CompareAndSetEventEnrichmentFromSnapshot(ctx, stored, result)
+	}
+	return p.repository.CompareAndSetEventEnrichment(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result)
 }
 
 func enrichMetricOutcome(failureReason string) string {

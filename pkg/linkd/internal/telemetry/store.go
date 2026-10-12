@@ -249,6 +249,43 @@ func (r *observedRepository) FindActiveAlert(
 	return result, err
 }
 
+// CompareAndSetEventEnrichmentFromSnapshot 保留原有逻辑操作指标，透明转发可选快照能力。
+func (r *observedRepository) CompareAndSetEventEnrichmentFromSnapshot(ctx context.Context, current store.StoredEvent, result domain.EventEnrichment) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	if next, ok := r.next.(store.LifecycleEventSnapshotStore); ok {
+		stored, err := next.CompareAndSetEventEnrichmentFromSnapshot(ctx, current, result)
+		r.record(ctx, "event", "compare_and_set_enrichment", startedAt, err)
+		return stored, err
+	}
+	return r.CompareAndSetEventEnrichment(ctx, current.Event.BKTenantID, current.Event.EventID, current.Version, result)
+}
+
+// CompareAndSetLifecycleEventResultFromSnapshot 保留策略、计划和最终提交的独立计量与后端回退。
+func (r *observedRepository) CompareAndSetLifecycleEventResultFromSnapshot(ctx context.Context, current store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	if next, ok := r.next.(store.LifecycleEventSnapshotStore); ok {
+		stored, err := next.CompareAndSetLifecycleEventResultFromSnapshot(ctx, current, result)
+		r.record(ctx, "event", "compare_and_set_result", startedAt, err)
+		return stored, err
+	}
+	return r.CompareAndSetLifecycleEventResult(ctx, current.Event.BKTenantID, current.Event.EventID, current.Version, result)
+}
+
+// CompareAndSetAlertFromSnapshot 透传快照 CAS，未实现时保留原有 active-lookup 更新语义。
+func (r *observedRepository) CompareAndSetAlertFromSnapshot(ctx context.Context, current store.StoredAlert, replacement domain.Alert) (store.StoredAlert, error) {
+	startedAt := time.Now()
+	if next, ok := r.next.(store.LifecycleAlertSnapshotStore); ok {
+		stored, err := next.CompareAndSetAlertFromSnapshot(ctx, current, replacement)
+		r.record(ctx, "alert", "compare_and_set", startedAt, err)
+		return stored, err
+	}
+	return r.CompareAndSetAlertAfterActiveLookup(ctx, current.Alert.BKTenantID, current.Alert.AlertID, current.Version, replacement)
+}
+
+var _ store.LifecycleEventSnapshotStore = (*observedRepository)(nil)
+
+var _ store.LifecycleAlertSnapshotStore = (*observedRepository)(nil)
+
 func (r *observedRepository) FindAlertEndedByEvent(
 	ctx context.Context,
 	bkTenantID, eventID string,

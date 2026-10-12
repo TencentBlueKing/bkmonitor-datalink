@@ -22,6 +22,9 @@ import (
 var errRetryDecision = errors.New("lifecycle decision changed concurrently")
 
 func (p *Processor) getLifecycleEvent(ctx context.Context, bkTenantID, eventID string) (store.StoredEvent, error) {
+	if _, ok := p.repository.(store.LifecycleEventSnapshotStore); ok {
+		return p.repository.GetEvent(ctx, bkTenantID, eventID)
+	}
 	if lifecycleStore, ok := p.repository.(store.LifecycleEventStore); ok {
 		return lifecycleStore.GetLifecycleEvent(ctx, bkTenantID, eventID)
 	}
@@ -72,7 +75,9 @@ func (p *Processor) compareAndSetAlert(
 	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
 	}
-	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
+	if repository, ok := p.repository.(store.LifecycleAlertSnapshotStore); ok {
+		updated, err = repository.CompareAndSetAlertFromSnapshot(ctx, current, replacement)
+	} else if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
 		updated, err = repository.CompareAndSetAlertAfterActiveLookup(
 			ctx,
 			current.Alert.BKTenantID,

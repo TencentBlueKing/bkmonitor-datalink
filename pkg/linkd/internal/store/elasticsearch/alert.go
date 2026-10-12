@@ -408,6 +408,24 @@ func (r *Repository) compareAndSetAlert(
 	if current.Version != expected {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q", store.ErrVersionConflict, alertID)
 	}
+	return r.compareAndSetAlertFromSnapshot(ctx, current, replacement, refresh)
+}
+
+// CompareAndSetAlertFromSnapshot 复用已读 Alert 校验变更，直接使用其 ES 版本条件写入。
+// 不等待 refresh；调用方仍须成功更新 Recent Alert 缓存后才推进输出和 Event。
+func (r *Repository) CompareAndSetAlertFromSnapshot(ctx context.Context, current store.StoredAlert, replacement domain.Alert) (store.StoredAlert, error) {
+	return r.compareAndSetAlertFromSnapshot(ctx, current, replacement, "false")
+}
+
+func (r *Repository) compareAndSetAlertFromSnapshot(ctx context.Context, current store.StoredAlert, replacement domain.Alert, refresh string) (store.StoredAlert, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredAlert{}, err
+	}
+	version, err := alertSnapshotVersion(current)
+	if err != nil {
+		return store.StoredAlert{}, err
+	}
+	alertID := current.Alert.AlertID
 	normalized, err := replacement.Normalize()
 	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("%w: normalize replacement alert: %w", store.ErrInvalidArgument, err)

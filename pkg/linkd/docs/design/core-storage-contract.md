@@ -22,6 +22,22 @@
   Elasticsearch 使用物理 `_index/_id/_seq_no/_primary_term`。
 - Event、Alert 和 AlertLog 是独立对象，Repository 不承诺跨对象事务。
 
+### Lifecycle 已读快照更新
+
+Elasticsearch 提供内部可选的 `LifecycleEventSnapshotStore` / `LifecycleAlertSnapshotStore` 能力。
+调用方仅传入从同一 Repository 读取或成功 CAS 返回的不可变快照；Repository 用该快照检查本次变更，
+直接携带其 `if_seq_no/if_primary_term` 写入，正常路径不再前置 GET。ES 返回版本冲突后仍重读并重新裁决，
+不得将旧 replacement 换上最新 token 后强行重试。其他后端保持原有 CAS 路径。
+
+Event 的首次读取使用完整 `GetEvent`，保证丰富提交的完整文档预算检查仍包含 `source_raw_data`；
+后续丰富结果、策略快照、计划、最终结果提交连续使用上一次写入返回的完整快照与新版本。
+三次状态提交和丰富结果冻结的恢复边界不变。局部 ES update 保留未修改字段，Alert 的 revision、
+投影 ACK 及不可变创建事实仍按原规则检查。既有 ID+版本接口继续前置读取，不改变独立调用者的契约。
+
+快照仅由本次处理调用链持有，不引入全局 Event 缓存。处理结束后无引用的对象由 Go GC 回收；
+错误重试、进程恢复和并发冲突仍可能产生新的读取，不承诺每条消息在所有异常场景下只读一次。
+性能验证分别统计被省掉的前置读取和实际写入，不能把整个 CAS 耗时当作可节省时间。
+
 ## Event
 
 - Repository 在读取边界一次性将文档转成标准 Event：恢复空集合、pending 默认状态及 UTC 时间，

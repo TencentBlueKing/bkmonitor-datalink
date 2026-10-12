@@ -8,8 +8,9 @@ FinalHook 分开：入队失败保留原意图并向调用者返回错误，全�
 
 Elasticsearch runtime 默认使用进程内共享合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
 CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；
-调用方收到对应 item 成功后才进入下一步，不能提前输出或 ACK。批次内 CAS 校验与冲突核对使用
-realtime `_mget`；Lifecycle 的 Event 点读排除不参与裁决的 `source_raw_data`，终态 CAS 使用局部
+调用方收到对应 item 成功后才进入下一步，不能提前输出或 ACK。已有快照的 CAS 不再前置读取；
+独立 ID+版本接口与冲突核对仍使用 realtime `_mget`。快照更新路径首次读取完整 Event，以保留丰富提交的
+完整文档预算检查，后续提交沿用返回快照与新版本；终态 CAS 使用局部
 Bulk update，只修改 `related_alert_ids` 和 `processing`。公共 Event 查询仍返回完整文档。
 写批次参数自动匹配 Lifecycle 并发，不允许独立手调：
 单批上限为并发的一半（向下取整、最少 1、最多 128），写侧等待为该上限的毫秒值（单项不等待），
@@ -101,7 +102,9 @@ type Locker interface {
 
 Handler 只负责编排 Mailbox、lease 和 Processor，不包含 Alert 状态机。Handler 从 Repository 读取并校验
 Mailbox 队首 Event 后把同一 `StoredEvent` 快照交给 Processor；Processor 仅在并发冲突重裁决时重新读取，
-避免正常路径重复 realtime GET。
+避免正常路径重复 realtime GET。启用 Elasticsearch 快照更新能力时，首次读取完整 Event，
+丰富提交以及策略快照、计划、最终结果三次提交复用写入返回的新快照；其他后端回退到原有 CAS。
+快照不存入全局缓存，处理结束后由 Go GC 回收无引用对象。
 
 Repository 在读取边界恢复默认值、UTC 时间和计划中的空集合。Processor 和 Enrich Scope 直接使用
 该快照，不重复规范化来源 JSON 或校验已经冻结的丰富载荷。新丰富结果由提交接口检查，非法结果在

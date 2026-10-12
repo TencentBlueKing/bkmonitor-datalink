@@ -58,6 +58,14 @@ type LifecycleEventStore interface {
 	) (StoredEvent, error)
 }
 
+// LifecycleEventSnapshotStore 复用同一 Repository 的完整读取或成功写入快照，省略 CAS 前置 GET。
+// current 必须保持不可变且包含完整来源字段，供丰富提交检查文档预算。版本冲突仍须重读并重裁决。
+// 该能力仅用于内部调用链，不接受外部构造快照；实现返回新快照，不缓存或修改 current。
+type LifecycleEventSnapshotStore interface {
+	CompareAndSetEventEnrichmentFromSnapshot(ctx context.Context, current StoredEvent, result domain.EventEnrichment) (StoredEvent, error)
+	CompareAndSetLifecycleEventResultFromSnapshot(ctx context.Context, current StoredEvent, result EventResult) (StoredEvent, error)
+}
+
 // AlertStore 定义逻辑 Alert 的创建、读取、活动关联查询和单对象 CAS。
 // 具体存储可以在内部使用多个物理集合，但不得向调用方暴露位置或归档编排状态。
 // 创建必须为 revision=1；业务 CAS 根据当前计数器推进 revision 和投影要求，元数据确认保持原业务版本。
@@ -87,6 +95,13 @@ type LifecycleAlertStore interface {
 		replacement domain.Alert,
 	) (StoredAlert, error)
 	GetAlertCurrent(ctx context.Context, bkTenantID, alertID string) (StoredAlert, error)
+}
+
+// LifecycleAlertSnapshotStore 在既有快照上校验 Alert 替换并直接条件写入，不重复读取。
+// current 只能来自同一 Repository 的可信读取、成功写入或其 Recent Alert 缓存，且不得就地修改。
+// 写入仍保护业务 revision、投影确认和创建事实；ES 冲突不能通过替换版本 token 绕过。
+type LifecycleAlertSnapshotStore interface {
+	CompareAndSetAlertFromSnapshot(ctx context.Context, current StoredAlert, replacement domain.Alert) (StoredAlert, error)
 }
 
 // AlertLogStore 定义不可变 AlertLog 的批量追加和分页读取。

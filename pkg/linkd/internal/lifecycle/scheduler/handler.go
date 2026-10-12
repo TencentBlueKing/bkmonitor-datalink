@@ -202,6 +202,10 @@ func (h *Handler) drain(
 }
 
 func readLifecycleEvent(ctx context.Context, reader EventReader, bkTenantID, eventID string) (store.StoredEvent, error) {
+	// 快照更新的首次读取保留来源原文，确保丰富提交的完整文档预算仍然有效。
+	if _, ok := reader.(store.LifecycleEventSnapshotStore); ok {
+		return reader.GetEvent(ctx, bkTenantID, eventID)
+	}
 	if lifecycleStore, ok := reader.(store.LifecycleEventStore); ok {
 		return lifecycleStore.GetLifecycleEvent(ctx, bkTenantID, eventID)
 	}

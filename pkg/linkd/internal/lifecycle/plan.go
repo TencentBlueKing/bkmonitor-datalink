@@ -125,6 +125,9 @@ func processResult(stored store.StoredEvent) ProcessResult {
 
 func (p *Processor) writeEventResult(ctx context.Context, stored store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
 	defer p.measurePhase(phaseEventCommit)()
+	if repo, ok := p.repository.(store.LifecycleEventSnapshotStore); ok {
+		return repo.CompareAndSetLifecycleEventResultFromSnapshot(ctx, stored, result)
+	}
 	if repo, ok := p.repository.(store.LifecycleEventStore); ok {
 		return repo.CompareAndSetLifecycleEventResult(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result)
 	}

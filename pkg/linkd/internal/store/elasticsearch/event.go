@@ -852,9 +852,20 @@ func (r *Repository) CompareAndSetLifecycleEventResult(
 	if current.Version != expected {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
 	}
-	if current.Processing.State != domain.EventProcessStateUnprocessed {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q is already processed", store.ErrInvalidTransition, eventID)
+	return r.CompareAndSetLifecycleEventResultFromSnapshot(ctx, current, result)
+}
+
+// CompareAndSetLifecycleEventResultFromSnapshot 校验已有快照并局部条件更新，不执行前置读取。
+// 快照与返回值只在当前处理链内流转；冲突交由调用方重读，绝不覆盖较新的 processing。
+func (r *Repository) CompareAndSetLifecycleEventResultFromSnapshot(ctx context.Context, current store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
 	}
+	version, err := eventSnapshotVersion(current)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	eventID := current.Event.EventID
 	updated, processing, err := store.ApplyEventResult(current, result)
 	if err != nil {
 		return store.StoredEvent{}, err
@@ -1070,6 +1081,19 @@ func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID,
 	}
 	if current.Version != expected {
 		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	return r.CompareAndSetEventEnrichmentFromSnapshot(ctx, current, result)
+}
+
+// CompareAndSetEventEnrichmentFromSnapshot 在完整已读快照上冻结丰富结果，保留原有完整文档预算检查。
+// 只写丰富字段，ES seq_no/primary_term 拒绝迟到的旧 owner；失败不修改调用方快照。
+func (r *Repository) CompareAndSetEventEnrichmentFromSnapshot(ctx context.Context, current store.StoredEvent, result domain.EventEnrichment) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	version, err := eventSnapshotVersion(current)
+	if err != nil {
+		return store.StoredEvent{}, err
 	}
 	updated, err := store.ApplyEventEnrichment(current, result)
 	if err != nil {

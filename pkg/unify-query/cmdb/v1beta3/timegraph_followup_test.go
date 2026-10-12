@@ -8,15 +8,16 @@ package v1beta3
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"testing"
+	"time"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	querypromql "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	pl "github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
-	"math"
-	"testing"
-	"time"
 )
 
 func TestTopologyAttributesSelectRootsPerFrame(t *testing.T) {

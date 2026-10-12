@@ -8,16 +8,17 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"testing"
 )
 
 type qualityTestSchema struct{}
@@ -25,12 +26,15 @@ type qualityTestSchema struct{}
 func (qualityTestSchema) GetResourcePrimaryKeys(string, v1beta3.ResourceType) []string {
 	return []string{"id"}
 }
+
 func (qualityTestSchema) GetResourceFields(string, v1beta3.ResourceType) []string {
 	return []string{"id"}
 }
+
 func (qualityTestSchema) ListResourceTypes(string) []v1beta3.ResourceType {
 	return []v1beta3.ResourceType{"source", "target"}
 }
+
 func (qualityTestSchema) ListRelationSchemas(string) []v1beta3.RelationSchema {
 	return []v1beta3.RelationSchema{{FromType: "source", ToType: "target", RelationType: "source_to_target", Category: v1beta3.RelationCategoryStatic, IsDirectional: true}}
 }
@@ -43,6 +47,7 @@ func (*qualityTestBackend) QueryPathResources(ctx context.Context, _, _, _ strin
 	}
 	return []cmdb.PathResourcesResult{{Timestamp: 1700000000000, TargetType: "target", Path: []cmdb.PathNode{{ResourceType: "source", Dimensions: matcher}, {ResourceType: "target", Dimensions: cmdb.Matcher{"id": "result"}}}}}, nil
 }
+
 func (b *qualityTestBackend) QueryPathResourcesRange(ctx context.Context, a, biz, _, _, _ string, source cmdb.Resource, targets []cmdb.Resource, paths [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
 	return b.QueryPathResources(ctx, a, biz, "", source, targets, paths, matcher)
 }

@@ -241,3 +241,36 @@ func TestProjectionCASRejectsRegressingConfirmationTime(t *testing.T) {
 		t.Fatal("direct CAS regressed confirmed time")
 	}
 }
+
+func TestBusinessSnapshotComparesJSONSemanticsWithoutChangingInputs(t *testing.T) {
+	left := projectionAlert()
+	left.ExtraData = domain.JSONObject{"nested": []byte(`{"a":9007199254740993,"z":[1,2]}`)}
+	left.Enrich = domain.JSONObject{"custom": []byte(`{"x":true,"y":null}`)}
+	right := left.Clone()
+	right.ExtraData["nested"] = []byte(`{ "z": [1, 2], "a": 9007199254740993 }`)
+	right.Enrich["custom"] = []byte(`{"y":null, "x":true}`)
+	beforeLeft, beforeRight := left.Clone(), right.Clone()
+	if !domain.SameAlertBusinessSnapshot(left, right) || !domain.SameAlertBusinessSnapshot(right, left) {
+		t.Fatal("JSON key order or whitespace invalidated persisted plan")
+	}
+	if !reflect.DeepEqual(left, beforeLeft) || !reflect.DeepEqual(right, beforeRight) {
+		t.Fatal("comparison mutated snapshots")
+	}
+	for name, edit := range map[string]func(*domain.Alert){
+		"number":       func(a *domain.Alert) { a.ExtraData["nested"] = []byte(`{"a":9007199254740992,"z":[1,2]}`) },
+		"array_order":  func(a *domain.Alert) { a.ExtraData["nested"] = []byte(`{"a":9007199254740993,"z":[2,1]}`) },
+		"enrich_value": func(a *domain.Alert) { a.Enrich["custom"] = []byte(`{"x":false,"y":null}`) },
+		"malformed":    func(a *domain.Alert) { a.Enrich["custom"] = []byte(`{"x":`) },
+		"revision":     func(a *domain.Alert) { a.Revision++ },
+		"tenant":       func(a *domain.Alert) { a.BKTenantID = "other" },
+		"content":      func(a *domain.Alert) { a.Content = "changed" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := right.Clone()
+			edit(&changed)
+			if domain.SameAlertBusinessSnapshot(left, changed) {
+				t.Fatal("business difference was ignored")
+			}
+		})
+	}
+}

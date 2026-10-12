@@ -219,5 +219,21 @@ func SameAlertBusinessSnapshot(a, b Alert) bool {
 		}
 		return v
 	}
-	return reflect.DeepEqual(strip(a), strip(b))
+	a, b = strip(a), strip(b)
+	aExtra, bExtra, aEnrich, bEnrich := a.ExtraData, b.ExtraData, a.Enrich, b.Enrich
+	a.ExtraData, b.ExtraData, a.Enrich, b.Enrich = nil, nil, nil, nil
+	if !reflect.DeepEqual(a, b) {
+		return false
+	}
+	// 计划保留来源 JSON，存储读取可能已规范化；仅在幂等恢复边界比较 JSON 语义。
+	// 身份、revision 和其他业务字段仍须严格相同，不能用格式差异掩盖业务冲突。
+	sameJSON := func(left, right JSONObject) bool {
+		if reflect.DeepEqual(left, right) {
+			return true
+		}
+		left, leftErr := left.Normalize()
+		right, rightErr := right.Normalize()
+		return leftErr == nil && rightErr == nil && reflect.DeepEqual(left, right)
+	}
+	return sameJSON(aExtra, bExtra) && sameJSON(aEnrich, bEnrich)
 }

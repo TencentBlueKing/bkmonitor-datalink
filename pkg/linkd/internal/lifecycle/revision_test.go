@@ -110,3 +110,37 @@ func TestEventPlanRetryPreservesLaterActiveControlMutation(t *testing.T) {
 		})
 	}
 }
+
+func TestEventPlanRetryAcceptsEquivalentJSONAfterAlertPersistence(t *testing.T) {
+	base := memory.New()
+	repo := &failCloseLogs{Repository: base, fail: true}
+	p := newTestProcessor(t, repo, NoopFinalHook{})
+	e := storetest.Event("tenant", "json-retry", "json-fingerprint", "warning")
+	e.ExtraData = domain.JSONObject{"nested": []byte(`{"a":1,"z":2}`)}
+	created, err := base.CreateEvent(t.Context(), e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.ProcessEvent(t.Context(), created.StoredEvent); err == nil {
+		t.Fatal("log failure ignored")
+	}
+	pending, err := base.GetEvent(t.Context(), e.BKTenantID, e.EventID)
+	if err != nil || pending.Processing.Plan == nil || len(pending.Processing.Plan.Mutations) != 1 {
+		t.Fatal("create plan not preserved", err)
+	}
+	target := &pending.Processing.Plan.Mutations[0].Alert
+	before, err := base.GetAlert(t.Context(), e.BKTenantID, target.AlertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟计划保留原始 JSON，而告警读取边界已经规范化同一业务对象。
+	target.ExtraData["nested"] = []byte(`{ "z": 2, "a": 1 }`)
+	result, err := p.ProcessEvent(t.Context(), pending)
+	if err != nil || result.EventState != domain.EventProcessStateAccepted {
+		t.Fatal("JSON representation broke frozen create plan retry", err)
+	}
+	after, err := base.GetAlert(t.Context(), e.BKTenantID, target.AlertID)
+	if err != nil || after.Version != before.Version || after.Alert.Revision != before.Alert.Revision {
+		t.Fatal("retry rewrote committed alert", err)
+	}
+}

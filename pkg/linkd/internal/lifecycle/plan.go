@@ -546,6 +546,11 @@ func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutat
 			return current, nil
 		}
 		if mutation.ExpectedVersion == "" {
+			p.logger.WarnContext(ctx, "saved create plan conflicts with persisted alert",
+				"bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID,
+				"event_id", event.EventID, "alert_id", target.AlertID,
+				"planned_revision", target.Revision, "current_revision", current.Alert.Revision,
+				"reason_code", "planned_alert_create_differs")
 			return store.StoredAlert{}, fmt.Errorf("%w: planned alert create differs", store.ErrIdentityConflict)
 		}
 		if current.Version.String() != mutation.ExpectedVersion {

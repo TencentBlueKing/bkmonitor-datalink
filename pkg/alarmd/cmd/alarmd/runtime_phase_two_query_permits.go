@@ -14,6 +14,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
+// lookbackPermitKey is the lookback's column in the permit readings.
+const lookbackPermitKey = "lookback"
+
 // queryPermitOccupancySource adapts the scheduler's occupancy to the metric
 // package's shape. The translation lives here rather than in either package so
 // neither has to depend on the other for the sake of a metric.
@@ -35,6 +38,10 @@ func queryPermitOccupancySource(flights *scheduler.FlightCoordinator) metric.Que
 		for operation, seconds := range occupancy.HeldSeconds {
 			translated.HeldSeconds[string(operation)] = seconds
 		}
+		// The lookback is not an Operation: its own key, so it is never read
+		// as normal's while the process total still includes it.
+		translated.Inflight[lookbackPermitKey] = occupancy.LookbackInflight
+		translated.HeldSeconds[lookbackPermitKey] = occupancy.LookbackHeldSeconds
 		return translated
 	}
 }

@@ -69,9 +69,9 @@ func TestTargetGroupProductionConnection(t *testing.T) {
 					}
 					return controlplane.NewLegacyRedisStrategySource(client, prefix)
 				}, phaseTwoProductionExternalDependencies{Now: time.Now, HTTPClient: http.DefaultClient,
-					OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+					PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 						return &recordingPhaseTwoEventSink{}, nil
-					},
+					}),
 				})
 			if mode == "initialization_failure" {
 				if err == nil || !strings.Contains(err.Error(), "injected source initialization failure") {
@@ -89,7 +89,7 @@ func TestTargetGroupProductionConnection(t *testing.T) {
 			t.Cleanup(func() { _ = bundle.Shutdown(ctx) })
 			plan := &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "host", Rule: contract.TargetPlanRuleHostID,
 				Identity: contract.TargetPlanIdentityV1{Dimensions: []string{"bk_host_id"}, HostIdentity: true}, DynamicGroups: []string{"1001"}}
-			resolution := bundle.workerPorts.Targets.Resolve(ctx, plan, time.Minute)
+			resolution := bundle.workerPorts.Targets.ResolveFor(ctx, "", plan, time.Minute)
 			if resolution.Contains("101") != (mode != "absent") || resolution.Contains("202") {
 				t.Fatalf("resolution = %+v", resolution)
 			}

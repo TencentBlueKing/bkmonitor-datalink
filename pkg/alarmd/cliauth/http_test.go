@@ -118,11 +118,6 @@ func TestPreviewDoesNotCreateGrantOrUseRedis(t *testing.T) {
 	if m.grantWindow.count != 0 {
 		t.Fatal("preview consumed issuance budget")
 	}
-	m.adminConfigured = false
-	response := authRequest(m, http.MethodGet, grantsPath, "", true)
-	if response.Code != 503 || !strings.Contains(response.Body.String(), "admin_not_configured") {
-		t.Fatal("unconfigured administrator accepted")
-	}
 }
 
 func TestHTTPBudgetsAndMethodBoundaries(t *testing.T) {
@@ -194,16 +189,13 @@ func TestNewValidatesCoordinatesWithoutExposingSecrets(t *testing.T) {
 		func(o *Options) { o.EnvironmentID = "" },
 		func(o *Options) { o.EnvironmentName = "" },
 		func(o *Options) { o.AdminKey = "weak" },
+		func(o *Options) { o.AdminKey = "" },
 	} {
 		opts := base
 		mutate(&opts)
 		if _, err := New(opts); err == nil {
 			t.Fatal("invalid options accepted")
 		}
-	}
-	base.AdminKey = ""
-	if _, err := New(base); err != nil {
-		t.Fatalf("disabled issuance rejected: %v", err)
 	}
 	base.EnvironmentID = "env{unexpected-slot}"
 	m, err = New(base)
@@ -490,7 +482,7 @@ func TestAdministratorKeyHeaderCompatibleBounds(t *testing.T) {
 		key string
 		ok  bool
 	}{
-		{strings.Repeat("a", 32), true}, {strings.Repeat("~", 256), true},
+		{"", false}, {strings.Repeat("a", 32), true}, {strings.Repeat("~", 256), true},
 		{strings.Repeat("a", 31), false}, {strings.Repeat("a", 257), false},
 		{strings.Repeat("a", 32) + " b", false}, {strings.Repeat("a", 32) + "中", false},
 		{strings.Repeat("a", 32) + "\x7f", false},

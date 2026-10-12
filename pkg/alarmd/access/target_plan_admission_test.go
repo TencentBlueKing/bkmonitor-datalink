@@ -37,7 +37,7 @@ func TestPlanScopesCarryTheTargetPlanAndTheExecutionsResolution(t *testing.T) {
 	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "2002"}
 	due := []execution.DuePlan{{Identity: identity, CompiledPlan: compilePlanWithTargetPlan(t, "2002", target)}}
 
-	unresolved := buildPlanScopes(due, nil)
+	unresolved := buildPlanScopes(due, nil, nil)
 	context := unresolved[identity]
 	if context.TargetScope != nil || context.TargetPlan == nil || context.TargetPlan.Members != nil {
 		t.Fatalf("unresolved context = %+v, want the target plan with nil members and no scope", context)
@@ -48,7 +48,7 @@ func TestPlanScopesCarryTheTargetPlanAndTheExecutionsResolution(t *testing.T) {
 		t.Fatalf("an unresolved target plan admitted a record: %v %s %s", admitted, filter, reason)
 	}
 
-	resolved := buildPlanScopes(due, execution.TargetMemberships{identity: memberSet{"101": {}}})
+	resolved := buildPlanScopes(due, execution.TargetMemberships{identity: memberSet{"101": {}}}, nil)
 	context = resolved[identity]
 	if context.TargetPlan == nil || context.TargetPlan.Members == nil {
 		t.Fatalf("resolved context = %+v, want the members", context)
@@ -57,7 +57,7 @@ func TestPlanScopesCarryTheTargetPlanAndTheExecutionsResolution(t *testing.T) {
 		t.Fatal("a resolved member was not admitted")
 	}
 	// A nil entry in the memberships is unresolved, not empty.
-	nilEntry := buildPlanScopes(due, execution.TargetMemberships{identity: nil})
+	nilEntry := buildPlanScopes(due, execution.TargetMemberships{identity: nil}, nil)
 	if nilEntry[identity].TargetPlan.Members != nil {
 		t.Fatal("a nil membership entry became a resolution")
 	}

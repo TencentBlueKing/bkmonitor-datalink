@@ -63,12 +63,6 @@ func runWithRuntimeModeDependencies(
 	stdout, stderr io.Writer,
 	dependencies runtimeModeDependencies,
 ) int {
-	// The repair is its own command with its own flags. It is not a mode of
-	// running: it changes stored execution state by hand, once, and a flag on
-	// the run path is one somebody passes by accident.
-	if len(args) > 0 && args[0] == repairOpenSegmentsCommand {
-		return runRepairOpenSegments(ctx, args[1:], stdout, stderr)
-	}
 	flags := flag.NewFlagSet("alarmd", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "", "path to alarmd YAML configuration")
@@ -124,15 +118,10 @@ func runWithRuntimeModeDependencies(
 		SchemaVersion: schemaVersion,
 	})
 	var runErr error
-	switch cfg.Input.Mode {
-	case config.InputModeGoAccess:
-		if dependencies.phaseTwo.run == nil {
-			runErr = errPhaseTwoWorkerBundleNotAssembled
-		} else {
-			runErr = dependencies.phaseTwo.run(ctx, cfg, recorder, dependencies.logger)
-		}
-	default:
-		runErr = fmt.Errorf("unsupported input mode %q", cfg.Input.Mode)
+	if dependencies.phaseTwo.run == nil {
+		runErr = errPhaseTwoWorkerBundleNotAssembled
+	} else {
+		runErr = dependencies.phaseTwo.run(ctx, cfg, recorder, dependencies.logger)
 	}
 	if runErr != nil {
 		fmt.Fprintf(stderr, "run alarmd: %v\n", runErr)

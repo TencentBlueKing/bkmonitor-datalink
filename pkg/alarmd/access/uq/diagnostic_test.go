@@ -76,6 +76,7 @@ func TestDiagnosticPreviewAndQueryUseProductionWire(t *testing.T) {
 			var mu sync.Mutex
 			var requests []received
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				raw, _ := io.ReadAll(r.Body)
 				mu.Lock()
 				requests = append(requests, received{r.URL.Path, raw, r.Header.Clone()})
@@ -121,6 +122,9 @@ func TestDiagnosticPreviewAndQueryUseProductionWire(t *testing.T) {
 			defer mu.Unlock()
 			if len(requests) != 2 || requests[0].path != requests[1].path || !bytes.Equal(requests[0].body, requests[1].body) || !bytes.Equal(preview.Body, requests[0].body) || preview.Path != requests[0].path {
 				t.Fatal("diagnostic wire differs from production")
+			}
+			if requests[0].headers.Get("Accept") != "" {
+				t.Fatal("diagnostic entry negotiated a new format")
 			}
 			for key, value := range preview.Headers {
 				if requests[0].headers.Get(key) != value || requests[1].headers.Get(key) != value {
@@ -189,7 +193,13 @@ func TestDiagnosticEmptyUnavailableAndMalformedResponsesStayDistinct(t *testing.
 				t.Fatalf("wrong completion: %+v", result)
 			}
 			raw, _ := json.Marshal(result)
-			if bytes.Contains(raw, []byte("fixture-secret")) || err != nil && strings.Contains(err.Error(), "fixture-secret") {
+			if tc.name == "http_error" {
+				// An answer that was not 200 is the one body a diagnostic read
+				// keeps the start of, sanitized, for the operator who asked.
+				if result.Completion == nil || result.Completion.ErrorExcerpt != "fixture-secret" {
+					t.Fatalf("completion %+v, want the error body's excerpt", result.Completion)
+				}
+			} else if bytes.Contains(raw, []byte("fixture-secret")) || err != nil && strings.Contains(err.Error(), "fixture-secret") {
 				t.Fatal("upstream error text leaked")
 			}
 			if tc.name == "empty" && (len(result.Series) != 0 || result.Completion.DataState != execution.DataStateEmpty || !result.Scan.Complete) {

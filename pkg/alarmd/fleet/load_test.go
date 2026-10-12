@@ -133,8 +133,8 @@ func TestBottleneckIsNamedFromTheEvidence(t *testing.T) {
 // not a skew and changes nothing.
 func TestBottleneckReadsTheSplitBeforeTheResourcesItFills(t *testing.T) {
 	skewed := &RebalanceFacts{ReadyWorkers: 2, Assigned: 2370, Target: 1185, MostOwned: 2370, LeastOwned: 0,
-		MostOwnedBy: "alarmd-a", LeastOwnedBy: "alarmd-b", Batch: 23, PlannedMoves: 23, StopSpreadPercent: 5, Shadow: true}
-	even := &RebalanceFacts{ReadyWorkers: 2, Assigned: 2370, Target: 1185, MostOwned: 1190, LeastOwned: 1180, Batch: 23, StopSpreadPercent: 5, Shadow: true}
+		MostOwnedBy: "alarmd-a", LeastOwnedBy: "alarmd-b", Batch: 23, PlannedMoves: 23, StopSpreadPercent: 5}
+	even := &RebalanceFacts{ReadyWorkers: 2, Assigned: 2370, Target: 1185, MostOwned: 1190, LeastOwned: 1180, Batch: 23, StopSpreadPercent: 5}
 	base := func() *CapacityView {
 		return &CapacityView{PermitAcquires: 1000, PermitWaits: 700, CPUSeconds: 100, ThrottledSeconds: 1, ThrottledKnown: true, Rotation: &Rotation{DeferredQueueFull: 12}}
 	}
@@ -192,7 +192,7 @@ func TestLoadIsTheFourReadingsWithTheirLimits(t *testing.T) {
 			"qg-stopped": {FirstSlot: 1, LastSlot: 3, Slots: 3, At: at.Add(-time.Hour), Replica: "pod-a"},
 		},
 	}
-	load := LoadOf(view, at)
+	load := ReplicaPartOf(*view, at).Load(view)
 	if load.OnTime.State != OnTimeKeepingUp || load.Backlog.State != BacklogNone {
 		t.Errorf("on time = %s, backlog = %s, want KEEPING_UP and NONE", load.OnTime.State, load.Backlog.State)
 	}
@@ -213,7 +213,7 @@ func TestLoadIsTheFourReadingsWithTheirLimits(t *testing.T) {
 		t.Errorf("limits = %v, want no headroom estimate, counters since start, and the half-hour trend span", load.Limits)
 	}
 	// Nothing to read from: every reading says so, and the limits name it.
-	bare := LoadOf(&View{}, at)
+	bare := ReplicaPartOf(View{}, at).Load(&View{})
 	if bare.OnTime.State != OnTimeUnknown || bare.Backlog.State != BacklogUnknown || bare.Bottleneck.Resource != BottleneckUnknown || bare.Loss.State != LossNone {
 		t.Errorf("bare load = %+v, want unknown on time, backlog and bottleneck, no loss", bare)
 	}

@@ -115,7 +115,7 @@ func TestABatchWithNoLeaseAuthorityIsAdmittedAsBefore(t *testing.T) {
 func TestTheAdmissionBoundIsTheProducersOwnTimeout(t *testing.T) {
 	t.Parallel()
 
-	config, err := NewDecisionProducerConfig(validDecisionSinkConfig())
+	config, err := NewDecisionProducerOnlyConfig(validDecisionSinkConfig())
 	if err != nil {
 		t.Fatal(err)
 	}

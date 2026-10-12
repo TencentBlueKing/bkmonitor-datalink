@@ -42,47 +42,6 @@ func newEffectiveTimeDependencyError(operation string, cause error) error {
 	return &EffectiveTimeDependencyError{operation: operation, cause: cause}
 }
 
-type BusinessTimezoneSource interface {
-	ResolveBusinessTimezone(context.Context, string, string) (string, bool, error)
-}
-
-type BusinessTimezoneSourceFunc func(context.Context, string, string) (string, bool, error)
-
-func (f BusinessTimezoneSourceFunc) ResolveBusinessTimezone(ctx context.Context, tenantID, businessID string) (string, bool, error) {
-	return f(ctx, tenantID, businessID)
-}
-
-type BusinessLocalTimezoneResolver struct {
-	source BusinessTimezoneSource
-}
-
-func NewBusinessLocalTimezoneResolver(source BusinessTimezoneSource) *BusinessLocalTimezoneResolver {
-	return &BusinessLocalTimezoneResolver{source: source}
-}
-
-func (r *BusinessLocalTimezoneResolver) ResolveTimezone(
-	ctx context.Context, ref, tenantID, businessID string,
-) (*time.Location, error) {
-	if ref != businessLocalTimezoneRef {
-		return nil, fmt.Errorf("effective time: unsupported timezone ref %q", ref)
-	}
-	if r == nil || r.source == nil {
-		return nil, errors.New("effective time: business timezone source is unavailable")
-	}
-	name, found, err := r.source.ResolveBusinessTimezone(ctx, tenantID, businessID)
-	if err != nil {
-		return nil, newEffectiveTimeDependencyError("resolve business timezone", err)
-	}
-	if !found || name == "" {
-		return nil, fmt.Errorf("effective time: business timezone is missing: %w", ErrEffectiveTimeUnknown)
-	}
-	location, err := time.LoadLocation(name)
-	if err != nil {
-		return nil, fmt.Errorf("effective time: invalid business timezone %q: %w", name, ErrEffectiveTimeUnknown)
-	}
-	return location, nil
-}
-
 type CalendarFactRequest struct {
 	TenantID       string
 	CalendarID     int64

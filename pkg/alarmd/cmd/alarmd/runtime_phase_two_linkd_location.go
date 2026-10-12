@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -16,9 +17,9 @@ type discoverLinkdTarget func(context.Context, openalerts.HTTPReconcilerOptions)
 
 // linkdDiscoveryAttempts bounds how long startup waits on a Console that does
 // not answer. Detection does not depend on the link; a process that could
-// not ask reads from the fallback location meanwhile, and keeps asking in the
-// background (linkdLocationSwitch.retry) until the Console answers, then moves
-// its reads to where the link writes without a restart.
+// not ask reads no set meanwhile - its gate answers from what it sent - and
+// keeps asking in the background (linkdLocationSwitch.retry) until the
+// Console answers, then reads where the link writes without a restart.
 const linkdDiscoveryAttempts = 3
 
 var linkdDiscoveryPause = 2 * time.Second
@@ -28,9 +29,9 @@ var linkdDiscoveryPause = 2 * time.Second
 // names the Redis and database its hook writes to, and when one of the Redis
 // connections this process already holds is that Redis, its credentials are
 // used with the link's database and prefix. The deployment therefore never
-// restates the hook's Redis a second time. A stated linkd connection is left
-// alone, and so is a target at a Redis this process holds no connection to:
-// the reconciler then refuses with both locations named.
+// restates the hook's Redis a second time. A target at a Redis this process
+// holds no connection to is left alone: the reconciler then refuses with both
+// locations named.
 //
 // What happened is returned beside the configuration, because the answer is
 // otherwise lost: a Console refusing the credentials, or a link writing to a
@@ -41,12 +42,8 @@ func adoptLinkdLocation(ctx context.Context, cfg config.Config, discover discove
 	if settings.ConsoleURL == "" {
 		return cfg, nil
 	}
-	if settings.Connection != nil {
-		return cfg, &fleet.LinkdDiscoveryFacts{Outcome: fleet.LinkdDiscoveryConnectionStated}
-	}
 	options := openalerts.HTTPReconcilerOptions{BaseURL: settings.ConsoleURL, Username: settings.Username, Password: settings.Password,
-		Client: &http.Client{Timeout: 5 * time.Second}, MaxResponseBytes: 1 << 20,
-		Select: openalerts.TargetSelector{EventSourceID: settings.EventSourceID, HookName: settings.HookName}}
+		Client: &http.Client{Timeout: 5 * time.Second}, MaxResponseBytes: 1 << 20}
 	var target openalerts.TargetBinding
 	var err error
 	facts := &fleet.LinkdDiscoveryFacts{}
@@ -66,9 +63,11 @@ func adoptLinkdLocation(ctx context.Context, cfg config.Config, discover discove
 	}
 	if err != nil {
 		facts.Outcome, facts.Error = fleet.LinkdDiscoveryFailed, boundedText(err.Error())
+		noteListedTargets(facts, target, err)
 		return cfg, facts
 	}
 	facts.Target = linkdTargetFacts(target)
+	noteListedTargets(facts, target, nil)
 	connection, prefix, found := heldLinkdLocation(cfg, target)
 	if !found {
 		facts.Outcome = fleet.LinkdDiscoveryNoHeldConnection
@@ -90,13 +89,34 @@ func heldLinkdLocation(cfg config.Config, target openalerts.TargetBinding) (conf
 			continue
 		}
 		held.DB = target.Database
-		prefix := cfg.PhaseTwo.Linkd.KeyPrefix
-		if prefix == "" {
-			prefix = target.KeyPrefix
-		}
-		return held, prefix, true
+		return held, target.KeyPrefix, true
 	}
 	return config.RedisConnectionConfig{}, "", false
+}
+
+// noteListedTargets records what the Console listed when it was asked: the
+// one target it was answered with, or, when it was refused for listing other
+// than one, how many and their names. A refusal for any other reason - the
+// Console not answering - leaves the last listing as it was.
+func noteListedTargets(facts *fleet.LinkdDiscoveryFacts, target openalerts.TargetBinding, err error) {
+	if err == nil {
+		facts.TargetCount, facts.TargetNames = 1, linkdTargetNames([]string{target.EventSourceID + "/" + target.HookName})
+		return
+	}
+	var counted *openalerts.TargetCountError
+	if errors.As(err, &counted) {
+		facts.TargetCount, facts.TargetNames = counted.Count, linkdTargetNames(counted.Names)
+	}
+}
+
+// linkdTargetNames is the names a discovery carries: the first
+// MaxLinkdTargetNames, each bounded as a failure sentence is.
+func linkdTargetNames(names []string) []string {
+	kept := make([]string, 0, min(len(names), fleet.MaxLinkdTargetNames))
+	for _, name := range names[:min(len(names), fleet.MaxLinkdTargetNames)] {
+		kept = append(kept, boundedText(name))
+	}
+	return kept
 }
 
 // linkdTargetFacts is a target as the page shows it: where the link writes,

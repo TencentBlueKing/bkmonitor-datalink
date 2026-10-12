@@ -10,6 +10,7 @@
 package strategy
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -32,7 +33,7 @@ func TestTheNoDataViewIsTheSamePlanWithOneLevel(t *testing.T) {
 		t.Fatal("a Plan that detects no-data has no view of it")
 	}
 
-	levels := view.Levels()
+	levels := view.Levels().Copy()
 	if len(levels) != 1 {
 		t.Fatalf("view levels = %+v, want only the no-data level", levels)
 	}
@@ -40,7 +41,7 @@ func TestTheNoDataViewIsTheSamePlanWithOneLevel(t *testing.T) {
 		t.Fatalf("view level = %d, want the no-data level %d",
 			levels[0].Definition().LevelID, plan.NoDataLevel().Definition().LevelID)
 	}
-	for _, declared := range plan.Levels() {
+	for _, declared := range plan.Levels().All() {
 		for _, seen := range levels {
 			if seen.Definition().LevelID == declared.Definition().LevelID {
 				t.Fatalf("the view carries declared level %d, so a synthetic series would be asked "+
@@ -70,7 +71,7 @@ func TestTheNoDataViewIsTheSamePlanWithOneLevel(t *testing.T) {
 
 	// The Plan it came from is untouched: the view is a reading of it, not a
 	// change to it.
-	if len(plan.Levels()) == 0 {
+	if plan.Levels().Len() == 0 {
 		t.Fatal("building a view emptied the Plan's own levels")
 	}
 }
@@ -80,10 +81,62 @@ func TestTheNoDataViewIsTheSamePlanWithOneLevel(t *testing.T) {
 // downstream would treat as "nothing to evaluate" and report as success.
 func TestAPlanWithoutNoDataHasNoView(t *testing.T) {
 	if view := noDataPlan(t, nil).NoDataView(); view != nil {
-		t.Fatalf("a Plan that detects no no-data produced a view with %d levels", len(view.Levels()))
+		t.Fatalf("a Plan that detects no no-data produced a view with %d levels", view.Levels().Len())
 	}
 	var absent *CompiledPlan
 	if view := absent.NoDataView(); view != nil {
 		t.Fatal("a nil Plan produced a view")
+	}
+}
+
+// The no-data view's alert identity reads the record's own dimensions, as the
+// backend does: its adapter hands extract_target the event's dimension_fields
+// (adapter.py:109-111), which for a no-data record are the group's
+// dimensions and the tag (nodata.py:259), not the item's. A Plan whose
+// identity names the host's IP therefore still files a topology or
+// service-instance no-data group under that object, where reading the Plan's
+// fields stopped at an empty host target.
+//
+// The expected keys are the backend's: extract_target and cal_dedupe_md5
+// (event.py:205-217) with count_md5, for strategy 9 in business 2, written
+// out rather than recomputed here.
+func TestTheNoDataViewsAlertIdentityIsTheGroupsAsTheBackendReadsIt(t *testing.T) {
+	plan := validPlan()
+	plan.NoData = &contract.NoDataConfigV1{Continuous: 3, Level: 2}
+	plan.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: []string{"bk_target_cloud_id", "bk_target_ip"}}
+	compiled := mustCompilePlan(t, newTestCompiler(t), plan)
+	identity := compiled.NoDataView().OutputIdentity()
+	if identity == nil {
+		t.Fatal("the no-data view lost the Plan's output identity")
+	}
+	tag := json.RawMessage("true")
+	for name, test := range map[string]struct {
+		dimensions map[string]json.RawMessage
+		want       string
+	}{
+		"a topology group":         {map[string]json.RawMessage{"bk_obj_id": json.RawMessage(`"set"`), "bk_inst_id": json.RawMessage(`"7"`), contract.NoDataDimensionTag: tag}, "ad65665afc0d09e0815bafe7ea3d5403"},
+		"a service-instance group": {map[string]json.RawMessage{"bk_target_service_instance_id": json.RawMessage(`"15"`), contract.NoDataDimensionTag: tag}, "eb2ed0783e9881a0d141d8b4b854fba1"},
+		"a host group":             {map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"192.0.2.1"`), "bk_target_cloud_id": json.RawMessage(`"0"`), contract.NoDataDimensionTag: tag}, "14056f88e6c665534beba9f53aadb7fe"},
+		"the whole item":           {map[string]json.RawMessage{contract.NoDataDimensionTag: tag}, "64192251d1beca857fb67c521b7bf32c"},
+	} {
+		got, err := contract.MonitorDedupeMD5("9", "2", test.dimensions, *identity)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got != test.want {
+			t.Errorf("%s files under %s, want the backend's %s", name, got, test.want)
+		}
+	}
+	// The Plan's own identity is unchanged: its threshold series are still
+	// filed by the item's fields.
+	if own := compiled.OutputIdentity(); own.DynamicDimensions || len(own.DimensionFields) != 2 {
+		t.Fatalf("the Plan's own identity = %+v, want the item's two fields", own)
+	}
+	// And a Plan with no output identity -- one that publishes no alert key,
+	// the compatible protocol's -- has a view with none: the view reads the
+	// record for a key the Plan has, it does not give one to a Plan without.
+	plan.OutputIdentity = nil
+	if identity := mustCompilePlan(t, newTestCompiler(t), plan).NoDataView().OutputIdentity(); identity != nil {
+		t.Fatalf("a Plan without an output identity has a no-data view with %+v", identity)
 	}
 }

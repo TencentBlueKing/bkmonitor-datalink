@@ -286,18 +286,6 @@ func TestDueIndexSuppressionSeparatesBackoffFromIdle(t *testing.T) {
 	}
 }
 
-func equalQueryGroups(left, right []execution.QueryGroupIdentity) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // TestDueIndexPredictionCounterReachesEveryOutcome is what makes the falsifier
 // readable.
 //

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The sentence the page owes a reader is "releasing needs N consecutive
@@ -16,18 +15,10 @@ import (
 // strategy's Levels and so differs strategy by strategy.
 func TestGapScopeProgressLineCarriesBothNumbers(t *testing.T) {
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 100})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	observer := NewLoggingObserver(New("alarmd", &output), policy)
+	observer := rendererObserver{output: &output}
 	observer.Observe(context.Background(), Observation{
 		Component: ComponentState, Stage: StageGapGuardProgress, Result: ResultSuccess,
-		Trace: TraceFields{StrategyID: "1074"},
+		Trace: TraceFields{StrategyID: "846"},
 		GapProgress: &GapProgressFacts{
 			Scope: "plan", Status: "GAPPED", Reason: "CONFIG_DRIFT", Required: 5, Observed: 0,
 			Progress: "none",
@@ -55,7 +46,7 @@ func TestGapScopeProgressLineCarriesBothNumbers(t *testing.T) {
 		// The same word the metric label carries, so a reader moving between
 		// the chart and the line is reading one vocabulary rather than two.
 		"gap_progress": "none",
-		"strategy_id":  "1074",
+		"strategy_id":  "846",
 	} {
 		if line[field] != want {
 			t.Fatalf("line[%q] = %#v, want %#v; line=%#v", field, line[field], want, line)

@@ -64,13 +64,21 @@ func newViewStreamCollector() *viewStreamCollector {
 				"of the desired set changed. Flat while nothing changes; a step per publication that moved something.", nil, nil),
 		sessions: prometheus.NewDesc(name("view_stream_sessions"),
 			"Workers with an open stream to this Leader. Read it against the number of ready Workers: the gap is "+
-				"Workers not connected, which in the shadow step is a Worker that cannot reach or is refused by the Leader.", nil, nil),
+				"Workers not connected, each one that cannot reach the Leader or that the Leader refused "+
+				"(view_stream_refusals_total). A Worker without a stream keeps executing from the view it installed last "+
+				"until the records move past it; one that starts without a stream has no view and executes nothing.", nil, nil),
 		receivers: prometheus.NewDesc(name("view_version_receivers"),
 			"Receivers of the current view revision by stage: expected is the set frozen when the revision was published, "+
 				"sent handed the complete message to the transport, acked received it, installed verified and installed it, "+
 				"switched executes under it. 0 <= switched <= installed <= acked <= sent <= expected, each receiver once per "+
-				"stage. In the shadow step switched stays 0 by design: nothing executes off the view yet, and the "+
-				"reading is installed against expected. A receiver that never installs holds the revision open; "+
+				"stage, and counted at a stage it stays counted for the revision. A Worker reports switched once every Query "+
+				"Group of its part of the revision passed the executable-view check at its latest Slot read "+
+				"(view_executed_query_groups on that Worker), and resends its count on the heartbeat when it moves; the reading is "+
+				"switched against expected. installed above switched is Workers that hold the revision without executing "+
+				"all of it from the view: briefly after a publication or a cutover, until the Query Groups it moved have "+
+				"their next Slot read, and for as long as one of their Query Groups is in the view without content "+
+				"(draining, or a Segment without an object), which never executes from the view. view_stream.not_switched "+
+				"in the fleet view names each such Worker with its count. A receiver that never installs holds the revision open; "+
 				"view_receipts_ignored_total says whether its receipts were arriving and refused.",
 			[]string{"stage"}, nil),
 		ignored: prometheus.NewDesc(name("view_receipts_ignored_total"),
@@ -101,7 +109,14 @@ func newViewStreamCollector() *viewStreamCollector {
 			"Desired sets the Leader could not publish, by why: activation_unreadable, content_unreadable, "+
 				"draining_unreadable, active_set_unreadable, assignments_unreadable (a read the set is built from failed), "+
 				"publish_rejected (the stream refused it). A Leader that cannot publish leaves view_revision flat exactly "+
-				"like one with nothing new to publish; this tells them apart. Counted since the process started.",
+				"like one with nothing new to publish; this tells them apart. draining_unreadable also counts, once a round, "+
+				"each draining Query Group whose timeline does not decode: that set is published, with the Query Group in its "+
+				"Worker's view without content, so it alone is not executed from the view (no_content at the Worker's gate) "+
+				"and view_publish_failing_seconds stays 0. That state ends by itself: a draining Query Group is retired "+
+				"2 x max_replay_age after its retirement boundary (DrainingQueryGroupTerminated, read from the projection, "+
+				"not from the timeline), so an undecodable draining timeline costs that one Query Group its remaining "+
+				"retired Slots for at most that window, and draining_unreadable stops counting it then. "+
+				"Counted since the process started.",
 			[]string{"reason"}, nil),
 		failing: prometheus.NewDesc(name("view_publish_failing_seconds"),
 			"How long this Leader has been failing to publish with no success since; 0 while publishing works. "+

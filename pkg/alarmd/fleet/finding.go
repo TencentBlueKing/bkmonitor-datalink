@@ -14,6 +14,7 @@ import (
 
 	// Aliased: a test helper in this package is named execution.
 	routedetail "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // A Finding is what the page renders for one object, decided here.
@@ -60,10 +61,16 @@ const (
 	// fields the contract requires is the writer's to fix, and the strategy
 	// it describes is not being detected until it is.
 	OwnerPlatform Owner = "PLATFORM"
+	// OwnerCapability: this build does not run it, by a capability it
+	// declares it does not have -- a query source, an algorithm, a target
+	// form, FTA. Nothing in the deployment or the strategy changes that; a
+	// build that has the capability does. Not an action item: waiting for
+	// the build is the whole of what anyone can do.
+	OwnerCapability Owner = "CAPABILITY"
 )
 
 // Owners lists every owner, for the page's completeness check.
-var Owners = []Owner{OwnerAlarmd, OwnerData, OwnerStrategy, OwnerNobody, OwnerUndetermined, OwnerPlatform}
+var Owners = []Owner{OwnerAlarmd, OwnerData, OwnerStrategy, OwnerNobody, OwnerUndetermined, OwnerPlatform, OwnerCapability}
 
 // Finding is what the page renders for one object.
 type Finding struct {
@@ -90,6 +97,29 @@ type Finding struct {
 // whatever its last round said; the window counts say more about a window
 // reason than the word does; and only then are the codes read.
 func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, unclassified bool) {
+	check, under, unclassified = checkOnCounts(anomaly, schedule)
+	// A window short only at minutes the strategy was outside its own active
+	// hours is the configuration doing what it was written to do, however the
+	// row got to a window line -- its own reason, or a guard raised for
+	// another and held because those rounds cannot fill it. It reads as a
+	// round outside its hours does (EFFECTIVE_TIME_INACTIVE): under no line.
+	if outOfHoursLine(check) && outOfHoursEvidence(anomaly.Coverage) {
+		return "", false, false
+	}
+	// A window line whose every short window is short only by minutes the
+	// query answered whole without the series is the data's, however the row
+	// got to the window line -- its own reason, a guard it is held under, or
+	// a code. The shape of it is a host that misses whole minutes, and it sat
+	// on this deployment's undetermined list.
+	if (check == CheckWindowUndecided || check == CheckSeriesDataMissing) && sparseEvidence(anomaly.Coverage) {
+		return CheckSeriesSparse, true, false
+	}
+	return check, under, unclassified
+}
+
+// checkOnCounts is the line the row's codes and counts put it under, before
+// the window evidence is read.
+func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool, unclassified bool) {
 	// A code the table files as this deployment's own defect is the line,
 	// whatever else the row says: a gap guard in conflict with itself stops
 	// the Slot, so the object also stalls, and filing it as stalled first
@@ -102,24 +132,44 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 	// This deployment's own client refusing to write the round's events is
 	// the same kind of line: a refusal the client decided, repeated every
 	// round until the configuration or the converter changes. Read from the
-	// failure's words, because the code it arrives under is the one the
+	// failure's kind, because the code it arrives under is the one the
 	// broker not answering also arrives under.
-	if _, kind, isOutput := outputFailureOf(anomaly); isOutput && kind == OutputFailureClientRejected && failureThisRound(anomaly) {
+	if _, kind, isOutput := outputFailureOf(anomaly); isOutput && kind == observability.OutputFailureClientRejected && failureThisRound(anomaly) {
 		return CheckDefect, true, false
 	}
 	switch {
 	case anomaly.Stalled:
 		return CheckRoundsStalled, true, false
+	case anomaly.AwaitingView != nil:
+		// The view's one wait, past what the design expects of it: its own
+		// line, ahead of the code table, which files VIEW_NOT_EXECUTABLE as
+		// a dependency that is down.
+		return CheckAwaitingView, true, false
 	case schedule == ScheduleOverdue, anomaly.Kind == KindOverdueWake:
 		return CheckSlotsOverdue, true, false
 	case anomaly.Kind == KindNoData:
 		return CheckNoDataPersistent, true, false
+	case anomaly.Kind == KindEmptyEveryRound && anomaly.EmptyEveryRound != nil &&
+		anomaly.EmptyEveryRound.Cause == EmptyEveryRoundCauseOutsideTarget:
+		return CheckEmptyAfterTarget, true, false
 	case anomaly.Kind == KindEmptyEveryRound:
 		return CheckEmptyEveryRound, true, false
+	case anomaly.Kind == KindQuiet:
+		return CheckQuiet, true, false
+	case anomaly.Kind == KindAnswerTruncated:
+		return CheckAnswerTruncated, true, false
 	case anomaly.Kind == KindNoDataMemoryRefused:
 		return CheckNoDataMemoryRefused, true, false
 	case anomaly.Kind == KindRetainedShareApproaching:
 		return CheckRetainedShareApproaching, true, false
+	case anomaly.Kind == KindReadBeforeComplete:
+		return CheckReadBeforeComplete, true, false
+	case anomaly.Kind == KindReadHeld:
+		return CheckReadHeld, true, false
+	case anomaly.Kind == KindLatePastRound:
+		return CheckLatePastRound, true, false
+	case anomaly.Kind == KindLateSeriesMissed:
+		return CheckLateSeriesMissed, true, false
 	case anomaly.Kind == KindQueryCooldown, anomaly.HeldBy == heldByCooldown:
 		// Cooldown is what this deployment does about a backend that keeps not
 		// answering; the line is the backend's, unless the backend answered and
@@ -133,6 +183,13 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 		// its doing.
 		if queryRejected(anomaly.Failure) {
 			return refusalCheck(anomaly.Failure), true, false
+		}
+		// The pool's reason, read from its record or its last probe: a code
+		// with no response detail, so it is read by the code.
+		if failure := anomaly.Failure; failure != nil && failure.Source == FailureFromPoolRecord {
+			if landing, known := codeChecks[failure.Code]; known && !landing.normal {
+				return landing.check, true, false
+			}
 		}
 		return CheckBackendNotAnswering, true, false
 	}
@@ -191,6 +248,15 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 // failure's code, the round's outcome. Decided with an empty check is a
 // code the table calls normal. Not decided is a row no code reaches.
 func codeVerdict(anomaly Anomaly) (check Check, decided bool) {
+	// A round that failed on a query whose deadline ran out while this
+	// deployment was still delivering the answer is this deployment's,
+	// whichever word the round ended with. The failure's code is OTHER,
+	// which decides nothing, and the round's own word would file it as an
+	// unnamed failure at no step or, from a source error, as a dependency
+	// down - when the detail says where the time went.
+	if deliveryTimedOutThisRound(anomaly) {
+		return CheckDefect, true
+	}
 	for _, code := range decisionCodes(anomaly) {
 		if code == "" {
 			continue
@@ -358,6 +424,16 @@ func refusalNamesMissingTarget(failure *FailureRef) bool {
 	return strings.Contains(status, "not_exist") || strings.Contains(status, "not_found")
 }
 
+// deliveryTimedOutThisRound says the row's latest round failed, and on a
+// query whose deadline passed while this deployment was decoding and
+// delivering what had arrived of the answer, rather than while it waited
+// on the backend. A round that went on to complete is read by its
+// completion, and a failure from an earlier Slot is not this round's.
+func deliveryTimedOutThisRound(anomaly Anomaly) bool {
+	return (failedExecution(anomaly.ReasonCode) || blockedOutcome(anomaly.ReasonCode)) && failureThisRound(anomaly) &&
+		anomaly.Failure.Detail == routedetail.DeliveryTimeoutRouteDetail
+}
+
 func queryRejected(failure *FailureRef) bool {
 	if failure == nil {
 		return false
@@ -365,6 +441,77 @@ func queryRejected(failure *FailureRef) bool {
 	detail := failure.Detail
 	return strings.HasPrefix(detail, routedetail.RouteDetailKindResponse+"="+routedetail.ResponseFailureStatusPrefix) ||
 		strings.HasPrefix(detail, routedetail.RouteDetailKindHTTPStatus+"=4")
+}
+
+// sparseEvidence says every short window of the object is short only by
+// minutes the query answered whole without the series, as far as the record
+// goes all the way: every short window listed, and every missing minute of
+// each one read against a remembered round. A list cut short, a minute read
+// as not remembered, one incomplete round or one empty answer, and it is not
+// proven, and the row stays where the counts put it.
+func sparseEvidence(coverage *HistoryCoverage) bool {
+	if coverage == nil || coverage.Short == 0 || len(coverage.Windows) == 0 || uint32(len(coverage.Windows)) > coverage.Short {
+		return false
+	}
+	for _, window := range coverage.Windows {
+		if !answeredWindow(window) {
+			return false
+		}
+	}
+	// The named windows are at most MaxCoverageWindows of the short ones.
+	// The rest are the data's only when their minutes say so: a Query Group
+	// several strategies share multiplies its short windows by its Plans, and
+	// reading "more short windows than named" as undecided filed three hosts
+	// that miss whole minutes as this side's to fix.
+	return uint32(len(coverage.Windows)) == coverage.Short || coverage.UnlistedHolesAnswered
+}
+
+// outOfHoursLine is a line a short window can bring a row to before its
+// window evidence is read: the window lines, and the configuration's line a
+// guard's stored reason files it under. SERIES_SPARSE is read from the
+// evidence after this, from these lines, so a window short only outside the
+// active hours never reaches it.
+func outOfHoursLine(check Check) bool {
+	return check == CheckWindowUndecided || check == CheckSeriesDataMissing || check == CheckConfigUnresolved
+}
+
+// outOfHoursEvidence says every short window is named and short only at
+// minutes its Level schedule puts outside the strategy's effective time, as
+// the Worker asked the schedule for each hole's own minute. What the round at
+// that minute did does not enter: out of hours, a round that answered empty,
+// could not query or was given up had nothing due to detect. A short window
+// not named, a hole not named, a hole in hours or one whose time the schedule
+// could not answer for says nothing of it, and the row keeps the line it was
+// on.
+func outOfHoursEvidence(coverage *HistoryCoverage) bool {
+	if coverage == nil || coverage.Short == 0 || uint32(len(coverage.Windows)) != coverage.Short {
+		return false
+	}
+	for _, window := range coverage.Windows {
+		if len(window.Holes) == 0 || uint32(len(window.Holes)) != window.MissingTotal+window.UnusableTotal {
+			return false
+		}
+		for _, hole := range window.Holes {
+			if !hole.OutsideEffectiveTime {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// answeredWindow says a named short window is short only at minutes the query
+// answered whole: without the series, or with nothing at all. A minute the
+// provider answered FULL and empty is a fact about the data, like one it
+// answered without this series; nothing this side did made it empty. A query
+// that is itself wrong is empty every round, which is EMPTY_EVERY_ROUND's line
+// and never reaches a window, so an empty minute here is the data's and is not
+// filed as this side's to fix.
+func answeredWindow(window WindowRow) bool {
+	if window.Verdict != VerdictDataAbsentWhenQueried && window.Verdict != VerdictQueryAnsweredEmpty {
+		return false
+	}
+	return window.HolesBy.AnsweredWithoutSeries+window.HolesBy.AnsweredEmpty == window.MissingTotal
 }
 
 // windowCheck reads a window reason on its counts. decided is false when the
@@ -441,6 +588,14 @@ var codeChecks = map[string]verdict{
 	// itself, and it is the retention's doing rather than the capacity's.
 	"GAP_SKIPPED":     lands(CheckDetectionAbandoned),
 	"SCHEDULE_PRUNED": lands(CheckTimelinePruned),
+	// A span the timeline lost too - the record line for those - but lost
+	// because the timeline stopped decoding and the Leader rewrote it. Its
+	// own word, so the row says that and not retention; the defect behind it
+	// is SCHEDULE_UNREADABLE's, which is filed as one while it lasts.
+	"SCHEDULE_REPAIRED": lands(CheckTimelinePruned),
+	// The same record line, for a span lost because the timeline's key was
+	// gone and the cutover opened a new one.
+	"SCHEDULE_REOPENED": lands(CheckTimelinePruned),
 	// Under no line. The Plan was not in the active set while those Slots went
 	// by, so there was nothing to run and nothing was lost: replaying them
 	// would produce alerts for a strategy that did not exist at the time.
@@ -491,7 +646,10 @@ var codeChecks = map[string]verdict{
 
 	// What this deployment persisted cannot be read back as written. Retrying
 	// reads the same bytes.
-	"STATE_CORRUPT":            lands(CheckDefect),
+	"STATE_CORRUPT": lands(CheckDefect),
+	// A persisted Snapshot that does not decode: this deployment's own record
+	// is wrong (execution.CauseSnapshotCorrupt, the round filed under it).
+	"SNAPSHOT_CORRUPT":         lands(CheckDefect),
 	"STATE_SCHEMA_UNSUPPORTED": lands(CheckDefect),
 	"AUDIT_DROP":               lands(CheckDefect),
 	// The Level contract on the record this deployment stored is not the one
@@ -590,10 +748,14 @@ var codeChecks = map[string]verdict{
 	// were still being retried every thirty seconds: the disposition was known
 	// inside the system and never reached the runner.
 	"BLOCKED_EXACT_SET_UNAVAILABLE": lands(CheckDependencyDown),
-	"SLOT_SOURCE_RETRY":             lands(CheckDependencyDown),
-	"VIEW_NOT_EXECUTABLE":           lands(CheckDependencyDown),
-	"PROGRESS_BEGIN_FAILED":         lands(CheckDependencyDown),
-	"PROGRESS_BEGIN_REJECTED":       lands(CheckDependencyDown),
+	// A timeline this build cannot decode is a defect - corrupt bytes, or a
+	// release whose content the previous build cannot read - not a dependency
+	// that is down.
+	"SCHEDULE_UNREADABLE":     lands(CheckDefect),
+	"SLOT_SOURCE_RETRY":       lands(CheckDependencyDown),
+	"VIEW_NOT_EXECUTABLE":     lands(CheckDependencyDown),
+	"PROGRESS_BEGIN_FAILED":   lands(CheckDependencyDown),
+	"PROGRESS_BEGIN_REJECTED": lands(CheckDependencyDown),
 
 	// Budgets this deployment allocates itself, at run time: work it gave up on
 	// because of its own limits. The next step is capacity, the same as for a
@@ -629,10 +791,24 @@ var codeChecks = map[string]verdict{
 	"PLAN_BUDGET_EXCEEDED":  lands(CheckPlanUnevaluable),
 	"LEVEL_BUDGET_EXCEEDED": lands(CheckPlanUnevaluable),
 
+	// A round that answered whole with a Level still held by a guard an
+	// earlier round's gap opened: the question is why the guard has not yet
+	// released, which is the undecided window's, as for a guard held at the
+	// window (guardHeld) - not whether the backend answers, which it did.
+	"GAP_GUARD_WARMING": lands(CheckWindowUndecided),
+
 	// The backend was asked and did not answer usefully.
 	"QUERY_TIMEOUT":     lands(CheckBackendNotAnswering),
 	"QUERY_UNAVAILABLE": lands(CheckBackendNotAnswering),
-	"QUERY_PARTIAL":     lands(CheckBackendNotAnswering),
+	// The backend answered and the table or field the strategy names does
+	// not route in its space: the strategy's, the same line the refusal's
+	// detail files it under.
+	"QUERY_TARGET_MISSING": lands(CheckQueryTargetMissing),
+	// A Plan detected more often than it aggregates over a table whose
+	// storage buckets on the aggregation grid: the definition cannot be
+	// evaluated as written here, and its owner removes the detect_interval.
+	"DETECT_INTERVAL_STORAGE_NOT_SLIDING": lands(CheckPlanUnevaluable),
+	"QUERY_PARTIAL":                       lands(CheckBackendNotAnswering),
 	// The backend answered and the dependency holds no rows: the data the
 	// algorithm compares against is missing, the same reading a series with
 	// no history point gets.
@@ -696,17 +872,28 @@ var codeChecks = map[string]verdict{
 	"EFFECTIVE_TIME_CALENDAR_IDENTITY_INVALID": lands(CheckPlanUnevaluable),
 	"EFFECTIVE_TIME_CALENDAR_DUPLICATE":        lands(CheckPlanUnevaluable),
 	"EFFECTIVE_TIME_CALENDAR_ITEMS_MISSING":    lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_ITEM_DUPLICATE":            lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_ITEM_INVALID":              lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_ITEM_TIME_INVALID":         lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_TIME_KIND_INVALID":         lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_TIMEZONE_INVALID":          lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_REPEAT_INVALID":            lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_REPEAT_LIST_INVALID":       lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_REPEAT_EVERY_INVALID":      lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_REPEAT_UNTIL_INVALID":      lands(CheckPlanUnevaluable),
 	// This build cannot read the snapshot's schema: a newer writer, and
 	// nothing in the definition or the deployment to change.
 	"EFFECTIVE_TIME_SCHEMA_UNSUPPORTED": lands(CheckPlanUnevaluable),
 	// The snapshot did not arrive, or arrived without the calendar the
 	// strategy names. The definition is not wrong and this build is not
 	// lacking anything; a piece of the source is missing, and the strategy
-	// detects nothing until it comes.
-	"EFFECTIVE_TIME_SNAPSHOT_UNAVAILABLE": lands(CheckPlanUnevaluable),
-	"EFFECTIVE_TIME_CALENDARS_MISSING":    lands(CheckPlanUnevaluable),
-	"EFFECTIVE_TIME_CALENDAR_NOT_PRESENT": lands(CheckPlanUnevaluable),
-	"EFFECTIVE_TIME_CALENDAR_MISSING":     lands(CheckPlanUnevaluable),
+	// detects nothing until it comes -- the line the catalog files these
+	// four under (SOURCE_INCOMPLETE), so a strategy withheld for one and a
+	// Plan that met one at run time read the same and go to the same owner.
+	"EFFECTIVE_TIME_SNAPSHOT_UNAVAILABLE": lands(CheckSourceIncomplete),
+	"EFFECTIVE_TIME_CALENDARS_MISSING":    lands(CheckSourceIncomplete),
+	"EFFECTIVE_TIME_CALENDAR_NOT_PRESENT": lands(CheckSourceIncomplete),
+	"EFFECTIVE_TIME_CALENDAR_MISSING":     lands(CheckSourceIncomplete),
 	// A terminal this build's table has no entry for. It is one strategy's
 	// refusal like any other, and the compiler's own code travels in the
 	// disposition's detail so the next reader is not guessing.

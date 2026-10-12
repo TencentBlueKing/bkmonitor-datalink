@@ -78,7 +78,7 @@ func TestDefaultRegistryBindsAndEvaluatesCompiledG4Algorithms(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			plan := compileNamedInputPlan(t, test.kind, test.config, test.projection)
-			algorithm := plan.Levels()[0].Algorithms()[0]
+			algorithm := plan.Levels().At(0).Algorithms().At(0)
 			bindings, primary := test.bindings(t, algorithm.InputRequirements())
 			input := execution.SeriesEvaluationInputRequest{
 				Consumer:       execution.ConsumerRef{Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}, LevelID: 5, HasLevel: true},
@@ -88,7 +88,7 @@ func TestDefaultRegistryBindsAndEvaluatesCompiledG4Algorithms(t *testing.T) {
 				input.RequirementIDs = append(input.RequirementIDs, execution.RequirementID(requirement.RequirementID))
 			}
 
-			evaluator, err := NewEvaluator(NewDefaultRegistry(), nil)
+			evaluator, err := NewEvaluator(NewDefaultRegistry())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestDefaultRegistryBindsAndEvaluatesCompiledG4Algorithms(t *testing.T) {
 func TestNamedInputEvaluationFailsOnlyTheAffectedLevel(t *testing.T) {
 	projection := strategy.AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}}
 	plan := compileNamedInputPlan(t, strategy.DetectorKindSimpleRingRatio, map[string]any{"floor": 20, "ceil": nil}, projection)
-	algorithm := plan.Levels()[0].Algorithms()[0]
+	algorithm := plan.Levels().At(0).Algorithms().At(0)
 	bindings, primary := namedBindings(t, algorithm.InputRequirements(), map[string][]contract.CanonicalRecordV2{
 		"primary": {namedRecord(t, 600, `80`, nil)},
 	})
@@ -121,7 +121,7 @@ func TestNamedInputEvaluationFailsOnlyTheAffectedLevel(t *testing.T) {
 	for _, requirement := range algorithm.InputRequirements() {
 		input.RequirementIDs = append(input.RequirementIDs, execution.RequirementID(requirement.RequirementID))
 	}
-	evaluator, err := NewEvaluator(NewDefaultRegistry(), nil)
+	evaluator, err := NewEvaluator(NewDefaultRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +141,8 @@ func TestNamedInputEvaluationFailsOnlyTheAffectedLevel(t *testing.T) {
 func TestOSRestartNamedInputPreservesPythonMissingPointSemantics(t *testing.T) {
 	projection := strategy.AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}}
 	plan := compileNamedInputPlan(t, strategy.DetectorKindOsRestart, map[string]any{}, projection)
-	algorithm := plan.Levels()[0].Algorithms()[0]
-	evaluator, err := NewEvaluator(NewDefaultRegistry(), nil)
+	algorithm := plan.Levels().At(0).Algorithms().At(0)
+	evaluator, err := NewEvaluator(NewDefaultRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestNamedInputPathKeepsThresholdAndPingMappingOnCanonicalDetector(t *testin
 	input := execution.SeriesEvaluationInputRequest{Consumer: consumer, SeriesIdentity: execution.SeriesIdentityDigest(primary.DimensionIdentity().Digest),
 		Inputs: []execution.NamedInputBinding{{Consumer: consumer, DatasetName: "primary", Role: execution.InputRolePrimary,
 			Dataset: dataset, View: view, Completeness: execution.CompletenessFull, DataState: execution.DataStateData, Disposition: execution.AccessAvailable}}}
-	evaluator, err := NewEvaluator(NewDefaultRegistry(), nil)
+	evaluator, err := NewEvaluator(NewDefaultRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}

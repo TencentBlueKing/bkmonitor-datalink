@@ -62,7 +62,6 @@ func TestARangeGivenUpOnForDistanceReportsWhatDecidedIt(t *testing.T) {
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 	source := newProductionSlotSourceWithRecoveryForTest(
 		t, catalog, foundProgress(firstSlot, firstSlot-execution.EvaluationTime(interval)), at, testRecoveryLimits())
-	source.expiredRangeEnabled = true
 	observer := &distanceExpiryObserver{}
 	source.observer = observer
 
@@ -185,7 +184,6 @@ func TestAnAgeExpiredRangeReportsNoDistanceNumbers(t *testing.T) {
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 	source := newProductionSlotSourceWithRecoveryForTest(
 		t, catalog, foundProgress(120, 60), time.UnixMilli(955000), testRecoveryLimits())
-	source.expiredRangeEnabled = true
 	observer := &distanceExpiryObserver{}
 	source.observer = observer
 

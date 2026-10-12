@@ -62,21 +62,17 @@ type FenceKeyResolver interface {
 // compare without reading the value again: the digest of the bytes it saw plus
 // the persisted version facts the old re-read path classified against.
 type runtimeWitness struct {
-	// The record the evaluator read: the newer of the two representations,
-	// or missing when neither key held one. The version rule classifies the
-	// mutation against these, because they are what the mutation's expected
-	// revision and version were taken from.
+	// The record the evaluator read, or missing when the key held none. The
+	// version rule classifies the mutation against these, because they are
+	// what the mutation's expected revision and version were taken from.
 	missing        bool
 	digest         string
 	blobRevision   uint64
 	applyVersion   execution.ApplyVersion
 	mutationDigest execution.MutationDigest
-	// The framed key on its own, whatever the evaluator read from. Every
-	// write goes to the framed key, so the compare-and-set expects these -
-	// missing means create, otherwise the exact bytes seen - and the record
-	// written continues framedRevision, never the envelope's count. A
-	// revision belongs to one representation; reading the envelope's into a
-	// write on the framed key is what made every first write a conflict.
+	// The framed key's own facts. Every write goes to the framed key, so the
+	// compare-and-set expects these - missing means create, otherwise the
+	// exact bytes seen - and the record written continues framedRevision.
 	framedMissing  bool
 	framedDigest   string
 	framedRevision uint64
@@ -379,8 +375,7 @@ func (store *ExecutionStore) applyRuntime(
 	seen := make(map[string]struct{}, len(request.Items))
 	duplicate := false
 	for index, mutation := range request.Items {
-		// Every write goes to the framed key. The envelope is read, never
-		// written, and expires on its own TTL once nothing writes it.
+		// Every write goes to the framed key.
 		keys[index], keyErrors[index] = RuntimeStateKeyV3(store.options.Prefix, mutation.Identity)
 		if keyErrors[index] != nil {
 			continue
@@ -433,11 +428,7 @@ func (store *ExecutionStore) applyRuntime(
 				result.Items[index] = item
 				continue
 			}
-			var fromEnvelope bool
-			result.Items[index], fromEnvelope = store.applyRuntimeSequential(ctx, request.Contract, mutation, keys[index], ttl, casBackend)
-			if fromEnvelope {
-				result.EnvelopeReads++
-			}
+			result.Items[index] = store.applyRuntimeSequential(ctx, request.Contract, mutation, keys[index], ttl, casBackend)
 			// The later copy of a key this request already wrote meets the
 			// earlier copy's bytes one revision up. Name that for what it is
 			// -- the producer sent one series twice -- so it does not count as
@@ -456,10 +447,10 @@ func (store *ExecutionStore) applyRuntime(
 			result.Items[index] = classified
 			continue
 		}
-		encoded, refusal, rule, legacyIDs := store.encodeForWrite(mutation, witness.framedRevision+1)
-		if refusal != "" {
-			item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(refusal)
-			item.RefusalRule = rule
+		encoded, refusal, legacyIDs := store.frameForWrite(request, index, mutation, witness.framedRevision+1)
+		if refusal.reason != "" {
+			item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(refusal.reason)
+			item.RefusalRule = refusal.rule
 			result.Items[index] = item
 			continue
 		}
@@ -479,67 +470,35 @@ func (store *ExecutionStore) applyRuntime(
 // applyRuntimeSequential is the original per-key path: read the current value,
 // classify it, then compare-and-set against the exact bytes just read. It
 // serves callers without a preflight witness and requests with repeated keys.
-//
-// The second result says whether the envelope decided this item: the record
-// the write was classified against came from it, or it refused the write with
-// no frame beside it. That is this path's own count of its dependence on the
-// older representation, reported on the apply and never folded into the
-// preflight's.
 func (store *ExecutionStore) applyRuntimeSequential(
 	ctx context.Context, contractRef execution.FrozenExecutionContractRef, mutation execution.StateMutation,
 	framedKey string, ttl time.Duration, backend CompareAndSetBackend,
-) (execution.StateApplyItemResult, bool) {
+) execution.StateApplyItemResult {
 	item := execution.StateApplyItemResult{Identity: mutation.Identity}
-	envelopeKey, err := RuntimeStateKeyV2(store.options.Prefix, mutation.Identity)
-	if err != nil {
-		item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(contract.ReasonStateCorrupt)
-		item.RefusalRule = PackedRuleIdentityKeyUnderivable
-		return item, false
-	}
-	values, err := backend.MGet(ctx, []string{envelopeKey, framedKey})
+	values, err := backend.MGet(ctx, []string{framedKey})
 	if err != nil {
 		item.Status, item.ReasonCode = execution.StateApplyRetryable, execution.ReasonCode(contract.ReasonRedisUnavailable)
-		return item, false
+		return item
 	}
-	var envelopeRaw, framedRaw []byte
-	if len(values) == 2 {
-		envelopeRaw, framedRaw = values[0], values[1]
+	var framedRaw []byte
+	if len(values) == 1 {
+		framedRaw = values[0]
 	}
-	// Both keys, and the newer of the two records, which is what LoadRuntime
-	// did before its read was split in two. The load no longer does: once a
-	// frame is there it never reads the envelope at all, and this path still
-	// reads both and takes whichever is newer. So a series whose envelope is
-	// the newer statement reads as the envelope here and as the frame there.
-	//
-	// It is left differing rather than split to match. This path runs for a
-	// series without a preflight witness - a repeated key, or a caller with no
-	// preflight - and it re-reads in order to compare against exact bytes, so
-	// the second key costs it a value it already has the round trip for. The
-	// load's split exists to stop fetching a 344 KB record for every series of
-	// every Slot; there is no such multiplier here.
-	//
-	// What the difference costs is that the load's envelope count cannot see
-	// this path. Whether this path still depends on the envelope is its own
-	// count - the second result, reported on the apply as
-	// envelope_reads_apply and counted in state_envelope_apply_items_total -
-	// and the envelope can go only when that count and the load's
-	// old_representation outcome have both stayed at zero.
-	view, source := store.readStoredRecordSourced(execution.StatePreflightRequest{Contract: contractRef},
-		execution.StatePreflightItem{Identity: mutation.Identity, ApplyVersion: mutation.ApplyVersion}, envelopeRaw, framedRaw)
-	fromEnvelope := source == runtimeViewEnvelope
+	view := store.readStoredRecord(execution.StatePreflightRequest{Contract: contractRef},
+		execution.StatePreflightItem{Identity: mutation.Identity, ApplyVersion: mutation.ApplyVersion}, framedRaw, nil)
 	witness, _ := store.witnesses.take(contractRef.Slot, mutation.Identity)
 	if view.Status == execution.StateDeterministicInvalid {
 		item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, view.ReasonCode
-		return item, fromEnvelope
+		return item
 	}
 	if classified, proceed := classifyWitnessedMutation(witness, mutation); !proceed {
-		return classified, fromEnvelope
+		return classified
 	}
-	encoded, refusal, rule, legacyIDs := store.encodeForWrite(mutation, witness.framedRevision+1)
-	if refusal != "" {
-		item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(refusal)
-		item.RefusalRule = rule
-		return item, fromEnvelope
+	encoded, refusal, legacyIDs := store.encodeForWrite(mutation, witness.framedRevision+1)
+	if refusal.reason != "" {
+		item.Status, item.ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(refusal.reason)
+		item.RefusalRule = refusal.rule
+		return item
 	}
 	item.LegacyRecordIDs = legacyIDs
 	applied, err := backend.CompareAndSet(ctx, framedKey, framedRaw, framedRaw == nil, encoded, ttl)
@@ -550,14 +509,20 @@ func (store *ExecutionStore) applyRuntimeSequential(
 	} else {
 		item.Status = execution.StateApplied
 	}
-	return item, fromEnvelope
+	return item
+}
+
+// writeRefusal is why a record cannot be written: the reason, the rule that
+// refused it and the store's sentence. The zero value is no refusal.
+type writeRefusal struct {
+	reason, rule, text string
 }
 
 // encodeForWrite frames the record every write stores, naming the refusal
 // when it cannot: a record that disagrees with the framed contract is
 // STATE_CORRUPT - the producer sent something no representation can hold -
 // and one that frames but does not fit is the budget.
-func (store *ExecutionStore) encodeForWrite(mutation execution.StateMutation, revision uint64) ([]byte, string, string, int) {
+func (store *ExecutionStore) encodeForWrite(mutation execution.StateMutation, revision uint64) ([]byte, writeRefusal, int) {
 	encoded, legacy, err := encodeRuntimePackedCounted(mutation, revision)
 	switch {
 	case errors.Is(err, ErrPackedContract):
@@ -565,11 +530,14 @@ func (store *ExecutionStore) encodeForWrite(mutation execution.StateMutation, re
 		// and which one refused is the difference between a producer that
 		// stopped deriving record ids and one that sent two fingerprints for
 		// a Level - different code, different fix.
-		return nil, contract.ReasonStateCorrupt, PackedRefusalRule(err), 0
-	case err != nil || len(encoded) > store.options.MaxValueBytes:
-		return nil, contract.ReasonStateBudgetExceeded, "", 0
+		return nil, writeRefusal{contract.ReasonStateCorrupt, PackedRefusalRule(err), err.Error()}, 0
+	case err != nil:
+		return nil, writeRefusal{contract.ReasonStateBudgetExceeded, RuntimeRuleValueNotEncodable, err.Error()}, 0
+	case len(encoded) > store.options.MaxValueBytes:
+		return nil, writeRefusal{contract.ReasonStateBudgetExceeded, RuntimeRuleValueOverLimit,
+			fmt.Sprintf("record encodes to %d bytes, over the value limit of %d bytes", len(encoded), store.options.MaxValueBytes)}, 0
 	}
-	return encoded, "", "", legacy
+	return encoded, writeRefusal{}, legacy
 }
 
 // runtimeValueSizeGroups bounds how many Query Groups the store remembers a
@@ -713,37 +681,15 @@ func (store *ExecutionStore) runtimeLoadBatchLimit(group execution.QueryGroupIde
 	}
 }
 
-// envelopeLoadBatchLimit bounds the second pass, and deliberately learns
-// nothing from the first.
-//
-// The first pass measures frames. On the one round shape the envelope read
-// exists for - a series that has an envelope and no frame - every frame comes
-// back empty, and a largest of zero reads as "this Query Group's records are
-// empty", which is the item bound: 256 keys in one call. The records about to
-// be asked for are the largest ones the store holds, so that bound asks for
-// 249 envelopes of 344 KB in a single MGET, ten times the batch budget, and
-// the read dies on its deadline. It does not recover either: a failed read
-// commits no size, so the next round sends the same call again. The symptom
-// this split exists to remove would have moved into the pass that only runs
-// while the migration is unfinished.
-//
-// So the envelope pass is bounded by what the store accepts as a value rather
-// than by anything any round saw - sixteen keys per call under the production
-// limit, which is what the first read of any cold Query Group has always been
-// bounded by. It is a conservative bound for a pass that should be empty and
-// is meant to disappear; a per-representation committed memory would earn back
-// the difference for the fleets that are mid-migration, and is worth doing only
-// if one of them is slow enough to notice.
-func (store *ExecutionStore) envelopeLoadBatchLimit() int {
-	// Deliberately not learned from this pass's own reads either. A batch that
-	// measures small envelopes would raise the bound for the batches after it,
-	// and the population this pass reads is mixed by construction: a Query
-	// Group changing representation holds both sizes at once, and so does one
-	// whose series differ in age. Sixteen short windows at 4 KB would lift the
-	// bound to the item cap and the next batch of long ones would ask for
-	// 89 MB. The sibling bound survives that only because it takes the max of
-	// a committed measurement of the whole population; this pass has none and
-	// deliberately commits none, since the records it reads are leaving.
+// carryLoadBatchLimit bounds the carry pass, and deliberately learns nothing
+// from the frame pass: on the round shape the carry pass exists for, every
+// frame of the current generation came back empty, and a largest of zero reads
+// as "this Query Group's records are empty", which is the item bound. The
+// records about to be asked for are the previous generation's, of a size the
+// frame pass did not see. So the bound is what the store accepts as a value -
+// sixteen keys per call under the production limit, which is what the first
+// read of any cold Query Group has always been bounded by.
+func (store *ExecutionStore) carryLoadBatchLimit() int {
 	expected := uint64(store.options.MaxValueBytes)
 	if expected == 0 {
 		return runtimeLoadBatchItems
@@ -766,27 +712,13 @@ type runtimeLoadBatch struct {
 	keys    []string
 }
 
-// runtimeLoadPass carries what the first pass learned into the second: which
-// series still need the older representation, and the framed bytes they came
-// with, so both records are classified together exactly as they were when one
-// call fetched both keys.
+// runtimeLoadPass says which pass a batch belongs to and counts what the carry
+// pass found.
 type runtimeLoadPass struct {
-	envelopes bool
-	// carry is the third pass: the previous generation's frame of each
+	// carry is the second pass: the previous generation's frame of each
 	// series that has no record of its own and whose Plan carries.
 	carry                                     bool
 	carryFound, carryMissing, carryUnreadable int
-	pending                                   []int
-	frames                                    map[int][]byte
-	// The four the second pass splits into; see the table where they are
-	// counted. Only envelopeAnswered ever reaches zero, which is why one
-	// number over all four could not say when the migration is over.
-	envelopeAnswered    int
-	envelopeCorrupt     int
-	noRecordYet         int
-	frameCorruptRescued int
-	frameCorruptLost    int
-	unclassified        int
 }
 
 func (batch *runtimeLoadBatch) reset() {
@@ -819,11 +751,6 @@ func runtimeLoadFailure(view execution.RuntimeStateView, err error) execution.Ru
 	}
 	return view
 }
-
-// IsStateReadTimeout is isReadTimeout for callers outside this package, so the
-// worker names a failed preflight with the same test the store classifies one
-// with rather than a second opinion about what a timeout looks like.
-func IsStateReadTimeout(err error) bool { return isReadTimeout(err) }
 
 // isCallDeadline reports whether a read ended because a deadline on the call
 // expired. It is checked before isReadTimeout, which accepts both shapes: a
@@ -931,74 +858,7 @@ func (store *ExecutionStore) loadRuntimeBatch(
 		if len(raw) > largest {
 			largest = len(raw)
 		}
-		if pass.envelopes {
-			// The envelope arrived for a series whose frame could not answer.
-			// The frame's bytes travel with it so the two are classified
-			// together, which is the shape this decision has always had when
-			// both records existed.
-			view := store.readStoredRecord(request, item, raw, pass.frames[index])
-			// Which of the four the second pass actually found. One number for
-			// all of them cannot say when the migration is over, because only
-			// one of the four ever ends:
-			//
-			//	frame        envelope answered   what it is
-			//	-----------  -----------------   ----------------------------
-			//	absent       yes                 the older representation, the
-			//	                                 only count that must reach zero
-			//	absent       no                  a series with no record yet --
-			//	                                 new or empty, normal for ever
-			//	present, bad yes                 a corrupt frame the older record
-			//	                                 rescued: a defect, not a writer
-			//	present, bad no                  a corrupt frame nothing rescued
-			//
-			// Counted here, where both records are in hand, rather than where
-			// the decision to read twice was taken: there the frame's absence
-			// is all that is known, and absence is exactly what the first two
-			// rows share.
-			//
-			// The envelope's own bytes decide the middle two: raw is nil when
-			// the key held nothing and non-nil when it held something that did
-			// not read. Both are facts of this read, so a bucket that merged
-			// them would be doing to the older record exactly what one count
-			// over all of these did to the frame -- leaving a damaged record
-			// indistinguishable from a series that never had one.
-			//
-			// frameCorruptLost does not split the same way: its record is lost
-			// whether the envelope was absent or unreadable, and the frame has
-			// already named the defect. The five are a partition, which is what
-			// lets the total below cross-check them.
-			answered := view.Representation == execution.StateRepresentationEnvelope
-			switch {
-			case pass.frames[index] == nil && answered:
-				pass.envelopeAnswered++
-			case pass.frames[index] == nil && raw != nil:
-				pass.envelopeCorrupt++
-			case pass.frames[index] == nil:
-				pass.noRecordYet++
-			case pass.frames[index] != nil && answered:
-				pass.frameCorruptRescued++
-			case pass.frames[index] != nil:
-				pass.frameCorruptLost++
-			default:
-				// Unreachable as the five stand, and deliberately written so
-				// that it can stop being unreachable. A shape none of the five
-				// names lands here and is counted rather than dropped, which
-				// is what makes them a partition by construction instead of by
-				// whatever a fixture happens to contain: a shape a fixture has
-				// no data for is invisible to every case built on one, the sum
-				// over the buckets included.
-				pass.unclassified++
-			}
-			views[index] = view
-			continue
-		}
-		classified, needsEnvelope := store.readFramedRecord(request, item, raw)
-		if needsEnvelope {
-			pass.pending = append(pass.pending, index)
-			pass.frames[index] = raw
-			continue
-		}
-		views[index] = classified
+		views[index] = store.readFramedRecord(request, item, raw)
 	}
 	return loaded, largest, err == nil
 }
@@ -1030,145 +890,61 @@ func (store *ExecutionStore) readCarriedRecord(
 	}
 }
 
-// readFramedRecord classifies a series from its framed record alone, and says
-// when it cannot.
-//
-// It cannot in exactly the cases the older representation was kept for: no
-// frame at all, or a frame whose bytes do not read as a record this binary
-// knows how to refuse on its own. A frame written by a newer binary is not one
-// of them - that refusal is the honest answer whatever the older key holds,
-// and it is the answer the pair of keys already produced.
-//
-// The size check is the frame's alone, where the pair of keys was refused if
-// either exceeded the limit. A series whose envelope is oversize and whose
-// frame is not is now read rather than refused - the readable record answers
-// and the unreadable one is not fetched. That is the more usable side of a
-// refusal that existed to keep a value nobody could write back from being
-// classified as good, and the envelope is not written back by anything.
+// readFramedRecord classifies a series from its framed record. The frame is
+// handed on decoded: decoding it a second time cost as much as the first -- a
+// record of fourteen hundred points is read point by point, each with its
+// derived id -- and was half of what reading a long-history Query Group's
+// state cost.
 func (store *ExecutionStore) readFramedRecord(
 	request execution.StatePreflightRequest, item execution.StatePreflightItem, framedRaw []byte,
-) (execution.RuntimeStateView, bool) {
-	if framedRaw == nil {
-		return execution.RuntimeStateView{}, true
-	}
-	if len(framedRaw) > store.options.MaxValueBytes {
-		return execution.RuntimeStateView{Identity: item.Identity, BlobRevision: 1, Status: execution.StateDeterministicInvalid,
-			ReasonCode: execution.ReasonCode(contract.ReasonStateBudgetExceeded)}, false
+) execution.RuntimeStateView {
+	if framedRaw == nil || len(framedRaw) > store.options.MaxValueBytes {
+		return store.readStoredRecord(request, item, framedRaw, nil)
 	}
 	decoded := decodeRuntime(framedRaw, item.Identity, request.Contract, item.ApplyVersion)
-	if decoded.Status == execution.StateDeterministicInvalid &&
-		decoded.ReasonCode != execution.ReasonCode(contract.ReasonStateSchemaUnsupported) {
-		return execution.RuntimeStateView{}, true
-	}
-	// The frame is handed on decoded. Decoding it a second time there cost
-	// as much as the first -- a record of fourteen hundred points is read
-	// point by point, each with its derived id -- and was half of what
-	// reading a long-history Query Group's state cost.
-	view, _ := store.readStoredRecordDecoded(request, item, nil, framedRaw, &decoded)
-	return view, false
+	return store.readStoredRecord(request, item, framedRaw, &decoded)
 }
 
-// readStoredRecord turns the two values one series may hold into the one view
-// the evaluator reads, and remembers what the apply path will need.
+// readStoredRecord turns the framed value one series holds into the view the
+// evaluator reads, and remembers what the apply path will need. framedDecoded
+// is framedRaw already decoded for the same request and item, or nil to
+// decode it here; decoding is a function of those inputs alone, so the view is
+// the one a second decode would give.
 //
-// The view is the newer of the two records (chooseRuntimeView), because a
-// Query Group bounces between binaries during a rollout and an old owner
-// writes the envelope after a new one wrote the framed record. The witness
-// carries that record's version facts for the version rule and, separately,
-// the framed key's own facts for the compare-and-set, since that is the key
-// every write goes to. A framed record that does not decode is not chosen
-// but is still witnessed by its bytes, so the next whole write replaces it
-// rather than conflicting with it forever.
+// A record that does not read - oversize, corrupt, or written by a newer
+// binary - is refused by name and not witnessed: the apply path re-reads and
+// refuses it the same way. A frame this binary does not know is a newer
+// binary's record, not garbage, and writing whole over it would roll the
+// series back silently on every cross-frame-version rollback.
 func (store *ExecutionStore) readStoredRecord(
-	request execution.StatePreflightRequest, item execution.StatePreflightItem, envelopeRaw, framedRaw []byte,
-) execution.RuntimeStateView {
-	view, _ := store.readStoredRecordSourced(request, item, envelopeRaw, framedRaw)
-	return view
-}
-
-// readStoredRecordSourced is readStoredRecord that also says which record
-// answered: the frame, the envelope, or neither. An unreadable record that
-// is the answer counts as the key it came from, because deleting that key
-// changes the answer.
-func (store *ExecutionStore) readStoredRecordSourced(
-	request execution.StatePreflightRequest, item execution.StatePreflightItem, envelopeRaw, framedRaw []byte,
-) (execution.RuntimeStateView, runtimeViewSource) {
-	return store.readStoredRecordDecoded(request, item, envelopeRaw, framedRaw, nil)
-}
-
-// readStoredRecordDecoded is readStoredRecordSourced for a caller that has
-// already decoded framedRaw, with the same request and item, and passes the
-// result as framedDecoded; nil decodes it here. Decoding is a function of
-// those inputs alone, so the view is the one a second decode would give.
-func (store *ExecutionStore) readStoredRecordDecoded(
-	request execution.StatePreflightRequest, item execution.StatePreflightItem, envelopeRaw, framedRaw []byte,
+	request execution.StatePreflightRequest, item execution.StatePreflightItem, framedRaw []byte,
 	framedDecoded *execution.RuntimeStateView,
-) (execution.RuntimeStateView, runtimeViewSource) {
-	oversize := func() execution.RuntimeStateView {
+) execution.RuntimeStateView {
+	if len(framedRaw) > store.options.MaxValueBytes {
 		return execution.RuntimeStateView{Identity: item.Identity, BlobRevision: 1, Status: execution.StateDeterministicInvalid,
 			ReasonCode: execution.ReasonCode(contract.ReasonStateBudgetExceeded)}
 	}
-	if len(framedRaw) > store.options.MaxValueBytes {
-		return oversize(), runtimeViewFramed
-	}
-	if len(envelopeRaw) > store.options.MaxValueBytes {
-		return oversize(), runtimeViewEnvelope
-	}
 	witness := runtimeWitness{missing: true, framedMissing: framedRaw == nil}
-	var envelope, framed *execution.RuntimeStateView
-	var invalid *execution.RuntimeStateView
-	invalidSource := runtimeViewNone
-	if envelopeRaw != nil {
-		decoded := decodeRuntime(envelopeRaw, item.Identity, request.Contract, item.ApplyVersion)
-		if decoded.Status == execution.StateDeterministicInvalid {
-			invalid, invalidSource = &decoded, runtimeViewEnvelope
-		} else {
-			envelope = &decoded
-		}
-	}
-	if framedRaw != nil {
-		witness.framedDigest = ExpectedValueDigest(framedRaw)
-		var decoded execution.RuntimeStateView
-		if framedDecoded != nil {
-			decoded = *framedDecoded
-		} else {
-			decoded = decodeRuntime(framedRaw, item.Identity, request.Contract, item.ApplyVersion)
-		}
-		if decoded.Status == execution.StateDeterministicInvalid {
-			if decoded.ReasonCode == execution.ReasonCode(contract.ReasonStateSchemaUnsupported) {
-				// A frame this binary does not know is a newer binary's
-				// record, not garbage. Falling back to the envelope here and
-				// writing whole over the frame would roll the series back
-				// silently on every cross-frame-version rollback; a refusal
-				// by name is the honest answer, and it is what the envelope
-				// key already gets for the same shape.
-				return decoded, runtimeViewFramed
-			}
-			invalid, invalidSource = &decoded, runtimeViewFramed
-		} else {
-			framed = &decoded
-			witness.framedRevision = decoded.BlobRevision
-		}
-	}
-	chosen, source := chooseRuntimeView(framed, envelope)
-	if source == runtimeViewNone {
-		if invalid != nil {
-			// Whatever was there does not read. Not witnessed: the apply path
-			// re-reads and refuses it by name, as it did before two keys.
-			return *invalid, invalidSource
-		}
+	if framedRaw == nil {
 		store.witnesses.remember(request.Contract.Slot, item.Identity, witness)
-		return execution.RuntimeStateView{Identity: item.Identity, Status: execution.StateMissingWarming}, runtimeViewNone
+		return execution.RuntimeStateView{Identity: item.Identity, Status: execution.StateMissingWarming}
 	}
-	witness.missing = false
-	witness.blobRevision, witness.applyVersion, witness.mutationDigest = chosen.BlobRevision, chosen.PersistedApplyVersion, chosen.PersistedMutationDigest
-	if source == runtimeViewFramed {
-		witness.digest = witness.framedDigest
+	witness.framedDigest = ExpectedValueDigest(framedRaw)
+	var decoded execution.RuntimeStateView
+	if framedDecoded != nil {
+		decoded = *framedDecoded
 	} else {
-		witness.digest = ExpectedValueDigest(envelopeRaw)
+		decoded = decodeRuntime(framedRaw, item.Identity, request.Contract, item.ApplyVersion)
 	}
+	if decoded.Status == execution.StateDeterministicInvalid {
+		return decoded
+	}
+	witness.framedRevision = decoded.BlobRevision
+	witness.missing = false
+	witness.blobRevision, witness.applyVersion, witness.mutationDigest = decoded.BlobRevision, decoded.PersistedApplyVersion, decoded.PersistedMutationDigest
+	witness.digest = witness.framedDigest
 	store.witnesses.remember(request.Contract.Slot, item.Identity, witness)
-	return chosen, source
+	return decoded
 }
 
 var _ execution.FencedStateStore = (*ExecutionStore)(nil)

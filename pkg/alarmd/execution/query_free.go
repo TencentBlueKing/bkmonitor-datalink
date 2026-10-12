@@ -8,6 +8,7 @@ package execution
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -114,6 +115,12 @@ type QueryFreeFinalization struct {
 	Mode       FinalizationMode
 	ReasonCode ReasonCode
 	Targets    FrozenDuePlanTargets
+	// Cause is why no query ran, one of QueryFreeCauses, required on the two
+	// query-free modes: their completion word does not say whether anything
+	// failed - SNAPSHOT_UNAVAILABLE is a Slot that came too late as well as a
+	// Snapshot that is corrupt - and a reader of the completion is told by
+	// this, on the completion's observation only.
+	Cause CompletionCause
 }
 
 func (finalization QueryFreeFinalization) Validate(request SlotExecutionRequest) error {
@@ -145,6 +152,9 @@ func (finalization QueryFreeFinalization) Validate(request SlotExecutionRequest)
 		expectedReason, _ := QueryFreeGapScopeReason(finalization.Mode)
 		if finalization.ReasonCode != expectedReason {
 			return errors.New("alarmd execution: query-free finalization requires its exact reason")
+		}
+		if !slices.Contains(QueryFreeCauses, finalization.Cause) {
+			return errors.New("alarmd execution: query-free finalization names no cause")
 		}
 		if err := finalization.Targets.Validate(request.Contract); err != nil {
 			return err

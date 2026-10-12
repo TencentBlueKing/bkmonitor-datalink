@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 func readOne(ctx context.Context, source string, binding RedisBinding, key string) (Result, []byte) {
@@ -47,7 +49,7 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 	for i := range results {
 		results[i].Limits.DocumentReadLimitBytes = limit
 	}
-	_, _ = binding.Client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	_, txErr := binding.Client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		for i, key := range keys {
 			types[i] = pipe.Type(ctx, key)
 			ttls[i] = pipe.PTTL(ctx, key)
@@ -56,11 +58,17 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 		return nil
 	})
 	bytesRead := 0
+	unanswered := ""
 	for i := range results {
 		r := &results[i]
 		at := time.Now().UTC()
 		r.ReadAt = &at
+		// A result the server did not answer says why, never only that it
+		// was unavailable: an idle connection the network cut and a command
+		// the server refused are fixed in different places.
 		if types[i] == nil || types[i].Err() != nil || ttls[i].Err() != nil {
+			r.Reason, r.ReasonText = failureReason(txErr, types[i], ttls[i])
+			unanswered = r.Reason
 			continue
 		}
 		r.Type = types[i].Val()
@@ -83,6 +91,8 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 			continue
 		}
 		if values[i].Err() != nil {
+			r.Reason, r.ReasonText = failureReason(txErr, values[i])
+			unanswered = r.Reason
 			continue
 		}
 		payload := []byte(values[i].Val())
@@ -105,5 +115,21 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 		results[i].Limits.Commands = commands
 		results[i].Limits.Bytes = bytesRead
 	}
+	binding.failed(unanswered)
 	return results, raw
+}
+
+// failureReason is why a read went unanswered, and the error's own text:
+// the first failed command's error, else the transaction's, else a reply
+// that was never filled in.
+func failureReason(txErr error, commands ...redis.Cmder) (string, string) {
+	for _, command := range commands {
+		if command != nil && command.Err() != nil {
+			return redisfailure.Reason(command.Err()), redisfailure.Detail(command.Err())
+		}
+	}
+	if txErr != nil {
+		return redisfailure.Reason(txErr), redisfailure.Detail(txErr)
+	}
+	return redisfailure.MalformedReply, "a reply the transaction did not fill in"
 }

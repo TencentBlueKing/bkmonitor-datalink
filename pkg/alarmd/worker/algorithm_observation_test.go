@@ -322,7 +322,7 @@ func workerAlgorithmObservationCoordinator(
 	observe func(observability.Observation),
 ) (*recordingPorts, *worker.SlotExecutionCoordinator) {
 	t.Helper()
-	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
+	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}

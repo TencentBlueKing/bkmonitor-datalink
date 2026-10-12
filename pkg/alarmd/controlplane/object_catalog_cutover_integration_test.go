@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // These tests pin what step 4 of the object catalog design owes: a cutover
@@ -326,7 +327,7 @@ func TestOutputContextEditRevisesReferencesWithoutCuttingTheSegment(t *testing.T
 // TestLegacyOpenSegmentIsCutOnceThenKept: an open Segment written before
 // step 3 names no content. The first publication after the upgrade cuts it
 // once, whatever the content did, so that every open Segment names its
-// content; the publication after that keeps it.
+// content, and counts it as any cut; the publication after that keeps it.
 func TestLegacyOpenSegmentIsCutOnceThenKept(t *testing.T) {
 	fixture := newCutoverFixture(t, "alarmd:control:cutover-legacy-segment")
 	first := cutoverCatalog(t, 80, nil)
@@ -352,10 +353,20 @@ func TestLegacyOpenSegmentIsCutOnceThenKept(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var decisions []map[string]int
+	fixture.repository.ConfigureObserver(observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		if observation.ScheduleCutover != nil && observation.ScheduleCutover.QueryGroups != nil {
+			decisions = append(decisions, observation.ScheduleCutover.QueryGroups)
+		}
+	}))
 	fixture.publish(t, cutoverCatalog(t, 80, renameStrategy), 120)
+	fixture.repository.ConfigureObserver(nil)
 	cut := fixture.openSegment(t, groupA.Identity, 120)
 	if cut.Start != 120 || cut.ObjectDigest == "" {
 		t.Fatalf("a Segment without content must be cut once so it names its content: %+v", cut)
+	}
+	if len(decisions) != 1 || decisions[0]["cut"] != 1 {
+		t.Fatalf("cutover decisions = %v, want the Segment without content counted as one cut", decisions)
 	}
 
 	fixture.publish(t, cutoverCatalog(t, 80, func(document map[string]any) {

@@ -35,10 +35,11 @@ var RefusalReasons = []string{
 // do not release), and the two are never wrapped in one another, so the
 // order only states which one wins if that ever changes.
 func RefusalReason(err error) (reason string, ok bool) {
+	var switched *LeaseEndedAtContentSwitch
 	switch {
 	case err == nil:
 		return "", false
-	case errors.Is(err, ErrContentScopeMoved):
+	case errors.As(err, &switched), errors.Is(err, ErrContentScopeMoved):
 		return contract.ReasonContentScopeMoved, true
 	case errors.Is(err, ErrNotDesired):
 		return contract.ReasonOwnershipNotDesired, true

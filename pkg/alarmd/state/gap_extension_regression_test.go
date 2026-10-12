@@ -38,7 +38,7 @@ func TestSameSlotGapExtensionPreservesScopesAndChecksCAS(t *testing.T) {
 			otherLevel.RequiredFullSlots = 4
 			old := build([]execution.GapScopeMutation{level, otherLevel}, 0)
 			apply := func(m execution.PlanGapMutation) execution.GapGuardApplyStatus {
-				r, e := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{m}})
+				r, e := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{m}})
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -131,7 +131,7 @@ func TestSameSlotStrengtheningPersistsExistingObservations(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation}})
+		result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation}})
 		if err != nil || result.Items[0].Status != execution.GapGuardApplied {
 			t.Fatalf("%s: result=%+v err=%v", kind, result, err)
 		}

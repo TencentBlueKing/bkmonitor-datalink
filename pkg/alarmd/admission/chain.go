@@ -90,22 +90,46 @@ type Facts struct {
 	// by the strategy rather than from an attribute filled ahead of time. It
 	// is the caller's map, read and never written.
 	Dimensions map[string]json.RawMessage
+	// TenantID is the tenant the record is read for - its Plan's - and so
+	// whose CMDB cache the fullers read: another tenant's hosts are under
+	// keys of their own. Empty is the default tenant.
+	TenantID string
 	// HostResolved records whether the host the record names was found in CMDB
 	// - the one HostNaming.LookupKey picks, not any identity that happens to
 	// resolve. A series whose host is unknown is not the same as one with no
 	// host dimensions, and filters need to tell them apart.
 	HostResolved bool
+	// HostUnresolved records that the record named a host - by a true id, by
+	// an address or its alias, or by a service instance - and the cache
+	// placed it nowhere: no branch of Python's fuller order found the host
+	// the record is about. It is what keeps a target rejection from being a
+	// verdict: a host the cache has not learned yet, or has lost, may well
+	// be inside the target (decision-024, "the cache must be trusted"). It
+	// differs from !HostResolved, which is also false for a record that
+	// names no host at all.
+	HostUnresolved bool
+	// ReportedAddressDiffers records that CMDB placed the record's host by its
+	// bk_host_id or bk_agent_id and the record's own bk_target_ip is not that
+	// host's address - another one, empty, or missing. Python's fuller
+	// overwrites bk_target_ip with the host's address on exactly that branch
+	// and reads the alert's target from it afterwards; this side writes
+	// nothing back, so these are the records whose alert identity can differ
+	// from Python's. Compared as strings, exactly: Python writes CMDB's
+	// string, and any byte of difference changes the dedupe md5. Measured,
+	// not acted on, until it is decided whether alert identity follows
+	// CMDB's address as Python's does.
+	ReportedAddressDiffers bool
+	// PlacedByHostID records that CMDB placed the record's host by its
+	// bk_host_id or bk_agent_id: the branch Python's fuller overwrites
+	// bk_target_ip on, whatever the record's own address. The count the
+	// records whose address differs (ReportedAddressDiffers, a part of
+	// these) are read against: without it a zero of those cannot tell
+	// "always the host's address" from "never placed that way".
+	PlacedByHostID bool
 	// HostState is the CMDB operational state, for the filter that acts on it.
 	HostState string
 	// HostBusinessID is the business the resolved host belongs to.
 	HostBusinessID string
-	// HostAttributes are the scalar fields of the resolved host's cache
-	// record, by field name, exposed to the matcher as
-	// contract.AttributeHostPrefix + name. The map is the index's own and is
-	// read only; keeping a reference costs the series nothing, where copying
-	// twenty fields into Attributes would allocate on every series for a
-	// target nobody has written yet.
-	HostAttributes map[string]string
 	// HostNaming records what the series said about its host, rather than what
 	// could be made of it. The host status filter needs the difference: Python
 	// keeps a record that names no host at all, drops one that names a host it
@@ -160,15 +184,7 @@ func (facts *Facts) Candidates(attribute string) []string {
 	if facts == nil {
 		return nil
 	}
-	if values, found := facts.Attributes[attribute]; found {
-		return values
-	}
-	if name, isHostAttribute := strings.CutPrefix(attribute, contract.AttributeHostPrefix); isHostAttribute {
-		if value, found := facts.HostAttributes[name]; found && value != "" {
-			return []string{value}
-		}
-	}
-	return nil
+	return facts.Attributes[attribute]
 }
 
 // Add records one candidate value for an attribute, keeping the values
@@ -298,11 +314,17 @@ func NewChain(fullers []Fuller, filters []Filter) *Chain {
 
 // Enrich derives the facts of one series once.
 func (chain *Chain) Enrich(dimensions map[string]json.RawMessage) Facts {
+	return chain.EnrichFor("", dimensions)
+}
+
+// EnrichFor is Enrich for a record read for a tenant's Plan: the fullers
+// read that tenant's CMDB cache.
+func (chain *Chain) EnrichFor(tenant string, dimensions map[string]json.RawMessage) Facts {
 	// The dimensions are handed to every fuller and kept on the facts by
 	// reference. They are read only: a fuller writes what it learns into
 	// Attributes, never into this map, so the series the fingerprint is
 	// derived from is exactly the series the provider returned.
-	facts := Facts{Dimensions: dimensions}
+	facts := Facts{Dimensions: dimensions, TenantID: tenant}
 	if chain == nil {
 		return facts
 	}

@@ -30,7 +30,7 @@ func hostStore(t *testing.T, now func() time.Time, hosts []string, nodes []strin
 	builder := newIndexBuilder(now())
 	builder.addFields(hosts)
 	builder.addTopologyNodes(nodes)
-	return &Store{index: builder.index, now: now, maxAge: 10 * time.Minute, interval: time.Minute}
+	return &Store{index: builder.index, now: now, maxAge: 10 * time.Minute}
 }
 
 func selector(resolution *targetplan.Resolution, kind, id string) targetplan.SelectorResult {
@@ -59,7 +59,7 @@ func TestTheResolverAnswersEachSelectorByTheRulingsTable(t *testing.T) {
 		"cw:dynamic_group:alldrop":  `{"model_id":"cw-Host","model_inst_ids":["7"],"member_list":[{"model_id":"cw-Host","model_inst_id":"7"}]}`,
 	}}
 	reader, _ := NewGroupReader(client, "cw:")
-	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: clock})
+	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,13 +157,13 @@ func TestTheResolverAnswersEachSelectorByTheRulingsTable(t *testing.T) {
 // out of Contains, and a source that was never wired says so. A snapshot
 // served past a failed refresh is answered and marked with its age; past
 // the staleness bound it is unavailable as stale; an index that is stale
-// makes every topology reference unavailable.
+// makes every topology reference unavailable as stale too.
 func TestTheResolverNeverReadsUnavailableAsEmpty(t *testing.T) {
 	now := time.Unix(1000, 0)
 	clock := func() time.Time { return now }
 	client := &groupClient{values: map[string]string{"cw:dynamic_group:ok": hostGroup}}
 	reader, _ := NewGroupReader(client, "cw:")
-	groups, _ := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: clock})
+	groups, _ := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
 	hosts := hostStore(t, clock, []string{"501", hostUnderSet}, []string{"set|12"})
 	resolver := NewTargetResolver(groups, hosts, clock)
 	set12 := contract.TargetPlanTopologyV1{BusinessID: "2", ObjectID: "set", InstanceID: "12"}
@@ -187,7 +187,7 @@ func TestTheResolverNeverReadsUnavailableAsEmpty(t *testing.T) {
 	if group := selector(tooOld, targetplan.SelectorKindGroup, "ok"); group.State != targetplan.SelectorUnavailable || group.Reason != targetplan.ReasonStale {
 		t.Fatalf("past the staleness bound the group answered %s %s", group.State, group.Reason)
 	}
-	if topology := selector(tooOld, targetplan.SelectorKindTopology, "2|set|12"); topology.State != targetplan.SelectorUnavailable || topology.Reason != targetplan.ReasonIndexUnavailable {
+	if topology := selector(tooOld, targetplan.SelectorKindTopology, "2|set|12"); topology.State != targetplan.SelectorUnavailable || topology.Reason != targetplan.ReasonStale {
 		t.Fatalf("with a stale host index the topology answered %s %s", topology.State, topology.Reason)
 	}
 	if tooOld.State != targetplan.ResolutionUnavailable || tooOld.Contains("101") || tooOld.Contains("501") {
@@ -210,4 +210,55 @@ func nonNil(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// A host index whose latest refresh failed is served as the snapshot before,
+// within the bound. Every selector answered from it says so - stale - as a
+// group served past a failed refresh does (decision-017 section 3.2,
+// resolved_from_stale_snapshot), so the resolution is not a verdict the
+// target-scope close may act on (decision-024: facts not current are not
+// closed on). With the refresh succeeding, it is current.
+func TestSelectorsAnsweredFromAHostIndexPastAFailedRefreshAreStale(t *testing.T) {
+	at := time.Unix(1700000000, 0).UTC()
+	now := at.Add(2 * time.Minute)
+	clock := func() time.Time { return now }
+	records := map[int]string{101: addressedHost(101, "tenant-a", "192.0.2.1|0", 2, "")}
+	plan := &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleIPCloud,
+		Identity: contract.TargetPlanIdentityV1{Dimensions: []string{"bk_target_ip", "bk_target_cloud_id"}, Address: true}, TenantID: "tenant-a",
+		StaticKeys: []string{}, StaticHosts: []string{"101"}}
+
+	hosts := hostStore(t, func() time.Time { return at }, hostFields(records), nil)
+	hosts.now = clock
+	current := NewTargetResolver(nil, hosts, clock).Resolve(context.Background(), plan, time.Minute)
+	if current.StaleAge != 0 || selector(current, targetplan.SelectorKindStatic, "cw-Host").StaleAge != 0 {
+		t.Fatalf("a current index answered stale: %+v", current)
+	}
+
+	hosts.lastError = errors.New("scan host cache: i/o timeout")
+	stale := NewTargetResolver(nil, hosts, clock).Resolve(context.Background(), plan, time.Minute)
+	static := selector(stale, targetplan.SelectorKindStatic, "cw-Host")
+	if static.State != targetplan.SelectorOK || static.StaleAge != 2*time.Minute || stale.StaleAge != 2*time.Minute {
+		t.Fatalf("served past a failed refresh: selector %+v, resolution stale %s; want OK and two minutes stale", static, stale.StaleAge)
+	}
+
+	// A group under an ip_cloud plan names hosts by id, and the index turns
+	// them into addresses: answered from the same index, so stale the same.
+	// The group's own read is current, so the age is the index's alone.
+	client := &groupClient{values: map[string]string{"cw:dynamic_group:g": `{"model_id":"cw-Host","bk_tenant_id":"tenant-a",` +
+		`"model_inst_ids":["101"],"member_list":[{"model_id":"cw-Host","model_inst_id":"101","bk_host_id":101}]}`}}
+	reader, _ := NewGroupReader(client, "cw:")
+	groups, _ := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
+	grouped := *plan
+	grouped.StaticHosts, grouped.DynamicGroups = nil, []string{"g"}
+	byGroup := NewTargetResolver(groups, hosts, clock).Resolve(context.Background(), &grouped, time.Minute)
+	if group := selector(byGroup, targetplan.SelectorKindGroup, "g"); group.State != targetplan.SelectorOK || group.StaleAge != 2*time.Minute {
+		t.Fatalf("ip_cloud group served past a failed host refresh: %+v; want OK and two minutes stale", group)
+	}
+	// A host_id plan's group is answered by the group alone: the index is not
+	// read for it, and its age is the group's.
+	byID := &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleHostID,
+		Identity: contract.TargetPlanIdentityV1{Dimensions: []string{"bk_host_id"}, HostIdentity: true}, DynamicGroups: []string{"g"}}
+	if group := selector(NewTargetResolver(groups, hosts, clock).Resolve(context.Background(), byID, time.Minute), targetplan.SelectorKindGroup, "g"); group.StaleAge != 0 {
+		t.Fatalf("host_id group marked by the host index: %+v", group)
+	}
 }

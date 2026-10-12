@@ -18,6 +18,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 func TestLoggerWritesFixedEventFields(t *testing.T) {
@@ -56,15 +58,7 @@ func TestLoggingObserverWritesExactAlgorithmReasonAndProvenanceWithoutPayload(t 
 	t.Parallel()
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentEvaluation,
 		Stage:     StageEvaluationCompleted,
 		Result:    ResultSuccess,
@@ -122,11 +116,11 @@ func TestLoggingObserverWritesActionableSourceRefreshFacts(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 1, MaxScopes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := NewBoundedLogPolicy(limiter)
+	policy, err := NewScopedBoundedLogPolicy(limiter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +159,11 @@ func TestLoggingObserverWritesBoundedActivationFailureReappearedSamples(t *testi
 	t.Parallel()
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 1, MaxScopes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := NewBoundedLogPolicy(limiter)
+	policy, err := NewScopedBoundedLogPolicy(limiter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,51 +216,55 @@ func TestLoggingObserverWritesBoundedActivationFailureReappearedSamples(t *testi
 	}
 }
 
-func TestLoggingObserverKeepsPendingCandidateWithoutInventingPublication(t *testing.T) {
+// A refresh line whose publication is not whole names none: a revision
+// without its epoch, or the reverse, is dropped rather than half reported.
+func TestLoggingObserverDropsAHalfNamedPublication(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 1, MaxScopes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := NewBoundedLogPolicy(limiter)
+	policy, err := NewScopedBoundedLogPolicy(limiter)
 	if err != nil {
 		t.Fatal(err)
 	}
 	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
 		Component: ComponentControlPlane, Stage: StageSnapshotRefreshed, Result: ResultSuccess,
 		SourceRefresh: &SourceRefreshFacts{
-			Status: SourceRefreshPending, ObservationID: "observation-candidate",
+			Status: SourceRefreshPublished, ObservationID: "observation-1", SnapshotRevision: "snapshot-1",
 		},
 	})
 
 	var event map[string]any
 	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
-		t.Fatalf("decode pending source refresh log: %v; log=%s", err, output.String())
+		t.Fatalf("decode source refresh log: %v; log=%s", err, output.String())
 	}
-	if event["source_refresh_status"] != "PENDING_CONFIRMATION" ||
-		event["source_observation_id"] != "observation-candidate" ||
+	if event["source_refresh_status"] != "PUBLISHED" ||
+		event["source_observation_id"] != "observation-1" ||
 		event["snapshot_revision"] != nil || event["publication_epoch"] != nil {
-		t.Fatalf("pending source refresh log invented publication: %#v", event)
+		t.Fatalf("source refresh log with half a publication = %#v, want none named", event)
 	}
 }
 
+// Two series of one Plan in the same round share the round's line: a
+// series identity is a coordinate on the line, not a bucket of its own.
 func TestSeriesTraceDoesNotExpandEvaluationLogBudget(t *testing.T) {
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 1, MaxScopes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := NewBoundedLogPolicy(limiter)
+	policy, err := NewScopedBoundedLogPolicy(limiter)
 	if err != nil {
 		t.Fatal(err)
 	}
 	observer := NewLoggingObserver(New("alarmd", &output), policy)
 	for _, series := range []string{"series-a", "series-b"} {
 		observer.Observe(context.Background(), Observation{
-			Component: ComponentEvaluation, Stage: StageEvaluationCompleted, Result: ResultSuccess,
-			Operation: OperationNormal, ReasonCode: ReasonNone,
+			Component: ComponentEvaluation, Stage: StageEvaluationCompleted, Result: ResultDegraded,
+			Operation: OperationNormal, ReasonCode: ReasonCode(contract.ReasonHistoryWarming),
 			Trace: TraceFields{StrategyID: "7", DimensionIdentityDigest: series},
 		})
 	}
@@ -307,11 +305,11 @@ func TestActivationFailureReasonSurvivesNormalisationAndIsLogged(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 1, MaxScopes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := NewBoundedLogPolicy(limiter)
+	policy, err := NewScopedBoundedLogPolicy(limiter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,15 +338,7 @@ func TestLoggingObserverWritesTheAttemptOnAShortPeriodCompletion(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Operation: OperationRetry, Result: ResultSuccess,
 		ShortPeriodCompletion: &ShortPeriodCompletionFacts{Cohort: "10s", CompletionKind: "FULL_COMPLETED", LagSeconds: 17.5, AttemptNo: 2},
 	})
@@ -374,18 +364,10 @@ func TestLoggingObserverWritesTheFrozenStateRenewalNumbers(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatal(err)
-	}
 	facts := &FrozenStateRenewalFacts{}
 	facts.RecordCensus(12, 11, 7)
 	facts.Record(3, 1, 0, 0)
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentState, Stage: StageFrozenStateRenewed, Operation: OperationNormal, Result: ResultSuccess,
 		FrozenStateRenewal: facts,
 	})
@@ -425,11 +407,11 @@ func TestTheViewSessionLineCarriesTheStreamsWordAsItsReasonCode(t *testing.T) {
 		{"10.0.0.1:9000", ResultSuccess, string(ReasonNone)},
 	} {
 		var output bytes.Buffer
-		limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
+		limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 10, MaxScopes: 1024})
 		if err != nil {
 			t.Fatal(err)
 		}
-		policy, err := NewBoundedLogPolicy(limiter)
+		policy, err := NewScopedBoundedLogPolicy(limiter)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -469,15 +451,7 @@ func TestLoggingObserverWritesTheCompletionKindTheSlotReached(t *testing.T) {
 
 	render := func(kind string) map[string]any {
 		var output bytes.Buffer
-		limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
-		if err != nil {
-			t.Fatal(err)
-		}
-		policy, err := NewBoundedLogPolicy(limiter)
-		if err != nil {
-			t.Fatal(err)
-		}
-		NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		renderTo(&output, Observation{
 			Component: ComponentScheduler, Stage: StageSlotCompleted, Operation: OperationRetry, Result: ResultSuccess,
 			SlotCompletionKind: kind,
 		})
@@ -513,15 +487,7 @@ func TestLoggingObserverWritesTheSplitGateOnTheRebalanceLine(t *testing.T) {
 	line := func(gate *ShardAwareFacts) map[string]any {
 		t.Helper()
 		var output bytes.Buffer
-		limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 8})
-		if err != nil {
-			t.Fatal(err)
-		}
-		policy, err := NewBoundedLogPolicy(limiter)
-		if err != nil {
-			t.Fatal(err)
-		}
-		NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		renderTo(&output, Observation{
 			Component: ComponentOwnership, Stage: StageRebalancePlanned, Result: ResultSuccess,
 			Rebalance: &RebalanceFacts{ReadyWorkers: 4, ShardAware: gate},
 		})
@@ -568,15 +534,7 @@ func TestLoggingObserverWritesTheByteConstraintCountsOnTheRebalanceLine(t *testi
 	t.Parallel()
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentOwnership, Stage: StageRebalancePlanned, Result: ResultSuccess,
 		Rebalance: &RebalanceFacts{ReadyWorkers: 4, Bytes: &ByteConstraintFacts{
 			SharePercent: 80, Judged: 4, Unread: 2046, Unsettled: []string{"w1", "w2", "w3", "w4"},
@@ -624,5 +582,28 @@ func TestTheSplitGatesReplicaListIsCopiedAndBounded(t *testing.T) {
 	unaware[0] = "changed after the round"
 	if normalized.ShardAware.Unaware[0] != "worker" {
 		t.Fatal("the observation shares the round's slice")
+	}
+}
+
+// A takeover replay's line carries what became of the Slot, how old it was
+// and how long after the takeover: without them a Slot given up on for its
+// age cannot be told from one replayed, and neither can be named.
+func TestLoggingObserverWritesReplayTakeoverFacts(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	renderTo(&output, Observation{
+		Component: ComponentScheduler, Stage: StageReplayTakeover, Result: ResultSuccess,
+		Trace:          TraceFields{QueryGroupKey: "qg-taken-over", EvaluationTime: 1_700_124_000},
+		ReplayTakeover: &ReplayTakeoverFacts{Outcome: ReplayTakeoverAgeExceeded, AgeSeconds: 601.5, TakeoverOffsetSeconds: 42},
+	})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode replay takeover log: %v; log=%s", err, output.String())
+	}
+	facts, _ := event["replay_takeover"].(map[string]any)
+	if facts["outcome"] != "age_exceeded" || facts["age_seconds"] != 601.5 || facts["takeover_offset_seconds"] != float64(42) ||
+		event["query_group_key"] != "qg-taken-over" {
+		t.Fatalf("replay takeover line = %#v, want the outcome, age and offset beside the Query Group", event)
 	}
 }

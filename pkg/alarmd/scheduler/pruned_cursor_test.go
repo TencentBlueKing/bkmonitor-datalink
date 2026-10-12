@@ -49,9 +49,12 @@ func prunedCursorSource(t *testing.T, catalog *fakeSlotCatalog, reader ScheduleP
 // blocked as before.
 func TestProductionSlotSourceAdvancesACursorTheTimelineNoLongerHolds(t *testing.T) {
 	at := time.Unix(661, 0)
+	// A cursor with no completion behind it: the shape production reaches the
+	// advance with. An anchored cursor is continued by the catalog at the
+	// first Segment after its anchor and never fails navigation for a missing
+	// Segment (see the fake's NextSlotAfter), so it never gets here.
 	pruned := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
-		Identity: execution.ProgressIdentity{QueryGroup: "query-group-1"}, NextSlot: 120, LastFullSlot: 60,
-		LastCompletionKind: execution.CompletionFull,
+		Identity: execution.ProgressIdentity{QueryGroup: "query-group-1"}, NextSlot: 120,
 	}}
 	advances := func(observations []observability.Observation) []*observability.CursorAdvanceFacts {
 		var found []*observability.CursorAdvanceFacts
@@ -63,7 +66,7 @@ func TestProductionSlotSourceAdvancesACursorTheTimelineNoLongerHolds(t *testing.
 		return found
 	}
 	wantRequest := execution.ProgressSkipPrunedRequest{Identity: execution.ProgressIdentity{QueryGroup: "query-group-1"},
-		OwnerFence: testFence(7), ExpectedNextSlot: 120, ResumeAt: 600}
+		OwnerFence: testFence(7), ExpectedNextSlot: 120, ResumeAt: 600, Reason: "SCHEDULE_PRUNED"}
 
 	t.Run("the cursor is moved to the earliest retained Slot and navigation continues", func(t *testing.T) {
 		catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedulerSchedule(t, 60, 600, nil, "snapshot-1", 1)}}

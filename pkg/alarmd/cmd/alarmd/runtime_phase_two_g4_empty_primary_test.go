@@ -84,7 +84,7 @@ func TestProductionPhaseTwoG4OsRestartEmptyPrimaryWithHistoryDataCompletesFullEm
 				defer observationsMu.Unlock()
 				observations = append(observations, observation)
 			}),
-			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
+			PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil }),
 		},
 	)
 	if err != nil {

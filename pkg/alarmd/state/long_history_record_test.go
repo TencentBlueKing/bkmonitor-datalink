@@ -97,8 +97,8 @@ func TestTheStoreDecodesAFramedRecordOnce(t *testing.T) {
 	request := execution.StatePreflightRequest{Contract: frozenRef(), Items: []execution.StatePreflightItem{item}}
 	decode := testing.AllocsPerRun(5, func() { _ = decodeRuntime(raw, identity, frozenRef(), next) })
 	read := testing.AllocsPerRun(5, func() {
-		if view, fallback := store.readFramedRecord(request, item, raw); fallback || len(view.History) != longHistoryPoints {
-			t.Fatalf("read back %d points (fallback %v)", len(view.History), fallback)
+		if view := store.readFramedRecord(request, item, raw); len(view.History) != longHistoryPoints {
+			t.Fatalf("read back %d points", len(view.History))
 		}
 	})
 	if read > decode*1.25 {

@@ -373,3 +373,65 @@ func TestTheRowCarriesEachPlansWireFormatFromItsEvaluationLine(t *testing.T) {
 		t.Fatalf("the object is listed as %+v; an evaluation line alone must not list it", listed)
 	}
 }
+
+// written is the observation a write of one Plan's events emits, carrying
+// what it did with its no-data events.
+func written(ctx context.Context, tracker *Tracker, strategy string, facts observability.NoDataEmissionFacts) {
+	tracker.Observe(ctx, observability.Observation{
+		Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
+		Direction: observability.DirectionInternal, Result: observability.ResultSuccess,
+		Trace:          observability.TraceFields{StrategyID: strategy, BusinessID: "2"},
+		NoDataEmission: &facts,
+	})
+}
+
+// A Plan's row says what this replica sent of its no-data events: the
+// writes add up, the latest event of each kind is the one its Slot decided
+// last whatever order the writes came in, and a deciding round that
+// replaces the Plan's word leaves the count alone. A Plan that decided and
+// sent nothing shows zeros with the sentence that reads them, and the fleet
+// summary sums what was sent.
+func TestARowSaysWhatThisReplicaSentOfAPlansNoDataEvents(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	started := tracker.startedAt
+	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "qg-sent"})
+	absenceDecided(ctx, tracker, "s-sent", 600, observability.NoDataAbsenceFacts{RosterSource: "HISTORY", Expected: 2, Present: 1, Absent: 1})
+	absenceDecided(ctx, tracker, "s-quiet", 600, observability.NoDataAbsenceFacts{RosterSource: "HISTORY", Expected: 1, Present: 1})
+	written(ctx, tracker, "s-sent", observability.NoDataEmissionFacts{AbnormalSent: 1,
+		LastAbnormal: &observability.NoDataEmittedEvent{EvaluationTime: 600, AlertKey: "key-600", Group: map[string]string{"bk_target_ip": "192.0.2.10"}}})
+	at.at = now.Add(time.Minute)
+	written(ctx, tracker, "s-sent", observability.NoDataEmissionFacts{AbnormalSent: 1, RecoverySent: 1, AckUnknown: 2, NotWritten: 1,
+		LastAbnormal: &observability.NoDataEmittedEvent{EvaluationTime: 540, AlertKey: "key-540"},
+		LastRecovery: &observability.NoDataEmittedEvent{EvaluationTime: 660, AlertKey: "key-600"}})
+	absenceDecided(ctx, tracker, "s-sent", 720, observability.NoDataAbsenceFacts{RosterSource: "HISTORY", Expected: 2, Present: 2})
+
+	row := objectRow(t, tracker, "qg-sent")
+	byPlan := map[string]NoDataTracking{}
+	for _, tracking := range row.NoDataTracking {
+		byPlan[tracking.Plan.StrategyID] = tracking
+	}
+	sent := byPlan["s-sent"].Emitted
+	if sent == nil || sent.AbnormalSent != 2 || sent.RecoverySent != 1 || sent.AckUnknown != 2 || sent.NotWritten != 1 {
+		t.Fatalf("s-sent emitted = %+v, want the two writes added up after its next deciding round", sent)
+	}
+	if sent.LastAbnormal == nil || sent.LastAbnormal.AlertKey != "key-600" || !sent.LastAbnormal.SentAt.Equal(now) ||
+		sent.LastAbnormal.Group["bk_target_ip"] != "192.0.2.10" ||
+		sent.LastRecovery == nil || sent.LastRecovery.EvaluationTime != 660 || !sent.LastRecovery.SentAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("s-sent latest = %+v / %+v, want the ABNORMAL its Slot decided last and the RECOVERY, each when seen", sent.LastAbnormal, sent.LastRecovery)
+	}
+	if sent.Replica != tracker.replica || !sent.CountingSince.Equal(started) || sent.Reading != NoDataEmittedReading {
+		t.Fatalf("s-sent window = %q since %v reading %q, want this replica since its start and the reading", sent.Replica, sent.CountingSince, sent.Reading)
+	}
+	quiet := byPlan["s-quiet"].Emitted
+	if quiet == nil || quiet.AbnormalSent != 0 || quiet.RecoverySent != 0 || quiet.Reading != NoDataEmittedReading || !quiet.CountingSince.Equal(started) {
+		t.Fatalf("s-quiet emitted = %+v, want zeros with the reading and the window", quiet)
+	}
+	// A Plan whose only write was refused has an entry and did not send.
+	written(ctx, tracker, "s-refused", observability.NoDataEmissionFacts{NotWritten: 3})
+	summary := tracker.NoDataTrackingSummary()
+	if summary == nil || summary.Plans != 2 || summary.AbnormalSent != 2 || summary.RecoverySent != 1 || summary.AckUnknown != 2 ||
+		summary.NotWritten != 4 || summary.PlansSent != 1 {
+		t.Fatalf("summary = %+v, want two deciding Plans, one of which sent, and the counts with the refused write", summary)
+	}
+}

@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -23,19 +22,6 @@ import (
 )
 
 const defaultOutputMaxMessageBytes = 512 << 10
-
-type ReaderLimitsConfig struct {
-	MaxEnvelopeBytes     int `yaml:"max_envelope_bytes"`
-	MaxRecordsPerMessage int `yaml:"max_records_per_message"`
-	MaxPlansPerMessage   int `yaml:"max_plans_per_message"`
-	MaxLevelsPerPlan     int `yaml:"max_levels_per_plan"`
-	MaxSelectorBytes     int `yaml:"max_selector_bytes"`
-	MaxRecordBytes       int `yaml:"max_record_bytes"`
-	MaxPlanSetBytes      int `yaml:"max_plan_set_bytes"`
-	MaxContractDepth     int `yaml:"max_contract_depth"`
-	MaxStringBytes       int `yaml:"max_string_bytes"`
-	MaxValidationIssues  int `yaml:"max_validation_issues"`
-}
 
 type CompilerLimitsConfig struct {
 	MaxPlanBytes              int      `yaml:"max_plan_bytes"`
@@ -85,7 +71,6 @@ type StoreLimitsConfig struct {
 }
 
 type LimitsConfig struct {
-	Reader   ReaderLimitsConfig   `yaml:"reader"`
 	Compiler CompilerLimitsConfig `yaml:"compiler"`
 	Detect   DetectLimitsConfig   `yaml:"detect"`
 	Trigger  TriggerLimitsConfig  `yaml:"trigger"`
@@ -95,11 +80,6 @@ type LimitsConfig struct {
 
 func defaultLimits() LimitsConfig {
 	return LimitsConfig{
-		Reader: ReaderLimitsConfig{
-			MaxEnvelopeBytes: 512 << 10, MaxRecordsPerMessage: 500, MaxPlansPerMessage: 16, MaxLevelsPerPlan: 8,
-			MaxSelectorBytes: 64 << 10, MaxRecordBytes: 128 << 10, MaxPlanSetBytes: 256 << 10,
-			MaxContractDepth: 32, MaxStringBytes: 64 << 10, MaxValidationIssues: 256,
-		},
 		Compiler: CompilerLimitsConfig{
 			MaxPlanBytes: 256 << 10, MaxLevelsPerPlan: 8, MaxAlgorithmsPerLevel: 8,
 			MaxGroupsPerAlgorithm: 16, MaxConditionsPerAlgorithm: 32, MaxASTNodesPerLevel: 512,
@@ -135,16 +115,6 @@ func defaultLimits() LimitsConfig {
 	}
 }
 
-func (c Config) ReaderLimits() contract.ReaderLimitsV2 {
-	v := c.Limits.Reader
-	return contract.ReaderLimitsV2{
-		MaxEnvelopeBytes: v.MaxEnvelopeBytes, MaxRecordsPerMessage: v.MaxRecordsPerMessage,
-		MaxPlansPerMessage: v.MaxPlansPerMessage, MaxLevelsPerPlan: v.MaxLevelsPerPlan,
-		MaxSelectorBytes: v.MaxSelectorBytes, MaxRecordBytes: v.MaxRecordBytes, MaxPlanSetBytes: v.MaxPlanSetBytes,
-		MaxContractDepth: v.MaxContractDepth, MaxStringBytes: v.MaxStringBytes, MaxValidationIssues: v.MaxValidationIssues,
-	}
-}
-
 func (c Config) CompilerLimits() strategy.Limits {
 	v := c.Limits.Compiler
 	return strategy.Limits{
@@ -172,26 +142,7 @@ func (c Config) TriggerLimits() trigger.EvaluationLimitsV2 {
 	}
 }
 
-func (c Config) CodecLimits() state.CodecLimits {
-	v := c.Limits.Codec
-	return state.CodecLimits{MaxLevels: v.MaxLevels, MaxPoints: v.MaxPoints, MaxEncodedBytes: v.MaxEncodedBytes}
-}
-
-func (c Config) StoreLimits() state.StoreLimits {
-	v := c.Limits.Store
-	return state.StoreLimits{
-		MaxKeysPerBatch: v.MaxKeysPerBatch, MaxKeyBytesPerBatch: v.MaxKeyBytesPerBatch,
-		MaxLoadedBytes: v.MaxLoadedBytes, MaxWrittenBytes: v.MaxWrittenBytes,
-	}
-}
-
 func (c LimitsConfig) validate() error {
-	r := c.Reader
-	if r.MaxEnvelopeBytes <= 0 || r.MaxRecordsPerMessage <= 0 || r.MaxPlansPerMessage <= 0 || r.MaxLevelsPerPlan <= 0 ||
-		r.MaxSelectorBytes <= 0 || r.MaxRecordBytes <= 0 || r.MaxPlanSetBytes <= 0 || r.MaxContractDepth <= 0 ||
-		r.MaxStringBytes <= 0 || r.MaxValidationIssues <= 0 {
-		return errors.New("limits.reader budgets must be positive")
-	}
 	compiler := c.Compiler
 	if compiler.MaxPlanBytes <= 0 || compiler.MaxLevelsPerPlan <= 0 || compiler.MaxAlgorithmsPerLevel <= 0 ||
 		compiler.MaxGroupsPerAlgorithm <= 0 || compiler.MaxConditionsPerAlgorithm <= 0 || compiler.MaxASTNodesPerLevel <= 0 ||
@@ -218,12 +169,7 @@ func (c LimitsConfig) validate() error {
 	if store.MaxKeysPerBatch <= 0 || store.MaxKeyBytesPerBatch <= 0 || store.MaxLoadedBytes <= 0 || store.MaxWrittenBytes <= 0 {
 		return errors.New("limits.store budgets must be positive")
 	}
-	if r.MaxSelectorBytes > r.MaxEnvelopeBytes || r.MaxRecordBytes > r.MaxEnvelopeBytes || r.MaxPlanSetBytes > r.MaxEnvelopeBytes ||
-		compiler.MaxPlanBytes > r.MaxPlanSetBytes {
-		return errors.New("reader and compiler byte budgets are inconsistent")
-	}
-	if r.MaxPlansPerMessage > int(detectLimits.MaxPlans) || r.MaxLevelsPerPlan > compiler.MaxLevelsPerPlan ||
-		compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevels) ||
+	if compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevels) ||
 		compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevelResultsPerEvent) || compiler.MaxLevelsPerPlan > codec.MaxLevels {
 		return errors.New("plan and level budgets are inconsistent")
 	}

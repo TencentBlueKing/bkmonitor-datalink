@@ -208,6 +208,8 @@ func (repository *RedisCatalogRepository) loadOutputContexts(
 		contexts[ref.Digest] = OutputContextObject{}
 		missing = append(missing, ref.Digest)
 	}
+	reading := repository.objects().announce(len(missing))
+	defer reading.settle()
 	for start := 0; start < len(missing); start += catalogIndexBatch {
 		batch := missing[start:minInt(start+catalogIndexBatch, len(missing))]
 		replies := make([]*redis.StringCmd, len(batch))
@@ -248,7 +250,7 @@ func (repository *RedisCatalogRepository) loadOutputContexts(
 				return nil, fmt.Errorf("%w: not an output context of this contract", ErrCatalogObjectCorrupt)
 			}
 			repository.observeObjectRead(ctx, objectReadKindOutputContext, objectReadMiss)
-			repository.objects().store(repository.outputContextKey(digest), context, len(payload))
+			repository.objects().store(reading, repository.outputContextKey(digest), context, len(payload))
 			contexts[digest] = context
 		}
 	}

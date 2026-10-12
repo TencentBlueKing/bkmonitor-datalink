@@ -45,8 +45,9 @@ func TestEverySnapshotFieldIsAssignedWhereTheSnapshotIsBuilt(t *testing.T) {
 	// Fields the replica does not fill in: they are set by the aggregate or by
 	// the reader, not by the replica publishing itself.
 	notPublishedHere := map[string]string{
-		"Replica":    "the publisher keys the snapshot by it rather than storing it in the body",
-		"ObservedAt": "stamped by the store on write, so a replica cannot backdate itself",
+		"Replica":      "the publisher keys the snapshot by it rather than storing it in the body",
+		"ObservedAt":   "stamped by the store on write, so a replica cannot backdate itself",
+		"ReadHoldsCut": "set by the store on write, where the read hold list is cut to its budget",
 	}
 	snapshot := reflect.TypeOf(fleet.Snapshot{})
 	for index := 0; index < snapshot.NumField(); index++ {

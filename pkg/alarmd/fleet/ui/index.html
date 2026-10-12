@@ -174,11 +174,26 @@ details.group table{margin:6px 0 0 12px}
       <span id="health" class="badge b-UNKNOWN">…</span>
       <span id="why" class="why"></span>
     </div>
+    <!-- While an object is held by more than one replica, the numbers here
+         are the replicas' own counts added, and each holder counts it. -->
+    <p class="note" id="handoverNote" hidden></p>
+    <!-- A rollout in progress: the leader's latest planning round, read from
+         the same rebalance fields fleet.get's summary names. -->
+    <p class="note" id="rolloutNote" hidden></p>
+    <!-- Query Groups every replica declined: they run nowhere and have no
+         object row, so this sentence is the one place they appear. -->
+    <p class="note stuck" id="declinedNote" hidden></p>
     <!-- What produced every number below. One line when the replicas agree on
          a build; two or more when a rollout is in progress or stuck, and the
          totals are then a mix that no single build produced. -->
     <p class="basis" id="buildLine"></p>
     <div class="brief">
+      <!-- Two denominators, said together: the strategies, as the diagnosis
+           counts them, and the Query Groups they make up, which every cell
+           of the grid below counts. The grid alone read as the strategies:
+           eleven strategies made up into six groups were "6 expected". -->
+      <p id="strategyCount"></p>
+      <p id="strategyVerdicts"></p>
       <p id="briefAction"></p>
       <!-- Where detection is stuck and how much cannot yet be said, as two
            clauses of one sentence that stands whatever the badge says: a
@@ -197,19 +212,20 @@ details.group table{margin:6px 0 0 12px}
          while reading as though it made both. -->
     <div id="impact" class="impact"></div>
     <p class="basis">时间口径：本次请求时刻的聚合快照，非时间窗聚合。<span id="splitBasis"></span></p>
+    <p class="basis">下面各格按查询组计，单位是组：一个查询组由查询相同的策略合成，组数不是策略数。</p>
     <div class="grid">
-      <div class="cell"><div class="k">正常</div><div class="v" id="healthy">–</div>
+      <div class="cell"><div class="k">正常（组）</div><div class="v" id="healthy">–</div>
         <div class="k">跑完了，结果完整</div></div>
-      <div class="cell hl"><div class="k">没跑成待查</div><div class="v" id="ownBad">–</div>
+      <div class="cell hl"><div class="k">没跑成待查（组）</div><div class="v" id="ownBad">–</div>
         <div class="k">这一轮没跑成，而且不属于右边任何一类已经有结论的情况。
           <b>不等于就是 alarmd 的问题</b>——栏里还要再分一次，只有归到 alarmd 的那部分才决定上面的判定</div></div>
-      <div class="cell"><div class="k">策略本身不可用</div><div class="v" id="demoted">–</div>
+      <div class="cell"><div class="k">策略本身不可用（组）</div><div class="v" id="demoted">–</div>
         <div class="k" id="demotedHint">后端持续查不到，已降级不再反复查</div></div>
-      <div class="cell"><div class="k">判不了恢复</div><div class="v" id="undecidable">–</div>
+      <div class="cell"><div class="k">判不了恢复（组）</div><div class="v" id="undecidable">–</div>
         <div class="k" id="undecidableHint">检测窗口没攒够点，恢复无从判起——正常现象，不是故障</div></div>
-      <div class="cell"><div class="k">按配置不处理</div><div class="v" id="byDesign">–</div>
+      <div class="cell"><div class="k">按配置不处理（组）</div><div class="v" id="byDesign">–</div>
         <div class="k" id="byDesignHint">策略自己的生效时段说现在不该跑——这是常驻状态，不是过渡状态</div></div>
-      <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
+      <div class="cell hl"><div class="k">状态未知（组）</div><div class="v" id="unknown">–</div>
         <div class="k">没有副本能报告它的状态。不知道不等于正常</div></div>
       <div class="cell hl" id="unattributedCell" hidden>
         <div class="k">成因没保留</div>
@@ -223,10 +239,10 @@ details.group table{margin:6px 0 0 12px}
       </div>
     </div>
     <div class="grid">
-      <div class="cell"><div class="k">应有 (expected)</div><div class="v" id="expected">–</div>
+      <div class="cell"><div class="k">应有（组，expected）</div><div class="v" id="expected">–</div>
         <div class="k" id="expectedHint"></div></div>
-      <div class="cell"><div class="k">已覆盖 (covered)</div><div class="v" id="covered">–</div></div>
-      <div class="cell"><div class="k">已知状态 (determined)</div><div class="v" id="determined">–</div></div>
+      <div class="cell"><div class="k">已覆盖（组，covered）</div><div class="v" id="covered">–</div></div>
+      <div class="cell"><div class="k">已知状态（组，determined）</div><div class="v" id="determined">–</div></div>
       <div class="cell wide">
         <div class="k">出过降级池</div>
         <div class="v" id="poolExits">–</div>
@@ -316,6 +332,7 @@ details.group table{margin:6px 0 0 12px}
          used to report CPU, memory and permits and leave "is it enough" to
          the reader, who could not answer it from those. -->
     <div id="loadLines" class="basis"></div>
+    <p class="note" id="loadHandover" hidden></p>
     <p class="basis" id="loadLimits"></p>
     <p class="basis">下面是各副本当前的占用与上限，是上面判断的依据。</p>
     <details class="more">
@@ -583,6 +600,7 @@ var GAP_MEANING = {
   NO_REPLICAS: '没有就绪副本，没有任何证据',
   DENOMINATOR_UNAVAILABLE: '读不到应有对象集，没有分母',
   REGISTRY_UNAVAILABLE: '读不到副本清单，不知道本应有谁上报',
+  SNAPSHOTS_DEFERRED: '本副本这一次没有读快照：观测内存余量放不下它们解码后的大小；不等于别的副本没上报，下一次读取可能就读到了',
   SNAPSHOTS_UNREADABLE: '本副本这一次没读到任何快照；不等于别的副本没上报'
 };
 
@@ -639,12 +657,25 @@ var EFFECT = {
   MEMORY_LOST: '这一轮的结果可信，丢的是无数据记忆的维护（没写进去或续不了期），下一轮再向存储要一次'
 };
 
+// How the dependency was named: by the reason code, by the error's words,
+// or - for a failed write of the round's events - by the kind the sink's
+// error said by its type. Held to fleet.DependencyEvidences.
+var DEPENDENCY_EVIDENCE = {
+  code: '，由原因码判定',
+  text: '，由错误原文判定',
+  ack_unknown: '，写事件时问了 broker、没拿到确认：消息可能已部分落地，这一轮会重做',
+  broker_refused: '，broker 应答说没写入（权限、主题、版本、时间戳之类，按 Kafka 协议错误码判定），这一轮会重做',
+  client_rejected: '，本部署的客户端或转换器拒绝发送（或生产者已彻底拒收），重试还会被拒，要改配置或策略',
+  snapshot_store: '，兼容协议的快照库（Redis）没写成，不是 Kafka 的问题',
+  sink_not_open: '，输出还没打开，没有问过任何 broker',
+  unknown: '，写事件失败，错误没带种类（升级过程中旧副本发布的行也是这样）'
+};
+
 // One sentence for the row: where it is stuck, talking to what, what kind,
 // and what it did to the detection -- then the last success, or that this
 // process never saw one, which is the fact a recovery is judged on.
 function blockedWords(blocked) {
-  var evidence = blocked.dependency_evidence === 'code' ? '，由原因码判定'
-    : blocked.dependency_evidence === 'text' ? '，由错误原文判定' : '';
+  var evidence = DEPENDENCY_EVIDENCE[blocked.dependency_evidence] || '';
   return (STAGE[blocked.stage] || blocked.stage)
     + '（' + (DEPENDENCY[blocked.dependency] || blocked.dependency) + evidence
     + (blocked.operation ? '，操作 ' + blocked.operation : '') + '）'
@@ -708,7 +739,7 @@ function momentLabel(at) {
 // Who has to act, in words. Keyed by the server's Owner values; a completeness
 // test holds this to the Go list.
 var OWNER = {ALARMD: 'alarmd', DATA: '数据侧', STRATEGY: '策略侧', NOBODY: '不用处理',
-             UNDETERMINED: '待确认', PLATFORM: '平台写入方'};
+             UNDETERMINED: '待确认', PLATFORM: '平台写入方', CAPABILITY: '等构建'};
 
 // One sentence per check. This is the whole of the page's wording about what
 // is wrong: twenty lines, held to the Go table by a test. The server decides
@@ -727,8 +758,9 @@ var CHECK = {
   // kind of cause under it; this template is the fallback for a server that
   // did not send one, and names no cause -- the reasons under the line do.
   CAPABILITY_UNSUPPORTED: '{s} 条策略这个部署跑不了（{g} 种原因）——处理办法按原因组看',
+  CAPABILITY_UNLISTED: '{s} 条策略这个部署跑不了，原因不在本构建声明的能力缺口清单里（{g} 种）——归本服务按原因组查清',
   CONFIG_REJECTED:       '{s} 条策略的定义编译不过（{g} 种原因）——按原因组看是哪个字段；带 STALE_CONFIG 的那组仍按上一版配置在跑',
-  CONFIG_NORMALIZED:     '{s} 条策略在检测，但有一部分配置的读法和写的不同（{g} 种原因，各原因的说明见下）——不是被扣',
+  CONFIG_NOTED:     '{s} 条策略在检测，配置有提示（{g} 种原因：读法和写的不同，或写了但不会起作用；各原因的说明见下）——不是被扣',
   // The three standings. {since}, {c}, {applied} and {published} come from
   // the leader's activation facts on the report, not from counts; the split
   // line's numbers come from the leader's rebalance round on the report.
@@ -745,15 +777,24 @@ var CHECK = {
   TIMELINE_PRUNED:       '{n} 个对象的游标越过了已裁掉的时间线，那段没检测也不补',
   BOOKKEEPING_ABANDONED: '{n} 个对象检测已执行、输出阶段已完成，完成记账未获确认{bookkeeping}',
   NO_DATA_MEMORY_REFUSED: '{n} 个对象的无数据记忆维护不了（{s} 条策略）：阈值检测照常，但写不进去的记忆停在最后一次成功写入、续不了期的记忆会在有效期到后整份过期——之后变缺失的组不会被记为首次缺失，无数据告警不会触发',
+  AWAITING_VIEW:         '{n} 个对象等所在副本的视图带上它，等得比设计内的时长还久（{g} 个副本）：这段时间里它们不检测',
   DEPENDENCY_DOWN:       'alarmd 自己的依赖没答，{n} 个对象受影响（{g} 种）',
   DEFECT:                '{n} 个对象命中程序缺陷（{g} 种），上报',
   OBSERVATION_GAP:       '{n} 个对象现在说不出结论（{g} 种原因）',
   BACKEND_NOT_ANSWERING: '查询没有得到应答，{n} 个对象受影响（{g} 种症状，{s} 条策略）——客户端超时或 5xx，查询预算、网络、后端耗时哪一环还分不出',
-  QUERY_REFUSED:         '后端拒绝了 {n} 个对象的查询（{g} 种原因，{b} 个业务）——后端读了查询并回了状态码，是查询构造、策略引用还是后端规则还分不出',
+  QUERY_REFUSED:         '后端拒绝了 {n} 个对象的查询（{g} 种原因，{b} 个业务）——后端读了查询并回了状态码：条件值存储不接受、表达式解析不了这类；归属依据是 2026-09-29 核过的 5 条（4 条条件值以控制字符开头、1 条表达式解析不了），逐条对照平台检测器对同一策略的请求，5 条都同样被拒',
   QUERY_TARGET_MISSING:  '{n} 个对象的查询被后端回"表或字段不存在"（{g} 种回答，{s} 条策略，{b} 个业务）——按策略引用核，未逐个核过实际请求与元数据前不认定是策略写错',
+  READ_BEFORE_COMPLETE: '{n} 个对象连续两次抽样都在数据到齐之前就做了首读（{s} 条策略）：检测照常在跑，但判的是没到齐的数据，结果不能直接采信；要把策略的 time_delay 调到对象行给的建议值',
+  READ_HELD: '{n} 个对象的数据到得比 time_delay 等的晚（{s} 条策略）：alarmd 按测得的到齐时刻自动推后首读，检测照常、读的是到齐的数据；要把策略的 time_delay 调到对象行给的建议值，改了之后就不用再推后',
+  LATE_PAST_ROUND: '{n} 个对象的迟到序列，连续两个补充窗口都晚过了下一轮（{s} 条策略）：补充一条也补不回，这些序列在迟到的那几轮是没有数据判的；要把策略的 time_delay 调到对象行给的建议值',
+  LATE_SERIES_MISSED: '{n} 个对象有补充补不回的迟到序列（{s} 条策略）：补充补回了同一窗口里的其余序列，这几条到得比补充能等的还晚，在那几轮是没有数据判的；交数据侧查为什么这么晚',
   RETAINED_SHARE_APPROACHING: '{n} 个对象最近一轮的留存字节已逼近单对象份额（阈值见对象行 threshold_percent；{s} 条策略）：检测照常，但再涨一点，这些对象的每一轮都会被按名拒掉、整条停检',
   NO_DATA_PERSISTENT:    '{n} 个对象持续没有数据（{s} 条策略）',
+  SERIES_SPARSE:         '{n} 个对象的序列按整分钟缺点（{s} 条策略）：查询正常返回，这些序列当时不在结果里，或整轮结果为空——数据侧的，不是本服务要处理的',
   EMPTY_EVERY_ROUND:     '{n} 个对象每一轮都查不到数据、没有任何一轮已知有过数据（{s} 条策略）：检测在跑，但没有任何东西可判',
+  EMPTY_AFTER_TARGET:    '{n} 个对象的查询有数据，但全部不在所选监控目标内（{s} 条策略）：数据在，但不在所选目标内，请核对目标',
+  QUIET:                 '{n} 个对象是分组的事件计数，这一轮查询完整、没有任何分组在问的范围里有事件（{s} 条策略）：检测在跑，事件流在静止，不是无数据',
+  ANSWER_TRUNCATED:      '{n} 个对象最近一轮回答可能被 UQ 截断（{s} 条策略）：某个分组维度在一层里恰好有一万个取值，是 UQ 每层的分组上限；回来的分组照常做阈值检测，配了无数据检测的这一轮整轮不判无数据（SKIPPED_ANSWER_TRUNCATED），回来的分组也不判',
   SERIES_CHURNING:       '{n} 个对象的序列活不过检测窗口（{s} 条策略），恢复判不了',
   SERIES_DATA_MISSING:   '{n} 个对象恢复所需的老序列数据不完整（{s} 条策略），恢复判不了——是数据没到还是 alarmd 没取到还分不出',
   WINDOW_UNDECIDED:      '{n} 个对象的窗口填不满，还分不出是谁的（{g} 种情况，{s} 条策略）',
@@ -854,14 +895,15 @@ var DEGRADATION = {
   CONTROL_SOURCE_STALE: '策略源超过设计允许的时间没有刷新成功，跑的是上一份好的目录',
   CONTROL_LEADER_ABSENT: '副本拿不到控制面 leader 租约、也不知道谁持有，超过设计允许的时间——可能没人在刷新',
   OPEN_ALERT_SET_STALE: '已开告警集合的副本超过设计允许的时间没拿到消费者的发布，恢复门在用旧知识',
-  OPEN_ALERT_SET_DISJOINT: '本副本发出的告警一条都不在 linkd 的已开告警集合里，集合的键和本副本查的不是一种；恢复门改按本副本发过的告警放行，本副本没发过的告警的恢复仍会被扣住，请核对 linkd 告警源的指纹配置',
+  OPEN_ALERT_SET_UNCONFIRMED: 'linkd 的 Console 还没确认已开告警集合在哪里、或没确认集合按本副本发出的告警 ID 建键；恢复门改按本副本发过的告警放行，本副本没开过的告警的恢复要等 Console 确认后才放行，看开放告警集合那一行写的是哪一条没确认',
   PLATFORM_SETTINGS_STALE: '平台设置的副本超过设计允许的时间没拿到平台的发布，检测在用可能已变的设置',
   OUTPUT_NOT_READY: '副本连不上告警输出：进程活着但不就绪，不接检测任务，由其余副本顶着——少一个副本的容量',
   VIEW_PUBLISH_FAILING: 'leader 超过一分钟发不出视图：已有视图的副本照常检测，这期间重启的副本没有视图、什么都不执行；原因见说明',
   VIEW_STREAM_NO_SESSIONS: 'leader 超过一分钟有待连的副本却没有一个连上视图流：视图谁都收不到，重启的副本会拿不到视图',
   METRICS_INTERNAL_LISTEN_MISSING: '副本配了 CLI 管理凭据，对外端口不再给 /metrics，又没配集群内端口：检测不受影响，但这个副本的自监控指标抓不到',
   CLI_AUTH_UNAVAILABLE: '副本配了 CLI 管理凭据，但 CLI 没起来、发不出会话：为了不把路堵死，公开面没有收紧，依赖地址等仍然公开；检测不受影响',
-  ACTIVATION_BLOCKED: '上一次发布有 QG 被扣住：它们的时间轴被发布流程之外的写入改过，保持原来的内容照常执行（没有可执行段的不执行），其余策略已按新配置生效；用修复子命令或查外部写入后会自动切过去；哪些 QG、什么原因见说明'
+  ACTIVATION_BLOCKED: '上一次发布有 QG 被扣住：它们的时间轴被发布流程之外的写入改过，保持原来的内容照常执行（没有可执行段的不执行），其余策略已按新配置生效；删掉说明里列出的时间轴键（下次切换会重新开段）或查清外部写入后会自动切过去；哪些 QG、什么原因、要删哪个键见说明',
+  ACTIVATION_HEADER_MISSING: '激活记录的头不见了、正文还在，leader 没能按正文写回：检测照常按正文执行，但策略变更不会生效、当前激活的对象不再续期，到期后整个舰队停止检测；上一次写回的结果见说明'
 };
 
 // What each line owes past its sentence, per check and held to the Go list:
@@ -876,8 +918,9 @@ var EVIDENCE = {
   SOURCE_SET_FLAPPING:   '展开按小时看：每组是那个小时回到活动集的策略数、最长缺席时长与策略样本；首屏"来源"块的 set.pending_removal / pending_removal_samples[].absent_since 是此刻宽限中的策略与各自缺席起点，set.hours[] 是整份按小时的账（自 set.since 起，leader 进程重启后重新计）；日志 snapshot_refreshed 行的 retired/added_query_groups 与 assignment_swept 行是同一件事在对象层的样子',
   SOURCE_INCOMPLETE:     '展开按原因看策略样本：SOURCE_IDENTITY_UNAVAILABLE = 文档顶层缺 bk_tenant_id / space_uid；SOURCE_OBJECT_INCOMPLETE = ID 在 strategy_ids 里但 strategy_<id> 不存在；依赖面板"策略缓存"行给缓存 Redis 地址与 last_updated；指标 catalog_withheld_objects{disposition="SOURCE_INCOMPLETE",reason}；日志 source_withheld',
   CAPABILITY_UNSUPPORTED: '展开按原因看：每组带服务端给的"这是什么 / 谁能处理 / 下一步"（words.kind ∈ DEPLOYMENT_PARAMETER 部署参数不够 · BUILD_CAPABILITY 本构建不支持 · WRITER_AHEAD 写入方超前于本构建 · STRATEGY_DEFINITION 策略定义超出护栏 · UNKNOWN_REASON 页面还没有说明）与策略样本、field_path。指标 catalog_withheld_objects{disposition="UNSUPPORTED_PHASE2_CAPABILITY",reason}，reason 原样显示不落 other',
+  CAPABILITY_UNLISTED: '展开按原因看：这些原因同样被记为能力不支持，但不在本构建声明的能力缺口清单里（一个没人登记的新原因，或记错处置的缺陷），所以先算本服务的，每组带服务端给的说明与策略样本、field_path',
   CONFIG_REJECTED:       '展开按原因看策略样本与字段路径（field_path 是编译器拒绝的那个字段）；指标 catalog_withheld_objects{disposition="CONFIG_REJECTED",reason}',
-  CONFIG_NORMALIZED:     '展开按原因看策略与级别，每组带服务端给的"读成了什么 / 下一步"；指标 catalog_withheld_objects{disposition="CONFIG_NORMALIZED",reason}（零也可读）',
+  CONFIG_NOTED:     '展开按原因看策略与级别，每组带服务端给的"实际怎么用 / 下一步"；指标 catalog_withheld_objects{disposition="CONFIG_NOTED",reason}（零也可读）',
   CUTOVER_FAILING:       '展开这一行：最近一次激活失败原文、阶段/类别、连续轮数；日志 activation_failed（reason_code = 阶段/类别）',
   OWNERSHIP_SKEWED:      '副本表的"持有"列与"已运行"列（持有少的那个若比同构建的其它副本晚启动很久，就是中途重启过，原因看容器上一次退出）；Leader 的再平衡这一轮（计划/发出/暂停）在这一行的句子里；指标 worker_owned_query_groups{pod}、rebalance_gap、assignment_moves_total{reason=rebalance}、rebalance_paused_total{reason=set_unstable}',
   REPLICA_DEGRADED:      '展开按种类看是哪个副本；策略源过期的组直接带最近一次刷新失败的阶段与原文（下面组名后）；输出未就绪的组带该副本的未就绪时长、重试次数与最近一次失败原文；副本表里该副本的策略源/告警集合/平台设置时钟；依赖面板"告警输出"行',
@@ -888,6 +931,7 @@ var EVIDENCE = {
   TIMELINE_PRUNED:       '对象行"没检测的时段"：游标从哪跳到哪、记录时刻',
   BOOKKEEPING_ABANDONED: '对象行"记账前被打断的时段"给出执行标记；累计数与最近时刻在这一行。结合同对象、同一 Slot 的失败环节、错误原文和后续 Progress 提交记录定位，不能仅凭此记录确定失败依赖',
   NO_DATA_MEMORY_REFUSED: '按原因分组看是写不进去还是续不了期。对象行"无数据记忆写不进去"：存储的拒绝原因、这份记忆的组数与上限、首次与最近拒绝时刻、被拒轮数；"无数据记忆续不了期"：拒绝原因、尝试次数；健康对象行的"无数据记忆维护"是对照（最近一次问存储的时刻在前进）。指标 worker_no_data_memory_refusals_total{reason,record}、worker_no_data_memory_renewals_total{result,reason}',
+  AWAITING_VIEW:         '对象行"等视图"（awaiting_view）：从哪一轮开始等（since）、已等多久（waited_seconds）、设计内的界（bound_seconds，由 Leader 租约、刷新间隔、续期间隔与对账间隔推出，不是配置）；按副本分组看是一个副本在等还是全部在等；指标 view_executed_query_groups{outcome="not_in_view"} 是此刻在等的对象数',
   DEPENDENCY_DOWN:       '分组的原因码说是哪个依赖；对象行"最近一次错误"给原文',
   DEFECT:                '分组的原因码 + 对象行"最近一次错误"原文与 Slot——上报带这两样',
   OBSERVATION_GAP:       '对象行"等下次 · 预计 HH:MM"；副本级缺口看副本表里该副本的快照年龄',
@@ -897,20 +941,29 @@ var EVIDENCE = {
   CONFIG_UNRESOLVED:     '对象行 config_changed 与快照/查询/调度三版本是否变了',
   BACKEND_NOT_ANSWERING: '分组的症状（超时/5xx）；对象行的冷却到期时刻与失败次数；超时的还要看查询预算与后端耗时，这两样不在页面上',
   NO_DATA_PERSISTENT:    '对象行连续空轮数 ≥3，且源时间上"最近一次空轮的 Slot − 最后一次有数据的 Slot" ≥ 1 h（与 EMPTY_EVERY_ROUND 同一把尺：一个时钟一个阈值，只差"有没有过数据"）；只看轮数会把每 10 min 上报一次的源在三分钟内列成"数据停了"，只看小时会把慢周期对象两轮就列上。最后一次有数据的 Slot 随对象记录跨重启恢复',
-  EMPTY_EVERY_ROUND:     '对象行"每轮都空"：连续空轮数（重启后只从恢复的那一轮起数，是下界）、空跑起始 Slot（源时间）、评估周期（interval_seconds）、never_saw_data=true（没有任何一轮已知有过数据——本进程没见过、对象记录里也没有）、原因 CAUSE_UNKNOWN（本版不猜）；与 NO_DATA_PERSISTENT 的区别只在"有没有已知有数据的轮"。一小时的门按 Slot 对 Slot 量：最近一次空轮的 Slot 减空跑起始 Slot ≥ 1 h，不掺墙钟——问的是"这个源在它自己的时间上空了一小时没有"，不是"我们看了多久"；两种时钟混在一条判据里，落后两小时正在追赶的对象恢复后第一轮就过门，恰是最该判对的场景。反过来，两小时的空 Slot 一分钟回放完也会列出，那一小时源时间确实是空的。JSON：no_data[].kind=EMPTY_EVERY_ROUND、empty_every_round{rounds, since, interval_seconds, never_saw_data, cause}、首屏 empty_every_round_total',
+  SERIES_SPARSE:         '对象行每个短窗口的缺口都已逐分钟对上记住的轮次，且全部是"查询正常返回、这条序列不在结果里"或"查询正常返回、整轮为空"（窗口判定 DATA_ABSENT_WHEN_QUERIED 或 QUERY_ANSWERED_EMPTY）；列表截断时，未列出的短窗口缺点所在的分钟也要全部对上完整应答的轮次。有本侧没查全的轮次、有超出记忆的分钟，都不归这一行；每轮都为空的查询归 EMPTY_EVERY_ROUND。序列被移出策略的监控目标、之后又移回来，移出的那几分钟也记成"查询正常返回、序列不在结果里"，所以这一行不能证明主机一定漏报了数据',
+  EMPTY_EVERY_ROUND:     '对象行"每轮都空"：连续空轮数（重启后只从恢复的那一轮起数，是下界）、空跑起始 Slot（源时间）、评估周期（interval_seconds）、never_saw_data=true（没有任何一轮已知有过数据——本进程没见过、对象记录里也没有）、原因 CAUSE_UNKNOWN（本行不猜；最近一个空轮的序列全部被目标判在目标外的同一条空跑归 EMPTY_AFTER_TARGET，原因 OUTSIDE_TARGET，不在本行，也不计入 empty_every_round_total）；与 NO_DATA_PERSISTENT 的区别只在"有没有已知有数据的轮"。一小时的门按 Slot 对 Slot 量：最近一次空轮的 Slot 减空跑起始 Slot ≥ 1 h，不掺墙钟——问的是"这个源在它自己的时间上空了一小时没有"，不是"我们看了多久"；两种时钟混在一条判据里，落后两小时正在追赶的对象恢复后第一轮就过门，恰是最该判对的场景。反过来，两小时的空 Slot 一分钟回放完也会列出，那一小时源时间确实是空的。JSON：no_data[].kind=EMPTY_EVERY_ROUND、empty_every_round{rounds, since, interval_seconds, never_saw_data, cause}、首屏 empty_every_round_total',
   SERIES_DATA_MISSING:   '对象行窗口计数：老序列缺点的比例；同一行若带超时或保护，缺点可能是 alarmd 没取到而不是数据没到',
+  EMPTY_AFTER_TARGET:    '与 EMPTY_EVERY_ROUND 同一条空跑（同一把一小时的尺、同样从没见过数据），只差最近一个空轮的原因：查询返回了序列，而每条都被所有策略按"不在监控目标内"拒绝，且拒绝时缓存事实齐全、是目标本身的回答（admission.DefinitelyOutside）。有任何一条因为别的原因被拒（主机停用监控、缓存读不到、选择器没答全），就不归这一行。JSON：empty_every_round.cause=OUTSIDE_TARGET',
+  QUIET:                 '对象行：最近一轮主查询完整（FULL）且为空，查询只读 custom/event、带分组维度，且没有任何序列被扣下（不是被目标拒绝的空）。事件计数向 UQ 要 N + R 个周期（触发窗口加恢复窗口），UQ 只给这个范围里有过事件的分组补 0；没有任何分组回来，就是这段时间里一条事件也没有。从第一轮空就是这一行，不等一小时，也不进 NO_DATA_PERSISTENT 或 EMPTY_EVERY_ROUND。JSON：no_data[].kind=QUIET',
+  ANSWER_TRUNCATED:      '对象行：最近一轮有回答的查询里，ES 类来源（custom/event、日志、bk_log_search 时序）的某个分组维度，在其余维度相同的一组序列里恰好有 10000 个不同取值，正是 UQ 每层 terms 聚合的上限（EsMaxSize 默认值）；UQ 截掉的分组不报任何标记。父桶恰好一万个、没截时回答长得一样，所以是"可能"。下一轮有回答且没有这个迹象即消失。JSON：no_data[].kind=ANSWER_TRUNCATED，answer_truncation 带来源与维度；计数 uq_answer_truncated_total{source_semantics}',
   SERIES_CHURNING:       '对象行窗口计数：新序列占比与活不过窗口的轮数',
   PLAN_UNEVALUABLE:      '分组的策略与原因码',
   QUERY_TARGET_MISSING:  '分组的后端回答（表/字段不存在的状态词）；策略引用的表与字段看行上策略链接，与元数据逐个核',
+  READ_BEFORE_COMPLETE: '对象行"首读早于数据到齐"：当前有效的 time_delay（current_time_delay_seconds，按周期向上取整、日志关键字不配时取 60）、建议值（suggested_time_delay_seconds：当前值加上样本里数据比首读晚到齐的最大秒数，再按周期向上取整；到齐时刻取的是第一次读全的那一档复查，数据实际在它和前一档之间到达，所以建议值是上界）、从何时起连续出现（since）。依据的样本（每个样本的 Slot、首读年龄、到齐年龄、在哪一档复查时看到首读已有的序列变了或首读为空后数据才到、变化的桶）在属主副本的 lookback.get 里（read_early）。回看按事实分四类，只有"整窗读早"进这一行；只是后来多出新序列的归补充检测，序列表被内存安全线拒绝而分不出的记为未分类，都不在这一行',
+  READ_HELD: '对象行"alarmd 推后首读"（read_hold）：当前自动推后多少（read_hold_ms）、从哪个 Slot 起（held_since）、测得的数据到齐时刻（arrival_age_ms，距窗口结束）、当前 time_delay（time_delay_seconds）和不再需要推后的建议值（suggested_time_delay_seconds：到齐时刻减去 alarmd 自身的就绪等待 settling_wait_seconds，按周期向上取整，所以可能小于到齐时刻；到齐时刻只随证据上升，所以是上界）。只有测得到齐时刻的推后才有这一行；继承自前驱的上限或降级冻结的推后只在 diagnose 的 time_delay_advice 里显示 read_hold_seconds，不给建议值',
+  LATE_PAST_ROUND: '对象行"迟到超过一轮"：当前有效的 time_delay（current_time_delay_seconds）、建议值（suggested_time_delay_seconds：当前值加上迟到序列在首读后多久被看到，按周期向上取整；序列在那一档复查和前一档之间到达，所以建议值是上界）、从何时起连续出现（since），以及依据的窗口（每个窗口的 Slot、看到迟到序列的那一档、距首读多久、首读准时的序列数与发现迟到的序列数（这两个按序列计，一条序列算一次）、已经越过自己 Slot 的数目（按 Plan 与序列的组合计，一条序列被几个 Plan 共用就算几次））。只有窗口里每一条迟到序列都越过了自己的 Slot 才算；同一窗口里有序列加载失败、读不全、配置已变或记为无数据的，这个窗口不算也不撤',
+  LATE_SERIES_MISSED: '对象行"补充补不回的迟到序列"：补充只补回一部分的窗口数（windows）、这些窗口里补不回的序列数（crossed_series）、从何时起（since），以及最近的几个窗口（每个窗口首读准时的序列数与发现迟到的序列数，这两个按序列计，一条序列算一次；补回几个、补不回几个，这两个按 Plan 与序列的组合计，一条序列被几个 Plan 共用就算几次，不能拿来和前两个直接相比）。补回的由补充检测记在 lookback.get 的 supplements 里',
   RETAINED_SHARE_APPROACHING: '对象行"逼近份额"：最近一个完成 Slot 的留存字节 retained_bytes、它被判的单对象份额 share_bytes、两者之比 percent_of_share、阈值 threshold_percent、从何时起一直在阈值以上（since），以及按相位拆开的 retained_input/state/output/gap_bytes；按策略分组，最满的在前。指标 state_retained_share_approaching_slots_total 数的是这样的完成 Slot'
 };
 
 var NEXT = {
-  SOURCE_SET_FLAPPING:   '交平台侧：找上游 strategy_ids 列表的写入方，问为什么这些小时的列表少了这批策略又回来（每小时同一分钟出现是定时任务的形状）；alarmd 这边不改策略、不改配置——宽限期（目录 AbsenceGracePeriod）已让 ≤10 分钟的缺席不再移除 Plan，超过宽限的缺席仍按删除处理',
+  SOURCE_SET_FLAPPING:   '交平台侧：找上游 strategy_ids 列表的写入方，问为什么这些小时的列表少了这批策略又回来（每小时同一分钟出现是定时任务的形状）；alarmd 这边不改策略、不改配置——写方不声明 hold_last_good 时，宽限期（目录 AbsenceGracePeriod）让 ≤10 分钟的缺席不移除 Plan，超过宽限的缺席仍按删除处理；写方声明时缺席即删除，没有宽限',
   SOURCE_INCOMPLETE:     '找策略缓存的写入方（bk-monitor 后台的 cache 进程，或替代它的模块）：缺身份字段的要写方按合同补 bk_tenant_id / space_uid（bk-monitor 主线 2026-08-31 起的缓存刷新才写）；ID 列表残留的要写方清掉已删除策略的 ID（2026-09-11 起的刷新会清）。Pod 外一句判据：在缓存 Redis 上 GET <前缀>.strategy_<任一 id>，顶层有 "space_uid" 才算过。alarmd 这边不用改，写方修好后下一轮刷新（最多 6 分钟）自动接受',
   CAPABILITY_UNSUPPORTED: '按原因组各自的"下一步"：部署参数不够的调参数、下一轮刷新自动接受；本构建不支持的等带该能力的构建，改参数没有用；写入方超前的等解释该字段的构建或写入方改文档；策略定义超出护栏的先收策略，护栏不是工作上限',
+  CAPABILITY_UNLISTED: '按原因组各自的"下一步"；说明写着原因待查的，交本服务查清是能力缺口、部署参数还是缺陷，登记后归到对应的一行',
   CONFIG_REJECTED:       '交策略侧：按原因组与字段路径改策略定义；alarmd 这边不用改，改好后下一轮刷新自动接受。STALE_CONFIG 组的策略仍在按上一版跑，不算漏检',
-  CONFIG_NORMALIZED:     '按原因组的"下一步"处理；有的要策略侧改写法，有的不需要处理。策略一直在检测，不算漏检',
+  CONFIG_NOTED:     '按原因组的"下一步"处理；有的要策略侧改配置，有的不需要处理。策略一直在检测，不算漏检',
   CUTOVER_FAILING:       '先修激活：看展开里最近一次失败文本与 activation_failed 日志；修好前所有策略变更都不生效',
   OWNERSHIP_SKEWED:      '不要手动重启持有多的副本来均衡——重启只会把它的对象整批搬到剩下的副本，不会均分。{rebalance}；在均分回来之前，持有多的那个副本上的漏检与超时不按容量处理、不据此扩副本或加资源',
   REPLICA_DEGRADED:      '按种类处理：源过期看策略源刷新，leader 缺席看租约，告警集合/平台设置过期看对应发布者；输出未就绪看该副本所在节点到告警输出的网络（它自己在重试，最多 30 秒一次，通了就就绪），不用重启它',
@@ -921,20 +974,29 @@ var NEXT = {
   TIMELINE_PRUNED:       '仍在发生的：看游标为什么落后到被剪；已停止的只是记录，那段永久没检测',
   BOOKKEEPING_ABANDONED: '核对同对象、同一 Slot 的最后失败步骤与后续 Progress 提交，定位受阻环节及依赖；持续新增时优先排查，单次记录也不能直接归因为瞬时抖动',
   NO_DATA_MEMORY_REFUSED: '写不进去的：这条策略的无数据记忆组数超过了上限（默认 100,000，是防失控的护栏，不是工作上限——线上最大的记忆只有几千组），先看策略的聚合维度是不是把组数放飞了（按高基数维度分组），收维度而不是抬上限。续不了期的：看状态存储（Redis）是否可用、是否支持设置有效期，恢复后下一轮自动续上，不用动策略。修复前这些策略的无数据告警不会触发，要人工盯这组的缺失',
+  AWAITING_VIEW:         '只有一个副本在等：看它的视图流有没有连上、视图修订有没有前进；全部副本都在等：看现在有没有 Leader、它的刷新有没有完成并发布视图。重启副本不解决问题，只会让它的对象再等一次',
   DEPENDENCY_DOWN:       '按原因码看是哪个依赖（Redis/Kafka/后端）；依赖恢复后自动清',
   DEFECT:                '程序缺陷：带原因码上报，展开取一个对象的证据',
   OBSERVATION_GAP:       '等下一轮完成以补齐原因（行上有预计时刻；到点后仍可能在等待、重试或取消）；超过预计完成时间仍未补齐，它会落到"到期没跑"那一行（alarmd 的），再查该副本的调度与执行；副本级缺口看该副本快照',
-  QUERY_REFUSED:         '展开看后端回答的状态词：说表/字段不存在的已单列到策略侧；只有状态码的，页面上没有后端原文可核，先留待归因，拿行上策略链接里的查询定义与后端侧日志对',
+  QUERY_REFUSED:         '按行上策略链接看查询定义：条件值里的控制字符、解析不了的表达式要改策略；若平台检测器对同一条策略的查询能过，就是 alarmd 构造的问题，回 alarmd',
   WINDOW_UNDECIDED:      '按"情况"分组看，再看行上最差窗口的进展：在补的（上一轮更少）等；连续多轮没进展的不能只等——看每一轮不完整的原因（那才是根因，多半是查询不可用或冷却）；保护未解除的等它解除，不改策略——它要求的完整轮数是这份持久化保护的，可能大于策略配置值，别拿策略里的数去核',
   COVERAGE_READING_REFUSED: '这是本部署自己的计数不自洽：按规则分组，把规则与系列交给 alarmd 修；这期间不能靠等窗口满来判断',
   CONFIG_UNRESOLVED:     '按策略看：config_changed 为真才是最近改过，下一轮按新配置跑；为假的不在这一行',
   BACKEND_NOT_ANSWERING: '先查查询链路：超时看查询预算、网络、后端耗时哪一环超了；5xx 看后端；核实是后端的再交数据侧。alarmd 已降频不再反复查',
   NO_DATA_PERSISTENT:    '交数据侧：按策略看是数据停了还是采集停了',
+  SERIES_SPARSE:         '交数据侧：按策略看是哪些主机或实例整分钟没上报；先确认这段时间策略的监控目标没有改过（目标移出又移回的分钟也会记在这里）',
   EMPTY_EVERY_ROUND:     '交策略侧，两个候选逐个核：① 数据源本身没有数据（这个查询在源上就查不到东西）；② 数据源上报周期比策略聚合周期长（如 15 s 聚合跑 30 s 上报的源，每个窗口都是空的）→ 对照上报周期与 agg_interval，把聚合周期抬到不小于上报周期。页面读不到 Plan 的聚合窗口和源的分辨率，所以原因只给 CAUSE_UNKNOWN、不替你判',
   SERIES_DATA_MISSING:   '先看同一行有没有超时或保护：有的先按那个查（缺点可能是 alarmd 没取到）；没有的再按策略给数据负责人',
+  EMPTY_AFTER_TARGET:    '交策略侧：数据在，但不在所选目标内，请核对目标——所选的主机、模块或分组里有没有正在上报这个指标的对象；数据源本身不用查',
+  QUIET:                 '不用处理：事件计数没有事件可判。若事件源确实在产生事件、这里却一直安静，先核 UQ 那头：ES 索引或 mapping 查找失败、路由没有存储实例时，UQ 也回"完整且为空"，从回答里分不出来（外部服务审查第 8 节）',
+  ANSWER_TRUNCATED:      '收窄策略的分组：去掉或换掉取值上万的那个维度（对象行的 answer_truncation.dimension），或改用不按它分组的写法；部署调高过 UQ 的 EsMaxSize 的，alarmd 认的仍是默认一万',
   SERIES_CHURNING:       '交策略侧：序列活不过检测窗口，通常是聚合维度太细',
-  PLAN_UNEVALUABLE:      '交策略侧：按现在的定义算不了，改策略',
+  PLAN_UNEVALUABLE:      '交策略侧：按现在的定义算不了，改策略；原因码为 DETECT_INTERVAL_STORAGE_NOT_SLIDING 时，是该指标的存储不支持按检测周期滑动，请去掉检测周期',
   QUERY_TARGET_MISSING:  '按策略核引用的表与字段是否真不存在（对元数据）：是就改策略或接入数据，不是就是查询构造或元数据问题回 alarmd；已降级的对象修好后会自动重试',
+  READ_BEFORE_COMPLETE: '交策略负责人把策略的 time_delay 改到对象行的建议值（或更大）；这是整窗读早，服务会按确认到齐的样本自动推后首读，当前等待见 read_hold_ms；自动等待已达上限仍读早时需调整策略。改完新配置发布后，下一次抽样仍读早会继续留在这一行',
+  READ_HELD: '交策略负责人把策略的 time_delay 改到对象行的建议值（或更大）。不改也照常检测，只是首读一直比 time_delay 写的晚',
+  LATE_PAST_ROUND: '交策略负责人把策略的 time_delay 改到对象行的建议值（或更大）：整窗的迟到序列都晚过了下一轮，补充补不回，只有 time_delay 能把读往后挪',
+  LATE_SERIES_MISSED: '交数据侧查这些序列为什么比同一对象的其余序列晚这么多；不调 time_delay，那会让整个对象为几条特别慢的序列一起变慢',
   RETAINED_SHARE_APPROACHING: '先看对象行上哪个相位占大头，再决定找谁：state 占大头是策略的留存窗口与序列数，交策略侧（收聚合维度、缩短窗口，或分片 decision-020）；output 占大头是本服务每轮在内存里留着的产出（这一轮要发出去的事件与写回的状态；兼容协议下没有消息的 RECOVERY 已不再占用），不是策略写错了，交 alarmd 处理。份额本身不随争用调，调参解决不了'
 };
 
@@ -946,8 +1008,9 @@ var RECOVERY = {
   SOURCE_SET_FLAPPING:   '上游列表稳定后：24 小时内不再有新的小时组出现，这一行随最后一组滚出 24 小时窗而消失；宽限中的计数回到 0',
   SOURCE_INCOMPLETE:     '写方修好后一轮刷新：这一行的策略数降到 0、"应有"从 0 涨上来、对象开始出现在各栏；这一行消失',
   CAPABILITY_UNSUPPORTED: '参数调好或新构建上线后一轮刷新：该原因组消失，"应有"涨上来',
+  CAPABILITY_UNLISTED: '原因查清归位或修好后一轮刷新：该原因组从这一行消失',
   CONFIG_REJECTED:       '策略改好后一轮刷新：该策略离开这一组；这一行只在全部改好后消失',
-  CONFIG_NORMALIZED:     '配置改好后一轮刷新：该策略离开这一组，按写的范围检测；这一行只在全部改好后消失',
+  CONFIG_NOTED:     '配置改好后一轮刷新：该策略离开这一组；这一行只在全部改好后消失',
   CUTOVER_FAILING:       '执行版本追上目标发布（两者一致）且之后一轮激活成功；这一行消失',
   OWNERSHIP_SKEWED:      'Leader 的再平衡计划移动数归零（最多与最少之差回到均分的 {stop}% 以内，这是调度器自己的容差）；这一行消失',
   REPLICA_DEGRADED:      '该副本的那个时钟回到设计界内；策略源的 = 一轮刷新成功、新目录发布；输出的 = 该副本打开告警输出成功、变为就绪并开始接任务，这一行消失',
@@ -958,20 +1021,29 @@ var RECOVERY = {
   TIMELINE_PRUNED:       '{w} 分钟内没有新的越过；已停止的记录不会归零',
   BOOKKEEPING_ABANDONED: '累计数来自当前可观测副本自各自启动以来的记录，重启或副本缺席会改变合计；停止增长仅表示未再观察到。确认恢复须看到同对象后续 Progress 成功提交',
   NO_DATA_MEMORY_REFUSED: '写不进去的：该 Plan 一次写入落库（no_data_memory_written 且 stored=true——ALREADY_APPLIED 算、STALE_VERSION 不算，以发射方的 stored 为准不看结局名）。续不了期的：一次续期到达存储（不论答"续了"还是"还够长"）或一次写入落库。这一行随之消失，进历史区的"已恢复"。{w} 分钟内没有新拒绝不算恢复',
+  AWAITING_VIEW:         '视图带上这个对象、它的下一轮被放行（或源答复还不到期），这一行自动清',
   DEPENDENCY_DOWN:       '依赖恢复后各对象下一轮完成，这一行自动清',
   DEFECT:                '修复上线后该原因码不再出现',
   OBSERVATION_GAP:       '各对象下一轮完成后补上成因、离开这一行——只是补齐证据，不等于这几个对象当前有新故障；副本级缺口随该副本重新发布快照消失',
-  QUERY_REFUSED:         '分出归属后转到对应行（策略侧或 alarmd）；不是等它消失',
+  QUERY_REFUSED:         '策略改好后冷却到期自动重试成功，对象离开降级池；核出是 alarmd 构造的转到 alarmd',
   WINDOW_UNDECIDED:      '行上最差窗口的有效点逐轮上涨直到填满，或保护解除；对象归到某一行或离开列表。连续多轮不涨不算在恢复',
   COVERAGE_READING_REFUSED: '读数不再被拒：行上重新出现窗口计数，对象按计数归到窗口相关的行或离开列表',
   CONFIG_UNRESOLVED:     '下一轮按新配置完成，对象离开这一行',
   BACKEND_NOT_ANSWERING: '分出是哪一环后转到对应行；应答恢复后冷却到期自动重试成功，对象离开降级池（降级池"出过"数在涨）',
   NO_DATA_PERSISTENT:    '数据恢复后下一轮非空',
+  SERIES_SPARSE:         '序列按时上报后窗口补满：该对象从这一行消失',
   EMPTY_EVERY_ROUND:     '任一轮查到数据即消失（此后再空就走 NO_DATA_PERSISTENT）。副本重启不再清零：对象记录带着"最近一次有数据的 Slot"和"本轮空跑起始 Slot"，恢复时接着算，起算来源标 RESTORED_EMPTY_RUN；只有引入这两个字段之前写的记录、或混版滚动期被旧二进制回写过的记录，才退回"只按最后一轮起算"，最后一轮非空才算已知有过数据',
   SERIES_DATA_MISSING:   '分出是没到还是没取到后转到对应行；老序列补上点后窗口填满',
+  EMPTY_AFTER_TARGET:    '任一轮有序列进入目标即消失；最近一个空轮不再是全部被目标拒绝时，回到 EMPTY_EVERY_ROUND',
+  QUIET:                 '任一轮有分组回来（范围里出现事件）即消失',
+  ANSWER_TRUNCATED:      '任一轮有回答、且没有维度顶到一万即消失；查询失败的轮次不算',
   SERIES_CHURNING:       '序列稳定活过窗口后窗口填满',
   PLAN_UNEVALUABLE:      '策略改定义后下一轮可算',
   QUERY_TARGET_MISSING:  '策略改好或表接入后，冷却到期自动重试成功，对象离开降级池',
+  READ_BEFORE_COMPLETE: '一次抽样发现首读时数据已经到齐（没有变化、或只是后来多出新序列）即消失；配置改完后要等这个对象的下一次抽样（约每小时一次）才会消失',
+  READ_HELD: 'time_delay 改大后 Plan 换到新的查询组，新组从不推后开始，这一行随旧组离开而消失；不改时，到齐时刻经三次一致的较早读数确认变早后推后会降低，降到 0 即消失',
+  LATE_PAST_ROUND: '出现一个补充补回了序列的窗口，或一个没有迟到序列的窗口，即消失；对象的序列不再迟到、不再逐轮迟到复查时也消失，之后再迟到从头计',
+  LATE_SERIES_MISSED: '对象的序列不再迟到、不再逐轮迟到复查时消失，之后再迟到从头计；在那之前计数只增不减，读最近的窗口看它是否还在发生',
   RETAINED_SHARE_APPROACHING: '最近一个完成 Slot 的留存降到阈值以下即消失；某一轮被份额拒掉时，这个对象在那一轮转到"策略本身不可用"那一行（QG_BUDGET_SHARE_EXCEEDED），不在这一行重复出现，下一轮完成后如仍在阈值以上会回到这一行，since 保持不变'
 };
 
@@ -1009,6 +1081,12 @@ function checkSentence(report, count) {
   // because the pool card says it of the pool and the two must agree.
   var demoted = report.demoted && count === (report.current || 0)
     ? '；其中 ' + report.demoted + ' 个已降级，不再反复查' : '';
+  // Short at positions before this replica's memory of them - after a
+  // restart or a handover - and settling by themselves as the window slides.
+  if (report.memory_gap && count === (report.current || 0)) {
+    demoted += '；其中 ' + report.memory_gap + ' 个是本副本接手（重启或交接）后还没看满一个窗口'
+      + (report.memory_gap_until ? '，最晚 ' + momentLabel(report.memory_gap_until) + ' 前会定下来' : '，窗口滑过后会定下来');
+  }
   return rebalanceWords(words, report.rebalance).replace('{n}', String(count))
     .replace('{g}', String(currentGroups(report).length))
     .replace('{s}', String(report.strategies || 0))
@@ -1070,7 +1148,6 @@ function rebalanceStanding(r) {
   if (!r || !r.planned_moves) return '等再平衡';
   var gap = Math.max(0, (r.most_owned || 0) - (r.least_owned || 0));
   var plan = 'Leader 本轮计划移 ' + r.planned_moves + ' 个（每轮最多 ' + (r.batch || 0) + ' 个）';
-  if (r.shadow) return plan + '，但这个构建只计划不执行——均分要等再平衡执行上线或下一次滚动';
   if (r.paused) {
     return plan + '，但这一轮没发：就绪副本集刚变过，等它稳定'
       + (r.paused_for_seconds ? '（还剩 ' + Math.ceil(r.paused_for_seconds) + ' 秒）' : '') + '再发';
@@ -1255,6 +1332,8 @@ var GUARD_REASON = {
   CONFIG_DRIFT: '配置变过',
   PLAN_REACTIVATED: '策略离开活动集后回来了，重新预热（配置没变）',
   QUERY_UNAVAILABLE: '查询不可用',
+  QUERY_TARGET_MISSING: '查询的表或字段在空间里路由不到（改策略或接入数据才会解除）',
+  DETECT_INTERVAL_STORAGE_NOT_SLIDING: '该指标的存储不支持按检测周期滑动（去掉检测周期才会解除）',
   QUERY_TIMEOUT: '查询超时',
   QUERY_PARTIAL: '查询结果不完整',
   QUERY_EMPTY: '算法依赖的对比数据查到了但一条都没有',
@@ -1276,7 +1355,6 @@ var MEMORY_REFUSAL_KIND = {
 };
 var MEMORY_REPRESENTATION = {
   NONE: '还没有记忆（没写过，或读失败）',
-  WHOLE_MEMORY: '整份存的旧格式（升级后还没写过）',
   PER_GROUP: '按组存的新格式'
 };
 
@@ -1588,6 +1666,12 @@ var CONSOLE_STATE = {
   reachable: '可达'
 };
 var CONSOLE_OP = { roster: '名册', reconcile: '校准对账', alert_record: '单条告警记录', event_source: '事件源键规则' };
+// Why a Console call failed, by the class the replica records: the
+// transport's words (the same a query provider's route detail uses), status
+// and incomplete.
+var CONSOLE_FAILURE_CLASS = { cancelled: '调用方先放弃了（进程退出或放手）', timeout: '超时', connection_refused: '连接被拒绝',
+  connection_reset: '连接被重置', dns: '域名解析失败', tls: 'TLS 握手或证书校验失败', eof: '连接被对端提前关闭',
+  other: '其他传输错误', status: '应答不是 200', incomplete: '应答体读不全或解析不了' };
 var LINK_HEALTH = {
   discovery_failing: '最近一次全量发现失败',
   discovery_never_succeeded: '从未成功完成全量发现',
@@ -1596,7 +1680,6 @@ var LINK_HEALTH = {
 // The startup question "where does the link write", and what came of it.
 var LINKD_DISCOVERY = {
   adopted: '已按 Console 给出的位置读取',
-  connection_stated: '部署自己配置了集合所在的 Redis，未向 Console 询问',
   no_held_connection: 'Console 给出的 Redis 不是本进程已持有连接的任何一个，仍按原位置读取，每轮对账会拒绝并写出两处位置',
   failed: '启动时向 Console 询问失败，仍按原位置读取'
 };
@@ -1613,6 +1696,7 @@ function consoleWords(c) {
   if (c.state === 'unreadable') {
     var failing = (c.calls || []).filter(function (call) { return call.op === c.reason; })[0];
     words += '（' + (CONSOLE_OP[c.reason] || c.reason) + '最近一次失败'
+      + (failing && failing.last_failure_class ? '，原因：' + (CONSOLE_FAILURE_CLASS[failing.last_failure_class] || failing.last_failure_class) : '')
       + (failing && failing.last_failure ? '：' + failing.last_failure : '') + '）';
     // A link older than the roster answers every reconciliation and refuses
     // every browse; the status says which of the two this is.
@@ -1633,7 +1717,12 @@ function consoleWords(c) {
   if (d) {
     words += '；启动时：' + (LINKD_DISCOVERY[d.outcome] || d.outcome)
       + (d.target && d.outcome !== 'adopted' ? '（Console 说 ' + linkdTargetWords(d.target) + '）' : '')
-      + (d.error ? '（试了 ' + d.attempts + ' 次：' + d.error + consoleFailureHint(d.error) + '）' : '');
+      + (d.error ? '（试了 ' + d.attempts + ' 次：' + d.error + consoleFailureHint(d.error) + '）' : '')
+      // A link that lists several targets: alarmd reads one, so the listing
+      // is the reason, named here rather than left inside the error.
+      + (d.target_count > 1 ? '；Console 列出 ' + d.target_count + ' 个目标'
+        + ((d.target_names || []).length ? '：' + d.target_names.join('、') + (d.target_names.length < d.target_count ? ' 等' : '') : '')
+        + '，alarmd 只读只列一个目标的 link' : '');
   }
   return words;
 }
@@ -1810,8 +1899,8 @@ function loadChecks() {
 // Held to the Go list of standings by a test.
 function isStanding(report) {
   return report.code === 'CUTOVER_FAILING' || report.code === 'REPLICA_DEGRADED' || report.code === 'OWNERSHIP_SKEWED'
-    || report.code === 'SOURCE_INCOMPLETE' || report.code === 'CAPABILITY_UNSUPPORTED' || report.code === 'CONFIG_REJECTED'
-    || report.code === 'SOURCE_SET_FLAPPING' || report.code === 'CONFIG_NORMALIZED';
+    || report.code === 'SOURCE_INCOMPLETE' || report.code === 'CAPABILITY_UNSUPPORTED' || report.code === 'CAPABILITY_UNLISTED' || report.code === 'CONFIG_REJECTED'
+    || report.code === 'SOURCE_SET_FLAPPING' || report.code === 'CONFIG_NOTED';
 }
 
 // The first screen: the checks this reader acts on now; folded away, the
@@ -2213,17 +2302,23 @@ var SELECTOR_REASON = {
   json_invalid: '分组缓存的值不是合法 JSON',
   structure_invalid: '分组缓存的值结构不符合合同',
   model_mismatch: '分组成员的模型与计划不一致',
-  read_failed: '读分组缓存失败（Redis 读错误）',
-  stale: '分组缓存刷新失败，用的是保留的旧快照（超过 10 分钟即不可用）',
+  read_failed: '读目标缓存失败（Redis 读错误）',
+  stale: '目标缓存快照已超过允许年龄，不可用',
   index_unavailable: '主机索引不可用，拓扑节点无法核对',
+  index_incomplete: '主机索引记录拒收或身份不完整，排除不可用',
+  excluded_absent: '完整主机快照里排除成员已不存在，正常跳过',
   node_missing: '拓扑节点在主机索引里不存在',
   node_in_other_business: '拓扑节点下的主机只属于别的业务',
   members_dropped: '成员逐条校验有丢弃（模型、实例、汇总列出、host_id 规则）',
   source_unwired: '本部署没有接这种 selector 的来源',
-  model_representation_unresolved: '按模型实例（model_inst_id）给出的静态成员，主机缓存里查不到对应主机身份——不是主机模型，或缓存没带规范身份字段'
+  model_representation_unresolved: '按模型实例（model_inst_id）给出的静态成员，主机缓存里查不到对应主机身份——不是主机模型，或缓存没带规范身份字段',
+  tenant_mismatch: '分组不是计划所属租户的（或没写租户）：按地址（ip_cloud）选的目标只读本租户的分组',
+  address_unresolved: '这些主机在主机缓存里都没有本租户的目标地址（target_address）：写入方还没按完整地址刷新，或是别的租户的主机；不是空目标',
+  address_ambiguous: '有成员所在的地址被本租户另一台主机共用，地址指不出是哪台，这些成员不计入'
 };
 function targetResolutionWords(resolution) {
   var parts = [RESOLUTION_STATE[resolution.state] || resolution.state];
+  if (resolution.excluded_absent) parts.push('排除成员已不存在：' + resolution.excluded_absent + '（excluded_absent，正常跳过）');
   (resolution.failures || []).forEach(function (failure) {
     var words = failure.kind + ' ' + failure.id + '：' + (SELECTOR_REASON[failure.reason] || failure.reason);
     if (failure.dropped) words += '（丢弃 ' + failure.dropped + '，保留 ' + (failure.kept || 0) + '）';
@@ -2482,6 +2577,10 @@ function objectRow(anomaly, check, group) {
   line('结果码', anomaly.reason_code);
   line('成因', anomaly.cause);
   line('下一层原因', anomaly.cause_reason);
+	var readHold = anomaly.read_early || anomaly.late_past_round;
+	if (readHold && typeof readHold.read_hold_ms === 'number') {
+		line('自动等待', 'alarmd 当前自动推后 ' + readHold.read_hold_ms / 1000 + ' 秒');
+	}
   // Two lines for a guarded window, because its one word says two things
   // that were read as one: the reason is the word the guard was raised
   // under -- history, stamped onto every completion since -- and the window
@@ -2699,6 +2798,40 @@ function rangeLabel(startAt, endAt) {
   return dated(start) + ' – ' + dated(end);
 }
 
+// The first screen's count of strategies, from the diagnosis's own summary:
+// the number a reader sets beside the CLI's diagnose is the one the CLI
+// sums, decided by the same rows. When it cannot be read the line says so,
+// and the grid's groups are never put in its place.
+function loadStrategyCount() {
+  return api('diagnose?summary=1').then(function (countRead) { renderStrategyCount(countRead, ''); })
+    .catch(function (e) { renderStrategyCount(null, String((e && e.message) || e)); });
+}
+
+// Named apart from every other response on the page - countRead, its
+// countUniverse and its strategyTally - so the check that every field the
+// page reads exists in the API can be pointed at each.
+function renderStrategyCount(countRead, failure) {
+  var countUniverse = countRead && countRead.universe;
+  if (failure || !countUniverse || countUniverse.status !== 'ok') {
+    var why = failure || (countUniverse && countUniverse.reason) || '没有说明原因';
+    text('strategyCount', '策略条数读不到（' + why + '）；下面各格是查询组数，不是策略数');
+    text('strategyVerdicts', '');
+    return;
+  }
+  var strategyTally = countRead.summary || {};
+  var groups = strategyTally.query_groups === null || strategyTally.query_groups === undefined
+    ? '合成的查询组数读不到' : '合成 ' + strategyTally.query_groups + ' 个查询组';
+  text('strategyCount', strategyTally.strategies + ' 条策略，' + groups);
+  var words = (countRead.words && countRead.words.state) || {};
+  var counts = strategyTally.by_verdict || {};
+  var parts = [];
+  (countRead.verdicts || []).forEach(function (word) {
+    if (counts[word] > 0) { parts.push((words[word] || word) + ' ' + counts[word]); }
+  });
+  text('strategyVerdicts', '按策略的状态：' + (parts.length ? parts.join(' · ') : '一条都没有')
+    + '（与 CLI diagnose 同一套判定，数到 ' + strategyTally.strategies + ' 条）');
+}
+
 function loadHealth() {
   // Called rather than passed by reference. The check that every page function
   // has a call site reads call syntax, and a bare reference is invisible to it
@@ -2728,6 +2861,21 @@ function renderDeployment(deployment) {
     var badge = document.getElementById('health');
     badge.textContent = h;
     badge.className = 'badge b-' + h;
+    // The counts below are the replicas' own counts added. While an object is
+    // held by two of them each counts it, and a skip the old holder records
+    // after the new one pooled the object reads as a loss in progress: said
+    // beside the counts and on the load block for as long as it lasts.
+    var handover = handoverWords(deployment.handover);
+    show('handoverNote', !!handover);
+    text('handoverNote', handover);
+    show('loadHandover', !!handover && !restricted);
+    text('loadHandover', handover);
+    var rollout = rolloutWords(deployment.rebalance);
+    show('rolloutNote', !!rollout);
+    text('rolloutNote', rollout);
+    var declinedEverywhere = declinedEverywhereWords(deployment.rebalance);
+    show('declinedNote', !!declinedEverywhere);
+    text('declinedNote', declinedEverywhere);
     text('expected', deployment.expected === null || deployment.expected === undefined ? '未知' : deployment.expected);
     text('covered', deployment.covered);
     text('determined', deployment.determined);
@@ -2935,7 +3083,7 @@ function renderDeployment(deployment) {
     if (restricted) {
       restrictedNotice(document.getElementById('prunedSkips'));
     } else {
-      renderPrunedSkips(deployment.pruned_skips || []);
+      renderPrunedSkips(deployment.pruned_skips || [], deployment.pruned_skips_total);
     }
     var gaps = deployment.gaps || [];
     // UNKNOWN has two ways in and the wording used to describe only one.
@@ -3292,16 +3440,17 @@ function renderSource(source, expected, standing) {
   } else {
     parts.push('策略缓存列出 ' + source.listed + ' 条，接受 ' + source.accepted + ' 条');
   }
-  // A normalized item is not withheld: the strategy runs, read otherwise
-  // than written. It gets its own verb, or the hint counts a running
+  // A noted item is not withheld: the strategy runs, with a note on its
+  // configuration -- read otherwise than written, or a setting that cannot
+  // take effect. It gets its own verb, or the hint counts a running
   // strategy among the held ones.
-  var held = withheld.filter(function (g) { return g.disposition !== 'CONFIG_NORMALIZED'; });
-  var widened = withheld.filter(function (g) { return g.disposition === 'CONFIG_NORMALIZED'; });
+  var held = withheld.filter(function (g) { return g.disposition !== 'CONFIG_NOTED'; });
+  var noted = withheld.filter(function (g) { return g.disposition === 'CONFIG_NOTED'; });
   if (held.length) {
     parts.push('扣住 ' + held.map(function (g) { return g.count + ' 条 ' + g.disposition + '/' + g.reason; }).join('、'));
   }
-  if (widened.length) {
-    parts.push('读法和写的不同、在检测 ' + widened.map(function (g) { return g.count + ' 条 ' + g.disposition + '/' + g.reason; }).join('、') + '（不是被扣）');
+  if (noted.length) {
+    parts.push('配置有提示、在检测 ' + noted.map(function (g) { return g.count + ' 条 ' + g.disposition + '/' + g.reason; }).join('、') + '（不是被扣）');
   }
   if (!standing && source.listed && !source.accepted) {
     parts.push('不是没负载，是全部被扣在配置获取环节——看首屏第一行');
@@ -3495,23 +3644,15 @@ function writerWords(dep) {
   return w.present ? '有' : '没有';
 }
 
-// The reader's account of the alert consumer's publication, as one sentence:
-// whether it has ever been read, the publisher's own heartbeat and cycle,
-// the fingerprint version on both sides (a mismatch is a publication every
-// lookup misses, which reads exactly like "no open alert"), what is held,
-// and -- the part the object list never shows -- whether the recovery gate
-// has been answering on the consumer's word or on the copy's own.
-var OPEN_ALERT_MODE = {
-  never_loaded: '从未读到发布',
-  authoritative: '以消费方的发布为准',
-  self_maintained: '发布不可用，按本副本自己的记录放行/扣留'
-};
+// The reader's account of the alert consumer's open alert sets, as one
+// sentence: when the index was last read, what is held, whether the copy is
+// unavailable or past its calibration bound, and -- the part the object list
+// never shows -- whether the recovery gate has been answering on the
+// consumer's word or on the copy's own.
 var OPEN_ALERT_UNAVAILABLE = {
-  read_error: '读不到（Redis 读失败）',
-  heartbeat_missing: '心跳键不存在——消费方没有在这个地址、这个前缀下发布',
-  heartbeat_unreadable: '心跳字段读不出',
-  heartbeat_stale: '心跳过期（超过 3 个发布周期没更新）',
-  fingerprint_version: '指纹版本与本端不同——每次查询都会落空，读起来像"没有未恢复告警"'
+  read_error: '读不到（索引读取或校准失败）',
+  location_unconfirmed: 'Console 还没确认集合写在哪里（发现失败、Console 给的 Redis 本副本没有连接，或对账发现写入位置变了）；这期间一条集合也不读',
+  keying_unconfirmed: 'Console 还没确认集合按本副本发出的告警 ID 建键（事件源没读到、按其他字段建键，或未发布）'
 };
 // Every answer the gate can give. A key missing here is not rendered and
 // does not count towards the total, so the row said "the gate has not been
@@ -3520,14 +3661,12 @@ var OPEN_ALERT_UNAVAILABLE = {
 // not to this table. The table is hand-listed, so it is the thing to check
 // whenever the server gains an answer.
 var OPEN_ALERT_ANSWER = {
-  authoritative_member: '发布里有',
-  authoritative_absent: '发布里没有',
   index_member: '索引里有',
   index_absent: '索引里没有',
   recently_sent: '本副本刚发过',
-  not_yet_loaded: '首轮未装载',
   self_maintained: '按本副本记录',
-  passed_through: '直接放行'
+  passed_through: '直接放行',
+  index_stale: '索引过期，按本副本记录'
 };
 // What the numbers above mean for the deployment, said once rather than left
 // for the reader to derive. The gate holds a recovery when the series is not
@@ -3543,48 +3682,20 @@ var OPEN_ALERT_ANSWER = {
 // this deployment also sent nothing to.
 function openAlertConsequence(a, lookups) {
   if (!lookups || a.members !== 0 || a.loaded_sets === 0) return '';
-  var absent = (a.lookups && (a.lookups.index_absent || 0) + (a.lookups.authoritative_absent || 0)) || 0;
+  var absent = (a.lookups && a.lookups.index_absent) || 0;
   if (absent < lookups) return '';
   return '这套部署现在发不出恢复：集合装载了但一条未恢复指纹都没有，' + lookups
     + ' 次全部落空、恢复被扣住——要么消费方此刻确实没有未恢复告警，要么它没有把本部署发过去的告警记进这个集合';
 }
 
-var KEY_SHAPE = { hex32: '32 位十六进制', hex64: '64 位十六进制', hex_other: '其他长度十六进制', non_hex: '非十六进制' };
-
-function shapeWords(shapes) {
-  var out = [];
-  Object.keys(shapes || {}).sort().forEach(function (key) {
-    if (shapes[key]) out.push((KEY_SHAPE[key] || key) + ' ' + shapes[key]);
-  });
-  return out.length ? out.join('、') : '无';
-}
-
-// The recovery gate's side-by-side reading, in counts and shapes only: the
-// keys themselves stay in the API sample. Which of the three misses it is
-// reads off the three clauses -- member shape, whose alerts, and whether our
-// keys are there as an alert id or as a fingerprint.
-function openAlertComparisonWords(c) {
-  if (!c) return '';
-  var own = c.own_event_source_id ? (c.alert_sources || {})[c.own_event_source_id] || 0 : null;
-  var others = 0;
-  Object.keys(c.alert_sources || {}).forEach(function (key) {
-    if (key !== c.own_event_source_id) others += c.alert_sources[key];
-  });
-  return '恢复闸对照：本端发出未恢复 ' + c.sent + ' 个（' + shapeWords(c.sent_shapes) + '），集合成员 ' + shapeWords(c.member_shapes)
-    + '；校准列出的活动告警' + (own === null ? '来源 ' + others + ' 条（本部署来源尚未读到）' : '本部署来源 ' + own + ' 条、其他来源 ' + others + ' 条')
-    + '；在已校准策略里的 ' + c.sent_in_calibrated + ' 个发出键中，等于某条活动告警 ID 的 ' + c.sent_matching_alert_id
-    + ' 个、等于其指纹的 ' + c.sent_matching_fingerprint + ' 个';
-}
-
 // The close of alerts whose target left the strategy's scope, in counts
-// only: the fingerprint samples stay in the API. Unarmed, would_send is the
-// count arming would send, which is what has to be read before arming.
+// only: the fingerprint samples stay in the API.
 function targetScopeCloseWords(c) {
   if (!c) return '';
   var o = c.outcomes || {};
   var n = function (k) { return o[k] || 0; };
-  return '目标移出范围关闭（' + (c.armed ? '已开启' : '未开启，只计算不发送') + '）：等第二轮确认 ' + (c.pending || 0)
-    + ' 个、已确认待关 ' + (c.confirmed || 0) + ' 个；累计已关 ' + n('closed') + '、本应发送 ' + n('would_send')
+  return '目标移出范围关闭：等第二轮确认 ' + (c.pending || 0)
+    + ' 个、已确认待关 ' + (c.confirmed || 0) + ' 个；累计发出关闭 ' + n('close_sent') + '（发出不等于 linkd 已关）'
     + '、首次观测 ' + n('unconfirmed') + '、目标缓存不确定未判 ' + n('cache_unavailable') + '、不在集合 ' + n('not_member')
     + '、集合不可判 ' + n('set_unavailable') + '、他源告警 ' + n('producer_foreign') + '、发送失败 ' + n('send_failed')
     + '、观测表满 ' + n('memory_full') + '、多输入无法算指纹 ' + n('fingerprint_unsupported') + '、观测过旧暂缓 ' + n('stale_deferred') + '、拒绝本身不确定 ' + n('indefinite');
@@ -3594,28 +3705,18 @@ function openAlertSetWords(dep) {
   var a = dep.open_alert_set;
   var w = dep.writer;
   if (!a) return w && w.present ? '有' : '没有';
+  if (!a.configured) return '没配 linkd 的 Console：本副本不读集合，恢复门按本副本发过的告警回答';
   var parts = [];
-  // The index protocol is its own publication and has no heartbeat, so the
-  // heartbeat branch below read it as "nothing published" -- on a deployment
-  // whose index was configured, subscribed, read 27 s ago and covering 60
-  // strategies, the row said there was no consumer publication at all.
-  if (a.index_protocol) {
-    parts.push('有：消费方按索引协议发布'
-      + (a.index_read_age_seconds != null ? '，本端 ' + elapsedLabel(a.index_read_age_seconds) + '前读到' : '，本端还没读到过')
-      + (a.subscription_ready ? '' : '，订阅未就绪'));
-    parts.push('跟踪 ' + a.tracked_sets + ' 条策略、索引覆盖 ' + a.loaded_sets + ' 条、未恢复指纹 ' + a.members + ' 个'
-      + (a.calibration_configured ? '' : '（未配校准）'));
-  } else if (a.heartbeat_age_seconds !== undefined && a.heartbeat_age_seconds !== null) {
-    parts.push('有：消费方心跳 ' + elapsedLabel(a.heartbeat_age_seconds) + '前（周期 ' + a.cycle_seconds + ' s，指纹版本 ' + a.fingerprint_version
-      + (a.fingerprint_version !== a.reader_fingerprint_version ? '≠本端 ' + a.reader_fingerprint_version : '') + '）');
-    parts.push('跟踪 ' + a.tracked_sets + ' 条策略、发布覆盖 ' + a.loaded_sets + ' 条、未恢复指纹 ' + a.members + ' 个');
-  } else {
-    parts.push('没有：' + (OPEN_ALERT_MODE[a.mode] || a.mode) + '（心跳键 alarmd:open_alerts:heartbeat）');
-  }
-  var mode = OPEN_ALERT_MODE[a.mode] || a.mode;
-  if (a.unavailable_reason) mode += '：' + (OPEN_ALERT_UNAVAILABLE[a.unavailable_reason] || a.unavailable_reason);
-  if (a.stale_beyond_bound) mode += '，已超过设计的暴露时长';
-  parts.push('当前 ' + mode);
+  parts.push('有：消费方按索引协议发布'
+    + (a.index_read_age_seconds != null ? '，本端 ' + elapsedLabel(a.index_read_age_seconds) + '前读到' : '，本端还没读到过')
+    + (a.subscription_ready ? '' : '，订阅未就绪'));
+  parts.push('跟踪 ' + a.tracked_sets + ' 条策略、索引覆盖 ' + a.loaded_sets + ' 条、未恢复指纹 ' + a.members + ' 个'
+    + (a.calibration_configured ? '' : '（未配校准）'));
+  parts.push('Console 确认：写入位置' + (a.location_confirmed ? '已确认' : '未确认') + '、按告警 ID 建键'
+    + (a.keyed_by_alert_id == null ? '还没读到' : (a.keyed_by_alert_id ? '是' : '否'))
+    + (a.keyed_by_alert_id_as_of ? '（' + elapsedLabel((Date.now() - Date.parse(a.keyed_by_alert_id_as_of)) / 1000) + '前确认）' : ''));
+  if (a.unavailable_reason) parts.push('当前不可用：' + (OPEN_ALERT_UNAVAILABLE[a.unavailable_reason] || a.unavailable_reason));
+  if (a.stale_beyond_bound) parts.push('校准已超过设计的暴露时长');
   var answers = [];
   var total = 0;
   Object.keys(OPEN_ALERT_ANSWER).forEach(function (key) {
@@ -3624,7 +3725,6 @@ function openAlertSetWords(dep) {
   });
   parts.push(total ? '恢复门查过 ' + total + ' 次：' + answers.join('、') : '恢复门还没查过');
   parts.push(openAlertConsequence(a, total));
-  parts.push(openAlertComparisonWords(a.comparison));
   parts.push(targetScopeCloseWords(a.target_scope_close));
   return parts.filter(Boolean).join('；');
 }
@@ -3697,11 +3797,23 @@ function renderReplicas(rows) {
     // rollout, a short uptime on the old build is a restart.
     var build = cell(buildLabel(replica.build), 'mono');
     if (replica.build) { build.title = 'commit ' + replica.build.commit + '，schema ' + replica.build.schema_version; }
-    var cap = replica.capacity;
-    cell(cap ? bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes) : '—');
-    cell(cap && cap.cpu_cores ? (cap.cpu_seconds !== undefined ? '上限 ' + cap.cpu_cores + ' 核' : '—') : '—');
-    cell(cap ? (cap.permits_held + ' / ' + cap.permit_budget) : '—');
+    // One replica's own capacity, per-replica fields throughout; the
+    // deployment's is `cap` in renderCapacity, where the names differ.
+    var rcap = replica.capacity;
+    cell(rcap ? bytes(rcap.memory_used_bytes) + ' / ' + bytes(rcap.memory_limit_bytes) : '—');
+    cell(rcap && rcap.cpu_cores ? (rcap.cpu_seconds !== undefined ? '上限 ' + rcap.cpu_cores + ' 核' : '—') : '—');
+    cell(rcap ? (rcap.permits_held + ' / ' + rcap.permit_budget) : '—');
     host.appendChild(tr);
+    var declined = declineWords(replica.declines);
+    if (declined) {
+      var note = document.createElement('tr');
+      var td = document.createElement('td');
+      td.colSpan = tr.children.length;
+      td.className = 'stuck';
+      td.textContent = shortReplica(replica.replica) + '：' + declined;
+      note.appendChild(td);
+      host.appendChild(note);
+    }
   });
 }
 
@@ -3779,6 +3891,12 @@ var KIND_TEXT = {
   SKIPPED_SPAN: '留存的漏检记录',
   NO_DATA: '持续无数据',
   EMPTY_EVERY_ROUND: '每轮都无数据',
+  QUIET: '事件计数静止（无事件）',
+  ANSWER_TRUNCATED: '回答可能被分组上限截断',
+  READ_BEFORE_COMPLETE: '首读早于数据到齐',
+  READ_HELD: 'alarmd 推后首读',
+  LATE_PAST_ROUND: '迟到超过一轮',
+  LATE_SERIES_MISSED: '补充补不回的迟到序列',
   RETAINED_SHARE_APPROACHING: '逼近单对象份额'
 };
 function kindText(kind) { return KIND_TEXT[kind] || kind || '—'; }
@@ -3830,6 +3948,84 @@ function percentOf(share) {
 
 function rateWords(rate) {
   return rate === null || rate === undefined ? '（无轮次）' : Math.round(rate * 10) / 10 + '%';
+}
+
+// handoverWords is the note for the health route's handover marker, or ''
+// when there is none: how many objects are held by several replicas, or that
+// it cannot be told when the owned sets could not be compared.
+function handoverWords(marker) {
+  if (!marker) {
+    return '';
+  }
+  var held = marker.objects === null || marker.objects === undefined ? '无法判断有多少' : marker.objects + ' 个';
+  return '交接中：' + held + '对象被多个副本同时持有，本时刻计数可能偏多、在途损失可能误判为进行中';
+}
+
+// rolloutWords is the note for a rollout the leader's latest planning round
+// is replacing Query Groups for, or '' when that round replaced, deferred and
+// left none. The numbers are that round's - replaced, replacements_deferred,
+// unplaceable, batch, planned_at - the fields fleet.get's summary names, so
+// the page and the CLI cannot read two different things; between rounds they
+// are the last round's, which the note says by naming it and its time.
+function rolloutWords(r) {
+  // unplaceable includes the Query Groups every replica declined, a cause of
+  // their own said by declinedEverywhereWords; the rest found no ready one.
+  var noReady = r ? Math.max(0, (r.unplaceable || 0) - (r.declined_everywhere || 0)) : 0;
+  if (!r || !(r.replaced || r.replacements_deferred || noReady)) {
+    return '';
+  }
+  var at = new Date(r.planned_at);
+  var round = 'Leader 上一轮再平衡' + (isNaN(at.getTime()) ? '' : '（' + at.toLocaleTimeString() + '）');
+  var clauses = [];
+  if (r.replaced || r.replacements_deferred) {
+    clauses.push('从不再合格的副本移走 ' + (r.replaced || 0) + ' 个对象，还有 ' + (r.replacements_deferred || 0)
+      + ' 个留到后面的轮次（每轮最多交接 ' + (r.batch || 0) + ' 个）');
+  }
+  if (noReady) {
+    clauses.push(noReady + ' 个这一轮没有就绪副本能接，留在原处——一直不为 0 说明新版本的副本不够或没就绪');
+  }
+  // Done is both left-for-later and stuck at zero: one alone at zero is not.
+  return round + '在滚动替换：' + clauses.join('；') + '。留到后面的与没人能接的都降到 0 才算换完';
+}
+
+// declinedEverywhereWords is the note for the Query Groups the leader's
+// latest round found every eligible replica declining - an execution of
+// each hung on every one in turn - or '' when there are none. They run
+// nowhere, no replica observes them, and readiness reads fine meanwhile.
+function declinedEverywhereWords(r) {
+  if (!r || !r.declined_everywhere) {
+    return '';
+  }
+  var at = new Date(r.planned_at);
+  var round = 'Leader 上一轮再平衡' + (isNaN(at.getTime()) ? '' : '（' + at.toLocaleTimeString() + '）');
+  var samples = (r.declined_everywhere_sample || []).map(function (s) {
+    return s.query_group + '（经过 ' + s.hops + ' 个副本' + ((s.stages || []).length ? '，卡在 ' + s.stages.join('、') : '') + '）';
+  });
+  return round + '：' + r.declined_everywhere + ' 个对象在每个副本上执行都卡死过，现在没有副本在跑它们。'
+    + '原因是执行在开始提交（写缺口标记、输出、状态或进度）之前，超过这次执行自己的期限一分钟仍没返回，是代码没响应取消（缺陷）' + (samples.length ? '：' + samples.join('；') : '') + '。'
+    + '放弃在那次执行返回、或放弃它的副本重启时解除；重启会把对象放回调度，同一条代码路径多半还会再卡——'
+    + '要修的是代码（按 execution_hung 日志里的步骤看），重启只为拿回执行位';
+}
+
+// declineWords is the sentence under a replica's row for the Query Groups it
+// declines, or '' when it declines none: each holds one of its execution
+// slots until the hung execution returns, and with every slot held the
+// replica executes nothing while it reads ready.
+function declineWords(d) {
+  if (!d || !d.total) {
+    return '';
+  }
+  var samples = (d.query_groups || []).map(function (q) {
+    var since = new Date(q.since);
+    return q.query_group + ' 卡在 ' + q.stage + (isNaN(since.getTime()) ? '' : '（自 ' + since.toLocaleTimeString() + '）');
+  });
+  var words = '执行位 ' + d.total + '/' + d.fanout + ' 被卡住的执行占着：' + samples.join('；')
+    + (d.total > samples.length ? ' 等 ' + d.total + ' 个' : '')
+    + '。执行在开始提交之前超过这次执行自己的期限一分钟仍没返回，是代码没响应取消（缺陷）；这些执行返回才放出执行位';
+  if (d.total >= d.fanout) {
+    words = '这个副本已经不执行任何对象，重启它才能放出执行位。' + words;
+  }
+  return words;
 }
 
 function renderLoad(load) {
@@ -3913,7 +4109,7 @@ function renderCapacity(cap, gaps, census) {
     if (hint) { var h = document.createElement('div'); h.className = 'k'; h.textContent = hint; d.appendChild(h); }
     box.appendChild(d);
   }
-  var permitCeiling = cap.permit_budget * cap.replicas;
+  var permitCeiling = cap.permit_budget_per_replica * cap.replicas;
   var at = Date.now();
   // Every cumulative figure is turned into a rate exactly once per render.
   // betweenReads records the value it was handed, so asking it a second time in
@@ -3922,7 +4118,7 @@ function renderCapacity(cap, gaps, census) {
   var rate = {
     permits: betweenReads('permit_seconds', cap.permit_seconds, at),
     throttled: betweenReads('throttled_seconds', cap.throttled_seconds || 0, at),
-    cpu: betweenReads('cpu_seconds', cap.cpu_seconds || 0, at),
+    cpu: betweenReads('cpu_seconds', cap.cpu_seconds_total || 0, at),
     memoryHits: betweenReads('memory_limit_hits', cap.memory_limit_hits || 0, at),
     series: cap.pulled ? betweenReads('pulled_series', cap.pulled.series, at) : null,
     points: cap.pulled ? betweenReads('pulled_records', cap.pulled.records, at) : null
@@ -3935,12 +4131,18 @@ function renderCapacity(cap, gaps, census) {
   // that suffix read undefined, the guard in front of this cell was then false,
   // and the cell simply never appeared -- with the numbers present in every
   // response the whole time.
-  if (cap.memory_limit_bytes) {
+  if (cap.memory_limit_bytes_per_replica) {
     // The ceiling beside it is every replica's limit added up, so it has to say
     // so: without the per-replica figure, 16 GiB on a two-replica deployment
     // reads as 16 GiB per container.
-    var memHint = cap.replicas + ' 个副本各 ' + bytes(cap.memory_limit_bytes) +
+    var memHint = cap.replicas + ' 个副本各 ' + bytes(cap.memory_limit_bytes_per_replica) +
       '；上限来源 ' + (cap.memory_source || '未知') + '；cgroup 用量，不是 Go 堆';
+    // The summed use against the summed limit hides one replica near its own
+    // limit behind the others; the fullest replica is named on its own.
+    if (cap.memory_used_share_max) {
+      memHint += '；用得最满的副本 ' + shortReplica(cap.memory_used_share_max_replica) +
+        ' 占它自己上限的 ' + percentOf(cap.memory_used_share_max);
+    }
     if (cap.memory_oom_kills) {
       memHint = '被杀过 ' + cap.memory_oom_kills + ' 次；' + memHint;
     } else if (cap.memory_limit_hits) {
@@ -3949,10 +4151,10 @@ function renderCapacity(cap, gaps, census) {
     } else {
       memHint = '没撞过上限；' + memHint;
     }
-    cell('内存', bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes * cap.replicas),
+    cell('内存', bytes(cap.memory_used_bytes_total) + ' / ' + bytes(cap.memory_limit_bytes_per_replica * cap.replicas),
       memHint, cap.memory_oom_kills > 0 || (rate.memoryHits && rate.memoryHits.rate > 0));
   }
-  if (cap.cpu_cores) {
+  if (cap.cpu_cores_per_replica) {
     // Same problem as the permits, same fix. "累计被限流 2 秒" counts from a
     // start nobody can see, so it says nothing about whether this deployment is
     // being throttled now -- two seconds could be all of yesterday or the last
@@ -3971,15 +4173,15 @@ function renderCapacity(cap, gaps, census) {
     // to a deployment using half a core and one using seven, and the core count
     // is the number every ceiling below is derived from -- so it is the one
     // figure here that most needed a measured load beside it.
-    var ceiling = cap.cpu_cores * cap.replicas;
+    var ceiling = cap.cpu_cores_per_replica * cap.replicas;
     var used = rate.cpu;
     // cgroup counts throttling as wall time held back, summed over replicas, so
     // one replica's share is the rate divided by how many reported.
     var throttledShare = throttled ? throttled.rate / cap.replicas * 100 : null;
     cell('CPU',
-      used ? used.rate.toFixed(2) + ' / ' + ceiling + ' 核' : ceiling + ' 核（' + cap.cpu_cores + ' × ' + cap.replicas + '）',
+      used ? used.rate.toFixed(2) + ' / ' + ceiling + ' 核' : ceiling + ' 核（' + cap.cpu_cores_per_replica + ' × ' + cap.replicas + '）',
       (used
-        ? '最近 ' + Math.round(used.elapsed) + ' 秒的平均用量，' + cap.replicas + ' 个副本各 ' + cap.cpu_cores + ' 核'
+        ? '最近 ' + Math.round(used.elapsed) + ' 秒的平均用量，' + cap.replicas + ' 个副本各 ' + cap.cpu_cores_per_replica + ' 核'
         : '用量要两次读取才算得出，约 30 秒后出现') +
       '；' + cpuFrom + '；' +
       (throttledShare !== null
@@ -4099,7 +4301,7 @@ function renderCapacity(cap, gaps, census) {
   // gone from the card: the panel's opening paragraph already says the operator
   // sets two numbers and the program derives every ceiling below them, and
   // saying it again on each card is what pushed the measurement to the end.
-  var ceilingText = '上限 ' + permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget + '）';
+  var ceilingText = '上限 ' + permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget_per_replica + '）';
   // "没有查询在排队。" was a statement about the deployment made from one
   // instant, and both halves of why that is wrong are already written down --
   // one in the Go type beside this field, one in the shape of the workload.
@@ -4153,17 +4355,17 @@ function renderCapacity(cap, gaps, census) {
   } else {
     queueText = '启动至今还没有查询取过位子，够不够无从谈起。';
   }
-  if (cap.waiting > 0) {
-    queueText = '此刻另有 ' + cap.waiting + ' 个在排队等位子。' + queueText;
+  if (cap.waiting_total > 0) {
+    queueText = '此刻另有 ' + cap.waiting_total + ' 个在排队等位子。' + queueText;
   }
   cell('同时在跑的查询',
-    cap.permits_held + ' / ' + permitCeiling,
+    cap.permits_held_total + ' / ' + permitCeiling,
     (held
       ? '最近 ' + Math.round(held.elapsed) + ' 秒平均跑着 ' + held.rate.toFixed(1)
-        + ' 个，此刻 ' + cap.permits_held + ' 个；' + ceilingText + '。'
-      : '此刻在跑 ' + cap.permits_held + ' 个，' + ceilingText + '；平均值约 30 秒后出现。')
+        + ' 个，此刻 ' + cap.permits_held_total + ' 个；' + ceilingText + '。'
+      : '此刻在跑 ' + cap.permits_held_total + ' 个，' + ceilingText + '；平均值约 30 秒后出现。')
       + queueText,
-    cap.waiting > 0);
+    cap.waiting_total > 0);
   // Only shown when it says something is wrong.
   //
   // "2069 圈走完" is a counter that climbs on a healthy deployment forever: it
@@ -4786,19 +4988,53 @@ function loadRecords(queryGroup) {
 // many Slots are inside it cannot be known, because the parts of the timeline
 // that would have counted them are the parts that were removed. The page says
 // that rather than printing a number that would read as measured.
-function renderPrunedSkips(skips) {
+// Why an object has a span nothing evaluated, and what to look at for it,
+// by the reason its skip was recorded under. A skip from a publisher older
+// than the reason is a pruned one, as PrunedSkip.Code reads it.
+var TIMELINE_LOSS = {
+  SCHEDULE_PRUNED: '游标曾经指向已经被裁掉的时间线，被移到了时间线还留着的最早一个时间点',
+  SCHEDULE_REPAIRED: '时间线的字节解不开，Leader 把它重写成从边界起的一段',
+  SCHEDULE_REOPENED: '时间线在 Redis 里的键没了，Leader 从边界把它重开'
+};
+var TIMELINE_LOSS_NEXT = {
+  SCHEDULE_PRUNED: '要查的是游标为什么落到了保留期之外',
+  SCHEDULE_REPAIRED: '这是本部署的缺陷：看这些对象的 SCHEDULE_UNREADABLE 行和 timeline_repairs_total',
+  SCHEDULE_REOPENED: '要查运行态 Redis 在那个时刻前后有没有逐出（maxmemory 策略、evicted_keys）或删除，不是 alarmd 的保留期'
+};
+function renderPrunedSkips(skips, total) {
   show('prunedSkips', skips.length > 0);
   if (!skips.length) return;
   var longest = skips[0];
-  var parts = ['有 ' + skips.length + ' 个对象存在一段"从来没有被检测过"的时间'
-    + '——它们的游标曾经指向已经被裁掉的时间线，被移到了时间线还留着的最早一个时间点。'
-    + '那一段里的时间点没有被评估过，也不会补跑。'];
+  // The list carries the longest few; the total is how many there are. A
+  // build before the total existed sends every one and no total.
+  var count = total || skips.length;
+  var parts = ['有 ' + count + ' 个对象存在一段"从来没有被检测过"的时间，那一段里的时间点没有被评估过，也不会补跑'];
+  // Counted over the listed spans only: a cut list does not say how the
+  // rest divide.
+  var reasons = {}, rewritten = {};
+  skips.forEach(function (skip) {
+    var reason = skip.reason || 'SCHEDULE_PRUNED';
+    reasons[reason] = (reasons[reason] || 0) + 1;
+    // By instant, not by text: RFC 3339 with fractions trimmed or a zone
+    // offset does not sort as its time does.
+    if (skip.rewritten_at && (!rewritten[reason] || Date.parse(skip.rewritten_at) > Date.parse(rewritten[reason]))) rewritten[reason] = skip.rewritten_at;
+  });
+  var byReason = [];
+  ['SCHEDULE_PRUNED', 'SCHEDULE_REPAIRED', 'SCHEDULE_REOPENED'].concat(Object.keys(reasons).filter(function (r) {
+    return !TIMELINE_LOSS[r];
+  })).forEach(function (reason) {
+    if (!reasons[reason]) return;
+    byReason.push(reasons[reason] + ' 段是' + (TIMELINE_LOSS[reason] || reason)
+      + (rewritten[reason] ? '（最近一次在 ' + momentLabel(rewritten[reason]) + '）' : '')
+      + (TIMELINE_LOSS_NEXT[reason] ? '，' + TIMELINE_LOSS_NEXT[reason] : ''));
+  });
+  parts.push((count > skips.length ? '列出的 ' + skips.length + ' 段里，' : '') + byReason.join('；'));
   parts.push('最长的一段是 ' + shortId(longest.query_group) + '，跨度 '
     + elapsedLabel(longest.span_seconds) + '，发生在 ' + momentLabel(longest.at));
   if (longest.discarded_slot) {
     parts.push('其中有一个时间点当时正在跑，被一起丢掉了');
   }
-  parts.push('跨度里有多少个时间点无法得知：能数它们的那部分时间线正是被裁掉的那部分。'
+  parts.push('跨度里有多少个时间点无法得知：能数它们的那部分时间线正是丢掉的那部分。'
     + '所以这里只给时间跨度，不给个数——给个数就会被当成数出来的');
   parts.push('这些对象现在通常是正常的，上面每一栏都会这么报，而且都没报错。'
     + '要处理的不是它们此刻的状态，是那一段没有告警覆盖的时间');
@@ -5136,6 +5372,7 @@ function refresh() {
   lastRead = Date.now();
   text('stamp', '读取于 ' + new Date().toLocaleTimeString());
   tickAge();
+  loadStrategyCount();
   loadHealth();
   loadChecks();
   loadWindows();

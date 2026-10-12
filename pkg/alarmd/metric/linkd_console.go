@@ -19,6 +19,9 @@ type LinkdConsoleReading struct {
 // LinkdConsoleCalls is one operation's totals since the process started.
 type LinkdConsoleCalls struct {
 	Calls, Failures uint64
+	// FailuresByClass is the failures under each class; a class not in it
+	// is zero.
+	FailuresByClass map[string]uint64
 }
 
 // linkdConsoleCollector reports the Console as a dependency of its own.
@@ -28,12 +31,14 @@ type LinkdConsoleCalls struct {
 // those families being missing. The state here is present on every replica
 // whatever the configuration.
 type linkdConsoleCollector struct {
-	mu     sync.Mutex
-	states []string
-	ops    []string
-	source func() LinkdConsoleReading
-	state  *prometheus.Desc
-	calls  *prometheus.Desc
+	mu       sync.Mutex
+	states   []string
+	ops      []string
+	classes  []string
+	source   func() LinkdConsoleReading
+	state    *prometheus.Desc
+	calls    *prometheus.Desc
+	failures *prometheus.Desc
 }
 
 func newLinkdConsoleCollector() *linkdConsoleCollector {
@@ -51,30 +56,42 @@ func newLinkdConsoleCollector() *linkdConsoleCollector {
 				"and result (ok, failed). Only the control leader walks the roster. An alert_record answered with "+
 				"'no such alert' is ok. Every cell exists once the source is bound, so a zero is a reading.",
 			[]string{"op", "result"}, nil),
+		failures: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "linkd_console_failures_total"),
+			"Failed calls to the alert link's Console, by operation and class: the transport's word for a request "+
+				"that got no answer (cancelled - the caller let go, timeout, connection_refused, connection_reset, dns, "+
+				"tls, eof, other - the same words a query provider's route detail uses), status (an answer other than "+
+				"200) and incomplete (a body not read whole or not decoded). The classes of one operation add up to "+
+				"its result=\"failed\" cell of linkd_console_calls_total; the latest one, with when, is the Console "+
+				"row's last_failure_class on the deployment's dependencies, and its start and every change of class "+
+				"write one console_call_failed line. Every cell exists once the source is bound."+
+				" Reader: the release acceptance, from /metrics after each deploy.",
+			[]string{"op", "class"}, nil),
 	}
 }
 
 // SetLinkdConsoleSource binds the collector: the closed state and operation
 // lists, and the reading. Safe before or after registration; a nil recorder
 // is a no-op.
-func (r *Recorder) SetLinkdConsoleSource(states, ops []string, source func() LinkdConsoleReading) {
+func (r *Recorder) SetLinkdConsoleSource(states, ops, classes []string, source func() LinkdConsoleReading) {
 	if r == nil || r.phaseTwo.linkdConsole == nil {
 		return
 	}
 	c := r.phaseTwo.linkdConsole
 	c.mu.Lock()
-	c.states, c.ops, c.source = append([]string(nil), states...), append([]string(nil), ops...), source
+	c.states, c.ops, c.classes, c.source = append([]string(nil), states...), append([]string(nil), ops...),
+		append([]string(nil), classes...), source
 	c.mu.Unlock()
 }
 
 func (c *linkdConsoleCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.state
 	ch <- c.calls
+	ch <- c.failures
 }
 
 func (c *linkdConsoleCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.Lock()
-	states, ops, source := c.states, c.ops, c.source
+	states, ops, classes, source := c.states, c.ops, c.classes, c.source
 	c.mu.Unlock()
 	if source == nil {
 		return
@@ -91,5 +108,8 @@ func (c *linkdConsoleCollector) Collect(ch chan<- prometheus.Metric) {
 		calls := reading.Calls[op]
 		ch <- prometheus.MustNewConstMetric(c.calls, prometheus.CounterValue, float64(calls.Calls-calls.Failures), op, "ok")
 		ch <- prometheus.MustNewConstMetric(c.calls, prometheus.CounterValue, float64(calls.Failures), op, "failed")
+		for _, class := range classes {
+			ch <- prometheus.MustNewConstMetric(c.failures, prometheus.CounterValue, float64(calls.FailuresByClass[class]), op, class)
+		}
 	}
 }

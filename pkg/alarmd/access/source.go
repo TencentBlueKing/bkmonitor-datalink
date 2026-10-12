@@ -11,8 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -46,6 +48,41 @@ const minimumSettlingWait = execution.MinimumSettlingWait
 func settlingWaitWithinBudget(schedule execution.ScheduleSpec, configured, reserve time.Duration) time.Duration {
 	budget := time.Duration(schedule.CompletionOffsetSeconds())*time.Second - reserve
 	return execution.SettlingWaitWithinQueryBudget(budget, configured)
+}
+
+// lookbackQuery is a physical query as the lookback sees it before it is
+// sent: its Slot, its frozen spec, the attempt, when it was ready, and the
+// Slot the frozen schedule has next, which the Runner put on ctx.
+func lookbackQuery(ctx context.Context, request execution.QueryExecutionRequest, spec execution.PhysicalQuerySpec,
+	attemptNo uint32, readyAtUnixMilli int64, secondary bool) lookback.Query {
+	return lookback.Query{Contract: request.Contract, Spec: spec, Operation: request.Operation, AttemptNo: attemptNo,
+		ReadyAt: time.UnixMilli(readyAtUnixMilli), FollowingSlot: execution.FollowingSlotOf(ctx), Secondary: secondary}
+}
+
+// slotFirstRead is the index in queries of the Slot's first read: the query
+// carrying the Slot's primary requirement with the smallest RequirementID
+// (the h design, section 14). The requirement id, a digest of the relative
+// window and the role, is the same at every Slot, where the queries' own
+// order, by deadline and then by a digest of the absolute window, can change
+// from one Slot to the next. A Slot with no primary requirement, which the
+// plan's validation rules out, has its first query as its first read, so
+// every Slot with a query has exactly one; -1 only for a Slot with none.
+func slotFirstRead(queries []PlannedQuery) int {
+	first, id := -1, execution.RequirementID("")
+	for index, query := range queries {
+		for _, requirement := range query.Requirements {
+			if requirement.Role != execution.InputRolePrimary {
+				continue
+			}
+			if first < 0 || requirement.RequirementID < id {
+				first, id = index, requirement.RequirementID
+			}
+		}
+	}
+	if first < 0 && len(queries) > 0 {
+		return 0
+	}
+	return first
 }
 
 type ReadinessDeferredError struct{ readyAt time.Time }
@@ -111,6 +148,12 @@ type Config struct {
 	Admission SeriesAdmission
 	// ObserveAdmission counts decisions. Optional.
 	ObserveAdmission AdmissionObserver
+	// ObserveHostPlacement counts each admitted series a Plan reads whose
+	// host CMDB placed by id or agent (admission.Facts.PlacedByHostID), with
+	// whether its own address is not that host's
+	// (admission.Facts.ReportedAddressDiffers), by whether the Plan's alert
+	// identity groups by bk_target_ip. Optional.
+	ObserveHostPlacement func(groupedByTargetIP, addressDiffers bool)
 	// ScopeDrops receives the series the target filters turned away, for
 	// the target-scope close; see ScopeDropSink. Optional.
 	ScopeDrops ScopeDropSink
@@ -120,6 +163,11 @@ type Config struct {
 	// printed with no measured load beside it says nothing about whether
 	// anything is near it. Optional.
 	ObserveSeriesPulled func(records uint64)
+	// Lookback takes one first read of each owned Query Group at a time as
+	// the provider delivered it, before any target filtering, as a summary to
+	// compare later reads of the same window with; see package lookback. It
+	// sees the query and hands nothing back into the pipeline. Optional.
+	Lookback *lookback.Engine
 }
 
 type Source struct {
@@ -154,6 +202,9 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	if err := request.Validate(); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
+	if request.Operation == execution.OperationSupplement {
+		return source.executeSupplement(ctx, request, consumer)
+	}
 	// Read once, before anything this call does can take time. It is what "how
 	// late did we arrive" is measured from, and a clock read taken after the
 	// plan resolve would fold that resolve into the answer.
@@ -175,13 +226,24 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	}
 	recoveryDeadline, budgetErr := deriveRecoveryQueryDeadline(request, frozen, recoveryStartedAt)
 	source.observeQueryTiming(ctx, request, frozen, prepared, recoveryStartedAt, recoveryDeadline)
+	// The deadline this recovery runs under, from here on: its channel wait
+	// and its queries are bounded by it, not by the frozen Slot's first
+	// attempt's, which is minutes gone for a replay of a taken-over Slot.
+	execution.ExtendDeadline(ctx, recoveryDeadline, recoveryStartedAt)
 	if budgetErr != nil || (!recoveryDeadline.IsZero() && !recoveryDeadline.After(source.now())) {
 		if err := consumer.Begin(ctx, prepared.Header); err != nil {
 			return execution.QueryExecutionCompletion{}, err
 		}
 		return completeBudgetExhaustedQueries(execution.QueryExecutionCompletion{}, prepared.Queries, request.AttemptNo), nil
 	}
-	if readyAt := sharedPendingReadiness(prepared.Queries, source.now()); !readyAt.IsZero() {
+	firstRead := slotFirstRead(prepared.Queries)
+	if request.Operation == execution.OperationNormal && source.config.Lookback != nil {
+		for index, query := range prepared.Queries {
+			source.config.Lookback.Prepare(lookbackQuery(ctx, request, query.Spec, request.AttemptNo, query.ReadyAtUnixMilli,
+				index != firstRead))
+		}
+	}
+	if readyAt := slotPendingReadiness(prepared.Queries, request.Contract.ReadHoldMillis, source.now()); !readyAt.IsZero() {
 		return execution.QueryExecutionCompletion{}, &ReadinessDeferredError{readyAt: readyAt}
 	}
 	// Past the turn-away, so this arrival is one that goes on to do the work.
@@ -243,7 +305,7 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	// The monitoring targets of this execution's plans are indexed once, not
 	// per series: one query commonly delivers thousands of series and every
 	// one of them would otherwise repeat the same lookup.
-	scopes := buildPlanScopes(prepared.Header.DuePlans, consumer.ResolvedTargets())
+	scopes := buildPlanScopes(prepared.Header.DuePlans, consumer.ResolvedTargets(), consumer.ResolvedScopeGroups())
 	var outputs planOutputs
 	if source.config.ScopeDrops != nil {
 		outputs = buildPlanOutputs(prepared.Header.DuePlans, prepared.Queries)
@@ -285,8 +347,23 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			}
 		}
 		queryDeadline := time.UnixMilli(query.DeadlineUnixMilli)
+		// Where the budget ending at that deadline began: a recovery's is
+		// counted from its arrival, a normal query's from its Slot.
+		budgetStart := int64(request.Contract.Slot.EvaluationTime) * 1000
 		if !recoveryDeadline.IsZero() {
 			queryDeadline = recoveryDeadline
+			budgetStart = recoveryStartedAt.UnixMilli()
+			// An execution the query cooldown pool let run decides whether
+			// the Query Group leaves it, so it gets what a normal round of
+			// this Slot has: from its arrival, the span from the query's
+			// readiness to its deadline as prepare plans both for the normal
+			// round. Not the whole interval a catch-up gets.
+			if execution.NormalQueryBudget(ctx) {
+				normal := recoveryStartedAt.Add(time.Duration(query.DeadlineUnixMilli-query.ReadyAtUnixMilli) * time.Millisecond)
+				if normal.Before(queryDeadline) {
+					queryDeadline = normal
+				}
+			}
 		}
 		permit, err := permits.AcquireQueryPermit(queryCtx, request.Contract.Slot, request.Operation, queryDeadline)
 		if err != nil {
@@ -309,26 +386,46 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			break
 		}
 		attempt := execution.QueryAttempt{Spec: query.Spec, Slot: request.Contract.Slot, Operation: request.Operation,
-			AttemptNo: request.AttemptNo, DeadlineUnixMilli: queryDeadline.UnixMilli(), RecoveryPermit: permit.RecoveryPermit()}
+			AttemptNo: request.AttemptNo, DeadlineUnixMilli: queryDeadline.UnixMilli(), RecoveryPermit: permit.RecoveryPermit(),
+			BudgetStartUnixMilli: budgetStart, ReadyAtUnixMilli: query.ReadyAtUnixMilli}
 		if err := attempt.Validate(); err != nil {
 			permit.Release()
 			dispatchErr = err
 			break
 		}
+		kept := source.config.Lookback.Begin(lookbackQuery(ctx, request, query.Spec, attempt.AttemptNo, query.ReadyAtUnixMilli,
+			queryIndex != firstRead))
+		// Each query raises the execution's deadline to its own as it
+		// starts, so a later query is judged by its deadline and not by an
+		// earlier one's that has passed.
+		execution.ExtendDeadline(ctx, queryDeadline, source.now())
+		// What the query has from its send to its deadline, read here on the
+		// dispatch loop just before it is sent.
+		budgetMillis := attempt.DeadlineUnixMilli - source.now().UnixMilli()
 		running.Add(1)
 		go func(index int, query PlannedQuery, attempt execution.QueryAttempt, permit QueryPermit) {
 			defer running.Done()
 			adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo,
 				admission: source.config.Admission, observe: source.config.ObserveAdmission,
-				pulled: source.config.ObserveSeriesPulled, scopes: scopes,
-				scopeSink: source.config.ScopeDrops, outputs: outputs, round: int64(request.Contract.Slot.EvaluationTime)}
+				hostPlacement: source.config.ObserveHostPlacement, pulled: source.config.ObserveSeriesPulled, scopes: scopes,
+				scopeSink: source.config.ScopeDrops, outputs: outputs, round: int64(request.Contract.Slot.EvaluationTime),
+				lookback: kept}
 			adapters[index] = adapter
 			completion, err := source.executeWithPermit(queryCtx, attempt, adapter, permit)
+			// The time it took is the provider's own measure, from its
+			// request to its answer or failure; this goroutine reads no
+			// clock of the Source's, which the dispatch loop owns.
+			results[index].clock = &execution.PhysicalQueryClock{BudgetMillis: budgetMillis,
+				ElapsedMillis: int64(completion.Stats.QueryMillis)}
 			if err != nil {
 				err = fmt.Errorf("alarmd access: execute physical query: %w", err)
 			} else if !trustedProviderCompletion(query.Spec.Digest, completion) {
 				err = errors.New("alarmd access: G1 provider returned an untrusted completion")
-			} else {
+			}
+			// The provider's own completion: a first read is kept as the
+			// provider delivered it, and a recheck is compared with that.
+			kept.Complete(completion, err)
+			if err == nil {
 				completion = adapter.reconcileCompletion(completion)
 			}
 			results[index].completion = completion
@@ -362,34 +459,63 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			completion = completeBudgetExhaustedQueries(completion, []PlannedQuery{query}, request.AttemptNo)
 			continue
 		}
-		providerCompletion := result.completion
-		completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
-			Ref: providerCompletion.Ref, PhysicalQuery: providerCompletion.PhysicalQuery,
-			QueryRevision: query.Spec.PlanFacts.QueryRevision, Completeness: providerCompletion.Completeness,
-			DataState: providerCompletion.DataState, Delivery: providerCompletion.Delivery,
-			RouteFacts: providerCompletion.RouteFacts, PartialEvidence: providerCompletion.PartialEvidence,
-			Stats: providerCompletion.Stats,
-		})
-		// Every valid requirement receives a completion binding, also when the
-		// query delivered series. A Plan whose PRIMARY query returned no series
-		// is completion-only at the worker and requires one binding per frozen
-		// requirement of every Level; a dependency query that returned DATA for
-		// other Plans or series would otherwise leave that Plan without a
-		// binding and fail the Slot deterministically on every attempt. The
-		// worker prefers a streamed binding for each (consumer, series,
-		// requirement) key and falls back to this one only where none exists.
-		completion.CompletionBindings = append(completion.CompletionBindings, completionBindings(query, providerCompletion, request.AttemptNo)...)
-		completion.CompletionBindings = append(completion.CompletionBindings,
-			readinessInvalidBindings(query, providerCompletion.Ref, request.AttemptNo)...)
+		completion = appendQueryCompletion(completion, query, result.completion, request.AttemptNo)
+		completion.PhysicalQueries[len(completion.PhysicalQueries)-1].Clock = result.clock
 	}
 	completion.AllRequiredCompleted = true
 	return completion, nil
+}
+
+// appendQueryCompletion adds one physical query's completion, restated for
+// what was forwarded, and its completion bindings.
+func appendQueryCompletion(
+	completion execution.QueryExecutionCompletion,
+	query PlannedQuery,
+	providerCompletion execution.ProviderCompletion,
+	attemptNo uint32,
+) execution.QueryExecutionCompletion {
+	completion.PhysicalQueries = append(completion.PhysicalQueries, execution.PhysicalQueryCompletion{
+		Ref: providerCompletion.Ref, PhysicalQuery: providerCompletion.PhysicalQuery,
+		QueryRevision: query.Spec.PlanFacts.QueryRevision, Completeness: providerCompletion.Completeness,
+		DataState: providerCompletion.DataState, Delivery: providerCompletion.Delivery,
+		RouteFacts: providerCompletion.RouteFacts, PartialEvidence: providerCompletion.PartialEvidence,
+		Stats: providerCompletion.Stats, Withheld: providerCompletion.Withheld, WithheldOutsideTarget: providerCompletion.WithheldOutsideTarget,
+		Range: queryRange(query),
+	})
+	// Every valid requirement receives a completion binding, also when the
+	// query delivered series. A Plan whose PRIMARY query returned no series
+	// is completion-only at the worker and requires one binding per frozen
+	// requirement of every Level; a dependency query that returned DATA for
+	// other Plans or series would otherwise leave that Plan without a
+	// binding and fail the Slot deterministically on every attempt. The
+	// worker prefers a streamed binding for each (consumer, series,
+	// requirement) key and falls back to this one only where none exists.
+	completion.CompletionBindings = append(completion.CompletionBindings, completionBindings(query, providerCompletion, attemptNo)...)
+	completion.CompletionBindings = append(completion.CompletionBindings,
+		readinessInvalidBindings(query, providerCompletion.Ref, attemptNo)...)
+	return completion
+}
+
+// queryRange is how long a range the query was sent asking for and how long
+// a range it accepts, and whether any requirement it serves is primary.
+func queryRange(query PlannedQuery) *execution.PhysicalQueryRange {
+	primary := false
+	for _, requirement := range query.Requirements {
+		if requirement.Role == execution.InputRolePrimary {
+			primary = true
+		}
+	}
+	return &execution.PhysicalQueryRange{Primary: primary,
+		AskedSeconds:    query.Spec.ProviderRange.End - query.Spec.ProviderRange.Start,
+		AcceptedSeconds: query.Spec.AcceptedRange.End - query.Spec.AcceptedRange.Start}
 }
 
 type physicalQueryResult struct {
 	completion      execution.ProviderCompletion
 	invalid         bool
 	budgetExhausted bool
+	// clock is what the query had from its send and what it used.
+	clock *execution.PhysicalQueryClock
 }
 
 // queryPermitDeadlineError names a normal-operation permit wait that ended at
@@ -553,11 +679,6 @@ func (source *Source) executeWithPermit(
 ) (execution.ProviderCompletion, error) {
 	defer permit.Release()
 	observability.EmitTargetFlow(ctx, "runner_decision", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "query_running"})
-	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
-		if c.QueryCalled != nil {
-			c.QueryCalled(attempt)
-		}
-	})
 	completion, err := source.provider.Execute(ctx, attempt, adapter)
 	if err == nil && completion.Stats.NullIdentityFields > 0 {
 		// Bounded diagnostics marker: at least one declared identity dimension
@@ -645,8 +766,10 @@ func prepare(
 			return PreparedExecution{}, errors.New("alarmd access: frozen query revision mismatch")
 		}
 		window := requirement.AbsoluteWindow(contractRef.Slot.EvaluationTime)
+		// The provider is asked from earlier for an event count (its
+		// requirement's lead); only the window is accepted.
 		spec, err := execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{PlanFacts: facts,
-			LogicalWindow: window, ProviderRange: window, AcceptedRange: window,
+			LogicalWindow: window, ProviderRange: requirement.ProviderWindow(contractRef.Slot.EvaluationTime), AcceptedRange: window,
 			RequiredColumns: append([]string(nil), requirement.RequiredColumns...)})
 		if err != nil {
 			return PreparedExecution{}, fmt.Errorf("alarmd access: build physical query: %w", err)
@@ -761,7 +884,17 @@ func frozenConsumerReadyAt(
 	// Source delay selects an older data window; it must not move the
 	// scheduler's global readiness boundary earlier by the same amount.
 	window.End += sourceDelaySeconds
-	return frozenRequirementReadyAt(requirement, window, settlingWaitWithinBudget(schedule, configuredDelay, reserve))
+	ready, err := frozenRequirementReadyAt(requirement, window, settlingWaitWithinBudget(schedule, configuredDelay, reserve))
+	if err != nil {
+		return 0, err
+	}
+	// The contract's read hold reads the Slot that much later, after the
+	// settling wait: the wait is still chosen within the schedule's own
+	// budget, which the hold does not widen, as the scheduler chooses it.
+	if contractRef.ReadHoldMillis < 0 || ready > math.MaxInt64-contractRef.ReadHoldMillis {
+		return 0, errors.New("alarmd access: read hold exceeds readiness range")
+	}
+	return ready + contractRef.ReadHoldMillis, nil
 }
 
 func frozenSchedules(frozen FrozenPlan) (map[execution.PlanIdentity]execution.ScheduleSpec, error) {
@@ -776,6 +909,31 @@ func frozenSchedules(frozen FrozenPlan) (map[execution.PlanIdentity]execution.Sc
 		schedules[due.Identity] = due.ScheduleSpec
 	}
 	return schedules, nil
+}
+
+// slotPendingReadiness is when a Slot that is not ready comes back, instead
+// of waiting inside its execution. A Slot carrying a read hold comes back
+// when the last of its queries is ready, whenever any is still pending: it
+// waits in the due index, as its held readiness is its due time there, and
+// does not sleep through the hold holding a dispatch slot and its Query
+// Group's flight. A query already readable is read then; its window is the
+// same and no less complete. A Slot without a hold keeps the shared rule:
+// deferred only when every query waits for the same moment, otherwise the
+// settling wait for the earliest is spent inside the execution.
+func slotPendingReadiness(queries []PlannedQuery, readHoldMillis int64, now time.Time) time.Time {
+	if readHoldMillis <= 0 {
+		return sharedPendingReadiness(queries, now)
+	}
+	var latest time.Time
+	for _, query := range queries {
+		if len(query.Requirements) == 0 {
+			continue
+		}
+		if readyAt := time.UnixMilli(query.ReadyAtUnixMilli); readyAt.After(now) && readyAt.After(latest) {
+			latest = readyAt
+		}
+	}
+	return latest
 }
 
 func sharedPendingReadiness(queries []PlannedQuery, now time.Time) time.Time {
@@ -821,6 +979,9 @@ type seriesAdapter struct {
 	attemptNo uint32
 	admission SeriesAdmission
 	observe   AdmissionObserver
+	// hostPlacement counts an admitted series whose host CMDB placed by id
+	// or agent, with whether its address differs, per Plan. Optional.
+	hostPlacement func(groupedByTargetIP, addressDiffers bool)
 	// pulled counts the series this query actually handed on. Optional.
 	pulled func(records uint64)
 	scopes planScopes
@@ -833,6 +994,10 @@ type seriesAdapter struct {
 	round        int64
 	scopeScreens map[execution.PlanIdentity]string
 	scopeTallies map[scopeTallyKey]int
+	// lookback is this query's first read as the lookback sees it: its bytes
+	// counted, and a summary kept when it was taken as its Query Group's
+	// sample; nil for a query that is not a formal first read.
+	lookback *lookback.Read
 
 	// forwarded accumulates the delivery proofs of the batches that actually
 	// reached the consumer, and withheld counts the ones the monitoring target
@@ -844,13 +1009,20 @@ type seriesAdapter struct {
 	// undefined for the worker too - which is why this needs no lock.
 	forwarded execution.SeriesDelivery
 	withheld  uint64
+	// withheldOutside counts the withheld series every Plan refused as
+	// outside its monitoring target on facts that were all there: data that
+	// exists and that the target did not select.
+	withheldOutside uint64
 }
 
 func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch execution.ProviderSeriesBatch) error {
 	if batch.PhysicalQuery != adapter.query.Spec.Digest || batch.CompletionRef == "" || batch.Dataset == nil || batch.Dataset.Len() == 0 {
 		return errors.New("alarmd access: provider delivered an invalid series")
 	}
-	admitted := adapter.admittedPlans(batch)
+	admitted, outside := adapter.admittedPlans(batch)
+	// Kept before the target filter returns: a recheck reads the whole
+	// dimension set, and a series every Plan turned away is still data.
+	adapter.lookback.Series(batch.Dataset, batch.Delivery.Bytes)
 	bindings, err := dataBindings(adapter.query, batch, adapter.attemptNo, admitted)
 	if err != nil {
 		return err
@@ -860,6 +1032,9 @@ func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch e
 		// batch on would be rejected as incomplete, and there is nothing to
 		// evaluate: the series simply does not belong to any of them.
 		adapter.withheld++
+		if outside {
+			adapter.withheldOutside++
+		}
 		return nil
 	}
 	if err := adapter.consumer.ConsumeSeries(ctx, execution.SeriesExecutionBatch{PhysicalQuery: batch.PhysicalQuery,
@@ -894,6 +1069,7 @@ func (adapter *seriesAdapter) ConsumeProviderSeries(ctx context.Context, batch e
 // including the ones whose series were admitted. Filtering therefore has to
 // subtract from the completion in the same layer that does the filtering.
 func (adapter *seriesAdapter) reconcileCompletion(completion execution.ProviderCompletion) execution.ProviderCompletion {
+	completion.Withheld, completion.WithheldOutsideTarget = adapter.withheld, adapter.withheldOutside
 	if adapter.withheld == 0 || completion.DataState != execution.DataStateData {
 		return completion
 	}
@@ -909,14 +1085,22 @@ func (adapter *seriesAdapter) reconcileCompletion(completion execution.ProviderC
 	return completion
 }
 
-// admittedPlans enriches the series once and then decides for each plan it
-// could feed. A nil result means no filtering is installed and every plan is
-// admitted.
-func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch) map[execution.PlanIdentity]bool {
+// admittedPlans enriches the series once per tenant among the plans it could
+// feed - the CMDB facts are the plan's tenant's - and then decides for each
+// plan, and says whether every plan refused it as outside its monitoring
+// target, decided on facts that were all there. A nil result means no
+// filtering is installed and every plan is admitted.
+func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch) (map[execution.PlanIdentity]bool, bool) {
 	if adapter.admission == nil {
-		return nil
+		return nil, false
 	}
-	facts := adapter.admission.Enrich(seriesDimensions(batch.Dataset))
+	outside := true
+	dimensions := seriesDimensions(batch.Dataset)
+	// The plans of one query are one tenant's in practice: the facts are
+	// kept for the last tenant enriched for, and only a plan of another
+	// tenant enriches again.
+	var facts admission.Facts
+	factsTenant, enriched := "", false
 	decisions := make(map[execution.PlanIdentity]bool)
 	for _, requirement := range adapter.query.Requirements {
 		for _, consumer := range requirement.Consumers {
@@ -924,21 +1108,19 @@ func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch)
 			if _, decided := decisions[identity]; decided {
 				continue
 			}
-			plan, known := adapter.scopes[identity]
-			if !known {
-				// A plan whose scope was not indexed must not be filtered on a
-				// guess. It is admitted and the gap is visible in the counter.
-				decisions[identity] = true
-				if adapter.observe != nil {
-					adapter.observe("target_scope", "admitted", "plan_not_indexed")
-				}
-				continue
+			plan := adapter.scopes[identity]
+			if !enriched || plan.TenantID != factsTenant {
+				facts, factsTenant, enriched = adapter.admission.EnrichFor(plan.TenantID, dimensions), plan.TenantID, true
 			}
 			admit, filter, reason := adapter.admission.Admit(plan, &facts)
 			decisions[identity] = admit
 			if !admit {
 				adapter.reportScopeDrop(identity, plan, &facts, filter, reason)
 			}
+			if admit && facts.PlacedByHostID && adapter.hostPlacement != nil {
+				adapter.hostPlacement(adapter.query.groupsByTargetIP(), facts.ReportedAddressDiffers)
+			}
+			outside = outside && !admit && admission.DefinitelyOutside(plan, &facts, filter, reason)
 			if adapter.observe != nil {
 				switch {
 				case !admit:
@@ -959,7 +1141,7 @@ func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch)
 			}
 		}
 	}
-	return decisions
+	return decisions, outside && len(decisions) > 0
 }
 
 func dataBindings(
@@ -1014,6 +1196,7 @@ func completionBindings(query PlannedQuery, completion execution.ProviderComplet
 	}
 	disposition := execution.AccessAvailable
 	var reason execution.ReasonCode
+	var attribution execution.UnavailableAttribution
 	switch completion.Completeness {
 	case execution.CompletenessFull:
 		dataset = execution.NewDataset(nil)
@@ -1026,7 +1209,7 @@ func completionBindings(query PlannedQuery, completion execution.ProviderComplet
 	case execution.CompletenessUnavailable:
 		dataState = execution.DataStateUnknown
 		disposition = execution.AccessUnavailable
-		reason = providerFailureReason(completion.RouteFacts)
+		reason, attribution = execution.AttributeUnavailable(completion.RouteFacts, execution.ReasonCode(contract.ReasonQueryUnavailable))
 	}
 	for _, requirement := range query.Requirements {
 		for _, consumer := range requirement.Consumers {
@@ -1035,20 +1218,11 @@ func completionBindings(query PlannedQuery, completion execution.ProviderComplet
 				ProviderResult: completion.Ref, QueryWindow: query.Spec.LogicalWindow, Dataset: dataset, View: view,
 				Completeness: completion.Completeness, DataState: dataState,
 				Disposition: disposition, ReasonCode: reason, ImpactScope: execution.ImpactPlan,
-				PartialEvidence: completion.PartialEvidence,
-				Provenance:      execution.InputProvenance{PhysicalQuery: query.Spec.Digest, AttemptNo: attemptNo}})
+				PartialEvidence: completion.PartialEvidence, UnavailableAttribution: attribution,
+				Provenance: execution.InputProvenance{PhysicalQuery: query.Spec.Digest, AttemptNo: attemptNo}})
 		}
 	}
 	return bindings
-}
-
-// providerFailureReason picks the code an unavailable completion carries. The
-// walk and the fallback live in execution.AttributeUnavailable, which also
-// says where the code came from; this caller binds the code only, the
-// attribution is counted where the completion is observed.
-func providerFailureReason(facts execution.ProviderRouteFacts) execution.ReasonCode {
-	code, _ := execution.AttributeUnavailable(facts, execution.ReasonCode(contract.ReasonQueryUnavailable))
-	return code
 }
 
 func waitContext(ctx context.Context, delay time.Duration) error {

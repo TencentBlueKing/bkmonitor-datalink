@@ -18,12 +18,12 @@ func cachedTimelineFor(queryGroup execution.QueryGroupIdentity, revision uint64)
 func TestControlReadCacheTimelinesAreBoundedByEntriesAndBytes(t *testing.T) {
 	four := cachedTimelineBytes(4)
 	cache := newControlReadCache(2, 16*four)
-	cache.storeTimeline("v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
-	cache.storeTimeline("v1", "qg-b", cachedTimelineFor("qg-b", 2), 4)
+	cache.storeTimeline(nil, "v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
+	cache.storeTimeline(nil, "v1", "qg-b", cachedTimelineFor("qg-b", 2), 4)
 	if _, ok := cache.lookupTimeline("v1", "qg-a"); !ok {
 		t.Fatal("recently used qg-a evicted early")
 	}
-	cache.storeTimeline("v1", "qg-c", cachedTimelineFor("qg-c", 3), 4)
+	cache.storeTimeline(nil, "v1", "qg-c", cachedTimelineFor("qg-c", 3), 4)
 	if cache.timelineCount() != 2 {
 		t.Fatalf("timeline entries=%d, want bounded 2", cache.timelineCount())
 	}
@@ -43,22 +43,43 @@ func TestControlReadCacheTimelinesAreBoundedByEntriesAndBytes(t *testing.T) {
 	// An entry is charged the object decoded from its payload, so a bound of
 	// one entry admits exactly one.
 	small := newControlReadCache(8, four+1)
-	small.storeTimeline("v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
-	small.storeTimeline("v1", "qg-b", cachedTimelineFor("qg-b", 2), 4)
+	small.storeTimeline(nil, "v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
+	small.storeTimeline(nil, "v1", "qg-b", cachedTimelineFor("qg-b", 2), 4)
 	if small.timelineCount() != 1 || small.bytes != four {
 		t.Fatalf("byte bound entries=%d bytes=%d, want 1/%d", small.timelineCount(), small.bytes, four)
 	}
 	if _, ok := small.lookupTimeline("v1", "qg-b"); !ok {
 		t.Fatal("newest timeline evicted instead of oldest")
 	}
-	small.storeTimeline("v1", "qg-c", cachedTimelineFor("qg-c", 3), 4096)
+	small.storeTimeline(nil, "v1", "qg-c", cachedTimelineFor("qg-c", 3), 4096)
 	if _, ok := small.lookupTimeline("v1", "qg-c"); ok {
 		t.Fatal("timeline above the byte bound was retained")
 	}
 	two := cachedTimelineBytes(2)
-	small.storeTimeline("v1", "qg-b", cachedTimelineFor("qg-b", 4), 2)
+	small.storeTimeline(nil, "v1", "qg-b", cachedTimelineFor("qg-b", 4), 2)
 	if small.timelineCount() != 1 || small.bytes != two {
 		t.Fatalf("replacing an entry double counted: entries=%d bytes=%d", small.timelineCount(), small.bytes)
+	}
+}
+
+// A peek at a timeline does not make it recently used: the cost roster peeks
+// every owned Query Group once a refresh, and that must not keep alive an
+// entry execution no longer reads. With the cache full, peeking the oldest
+// entry and storing one more evicts the entry peeked.
+func TestAPeekLeavesTheEvictionOrderAsExecutionMadeIt(t *testing.T) {
+	four := cachedTimelineBytes(4)
+	cache := newControlReadCache(2, 16*four)
+	cache.storeTimeline(nil, "v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
+	cache.storeTimeline(nil, "v1", "qg-b", cachedTimelineFor("qg-b", 2), 4)
+	if _, ok := cache.peekTimelineAtRevision("qg-a", 1); !ok {
+		t.Fatal("setup: the peek did not find qg-a at revision 1")
+	}
+	cache.storeTimeline(nil, "v1", "qg-c", cachedTimelineFor("qg-c", 3), 4)
+	if _, ok := cache.lookupTimeline("v1", "qg-a"); ok {
+		t.Fatal("the peeked qg-a survived eviction: the peek made it recently used")
+	}
+	if _, ok := cache.lookupTimeline("v1", "qg-b"); !ok {
+		t.Fatal("qg-b was evicted in place of the older, only peeked qg-a")
 	}
 }
 
@@ -67,7 +88,7 @@ func TestControlReadCacheVersionChangeEvictsEverything(t *testing.T) {
 	cache := newControlReadCache(8, 16*four)
 	entry := &parsedActivation{}
 	cache.storeActivation("v1", entry, 10)
-	cache.storeTimeline("v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
+	cache.storeTimeline(nil, "v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
 	if got, ok := cache.lookupActivation("v1", 10); !ok || got != entry {
 		t.Fatal("activation lookup under its version missed")
 	}
@@ -86,7 +107,7 @@ func TestControlReadCacheVersionChangeEvictsEverything(t *testing.T) {
 	if cache.supersedes("v2") != true || cache.supersedes("v1") != false {
 		t.Fatal("supersedes must report only a different non-empty cached version")
 	}
-	cache.storeTimeline("v2", "qg-b", cachedTimelineFor("qg-b", 2), 4)
+	cache.storeTimeline(nil, "v2", "qg-b", cachedTimelineFor("qg-b", 2), 4)
 	if _, ok := cache.lookupTimeline("v2", "qg-a"); ok {
 		t.Fatal("timeline from the previous version survived the version change")
 	}
@@ -113,14 +134,14 @@ func TestControlReadCacheVersionChangeEvictsEverything(t *testing.T) {
 func TestControlReadCacheReportsItsBudgetAndOccupancy(t *testing.T) {
 	four := cachedTimelineBytes(4)
 	cache := newControlReadCache(8, 16*four)
-	cache.storeTimeline("v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
+	cache.storeTimeline(nil, "v1", "qg-a", cachedTimelineFor("qg-a", 1), 4)
 	occupancy := cache.timelineOccupancy()
 	if occupancy.Entries != 1 || occupancy.Bytes != four ||
 		occupancy.MaxEntries != 8 || occupancy.MaxBytes != 16*four || occupancy.Evictions != 0 {
 		t.Fatalf("occupancy = %+v", occupancy)
 	}
 	cache.configureTimelineBounds(1, four+1)
-	cache.storeTimeline("v1", "qg-b", cachedTimelineFor("qg-b", 2), 4)
+	cache.storeTimeline(nil, "v1", "qg-b", cachedTimelineFor("qg-b", 2), 4)
 	occupancy = cache.timelineOccupancy()
 	if occupancy.Entries != 1 || occupancy.MaxEntries != 1 || occupancy.MaxBytes != four+1 ||
 		occupancy.Evictions != 1 {

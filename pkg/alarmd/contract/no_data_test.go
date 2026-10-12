@@ -148,3 +148,17 @@ func TestPlanOmitsTheNoDataSectionWhenAbsent(t *testing.T) {
 		t.Fatalf("Plan with no-data detection omits the section: %s", got)
 	}
 }
+
+// A frozen Plan's horizon is held to the same ceiling its readers apply: the
+// largest a runtime-state lifetime can hold is valid, one second more is not.
+func TestANoDataConfigHorizonIsBoundedByWhatALifetimeHolds(t *testing.T) {
+	config := NoDataConfigV1{Continuous: 3, Level: 2, TrackingHorizonSeconds: MaxNoDataTrackingHorizonSeconds,
+		TrackingHorizonSource: NoDataHorizonSourcePlatform}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate() at the largest horizon = %v, want valid", err)
+	}
+	config.TrackingHorizonSeconds++
+	if err := config.Validate(); err == nil {
+		t.Fatal("Validate() accepted a horizon one second past what a lifetime holds")
+	}
+}

@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ import (
 func TestTheQueryCooldownRecordIsFencedByOwnerOnRedis(t *testing.T) {
 	_, client := startPhaseTwoRedis(t)
 	ctx := context.Background()
-	store := newRedisQueryCooldownStore(client, "test.cooldown", nil, nil)
+	store := newRedisQueryCooldownStore(client, "test.cooldown", nil, nil, nil)
 	if _, found, err := store.LoadQueryCooldown(ctx, "qg"); found || err != nil {
 		t.Fatalf("empty store = (found %t, %v), want no record and no error", found, err)
 	}
@@ -74,14 +75,14 @@ func TestTheQueryCooldownRecordIsFencedByOwnerOnRedis(t *testing.T) {
 	if err := client.Set(ctx, "test.cooldown:qg", "not json", time.Minute).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := store.LoadQueryCooldown(ctx, "qg"); found || err == nil {
-		t.Fatalf("undecodable record = (found %t, %v), want no record with the reason", found, err)
+	if _, found, err := store.LoadQueryCooldown(ctx, "qg"); found || !errors.Is(err, scheduler.ErrQueryCooldownUndecodable) {
+		t.Fatalf("undecodable record = (found %t, %v), want no record, named as undecodable", found, err)
 	}
 	// A record that does not decode does not block the next owner's write.
 	if err := store.SaveQueryCooldown(ctx, fence(1), stale); err != nil {
 		t.Fatalf("a save over an undecodable record = %v, want it written", err)
 	}
-	if newRedisQueryCooldownStore(nil, "p", nil, nil) != nil {
+	if newRedisQueryCooldownStore(nil, "p", nil, nil, nil) != nil {
 		t.Fatal("a store without a client is not nil")
 	}
 }
@@ -96,7 +97,7 @@ func TestEveryPoolRecordWriteIsCountedByItsResult(t *testing.T) {
 	results := map[string]int{}
 	var lines []observability.Observation
 	observer := observability.ObserverFunc(func(_ context.Context, o observability.Observation) { lines = append(lines, o) })
-	store := newRedisQueryCooldownStore(client, "test.cooldown", func(result string) { results[result]++ }, observer)
+	store := newRedisQueryCooldownStore(client, "test.cooldown", func(result string) { results[result]++ }, nil, observer)
 	fence := func(epoch uint64) execution.OwnerFence {
 		return execution.OwnerFence{QueryGroup: "qg", OwnerID: "worker", OwnerEpoch: epoch, LeaseToken: "token"}
 	}
@@ -110,7 +111,7 @@ func TestEveryPoolRecordWriteIsCountedByItsResult(t *testing.T) {
 	}
 	down := redis.NewClient(&redis.Options{Addr: "192.0.2.1:6379", DialTimeout: 50 * time.Millisecond, MaxRetries: -1})
 	t.Cleanup(func() { _ = down.Close() })
-	failing := newRedisQueryCooldownStore(down, "test.cooldown", func(result string) { results[result]++ }, observer)
+	failing := newRedisQueryCooldownStore(down, "test.cooldown", func(result string) { results[result]++ }, nil, observer)
 	if err := failing.SaveQueryCooldown(ctx, fence(3), record); err == nil || errors.Is(err, errQueryCooldownSuperseded) {
 		t.Fatalf("save to an unreachable store = %v, want the store's error", err)
 	}
@@ -155,5 +156,67 @@ func TestTheProductionPoolStoreCountsOnTheRecorder(t *testing.T) {
 	}
 	if written != 1 {
 		t.Fatalf("written = %v on the process Recorder, want 1", written)
+	}
+	if _, found, err := store.LoadQueryCooldown(context.Background(), "qg"); !found || err != nil {
+		t.Fatalf("load = (found %t, %v), want the record", found, err)
+	}
+	loaded := map[string]float64{}
+	families, err = recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() == "bkmonitor_alarmd_query_cooldown_loads_total" {
+			for _, m := range family.GetMetric() {
+				loaded[m.GetLabel()[0].GetValue()] = m.GetCounter().GetValue()
+			}
+		}
+	}
+	if loaded["found"] != 1 || len(loaded) != len(metric.QueryCooldownLoadResults) {
+		t.Fatalf("loads on the process Recorder = %v, want found 1 and every result present", loaded)
+	}
+}
+
+// Every read is counted by what it found -- a record, none, one that does
+// not decode, or a store that did not answer -- and a failed one is also a
+// line naming its Query Group. The Runner reads again on the next round
+// after a failed read and writes nothing until one succeeds, so a store that
+// keeps failing counts failed on every round, which is the reading wanted.
+// A record that does not decode is told apart from a failed read: reading
+// it again gives the same bytes, so the Runner takes it as no record.
+func TestEveryPoolRecordReadIsCountedByWhatItFound(t *testing.T) {
+	_, client := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	results := map[string]int{}
+	var lines []observability.Observation
+	observer := observability.ObserverFunc(func(_ context.Context, o observability.Observation) { lines = append(lines, o) })
+	store := newRedisQueryCooldownStore(client, "test.cooldown", nil, func(result string) { results[result]++ }, observer)
+	if _, found, err := store.LoadQueryCooldown(ctx, "qg"); found || err != nil {
+		t.Fatalf("absent = (found %t, %v)", found, err)
+	}
+	fence := execution.OwnerFence{QueryGroup: "qg", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "token"}
+	if err := store.SaveQueryCooldown(ctx, fence, scheduler.QueryCooldownRecord{QueryGroup: "qg", OwnerEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.LoadQueryCooldown(ctx, "qg"); !found || err != nil {
+		t.Fatalf("found = (found %t, %v)", found, err)
+	}
+	if err := client.Set(ctx, "test.cooldown:qg", "not json", time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.LoadQueryCooldown(ctx, "qg"); !errors.Is(err, scheduler.ErrQueryCooldownUndecodable) {
+		t.Fatalf("undecodable = %v, want ErrQueryCooldownUndecodable", err)
+	}
+	down := redis.NewClient(&redis.Options{Addr: "192.0.2.1:6379", DialTimeout: 50 * time.Millisecond, MaxRetries: -1})
+	t.Cleanup(func() { _ = down.Close() })
+	failing := newRedisQueryCooldownStore(down, "test.cooldown", nil, func(result string) { results[result]++ }, observer)
+	if _, _, err := failing.LoadQueryCooldown(ctx, "qg"); err == nil || errors.Is(err, scheduler.ErrQueryCooldownUndecodable) {
+		t.Fatalf("unreachable = %v, want the store's error", err)
+	}
+	if want := map[string]int{"absent": 1, "found": 1, "undecodable": 1, "failed": 1}; !reflect.DeepEqual(results, want) {
+		t.Fatalf("results = %v, want %v", results, want)
+	}
+	if len(lines) != 1 || lines[0].Result != observability.ResultFailed || lines[0].Trace.QueryGroupKey != "qg" || lines[0].Err == nil {
+		t.Fatalf("lines = %+v, want one failed line naming the Query Group", lines)
 	}
 }

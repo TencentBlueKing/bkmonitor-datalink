@@ -78,6 +78,15 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonEffectiveTimeCalendarIdentity:      {ReasonEffectiveTimeCalendarIdentity, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonEffectiveTimeCalendarDuplicate:     {ReasonEffectiveTimeCalendarDuplicate, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonEffectiveTimeCalendarItemsMissing:  {ReasonEffectiveTimeCalendarItemsMissing, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeItemDuplicate:         {ReasonEffectiveTimeItemDuplicate, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeItemInvalid:           {ReasonEffectiveTimeItemInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeItemTimeInvalid:       {ReasonEffectiveTimeItemTimeInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeTimeKindInvalid:       {ReasonEffectiveTimeTimeKindInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeTimezoneInvalid:       {ReasonEffectiveTimeTimezoneInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeRepeatInvalid:         {ReasonEffectiveTimeRepeatInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeRepeatListInvalid:     {ReasonEffectiveTimeRepeatListInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeRepeatEveryInvalid:    {ReasonEffectiveTimeRepeatEveryInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeRepeatUntilInvalid:    {ReasonEffectiveTimeRepeatUntilInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonCompilerTerminalUnclassified:       {ReasonCompilerTerminalUnclassified, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	// Deterministic for the same reason: the target's shape and the no-data
 	// dimensions are both frozen, so every round would reach this answer again.
@@ -104,6 +113,12 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonQueryEmpty:       {ReasonQueryEmpty, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryTimeout:     {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryUnavailable: {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryTargetMissing: {
+		ReasonQueryTargetMissing, ReasonClassCoverage, reasonQueryDomainsV2,
+	},
+	ReasonDetectIntervalStorageNotSliding: {
+		ReasonDetectIntervalStorageNotSliding, ReasonClassCoverage, reasonQueryDomainsV2,
+	},
 	ReasonReadinessBudgetInvalid: {
 		ReasonReadinessBudgetInvalid, ReasonClassCoverage, reasonQueryDomainsV2,
 	},
@@ -128,7 +143,12 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	// Coverage, like the pruned skip beside it: Slots passed without being
 	// evaluated. Not deterministic, because nothing was refused - the active
 	// set simply did not hold the Plan while they went by.
-	ReasonPlanNotActive:         {ReasonPlanNotActive, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonPlanNotActive: {ReasonPlanNotActive, ReasonClassCoverage, ReasonDomainObservation},
+	// Coverage for the same reason as the two beside it: Slots passed without
+	// being evaluated. The cause is a timeline that would not decode, which
+	// the fleet files as a defect; the word itself only says the Slots went.
+	ReasonScheduleRepaired:      {ReasonScheduleRepaired, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonScheduleReopened:      {ReasonScheduleReopened, ReasonClassCoverage, ReasonDomainObservation},
 	ReasonEffectiveTimeInactive: {ReasonEffectiveTimeInactive, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonEffectiveTimeUnknown:  {ReasonEffectiveTimeUnknown, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonHistoryWarming:        {ReasonHistoryWarming, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
@@ -159,6 +179,7 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonSlotSourceRetry:            {ReasonSlotSourceRetry, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonViewNotExecutable:          {ReasonViewNotExecutable, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonBlockedExactSetUnavailable: {ReasonBlockedExactSetUnavailable, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonScheduleUnreadable:         {ReasonScheduleUnreadable, ReasonClassDeterministic, ReasonDomainObservation},
 	// Deterministic: the persisted marker and the proposed one are both facts,
 	// and repeating the attempt compares the same two facts again.
 	ReasonGapGuardConflict: {ReasonGapGuardConflict, ReasonClassDeterministic, ReasonDomainObservation},

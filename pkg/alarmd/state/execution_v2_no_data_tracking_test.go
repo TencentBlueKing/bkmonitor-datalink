@@ -87,7 +87,7 @@ func TestTheTrackingFactsSurviveTheStore(t *testing.T) {
 		ScheduleRevision: "plan-r1", RosterVersion: "TARGET_STATIC/1",
 		PresentAsOf: noDataPresentAsOf, Memory: []execution.NoDataGroupMemory{suppressed},
 	})
-	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{first},
 	})
 	if err != nil {
@@ -122,7 +122,7 @@ func TestTheTrackingFactsSurviveTheStore(t *testing.T) {
 		PresentAsOf: noDataPresentAsOf, TrackingExhaustedAt: 970,
 		Loaded: []execution.NoDataGroupMemory{suppressed}, LoadedPresentAsOf: noDataPresentAsOf,
 	})
-	applied, err = store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	applied, err = store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{second},
 	})
 	if err != nil {

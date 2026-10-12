@@ -13,6 +13,7 @@ import (
 	"reflect"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
@@ -140,6 +141,9 @@ func TestEveryIdentifiedButtonIsWired(t *testing.T) {
 // which looks exactly like a deployment that has no such data.
 func TestEveryCapacityFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "cap", reflect.TypeOf(fleet.CapacityView{}))
+	// Each replica's row reads that replica's own capacity, whose names are
+	// per replica and differ from the deployment's summed ones.
+	assertFieldsExist(t, "rcap", reflect.TypeOf(fleet.Capacity{}))
 }
 
 // The same failure on the other response, and it shipped too: the records panel
@@ -501,6 +505,15 @@ func TestEveryReplicaFieldThePageReadsExistsInTheAPI(t *testing.T) {
 // renders a sentence that omits a whole bucket of objects without saying so.
 func TestEverySummaryFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "summary", reflect.TypeOf(fleet.Summary{}))
+}
+
+// The first screen's count of strategies, read as three names of its own:
+// a misspelled count there renders "undefined 条策略", or no state at all,
+// on the line a reader sets beside the CLI's diagnose.
+func TestEveryStrategyCountFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "countRead", reflect.TypeOf(fleet.DiagnosisSummaryResponse{}))
+	assertFieldsExist(t, "countUniverse", reflect.TypeOf(fleet.DiagnosisUniverse{}))
+	assertFieldsExist(t, "strategyTally", reflect.TypeOf(fleet.DiagnosisSummary{}))
 }
 
 // The anomaly row is the busiest object on the page -- every cell in the table
@@ -923,11 +936,15 @@ func TestThePageHasWordingForEveryDependencyRoleAndConsoleReading(t *testing.T) 
 		}
 	}
 	tables := map[string][]string{
-		"ENDPOINT":        fleet.EndpointRoles,
-		"CONSOLE_STATE":   fleet.LinkdConsoleStates,
-		"CONSOLE_OP":      openalerts.ConsoleOps,
-		"LINK_HEALTH":     unhealthy,
-		"LINKD_DISCOVERY": fleet.LinkdDiscoveryOutcomes,
+		"ENDPOINT":              fleet.EndpointRoles,
+		"CONSOLE_STATE":         fleet.LinkdConsoleStates,
+		"CONSOLE_OP":            openalerts.ConsoleOps,
+		"LINK_HEALTH":           unhealthy,
+		"LINKD_DISCOVERY":       fleet.LinkdDiscoveryOutcomes,
+		"CONSOLE_FAILURE_CLASS": openalerts.ConsoleFailureClasses,
+		// Why an object has a span nothing evaluated: each reason its own
+		// cause and next step on the deployment line.
+		"TIMELINE_LOSS": {contract.ReasonSchedulePruned, contract.ReasonScheduleRepaired, contract.ReasonScheduleReopened},
 	}
 	for table, words := range tables {
 		if len(words) == 0 {
@@ -956,5 +973,40 @@ func TestTheFirstScreenConsoleLineReadsTheServersAttention(t *testing.T) {
 	}
 	if !strings.Contains(string(page), "consoleBrief(deployment.linkd_console, deployment)") {
 		t.Fatal("the brief no longer renders the Console line from deployment.linkd_console")
+	}
+}
+
+// How a row's dependency was named has words on the page for every word the
+// server sends - the two naming words and each kind of output failure - and
+// for none it does not: a kind without words would render as nothing, which
+// reads as "named by nothing".
+func TestThePageHasWordingForEveryDependencyEvidence(t *testing.T) {
+	found := regexp.MustCompile(`var DEPENDENCY_EVIDENCE = \{([\s\S]*?)\};`).FindStringSubmatch(string(page))
+	if found == nil {
+		t.Fatal("the page has no DEPENDENCY_EVIDENCE wording table")
+	}
+	worded := map[string]bool{}
+	for _, entry := range regexp.MustCompile(`(?m)^  ([a-z_]+):`).FindAllStringSubmatch(found[1], -1) {
+		worded[entry[1]] = true
+		if !containsString(fleet.DependencyEvidences, entry[1]) {
+			t.Errorf("DEPENDENCY_EVIDENCE has words for %s, which the server never sends", entry[1])
+		}
+	}
+	for _, word := range fleet.DependencyEvidences {
+		if !worded[word] {
+			t.Errorf("DEPENDENCY_EVIDENCE has no words for %s", word)
+		}
+	}
+}
+
+// The Console's listing reaches the first-screen Console sentence when the
+// link lists several targets: the count and the names the discovery carries,
+// not only the error that refused them.
+func TestTheConsoleSentenceNamesTheTargetsTheLinkListed(t *testing.T) {
+	text := string(page)
+	for _, field := range []string{"d.target_count", "d.target_names"} {
+		if !strings.Contains(text, field) {
+			t.Errorf("the Console sentence does not read %s", field)
+		}
 	}
 }

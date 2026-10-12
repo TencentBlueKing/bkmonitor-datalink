@@ -22,7 +22,11 @@ func recordFacts(dimensions map[string]string) *Facts {
 		encoded, _ := json.Marshal(value)
 		raw[name] = encoded
 	}
-	return &Facts{Dimensions: raw}
+	// The identity fuller always runs first in production; the host naming a
+	// target plan reads is what it records.
+	facts := &Facts{Dimensions: raw}
+	IdentityFuller{}.Fill(raw, facts)
+	return facts
 }
 
 // The filter admits a record whose key, read by the Plan's identity, is
@@ -73,21 +77,76 @@ func TestAHostIdentityTargetReadsTheRecordsHostIdentityHoweverItCameByIt(t *test
 		t.Fatalf("record naming bk_host_id 101 = %+v", decision)
 	}
 	byAddress := recordFacts(map[string]string{"bk_target_ip": "192.0.2.1", "bk_target_cloud_id": "0"})
-	byAddress.AddHostKey("192.0.2.1|0")
-	byAddress.AddHostKey("101") // what the CMDB fuller teaches it
+	// What the CMDB fuller records for a host it found by address
+	// (cmdbcache placeByAddress, Python fullers.py:106-110): the found
+	// host's id as the record's bk_host_id.
+	byAddress.HostNaming.NamedID, byAddress.HostNaming.IDKey = true, "101"
 	if decision := (TargetPlanFilter{}).Admit(plan, byAddress); !decision.Admit {
 		t.Fatalf("record named by address, host id learned from CMDB = %+v; the host identity is read however it came", decision)
 	}
 	otherHost := recordFacts(map[string]string{"bk_target_ip": "192.0.2.2", "bk_target_cloud_id": "0"})
-	otherHost.AddHostKey("192.0.2.2|0")
-	otherHost.AddHostKey("202")
+	otherHost.HostNaming.NamedID, otherHost.HostNaming.IDKey = true, "202"
 	if decision := (TargetPlanFilter{}).Admit(plan, otherHost); decision.Admit || decision.Reason != TargetPlanReasonOutOfTarget {
 		t.Fatalf("record of another host = %+v, want out_of_target", decision)
 	}
 	unplaced := recordFacts(map[string]string{"bk_target_ip": "192.0.2.3", "bk_target_cloud_id": "0"})
-	unplaced.AddHostKey("192.0.2.3|0") // the address alone: CMDB did not know it
+	// The address alone: CMDB did not know it, so no id was written.
 	if decision := (TargetPlanFilter{}).Admit(plan, unplaced); decision.Admit || decision.Reason != TargetPlanReasonKeyMissing {
 		t.Fatalf("record with no host id = %+v, want target_key_missing", decision)
+	}
+}
+
+// unavailableSet is a resolution one of whose selectors could not answer:
+// its members are the ones that did.
+type unavailableSet struct{ memberSet }
+
+func (unavailableSet) Unavailable() bool { return true }
+
+// A refusal the index or the resolution could not decide says so. The record
+// is refused either way - the writer's contract has a selector that cannot
+// answer match nothing - but a record named by address whose host id an
+// unreadable index could not teach is not the writer's or the query's
+// defect, and a record outside the members of a resolution that could not
+// answer is not known to be outside the target. Both stand as facts not
+// read, never as the target's verdict. A resolution that answered, an
+// incomplete one included, keeps out_of_target.
+func TestARefusalTheIndexOrTheResolutionCouldNotDecideSaysSo(t *testing.T) {
+	host := contract.TargetPlanIdentityV1{Dimensions: []string{"bk_host_id"}, HostIdentity: true}
+	answered := PlanContext{TargetPlan: &TargetPlanContext{Identity: host, Members: memberSet{"101": {}}}}
+	indexDown := recordFacts(map[string]string{"bk_target_ip": "192.0.2.3", "bk_target_cloud_id": "0"})
+	indexDown.AddHostKey("192.0.2.3|0")
+	indexDown.MarkFactsUnavailable(FactsUnavailableHostIndex)
+	decision := (TargetPlanFilter{}).Admit(answered, indexDown)
+	if decision.Admit || decision.Reason != FactsUnavailableHostIndex {
+		t.Fatalf("address-only record with the host index unreadable = %+v, want refused as %s", decision, FactsUnavailableHostIndex)
+	}
+	if standing := RejectionStandingOf(answered, indexDown, TargetPlanFilter{}.Name(), decision.Reason); standing != StandingCacheUnavailable {
+		t.Fatalf("standing = %v, want cache unavailable", standing)
+	}
+
+	node := contract.TargetPlanIdentityV1{Dimensions: []string{"bcs_cluster_id", "node"}}
+	partial := unavailableSet{memberSet{"cluster-a|node-01": {}}}
+	unavailable := PlanContext{TargetPlan: &TargetPlanContext{Identity: node, Members: partial}}
+	outside := recordFacts(map[string]string{"bcs_cluster_id": "cluster-a", "node": "node-09"})
+	decision = (TargetPlanFilter{}).Admit(unavailable, outside)
+	if decision.Admit || decision.Reason != TargetPlanReasonSelectorUnavailable {
+		t.Fatalf("record outside an unavailable resolution = %+v, want refused as %s", decision, TargetPlanReasonSelectorUnavailable)
+	}
+	if standing := RejectionStandingOf(unavailable, outside, TargetPlanFilter{}.Name(), decision.Reason); standing != StandingCacheUnavailable {
+		t.Fatalf("standing = %v, want cache unavailable", standing)
+	}
+	if member := (TargetPlanFilter{}).Admit(unavailable, recordFacts(map[string]string{"bcs_cluster_id": "cluster-a", "node": "node-01"})); !member.Admit {
+		t.Fatalf("a member the answering selectors resolved = %+v, want admitted", member)
+	}
+	hostUnavailable := PlanContext{TargetPlan: &TargetPlanContext{Identity: host, Members: unavailableSet{memberSet{"101": {}}}}}
+	other := recordFacts(map[string]string{"bk_host_id": "202"})
+	if decision := (TargetPlanFilter{}).Admit(hostUnavailable, other); decision.Admit || decision.Reason != TargetPlanReasonSelectorUnavailable {
+		t.Fatalf("host outside an unavailable resolution = %+v, want %s", decision, TargetPlanReasonSelectorUnavailable)
+	}
+
+	answeredNode := PlanContext{TargetPlan: &TargetPlanContext{Identity: node, Members: memberSet{"cluster-a|node-01": {}}}}
+	if decision := (TargetPlanFilter{}).Admit(answeredNode, outside); decision.Reason != TargetPlanReasonOutOfTarget {
+		t.Fatalf("record outside a resolution that answered = %+v, want out_of_target", decision)
 	}
 }
 

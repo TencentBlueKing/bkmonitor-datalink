@@ -52,6 +52,25 @@ func TestSlotExecutionCoordinatorFinalizesSnapshotUnavailableWithoutQuery(t *tes
 		lastObservation.ReasonCode != execution.ReasonCode(contract.ReasonSnapshotUnavailable) {
 		t.Fatalf("query-free completion observation=%+v", lastObservation)
 	}
+	// Why no query ran rides the completion's line: the completion word is
+	// the same for a Slot that came too late and a Snapshot that is corrupt.
+	if lastObservation.ProgressCompletionCause != string(execution.CauseSnapshotCorrupt) {
+		t.Fatalf("completion cause on the line = %q, want the finalization's %s", lastObservation.ProgressCompletionCause, execution.CauseSnapshotCorrupt)
+	}
+}
+
+// A query-free finalization that names no cause is refused before anything
+// is written: a producer added later cannot finalize a Slot the reader would
+// have to guess about.
+func TestAQueryFreeFinalizationWithoutACauseIsRefused(t *testing.T) {
+	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activePlanResult("state-v2", 2)})
+	fixture.ports.finalization.Cause = ""
+	if result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay)); err == nil {
+		t.Fatalf("Execute() = %+v, want the cause-less finalization refused", result)
+	}
+	if fixture.ports.lastProgress.Completion.Kind != "" || len(fixture.ports.mutations) != 0 {
+		t.Fatalf("progress %+v and %d gap mutations written for a refused finalization", fixture.ports.lastProgress.Completion, len(fixture.ports.mutations))
+	}
 }
 
 func TestSlotExecutionCoordinatorReusesSufficientQueryFreeGapWithoutRewrite(t *testing.T) {
@@ -809,7 +828,7 @@ func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationRes
 		recordingPorts: base,
 		finalization: execution.QueryFreeFinalization{
 			Contract: frozenContract(), Mode: execution.FinalizationSnapshotUnavailable,
-			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
+			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable), Cause: execution.CauseSnapshotCorrupt,
 			Targets: execution.FrozenDuePlanTargets{
 				DuePlanSetDigest: expectedTargets.DuePlanSetDigest,
 				Plans:            append([]execution.PlanKey(nil), expectedTargets.Plans...),

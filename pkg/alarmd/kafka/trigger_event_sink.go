@@ -97,8 +97,13 @@ func (sink *TriggerEventSink) ConfigureLegacyOutput(converter LegacyEventConvert
 // client for want of a protocol version read as a Kafka that was down,
 // retried every round, and committed no progress. Encoding and local
 // lifecycle errors remain ordinary.
+//
+// kind is what the failure was (OutputFailureKind): the broker's answer read
+// by brokerFailureKind for a send, and nothing for a conversion, whose
+// wrapped error says its own (a snapshot store's) or is the caller's context.
 type triggerEventDependencyError struct {
-	err error
+	err  error
+	kind string
 }
 
 // OutputRejectedError is a decision this process will not write, decided
@@ -272,13 +277,16 @@ func (err *triggerEventDependencyError) Unwrap() error {
 
 func (err *triggerEventDependencyError) RetryableOutputDependency() {}
 
-// OpenTriggerEventSink prepares and opens the sink in one call.
-func OpenTriggerEventSink(coordinates DecisionSinkConfig) (*TriggerEventSink, error) {
-	opener, err := PrepareTriggerEventSink(coordinates)
-	if err != nil {
-		return nil, err
+func (err *triggerEventDependencyError) OutputFailureKind() string {
+	if err == nil {
+		return ""
 	}
-	return opener.Open()
+	return err.kind
+}
+
+// OutputFailureKind: refused before sending, or for good by the producer.
+func (err *OutputRejectedError) OutputFailureKind() string {
+	return observability.OutputFailureClientRejected
 }
 
 // TriggerEventSinkOpener is the half of opening the sink that needs the
@@ -311,7 +319,7 @@ func (opener *TriggerEventSinkOpener) Open() (*TriggerEventSink, error) {
 	if opener == nil || opener.config == nil {
 		return nil, errors.New("kafka trigger event sink: opener is not prepared")
 	}
-	negotiation, err := NegotiateProtocol(opener.coordinates.Brokers, opener.config)
+	negotiation, err := NegotiateProtocol(opener.coordinates.Brokers, opener.coordinates.OutputTopic, opener.config)
 	if err != nil {
 		return nil, &ProtocolNegotiationError{Negotiation: negotiation, Err: err}
 	}
@@ -334,9 +342,9 @@ func (opener *TriggerEventSinkOpener) Open() (*TriggerEventSink, error) {
 }
 
 // ProtocolNegotiationError is an open that could not decide the protocol
-// because a broker did not answer. It carries the partial answers so the
-// state a reader sees says which broker, and is retried like any open
-// failure: the producer is not opened on a guess.
+// because no broker answered. It carries the partial answers so the state a
+// reader sees says which brokers, and is retried like any open failure: the
+// producer is not opened on a guess.
 type ProtocolNegotiationError struct {
 	Negotiation ProtocolNegotiation
 	Err         error
@@ -381,7 +389,7 @@ const tenantHeader = "bk_tenant_id"
 
 func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
 	if sink == nil || sink.core == nil {
-		return ErrDecisionSinkClosed
+		return &outputKindError{kind: observability.OutputFailureSinkNotOpen, err: ErrDecisionSinkClosed}
 	}
 	if ctx == nil {
 		return errors.New("kafka trigger event sink: context is required")
@@ -462,14 +470,20 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			}
 			// The Python protocol carries anomaly points and nothing else: its
 			// producer builds every message from the anomaly list and stamps
-			// ABNORMAL, and recovery is decided downstream from the absence of
-			// anomalies. alarmd's own Recovery is a steady-state result, so
-			// every healthy series produces one every cycle - converting those
-			// put a hundred times Python's volume on the topic. A Recovery
-			// event has no representation in this protocol, so it produces no
-			// message here and no snapshot; the native protocol still carries
-			// it, because the choice of protocol is the revision's, not the
-			// event kind's.
+			// ABNORMAL. The consumer does not decide recovery from their
+			// absence: its recovery and close checks read the checkpoints the
+			// backend's own detection writes (recover.py:296-314,
+			// close.py:281-300), which alarmd does not write. So alarmd's
+			// recovery does not leave on this protocol, and an alert it raised
+			// recovers and closes by those checkpoints while the backend's
+			// detection runs; without them the close check closes every such
+			// alert within about a minute, as reporting no data. alarmd's own
+			// Recovery is a steady-state result, so every healthy series
+			// produces one every cycle - converting those put a hundred times
+			// Python's volume on the topic. A Recovery event has no
+			// representation in this protocol, so it produces no message here
+			// and no snapshot; the native protocol still carries it, because
+			// the choice of protocol is the revision's, not the event kind's.
 			if !contract.EventHasMessage(format, events[index].EventKind) {
 				messages[index] = nil
 				continue
@@ -563,10 +577,14 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 	for key, count := range withoutMessageBy {
 		buckets = append(buckets, observability.OutputWithoutMessage{Format: key.format, EventKind: key.eventKind, Events: count})
 	}
+	// Compacted in place; eventOf says which event each published message
+	// is, for a batch some of whose messages are refused after it was sent.
 	published := messages[:0]
-	for _, message := range messages {
+	eventOf := make([]int, 0, len(messages))
+	for index, message := range messages {
 		if message != nil {
 			published = append(published, message)
+			eventOf = append(eventOf, index)
 		}
 	}
 	messages = published
@@ -584,16 +602,28 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 	}
 	if err := sink.core.writeMessages(ctx, messages); err != nil {
 		publishErr := fmt.Errorf("kafka trigger event sink: publish batch: %w", err)
-		if errors.Is(err, ErrDecisionSinkClosed) || ctx.Err() != nil {
-			return publishErr
+		if errors.Is(err, ErrDecisionSinkClosed) {
+			return &outputKindError{kind: observability.OutputFailureSinkNotOpen, err: publishErr}
+		}
+		if ctx.Err() != nil {
+			if err == ctx.Err() {
+				// The Slot's context ended before the batch reached the
+				// client: nothing was sent, and the cause is the caller's.
+				return publishErr
+			}
+			// Ended while the batch was being sent: what landed is unknown.
+			return &outputKindError{kind: observability.OutputFailureAckUnknown, err: publishErr}
 		}
 		if detail, rejected := clientRejection(err); rejected {
-			// The client, not a broker: nothing was sent and nothing will
-			// be by retrying. Named for the first event of the batch; the
-			// detail is the client's own sentence.
+			if landed := partlyRefused(ctx, err, messages, eventOf, events, formats, refused); landed != nil {
+				return landed
+			}
+			// Every message refused, nothing landed, and nothing will by
+			// retrying. Named for the first event of the batch; the detail
+			// is the client's own sentence.
 			return outputRejected(contract.ReasonOutputClientRejected, detail, string(contract.ResolveOutputWireFormat(events[0].WireFormat, eventRevision(events[0]))), &events[0])
 		}
-		return &triggerEventDependencyError{err: publishErr}
+		return &triggerEventDependencyError{err: publishErr, kind: brokerFailureKind(err)}
 	}
 	return partial.err()
 }

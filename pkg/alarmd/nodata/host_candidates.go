@@ -68,7 +68,11 @@ func HostCandidates(request RosterRequest) ([]HostCandidate, error) {
 			add(hostTargetGroup(host).Key(), host)
 		}
 	case RosterHistory:
-		for key, group := range historyGroups(request.Memory) {
+		groups, err := historyGroups(request.Memory)
+		if err != nil {
+			return nil, err
+		}
+		for key, group := range groups {
 			host, ok := groupHostIdentity(group)
 			if !ok {
 				// A remembered group whose dimensions do not name a host. There

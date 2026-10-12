@@ -22,7 +22,34 @@ type SlotOptions struct {
 	Resolve  func(context.Context, execution.SlotIdentity) (SlotPlan, error)
 	Evidence func(context.Context, execution.SlotIdentity) (SlotEvidence, error)
 	UQ       *uq.DiagnosticClient
+	// LatestPublication, when set, reads the newest publication, the one
+	// strategy.get reports, so a Slot's older snapshot_revision is read
+	// beside it rather than taken for a fault.
+	LatestPublication func(context.Context) (SlotPublication, error)
 }
+
+// SlotPublication is a publication by its content revision and epoch.
+type SlotPublication struct {
+	SnapshotRevision execution.SnapshotRevision `json:"snapshot_revision"`
+	PublicationEpoch uint64                     `json:"publication_epoch"`
+	// SameAsSlot is whether it is the publication the Slot's Segment began
+	// under.
+	SameAsSlot bool `json:"same_as_slot"`
+}
+
+// slotSnapshotNote says why a Slot names an older publication than the
+// latest: its snapshot_revision is the publication its schedule Segment
+// began under, and a Segment is kept across publications while the Query
+// Group's execution content -- its ObjectDigest -- is unchanged (see
+// controlplane/content_cutover.go). Two readers of the first acceptance
+// stopped on the difference and asked. It must not explain a change that
+// did not take effect as normal: any change to the execution content, a
+// threshold or the members included, cuts a new Segment.
+const slotSnapshotNote = "slot.snapshot_revision is the publication this Slot's schedule Segment began under (schedule_segment_start). " +
+	"A Segment is kept across publications while this Query Group's execution content (object_digest: its query, schedule, membership " +
+	"and what its Plans evaluate) is unchanged, so a Slot can name an older publication than latest_publication. A change to any of that " +
+	"starts a new Segment; a change to rendering only does not. Whether this Slot ran the same content as a publication is decided by " +
+	"object_digest, not by snapshot_revision."
 
 type SlotContext struct {
 	QueryGroup       execution.QueryGroupIdentity `json:"query_group"`
@@ -34,6 +61,10 @@ type SlotContext struct {
 	ObjectDigest     execution.ObjectDigest       `json:"object_digest"`
 	DuePlanSetDigest execution.DuePlanSetDigest   `json:"due_plan_set_digest"`
 	ContractDigest   string                       `json:"contract_digest"`
+	// ReadHoldMillis is the read hold the Slot was frozen with, and
+	// ReadHoldBasis where it was read from (ReadHoldFromProgress, ...).
+	ReadHoldMillis int64  `json:"read_hold_ms"`
+	ReadHoldBasis  string `json:"read_hold_basis,omitempty"`
 }
 
 type SlotQueryInput struct {
@@ -50,11 +81,15 @@ type SlotQueryPlan struct {
 }
 
 type SlotGetResult struct {
-	Kind                    string          `json:"kind"`
-	Slot                    SlotContext     `json:"slot"`
-	Queries                 []SlotQueryPlan `json:"queries"`
-	Retained                SlotEvidence    `json:"retained"`
-	HistoricalInputComplete bool            `json:"historical_input_complete"`
+	Kind string      `json:"kind"`
+	Slot SlotContext `json:"slot"`
+	// LatestPublication is the newest publication beside the Slot's own,
+	// and SnapshotNote why the two differ, present only when they do.
+	LatestPublication       *SlotPublication `json:"latest_publication,omitempty"`
+	SnapshotNote            string           `json:"snapshot_note,omitempty"`
+	Queries                 []SlotQueryPlan  `json:"queries"`
+	Retained                SlotEvidence     `json:"retained"`
+	HistoricalInputComplete bool             `json:"historical_input_complete"`
 }
 
 type SlotQueryResult struct {
@@ -102,10 +137,13 @@ func SlotOperations(options SlotOptions) []Operation {
 		}
 		result := SlotGetResult{Kind: "reconstructed_from_contract", Slot: slotContext(plan), Queries: []SlotQueryPlan{}, Retained: SlotEvidence{Records: []json.RawMessage{}, Samples: []json.RawMessage{}}}
 		out := Outcome{Complete: true, Limitations: []string{slotBoundary}}
+		if plan.ReadHoldBasis == ReadHoldNoRecord {
+			out.Limitations = append(out.Limitations, slotNoHoldRecord)
+		}
 		for _, query := range plan.Prepared.Queries {
 			preview, err := options.UQ.Preview(query.Spec)
 			if err != nil {
-				return Outcome{Error: &Failure{"query_plan_unavailable", "Historical query cannot be rendered by this build."}}
+				return Outcome{Error: &Failure{Code: "query_plan_unavailable", Message: "Historical query cannot be rendered by this build."}}
 			}
 			item := SlotQueryPlan{PhysicalQueryDigest: query.Spec.Digest, Request: preview, Inputs: []SlotQueryInput{}}
 			for _, requirement := range append(append([]execution.DataRequirement{}, query.Requirements...), query.ReadinessInvalidRequirements...) {
@@ -119,6 +157,17 @@ func SlotOperations(options SlotOptions) []Operation {
 			next := slotParams(result.Slot)
 			next["contract_digest"], next["physical_query_digest"], next["request_digest"] = result.Slot.ContractDigest, string(query.Spec.Digest), preview.RequestDigest
 			out.Next = append(out.Next, Call{Operation: "slot.query", Params: next, Reason: "选取此物理查询按原条件重查UQ；默认通过控制面定位当前owner，结果属于本次查询。"})
+		}
+		if options.LatestPublication != nil {
+			if latest, err := options.LatestPublication(ctx); err == nil {
+				latest.SameAsSlot = latest.SnapshotRevision == result.Slot.SnapshotRevision
+				result.LatestPublication = &latest
+				if !latest.SameAsSlot {
+					result.SnapshotNote = slotSnapshotNote
+				}
+			} else {
+				out.Limitations = append(out.Limitations, "The latest publication could not be read; slot.snapshot_revision is the publication the Slot's Segment began under, not necessarily the latest.")
+			}
 		}
 		if options.Evidence != nil {
 			evidence, err := options.Evidence(ctx, plan.Contract.Slot)
@@ -155,7 +204,7 @@ func SlotOperations(options SlotOptions) []Operation {
 		}
 		slot := slotContext(plan)
 		changed := func(code, message string) Outcome {
-			return Outcome{Error: &Failure{code, message}, Next: []Call{{Operation: "slot.get", Params: slotParams(slot), Reason: "在实际执行实例重新读取保留合同与请求预览；未执行UQ查询。"}}}
+			return Outcome{Error: &Failure{Code: code, Message: message}, Next: []Call{{Operation: "slot.get", Params: slotParams(slot), Reason: "在实际执行实例重新读取保留合同与请求预览；未执行UQ查询。"}}}
 		}
 		if slot.ContractDigest != p.String("contract_digest") {
 			return changed("slot_contract_changed", "Retained Slot contract differs from the preview; no UQ query executed.")
@@ -186,7 +235,7 @@ func SlotOperations(options SlotOptions) []Operation {
 			if errors.As(err, &diagnostic) {
 				code = diagnostic.Code
 			}
-			out.Error = &Failure{code, "Diagnostic UQ query did not complete; inspect retained partial query evidence."}
+			out.Error = &Failure{Code: code, Message: "Diagnostic UQ query did not complete; inspect retained partial query evidence."}
 		}
 		return out
 	}
@@ -195,7 +244,7 @@ func SlotOperations(options SlotOptions) []Operation {
 
 func resolveSlot(ctx context.Context, options SlotOptions, p Params) (SlotPlan, *Failure) {
 	if options.Resolve == nil || options.UQ == nil {
-		return SlotPlan{}, &Failure{"operation_unavailable", "Slot diagnostics are not configured."}
+		return SlotPlan{}, &Failure{Code: "operation_unavailable", Message: "Slot diagnostics are not configured."}
 	}
 	slot := execution.SlotIdentity{QueryGroup: execution.QueryGroupIdentity(p.String("query_group")), EvaluationTime: execution.EvaluationTime(p.Int("evaluation_time", 0))}
 	plan, err := options.Resolve(ctx, slot)
@@ -211,16 +260,22 @@ func resolveSlot(ctx context.Context, options SlotOptions, p Params) (SlotPlan, 
 	return plan, nil
 }
 
+// slotNoHoldRecord says what a read hold of zero read from no record rests
+// on.
+const slotNoHoldRecord = "slot.read_hold_ms is 0 because its Query Group keeps no read hold record: one whose hold has only ever been zero keeps none, and a record lowered to zero lasts 7 days. A record evicted from Redis reads the same; evicted_keys on the state Redis says whether any were."
+
 func slotFailure(err error) *Failure {
 	switch {
+	case errors.Is(err, ErrHistoricalReadHoldUnknown):
+		return &Failure{Code: "historical_read_hold_unknown", Message: "The read hold this Slot was frozen with is not known: its record did not decode or no longer reaches back to it, or there is none and the Slot is older than a record's 7-day lifetime; its contract is not rebuilt with another."}
 	case errors.Is(err, ErrHistoricalContractUnavailable):
-		return &Failure{"historical_contract_unavailable", "Retained historical Segment, object or exact due plans are unavailable; current strategy is not substituted."}
+		return &Failure{Code: "historical_contract_unavailable", Message: "Retained historical Segment, object or exact due plans are unavailable; current strategy is not substituted."}
 	case errors.Is(err, ErrSlotBudgetExceeded):
-		return &Failure{"budget_exceeded", "Historical evidence exceeds the diagnostic read budget."}
+		return &Failure{Code: "budget_exceeded", Message: "Historical evidence exceeds the diagnostic read budget."}
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-		return &Failure{"request_timeout", "Slot evidence read context ended."}
+		return &Failure{Code: "request_timeout", Message: "Slot evidence read context ended."}
 	default:
-		return &Failure{"dependency_unavailable", "Historical evidence dependency could not be read."}
+		return &Failure{Code: "dependency_unavailable", Message: "Historical evidence dependency could not be read."}
 	}
 }
 
@@ -231,7 +286,8 @@ func slotContext(plan SlotPlan) SlotContext {
 		ObjectDigest execution.ObjectDigest
 	}{ref, plan.ObjectDigest})
 	digest := sha256.Sum256(raw)
-	return SlotContext{ref.Slot.QueryGroup, ref.Slot.EvaluationTime, ref.SnapshotRevision, ref.QueryRevision, ref.ScheduleRevision, ref.ScheduleSegmentStart, plan.ObjectDigest, ref.DuePlanSetDigest, hex.EncodeToString(digest[:])}
+	return SlotContext{ref.Slot.QueryGroup, ref.Slot.EvaluationTime, ref.SnapshotRevision, ref.QueryRevision, ref.ScheduleRevision, ref.ScheduleSegmentStart, plan.ObjectDigest, ref.DuePlanSetDigest, hex.EncodeToString(digest[:]),
+		ref.ReadHoldMillis, plan.ReadHoldBasis}
 }
 
 func slotParams(slot SlotContext) Params {

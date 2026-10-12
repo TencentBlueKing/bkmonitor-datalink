@@ -17,12 +17,12 @@ import (
 	"github.com/Shopify/sarama"
 )
 
-func TestNewDecisionProducerConfigForcesAcknowledgementAndBounds(t *testing.T) {
+func TestNewDecisionProducerOnlyConfigForcesAcknowledgementAndBounds(t *testing.T) {
 	t.Parallel()
 
-	config, err := NewDecisionProducerConfig(validDecisionSinkConfig())
+	config, err := NewDecisionProducerOnlyConfig(validDecisionSinkConfig())
 	if err != nil {
-		t.Fatalf("NewDecisionProducerConfig() error = %v", err)
+		t.Fatalf("NewDecisionProducerOnlyConfig() error = %v", err)
 	}
 	if config.Producer.RequiredAcks != sarama.WaitForAll {
 		t.Fatalf("required acks = %d, want WaitForAll", config.Producer.RequiredAcks)
@@ -81,14 +81,14 @@ func TestNewDecisionProducerConfigForcesAcknowledgementAndBounds(t *testing.T) {
 // exactly that version without idempotence; a version below it is refused
 // with the reason at configuration time. Record headers are not the floor:
 // they are negotiated per cluster when the sink opens.
-func TestNewDecisionProducerConfigFloorIsTheOldestProtocolTheProgramSpeaks(t *testing.T) {
+func TestNewDecisionProducerOnlyConfigFloorIsTheOldestProtocolTheProgramSpeaks(t *testing.T) {
 	t.Parallel()
 
 	coordinates := validDecisionSinkConfig()
 	coordinates.BrokerVersion = MinimumBrokerVersion
-	config, err := NewDecisionProducerConfig(coordinates)
+	config, err := NewDecisionProducerOnlyConfig(coordinates)
 	if err != nil {
-		t.Fatalf("NewDecisionProducerConfig() error = %v", err)
+		t.Fatalf("NewDecisionProducerOnlyConfig() error = %v", err)
 	}
 	if config.Version != sarama.V0_10_2_0 {
 		t.Fatalf("broker version = %s, want %s", config.Version, sarama.V0_10_2_0)
@@ -108,26 +108,9 @@ func TestNewDecisionProducerConfigFloorIsTheOldestProtocolTheProgramSpeaks(t *te
 	}
 
 	coordinates.BrokerVersion = "0.10.1.0"
-	_, err = NewDecisionProducerConfig(coordinates)
+	_, err = NewDecisionProducerOnlyConfig(coordinates)
 	if err == nil || !strings.Contains(err.Error(), "consumer groups") || !strings.Contains(err.Error(), MinimumBrokerVersion) {
-		t.Fatalf("NewDecisionProducerConfig(0.10.1.0) error = %v, want a refusal naming consumer groups and %s", err, MinimumBrokerVersion)
-	}
-	if _, err := NewDecisionProducerOnlyConfig(coordinates); err == nil {
-		t.Fatal("NewDecisionProducerOnlyConfig(0.10.1.0) = nil, want the same refusal on the producer-only path")
-	}
-}
-
-func TestNewDecisionProducerOnlyConfigDoesNotRequireInputTopic(t *testing.T) {
-	t.Parallel()
-
-	coordinates := validDecisionSinkConfig()
-	coordinates.InputTopic = ""
-	config, err := NewDecisionProducerOnlyConfig(coordinates)
-	if err != nil {
-		t.Fatalf("NewDecisionProducerOnlyConfig() error = %v", err)
-	}
-	if config.Producer.RequiredAcks != sarama.WaitForAll || !config.Producer.Return.Successes {
-		t.Fatal("producer-only config must preserve synchronous broker acknowledgement")
+		t.Fatalf("NewDecisionProducerOnlyConfig(0.10.1.0) error = %v, want a refusal naming consumer groups and %s", err, MinimumBrokerVersion)
 	}
 }
 
@@ -135,7 +118,6 @@ func TestNewDecisionProducerOnlyConfigRejectsMissingOutputCoordinates(t *testing
 	t.Parallel()
 
 	valid := validDecisionSinkConfig()
-	valid.InputTopic = ""
 	tests := map[string]func(*DecisionSinkConfig){
 		"missing brokers":      func(config *DecisionSinkConfig) { config.Brokers = nil },
 		"missing output topic": func(config *DecisionSinkConfig) { config.OutputTopic = "" },
@@ -154,16 +136,6 @@ func TestNewDecisionProducerOnlyConfigRejectsMissingOutputCoordinates(t *testing
 	}
 }
 
-func TestNewDecisionProducerConfigStillRequiresInputTopic(t *testing.T) {
-	t.Parallel()
-
-	coordinates := validDecisionSinkConfig()
-	coordinates.InputTopic = ""
-	if _, err := NewDecisionProducerConfig(coordinates); err == nil {
-		t.Fatal("NewDecisionProducerConfig() accepted missing phase-one input topic")
-	}
-}
-
 func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -173,11 +145,7 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 		"duplicate broker": func(config *DecisionSinkConfig) {
 			config.Brokers = []string{"kafka-1.example:9092", "kafka-1.example:9092"}
 		},
-		"missing input topic":  func(config *DecisionSinkConfig) { config.InputTopic = "" },
 		"missing output topic": func(config *DecisionSinkConfig) { config.OutputTopic = "" },
-		"same input and output": func(config *DecisionSinkConfig) {
-			config.OutputTopic = config.InputTopic
-		},
 		"non-canonical topic": func(config *DecisionSinkConfig) {
 			config.OutputTopic = " shadow-output"
 		},
@@ -198,8 +166,8 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 
 			config := cloneDecisionSinkConfig(valid)
 			mutate(&config)
-			if _, err := NewDecisionProducerConfig(config); err == nil {
-				t.Fatal("NewDecisionProducerConfig() accepted invalid configuration")
+			if _, err := NewDecisionProducerOnlyConfig(config); err == nil {
+				t.Fatal("NewDecisionProducerOnlyConfig() accepted invalid configuration")
 			}
 		})
 	}
@@ -208,7 +176,6 @@ func TestDecisionSinkConfigRejectsInvalidCoordinatesAndPolicy(t *testing.T) {
 func validDecisionSinkConfig() DecisionSinkConfig {
 	return DecisionSinkConfig{
 		Brokers:         []string{"kafka-1.example:9092"},
-		InputTopic:      "alarmd-trigger-input-shadow",
 		OutputTopic:     "alarmd-trigger-decision-shadow",
 		ClientID:        "alarmd",
 		BrokerVersion:   "2.6.0",

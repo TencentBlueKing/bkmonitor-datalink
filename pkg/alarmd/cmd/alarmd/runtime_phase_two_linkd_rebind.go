@@ -41,15 +41,16 @@ type linkdBinding struct {
 }
 
 // linkdLocationSwitch is the index's source and subscriber, delegating to the
-// binding in force. A process whose startup discovery failed reads from the
-// fallback location; retry keeps asking the Console and, once it answers with
-// a location this process holds a connection to, moves every read there. The
+// binding in force. A process whose startup discovery failed, or whose
+// Console names a Redis it holds no connection to, is bound nowhere and reads
+// nothing: there is no fallback location, since a set read from a place the
+// Console did not name answers for nobody. retry keeps asking the Console
+// after a failed discovery, and a reconciliation that finds the link writing
+// elsewhere hands its target to relocate; either moves every read to the
+// place the Console names when this process holds a connection to it. The
 // cache needs no restart: a Watch in progress on the old binding returns when
 // the binding is replaced, and the cache's own loop subscribes again - on the
 // new binding - and rereads every strategy it tracks.
-//
-// Only one move ever happens, from the fallback to the discovered location;
-// a discovered location is the link's answer and is not asked again.
 type linkdLocationSwitch struct {
 	mu        sync.Mutex
 	current   linkdBinding
@@ -63,7 +64,16 @@ type linkdLocationSwitch struct {
 	// connection is the runtime's, a new one this switch then owns otherwise.
 	open  func(config.RedisConnectionConfig) (redis.UniversalClient, bool)
 	owned redis.UniversalClient
+	// cfg is the deployment's configuration, for the connections this
+	// process holds; calibrate tells the copy the reads moved, so it forgets
+	// what the old place held and calibrates at once, and the Console's
+	// confirmation does not wait an interval.
+	cfg       config.Config
+	calibrate func()
 }
+
+// bound is whether the binding in force reads anywhere.
+func (binding linkdBinding) bound() bool { return binding.source != nil && binding.subscriber != nil }
 
 func newLinkdBinding(client redis.UniversalClient, connection config.RedisConnectionConfig, prefix string,
 	limits openalerts.ReadLimits) (linkdBinding, error) {
@@ -87,13 +97,26 @@ func (s *linkdLocationSwitch) binding() (linkdBinding, chan struct{}) {
 // ReadSet implements openalerts.IndexSource on the binding in force.
 func (s *linkdLocationSwitch) ReadSet(ctx context.Context, key openalerts.StrategyKey) ([]string, error) {
 	current, _ := s.binding()
+	if !current.bound() {
+		return nil, openalerts.ErrLocationUnconfirmed
+	}
 	return current.source.ReadSet(ctx, key)
 }
 
 // Watch implements openalerts.Subscriber on the binding in force, and returns
 // when that binding is replaced so the cache subscribes again on the new one.
-func (s *linkdLocationSwitch) Watch(ctx context.Context, ready func(bool), changed func(openalerts.StrategyKey)) error {
+func (s *linkdLocationSwitch) Watch(ctx context.Context, ready func(bool), changed func(openalerts.StrategyKey), refused func(openalerts.NoticeRefusal)) error {
 	current, replaced := s.binding()
+	if !current.bound() {
+		// Nothing to subscribe to until the Console names a place; the
+		// cache subscribes again once one is bound.
+		select {
+		case <-replaced:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	inner, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -103,7 +126,7 @@ func (s *linkdLocationSwitch) Watch(ctx context.Context, ready func(bool), chang
 		case <-inner.Done():
 		}
 	}()
-	err := current.subscriber.Watch(inner, ready, changed)
+	err := current.subscriber.Watch(inner, ready, changed, refused)
 	if ctx.Err() == nil {
 		// Replaced, not stopped: the cache's loop marks the copy not ready and
 		// subscribes again, which is the reread the move needs.
@@ -159,21 +182,83 @@ func (s *linkdLocationSwitch) rebind(connection config.RedisConnectionConfig, pr
 		}
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	previous := s.owned
 	s.current, s.moved = next, true
 	if owned {
 		s.owned = client
+	} else {
+		s.owned = nil
 	}
 	close(s.replaced)
 	s.replaced = make(chan struct{})
+	calibrate := s.calibrate
+	s.mu.Unlock()
+	if previous != nil && previous != client {
+		_ = previous.Close()
+	}
+	if calibrate != nil {
+		calibrate()
+	}
 	return nil
+}
+
+// relocate is a reconciliation's finding that the link writes somewhere
+// other than where this process reads: the target it read is the Console's
+// own answer, so the reads move there when this process holds a connection
+// to that Redis, and are unbound otherwise - a place the Console no longer
+// names is not read on.
+func (s *linkdLocationSwitch) relocate(target openalerts.TargetBinding) {
+	// The target's own prefix: the configuration's prefix is the one startup
+	// adopted, the very place the link no longer writes to, and a prefix the
+	// deployment stated is not the Console's word either.
+	cfg := s.cfg
+	cfg.PhaseTwo.Linkd.KeyPrefix = ""
+	connection, prefix, found := heldLinkdLocation(cfg, target)
+	s.mu.Lock()
+	s.discovery.Target = linkdTargetFacts(target)
+	same := found && s.current.bound() && sameRedisConnection(s.current.connection, connection) && s.current.prefix == prefix
+	s.mu.Unlock()
+	if same {
+		return
+	}
+	if !found {
+		s.unbind()
+		s.mu.Lock()
+		s.discovery.Outcome = fleet.LinkdDiscoveryNoHeldConnection
+		s.mu.Unlock()
+		return
+	}
+	if err := s.rebind(connection, prefix); err != nil {
+		s.mu.Lock()
+		s.discovery.Error = boundedText(err.Error())
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Lock()
+	s.discovery.Outcome, s.discovery.Error = fleet.LinkdDiscoveryAdopted, ""
+	s.mu.Unlock()
+}
+
+// unbind stops every read: the place read until now is not the Console's.
+func (s *linkdLocationSwitch) unbind() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.current.bound() {
+		return
+	}
+	s.current = linkdBinding{}
+	close(s.replaced)
+	s.replaced = make(chan struct{})
 }
 
 // retry asks the Console where the link writes until it answers, then moves
 // the reads there. It runs only for a process whose startup discovery failed:
 // an adopted location, a stated connection and a target at a Redis this
 // process holds no connection to are all answers, not failures, and none is
-// asked again.
+// asked again. A reconciliation that finds the link meanwhile moves the reads
+// itself (relocate) and is that answer too: the loop stops, and it never
+// moves reads already where the Console names - a move forgets everything
+// read before it.
 func (s *linkdLocationSwitch) retry(ctx context.Context, cfg config.Config, discover discoverLinkdTarget,
 	first, ceiling time.Duration) {
 	s.mu.Lock()
@@ -184,17 +269,23 @@ func (s *linkdLocationSwitch) retry(ctx context.Context, cfg config.Config, disc
 	}
 	settings := cfg.PhaseTwo.Linkd
 	options := openalerts.HTTPReconcilerOptions{BaseURL: settings.ConsoleURL, Username: settings.Username, Password: settings.Password,
-		Client: &http.Client{Timeout: 5 * time.Second}, MaxResponseBytes: 1 << 20,
-		Select: openalerts.TargetSelector{EventSourceID: settings.EventSourceID, HookName: settings.HookName}}
+		Client: &http.Client{Timeout: 5 * time.Second}, MaxResponseBytes: 1 << 20}
 	pause := first
 	for {
 		if !waitLinkdRetry(ctx, pause) {
+			return
+		}
+		s.mu.Lock()
+		failed = s.discovery.Outcome == fleet.LinkdDiscoveryFailed
+		s.mu.Unlock()
+		if !failed {
 			return
 		}
 		pause = min(2*pause, ceiling)
 		target, err := discover(ctx, options)
 		s.mu.Lock()
 		s.discovery.Attempts++
+		noteListedTargets(&s.discovery, target, err)
 		if err != nil {
 			s.discovery.Error = boundedText(err.Error())
 			s.mu.Unlock()
@@ -206,6 +297,15 @@ func (s *linkdLocationSwitch) retry(ctx context.Context, cfg config.Config, disc
 		if !found {
 			s.mu.Lock()
 			s.discovery.Outcome = fleet.LinkdDiscoveryNoHeldConnection
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Lock()
+		same := s.current.bound() && sameRedisConnection(s.current.connection, connection) && s.current.prefix == prefix
+		s.mu.Unlock()
+		if same {
+			s.mu.Lock()
+			s.discovery.Outcome = fleet.LinkdDiscoveryAdopted
 			s.mu.Unlock()
 			return
 		}

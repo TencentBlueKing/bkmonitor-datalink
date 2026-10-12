@@ -11,6 +11,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -380,5 +381,88 @@ func TestAnItemStatingAZeroHorizonIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "tracking_horizon_seconds") {
 		t.Fatalf("refusal = %v, want it to name the field whoever wrote it has to fix", err)
+	}
+}
+
+// An item's own tracking horizon is a positive whole number of seconds
+// (retention proposal, section 0 item 4), and nothing else. Unlike continuous
+// and level it has no backend reading to follow, so there is no truncation to
+// copy: 1.5 is not 1, 1.0 is not 1, and an exponent, words, zero and
+// negatives are refused by name, each of which suspends only the item's
+// no-data. Quotes are transport, not value - the section is a bare dict - so
+// "900" is 900 and "1.5" is refused like 1.5. The smallest horizon there is,
+// one second, is taken.
+func TestAnItemsOwnHorizonIsAWholeNumberOfSecondsOrRefused(t *testing.T) {
+	for name, test := range map[string]struct {
+		written string
+		want    int64
+		refused bool
+	}{
+		"a day":                             {written: `86400`, want: 86400},
+		"one second":                        {written: `1`, want: 1},
+		"a fraction":                        {written: `1.5`, refused: true},
+		"whole but written with a fraction": {written: `1.0`, refused: true},
+		"an exponent":                       {written: `1e3`, refused: true},
+		"a whole number as text":            {written: `"3600"`, want: 3600},
+		"a fraction as text":                {written: `"1.5"`, refused: true},
+		"words":                             {written: `"a day"`, refused: true},
+		"zero":                              {written: `0`, refused: true},
+		"negative":                          {written: `-60`, refused: true},
+		"the largest a lifetime holds":      {written: strconv.FormatInt(contract.MaxNoDataTrackingHorizonSeconds, 10), want: contract.MaxNoDataTrackingHorizonSeconds},
+		"one second more":                   {written: strconv.FormatInt(contract.MaxNoDataTrackingHorizonSeconds+1, 10), refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			item := noDataItem(t, `{"is_enabled":true,"continuous":3,"tracking_horizon_seconds":`+test.written+`}`)
+			config, err := frozenNoDataConfig(item, NoDataPolicy{TrackingHorizonSeconds: 600})
+			if test.refused {
+				if err == nil {
+					t.Fatalf("frozenNoDataConfig() = %+v, want %s refused by name", config, test.written)
+				}
+				return
+			}
+			if err != nil || config == nil || config.TrackingHorizonSeconds != test.want ||
+				config.TrackingHorizonSource != contract.NoDataHorizonSourceStrategy {
+				t.Fatalf("frozenNoDataConfig() = %+v, %v; want the item's %d from STRATEGY", config, err, test.want)
+			}
+		})
+	}
+}
+
+// is_enabled is read the way strategy.py reads it, `cfg.get("is_enabled")`
+// in an if: Python's truthiness of whatever the store holds. A number is on
+// unless it is zero, a string is on unless it is empty -- "false", "0" and
+// a lone space included, because a non-empty string is true -- and null or a
+// missing key is off. A list or an object is refused by name rather than
+// read: the platform writes neither, and guessing which way it meant would
+// decide detection on a shape nobody wrote.
+func TestIsEnabledIsReadWithPythonsTruthiness(t *testing.T) {
+	for value, want := range map[string]string{
+		`false`: "off", `true`: "on",
+		`0`: "off", `0.0`: "off", `1`: "on", `2`: "on", `-1`: "on", `0.5`: "on",
+		`""`: "off", `"false"`: "on", `"0"`: "on", `" "`: "on", `"no"`: "on", `"true"`: "on",
+		`null`: "off", `missing`: "off",
+		`[]`: "refused", `{}`: "refused",
+	} {
+		t.Run(value, func(t *testing.T) {
+			section := `"is_enabled": ` + value + `, `
+			if value == "missing" {
+				section = ""
+			}
+			var item legacyItem
+			if err := json.Unmarshal([]byte(`{"id": 1, "no_data_config": {`+section+`"continuous": 3}}`), &item); err != nil {
+				t.Fatal(err)
+			}
+			config, err := frozenNoDataConfig(item, NoDataPolicy{})
+			got := "off"
+			switch {
+			case err != nil:
+				got = "refused"
+			case config != nil:
+				got = "on"
+			}
+			if got != want {
+				t.Fatalf("is_enabled %s reads %s (config %+v, error %v), want %s", value, got, config, err, want)
+			}
+		})
 	}
 }

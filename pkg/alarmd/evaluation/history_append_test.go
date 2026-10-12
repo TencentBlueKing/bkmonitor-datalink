@@ -32,7 +32,7 @@ import (
 // how an earlier version of this test reported that nothing reproduced.
 func TestReEvaluatingAStoredRecordDoesNotBreakItsOwnHistory(t *testing.T) {
 	plan := compiledWindow(t, 3, 3)
-	fingerprint := plan.Levels()[0].Fingerprints().Detect
+	fingerprint := plan.Levels().At(0).Fingerprints().Detect
 	point := func(id string, sourceTime int64) execution.StateHistoryPoint {
 		return execution.StateHistoryPoint{RecordID: strings.Repeat(id, 64), SourceTime: sourceTime,
 			Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: fingerprint, Result: execution.LevelFactNormal}}}
@@ -161,7 +161,7 @@ func TestNoWindowIsAskedForMorePositionsThanTheStateRetains(t *testing.T) {
 			t.Fatalf("planLevelRequirements on a %d/%d window: %v", shape.windowSize,
 				shape.requiredAnomalies, err)
 		}
-		levels := plan.Levels()
+		levels := plan.Levels().Copy()
 		if len(requirements) != len(levels) {
 			t.Fatalf("requirements = %d for %d levels", len(requirements), len(levels))
 		}
@@ -396,7 +396,7 @@ func recordLeftBehind(t testing.TB, mutation execution.StateMutation) []executio
 // starts from a missing record, so it cannot see this at all.
 func TestTheSecondRecordOfASlotSeesTheLoadedWindowAndNotOnlyTheSlotsOwnPoints(t *testing.T) {
 	plan := compiledWindow(t, 3, 2)
-	fingerprint := plan.Levels()[0].Fingerprints().Detect
+	fingerprint := plan.Levels().At(0).Fingerprints().Detect
 	stored := func(sourceTime int64) execution.StateHistoryPoint {
 		id, err := contract.DeriveRecordIDV2(strings.Repeat("c", 64), sourceTime)
 		if err != nil {

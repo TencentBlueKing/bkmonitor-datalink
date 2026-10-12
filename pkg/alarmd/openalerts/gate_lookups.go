@@ -59,10 +59,7 @@ func (cache *Cache) countLookup(answer Answer) {
 // recordGate files the lookup Contains just answered. Called with the lock
 // held.
 func (cache *Cache) recordGate(m member, now time.Time, open bool) {
-	own := false
-	if cache.index != nil {
-		_, own = cache.index.opened[m]
-	}
+	_, own := cache.index.opened[m]
 	if !own {
 		_, own = cache.added[m]
 	}
@@ -85,23 +82,12 @@ func (cache *Cache) recordGate(m member, now time.Time, open bool) {
 // fingerprint, bounded. Called with the lock held.
 func (cache *Cache) setsCarrying(m member) []string {
 	var found []string
-	if cache.index != nil {
-		for key, entry := range cache.index.entries {
-			if key == m.key || entry == nil {
-				continue
-			}
-			if _, ok := entry.index[m.fingerprint]; ok {
-				found = append(found, key.StrategyID)
-			}
+	for key, entry := range cache.index.entries {
+		if key == m.key || entry == nil {
+			continue
 		}
-	} else {
-		for key, set := range cache.sets {
-			if key == m.key {
-				continue
-			}
-			if _, ok := set[m.fingerprint]; ok {
-				found = append(found, key.StrategyID)
-			}
+		if _, ok := entry.index[m.fingerprint]; ok {
+			found = append(found, key.StrategyID)
 		}
 	}
 	sort.Strings(found)
@@ -154,4 +140,5 @@ func (cache *Cache) gateStats(stats *Stats) {
 		}
 	}
 	stats.RecentOwnHeld = cache.recentOwnHeld.ordered()
+	cache.departureStats(stats)
 }

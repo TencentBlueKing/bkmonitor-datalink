@@ -11,6 +11,7 @@ package worker
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -205,10 +206,13 @@ func TestARoundThatDidNotJudgeEmitsNoAbsenceLine(t *testing.T) {
 	}
 }
 
-// The line is emitted from the round's own pass, once for the Plan that
-// judged and not for the Plan the budget skipped: read through evaluateNoData
-// rather than the emitter, because a call site that was never wired reads the
-// same as one that was under a test that calls the emitter itself.
+// The line comes out of the round's own pass, once for the Plan that judged
+// and not for the Plan the budget skipped, and only when the Slot reports its
+// outcomes: read through evaluateNoData and the report, the two steps the
+// Slot runs, rather than the emitter, because a call site that was never
+// wired reads the same as one that was under a test that calls the emitter
+// itself. Before the report nothing is said: a judgement the Slot discards
+// is not reported as made.
 func TestTheAbsenceLineComesOutOfTheRoundsOwnPass(t *testing.T) {
 	first := noDataWiredPlan(t)
 	second := first
@@ -226,7 +230,7 @@ func TestTheAbsenceLineComesOutOfTheRoundsOwnPass(t *testing.T) {
 				})},
 			// One mutation for the whole Slot: the first Plan judges and its
 			// series fits, the second is skipped by the budget.
-			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 1},
+			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 1, MaxEvents: 1},
 		},
 		header: execution.InternalExecutionHeader{Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans},
 	}
@@ -238,6 +242,12 @@ func TestTheAbsenceLineComesOutOfTheRoundsOwnPass(t *testing.T) {
 	if err := stream.evaluateNoData(context.Background(), nil, 16); err == nil {
 		t.Fatal("fixture: the batch was expected to fail, so its success means this read something else")
 	}
+	for _, observation := range recorded {
+		if observation.NoDataAbsence != nil {
+			t.Fatalf("an absence line came out before the Slot reported its outcomes: %+v", observation)
+		}
+	}
+	stream.observeNoDataOutcomes(context.Background())
 	lines := map[string]observability.NoDataAbsenceFacts{}
 	for _, observation := range recorded {
 		if observation.NoDataAbsence == nil {
@@ -262,5 +272,125 @@ func TestTheAbsenceLineComesOutOfTheRoundsOwnPass(t *testing.T) {
 	// absent, which is the reading a fresh Plan on an empty store gives.
 	if line.Outcome != string(nodata.OutcomeEvaluated) || line.Absent != 1 || line.Expected != 0 || line.Present != 0 {
 		t.Fatalf("line = %+v, want EVALUATED with the whole-item absence counted once", line)
+	}
+}
+
+// A Slot whose own output went past a per-Slot cap decided no Plan's no-data,
+// whatever the rounds had filed: every no-data Plan lands on exactly one
+// outcome, SKIPPED_SLOT_BUDGET where it had none and where it had filed
+// EVALUATED; the census counts the Plans the Slot had even when the cap
+// tripped before they were seen; the judging Plan's line is not reported and
+// its memory is not written.
+func TestASlotBeyondItsBudgetSettlesEveryNoDataPlanOnce(t *testing.T) {
+	first := noDataWiredPlan(t)
+	second := first
+	second.Identity.StrategyID = "8"
+	second.CompiledPlan = noDataPreflightPlan(t, "8", &contract.NoDataConfigV1{
+		Continuous: 1, Level: 2, AggDimension: []string{"bk_target_ip", "bk_target_cloud_id"},
+	})
+	duePlans := []execution.DuePlan{first, second}
+	for _, decidedFirst := range []bool{true, false} {
+		recorded := []observability.Observation{}
+		stream := &streamedExecution{
+			coordinator: &SlotExecutionCoordinator{
+				ports: Ports{NoData: &emptyNoDataStore{}, Hosts: SharedHostBusiness, State: failingStatePort{},
+					Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+						recorded = append(recorded, observation)
+					})},
+				budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 1, MaxEvents: 1},
+			},
+			header: execution.InternalExecutionHeader{Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans},
+		}
+		if err := stream.loadNoDataMemory(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if decidedFirst {
+			// The first Plan judges and files EVALUATED, the second is skipped by
+			// the no-data budget; then the cap trips.
+			_ = stream.evaluateNoData(context.Background(), nil, 16)
+			// The guard on the fixture: the case is only read if the first Plan
+			// really judged, or the correction below is never exercised.
+			index, filed := stream.noDataOutcomeIndex[first.Key()]
+			if len(stream.noDataOutcomes) != 2 || !filed || stream.noDataOutcomes[index] != nodata.OutcomeEvaluated {
+				t.Fatalf("fixture: outcomes %v before the trip, want the first Plan EVALUATED and the second skipped", stream.noDataOutcomes)
+			}
+		}
+		// Through the replacement itself, which is where the settling is wired.
+		// It settles the no-data side first; this fixture loads no gap
+		// markers, so the replacement gaps after it fail, and that is not
+		// what is read here.
+		_ = stream.completeBeyondSlotBudget(context.Background())
+		stream.observeNoDataOutcomes(context.Background())
+		// The discarded EVALUATED counts as a skip: the streak the judgement
+		// reset starts again at this round.
+		if rounds := stream.coordinator.noDataSkips.rounds[first.Key()]; rounds != 1 {
+			t.Fatalf("decided first=%v: first Plan's streak = %d, want 1", decidedFirst, rounds)
+		}
+		if stream.noDataMutations != nil {
+			t.Fatalf("decided first=%v: memory mutations %+v survived a replaced Slot", decidedFirst, stream.noDataMutations)
+		}
+		census, partition := 0, map[string]int{}
+		for _, observation := range recorded {
+			switch {
+			case observation.NoDataAbsence != nil:
+				t.Fatalf("decided first=%v: a replaced Slot reported a judgement: %+v", decidedFirst, observation.NoDataAbsence)
+			case observation.NoDataCensus != nil:
+				census = observation.NoDataCensus.Plans
+			case observation.NoDataSlot != nil:
+				partition[observation.NoDataSlot.Outcome] += observation.NoDataSlot.Plans
+			}
+		}
+		if census != 2 || len(partition) != 1 || partition[string(nodata.OutcomeSkippedSlotBudget)] != 2 {
+			t.Fatalf("decided first=%v: census=%d partition=%v, want both Plans and both on SKIPPED_SLOT_BUDGET", decidedFirst, census, partition)
+		}
+	}
+}
+
+// A Query Group whose Slot goes past its cap every round has stopped
+// detecting no-data, and is reported as a stall on its third round like any
+// other persistent skip. Each round its Plan judges first and files
+// EVALUATED, and the cap then turns that into SKIPPED_SLOT_BUDGET: the
+// streak follows the outcome the Slot settles on, not the one filed first,
+// or every round would reset the streak it then counts as one.
+func TestASlotBeyondItsBudgetEveryRoundIsReportedAsAStall(t *testing.T) {
+	first := noDataWiredPlan(t)
+	duePlans := []execution.DuePlan{first}
+	recorded := []observability.Observation{}
+	coordinator := &SlotExecutionCoordinator{
+		ports: Ports{NoData: &emptyNoDataStore{}, Hosts: SharedHostBusiness, State: failingStatePort{},
+			Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				recorded = append(recorded, observation)
+			})},
+		budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 1, MaxEvents: 1},
+	}
+	contract := noDataPreflightContract(t, duePlans)
+	for round := 1; round <= 4; round++ {
+		stream := &streamedExecution{coordinator: coordinator,
+			header: execution.InternalExecutionHeader{Contract: contract, DuePlans: duePlans}}
+		stream.request.Contract = contract
+		stream.request.Contract.Slot.EvaluationTime += execution.EvaluationTime(60 * round)
+		if err := stream.loadNoDataMemory(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		_ = stream.evaluateNoData(context.Background(), nil, 16)
+		if index, filed := stream.noDataOutcomeIndex[first.Key()]; !filed || stream.noDataOutcomes[index] != nodata.OutcomeEvaluated {
+			t.Fatalf("fixture: round %d filed %v before the cap, want EVALUATED", round, stream.noDataOutcomes)
+		}
+		mark := len(recorded)
+		_ = stream.completeBeyondSlotBudget(context.Background())
+		stream.observeNoDataOutcomes(context.Background())
+		var stalls []string
+		for _, observation := range recorded[mark:] {
+			if observation.NoDataStall != nil {
+				stalls = append(stalls, observation.NoDataStall.Outcome)
+			}
+		}
+		want := []string(nil)
+		if round == 3 {
+			want = []string{"SKIPPED_SLOT_BUDGET"}
+		}
+		if !reflect.DeepEqual(stalls, want) {
+			t.Fatalf("round %d reported stalls %v, want %v: three rounds past the cap are a stall, reported once", round, stalls, want)
+		}
 	}
 }

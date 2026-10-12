@@ -47,8 +47,8 @@ func TestAReplayHeldPastItsWindowIsNamedEvenWhenItIsAlsoTooFar(t *testing.T) {
 			source.observer = observer
 			deadline := (int64(slot) + 2) * 1000
 
-			operation, facts, err := source.classifyRecovery(context.Background(), slot, deadline,
-				time.Unix(int64(slot)+test.reachedAfter, 0))
+			operation, facts, err := source.classifyRecovery(context.Background(), slot, deadline, 0,
+				time.Unix(int64(slot)+test.reachedAfter, 0), execution.OwnerFence{})
 			if err != nil {
 				t.Fatalf("classifyRecovery() error = %v", err)
 			}
@@ -99,7 +99,6 @@ func TestABuilderRefusalNamesItsOwnConditionAndCarriesTheBounds(t *testing.T) {
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 	source := newProductionSlotSourceWithRecoveryForTest(
 		t, catalog, foundProgress(firstSlot, firstSlot-execution.EvaluationTime(interval)), at, testRecoveryLimits())
-	source.expiredRangeEnabled = true
 	observer := &gateObserver{}
 	source.observer = observer
 	ctx := context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
@@ -132,14 +131,13 @@ func TestABuilderRefusalNamesItsOwnConditionAndCarriesTheBounds(t *testing.T) {
 // of it in a bucket that means "not applicable".
 func TestARefusalBeforeTheBoundsAreComputedReportsNoBounds(t *testing.T) {
 	observer := &gateObserver{}
-	source, ctx := fourBehindSource(t, observer, true)
-	source.expiredRangeEnabled = false
+	source, ctx := fourBehindSource(t, observer, false)
 	if _, _, _, err := source.Next(ctx, "query-group-1"); err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
 	facts := observer.gate(t)
-	if facts.Outcome != observability.RangeGateCreationDisabled {
-		t.Fatalf("outcome = %q, want %q", facts.Outcome, observability.RangeGateCreationDisabled)
+	if facts.Outcome != observability.RangeGateNoRangeFlight {
+		t.Fatalf("outcome = %q, want %q", facts.Outcome, observability.RangeGateNoRangeFlight)
 	}
 	if facts.BoundsKnown || facts.DistanceBound != 0 || facts.DeadlineBound != 0 {
 		t.Fatalf("facts = %+v, want no bounds: this refusal is decided before either is computed", facts)

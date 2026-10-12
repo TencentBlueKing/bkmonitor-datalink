@@ -59,42 +59,6 @@ func TestPollingPromQLWireAndDynamicSeries(t *testing.T) {
 	}
 }
 
-func TestPollingFTAWireKeepsIntrinsicFilterSeparate(t *testing.T) {
-	attempt := validAttempt(t)
-	facts := attempt.Spec.PlanFacts
-	facts.QueryRevision = ""
-	q := &facts.QueryList[0]
-	q.FieldSemantics = "fta_event_tags/v1"
-	q.Conditions = execution.QueryConditions{Fields: []execution.QueryConditionField{{Field: "tags.env", Operator: "contains", Values: []execution.QueryScalar{{Kind: execution.QueryScalarString, StringValue: "prod"}}}}}
-	q.SourceConditions = &execution.QueryConditions{Fields: []execution.QueryConditionField{{Field: "status", Operator: "eq", Values: []execution.QueryScalar{{Kind: execution.QueryScalarString, StringValue: "ABNORMAL"}}}}}
-	facts.TSDBMap = map[string][]execution.QueryStorage{"a": {{TableID: "events", StorageID: "17", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__", TimeField: execution.QueryTimeField{Name: "time", Type: "date", Unit: "millisecond"}}}}
-	var err error
-	facts, err = execution.BuildQueryPlanFacts(facts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	attempt.Spec, err = execution.BuildPhysicalQuerySpec(execution.PhysicalQuerySpec{PlanFacts: facts, LogicalWindow: attempt.Spec.LogicalWindow, ProviderRange: attempt.Spec.ProviderRange, AcceptedRange: attempt.Spec.AcceptedRange, RequiredColumns: []string{"value"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := buildRequest(attempt.Spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wire, _ := json.Marshal(body)
-	var got map[string]any
-	_ = json.Unmarshal(wire, &got)
-	clause := got["query_list"].([]any)[0].(map[string]any)
-	if clause["field_semantics"] != "fta_event_tags/v1" || clause["source_conditions"] == nil || len(body.QueryList[0].Conditions.Fields) != 1 || body.QueryList[0].SourceConditions.Fields[0].Field != "status" {
-		t.Fatalf("wire=%s", wire)
-	}
-	facts.QueryRevision = ""
-	facts.TSDBMap["a"][0].TimeField.Unit = "s"
-	if _, err := execution.BuildQueryPlanFacts(facts); err == nil {
-		t.Fatal("noncanonical ES time unit accepted")
-	}
-}
-
 func TestPollingMissingGroupValuesBindExplicitNull(t *testing.T) {
 	attempt := validAttempt(t)
 	attempt.Spec.PlanFacts.Normalization.Version = "uq-polling-normalization-v1"

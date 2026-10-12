@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -66,24 +68,19 @@ func TestASentinelTargetIsMatchedTheWayTheConsoleNamesIt(t *testing.T) {
 	}
 }
 
-// What is not adopted: a stated connection, a stated prefix, a Redis this
-// process holds no connection to, and a Console that never answers.
+// What is not adopted: a Redis this process holds no connection to, and a
+// Console that never answers; without a Console nothing is asked. The
+// Console is always asked when there is one, and its prefix is the one read:
+// the deployment no longer states either.
 func TestTheLinksLocationIsAdoptedOnlyWhenNothingElseDecidesIt(t *testing.T) {
-	stated := linkdLocationConfig()
-	stated.PhaseTwo.Linkd.Connection = &config.RedisConnectionConfig{Mode: config.RedisModeStandalone, Address: "stated:6379"}
 	calls := 0
-	if got := adoptedConfig(adoptLinkdLocation(context.Background(), stated, answering(openalerts.TargetBinding{Address: "platform-redis:6379"}, &calls))); got.PhaseTwo.Linkd.Connection.Address != "stated:6379" || calls != 0 {
-		t.Fatalf("a stated connection was replaced: %+v", got.PhaseTwo.Linkd.Connection)
-	}
 	noConsole := linkdLocationConfig()
 	noConsole.PhaseTwo.Linkd.ConsoleURL = ""
 	if got := adoptedConfig(adoptLinkdLocation(context.Background(), noConsole, answering(openalerts.TargetBinding{Address: "platform-redis:6379"}, &calls))); got.PhaseTwo.Linkd.Connection != nil || calls != 0 {
 		t.Fatal("adopted without a Console")
 	}
-	prefixed := linkdLocationConfig()
-	prefixed.PhaseTwo.Linkd.KeyPrefix = "stated:prefix"
-	if got := adoptedConfig(adoptLinkdLocation(context.Background(), prefixed, answering(openalerts.TargetBinding{KeyPrefix: "hook:open", Address: "platform-redis:6379", Database: 8}, &calls))); got.PhaseTwo.Linkd.Prefix() != "stated:prefix" {
-		t.Fatal("a stated prefix was replaced")
+	if got := adoptedConfig(adoptLinkdLocation(context.Background(), linkdLocationConfig(), answering(openalerts.TargetBinding{KeyPrefix: "hook:open", Address: "platform-redis:6379", Database: 8}, &calls))); got.PhaseTwo.Linkd.Prefix() != "hook:open" || calls != 1 {
+		t.Fatalf("prefix %q after %d asks, want the Console's prefix from one ask", got.PhaseTwo.Linkd.Prefix(), calls)
 	}
 	if got := adoptedConfig(adoptLinkdLocation(context.Background(), linkdLocationConfig(), answering(openalerts.TargetBinding{Address: "elsewhere:6379", Database: 8}, &calls))); got.PhaseTwo.Linkd.Connection != nil {
 		t.Fatalf("a Redis this process holds no credentials for was adopted: %+v", got.PhaseTwo.Linkd.Connection)
@@ -155,15 +152,45 @@ func TestEveryDiscoveryOutcomeIsRecordedWithWhatItFound(t *testing.T) {
 	if _, facts := adoptLinkdLocation(context.Background(), linkdLocationConfig(), long); len(facts.Error) != linkdFailureTextLimit+3 {
 		t.Fatalf("a failure text is carried whole: %d bytes", len(facts.Error))
 	}
-	stated := linkdLocationConfig()
-	stated.PhaseTwo.Linkd.Connection = &config.RedisConnectionConfig{Mode: config.RedisModeStandalone, Address: "stated:6379"}
-	if _, facts := adoptLinkdLocation(context.Background(), stated, answering(here, &calls)); facts == nil ||
-		facts.Outcome != fleet.LinkdDiscoveryConnectionStated || facts.Attempts != 0 {
-		t.Fatalf("stated: %+v", facts)
+	if !reflect.DeepEqual(fleet.LinkdDiscoveryOutcomes, []string{fleet.LinkdDiscoveryAdopted, fleet.LinkdDiscoveryNoHeldConnection, fleet.LinkdDiscoveryFailed}) {
+		t.Fatalf("discovery outcomes = %v, want adopted, no held connection and failed: the deployment states no connection", fleet.LinkdDiscoveryOutcomes)
 	}
 	noConsole := linkdLocationConfig()
 	noConsole.PhaseTwo.Linkd.ConsoleURL = ""
 	if _, facts := adoptLinkdLocation(context.Background(), noConsole, answering(here, &calls)); facts != nil {
 		t.Fatalf("a deployment without a Console recorded %+v", facts)
+	}
+}
+
+// What the Console listed is carried with the discovery, so a link listing
+// several targets is read in one step: one on adoption, with its name; on a
+// refusal, the count and the names.
+func TestTheDiscoveryCarriesWhatTheConsoleListed(t *testing.T) {
+	calls := 0
+	_, facts := adoptLinkdLocation(context.Background(), linkdLocationConfig(), answering(openalerts.TargetBinding{
+		EventSourceID: "alarmd", HookName: "active", KeyPrefix: "hook:open", Address: "platform-redis:6379", Database: 8}, &calls))
+	if facts == nil || facts.TargetCount != 1 || !reflect.DeepEqual(facts.TargetNames, []string{"alarmd/active"}) {
+		t.Fatalf("adopted: %+v, want one target named alarmd/active", facts)
+	}
+	defer func(pause time.Duration) { linkdDiscoveryPause = pause }(linkdDiscoveryPause)
+	linkdDiscoveryPause = 0
+	several := func(context.Context, openalerts.HTTPReconcilerOptions) (openalerts.TargetBinding, error) {
+		return openalerts.TargetBinding{}, &openalerts.TargetCountError{Count: 2, Names: []string{"alarmd/active", "other/standby"}}
+	}
+	_, facts = adoptLinkdLocation(context.Background(), linkdLocationConfig(), several)
+	if facts == nil || facts.Outcome != fleet.LinkdDiscoveryFailed || facts.TargetCount != 2 ||
+		!reflect.DeepEqual(facts.TargetNames, []string{"alarmd/active", "other/standby"}) {
+		t.Fatalf("refused: %+v, want the count and both names", facts)
+	}
+	many := make([]string, 20)
+	for index := range many {
+		many[index] = fmt.Sprintf("source-%d/hook", index)
+	}
+	crowded := func(context.Context, openalerts.HTTPReconcilerOptions) (openalerts.TargetBinding, error) {
+		return openalerts.TargetBinding{}, &openalerts.TargetCountError{Count: len(many), Names: many}
+	}
+	if _, facts = adoptLinkdLocation(context.Background(), linkdLocationConfig(), crowded); facts.TargetCount != 20 ||
+		!reflect.DeepEqual(facts.TargetNames, many[:fleet.MaxLinkdTargetNames]) {
+		t.Fatalf("twenty targets: count %d, names %v; want the count whole and the first %d names", facts.TargetCount, facts.TargetNames, fleet.MaxLinkdTargetNames)
 	}
 }

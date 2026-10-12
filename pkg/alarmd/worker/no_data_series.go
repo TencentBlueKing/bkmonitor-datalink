@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -94,7 +95,10 @@ func dimensionText(raw map[string]json.RawMessage) map[string]string {
 // dataset, a primary binding, the same batch, the same evaluator, the same
 // recovery gate, the same state writer. The one thing that marks them is the
 // kind on the input, and that is what decides they are judged against the
-// no-data level rather than the strategy's declared ones.
+// no-data level rather than the strategy's declared ones. The one exception
+// to the gate is the close of a group the roster dropped: it is the absence's
+// last word, sent once and then forgotten, so the gate is not asked about it
+// (completedSeries.closing).
 func (stream *streamedExecution) noDataRoundFor(
 	due execution.DuePlan, seen []map[string]string, completeness execution.Completeness,
 ) (noDataRound, error) {
@@ -122,6 +126,7 @@ func (stream *streamedExecution) noDataRoundFor(
 		Scope:            due.CompiledPlan.TargetScope(),
 		Plan:             due.CompiledPlan.TargetPlan(),
 		TargetResolution: stream.targetResolutions[identity.Plan].absenceView(),
+		AnswerTruncated:  stream.answerTruncated[due.Identity],
 		Identity:         identity,
 		Snapshot:         snapshot,
 		ApplyVersion:     version,
@@ -204,7 +209,7 @@ func (stream *streamedExecution) noDataCompletedSeries(
 	if err != nil {
 		return completedSeries{}, fmt.Errorf("alarmd worker: derive no-data record id: %w", err)
 	}
-	level := view.CompiledPlan.Levels()[0]
+	level := view.CompiledPlan.Levels().At(0)
 	consumer := execution.ConsumerRef{
 		Plan: view.Identity, LevelID: level.Definition().LevelID, HasLevel: true,
 	}
@@ -236,7 +241,7 @@ func (stream *streamedExecution) noDataCompletedSeries(
 		Disposition: execution.AccessAvailable, ImpactScope: execution.ImpactPlan,
 	}
 	return completedSeries{
-		due: view, series: series,
+		due: view, series: series, closing: synthetic.Closing,
 		inputs: []execution.SeriesEvaluationInputRequest{{
 			Contract: stream.header.Contract, Consumer: consumer, SeriesIdentity: series,
 			Kind: execution.SeriesKindNoData, RequirementIDs: []execution.RequirementID{noDataRequirementID},
@@ -270,7 +275,16 @@ func (stream *streamedExecution) evaluateNoData(
 		pending = pending[:0]
 		return err
 	}
-	budget := stream.coordinator.slotBudget().MaxStateMutations
+	// What the Slot's own series have already spent. They are all evaluated
+	// and merged by now, so the no-data Plans share only what is left of each
+	// per-Slot cap their series spend from: one State write per series, and
+	// at most one event per series, since a no-data Plan has one Level.
+	// Checked against the whole cap instead, a Plan whose series fit alone
+	// and not beside the threshold ones passes here and is refused by the
+	// Slot-wide check, which replaces every Plan's results with a budget gap -
+	// the threshold detection this round already decided included.
+	budget := stream.coordinator.slotBudget()
+	spentStates, spentEvents := stream.effects.states, stream.effects.events
 	for _, due := range stream.header.DuePlans {
 		if due.CompiledPlan.NoData() == nil {
 			continue
@@ -279,6 +293,7 @@ func (stream *streamedExecution) evaluateNoData(
 		// cannot disagree about which Plans this Slot had. A Plan seen here and
 		// missing from the outcomes was dropped between the two.
 		stream.noDataPlansSeen++
+		started := time.Now()
 		round, err := stream.noDataRoundFor(due, seriesDimensionsFor(prepared, due.Identity),
 			stream.noDataCompleteness(due))
 		if err != nil {
@@ -297,7 +312,7 @@ func (stream *streamedExecution) evaluateNoData(
 			// said must not record that it said them: the next round would
 			// count the absence from a checkpoint no alert was ever raised
 			// against.
-			stream.observeNoDataLocalFailure(ctx, due, outcome, err)
+			stream.observeNoDataLocalFailure(ctx, started, due, outcome, err)
 			stream.recordNoDataOutcome(ctx, due, outcome)
 			continue
 		}
@@ -307,13 +322,15 @@ func (stream *streamedExecution) evaluateNoData(
 		// will not fit next round either, and a partial set of synthetic series
 		// would report the groups that fitted as absent and say nothing about
 		// the rest.
-		if !noDataFitsSlotBudget(stream.noDataStateMutations, uint64(len(round.series)), budget) {
+		adding := uint64(len(round.series))
+		if !noDataFitsSlotBudget(spentStates+stream.noDataStateMutations, adding, budget.MaxStateMutations) ||
+			!noDataFitsSlotBudget(spentEvents+stream.noDataStateMutations, adding, budget.MaxEvents) {
 			stream.recordNoDataOutcome(ctx, due, nodata.OutcomeSkippedSlotBudget)
 			continue
 		}
 		stream.noDataStateMutations += uint64(len(round.series))
 		stream.recordNoDataOutcome(ctx, due, round.outcome)
-		stream.observeNoDataAbsence(ctx, due, round)
+		stream.noDataJudged = append(stream.noDataJudged, noDataJudgment{due: due, round: round})
 		if round.mutation != nil {
 			stream.noDataMutations = append(stream.noDataMutations, *round.mutation)
 		}
@@ -337,15 +354,37 @@ func (stream *streamedExecution) evaluateNoData(
 	return flush()
 }
 
+// noteAnswerTruncation marks the binding's Plan when the binding is a
+// primary input and its physical query's answer may have been cut. Only a
+// primary answer says which groups reported; a cut dependency answer leaves
+// the Plan's presence as it was.
+func (stream *streamedExecution) noteAnswerTruncation(binding execution.NamedInputBinding, route execution.ProviderRouteFacts) {
+	if binding.Role != execution.InputRolePrimary || route.Truncation == nil {
+		return
+	}
+	if stream.answerTruncated == nil {
+		stream.answerTruncated = map[execution.PlanIdentity]bool{}
+	}
+	stream.answerTruncated[binding.Consumer.Plan] = true
+}
+
 // noDataCompleteness is whether this Slot saw the whole period for one Plan.
 //
 // Absence is only evidence when the round was complete, and the completeness
 // that matters is the Plan's own: a Slot in which another Plan's query came
 // back partial says nothing about this one.
 func (stream *streamedExecution) noDataCompleteness(due execution.DuePlan) execution.Completeness {
+	// Unavailable outranks partial: whichever order the bindings come in, the
+	// Plan's round is reported as short as its shortest binding.
 	worst := execution.CompletenessFull
 	for _, binding := range planBindings(stream.bindings, due.Identity) {
-		if binding.Completeness != execution.CompletenessFull {
+		switch binding.Completeness {
+		case execution.CompletenessFull:
+		case execution.CompletenessPartial:
+			if worst == execution.CompletenessFull {
+				worst = binding.Completeness
+			}
+		default:
 			worst = binding.Completeness
 		}
 	}
@@ -359,14 +398,54 @@ func (stream *streamedExecution) noDataCompleteness(due execution.DuePlan) execu
 // that could not store it reports from the memory it had, which is the previous
 // round's, and the round after that stores again. Failing the Slot over it
 // would throw away evaluations that were already correct and already sent.
+//
+// A memory for a Plan this round does not have, or one whose retention cannot
+// be derived, is not a refusal: nothing was asked of the store, the wiring
+// handed it a write it cannot place, and that does fail the Slot.
+// withoutWithheldNoData is the memory mutations of the Plans whose output
+// landed, in the order they were queued.
+func withoutWithheldNoData(
+	mutations []execution.PlanNoDataMutation, withheld map[execution.PlanIdentity]struct{},
+) []execution.PlanNoDataMutation {
+	if len(withheld) == 0 {
+		return mutations
+	}
+	kept := make([]execution.PlanNoDataMutation, 0, len(mutations))
+	for _, mutation := range mutations {
+		if _, skip := withheld[mutation.Identity.Plan]; skip {
+			continue
+		}
+		kept = append(kept, mutation)
+	}
+	return kept
+}
+
 func (coordinator *SlotExecutionCoordinator) applyNoDataMemory(
-	ctx context.Context, request execution.SlotExecutionRequest, mutations []execution.PlanNoDataMutation,
+	ctx context.Context, request execution.SlotExecutionRequest, duePlans []execution.DuePlan,
+	mutations []execution.PlanNoDataMutation,
 ) error {
 	if len(mutations) == 0 {
 		return nil
 	}
+	// What each memory lives for: its own Plan's retention, the one the load
+	// renews it to.
+	written := make([]execution.DuePlan, 0, len(mutations))
+	for _, mutation := range mutations {
+		due, ok := duePlan(duePlans, mutation.Identity.Plan)
+		if !ok {
+			return fmt.Errorf("alarmd worker: no-data memory for a Plan that is not due")
+		}
+		written = append(written, due)
+	}
+	retention, err := generationRetentionOf(written...)
+	if err != nil {
+		return err
+	}
+	if err := execution.EnterCommit(ctx, execution.SlotStageState); err != nil {
+		return err
+	}
 	result, err := coordinator.ports.NoData.ApplyNoData(ctx, execution.NoDataApplyRequest{
-		Contract: request.Contract, Items: mutations,
+		Contract: request.Contract, Items: mutations, Retention: retention,
 	})
 	if err != nil {
 		return fmt.Errorf("alarmd worker: store no-data memory: %w", err)
@@ -500,6 +579,7 @@ func (stream *streamedExecution) observeNoDataOutcomes(ctx context.Context) {
 	if len(stream.noDataOutcomes) == 0 {
 		return
 	}
+	stream.noteNoDataStreaks(ctx)
 	counts := make(map[nodata.SlotOutcome]int, len(nodata.SlotOutcomes))
 	for _, outcome := range stream.noDataOutcomes {
 		counts[outcome]++
@@ -516,6 +596,46 @@ func (stream *streamedExecution) observeNoDataOutcomes(ctx context.Context) {
 			NoDataSlot: &observability.NoDataSlotFacts{Outcome: string(outcome), Plans: plans},
 		})
 	}
+	// Each judging Plan's own line, for the judgements the Slot kept.
+	for _, judged := range stream.noDataJudged {
+		if index, filed := stream.noDataOutcomeIndex[judged.due.Key()]; filed && stream.noDataOutcomes[index] == nodata.OutcomeEvaluated {
+			stream.observeNoDataAbsence(ctx, judged.due, judged.round)
+		}
+	}
+}
+
+// noDataJudgment is one Plan's round that judged, held for its line.
+type noDataJudgment struct {
+	due   execution.DuePlan
+	round noDataRound
+}
+
+// closeNoDataBeyondSlotBudget settles the no-data side of a Slot whose own
+// output went past a per-Slot cap: nothing the Slot evaluated reaches State
+// or Events, so no Plan's no-data was decided whatever its round had filed,
+// and no memory is written for it -- a round whose verdicts were not said
+// must not record that it said them. Every no-data Plan lands on exactly one
+// outcome: SKIPPED_SLOT_BUDGET where it had none, or where it had filed
+// EVALUATED, which counts as a skip for its streak; a skip it had already
+// filed for another reason keeps that reason. The census is the Plans the
+// Slot had, counted here because the trip can come before they were seen.
+func (stream *streamedExecution) closeNoDataBeyondSlotBudget(ctx context.Context) {
+	stream.noDataMutations = nil
+	seen := 0
+	for _, due := range stream.header.DuePlans {
+		if due.CompiledPlan.NoData() == nil {
+			continue
+		}
+		seen++
+		index, filed := stream.noDataOutcomeIndex[due.Key()]
+		switch {
+		case !filed:
+			stream.recordNoDataOutcome(ctx, due, nodata.OutcomeSkippedSlotBudget)
+		case stream.noDataOutcomes[index] == nodata.OutcomeEvaluated:
+			stream.noDataOutcomes[index] = nodata.OutcomeSkippedSlotBudget
+		}
+	}
+	stream.noDataPlansSeen = seen
 }
 
 // observeNoDataAbsence reports what one Plan's round decided about its groups,

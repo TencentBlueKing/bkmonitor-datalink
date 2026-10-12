@@ -81,10 +81,6 @@ func TestAThresholdUnitIsReadFromTheQueryConfigWhereTheCacheKeepsIt(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result, err := reconciler.Refresh(ctx, source, planner); err != nil ||
-				result.Status != controlplane.SourceRefreshPendingConfirmation {
-				t.Fatalf("first refresh = (%#v, %v)", result, err)
-			}
 			published, err := reconciler.Refresh(ctx, source, planner)
 			if err != nil || published.Status != controlplane.SourceRefreshPublished {
 				t.Fatalf("publish = (%#v, %v)", published, err)

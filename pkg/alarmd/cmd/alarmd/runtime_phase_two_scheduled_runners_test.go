@@ -122,6 +122,12 @@ func (runner walkRunner) NextReadyAt() time.Time { return runner.readyAt }
 func (runner walkRunner) DueBound() scheduler.RunnerDueBound { return runner.bound }
 func (runner walkRunner) NextDeadline() time.Time            { return time.Time{} }
 
+func (walkRunner) DeclineHung(time.Time, time.Duration) (string, time.Time, bool) {
+	return "", time.Time{}, false
+}
+
+func (walkRunner) ExecutionDeadline() time.Time { return time.Time{} }
+
 func (walkRunner) MaintainLease(context.Context, time.Duration, time.Duration) error { return nil }
 
 func (walkRunner) Release(context.Context) error { return nil }
@@ -309,8 +315,9 @@ func oneShotWalkDispatcher(
 }
 
 // TestOneShotRunKeepsTheReturningRunnerOutOfTheQueueToo covers the mode that
-// looks like it needs an exception. A one-shot run is driven by a single wake,
-// so it has one generation and no next turn to wait for. It still does not let
+// looks like it needs an exception. A one-shot run is driven by a single wake
+// and issues a later generation itself only for a target a full queue turned
+// away, so a returning Runner has no next turn of its own. It still does not let
 // a returning Runner take a place: within one generation the walk visits each
 // Query Group exactly once, and a Query Group can only be active after the walk
 // has queued it, so no Query Group is ever passed over as active and none is

@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -19,13 +18,15 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 // runtimeStateUpgradeFixture is Runtime State an earlier release wrote
 // through its own store into a real server: every key's exact bytes, the
 // preflight that reads them, and what that release itself loaded from them.
 // testdata/runtime-state-upgrade holds one per release an upgrade may start
-// from: the upstream line writes the v2 envelope, 0.2.4605 the v3 frame.
+// from: the previous upstream snapshot (8c3c859f) and 0.2.4605, both of which
+// write the v3 frame.
 // writer_test.go.txt there wrote them: copied into that release's
 // pkg/alarmd/state as a _test.go file, it runs with XV_OUT naming the
 // fixture and XV_SOURCE the commit.
@@ -49,10 +50,7 @@ type runtimeStateUpgradeFixture struct {
 // this build means to stop reading must turn this into a named refusal, not
 // a silent miss.
 func TestRuntimeStateWrittenByAnEarlierReleaseLoads(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	paths, err := filepath.Glob("testdata/runtime-state-upgrade/*.json")
 	if err != nil || len(paths) < 2 {
 		t.Fatalf("fixtures %v: %v", paths, err)

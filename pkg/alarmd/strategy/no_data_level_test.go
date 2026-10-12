@@ -62,9 +62,9 @@ func TestNoDataDetectionDoesNotMoveThePlanFingerprints(t *testing.T) {
 			"this would re-key every Plan's runtime state in the deployment",
 			with.PlanRef().StateCompatibilityHash, without.PlanRef().StateCompatibilityHash)
 	}
-	if len(with.Levels()) != len(without.Levels()) {
+	if with.Levels().Len() != without.Levels().Len() {
 		t.Fatalf("Levels() = %d with no-data and %d without; the no-data level is not a declared level",
-			len(with.Levels()), len(without.Levels()))
+			with.Levels().Len(), without.Levels().Len())
 	}
 }
 
@@ -205,7 +205,7 @@ func TestNoDataLevelThatCannotCompileWithholdsTheWholePlan(t *testing.T) {
 	}
 	if compiled, ok := result.Plan(); ok {
 		t.Fatalf("Compile() produced a Plan with %d levels and no-data level %v; want the Plan withheld",
-			len(compiled.Levels()), compiled.NoDataLevel())
+			compiled.Levels().Len(), compiled.NoDataLevel())
 	}
 	terminal := result.PlanTerminal()
 	if terminal == nil {

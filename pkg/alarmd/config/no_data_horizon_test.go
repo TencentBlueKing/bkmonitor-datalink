@@ -10,6 +10,8 @@
 package config
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -75,6 +77,9 @@ func TestANoDataHorizonThatIsNotPositiveIsRefusedAtLoad(t *testing.T) {
 	for name, stated := range map[string]string{
 		"a written zero is not how a deployment says it has no horizon": "0",
 		"a negative horizon is not a length of time":                    "-1",
+		"a fraction is not a whole number of seconds":                   "1.5",
+		"an exponent is not how the contract writes seconds":            "1e3",
+		"words are not a number":                                        "an hour",
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(writeConfig(t, platformSettingsConfigContents("",
@@ -84,6 +89,70 @@ func TestANoDataHorizonThatIsNotPositiveIsRefusedAtLoad(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "tracking_horizon_seconds") {
 				t.Fatalf("Load() error = %v, want it to name the key the operator has to fix", err)
+			}
+		})
+	}
+}
+
+// The deployment's horizon has a ceiling as well as a floor: the largest
+// horizon a runtime-state lifetime can hold. That one is taken, and one
+// second more is refused by the key's name, since past it the lifetime would
+// wrap (retention proposal, section 6).
+func TestANoDataHorizonPastWhatALifetimeHoldsIsRefusedAtLoad(t *testing.T) {
+	for name, test := range map[string]struct {
+		stated  int64
+		refused bool
+	}{
+		"the largest a lifetime holds": {stated: contract.MaxNoDataTrackingHorizonSeconds},
+		"one second more":              {stated: contract.MaxNoDataTrackingHorizonSeconds + 1, refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, platformSettingsConfigContents("",
+				platformSettingsControlBase+"  no_data:\n    tracking_horizon_seconds: "+strconv.FormatInt(test.stated, 10)+"\n")))
+			if test.refused != (err != nil) {
+				t.Fatalf("Load(%d) error = %v, want refused %t", test.stated, err, test.refused)
+			}
+			if test.refused && !strings.Contains(err.Error(), "tracking_horizon_seconds") {
+				t.Fatalf("Load() error = %v, want it to name the key the operator has to fix", err)
+			}
+		})
+	}
+}
+
+// The forms the values file may carry the horizon in: a bare decimal, the
+// same quoted (a rendered values file may quote it), and an empty leaf,
+// which is the key absent. A misspelled key is refused by its name, as the
+// loader refuses every unknown key: read as absent, it would be a deployment
+// on the default horizon that believes it set one.
+func TestTheValuesHorizonIsADecimalBareOrQuotedAndATypoIsRefused(t *testing.T) {
+	for name, test := range map[string]struct {
+		leaf    string
+		want    int64
+		absent  bool
+		refused string
+	}{
+		"bare":              {leaf: "tracking_horizon_seconds: 900", want: 900},
+		"quoted":            {leaf: `tracking_horizon_seconds: "900"`, want: 900},
+		"the smallest":      {leaf: "tracking_horizon_seconds: 1", want: 1},
+		"empty":             {leaf: "tracking_horizon_seconds:", absent: true},
+		"a misspelled key":  {leaf: "tracking_horizon_secs: 900", refused: "tracking_horizon_secs"},
+		"a quoted fraction": {leaf: `tracking_horizon_seconds: "1.5"`, refused: "tracking_horizon_seconds"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			loaded, err := Load(writeConfig(t, platformSettingsConfigContents("",
+				platformSettingsControlBase+"  no_data:\n    "+test.leaf+"\n")))
+			if test.refused != "" {
+				if err == nil || !strings.Contains(err.Error(), test.refused) {
+					t.Fatalf("Load() error = %v, want a refusal naming %s", err, test.refused)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			got := loaded.PhaseTwo.NoData.TrackingHorizonSeconds
+			if test.absent != (got == nil) || (got != nil && *got != test.want) {
+				t.Fatalf("horizon = %v, want %d (absent %t)", got, test.want, test.absent)
 			}
 		})
 	}

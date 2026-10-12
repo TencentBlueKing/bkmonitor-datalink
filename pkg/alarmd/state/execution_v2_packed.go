@@ -142,6 +142,25 @@ var PackedRuleNames = []string{
 	PackedRuleIdentityKeyUnderivable, PackedRuleLegacyRecordIDTooLong, PackedRuleTwoRecordsOneSourceTime,
 }
 
+// The ways a runtime write is refused as STATE_BUDGET_EXCEEDED, named for the
+// same reason the packed rules are: one reason, several limits, and a line
+// that carries only the reason does not say which was reached.
+const (
+	// RuntimeRuleLifetimePastCeiling is the Plan's runtime state lifetime
+	// past the store's ceiling: every mutation of the Plan is refused.
+	RuntimeRuleLifetimePastCeiling = "lifetime_past_ceiling"
+	// RuntimeRuleValueOverLimit is one record that frames and is larger than
+	// the store's value limit.
+	RuntimeRuleValueOverLimit = "value_over_limit"
+	// RuntimeRuleValueNotEncodable is one record the framing itself refused
+	// for a reason that is not a contract rule.
+	RuntimeRuleValueNotEncodable = "value_not_encodable"
+)
+
+// RuntimeBudgetRuleNames is every rule a runtime write can be refused by as
+// STATE_BUDGET_EXCEEDED.
+var RuntimeBudgetRuleNames = []string{RuntimeRuleLifetimePastCeiling, RuntimeRuleValueOverLimit, RuntimeRuleValueNotEncodable}
+
 // PackedContractRefusal is a framed write refused by one named rule. The
 // sentence stays for a human reading the error; the rule is what the line
 // carries.
@@ -252,12 +271,6 @@ func levelFingerprints(mutation execution.StateMutation, levels []execution.Runt
 		return nil, err
 	}
 	return fingerprints, nil
-}
-
-// encodeRuntimePacked writes the framed record.
-func encodeRuntimePacked(mutation execution.StateMutation, revision uint64) ([]byte, error) {
-	encoded, _, err := encodeRuntimePackedCounted(mutation, revision)
-	return encoded, err
 }
 
 // encodeRuntimePackedCounted also reports how many of the record's points
@@ -398,9 +411,8 @@ func encodeRuntimePackedCounted(mutation execution.StateMutation, revision uint6
 	return append(buffer, points...), len(legacy), nil
 }
 
-// packedFrame reports whether these bytes are a framed record rather than the
-// JSON envelope. The two are told apart by their first bytes, so a reader needs
-// no version field to dispatch.
+// packedFrame reports whether these bytes are a framed record, by their first
+// bytes.
 func packedFrame(raw []byte) bool {
 	return len(raw) >= packedFrameHeaderLen && string(raw[:4]) == packedFrameMagic
 }
@@ -509,64 +521,4 @@ func decodeRuntimePacked(raw []byte, identity execution.StateKeyIdentity) (execu
 		PersistedApplyVersion: header.ApplyVersion, PersistedMutationDigest: header.MutationDigest,
 		LastProcessedEventTime: header.LastEventTime, SeriesGuard: header.SeriesGuard,
 		Levels: levels, History: history}, nil
-}
-
-// runtimeViewSource says which key a loaded view came from, so the write side
-// knows whether it is continuing a framed record or converting an envelope.
-type runtimeViewSource uint8
-
-const (
-	runtimeViewNone runtimeViewSource = iota
-	runtimeViewFramed
-	runtimeViewEnvelope
-)
-
-// chooseRuntimeView picks between the two representations of one series.
-//
-// Not "prefer the new key". Ownership of a Query Group moves between replicas
-// while a rollout is in progress, and an old binary that takes a Query Group
-// back writes the envelope key after a new one has already written the framed
-// one - so the envelope can legitimately be the newer of the two, and taking
-// the framed one on sight would throw away every round the old owner ran.
-//
-// Who still asks this. The sequential apply path does: it reads both keys to
-// compare against exact bytes and has no per-Slot multiplier, so the second
-// key costs it a value it already has the round trip for. The preflight does
-// not any more - it asks for the envelope only of a series whose frame is
-// missing or unreadable, so a frame that reads is the view whatever the older
-// key holds. What that gives up is this function's first paragraph: during a
-// rollout from a binary that predates the framed record, the rounds the old
-// owner wrote are missing from the frame's history until the window slides
-// past them. It is given up because the alternative is reading a 344 KB
-// record for every series of every Slot for a representation nothing writes,
-// and there is no reading today that says the shape still happens - the
-// fleet-level fact that would settle it is every ready replica declaring it
-// writes frames.
-//
-// Equal versions go to the framed key, and that choice is not arbitrary. Two
-// records at one version describe the same evaluation and hold the same facts,
-// so either is correct to read; but taking the envelope means deriving the
-// framed record from it again next round, and the round after, for as long as
-// both exist. The migration would never converge while looking entirely
-// healthy.
-func chooseRuntimeView(framed, envelope *execution.RuntimeStateView) (execution.RuntimeStateView, runtimeViewSource) {
-	switch {
-	case framed == nil && envelope == nil:
-		return execution.RuntimeStateView{}, runtimeViewNone
-	case framed == nil:
-		return *envelope, runtimeViewEnvelope
-	case envelope == nil:
-		return *framed, runtimeViewFramed
-	}
-	switch execution.CompareApplyVersion(framed.PersistedApplyVersion, envelope.PersistedApplyVersion) {
-	case execution.ApplyVersionPersistedOlder:
-		return *envelope, runtimeViewEnvelope
-	default:
-		// Newer, and equal. CompareApplyVersion is a total order: when the
-		// epoch and evaluation time match it falls back to comparing the Slot
-		// digests, which is deterministic and the same on every replica but
-		// says nothing about which happened later - so it is usable to break a
-		// tie and must not be read as "this one is more recent".
-		return *framed, runtimeViewFramed
-	}
 }

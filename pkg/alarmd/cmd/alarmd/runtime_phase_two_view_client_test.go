@@ -107,13 +107,21 @@ func TestTheProductionWorkerExecutesFromTheViewAndRefusesWhenItGoesStale(t *test
 	if progress := fixture.progress(ctx); progress.NextSlot != before.NextSlot || progress.LastFullSlot != before.LastFullSlot {
 		t.Fatalf("the cursor moved on a stale view: %+v, was %+v", progress, before)
 	}
-	if counts := fixture.production.viewGate.Counts(); counts["timeline_stale"] != 1 {
-		t.Fatalf("gate outcomes after the stale round = %v, want this Query Group counted timeline_stale", counts)
+	// Every reading from here on is of this Query Group alone. The cutover
+	// gave the sibling strategy a new Query Group and retired its old one,
+	// and the bundle's own loops read both while the old one drains: their
+	// outcomes and refusals move on their own clock while the view catches
+	// up, and a count over the whole gate or the whole log read them too.
+	if outcome := viewGateOutcomeOf(fixture.production.viewGate, fixture.queryGroup); outcome != viewGateTimelineMismatch {
+		t.Fatalf("gate outcome after the stale round = %q, want this Query Group %q (all: %v)", outcome, viewGateTimelineMismatch, fixture.production.viewGate.Counts())
 	}
 	// The refusal reached the log by name with the gate's word, and the
 	// Runner's outcome the fleet reads says the same.
 	var dueLines, runnerLines int
 	for _, observation := range fixture.observed() {
+		if observation.Trace.QueryGroupKey != string(fixture.queryGroup) {
+			continue
+		}
 		switch {
 		case observation.Stage == observability.StageScheduleDue && observation.ReasonCode == observability.ReasonCode(contract.ReasonViewNotExecutable):
 			if observation.Result != observability.ResultRetrying || observation.Err == nil || !strings.Contains(observation.Err.Error(), "timeline_stale") {
@@ -140,9 +148,17 @@ func TestTheProductionWorkerExecutesFromTheViewAndRefusesWhenItGoesStale(t *test
 	if restored.CompletionKind != withStream.CompletionKind {
 		t.Fatalf("Slot after the stream returned = %+v, want %+v", restored, withStream)
 	}
-	if counts := fixture.production.viewGate.Counts(); counts["timeline_stale"] != 0 || counts["executable"] == 0 {
-		t.Fatalf("gate outcomes after the stream returned = %v, want the Query Group executable again", counts)
+	if outcome := viewGateOutcomeOf(fixture.production.viewGate, fixture.queryGroup); outcome != viewGateExecutable {
+		t.Fatalf("gate outcome after the stream returned = %q, want the Query Group %q again (all: %v)", outcome, viewGateExecutable, fixture.production.viewGate.Counts())
 	}
+}
+
+// viewGateOutcomeOf is the latest outcome the gate recorded for one Query
+// Group, empty when it has none.
+func viewGateOutcomeOf(gate *viewExecutionGate, queryGroup execution.QueryGroupIdentity) viewGateOutcome {
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	return gate.outcomes[queryGroup].outcome
 }
 
 type slotOutcome struct {
@@ -264,7 +280,7 @@ func reserveAddressForBundle(t *testing.T) string {
 }
 
 // The execution path does not import the view stream: the hard condition
-// four of decision-016's shadow step, pinned on the import graph rather
+// four of decision-016, pinned on the import graph rather
 // than on one behaviour. A package on the Slot's path that starts to
 // depend on viewstream fails here before it can read a view.
 func TestTheHotPathDoesNotImportTheViewStream(t *testing.T) {

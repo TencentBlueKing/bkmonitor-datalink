@@ -164,7 +164,7 @@ func TestMemoryUpkeepRidesOnTheObjectRow(t *testing.T) {
 	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "qg-upkeep"})
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		memoryRead(ctx, tracker, "s-1", "PER_GROUP")
-		memoryRead(ctx, tracker, "s-2", "WHOLE_MEMORY")
+		memoryRead(ctx, tracker, "s-2", "NONE")
 		if round == 1 {
 			memoryRenewed(ctx, tracker, "s-2", false, 43200, "")
 		}

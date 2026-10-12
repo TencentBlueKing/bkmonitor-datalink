@@ -227,14 +227,14 @@ func TestExecutionStateIdentityIsBoundedAndLevelIndependent(t *testing.T) {
 		Plan:            execution.PlanIdentity{TenantID: strings.Repeat("tenant", 100), BusinessID: "2", StrategyID: "9"},
 		StateGeneration: "generation-1", SeriesIdentityDigest: execution.SeriesIdentityDigest(strings.Repeat("a", 64)),
 	}
-	key, err := RuntimeStateKeyV2("alarmd", identity)
+	key, err := RuntimeStateKeyV3("alarmd", identity)
 	if err != nil {
-		t.Fatalf("RuntimeStateKeyV2() error = %v", err)
+		t.Fatalf("RuntimeStateKeyV3() error = %v", err)
 	}
-	if len(key) > 256 || !strings.Contains(key, ":runtime:v2:") {
-		t.Fatalf("RuntimeStateKeyV2() = %q", key)
+	if len(key) > 256 || !strings.Contains(key, ":runtime3:v2:") {
+		t.Fatalf("RuntimeStateKeyV3() = %q", key)
 	}
-	if key2, _ := RuntimeStateKeyV2("alarmd", identity); key2 != key {
+	if key2, _ := RuntimeStateKeyV3("alarmd", identity); key2 != key {
 		t.Fatalf("key is not deterministic: %q != %q", key, key2)
 	}
 }
@@ -247,19 +247,19 @@ func TestExecutionStateIdentityRejectsAmbiguousNumericFields(t *testing.T) {
 	} {
 		identity := stateIdentityV2()
 		identity.Plan = plan
-		if _, err := RuntimeStateKeyV2("alarmd", identity); err == nil {
-			t.Fatalf("RuntimeStateKeyV2(%+v) accepted ambiguous identity", plan)
+		if _, err := RuntimeStateKeyV3("alarmd", identity); err == nil {
+			t.Fatalf("RuntimeStateKeyV3(%+v) accepted ambiguous identity", plan)
 		}
 	}
 	left, right := stateIdentityV2(), stateIdentityV2()
 	left.Plan.BusinessID, left.Plan.StrategyID = "1", "23"
 	right.Plan.BusinessID, right.Plan.StrategyID = "12", "3"
-	leftKey, _ := RuntimeStateKeyV2("alarmd", left)
-	rightKey, _ := RuntimeStateKeyV2("alarmd", right)
+	leftKey, _ := RuntimeStateKeyV3("alarmd", left)
+	rightKey, _ := RuntimeStateKeyV3("alarmd", right)
 	if leftKey == rightKey {
 		t.Fatalf("numeric tuple collision: %q", leftKey)
 	}
-	if _, err := RuntimeStateKeyV2(strings.Repeat("p", 65), left); err == nil {
+	if _, err := RuntimeStateKeyV3(strings.Repeat("p", 65), left); err == nil {
 		t.Fatal("oversized prefix was accepted")
 	}
 }
@@ -287,7 +287,7 @@ func TestApplyGapRejectsInvalidIdentityWithoutCallingStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation}})
+	result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation}})
 	if err != nil || result.Items[0].Status != execution.GapGuardRejected {
 		t.Fatalf("ApplyGap(invalid identity) = (%+v, %v)", result, err)
 	}
@@ -304,7 +304,7 @@ func TestExecutionStoreDoesNotResetCorruptRuntimeState(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := stateIdentityV2()
-	key, _ := RuntimeStateKeyV2("alarmd", identity)
+	key, _ := RuntimeStateKeyV3("alarmd", identity)
 	backend.values[key] = []byte("not-json")
 	request := execution.StatePreflightRequest{Contract: frozenRef(), Items: []execution.StatePreflightItem{{Identity: identity, ApplyVersion: applyVersion()}}}
 	loaded, err := store.LoadRuntime(context.Background(), request)
@@ -332,7 +332,7 @@ func TestRuntimeSeriesGuardDeterminesPersistedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := encodeRuntime(mutation, 1)
+	raw, err := encodeRuntimePacked(mutation, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,14 +410,17 @@ func TestRuntimeOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 	goodIdentity.SeriesIdentityDigest = seriesDigest("good")
 	badIdentity := stateIdentityV2()
 	badIdentity.SeriesIdentityDigest = seriesDigest("oversize")
-	goodMutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: goodIdentity, ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
+	goodMutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: goodIdentity, ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, goodIdentity, 60)}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, goodIdentity, 60, "detect", execution.LevelFactNormal)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	goodRaw, _ := encodeRuntime(goodMutation, 1)
+	goodRaw, err := encodeRuntimePacked(goodMutation, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	limit := len(goodRaw) + 16
-	goodKey, _ := RuntimeStateKeyV2("alarmd", goodIdentity)
-	badKey, _ := RuntimeStateKeyV2("alarmd", badIdentity)
+	goodKey, _ := RuntimeStateKeyV3("alarmd", goodIdentity)
+	badKey, _ := RuntimeStateKeyV3("alarmd", badIdentity)
 	backend.values[goodKey], backend.values[badKey] = goodRaw, []byte(strings.Repeat("x", limit+1))
 	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: limit, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	loaded, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: []execution.StatePreflightItem{{Identity: goodIdentity, ApplyVersion: applyVersion()}, {Identity: badIdentity, ApplyVersion: applyVersion()}}})
@@ -448,7 +451,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
+	apply, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
 	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
 		t.Fatalf("ApplyGap(open) = (%+v, %v)", apply, err)
 	}
@@ -462,7 +465,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	}
 	key, _ := PlanGapKeyV2("alarmd", identity)
 	original := append([]byte(nil), backend.values[key]...)
-	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{conflicting}})
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{conflicting}})
 	if err != nil || apply.Items[0].Status != execution.GapGuardConflict || string(backend.values[key]) != string(original) {
 		t.Fatalf("ApplyGap(same version, different digest) = (%+v, %v)", apply, err)
 	}
@@ -476,7 +479,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{warmed}})
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{warmed}})
 	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
 		t.Fatalf("ApplyGap(warmup) = (%+v, %v)", apply, err)
 	}
@@ -490,7 +493,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{cleared}})
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{cleared}})
 	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
 		t.Fatalf("ApplyGap(clear) = (%+v, %v)", apply, err)
 	}
@@ -526,7 +529,7 @@ func TestGapOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := append([]byte(nil), backend.values[badKey]...)
-	applied, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{badMutation}})
+	applied, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{badMutation}})
 	if err != nil || applied.Items[0].Status != execution.GapGuardRejected || string(backend.values[badKey]) != string(original) {
 		t.Fatalf("ApplyGap(oversize) = (%+v, %v)", applied, err)
 	}

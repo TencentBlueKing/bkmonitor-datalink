@@ -66,13 +66,19 @@ type EmptyEveryRoundFacts struct {
 	Cause string `json:"cause"`
 }
 
-// EmptyEveryRoundCauseUnknown is the one cause this build produces: the
-// evidence at hand does not decide between the candidates.
+// EmptyEveryRoundCauseUnknown: the evidence at hand does not decide between
+// the candidates.
 const EmptyEveryRoundCauseUnknown = "CAUSE_UNKNOWN"
+
+// EmptyEveryRoundCauseOutsideTarget: the latest empty round's query returned
+// series, and the monitoring target selected none of them -- every one was
+// refused as outside the target on facts that were all there. The data is
+// there; the target is what to check, not the source.
+const EmptyEveryRoundCauseOutsideTarget = "OUTSIDE_TARGET"
 
 // EmptyEveryRoundCauses is the closed list of causes a row may carry, for the
 // page's wording table.
-var EmptyEveryRoundCauses = []string{EmptyEveryRoundCauseUnknown}
+var EmptyEveryRoundCauses = []string{EmptyEveryRoundCauseUnknown, EmptyEveryRoundCauseOutsideTarget}
 
 // emptyRunHole reports whether the distance between two of an object's empty
 // rounds is a hole in the evidence -- a stretch this process did not watch the
@@ -106,11 +112,14 @@ func emptyRunHole(gap, stride int64, inherited bool, window time.Duration) bool 
 }
 
 // countEmptyEveryRound is the distinct objects of KindEmptyEveryRound in the
-// no-data column: the first screen's one number for this line.
+// no-data column that are on this line: the first screen's one number for
+// it. A run whose cause is OUTSIDE_TARGET is on EMPTY_AFTER_TARGET's line and
+// is not counted, so the number and the rows under the line agree.
 func countEmptyEveryRound(rows []Anomaly) int {
 	seen := map[string]struct{}{}
 	for _, row := range rows {
-		if row.Kind == KindEmptyEveryRound {
+		if row.Kind == KindEmptyEveryRound &&
+			(row.EmptyEveryRound == nil || row.EmptyEveryRound.Cause != EmptyEveryRoundCauseOutsideTarget) {
 			seen[row.QueryGroup] = struct{}{}
 		}
 	}

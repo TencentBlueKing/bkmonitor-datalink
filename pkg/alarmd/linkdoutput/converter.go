@@ -190,6 +190,19 @@ type Converter struct {
 	onUnmappedSeverity func(level uint32)
 }
 
+// labelBusiness is the business an alert is filed under: the business a
+// global business Plan attributed the event to, and the Plan's own business
+// for every other event. Only the label moves. The consumer matches a
+// label business that differs from the strategy's when the strategy's
+// business is global, and enriches from the label business; the alert id
+// and the strategy reference stay the Plan's.
+func labelBusiness(event *contract.TriggerEventV1) string {
+	if event.AttributedBusinessID != "" {
+		return event.AttributedBusinessID
+	}
+	return event.BusinessID
+}
+
 // NewConverter builds a converter. It takes no clock: see Converter.
 func NewConverter(onUnmappedSeverity func(level uint32)) (*Converter, error) {
 	return &Converter{onUnmappedSeverity: onUnmappedSeverity}, nil
@@ -220,9 +233,9 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 	if err != nil {
 		return Event{}, reject(RuleLevelsInvalid, err)
 	}
-	businessID, err := strconv.ParseInt(event.BusinessID, 10, 64)
+	businessID, err := strconv.ParseInt(labelBusiness(event), 10, 64)
 	if err != nil {
-		return Event{}, reject(RuleBusinessIdentity, fmt.Errorf("alarmd linkdoutput: business identity %q: %w", event.BusinessID, err))
+		return Event{}, reject(RuleBusinessIdentity, fmt.Errorf("alarmd linkdoutput: business identity %q: %w", labelBusiness(event), err))
 	}
 	evaluations, err := converter.evaluations(event)
 	if err != nil {
@@ -281,7 +294,12 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 		// the observed value would put a number on a page whose whole subject
 		// is that there was no number.
 		message.ExtraData.EvaluationFamily = evaluationFamilyNoData
-		message.ExtraData.NoDataPeriods = event.Observed.Values[contract.NoDataPeriodFactField]
+		// The period count only on an absence. A recovery's point carries
+		// zero by construction - the group reported - and a zero in this
+		// field would read as a count of zero periods without data.
+		if event.EventKind != contract.TriggerEventRecovery {
+			message.ExtraData.NoDataPeriods = event.Observed.Values[contract.NoDataPeriodFactField]
+		}
 	} else {
 		message.Values = observedValues(event.Observed)
 		message.ExtraData.Unit = event.Observed.Unit
@@ -296,7 +314,7 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 	}
 	return Event{
 		EventID: event.EventID, AlertID: event.DedupeMD5, TenantID: event.TenantID, Payload: payload,
-		Severity: severityFor(primary), Action: action, SubjectKd: kind,
+		Severity: SeverityFor(primary), Action: action, SubjectKd: kind,
 	}, nil
 }
 
@@ -316,16 +334,11 @@ func (converter *Converter) evaluations(event *contract.TriggerEventV1) ([]wireE
 	evaluations := make([]wireEvaluation, 0, len(event.LevelResults))
 	seen := make(map[string]struct{}, len(event.LevelResults))
 	for _, level := range event.LevelResults {
-		action := ""
-		switch level.Result {
-		case contract.LevelResultAbnormal:
-			action = ActionTriggered
-		case contract.LevelResultRecovery:
-			action = ActionResolved
-		default:
+		action := LevelAction(level)
+		if action == "" {
 			continue
 		}
-		severity := severityFor(level)
+		severity := SeverityFor(level)
 		if !SeverityIsBuiltIn(level) && converter.onUnmappedSeverity != nil {
 			converter.onUnmappedSeverity(level.LevelID)
 		}
@@ -454,6 +467,20 @@ func soleObservedValue(observed contract.TriggerObservedV1) json.RawMessage {
 	return nil
 }
 
+// LevelAction is what the consumer is told about one level: triggered for
+// ABNORMAL, resolved for RECOVERY, and nothing ("") for a level that decided
+// nothing this round. See evaluations for why the last is left out; whoever
+// models what the consumer does with a message reads it through this too.
+func LevelAction(level contract.LevelResultV1) string {
+	switch level.Result {
+	case contract.LevelResultAbnormal:
+		return ActionTriggered
+	case contract.LevelResultRecovery:
+		return ActionResolved
+	}
+	return ""
+}
+
 // primaryLevel returns the level the event was aggregated to. The aggregation
 // already happened - lowest priority among the levels that agree with the
 // event's kind, then lowest level id - so this only has to find it again.
@@ -468,7 +495,7 @@ func primaryLevel(event *contract.TriggerEventV1) (contract.LevelResultV1, error
 	)
 }
 
-// severityFor names the level for the consumer.
+// SeverityFor names the level for the consumer.
 //
 // The three built-in levels are the platform's whole set today and their names
 // do not change. A level outside them is not rejected: levels are stated in the
@@ -477,7 +504,7 @@ func primaryLevel(event *contract.TriggerEventV1) (contract.LevelResultV1, error
 // identifier derived from the level. Neither case invents a business meaning -
 // a consumer that does not recognise the name maps it or falls back on its own
 // terms.
-func severityFor(level contract.LevelResultV1) string {
+func SeverityFor(level contract.LevelResultV1) string {
 	if name, builtIn := builtInSeverities[level.LevelID]; builtIn {
 		return name
 	}
@@ -532,6 +559,14 @@ func title(event *contract.TriggerEventV1, primary contract.LevelResultV1, actio
 func content(event *contract.TriggerEventV1, primary contract.LevelResultV1, noData bool) string {
 	window := primary.DecisionWindow.Trigger
 	if noData {
+		// A recovery is the group reporting again, which is what this point
+		// observed; its period count is zero by construction and saying "no
+		// data for 0 periods" would describe the opposite of the decision.
+		// The envelope only goes out while the consumer holds an open alert
+		// on the series, so "again" is the case it is sent in.
+		if event.EventKind == contract.TriggerEventRecovery {
+			return fmt.Sprintf("data reported again, as of %s", wireTime(event.RecordRef.SourceTime))
+		}
 		return fmt.Sprintf(
 			"no data for %s periods, as of %s",
 			noDataPeriods(event.Observed), wireTime(event.RecordRef.SourceTime),

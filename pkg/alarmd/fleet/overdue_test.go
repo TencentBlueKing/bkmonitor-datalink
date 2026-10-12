@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -45,33 +46,48 @@ func TestHowLateIsLateIsMeasuredInTheObjectsOwnPeriod(t *testing.T) {
 	}
 }
 
-// An object with no period stated still has to be reported once its wake time
-// has passed. Dropping it would turn a missing field into silence about the
-// object, and silence here is what health looks like.
-// It is also counted separately. No ordinary path produces an entry without a
-// period -- an object with no due Plans never gets a wake time written at all --
-// so one arriving means the writer is broken, and the defensive default that
-// keeps the object visible would otherwise make that indistinguishable from
-// ordinary reporting.
-func TestAnObjectWithNoStatedPeriodIsStillReportedAndCounted(t *testing.T) {
+// A wake that carries no period -- the due index's word for a round that
+// could not read the object's schedule -- is not overdue however late it is:
+// there is no period to be late by. It is not listed and is counted apart,
+// as period unknown. The same object once its period is read, and a whole
+// period late, is listed as any other.
+func TestAWakeWithNoPeriodIsCountedAndNeverOverdue(t *testing.T) {
 	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
-	anomalies, facts := OverdueAnomalies([]OverdueWake{
-		{QueryGroup: "unknown-period", WakeAt: now.Add(-time.Second)},
-	}, 1, now, "pod-a", nil)
-
-	if len(anomalies) != 1 {
-		t.Fatalf("anomalies = %+v, want the object kept rather than silently dropped", anomalies)
+	for _, late := range []time.Duration{time.Second, time.Hour, 24 * time.Hour} {
+		anomalies, facts := OverdueAnomalies([]OverdueWake{{QueryGroup: "unread", WakeAt: now.Add(-late)}}, 1, now, "pod-a", nil)
+		if len(anomalies) != 0 || facts.PeriodUnknown != 1 || facts.Total != 0 || facts.OldestSeconds != 0 {
+			t.Fatalf("%v late with no period: anomalies %+v facts %+v, want none listed and one period unknown", late, anomalies, facts)
+		}
 	}
-	if facts.MissingPeriod != 1 {
-		t.Fatalf("missing_period = %d, want the defect counted rather than absorbed", facts.MissingPeriod)
+	anomalies, facts := OverdueAnomalies([]OverdueWake{{QueryGroup: "unread", WakeAt: now.Add(-time.Hour), IntervalSeconds: 60}}, 1, now, "pod-a", nil)
+	if len(anomalies) != 1 || anomalies[0].QueryGroup != "unread" || facts.PeriodUnknown != 0 || facts.Total != 1 {
+		t.Fatalf("the same object with its period read: anomalies %+v facts %+v, want it listed overdue", anomalies, facts)
 	}
+}
 
-	// And it stays zero on the ordinary path, or it says nothing.
-	_, healthy := OverdueAnomalies([]OverdueWake{
-		{QueryGroup: "normal", WakeAt: now.Add(-time.Hour), IntervalSeconds: 60},
-	}, 1, now, "pod-a", nil)
-	if healthy.MissingPeriod != 0 {
-		t.Fatalf("missing_period = %d on a well-formed entry", healthy.MissingPeriod)
+// A wake is late past a whole period of its own; one with no period is never
+// late, nor is a wake not written. Both the wake list and an object asked after
+// alone are judged by this.
+func TestAWakeIsLateByItsOwnPeriodOnly(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	for name, want := range map[string]struct {
+		wake OverdueWake
+		late bool
+	}{
+		"within its period":  {OverdueWake{WakeAt: now.Add(-30 * time.Second), IntervalSeconds: 60}, false},
+		"past its period":    {OverdueWake{WakeAt: now.Add(-61 * time.Second), IntervalSeconds: 60}, true},
+		"no period, passed":  {OverdueWake{WakeAt: now.Add(-time.Hour)}, false},
+		"no period, ahead":   {OverdueWake{WakeAt: now.Add(time.Second)}, false},
+		"no wake written":    {OverdueWake{IntervalSeconds: 60}, false},
+		"no wake, no period": {OverdueWake{}, false},
+	} {
+		if got := want.wake.LateAt(now); got != want.late {
+			t.Errorf("%s: late %t, want %t", name, got, want.late)
+		}
+	}
+	anomalies, _ := OverdueAnomalies([]OverdueWake{{QueryGroup: "unwritten", IntervalSeconds: 60}}, 1, now, "pod-a", nil)
+	if len(anomalies) != 0 {
+		t.Fatalf("anomalies = %+v, want a wake never written left out", anomalies)
 	}
 }
 
@@ -116,13 +132,13 @@ func TestOverdueAddsUpAndKeepsTheWorstWait(t *testing.T) {
 	at := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
 	view := Aggregate(Expectation{QueryGroups: 40, Known: true}, []Snapshot{
 		{Replica: "pod-a", TakenAt: at, Owned: 20, Determined: 20,
-			Overdue: &OverdueFacts{Total: 2, OldestSeconds: 30}},
+			Overdue: &OverdueFacts{Total: 2, OldestSeconds: 30, PeriodUnknown: 1}},
 		{Replica: "pod-b", TakenAt: at, Owned: 20, Determined: 20,
-			Overdue: &OverdueFacts{Total: 3, OldestSeconds: 900, Truncated: true}},
+			Overdue: &OverdueFacts{Total: 3, OldestSeconds: 900, Truncated: true, PeriodUnknown: 2}},
 	}, []string{"pod-a", "pod-b"}, at, time.Minute)
 
-	if view.Overdue.Total != 5 || view.Overdue.OldestSeconds != 900 || !view.Overdue.Truncated {
-		t.Fatalf("overdue = %+v, want 5 objects, the 900s worst case, and the truncation kept", view.Overdue)
+	if view.Overdue.Total != 5 || view.Overdue.OldestSeconds != 900 || !view.Overdue.Truncated || view.Overdue.PeriodUnknown != 3 {
+		t.Fatalf("overdue = %+v, want 5 objects, the 900s worst case, the truncation kept and 3 periods unknown", view.Overdue)
 	}
 }
 
@@ -149,5 +165,71 @@ func TestTheOverdueKindIsInTheClosedLabelSet(t *testing.T) {
 	if got := MetricKind(KindOverdueWake); got != KindOverdueWake {
 		t.Fatalf("MetricKind(%q) = %q, want the kind itself rather than the OTHER bucket",
 			KindOverdueWake, got)
+	}
+}
+
+// The objects without a period are named beside their count, every one the
+// index returned, oldest wake first, for the publisher to date; published,
+// the MaxPeriodUnknownObjects longest without a period, longest first, and
+// the count stays the whole number. Across replicas the same.
+func TestTheObjectsWithNoPeriodAreNamedBesideTheirCount(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	var wakes []OverdueWake
+	for index := 0; index < MaxPeriodUnknownObjects+5; index++ {
+		wakes = append(wakes, OverdueWake{QueryGroup: fmt.Sprintf("qg-%02d", index), WakeAt: now.Add(-time.Duration(30-index) * time.Second)})
+	}
+	_, facts := OverdueAnomalies(wakes, len(wakes), now, "pod-a", nil)
+	if facts.PeriodUnknown != MaxPeriodUnknownObjects+5 || len(facts.PeriodUnknownObjects) != MaxPeriodUnknownObjects+5 ||
+		facts.PeriodUnknownObjects[0].QueryGroup != "qg-00" || facts.PeriodUnknownObjects[MaxPeriodUnknownObjects+4].QueryGroup != "qg-24" {
+		t.Fatalf("facts %+v, want every one counted and named, oldest first", facts)
+	}
+	for index := range facts.PeriodUnknownObjects {
+		facts.PeriodUnknownObjects[index].Since = now.Add(-time.Duration(index%7) * time.Minute)
+	}
+	longest := LongestWithoutPeriod(facts.PeriodUnknownObjects)
+	if len(longest) != MaxPeriodUnknownObjects || !longest[0].Since.Equal(now.Add(-6*time.Minute)) || longest[0].QueryGroup != "qg-06" ||
+		!longest[MaxPeriodUnknownObjects-1].Since.Before(longest[0].Since.Add(6*time.Minute)) {
+		t.Fatalf("longest %+v, want the %d longest without a period, longest first", longest, MaxPeriodUnknownObjects)
+	}
+	at := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	named := func(replica string, count int, since time.Time) *OverdueFacts {
+		facts := &OverdueFacts{PeriodUnknown: count}
+		for index := 0; index < count; index++ {
+			facts.PeriodUnknownObjects = append(facts.PeriodUnknownObjects,
+				PeriodUnknownObject{QueryGroup: fmt.Sprintf("%s-%02d", replica, index), Since: since.Add(time.Duration(index) * time.Second)})
+		}
+		return facts
+	}
+	view := Aggregate(Expectation{QueryGroups: 40, Known: true}, []Snapshot{
+		{Replica: "pod-a", TakenAt: at, Owned: 20, Determined: 20, Overdue: named("pod-a", 15, at.Add(-time.Minute))},
+		{Replica: "pod-b", TakenAt: at, Owned: 20, Determined: 20, Overdue: named("pod-b", 15, at.Add(-time.Hour))},
+	}, []string{"pod-a", "pod-b"}, at, time.Minute)
+	objects := view.Overdue.PeriodUnknownObjects
+	if view.Overdue.PeriodUnknown != 30 || len(objects) != MaxPeriodUnknownObjects || objects[0].QueryGroup != "pod-b-00" ||
+		objects[14].QueryGroup != "pod-b-14" || objects[15].QueryGroup != "pod-a-00" {
+		t.Fatalf("aggregated %d named %+v, want 30 counted and the longest without a period named first", view.Overdue.PeriodUnknown, objects)
+	}
+}
+
+// Among objects first seen at the same moment -- right after a start, all of
+// them -- the ones named are the first given, oldest wake first, not the
+// first by name.
+func TestObjectsWithoutAPeriodSinceTheSameMomentKeepTheOrderGiven(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	_, facts := OverdueAnomalies([]OverdueWake{
+		{QueryGroup: "qg-09", WakeAt: now.Add(-2 * time.Minute)},
+		{QueryGroup: "qg-01", WakeAt: now.Add(-time.Minute)},
+	}, 2, now, "pod-a", nil)
+	var objects []PeriodUnknownObject
+	for index := 0; index < MaxPeriodUnknownObjects; index++ {
+		objects = append(objects, PeriodUnknownObject{QueryGroup: fmt.Sprintf("qg-%02d", 20+index), Since: now.Add(-time.Hour)})
+	}
+	for _, object := range facts.PeriodUnknownObjects {
+		objects = append(objects, PeriodUnknownObject{QueryGroup: object.QueryGroup, Since: now})
+	}
+	// Room for one of the two tied at now: the twenty an hour old take the rest.
+	longest := LongestWithoutPeriod(append(objects[:MaxPeriodUnknownObjects-1:MaxPeriodUnknownObjects-1], objects[MaxPeriodUnknownObjects:]...))
+	if len(longest) != MaxPeriodUnknownObjects || longest[MaxPeriodUnknownObjects-1].QueryGroup != "qg-09" {
+		t.Fatalf("longest %+v, want qg-09, the older wake, named before qg-01", longest)
 	}
 }

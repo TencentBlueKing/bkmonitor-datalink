@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 var defaultPair = [2]string{"cw_object_model_id", "cw_object_model_inst_id"}
@@ -170,13 +168,6 @@ func TestTheMatcherIsGenericOverTheAttributeTable(t *testing.T) {
 	}})}
 	if decision := (TargetScopeFilter{}).Admit(unknown, &facts); decision.Admit {
 		t.Fatalf("a condition on a field the table does not know admitted the record: %+v", decision)
-	}
-	facts.HostAttributes = map[string]string{"bk_os_type": "linux", "bk_state": "运营中[需告警]"}
-	if got := facts.Candidates(contract.AttributeHostPrefix + "bk_os_type"); !reflect.DeepEqual(got, []string{"linux"}) {
-		t.Fatalf("host attribute candidates = %v", got)
-	}
-	if got := facts.Candidates(contract.AttributeHostPrefix + "bk_cpu"); got != nil {
-		t.Fatalf("an attribute the host does not have produced %v", got)
 	}
 	if got := facts.Candidates("host.identity"); !reflect.DeepEqual(got, []string{"42"}) {
 		t.Fatalf("host identity candidates = %v", got)
@@ -348,38 +339,6 @@ func TestAnObjectIdentityHitCountsOnlyForTheGroupThatMatched(t *testing.T) {
 	}
 	if len(sink.reports) != 1 {
 		t.Fatalf("reports = %+v, want the unmatched line: the admission above went through the host, not the object identity", sink.reports)
-	}
-}
-
-// ResolvesToNoHost is answered from host facts, which carry no dimensions,
-// so a scope with an object-model condition would read as satisfiable by no
-// host and its query would be skipped outright. Such a scope is not decidable
-// ahead of the data and the answer is false, whatever the hosts say; a scope
-// of host attributes alone is still decided.
-func TestAScopeWithAnObjectModelConditionIsNotDecidableFromHosts(t *testing.T) {
-	noHosts := func(func(*Facts) bool) {}
-	oneHost := func(yield func(*Facts) bool) {
-		facts := hostFacts("10.0.0.1|0")
-		facts.SetTopoNodes([]string{"module|91"})
-		yield(&facts)
-	}
-	objectScope := scope(TargetScopeGroup{Conditions: []TargetScopeCondition{object(TargetScopeInclude, [][2]string{defaultPair}, "switch|2")}})
-	mixedScope := scope(
-		TargetScopeGroup{Conditions: []TargetScopeCondition{topo(TargetScopeInclude, "module|85")}},
-		TargetScopeGroup{Conditions: []TargetScopeCondition{object(TargetScopeInclude, [][2]string{defaultPair}, "switch|2")}},
-	)
-	for name, candidate := range map[string]*TargetScope{"object only": objectScope, "object beside topology": mixedScope} {
-		if candidate.ResolvesToNoHost(noHosts) || candidate.ResolvesToNoHost(oneHost) {
-			t.Fatalf("%s: a scope with an object-model condition was decided from hosts", name)
-		}
-	}
-	topoScope := scope(TargetScopeGroup{Conditions: []TargetScopeCondition{topo(TargetScopeInclude, "module|85")}})
-	if !topoScope.ResolvesToNoHost(oneHost) || !topoScope.ResolvesToNoHost(noHosts) {
-		t.Fatalf("a topology scope no host is under was not resolved to no host")
-	}
-	underScope := scope(TargetScopeGroup{Conditions: []TargetScopeCondition{topo(TargetScopeInclude, "module|91")}})
-	if underScope.ResolvesToNoHost(oneHost) {
-		t.Fatalf("a topology scope a host is under was resolved to no host")
 	}
 }
 

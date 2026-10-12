@@ -81,13 +81,19 @@ func (coordinator *FlightCoordinator) acquireRecoveryChannels(ctx context.Contex
 	if slot.QueryGroup == "" || slot.EvaluationTime <= 0 || operation.Validate() != nil || operation == execution.OperationNormal || maximum <= 0 {
 		return nil, errors.New("alarmd scheduler: invalid recovery channel request")
 	}
+	// A channel not granted is observed as a permit not granted on the
+	// process path is, with its word: the query never reaches the physical
+	// permit, so this is the only line that says why.
 	if err := ctx.Err(); err != nil {
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultPaused, false, coordinator.queryPermitSnapshot())
 		return nil, err
 	}
 	if !deadline.After(coordinator.now()) {
+		coordinator.observeQueryPermit(ctx, operation, observability.ResultTimeout, false, coordinator.queryPermitSnapshot())
 		return nil, context.DeadlineExceeded
 	}
 	if coordinator.limits.RecoveryQueryPermits == 0 {
+		coordinator.observeQueryPermitReason(ctx, operation, observability.ResultFailed, permitRecoveryOff, false, coordinator.queryPermitSnapshot())
 		return nil, ErrRecoveryPermitsOff
 	}
 	waiter := &recoveryChannelWaiter{slot: slot, operation: operation, deadline: deadline, maximum: maximum, grant: make(chan *RecoveryChannels, 1)}
@@ -100,6 +106,7 @@ func (coordinator *FlightCoordinator) acquireRecoveryChannels(ctx context.Contex
 	}
 	if len(coordinator.recoveryChannelWaiters) >= coordinator.limits.RecoveryQueueCapacity || perQG >= coordinator.limits.MaxQueuedItemsPerQG {
 		coordinator.mu.Unlock()
+		coordinator.observeQueryPermitReason(ctx, operation, observability.ResultFailed, permitQueueFull, false, coordinator.queryPermitSnapshot())
 		return nil, ErrQueryPermitQueueFull
 	}
 	coordinator.recoveryChannelWaiters = append(coordinator.recoveryChannelWaiters, waiter)
@@ -133,10 +140,12 @@ func (coordinator *FlightCoordinator) acquireRecoveryChannels(ctx context.Contex
 		}
 		if ctx.Err() != nil {
 			channels.Release()
+			coordinator.observeQueryPermit(ctx, operation, observability.ResultPaused, false, coordinator.queryPermitSnapshot())
 			return nil, ctx.Err()
 		}
 		if !deadline.After(coordinator.now()) {
 			channels.Release()
+			coordinator.observeQueryPermit(ctx, operation, observability.ResultTimeout, false, coordinator.queryPermitSnapshot())
 			return nil, context.DeadlineExceeded
 		}
 		coordinator.observeQueryPermit(ctx, operation, observability.ResultSuccess, false, coordinator.queryPermitSnapshot())

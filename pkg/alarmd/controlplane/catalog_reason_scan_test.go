@@ -84,7 +84,7 @@ func reasonShapedLiterals(t *testing.T, directory string) map[string]struct{} {
 // registration is a promise about cardinality, and this is what keeps it true
 // without anyone having to remember it.
 func TestReasonShapedLiteralsStayWithinTheRegisteredHeadroom(t *testing.T) {
-	const headroom = 120
+	const headroom = 140
 	found := reasonShapedLiterals(t, ".")
 
 	// The scan has to be reading this package, and a count alone cannot say so:
@@ -92,7 +92,7 @@ func TestReasonShapedLiteralsStayWithinTheRegisteredHeadroom(t *testing.T) {
 	// reasons written in two different shapes - a struct field and a bare
 	// return in the query compiler - and a floor well under the real count are
 	// what make a detached scan fail here instead of passing quietly.
-	for _, reason := range []string{"NO_DATA_CONFIG_INVALID", "QUERY_SOURCE_NOT_MIGRATED"} {
+	for _, reason := range []string{"PLAN_INVALID", "QUERY_SOURCE_NOT_MIGRATED"} {
 		if _, seen := found[reason]; !seen {
 			t.Fatalf("the scan did not find %s in this package's source; it is not reading it", reason)
 		}

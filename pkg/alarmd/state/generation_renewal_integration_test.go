@@ -11,9 +11,10 @@ package state
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 // The renewal rule executed by Redis, not restated in Go.
@@ -24,10 +25,7 @@ import (
 // written before lifetimes existed - would leave all of them green and leave
 // the leak exactly where it was. This is the only test that can tell.
 func TestRenewIfBelowFollowsRedisPTTLReplies(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
 	backend, err := NewRedisBackend(RedisBackendOptions{

@@ -103,9 +103,10 @@ func requiredFinalizationReason(
 	for _, candidate := range candidates {
 		withTargets := execution.QueryFreeFinalization{
 			Contract: request.Contract, Mode: mode, ReasonCode: candidate, Targets: targets,
+			Cause: execution.CauseExpiredReplay,
 		}
 		without := execution.QueryFreeFinalization{
-			Contract: request.Contract, Mode: mode, ReasonCode: candidate,
+			Contract: request.Contract, Mode: mode, ReasonCode: candidate, Cause: execution.CauseExpiredReplay,
 		}
 		switch {
 		case withTargets.Validate(request) == nil:

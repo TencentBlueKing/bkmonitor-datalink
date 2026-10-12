@@ -12,6 +12,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // The production bundle publishes the view its Worker actually holds: after
@@ -21,8 +22,15 @@ import (
 // recorder; a source left unbound publishes no series at all, and a source
 // bound to the cache's residency would count both Query Groups' objects,
 // which the activation read to compile them.
+//
+// The effective-time maintenance loop is not started. Once a second it reads
+// every owned Query Group's Plans by content, which puts the sibling in the
+// view as rightly as a Slot does; left running, the count was 2 whenever the
+// fixture outlasted its first tick after the view opened, which under the
+// race detector on a loaded machine it did in about one run in fifty.
 func TestTheProductionBundlePublishesTheViewItsWorkerHolds(t *testing.T) {
-	fixture := startCutoverFixture(t, nil)
+	fixture := startCutoverFixtureOpened(t, nil, observability.Discard(observability.ComponentRuntime), nil,
+		func(bundle *phaseTwoWorkerBundle) { bundle.dependencies.RunEffectiveTime = nil })
 	ctx := context.Background()
 	gathered := gatherPhaseTwoGauges(t, fixture)
 	if owned := gathered["bkmonitor_alarmd_worker_owned_query_groups{worker_role=complete}"]; owned != 2 {

@@ -46,6 +46,31 @@ var UnavailableAttributions = []UnavailableAttribution{
 	UnavailableFromAttempt, UnavailableNoAttemptReason, UnavailableNoAttempts,
 }
 
+// The reasons a completion carries for a primary input whose code was the
+// fallback: the query was not sent at all, or no attempt said why it failed.
+// Both are this side's to explain, and neither is the backend's word the
+// fallback reads as.
+const (
+	ReasonQueryNotAttempted     ReasonCode = "QUERY_NOT_ATTEMPTED"
+	ReasonQueryReasonUnrecorded ReasonCode = "QUERY_REASON_UNRECORDED"
+)
+
+// AttributedReason is the reason a completion, and the failure beside it,
+// name for an unavailable input: its own code when an attempt named it, and
+// otherwise what the fallback stands in for. The fallback stays the code the
+// binding carries, for what reads bindings; read as a reason it was the
+// backend's word for a query that was never sent.
+func AttributedReason(code ReasonCode, attribution UnavailableAttribution) ReasonCode {
+	switch attribution {
+	case UnavailableNoAttempts:
+		return ReasonQueryNotAttempted
+	case UnavailableNoAttemptReason:
+		return ReasonQueryReasonUnrecorded
+	default:
+		return code
+	}
+}
+
 // AttributeUnavailable reports the reason code an unavailable completion
 // should carry and where that code came from. The code is unchanged from
 // what the two callers picked before; only the second result is new.

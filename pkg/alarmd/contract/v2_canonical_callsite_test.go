@@ -81,19 +81,14 @@ func BenchmarkCanonicalByCallSite(b *testing.B) {
 	}
 	for _, shape := range shapes {
 		for _, arm := range []struct {
-			name string
-			mode string
-		}{{"established", CanonicalModeEstablished}, {"stream", CanonicalModeStream}} {
+			name   string
+			encode func(any) ([]byte, error)
+		}{{"established", canonicalEstablishedOf}, {"stream", CanonicalJSONV2}} {
 			b.Run(shape.name+"/"+arm.name, func(b *testing.B) {
-				previous, err := SetCanonicalMode(arm.mode)
-				if err != nil {
-					b.Fatal(err)
-				}
-				defer SetCanonicalMode(previous)
 				b.ReportAllocs()
 				b.ResetTimer()
 				for range b.N {
-					if _, err := CanonicalJSONV2(shape.value); err != nil {
+					if _, err := arm.encode(shape.value); err != nil {
 						b.Fatal(err)
 					}
 				}
@@ -112,11 +107,6 @@ func TestCanonicalStreamAnswersEveryRealCallSite(t *testing.T) {
 		"series_delivery":    benchmarkCanonicalRecords(12),
 		"raw_scalar":         json.RawMessage(`"value-0-abcdefghij"`),
 	}
-	previous, err := SetCanonicalMode(CanonicalModeStream)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer SetCanonicalMode(previous)
 	for name, value := range shapes {
 		t.Run(name, func(t *testing.T) {
 			beforeServed, beforeDeclined := CanonicalStreamCounts()

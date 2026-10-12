@@ -22,17 +22,9 @@ import (
 )
 
 const (
-	SchemaVersion           = "detection-outcome/1.0"
-	schemaMajor             = 1
-	detectionOutcomeSchema  = "detection-outcome"
-	triggerStrategyIRSchema = "trigger-strategy-ir"
+	SchemaVersion = "detection-outcome/1.0"
+	schemaMajor   = 1
 
-	featureFullLevelEvaluations = "full-level-evaluations-v1"
-	featureRawJSON              = "raw-json-v1"
-	featureRawStrategyBytes     = "raw-strategy-bytes-v1"
-
-	PurposeDetect  = "DETECT"
-	PurposeNodata  = "NODATA"
 	maxContractInt = 1<<31 - 1
 )
 
@@ -40,7 +32,6 @@ var (
 	canonicalDecimalPattern       = regexp.MustCompile(`^(?:0|[1-9][0-9]*)$`)
 	canonicalSignedDecimalPattern = regexp.MustCompile(`^(?:0|-?[1-9][0-9]*)$`)
 	sha256Pattern                 = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	dimensionsMD5Pattern          = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
 type Schema struct {
@@ -70,57 +61,6 @@ func (e *ValidationError) Error() string {
 
 func invalid(field, message string) error {
 	return &ValidationError{Field: field, Message: message}
-}
-
-func validateHeader(schema Schema, features []string, name string, required map[string]struct{}) error {
-	if schema.Name != name {
-		return invalid("schema.name", "unexpected schema name")
-	}
-	if schema.Major != schemaMajor {
-		return invalid("schema.major", "unsupported schema major")
-	}
-	if schema.Minor < 0 || schema.Minor > maxContractInt {
-		return invalid("schema.minor", "must be a non-negative 32-bit signed integer")
-	}
-	seen := make(map[string]struct{}, len(features))
-	for _, feature := range features {
-		if _, ok := required[feature]; !ok {
-			return invalid("required_features", "unsupported required feature "+feature)
-		}
-		if _, ok := seen[feature]; ok {
-			return invalid("required_features", "contains duplicate feature "+feature)
-		}
-		seen[feature] = struct{}{}
-	}
-	for feature := range required {
-		if _, ok := seen[feature]; !ok {
-			return invalid("required_features", "missing required feature "+feature)
-		}
-	}
-	return nil
-}
-
-func validateStrategyRef(ref StrategyRef) error {
-	if !canonicalDecimalPattern.MatchString(ref.StrategyID) {
-		return invalid("strategy_ref.strategy_id", "must use canonical decimal form")
-	}
-	if !canonicalDecimalPattern.MatchString(ref.ItemID) {
-		return invalid("strategy_ref.item_id", "must use canonical decimal form")
-	}
-	if ref.Generation == "" {
-		return invalid("strategy_ref.generation", "must be non-empty")
-	}
-	if !sha256Pattern.MatchString(ref.ContentSHA256) {
-		return invalid("strategy_ref.content_sha256", "must be 64 lowercase hexadecimal characters")
-	}
-	return nil
-}
-
-func validatePurpose(purpose string) error {
-	if purpose != PurposeDetect && purpose != PurposeNodata {
-		return invalid("purpose", "unsupported purpose")
-	}
-	return nil
 }
 
 func decodeJSONObject(payload []byte, target any) error {
@@ -243,50 +183,6 @@ func validateJSONObjectFields(
 		}
 	}
 	return object, nil
-}
-
-func validateContractEnvelope(
-	payload []byte,
-	field string,
-	schemaName string,
-	required []string,
-	optional []string,
-) (Schema, map[string]json.RawMessage, error) {
-	object, err := validateJSONObjectFields(payload, field, required, optional, true)
-	if err != nil {
-		return Schema{}, nil, err
-	}
-	_, err = validateJSONObjectFields(
-		object["schema"],
-		field+".schema",
-		[]string{"name", "major", "minor"},
-		nil,
-		true,
-	)
-	if err != nil {
-		return Schema{}, nil, err
-	}
-	var schema Schema
-	if err := decodeJSONObject(object["schema"], &schema); err != nil {
-		return Schema{}, nil, err
-	}
-	if schema.Name != schemaName || schema.Major != schemaMajor || schema.Minor < 0 || schema.Minor > maxContractInt {
-		return Schema{}, nil, invalid(field+".schema", "unsupported schema version")
-	}
-	allowUnknown := schema.Minor > 0
-	if _, err := validateJSONObjectFields(payload, field, required, optional, allowUnknown); err != nil {
-		return Schema{}, nil, err
-	}
-	if _, err := validateJSONObjectFields(
-		object["schema"],
-		field+".schema",
-		[]string{"name", "major", "minor"},
-		nil,
-		allowUnknown,
-	); err != nil {
-		return Schema{}, nil, err
-	}
-	return schema, object, nil
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

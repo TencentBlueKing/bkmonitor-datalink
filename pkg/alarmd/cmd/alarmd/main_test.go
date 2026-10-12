@@ -136,9 +136,6 @@ kafka:
   trigger_event:
     topic: alarmd-shadow-trigger-event-v2
     max_message_bytes: 524288
-  allowed_output_topics:
-    - alarmd-shadow-trigger-event-v2
-    - alarmd_0bkmonitor_backend_event
   legacy_adapter:
     topic: alarmd_0bkmonitor_backend_event
     snapshot_prefix: alarmd-compatibility-test
@@ -154,12 +151,6 @@ phase_two:
   control:
     strategy_cache_prefix: alarm-config
     timezone: Asia/Shanghai
-    legacy_query_runtime:
-      access_bk_data: false
-      bkdata_cmdb_level_tables: []
-      system_disk_filter:
-        field_name: device_type
-        values: []
   access:
     uq_endpoint: http://unify-query.service
     query_source: alarmd

@@ -79,12 +79,6 @@ const (
 	SourceRefreshExitValidateCatalog SourceRefreshExit = "validate_catalog"
 	// SourceRefreshExitActivation: the activation record could not be read.
 	SourceRefreshExitActivation SourceRefreshExit = "activation"
-	// SourceRefreshExitConfirmation: the confirmation key could not be
-	// derived.
-	SourceRefreshExitConfirmation SourceRefreshExit = "confirmation"
-	// SourceRefreshExitCandidate: the pending candidate could not be read,
-	// written or cleared.
-	SourceRefreshExitCandidate SourceRefreshExit = "candidate"
 	// SourceRefreshExitPublish: publishing the Catalog, or restoring the
 	// publication the activation already names, failed.
 	SourceRefreshExitPublish SourceRefreshExit = "publish"
@@ -110,8 +104,6 @@ var SourceRefreshExits = []SourceRefreshExit{
 	SourceRefreshExitObservationChanged,
 	SourceRefreshExitValidateCatalog,
 	SourceRefreshExitActivation,
-	SourceRefreshExitConfirmation,
-	SourceRefreshExitCandidate,
 	SourceRefreshExitPublish,
 	SourceRefreshExitOther,
 }

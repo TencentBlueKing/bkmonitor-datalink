@@ -135,30 +135,41 @@ func TestTheSampledLineSaysSoAndCarriesTheMergedCountEvenAtZero(t *testing.T) {
 	}
 }
 
-// Every sampled reason is a word the policy's fixed buckets know; a sample on
-// a word outside the vocabulary would never be admitted at all, and the
-// positive control would be silence.
-func TestEverySampledReasonIsInTheLogVocabulary(t *testing.T) {
+// Every reason an observation can carry once normalized has a bucket in the
+// limiter: a word it has none for is refused outright and its lines are never
+// written. The completion attribution words were normalized and not listed,
+// and so never reached the log.
+func TestEveryNormalizedReasonHasALimiterBucket(t *testing.T) {
 	t.Parallel()
 
-	known := map[ReasonCode]bool{}
+	now := time.Unix(1_000, 0)
+	limiter, err := newScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Minute, MaxEvents: 1, MaxScopes: 1 << 12}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[ReasonCode]bool{}
 	for _, reason := range AllLogReasons() {
-		known[reason] = true
+		listed[reason] = true
 	}
-	sampled := PacingLogSampledReasons()
-	if len(sampled) == 0 {
-		t.Fatal("no reason is sampled: the pacing word writes every line again")
-	}
-	for _, reason := range sampled {
-		if !known[reason] {
-			t.Fatalf("sampled reason %q is not a log reason the limiter buckets", reason)
-		}
-		sample, ok := PacingLogSample(reason)
-		if !ok || sample.Window < time.Hour || sample.MaxEvents != 1 {
-			t.Fatalf("sample for %q=%+v, want one line per hour or slower", reason, sample)
+	for _, reason := range append(append([]ReasonCode(nil), CompletionAttributionReasons...), AdmissionFailureReasons...) {
+		if !listed[reason] {
+			t.Fatalf("%q is normalized but not a log reason", reason)
 		}
 	}
-	if _, ok := PacingLogSample(ReasonCode(contract.ReasonQueryUnavailable)); ok {
-		t.Fatal("a failure word is under a pacing sample")
+	for reason := range listed {
+		if reason == ReasonNone {
+			continue
+		}
+		if got := NormalizeReason(reason, ResultDegraded); got != reason {
+			t.Fatalf("%q normalizes to %q", reason, got)
+		}
+		observation := Observation{Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultDegraded,
+			ReasonCode: reason, Trace: TraceFields{QueryGroupKey: "qg-" + string(reason)}}
+		if !limiter.Admit(observation).Allowed {
+			t.Fatalf("%q has no limiter bucket: its first line was refused", reason)
+		}
+	}
+	if got := NormalizeReason("NOT_A_REASON", ResultDegraded); got != ReasonOther {
+		t.Fatalf("an unlisted word normalizes to %q, want %q", got, ReasonOther)
 	}
 }

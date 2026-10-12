@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -27,32 +28,6 @@ import (
 // checking. The kind is here and the shape is in Version, which is the field
 // the readability rule reads.
 const executionNoDataSchema = "alarmd-plan-no-data"
-
-// noDataHeader is everything that has to be read before the body can be.
-//
-// Decoding happens in two stages and cannot be done in one. A strict decoder
-// meeting a field a newer schema added would fail, turning a record this build
-// simply cannot read into a corrupt one; a lenient decoder would drop those
-// fields and hand back what is left, which is the payload the load contract
-// refuses on the grounds that it is a guess. Reading the header first means the
-// question "can this build read this record" is answered before anything tries.
-type noDataHeader struct {
-	Schema   string                       `json:"schema"`
-	Version  execution.NoDataMemorySchema `json:"version"`
-	Identity execution.PlanNoDataIdentity `json:"identity"`
-}
-
-type noDataEnvelope struct {
-	Schema           string                         `json:"schema"`
-	Version          execution.NoDataMemorySchema   `json:"version"`
-	Identity         execution.PlanNoDataIdentity   `json:"identity"`
-	MarkerRevision   uint64                         `json:"marker_revision"`
-	ApplyVersion     execution.ApplyVersion         `json:"apply_version"`
-	MutationDigest   execution.MutationDigest       `json:"mutation_digest"`
-	ScheduleRevision execution.PlanScheduleRevision `json:"schedule_revision"`
-	RosterVersion    string                         `json:"roster_version"`
-	Groups           []execution.NoDataGroupMemory  `json:"groups"`
-}
 
 // LoadNoData reads one Plan's no-data memory per request item.
 func (store *ExecutionStore) LoadNoData(
@@ -76,15 +51,18 @@ func (store *ExecutionStore) LoadNoData(
 	return result, nil
 }
 
+// loadOneNoData reads one Plan's per-group memory. The single-value record a
+// build before the per-group one wrote is not read: no build since writes it,
+// the previous upstream snapshot included, so one still present is left to
+// its TTL and the Plan reads as having no memory, as a new Plan does.
 func (store *ExecutionStore) loadOneNoData(
 	ctx context.Context, request execution.NoDataLoadRequest, item execution.PlanNoDataLoadItem,
 ) (execution.NoDataMemorySnapshot, *execution.NoDataMemoryRenewal) {
-	blob := store.loadOneNoDataBlob(ctx, request, item)
 	hash, renewal, consulted := store.loadOneNoDataHash(ctx, request, item)
 	if !consulted {
-		return representationStamped(blob), renewal
+		return representationStamped(execution.NoDataMemorySnapshot{Identity: item.Identity, Status: execution.NoDataMemoryMissing}), renewal
 	}
-	return representationStamped(newerNoDataMemory(blob, hash)), renewal
+	return representationStamped(hash), renewal
 }
 
 // representationStamped gives every snapshot a representation, including the
@@ -103,82 +81,6 @@ func representationStamped(snapshot execution.NoDataMemorySnapshot) execution.No
 	return snapshot
 }
 
-// newerNoDataMemory picks between the two representations a Plan may have
-// during a rollout.
-//
-// By apply version, not by representation. A build that writes the hash never
-// writes the whole-memory record, but a Plan can move back to a build that only
-// knows the old one - a rollback, or a rebalance onto a worker not yet
-// upgraded - and that build then writes a record newer than the hash. Reading
-// the hash because it is the new shape would lose those rounds.
-//
-// A tie goes to the hash. One Slot writes one representation, so the two cannot
-// state the same round; a tie means something that is not one Slot per round,
-// and the hash is the shape the fleet is moving to.
-//
-// Only a record that was read is a candidate. An unreadable or failed read of
-// either side is never the answer: the other side is used if it is a record,
-// and if neither is, the failure itself is reported - the caller has to be able
-// to tell a Plan with no memory from a Plan whose memory could not be read.
-func newerNoDataMemory(blob, hash execution.NoDataMemorySnapshot) execution.NoDataMemorySnapshot {
-	blobFound := blob.Status == execution.NoDataMemoryFound
-	hashFound := hash.Status == execution.NoDataMemoryFound
-	switch {
-	case blobFound && hashFound:
-		if execution.CompareApplyVersion(hash.PersistedApplyVersion, blob.PersistedApplyVersion) ==
-			execution.ApplyVersionPersistedOlder {
-			return blob
-		}
-		return hash
-	case hashFound:
-		return hash
-	case blobFound:
-		return blob
-	case hash.Status != execution.NoDataMemoryMissing:
-		// A hash that could not be read is reported even when the old record is
-		// merely absent: the Plan's memory has moved to the hash, so an
-		// unreadable one is the memory, not a missing one.
-		return hash
-	default:
-		// Neither is a record. Nothing was read, so nothing names a shape: a
-		// Plan before its first no-data round must not read as "still on the
-		// old representation", which is the number the cleanup waits on.
-		return blob
-	}
-}
-
-func (store *ExecutionStore) loadOneNoDataBlob(
-	ctx context.Context, request execution.NoDataLoadRequest, item execution.PlanNoDataLoadItem,
-) execution.NoDataMemorySnapshot {
-	snapshot := execution.NoDataMemorySnapshot{Identity: item.Identity, Status: execution.NoDataMemoryMissing}
-	raw, err := store.readOneRenewing(ctx, item.Identity.Plan, item.Retention,
-		func() (string, error) { return PlanNoDataKeyV2(store.options.Prefix, item.Identity) })
-	if err != nil {
-		var identityErr *IdentityError
-		if errors.Is(err, ErrLifetimeUnsupported) {
-			snapshot.Status = execution.NoDataMemoryTerminal
-			snapshot.ReasonCode = execution.ReasonCode(contract.ReasonBackendCapabilityMissing)
-		} else if errors.As(err, &identityErr) {
-			snapshot.Status = execution.NoDataMemoryTerminal
-			snapshot.ReasonCode = execution.ReasonCode(contract.ReasonStateCorrupt)
-		} else {
-			snapshot.Status = execution.NoDataMemoryUnavailable
-			snapshot.ReasonCode = execution.ReasonCode(contract.ReasonRedisUnavailable)
-		}
-		return snapshot
-	}
-	if raw == nil {
-		return snapshot
-	}
-	if len(raw) > store.options.MaxValueBytes {
-		snapshot.Status = execution.NoDataMemoryTerminal
-		snapshot.ReasonCode = execution.ReasonCode(contract.ReasonStateBudgetExceeded)
-		return snapshot
-	}
-	return store.validatedNoData(request, item,
-		named(decodeNoData(raw, item.Identity), execution.NoDataRepresentationWholeMemory))
-}
-
 // named says which record a snapshot was read from, and only when one was.
 //
 // Only a record that was read names a shape. A failed or unreadable one carries
@@ -195,9 +97,9 @@ func named(
 }
 
 // loadOneNoDataHash reads the per-group representation. The second return is
-// false when the backend cannot hold one at all, which is not a failure of this
-// Plan: the whole-memory record is still the memory there, and reporting a
-// capability gap would pause a Plan the old path can serve.
+// false when the backend cannot hold one at all: nothing can have been written
+// there, so the Plan reads as having no memory, and the write reports the
+// capability gap.
 func (store *ExecutionStore) loadOneNoDataHash(
 	ctx context.Context, request execution.NoDataLoadRequest, item execution.PlanNoDataLoadItem,
 ) (execution.NoDataMemorySnapshot, *execution.NoDataMemoryRenewal, bool) {
@@ -231,20 +133,17 @@ func (store *ExecutionStore) loadOneNoDataHash(
 		named(decodeNoDataHash(fields, item.Identity), execution.NoDataRepresentationPerGroup)), renewal, true
 }
 
-// renewNoDataHash keeps a record that was read alive the way a whole-memory one
-// is kept alive, through the same renewal gate.
+// renewNoDataHash keeps a record that was read alive through the renewal gate.
 //
-// It matters more here than it did there. The whole-memory record was rewritten
-// whenever anything moved, and that write carried a lifetime; a hash is only
-// touched for the groups that changed, so a Plan whose groups are all steady
-// writes nothing for as long as that lasts and would let its memory expire
-// underneath it. A failed renewal is not this Plan's failure to report - the
+// A hash is only touched for the groups that changed, so a Plan whose groups
+// are all steady writes nothing for as long as that lasts and would let its
+// memory expire underneath it without this. A failed renewal is not this Plan's failure to report - the
 // record was read, and the read is what the caller asked for.
 func (store *ExecutionStore) renewNoDataHash(
 	ctx context.Context, target StorageTarget, item execution.PlanNoDataLoadItem, key string,
 ) *execution.NoDataMemoryRenewal {
 	attempt, err := RenewGenerationKeyReporting(ctx, target, key, item.Retention,
-		store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.renewals)
+		store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.renewals, store.options.ReadHoldBound)
 	if !attempt.Asked && err == nil {
 		// The gate answered from what this process already knows. Reporting it
 		// would bury the attempts that reached the store under the ones that
@@ -258,11 +157,9 @@ func (store *ExecutionStore) renewNoDataHash(
 	case err == nil:
 	case errors.Is(err, ErrLifetimeUnsupported):
 		// A backend that cannot renew leaks the lifetime of every memory it
-		// holds. The whole-memory path reports this on every load and stops the
-		// Slot; this path reports it and carries on, because stopping here
+		// holds. This path reports it and carries on, because stopping here
 		// would take a Plan's threshold detection down over the lifetime of a
-		// record that is still perfectly readable. The two differ on purpose
-		// and the reason is that the old path had no way to say it at all.
+		// record that is still perfectly readable.
 		//
 		// The policy is still one policy, because this branch never runs on its
 		// own: the condition is a routed backend that does not implement
@@ -295,66 +192,6 @@ func (store *ExecutionStore) validatedNoData(
 	return snapshot
 }
 
-// decodeNoData reads a stored record, refusing to read its body until the
-// header says this build understands its shape.
-func decodeNoData(raw []byte, identity execution.PlanNoDataIdentity) execution.NoDataMemorySnapshot {
-	corrupt := execution.NoDataMemorySnapshot{Identity: identity, Status: execution.NoDataMemoryTerminal,
-		ReasonCode: execution.ReasonCode(contract.ReasonStateCorrupt)}
-	var header noDataHeader
-	if err := json.Unmarshal(raw, &header); err != nil {
-		return corrupt
-	}
-	if header.Schema != executionNoDataSchema || header.Identity != identity || header.Version == 0 {
-		return corrupt
-	}
-	if !execution.NoDataMemoryReadable(header.Version) {
-		// The schema and nothing else. The body is in a shape this build has no
-		// definition for, so anything taken out of it would be a guess with the
-		// unrecognised fields already dropped.
-		return execution.NoDataMemorySnapshot{Identity: identity, Status: execution.NoDataMemoryUnreadable,
-			SchemaVersion: header.Version,
-			ReasonCode:    execution.ReasonCode(contract.ReasonStateSchemaUnsupported)}
-	}
-	var envelope noDataEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return corrupt
-	}
-	if envelope.MarkerRevision == 0 {
-		return corrupt
-	}
-	return execution.NoDataMemorySnapshot{
-		Identity: identity, MarkerRevision: envelope.MarkerRevision,
-		PersistedApplyVersion: envelope.ApplyVersion, PersistedMutationDigest: envelope.MutationDigest,
-		Status: execution.NoDataMemoryFound, SchemaVersion: envelope.Version,
-		LastScheduleRevision: envelope.ScheduleRevision, RosterVersion: envelope.RosterVersion,
-		Groups: envelope.Groups, PresentAsOf: wholeMemoryPresentAsOf(envelope.Groups),
-	}
-}
-
-// wholeMemoryPresentAsOf is the round a whole-memory record says the Plan last
-// had data in.
-//
-// The record has no such field -- it was added with the per-group shape, which
-// needs it to store a present group as one byte -- so it is derived from what
-// the record does hold. The newest last-seen time in it is the answer by
-// definition: a group's last-seen time is a round the Plan had data in, and
-// there is no later one to be found anywhere in the record.
-//
-// Reading the absent field as zero instead is what stopped every v1 Plan from
-// writing. Zero is not "no information"; it is the assertion that the Plan has
-// never had data, and it contradicts every group in the record. The derivation
-// then refused its own memory -- no group may be last seen after the Plan last
-// had data -- and the Plan kept evaluating while remembering nothing new.
-func wholeMemoryPresentAsOf(groups []execution.NoDataGroupMemory) int64 {
-	var newest int64
-	for _, group := range groups {
-		if group.LastSeen > newest {
-			newest = group.LastSeen
-		}
-	}
-	return newest
-}
-
 // ApplyNoData replaces one Plan's whole no-data memory per request item.
 func (store *ExecutionStore) ApplyNoData(
 	ctx context.Context, request execution.NoDataApplyRequest,
@@ -363,18 +200,28 @@ func (store *ExecutionStore) ApplyNoData(
 		len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.NoDataApplyResult{}, fmt.Errorf("state: invalid no-data apply request")
 	}
+	// Every memory's lifetime before any is written, as for gap markers.
+	lifetimes := make([]time.Duration, len(request.Items))
+	for index, mutation := range request.Items {
+		ttl, err := generationWriteTTL(request.Retention, mutation.Identity.Plan,
+			store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.options.ReadHoldBound)
+		if err != nil {
+			return execution.NoDataApplyResult{}, fmt.Errorf("state: invalid no-data apply request: %w", err)
+		}
+		lifetimes[index] = ttl
+	}
 	result := execution.NoDataApplyResult{Items: make([]execution.NoDataApplyItemResult, len(request.Items))}
 	for index, mutation := range request.Items {
 		if err := ctx.Err(); err != nil {
 			return execution.NoDataApplyResult{}, err
 		}
-		result.Items[index] = store.applyOneNoData(ctx, mutation)
+		result.Items[index] = store.applyOneNoData(ctx, mutation, lifetimes[index])
 	}
 	return result, nil
 }
 
 func (store *ExecutionStore) applyOneNoData(
-	ctx context.Context, mutation execution.PlanNoDataMutation,
+	ctx context.Context, mutation execution.PlanNoDataMutation, lifetime time.Duration,
 ) execution.NoDataApplyItemResult {
 	item := execution.NoDataApplyItemResult{Identity: mutation.Identity}
 	reject := func(reason string) execution.NoDataApplyItemResult {
@@ -437,9 +284,7 @@ func (store *ExecutionStore) applyOneNoData(
 		return retry()
 	}
 	// The revision this write leaves behind, counted on this record's own line.
-	// A first write to it starts at one whatever the statement was derived
-	// from: the whole-memory record's revisions are its own and carrying one
-	// over would claim a history this record does not have.
+	// A first write to it starts at one.
 	nextRevision := uint64(1)
 	if expectedHeader != nil {
 		previous, _, _ := decodeNoDataHashHeader(expectedHeader, mutation.Identity)
@@ -471,10 +316,7 @@ func (store *ExecutionStore) applyOneNoData(
 				previous.PersistedMutationDigest, previous.MarkerRevision)
 		}
 		// A revision belongs to the record that issued it. Only a statement
-		// derived from this record has one to expect of it -- the two
-		// representations keep separate revision lines, and comparing one
-		// against the other refused every write in a fleet that was still
-		// moving off the whole-memory record.
+		// derived from this record has one to expect of it.
 		if !mutation.ReplacesWholeRecord() && previous.MarkerRevision != mutation.ExpectedMarkerRevision {
 			// A delta is only meaningful against the revision it was derived
 			// from, so this is a conflict rather than something to reconcile.
@@ -484,15 +326,11 @@ func (store *ExecutionStore) applyOneNoData(
 			}
 			return conflict(kind, previous.PersistedMutationDigest, previous.MarkerRevision)
 		}
-		// A whole-record statement has no revision of this record to expect,
-		// so it expects the version instead: the record it replaces must not
-		// be newer than the one it was derived against. A statement derived
-		// from no record meets none; one derived from the whole-memory record
-		// may meet a per-group record the read already outranked, and no
-		// other. Anything newer was written between this Slot's read and its
-		// write, and replacing it would take the round that wrote it out of
-		// the memory -- the retry reads it and derives against it instead.
-		if mutation.ReplacesWholeRecord() && recordMovedSinceRead(previous.PersistedApplyVersion, mutation) {
+		// A whole-record statement is derived from no record, so it expects to
+		// meet none. One it meets was written between this Slot's read and its
+		// write, and replacing it would take the round that wrote it out of the
+		// memory -- the retry reads it and derives against it instead.
+		if mutation.ReplacesWholeRecord() {
 			return conflict(execution.StateVersionConflictRevisionMoved,
 				previous.PersistedMutationDigest, previous.MarkerRevision)
 		}
@@ -519,15 +357,15 @@ func (store *ExecutionStore) applyOneNoData(
 		Key: key, HeaderField: noDataHeaderField,
 		ExpectedMissing: expectedHeader == nil, Header: header,
 		Set: set, Del: deleted,
-		// A statement derived from another record carries the whole memory, so
-		// what this one holds goes first. Leaving it would keep every group the
-		// other record has since dropped, and no reader could tell the mixture
-		// from a memory somebody wrote.
+		// A statement derived from no record carries the whole memory, so what
+		// this one holds goes first. Leaving it would keep every group a writer
+		// put there since the read, and no reader could tell the mixture from a
+		// memory somebody wrote.
 		Replace: mutation.ReplacesWholeRecord(),
-		// The floor, for the same reason a gap marker takes it: the load renews
-		// to whatever this Plan needs, and this only has to keep the key from
-		// being born without a lifetime at all.
-		TTL: GenerationScopedFloor,
+		// The Plan's own lifetime, the one the load renews it to, for the same
+		// reason a gap marker takes it: written at the floor, the memory of a
+		// Plan whose interval is past a day was gone before its next round.
+		TTL: lifetime,
 	}
 	if expectedHeader != nil {
 		write.ExpectedDigest = HeaderDigest(expectedHeader)
@@ -546,18 +384,6 @@ func (store *ExecutionStore) applyOneNoData(
 		item.Status = execution.NoDataApplied
 	}
 	return item
-}
-
-// recordMovedSinceRead says whether the per-group record a whole-record
-// statement is about to replace was written after the statement's read. Read
-// none, met one: moved. Read the whole-memory record, met a per-group record
-// newer than it: moved. Met one the read already outranked: not moved, and the
-// replacement is exactly what the read decided.
-func recordMovedSinceRead(persisted execution.ApplyVersion, mutation execution.PlanNoDataMutation) bool {
-	if mutation.DerivedFrom == execution.NoDataRepresentationNone {
-		return true
-	}
-	return execution.CompareApplyVersion(persisted, mutation.LoadedApplyVersion) == execution.ApplyVersionPersistedNewer
 }
 
 // raceConflictKind names a conflict discovered inside the write rather than by

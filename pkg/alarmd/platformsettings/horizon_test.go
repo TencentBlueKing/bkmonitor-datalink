@@ -11,6 +11,8 @@ package platformsettings
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"strconv"
 	"testing"
 )
 
@@ -103,5 +105,28 @@ func TestTheCopyTakesAPublishedHorizonWithdrawsItOnNullAndRefusesNonsense(t *tes
 func TestTheHorizonIsReadFromTheStrategyDomain(t *testing.T) {
 	if got := FieldNoDataTrackingHorizonSeconds.DBKey(); got != "base_config.domains.strategy.no_data_tracking_horizon_seconds" {
 		t.Fatalf("DBKey = %q", got)
+	}
+}
+
+// A published horizon past the largest one a runtime-state lifetime can hold
+// is refused like any other nonsense, keeping the last good one; the largest
+// itself is taken.
+func TestAPublishedHorizonPastWhatALifetimeHoldsIsRefused(t *testing.T) {
+	fixture := newCacheFixture(t, Layer{})
+	ctx := context.Background()
+	largest := strconv.FormatInt(contract.MaxNoDataTrackingHorizonSeconds, 10)
+	fixture.source.publication = published("r1", map[Field]string{FieldNoDataTrackingHorizonSeconds: largest})
+	fixture.cache.Refresh(ctx)
+	if got := fixture.cache.Current().NoDataTrackingHorizonSeconds; got != contract.MaxNoDataTrackingHorizonSeconds {
+		t.Fatalf("published the largest horizon = %d, want it taken", got)
+	}
+	over := strconv.FormatInt(contract.MaxNoDataTrackingHorizonSeconds+1, 10)
+	fixture.source.publication = published("r2", map[Field]string{FieldNoDataTrackingHorizonSeconds: over})
+	fixture.cache.Refresh(ctx)
+	if got := fixture.cache.Current().NoDataTrackingHorizonSeconds; got != contract.MaxNoDataTrackingHorizonSeconds {
+		t.Fatalf("after publishing one second more = %d, want the last good one kept", got)
+	}
+	if fixture.cache.Stats().Unavailable[UnavailableDecodeError] == 0 {
+		t.Fatal("publishing one second more was not counted as a refused publication")
 	}
 }

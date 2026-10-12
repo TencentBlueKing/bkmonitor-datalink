@@ -30,9 +30,8 @@ func TestAStaleOpenAlertSetDegradesTheVerdictOnItsOwn(t *testing.T) {
 		want  Health
 	}{
 		{name: "no facts (a build without the gate)", facts: nil, want: HealthHealthy},
-		{name: "never loaded", facts: &OpenAlertSetFacts{Mode: "never_loaded"}, want: HealthHealthy},
-		{name: "self-maintained inside the bound", facts: &OpenAlertSetFacts{Mode: "self_maintained"}, want: HealthHealthy},
-		{name: "self-maintained past the bound", facts: &OpenAlertSetFacts{Mode: "self_maintained", StaleBeyondBound: true}, want: HealthDegraded},
+		{name: "never calibrated or inside the bound", facts: &OpenAlertSetFacts{}, want: HealthHealthy},
+		{name: "calibration past the bound", facts: &OpenAlertSetFacts{StaleBeyondBound: true}, want: HealthDegraded},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			snapshots := healthySnapshots()
@@ -59,7 +58,7 @@ func TestAStaleOpenAlertSetDegradesTheVerdictOnItsOwn(t *testing.T) {
 // does show are not the whole story, and neither is this.
 func TestAStaleOpenAlertSetDoesNotOutrankAGap(t *testing.T) {
 	snapshots := healthySnapshots()
-	snapshots[1].OpenAlertSet = &OpenAlertSetFacts{Mode: "self_maintained", StaleBeyondBound: true}
+	snapshots[1].OpenAlertSet = &OpenAlertSetFacts{StaleBeyondBound: true}
 	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots[:1], replicas(), now, freshness)
 	if view.Health != HealthUnknown {
 		t.Fatalf("health = %s, want UNKNOWN with a replica missing", view.Health)
@@ -69,22 +68,22 @@ func TestAStaleOpenAlertSetDoesNotOutrankAGap(t *testing.T) {
 // The facts and the degradation reach the page's JSON under their own names,
 // and an absent age is absent rather than zero.
 func TestOpenAlertSetFactsEncodeWithoutInventingAnAge(t *testing.T) {
-	encoded, err := json.Marshal(Snapshot{Replica: "pod-a", OpenAlertSet: &OpenAlertSetFacts{Mode: "never_loaded"}})
+	encoded, err := json.Marshal(Snapshot{Replica: "pod-a", OpenAlertSet: &OpenAlertSetFacts{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The mode and the stale flag under their names; the ages absent, not
+	// The stale flag under its name; the ages absent, not
 	// zero; the counts present at zero, since a count of nothing is an
 	// answer and an absent count is not; whether calibration is configured
 	// present at false, since "off" is a reading a deployment has to be
 	// able to make.
-	if !strings.Contains(string(encoded), `"open_alert_set":{"calibration_configured":false,"mode":"never_loaded","stale_beyond_bound":false,"available":false,"reader_fingerprint_version":"","tracked_sets":0,"loaded_sets":0,"members":0,"sent_in_set":0,"sent_not_in_set":0,"disjoint":false}`) ||
+	if !strings.Contains(string(encoded), `"open_alert_set":{"calibration_configured":false,"stale_beyond_bound":false,"available":false,"tracked_sets":0,"loaded_sets":0,"members":0,"configured":false,"location_confirmed":false}`) ||
 		strings.Contains(string(encoded), "authoritative_age_seconds") || strings.Contains(string(encoded), "heartbeat_age_seconds") {
 		t.Fatalf("encoded = %s", encoded)
 	}
 	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, func() []Snapshot {
 		s := healthySnapshots()
-		s[0].OpenAlertSet = &OpenAlertSetFacts{Mode: "self_maintained", StaleBeyondBound: true}
+		s[0].OpenAlertSet = &OpenAlertSetFacts{StaleBeyondBound: true}
 		return s
 	}(), replicas(), now, freshness)
 	encoded, err = json.Marshal(view)
@@ -96,29 +95,40 @@ func TestOpenAlertSetFactsEncodeWithoutInventingAnAge(t *testing.T) {
 	}
 }
 
-// A replica whose sets carry none of its own alerts degrades the verdict
-// under its own kind and names the replica: the gate there is answering
-// from what that replica sent, and recoveries for series it did not send
-// are still held. Sent counts alone, without the state, degrade nothing.
-func TestSetsCarryingNoneOfOurAlertsDegradeTheVerdictByName(t *testing.T) {
+// A replica whose open alert sets the link's Console has not confirmed -
+// where they are, or that they are keyed by the alert ids it sends -
+// degrades the verdict under its own kind, names the replica and says
+// which fact is missing: the gate there answers from what that replica
+// sent, and recoveries for alerts it did not open are held. A replica
+// without the Console is not configured and degrades nothing: a deployment
+// that does not use the link would otherwise be degraded for good.
+func TestUnconfirmedOpenAlertSetsDegradeTheVerdictByName(t *testing.T) {
+	yes, no := true, false
 	for _, arm := range []struct {
 		name  string
 		facts *OpenAlertSetFacts
-		want  Health
+		stage string
 	}{
-		{name: "some of ours missing, one found", facts: &OpenAlertSetFacts{Mode: "self_maintained", SentInSet: 1, SentNotInSet: 5}, want: HealthHealthy},
-		{name: "disjoint", facts: &OpenAlertSetFacts{Mode: "self_maintained", SentNotInSet: 103, Disjoint: true}, want: HealthDegraded},
+		{name: "not configured", facts: &OpenAlertSetFacts{}},
+		{name: "both confirmed", facts: &OpenAlertSetFacts{Configured: true, LocationConfirmed: true, KeyedByAlertID: &yes}},
+		{name: "location unconfirmed", facts: &OpenAlertSetFacts{Configured: true, KeyedByAlertID: &yes}, stage: "location_unconfirmed"},
+		{name: "keying not read yet", facts: &OpenAlertSetFacts{Configured: true, LocationConfirmed: true}, stage: "keying_unconfirmed"},
+		{name: "keyed by other fields", facts: &OpenAlertSetFacts{Configured: true, LocationConfirmed: true, KeyedByAlertID: &no}, stage: "keying_unconfirmed"},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			snapshots := healthySnapshots()
 			snapshots[1].OpenAlertSet = arm.facts
 			view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
-			if view.Health != arm.want {
-				t.Fatalf("health = %s, want %s (degradations %+v)", view.Health, arm.want, view.Degradations)
+			want := HealthHealthy
+			if arm.stage != "" {
+				want = HealthDegraded
 			}
-			if arm.want == HealthDegraded {
-				if len(view.Degradations) != 1 || view.Degradations[0] != (Degradation{Kind: DegradationOpenAlertSetDisjoint, Replica: "pod-b"}) {
-					t.Fatalf("degradations = %+v, want OPEN_ALERT_SET_DISJOINT on pod-b", view.Degradations)
+			if view.Health != want {
+				t.Fatalf("health = %s, want %s (degradations %+v)", view.Health, want, view.Degradations)
+			}
+			if arm.stage != "" {
+				if len(view.Degradations) != 1 || view.Degradations[0] != (Degradation{Kind: DegradationOpenAlertSetUnconfirmed, Replica: "pod-b", Stage: arm.stage}) {
+					t.Fatalf("degradations = %+v, want OPEN_ALERT_SET_UNCONFIRMED on pod-b at %s", view.Degradations, arm.stage)
 				}
 			} else if len(view.Degradations) != 0 {
 				t.Fatalf("degradations = %+v, want none", view.Degradations)

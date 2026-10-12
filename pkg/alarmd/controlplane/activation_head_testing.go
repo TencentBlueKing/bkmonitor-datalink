@@ -12,8 +12,6 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 // WriteActivationForTest writes an activation header and body as a later
@@ -33,15 +31,6 @@ func WriteActivationForTest(ctx context.Context, repository *RedisCatalogReposit
 		return err
 	}
 	return repository.client.Set(ctx, repository.activationKey(), payload, 0).Err()
-}
-
-// PersistActiveQueryGroupSetForTest writes an active Query Group set the way
-// a cutover does and returns its reference.
-func PersistActiveQueryGroupSetForTest(
-	ctx context.Context, repository *RedisCatalogRepository, identities []execution.QueryGroupIdentity,
-) (ActiveQueryGroupSetRef, error) {
-	ref, _, err := repository.persistAndVerifyActiveQGSet(ctx, identities)
-	return ref, err
 }
 
 // ActivationHeadSchemaVersionForTest is the schema a head body carries.

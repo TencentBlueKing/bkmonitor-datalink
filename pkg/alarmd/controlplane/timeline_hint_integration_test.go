@@ -11,6 +11,7 @@ package controlplane_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -79,20 +80,13 @@ func TestAHintedTimelineReadSkipsTheHeaderUntilTheHintGoesStale(t *testing.T) {
 	// The timeline moves to revision 2 by a cutover; the Worker still hints
 	// 1. The read must not answer with the old Segment: it falls to the
 	// header path and returns the timeline as it is.
-	newCatalog := catalogWithSchedule(t, oldCatalog, 120, 30)
+	newCatalog := catalogWithSchedule(t, oldCatalog, 60, 30)
 	newSnapshot, _, err := repository.PublishCatalog(ctx, newCatalog)
 	if err != nil {
 		t.Fatal(err)
 	}
 	boundary := execution.EvaluationTime(180)
-	oldClosed := frozenSchedule(t, oldSnapshot.Publication, oldCatalog.QueryGroups[0], 60, &boundary)
-	newOpen := frozenSchedule(t, newSnapshot.Publication, newCatalog.QueryGroups[0], boundary, nil)
-	newActivation := activationState(t, 2, newSnapshot, newOpen, nil)
-	if err := repository.CompareAndSetScheduleCutover(ctx, controlplane.ActivationExpectation{
-		RecordRevision: oldActivation.RecordRevision, Current: oldActivation.Current,
-	}, newActivation, []execution.ScheduleCutoverFact{{OldSegment: oldClosed.Segment, NewSegment: newOpen.Segment}}); err != nil {
-		t.Fatal(err)
-	}
+	cutOverAt(t, repository, newSnapshot, boundary)
 	before = repository.ControlReadCacheStats()
 	loaded, err := runtime.ReadFrozenSchedule(hinted, queryGroup, boundary)
 	if err != nil || loaded.Segment.Start != boundary {
@@ -186,19 +180,12 @@ func TestAHintedActivationRequestIsAnsweredFromTheTimelineWithoutTheHeader(t *te
 
 	// After the cutover the Slot at 60 is in a closed Segment: historical,
 	// every Plan ActivationNone, with the right hint (2) and without.
-	newCatalog := catalogWithSchedule(t, catalog, 120, 30)
+	newCatalog := catalogWithSchedule(t, catalog, 60, 30)
 	newSnapshot, _, err := repository.PublishCatalog(ctx, newCatalog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	boundary := execution.EvaluationTime(180)
-	oldClosed := frozenSchedule(t, snapshot.Publication, group, 60, &boundary)
-	newOpen := frozenSchedule(t, newSnapshot.Publication, newCatalog.QueryGroups[0], boundary, nil)
-	newActivation := activationState(t, 2, newSnapshot, newOpen, nil)
-	if err := repository.CompareAndSetScheduleCutover(ctx, controlplane.ActivationExpectation{RecordRevision: state.RecordRevision, Current: state.Current},
-		newActivation, []execution.ScheduleCutoverFact{{OldSegment: oldClosed.Segment, NewSegment: newOpen.Segment}}); err != nil {
-		t.Fatal(err)
-	}
+	cutOverAt(t, repository, newSnapshot, 180)
 	historical, err := repository.LoadActivations(controlplane.WithTimelineRevisionHint(ctx, 2), request)
 	if err != nil || historical.Facts[0].Selection != execution.ActivationNone {
 		t.Fatalf("hinted activations for a closed Segment = (%+v, %v), want ActivationNone", historical.Facts, err)
@@ -272,5 +259,37 @@ func TestDrainingContentServesTheRetiredTimelinesLastSegment(t *testing.T) {
 	digest, refs, draining, err = repository.DrainingContent(ctx, "never-activated")
 	if err != nil || draining || digest != "" || refs != nil {
 		t.Fatalf("DrainingContent(absent) = (%q, %v, %t, %v), want nothing", digest, refs, draining, err)
+	}
+}
+
+// The view publication tells a draining Query Group's own fault from the
+// store's by the class of DrainingContent's error: a timeline that does not
+// decode is a DeterministicScheduleError, and only that Query Group is left
+// without content in the view; a store that does not answer is any other
+// error, and the set is not published. Pinned against the repository,
+// since the publication's own test reads a fake catalog.
+func TestDrainingContentTellsATimelineThatDoesNotDecodeFromAStoreThatDoesNotAnswer(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:draining-undecodable"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGroup := execution.QueryGroupIdentity("qg-garbled")
+	if err := client.Set(ctx, prefix+":schedule_timeline:"+string(queryGroup), "{not a timeline", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	var undecodable *controlplane.DeterministicScheduleError
+	_, _, draining, err := repository.DrainingContent(ctx, queryGroup)
+	if draining || !errors.As(err, &undecodable) {
+		t.Fatalf("DrainingContent(garbled) = (%t, %v), want a deterministic schedule error", draining, err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, _, draining, err = repository.DrainingContent(ctx, queryGroup)
+	if draining || err == nil || errors.As(err, &undecodable) {
+		t.Fatalf("DrainingContent(store closed) = (%t, %v), want an error that is not deterministic", draining, err)
 	}
 }

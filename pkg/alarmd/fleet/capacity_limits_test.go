@@ -10,6 +10,8 @@
 package fleet
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -118,5 +120,70 @@ func TestCPUTimeAddsUpSoTheCoreCountCanBeReadAgainstIt(t *testing.T) {
 	// multiplication itself and would double it otherwise.
 	if view.Capacity.CPUCores != 8 {
 		t.Fatalf("cpu cores = %d, want the per-replica ceiling reported once", view.Capacity.CPUCores)
+	}
+}
+
+// A counter the flag beside it calls measured is on the wire even at zero:
+// "throttled_known":true with no throttled_seconds cannot be told apart from a
+// field this build does not send. Unmeasured, a zero stays off the wire, and a
+// non-zero value reads as it always did -- on each replica and on the
+// deployment the page is given.
+func TestAMeasuredZeroIsSentAndAnUnmeasuredOneIsNot(t *testing.T) {
+	at := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	measuredZero := &Capacity{MemoryLimitKnown: true, ThrottledKnown: true}
+	view := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
+		capacitySnapshot("pod-a", at, measuredZero),
+		capacitySnapshot("pod-b", at, &Capacity{MemoryLimitKnown: true, ThrottledKnown: true}),
+	}, []string{"pod-a", "pod-b"}, at, time.Minute)
+	for name, value := range map[string]any{"replica": measuredZero, "deployment": view.Capacity} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{`"throttled_seconds":0`, `"memory_limit_hits":0`} {
+			if !strings.Contains(string(encoded), want) {
+				t.Fatalf("%s: measured zero %s is not on the wire: %s", name, want, encoded)
+			}
+		}
+		if strings.Contains(string(encoded), `"memory_oom_kills"`) {
+			t.Fatalf("%s: kills were sent though no flag says they were read: %s", name, encoded)
+		}
+	}
+
+	for name, value := range map[string]any{"replica": &Capacity{}, "deployment": &CapacityView{}} {
+		encoded, _ := json.Marshal(value)
+		if strings.Contains(string(encoded), `"throttled_seconds"`) || strings.Contains(string(encoded), `"memory_limit_hits"`) {
+			t.Fatalf("%s: an unmeasured zero was sent: %s", name, encoded)
+		}
+	}
+	// Each count follows its own flag: a container that could read its CPU
+	// throttling but not its memory events says so field by field.
+	for name, value := range map[string]any{
+		"replica":    &Capacity{ThrottledKnown: true},
+		"deployment": &CapacityView{ThrottledKnown: true},
+	} {
+		encoded, _ := json.Marshal(value)
+		if !strings.Contains(string(encoded), `"throttled_seconds":0`) || strings.Contains(string(encoded), `"memory_limit_hits"`) {
+			t.Fatalf("%s: throttling alone was measured: %s", name, encoded)
+		}
+	}
+	for name, value := range map[string]any{
+		"replica":    &Capacity{MemoryLimitKnown: true},
+		"deployment": &CapacityView{MemoryLimitKnown: true},
+	} {
+		encoded, _ := json.Marshal(value)
+		if !strings.Contains(string(encoded), `"memory_limit_hits":0`) || strings.Contains(string(encoded), `"throttled_seconds"`) {
+			t.Fatalf("%s: memory events alone were measured: %s", name, encoded)
+		}
+	}
+	encoded, _ := json.Marshal(&CapacityView{ThrottledSeconds: 2.5, MemoryLimitHits: 3})
+	if !strings.Contains(string(encoded), `"throttled_seconds":2.5`) || !strings.Contains(string(encoded), `"memory_limit_hits":3`) {
+		t.Fatalf("a non-zero count lost its value: %s", encoded)
+	}
+
+	var decoded Capacity
+	if err := json.Unmarshal([]byte(`{"throttled_known":true,"throttled_seconds":0,"memory_limit_known":true,"memory_limit_hits":0}`), &decoded); err != nil ||
+		!decoded.ThrottledKnown || !decoded.MemoryLimitKnown {
+		t.Fatalf("a replica's measured zero does not decode: %+v %v", decoded, err)
 	}
 }

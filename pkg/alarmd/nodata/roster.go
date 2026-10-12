@@ -257,7 +257,9 @@ func BuildRoster(request RosterRequest) (Roster, error) {
 	roster := Roster{Source: class.Source, Groups: map[string]Group{}}
 	switch class.Source {
 	case RosterHistory:
-		roster.Groups = historyGroups(request.Memory)
+		if roster.Groups, err = historyGroups(request.Memory); err != nil {
+			return Roster{}, err
+		}
 	case RosterTargetStatic:
 		for _, host := range class.Hosts {
 			if _, known := request.KnownHosts[host.IP+"|"+host.CloudID]; !known {
@@ -371,7 +373,13 @@ func hostTargetGroup(host HostIdentity) Group {
 // evaluation records when the item as a whole went absent, and it is not a
 // series - carrying it into a roster would make the item expect itself, so it
 // would be judged as a group whose absence is the very thing that put it there.
-func historyGroups(memory map[string]GroupMemory) map[string]Group {
+//
+// A remembered key that does not parse back into a group is refused by name
+// rather than left out. Every key this package writes parses, so one that does
+// not was written by something else, and leaving it out would quietly stop
+// expecting a group the memory says was seen: its absence would never be
+// reported, and nothing would say why.
+func historyGroups(memory map[string]GroupMemory) (map[string]Group, error) {
 	whole := WholeItemGroup().Key()
 	groups := make(map[string]Group, len(memory))
 	for key, entry := range memory {
@@ -380,9 +388,20 @@ func historyGroups(memory map[string]GroupMemory) map[string]Group {
 		}
 		group, ok := ParseGroupKey(key)
 		if !ok {
-			continue
+			return nil, unparseableGroupKey(key)
 		}
 		groups[key] = group
 	}
-	return groups
+	return groups, nil
+}
+
+// unparseableGroupKey is the refusal of a remembered key this package could
+// not have written. The key is quoted short: it is text from the store, and
+// the error travels to a log line.
+func unparseableGroupKey(key string) error {
+	const shown = 96
+	if len(key) > shown {
+		key = key[:shown] + "..."
+	}
+	return fmt.Errorf("alarmd nodata: remembered group key %q does not parse back into a group", key)
 }

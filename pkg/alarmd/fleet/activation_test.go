@@ -130,18 +130,21 @@ func TestTheStaleSourceFoldCarriesTheFailureBehindIt(t *testing.T) {
 }
 
 // Query Groups the last cutover held back degrade the verdict by name - with
-// how many, why and which - while the rest of the publication is active.
+// how many, why, which and the timeline key to delete for each - while the
+// rest of the publication is active.
 // None held back, no degradation.
 func TestAggregateNamesQueryGroupsTheCutoverHeldBack(t *testing.T) {
 	held := &ActivationFacts{Applied: "e7a1b2c3", Published: "e7a1b2c3", BlockedQueryGroups: 2,
-		BlockedReasons: "open_digest_mismatch=1,open_segment_closed_or_ahead=1", BlockedSamples: "qg-a:open_digest_mismatch,qg-b:open_segment_closed_or_ahead"}
+		BlockedReasons: "open_digest_mismatch=1,open_segment_closed_or_ahead=1", BlockedSamples: "qg-a:open_digest_mismatch,qg-b:open_segment_closed_or_ahead",
+		BlockedKeys: "p:schedule_timeline:qg-a,p:schedule_timeline:qg-b"}
 	snapshots := []Snapshot{
 		{Replica: "pod-a", TakenAt: now, Owned: 1, Determined: 1, Activation: held},
 		{Replica: "pod-b", TakenAt: now, Owned: 1, Determined: 1},
 	}
 	view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness)
 	if len(view.Degradations) != 1 || view.Degradations[0].Kind != DegradationActivationBlocked || view.Degradations[0].Replica != "pod-a" ||
-		!strings.Contains(view.Degradations[0].Text, "2 held back") || !strings.Contains(view.Degradations[0].Text, "qg-a:open_digest_mismatch") {
+		!strings.Contains(view.Degradations[0].Text, "2 held back") || !strings.Contains(view.Degradations[0].Text, "qg-a:open_digest_mismatch") ||
+		!strings.Contains(view.Degradations[0].Text, "timeline keys to delete: p:schedule_timeline:qg-a,p:schedule_timeline:qg-b") {
 		t.Fatalf("degradations = %+v, want ACTIVATION_BLOCKED naming the two", view.Degradations)
 	}
 	if view.Health != HealthDegraded {
@@ -152,5 +155,28 @@ func TestAggregateNamesQueryGroupsTheCutoverHeldBack(t *testing.T) {
 	snapshots[0].Activation = &clear
 	if view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness); len(view.Degradations) != 0 {
 		t.Fatalf("nothing held back, degradations = %+v", view.Degradations)
+	}
+}
+
+// A missing activation header the leader has not written back degrades the
+// verdict by name, with how long and how the last attempt ended. Absent
+// facts, no degradation.
+func TestAggregateNamesAnActivationHeaderTheLeaderCouldNotWriteBack(t *testing.T) {
+	snapshots := []Snapshot{
+		{Replica: "pod-a", TakenAt: now, Owned: 1, Determined: 1,
+			ActivationHeader: &ActivationHeaderFacts{MissingSeconds: 90, LastRebuild: "body_pending"}},
+		{Replica: "pod-b", TakenAt: now, Owned: 1, Determined: 1},
+	}
+	view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness)
+	if len(view.Degradations) != 1 || view.Degradations[0].Kind != DegradationActivationHeaderMissing || view.Degradations[0].Replica != "pod-a" ||
+		!strings.Contains(view.Degradations[0].Text, "body_pending") || view.Degradations[0].AgeSeconds == nil || *view.Degradations[0].AgeSeconds != 90 {
+		t.Fatalf("degradations = %+v, want ACTIVATION_HEADER_MISSING for 90s after body_pending", view.Degradations)
+	}
+	if view.Health != HealthDegraded {
+		t.Fatalf("health = %s, want DEGRADED", view.Health)
+	}
+	snapshots[0].ActivationHeader = nil
+	if view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness); len(view.Degradations) != 0 {
+		t.Fatalf("header present, degradations = %+v", view.Degradations)
 	}
 }

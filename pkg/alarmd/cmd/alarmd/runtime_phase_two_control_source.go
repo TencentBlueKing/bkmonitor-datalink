@@ -66,17 +66,6 @@ type controlSourceState struct {
 	// is known. Read on every refresh tick by every replica, so the age it
 	// yields is the same fact everywhere and survives every process.
 	persistedSuccessAt time.Time
-	// pendingSince is when this leader's refresh last began answering
-	// PENDING_CONFIRMATION without a PUBLISHED or UNCHANGED since, and
-	// pendingRounds how many rounds it has answered so. A candidate is
-	// published only when two whole observations agree, so a source whose
-	// writer moves something between every pair of rounds keeps a change
-	// pending indefinitely -- while every one of those rounds counts as a
-	// successful refresh and the success age stays young. This is the one
-	// reading that rises then. Zero when nothing is pending, and cleared when
-	// the process stops leading: a follower refreshes nothing.
-	pendingSince  time.Time
-	pendingRounds int
 }
 
 // controlSourceFailureTextLimit bounds the failure text the state keeps: it
@@ -108,9 +97,6 @@ func (bundle *phaseTwoWorkerBundle) setControlRoleLocked(role observability.Cont
 	} else {
 		state.unacquiredSince = time.Time{}
 	}
-	if role != observability.ControlSourceRoleLeader {
-		state.pendingSince, state.pendingRounds = time.Time{}, 0
-	}
 	state.role = role
 }
 
@@ -137,15 +123,6 @@ func (bundle *phaseTwoWorkerBundle) noteControlRoundLocked(result phaseTwoContro
 		state.degradedSince = time.Time{}
 		state.lastFailureExit = ""
 		state.lastFailure = ""
-	}
-	switch result.SourceRefreshStatus {
-	case controlplane.SourceRefreshPendingConfirmation:
-		if state.pendingSince.IsZero() {
-			state.pendingSince = bundle.dependencies.Now()
-		}
-		state.pendingRounds++
-	case controlplane.SourceRefreshPublished, controlplane.SourceRefreshUnchanged:
-		state.pendingSince, state.pendingRounds = time.Time{}, 0
 	}
 	if result.Composition != nil {
 		state.composition = result.Composition
@@ -189,8 +166,6 @@ type controlSourceView struct {
 	unacquiredSince time.Time
 	lastFailureExit string
 	lastFailure     string
-	pendingSince    time.Time
-	pendingRounds   int
 	now             time.Time
 }
 
@@ -203,7 +178,6 @@ func (bundle *phaseTwoWorkerBundle) controlSourceView() controlSourceView {
 		known: state.known, role: state.role, lastSuccessAt: state.persistedSuccessAt,
 		degradedSince: state.degradedSince, unacquiredSince: state.unacquiredSince,
 		lastFailureExit: state.lastFailureExit, lastFailure: state.lastFailure,
-		pendingSince: state.pendingSince, pendingRounds: state.pendingRounds,
 		now: bundle.dependencies.Now(),
 	}
 	if view.role == "" {
@@ -248,25 +222,10 @@ func (view controlSourceView) leaderAbsentBeyondBound() bool {
 		view.now.Sub(view.unacquiredSince) > controlplane.SourceStalenessBound
 }
 
-// pendingAge is how long the leader's refresh has been answering
-// PENDING_CONFIRMATION, zero when it is not, and false on a process that is
-// not leading, which refreshes nothing and so has no pending to report.
-func (view controlSourceView) pendingAge() (float64, bool) {
-	if view.role != observability.ControlSourceRoleLeader {
-		return 0, false
-	}
-	if view.pendingSince.IsZero() {
-		return 0, true
-	}
-	return max(view.now.Sub(view.pendingSince).Seconds(), 0), true
-}
-
 // controlSourceStats is what the metric collector scrapes.
 func (bundle *phaseTwoWorkerBundle) controlSourceStats() metric.ControlSourceStats {
 	view := bundle.controlSourceView()
-	stats := metric.ControlSourceStats{Known: view.known, Role: view.role, Mode: view.mode, LastSuccessAt: view.lastSuccessAt}
-	stats.PendingConfirmationAgeSeconds, stats.Leading = view.pendingAge()
-	return stats
+	return metric.ControlSourceStats{Known: view.known, Role: view.role, Mode: view.mode, LastSuccessAt: view.lastSuccessAt}
 }
 
 // catalogComposition is the last Catalog composition this process built, for
@@ -365,10 +324,6 @@ func (bundle *phaseTwoWorkerBundle) controlSourceFleetFacts() *fleet.ControlSour
 	if !view.degradedSince.IsZero() {
 		degraded := view.now.Sub(view.degradedSince).Seconds()
 		facts.DegradedSecondsThisProcess = &degraded
-	}
-	if age, leading := view.pendingAge(); leading {
-		facts.PendingConfirmationAgeSeconds = &age
-		facts.PendingConfirmationRounds = view.pendingRounds
 	}
 	return facts
 }

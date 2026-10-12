@@ -40,23 +40,17 @@ type ActivationFailureStage string
 type ActivationFailureClass string
 
 const (
-	ComponentRuntime        = "runtime"
-	ComponentControlPlane   = "source"
-	ComponentOwnership      = "router"
-	ComponentScheduler      = "scheduler"
-	ComponentConsumer       = "consumer"
-	ComponentAdapter        = "adapter"
-	ComponentCompiler       = "compiler"
-	ComponentAccess         = "access"
-	ComponentEvaluation     = "evaluation"
-	ComponentState          = "state"
-	ComponentProgress       = "progress"
-	ComponentDetect         = "detect"
-	ComponentOutput         = "output"
-	ComponentCoverage       = "coverage"
-	ComponentResource       = "resource"
-	ComponentPythonProducer = "python_producer"
-	ComponentOther          = "_other"
+	ComponentRuntime      = "runtime"
+	ComponentControlPlane = "source"
+	ComponentOwnership    = "router"
+	ComponentScheduler    = "scheduler"
+	ComponentAccess       = "access"
+	ComponentEvaluation   = "evaluation"
+	ComponentState        = "state"
+	ComponentProgress     = "progress"
+	ComponentOutput       = "output"
+	ComponentResource     = "resource"
+	ComponentOther        = "_other"
 
 	StageConfigLoaded             = "config_loaded"
 	StageEffectiveTimeMaintenance = "effective_time_maintenance"
@@ -79,7 +73,6 @@ const (
 	StageStateCarryDecided      = "state_carry_decided"
 	StageStateCarried           = "state_carried"
 	StageScheduleCutover        = "schedule_cutover"
-	StageLegacyQGMigration      = "legacy_active_qg_migration"
 	StageDrainingQGReconciled   = "draining_query_groups"
 	StageAssignmentAcquired     = "assignment_acquired"
 	StageAssignmentLost         = "assignment_lost"
@@ -90,6 +83,11 @@ const (
 	// Control Leader: how many named retired Query Groups and how many of
 	// those it reclaimed (AssignmentSweepFacts).
 	StageAssignmentSwept = "assignment_swept"
+	// StageAssignmentApplied names one assignment change a Worker applied:
+	// how many Query Groups it lost, took over and failed to take over, with
+	// the first few of each (AssignmentAppliedFacts). It is the line for a
+	// handover; the per-Query Group successes are counted and not written.
+	StageAssignmentApplied = "assignment_applied"
 	// StageViewPublished names one publication of the Control Leader's
 	// desired set over the view stream (decision-016): the term revision
 	// it produced and how many Workers' views moved. StageViewSession names
@@ -113,21 +111,13 @@ const (
 	StageSlotSourceCompleted    = "slot_source_completed"
 	StageScheduleCursorAdvanced = "schedule_cursor_advanced"
 	StageReplayExpired          = "replay_expired"
+	StageReplayTakeover         = "replay_takeover"
 	StageRangeDistanceExpired   = "range_distance_expired"
 	StageRangeGateDecided       = "range_gate_decided"
 	StageSlotWait               = "slot_wait"
 	StageQueryAdmission         = "query_admission"
-	StageRestartRecovered       = "restart_recovered"
 	StageFleetSnapshotPublish   = "fleet_snapshot_publish"
 	StageObservationWindow      = "observation_window"
-	StageKafkaAssigned          = "kafka_assigned"
-	StageExecutionReceived      = "execution_received"
-	StageOffsetGap              = "offset_gap"
-	StageOffsetMarked           = "offset_marked"
-	StageMessageDecoded         = "message_decoded"
-	StageRecordBatchReady       = "record_batch_ready"
-	StageRejected               = "rejected"
-	StagePlanCompiled           = "plan_compiled"
 	StageQueryCompleted         = "query_completed"
 	StageQueryBudgetResolved    = "query_budget_resolved"
 	StageSlotReadinessArrival   = "slot_readiness_arrival"
@@ -168,14 +158,8 @@ const (
 	// as a refused one does, and a reader with only the refusal lines cannot
 	// tell a Plan that recovered from one that started losing races instead.
 	StageNoDataMemoryWritten = "no_data_memory_written"
-	// StageNoDataMemoryRead names which of the two stored shapes one Plan's
-	// memory was read from.
-	//
-	// It is the only signal that says how far the change of representation has
-	// got. Every other one looks the same either way -- the memory is read, the
-	// Plan evaluates, the write goes through -- and the count of Plans still on
-	// the old record is what the one-shot cleanup waits for. Without it that
-	// wait is somebody's guess about how long a rollout takes.
+	// StageNoDataMemoryRead names whether one Plan's memory was read from the
+	// per-group record or from none.
 	StageNoDataMemoryRead = "no_data_memory_read"
 	// StageNoDataMemoryRenewed names one renewal of a Plan's absence-memory
 	// key that actually reached the store.
@@ -187,15 +171,6 @@ const (
 	// signal: not the write family, which is correctly silent for such a Plan,
 	// and not the memory itself, which reads fine right up until it is gone.
 	StageNoDataMemoryRenewed = "no_data_memory_renewed"
-	// StageSplitPlanned is the Leader deciding what splitting one object
-	// would look like, or why it cannot be split. A dry run for now: the
-	// stage exists so the decision can be read on the objects it would
-	// actually be taken on, before anything acts on it.
-	StageSplitPlanned = "split_planned"
-	// StageDimensionCensus is a Slot leaving one candidate Plan's dimension
-	// census behind (decision-020 section 4.7.3): what its series look like
-	// along each dimension, which is what a split is planned from.
-	StageDimensionCensus = "dimension_census"
 	// StageFrozenStateRenewed names the renewal of the Runtime State keys of
 	// the series a Slot read and did not write.
 	//
@@ -220,22 +195,7 @@ const (
 	// not, so without this a deployment where every such write fails looks
 	// exactly like one where none was ever needed.
 	StageExecutionEvidenceWritten = "execution_evidence_written"
-	StageDependencyLoaded         = "dependency_loaded"
-	StageStateCommitted           = "state_committed"
-	StageDetectCompleted          = "detect_completed"
-	StageTriggerCompleted         = "trigger_completed"
-	StageOutputACKed              = "output_acked"
-	StageCoverageCompleted        = "coverage_completed"
-	StageCoverageGap              = "coverage_gap"
-	StageResourceSoft             = "resource_soft"
 	StageResourceHard             = "resource_hard"
-	StageResourceResumed          = "resource_resumed"
-	StagePythonSource             = "source"
-	StagePythonBuilt              = "built"
-	StagePythonEnqueued           = "enqueued"
-	StagePythonPublished          = "published"
-	StagePythonACKed              = "acked"
-	StagePythonDropped            = "dropped"
 	StageOther                    = "_other"
 
 	ResultTerminal = "terminal"
@@ -285,6 +245,7 @@ const (
 	OperationRetry              = "retry"
 	OperationReplay             = "replay"
 	OperationProbe              = "probe"
+	OperationSupplement         = "supplement"
 	OperationOther              = "_other"
 
 	DirectionInput    Direction = "input"
@@ -349,7 +310,6 @@ const (
 	AlgorithmInputResultPartial     AlgorithmInputResult = "partial"
 	AlgorithmInputResultUnavailable AlgorithmInputResult = "unavailable"
 
-	SourceRefreshPending   SourceRefreshStatus = "PENDING_CONFIRMATION"
 	SourceRefreshPublished SourceRefreshStatus = "PUBLISHED"
 	SourceRefreshUnchanged SourceRefreshStatus = "UNCHANGED"
 	SourceRefreshConflict  SourceRefreshStatus = "PUBLICATION_CONFLICT"
@@ -359,6 +319,17 @@ const (
 	// ReasonInternalUnknown is chosen by a site that has looked at the failure
 	// and has nothing finer to say about it.
 	ReasonInternalUnknown ReasonCode = "internal_unknown"
+	// ReasonHeldBySupplement and ReasonHeldByMaintenance are a round turned
+	// away from its Query Group's flight while a supplement of a completed
+	// Slot, or a maintenance write, held it: a yield by design, the round run
+	// again the moment the hold ends.
+	ReasonHeldBySupplement  ReasonCode = "held_by_supplement"
+	ReasonHeldByMaintenance ReasonCode = "held_by_maintenance"
+	// ReasonSlotCancelled is a Slot, or its query, stopped because the
+	// context it ran under was cancelled from above: this process stopping,
+	// or its Query Group leaving this Worker. Every rollout's outgoing
+	// replicas meet it once per Slot in flight, by design.
+	ReasonSlotCancelled ReasonCode = "SLOT_CANCELLED"
 	// ReasonNotReported is not chosen by anyone: it is what a failing
 	// observation gets when its emitting site reported no reason at all.
 	//
@@ -418,35 +389,11 @@ type Counts struct {
 	Bytes      int64
 	Keys       int64
 	StateBytes int64
-	// EnvelopeReads is how many of a state preflight's series had to be read
-	// from the older representation as well, because the framed record could
-	// not answer for them. It is the second pass's cost, and it is not the
-	// migration indicator: a series with no record at all has no frame, so it
-	// lands here for ever.
-	EnvelopeReads int64
-	// The four EnvelopeReads splits into; see execution.StatePreflightResult
-	// for the table. EnvelopeAnswered is the only one that ends, and reading
-	// it as zero is the whole point of having it -- so all four go on the line
-	// at every value, zero included. A count that exists to answer "how many"
-	// has its answer erased by omitting its zero.
-	EnvelopeAnswered    int64
-	EnvelopeCorrupt     int64
-	NoRecordYet         int64
-	FrameCorruptRescued int64
-	FrameCorruptLost    int64
-	Unclassified        int64
 	// StateFetchMillis and StateDecodeMillis split a state preflight's time
 	// into the store's reads and this process's decoding of what they
 	// returned; see execution.PreflightTiming.
 	StateFetchMillis  int64
 	StateDecodeMillis int64
-	// EnvelopeReadsApply is how many items of a state apply had their outcome
-	// decided by the older representation on the per-key write path, which
-	// reads both keys and which none of the preflight's counts can see. The
-	// other consumer of the envelope beside EnvelopeAnswered: the envelope
-	// can be deleted only when both have stayed at zero for a whole retention
-	// window, and a sum could not say which one had not.
-	EnvelopeReadsApply int64
 }
 
 // TargetResolutionFacts is one Plan's target plan resolved for one Slot:
@@ -457,6 +404,10 @@ type Counts struct {
 type TargetResolutionFacts struct {
 	StrategyID string
 	State      string
+	// ScopeGroups says the selectors are the dynamic groups a target scope
+	// names, read for the Slot, and not a target plan's: the groups are
+	// counted with every selector, the resolution not with target plans'.
+	ScopeGroups bool
 	// StaleAgeSeconds is non-zero when a selector answered from a snapshot
 	// kept past a failed refresh: resolved_from_stale_snapshot.
 	StaleAgeSeconds int64
@@ -633,9 +584,9 @@ type NoDataMemoryWriteFacts struct {
 	// two sides were, and none of it left the store. The reason code cannot
 	// carry it either, because a conflict is not a rejection and has none.
 	Conflict *NoDataMemoryConflictFacts
-	// DerivedFrom is the record the refused statement was built from. It is
-	// what tells a conflict during a rollout -- a Plan still writing from the
-	// whole-memory record -- from one between two writers of the same record.
+	// DerivedFrom is the record the refused statement was built from: none,
+	// for a statement that replaces the whole record, or the per-group record
+	// for a delta.
 	DerivedFrom string
 }
 
@@ -744,34 +695,6 @@ func (facts *FrozenStateRenewalFacts) Record(renewed, fresh, missing, failed int
 	facts.Fresh += fresh
 	facts.Missing += missing
 	facts.Failed += failed
-}
-
-// DimensionCensusFacts is one census write: where its values came from, what
-// the store did with it, how much of the strategy it could name, and the two
-// numbers the candidate decision was made on.
-//
-// PeakBytes and ShareBytes are on the line because "why is this Plan a
-// candidate" is otherwise unanswerable afterwards: the gate is this
-// replica's own peak against its own pool share (decision-020 section
-// 4.7.3.1), both of which move, and a census that appears or stops
-// appearing is otherwise a change with no reading behind it.
-//
-// OverflowValues and OverflowSeries are the reading that says the bound was
-// reached: a census that names four thousand values and hides a tail of
-// twenty thousand is not a distribution a split can be planned from, and it
-// has to be possible to see that without reading the record.
-type DimensionCensusFacts struct {
-	Source         string `json:"source"`
-	Status         string `json:"status"`
-	Series         uint32 `json:"series"`
-	Dimensions     int    `json:"dimensions"`
-	Values         int    `json:"values"`
-	OverflowValues uint32 `json:"overflow_values"`
-	OverflowSeries uint32 `json:"overflow_series"`
-	Bytes          int    `json:"bytes"`
-	Limit          int    `json:"limit"`
-	PeakBytes      uint64 `json:"peak_bytes"`
-	ShareBytes     uint64 `json:"share_bytes"`
 }
 
 // RecordCensus states where the Slot's series went.
@@ -948,11 +871,22 @@ type ScheduleCutoverFacts struct {
 	TimelinesRead   int
 	RevisionsFolded int
 	ContentSource   string
+	// ReadHoldLinks counts the moved Plans' links to the groups they left,
+	// by ScheduleCutoverReadHoldLinks.
+	ReadHoldLinks map[string]int
 }
 
 // ScheduleCutoverDecisions is the closed vocabulary of what a publication
 // cutover does with one Query Group.
-var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "legacy_cut", "retired", "added", "blocked", "reopened", "retired_unwritten"}
+var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "retired", "added", "blocked", "reopened", "retired_unwritten", "repaired"}
+
+// ScheduleCutoverReadHoldLinks is the closed vocabulary of what a cutover
+// does with a Plan's link to the Query Group it left: linked (the state
+// generation is unchanged), linked_generation_unknown (a generation could
+// not be read; linked to keep ordering), generation_changed (no state
+// shared, no link), and the carried links it stops carrying because they
+// name the group they are in or are past their lifetime.
+var ScheduleCutoverReadHoldLinks = []string{"linked", "linked_generation_unknown", "generation_changed", "dropped_self", "dropped_expired"}
 
 // ReplayExpiryFacts describe one Slot the scheduler gave up replaying.
 //
@@ -980,7 +914,6 @@ var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "legacy_cut", 
 // silent fallthrough.
 const (
 	RangeGateApplied               = "applied"
-	RangeGateCreationDisabled      = "range_creation_disabled"
 	RangeGateProgressMissing       = "progress_missing"
 	RangeGateNextSlotMoved         = "next_slot_moved"
 	RangeGateUnfinishedSlotPresent = "unfinished_slot_present"
@@ -1004,7 +937,7 @@ const (
 // RangeGateOutcomes is every value the outcome takes, for the partition to
 // pre-create and for a reader to bound the family by.
 var RangeGateOutcomes = []string{
-	RangeGateApplied, RangeGateCreationDisabled, RangeGateProgressMissing, RangeGateNextSlotMoved,
+	RangeGateApplied, RangeGateProgressMissing, RangeGateNextSlotMoved,
 	RangeGateUnfinishedSlotPresent, RangeGateNoRangeFlight,
 	RangeGateRecoveryDisabled, RangeGatePlansMismatch, RangeGateDeadlineNotReached,
 	RangeGateStepsBelowOne, RangeGateFreezeFailed, RangeGateProofTooLarge,
@@ -1030,7 +963,6 @@ type RangeGateFacts struct {
 	// is still holding the Slot it began, and the evaluation time says which.
 	UnfinishedSlotPresent        bool  `json:"unfinished_slot_present"`
 	UnfinishedSlotEvaluationTime int64 `json:"unfinished_slot_evaluation_time"`
-	RangeCreationEnabled         bool  `json:"range_creation_enabled"`
 	// The two candidate bounds the builder's distance branch compared, when
 	// the refusal came from a branch that had computed them. BoundsKnown says
 	// so: the other refusals never compute these, and reporting zeroes for
@@ -1256,6 +1188,31 @@ var ReplayExpiryReasons = []string{
 	"REPLAY_AGE_EXCEEDED", "REPLAY_DISTANCE_EXCEEDED", "REPLAY_WAIT_EXCEEDS_DISTANCE", "REPLAY_RANGE_EXPIRED",
 }
 
+// ReplayTakeoverFacts is one Slot evaluated before this process took its
+// Query Group over from another owner (scheduler.TakeoverClock): replayed,
+// because nobody here could have run it and it is within the replay age, or
+// past the replay age and given up on like any Slot that old. The distance
+// rule does not apply to it. TakeoverOffsetSeconds is how long after the
+// takeover the Slot was first classified. One is reported per Slot and
+// outcome, however many times the Slot is classified: a Slot retried after a
+// failed replay is not reported again, and one replayed and later given up
+// on for its age is reported under each. A Query Group the degraded pool
+// holds reports none: its Slots are given up on for distance as before.
+type ReplayTakeoverFacts struct {
+	Outcome               string  `json:"outcome"`
+	AgeSeconds            float64 `json:"age_seconds"`
+	TakeoverOffsetSeconds float64 `json:"takeover_offset_seconds"`
+}
+
+// The outcomes of a Slot due before a takeover, closed.
+const (
+	ReplayTakeoverReplayed    = "replayed"
+	ReplayTakeoverAgeExceeded = "age_exceeded"
+)
+
+// ReplayTakeoverOutcomes is every outcome, for the metric to pre-create.
+var ReplayTakeoverOutcomes = []string{ReplayTakeoverReplayed, ReplayTakeoverAgeExceeded}
+
 // ObjectCatalogFacts describe one write or renewal of the content-addressed
 // Query Group objects, output contexts and the manifest that names them for
 // one publication. Written counts objects the operation created, Present
@@ -1362,13 +1319,6 @@ type ActivationHoldFacts struct {
 // hold observation carries.
 const MaxActivationHoldSamples = 12
 
-type LegacyQGMigrationFacts struct {
-	Result      string
-	ReasonClass string
-	ScanKeys    int
-	Duration    time.Duration
-}
-
 const (
 	MaxDrainingQGLogSamples          = 12
 	MaxActivationFailureQGLogSamples = 8
@@ -1434,6 +1384,22 @@ type RebalanceFacts struct {
 	Conflicts        int     `json:"conflicts"`
 	Paused           bool    `json:"paused"`
 	PausedForSeconds float64 `json:"paused_for_seconds"`
+	// Replaced is how many Query Groups the round moved off holders that are
+	// alive and READY but no longer eligible (a rollout that changed the
+	// capability digest), Deferred how many more it left where they were for
+	// a later round because the round's handover batch was spent, and
+	// Unplaceable how many no ready worker could take this round, each kept
+	// as it was. The batch is shared: the count correction above plans within
+	// what Replaced left of Batch.
+	Replaced    int `json:"replaced"`
+	Deferred    int `json:"replacements_deferred"`
+	Unplaceable int `json:"unplaceable"`
+	// DeclinedEverywhere is the part of Unplaceable whose every eligible
+	// worker declines it - an execution of it hung on each in turn, the
+	// Query Group's own bug (design 02 section 6.5) - and the first few by
+	// name, with how many workers declined each and the stage each hung in.
+	DeclinedEverywhere       int                        `json:"declined_everywhere"`
+	DeclinedEverywhereSample []DeclinedEverywhereSample `json:"declined_everywhere_sample,omitempty"`
 	// Bytes is the same round's byte-constraint planning (decision-020
 	// section 5.7), which runs before the count correction above.
 	Bytes *ByteConstraintFacts `json:"bytes,omitempty"`
@@ -1467,6 +1433,7 @@ type ByteConstraintFacts struct {
 	PoolUnknown    []string         `json:"pool_unknown,omitempty"`
 	Unread         int              `json:"unread"`
 	Unsettled      []string         `json:"unsettled,omitempty"`
+	UnreadEstimate uint64           `json:"unread_estimate_bytes"`
 	Overloaded     []string         `json:"overloaded,omitempty"`
 	Unplaceable    []string         `json:"unplaceable,omitempty"`
 	PlannedMoves   int              `json:"planned_moves"`
@@ -1607,6 +1574,46 @@ type AssignmentSweepFacts struct {
 	Changed     int `json:"changed"`
 }
 
+// MaxAssignmentAppliedSamples bounds the Query Groups an assignment_applied
+// line names in each list; the counts carry the rest.
+const MaxAssignmentAppliedSamples = 8
+
+// AssignmentAppliedFacts is one assignment change a Worker applied: the
+// Query Groups it released, the ones it took over and the ones it could not,
+// each counted, and the first MaxAssignmentAppliedSamples of each by name.
+// Truncated says some list was longer than its sample.
+type AssignmentAppliedFacts struct {
+	Lost           int      `json:"lost"`
+	Acquired       int      `json:"acquired"`
+	Failed         int      `json:"failed"`
+	LostSample     []string `json:"lost_sample,omitempty"`
+	AcquiredSample []string `json:"acquired_sample,omitempty"`
+	FailedSample   []string `json:"failed_sample,omitempty"`
+	Truncated      bool     `json:"truncated,omitempty"`
+}
+
+// Note adds one Query Group to the list its outcome names.
+func (facts *AssignmentAppliedFacts) Note(queryGroup string, lost, failed bool) {
+	count, sample := &facts.Acquired, &facts.AcquiredSample
+	switch {
+	case failed:
+		count, sample = &facts.Failed, &facts.FailedSample
+	case lost:
+		count, sample = &facts.Lost, &facts.LostSample
+	}
+	*count++
+	if len(*sample) < MaxAssignmentAppliedSamples {
+		*sample = append(*sample, queryGroup)
+	} else {
+		facts.Truncated = true
+	}
+}
+
+// Changed says the change moved anything at all.
+func (facts AssignmentAppliedFacts) Changed() bool {
+	return facts.Lost+facts.Acquired+facts.Failed > 0
+}
+
 // ViewStreamFacts describe one event of the view stream: a publication
 // (Event "published": Revision, Affected, and the four numbers of the
 // version it closed when Closed is set), or a session event (Event
@@ -1707,6 +1714,17 @@ type CursorAdvanceFacts struct {
 	// flight and an applied skip discarded with the pruned span; a conflict
 	// from the compare-and-set names it too. Zero when there was none.
 	InFlightSlot int64 `json:"in_flight_slot,omitempty"`
+	// Reason is the word the skip is recorded under in the Progress: why the
+	// Slots between From and To went unevaluated (SCHEDULE_PRUNED,
+	// PLAN_NOT_ACTIVE, SCHEDULE_REPAIRED, SCHEDULE_REOPENED). Every skip used to be read as a
+	// pruned one, so a span lost to a timeline that would not decode was
+	// filed under retention, and one where the Plan was simply not active
+	// was filed as a loss at all.
+	Reason string `json:"reason,omitempty"`
+	// RepairedAtUnixMilli is when the Control Leader rewrote the timeline
+	// the skip lands in, for a SCHEDULE_REPAIRED or SCHEDULE_REOPENED skip;
+	// zero otherwise.
+	RepairedAtUnixMilli int64 `json:"repaired_at_unix_ms,omitempty"`
 }
 
 // Closed vocabulary of cursor advance outcomes.
@@ -1815,48 +1833,27 @@ type DrainingQGFacts struct {
 	Truncated    bool               `json:"truncated"`
 }
 
-// SourceRefreshFacts carries one bounded source refresh outcome. Snapshot
+// SourceRefreshFacts carries what one refresh round settled. Snapshot
 // identity is diagnostic log context only; Prometheus consumes Status alone.
-// SourceRefreshFacts carries what one refresh round settled. Two different
-// objects are described here and they must never share a field: SnapshotRevision
-// is the publication this round produced, and ActivatedRevision is the
-// publication the fleet is executing, which is older whenever a round ends
-// without publishing. A round that publishes nothing has no publication to name,
-// so it fills the activated pair and leaves the published pair empty.
-//
-// The distinction is load-bearing rather than cosmetic. These reach the log under
-// one stage, so a reader who cannot tell the two apart from the record will read
-// a lagging activation as a stalled publication -- and the lag is normal while
-// the stall is not.
+// Every round that returns names the publication it produced or found
+// already published, and the fleet is brought to it by the same round.
 type SourceRefreshFacts struct {
-	Status            SourceRefreshStatus
-	ObservationID     string
-	SnapshotRevision  string
-	PublicationEpoch  uint64
-	ActivatedRevision string
-	ActivatedEpoch    uint64
-	// ActivationCaughtUp marks a round that published nothing but moved the
-	// activation to the publication an earlier round had published and not
-	// activated. The counts below then describe that move.
-	ActivationCaughtUp bool
-	// ActivationRebuilt marks a caught-up round that found no activation
-	// record at all and established one from the published Catalog, as a
-	// first activation does. Catching up moves an activation; rebuilding
-	// writes one where the store had none, which is what a store that came
-	// back without its keys leaves behind, and the two must not read alike.
-	ActivationRebuilt bool
-	// ActiveQueryGroups is a size, not a change. The counts below are a change,
-	// and the two are kept apart because a round that publishes nothing has no
-	// previous set to difference against: reporting a difference there can only
-	// restate the current set against itself and produce zeroes that look
-	// measured.
-	ActiveQueryGroups      int
-	ActiveQueryGroupsKnown bool
-	CountsKnown            bool
-	OldQueryGroups         int
-	NewQueryGroups         int
-	AddedQueryGroups       int
-	RetiredQueryGroups     int
+	Status           SourceRefreshStatus
+	ObservationID    string
+	SnapshotRevision string
+	PublicationEpoch uint64
+	// ActivationRebuilt marks a round that found no activation record at all
+	// beside a publication that was already latest when the round began, and
+	// established one from it, as a first activation does. That is what a
+	// store that came back without its keys leaves behind, and it must not
+	// read like the first activation of a fresh deployment, which finds no
+	// record either and has no publication before it.
+	ActivationRebuilt  bool
+	CountsKnown        bool
+	OldQueryGroups     int
+	NewQueryGroups     int
+	AddedQueryGroups   int
+	RetiredQueryGroups int
 	// CompiledStrategies and ReusedStrategies say how the round's Catalog was
 	// built: how many strategies went through the compiler and how many were
 	// taken from an earlier round's compilation of the same document. Their
@@ -1872,6 +1869,9 @@ type SourceRefreshFacts struct {
 	ReadMode       SourceReadMode
 	ReadReason     SourceReadReason
 	StrategiesRead int
+	// Build says whether the round built its Catalog or reused the previous
+	// round's (SourceRefreshBuilds); empty for a producer that does not say.
+	Build SourceRefreshBuild
 	// ChangeSignalPresent says the source offered a change signal this round;
 	// ChangeSignalAgeSeconds is how long ago its publisher moved it, by the
 	// reporting process's clock, and means nothing when not present.
@@ -1882,6 +1882,11 @@ type SourceRefreshFacts struct {
 	// from their facts; non-zero only across a change of the revision
 	// formula, when it is the whole population of retained Plans.
 	RetainedStaleRevisions int
+	// LastGoodIdentityChanged is how many last-good Plans the round's Catalog
+	// refused to retain because the source now states another tenant,
+	// business, space or global switch for the strategy; non-zero when a
+	// writer's numbering started over and a number names another strategy.
+	LastGoodIdentityChanged int
 }
 
 // SourceReadMode and SourceReadReason mirror the control plane's vocabulary
@@ -1929,6 +1934,19 @@ func ValidSourceReadOutcome(mode SourceReadMode, reason SourceReadReason) bool {
 	}
 	return false
 }
+
+// SourceRefreshBuild mirrors the control plane's word for whether a refresh
+// round built its Catalog or stood on the previous round's. Closed: the
+// metric is labelled by it.
+type SourceRefreshBuild string
+
+const (
+	SourceRefreshRebuilt SourceRefreshBuild = "rebuilt"
+	SourceRefreshReused  SourceRefreshBuild = "reused"
+)
+
+// SourceRefreshBuilds is every build word, one pre-created series each.
+var SourceRefreshBuilds = []SourceRefreshBuild{SourceRefreshRebuilt, SourceRefreshReused}
 
 // ControlSourceRole is what this process is to the control plane's source
 // refresh. Only the leader refreshes; a follower reads what the leader
@@ -2146,6 +2164,10 @@ type OpenAlertGateOutcome string
 const (
 	// OpenAlertGatePassed: the consumer holds an open alert; the envelope went.
 	OpenAlertGatePassed OpenAlertGateOutcome = "passed"
+	// OpenAlertGatePassedOneTimeClose: the one close of a group the target
+	// dropped, let through without the consumer's copy vouching for it; an
+	// orphan at the consumer where it holds no such alert.
+	OpenAlertGatePassedOneTimeClose OpenAlertGateOutcome = "passed_one_time_close"
 	// OpenAlertGateHeldNoOpenAlert: the consumer holds no alert on the series;
 	// nothing to resolve, no envelope.
 	OpenAlertGateHeldNoOpenAlert OpenAlertGateOutcome = "held_no_open_alert"
@@ -2165,7 +2187,7 @@ const (
 // OpenAlertGateOutcomes lists every outcome, for the metric that pre-creates
 // them all.
 var OpenAlertGateOutcomes = []OpenAlertGateOutcome{
-	OpenAlertGatePassed, OpenAlertGateHeldNoOpenAlert, OpenAlertGateHeldFingerprintUnknown,
+	OpenAlertGatePassed, OpenAlertGatePassedOneTimeClose, OpenAlertGateHeldNoOpenAlert, OpenAlertGateHeldFingerprintUnknown,
 	OpenAlertGateNotConfigured, OpenAlertGateProtocolNotGated,
 }
 
@@ -2233,6 +2255,11 @@ type Observation struct {
 	// event_acked observation. Nil when the write failed for any other
 	// reason, or did not fail.
 	OutputRejection *OutputRejectionFacts
+	// OutputFailureKind is which kind of failure a failed event_acked
+	// observation's write was, as the sink's error says by its type (one of
+	// OutputFailureKinds; OutputFailureKindOf). Empty when the write did
+	// not fail.
+	OutputFailureKind string
 	// OutputWrite is the sink's own count of the batch on an event_acked
 	// observation: messages handed to the client and events the protocol
 	// had no message for. Nil when the sink did not count -- and left
@@ -2248,6 +2275,9 @@ type Observation struct {
 	// OutputEventKinds is OutputWireFormats split by event kind, on the same
 	// event_acked observation.
 	OutputEventKinds OutputEventKindCounts
+	// NoDataEmission is what the write did with the no-data events in it, on
+	// the write's own observation; nil when it carried none.
+	NoDataEmission *NoDataEmissionFacts
 	// PlanSeriesMatched is how many PRIMARY series this Slot's query bound to
 	// the Plan an evaluation line is about, on every evaluation line of that
 	// Plan and on the completion-only line of a Plan bound to none. A Plan
@@ -2273,6 +2303,9 @@ type Observation struct {
 	// population -- on a running deployment, 61 of 62 objects sharing a label
 	// that could not say whose problem they were.
 	ProgressCompletionReason string
+	// ProgressCompletionScope is where that cause was found: the Plan, and the
+	// Level or the physical query. Nil when the completion carried no cause.
+	ProgressCompletionScope *CompletionScopeFacts
 	// HistoryCoverage says how far short of the required window the series in
 	// this run actually were. HISTORY_WARMING alone cannot tell a series two
 	// rounds into its life, which converges by itself, from a series whose
@@ -2294,44 +2327,51 @@ type Observation struct {
 	// the result -- the data's; one missing from a round whose query did not
 	// answer was never asked for -- this side's. Nil when the completion
 	// carried no primary fact (a Slot skipped without a query).
-	PrimaryInput          *PrimaryInputFacts
-	Dispatcher            *DispatcherFacts
-	DispatchTurnaway      *DispatchTurnawayFacts
-	PermitWait            *PermitWaitFacts
-	ExpiredRange          *ExpiredRangeFacts
-	Component             Component
-	Stage                 Stage
-	Result                Result
-	Operation             Operation
-	Direction             Direction
-	ReasonCode            ReasonCode
-	Duration              time.Duration
-	Counts                Counts
-	Trace                 TraceFields
-	Err                   error
-	CapacityBudget        CapacityBudget
-	CapacityRejection     *CapacityRejectionFacts
-	SlotBudgetUsage       *SlotBudgetUsageFacts
-	SlotTiming            *SlotTimingFacts
-	SourceKind            SourceKind
-	QueryPermit           *QueryPermitFacts
-	NoDataSlot            *NoDataSlotFacts
-	TargetResolution      *TargetResolutionFacts
-	NoDataStall           *NoDataStallFacts
-	NoDataAbsence         *NoDataAbsenceFacts
-	GapProgress           *GapProgressFacts
-	NoDataMemoryRefusal   *NoDataMemoryRefusalFacts
-	NoDataMemoryWrite     *NoDataMemoryWriteFacts
-	NoDataMemoryRead      *NoDataMemoryReadFacts
-	NoDataMemoryRenewal   *NoDataMemoryRenewalFacts
-	ExecutionEvidence     *ExecutionEvidenceFacts
-	FrozenStateRenewal    *FrozenStateRenewalFacts
-	SourceWithheld        *SourceWithheldFacts
-	NoDataCensus          *NoDataCensusFacts
-	SegmentContent        *SegmentContentFacts
-	RuntimeConfig         *RuntimeConfigFacts
-	QueryFailure          *QueryFailureFacts
-	QueryStatus           []QueryStatusFacts
+	PrimaryInput        *PrimaryInputFacts
+	Dispatcher          *DispatcherFacts
+	DispatchTurnaway    *DispatchTurnawayFacts
+	PermitWait          *PermitWaitFacts
+	ExpiredRange        *ExpiredRangeFacts
+	Component           Component
+	Stage               Stage
+	Result              Result
+	Operation           Operation
+	Direction           Direction
+	ReasonCode          ReasonCode
+	Duration            time.Duration
+	Counts              Counts
+	Trace               TraceFields
+	Err                 error
+	CapacityBudget      CapacityBudget
+	CapacityRejection   *CapacityRejectionFacts
+	SlotBudgetUsage     *SlotBudgetUsageFacts
+	SlotTiming          *SlotTimingFacts
+	SourceKind          SourceKind
+	QueryPermit         *QueryPermitFacts
+	NoDataSlot          *NoDataSlotFacts
+	TargetResolution    *TargetResolutionFacts
+	NoDataStall         *NoDataStallFacts
+	NoDataAbsence       *NoDataAbsenceFacts
+	GapProgress         *GapProgressFacts
+	NoDataMemoryRefusal *NoDataMemoryRefusalFacts
+	NoDataMemoryWrite   *NoDataMemoryWriteFacts
+	NoDataMemoryRead    *NoDataMemoryReadFacts
+	NoDataMemoryRenewal *NoDataMemoryRenewalFacts
+	ExecutionEvidence   *ExecutionEvidenceFacts
+	FrozenStateRenewal  *FrozenStateRenewalFacts
+	SourceWithheld      *SourceWithheldFacts
+	NoDataCensus        *NoDataCensusFacts
+	SegmentContent      *SegmentContentFacts
+	RuntimeConfig       *RuntimeConfigFacts
+	QueryFailure        *QueryFailureFacts
+	QueryStatus         []QueryStatusFacts
+	QueryCodec          []QueryCodecFacts
+	// QueryTruncation is every physical query of the completion whose
+	// answer may have been cut by the query service's terms cap.
+	QueryTruncation []QueryTruncationFacts
+	// QueryRanges is every primary physical query of the completion with the
+	// range it asked and accepts.
+	QueryRanges           []QueryRangeFacts
 	QueryUnavailable      []QueryUnavailableFacts
 	QueryTiming           *QueryTimingFacts
 	SlotReadiness         *SlotReadinessFacts
@@ -2343,6 +2383,7 @@ type Observation struct {
 	ActiveQGSet           *ActiveQGSetFacts
 	ScheduleCutover       *ScheduleCutoverFacts
 	ReplayExpiry          *ReplayExpiryFacts
+	ReplayTakeover        *ReplayTakeoverFacts
 	// HeldBy is what the round before this one did with the Query Group. It
 	// sits on the Observation rather than inside one cohort's fact bundle:
 	// it first shipped inside ShortPeriodCompletionFacts, and every Query
@@ -2360,21 +2401,33 @@ type Observation struct {
 	// before it ran, and the two want opposite investigations. Its own field
 	// rather than ProgressCompletionKind, which target flow reads to fill
 	// Completion on a line that already emits its own.
-	SlotCompletionKind   string
-	RangeDistance        *RangeDistanceFacts
-	RangeGate            *RangeGateFacts
-	SlotWait             *SlotWaitFacts
-	ObjectCatalog        *ObjectCatalogFacts
-	ObjectRead           *ObjectReadFacts
-	StateGenerationSkew  *StateGenerationSkewFacts
-	StateCarry           *StateCarryFacts
-	ActivationHold       *ActivationHoldFacts
-	LegacyMigration      *LegacyQGMigrationFacts
-	DrainingQG           *DrainingQGFacts
-	Rebalance            *RebalanceFacts
-	ControlReads         *ControlReadFacts
-	AssignmentIndex      *AssignmentIndexFacts
-	AssignmentSweep      *AssignmentSweepFacts
+	SlotCompletionKind  string
+	RangeDistance       *RangeDistanceFacts
+	RangeGate           *RangeGateFacts
+	SlotWait            *SlotWaitFacts
+	ObjectCatalog       *ObjectCatalogFacts
+	ObjectRead          *ObjectReadFacts
+	StateGenerationSkew *StateGenerationSkewFacts
+	StateCarry          *StateCarryFacts
+	ActivationHold      *ActivationHoldFacts
+	DrainingQG          *DrainingQGFacts
+	Rebalance           *RebalanceFacts
+	ControlReads        *ControlReadFacts
+	AssignmentIndex     *AssignmentIndexFacts
+	AssignmentSweep     *AssignmentSweepFacts
+	AssignmentApplied   *AssignmentAppliedFacts
+	// SlotDrain is one wait for in-flight Slots: a handover's, on
+	// handover_drained, or a stop's, on the shutdown line.
+	SlotDrain *SlotDrainFacts
+	// ExecutionHung is one execution past its deadline and grace declined,
+	// or returning, on execution_hung.
+	ExecutionHung *ExecutionHungFacts
+	// AwaitingView says a round the executable view refused was refused only
+	// because the view has not carried its Query Group yet while the Worker
+	// already holds its lease: the record arrives by renewal and the view by
+	// delta, at every Worker's start and on every move. A Query Group that
+	// stays there is counted on the gate's not_in_view gauge.
+	AwaitingView         bool
 	ViewStream           *ViewStreamFacts
 	CursorAdvance        *CursorAdvanceFacts
 	SourceRefresh        *SourceRefreshFacts
@@ -2389,23 +2442,7 @@ type Observation struct {
 	// reason. The line's own reason is the Plan's fold - one word for the
 	// worst Level - so a Level suppressed by its effective time or held by a
 	// warming window had no name on the line unless it was that word.
-	LevelOutcomes []LevelOutcomeFact
-	// Shardability is the catalog counted by whether a value-list split
-	// could be expressed at all, once per publication.
-	Shardability *ShardabilityFacts
-	// ShardQuery is whether that object's own query could express the split
-	// the planner decided on. Beside SplitPlan and not folded into it: one
-	// says whether the pieces would be even, the other whether the strategy
-	// can be cut at all, and a strategy can be worth splitting and
-	// impossible to express.
-	ShardQuery *ShardQueryFacts
-	// SplitPlan is one object's split decision as the Leader's dry run
-	// reached it; SplitRound is what that round looked at. Two structures
-	// because they have two subjects - one object, and one round.
-	SplitPlan  *SplitPlanFacts
-	SplitRound *SplitRoundFacts
-	// DimensionCensus is one candidate Plan's census as this Slot wrote it.
-	DimensionCensus    *DimensionCensusFacts
+	LevelOutcomes      []LevelOutcomeFact
 	ControlSourceRound *ControlSourceRoundFacts
 	normalized         bool
 	stageReasonBucket  bool
@@ -2448,10 +2485,17 @@ func Multi(observers ...Observer) Observer {
 	return result
 }
 
+// Observe gives every observer the observation on its own: a panic in one
+// is counted under its name (observer_panic.go) and the rest still receive
+// it.
 func (m multiObserver) Observe(ctx context.Context, observation Observation) {
 	observation = NormalizeObservation(observation)
 	for _, observer := range m {
-		observer.Observe(ctx, observation)
+		name, target := ObserverUnnamed, observer
+		if named, ok := observer.(namedObserver); ok {
+			name, target = named.name, named.observer
+		}
+		observeIsolated(ctx, name, target, &observation)
 	}
 }
 
@@ -2490,10 +2534,10 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.StateApplyChunk = normalizeStateApplyChunk(observation)
 	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.QueryFailure)
 	observation.QueryStatus = normalizeQueryStatus(observation.Component, observation.Stage, observation.QueryStatus)
+	observation.QueryCodec = normalizeQueryCodec(observation.Component, observation.Stage, observation.QueryCodec)
+	observation.QueryTruncation = normalizeQueryTruncation(observation.QueryTruncation)
 	observation.QueryUnavailable = normalizeQueryUnavailable(observation.Component, observation.Stage, observation.QueryUnavailable)
 	observation.SlotReadiness = normalizeSlotReadiness(observation.SlotReadiness)
-	observation.DimensionCensus = normalizeDimensionCensusFacts(observation.DimensionCensus)
-	observation.SplitPlan = normalizeSplitPlanFacts(observation.SplitPlan)
 	if observation.RuntimeConfig != nil {
 		if observation.Component != ComponentRuntime || observation.Stage != StageConfigLoaded {
 			observation.RuntimeConfig = nil
@@ -2509,7 +2553,6 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.StateGenerationSkew = normalizeStateGenerationSkewFacts(observation.StateGenerationSkew)
 	observation.StateCarry = normalizeStateCarryFacts(observation.StateCarry)
 	observation.ActivationHold = normalizeActivationHoldFacts(observation.ActivationHold)
-	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
 	observation.Rebalance = normalizeRebalanceFacts(observation.Rebalance)
 	observation.ControlReads = normalizeControlReadFacts(observation.ControlReads)
@@ -2667,7 +2710,7 @@ func normalizeSourceRefreshFacts(component Component, stage Stage, facts *Source
 
 func validSourceRefreshStatus(status SourceRefreshStatus) bool {
 	switch status {
-	case SourceRefreshPending, SourceRefreshPublished, SourceRefreshUnchanged, SourceRefreshConflict:
+	case SourceRefreshPublished, SourceRefreshUnchanged, SourceRefreshConflict:
 		return true
 	default:
 		return false
@@ -2676,7 +2719,7 @@ func validSourceRefreshStatus(status SourceRefreshStatus) bool {
 
 func AllSourceRefreshStatuses() []SourceRefreshStatus {
 	return []SourceRefreshStatus{
-		SourceRefreshPending, SourceRefreshPublished, SourceRefreshUnchanged, SourceRefreshConflict,
+		SourceRefreshPublished, SourceRefreshUnchanged, SourceRefreshConflict,
 	}
 }
 
@@ -2738,7 +2781,7 @@ func normalizeOpenAlertGateFacts(observation Observation) []OpenAlertGateFact {
 			continue
 		}
 		switch fact.Outcome {
-		case OpenAlertGatePassed, OpenAlertGateHeldNoOpenAlert, OpenAlertGateHeldFingerprintUnknown,
+		case OpenAlertGatePassed, OpenAlertGatePassedOneTimeClose, OpenAlertGateHeldNoOpenAlert, OpenAlertGateHeldFingerprintUnknown,
 			OpenAlertGateNotConfigured, OpenAlertGateProtocolNotGated:
 			facts = append(facts, fact)
 		}
@@ -2889,26 +2932,6 @@ func normalizeDrainingQGFacts(facts *DrainingQGFacts) *DrainingQGFacts {
 // SchedulePruneSkipReasons is the closed vocabulary of ScheduleCutoverFacts.PrunesSkipped.
 var SchedulePruneSkipReasons = []string{"progress_unavailable", "progress_missing"}
 
-// The outcomes a state preflight's second pass splits into, as the closed set
-// the counter pre-creates. Only OldRepresentation ends; NoRecordYet never
-// does; the three corrupt ones should be zero and are read to confirm it.
-//
-// Pre-created because this family is read for its zeros, and an outcome nobody
-// pre-created is absent -- which reads the same as zero and means the opposite.
-const (
-	EnvelopePassOldRepresentation = "old_representation"
-	EnvelopePassNoRecordYet       = "no_record_yet"
-	EnvelopePassEnvelopeCorrupt   = "envelope_corrupt"
-	EnvelopePassFrameCorruptSaved = "frame_corrupt_rescued"
-	EnvelopePassFrameCorruptLost  = "frame_corrupt_lost"
-	// EnvelopePassUnclassified is a shape the split does not know: unreachable
-	// today, carried so that a sixth one is counted rather than dropped.
-	EnvelopePassUnclassified = "unclassified"
-)
-
-var EnvelopePassOutcomes = []string{EnvelopePassOldRepresentation, EnvelopePassNoRecordYet,
-	EnvelopePassEnvelopeCorrupt, EnvelopePassFrameCorruptSaved, EnvelopePassFrameCorruptLost, EnvelopePassUnclassified}
-
 func normalizeScheduleCutoverFacts(facts *ScheduleCutoverFacts) *ScheduleCutoverFacts {
 	if facts == nil {
 		return nil
@@ -3039,30 +3062,6 @@ func normalizeActiveQGSetFacts(facts *ActiveQGSetFacts) *ActiveQGSetFacts {
 	}
 	if normalized.ObjectBytes < 0 {
 		normalized.ObjectBytes = 0
-	}
-	if normalized.Duration < 0 {
-		normalized.Duration = 0
-	}
-	return &normalized
-}
-
-func normalizeLegacyQGMigrationFacts(facts *LegacyQGMigrationFacts) *LegacyQGMigrationFacts {
-	if facts == nil {
-		return nil
-	}
-	normalized := *facts
-	switch normalized.Result {
-	case "success", "fail_closed", "canceled":
-	default:
-		normalized.Result = "fail_closed"
-	}
-	switch normalized.ReasonClass {
-	case "none", "config", "unsupported", "ownership", "dependency", "data_quality", "capacity", "state_progress", "output", "validation", "contract":
-	default:
-		normalized.ReasonClass = "contract"
-	}
-	if normalized.ScanKeys < 0 {
-		normalized.ScanKeys = 0
 	}
 	if normalized.Duration < 0 {
 		normalized.Duration = 0
@@ -3258,28 +3257,10 @@ func NormalizeReason(reason ReasonCode, result Result) ReasonCode {
 		}
 		return ReasonNotReported
 	}
-	if _, ok := commonReasonSet[reason]; ok {
-		return reason
-	}
-	if _, ok := resourceReasonSet[reason]; ok {
-		return reason
-	}
-	if _, ok := contractObservationReasonSet[string(reason)]; ok {
-		return reason
-	}
-	if _, ok := activationFailureReasonSet[reason]; ok {
-		return reason
-	}
-	if _, ok := viewStreamReasonSet[reason]; ok {
-		return reason
-	}
-	if _, ok := schedulerDecisionReasonSet[reason]; ok {
-		return reason
-	}
-	if _, ok := effectiveMaintenanceReasonSet[reason]; ok {
-		return reason
-	}
-	if _, ok := absentCloseReasonSet[reason]; ok {
+	// One catalogue for what a reason may be and for what the log limiter
+	// keeps a bucket for: a word normalized here but missing there was
+	// refused by the limiter and its lines never written.
+	if _, ok := logReasonSet[reason]; ok {
 		return reason
 	}
 	return ReasonOther
@@ -3332,14 +3313,6 @@ func AllStages() []Stage {
 	return stages
 }
 
-func AllMetricStages() []Stage {
-	stages := make([]Stage, 0, len(metricComponentStages))
-	for _, pair := range metricComponentStages {
-		stages = append(stages, pair.Stage)
-	}
-	return stages
-}
-
 func AllResults() []Result {
 	return append([]Result(nil), allResults...)
 }
@@ -3362,10 +3335,6 @@ func AllLogReasons() []ReasonCode {
 	return reasons
 }
 
-func AllOperations() []Operation {
-	return append([]Operation(nil), allOperations...)
-}
-
 func AllMetricOperations() []Operation {
 	return append([]Operation(nil), metricOperations...)
 }
@@ -3378,10 +3347,6 @@ func NormalizeMetricOperation(operation Operation) Operation {
 		return operation
 	}
 	return OperationOther
-}
-
-func AllDirections() []Direction {
-	return append([]Direction(nil), allDirections...)
 }
 
 func normalizeCounts(counts Counts) Counts {
@@ -3401,7 +3366,6 @@ var metricComponentStages = []ComponentStage{
 	{ComponentRuntime, StageStartup}, {ComponentRuntime, StageConfigLoaded},
 	{ComponentRuntime, StageEffectiveTimeMaintenance},
 	{ComponentRuntime, StageShutdown}, {ComponentRuntime, StageFatal},
-	{ComponentRuntime, StageRestartRecovered},
 	// Registered on the generic catalog rather than the phase-two one because
 	// this has to be answerable from metrics alone: when the snapshot channel
 	// itself is broken, the aggregated view can only report that a replica is
@@ -3412,21 +3376,9 @@ var metricComponentStages = []ComponentStage{
 	// learn from metrics whether it was applied, and log collection is
 	// configured per environment while metrics are always there.
 	{ComponentRuntime, StageObservationWindow},
-	{ComponentConsumer, StageKafkaAssigned}, {ComponentConsumer, StageExecutionReceived},
-	{ComponentConsumer, StageOffsetGap}, {ComponentConsumer, StageOffsetMarked},
-	{ComponentAdapter, StageMessageDecoded}, {ComponentAdapter, StageRecordBatchReady},
-	{ComponentAdapter, StageRejected},
-	{ComponentCompiler, StagePlanCompiled},
-	{ComponentState, StageDependencyLoaded}, {ComponentState, StageStateCommitted},
-	{ComponentDetect, StageDetectCompleted},
-	{ComponentTrigger, StageTriggerCompleted},
-	{ComponentOutput, StageOutputACKed},
-	{ComponentCoverage, StageCoverageCompleted}, {ComponentCoverage, StageCoverageGap},
-	{ComponentResource, StageResourceSoft}, {ComponentResource, StageResourceHard},
-	{ComponentResource, StageResourceResumed},
-	{ComponentPythonProducer, StagePythonSource}, {ComponentPythonProducer, StagePythonBuilt},
-	{ComponentPythonProducer, StagePythonEnqueued}, {ComponentPythonProducer, StagePythonPublished},
-	{ComponentPythonProducer, StagePythonACKed}, {ComponentPythonProducer, StagePythonDropped},
+	// A Worker refusing work for capacity: the one resource stage still
+	// emitted.
+	{ComponentResource, StageResourceHard},
 	{ComponentOther, StageOther},
 }
 
@@ -3454,7 +3406,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	// schedule_cutover_total) were counting them all along.
 	{ComponentControlPlane, StageObjectCatalog}, {ComponentControlPlane, StageObjectRead},
 	{ComponentControlPlane, StageScheduleCutover},
-	{ComponentControlPlane, StageActiveQGSet}, {ComponentControlPlane, StageLegacyQGMigration},
+	{ComponentControlPlane, StageActiveQGSet},
 	{ComponentControlPlane, StageDrainingQGReconciled},
 	{ComponentControlPlane, StageFrozenPlanGeneration}, {ComponentControlPlane, StageActivationHold},
 	{ComponentControlPlane, StageStateCarryDecided}, {ComponentState, StageStateCarried},
@@ -3462,17 +3414,20 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentOwnership, StageRebalancePlanned},
 	{ComponentOwnership, StageControlReadsSpent},
 	{ComponentOwnership, StageAssignmentIndexWritten}, {ComponentOwnership, StageAssignmentIndexRead},
-	{ComponentOwnership, StageAssignmentSwept},
+	{ComponentOwnership, StageAssignmentSwept}, {ComponentOwnership, StageAssignmentApplied},
+	{ComponentOwnership, StageHandoverDrained},
 	{ComponentOwnership, StageViewPublished}, {ComponentOwnership, StageViewSession}, {ComponentOwnership, StageViewInstalled},
 	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
 	{ComponentScheduler, StageScheduleDue}, {ComponentScheduler, StageSlotStarted},
 	{ComponentScheduler, StageSlotCompleted}, {ComponentScheduler, StageQueryAdmission},
+	{ComponentRuntime, StageAuthStore},
 	{ComponentScheduler, StageQueryCooldown}, {ComponentScheduler, StageRunnerReturned}, {ComponentScheduler, StageDispatcherSnapshot}, {ComponentScheduler, StageQueryPermitWait},
 	{ComponentScheduler, StageExpiredRangeReturned},
-	{ComponentScheduler, StageDispatchTurnaway},
+	{ComponentScheduler, StageDispatchTurnaway}, {ComponentScheduler, StageExecutionHung},
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
 	{ComponentScheduler, StageScheduleCursorAdvanced}, {ComponentScheduler, StageReplayExpired},
+	{ComponentScheduler, StageReplayTakeover},
 	{ComponentScheduler, StageRangeDistanceExpired},
 	{ComponentScheduler, StageRangeGateDecided},
 	{ComponentScheduler, StageSlotWait},
@@ -3486,8 +3441,6 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentAccess, StageTargetResolved},
 	{ComponentProgress, StageExecutionEvidenceWritten},
 	{ComponentState, StageNoDataMemoryRead},
-	{ComponentState, StageDimensionCensus},
-	{ComponentControlPlane, StageSplitPlanned},
 	{ComponentState, StageNoDataMemoryRenewed},
 	{ComponentState, StageFrozenStateRenewed},
 	{ComponentState, StageNoDataMemoryRefused},
@@ -3496,7 +3449,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageNoDataSuspended},
 	{ComponentState, StageSideEffectAdmission}, {ComponentState, StageGapGuardCommitted},
 	{ComponentState, StageMutationCompared}, {ComponentState, StageStateAdmission},
-	{ComponentState, StageStateApplied},
+	{ComponentState, StageStateApplied}, {ComponentState, StageOutputUnapplied},
 	{ComponentOutput, StageEventACKed},
 	{ComponentProgress, StageProgressCommitted},
 }
@@ -3518,7 +3471,7 @@ var metricOperations = []Operation{
 	OperationSample, OperationTransition, OperationOther,
 }
 
-var phaseTwoOperations = []Operation{OperationNormal, OperationRetry, OperationReplay, OperationProbe}
+var phaseTwoOperations = []Operation{OperationNormal, OperationRetry, OperationReplay, OperationProbe, OperationSupplement}
 var allOperations = append(append([]Operation(nil), metricOperations...), phaseTwoOperations...)
 
 var allDirections = []Direction{DirectionInput, DirectionOutput, DirectionInternal, DirectionOther}
@@ -3568,6 +3521,18 @@ const (
 	// replica starts - and not a store failure, which is what "unavailable"
 	// read as when the two were one word.
 	EffectiveCloseViewNotExecutable ReasonCode = "view_not_executable"
+	// EffectiveCloseCalendarDeletionUnsettled is a close held back for a
+	// Plan that reads a calendar deleted before the deletion settled: the
+	// calendar has not read deleted in every snapshot that names it for
+	// long enough, or every calendar this replica's Plans name read deleted
+	// at once, recently - the writer's calendar source gone, not a
+	// deletion. One per Plan with alerts to close, per step.
+	EffectiveCloseCalendarDeletionUnsettled ReasonCode = "calendar_deletion_unsettled"
+	// EffectiveCloseBoundaryActive is a Plan the recheck just before a send
+	// found active again: inactive at the step's first look, active by the
+	// time its batch was ready. The batch is not sent, and the step goes on
+	// to the Query Group's next Plan.
+	EffectiveCloseBoundaryActive ReasonCode = "close_boundary_active"
 )
 
 // EffectiveCloseOutcomes is every outcome, for the metric to pre-create each
@@ -3576,7 +3541,7 @@ var EffectiveCloseOutcomes = []ReasonCode{
 	EffectiveCloseAcked, EffectiveClosePrecheckFailed, EffectiveCloseSendFailed,
 	EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
 	EffectiveCloseEffectiveTimeUnknown, EffectiveCloseLegacyUnavailable, EffectiveCloseUnavailable, EffectiveCloseUnsupportedRunner,
-	EffectiveCloseViewNotExecutable,
+	EffectiveCloseViewNotExecutable, EffectiveCloseCalendarDeletionUnsettled, EffectiveCloseBoundaryActive,
 }
 
 // Maintenance details are bounded log reasons, not new metric label dimensions.
@@ -3679,7 +3644,11 @@ var SchedulerDecisionReasons = func() []ReasonCode {
 var allCommonReasons = joinReasons(unclassifiedReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 var allResourceReasons = joinReasons(
 	unclassifiedReasons, resourceOnlyReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
-var allLogReasons = joinReasons(unclassifiedReasons, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, effectiveMaintenanceReasons, AbsentCloseReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+
+// allLogReasons is every reason NormalizeReason can return: the limiter keeps
+// a bucket for each, and refuses a reason it has none for, so a catalogue
+// NormalizeReason accepts and this list leaves out has its lines dropped.
+var allLogReasons = joinReasons(unclassifiedReasons, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, effectiveMaintenanceReasons, AbsentCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
@@ -3687,6 +3656,7 @@ var resultSet = makeResultSet(allResults)
 var operationSet = makeOperationSet(allOperations)
 var metricOperationSet = makeOperationSet(metricOperations)
 var directionSet = makeDirectionSet(allDirections)
+var logReasonSet = makeReasonSet(AllLogReasons())
 var commonReasonSet = makeReasonSet(joinReasons(unclassifiedReasons, []ReasonCode{ReasonStateAlreadyAppliedBeforeEvaluation}))
 var resourceReasonSet = makeReasonSet(resourceOnlyReasons)
 var activationFailureReasonSet = makeReasonSet(activationFailureReasons)
@@ -3788,38 +3758,6 @@ func sortedUniqueReasons(reasons []ReasonCode) []ReasonCode {
 		result = result[:8]
 	}
 	return result
-}
-
-func NormalizeMetricReasons(component Component, reasons []ReasonCode) []ReasonCode {
-	if len(reasons) == 0 {
-		return nil
-	}
-	mapped := make([]ReasonCode, 0, len(reasons))
-	for _, reason := range reasons {
-		mapped = append(mapped, NormalizeMetricReason(component, reason, ResultDegraded))
-	}
-	return sortedUniqueReasons(mapped)
-}
-
-// NormalizeHealthMetricReasons maps health reasons to the fixed Prometheus
-// catalog. Health is a cross-component snapshot, not the Resource component.
-func NormalizeHealthMetricReasons(reasons []ReasonCode) []ReasonCode {
-	if len(reasons) == 0 {
-		return nil
-	}
-	mapped := make([]ReasonCode, 0, len(reasons))
-	known := makeReasonSet(allResourceReasons)
-	for _, reason := range reasons {
-		reason = NormalizeReason(reason, ResultDegraded)
-		if metricReason, ok := contractObservationMetricReasonByCode[string(reason)]; ok {
-			reason = metricReason
-		}
-		if _, ok := known[reason]; !ok {
-			reason = ReasonOther
-		}
-		mapped = append(mapped, reason)
-	}
-	return sortedUniqueReasons(mapped)
 }
 
 // ObserveSlotWait reports one blocking wait inside a Slot attempt. The wait

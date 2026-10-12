@@ -12,6 +12,8 @@ package fleet
 import (
 	"strings"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // Blocked is the one shape every failure on a row is read in: which step of
@@ -51,6 +53,14 @@ type Blocked struct {
 	// Effect is what the failure did to the detection.
 	Retrying bool   `json:"retrying"`
 	Effect   Effect `json:"effect"`
+	// Timing is this round's failed query read against its budget, when it
+	// measured it: the settling wait by design, how late after it the query
+	// began, what was left to its deadline then, and what it used. It is
+	// what the Dependency above cannot say for a timeout: a backend slow to
+	// answer uses its whole budget having begun on time, a query begun late
+	// had little left, and a budget short to begin with is small in all
+	// three added together. See observability.QueryTiming.
+	Timing *observability.QueryTiming `json:"timing,omitempty"`
 }
 
 // Stage is the step of the work a failure stopped at.
@@ -177,6 +187,14 @@ var failureFacets = map[string]facets{
 	// what decided it was the active set - which Plans this deployment was
 	// told to run.
 	"PLAN_NOT_ACTIVE": {StageSchedule, ClassConfig, DependencyNone},
+	// The scheduler's span again, lost because the timeline stopped decoding
+	// and was rewritten: CONTRACT, as the unreadable timeline itself is -
+	// this deployment could not read what it had written - and not retention.
+	"SCHEDULE_REPAIRED": {StageSchedule, ClassContract, DependencyNone},
+	// And lost because the timeline's key was gone from the store and a new
+	// one was opened: the store did not have what this deployment had
+	// written, so the word names it, as ACTIVATION_MISSING does.
+	"SCHEDULE_REOPENED": {StageSchedule, ClassUnavailable, DependencyRedis},
 
 	// The stores and infrastructure this deployment depends on.
 	"REDIS_UNAVAILABLE": {StageCommit, ClassUnavailable, DependencyRedis},
@@ -225,6 +243,7 @@ var failureFacets = map[string]facets{
 
 	// This deployment in conflict with what it persisted.
 	"STATE_CORRUPT":              {StageCommit, ClassContract, DependencyNone},
+	"SNAPSHOT_CORRUPT":           {StageConfig, ClassContract, DependencyNone},
 	"STATE_SCHEMA_UNSUPPORTED":   {StageCommit, ClassContract, DependencyNone},
 	"AUDIT_DROP":                 {StageCommit, ClassContract, DependencyNone},
 	"BACKEND_CAPABILITY_MISSING": {StageCommit, ClassContract, DependencyNone},
@@ -282,10 +301,12 @@ var failureFacets = map[string]facets{
 
 	// The control plane did not hand the runner something to run.
 	"BLOCKED_EXACT_SET_UNAVAILABLE": {StageConfig, ClassUnavailable, ""},
-	"SLOT_SOURCE_RETRY":             {StageConfig, ClassUnavailable, ""},
-	"VIEW_NOT_EXECUTABLE":           {StageConfig, ClassUnavailable, ""},
-	"PROGRESS_BEGIN_FAILED":         {StageSchedule, ClassUnavailable, ""},
-	"PROGRESS_BEGIN_REJECTED":       {StageSchedule, ClassRefused, DependencyNone},
+	// The timeline is there and does not decode: the same bytes every round.
+	"SCHEDULE_UNREADABLE":     {StageConfig, ClassContract, DependencyNone},
+	"SLOT_SOURCE_RETRY":       {StageConfig, ClassUnavailable, ""},
+	"VIEW_NOT_EXECUTABLE":     {StageConfig, ClassUnavailable, ""},
+	"PROGRESS_BEGIN_FAILED":   {StageSchedule, ClassUnavailable, ""},
+	"PROGRESS_BEGIN_REJECTED": {StageSchedule, ClassRefused, DependencyNone},
 
 	// Budgets this deployment allocates itself.
 	"EXECUTION_BUDGET_EXHAUSTED": {StageEvaluate, ClassCapacity, DependencyNone},
@@ -315,7 +336,12 @@ var failureFacets = map[string]facets{
 	// or a partial answer does not say where the time went.
 	"QUERY_TIMEOUT":     {StageQuery, ClassTimeout, ""},
 	"QUERY_UNAVAILABLE": {StageQuery, ClassUnavailable, ""},
-	"QUERY_PARTIAL":     {StageQuery, ClassUnavailable, ""},
+	// Answered and refused: the table or field does not route in the space.
+	"QUERY_TARGET_MISSING": {StageQuery, ClassRefused, ""},
+	// The answer came back bucketed on the aggregation grid, which a Plan
+	// detected every step cannot use: refused for the strategy's step.
+	"DETECT_INTERVAL_STORAGE_NOT_SLIDING": {StageQuery, ClassRefused, ""},
+	"QUERY_PARTIAL":                       {StageQuery, ClassUnavailable, ""},
 	// The backend answered, completely, with nothing: the dependency data is
 	// not there. Not unavailable -- the query succeeded -- and where the data
 	// went is not this deployment's to say.
@@ -327,6 +353,10 @@ var failureFacets = map[string]facets{
 	// The window: the detection ran and could not decide.
 	"HISTORY_GAPPED":  {StageEvaluate, ClassUnlocated, ""},
 	"HISTORY_WARMING": {StageEvaluate, ClassUnlocated, ""},
+	// A Level held by a guard an earlier round's gap opened, on a round that
+	// answered whole: where it stops is evaluation, and what holds it is the
+	// guard's warmup, not a dependency.
+	"GAP_GUARD_WARMING": {StageEvaluate, ClassUnlocated, ""},
 
 	// The strategy's own configuration.
 	"CONFIG_DRIFT":            {StageConfig, ClassConfig, DependencyNone},
@@ -348,6 +378,17 @@ var failureFacets = map[string]facets{
 	"EFFECTIVE_TIME_CALENDAR_IDENTITY_INVALID": {StageConfig, ClassConfig, DependencyControlSource},
 	"EFFECTIVE_TIME_CALENDAR_DUPLICATE":        {StageConfig, ClassConfig, DependencyControlSource},
 	"EFFECTIVE_TIME_CALENDAR_ITEMS_MISSING":    {StageConfig, ClassConfig, DependencyControlSource},
+	// A calendar item or the business timezone in the snapshot that does not
+	// parse: arrived from the control source, and readable, and wrong.
+	"EFFECTIVE_TIME_ITEM_DUPLICATE":       {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_ITEM_INVALID":         {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_ITEM_TIME_INVALID":    {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_TIME_KIND_INVALID":    {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_TIMEZONE_INVALID":     {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_REPEAT_INVALID":       {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_REPEAT_LIST_INVALID":  {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_REPEAT_EVERY_INVALID": {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_REPEAT_UNTIL_INVALID": {StageConfig, ClassConfig, DependencyControlSource},
 	// A terminal this build cannot classify. Config's stage, because it is a
 	// definition this build refused; the compiler's own code travels with the
 	// disposition for the reader who has to find out which part.
@@ -424,7 +465,9 @@ var dependencySignatures = []struct {
 // no failure: a normal object, or one whose data stopped, which is not
 // this deployment stuck anywhere.
 func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
-	if anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound || anomaly.Kind == KindRetainedShareApproaching {
+	if anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound || anomaly.Kind == KindQuiet || anomaly.Kind == KindAnswerTruncated || anomaly.Kind == KindRetainedShareApproaching ||
+		anomaly.Kind == KindReadBeforeComplete || anomaly.Kind == KindReadHeld || anomaly.Kind == KindLatePastRound ||
+		anomaly.Kind == KindLateSeriesMissed {
 		return nil
 	}
 	// A span every Slot of which an earlier attempt executed, or an object
@@ -447,6 +490,12 @@ func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
 			blocked.Stage, blocked.Class = reading.stage, reading.class
 			if reading.dependency != "" {
 				blocked.Dependency, blocked.DependencyEvidence = reading.dependency, dependencyByCode
+			}
+			// The view's wait names no dependency: the view is the
+			// deployment's own control plane, and nothing it depends on
+			// failed.
+			if anomaly.AwaitingView != nil {
+				blocked.Dependency, blocked.DependencyEvidence = DependencyNone, dependencyByCode
 			}
 			break
 		}
@@ -514,32 +563,43 @@ func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
 			blocked.Code = anomaly.Failure.Code
 		}
 	}
-	// A failure writing the round's events is read by its words, not by its
+	// A round that failed on a query whose deadline passed while this
+	// deployment was still delivering what had arrived ran out of time on
+	// this side: a timeout at the query step, with no dependency named - not
+	// the unlocated step its OTHER code gives, nor the configuration a
+	// source error reads as.
+	if deliveryTimedOutThisRound(anomaly) {
+		blocked.Stage, blocked.Class = StageQuery, ClassTimeout
+		blocked.Dependency, blocked.DependencyEvidence = DependencyNone, dependencyByCode
+	}
+	// A failure writing the round's events is read by its kind, not by its
 	// code: the code says the ACK did not come and nothing about why. The
-	// broker not answering is the dependency's, unavailable; the client
-	// refusing to send is this deployment's, a contract, and no dependency
-	// is named for it -- pointing the reader at the broker for a refusal the
-	// client decided before any byte left is the reading that lost an
-	// afternoon. Words nobody has a signature for stay unlocated, on this
-	// deployment's side of the page.
+	// broker not answering, or answering no, is Kafka's, unavailable; the
+	// snapshot store is Redis's; the client refusing to send is this
+	// deployment's, a contract, and no dependency is named for it --
+	// pointing the reader at the broker for a refusal the client decided
+	// before any byte left is the reading that lost an afternoon. A failure
+	// without a kind stays unlocated, on this deployment's side of the page.
 	if failureThisRound(anomaly) {
 		if failure, kind, isOutput := outputFailureOf(anomaly); isOutput {
-			blocked.DependencyEvidence = kind
+			// A code the sink named itself without a kind - the lease too
+			// short to start a batch - is read by its code alone: no
+			// evidence word claims more than the code does.
+			if !outputNamedCodes[failure.Code] || kind != observability.OutputFailureUnknown {
+				blocked.DependencyEvidence = kind
+			}
 			if blocked.Code == "" {
 				blocked.Code = failure.Code
 			}
 			// A code the sink named itself already has its reading in the
-			// table -- the two refusal words say commit, no dependency, and
-			// which class -- and the words only add which kind. A failure
-			// under the shared code is read here, by its words.
-			if !outputRejectionCodes[failure.Code] {
+			// table -- the refusal words and the lease say commit, the
+			// dependency and the class -- and the kind only adds which one.
+			// A failure under the shared code is read here, by its kind.
+			if !outputNamedCodes[failure.Code] {
 				blocked.Stage = StageCommit
-				switch kind {
-				case OutputFailureClientRejected:
-					blocked.Dependency, blocked.Class = DependencyNone, ClassContract
-				case OutputFailureBrokerError:
-					blocked.Dependency, blocked.Class = DependencyKafka, ClassUnavailable
-				default:
+				if reading, known := outputFailureReading[kind]; known {
+					blocked.Dependency, blocked.Class = reading.dependency, reading.class
+				} else {
 					blocked.Dependency, blocked.Class = DependencyUnlocated, ClassUnlocated
 				}
 			}
@@ -607,6 +667,12 @@ func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
 		blocked.Text = anomaly.Failure.Detail
 	case failureCurrent && anomaly.Failure.Text != "":
 		blocked.Text = anomaly.Failure.Text
+	}
+	// Only this round's failure: a kept failure's timing is an earlier
+	// round's, and read as this one's it would time the wrong query.
+	if failureCurrent && anomaly.Failure.Timing != nil {
+		timing := *anomaly.Failure.Timing
+		blocked.Timing = &timing
 	}
 	if !latest.IsZero() {
 		at := latest

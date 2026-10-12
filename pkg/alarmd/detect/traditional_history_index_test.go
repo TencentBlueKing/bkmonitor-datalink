@@ -12,7 +12,7 @@ import (
 func TestTraditionalContinuousHistoryIndexKeepsExactAndDuplicateSemantics(t *testing.T) {
 	config := map[string]any{"ceil": 20, "ceil_interval": 32, "fetch_type": "avg", "data_unit": "short", "algorithm_unit": "", "precision": 6}
 	plan := compileNamedInputPlan(t, strategy.DetectorKindAdvancedRingRatio, config, strategy.AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}})
-	algorithm := plan.Levels()[0].Algorithms()[0]
+	algorithm := plan.Levels().At(0).Algorithms().At(0)
 	for _, duplicate := range []bool{false, true} {
 		// Provider order need not match increasing offset order. Include an
 		// unrelated point and ensure it cannot affect the average.

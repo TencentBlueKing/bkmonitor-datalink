@@ -46,6 +46,7 @@ func TestProductionPhaseTwoWorkerAcknowledgesTheActivationItExecutesBy(t *testin
 		t.Fatal(err)
 	}
 	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"unused","is_partial":false,"result_table_id":[]}`))
 	}))
 	defer uqServer.Close()
@@ -66,9 +67,9 @@ func TestProductionPhaseTwoWorkerAcknowledgesTheActivationItExecutesBy(t *testin
 		},
 		phaseTwoProductionExternalDependencies{
 			Now: now, HTTPClient: uqServer.Client(),
-			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+			PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 				return &recordingPhaseTwoEventSink{}, nil
-			},
+			}),
 		},
 	)
 	if err != nil {

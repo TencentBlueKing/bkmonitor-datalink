@@ -13,23 +13,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
-const (
-	estimatedSeriesBytes    uint64 = 192
-	estimatedRecordBytes    uint64 = 160
-	estimatedProjectedBytes uint64 = 192
-	estimatedLevelFactBytes uint64 = 256
-)
+const ()
 
 type Evaluator struct {
 	registry *Registry
-	observer Observer
 }
 
 // boundPlan is a compiled Plan with its detectors and algorithms resolved.
@@ -61,11 +54,11 @@ type boundAlgorithm struct {
 	named    namedInputDetector
 }
 
-func NewEvaluator(registry *Registry, observer Observer) (*Evaluator, error) {
+func NewEvaluator(registry *Registry) (*Evaluator, error) {
 	if registry == nil || len(registry.detectors) == 0 {
 		return nil, errors.New("alarmd detect: detector registry is required")
 	}
-	return &Evaluator{registry: registry, observer: observer}, nil
+	return &Evaluator{registry: registry}, nil
 }
 
 type projectionKey struct {
@@ -294,20 +287,6 @@ func declaresReason(spec strategy.DetectorSpec, reason string) bool {
 	reasons := spec.DeclaredExecutorErrors()
 	index := sort.SearchStrings(reasons, reason)
 	return index < len(reasons) && reasons[index] == reason
-}
-
-func checkedAdd(left, right uint64) (uint64, bool) {
-	if math.MaxUint64-left < right {
-		return 0, false
-	}
-	return left + right, true
-}
-
-func checkedMul(left, right uint64) (uint64, bool) {
-	if left != 0 && right > math.MaxUint64/left {
-		return 0, false
-	}
-	return left * right, true
 }
 
 // strongerUnknownReason reports whether a newly met unavailable input's reason

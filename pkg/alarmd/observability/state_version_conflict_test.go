@@ -28,11 +28,11 @@ func TestLoggingObserverWritesStateVersionConflictAttributes(t *testing.T) {
 	facts.Record(StateAlreadyAppliedAtApply, "", "series-4", 7, 8, "PERSISTED_EQUAL", false)
 
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 1, MaxScopes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := NewBoundedLogPolicy(limiter)
+	policy, err := NewScopedBoundedLogPolicy(limiter)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -130,14 +130,14 @@ func TestObjectListPagesThePoolAndKeepsOnlyWhatThePageIsAbout(t *testing.T) {
 func TestObjectListCarriesFiltersIntoTheRouteAndTheNextPage(t *testing.T) {
 	route := &objectRoute{rows: poolRows(30)}
 	op := objectList(t, route)
-	out := op.Run(context.Background(), Params{"column": "demoted", "order": "newest", "replica": "worker-a", "strategy": "8999", "business": "2", "limit": json.Number("10")})
-	for name, want := range map[string]string{"order": "newest", "replica": "worker-a", "strategy": "8999", "business": "2"} {
+	out := op.Run(context.Background(), Params{"column": "demoted", "order": "newest", "replica": "worker-a", "strategy": "863", "business": "2", "limit": json.Number("10")})
+	for name, want := range map[string]string{"order": "newest", "replica": "worker-a", "strategy": "863", "business": "2"} {
 		if route.asked.Get(name) != want {
 			t.Fatalf("%s not passed to the route: %v", name, route.asked)
 		}
 	}
 	next := out.Next[0].Params
-	if next["order"] != "newest" || next["replica"] != "worker-a" || next["strategy"] != "8999" || next["business"] != "2" || next["offset"] != 10 {
+	if next["order"] != "newest" || next["replica"] != "worker-a" || next["strategy"] != "863" || next["business"] != "2" || next["offset"] != 10 {
 		t.Fatalf("next page dropped a filter: %v", next)
 	}
 	if !strings.Contains(strings.Join(out.Limitations, "\n"), "Rows are filtered") {

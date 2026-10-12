@@ -51,6 +51,16 @@ func (store *countingOwnershipStore) Acquire(
 	return ownership.Lease{Fence: store.fence, Deadline: store.deadline}, nil
 }
 
+func (store *countingOwnershipStore) RenewDeclaring(
+	ctx context.Context,
+	fence execution.OwnerFence,
+	_ string,
+	at time.Time,
+	ttl time.Duration,
+) (ownership.Lease, error) {
+	return store.Renew(ctx, fence, at, ttl)
+}
+
 func (store *countingOwnershipStore) Renew(
 	_ context.Context,
 	fence execution.OwnerFence,

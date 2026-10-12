@@ -191,8 +191,8 @@ func (reconciler *ScheduleActivationReconciler) levelDetectFingerprints(
 	if !ok || result.PlanTerminal() != nil {
 		return nil, errors.New("alarmd controlplane: Plan does not compile")
 	}
-	fingerprints := make(map[uint32]string, len(compiled.Levels()))
-	for _, level := range compiled.Levels() {
+	fingerprints := make(map[uint32]string, compiled.Levels().Len())
+	for _, level := range compiled.Levels().All() {
 		fingerprints[level.Definition().LevelID] = level.Fingerprints().Detect
 	}
 	return fingerprints, nil

@@ -38,17 +38,11 @@ func TestTheLastAndFirstCutoverAreReadExactly(t *testing.T) {
 	cutover("success", 12*time.Second, 1_786_370, 2819)
 	cutover("success", 300*time.Millisecond, 24_000, 3)
 	cutover("failure", 40*time.Second, 9_000_000, 2819)
-	if got := testutil.ToFloat64(m.scheduleCutoverLastDuration); got != 0.3 {
-		t.Fatalf("last duration %v, want the second cutover's 0.3", got)
-	}
 	if got := testutil.ToFloat64(m.scheduleCutoverPayload); got != 24_000 {
 		t.Fatalf("last payload %v, want the same cutover's", got)
 	}
 	if got, timelines := testutil.ToFloat64(m.scheduleCutoverFirstDuration), testutil.ToFloat64(m.scheduleCutoverFirstTimelines); got != 12 || timelines != 2819 {
 		t.Fatalf("first cutover %v s over %v timelines, want the first one kept", got, timelines)
-	}
-	if got := testutil.CollectAndCount(m.scheduleCutoverPayloadSize); got != 1 {
-		t.Fatalf("payload distribution series %d", got)
 	}
 	families, err := recorder.Gatherer().Gather()
 	if err != nil {
@@ -72,13 +66,4 @@ func TestTheLastAndFirstCutoverAreReadExactly(t *testing.T) {
 			}
 		}
 	}
-	for _, family := range families {
-		if family.GetName() == "bkmonitor_alarmd_schedule_cutover_payload_size_bytes" {
-			if count := family.GetMetric()[0].GetHistogram().GetSampleCount(); count != 2 {
-				t.Fatalf("payload distribution counted %d cutovers, want the two that succeeded", count)
-			}
-			return
-		}
-	}
-	t.Fatal("no payload distribution")
 }

@@ -76,7 +76,7 @@ func TestEveryNoDataMemoryWriteOutcomeIsReportedOnExactlyOneStage(t *testing.T) 
 			}}
 			if err := coordinator.applyNoDataMemory(context.Background(), execution.SlotExecutionRequest{
 				Operation: execution.OperationNormal,
-			}, []execution.PlanNoDataMutation{refusedMemoryMutation(t)}); err != nil {
+			}, refusedMemoryDue(t), []execution.PlanNoDataMutation{refusedMemoryMutation(t)}); err != nil {
 				t.Fatalf("applyNoDataMemory() error: %v", err)
 			}
 
@@ -99,7 +99,7 @@ func TestEveryNoDataMemoryWriteOutcomeIsReportedOnExactlyOneStage(t *testing.T) 
 					if facts.Stored != stored[status] {
 						t.Fatalf("stored = %v for %s, want %v", facts.Stored, status, stored[status])
 					}
-					if observation.Trace.StrategyID != "8946" {
+					if observation.Trace.StrategyID != "856" {
 						t.Fatalf("write line strategy = %q", observation.Trace.StrategyID)
 					}
 				case observability.StageNoDataMemoryRefused:
@@ -152,7 +152,7 @@ func TestARefusedWriteIsNotAlsoReportedAsAWrite(t *testing.T) {
 	coordinator, observed := noDataRefusalFixture(store)
 	if err := coordinator.applyNoDataMemory(context.Background(), execution.SlotExecutionRequest{
 		Operation: execution.OperationNormal,
-	}, []execution.PlanNoDataMutation{refusedMemoryMutation(t)}); err != nil {
+	}, refusedMemoryDue(t), []execution.PlanNoDataMutation{refusedMemoryMutation(t)}); err != nil {
 		t.Fatalf("applyNoDataMemory() error: %v", err)
 	}
 	for _, observation := range *observed {
@@ -177,7 +177,7 @@ func TestARefusedNoDataMemoryWriteReportsTheComparisonTheStoreMade(t *testing.T)
 		conflict: &execution.NoDataConflictFacts{
 			Kind: execution.StateVersionConflictMissing, Persisted: "stored-digest", Proposed: "proposed-digest",
 			ExpectedRevision: 7, StoredRevision: 0,
-			DerivedFrom: execution.NoDataRepresentationWholeMemory,
+			DerivedFrom: execution.NoDataRepresentationPerGroup,
 		},
 	}
 	coordinator := &SlotExecutionCoordinator{ports: Ports{
@@ -188,7 +188,7 @@ func TestARefusedNoDataMemoryWriteReportsTheComparisonTheStoreMade(t *testing.T)
 	}}
 	if err := coordinator.applyNoDataMemory(context.Background(), execution.SlotExecutionRequest{
 		Operation: execution.OperationNormal,
-	}, []execution.PlanNoDataMutation{refusedMemoryMutation(t)}); err != nil {
+	}, refusedMemoryDue(t), []execution.PlanNoDataMutation{refusedMemoryMutation(t)}); err != nil {
 		t.Fatalf("applyNoDataMemory() error: %v", err)
 	}
 	var facts *observability.NoDataMemoryWriteFacts
@@ -211,7 +211,7 @@ func TestARefusedNoDataMemoryWriteReportsTheComparisonTheStoreMade(t *testing.T)
 	if *facts.Conflict != want {
 		t.Fatalf("conflict facts = %+v, want %+v", *facts.Conflict, want)
 	}
-	if facts.DerivedFrom != string(execution.NoDataRepresentationWholeMemory) {
+	if facts.DerivedFrom != string(execution.NoDataRepresentationPerGroup) {
 		t.Fatalf("derived-from = %q, want the record the statement was built from; it is what tells a "+
 			"rollout apart from a race between two writers of the same record", facts.DerivedFrom)
 	}

@@ -135,9 +135,12 @@ func (c *RetainedPeakCensus) Observe(ctx context.Context, o Observation) {
 // the previous one, anything older is gone. The summary rotates every group
 // on Publish; the census rotates a group when it is observed and when it is
 // read, which comes to the same thing - a group that stopped completing
-// Slots ages out of its two windows on the read rather than never.
+// Slots ages out of its two windows on the read rather than never. An epoch
+// older than the one held leaves the windows as they are: the observer and
+// the reader read the clock before they take the lock, and one that waited
+// behind a caller already in the next window must not clear both windows.
 func (g *censusGroup) rotate(epoch int64) {
-	if g.epoch == epoch {
+	if epoch <= g.epoch {
 		return
 	}
 	if g.epoch+1 == epoch {

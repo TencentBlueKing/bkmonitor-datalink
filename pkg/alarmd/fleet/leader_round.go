@@ -26,7 +26,6 @@ const (
 	LeaderRoundStageReconcileRecords = "reconcile_records"
 	LeaderRoundStageByteMoves        = "byte_moves"
 	LeaderRoundStageRebalanceMoves   = "rebalance_moves"
-	LeaderRoundStageSplitDryRun      = "split_dry_run"
 	LeaderRoundStageAssignmentIndex  = "assignment_index"
 	LeaderRoundStageAssignmentSweep  = "assignment_sweep"
 	LeaderRoundStageViewPublish      = "view_publish"
@@ -36,7 +35,7 @@ const (
 var LeaderRoundStages = []string{
 	LeaderRoundStageAuthority, LeaderRoundStageReadyWorkers, LeaderRoundStageContentScopes,
 	LeaderRoundStageReconcileRecords, LeaderRoundStageByteMoves, LeaderRoundStageRebalanceMoves,
-	LeaderRoundStageSplitDryRun, LeaderRoundStageAssignmentIndex, LeaderRoundStageAssignmentSweep,
+	LeaderRoundStageAssignmentIndex, LeaderRoundStageAssignmentSweep,
 	LeaderRoundStageViewPublish,
 }
 

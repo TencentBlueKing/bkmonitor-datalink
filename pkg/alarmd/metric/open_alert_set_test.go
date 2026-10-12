@@ -11,6 +11,7 @@ package metric
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -38,37 +39,32 @@ func TestOpenAlertGateCounterStartsAtZeroForEveryOutcomeAndAddsRecords(t *testin
 		OpenAlertGates: []observability.OpenAlertGateFact{
 			{Outcome: observability.OpenAlertGateHeldNoOpenAlert, Records: 3},
 			{Outcome: observability.OpenAlertGatePassed, Records: 1},
+			{Outcome: observability.OpenAlertGatePassedOneTimeClose, Records: 2},
 		},
 	})
 	got := map[string]float64{}
 	for _, m := range gatherFamily(t, r, name) {
 		got[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
-	if got["held_no_open_alert"] != 3 || got["passed"] != 1 || got["not_configured"] != 0 {
+	if got["held_no_open_alert"] != 3 || got["passed"] != 1 || got["passed_one_time_close"] != 2 || got["not_configured"] != 0 {
 		t.Fatalf("outcomes after observation = %v", got)
 	}
 }
 
-// The copy's state is scraped, not pushed: the mode is 1 on exactly one
-// value, and the age of the last authoritative publication does not exist
-// as a series until there has been one.
-func TestOpenAlertSetCollectorReportsModeAndEmitsAgeOnlyOnceLoaded(t *testing.T) {
+// The copy's state is scraped, not pushed: every answer and reason is a
+// series from the start, and the calibration age does not exist as a series
+// until a calibration has completed.
+func TestOpenAlertSetCollectorEmitsEveryWordAndTheAgeOnlyOnceCalibrated(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	stats := openalerts.Stats{Mode: openalerts.ModeNeverLoaded, Lookups: map[openalerts.Answer]uint64{openalerts.AnswerSelfMaintained: 4},
-		Unavailable: map[openalerts.UnavailableReason]uint64{openalerts.UnavailableHeartbeatMissing: 2}, Refreshes: map[string]uint64{"unavailable": 2}}
+	stats := openalerts.Stats{Lookups: map[openalerts.Answer]uint64{openalerts.AnswerSelfMaintained: 4},
+		NoticesRefused: map[openalerts.NoticeRefusal]uint64{openalerts.NoticeUndecodable: 5},
+		Unavailable:    map[openalerts.UnavailableReason]uint64{openalerts.UnavailableReadError: 2}, Refreshes: map[string]uint64{"unavailable": 2}}
 	r.SetOpenAlertSetSource(func() openalerts.Stats { return stats })
 	now := time.Unix(1_700_000_600, 0)
 	r.phaseTwo.openAlertSet.now = func() time.Time { return now }
 
-	modes := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_mode") {
-		modes[m.Label[0].GetValue()] = m.GetGauge().GetValue()
-	}
-	if len(modes) != len(openalerts.Modes) || modes["never_loaded"] != 1 || modes["authoritative"] != 0 || modes["self_maintained"] != 0 {
-		t.Fatalf("modes = %v, want 1 on never_loaded and 0 on the others", modes)
-	}
 	if age := gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_authoritative_age_seconds"); len(age) != 0 {
-		t.Fatalf("age series before any authoritative load = %v, want none", age)
+		t.Fatalf("age series before any calibration = %v, want none", age)
 	}
 	lookups := map[string]float64{}
 	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_lookup_total") {
@@ -81,21 +77,21 @@ func TestOpenAlertSetCollectorReportsModeAndEmitsAgeOnlyOnceLoaded(t *testing.T)
 	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_unavailable_total") {
 		unavailable[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
-	if len(unavailable) != len(openalerts.UnavailableReasons) || unavailable["heartbeat_missing"] != 2 {
+	if len(unavailable) != len(openalerts.UnavailableReasons) || unavailable["read_error"] != 2 || unavailable["location_unconfirmed"] != 0 {
 		t.Fatalf("unavailable = %v", unavailable)
 	}
 
-	stats.Mode = openalerts.ModeAuthoritative
+	refused := map[string]float64{}
+	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_notices_refused_total") {
+		refused[m.Label[0].GetValue()] = m.GetCounter().GetValue()
+	}
+	if want := map[string]float64{"oversized": 0, "undecodable": 5, "invalid_key": 0}; !reflect.DeepEqual(refused, want) {
+		t.Fatalf("refused notices = %v, want %v", refused, want)
+	}
+
 	stats.LoadedAt = now.Add(-90 * time.Second)
 	age := gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_authoritative_age_seconds")
 	if len(age) != 1 || age[0].GetGauge().GetValue() != 90 {
-		t.Fatalf("age after a load = %v, want one series at 90", age)
-	}
-	modes = map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_mode") {
-		modes[m.Label[0].GetValue()] = m.GetGauge().GetValue()
-	}
-	if modes["authoritative"] != 1 || modes["never_loaded"] != 0 {
-		t.Fatalf("modes after a load = %v", modes)
+		t.Fatalf("age after a calibration = %v, want one series at 90", age)
 	}
 }

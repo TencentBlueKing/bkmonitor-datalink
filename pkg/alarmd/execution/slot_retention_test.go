@@ -68,3 +68,17 @@ func TestSegmentKeepUntilRefusesOpenSegmentsAndInvalidRetention(t *testing.T) {
 		t.Fatalf("a reserve that consumes the whole completion offset must be refused: %v", err)
 	}
 }
+
+func TestClosedSegmentKeepUntilIncludesTheConfiguredReadHoldBound(t *testing.T) {
+	retention := SlotRetention{QueryReserve: 5 * time.Second, MaxReplayAge: 10 * time.Minute, TerminalDelay: 30 * time.Second}
+	schedule := retentionSchedule(t, 600, 900)
+	before, err := SegmentKeepUntilUnixMilli(schedule, retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retention.ReadHoldBound = 10 * time.Minute
+	after, err := SegmentKeepUntilUnixMilli(schedule, retention)
+	if err != nil || after-before != retention.ReadHoldBound.Milliseconds() {
+		t.Fatalf("closed segment bound: %d -> %d, %v", before, after, err)
+	}
+}

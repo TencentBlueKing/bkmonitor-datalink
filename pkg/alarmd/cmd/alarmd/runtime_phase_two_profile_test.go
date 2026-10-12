@@ -11,11 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
@@ -111,13 +112,12 @@ func TestPhaseTwoRuntimeProfileTracksSchedulerFieldsAndCPU(t *testing.T) {
 	cfg := config.Default()
 	base, _ := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	for name, change := range map[string]func(*config.Config){
-		"expired_range": func(c *config.Config) { c.PhaseTwo.Scheduler.ExpiredRangeEnabled = false },
-		"F":             func(c *config.Config) { c.PhaseTwo.Scheduler.ActiveExecutionLimit++ },
-		"P":             func(c *config.Config) { c.PhaseTwo.Scheduler.ProcessQueryPermits++ },
-		"R":             func(c *config.Config) { c.PhaseTwo.Scheduler.RecoveryQueryPermits++ },
-		"retry":         func(c *config.Config) { c.PhaseTwo.Scheduler.RetryMaxDelay++ },
-		"replay":        func(c *config.Config) { c.PhaseTwo.Scheduler.MaxReplayAge++ },
-		"bytes":         func(c *config.Config) { c.PhaseTwo.Coordinator.MaxRetainedBytes++ },
+		"F":      func(c *config.Config) { c.PhaseTwo.Scheduler.ActiveExecutionLimit++ },
+		"P":      func(c *config.Config) { c.PhaseTwo.Scheduler.ProcessQueryPermits++ },
+		"R":      func(c *config.Config) { c.PhaseTwo.Scheduler.RecoveryQueryPermits++ },
+		"retry":  func(c *config.Config) { c.PhaseTwo.Scheduler.RetryMaxDelay++ },
+		"replay": func(c *config.Config) { c.PhaseTwo.Scheduler.MaxReplayAge++ },
+		"bytes":  func(c *config.Config) { c.PhaseTwo.Coordinator.MaxRetainedBytes++ },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := cfg
@@ -173,6 +173,11 @@ func TestPhaseTwoCPURecordsPinnedLibraryDecisionWithoutRawEnvironment(t *testing
 		if err != nil || source != want {
 			t.Fatalf("source=%q want=%q err=%v", source, want, err)
 		}
+		// And it is a source the capacity metric's closed label set names,
+		// rather than one it would fold into "other".
+		if !slices.Contains(observability.CPUSources, source) {
+			t.Fatalf("source %q is not among the CPU sources %v", source, observability.CPUSources)
+		}
 	}
 	// The process resolves its CPU budget once, so exercise the pinned
 	// library through the same seam the startup path uses rather than
@@ -190,7 +195,6 @@ func TestPhaseTwoCPURecordsPinnedLibraryDecisionWithoutRawEnvironment(t *testing
 // but that answers a different question and only once a Pod exists.
 func TestResolvedRuntimeFactsCarryTheDerivedTimelineCacheBudget(t *testing.T) {
 	cfg := config.Default()
-	cfg.Input.Mode = config.InputModeGoAccess
 	facts, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	if err != nil {
 		t.Fatal(err)
@@ -218,43 +222,71 @@ func TestResolvedRuntimeFactsCarryTheDerivedTimelineCacheBudget(t *testing.T) {
 	}
 }
 
-// The preflight table has to name which canonical encoder the process will
-// run. It decides the provenance of every digest written, and a digest that
-// later fails to match will be asked which encoder produced it at a point
-// where the process is gone and only this record survives.
-//
-// The digest over this table moves when the table gains a field. That is safe
-// only while nothing outside the process freezes it and asserts equality
-// later; nothing does today. This test pins the reasoning next to the field so
-// the next person to add one checks the same thing rather than the tests.
-func TestRuntimeProfileNamesTheCanonicalEncoder(t *testing.T) {
+// The alert link's settings are on the profile, the Console as configured
+// or not and never its address: whether the alert closes run at all is
+// otherwise readable only from the file the process started with.
+func TestThePhaseTwoRuntimeProfileSaysWhetherTheLinkIsConfigured(t *testing.T) {
 	cfg := config.Default()
-	facts, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	off, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if facts.Capacity.CanonicalEncoding != contract.CanonicalModeStream {
-		t.Fatalf("default deployment should preflight as the single-pass encoder, got %q",
-			facts.Capacity.CanonicalEncoding)
+	if off.Linkd != (observability.RuntimeLinkdFacts{}) {
+		t.Fatalf("default linkd facts = %+v, want nothing configured", off.Linkd)
 	}
-	if facts.Capacity.CanonicalShadowStride != 0 {
-		t.Fatalf("nothing compares by default, so nothing should be sampling; got %d",
-			facts.Capacity.CanonicalShadowStride)
+	cfg.PhaseTwo.Linkd.ConsoleURL = "http://DO_NOT_LOG_CONSOLE:8080"
+	on, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	if err != nil {
+		t.Fatal(err)
 	}
+	want := observability.RuntimeLinkdFacts{ConsoleConfigured: true}
+	encoded, _ := json.Marshal(on)
+	if on.Linkd != want || strings.Contains(string(encoded), "DO_NOT_LOG") || on.Digest == off.Digest {
+		t.Fatalf("linkd facts = %+v (want %+v), digest moved %v: %s", on.Linkd, want, on.Digest != off.Digest, encoded)
+	}
+}
 
-	cfg.PhaseTwo.Canonical.Mode = contract.CanonicalModeEstablished
-	established, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if established.Capacity.CanonicalEncoding != contract.CanonicalModeEstablished {
-		t.Fatalf("preflight did not follow the selected mode, got %q", established.Capacity.CanonicalEncoding)
-	}
-	if established.Capacity.CanonicalShadowStride != 0 {
-		t.Fatalf("nothing compares in the established mode, so nothing should be sampling; got %d",
-			established.Capacity.CanonicalShadowStride)
-	}
-	if established.Digest == facts.Digest {
-		t.Fatal("two deployments running different encoders share a runtime config digest")
+// The runtime facts name the retention the deployment runs on, beside every
+// input, and the lengths agree with their inputs as reported: a reader checks
+// them from the facts alone, without the configuration file or the functions.
+// Both sides of each larger-of: the catalog TTL over and under what the
+// recovery contract needs, and the state store's maximum TTL over and under
+// the catalog retention.
+func TestTheRuntimeProfileNamesTheRetentionAndItsInputs(t *testing.T) {
+	for _, arm := range []struct {
+		name               string
+		catalogTTL, maxTTL time.Duration
+		catalogIsTTL       bool
+		limitIsMaxTTL      bool
+	}{
+		{name: "the catalog TTL and the state ceiling decide", catalogTTL: 96 * time.Hour, maxTTL: 720 * time.Hour, catalogIsTTL: true, limitIsMaxTTL: true},
+		{name: "the recovery contract and the catalog decide", catalogTTL: time.Hour, maxTTL: 2 * time.Hour},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.PhaseTwo.Control.CatalogTTL = config.Duration(arm.catalogTTL)
+			cfg.Redis.MaxTTL = config.Duration(arm.maxTTL)
+			facts, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := facts.Retention
+			if r.CatalogTTLSeconds != int64(arm.catalogTTL/time.Second) || r.RedisMaxTTLSeconds != int64(arm.maxTTL/time.Second) ||
+				r.CatalogKeyCadenceSeconds != 24*3600 || r.DownstreamExecutionReserveSeconds <= 0 || r.MaxReplayAgeSeconds <= 0 ||
+				r.PublicationDelayAllowanceSeconds <= 0 || r.PostRecoveryTerminalDelaySeconds <= 0 || r.RedisRestartMarginSeconds <= 0 {
+				t.Fatalf("inputs = %+v, want the configured and derived values", r)
+			}
+			minimum := r.PublicationDelayAllowanceSeconds + r.CatalogKeyCadenceSeconds - r.DownstreamExecutionReserveSeconds +
+				r.MaxReplayAgeSeconds + r.PostRecoveryTerminalDelaySeconds
+			if r.SnapshotMinimumSeconds != minimum {
+				t.Fatalf("snapshot minimum = %d, want %d from the inputs as reported", r.SnapshotMinimumSeconds, minimum)
+			}
+			if wantCatalog := max(r.CatalogTTLSeconds, minimum); r.CatalogSeconds != wantCatalog || (r.CatalogSeconds == r.CatalogTTLSeconds) != arm.catalogIsTTL {
+				t.Fatalf("catalog = %d, want %d (the TTL deciding: %v)", r.CatalogSeconds, wantCatalog, arm.catalogIsTTL)
+			}
+			if wantLimit := max(r.RedisMaxTTLSeconds, r.CatalogSeconds); r.ObjectLimitSeconds != wantLimit || (r.ObjectLimitSeconds == r.RedisMaxTTLSeconds) != arm.limitIsMaxTTL {
+				t.Fatalf("object limit = %d, want %d (the state ceiling deciding: %v)", r.ObjectLimitSeconds, wantLimit, arm.limitIsMaxTTL)
+			}
+		})
 	}
 }

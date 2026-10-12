@@ -4,10 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/go-redis/redis/v8"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
@@ -108,6 +107,14 @@ func TestLocalConverterMatchesPythonAdapter(t *testing.T) {
 		// converter, because the reader takes the payload's value when present
 		// and only computes its own when it is absent.
 		delete(expected, "dedupe_md5")
+		// Python's access stamps each record with the time it processed it
+		// (records.py:244) and the adapter carries the record's data as it is
+		// (adapter.py:165); the alert builder decides an event is expired from
+		// it, and falls back to the data time without it (event.py:394-415).
+		// The oracle was captured from records that never went through access,
+		// so it has none. This converter's processing time is the
+		// conversion's, the one its trigger_time carries - not the data time.
+		expected["extra_info"].(map[string]any)["origin_alarm"].(map[string]any)["data"].(map[string]any)["access_time"] = float64(fixture.PythonTime)
 		if !reflect.DeepEqual(actual, expected) {
 			t.Fatalf("local Python protocol differs:\ngot %s\nwant %s", event.Payload, fixture.Response.Events[i].Payload)
 		}
@@ -147,29 +154,8 @@ func TestServiceSnapshotWritesEveryStrategyWithPythonTTL(t *testing.T) {
 
 func startSnapshotRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	binary, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server unavailable")
-	}
-	dir, err := os.MkdirTemp("/tmp", "als-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "redis.sock")
-	command := exec.Command(binary, "--port", "0", "--unixsocket", socket, "--save", "", "--appendonly", "no")
-	if err = command.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { command.Process.Kill(); command.Wait() })
-	client := redis.NewClient(&redis.Options{Network: "unix", Addr: socket})
+	server := redistest.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr})
 	t.Cleanup(func() { client.Close() })
-	for i := 0; i < 100; i++ {
-		if client.Ping(context.Background()).Err() == nil {
-			return client
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("redis-server did not start")
-	return nil
+	return client
 }

@@ -37,7 +37,6 @@ var SupportedSourceSemantics = []string{
 	"custom/time_series",
 	"custom/event",
 	"prometheus/time_series",
-	"bk_fta/event",
 }
 
 // SourceSemanticsOther is the label for semantics outside the supported list.
@@ -128,10 +127,11 @@ type CatalogComposition struct {
 	// is in Withheld under the reason that withheld it.
 	//
 	// The two together are one partition over the items that asked for no-data
-	// detection: a source here, or a reason there. NoDataPlansPartition states
-	// the sum, because a count of what is working answers nothing on its own -
-	// three sources adding to fewer items than are configured is the reading
-	// that matters, and it is only visible against what the other side holds.
+	// detection: a source here, or a reason there. Their sum is the reading
+	// that matters, because a count of what is working answers nothing on its
+	// own - three sources adding to fewer items than are configured is only
+	// visible against what the other side holds; the catalog gauges carry both
+	// halves and a reader sums them (METRICS.md, catalog_no_data_plans).
 	NoDataPlans map[nodata.RosterSource]int
 	// NoDataPlansUnclassified counts an accepted Plan whose expected set cannot
 	// be classified. The compiler refuses those, so this is zero and is here to
@@ -193,6 +193,45 @@ type CatalogComposition struct {
 	// compiled Levels are in hand; recomputing it here from the frozen
 	// strategy documents would be the same relation derived twice.
 	Retention CatalogRetention
+
+	// GlobalStrategies counts the strategies the source marks global by what
+	// the round did with them (GlobalOutcomes), every outcome present at
+	// zero: a partition of Catalog.GlobalStrategies, so the three add up to
+	// the global strategies the source listed this round. A zero here is
+	// what a deployment reads to say no global strategy was refused, and a
+	// zero that reads the same as "this build does not count them" is not a
+	// reading.
+	GlobalStrategies map[string]int
+	// GlobalUnsupported splits the global_unsupported outcome by the word it
+	// was refused for and the source its query reads, and adds up to it. It
+	// is what decides which query source alarmd learns to run globally next,
+	// which is why it is by source and not by word alone. Only the pairs a
+	// round produced are present: both labels are closed sets (the four
+	// words, GlobalQuerySource), and most of their product cannot happen.
+	GlobalUnsupported map[GlobalUnsupportedKey]int
+}
+
+// What a round did with a strategy the source marks global.
+const (
+	// GlobalOutcomeAccepted: runs as a global strategy - its ACCEPTED
+	// disposition survived to the Catalog as published.
+	GlobalOutcomeAccepted = "accepted"
+	// GlobalOutcomeUnsupported: refused as GLOBAL_STRATEGY_UNSUPPORTED - a
+	// strategy this build cannot yet run across businesses. It stopped
+	// detecting unless a last good Plan was retained for it.
+	GlobalOutcomeUnsupported = "global_unsupported"
+	// GlobalOutcomeWithheld: withheld for any other reason, which
+	// catalog_withheld_objects names like any other strategy's.
+	GlobalOutcomeWithheld = "withheld"
+)
+
+// GlobalOutcomes is every outcome, for the partition to pre-create.
+var GlobalOutcomes = []string{GlobalOutcomeAccepted, GlobalOutcomeUnsupported, GlobalOutcomeWithheld}
+
+// GlobalUnsupportedKey is one pair GlobalUnsupported counts under.
+type GlobalUnsupportedKey struct {
+	Reason      string
+	QuerySource string
 }
 
 // SourceSemanticsLabel is the partition key for one Query Group's query: the
@@ -343,6 +382,41 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 	// for each of its Plans or levels.
 	sort.Strings(composition.ListedStrategies)
 	composition.ListedStrategies = slices.Compact(composition.ListedStrategies)
+	composition.GlobalStrategies = make(map[string]int, len(GlobalOutcomes))
+	for _, outcome := range GlobalOutcomes {
+		composition.GlobalStrategies[outcome] = 0
+	}
+	composition.GlobalUnsupported = make(map[GlobalUnsupportedKey]int)
+	// Accepted is read off the Catalog as published, not off the record: a
+	// strategy this build compiled can still be withheld by the runtime check
+	// or the deployment's admission, and each replaces its ACCEPTED with the
+	// reason it withheld it. Counted from the record it would read accepted
+	// while it stopped running.
+	accepted := make(map[string]bool, len(catalog.GlobalStrategies))
+	for _, disposition := range catalog.Dispositions {
+		if disposition.Scope == "PLAN" && disposition.Disposition == DispositionAccepted {
+			accepted[disposition.SourceID] = true
+		}
+	}
+	// Once per strategy: the same one listed twice is one strategy, as it
+	// is one object in catalog_objects, and its first record is the one
+	// that compiled.
+	counted := make(map[string]bool, len(catalog.GlobalStrategies))
+	for _, global := range catalog.GlobalStrategies {
+		if counted[global.SourceID] {
+			continue
+		}
+		counted[global.SourceID] = true
+		switch {
+		case global.Refusal != "":
+			composition.GlobalStrategies[GlobalOutcomeUnsupported]++
+			composition.GlobalUnsupported[GlobalUnsupportedKey{Reason: global.Refusal, QuerySource: global.QuerySource}]++
+		case accepted[global.SourceID]:
+			composition.GlobalStrategies[GlobalOutcomeAccepted]++
+		default:
+			composition.GlobalStrategies[GlobalOutcomeWithheld]++
+		}
+	}
 	return composition
 }
 
@@ -406,41 +480,17 @@ var AlwaysReportedWithheld = []WithheldKey{
 	// "No strategy's effective time was widened to the whole day because a
 	// range did not parse" is a claim a reader acts on: the widening is the
 	// direction of more detection, and the only way to see it is this pair.
-	{Disposition: DispositionConfigNormalized, Reason: ReasonEffectiveTimeRangeInvalid},
+	{Disposition: DispositionConfigNoted, Reason: ReasonEffectiveTimeRangeInvalid},
 	// "No strategy here takes part in priority arbitration" is the zero that
 	// says every strategy detects exactly as it would alone on the platform.
-	{Disposition: DispositionConfigNormalized, Reason: ReasonPriorityIgnored},
+	{Disposition: DispositionConfigNoted, Reason: ReasonPriorityIgnored},
 	// "No strategy here runs a level on another level's trigger."
-	{Disposition: DispositionConfigNormalized, Reason: ReasonLevelTriggerBorrowed},
-}
-
-// NoDataReasons is the set of reasons that withhold a Plan from no-data
-// detection. The partition below sums over them.
-var NoDataReasons = []string{"NO_DATA_CONFIG_INVALID", "NO_DATA_ROSTER_UNSUPPORTED"}
-
-// NoDataPlansPartition is how many items asked for no-data detection: the ones
-// that got it, by source, plus the ones a no-data reason withheld.
-//
-// The withheld half is summed by reason across dispositions rather than read at
-// one of them. A strategy refused for the first time is CONFIG_REJECTED, and
-// the same strategy is STALE_CONFIG once a previous good Plan is retained for
-// it - same reason, different disposition, on different rounds. Reading only
-// CONFIG_REJECTED would make the total drop by one the round a strategy starts
-// running its last good Plan, which reads as a gauge that lost a count rather
-// than as a strategy that changed state.
-func (composition CatalogComposition) NoDataPlansPartition() int {
-	total := composition.NoDataPlansUnclassified
-	for _, count := range composition.NoDataPlans {
-		total += count
-	}
-	for key, count := range composition.Withheld {
-		for _, reason := range NoDataReasons {
-			if key.Reason == reason {
-				total += count
-			}
-		}
-	}
-	return total
+	{Disposition: DispositionConfigNoted, Reason: ReasonLevelTriggerBorrowed},
+	// "No strategy here runs on a period it did not write."
+	{Disposition: DispositionConfigNoted, Reason: ReasonAggIntervalDefaulted},
+	// "No strategy here has a no-data trigger the tracking horizon stops
+	// before it can fire."
+	{Disposition: DispositionConfigNoted, Reason: ReasonNoDataTriggerBeyondHorizon},
 }
 
 // WithheldKey pairs what happened to an object with why. Neither half answers
@@ -467,5 +517,5 @@ var CatalogDispositions = []Disposition{
 	DispositionRemoved,
 	DispositionUnsupported,
 	DispositionCompatibilityIgnored,
-	DispositionConfigNormalized,
+	DispositionConfigNoted,
 }

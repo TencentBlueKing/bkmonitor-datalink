@@ -16,7 +16,7 @@ import (
 // and nothing from a record that still guarded holes.
 func TestASeriesKeepsOnlyTheSameFactsFromThePreviousGeneration(t *testing.T) {
 	plan := internalCompiledPlan(t, "7", 5, 60)
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	if len(levels) == 0 {
 		t.Fatal("test Plan has no Level")
 	}

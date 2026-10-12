@@ -208,7 +208,7 @@ func TestPhaseTwoSourceRefreshMetricUsesOnlyFixedStatus(t *testing.T) {
 	}
 }
 
-func TestPhaseTwoActiveSetAndLegacyMigrationMetricsUseOnlyFixedLabels(t *testing.T) {
+func TestPhaseTwoActiveSetMetricsUseOnlyFixedLabels(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	recorder.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,
 		Stage: observability.StageActiveQGSet, Result: observability.ResultSuccess,
@@ -220,23 +220,14 @@ func TestPhaseTwoActiveSetAndLegacyMigrationMetricsUseOnlyFixedLabels(t *testing
 	recorder.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,
 		Stage: observability.StageActiveQGSet, Result: observability.ResultSuccess,
 		ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "renew", Result: "success", QueryGroups: 7, ObjectBytes: 321, Duration: time.Second}})
-	recorder.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,
-		Stage: observability.StageLegacyQGMigration, Result: observability.ResultFailed,
-		LegacyMigration: &observability.LegacyQGMigrationFacts{Result: "fail_closed", ReasonClass: "contract", ScanKeys: 12, Duration: time.Second}})
 	if got := testutil.ToFloat64(recorder.phaseTwo.activeQGSetCount); got != 7 {
 		t.Fatalf("active QG count=%v", got)
 	}
 	if got := testutil.ToFloat64(recorder.phaseTwo.activeQGSetBytes); got != 321 {
 		t.Fatalf("active set bytes=%v", got)
 	}
-	if got := testutil.CollectAndCount(recorder.phaseTwo.activeQGSetEncode); got != 1 {
-		t.Fatalf("encode metric families=%d", got)
-	}
 	if got := testutil.CollectAndCount(recorder.phaseTwo.activeQGSetRedis); got != 1 {
 		t.Fatalf("redis metric families=%d", got)
-	}
-	if got := testutil.ToFloat64(recorder.phaseTwo.legacyMigration.WithLabelValues("fail_closed", "contract")); got != 1 {
-		t.Fatalf("migration total=%v", got)
 	}
 }
 
@@ -699,5 +690,26 @@ func TestSteppingDownAsLeaderTakesTheLeaderReadingsOffTheScrape(t *testing.T) {
 	})
 	if scraped = scrape(t, recorder); !strings.Contains(scraped, "bkmonitor_alarmd_rebalance_planned_moves ") {
 		t.Fatalf("a replica that leads again does not publish its readings:\n%s", scraped)
+	}
+}
+
+// Both build series exist from the start, and a round counts under its word.
+func TestSourceRefreshBuildsAreCountedFromZero(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	counts := func() map[string]float64 {
+		result := map[string]float64{}
+		for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_source_refresh_build_total") {
+			result[m.Label[0].GetValue()] = m.GetCounter().GetValue()
+		}
+		return result
+	}
+	if got := counts(); len(got) != 2 || got["reused"] != 0 || got["rebuilt"] != 0 {
+		t.Fatalf("before any round = %v, want both words at zero", got)
+	}
+	r.Observe(context.Background(), observability.Observation{Component: observability.ComponentControlPlane,
+		Stage: observability.StageSnapshotRefreshed, Result: observability.ResultSuccess,
+		SourceRefresh: &observability.SourceRefreshFacts{Status: "UNCHANGED", Build: observability.SourceRefreshReused}})
+	if got := counts(); got["reused"] != 1 || got["rebuilt"] != 0 {
+		t.Fatalf("after one reused round = %v", got)
 	}
 }

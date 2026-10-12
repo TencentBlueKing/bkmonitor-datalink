@@ -90,7 +90,7 @@ func TestNoDataMemoryRoundTripsThroughTheStore(t *testing.T) {
 	}
 
 	mutation := noDataMutationV2(t, 0, execution.NoDataGroupMemory{GroupKey: "a", FirstAbsent: 940})
-	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: planRetention(retentionEvery(5, time.Minute)),
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -131,7 +131,7 @@ func TestNoDataMemoryRoundTripsThroughTheStore(t *testing.T) {
 	}
 
 	// Replaying the same mutation is recognised rather than written twice.
-	repeat, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	repeat, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -152,10 +152,6 @@ func TestNoDataMemoryRoundTripsThroughTheStore(t *testing.T) {
 func TestNoDataMemoryFromANewerBuildIsUnreadableRatherThanCorrupt(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	store := generationStore(t, backend)
-	key, err := PlanNoDataKeyV2("alarmd", noDataIdentityV2())
-	if err != nil {
-		t.Fatal(err)
-	}
 	future := map[string]any{
 		"schema":            executionNoDataSchema,
 		"version":           execution.MaxSupportedNoDataMemorySchema + 1,
@@ -165,7 +161,6 @@ func TestNoDataMemoryFromANewerBuildIsUnreadableRatherThanCorrupt(t *testing.T) 
 		"mutation_digest":   "digest",
 		"schedule_revision": "plan-r1",
 		"roster_version":    "HISTORY/1",
-		"groups":            []execution.NoDataGroupMemory{{GroupKey: "a", FirstAbsent: 940}},
 		// The field a newer schema added, which this build has no name for.
 		"absent_since_reason": "something this build has never heard of",
 	}
@@ -173,7 +168,9 @@ func TestNoDataMemoryFromANewerBuildIsUnreadableRatherThanCorrupt(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend.values[key] = encoded
+	backend.hashes = map[string]map[string][]byte{noDataHashKey(t): {
+		noDataHeaderField: encoded, noDataGroupPrefix + "a": []byte(`{"first_absent":940}`),
+	}}
 
 	loaded, err := store.LoadNoData(context.Background(), execution.NoDataLoadRequest{
 		Contract: frozenRef(), Items: []execution.PlanNoDataLoadItem{noDataLoadItemV2()},
@@ -204,7 +201,7 @@ func TestNoDataApplyRefusesToOverwriteARecordItCannotRead(t *testing.T) {
 	future := futureHashHeader(t)
 	backend.hashes = map[string]map[string][]byte{key: {noDataHeaderField: future}}
 
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(),
 		Items:    []execution.PlanNoDataMutation{noDataMutationV2(t, 9, execution.NoDataGroupMemory{GroupKey: "a", LastSeen: 940})},
 	})
@@ -244,7 +241,7 @@ func TestNoDataApplyConflictsOnAStaleMarkerRevision(t *testing.T) {
 	ctx := context.Background()
 
 	first := noDataMutationV2(t, 0, execution.NoDataGroupMemory{GroupKey: "a", LastSeen: 940})
-	if _, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	if _, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{first},
 	}); err != nil {
 		t.Fatal(err)
@@ -264,7 +261,7 @@ func TestNoDataApplyConflictsOnAStaleMarkerRevision(t *testing.T) {
 		PresentAsOf: noDataPresentAsOf,
 		Memory:      []execution.NoDataGroupMemory{{GroupKey: "b", LastSeen: 1000}},
 	})
-	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{stale},
 	})
 	if err != nil {
@@ -292,7 +289,7 @@ func TestNoDataApplyConflictsOnAStaleMarkerRevision(t *testing.T) {
 // same one. Sharing would make two different records overwrite each other.
 func TestNoDataKeyIsItsOwnKey(t *testing.T) {
 	identity := noDataIdentityV2()
-	noData, err := PlanNoDataKeyV2("alarmd", identity)
+	noData, err := PlanNoDataHashKeyV2("alarmd", identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +302,7 @@ func TestNoDataKeyIsItsOwnKey(t *testing.T) {
 	if noData == gap {
 		t.Fatalf("the no-data memory and the gap marker share the key %q", noData)
 	}
-	other, err := PlanNoDataKeyV2("alarmd", execution.PlanNoDataIdentity{
+	other, err := PlanNoDataHashKeyV2("alarmd", execution.PlanNoDataIdentity{
 		Plan: identity.Plan, StateGeneration: "generation-2",
 	})
 	if err != nil {
@@ -314,21 +311,10 @@ func TestNoDataKeyIsItsOwnKey(t *testing.T) {
 	if other == noData {
 		t.Fatal("two state generations share one no-data key, so a content change would inherit the old memory")
 	}
-	// The two representations coexist for a rollout, so they must be two keys -
-	// and two keys the cleanup can tell apart with a glob, because that is how
-	// it enumerates the records it is allowed to delete.
-	hash, err := PlanNoDataHashKeyV2("alarmd", identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hash == noData {
-		t.Fatalf("both no-data representations live at %q; one would overwrite the other", hash)
-	}
-	if !strings.HasPrefix(noData, "alarmd:nodata:v2:") {
-		t.Fatalf("the whole-memory key is %q, which the cleanup pattern does not describe", noData)
-	}
-	if strings.HasPrefix(hash, "alarmd:nodata:v2:") {
-		t.Fatalf("the hash key %q matches the cleanup pattern; the cleanup would delete live memory", hash)
+	// Builds before the per-group record kept a single value under "nodata";
+	// the hash must not be read from, or written to, that key.
+	if strings.HasPrefix(noData, "alarmd:nodata:v2:") || noData == legacyNoDataKey(t) {
+		t.Fatalf("the hash key %q is the older single-value key", noData)
 	}
 }
 
@@ -362,7 +348,6 @@ func TestAPieceOfASplitStrategyHasItsOwnPlanLevelKeys(t *testing.T) {
 		kind string
 	}
 	for _, record := range []keyed{
-		{name: "no-data memory", key: func(id execution.PlanNoDataIdentity) (string, error) { return PlanNoDataKeyV2("alarmd", id) }, kind: "nodata"},
 		{name: "no-data hash", key: func(id execution.PlanNoDataIdentity) (string, error) { return PlanNoDataHashKeyV2("alarmd", id) }, kind: "nodata-hash"},
 		{name: "gap marker", key: func(id execution.PlanNoDataIdentity) (string, error) {
 			return PlanGapKeyV2("alarmd", execution.PlanGapIdentity{Plan: id.Plan, StateGeneration: id.StateGeneration, Shard: id.Shard})
@@ -462,7 +447,7 @@ func TestTwoPiecesOfOneStrategyKeepSeparateNoDataMemories(t *testing.T) {
 			ScheduleRevision: "plan-r1", RosterVersion: "TARGET_STATIC/1",
 			PresentAsOf: noDataPresentAsOf, Memory: []execution.NoDataGroupMemory{{GroupKey: group, FirstAbsent: 940}},
 		})
-		applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+		applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 			Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 		})
 		if err != nil {
@@ -529,7 +514,7 @@ func TestTwoPiecesOfOneStrategyKeepSeparateGapMarkers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		applied, err := store.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
+		applied, err := store.ApplyGap(ctx, execution.GapGuardApplyRequest{Retention: execution.GenerationRetention{Unknown: true}, Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
 		if err != nil || applied.Items[0].Status != execution.GapGuardApplied {
 			t.Fatalf("piece %d ApplyGap(open) = (%+v, %v); under a shared key the second piece's open conflicts with the first's",
 				index, applied, err)
@@ -566,19 +551,16 @@ func TestTwoPiecesOfOneStrategyKeepSeparateGapMarkers(t *testing.T) {
 func TestNoDataLoadRenewsTheKeyEvenWhenItCannotReadTheRecord(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte), remaining: make(map[string]time.Duration)}
 	store := generationStore(t, backend)
-	key, err := PlanNoDataKeyV2("alarmd", noDataIdentityV2())
-	if err != nil {
-		t.Fatal(err)
-	}
-	future, err := json.Marshal(noDataEnvelope{
-		Schema: executionNoDataSchema, Version: execution.MaxSupportedNoDataMemorySchema + 1,
-		Identity: noDataIdentityV2(), MarkerRevision: 9, ApplyVersion: applyVersion(),
-		MutationDigest: "digest", ScheduleRevision: "plan-r1", RosterVersion: "HISTORY/1",
+	key := noDataHashKey(t)
+	future, err := json.Marshal(map[string]any{
+		"schema": executionNoDataSchema, "version": execution.MaxSupportedNoDataMemorySchema + 1,
+		"identity": noDataIdentityV2(), "marker_revision": 9, "apply_version": applyVersion(),
+		"memory_digest": "digest", "schedule_revision": "plan-r1", "roster_version": "HISTORY/1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend.values[key] = future
+	backend.hashes = map[string]map[string][]byte{key: {noDataHeaderField: future}}
 	backend.remaining[key] = time.Minute
 
 	loaded, err := store.LoadNoData(context.Background(), execution.NoDataLoadRequest{
@@ -605,17 +587,14 @@ func TestNoDataLoadRenewsTheKeyEvenWhenItCannotReadTheRecord(t *testing.T) {
 func TestNoDataLoadCallsUnreadableBytesCorrupt(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	store := generationStore(t, backend)
-	key, err := PlanNoDataKeyV2("alarmd", noDataIdentityV2())
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := noDataHashKey(t)
 	for name, stored := range map[string][]byte{
 		"not json":       []byte("{"),
 		"another record": []byte(`{"schema":"alarmd-plan-gap-v2","version":1}`),
 		"no version":     []byte(`{"schema":"` + executionNoDataSchema + `"}`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			backend.values[key] = stored
+			backend.hashes = map[string]map[string][]byte{key: {noDataHeaderField: stored}}
 			loaded, err := store.LoadNoData(context.Background(), execution.NoDataLoadRequest{
 				Contract: frozenRef(), Items: []execution.PlanNoDataLoadItem{noDataLoadItemV2()},
 			})

@@ -76,15 +76,10 @@ func TestEveryReasonACatalogCanBeAbsentForHasItsOwnWord(t *testing.T) {
 	if strings.Contains(short.Detail, "分钟") {
 		t.Errorf("sentence %q, want no duration clause under a minute rather than a zero", short.Detail)
 	}
-	// The way out is offered only where the route is mounted.
-	withRoute := states[CatalogAbsencePublishFailing]
-	withRoute.DirectoryMounted = true
-	offered := catalogAbsenceOf(withRoute, "pod-a", true)
-	if offered.Next != strategyDirectoryRoute || !strings.Contains(offered.Detail, strategyDirectoryRoute) {
-		t.Errorf("offered = %+v, want the directory route named on the body and in the sentence", offered)
-	}
-	if failing.Next != "" || strings.Contains(failing.Detail, strategyDirectoryRoute) {
-		t.Errorf("unmounted = %+v, want no way out named: a route that is not mounted is not one", failing)
+	// No other route is named: the strategy directory reads the same index,
+	// and answers not ready exactly when this does.
+	if strings.Contains(failing.Detail, "scope=strategies") {
+		t.Errorf("failing = %+v, names the directory route, which is down whenever this is", failing)
 	}
 	// Not knowing does not borrow a role from the facts it could not read.
 	if unknown := catalogAbsenceOf(CatalogAbsenceFacts{Role: "leader"}, "pod-a", false); unknown.Reason != CatalogAbsenceUnknown || unknown.Role != "" {
@@ -102,7 +97,7 @@ func TestThePointReadRefusalSaysWhyThereIsNoCatalog(t *testing.T) {
 	handler = WithStrategyStanding(handler, nil, func(string) StrategyLookupFacts { return StrategyLookupFacts{} }, nil, nil,
 		func() CatalogAbsenceFacts {
 			return CatalogAbsenceFacts{Known: true, Role: "leader", Exit: "retain_executable",
-				Text: "runtime compiler returned an unclassified terminal reason", FailingSeconds: &halfHour, DirectoryMounted: true}
+				Text: "runtime compiler returned an unclassified terminal reason", FailingSeconds: &halfHour}
 		}, "pod-a", func() time.Time { return now }, 0)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/strategies/4101", nil))
@@ -113,9 +108,8 @@ func TestThePointReadRefusalSaysWhyThereIsNoCatalog(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("body %q: %v", recorder.Body.String(), err)
 	}
-	if body.Reason != CatalogAbsencePublishFailing || body.Exit != "retain_executable" || body.Next != strategyDirectoryRoute ||
-		body.Replica != "pod-a" || body.Detail == "" {
-		t.Errorf("body = %+v, want the failing word with its exit, the replica and the way out", body)
+	if body.Reason != CatalogAbsencePublishFailing || body.Exit != "retain_executable" || body.Replica != "pod-a" || body.Detail == "" {
+		t.Errorf("body = %+v, want the failing word with its exit and the replica", body)
 	}
 	if strings.Contains(recorder.Body.String(), "before its first round") {
 		t.Error("the refusal still names a cause it did not check")

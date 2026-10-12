@@ -13,10 +13,7 @@ import (
 
 func fleetSampleFixture(t *testing.T) (*observability.SeriesSampler, observability.SeriesSampleCandidate) {
 	t.Helper()
-	s, err := observability.NewSeriesSampler(observability.SeriesSampleLimits{RecordsPerMinute: 8, BytesPerMinute: 8 * observability.SeriesSampleMaxBytes, QueueCapacity: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := observability.NewAdmittedSeriesSampler(func(uint64) bool { return true })
 	now := time.Now()
 	v := observability.SeriesSampleSelection{QueryGroup: digest("a"), WindowID: "window", OpenedAt: now, ExpiresAt: now.Add(time.Minute), TenantID: "tenant", BusinessID: "business", StrategyID: "strategy", StateGeneration: "generation", PlanScheduleRevision: "schedule"}
 	if err := s.Select([]observability.SeriesSampleSelection{v}); err != nil {

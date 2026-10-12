@@ -40,9 +40,13 @@ func TestDefaultKafkaProtocolCarriesTheStandardRawEventToTheBroker(t *testing.T)
 		"ProduceRequest":     sarama.NewMockProduceResponse(t).SetVersion(3),
 	})
 
-	sink, err := enginekafka.OpenTriggerEventSink(coordinates)
+	opener, err := enginekafka.PrepareTriggerEventSink(coordinates)
 	if err != nil {
-		t.Fatalf("OpenTriggerEventSink() with the default configuration = %v", err)
+		t.Fatalf("PrepareTriggerEventSink() with the default configuration = %v", err)
+	}
+	sink, err := opener.Open()
+	if err != nil {
+		t.Fatalf("Open() with the default configuration = %v", err)
 	}
 	defer func() { _ = sink.Close() }()
 

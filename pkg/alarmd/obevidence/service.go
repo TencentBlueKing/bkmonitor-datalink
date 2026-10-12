@@ -14,6 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/cmdbcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -45,13 +46,25 @@ type Location struct {
 type RedisBinding struct {
 	Client   redis.Cmdable
 	Location Location
+	// OnFailure, when set, hears the reason of each read of this binding that
+	// the server did not answer: once per read, however many keys it asked.
+	OnFailure func(reason string)
 }
+
+// failed reports one unanswered read of the binding by its reason.
+func (binding RedisBinding) failed(reason string) {
+	if binding.OnFailure != nil && reason != "" {
+		binding.OnFailure(reason)
+	}
+}
+
 type Options struct {
 	SourceStrategy, TargetGroup, DynamicConfig, QueryProgress, Published RedisBinding
 	// QueryCooldown is the runtime store under the pool records' prefix: the
 	// record a Query Group's owner keeps of its place in the demoted pool.
 	QueryCooldown RedisBinding
-	// CMDBCache is the platform's host cache, read here only for INFO.
+	// CMDBCache is the platform's host cache: INFO, and one host or service
+	// instance record at a time.
 	CMDBCache RedisBinding
 	Catalog   *controlplane.RedisCatalogRepository
 	Progress  *progress.Store
@@ -66,6 +79,18 @@ type StoreRequest struct {
 	GroupID    string                   `json:"group_id,omitempty"`
 	QueryGroup string                   `json:"query_group,omitempty"`
 	Fields     []platformsettings.Field `json:"fields,omitempty"`
+	// ObjectDigest, Tenant and Business name a Plan's records by the
+	// published object that carries its state generation, as strategy.get
+	// shows them.
+	ObjectDigest string `json:"object_digest,omitempty"`
+	Tenant       string `json:"tenant,omitempty"`
+	Business     string `json:"business,omitempty"`
+
+	// Host names one record of the platform's CMDB host hash - its host id
+	// or its "ip|cloud" field - and ServiceInstance one of the service
+	// instance hash, by instance id.
+	Host            string `json:"host,omitempty"`
+	ServiceInstance string `json:"service_instance,omitempty"`
 }
 type ConfigRequest struct {
 	View         string `json:"view"`
@@ -105,7 +130,28 @@ type Result struct {
 	Limits   Limits     `json:"limits"`
 	Value    any        `json:"value"`
 	Reason   string     `json:"reason,omitempty"`
+	// KeyIdentity says how the key names the object it was read for, on a
+	// family whose key carries a digest of the ID rather than the ID.
+	KeyIdentity *KeyIdentity `json:"key_identity,omitempty"`
+	// ReasonText is the error's own text, bounded, beside a reason for a
+	// read the server did not answer: other names nothing on its own. The
+	// result goes only to an authorized session, which reads addresses
+	// already.
+	ReasonText string `json:"reason_text,omitempty"`
 }
+
+// KeyIdentity ties a key to the object it names when the key holds only a
+// digest of the object's ID: the ID asked for, the digest as it appears in
+// the key, and the rule that derives one from the other.
+type KeyIdentity struct {
+	QueryGroup string `json:"query_group"`
+	HashTag    string `json:"hash_tag"`
+	Rule       string `json:"rule"`
+}
+
+// controlKeyRule is how a control key's braces name its Query Group.
+const controlKeyRule = "hash_tag is the hex SHA-256 of query_group, the part of the key between the braces; " +
+	"it keeps one Query Group's control keys in one Redis Cluster slot"
 
 func result(source string, binding RedisBinding, status string) Result {
 	return Result{Status: status, Source: source, Location: binding.Location,
@@ -155,7 +201,7 @@ func (service *Service) Store(ctx context.Context, request StoreRequest) Result 
 		}
 		r, raw := readOne(ctx, request.Family, binding, key)
 		if r.Status == "ok" {
-			r.Value, r.Omitted, err = projectJSON(raw, sourcePolicy)
+			r.Value, r.Omitted, err = projectSourceJSON(raw)
 			if err != nil {
 				r.Status = "invalid_document"
 				r.Complete = false
@@ -185,6 +231,8 @@ func (service *Service) Store(ctx context.Context, request StoreRequest) Result 
 		return r
 	case FamilyDynamicConfig:
 		return service.dynamicConfig(ctx, request)
+	case FamilyCMDBHost, FamilyCMDBServiceInstance:
+		return service.cmdbRecord(ctx, request)
 	case FamilyQueryProgress:
 		binding := service.options.QueryProgress
 		if !identifier(request.QueryGroup) || request.StrategyID != "" || request.GroupID != "" || len(request.Fields) > 0 {
@@ -198,6 +246,7 @@ func (service *Service) Store(ctx context.Context, request StoreRequest) Result 
 			return result(request.Family, binding, "not_configured")
 		}
 		r, raw := readOne(ctx, request.Family, binding, key)
+		r.KeyIdentity = &KeyIdentity{QueryGroup: request.QueryGroup, HashTag: ownership.ControlHashTag(execution.QueryGroupIdentity(request.QueryGroup)), Rule: controlKeyRule}
 		if r.Status == "ok" {
 			value, err := progress.DecodeObserved(raw)
 			if err != nil {
@@ -217,6 +266,8 @@ func (service *Service) Store(ctx context.Context, request StoreRequest) Result 
 		return r
 	case FamilyQueryCooldown:
 		return service.queryCooldown(ctx, request)
+	case FamilyGapMarker, FamilyNoDataMemory:
+		return service.planRecords(ctx, request)
 	default:
 		return invalid(request.Family, RedisBinding{})
 	}
@@ -369,7 +420,7 @@ func (service *Service) dynamicConfig(ctx context.Context, request StoreRequest)
 		entry := results[i+1]
 		if entry.Status == "ok" {
 			var value any
-			if json.Unmarshal(raws[i+1], &value) != nil || !validSetting(field, value) {
+			if json.Unmarshal(raws[i+1], &value) != nil || platformsettings.CheckFieldValue(field, raws[i+1]) != nil {
 				entry.Status = "invalid_document"
 				entry.Complete = false
 			} else {
@@ -389,24 +440,4 @@ func (service *Service) dynamicConfig(ctx context.Context, request StoreRequest)
 	}
 	r.Value = map[string]any{"revision": revision, "fields": values, "tenant": platformsettings.Tenant, "publication_present": revision.Status == "ok", "applied_to_runtime": "not_proven_by_this_read"}
 	return r
-}
-
-func validSetting(field platformsettings.Field, value any) bool {
-	if field == platformsettings.FieldIsAccessBKData {
-		_, ok := value.(bool)
-		return ok
-	}
-	if value == nil {
-		return true
-	}
-	items, ok := value.([]any)
-	if !ok {
-		return false
-	}
-	for _, item := range items {
-		if _, ok := item.(string); !ok {
-			return false
-		}
-	}
-	return true
 }

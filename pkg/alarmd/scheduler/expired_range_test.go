@@ -10,7 +10,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
-func TestExpiredRangeProductionSourceAgeBoundaryAndDisabledResume(t *testing.T) {
+func TestExpiredRangeProductionSourceAgeBoundaryAndResume(t *testing.T) {
 	for _, tc := range []struct {
 		at   int64
 		last execution.EvaluationTime
@@ -19,7 +19,6 @@ func TestExpiredRangeProductionSourceAgeBoundaryAndDisabledResume(t *testing.T) 
 			schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
 			catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 			source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.UnixMilli(tc.at), testRecoveryLimits())
-			source.expiredRangeEnabled = true
 			ctx := context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
 			slot, due, _, err := source.Next(ctx, "query-group-1")
 			if err != nil || !due || slot.ExpiredRange == nil {
@@ -38,7 +37,7 @@ func TestExpiredRangeProductionSourceAgeBoundaryAndDisabledResume(t *testing.T) 
 			restarted := newProductionSlotSourceWithRecoveryForTest(t, catalog, load, time.Unix(2000, 0), testRecoveryLimits())
 			resumed, due, _, err := restarted.Next(context.Background(), "query-group-1")
 			if err != nil || !due || resumed.ExpiredRange == nil || !resumed.ExpiredRange.Equal(*p) {
-				t.Fatalf("disabled resume: %+v %v %v", resumed, due, err)
+				t.Fatalf("resume: %+v %v %v", resumed, due, err)
 			}
 			if len(catalog.requests) != 2 {
 				t.Fatal("persisted range attempted Snapshot re-freeze")
@@ -47,11 +46,11 @@ func TestExpiredRangeProductionSourceAgeBoundaryAndDisabledResume(t *testing.T) 
 	}
 }
 
-func TestExpiredRangeSourceRequiresEnabledUnstartedSingleFlight(t *testing.T) {
+func TestExpiredRangeSourceRequiresUnstartedSingleFlight(t *testing.T) {
 	for _, tc := range []struct {
-		name                    string
-		enabled, flight, single bool
-	}{{"disabled", false, true, false}, {"without flight", true, false, false}, {"single pending", true, true, true}} {
+		name           string
+		flight, single bool
+	}{{"without flight", false, false}, {"single pending", true, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
 			catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
@@ -64,7 +63,6 @@ func TestExpiredRangeSourceRequiresEnabledUnstartedSingleFlight(t *testing.T) {
 				}
 				load.Progress.UnfinishedSlot = &execution.UnfinishedSlotProjection{Contract: slot.Contract, DuePlanTargets: slot.DuePlanTargets, EarliestQueryDeadlineUnixMilli: slot.EarliestQueryDeadlineUnixMilli, KeepUntilUnixMilli: slot.KeepUntilUnixMilli}
 			}
-			source.expiredRangeEnabled = tc.enabled
 			ctx := context.Background()
 			if tc.flight {
 				ctx = context.WithValue(ctx, rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
@@ -82,7 +80,6 @@ func TestExpiredRangeSourceStopsAtRetirementAndBlocksChangedTail(t *testing.T) {
 	schedule := schedulerSchedule(t, 60, 60, &end, "snapshot-1", 1)
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}, retiredAt: &end}
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(2000, 0), testRecoveryLimits())
-	source.expiredRangeEnabled = true
 	slot, due, _, err := source.Next(context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1")), "query-group-1")
 	if err != nil || !due || slot.ExpiredRange == nil || slot.ExpiredRange.Last.Contract.Slot.EvaluationTime != 240 || slot.ExpiredRange.Next != 277 {
 		t.Fatalf("retirement %+v %v %v", slot, due, err)
@@ -97,4 +94,58 @@ func TestExpiredRangeSourceStopsAtRetirementAndBlocksChangedTail(t *testing.T) {
 	if due || err == nil || (!errors.As(err, &blocked) && !errors.Is(err, controlplane.ErrScheduleUnavailable)) {
 		t.Fatalf("changed tail due=%v err=%v", due, err)
 	}
+}
+
+// A range over held Slots is the unheld range a hold later: its head is
+// counted on the clock the hold shifts, as the replay distance is, so the
+// same moment plus the hold seals the same Slots, the hold frozen in. Both
+// branches: a range bounded by the replay age, and one given up on for
+// distance, where the head is what decides it.
+func TestAnExpiredRangeOverHeldSlotsSealsOnTheShiftedClock(t *testing.T) {
+	const hold = 60_000
+	for _, tc := range []struct {
+		at   int64
+		last execution.EvaluationTime
+	}{{954999 + hold, 240}, {955000 + hold, 300}, {955001 + hold, 300}} {
+		t.Run(time.UnixMilli(tc.at).String(), func(t *testing.T) {
+			schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+			catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+			source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.UnixMilli(tc.at), testRecoveryLimits())
+			source.readHolds = &testReadHolds{hold: hold * time.Millisecond}
+			ctx := context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
+			slot, due, _, err := source.Next(ctx, "query-group-1")
+			if err != nil || !due || slot.ExpiredRange == nil {
+				t.Fatalf("a range over held Slots was not sealed: %+v %v %v", slot, due, err)
+			}
+			p := slot.ExpiredRange
+			if p.Last.Contract.Slot.EvaluationTime != tc.last || p.Last.Contract.ReadHoldMillis != hold || p.Count != uint32((tc.last-120)/60+1) {
+				t.Fatalf("range=%+v, want it to end at %d with the hold frozen in", p, tc.last)
+			}
+		})
+	}
+	t.Run("given up on for distance", func(t *testing.T) {
+		const interval, held = int64(15), int64(30_000)
+		const firstSlot = execution.EvaluationTime(600)
+		build := func(hold int64) *execution.ExpiredRangeProjectionV1 {
+			t.Helper()
+			at := time.UnixMilli((int64(firstSlot)+8*interval)*1000 + hold)
+			schedule := schedulerSchedule(t, interval, firstSlot, nil, "snapshot-1", 1)
+			catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+			source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(firstSlot, firstSlot-execution.EvaluationTime(interval)), at, testRecoveryLimits())
+			source.readHolds = &testReadHolds{hold: time.Duration(hold) * time.Millisecond}
+			ctx := context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
+			slot, due, _, err := source.Next(ctx, "query-group-1")
+			if err != nil || !due || slot.ExpiredRange == nil || slot.ExpiredRange.EligibilityV2 == nil ||
+				slot.ExpiredRange.EligibilityV2.Reason != execution.RangeDistanceExpired {
+				t.Fatalf("hold %d: not a distance range: %+v %v %v", hold, slot, due, err)
+			}
+			return slot.ExpiredRange
+		}
+		unheld, heldRange := build(0), build(held)
+		if heldRange.Count != unheld.Count || heldRange.Last.Contract.Slot.EvaluationTime != unheld.Last.Contract.Slot.EvaluationTime ||
+			heldRange.Last.Contract.ReadHoldMillis != held {
+			t.Fatalf("held range %d Slots to %d, unheld %d Slots to %d: the head was not counted on the shifted clock",
+				heldRange.Count, heldRange.Last.Contract.Slot.EvaluationTime, unheld.Count, unheld.Last.Contract.Slot.EvaluationTime)
+		}
+	})
 }

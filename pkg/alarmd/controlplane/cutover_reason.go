@@ -54,10 +54,6 @@ const (
 	// moved by something other than this path -- including a previous cutover
 	// of this path that wrote Segments and did not land its activation.
 	CutoverReasonOpenDigestMismatch = "open_digest_mismatch"
-	// CutoverReasonLegacyRevisionMismatch is a Segment from before Segments
-	// named their content, whose query or schedule revision disagrees with the
-	// group it is being compared against.
-	CutoverReasonLegacyRevisionMismatch = "legacy_revision_mismatch"
 	// CutoverReasonSegmentContentMismatch is the publication's own names
 	// disagreeing with the content it hands the cutter: the manifest says this
 	// Query Group's object is one digest and the group that came back from the
@@ -108,7 +104,7 @@ const (
 var CutoverReasons = []string{
 	CutoverReasonActivationRecordMissing,
 	CutoverReasonTimelineMissing, CutoverReasonOpenSegmentClosed,
-	CutoverReasonOpenDigestMismatch, CutoverReasonLegacyRevisionMismatch,
+	CutoverReasonOpenDigestMismatch,
 	CutoverReasonSegmentContentMismatch, CutoverReasonSegmentConflict,
 	CutoverReasonDigestMismatch, CutoverReasonObjectNewer, CutoverReasonConflict, CutoverReasonUnavailable,
 	CutoverReasonInvalidRequest, CutoverReasonIO, CutoverReasonOther,

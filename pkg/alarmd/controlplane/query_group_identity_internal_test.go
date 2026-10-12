@@ -48,6 +48,9 @@ var queryGroupIdentityFieldOfFact = map[string]string{
 	// Shard: a piece of a split strategy is its own Query Group, so a
 	// re-split of one piece is a cutover of that piece alone.
 	"Shard": "Shard",
+	// GlobalBusiness: a query that skips the space and one scoped to it are
+	// two queries, whatever else they share.
+	"GlobalBusiness": "GlobalBusiness",
 }
 
 // The identity has to read every fact the revision reads. A fact that only
@@ -158,6 +161,12 @@ func TestQueryGroupIdentitySeparatesOnEachAddedFact(t *testing.T) {
 		// with the same query facts are two groups.
 		{"shard", func(facts execution.QueryPlanFacts) execution.QueryPlanFacts {
 			facts.Shard = &execution.ShardRef{Dimension: "bk_target_ip", Index: 1, Count: 2, MatcherDigest: strings.Repeat("b", 64)}
+			return facts
+		}},
+		// A global business query skips the space the ordinary one is
+		// scoped to; the same facts otherwise are two queries.
+		{"global business", func(facts execution.QueryPlanFacts) execution.QueryPlanFacts {
+			facts.GlobalBusiness = true
 			return facts
 		}},
 	} {

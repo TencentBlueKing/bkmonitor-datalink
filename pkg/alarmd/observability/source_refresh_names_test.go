@@ -11,24 +11,14 @@ package observability
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"testing"
-	"time"
 )
 
 func refreshEvent(t *testing.T, facts *SourceRefreshFacts) map[string]any {
 	t.Helper()
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentControlPlane, Stage: StageSnapshotRefreshed, Result: ResultSuccess,
 		SourceRefresh: facts,
 	})
@@ -39,50 +29,21 @@ func refreshEvent(t *testing.T, facts *SourceRefreshFacts) map[string]any {
 	return event
 }
 
-// Whoever reads these records matches on the field name, so the split between
-// the published revision and the activated one only exists if the two arrive
-// under different names. Asserting on the struct alone would let a rename pass.
-func TestTheActivatedRevisionTravelsUnderItsOwnFieldName(t *testing.T) {
+// A round that found no activation beside an earlier publication and
+// established one says so on its refresh line, with the publication it
+// activated and every Query Group counted as added.
+func TestARebuiltActivationTravelsOnTheRefreshLine(t *testing.T) {
 	event := refreshEvent(t, &SourceRefreshFacts{
-		Status: SourceRefreshPending, ObservationID: "observation-candidate",
-		ActivatedRevision: "snapshot-activated", ActivatedEpoch: 7,
-		ActiveQueryGroups: 943, ActiveQueryGroupsKnown: true,
+		Status: SourceRefreshUnchanged, ObservationID: "observation-1",
+		SnapshotRevision: "snapshot-1", PublicationEpoch: 7, ActivationRebuilt: true,
+		CountsKnown: true, NewQueryGroups: 3, AddedQueryGroups: 3,
 	})
-
-	if event["activated_snapshot_revision"] != "snapshot-activated" {
-		t.Fatalf("activated_snapshot_revision = %#v", event["activated_snapshot_revision"])
+	if event["activation_rebuilt"] != true || event["snapshot_revision"] != "snapshot-1" ||
+		event["publication_epoch"] != float64(7) || event["added_query_groups"] != float64(3) {
+		t.Fatalf("rebuilt activation on the refresh line = %#v", event)
 	}
-	if event["activated_publication_epoch"] != float64(7) {
-		t.Fatalf("activated_publication_epoch = %#v", event["activated_publication_epoch"])
-	}
-	if event["active_query_groups"] != float64(943) {
-		t.Fatalf("active_query_groups = %#v", event["active_query_groups"])
-	}
-	// The published names stay empty on a round that published nothing; filling
-	// them is the defect this split exists to prevent.
-	if event["snapshot_revision"] != nil || event["publication_epoch"] != nil {
-		t.Fatalf("activated revision leaked into the published names: %#v", event)
-	}
-	// A size is not a change. These four say something moved, and nothing moved.
-	for _, name := range []string{"old_query_groups", "new_query_groups",
-		"added_query_groups", "retired_query_groups"} {
-		if event[name] != nil {
-			t.Fatalf("%s present on a round that measured no change: %#v", name, event[name])
-		}
-	}
-}
-
-// The active size is reported only when it was actually read. Defaulting it to
-// zero would put a confident "0 Query Groups are active" in the record of a
-// round that simply could not count them.
-func TestAnUncountedActiveSetIsAbsentRatherThanZero(t *testing.T) {
-	event := refreshEvent(t, &SourceRefreshFacts{
-		Status: SourceRefreshPending, ObservationID: "observation-candidate",
-		ActivatedRevision: "snapshot-activated", ActivatedEpoch: 7,
-	})
-
-	if _, present := event["active_query_groups"]; present {
-		t.Fatalf("uncounted active set reported as a number: %#v", event["active_query_groups"])
+	if _, present := refreshEvent(t, &SourceRefreshFacts{Status: SourceRefreshUnchanged})["activation_rebuilt"]; present {
+		t.Fatal("a round that rebuilt nothing logged activation_rebuilt")
 	}
 }
 

@@ -33,16 +33,16 @@ func fp(n int) string { return fmt.Sprintf("%032x", n) }
 // the strategy's set holds, which alerts calibration listed, whether it can
 // be judged at all.
 type fakeSet struct {
-	disjoint bool
-	unjudged bool
-	own      string
-	held     map[string]bool
-	alerts   []openalerts.Alert
+	untrusted bool
+	unjudged  bool
+	own       string
+	held      map[string]bool
+	alerts    []openalerts.Alert
 }
 
-func (set *fakeSet) Disjoint() bool { return set.disjoint }
+func (set *fakeSet) Trusted() bool { return !set.untrusted }
 func (set *fakeSet) MemberCount(k openalerts.StrategyKey) (int, bool) {
-	if set.unjudged || set.disjoint || k != key {
+	if set.unjudged || set.untrusted || k != key {
 		return 0, false
 	}
 	n := 0
@@ -54,7 +54,7 @@ func (set *fakeSet) MemberCount(k openalerts.StrategyKey) (int, bool) {
 	return n, true
 }
 func (set *fakeSet) Holds(k openalerts.StrategyKey, fingerprint string) (bool, bool) {
-	if set.unjudged || set.disjoint || k != key {
+	if set.unjudged || set.untrusted || k != key {
 		return false, false
 	}
 	return set.held[fingerprint], true
@@ -114,9 +114,9 @@ type fixture struct {
 	closer *Closer
 }
 
-func newFixture(set *fakeSet, send bool, mutate func(*Options)) *fixture {
+func newFixture(set *fakeSet, mutate func(*Options)) *fixture {
 	c := &clock{at: time.Unix(1700000000, 0)}
-	options := Options{Send: send, Now: c.now, MaxEntries: 16, Batch: 8, ObservationTTL: 30 * time.Minute}
+	options := Options{Now: c.now, MaxEntries: 16, Batch: 8, ObservationTTL: 30 * time.Minute}
 	if mutate != nil {
 		mutate(&options)
 	}
@@ -178,35 +178,32 @@ func TestTargetScopeCloseDecisions(t *testing.T) {
 	cases := []struct {
 		name  string
 		set   *fakeSet
-		send  bool
 		drops []Drop
 		want  map[string]uint64
 		sent  int
 	}{
-		{name: "an open alert of ours turned away by two Slots is closed", set: openSet(ownSrc, member), send: true,
-			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeUnconfirmed: 1, OutcomeClosed: 1}, sent: 1},
-		{name: "unarmed, the same close is decided and not sent", set: openSet(ownSrc, member),
-			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeUnconfirmed: 1, OutcomeWouldSend: 1}},
-		{name: "a strategy with no open alert is counted in bulk", set: openSet(ownSrc), send: true,
+		{name: "an open alert of ours turned away by two Slots is closed", set: openSet(ownSrc, member),
+			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, sent: 1},
+		{name: "a strategy with no open alert is counted in bulk", set: openSet(ownSrc),
 			drops: []Drop{drop(member, 0), drop(fp(2), 0)}, want: map[string]uint64{OutcomeNotMember: 4}},
-		{name: "a fingerprint the set does not hold is not closed", set: openSet(ownSrc, member), send: true,
+		{name: "a fingerprint the set does not hold is not closed", set: openSet(ownSrc, member),
 			drops: []Drop{drop(fp(2), 0)}, want: map[string]uint64{OutcomeNotMember: 2}},
-		{name: "a record with no fingerprint is not closed", set: openSet(ownSrc, member), send: true,
+		{name: "a record with no fingerprint is not closed", set: openSet(ownSrc, member),
 			drops: []Drop{drop("", 0)}, want: map[string]uint64{OutcomeNotMember: 2}},
-		{name: "an open alert of another source is not closed", set: openSet(otherSrc, member), send: true,
+		{name: "an open alert of another source is not closed", set: openSet(otherSrc, member),
 			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeUnconfirmed: 1, OutcomeProducerForeign: 1}},
 		{name: "a strategy whose set cannot be judged (uncalibrated) is not acted on",
-			set: func() *fakeSet { s := openSet(ownSrc, member); s.unjudged = true; return s }(), send: true,
+			set:   func() *fakeSet { s := openSet(ownSrc, member); s.unjudged = true; return s }(),
 			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeSetUnavailable: 2}},
-		{name: "disjoint sets are not acted on",
-			set: func() *fakeSet { s := openSet(ownSrc, member); s.disjoint = true; return s }(), send: true,
+		{name: "sets the Console has not confirmed are not acted on",
+			set:   func() *fakeSet { s := openSet(ownSrc, member); s.untrusted = true; return s }(),
 			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeSetUnavailable: 2}},
 		{name: "a copy that has not learned its own source is not acted on",
-			set: func() *fakeSet { s := openSet(ownSrc, member); s.own = ""; return s }(), send: true,
+			set:   func() *fakeSet { s := openSet(ownSrc, member); s.own = ""; return s }(),
 			drops: []Drop{drop(member, 0)}, want: map[string]uint64{OutcomeSetUnavailable: 2}},
 	}
 	for _, c := range cases {
-		f := newFixture(c.set, c.send, nil)
+		f := newFixture(c.set, nil)
 		f.slot(1700000000, c.drops...)
 		f.slot(1700000060, c.drops...)
 		f.want(t, c.name, c.want)
@@ -221,7 +218,7 @@ func TestTargetScopeCloseDecisions(t *testing.T) {
 // share one evaluation time. The close waits for a second Slot.
 func TestOneSlotIsOneObservation(t *testing.T) {
 	member := fp(1)
-	f := newFixture(openSet(ownSrc, member), true, nil)
+	f := newFixture(openSet(ownSrc, member), nil)
 	f.slot(1700000000, drop(member, 0), drop(member, 0))
 	f.slot(1700000000, drop(member, 0))
 	f.want(t, "the same Slot three times", map[string]uint64{OutcomeUnconfirmed: 1})
@@ -229,7 +226,7 @@ func TestOneSlotIsOneObservation(t *testing.T) {
 		t.Fatal("closed on one Slot's observation")
 	}
 	f.slot(1700000060, drop(member, 0))
-	f.want(t, "a second Slot", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeClosed: 1})
+	f.want(t, "a second Slot", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1})
 }
 
 // What is sent is the same close every other close is: one evaluation at
@@ -237,7 +234,7 @@ func TestOneSlotIsOneObservation(t *testing.T) {
 // the calibration listed, with the strategy's frozen revision.
 func TestTheCloseIsTheSharedCloseWithItsOwnReason(t *testing.T) {
 	member := fp(1)
-	f := newFixture(openSet(ownSrc, member), true, nil)
+	f := newFixture(openSet(ownSrc, member), nil)
 	f.slot(1700000000, drop(member, 0))
 	f.slot(1700000060, drop(member, 0))
 	sent := f.writer.sent()
@@ -267,17 +264,18 @@ func TestTheCloseIsTheSharedCloseWithItsOwnReason(t *testing.T) {
 	}
 }
 
-// Unarmed, a decided fingerprint is not decided again while the Slots keep
-// turning it away: would_send counts alerts, not Slots.
-func TestWouldSendCountsTheAlertOnce(t *testing.T) {
+// A closed fingerprint is not closed again while the Slots keep turning it
+// away before the link takes the alert out of the set: closed counts
+// alerts, not Slots, and the alert is sent once.
+func TestAClosedAlertIsSentOnce(t *testing.T) {
 	member := fp(1)
-	f := newFixture(openSet(ownSrc, member), false, nil)
+	f := newFixture(openSet(ownSrc, member), nil)
 	for i := int64(0); i < 10; i++ {
 		f.slot(1700000000+60*i, drop(member, 0))
 	}
-	f.want(t, "ten Slots unarmed", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeWouldSend: 1})
-	if len(f.writer.batches) != 0 {
-		t.Fatal("an unarmed close sent something")
+	f.want(t, "ten Slots", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1})
+	if len(f.writer.batches) != 1 || len(f.writer.sent()) != 1 {
+		t.Fatalf("sent %v, want one close in one batch", f.writer.batches)
 	}
 }
 
@@ -285,25 +283,25 @@ func TestWouldSendCountsTheAlertOnce(t *testing.T) {
 // step keeps the observation for when it can.
 func TestARefusedStepKeepsTheObservation(t *testing.T) {
 	member := fp(1)
-	f := newFixture(openSet(ownSrc, member), true, nil)
+	f := newFixture(openSet(ownSrc, member), nil)
 	f.writer.fail = errors.New("broker down")
 	f.slot(1700000000, drop(member, 0))
 	f.slot(1700000060, drop(member, 0))
 	f.want(t, "send refused", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeSendFailed: 1})
 	f.writer.fail = nil
-	f.set.disjoint = true
+	f.set.untrusted = true
 	f.slot(1700000120, drop(member, 0))
-	f.want(t, "copy disjoint", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeSendFailed: 1, OutcomeSetUnavailable: 2})
-	f.set.disjoint = false
+	f.want(t, "copy unconfirmed", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeSendFailed: 1, OutcomeSetUnavailable: 2})
+	f.set.untrusted = false
 	f.slot(1700000180, drop(member, 0))
-	f.want(t, "retried", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeSendFailed: 1, OutcomeSetUnavailable: 2, OutcomeClosed: 1})
+	f.want(t, "retried", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeSendFailed: 1, OutcomeSetUnavailable: 2, OutcomeCloseSent: 1})
 }
 
 // At most Batch closes per step, and the next step starts after the last
 // one decided rather than at the head again.
 func TestClosesAreBoundedPerStepAndRotate(t *testing.T) {
 	fingerprints := []string{fp(1), fp(2), fp(3)}
-	f := newFixture(openSet(ownSrc, fingerprints...), true, func(o *Options) { o.Batch = 2 })
+	f := newFixture(openSet(ownSrc, fingerprints...), func(o *Options) { o.Batch = 2 })
 	drops := []Drop{drop(fingerprints[0], 0), drop(fingerprints[1], 0), drop(fingerprints[2], 0)}
 	f.slot(1700000000, drops...)
 	f.slot(1700000060, drops...)
@@ -320,11 +318,11 @@ func TestClosesAreBoundedPerStepAndRotate(t *testing.T) {
 // and waits for a later Slot. An observation that waited longer than its
 // TTL for a second is forgotten and starts over.
 func TestTheObservationsAreBoundedAndExpire(t *testing.T) {
-	f := newFixture(openSet(ownSrc, fp(1), fp(2)), true, func(o *Options) { o.MaxEntries = 1 })
+	f := newFixture(openSet(ownSrc, fp(1), fp(2)), func(o *Options) { o.MaxEntries = 1 })
 	f.slot(1700000000, drop(fp(1), 0), drop(fp(2), 0))
 	f.want(t, "past the bound", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeMemoryFull: 1})
 
-	g := newFixture(openSet(ownSrc, fp(1)), true, nil)
+	g := newFixture(openSet(ownSrc, fp(1)), nil)
 	g.slot(1700000000, drop(fp(1), 0))
 	g.clock.at = g.clock.at.Add(30 * time.Minute)
 	g.slot(1700003600, drop(fp(1), 0))
@@ -337,7 +335,7 @@ func TestTheObservationsAreBoundedAndExpire(t *testing.T) {
 // Nothing bound yet: the screen and every observation that needs the copy
 // are refused by name.
 func TestAnUnboundCloserRefuses(t *testing.T) {
-	closer := New(Options{Send: true})
+	closer := New(Options{})
 	if screen := closer.Screen(key); screen != OutcomeSetUnavailable {
 		t.Fatalf("Screen = %q, want set_unavailable", screen)
 	}
@@ -352,7 +350,7 @@ func TestAnUnboundCloserRefuses(t *testing.T) {
 // list, never a whole fingerprint.
 func TestFactsAreBoundedPrefixes(t *testing.T) {
 	fingerprints := []string{fp(1), fp(2), fp(3), fp(4)}
-	f := newFixture(openSet(ownSrc, fingerprints...), false, nil)
+	f := newFixture(openSet(ownSrc, fingerprints...), nil)
 	var drops []Drop
 	for _, value := range fingerprints {
 		drops = append(drops, drop(value, 0))
@@ -363,7 +361,7 @@ func TestFactsAreBoundedPrefixes(t *testing.T) {
 		t.Fatalf("strategies = %+v", facts.Strategies)
 	}
 	row := facts.Strategies[0]
-	if row.Pending != 4 || len(row.PendingSample) != 3 || row.Outcomes[OutcomeUnconfirmed] != 4 || facts.Pending != 4 || facts.Armed {
+	if row.Pending != 4 || len(row.PendingSample) != 3 || row.Outcomes[OutcomeUnconfirmed] != 4 || facts.Pending != 4 {
 		t.Fatalf("facts = %+v", facts)
 	}
 	for _, sample := range row.PendingSample {
@@ -374,7 +372,7 @@ func TestFactsAreBoundedPrefixes(t *testing.T) {
 	f.slot(1700000060, drops...)
 	facts = f.closer.Facts()
 	row = facts.Strategies[0]
-	if row.Outcomes[OutcomeWouldSend] != 4 || len(row.DecidedSample) != 3 || facts.Outcomes[OutcomeWouldSend] != 4 {
+	if row.Outcomes[OutcomeCloseSent] != 4 || len(row.DecidedSample) != 3 || facts.Outcomes[OutcomeCloseSent] != 4 {
 		t.Fatalf("facts after the decision = %+v", facts)
 	}
 }
@@ -384,7 +382,7 @@ func TestFactsAreBoundedPrefixes(t *testing.T) {
 // rather than at the head again.
 func TestTheNextStepStartsAfterTheLastDecided(t *testing.T) {
 	first, second := fp(1), fp(2)
-	f := newFixture(openSet(ownSrc, first, second), true, func(o *Options) { o.Batch = 1 })
+	f := newFixture(openSet(ownSrc, first, second), func(o *Options) { o.Batch = 1 })
 	f.writer.fail = errors.New("broker down")
 	f.slot(1700000000, drop(first, 0), drop(second, 0))
 	f.slot(1700000060, drop(first, 0), drop(second, 0))
@@ -410,10 +408,10 @@ func TestTheObservationTTLBoundary(t *testing.T) {
 		want map[string]uint64
 		sent int
 	}{
-		{30*time.Minute - time.Second, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeClosed: 1}, 1},
+		{30*time.Minute - time.Second, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
 		{30 * time.Minute, map[string]uint64{OutcomeUnconfirmed: 2}, 0},
 	} {
-		f := newFixture(openSet(ownSrc, fp(1)), true, nil)
+		f := newFixture(openSet(ownSrc, fp(1)), nil)
 		start := f.clock.at
 		f.observeAt(start, 1700000000, fp(1))
 		f.observeAt(start.Add(c.gap), 1700001800, fp(1))
@@ -435,12 +433,12 @@ func TestTheDedupeTTLBoundary(t *testing.T) {
 		{30*time.Minute - time.Second, 1},
 		{30 * time.Minute, 2},
 	} {
-		f := newFixture(openSet(ownSrc, fp(1)), false, nil)
+		f := newFixture(openSet(ownSrc, fp(1)), nil)
 		start := f.clock.at
 		f.observeAt(start, 1700000000, fp(1))
 		f.observeAt(start.Add(time.Minute), 1700000060, fp(1))
 		f.closer.Step(context.Background())
-		if f.closer.Stats()[OutcomeWouldSend] != 1 {
+		if f.closer.Stats()[OutcomeCloseSent] != 1 {
 			t.Fatalf("%s: fixture did not decide", c.gap)
 		}
 		f.observeAt(start.Add(time.Minute+c.gap), 1700009999, fp(1))
@@ -462,7 +460,7 @@ func TestTheFreshnessBoundary(t *testing.T) {
 		{time.Minute, 1},
 		{time.Minute + time.Second, 0},
 	} {
-		f := newFixture(openSet(ownSrc, fp(1)), true, nil)
+		f := newFixture(openSet(ownSrc, fp(1)), nil)
 		start := f.clock.at
 		f.observeAt(start, 1700000000, fp(1))
 		f.observeAt(start.Add(time.Minute), 1700000060, fp(1))
@@ -486,34 +484,35 @@ func TestTheFreshnessBoundary(t *testing.T) {
 // another whose set is not calibrated is not, and an empty set is
 // not_member without any per-record work.
 func TestScreenJudgesPerStrategy(t *testing.T) {
-	f := newFixture(openSet(ownSrc, fp(1)), true, nil)
+	f := newFixture(openSet(ownSrc, fp(1)), nil)
 	if screen := f.closer.Screen(key); screen != "" {
 		t.Fatalf("Screen(open strategy) = %q, want cleared", screen)
 	}
 	if screen := f.closer.Screen(openalerts.StrategyKey{TenantID: tenant, StrategyID: "other"}); screen != OutcomeSetUnavailable {
 		t.Fatalf("Screen(uncalibrated strategy) = %q, want set_unavailable", screen)
 	}
-	empty := newFixture(openSet(ownSrc), true, nil)
+	empty := newFixture(openSet(ownSrc), nil)
 	if screen := empty.closer.Screen(key); screen != OutcomeNotMember {
 		t.Fatalf("Screen(empty set) = %q, want not_member", screen)
 	}
 }
 
-// countingDisjointSet is a copy whose sets are disjoint and whose per
-// strategy answers do not know it: the whole-copy gate is what refuses.
-type countingDisjointSet struct{ fakeSet }
+// countingUnconfirmedSet is a copy whose sets the Console has not confirmed
+// and whose per strategy answers do not know it: the whole-copy gate is what
+// refuses.
+type countingUnconfirmedSet struct{ fakeSet }
 
-func (set *countingDisjointSet) MemberCount(openalerts.StrategyKey) (int, bool) { return 1, true }
+func (set *countingUnconfirmedSet) MemberCount(openalerts.StrategyKey) (int, bool) { return 1, true }
 
-// Disjoint sets refuse the screen on their own, whatever a strategy's
+// Unconfirmed sets refuse the screen on their own, whatever a strategy's
 // count says.
-func TestScreenRefusesDisjointSets(t *testing.T) {
-	set := &countingDisjointSet{fakeSet: *openSet(ownSrc, fp(1))}
-	set.disjoint = true
+func TestScreenRefusesUnconfirmedSets(t *testing.T) {
+	set := &countingUnconfirmedSet{fakeSet: *openSet(ownSrc, fp(1))}
+	set.untrusted = true
 	closer := New(Options{})
 	closer.Bind(set, nil)
 	if screen := closer.Screen(key); screen != OutcomeSetUnavailable {
-		t.Fatalf("Screen = %q, want set_unavailable on disjoint sets", screen)
+		t.Fatalf("Screen = %q, want set_unavailable on unconfirmed sets", screen)
 	}
 }
 
@@ -547,5 +546,30 @@ func TestReportersOfOneStrategyAreSummedAndTheirRetriesAreNot(t *testing.T) {
 	}
 	if got := closer.Facts().Strategies[0].Outcomes[OutcomeNotMember]; got != 12 {
 		t.Fatalf("the strategy's own count = %d, want 12", got)
+	}
+}
+
+// A close whose request cannot be built - the strategy's revision not
+// positive, or its business zero - is counted as close_identity_invalid,
+// the word the effective-time close uses for the same facts, and not as a
+// send that failed: nothing was sent. It is forgotten, as before: those
+// facts change only when the writer's data does.
+func TestACloseWhoseIdentityCannotBeBuiltIsNamedNotSendFailed(t *testing.T) {
+	for name, mutate := range map[string]func(*Drop){
+		"revision not positive": func(d *Drop) { d.StrategyRevision = 0 },
+		"business zero":         func(d *Drop) { d.BusinessID = "0" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			member := fp(1)
+			f := newFixture(openSet(ownSrc, member), nil)
+			d := drop(member, 0)
+			mutate(&d)
+			f.slot(1700000000, d)
+			f.slot(1700000060, d)
+			f.want(t, name, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeIdentityInvalid: 1})
+			if len(f.writer.batches) != 0 {
+				t.Fatalf("sent %v, want nothing", f.writer.batches)
+			}
+		})
 	}
 }

@@ -35,8 +35,10 @@ func TestOnlyACompleteFreshResolutionIsDefinitive(t *testing.T) {
 		{"a selector dropped members", selector(targetplan.SelectorIncomplete, func(r *targetplan.SelectorResult) { r.Dropped = 1 }), false},
 		{"a selector could not answer", selector(targetplan.SelectorUnavailable, nil), false},
 		{"a selector ate a stale snapshot", selector(targetplan.SelectorOK, func(r *targetplan.SelectorResult) { r.StaleAge = time.Second }), false},
-		{"a reference to a node the cache does not list", selector(targetplan.SelectorOKEmpty, func(r *targetplan.SelectorResult) { r.NodeMissing = true }), false},
-		{"a reference to a node under another business", selector(targetplan.SelectorOKEmpty, func(r *targetplan.SelectorResult) { r.NodeForeign = true }), false},
+		// decision-017 section 3.2: a missing or foreign node is a resolved
+		// empty answer for its reference, not facts unread.
+		{"a reference to a node the cache does not list", selector(targetplan.SelectorOKEmpty, func(r *targetplan.SelectorResult) { r.NodeMissing = true }), true},
+		{"a reference to a node under another business", selector(targetplan.SelectorOKEmpty, func(r *targetplan.SelectorResult) { r.NodeForeign = true }), true},
 	}
 	for _, c := range cases {
 		resolution := &targetplan.Resolution{Selectors: []targetplan.SelectorResult{c.selector}}
@@ -51,5 +53,26 @@ func TestOnlyACompleteFreshResolutionIsDefinitive(t *testing.T) {
 	unresolved.unresolved = true
 	if unresolved.Definitive() {
 		t.Error("a plan nothing resolved answered as definitive")
+	}
+}
+
+// A plan whose static members resolved and one of whose topology references
+// names a node the topology cache no longer lists - a global strategy whose
+// member business was deleted - is fully resolved: the reference contributes
+// nothing, and the static members' out-of-target verdicts stand.
+func TestANodeMissingReferenceLeavesThePlansOtherMembershipsDefinitive(t *testing.T) {
+	resolution := &targetplan.Resolution{
+		Static: map[string]struct{}{"101": {}},
+		Selectors: []targetplan.SelectorResult{{
+			Kind: targetplan.SelectorKindTopology, ID: "7|module|85", State: targetplan.SelectorOKEmpty,
+			Reason: targetplan.ReasonNodeMissing, NodeMissing: true,
+		}},
+	}
+	resolution.Compose()
+	if resolution.State != targetplan.ResolutionComplete {
+		t.Fatalf("fixture: state %s", resolution.State)
+	}
+	if !newResolvedTarget(resolution).Definitive() {
+		t.Error("a complete resolution with a node_missing reference is not definitive: every out-of-target close of the strategy is withheld")
 	}
 }

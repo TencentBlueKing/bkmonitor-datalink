@@ -43,6 +43,18 @@ var acceptOperations = []string{"fleet.get", "k8s.pods", "k8s.events", "k8s.logs
 // surface restriction is not in force.
 var acceptSurfaceDegradations = []string{"METRICS_INTERNAL_LISTEN_MISSING", "CLI_AUTH_UNAVAILABLE"}
 
+// acceptControlDegradations are the fleet degradations that say a strategy
+// change does not reach what the fleet executes - in the publication, the
+// activation, or the view reaching the workers - each held to the fleet's
+// bound: no refresh round has succeeded, the activation is behind the
+// publication, nobody holds the leader lease, the round accepts none of the
+// strategies the source lists, the cutover held query groups back, the
+// leader cannot publish its view, or no worker holds a stream to take it.
+// The refresh counters cannot say it: a round that fails is not in
+// source_refresh_total, and the rest happen after the round.
+var acceptControlDegradations = []string{"CONTROL_SOURCE_STALE", "ACTIVATION_BEHIND", "CONTROL_LEADER_ABSENT", "SOURCE_BLOCKED",
+	"ACTIVATION_BLOCKED", "VIEW_PUBLISH_FAILING", "VIEW_STREAM_NO_SESSIONS"}
+
 // acceptHorizonSources are the sources a no-data horizon may be read from.
 var acceptHorizonSources = []string{"DEFAULT", "VALUES", "DYNAMIC"}
 
@@ -68,13 +80,7 @@ const (
 	metricEventsByKind    = "bkmonitor_alarmd_output_events_by_kind_total"
 	metricEventsRejected  = "bkmonitor_alarmd_output_events_rejected_total"
 	metricRejectedOverrun = "bkmonitor_alarmd_output_events_rejected_strategies_overflow_total"
-	metricPendingAge      = "bkmonitor_alarmd_source_pending_confirmation_age_seconds"
 )
-
-// acceptStarvedRounds is how many more pending answers than none a window
-// must see before it says starved: one pending round is a change the next
-// round confirms, and a window can close between the two.
-const acceptStarvedRounds = 2
 
 type acceptItem struct {
 	Item    string `json:"item"`
@@ -110,6 +116,7 @@ var refusalOwners = map[string]string{
 	"legacy_context_missing":     refusalOwnerAlarmd,
 	"legacy_conversion_rejected": refusalOwnerAlarmd,
 	"legacy_output_invalid":      refusalOwnerAlarmd,
+	"producer_refused":           refusalOwnerAlarmd,
 	"_other":                     refusalOwnerAlarmd,
 	"standard_business_identity": refusalOwnerStrategy,
 	"legacy_strategy_invalid":    refusalOwnerStrategy,
@@ -241,12 +248,12 @@ func (run *acceptRun) checkCatalog(discovered map[string]any, expectBuild string
 	run.add("operations listed and available", verdict, fmt.Sprintf("missing %s; unavailable %s", listOrNone(missing), listOrNone(down)))
 }
 
-// checkFleet reads the fleet: the public surface degradations, the no-data
-// horizon, and the replicas it knows.
+// checkFleet reads the fleet: the public surface degradations, the control
+// source's, the no-data horizon, and the replicas it knows.
 func (run *acceptRun) checkFleet() []string {
 	m, failure := run.read("fleet", "fleet.get", nil)
 	if m == nil {
-		for _, item := range []string{"public surface not degraded", "no-data horizon"} {
+		for _, item := range []string{"public surface not degraded", "control source publishes and activates", "no-data horizon"} {
 			run.add(item, verdictReadFailed, "fleet.get: "+failure)
 		}
 		return nil
@@ -267,6 +274,27 @@ func (run *acceptRun) checkFleet() []string {
 		run.add("public surface not degraded", verdictFail, "fleet degradations include "+strings.Join(surface, ", "))
 	} else {
 		run.add("public surface not degraded", verdictPass, "none of "+strings.Join(acceptSurfaceDegradations, ", "))
+	}
+	var control []string
+	for _, raw := range degradations {
+		degradation := raw.(map[string]any)
+		kind := stringField(degradation, "kind")
+		if !contains(acceptControlDegradations, kind) {
+			continue
+		}
+		words := kind
+		if replica := stringField(degradation, "replica"); replica != "" {
+			words += " on " + replica
+		}
+		if stage := stringField(degradation, "stage"); stage != "" {
+			words += " at " + stage
+		}
+		control = append(control, words)
+	}
+	if len(control) > 0 {
+		run.add("control source publishes and activates", verdictFail, "fleet degradations include "+strings.Join(control, "; "))
+	} else {
+		run.add("control source publishes and activates", verdictPass, "none of "+strings.Join(acceptControlDegradations, ", "))
 	}
 	horizon := objectField(result, "no_data_horizon")
 	source := stringField(horizon, "source")
@@ -478,7 +506,7 @@ func (run *acceptRun) checkMetrics(targets []string) {
 		targets = []string{""}
 	}
 	var failures, held []string
-	var refreshed, recoveries, closed, overflow float64
+	var refreshed, recoveries, closeSendFailed, overflow float64
 	beside := map[string]float64{}
 	closes := map[string]float64{}
 	rejectedBy := map[string]map[string]float64{refusalOwnerAlarmd: {}, refusalOwnerStrategy: {}}
@@ -509,7 +537,7 @@ func (run *acceptRun) checkMetrics(targets []string) {
 		for _, s := range families[metricScopeClose] {
 			closes[stringField(objectField(s, "labels"), "outcome")] += float(s["value"])
 		}
-		closed += sum(families[metricScopeClose], "outcome", "closed")
+		closeSendFailed += sum(families[metricScopeClose], "outcome", "send_failed")
 		if _, ok := families[metricEventsRejected]; ok {
 			rejectedRead = true
 			for _, s := range families[metricEventsRejected] {
@@ -544,7 +572,7 @@ func (run *acceptRun) checkMetrics(targets []string) {
 	}
 	if read == 0 {
 		for _, item := range []string{"source refresh counted", "held recovery counter removed", "recovery beside another Level",
-			"target out of scope closes nothing", "control loop slowest turn", "output events refused by alarmd"} {
+			"target out of scope closes", "control loop slowest turn", "output events refused by alarmd"} {
 			run.add(item, verdictReadFailed, "no replica's metrics were read")
 		}
 		return
@@ -556,7 +584,13 @@ func (run *acceptRun) checkMetrics(targets []string) {
 		run.add("held recovery counter removed", verdictPass, metricRecoveryHeld+" absent on every replica read")
 	}
 	run.checkBeside(beside, recoveries)
-	run.add("target out of scope closes nothing", passIf(closed == 0), fmt.Sprintf("outcome=closed %g (want 0); by outcome %s", closed, floats(closes)))
+	// The alerts of a target that left the strategy's scope are closed, and the closes are sent: how many
+	// went out is what the deployment did, not a fault. A close the producer would not take is.
+	scopeVerdict := verdictInfo
+	if closeSendFailed > 0 {
+		scopeVerdict = verdictFail
+	}
+	run.add("target out of scope closes", scopeVerdict, fmt.Sprintf("send_failed %g (want 0); by outcome %s", closeSendFailed, floats(closes)))
 	switch {
 	case worst == 0:
 		run.add("control loop slowest turn", verdictUndecided, "no control loop turn observed on any replica read")
@@ -732,7 +766,7 @@ func (run *acceptRun) checkDetecting(diagnosis diagnosisRun, covered bool) {
 		dispositions, _ := row["dispositions"].([]any)
 		for _, rawDisposition := range dispositions {
 			disposition, _ := rawDisposition.(map[string]any)
-			if word := stringField(disposition, "disposition"); word == "ACCEPTED" || word == "CONFIG_NORMALIZED" {
+			if word := stringField(disposition, "disposition"); word == "ACCEPTED" || word == "CONFIG_NOTED" {
 				continue
 			}
 			entry.Refusals = append(entry.Refusals, refusal{Scope: stringField(disposition, "scope"), LevelID: disposition["level_id"],
@@ -868,27 +902,14 @@ func (run *acceptRun) reachesLoginPage(path, href string) bool {
 // counts it, and which Leader term it was read from.
 type refreshReading struct {
 	byStatus map[string]float64
-	// pendingAge is the Leader's gauge of how long a change has waited for
-	// confirmation; nil where the build has no such gauge.
-	pendingAge *float64
-	leader     string
-	failure    string
+	leader   string
+	failure  string
 }
 
 // read adds one answer's families to the reading.
 func (reading *refreshReading) read(families map[string][]map[string]any) {
 	for _, s := range families[metricSourceRefresh] {
 		reading.byStatus[stringField(objectField(s, "labels"), "status")] += float(s["value"])
-	}
-	if series, ok := families[metricPendingAge]; ok {
-		age := 0.0
-		if reading.pendingAge != nil {
-			age = *reading.pendingAge
-		}
-		for _, s := range series {
-			age = max(age, float(s["value"]))
-		}
-		reading.pendingAge = &age
 	}
 }
 
@@ -897,7 +918,7 @@ func (reading *refreshReading) read(families map[string][]map[string]any) {
 // replica and summed.
 func (run *acceptRun) refreshCounts(name string, targets []string) refreshReading {
 	reading := refreshReading{byStatus: map[string]float64{}}
-	names := []string{metricSourceRefresh, metricPendingAge}
+	names := []string{metricSourceRefresh}
 	families, failure := run.metricsOf(name, names, map[string]any{"control_leader": true})
 	if families != nil {
 		answer := objectField(objectField(run.answers[name].(map[string]any), "meta"), "control_leader")
@@ -926,19 +947,20 @@ func (run *acceptRun) refreshCounts(name string, targets []string) refreshReadin
 }
 
 // checkRefresh reads the refresh counts a window after the first read and
-// decides on the increase: publication is starved when confirmations keep
-// pending and nothing is published. A Leader change between the reads
-// leaves no increase to read.
+// reports the increase by status: how many rounds the Control Leader
+// published a change on, found unchanged, or lost to another writer over the
+// window. Every round that reads a change publishes it, so the increase is a
+// reading and not a verdict. A Leader change between the reads leaves no
+// increase to read.
 func (run *acceptRun) checkRefresh(before refreshReading, started time.Time, window time.Duration, targets []string) {
-	const starved, conflicts = "control source publication not starved", "control source publication conflicts"
+	const rounds, conflicts = "control source rounds over the window", "control source publication conflicts"
 	if before.failure != "" {
-		run.add("control source pending age", verdictReadFailed, before.failure)
-		run.add(starved, verdictReadFailed, before.failure)
+		run.add(rounds, verdictReadFailed, before.failure)
 		run.add(conflicts, verdictReadFailed, before.failure)
 		return
 	}
 	if window <= 0 {
-		run.add(starved, verdictUndecided, "--window 0: the increase was not read")
+		run.add(rounds, verdictUndecided, "--window 0: the increase was not read")
 	} else {
 		if wait := window - time.Since(started); wait > 0 {
 			fmt.Fprintf(run.app.Err, "Waiting %s for the second control source refresh read...\n", wait.Round(time.Second))
@@ -948,36 +970,20 @@ func (run *acceptRun) checkRefresh(before refreshReading, started time.Time, win
 		elapsed := time.Since(started).Round(time.Second)
 		switch {
 		case after.failure != "":
-			run.add(starved, verdictReadFailed, after.failure)
+			run.add(rounds, verdictReadFailed, after.failure)
 		case after.leader != before.leader:
-			run.add(starved, verdictUndecided, fmt.Sprintf("the Control Leader changed between the reads (%s, then %s)", before.leader, after.leader))
+			run.add(rounds, verdictUndecided, fmt.Sprintf("the Control Leader changed between the reads (%s, then %s)", before.leader, after.leader))
 		default:
 			delta := map[string]float64{}
 			for status, value := range after.byStatus {
 				delta[status] = value - before.byStatus[status]
 			}
-			pending, published := delta["PENDING_CONFIRMATION"], delta["PUBLISHED"]
-			run.add(starved, passIf(!(pending >= acceptStarvedRounds && published == 0)),
-				fmt.Sprintf("increase over %s: %s; starved means PENDING_CONFIRMATION rising by %d or more with PUBLISHED at 0", elapsed, floats(delta), acceptStarvedRounds))
+			run.add(rounds, verdictInfo, fmt.Sprintf("increase over %s: %s", elapsed, floats(delta)))
 		}
 		before = after
 	}
 	conflict := before.byStatus["PUBLICATION_CONFLICT"]
 	run.add(conflicts, passIf(conflict == 0), fmt.Sprintf("PUBLICATION_CONFLICT since start %g", conflict))
-	// A change pending longer than the window has missed more than a
-	// window's worth of confirmations; the gauge says so without waiting.
-	bound := window
-	if bound <= 0 {
-		bound = acceptDefaultWindow
-	}
-	switch {
-	case before.pendingAge == nil:
-		run.add("control source pending age", verdictNotBuilt, metricPendingAge+" is not reported by this build")
-	case *before.pendingAge > bound.Seconds():
-		run.add("control source pending age", verdictFail, fmt.Sprintf("a change has waited %g s for confirmation, longer than %s", *before.pendingAge, bound))
-	default:
-		run.add("control source pending age", verdictPass, fmt.Sprintf("pending %g s (0 is nothing pending); bound %s", *before.pendingAge, bound))
-	}
 }
 
 // acceptRecord saves the whole run -- items and the answers they were

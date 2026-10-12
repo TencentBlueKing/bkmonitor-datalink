@@ -46,6 +46,14 @@ func TestScopedLogLimiterRejectsMissingBounds(t *testing.T) {
 	if _, err := NewScopedBoundedLogPolicy(nil); err == nil {
 		t.Fatal("NewScopedBoundedLogPolicy(nil) returned nil error")
 	}
+	// A logging observer without a policy writes nothing.
+	var output bytes.Buffer
+	NewLoggingObserver(New("runtime", &output), nil).Observe(context.Background(), Observation{
+		Component: ComponentRuntime, Stage: StageStartup, Result: ResultStarted,
+	})
+	if output.Len() != 0 {
+		t.Fatalf("nil policy emitted logs: %s", output.String())
+	}
 }
 
 func TestScopedLogLimiterKeepsOneLinePerReasonAndQueryGroup(t *testing.T) {
@@ -71,13 +79,13 @@ func TestScopedLogLimiterKeepsOneLinePerReasonAndQueryGroup(t *testing.T) {
 	}
 	noScope := scopedFailure("")
 	if !limiter.Admit(noScope).Allowed || limiter.Admit(noScope).Allowed {
-		t.Fatal("observations without a Query Group did not fall back to the fixed reason bucket")
+		t.Fatal("observations without a Query Group did not keep their stage's own bucket")
 	}
 	if !limiter.Admit(scopedFailure("qg-c")).Allowed {
-		t.Fatal("fixed reason bucket traffic suppressed a scoped bucket")
+		t.Fatal("a line without a Query Group suppressed a Query Group's bucket")
 	}
-	if got := limiter.ScopeBuckets(); got != 4 {
-		t.Fatalf("scope buckets=%d, want 4 (qg-a x2 reasons, qg-b, qg-c)", got)
+	if got := limiter.ScopeBuckets(); got != 5 {
+		t.Fatalf("scope buckets=%d, want 5 (qg-a x2 reasons, qg-b, the stage without a Query Group, qg-c)", got)
 	}
 }
 
@@ -223,20 +231,110 @@ func TestLoggingObserverEmitsSuppressedLogsPerQueryGroupFromContext(t *testing.T
 	}
 }
 
-func TestPhaseOneWindowLimiterAdmitDoesNotReportSuppressedCounts(t *testing.T) {
+// The clock is read under the limiter's lock: a caller that read the time
+// before another finished admission could otherwise look like a clock that
+// ran backwards and reset the window.
+func TestScopedLogLimiterSerializesClockWithAdmission(t *testing.T) {
 	t.Parallel()
 
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Minute, MaxEvents: 1})
+	start := time.Unix(1_000, 0)
+	observation := Observation{ReasonCode: ReasonRSS, Result: ResultFailed}
+	var limiter *ScopedLogLimiter
+	var calls atomic.Int64
+	var allowed atomic.Int64
+	clock := func() time.Time {
+		call := calls.Add(1)
+		captured := start.Add(time.Duration(call) * time.Nanosecond)
+		// If the clock runs outside the critical section, deterministically
+		// let a later caller finish admission before returning this timestamp.
+		// TryLock avoids timing assumptions and cannot unlock another caller.
+		if call == 1 && limiter.mu.TryLock() {
+			limiter.mu.Unlock()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				if limiter.Admit(observation).Allowed {
+					allowed.Add(1)
+				}
+			}()
+			<-done
+		}
+		return captured
+	}
+	var err error
+	limiter, err = newScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Minute, MaxEvents: 1, MaxScopes: 16}, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := NewBoundedLogPolicy(limiter)
+	for i := 0; i < 2; i++ {
+		if limiter.Admit(observation).Allowed {
+			allowed.Add(1)
+		}
+	}
+	if got := allowed.Load(); got != 1 {
+		t.Fatalf("allowed events = %d, want 1; all timestamps are within one minute", got)
+	}
+}
+
+func TestScopedLogLimiterResetsOnItsWindowAndOnAClockRollback(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_000, 0)
+	limiter, err := newScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Minute, MaxEvents: 1, MaxScopes: 16},
+		func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := policy.Admit(scopedFailure("qg-a"))
-	second := policy.Admit(scopedFailure("qg-b"))
-	if !first.Allowed || second.Allowed || first.Suppressed != 0 || second.Suppressed != 0 {
-		t.Fatalf("phase-one behaviour changed: first=%+v second=%+v", first, second)
+	for _, observation := range []Observation{
+		{ReasonCode: ReasonRSS, Result: ResultFailed},
+		scopedFailure("qg-a"),
+	} {
+		admit := func() bool { return limiter.Admit(observation).Allowed }
+		if !admit() || admit() {
+			t.Fatalf("%+v: initial window capacity changed", observation)
+		}
+		now = now.Add(time.Minute)
+		if !admit() || admit() {
+			t.Fatalf("%+v: window expiry did not reset capacity", observation)
+		}
+		now = now.Add(-time.Second)
+		if !admit() || admit() {
+			t.Fatalf("%+v: actual clock rollback did not reset capacity", observation)
+		}
+	}
+}
+
+// An observation without a Query Group is bounded by its reason, or by its
+// stage when it has none; each bucket is its own, and an unlisted reason
+// folds into _other's rather than opening one of its own.
+func TestScopedLogLimiterKeepsOneBucketPerReasonAndStageWithoutAQueryGroup(t *testing.T) {
+	t.Parallel()
+
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Minute, MaxEvents: 1, MaxScopes: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admit := func(observation Observation) bool { return limiter.Admit(observation).Allowed }
+	failed := func(reason ReasonCode) Observation {
+		return Observation{Component: ComponentResource, Stage: StageResourceHard, Result: ResultFailed, ReasonCode: reason}
+	}
+	if !admit(failed(ReasonRSS)) || admit(failed(ReasonRSS)) {
+		t.Fatal("RSS bucket did not enforce its capacity")
+	}
+	if !admit(failed(ReasonCPU)) {
+		t.Fatal("RSS traffic suppressed the independent CPU bucket")
+	}
+	if !admit(failed(ReasonCode(contract.ReasonRecordInvalid))) {
+		t.Fatal("resource traffic suppressed the independent contract reason bucket")
+	}
+	startup := Observation{Component: ComponentRuntime, Stage: StageStartup, Result: ResultFailed, ReasonCode: ReasonNone}
+	if !admit(startup) || admit(startup) {
+		t.Fatal("a failed observation without a reason did not use its bounded stage bucket")
+	}
+	if !admit(Observation{Component: ComponentRuntime, Stage: StageShutdown, Result: ResultFailed}) {
+		t.Fatal("one stage's traffic suppressed another stage's bucket")
+	}
+	if !admit(failed("UNKNOWN_REASON")) || admit(failed("ANOTHER_UNKNOWN_REASON")) {
+		t.Fatal("two unlisted reasons did not share _other's bucket")
 	}
 }

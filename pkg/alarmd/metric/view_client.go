@@ -15,9 +15,9 @@ import (
 // ViewClientCounts is the Worker's account of decision-016's view stream:
 // whether it holds a stream to the Leader, which version it has installed,
 // how many of that version's objects it cannot read, and what happened on
-// the way. Every Worker reports these; in the shadow step nothing executes
-// off the installed view, so a Worker with no stream is a Worker with one
-// fewer diagnostic and nothing else.
+// the way. Every Worker reports these. A Worker with no stream keeps
+// executing from the view it installed last; one that starts without a
+// stream has no view and executes nothing.
 type ViewClientCounts struct {
 	Connected                         bool
 	InstalledRevision, InstalledEpoch uint64
@@ -115,7 +115,7 @@ func newViewClientCollector() *viewClientCollector {
 				"stream); DISCOVERY_FAILED a registry that could not be read.", []string{"reason"}, nil),
 		executed: prometheus.NewDesc(name("view_executed_query_groups"),
 			"Query Groups this Worker runs, by the latest outcome of the executable-view check made at each Slot "+
-				"read (decision-016 batch 4): executable (the view carries it, the renewal's content scope and "+
+				"read: executable (the view carries it, the renewal's content scope and "+
 				"timeline revision are the entry's, and the read skipped the activation header), not_in_view, "+
 				"no_content (in the view but with nothing to execute - draining, or a Segment without an object - "+
 				"never executed from the view), scope_mismatch (the renewal's scope is not the entry's), "+
@@ -126,7 +126,7 @@ func newViewClientCollector() *viewClientCollector {
 			[]string{"outcome"}, nil),
 		renewals: prometheus.NewDesc(name("view_gate_lease_renewal_total"),
 			"Leases the executable-view check renewed ahead of their interval because the view named a newer timeline "+
-				"revision than the lease had brought (decision-016 batch 4b: the record moved, the lease had not "+
+				"revision than the lease had brought (the record moved, the lease had not "+
 				"caught up), by result: settled (the record agreed with the view and the read went through), "+
 				"unsettled (renewed, and the view was ahead of the record too: refused timeline_stale), failed "+
 				"(the renewal itself returned an error, which says nothing about the view: refused as it stood). "+

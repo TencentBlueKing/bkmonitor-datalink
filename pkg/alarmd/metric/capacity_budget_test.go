@@ -102,6 +102,20 @@ func TestCapacityLoadCarriesTheSourceOfEveryLimit(t *testing.T) {
 	}
 }
 
+// Every source the CPU budget is resolved from is its own label value. The
+// one a container's budget is normally read from, its CPU quota, used to be
+// missing from the closed set, so every replica on a quota read "other" and
+// the label could not say whether the budget described the container.
+func TestEveryCPUSourceIsItsOwnLabel(t *testing.T) {
+	for _, source := range []string{"cpu_quota", "cpu_quota_minimum", "environment_override", "runtime_default"} {
+		load := fullCapacityLoad()
+		load.CPUSource = source
+		if got := gatherCapacity(t, load)["bkmonitor_alarmd_container_cpu_cores"][source]; got != 8 {
+			t.Fatalf("CPU source %s read as %v, want its own label", source, gatherCapacity(t, load)["bkmonitor_alarmd_container_cpu_cores"])
+		}
+	}
+}
+
 // Outside a container these files do not exist. Reporting zero would say the
 // process is using no memory and is never throttled, which is a far more
 // confident claim than "not measured here".

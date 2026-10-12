@@ -14,24 +14,25 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
 )
 
-// Under the Python-compatible protocol a series keeps only the identity of a
-// RECOVERY it decided: that event was held for the whole Slot and dropped at
-// the sink. The standard protocol's RECOVERY, which the consumer receives, is
-// kept whole - the native control - and so is every anomaly.
-func TestASeriesKeepsOnlyTheIdentityOfAnEventTheSinkWouldDrop(t *testing.T) {
+// Under the Python-compatible protocol a record keeps only the identity of a
+// RECOVERY it decided - the record, the kind, the format - because the
+// trigger did not build it. The standard protocol's RECOVERY, which the
+// consumer receives, is kept whole - the native control - and so is every
+// anomaly.
+func TestARecordKeepsOnlyTheIdentityOfAnEventItsProtocolHasNoMessageFor(t *testing.T) {
 	legacy := &contract.LegacyEventContext{Configuration: &contract.FrozenLegacyOutput{}}
-	record := contract.TriggerRecordRefV1{RecordID: "r-1", SourceTime: 1_700_000_000}
+	anchor := execution.RecordAnchor{RecordID: "r-1", SourceTime: 1_700_000_000}
+	record := contract.TriggerRecordRefV1{RecordID: anchor.RecordID, SourceTime: anchor.SourceTime}
 
-	pythonRecovery := &contract.TriggerEventV1{WireFormat: contract.WireFormatPythonCompatible,
-		EventKind: contract.TriggerEventRecovery, LegacyOutput: legacy, RecordRef: record}
-	events, dropped := keptEvents(pythonRecovery)
+	events, dropped := keptEvents(trigger.EvaluationResultV2{RecordResult: contract.LevelResultRecovery,
+		WithoutMessageFormat: contract.WireFormatPythonCompatible}, anchor)
 	if len(events) != 0 || len(dropped) != 1 {
 		t.Fatalf("python RECOVERY kept %d events and %d identities, want its identity alone", len(events), len(dropped))
 	}
-	want := execution.EventWithoutMessage{Record: execution.RecordAnchor{RecordID: "r-1", SourceTime: 1_700_000_000},
-		EventKind: contract.TriggerEventRecovery, Format: contract.WireFormatPythonCompatible}
+	want := execution.EventWithoutMessage{Record: anchor, EventKind: contract.TriggerEventRecovery, Format: contract.WireFormatPythonCompatible}
 	if dropped[0] != want {
 		t.Fatalf("identity = %+v, want %+v", dropped[0], want)
 	}
@@ -40,13 +41,13 @@ func TestASeriesKeepsOnlyTheIdentityOfAnEventTheSinkWouldDrop(t *testing.T) {
 		"native RECOVERY": {WireFormat: contract.WireFormatStandardRawEvent, EventKind: contract.TriggerEventRecovery, RecordRef: record},
 		"python anomaly":  {WireFormat: contract.WireFormatPythonCompatible, EventKind: contract.TriggerEventAbnormal, LegacyOutput: legacy, RecordRef: record},
 	} {
-		events, dropped := keptEvents(event)
+		events, dropped := keptEvents(trigger.EvaluationResultV2{RecordResult: event.EventKind, TriggerEvent: event}, anchor)
 		if len(events) != 1 || len(dropped) != 0 || events[0].EventKind != event.EventKind {
 			t.Errorf("%s kept %d events and %d identities, want the event whole", name, len(events), len(dropped))
 		}
 	}
-	if events, dropped := keptEvents(nil); events != nil || dropped != nil {
-		t.Errorf("no event kept %v and %v, want nothing", events, dropped)
+	if events, dropped := keptEvents(trigger.EvaluationResultV2{RecordResult: contract.LevelResultRecovery}, anchor); events != nil || dropped != nil {
+		t.Errorf("a held RECOVERY kept %v and %v, want nothing", events, dropped)
 	}
 }
 

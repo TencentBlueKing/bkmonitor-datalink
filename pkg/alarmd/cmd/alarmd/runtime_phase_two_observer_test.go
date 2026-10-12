@@ -48,20 +48,17 @@ func TestPhaseTwoRuntimeObserverKeepsOneLinePerReasonAndQueryGroup(t *testing.T)
 	//
 	// Written against the budget rather than against the number 1. What this
 	// check is for is the scoping -- one noisy Query Group must not hide every
-	// other one, which is the whole difference from the phase-one limiter below
-	// -- and pinning "two lines" demonstrated that only while the budget
-	// happened to be one line per window. Opening the budget up for the
-	// development phase made this fail without anything about the scoping
-	// changing.
-	for round := 0; round <= phaseTwoDiagnosticLogMaxEvents; round++ {
+	// other one -- and pinning a line count would tie it to whatever the
+	// failure budget happens to be.
+	for round := 0; round <= phaseTwoLogFailureMaxEvents; round++ {
 		observer.Observe(ctxA, failed("query-group-a"))
 	}
 	observer.Observe(ctxB, failed("query-group-b"))
 
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != phaseTwoDiagnosticLogMaxEvents+1 {
+	if len(lines) != phaseTwoLogFailureMaxEvents+1 {
 		t.Fatalf("lines=%d, want %d: A's budget spent, the extra A suppressed, and B still admitted",
-			len(lines), phaseTwoDiagnosticLogMaxEvents+1)
+			len(lines), phaseTwoLogFailureMaxEvents+1)
 	}
 	// The last line has to be B's. If the two shared a bucket, B would have been
 	// suppressed behind A and the run would end on an A line.
@@ -87,4 +84,54 @@ func TestPhaseTwoRuntimeObserverKeepsOneLinePerReasonAndQueryGroup(t *testing.T)
 	// comparison that no longer has a second side: the budget is per Query
 	// Group, not per reason code, and a Query Group spending its own budget
 	// must not consume anyone else's.
+}
+
+// The process's observer reports its own lines: the recorder beside it reads
+// log_lines_total from the logging half, written for every line in the log,
+// limited for every one its limiter held back and unwritten for a routine
+// success counted without being written.
+func TestPhaseTwoRuntimeObserverReportsItsLinesByStage(t *testing.T) {
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	var output bytes.Buffer
+	observer, err := newPhaseTwoRuntimeObserver(recorder, observability.New("alarmd", &output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "query-group-a"})
+	for round := 0; round <= phaseTwoLogFailureMaxEvents; round++ {
+		observer.Observe(ctx, observability.Observation{
+			Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+			Result: observability.Result(observability.ResultFailed), ReasonCode: observability.ReasonInternalUnknown,
+			Err: errors.New("alarmd worker: duplicate completion binding"),
+		})
+	}
+	observer.Observe(ctx, observability.Observation{
+		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+		Result: observability.Result(observability.ResultSuccess),
+	})
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "bkmonitor_alarmd_log_lines_total" {
+			continue
+		}
+		for _, sample := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range sample.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["stage"] == string(observability.StageQueryCompleted) {
+				counts[labels["admission"]] = sample.GetCounter().GetValue()
+			}
+		}
+	}
+	lines := len(strings.Split(strings.TrimSpace(output.String()), "\n"))
+	if counts["written"] != float64(lines) || counts["written"] != phaseTwoLogFailureMaxEvents || counts["limited"] != 1 ||
+		counts["unwritten"] != 1 {
+		t.Fatalf("query_completed written %v limited %v unwritten %v, %d lines in the log; want the lines written, "+
+			"the one held back and the success counted", counts["written"], counts["limited"], counts["unwritten"], lines)
+	}
 }

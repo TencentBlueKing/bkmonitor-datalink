@@ -8,7 +8,6 @@ package main
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -82,7 +81,6 @@ func TestProductionPhaseTwoDrainingViewReportsACursorTheTimelineNoLongerHolds(t 
 				Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 					observations = append(observations, observation)
 				}),
-				RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
 			})
 			if err != nil {
 				t.Fatal(err)

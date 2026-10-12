@@ -185,6 +185,16 @@ type EvaluationRequestV2 struct {
 	// answers from what this process sent, and is never nil. The two are
 	// told apart in the gate outcome, not folded into one another.
 	OpenAlerts contract.OpenAlertSet
+	// HoldRecovery is asked about a Level this record would recover: whether
+	// that recovery is held, and why. The caller's own inputs for the Level
+	// this round may have been incomplete, which this package cannot see --
+	// it is handed facts, not the bindings they were detected from. A held
+	// Level is unavailable for that reason instead, before the record's
+	// result, the recovery gate and the envelope are derived, so every one
+	// of them agrees with the verdict. Asked only for a Level that would
+	// recover, so a round that recovers nothing costs nothing. Nil holds
+	// nothing.
+	HoldRecovery func(levelID uint32) (reason string, held bool)
 }
 
 type LevelOutcomeV2 struct {
@@ -251,6 +261,12 @@ const (
 const (
 	// OpenAlertGatePassed: the consumer holds an open alert; the envelope goes.
 	OpenAlertGatePassed = "passed"
+	// OpenAlertGatePassedOneTimeClose: the one close of a group the target
+	// dropped, asked against a set that lets it through (a
+	// contract.OneTimeCloseSet); the envelope goes whether or not the
+	// consumer holds the alert, and where it does not the close is an orphan
+	// there.
+	OpenAlertGatePassedOneTimeClose = "passed_one_time_close"
 	// OpenAlertGateHeldNoOpenAlert: see RecoveryHeldNoOpenAlert.
 	OpenAlertGateHeldNoOpenAlert = "held_no_open_alert"
 	// OpenAlertGateHeldFingerprintUnknown: see RecoveryHeldFingerprintUnknown.
@@ -261,10 +277,9 @@ const (
 	OpenAlertGateNotConfigured = "not_configured"
 	// OpenAlertGateProtocolNotGated: the Plan does not publish the alert
 	// consumer's protocol, so the consumer's open alert set has nothing to
-	// say about its envelope. The compatibility protocol carries anomalies
-	// only and drops the RECOVERY envelope at the sink; alarmd's own decision
-	// event has no consumer that keeps an open alert set. The set is not
-	// asked.
+	// say about its envelope. That is the compatibility protocol, which
+	// carries anomalies only: its RECOVERY envelope is not built at all
+	// (EvaluationResultV2.WithoutMessageFormat). The set is not asked.
 	OpenAlertGateProtocolNotGated = "protocol_not_gated"
 )
 
@@ -296,4 +311,11 @@ type EvaluationResultV2 struct {
 	// leaves TriggerEvent nil while RecordResult stays RECOVERY. Held is the
 	// union of both gates; Cause says which.
 	RecoveryGate RecoveryGateV2
+	// WithoutMessageFormat is set when the record decided an event its
+	// Plan's protocol has no message for (contract.NoMessageFor): under the
+	// compatibility protocol, every RECOVERY that passed the gates. The
+	// envelope is not built and TriggerEvent stays nil; this names the
+	// resolved wire format, and RecordResult the kind, so the record still
+	// stands for one event the protocol had no message for.
+	WithoutMessageFormat string
 }

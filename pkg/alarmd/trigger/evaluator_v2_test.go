@@ -50,7 +50,7 @@ func TestEvaluatorV2MatchesPythonTriggerAndRecoveryWindows(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := requestV2(t, plan, test.source, []DetectionFact{factV2(plan.Levels()[0], test.fact)}, []LevelHistory{{
+			request := requestV2(t, plan, test.source, []DetectionFact{factV2(plan.Levels().At(0), test.fact)}, []LevelHistory{{
 				LevelID: 5, View: pointHistory{step: 60, points: test.points},
 			}}, activeFactsV2(t, plan, test.source))
 			result, err := EvaluateV2(request)
@@ -86,7 +86,7 @@ func TestEvaluatorV2TreatsRequiredAnomaliesAboveWindowAsNeverTriggered(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			plan := compilePlanV2(t, []contract.LevelIRV2{test.level})
-			level := plan.Levels()[0]
+			level := plan.Levels().At(0)
 			if level.RequiredDetectHistoryPoints() != 2 {
 				t.Fatalf("RequiredDetectHistoryPoints() = %d, want trigger window 2", level.RequiredDetectHistoryPoints())
 			}
@@ -113,7 +113,7 @@ func TestEvaluatorV2KeepsWarmingAndLevelIsolationExplicit(t *testing.T) {
 		levelV2(1, 20, 2, 2, 1, staticUptimeV2()),
 		levelV2(5, 1, 2, 2, 1, nil),
 	})
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	source := int64(64800)
 	facts := effectiveFactsV2(t, plan, source, func(ref string) (*time.Location, error) { return time.UTC, nil })
 	if facts[0].Fact.Status() != strategy.EffectiveTimeInactive || facts[1].Fact.Status() != strategy.EffectiveTimeActive {
@@ -143,7 +143,7 @@ func TestEvaluatorV2KeepsWarmingAndLevelIsolationExplicit(t *testing.T) {
 	// so by not satisfying it.
 	warming := requestV2(t, compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 2, nil)}), 300,
 		[]DetectionFact{}, nil, nil)
-	warming.Record.LevelFacts = []DetectionFact{factV2(warming.Plan.Levels()[0], DetectionNormal)}
+	warming.Record.LevelFacts = []DetectionFact{factV2(warming.Plan.Levels().At(0), DetectionNormal)}
 	warming.Histories = []LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{300: false}}}}
 	warming.EffectiveTimeFacts = activeFactsV2(t, warming.Plan, 300)
 	warmingResult, err := EvaluateV2(warming)
@@ -160,7 +160,7 @@ func TestEvaluatorV2UnknownAndUnavailableFreezeWithoutBlockingSibling(t *testing
 		levelV2(1, 10, 1, 1, 1, staticUptimeV2()),
 		levelV2(5, 1, 1, 1, 1, nil),
 	})
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	source := int64(36000)
 	effective := effectiveFactsV2(t, plan, source, func(ref string) (*time.Location, error) {
 		return nil, strategy.ErrEffectiveTimeUnknown
@@ -188,7 +188,7 @@ func TestEvaluatorV2UnknownAndUnavailableFreezeWithoutBlockingSibling(t *testing
 
 func TestStateEligibilityV2(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, staticUptimeV2())})
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	active := effectiveFactsV2(t, plan, 36000, func(string) (*time.Location, error) { return time.UTC, nil })[0].Fact
 	inactive := effectiveFactsV2(t, plan, 64800, func(string) (*time.Location, error) { return time.UTC, nil })[0].Fact
 	unknown := effectiveFactsV2(t, plan, 36000, func(string) (*time.Location, error) {
@@ -251,7 +251,7 @@ func TestEvaluatorV2RejectsBrokenCrossModuleInvariants(t *testing.T) {
 	if _, err := EvaluateV2(request); !errors.Is(err, ErrInvariantV2) {
 		t.Fatalf("missing fact error = %v", err)
 	}
-	request.Record.LevelFacts = []DetectionFact{factV2(plan.Levels()[0], DetectionAnomalous), factV2(plan.Levels()[0], DetectionNormal)}
+	request.Record.LevelFacts = []DetectionFact{factV2(plan.Levels().At(0), DetectionAnomalous), factV2(plan.Levels().At(0), DetectionNormal)}
 	if _, err := EvaluateV2(request); !errors.Is(err, ErrInvariantV2) {
 		t.Fatalf("duplicate fact error = %v", err)
 	}
@@ -263,7 +263,7 @@ func TestEvaluatorV2RejectsEffectiveTimeFactRequirementMismatch(t *testing.T) {
 			levelV2(1, 1, 1, 1, 1, staticUptimeV2()),
 			levelV2(5, 2, 1, 1, 1, nil),
 		})
-		levels := plan.Levels()
+		levels := plan.Levels().Copy()
 		facts := activeFactsV2(t, plan, 36000)
 		facts[0].Fact, facts[1].Fact = facts[1].Fact, facts[0].Fact
 		request := requestV2(t, plan, 36000,
@@ -286,7 +286,7 @@ func TestEvaluatorV2RejectsEffectiveTimeFactRequirementMismatch(t *testing.T) {
 			"calendars":        []any{},
 		}
 		plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, newUptime)})
-		level := plan.Levels()[0]
+		level := plan.Levels().At(0)
 		oldFact.LevelID = level.Definition().LevelID
 		request := requestV2(t, plan, 36000,
 			[]DetectionFact{factV2(level, DetectionAnomalous)},
@@ -302,7 +302,7 @@ func TestEvaluatorV2RejectsEffectiveTimeFactRequirementMismatch(t *testing.T) {
 			levelV2(1, 1, 1, 1, 1, staticUptimeV2()),
 			levelV2(5, 2, 1, 1, 1, nil),
 		})
-		levels := plan.Levels()
+		levels := plan.Levels().Copy()
 		facts := activeFactsV2(t, plan, 36000)
 		facts[0].Fact, facts[1].Fact = facts[1].Fact, facts[0].Fact
 		request := requestV2(t, plan, 36000,
@@ -327,7 +327,7 @@ func TestEvaluatorV2RejectsEffectiveTimeFactRequirementMismatch(t *testing.T) {
 			"calendars":        []any{},
 		}
 		plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, newUptime)})
-		level := plan.Levels()[0]
+		level := plan.Levels().At(0)
 		oldFact.LevelID = level.Definition().LevelID
 		detectFact := unavailableFactV2(level, contract.ReasonRequiredValueNormalizationFailed)
 		detectFact.Result = DetectionError
@@ -351,7 +351,7 @@ func assertInvariantWithoutResultV2(t *testing.T, result EvaluationResultV2, err
 func TestEvaluatorV2UsesStableM0EventIdentity(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 1, 1, 1, nil)})
 	history := []LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{300: true}}}}
-	first := requestV2(t, plan, 300, []DetectionFact{factV2(plan.Levels()[0], DetectionAnomalous)}, history, activeFactsV2(t, plan, 300))
+	first := requestV2(t, plan, 300, []DetectionFact{factV2(plan.Levels().At(0), DetectionAnomalous)}, history, activeFactsV2(t, plan, 300))
 	second := first
 	second.ExecutionID = "execution-replay"
 	firstResult, err := EvaluateV2(first)
@@ -376,7 +376,7 @@ func TestEvaluatorV2AggregatesDynamicLevelsByResultThenPriority(t *testing.T) {
 		levelV2(5, 1, 1, 1, 1, nil),
 		levelV2(7, 1, 1, 1, 1, nil),
 	})
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	request := requestV2(t, plan, 300,
 		[]DetectionFact{
 			factV2(levels[0], DetectionNormal),
@@ -425,7 +425,7 @@ func TestEvaluatorV2AggregatesDynamicLevelsByResultThenPriority(t *testing.T) {
 // windows, which is the same conflation the walk itself made.
 func TestEvaluatorV2IncompleteWindowAllowsAbnormalAndEvidencedRecovery(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 2, nil)})
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	request := requestV2(t, plan, 300, []DetectionFact{factV2(level, DetectionAnomalous)},
 		[]LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{240: true, 300: true}}}},
 		activeFactsV2(t, plan, 300))
@@ -489,7 +489,7 @@ func TestEvaluatorV2IncompleteWindowAllowsAbnormalAndEvidencedRecovery(t *testin
 // worth its fixture.
 func TestEvaluatorV2RecoveryWalkPassesSkippedWindowsToReachTheRetainedOnes(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 2, nil)})
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	history := pointHistory{step: 60, points: map[int64]bool{60: false, 120: false, 300: false, 360: false}}
 	request := requestV2(t, plan, 360, []DetectionFact{factV2(level, DetectionNormal)},
 		[]LevelHistory{{LevelID: 5, View: history}}, activeFactsV2(t, plan, 360))
@@ -536,7 +536,7 @@ func TestEvaluatorV2RecoveryWalkPassesSkippedWindowsToReachTheRetainedOnes(t *te
 // written before the retention grew a slack can tell them apart.
 func TestEvaluatorV2RecoveryWalkReadsThePositionsRetainedPastTheWindow(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 5, 1, 20, nil)})
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	requirement := level.StateRequirement()
 	if requirement.RequiredDetectHistoryPoints != 24 || requirement.RetentionPoints != 38 {
 		t.Fatalf("StateRequirement() = %+v, want 24 required and 38 retained: the distance between the "+
@@ -567,7 +567,7 @@ func TestEvaluatorV2RecoveryWalkReadsThePositionsRetainedPastTheWindow(t *testin
 
 func TestEvaluatorV2AllInactiveIsSuppressedNotNormal(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, staticUptimeV2())})
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	source := int64(64800)
 	result, err := EvaluateV2(requestV2(t, plan, source, []DetectionFact{factV2(level, DetectionAnomalous)},
 		[]LevelHistory{{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source: true}}}},
@@ -583,7 +583,7 @@ func TestEvaluatorV2AllInactiveIsSuppressedNotNormal(t *testing.T) {
 
 func TestEvaluatorV2EnforcesComputeAndEvidenceBudgets(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 2, nil)})
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	request := requestV2(t, plan, 300, []DetectionFact{factV2(level, DetectionAnomalous)},
 		[]LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{120: false, 180: false, 240: true, 300: true}}}},
 		activeFactsV2(t, plan, 300))
@@ -613,7 +613,7 @@ func TestEvaluatorV2EnforcesComputeAndEvidenceBudgets(t *testing.T) {
 
 func TestEvaluatorV2DisabledRecoveryAndFuturePointsDoNotChangeCurrentWindow(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelWithoutRecoveryV2(5, 1, 2, 2)})
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	request := requestV2(t, plan, 300, []DetectionFact{factV2(level, DetectionAnomalous)},
 		[]LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{240: false, 300: true, 360: true}}}},
 		activeFactsV2(t, plan, 300))
@@ -643,7 +643,7 @@ func TestCanonicalNormalizedValueV2(t *testing.T) {
 
 func BenchmarkEvaluateV2(b *testing.B) {
 	plan := compilePlanV2(b, []contract.LevelIRV2{levelV2(5, 1, 5, 3, 3, nil)})
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	for _, benchmark := range []struct {
 		name string
 		fact string
@@ -685,7 +685,7 @@ func requestV2ForBenchmark(b *testing.B, plan *strategy.CompiledPlan, level stra
 func activeFactsBenchmark(b *testing.B, plan *strategy.CompiledPlan, evaluationTime int64) []LevelEffectiveTimeFact {
 	b.Helper()
 	provider := strategy.NewStaticScheduleProvider(nil)
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	requests := make([]strategy.EffectiveTimeRequest, len(levels))
 	for index, level := range levels {
 		requests[index] = strategy.EffectiveTimeRequest{TenantID: "default", BusinessID: "2", EvaluationTime: evaluationTime, Requirement: level.EffectiveTimeRequirement()}
@@ -841,7 +841,7 @@ func effectiveFactsV2(t *testing.T, plan *strategy.CompiledPlan, evaluationTime 
 	provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(func(_ context.Context, ref, _, _ string) (*time.Location, error) {
 		return resolve(ref)
 	}))
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	requests := make([]strategy.EffectiveTimeRequest, len(levels))
 	for index, level := range levels {
 		requests[index] = strategy.EffectiveTimeRequest{TenantID: "default", BusinessID: "2", EvaluationTime: evaluationTime, Requirement: level.EffectiveTimeRequirement()}
@@ -861,7 +861,7 @@ func compilePlanV2(t testing.TB, levels []contract.LevelIRV2) *strategy.Compiled
 	return compilePlanV2WithOutput(t, levels, nil)
 }
 
-func compilePlanV2WithOutput(t testing.TB, levels []contract.LevelIRV2, shape func(*contract.EvaluationPlanV2)) *strategy.CompiledPlan {
+func compilePlanV2WithOutput(t testing.TB, levels []contract.LevelIRV2, shape func(*contract.EvaluationPlanV2), options ...strategy.CompilerOption) *strategy.CompiledPlan {
 	t.Helper()
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
@@ -869,7 +869,7 @@ func compilePlanV2WithOutput(t testing.TB, levels []contract.LevelIRV2, shape fu
 		MaxTriggerWindowSize: 4096, MaxRecoveryConsecutiveWindows: 4096, MaxTriggerComputeCost: 1 << 20,
 		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 64, MaxCacheBytes: 4 << 20,
 		NegativeCacheTTL: time.Minute, BudgetRevision: "trigger-test-v1",
-	})
+	}, options...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -943,7 +943,7 @@ func mustJSONV2(value any) json.RawMessage {
 func TestTheWindowReportsWhenItsAnomaliesStarted(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 9, 3, 2, 2, nil)})
 	const source = int64(300)
-	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels()[0], DetectionAnomalous)}, []LevelHistory{{
+	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels().At(0), DetectionAnomalous)}, []LevelHistory{{
 		LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{120: false, 180: false, 240: true, 300: true}},
 	}}, activeFactsV2(t, plan, source))
 	result, err := EvaluateV2(request)
@@ -965,7 +965,7 @@ func TestTheWindowReportsWhenItsAnomaliesStarted(t *testing.T) {
 func TestAWindowWithNoAnomalyReportsNoBeginning(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 9, 3, 2, 2, nil)})
 	const source = int64(300)
-	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels()[0], DetectionNormal)}, []LevelHistory{{
+	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels().At(0), DetectionNormal)}, []LevelHistory{{
 		LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{120: false, 180: false, 240: false, 300: false}},
 	}}, activeFactsV2(t, plan, source))
 	result, err := EvaluateV2(request)
@@ -998,7 +998,7 @@ func TestAPlanThatPublishesTheCompatibleProtocolCarriesItsContext(t *testing.T) 
 		t.Fatal("the fixture did not produce a Plan carrying a compatibility context")
 	}
 	const source = int64(300)
-	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels()[0], DetectionAnomalous)}, []LevelHistory{{
+	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels().At(0), DetectionAnomalous)}, []LevelHistory{{
 		LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{180: true, 240: true, 300: true}},
 	}}, activeFactsV2(t, plan, source))
 	result, err := EvaluateV2(request)

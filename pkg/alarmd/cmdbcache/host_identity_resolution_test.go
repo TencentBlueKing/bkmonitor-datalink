@@ -79,7 +79,7 @@ func TestTheWritersHostPlansResolveThroughTheHostCacheAndTheDatabasePlanIsNamedU
 		"cw:dynamic_group:2001": `{"model_id":"cw-MySQL","model_inst_ids":["mysql-prod-01"],"member_list":[{"model_id":"cw-MySQL","model_inst_id":"mysql-prod-01"}]}`,
 	}}
 	reader, _ := NewGroupReader(client, "cw:")
-	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: clock})
+	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +141,35 @@ func TestTheWritersHostPlansResolveThroughTheHostCacheAndTheDatabasePlanIsNamedU
 	}
 }
 
+// A host cache that lists hosts under the plan's model, and none the static
+// members name: the members are hosts that are gone. The selector says so -
+// Incomplete, every member dropped - rather than that the model cannot be
+// placed, and a group beside it still admits its members.
+func TestStaticMembersAllGoneFromACacheThatListsTheModelAreDropped(t *testing.T) {
+	now := time.Unix(1000, 0)
+	clock := func() time.Time { return now }
+	client := &groupClient{values: map[string]string{"cw:dynamic_group:g": `{"model_id":"cw-Host","model_inst_ids":["501"],` +
+		`"member_list":[{"model_id":"cw-Host","model_inst_id":"501","bk_host_id":501}]}`}}
+	reader, _ := NewGroupReader(client, "cw:")
+	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := hostStore(t, clock, []string{"501", hostUnderSet}, []string{"set|12"})
+	plan := &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleModelInstID,
+		Identity: contract.TargetPlanIdentityV1{Dimensions: []string{"bk_host_id"}, HostIdentity: true}, StaticKeys: []string{},
+		StaticMembers: []contract.TargetPlanMemberV1{{ModelID: "cw-Host", ModelInstID: "901"}, {ModelID: "cw-Host", ModelInstID: "902"}},
+		DynamicGroups: []string{"g"}}
+	resolution := NewTargetResolver(groups, hosts, clock).Resolve(context.Background(), plan, time.Minute)
+	static := selector(resolution, targetplan.SelectorKindStatic, "cw-Host")
+	if static.State != targetplan.SelectorIncomplete || static.Reason != targetplan.ReasonMembersDropped || static.Dropped != 2 || static.Kept != 0 {
+		t.Fatalf("static members all gone = %+v, want Incomplete members_dropped, two dropped", static)
+	}
+	if resolution.State != targetplan.ResolutionIncomplete || !resolution.Contains("501") {
+		t.Fatalf("resolution = %s, contains 501 %v; want incomplete, the group's member admitted", resolution.State, resolution.Contains("501"))
+	}
+}
+
 // A host cache whose writer has not put the canonical (model, instance)
 // identity on its records cannot say which members are hosts. The plan's
 // members are then unresolved by name, not read as hosts on the strength of
@@ -151,13 +180,13 @@ func TestAHostCacheWithoutTheCanonicalIdentityLeavesHostMembersUnresolvedByName(
 	now := time.Unix(1000, 0)
 	clock := func() time.Time { return now }
 	reader, _ := NewGroupReader(&groupClient{values: map[string]string{}}, "cw:")
-	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: clock})
+	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
 	hosts := hostStore(t, clock, []string{"101", hostWithoutIdentity101}, []string{"set|12", "module|31"})
-	if hosts.Current().ModelledHosts() != 0 || hosts.Current().Hosts() != 1 {
-		t.Fatalf("fixture: modelled %d of %d hosts, want a cache with hosts and no identity", hosts.Current().ModelledHosts(), hosts.Current().Hosts())
+	if len(hosts.Current().byModelInstance) != 0 || hosts.Current().Hosts() != 1 {
+		t.Fatalf("fixture: modelled %d of %d hosts, want a cache with hosts and no identity", len(hosts.Current().byModelInstance), hosts.Current().Hosts())
 	}
 	resolver := NewTargetResolver(groups, hosts, clock)
 	plan := &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleModelInstID,

@@ -68,6 +68,10 @@ type queryGroupIdentityFacts struct {
 	// a Plan that is not split, so every identity in the deployment stays
 	// where it was.
 	Shard *execution.ShardRef `json:"shard,omitempty"`
+	// GlobalBusiness keeps a global business Plan's query apart from an
+	// ordinary Plan of the same business asking the same thing: one skips
+	// the space and the other is scoped to it, so they are two queries.
+	GlobalBusiness bool `json:"global_business,omitempty"`
 }
 
 // queryGroupIdentityFactsOf projects a Plan's facts onto the identity. The
@@ -81,7 +85,7 @@ func queryGroupIdentityFactsOf(facts execution.QueryPlanFacts) queryGroupIdentit
 		DownSample: facts.DownSampleRange, Timezone: facts.Timezone, NotTimeAlign: facts.NotTimeAlign,
 		Normalization: facts.Normalization, QueryDelay: facts.QueryDelaySeconds,
 		SourceSemantics: facts.SourceSemantics, PromQL: facts.PromQL, TSDBMap: facts.TSDBMap,
-		Shard: facts.Shard,
+		Shard: facts.Shard, GlobalBusiness: facts.GlobalBusiness,
 	}
 }
 

@@ -68,25 +68,25 @@ func TestG4DefaultRegistryCompilesThreeIndependentAlgorithmKinds(t *testing.T) {
 			request := g4CompileRequest(t, test.kind, test.config, test.projection, test.requirements)
 			compiled := mustCompileG4Request(t, newTestCompiler(t), request)
 			stateCompatibility[test.kind] = compiled.StateCompatibilityHash()
-			algorithms := compiled.Levels()[0].Algorithms()
-			if len(algorithms) != 1 || algorithms[0].Kind() != test.kind || algorithms[0].Version() != 1 ||
-				len(algorithms[0].AlgorithmPlanID()) != 64 || len(algorithms[0].CapabilityDigest()) != 64 ||
-				len(algorithms[0].StateCompatibilityFingerprint()) != 64 {
+			algorithms := compiled.Levels().At(0).Algorithms()
+			if algorithms.Len() != 1 || algorithms.At(0).Kind() != test.kind || algorithms.At(0).Version() != 1 ||
+				len(algorithms.At(0).AlgorithmPlanID()) != 64 || len(algorithms.At(0).CapabilityDigest()) != 64 ||
+				len(algorithms.At(0).StateCompatibilityFingerprint()) != 64 {
 				t.Fatalf("compiled algorithms = %+v", algorithms)
 			}
-			capability := algorithms[0].Capability()
+			capability := algorithms.At(0).Capability()
 			if capability.EvaluationScope != contract.EvaluationScopeSeries ||
 				((test.kind == DetectorKindSimpleRingRatio || test.kind == DetectorKindOsRestart) && capability.RequiredHistoryKind != algorithmHistoryPlanLocalInput) ||
 				(test.kind == DetectorKindProcPort && capability.RequiredHistoryKind != algorithmHistoryNone) {
 				t.Fatalf("capability = %+v", capability)
 			}
-			if got := algorithms[0].InputRequirements(); !reflect.DeepEqual(got, test.requirements) {
+			if got := algorithms.At(0).InputRequirements(); !reflect.DeepEqual(got, test.requirements) {
 				t.Fatalf("InputRequirements() = %+v, want %+v", got, test.requirements)
 			}
-			if got := algorithms[0].InputProjection(); !reflect.DeepEqual(got, test.projection) {
+			if got := algorithms.At(0).InputProjection(); !reflect.DeepEqual(got, test.projection) {
 				t.Fatalf("InputProjection() = %+v, want %+v", got, test.projection)
 			}
-			test.assert(t, algorithms[0])
+			test.assert(t, algorithms.At(0))
 		})
 	}
 	seenState := make(map[string]string, len(stateCompatibility))
@@ -123,8 +123,8 @@ func TestG4ProcPortDeclaresSeriesFoldPolicyWithoutChangingFingerprints(t *testin
 	}
 	compiled := mustCompileG4Request(t, newTestCompiler(t),
 		g4CompileRequest(t, DetectorKindProcPort, map[string]any{}, projection, g4PrimaryRequirements(t, projection)))
-	level := compiled.Levels()[0]
-	algorithm := level.Algorithms()[0]
+	level := compiled.Levels().At(0)
+	algorithm := level.Algorithms().At(0)
 	const (
 		wantDetect         = "9218eb1b3507104a392a86d45a0314e6ac21a964ce39a420832412ba8f0b72ce"
 		wantTrigger        = "5177aa852128e953a9ed687682e39d2d7cdb99d892678da8bd52df3416f202f1"
@@ -162,11 +162,11 @@ func TestG4ProcPortDeclaresSeriesFoldPolicyWithoutChangingFingerprints(t *testin
 	for _, other := range others {
 		compiled := mustCompileG4Request(t, newTestCompiler(t), g4CompileRequest(t, other.kind, other.config,
 			AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}}, g4Requirements(t, other.dependency)))
-		levels := compiled.Levels()
-		if len(levels) != 1 || len(levels[0].Algorithms()) != 1 {
+		levels := compiled.Levels().Copy()
+		if len(levels) != 1 || levels[0].Algorithms().Len() != 1 {
 			t.Fatalf("%s compiled %d levels", other.kind, len(levels))
 		}
-		if _, declared := levels[0].Algorithms()[0].SeriesFoldPolicy(); declared {
+		if _, declared := levels[0].Algorithms().At(0).SeriesFoldPolicy(); declared {
 			t.Fatalf("%s declared a fold policy", other.kind)
 		}
 	}
@@ -195,7 +195,7 @@ func TestThresholdSourceMappingProvenanceEntersCompatibility(t *testing.T) {
 	plan := validPlan()
 	plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Config = mustJSON(config)
 	mapped := mustCompileG4Request(t, compiler, validRequest(plan))
-	algorithm := mapped.Levels()[0].Algorithms()[0]
+	algorithm := mapped.Levels().At(0).Algorithms().At(0)
 	provenance, ok := algorithm.SourceProvenance()
 	if !ok || provenance.SourceAlgorithmFamily != "ping_unreachable" || provenance.SourceMappingVersion != "ping-unreachable-to-threshold-v1" ||
 		provenance.CanonicalQueryDigest != queryDigest {
@@ -288,11 +288,11 @@ func TestG4SimpleRingRatioPreservesUnconfiguredAndNumericZero(t *testing.T) {
 	}
 	unconfigured := compile(nil)
 	zero := compile(0)
-	zeroConfig, ok := zero.Levels()[0].Algorithms()[0].SimpleRingRatioConfig()
+	zeroConfig, ok := zero.Levels().At(0).Algorithms().At(0).SimpleRingRatioConfig()
 	if !ok || !zeroConfig.FloorConfigured || zeroConfig.FloorEnabled || zeroConfig.FloorDecimal != "0.000000" {
 		t.Fatalf("zero config = %+v, ok=%v", zeroConfig, ok)
 	}
-	unconfiguredConfig, ok := unconfigured.Levels()[0].Algorithms()[0].SimpleRingRatioConfig()
+	unconfiguredConfig, ok := unconfigured.Levels().At(0).Algorithms().At(0).SimpleRingRatioConfig()
 	if !ok || unconfiguredConfig.FloorConfigured || unconfiguredConfig.FloorDecimal != "" {
 		t.Fatalf("unconfigured config = %+v, ok=%v", unconfiguredConfig, ok)
 	}

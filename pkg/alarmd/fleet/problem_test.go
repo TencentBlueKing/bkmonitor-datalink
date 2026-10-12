@@ -247,7 +247,7 @@ func TestTheRowCarriesBothEndsOfTheReasonsClock(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	for round := 0; round < DefaultDegradedRounds+2; round++ {
-		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8709"))
+		tracker.Observe(context.Background(), completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "852"))
 		at.at = at.at.Add(time.Minute)
 	}
 	rows := tracker.Anomalies()

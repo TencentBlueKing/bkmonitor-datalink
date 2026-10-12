@@ -22,20 +22,19 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
-func TestPrepareAlwaysEffectiveTimeFactsDeduplicatesRequirementDigestWithoutDroppingConsumers(t *testing.T) {
+// Every consumer of every due Plan gets a fact, and consumers that share one
+// ALWAYS requirement get the same fact: one requirement resolved once, not a
+// fact per consumer that could disagree.
+func TestPrepareEffectiveTimeFactsGivesEveryConsumerTheFactOfItsRequirement(t *testing.T) {
 	header, plans := effectiveTimeHeaderForTest(t)
-	provider := &recordingEffectiveTimeProvider{delegate: strategy.NewStaticScheduleProvider(nil)}
 
-	prepared, err := prepareAlwaysEffectiveTimeFactsWithProvider(context.Background(), header, provider)
+	prepared, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
 	if err != nil {
-		t.Fatalf("prepareAlwaysEffectiveTimeFacts() error = %v", err)
-	}
-	if provider.calls != 1 || !reflect.DeepEqual(provider.requestCounts, []int{1}) {
-		t.Fatalf("EffectiveTime Resolve calls/requests = %d/%v, want 1/[1] for one shared requirement digest", provider.calls, provider.requestCounts)
+		t.Fatalf("PrepareEffectiveTimeFacts() error = %v", err)
 	}
 	wantConsumers := 0
 	for _, due := range plans {
-		wantConsumers += len(due.CompiledPlan.Levels())
+		wantConsumers += due.CompiledPlan.Levels().Len()
 	}
 	if len(prepared) != wantConsumers {
 		t.Fatalf("prepared consumers = %d, want %d", len(prepared), wantConsumers)
@@ -51,23 +50,8 @@ func TestPrepareAlwaysEffectiveTimeFactsDeduplicatesRequirementDigestWithoutDrop
 		factDigests[fact.FactDigest()] = struct{}{}
 	}
 	if len(requirementDigests) != 1 || len(factDigests) != 1 {
-		t.Fatalf("duplicate ALWAYS requirements resolved to requirement/fact digests = %d/%d, want 1/1", len(requirementDigests), len(factDigests))
+		t.Fatalf("one ALWAYS requirement resolved to requirement/fact digests = %d/%d, want 1/1", len(requirementDigests), len(factDigests))
 	}
-}
-
-type recordingEffectiveTimeProvider struct {
-	delegate      strategy.EffectiveTimeProvider
-	calls         int
-	requestCounts []int
-}
-
-func (provider *recordingEffectiveTimeProvider) Resolve(
-	ctx context.Context,
-	requests []strategy.EffectiveTimeRequest,
-) ([]strategy.EffectiveTimeFact, error) {
-	provider.calls++
-	provider.requestCounts = append(provider.requestCounts, len(requests))
-	return provider.delegate.Resolve(ctx, requests)
 }
 
 func TestBindAlwaysEffectiveTimeFactsUsesExactSelectedSeriesPlanAndLevelTargets(t *testing.T) {
@@ -170,7 +154,7 @@ func TestPrepareEffectiveTimeFactsFreezesUnresolvedLegacySchedule(t *testing.T) 
 		}},
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		facts, err := prepareAlwaysEffectiveTimeFacts(context.Background(), header)
+		facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -315,7 +299,7 @@ func TestPrepareEffectiveTimeFactsPreservesDifferentLevelRequirements(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, level := range compiled.Levels() {
+	for _, level := range compiled.Levels().All() {
 		fact := facts[execution.ConsumerRef{Plan: identity, LevelID: level.Definition().LevelID, HasLevel: true}]
 		want := strategy.EffectiveTimeActive
 		if level.Definition().LevelID == 2 {
@@ -364,9 +348,9 @@ func mustPrepareAlwaysEffectiveTimeFacts(
 	header execution.InternalExecutionHeader,
 ) map[execution.ConsumerRef]strategy.EffectiveTimeFact {
 	t.Helper()
-	prepared, err := prepareAlwaysEffectiveTimeFacts(context.Background(), header)
+	prepared, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
 	if err != nil {
-		t.Fatalf("prepareAlwaysEffectiveTimeFacts() error = %v", err)
+		t.Fatalf("PrepareEffectiveTimeFacts() error = %v", err)
 	}
 	return prepared
 }

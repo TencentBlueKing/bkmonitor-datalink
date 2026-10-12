@@ -8,7 +8,6 @@ package controlplane
 import (
 	"context"
 	"errors"
-	"sort"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -99,23 +98,6 @@ type segmentContent struct {
 	refs   []execution.OutputContextRef
 }
 
-func contentOf(group QueryGroup) (segmentContent, error) {
-	digest, err := DeriveQueryGroupObjectDigest(group)
-	if err != nil {
-		return segmentContent{}, err
-	}
-	refs := make([]execution.OutputContextRef, 0, len(group.Plans))
-	for _, plan := range group.Plans {
-		contextDigest, err := DeriveOutputContextDigest(plan)
-		if err != nil {
-			return segmentContent{}, err
-		}
-		refs = append(refs, execution.OutputContextRef{Plan: plan.Identity, Digest: contextDigest})
-	}
-	sort.Slice(refs, func(i, j int) bool { return lessPlanIdentity(refs[i].Plan, refs[j].Plan) })
-	return segmentContent{digest: digest, refs: refs}, nil
-}
-
 // activatedContent is the population the current activation runs, with the
 // content each Query Group runs when the source can tell. The manifest of
 // the current publication tells it in one small read; the whole Snapshot
@@ -154,15 +136,7 @@ func (content activatedContent) refsFor(group QueryGroup) ([]execution.OutputCon
 // activated, so it is not an old Query Group for the next cutover to keep or
 // cut, and it is not part of the coverage the activation owes.
 func (repository *RedisCatalogRepository) loadActivatedContent(ctx context.Context, activation ActivationState) (activatedContent, error) {
-	load := repository.loadPublicationContent
-	if activation.CutoverProgress != nil {
-		// The manifest of the current publication names content the Query
-		// Groups past the cutover's cursor are not running yet; taken for
-		// theirs, it would pass them off as unchanged and they would never be
-		// cut. What each runs is on its open Segment.
-		load = repository.activatedContentFromOpenSegments
-	}
-	content, err := load(ctx, activation)
+	content, err := repository.loadPublicationContent(ctx, activation)
 	if err != nil {
 		return activatedContent{}, err
 	}
@@ -209,26 +183,17 @@ func (repository *RedisCatalogRepository) loadPublicationContent(ctx context.Con
 	if !errors.Is(err, ErrCatalogManifestUnavailable) {
 		return activatedContent{}, err
 	}
-	var groups map[execution.QueryGroupIdentity]QueryGroup
-	digests := map[execution.QueryGroupIdentity]execution.ObjectDigest{}
-	if activation.SchemaVersion == activationSchemaVersion {
-		identities, err := repository.LoadActiveQueryGroupSet(ctx, activation.ActiveQGSetRef)
-		if err != nil {
-			return activatedContent{}, err
-		}
-		candidates := make(map[execution.QueryGroupIdentity]QueryGroup, len(identities))
-		for _, identity := range identities {
-			candidates[identity] = QueryGroup{Identity: identity}
-		}
-		groups, digests, err = repository.loadActivatedGroupsFromOpenSchedules(ctx, activation, candidates)
-		if err != nil {
-			return activatedContent{}, err
-		}
-	} else {
-		groups, err = repository.loadActivatedGroupsFromScheduleScan(ctx, activation)
-		if err != nil {
-			return activatedContent{}, err
-		}
+	identities, err := repository.LoadActiveQueryGroupSet(ctx, activation.ActiveQGSetRef)
+	if err != nil {
+		return activatedContent{}, err
+	}
+	candidates := make(map[execution.QueryGroupIdentity]QueryGroup, len(identities))
+	for _, identity := range identities {
+		candidates[identity] = QueryGroup{Identity: identity}
+	}
+	groups, digests, err := repository.loadActivatedGroupsFromOpenSchedules(ctx, activation, candidates)
+	if err != nil {
+		return activatedContent{}, err
 	}
 	// Open Segments name the execution content but not the output contexts
 	// in a form that can be compared per Plan without reading them again, so
@@ -244,12 +209,11 @@ func (repository *RedisCatalogRepository) loadPublicationContent(ctx context.Con
 type contentCutoverDecision string
 
 const (
-	cutoverKept      contentCutoverDecision = "kept"
-	cutoverRevised   contentCutoverDecision = "revised"
-	cutoverCut       contentCutoverDecision = "cut"
-	cutoverLegacyCut contentCutoverDecision = "legacy_cut"
-	cutoverRetired   contentCutoverDecision = "retired"
-	cutoverAdded     contentCutoverDecision = "added"
+	cutoverKept    contentCutoverDecision = "kept"
+	cutoverRevised contentCutoverDecision = "revised"
+	cutoverCut     contentCutoverDecision = "cut"
+	cutoverRetired contentCutoverDecision = "retired"
+	cutoverAdded   contentCutoverDecision = "added"
 	// cutoverBlocked: a precondition only a write outside the cutover could
 	// break failed on this Query Group; it keeps its records and is judged
 	// again at the next cutover.
@@ -257,6 +221,10 @@ const (
 	// cutoverReopened: the Query Group's timeline key was gone; a new
 	// timeline was opened for it as for a new Query Group.
 	cutoverReopened contentCutoverDecision = "reopened"
+	// cutoverRepaired: the Query Group's timeline did not decode; it was
+	// rewritten with one Segment from the boundary on the content and the
+	// records it runs, marked so its Worker records the Slots lost with it.
+	cutoverRepaired contentCutoverDecision = "repaired"
 	// cutoverRetiredUnwritten: a Query Group leaving the publication whose
 	// timeline failed a precondition; it leaves the activation, and its
 	// timeline is left as it is.
@@ -308,7 +276,10 @@ func pruneOutputContextRevisions(schedule *execution.FrozenQueryGroupSchedule, r
 			maxOffset = offset
 		}
 	}
-	keep := int64(retention.MaxReplayAge/time.Second) + int64(retention.TerminalDelay/time.Second) + maxOffset
+	// A Slot can be read as much as the read hold bound later than its
+	// schedule says, as SegmentKeepUntilUnixMilli takes it.
+	keep := int64(retention.MaxReplayAge/time.Second) + int64(retention.TerminalDelay/time.Second) + maxOffset +
+		int64(retention.ReadHoldBound/time.Second)
 	folded := 0
 	revisions := schedule.Segment.OutputContextRevisions
 	for len(revisions) > 0 && int64(revisions[0].Since)+keep < now.Unix() {

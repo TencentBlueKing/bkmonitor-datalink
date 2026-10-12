@@ -50,9 +50,6 @@ func TestLegacyCompilerIdentityCoversEveryFactItClosesOver(t *testing.T) {
 		"network filter values": func(facts *controlplane.LegacyQueryRuntimeFacts) {
 			facts.SystemNetworkFilter.Values = []string{"lo", "docker0"}
 		},
-		"fta event storage": func(facts *controlplane.LegacyQueryRuntimeFacts) {
-			facts.FTAEventStorage = &execution.QueryStorage{TableID: "fta.event", StorageID: "1", StorageType: "elasticsearch"}
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			facts := testLegacyQueryRuntimeFacts()

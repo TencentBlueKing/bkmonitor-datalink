@@ -35,32 +35,32 @@ func TestAStallIsReportedOnceAndAgainOnlyAfterItRecovers(t *testing.T) {
 	skip := nodata.OutcomeSkippedHostsUnresolved
 
 	for round := 1; round < noDataPersistentSkipRounds; round++ {
-		if streaks.record(plan, skip) {
+		if streaks.record(plan, nextRound(), skip) {
 			t.Fatalf("round %d of %d reported a stall; skipping a round is allowed by design and "+
 				"happens for ordinary reasons", round, noDataPersistentSkipRounds)
 		}
 	}
-	if !streaks.record(plan, skip) {
+	if !streaks.record(plan, nextRound(), skip) {
 		t.Fatalf("round %d did not report a stall; that is the round it stops being occasional",
 			noDataPersistentSkipRounds)
 	}
 	for round := 0; round < 5; round++ {
-		if streaks.record(plan, skip) {
+		if streaks.record(plan, nextRound(), skip) {
 			t.Fatal("the same stall was reported again; one Plan that has stopped is one thing that " +
 				"has stopped, and counting it every round turns this back into a count of rounds")
 		}
 	}
 
 	// It evaluates, so the streak is over and the Plan can stall again later.
-	if streaks.record(plan, nodata.OutcomeEvaluated) {
+	if streaks.record(plan, nextRound(), nodata.OutcomeEvaluated) {
 		t.Fatal("a round that evaluated reported a stall")
 	}
 	for round := 1; round < noDataPersistentSkipRounds; round++ {
-		if streaks.record(plan, skip) {
+		if streaks.record(plan, nextRound(), skip) {
 			t.Fatalf("round %d after the recovery reported a stall; the count restarts", round)
 		}
 	}
-	if !streaks.record(plan, skip) {
+	if !streaks.record(plan, nextRound(), skip) {
 		t.Fatal("a Plan that stalled, recovered and stalled again was not reported the second time")
 	}
 }
@@ -75,8 +75,47 @@ func TestStreaksAreCountedPerPlan(t *testing.T) {
 	skip := nodata.OutcomeSkippedQueryNotFull
 	for index := 0; index < noDataPersistentSkipRounds*2; index++ {
 		plan := execution.PlanKey{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: string(rune('a' + index))}}
-		if streaks.record(plan, skip) {
+		if streaks.record(plan, nextRound(), skip) {
 			t.Fatalf("Plan %s reported a stall on its first skipped round", plan.StrategyID)
 		}
+	}
+}
+
+// nextRound is a new round for each call, a minute after the last: the
+// streak counts rounds, so each skip here is one.
+var lastRound execution.EvaluationTime
+
+func nextRound() execution.EvaluationTime {
+	lastRound += 60
+	return lastRound
+}
+
+// A round attempted again -- its Slot retried after an output whose
+// acknowledgement was unknown -- is one round of the streak, not two; a
+// retry that evaluates still ends the streak.
+func TestARoundAttemptedTwiceCountsOnceInTheStreak(t *testing.T) {
+	plan := execution.PlanKey{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9"}}
+	var streaks noDataSkipStreaks
+	skip := nodata.OutcomeSkippedHostsUnresolved
+	first, second, third := execution.EvaluationTime(600), execution.EvaluationTime(660), execution.EvaluationTime(720)
+	for _, round := range []execution.EvaluationTime{first, first, second, second} {
+		if streaks.record(plan, round, skip) {
+			t.Fatalf("round %d reported a stall; two rounds were skipped, each attempted twice", round)
+		}
+	}
+	if !streaks.record(plan, third, skip) {
+		t.Fatal("the third skipped round did not report the stall")
+	}
+	if streaks.record(plan, third, nodata.OutcomeEvaluated) {
+		t.Fatal("a retry of the third round that evaluated reported a stall")
+	}
+	// Judged on one attempt and skipped on the next, the round is a skipped
+	// round of a new streak: the stall then falls two rounds later, not
+	// three.
+	if streaks.record(plan, third, skip) || streaks.record(plan, 780, skip) {
+		t.Fatal("a new streak reported a stall before its third round")
+	}
+	if !streaks.record(plan, 840, skip) {
+		t.Fatal("the round skipped after it was judged did not count toward the new streak")
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 // Reconciliation is a complete alert-store observation. Missing and Suppressed
@@ -54,13 +56,16 @@ type TargetBinding struct {
 	Sources       []string `json:"sources"`
 }
 
-// TargetSelector picks which of the link's targets is this deployment's. Both
-// fields are optional: with neither, the one target the link lists is used,
-// and a link that lists several is refused with their names, so the choice is
-// never the first one that happened to come back.
-type TargetSelector struct {
-	EventSourceID string
-	HookName      string
+// TargetCountError is a link that lists other than one target, with the
+// targets' names: alarmd reads the sets of a link with exactly one.
+type TargetCountError struct {
+	Count int
+	Names []string
+}
+
+func (err *TargetCountError) Error() string {
+	return fmt.Sprintf("alarmd openalerts: the link lists %d targets, and alarmd reads the sets of a link with one (targets: %s)",
+		err.Count, strings.Join(err.Names, ", "))
 }
 
 // IndexLocation is where this process reads the open alert sets from. The
@@ -77,11 +82,26 @@ type HTTPReconcilerOptions struct {
 	Username         string
 	Password         string
 	Client           *http.Client
-	Select           TargetSelector
 	Index            IndexLocation
 	MaxResponseBytes int64
 	// Now is the clock the call record is kept by; nil is the wall clock.
 	Now func() time.Time
+	// LocationConfirmed is whether Index was taken from the Console's own
+	// target (its startup discovery adopted it). Every reconciliation then
+	// confirms it again, or finds the link writing elsewhere.
+	LocationConfirmed bool
+	// OnLocationMismatch is told the target a reconciliation found writing
+	// somewhere other than Index, outside the reader's lock, so the caller
+	// can move its reads there.
+	OnLocationMismatch func(TargetBinding)
+	// KeyingEvery is how often a reconciliation reads the event source's
+	// keying again; zero reads it only until it has answered once.
+	KeyingEvery time.Duration
+	// OnFailure is told of an operation's failure when a run of failures
+	// starts and when its class changes, not on every failure while it
+	// lasts, with the operation's failures so far; outside the record's
+	// lock. Nil tells no one.
+	OnFailure func(op, class string, failures uint64)
 }
 
 // HTTPReconciler reads the link's Console. Which target is this deployment's
@@ -94,6 +114,11 @@ type HTTPReconciler struct {
 	mu         sync.Mutex
 	binding    TargetBinding
 	resolvedAt time.Time
+	// confirmed is ConsoleFacts.LocationConfirmed; keyingTried when the
+	// event source was last asked for, answered or not; factsTried when
+	// Refresh last resolved the target.
+	confirmed               bool
+	keyingTried, factsTried time.Time
 	// calls is what this process has seen of each Console operation.
 	calls consoleCalls
 }
@@ -114,7 +139,7 @@ func NewHTTPReconciler(options HTTPReconcilerOptions) (*HTTPReconciler, error) {
 	client := *options.Client
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	options.Client = &client
-	return &HTTPReconciler{options: options}, nil
+	return &HTTPReconciler{options: options, confirmed: options.LocationConfirmed}, nil
 }
 
 func (reader *HTTPReconciler) get(ctx context.Context, path string, query url.Values, out any) error {
@@ -133,7 +158,7 @@ func (reader *HTTPReconciler) getPath(ctx context.Context, path string, query ur
 	req.SetBasicAuth(reader.options.Username, reader.options.Password)
 	response, err := reader.options.Client.Do(req)
 	if err != nil {
-		return errors.New("alarmd openalerts: Console request failed")
+		return transportError(execution.ClassifyTransportFailure(err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -184,21 +209,28 @@ func (reader *HTTPReconciler) resolve(ctx context.Context) (TargetBinding, error
 	index := reader.options.Index
 	reader.mu.Unlock()
 	if binding.KeyPrefix != index.KeyPrefix || !strings.EqualFold(binding.Address, index.Address) || binding.Database != index.Database {
+		reader.mu.Lock()
+		reader.confirmed = false
+		onMismatch := reader.options.OnLocationMismatch
+		reader.mu.Unlock()
+		if onMismatch != nil {
+			onMismatch(binding)
+		}
 		return TargetBinding{}, fmt.Errorf("alarmd openalerts: the link writes open alert sets to %s db %d prefix %s, this process reads %s db %d prefix %s, and none of the Redis connections this process holds is at %s",
 			binding.Address, binding.Database, binding.KeyPrefix, index.Address, index.Database, index.KeyPrefix, binding.Address)
 	}
 	reader.mu.Lock()
-	reader.binding, reader.resolvedAt = binding, reader.now()
+	reader.binding, reader.resolvedAt, reader.confirmed = binding, reader.now(), true
 	reader.mu.Unlock()
 	return binding, nil
 }
 
 // SetIndexLocation moves where this process says it reads the open alert
-// sets from. A process that could not ask the Console at startup reads from
-// a fallback location, and every reconciliation refuses with both locations
-// named; once a later discovery finds where the link writes, the reader is
-// rebound there and this is the reconciler's half of that move. The resolved
-// target is forgotten so the next reconciliation checks the new location.
+// sets from: to a place a later discovery found after a failed start, or to
+// the one a reconciliation found the link writing to. The resolved target is
+// forgotten, and the location is not confirmed until a resolution agrees
+// with it - the next Refresh, at once, or the calibration the caller asks
+// for - so nothing read before that is trusted as the link's word.
 func (reader *HTTPReconciler) SetIndexLocation(index IndexLocation) error {
 	if !validPrefix(index.KeyPrefix) || index.Address == "" || index.Database < 0 {
 		return errors.New("alarmd openalerts: invalid index location")
@@ -206,11 +238,15 @@ func (reader *HTTPReconciler) SetIndexLocation(index IndexLocation) error {
 	reader.mu.Lock()
 	defer reader.mu.Unlock()
 	reader.options.Index = index
-	reader.binding, reader.resolvedAt = TargetBinding{}, time.Time{}
+	reader.binding, reader.resolvedAt, reader.confirmed = TargetBinding{}, time.Time{}, false
+	reader.keyingTried, reader.factsTried = time.Time{}, time.Time{}
 	return nil
 }
 
-// choose is the target the selector picks among those the Console lists.
+// choose is the one target the Console lists. A link that lists none, or
+// several, is refused with the targets' names: the choice is never the first
+// one that happened to come back, and a link that maintains several targets
+// is the link's to disambiguate, not this deployment's.
 func (reader *HTTPReconciler) choose(ctx context.Context) (TargetBinding, error) {
 	var targets []TargetBinding
 	if err := reader.get(ctx, "targets", nil, &targets); err != nil {
@@ -219,25 +255,14 @@ func (reader *HTTPReconciler) choose(ctx context.Context) (TargetBinding, error)
 	if len(targets) > 512 {
 		return TargetBinding{}, ErrIncomplete
 	}
-	selector := reader.options.Select
-	candidates := make([]TargetBinding, 0, 1)
 	names := make([]string, 0, len(targets))
 	for _, target := range targets {
 		names = append(names, target.EventSourceID+"/"+target.HookName)
-		if (selector.EventSourceID == "" || target.EventSourceID == selector.EventSourceID) &&
-			(selector.HookName == "" || target.HookName == selector.HookName) {
-			candidates = append(candidates, target)
-		}
 	}
-	switch {
-	case len(candidates) == 0:
-		return TargetBinding{}, fmt.Errorf("alarmd openalerts: the link lists no target matching event_source_id=%q hook_name=%q (targets: %s)",
-			selector.EventSourceID, selector.HookName, strings.Join(names, ", "))
-	case len(candidates) > 1:
-		return TargetBinding{}, fmt.Errorf("alarmd openalerts: the link lists %d targets, set linkd event_source_id and hook_name to choose one (targets: %s)",
-			len(candidates), strings.Join(names, ", "))
+	if len(targets) != 1 {
+		return TargetBinding{}, &TargetCountError{Count: len(targets), Names: names}
 	}
-	return normalizeBinding(candidates[0])
+	return normalizeBinding(targets[0])
 }
 
 func normalizeBinding(b TargetBinding) (TargetBinding, error) {
@@ -275,6 +300,7 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 	if err != nil {
 		return Reconciliation{}, err
 	}
+	reader.refreshKeying(ctx, b)
 	var response struct {
 		Target     TargetBinding `json:"target"`
 		TenantID   string        `json:"tenantId"`
@@ -340,6 +366,16 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 		}
 	}
 	return result, nil
+}
+
+// transportError is a Console request that got no answer, named by the
+// transport word for why (execution.ClassifyTransportFailure). The text is
+// this package's own and carries the word only, never the address the
+// client's error would.
+type transportError string
+
+func (class transportError) Error() string {
+	return "alarmd openalerts: Console request failed (" + string(class) + ")"
 }
 
 // statusError is a Console answer other than 200. It keeps the code so a

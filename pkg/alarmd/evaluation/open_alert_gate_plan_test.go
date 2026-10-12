@@ -21,6 +21,13 @@ import (
 
 type openAlertSetStub map[string]bool
 
+// oneTimeCloseStub is the set the one close of a dropped group is asked
+// against: it holds everything and says it is a one-time close.
+type oneTimeCloseStub struct{}
+
+func (oneTimeCloseStub) Contains(string, string, string) bool { return true }
+func (oneTimeCloseStub) OneTimeClose() bool                   { return true }
+
 func (set openAlertSetStub) Contains(tenantID, strategyID, fingerprint string) bool {
 	return set[tenantID+"/"+strategyID+"/"+fingerprint]
 }
@@ -56,6 +63,8 @@ func TestEvaluatorGatesARecoveryEnvelopeOnTheOpenAlertSet(t *testing.T) {
 	}{
 		{name: "an open alert on the series: the envelope goes", shape: native, set: openAlertSetStub{"tenant/7/" + fingerprint: true},
 			wantCounts: execution.OpenAlertGateCounts{Passed: 1}, wantEnvelopes: 1},
+		{name: "the one close of a dropped group: the envelope goes, counted apart", shape: native, set: oneTimeCloseStub{},
+			wantCounts: execution.OpenAlertGateCounts{PassedOneTimeClose: 1}, wantEnvelopes: 1},
 		{name: "no open alert on the series: held on every RECOVERY outcome, state still written", shape: native, set: openAlertSetStub{},
 			wantCounts: execution.OpenAlertGateCounts{HeldNoOpenAlert: 1}, wantEnvelopes: 0, wantHeld: true},
 		{name: "no set passed: the envelope goes and the wiring gap is counted", shape: native, set: nil,
@@ -66,8 +75,8 @@ func TestEvaluatorGatesARecoveryEnvelopeOnTheOpenAlertSet(t *testing.T) {
 		t.Run(arm.name, func(t *testing.T) {
 			plan := compiledTwoLevelsShaped(t, "50", "50", arm.shape)
 			history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{
-				{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
-				{LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+				{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+				{LevelID: 6, DetectFingerprint: plan.Levels().At(1).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
 			}}}
 			req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
 			req.OpenAlerts = arm.set

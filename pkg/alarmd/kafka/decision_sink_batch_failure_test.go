@@ -43,7 +43,7 @@ func (*refusingBatchProducer) Close() error { return nil }
 // The list stays in the chain so callers that classify by type still can.
 func TestABatchTheClientRefusedNamesTheCauseNotJustTheCount(t *testing.T) {
 	cause := sarama.ConfigurationError("Producing headers requires Kafka at least v0.11")
-	sink := newDecisionSinkForTest(t, &refusingBatchProducer{cause: cause}, &fakeCloser{})
+	sink := newTriggerEventSinkForTest(t, &refusingBatchProducer{cause: cause}, &fakeCloser{}).core
 	messages := []*sarama.ProducerMessage{
 		{Topic: "alarmd_event", Value: sarama.StringEncoder("a")},
 		{Topic: "alarmd_event", Value: sarama.StringEncoder("b")},

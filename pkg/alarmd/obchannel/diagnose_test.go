@@ -25,7 +25,11 @@ func diagnoseNative(t *testing.T, page map[string]any) http.Handler {
 			_ = json.NewEncoder(w).Encode(page)
 		case "/api/health":
 			_ = json.NewEncoder(w).Encode(map[string]any{"health": "DEGRADED", "expected": 83, "determined": 83,
-				"dependencies": []any{}, "per_replica": []any{"not kept"}})
+				"dependencies": []any{}, "per_replica": []any{"not kept"},
+				"source_standing": map[string]any{"kind": "ACCEPTING", "writer_age_seconds": 30},
+				"overdue":         map[string]any{"total": 0, "period_unknown": 1, "period_unknown_objects": []any{map[string]any{"query_group": "qg-unread"}}},
+				"platform_setting_fields": map[string]any{"replica": "pod-a", "differing": "pod-b",
+					"fields": []any{map[string]any{"field": "is_access_bk_data", "source": "VALUES", "enabled": true}}}})
 		default:
 			w.WriteHeader(404)
 		}
@@ -82,6 +86,21 @@ func TestDiagnoseEnvironmentAddsTheDeploymentToTheFirstPage(t *testing.T) {
 	fleetFacts := deployment["fleet"].(map[string]any)
 	if fleetFacts["health"] != "DEGRADED" || fleetFacts["per_replica"] != nil {
 		t.Errorf("fleet = %v, want the kept keys only", fleetFacts)
+	}
+	// The source's standing comes whole, with what it carries beside the
+	// verdict.
+	if standing, _ := fleetFacts["source_standing"].(map[string]any); standing == nil ||
+		standing["kind"] != "ACCEPTING" || standing["writer_age_seconds"] != 30.0 {
+		t.Errorf("source_standing = %v, want it whole", fleetFacts["source_standing"])
+	}
+	// And the overdue facts, which name the objects without a period.
+	if overdue, _ := fleetFacts["overdue"].(map[string]any); overdue == nil || overdue["period_unknown"] != 1.0 {
+		t.Errorf("overdue = %v, want the overdue facts with the objects without a period", fleetFacts["overdue"])
+	}
+	// And the platform settings as the deployment resolves them, so a row
+	// whose behaviour follows a setting is read beside its effective value.
+	if settings, _ := fleetFacts["platform_setting_fields"].(map[string]any); settings == nil || settings["differing"] != "pod-b" {
+		t.Errorf("platform_setting_fields = %v, want the settings with the replica that differs", fleetFacts["platform_setting_fields"])
 	}
 	if replicas := deployment["replicas"].(map[string]any); replicas["reason"] != "service_account_not_mounted" {
 		t.Errorf("replicas = %v", replicas)

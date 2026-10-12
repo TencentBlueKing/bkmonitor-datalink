@@ -8,7 +8,6 @@ import (
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -17,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	alarmdprogress "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisbatch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -68,6 +68,14 @@ type persistedScheduleSegment struct {
 	Schedule         execution.FrozenQueryGroupSchedule `json:"schedule"`
 	Plans            []PlanActivationRecord             `json:"plans"`
 	ReactivatedAfter *execution.EvaluationTime          `json:"reactivated_after,omitempty"`
+	// Repair marks the Segment the Control Leader opened in place of a
+	// timeline it could not carry on (execution.SegmentRepair): the Worker
+	// whose cursor stood in the lost Segments records the jump to it under
+	// the mark's word. Omitted on every other Segment, and ignored by a build
+	// without the field - its decode is not strict - which jumps silently as
+	// before. It travels with the Segment through later cutovers and prunes,
+	// so a closed repaired Segment still says what it was.
+	Repair *execution.SegmentRepair `json:"repair,omitempty"`
 }
 
 type persistedScheduleTimeline struct {
@@ -277,39 +285,6 @@ func (repository *RedisCatalogRepository) loadActivationDelta(ctx context.Contex
 	return delta, true, nil
 }
 
-func (repository *RedisCatalogRepository) persistActivationRefUpgrade(ctx context.Context, expected ActivationExpectation, next ActivationState, activePayload []byte) error {
-	expectedHeader, err := activationHeader(expected.RecordRevision, expected.Current, expected.Pending)
-	if err != nil {
-		return err
-	}
-	nextHeader, err := activationHeader(next.RecordRevision, next.Current, next.Pending)
-	if err != nil {
-		return err
-	}
-	payload, err := encodeActivationHead(next)
-	if err != nil {
-		return err
-	}
-	// A ref upgrade rewrites the activation record and nothing else: the delta
-	// it leaves names no Query Group, so a Worker keeps every cached timeline.
-	delta, err := encodeActivationDelta(next.RecordRevision, nil)
-	if err != nil {
-		return err
-	}
-	changed, err := repository.client.Eval(ctx, compareAndSetCutoverSchedulesScript,
-		[]string{repository.activationHeaderKey(), repository.activationKey(), repository.activeQGSetKey(next.ActiveQGSetRef.Digest),
-			repository.activationDeltaKey(next.RecordRevision), repository.activationBlockedKey()},
-		expectedHeader, nextHeader, payload, activePayload, repository.ttl.Milliseconds(), delta, 0, blockedSetUnchanged).Int()
-	if err != nil {
-		return activationDependencyIO(fmt.Errorf("persist activation ref upgrade: %w", err))
-	}
-	if changed != 1 {
-		return ErrActivationConflict
-	}
-	repository.written.remember(payload, next)
-	return nil
-}
-
 // CompareAndSetPublicationScheduleActivation advances one confirmed
 // publication at one shared EvaluationTime. Every previously active Query
 // Group is either cut over or retired, and every new Query Group is activated
@@ -320,6 +295,22 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	next ActivationState,
 	boundary execution.EvaluationTime,
 	progress ScheduleActivationProgressReader,
+) error {
+	return repository.compareAndSetPublicationScheduleActivation(ctx, expected, next, boundary, progress, nil)
+}
+
+// compareAndSetPublicationScheduleActivation is the cutover with the Query
+// Groups the Workers report an unreadable timeline for (reported, may be
+// nil): each of them is read even when the manifest shows it unchanged, so
+// the cutover that follows a report rewrites the timeline rather than
+// trusting the manifest past it.
+func (repository *RedisCatalogRepository) compareAndSetPublicationScheduleActivation(
+	ctx context.Context,
+	expected ActivationExpectation,
+	next ActivationState,
+	boundary execution.EvaluationTime,
+	progress ScheduleActivationProgressReader,
+	reported map[execution.QueryGroupIdentity]struct{},
 ) (err error) {
 	if repository == nil || repository.client == nil || boundary <= 0 {
 		return fmt.Errorf("%w: publication schedule activation is required", ErrCutoverRequest)
@@ -337,12 +328,8 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	if !activationMatchesExpectation(previous, expected) {
 		return ErrActivationConflict
 	}
-	// Finishing a cutover left in progress is the one write that may name the
-	// publication it already names: it clears the progress, so it cannot be
-	// repeated. Any other write must move to a new publication.
-	finishing := previous.CutoverProgress != nil && next.CutoverProgress == nil && next.Current == previous.Current
-	if next.Pending != nil || (!finishing && (next.Current.PublicationEpoch <= previous.Current.PublicationEpoch ||
-		next.Current.SnapshotRevision == previous.Current.SnapshotRevision)) {
+	if next.Pending != nil || next.Current.PublicationEpoch <= previous.Current.PublicationEpoch ||
+		next.Current.SnapshotRevision == previous.Current.SnapshotRevision {
 		return fmt.Errorf("%w: publication activation must advance to one new current publication", ErrCutoverRequest)
 	}
 	published, err := repository.loadPublishedGroups(ctx, next.Current)
@@ -432,6 +419,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	updates := make([]scheduleTimelineUpdate, 0, len(oldGroups)+len(newGroups))
 	candidates := make([]pruneCandidate, 0, len(oldGroups))
 	plans := make([]PlanActivationRecord, 0, len(candidate.Plans))
+	readHoldPrevious := make(map[execution.PlanKey]readHoldOrigin)
 	oldIdentities := make([]execution.QueryGroupIdentity, 0, len(oldGroups))
 	for identity := range oldGroups {
 		oldIdentities = append(oldIdentities, identity)
@@ -451,6 +439,10 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	var blockedPlans []PlanActivationRecord
 	blockedGroups := make(map[execution.QueryGroupIdentity]struct{})
 	reopened := 0
+	// repaired counts the timelines this cutover rewrites because they did
+	// not decode; they are counted rewritten once the write lands.
+	repaired := 0
+	repairedGroups := make(map[execution.QueryGroupIdentity]struct{})
 	var previousPublished *PublishedContent
 	previousPlansOf := func(group execution.QueryGroupIdentity) ([]execution.PlanKey, execution.ObjectDigest, []execution.OutputContextRef, error) {
 		if earlier, ok := previousBlocked[group]; ok {
@@ -465,6 +457,24 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		}
 		entry := previousPublished.Groups[group]
 		return entry.Plans, entry.Digest, entry.Refs, nil
+	}
+	// unreadKeys is the Plans of the Query Groups the activation read left out
+	// because their timelines did not decode: they have no record in
+	// previous, which is the read's gap, not an activation that dropped them.
+	unreadKeys := make(map[execution.PlanKey]struct{})
+	for _, skipped := range previous.SkippedTimelines {
+		if _, existed := oldGroups[skipped.QueryGroup]; !existed {
+			continue
+		}
+		keys, _, _, keysErr := previousPlansOf(skipped.QueryGroup)
+		if keysErr != nil {
+			return keysErr
+		}
+		for _, key := range keys {
+			if _, held := carried[key]; !held {
+				unreadKeys[key] = struct{}{}
+			}
+		}
 	}
 	settle := func(group execution.QueryGroupIdentity, remains bool, reason, detail string,
 		openDigest execution.ObjectDigest, openRefs []execution.OutputContextRef) error {
@@ -494,12 +504,18 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	}
 	// keptWithoutRead is the Query Groups the manifest shows unchanged, whose
 	// open Segment is left as it is without a read. Every other one is read,
-	// and all of those are fetched before the walk, in pipelined batches: a
+	// in pipelined batches a window ahead of the walk (cutoverTimelines): a
 	// process's first cutover reads every open Segment, and one round trip
 	// each is what made it tens of seconds on a few thousand Query Groups.
+	// A Query Group a Worker reports an unreadable timeline for is read
+	// whatever the manifest says: the manifest says nothing about the bytes.
+	// It needs no content loaded for that (needed above): unchanged, its
+	// records name the publication they were activated under, and a rewrite
+	// takes that publication's content (segmentContentFor).
 	keptWithoutRead := func(queryGroup execution.QueryGroupIdentity) bool {
 		newGroup, remains := newGroups[queryGroup]
-		if _, wasBlocked := previousBlocked[queryGroup]; !remains || readAll || wasBlocked {
+		_, named := reported[queryGroup]
+		if _, wasBlocked := previousBlocked[queryGroup]; !remains || readAll || wasBlocked || named {
 			return false
 		}
 		previousRefs, known := previousContent.refsFor(newGroup)
@@ -512,15 +528,11 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			toRead = append(toRead, queryGroup)
 		}
 	}
-	prefetched, err := repository.prefetchTimelinesForUpdate(ctx, toRead)
-	if err != nil {
-		return err
-	}
+	timelines := repository.cutoverTimelines(toRead)
 	for _, queryGroup := range oldIdentities {
 		// Recorded before anything can fail on it: the cutover returns at its
 		// first failure, so this names the one that stopped it.
 		cutover.failedAt(queryGroup)
-		oldGroup := oldGroups[queryGroup]
 		newGroup, remains := newGroups[queryGroup]
 		if keptWithoutRead(queryGroup) {
 			// Kept without a read: the manifest names the same content and
@@ -546,7 +558,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			cutover.decided(cutoverKept)
 			continue
 		}
-		timeline, raw, err := prefetched.timeline(queryGroup)
+		timeline, raw, err := timelines.timeline(ctx, queryGroup)
 		if errors.Is(err, ErrScheduleUnavailable) {
 			// The key is gone: evicted, or expired. This used to fail the whole
 			// cutover as a dependency that did not answer, on every publication,
@@ -567,38 +579,67 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			// The candidate records say which publication the Segment names: the
 			// new one when the content changed, the one the carried records were
 			// activated under when it did not - its content is the same, and the
-			// records are kept as they were.
-			openPublication, openGroup, openNamed := published.content.Publication, newGroup, published.content.Groups[queryGroup]
-			if carriedPublication, ok := candidatePublication(candidate, newGroup); ok && carriedPublication != openPublication {
-				group, groupErr := repository.loadPublishedQueryGroup(ctx, carriedPublication, queryGroup)
-				if groupErr != nil {
-					return groupErr
-				}
-				content, contentErr := repository.LoadPublishedContent(ctx, carriedPublication)
-				if contentErr != nil {
-					return contentErr
-				}
-				openPublication, openGroup, openNamed = carriedPublication, group, content.Groups[queryGroup]
-			}
-			opened, openErr := repository.openQueryGroupTimeline(ctx, openPublication, openGroup, openNamed, boundary, candidate, now, cutover)
+			// records are kept as they were (segmentContentFor). The Segment is
+			// marked, so the Worker whose cursor stood in the lost timeline
+			// records the Slots it lost under SCHEDULE_REOPENED rather than
+			// jumping past them: a key that went missing is named, never taken
+			// for benign. Written only while the key is still absent.
+			opened, openErr := repository.repairedQueryGroupTimeline(ctx, published, candidate, newGroup, boundary, nil,
+				execution.SegmentRepair{Kind: execution.SegmentRepairAbsent, AtUnixMilli: int64(boundary) * 1000})
 			if openErr != nil {
 				return openErr
 			}
 			updates = append(updates, opened.update)
 			plans = append(plans, opened.records...)
 			reopened++
-			cutover.redecided(cutoverAdded, cutoverReopened)
+			cutover.decided(cutoverReopened)
 			continue
 		}
 		var unreadable *DeterministicScheduleError
 		if errors.As(err, &unreadable) {
-			if err := settle(queryGroup, remains, CutoverReasonTimelineMissing, "timeline unreadable: "+err.Error(), "", nil); err != nil {
+			// Bytes that do not decode: nothing in them can be carried on, and
+			// holding the Query Group back with them left it running nothing
+			// until somebody deleted the key by hand. A Query Group that stays
+			// gets the timeline a rewrite gives it - one Segment from the
+			// boundary on the content and records it runs, marked, fenced on
+			// these bytes. One that leaves, or whose bytes another schema
+			// wrote, or whose replacement cannot be built, is settled as
+			// before.
+			detail := "timeline unreadable: " + err.Error()
+			if remains && !writtenByAnotherSchema(raw) {
+				opened, repairErr := repository.repairedQueryGroupTimeline(ctx, published, candidate, newGroup, boundary, raw,
+					execution.SegmentRepair{Kind: execution.SegmentRepairUnreadable, AtUnixMilli: int64(boundary) * 1000})
+				if repairErr == nil {
+					keys, _, _, keysErr := previousPlansOf(queryGroup)
+					if keysErr != nil {
+						return keysErr
+					}
+					for _, key := range keys {
+						coveredPrevious[key] = struct{}{}
+					}
+					updates = append(updates, opened.update)
+					plans = append(plans, opened.records...)
+					repaired++
+					repairedGroups[queryGroup] = struct{}{}
+					cutover.decided(cutoverRepaired)
+					continue
+				}
+				repository.timelineRepairs.add(TimelineRepairFailed, 1)
+				repository.observeTimelineRepairFailure(ctx, queryGroup, repairErr)
+				detail += "; rewrite failed: " + repairErr.Error()
+			} else if remains {
+				repository.timelineRepairs.add(TimelineRepairOtherSchema, 1)
+			}
+			if err := settle(queryGroup, remains, CutoverReasonTimelineMissing, detail, "", nil); err != nil {
 				return err
 			}
 			continue
 		}
 		if err != nil {
 			return err
+		}
+		if _, named := reported[queryGroup]; named {
+			repository.timelineRepairs.add(TimelineRepairDecodesAgain, 1)
 		}
 		cutover.read++
 		last := len(timeline.Segments) - 1
@@ -626,32 +667,16 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			openRefs = open.Schedule.Segment.OutputContextRevisions[count-1].Refs
 		}
 		// A source that names the content must agree with the Segment; a
-		// Segment that disagrees was changed outside this path. A Segment
-		// written before Segments named their content is compared on the
-		// revisions the old source carries instead.
-		// A source that names the content must agree with the Segment; a
 		// Segment that disagrees was changed outside this path, and this path
-		// does not repair it. Segments already carrying a name nobody
-		// published are cleaned up once, deliberately, by the repair
-		// subcommand -- not by a self-healing branch that would have to stay
-		// in the code forever for a state that cannot be produced any more.
+		// does not repair it: it is held back, and deleting its timeline key
+		// lets the next cutover open it again. A Segment that names no content
+		// has nothing to disagree with; it is cut below, as any Segment whose
+		// content is not the published one is.
 		if oldDigest, named := previousContent.digests[queryGroup]; named && open.Schedule.Segment.ObjectDigest != "" &&
 			open.Schedule.Segment.ObjectDigest != oldDigest {
 			if err := settle(queryGroup, remains, CutoverReasonOpenDigestMismatch,
 				fmt.Sprintf("open_digest=%s activation_digest=%s published_digest=%s content_source=%s",
 					open.Schedule.Segment.ObjectDigest, oldDigest, newContent[queryGroup].digest, previousContent.source),
-				open.Schedule.Segment.ObjectDigest, openRefs); err != nil {
-				return err
-			}
-			continue
-		}
-		if open.Schedule.Segment.ObjectDigest == "" && oldGroup.QueryPlan.QueryRevision != "" &&
-			(open.Schedule.Segment.QueryRevision != oldGroup.QueryPlan.QueryRevision ||
-				open.Schedule.Segment.ScheduleRevision != oldGroup.ScheduleRevision) {
-			if err := settle(queryGroup, remains, CutoverReasonLegacyRevisionMismatch,
-				fmt.Sprintf("open_query_revision=%s want=%s open_schedule_revision=%s want=%s",
-					open.Schedule.Segment.QueryRevision, oldGroup.QueryPlan.QueryRevision,
-					open.Schedule.Segment.ScheduleRevision, oldGroup.ScheduleRevision),
 				open.Schedule.Segment.ObjectDigest, openRefs); err != nil {
 				return err
 			}
@@ -704,6 +729,34 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		if err := closed.Validate(); err != nil {
 			return err
 		}
+		closedRecords := make(map[execution.PlanKey]PlanActivationRecord, len(open.Plans))
+		for _, record := range open.Plans {
+			closedRecords[record.Fact.Key()] = record
+		}
+		for _, plan := range closed.Plans {
+			record := closedRecords[plan.Key()]
+			origin := readHoldOrigin{generation: record.Fact.Selected.StateGeneration}
+			last := int64(boundary) - 1
+			last -= (last - int64(plan.Spec.Alignment)) % plan.Spec.EvaluationIntervalSeconds
+			// The same last legal Slot readhold's closeRecord fixes.
+			if last < int64(closed.Segment.Start) || !plan.Spec.IsAligned(execution.EvaluationTime(last)) {
+				// An intermediate segment that never ran a Slot adds no new
+				// deadline. Keep the previous real segment's bridge directly.
+				if previous := record.PreviousReadHold; previous != nil {
+					origin.ref = *previous
+					readHoldPrevious[plan.Key()] = origin
+					continue
+				}
+				if len(timeline.Segments) == 1 {
+					continue
+				}
+				origin.ref = ReadHoldPredecessorRef{QueryGroup: queryGroup, ClosedAt: boundary}
+			} else {
+				origin.ref = ReadHoldPredecessorRef{QueryGroup: queryGroup, ClosedAt: boundary, PreviousSlot: execution.EvaluationTime(last),
+					CompletionOffsetMillis: plan.Spec.CompletionOffsetSeconds() * 1000}
+			}
+			readHoldPrevious[plan.Key()] = origin
+		}
 		timeline.Segments[last].Schedule = closed
 		timeline.RecordRevision++
 		if remains {
@@ -722,11 +775,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			}
 			timeline.Segments = append(timeline.Segments, persistedScheduleSegment{Schedule: opened, Plans: records})
 			plans = append(plans, records...)
-			if open.Schedule.Segment.ObjectDigest == "" {
-				cutover.decided(cutoverLegacyCut)
-			} else {
-				cutover.decided(cutoverCut)
-			}
+			cutover.decided(cutoverCut)
 		} else {
 			retiredAt := boundary
 			timeline.RetiredAt = &retiredAt
@@ -740,8 +789,24 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		}
 		updates = append(updates, scheduleTimelineUpdate{expected: raw, next: timeline})
 	}
-	if readAll && len(coveredPrevious) != len(carried) {
-		return fmt.Errorf("%w: current activation names Plans no open Segment carries", ErrActivationRecordMissing)
+	if readAll {
+		// Both ways round: every record the activation holds is carried by an
+		// open Segment, and every Plan an open Segment carries has a record -
+		// but for the Plans of a Query Group the activation read could not
+		// decode, whose records are what this cutover writes back.
+		covered := 0
+		for key := range coveredPrevious {
+			if _, held := carried[key]; held {
+				covered++
+				continue
+			}
+			if _, unread := unreadKeys[key]; !unread {
+				return fmt.Errorf("%w: an open Segment carries Plan %v the current activation has no record for", ErrActivationRecordMissing, key)
+			}
+		}
+		if covered != len(carried) {
+			return fmt.Errorf("%w: current activation names Plans no open Segment carries", ErrActivationRecordMissing)
+		}
 	}
 	newIdentities := make([]execution.QueryGroupIdentity, 0, len(activeGroups))
 	for identity := range activeGroups {
@@ -761,6 +826,29 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		}
 		updates = append(updates, opened.update)
 		plans = append(plans, opened.records...)
+	}
+	// The link is written in the existing timeline/activation CAS. A new
+	// owner can find the previous QG without scanning state or relying on the
+	// shorter-lived draining projection. Kept links survive content changes
+	// until their lifetime.
+	linker := readHoldLinker{origins: readHoldPrevious, carried: carried, facts: cutover,
+		expiredBefore: boundary - execution.EvaluationTime(ReadHoldLinkLifetime/time.Second)}
+	for i := range updates {
+		for j := range updates[i].next.Segments {
+			segment := &updates[i].next.Segments[j]
+			if segment.Schedule.Segment.Start == boundary && segment.Schedule.Segment.End == nil {
+				linker.carry(segment.Plans, segment.Schedule.Segment.QueryGroup, true)
+			}
+		}
+	}
+	groupsByPlan := make(map[execution.PlanKey]execution.QueryGroupIdentity)
+	for group := range activeGroups {
+		for _, key := range published.content.Groups[group].Plans {
+			groupsByPlan[key] = group
+		}
+	}
+	for i := range plans {
+		linker.carry(plans[i:i+1], groupsByPlan[plans[i].Fact.Key()], false)
 	}
 	// Coverage is owed by everyone the cutover did not hold back. A blocked
 	// Query Group's carried records name what it ran, which may not be the
@@ -807,66 +895,92 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		return err
 	}
 	if err := repository.persistCutoverActivation(ctx, expected, next, updates, cutover, blockedPayload); err != nil {
+		if errors.Is(err, ErrActivationConflict) {
+			repository.timelineRepairs.add(TimelineRepairConflict, repaired)
+		}
 		return err
 	}
-	repository.blocked.record(blockedNow, previousContent.accounting, reopened)
+	repository.timelineRepairs.add(TimelineRepairRewritten, repaired)
+	if len(previous.SkippedTimelines) > 0 {
+		repository.skippedTimelines.stillUnread(previous.SkippedTimelines, repairedGroups)
+	}
+	repository.blocked.record(blockedNow, previousContent.accounting, reopened, repository.scheduleTimelineKey)
 	if readAll {
 		repository.contentCutoverVerified.Store(true)
 	}
 	return nil
 }
 
-// prefetchedTimelines is the stored bytes of the timelines a cutover reads,
-// fetched together before it walks them. The walk decodes each as the one
-// read it used to make would have: absent is ErrScheduleUnavailable, bytes
-// that do not decode are a DeterministicScheduleError, and the bytes are
-// the expectation the write is fenced on.
-type prefetchedTimelines struct {
-	payloads map[execution.QueryGroupIdentity][]byte
+// cutoverTimelines is the stored bytes of the timelines a cutover reads, in
+// the order its walk reads them, a window at a time (redisbatch.Windows):
+// the timelines after the last whose lengths add up to at most the cutover's
+// read bound, or the one timeline larger than it, one pipeline of values,
+// with each timeline's length read once in pipelines of redisbatch.Batch.
+// The walk asks for the next timeline, and the next window is read when it
+// passes the last. A window is let go when the walk moves past it; the
+// bytes the walk keeps are the fences of the timelines it writes. Reading
+// them all before the walk held every open Segment of a process's first
+// cutover at once.
+//
+// Each is decoded as the one read the cutover used to make would have:
+// absent is ErrScheduleUnavailable, bytes that do not decode are a
+// DeterministicScheduleError returned beside those bytes, and the bytes are
+// the expectation the write is fenced on. A read that fails fails the
+// cutover, as the single read it replaces did, and so does a window Redis
+// answered any key of with an error (LOADING, BUSY, a key of another type;
+// redisbatch.UnansweredError): that says nothing about the timeline, and the
+// cutover writes nothing.
+type cutoverTimelines struct {
+	identities []execution.QueryGroupIdentity
+	windows    *redisbatch.Windows
+	// window holds the values of identities[start:start+len(window)];
+	// next is the index of the one the walk asks for next.
+	window      []redisbatch.Value
+	start, next int
 }
 
-func (prefetched prefetchedTimelines) timeline(queryGroup execution.QueryGroupIdentity) (persistedScheduleTimeline, []byte, error) {
-	payload, ok := prefetched.payloads[queryGroup]
-	if !ok {
+func (repository *RedisCatalogRepository) cutoverTimelines(identities []execution.QueryGroupIdentity) *cutoverTimelines {
+	keys := make([]string, len(identities))
+	for index, identity := range identities {
+		keys[index] = repository.scheduleTimelineKey(identity)
+	}
+	return &cutoverTimelines{identities: identities,
+		windows: redisbatch.NewWindows(repository.client, keys, repository.cutoverReadBound())}
+}
+
+// timeline is the next Query Group's timeline; the walk asks for them in
+// the order it was given them.
+func (timelines *cutoverTimelines) timeline(ctx context.Context, queryGroup execution.QueryGroupIdentity) (
+	persistedScheduleTimeline, []byte, error,
+) {
+	if timelines.next >= len(timelines.identities) || timelines.identities[timelines.next] != queryGroup {
+		return persistedScheduleTimeline{}, nil, fmt.Errorf("alarmd controlplane: cutover read %s out of order", queryGroup)
+	}
+	if timelines.next >= timelines.start+len(timelines.window) {
+		// The window before is dropped before the next is read: only one is
+		// held at a time.
+		timelines.window = nil
+		start, window, err := timelines.windows.Next(ctx)
+		if err != nil {
+			return persistedScheduleTimeline{}, nil, activationDependencyIO(err)
+		}
+		if start != timelines.next || len(window) == 0 {
+			return persistedScheduleTimeline{}, nil, errors.New("alarmd controlplane: a cutover read returned the wrong shape")
+		}
+		timelines.window, timelines.start = window, start
+	}
+	value := timelines.window[timelines.next-timelines.start]
+	timelines.next++
+	if value.Missing {
 		return persistedScheduleTimeline{}, nil, ErrScheduleUnavailable
 	}
-	timeline, err := decodeScheduleTimeline(queryGroup, payload)
+	timeline, err := decodeScheduleTimeline(queryGroup, value.Raw)
 	if err != nil {
-		return persistedScheduleTimeline{}, nil, err
+		// The bytes go back with the decode failure: a rewrite of the
+		// timeline is fenced on exactly them.
+		return persistedScheduleTimeline{}, value.Raw, err
 	}
-	return timeline, payload, nil
-}
-
-// prefetchTimelinesForUpdate reads the timelines of the given Query Groups
-// live, in pipelined batches. A read that fails fails the cutover, as the
-// single read it replaces did; a key that is not there is left out.
-func (repository *RedisCatalogRepository) prefetchTimelinesForUpdate(
-	ctx context.Context, identities []execution.QueryGroupIdentity,
-) (prefetchedTimelines, error) {
-	result := prefetchedTimelines{payloads: make(map[execution.QueryGroupIdentity][]byte, len(identities))}
-	for start := 0; start < len(identities); start += openSegmentReadBatch {
-		batch := identities[start:min(start+openSegmentReadBatch, len(identities))]
-		replies := make([]*redis.StringCmd, len(batch))
-		if _, err := repository.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-			for index, identity := range batch {
-				replies[index] = pipe.Get(ctx, repository.scheduleTimelineKey(identity))
-			}
-			return nil
-		}); err != nil && !errors.Is(err, redis.Nil) {
-			return prefetchedTimelines{}, activationDependencyIO(err)
-		}
-		for index, identity := range batch {
-			payload, err := replies[index].Bytes()
-			if errors.Is(err, redis.Nil) {
-				continue
-			}
-			if err != nil {
-				return prefetchedTimelines{}, activationDependencyIO(err)
-			}
-			result.payloads[identity] = payload
-		}
-	}
-	return result, nil
+	return timeline, value.Raw, nil
 }
 
 // CompareAndSetInitialScheduleActivation establishes zero or more first
@@ -1123,88 +1237,6 @@ func (repository *RedisCatalogRepository) CompareAndSetInitialScheduleActivation
 	return repository.persistInitialActivation(ctx, expected, next, timelines)
 }
 
-// CompareAndSetScheduleCutover atomically closes each old Segment, opens its
-// adjacent successor and advances the shared Plan activation record.
-func (repository *RedisCatalogRepository) CompareAndSetScheduleCutover(
-	ctx context.Context,
-	expected ActivationExpectation,
-	next ActivationState,
-	facts []execution.ScheduleCutoverFact,
-) error {
-	if repository == nil || repository.client == nil || len(facts) == 0 {
-		return errors.New("alarmd controlplane: schedule cutover is required")
-	}
-	if err := validateActivationTransition(expected, next); err != nil {
-		return err
-	}
-	if expected.RecordRevision == 0 {
-		return errors.New("alarmd controlplane: schedule cutover requires an existing activation")
-	}
-	previous, err := repository.LoadActivation(ctx)
-	if err != nil {
-		return err
-	}
-	if !activationMatchesExpectation(previous, expected) {
-		return ErrActivationConflict
-	}
-	next.SchemaVersion = activationSchemaVersion
-	updates := make([]scheduleTimelineUpdate, 0, len(facts))
-	seen := make(map[execution.QueryGroupIdentity]struct{}, len(facts))
-	affectedPlans := make(map[execution.PlanKey]struct{})
-	for _, fact := range facts {
-		if _, duplicate := seen[fact.NewSegment.QueryGroup]; duplicate {
-			return errors.New("alarmd controlplane: duplicate Query Group cutover")
-		}
-		seen[fact.NewSegment.QueryGroup] = struct{}{}
-		oldSchedule, err := repository.materializeSchedule(ctx, fact.OldSegment)
-		if err != nil {
-			return err
-		}
-		newSchedule, err := repository.materializeSchedule(ctx, fact.NewSegment)
-		if err != nil {
-			return err
-		}
-		if err := fact.Validate(oldSchedule, newSchedule); err != nil {
-			return err
-		}
-		for _, plan := range oldSchedule.Plans {
-			affectedPlans[plan.Key()] = struct{}{}
-		}
-		for _, plan := range newSchedule.Plans {
-			affectedPlans[plan.Key()] = struct{}{}
-		}
-		timeline, raw, err := repository.loadScheduleTimelineForUpdate(ctx, fact.OldSegment.QueryGroup)
-		if err != nil {
-			return err
-		}
-		last := len(timeline.Segments) - 1
-		if last < 0 || !sameFrozenSchedule(timeline.Segments[last].Schedule, execution.FrozenQueryGroupSchedule{
-			Segment: openVersion(fact.OldSegment), Plans: oldSchedule.Plans,
-		}) {
-			return ErrScheduleConflict
-		}
-		if err := validateOpenSegmentActivation(previous, timeline.Segments[last]); err != nil {
-			return err
-		}
-		timeline.Segments[last].Schedule = oldSchedule
-		records, err := activationRecordsForSchedule(next, newSchedule)
-		if err != nil {
-			return err
-		}
-		timeline.Segments = append(timeline.Segments, persistedScheduleSegment{Schedule: newSchedule, Plans: records})
-		timeline.RecordRevision++
-		if err := validateScheduleTimeline(timeline); err != nil {
-			return err
-		}
-		updates = append(updates, scheduleTimelineUpdate{expected: raw, next: timeline})
-	}
-	if err := validateUnchangedActivationRecords(previous, next, affectedPlans); err != nil {
-		return err
-	}
-	next.BlockedCount, next.BlockedDigest = previous.BlockedCount, previous.BlockedDigest
-	return repository.persistCutoverActivation(ctx, expected, next, updates, nil, blockedSetUnchanged)
-}
-
 func validateInitialActivationCoverage(state ActivationState, timelines []persistedScheduleTimeline) error {
 	wanted, err := activationRecordMap(state.Plans)
 	if err != nil {
@@ -1248,34 +1280,6 @@ func validateOpenSegmentActivation(state ActivationState, segment persistedSched
 	for _, record := range segment.Plans {
 		if !current[record.Fact.Key()].Equal(record) {
 			return errors.New("alarmd controlplane: open Schedule Segment differs from current Plan activation")
-		}
-	}
-	return nil
-}
-
-func validateUnchangedActivationRecords(previous, next ActivationState, affected map[execution.PlanKey]struct{}) error {
-	before, err := activationRecordMap(previous.Plans)
-	if err != nil {
-		return err
-	}
-	after, err := activationRecordMap(next.Plans)
-	if err != nil {
-		return err
-	}
-	for identity, record := range before {
-		if _, changed := affected[identity]; changed {
-			continue
-		}
-		if !after[identity].Equal(record) {
-			return errors.New("alarmd controlplane: activation changed outside affected Query Groups")
-		}
-	}
-	for identity, record := range after {
-		if _, changed := affected[identity]; changed {
-			continue
-		}
-		if !before[identity].Equal(record) {
-			return errors.New("alarmd controlplane: activation changed outside affected Query Groups")
 		}
 	}
 	return nil
@@ -1357,7 +1361,7 @@ func (repository *RedisCatalogRepository) persistInitialActivation(
 	if changed != 1 {
 		return ErrActivationConflict
 	}
-	repository.written.remember(activationPayload, next)
+	repository.rememberWritten(activationPayload, next)
 	return nil
 }
 
@@ -1383,7 +1387,7 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 			active[identity] = struct{}{}
 		}
 	} else {
-		return errors.New("alarmd controlplane: legacy Activation must be upgraded before cutover persistence")
+		return fmt.Errorf("alarmd controlplane: activation schema %q is not one this build cuts over from", previous.SchemaVersion)
 	}
 	for _, update := range updates {
 		if update.next.RetiredAt == nil {
@@ -1453,7 +1457,7 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 	if changed != 1 {
 		return ErrActivationConflict
 	}
-	repository.written.remember(activationPayload, next)
+	repository.rememberWritten(activationPayload, next)
 	return nil
 }
 
@@ -1500,11 +1504,6 @@ func activationRecordsForSchedule(state ActivationState, schedule execution.Froz
 		records[index] = record
 	}
 	return records, nil
-}
-
-func openVersion(segment execution.ScheduleSegmentFact) execution.ScheduleSegmentFact {
-	segment.End = nil
-	return segment
 }
 
 // scheduleSegmentForGroup opens the Segment a Query Group runs under from
@@ -1557,20 +1556,6 @@ func scheduleSegmentForGroup(
 		ScheduleRevision: group.ScheduleRevision, Start: start,
 		ObjectDigest: objectDigest, OutputContextRefs: refs,
 	}, nil
-}
-
-func queryGroupMap(groups []QueryGroup) (map[execution.QueryGroupIdentity]QueryGroup, error) {
-	result := make(map[execution.QueryGroupIdentity]QueryGroup, len(groups))
-	for _, group := range groups {
-		if group.Identity == "" {
-			return nil, errors.New("alarmd controlplane: Snapshot contains an empty Query Group")
-		}
-		if _, duplicate := result[group.Identity]; duplicate {
-			return nil, errors.New("alarmd controlplane: Snapshot contains a duplicate Query Group")
-		}
-		result[group.Identity] = group
-	}
-	return result, nil
 }
 
 // loadActivatedGroupsFromOpenSchedules recovers only the old group facts
@@ -1646,88 +1631,6 @@ func (repository *RedisCatalogRepository) loadActivatedGroupsFromOpenSchedules(
 		return nil, nil, ErrSnapshotUnavailable
 	}
 	return groups, digests, nil
-}
-
-// loadActivatedGroupsFromScheduleScan is the one-time v1 migration fallback.
-// It is never called for a v2 Activation and is bounded independently of the
-// Redis SCAN COUNT hint.
-func (repository *RedisCatalogRepository) loadActivatedGroupsFromScheduleScan(ctx context.Context, activation ActivationState) (groupsResult map[execution.QueryGroupIdentity]QueryGroup, resultErr error) {
-	started := time.Now()
-	scanned := 0
-	defer func() {
-		result := "success"
-		reason := "none"
-		observationResult := observability.Result(observability.ResultSuccess)
-		observationReason := observability.ReasonNone
-		if resultErr != nil {
-			result, reason, observationResult = "fail_closed", "contract", observability.ResultFailed
-			observationReason = observability.ReasonContractDeterministic
-			if errors.Is(resultErr, context.Canceled) || errors.Is(resultErr, context.DeadlineExceeded) {
-				result, reason = "canceled", "dependency"
-				observationReason = observability.ReasonContractRetryable
-			}
-		}
-		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageLegacyQGMigration,
-			Result: observationResult, ReasonCode: observationReason, LegacyMigration: &observability.LegacyQGMigrationFacts{Result: result, ReasonClass: reason, ScanKeys: scanned, Duration: time.Since(started)}})
-	}()
-	if repository.legacyMigrationMaxScanKeys <= 0 || repository.legacyMigrationTimeout <= 0 {
-		return nil, errors.New("alarmd controlplane: legacy migration bounds are required")
-	}
-	migrationCtx, cancel := context.WithTimeout(ctx, repository.legacyMigrationTimeout)
-	defer cancel()
-	expected, err := activationRecordMap(activation.Plans)
-	if err != nil {
-		return nil, err
-	}
-	covered := make(map[execution.PlanKey]struct{}, len(expected))
-	groups := make(map[execution.QueryGroupIdentity]QueryGroup)
-	var cursor uint64
-	pattern := repository.prefix + ":schedule_timeline:*"
-	for {
-		keys, next, scanErr := repository.client.Scan(migrationCtx, cursor, pattern, 500).Result()
-		if scanErr != nil {
-			return nil, activationDependencyIO(scanErr)
-		}
-		scanned += len(keys)
-		if scanned > repository.legacyMigrationMaxScanKeys {
-			return nil, errors.New("alarmd controlplane: legacy active Query Group migration scan limit exceeded")
-		}
-		for _, key := range keys {
-			identity := execution.QueryGroupIdentity(strings.TrimPrefix(key, repository.prefix+":schedule_timeline:"))
-			timeline, loadErr := repository.loadScheduleTimeline(migrationCtx, identity)
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			if timeline.RetiredAt != nil || len(timeline.Segments) == 0 {
-				continue
-			}
-			open := timeline.Segments[len(timeline.Segments)-1]
-			if open.Schedule.Segment.End != nil {
-				return nil, ErrSnapshotUnavailable
-			}
-			if err := validateOpenSegmentActivation(activation, open); err != nil {
-				return nil, err
-			}
-			for _, record := range open.Plans {
-				if !expected[record.Fact.Key()].Equal(record) {
-					return nil, ErrSnapshotUnavailable
-				}
-				if _, duplicate := covered[record.Fact.Key()]; duplicate {
-					return nil, ErrSnapshotUnavailable
-				}
-				covered[record.Fact.Key()] = struct{}{}
-			}
-			groups[identity] = QueryGroup{Identity: identity, QueryPlan: execution.QueryPlanFacts{QueryRevision: open.Schedule.Segment.QueryRevision}, ScheduleRevision: open.Schedule.Segment.ScheduleRevision}
-		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
-	}
-	if len(covered) != len(expected) {
-		return nil, ErrSnapshotUnavailable
-	}
-	return groups, nil
 }
 
 // DrainingTerminationWindow is the age past its retirement boundary after
@@ -1935,12 +1838,6 @@ func (repository *RedisCatalogRepository) queryGroupDrained(
 		}
 	}
 	return true, nil
-}
-
-func sameFrozenSchedule(left, right execution.FrozenQueryGroupSchedule) bool {
-	leftPayload, leftErr := json.Marshal(left)
-	rightPayload, rightErr := json.Marshal(right)
-	return leftErr == nil && rightErr == nil && string(leftPayload) == string(rightPayload)
 }
 
 func validateScheduleTimeline(timeline persistedScheduleTimeline) error {
@@ -2275,6 +2172,34 @@ func (runtime *RedisCatalogRuntime) NextSlotAfter(
 	}
 }
 
+// ReadSegmentRepair says whether the Segment of the Query Group's timeline
+// that starts at segmentStart carries the Control Leader's repair mark. A
+// Segment that is not there carries none: the question is only asked of a
+// Segment navigation has just read.
+func (runtime *RedisCatalogRuntime) ReadSegmentRepair(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	segmentStart execution.EvaluationTime,
+) (execution.SegmentRepair, bool, error) {
+	if runtime == nil || runtime.repository == nil || queryGroup == "" || segmentStart <= 0 {
+		return execution.SegmentRepair{}, false, errors.New("alarmd controlplane: valid Segment repair read is required")
+	}
+	timeline, err := runtime.repository.loadScheduleTimelineHinted(ctx, queryGroup)
+	if err != nil {
+		return execution.SegmentRepair{}, false, err
+	}
+	for _, segment := range timeline.Segments {
+		if segment.Schedule.Segment.Start != segmentStart {
+			continue
+		}
+		if segment.Repair == nil {
+			return execution.SegmentRepair{}, false, nil
+		}
+		return *segment.Repair, true, nil
+	}
+	return execution.SegmentRepair{}, false, nil
+}
+
 // readPersistedSegmentAfter returns the earliest Segment that starts after
 // evaluationTime, for an anchor no Segment holds. Segments are kept in time
 // order, so the first one past the anchor is the continuation.
@@ -2355,13 +2280,18 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 	publication := SnapshotPublicationRef{SnapshotRevision: schedule.Segment.Publication.SnapshotRevision,
 		PublicationEpoch: uint64(schedule.Segment.Publication.PublicationEpoch)}
 	var group QueryGroup
+	// Whether the group came from the content the Segment names, which is
+	// what lets a Plan's compile be keyed by that content.
+	var byContent bool
 	if observed {
 		group, err = runtime.repository.LoadObservedSegmentQueryGroup(ctx, schedule.Segment, request.EvaluationTime)
+		byContent = err == nil
 	} else {
-		group, err = runtime.repository.LoadSegmentQueryGroup(ctx, schedule.Segment, request.EvaluationTime, func(ctx context.Context) (QueryGroup, error) {
+		group, byContent, err = runtime.repository.LoadSegmentQueryGroupContent(ctx, schedule.Segment, request.EvaluationTime, func(ctx context.Context) (QueryGroup, error) {
 			return runtime.repository.loadPublishedQueryGroup(ctx, publication, request.QueryGroup)
 		})
 	}
+	contentSegment := schedule.Segment.At(request.EvaluationTime)
 	if err != nil {
 		if errors.Is(err, ErrCatalogObjectUnavailable) {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
@@ -2400,7 +2330,8 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 				errors.New("alarmd controlplane: due Plan is absent from frozen Catalog or activation"))
 		}
 		compiledResult, err := runtime.compiler.Compile(ctx, strategy.CompileRequest{Plan: plan.Plan,
-			DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: runtime.stateSemantics})
+			DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: runtime.stateSemantics,
+			ContentKey: compileContentKey(byContent, contentSegment, plan)})
 		if err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 		}
@@ -2414,12 +2345,12 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 		if err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 		}
-		deadline, err := completionDeadline(request.EvaluationTime, plan.ScheduleSpec)
+		deadline, err := completionDeadline(request.EvaluationTime, request.ReadHoldMillis, plan.ScheduleSpec)
 		if err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 		}
-		capabilities := make([]execution.LevelPartialCapability, 0, len(compiled.Levels()))
-		for _, level := range compiled.Levels() {
+		capabilities := make([]execution.LevelPartialCapability, 0, compiled.Levels().Len())
+		for _, level := range compiled.Levels().All() {
 			capabilities = append(capabilities, execution.LevelPartialCapability{LevelID: level.Definition().LevelID, Policy: execution.PartialRequiresFull})
 		}
 		if compiled.NoData() != nil {
@@ -2462,17 +2393,13 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 	if err != nil {
 		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureInputClosure, err)
 	}
-	digest, err := execution.DeriveDuePlanSetDigest(duePlans, requirements)
-	if err != nil {
-		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
-	}
-	fact := execution.FrozenSlotContractFact{Contract: execution.FrozenExecutionContractRef{
+	fact, err := execution.SealFrozenSlotContractFact(execution.FrozenSlotContractFact{Contract: execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: request.QueryGroup, EvaluationTime: request.EvaluationTime},
 		SnapshotRevision: schedule.Segment.Publication.SnapshotRevision, QueryRevision: schedule.Segment.QueryRevision,
 		ScheduleRevision: request.ScheduleRevision, ScheduleSegmentStart: request.ScheduleSegmentStart,
-		DuePlanSetDigest: digest,
-	}, DuePlans: duePlans, Requirements: requirements}
-	if err := fact.Validate(request); err != nil {
+		ReadHoldMillis: request.ReadHoldMillis,
+	}, DuePlans: duePlans, Requirements: requirements}, request)
+	if err != nil {
 		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 	}
 	return fact, nil
@@ -2612,9 +2539,9 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 
 		expected := make(map[execution.RequirementID]uint32)
 		explicitPrimary := make(map[uint32]map[execution.RequirementID]struct{})
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			levelID := level.Definition().LevelID
-			for _, algorithm := range level.Algorithms() {
+			for _, algorithm := range level.Algorithms().All() {
 				algorithmRequirements := algorithm.InputRequirements()
 				if len(algorithmRequirements) == 0 {
 					continue
@@ -2640,7 +2567,7 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 				}
 			}
 		}
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			levelID := level.Definition().LevelID
 			switch len(explicitPrimary[levelID]) {
 			case 0:
@@ -2754,7 +2681,7 @@ func validateExactlyOnePrimaryPerLevel(duePlans []execution.DuePlan, requirement
 		}
 	}
 	for _, due := range duePlans {
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			consumer := execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}
 			if primary[consumer] != 1 {
 				return errors.New("alarmd controlplane: compiled Level must have exactly one PRIMARY input requirement")
@@ -2784,6 +2711,69 @@ func (runtime *RedisCatalogRuntime) readPersistedSegment(
 	return persistedScheduleSegment{}, ErrScheduleUnavailable
 }
 
+// eventCountProviderLeads is, by requirement window, how far before it a
+// custom/event count asks the provider from: an event count's group comes
+// back only while it holds an event inside the range asked, with zeros for
+// the empty steps, and a group that went quiet must stay in the answer until
+// it can recover. Recovery reads back N + R - 1 points (a level's
+// RequiredDetectHistoryPoints), so the range is N + R windows - the window
+// and that many before it - for the most demanding level of the Plans due
+// with that window; the window alone is accepted. Only a query that reads
+// custom/event and nothing else: a log count is read as a time series, whose
+// empty answer does not recover, and every other source answers without
+// zero-filled groups to keep. Rounded up to a whole number of steps.
+func eventCountProviderLeads(query execution.QueryPlanFacts, duePlans []execution.DuePlan) map[int64]int64 {
+	if !readsEventCountOnly(query) {
+		return nil
+	}
+	var histories []levelHistory
+	for _, due := range duePlans {
+		window := int64(due.CompiledPlan.EvaluationSemantics().QueryWindow)
+		for _, level := range due.CompiledPlan.Levels().All() {
+			histories = append(histories, levelHistory{window: window, points: int64(level.RequiredDetectHistoryPoints())})
+		}
+	}
+	return providerLeads(query.StepMillis, histories)
+}
+
+// levelHistory is one due Level's requirement window and the history points
+// its trigger reads back.
+type levelHistory struct{ window, points int64 }
+
+// readsEventCountOnly is whether a query reads custom/event and nothing else.
+func readsEventCountOnly(query execution.QueryPlanFacts) bool {
+	return len(query.SourceSemantics) == 1 && query.SourceSemantics[0] == eventCountSourceSemantics && query.StepMillis > 0
+}
+
+// providerLeads is, by window, the most history points of a Level due with
+// it times the window, rounded up to a whole number of steps; zero points
+// lead nothing.
+func providerLeads(stepMillis int64, histories []levelHistory) map[int64]int64 {
+	leads := make(map[int64]int64)
+	for _, history := range histories {
+		lead := history.points * history.window
+		if lead*1000%stepMillis != 0 {
+			lead = (lead*1000/stepMillis + 1) * stepMillis / 1000
+		}
+		if lead > leads[history.window] {
+			leads[history.window] = lead
+		}
+	}
+	return leads
+}
+
+// eventCountSourceSemantics is the source an event count reads.
+const eventCountSourceSemantics = "custom/event"
+
+// primaryIdentityFields is the dimensions every series of the query is told
+// apart by: the dataset's identity fields. The primary requirement reads them
+// beside the value - an event count with any is a count of groups, which is
+// what its quiet is decided on - and a strategy lookup names them as the
+// Plan's grouping, so the two are one definition.
+func primaryIdentityFields(query execution.QueryPlanFacts) []string {
+	return append([]string(nil), query.Normalization.DatasetContract.IdentityFields...)
+}
+
 func (runtime *RedisCatalogRuntime) primaryRequirements(
 	group QueryGroup,
 	duePlans []execution.DuePlan,
@@ -2793,21 +2783,26 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(
 		window int64
 	}
 	byWindow := make(map[requirementKey]*execution.DataRequirement)
-	columns := append([]string{"value"}, group.QueryPlan.Normalization.DatasetContract.IdentityFields...)
+	columns := append([]string{"value"}, primaryIdentityFields(group.QueryPlan)...)
 	sort.Strings(columns)
+	leads := eventCountProviderLeads(group.QueryPlan, duePlans)
 	for _, due := range duePlans {
 		window := int64(due.CompiledPlan.EvaluationSemantics().QueryWindow)
 		key := requirementKey{window: window}
 		requirement := byWindow[key]
 		if requirement == nil {
+			lead := leads[window]
 			identity, err := contract.DeriveCanonicalDigestV2("alarmd-primary-requirement-v1", struct {
 				QueryRevision execution.QueryRevision `json:"query_revision"`
 				WindowSeconds int64                   `json:"window_seconds"`
-			}{group.QueryPlan.QueryRevision, window})
+				// Omitted when zero, so every requirement without a lead
+				// keeps the identity it had.
+				ProviderLeadSeconds int64 `json:"provider_lead_seconds,omitempty"`
+			}{group.QueryPlan.QueryRevision, window, lead})
 			if err != nil {
 				return nil, err
 			}
-			requirement = &execution.DataRequirement{RequirementID: execution.RequirementID(identity),
+			requirement = &execution.DataRequirement{RequirementID: execution.RequirementID(identity), ProviderLeadSeconds: lead,
 				DatasetName: execution.DatasetName("primary:" + identity), Role: execution.InputRolePrimary,
 				LogicalQueryRef: execution.LogicalQueryRef(group.QueryPlan.QueryRevision),
 				RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -group.QueryPlan.QueryDelaySeconds - window, EndOffsetSeconds: -group.QueryPlan.QueryDelaySeconds, HalfOpen: true},
@@ -2852,8 +2847,10 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(
 	return result, nil
 }
 
-func completionDeadline(at execution.EvaluationTime, spec execution.ScheduleSpec) (int64, error) {
-	deadline, ok := spec.CompletionDeadlineUnixMilli(at)
+// completionDeadline is a due Plan's deadline in a contract frozen with the
+// read hold readHoldMillis: its schedule's, that much later.
+func completionDeadline(at execution.EvaluationTime, readHoldMillis int64, spec execution.ScheduleSpec) (int64, error) {
+	deadline, ok := spec.HeldCompletionDeadlineUnixMilli(at, readHoldMillis)
 	if !ok {
 		return 0, errors.New("alarmd controlplane: invalid frozen Plan deadline")
 	}
@@ -2908,4 +2905,22 @@ func candidatePublication(candidate ActivationState, group QueryGroup) (Snapshot
 		named = publication
 	}
 	return named, len(group.Plans) > 0
+}
+
+// rememberWritten keeps the activation this process just wrote, and lets the
+// content memo put out an older publication it no longer carries a Plan on:
+// the drain that needed it has ended with this write.
+func (repository *RedisCatalogRepository) rememberWritten(payload []byte, next ActivationState) {
+	repository.written.remember(payload, next)
+	repository.contentMemo.release(func(publication SnapshotPublicationRef) bool {
+		if publication == next.Current || next.Pending != nil && publication == *next.Pending {
+			return true
+		}
+		for _, record := range next.Plans {
+			if record.Publication == publication {
+				return true
+			}
+		}
+		return false
+	})
 }

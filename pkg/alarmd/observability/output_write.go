@@ -80,7 +80,12 @@ const (
 	OutputRejectLegacyStrategyInvalid = "legacy_strategy_invalid"
 	OutputRejectLegacyOutputInvalid   = "legacy_output_invalid"
 	OutputRejectLegacyPayloadTooLarge = "legacy_payload_too_large"
-	OutputRejectOther                 = "_other"
+	// OutputRejectProducerRefused is a message the producer or a broker
+	// refused for good once the batch was sent - over the client's or the
+	// topic's message size, or a record the negotiated protocol cannot
+	// carry - while other messages of the batch landed.
+	OutputRejectProducerRefused = "producer_refused"
+	OutputRejectOther           = "_other"
 )
 
 // OutputRejectRules is every rule a metric cell is created for.
@@ -89,7 +94,7 @@ var OutputRejectRules = []string{
 	OutputRejectStandardTooManyLevels, OutputRejectStandardBusinessIdentity, OutputRejectStandardEncode,
 	OutputRejectEventInvalid, OutputRejectFormatUnsupported, OutputRejectLegacyContextMissing,
 	OutputRejectLegacyConversion, OutputRejectLegacyStrategyInvalid, OutputRejectLegacyOutputInvalid, OutputRejectLegacyPayloadTooLarge,
-	OutputRejectOther,
+	OutputRejectProducerRefused, OutputRejectOther,
 }
 
 // NormalizeOutputRejectRule folds a rule this build does not name onto _other.

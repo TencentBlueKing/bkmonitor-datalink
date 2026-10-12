@@ -78,7 +78,23 @@ func deliverSeries(t *testing.T, adapter *seriesAdapter, dimensions map[string]j
 }
 
 func targetChain() *admission.Chain {
-	return admission.NewChain([]admission.Fuller{admission.IdentityFuller{}}, []admission.Filter{admission.TargetScopeFilter{}, admission.TargetPlanFilter{}})
+	return admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, knownHostFuller{}},
+		[]admission.Filter{admission.TargetScopeFilter{}, admission.TargetPlanFilter{}})
+}
+
+// knownHostFuller stands for a host cache that knows every host a record names
+// by id, as the CMDB fuller records it: a rejection of such a host is decided
+// on facts that were there. A host the cache did not know is never a verdict
+// (decision-024), so the fixtures that mean "a host outside the target" say
+// the cache knows it.
+type knownHostFuller struct{}
+
+func (knownHostFuller) Name() string { return "known_hosts" }
+
+func (knownHostFuller) Fill(_ map[string]json.RawMessage, facts *admission.Facts) {
+	if facts.HostNaming.IDKey != "" {
+		facts.HostResolved = true
+	}
 }
 
 func hostDims(id string) map[string]json.RawMessage {
@@ -152,10 +168,7 @@ func TestRejectionsTheCloseCannotUseAreCountedInBulk(t *testing.T) {
 // A host turned away by the host status filter is still inside its target;
 // the close does not hear about it at all.
 func TestAHostStatusRejectionIsNotReported(t *testing.T) {
-	filter, installed := admission.NewHostStatusFilter([]string{"spare"})
-	if !installed {
-		t.Fatal("host status filter not installed")
-	}
+	filter := admission.NewHostStatusFilter([]string{"spare"})
 	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, stateFuller{state: "spare"}},
 		[]admission.Filter{filter, admission.TargetScopeFilter{}})
 	sink := &recordingSink{}

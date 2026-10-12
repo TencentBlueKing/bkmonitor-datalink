@@ -76,9 +76,9 @@ func TestTheDiagnosisWarmUpReadsWhatAFirstPageReads(t *testing.T) {
 		universeReads++
 		return []string{"4101", "4102"}, nil
 	}
-	progress := func(_ context.Context, groups []string) (map[string]ProgressFacts, map[string]bool, error) {
+	progress := func(_ context.Context, groups []string) (map[string]ProgressFacts, map[string]string, error) {
 		progressAsked = append(progressAsked, groups...)
-		return map[string]ProgressFacts{}, map[string]bool{}, nil
+		return map[string]ProgressFacts{}, map[string]string{}, nil
 	}
 	warmer := NewDiagnosisWarmer(service, lookup, universe, progress, func() time.Time { return now }, 0)
 	warm := warmer.Tick()
@@ -123,7 +123,7 @@ func TestAWarmUpThatCannotReadTheUniverseSaysSoAndStops(t *testing.T) {
 	asked := false
 	warmer := NewDiagnosisWarmer(nil, func(string) StrategyLookupFacts { return StrategyLookupFacts{Available: true} },
 		func(context.Context) ([]string, error) { return nil, errors.New("SOURCE_UNREADABLE") },
-		func(context.Context, []string) (map[string]ProgressFacts, map[string]bool, error) {
+		func(context.Context, []string) (map[string]ProgressFacts, map[string]string, error) {
 			asked = true
 			return nil, nil, nil
 		}, func() time.Time { return now }, 0)
@@ -138,8 +138,8 @@ func TestAWarmUpThatCannotReadTheUniverseSaysSoAndStops(t *testing.T) {
 // diagnosis's cache does not carry those at all, rather than a zero that
 // would read as free. Progress is there only where it is wired.
 func TestADiagnosisPageSaysWhereItsTimeWent(t *testing.T) {
-	rig := newDiagnosisRig(t, diagnosisFacts(), func(context.Context, []string) (map[string]ProgressFacts, map[string]bool, error) {
-		return map[string]ProgressFacts{}, map[string]bool{}, nil
+	rig := newDiagnosisRig(t, diagnosisFacts(), func(context.Context, []string) (map[string]ProgressFacts, map[string]string, error) {
+		return map[string]ProgressFacts{}, map[string]string{}, nil
 	})
 	rig.universe = []string{"4101", "4102", "4103"}
 	first, firstRaw := rig.rawPage(t, "")

@@ -22,7 +22,11 @@ func TestSlotIdentityContainsOnlyQueryGroupAndEvaluationTime(t *testing.T) {
 
 func TestFrozenContractKeepsScheduleAsProvenance(t *testing.T) {
 	fields := fieldNames(reflect.TypeOf(execution.FrozenExecutionContractRef{}))
-	want := []string{"Slot", "SnapshotRevision", "QueryRevision", "ScheduleRevision", "ScheduleSegmentStart", "DuePlanSetDigest"}
+	// The read hold says when the Slot is read and due, not which schedule
+	// it belongs to: the schedule stays provenance, the hold an input of the
+	// contract beside the evaluation time.
+	want := []string{"Slot", "SnapshotRevision", "QueryRevision", "ScheduleRevision", "ScheduleSegmentStart", "DuePlanSetDigest",
+		"ReadHoldMillis"}
 	if !reflect.DeepEqual(fields, want) {
 		t.Fatalf("FrozenExecutionContractRef fields = %v, want %v", fields, want)
 	}
@@ -39,7 +43,7 @@ func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 
 func TestProgressContractsDoNotFreezeNextSlotAfterCompletion(t *testing.T) {
 	if got, want := fieldNames(reflect.TypeOf(execution.SlotExecutionRequest{})),
-		[]string{"ShortPeriodCohort", "Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "ReplayExpired", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot", "ExpiredRange", "ContentScope"}; !reflect.DeepEqual(got, want) {
+		[]string{"ShortPeriodCohort", "Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "ReplayExpired", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot", "ExpiredRange", "ContentScope", "Supplement"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("SlotExecutionRequest fields = %v, want %v", got, want)
 	}
 	if got, want := fieldNames(reflect.TypeOf(execution.ProgressCommitRequest{})),
@@ -129,21 +133,11 @@ func TestScheduleCutoverCreatesAdjacentHalfOpenSegments(t *testing.T) {
 	boundary := execution.EvaluationTime(75)
 	oldSchedule := baselineSchedule(t, "query-group", 60, 30, &boundary, "snapshot-old", 7)
 	newSchedule := baselineSchedule(t, "query-group", 90, boundary, nil, "snapshot-new", 8)
-	fact := execution.ScheduleCutoverFact{OldSegment: oldSchedule.Segment, NewSegment: newSchedule.Segment}
-	if err := fact.Validate(oldSchedule, newSchedule); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
 	if got, ok := newSchedule.FirstSlot(); !ok || got != 90 {
 		t.Fatalf("new FirstSlot() = %d, %t; want 90, true", got, ok)
 	}
 	if due := oldSchedule.DuePlanRefs(boundary); len(due) != 0 {
 		t.Fatalf("old Segment owns boundary due Plans: %+v", due)
-	}
-
-	overlapped := fact
-	overlapped.NewSegment.Start = boundary - 1
-	if err := overlapped.Validate(oldSchedule, newSchedule); err == nil {
-		t.Fatal("Validate() accepted overlapping Segments")
 	}
 }
 
@@ -151,11 +145,6 @@ func TestScheduleCutoverAllowsOldSegmentReplacedBeforeItsFirstSlot(t *testing.T)
 	boundary := execution.EvaluationTime(90)
 	oldSchedule := baselineSchedule(t, "query-group", 60, 83, &boundary, "snapshot-old", 7)
 	newSchedule := baselineSchedule(t, "query-group", 60, boundary, nil, "snapshot-new", 8)
-	fact := execution.ScheduleCutoverFact{OldSegment: oldSchedule.Segment, NewSegment: newSchedule.Segment}
-
-	if err := fact.Validate(oldSchedule, newSchedule); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
 	if first, ok := oldSchedule.FirstSlot(); ok {
 		t.Fatalf("old FirstSlot() = (%d, %t), want no owned Slot", first, ok)
 	}

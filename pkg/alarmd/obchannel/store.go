@@ -27,17 +27,28 @@ func StoreOperations(service *obevidence.Service) []Operation {
 		"business":      {Type: "string", MaxLength: 256, MinLength: 1, Description: "发布计划的业务筛选。", Source: "strategy.get plans[].business"},
 	}
 	storeFields := map[string]Field{
-		"family":      {Type: "string", Enum: []string{"source_strategy", "target_group", "dynamic_config", "query_progress", "query_cooldown"}, Description: "受支持的存储证据族；query_cooldown 是运行对象在降级池里的持久记录（入池时间、失败次数、上次出池及原因、写入者任期），重启或换持有者后按它恢复。"},
+		"family":      {Type: "string", Enum: []string{"source_strategy", "target_group", "dynamic_config", "query_progress", "query_cooldown", "gap_marker", "no_data_memory", "cmdb_host", "cmdb_service_instance"}, Description: "受支持的存储证据族；cmdb_host 和 cmdb_service_instance 是平台 CMDB 缓存里的一条主机或服务实例记录（主机按 host id 或 \"ip|云区域\"，服务实例按实例 id），返回写方写入的原文，以及 alarmd 能否解码、解码出什么——全量加载时解码不了的记录会被静默跳过，这里能看到它；键整体不在为 missing/key_absent，键在而这条不在为 missing/field_absent；query_cooldown 是运行对象在降级池里的持久记录（入池时间、失败次数、上次出池及原因、写入者任期），重启或换持有者后按它恢复；query_progress 的键里只有运行对象 ID 的 SHA-256（花括号内），结果的 key_identity 给出两者的对应；gap_marker 和 no_data_memory 是一个 Plan 的缺口标记和无数据记忆，按 strategy.get 给出的运行对象、发布对象摘要和策略读，返回每个键在不在、剩余寿命（毫秒）、大小（字符串字节数或哈希字段数）和头部的修订号、写入的 Slot；键名里的状态代际与分片取自发布对象。"},
 		"strategy_id": id, "query_group": object,
 		"group_id": {Type: "string", Pattern: "^[^\\s\\x00-\\x1f\\x7f]+$", MinLength: 1, MaxLength: 512, Description: "目标组ID。", Source: "源策略 target 配置或既有目标组证据"},
-		"fields":   {Type: "array", MaxItems: len(platformsettings.Fields), UniqueItems: true, Items: &fields, Description: "动态配置字段；省略或空数组时读取全部四项。"},
+		"fields":   {Type: "array", MaxItems: len(platformsettings.Fields), UniqueItems: true, Items: &fields, Description: "动态配置字段；省略或空数组时读取全部字段。"},
+
+		// A Plan's records are named by the object that carries its state
+		// generation, as strategy.config's published view names it.
+		"object_digest": configFields["object_digest"], "tenant": configFields["tenant"], "business": configFields["business"],
+
+		"host":             {Type: "string", Pattern: "^([1-9][0-9]*|[^\\s|]+\\|(0|[1-9][0-9]*))$", MinLength: 1, MaxLength: 128, Description: "CMDB 主机：host id，或 \"ip|云区域\"（与写方的哈希字段同形）。", Source: "告警维度 bk_host_id，或 bk_target_ip 与 bk_target_cloud_id"},
+		"service_instance": {Type: "string", Pattern: "^[1-9][0-9]*$", MinLength: 1, MaxLength: 32, Description: "CMDB 服务实例 id。", Source: "告警维度 bk_target_service_instance_id"},
 	}
 	configVariants := map[string][]string{"source": {"strategy_id"}, "published": {"strategy_id", "query_group", "object_digest", "tenant", "business"}}
-	storeVariants := map[string][]string{"source_strategy": {"strategy_id"}, "target_group": {"group_id"}, "dynamic_config": {"fields"}, "query_progress": {"query_group"}, "query_cooldown": {"query_group"}}
+	planRecords := []string{"query_group", "object_digest", "strategy_id", "tenant", "business"}
+	storeVariants := map[string][]string{"source_strategy": {"strategy_id"}, "target_group": {"group_id"}, "dynamic_config": {"fields"}, "query_progress": {"query_group"}, "query_cooldown": {"query_group"},
+		"gap_marker": planRecords, "no_data_memory": planRecords, "cmdb_host": {"host"}, "cmdb_service_instance": {"service_instance"}}
 	configRequired := map[string][]string{"source": {"strategy_id"}, "published": {"strategy_id", "query_group", "object_digest"}}
-	storeRequired := map[string][]string{"source_strategy": {"strategy_id"}, "target_group": {"group_id"}, "query_progress": {"query_group"}, "query_cooldown": {"query_group"}}
+	storeRequired := map[string][]string{"source_strategy": {"strategy_id"}, "target_group": {"group_id"}, "query_progress": {"query_group"}, "query_cooldown": {"query_group"},
+		"gap_marker": {"query_group", "object_digest", "strategy_id"}, "no_data_memory": {"query_group", "object_digest", "strategy_id"},
+		"cmdb_host": {"host"}, "cmdb_service_instance": {"service_instance"}}
 	ops := []Operation{
-		{ID: "strategy.config", Summary: "读取策略具体配置，并区分当前源缓存与指定发布对象；秘密字段有明确省略记录。", Fields: configFields, Required: []string{"view", "strategy_id"}, Limits: limits, OutputSchema: SchemaOf(obevidence.Result{}), InputRules: variantRules("view", configFields, configVariants, configRequired), Examples: []Params{{"view": "source", "strategy_id": "1001"}}, Validate: func(p Params) error { return validateVariant(p, "view", configVariants, configRequired) }, Run: func(ctx context.Context, p Params) Outcome {
+		{ID: "strategy.config", Summary: "读取策略具体配置，并区分当前源缓存与指定发布对象；源缓存视图里本构建不认识的键按形状给出（键名、嵌套结构、数字与布尔原值，字符串只给长度），凭据类字段与秘密参数有明确省略记录。", Fields: configFields, Required: []string{"view", "strategy_id"}, Limits: limits, OutputSchema: SchemaOf(obevidence.Result{}), InputRules: variantRules("view", configFields, configVariants, configRequired), Examples: []Params{{"view": "source", "strategy_id": "1001"}}, Validate: func(p Params) error { return validateVariant(p, "view", configVariants, configRequired) }, Run: func(ctx context.Context, p Params) Outcome {
 			return storeOutcome(service.StrategyConfig(ctx, obevidence.ConfigRequest{View: p.String("view"), StrategyID: p.String("strategy_id"), Tenant: p.String("tenant"), Business: p.String("business"), QueryGroup: p.String("query_group"), ObjectDigest: p.String("object_digest")}))
 		}},
 		{ID: "store.inspect", Summary: "按证据族和领域ID读取 Redis 类型、TTL、具体值与来源，缺失、错型、超限和不可达分别返回。", Fields: storeFields, Required: []string{"family"}, Limits: limits, OutputSchema: SchemaOf(obevidence.Result{}), InputRules: variantRules("family", storeFields, storeVariants, storeRequired), Examples: []Params{{"family": "dynamic_config"}, {"family": "source_strategy", "strategy_id": "1001"}}, Validate: func(p Params) error {
@@ -53,7 +64,9 @@ func StoreOperations(service *obevidence.Service) []Operation {
 			}
 			return nil
 		}, Run: func(ctx context.Context, p Params) Outcome {
-			return storeOutcome(service.Store(ctx, obevidence.StoreRequest{Family: p.String("family"), StrategyID: p.String("strategy_id"), GroupID: p.String("group_id"), QueryGroup: p.String("query_group"), Fields: selectedFields(p)}))
+			return storeOutcome(service.Store(ctx, obevidence.StoreRequest{Family: p.String("family"), StrategyID: p.String("strategy_id"), GroupID: p.String("group_id"), QueryGroup: p.String("query_group"), Fields: selectedFields(p),
+				ObjectDigest: p.String("object_digest"), Tenant: p.String("tenant"), Business: p.String("business"),
+				Host: p.String("host"), ServiceInstance: p.String("service_instance")}))
 		}},
 		{ID: "store.info", Summary: "读取 alarmd 用到的每个 Redis 的内存上限、淘汰策略、已用内存、淘汰与过期计数、各角色所在库的键数、脚本命令（eval/evalsha）累计调用与耗时、复制 offset 与各副本落后字节数（不含副本地址）（INFO 白名单字段）；读不到的服务器具名标出。", Fields: map[string]Field{}, Limits: limits, OutputSchema: SchemaOf(obevidence.InfoResult{}), Run: func(ctx context.Context, _ Params) Outcome {
 			info := service.Info(ctx)
@@ -141,9 +154,9 @@ func storeOutcome(r obevidence.Result) Outcome {
 	}
 	switch r.Status {
 	case "dependency_unavailable":
-		out.Error = &Failure{"evidence_unavailable", "The configured evidence store could not be read."}
+		out.Error = &Failure{Code: "evidence_unavailable", Message: "The configured evidence store could not be read.", Reason: r.Reason}
 	case "invalid_input":
-		out.Error = &Failure{"invalid_input", "The domain reader rejected the input."}
+		out.Error = &Failure{Code: "invalid_input", Message: "The domain reader rejected the input."}
 	}
 	return out
 }

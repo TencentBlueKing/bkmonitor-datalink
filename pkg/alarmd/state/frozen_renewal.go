@@ -86,10 +86,8 @@ func (store *ExecutionStore) RenewFrozenRuntime(
 			result.Items[index].Outcome = execution.FrozenRenewalFresh
 			continue
 		}
-		// The key the record was read from. A framed record lives under
-		// runtime3 and an envelope under runtime; renewing the other key
-		// keeps nothing alive, and a frozen series is never written, so the
-		// key it was read from is the key it stays under.
+		// The key the record was read from: a frozen series is never
+		// written, so the key it was read from is the key it stays under.
 		key, err := frozenRecordKey(store.options.Prefix, item)
 		if err == nil {
 			var target StorageTarget
@@ -204,8 +202,6 @@ func frozenRecordKey(prefix string, item execution.FrozenSeriesState) (string, e
 	switch item.Representation {
 	case execution.StateRepresentationFramed:
 		return RuntimeStateKeyV3(prefix, item.Identity)
-	case execution.StateRepresentationEnvelope:
-		return RuntimeStateKeyV2(prefix, item.Identity)
 	}
 	return "", identityError("frozen series state does not say which representation its record is in")
 }

@@ -23,11 +23,11 @@ import (
 // enough that anything it governs is suppressed after one line.
 func withheldObserver(t *testing.T, output *bytes.Buffer) Observer {
 	t.Helper()
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 1, MaxScopes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := NewBoundedLogPolicy(limiter)
+	policy, err := NewScopedBoundedLogPolicy(limiter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestASlotWithNoNoDataPlansWritesTheZero(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentEvaluation, Stage: StageNoDataDecided, Result: ResultSuccess,
 		NoDataCensus: &NoDataCensusFacts{Plans: 0},
 	})
@@ -168,20 +168,9 @@ func TestANoDataSlotWritesItsCensusAndItsOutcome(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	// Its own limiter with room for both: the helper above deliberately allows
-	// one line per window, and what this test is about is the fields, not the
-	// budget. That these two lines share one limiter bucket -- same reason, no
-	// query group -- is real and worth knowing, but at two Slots a minute it is
-	// nowhere near the budget in production.
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 100})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	observer := NewLoggingObserver(New("alarmd", &output), policy)
+	// The rendered lines: what this case is about is the fields, not which
+	// lines the policy writes.
+	observer := rendererObserver{output: &output}
 	observer.Observe(context.Background(), Observation{
 		Component: ComponentEvaluation, Stage: StageNoDataDecided, Result: ResultSuccess,
 		NoDataCensus: &NoDataCensusFacts{Plans: 9},

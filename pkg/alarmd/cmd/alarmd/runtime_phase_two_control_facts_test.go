@@ -45,11 +45,10 @@ func newProductionControlWithRecorder(
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
 		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
 		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
-		Progress: &fakeProductionProgressReader{}, RefreshInterval: time.Second, Recorder: recorder,
+		Progress: &fakeProductionProgressReader{}, Recorder: recorder,
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			*observations = append(*observations, observation)
 		}),
-		Wait: func(context.Context, time.Duration) error { return nil },
 	})
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoControl() error = %v", err)
@@ -57,15 +56,64 @@ func newProductionControlWithRecorder(
 	return control, recorder
 }
 
-// A pending round on a Control Leader whose store has no activation record,
-// but does have a published Catalog, rebuilds the activation from the latest
-// publication: the same idempotent first activation a fresh deployment makes.
-// The round returns a healthy fact naming every Query Group as added, says so
-// in its observation, and counts the record as missing once and rebuilt once.
+// A round on a Control Leader whose store has no activation record but does
+// have the publication the round names - the latest one before the round
+// began - rebuilds the activation from it: the same idempotent first
+// activation a fresh deployment makes. The round returns a healthy fact
+// naming every Query Group as added, says so in its observation, and counts
+// the record as missing once and rebuilt once. Any round does this, whatever
+// its status: it used to happen only on a round whose candidate was pending.
 func TestProductionPhaseTwoControlRebuildsAMissingActivationFromTheLatestPublication(t *testing.T) {
 	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1}
+	for _, status := range []controlplane.SourceRefreshStatus{controlplane.SourceRefreshUnchanged, controlplane.SourceRefreshPublished} {
+		t.Run(string(status), func(t *testing.T) {
+			reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{
+				{Status: status, Observation: "observation-1", Publication: publication, Latest: publication},
+			}}
+			repository := &fakeProductionCatalogRepository{activationErr: controlplane.ErrActivationUnavailable,
+				snapshot: controlplane.PublishedSnapshot{Publication: publication,
+					QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-1"}}}}
+			activator := &fakeInitialScheduleActivator{state: controlplane.ActivationState{RecordRevision: 1, Current: publication}}
+			var observations []observability.Observation
+			control, recorder := newProductionControlWithRecorder(t, reconciler, repository, activator, &observations)
+
+			result, err := control.Refresh(context.Background())
+			if err != nil || result.Status != phaseTwoControlHealthy || result.QueryGroupsRetained ||
+				!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
+				t.Fatalf("Refresh() = %#v, %v, want a healthy fact naming query-group-1", result, err)
+			}
+			if activator.calls != 1 || activator.publication != publication {
+				t.Fatalf("activator calls/publication = %d/%+v, want one activation of the latest publication", activator.calls, activator.publication)
+			}
+			rounds := sourceRefreshObservations(observations, observability.SourceRefreshStatus(status))
+			if len(rounds) != 1 {
+				t.Fatalf("%s observations = %d, want 1", status, len(rounds))
+			}
+			facts := rounds[0].SourceRefresh
+			if !facts.ActivationRebuilt || !facts.CountsKnown ||
+				facts.AddedQueryGroups != 1 || facts.NewQueryGroups != 1 || facts.OldQueryGroups != 0 {
+				t.Fatalf("source refresh facts = %+v, want rebuilt with every Query Group added", facts)
+			}
+			for name, labels := range map[string]map[string]string{
+				"bkmonitor_alarmd_control_facts_unavailable_total": {"fact": "activation", "reason": "missing"},
+				"bkmonitor_alarmd_control_facts_rebuilt_total":     {"fact": "activation"},
+			} {
+				if got := counterValue(t, recorder, name, labels); got != 1 {
+					t.Fatalf("%s%v = %v, want 1", name, labels, got)
+				}
+			}
+		})
+	}
+}
+
+// The first activation of a fresh deployment also finds no record, and is
+// not a rebuild: nothing was published before the round, so nothing was
+// lost. It is counted as the read that found the record missing, and the
+// round activates what it published.
+func TestProductionPhaseTwoControlCountsAFirstActivationAsNoRebuild(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1}
 	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{
-		{Status: controlplane.SourceRefreshPendingConfirmation, Observation: "observation-1", Latest: publication},
+		{Status: controlplane.SourceRefreshPublished, Observation: "observation-1", Publication: publication},
 	}}
 	repository := &fakeProductionCatalogRepository{activationErr: controlplane.ErrActivationUnavailable,
 		snapshot: controlplane.PublishedSnapshot{Publication: publication,
@@ -74,67 +122,23 @@ func TestProductionPhaseTwoControlRebuildsAMissingActivationFromTheLatestPublica
 	var observations []observability.Observation
 	control, recorder := newProductionControlWithRecorder(t, reconciler, repository, activator, &observations)
 
-	result, err := control.Refresh(context.Background())
-	if err != nil || result.Status != phaseTwoControlHealthy || result.QueryGroupsRetained ||
-		!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1"}) {
-		t.Fatalf("Refresh() = %#v, %v, want a healthy fact naming query-group-1", result, err)
+	result, err := control.InitialRefresh(context.Background())
+	if err != nil || result.Status != phaseTwoControlHealthy || activator.calls != 1 || reconciler.calls != 1 {
+		t.Fatalf("InitialRefresh() = %#v, %v with %d activations over %d rounds, want one healthy round", result, err, activator.calls, reconciler.calls)
 	}
-	if activator.calls != 1 || activator.publication != publication {
-		t.Fatalf("activator calls/publication = %d/%+v, want one activation of the latest publication", activator.calls, activator.publication)
-	}
-	pending := sourceRefreshObservations(observations, observability.SourceRefreshPending)
-	if len(pending) != 1 {
-		t.Fatalf("pending observations = %d, want 1", len(pending))
-	}
-	facts := pending[0].SourceRefresh
-	if !facts.ActivationRebuilt || !facts.ActivationCaughtUp || !facts.CountsKnown ||
-		facts.AddedQueryGroups != 1 || facts.NewQueryGroups != 1 || facts.OldQueryGroups != 0 {
-		t.Fatalf("source refresh facts = %+v, want rebuilt+caught up with every Query Group added", facts)
-	}
-	for name, labels := range map[string]map[string]string{
-		"bkmonitor_alarmd_control_facts_unavailable_total": {"fact": "activation", "reason": "missing"},
-		"bkmonitor_alarmd_control_facts_rebuilt_total":     {"fact": "activation"},
-	} {
-		if got := counterValue(t, recorder, name, labels); got != 1 {
-			t.Fatalf("%s%v = %v, want 1", name, labels, got)
-		}
-	}
-}
-
-// The same round with nothing published yet has nothing to rebuild from. It
-// used to return the zero result with a nil error; it now returns a degraded
-// fact that names the missing activation and asks the receiver to keep the
-// set it has, and counts the record as missing without counting a rebuild.
-func TestProductionPhaseTwoControlNamesAMissingActivationItCannotRebuild(t *testing.T) {
-	reconciler := &fakeSourceReconciler{results: []controlplane.SourceRefreshResult{
-		{Status: controlplane.SourceRefreshPendingConfirmation, Observation: "observation-1"},
-	}}
-	repository := &fakeProductionCatalogRepository{activationErr: controlplane.ErrActivationUnavailable}
-	activator := &fakeInitialScheduleActivator{}
-	var observations []observability.Observation
-	control, recorder := newProductionControlWithRecorder(t, reconciler, repository, activator, &observations)
-
-	result, err := control.Refresh(context.Background())
-	if err != nil {
-		t.Fatalf("Refresh() error = %v, want a degraded fact rather than an error", err)
-	}
-	if result.Status != phaseTwoControlDegradedLastGood || !result.QueryGroupsRetained ||
-		result.ReasonCode != activationMissingReason || !errors.Is(result.Cause, controlplane.ErrActivationUnavailable) ||
-		result.SourceKind != observability.SourceKindCompiledSnapshot {
-		t.Fatalf("Refresh() = %#v, want degraded_last_good/ACTIVATION_MISSING with the set retained", result)
-	}
-	if activator.calls != 0 {
-		t.Fatalf("activator called %d times with nothing published", activator.calls)
-	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_facts_unavailable_total", map[string]string{"fact": "activation", "reason": "missing"}); got != 1 {
-		t.Fatalf("control_facts_unavailable_total{activation,missing} = %v, want 1", got)
+	published := sourceRefreshObservations(observations, observability.SourceRefreshPublished)
+	if len(published) != 1 || published[0].SourceRefresh.ActivationRebuilt {
+		t.Fatalf("published observations = %#v, want one and no rebuild", published)
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_facts_rebuilt_total", map[string]string{"fact": "activation"}); got != 0 {
 		t.Fatalf("control_facts_rebuilt_total{activation} = %v, want 0", got)
 	}
+	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_facts_unavailable_total", map[string]string{"fact": "activation", "reason": "missing"}); got != 1 {
+		t.Fatalf("control_facts_unavailable_total{activation,missing} = %v, want 1", got)
+	}
 }
 
-// The structural guard behind the two tests above: a round that says nothing
+// The structural guard behind the tests above: a round that says nothing
 // and claims success is turned into a named error, never handed to the bundle
 // as a fact. Reverting the pending branch to its early return lands here.
 func TestCompleteControlResultRefusesAZeroResultWithNoError(t *testing.T) {

@@ -54,6 +54,9 @@ type StrategyLookupFacts struct {
 	// Dispositions is every disposition the round recorded for the
 	// strategy, accepted and withheld, one per item.
 	Dispositions []StrategyDisposition
+	// Global says the source marks the strategy global, whatever the round
+	// did with it (controlplane.StrategyLookup.Global).
+	Global bool
 }
 
 // StrategyPublication is the catalog a standing was answered from.
@@ -72,17 +75,31 @@ type StrategyPlanRef struct {
 	SnapshotRevision string `json:"snapshot_revision"`
 	QueryRevision    string `json:"query_revision"`
 	ScheduleRevision string `json:"schedule_revision"`
+	// SourceSemantics is what the Plan's query reads; GroupBy the dimensions
+	// every series of it is told apart by - the same ones an event count's
+	// quiet is decided on - at most sixteen with GroupByTotal counting all;
+	// PromQL says the query runs as PromQL. A census reads them off one pass
+	// over the diagnose rows. All four are absent from a build before they
+	// existed, which a reader tells from SourceSemantics missing.
+	SourceSemantics []string `json:"source_semantics,omitempty"`
+	GroupBy         []string `json:"group_by,omitempty"`
+	GroupByTotal    int      `json:"group_by_total,omitempty"`
+	PromQL          bool     `json:"promql,omitempty"`
 }
 
 // StrategyDisposition is what the round decided about one item of the
 // strategy: ACCEPTED, or a disposition with the reason and the field it
 // refused on. The same words the first screen's source facts count by.
+// Detail is the refusal in the compiler's words, bounded, when a word and a
+// path are not enough to act on - which target field, which condition
+// method - and empty for every refusal that carries none.
 type StrategyDisposition struct {
 	Scope       string `json:"scope,omitempty"`
 	LevelID     uint32 `json:"level_id,omitempty"`
 	Disposition string `json:"disposition"`
 	Reason      string `json:"reason,omitempty"`
 	FieldPath   string `json:"field_path,omitempty"`
+	Detail      string `json:"detail,omitempty"`
 }
 
 // StrategyLookupFunc answers the standing of one strategy from the
@@ -115,11 +132,6 @@ type CatalogAbsenceFacts struct {
 	// recorded anywhere; the age is what exists, and deriving the count from
 	// it would be arithmetic presented as a measurement.
 	FailingSeconds *float64
-	// DirectoryMounted says this process also serves the strategy directory,
-	// which answers the same question from the store rather than from the
-	// published catalog. It is the way out while the catalog is absent, and
-	// it is only offered when the route is actually mounted here.
-	DirectoryMounted bool
 }
 
 // CatalogAbsenceFunc reads that state. Nil leaves the refusal saying it does
@@ -168,15 +180,7 @@ type CatalogAbsence struct {
 	Exit           string   `json:"exit,omitempty"`
 	Text           string   `json:"text,omitempty"`
 	FailingSeconds *float64 `json:"failing_seconds,omitempty"`
-	// Next names the route that answers the same question while this one
-	// cannot, and is absent when this process does not serve it. Absent is
-	// the honest answer: a way out that is not mounted is not a way out.
-	Next string `json:"next,omitempty"`
 }
-
-// strategyDirectoryRoute is where the same question is answered from the
-// store rather than from the published catalog.
-const strategyDirectoryRoute = "/api/objects?scope=strategies"
 
 // controlRoleLeader and controlExitNone are the control plane's words as
 // they arrive here. Spelled out rather than imported: this package does not
@@ -196,9 +200,6 @@ const (
 // which gets its own word rather than the nearest one.
 func catalogAbsenceOf(facts CatalogAbsenceFacts, replica string, wired bool) CatalogAbsence {
 	absence := CatalogAbsence{Error: "NOT_PUBLISHED", Replica: replica, Role: facts.Role}
-	if facts.DirectoryMounted {
-		absence.Next = strategyDirectoryRoute
-	}
 	switch {
 	case !wired || facts.Role == "":
 		absence.Reason, absence.Role = CatalogAbsenceUnknown, ""
@@ -217,9 +218,6 @@ func catalogAbsenceOf(facts CatalogAbsenceFacts, replica string, wired bool) Cat
 	default:
 		absence.Reason = CatalogAbsenceIndexMissing
 		absence.Detail = "这个副本是 leader，最近一轮目录刷新没有失败，手上却没有目录——这是程序缺陷，不是部署状态。"
-	}
-	if absence.Next != "" {
-		absence.Detail += "同一个问题可以用 " + strategyDirectoryRoute + " 从存储直接查。"
 	}
 	return absence
 }
@@ -298,10 +296,15 @@ type StrategyPlanStanding struct {
 	// Rows is what the fleet lists the object under, every row: an object
 	// under no row is healthy for the equation and appears as none.
 	Rows []Anomaly `json:"rows"`
+	// Tracked is the answering replica's live row for the Plan's object when
+	// it lists none and this replica tracks it, as on the object route.
+	// Otherwise Replica names the owner to ask.
+	Tracked *Anomaly `json:"tracked,omitempty"`
 	// Config is the Plan's key configuration, redacted, read from the
 	// frozen object on request (include=config) and absent otherwise. See
 	// StrategyPlanConfigs for what it carries and what it refuses.
-	Config *StrategyPlanConfigs `json:"config,omitempty"`
+	Config   *StrategyPlanConfigs `json:"config,omitempty"`
+	ReadHold *ReadHoldFacts       `json:"read_hold,omitempty"`
 }
 
 // StrategyStandingOf composes the answer from the lookup and the fleet's
@@ -318,6 +321,7 @@ func StrategyStandingOf(strategyID, tenant, business, replica string, facts Stra
 		if view != nil {
 			entry.Existence = objectExistence(plan.QueryGroup, view.expectation)
 			entry.Replica = view.ownerOf[plan.QueryGroup]
+			entry.ReadHold = view.readHoldOf(plan.QueryGroup)
 			walkObjectRows("", "", plan.QueryGroup, view, now, func(row Anomaly) {
 				if len(entry.Rows) < MaxPageSize {
 					entry.Rows = append(entry.Rows, row)
@@ -428,7 +432,7 @@ func strategyStandingLine(standing StrategyStanding) string {
 		if disposition.FieldPath != "" {
 			item += "（" + disposition.FieldPath + "）"
 		}
-		if disposition.Disposition == dispositionConfigNormalized {
+		if disposition.Disposition == dispositionConfigNoted {
 			normalized = append(normalized, item+"——"+WithheldWordsOf(disposition.Reason).What)
 			continue
 		}
@@ -469,16 +473,17 @@ func strategyStandingLine(standing StrategyStanding) string {
 		objects = append(objects, object)
 	}
 	removed, pending := removedFromSource(standing)
-	return strategyStandingSentence(standing, objects, withheld, removed, pending) + normalizedClause(normalized)
+	return strategyStandingSentence(standing, objects, withheld, removed, pending) + notedClause(normalized)
 }
 
-// normalizedClause is the sentence's tail for the items read wider than
-// written; empty when there are none.
-func normalizedClause(normalized []string) string {
+// notedClause is the sentence's tail for the items that run with a
+// note about their configuration - read other than written, or run as
+// written and unable to do what they appear to; empty when there are none.
+func notedClause(normalized []string) string {
 	if len(normalized) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("；%d 项的读法和配置写的不同、在检测：%s", len(normalized), strings.Join(normalized, "；"))
+	return fmt.Sprintf("；%d 项配置有提示、仍在检测：%s", len(normalized), strings.Join(normalized, "；"))
 }
 
 // strategyStandingSentence is the standing, the objects and the withheld
@@ -575,12 +580,17 @@ func WithStrategyStanding(next http.Handler, service *Service, lookup StrategyLo
 			return
 		}
 		var view *View
+		// Held on the memory line until this page's answer is written: the
+		// snapshots and the view built of them are garbage then.
+		pageCtx, release := withPageHolds(request.Context())
+		defer release()
 		if service != nil {
-			current := service.View(request.Context())
+			current := service.View(pageCtx)
 			Decide(&current, now(), stallAfter)
 			view = &current
 		}
 		standing := StrategyStandingOf(strategyID, query.Get("tenant"), query.Get("business"), replica, facts, view, now())
+		attachTrackedRows(&standing, service)
 		if includes[IncludeConfig] {
 			attachStrategyConfigs(request.Context(), &standing, loader)
 		}
@@ -649,7 +659,11 @@ func serveStrategyList(response http.ResponseWriter, request *http.Request, serv
 			limit = parsed
 		}
 	}
-	current := service.View(request.Context())
+	// Held on the memory line until this page's answer is written: the
+	// snapshots and the view built of them are garbage then.
+	pageCtx, release := withPageHolds(request.Context())
+	defer release()
+	current := service.View(pageCtx)
 	Decide(&current, now(), stallAfter)
 	all := StrategyLines(&current, now())
 	lines := FilterStrategyLines(all, state, action)
@@ -677,4 +691,20 @@ func knownActionWord(word ActionWord) bool {
 		}
 	}
 	return false
+}
+
+// attachTrackedRows gives each Plan whose object lists no row this
+// replica's live row for it, where this replica tracks it: the strategy
+// route's answer for a healthy object. Kept off StrategyStandingOf, which
+// every diagnosis row is built from, so the diagnosis does not grow.
+func attachTrackedRows(standing *StrategyStanding, service *Service) {
+	for index := range standing.Plans {
+		plan := &standing.Plans[index]
+		if len(plan.Rows) != 0 {
+			continue
+		}
+		if row, tracked := service.LocalRow(plan.QueryGroup); tracked {
+			plan.Tracked = &row
+		}
+	}
 }

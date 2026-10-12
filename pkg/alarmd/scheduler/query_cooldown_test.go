@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
@@ -27,7 +28,8 @@ func TestQueryCooldownDispersesSynchronizedPopulation(t *testing.T) {
 }
 
 func unavailableResult() execution.SlotExecutionResult {
-	return execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityUnavailable}
+	return execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityUnavailable,
+		QueryUnavailableReason: execution.ReasonCode(contract.ReasonQueryUnavailable)}
 }
 
 func TestQueryCooldownAcrossSlotsAndRecovery(t *testing.T) {
@@ -39,7 +41,6 @@ func TestQueryCooldownAcrossSlotsAndRecovery(t *testing.T) {
 		{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable},
 	}}
 	limits := testRecoveryLimits()
-	limits.QueryUnavailableCooldown = true
 	flights, err := NewFlightCoordinatorWithRecovery(limits, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
@@ -83,16 +84,16 @@ func TestQueryCooldownAcrossSlotsAndRecovery(t *testing.T) {
 
 func TestQueryCooldownDoesNotCountDuplicateOrQueryFreeCompletion(t *testing.T) {
 	now := time.Unix(100, 0)
-	runner := &Runner{queryGroup: "qg", now: func() time.Time { return now }, flights: &FlightCoordinator{limits: RecoveryLimits{QueryUnavailableCooldown: true}}}
+	runner := &Runner{queryGroup: "qg", now: func() time.Time { return now }, flights: &FlightCoordinator{limits: RecoveryLimits{}}}
 	slot := frozenSlot("qg")
 	for i := 0; i < 10; i++ {
-		runner.recordQueryAvailability(context.Background(), slot, unavailableResult(), 10)
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 10, runner.queryCooldownLetsRun())
 	}
 	if runner.queryCooldown.failures != 1 {
 		t.Fatal("duplicate Slot counted")
 	}
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.SlotExecutionResult{Completed: true}, 10)
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true}, 10, runner.queryCooldownLetsRun())
 	if runner.queryCooldown.failures != 1 {
 		t.Fatal("query-free completion changed evidence")
 	}
@@ -101,7 +102,7 @@ func TestQueryCooldownDoesNotCountDuplicateOrQueryFreeCompletion(t *testing.T) {
 	if runner.deferUnavailableQuery(context.Background(), slot) {
 		t.Fatal("expired finalization delayed")
 	}
-	runner.recordQueryAvailability(context.Background(), slot, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 10)
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 10, runner.queryCooldownLetsRun())
 	if runner.queryCooldown.failures != 1 || !runner.queryCooldown.until.Equal(now.Add(time.Minute)) {
 		t.Fatal("expired finalization forged recovery")
 	}
@@ -109,11 +110,11 @@ func TestQueryCooldownDoesNotCountDuplicateOrQueryFreeCompletion(t *testing.T) {
 
 func TestQueryCooldownMaintenanceConfigAndDisable(t *testing.T) {
 	now := time.Unix(100, 0)
-	runner := &Runner{queryGroup: "qg", now: func() time.Time { return now }, flights: &FlightCoordinator{limits: RecoveryLimits{QueryUnavailableCooldown: true}}}
+	runner := &Runner{queryGroup: "qg", now: func() time.Time { return now }, flights: &FlightCoordinator{limits: RecoveryLimits{}}}
 	slot := frozenSlot("qg")
 	for i := 0; i < 3; i++ {
 		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), slot, unavailableResult(), 60)
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownLetsRun())
 	}
 	slot.RecoveryUntilUnixMilli = now.Add(5 * time.Second).UnixMilli()
 	if !runner.deferUnavailableQuery(context.Background(), slot) || !runner.queryCooldown.wakeAt.Equal(now.Add(5*time.Second)) {
@@ -131,14 +132,6 @@ func TestQueryCooldownMaintenanceConfigAndDisable(t *testing.T) {
 	slot.Contract.QueryRevision = "fixed-query"
 	if runner.deferUnavailableQuery(context.Background(), slot) || runner.queryCooldown.failures != 0 {
 		t.Fatal("fixed query stayed isolated")
-	}
-	for i := 0; i < 3; i++ {
-		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), slot, unavailableResult(), 60)
-	}
-	runner.flights.limits.QueryUnavailableCooldown = false
-	if runner.deferUnavailableQuery(context.Background(), slot) || runner.queryCooldown.failures != 0 {
-		t.Fatal("disabled gate retained cooldown")
 	}
 }
 
@@ -158,18 +151,10 @@ func TestQueryCooldownDelayBoundedForAllPeriods(t *testing.T) {
 }
 
 func BenchmarkQueryCooldownHealthyGate(b *testing.B) {
-	for _, enabled := range []bool{false, true} {
-		name := "disabled"
-		if enabled {
-			name = "enabled"
-		}
-		b.Run(name, func(b *testing.B) {
-			runner := &Runner{flights: &FlightCoordinator{limits: RecoveryLimits{QueryUnavailableCooldown: enabled}}, now: time.Now}
-			slot := frozenSlot("qg")
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				runner.deferUnavailableQuery(context.Background(), slot)
-			}
-		})
+	runner := &Runner{flights: &FlightCoordinator{}, now: time.Now}
+	slot := frozenSlot("qg")
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		runner.deferUnavailableQuery(context.Background(), slot)
 	}
 }

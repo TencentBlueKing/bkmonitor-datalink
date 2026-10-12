@@ -21,6 +21,9 @@ import (
 type LeaseStore interface {
 	Acquire(context.Context, execution.QueryGroupIdentity, string, time.Time, time.Duration) (Lease, error)
 	Renew(context.Context, execution.OwnerFence, time.Time, time.Duration) (Lease, error)
+	// RenewDeclaring is Renew saying which content scope the holder runs
+	// now; see RedisStore.RenewDeclaring.
+	RenewDeclaring(context.Context, execution.OwnerFence, string, time.Time, time.Duration) (Lease, error)
 	CheckFence(context.Context, execution.OwnerFence) error
 	// CheckFenceWithAssignment is the fence check plus the Assignment record it
 	// already had to consult, in one round trip. It is on the interface rather
@@ -42,6 +45,10 @@ type Session struct {
 	lease     Lease
 	accepting bool
 	released  bool
+	// declared is the content scope the Query Group's Slot in flight runs,
+	// as its Runner noted it; renewals carry it, so a holder already on a
+	// pending change's content is not capped at the change.
+	declared string
 }
 
 func OpenSession(
@@ -123,7 +130,7 @@ func (session *Session) admittedLease(at time.Time) (Lease, error) {
 	lease, accepting := session.lease, session.accepting
 	session.mu.RUnlock()
 	if !accepting || !lease.Deadline.After(at) {
-		return Lease{}, ErrStaleFence
+		return Lease{}, stale(ErrStaleFence, lease, at)
 	}
 	return lease, nil
 }
@@ -133,13 +140,14 @@ func (session *Session) Renew(ctx context.Context, at time.Time, ttl time.Durati
 		return ErrStaleFence
 	}
 	session.mu.RLock()
-	lease, accepting := session.lease, session.accepting
+	lease, accepting, declared := session.lease, session.accepting, session.declared
 	session.mu.RUnlock()
 	if !accepting {
 		return ErrStaleFence
 	}
-	renewed, err := session.store.Renew(ctx, lease.Fence, at, ttl)
+	renewed, err := session.store.RenewDeclaring(ctx, lease.Fence, declared, at, ttl)
 	if err != nil {
+		err = stale(err, lease, at)
 		// An authoritative store decision or a lease whose deadline has
 		// already passed ends admission here. A failure to reach the store
 		// while the lease is still inside its TTL does not: the caller
@@ -178,13 +186,71 @@ func (session *Session) Maintain(ctx context.Context, interval, ttl time.Duratio
 	}
 }
 
+// Deadline is the instant, on this process's clock, until which the Session
+// admits work on its lease: zero once it has stopped accepting - released,
+// or its renewal refused by the store - whatever the last renewal had left.
+// It is the authority the output sink admits a batch against
+// (execution.LeaseAuthority), and a Slot can outlive its lease: a hung
+// execution whose Query Group was declined, or one running when the store
+// refused the renewal. Answering the stale deadline there admitted that
+// Slot's output while the next owner could already hold the lease, and the
+// next owner sent the same events again; admittedLease already refused the
+// same Session its fence check.
 func (session *Session) Deadline() time.Time {
 	if session == nil {
 		return time.Time{}
 	}
 	session.mu.RLock()
 	defer session.mu.RUnlock()
+	if !session.accepting {
+		return time.Time{}
+	}
 	return session.lease.Deadline
+}
+
+// NoteContentScope records the content scope the Query Group's Slot about to
+// run declares: the scope of the Segment it was frozen from, empty for a Slot
+// of a Segment that has closed. One Slot of a Query Group runs at a time, so
+// this is the content the holder runs until the next note, and a renewal that
+// carries it is not capped at a pending change it already runs.
+func (session *Session) NoteContentScope(scope string) {
+	if session == nil {
+		return
+	}
+	session.mu.Lock()
+	session.declared = scope
+	session.mu.Unlock()
+}
+
+// LeaseEndedAtContentSwitch is a Session's lease running out at a pending
+// content change's effective time: the cap the store puts on a holder that
+// was still on the old content when the change fell due. It is a stale
+// fence, and every branch that asks errors.Is(err, ErrStaleFence) takes it
+// as one - the holder lets the Query Group go and takes it again on the new
+// content. It is named apart for the reading only: RefusalReason calls it
+// CONTENT_SCOPE_MOVED, so a content publication does not read as a lost
+// lease (control-plane review, deviation 9).
+type LeaseEndedAtContentSwitch struct{ Err error }
+
+func (err *LeaseEndedAtContentSwitch) Error() string {
+	return "alarmd ownership: the lease ended at a content switch: " + err.Err.Error()
+}
+
+func (err *LeaseEndedAtContentSwitch) Unwrap() error { return err.Err }
+
+// endedAtContentSwitch says lease was capped at a pending content change and
+// has run out there by at, on this process's clock.
+func endedAtContentSwitch(lease Lease, at time.Time) bool {
+	return lease.ContentChangePending() && !lease.Deadline.After(lease.EffectiveAt) && !lease.Deadline.After(at)
+}
+
+// stale is the stale fence a Session answers for lease at at: named as the
+// content switch when that is where the lease ran out.
+func stale(err error, lease Lease, at time.Time) error {
+	if errors.Is(err, ErrStaleFence) && endedAtContentSwitch(lease, at) {
+		return &LeaseEndedAtContentSwitch{Err: err}
+	}
+	return err
 }
 
 // Current is the lease as the last acquire or renewal left it, and whether

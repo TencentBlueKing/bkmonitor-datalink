@@ -9,8 +9,6 @@
 
 package execution
 
-import "errors"
-
 type PartialPolicy string
 
 const (
@@ -31,38 +29,6 @@ type LevelPartialCapability struct {
 	LevelID uint32
 	Policy  PartialPolicy
 	Proof   *PartialProofRef
-}
-
-func validatePartialCapabilities(plan DuePlan) error {
-	levels := plan.CompiledPlan.Levels()
-	if len(plan.PartialCapabilities) != len(levels) {
-		return errors.New("alarmd execution: every compiled Level requires one PARTIAL capability closure")
-	}
-	seen := make(map[uint32]struct{}, len(levels))
-	for _, capability := range plan.PartialCapabilities {
-		if capability.LevelID == 0 || !compiledPlanHasLevel(plan.CompiledPlan, capability.LevelID) {
-			return errors.New("alarmd execution: PARTIAL capability references an unknown Level")
-		}
-		if _, duplicate := seen[capability.LevelID]; duplicate {
-			return errors.New("alarmd execution: duplicate Level PARTIAL capability")
-		}
-		seen[capability.LevelID] = struct{}{}
-		switch capability.Policy {
-		case PartialRequiresFull:
-			if capability.Proof != nil {
-				return errors.New("alarmd execution: REQUIRES_FULL must not carry a proof")
-			}
-		case PartialProvableAbnormalOnly:
-			if capability.Proof == nil || capability.Proof.EvidenceKind != PartialEvidenceOmissionStable ||
-				capability.Proof.EvidenceVersion == 0 || capability.Proof.RuleID == "" ||
-				capability.Proof.RuleVersion == 0 || capability.Proof.ProofDigest == "" {
-				return errors.New("alarmd execution: PROVABLE_ABNORMAL_ONLY requires a registered proof reference")
-			}
-		default:
-			return errors.New("alarmd execution: invalid PARTIAL policy")
-		}
-	}
-	return nil
 }
 
 func partialCapability(plan DuePlan, levelID uint32) (LevelPartialCapability, bool) {

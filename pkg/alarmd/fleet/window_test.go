@@ -175,7 +175,7 @@ func TestWindowsAreRefusedWhenTheyCannotBeHonoured(t *testing.T) {
 	ctx := context.Background()
 	for name, attempt := range map[string]func() error{
 		"not an identity": func() error {
-			_, err := store.Open(ctx, []string{"strategy-8930"}, "operator", time.Minute, now)
+			_, err := store.Open(ctx, []string{"strategy-854"}, "operator", time.Minute, now)
 			return err
 		},
 		"no ttl": func() error {
@@ -283,7 +283,7 @@ func TestTheAPIOpensAndReportsWindows(t *testing.T) {
 func TestTheAPIRefusesWindowsItCannotHonour(t *testing.T) {
 	handler := windowHandler(t)
 	for name, body := range map[string]string{
-		"not an identity": `{"query_groups":["strategy-8930"],"opened_by":"operator","ttl_seconds":600}`,
+		"not an identity": `{"query_groups":["strategy-854"],"opened_by":"operator","ttl_seconds":600}`,
 		"past the ceiling": fmt.Sprintf(`{"query_groups":[%q],"opened_by":"operator","ttl_seconds":%d}`,
 			digest("a"), int(MaxWindowTTL.Seconds())+1),
 		"unattributed":  fmt.Sprintf(`{"query_groups":[%q],"ttl_seconds":600}`, digest("a")),

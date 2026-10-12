@@ -30,7 +30,7 @@ func TestDeriveCompletionSeparatesTheCausesThatShareOneKind(t *testing.T) {
 		{"plan could not be decided", execution.PlanUnavailable, execution.CausePlanUnavailable},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			kind, cause, err := execution.DeriveCompletion(input, execution.EvaluationResult{
+			kind, cause, err := deriveCompletion(input, execution.EvaluationResult{
 				Plans: []execution.PlanEvaluationResult{{Disposition: testCase.plan}},
 			})
 			if err != nil {
@@ -51,7 +51,7 @@ func TestDeriveCompletionSeparatesTheCausesThatShareOneKind(t *testing.T) {
 // Slot someone should look at, and reporting the gap would say the opposite.
 func TestDeriveCompletionReportsTheMostActionableCause(t *testing.T) {
 	input := validInternalExecution()
-	kind, cause, err := execution.DeriveCompletion(input, execution.EvaluationResult{
+	kind, cause, err := deriveCompletion(input, execution.EvaluationResult{
 		Plans: []execution.PlanEvaluationResult{
 			{Disposition: execution.PlanReadinessGap},
 			{Disposition: execution.PlanUnavailable},
@@ -68,7 +68,7 @@ func TestDeriveCompletionReportsTheMostActionableCause(t *testing.T) {
 	}
 	// Order of the Plans must not decide the answer, or the same Slot would
 	// explain itself differently depending on how the results were collected.
-	_, reversed, err := execution.DeriveCompletion(input, execution.EvaluationResult{
+	_, reversed, err := deriveCompletion(input, execution.EvaluationResult{
 		Plans: []execution.PlanEvaluationResult{
 			{Disposition: execution.PlanUnavailable},
 			{Disposition: execution.PlanReadinessGap},
@@ -88,7 +88,7 @@ func TestDeriveCompletionSaysWhichConditionMadeThePartialGap(t *testing.T) {
 	input := validInternalExecution()
 	input.Inputs[0].Completeness = execution.CompletenessPartial
 	for _, disposition := range []execution.PlanDisposition{execution.PlanDecided, execution.PlanDecidedDegraded} {
-		kind, cause, err := execution.DeriveCompletion(input, execution.EvaluationResult{
+		kind, cause, err := deriveCompletion(input, execution.EvaluationResult{
 			Plans: []execution.PlanEvaluationResult{{Disposition: disposition}},
 		})
 		if err != nil {
@@ -105,7 +105,7 @@ func TestDeriveCompletionSaysWhichConditionMadeThePartialGap(t *testing.T) {
 // a full cause rate, which is where unidentified paths are meant to land;
 // naming it in advance would hide that a path nobody knows about exists.
 func TestDeriveCompletionLeavesAnUnproducedPartialGapWithoutACause(t *testing.T) {
-	kind, cause, err := execution.DeriveCompletion(validInternalExecution(), execution.EvaluationResult{
+	kind, cause, err := deriveCompletion(validInternalExecution(), execution.EvaluationResult{
 		Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanDecidedDegraded}},
 	})
 	if err != nil {
@@ -123,7 +123,7 @@ func TestDeriveCompletionLeavesAnUnproducedPartialGapWithoutACause(t *testing.T)
 func TestDeriveCompletionKeepsPartialCausesOffAnUnavailableSlot(t *testing.T) {
 	input := validInternalExecution()
 	input.Inputs[0].Completeness = execution.CompletenessPartial
-	kind, cause, err := execution.DeriveCompletion(input, execution.EvaluationResult{
+	kind, cause, err := deriveCompletion(input, execution.EvaluationResult{
 		Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanReadinessGap}},
 	})
 	if err != nil {
@@ -138,7 +138,7 @@ func TestDeriveCompletionKeepsPartialCausesOffAnUnavailableSlot(t *testing.T) {
 // on a Slot that completed normally.
 func TestDeriveCompletionLeavesTheCauseEmptyWhenTheSlotCompletedFull(t *testing.T) {
 	input := validInternalExecution()
-	_, cause, err := execution.DeriveCompletion(input, execution.EvaluationResult{
+	_, cause, err := deriveCompletion(input, execution.EvaluationResult{
 		Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanDecided}},
 	})
 	if err != nil {
@@ -164,8 +164,8 @@ func TestDeriveCompletionKindStillAgreesWithTheCombinedDerivation(t *testing.T) 
 			{{Disposition: execution.PlanDecidedDegraded}},
 		} {
 			result := execution.EvaluationResult{Plans: plans}
-			kindOnly, errOnly := execution.DeriveCompletionKind(input, result)
-			kind, _, err := execution.DeriveCompletion(input, result)
+			kindOnly, errOnly := deriveCompletionKind(input, result)
+			kind, _, err := deriveCompletion(input, result)
 			if kindOnly != kind || (errOnly == nil) != (err == nil) {
 				t.Fatalf("the two derivations disagreed for %s primary and %+v: %q/%v vs %q/%v",
 					completeness, plans, kindOnly, errOnly, kind, err)
@@ -185,14 +185,14 @@ func TestDeriveCompletionNamesTheInputBeforeThePlanItLeftUndecided(t *testing.T)
 	starved.Inputs[0].Completeness = execution.CompletenessUnavailable
 	starved.Inputs[0].DataState = execution.DataStateUnknown
 	undecided := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{Disposition: execution.PlanUnavailable}}}
-	kind, cause, err := execution.DeriveCompletion(starved, undecided)
+	kind, cause, err := deriveCompletion(starved, undecided)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if kind != execution.CompletionUnavailable || cause != execution.CausePrimaryInputUnavailable {
 		t.Fatalf("undecided Plan beside an unavailable primary: kind=%q cause=%q, want the input named", kind, cause)
 	}
-	_, alone, err := execution.DeriveCompletion(validInternalExecution(), undecided)
+	_, alone, err := deriveCompletion(validInternalExecution(), undecided)
 	if err != nil || alone != execution.CausePlanUnavailable {
 		t.Fatalf("undecided Plan beside a FULL primary: cause=%q err=%v, want the Plan named", alone, err)
 	}

@@ -16,8 +16,10 @@ import (
 )
 
 // The source's active set is the list of strategies the platform says exist.
-// A strategy that leaves it is given one grace cycle under PENDING_REMOVAL
-// and then REMOVED: its Plan leaves the Catalog, its Query Groups are swept,
+// A strategy that leaves it is REMOVED at once when the list's writer states
+// it holds the last good document; under a writer without that statement it
+// is given a grace under PENDING_REMOVAL first. Either way, once REMOVED its
+// Plan leaves the Catalog, its Query Groups are swept,
 // and when the strategy is listed again they are placed anew. Read one round
 // at a time that is a strategy being deleted and later re-created. Read
 // across rounds it was the platform's list losing 99 entries for six minutes

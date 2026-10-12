@@ -14,7 +14,7 @@ import (
 // and lease admission as native detection output. No Python event is emitted.
 func (sink *TriggerEventSink) WriteCloseBatch(ctx context.Context, requests []linkdoutput.CloseRequest) error {
 	if sink == nil || sink.core == nil {
-		return ErrDecisionSinkClosed
+		return &outputKindError{kind: observability.OutputFailureSinkNotOpen, err: ErrDecisionSinkClosed}
 	}
 	if ctx == nil {
 		return errors.New("close sink requires context")
@@ -43,7 +43,7 @@ func (sink *TriggerEventSink) WriteCloseBatch(ctx context.Context, requests []li
 	}
 	observability.ReportOutputWrite(ctx, len(messages), 0, nil)
 	if err := sink.core.writeMessages(ctx, messages); err != nil {
-		return &triggerEventDependencyError{err: fmt.Errorf("publish close batch: %w", err)}
+		return &triggerEventDependencyError{err: fmt.Errorf("publish close batch: %w", err), kind: brokerFailureKind(err)}
 	}
 	return nil
 }

@@ -68,7 +68,12 @@ type redisQueryCooldownStore struct {
 	// write that failed, as a line limited by reason and Query Group: the
 	// Runner cannot act on either, and a failure nothing records is a pool
 	// state that is gone by the next restart with nothing to say so.
-	saves    func(result string)
+	saves func(result string)
+	// loads counts every read by what it found, and observer is told of a
+	// read that failed the same way. The Runner reads again on its next
+	// round and writes nothing until a read succeeds, so failed counts once
+	// per round for as long as the store does not answer.
+	loads    func(result string)
 	observer observability.Observer
 }
 
@@ -78,25 +83,51 @@ type redisQueryCooldownStore struct {
 // counted nowhere reads as a write that never failed -- is one a test runs.
 func newProductionQueryCooldownStore(cfg config.Config, client redis.UniversalClient, recorder *metric.Recorder,
 	observer observability.Observer) scheduler.QueryCooldownStore {
-	return newRedisQueryCooldownStore(client, queryCooldownPrefix(cfg), recorder.ObserveQueryCooldownSave, observer)
+	return newRedisQueryCooldownStore(client, queryCooldownPrefix(cfg), recorder.ObserveQueryCooldownSave,
+		recorder.ObserveQueryCooldownLoad, observer)
 }
 
 // newRedisQueryCooldownStore is the store, or none -- a nil interface, not a
 // nil pointer inside one -- when there is no runtime store to keep it in.
-func newRedisQueryCooldownStore(client redis.UniversalClient, prefix string, saves func(string), observer observability.Observer) scheduler.QueryCooldownStore {
+func newRedisQueryCooldownStore(client redis.UniversalClient, prefix string, saves, loads func(string), observer observability.Observer) scheduler.QueryCooldownStore {
 	if client == nil || prefix == "" {
 		return nil
 	}
-	return &redisQueryCooldownStore{client: client, prefix: prefix, saves: saves, observer: observer}
+	return &redisQueryCooldownStore{client: client, prefix: prefix, saves: saves, loads: loads, observer: observer}
 }
 
 func (store *redisQueryCooldownStore) key(queryGroup execution.QueryGroupIdentity) string {
 	return scheduler.QueryCooldownKey(store.prefix, queryGroup)
 }
 
-// LoadQueryCooldown reads the record. Absent is no record; so is one that
-// does not decode, which the Runner treats the same way: outside the pool.
+// LoadQueryCooldown reads the record, and counts the read by what it found.
+// Absent is no record; one that does not decode is
+// scheduler.ErrQueryCooldownUndecodable, which the Runner reads as none; a
+// read the store did not answer is its error, and the Runner reads again.
 func (store *redisQueryCooldownStore) LoadQueryCooldown(ctx context.Context, queryGroup execution.QueryGroupIdentity) (scheduler.QueryCooldownRecord, bool, error) {
+	record, found, err := store.load(ctx, queryGroup)
+	result := "found"
+	switch {
+	case errors.Is(err, scheduler.ErrQueryCooldownUndecodable):
+		result = "undecodable"
+	case err != nil:
+		result = "failed"
+		observeRuntime(ctx, store.observer, observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageQueryCooldown,
+			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			ReasonCode: observability.ReasonContractRetryable, Err: fmt.Errorf("load query cooldown record: %w", err),
+			Trace: observability.TraceFields{QueryGroupKey: string(queryGroup)},
+		})
+	case !found:
+		result = "absent"
+	}
+	if store.loads != nil {
+		store.loads(result)
+	}
+	return record, found, err
+}
+
+func (store *redisQueryCooldownStore) load(ctx context.Context, queryGroup execution.QueryGroupIdentity) (scheduler.QueryCooldownRecord, bool, error) {
 	raw, err := store.client.Get(ctx, store.key(queryGroup)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return scheduler.QueryCooldownRecord{}, false, nil
@@ -106,7 +137,7 @@ func (store *redisQueryCooldownStore) LoadQueryCooldown(ctx context.Context, que
 	}
 	var record scheduler.QueryCooldownRecord
 	if err := json.Unmarshal(raw, &record); err != nil || record.QueryGroup != queryGroup {
-		return scheduler.QueryCooldownRecord{}, false, errors.New("alarmd: query cooldown record does not decode")
+		return scheduler.QueryCooldownRecord{}, false, scheduler.ErrQueryCooldownUndecodable
 	}
 	return record, true, nil
 }

@@ -84,36 +84,14 @@ type StateWriteReuseKey struct {
 // lasts; kept apart, the warm-up is visible instead of averaged in.
 type StateWriteReuseFacts struct {
 	Counts map[StateWriteReuseKey]int64 `json:"counts"`
-	// ChangeReasons is only populated for comparisons that came back changed,
-	// and says which field differed first. It is a separate family rather than
-	// a third label on the classes because a reason is meaningless for the
-	// other classes, and a label that is "none" for most of a counter's
-	// population makes both harder to read.
-	ChangeReasons map[StateWriteChangeKey]int64 `json:"change_reasons"`
 }
 
-// Record records one comparison, normalising every label. The class and its
-// reason are recorded in one call so a caller cannot count one without the
-// other and leave two families that disagree on how many comparisons happened.
-func (facts *StateWriteReuseFacts) Record(
-	class StateWriteReuseClass, reason StateWriteChangeReason, stored StateWriteReuseStored,
-) {
-	normalizedClass := NormalizeStateWriteReuseClass(class)
-	normalizedStored := NormalizeStateWriteReuseStored(stored)
+// Record records one comparison, normalising every label.
+func (facts *StateWriteReuseFacts) Record(class StateWriteReuseClass, stored StateWriteReuseStored) {
 	if facts.Counts == nil {
 		facts.Counts = map[StateWriteReuseKey]int64{}
 	}
-	facts.Counts[StateWriteReuseKey{Class: normalizedClass, Stored: normalizedStored}]++
-	if normalizedClass != StateWriteReuseChanged {
-		return
-	}
-	if facts.ChangeReasons == nil {
-		facts.ChangeReasons = map[StateWriteChangeKey]int64{}
-	}
-	facts.ChangeReasons[StateWriteChangeKey{
-		Reason: NormalizeStateWriteChangeReason(reason),
-		Stored: normalizedStored,
-	}]++
+	facts.Counts[StateWriteReuseKey{Class: NormalizeStateWriteReuseClass(class), Stored: NormalizeStateWriteReuseStored(stored)}]++
 }
 
 // Total is the population every class is counted out of. It is the positive
@@ -133,52 +111,6 @@ func (facts StateWriteReuseFacts) Total() int64 {
 // Empty reports whether nothing was classified, so a caller can leave the facts
 // off an observation rather than emitting zeros that read as a result.
 func (facts StateWriteReuseFacts) Empty() bool { return facts.Total() == 0 }
-
-// StateWriteChangeReason names the first field a changed comparison found
-// different. The class alone cannot be acted on: "changed" covers a decision
-// that truly moved, which would end the case for skipping the write, and a
-// field that should never have counted as part of the decision, which would
-// mean the predicate is wrong rather than the idea. Those point at opposite
-// actions and are indistinguishable without the field name.
-type StateWriteChangeReason string
-
-const (
-	StateWriteChangeNone          StateWriteChangeReason = "none"
-	StateWriteChangeLevelCount    StateWriteChangeReason = "level_count"
-	StateWriteChangeLevelMissing  StateWriteChangeReason = "level_missing"
-	StateWriteChangeCompatibility StateWriteChangeReason = "level_compatibility"
-	StateWriteChangeCompleteness  StateWriteChangeReason = "history_completeness"
-	StateWriteChangeGapReason     StateWriteChangeReason = "gap_reason"
-	StateWriteChangeWarmupRef     StateWriteChangeReason = "warmup_ref"
-	StateWriteChangeProcessedTime StateWriteChangeReason = "processed_time"
-	StateWriteChangeSeriesGuard   StateWriteChangeReason = "series_guard"
-	StateWriteChangeReasonOther   StateWriteChangeReason = "other"
-)
-
-// AllStateWriteChangeReasons is the complete bounded set, "other" included.
-func AllStateWriteChangeReasons() []StateWriteChangeReason {
-	return []StateWriteChangeReason{
-		StateWriteChangeNone, StateWriteChangeLevelCount, StateWriteChangeLevelMissing,
-		StateWriteChangeCompatibility, StateWriteChangeCompleteness, StateWriteChangeGapReason,
-		StateWriteChangeWarmupRef, StateWriteChangeProcessedTime, StateWriteChangeSeriesGuard,
-		StateWriteChangeReasonOther,
-	}
-}
-
-func NormalizeStateWriteChangeReason(reason StateWriteChangeReason) StateWriteChangeReason {
-	for _, known := range AllStateWriteChangeReasons() {
-		if known == reason && known != StateWriteChangeReasonOther {
-			return reason
-		}
-	}
-	return StateWriteChangeReasonOther
-}
-
-// StateWriteChangeKey is one cell of the first-difference reading.
-type StateWriteChangeKey struct {
-	Reason StateWriteChangeReason
-	Stored StateWriteReuseStored
-}
 
 // AllStateWriteReuseClasses and AllStateWriteReuseStored are the complete label
 // sets, "other" included. They are the one place these values are enumerated:

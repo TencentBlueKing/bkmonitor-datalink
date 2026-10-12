@@ -171,8 +171,32 @@ type WriterEvidence struct {
 	// State is the reader's own reading of the copy, in the reader's closed
 	// words, when it keeps one: never_loaded, index_stale, index_empty for the
 	// host cache; not_configured, authoritative and the like for the settings
-	// copy. Empty where the reader keeps no such state.
+	// copy; no_groups_referenced, loaded and refresh_failed for
+	// the target groups. Empty where the reader keeps no such state.
 	State string `json:"state,omitempty"`
+	// Refused is what the reader read of the writer's records and could not
+	// use, where it counts that: the host cache's. Absent elsewhere, and
+	// before the first load.
+	Refused *RefusedRecords `json:"refused,omitempty"`
+	// FailingSinceAgeSeconds is how long ago the first of the reader's
+	// failed reads since it last read was, and FailingReason why the latest
+	// failed, in closed words: the code Redis answered with (LOADING, BUSY,
+	// WRONGTYPE), timed_out or transport. Where the reader reads its copies
+	// as one - the target group store - every copy it holds is served past
+	// them. Absent while it reads.
+	FailingSinceAgeSeconds *float64 `json:"failing_since_age_seconds,omitempty"`
+	FailingReason          string   `json:"failing_reason,omitempty"`
+}
+
+// RefusedRecords is what the latest load of the CMDB caches read and could
+// not use, each taken as absent: fields of the host and service instance
+// hashes whose record does not decode, and topology nodes of decoded records
+// that do not decode to an object and a numeric instance. Host counts fields,
+// not hosts: the writer publishes every host under two fields.
+type RefusedRecords struct {
+	Host            int `json:"host"`
+	ServiceInstance int `json:"service_instance"`
+	TopoNode        int `json:"topo_node"`
 }
 
 // The endpoint roles, closed. The page's wording table is held to this list.
@@ -291,7 +315,16 @@ type LinkdDiscoveryFacts struct {
 	Attempts int               `json:"attempts"`
 	Error    string            `json:"error,omitempty"`
 	Target   *LinkdTargetFacts `json:"target,omitempty"`
+	// TargetCount and TargetNames are what the Console listed when it was
+	// asked: one on adoption, and on a refusal however many it listed, with
+	// their names (source/hook, the first MaxLinkdTargetNames of them), so a
+	// link that lists several is read in one step rather than from an error.
+	TargetCount int      `json:"target_count,omitempty"`
+	TargetNames []string `json:"target_names,omitempty"`
 }
+
+// MaxLinkdTargetNames bounds the target names a discovery carries.
+const MaxLinkdTargetNames = 16
 
 // The startup discovery outcomes, closed; the page's wording table is held
 // to this list.
@@ -299,9 +332,6 @@ const (
 	// LinkdDiscoveryAdopted: the link writes to a Redis this process already
 	// holds a connection to, and the sets are read there.
 	LinkdDiscoveryAdopted = "adopted"
-	// LinkdDiscoveryConnectionStated: the deployment states the link's Redis
-	// itself; the Console was not asked.
-	LinkdDiscoveryConnectionStated = "connection_stated"
 	// LinkdDiscoveryNoHeldConnection: the Console answered with a Redis this
 	// process holds no connection to. The sets are read where they would
 	// have been, and every reconciliation refuses with both places named.
@@ -312,8 +342,7 @@ const (
 )
 
 // LinkdDiscoveryOutcomes is every word Outcome can carry.
-var LinkdDiscoveryOutcomes = []string{LinkdDiscoveryAdopted, LinkdDiscoveryConnectionStated,
-	LinkdDiscoveryNoHeldConnection, LinkdDiscoveryFailed}
+var LinkdDiscoveryOutcomes = []string{LinkdDiscoveryAdopted, LinkdDiscoveryNoHeldConnection, LinkdDiscoveryFailed}
 
 // ConsoleCallFacts is one Console operation as this replica has called it.
 // Calls and Failures answer "how many" and are never omitted; the ages are
@@ -326,6 +355,10 @@ type ConsoleCallFacts struct {
 	LastSuccessAgeSeconds *float64 `json:"last_success_age_seconds,omitempty"`
 	LastFailureAgeSeconds *float64 `json:"last_failure_age_seconds,omitempty"`
 	LastFailure           string   `json:"last_failure,omitempty"`
+	// LastFailureClass is why the last failure failed, one of the Console's
+	// failure classes (openalerts.ConsoleFailureClasses): the transport's
+	// word for a request that got no answer, status, incomplete or other.
+	LastFailureClass string `json:"last_failure_class,omitempty"`
 }
 
 // The Console states, closed. The page's wording table is held to this

@@ -668,3 +668,102 @@ func TestPublicationCutoverReadsProgressInOneBatch(t *testing.T) {
 		t.Fatalf("the Query Group whose Progress failed must keep every Segment: a=%d b=%d", len(timelineA.Segments), len(timelineB.Segments))
 	}
 }
+
+// budgetProgressReader offers the read within what is admitted, every
+// record the given size, and records how much of each batch it was asked
+// for and read.
+type budgetProgressReader struct {
+	*activationProgressReader
+	size  uint64
+	asked []int
+	read  []int
+}
+
+func (reader *budgetProgressReader) LoadProgressWithin(ctx context.Context, identities []execution.ProgressIdentity, admit func(uint64) bool) (
+	[]execution.ProgressLoadResult, []error, int) {
+	reader.asked = append(reader.asked, len(identities))
+	results, errs := []execution.ProgressLoadResult{}, []error{}
+	for _, identity := range identities {
+		if !admit(reader.size) {
+			break
+		}
+		result, err := reader.activationProgressReader.LoadProgress(ctx, identity)
+		results, errs = append(results, result), append(errs, err)
+	}
+	reader.read = append(reader.read, len(results))
+	return results, errs, len(results)
+}
+
+// A cutover reads Progress in batches of at most the timeline cache's bytes,
+// and at least one record each, pruning each batch before reading the next:
+// with every record larger than the bound, both Query Groups are still read,
+// one at a time, and both timelines pruned -- detection is never refused.
+func TestPublicationCutoverReadsProgressInBatchesOfTheTimelineCachesBytes(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	prefix := "alarmd:control:timeline-prune-budget"
+	observer := &cutoverObserver{}
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository.ConfigureObserver(observer)
+	if err := repository.ConfigureSegmentRetention(pruneRetention); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ConfigureControlTimelineCache(16, 150); err != nil {
+		t.Fatal(err)
+	}
+	reader := &budgetProgressReader{size: 200, activationProgressReader: &activationProgressReader{
+		byGroup: map[execution.QueryGroupIdentity]execution.ProgressLoadResult{}, errorsByGroup: map[execution.QueryGroupIdentity]error{}}}
+	compiler, semantics := runtimePlanCompiler(t)
+	at := time.Unix(60, 0)
+	reconciler, err := controlplane.NewScheduleActivationReconcilerWithProgress(repository, compiler, semantics, reader, func() time.Time { return at })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var a, b execution.QueryGroupIdentity
+	activate := func(threshold int, boundary int64) {
+		t.Helper()
+		catalog := twoGroupCatalogBothEdited(t, threshold)
+		for _, group := range catalog.QueryGroups {
+			if group.QueryPlan.BusinessID == "2" {
+				a = group.Identity
+			} else {
+				b = group.Identity
+			}
+		}
+		snapshot, _, err := repository.PublishCatalog(ctx, catalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at = time.Unix(boundary, 0)
+		if _, err := reconciler.Ensure(ctx, snapshot.Publication); err != nil {
+			t.Fatalf("activation at %d: %v", boundary, err)
+		}
+	}
+	activate(80, 60)
+	for index := 1; index < 14; index++ {
+		boundary := int64(60 + 60*index)
+		for _, queryGroup := range []execution.QueryGroupIdentity{a, b} {
+			reader.byGroup[queryGroup] = execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+				Identity: execution.ProgressIdentity{QueryGroup: queryGroup}, NextSlot: execution.EvaluationTime(boundary),
+				LastFullSlot: execution.EvaluationTime(boundary - 60), LastCompletionKind: execution.CompletionFull,
+			}}
+		}
+		activate(80+index, boundary)
+	}
+	if len(reader.read) == 0 {
+		t.Fatal("no cutover read Progress")
+	}
+	for index, read := range reader.read {
+		// Two asked, one read; then the one left, read.
+		if read != 1 || reader.asked[index] != 2-index%2 {
+			t.Fatalf("batches asked %v read %v, want each cutover to read one record, then the other", reader.asked, reader.read)
+		}
+	}
+	facts := observer.last(t)
+	if facts.Result != "success" || facts.SegmentsPruned == 0 || len(facts.PrunesSkipped) != 0 {
+		t.Fatalf("cutover facts=%+v, want both timelines pruned", facts)
+	}
+}

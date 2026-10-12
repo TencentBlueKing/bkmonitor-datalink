@@ -11,7 +11,8 @@ package main
 
 import (
 	"context"
-	"reflect"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,118 +20,42 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
-type staticOpenAlertSource struct{ publication openalerts.Publication }
-
-func (source staticOpenAlertSource) Read(context.Context, []openalerts.StrategyKey) (openalerts.Publication, error) {
-	return source.publication, nil
-}
-
-// The replica's published facts about its copy: the age is absent until a
-// publication has been read, and present as the seconds since once it has;
-// the mode and the stale flag are the copy's own. The port adapter turns
-// the Plans the worker names into the strategy keys the copy reads.
+// The replica's published facts about its copy: before any read no age,
+// the reader's own version and every answer word at zero; once read and
+// calibrated, each age as the seconds since its own time. The port adapter
+// turns the Plans the worker names into the strategy keys the copy tracks.
 func TestOpenAlertSetFactsAndPortAdapter(t *testing.T) {
 	at := time.Unix(1_700_000_000, 0)
 	now := func() time.Time { return at }
-	source := &staticOpenAlertSource{}
-	cache, err := openalerts.New(openalerts.Options{Source: source, Now: now})
+	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: nothingIndexed{}, Subscriber: nothingIndexed{}, Now: now,
+		MaxStrategies: 4, MaxMembers: 4, MaxBytes: 1 << 16, MaxLocalEntries: 4, ReadBatch: 1, ReconcileBatch: 1,
+		RefreshInterval: time.Minute, IndexInterval: time.Minute, ReconcileInterval: time.Minute, CalibrationMaxAge: time.Minute,
+		LocalRetention: time.Minute, CycleTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
 	facts := openAlertSetFactsSource(cache, now)()
-	if facts == nil || facts.Mode != string(openalerts.ModeNeverLoaded) || facts.StaleBeyondBound || facts.AuthoritativeAgeSeconds != nil {
-		t.Fatalf("facts before any read = %+v, want never_loaded, not stale, no age", facts)
+	if facts == nil || facts.StaleBeyondBound || facts.IndexReadAgeSeconds != nil || facts.AuthoritativeAgeSeconds != nil {
+		t.Fatalf("facts before any read = %+v, want not stale, no age", facts)
 	}
-	// The reader's account before any read: no heartbeat and so no age,
-	// cycle or publisher version -- not zeros; the reader's own version;
-	// every answer word present at zero.
-	if facts.Available || facts.HeartbeatAgeSeconds != nil || facts.CycleSeconds != 0 || facts.FingerprintVersion != "" ||
-		facts.ReaderFingerprintVersion != openalerts.FingerprintVersion || facts.TrackedSets != 0 || facts.Members != 0 {
-		t.Fatalf("account before any read = %+v, want nothing of the publisher and the reader's own version", facts)
+	if facts.Available || facts.TrackedSets != 0 || facts.Members != 0 {
+		t.Fatalf("account before any read = %+v, want nothing read", facts)
 	}
 	for _, answer := range openalerts.Answers {
 		if count, present := facts.Lookups[string(answer)]; !present || count != 0 {
 			t.Fatalf("lookups before any lookup = %v, want every answer word at zero", facts.Lookups)
 		}
 	}
-	if facts.Comparison != nil {
-		t.Fatalf("a copy that does not read the index has nothing to compare: %+v", facts.Comparison)
-	}
 
 	port := openAlertCopyPort{cache: cache}
 	port.TrackPlans("qg-test", []execution.PlanIdentity{{TenantID: "default", BusinessID: "2", StrategyID: "1001"}})
-	source.publication = openalerts.Publication{
-		Heartbeat: &openalerts.Heartbeat{PublishedAt: at, Cycle: time.Minute, FingerprintVersion: openalerts.FingerprintVersion},
-		Sets:      map[openalerts.StrategyKey][]string{{TenantID: "default", StrategyID: "1001"}: {"f1"}},
-	}
-	cache.Refresh(context.Background())
-	if !port.Contains("default", "1001", "f1") {
-		t.Fatal("the tracked strategy's set was not read through the port")
-	}
-	at = at.Add(45 * time.Second)
-	facts = openAlertSetFactsSource(cache, now)()
-	if facts.Mode != string(openalerts.ModeAuthoritative) || facts.AuthoritativeAgeSeconds == nil || *facts.AuthoritativeAgeSeconds != 45 {
-		t.Fatalf("facts after a read = %+v, want authoritative with age 45", facts)
-	}
 	if stats := cache.Stats(); stats.Tracked != 1 {
 		t.Fatalf("tracked = %d, want the one Plan the worker named", stats.Tracked)
 	}
-	// The account after the read: the publisher's heartbeat by its own
-	// clock, its cycle and version, one set tracked and loaded with its one
-	// member, and the lookup above counted under the authoritative word.
-	if !facts.Available || facts.UnavailableReason != "" || facts.HeartbeatAgeSeconds == nil || *facts.HeartbeatAgeSeconds != 45 ||
-		facts.CycleSeconds != 60 || facts.FingerprintVersion != openalerts.FingerprintVersion ||
-		facts.TrackedSets != 1 || facts.LoadedSets != 1 || facts.Members != 1 || facts.Lookups[string(openalerts.AnswerMember)] != 1 {
-		t.Fatalf("account after a read = %+v, want available, heartbeat 45 s old, cycle 60, one set with one member, one authoritative_member lookup", facts)
-	}
-	// The publisher stops: past the staleness bound the copy is on its own
-	// and the account says why, with the last heartbeat still dated.
-	source.publication = openalerts.Publication{}
-	at = at.Add(10 * time.Minute)
-	cache.Refresh(context.Background())
-	facts = openAlertSetFactsSource(cache, now)()
-	if facts.Available || facts.Mode != string(openalerts.ModeSelfMaintained) || facts.UnavailableReason != string(openalerts.UnavailableHeartbeatMissing) ||
-		facts.HeartbeatAgeSeconds == nil || *facts.HeartbeatAgeSeconds != 645 {
-		t.Fatalf("account after the publisher stopped = %+v, want self_maintained for heartbeat_missing with the last heartbeat 645 s old", facts)
-	}
-}
 
-// Every field of the copy's comparison reaches the replica's facts: a field
-// added to one side and not carried would read as zero, and a zero here is a
-// reading ("none of the alerts is ours").
-func TestTheOpenAlertComparisonIsCarriedFieldForField(t *testing.T) {
-	comparison := &openalerts.Comparison{OwnEventSourceID: "own", Sent: 3,
-		SentShapes: map[string]int{openalerts.ShapeHex32: 3}, MemberShapes: map[string]int{openalerts.ShapeHex64: 5},
-		AlertSources: map[string]int{"own": 0, "elsewhere": 5}, SentInCalibrated: 3, SentMatchingAlertID: 2, SentMatchingFingerprint: 1,
-		Strategies: []openalerts.ComparisonStrategy{{TenantID: "t", StrategyID: "s", Sent: 1, Members: 2, Alerts: 3, Calibrated: true,
-			SentSample: []string{"a"}, MemberSample: []string{"b"},
-			AlertSample: []openalerts.ComparisonAlert{{AlertID: "c", Fingerprint: "d", EventSourceID: "e"}}}}}
-	facts := openAlertComparisonFacts(comparison)
-	var zero func(path string, value reflect.Value)
-	zero = func(path string, value reflect.Value) {
-		switch value.Kind() {
-		case reflect.Ptr:
-			zero(path, value.Elem())
-		case reflect.Struct:
-			for i := 0; i < value.NumField(); i++ {
-				zero(path+"."+value.Type().Field(i).Name, value.Field(i))
-			}
-		case reflect.Slice:
-			if value.Len() == 0 {
-				t.Errorf("%s was not carried", path)
-			}
-			for i := 0; i < value.Len(); i++ {
-				zero(path, value.Index(i))
-			}
-		default:
-			if value.IsZero() {
-				t.Errorf("%s was not carried", path)
-			}
-		}
-	}
-	zero("comparison", reflect.ValueOf(facts))
-	if openAlertComparisonFacts(nil) != nil {
-		t.Error("no comparison is carried as none")
+	read := openAlertSetFacts(openalerts.Stats{IndexReadAt: at.Add(-45 * time.Second), LoadedAt: at.Add(-90 * time.Second)}, false, at)
+	if read.IndexReadAgeSeconds == nil || *read.IndexReadAgeSeconds != 45 || read.AuthoritativeAgeSeconds == nil || *read.AuthoritativeAgeSeconds != 90 {
+		t.Fatalf("ages after a read = %v and %v, want 45 since the read and 90 since the calibration", read.IndexReadAgeSeconds, read.AuthoritativeAgeSeconds)
 	}
 }
 
@@ -140,42 +65,29 @@ func (nothingIndexed) ReadSet(context.Context, openalerts.StrategyKey) ([]string
 	return nil, nil
 }
 
-func (nothingIndexed) Watch(ctx context.Context, _ func(bool), _ func(openalerts.StrategyKey)) error {
+func (nothingIndexed) Watch(ctx context.Context, _ func(bool), _ func(openalerts.StrategyKey), _ func(openalerts.NoticeRefusal)) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
 
-// A copy that reads the index publishes its comparison in the replica's
-// facts, before any read as well: the counts are then zeros, which is what
-// the copy knows.
-func TestAnIndexCopyPublishesItsComparison(t *testing.T) {
-	now := func() time.Time { return time.Unix(1_700_000_000, 0) }
-	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: nothingIndexed{}, Subscriber: nothingIndexed{}, Now: now,
-		MaxStrategies: 1, MaxMembers: 1, MaxBytes: 1, MaxLocalEntries: 1, ReadBatch: 1, ReconcileBatch: 1,
-		RefreshInterval: time.Minute, IndexInterval: time.Minute, ReconcileInterval: time.Minute, CalibrationMaxAge: time.Minute,
-		LocalRetention: time.Minute, CycleTimeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
+// The Console's two facts reach the published facts under their own names,
+// and so the fleet verdict: the copy saying so is not enough if the replica
+// does not pass it on. The keying's age is carried with it, and is absent
+// while the keying was never read.
+func TestTheConsoleFactsArePublishedWithTheReason(t *testing.T) {
+	at := time.Unix(1_700_000_000, 0)
+	stats := openalerts.Stats{Configured: true, LocationConfirmed: false, UnavailableReason: openalerts.UnavailableLocationUnconfirmed}
+	facts := openAlertSetFacts(stats, false, at)
+	if !facts.Configured || facts.LocationConfirmed || facts.KeyedByAlertID != nil || facts.KeyedByAlertIDAsOf != nil ||
+		facts.UnavailableReason != "location_unconfirmed" {
+		t.Fatalf("facts = %+v, want configured, unconfirmed, keying absent and the reason named", facts)
 	}
-	facts := openAlertSetFactsSource(cache, now)()
-	if facts.Comparison == nil || facts.Comparison.SentShapes == nil || facts.Comparison.MemberShapes == nil {
-		t.Fatalf("the index copy's facts carry no comparison: %+v", facts.Comparison)
-	}
-}
-
-// Sets that carry none of this replica's alerts reach the published facts
-// under their own names, and so the fleet verdict: the copy saying so is
-// not enough if the replica does not pass it on.
-func TestTheDisjointStateIsPublishedWithTheSentCounts(t *testing.T) {
-	stats := openalerts.Stats{Mode: openalerts.ModeSelfMaintained, IndexProtocol: true,
-		SentInSet: 0, SentNotInSet: 103, Disjoint: true, UnavailableReason: openalerts.UnavailableMembersDisjoint}
-	facts := openAlertSetFacts(stats, false, time.Unix(1_700_000_000, 0))
-	if !facts.Disjoint || facts.SentInSet != 0 || facts.SentNotInSet != 103 || facts.UnavailableReason != "members_disjoint" {
-		t.Fatalf("facts = %+v, want disjoint with 0 of 103 found and the reason named", facts)
-	}
-	stats.SentInSet, stats.Disjoint, stats.UnavailableReason = 4, false, ""
-	if facts := openAlertSetFacts(stats, false, time.Unix(1_700_000_000, 0)); facts.Disjoint || facts.SentInSet != 4 {
-		t.Fatalf("facts = %+v, want the found count and no disjoint", facts)
+	keyed := true
+	stats = openalerts.Stats{Configured: true, LocationConfirmed: true, KeyedByAlertID: &keyed, KeyedByAlertIDAsOf: at.Add(-time.Hour), Available: true}
+	facts = openAlertSetFacts(stats, false, at)
+	if !facts.LocationConfirmed || facts.KeyedByAlertID == nil || !*facts.KeyedByAlertID || facts.KeyedByAlertIDAsOf == nil ||
+		!facts.KeyedByAlertIDAsOf.Equal(at.Add(-time.Hour)) || facts.UnavailableReason != "" {
+		t.Fatalf("facts = %+v, want both confirmed with the keying's time", facts)
 	}
 }
 
@@ -194,5 +106,38 @@ func TestTheGatesOwnHeldLookupsReachTheFacts(t *testing.T) {
 	if len(facts.GateRecentOwnHeld) != 1 || facts.GateRecentOwnHeld[0].Fingerprint != "1f018838" || facts.GateRecentOwnHeld[0].InOtherSets[0] != "370" ||
 		!facts.GateRecentOwnHeld[0].Own || facts.GateRecentOwnHeld[0].Answer != "index_absent" || len(facts.GateRecent) != 1 {
 		t.Fatalf("kept lookups %+v %+v", facts.GateRecentOwnHeld, facts.GateRecent)
+	}
+}
+
+// The departures reach the facts with every path word, and own_open is
+// carried as a number, zero included, which is an answer.
+func TestTheDeparturesAndOwnOpenReachTheFacts(t *testing.T) {
+	at := time.Date(2026, 9, 28, 4, 0, 0, 0, time.UTC)
+	facts := openAlertSetFacts(openalerts.Stats{SentDepartures: map[string]uint64{openalerts.DepartureNotResent: 3},
+		OwnOpen: 0, OwnOpenDepartures: map[string]uint64{openalerts.DepartureNotInSet: 1, openalerts.DepartureEvicted: 2}}, false, at)
+	if facts.SentDepartures["not_resent"] != 3 || len(facts.SentDepartures) != len(openalerts.SentDepartures) {
+		t.Fatalf("sent departures %v", facts.SentDepartures)
+	}
+	if facts.OwnOpen == nil || *facts.OwnOpen != 0 || facts.OwnOpenDepartures["evicted"] != 2 ||
+		facts.OwnOpenDepartures["not_in_set"] != 1 || len(facts.OwnOpenDepartures) != len(openalerts.OwnOpenDepartures) {
+		t.Fatalf("own open %v departures %v", facts.OwnOpen, facts.OwnOpenDepartures)
+	}
+	encoded, err := json.Marshal(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"own_open":0`) {
+		t.Fatalf("a known zero own_open was dropped: %s", encoded)
+	}
+}
+
+// The bound a set's last read is judged stale against reaches the replica's
+// facts beside the read's age, with how many sets are past it: the age and
+// the bound read in one step, on any deployment, whatever its strategies.
+func TestTheStaleBoundIsPublishedBesideTheReadAge(t *testing.T) {
+	at := time.Unix(1_700_000_000, 0)
+	facts := openAlertSetFacts(openalerts.Stats{IndexReadAt: at.Add(-400 * time.Second), StaleAfter: 336 * time.Second, Stale: 2}, false, at)
+	if facts.IndexReadAgeSeconds == nil || *facts.IndexReadAgeSeconds != 400 || facts.IndexStaleAfterSeconds != 336 || facts.StaleSets != 2 {
+		t.Fatalf("facts = age %v, bound %v, stale %d; want 400 against 336 with two stale", facts.IndexReadAgeSeconds, facts.IndexStaleAfterSeconds, facts.StaleSets)
 	}
 }

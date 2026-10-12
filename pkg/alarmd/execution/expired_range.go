@@ -142,7 +142,7 @@ func (p ExpiredRangeProjectionV1) validateFacts() error {
 			if _, found := targets[plan.Identity]; !found {
 				return bad()
 			}
-			d, ok := plan.Spec.CompletionDeadlineUnixMilli(ref.Slot.EvaluationTime)
+			d, ok := plan.Spec.HeldCompletionDeadlineUnixMilli(ref.Slot.EvaluationTime, ref.ReadHoldMillis)
 			if !ok || d <= p.QueryReserveMillis {
 				return bad()
 			}

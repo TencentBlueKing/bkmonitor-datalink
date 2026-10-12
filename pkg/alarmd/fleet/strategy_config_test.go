@@ -51,11 +51,10 @@ var (
 func configObject() controlplane.QueryGroupObject {
 	clause := model.QueryClause{
 		ReferenceName: "a", DataSource: "bk_monitor", Driver: "uq", TableID: "system.cpu_summary", FieldName: "usage",
-		FieldSemantics: "gauge", TimeField: "time", Dimensions: []string{"bk_target_ip", "bk_target_cloud_id"},
+		TimeField: "time", Dimensions: []string{"bk_target_ip", "bk_target_cloud_id"},
 		Functions:   []model.QueryFunction{{Method: "avg", Dimensions: []string{"bk_target_ip"}}, {Method: "rate", Window: "5m", Arguments: []model.QueryScalar{{Kind: model.QueryScalarNumber, NumberValue: "0.99"}, {Kind: model.QueryScalarString, StringValue: secretArgument}}}},
 		KeepColumns: []string{secretKeepColumn}, OffsetForward: secretOffsetForward,
-		SourceConditions: &model.QueryConditions{Fields: []model.QueryConditionField{{Field: "src", Operator: "eq", Values: []model.QueryScalar{{Kind: model.QueryScalarString, StringValue: secretConditionHost}}}}},
-		TimeAggregation:  model.QueryFunction{Method: "avg_over_time", Window: "60s"},
+		TimeAggregation: model.QueryFunction{Method: "avg_over_time", Window: "60s"},
 		Conditions: model.QueryConditions{Fields: []model.QueryConditionField{
 			{Field: "bk_target_ip", Operator: "eq", Values: []model.QueryScalar{{Kind: model.QueryScalarString, StringValue: "192.0.2.41"}, {Kind: model.QueryScalarString, StringValue: "192.0.2.42"}}},
 			{Field: "hostname", Operator: "contains", Values: []model.QueryScalar{{Kind: model.QueryScalarString, StringValue: secretConditionHost}}},

@@ -110,7 +110,7 @@ func TestTheStatePoolIsChargedForTheRetainedPointsNotTheRequiredOnes(t *testing.
 	plan.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(`{"window_size":30,"required_anomalies":1,"step_seconds":60}`)
 	plan.StrategyIR.Levels[0].RecoveryPlan.Config = json.RawMessage(`{"enabled":true,"consecutive_windows":1440}`)
 
-	level := mustCompilePlan(t, newTestCompiler(t), plan).Levels()[0]
+	level := mustCompilePlan(t, newTestCompiler(t), plan).Levels().At(0)
 	requirement := level.StateRequirement()
 	if requirement.RequiredDetectHistoryPoints != 1469 || requirement.RetentionPoints != 1508 {
 		t.Fatalf("StateRequirement() = %+v, want 1469 required and 1508 retained: without two different "+

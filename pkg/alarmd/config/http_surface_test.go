@@ -106,22 +106,21 @@ func TestDiagnosticsListenMustNotCollideWithQuerySurface(t *testing.T) {
 func TestTheKeyAsksForRestrictionAndNothingAboutItIsRefused(t *testing.T) {
 	key := strings.Repeat("k", 40)
 	cases := []struct {
-		name, key, internal, wantErr string
-		enabled, requested           bool
+		name, key, listener, wantErr string
+		requested                    bool
 	}{
-		{name: "no key, no internal listener", enabled: true},
-		{name: "no key, internal listener", enabled: true, internal: "0.0.0.0:8081"},
-		{name: "key with the CLI off", key: key},
-		{name: "key without internal listener", enabled: true, key: key, requested: true},
-		{name: "key with internal listener", enabled: true, key: key, internal: "0.0.0.0:8081", requested: true},
-		{name: "internal listener on the query port", internal: "0.0.0.0:8080", wantErr: "must differ from http listen"},
-		{name: "internal listener on the diagnostics port", internal: "127.0.0.1:6060", wantErr: "must differ from http diagnostics_listen"},
+		{name: "no key, no internal listener"},
+		{name: "no key, internal listener", listener: "0.0.0.0:8081"},
+		{name: "key without internal listener", key: key, requested: true},
+		{name: "key with internal listener", key: key, listener: "0.0.0.0:8081", requested: true},
+		{name: "internal listener on the query port", listener: "0.0.0.0:8080", wantErr: "must differ from http listen"},
+		{name: "internal listener on the diagnostics port", listener: "127.0.0.1:6060", wantErr: "must differ from http diagnostics_listen"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			cfg := validGoAccessConfigObject()
 			cfg.HTTP.Listen, cfg.HTTP.DiagnosticsListen = "127.0.0.1:8080", "127.0.0.1:6060"
-			cfg.CLI.Enabled, cfg.CLI.AdminKey, cfg.HTTP.InternalListen = testCase.enabled, testCase.key, testCase.internal
+			cfg.CLI.AdminKey, cfg.HTTP.InternalListen = testCase.key, testCase.listener
 			if cfg.PublicSurfaceRestrictionRequested() != testCase.requested {
 				t.Fatalf("requested = %v, want %v", cfg.PublicSurfaceRestrictionRequested(), testCase.requested)
 			}

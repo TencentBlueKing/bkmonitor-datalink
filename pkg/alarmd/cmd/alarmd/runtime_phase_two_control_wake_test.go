@@ -92,7 +92,7 @@ func TestPhaseTwoWorkerBundleNormalTicksContinueDuringBlockedControl(t *testing.
 					if err != nil {
 						t.Errorf("Run(cancel) = %v", err)
 					}
-				case <-time.After(time.Second):
+				case <-time.After(signalWaitBound):
 					t.Error("Run did not join scheduler after cancellation")
 				}
 			}()

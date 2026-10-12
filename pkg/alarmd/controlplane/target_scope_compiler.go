@@ -73,17 +73,10 @@ const (
 // may end up without one. The query configurations are read for the object
 // identity pairs an OBJECT_MODEL_INST condition is matched by.
 func compileTargetScope(target [][]legacyTargetCondition, queryConfigs []json.RawMessage) (*contract.TargetScopeV2, error) {
-	if len(target) == 0 {
-		return nil, nil
-	}
-	stated := false
-	for _, group := range target {
-		if len(group) > 0 {
-			stated = true
-			break
-		}
-	}
-	if !stated {
+	// Python builds no target condition when the target is missing or its
+	// first group is empty (item.py:123-126), whatever the groups after it
+	// say: only target[0] is looked at.
+	if len(target) == 0 || len(target[0]) == 0 {
 		return nil, nil
 	}
 
@@ -97,8 +90,11 @@ func compileTargetScope(target [][]legacyTargetCondition, queryConfigs []json.Ra
 				return nil, err
 			}
 			// Python drops a condition that produced no keys instead of
-			// letting it reject everything. Transcribed, not improved.
-			if len(keys) == 0 {
+			// letting it reject everything. Transcribed, not improved. A
+			// dynamic group condition is the exception, in Python too: one
+			// whose groups hold no host keeps the condition with a key that
+			// matches nothing, so it is kept here with no group ids.
+			if len(keys) == 0 && field != contract.TargetScopeDynamicGroup {
 				continue
 			}
 			frozen := contract.TargetScopeConditionV2{Field: field, Method: method, Keys: keys}
@@ -131,14 +127,13 @@ func compileTargetScope(target [][]legacyTargetCondition, queryConfigs []json.Ra
 func compileTargetCondition(
 	condition legacyTargetCondition,
 ) (contract.TargetScopeField, contract.TargetScopeMethod, []string, error) {
-	method := contract.TargetScopeInclude
-	switch strings.ToLower(strings.TrimSpace(condition.Method)) {
-	case "eq", "":
+	// Python matches a condition as "eq" only when its method, lower-cased
+	// and not trimmed, is exactly that, and as an exclusion otherwise
+	// (target.py:41,147-150): "neq", an empty method, " eq" and any other
+	// word all exclude.
+	method := contract.TargetScopeExclude
+	if strings.ToLower(condition.Method) == "eq" {
 		method = contract.TargetScopeInclude
-	case "neq":
-		method = contract.TargetScopeExclude
-	default:
-		return "", "", nil, fmt.Errorf("TARGET_SCOPE_UNSUPPORTED: target condition method %q", condition.Method)
 	}
 
 	field := strings.ToLower(strings.TrimSpace(condition.Field))
@@ -221,12 +216,23 @@ func compileTargetCondition(
 		}
 		return contract.TargetScopeTopoNode, method, contract.CanonicalTargetScopeKeys(keys), nil
 
-	case field == "dynamic_group" || field == "cw_dynamic_group":
-		// A dynamic group's membership is a CMDB query, not a property of the
-		// strategy, and this side does not read the store the fork keeps it
-		// in. The strategy cache writer expands a group into the hosts or
-		// object instances it currently names before writing the target, so
-		// one arriving here is a target the writer did not expand.
+	case field == "dynamic_group":
+		// The platform's strategy cache keeps a dynamic group target as the
+		// group ids (strategy.py insert_target) and Python reads the groups'
+		// hosts from the CMDB cache when it matches (target.py), so the ids
+		// are what is frozen and a Slot reads the members.
+		keys := make([]string, 0, len(values))
+		for _, value := range values {
+			if value.DynamicGroupID != "" {
+				keys = append(keys, value.DynamicGroupID)
+			}
+		}
+		return contract.TargetScopeDynamicGroup, method, contract.CanonicalTargetScopeKeys(keys), nil
+
+	case field == "cw_dynamic_group":
+		// The fork's dynamic groups are object-model groups its strategy
+		// cache writer expands into a target plan before writing; this field
+		// arriving in a target is a group that writer did not expand.
 		return "", "", nil, fmt.Errorf("TARGET_SCOPE_UNSUPPORTED: %s target must be expanded by the strategy cache writer before it is written", field)
 
 	default:

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -37,9 +38,49 @@ type PlanCompiler struct {
 	cache            *compileCache
 	capabilityDigest string
 	budgetDigest     string
+	keys             compileKeyMemo
+	boundaryLocation *time.Location
 }
 
-func NewCompiler(registry *AlgorithmCompilerRegistry, limits Limits) (*PlanCompiler, error) {
+// CompilerOption sets what a compiler compiles every Plan with beside its
+// budgets.
+type CompilerOption func(*PlanCompiler)
+
+// WithBoundaryLocation lays the aggregation boundaries of every Plan detected
+// more often than it aggregates in location: the time zone the deployment's
+// queries are laid in, where the query service starts an aligned query's
+// buckets. One deployment lays every query in one zone, so the zone is the
+// compiler's and no Plan carries it; without the option it is UTC.
+func WithBoundaryLocation(location *time.Location) CompilerOption {
+	return func(compiler *PlanCompiler) { compiler.boundaryLocation = location }
+}
+
+// BoundaryLocation is the location WithBoundaryLocation set, nil without it.
+func (c *PlanCompiler) BoundaryLocation() *time.Location { return c.boundaryLocation }
+
+// compileKeyMemoEntries bounds how many content keys the compiler remembers
+// a cache key for. A replica freezes the Slots of the Query Groups it owns --
+// on a production deployment some seven hundred groups holding about 2,900
+// Plans -- and a publication that changes content brings a second key for
+// each Plan it changes while the first is still being frozen. Twice the Plans
+// with room over is 8,192 entries at about 350 bytes each, under 3 MB. Past it
+// the memory is cleared whole and refilled; a cleared key only derives its
+// cache key from the Plan again, as a request without a content key does.
+const compileKeyMemoEntries = 8192
+
+// compileKeyMemo is the cache key each content key was found to have, by
+// content key and the state semantics the key was derived under.
+type compileKeyMemo struct {
+	mu   sync.RWMutex
+	keys map[compileKeyMemoKey]string
+}
+
+type compileKeyMemoKey struct {
+	content string
+	state   StateSemantics
+}
+
+func NewCompiler(registry *AlgorithmCompilerRegistry, limits Limits, options ...CompilerOption) (*PlanCompiler, error) {
 	if registry == nil || len(registry.compilers) == 0 {
 		return nil, errors.New("strategy: algorithm registry is empty")
 	}
@@ -72,11 +113,15 @@ func NewCompiler(registry *AlgorithmCompilerRegistry, limits Limits) (*PlanCompi
 	if err != nil {
 		return nil, fmt.Errorf("strategy: derive compiler budget digest: %w", err)
 	}
-	return &PlanCompiler{
+	compiler := &PlanCompiler{
 		registry: registry, limits: limits,
 		cache:            newCompileCache(limits.MaxCacheEntries, limits.MaxCacheBytes, limits.NegativeCacheTTL),
 		capabilityDigest: registry.CapabilityDigest(), budgetDigest: budgetDigest,
-	}, nil
+	}
+	for _, option := range options {
+		option(compiler)
+	}
+	return compiler, nil
 }
 
 func (c *PlanCompiler) Compile(ctx context.Context, request CompileRequest) (CompileResult, error) {
@@ -133,11 +178,13 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		},
 		projection:          cloneProjection(request.Plan.InputProjection),
 		evaluationSemantics: request.Plan.StrategyIR.ExecutionSemantics,
+		boundaryLocation:    c.boundaryLocation,
 		normalizers:         make(map[string]NumericNormalizerSpec),
 		datasetDigest:       datasetDigest,
 		targetScope:         request.Plan.TargetScope,
 		targetPlan:          request.Plan.TargetPlan,
 		noData:              request.Plan.NoData,
+		globalBusiness:      request.Plan.GlobalBusiness,
 	}
 	compiled.effectiveRules, err = compileEffectiveRules(request.Plan.EffectiveTimeSnapshot, request.Plan.StrategyRef.TenantID)
 	if err != nil {
@@ -213,6 +260,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 			return CompileResult{planTerminal: &Terminal{
 				ReasonCode: contract.ReasonNoDataPlanUncompilable,
 				FieldPath:  "no_data." + terminal.FieldPath,
+				Detail:     terminal.Detail,
 			}}, nil
 		default:
 			levelCost := triggerComputeCostForLevel(level.trigger, level.recovery)
@@ -241,12 +289,14 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 			}
 		}
 		var config triggerPlanConfigV1
-		if json.Unmarshal(raw.TriggerPlan.Config, &config) != nil {
-			return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeInvalid, FieldPath: "strategy_ir.levels.trigger_plan"}}, nil
+		if err := json.Unmarshal(raw.TriggerPlan.Config, &config); err != nil {
+			return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeInvalid, FieldPath: "strategy_ir.levels.trigger_plan",
+				Detail: err.Error()}}, nil
 		}
 		requirement, err := compileEffectiveTimeRequirement(config.Uptime, config.TimezoneRef)
 		if err != nil {
-			return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeInvalid, FieldPath: "strategy_ir.levels.trigger_plan.uptime"}}, nil
+			return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeInvalid, FieldPath: "strategy_ir.levels.trigger_plan.uptime",
+				Detail: err.Error()}}, nil
 		}
 		compiled.noDataLevel.effectiveTime = requirement
 	}
@@ -288,7 +338,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	plan := request.Plan
 	if err := plan.LegacyOutput.Validate(); err != nil {
-		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output", Detail: err.Error()}
 	}
 	// The conversion context belongs to the Plans that publish that protocol
 	// and to no others: carrying it elsewhere means a Plan that could be
@@ -406,6 +456,10 @@ func (c *PlanCompiler) compileLevel(
 	terminal := func(reason, field string) (CompiledLevel, []NumericNormalizerSpec, *Terminal, error) {
 		return CompiledLevel{}, nil, &Terminal{LevelID: levelID, ReasonCode: reason, FieldPath: field}, nil
 	}
+	// A refusal decided by an error carries what the error said.
+	refused := func(reason, field string, err error) (CompiledLevel, []NumericNormalizerSpec, *Terminal, error) {
+		return CompiledLevel{}, nil, &Terminal{LevelID: levelID, ReasonCode: reason, FieldPath: field, Detail: err.Error()}, nil
+	}
 	if levelID == 0 || raw.Definition.Priority == 0 || (raw.Connector != contract.LevelConnectorAND && raw.Connector != contract.LevelConnectorOR) ||
 		len(raw.DetectPlan.Algorithms) == 0 {
 		return terminal(contract.ReasonLevelInvalid, "level")
@@ -433,7 +487,7 @@ func (c *PlanCompiler) compileLevel(
 			return terminal(contract.ReasonLevelBudgetExceeded, "level.detect_plan.algorithms")
 		}
 		if errors.Is(err, errAlgorithmConfig) {
-			return terminal(contract.ReasonLevelInvalid, "level.detect_plan.algorithms")
+			return refused(contract.ReasonLevelInvalid, "level.detect_plan.algorithms", err)
 		}
 		if err != nil {
 			return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: compile %s@%d: %w", algorithm.Type, algorithm.Version, err)
@@ -464,11 +518,11 @@ func (c *PlanCompiler) compileLevel(
 	}
 	trigger, effectiveTime, canonicalTrigger, err := compileTriggerPlan(raw.TriggerPlan, execution)
 	if err != nil {
-		return terminal(contract.ReasonLevelInvalid, "level.trigger_plan")
+		return refused(contract.ReasonLevelInvalid, "level.trigger_plan", err)
 	}
 	recovery, canonicalRecovery, err := compileRecoveryPlan(raw.RecoveryPlan)
 	if err != nil {
-		return terminal(contract.ReasonLevelInvalid, "level.recovery_plan")
+		return refused(contract.ReasonLevelInvalid, "level.recovery_plan", err)
 	}
 	if trigger.WindowSize > c.limits.MaxTriggerWindowSize {
 		return terminal(contract.ReasonLevelBudgetExceeded, "level.trigger_plan")
@@ -787,7 +841,40 @@ func compilePlanFingerprints(plan *CompiledPlan) error {
 	return nil
 }
 
+// compileCacheKey is the cache key of the request: remembered by its content
+// key when it has one, derived from the Plan otherwise. What is remembered is
+// the key deriving it gives, so the cache holds and shares entries exactly as
+// it did before; only the derivation, the whole Plan's canonical encoding and
+// its digest, is skipped for a content key already seen. That was 3.4% of a
+// replica's CPU, all of it on Slots whose Plan had not changed.
 func (c *PlanCompiler) compileCacheKey(request CompileRequest) (string, error) {
+	if request.ContentKey == "" {
+		return c.deriveCompileCacheKey(request)
+	}
+	memoKey := compileKeyMemoKey{content: request.ContentKey, state: request.StateSemantics}
+	c.keys.mu.RLock()
+	key, ok := c.keys.keys[memoKey]
+	c.keys.mu.RUnlock()
+	if ok {
+		return key, nil
+	}
+	key, err := c.deriveCompileCacheKey(request)
+	if err != nil {
+		return "", err
+	}
+	c.keys.mu.Lock()
+	if c.keys.keys == nil || len(c.keys.keys) >= compileKeyMemoEntries {
+		c.keys.keys = make(map[compileKeyMemoKey]string)
+	}
+	c.keys.keys[memoKey] = key
+	c.keys.mu.Unlock()
+	return key, nil
+}
+
+// deriveCompileCacheKey derives the cache key from everything the compiler
+// reads: the Plan, the dataset contract, the state semantics, and the
+// compiler's own algorithms and budgets.
+func (c *PlanCompiler) deriveCompileCacheKey(request CompileRequest) (string, error) {
 	planDigest, err := contract.DeriveCanonicalDigestV2("strategy-plan-semantic-v1", request.Plan)
 	if err != nil {
 		return "", err

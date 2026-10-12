@@ -15,6 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -30,6 +31,28 @@ type expiredRangeBundleFixture struct {
 	base           int64
 	cfg            config.Config
 	events         *recordingPhaseTwoEventSink
+}
+
+// heldSince makes the fixture's process the owner of every Query Group from
+// at: the backlog a clock jump opens after it is this owner's own falling
+// behind, which the distance rule gives up on as a range. Without it the
+// jump is the first round this process holds them, a takeover, and the
+// Slots inside the replay age are replayed instead (scheduler.TakeoverClock).
+func (f expiredRangeBundleFixture) heldSince(t *testing.T, at time.Time) {
+	t.Helper()
+	f.bundle.mu.RLock()
+	defer f.bundle.mu.RUnlock()
+	for queryGroup, lifecycle := range f.bundle.runners {
+		group, ok := lifecycle.runner.(*productionPhaseTwoQueryGroup)
+		if !ok {
+			t.Fatalf("%s runs as %T, not a production Query Group", queryGroup, lifecycle.runner)
+		}
+		lease, held := group.session.Current()
+		if !held {
+			t.Fatalf("%s holds no lease", queryGroup)
+		}
+		f.production.takeovers.Anchor(queryGroup, lease.Fence, at)
+	}
 }
 
 func TestExpiredRangeSharesF2WithHealthyFull(t *testing.T) {
@@ -48,7 +71,13 @@ func testExpiredRangeSharesF2WithHealthyFull(t *testing.T, distance bool) {
 	var mixed atomic.Bool
 	var hot execution.QueryGroupIdentity
 	var slot int64
+	// The fleet's own reading of the run: the range commit writes no
+	// completion line, and its Slots reach the record of what was never
+	// evaluated only through the range's own line, its trace merged from the
+	// context as every observer does.
+	tracker := fleet.NewTracker(nil, "range-replica", time.Now)
 	observer := observability.ObserverFunc(func(ctx context.Context, o observability.Observation) {
+		tracker.Observe(ctx, o)
 		if mixed.Load() && o.Stage == observability.StageGapLoaded && observability.TraceFieldsFromContext(ctx).QueryGroupKey == string(hot) {
 			rangeOnce.Do(func() { close(rangeEntered) })
 			select {
@@ -84,6 +113,7 @@ func testExpiredRangeSharesF2WithHealthyFull(t *testing.T, distance bool) {
 	if hot == "" || healthy == "" {
 		t.Fatal("fixture requires distinct hot and healthy groups")
 	}
+	f.heldSince(t, time.Unix(f.base, 0))
 	slot = f.base + 1800
 	f.clock.Store(slot*1000 + 100)
 	first, attempted, err := settledRunner(f.bundle, hot).RunOne(ctx)
@@ -142,6 +172,9 @@ func testExpiredRangeSharesF2WithHealthyFull(t *testing.T, distance bool) {
 	if distance && rp.CurrentOrRecentGap.Kind != execution.CompletionGapSkipped {
 		t.Fatalf("distance prefix lost cause: %+v", rp)
 	}
+	if span, recorded := tracker.GapSkips()[string(hot)]; !recorded || span.Slots < 2 || span.FirstSlot >= span.LastSlot {
+		t.Fatalf("the range's Slots on the fleet's skip record = %+v (recorded %t), want the committed range", span, recorded)
+	}
 	events := f.events.snapshot()
 	if len(events) != 1 || events[0].PlanRef.StrategyID != "1002" {
 		t.Fatalf("healthy real ACK events=%+v", events)
@@ -189,6 +222,7 @@ func newExpiredRangeProductionBundle(t *testing.T, response http.HandlerFunc, ob
 	clock.Store(base * 1000)
 	var queries atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		queries.Add(1)
 		if response == nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -201,7 +235,6 @@ func newExpiredRangeProductionBundle(t *testing.T, response http.HandlerFunc, ob
 	cfg.Redis.Address = address
 	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-expired-range-integration"
-	cfg.PhaseTwo.Scheduler.ExpiredRangeEnabled = true
 	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Millisecond)
 	cfg.PhaseTwo.Access.UQEndpoint = server.URL
 	// The public fixture uses one-second Slots; its reserve must leave a
@@ -220,9 +253,9 @@ func newExpiredRangeProductionBundle(t *testing.T, response http.HandlerFunc, ob
 		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)
 		},
-		phaseTwoProductionExternalDependencies{Now: func() time.Time { return time.UnixMilli(clock.Load()) }, HTTPClient: server.Client(), AdditionalObserver: observer, OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+		phaseTwoProductionExternalDependencies{Now: func() time.Time { return time.UnixMilli(clock.Load()) }, HTTPClient: server.Client(), AdditionalObserver: observer, PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 			return events, nil
-		}})
+		})})
 	if err != nil {
 		t.Fatal(err)
 	}

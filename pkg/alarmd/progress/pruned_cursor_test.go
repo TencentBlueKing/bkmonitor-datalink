@@ -142,3 +142,45 @@ func TestSkipPrunedRangeDiscardsASlotInFlightInsideThePrunedSpan(t *testing.T) {
 		t.Fatalf("progress after skip = %+v, want cursor 600, nothing in flight and the pruned gap %+v", got, wantGap)
 	}
 }
+
+// The store writes the reason the Worker decided, not one of its own. It
+// wrote SCHEDULE_PRUNED for every skip, so a skip made because the Plan was
+// out of the active set, or because the timeline was rewritten after it
+// stopped decoding, was persisted - and read back by every later reader -
+// as retention loss. Each reason is read back as itself, and each still
+// leaves the cursor standing on its own.
+func TestSkipPrunedRangePersistsTheReasonItWasGiven(t *testing.T) {
+	identity := execution.ProgressIdentity{QueryGroup: "q"}
+	fence := execution.OwnerFence{QueryGroup: "q", OwnerID: "worker", OwnerEpoch: 1, LeaseToken: "lease"}
+	for given, want := range map[execution.ReasonCode]string{
+		"": "SCHEDULE_PRUNED", "SCHEDULE_PRUNED": "SCHEDULE_PRUNED",
+		"PLAN_NOT_ACTIVE": "PLAN_NOT_ACTIVE", "SCHEDULE_REPAIRED": "SCHEDULE_REPAIRED",
+		"SCHEDULE_REOPENED": "SCHEDULE_REOPENED",
+	} {
+		t.Run(want+"/"+string(given), func(t *testing.T) {
+			current := execution.ScheduleProgress{Identity: identity, NextSlot: 120, LastFullSlot: 60, LastCompletionKind: execution.CompletionFull}
+			fake := &controlFake{value: mustEncode(t, current)}
+			store := mustStore(t, fake)
+			ctx := context.Background()
+			skip := execution.ProgressSkipPrunedRequest{Identity: identity, OwnerFence: fence, ExpectedNextSlot: 120, ResumeAt: 600, Reason: given}
+			if result, err := store.SkipPrunedRange(ctx, skip); err != nil || result.Status != execution.ProgressCommitted {
+				t.Fatalf("SkipPrunedRange() = (%+v, %v), want committed", result, err)
+			}
+			loaded, err := store.LoadProgress(ctx, identity)
+			if err != nil || loaded.Progress == nil || loaded.Progress.CurrentOrRecentGap == nil {
+				t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
+			}
+			if got := string(loaded.Progress.CurrentOrRecentGap.ReasonCode); got != want {
+				t.Fatalf("the persisted skip reads %q, want %q", got, want)
+			}
+			if _, anchored := loaded.Progress.ContinuityAnchor(); anchored {
+				t.Fatal("the persisted skip anchors navigation on a Slot nobody ran")
+			}
+		})
+	}
+	// A word that is not a forward skip's is refused before anything is read.
+	bad := execution.ProgressSkipPrunedRequest{Identity: identity, OwnerFence: fence, ExpectedNextSlot: 120, ResumeAt: 600, Reason: "GAP_SKIPPED"}
+	if _, err := mustStore(t, &controlFake{}).SkipPrunedRange(context.Background(), bad); err == nil {
+		t.Fatal("a skip under a word that is not a forward skip's was accepted")
+	}
+}

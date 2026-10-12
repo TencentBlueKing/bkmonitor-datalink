@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,5 +166,78 @@ func TestObjectNextUsesOnlyKnownSlotIdentity(t *testing.T) {
 	}})
 	if len(out.Next) != 1 || out.Next[0].Operation != "slot.get" || out.Next[0].Params["evaluation_time"] != int64(14) {
 		t.Fatal(out.Next)
+	}
+}
+
+// The Slot names the publication its Segment began under. Beside the latest
+// one it says whether they are the same, and explains the difference only
+// when there is one; a latest publication that cannot be read is said, and
+// no latest is claimed.
+func TestSlotGetSetsTheLatestPublicationBesideTheSlotsOwn(t *testing.T) {
+	plan := slotFixture(t)
+	client, err := uq.NewDiagnosticClient("http://127.0.0.1:1", "fixture", http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := SlotPublication{SnapshotRevision: "newer", PublicationEpoch: 20}
+	var latestErr error
+	get := SlotOperations(SlotOptions{Resolve: func(context.Context, execution.SlotIdentity) (SlotPlan, error) { return plan, nil }, UQ: client,
+		LatestPublication: func(context.Context) (SlotPublication, error) { return latest, latestErr }})[0]
+	p := jsonParams(t, slotParams(slotContext(plan)))
+
+	view := get.Run(context.Background(), p).Value.(SlotGetResult)
+	if view.LatestPublication == nil || view.LatestPublication.SnapshotRevision != "newer" || view.LatestPublication.PublicationEpoch != 20 ||
+		view.LatestPublication.SameAsSlot || view.Slot.SnapshotRevision != "snapshot" {
+		t.Fatalf("latest beside the Slot = %+v (slot %s)", view.LatestPublication, view.Slot.SnapshotRevision)
+	}
+	if !strings.Contains(view.SnapshotNote, "execution content") || !strings.Contains(view.SnapshotNote, "decided by object_digest") ||
+		strings.Contains(view.SnapshotNote, "running now") {
+		t.Fatalf("an older Slot publication is not explained: %q", view.SnapshotNote)
+	}
+
+	latest = SlotPublication{SnapshotRevision: "snapshot", PublicationEpoch: 19}
+	view = get.Run(context.Background(), p).Value.(SlotGetResult)
+	if view.LatestPublication == nil || !view.LatestPublication.SameAsSlot || view.SnapshotNote != "" {
+		t.Fatalf("the same publication was explained as different: %+v %q", view.LatestPublication, view.SnapshotNote)
+	}
+
+	latestErr = errors.New("catalog unavailable")
+	out := get.Run(context.Background(), p)
+	view = out.Value.(SlotGetResult)
+	if view.LatestPublication != nil || view.SnapshotNote != "" || !strings.Contains(strings.Join(out.Limitations, "\n"), "latest publication could not be read") {
+		t.Fatalf("an unreadable latest publication was not said: %+v %v", view.LatestPublication, out.Limitations)
+	}
+
+	without := SlotOperations(SlotOptions{Resolve: func(context.Context, execution.SlotIdentity) (SlotPlan, error) { return plan, nil }, UQ: client})[0]
+	if view := without.Run(context.Background(), p).Value.(SlotGetResult); view.LatestPublication != nil || view.SnapshotNote != "" {
+		t.Fatalf("a latest publication was claimed with no reader: %+v", view)
+	}
+}
+
+// slot.get says the read hold the Slot was frozen with and where it was read
+// from; a zero read from no record says what it rests on, and one from a
+// record does not.
+func TestSlotGetSaysTheReadHoldAndWhereItWasReadFrom(t *testing.T) {
+	plan := slotFixture(t)
+	client, err := uq.NewDiagnosticClient("http://127.0.0.1:1", "fixture", http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		basis  string
+		hold   int64
+		caveat bool
+	}{{ReadHoldNoRecord, 0, true}, {ReadHoldFromRecord, 60_000, false}, {ReadHoldFromProgress, 0, false}} {
+		plan.ReadHoldBasis, plan.Contract.ReadHoldMillis = tc.basis, tc.hold
+		get := SlotOperations(SlotOptions{Resolve: func(context.Context, execution.SlotIdentity) (SlotPlan, error) { return plan, nil }, UQ: client})[0]
+		out := get.Run(context.Background(), jsonParams(t, slotParams(slotContext(plan))))
+		view := out.Value.(SlotGetResult)
+		if view.Slot.ReadHoldMillis != tc.hold || view.Slot.ReadHoldBasis != tc.basis {
+			t.Fatalf("%s: slot %+v, want hold %d read from %s", tc.basis, view.Slot, tc.hold, tc.basis)
+		}
+		said := strings.Contains(strings.Join(out.Limitations, "\n"), "keeps no read hold record")
+		if said != tc.caveat {
+			t.Fatalf("%s: limitations %v, want the no-record caveat %t", tc.basis, out.Limitations, tc.caveat)
+		}
 	}
 }

@@ -28,23 +28,18 @@ import (
 // attempts. No administrative cleanup is involved.
 func TestProductionPhaseTwoCutoverStalledGroupRecoversPastReplayAge(t *testing.T) {
 	for _, variant := range []struct {
-		expiredRange  bool
 		triggerWindow int
 	}{
-		{expiredRange: false, triggerWindow: 1},
-		{expiredRange: true, triggerWindow: 1},
+		{triggerWindow: 1},
 		// A trigger window of two points needs two data Slots to warm the gap
 		// guard and two consecutive history points before a Level is FULL.
-		{expiredRange: true, triggerWindow: 2},
+		{triggerWindow: 2},
 	} {
-		expiredRange := variant.expiredRange
-		t.Run(fmt.Sprintf("expired_range_enabled=%t/trigger_window=%d", expiredRange, variant.triggerWindow), func(t *testing.T) {
+		t.Run(fmt.Sprintf("trigger_window=%d", variant.triggerWindow), func(t *testing.T) {
 			previousWindow := cutoverStallTriggerWindow
 			cutoverStallTriggerWindow = variant.triggerWindow
 			t.Cleanup(func() { cutoverStallTriggerWindow = previousWindow })
-			fixture := newCutoverStalledFixture(t, func(cfg *config.Config) {
-				cfg.PhaseTwo.Scheduler.ExpiredRangeEnabled = expiredRange
-			})
+			fixture := newCutoverStalledFixture(t, func(*config.Config) {})
 			ctx := context.Background()
 			limits := fixture.production.dependencies.RecoveryLimits
 			const staleAge = 2 * time.Hour
@@ -213,7 +208,7 @@ func TestProductionPhaseTwoCutoverStalledGroupRecoversPastReplayAge(t *testing.T
 			if len(ranges) > 0 {
 				t.Logf("expired ranges:\n  %s", strings.Join(ranges, "\n  "))
 			} else {
-				t.Logf("no expired range was used (expired_range_enabled=%t)", expiredRange)
+				t.Logf("no expired range was used")
 			}
 			t.Logf("backlog drained by attempt %d; current Slots:\n  %s", backlogAttempts, strings.Join(currentPath, "\n  "))
 			t.Logf("completions by kind/reason: %v; total completions %d; RequiredFullSlots=%d; current data Slots %d; first current FULL at attempt %d (0 = none); UQ calls during recovery %d",

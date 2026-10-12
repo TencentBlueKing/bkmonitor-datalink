@@ -9,36 +9,40 @@
 
 package execution
 
-// GapRecoveryReach is how much of a standing marker one healthy Slot is
-// evidence about.
-//
-// A Slot that evaluated the Plan's series is evidence about every scope: the
-// query answered whole and each series carried its round forward. A Slot that
-// completed FULL with no series at all is evidence about the Plan and about
-// nothing below it -- the query answered whole, which is what a Plan scope
-// asks, but no Level advanced a history, which is what a Level scope asks.
-// Recovering a Level scope on a round where no Level ran would count a slot
-// towards a requirement the round did not meet.
-//
-// The two reaches exist so that the difference between them is this one
-// value and not two copies of the warmup arithmetic.
-type GapRecoveryReach uint8
-
-const (
-	// GapRecoverEveryScope is the reach of a Slot that evaluated series.
-	GapRecoverEveryScope GapRecoveryReach = iota
-	// GapRecoverPlanScopeOnly is the reach of a Slot that completed FULL with
-	// no series: the Plan's scopes advance, the Level scopes are left exactly
-	// as they were loaded.
-	GapRecoverPlanScopeOnly
-)
-
 // PlanGapRecoveryMutation is what one healthy Slot does to a Plan's standing
-// gap marker: every scope within the Slot's reach moves one slot closer to
-// its warmup requirement, and a scope that reaches it clears.
+// gap marker: every scope moves one slot closer to its warmup requirement,
+// and a scope that reaches it clears.
 //
-// Nil when there is nothing to say -- no marker, a marker that is not
-// standing, or a marker whose every scope is out of this Slot's reach.
+// A healthy Slot is one whose Plan input was whole: evaluated series that
+// carried their round forward, or, with no series at all, every input of the
+// Plan FULL and available. Both are evidence about every scope, Level scopes
+// included. What a marker guards is the round whose answer is unknown; a round
+// that answered whole and held nothing for the Plan is a known absence, not an
+// unknown. The warmup requirement is the window a Level's decisions reach back
+// over, and windows are cut by time, so once that many whole rounds have
+// passed the unknown round is outside every window - whether or not a series
+// had points in them. A series that comes back sooner still meets the marker
+// and is held by it.
+//
+// Level scopes used to be left alone on a round with no series, on the reading
+// that they ask for a series' history to have moved. A Plan that matches no
+// series then kept a marker opened by a query failure for as long as it
+// matched none: it never warmed, never cleared, and held its Levels' reason
+// on the Slot every round.
+//
+// Nil when there is nothing to say -- no marker, or a marker that is not
+// standing.
+//
+// Known boundary, per series: a Level a marker held keeps WARMING in its own
+// state and converges only on a window that is whole again (evaluation
+// guardConvergenceAllowed), so a series that misses whole minutes stays under
+// GAP_GUARD_WARMING for as long as it keeps missing them. That withholds only
+// NORMAL, which needs a FULL window whether or not a guard holds it: ABNORMAL
+// is decided from the anomalies in the window and RECOVERY steps over minutes
+// nobody observed, so the series still alerts and recovers. A reader should
+// look at the window's missing minutes (answered without the series, or a
+// round this side did not see whole) rather than read the reason as "not
+// evaluated".
 //
 // A marker written under an older Plan schedule revision still recovers, it
 // only restarts its warmup: the store discards the warmup count of every
@@ -53,7 +57,6 @@ func PlanGapRecoveryMutation(
 	contractRef FrozenExecutionContractRef,
 	due DuePlan,
 	gaps GapLoadResult,
-	reach GapRecoveryReach,
 ) (*PlanGapMutation, error) {
 	identity := due.GapIdentity()
 	gap, found := gaps.Find(identity)
@@ -63,9 +66,6 @@ func PlanGapRecoveryMutation(
 	restarted := gap.LastScheduleRevision != due.ScheduleRevision
 	scopes := make([]GapScopeMutation, 0, len(gap.Scopes))
 	for _, current := range gap.Scopes {
-		if reach == GapRecoverPlanScopeOnly && current.Scope.HasLevel {
-			continue
-		}
 		observed := current.ObservedFullSlots
 		if restarted {
 			observed = 0
@@ -78,8 +78,8 @@ func PlanGapRecoveryMutation(
 		}
 		scopes = append(scopes, scope)
 	}
-	// Only reachable under GapRecoverPlanScopeOnly: a loaded marker always
-	// carries at least one scope, and a mutation carrying none is refused.
+	// A loaded marker always carries at least one scope; a mutation carrying
+	// none is refused, so an empty one is never proposed.
 	if len(scopes) == 0 {
 		return nil, nil
 	}

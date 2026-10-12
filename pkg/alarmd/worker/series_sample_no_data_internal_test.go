@@ -33,12 +33,7 @@ func CheckSeriesSampleNoDataWorkerRegression(t *testing.T, off, on *state.Execut
 	t.Helper()
 	due := noDataWiredPlan(t)
 	due.CompiledPlan = noDataPreflightPlan(t, "7", &contract.NoDataConfigV1{Continuous: 3, Level: 2})
-	sampler, err := observability.NewSeriesSampler(observability.SeriesSampleLimits{
-		RecordsPerMinute: 8, BytesPerMinute: 8 * observability.SeriesSampleMaxBytes, QueueCapacity: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	sampler := observability.NewAdmittedSeriesSampler(func(uint64) bool { return true })
 	now := time.Now()
 	if err := sampler.Select([]observability.SeriesSampleSelection{{
 		QueryGroup: "query-group", WindowID: "no-data-window", OpenedAt: now, ExpiresAt: now.Add(time.Minute),
@@ -60,7 +55,7 @@ func CheckSeriesSampleNoDataWorkerRegression(t *testing.T, off, on *state.Execut
 func runNoDataSampleRounds(t *testing.T, due execution.DuePlan, store *state.ExecutionStore, sampler *observability.SeriesSampler) []noDataSampleRound {
 	t.Helper()
 	ctx := context.Background()
-	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
+	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +148,7 @@ func runNoDataSampleRounds(t *testing.T, due execution.DuePlan, store *state.Exe
 				}
 			}
 		}
-		if err := stream.coordinator.applyNoDataMemory(ctx, stream.request, stream.noDataMutations); err != nil {
+		if err := stream.coordinator.applyNoDataMemory(ctx, stream.request, stream.header.DuePlans, stream.noDataMutations); err != nil {
 			t.Fatal(err)
 		}
 		if len(stream.stateItems) > 0 {

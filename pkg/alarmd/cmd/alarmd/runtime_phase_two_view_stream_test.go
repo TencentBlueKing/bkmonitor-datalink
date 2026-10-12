@@ -61,12 +61,20 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 		t.Fatalf("control leader = %+v found=%t err=%v, want this replica with a term", leader, found, err)
 	}
 
-	// The fixture serves the control stream once it runs a Slot, so this
-	// replica's own Worker may already hold a session; the manual stream
-	// below replaces it under the same Worker id.
+	// The fixture serves the control stream once it runs a Slot, and this
+	// replica's own Worker holds a session under the Worker id the manual
+	// stream below uses. It is stopped first: replaced by the manual stream,
+	// it came back within a second of jitter and replaced the manual stream
+	// in turn, and the receipt's Send read EOF whenever the test took that
+	// long -- which under a full parallel run it did.
+	bundle.cancelViewClient()
 	stats := bundle.dependencies.ViewStreamStats()
-	if !stats.Leading || stats.ControlEpoch != leader.OwnerEpoch || stats.Revision == 0 || stats.Counts.Expected != 1 || stats.Sessions > 1 {
-		t.Fatalf("stream stats after the first round = %+v, want leading in term %d with a revision and one expected receiver", stats, leader.OwnerEpoch)
+	for deadline := time.Now().Add(5 * time.Second); stats.Sessions != 0 && time.Now().Before(deadline); stats = bundle.dependencies.ViewStreamStats() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !stats.Leading || stats.ControlEpoch != leader.OwnerEpoch || stats.Revision == 0 || stats.Counts.Expected != 1 || stats.Sessions != 0 {
+		t.Fatalf("stream stats after the first round = %+v, want leading in term %d with a revision, one expected receiver and "+
+			"this replica's own session closed", stats, leader.OwnerEpoch)
 	}
 
 	// The stream served the way the listener serves it: over HTTP/2 in the
@@ -251,62 +259,4 @@ func (staticViewSource) ActivationBlocked(context.Context) ([]controlplane.Block
 
 func (staticViewSource) DrainingContent(context.Context, execution.QueryGroupIdentity) (execution.ObjectDigest, []execution.OutputContextRef, bool, error) {
 	return "", nil, false, nil
-}
-
-// ApplyCutoverProgress passes the content through: this fixture has no
-// cutover in progress.
-func (_ failingViewSource) ApplyCutoverProgress(
-	_ context.Context, _ controlplane.ActivationState, content map[execution.QueryGroupIdentity]controlplane.ContentEntry,
-) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
-	return content, nil
-}
-
-// ApplyCutoverProgress passes the content through: this fixture has no
-// cutover in progress.
-func (_ staticViewSource) ApplyCutoverProgress(
-	_ context.Context, _ controlplane.ActivationState, content map[execution.QueryGroupIdentity]controlplane.ContentEntry,
-) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
-	return content, nil
-}
-
-// progressViewSource publishes new content for qg while its open Segment
-// still runs old, as during a cutover in progress.
-type progressViewSource struct{ staticViewSource }
-
-func (progressViewSource) LoadActivationHead(context.Context) (controlplane.ActivationState, error) {
-	return controlplane.ActivationState{RecordRevision: 2, Current: controlplane.SnapshotPublicationRef{SnapshotRevision: "snap", PublicationEpoch: 2},
-		CutoverProgress: &controlplane.CutoverProgress{}}, nil
-}
-
-func (progressViewSource) LoadPublishedContent(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedContent, error) {
-	return controlplane.PublishedContent{Groups: map[execution.QueryGroupIdentity]controlplane.ContentEntry{"qg": {Digest: "new"}, "added": {Digest: "fresh"}}}, nil
-}
-
-func (progressViewSource) ApplyCutoverProgress(
-	_ context.Context, state controlplane.ActivationState, content map[execution.QueryGroupIdentity]controlplane.ContentEntry,
-) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
-	if state.CutoverProgress == nil {
-		return content, nil
-	}
-	return map[execution.QueryGroupIdentity]controlplane.ContentEntry{"qg": {Digest: "old"}}, nil
-}
-
-// While a cutover is in progress the view gives each Query Group what its
-// open Segment runs: a Query Group past the cursor keeps its old content,
-// and one not added yet is not in the view. Given the manifest's, the first
-// would stop on a scope mismatch and the second would be told to run what
-// it has no timeline for.
-func TestTheViewFollowsTheOpenSegmentsWhileACutoverIsInProgress(t *testing.T) {
-	source := progressViewSource{}
-	state, err := source.LoadActivationHead(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	running, err := runningViewContent(context.Background(), source, state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(running) != 1 || running["qg"].Digest != "old" {
-		t.Fatalf("view content = %+v, want only qg on the content its open Segment runs", running)
-	}
 }

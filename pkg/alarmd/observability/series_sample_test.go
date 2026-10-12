@@ -10,12 +10,11 @@ import (
 	"time"
 )
 
-func sampleFixture(t testing.TB, capacity, records int) (*SeriesSampler, SeriesSampleSelection, SeriesSampleCandidate) {
+// sampleFixture is a sampler as the process builds it, every buffer
+// admitted, with one window selected: one encode buffer.
+func sampleFixture(t testing.TB) (*SeriesSampler, SeriesSampleSelection, SeriesSampleCandidate) {
 	t.Helper()
-	s, err := NewSeriesSampler(SeriesSampleLimits{RecordsPerMinute: records, BytesPerMinute: records * SeriesSampleMaxBytes, QueueCapacity: capacity})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := NewAdmittedSeriesSampler(func(uint64) bool { return true })
 	now := time.Now()
 	v := SeriesSampleSelection{QueryGroup: "query-group", WindowID: "window", OpenedAt: now, ExpiresAt: now.Add(time.Minute), TenantID: "tenant", BusinessID: "business", StrategyID: "strategy", StateGeneration: "generation", PlanScheduleRevision: "schedule"}
 	if err := s.Select([]SeriesSampleSelection{v}); err != nil {
@@ -25,27 +24,8 @@ func sampleFixture(t testing.TB, capacity, records int) (*SeriesSampler, SeriesS
 	return s, v, c
 }
 
-func TestSeriesSampleBudgetIsIndependentOfLifecycleAllocation(t *testing.T) {
-	limits := SeriesSampleLimits{
-		RecordsPerMinute: 2 * TargetFlowMaxRecords,
-		BytesPerMinute:   2 * TargetFlowMaxBytes,
-		QueueCapacity:    1,
-	}
-	sampler, err := NewSeriesSampler(limits)
-	if err != nil {
-		t.Fatalf("resource-derived sample allocation above lifecycle limits was rejected: %v", err)
-	}
-	if sampler.Limits() != limits {
-		t.Fatalf("sample allocation changed: got %+v, want %+v", sampler.Limits(), limits)
-	}
-	limits.QueueCapacity = limits.RecordsPerMinute + 1
-	if _, err := NewSeriesSampler(limits); err == nil {
-		t.Fatal("queue capacity above the sample record budget was accepted")
-	}
-}
-
 func TestSeriesSampleDisabledAllocatesNothing(t *testing.T) {
-	s, v, c := sampleFixture(t, 1, 2)
+	s, v, c := sampleFixture(t)
 	cases := map[string]struct {
 		s *SeriesSampler
 		c SeriesSampleCandidate
@@ -73,7 +53,7 @@ func TestSeriesSampleDisabledAllocatesNothing(t *testing.T) {
 			c SeriesSampleCandidate
 		}{s, other}
 	}
-	expired, _, _ := sampleFixture(t, 1, 2)
+	expired, _, _ := sampleFixture(t)
 	expired.now = func() time.Time { return v.ExpiresAt.Add(time.Second) }
 	cases["expired"] = struct {
 		s *SeriesSampler
@@ -93,43 +73,32 @@ func TestSeriesSampleDisabledAllocatesNothing(t *testing.T) {
 }
 
 func TestSeriesSampleReservationPrecedesMaterialization(t *testing.T) {
-	for _, arm := range []struct {
-		name              string
-		capacity, records int
-		wantBudget        bool
-	}{{"queue", 1, 2, false}, {"records", 1, 1, true}, {"bytes", 2, 2, true}} {
-		t.Run(arm.name, func(t *testing.T) {
-			s, _, c := sampleFixture(t, arm.capacity, arm.records)
-			if arm.name == "bytes" {
-				s.limits.BytesPerMinute = SeriesSampleMaxBytes
-			}
-			r := s.TryReserve(context.Background(), c)
-			if r == nil {
-				t.Fatal("initial reservation")
-			}
-			c.Slot++
-			if got := testing.AllocsPerRun(1000, func() {
-				if s.TryReserve(context.Background(), c) != nil {
-					t.Fatal("materialization admitted without capacity")
-				}
-			}); got != 0 {
-				t.Fatalf("exhaustion allocated %g", got)
-			}
-			if arm.wantBudget && s.Health().BudgetDropped == 0 || !arm.wantBudget && s.Health().QueueDropped == 0 {
-				t.Fatalf("health=%+v", s.Health())
-			}
-			r.Cancel()
-			if next := s.TryReserve(context.Background(), c); next == nil {
-				t.Fatal("cancel leaked reservation")
-			} else {
-				next.Cancel()
-			}
-		})
+	s, _, c := sampleFixture(t)
+	r := s.TryReserve(context.Background(), c)
+	if r == nil {
+		t.Fatal("initial reservation")
+	}
+	c.Slot++
+	if got := testing.AllocsPerRun(1000, func() {
+		if s.TryReserve(context.Background(), c) != nil {
+			t.Fatal("materialization admitted without a free buffer")
+		}
+	}); got != 0 {
+		t.Fatalf("exhaustion allocated %g", got)
+	}
+	if s.Health().QueueDropped == 0 {
+		t.Fatalf("health=%+v", s.Health())
+	}
+	r.Cancel()
+	if next := s.TryReserve(context.Background(), c); next == nil {
+		t.Fatal("cancel leaked reservation")
+	} else {
+		next.Cancel()
 	}
 }
 
 func TestSeriesSamplePinsOneDigestAndPreservesWindowOnRefresh(t *testing.T) {
-	s, v, c := sampleFixture(t, 1, 4)
+	s, v, c := sampleFixture(t)
 	r := s.TryReserve(context.Background(), c)
 	r.AddLevel(1)
 	r.Commit()
@@ -165,7 +134,7 @@ func TestSeriesSamplePinsOneDigestAndPreservesWindowOnRefresh(t *testing.T) {
 }
 
 func TestSeriesSampleConcurrentReservationAndClose(t *testing.T) {
-	s, _, c := sampleFixture(t, 8, 32)
+	s, _, c := sampleFixture(t)
 	var wg sync.WaitGroup
 	for i := 0; i < 64; i++ {
 		wg.Add(1)
@@ -192,7 +161,7 @@ func TestSeriesSampleConcurrentReservationAndClose(t *testing.T) {
 }
 
 func TestSeriesSampleContentBounds(t *testing.T) {
-	s, _, c := sampleFixture(t, 1, 4)
+	s, _, c := sampleFixture(t)
 	r := s.TryReserve(context.Background(), c)
 	r.AddLevel(1)
 	r.Sample.EventID = strings.Repeat("x", 129)
@@ -230,8 +199,8 @@ func worstCaseSampleStrings(value reflect.Value) {
 	}
 }
 
-func TestSeriesSampleEncodingScratchAndAttemptBudget(t *testing.T) {
-	s, _, c := sampleFixture(t, 1, 1)
+func TestSeriesSampleEncodingScratchAndOversizeRelease(t *testing.T) {
+	s, _, c := sampleFixture(t)
 	r := s.TryReserve(context.Background(), c)
 	r.AddLevel(1)
 	r.AddLevel(2)
@@ -248,9 +217,12 @@ func TestSeriesSampleEncodingScratchAndAttemptBudget(t *testing.T) {
 	if len(s.queue) != 0 || s.Health().Oversize != 1 {
 		t.Fatal("oversize encoding was not dropped")
 	}
+	// The dropped record gives its buffer back: the next Slot records.
 	c.Slot++
-	if s.TryReserve(context.Background(), c) != nil || s.Health().BudgetDropped != 1 {
-		t.Fatal("encoding failure refunded already-spent CPU attempt budget")
+	if next := s.TryReserve(context.Background(), c); next == nil {
+		t.Fatalf("an oversize record kept its buffer: %+v", s.Health())
+	} else {
+		next.Cancel()
 	}
 }
 
@@ -266,7 +238,7 @@ func (w *sampleBlockedWriter) Write(p []byte) (int, error) {
 }
 
 func TestSeriesSampleDoesNotUseBlockedTargetFlowLogger(t *testing.T) {
-	s, v, c := sampleFixture(t, 1, 2)
+	s, v, c := sampleFixture(t)
 	v.QueryGroup, c.QueryGroup = flowQG, flowQG
 	if err := s.Select([]SeriesSampleSelection{v}); err != nil {
 		t.Fatal(err)
@@ -309,17 +281,14 @@ func TestSeriesSampleDoesNotUseBlockedTargetFlowLogger(t *testing.T) {
 }
 
 func BenchmarkSeriesSample(b *testing.B) {
-	for _, name := range []string{"disabled", "sibling_plan", "selected", "exhausted", "queue_full", "oversize"} {
+	for _, name := range []string{"disabled", "sibling_plan", "selected", "queue_full", "oversize"} {
 		b.Run(name, func(b *testing.B) {
-			s, _, c := sampleFixture(b, 1, 2)
+			s, _, c := sampleFixture(b)
 			switch name {
 			case "disabled":
 				s = nil
 			case "sibling_plan":
 				c.StrategyID = "sibling"
-			case "exhausted":
-				s.records = s.limits.RecordsPerMinute
-				s.start = time.Now()
 			case "queue_full":
 				held := s.TryReserve(context.Background(), c)
 				defer held.Cancel()
@@ -337,10 +306,6 @@ func BenchmarkSeriesSample(b *testing.B) {
 					if name != "oversize" {
 						(<-s.Records()).Release()
 					}
-					s.mu.Lock()
-					s.records = 0
-					s.bytes = 0
-					s.mu.Unlock()
 				}
 			}
 		})

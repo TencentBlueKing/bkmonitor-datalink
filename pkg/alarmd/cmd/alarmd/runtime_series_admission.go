@@ -32,9 +32,17 @@ import (
 // that several failed reads in a row are not called stale and short enough that
 // a cache which stopped being refreshed is visible well before an operator
 // would notice through alerts.
+//
+// When the writer publishes when it published, the facts are aged from that
+// instead, held to three of its publish rounds (five minutes each on the CMDB
+// cache writer): one missed round is tolerated, and the index does not go in
+// and out of stale with a single slow build; a writer that stopped is stale
+// fifteen minutes after its last publish, not when its keys expire a week
+// later.
 const (
-	cmdbIndexRefreshInterval = time.Minute
-	cmdbIndexStalenessBound  = 10 * cmdbIndexRefreshInterval
+	cmdbIndexRefreshInterval         = time.Minute
+	cmdbIndexStalenessBound          = 10 * cmdbIndexRefreshInterval
+	cmdbIndexPublishedStalenessBound = 15 * time.Minute
 )
 
 // How often one plan may describe its object-identity rejections in the log.
@@ -59,21 +67,19 @@ func buildSeriesAdmission(
 	logger *observability.Logger,
 	hostStatus *dynamicHostStatusFilter,
 	wait startupWaiter,
-) (*admission.Chain, *cmdbcache.Store, error) {
+) (*admission.Chain, *cmdbcache.TenantStores, error) {
 	// The platform states its key prefix once and both of its caches hang off
-	// it, so the CMDB cache key comes from that one spelling.
-	prefix := cfg.PlatformKeyPrefix()
-	reader, err := cmdbcache.NewReader(client, prefix)
-	if err != nil {
-		return nil, nil, err
-	}
-	store, err := cmdbcache.NewStore(reader, cmdbcache.StoreOptions{
+	// it, so the CMDB cache key comes from that one spelling; another
+	// tenant's keys carry the tenant in front of it (cmdbcache.TenantStores).
+	stores, err := cmdbcache.NewTenantStores(client, cfg.PlatformKeyPrefix(), cmdbcache.StoreOptions{
 		RefreshInterval: cmdbIndexRefreshInterval,
 		MaxAge:          cmdbIndexStalenessBound,
+		PublishedMaxAge: cmdbIndexPublishedStalenessBound,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
+	store := stores.Default()
 	// The first index is built before the worker can evaluate anything. A
 	// worker that started without one would decide every scoped strategy's
 	// series to be out of scope and silently stop alerting for them. This is
@@ -89,17 +95,18 @@ func buildSeriesAdmission(
 	filters := seriesAdmissionFilters(hostStatus, newIdentityReporter(logger, time.Now))
 	recorder.SetHostDisableMonitorStates(hostDisableMonitorStateCount(filters))
 	// Python's order: the record's own identities, then the host it names,
+	// in the CMDB cache of the tenant the record is read for,
 	// then the service instance it names - which may re-place it under the
 	// instance's module and host.
 	chain := admission.NewChain(
 		[]admission.Fuller{
 			admission.IdentityFuller{},
-			cmdbcache.NewHostTopologyFuller(store),
-			cmdbcache.NewServiceInstanceTopologyFuller(store),
+			cmdbcache.NewHostTopologyFuller(stores),
+			cmdbcache.NewServiceInstanceTopologyFuller(stores),
 		},
 		filters,
 	)
-	return chain, store, nil
+	return chain, stores, nil
 }
 
 // newIdentityReporter writes one plan's object-identity rejections as a log
@@ -150,7 +157,9 @@ func identityPairsText(pairs [][2]string) string {
 // losing it would restore alerting outside every strategy's target, which is
 // the defect this exists to fix, and refusing to evaluate would silence real
 // alerts because a cache hiccuped. Staleness is reported instead of acted on.
-func maintainCMDBIndex(ctx context.Context, store *cmdbcache.Store, recorder *metric.Recorder) {
+//
+// Every tenant's index is refreshed on the same tick.
+func maintainCMDBIndex(ctx context.Context, stores *cmdbcache.TenantStores, recorder *metric.Recorder) {
 	ticker := time.NewTicker(cmdbIndexRefreshInterval)
 	defer ticker.Stop()
 	for {
@@ -158,8 +167,8 @@ func maintainCMDBIndex(ctx context.Context, store *cmdbcache.Store, recorder *me
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = store.Refresh(ctx)
-			publishCMDBIndexHealth(recorder, store)
+			_ = stores.Refresh(ctx)
+			publishCMDBIndexHealth(recorder, stores.Default())
 		}
 	}
 }
@@ -167,9 +176,34 @@ func maintainCMDBIndex(ctx context.Context, store *cmdbcache.Store, recorder *me
 func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 	health := store.Health()
 	recorder.SetCMDBHostIndex(
-		health.Hosts, health.Age.Seconds(), health.SourceAge.Seconds(), health.Degraded, health.DegradedReason,
+		health.Hosts, health.Age.Seconds(), health.PublishedAge.Seconds(), health.SourceAge.Seconds(), health.Degraded, health.DegradedReason,
 	)
 	recorder.SetCMDBServiceInstanceIndex(health.ServiceInstances)
+	publishCMDBBusinessMappings(recorder, health)
+	publishCMDBRefusedRecords(recorder, health)
+}
+
+// publishCMDBRefusedRecords names each count of what the held index's load
+// refused by the label its gauge carries, for the same reason the mappings
+// are named: the recorder would not notice two counts swapped.
+func publishCMDBRefusedRecords(recorder *metric.Recorder, health cmdbcache.Health) {
+	for record, refused := range map[string]int{
+		"host": health.Refused.Hosts, "service_instance": health.Refused.ServiceInstances, "topo_node": health.Refused.TopoNodes,
+	} {
+		recorder.SetCMDBRecordsRefused(record, refused)
+	}
+}
+
+// publishCMDBBusinessMappings names each business mapping the index holds by
+// the label its gauge carries. The two mappings are read alike and neither
+// the recorder nor the store would notice them published under each other's
+// name.
+func publishCMDBBusinessMappings(recorder *metric.Recorder, health cmdbcache.Health) {
+	for mapping, stats := range map[string]cmdbcache.MappingStats{
+		"bcs_cluster": health.ClusterBusinessMapping, "bcs_namespace": health.NamespaceBusinessMapping,
+	} {
+		recorder.SetCMDBBusinessMapping(mapping, stats.Held, stats.Refused, stats.Truncated, stats.ReadFailed, stats.Missing)
+	}
 }
 
 // seriesAdmissionFilters is the access-path filter chain, in Python's order:
@@ -182,14 +216,18 @@ func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 // same resolution the platform's own consumers apply, so the list in force
 // here is the list in force there. It follows the copy when the platform
 // changes it, through the filter's own swap, without a restart.
+//
+// It is always in the chain, as Python installs it whatever the list
+// (processor.py:76-80): a list emptied of states disables no host by state
+// and still drops the invalid and unknown hosts (filters.py:114-116). Given
+// none, it is built over no states.
 func seriesAdmissionFilters(hostStatus *dynamicHostStatusFilter, reporter *admission.IdentityReporter) []admission.Filter {
+	if hostStatus == nil {
+		hostStatus = newDynamicHostStatusFilter(nil)
+	}
 	// The two target filters are told apart by which frozen form the Plan
 	// carries; a Plan carries at most one, so at most one of them decides.
-	filters := []admission.Filter{admission.TargetScopeFilter{Reporter: reporter}, admission.TargetPlanFilter{}}
-	if hostStatus != nil {
-		filters = append(filters, hostStatus)
-	}
-	return filters
+	return []admission.Filter{admission.TargetScopeFilter{Reporter: reporter}, admission.TargetPlanFilter{}, hostStatus}
 }
 
 // hostDisableMonitorStateCount reports what the host status filter is actually
@@ -205,6 +243,19 @@ func hostDisableMonitorStateCount(filters []admission.Filter) int {
 	return 0
 }
 
+// buildScopeGroups assembles what a target scope's dynamic group conditions
+// are read from: the platform's dynamic group hash of each tenant, under the
+// platform prefix the host index reads (cmdbcache.PlatformGroupStores), on
+// the host index's cadence and staleness bound. There is no coordinate of its
+// own: the platform keeps it beside the host hash. One read holds at most
+// readBound bytes of group values, the bound the fork's group reader windows
+// by.
+func buildScopeGroups(cfg config.Config, client redis.Cmdable, readBound int) (*cmdbcache.PlatformGroupStores, error) {
+	return cmdbcache.NewPlatformGroupStores(client, cfg.PlatformKeyPrefix(), cmdbcache.GroupStoreOptions{
+		RefreshInterval: cmdbIndexRefreshInterval, MaxAge: cmdbIndexStalenessBound, ReadBound: readBound,
+	})
+}
+
 // buildTargetResolver assembles what resolves a target plan's dynamic
 // references (decision-017): the dynamic group store, when the deployment
 // renders the fork's key prefix, and the host index for topology nodes.
@@ -213,8 +264,11 @@ func hostDisableMonitorStateCount(filters []admission.Filter) int {
 // references still resolve against the host index.
 //
 // The group store reads its configured target group connection and refreshes the
-// referenced groups on the host index's cadence with its staleness bound.
-func buildTargetResolver(cfg config.Config, client redis.Cmdable, hosts *cmdbcache.Store) (*cmdbcache.TargetResolver, *cmdbcache.GroupStore, error) {
+// referenced groups on the host index's cadence with its staleness bound. One
+// read holds at most readBound bytes of group documents at once: the
+// timeline cache's bound, derived from the container
+// (config.DeriveControlTimelineCache).
+func buildTargetResolver(cfg config.Config, client redis.Cmdable, hosts cmdbcache.StoreSource, readBound int) (*cmdbcache.TargetResolver, *cmdbcache.GroupStore, error) {
 	prefix, rendered := cfg.DynamicGroupKeyPrefix()
 	if !rendered {
 		return cmdbcache.NewTargetResolver(nil, hosts, time.Now), nil, nil
@@ -224,7 +278,7 @@ func buildTargetResolver(cfg config.Config, client redis.Cmdable, hosts *cmdbcac
 		return nil, nil, err
 	}
 	groups, err := cmdbcache.NewGroupStore(reader, cmdbcache.GroupStoreOptions{
-		RefreshInterval: cmdbIndexRefreshInterval, MaxAge: cmdbIndexStalenessBound,
+		RefreshInterval: cmdbIndexRefreshInterval, MaxAge: cmdbIndexStalenessBound, ReadBound: readBound,
 	})
 	if err != nil {
 		return nil, nil, err

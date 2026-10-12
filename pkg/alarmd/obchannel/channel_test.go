@@ -172,6 +172,160 @@ func TestASessionSpendsOnlyItsOwnInvocationBudget(t *testing.T) {
 	}
 }
 
+// A read that names a replica, or that its operation sends to the query
+// group's owner by default, spends the same minute's budget as a read run
+// here: whichever way the thirty-first goes it is refused before it is
+// admitted or routed, and the three ways share one count. A targeted read
+// that has no route to go by is refused without spending.
+func TestATargetedReadSpendsTheSessionsBudgetLikeALocalOne(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 20, 0, time.UTC)
+	local := Operation{ID: "process.read", Summary: "Read", Targetable: true, Fields: map[string]Field{"id": {Type: "string", MinLength: 1}}, Required: []string{"id"}}
+	owned := Operation{ID: "group.read", Summary: "Read", Targetable: true, DefaultOwnerParam: "query_group", Fields: map[string]Field{"query_group": {Type: "string", MinLength: 1}}, Required: []string{"query_group"}}
+	type counts struct{ runs, routes atomic.Int32 }
+	open := func(routed bool) (*Channel, *sessionAuth, *counts) {
+		a, n := &sessionAuth{}, &counts{}
+		local.Run = func(context.Context, Params) Outcome { n.runs.Add(1); return Outcome{Complete: true} }
+		owned.Run = func(context.Context, Params) Outcome { n.runs.Add(1); return Outcome{Complete: true} }
+		options := Options{Auth: a, EnvironmentID: "test", Replica: "worker-a", Build: "test", Operations: []Operation{local, owned}, Now: func() time.Time { return now }}
+		if routed {
+			options.Route = func(_ context.Context, inv Invocation) Response {
+				if inv.Target.Replica != "worker-b" && inv.Target.OwnerQueryGroup != "qg" {
+					t.Errorf("routed without the target it was asked for: %+v", inv.Target)
+				}
+				n.routes.Add(1)
+				return Response{Status: "ok", Evidence: Evidence{Complete: true}, Meta: Meta{Version: Version, EnvironmentID: "test", AnsweredBy: "worker-b"}}
+			}
+		}
+		c, err := New(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c, a, n
+	}
+	ways := []struct {
+		name   string
+		op     string
+		params Params
+	}{
+		{"here", "process.read", Params{"id": "x"}},
+		{"replica", "process.read", Params{"id": "x", "replica": "worker-b"}},
+		{"default owner", "group.read", Params{"query_group": "qg"}},
+	}
+	refused := func(c *Channel, a *sessionAuth, n *counts, name, op string, params Params) {
+		t.Helper()
+		admitted, executed := a.calls.Load(), n.runs.Load()+n.routes.Load()
+		status, header, out := callAs(t, c, "s1", envelope(c, "invoke", op, params))
+		if status != 429 || out.Error == nil || out.Error.Code != "rate_limited" || header.Get("Retry-After") != "40" {
+			t.Fatalf("%s: over budget answered %d %s %+v", name, status, header.Get("Retry-After"), out)
+		}
+		if a.calls.Load() != admitted || n.runs.Load()+n.routes.Load() != executed {
+			t.Fatalf("%s: a read over budget was admitted or executed", name)
+		}
+	}
+	for _, way := range ways {
+		c, a, n := open(true)
+		for i := 0; i < InvokesPerSessionPerMinute; i++ {
+			if status, _, out := callAs(t, c, "s1", envelope(c, "invoke", way.op, way.params)); status != 200 {
+				t.Fatalf("%s: read %d of the budget refused: %d %+v", way.name, i+1, status, out)
+			}
+		}
+		if way.name == "here" && (n.runs.Load() != int32(InvokesPerSessionPerMinute) || n.routes.Load() != 0) ||
+			way.name != "here" && (n.routes.Load() != int32(InvokesPerSessionPerMinute) || n.runs.Load() != 0) {
+			t.Fatalf("%s: went the wrong way: %d run here, %d routed", way.name, n.runs.Load(), n.routes.Load())
+		}
+		refused(c, a, n, way.name, way.op, way.params)
+	}
+	c, a, n := open(true)
+	for i := 0; i < InvokesPerSessionPerMinute; i++ {
+		way := ways[i%len(ways)]
+		if status, _, out := callAs(t, c, "s1", envelope(c, "invoke", way.op, way.params)); status != 200 {
+			t.Fatalf("mixed read %d (%s) refused: %d %+v", i+1, way.name, status, out)
+		}
+	}
+	for _, way := range ways {
+		refused(c, a, n, "mixed "+way.name, way.op, way.params)
+	}
+	c, a, n = open(false)
+	for i := 0; i < 5; i++ {
+		if status, _, out := callAs(t, c, "s1", envelope(c, "invoke", "process.read", Params{"id": "x", "replica": "worker-b"})); status != 503 {
+			t.Fatalf("targeted read with no route: %d %+v", status, out)
+		}
+	}
+	for i := 0; i < InvokesPerSessionPerMinute; i++ {
+		if status, _, out := callAs(t, c, "s1", envelope(c, "invoke", "process.read", Params{"id": "x"})); status != 200 {
+			t.Fatalf("read %d refused after targeted reads that had no route: %d %+v", i+1, status, out)
+		}
+	}
+	refused(c, a, n, "after no route", "process.read", Params{"id": "x"})
+}
+
+// An operation that is unavailable refuses the read before the budget is
+// spent: refused reads of it leave the whole minute's budget to the reads
+// that run once it is available again.
+func TestAnUnavailableOperationCostsNothing(t *testing.T) {
+	a := &sessionAuth{}
+	now := time.Date(2026, 1, 1, 0, 0, 20, 0, time.UTC)
+	up := false
+	op := Operation{ID: "read", Summary: "Read", Fields: map[string]Field{"id": {Type: "string", MinLength: 1}}, Required: []string{"id"},
+		Availability: func() Availability { return Availability{Available: up, Reason: "not ready"} },
+		Run:          func(context.Context, Params) Outcome { return Outcome{Complete: true} }}
+	c, err := New(Options{Auth: a, EnvironmentID: "test", Replica: "replica-1", Build: "test", Operations: []Operation{op},
+		Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if status, _, out := callAs(t, c, "s1", envelope(c, "invoke", "read", Params{"id": "x"})); status != 503 || out.Error == nil || out.Error.Code != "operation_unavailable" {
+			t.Fatalf("unavailable read answered %d %+v", status, out)
+		}
+	}
+	up = true
+	for i := 0; i < InvokesPerSessionPerMinute; i++ {
+		if status, _, out := callAs(t, c, "s1", envelope(c, "invoke", "read", Params{"id": "x"})); status != 200 {
+			t.Fatalf("read %d refused after reads of an unavailable operation: %d %+v", i+1, status, out)
+		}
+	}
+	if status, _, out := callAs(t, c, "s1", envelope(c, "invoke", "read", Params{"id": "x"})); status != 429 || out.Error == nil || out.Error.Code != "rate_limited" {
+		t.Fatalf("over budget answered %d %+v", status, out)
+	}
+}
+
+// A session over its budget is refused as over budget even while another
+// session's read holds the execution slot: the budget is spent before the
+// slot is asked for, so the session never contends for it.
+func TestASessionOverBudgetNeverContendsForTheSlot(t *testing.T) {
+	a := &sessionAuth{}
+	now := time.Date(2026, 1, 1, 0, 0, 20, 0, time.UTC)
+	entered, release := make(chan struct{}), make(chan struct{})
+	op := Operation{ID: "read", Summary: "Read", Fields: map[string]Field{"id": {Type: "string", MinLength: 1}}, Required: []string{"id"},
+		Run: func(_ context.Context, params Params) Outcome {
+			if params.String("id") == "hold" {
+				close(entered)
+				<-release
+			}
+			return Outcome{Complete: true}
+		}}
+	c, err := New(Options{Auth: a, EnvironmentID: "test", Replica: "replica-1", Build: "test", Operations: []Operation{op},
+		Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < InvokesPerSessionPerMinute; i++ {
+		if status, _, out := callAs(t, c, "s1", envelope(c, "invoke", "read", Params{"id": "x"})); status != 200 {
+			t.Fatalf("read %d of the budget refused: %d %+v", i+1, status, out)
+		}
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); callAs(t, c, "s2", envelope(c, "invoke", "read", Params{"id": "hold"})) }()
+	<-entered
+	status, header, out := callAs(t, c, "s1", envelope(c, "invoke", "read", Params{"id": "x"}))
+	close(release)
+	<-done
+	if status != 429 || out.Error == nil || out.Error.Code != "rate_limited" || header.Get("Retry-After") != "40" {
+		t.Fatalf("a session over budget was answered on the slot instead: %d %s %+v", status, header.Get("Retry-After"), out)
+	}
+}
+
 // The gate forgets sessions whose minute has passed once it holds more than
 // it needs to, and never forgets one still in its minute.
 func TestTheInvocationGateForgetsPastMinutes(t *testing.T) {
@@ -233,6 +387,28 @@ func TestMalformedAndOversizedEnvelopeNeverAdmitted(t *testing.T) {
 	}
 }
 
+// The CMDB families' identities reach the evidence service from the
+// operation's parameters. With no CMDB cache wired a host the service was
+// handed reads as not configured, and one it was not handed as invalid
+// input, so the two tell the parameter apart from its absence.
+func TestTheStoreOperationHandsTheCMDBIdentitiesOn(t *testing.T) {
+	var inspect Operation
+	for _, op := range StoreOperations(obevidence.New(obevidence.Options{})) {
+		if op.ID == "store.inspect" {
+			inspect = op
+		}
+	}
+	for params, want := range map[string]Params{
+		"host":             {"family": "cmdb_host", "host": "101"},
+		"service_instance": {"family": "cmdb_service_instance", "service_instance": "501"},
+	} {
+		result, _ := inspect.Run(context.Background(), want).Value.(obevidence.Result)
+		if result.Status != "not_configured" {
+			t.Errorf("%s = %+v, want not_configured: the service was not handed the identity", params, result)
+		}
+	}
+}
+
 func TestStableCatalogAndConditionalSchema(t *testing.T) {
 	ops := StoreOperations(obevidence.New(obevidence.Options{}))
 	c := testChannel(t, &testAuth{}, ops...)
@@ -260,6 +436,21 @@ func TestStableCatalogAndConditionalSchema(t *testing.T) {
 		{"store.inspect", Params{"family": "query_cooldown", "query_group": "q", "strategy_id": "1"}, false},
 		{"store.inspect", Params{"family": "target_group", "group_id": "a b"}, false},
 		{"store.inspect", Params{"family": "target_group", "group_id": "a", "strategy_id": "1"}, false},
+		// A Plan's records are named as strategy.get names the Plan: its
+		// object, its object digest and its strategy, with tenant and
+		// business to narrow; a group id is no part of it.
+		{"store.inspect", Params{"family": "gap_marker", "query_group": "q", "object_digest": strings.Repeat("a", 64), "strategy_id": "1"}, true},
+		{"store.inspect", Params{"family": "no_data_memory", "query_group": "q", "object_digest": strings.Repeat("a", 64), "strategy_id": "1", "tenant": "t", "business": "2"}, true},
+		{"store.inspect", Params{"family": "gap_marker", "query_group": "q", "strategy_id": "1"}, false},
+		{"store.inspect", Params{"family": "no_data_memory", "query_group": "q", "object_digest": strings.Repeat("a", 64)}, false},
+		{"store.inspect", Params{"family": "gap_marker", "query_group": "q", "object_digest": strings.Repeat("a", 64), "strategy_id": "1", "group_id": "g"}, false},
+		{"store.inspect", Params{"family": "cmdb_host", "host": "101"}, true},
+		{"store.inspect", Params{"family": "cmdb_host", "host": "192.0.2.10|0"}, true},
+		{"store.inspect", Params{"family": "cmdb_host"}, false},
+		{"store.inspect", Params{"family": "cmdb_host", "host": "101", "strategy_id": "1"}, false},
+		{"store.inspect", Params{"family": "cmdb_service_instance", "service_instance": "501"}, true},
+		{"store.inspect", Params{"family": "cmdb_service_instance", "host": "101"}, false},
+		{"store.inspect", Params{"family": "query_cooldown", "query_group": "q", "object_digest": strings.Repeat("a", 64)}, false},
 	} {
 		if err := validate(c.ops[tc.operation], tc.params); (err == nil) != tc.valid {
 			t.Fatalf("%s %+v: %v", tc.operation, tc.params, err)
@@ -267,7 +458,7 @@ func TestStableCatalogAndConditionalSchema(t *testing.T) {
 	}
 	_, desc := call(t, c, envelope(c, "describe", "store.inspect", nil))
 	encoded, _ := json.Marshal(desc.Result)
-	for _, word := range []string{"allOf", "additionalProperties", "query_progress", "query_cooldown", "uniqueItems", "max_commands"} {
+	for _, word := range []string{"allOf", "additionalProperties", "query_progress", "query_cooldown", "gap_marker", "no_data_memory", "cmdb_host", "cmdb_service_instance", "uniqueItems", "max_commands"} {
 		if !bytes.Contains(encoded, []byte(word)) {
 			t.Fatalf("schema missing %s", word)
 		}

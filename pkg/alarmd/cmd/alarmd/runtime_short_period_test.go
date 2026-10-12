@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 func TestObservedShortPeriodSlotRequiresSuccessfulProgressKind(t *testing.T) {

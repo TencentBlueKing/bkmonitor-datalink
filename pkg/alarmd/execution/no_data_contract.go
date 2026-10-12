@@ -241,12 +241,8 @@ func BuildPlanNoDataMutation(update PlanNoDataMemoryUpdate) (PlanNoDataMutation,
 		GroupCount:             uint32(len(memory)),
 	}
 	if mutation.ReplacesWholeRecord() {
-		// Nothing to take a difference against. What was loaded describes
-		// another record -- the whole-memory one, or no record at all -- so the
+		// Nothing to take a difference against: no record was loaded, so the
 		// statement carries every group and the store replaces what it holds.
-		// Taking the difference anyway is the shape of the defect this guards:
-		// the groups that did not change since the blob would be left out, and
-		// the per-group record would be written holding only the ones that did.
 		loaded = nil
 	}
 	mutation.Set, mutation.Del = noDataMemoryDelta(memory, update.PresentAsOf, loaded, update.LoadedPresentAsOf)
@@ -334,7 +330,7 @@ func (mutation PlanNoDataMutation) validateStatement() error {
 			mutation.SchemaVersion)
 	}
 	switch mutation.DerivedFrom {
-	case NoDataRepresentationNone, NoDataRepresentationWholeMemory, NoDataRepresentationPerGroup:
+	case NoDataRepresentationNone, NoDataRepresentationPerGroup:
 	default:
 		// Not defaulted to the per-group value. That default would make an
 		// unset field mean "this is a delta against the stored record", which

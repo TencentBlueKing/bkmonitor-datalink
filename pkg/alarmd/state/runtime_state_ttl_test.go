@@ -296,6 +296,71 @@ func TestRuntimeApplyRefusesRetentionNoTTLCanSatisfy(t *testing.T) {
 	}
 }
 
+// A retention whose span is past the ceiling is written for its horizon cap
+// when the cap fits: the ceiling bounds the lifetime a key is given, not the
+// span the Plan's window covers. Holding the span against it refused every
+// round of a sixty-hour strategy for a lifetime it was never going to be
+// given. Both sides of the ceiling: a cap exactly at it is written, a cap one
+// second past it is refused the way a span past it is without a horizon.
+func TestRuntimeApplyWritesARetentionPastTheCeilingForItsHorizonCap(t *testing.T) {
+	for _, arm := range []struct {
+		name    string
+		horizon int64
+		want    time.Duration
+		refused bool
+	}{
+		{name: "a cap under the ceiling", horizon: 1800, want: 30 * time.Minute},
+		{name: "a cap exactly at the ceiling", horizon: 3600, want: time.Hour},
+		{name: "a cap one second past the ceiling", horizon: 3601, refused: true},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			backend := newTTLRecordingBackend()
+			store := newBatchStore(t, backend, nil)
+			mutations := seriesMutations(t, 2, applyVersion(), 0)
+			// Two hours of retention against newBatchStore's one-hour ceiling.
+			request := execution.StateApplyRequest{Contract: frozenRef(),
+				Retention: ttlTestRetention(120, time.Minute, 0), Items: mutations, HorizonSeconds: arm.horizon}
+
+			admission, err := store.AdmitRuntime(context.Background(), request)
+			if err != nil {
+				t.Fatalf("AdmitRuntime() error = %v", err)
+			}
+			for index, item := range admission.Items {
+				refused := item.Status == execution.StateAdmissionDeterministicInvalid &&
+					item.ReasonCode == execution.ReasonCode(contract.ReasonStateBudgetExceeded)
+				if refused != arm.refused || (!arm.refused && item.Status != execution.StateAdmissionAccepted) {
+					t.Fatalf("admission item %d = %+v, want refused %t", index, item, arm.refused)
+				}
+			}
+			applied, err := store.ApplyRuntime(context.Background(), request)
+			if err != nil {
+				t.Fatalf("ApplyRuntime() error = %v", err)
+			}
+			if arm.refused {
+				for index, item := range applied.Items {
+					if item.Status != execution.StateApplyDeterministicInvalid ||
+						item.ReasonCode != execution.ReasonCode(contract.ReasonStateBudgetExceeded) {
+						t.Fatalf("apply item %d = %+v, want a deterministic budget rejection", index, item)
+					}
+				}
+				if len(backend.ttls) != 0 {
+					t.Fatal("a refused Plan still reached storage")
+				}
+				return
+			}
+			requireAllStatus(t, applied, execution.StateApplied)
+			if len(backend.ttls) == 0 {
+				t.Fatal("the apply wrote nothing to check a lifetime on")
+			}
+			for index, ttl := range backend.ttls {
+				if ttl != arm.want {
+					t.Fatalf("write %d lives %s, want the horizon cap %s", index, ttl, arm.want)
+				}
+			}
+		})
+	}
+}
+
 // TestRuntimeApplyRequiresPlanRetention keeps the ceiling from becoming a
 // silent fallback: a caller that cannot state what its keys must outlive is
 // rejected outright rather than served 30 days.
@@ -587,4 +652,33 @@ func TestTheHalfStepOffsetSurvivesTheFloorAndTheCeiling(t *testing.T) {
 			t.Fatalf("TTL = %s, want the bounds' 2m0s when no half step fits between them", ttl)
 		}
 	})
+}
+
+// A retention that fits the ceiling without the read hold fits with it: the
+// hold only lengthens the key's life, and near the ceiling it gets what is
+// left below it. Refusing these refused, every round, a Plan that fits.
+func TestARetentionThatFitsWithoutTheReadHoldFitsWithIt(t *testing.T) {
+	const (
+		restartMargin = 10 * time.Minute
+		maximum       = 30 * 24 * time.Hour
+		hold          = 10 * time.Minute
+	)
+	fingerprint := strings.Repeat("a", 64)
+	for _, tc := range []struct {
+		interval    time.Duration
+		first, last uint32
+	}{{time.Minute, 43_180, 43_190}, {5 * time.Minute, 8_636, 8_638}} {
+		for points := tc.first; points <= tc.last; points++ {
+			requirement := NewLevelRequirement(execution.StateRetentionRequirement{LevelID: 1, RetentionPoints: points, EvaluationInterval: tc.interval},
+				fingerprint, 1)
+			without, err := StateTTL([]LevelRequirement{requirement}, restartMargin, time.Minute, maximum)
+			if err != nil {
+				t.Fatalf("%s x %d does not fit even without the hold: %v", tc.interval, points, err)
+			}
+			with, err := StateTTL([]LevelRequirement{requirement}, restartMargin, time.Minute, maximum, hold)
+			if err != nil || with != min(without+hold, maximum) {
+				t.Fatalf("%s x %d with the hold = %s %v; want %s", tc.interval, points, with, err, min(without+hold, maximum))
+			}
+		}
+	}
 }

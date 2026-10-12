@@ -141,8 +141,9 @@ func TestPlanSlotProducesSeriesAndTheMemoryToStore(t *testing.T) {
 	if result.Outcome != OutcomeEvaluated {
 		t.Fatalf("outcome = %q, want %q", result.Outcome, OutcomeEvaluated)
 	}
-	if len(result.Series) != 2 {
-		t.Fatalf("series = %+v, want one per judged host", result.Series)
+	// One per judged host, and the whole item's NORMAL: the round had data.
+	if len(result.Series) != 3 {
+		t.Fatalf("series = %+v, want one per judged host and one for the whole item", result.Series)
 	}
 	if result.Mutation == nil {
 		t.Fatal("a round that judged two hosts stored nothing")
@@ -276,8 +277,8 @@ func TestPlanSlotWritesNothingWhenTheMemoryDidNotMove(t *testing.T) {
 	}
 	// It still produced the series - the trigger needs a point every round, and
 	// skipping the write is about the store, not about the evaluation.
-	if len(repeat.Series) != 2 {
-		t.Fatalf("series = %d, want one per judged host even when nothing is written", len(repeat.Series))
+	if len(repeat.Series) != 3 {
+		t.Fatalf("series = %d, want one per judged host and the whole item even when nothing is written", len(repeat.Series))
 	}
 }
 
@@ -333,56 +334,5 @@ func TestPlanSlotStoresOnlyGroupsThatRememberSomething(t *testing.T) {
 	}
 	if groups[0].GroupKey != "a" || groups[1].GroupKey != "c" {
 		t.Fatalf("stored groups = %+v, want canonical order", groups)
-	}
-}
-
-// A Plan whose memory is still in the old record derives a round like any
-// other, including the round where nothing reports.
-//
-// The old record has no present-as-of field. Reading the absent field as zero
-// made every group in it look like it had been seen after the Plan last had
-// data, and the derivation refused its own memory -- so a Plan on the old
-// record stopped remembering anything at exactly the moment absence was being
-// detected, and reported the round as skipped instead. The value is derived
-// from the record instead, and this is the round that proves it: nothing
-// reports, so nothing moves the present-as-of forward and the stored one has
-// to stand on its own.
-func TestAPlanStillOnTheOldRecordDerivesARoundWhereNothingReports(t *testing.T) {
-	// What the store hands back for a whole-memory record: the groups it holds,
-	// and the newest last-seen time among them as the round the Plan last had
-	// data in.
-	snapshot := storedSnapshot(t, 940,
-		execution.NoDataGroupMemory{
-			GroupKey: hostTargetGroup(HostIdentity{IP: "10.0.0.1", CloudID: "0"}).Key(), LastSeen: 940},
-		execution.NoDataGroupMemory{
-			GroupKey: hostTargetGroup(HostIdentity{IP: "10.0.0.2", CloudID: "0"}).Key(),
-			LastSeen: 880, FirstAbsent: 940},
-	)
-	snapshot.Representation = execution.NoDataRepresentationWholeMemory
-	snapshot.SchemaVersion = execution.NoDataMemorySchemaV1
-
-	result, err := EvaluatePlanSlot(planSlotInput(snapshot))
-	if err != nil {
-		t.Fatalf("EvaluatePlanSlot() error = %v; a Plan on the old record cannot derive its round, which "+
-			"is every no-data Plan in a fleet that has just upgraded", err)
-	}
-	if result.Outcome != OutcomeEvaluated {
-		t.Fatalf("outcome = %q, want %q", result.Outcome, OutcomeEvaluated)
-	}
-	if result.Mutation == nil {
-		t.Fatal("the round derived no memory to store")
-	}
-	if result.Mutation.DerivedFrom != execution.NoDataRepresentationWholeMemory {
-		t.Fatalf("statement derived-from = %q, want the record it was actually read out of; a statement "+
-			"that claims the other record is applied as a difference from something empty",
-			result.Mutation.DerivedFrom)
-	}
-	if result.Mutation.PresentAsOf != 940 {
-		t.Fatalf("present as of = %d, want the stored 940 carried forward by a round that saw nothing",
-			result.Mutation.PresentAsOf)
-	}
-	if len(result.Mutation.Set) != 2 {
-		t.Fatalf("the statement carries %d groups, want both: it is the whole memory, not a difference "+
-			"from a record the new one does not hold: %+v", len(result.Mutation.Set), result.Mutation.Set)
 	}
 }

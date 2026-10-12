@@ -83,12 +83,12 @@ func TestARecordHeldByACooldownIsTheCooldownsAfterTheObjectLeavesThePool(t *test
 		t.Fatalf("rows under AFTER_COOLDOWN = %+v, want the object that left the pool with its held-by", rows)
 	}
 	// The load reading counts it in progress and names it apart.
-	load := LoadOf(view, at)
+	load := ReplicaPartOf(*view, at).Load(view)
 	if load.Loss.State != LossInProgress || load.Loss.AfterCooldown != 1 || load.Loss.Ongoing != 2 {
 		t.Fatalf("load loss = %+v", load.Loss)
 	}
 	// And the census the metric family exports agrees with the lines.
-	census, unknown := LossCensus(view, at)
+	census, unknown := lossCensus(view, at)
 	if census[LossAfterCooldown] != 1 || census[LossOngoing] != 2 || census[LossHistorical] != 1 || census[LossWhileDemoted] != 1 || census[LossAfterRestart] != 0 || unknown != 0 {
 		t.Fatalf("census = %v unknown %d", census, unknown)
 	}
@@ -155,7 +155,7 @@ func TestTheRestartGraceIsAnchoredAtTheProcessStartAndAtTheFirstSightOfTheObject
 	if sight := byObject["qg-sight-only"].Skip; sight == nil || sight.RestartOffsetSeconds != nil || sight.TakeoverOffsetSeconds == nil || *sight.TakeoverOffsetSeconds != 60 {
 		t.Fatalf("sight-only offsets = %+v, want only the takeover offset, 60 s", sight)
 	}
-	census, unknown := LossCensus(view, at)
+	census, unknown := lossCensus(view, at)
 	if census[LossAfterRestart] != 3 || census[LossOngoing] != 2 || unknown != 1 {
 		t.Fatalf("census = %v unknown %d, want the recent unjudged record counted once", census, unknown)
 	}
@@ -196,4 +196,14 @@ func TestTheSkipRecordCarriesWhatHeldTheSlotAndWhenTheObjectWasFirstSeen(t *test
 	if record := tracker.GapSkips()["qg-expiry"]; record.HeldBy != "query_cooldown" {
 		t.Fatalf("record with the holder on the expiry facts = %+v, want it read", record)
 	}
+}
+
+// lossCensus is the loss census a replica's part carries for view, as the
+// scrape reads it.
+func lossCensus(view *View, now time.Time) (map[Loss]int, int) {
+	part := ReplicaPartOf(*view, now)
+	if part.Metrics == nil {
+		return nil, 0
+	}
+	return part.Metrics.Losses, part.Metrics.GraceUnknown
 }

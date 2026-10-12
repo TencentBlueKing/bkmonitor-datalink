@@ -50,9 +50,6 @@ type chunkStore struct {
 	// third with the key missing, the second moved two revisions ahead under
 	// a newer ApplyVersion, the fourth without saying which comparison.
 	conflictCall int
-	// envelopeReads is what each call reports as its per-key path's envelope
-	// count, by call; a call past the end reports none.
-	envelopeReads []int
 }
 
 func (store *chunkStore) LoadRuntime(context.Context, execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
@@ -83,9 +80,6 @@ func (store *chunkStore) ApplyRuntime(ctx context.Context, request execution.Sta
 	result := execution.StateApplyResult{Items: make([]execution.StateApplyItemResult, len(request.Items))}
 	for index, mutation := range request.Items {
 		result.Items[index] = execution.StateApplyItemResult{Identity: mutation.Identity, Status: execution.StateApplied}
-	}
-	if call <= len(store.envelopeReads) {
-		result.EnvelopeReads = store.envelopeReads[call-1]
 	}
 	switch call {
 	case store.retryableCall:
@@ -311,13 +305,14 @@ func TestAdmitStateChunksAndMeasuresEncodedBytes(t *testing.T) {
 	store := &chunkStore{encodedBytes: 10}
 	fixture := newChunkFixture(store, 8192)
 	mutations := chunkMutations(8193)
-	rejected, encodedBytes, err := fixture.coordinator.admitState(context.Background(), execution.OperationNormal, fixture.contract, chunkRetention, 0, mutations)
+	rejected, encodedBytes, held, err := fixture.coordinator.admitState(context.Background(), execution.OperationNormal, fixture.contract, chunkRetention, 0, mutations)
+	defer held.release()
 	if err != nil || len(rejected) != 0 || store.admitCalls != 2 || len(encodedBytes) != len(mutations) {
 		t.Fatalf("admitState() rejected=%v bytes=%d calls=%d error=%v", rejected, len(encodedBytes), store.admitCalls, err)
 	}
-	for index, size := range encodedBytes {
-		if size != 10 {
-			t.Fatalf("mutation %d encoded bytes = %d, want the store measurement", index, size)
+	for index, admitted := range encodedBytes {
+		if admitted.bytes != 10 {
+			t.Fatalf("mutation %d encoded bytes = %d, want the store measurement", index, admitted.bytes)
 		}
 	}
 	admitted := fixture.chunkObservations(observability.StageStateAdmission)
@@ -491,36 +486,4 @@ func (store *chunkStore) RenewFrozenRuntime(
 	_ context.Context, request execution.FrozenStateRenewalRequest,
 ) (execution.FrozenStateRenewalResult, error) {
 	return freshFrozenRenewals(request), nil
-}
-
-// Each chunk's row carries the envelope count its own store call reported,
-// under its own name and not the preflight's.
-//
-// The count is decided in the store and put on the row here, and a test of
-// the store alone cannot reach this line: dropping it leaves the store's
-// count right and the row empty, which reads as "nothing on this path
-// depends on the envelope" - the one reading the envelope's deletion waits
-// for. Two chunks with different counts, so a row that took another chunk's
-// number or the sum fails.
-func TestEachAppliedChunkCarriesItsOwnEnvelopeCount(t *testing.T) {
-	store := &chunkStore{envelopeReads: []int{3, 0}}
-	fixture := newChunkFixture(store, 8192)
-	if _, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract,
-		fixture.fence, "", chunkRetention, 0, chunkMutations(8192+1), nil); err != nil {
-		t.Fatal(err)
-	}
-	applied := fixture.chunkObservations(observability.StageStateApplied)
-	if len(applied) != 2 {
-		t.Fatalf("state_applied observations = %d, want 2", len(applied))
-	}
-	for index, want := range []int64{3, 0} {
-		counts := applied[index].Counts
-		if counts.EnvelopeReadsApply != want {
-			t.Fatalf("chunk %d envelope_reads_apply = %d, want %d", index, counts.EnvelopeReadsApply, want)
-		}
-		if counts.EnvelopeReads != 0 {
-			t.Fatalf("chunk %d moved the preflight's envelope count to %d: two consumers of one key, two numbers",
-				index, counts.EnvelopeReads)
-		}
-	}
 }

@@ -7,11 +7,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// PreparationByteAdmission binds preparation to the existing Coordinator account.
-func PreparationByteAdmission(coordinator *SlotExecutionCoordinator) func(context.Context, uint64) (func(), error) {
-	return coordinator.reservePreparationBytes
-}
-
 // reservePreparationBytes uses the same process account as input and output
 // retention. It never waits while a caller may already own part of that pool.
 // The owner must drop its references before releasing the reservation.

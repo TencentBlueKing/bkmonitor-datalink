@@ -51,9 +51,17 @@ func TestEveryWindowCountReachesTheObservation(t *testing.T) {
 		case reflect.Slice:
 			// The named windows cross field by field below, since the two
 			// sides are different types; here they only have to be present.
-			if value.Type().Field(i).Name != "Windows" {
+			// The missing minutes are the same type on both sides and cross
+			// as themselves.
+			switch value.Type().Field(i).Name {
+			case "Windows":
+			case "MissingMinutes":
+				field.Set(reflect.ValueOf([]int64{int64(300 + i), int64(360 + i)}))
+			default:
 				t.Fatalf("%s is a slice this test has no fixture for; decide how it crosses", value.Type().Field(i).Name)
 			}
+		case reflect.Bool:
+			field.SetBool(true)
 		default:
 			t.Fatalf("%s is neither a uint32 nor a string; a field of another kind needs a decision "+
 				"about how it crosses, not a silent skip", value.Type().Field(i).Name)
@@ -131,7 +139,7 @@ func TestEveryNamedWindowFieldAndThePrimaryFactReachTheObservation(t *testing.T)
 	window := execution.WindowCoverage{
 		Plan:    execution.PlanIdentity{TenantID: "default", BusinessID: "2", StrategyID: "4101"},
 		LevelID: 5, Series: "abc", Valid: 2, Required: 9, End: 540,
-		Missing: []int64{120, 180}, MissingTotal: 6, Unusable: []int64{240}, UnusableTotal: 1,
+		Missing: []int64{120, 180}, MissingTotal: 6, Unusable: []int64{240}, UnusableTotal: 1, Inactive: []int64{180, 240},
 		Guarded: true, GuardReason: "CONFIG_DRIFT", Fresh: true}
 	facts := historyCoverageFacts(execution.HistoryCoverage{Levels: 1, Short: 1, WorstValid: 2, WorstRequired: 9, Windows: []execution.WindowCoverage{window}})
 	if facts == nil || len(facts.Windows) != 1 {

@@ -39,8 +39,12 @@ func noDataWiredStream(t *testing.T, due execution.DuePlan, store execution.Plan
 	duePlans := []execution.DuePlan{due}
 	return &streamedExecution{
 		coordinator: &SlotExecutionCoordinator{
-			ports:  Ports{NoData: store, Hosts: SharedHostBusiness},
-			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10},
+			ports: Ports{NoData: store, Hosts: SharedHostBusiness},
+			// A budget the coordinator would accept: it refuses a zero cap at
+			// construction, and a zero here would skip every no-data Plan on
+			// whichever cap a case did not set, for a reason no case means.
+			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10,
+				MaxStateMutations: 100, MaxEvents: 100},
 		},
 		header: execution.InternalExecutionHeader{
 			Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans,
@@ -86,7 +90,7 @@ func TestANoDataRoundProducesASeriesTheEvaluationCanRead(t *testing.T) {
 	// would give every no-data alert a deduplication key that no group on the
 	// other side shares.
 	const noDataConfiguredLevel = uint32(2)
-	if levels := entry.due.CompiledPlan.Levels(); len(levels) != 1 ||
+	if levels := entry.due.CompiledPlan.Levels().Copy(); len(levels) != 1 ||
 		levels[0].Definition().LevelID != noDataConfiguredLevel {
 		t.Fatalf("the series carries levels %+v, want only the configured no-data level %d", levels, noDataConfiguredLevel)
 	}
@@ -149,7 +153,7 @@ func TestANoDataRoundStoresWhatItRemembered(t *testing.T) {
 		t.Fatal("a round that judged the item absent stored nothing")
 	}
 	if err := stream.coordinator.applyNoDataMemory(context.Background(),
-		execution.SlotExecutionRequest{Contract: stream.header.Contract},
+		execution.SlotExecutionRequest{Contract: stream.header.Contract}, stream.header.DuePlans,
 		[]execution.PlanNoDataMutation{*round.mutation}); err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +209,7 @@ func TestASyntheticSeriesIsBoundToTheNoDataLevelsOwnEffectiveTime(t *testing.T) 
 		Contract: noDataPreflightContract(t, []execution.DuePlan{due}),
 		DuePlans: []execution.DuePlan{due},
 	}
-	prepared, err := prepareAlwaysEffectiveTimeFacts(context.Background(), header)
+	prepared, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,6 +399,60 @@ func TestAPlanBeyondTheSlotBudgetIsSkippedByNameAndEntirely(t *testing.T) {
 	}
 }
 
+// The no-data Plans share only what the Slot's own series left of each cap
+// their series spend from: one State write per series and at most one event,
+// since a no-data Plan has one Level (decomposition 5.9 item 2). The edge is
+// exact on both sides of both caps: filling what is left fits, one more does
+// not. Counted against the whole cap instead, a Plan beside threshold series
+// that used part of it passes here and is refused by the Slot-wide check,
+// which replaces every Plan's results with a budget gap.
+func TestANoDataPlanSharesOnlyWhatTheSlotsOwnSeriesLeft(t *testing.T) {
+	due := noDataWiredPlan(t)
+	probe := noDataWiredStream(t, due, &emptyNoDataStore{})
+	if err := probe.loadNoDataMemory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	round, err := probe.noDataRoundFor(due, nil, execution.CompletenessFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series := uint64(len(round.series))
+	if series == 0 {
+		t.Fatal("the Plan produced no series, so no budget edge can be read from it")
+	}
+	const spent = 3
+	for name, test := range map[string]struct {
+		effects              effectCounts
+		maxStates, maxEvents uint64
+		want                 nodata.SlotOutcome
+	}{
+		"State writes fill exactly what is left": {effects: effectCounts{states: spent},
+			maxStates: spent + series, maxEvents: 100, want: nodata.OutcomeEvaluated},
+		"State writes one over what is left": {effects: effectCounts{states: spent},
+			maxStates: spent + series - 1, maxEvents: 100, want: nodata.OutcomeSkippedSlotBudget},
+		"events fill exactly what is left": {effects: effectCounts{events: spent},
+			maxStates: 100, maxEvents: spent + series, want: nodata.OutcomeEvaluated},
+		"events one over what is left": {effects: effectCounts{events: spent},
+			maxStates: 100, maxEvents: spent + series - 1, want: nodata.OutcomeSkippedSlotBudget},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stream := noDataWiredStream(t, due, &emptyNoDataStore{})
+			stream.coordinator.ports.State = failingStatePort{}
+			stream.coordinator.budget.MaxStateMutations, stream.coordinator.budget.MaxEvents = test.maxStates, test.maxEvents
+			stream.effects = test.effects
+			if err := stream.loadNoDataMemory(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			// An evaluated Plan reaches the batch, which fails on purpose in
+			// this fixture; the outcome is recorded before it.
+			_ = stream.evaluateNoData(context.Background(), nil, 16)
+			if len(stream.noDataOutcomes) != 1 || stream.noDataOutcomes[0] != test.want {
+				t.Fatalf("outcomes = %+v, want exactly %q", stream.noDataOutcomes, test.want)
+			}
+		})
+	}
+}
+
 // An evaluated Plan spends the budget its series cost, which is visible in what
 // happens to the Plan after it.
 //
@@ -417,7 +475,7 @@ func TestAnEvaluatedPlanSpendsWhatItsSeriesCost(t *testing.T) {
 			// One mutation for the whole Slot: the first Plan's one series fits
 			// and the second Plan's does not.
 			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10,
-				MaxStateMutations: 1},
+				MaxStateMutations: 1, MaxEvents: 1},
 		},
 		header: execution.InternalExecutionHeader{
 			Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans,
@@ -655,7 +713,7 @@ func TestTheCensusCountsTheSlotsOwnNoDataPlans(t *testing.T) {
 	stream := &streamedExecution{
 		coordinator: &SlotExecutionCoordinator{
 			ports:  Ports{NoData: &emptyNoDataStore{}, Hosts: SharedHostBusiness, State: failingStatePort{}},
-			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 1},
+			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 1, MaxEvents: 1},
 		},
 		header: execution.InternalExecutionHeader{
 			Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans,
@@ -696,7 +754,7 @@ func TestTheCensusIsZeroWhenNoPlanDetectsNoData(t *testing.T) {
 	stream := &streamedExecution{
 		coordinator: &SlotExecutionCoordinator{
 			ports:  Ports{NoData: &emptyNoDataStore{}, Hosts: SharedHostBusiness, State: failingStatePort{}},
-			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 8},
+			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 8, MaxEvents: 8},
 		},
 		header: execution.InternalExecutionHeader{
 			Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans,
@@ -719,4 +777,25 @@ func (failingStatePort) RenewFrozenRuntime(
 	_ context.Context, request execution.FrozenStateRenewalRequest,
 ) (execution.FrozenStateRenewalResult, error) {
 	return freshFrozenRenewals(request), nil
+}
+
+// A Slot completed beyond its budget replaces every result with a budget gap,
+// and the no-data memory those results decided goes with them: applied, it
+// would record decisions whose events are never sent.
+func TestASlotCompletedBeyondItsBudgetDiscardsTheNoDataMemoryItsResultsDecided(t *testing.T) {
+	due := noDataWiredPlan(t)
+	stream := noDataWiredStream(t, due, &emptyNoDataStore{})
+	stream.noDataMutations = []execution.PlanNoDataMutation{{Identity: due.NoDataIdentity()}}
+	// The Plan's gap marker as the load would have read it: none yet, so the
+	// budget gap opens one.
+	stream.gaps = execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{Identity: due.GapIdentity(), Status: execution.GapMissing}}}
+	if err := stream.completeBeyondSlotBudget(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(stream.noDataMutations) != 0 {
+		t.Fatalf("no-data memory still queued after the results were discarded: %+v", stream.noDataMutations)
+	}
+	if len(stream.evaluated.Plans) != 1 || stream.evaluated.Plans[0].ReasonCode != execution.ReasonCode(contract.ReasonExecutionBudgetExhausted) {
+		t.Fatalf("results = %+v, want the Plan's budget gap in place of what it decided", stream.evaluated.Plans)
+	}
 }

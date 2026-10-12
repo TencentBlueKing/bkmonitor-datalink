@@ -189,7 +189,7 @@ func TestNoAdmissionGateDeliversEverySeries(t *testing.T) {
 // a plan compiled with a target actually filters at runtime.
 func TestPlanScopesComeFromTheCompiledPlan(t *testing.T) {
 	_, frozen := frozenExecution(t)
-	scopes := buildPlanScopes(frozen.DuePlans, nil)
+	scopes := buildPlanScopes(frozen.DuePlans, nil, nil)
 	if len(scopes) != len(frozen.DuePlans) {
 		t.Fatalf("scopes = %d, due plans = %d", len(scopes), len(frozen.DuePlans))
 	}
@@ -208,5 +208,42 @@ func plannedQueryForTest(requirement execution.DataRequirement) PlannedQuery {
 		Spec: execution.PhysicalQuerySpec{Digest: "physical-1",
 			PlanFacts: execution.QueryPlanFacts{QueryRevision: "revision-1"}},
 		Requirements: []execution.DataRequirement{requirement},
+	}
+}
+
+// tenantRecordingFuller records the tenant each series is enriched for.
+type tenantRecordingFuller struct{ tenants *[]string }
+
+func (tenantRecordingFuller) Name() string { return "tenant_recording" }
+
+func (fuller tenantRecordingFuller) Fill(_ map[string]json.RawMessage, facts *admission.Facts) {
+	*fuller.tenants = append(*fuller.tenants, facts.TenantID)
+}
+
+// A series is enriched for the tenant of the plan it is decided for: the
+// CMDB facts are that tenant's, whose hosts are under keys of their own.
+func TestASeriesIsEnrichedForItsPlansTenant(t *testing.T) {
+	_, frozen := frozenExecution(t)
+	requirement := frozen.Requirements[0]
+	plan := requirement.Consumers[0].Consumer.Plan
+
+	var tenants []string
+	adapter := &seriesAdapter{
+		consumer:  &admissionConsumer{},
+		query:     plannedQueryForTest(requirement),
+		attemptNo: 1,
+		admission: admission.NewChain([]admission.Fuller{tenantRecordingFuller{tenants: &tenants}}, nil),
+		scopes:    planScopes{plan: {TenantID: "tenant-a", StrategyID: plan.StrategyID}},
+	}
+	err := adapter.ConsumeProviderSeries(context.Background(), execution.ProviderSeriesBatch{
+		PhysicalQuery: adapter.query.Spec.Digest, CompletionRef: "result", Dataset: hostSeries(t, "192.0.2.9"),
+		Delivery: execution.SeriesDelivery{PhysicalQuery: adapter.query.Spec.Digest,
+			QueryRevision: adapter.query.Spec.PlanFacts.QueryRevision, Series: 1, Records: 1, Digest: "digest"},
+	})
+	if err != nil {
+		t.Fatalf("consume: %v", err)
+	}
+	if len(tenants) != 1 || tenants[0] != "tenant-a" {
+		t.Fatalf("the series was enriched for tenants %q, want once for tenant-a", tenants)
 	}
 }

@@ -48,6 +48,16 @@ type OverdueWake struct {
 	IntervalSeconds int64
 }
 
+// LateAt says whether the wake is a whole evaluation period late at now: the
+// wakes OverdueAnomalies keeps. One that states no period never is -- its
+// schedule was not read, and there is no period to be late by.
+func (wake OverdueWake) LateAt(now time.Time) bool {
+	if wake.WakeAt.IsZero() || wake.IntervalSeconds <= 0 {
+		return false
+	}
+	return now.Sub(wake.WakeAt) > time.Duration(wake.IntervalSeconds)*time.Second
+}
+
 // OverdueWakeSource is what a scheduler's due index has to be able to answer.
 //
 // It returns entries rather than a count because this reaches the object list,
@@ -77,14 +87,33 @@ type OverdueFacts struct {
 	Truncated bool `json:"truncated,omitempty"`
 	// OldestSeconds is how long the worst one has been waiting.
 	OldestSeconds float64 `json:"oldest_seconds,omitempty"`
-	// MissingPeriod counts entries that arrived without the object's own
-	// evaluation period. There is no ordinary path that produces one -- an
-	// object with no due Plans never gets a wake time written at all -- so a
-	// non-zero here is a defect in whatever wrote the entry, not a state of the
-	// deployment. It is counted rather than left to the defensive default alone,
-	// because that default keeps the object visible and would otherwise make the
-	// defect indistinguishable from ordinary reporting.
-	MissingPeriod int `json:"missing_period,omitempty"`
+	// PeriodUnknown counts the past-wake entries that carry no evaluation
+	// period: the due index writes one for a round that could not read the
+	// object's schedule (a real state, stated on purpose, most often for a
+	// moment after a start). Overdue is a whole period late, so such an entry
+	// is never overdue and never listed; counted here instead, and a count
+	// that stays up is its own finding: a schedule that is not being read.
+	PeriodUnknown int `json:"period_unknown,omitempty"`
+	// PeriodUnknownObjects names them, each with when this replica first saw
+	// it without a period: a count says some schedule is not being read, the
+	// names say which. OverdueAnomalies names every one the index returned;
+	// the publisher dates them all, remembering each until its period
+	// arrives, and publishes the MaxPeriodUnknownObjects longest without one
+	// (LongestWithoutPeriod).
+	PeriodUnknownObjects []PeriodUnknownObject `json:"period_unknown_objects,omitempty"`
+}
+
+// MaxPeriodUnknownObjects bounds the objects OverdueFacts names under
+// PeriodUnknown: a stuck schedule is one or a few objects, and the count
+// carries the rest.
+const MaxPeriodUnknownObjects = 20
+
+// PeriodUnknownObject is one object whose wake carries no period, and since
+// when this replica has seen it so: no guessed duration stands in for the
+// period it does not have, only how long it has gone without one.
+type PeriodUnknownObject struct {
+	QueryGroup string    `json:"query_group"`
+	Since      time.Time `json:"since"`
 }
 
 // OverdueAnomalies turns parked objects into list entries, keeping the ones a
@@ -102,9 +131,10 @@ type OverdueFacts struct {
 // execution is never reported for merely being busy. One whose period is
 // shorter is reported -- correctly, because by then it has missed turns.
 //
-// An object with no period stated is kept once its wake time has passed at all.
-// Dropping it would make a missing field into silence about the object, and
-// silence here is indistinguishable from health.
+// An object whose wake carries no period has no period to be late by: its
+// schedule was not read. It is not listed, not overdue and opens no episode,
+// and is counted under PeriodUnknown, with no guessed duration standing in
+// for the period it does not have.
 func OverdueAnomalies(
 	wakes []OverdueWake,
 	total int,
@@ -118,18 +148,15 @@ func OverdueAnomalies(
 		if wake.QueryGroup == "" || wake.WakeAt.IsZero() {
 			continue
 		}
-		late := now.Sub(wake.WakeAt)
-		if late <= 0 {
+		if wake.IntervalSeconds <= 0 {
+			facts.PeriodUnknown++
+			facts.PeriodUnknownObjects = append(facts.PeriodUnknownObjects, PeriodUnknownObject{QueryGroup: wake.QueryGroup})
 			continue
 		}
-		if period := time.Duration(wake.IntervalSeconds) * time.Second; period > 0 {
-			if late <= period {
-				continue
-			}
-		} else {
-			facts.MissingPeriod++
+		if !wake.LateAt(now) {
+			continue
 		}
-		if late.Seconds() > facts.OldestSeconds {
+		if late := now.Sub(wake.WakeAt); late.Seconds() > facts.OldestSeconds {
 			facts.OldestSeconds = late.Seconds()
 		}
 		anomaly := Anomaly{
@@ -176,11 +203,37 @@ func aggregateOverdue(view *View, snapshots []Snapshot) {
 			overdue = &OverdueFacts{}
 		}
 		overdue.Total += facts.Total
-		overdue.MissingPeriod += facts.MissingPeriod
+		overdue.PeriodUnknown += facts.PeriodUnknown
+		overdue.PeriodUnknownObjects = append(overdue.PeriodUnknownObjects, facts.PeriodUnknownObjects...)
 		overdue.Truncated = overdue.Truncated || facts.Truncated
 		if facts.OldestSeconds > overdue.OldestSeconds {
 			overdue.OldestSeconds = facts.OldestSeconds
 		}
 	}
+	if overdue != nil {
+		overdue.PeriodUnknownObjects = LongestWithoutPeriod(overdue.PeriodUnknownObjects)
+	}
 	view.Overdue = overdue
+}
+
+// LongestWithoutPeriod is the MaxPeriodUnknownObjects of the objects that
+// have gone longest without a period, longest first, and among equal ones in
+// the order given: a replica's list comes oldest wake first, and the replicas'
+// merged in the order the replicas are expected in.
+func LongestWithoutPeriod(objects []PeriodUnknownObject) []PeriodUnknownObject {
+	if len(objects) == 0 {
+		return objects
+	}
+	sorted := append([]PeriodUnknownObject(nil), objects...)
+	sort.SliceStable(sorted, func(left, right int) bool {
+		l, r := sorted[left], sorted[right]
+		if !l.Since.Equal(r.Since) {
+			return l.Since.Before(r.Since)
+		}
+		return false
+	})
+	if len(sorted) > MaxPeriodUnknownObjects {
+		sorted = sorted[:MaxPeriodUnknownObjects]
+	}
+	return sorted
 }

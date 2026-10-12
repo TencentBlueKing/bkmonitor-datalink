@@ -33,7 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
 
-func TestPhaseTwoApplicationHealthUsesWorkerReadinessWithoutKafkaInputState(t *testing.T) {
+func TestPhaseTwoApplicationHealthUsesWorkerReadiness(t *testing.T) {
 	health := newPhaseTwoApplicationHealth()
 	health.Update(phaseTwoReadiness{
 		State: observability.HealthReady, SnapshotReady: true, AssignmentReady: true,
@@ -43,9 +43,6 @@ func TestPhaseTwoApplicationHealthUsesWorkerReadinessWithoutKafkaInputState(t *t
 	snapshot := health.HealthSnapshot()
 	if !snapshot.PhaseTwo || !snapshot.Ready {
 		t.Fatalf("phase-two health = %+v, want ready phase-two worker", snapshot)
-	}
-	if snapshot.AssignedClaims != 0 || snapshot.ConsumerLagKnown || snapshot.ConsumerLagRecords != 0 {
-		t.Fatalf("phase-two health leaked Kafka input claim/lag state: %+v", snapshot)
 	}
 }
 
@@ -72,11 +69,6 @@ func TestNewPhaseTwoApplicationAcceptsOnlyGoAccess(t *testing.T) {
 		t.Fatalf("new phase-two application health = %+v", snapshot)
 	}
 
-	unsupported := goAccess
-	unsupported.Input = config.PhaseTwoInputConfig{Mode: config.InputMode("kafka_compatibility")}
-	if _, err := newPhaseTwoApplication(unsupported); err == nil {
-		t.Fatal("newPhaseTwoApplication() accepted an input mode that is not go_access")
-	}
 }
 
 func TestPhaseTwoCapabilitiesDigestIsStableAndExcludesWorkerIdentity(t *testing.T) {
@@ -175,7 +167,7 @@ func TestRunPhaseTwoApplicationBoundsHTTPShutdownWhenBundleOpenFails(t *testing.
 		if !errors.Is(err, want) || !errors.Is(err, ErrApplicationShutdownTimeout) {
 			t.Fatalf("runPhaseTwoApplicationWithDependencies() error = %v, want open and shutdown timeout", err)
 		}
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(eventWatchdog):
 		close(httpRelease)
 		<-done
 		t.Fatal("bundle open failure waited indefinitely for HTTP shutdown")
@@ -229,7 +221,7 @@ func TestRunPhaseTwoApplicationCancelsWorkerAndMarksFatalWhenHTTPStopsEarly(t *t
 		if !errors.Is(err, want) {
 			t.Fatalf("runPhaseTwoApplicationWithDependencies() error = %v, want HTTP failure", err)
 		}
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(eventWatchdog):
 		cancel()
 		<-done
 		t.Fatal("HTTP runtime stopped but the Worker Bundle kept running")
@@ -536,7 +528,7 @@ func TestPhaseTwoWorkerBundleRunsRetiredBacklogWhenCapacityIsReleased(t *testing
 		select {
 		case queryGroup := <-started:
 			firstTwo[queryGroup] = struct{}{}
-		case <-time.After(time.Second):
+		case <-time.After(signalWaitBound):
 			t.Fatal("timed out waiting for the initial runner fanout")
 		}
 	}
@@ -552,7 +544,7 @@ func TestPhaseTwoWorkerBundleRunsRetiredBacklogWhenCapacityIsReleased(t *testing
 		if queryGroup != "query-group-3-retired-backlog" {
 			t.Fatalf("runner after query-group-2 released = %s, want retired backlog", queryGroup)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("timed out waiting for the retired backlog Query Group")
 	}
 	releaseFirst()
@@ -673,7 +665,7 @@ func TestPhaseTwoWorkerBundleRetriesReadyQueryGroupBeforeFullSweepCompletes(t *t
 	select {
 	case <-retried:
 		retriedBeforeSweepCompleted = true
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(eventWatchdog):
 	}
 	close(blockingRelease)
 	if err := <-done; err != nil {
@@ -730,24 +722,21 @@ func TestPhaseTwoWorkerBundleNextTickReentersNormalQueryGroupBeforeSlowSweepComp
 			"query-group-b-blocking": {runner: blocking},
 		},
 	}
-	backlogProgress := make(chan struct{}, 1)
 	for index := 0; index < 500; index++ {
 		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-c-backlog-%03d", index))
 		bundle.runners[queryGroup] = &phaseTwoQueryGroupLifecycle{runner: &callbackPhaseTwoQueryGroup{
 			run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
-				select {
-				case backlogProgress <- struct{}{}:
-				default:
-				}
 				return execution.SlotExecutionResult{}, false, nil
 			},
 		}}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	wake := make(chan struct{}, 1)
+	// Unbuffered, so a send returns exactly when the dispatcher takes the wake:
+	// every wake counted below is a pass the dispatcher ran.
+	wake := make(chan struct{})
 	done := make(chan error, 1)
-	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	go func() { done <- bundle.runScheduler(ctx, wake, nil, false) }()
 	defer func() {
 		cancel()
 		close(blockingRelease)
@@ -756,37 +745,59 @@ func TestPhaseTwoWorkerBundleNextTickReentersNormalQueryGroupBeforeSlowSweepComp
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("runScheduler(cancel) error = %v, want context canceled", err)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(signalWaitBound):
 			t.Error("persistent dispatcher did not drain after cancellation")
 		}
 	}()
 	wake <- struct{}{}
 	waitSignal(t, firstNormal, "first normal Query Group run")
 	waitSignal(t, blockingStarted, "blocking Query Group")
-	wake <- struct{}{}
-	// This is a 500-QG ordering test, not a one-second throughput contract.
-	// Keep a short stalled-work watchdog and a separate total test bound;
-	// backlog progress alone must never substitute for normal reentry.
-	stalled := time.NewTimer(time.Second)
-	defer stalled.Stop()
-	deadline := time.NewTimer(10 * time.Second)
-	defer deadline.Stop()
-	for {
-		select {
-		case <-secondNormal:
-			return
-		case <-backlogProgress:
-			if !stalled.Stop() {
-				select {
-				case <-stalled.C:
-				default:
+
+	// From here the wake is offered the way the deployment's ticker offers it,
+	// for as long as the normal Query Group has not run again, and each wake
+	// the dispatcher takes is counted. That count is the judgement: a pass
+	// the dispatcher ran, with the chance to begin a generation and queue the
+	// normal Query Group, is the unit, not time. The two bounds this test had
+	// before - wall clock, then ticks of this goroutine - both kept counting
+	// while the dispatcher was not scheduled, and both failed gates on loaded
+	// machines with the dispatcher doing nothing wrong. A process paused, or a
+	// dispatcher starved of the CPU, takes no wake and fails nothing; a
+	// dispatcher that keeps taking wakes and never serves the normal Query
+	// Group again - a sweep barrier, a generation that never begins - runs
+	// out of them and fails here, in as long as it takes to take them.
+	//
+	// The allowance is ten passes per owned Query Group. The normal Query
+	// Group's turn comes within one walk of the owned set once a generation
+	// begins, and a pass takes at most one wake, so the allowance is a
+	// multiple of the most the dispatcher can need, not a tuning of it.
+	allowance := int32(10 * len(bundle.runners))
+	var taken atomic.Int32
+	exhausted := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-secondNormal:
+				return
+			case wake <- struct{}{}:
+				if taken.Add(1) == allowance {
+					close(exhausted)
+					return
 				}
 			}
-			stalled.Reset(time.Second)
-		case <-stalled.C:
-			t.Fatal("normal reentry and backlog processing both stalled")
-		case <-deadline.C:
-			t.Fatal("normal Query Group did not reenter within bounded test window")
+		}
+	}()
+	// A dispatcher that takes no wake at all and runs nothing is a deadlock,
+	// not an ordering failure; the test binary's own timeout reports it, with
+	// every goroutine's stack.
+	select {
+	case <-secondNormal:
+	case <-exhausted:
+		select {
+		case <-secondNormal:
+		default:
+			t.Fatalf("the dispatcher took %d wakes and did not run the normal Query Group again", allowance)
 		}
 	}
 }
@@ -836,7 +847,7 @@ func TestPhaseTwoWorkerBundleNormalQueueRotatesPastFastPrefixAcrossTicks(t *test
 	defer cancel()
 	wake := make(chan struct{})
 	done := make(chan error, 1)
-	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	go func() { done <- bundle.runScheduler(ctx, wake, nil, false) }()
 	wake <- struct{}{}
 	target := execution.QueryGroupIdentity("query-group-09")
 	reachedTarget := false
@@ -850,7 +861,7 @@ func TestPhaseTwoWorkerBundleNormalQueueRotatesPastFastPrefixAcrossTicks(t *test
 			}
 			wake <- struct{}{}
 			release <- struct{}{}
-		case <-time.After(time.Second):
+		case <-time.After(signalWaitBound):
 			cancel()
 			t.Fatal("normal dispatcher stopped making progress")
 		}
@@ -867,7 +878,7 @@ func TestPhaseTwoWorkerBundleNormalQueueRotatesPastFastPrefixAcrossTicks(t *test
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("normal dispatcher did not drain after cancellation")
 	}
 }
@@ -913,14 +924,14 @@ func TestPhaseTwoWorkerBundleDelayedQueueKeepsEarliestReadyQueryGroups(t *testin
 	defer cancel()
 	wake := make(chan struct{}, 1)
 	done := make(chan error, 1)
-	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	go func() { done <- bundle.runScheduler(ctx, wake, nil, false) }()
 	wake <- struct{}{}
 	select {
 	case queryGroup := <-started:
 		if queryGroup != target {
 			t.Fatalf("first delayed Query Group = %s, want %s", queryGroup, target)
 		}
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(eventWatchdog):
 		t.Fatal("ready Query Group was hidden behind a full future delayed queue")
 	}
 	cancel()
@@ -929,7 +940,7 @@ func TestPhaseTwoWorkerBundleDelayedQueueKeepsEarliestReadyQueryGroups(t *testin
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("delayed dispatcher did not stop after cancellation")
 	}
 }
@@ -991,7 +1002,7 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 	done := make(chan error, 1)
 	dispatcher := newPhaseTwoRunnerDispatcher(bundle, false)
 	dispatcher.start(ctx)
-	go func() { done <- dispatcher.run(ctx, wake) }()
+	go func() { done <- dispatcher.run(ctx, wake, nil) }()
 	wake <- struct{}{}
 	waitSignal(t, holderStarted, "first-attempt Replay")
 
@@ -1049,7 +1060,7 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 	for index := 0; index < 2; index++ {
 		select {
 		case <-recoveryRan:
-		case <-time.After(time.Second):
+		case <-time.After(signalWaitBound):
 			cancel()
 			t.Fatal("recovery Runner was blocked by another Runner holding query recovery allowance")
 		}
@@ -1066,7 +1077,7 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("dispatcher(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("dispatcher did not drain recovery after cancellation")
 	}
 	dispatcher.stop()
@@ -1110,7 +1121,7 @@ func TestPhaseTwoWorkerBundleSchedulerCancellationStopsAdmissionAndDrainsInfligh
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduledOnce(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("dispatcher did not drain canceled inflight Query Groups")
 	}
 	if got := queuedCalls.Load(); got != 0 {
@@ -1209,6 +1220,10 @@ func TestPhaseTwoWorkerBundleRunKeepsControlTicksActiveWhileSchedulerIsBusy(t *t
 		t.Run(test.name, func(t *testing.T) {
 			cfg := validGoAccessRuntimeConfig()
 			cfg.PhaseTwo.Scheduler.TickInterval = config.Duration(time.Millisecond)
+			// The busy Slot only returns when cancelled, which a stop does at
+			// its drain deadline (design 02 §6.6); a short one keeps the
+			// test about the ticks.
+			cfg.ShutdownTimeout = config.Duration(200 * time.Millisecond)
 			test.configure(&cfg)
 			queryGroup := execution.QueryGroupIdentity("query-group-busy")
 			var schedulerBusy atomic.Bool
@@ -1244,7 +1259,7 @@ func TestPhaseTwoWorkerBundleRunKeepsControlTicksActiveWhileSchedulerIsBusy(t *t
 				if err != nil {
 					t.Fatalf("Run(cancel) error = %v", err)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(signalWaitBound):
 				t.Fatal("Run did not stop after scheduler and control cancellation")
 			}
 		})
@@ -2157,17 +2172,27 @@ func TestPhaseTwoWorkerBundleObservesLifecycleWithoutInventingSlotTransitions(t 
 		ownershipTransition := observation.Component == observability.ComponentOwnership &&
 			(observation.Stage == observability.StageAssignmentAcquired || observation.Stage == observability.StageAssignmentLost ||
 				observation.Stage == observability.StageTakeoverStarted || observation.Stage == observability.StageTakeoverCompleted)
-		if ownershipTransition {
+		applied := observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageAssignmentApplied
+		switch {
+		case ownershipTransition:
 			if observation.Trace.QueryGroupKey != "query-group-1" || observation.Trace.OwnerID != cfg.PhaseTwo.Worker.ID {
 				t.Fatalf("ownership lifecycle observation lacks diagnostic identity: %+v", observation)
 			}
-		} else if observation.Trace.QueryGroupKey != "" || observation.Trace.OwnerID != "" {
+		case applied:
+			// The assignment change's one line names the Worker and, in its
+			// facts, the Query Groups it took over.
+			facts := observation.AssignmentApplied
+			if observation.Trace.OwnerID != cfg.PhaseTwo.Worker.ID || observation.Trace.QueryGroupKey != "" || facts == nil ||
+				facts.Acquired != 1 || len(facts.AcquiredSample) != 1 || facts.AcquiredSample[0] != "query-group-1" {
+				t.Fatalf("assignment change observation = %+v, want the Worker and the one Query Group taken over", observation)
+			}
+		case observation.Trace.QueryGroupKey != "" || observation.Trace.OwnerID != "":
 			t.Fatalf("non-ownership lifecycle observation leaked business identity: %+v", observation)
 		}
 	}
 	for _, want := range []observability.Stage{
 		observability.Stage(observability.StageStartup), observability.StageConfigLoaded,
-		observability.StageSnapshotRefreshed, observability.StageAssignmentAcquired,
+		observability.StageSnapshotRefreshed, observability.StageAssignmentAcquired, observability.StageAssignmentApplied,
 		observability.Stage(observability.StageShutdown),
 	} {
 		if !containsStage(stages, want) {
@@ -2312,11 +2337,18 @@ type fakePhaseTwoOwnership struct {
 	beforeRegister func(ownership.WorkerRegistration)
 	// registerHook may reject or block one registration. It runs before the
 	// registration is recorded and receives the per-attempt context.
-	registerHook  func(context.Context, ownership.WorkerRegistration) error
-	assigned      []execution.QueryGroupIdentity
-	runner        phaseTwoQueryGroupRuntime
-	runners       map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime
-	openErrors    map[execution.QueryGroupIdentity]error
+	registerHook func(context.Context, ownership.WorkerRegistration) error
+	assigned     []execution.QueryGroupIdentity
+	runner       phaseTwoQueryGroupRuntime
+	runners      map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime
+	openErrors   map[execution.QueryGroupIdentity]error
+	// opens counts OpenQueryGroup calls, refused ones included, and the call
+	// numbered failOpenAt fails with failOpenErr; loadOpened, when set, is
+	// called with each LoadOpened's Query Groups.
+	opens         int
+	failOpenAt    int
+	failOpenErr   error
+	loadOpened    func([]execution.QueryGroupIdentity)
 	follower      bool
 	controlLeader int
 	published     int
@@ -2430,6 +2462,10 @@ func (owner *fakePhaseTwoOwnership) OpenQueryGroup(
 ) (phaseTwoQueryGroupRuntime, error) {
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
+	owner.opens++
+	if owner.failOpenAt != 0 && owner.opens == owner.failOpenAt {
+		return nil, owner.failOpenErr
+	}
 	if err := owner.openErrors[queryGroup]; err != nil {
 		return nil, err
 	}
@@ -2440,6 +2476,17 @@ func (owner *fakePhaseTwoOwnership) OpenQueryGroup(
 		return owner.runners[queryGroup], nil
 	}
 	return owner.runner, nil
+}
+
+// LoadOpened reads nothing: no read hold is kept here. A test that hooks it
+// sees the Query Groups each round passed.
+func (owner *fakePhaseTwoOwnership) LoadOpened(_ context.Context, queryGroups []execution.QueryGroupIdentity) {
+	owner.mu.Lock()
+	hook := owner.loadOpened
+	owner.mu.Unlock()
+	if hook != nil {
+		hook(queryGroups)
+	}
 }
 
 func (owner *fakePhaseTwoOwnership) Close() error {
@@ -2479,6 +2526,7 @@ type fakePhaseTwoQueryGroup struct {
 	mu            sync.Mutex
 	runCalls      int
 	releaseCalls  int
+	releaseErr    error
 	leaseErr      error
 	leaseRelease  chan struct{}
 	leaseStarted  chan struct{}
@@ -2544,6 +2592,12 @@ func (runner *callbackPhaseTwoQueryGroup) DueBound() scheduler.RunnerDueBound {
 	}
 	return runner.dueBound()
 }
+
+func (*callbackPhaseTwoQueryGroup) DeclineHung(time.Time, time.Duration) (string, time.Time, bool) {
+	return "", time.Time{}, false
+}
+
+func (*callbackPhaseTwoQueryGroup) ExecutionDeadline() time.Time { return time.Time{} }
 
 func (*callbackPhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
 	<-ctx.Done()
@@ -2616,7 +2670,7 @@ func (runner *fakePhaseTwoQueryGroup) Release(context.Context) error {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
 	runner.releaseCalls++
-	return nil
+	return runner.releaseErr
 }
 
 func (runner *fakePhaseTwoQueryGroup) releaseCount() int {
@@ -2643,11 +2697,23 @@ func waitForRunnerCalls(t *testing.T, runner *fakePhaseTwoQueryGroup, count int)
 	t.Fatalf("timed out waiting for %d runner calls; got %d", count, runner.runCount())
 }
 
+// waitSignal waits for a signal the case knows is coming. The bound only
+// decides how long a broken case takes to fail, so it is the ten seconds
+// waitFor uses rather than one: under the race detector with the whole
+// module testing beside it, a goroutine can take more than a second to
+// reach the point it signals from, and the case failed there on a run
+// that was otherwise correct.
+// signalWaitBound bounds a wait for a signal a case knows is coming. It only
+// decides how long a broken case takes to fail, and no case relies on it
+// being short, so it is long enough for a run with the whole module testing
+// beside it: one second was not.
+const signalWaitBound = 10 * time.Second
+
 func waitSignal(t *testing.T, signal <-chan struct{}, name string) {
 	t.Helper()
 	select {
 	case <-signal:
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatalf("timed out waiting for %s", name)
 	}
 }
@@ -2717,15 +2783,6 @@ func schedulerFailureObservations(observations []observability.Observation) []ob
 // already run, because the snapshot destination is never what is under test.
 func withCompatibilityOutput(cfg *config.Config, address string) {
 	const topic = "alarmd_0bkmonitor_backend_event"
-	present := false
-	for _, allowed := range cfg.Kafka.AllowedOutputTopics {
-		if allowed == topic {
-			present = true
-		}
-	}
-	if !present {
-		cfg.Kafka.AllowedOutputTopics = append(cfg.Kafka.AllowedOutputTopics, topic)
-	}
 	cfg.Kafka.LegacyAdapter.Topic = topic
 	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "alarmd-compatibility-test"
 	connection := cfg.Redis.Connection()
@@ -2742,10 +2799,8 @@ func validGoAccessRuntimeConfig() config.Config {
 	// settled-run helper serves the control stream there when a case runs
 	// Slots, since batch 4b executes only from an installed view.
 	cfg.HTTP.Listen = reserveBundleAddress()
-	accessBKData := false
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"
-	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event", "alarmd_0bkmonitor_backend_event"}
 	// Every deployment carries the compatibility output: a strategy without a
 	// frozen revision selects that protocol, and its snapshot is written before
 	// the event is published. Tests that open a bundle point the service Redis
@@ -2765,10 +2820,6 @@ func validGoAccessRuntimeConfig() config.Config {
 	cfg.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
 	cfg.PhaseTwo.Control.ProviderRoute = "unify-query-primary"
 	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = &accessBKData
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = []string{}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter = config.PhaseTwoRuntimeFilterConfig{FieldName: "device_type", Values: []string{}}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemNetworkFilter = config.PhaseTwoRuntimeFilterConfig{FieldName: "device_name", Values: []string{}}
 	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
 	cfg.PhaseTwo.Access.QuerySource = "alarmd"
 	return cfg
@@ -2857,7 +2908,20 @@ func TestPhaseTwoWorkerBundleRegistrationRenewalCutsHungStoreCall(t *testing.T) 
 	waitPhaseTwoCondition(t, 3*time.Second, "READY renewals after the hung call", func() bool {
 		return readyRegistrationCount(owner) >= readyBefore+2
 	})
-	if !hasRegistrationRenewalObservation(observations(), observability.ResultFailed, phaseTwoControlDependencyReason) {
+	// The failure is observed by the goroutine whose call hung, after the
+	// call returns. That is the renewal loop or the control round's first
+	// READY registration, whichever reached the store first; in the second
+	// case the renewal loop goes on beside it, and the renewals above can
+	// land before the control round is scheduled to record its failure.
+	// So the observation is waited for, not read at one instant.
+	failureObserved := func() bool {
+		return hasRegistrationRenewalObservation(observations(), observability.ResultFailed, phaseTwoControlDependencyReason)
+	}
+	deadline := time.Now().Add(eventWatchdog)
+	for !failureObserved() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !failureObserved() {
 		t.Fatalf("observations = %+v, want a retryable registration renewal failure", observations())
 	}
 	if snapshot := health.HealthSnapshot(); snapshot.State == observability.HealthNotReady {
@@ -2990,3 +3054,17 @@ func waitPhaseTwoCondition(t *testing.T, timeout time.Duration, name string, con
 	}
 	t.Fatalf("timed out waiting for %s", name)
 }
+
+// eventWatchdog is how long a test waits for something it expects to happen
+// before calling it missing. It bounds a hang, not a speed: these waits ran
+// at 20 to 200 ms, and on a machine busy with other test runs the process
+// stalls longer than that while nothing is wrong, which failed them. The
+// property each one guards - the event comes at all while the test holds
+// the rest still - is the same at ten seconds.
+const eventWatchdog = 10 * time.Second
+
+func (*fakePhaseTwoQueryGroup) DeclineHung(time.Time, time.Duration) (string, time.Time, bool) {
+	return "", time.Time{}, false
+}
+
+func (*fakePhaseTwoQueryGroup) ExecutionDeadline() time.Time { return time.Time{} }

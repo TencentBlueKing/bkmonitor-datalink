@@ -107,7 +107,7 @@ stdout 是一个 JSON 对象（`--help` 除外），进度和提示写在 stderr
 
 **策略配置为什么被拒或被改写**
 
-1. `invoke strategy.get`，输入 `{"strategy_id":"<strategy_id>"}`：看 `dispositions` 里每条的 `disposition`（例如 `CONFIG_REJECTED`、`UNSUPPORTED_PHASE2_CAPABILITY`、`CONFIG_NORMALIZED`）、`reason`、`field_path` 和 `detail`。
+1. `invoke strategy.get`，输入 `{"strategy_id":"<strategy_id>"}`：看 `dispositions` 里每条的 `disposition`（例如 `CONFIG_REJECTED`、`UNSUPPORTED_PHASE2_CAPABILITY`、`CONFIG_NOTED`）、`reason`、`field_path` 和 `detail`。
 2. `invoke strategy.config`，输入 `{"view":"source","strategy_id":"<strategy_id>"}`：读当前策略缓存里的配置（`value`；凭据类字段已省略，省略了什么记在 `omitted`），按 `field_path` 对照被拒的字段。要读已发布的不可变对象时用 `view=published`：必填 `strategy_id`、`query_group`、`object_digest`，可选 `business`、`tenant`，都取自 strategy.get 的 `plans[]`；strategy.get 的 `next_call` 里 `view=published` 的那一项已经带齐，直接用它的 `params`。
 
 **数据是否迟到、首读是否读早**

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"testing"
 	"time"
 
@@ -130,25 +131,30 @@ func TestTheStartupWaitRetriesCountsAndStopsOnAnAnswerOrARefusal(t *testing.T) {
 	}
 }
 
-// The delay doubles to its ceiling and no further.
+// The delay doubles to its ceiling and no further. The delays are the ones
+// the waiter asked for, not gaps read off the wall clock: under a loaded
+// test run a timer's goroutine woke more than half a delay late, and a gap
+// read that way failed on the scheduler, not on the backoff. That the delay
+// is actually waited out is TestTheStartupWaitEndsWithTheProcess's, on the
+// timer.
 func TestTheStartupWaitBacksOffToItsCeiling(t *testing.T) {
-	waiter := startupWaiter{initial: 50 * time.Millisecond, ceiling: 100 * time.Millisecond}
-	var at []time.Time
-	_ = waiter.await(context.Background(), "redis_source", func(context.Context) error {
-		at = append(at, time.Now())
-		if len(at) < 6 {
+	var delays []time.Duration
+	waiter := startupWaiter{initial: 50 * time.Millisecond, ceiling: 100 * time.Millisecond,
+		pause: func(_ context.Context, delay time.Duration) error { delays = append(delays, delay); return nil }}
+	attempts := 0
+	err := waiter.await(context.Background(), "redis_source", func(context.Context) error {
+		if attempts++; attempts < 6 {
 			return io.EOF
 		}
 		return nil
 	})
-	// Without the ceiling the fourth and fifth gaps would be 200ms and 400ms,
-	// past the half-again tolerance.
-	want := []time.Duration{50, 100, 100, 100, 100}
-	for i, floor := range want {
-		gap := at[i+1].Sub(at[i])
-		if gap < floor*time.Millisecond || gap > floor*time.Millisecond*3/2 {
-			t.Fatalf("gap %d = %s, want about %dms (gaps from %v)", i, gap, floor, at)
-		}
+	if err != nil || attempts != 6 {
+		t.Fatalf("err %v after %d attempts, want an answer on the sixth", err, attempts)
+	}
+	// Without the ceiling the fourth and fifth would be 200ms and 400ms.
+	want := []time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond, 100 * time.Millisecond}
+	if !slices.Equal(delays, want) {
+		t.Fatalf("delays = %v, want %v", delays, want)
 	}
 }
 

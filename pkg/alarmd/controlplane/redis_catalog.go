@@ -18,9 +18,8 @@ import (
 )
 
 const (
-	snapshotSchemaVersion         = "alarmd-control-snapshot-v1"
-	activationSchemaVersion       = "alarmd-control-activation-v2"
-	legacyActivationSchemaVersion = "alarmd-control-activation-v1"
+	snapshotSchemaVersion   = "alarmd-control-snapshot-v1"
+	activationSchemaVersion = "alarmd-control-activation-v2"
 )
 
 var (
@@ -79,6 +78,21 @@ type SourceAuditState struct {
 type PlanActivationRecord struct {
 	Fact        execution.PlanActivationFact `json:"fact"`
 	Publication SnapshotPublicationRef       `json:"publication"`
+	// PreviousReadHold locates this Plan's lateness evidence after a query
+	// identity change. It is observational metadata, not activation identity.
+	PreviousReadHold *ReadHoldPredecessorRef `json:"previous_read_hold,omitempty"`
+}
+
+type ReadHoldPredecessorRef struct {
+	QueryGroup execution.QueryGroupIdentity `json:"query_group"`
+	ClosedAt   execution.EvaluationTime     `json:"closed_at"`
+	// PreviousSlot is the Plan's last legal Slot in the Segment it left and
+	// CompletionOffsetMillis its completion offset there, both from the
+	// closed schedule: the deadline the new group's first Slots must not read
+	// ahead of, known without reading the old group's timeline or content.
+	// Zero when that Segment held no Slot of the Plan.
+	PreviousSlot           execution.EvaluationTime `json:"previous_slot,omitempty"`
+	CompletionOffsetMillis int64                    `json:"completion_offset_ms,omitempty"`
 }
 
 // Equal compares by content; the fact carries a pointer, see
@@ -108,11 +122,12 @@ type ActivationState struct {
 	// key of its own. A reader that does not know them ignores them.
 	BlockedCount  int    `json:"blocked_count,omitempty"`
 	BlockedDigest string `json:"blocked_digest,omitempty"`
-	// CutoverProgress is a publication cutover committed in pieces that has
-	// not finished (N15): the Query Groups after its cursor still run the
-	// content they ran before it. Nil everywhere else, and omitted, so a body
-	// without it serializes exactly as before. See activation_head.go.
-	CutoverProgress *CutoverProgress `json:"cutover_progress,omitempty"`
+	// SkippedTimelines is the Query Groups the read that gave a head body its
+	// records back left out, because their timelines did not decode. Never
+	// persisted: it is what this process could not read, not a fact of the
+	// activation. Their records are missing from Plans, which is not their
+	// removal (see Ensure).
+	SkippedTimelines []SkippedTimeline `json:"-"`
 }
 
 type ActivationExpectation struct {
@@ -128,12 +143,19 @@ type RedisCatalogRepository struct {
 	activationCache parsedActivationCache
 	// lastGood is the activation last served under a known header, kept for
 	// RebuildActivationBody; see lastGoodActivation.
-	lastGood      lastGoodActivation
-	rebuilds      activationRebuildCounts
-	blocked       blockedCounts
-	objectCatalog objectCatalogState
-	catalogIndex  catalogIndex
-	contentMemo   publishedContentMemo
+	lastGood lastGoodActivation
+	rebuilds activationRebuildCounts
+	// timelineRepairs is every unreadable timeline this process was asked
+	// to look at, by what became of it; read at scrape time.
+	timelineRepairs timelineRepairCounts
+	// skippedTimelines is every timeline the activation read left out, by
+	// reason, and the ones its last read left out.
+	skippedTimelines skippedTimelineState
+	header           activationHeaderStanding
+	blocked          blockedCounts
+	objectCatalog    objectCatalogState
+	catalogIndex     catalogIndex
+	contentMemo      publishedContentMemo
 	// objectCache is read through objects(): an atomic pointer, so the
 	// cache can be configured, or configured again, while readers are
 	// running. See ConfigureObjectCache.
@@ -144,20 +166,18 @@ type RedisCatalogRepository struct {
 	localView localView
 	// manifestCache and latestPublication bound the two reads the per-Slot
 	// Segment freshness check makes. See segment_freshness_cache.go.
-	manifestCache              catalogManifestCache
-	manifestFlights            catalogManifestFlights
-	latestPublication          latestPublicationMemo
-	freshnessClock             func() time.Time
-	controlCache               *controlReadCache
-	controlReads               controlReadCounters
-	activationBodyBytes        atomic.Int64
-	written                    writtenActivation
-	activeSets                 activeSetCache
-	adoptMu                    sync.Mutex
-	legacyMigrationMaxScanKeys int
-	legacyMigrationTimeout     time.Duration
-	drainingRetireAfter        time.Duration
-	segmentRetention           execution.SlotRetention
+	manifestCache       catalogManifestCache
+	manifestFlights     catalogManifestFlights
+	latestPublication   latestPublicationMemo
+	freshnessClock      func() time.Time
+	controlCache        *controlReadCache
+	controlReads        controlReadCounters
+	activationBodyBytes atomic.Int64
+	written             writtenActivation
+	activeSets          activeSetCache
+	adoptMu             sync.Mutex
+	drainingRetireAfter time.Duration
+	segmentRetention    execution.SlotRetention
 	// contentCutoverVerified is set once this process has read every open
 	// Segment in one cutover and found each naming the content its manifest
 	// names; later cutovers then read only the Query Groups whose content
@@ -207,14 +227,6 @@ func NewRedisCatalogRepository(client redis.Cmdable, prefix string, ttl time.Dur
 			controlTimelineCacheDefaultMaxEntries, controlTimelineCacheDefaultMaxBytes)}, nil
 }
 
-func (repository *RedisCatalogRepository) ConfigureLegacyMigration(maxScanKeys int, timeout time.Duration) error {
-	if repository == nil || maxScanKeys <= 0 || timeout <= 0 {
-		return errors.New("alarmd controlplane: invalid legacy migration bounds")
-	}
-	repository.legacyMigrationMaxScanKeys, repository.legacyMigrationTimeout = maxScanKeys, timeout
-	return nil
-}
-
 func (repository *RedisCatalogRepository) Ping(ctx context.Context) error {
 	if repository == nil || repository.client == nil {
 		return errors.New("alarmd controlplane: Redis catalog repository is required")
@@ -226,11 +238,15 @@ func (repository *RedisCatalogRepository) Ping(ctx context.Context) error {
 // Activation header names, and of nothing else. The Snapshot and the Active
 // Set are content-addressed, so their presence is all the script needs to
 // know about them; the two small mappings are compared by value, and a header
-// that moved means another Activation owns the objects now. The reply carries
-// the Active Set's size for the renewal facts, so the caller never reads it
-// to learn that.
+// that moved means another Activation owns the objects now. A header that is
+// not there at all is told apart from one that moved (-2): nothing moves on
+// from it by itself, and the Control Leader writes it back from the body
+// (RebuildActivationHeader). The reply carries the Active Set's size for the
+// renewal facts, so the caller never reads it to learn that.
 const renewCurrentActivationObjectsScript = `
-if redis.call('GET', KEYS[1]) ~= ARGV[1] then return {0, 0} end
+local header = redis.call('GET', KEYS[1])
+if not header then return {-2, 0} end
+if header ~= ARGV[1] then return {0, 0} end
 if redis.call('EXISTS', KEYS[2]) == 0 or redis.call('GET', KEYS[3]) ~= ARGV[3] or
    redis.call('GET', KEYS[4]) ~= ARGV[4] or redis.call('EXISTS', KEYS[5]) == 0 then return {-1, 0} end
 redis.call('PEXPIRE', KEYS[2], ARGV[2])
@@ -264,7 +280,11 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 	if err != nil {
 		return err
 	}
-	if _, err := repository.LoadCatalogManifest(ctx, state.Current.SnapshotRevision); err != nil {
+	// Decoded once per revision and asked of the store on every round with
+	// an existence check: the whole manifest, most of a megabyte on a few
+	// thousand Query Groups, was read here on every refresh round only to be
+	// dropped.
+	if _, err := repository.retainedCatalogManifest(ctx, state.Current.SnapshotRevision); err != nil {
 		if errors.Is(err, ErrCatalogManifestUnavailable) {
 			return ErrSnapshotUnavailable
 		}
@@ -302,11 +322,20 @@ func (repository *RedisCatalogRepository) RenewCurrentActivationObjects(ctx cont
 			return err
 		}
 		repository.renewObjectCatalog(ctx, state.Current.SnapshotRevision)
+		// The renewal compared the header and found it: whatever this
+		// process last saw of a missing header is over. Without this a
+		// header another writer put back while a rebuild conflicted stayed
+		// "missing" on the fleet until the next activation asked.
+		repository.header.present()
 		metricResult = "success"
 		queryGroups, objectBytes = len(groups), int(activeBytes)
 		return nil
 	case 0:
+		repository.header.conflict(ActivationRenewalHeaderMoved)
 		return ErrActivationConflict
+	case -2:
+		repository.header.conflict(ActivationRenewalHeaderMissing)
+		return ErrActivationHeaderMissing
 	default:
 		return ErrSnapshotUnavailable
 	}
@@ -855,9 +884,11 @@ func (repository *RedisCatalogRepository) LoadActivations(ctx context.Context, r
 
 func validateActivationState(state ActivationState) error {
 	switch state.SchemaVersion {
-	case "", activationSchemaVersion, legacyActivationSchemaVersion, activationHeadSchemaVersion:
+	case "", activationSchemaVersion, activationHeadSchemaVersion:
 	default:
-		return errors.New("alarmd controlplane: unsupported activation schema")
+		// The v1 body a development build wrote before the first release is
+		// among these: no release wrote one, and none is upgraded.
+		return fmt.Errorf("alarmd controlplane: unsupported activation schema %q", state.SchemaVersion)
 	}
 	if state.SchemaVersion == activationSchemaVersion || state.SchemaVersion == activationHeadSchemaVersion {
 		if err := state.ActiveQGSetRef.validate(); err != nil {
@@ -871,9 +902,6 @@ func validateActivationState(state ActivationState) error {
 	}
 	if state.RecordRevision == 0 || state.Current.validate() != nil {
 		return errors.New("alarmd controlplane: incomplete activation state")
-	}
-	if err := state.CutoverProgress.validate(state.Current); err != nil {
-		return err
 	}
 	if state.Pending != nil && state.Pending.validate() != nil {
 		return errors.New("alarmd controlplane: invalid pending snapshot reference")

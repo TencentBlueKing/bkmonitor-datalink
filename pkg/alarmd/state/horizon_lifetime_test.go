@@ -11,6 +11,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -47,6 +48,41 @@ func TestARuntimeLifetimeIsTheRetentionsCappedAtTheHorizonAndFlooredAtOneRound(t
 	}
 	if uncapped <= 200*time.Second {
 		t.Fatalf("setup: the retention's own lifetime %s leaves no room above the horizon under test", uncapped)
+	}
+}
+
+// The deployed shape: fourteen points of a sixty-hour interval are 840 hours,
+// past the 720-hour ceiling, under the platform's one-day horizon. The series'
+// state lives one round past its last write - sixty hours and the restart
+// margin - which fits. An interval longer than the ceiling has no round that
+// fits, and stays refused.
+func TestASixtyHourRetentionPastTheCeilingLivesOneRoundUnderTheHorizon(t *testing.T) {
+	router, err := NewFixedRouter("state-01", newTTLRecordingBackend())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 1 << 20,
+		MaxItemsPerCall: 64, MinTTL: time.Minute, MaxTTL: 720 * time.Hour, RestartMargin: 10 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sixtyHours := ttlTestRetention(14, 60*time.Hour, 0)
+	if _, err := StateTTL([]LevelRequirement{NewLevelRequirement(sixtyHours[0], "", 0)},
+		10*time.Minute, time.Minute, 720*time.Hour); !errors.Is(err, ErrStateBudget) {
+		t.Fatalf("setup: the span alone = %v, want it past the ceiling", err)
+	}
+	got, err := store.runtimeTTL(sixtyHours, 86400)
+	if err != nil {
+		t.Fatalf("runtimeTTL() error = %v, want the horizon cap written", err)
+	}
+	if want := 60*time.Hour + 10*time.Minute; got != want {
+		t.Fatalf("lifetime = %s, want one round and the margin %s", got, want)
+	}
+	if _, err := store.runtimeTTL(ttlTestRetention(2, 721*time.Hour, 0), 86400); !errors.Is(err, ErrStateBudget) {
+		t.Fatalf("an interval past the ceiling = %v, want the budget refusal", err)
+	}
+	if _, err := store.runtimeTTL(sixtyHours, 0); !errors.Is(err, ErrStateBudget) {
+		t.Fatalf("no horizon = %v, want the span held against the ceiling as before", err)
 	}
 }
 

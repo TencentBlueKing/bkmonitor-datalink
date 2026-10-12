@@ -17,6 +17,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
+// mark is a remembered round as rememberRound files it.
+func mark(end int64, kind, reason string, answer *observability.PrimaryInputFacts, inferred bool) roundMark {
+	return roundMark{end: end, kind: roundWordTable.of(kind), reason: roundWordTable.of(reason), answer: answerOf(answer),
+		endInferred: inferred}
+}
+
 func primary(completeness, dataState string) *observability.PrimaryInputFacts {
 	return &observability.PrimaryInputFacts{Completeness: completeness, DataState: dataState}
 }
@@ -80,7 +86,7 @@ func TestEveryHoleIsReadAgainstTheRoundOfItsMinute(t *testing.T) {
 		kind     string
 		inferred bool
 	}{
-		{180, HoleNotInMemory, "", false},
+		{180, HoleBeforeThisProcess, "", false},
 		{300, HoleInputIncomplete, "COMPLETED_WITH_UNAVAILABLE", true},
 		{360, HoleAnsweredEmpty, "FULL_EMPTY_COMPLETED", true},
 		{480, HoleAnsweredWithoutSeries, "FULL_COMPLETED", false},
@@ -96,7 +102,7 @@ func TestEveryHoleIsReadAgainstTheRoundOfItsMinute(t *testing.T) {
 	if window.Holes[1].Reason != "QUERY_TIMEOUT" {
 		t.Fatalf("the incomplete round's hole carries reason %q, want the round's QUERY_TIMEOUT", window.Holes[1].Reason)
 	}
-	if by := window.HolesBy; by != (WindowHoleCounts{AnsweredWithoutSeries: 1, AnsweredEmpty: 1, InputIncomplete: 1, NotInMemory: 1}) {
+	if by := window.HolesBy; by != (WindowHoleCounts{AnsweredWithoutSeries: 1, AnsweredEmpty: 1, InputIncomplete: 1, BeforeThisProcess: 1}) {
 		t.Fatalf("holes by cause = %+v", by)
 	}
 	if window.Verdict != VerdictInputIncomplete {
@@ -116,8 +122,8 @@ func TestEveryHoleIsReadAgainstTheRoundOfItsMinute(t *testing.T) {
 // records each take their own branch.
 func TestTheWindowVerdictIsDecidedFromItsHoles(t *testing.T) {
 	rounds := []roundMark{
-		{slot: 300, end: 240, kind: "FULL_COMPLETED", primary: primary("FULL", "DATA")},
-		{slot: 360, end: 300, kind: "FULL_COMPLETED", primary: primary("FULL", "DATA")},
+		mark(240, "FULL_COMPLETED", "", primary("FULL", "DATA"), false),
+		mark(300, "FULL_COMPLETED", "", primary("FULL", "DATA"), false),
 	}
 	window := func(missing []int64, missingTotal uint32, unusable []int64, unusableTotal uint32) observability.HistoryWindowFact {
 		return observability.HistoryWindowFact{Series: "c", Level: 1, Valid: 9 - missingTotal - unusableTotal, Required: 9, End: 540,
@@ -133,22 +139,22 @@ func TestTheWindowVerdictIsDecidedFromItsHoles(t *testing.T) {
 		"an unusable record":             {window([]int64{240}, 1, []int64{300}, 1), VerdictPointsUnusable},
 		"unusable beside an unseen hole": {window([]int64{120}, 1, []int64{300}, 1), VerdictPointsUnusable},
 	} {
-		rows := windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1, Windows: []observability.HistoryWindowFact{testCase.window}})
+		rows := windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1, Windows: []observability.HistoryWindowFact{testCase.window}}, 0, 0)
 		if len(rows) != 1 || rows[0].Verdict != testCase.verdict {
 			t.Fatalf("%s: rows = %+v, want verdict %s", name, rows, testCase.verdict)
 		}
 	}
 	// An incomplete round outranks everything else on the window.
-	rounds = append(rounds, roundMark{slot: 420, end: 360, kind: "COMPLETED_WITH_UNAVAILABLE", primary: primary("PARTIAL", "DATA")})
+	rounds = append(rounds, mark(360, "COMPLETED_WITH_UNAVAILABLE", "", primary("PARTIAL", "DATA"), false))
 	rows := windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1,
-		Windows: []observability.HistoryWindowFact{window([]int64{120, 240, 360}, 3, []int64{300}, 1)}})
+		Windows: []observability.HistoryWindowFact{window([]int64{120, 240, 360}, 3, []int64{300}, 1)}}, 0, 0)
 	if rows[0].Verdict != VerdictInputIncomplete || rows[0].HolesBy.InputIncomplete != 1 {
 		t.Fatalf("rows = %+v, want INPUT_INCOMPLETE over unusable and unseen", rows)
 	}
 	// A Slot given up without a query carries no primary, and the kind says
 	// why: the minute was not seen whole by this side.
-	rounds = []roundMark{{slot: 300, end: 240, kind: "GAP_SKIPPED", reason: "GAP_SKIPPED"}}
-	rows = windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1, Windows: []observability.HistoryWindowFact{window([]int64{240}, 1, nil, 0)}})
+	rounds = []roundMark{mark(240, "GAP_SKIPPED", "GAP_SKIPPED", nil, false)}
+	rows = windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1, Windows: []observability.HistoryWindowFact{window([]int64{240}, 1, nil, 0)}}, 0, 0)
 	if rows[0].Holes[0].Cause != HoleInputIncomplete || rows[0].Holes[0].Reason != "GAP_SKIPPED" {
 		t.Fatalf("a skipped round's hole = %+v, want INPUT_INCOMPLETE carrying the skip reason", rows[0].Holes[0])
 	}
@@ -157,26 +163,26 @@ func TestTheWindowVerdictIsDecidedFromItsHoles(t *testing.T) {
 	// the observer dropped -- is a minute nobody can speak for. Not this
 	// side's: "the dependency did not answer" and "we did not write down
 	// what it answered" must not share the strongest word.
-	rounds = []roundMark{{slot: 300, end: 240, kind: "FULL_COMPLETED"}}
-	rows = windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1, Windows: []observability.HistoryWindowFact{window([]int64{240}, 1, nil, 0)}})
+	rounds = []roundMark{mark(240, "FULL_COMPLETED", "", nil, false)}
+	rows = windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1, Windows: []observability.HistoryWindowFact{window([]int64{240}, 1, nil, 0)}}, 0, 0)
 	if hole := rows[0].Holes[0]; hole.Cause != HolePrimaryUnrecorded || hole.Round != "FULL_COMPLETED" {
 		t.Fatalf("a round without its primary on record = %+v, want ROUND_PRIMARY_UNRECORDED", hole)
 	}
 	if rows[0].Verdict != VerdictUnknown || rows[0].HolesBy.PrimaryUnrecorded != 1 || rows[0].HolesBy.InputIncomplete != 0 {
 		t.Fatalf("rows = %+v, want UNKNOWN with the unrecorded hole counted on its own", rows)
 	}
-	if windowRows(rounds, nil) != nil || windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1}) != nil {
+	if windowRows(rounds, nil, 0, 0) != nil || windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1}, 0, 0) != nil {
 		t.Fatal("rows were made for a round that named no window")
 	}
 	// A minute both a reported round and an inferred one claim is the
 	// reported round's: a minute a round reported is a fact, an inferred
 	// one an arithmetic.
 	rounds = []roundMark{
-		{slot: 300, end: 240, endInferred: true, kind: "FULL_EMPTY_COMPLETED", primary: primary("FULL", "EMPTY")},
-		{slot: 300, end: 240, kind: "FULL_COMPLETED", primary: primary("FULL", "DATA")},
-		{slot: 360, end: 240, endInferred: true, kind: "FULL_EMPTY_COMPLETED", primary: primary("FULL", "EMPTY")},
+		mark(240, "FULL_EMPTY_COMPLETED", "", primary("FULL", "EMPTY"), true),
+		mark(240, "FULL_COMPLETED", "", primary("FULL", "DATA"), false),
+		mark(240, "FULL_EMPTY_COMPLETED", "", primary("FULL", "EMPTY"), true),
 	}
-	rows = windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1, Windows: []observability.HistoryWindowFact{window([]int64{240}, 1, nil, 0)}})
+	rows = windowRows(rounds, &observability.HistoryCoverageFacts{Levels: 1, Short: 1, Windows: []observability.HistoryWindowFact{window([]int64{240}, 1, nil, 0)}}, 0, 0)
 	if hole := rows[0].Holes[0]; hole.Cause != HoleAnsweredWithoutSeries || hole.Inferred || hole.Round != "FULL_COMPLETED" {
 		t.Fatalf("hole = %+v, want the reported round over the inferred ones either side of it", hole)
 	}

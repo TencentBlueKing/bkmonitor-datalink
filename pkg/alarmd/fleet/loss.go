@@ -235,33 +235,29 @@ func lossRecords(view *View, now time.Time, visit func(queryGroup string, check,
 			// not detection given up, bookkeeping interrupted.
 			check = CheckBookkeepingAbandoned
 		}
-		each(queryGroup, check, "GAP_SKIPPED", skip)
+		// An expired replay's span is recorded under its own word; a gap skip's
+		// Reason is what came before the skip, not the skip's code, and may
+		// itself read SNAPSHOT_UNAVAILABLE, so the span's kind decides.
+		code := "GAP_SKIPPED"
+		if skip.Kind == SkipKindExpiredReplay {
+			code = snapshotUnavailableCompletion
+		}
+		each(queryGroup, check, code, skip)
 	}
 	for queryGroup, pruned := range view.PrunedSkips {
-		each(queryGroup, CheckTimelinePruned, "SCHEDULE_PRUNED", SkippedSpan{FirstSlot: pruned.From, LastSlot: pruned.To,
-			At: pruned.At, Replica: pruned.Replica, Strategies: pruned.Strategies, IntervalSeconds: pruned.IntervalSeconds})
-	}
-}
-
-// LossCensus counts the view's retained records by what each is, every kind
-// present at zero, and how many could not be judged against a restart for
-// want of an anchor. Distinct records, one per object per record kind, the
-// same walk the lines make -- so the family a scrape exports and the counts
-// the page prints come from one reading. Bookkeeping records are not losses
-// of detection and are left out, as the lines leave them out.
-func LossCensus(view *View, now time.Time) (byLoss map[Loss]int, graceUnknown int) {
-	byLoss = make(map[Loss]int, len(Losses))
-	for _, loss := range Losses {
-		byLoss[loss] = 0
-	}
-	lossRecords(view, now, func(_ string, check, _ Check, _ string, skip SkippedSpan, loss Loss, unknown bool) {
-		if check == CheckBookkeepingAbandoned {
-			return
+		// The record's own word decides where it is filed, so a span lost to
+		// a rewritten timeline carries SCHEDULE_REPAIRED and its facets, not
+		// retention's; both are spans the timeline lost, on the same line.
+		code := pruned.Code()
+		check := CheckTimelinePruned
+		if verdict, known := codeChecks[code]; known {
+			if verdict.normal {
+				continue
+			}
+			check = verdict.check
 		}
-		byLoss[loss]++
-		if unknown && now.Sub(skip.At) <= RecentSkipWindow {
-			graceUnknown++
-		}
-	})
-	return byLoss, graceUnknown
+		each(queryGroup, check, code, SkippedSpan{FirstSlot: pruned.From, LastSlot: pruned.To,
+			At: pruned.At, Replica: pruned.Replica, Strategies: pruned.Strategies, IntervalSeconds: pruned.IntervalSeconds,
+			RewrittenAt: pruned.RewrittenAt})
+	}
 }

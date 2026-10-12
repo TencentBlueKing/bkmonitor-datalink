@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -155,13 +156,13 @@ func TestFleetPublisherCarriesTheActivationStanding(t *testing.T) {
 func TestFleetPublisherCarriesTheRebalanceRound(t *testing.T) {
 	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
 	facts := &fleet.RebalanceFacts{PlannedAt: clock.now(), ReadyWorkers: 2, Assigned: 2370, Target: 1185, MostOwned: 2370,
-		MostOwnedBy: "replica-1", LeastOwnedBy: "replica-2", Batch: 23, PlannedMoves: 23, StopSpreadPercent: 5, Shadow: true}
+		MostOwnedBy: "replica-1", LeastOwnedBy: "replica-2", Batch: 23, PlannedMoves: 23, StopSpreadPercent: 5}
 	publisher := fleetPublisher{
 		tracker: fleet.NewTracker(nil, "replica-1", clock.now), replica: "replica-1", now: clock.now,
 		owned:     func() []execution.QueryGroupIdentity { return nil },
 		rebalance: func() *fleet.RebalanceFacts { return facts },
 	}
-	if snapshot := publisher.snapshot(context.Background()); snapshot.Rebalance == nil || *snapshot.Rebalance != *facts {
+	if snapshot := publisher.snapshot(context.Background()); snapshot.Rebalance == nil || !reflect.DeepEqual(*snapshot.Rebalance, *facts) {
 		t.Fatalf("snapshot rebalance = %+v, want the round as given", snapshot.Rebalance)
 	}
 	publisher.rebalance = func() *fleet.RebalanceFacts { return nil }
@@ -175,10 +176,10 @@ func TestFleetPublisherCarriesTheRebalanceRound(t *testing.T) {
 // a fake without the method is a deployment with no round, not a nil
 // dereference.
 func TestBundleReadsTheRebalanceRoundOnlyFromARuntimeThatPlans(t *testing.T) {
-	facts := &fleet.RebalanceFacts{PlannedMoves: 1, MostOwnedBy: "a", LeastOwnedBy: "b", Shadow: true}
+	facts := &fleet.RebalanceFacts{PlannedMoves: 1, MostOwnedBy: "a", LeastOwnedBy: "b"}
 	planning := &planningOwnershipRuntime{fakePhaseTwoOwnership: &fakePhaseTwoOwnership{}, last: facts}
 	bundle := &phaseTwoWorkerBundle{dependencies: phaseTwoWorkerBundleDependencies{Ownership: planning}}
-	if got := bundle.rebalanceFleetFacts(); got == nil || *got != *facts {
+	if got := bundle.rebalanceFleetFacts(); got == nil || !reflect.DeepEqual(*got, *facts) {
 		t.Fatalf("rebalanceFleetFacts() = %+v, want the runtime's round", got)
 	}
 	bundle.dependencies.Ownership = &fakePhaseTwoOwnership{}
@@ -237,9 +238,9 @@ func TestFleetPublisherNamesTheStrategiesOnRetainedRecords(t *testing.T) {
 	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
 	tracker := fleet.NewTracker(nil, "replica-1", clock.now)
 	ctx := observability.ContextWithTraceFields(context.Background(),
-		observability.TraceFields{QueryGroupKey: "qg-skip", EvaluationTime: 100, StrategyID: "1854", BusinessID: "7"})
+		observability.TraceFields{QueryGroupKey: "qg-skip", EvaluationTime: 100, StrategyID: "847", BusinessID: "7"})
 	tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "GAP_SKIPPED",
-		Trace: observability.TraceFields{QueryGroupKey: "qg-skip", StrategyID: "1854", BusinessID: "7"}})
+		Trace: observability.TraceFields{QueryGroupKey: "qg-skip", StrategyID: "847", BusinessID: "7"}})
 	publisher := fleetPublisher{
 		tracker: tracker, replica: "replica-1", now: clock.now,
 		owned:      func() []execution.QueryGroupIdentity { return []execution.QueryGroupIdentity{"qg-skip"} },
@@ -250,31 +251,55 @@ func TestFleetPublisherNamesTheStrategiesOnRetainedRecords(t *testing.T) {
 	if !retained {
 		t.Fatalf("snapshot gap skips = %+v, want qg-skip retained", snapshot.GapSkips)
 	}
-	if len(skip.Strategies) != 1 || skip.Strategies[0].StrategyID != "1854" || skip.Strategies[0].BusinessID != "7" {
-		t.Fatalf("retained record strategies = %+v, want strategy 1854 of business 7", skip.Strategies)
+	if len(skip.Strategies) != 1 || skip.Strategies[0].StrategyID != "847" || skip.Strategies[0].BusinessID != "7" {
+		t.Fatalf("retained record strategies = %+v, want strategy 847 of business 7", skip.Strategies)
 	}
 }
 
 // The standing names the Query Groups the last cutover held back - how many,
-// why and which - from the repository's reading, and says nothing when none
-// were.
+// why, which, and the timeline key to delete for each - from the repository's
+// reading, and says nothing when none were.
 func TestActivationStandingNamesQueryGroupsTheCutoverHeldBack(t *testing.T) {
 	bundle := mustPhaseTwoWorkerBundle(t, validGoAccessRuntimeConfig(), newPhaseTwoApplicationHealth(), &fakePhaseTwoControl{}, &fakePhaseTwoOwnership{})
 	reading := controlplane.ActivationBlockedReading{
 		ByReason: map[string]int{controlplane.CutoverReasonOpenSegmentClosed: 1, controlplane.CutoverReasonOpenDigestMismatch: 2},
 		Samples:  []string{"qg-a:open_digest_mismatch", "qg-b:open_digest_mismatch", "qg-c:open_segment_closed_or_ahead"},
+		Keys:     []string{"p:schedule_timeline:qg-a", "p:schedule_timeline:qg-b", "p:schedule_timeline:qg-c"},
 	}
 	bundle.dependencies.ActivationBlocked = func() controlplane.ActivationBlockedReading { return reading }
 	bundle.activation.attempted = true
 	facts := bundle.activationFleetFacts()
 	if facts == nil || facts.BlockedQueryGroups != 3 ||
 		facts.BlockedReasons != "open_digest_mismatch=2,open_segment_closed_or_ahead=1" ||
-		facts.BlockedSamples != "qg-a:open_digest_mismatch,qg-b:open_digest_mismatch,qg-c:open_segment_closed_or_ahead" {
+		facts.BlockedSamples != "qg-a:open_digest_mismatch,qg-b:open_digest_mismatch,qg-c:open_segment_closed_or_ahead" ||
+		facts.BlockedKeys != "p:schedule_timeline:qg-a,p:schedule_timeline:qg-b,p:schedule_timeline:qg-c" {
 		t.Fatalf("facts = %+v", facts)
 	}
 	reading = controlplane.ActivationBlockedReading{}
-	if facts := bundle.activationFleetFacts(); facts.BlockedQueryGroups != 0 || facts.BlockedReasons != "" || facts.BlockedSamples != "" {
+	if facts := bundle.activationFleetFacts(); facts.BlockedQueryGroups != 0 || facts.BlockedReasons != "" || facts.BlockedSamples != "" || facts.BlockedKeys != "" {
 		t.Fatalf("nothing held back, facts = %+v", facts)
+	}
+}
+
+// The standing names the Query Groups the leader's activation read left out
+// because their timelines did not decode - how many, and which with why -
+// from the repository's reading, in one step for the CLI; and says nothing
+// when none are.
+func TestActivationStandingNamesTheTimelinesTheActivationReadLeftOut(t *testing.T) {
+	bundle := mustPhaseTwoWorkerBundle(t, validGoAccessRuntimeConfig(), newPhaseTwoApplicationHealth(), &fakePhaseTwoControl{}, &fakePhaseTwoOwnership{})
+	reading := controlplane.SkippedTimelinesReading{Total: 3, Named: []controlplane.SkippedTimeline{
+		{QueryGroup: "qg-a", Reason: controlplane.SkippedTimelineUndecodable},
+		{QueryGroup: "qg-b", Reason: controlplane.SkippedTimelineNewerFormat},
+	}}
+	bundle.dependencies.ActivationSkipped = func() controlplane.SkippedTimelinesReading { return reading }
+	bundle.activation.attempted = true
+	facts := bundle.activationFleetFacts()
+	if facts == nil || facts.SkippedTimelines != 3 || facts.SkippedNamed != "qg-a:undecodable,qg-b:newer_format" {
+		t.Fatalf("facts = %+v, want three skipped and the two named with why", facts)
+	}
+	reading = controlplane.SkippedTimelinesReading{}
+	if facts := bundle.activationFleetFacts(); facts.SkippedTimelines != 0 || facts.SkippedNamed != "" {
+		t.Fatalf("nothing skipped, facts = %+v", facts)
 	}
 }
 

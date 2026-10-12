@@ -13,10 +13,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // A no-data round that cannot be worked out is that Plan's outcome, not the
@@ -42,7 +44,7 @@ func TestANoDataRoundThatCannotBeDerivedIsThatPlansOutcome(t *testing.T) {
 	stream := &streamedExecution{
 		coordinator: &SlotExecutionCoordinator{
 			ports:  Ports{NoData: &emptyNoDataStore{}, Hosts: SharedHostBusiness, State: failingStatePort{}},
-			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 8},
+			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 8, MaxEvents: 8},
 		},
 		header: execution.InternalExecutionHeader{
 			Contract: noDataPreflightContract(t, duePlans), DuePlans: duePlans,
@@ -87,6 +89,40 @@ func TestANoDataRoundThatCannotBeDerivedIsThatPlansOutcome(t *testing.T) {
 	}
 }
 
+// The contained failure is reported as the Plan's evaluation with the time
+// its no-data round took, measured: untimed, the cost summary counted it as
+// an evaluation whose cost nobody measured, and its window incomplete.
+func TestANoDataRoundThatCannotBeDerivedIsReportedTimed(t *testing.T) {
+	failing := noDataWiredPlan(t)
+	var observed []observability.Observation
+	stream := &streamedExecution{
+		coordinator: &SlotExecutionCoordinator{
+			ports: Ports{NoData: &emptyNoDataStore{}, Hosts: SharedHostBusiness, State: failingStatePort{},
+				Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { observed = append(observed, o) })},
+			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 8, MaxEvents: 8},
+		},
+		header: execution.InternalExecutionHeader{
+			Contract: noDataPreflightContract(t, []execution.DuePlan{failing}), DuePlans: []execution.DuePlan{failing},
+		},
+	}
+	if err := stream.loadNoDataMemory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stream.noData = dropNoDataMemory(stream.noData, failing.Identity.StrategyID)
+	began := time.Now()
+	_ = stream.evaluateNoData(context.Background(), nil, 16)
+	round := time.Since(began)
+	for _, o := range observed {
+		if o.Stage == observability.StageEvaluationCompleted && o.EvaluationOwner.StrategyID == failing.Identity.StrategyID {
+			if !o.DurationKnown || o.Duration < 0 || o.Duration > round {
+				t.Fatalf("contained failure = duration %v known %v, want its no-data round timed within %v", o.Duration, o.DurationKnown, round)
+			}
+			return
+		}
+	}
+	t.Fatalf("the contained failure was not reported as the Plan's evaluation: %+v", observed)
+}
+
 // A failure this package did not wrap still reaches the Slot.
 //
 // This is what keeps the containment from swallowing everything. A cancelled
@@ -118,4 +154,27 @@ func dropNoDataMemory(loaded execution.NoDataLoadResult, strategyID string) exec
 		}
 	}
 	return kept
+}
+
+// A stored key the no-data package could not have written reaches the Plan's
+// outcome as a derivation failure, by name, and nothing is remembered.
+func TestAStoredKeyThatDoesNotParseIsADerivationFailure(t *testing.T) {
+	due := noDataWiredPlan(t)
+	evaluation := int64(noDataPreflightContract(t, []execution.DuePlan{due}).Slot.EvaluationTime)
+	store := &horizonNoDataStore{
+		groups:  []execution.NoDataGroupMemory{{GroupKey: "bk_target_cloud_id=0,bk_target_ip=192.0.2.9", LastSeen: evaluation - 60}},
+		present: evaluation - 60,
+	}
+	stream := noDataWiredStream(t, due, store)
+	if err := stream.loadNoDataMemory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	round, err := stream.noDataRoundFor(due, nil, execution.CompletenessFull)
+	outcome, local := noDataLocalOutcome(err)
+	if !local || outcome != nodata.OutcomeSkippedDerivationFailed {
+		t.Fatalf("noDataRoundFor() error = %v (outcome %q, local %t), want %s", err, outcome, local, nodata.OutcomeSkippedDerivationFailed)
+	}
+	if round.mutation != nil {
+		t.Fatalf("a round that could not be derived remembered %+v", round.mutation)
+	}
 }

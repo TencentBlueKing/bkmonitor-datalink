@@ -94,3 +94,26 @@ func TestThePlanAtTheRetentionLimitIsServedAndTheOnePastItIsWithheld(t *testing.
 		t.Fatalf("the Plan past the limit is %+v, want it withheld as %s", withheld, contract.ReasonSnapshotRetentionInsufficient)
 	}
 }
+
+// The production Slot source is handed the bound the admission serves a Plan
+// under. It was handed the catalog retention: a sixty-hour Plan was admitted,
+// its content kept, and every Slot of it refused as
+// ErrSnapshotRetentionInsufficient, retrying about once a second from its
+// first Slot on. What is read here is the value the bundle wires in, not a
+// function the test calls itself.
+func TestTheProductionSlotSourceChecksTheRetentionTheAdmissionServes(t *testing.T) {
+	fixture := startCutoverFixture(t, nil)
+	cfg := fixture.cfg
+	wired := fixture.production.dependencies.SnapshotRetention
+	if limit := phaseTwoObjectRetentionLimit(cfg); wired != limit {
+		t.Fatalf("Slot source retention = %s, want the admission's limit %s", wired, limit)
+	}
+	reserve := cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
+	required := phaseTwoSnapshotMinimumRetention(cfg, 216000*time.Second-reserve)
+	if required <= phaseTwoCatalogRetention(cfg) {
+		t.Fatalf("setup: the sixty-hour Plan needs %s, not past the catalog retention %s", required, phaseTwoCatalogRetention(cfg))
+	}
+	if required > wired {
+		t.Fatalf("the sixty-hour Plan the admission serves needs %s, past the %s its Slot source checks", required, wired)
+	}
+}

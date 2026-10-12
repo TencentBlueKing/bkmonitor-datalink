@@ -67,8 +67,9 @@ func produceUpTo(max int16) *sarama.ApiVersionsResponse {
 // The protocol the producer speaks is decided from every broker's own
 // answer: the newest version they all accept, between the floor and the
 // version record headers need. One broker short of headers keeps the whole
-// cluster on the floor, by name; one broker that does not answer decides
-// nothing, and says which.
+// cluster on the floor, by name. A broker that does not answer decides
+// nothing and is named; the brokers that did answer decide, and only a
+// cluster where none answered leaves the protocol undecided.
 func TestTheProtocolIsTheNewestVersionEveryBrokerAccepts(t *testing.T) {
 	t.Parallel()
 
@@ -79,6 +80,7 @@ func TestTheProtocolIsTheNewestVersionEveryBrokerAccepts(t *testing.T) {
 		answers    map[string]*sarama.ApiVersionsResponse
 		errs       map[string]error
 		wantErr    string
+		silent     []string
 		want       string
 		wantHeader bool
 		wantReason string
@@ -90,10 +92,18 @@ func TestTheProtocolIsTheNewestVersionEveryBrokerAccepts(t *testing.T) {
 			want: MinimumBrokerVersion, wantReason: ProtocolReasonUnsupportedByBroker, wantProd: 2},
 		{name: "a broker that names no produce api", answers: map[string]*sarama.ApiVersionsResponse{"a:9092": {ApiVersions: []*sarama.ApiVersionsResponseBlock{{ApiKey: 3, MaxVersion: 4}}}},
 			want: MinimumBrokerVersion, wantReason: ProtocolReasonUnsupportedByBroker, wantProd: 2},
-		{name: "a broker that does not answer", answers: map[string]*sarama.ApiVersionsResponse{"a:9092": produceUpTo(7)},
-			errs: map[string]error{"b:9092": errors.New("dial tcp: connection refused")}, wantErr: "b:9092 did not answer"},
-		{name: "a broker that refuses", answers: map[string]*sarama.ApiVersionsResponse{"a:9092": {Err: sarama.ErrUnsupportedVersion}},
-			wantErr: "a:9092 did not answer"},
+		{name: "a broker that does not answer beside one that takes record batches", answers: map[string]*sarama.ApiVersionsResponse{"a:9092": produceUpTo(7)},
+			errs: map[string]error{"b:9092": errors.New("dial tcp: connection refused")}, silent: []string{"b:9092"},
+			want: RecordHeaderBrokerVersion, wantHeader: true, wantProd: 3},
+		{name: "a broker that does not answer beside one that stops at produce v2", answers: map[string]*sarama.ApiVersionsResponse{"a:9092": produceUpTo(2)},
+			errs: map[string]error{"b:9092": errors.New("dial tcp: connection refused")}, silent: []string{"b:9092"},
+			want: MinimumBrokerVersion, wantReason: ProtocolReasonUnsupportedByBroker, wantProd: 2},
+		{name: "a broker that refuses beside one that answers", answers: map[string]*sarama.ApiVersionsResponse{"a:9092": produceUpTo(3), "b:9092": {Err: sarama.ErrUnsupportedVersion}},
+			silent: []string{"b:9092"}, want: RecordHeaderBrokerVersion, wantHeader: true, wantProd: 3},
+		{name: "the only broker refuses", answers: map[string]*sarama.ApiVersionsResponse{"a:9092": {Err: sarama.ErrUnsupportedVersion}},
+			wantErr: "no broker answered ApiVersions"},
+		{name: "no broker answers", errs: map[string]error{"a:9092": errors.New("dial tcp: connection refused"), "b:9092": errors.New("i/o timeout")},
+			wantErr: "no broker answered ApiVersions"},
 	}
 	for _, test := range cases {
 		test := test
@@ -138,7 +148,20 @@ func TestTheProtocolIsTheNewestVersionEveryBrokerAccepts(t *testing.T) {
 				t.Fatalf("negotiation names configured %s wanted %s produce v%d, want %s / %s / v3",
 					negotiation.Configured, negotiation.Wanted, negotiation.WantedProduceVersion, MinimumBrokerVersion, RecordHeaderBrokerVersion)
 			}
+			if len(negotiation.Brokers) != len(brokers) {
+				t.Fatalf("broker rows = %+v, want one per broker the metadata listed", negotiation.Brokers)
+			}
 			for _, broker := range negotiation.Brokers {
+				silent := false
+				for _, addr := range test.silent {
+					silent = silent || addr == broker.Address
+				}
+				if silent {
+					if broker.Answered || broker.Error == "" || broker.ID <= 0 {
+						t.Fatalf("broker row %+v, want it named by node id as not answering, with the error", broker)
+					}
+					continue
+				}
 				if !broker.Answered || broker.Error != "" || broker.ID <= 0 {
 					t.Fatalf("broker row %+v, want answered with no error and the node id the metadata gave", broker)
 				}
@@ -316,9 +339,9 @@ func TestTheOpenerSpeaksTheVersionTheBrokerAccepts(t *testing.T) {
 	}
 }
 
-// An open that could not decide the protocol is an open failure with the
-// partial answers attached, not a producer on a guess.
-func TestAnOpenWithoutAnAnswerFromEveryBrokerDoesNotGuess(t *testing.T) {
+// An open where no broker answered could not decide the protocol: it is an
+// open failure with the partial answers attached, not a producer on a guess.
+func TestAnOpenNoBrokerAnsweredDoesNotGuess(t *testing.T) {
 	broker := sarama.NewMockBroker(t, 1)
 	defer broker.Close()
 	coordinates := validDecisionSinkConfig()
@@ -392,5 +415,71 @@ func TestTheNegotiationAsksEveryBrokerTheMetadataNamesNotJustTheBootstrap(t *tes
 	}
 	if negotiation.MetadataFrom != bootstrap.Addr() {
 		t.Fatalf("metadata from %q, want the bootstrap address %s", negotiation.MetadataFrom, bootstrap.Addr())
+	}
+}
+
+// A broker the cluster's metadata lists that does not answer at open is
+// named, and the sink opens on what the other brokers answered, so the
+// replica writes. An open that waited for every broker left the whole
+// replica writing nothing for as long as one broker of the cluster was
+// down. The broker that did not answer is on the page as such: the
+// produce-version check fails on it by name.
+func TestAnOpenWithOneBrokerSilentWritesThroughTheOthers(t *testing.T) {
+	bootstrap := sarama.NewMockBroker(t, 1)
+	defer bootstrap.Close()
+	down := sarama.NewMockBroker(t, 2)
+	downAddr, downID := down.Addr(), down.BrokerID()
+	down.Close()
+	coordinates := validDecisionSinkConfig()
+	coordinates.Brokers = []string{bootstrap.Addr()}
+	coordinates.BrokerVersion = MinimumBrokerVersion
+	bootstrap.SetHandlerByMap(map[string]sarama.MockResponse{
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(bootstrap.Addr(), bootstrap.BrokerID()).
+			SetBroker(downAddr, downID).
+			SetLeader(coordinates.OutputTopic, 0, bootstrap.BrokerID()),
+		"ApiVersionsRequest": sarama.NewMockWrapper(produceUpTo(7)),
+		"ProduceRequest":     sarama.NewMockProduceResponse(t).SetVersion(3),
+	})
+	opener, err := PrepareTriggerEventSink(coordinates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink, err := opener.Open()
+	if err != nil {
+		t.Fatalf("Open() error = %v, want the sink open on the broker that answered", err)
+	}
+	defer func() { _ = sink.Close() }()
+	negotiation := sink.ProtocolNegotiation()
+	if negotiation == nil || negotiation.Negotiated != RecordHeaderBrokerVersion || !negotiation.HeadersSupported ||
+		negotiation.ProduceVersion != 3 || len(negotiation.Brokers) != 2 {
+		t.Fatalf("negotiation = %+v, want record headers decided by the broker that answered, both brokers listed", negotiation)
+	}
+	var namedDown bool
+	for _, broker := range negotiation.Brokers {
+		if broker.ID == downID && broker.Address == downAddr && !broker.Answered && broker.Error != "" {
+			namedDown = true
+		}
+	}
+	if !namedDown {
+		t.Fatalf("brokers = %+v, want node %d at %s named as not answering, with its error", negotiation.Brokers, downID, downAddr)
+	}
+
+	standard := triggerEventGolden(t)
+	standard.WireFormat = contract.WireFormatStandardRawEvent
+	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{standard}); err != nil {
+		t.Fatalf("WriteBatch(standard) = %v, want it written through the broker that answered", err)
+	}
+	produces := 0
+	for _, request := range bootstrap.History() {
+		if produce, ok := request.Request.(*sarama.ProduceRequest); ok {
+			produces++
+			if produce.Version != 3 {
+				t.Fatalf("broker received produce v%d, want v3", produce.Version)
+			}
+		}
+	}
+	if produces != 1 {
+		t.Fatalf("broker received %d produce requests, want 1", produces)
 	}
 }

@@ -28,7 +28,7 @@ const ContentSwitchMargin = 5 * time.Second
 // one that then admits a stale owner. decision-016 adds a sixth comparison
 // -- the content scope -- and it is added here once.
 //
-// It defines three functions and nothing else:
+// It defines four functions and nothing else:
 //
 //	redis_now_ms()
 //	    The instant the script is running, in milliseconds, read from the
@@ -50,14 +50,32 @@ const ContentSwitchMargin = 5 * time.Second
 //	    also settles a change that fell due. The scope is an empty string
 //	    until a leader has ever written one.
 //
+//	draining_holder(assignment_key, owner_id, now_ms)
+//	    Whether the record names owner_id as the outgoing holder of a move
+//	    whose grace has not ended (below).
+//
 //	fence_refusal(assignment_key, ownership_key, require_assignment,
 //	              owner_id, epoch, token, content_scope, now_ms)
 //	    nil when the fence holds, otherwise why it does not, decided in this
-//	    order: NOT_DESIRED when the assignment names another worker; STALE
-//	    for a lease that is paused, belongs to someone else, carries another
-//	    epoch or token, or has passed its deadline; CONTENT_MOVED, last, when
-//	    the lease holds but the caller declared a content scope that is
-//	    neither the scope the record names now nor the one it has pending.
+//	    order: NOT_DESIRED when the assignment names another worker and is
+//	    not draining the caller (below); STALE for a lease that is paused,
+//	    belongs to someone else, carries another epoch or token, or has
+//	    passed its deadline; CONTENT_MOVED, last, when the lease holds but
+//	    the caller declared a content scope that is neither the scope the
+//	    record names now nor the one it has pending.
+//
+//	    A record moved to another worker while the caller held a live lease
+//	    names the caller in releasing_worker_id until effective_at_ms (the
+//	    lease deadline at the move plus ContentSwitchMargin). Until then the
+//	    caller is not refused for the move: it is the outgoing holder,
+//	    finishing the commit boundary it is in, and the old lease is the only
+//	    valid owner until it lets go (design 02 §6.2). The grace skips the
+//	    desired-worker comparison and nothing else. The owner, epoch, token
+//	    and deadline comparisons still run on this clock, so a holder whose
+//	    lease lapsed is STALE inside the grace, and once the new owner is
+//	    granted the lease the old triple no longer matches. There is never an
+//	    instant with two writers. Renewal caps the holder at the grace's end,
+//	    and the grant to the new owner clears the pair.
 //
 //	    The pending scope is admitted on purpose. A pending change protects
 //	    the holder of the old content until the moment it was promised, and
@@ -79,14 +97,14 @@ const ContentSwitchMargin = 5 * time.Second
 //	    would otherwise come back with CONTENT_MOVED in hand, keep the Query
 //	    Group and re-read, and the lost lease would never be reported.
 //
-// The content scope comparison is optional on both sides on purpose. A
-// caller that passes an empty scope -- every binary built before this field
-// existed -- gets the five comparisons it always had; a record that names no
-// scope -- every record written by a leader from before it -- authorizes
-// whatever the caller declares, as it always did. The comparison binds only
-// once a leader has written a scope and a writer declares one, so the two
-// argument shapes and the two record shapes coexist through a rolling
-// restart in either order.
+// The content scope comparison is optional on both sides on purpose, and
+// both empty shapes are live, not only left over from builds before the
+// field: a caller that passes an empty scope -- the Control Leader's own
+// fence check and any fenced write that executes no content -- gets the five
+// comparisons it always had; a record that names no scope -- one the Control
+// Leader wrote with no scope to state, or withdrew the scope from --
+// authorizes whatever the caller declares. The comparison binds only once
+// the Control Leader has written a scope and a writer declares one.
 //
 // TIME is a non-deterministic command. Redis before 5 refused a write after
 // one unless the script had opted into effects replication, and Redis from 5
@@ -112,10 +130,15 @@ local function current_content_scope(assignment_key, now_ms)
   end
   return scope
 end
+local function draining_holder(assignment_key, owner_id, now_ms)
+  local grace = redis.call('HMGET', assignment_key, 'releasing_worker_id', 'effective_at_ms')
+  return grace[1] == owner_id and tonumber(grace[2] or '0') > now_ms
+end
 local function fence_refusal(assignment_key, ownership_key, require_assignment, owner_id, epoch, token, content_scope, now_ms)
   if require_assignment == '1' then
     local desired = redis.call('HGET', assignment_key, 'desired_worker_id')
-    if not desired or desired ~= owner_id then return 'NOT_DESIRED' end
+    if not desired then return 'NOT_DESIRED' end
+    if desired ~= owner_id and not draining_holder(assignment_key, owner_id, now_ms) then return 'NOT_DESIRED' end
   end
   if redis.call('HGET', ownership_key, 'execution_disposition') ~= 'ACTIVE' then return 'STALE' end
   if redis.call('HGET', ownership_key, 'owner_id') ~= owner_id or

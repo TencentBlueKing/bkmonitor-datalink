@@ -24,13 +24,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
 )
 
-// The Worker's side of the stream, in the shadow step of decision-016
-// section 7.1: it finds the Leader, connects, says Hello, installs what it
-// is sent -- whole snapshots and one-step deltas, each verified against its
-// digest before anything is installed -- and reports back per version.
-// Nothing executes off the installed view. A Leader that cannot be found,
+// The Worker's side of the stream (decision-016 section 7.1): it finds the
+// Leader, connects, says Hello, installs what it is sent -- whole snapshots
+// and one-step deltas, each verified against its digest before anything is
+// installed -- and reports back per version, with how many of the view's
+// Query Groups it executes from it (batch 4). A Leader that cannot be found,
 // refuses the stream, or sends something that does not verify costs this
-// Worker a log line and a counter and nothing else.
+// Worker a log line and a counter, and a Query Group the installed view
+// cannot answer for is read the control plane's way.
 
 // Reconnect pacing: exponential from ReconnectMin to ReconnectMax with full
 // jitter, so sixty-four Workers cut off by one Leader restart do not come
@@ -147,7 +148,7 @@ type ClientOptions struct {
 	Costs CostSource
 	// Switched is asked on every receipt for how many of the installed
 	// view's Query Groups this Worker executes from it; nil reports zero and
-	// never claims switched, which is the shadow step.
+	// never claims switched.
 	Switched SwitchedSource
 }
 
@@ -173,6 +174,9 @@ type Client struct {
 	dial      func(ctx context.Context, endpoint string) (pb.ControlServiceClient, func() error, error)
 	now       func() time.Time
 	sleep     func(ctx context.Context, wait time.Duration) error
+	// attempted is the Leader the last connection was made to, empty when
+	// discovery found none; under mu.
+	attempted LeaderEndpoint
 	tick      time.Duration
 	random    *rand.Rand
 	costs     CostSource
@@ -305,10 +309,45 @@ func (client *Client) Run(ctx context.Context) error {
 		if err != nil || !connected {
 			attempt++
 		}
-		if err := client.sleep(ctx, client.backoff(attempt)); err != nil {
+		client.mu.Lock()
+		attempted := client.attempted
+		client.mu.Unlock()
+		if err := client.waitToReconnect(ctx, client.backoff(attempt), attempted); err != nil {
 			return err
 		}
 	}
+}
+
+// waitToReconnect waits out the backoff and asks discovery, once each
+// ReconnectMin of it, whether a Leader of another term has appeared - or a
+// Leader at all, where there was none - and stops waiting when one has. A
+// Leader that keeps failing is waited out in full as before: only a change
+// of term ends the wait early, so a Worker does not hammer a broken Leader.
+// The backoff was chosen while there was nothing to connect to; kept in
+// full after a Leader appeared, it left a Worker that started in a Leader
+// gap without a view for up to ReconnectMax more (control-plane review,
+// deviation 7). The view's lag after a gap is bounded by the renewal
+// interval plus the delta's propagation (B4 §2), not by this ceiling.
+//
+// Cost: one discovery - two reads of the ownership store - per ReconnectMin
+// while a Worker is disconnected and backing off past ReconnectMin, and
+// nothing while it is connected.
+func (client *Client) waitToReconnect(ctx context.Context, wait time.Duration, attempted LeaderEndpoint) error {
+	for remaining := wait; remaining > 0; {
+		step := min(remaining, ReconnectMin)
+		if err := client.sleep(ctx, step); err != nil {
+			return err
+		}
+		remaining -= step
+		if remaining <= 0 {
+			return nil
+		}
+		leader, miss, err := client.discovery.Leader(ctx)
+		if err == nil && miss == "" && leader.Endpoint != "" && leader != attempted {
+			return nil
+		}
+	}
+	return nil
 }
 
 // backoff is full jitter over an exponential ceiling: uniform in
@@ -339,6 +378,12 @@ func (client *Client) serveOnce(ctx context.Context) (connected bool, err error)
 	} else if miss == "" && leader.Endpoint == "" {
 		miss = MissLeaderNoEndpoint
 	}
+	client.mu.Lock()
+	client.attempted = LeaderEndpoint{}
+	if miss == "" {
+		client.attempted = leader
+	}
+	client.mu.Unlock()
 	if miss != "" {
 		client.mu.Lock()
 		if client.stats.DiscoveryMisses == nil {
@@ -471,7 +516,7 @@ func (client *Client) session(ctx context.Context, stream pb.ControlService_Conn
 		case *pb.LeaderMessage_Delta:
 			client.installDelta(ctx, body.Delta, send)
 		case *pb.LeaderMessage_Heartbeat, *pb.LeaderMessage_ObjectResult:
-			// Nothing to do with either in the shadow step.
+			// Nothing to do with either here.
 		}
 	}
 }
@@ -632,8 +677,7 @@ func receiptMessage(incarnation string, version Version, acked, installed bool, 
 
 // switchedReceipt is an installed receipt that also says how many of the
 // view's Query Groups the Worker executes from it, and switched when that is
-// all of them. Without a source it is the shadow step's receipt: zero, not
-// switched.
+// all of them. Without a source it is a receipt of zero, not switched.
 func (client *Client) switchedReceipt(view View, missing int, probed bool) *pb.WorkerMessage {
 	message := receiptMessage(client.identity.Incarnation, view.Version, true, true, "", missing, probed)
 	if client.switched == nil {

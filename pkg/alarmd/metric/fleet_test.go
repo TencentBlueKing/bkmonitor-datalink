@@ -262,3 +262,50 @@ func TestCheckLinesAndDegradationKindsAreExportedAtZero(t *testing.T) {
 		}
 	}
 }
+
+// The handover gauge is emitted whenever the number is known, zero
+// included, and absent when it is not; with the rows' counts unknown their
+// families are left out while the judgment and the replicas' own facts
+// stay.
+func TestFleetHandoverAndUnknownRowsAreExportedAsTheyAre(t *testing.T) {
+	zero := 0
+	known := gatherFleet(t, FleetVerdict{Health: "HEALTHY", HandoverObjects: &zero,
+		Checks: []FleetCount{{Value: "DEFECT", Count: 0}}})
+	if value, ok := known["bkmonitor_alarmd_fleet_handover_objects"][""]; !ok || value != 0 {
+		t.Fatalf("handover %v, want zero emitted", known["bkmonitor_alarmd_fleet_handover_objects"])
+	}
+	unknown := gatherFleet(t, FleetVerdict{Health: "HEALTHY"})
+	if _, ok := unknown["bkmonitor_alarmd_fleet_handover_objects"]; ok {
+		t.Fatal("handover emitted while unknown")
+	}
+	rows := gatherFleet(t, FleetVerdict{Health: "UNKNOWN", RowsUnknown: true, Stalled: 0,
+		Checks:       []FleetCount{{Value: "DEFECT", Count: 0}},
+		Losses:       []FleetCount{{Value: "ONGOING", Count: 0}},
+		Workers:      []FleetCount{{Value: "acked", Count: 2}},
+		Degradations: []FleetCount{{Value: "OPEN_ALERT_SET_STALE", Count: 0}}})
+	for _, family := range []string{"bkmonitor_alarmd_fleet_stalled_objects", "bkmonitor_alarmd_fleet_checks", "bkmonitor_alarmd_fleet_losses"} {
+		if _, ok := rows[family]; ok {
+			t.Fatalf("%s exported with the rows' counts unknown: %v", family, rows[family])
+		}
+	}
+	if rows["bkmonitor_alarmd_fleet_health"]["UNKNOWN"] != 1 || rows["bkmonitor_alarmd_fleet_workers"]["acked"] != 2 {
+		t.Fatalf("judgment or workers lost with the rows unknown: %v", rows)
+	}
+}
+
+// The running strategies are emitted, every state, when the verdict carries
+// them, and absent when it does not: a view not read whole says nothing of
+// them, and must not read as none running.
+func TestFleetRunningStrategiesAreAbsentUnlessKnown(t *testing.T) {
+	known := gatherFleet(t, FleetVerdict{Health: "HEALTHY", RunningStrategies: []FleetCount{{Value: "DETECTING", Count: 120}, {Value: "DATA_ABSENT", Count: 0}}})
+	running := known["bkmonitor_alarmd_fleet_running_strategies"]
+	if running["DETECTING"] != 120 || len(running) != 2 {
+		t.Fatalf("running %v, want DETECTING 120 and DATA_ABSENT 0", running)
+	}
+	if value, ok := running["DATA_ABSENT"]; !ok || value != 0 {
+		t.Fatalf("a state at zero was left out: %v", running)
+	}
+	if unknown := gatherFleet(t, FleetVerdict{Health: "HEALTHY"}); len(unknown["bkmonitor_alarmd_fleet_running_strategies"]) != 0 {
+		t.Fatalf("running strategies emitted while unknown: %v", unknown["bkmonitor_alarmd_fleet_running_strategies"])
+	}
+}

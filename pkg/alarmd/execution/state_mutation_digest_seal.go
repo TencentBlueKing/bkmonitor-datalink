@@ -79,12 +79,23 @@ func stateMutationDigestPayloadOf(mutation StateMutation) stateMutationDigestPay
 // stateMutationContentKey reports the content key of payload. A payload that
 // cannot be encoded has no key; the caller then derives without the seal and
 // the canonical encoder reports the real error.
+//
+// The payload is encoded into the hash rather than into a document that is
+// then hashed: the document was a copy of every point's bytes made only to be
+// read once, and on a profiled replica it was the largest allocation site by
+// bytes. The encoder escapes as Marshal does and ends with a newline Marshal
+// does not write, so the key is not the one the document gave. Nothing holds
+// a key but the seal on a mutation in this process, and the seal is written
+// and checked by this one function, so no key made the other way is ever
+// compared with one made this way.
 func stateMutationContentKey(payload stateMutationDigestPayload) ([sha256.Size]byte, bool) {
-	encoded, err := json.Marshal(payload)
-	if err != nil {
+	hash := sha256.New()
+	if err := json.NewEncoder(hash).Encode(payload); err != nil {
 		return [sha256.Size]byte{}, false
 	}
-	return sha256.Sum256(encoded), true
+	var key [sha256.Size]byte
+	hash.Sum(key[:0])
+	return key, true
 }
 
 // answers reports whether the seal was derived from this exact content and

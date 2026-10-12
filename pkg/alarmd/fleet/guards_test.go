@@ -195,3 +195,99 @@ func TestTheProgressWordIsTheEmittersNotDerived(t *testing.T) {
 		t.Fatalf("vocabularies = %v / %v, want the emitter's three words and two statuses", GapProgressValues, GapGuardStatuses)
 	}
 }
+
+// A round whose only UNKNOWN is a guard's tail answered whole: it is filed
+// under GAP_GUARD_WARMING, not under the guard's reason, and read on the
+// undecided-window line. The same reason under an UNKNOWN of the round's own
+// still reads as the backend not answering - the other side of the rule.
+func TestAGuardTailRoundIsFiledUnderItsCauseNotTheGuardsReason(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		cause string
+		filed string
+		check Check
+	}{
+		{name: "the guard's tail", cause: "GAP_GUARD_WARMING", filed: "GAP_GUARD_WARMING", check: CheckWindowUndecided},
+		{name: "an UNKNOWN of this round's own", cause: "LEVEL_OUTCOME_UNKNOWN", filed: "QUERY_UNAVAILABLE", check: CheckBackendNotAnswering},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			at := &clock{at: now}
+			tracker := newTracker(t, at)
+			ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "qg-tail"})
+			for round := 0; round < DefaultDegradedRounds; round++ {
+				tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE",
+					ProgressCompletionCause: testCase.cause, ProgressCompletionReason: "QUERY_UNAVAILABLE",
+					Trace: observability.TraceFields{EvaluationTime: int64(1000 + 60*round)}})
+				at.at = at.at.Add(time.Minute)
+			}
+			rows := anyColumn(tracker)
+			Attribute(rows, at.at)
+			if len(rows) != 1 || rows[0].CauseReason != testCase.filed || rows[0].Finding.Check != testCase.check {
+				t.Fatalf("rows = %+v, want filed under %s on %s", rows, testCase.filed, testCase.check)
+			}
+		})
+	}
+}
+
+// A run of rounds that read GAP_GUARD_WARMING and nothing else is
+// undecidable: the guard clears once its rounds pass, nobody acts. A run that
+// began with the gap that opened the guard has seen something wrong and stays
+// on the anomaly column for as long as it lasts.
+func TestAWarmingGuardIsUndecidableOnlyInARunThatSawNothingWrong(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		first       string
+		undecidable bool
+	}{
+		{name: "only warming", first: "GAP_GUARD_WARMING", undecidable: true},
+		{name: "the gap, then warming", first: "LEVEL_OUTCOME_UNKNOWN", undecidable: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			at := &clock{at: now}
+			tracker := newTracker(t, at)
+			ctx := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "qg-warming"})
+			for round := 0; round < DefaultDegradedRounds+1; round++ {
+				cause := "GAP_GUARD_WARMING"
+				if round == 0 {
+					cause = testCase.first
+				}
+				tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE",
+					ProgressCompletionCause: cause, ProgressCompletionReason: "QUERY_UNAVAILABLE",
+					Trace: observability.TraceFields{EvaluationTime: int64(1000 + 60*round)}})
+				at.at = at.at.Add(time.Minute)
+			}
+			undecidable, anomalies := tracker.Undecidable(), tracker.Anomalies()
+			if testCase.undecidable && (len(undecidable) != 1 || len(anomalies) != 0) {
+				t.Fatalf("undecidable %+v, anomalies %+v: want the warming run undecidable", undecidable, anomalies)
+			}
+			if !testCase.undecidable && (len(anomalies) != 1 || len(undecidable) != 0) {
+				t.Fatalf("undecidable %+v, anomalies %+v: want the run that held the gap on the anomaly column", undecidable, anomalies)
+			}
+		})
+	}
+}
+
+// A warming guard's window fills once the guard's rounds pass, so however
+// long its coverage has been short it is not a series too short-lived to
+// fill its window. The same coverage under HISTORY_WARMING is.
+func TestAWarmingGuardIsNotAWindowThatNeverFills(t *testing.T) {
+	persistent := func() *HistoryCoverage {
+		return &HistoryCoverage{Levels: 2, Short: 1, WorstValid: 3, WorstRequired: 9, ShortRounds: 40}
+	}
+	if !persistent().Persistent() {
+		t.Fatal("fixture: the coverage must be persistent, so only the reason keeps the guard out of the count")
+	}
+	for _, testCase := range []struct {
+		reason string
+		want   int
+	}{
+		{reason: "HISTORY_WARMING", want: 1},
+		{reason: "GAP_GUARD_WARMING", want: 0},
+	} {
+		anomalies := []Anomaly{{QueryGroup: "qg-" + testCase.reason, Kind: KindDegradedRun, CauseReason: testCase.reason, Coverage: persistent()}}
+		Attribute(anomalies, now)
+		if got := summarize(anomalies, now).WindowNeverFills; got != testCase.want {
+			t.Errorf("%s: window_never_fills = %d, want %d", testCase.reason, got, testCase.want)
+		}
+	}
+}

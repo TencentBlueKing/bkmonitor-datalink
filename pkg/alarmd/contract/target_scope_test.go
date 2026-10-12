@@ -20,6 +20,12 @@ func TestEveryTargetScopeFieldIsATableRow(t *testing.T) {
 			Attribute: AttributeHostIdentity, Source: TargetScopeSourceFacts,
 			Absence: TargetScopeAbsenceSkipCondition, MismatchReason: TargetScopeReasonOutOfScope,
 		},
+		// Matched on the host identity a host condition reads: Python turns
+		// it into bk_target_ip over the groups' host ids.
+		TargetScopeDynamicGroup: {
+			Attribute: AttributeHostIdentity, Source: TargetScopeSourceFacts,
+			Absence: TargetScopeAbsenceSkipCondition, MismatchReason: TargetScopeReasonOutOfScope,
+		},
 		TargetScopeServiceInstance: {
 			Attribute: AttributeServiceInstanceID, Source: TargetScopeSourceFacts,
 			Absence: TargetScopeAbsenceSkipCondition, MismatchReason: TargetScopeReasonOutOfScope,
@@ -49,7 +55,7 @@ func TestEveryTargetScopeFieldIsATableRow(t *testing.T) {
 			t.Fatalf("row for %s = %+v, want %+v", field, got, expected)
 		}
 	}
-	if _, known := TargetScopeAttributeFor("DYNAMIC_GROUP"); known {
+	if _, known := TargetScopeAttributeFor("CW_DYNAMIC_GROUP"); known {
 		t.Fatal("a field the compiler refuses has a row")
 	}
 	// A skip-on-absence field cannot name an absence reason: a skipped

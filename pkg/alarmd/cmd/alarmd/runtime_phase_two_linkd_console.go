@@ -45,7 +45,7 @@ type linkdLocationReport interface {
 // of it. A nil console is a deployment that configured none, whose entry
 // already says so. When a later discovery moved the reads, the open alert
 // set's entry is rewritten to where they are read now: the list is otherwise
-// resolved once, at startup, from the fallback location.
+// resolved once, at startup, from the configured connection.
 func withLinkdConsole(endpoints func() []fleet.Endpoint, console *openalerts.HTTPReconciler,
 	location linkdLocationReport, now func() time.Time) func() []fleet.Endpoint {
 	if console == nil {
@@ -94,7 +94,7 @@ func linkdConsoleFacts(console *openalerts.HTTPReconciler, at time.Time) *fleet.
 		}
 		if !call.LastFailureAt.IsZero() {
 			age := at.Sub(call.LastFailureAt).Seconds()
-			row.LastFailureAgeSeconds, row.LastFailure = &age, call.LastFailure
+			row.LastFailureAgeSeconds, row.LastFailure, row.LastFailureClass = &age, call.LastFailure, call.LastFailureClass
 		}
 		facts.Calls = append(facts.Calls, row)
 		called = called || call.Calls > 0
@@ -141,8 +141,13 @@ func linkdConsoleReading(console *openalerts.HTTPReconciler, now func() time.Tim
 	return func() metric.LinkdConsoleReading {
 		facts := linkdConsoleFacts(console, now())
 		reading := metric.LinkdConsoleReading{State: facts.State, Calls: make(map[string]metric.LinkdConsoleCalls, len(facts.Calls))}
+		var record openalerts.ConsoleRecord
+		if console != nil {
+			record = console.Record()
+		}
 		for _, call := range facts.Calls {
-			reading.Calls[call.Op] = metric.LinkdConsoleCalls{Calls: call.Calls, Failures: call.Failures}
+			reading.Calls[call.Op] = metric.LinkdConsoleCalls{Calls: call.Calls, Failures: call.Failures,
+				FailuresByClass: record.Calls[call.Op].FailuresByClass}
 		}
 		return reading
 	}

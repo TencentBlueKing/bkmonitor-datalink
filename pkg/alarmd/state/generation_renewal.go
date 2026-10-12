@@ -71,16 +71,16 @@ type RenewalAttempt struct {
 // that only need the error.
 func RenewGenerationKey(
 	ctx context.Context, target StorageTarget, key string, retention []execution.StateRetentionRequirement,
-	restartMargin, minimum, maximum time.Duration, gate *renewalGate,
+	restartMargin, minimum, maximum time.Duration, gate *renewalGate, readHoldBound ...time.Duration,
 ) error {
-	_, err := RenewGenerationKeyReporting(ctx, target, key, retention, restartMargin, minimum, maximum, gate)
+	_, err := RenewGenerationKeyReporting(ctx, target, key, retention, restartMargin, minimum, maximum, gate, readHoldBound...)
 	return err
 }
 
 // RenewGenerationKeyReporting is the same renewal, and says what it did.
 func RenewGenerationKeyReporting(
 	ctx context.Context, target StorageTarget, key string, retention []execution.StateRetentionRequirement,
-	restartMargin, minimum, maximum time.Duration, gate *renewalGate,
+	restartMargin, minimum, maximum time.Duration, gate *renewalGate, readHoldBound ...time.Duration,
 ) (RenewalAttempt, error) {
 	backend, ok := target.Backend.(LifetimeBackend)
 	if !ok {
@@ -92,7 +92,7 @@ func RenewGenerationKeyReporting(
 		// and it must read exactly the retention the window was built from.
 		requirements[index] = NewLevelRequirement(level, "", 0)
 	}
-	ttl, err := GenerationScopedTTL(requirements, restartMargin, minimum, maximum)
+	ttl, err := GenerationScopedTTL(requirements, restartMargin, minimum, maximum, readHoldBound...)
 	if err != nil {
 		return RenewalAttempt{}, err
 	}

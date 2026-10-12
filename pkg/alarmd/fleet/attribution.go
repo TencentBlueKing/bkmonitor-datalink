@@ -103,17 +103,6 @@ func restoredWithoutEvidence(anomaly Anomaly) bool {
 	return false
 }
 
-// UnattributedCount returns how many carry no evidence either way.
-func UnattributedCount(anomalies []Anomaly) int {
-	unknown := 0
-	for _, anomaly := range anomalies {
-		if anomaly.Attribution == AttributionUnknown {
-			unknown++
-		}
-	}
-	return unknown
-}
-
 // Attribute fills in the attribution on every anomaly in the list.
 //
 // It runs over the rows rather than being computed in the tracker so that the
@@ -151,15 +140,4 @@ func attribute(anomaly *Anomaly, at time.Time) {
 	// counts cannot disagree about which of these was actually decided.
 	anomaly.Unclassified = unclassified
 	anomaly.Attribution = attributionOf(*anomaly)
-}
-
-// OursCount returns how many of these count against the deployment.
-func OursCount(anomalies []Anomaly) int {
-	ours := 0
-	for _, anomaly := range anomalies {
-		if anomaly.Attribution == AttributionOurs {
-			ours++
-		}
-	}
-	return ours
 }

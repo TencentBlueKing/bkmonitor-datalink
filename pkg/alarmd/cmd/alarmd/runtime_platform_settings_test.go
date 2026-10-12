@@ -12,12 +12,18 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -57,6 +63,27 @@ func TestPlatformSettingsWithoutADistributionAreTheDeploymentLayer(t *testing.T)
 	fleetFacts := platformSettingsFactsSource(cache, func() time.Time { return now })()
 	if fleetFacts.Mode != "not_configured" || fleetFacts.StaleBeyondBound || fleetFacts.AuthoritativeAgeSeconds != nil {
 		t.Fatalf("fleet facts = %+v, want not_configured with no age and no staleness", fleetFacts)
+	}
+	// Each setting's value and the layer it came from, as the health route
+	// carries them: a boolean as enabled, a list as how many entries.
+	fields := map[string]fleet.PlatformSettingField{}
+	for _, field := range fleetFacts.Fields {
+		fields[field.Field] = field
+	}
+	if len(fields) != len(platformsettings.Fields) {
+		t.Fatalf("fields %+v, want every setting", fleetFacts.Fields)
+	}
+	if got := fields[string(platformsettings.FieldIsAccessBKData)]; got.Enabled == nil || !*got.Enabled || got.Entries != nil ||
+		got.Source != string(platformsettings.HorizonSourceValues) {
+		t.Fatalf("is_access_bk_data = %+v, want enabled from the deployment's layer", got)
+	}
+	if got := fields[string(platformsettings.FieldHostDisableMonitorStates)]; got.Entries == nil || *got.Entries != 7 ||
+		got.Enabled != nil || got.Source != string(platformsettings.HorizonSourceValues) {
+		t.Fatalf("host_disable_monitor_states = %+v, want the deployment's 7 entries", got)
+	}
+	if got := fields[string(platformsettings.FieldFileSystemTypeIgnore)]; got.Entries == nil ||
+		*got.Entries != len(platformsettings.CodeDefaults().FileSystemTypeIgnore) || got.Source != string(platformsettings.HorizonSourceDefault) {
+		t.Fatalf("file_system_type_ignore = %+v, want the code default's entries", got)
 	}
 	// The refresher on a copy with no source changes nothing and reports the
 	// filter in force.
@@ -164,5 +191,70 @@ func TestPlatformSettingsChangeReachesThePlansOnTheNextRound(t *testing.T) {
 	}
 	if after.SnapshotRevision == before.SnapshotRevision {
 		t.Fatal("a plan compiled by another setting must move the Catalog revision")
+	}
+}
+
+// The strategy compiler a process evaluates Plans with lays the aggregation
+// boundaries of a Plan detected more often than it aggregates in the zone
+// the deployment's queries are laid in, and a zone that is none is refused.
+func TestThePlanCompilerLaysBoundariesInTheQueriesTimeZone(t *testing.T) {
+	for _, zone := range []string{"Asia/Shanghai", "UTC"} {
+		cfg := config.Default()
+		cfg.PhaseTwo.Control.Timezone = zone
+		compiler, err := newPlanCompiler(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := compiler.BoundaryLocation(); got == nil || got.String() != zone {
+			t.Fatalf("control timezone %s: boundary location %v", zone, got)
+		}
+	}
+	cfg := config.Default()
+	cfg.PhaseTwo.Control.Timezone = "Mars/Olympus"
+	if _, err := newPlanCompiler(cfg); err == nil {
+		t.Fatal("a control timezone that is no time zone built a compiler")
+	}
+}
+
+// Every compiler a process evaluates Plans with is newPlanCompiler's: one
+// built anywhere else would lay a stepped Plan's boundaries in UTC whatever
+// zone its queries are laid in.
+func TestEveryPlanCompilerIsBuiltWithTheQueriesTimeZone(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no sources to scan (%v)", err)
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if file == "runtime_platform_settings.go" {
+			want = 1
+		}
+		if got := strings.Count(string(source), "strategy.NewCompiler("); got != want {
+			t.Fatalf("%s builds %d strategy compilers itself, want %d: build them with newPlanCompiler", file, got, want)
+		}
+	}
+}
+
+// The platform publishing an empty list of disabled states disables no host by
+// state; it does not take the host status filter away. Python installs that
+// filter whatever the list (processor.py:76-80), so a host CMDB does not know
+// is still dropped (filters.py:114-116), as before the list emptied.
+func TestAnEmptyDisabledStateListStillDropsUnknownHosts(t *testing.T) {
+	filter := newDynamicHostStatusFilter([]string{"备用机"})
+	if states := filter.Apply(nil); states != 0 {
+		t.Fatalf("states in force after an empty list = %d, want 0", states)
+	}
+	dimensions := map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"800001"`)}
+	facts := admission.Facts{Dimensions: dimensions}
+	admission.IdentityFuller{}.Fill(dimensions, &facts)
+	if decision := filter.Admit(admission.PlanContext{}, &facts); decision.Admit || decision.Reason != "host_unknown" {
+		t.Fatalf("unknown host with no disabled states = %+v, want host_unknown", decision)
 	}
 }

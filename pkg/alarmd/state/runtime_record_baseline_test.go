@@ -1,14 +1,12 @@
 package state
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
@@ -139,98 +137,5 @@ func TestTheEncoderAgreesWithWhatTheClusterRead(t *testing.T) {
 		t.Errorf("the deployment read %.1f bytes per point on %s, this package's encoder says %.1f (%.1f%% apart, "+
 			"tolerance %.0f%%); the stored record is not what this package models it to be, or the reading counts "+
 			"something else", observedPerPoint, reading.ObservedOn, modelPerPoint, 100*apart, 100*tolerance)
-	}
-}
-
-func packedFixtureWindow(t *testing.T, levels int, points []StatePoint) (*Codec, *Window) {
-	t.Helper()
-	digest := strings.Repeat("ab", 32)
-	requirements := make([]LevelRequirement, levels)
-	for index := range requirements {
-		requirements[index] = LevelRequirement{LevelID: uint32(index + 1), DetectFingerprint: digest,
-			RequiredPoints: 16, RetentionPoints: 16, EvaluationInterval: time.Minute}
-	}
-	window, err := NewWindow(requirements)
-	if err != nil {
-		t.Fatalf("new window: %v", err)
-	}
-	if _, err := window.Apply(points); err != nil {
-		t.Fatalf("apply points: %v", err)
-	}
-	codec, err := NewCodec(CodecLimits{MaxLevels: 8, MaxPoints: 4096, MaxEncodedBytes: 512 << 10})
-	if err != nil {
-		t.Fatalf("new codec: %v", err)
-	}
-	return codec, window
-}
-
-func packedFixturePoint(index int, results ...LevelFactResult) StatePoint {
-	digest := strings.Repeat("ab", 32)
-	facts := make([]PointLevelFact, len(results))
-	for level, result := range results {
-		facts[level] = PointLevelFact{LevelID: uint32(level + 1), DetectFingerprint: digest, Result: result}
-	}
-	return StatePoint{RecordID: fmt.Sprintf("%064x", index), SourceTime: 1758400000 + int64(index)*60, Levels: facts}
-}
-
-// TestThePackedWindowCannotTellUnusableKindsApart pins one of the two reasons
-// the packed codec cannot carry the execution record as it stands.
-//
-// It records a Level's fact in two bits - had a value, and was that value
-// anomalous - so UNAVAILABLE and ERROR, which differ in neither, encode
-// identically. For the phase one consumer that was the whole question. The
-// execution result contract asks a different one: it compares the stored fact
-// against the Level outcome field by field, and the facts it compares under an
-// unknown or terminal outcome are exactly these two.
-//
-// If this test ever fails, the codec learned to tell them apart and
-// decision-021's premise needs rereading rather than this test relaxing.
-func TestThePackedWindowCannotTellUnusableKindsApart(t *testing.T) {
-	withError := []StatePoint{packedFixturePoint(1, LevelFactNormal, LevelFactError)}
-	withUnavailable := []StatePoint{packedFixturePoint(1, LevelFactNormal, LevelFactUnavailable)}
-
-	codec, errorWindow := packedFixtureWindow(t, 2, withError)
-	errorBlob, err := codec.Encode(errorWindow)
-	if err != nil {
-		t.Fatalf("encode the ERROR window: %v", err)
-	}
-	_, unavailableWindow := packedFixtureWindow(t, 2, withUnavailable)
-	unavailableBlob, err := codec.Encode(unavailableWindow)
-	if err != nil {
-		t.Fatalf("encode the UNAVAILABLE window: %v", err)
-	}
-	if !bytes.Equal(errorBlob, unavailableBlob) {
-		t.Fatalf("the packed form now distinguishes ERROR from UNAVAILABLE (%d bytes against %d); decision-021 "+
-			"rejected reusing this codec partly because it could not", len(errorBlob), len(unavailableBlob))
-	}
-}
-
-// TestThePackedWindowDropsAPointWithNoUsableLevel pins the other reason.
-//
-// A point every Level found unusable carries no valid bit, and the codec
-// refuses to encode one - so it is not stored at all. The record the execution
-// store writes keeps it, and the result contract reads it back to justify
-// carrying an unknown outcome forward.
-func TestThePackedWindowDropsAPointWithNoUsableLevel(t *testing.T) {
-	points := []StatePoint{
-		packedFixturePoint(1, LevelFactNormal),
-		packedFixturePoint(2, LevelFactError),
-		packedFixturePoint(3, LevelFactUnavailable),
-	}
-	codec, window := packedFixtureWindow(t, 1, points)
-	blob, err := codec.Encode(window)
-	if err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	decoded, err := codec.Decode(blob)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(decoded.points) != 1 {
-		t.Fatalf("three points went in and %d came back; the packed form was expected to keep only the one "+
-			"with a usable Level, and decision-021 rests on that being what it does", len(decoded.points))
-	}
-	if kept := decoded.points[0].sourceTime; kept != points[0].SourceTime {
-		t.Fatalf("the surviving point is at %d, expected the NORMAL one at %d", kept, points[0].SourceTime)
 	}
 }

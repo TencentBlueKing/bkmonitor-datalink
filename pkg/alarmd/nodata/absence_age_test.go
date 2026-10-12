@@ -65,3 +65,9 @@ func TestAbsencesAreFiledByHowLongTheyHaveBeenOpen(t *testing.T) {
 		t.Fatalf("whole-item ages = %+v, want one under a day", whole.Facts.AbsentAges)
 	}
 }
+
+// Total is every absence the buckets counted, which equals Absent. Only the
+// tests read the sum: the line and the metric carry the buckets themselves.
+func (buckets AbsentAgeBuckets) Total() uint64 {
+	return buckets.ThisRound + buckets.UnderHour + buckets.UnderDay + buckets.DayOrMore
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisbatch"
 )
 
 type RedisStoreOptions struct {
@@ -39,6 +40,9 @@ type RedisStore struct {
 	prefix     string
 	client     redis.UniversalClient
 	ownsClient bool
+	// epochRetention is how long a swept Query Group keeps its owner epoch
+	// (ConfigureEpochRetention); zero refuses to sweep.
+	epochRetention time.Duration
 }
 
 func NewRedisStore(options RedisStoreOptions) (*RedisStore, error) {
@@ -278,7 +282,7 @@ func (store *RedisStore) RenewControlLeader(
 	if authority.Fence.QueryGroup != ControlLeaderIdentity {
 		return PublicationAuthority{}, ErrStaleFence
 	}
-	lease, err := store.renew(ctx, authority.Fence, at, ttl, false)
+	lease, err := store.renew(ctx, authority.Fence, "", at, ttl, false)
 	if err != nil {
 		return PublicationAuthority{}, err
 	}
@@ -575,12 +579,30 @@ func (store *RedisStore) Renew(
 	at time.Time,
 	ttl time.Duration,
 ) (Lease, error) {
-	return store.renew(ctx, fence, at, ttl, true)
+	return store.renew(ctx, fence, "", at, ttl, true)
+}
+
+// RenewDeclaring is Renew for a holder that says which content scope it
+// runs now. A renewal under a pending content change is capped at the
+// change's effective time so a holder still on the old content stops there;
+// a holder that declares the pending scope already runs the new content and
+// is not who the cap protects against, so its renewal is not capped for the
+// change and its lease carries across the switch. An empty declaration is
+// Renew.
+func (store *RedisStore) RenewDeclaring(
+	ctx context.Context,
+	fence execution.OwnerFence,
+	declared string,
+	at time.Time,
+	ttl time.Duration,
+) (Lease, error) {
+	return store.renew(ctx, fence, declared, at, ttl, true)
 }
 
 func (store *RedisStore) renew(
 	ctx context.Context,
 	fence execution.OwnerFence,
+	declared string,
 	at time.Time,
 	ttl time.Duration,
 	requireAssignment bool,
@@ -590,7 +612,7 @@ func (store *RedisStore) renew(
 	}
 	result, err := renewScript.Run(ctx, store.client, []string{
 		store.assignmentKey(fence.QueryGroup), store.ownershipKey(fence.QueryGroup),
-	}, boolText(requireAssignment), fence.OwnerID, fence.OwnerEpoch, fence.LeaseToken, ttl.Milliseconds()).Result()
+	}, boolText(requireAssignment), fence.OwnerID, fence.OwnerEpoch, fence.LeaseToken, ttl.Milliseconds(), declared).Result()
 	if err != nil {
 		return Lease{}, err
 	}
@@ -771,58 +793,67 @@ func (store *RedisStore) ReadControl(
 	return append([]byte(nil), value...), false, nil
 }
 
-// ControlRead is one entry of a batched control read.
-type ControlRead struct {
-	Raw     []byte
-	Missing bool
-}
+// ControlRead is one entry of a batched control read: a
+// redisbatch.Value, whose Raw is the reply's own bytes, to be read and not
+// written, and whose Err is this entry's own failure while the others of
+// its batch still read.
+type ControlRead = redisbatch.Value
 
-const controlReadBatch = 512
+// ControlReadBatch is how many Query Groups one pipeline of a batched
+// control read carries (redisbatch.Batch): one round trip reads that many
+// records. Readers that batch control reads size their own batches by it,
+// so each of their batches is one round trip.
+const ControlReadBatch = redisbatch.Batch
 
 // ReadControlBatch reads one control namespace for many Query Groups in
 // pipelined batches: the same bytes ReadControl returns, one round trip per
-// batch instead of one per Query Group. Keys carry per-Query-Group hash
-// tags, so the reads are pipelined rather than sent as one MGET, which a
-// cluster would refuse across slots.
+// batch instead of one per Query Group.
 func (store *RedisStore) ReadControlBatch(
 	ctx context.Context,
 	queryGroups []execution.QueryGroupIdentity,
 	namespace string,
 ) ([]ControlRead, error) {
+	keys, err := store.controlKeys(queryGroups, namespace)
+	if err != nil {
+		return nil, err
+	}
+	return redisbatch.Values(ctx, store.client, keys)
+}
+
+// ReadControlWithin is ReadControlBatch over the longest prefix of
+// queryGroups -- at most ControlReadBatch of them, one pipeline of lengths and
+// one of values -- whose values admit accepts, and how many that was
+// (redisbatch.Within); the rest are left for another read.
+func (store *RedisStore) ReadControlWithin(
+	ctx context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+	namespace string,
+	admit func(bytes uint64) bool,
+) ([]ControlRead, int, error) {
+	if len(queryGroups) > ControlReadBatch {
+		queryGroups = queryGroups[:ControlReadBatch]
+	}
+	keys, err := store.controlKeys(queryGroups, namespace)
+	if err != nil {
+		return nil, 0, err
+	}
+	return redisbatch.Within(ctx, store.client, keys, admit)
+}
+
+// controlKeys is each Query Group's key in one control namespace, for a
+// batched read.
+func (store *RedisStore) controlKeys(queryGroups []execution.QueryGroupIdentity, namespace string) ([]string, error) {
 	if store == nil || store.client == nil || namespace == "" || strings.ContainsAny(namespace, "{} \t\r\n") {
 		return nil, errors.New("alarmd ownership: invalid control read")
 	}
-	reads := make([]ControlRead, len(queryGroups))
-	for start := 0; start < len(queryGroups); start += controlReadBatch {
-		end := start + controlReadBatch
-		if end > len(queryGroups) {
-			end = len(queryGroups)
+	keys := make([]string, len(queryGroups))
+	for index, queryGroup := range queryGroups {
+		if queryGroup == "" {
+			return nil, errors.New("alarmd ownership: invalid control read")
 		}
-		replies := make([]*redis.StringCmd, end-start)
-		if _, err := store.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-			for offset, queryGroup := range queryGroups[start:end] {
-				if queryGroup == "" {
-					return errors.New("alarmd ownership: invalid control read")
-				}
-				replies[offset] = pipe.Get(ctx, store.controlKey(queryGroup, namespace))
-			}
-			return nil
-		}); err != nil && !errors.Is(err, redis.Nil) {
-			return nil, err
-		}
-		for offset, reply := range replies {
-			value, err := reply.Bytes()
-			switch {
-			case errors.Is(err, redis.Nil):
-				reads[start+offset] = ControlRead{Missing: true}
-			case err != nil:
-				return nil, err
-			default:
-				reads[start+offset] = ControlRead{Raw: append([]byte(nil), value...)}
-			}
-		}
+		keys[index] = store.controlKey(queryGroup, namespace)
 	}
-	return reads, nil
+	return keys, nil
 }
 
 func (store *RedisStore) workerRegistryKey() string {
@@ -867,8 +898,18 @@ func (store *RedisStore) ownershipKey(queryGroup execution.QueryGroupIdentity) s
 }
 
 func (store *RedisStore) controlKey(queryGroup execution.QueryGroupIdentity, namespace string) string {
+	return store.prefix + ":{" + ControlHashTag(queryGroup) + "}:" + namespace
+}
+
+// ControlHashTag is the part of a Query Group's control keys between the
+// braces: the SHA-256 of the Query Group identity, hex. As a Redis Cluster
+// hash tag it keeps every control key of one Query Group -- ownership,
+// progress, the rest -- in one slot. A key names its Query Group only
+// through this digest, so a reader holding the key and the identity checks
+// one against the other here.
+func ControlHashTag(queryGroup execution.QueryGroupIdentity) string {
 	digest := sha256.Sum256([]byte(queryGroup))
-	return store.prefix + ":{" + hex.EncodeToString(digest[:]) + "}:" + namespace
+	return hex.EncodeToString(digest[:])
 }
 
 func validateFence(fence execution.OwnerFence) error {
@@ -946,6 +987,11 @@ func parseInt(value string) int64 {
 // knows what it was admitted to execute, and the server instant so it can
 // keep the remaining duration on its own clock.
 //
+// The epoch counts on from the one the ownership hash keeps: a Release
+// leaves it, and so does the sweep that reclaims a retired Query Group,
+// which leaves it under an expiry and nothing else in the hash. A lease
+// clears that expiry, so a live holder's hash never expires under it.
+//
 // Every branch returns five elements: status, epoch, deadline_ms, scope,
 // now_ms. BUSY carries the deadline of the lease that is in the way.
 var acquireScript = redis.NewScript(FenceLua + `
@@ -967,9 +1013,23 @@ if disposition and disposition ~= 'ACTIVE' then return {'PAUSED', 0, 0, '', now_
 local current_owner = redis.call('HGET', KEYS[2], 'owner_id')
 local current_deadline = tonumber(redis.call('HGET', KEYS[2], 'deadline_ms') or '0')
 if current_owner and current_owner ~= '' and current_deadline > now_ms then return {'BUSY', 0, current_deadline, '', now_ms, 0} end
+if require_assignment == '1' and redis.call('HEXISTS', KEYS[1], 'releasing_worker_id') == 1 then
+  -- The holder a move's grace protected has let go or run out, so this
+  -- grant ends the grace. The content the move brought is promoted now
+  -- rather than at the grace's end: nobody is left on the old content, and
+  -- left pending it would cap this new owner's first lease and take it away
+  -- at that instant.
+  local pending = redis.call('HGET', KEYS[1], 'pending_content_scope')
+  if pending and pending ~= '' then
+    redis.call('HSET', KEYS[1], 'content_scope', pending)
+    scope = pending
+  end
+  redis.call('HDEL', KEYS[1], 'releasing_worker_id', 'pending_content_scope', 'effective_at_ms')
+end
 local epoch = tonumber(redis.call('HGET', KEYS[2], 'owner_epoch') or '0') + 1
 redis.call('HSET', KEYS[2], 'owner_id', owner_id, 'owner_epoch', epoch, 'lease_token', token,
   'deadline_ms', deadline_ms, 'execution_disposition', 'ACTIVE')
+redis.call('PERSIST', KEYS[2])
 return {'OWNED', epoch, deadline_ms, scope, now_ms, timeline}
 `)
 
@@ -992,6 +1052,7 @@ local owner_id = ARGV[2]
 local epoch = ARGV[3]
 local token = ARGV[4]
 local ttl_ms = tonumber(ARGV[5])
+local declared = ARGV[6] or ''
 local now_ms = redis_now_ms()
 local deadline_ms = now_ms + ttl_ms
 local refusal = fence_refusal(KEYS[1], KEYS[2], require_assignment, owner_id, epoch, token, '', now_ms)
@@ -999,12 +1060,23 @@ if refusal then return {refusal, 0, '', '', 0, now_ms, 0} end
 local scope, pending, effective, timeline = '', '', 0, 0
 if require_assignment == '1' then
   scope = current_content_scope(KEYS[1], now_ms)
-  local change = redis.call('HMGET', KEYS[1], 'pending_content_scope', 'effective_at_ms', 'timeline_record_revision')
+  local change = redis.call('HMGET', KEYS[1], 'pending_content_scope', 'effective_at_ms', 'timeline_record_revision',
+    'desired_worker_id')
+  local cap = 0
   if change[1] and change[1] ~= '' then
     pending = change[1]
     effective = tonumber(change[2] or '0')
-    if effective > 0 and deadline_ms > effective then deadline_ms = effective end
+    -- The cap stops a holder still on the old content at the change; one
+    -- that declares the pending content already runs it and is not capped.
+    if declared ~= pending then cap = effective end
   end
+  -- The fence admitted a caller the record no longer desires only as the
+  -- draining holder of a move, whose lease ends where its grace does.
+  if change[4] ~= owner_id then
+    effective = tonumber(change[2] or '0')
+    cap = effective
+  end
+  if cap > 0 and deadline_ms > cap then deadline_ms = cap end
   timeline = tonumber(change[3] or '0')
 end
 redis.call('HSET', KEYS[2], 'deadline_ms', deadline_ms)
@@ -1168,7 +1240,7 @@ if current_desired and current_desired == desired then
     if pending == wanted_scope then return reply() end
     local effective = lease_deadline + margin_ms
     local existing = tonumber(redis.call('HGET', KEYS[2], 'effective_at_ms') or '0')
-    if existing > effective then effective = existing end
+    if existing > effective or (holder ~= desired and existing > now_ms) then effective = existing end
     redis.call('HSET', KEYS[2], 'pending_content_scope', wanted_scope, 'effective_at_ms', effective,
       'record_revision', current_revision + 1)
     return reply()
@@ -1179,12 +1251,41 @@ if current_desired and current_desired == desired then
 end
 local generation = tonumber(redis.call('HGET', KEYS[2], 'assignment_generation') or '0') + 1
 local revision = current_revision + 1
+local holder = redis.call('HGET', KEYS[3], 'owner_id')
+local lease_deadline = tonumber(redis.call('HGET', KEYS[3], 'deadline_ms') or '0')
+local releasing = redis.call('HGET', KEYS[2], 'releasing_worker_id')
+-- A holder this record authorized -- its desired worker, or the holder an
+-- earlier move is still draining -- that holds a live lease and is not the
+-- new decision keeps the lease until it lets go or its grace ends.
+local draining = holder and holder ~= '' and holder ~= desired and lease_deadline > now_ms and
+  (holder == current_desired or holder == releasing)
 redis.call('HSET', KEYS[2], 'query_group', query_group, 'desired_worker_id', desired,
   'assignment_generation', generation, 'record_revision', revision, 'control_epoch', leader_epoch,
   'placement_reason', reason, 'assigned_at_ms', assigned_at)
-if wanted_scope ~= '' then redis.call('HSET', KEYS[2], 'content_scope', wanted_scope) end
-if withdraw then redis.call('HDEL', KEYS[2], 'content_scope') end
-redis.call('HDEL', KEYS[2], 'pending_content_scope', 'effective_at_ms')
+if not draining then
+  if wanted_scope ~= '' then redis.call('HSET', KEYS[2], 'content_scope', wanted_scope) end
+  if withdraw then redis.call('HDEL', KEYS[2], 'content_scope') end
+  redis.call('HDEL', KEYS[2], 'pending_content_scope', 'effective_at_ms', 'releasing_worker_id')
+  return reply()
+end
+-- The grace ends at the holder's deadline plus the margin, and a holder
+-- already draining keeps the end it was given: a later decision moves the
+-- Query Group on, never the holder's end further out.
+local existing = tonumber(redis.call('HGET', KEYS[2], 'effective_at_ms') or '0')
+local effective = lease_deadline + margin_ms
+if existing > effective or (releasing == holder and existing > now_ms) then effective = existing end
+redis.call('HSET', KEYS[2], 'releasing_worker_id', holder, 'effective_at_ms', effective)
+if withdraw then
+  redis.call('HDEL', KEYS[2], 'content_scope', 'pending_content_scope')
+elseif wanted_scope ~= '' then
+  local scope = current_content_scope(KEYS[2], now_ms)
+  if scope == '' or scope == wanted_scope then
+    redis.call('HSET', KEYS[2], 'content_scope', wanted_scope)
+    redis.call('HDEL', KEYS[2], 'pending_content_scope')
+  else
+    redis.call('HSET', KEYS[2], 'pending_content_scope', wanted_scope)
+  end
+end
 return reply()
 `)
 

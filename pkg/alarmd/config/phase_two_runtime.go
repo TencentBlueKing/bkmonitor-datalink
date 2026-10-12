@@ -10,12 +10,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
@@ -23,9 +21,9 @@ import (
 const PhaseTwoWorkerIDEnvironment = "ALARMD_PHASE_TWO_WORKER_ID"
 
 type PhaseTwoWorkerConfig struct {
-	ID                        string `yaml:"id"`
-	RegistrationTTL           Duration
-	RegistrationRenewInterval Duration
+	ID                        string   `yaml:"id"`
+	RegistrationTTL           Duration `yaml:"-"`
+	RegistrationRenewInterval Duration `yaml:"-"`
 }
 
 // DefaultTimezone is the platform's evaluation timezone, the constant Python
@@ -40,33 +38,10 @@ type PhaseTwoControlConfig struct {
 	StrategyCachePrefix string `yaml:"strategy_cache_prefix"`
 	ProviderRoute       string `yaml:"provider_route"`
 	// Timezone defaults to DefaultTimezone.
-	Timezone                   string `yaml:"timezone"`
-	RefreshInterval            Duration
-	ReconcileInterval          Duration
-	CatalogTTL                 Duration
-	LegacyMigrationMaxScanKeys int
-	LegacyMigrationTimeout     Duration
-	LegacyQueryRuntime         PhaseTwoLegacyQueryRuntimeConfig `yaml:"legacy_query_runtime"`
-}
-
-type PhaseTwoRuntimeFilterConfig struct {
-	FieldName string   `yaml:"field_name"`
-	Values    []string `yaml:"values"`
-}
-
-type PhaseTwoLegacyQueryRuntimeConfig struct {
-	FTAEventStorage *execution.QueryStorage `yaml:"fta_event_storage"`
-	// Deprecated: the four keys below are the platform's own settings and
-	// live under phase_two.platform_settings, which the platform's dynamic
-	// configuration distribution overrides at run time. They are still
-	// accepted here for one release: a value given here is carried into the
-	// new group, a value given in both places must agree, and the network
-	// filter, which the platform has never made a setting, must be the
-	// constant it always was. Remove once no deployment states them.
-	AccessBKData          *bool                       `yaml:"access_bk_data"`
-	BKDataCMDBLevelTables []string                    `yaml:"bkdata_cmdb_level_tables"`
-	SystemDiskFilter      PhaseTwoRuntimeFilterConfig `yaml:"system_disk_filter"`
-	SystemNetworkFilter   PhaseTwoRuntimeFilterConfig `yaml:"system_network_filter"`
+	Timezone          string   `yaml:"timezone"`
+	RefreshInterval   Duration `yaml:"-"`
+	ReconcileInterval Duration `yaml:"-"`
+	CatalogTTL        Duration `yaml:"-"`
 }
 
 // PhaseTwoPlatformSettingsConfig is alarmd's deployment layer of the
@@ -133,31 +108,27 @@ type PhaseTwoOwnershipConfig struct {
 }
 
 type PhaseTwoSchedulerConfig struct {
-	// Disabling creation never disables recovery of an existing pending range.
-	ExpiredRangeEnabled bool `yaml:"expired_range_enabled"`
 	// ActiveExecutionLimit bounds outstanding Runner invocations. It is derived
 	// from the container's CPU budget alongside the permits below, and there is
 	// no unlimited setting: zero was one until production showed it produced
 	// parked executions rather than query throughput.
-	ActiveExecutionLimit int
-	TickInterval         Duration
+	ActiveExecutionLimit int      `yaml:"-"`
+	TickInterval         Duration `yaml:"-"`
 	// Admission and queue depth are derived from the container's CPU budget.
-	ProcessQueryPermits      int
-	RecoveryQueryPermits     int
-	ReadyQueueCapacity       int
-	RecoveryQueueCapacity    int
-	MaxQueuedItemsPerQG      int
-	MaxReplaySlots           uint32
-	MaxReplayAge             Duration
-	RetryMinDelay            Duration
-	RetryMaxDelay            Duration
-	QueryUnavailableCooldown bool `yaml:"query_unavailable_cooldown"`
+	ProcessQueryPermits   int      `yaml:"-"`
+	RecoveryQueryPermits  int      `yaml:"-"`
+	ReadyQueueCapacity    int      `yaml:"-"`
+	RecoveryQueueCapacity int      `yaml:"-"`
+	MaxQueuedItemsPerQG   int      `yaml:"-"`
+	MaxReplaySlots        uint32   `yaml:"-"`
+	MaxReplayAge          Duration `yaml:"-"`
+	RetryMinDelay         Duration `yaml:"-"`
+	RetryMaxDelay         Duration `yaml:"-"`
 }
 
 func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits {
 	return scheduler.RecoveryLimits{
-		QueryUnavailableCooldown: config.QueryUnavailableCooldown,
-		ProcessQueryPermits:      config.ProcessQueryPermits, RecoveryQueryPermits: config.RecoveryQueryPermits,
+		ProcessQueryPermits: config.ProcessQueryPermits, RecoveryQueryPermits: config.RecoveryQueryPermits,
 		ReadyQueueCapacity: config.ReadyQueueCapacity, RecoveryQueueCapacity: config.RecoveryQueueCapacity,
 		MaxQueuedItemsPerQG: config.MaxQueuedItemsPerQG,
 		MaxReplaySlots:      config.MaxReplaySlots, MaxReplayAge: config.MaxReplayAge.Duration(),
@@ -192,26 +163,9 @@ type PhaseTwoAccessConfig struct {
 	// search box. Empty means the references render as they did before, as
 	// plain labels, so a new environment still gets every other part of the page
 	// with no configuration at all.
-	MonitorWebBaseURL string `yaml:"monitor_web_base_url"`
-	// HostDisableMonitorStates mirrors the platform's HOST_DISABLE_MONITOR_STATES
-	// global config: a host whose CMDB bk_state contains any of these is not
-	// monitored, and Python's access chain drops its records before they can
-	// alert.
-	//
-	// It is stated here rather than derived because the program cannot derive
-	// it: it is an operator-editable platform setting living in the platform's
-	// own database, and this environment's value is not the shipped default.
-	// Absent means the filter is not installed, which is the behaviour alarmd
-	// had before it existed; it never falls back to the default, because a
-	// wrong list silently changes which alerts are produced.
-	//
-	// Deprecated: the exit stated above has arrived. The value lives under
-	// phase_two.platform_settings.host_disable_monitor_states and the
-	// platform's distribution overrides it at run time; a value given here
-	// is carried there for one release, and must agree with one given there.
-	HostDisableMonitorStates   []string `yaml:"host_disable_monitor_states"`
-	MinReadyDelay              Duration
-	DownstreamExecutionReserve Duration
+	MonitorWebBaseURL          string   `yaml:"monitor_web_base_url"`
+	MinReadyDelay              Duration `yaml:"-"`
+	DownstreamExecutionReserve Duration `yaml:"-"`
 }
 
 type PhaseTwoCoordinatorConfig struct {
@@ -252,87 +206,6 @@ func (c PhaseTwoOutputConfig) protocol() string {
 	return c.Protocol
 }
 
-// PhaseTwoCanonicalConfig selects how the shared canonical encoder runs. It
-// existed to roll the replacement of that encoder out in stages a deployment
-// chose, because only the operator of a cluster knew whether the new form had
-// been proven on that cluster's own traffic.
-//
-// That proof is in: both directions were compared on production traffic, over
-// a hundred million calls, with zero divergence in all three classes and the
-// covered call-site count flat. The comparison has done its job, so the
-// default is the single-pass encoder with nothing comparing, and the keys
-// below are the way back and the way to compare again, not a position a new
-// deployment has to choose.
-//
-// Retirement: the keys, the established encoder and the mode machinery come
-// out together once the single-pass default has been through one release
-// without a rollback. A comparison a deployment wants after that is a
-// one-off measurement with a dense stride, not a standing guard.
-//
-// Everything else about the encoder stays derived. There is no tuning here.
-type PhaseTwoCanonicalConfig struct {
-	// Mode is one of established, shadow, stream_shadow, stream. Empty means
-	// stream: the proven single-pass encoder, nothing comparing.
-	Mode string `yaml:"mode,omitempty"`
-	// ShadowSampleStride compares one call in every stride. Running both forms
-	// on all traffic doubles the work the replacement exists to remove, so a
-	// mode that compares needs a stride, and the default is derived rather
-	// than asked for.
-	ShadowSampleStride uint64 `yaml:"shadow_sample_stride,omitempty"`
-}
-
-// defaultCanonicalShadowStride is derived from what the comparison costs, not
-// chosen for feeling about right.
-//
-// The comparison runs the other form once every stride calls. Measured, the
-// established form costs about five times the single-pass one, so with the
-// single-pass form answering, the comparison adds 5/stride of one canonical
-// call. Holding that under a thousandth of the canonical path gives
-// stride > 5000/5 = 1000, and 1024 is the next power of two.
-//
-// Only the cost sets the bound; detection does not push back. A systematic
-// divergence recurs, so at the observed 52,000 canonical calls a second, one
-// affecting even a hundredth of one per cent of calls is seen within minutes.
-// The thing sparse sampling cannot do is a census -- stride 64 missed six call
-// site types that stride 1 found -- and a census is not what this is for.
-//
-// A window that wants dense sampling says so explicitly; this is the value a
-// comparing mode gets when it names no stride.
-const defaultCanonicalShadowStride = 1024
-
-// The default is the single-pass encoder with nothing comparing. It was the
-// established encoder until every deployment had proven the new form on its
-// own traffic, and briefly the comparing form after that; the comparison is
-// concluded, so a deployment that says nothing pays for one encoder. The
-// established form stays selectable as the way back until the mechanism
-// retires.
-//
-// Deployments are named by role rather than by environment: this file is
-// public.
-func (c PhaseTwoCanonicalConfig) mode() string {
-	if c.Mode == "" {
-		return contract.CanonicalModeStream
-	}
-	return c.Mode
-}
-
-// Stride is zero for a mode that does not compare, so that a leftover setting
-// cannot quietly keep paying for a comparison nobody is reading.
-func (c PhaseTwoCanonicalConfig) Stride() uint64 {
-	switch c.mode() {
-	case contract.CanonicalModeShadow, contract.CanonicalModeStreamShadow:
-	default:
-		return 0
-	}
-	if c.ShadowSampleStride == 0 {
-		return defaultCanonicalShadowStride
-	}
-	return c.ShadowSampleStride
-}
-
-// Mode reports the rollout position this deployment asked for.
-func (c PhaseTwoCanonicalConfig) SelectedMode() string { return c.mode() }
-
 type PhaseTwoRuntimeConfig struct {
 	Linkd            LinkdConfig                    `yaml:"linkd"`
 	Worker           PhaseTwoWorkerConfig           `yaml:"worker"`
@@ -342,9 +215,7 @@ type PhaseTwoRuntimeConfig struct {
 	Scheduler        PhaseTwoSchedulerConfig        `yaml:"scheduler"`
 	Access           PhaseTwoAccessConfig           `yaml:"access"`
 	Coordinator      PhaseTwoCoordinatorConfig      `yaml:"-"`
-	Canonical        PhaseTwoCanonicalConfig        `yaml:"canonical"`
 	PlatformSettings PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
-	Observation      PhaseTwoObservationConfig      `yaml:"observation"`
 	NoData           PhaseTwoNoDataConfig           `yaml:"no_data"`
 }
 
@@ -378,35 +249,6 @@ type PhaseTwoNoDataConfig struct {
 	TrackingHorizonSeconds *int64 `yaml:"tracking_horizon_seconds,omitempty"`
 }
 
-// PhaseTwoObservationConfig is the operator's allocation to the strategy
-// directory, the cost candidates and the criterion samples: the diagnostics
-// that read the control plane and write the diagnostic store on their own
-// account, beyond what detection needs.
-//
-// MemoryPercent is the share of the container's memory limit they may hold,
-// from which every other bound of theirs is derived (config.DeriveObservationCapacity).
-// Zero -- the default -- leaves them off: the directory cold read of a
-// ten-thousand-Plan catalogue and the per-tick cost summary were measured
-// on synthetic populations only, and the ruling is that they are switched on
-// by an operator who has been given the measured budget for that deployment,
-// not by whichever container happens to know its limit. An operator turning
-// them on says how much, and nothing here says "unlimited".
-type PhaseTwoObservationConfig struct {
-	MemoryPercent int `yaml:"memory_percent"`
-}
-
-// ObservationMemoryPercentMax bounds the allocation: a quarter of the
-// container is the point past which the diagnostics are competing with the
-// detection they are supposed to describe.
-const ObservationMemoryPercentMax = 25
-
-func (c PhaseTwoObservationConfig) validate() error {
-	if c.MemoryPercent < 0 || c.MemoryPercent > ObservationMemoryPercentMax {
-		return fmt.Errorf("phase_two.observation.memory_percent %d must be between 0 (off) and %d", c.MemoryPercent, ObservationMemoryPercentMax)
-	}
-	return nil
-}
-
 func (c PhaseTwoNoDataConfig) validate() error {
 	// Refused here as well as in the contract because this is where an
 	// operator's typo is still a startup failure they can read. Reaching the
@@ -421,8 +263,12 @@ func (c PhaseTwoNoDataConfig) validate() error {
 	// way to mean.
 	if c.TrackingHorizonSeconds != nil && *c.TrackingHorizonSeconds < 1 {
 		return fmt.Errorf("phase_two.no_data.tracking_horizon_seconds %d must be a positive number of "+
-			"seconds; omit the key entirely to leave absence tracked indefinitely",
+			"seconds; omit the key to inherit the platform's horizon (the published dynamic value, else one day)",
 			*c.TrackingHorizonSeconds)
+	}
+	if c.TrackingHorizonSeconds != nil && *c.TrackingHorizonSeconds > contract.MaxNoDataTrackingHorizonSeconds {
+		return fmt.Errorf("phase_two.no_data.tracking_horizon_seconds %d is past the largest horizon a lifetime "+
+			"can hold, %d seconds", *c.TrackingHorizonSeconds, contract.MaxNoDataTrackingHorizonSeconds)
 	}
 	return nil
 }
@@ -442,8 +288,7 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			// top is a design item alarmd does not carry yet.
 			Timezone:        DefaultTimezone,
 			RefreshInterval: Duration(30 * time.Second), ReconcileInterval: Duration(5 * time.Second),
-			CatalogTTL: Duration(24 * time.Hour), LegacyMigrationMaxScanKeys: 50000,
-			LegacyMigrationTimeout: Duration(30 * time.Second),
+			CatalogTTL: Duration(24 * time.Hour),
 		},
 		Ownership: PhaseTwoOwnershipConfig{
 			ControlLeaderTTL: Duration(30 * time.Second), ControlLeaderRenewInterval: Duration(10 * time.Second),
@@ -454,14 +299,9 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 		// only place that knows the chunked Store apply budget they are held
 		// against.
 		Scheduler: PhaseTwoSchedulerConfig{
-			// Expired-range finalization is the product's behaviour; the key
-			// stays as the rollback switch decision-002 keeps for a version
-			// that cannot read the range proof.
-			ExpiredRangeEnabled: true,
 			TickInterval:        Duration(time.Second),
 			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
-			QueryUnavailableCooldown: true,
 		},
 		Access: PhaseTwoAccessConfig{
 			// The query source is the product's name on every unify-query
@@ -473,81 +313,8 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 	}
 }
 
-// migratePlatformSettings carries the deprecated keys into the new group.
-// A value stated in both places must agree: a deployment that says two
-// things about one setting is not one that can be read either way. The
-// constants are checked rather than ignored, so that a deployment which
-// changed one expecting an effect is told there is none.
-func (c *PhaseTwoRuntimeConfig) migratePlatformSettings() error {
-	group := &c.PlatformSettings
-	legacy := &c.Control.LegacyQueryRuntime
-	if states := c.Access.HostDisableMonitorStates; len(states) > 0 {
-		if err := carryList("access.host_disable_monitor_states", states, &group.HostDisableMonitorStates); err != nil {
-			return err
-		}
-	}
-	if legacy.AccessBKData != nil {
-		if group.IsAccessBKData != nil && *group.IsAccessBKData != *legacy.AccessBKData {
-			return errors.New("phase_two control legacy_query_runtime.access_bk_data and platform_settings.is_access_bk_data disagree")
-		}
-		value := *legacy.AccessBKData
-		group.IsAccessBKData = &value
-	}
-	if legacy.BKDataCMDBLevelTables != nil {
-		if err := carryList("control.legacy_query_runtime.bkdata_cmdb_level_tables", legacy.BKDataCMDBLevelTables, &group.BKDataCMDBLevelTables); err != nil {
-			return err
-		}
-	}
-	if legacy.SystemDiskFilter.FieldName != "" && legacy.SystemDiskFilter.FieldName != SystemDiskFilterField {
-		return fmt.Errorf("phase_two control legacy_query_runtime.system_disk_filter.field_name is the constant %q", SystemDiskFilterField)
-	}
-	if legacy.SystemDiskFilter.Values != nil {
-		if err := carryList("control.legacy_query_runtime.system_disk_filter.values", legacy.SystemDiskFilter.Values, &group.FileSystemTypeIgnore); err != nil {
-			return err
-		}
-	}
-	network := legacy.SystemNetworkFilter
-	if (network.FieldName != "" && network.FieldName != SystemNetworkFilterField) ||
-		(network.Values != nil && !equalStringLists(network.Values, SystemNetworkFilterValues())) {
-		return fmt.Errorf("phase_two control legacy_query_runtime.system_network_filter is the constant %s=%v and not a setting",
-			SystemNetworkFilterField, SystemNetworkFilterValues())
-	}
-	// One source from here on: the deprecated keys are read, carried, and
-	// then hold nothing a later reader could take for the value in force.
-	c.Access.HostDisableMonitorStates = nil
-	legacy.AccessBKData = nil
-	legacy.BKDataCMDBLevelTables = nil
-	legacy.SystemDiskFilter = PhaseTwoRuntimeFilterConfig{}
-	legacy.SystemNetworkFilter = PhaseTwoRuntimeFilterConfig{}
-	return nil
-}
-
-func carryList(oldKey string, values []string, into **[]string) error {
-	if *into != nil {
-		if !equalStringLists(**into, values) {
-			return fmt.Errorf("phase_two %s and its platform_settings key disagree", oldKey)
-		}
-		return nil
-	}
-	copied := append([]string{}, values...)
-	*into = &copied
-	return nil
-}
-
-func equalStringLists(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
 func (c *Config) resolvePhaseTwoWorkerIDFromEnvironment() {
-	if c == nil || c.Input.Mode != InputModeGoAccess {
+	if c == nil {
 		return
 	}
 	if workerID, ok := os.LookupEnv(PhaseTwoWorkerIDEnvironment); ok {
@@ -561,10 +328,6 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	// no longer configuration at all.
 	if !canonicalText(c.Worker.ID) {
 		return errors.New("phase_two worker identity must be canonical text")
-	}
-	if !slices.Contains(contract.CanonicalModeNames(), c.Canonical.mode()) {
-		return fmt.Errorf("phase_two.canonical.mode %q must be one of %s",
-			c.Canonical.Mode, strings.Join(contract.CanonicalModeNames(), ", "))
 	}
 	switch c.Output.protocol() {
 	case OutputProtocolAuto, OutputProtocolLegacy, OutputProtocolNative:
@@ -587,9 +350,6 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	if err := platformsettings.ValidateKeyPrefix(c.PlatformSettings.RedisKeyPrefix); err != nil {
 		return fmt.Errorf("phase_two platform_settings.redis_key_prefix: %w", err)
 	}
-	if err := c.Observation.validate(); err != nil {
-		return err
-	}
 	if err := c.NoData.validate(); err != nil {
 		return err
 	}
@@ -603,8 +363,7 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 		}
 	}
 	if c.Control.RefreshInterval.Duration() <= 0 || c.Control.ReconcileInterval.Duration() <= 0 ||
-		c.Control.CatalogTTL.Duration() <= c.Control.RefreshInterval.Duration() ||
-		c.Control.LegacyMigrationMaxScanKeys <= 0 || c.Control.LegacyMigrationTimeout.Duration() <= 0 {
+		c.Control.CatalogTTL.Duration() <= c.Control.RefreshInterval.Duration() {
 		return errors.New("phase_two control refresh, reconcile and catalog TTL are invalid")
 	}
 	if !ttlExceedsRenew(c.Ownership.ControlLeaderTTL, c.Ownership.ControlLeaderRenewInterval) ||

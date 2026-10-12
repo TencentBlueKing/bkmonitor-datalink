@@ -6,20 +6,11 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 )
 
-func refusalLogObserver(output *bytes.Buffer, t *testing.T) *LoggingObserver {
+func refusalLogObserver(output *bytes.Buffer, t *testing.T) Observer {
 	t.Helper()
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 100})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return NewLoggingObserver(New("alarmd", output), policy)
+	return rendererObserver{output: output}
 }
 
 // The size and the bound travel together on the line.
@@ -34,7 +25,7 @@ func TestNoDataMemoryRefusalLineCarriesTheSizeAndTheBound(t *testing.T) {
 	observer.Observe(context.Background(), Observation{
 		Component: ComponentState, Stage: StageNoDataMemoryRefused, Result: ResultDegraded,
 		ReasonCode: ReasonCode("STATE_BUDGET_EXCEEDED"),
-		Trace:      TraceFields{StrategyID: "8946"},
+		Trace:      TraceFields{StrategyID: "856"},
 		NoDataMemoryRefusal: &NoDataMemoryRefusalFacts{
 			Reason: "STATE_BUDGET_EXCEEDED", Record: "GROUPS", Groups: 120000, Limit: 100000,
 		},
@@ -54,7 +45,7 @@ func TestNoDataMemoryRefusalLineCarriesTheSizeAndTheBound(t *testing.T) {
 		"no_data_memory_record":  "GROUPS",
 		"no_data_memory_groups":  float64(120000),
 		"no_data_memory_limit":   float64(100000),
-		"strategy_id":            "8946",
+		"strategy_id":            "856",
 	} {
 		if line[field] != want {
 			t.Fatalf("line[%q] = %#v, want %#v; line=%#v", field, line[field], want, line)
@@ -103,7 +94,7 @@ func TestNoDataMemoryWriteLineCarriesTheOutcomeAndWhetherItWasKept(t *testing.T)
 		observer := refusalLogObserver(&output, t)
 		observer.Observe(context.Background(), Observation{
 			Component: ComponentState, Stage: StageNoDataMemoryWritten, Result: ResultSuccess,
-			Trace:             TraceFields{StrategyID: "8946"},
+			Trace:             TraceFields{StrategyID: "856"},
 			NoDataMemoryWrite: &NoDataMemoryWriteFacts{Outcome: test.outcome, Stored: test.stored},
 		})
 		var line map[string]any
@@ -117,7 +108,7 @@ func TestNoDataMemoryWriteLineCarriesTheOutcomeAndWhetherItWasKept(t *testing.T)
 			// looking for: an omitted false is a line that does not say the
 			// memory was dropped.
 			"no_data_memory_stored": test.stored,
-			"strategy_id":           "8946",
+			"strategy_id":           "856",
 		} {
 			if line[field] != want {
 				t.Fatalf("line[%q] = %#v, want %#v; line=%#v", field, line[field], want, line)

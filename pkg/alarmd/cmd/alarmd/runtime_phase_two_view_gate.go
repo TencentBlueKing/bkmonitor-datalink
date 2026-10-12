@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -51,9 +52,13 @@ import (
 // view's propagation delay is the reading batch 4a is accepted on.
 type viewExecutionGate struct {
 	view installedView
+	// retryWithin is the lease renewal interval: what a refused round waits
+	// for arrives by the view's delta or by the next renewal, so a refusal
+	// is asked again within it (scheduler.ViewNotExecutableError.RetryWithin).
+	retryWithin time.Duration
 
 	mu       sync.Mutex
-	outcomes map[execution.QueryGroupIdentity]viewGateOutcome
+	outcomes map[execution.QueryGroupIdentity]viewGateRecord
 	// renewals counts the leases renewed ahead of their interval because
 	// the view said a newer timeline revision than the lease had brought,
 	// and how many of those renewals settled the check. A cutover moves
@@ -87,7 +92,7 @@ var viewGateOutcomes = []viewGateOutcome{
 }
 
 func newViewExecutionGate() *viewExecutionGate {
-	return &viewExecutionGate{outcomes: map[execution.QueryGroupIdentity]viewGateOutcome{}}
+	return &viewExecutionGate{outcomes: map[execution.QueryGroupIdentity]viewGateRecord{}}
 }
 
 // attach gives the gate the installed view to read. The client is built
@@ -174,18 +179,32 @@ func (gate *viewExecutionGate) Renewals() (made, settled, failed uint64) {
 	return gate.renewals, gate.renewalsSettled, gate.renewalsFailed
 }
 
-// record keeps the latest outcome for a Query Group this Worker runs.
-func (gate *viewExecutionGate) record(queryGroup execution.QueryGroupIdentity, outcome viewGateOutcome) {
+// viewGateRecord is a Query Group's latest outcome and the session of the
+// Runner that judged it.
+type viewGateRecord struct {
+	outcome viewGateOutcome
+	session *ownership.Session
+}
+
+// record keeps the latest outcome for a Query Group this Worker runs, under
+// the Runner's session.
+func (gate *viewExecutionGate) record(queryGroup execution.QueryGroupIdentity, session *ownership.Session, outcome viewGateOutcome) {
 	gate.mu.Lock()
-	gate.outcomes[queryGroup] = outcome
+	gate.outcomes[queryGroup] = viewGateRecord{outcome: outcome, session: session}
 	gate.mu.Unlock()
 }
 
 // forget drops a Query Group the Worker no longer runs, so a released
-// Query Group neither counts as executed from the view nor as short of it.
-func (gate *viewExecutionGate) forget(queryGroup execution.QueryGroupIdentity) {
+// Query Group neither counts as executed from the view nor as short of it -
+// the outcome the releasing Runner recorded, and only that: a Runner lost
+// and released after the next one recorded leaves the newer outcome. The
+// session is compared as the *Session the record holds, never as an
+// address.
+func (gate *viewExecutionGate) forget(queryGroup execution.QueryGroupIdentity, session *ownership.Session) {
 	gate.mu.Lock()
-	delete(gate.outcomes, queryGroup)
+	if record, ok := gate.outcomes[queryGroup]; ok && record.session == session {
+		delete(gate.outcomes, queryGroup)
+	}
 	gate.mu.Unlock()
 }
 
@@ -200,7 +219,7 @@ func (gate *viewExecutionGate) SwitchedQueryGroups(of []execution.QueryGroupIden
 	defer gate.mu.Unlock()
 	count := 0
 	for _, queryGroup := range of {
-		if gate.outcomes[queryGroup] == viewGateExecutable {
+		if gate.outcomes[queryGroup].outcome == viewGateExecutable {
 			count++
 		}
 	}
@@ -215,8 +234,8 @@ func (gate *viewExecutionGate) Counts() map[string]int {
 	for _, outcome := range viewGateOutcomes {
 		counts[string(outcome)] = 0
 	}
-	for _, outcome := range gate.outcomes {
-		counts[string(outcome)]++
+	for _, record := range gate.outcomes {
+		counts[string(record.outcome)]++
 	}
 	return counts
 }
@@ -265,9 +284,10 @@ func gateContext(ctx context.Context, gate *viewExecutionGate, queryGroup execut
 		}
 		gate.noteRenewal(outcome == viewGateExecutable, err != nil)
 	}
-	gate.record(queryGroup, outcome)
+	gate.record(queryGroup, session, outcome)
 	if revision == 0 {
-		return ctx, &scheduler.ViewNotExecutableError{Reason: string(outcome)}
+		return ctx, &scheduler.ViewNotExecutableError{Reason: string(outcome), AwaitingView: outcome == viewGateNotInView,
+			RetryWithin: gate.retryWithin}
 	}
 	return controlplane.WithTimelineRevisionHint(ctx, revision), nil
 }
@@ -312,10 +332,32 @@ func (catalog *viewGatedCatalog) NextSlotAfter(ctx context.Context, queryGroup e
 	return catalog.next.NextSlotAfter(ctx, queryGroup, at)
 }
 
+func (catalog *viewGatedCatalog) ReadSegmentRepair(ctx context.Context, queryGroup execution.QueryGroupIdentity, segmentStart execution.EvaluationTime) (execution.SegmentRepair, bool, error) {
+	ctx, err := catalog.gated(ctx)
+	if err != nil {
+		return execution.SegmentRepair{}, false, err
+	}
+	return catalog.next.ReadSegmentRepair(ctx, queryGroup, segmentStart)
+}
+
 func (catalog *viewGatedCatalog) FreezeSlotContract(ctx context.Context, request execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error) {
 	ctx, err := catalog.gated(ctx)
 	if err != nil {
 		return execution.FrozenSlotContractFact{}, err
+	}
+	return catalog.next.FreezeSlotContract(ctx, request)
+}
+
+// FreezeObservedSlotContract is the freeze a supplement asks for, under the
+// same gate: from the Segment's retained content alone when the catalog
+// offers it, the ordinary freeze otherwise.
+func (catalog *viewGatedCatalog) FreezeObservedSlotContract(ctx context.Context, request execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error) {
+	ctx, err := catalog.gated(ctx)
+	if err != nil {
+		return execution.FrozenSlotContractFact{}, err
+	}
+	if observed, ok := catalog.next.(scheduler.ObservedContractFreezer); ok {
+		return observed.FreezeObservedSlotContract(ctx, request)
 	}
 	return catalog.next.FreezeSlotContract(ctx, request)
 }

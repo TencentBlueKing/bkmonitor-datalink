@@ -11,7 +11,6 @@ package fleet
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -66,7 +65,7 @@ type WithheldReasonWords struct {
 	Kind WithheldKind `json:"kind"`
 	What string       `json:"what"`
 	Next string       `json:"next"`
-	// Action is set on the reasons under CONFIG_NORMALIZED, whose line
+	// Action is set on the reasons under CONFIG_NOTED, whose line
 	// holds strategies that are detecting: whether the reason asks the
 	// strategy to change what it wrote, or asks nothing. The line takes the
 	// most demanding of its reasons, so a line of ignored priorities alone
@@ -79,26 +78,72 @@ type WithheldReasonWords struct {
 // produced and not listed here reaches the page as unknown, which a test
 // against the control plane's literals keeps from lasting a release.
 var withheldReasonWords = map[string]WithheldReasonWords{
-	// The one reason under CONFIG_NORMALIZED: not withheld at all. The
+	// The one reason under CONFIG_NOTED: not withheld at all. The
 	// words say what was read instead of what was written, and that the
 	// strategy detects more than it asked for until the range is fixed.
 	"EFFECTIVE_TIME_RANGE_INVALID": {Kind: WithheldStrategyDefinition,
 		What:   "生效时间段的开始或结束时间格式不合法，已按平台自己的读法读：开始坏读作 00:00、结束坏读作 23:59——策略在检测，但检测的时段比配置写的宽，不是被扣住",
 		Next:   "策略负责人把该时间段改成 HH:MM；改好后下一轮刷新按写的时段检测，这一行消失",
 		Action: ActionStrategyEdit},
-	// The second reason under CONFIG_NORMALIZED, also not withheld: the
+	// The second reason under CONFIG_NOTED, also not withheld: the
 	// strategy runs, without the arbitration the platform applies between
 	// the strategies of one priority group.
 	"PRIORITY_IGNORED": {Kind: WithheldStrategyDefinition,
 		What:   "策略配了优先级分组。优先级是平台告警链路在同组策略之间做的抑制：同一目标上只留优先级最高的那条。这里按独立策略检测，不做这层抑制，所以同组的低优先级策略也会在同一目标上告警——策略在检测，不是被扣住",
 		Next:   "不需要处理。平台那边可能仍会按优先级关掉低优先级的告警，那是平台的规则，不是这里的错关",
 		Action: ActionNone},
-	// Under CONFIG_NORMALIZED as well: the level runs, on another level's
+	// Under CONFIG_NOTED as well: the level runs, on another level's
 	// trigger, the way the platform runs it.
 	"LEVEL_TRIGGER_BORROWED": {Kind: WithheldStrategyDefinition,
 		What:   "这一级别的算法没有配同级别的触发条件，已按平台的读法借用策略里第一条触发条件（次数、窗口、生效时间）来检测，恢复按平台默认的 5 个周期——策略在检测，不是被扣住",
 		Next:   "策略负责人把触发条件配到算法所在的级别上；改好后下一轮刷新按写的条件检测，这一行消失",
 		Action: ActionStrategyEdit},
+	// Under CONFIG_NOTED too: the strategy runs, on the period Python
+	// gives a query config that carries none.
+	"AGG_INTERVAL_DEFAULTED": {Kind: WithheldStrategyDefinition,
+		What:   "策略的查询配置没有写聚合周期，或写的是 0，已按平台的读法按 60 秒作为检测周期——策略在检测，不是被扣住",
+		Next:   "策略负责人在查询配置里写上聚合周期；改好后下一轮刷新按写的周期检测，这一行消失",
+		Action: ActionStrategyEdit},
+	// Under CONFIG_NOTED too: the level recovers, on the window the platform
+	// reads when it cannot read the one written.
+	"RECOVERY_CONFIG_DEFAULTED": {Kind: WithheldStrategyDefinition,
+		What:   "这一级别的恢复配置平台读不出窗口数（没写、为空、不是数字，或同一策略另一级别的恢复配置读不出——平台那时整条策略都用默认），已按平台的读法用默认 5 个周期恢复——策略在检测，不是被扣住",
+		Next:   "策略负责人给每个级别写上恢复周期数；改好后下一轮刷新按写的周期恢复，这一行消失",
+		Action: ActionStrategyEdit},
+	// Under CONFIG_NOTED too, and not a reading at all: the no-data
+	// configuration runs as written and can never alert, because the
+	// tracking horizon stops each absence before the trigger has its count.
+	// The detail carries the numbers the owner chooses between.
+	"NO_DATA_TRIGGER_BEYOND_HORIZON": {Kind: WithheldStrategyDefinition,
+		What:   "无数据告警要连续缺席的时长达到或超过追踪期限：第 N 个连续缺席点出现在首次缺席后（连续周期数−1）×周期 秒，而追踪在缺席满追踪期限的那一轮停止且不出裁决，所以这条无数据永远发不出告警（详情里写明连续周期数、周期、最早可告警时刻、追踪期限及其来源）——策略在检测，阈值检测和无数据的追踪、停止、恢复都照常，不是被扣住",
+		Next:   "策略负责人把连续周期数调小，或调大追踪期限（来源是 STRATEGY 时改策略的无数据配置，是 PLATFORM 时改平台配置）；改好后下一轮刷新这一行消失",
+		Action: ActionStrategyEdit},
+	// The detect_interval readings, under CONFIG_NOTED: the Plan runs,
+	// at the step written or at the aggregation interval, and the words say
+	// which and what follows from it.
+	"ABOVE_AGG_INTERVAL": {Kind: WithheldStrategyDefinition,
+		What:   "检测周期大于聚合周期：每次检测只看最近一个聚合窗口，两次检测之间的聚合周期不参与检测；兼容输出的下游按聚合周期数“N 次里 M 次”，点变稀后可能永远凑不够——策略在检测，不是被扣住",
+		Next:   "如果不是有意这样配，策略负责人把检测周期改到不大于聚合周期；改好后下一轮刷新这一行消失",
+		Action: ActionStrategyEdit},
+	"NOT_DIVISIBLE": {Kind: WithheldStrategyDefinition,
+		What:   "检测周期不能整除聚合周期：按配置的节拍检测；兼容输出只送落在聚合周期边界上的那几次，点会变稀，在两个边界之间开始又结束的异常在兼容输出上送不出去——标准输出不受影响，策略在检测",
+		Next:   "需要兼容输出完整时，策略负责人把检测周期改成能整除聚合周期的值；改好后下一轮刷新这一行消失",
+		Action: ActionStrategyEdit},
+	"BELOW_FLOOR": {Kind: WithheldStrategyDefinition,
+		What:   "检测周期低于系统下限 10 秒：已按 10 秒检测，配置值没有生效——策略在检测",
+		Next:   "策略负责人把检测周期改到 10 秒或以上；改好后下一轮刷新这一行消失",
+		Action: ActionStrategyEdit},
+	"SOURCE_NOT_SLIDING": {Kind: WithheldStrategyDefinition,
+		What:   "该数据源暂不支持按检测周期滑动，已按聚合周期检测：只有结构化时序（bk_monitor/time_series、custom/time_series）能按检测周期读窗口，日志、事件、计算平台和 PromQL 的查询按聚合周期分桶——策略在检测，检测周期没有生效",
+		Next:   "不需要处理。要更快发现，可以缩短聚合周期，或改用结构化时序指标",
+		Action: ActionNone},
+	"ALGORITHM_NOT_SLIDING": {Kind: WithheldStrategyDefinition,
+		What:   "策略有级别用的算法不能按这个检测周期检测（详情里写明是哪个算法），已按聚合周期检测：高级环比（AdvancedRingRatio）要按检测周期取多个历史点，按聚合周期分的桶落不到这些点上；系统重启（OsRestart）要和 10 分钟、25 分钟前的点比，检测周期达到 10 分钟及以上时比较点会乱序——策略在检测，检测周期没有生效",
+		Next:   "要按检测周期检测，策略负责人把该级别换成其它算法（例如简易环比），系统重启则把检测周期改到 10 分钟以下，或去掉检测周期；改好后下一轮刷新这一行消失",
+		Action: ActionStrategyEdit},
+	"DETECT_INTERVAL_INVALID": {Kind: WithheldStrategyDefinition,
+		What: "检测周期不是正整数（秒），无法执行，策略被扣住",
+		Next: "策略负责人把检测周期改成正整数秒，或去掉它；改好后下一轮刷新自动接受"},
 	"SNAPSHOT_RETENTION_INSUFFICIENT": {Kind: WithheldStrategyDefinition,
 		What: "策略的评估周期太长：冻结的 Slot 要读的内容和按序列状态，需要保留得比状态存储的上限还久（样本里有要求值和上限）",
 		Next: "缩短该策略的评估周期，下一轮刷新自动接受；调部署参数没有用"},
@@ -126,9 +171,19 @@ var withheldReasonWords = map[string]WithheldReasonWords{
 	"UNSUPPORTED_TARGET_VALUE_SHAPE": {Kind: WithheldBuildCapability,
 		What: "策略目标值的写法本构建读不出键",
 		Next: "等能读该值形状的构建；改部署参数没有用"},
+	// A global business strategy written in a form this build cannot run
+	// across businesses; the detail's reason= names which one.
+	"GLOBAL_STRATEGY_UNSUPPORTED": {Kind: WithheldBuildCapability,
+		What: "全局业务策略的这种写法本构建还不能按全局运行：详情里的 reason 说明是哪一条（旧写法的目标、非结构化时序查询、查询没写表或数据标签、输出兼容事件）",
+		Next: "一般要等支持该写法的构建。两种例外：reason 为 query_table 时，策略负责人给查询补上表或数据标签即可；reason 为 output_protocol 时，部署输出协议（phase_two.output.protocol）是 legacy 的改为 auto 或 native 即可（策略须带快照 revision），是 auto 的要等写方给策略补上快照 revision"},
 	"UNSUPPORTED_MULTI_ITEM_STRATEGY": {Kind: WithheldBuildCapability,
 		What: "多 item 的策略本构建不支持",
 		Next: "等支持多 item 的构建；改部署参数没有用"},
+	// Not a capability still to come: FTA event sources are not supported,
+	// and no build or deployment parameter changes that.
+	"QUERY_FTA_UNSUPPORTED": {Kind: WithheldStrategyDefinition,
+		What: "FTA 告警事件类数据源不支持：这类查询要用查询服务没有的字段，不带这些字段就会把整张表的告警都算进来，所以一律不编译",
+		Next: "不会在这里检测，也没有开关可开；需要检测的话，策略负责人改用其它数据源"},
 	"QUERY_SOURCE_NOT_MIGRATED": {Kind: WithheldBuildCapability,
 		What: "该数据源的查询还没迁到 Go 侧",
 		Next: "等带该数据源的构建；改部署参数没有用"},
@@ -164,6 +219,9 @@ var withheldReasonWords = map[string]WithheldReasonWords{
 	"TARGET_PLAN_EMPTY": {Kind: WithheldWriterAhead,
 		What: "写入方给的 target_plan 既没有静态目标也没有动态引用，永远匹配不到任何东西",
 		Next: "写入方核这条策略的目标计划；alarmd 与部署参数都不用改"},
+	"TARGET_PLAN_TENANT_MISMATCH": {Kind: WithheldWriterAhead,
+		What: "ip_cloud 目标计划写的 bk_tenant_id 不是策略自己的租户；地址只在一个租户内对应主机，按别的租户读会把别人的主机当成目标",
+		Next: "写入方核这条策略目标计划里的租户；alarmd 与部署参数都不用改"},
 	"TARGET_PLAN_MISSING": {Kind: WithheldWriterAhead,
 		What: "item 的目标是选择文档但没有配套的 target_plan",
 		Next: "写入方补 target_plan；alarmd 与部署参数都不用改"},
@@ -181,17 +239,6 @@ func WithheldWordsOf(reason string) WithheldReasonWords {
 	return WithheldReasonWords{Kind: WithheldUnknownReason,
 		What: "原因 " + reason + "：本构建的页面还没有这个原因的说明",
 		Next: "按原因词查该构建的变更说明；别按别的原因的处理办法改参数"}
-}
-
-// KnownWithheldReasons lists the reasons this table explains, sorted, for
-// the test that holds it to what the control plane produces.
-func KnownWithheldReasons() []string {
-	reasons := make([]string, 0, len(withheldReasonWords))
-	for reason := range withheldReasonWords {
-		reasons = append(reasons, reason)
-	}
-	sort.Strings(reasons)
-	return reasons
 }
 
 // capabilityLine is the sentence for the line of strategies this

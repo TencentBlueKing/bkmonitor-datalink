@@ -30,9 +30,9 @@ var errRuntimeCatalogClosureInvalid = errors.New("alarmd controlplane: runtime C
 // The no-data Level counts with the rest. Its facts are written on the same
 // records, so its retention is retention the store pays for.
 func observeRetention(retention *CatalogRetention, compiled *strategy.CompiledPlan) {
-	levels := compiled.Levels()
+	levels := compiled.Levels().Copy()
 	if noData := compiled.NoDataLevel(); noData != nil {
-		levels = append(append([]strategy.CompiledLevel(nil), levels...), *noData)
+		levels = append(levels, *noData)
 	}
 	for _, level := range levels {
 		requirement := level.StateRequirement()
@@ -70,6 +70,24 @@ func retainRuntimeExecutableCatalog(
 	groups := make(map[execution.QueryGroupIdentity]*QueryGroup, len(catalog.QueryGroups))
 	seenPlans := make(map[execution.PlanKey]struct{})
 	lastGoodPlans := indexLastGoodPlans(lastGood)
+	// lastGoodFor is the strategy's last-good Plan when it may stand in for
+	// the one built this round, whole or Level by Level: built for the same
+	// identity as current, the facts this round's document compiled to. A
+	// last-good Plan of another identity is named and counted, and not used.
+	lastGoodFor := func(strategyID string, current execution.QueryPlanFacts) (lastGoodPlan, bool) {
+		entry, ok := lastGoodPlans[strategyID]
+		if !ok {
+			return lastGoodPlan{}, false
+		}
+		identity := identityOfFacts(current)
+		if !lastGoodIdentityHolds(&identity, entry) {
+			result.Dispositions = append(result.Dispositions, ObjectDisposition{SourceID: strategyID, Scope: "PLAN",
+				Disposition: DispositionConfigRejected, Reason: reasonLastGoodIdentityChanged})
+			result.LastGoodIdentityChanged++
+			return lastGoodPlan{}, false
+		}
+		return entry, true
+	}
 	rejectClosure := func(sourceID string, dispositions ...ObjectDisposition) {
 		result.Dispositions = append(result.Dispositions, dispositions...)
 		result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourceID)
@@ -131,7 +149,7 @@ func retainRuntimeExecutableCatalog(
 				disposition := terminalDisposition(sourcePlan.Identity.StrategyID, "PLAN", *terminal)
 				result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourcePlan.Identity.StrategyID)
 				if RetainsLastGoodDefinition(disposition.Disposition) {
-					if entry, ok := lastGoodPlans[sourcePlan.Identity.StrategyID]; ok {
+					if entry, ok := lastGoodFor(sourcePlan.Identity.StrategyID, sourceGroup.QueryPlan); ok {
 						lastGoodCompiled, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 						if err != nil {
 							return Catalog{}, err
@@ -181,7 +199,7 @@ func retainRuntimeExecutableCatalog(
 			}
 			supplementedLevels := map[uint32]struct{}{}
 			if retainsLastGood {
-				if entry, ok := lastGoodPlans[sourcePlan.Identity.StrategyID]; ok {
+				if entry, ok := lastGoodFor(sourcePlan.Identity.StrategyID, sourceGroup.QueryPlan); ok {
 					_, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 					if err != nil {
 						return Catalog{}, err
@@ -212,7 +230,7 @@ func retainRuntimeExecutableCatalog(
 					return Catalog{}, err
 				}
 				verifiedPlan, ok := verification.Plan()
-				if verification.PlanTerminal() == nil && len(verification.LevelTerminals()) == 0 && ok && len(verifiedPlan.Levels()) > 0 {
+				if verification.PlanTerminal() == nil && len(verification.LevelTerminals()) == 0 && ok && verifiedPlan.Levels().Len() > 0 {
 					if err := validateRuntimePlanDependencyClosure(plan, verifiedPlan); err != nil {
 						if errors.Is(err, errRuntimeCatalogClosureInvalid) {
 							rejectClosure(sourcePlan.Identity.StrategyID, terminalDispositions...)
@@ -284,13 +302,13 @@ func runtimeFrozenPlanIsTerminalFree(
 		return nil, false, err
 	}
 	compiled, ok := result.Plan()
-	executable := ok && result.PlanTerminal() == nil && len(result.LevelTerminals()) == 0 && len(compiled.Levels()) > 0
+	executable := ok && result.PlanTerminal() == nil && len(result.LevelTerminals()) == 0 && compiled.Levels().Len() > 0
 	return compiled, executable, nil
 }
 
 func retainCompiledLevels(plan FrozenPlan, compiled *strategy.CompiledPlan) (FrozenPlan, error) {
-	retained := make(map[uint32]struct{}, len(compiled.Levels()))
-	for _, level := range compiled.Levels() {
+	retained := make(map[uint32]struct{}, compiled.Levels().Len())
+	for _, level := range compiled.Levels().All() {
 		retained[level.Definition().LevelID] = struct{}{}
 	}
 	levels := make([]contract.LevelIRV2, 0, len(retained))
@@ -445,8 +463,8 @@ func validateRuntimePlanDependencyClosure(plan FrozenPlan, compiled *strategy.Co
 		return errRuntimeCatalogClosureInvalid
 	}
 	expected := make(map[runtimeRequirementKey]execution.DataRequirementTemplate)
-	for _, level := range compiled.Levels() {
-		for _, algorithm := range level.Algorithms() {
+	for _, level := range compiled.Levels().All() {
+		for _, algorithm := range level.Algorithms().All() {
 			for _, requirement := range algorithm.InputRequirements() {
 				template, err := runtimeRequirementTemplate(requirement)
 				if err != nil {
@@ -589,7 +607,8 @@ func CompilerTerminalDisposition(reasonCode string) (Disposition, bool) {
 		contract.ReasonNoDataPlanUncompilable,
 		strategy.ReasonEffectiveTimeInvalid, strategy.ReasonEffectiveTimeSnapshotInvalid,
 		strategy.ReasonEffectiveTimeSnapshotStatusInvalid, strategy.ReasonEffectiveTimeCalendarIdentity,
-		strategy.ReasonEffectiveTimeCalendarDuplicate, strategy.ReasonEffectiveTimeCalendarItemsMissing:
+		strategy.ReasonEffectiveTimeCalendarDuplicate, strategy.ReasonEffectiveTimeCalendarItemsMissing,
+		strategy.ReasonEffectiveTimeItemDuplicate, strategy.ReasonEffectiveTimeItemInvalid, strategy.ReasonEffectiveTimeItemTimeInvalid, strategy.ReasonEffectiveTimeTimeKindInvalid, strategy.ReasonEffectiveTimeTimezoneInvalid, strategy.ReasonEffectiveTimeRepeatInvalid, strategy.ReasonEffectiveTimeRepeatListInvalid, strategy.ReasonEffectiveTimeRepeatEveryInvalid, strategy.ReasonEffectiveTimeRepeatUntilInvalid:
 		return DispositionConfigRejected, true
 	case strategy.ReasonEffectiveTimeSnapshotUnavailable, strategy.ReasonEffectiveTimeCalendarsMissing,
 		strategy.ReasonEffectiveTimeCalendarNotPresent, strategy.ReasonEffectiveTimeCalendarMissing:
@@ -627,7 +646,8 @@ func terminalDisposition(sourceID, scope string, terminal strategy.Terminal) Obj
 			FieldPath: terminal.FieldPath, Detail: dispositionDetail(terminal.ReasonCode)}
 	}
 	return ObjectDisposition{SourceID: sourceID, Scope: scope, LevelID: terminal.LevelID,
-		Disposition: disposition, Reason: terminal.ReasonCode, FieldPath: terminal.FieldPath}
+		Disposition: disposition, Reason: terminal.ReasonCode, FieldPath: terminal.FieldPath,
+		Detail: dispositionDetail(terminal.Detail)}
 }
 
 func withoutAcceptedPlanDisposition(dispositions []ObjectDisposition, sourceID string) []ObjectDisposition {

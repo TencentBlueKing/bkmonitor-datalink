@@ -5,8 +5,6 @@
 
 package controlplane
 
-import "context"
-
 // ForgetActivationCacheForTest drops the parsed activation, so a test that
 // rewrites the body under an unchanged header reads what it wrote.
 func (repository *RedisCatalogRepository) ForgetActivationCacheForTest() {
@@ -21,14 +19,6 @@ func EncodeBlockedSetForTest(groups []BlockedQueryGroup) ([]byte, error) {
 	return encodeBlockedSet(groups)
 }
 func BlockedDigestForTest(groups []BlockedQueryGroup) string { return blockedDigest(groups) }
-
-// PersistActivationRefUpgradeForTest drives the v1-to-v2 ref upgrade's write,
-// which no reachable fixture takes any more.
-func (repository *RedisCatalogRepository) PersistActivationRefUpgradeForTest(
-	ctx context.Context, expected ActivationExpectation, next ActivationState, activePayload []byte,
-) error {
-	return repository.persistActivationRefUpgrade(ctx, expected, next, activePayload)
-}
 
 // CutoverScriptForTest is the cutover script's text.
 func CutoverScriptForTest() string { return compareAndSetCutoverSchedulesScript }

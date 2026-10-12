@@ -120,6 +120,20 @@ func (router *Router) PlanRebalanceWithBytes(
 	readings ByteReadings,
 	at time.Time,
 ) RebalancePlan {
+	return router.PlanRebalanceWithin(owners, workers, readings, at, -1)
+}
+
+// PlanRebalanceWithin is PlanRebalanceWithBytes moving at most within Query
+// Groups (negative is no further bound): what is left of the round's
+// handover batch after the round's own re-placements
+// (ReconcileRoundSettling), so the round hands over one batch in all.
+func (router *Router) PlanRebalanceWithin(
+	owners map[execution.QueryGroupIdentity]string,
+	workers []ownership.WorkerRegistration,
+	readings ByteReadings,
+	at time.Time,
+	within int,
+) RebalancePlan {
 	plan := RebalancePlan{Owned: map[string]int{}}
 	if router == nil || at.IsZero() {
 		return plan
@@ -165,6 +179,9 @@ func (router *Router) PlanRebalanceWithBytes(
 	if limit > plan.Batch {
 		limit = plan.Batch
 	}
+	if within >= 0 && limit > within {
+		limit = within
+	}
 	if limit == 0 {
 		return plan
 	}
@@ -185,6 +202,9 @@ func (router *Router) PlanRebalanceWithBytes(
 			break
 		}
 		if router.additionalEligibility != nil && !router.additionalEligibility.Eligible(queryGroup, destination, at) {
+			continue
+		}
+		if destination.Declines(queryGroup) {
 			continue
 		}
 		peak := readings.Peak[queryGroup]
@@ -230,4 +250,26 @@ func (reconciler *Reconciler) PlanRebalanceWithBytes(
 		return RebalancePlan{Owned: map[string]int{}}
 	}
 	return reconciler.router.PlanRebalanceWithBytes(owners, workers, readings, at)
+}
+
+// PlanRebalanceWithin is the router's PlanRebalanceWithin, for the owner of
+// the reconcile loop.
+func (reconciler *Reconciler) PlanRebalanceWithin(
+	owners map[execution.QueryGroupIdentity]string,
+	workers []ownership.WorkerRegistration,
+	readings ByteReadings,
+	at time.Time,
+	within int,
+) RebalancePlan {
+	if reconciler == nil {
+		return RebalancePlan{Owned: map[string]int{}}
+	}
+	return reconciler.router.PlanRebalanceWithin(owners, workers, readings, at, within)
+}
+
+// HandoverBatch is the round's handover batch for a population of Query
+// Groups (rebalanceBatch), for the owner of the reconcile loop to share
+// between the round's re-placements and its count correction.
+func HandoverBatch(queryGroups int) int {
+	return rebalanceBatch(queryGroups)
 }

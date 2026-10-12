@@ -12,11 +12,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -128,11 +127,15 @@ func TestG3ACrashWindowChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventSink, err := enginekafka.OpenTriggerEventSink(enginekafka.DecisionSinkConfig{
+	eventOpener, err := enginekafka.PrepareTriggerEventSink(enginekafka.DecisionSinkConfig{
 		Brokers: []string{os.Getenv(g3aChildKafkaBroker)}, OutputTopic: os.Getenv(g3aChildKafkaTopic),
 		ClientID:      "alarmd-g3a-crash-child",
 		BrokerVersion: "2.1.0", MaxMessageBytes: 512 << 10,
 	})
+	if err != nil {
+		t.Fatalf("prepare real TriggerEvent sink: %v", err)
+	}
+	eventSink, err := eventOpener.Open()
 	if err != nil {
 		t.Fatalf("open real TriggerEvent sink: %v", err)
 	}
@@ -736,100 +739,7 @@ func g3aEventsAtBroker(t *testing.T, broker *sarama.MockBroker) int {
 
 func startG3ARedis(t *testing.T) string {
 	t.Helper()
-	// Skipped rather than failed when redis-server is missing, which is how
-	// every other real-Redis case in this tree behaves: the machine either
-	// has it and the windows run, or it does not and nothing here can be
-	// decided. A failure would only teach people to set a flag again.
-	redisServer, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
-	address := reserveG3AAddress(t)
-	_, port, err := net.SplitHostPort(address)
-	if err != nil {
-		t.Fatalf("split Redis address %q: %v", address, err)
-	}
-	process := startG3AProcess(t, redisServer, nil,
-		"--bind", "127.0.0.1", "--port", port, "--save", "", "--appendonly", "no", "--protected-mode", "no")
-	waitG3ATCP(t, address, process, 10*time.Second)
-	return address
-}
-
-type lockedBuffer struct {
-	mu     sync.Mutex
-	buffer bytes.Buffer
-}
-
-func (buffer *lockedBuffer) Write(value []byte) (int, error) {
-	buffer.mu.Lock()
-	defer buffer.mu.Unlock()
-	return buffer.buffer.Write(value)
-}
-
-func (buffer *lockedBuffer) String() string {
-	buffer.mu.Lock()
-	defer buffer.mu.Unlock()
-	return buffer.buffer.String()
-}
-
-type g3aProcess struct {
-	command  *exec.Cmd
-	output   *lockedBuffer
-	stopOnce sync.Once
-}
-
-func startG3AProcess(t *testing.T, executable string, environment []string, arguments ...string) *g3aProcess {
-	t.Helper()
-	command := exec.Command(executable, arguments...)
-	if environment != nil {
-		command.Env = environment
-	}
-	output := &lockedBuffer{}
-	command.Stdout = output
-	command.Stderr = output
-	if err := command.Start(); err != nil {
-		t.Fatalf("start %s: %v", executable, err)
-	}
-	process := &g3aProcess{command: command, output: output}
-	t.Cleanup(process.Stop)
-	return process
-}
-
-func (process *g3aProcess) Stop() {
-	if process == nil || process.command == nil || process.command.Process == nil {
-		return
-	}
-	process.stopOnce.Do(func() {
-		_ = process.command.Process.Kill()
-		_ = process.command.Wait()
-	})
-}
-
-func waitG3ATCP(t *testing.T, address string, process *g3aProcess, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
-		if err == nil {
-			_ = connection.Close()
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	t.Fatalf("process did not listen on %s within %s\n%s", address, timeout, process.output.String())
-}
-
-func reserveG3AAddress(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve TCP address: %v", err)
-	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatalf("release reserved TCP address: %v", err)
-	}
-	return address
+	return redistest.Start(t, "--protected-mode", "no").Addr
 }
 
 var _ execution.EventSink = (*g3aCrashEventSink)(nil)

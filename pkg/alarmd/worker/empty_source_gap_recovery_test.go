@@ -31,18 +31,17 @@ func driftedScopes(observed uint32) []execution.GapScopeState {
 	}
 }
 
-// A query group whose source has gone empty still recovers its Plan scope: a
-// FULL completion with no rows is a healthy Slot for the Plan, warming its
-// marker one slot per round until it clears. The Level scope is left exactly
-// as it was loaded on every one of those rounds.
+// A query group whose source has gone empty still recovers its marker: a FULL
+// completion with no rows, every input whole, is a healthy Slot for the Plan,
+// warming every scope - the Plan's and the Level's - one slot per round until
+// it clears.
 //
 // Without this the marker outlives the outage that opened it for as long as
 // the source stays empty, because the recovery used to ride on a state
-// mutation and a Plan with no series produces none. The cost is paid on the
-// round the data comes back: every Level is held at UNKNOWN with the marker's
-// reason, for the whole warmup, after a source that had been answering the
-// entire time.
-func TestAnEmptySourceSlotWarmsThePlanScopeAndLeavesTheLevelScopeAlone(t *testing.T) {
+// mutation and a Plan with no series produces none. The Level scope used to be
+// left out as well, and a Plan that matches no series at all kept a marker a
+// query failure opened for ever.
+func TestAnEmptySourceSlotWarmsEveryScope(t *testing.T) {
 	for _, testCase := range []struct {
 		name     string
 		observed uint32
@@ -65,30 +64,26 @@ func TestAnEmptySourceSlotWarmsThePlanScopeAndLeavesTheLevelScopeAlone(t *testin
 				t.Fatalf("gap mutations=%+v, want the one Plan's recovery", fixture.ports.gapMutations)
 			}
 			scopes := fixture.ports.gapMutations[0].Scopes
-			// One scope, not two: the Level scope is not in the mutation at
-			// all, which is what leaves it untouched -- the store applies the
-			// scopes it is given and keeps the rest. A Level scope asks for
-			// that series' own history to have moved, and a round with no
-			// series has none to show.
-			if len(scopes) != 1 || scopes[0].Scope.HasLevel {
-				t.Fatalf("recovered scopes=%+v, want the Plan scope alone", scopes)
+			if len(scopes) != 2 {
+				t.Fatalf("recovered scopes=%+v, want the Plan scope and the Level scope", scopes)
 			}
-			if scopes[0].Kind != testCase.want {
-				t.Fatalf("Plan scope=%+v, want %s at %d of 3 observed", scopes[0], testCase.want, testCase.observed)
-			}
-			if testCase.want == execution.GapWarmup &&
-				(scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) || scopes[0].RequiredFullSlots != 3) {
-				t.Fatalf("warming Plan scope=%+v, want the marker's own reason and requirement", scopes[0])
+			for _, scope := range scopes {
+				if scope.Kind != testCase.want {
+					t.Fatalf("scope=%+v, want %s at %d of 3 observed", scope, testCase.want, testCase.observed)
+				}
+				if testCase.want == execution.GapWarmup &&
+					(scope.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) || scope.RequiredFullSlots != 3) {
+					t.Fatalf("warming scope=%+v, want the marker's own reason and requirement", scope)
+				}
 			}
 		})
 	}
 }
 
-// The same empty Slot on a Plan whose marker is only about a Level writes
-// nothing at all. There is no Plan scope to warm, and a mutation carrying no
-// scope is refused by the contract -- so "nothing to say" has to be said by
-// not proposing a mutation, not by proposing an empty one.
-func TestAnEmptySourceSlotWithOnlyALevelScopeWritesNothing(t *testing.T) {
+// The same empty Slot on a Plan whose marker is only about a Level - the
+// marker a failed query opens - warms that Level scope. This is the marker a
+// Plan matching no series used to keep for ever: nothing ever warmed it.
+func TestAnEmptySourceSlotWarmsALevelOnlyMarker(t *testing.T) {
 	plans, requirements := baseDuePlanAndRequirements()
 	fixture, request := newCompletionOnlyFixture(t, plans, requirements, nil)
 	fixture.ports.gapScopes = driftedScopes(0)[1:]
@@ -97,7 +92,11 @@ func TestAnEmptySourceSlotWithOnlyALevelScopeWritesNothing(t *testing.T) {
 	if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
-	if len(fixture.ports.gapMutations) != 0 {
-		t.Fatalf("gap mutations=%+v, want none: the marker has no Plan scope to recover", fixture.ports.gapMutations)
+	if len(fixture.ports.gapMutations) != 1 {
+		t.Fatalf("gap mutations=%+v, want the Level scope's warmup", fixture.ports.gapMutations)
+	}
+	scopes := fixture.ports.gapMutations[0].Scopes
+	if len(scopes) != 1 || !scopes[0].Scope.HasLevel || scopes[0].Kind != execution.GapWarmup {
+		t.Fatalf("scopes=%+v, want the Level scope warming", scopes)
 	}
 }

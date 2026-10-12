@@ -26,27 +26,18 @@ const (
 )
 
 type HealthSnapshot struct {
-	State              HealthState   `json:"state"`
-	Ready              bool          `json:"ready"`
-	Reasons            []ReasonCode  `json:"reasons,omitempty"`
-	ConfigLoaded       bool          `json:"config_loaded"`
-	SchemaReady        bool          `json:"schema_ready"`
-	AssignmentReady    bool          `json:"assignment_ready"`
-	RuntimeStateReady  bool          `json:"runtime_state_ready"`
-	OutputSinkReady    bool          `json:"output_sink_ready"`
-	PhaseTwo           bool          `json:"phase_two,omitempty"`
-	SnapshotReady      bool          `json:"snapshot_ready,omitempty"`
-	ResourceState      ResourceState `json:"resource_state"`
-	AssignedClaims     int           `json:"assigned_claims,omitempty"`
-	InflightMessages   int           `json:"inflight_messages,omitempty"`
-	WorkerQueueDepth   int           `json:"worker_queue_depth,omitempty"`
-	WorkerQueueBytes   int64         `json:"worker_queue_bytes,omitempty"`
-	ConsumerLagRecords int64         `json:"consumer_lag_records,omitempty"`
-	ConsumerLagKnown   bool          `json:"consumer_lag_known"`
-	LastProgressStage  Stage         `json:"last_progress_stage,omitempty"`
-	LastProgressAt     time.Time     `json:"last_progress_at,omitempty"`
-	LastRecoveryAt     time.Time     `json:"last_recovery_at,omitempty"`
-	Draining           bool          `json:"draining"`
+	State             HealthState  `json:"state"`
+	Ready             bool         `json:"ready"`
+	Reasons           []ReasonCode `json:"reasons,omitempty"`
+	ConfigLoaded      bool         `json:"config_loaded"`
+	SchemaReady       bool         `json:"schema_ready"`
+	AssignmentReady   bool         `json:"assignment_ready"`
+	RuntimeStateReady bool         `json:"runtime_state_ready"`
+	OutputSinkReady   bool         `json:"output_sink_ready"`
+	PhaseTwo          bool         `json:"phase_two,omitempty"`
+	SnapshotReady     bool         `json:"snapshot_ready,omitempty"`
+	LastRecoveryAt    time.Time    `json:"last_recovery_at,omitempty"`
+	Draining          bool         `json:"draining"`
 }
 
 type HealthSource interface {
@@ -94,18 +85,6 @@ func NormalizeHealthSnapshot(snapshot HealthSnapshot) HealthSnapshot {
 	snapshot.Ready = snapshot.State == HealthReady || snapshot.State == HealthDegraded
 	snapshot.Draining = snapshot.State == HealthDraining
 	snapshot.Reasons = normalizeReasons(snapshot.Reasons)
-	snapshot.ResourceState = normalizeResourceState(snapshot.ResourceState)
-	snapshot.AssignedClaims = normalizeOptionalInt(snapshot.AssignedClaims)
-	snapshot.InflightMessages = normalizeOptionalInt(snapshot.InflightMessages)
-	snapshot.WorkerQueueDepth = normalizeOptionalInt(snapshot.WorkerQueueDepth)
-	snapshot.WorkerQueueBytes = normalizeOptionalInt64(snapshot.WorkerQueueBytes)
-	if snapshot.ConsumerLagRecords < 0 {
-		snapshot.ConsumerLagRecords = -1
-		snapshot.ConsumerLagKnown = false
-	}
-	if snapshot.LastProgressStage != "" {
-		_, snapshot.LastProgressStage = NormalizeComponentStage(componentForStage(snapshot.LastProgressStage), snapshot.LastProgressStage)
-	}
 	return snapshot
 }
 
@@ -118,10 +97,6 @@ func healthPrerequisitesReady(snapshot HealthSnapshot) bool {
 	return ready
 }
 
-func AllHealthStates() []HealthState {
-	return []HealthState{HealthStarting, HealthReady, HealthDegraded, HealthNotReady, HealthDraining, HealthFatal}
-}
-
 func normalizeHealthState(state HealthState) HealthState {
 	switch state {
 	case HealthReady, HealthDegraded, HealthNotReady, HealthDraining, HealthFatal:
@@ -131,27 +106,4 @@ func normalizeHealthState(state HealthState) HealthState {
 	default:
 		return HealthNotReady
 	}
-}
-
-func normalizeOptionalInt(value int) int {
-	if value < 0 {
-		return -1
-	}
-	return value
-}
-
-func normalizeOptionalInt64(value int64) int64 {
-	if value < 0 {
-		return -1
-	}
-	return value
-}
-
-func componentForStage(stage Stage) Component {
-	for _, value := range allComponentStages {
-		if value.Stage == stage {
-			return value.Component
-		}
-	}
-	return ComponentOther
 }

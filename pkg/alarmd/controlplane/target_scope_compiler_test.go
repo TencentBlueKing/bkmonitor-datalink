@@ -98,12 +98,11 @@ func TestAStatedTargetThatReducesToNothingRejectsThePlan(t *testing.T) {
 
 // Targets whose membership is not a property of the strategy must reject
 // rather than be dropped: a silently ignored target is exactly the defect
-// being fixed. A dynamic group is one: the strategy cache writer expands it
-// before writing, and one reaching here is a target the writer did not
-// expand, which the reason says.
+// being fixed. The fork's object-model dynamic group is one: its strategy
+// cache writer expands it before writing, and one reaching here is a target
+// that writer did not expand, which the reason says.
 func TestTargetsThatCannotBeFrozenRejectThePlan(t *testing.T) {
 	for _, document := range []string{
-		`{"id":1,"target":[[{"field":"dynamic_group","method":"eq","value":[{"dynamic_group_id":"abc"}]}]]}`,
 		`{"id":1,"target":[[{"field":"cw_dynamic_group","method":"eq","value":[{"dynamic_group_id":"abc"}]}]]}`,
 		`{"id":1,"target":[[{"field":"something_new","method":"eq","value":[{"bk_obj_id":"module","bk_inst_id":3}]}]]}`,
 	} {
@@ -114,6 +113,40 @@ func TestTargetsThatCannotBeFrozenRejectThePlan(t *testing.T) {
 		} else if strings.Contains(document, "dynamic_group") && !strings.Contains(err.Error(), "strategy cache writer") {
 			t.Fatalf("%s does not tell the reader who expands it: %v", document, err)
 		}
+	}
+}
+
+// The platform keeps a dynamic group target as its group ids (strategy.py
+// insert_target) and Python reads the groups' hosts when it matches
+// (target.py), so the ids are what is frozen, under either method, without
+// trimming or reordering their spelling beyond the canonical sort. A
+// condition naming no group is kept, as Python keeps it with a key that
+// matches nothing; any other field naming nothing is dropped.
+func TestADynamicGroupTargetFreezesItsGroupIDs(t *testing.T) {
+	scope, err := compileTargetScope(decodeTarget(t, `{"id":1,"target":[[
+		{"field":"dynamic_group","method":"eq","value":[{"dynamic_group_id":"bto02qijv6d06mf38j20"},{"dynamic_group_id":"03c79170-7ee1-11ee-a820-5e22272a2c60"},{"dynamic_group_id":"bto02qijv6d06mf38j20"}]},
+		{"field":"bk_target_ip","method":"neq","value":[{"bk_target_ip":"192.0.2.7","bk_target_cloud_id":0}]}
+	]]}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditions := scope.Groups[0].Conditions
+	if len(conditions) != 2 || conditions[0].Field != "DYNAMIC_GROUP" || conditions[0].Method != "EQ" ||
+		strings.Join(conditions[0].Keys, ",") != "03c79170-7ee1-11ee-a820-5e22272a2c60,bto02qijv6d06mf38j20" {
+		t.Fatalf("dynamic group target froze as %+v", conditions)
+	}
+	if conditions[1].Field != "HOST" || conditions[1].Method != "NEQ" {
+		t.Fatalf("the host exclusion beside it froze as %+v", conditions[1])
+	}
+
+	empty, err := compileTargetScope(decodeTarget(t,
+		`{"id":1,"target":[[{"field":"dynamic_group","method":"NEQ","value":[{"dynamic_group_id":""},{"bk_obj_id":"host"}]}]]}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Groups) != 1 || len(empty.Groups[0].Conditions) != 1 || empty.Groups[0].Conditions[0].Method != "NEQ" ||
+		len(empty.Groups[0].Conditions[0].Keys) != 0 {
+		t.Fatalf("a dynamic group condition naming no group froze as %+v", empty)
 	}
 }
 

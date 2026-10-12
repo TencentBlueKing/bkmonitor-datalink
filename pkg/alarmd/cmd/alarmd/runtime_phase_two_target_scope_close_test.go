@@ -37,16 +37,27 @@ func (s scopeCloseIndex) Reconcile(ctx context.Context, key openalerts.StrategyK
 	return openalerts.Reconciliation{EventSourceID: s.source, Members: members, Alerts: s.alerts}, nil
 }
 
-func (s scopeCloseIndex) Watch(ctx context.Context, ready func(bool), _ func(openalerts.StrategyKey)) error {
+func (s scopeCloseIndex) Watch(ctx context.Context, ready func(bool), _ func(openalerts.StrategyKey), _ func(openalerts.NoticeRefusal)) error {
 	ready(true)
 	<-ctx.Done()
 	return ctx.Err()
 }
 
 // calibratedCopy is a real index copy, running, calibrated for one strategy.
+// confirmedConsole is a link Console that has confirmed both facts the sets
+// are trusted on, the state a deployment's close reads them in.
+type confirmedConsole struct{}
+
+func (confirmedConsole) LocationConfirmed() bool { return true }
+func (confirmedConsole) KeyedByAlertID() (bool, time.Time, bool) {
+	return true, time.Unix(1700000000, 0), true
+}
+func (confirmedConsole) KeyingAsked() bool       { return true }
+func (confirmedConsole) Refresh(context.Context) {}
+
 func calibratedCopy(t *testing.T, key openalerts.StrategyKey, index scopeCloseIndex) *openalerts.Cache {
 	t.Helper()
-	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: index, Reconciler: index, Subscriber: index,
+	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: index, Reconciler: index, Subscriber: index, Facts: confirmedConsole{},
 		MaxStrategies: 10, MaxMembers: 100, MaxBytes: 1 << 20, MaxLocalEntries: 100, ReadBatch: 2, ReconcileBatch: 1,
 		RefreshInterval: time.Hour, IndexInterval: time.Hour, ReconcileInterval: time.Hour, CalibrationMaxAge: 2 * time.Hour,
 		LocalRetention: time.Minute, CycleTimeout: time.Second})
@@ -82,7 +93,7 @@ func TestTargetScopeCloseThroughTheProductionWiring(t *testing.T) {
 		{AlertID: "instance-ours", EventSourceID: "native", Fingerprint: ours},
 		{AlertID: "instance-theirs", EventSourceID: "elsewhere", Fingerprint: theirs},
 	}})
-	closer := scopeclose.New(scopeclose.Options{Send: true})
+	closer := scopeclose.New(scopeclose.Options{})
 	writer := &maintenanceTestWriter{}
 	closer.Bind(scopeclose.CacheSet(cache), writer)
 	sink := scopeDropSink{closer: closer}
@@ -116,7 +127,7 @@ func TestTargetScopeCloseThroughTheProductionWiring(t *testing.T) {
 		t.Fatalf("request = %+v", request)
 	}
 	stats := closer.Stats()
-	if stats[scopeclose.OutcomeClosed] != 1 || stats[scopeclose.OutcomeProducerForeign] != 1 || stats[scopeclose.OutcomeCacheUnavailable] != 2 || stats[scopeclose.OutcomeIndefinite] != 2 ||
+	if stats[scopeclose.OutcomeCloseSent] != 1 || stats[scopeclose.OutcomeProducerForeign] != 1 || stats[scopeclose.OutcomeCacheUnavailable] != 2 || stats[scopeclose.OutcomeIndefinite] != 2 ||
 		stats[scopeclose.OutcomeFingerprintUnsupported] != 4 || stats[scopeclose.OutcomeNotMember] != 6 {
 		t.Fatalf("stats = %v", stats)
 	}
@@ -126,8 +137,8 @@ func TestTargetScopeCloseThroughTheProductionWiring(t *testing.T) {
 // on the open set's facts: a field dropped on the way would read as zero,
 // which here is a reading.
 func TestTheTargetScopeCloseFactsAreCarriedFieldForField(t *testing.T) {
-	facts := targetScopeCloseFacts(scopeclose.Facts{Armed: true, Pending: 1, Confirmed: 2, MaxEntries: 3,
-		Outcomes: map[string]uint64{scopeclose.OutcomeWouldSend: 4},
+	facts := targetScopeCloseFacts(scopeclose.Facts{Pending: 1, Confirmed: 2, MaxEntries: 3,
+		Outcomes: map[string]uint64{scopeclose.OutcomeCloseSent: 4},
 		Strategies: []scopeclose.StrategyFacts{{TenantID: "t", StrategyID: "s", Pending: 1, Confirmed: 2,
 			Outcomes: map[string]uint64{scopeclose.OutcomeUnconfirmed: 5}, PendingSample: []string{"aaaaaaaa"}, DecidedSample: []string{"bbbbbbbb"}}}})
 	var zero func(path string, value reflect.Value)
@@ -157,7 +168,7 @@ func TestTheTargetScopeCloseFactsAreCarriedFieldForField(t *testing.T) {
 	zero("target_scope_close", reflect.ValueOf(facts))
 
 	closer := scopeclose.New(scopeclose.Options{})
-	source := withTargetScopeClose(func() *fleet.OpenAlertSetFacts { return &fleet.OpenAlertSetFacts{Mode: "authoritative"} }, closer)
+	source := withTargetScopeClose(func() *fleet.OpenAlertSetFacts { return &fleet.OpenAlertSetFacts{} }, closer)
 	carried := source()
 	if carried.TargetScopeClose == nil || len(carried.TargetScopeClose.Outcomes) != len(scopeclose.Outcomes) {
 		t.Fatalf("open set facts = %+v, want the close beside them with every outcome", carried)

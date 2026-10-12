@@ -19,23 +19,27 @@ import (
 
 // contentScopeSource is what the reconcile round needs of the catalog to
 // name each Query Group's content: the activation that says which
-// publication the fleet executes, and that publication's manifest.
+// publication the fleet executes, and that publication's content.
 type contentScopeSource interface {
 	LoadActivationHead(context.Context) (controlplane.ActivationState, error)
-	LoadCatalogManifest(context.Context, execution.SnapshotRevision) (controlplane.CatalogManifest, error)
+	// LoadPublishedContent is the publication's content as the view reads
+	// it. The repository remembers it per publication; while it does, a read
+	// is an existence check of the manifest and the two small reads that say
+	// the publication still occurs, never the manifest itself.
+	LoadPublishedContent(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedContent, error)
 	// ActivationBlocked is the Query Groups a cutover held back; their scope
 	// is what their open Segment names, not what the manifest names.
 	ActivationBlocked(context.Context) ([]controlplane.BlockedQueryGroup, error)
-	// ApplyCutoverProgress is what each Query Group runs while a cutover is
-	// in progress; see viewSource.
-	ApplyCutoverProgress(context.Context, controlplane.ActivationState, map[execution.QueryGroupIdentity]controlplane.ContentEntry) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error)
 }
 
 // currentContentScopes reads the content each Query Group is published with
 // (decision-016): the ObjectDigest the current activation's manifest names
 // for it -- the same digest the Query Group's open Segment carries, which is
-// what a worker's Slot declares. Both reads are the repository's cached ones,
-// so a round costs the header check they already cost.
+// what a worker's Slot declares. It reads the content the way the view does,
+// through the repository's memory of the publication, so a round with the
+// publication unchanged costs the header check and a few small reads; the
+// manifest, which is most of a megabyte on a few thousand Query Groups, is
+// read once per publication and not once per round.
 func currentContentScopes(source contentScopeSource) func(context.Context) (map[execution.QueryGroupIdentity]string, error) {
 	return func(ctx context.Context) (map[execution.QueryGroupIdentity]string, error) {
 		if source == nil {
@@ -45,43 +49,24 @@ func currentContentScopes(source contentScopeSource) func(context.Context) (map[
 		if err != nil {
 			return nil, fmt.Errorf("phase-two content scopes: read activation: %w", err)
 		}
-		if state.CutoverProgress != nil {
-			// The manifest names content the Query Groups past the cursor are
-			// not running yet; each open Segment names what it runs.
-			running, err := source.ApplyCutoverProgress(ctx, state, nil)
-			if err != nil {
-				return nil, fmt.Errorf("phase-two content scopes: read the content a cutover in progress runs: %w", err)
-			}
-			digests := make(map[execution.QueryGroupIdentity]string, len(running))
-			for identity, entry := range running {
-				digests[identity] = string(entry.Digest)
-			}
-			return digests, nil
-		}
-		manifest, err := source.LoadCatalogManifest(ctx, state.Current.SnapshotRevision)
+		published, err := source.LoadPublishedContent(ctx, state.Current)
 		if err != nil {
-			return nil, fmt.Errorf("phase-two content scopes: read manifest %s: %w", state.Current.SnapshotRevision, err)
-		}
-		digests := make(map[execution.QueryGroupIdentity]string, len(manifest.QueryGroups))
-		for _, entry := range manifest.QueryGroups {
-			if entry.QueryGroup == "" || entry.ObjectDigest == "" {
-				continue
-			}
-			digests[entry.QueryGroup] = string(entry.ObjectDigest)
+			return nil, fmt.Errorf("phase-two content scopes: read published content %s: %w", state.Current.SnapshotRevision, err)
 		}
 		blocked, err := source.ActivationBlocked(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("phase-two content scopes: read held-back Query Groups: %w", err)
 		}
-		for _, group := range blocked {
-			if _, present := digests[group.QueryGroup]; !present {
+		// A held-back Query Group is scoped to what its open Segment names,
+		// and one with no Segment that can run has no scope: the same rule the
+		// view applies, through the same function, so the two cannot differ.
+		running := controlplane.ApplyBlockedToContent(published.Groups, blocked)
+		digests := make(map[execution.QueryGroupIdentity]string, len(running))
+		for identity, entry := range running {
+			if identity == "" || entry.Digest == "" {
 				continue
 			}
-			if group.OpenDigest == "" {
-				delete(digests, group.QueryGroup)
-				continue
-			}
-			digests[group.QueryGroup] = string(group.OpenDigest)
+			digests[identity] = string(entry.Digest)
 		}
 		return digests, nil
 	}

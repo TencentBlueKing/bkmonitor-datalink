@@ -60,21 +60,12 @@ func TestACutoverStampsTheTimelineRevisionOnTheAssignmentRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newCatalog := catalogWithSchedule(t, oldCatalog, 120, 30)
+	newCatalog := catalogWithSchedule(t, oldCatalog, 60, 30)
 	newSnapshot, _, err := repository.PublishCatalog(ctx, newCatalog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	boundary := execution.EvaluationTime(180)
-	oldClosed := frozenSchedule(t, oldSnapshot.Publication, oldCatalog.QueryGroups[0], 60, &boundary)
-	newOpen := frozenSchedule(t, newSnapshot.Publication, newCatalog.QueryGroups[0], boundary, nil)
-	newActivation := activationState(t, 2, newSnapshot, newOpen, nil)
-	cutover := execution.ScheduleCutoverFact{OldSegment: oldClosed.Segment, NewSegment: newOpen.Segment}
-	if err := repository.CompareAndSetScheduleCutover(ctx, controlplane.ActivationExpectation{
-		RecordRevision: oldActivation.RecordRevision, Current: oldActivation.Current,
-	}, newActivation, []execution.ScheduleCutoverFact{cutover}); err != nil {
-		t.Fatal(err)
-	}
+	cutOverAt(t, repository, newSnapshot, 180)
 	stamped, err := client.HGet(ctx, recordKey(queryGroup), "timeline_record_revision").Result()
 	if err != nil || stamped != "2" {
 		t.Fatalf("after the cutover the record says timeline revision %q (%v), want 2", stamped, err)

@@ -23,8 +23,8 @@ import (
 func TestControlReadCacheKeepsTimelinesOnlyAcrossConsecutiveRevisions(t *testing.T) {
 	four := cachedTimelineBytes(4)
 	cache := newControlReadCache(8, 16*four)
-	cache.storeTimeline("5|current", "qg-a", cachedTimelineFor("qg-a", 5), 4)
-	cache.storeTimeline("5|current", "qg-b", cachedTimelineFor("qg-b", 5), 4)
+	cache.storeTimeline(nil, "5|current", "qg-a", cachedTimelineFor("qg-a", 5), 4)
+	cache.storeTimeline(nil, "5|current", "qg-b", cachedTimelineFor("qg-b", 5), 4)
 
 	// Revision 6 rewrote qg-b and this cache never saw it; the delta of 7
 	// names qg-b too, but that is a coincidence of the fixture. Whatever 7
@@ -42,8 +42,8 @@ func TestControlReadCacheKeepsTimelinesOnlyAcrossConsecutiveRevisions(t *testing
 
 	// The consecutive crossing is the one the delta is for: the named
 	// timeline goes and the other stays.
-	cache.storeTimeline("7|current", "qg-a", cachedTimelineFor("qg-a", 7), 4)
-	cache.storeTimeline("7|current", "qg-b", cachedTimelineFor("qg-b", 7), 4)
+	cache.storeTimeline(nil, "7|current", "qg-a", cachedTimelineFor("qg-a", 7), 4)
+	cache.storeTimeline(nil, "7|current", "qg-b", cachedTimelineFor("qg-b", 7), 4)
 	outcome, dropped, kept = cache.advance("8|current", []execution.QueryGroupIdentity{"qg-b"})
 	if outcome != advanceApplied {
 		t.Fatalf("crossing from revision 7 to 8 = %v, want the delta applied", outcome)
@@ -61,7 +61,7 @@ func TestControlReadCacheKeepsTimelinesOnlyAcrossConsecutiveRevisions(t *testing
 	// A header behind the cached one, or one carrying no revision, is not a
 	// crossing the delta can describe either.
 	for _, header := range []string{"7|current", "legacy-header"} {
-		cache.storeTimeline("8|current", "qg-b", cachedTimelineFor("qg-b", 8), 4)
+		cache.storeTimeline(nil, "8|current", "qg-b", cachedTimelineFor("qg-b", 8), 4)
 		outcome, _, _ = cache.advance(header, nil)
 		if outcome != advanceReset || cache.timelineCount() != 0 {
 			t.Fatalf("crossing from revision 8 to %q = %v with %d timelines, want a reset with none", header, outcome, cache.timelineCount())

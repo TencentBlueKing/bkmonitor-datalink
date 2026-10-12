@@ -51,6 +51,23 @@ type ExpiredRangeFacts struct {
 	ReasonCode     ReasonCode
 	Result         string
 	CommittedSlots uint32
+	// FirstSlot, LastSlot and Slots are the range the proof covers, and Kind
+	// and Cause how its Slots were finalized: the completion kind
+	// (SNAPSHOT_UNAVAILABLE past the replay's age, GAP_SKIPPED past its
+	// reach) and the finalization's cause. The range commit writes no
+	// completion line of its own, so these are what the fleet records the
+	// Slots it never evaluated from.
+	FirstSlot, LastSlot int64
+	Slots               uint32
+	Kind, Cause         string
+	// Strategies are the range's due Plans' strategies, once each: after a
+	// restart the range's line may be the first a reader sees of the object.
+	Strategies []ExpiredRangeStrategy
+}
+
+// ExpiredRangeStrategy is one strategy a range's due Plans belong to.
+type ExpiredRangeStrategy struct {
+	BusinessID, StrategyID string
 }
 
 type DispatcherFacts struct {

@@ -33,7 +33,7 @@ type SourceFacts struct {
 	At time.Time `json:"at"`
 	// Listed is how many strategies the source listed: every object the round
 	// recorded a disposition for, save the records that only annotate an
-	// accepted one (CONFIG_NORMALIZED). Accepted is how many of them became
+	// accepted one (CONFIG_NOTED). Accepted is how many of them became
 	// Plans.
 	Listed   int `json:"listed"`
 	Accepted int `json:"accepted"`
@@ -107,25 +107,29 @@ const (
 	dispositionConfigRejected        = "CONFIG_REJECTED"
 	dispositionStaleConfig           = "STALE_CONFIG"
 	dispositionCapabilityUnsupported = "UNSUPPORTED_PHASE2_CAPABILITY"
-	// The source took the strategy out of its active set: the last good
-	// Plan runs one more round under PENDING_REMOVAL, and the round after
-	// that records REMOVED with no Plan. Neither is a refusal.
+	// The source took the strategy out of its active set: under a writer
+	// without a statement the last good Plan runs through the removal grace
+	// under PENDING_REMOVAL, and the round after it records REMOVED with no
+	// Plan; under the writer's statement the first round records REMOVED.
+	// Neither is a refusal.
 	dispositionPendingRemoval = "PENDING_REMOVAL"
 	dispositionRemoved        = "REMOVED"
-	// The item was accepted with a part of its configuration read as
-	// something other than what was written, the way the platform's own
+	// The item was accepted with a note on its configuration: a part read
+	// as something other than what was written, the way the platform's own
 	// reader reads it -- a time range that does not parse read as the whole
-	// day. Not a refusal: the Plan runs. Listed beside the refusals because
+	// day -- or a part that runs as written and cannot do what it appears
+	// to. Not a refusal: the Plan runs. Listed beside the refusals because
 	// that is where a reader looks for what the catalog did to a strategy,
-	// and the words for it have to say "wider than written", not "withheld".
-	dispositionConfigNormalized = "CONFIG_NORMALIZED"
+	// and the words for it have to say "detecting, with a note", not
+	// "withheld".
+	dispositionConfigNoted = "CONFIG_NOTED"
 )
 
 // isWithheld says whether a disposition kept the item from running. The
-// accepted item and the normalized one both run; every other disposition is
-// a strategy or item that did not become a Plan this round.
+// accepted item and the noted one both run; every other disposition is a
+// strategy or item that did not become a Plan this round.
 func isWithheld(disposition string) bool {
-	return disposition != dispositionAccepted && disposition != dispositionConfigNormalized
+	return disposition != dispositionAccepted && disposition != dispositionConfigNoted
 }
 
 // WithheldObject is one withheld record as the control plane hands it over.
@@ -150,7 +154,7 @@ func NewSourceFacts(at time.Time, objects map[string]int, withheld []WithheldObj
 		facts.Objects[disposition] = count
 		// A normalized record annotates an item that is also counted as
 		// accepted; adding it here would count that item twice.
-		if disposition != dispositionConfigNormalized {
+		if disposition != dispositionConfigNoted {
 			facts.Listed += count
 		}
 		if disposition == dispositionAccepted {
@@ -303,7 +307,7 @@ type SourceStanding struct {
 	// taken as Listed minus Accepted swallows them: the sentence said "1
 	// withheld" about a strategy that is detecting, on the same screen as
 	// the line that says it is detecting more than it asked for.
-	Normalized int `json:"normalized,omitempty"`
+	Noted int `json:"noted,omitempty"`
 	// Executing is how many objects the deployment runs: the catalogue's
 	// count when it is known, or what the replicas own, whichever is more.
 	Executing int `json:"executing"`
@@ -326,7 +330,7 @@ func sourceStandingOf(source *SourceFacts, executing int) *SourceStanding {
 	}
 	standing := &SourceStanding{Listed: source.Listed, Accepted: source.Accepted,
 		Incomplete: source.WithheldCount(dispositionSourceIncomplete),
-		Normalized: source.WithheldCount(dispositionConfigNormalized), Executing: executing,
+		Noted:      source.WithheldCount(dispositionConfigNoted), Executing: executing,
 		WriterAgeSeconds: source.ChangeSignalAgeSeconds}
 	switch {
 	case source.Listed == 0:
@@ -359,8 +363,8 @@ func sourceStandingLines(standing *SourceStanding) (run, cache string) {
 		if withheld := standing.Listed - standing.Accepted; withheld > 0 {
 			cache += fmt.Sprintf("，扣住 %d 条（原因见检查项）", withheld)
 		}
-		if standing.Normalized > 0 {
-			cache += fmt.Sprintf("，可用的里有 %d 条的读法和配置写的不同（在检测，不是被扣，原因见检查项）", standing.Normalized)
+		if standing.Noted > 0 {
+			cache += fmt.Sprintf("，可用的里有 %d 条配置有提示（仍在检测，不是被扣，原因见检查项）", standing.Noted)
 		}
 		return fmt.Sprintf("%d 个对象正在检测", standing.Executing), cache
 	case SourceUpdateUnusable:

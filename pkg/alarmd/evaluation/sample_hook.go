@@ -28,7 +28,7 @@ func (e *Evaluator) reserveSeriesSample(ctx context.Context, header execution.In
 	s.ExecutionID, s.SnapshotRevision, s.QueryRevision = header.ExecutionID, string(header.Contract.SnapshotRevision), string(header.Contract.QueryRevision)
 	s.ScheduleRevision, s.StateStatus = string(header.Contract.ScheduleRevision), string(view.Status)
 	s.RecordID, s.SourceTime = record.RecordID(), record.SourceTime()
-	for _, level := range due.CompiledPlan.Levels() {
+	for _, level := range due.CompiledPlan.Levels().All() {
 		l := r.AddLevel(level.Definition().LevelID)
 		if l == nil {
 			continue

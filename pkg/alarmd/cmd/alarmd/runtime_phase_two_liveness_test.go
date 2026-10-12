@@ -114,8 +114,8 @@ func TestEveryExecutionSlotStuckPastItsDeadlineIsAStall(t *testing.T) {
 		liveness := newPhaseTwoLiveness(clock.Now, nil)
 		liveness.setSlots(2)
 		deadline := clock.Now().Add(time.Minute)
-		liveness.executionStarted(deadline)
-		liveness.executionStarted(deadline.Add(-30 * time.Second))
+		liveness.executionStarted(deadline, nil)
+		liveness.executionStarted(deadline.Add(-30*time.Second), nil)
 		return clock, liveness, deadline
 	}
 	clock, liveness, deadline := setup()
@@ -144,7 +144,7 @@ func TestEveryExecutionSlotStuckPastItsDeadlineIsAStall(t *testing.T) {
 	// when the slot is refilled at once by work whose deadline has passed.
 	clock, liveness, deadline = setup()
 	clock.advance(deadline.Add(executionPastDeadlineGrace).Sub(clock.Now()) + 4*time.Minute)
-	token := liveness.executionStarted(deadline)
+	token := liveness.executionStarted(deadline, nil)
 	liveness.executionReturned(token - 1)
 	clock.advance(2 * time.Minute)
 	if got := stalledLoops(liveness); len(got) != 0 {
@@ -155,10 +155,49 @@ func TestEveryExecutionSlotStuckPastItsDeadlineIsAStall(t *testing.T) {
 	clock = newLivenessClock()
 	liveness = newPhaseTwoLiveness(clock.Now, nil)
 	liveness.setSlots(1)
-	liveness.executionStarted(time.Time{})
+	liveness.executionStarted(time.Time{}, nil)
 	clock.advance(time.Hour)
 	if got := stalledLoops(liveness); len(got) != 0 {
 		t.Fatalf("an execution without a deadline: stalled %v", got)
+	}
+}
+
+// An execution is judged by the later of the deadline it was queued by and
+// its own. A replay of a taken-over Slot is queued by its frozen Slot's
+// first-attempt deadline, minutes gone, and runs under the deadline access
+// derives from its arrival: past the queued one and inside its own, it is
+// not past its deadline, and slots full of such replays are no stall. Past
+// its own, it is. One with no deadline of its own yet keeps the queued one.
+func TestALateReplayIsJudgedByItsOwnDeadline(t *testing.T) {
+	clock := newLivenessClock()
+	liveness := newPhaseTwoLiveness(clock.Now, nil)
+	liveness.setSlots(2)
+	queued := clock.Now().Add(-10 * time.Minute)
+	own := clock.Now().Add(time.Minute)
+	var ownDeadline atomic.Int64
+	ownDeadline.Store(own.UnixNano())
+	readOwn := func() time.Time { return time.Unix(0, ownDeadline.Load()).UTC() }
+	liveness.executionStarted(queued, readOwn)
+	liveness.executionStarted(queued, readOwn)
+	if reading := liveness.reading(); reading.ExecutionsPastDeadline != 0 {
+		t.Fatalf("late replays inside their own deadline counted past it: %d", reading.ExecutionsPastDeadline)
+	}
+	clock.advance(executionPastDeadlineGrace + executionsStuckBound)
+	if got := stalledLoops(liveness); len(got) != 0 {
+		t.Fatalf("replays a minute inside their own deadline plus the bound: stalled %v", got)
+	}
+	clock.advance(time.Minute)
+	if reading := liveness.reading(); reading.ExecutionsPastDeadline != 2 {
+		t.Fatalf("past their own deadline and grace: counted %d, want 2", reading.ExecutionsPastDeadline)
+	}
+
+	// No deadline of its own yet: the queued one judges it.
+	clock = newLivenessClock()
+	liveness = newPhaseTwoLiveness(clock.Now, nil)
+	liveness.setSlots(1)
+	liveness.executionStarted(clock.Now().Add(-10*time.Minute), func() time.Time { return time.Time{} })
+	if reading := liveness.reading(); reading.ExecutionsPastDeadline != 1 {
+		t.Fatalf("an execution with no own deadline, ten minutes past its queued one: counted %d, want 1", reading.ExecutionsPastDeadline)
 	}
 }
 
@@ -316,9 +355,13 @@ func TestAControlLoopFailingOnADependencyStaysAlive(t *testing.T) {
 	waitForHealth(t, health, "the outage on the page", func(snapshot observability.HealthSnapshot) bool {
 		return hasReason(snapshot.Reasons, phaseTwoControlDependencyReason)
 	})
+	// The moved clock ages every loop, so the dispatch loop has to turn under
+	// it too before the probe is read; waiting on the control loop alone
+	// raced the dispatch loop's next tick.
 	clock.advance(controlLoopStallBound + time.Minute)
 	waitUntil(t, 5*time.Second, "the failing control loop keeps turning", func() bool {
-		return livenessTurnAge(bundle.liveness, livenessLoopControl) < time.Second
+		return livenessTurnAge(bundle.liveness, livenessLoopControl) < time.Second &&
+			livenessTurnAge(bundle.liveness, livenessLoopDispatch) < time.Second
 	})
 	if got := stalledLoops(bundle.liveness); len(got) != 0 {
 		t.Fatalf("a dependency outage failed liveness: stalled %v", got)
@@ -388,6 +431,75 @@ func TestASlotHeldPastItsDeadlineThroughTheDispatcherFailsLiveness(t *testing.T)
 	})
 }
 
+// ownDeadlineQueryGroup is a Query Group whose execution in flight runs under
+// a deadline of its own, as a replay's does once access has derived it.
+type ownDeadlineQueryGroup struct {
+	*callbackPhaseTwoQueryGroup
+	own time.Time
+}
+
+func (runner *ownDeadlineQueryGroup) ExecutionDeadline() time.Time { return runner.own }
+
+// Through the dispatcher: a slot held by a replay queued by a deadline long
+// gone but running under its own later one is no stall while it is inside
+// that one, and is once it is past it by the grace for the bound.
+func TestASlotHeldByALateReplayIsJudgedByItsOwnDeadlineThroughTheDispatcher(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.TickInterval = config.Duration(time.Millisecond)
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 1
+	cfg.PhaseTwo.Control.RefreshInterval = config.Duration(time.Hour)
+	cfg.PhaseTwo.Control.ReconcileInterval = config.Duration(2 * time.Millisecond)
+	queryGroup := execution.QueryGroupIdentity("query-group-1")
+	clock := newLivenessClock()
+	queued := clock.Now().Add(time.Minute)
+	own := queued.Add(10 * time.Minute)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{queryGroup}}
+	owner.runner = &ownDeadlineQueryGroup{own: own, callbackPhaseTwoQueryGroup: &callbackPhaseTwoQueryGroup{
+		run: func(context.Context) (execution.SlotExecutionResult, bool, error) {
+			once.Do(func() { close(entered) })
+			<-release
+			return execution.SlotExecutionResult{}, true, nil
+		},
+		nextDeadline: func() time.Time { return queued },
+	}}
+	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Config: cfg, Health: newPhaseTwoApplicationHealth(),
+		Control: &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{queryGroup}}, Ownership: owner,
+		Observer: observability.NopObserver{}, Now: clock.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- bundle.Run(ctx) }()
+	defer func() {
+		close(release)
+		cancel()
+		<-done
+	}()
+	waitSignal(t, entered, "the replay holds the only slot")
+	// Past the queued deadline by the grace and the bound, inside its own.
+	clock.advance(queued.Add(executionPastDeadlineGrace).Sub(clock.Now()) + executionsStuckBound + time.Second)
+	waitUntil(t, 5*time.Second, "both loops turn under the moved clock", func() bool {
+		return livenessTurnAge(bundle.liveness, livenessLoopControl) < time.Second &&
+			livenessTurnAge(bundle.liveness, livenessLoopDispatch) < time.Second
+	})
+	if got := stalledLoops(bundle.liveness); len(got) != 0 {
+		t.Fatalf("a replay inside its own deadline, past the one it was queued by: stalled %v", got)
+	}
+	if reading := bundle.liveness.reading(); reading.ExecutionsPastDeadline != 0 {
+		t.Fatalf("a replay inside its own deadline counted past it: %d", reading.ExecutionsPastDeadline)
+	}
+	// Past its own by the grace and the bound: a stall.
+	clock.advance(own.Add(executionPastDeadlineGrace).Sub(clock.Now()) + executionsStuckBound + time.Second)
+	waitUntil(t, 5*time.Second, "the held slot is named past its own deadline", func() bool {
+		return sameLoops(stalledLoops(bundle.liveness), livenessExecutions)
+	})
+}
+
 // A replica shut down stops being judged: its loops stop on purpose, and
 // the probe must not fail a replica that is draining.
 func TestAShutDownReplicaIsNotJudged(t *testing.T) {
@@ -428,13 +540,11 @@ func TestStoppingAQueryGroupWhoseLeaseNeverEndsIsBounded(t *testing.T) {
 	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(),
 		&fakePhaseTwoControl{}, &fakePhaseTwoOwnership{runner: runner})
 	lifecycle := &phaseTwoQueryGroupLifecycle{runner: runner, cancel: func() {}, done: make(chan struct{})}
-	stopped := make(chan error, 1)
-	go func() { stopped <- bundle.stopQueryGroup(context.Background(), "query-group-1", lifecycle) }()
+	stopped := make(chan struct{})
+	bundle.maintenanceWG.Add(1)
+	go func() { bundle.handOverQueryGroup("query-group-1", lifecycle); close(stopped) }()
 	select {
-	case err := <-stopped:
-		if err != nil {
-			t.Fatalf("stop: %v", err)
-		}
+	case <-stopped:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the control loop waited on a lease goroutine that never ended")
 	}

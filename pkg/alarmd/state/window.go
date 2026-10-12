@@ -173,65 +173,12 @@ func (window *Window) Align(requirements []LevelRequirement) error {
 	return nil
 }
 
-func (window *Window) setObserver(observer Observer) {
-	if window != nil {
-		window.observer = observer
-	}
-}
-
 func (window *Window) Apply(points []StatePoint) ([]PointResult, error) {
 	return window.ApplyContext(context.Background(), points)
 }
 
-// ApplyContext is the M4 observation callpoint used by M7. It emits one
-// aggregate result for the complete points slice and never emits per-point
-// logs or high-cardinality identities.
+// ApplyContext applies the points in order and returns one result per point.
 func (window *Window) ApplyContext(ctx context.Context, points []StatePoint) (results []PointResult, err error) {
-	started := time.Now()
-	var observer Observer
-	if window != nil {
-		observer = window.observer
-	}
-	defer func() {
-		observation := Observation{
-			Stage: StageDependencyLoaded, Operation: OperationTransition,
-			Result: OperationSucceeded, Codec: CodecNoneV1,
-			TouchedPoints: len(points), Duration: time.Since(started),
-		}
-		if err != nil {
-			observation.Result = OperationFailed
-			switch {
-			case errors.Is(err, ErrStateBudget):
-				observation.BudgetViolations = 1
-			default:
-				observation.InvariantViolations = 1
-			}
-		} else {
-			for _, result := range results {
-				switch result.Status {
-				case PointApplied:
-					observation.AppliedPoints++
-				case PointNoop:
-					observation.NoopPoints++
-				case PointUnavailable:
-					observation.UnavailablePoints++
-				case PointTerminal:
-					observation.TerminalPoints++
-				}
-				if result.Late && (result.Status == PointApplied || result.Status == PointNoop) {
-					observation.LateAcceptedPoints++
-				}
-				if result.ReasonCode == contract.ReasonLateOutOfWindow {
-					observation.LateOutOfWindowPoints++
-					observation.ReasonCode = contract.ReasonLateOutOfWindow
-				}
-			}
-			if observation.TerminalPoints > 0 || observation.UnavailablePoints > 0 {
-				observation.Result = OperationPartial
-			}
-		}
-		observeState(ctx, observer, observation)
-	}()
 	if window == nil {
 		return nil, fmt.Errorf("%w: nil window", ErrStateInvariant)
 	}
@@ -346,32 +293,11 @@ func (view HistoryView) SummarizeHoles(endTime int64, requiredPositions uint32, 
 	return view.SummarizeHolesContext(context.Background(), endTime, requiredPositions, limit)
 }
 
-// SummarizeHolesContext is SummarizeHoles at the observation callpoint. A
+// SummarizeHolesContext is SummarizeHoles with the caller's context. A
 // request the walk refuses -- more positions than the Level retains, a window
 // reaching before the epoch -- yields the same WARMING summary as before and
 // no holes with zero totals, which a caller reads as "not walked", not "none".
 func (view HistoryView) SummarizeHolesContext(ctx context.Context, endTime int64, requiredPositions uint32, limit int) (summary WindowSummary, holes WindowHoles) {
-	started := time.Now()
-	defer func() {
-		observation := Observation{
-			Stage: StageDependencyLoaded, Operation: OperationSample,
-			Result: OperationSucceeded, Codec: CodecNoneV1,
-			Duration: time.Since(started),
-		}
-		switch summary.Completeness {
-		case HistoryFull:
-			observation.FullSummaries = 1
-		case HistoryGapped:
-			observation.GappedSummaries = 1
-		default:
-			observation.WarmingSummaries = 1
-		}
-		var observer Observer
-		if view.window != nil {
-			observer = view.window.observer
-		}
-		observeState(ctx, observer, observation)
-	}()
 	if requiredPositions == 0 {
 		requiredPositions = view.requirement.RequiredPoints
 	}

@@ -47,6 +47,9 @@ type DiagnosticScan struct {
 	// was decoded. It does not mean the provider declared complete evidence.
 	Complete   bool `json:"complete"`
 	statusCode string
+	// errorExcerpt is the start of the body of an answer that was not 200,
+	// sanitized (providerErrorExcerpt): kept for the diagnostic read alone.
+	errorExcerpt string
 }
 
 type DiagnosticPoint struct {
@@ -62,13 +65,18 @@ type DiagnosticSeries struct {
 }
 
 // DiagnosticCompletion projects the final production-normalized completion.
-// Endpoint URLs and raw upstream error messages never leave this boundary.
+// Endpoint URLs and raw upstream error messages never leave this boundary,
+// with one exception: ErrorExcerpt, the start of the body of an answer that
+// was not 200, sanitized (providerErrorExcerpt), for an operator asking why
+// the provider refused a query. Only this read keeps it: detection drains
+// and drops such a body, and it reaches no log or published snapshot.
 type DiagnosticCompletion struct {
 	Completeness   execution.Completeness `json:"completeness"`
 	DataState      execution.DataState    `json:"data_state"`
 	Status         *DiagnosticStatus      `json:"status,omitempty"`
 	ResultTableIDs []string               `json:"result_table_ids"`
 	RouteDetails   []string               `json:"route_details"`
+	ErrorExcerpt   string                 `json:"error_excerpt,omitempty"`
 }
 
 type DiagnosticStatus struct {
@@ -126,8 +134,8 @@ func (client *DiagnosticClient) Preview(spec execution.PhysicalQuerySpec) (Diagn
 	if err != nil {
 		return DiagnosticPreview{}, &DiagnosticError{Code: "query_spec_invalid"}
 	}
-	headers := map[string]string{"Content-Type": "application/json", headerQuerySource: client.client.querySource,
-		headerTenant: spec.PlanFacts.TenantID, headerSpace: spec.PlanFacts.SpaceScope}
+	headers := scopeHeaders(spec.PlanFacts)
+	headers["Content-Type"], headers[headerQuerySource] = "application/json", client.client.querySource
 	// The digest covers the exact provider path/body and semantic headers, not
 	// the current endpoint, secrets or output selection. The preview preserves
 	// business conditions and expressions so operators can inspect the query.
@@ -216,6 +224,7 @@ func (client *DiagnosticClient) Query(ctx context.Context, spec execution.Physic
 			final.RouteDetails = append(final.RouteDetails, attempt.Detail)
 		}
 	}
+	final.ErrorExcerpt = result.Scan.errorExcerpt
 	result.Completion = final
 	if completion.Completeness != execution.CompletenessFull {
 		result.Limitations = append(result.Limitations, "provider_"+strings.ToLower(string(completion.Completeness)))

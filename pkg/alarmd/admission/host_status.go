@@ -27,21 +27,23 @@ import "strings"
 //     platform's own check is `state in host.bk_state`.
 //
 // The states are a platform setting an operator can change, so they are given
-// to the filter rather than compiled into it, and an empty set means the
-// filter must not be installed at all - see NewHostStatusFilter.
+// to the filter rather than compiled into it. Only the last branch reads them:
+// with none configured the filter still drops invalid and unknown hosts, as
+// Python's does - it is always installed (processor.py:76-80).
 type HostStatusFilter struct {
 	states []string
 }
 
-// NewHostStatusFilter returns a filter for the given disabled states, or false
-// when there are none.
+// NewHostStatusFilter returns the filter for the given disabled states. An
+// empty list disables no host by state; the filter still decides the other
+// four branches.
 //
-// The false result is not an error: no configured states means the platform
-// disables no host, and installing a filter that can never reject would spend
-// a decision per series to always say yes. The caller distinguishes "not
-// configured" from "configured empty"; both leave the filter out, and only the
-// first is worth reporting.
-func NewHostStatusFilter(states []string) (*HostStatusFilter, bool) {
+// Each state is trimmed and an empty one is left out, which Python does not
+// do: its `state in host.bk_state` with an empty state is true for every
+// host, so one empty entry in the platform's list would drop every host
+// series there. This is a rule difference kept on purpose, awaiting product
+// (the target-scope review of 2026-10-09, section 6).
+func NewHostStatusFilter(states []string) *HostStatusFilter {
 	kept := make([]string, 0, len(states))
 	for _, state := range states {
 		state = strings.TrimSpace(state)
@@ -50,10 +52,7 @@ func NewHostStatusFilter(states []string) (*HostStatusFilter, bool) {
 		}
 		kept = append(kept, state)
 	}
-	if len(kept) == 0 {
-		return nil, false
-	}
-	return &HostStatusFilter{states: kept}, true
+	return &HostStatusFilter{states: kept}
 }
 
 // States returns the configured states, for the config surface to report what

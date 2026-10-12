@@ -186,7 +186,10 @@ func TestAContentChangeWithNoHolderIsWrittenDirectly(t *testing.T) {
 	}
 }
 
-func TestAContentChangeWithAMoveIsWrittenDirectly(t *testing.T) {
+// With no live holder there is nobody to drain: a move that changes the
+// content writes both directly. (Under a live holder the content goes
+// pending beside the holder's grace: TestAMoveWithAContentChangeLeavesTheHolderOnItsContent.)
+func TestAContentChangeWithAMoveAndNoHolderIsWrittenDirectly(t *testing.T) {
 	store := newIntegrationStore(t)
 	ctx := context.Background()
 	now := time.UnixMilli(1_700_000_000_000)
@@ -199,14 +202,17 @@ func TestAContentChangeWithAMoveIsWrittenDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Release(ctx, lease.Fence); err != nil {
+		t.Fatal(err)
+	}
 	moved := publishScope(t, store, authority, first.RecordRevision, "worker-2", "view-b", now.Add(time.Second))
 	if moved.DesiredWorkerID != "worker-2" || moved.ContentScope != "view-b" || moved.ContentChangePending() ||
 		moved.AssignmentGeneration != first.AssignmentGeneration+1 {
 		t.Fatalf("record after a move = %+v, want worker-2 on view-b directly, generation bumped", moved)
 	}
-	// The old holder is refused exactly as before: by desired worker, at once.
-	if _, err := store.Renew(ctx, lease.Fence, now.Add(2*time.Second), time.Minute); !errors.Is(err, ErrNotDesired) {
-		t.Fatalf("Renew() by the moved-away holder = %v, want ErrNotDesired", err)
+	next, err := store.Acquire(ctx, "query-group-1", "worker-2", now.Add(2*time.Second), time.Minute)
+	if err != nil || next.ContentScope != "view-b" {
+		t.Fatalf("Acquire(worker-2) = (%+v, %v), want a lease on view-b", next, err)
 	}
 }
 
@@ -392,7 +398,14 @@ func TestADeadLeaseWithAMovedScopeIsReportedAsTheLeaseNotTheScope(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CheckFenceForContentScope(ctx, next.Fence, "view-b"); !errors.Is(err, ErrNotDesired) {
+	// worker-1 is the draining holder of that move, on the content it holds,
+	// until its grace ends; past the grace, with its lease dead and the scope
+	// moved too, NOT_DESIRED is still said first.
+	if err := store.CheckFenceForContentScope(ctx, next.Fence, "view-b"); err != nil {
+		t.Fatalf("draining holder on its own scope: CheckFenceForContentScope() = %v, want valid", err)
+	}
+	elapseOnRedis(t, store, "query-group-1", time.Minute+ContentSwitchMargin+time.Second)
+	if err := store.CheckFenceForContentScope(ctx, next.Fence, "view-a"); !errors.Is(err, ErrNotDesired) {
 		t.Fatalf("not desired with a moved scope: CheckFenceForContentScope() = %v, want ErrNotDesired", err)
 	}
 }

@@ -14,6 +14,9 @@ type rangeCommittedCountKey struct{}
 
 func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Context, request execution.SlotExecutionRequest) (result execution.SlotExecutionResult, err error) {
 	var committed uint32
+	// The finalization's cause, once built, for the range's line: the
+	// commit writes no completion line that would carry it.
+	var cause execution.CompletionCause
 	ctx = context.WithValue(ctx, rangeCommittedCountKey{}, &committed)
 	defer func() {
 		outcome := "retrying"
@@ -26,7 +29,11 @@ func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Con
 		}
 		func() {
 			defer func() { _ = recover() }()
-			coordinator.ports.Observer.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageExpiredRangeReturned, Result: observability.ResultSuccess, ExpiredRange: &observability.ExpiredRangeFacts{Result: outcome, CommittedSlots: committed, ReasonCode: observability.ReasonCode(request.ExpiredRange.CompletionReason())}})
+			p := request.ExpiredRange
+			coordinator.ports.Observer.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageExpiredRangeReturned, Result: observability.ResultSuccess, ExpiredRange: &observability.ExpiredRangeFacts{
+				Result: outcome, CommittedSlots: committed, ReasonCode: observability.ReasonCode(p.CompletionReason()),
+				FirstSlot: int64(p.First.Contract.Slot.EvaluationTime), LastSlot: int64(p.Last.Contract.Slot.EvaluationTime), Slots: p.Count,
+				Kind: string(p.CompletionKind()), Cause: string(cause), Strategies: rangeStrategies(p.First.DuePlanTargets)}})
 		}()
 		p := request.ExpiredRange
 		observability.EmitTargetFlow(ctx, "expired_range_returned", observability.TraceFields{}, observability.TargetFlowFacts{Decision: outcome, RangeFirst: int64(p.First.Contract.Slot.EvaluationTime), RangeLast: int64(p.Last.Contract.Slot.EvaluationTime), RangeCount: p.Count, RangeDigest: p.Digest, NextSlot: int64(p.Next), Completed: result.Completed})
@@ -63,11 +70,27 @@ func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Con
 	}
 	finalization := execution.QueryFreeFinalization{Contract: request.Contract,
 		Mode: mode, ReasonCode: request.ExpiredRange.CompletionReason(),
-		Targets: request.DuePlanTargets.Clone()}
+		Targets: request.DuePlanTargets.Clone(), Cause: execution.CauseExpiredReplay}
 	if err := finalization.Validate(request); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
+	cause = finalization.Cause
 	return coordinator.executeQueryFreeFinalization(ctx, request, finalization)
+}
+
+// rangeStrategies is the strategies of a range's due Plans, once each, in
+// their order.
+func rangeStrategies(targets execution.FrozenDuePlanTargets) []observability.ExpiredRangeStrategy {
+	var strategies []observability.ExpiredRangeStrategy
+	seen := map[observability.ExpiredRangeStrategy]bool{}
+	for _, plan := range targets.Plans {
+		strategy := observability.ExpiredRangeStrategy{BusinessID: plan.BusinessID, StrategyID: plan.StrategyID}
+		if !seen[strategy] {
+			seen[strategy] = true
+			strategies = append(strategies, strategy)
+		}
+	}
+	return strategies
 }
 
 func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Context, request execution.SlotExecutionRequest, completion execution.SlotCompletion) (execution.SlotExecutionResult, error) {
@@ -83,7 +106,7 @@ func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Cont
 		return execution.SlotExecutionResult{}, err
 	}
 	if result.Status != execution.ProgressCommitted {
-		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: range Progress not committed: %s", result.Status)
+		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: range %w", progressNotCommitted(result.Status))
 	}
 	if !result.AlreadyCommitted {
 		if count, ok := ctx.Value(rangeCommittedCountKey{}).(*uint32); ok {

@@ -131,8 +131,14 @@ func TestEvaluateSlotJudgesATargetPlanOnlyAgainstACompleteResolution(t *testing.
 	if got := result.Verdicts[absent.Key()]; got != VerdictNormal {
 		t.Fatalf("102 verdict = %q, want %q: it arrived", got, VerdictNormal)
 	}
-	if _, whole := result.Verdicts[WholeItemGroup().Key()]; whole {
-		t.Fatal("a target plan roster judged the whole item")
+	// The whole item is never reported absent under a target plan, but data
+	// arriving recovers it like any group (retention proposal, section 4 item
+	// 2), and it keeps no entry.
+	if got := result.Verdicts[WholeItemGroup().Key()]; got != VerdictNormal {
+		t.Fatalf("whole-item verdict = %q, want NORMAL: 102 reported", got)
+	}
+	if entry, kept := result.Memory[WholeItemGroup().Key()]; kept {
+		t.Fatalf("whole-item memory = %+v under a target plan, want none", entry)
 	}
 }
 
@@ -181,5 +187,37 @@ func TestTheTargetPlanOutcomesAreOnTheList(t *testing.T) {
 	}
 	if !listed[OutcomeSkippedTargetSelectorUnavailable] || !listed[OutcomeSkippedTargetMembersDropped] {
 		t.Fatalf("SlotOutcomes = %v", SlotOutcomes)
+	}
+}
+
+// The same confirmed-empty target, with data. A host that left the target
+// and reports again is data like any other: it is recovered and remembered as
+// seen rather than closed and forgotten, and the whole item recovers on it
+// (retention proposal, section 4 item 2). The case without data is the one
+// above: the host's absence closes once and the host is forgotten.
+func TestAConfirmedEmptyTargetPlanStillJudgesTheDataThatArrives(t *testing.T) {
+	plan := targetPlanSlotPlan(&contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleHostID,
+		Identity: contract.TargetPlanIdentityV1{Dimensions: []string{"bk_host_id"}, HostIdentity: true}, StaticKeys: []string{}, DynamicGroups: []string{"1001"}}, []string{"bk_host_id"})
+	left := hostIDGroup(t, "102")
+	result, outcome, err := EvaluateSlot(SlotInput{
+		Plan: plan, EvaluationTime: 1000, PeriodSeconds: 60, Completeness: execution.CompletenessFull,
+		Series:           []map[string]string{{"bk_host_id": "102"}},
+		TargetResolution: &TargetResolution{State: TargetResolutionComplete},
+		Memory:           map[string]GroupMemory{left.Key(): {LastSeen: 820, FirstAbsent: 940}},
+	})
+	if err != nil || outcome != OutcomeEvaluated {
+		t.Fatalf("EvaluateSlot() = %q, %v", outcome, err)
+	}
+	if got := result.Verdicts[left.Key()]; got != VerdictNormal {
+		t.Fatalf("verdict for the host that reported = %q, want NORMAL", got)
+	}
+	if got := result.Memory[left.Key()]; got != (GroupMemory{LastSeen: 1000}) {
+		t.Fatalf("memory for the host that reported = %+v, want it remembered as seen at 1000", got)
+	}
+	if got := result.Verdicts[WholeItemGroup().Key()]; got != VerdictNormal {
+		t.Fatalf("whole-item verdict = %q, want NORMAL: data arrived", got)
+	}
+	if entry, kept := result.Memory[WholeItemGroup().Key()]; kept {
+		t.Fatalf("whole-item memory = %+v under a target plan, want none", entry)
 	}
 }

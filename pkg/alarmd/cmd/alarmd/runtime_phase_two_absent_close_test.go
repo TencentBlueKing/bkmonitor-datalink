@@ -4,14 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 type absentTestControl struct {
@@ -117,6 +125,39 @@ type absentTestFixture struct {
 	now     time.Time
 }
 
+// An empty strategy list under the writer's statement is a fact: the loop
+// decides on it and, after its own grace and under a second observation,
+// closes the alerts of a strategy that is gone. Without the statement the
+// same empty list is refused as snapshot_empty and closes nothing.
+func TestAnEmptyListIsDecidedOnOnlyUnderTheWritersStatement(t *testing.T) {
+	for _, stated := range []bool{true, false} {
+		fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+		ctx := context.Background()
+		fixture.control.snapshot = liveSnapshot("observation-one", fixture.now, 0)
+		fixture.control.snapshot.HoldsLastGood = stated
+		fixture.loop.step(ctx)
+		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 0)
+		fixture.control.snapshot.HoldsLastGood = stated
+		for i := range fixture.link.pages {
+			fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+		}
+		fixture.loop.step(ctx)
+		rounds := fixture.loop.Rounds()
+		if stated {
+			if rounds[absentalerts.RefusalNone] != 2 || rounds[absentalerts.RefusalSnapshotEmpty] != 0 ||
+				len(fixture.writer.batches) == 0 || fixture.loop.Stats()[absentalerts.OutcomeCloseDecided] == 0 {
+				t.Fatalf("empty list under the statement: rounds %+v stats %+v batches %+v, want decided and closed",
+					rounds, fixture.loop.Stats(), fixture.writer.batches)
+			}
+			continue
+		}
+		if rounds[absentalerts.RefusalSnapshotEmpty] != 2 || rounds[absentalerts.RefusalNone] != 0 || len(fixture.writer.batches) != 0 {
+			t.Fatalf("empty list without the statement: rounds %+v batches %+v, want refused as snapshot_empty", rounds, fixture.writer.batches)
+		}
+	}
+}
+
 // newAbsentFixture is a deployment where strategy 10 was deleted before
 // this process ever saw it: the link lists it with an open alert, the
 // snapshot does not list it, and nothing in the catalog remembers it. Its
@@ -144,7 +185,7 @@ func newAbsentFixture(t *testing.T, alerts []openalerts.Alert) *absentTestFixtur
 	bundle := &phaseTwoWorkerBundle{dependencies: phaseTwoWorkerBundleDependencies{
 		Now: func() time.Time { return fixture.now }, Observer: observability.NopObserver{}}}
 	bundle.controlLeader = true
-	fixture.loop = newAbsentStrategyClose(bundle, fixture.control, fixture.link, fixture.writer, true)
+	fixture.loop = newAbsentStrategyClose(bundle, fixture.control, fixture.link, fixture.writer)
 	return fixture
 }
 
@@ -152,7 +193,7 @@ func newAbsentFixture(t *testing.T, alerts []openalerts.Alert) *absentTestFixtur
 // observation of the source: the earliest a close can be sent.
 func (fixture *absentTestFixture) mature(ctx context.Context) {
 	fixture.loop.step(ctx)
-	fixture.now = fixture.now.Add(controlplane.AbsenceGracePeriod + time.Minute)
+	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
 	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
 	for i := range fixture.link.pages {
 		fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
@@ -177,7 +218,7 @@ func TestTheAlertsOfAStrategyDeletedBeforeThisProcessSawItAreClosed(t *testing.T
 	if len(fixture.writer.batches) != 0 || fixture.loop.Stats()[absentalerts.OutcomeWithinGrace] != 1 {
 		t.Fatalf("the first round closed, or did not say why it did not: %+v", fixture.loop.Stats())
 	}
-	fixture.now = fixture.now.Add(controlplane.AbsenceGracePeriod + time.Minute)
+	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
 	for i := range fixture.link.pages {
 		fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
 	}
@@ -294,7 +335,7 @@ func TestLosingTheControlTermRestartsTheGrace(t *testing.T) {
 	fixture.loop.bundle.controlLeader = false
 	fixture.loop.step(ctx)
 	fixture.loop.bundle.controlLeader = true
-	fixture.now = fixture.now.Add(controlplane.AbsenceGracePeriod + time.Minute)
+	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
 	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
 	for i := range fixture.link.pages {
 		fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
@@ -321,7 +362,7 @@ func TestALinkWhoseMaintenanceFailedRefusesTheRound(t *testing.T) {
 	fixture.link.pages[0].Health.Error = "discovery_failed"
 	ctx := context.Background()
 	fixture.loop.step(ctx)
-	fixture.now = fixture.now.Add(controlplane.AbsenceGracePeriod + time.Minute)
+	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
 	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
 	fixture.loop.step(ctx)
 	if len(fixture.writer.batches) != 0 || fixture.loop.Rounds()[absentalerts.RefusalLinkUnhealthy] != 2 {
@@ -357,18 +398,142 @@ func TestAListedStrategyWhoseSetCouldNotBeReadIsReported(t *testing.T) {
 	}
 }
 
-func TestASnapshotThatShrankRefusesTheRoundByName(t *testing.T) {
+// A strategy list that lost most of its strategies since the round before
+// is decided on, with or without the writer's statement: the writer takes a
+// strategy out only when it is gone, and the reader keeps no size gate to
+// second-guess it with. Nor does a later round compare its list with the
+// size before the deletion, which is what used to refuse every round after
+// a legitimate bulk deletion until the leader changed.
+func TestASnapshotThatShrankIsDecidedOn(t *testing.T) {
 	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
 	ctx := context.Background()
 	fixture.loop.step(ctx)
-	fixture.now = fixture.now.Add(controlplane.AbsenceGracePeriod + time.Minute)
-	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 40)
-	for i := range fixture.link.pages {
-		fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+	for round, observation := range []string{"observation-two", "observation-three"} {
+		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		fixture.control.snapshot = liveSnapshot(observation, fixture.now, 40)
+		for i := range fixture.link.pages {
+			fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+		}
+		fixture.loop.step(ctx)
+		if decided := fixture.loop.Rounds()[absentalerts.RefusalNone]; decided != uint64(round+2) {
+			t.Fatalf("round %d after the shrink: %d rounds decided, want %d: %+v", round+1, decided, round+2, fixture.loop.Rounds())
+		}
 	}
+	if fixture.loop.Stats()[absentalerts.OutcomeCloseDecided] < 1 || len(fixture.writer.batches) < 1 {
+		t.Fatalf("the absent strategy was not closed after the shrink: %+v %+v", fixture.loop.Stats(), fixture.writer.batches)
+	}
+}
+
+// absentSourceStrategyIDs is the strategy_ids value a writer stores for
+// strategies 1001 up to 1000+n.
+func absentSourceStrategyIDs(n int) string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = strconv.Itoa(1001 + i)
+	}
+	return "[" + strings.Join(ids, ",") + "]"
+}
+
+// absentSourceReconciler is the control plane the close loop asks in
+// production: a SourceReconciler reading the Legacy strategy cache on a real
+// Redis, which holds strategies 1001..1100 and nothing else.
+func absentSourceReconciler(t *testing.T, client *redis.Client, now func() time.Time) (*controlplane.SourceReconciler, func()) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		id := 1001 + i
+		document := fmt.Sprintf(`{"id":%d,"bk_biz_id":2,"bk_tenant_id":"system","space_uid":"bkcc__2","update_time":1,`+
+			`"items":[{"id":1,"query_md5":"absent-%d","expression":"a","unit":"","query_configs":[{"data_source_label":"bk_monitor",`+
+			`"data_type_label":"time_series","metric_field":"usage","alias":"a","agg_dimension":["host"],"agg_method":"MAX",`+
+			`"agg_interval":60,"result_table_id":"system.cpu"}],"algorithms":[{"level":1,"type":"Threshold","config":[[{"method":"gte","threshold":80}]]}]}],`+
+			`"detects":[{"level":1,"priority":1,"connector":"and","trigger_config":{"count":1,"check_window":1}}]}`, id, id)
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+strconv.Itoa(id), document, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Default()
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:absent-close", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := state.RuntimeStateSemantics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	semantics := strategy.StateSemantics{StateSchemaVersion: sm.StateSchemaVersion, CodecSemanticsVersion: sm.CodecSemanticsVersion,
+		IdentitySchemaDigest: sm.IdentitySchemaDigest, SourceTimeSemanticsVersion: sm.SourceTimeSemanticsVersion, HistoryCellSemanticsVersion: sm.HistoryCellSemanticsVersion}
+	accessBKData := true
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", controlplane.LegacyQueryRuntimeFacts{AccessBKData: &accessBKData,
+		BKDataCMDBLevelTables: []string{}, SystemDiskFilter: controlplane.LegacyRuntimeFilterFact{FieldName: "device_type", Values: []string{"iso9660"}},
+		SystemNetworkFilter: controlplane.LegacyRuntimeFilterFact{FieldName: "device_name", Values: []string{"lo"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, semantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.ConfigureClock(now); err != nil {
+		t.Fatal(err)
+	}
+	refresh := func() {
+		t.Helper()
+		result, err := reconciler.Refresh(ctx, source, planner)
+		if err != nil || result.ReadMode != controlplane.SourceReadFull {
+			t.Fatalf("Refresh() = (%+v, %v), want a full read of the source", result, err)
+		}
+	}
+	return reconciler, refresh
+}
+
+// The production control plane, end to end: a writer rewrites strategy_ids
+// in place and drops sixty of a hundred strategies, without moving
+// last_updated and without a statement. The round after is decided on, and
+// so is the one after that: nothing compares a list with the size of the one
+// before it.
+func TestAListThatLostMostOfItsStrategiesIsDecidedOnThroughTheSource(t *testing.T) {
+	_, client := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	fixture.link.pages[0].Rows[0].StrategyID = "1001"
+	reconciler, refresh := absentSourceReconciler(t, client, func() time.Time { return fixture.now })
+	fixture.loop.control = reconciler
+	later := func() {
+		fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+		for i := range fixture.link.pages {
+			fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+		}
+	}
+
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", absentSourceStrategyIDs(100), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	refresh()
 	fixture.loop.step(ctx)
-	if len(fixture.writer.batches) != 0 || fixture.loop.Rounds()[absentalerts.RefusalSnapshotShrunk] != 1 {
-		t.Fatalf("a shrunken snapshot was decided on, or the refusal was not named: %+v", fixture.loop.Rounds())
+	if fixture.loop.Rounds()[absentalerts.RefusalNone] != 1 || fixture.loop.Difference()["snapshot_strategies"] != 100 {
+		t.Fatalf("the first round did not decide on the hundred: %+v %+v", fixture.loop.Rounds(), fixture.loop.Difference())
+	}
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", absentSourceStrategyIDs(40), 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	for round := 2; round <= 3; round++ {
+		later()
+		refresh()
+		fixture.loop.step(ctx)
+		if fixture.loop.Rounds()[absentalerts.RefusalNone] != uint64(round) || fixture.loop.Difference()["snapshot_strategies"] != 40 {
+			t.Fatalf("round %d on the forty: %+v %+v", round, fixture.loop.Rounds(), fixture.loop.Difference())
+		}
+	}
+	if fixture.loop.Stats()[absentalerts.OutcomeCloseDecided] < 1 {
+		t.Fatalf("the absent strategy was not decided: %+v", fixture.loop.Stats())
 	}
 }
 
@@ -381,24 +546,21 @@ func TestAnUnreadableAlertListIsReported(t *testing.T) {
 	}
 }
 
-// Until the deployment arms it, the difference runs in full and sends
-// nothing, and every per-alert guard is read exactly as it would be armed.
-func TestAnUnarmedDifferenceDecidesEverythingAndSendsNothing(t *testing.T) {
+// A candidate past its grace is closed by the loop production builds, with
+// nothing to switch on: its own alert is sent, and another producer's is
+// counted and left.
+func TestACandidatePastGraceIsSentWithNoSwitch(t *testing.T) {
 	fixture := newAbsentFixture(t, []openalerts.Alert{
 		nativeAlert("mine", "0123456789abcdef0123456789abcdef"),
 		{AlertID: "theirs", EventSourceID: "another-source", Fingerprint: "1123456789abcdef0123456789abcdef"},
 	})
-	fixture.loop.send = false
 	fixture.mature(context.Background())
 	stats := fixture.loop.Stats()
-	if len(fixture.writer.batches) != 0 || stats[absentalerts.OutcomeAlertClosed] != 0 {
-		t.Fatalf("an unarmed difference sent a close: %+v", fixture.writer.batches)
+	if len(fixture.writer.batches) != 1 || len(fixture.writer.batches[0]) != 1 || fixture.writer.batches[0][0].AlertInstanceID != "mine" {
+		t.Fatalf("the candidate's own alert was not sent alone: %+v", fixture.writer.batches)
 	}
-	if stats[absentalerts.OutcomeClosed] != 1 || stats[absentalerts.OutcomeWouldSend] != 1 || stats[absentalerts.OutcomeProducerForeign] != 1 {
-		t.Fatalf("an unarmed difference did not report what arming would do: %+v", stats)
-	}
-	if fixture.loop.Difference()["send_armed"] != 0 {
-		t.Fatalf("the reading does not say the close is unarmed: %+v", fixture.loop.Difference())
+	if stats[absentalerts.OutcomeCloseDecided] != 1 || stats[absentalerts.OutcomeCloseSent] != 1 || stats[absentalerts.OutcomeProducerForeign] != 1 {
+		t.Fatalf("outcomes = %+v, want one strategy closed, one alert closed, one foreign", stats)
 	}
 }
 
@@ -428,7 +590,7 @@ func TestAStrategyWhoseDocumentLostItsTenantKeepsItsAlerts(t *testing.T) {
 	ctx := context.Background()
 	fixture.control.snapshot = withoutTenant(fixture.control.snapshot)
 	fixture.loop.step(ctx)
-	fixture.now = fixture.now.Add(controlplane.AbsenceGracePeriod + time.Minute)
+	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
 	fixture.control.snapshot = withoutTenant(liveSnapshot("observation-two", fixture.now, 100))
 	for i := range fixture.link.pages {
 		fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)

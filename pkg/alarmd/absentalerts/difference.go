@@ -25,8 +25,10 @@
 // alerts have nothing left to recover them. The cache is not read twice or
 // reinterpreted here; the snapshot is the control plane's own read of it. What
 // is added is only what one read cannot say: that the read was a good one
-// (read at all, not empty, not old, not suddenly much smaller than the last),
-// and that the strategy stayed missing - for the grace, across two reads.
+// (read at all, not old, and not empty unless the writer states it), and that
+// the strategy stayed missing - for the grace, across two reads. How much smaller a list is than the one
+// before is not judged: a strategy leaves the list when it is gone, and a
+// writer that drops strategies on error is the writer's to fix.
 //
 // The roster can only err by missing a strategy or listing one twice, which
 // costs a close and never makes one; and a close the link receives for an
@@ -73,8 +75,8 @@ type Round struct {
 	// there is no difference to take.
 	LinkRead bool
 	// Roster is every strategy the link listed with at least one member in
-	// its open alert set.
-	Roster map[Key]struct{}
+	// its open alert set, with how many members the link read in it.
+	Roster map[Key]int
 	// RosterUnreadable is how many listed strategies the link could not read
 	// the set of. Not in Roster, because not read is not empty.
 	RosterUnreadable int
@@ -93,10 +95,12 @@ type Round struct {
 	SnapshotUsable      bool
 	SnapshotObservation string
 	SnapshotAgeSeconds  int64
-	// PreviousSnapshotStrategies is how large the snapshot was when this
-	// loop last decided on one. Zero means there is no round to compare
-	// against, which is the first round of a leader term.
-	PreviousSnapshotStrategies int
+	// WriterHoldsLastGood is the writer's statement, made about this very
+	// list, that a strategy leaves it only for a fact about the strategy
+	// itself and never because publishing it failed. It decides one thing
+	// here: an empty list under it is a fact, every strategy gone, and is
+	// decided on; an empty list without it is refused (RefusalSnapshotEmpty).
+	WriterHoldsLastGood bool
 	// Identities is what the catalog remembers about the strategies it let
 	// go. A candidate not here is still closed; its identity is read from its
 	// alerts.
@@ -108,6 +112,16 @@ type Round struct {
 	// round's walk over the candidates starts just past it.
 	After Key
 	Now   time.Time
+}
+
+// Decision is what a round decided about one candidate: one of the four
+// per-candidate outcomes OutcomeWithinGrace, OutcomeUnconfirmed,
+// OutcomeDeferred and OutcomeCloseDecided. AbsentSince is zero when the memory did
+// not hold the candidate, which keeps it within the grace on every round.
+type Decision struct {
+	Key         Key
+	Outcome     string
+	AbsentSince time.Time
 }
 
 // Absent is one strategy the round decided to close.
@@ -139,33 +153,30 @@ const (
 	// unread snapshot is not an empty one, and reading it as empty would
 	// close every unrecovered alert in the deployment.
 	RefusalSnapshotUnusable = "snapshot_unusable"
-	// RefusalSnapshotEmpty: the snapshot was observed and holds no strategy
-	// at all. On a live deployment that is a source that lost its content,
-	// not a deployment without strategies.
+	// RefusalSnapshotEmpty: the snapshot was observed, lists no strategy at
+	// all, and the writer made no statement about it. On it every
+	// unrecovered alert in the deployment would be a candidate at once, and
+	// nothing says the list is the writer's word rather than one that lost
+	// its content. Under the writer's statement (Round.WriterHoldsLastGood)
+	// an empty list is a fact and the round decides.
 	RefusalSnapshotEmpty = "snapshot_empty"
 	// RefusalSnapshotStale: the observation is older than this round may
 	// decide on. Strategies created since it was read would read as absent.
 	RefusalSnapshotStale = "snapshot_stale"
-	// RefusalSnapshotShrunk: the snapshot itself lost a large share of its
-	// strategies since the round before. The gate is on the input and not on the difference: the
-	// difference is an output filtered by "still holds an unrecovered
-	// alert", so a badly truncated snapshot whose lost strategies happened
-	// to have no open alerts produces a small difference and reads as a
-	// healthy round, while an honest backlog of deleted strategies - the
-	// state this capability exists for - produces a large one.
-	RefusalSnapshotShrunk = "snapshot_shrunk"
 )
 
 // Refusals is the closed list of whole-round refusals.
 var Refusals = []string{RefusalNone, RefusalLinkUnavailable, RefusalLinkUnhealthy, RefusalSnapshotUnusable,
-	RefusalSnapshotEmpty, RefusalSnapshotStale, RefusalSnapshotShrunk}
+	RefusalSnapshotEmpty, RefusalSnapshotStale}
 
 // The per-strategy outcomes of the decision. Every candidate the round did
 // not close lands on one of these, and every one of them is counted.
 const (
-	// OutcomeClosed: absent from the snapshot for the grace under two
-	// observations, and within this round's bound.
-	OutcomeClosed = "closed"
+	// OutcomeCloseDecided: absent from the snapshot for the grace under two
+	// observations, and within this round's bound. Decided, not closed: what
+	// went out is OutcomeCloseSent, and whether the link acted on it is what
+	// its next reconcile read lists as active.
+	OutcomeCloseDecided = "close_decided"
 	// OutcomeWithinGrace: absent, but not for long enough by this loop's own
 	// clock. A leader that has just been elected cannot close on its first
 	// round.
@@ -197,17 +208,14 @@ const (
 	// from the link, so there is nothing to address a close to. Per
 	// strategy.
 	OutcomeEvidenceUnavailable = "evidence_unavailable"
-	// OutcomeAlertClosed: an alert the broker acknowledged a close for. Per
-	// alert, where OutcomeClosed counts strategies.
-	OutcomeAlertClosed = "alert_closed"
+	// OutcomeCloseSent: an alert the broker acknowledged a close for. Per
+	// alert, where OutcomeCloseDecided counts strategies. Sent, not closed:
+	// the link closes the alert or does not, and an alert it left open is
+	// listed active again by the next close's reconcile read.
+	OutcomeCloseSent = "close_sent"
 	// OutcomeSendFailed: the producer did not acknowledge the batch. Per
 	// alert.
 	OutcomeSendFailed = "send_failed"
-	// OutcomeWouldSend: an alert a round decided on and did not send,
-	// because the deployment has not armed the close. Per alert, so that
-	// what arming would do is a number and not an estimate from the strategy
-	// counts.
-	OutcomeWouldSend = "would_send"
 	// OutcomeNotLeader: this replica is not the control leader and takes no
 	// difference. Counted so that a deployment where no replica ever ran a
 	// round is not read as a deployment with nothing to close.
@@ -227,9 +235,9 @@ const (
 )
 
 // Outcomes is the closed list, for the metric that reports every cell.
-var Outcomes = []string{OutcomeClosed, OutcomeWithinGrace, OutcomeUnconfirmed,
+var Outcomes = []string{OutcomeCloseDecided, OutcomeWithinGrace, OutcomeUnconfirmed,
 	OutcomeDeferred, OutcomeIndexUnreadable, OutcomeIdentityUnknown, OutcomeRevisionUnknown,
-	OutcomeEvidenceUnavailable, OutcomeAlertClosed, OutcomeSendFailed, OutcomeWouldSend,
+	OutcomeEvidenceUnavailable, OutcomeCloseSent, OutcomeSendFailed,
 	OutcomeNotLeader, OutcomeMemoryFull, OutcomeProducerForeign, OutcomeProducerUnknown}
 
 // Counts is what the round measured. The denominators are reported with
@@ -237,17 +245,16 @@ var Outcomes = []string{OutcomeClosed, OutcomeWithinGrace, OutcomeUnconfirmed,
 // absent, or nothing was decided - and without them a reader cannot tell a
 // healthy deployment from a difference that never ran.
 type Counts struct {
-	Roster                     int
-	RosterUnreadable           int
-	SnapshotStrategies         int
-	PreviousSnapshotStrategies int
+	Roster             int
+	RosterUnreadable   int
+	SnapshotStrategies int
 	// Candidates is the difference this round acts on: listed by the link,
 	// not listed by the snapshot.
-	Candidates  int
-	Closed      int
-	WithinGrace int
-	Unconfirmed int
-	Deferred    int
+	Candidates   int
+	CloseDecided int
+	WithinGrace  int
+	Unconfirmed  int
+	Deferred     int
 }
 
 // Bounds are the gates a round is decided under.
@@ -263,26 +270,24 @@ type Bounds struct {
 	// discovery may be. Older, the link's maintenance has stopped and its
 	// roster is not current.
 	MaxLinkHealthAge time.Duration
-	// MaxSnapshotShrinkRatio is how much smaller this round's snapshot may
-	// be than the round before's before the round is refused.
-	MaxSnapshotShrinkRatio float64
-	// MinSnapshotForShrink is the size below which the shrink ratio says
-	// nothing: on a deployment with four strategies one deletion is
-	// twenty-five percent.
-	MinSnapshotForShrink int
 	// MaxCloseStrategies bounds how many strategies one round closes, so a
 	// backlog is worked off over rounds instead of in one batch.
 	MaxCloseStrategies int
 }
 
 // Result is the round's decision. Close is what the round decided to
-// close, which is not the same as what it sent: arming the send is the
-// caller's, and the two are counted apart so that a deployment can read
-// what the difference would do before it does it.
+// close, which is not the same as what it sent: the send is the caller's,
+// and its own guards - whose alerts they are, which business and revision
+// they carry - can still hold a decided strategy back, so the two are
+// counted apart.
 type Result struct {
-	Close   []Absent
-	Counts  Counts
-	Refusal string
+	Close []Absent
+	// Decisions is every candidate's decision, in the candidates' order
+	// (lessKey) rather than the walk's, so that a reader can page them by
+	// key. Each outcome's count in Counts is how many of these carry it.
+	Decisions []Decision
+	Counts    Counts
+	Refusal   string
 }
 
 // Candidates is the first half of the difference: the strategies with
@@ -292,8 +297,7 @@ type Result struct {
 // decision reads it, without the decision itself mutating memory.
 func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	counts := Counts{Roster: len(round.Roster), RosterUnreadable: round.RosterUnreadable,
-		SnapshotStrategies:         len(round.SnapshotStrategies),
-		PreviousSnapshotStrategies: round.PreviousSnapshotStrategies}
+		SnapshotStrategies: len(round.SnapshotStrategies)}
 	if !round.LinkRead {
 		return nil, counts, RefusalLinkUnavailable
 	}
@@ -303,14 +307,11 @@ func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	if !round.SnapshotUsable || round.SnapshotObservation == "" {
 		return nil, counts, RefusalSnapshotUnusable
 	}
-	if len(round.SnapshotStrategies) == 0 {
+	if len(round.SnapshotStrategies) == 0 && !round.WriterHoldsLastGood {
 		return nil, counts, RefusalSnapshotEmpty
 	}
 	if bounds.MaxSnapshotAge > 0 && time.Duration(round.SnapshotAgeSeconds)*time.Second > bounds.MaxSnapshotAge {
 		return nil, counts, RefusalSnapshotStale
-	}
-	if shrunk(counts, bounds) {
-		return nil, counts, RefusalSnapshotShrunk
 	}
 	// Presence is decided by the strategy id alone. The snapshot lists a
 	// strategy whose source document lost its tenant with an empty one, while
@@ -347,38 +348,50 @@ func Compute(round Round, bounds Bounds) Result {
 	if refusal != RefusalNone {
 		return Result{Counts: counts, Refusal: refusal}
 	}
-	result := Result{Counts: counts, Refusal: RefusalNone}
-	for _, key := range rotate(candidates, round.After) {
+	result := Result{Counts: counts, Refusal: RefusalNone, Decisions: make([]Decision, len(candidates))}
+	start := rotation(candidates, round.After)
+	for step := range candidates {
+		at := (start + step) % len(candidates)
+		key := candidates[at]
 		absence, tracked := round.FirstAbsent[key]
-		if !tracked || round.Now.Sub(absence.Since) < bounds.Grace {
+		decision := Decision{Key: key}
+		if tracked {
+			decision.AbsentSince = absence.Since
+		}
+		switch {
+		case !tracked || round.Now.Sub(absence.Since) < bounds.Grace:
+			decision.Outcome = OutcomeWithinGrace
 			result.Counts.WithinGrace++
-			continue
-		}
-		if absence.Observation == round.SnapshotObservation {
+		case absence.Observation == round.SnapshotObservation:
+			decision.Outcome = OutcomeUnconfirmed
 			result.Counts.Unconfirmed++
-			continue
-		}
-		if bounds.MaxCloseStrategies > 0 && len(result.Close) >= bounds.MaxCloseStrategies {
+		case bounds.MaxCloseStrategies > 0 && len(result.Close) >= bounds.MaxCloseStrategies:
+			decision.Outcome = OutcomeDeferred
 			result.Counts.Deferred++
-			continue
+		default:
+			decision.Outcome = OutcomeCloseDecided
+			result.Close = append(result.Close, Absent{Key: key, Identity: round.Identities[key], AbsentSince: absence.Since})
+			result.Counts.CloseDecided++
 		}
-		result.Close = append(result.Close, Absent{Key: key, Identity: round.Identities[key], AbsentSince: absence.Since})
-		result.Counts.Closed++
+		result.Decisions[at] = decision
 	}
 	return result
 }
 
-// rotate starts the walk over the candidates just after the last strategy a
-// previous round closed, so that a strategy which never yields a close -
-// every alert another producer's, no identity to be found - cannot hold the
-// front of the order and spend the bound on every round.
-func rotate(candidates []Key, after Key) []Key {
-	if after == (Key{}) {
-		return candidates
+// rotation is where the walk over the candidates starts: just after the
+// last strategy a previous round closed, so that a strategy which never
+// yields a close - every alert another producer's, no identity to be found -
+// cannot hold the front of the order and spend the bound on every round.
+func rotation(candidates []Key, after Key) int {
+	if after == (Key{}) || len(candidates) == 0 {
+		return 0
 	}
-	start := sort.Search(len(candidates), func(i int) bool { return lessKey(after, candidates[i]) })
-	return append(append(make([]Key, 0, len(candidates)), candidates[start:]...), candidates[:start]...)
+	return sort.Search(len(candidates), func(i int) bool { return lessKey(after, candidates[i]) }) % len(candidates)
 }
+
+// LessKey is the order candidates are listed, remembered and walked in:
+// tenant, then strategy id, both compared as strings ("100" before "20").
+func LessKey(a, b Key) bool { return lessKey(a, b) }
 
 func lessKey(a, b Key) bool {
 	if a.TenantID != b.TenantID {
@@ -421,21 +434,6 @@ func LinkHealthWord(lastSuccess time.Time, linkError string, now time.Time, maxA
 		return LinkDiscoveryStale
 	}
 	return LinkHealthy
-}
-
-// shrunk gates on the input: the strategy list itself, against what it was
-// the round before.
-func shrunk(counts Counts, bounds Bounds) bool {
-	if bounds.MaxSnapshotShrinkRatio <= 0 {
-		return false
-	}
-	against := func(before int) bool {
-		if before < max(bounds.MinSnapshotForShrink, 1) || counts.SnapshotStrategies >= before {
-			return false
-		}
-		return float64(before-counts.SnapshotStrategies)/float64(before) > bounds.MaxSnapshotShrinkRatio
-	}
-	return against(counts.PreviousSnapshotStrategies)
 }
 
 func sortKeys(keys []Key) {

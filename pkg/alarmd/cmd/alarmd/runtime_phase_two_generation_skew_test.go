@@ -71,9 +71,6 @@ func newPreviousFormulaLeader(t *testing.T, fixture *cutoverStallFixture) *previ
 // have and cuts every Segment over to the publication at the fixture clock.
 func (leader *previousFormulaLeader) publish(t *testing.T, ctx context.Context) controlplane.ActivationState {
 	t.Helper()
-	if result, err := leader.reconciler.Refresh(ctx, leader.source, leader.planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
-		t.Fatalf("previous formula pending = (%+v, %v)", result, err)
-	}
 	published, err := leader.reconciler.Refresh(ctx, leader.source, leader.planner)
 	if err != nil || published.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("previous formula publish = (%+v, %v)", published, err)

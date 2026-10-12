@@ -38,6 +38,10 @@ const (
 	// dynamic reference. It would match nothing; refusing it puts it on the
 	// first screen where a strategy that can never alert belongs.
 	ReasonEmpty = "TARGET_PLAN_EMPTY"
+	// ReasonTenantMismatch is an ip_cloud plan whose tenant is not the
+	// strategy's: its hosts would be read as another tenant's, and an
+	// address is a host only inside one tenant.
+	ReasonTenantMismatch = "TARGET_PLAN_TENANT_MISMATCH"
 )
 
 // Error is one refusal: the bounded reason, the path inside target_plan of
@@ -69,11 +73,57 @@ const (
 
 // Options are the strategy facts the decoder needs beside the document.
 type Options struct {
+	// TenantID is the strategy's tenant, which an ip_cloud plan names too
+	// and must name the same.
+	TenantID string
 	// ObjectIdentities are the (model dimension, instance dimension) pairs
 	// the strategy's query configurations identify object-model records by,
 	// first occurrence first and the platform default last. They decide how
 	// a model_inst_id record key is read; nothing else reads them.
 	ObjectIdentities [][2]string
+}
+
+// The protocol's fields at each place in a plan. onlyKeys holds a document
+// to them, and DocumentKeys lists them.
+var (
+	planFields = []string{"schema_version", "model_id", "target_rule", "failure_policy",
+		"static_targets", "dynamic_groups", "dynamic_topologies", "model_match", "bk_tenant_id", "exclude"}
+	dynamicGroupFields    = []string{"dynamic_group_id"}
+	dynamicTopologyFields = []string{"bk_biz_id", "bk_obj_id", "bk_inst_id"}
+	hostTargetFields      = []string{"bk_host_id"}
+	memberTargetFields    = []string{"model_id", "model_inst_id"}
+	// matchedTargetFields is a Kubernetes static target, which may also
+	// carry its cluster's business (staticTargetBusinessField).
+	matchedTargetFields       = []string{"model_id", "model_inst_id", "match"}
+	staticTargetBusinessField = "bk_biz_id"
+)
+
+// DocumentKeys is every key Decode reads, as a dotted path below the
+// target_plan with arrays left out (static_targets.match.namespace). The
+// key of a model match is whatever dimension the writer names; it is listed
+// by the platform's default one.
+func DocumentKeys() []string {
+	keys := append([]string(nil), planFields...)
+	add := func(prefix string, names ...string) {
+		for _, name := range names {
+			keys = append(keys, prefix+"."+name)
+		}
+	}
+	add("model_match", DefaultObjectModelDimension)
+	add("dynamic_groups", dynamicGroupFields...)
+	add("dynamic_topologies", dynamicTopologyFields...)
+	add("static_targets", hostTargetFields...)
+	add("static_targets", memberTargetFields...)
+	add("static_targets", matchedTargetFields...)
+	add("static_targets", staticTargetBusinessField)
+	for _, rule := range contract.TargetPlanRules() {
+		if rule == contract.TargetPlanRuleHostID || rule == contract.TargetPlanRuleModelInstID || rule == contract.TargetPlanRuleIPCloud {
+			continue // decodeStaticTarget reads no match for these
+		}
+		dimensions, _ := contract.TargetPlanRuleDimensions(rule)
+		add("static_targets.match", dimensions...)
+	}
+	return keys
 }
 
 // Decode reads one target_plan document. A nil error means the plan is
@@ -84,8 +134,7 @@ func Decode(raw json.RawMessage, options Options) (*contract.TargetPlanV1, *Erro
 	if err != nil {
 		return nil, unsupported("", "%s", err)
 	}
-	if err := onlyKeys(fields, "", "schema_version", "model_id", "target_rule", "failure_policy",
-		"static_targets", "dynamic_groups", "dynamic_topologies", "model_match"); err != nil {
+	if err := onlyKeys(fields, "", planFields...); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(string(fields["schema_version"])) != "1" {
@@ -111,6 +160,25 @@ func Decode(raw json.RawMessage, options Options) (*contract.TargetPlanV1, *Erro
 	}
 
 	plan := &contract.TargetPlanV1{SchemaVersion: 1, ModelID: modelID, Rule: rule, StaticKeys: []string{}}
+	// The tenant belongs to ip_cloud alone: its addresses are read inside
+	// one tenant, and that tenant is the strategy's.
+	tenantRaw, tenantNamed := fields["bk_tenant_id"]
+	if rule == contract.TargetPlanRuleIPCloud {
+		if modelID != contract.HostModelID {
+			return nil, unsupported("model_id", "rule %s names %s", rule, contract.HostModelID)
+		}
+		tenant, err := nonEmptyText(tenantRaw)
+		if err != nil {
+			return nil, unsupported("bk_tenant_id", "%s", err)
+		}
+		if tenant != options.TenantID {
+			return nil, &Error{Reason: ReasonTenantMismatch, Path: "bk_tenant_id",
+				Detail: fmt.Sprintf("the plan names tenant %q, the strategy is tenant %q's", tenant, options.TenantID)}
+		}
+		plan.TenantID = tenant
+	} else if tenantNamed {
+		return nil, unsupported("bk_tenant_id", "only %s carries a tenant", contract.TargetPlanRuleIPCloud)
+	}
 	identity, err2 := decodeIdentity(rule, ruleDimensions, fields["model_match"], options)
 	if err2 != nil {
 		return nil, err2
@@ -122,11 +190,18 @@ func Decode(raw json.RawMessage, options Options) (*contract.TargetPlanV1, *Erro
 		return nil, unsupported("static_targets", "%s", err)
 	}
 	keys := make([]string, 0, len(statics))
+	var hosts []string
 	seenMembers := make(map[contract.TargetPlanMemberV1]struct{}, len(statics))
+	businesses := staticBusinesses{}
 	for index, element := range statics {
-		key, member, err := decodeStaticTarget(rule, ruleDimensions, plan, element, fmt.Sprintf("static_targets[%d]", index))
+		key, member, business, err := decodeStaticTarget(rule, ruleDimensions, plan, element, fmt.Sprintf("static_targets[%d]", index))
 		if err != nil {
 			return nil, err
+		}
+		if rule == contract.TargetPlanRuleIPCloud {
+			// A host id: its key is its address, which the worker reads.
+			hosts = append(hosts, key)
+			continue
 		}
 		if member != nil {
 			if _, duplicate := seenMembers[*member]; !duplicate {
@@ -136,9 +211,47 @@ func Decode(raw json.RawMessage, options Options) (*contract.TargetPlanV1, *Erro
 			continue
 		}
 		keys = append(keys, key)
+		businesses.add(key, business)
 	}
 	plan.StaticKeys = contract.CanonicalTargetScopeKeys(keys)
+	if len(hosts) > 0 {
+		plan.StaticHosts = contract.CanonicalTargetScopeKeys(hosts)
+	}
+	plan.StaticBusinesses = businesses.frozen()
 	contract.SortTargetPlanMembers(plan.StaticMembers)
+	// An absent field is the original v1 protocol. A present field must be
+	// an array, including when empty; null must not erase an exclusion.
+	if raw, present := fields["exclude"]; present {
+		exclusions, err := arrayElements(raw)
+		if err != nil {
+			return nil, unsupported("exclude", "%s", err)
+		}
+		if len(exclusions) > 0 && !contract.TargetPlanRuleAllowsDynamic(rule) {
+			return nil, unsupported("exclude", "rule %s requires an empty exclusion list", rule)
+		}
+		seen := make(map[contract.TargetPlanMemberV1]struct{}, len(exclusions))
+		for index, element := range exclusions {
+			key, member, _, err := decodeStaticTarget(rule, ruleDimensions, plan, element, fmt.Sprintf("exclude[%d]", index))
+			if err != nil {
+				return nil, err
+			}
+			if rule == contract.TargetPlanRuleIPCloud {
+				plan.ExcludeHosts = append(plan.ExcludeHosts, key)
+			} else if member == nil {
+				plan.ExcludeKeys = append(plan.ExcludeKeys, key)
+			} else if _, duplicate := seen[*member]; !duplicate {
+				seen[*member] = struct{}{}
+				plan.ExcludeMembers = append(plan.ExcludeMembers, *member)
+			}
+		}
+		if len(plan.ExcludeKeys) > 0 {
+			plan.ExcludeKeys = contract.CanonicalTargetScopeKeys(plan.ExcludeKeys)
+		}
+		contract.SortTargetPlanMembers(plan.ExcludeMembers)
+		if len(plan.ExcludeHosts) > 0 {
+			plan.ExcludeHosts = contract.CanonicalTargetScopeKeys(plan.ExcludeHosts)
+		}
+	}
 
 	groups, err := arrayElements(fields["dynamic_groups"])
 	if err != nil {
@@ -154,7 +267,7 @@ func Decode(raw json.RawMessage, options Options) (*contract.TargetPlanV1, *Erro
 		if err != nil {
 			return nil, unsupported(path, "%s", err)
 		}
-		if err := onlyKeys(members, path, "dynamic_group_id"); err != nil {
+		if err := onlyKeys(members, path, dynamicGroupFields...); err != nil {
 			return nil, err
 		}
 		id, err := scalarText(members["dynamic_group_id"])
@@ -181,7 +294,7 @@ func Decode(raw json.RawMessage, options Options) (*contract.TargetPlanV1, *Erro
 		if err != nil {
 			return nil, unsupported(path, "%s", err)
 		}
-		if err := onlyKeys(members, path, "bk_biz_id", "bk_obj_id", "bk_inst_id"); err != nil {
+		if err := onlyKeys(members, path, dynamicTopologyFields...); err != nil {
 			return nil, err
 		}
 		business, err := integerText(members["bk_biz_id"])
@@ -205,7 +318,8 @@ func Decode(raw json.RawMessage, options Options) (*contract.TargetPlanV1, *Erro
 	}
 	contract.SortTargetPlanTopologies(plan.DynamicTopologies)
 
-	if len(plan.StaticKeys) == 0 && len(plan.StaticMembers) == 0 && len(plan.DynamicGroups) == 0 && len(plan.DynamicTopologies) == 0 {
+	if len(plan.StaticKeys) == 0 && len(plan.StaticMembers) == 0 && len(plan.StaticHosts) == 0 &&
+		len(plan.DynamicGroups) == 0 && len(plan.DynamicTopologies) == 0 {
 		return nil, &Error{Reason: ReasonEmpty, Detail: "the plan names no static target and no dynamic reference"}
 	}
 	if err := plan.Validate(); err != nil {
@@ -241,7 +355,8 @@ func decodeIdentity(
 		if len(modelMatch) != 0 {
 			return contract.TargetPlanIdentityV1{}, unsupported("model_match", "only %s carries a model match", contract.TargetPlanRuleModelInstID)
 		}
-		return contract.TargetPlanIdentityV1{Dimensions: ruleDimensions, HostIdentity: rule == contract.TargetPlanRuleHostID}, nil
+		return contract.TargetPlanIdentityV1{Dimensions: ruleDimensions, HostIdentity: rule == contract.TargetPlanRuleHostID,
+			Address: rule == contract.TargetPlanRuleIPCloud}, nil
 	}
 	pairs := options.ObjectIdentities
 	if len(pairs) == 0 {
@@ -281,60 +396,107 @@ func decodeIdentity(
 
 // decodeStaticTarget reads one static target into its member key, or, on a
 // model_inst_id plan read by host identity, into the (model, instance)
-// member the worker maps to a host id once per Slot.
+// member the worker maps to a host id once per Slot. A Kubernetes target
+// may also carry the business of its cluster, returned as text and empty
+// when the target carries none.
 func decodeStaticTarget(
 	rule contract.TargetPlanRule, ruleDimensions []string, plan *contract.TargetPlanV1, element json.RawMessage, path string,
-) (string, *contract.TargetPlanMemberV1, *Error) {
+) (string, *contract.TargetPlanMemberV1, string, *Error) {
 	fields, err := objectFields(element)
 	if err != nil {
-		return "", nil, unsupported(path, "%s", err)
+		return "", nil, "", unsupported(path, "%s", err)
 	}
 	switch rule {
-	case contract.TargetPlanRuleHostID:
-		if err := onlyKeys(fields, path, "bk_host_id"); err != nil {
-			return "", nil, err
+	case contract.TargetPlanRuleHostID, contract.TargetPlanRuleIPCloud:
+		if err := onlyKeys(fields, path, hostTargetFields...); err != nil {
+			return "", nil, "", err
 		}
 		host, err := integerText(fields["bk_host_id"])
 		if err != nil {
-			return "", nil, unsupported(path+".bk_host_id", "%s", err)
+			return "", nil, "", unsupported(path+".bk_host_id", "%s", err)
 		}
-		return contract.TargetPlanMemberKey(host), nil, nil
+		return contract.TargetPlanMemberKey(host), nil, "", nil
 	case contract.TargetPlanRuleModelInstID:
-		if err := onlyKeys(fields, path, "model_id", "model_inst_id"); err != nil {
-			return "", nil, err
+		if err := onlyKeys(fields, path, memberTargetFields...); err != nil {
+			return "", nil, "", err
 		}
 		model, instance, err := memberModelInstance(fields, path, plan.ModelID)
 		if err != nil {
-			return "", nil, err
+			return "", nil, "", err
 		}
 		if plan.Identity.HostIdentity {
-			return "", &contract.TargetPlanMemberV1{ModelID: model, ModelInstID: instance}, nil
+			return "", &contract.TargetPlanMemberV1{ModelID: model, ModelInstID: instance}, "", nil
 		}
-		return plan.Identity.MemberKey(model, instance), nil, nil
+		return plan.Identity.MemberKey(model, instance), nil, "", nil
 	default:
-		if err := onlyKeys(fields, path, "model_id", "model_inst_id", "match"); err != nil {
-			return "", nil, err
+		// The cluster's business is optional and is the one optional field of
+		// a static target: read and taken out before the closed key check,
+		// so every other field stays exactly as required as it was.
+		business := ""
+		if raw, present := fields[staticTargetBusinessField]; present {
+			text, err := integerText(raw)
+			if err != nil {
+				return "", nil, "", unsupported(path+".bk_biz_id", "%s", err)
+			}
+			business = text
+			delete(fields, staticTargetBusinessField)
+		}
+		if err := onlyKeys(fields, path, matchedTargetFields...); err != nil {
+			return "", nil, "", err
 		}
 		if _, _, err := memberModelInstance(fields, path, plan.ModelID); err != nil {
-			return "", nil, err
+			return "", nil, "", err
 		}
 		match, err2 := objectFields(fields["match"])
 		if err2 != nil {
-			return "", nil, unsupported(path+".match", "%s", err2)
+			return "", nil, "", unsupported(path+".match", "%s", err2)
 		}
 		if err := onlyKeys(match, path+".match", ruleDimensions...); err != nil {
-			return "", nil, err
+			return "", nil, "", err
 		}
 		parts := make([]string, 0, len(ruleDimensions))
 		for _, dimension := range ruleDimensions {
 			value, err := nonEmptyText(match[dimension])
 			if err != nil {
-				return "", nil, unsupported(path+".match."+dimension, "%s", err)
+				return "", nil, "", unsupported(path+".match."+dimension, "%s", err)
 			}
 			parts = append(parts, value)
 		}
-		return contract.TargetPlanMemberKey(parts...), nil, nil
+		return contract.TargetPlanMemberKey(parts...), nil, business, nil
 	}
+}
+
+// staticBusinesses collects the business each static target key was given.
+// A key given two different businesses keeps neither: the plan cannot say
+// which is the target's, and picking by document order would move an
+// alert's business when the writer reorders the list.
+type staticBusinesses map[string]string
+
+const conflictingBusiness = "\x00"
+
+func (businesses staticBusinesses) add(key, business string) {
+	if business == "" {
+		return
+	}
+	if existing, found := businesses[key]; found && existing != business {
+		businesses[key] = conflictingBusiness
+		return
+	}
+	businesses[key] = business
+}
+
+func (businesses staticBusinesses) frozen() map[string]string {
+	var frozen map[string]string
+	for key, business := range businesses {
+		if business == conflictingBusiness {
+			continue
+		}
+		if frozen == nil {
+			frozen = make(map[string]string, len(businesses))
+		}
+		frozen[key] = business
+	}
+	return frozen
 }
 
 func memberModelInstance(fields map[string]json.RawMessage, path, planModel string) (string, string, *Error) {
@@ -377,9 +539,8 @@ func arrayElements(raw json.RawMessage) ([]json.RawMessage, error) {
 }
 
 // onlyKeys refuses a field the table does not name and a named field that
-// is absent, each by path. Optional fields are not a concept here: every
-// field the protocol lists is required, and model_match is the one
-// exception, checked by its reader.
+// is absent, each by path. The top-level model_match, bk_tenant_id and
+// exclude fields are optional by key and checked by their own readers.
 func onlyKeys(fields map[string]json.RawMessage, path string, allowed ...string) *Error {
 	names := make([]string, 0, len(fields))
 	for name := range fields {
@@ -399,7 +560,8 @@ func onlyKeys(fields map[string]json.RawMessage, path string, allowed ...string)
 		}
 	}
 	for _, name := range allowed {
-		if name == "model_match" {
+		if path == "" && (name == "model_match" || name == "bk_tenant_id" || name == "exclude") {
+			// Optional by key; the rule decides whether it must be there.
 			continue
 		}
 		if _, present := fields[name]; !present {

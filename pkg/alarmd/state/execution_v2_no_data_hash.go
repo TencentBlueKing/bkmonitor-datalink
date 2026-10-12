@@ -54,9 +54,8 @@ type noDataHashHeader struct {
 }
 
 // noDataHashVersion is the part of the header that has to be read before the
-// rest of it may be. Same two-stage rule as the whole-memory record: a strict
-// decode of a newer shape fails and reads as corrupt, a lenient one silently
-// drops the fields that shape added.
+// rest of it may be: a strict decode of a newer shape fails and reads as
+// corrupt, a lenient one silently drops the fields that shape added.
 type noDataHashVersion struct {
 	Schema   string                       `json:"schema"`
 	Version  execution.NoDataMemorySchema `json:"version"`
@@ -75,9 +74,7 @@ type noDataGroupAbsenceValue struct {
 	SuppressedAt int64 `json:"suppressed_at,omitempty"`
 }
 
-// decodeNoDataHash reads a hash record into the same snapshot shape the
-// whole-memory record decodes to, so nothing above the store learns which
-// representation it came from.
+// decodeNoDataHash reads a hash record into the store's snapshot shape.
 func decodeNoDataHash(
 	fields map[string][]byte, identity execution.PlanNoDataIdentity,
 ) execution.NoDataMemorySnapshot {

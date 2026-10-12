@@ -169,21 +169,6 @@ func TestCanonicalBranchDiscovery(t *testing.T) {
 	}
 }
 
-// formatCanonicalBytes shows the bytes, not a rendering of them: the whole
-// question here is which byte the encoder emitted, so a terminal that folds an
-// escape into the character it denotes would hide exactly what is being read.
-func formatCanonicalBytes(out []byte) string {
-	printable := make([]byte, 0, len(out))
-	for _, b := range out {
-		if b >= 0x20 && b < 0x7f {
-			printable = append(printable, b)
-			continue
-		}
-		printable = append(printable, []byte(fmt.Sprintf("<%02x>", b))...)
-	}
-	return string(printable)
-}
-
 // branchProbeStruct has its fields declared in an order that is not the sorted
 // order, which is the one shape that separates "the encoder emitted fields in
 // declaration order" from "the canonical form sorted them". Every struct in

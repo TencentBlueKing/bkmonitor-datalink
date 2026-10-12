@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -231,6 +232,15 @@ func noDataRequestFixtureAt(
 	t *testing.T, plan *strategy.CompiledPlan, value int, sourceTime int64,
 ) execution.EvaluationRequest {
 	t.Helper()
+	return noDataRequestFixtureOnGroup(t, plan, value, sourceTime, nil)
+}
+
+// noDataRequestFixtureOnGroup is the same for a roster group: the group's
+// dimensions beside the no-data tag.
+func noDataRequestFixtureOnGroup(
+	t *testing.T, plan *strategy.CompiledPlan, value int, sourceTime int64, group map[string]string,
+) execution.EvaluationRequest {
+	t.Helper()
 	id := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
 	due := execution.DuePlan{Identity: id, CompiledPlan: plan, StateGeneration: "state-v1", StateApplyEpoch: 1,
 		ScheduleRevision: "plan-schedule", CompletionDeadlineUnixMilli: 200000}
@@ -263,6 +273,9 @@ func noDataRequestFixtureAt(
 		Dimensions:        map[string]json.RawMessage{contract.NoDataDimensionTag: json.RawMessage("true")},
 		ReceivedTime:      sourceTime,
 	}}
+	for name, value := range group {
+		records[0].Dimensions[name] = json.RawMessage(strconv.Quote(value))
+	}
 	series := execution.SeriesIdentityDigest(records[0].DimensionIdentity.Digest)
 	dataset := execution.NewDataset(records)
 	view, _ := execution.NewDatasetView(dataset, []uint32{0})
@@ -275,7 +288,7 @@ func noDataRequestFixtureAt(
 	}
 	provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(
 		func(context.Context, string, string, string) (*time.Location, error) { return time.UTC, nil }))
-	requirementLevel := plan.Levels()[0]
+	requirementLevel := plan.Levels().At(0)
 	if level := plan.NoDataLevel(); level != nil {
 		requirementLevel = *level
 	}

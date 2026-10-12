@@ -44,7 +44,14 @@ type SlotInput struct {
 	// this Slot. Nil for a Plan without one; nil for a Plan with one means
 	// nothing resolved it, which is read as unavailable and never as empty.
 	TargetResolution *TargetResolution
-	Memory           map[string]GroupMemory
+	// AnswerTruncated says a primary query of this Plan came back whole by
+	// its own account but may have been cut: the query service returns at
+	// most a fixed number of groups per terms level and drops the rest
+	// without marking the answer (execution.ProviderTruncationFact). The
+	// groups it returned are present; the ones it may have dropped are not
+	// known absent.
+	AnswerTruncated bool
+	Memory          map[string]GroupMemory
 	// TrackingHorizonSeconds and TrackingExhaustedAt are the horizon in force
 	// for this Plan and the Plan-level fact the record held. They are carried
 	// rather than derived: the horizon lives in the Plan the catalog froze and
@@ -150,6 +157,16 @@ const (
 	// decided and could not be said in the second -- which is the one that
 	// leaves a group's absence known to this process and to nobody else.
 	OutcomeSkippedOutputFailed SlotOutcome = "SKIPPED_OUTPUT_FAILED"
+	// OutcomeSkippedAnswerTruncated means the Plan's query answered in full
+	// by its own account, but the answer may have been cut at the query
+	// service's group cap. A group missing from it may be one the cap
+	// dropped, so absence is not evidence: judged anyway, every dropped
+	// group would read as gone, raise or keep open its absence, and recover
+	// when the cut moved elsewhere. Nothing is judged and nothing is
+	// remembered. It is named apart from SKIPPED_QUERY_NOT_FULL because it
+	// does not clear next round: it lasts as long as the groups stay at the
+	// cap, which is the strategy's size, not a blip.
+	OutcomeSkippedAnswerTruncated SlotOutcome = "SKIPPED_ANSWER_TRUNCATED"
 )
 
 // SlotOutcomes is every outcome a Plan that detects no-data can land on, for a
@@ -157,7 +174,7 @@ const (
 var SlotOutcomes = []SlotOutcome{
 	OutcomeEvaluated, OutcomeSkippedQueryNotFull, OutcomeSkippedSlotBudget, OutcomeSkippedMemoryUnreadable,
 	OutcomeSkippedHostsUnresolved, OutcomeSkippedTargetSelectorUnavailable, OutcomeSkippedTargetMembersDropped,
-	OutcomeSkippedDerivationFailed, OutcomeSkippedOutputFailed,
+	OutcomeSkippedDerivationFailed, OutcomeSkippedOutputFailed, OutcomeSkippedAnswerTruncated,
 }
 
 // TargetResolutionState is what the worker's resolution of a target plan
@@ -238,6 +255,12 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 		// one expects nothing by design, and neither becomes less true because
 		// the index is cold.
 		return AbsenceResult{}, OutcomeSkippedHostsUnresolved, nil
+	}
+	if input.AnswerTruncated && input.Completeness == execution.CompletenessFull {
+		// An answer that is not full is skipped below under its own name,
+		// which is the stronger statement; this is the answer that says it is
+		// full and may not be.
+		return AbsenceResult{}, OutcomeSkippedAnswerTruncated, nil
 	}
 	tally := ProjectSeries(input.Series, config.AggDimension)
 	roster, err := BuildRoster(RosterRequest{

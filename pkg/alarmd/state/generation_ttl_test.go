@@ -83,6 +83,45 @@ func TestGenerationScopedTTLTakesTheLongerOfRetentionAndTheFloor(t *testing.T) {
 	}
 }
 
+// A retention whose span is past the ceiling - fourteen points of a sixty-hour
+// interval, 840 hours against 720 - has its runtime state written for its
+// horizon cap, and its generation-scoped keys are loaded every Slot all the
+// same. The load renews them to the ceiling, which outlives that state,
+// instead of failing: refusing here failed the load of a Plan whose runtime
+// state was being written.
+func TestAGenerationKeyOfARetentionPastTheCeilingIsRenewedToTheCeiling(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte), remaining: make(map[string]time.Duration)}
+	store := generationStore(t, backend)
+	item := gapLoadItem("generation", []execution.StateRetentionRequirement{
+		{LevelID: 1, RetentionPoints: 14, EvaluationInterval: 60 * time.Hour},
+	})
+	key, err := PlanGapKeyV2("alarmd", item.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend.values[key] = []byte("{}")
+	backend.remaining[key] = GenerationScopedFloor
+	if _, err := store.LoadGaps(context.Background(), execution.GapLoadRequest{
+		Contract: frozenRef(), Items: []execution.PlanGapLoadItem{item},
+	}); err != nil {
+		t.Fatalf("LoadGaps() error = %v, want the key renewed", err)
+	}
+	if got := backend.remaining[key]; got != 30*24*time.Hour {
+		t.Fatalf("renewed lifetime = %s, want the ceiling", got)
+	}
+
+	// A ceiling below the floor still leaves the floor: the floor is the span
+	// the backend would have forgotten after anyway.
+	past := []LevelRequirement{{LevelID: 1, RetentionPoints: 14, EvaluationInterval: 60 * time.Hour}}
+	if got, err := GenerationScopedTTL(past, time.Minute, time.Minute, 12*time.Hour); err != nil || got != GenerationScopedFloor {
+		t.Fatalf("GenerationScopedTTL(past a 12 h ceiling) = %s, %v; want the floor", got, err)
+	}
+	// Inputs that are wrong rather than too long are still refused.
+	if _, err := GenerationScopedTTL([]LevelRequirement{{LevelID: 1}}, time.Minute, time.Minute, 12*time.Hour); err == nil {
+		t.Fatal("GenerationScopedTTL(no retention points) was accepted")
+	}
+}
+
 // The script writes a new expiry only when the remaining life is below half.
 //
 // This is about what the script decides once it is reached, which is why each
@@ -314,7 +353,7 @@ func TestAGenerationKeyIsNeverWrittenWithoutALifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{
+	result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Retention: planRetention(retentionEvery(5, time.Minute)),
 		Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation},
 	})
 	if err != nil {

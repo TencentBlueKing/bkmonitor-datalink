@@ -29,9 +29,9 @@ func TestBuildSeriesEvaluationInputRequestSupportsG4InputShapes(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			plan, requirements := compiledG4Requirements(t, test.kind)
 			header, consumer, series, bindings, completions := namedInputFixture(t, plan, requirements)
-			request, err := execution.BuildSeriesEvaluationInputRequest(header, consumer, series, bindings, completions)
+			request, err := buildSeriesEvaluationInputRequest(header, consumer, series, bindings, completions)
 			if err != nil {
-				t.Fatalf("BuildSeriesEvaluationInputRequest() error = %v", err)
+				t.Fatalf("buildSeriesEvaluationInputRequest() error = %v", err)
 			}
 			if err := request.Validate(header, completions); err != nil {
 				t.Fatalf("Validate() error = %v", err)
@@ -281,7 +281,7 @@ func TestBuildSeriesEvaluationInputRequestFailsClosedAtConsumerSeriesScope(t *te
 			mutatedBindings := append([]execution.NamedInputBinding(nil), bindings...)
 			mutatedCompletions := append([]execution.PhysicalQueryCompletion(nil), completions...)
 			mutatedBindings, mutatedCompletions = test.mutate(mutatedBindings, mutatedCompletions)
-			_, err := execution.BuildSeriesEvaluationInputRequest(header, consumer, series, mutatedBindings, mutatedCompletions)
+			_, err := buildSeriesEvaluationInputRequest(header, consumer, series, mutatedBindings, mutatedCompletions)
 			if err == nil {
 				t.Fatal("invalid named-input exact set must fail closed")
 			}
@@ -293,7 +293,7 @@ func TestBuildSeriesEvaluationInputRequestFailsClosedAtConsumerSeriesScope(t *te
 func TestSeriesEvaluationInputRequestRejectsRequestLocalCompletionTampering(t *testing.T) {
 	plan, requirements := compiledG4Requirements(t, strategy.DetectorKindSimpleRingRatio)
 	header, consumer, series, bindings, completions := namedInputFixture(t, plan, requirements)
-	request, err := execution.BuildSeriesEvaluationInputRequest(header, consumer, series, bindings, completions)
+	request, err := buildSeriesEvaluationInputRequest(header, consumer, series, bindings, completions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,11 +391,11 @@ func compiledG4Requirements(t *testing.T, kind string) (*strategy.CompiledPlan, 
 	config["input_projection"] = projection
 	config["requirements"] = algorithmRequirements
 	compiled := compileG4Plan(t, kind, config)
-	algorithms := compiled.Levels()[0].Algorithms()
-	if len(algorithms) != 1 || algorithms[0].Kind() != kind {
+	algorithms := compiled.Levels().At(0).Algorithms()
+	if algorithms.Len() != 1 || algorithms.At(0).Kind() != kind {
 		t.Fatalf("compiled algorithms = %+v", algorithms)
 	}
-	compiledRequirements := algorithms[0].InputRequirements()
+	compiledRequirements := algorithms.At(0).InputRequirements()
 	if len(compiledRequirements) != len(algorithmRequirements) {
 		t.Fatalf("compiled InputRequirements = %+v", compiledRequirements)
 	}
@@ -616,4 +616,21 @@ func namedInputDataset(fields []contract.DimensionFieldV2, series execution.Seri
 		Values:            map[string]json.RawMessage{"value": json.RawMessage(`1`)},
 		Dimensions:        map[string]json.RawMessage{"host": host}, ReceivedTime: sourceTime,
 	}})
+}
+
+// buildSeriesEvaluationInputRequest builds the request the way the worker
+// does: a builder prepared once from the frozen header, then one request per
+// consumer and series.
+func buildSeriesEvaluationInputRequest(
+	header execution.InternalExecutionHeader,
+	consumer execution.ConsumerRef,
+	series execution.SeriesIdentityDigest,
+	bindings []execution.NamedInputBinding,
+	completions []execution.PhysicalQueryCompletion,
+) (execution.SeriesEvaluationInputRequest, error) {
+	builder, err := execution.PrepareSeriesEvaluationInputBuilder(header)
+	if err != nil {
+		return execution.SeriesEvaluationInputRequest{}, err
+	}
+	return builder.Build(consumer, series, bindings, completions)
 }

@@ -127,7 +127,6 @@ func TestEveryCutoverReasonIsListed(t *testing.T) {
 		"CutoverReasonTimelineMissing":         CutoverReasonTimelineMissing,
 		"CutoverReasonOpenSegmentClosed":       CutoverReasonOpenSegmentClosed,
 		"CutoverReasonOpenDigestMismatch":      CutoverReasonOpenDigestMismatch,
-		"CutoverReasonLegacyRevisionMismatch":  CutoverReasonLegacyRevisionMismatch,
 		"CutoverReasonSegmentContentMismatch":  CutoverReasonSegmentContentMismatch,
 		"CutoverReasonSegmentConflict":         CutoverReasonSegmentConflict,
 		"CutoverReasonDigestMismatch":          CutoverReasonDigestMismatch,

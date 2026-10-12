@@ -22,10 +22,11 @@ import (
 // platform's code default -- the same list the platform's own consumers
 // apply with nothing declared -- and not "no filter": a deployment whose
 // list differs states it in its own layer, as every deployment did before
-// the distribution existed. An empty list, from any layer, installs
-// nothing: it is the platform saying no host is disabled. A change of the
-// list swaps the filter under the running chain, and the count published
-// beside it follows the filter in force, never the configuration.
+// the distribution existed. An empty list, from any layer, disables no host
+// by state and still drops the invalid and unknown hosts: the filter stays in
+// the chain, as Python installs it whatever the list. A change of the list
+// swaps the filter under the running chain, and the count published beside it
+// follows the filter in force, never the configuration.
 func TestHostStatusFilterFollowsThePlatformSettingsCopy(t *testing.T) {
 	defaults := platformsettings.CodeDefaults()
 	hostStatus := newDynamicHostStatusFilter(defaults.HostDisableMonitorStates)
@@ -47,7 +48,7 @@ func TestHostStatusFilterFollowsThePlatformSettingsCopy(t *testing.T) {
 	if decision := hostStatus.Admit(admission.PlanContext{}, facts); !decision.Admit {
 		t.Fatalf("a host in a state the new list does not name was refused: %+v", decision)
 	}
-	// The platform publishes an empty list: no filter is in force, and the
+	// The platform publishes an empty list: no state disables a host, so the
 	// same host is admitted; the count says zero.
 	if got := hostStatus.Apply([]string{}); got != 0 {
 		t.Fatalf("states in force after an empty list = %d, want 0", got)
@@ -63,8 +64,18 @@ func TestHostStatusFilterFollowsThePlatformSettingsCopy(t *testing.T) {
 	if decision := hostStatus.Admit(admission.PlanContext{}, facts); decision.Admit {
 		t.Fatalf("a host in a newly disabled state was admitted: %+v", decision)
 	}
-	if names := filterNames(seriesAdmissionFilters(nil, nil)); !reflect.DeepEqual(names, []string{"target_scope", "target_plan"}) {
-		t.Fatalf("filters without a host filter = %v", names)
+	// Given no filter, the chain still has one, over no states: a host CMDB
+	// does not know is dropped, one it knows is admitted.
+	chain := seriesAdmissionFilters(nil, nil)
+	if names := filterNames(chain); !reflect.DeepEqual(names, []string{"target_scope", "target_plan", "host_status"}) {
+		t.Fatalf("filters given no host filter = %v, want the host state still in the chain", names)
+	}
+	unknown := &admission.Facts{HostNaming: admission.HostNaming{NamedID: true, Usable: true, IDKey: "43"}}
+	if decision := chain[2].Admit(admission.PlanContext{}, unknown); decision.Admit || decision.Reason != "host_unknown" {
+		t.Fatalf("an unknown host with no filter given = %+v, want host_unknown", decision)
+	}
+	if decision := chain[2].Admit(admission.PlanContext{}, facts); !decision.Admit {
+		t.Fatalf("a known host with no filter given was refused: %+v", decision)
 	}
 }
 

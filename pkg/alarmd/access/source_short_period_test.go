@@ -80,6 +80,55 @@ func TestShortPeriodRecoveryKeepsFiveOrTenSecondsAcrossQueriesAndPermits(t *test
 	}
 }
 
+// Every attempt carries where the budget ending at its deadline began and
+// when its window could be read, which a failure is timed against. A normal
+// query's budget begins at its Slot; a recovery's deadline is counted from
+// its arrival, so its budget begins there - on every query it dispatches,
+// not at the clock a later query happened to be sent by. Timed from the Slot
+// instead, a replay of an old Slot read as a query begun minutes late.
+func TestEachAttemptCarriesWhereItsBudgetBegan(t *testing.T) {
+	ref, frozen := frozenExecution(t)
+	frozen.DuePlans[0].ScheduleSpec = execution.ScheduleSpec{EvaluationIntervalSeconds: 10, Timezone: "UTC", CompletionDeadlineOffsetSeconds: 30}
+	eval := int64(ref.Slot.EvaluationTime) * 1000
+	frozen.DuePlans[0].CompletionDeadlineUnixMilli = eval + 30000
+	frozen.Requirements[0].Consumers[0].ConsumerDeadlineUnixMilli = frozen.DuePlans[0].CompletionDeadlineUnixMilli
+	second := frozen.Requirements[0]
+	second.RequirementID, second.DatasetName = "secondary", "secondary"
+	second.RelativeWindow.StartOffsetSeconds = -120
+	frozen.Requirements = append(frozen.Requirements, second)
+	ref = bindFrozenDueDigest(t, ref, frozen)
+	for _, operation := range []execution.Operation{execution.OperationNormal, execution.OperationReplay, execution.OperationRetry, execution.OperationProbe} {
+		arrived := time.UnixMilli(eval + 12_000)
+		if operation != execution.OperationNormal {
+			arrived = time.UnixMilli(eval + 600_000)
+		}
+		clock := arrived
+		provider := &fakeProvider{}
+		permits := &recordingQueryPermits{onAcquire: func() { clock = clock.Add(time.Second) }}
+		source, err := NewSource(staticFrozenPlan{plan: frozen}, provider, permits, Config{MinReadyDelay: 30 * time.Second, Now: func() time.Time { return clock }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.wait = func(context.Context, time.Duration) error { return nil }
+		if _, err = source.Execute(context.Background(), execution.QueryExecutionRequest{Contract: ref, Operation: operation, AttemptNo: 2}, &recordingConsumer{}); err != nil {
+			t.Fatal(err)
+		}
+		if len(provider.attempts) != 2 {
+			t.Fatalf("%s: %d attempts, want both queries dispatched", operation, len(provider.attempts))
+		}
+		wantStart, wantDeadline := eval, eval+25_000
+		if operation != execution.OperationNormal {
+			wantStart, wantDeadline = arrived.UnixMilli(), arrived.UnixMilli()+5_000
+		}
+		for _, attempt := range provider.attempts {
+			if attempt.BudgetStartUnixMilli != wantStart || attempt.ReadyAtUnixMilli != eval+10_000 || attempt.DeadlineUnixMilli != wantDeadline {
+				t.Fatalf("%s: attempt budget start %d, ready %d, deadline %d; want %d, %d, %d", operation,
+					attempt.BudgetStartUnixMilli, attempt.ReadyAtUnixMilli, attempt.DeadlineUnixMilli, wantStart, eval+10_000, wantDeadline)
+			}
+		}
+	}
+}
+
 func TestShortPeriodObserverPanicDoesNotChangeReadiness(t *testing.T) {
 	ref, frozen := frozenExecution(t)
 	frozen.DuePlans[0].ScheduleSpec = execution.ScheduleSpec{EvaluationIntervalSeconds: 10, Timezone: "UTC", CompletionDeadlineOffsetSeconds: 30}

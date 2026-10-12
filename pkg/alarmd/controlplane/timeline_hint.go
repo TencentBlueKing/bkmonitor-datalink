@@ -34,9 +34,6 @@ func WithTimelineRevisionHint(ctx context.Context, revision uint64) context.Cont
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if revision == 0 {
-		return ctx
-	}
 	return context.WithValue(ctx, timelineRevisionHintKey{}, revision)
 }
 
@@ -63,6 +60,8 @@ func (repository *RedisCatalogRepository) loadScheduleTimelineAtRevision(
 		counters.hits.Add(1)
 		return timeline, nil
 	}
+	reading := repository.controlCache.announceTimelines(1)
+	defer reading.settle()
 	timeline, payload, err := repository.readScheduleTimeline(ctx, queryGroup)
 	if err != nil {
 		return persistedScheduleTimeline{}, err
@@ -72,7 +71,7 @@ func (repository *RedisCatalogRepository) loadScheduleTimelineAtRevision(
 		return persistedScheduleTimeline{}, errTimelineRevisionMoved
 	}
 	counters.misses.Add(1)
-	repository.controlCache.storeTimelineAtCurrentVersion(queryGroup, timeline, len(payload))
+	repository.controlCache.storeTimelineAtCurrentVersion(reading, queryGroup, timeline, len(payload))
 	return timeline, nil
 }
 

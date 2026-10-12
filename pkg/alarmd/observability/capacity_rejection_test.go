@@ -22,8 +22,8 @@ func TestCapacityRejectionLogWhitelistAndUnknownOwnUsage(t *testing.T) {
 		{"https://user:secret@example.test/query", nil, "other"},
 	} {
 		var output bytes.Buffer
-		limiter, _ := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
-		policy, _ := NewBoundedLogPolicy(limiter)
+		limiter, _ := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 10, MaxScopes: 1024})
+		policy, _ := NewScopedBoundedLogPolicy(limiter)
 		NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
 			Component: ComponentResource, Stage: StageResourceHard, Result: ResultPaused, Err: errors.New("reserve https://user:secret@example.test/query: rejected"),
 			CapacityBudget: CapacityBudgetRetainedBytes, CapacityRejection: &CapacityRejectionFacts{Phase: test.phase, OwnUsed: test.own, SharedUsed: 60, Requested: 50, Limit: 100},
@@ -63,8 +63,8 @@ func TestCapacityRejectionLogWhitelistAndUnknownOwnUsage(t *testing.T) {
 func TestARejectionReportsEveryBudgetNotOnlyTheOneThatRefused(t *testing.T) {
 	own := uint64(524288)
 	var output bytes.Buffer
-	limiter, _ := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
-	policy, _ := NewBoundedLogPolicy(limiter)
+	limiter, _ := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 10, MaxScopes: 1024})
+	policy, _ := NewScopedBoundedLogPolicy(limiter)
 	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
 		Component: ComponentResource, Stage: StageResourceHard, Result: ResultPaused,
 		Err:            errors.New("rejected"),
@@ -104,9 +104,7 @@ func TestARejectionReportsEveryBudgetNotOnlyTheOneThatRefused(t *testing.T) {
 // rejections have a distribution to be read against.
 func TestTheCompletionRowCarriesBudgetUsageOnASuccess(t *testing.T) {
 	var output bytes.Buffer
-	limiter, _ := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
-	policy, _ := NewBoundedLogPolicy(limiter)
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
 		Direction: DirectionInternal,
 		SlotBudgetUsage: &SlotBudgetUsageFacts{
@@ -146,9 +144,7 @@ func TestTheCompletionRowCarriesBudgetUsageOnASuccess(t *testing.T) {
 // and every dashboard asking for it gets nothing back.
 func TestTheCompletionRowSaysWhichPhaseHeldTheRetainedBytes(t *testing.T) {
 	var output bytes.Buffer
-	limiter, _ := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
-	policy, _ := NewBoundedLogPolicy(limiter)
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
 		Direction: DirectionInternal,
 		SlotBudgetUsage: &SlotBudgetUsageFacts{
@@ -176,7 +172,7 @@ func TestTheCompletionRowSaysWhichPhaseHeldTheRetainedBytes(t *testing.T) {
 	// Zero is reported rather than omitted. A phase that is nothing on most
 	// Slots and the whole budget on a few is the one worth finding, and a phase
 	// whose zeros are absent has no denominator to be occasional against.
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
 		Direction: DirectionInternal, SlotBudgetUsage: &SlotBudgetUsageFacts{RetainedBytes: 4096, RetainedInputBytes: 4096},
 	})
@@ -204,9 +200,7 @@ func TestTheCompletionRowSaysWhichPhaseHeldTheRetainedBytes(t *testing.T) {
 // to - which was the one thing the field was added to answer.
 func TestTheCompletionRowSaysWhichGapApplyRefused(t *testing.T) {
 	var output bytes.Buffer
-	limiter, _ := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
-	policy, _ := NewBoundedLogPolicy(limiter)
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultFailed,
 		Direction: DirectionInternal, ReasonCode: "GAP_APPLY_CONFLICT", GapApplySite: "after_state",
 	})
@@ -220,7 +214,7 @@ func TestTheCompletionRowSaysWhichGapApplyRefused(t *testing.T) {
 	// A completion that refused nothing carries no site, so the key's presence
 	// means a refusal rather than meaning the line was rendered by this build.
 	output.Reset()
-	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
 		Direction: DirectionInternal,
 	})

@@ -49,6 +49,12 @@ type ProgressSkipPrunedRequest struct {
 	OwnerFence       OwnerFence
 	ExpectedNextSlot EvaluationTime
 	ResumeAt         EvaluationTime
+	// Reason is the word the skip is recorded under: one of the forward-skip
+	// reasons (ForwardSkipReasons), empty for SCHEDULE_PRUNED. The store
+	// writes what it is given. It used to write SCHEDULE_PRUNED whatever the
+	// caller had decided, so a PLAN_NOT_ACTIVE skip was persisted as retention
+	// loss while the Worker that made it said otherwise.
+	Reason ReasonCode
 }
 
 func (request ProgressSkipPrunedRequest) Validate() error {
@@ -62,17 +68,42 @@ func (request ProgressSkipPrunedRequest) Validate() error {
 	if request.ExpectedNextSlot <= 0 || request.ResumeAt <= request.ExpectedNextSlot {
 		return errors.New("alarmd execution: a pruned skip must resume after the cursor it skips from")
 	}
+	if request.Reason != "" && !forwardSkipReason(request.Reason) {
+		return errors.New("alarmd execution: a forward skip must be recorded under a forward-skip reason")
+	}
 	return nil
 }
 
-// PrunedSkipGap is the gap summary a pruned skip from cursor to resumeAt
-// records.
+// ForwardSkipReasons are the words a cursor moved forward past Slots nobody
+// evaluated can be recorded under. Each sends a reader somewhere else:
+// retention, the active set, a timeline that would not decode. All of them
+// leave the Progress with no completion to anchor on (SkippedPrunedRange).
+var ForwardSkipReasons = []ReasonCode{
+	ReasonCode(contract.ReasonSchedulePruned), ReasonCode(contract.ReasonPlanNotActive),
+	ReasonCode(contract.ReasonScheduleRepaired), ReasonCode(contract.ReasonScheduleReopened),
+}
+
+func forwardSkipReason(reason ReasonCode) bool {
+	for _, known := range ForwardSkipReasons {
+		if reason == known {
+			return true
+		}
+	}
+	return false
+}
+
+// SkipGap is the gap summary of a forward skip from cursor to resumeAt under
+// reason, empty meaning SCHEDULE_PRUNED. Every forward skip has this one shape;
+// only the reason differs, and it has to, because a reader asking "where did
+// these rounds go" is sent to retention by SCHEDULE_PRUNED, to the active set
+// by PLAN_NOT_ACTIVE, and to a timeline that would not decode by
+// SCHEDULE_REPAIRED.
 //
-// Two things this has to say and one it must not. The span is real and known:
-// every Slot from the old cursor up to the one the timeline still holds went
-// unevaluated and will not be revisited. How many Slots that is, is not known
-// and cannot become known -- the segments that would have counted them are the
-// segments that were pruned.
+// Two things the shape has to say and one it must not. The span is real and
+// known: every Slot from the old cursor up to the one the timeline still holds
+// went unevaluated and will not be revisited. How many Slots that is, is not
+// known and cannot become known -- for a pruned skip, the segments that would
+// have counted them are the segments that were pruned.
 //
 // So Count is zero with Uncounted set, rather than one. Count means Slots in
 // every other gap, and a 1 here was read as one Slot by everything that adds
@@ -87,29 +118,20 @@ func (request ProgressSkipPrunedRequest) Validate() error {
 // stated without the population being invented: the first skipped Slot is
 // known, where the cursor landed is known, and how many lie between them is
 // exactly what the pruned segments took with them.
-func PrunedSkipGap(cursor, resumeAt EvaluationTime) *ProgressGapSummary {
-	if resumeAt < cursor {
-		resumeAt = cursor
+func (request ProgressSkipPrunedRequest) SkipGap() *ProgressGapSummary {
+	reason := request.Reason
+	if reason == "" {
+		reason = ReasonCode(contract.ReasonSchedulePruned)
 	}
-	return &ProgressGapSummary{
-		Kind: CompletionGapSkipped, ReasonCode: ReasonCode(contract.ReasonSchedulePruned),
-		FirstSlot: cursor, LastSlot: cursor, ResumedAt: resumeAt, Uncounted: true,
-	}
+	return forwardSkipGap(reason, request.ExpectedNextSlot, request.ResumeAt)
 }
 
-// PlanNotActiveSkipGap is the same forward skip for Slots no Plan was due at.
-//
-// Same shape as the pruned skip and deliberately so: both move the cursor past
-// Slots that were never evaluated and carry no completion to navigate from.
-// Only the reason differs, and it has to, because a reader asking "where did
-// these rounds go" gets sent to retention by one and to the active set by the
-// other.
-func PlanNotActiveSkipGap(cursor, resumeAt EvaluationTime) *ProgressGapSummary {
+func forwardSkipGap(reason ReasonCode, cursor, resumeAt EvaluationTime) *ProgressGapSummary {
 	if resumeAt < cursor {
 		resumeAt = cursor
 	}
 	return &ProgressGapSummary{
-		Kind: CompletionGapSkipped, ReasonCode: ReasonCode(contract.ReasonPlanNotActive),
+		Kind: CompletionGapSkipped, ReasonCode: reason,
 		FirstSlot: cursor, LastSlot: cursor, ResumedAt: resumeAt, Uncounted: true,
 	}
 }
@@ -118,22 +140,18 @@ func PlanNotActiveSkipGap(cursor, resumeAt EvaluationTime) *ProgressGapSummary {
 // skip: its last completion is the skip itself and no Slot has been completed
 // since.
 //
-// Both skips count. The question this answers is navigational - is there a
-// completion to anchor the next Slot on - and a skip carries none whichever
-// reason it holds. Reading only the pruned reason here would have the
-// plan-not-active skip anchor on a Slot that was never evaluated, and
-// navigation would resume inside the stretch it just moved past.
+// Every forward skip counts. The question this answers is navigational - is
+// there a completion to anchor the next Slot on - and a skip carries none
+// whichever reason it holds. Reading only the pruned reason here would have
+// the plan-not-active or the repaired skip anchor on a Slot that was never
+// evaluated, and navigation would resume inside the stretch it just moved
+// past - for the repaired one, inside Segments that no longer exist.
 func (progress ScheduleProgress) SkippedPrunedRange() bool {
 	if progress.LastCompletionKind != CompletionGapSkipped || progress.CurrentOrRecentGap == nil ||
 		progress.CurrentOrRecentGap.Kind != CompletionGapSkipped {
 		return false
 	}
-	switch progress.CurrentOrRecentGap.ReasonCode {
-	case ReasonCode(contract.ReasonSchedulePruned), ReasonCode(contract.ReasonPlanNotActive):
-		return true
-	default:
-		return false
-	}
+	return forwardSkipReason(progress.CurrentOrRecentGap.ReasonCode)
 }
 
 // ContinuityAnchor is the last Slot whose completion the Progress carries,

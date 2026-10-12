@@ -53,6 +53,11 @@ type noDataSkipStreaks struct {
 	// this Worker are two streaks.
 	rounds  map[execution.PlanKey]int
 	crossed map[execution.PlanKey]bool
+	// last is the round each streak counted most recently. A Slot attempted
+	// again -- its output's acknowledgement unknown, say -- is the same round
+	// and is not counted twice: the stall is three skipped rounds, not three
+	// attempts.
+	last map[execution.PlanKey]execution.EvaluationTime
 }
 
 // record takes one Plan's outcome for one Slot and reports whether this is the
@@ -63,18 +68,24 @@ type noDataSkipStreaks struct {
 // times would turn the count of stalls into a count of rounds -- which is the
 // reading the outcome buckets already give and the one that cannot be acted
 // on. It becomes reportable again only after the Plan evaluates.
-func (streaks *noDataSkipStreaks) record(plan execution.PlanKey, outcome nodata.SlotOutcome) bool {
+func (streaks *noDataSkipStreaks) record(plan execution.PlanKey, round execution.EvaluationTime, outcome nodata.SlotOutcome) bool {
 	streaks.mu.Lock()
 	defer streaks.mu.Unlock()
 	if streaks.rounds == nil {
 		streaks.rounds = map[execution.PlanKey]int{}
 		streaks.crossed = map[execution.PlanKey]bool{}
+		streaks.last = map[execution.PlanKey]execution.EvaluationTime{}
 	}
 	if outcome == nodata.OutcomeEvaluated {
 		delete(streaks.rounds, plan)
 		delete(streaks.crossed, plan)
+		delete(streaks.last, plan)
 		return false
 	}
+	if last, counted := streaks.last[plan]; counted && last == round {
+		return false
+	}
+	streaks.last[plan] = round
 	streaks.rounds[plan]++
 	if streaks.rounds[plan] < noDataPersistentSkipRounds || streaks.crossed[plan] {
 		return false
@@ -83,16 +94,37 @@ func (streaks *noDataSkipStreaks) record(plan execution.PlanKey, outcome nodata.
 	return true
 }
 
-// recordNoDataOutcome files one Plan's outcome for this Slot and reports a
-// stall the round it becomes one.
+// recordNoDataOutcome files one Plan's outcome for this Slot.
 //
-// The outcome reaches the Slot's partition here and nowhere else, so the
-// partition and the streak cannot disagree about what happened to a Plan.
+// The outcome reaches the Slot's partition here and nowhere else. The streak
+// is counted later, from the outcome the Slot settles on (noteNoDataStreaks):
+// a Slot past its cap turns an EVALUATED already filed into a skip, and a
+// streak counted at filing would be reset by the judgement and then counted
+// as one, every round, never reaching a stall.
 func (stream *streamedExecution) recordNoDataOutcome(
-	ctx context.Context, due execution.DuePlan, outcome nodata.SlotOutcome,
+	_ context.Context, due execution.DuePlan, outcome nodata.SlotOutcome,
 ) {
+	if stream.noDataOutcomeIndex == nil {
+		stream.noDataOutcomeIndex = map[execution.PlanKey]int{}
+	}
+	stream.noDataOutcomeIndex[due.Key()] = len(stream.noDataOutcomes)
 	stream.noDataOutcomes = append(stream.noDataOutcomes, outcome)
-	if !stream.coordinator.noDataSkips.record(due.Key(), outcome) {
+}
+
+// noteNoDataStreaks counts each due Plan's settled outcome into its streak,
+// once per Slot, when the Slot's results are final.
+func (stream *streamedExecution) noteNoDataStreaks(ctx context.Context) {
+	for _, due := range stream.header.DuePlans {
+		if index, filed := stream.noDataOutcomeIndex[due.Key()]; filed {
+			stream.noteNoDataStreak(ctx, due, stream.noDataOutcomes[index])
+		}
+	}
+}
+
+// noteNoDataStreak counts one Plan's outcome into its streak and reports a
+// stall the round it becomes one.
+func (stream *streamedExecution) noteNoDataStreak(ctx context.Context, due execution.DuePlan, outcome nodata.SlotOutcome) {
+	if !stream.coordinator.noDataSkips.record(due.Key(), stream.request.Contract.Slot.EvaluationTime, outcome) {
 		return
 	}
 	stream.coordinator.emitObservation(ctx, observability.Observation{

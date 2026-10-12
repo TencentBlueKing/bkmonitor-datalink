@@ -6,6 +6,7 @@
 package cmdbcache
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,9 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisbatch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 )
 
@@ -26,15 +26,13 @@ import (
 // module on its own cadence with a seven-day expiry. alarmd reads it from
 // configured target group connection (legacy prefix-only configurations use
 // the host cache connection), and only for the groups active Plans reference:
-// tens to hundreds of GETs a minute, never a scan of the inverse hash that lists every
-// instance of a model.
+// tens to hundreds of STRLENs and GETs a minute, never a scan of the inverse
+// hash that lists every instance of a model.
 
-// GroupClient is the one command the reader issues: MGET over the
-// referenced ids, one round trip. Narrow so a test can stand in for Redis
-// and fail the transport on purpose.
-type GroupClient interface {
-	MGet(ctx context.Context, keys ...string) *redis.SliceCmd
-}
+// GroupClient is the one call the reader makes: a pipeline, of the
+// documents' lengths or of the documents (redisbatch.Windows). Narrow so a test can stand in for Redis and fail the
+// transport on purpose.
+type GroupClient = redisbatch.Client
 
 // GroupReader reads group documents by id.
 type GroupReader struct {
@@ -60,44 +58,66 @@ func (reader *GroupReader) key(id string) string {
 	return reader.prefix + "dynamic_group:" + id
 }
 
+// decode reads one of the fork's group documents (decodeGroup).
+func (reader *GroupReader) decode(id string, payload []byte, readAt time.Time) *GroupSnapshot {
+	return decodeGroup(id, payload, readAt)
+}
+
+// groupSource is where a store reads its groups and how it reads one: the
+// fork's per-group documents (GroupReader) or the platform's one hash per
+// tenant (PlatformGroupReader). Read hands each id's read to visit, a missing
+// group as an answer and a failed read as the error; decode makes a read
+// payload a snapshot.
+type groupSource interface {
+	Read(ctx context.Context, ids []string, bound int, visit func(id string, read GroupRead)) error
+	decode(id string, payload []byte, readAt time.Time) *GroupSnapshot
+}
+
 // GroupRead is one id's raw read: the payload, or that the key was absent.
+// The payload is the reply's own bytes, valid only while visit runs.
 type GroupRead struct {
 	Payload []byte
 	Missing bool
 }
 
-// Read fetches every id in one MGET. The error is the transport's - the
-// round trip failed - and a caller keeps what it held; a missing key is not
-// an error, it is an answer.
-func (reader *GroupReader) Read(ctx context.Context, ids []string) (map[string]GroupRead, error) {
-	reads := make(map[string]GroupRead, len(ids))
-	if len(ids) == 0 {
-		return reads, nil
-	}
+// Read reads every id a window at a time (redisbatch.Windows) and hands each
+// id's read to visit, in order, before the next window is read. A window is
+// one pipeline of the documents after the last whose lengths add up to at
+// most bound bytes, or the one document larger than it; each document's
+// length is read once, in pipelines of redisbatch.Batch ahead of the
+// windows. A group document is a whole member list,
+// from a few hundred bytes to megabytes: a caller that decodes in visit
+// holds one window of documents at a time, not every referenced group's,
+// and one reply is never more than the bound.
+//
+// A missing key is not an error, it is an answer. A key Redis answers with
+// an error - LOADING or BUSY, which hold for the whole instance while it
+// restarts or runs a script, or a key of another type - is not: it says
+// nothing about its group, and is never handed over as one. Read stops
+// there and returns the error, wrapping the redisbatch.UnansweredError that
+// says so, as it does for a round trip that failed; a caller keeps what it
+// held for every group, and lets go of what it made of the windows visited
+// before it.
+func (reader *GroupReader) Read(ctx context.Context, ids []string, bound int, visit func(id string, read GroupRead)) error {
 	keys := make([]string, len(ids))
 	for index, id := range ids {
 		keys[index] = reader.key(id)
 	}
-	values, err := reader.client.MGet(ctx, keys...).Result()
-	if err != nil {
-		return nil, fmt.Errorf("alarmd cmdbcache: read dynamic groups: %w", err)
-	}
-	if len(values) != len(ids) {
-		return nil, fmt.Errorf("alarmd cmdbcache: read dynamic groups: %d values for %d keys", len(values), len(ids))
-	}
-	for index, id := range ids {
-		switch value := values[index].(type) {
-		case nil:
-			reads[id] = GroupRead{Missing: true}
-		case string:
-			reads[id] = GroupRead{Payload: []byte(value)}
-		case []byte:
-			reads[id] = GroupRead{Payload: value}
-		default:
-			return nil, fmt.Errorf("alarmd cmdbcache: read dynamic group %s: unexpected value %T", id, value)
+	windows := redisbatch.NewWindows(reader.client, keys, bound)
+	for read := 0; read < len(keys); {
+		start, values, err := windows.Next(ctx)
+		if err != nil {
+			return fmt.Errorf("alarmd cmdbcache: read dynamic groups: %w", err)
 		}
+		if start != read || len(values) == 0 {
+			return fmt.Errorf("alarmd cmdbcache: read dynamic groups: %d values at %d, want some at %d", len(values), start, read)
+		}
+		for offset, value := range values {
+			visit(ids[start+offset], GroupRead{Payload: value.Raw, Missing: value.Missing})
+		}
+		read += len(values)
 	}
-	return reads, nil
+	return nil
 }
 
 // GroupMember is one member as the cache carries it, after the checks that
@@ -123,7 +143,10 @@ type GroupSnapshot struct {
 	// key_missing, json_invalid, structure_invalid. Empty when it can.
 	Unavailable string
 	ModelID     string
-	Members     []GroupMember
+	// TenantID is the tenant the writer says the group is, empty when it
+	// says none. An ip_cloud plan reads a group only of its own tenant.
+	TenantID string
+	Members  []GroupMember
 	// Dropped counts the members refused by the plan-independent checks.
 	Dropped int
 
@@ -159,9 +182,10 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 			continue
 		}
 		switch {
-		case plan.Rule == contract.TargetPlanRuleHostID || plan.Identity.HostIdentity:
-			// Held under the host id: the host_id rule's key, and the key of
-			// a model_inst_id plan read by host identity. A member the
+		case plan.Rule == contract.TargetPlanRuleHostID || plan.Identity.HostIdentity || plan.Rule == contract.TargetPlanRuleIPCloud:
+			// Held under the host id: the host_id rule's key, the key of a
+			// model_inst_id plan read by host identity, and what an ip_cloud
+			// resolution maps to an address once per Slot. A member the
 			// writer put no host id on cannot be placed and is dropped.
 			if member.HostID == "" {
 				built.dropped++
@@ -182,13 +206,18 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 // decodeGroup reads one group document per the protocol: an object with
 // model_id, member_list and the model_inst_ids summary. A member is kept
 // when it names the group's model, names an instance, and the summary lists
-// it; the rest are dropped and counted. member_list absent is a structure
-// the reader does not accept - it cannot tell "empty" from "not written" -
-// and member_list present and empty is the writer saying empty.
+// it; the rest are dropped and counted. An instance the summary lists and no
+// member carries is a member the list lost, counted dropped too: the two
+// disagree, and the list is not the whole group (decision-017 sections 3.2
+// and 4: a normal empty group has a summary that does not contradict it).
+// member_list absent is a structure the reader does not accept - it cannot
+// tell "empty" from "not written" - and member_list present and empty, with
+// nothing in the summary, is the writer saying empty.
 func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 	snapshot := &GroupSnapshot{ID: id, ReadAt: readAt}
 	var document struct {
 		ModelID      string            `json:"model_id"`
+		TenantID     string            `json:"bk_tenant_id"`
 		ModelInstIDs []json.RawMessage `json:"model_inst_ids"`
 		MemberList   *[]struct {
 			ModelID     string          `json:"model_id"`
@@ -196,7 +225,7 @@ func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 			HostID      json.RawMessage `json:"bk_host_id"`
 		} `json:"member_list"`
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
 	if err := decoder.Decode(&document); err != nil {
 		snapshot.Unavailable = targetplan.ReasonJSONInvalid
@@ -207,6 +236,7 @@ func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 		return snapshot
 	}
 	snapshot.ModelID = document.ModelID
+	snapshot.TenantID = strings.TrimSpace(document.TenantID)
 	var listed map[string]struct{}
 	if document.ModelInstIDs != nil {
 		listed = make(map[string]struct{}, len(document.ModelInstIDs))
@@ -216,8 +246,12 @@ func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 			}
 		}
 	}
+	carried := make(map[string]struct{}, len(*document.MemberList))
 	for _, wire := range *document.MemberList {
 		instance := rawScalarText(wire.ModelInstID)
+		if instance != "" {
+			carried[instance] = struct{}{}
+		}
 		if wire.ModelID != document.ModelID || instance == "" {
 			snapshot.Dropped++
 			continue
@@ -233,6 +267,11 @@ func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 			host = ""
 		}
 		snapshot.Members = append(snapshot.Members, GroupMember{ModelID: wire.ModelID, ModelInstID: instance, HostID: host})
+	}
+	for instance := range listed {
+		if _, found := carried[instance]; !found {
+			snapshot.Dropped++
+		}
 	}
 	return snapshot
 }
@@ -257,10 +296,11 @@ type GroupLookup struct {
 // first Slot after a restart does not run a minute with its group members
 // outside the target.
 type GroupStore struct {
-	reader   *GroupReader
-	interval time.Duration
-	maxAge   time.Duration
-	now      func() time.Time
+	reader    groupSource
+	interval  time.Duration
+	maxAge    time.Duration
+	readBound int
+	now       func() time.Time
 
 	mu        sync.RWMutex
 	snapshots map[string]*GroupSnapshot
@@ -278,8 +318,13 @@ type GroupStore struct {
 	lastFailureAt time.Time
 	syncReads     uint64
 	lastError     error
-	failures      uint64
 	refreshes     uint64
+	// failingSince is the first refresh that failed since the last one that
+	// read the groups, zero while they read; failureReason why the latest
+	// failed, in closed words (groupFailureReason). A refresh reads every
+	// group or none, so the run is the store's, not a group's.
+	failingSince  time.Time
+	failureReason string
 }
 
 // GroupStoreOptions mirror StoreOptions: the same cadence and the same
@@ -287,24 +332,34 @@ type GroupStore struct {
 type GroupStoreOptions struct {
 	RefreshInterval time.Duration
 	MaxAge          time.Duration
-	Now             func() time.Time
+	// ReadBound is the most bytes of group documents one read holds at once
+	// (GroupReader.Read), derived from the container by the caller.
+	ReadBound int
+	Now       func() time.Time
 }
 
 func NewGroupStore(reader *GroupReader, options GroupStoreOptions) (*GroupStore, error) {
 	if reader == nil {
 		return nil, errors.New("alarmd cmdbcache: a group reader is required")
 	}
+	return newGroupStore(reader, options)
+}
+
+func newGroupStore(reader groupSource, options GroupStoreOptions) (*GroupStore, error) {
 	if options.RefreshInterval <= 0 {
 		return nil, errors.New("alarmd cmdbcache: a positive refresh interval is required")
 	}
 	if options.MaxAge <= options.RefreshInterval {
 		return nil, errors.New("alarmd cmdbcache: the staleness bound must exceed the refresh interval")
 	}
+	if options.ReadBound <= 0 {
+		return nil, errors.New("alarmd cmdbcache: a positive read bound is required")
+	}
 	now := options.Now
 	if now == nil {
 		now = time.Now
 	}
-	return &GroupStore{reader: reader, interval: options.RefreshInterval, maxAge: options.MaxAge, now: now,
+	return &GroupStore{reader: reader, interval: options.RefreshInterval, maxAge: options.MaxAge, readBound: options.ReadBound, now: now,
 		snapshots: make(map[string]*GroupSnapshot), referenced: make(map[string]groupReference)}, nil
 }
 
@@ -314,6 +369,23 @@ func (store *GroupStore) MaxAge() time.Duration {
 		return 0
 	}
 	return store.maxAge
+}
+
+// groupFailureReason is why a refresh could not read the groups, in closed
+// words: the code Redis answered its key with (LOADING, BUSY, WRONGTYPE;
+// redisbatch.AnsweredCode), timed_out for a round trip that ran past its
+// deadline or was cancelled, transport for any other failure. Never the
+// error's text: a Redis client's names the endpoint it could not reach, and
+// the reason is published with the replica's dependencies.
+func groupFailureReason(err error) string {
+	if code, answered := redisbatch.AnsweredCode(err); answered {
+		return code
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || (errors.As(err, &timeout) && timeout.Timeout()) {
+		return "timed_out"
+	}
+	return "transport"
 }
 
 // groupReference is one id's registration: when it was last asked for and
@@ -344,27 +416,29 @@ func (store *GroupStore) Group(ctx context.Context, id string, interval time.Dur
 	}
 	store.mu.Unlock()
 	if !held {
-		reads, err := store.reader.Read(ctx, []string{id})
-		if err != nil {
+		// A first read that fails, Redis answering the key with an error
+		// included, publishes nothing: the next ask reads it again.
+		var first *GroupSnapshot
+		if err := store.reader.Read(ctx, []string{id}, store.readBound, func(_ string, read GroupRead) {
+			first = snapshotOf(store.reader, id, read, now)
+		}); err != nil {
 			return GroupLookup{ReadErr: err}
 		}
-		snapshot = store.publish(id, reads[id], now)
-		failedAt = time.Time{}
+		store.mu.Lock()
+		store.snapshots[id] = first
+		store.mu.Unlock()
+		snapshot, failedAt = first, time.Time{}
 	}
 	return GroupLookup{Snapshot: snapshot, Age: now.Sub(snapshot.ReadAt), RefreshFailed: failedAt.After(snapshot.ReadAt)}
 }
 
-func (store *GroupStore) publish(id string, read GroupRead, at time.Time) *GroupSnapshot {
-	var snapshot *GroupSnapshot
+// snapshotOf is one id's read as a snapshot. It keeps nothing of the read:
+// the payload is the reply's, and is let go with its window.
+func snapshotOf(source groupSource, id string, read GroupRead, at time.Time) *GroupSnapshot {
 	if read.Missing {
-		snapshot = &GroupSnapshot{ID: id, ReadAt: at, Unavailable: targetplan.ReasonKeyMissing}
-	} else {
-		snapshot = decodeGroup(id, read.Payload, at)
+		return &GroupSnapshot{ID: id, ReadAt: at, Unavailable: targetplan.ReasonKeyMissing}
 	}
-	store.mu.Lock()
-	store.snapshots[id] = snapshot
-	store.mu.Unlock()
-	return snapshot
+	return source.decode(id, read.Payload, at)
 }
 
 // Refresh re-reads every referenced group. A transport failure keeps every
@@ -373,6 +447,17 @@ func (store *GroupStore) publish(id string, read GroupRead, at time.Time) *Group
 // one - the writer withdrew or never wrote it, and that is an answer. A
 // reference nobody has asked for within its horizon is forgotten first,
 // snapshot and all.
+//
+// A group read with an explicit empty member list is the writer saying the
+// group is empty, and it is read as that: a normal empty answer, with no
+// members (decision-017 section 4, the E ruling: a key that is there, whose
+// structure and root model check out and that states member_list: [] with no
+// contradicting model_inst_ids, is a normal empty group). Nothing is held
+// back for a writer cycle and no share of groups emptying together is
+// judged the writer's fault: the user ruled out such share-of-set gates on
+// 10-08, and a writer failure is a key missing, a document that does not
+// decode, or a read that fails, each of which keeps or names its own state
+// above. A restart reads what the writer has, as every refresh does.
 func (store *GroupStore) Refresh(ctx context.Context) error {
 	now := store.now()
 	store.mu.Lock()
@@ -391,20 +476,39 @@ func (store *GroupStore) Refresh(ctx context.Context) error {
 	}
 	store.mu.Unlock()
 	sort.Strings(ids)
-	reads, err := store.reader.Read(ctx, ids)
-	if err != nil {
+	// Each window of documents is decoded as it is read, before the next is
+	// read: the refresh holds one window of documents at a time beside the
+	// snapshots it makes, not every referenced group's document.
+	next := make(map[string]*GroupSnapshot, len(ids))
+	readErr := store.reader.Read(ctx, ids, store.readBound, func(id string, read GroupRead) {
+		next[id] = snapshotOf(store.reader, id, read, time.Time{})
+	})
+	// A read that failed - at the round trip, or Redis answering a key with
+	// an error - keeps every group's snapshot, served as past a failed
+	// refresh, and the run of failures says since when and why.
+	if readErr != nil {
 		store.mu.Lock()
-		store.lastFailureAt, store.lastError = store.now(), err
-		store.failures++
+		store.lastFailureAt, store.lastError = store.now(), readErr
+		if store.failingSince.IsZero() {
+			store.failingSince = store.lastFailureAt
+		}
+		store.failureReason = groupFailureReason(readErr)
 		store.mu.Unlock()
-		return err
+		return readErr
 	}
+	// The snapshots are dated when the read succeeded, which is when the
+	// last window was.
 	at := store.now()
-	for _, id := range ids {
-		store.publish(id, reads[id], at)
+	for _, snapshot := range next {
+		snapshot.ReadAt = at
 	}
 	store.mu.Lock()
-	store.lastError = nil
+	for _, id := range ids {
+		if current, read := next[id]; read {
+			store.snapshots[id] = current
+		}
+	}
+	store.lastError, store.failingSince, store.failureReason = nil, time.Time{}, ""
 	store.refreshes++
 	store.mu.Unlock()
 	return nil
@@ -432,14 +536,20 @@ type GroupHealth struct {
 	Referenced  int
 	Loaded      int
 	Unavailable int
-	// RefreshFailed says the last refresh failed at the transport; the
-	// snapshots served are older than the cadence promises.
-	RefreshFailed     bool
-	ConsecutiveErrors uint64
-	Refreshes         uint64
+	// RefreshFailed says the last refresh failed - at the round trip, or
+	// Redis answering a group's key with an error - and the snapshots served
+	// are older than the cadence promises.
+	RefreshFailed bool
+	Refreshes     uint64
 	// SyncReads counts the reads made on a Slot path for an id not held:
 	// one per first reference, and none after, is the reading.
 	SyncReads uint64
+	// FailingSince is the first refresh that failed since the groups were
+	// last read, and FailureReason why the latest failed, in closed words
+	// (groupFailureReason): every group held is served past them. Zero and
+	// empty while the refreshes read.
+	FailingSince  time.Time
+	FailureReason string
 }
 
 func (store *GroupStore) Health() GroupHealth {
@@ -449,7 +559,8 @@ func (store *GroupStore) Health() GroupHealth {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	health := GroupHealth{Referenced: len(store.referenced), RefreshFailed: store.lastError != nil,
-		ConsecutiveErrors: store.failures, Refreshes: store.refreshes, SyncReads: store.syncReads}
+		Refreshes: store.refreshes, SyncReads: store.syncReads,
+		FailingSince: store.failingSince, FailureReason: store.failureReason}
 	for _, snapshot := range store.snapshots {
 		if snapshot.Unavailable != "" {
 			health.Unavailable++

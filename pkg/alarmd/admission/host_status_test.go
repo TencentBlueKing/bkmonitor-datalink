@@ -12,10 +12,7 @@ import (
 
 func hostStatusFilter(t *testing.T, states ...string) *HostStatusFilter {
 	t.Helper()
-	filter, installed := NewHostStatusFilter(states)
-	if !installed {
-		t.Fatalf("NewHostStatusFilter(%v) declined to install", states)
-	}
+	filter := NewHostStatusFilter(states)
 	return filter
 }
 
@@ -89,19 +86,20 @@ func TestASeriesThatNamesAHostWithNoUsableIdentityIsRejected(t *testing.T) {
 	}
 }
 
-// Python looks a host up by address only when the cloud came with it. Without
-// one it never consults CMDB, so the record survives even though the same
-// address in cloud 0 is a disabled host.
-func TestAnAddressWithoutItsCloudIsNotLookedUp(t *testing.T) {
+// A record that gives an address without its cloud, whose host the fuller did
+// not find: Python's fuller wrote nothing (fullers.py:96-103 found no host),
+// so its host status filter sees no bk_host_id value and no
+// bk_target_cloud_id, and leaves the record alone (filters.py:100-108). When
+// the fuller does find the host - in cloud 0, the default it looks in - it
+// writes the host's id and the filter judges that host; that case runs
+// through the real fuller in cmdbcache (host_naming_python_test.go).
+func TestAnAddressWithoutItsCloudWhoseHostWasNotFoundIsNotLookedUp(t *testing.T) {
 	filter := hostStatusFilter(t, "备用机")
 	facts := factsFor(map[string]json.RawMessage{
 		"bk_target_ip": raw(`"192.0.2.10"`),
-	}, func(f *Facts) {
-		f.HostResolved = true
-		f.HostState = "备用机"
-	})
+	}, nil)
 	if decision := filter.Admit(PlanContext{}, facts); !decision.Admit {
-		t.Fatalf("decision = %+v, want the record admitted without a cloud", decision)
+		t.Fatalf("decision = %+v, want the record admitted: nothing names a host to look up", decision)
 	}
 }
 
@@ -147,12 +145,26 @@ func TestAnUnreadableIndexDoesNotSilenceEveryHost(t *testing.T) {
 	}
 }
 
-// No configured states means the platform disables no host. Installing a
-// filter that can never reject would spend a decision per series to say yes.
-func TestNoConfiguredStatesInstallsNoFilter(t *testing.T) {
+// No configured states disables no host by state, and nothing else changes:
+// Python installs its host status filter whatever the list
+// (processor.py:76-80), and drops an invalid or unknown host before the list
+// is consulted (filters.py:96-116). A known host is kept whatever its state.
+func TestNoConfiguredStatesStillDropsInvalidAndUnknownHosts(t *testing.T) {
 	for _, states := range [][]string{nil, {}, {"", "  "}} {
-		if _, installed := NewHostStatusFilter(states); installed {
-			t.Fatalf("NewHostStatusFilter(%q) installed a filter that cannot reject", states)
+		filter := NewHostStatusFilter(states)
+		unknown := factsFor(map[string]json.RawMessage{"bk_host_id": raw(`"800001"`)}, nil)
+		if decision := filter.Admit(PlanContext{}, unknown); decision.Admit || decision.Reason != "host_unknown" {
+			t.Errorf("states %q, unknown host: %+v, want host_unknown", states, decision)
+		}
+		invalid := factsFor(map[string]json.RawMessage{"bk_target_ip": raw(`""`)}, nil)
+		if decision := filter.Admit(PlanContext{}, invalid); decision.Admit || decision.Reason != "host_identity_invalid" {
+			t.Errorf("states %q, invalid host: %+v, want host_identity_invalid", states, decision)
+		}
+		spare := factsFor(map[string]json.RawMessage{"bk_host_id": raw(`"700001"`)}, func(f *Facts) {
+			f.HostResolved, f.HostState = true, "备用机"
+		})
+		if decision := filter.Admit(PlanContext{}, spare); !decision.Admit {
+			t.Errorf("states %q, known spare host: %+v, want admitted - no state is disabled", states, decision)
 		}
 	}
 }
@@ -168,20 +180,20 @@ func TestTheChainNamesTheHostStatusFilter(t *testing.T) {
 	}
 }
 
-// The target scope accepts ip / bk_cloud_id as alternative spellings, and the
-// host status filter must not inherit that. Python branches on bk_target_ip
-// and bk_host_id only, so a record spelled the other way is not host data to
-// it - and looking such a record up would drop a series Python keeps whenever
-// the address happens to belong to a disabled host. That is a missed alert.
-func TestTheAlternativeAddressSpellingIsNotHostNamingForThisFilter(t *testing.T) {
+// A record spelled ip / bk_cloud_id whose host the fuller did not find is not
+// host data to Python's filter: it branches on bk_host_id and bk_target_ip
+// only (filters.py:92-94), and the fuller wrote neither (fullers.py:103-104
+// returned without a host). That is the true half of the 09-10 fix: an alias
+// that does not resolve to a known host is left alone. An alias that does
+// resolve is a different record by the time the filter sees it - the fuller
+// wrote the host's id - and is judged by that host's state (cmdbcache
+// host_naming_python_test.go).
+func TestAnAlternativeSpellingWhoseHostWasNotFoundIsNotHostData(t *testing.T) {
 	filter := hostStatusFilter(t, "备用机")
 	facts := factsFor(map[string]json.RawMessage{
 		"ip":          raw(`"192.0.2.10"`),
 		"bk_cloud_id": raw(`0`),
-	}, func(f *Facts) {
-		f.HostResolved = true
-		f.HostState = "备用机"
-	})
+	}, nil)
 	if decision := filter.Admit(PlanContext{}, facts); !decision.Admit {
 		t.Fatalf("decision = %+v, want the record admitted: Python does not treat it as host data", decision)
 	}
@@ -191,9 +203,13 @@ func TestTheAlternativeAddressSpellingIsNotHostNamingForThisFilter(t *testing.T)
 	}
 }
 
-// An empty bk_target_ip is invalid host data even when the alternative
-// spelling carries an address, because Python checks bk_target_ip itself.
-func TestAnEmptyTargetAddressIsInvalidEvenWithTheAlternativeSpelling(t *testing.T) {
+// An empty bk_target_ip, with an alternative spelling whose host the fuller
+// did not find, is invalid host data: the fuller wrote no id
+// (fullers.py:103-104), so the filter sees a bk_target_ip key with no value
+// and no bk_host_id and drops the record (filters.py:96-98). When the fuller
+// does find the alias's host it writes the id and the record is kept
+// (cmdbcache host_naming_python_test.go).
+func TestAnEmptyTargetAddressWhoseAliasWasNotFoundIsInvalid(t *testing.T) {
 	filter := hostStatusFilter(t, "备用机")
 	facts := factsFor(map[string]json.RawMessage{
 		"bk_target_ip": raw(`""`),
@@ -270,22 +286,23 @@ func TestTheTargetMatchKeyKeepsTheCloudDimensionAsItStands(t *testing.T) {
 	}
 }
 
-// An absent cloud is still the direct area on both sides: Python's enrichment
-// falls back to bk_cloud_id and then to "0" before it builds the key, so this
-// is not the coercion above but the default underneath it.
-func TestAnAbsentCloudIsTheDirectAreaOnBothKeys(t *testing.T) {
+// An empty target cloud means two different things to two readers. The host
+// status filter's lookup coerces it with safe_int, so it looks in the direct
+// area (filters.py:108-113). The target match reads the dimension as it
+// stands: data.get("bk_target_cloud_id", ...) is the empty string, so the
+// key is "192.0.2.10|" (target.py:115-118). It becomes "|0" only when the
+// fuller finds the host in cloud 0 and writes bk_target_cloud_id
+// (fullers.py:101,107), which needs the CMDB fuller (cmdbcache).
+func TestAnEmptyCloudIsTheDirectAreaOnlyForTheLookup(t *testing.T) {
 	facts := factsFor(map[string]json.RawMessage{
 		"bk_target_ip":       raw(`"192.0.2.10"`),
 		"bk_target_cloud_id": raw(`""`),
 	}, nil)
-	found := false
-	for _, key := range facts.HostKeys() {
-		if key == "192.0.2.10|0" {
-			found = true
-		}
+	if key, looked := facts.HostNaming.LookupKey(); !looked || key != "192.0.2.10|0" {
+		t.Fatalf("lookup key = %q/%v, want the direct area", key, looked)
 	}
-	if !found {
-		t.Fatalf("host keys = %v, want the direct area", facts.HostKeys())
+	if keys := facts.HostKeys(); len(keys) != 1 || keys[0] != "192.0.2.10|" {
+		t.Fatalf("target keys = %v, want the cloud as it stands", keys)
 	}
 }
 
@@ -320,15 +337,11 @@ func TestTheLookupKeyIsThePlatformsOwnSpellingsOnly(t *testing.T) {
 	if !looked || key != "192.0.2.10|0" {
 		t.Fatalf("lookup key = %q/%v, want the target cloud coerced to the direct area", key, looked)
 	}
-	// The alternative spelling still builds a target-scope key, so the two
-	// readings really are separate.
-	found := false
-	for _, candidate := range facts.HostKeys() {
-		if candidate == "192.0.2.10|5" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("host keys = %v, want the alternative spelling kept for target matching", facts.HostKeys())
+	// The target match reads bk_target_cloud_id by presence: it is there,
+	// empty, so bk_cloud_id is not consulted (target.py:115-118). Only a
+	// fuller that found the host - in cloud 5, the fuller reading the clouds
+	// by truthiness - would write "5" there.
+	if keys := facts.HostKeys(); len(keys) != 1 || keys[0] != "192.0.2.10|" {
+		t.Fatalf("target keys = %v, want the target cloud as it stands", keys)
 	}
 }

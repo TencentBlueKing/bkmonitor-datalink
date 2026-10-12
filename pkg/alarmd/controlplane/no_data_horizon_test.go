@@ -111,9 +111,6 @@ func TestTheDeploymentHorizonReachesAPublishedPlan(t *testing.T) {
 			t.Fatal(err)
 		}
 		policy(reconciler)
-		if _, err := reconciler.Refresh(ctx, newRedisStrategySource(t, client), planner); err != nil {
-			t.Fatal(err)
-		}
 		published, err := reconciler.Refresh(ctx, newRedisStrategySource(t, client), planner)
 		if err != nil || published.Status != controlplane.SourceRefreshPublished {
 			t.Fatalf("publish = (%#v, %v)", published, err)

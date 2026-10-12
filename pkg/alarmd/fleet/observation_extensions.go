@@ -95,7 +95,12 @@ type sampleWindowRequest struct {
 
 // WithSeriesSamples reuses the existing window and object routes. Reading a
 // sample is explicit; normal lists/refreshes never read sample Redis lists.
-func WithSeriesSamples(next http.Handler, directory *controlplane.ObservationDirectory, windows *WindowStore, store *DiagnosticStore, sampler *observability.SeriesSampler, now func() time.Time) http.Handler {
+//
+// A sample window names the strategy's current row, which only the control
+// Leader's directory resolves: a follower forwards the open to the Leader,
+// which writes the window to the shared window store, and the replica that
+// owns the Query Group applies it from there on its next pass.
+func WithSeriesSamples(next http.Handler, directory StrategyDirectory, forward LeaderForward, windows *WindowStore, store *DiagnosticStore, sampler *observability.SeriesSampler, now func() time.Time) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/windows" && r.Method == http.MethodGet && r.URL.Query().Get("mode") == "sample" {
 			writeJSON(w, 200, map[string]any{"enabled": directory != nil && windows != nil && store != nil && sampler != nil, "budget": sampleBudget(sampler), "max_window_ttl_seconds": int(MaxWindowTTL.Seconds())})
@@ -162,7 +167,11 @@ func WithSeriesSamples(next http.Handler, directory *controlplane.ObservationDir
 			writeJSON(w, 503, map[string]string{"error": "SAMPLE_STORAGE_OR_RESOURCE_BUDGET_UNAVAILABLE"})
 			return
 		}
-		row, err := directory.ResolveCurrent(now(), body.Tenant, body.Business, body.Strategy, body.QueryGroup)
+		r.Body = io.NopCloser(bytes.NewReader(payload))
+		if toLeader(w, r, directory, forward) {
+			return
+		}
+		row, err := directory.ResolveCurrent(r.Context(), now(), body.Tenant, body.Business, body.Strategy, body.QueryGroup)
 		if err != nil {
 			status := 503
 			code := "STRATEGY_SELECTION_UNKNOWN"

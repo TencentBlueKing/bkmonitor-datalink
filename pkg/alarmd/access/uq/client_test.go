@@ -22,6 +22,7 @@ import (
 func TestClientUsesFinalPythonWireContractAndNormalizesMilliseconds(t *testing.T) {
 	var got map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		if request.URL.Path != "/query/ts" {
 			t.Errorf("path=%s", request.URL.Path)
 		}
@@ -267,6 +268,7 @@ func TestClientClassifiesQueryTsPartialStatus(t *testing.T) {
 
 func TestClientDeliversLargeResponseOneSeriesAtATime(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"series":[`))
 		for index := 0; index < 256; index++ {
 			if index > 0 {
@@ -423,16 +425,12 @@ func TestClientEnforcesDecompressedAndSeriesBudgets(t *testing.T) {
 		}))
 		defer server.Close()
 		client, _ := NewClientWithLimits(server.URL, "alarmd-shadow", server.Client(), Limits{MaxBodyBytes: 256, MaxSeriesBytes: 128, MaxSeries: 10, MaxRecords: 10})
-		if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); !errors.Is(err, ErrResponseBytesExceeded) {
-			t.Fatalf("error=%v", err)
-		}
+		wantLimitCompletion(t, client, "response=limit_response_bytes")
 	})
 	t.Run("single series", func(t *testing.T) {
 		body := `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["` + strings.Repeat("x", 256) + `"],"values":[[1700123456789,1]]}],"is_partial":false}`
 		client := fixtureClient(t, http.StatusOK, body, Limits{MaxBodyBytes: 4096, MaxSeriesBytes: 128, MaxSeries: 10, MaxRecords: 10})
-		if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); !errors.Is(err, ErrSeriesBytesExceeded) {
-			t.Fatalf("error=%v", err)
-		}
+		wantLimitCompletion(t, client, "response=limit_series_bytes")
 	})
 }
 
@@ -440,15 +438,11 @@ func TestClientEnforcesTotalSeriesAndRecordBudgets(t *testing.T) {
 	body := `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["a"],"values":[[1700123456789,1],[1700123457789,2]]},{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["b"],"values":[[1700123456789,1]]}],"is_partial":false}`
 	t.Run("series", func(t *testing.T) {
 		client := fixtureClient(t, http.StatusOK, body, Limits{MaxBodyBytes: 4096, MaxSeriesBytes: 2048, MaxSeries: 1, MaxRecords: 10})
-		if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); !errors.Is(err, ErrTotalSeriesExceeded) {
-			t.Fatalf("error=%v", err)
-		}
+		wantLimitCompletion(t, client, "response=limit_total_series")
 	})
 	t.Run("records", func(t *testing.T) {
 		client := fixtureClient(t, http.StatusOK, body, Limits{MaxBodyBytes: 4096, MaxSeriesBytes: 2048, MaxSeries: 10, MaxRecords: 1})
-		if _, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{}); !errors.Is(err, ErrTotalRecordsExceeded) {
-			t.Fatalf("error=%v", err)
-		}
+		wantLimitCompletion(t, client, "response=limit_total_records")
 	})
 }
 
@@ -573,6 +567,7 @@ func TestRequestPreservesPythonEmptyStringConditionValue(t *testing.T) {
 func fixtureClient(t *testing.T, status int, body string, limits Limits) *Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(status)
 		_, _ = writer.Write([]byte(body))
 	}))
@@ -653,4 +648,33 @@ func noDimensionAttempt(t *testing.T) execution.QueryAttempt {
 		t.Fatal(err)
 	}
 	return attempt
+}
+
+// wantLimitCompletion runs one evaluation query whose answer is past one of
+// the client's response limits and wants it completed, not failed: the
+// query UNAVAILABLE as QUERY_UNAVAILABLE with the limit named in the
+// attempt's response detail, and what was handed to the sink before the
+// limit was met kept in the completion's delivery. Before, it was an error,
+// and the Slot was attempted again until its deadline: every attempt fetched
+// the same answer past the same limit, and a failure that is not a
+// completion never reached the degraded pool.
+func wantLimitCompletion(t *testing.T, client *Client, detail string) {
+	t.Helper()
+	sink := &collectingSink{}
+	completion, err := client.Execute(context.Background(), validAttempt(t), sink)
+	if err != nil {
+		t.Fatalf("Execute() error = %v, want an UNAVAILABLE completion naming %s", err, detail)
+	}
+	if completion.Completeness != execution.CompletenessUnavailable || len(completion.RouteFacts.Attempts) != 1 ||
+		completion.RouteFacts.Attempts[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) ||
+		completion.RouteFacts.Attempts[0].Detail != detail {
+		t.Fatalf("completion = %+v / %+v, want UNAVAILABLE, QUERY_UNAVAILABLE, %s", completion.Completeness, completion.RouteFacts, detail)
+	}
+	var delivered uint64
+	for _, batch := range sink.batches {
+		delivered += batch.Delivery.Series
+	}
+	if completion.Delivery.Series != delivered {
+		t.Fatalf("completion delivery = %d series, the sink received %d: delivery is not conserved", completion.Delivery.Series, delivered)
+	}
 }

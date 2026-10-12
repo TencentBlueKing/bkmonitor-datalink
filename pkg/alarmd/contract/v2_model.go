@@ -9,13 +9,14 @@
 
 package contract
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
-	ExecutionEnvelopeSchemaV2 = "execution-envelope"
-	StrategyIRSchemaV2        = "alarmd-strategy-ir"
-	TriggerEventSchemaV1      = "trigger-event"
-	ExecutionSummarySchemaV1  = "execution-summary"
+	StrategyIRSchemaV2   = "alarmd-strategy-ir"
+	TriggerEventSchemaV1 = "trigger-event"
 
 	QueryCompletenessFull        = "FULL"
 	QueryCompletenessPartial     = "PARTIAL"
@@ -28,13 +29,6 @@ const (
 
 	LevelConnectorAND = "AND"
 	LevelConnectorOR  = "OR"
-
-	SelectorKindRanges = "RANGES"
-	SelectorKindBitmap = "BITMAP"
-
-	ValidationScopePlan   ValidationScope = "PLAN"
-	ValidationScopeLevel  ValidationScope = "LEVEL"
-	ValidationScopeRecord ValidationScope = "RECORD"
 
 	ReasonMalformedJSON              = "MALFORMED_JSON"
 	ReasonSchemaMajorUnsupported     = "SCHEMA_MAJOR_UNSUPPORTED"
@@ -78,6 +72,18 @@ const (
 	ReasonEffectiveTimeCalendarIdentity      = "EFFECTIVE_TIME_CALENDAR_IDENTITY_INVALID"
 	ReasonEffectiveTimeCalendarDuplicate     = "EFFECTIVE_TIME_CALENDAR_DUPLICATE"
 	ReasonEffectiveTimeCalendarItemsMissing  = "EFFECTIVE_TIME_CALENDAR_ITEMS_MISSING"
+	// The ITEM_, TIME_KIND_, TIMEZONE_ and REPEAT_ ones are a calendar item
+	// or the business timezone in the snapshot that does not parse: the
+	// snapshot arrived and is readable, and what it carries is wrong.
+	ReasonEffectiveTimeItemDuplicate      = "EFFECTIVE_TIME_ITEM_DUPLICATE"
+	ReasonEffectiveTimeItemInvalid        = "EFFECTIVE_TIME_ITEM_INVALID"
+	ReasonEffectiveTimeItemTimeInvalid    = "EFFECTIVE_TIME_ITEM_TIME_INVALID"
+	ReasonEffectiveTimeTimeKindInvalid    = "EFFECTIVE_TIME_TIME_KIND_INVALID"
+	ReasonEffectiveTimeTimezoneInvalid    = "EFFECTIVE_TIME_TIMEZONE_INVALID"
+	ReasonEffectiveTimeRepeatInvalid      = "EFFECTIVE_TIME_REPEAT_INVALID"
+	ReasonEffectiveTimeRepeatListInvalid  = "EFFECTIVE_TIME_REPEAT_LIST_INVALID"
+	ReasonEffectiveTimeRepeatEveryInvalid = "EFFECTIVE_TIME_REPEAT_EVERY_INVALID"
+	ReasonEffectiveTimeRepeatUntilInvalid = "EFFECTIVE_TIME_REPEAT_UNTIL_INVALID"
 	// ReasonCompilerTerminalUnclassified files a compiler terminal this build
 	// has no classification for. It is declared here so the tables that walk
 	// the catalogue can see it; the compiler's own code travels beside it.
@@ -107,10 +113,28 @@ const (
 	// ReasonQueryEmpty names a dependency query that completed and returned
 	// no rows at all. The query succeeded, so the binding carries no reason of
 	// its own; this is the one the guard for the Level it starves carries.
-	ReasonQueryEmpty             = "QUERY_EMPTY"
-	ReasonQueryTimeout           = "QUERY_TIMEOUT"
-	ReasonQueryUnavailable       = "QUERY_UNAVAILABLE"
-	ReasonReadinessBudgetInvalid = "READINESS_BUDGET_INVALID"
+	ReasonQueryEmpty       = "QUERY_EMPTY"
+	ReasonQueryTimeout     = "QUERY_TIMEOUT"
+	ReasonQueryUnavailable = "QUERY_UNAVAILABLE"
+	// ReasonQueryTargetMissing names a query the backend answered and
+	// refused because the table or field it names does not route in the
+	// strategy's space: a statement about where the data is, not about
+	// whether the backend answers. It stays until somebody changes the
+	// strategy or the space; the routing it reports takes no time range, so
+	// a replay says it as an on-time query does. An expression with a
+	// fallback (`... or vector(100)`) that still produced series is used
+	// despite it, so such a Query Group can leave the query cooldown on the
+	// rounds its fallback answers and return on the rounds it does not.
+	ReasonQueryTargetMissing = "QUERY_TARGET_MISSING"
+	// ReasonDetectIntervalStorageNotSliding names a query of a Plan detected
+	// more often than it aggregates whose answer came back bucketed on the
+	// aggregation grid rather than from where the request started: the
+	// storage the query service routed the table to does not read unaligned
+	// windows. Its points cover partial buckets at the wrong times, so the
+	// query is not used. Like QUERY_TARGET_MISSING it stays until the
+	// strategy changes - here, until its detect_interval is removed.
+	ReasonDetectIntervalStorageNotSliding = "DETECT_INTERVAL_STORAGE_NOT_SLIDING"
+	ReasonReadinessBudgetInvalid          = "READINESS_BUDGET_INVALID"
 	// ReasonQueryNotReady names a Slot deferred because the window it would
 	// query is not in yet. It is the normal pacing of every Slot, and the
 	// highest-volume observation alarmd makes, so it needs its own name:
@@ -140,6 +164,30 @@ const (
 	// carries PLAN_REACTIVATED below: the other half of this skip. The two
 	// words tell one story at its two Slots, and neither is the whole of it.
 	ReasonPlanNotActive = "PLAN_NOT_ACTIVE"
+	// ReasonScheduleRepaired names Slots the cursor moved past because the
+	// Query Group's Schedule timeline stopped decoding and the Control Leader
+	// rewrote it: the new timeline opens one Segment at the moment of the
+	// rewrite, so the times between the cursor and that Segment are on no
+	// timeline any more and no read will ever find them.
+	//
+	// Separate from SCHEDULE_PRUNED, which the same jump would otherwise look
+	// like, because the two send a reader to opposite places. Pruned is
+	// retention doing what it was configured to do; this is a timeline this
+	// deployment could not read, which is a defect of its own - something
+	// wrote bytes the reader cannot decode - and the rewrite is what ended it.
+	// Without a word of its own the stretch was silent: the cursor jumped from
+	// inside the lost Segment to the rewrite with no record at all.
+	ReasonScheduleRepaired = "SCHEDULE_REPAIRED"
+	// ReasonScheduleReopened names Slots the cursor moved past because the
+	// Query Group's Schedule timeline key was gone - evicted, expired, deleted
+	// - and the cutover opened a new one at its boundary: the times between
+	// the cursor and that Segment were on the timeline the key held.
+	//
+	// The same shape as SCHEDULE_REPAIRED and kept apart from it because the
+	// two send a reader to different places: bytes this deployment could not
+	// read, against a key the store no longer had. Before it the jump was
+	// silent, which made a missing key the one loss that passed for benign.
+	ReasonScheduleReopened = "SCHEDULE_REOPENED"
 	// ReasonPlanReactivated names a Slot that ran while its Plan's activation
 	// changed under it with the Plan itself unchanged: the same identity,
 	// schedule revision and state generation, only the activation epoch
@@ -231,6 +279,17 @@ const (
 	ReasonSnapshotRetryPending       = "SNAPSHOT_RETRY_PENDING"
 	ReasonSlotSourceRetry            = "SLOT_SOURCE_RETRY"
 	ReasonBlockedExactSetUnavailable = "BLOCKED_EXACT_SET_UNAVAILABLE"
+	// ReasonScheduleUnreadable names a round the Slot source could not take
+	// because the Query Group's schedule timeline does not decode: corrupt
+	// bytes, or a timeline written by a build this one cannot read (a rollout
+	// whose new content the previous build cannot run). Until the timeline is
+	// rewritten or the Query Group moves to a build that reads it, every round
+	// meets the same bytes.
+	//
+	// Retire when: the upstream snapshot after the one that adds this word is
+	// merged, the previous-build case is gone; the word stays for corrupt
+	// bytes.
+	ReasonScheduleUnreadable = "SCHEDULE_UNREADABLE"
 	// ReasonViewNotExecutable names a round the Worker did not run because
 	// its installed executable view does not yet agree with the Assignment
 	// record on the Query Group's content or timeline, or does not carry it
@@ -515,6 +574,12 @@ type EvaluationPlanV2 struct {
 	// rather than carrying a guess.
 	SignalType         string `json:"signal_type,omitempty"`
 	TerminalReasonCode string `json:"terminal_reason_code,omitempty"`
+	// GlobalBusiness says the strategy belongs to a global business: it
+	// queries every business of its tenant, and each event it raises names
+	// the business it is about beside the Plan's own (see
+	// TriggerEventV1.AttributedBusinessID). Omitted when false, so every
+	// other Plan keeps its bytes and its revision.
+	GlobalBusiness bool `json:"global_business,omitempty"`
 }
 
 // PublishesCompatibleProtocol reports whether this Plan's events go out as the
@@ -551,17 +616,73 @@ const (
 // output sink use the same rule. Unknown formats remain unknown for rejection.
 // EventHasMessage reports whether an event of this kind becomes a message
 // under this resolved wire format. The Python-compatible protocol carries
-// anomalies and nothing else: its consumer decides recovery from the absence
-// of anomalies, so an event of any other kind has no message there. Every
-// other format carries every kind.
+// anomalies and nothing else: its consumer recovers and closes alerts by the
+// checkpoints the backend's own detection writes, not by any message, so an
+// event of any other kind has no message there. Every other format carries
+// every kind.
 //
 // One rule with two readers: the sink, which leaves such an event without a
-// message, and the evaluation, which does not keep one it knows the sink
-// would drop. Two copies of it could disagree, and the way they would
-// disagree is silent - an event kept that goes nowhere, or dropped that
-// should have gone.
+// message, and the trigger, which does not build one the sink would leave
+// without a message (NoMessageFor). Two copies of it could disagree, and the
+// way they would disagree is silent - an event built that goes nowhere, or
+// not built that should have gone.
 func EventHasMessage(format, eventKind string) bool {
 	return format != WireFormatPythonCompatible || eventKind == TriggerEventAbnormal
+}
+
+// NoMessageFor reports whether an event of this kind, under this resolved
+// wire format, would be taken by the sink and left without a message: a kind
+// the protocol has no message for, on an event carrying the compatibility
+// context the sink converts it by. Without that context the sink refuses the
+// event rather than leaving it, so it is not reported here.
+//
+// The trigger asks it before building an envelope and the sink's answer for
+// a built one (DroppedAtSink) is the same function, so the envelope is not
+// built exactly where it would have been dropped.
+func NoMessageFor(format, eventKind string, compatibilityContext bool) bool {
+	return !EventHasMessage(format, eventKind) && compatibilityContext
+}
+
+// CompatibleOffBoundary reports whether a record of a Plan detected more
+// often than it aggregates is one of the detections between two aggregation
+// boundaries. The record's source time is where its window starts; off the
+// aggregation grid, the window is not one of the buckets the compatible
+// protocol's consumer counts - it counts its windows in aggregation
+// intervals, and would read one window several times over - so the protocol
+// has no message for such a record of any kind. A Plan detected once an
+// aggregation interval has none.
+//
+// The grid is laid in location, the time zone the Plan's query is laid in, as
+// the query service lays an aligned query's buckets: a boundary is a time
+// whose wall clock there is a whole number of aggregation intervals from the
+// epoch, so that a day's boundary is the local midnight. A nil location is
+// UTC.
+func CompatibleOffBoundary(semantics ExecutionSemanticsV2, location *time.Location, sourceTime int64) bool {
+	step, aggregation := int64(semantics.EvaluationInterval), int64(semantics.AggregationInterval)
+	if step <= 0 || aggregation <= 0 || step == aggregation {
+		return false
+	}
+	local := sourceTime
+	if location != nil {
+		_, offset := time.Unix(sourceTime, 0).In(location).Zone()
+		local += int64(offset)
+	}
+	return local%aggregation != 0
+}
+
+// EventHasMessageAt is EventHasMessage for a record that may lie between two
+// aggregation boundaries (CompatibleOffBoundary): under the compatible
+// protocol such a record has no message of any kind; every other protocol
+// carries it.
+func EventHasMessageAt(format, eventKind string, offBoundary bool) bool {
+	return EventHasMessage(format, eventKind) && !(offBoundary && format == WireFormatPythonCompatible)
+}
+
+// NoMessageForAt is NoMessageFor for a record that may lie between two
+// aggregation boundaries, read by the trigger that decides it and by the
+// result contract that checks it, so the two cannot disagree.
+func NoMessageForAt(format, eventKind string, compatibilityContext, offBoundary bool) bool {
+	return !EventHasMessageAt(format, eventKind, offBoundary) && compatibilityContext
 }
 
 // DroppedAtSink reports whether the sink would take this event and leave it
@@ -573,10 +694,8 @@ func DroppedAtSink(event *TriggerEventV1) bool {
 	if event == nil {
 		return false
 	}
-	if EventHasMessage(OutputWireFormatOf(event), event.EventKind) {
-		return false
-	}
-	return event.LegacyOutput != nil && event.LegacyOutput.Configuration != nil
+	return NoMessageFor(OutputWireFormatOf(event), event.EventKind,
+		event.LegacyOutput != nil && event.LegacyOutput.Configuration != nil)
 }
 
 // OutputWireFormatOf is the wire format the sink resolves this event to.
@@ -701,32 +820,12 @@ type ReaderLimitsV2 struct {
 	MaxValidationIssues  int
 }
 
-type ValidationScope string
-
-type ValidationIssue struct {
-	Scope                 ValidationScope             `json:"scope"`
-	ReasonCode            string                      `json:"reason_code"`
-	FieldPath             string                      `json:"field_path"`
-	PlanOrdinal           *uint32                     `json:"plan_ordinal,omitempty"`
-	PlanID                string                      `json:"plan_id,omitempty"`
-	PlanIdentityUntrusted bool                        `json:"plan_identity_untrusted,omitempty"`
-	LevelID               *uint32                     `json:"level_id,omitempty"`
-	RecordOrdinal         *uint32                     `json:"record_ordinal,omitempty"`
-	RecordID              string                      `json:"record_id,omitempty"`
-	UnverifiedTail        *ValidationUnverifiedTailV2 `json:"unverified_tail,omitempty"`
-}
-
 // ValidationUnverifiedTailV2 is present only on VALIDATION_BUDGET_EXCEEDED.
 // Every object at or after a non-nil ordinal was not fully validated and must
 // be terminalized by the consumer; it must never be treated as valid.
 type ValidationUnverifiedTailV2 struct {
 	PlanFromOrdinal   *uint32 `json:"plan_from_ordinal,omitempty"`
 	RecordFromOrdinal *uint32 `json:"record_from_ordinal,omitempty"`
-}
-
-type FramedExecutionEnvelopeV2 struct {
-	Envelope   ExecutionEnvelopeV2
-	RawPayload json.RawMessage
 }
 
 // StateCompatibilityInputV1 contains only whole-key interpretation semantics.
@@ -890,6 +989,13 @@ type TriggerEventV1 struct {
 	DetectPlanFingerprint   string               `json:"detect_plan_fingerprint"`
 	TriggerStateFingerprint string               `json:"trigger_state_fingerprint"`
 	Trace                   TriggerEventTraceV1  `json:"trace"`
+	// AttributedBusinessID is the business a global business Plan's event is
+	// about: the one its target, or else its bk_biz_id dimension, names, and
+	// the Plan's own business when neither does. BusinessID stays the Plan's
+	// business, because it is part of the Plan's identity, the event id and
+	// the state key; this is only where the output files the alert. Empty
+	// on every other Plan's events, so their bytes are what they were.
+	AttributedBusinessID string `json:"attributed_business_id,omitempty"`
 }
 
 type TriggerEventBuildInputV1 struct {
@@ -912,30 +1018,4 @@ type TriggerEventBuildInputV1 struct {
 type TriggerEventReaderLimitsV1 struct {
 	MaxPayloadBytes  int
 	MaxEvidenceBytes int
-}
-
-type CountSetV1 struct {
-	Messages uint64 `json:"messages"`
-	Records  uint64 `json:"records"`
-	Bytes    uint64 `json:"bytes"`
-}
-
-type ReasonCountV1 struct {
-	ReasonCode string `json:"reason_code"`
-	Count      uint64 `json:"count"`
-}
-
-type ExecutionSummaryV1 struct {
-	Schema           Schema          `json:"schema"`
-	RequiredFeatures []string        `json:"required_features"`
-	SummaryID        string          `json:"summary_id"`
-	ExecutionID      string          `json:"execution_id"`
-	TenantID         string          `json:"tenant_id"`
-	QueryGroupKey    string          `json:"query_group_key"`
-	SourceWindow     SourceWindowV2  `json:"source_window"`
-	PlanSetDigest    string          `json:"plan_set_digest"`
-	Source           CountSetV1      `json:"source"`
-	Published        CountSetV1      `json:"published"`
-	Dropped          CountSetV1      `json:"dropped"`
-	ReasonCounts     []ReasonCountV1 `json:"reason_counts"`
 }

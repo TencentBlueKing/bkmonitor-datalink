@@ -114,11 +114,8 @@ func (entry *parsedActivation) cloneState() ActivationState {
 		pending := *state.Pending
 		state.Pending = &pending
 	}
-	if state.CutoverProgress != nil {
-		progress := *state.CutoverProgress
-		state.CutoverProgress = &progress
-	}
 	state.Plans = slices.Clone(state.Plans)
 	state.Draining = slices.Clone(state.Draining)
+	state.SkippedTimelines = slices.Clone(state.SkippedTimelines)
 	return state
 }

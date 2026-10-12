@@ -20,7 +20,7 @@ import (
 func programFactsConfig(stated bool) string {
 	text := validGoAccessRuntimeConfigYAML("facts-worker")
 	if stated {
-		return text + "  scheduler:\n    expired_range_enabled: true\n"
+		return text
 	}
 	for _, line := range []string{
 		"  state_prefix: alarmd:phase-two:g2:v1\n",
@@ -35,10 +35,10 @@ func programFactsConfig(stated bool) string {
 	return text
 }
 
-// The state prefix, timezone, query source and range switch are program
-// facts: a deployment that states them at the values every deployment
-// states today loads to exactly what a deployment that omits them loads
-// to, which is the proof a values file needs before those lines are removed.
+// The state prefix, timezone and query source are program facts: a
+// deployment that states them at the values every deployment states today
+// loads to exactly what a deployment that omits them loads to, which is the
+// proof a values file needs before those lines are removed.
 // Stating another value still takes effect, and an unparseable timezone is
 // still refused.
 func TestProgramFactsLoadTheSameStatedOrAbsent(t *testing.T) {
@@ -54,9 +54,9 @@ func TestProgramFactsLoadTheSameStatedOrAbsent(t *testing.T) {
 		t.Fatalf("absent: %v", err)
 	}
 	if absent.Redis.StatePrefix != DefaultStatePrefix || absent.PhaseTwo.Control.Timezone != DefaultTimezone ||
-		absent.PhaseTwo.Access.QuerySource != DefaultQuerySource || !absent.PhaseTwo.Scheduler.ExpiredRangeEnabled {
-		t.Fatalf("absent facts = prefix %q tz %q source %q range %t", absent.Redis.StatePrefix, absent.PhaseTwo.Control.Timezone,
-			absent.PhaseTwo.Access.QuerySource, absent.PhaseTwo.Scheduler.ExpiredRangeEnabled)
+		absent.PhaseTwo.Access.QuerySource != DefaultQuerySource {
+		t.Fatalf("absent facts = prefix %q tz %q source %q", absent.Redis.StatePrefix, absent.PhaseTwo.Control.Timezone,
+			absent.PhaseTwo.Access.QuerySource)
 	}
 	if !reflect.DeepEqual(stated, absent) {
 		t.Fatalf("stated and absent program facts load differently:\nstated = %+v\nabsent = %+v", stated, absent)

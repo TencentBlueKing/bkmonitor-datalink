@@ -162,6 +162,17 @@ func (view RecordView) Value(name string) (json.RawMessage, bool) {
 	return cloneRawMessage(value), ok
 }
 
+// AppendValue appends one value's bytes to dst. It is a copy, like Value,
+// into a buffer the caller reuses: a reader keeping many values pays per
+// buffer, not per value.
+func (view RecordView) AppendValue(dst []byte, name string) ([]byte, bool) {
+	if view.record == nil {
+		return dst, false
+	}
+	value, ok := view.record.Values[name]
+	return append(dst, value...), ok
+}
+
 func (view RecordView) Dimensions() map[string]json.RawMessage {
 	if view.record == nil {
 		return nil

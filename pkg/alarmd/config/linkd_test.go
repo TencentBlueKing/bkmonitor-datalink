@@ -17,23 +17,23 @@ func TestLinkdConfigurationBinding(t *testing.T) {
 	if err := (LinkdConfig{}).Validate(); err != nil {
 		t.Fatal(err)
 	}
-	c := LinkdConfig{ConsoleURL: "https://console.example.test", EventSourceID: "native-events", HookName: "active-index", Username: "reader", Password: "test-password"}
+	// The target is read from the Console, so a Console with credentials
+	// is the whole configuration.
+	c := LinkdConfig{ConsoleURL: "https://console.example.test", Username: "reader", Password: "test-password"}
 	if err := c.Validate(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("a Console with credentials alone was refused: %v", err)
 	}
 	c.ConsoleURL = "https://reader:password@console.example.test"
 	if err := c.Validate(); err == nil {
 		t.Fatal("URL credentials accepted")
 	}
-	// The target is read from the Console; source and hook only narrow the
-	// choice, so a Console with credentials alone is a whole configuration.
-	c = LinkdConfig{ConsoleURL: "https://console.example.test", Username: "reader", Password: "test-password"}
-	if err := c.Validate(); err != nil {
-		t.Fatalf("a Console with credentials alone was refused: %v", err)
-	}
+	c.ConsoleURL = "https://console.example.test"
 	c.Password = ""
 	if err := c.Validate(); err == nil {
 		t.Fatal("a Console without credentials was accepted")
+	}
+	if err := (LinkdConfig{Username: "reader"}).Validate(); err == nil {
+		t.Fatal("credentials without a Console were accepted")
 	}
 }
 
@@ -43,7 +43,7 @@ func TestLinkdConfigurationBinding(t *testing.T) {
 func TestLinkdConsoleCredentialsComeFromTheEnvironment(t *testing.T) {
 	t.Setenv(LinkdConsoleUsernameEnvironment, "reader")
 	t.Setenv(LinkdConsolePasswordEnvironment, "test-password")
-	c := LinkdConfig{ConsoleURL: "https://console.example.test", EventSourceID: "native-events", HookName: "active-index"}
+	c := LinkdConfig{ConsoleURL: "https://console.example.test"}
 	if err := c.resolveCredentialsFromEnvironment(); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestLoadingTakesTheConsoleCredentialsFromTheEnvironment(t *testing.T) {
 	t.Setenv(LinkdConsoleUsernameEnvironment, "reader")
 	t.Setenv(LinkdConsolePasswordEnvironment, "test-password")
 	text := validGoAccessRuntimeConfigYAML("linkd-worker") +
-		"  linkd:\n    console_url: https://console.example.test\n    event_source_id: native-events\n    hook_name: active-index\n"
+		"  linkd:\n    console_url: https://console.example.test\n"
 	cfg, err := Load(writeConfig(t, text))
 	if err != nil {
 		t.Fatal(err)

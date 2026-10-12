@@ -64,6 +64,31 @@ type FrozenExecutionContractRef struct {
 	ScheduleRevision     ScheduleRevision
 	ScheduleSegmentStart EvaluationTime
 	DuePlanSetDigest     DuePlanSetDigest
+	// ReadHoldMillis is how much later than its schedule says this Slot is
+	// read and due: its Query Group's read hold when the Slot was frozen. It
+	// is an input of the contract like the evaluation time - the due Plans'
+	// deadlines carry it, and so does DuePlanSetDigest - and every freeze of
+	// the same Slot passes it back from here. It changes neither which data
+	// the Slot reads nor its Plans, schedule or Query Group. Omitted when
+	// zero, so a contract without one encodes as it always has.
+	ReadHoldMillis int64 `json:",omitempty"`
+}
+
+// MaxReadHoldMillis bounds a contract's read hold: a day, far past any hold
+// a Query Group is given, and short of any arithmetic on deadlines.
+const MaxReadHoldMillis = int64(24 * time.Hour / time.Millisecond)
+
+// LoweredReadHold is the hold one lowering step tries from hold: half of it,
+// or none once half is less than a step of the group's period -- below a
+// step a hold no longer moves the read past another point, and halving to
+// zero would take a dozen quiet hours. The early read that tries the step and
+// the controller that takes it decide it by this one rule.
+func LoweredReadHold(hold, step time.Duration) time.Duration {
+	half := time.Duration(hold.Milliseconds()/2) * time.Millisecond
+	if half < step {
+		return 0
+	}
+	return half
 }
 
 func (ref FrozenExecutionContractRef) Validate() error {
@@ -82,6 +107,8 @@ func (ref FrozenExecutionContractRef) Validate() error {
 		return errors.New("alarmd execution: valid schedule segment start is required")
 	case ref.DuePlanSetDigest == "":
 		return errors.New("alarmd execution: due plan set digest is required")
+	case ref.ReadHoldMillis < 0 || ref.ReadHoldMillis > MaxReadHoldMillis:
+		return errors.New("alarmd execution: read hold is out of range")
 	default:
 		return nil
 	}
@@ -94,11 +121,15 @@ const (
 	OperationRetry  Operation = "retry"
 	OperationReplay Operation = "replay"
 	OperationProbe  Operation = "probe"
+	// OperationSupplement evaluates, for a Slot already completed, the series
+	// its own read did not have and a later read of the same frozen query
+	// did. See SupplementScope.
+	OperationSupplement Operation = "supplement"
 )
 
 func (operation Operation) Validate() error {
 	switch operation {
-	case OperationNormal, OperationRetry, OperationReplay, OperationProbe:
+	case OperationNormal, OperationRetry, OperationReplay, OperationProbe, OperationSupplement:
 		return nil
 	default:
 		return fmt.Errorf("alarmd execution: unsupported operation %q", operation)
@@ -169,6 +200,9 @@ type SlotExecutionRequest struct {
 	// for a Segment written before Segments named their content, in which
 	// case the fence compares what it always compared and nothing more.
 	ContentScope string
+	// Supplement is set exactly when Operation is OperationSupplement: the
+	// series this execution may evaluate. See SupplementScope.
+	Supplement *SupplementScope
 }
 
 func (request SlotExecutionRequest) Validate() error {
@@ -190,6 +224,17 @@ func (request SlotExecutionRequest) Validate() error {
 	}
 	if err := request.Operation.Validate(); err != nil {
 		return err
+	}
+	if (request.Operation == OperationSupplement) != (request.Supplement != nil) {
+		return errors.New("alarmd execution: a supplement scope goes with the supplement operation and only with it")
+	}
+	if request.Supplement != nil {
+		if err := request.Supplement.Validate(); err != nil {
+			return err
+		}
+		if request.ExpiredRange != nil {
+			return errors.New("alarmd execution: a supplement is of one Slot, not of an expired range")
+		}
 	}
 	if request.AttemptNo == 0 {
 		return errors.New("alarmd execution: positive Slot attempt number is required")
@@ -225,6 +270,26 @@ type QueryExecutionRequest struct {
 	Contract  FrozenExecutionContractRef
 	Operation Operation
 	AttemptNo uint32
+}
+
+type followingSlotKey struct{}
+
+// WithFollowingSlot is ctx carrying the Slot the frozen schedule has after
+// the one executing, to the query layer, for the lookback: when the Query
+// Group reads next. Observation only. It rides on the context and on no
+// execution request: those carry no Slot after the one they execute, and
+// nothing that persists progress may read one.
+func WithFollowingSlot(ctx context.Context, slot EvaluationTime) context.Context {
+	if slot <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, followingSlotKey{}, slot)
+}
+
+// FollowingSlotOf is the FollowingSlot ctx carries, zero when none.
+func FollowingSlotOf(ctx context.Context) EvaluationTime {
+	slot, _ := ctx.Value(followingSlotKey{}).(EvaluationTime)
+	return slot
 }
 
 func (request QueryExecutionRequest) Validate() error {
@@ -494,6 +559,12 @@ type NamedInputBinding struct {
 	Terminals       []InputTerminal
 	PartialEvidence *PartialEvidence
 	Provenance      InputProvenance
+	// UnavailableAttribution is where an unavailable binding's ReasonCode
+	// came from (AttributeUnavailable): an attempt that named it, or the
+	// fallback because no attempt named one or none was made. Empty on a
+	// binding that is not unavailable, and on one from a producer that does
+	// not say, whose reason is taken as it is.
+	UnavailableAttribution UnavailableAttribution
 }
 
 type InputProvenance struct {
@@ -553,20 +624,14 @@ func BuildApplyVersion(contractRef FrozenExecutionContractRef, epoch StateApplyE
 	if epoch == 0 {
 		return ApplyVersion{}, errors.New("alarmd execution: positive state apply epoch is required")
 	}
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-slot-identity-v2", struct {
-		QueryGroup     QueryGroupIdentity `json:"query_group"`
-		EvaluationTime EvaluationTime     `json:"evaluation_time"`
-	}{
-		QueryGroup:     contractRef.Slot.QueryGroup,
-		EvaluationTime: contractRef.Slot.EvaluationTime,
-	})
+	digest, err := slotIdentityDigest(contractRef.Slot)
 	if err != nil {
-		return ApplyVersion{}, fmt.Errorf("alarmd execution: derive Slot identity digest: %w", err)
+		return ApplyVersion{}, err
 	}
 	return ApplyVersion{
 		StateApplyEpoch: epoch,
 		EvaluationTime:  contractRef.Slot.EvaluationTime,
-		SlotDigest:      SlotIdentityDigest(digest),
+		SlotDigest:      digest,
 	}, nil
 }
 
@@ -654,311 +719,6 @@ func planOwnsLevel(plan *strategy.CompiledPlan, levelID uint32) bool {
 	return false
 }
 
-func (input InternalExecution) Validate(expected FrozenExecutionContractRef) error {
-	if err := input.Contract.Validate(); err != nil {
-		return err
-	}
-	if input.Contract != expected {
-		return errors.New("alarmd execution: provider changed frozen contract")
-	}
-	if len(input.DuePlans) == 0 {
-		return errors.New("alarmd execution: at least one due plan is required")
-	}
-	plans := make(map[PlanIdentity]DuePlan, len(input.DuePlans))
-	for _, due := range input.DuePlans {
-		if err := due.Identity.Validate(); err != nil {
-			return err
-		}
-		if _, duplicate := plans[due.Identity]; duplicate {
-			return errors.New("alarmd execution: duplicate due plan identity")
-		}
-		if due.CompiledPlan == nil || due.StateGeneration == "" || due.StateApplyEpoch == 0 ||
-			due.ScheduleRevision == "" || due.CompletionDeadlineUnixMilli <= 0 {
-			return errors.New("alarmd execution: incomplete due plan")
-		}
-		planRef := due.CompiledPlan.PlanRef()
-		fingerprints := due.CompiledPlan.Fingerprints()
-		if planRef.StrategyID != due.Identity.StrategyID || planRef.StrategyRevision == "" ||
-			planRef.StateCompatibilityHash == "" || fingerprints.Detect == "" || fingerprints.Trigger == "" {
-			return errors.New("alarmd execution: due plan does not contain a complete compiled contract")
-		}
-		if err := validatePartialCapabilities(due); err != nil {
-			return err
-		}
-		plans[due.Identity] = due
-	}
-	requirements := make(map[RequirementID]DataRequirement, len(input.Requirements))
-	consumerRequirements := make(map[struct {
-		Consumer      ConsumerRef
-		RequirementID RequirementID
-	}]struct{})
-	for _, requirement := range input.Requirements {
-		if err := requirement.Validate(plans); err != nil {
-			return err
-		}
-		if _, duplicate := requirements[requirement.RequirementID]; duplicate {
-			return errors.New("alarmd execution: duplicate DataRequirement identity")
-		}
-		requirements[requirement.RequirementID] = requirement
-		for _, consumer := range requirement.Consumers {
-			consumerRequirements[struct {
-				Consumer      ConsumerRef
-				RequirementID RequirementID
-			}{Consumer: consumer.Consumer, RequirementID: requirement.RequirementID}] = struct{}{}
-		}
-	}
-	if len(requirements) == 0 {
-		return errors.New("alarmd execution: at least one DataRequirement is required")
-	}
-	duePlanSetDigest, err := DeriveDuePlanSetDigest(input.DuePlans, input.Requirements)
-	if err != nil {
-		return err
-	}
-	if input.Contract.DuePlanSetDigest != duePlanSetDigest {
-		return errors.New("alarmd execution: frozen due Plan set digest does not match prepared execution")
-	}
-	primaryBindings := make(map[PlanIdentity]uint32, len(plans))
-	inputBindings := make(map[struct {
-		Consumer      ConsumerRef
-		RequirementID RequirementID
-	}]struct{}, len(input.Inputs))
-	for _, binding := range input.Inputs {
-		due, ok := plans[binding.Consumer.Plan]
-		requirement, requirementFound := requirements[binding.RequirementID]
-		if !ok || !requirementFound || binding.DatasetName == "" {
-			return errors.New("alarmd execution: input binding references an unknown plan or dataset")
-		}
-		if requirement.DatasetName != binding.DatasetName || requirement.Role != binding.Role ||
-			requirement.AbsoluteWindow(input.Contract.Slot.EvaluationTime) != binding.QueryWindow {
-			return errors.New("alarmd execution: input binding differs from its DataRequirement")
-		}
-		if err := validateOptionalLevel(binding.Consumer.LevelID, binding.Consumer.HasLevel); err != nil {
-			return err
-		}
-		if binding.Consumer.HasLevel && !compiledPlanHasLevel(due.CompiledPlan, binding.Consumer.LevelID) {
-			return errors.New("alarmd execution: input binding references an unknown compiled Level")
-		}
-		switch binding.Role {
-		case InputRolePrimary:
-			primaryBindings[binding.Consumer.Plan]++
-		case InputRoleAlgorithmDependency:
-		default:
-			return errors.New("alarmd execution: invalid input role")
-		}
-		bindingIdentity := struct {
-			Consumer      ConsumerRef
-			RequirementID RequirementID
-		}{Consumer: binding.Consumer, RequirementID: binding.RequirementID}
-		if _, duplicate := inputBindings[bindingIdentity]; duplicate {
-			return errors.New("alarmd execution: duplicate consumer requirement binding")
-		}
-		inputBindings[bindingIdentity] = struct{}{}
-		if _, declared := consumerRequirements[bindingIdentity]; !declared {
-			return errors.New("alarmd execution: input binding consumer is not declared by its DataRequirement")
-		}
-		if err := binding.QueryWindow.Validate(); err != nil {
-			return err
-		}
-		if binding.ImpactScope != ImpactPlan && binding.ImpactScope != ImpactLevel && binding.ImpactScope != ImpactSeries {
-			return errors.New("alarmd execution: invalid input impact scope")
-		}
-		if binding.ImpactScope == ImpactLevel && !binding.Consumer.HasLevel {
-			return errors.New("alarmd execution: LEVEL input impact requires a Level-scoped consumer")
-		}
-		for _, fact := range binding.QualityFacts {
-			if err := validateInputFact(fact.ReasonCode, fact.ImpactScope, fact.RecordID, fact.SourceTime, fact.SeriesIdentity, false); err != nil {
-				return err
-			}
-			if fact.ImpactScope == ImpactLevel && !binding.Consumer.HasLevel {
-				return errors.New("alarmd execution: LEVEL quality fact requires a Level-scoped consumer")
-			}
-		}
-		for _, terminal := range binding.Terminals {
-			if err := validateInputFact(terminal.ReasonCode, terminal.ImpactScope, terminal.RecordID, terminal.SourceTime, terminal.SeriesIdentity, true); err != nil {
-				return err
-			}
-			if terminal.ImpactScope == ImpactLevel && !binding.Consumer.HasLevel {
-				return errors.New("alarmd execution: LEVEL terminal fact requires a Level-scoped consumer")
-			}
-		}
-		switch binding.Completeness {
-		case CompletenessFull:
-			if binding.ProviderResult == "" || binding.Dataset == nil || binding.View == nil || !binding.View.Uses(binding.Dataset) ||
-				(binding.DataState != DataStateData && binding.DataState != DataStateEmpty) ||
-				(binding.Disposition != AccessAvailable && binding.Disposition != AccessDegraded) {
-				return errors.New("alarmd execution: invalid FULL input binding")
-			}
-			if err := validateDatasetState(binding.Dataset, binding.DataState); err != nil {
-				return err
-			}
-			if binding.Disposition == AccessDegraded && len(binding.Terminals) == 0 && len(binding.QualityFacts) == 0 {
-				return errors.New("alarmd execution: degraded FULL input requires localized quality evidence")
-			}
-			if binding.PartialEvidence != nil {
-				return errors.New("alarmd execution: FULL input must not carry PARTIAL evidence")
-			}
-		case CompletenessPartial:
-			if binding.ProviderResult == "" || binding.Dataset == nil || binding.View == nil || !binding.View.Uses(binding.Dataset) ||
-				binding.Disposition != AccessDegraded ||
-				(binding.DataState != DataStateData && binding.DataState != DataStateEmpty) {
-				return errors.New("alarmd execution: invalid PARTIAL input binding")
-			}
-			if err := validateDatasetState(binding.Dataset, binding.DataState); err != nil {
-				return err
-			}
-			if binding.PartialEvidence != nil {
-				if err := binding.PartialEvidence.Validate(); err != nil {
-					return err
-				}
-			}
-		case CompletenessUnavailable:
-			if binding.Dataset != nil || binding.View != nil || binding.DataState != DataStateUnknown ||
-				(binding.Disposition != AccessUnavailable && binding.Disposition != AccessTerminal) {
-				return errors.New("alarmd execution: invalid UNAVAILABLE input binding")
-			}
-			if binding.PartialEvidence != nil {
-				return errors.New("alarmd execution: UNAVAILABLE input must not carry PARTIAL evidence")
-			}
-		default:
-			return errors.New("alarmd execution: invalid input completeness")
-		}
-		if binding.ProviderResult != "" && (binding.Provenance.PhysicalQuery == "" || binding.Provenance.AttemptNo == 0) {
-			return errors.New("alarmd execution: ProviderResult binding requires physical query provenance")
-		}
-		switch binding.Disposition {
-		case AccessAvailable:
-			if err := ValidateResultReason(observability.ResultSuccess, binding.ReasonCode); err != nil {
-				return err
-			}
-		case AccessDegraded, AccessUnavailable:
-			if err := requireReasonClass(binding.ReasonCode, contract.ReasonClassCoverage); err != nil {
-				return err
-			}
-		case AccessTerminal:
-			if err := requireReasonClass(binding.ReasonCode, contract.ReasonClassDeterministic); err != nil {
-				return err
-			}
-		default:
-			return errors.New("alarmd execution: invalid access disposition")
-		}
-	}
-	if len(inputBindings) != len(consumerRequirements) {
-		return errors.New("alarmd execution: every DataRequirement consumer requires one input binding")
-	}
-	for plan := range plans {
-		if primaryBindings[plan] == 0 {
-			return errors.New("alarmd execution: every due plan requires a PRIMARY input binding")
-		}
-	}
-	expectedStateIdentities, err := selectedPrimaryStateIdentities(input.Inputs, plans)
-	if err != nil {
-		return err
-	}
-	stateIdentities := make(map[StateKeyIdentity]struct{}, len(input.StatePreflight))
-	for _, item := range input.StatePreflight {
-		due, ok := plans[item.Identity.Plan]
-		if !ok || item.Identity.StateGeneration == "" || item.Identity.SeriesIdentityDigest == "" {
-			return errors.New("alarmd execution: invalid state preflight identity")
-		}
-		expectedVersion, err := BuildApplyVersion(input.Contract, due.StateApplyEpoch)
-		if err != nil {
-			return err
-		}
-		if item.Identity.StateGeneration != due.StateGeneration || item.ApplyVersion != expectedVersion {
-			return errors.New("alarmd execution: state preflight version does not match the frozen plan")
-		}
-		if err := item.ApplyVersion.Validate(); err != nil {
-			return err
-		}
-		if _, duplicate := stateIdentities[item.Identity]; duplicate {
-			return errors.New("alarmd execution: duplicate state preflight identity")
-		}
-		stateIdentities[item.Identity] = struct{}{}
-	}
-	if len(stateIdentities) != len(expectedStateIdentities) {
-		return errors.New("alarmd execution: state preflight does not exactly cover selected PRIMARY series")
-	}
-	for identity := range expectedStateIdentities {
-		if _, found := stateIdentities[identity]; !found {
-			return errors.New("alarmd execution: selected PRIMARY series is missing state preflight")
-		}
-	}
-	if err := validateEffectiveTimeFacts(input, plans); err != nil {
-		return err
-	}
-	gapIdentities := make(map[PlanGapIdentity]struct{}, len(input.GapPreflight))
-	for _, item := range input.GapPreflight {
-		due, ok := plans[item.Identity.Plan]
-		if !ok || item.Identity.StateGeneration == "" || item.Identity.StateGeneration != due.StateGeneration {
-			return errors.New("alarmd execution: invalid gap preflight identity")
-		}
-		expectedVersion, err := BuildApplyVersion(input.Contract, due.StateApplyEpoch)
-		if err != nil {
-			return err
-		}
-		if item.ApplyVersion != expectedVersion || item.ScheduleRevision != due.ScheduleRevision {
-			return errors.New("alarmd execution: gap preflight version does not match the frozen plan")
-		}
-		if _, duplicate := gapIdentities[item.Identity]; duplicate {
-			return errors.New("alarmd execution: duplicate gap preflight identity")
-		}
-		gapIdentities[item.Identity] = struct{}{}
-	}
-	if len(gapIdentities) != len(plans) {
-		return errors.New("alarmd execution: every due Plan requires exactly one gap preflight")
-	}
-	// Matched on the whole identity, shard included: a preflight that names
-	// the Plan and the generation but another piece of the strategy loaded
-	// another piece's marker, and is missing for this one.
-	for _, due := range plans {
-		if _, found := gapIdentities[due.GapIdentity()]; !found {
-			return errors.New("alarmd execution: due Plan is missing its gap preflight")
-		}
-	}
-	return nil
-}
-
-func selectedPrimaryStateIdentities(
-	bindings []NamedInputBinding,
-	plans map[PlanIdentity]DuePlan,
-) (map[StateKeyIdentity]struct{}, error) {
-	identities := make(map[StateKeyIdentity]struct{})
-	for _, binding := range bindings {
-		if binding.Role != InputRolePrimary {
-			continue
-		}
-		due := plans[binding.Consumer.Plan]
-		if binding.Dataset != nil {
-			for index := 0; index < binding.View.Len(); index++ {
-				record, _ := binding.View.Record(index)
-				identity := StateKeyIdentity{
-					Plan: binding.Consumer.Plan, StateGeneration: due.StateGeneration,
-					SeriesIdentityDigest: SeriesIdentityDigest(record.DimensionIdentityDigest()),
-				}
-				if identity.SeriesIdentityDigest == "" {
-					return nil, errors.New("alarmd execution: selected PRIMARY record lacks series identity")
-				}
-				identities[identity] = struct{}{}
-			}
-		}
-		for _, fact := range binding.QualityFacts {
-			if fact.ImpactScope == ImpactSeries {
-				identities[StateKeyIdentity{
-					Plan: binding.Consumer.Plan, StateGeneration: due.StateGeneration, SeriesIdentityDigest: fact.SeriesIdentity,
-				}] = struct{}{}
-			}
-		}
-		for _, fact := range binding.Terminals {
-			if fact.ImpactScope == ImpactSeries {
-				identities[StateKeyIdentity{
-					Plan: binding.Consumer.Plan, StateGeneration: due.StateGeneration, SeriesIdentityDigest: fact.SeriesIdentity,
-				}] = struct{}{}
-			}
-		}
-	}
-	return identities, nil
-}
-
 func validateOptionalLevel(levelID uint32, hasLevel bool) error {
 	if hasLevel != (levelID != 0) {
 		return errors.New("alarmd execution: level presence and level ID disagree")
@@ -967,7 +727,7 @@ func validateOptionalLevel(levelID uint32, hasLevel bool) error {
 }
 
 func compiledPlanHasLevel(plan *strategy.CompiledPlan, levelID uint32) bool {
-	for _, level := range plan.Levels() {
+	for _, level := range plan.Levels().All() {
 		if level.Definition().LevelID == levelID {
 			return true
 		}
@@ -1074,20 +834,13 @@ type RuntimeLevelStateView struct {
 }
 
 // StateRepresentation names the on-disk shape a Runtime State record was read
-// in. Two shapes coexist while records migrate from the JSON envelope to the
-// framed record: the envelope lives under the runtime key, the framed record
-// under runtime3, and a series may hold either or both. The renewal path
-// needs to know which key holds the record it is keeping alive, and the page
-// needs to know how far the migration has gone; the write path does not
-// branch on it - every write is a whole framed record under runtime3.
+// in. The framed record under runtime3 is the only one read or written; the
+// renewal path refuses a view that does not say so rather than renew a key it
+// guessed.
 type StateRepresentation string
 
-const (
-	// StateRepresentationEnvelope is the JSON envelope under the runtime key.
-	StateRepresentationEnvelope StateRepresentation = "envelope"
-	// StateRepresentationFramed is the framed record under runtime3.
-	StateRepresentationFramed StateRepresentation = "framed"
-)
+// StateRepresentationFramed is the framed record under runtime3.
+const StateRepresentationFramed StateRepresentation = "framed"
 
 type RuntimeStateView struct {
 	Identity     StateKeyIdentity
@@ -1129,67 +882,6 @@ type StatePreflightResult struct {
 	// is what lets a state read reach 86 MB per Slot unremarked and then arrive
 	// as a dependency outage.
 	LoadedBytes int64
-	// EnvelopeReads is how many series this preflight had to read the older
-	// representation for, because the framed record was missing or could not
-	// be read on its own. It is a cost: how much the second pass is still
-	// being asked to do.
-	//
-	// It is deliberately not the migration indicator, though it was used as
-	// one. A series with no record at all has no frame either, so it lands
-	// here and keeps landing here for ever: a deployment that creates series
-	// can never drive this to zero, migrated or not. On the release that first
-	// carried it a round read 131 of 256 this way, and nothing in the number
-	// said how many of the 131 were the older representation.
-	//
-	// What it is good for is an identity over the five below, which are a
-	// partition of the second pass:
-	//
-	//	EnvelopeReads - (the five) = envelopes this round did not get back
-	//
-	// A batch whose read fails classifies every one of its items as a failure
-	// and never reaches the split, so the difference is the only name that
-	// shape has. Zero difference says the five account for the pass; a
-	// standing difference says reads are failing, and neither is visible in
-	// any of the five alone.
-	EnvelopeReads int
-	// The four the second pass splits into. Only EnvelopeAnswered ever ends,
-	// which is the whole reason the total above cannot answer for them.
-	//
-	// EnvelopeAnswered: no frame, and the older record answered -- the
-	// migration stock, the one count that must reach zero before the
-	// compatibility read can go.
-	//
-	// EnvelopeCorrupt: no frame, and the older key held bytes that did not
-	// read. A damaged record of the older representation, and a defect. It has
-	// its own name because the alternative was to fold it in beside the series
-	// that never had a record -- which is the same mistake this split exists
-	// to undo, made on the other side: a damaged envelope would have been
-	// indistinguishable from a new series, exactly as a damaged frame was.
-	//
-	// NoRecordYet: no frame and the older key held nothing at all -- a series
-	// with no record yet. Normal for ever on any deployment where series
-	// appear, and the reason the total above can never reach zero.
-	//
-	// FrameCorruptRescued and FrameCorruptLost: the frame's bytes were there
-	// and did not read. Both are corruption, not a writer of the older
-	// representation, and both should be zero -- they are named for the defect
-	// rather than for the branch that found them, because a reader meeting one
-	// has a damaged record and not a migration to wait out. They were
-	// invisible while one count covered the pass: a corrupt frame the older
-	// record rescued read exactly like a new series arriving. FrameCorruptLost
-	// does not separate an absent envelope from an unreadable one, because the
-	// record is lost either way and the frame has already named the defect.
-	EnvelopeAnswered    int
-	EnvelopeCorrupt     int
-	NoRecordYet         int
-	FrameCorruptRescued int
-	FrameCorruptLost    int
-	// Unclassified is a shape the split does not know. It is unreachable as
-	// the five stand and is carried anyway, because the alternative is that a
-	// sixth shape added later is silently dropped from all of them -- and a
-	// test cannot catch that, having no data for a shape nobody has written
-	// yet. Non-zero means the five stopped being a partition.
-	Unclassified int
 	// The carry pass: series with no record of their own whose Plan carries
 	// history from another generation, by what that generation held for
 	// them. Found is handed to the Worker on the view (Carried); the other
@@ -1246,16 +938,8 @@ func ClassifyStatePreflight(request StatePreflightRequest, result StatePreflight
 	// The byte count travels with the classified result: it is the store's
 	// own reading of what the preflight moved, and dropping it here left the
 	// preflight line reporting zero bytes on every successful round.
-	// EnvelopeReads travels for the same reason: it is the store's count of
-	// the series that still needed the older representation, and it is the
-	// number a deployment reads to learn whether the compatibility pass is
-	// still buying anything.
 	classified := StatePreflightResult{Items: make([]RuntimeStateView, len(result.Items)),
-		LoadedBytes: result.LoadedBytes, EnvelopeReads: result.EnvelopeReads,
-		EnvelopeAnswered: result.EnvelopeAnswered, EnvelopeCorrupt: result.EnvelopeCorrupt,
-		NoRecordYet:         result.NoRecordYet,
-		FrameCorruptRescued: result.FrameCorruptRescued, FrameCorruptLost: result.FrameCorruptLost,
-		Unclassified: result.Unclassified,
+		LoadedBytes: result.LoadedBytes,
 		// The carry pass's split travels too: dropped here, the round's
 		// reading of how much history crossed a moved generation would be
 		// zero on every round that carried any.
@@ -1773,90 +1457,41 @@ const (
 	StateWriteReuseChanged StateWriteReuse = "changed"
 )
 
-// StateWriteChangeReason names the first field a comparison found different.
-// A class alone cannot be acted on: "changed" covers both a decision that truly
-// moved, which would end the case for skipping the write, and a field that
-// should never have been counted as part of the decision, which would mean the
-// predicate is wrong rather than the idea. Those two point at opposite actions
-// and are indistinguishable without the field name.
-type StateWriteChangeReason string
-
-const (
-	StateWriteChangeNone          StateWriteChangeReason = "none"
-	StateWriteChangeLevelCount    StateWriteChangeReason = "level_count"
-	StateWriteChangeLevelMissing  StateWriteChangeReason = "level_missing"
-	StateWriteChangeCompatibility StateWriteChangeReason = "level_compatibility"
-	StateWriteChangeCompleteness  StateWriteChangeReason = "history_completeness"
-	StateWriteChangeGapReason     StateWriteChangeReason = "gap_reason"
-	StateWriteChangeWarmupRef     StateWriteChangeReason = "warmup_ref"
-	StateWriteChangeProcessedTime StateWriteChangeReason = "processed_time"
-	StateWriteChangeSeriesGuard   StateWriteChangeReason = "series_guard"
-	StateWriteChangeReasonOther   StateWriteChangeReason = "other"
-)
-
-// AllStateWriteChangeReasons is the complete bounded set, "other" included.
-func AllStateWriteChangeReasons() []StateWriteChangeReason {
-	return []StateWriteChangeReason{
-		StateWriteChangeNone, StateWriteChangeLevelCount, StateWriteChangeLevelMissing,
-		StateWriteChangeCompatibility, StateWriteChangeCompleteness, StateWriteChangeGapReason,
-		StateWriteChangeWarmupRef, StateWriteChangeProcessedTime, StateWriteChangeSeriesGuard,
-		StateWriteChangeReasonOther,
-	}
-}
-
 // ClassifyStateWriteReuse compares a mutation against the state the preflight
 // witnessed for the same key. It reports only what the comparison supports and
 // never that a write may be skipped: the two are not the same claim while the
 // stored window is the only source of the retention history.
-//
-// The reason is the first field found different, in a fixed order, and is
-// meaningful only when the class is changed.
-func ClassifyStateWriteReuse(view RuntimeStateView, mutation StateMutation) (StateWriteReuse, StateWriteChangeReason) {
+func ClassifyStateWriteReuse(view RuntimeStateView, mutation StateMutation) StateWriteReuse {
 	if view.PersistedMutationDigest == "" {
-		return StateWriteReuseUnobserved, StateWriteChangeNone
+		return StateWriteReuseUnobserved
 	}
 	if view.PersistedMutationDigest == mutation.MutationDigest {
-		return StateWriteReuseIdentical, StateWriteChangeNone
+		return StateWriteReuseIdentical
 	}
-	if reason := decisionStateChange(view, mutation); reason != StateWriteChangeNone {
-		return StateWriteReuseChanged, reason
+	if decisionStateChanged(view, mutation) {
+		return StateWriteReuseChanged
 	}
-	return StateWriteReuseDecisionStable, StateWriteChangeNone
+	return StateWriteReuseDecisionStable
 }
 
-// decisionStateChange names the first difference between the persisted Level
-// state and the one about to be written, or none. It compares fields rather
+// decisionStateChanged is whether the persisted Level state and the series
+// guard differ from the ones about to be written. It compares fields rather
 // than a digest because there is no digest over this subset: adding one would
 // be a second construction of the same fact, and the two could disagree.
-//
-// The field order is fixed so that the reported reason is reproducible. A
-// mutation differing in several fields reports the first in this order, which
-// means the counts are "first difference", not "how many differ".
-func decisionStateChange(view RuntimeStateView, mutation StateMutation) StateWriteChangeReason {
+func decisionStateChanged(view RuntimeStateView, mutation StateMutation) bool {
 	if len(view.Levels) != len(mutation.Levels) {
-		return StateWriteChangeLevelCount
+		return true
 	}
 	for _, level := range mutation.Levels {
 		stored, found := findPersistedLevel(view.Levels, level.LevelID)
-		switch {
-		case !found:
-			return StateWriteChangeLevelMissing
-		case stored.LevelStateCompatibility != level.LevelStateCompatibility:
-			return StateWriteChangeCompatibility
-		case stored.HistoryCompleteness != level.HistoryCompleteness:
-			return StateWriteChangeCompleteness
-		case stored.GapReasonCode != level.GapReasonCode:
-			return StateWriteChangeGapReason
-		case stored.WarmupRequirementRef != level.WarmupRequirementRef:
-			return StateWriteChangeWarmupRef
-		case stored.LastProcessedEventTime != level.LastProcessedEventTime:
-			return StateWriteChangeProcessedTime
+		if !found || stored.LevelStateCompatibility != level.LevelStateCompatibility ||
+			stored.HistoryCompleteness != level.HistoryCompleteness || stored.GapReasonCode != level.GapReasonCode ||
+			stored.WarmupRequirementRef != level.WarmupRequirementRef ||
+			stored.LastProcessedEventTime != level.LastProcessedEventTime {
+			return true
 		}
 	}
-	if !seriesGuardUnchanged(view.SeriesGuard, mutation.SeriesGuard) {
-		return StateWriteChangeSeriesGuard
-	}
-	return StateWriteChangeNone
+	return !seriesGuardUnchanged(view.SeriesGuard, mutation.SeriesGuard)
 }
 
 func findPersistedLevel(levels []RuntimeLevelStateView, id uint32) (RuntimeLevelStateView, bool) {
@@ -2005,22 +1640,10 @@ type NoDataGroupDelta struct {
 type PlanNoDataMutation struct {
 	Identity      PlanNoDataIdentity
 	SchemaVersion NoDataMemorySchema
-	// DerivedFrom is the representation this round read the memory out of.
-	//
-	// A marker revision belongs to the record that issued it, and the two
-	// representations keep separate ones. A statement derived from the
-	// whole-memory record therefore has no revision to expect of the per-group
-	// record, and must not be compared against one: the first deployment that
-	// did compare them refused every write in the fleet -- the per-group record
-	// did not exist yet, the expected revision came off the blob, and the
-	// mismatch read as "the record vanished" on every round forever.
-	//
-	// It also decides what the statement is. A delta describes the difference
-	// from the record it was derived against, so a delta derived from the blob
-	// is meaningless to the hash: the groups it leaves out are the ones that
-	// did not change since the blob, and they are not in the hash at all. Only
-	// a statement derived from the per-group record is a delta; every other
-	// one carries the whole memory and replaces what is stored.
+	// DerivedFrom is the representation this round read the memory out of,
+	// and it decides what the statement is. Only a statement derived from the
+	// per-group record is a delta against that record's revision; one derived
+	// from no record carries the whole memory and replaces what is stored.
 	DerivedFrom            NoDataRepresentation
 	ExpectedMarkerRevision uint64
 	// LoadedApplyVersion is the apply version of the record this statement was
@@ -2081,14 +1704,14 @@ func (mutation PlanNoDataMutation) ReplacesWholeRecord() bool {
 type StateEvaluation struct {
 	Mutation StateMutation
 	Events   []contract.TriggerEventV1
-	// WithoutMessage is the events this series decided and did not keep
-	// because the sink would take them and leave them without a message
-	// (contract.DroppedAtSink): under the Python-compatible protocol, every
-	// RECOVERY. Only their identity is kept. The event, with its evidence, was
-	// the largest thing a Slot held for such a Plan - one per healthy series
-	// per round - and it was held until the sink dropped it. What an output
-	// line counts is unchanged: the write adds these back as events the
-	// protocol had no message for, which is what they were.
+	// WithoutMessage is the events this series decided that its protocol has
+	// no message for (contract.NoMessageFor): under the Python-compatible
+	// protocol, every RECOVERY. They are not built; only their identity is
+	// kept. The envelope, with its evidence, was once held until the sink
+	// dropped it and later built and dropped at once - one per healthy
+	// series per round either way. What an output line counts is unchanged:
+	// the write adds these back as events the protocol had no message for,
+	// which is what they are.
 	WithoutMessage []EventWithoutMessage
 }
 
@@ -2133,8 +1756,11 @@ type RecoveryGateCounts struct {
 // by could not be built. NotConfigured is a caller that passed no set, the
 // behaviour before the gate existed. ProtocolNotGated is a Plan that does
 // not publish the alert consumer's protocol, so the set was not asked.
+// PassedOneTimeClose is the one close of a group the target dropped, let
+// through by the set it was asked against; it produced its envelope.
 type OpenAlertGateCounts struct {
 	Passed                 uint64
+	PassedOneTimeClose     uint64
 	HeldNoOpenAlert        uint64
 	HeldFingerprintUnknown uint64
 	NotConfigured          uint64
@@ -2327,11 +1953,43 @@ type HistoryCoverage struct {
 	// And without the positions "which minutes" was a question for the logs,
 	// which the page told the reader to go and answer by hand.
 	Windows []WindowCoverage
+	// MissingMinutes is every minute at which some short window of the run
+	// has a position with no point, over all of them and not only the named
+	// ones, oldest first and at most MaxCoverageMissingMinutes long.
+	// MissingMinutesTruncated says the union is not whole: a window held more
+	// missing positions than it lists, or the union ran over the bound.
+	// ShortUnusable is how many short windows held a position whose record
+	// the Level could not use.
+	//
+	// Whose a missing position is -- the data's, or this side's -- is a fact
+	// about the round that evaluated its minute, not about the window, so for
+	// the windows Windows does not name the minutes are what a reader needs.
+	// Without them a Query Group five strategies share, with three hosts that
+	// miss whole minutes, had fifteen short windows, named eight, and was
+	// filed every round as this side's undecided window for want of the rest.
+	MissingMinutes          []int64
+	MissingMinutesTruncated bool
+	ShortUnusable           uint32
 	// End is the newest record source time any window of this run ended at
 	// -- the minute this round evaluated. Carried on every run that
 	// summarised a window, full or short, so the round can be matched to
 	// the minute a later hole names.
 	End int64
+	// WindowStart is the oldest position any window of this run reaches
+	// back to, full or short: no hole of this run's windows is older. A
+	// reader that matches holes to the rounds of their minutes needs the
+	// rounds from here to End and no older ones; zero when no window said.
+	WindowStart int64
+}
+
+// ObserveWindowStart notes where one window reaches back to.
+func (coverage *HistoryCoverage) ObserveWindowStart(start int64) {
+	if coverage == nil || start <= 0 {
+		return
+	}
+	if coverage.WindowStart == 0 || start < coverage.WindowStart {
+		coverage.WindowStart = start
+	}
 }
 
 // MaxCoverageWindows bounds how many short windows a round names, and
@@ -2341,6 +1999,11 @@ type HistoryCoverage struct {
 const (
 	MaxCoverageWindows   = 8
 	MaxWindowHolesListed = 16
+	// MaxCoverageMissingMinutes bounds MissingMinutes. It is the union of
+	// minutes, not of holes: every window of a run ends at the same minute, so
+	// the union is no longer than the longest window, and a round whose
+	// windows reach back further than this says so rather than listing more.
+	MaxCoverageMissingMinutes = 64
 )
 
 // WindowCoverage is one short window of the round, by identity.
@@ -2367,6 +2030,12 @@ type WindowCoverage struct {
 	MissingTotal  uint32
 	Unusable      []int64
 	UnusableTotal uint32
+	// Inactive are the listed holes, Missing or Unusable, whose own
+	// evaluation time the window's Level schedule says is outside its
+	// effective time; set by the Worker at commit, from the schedule, for the
+	// holes whose time it can tell. A listed hole not in it is in hours or
+	// not known.
+	Inactive []int64
 	// Guarded says the verdict reported for this window was held over from a
 	// guard, and GuardReason the reason that guard was established with --
 	// per window, because a round's one reason is the fold over its windows
@@ -2412,6 +2081,43 @@ func (coverage *HistoryCoverage) ObserveWindow(window WindowCoverage) {
 	if coverage == nil || window.Required == 0 || window.Shortfall() == 0 {
 		return
 	}
+	coverage.noteShortWindow(window)
+	coverage.keepWindow(window)
+}
+
+// noteShortWindow folds one short window into the counts every short window
+// contributes to, named or not: where it is missing points, and whether it
+// holds a point its Level could not use.
+func (coverage *HistoryCoverage) noteShortWindow(window WindowCoverage) {
+	if window.UnusableTotal > 0 {
+		coverage.ShortUnusable++
+	}
+	if uint32(len(window.Missing)) < window.MissingTotal {
+		coverage.MissingMinutesTruncated = true
+	}
+	coverage.addMissingMinutes(window.Missing)
+}
+
+// addMissingMinutes adds minutes to the sorted union, marking it truncated
+// instead of growing past MaxCoverageMissingMinutes.
+func (coverage *HistoryCoverage) addMissingMinutes(minutes []int64) {
+	for _, minute := range minutes {
+		index := sort.Search(len(coverage.MissingMinutes), func(i int) bool { return coverage.MissingMinutes[i] >= minute })
+		if index < len(coverage.MissingMinutes) && coverage.MissingMinutes[index] == minute {
+			continue
+		}
+		if len(coverage.MissingMinutes) >= MaxCoverageMissingMinutes {
+			coverage.MissingMinutesTruncated = true
+			continue
+		}
+		coverage.MissingMinutes = append(coverage.MissingMinutes, 0)
+		copy(coverage.MissingMinutes[index+1:], coverage.MissingMinutes[index:])
+		coverage.MissingMinutes[index] = minute
+	}
+}
+
+// keepWindow places one short window among the MaxCoverageWindows named ones.
+func (coverage *HistoryCoverage) keepWindow(window WindowCoverage) {
 	for index, kept := range coverage.Windows {
 		if kept.Plan != window.Plan || kept.Series != window.Series || kept.LevelID != window.LevelID {
 			continue
@@ -2537,12 +2243,20 @@ func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
 	if other.Short > 0 && other.WorstRequired-other.WorstValid > coverage.WorstRequired-coverage.WorstValid {
 		coverage.WorstValid, coverage.WorstRequired = other.WorstValid, other.WorstRequired
 	}
+	// The other side's counts already hold every window it saw, the named
+	// ones included, so its names are only placed here, not counted again.
+	coverage.ShortUnusable += other.ShortUnusable
+	coverage.MissingMinutesTruncated = coverage.MissingMinutesTruncated || other.MissingMinutesTruncated
+	coverage.addMissingMinutes(other.MissingMinutes)
 	for _, window := range other.Windows {
-		coverage.ObserveWindow(window)
+		if window.Required != 0 && window.Shortfall() != 0 {
+			coverage.keepWindow(window)
+		}
 	}
 	if other.End > coverage.End {
 		coverage.End = other.End
 	}
+	coverage.ObserveWindowStart(other.WindowStart)
 }
 
 type EvaluationResult struct {
@@ -2585,12 +2299,12 @@ func buildEvaluationInternalExecution(request EvaluationRequest) (InternalExecut
 	if err != nil {
 		return InternalExecution{}, err
 	}
-	if len(request.Inputs) != len(due.CompiledPlan.Levels()) {
+	if len(request.Inputs) != due.CompiledPlan.Levels().Len() {
 		return InternalExecution{}, errors.New("alarmd execution: evaluation inputs do not exactly cover one due Plan")
 	}
 	input := InternalExecution{Contract: request.Header.Contract, DuePlans: []DuePlan{due},
 		FullPlans: map[PlanIdentity]*strategy.CompiledPlan{due.Identity: full}}
-	for index, level := range due.CompiledPlan.Levels() {
+	for index, level := range due.CompiledPlan.Levels().All() {
 		current := request.Inputs[index]
 		if current.Contract != request.Header.Contract || current.Consumer.Plan != due.Identity || !current.Consumer.HasLevel ||
 			current.Consumer.LevelID != level.Definition().LevelID || current.SeriesIdentity != first.SeriesIdentity ||
@@ -3323,6 +3037,34 @@ func (result SideEffectAdmissionResult) Validate() error {
 type GapGuardApplyRequest struct {
 	Contract FrozenExecutionContractRef
 	Items    []PlanGapMutation
+	// Retention is what the written markers live for; see GenerationRetention.
+	Retention GenerationRetention
+}
+
+// GenerationRetention is what a write of generation-scoped keys -- a Plan's
+// gap marker, its no-data memory -- lives for: each Plan's own state
+// retention, from which the store derives the key's lifetime by the formula
+// the load renews it by (state.GenerationScopedTTL).
+//
+// The write needs it as much as the load does. A key written at a fixed day
+// outlived the round that wrote it only when the Plan ran at least daily: a
+// Plan on a sixty-hour interval lost its marker and its memory before its
+// next round could load them, every round, and one on a daily interval lost
+// them whenever the next round ran late.
+type GenerationRetention struct {
+	// ByPlan is each item's Plan's own retention. Every item's Plan must be in
+	// it unless Unknown is set; a write that has neither is refused rather
+	// than written at a guess.
+	ByPlan map[PlanIdentity][]StateRetentionRequirement
+	// Unknown says the writer has no compiled Plan to read the retention from
+	// -- a round that ran no query writes an activated Plan's marker from its
+	// activation record alone -- and the key is written at the store's
+	// ceiling, which no Plan's own lifetime exceeds. The next round that
+	// evaluates the Plan writes the marker again for the Plan's own lifetime,
+	// so only a marker no round evaluates after keeps the longer life. Said,
+	// rather than being what an empty map means, so a writer that forgot the
+	// retention is refused instead.
+	Unknown bool
 }
 
 type GapGuardApplyStatus string
@@ -3381,6 +3123,25 @@ type StateApplyRequest struct {
 	// that stops appearing leaves no state behind for longer than H. Zero
 	// leaves the retention's own lifetime uncapped.
 	HorizonSeconds int64
+	// Frames, when present, are aligned with Items: the frame the store
+	// encoded for that item when it admitted it, or nil. The store writes a
+	// frame only where it is the one it would encode now -- the same
+	// mutation, the same revision -- and encodes the item itself otherwise,
+	// so a frame that is missing, stale or misaligned costs an encode and
+	// nothing else.
+	Frames []*EncodedStateFrame
+}
+
+// EncodedStateFrame is a mutation as the store encodes it for writing, kept
+// from its admission so the write need not encode it again. It names what it
+// was encoded from, which is what the store checks before writing it.
+type EncodedStateFrame struct {
+	MutationDigest MutationDigest
+	// Revision is the stored record's revision the frame carries: the one it
+	// was encoded for.
+	Revision        uint64
+	Bytes           []byte
+	LegacyRecordIDs int
 }
 
 type StateAdmissionStatus string
@@ -3403,9 +3164,20 @@ type StateAdmissionItemResult struct {
 	// rules share STATE_CORRUPT, and a line that carries only the reason sends
 	// a reader to read every producer.
 	RefusalRule string
+	// RefusalText is the store's own sentence for that refusal, with the
+	// numbers the rule does not carry: the lifetime required against the
+	// ceiling, the bytes encoded against the limit. Empty for every other
+	// status. A Plan refused as STATE_BUDGET_EXCEEDED every round carried
+	// only the reason, and which of two limits it was past, and by how much,
+	// was in no line.
+	RefusalText string
 	// LegacyRecordIDs is how many of the mutation's points carried an id the
 	// derivation could not rebuild, so the id had to be stored.
 	LegacyRecordIDs int
+	// Frame is what the store encoded to measure an admitted mutation, for a
+	// caller that can hold it until the write (StateApplyRequest.Frames);
+	// nil for every other status, and from a store that does not keep one.
+	Frame *EncodedStateFrame
 }
 
 type StateAdmissionResult struct {
@@ -3487,23 +3259,6 @@ func (item *StateApplyItemResult) MarkVersionConflict(kind StateVersionConflictK
 
 type StateApplyResult struct {
 	Items []StateApplyItemResult
-	// EnvelopeReads is how many of this apply's items had their outcome
-	// decided by the older representation: the record the write was compared
-	// against came from the envelope key, or an envelope that did not read
-	// refused the write with no frame beside it.
-	//
-	// Only the per-key path can count any. It reads both keys of every series
-	// it writes, so reading the envelope is not the event - the envelope
-	// deciding something is. Kept apart from the preflight's count because
-	// the two are two consumers of one key: the envelope can be deleted only
-	// when neither of them still depends on it, and one number summed from
-	// both could not say which one had not reached zero.
-	//
-	// A request that fails part-way - a pipeline that could not be added to
-	// or flushed - returns no result at all, so the items the envelope
-	// decided before the failure, including ones already written, are not
-	// counted. The count is a lower bound for such a round, never more.
-	EnvelopeReads int
 }
 
 func (result StateApplyResult) Validate() error {
@@ -3543,6 +3298,22 @@ const (
 type PrimaryInputFact struct {
 	Completeness Completeness
 	DataState    DataState
+	// EmptiedByTarget says a FULL, EMPTY primary was empty because every
+	// series its queries returned was withheld as outside the monitoring
+	// target: the data was there, the target selected none of it. Set by
+	// the worker from the query completions.
+	EmptiedByTarget bool
+	// QuietWhenEmpty says a FULL, EMPTY primary is an event count of groups
+	// that came back with no group: no event in the range asked. Set by the
+	// worker the same way.
+	//
+	// Neither is part of the Slot's contract. The progress record's summary
+	// of the last round keeps a copy of both (EmptyRoundSummary) for the row
+	// a restarted replica restores, with the content the round ran under:
+	// they are the Plan's word - its source, grouping and lead - and the
+	// round's - its target - so they go stale when the content moves, and a
+	// reader trusts the copy only under the same content.
+	QuietWhenEmpty bool
 }
 
 func DerivePrimaryInputFact(input InternalExecution) (PrimaryInputFact, error) {
@@ -3631,6 +3402,12 @@ const (
 	// CauseLevelOutcomeUnknown is a Level whose outcome could not be determined
 	// even though its Plan was.
 	CauseLevelOutcomeUnknown CompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	// CauseGapGuardWarming is a Slot that answered whole and still left a Level
+	// UNKNOWN, only because a guard an earlier round's gap raised is warming
+	// towards its requirement (SlotInputWholeness.UnknownIsGuardTail). The reason beside it is
+	// the guard's - why the gap was opened, not what happened this round - and
+	// nothing needs doing: the guard clears once enough whole rounds pass.
+	CauseGapGuardWarming CompletionCause = "GAP_GUARD_WARMING"
 	// CausePrimaryInputPartial is the provider answering the primary input's
 	// query with a stretch of the window missing. The Slot completes as
 	// COMPLETED_WITH_PARTIAL_GAP, and the missing stretch is the data link's or
@@ -3654,28 +3431,31 @@ const (
 	// with is not in the activation at all any more: the Slot ran after its
 	// Plan left the active set. Still a partial gap, still nothing to fix.
 	CausePlanNotActive CompletionCause = "PLAN_NOT_ACTIVE"
+	// The causes of a Slot finalized without a query (QueryFreeFinalization),
+	// one of which every such finalization names. The completion word is the
+	// same for several of them - SNAPSHOT_UNAVAILABLE - and only the cause
+	// says whether anything failed.
+	//
+	// CauseExpiredReplay is a Slot that came after its recovery bound, or
+	// past the replay's reach, and was given up without resolving anything:
+	// the backlog of a takeover, or a cursor resting on a Segment no longer
+	// retained. Nothing failed; the Slot came too late to be evaluated.
+	CauseExpiredReplay CompletionCause = "EXPIRED_REPLAY"
+	// CauseSnapshotCorrupt is a persisted Snapshot that does not decode:
+	// finalized at once, on a live Slot, every round it is read. This
+	// deployment's own record is wrong.
+	CauseSnapshotCorrupt CompletionCause = "SNAPSHOT_CORRUPT"
+	// CauseSnapshotUnavailablePastBound is a Snapshot that could not be read
+	// until the Slot's recovery bound passed: the store did not answer.
+	CauseSnapshotUnavailablePastBound CompletionCause = "SNAPSHOT_UNAVAILABLE_PAST_BOUND"
+	// CauseResolveFailedPastBound is any other failure to resolve the frozen
+	// Slot that lasted until its recovery bound passed.
+	CauseResolveFailedPastBound CompletionCause = "RESOLVE_FAILED_PAST_BOUND"
 )
 
-// DeriveCompletionKind reports the completion kind alone, which is what the
-// contract and every persisted structure use.
-func DeriveCompletionKind(input InternalExecution, result EvaluationResult) (CompletionKind, error) {
-	kind, _, err := deriveCompletion(input, result)
-	return kind, err
-}
-
-// DeriveCompletion reports the kind together with why it was unavailable.
-//
-// The two come from one traversal on purpose: derived separately they would be
-// two functions that must agree about the same Slot, and the first time they
-// disagreed the page would explain a completion that did not happen.
-func DeriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionCause, error) {
-	return deriveCompletion(input, result)
-}
-
-func deriveCompletion(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionCause, error) {
-	kind, cause, _, err := deriveCompletionDetail(input, result)
-	return kind, cause, err
-}
+// QueryFreeCauses are the causes a query-free finalization may name.
+var QueryFreeCauses = []CompletionCause{CauseExpiredReplay, CauseSnapshotCorrupt, CauseSnapshotUnavailablePastBound,
+	CauseResolveFailedPastBound}
 
 // CompletionAttribution is why a Slot completed the way it did: the condition
 // that folded into the kind, and that condition's own reason.
@@ -3698,26 +3478,41 @@ type CompletionAttribution struct {
 	// Zero when the Slot did not summarise any window, which is not the same
 	// as a Slot whose windows were all complete.
 	Coverage HistoryCoverage
+	// Scope is where the cause was found: the Plan, and the Level for a
+	// Level's outcome or the physical query for the primary input. The cause
+	// and its reason say what kind of thing went wrong; the scope says which
+	// one, so a round that did not answer whole names the Level or the query
+	// that did not.
+	Scope CompletionScope
 }
 
-// DeriveCompletionDetail adds the reason that belongs to the reported cause.
+// CompletionScope is the part of a Slot a completion cause was found in.
+type CompletionScope struct {
+	Plan          PlanIdentity
+	HasPlan       bool
+	LevelID       uint32
+	HasLevel      bool
+	PhysicalQuery PhysicalQueryDigest
+}
+
+// DeriveCompletionAttribution reports the kind together with why it was
+// unavailable: the cause, the reason that belongs to it, and the scope it was
+// found in.
 //
-// Separate from DeriveCompletion so the existing callers keep their signature,
-// and one traversal still decides all three: derived apart they would be
-// functions that must agree about the same Slot.
-func DeriveCompletionDetail(input InternalExecution, result EvaluationResult) (
-	CompletionKind, CompletionCause, ReasonCode, error) {
-	return deriveCompletionDetail(input, result)
+// All of it comes from one traversal on purpose: derived separately they
+// would be functions that must agree about the same Slot, and the first time
+// they disagreed the page would explain a completion that did not happen.
+func DeriveCompletionAttribution(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionAttribution, error) {
+	return deriveCompletionAttribution(input, result)
 }
 
-func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
-	CompletionKind, CompletionCause, ReasonCode, error) {
+func deriveCompletionAttribution(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionAttribution, error) {
 	if len(result.Plans) == 0 {
-		return "", "", "", errors.New("alarmd execution: no Plan results to complete")
+		return "", CompletionAttribution{}, errors.New("alarmd execution: no Plan results to complete")
 	}
 	primary, err := DerivePrimaryInputFact(input)
 	if err != nil {
-		return "", "", "", err
+		return "", CompletionAttribution{}, err
 	}
 	// A Slot can hit several of these at once. The cause reported is the most
 	// actionable one rather than the first or the commonest: a readiness gap
@@ -3736,33 +3531,48 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 	// 61 of 62 objects sharing a single label that could not say whose problem
 	// they were.
 	reason := ReasonCode("")
-	note := func(candidate CompletionCause, candidateReason ReasonCode) {
+	var scope CompletionScope
+	note := func(candidate CompletionCause, candidateReason ReasonCode, candidateScope CompletionScope) {
 		if causeRank(candidate) > causeRank(cause) {
-			cause, reason = candidate, candidateReason
+			cause, reason, scope = candidate, candidateReason, candidateScope
 		}
 	}
 	hasPartial := primary.Completeness == CompletenessPartial
 	hasUnavailable := primary.Completeness == CompletenessUnavailable
+	// A primary input short or missing names the binding that was, with the
+	// reason access gave it: the query and why, not only that one was.
+	primaryAt := func(completeness Completeness) (ReasonCode, CompletionScope) {
+		for _, binding := range input.Inputs {
+			if binding.Role == InputRolePrimary && binding.Completeness == completeness {
+				return AttributedReason(binding.ReasonCode, binding.UnavailableAttribution), CompletionScope{Plan: binding.Consumer.Plan, HasPlan: true,
+					LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel, PhysicalQuery: binding.Provenance.PhysicalQuery}
+			}
+		}
+		return "", CompletionScope{}
+	}
 	if hasUnavailable {
-		note(CausePrimaryInputUnavailable, "")
+		bindingReason, bindingScope := primaryAt(CompletenessUnavailable)
+		note(CausePrimaryInputUnavailable, bindingReason, bindingScope)
 	}
 	if hasPartial {
-		note(CausePrimaryInputPartial, "")
+		bindingReason, bindingScope := primaryAt(CompletenessPartial)
+		note(CausePrimaryInputPartial, bindingReason, bindingScope)
 	}
 	allFullEmpty := primary.Completeness == CompletenessFull && primary.DataState == DataStateEmpty
 	hasTerminal := false
+	wholeness := NewSlotInputWholeness(input.Inputs)
 	for _, plan := range result.Plans {
 		switch plan.Disposition {
 		case PlanTerminal:
 			hasTerminal = true
 		case PlanUnavailable:
 			hasUnavailable = true
-			note(CausePlanUnavailable, plan.ReasonCode)
+			note(CausePlanUnavailable, plan.ReasonCode, CompletionScope{Plan: plan.Plan, HasPlan: true})
 		case PlanReadinessGap:
 			hasUnavailable = true
-			note(CauseDataNotReady, plan.ReasonCode)
+			note(CauseDataNotReady, plan.ReasonCode, CompletionScope{Plan: plan.Plan, HasPlan: true})
 		case PlanRetryPending:
-			return "", "", "", errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
+			return "", CompletionAttribution{}, errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
 		case PlanDecided, PlanDecidedDegraded:
 			if plan.Disposition == PlanDecidedDegraded {
 				// A Plan degraded beside a FULL primary input would complete
@@ -3781,24 +3591,30 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 					hasTerminal = true
 				case LevelOutcomeUnknown:
 					hasUnavailable = true
-					note(CauseLevelOutcomeUnknown, outcome.ReasonCode)
+					levelScope := CompletionScope{Plan: outcome.Plan, HasPlan: true, LevelID: outcome.LevelID, HasLevel: true}
+					if wholeness.UnknownIsGuardTail(outcome) {
+						note(CauseGapGuardWarming, outcome.ReasonCode, levelScope)
+					} else {
+						note(CauseLevelOutcomeUnknown, outcome.ReasonCode, levelScope)
+					}
 				}
 			}
 		default:
-			return "", "", "", errors.New("alarmd execution: invalid Plan disposition for completion")
+			return "", CompletionAttribution{}, errors.New("alarmd execution: invalid Plan disposition for completion")
 		}
 	}
+	attributed := CompletionAttribution{Cause: cause, Reason: reason, Scope: scope}
 	switch {
 	case hasTerminal:
-		return CompletionTerminal, "", "", nil
+		return CompletionTerminal, CompletionAttribution{}, nil
 	case hasUnavailable:
-		return CompletionUnavailable, cause, reason, nil
+		return CompletionUnavailable, attributed, nil
 	case hasPartial:
-		return CompletionPartialGap, cause, reason, nil
+		return CompletionPartialGap, attributed, nil
 	case allFullEmpty:
-		return CompletionFullEmpty, "", "", nil
+		return CompletionFullEmpty, CompletionAttribution{}, nil
 	default:
-		return CompletionFull, "", "", nil
+		return CompletionFull, CompletionAttribution{}, nil
 	}
 }
 
@@ -3825,12 +3641,14 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 func causeRank(cause CompletionCause) int {
 	switch cause {
 	case CausePrimaryInputUnavailable:
-		return 6
+		return 7
 	case CausePlanUnavailable:
-		return 5
+		return 6
 	case CauseLevelOutcomeUnknown:
-		return 4
+		return 5
 	case CauseDataNotReady:
+		return 4
+	case CauseGapGuardWarming:
 		return 3
 	case CausePrimaryInputPartial:
 		return 2
@@ -4028,6 +3846,8 @@ type TargetResolutionSummary struct {
 	NodesMissing    []string                `json:"nodes_missing,omitempty"`
 	NodesForeign    []string                `json:"nodes_foreign,omitempty"`
 	StaleAgeSeconds int64                   `json:"stale_age_seconds,omitempty"`
+	// ExcludedAbsent counts normal no-op exclusions, outside the failure list.
+	ExcludedAbsent int `json:"excluded_absent,omitempty"`
 }
 
 // TargetSelectorFailure names one selector that did not answer whole.
@@ -4239,6 +4059,24 @@ type LastCompletionSummary struct {
 	// Plans that have one. Omitted when none has, so a record written before
 	// the field existed re-encodes unchanged.
 	TargetResolutions []TargetResolutionSummary `json:"target_resolutions,omitempty"`
+	// Empty is what the round said about an empty answer. Written only for a
+	// whole, empty primary with one of its flags set, so every other record
+	// - and every record written before the field existed - re-encodes
+	// unchanged.
+	Empty *EmptyRoundSummary `json:"empty,omitempty"`
+}
+
+// EmptyRoundSummary is what a round whose primary was whole and empty said
+// about its emptiness: an event count of groups at rest (Quiet, from
+// PrimaryInputFact.QuietWhenEmpty), or every series withheld as outside the
+// monitoring target (EmptiedByTarget), with the content the round ran under
+// - the ContentScope its commit declared. The flags are the Plan's and the
+// round's word, so a reader trusts them only while the object runs the same
+// content, and a commit that declares no content writes none.
+type EmptyRoundSummary struct {
+	Quiet           bool   `json:"quiet,omitempty"`
+	EmptiedByTarget bool   `json:"emptied_by_target,omitempty"`
+	ContentScope    string `json:"content_scope,omitempty"`
 }
 
 type UnfinishedSlotProjection struct {
@@ -4494,6 +4332,16 @@ const (
 type SlotExecutionResult struct {
 	// Set only after successful Progress commit for the unchanged configuration.
 	QueryAvailability QueryAvailability
+	// QueryUnavailableReason is, with QueryAvailabilityUnavailable, why the
+	// primary query was unavailable, as its binding states it
+	// (AttributedReason): what the query cooldown that this result feeds
+	// reports its entries and exits under.
+	QueryUnavailableReason ReasonCode
+	// PrimaryQueryClock is the slowest PRIMARY query's budget and elapsed
+	// time, answered or not; nil when no primary query was measured. Read
+	// with QueryAvailability by the query cooldown pool, which keeps what
+	// the execution that decided its membership had and used.
+	PrimaryQueryClock *PhysicalQueryClock
 	// Set only after a successful Progress commit, not inferred from Result.
 	CompletionKind CompletionKind
 	Completed      bool
@@ -4522,6 +4370,9 @@ type SlotExecutionResult struct {
 	// person to add a field would find an invariant that no longer holds
 	// without being told which field broke it.
 	Timing SlotTiming
+	// Supplement is what a supplement execution did with each series it was
+	// given; nil for every other operation.
+	Supplement *SupplementFacts
 }
 
 // SlotTiming is where one Slot's wall clock went, in milliseconds.

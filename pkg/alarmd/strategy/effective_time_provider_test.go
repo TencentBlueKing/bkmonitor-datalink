@@ -19,75 +19,10 @@ import (
 	"time"
 )
 
-func TestBusinessLocalTimezoneResolverUsesPluggableSource(t *testing.T) {
-	t.Parallel()
-
-	resolver := NewBusinessLocalTimezoneResolver(BusinessTimezoneSourceFunc(
-		func(_ context.Context, tenantID, businessID string) (string, bool, error) {
-			if tenantID != "tenant-a" || businessID != "42" {
-				t.Fatalf("identity = %q/%q", tenantID, businessID)
-			}
-			return "Asia/Tokyo", true, nil
-		},
-	))
-	location, err := resolver.ResolveTimezone(context.Background(), "BUSINESS_LOCAL", "tenant-a", "42")
-	if err != nil || location.String() != "Asia/Tokyo" {
-		t.Fatalf("ResolveTimezone() = %v, %v", location, err)
-	}
-}
-
-func TestBusinessLocalTimezoneResolverSeparatesUnknownFromSourceFailure(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name   string
-		source BusinessTimezoneSourceFunc
-	}{
-		{name: "missing", source: func(context.Context, string, string) (string, bool, error) { return "", false, nil }},
-		{name: "invalid IANA", source: func(context.Context, string, string) (string, bool, error) { return "Invalid/Timezone", true, nil }},
-	} {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			resolver := NewBusinessLocalTimezoneResolver(test.source)
-			if _, err := resolver.ResolveTimezone(context.Background(), "BUSINESS_LOCAL", "tenant-a", "42"); !errors.Is(err, ErrEffectiveTimeUnknown) {
-				t.Fatalf("ResolveTimezone() error = %v", err)
-			}
-		})
-	}
-
-	want := errors.New("business cache unavailable")
-	resolver := NewBusinessLocalTimezoneResolver(BusinessTimezoneSourceFunc(
-		func(context.Context, string, string) (string, bool, error) { return "", false, want },
-	))
-	if _, err := resolver.ResolveTimezone(context.Background(), "BUSINESS_LOCAL", "tenant-a", "42"); !errors.Is(err, want) {
-		t.Fatalf("ResolveTimezone() error = %v", err)
-	} else {
-		assertRetryableEffectiveTimeDependency(t, err)
-	}
-}
-
-func TestBusinessLocalTimezoneResolverDoesNotMarkLocalErrorsRetryable(t *testing.T) {
-	t.Parallel()
-
-	resolver := NewBusinessLocalTimezoneResolver(nil)
-	_, err := resolver.ResolveTimezone(context.Background(), "BUSINESS_LOCAL", "tenant-a", "42")
-	assertNotRetryableEffectiveTimeDependency(t, err)
-
-	resolver = NewBusinessLocalTimezoneResolver(BusinessTimezoneSourceFunc(
-		func(context.Context, string, string) (string, bool, error) { return "", false, nil },
-	))
-	_, err = resolver.ResolveTimezone(context.Background(), "BUSINESS_LOCAL", "tenant-a", "42")
-	if !errors.Is(err, ErrEffectiveTimeUnknown) {
-		t.Fatalf("ResolveTimezone() error = %v", err)
-	}
-	assertNotRetryableEffectiveTimeDependency(t, err)
-}
-
 func TestCalendarScheduleProviderResolvesAlwaysWithoutDependencies(t *testing.T) {
 	t.Parallel()
 
-	requirement := mustCompilePlan(t, newTestCompiler(t), validPlan()).Levels()[0].EffectiveTimeRequirement()
+	requirement := mustCompilePlan(t, newTestCompiler(t), validPlan()).Levels().At(0).EffectiveTimeRequirement()
 	evaluationTime := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC).Unix()
 	provider := NewCalendarScheduleProvider(nil, nil)
 	facts, err := provider.Resolve(context.Background(), []EffectiveTimeRequest{{
@@ -228,7 +163,7 @@ func calendarRequirement(t testing.TB, active, inactive []int64) EffectiveTimeRe
 		"active_calendars": active,
 		"calendars":        inactive,
 	})
-	return mustCompilePlan(t, newTestCompiler(t), plan).Levels()[0].EffectiveTimeRequirement()
+	return mustCompilePlan(t, newTestCompiler(t), plan).Levels().At(0).EffectiveTimeRequirement()
 }
 
 func fixedTimezoneResolver(location *time.Location) TimezoneResolver {

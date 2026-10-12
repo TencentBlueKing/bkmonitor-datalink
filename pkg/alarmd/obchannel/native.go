@@ -39,6 +39,7 @@ func NativeOperations(handler http.Handler) []Operation {
 				}
 				if id == "strategy.get" {
 					strategyNext(&out, p, result)
+					strategyGuardWarming(&out, result)
 				}
 				if id == "object.get" {
 					objectSlotNext(&out, p, result)
@@ -52,6 +53,18 @@ func NativeOperations(handler http.Handler) []Operation {
 						}
 						out.Summary += clearing.Line
 					}
+					if anomaly, ok := resultAnomaly(result["anomaly"]); ok {
+						if warming := fleet.GuardWarmingOf(anomaly); warming != nil {
+							result["guard_warming"] = warming
+							if out.Summary != "" {
+								out.Summary += "；"
+							}
+							out.Summary += warming.Line
+						}
+					}
+				}
+				if id == "fleet.get" {
+					absentNext(&out, result)
 				}
 				if id == "strategy.list" {
 					// This endpoint lists fact rows, not every source strategy.
@@ -62,7 +75,10 @@ func NativeOperations(handler http.Handler) []Operation {
 		}}
 	}
 	ops := []Operation{
-		makeOp("fleet.get", "读取部署健康、覆盖、依赖和执行能力；业务异常与取证失败分开。", map[string]Field{}, nil, fleet.HealthResponse{}, func(Params) (string, url.Values) { return "/api/health", nil }),
+		makeOp("fleet.get", "读取部署健康、覆盖、依赖和执行能力；业务异常与取证失败分开。"+
+			"rebalance 是 Leader 上一轮再平衡（planned_at 那一轮，不是实时数）：滚动发布时 replaced 是这一轮从不再合格的副本移走的对象数、replacements_deferred 是因每轮交接上限（batch）留到后面轮次的、unplaceable 是这一轮没有就绪副本能接而留在原处的；replacements_deferred 与 unplaceable 都降到 0 才算换完（只有一个为 0 不算）。"+
+			"unplaceable 包含 declined_everywhere：每个合格副本都因执行卡死放弃过的对象（开始提交之前超过这次执行自己的期限一分钟仍没返回，代码没响应取消；见 declined_everywhere_sample 的副本与步骤），它们哪儿都不跑、没有对象行，原因与\"没有就绪副本\"不同，要修代码；"+
+			"per_replica[].declines 是该副本放弃中的对象与执行位（total/fanout，各占一个执行位直到卡住的执行返回；total 等于 fanout 时这个副本什么都不执行而就绪照常）。", map[string]Field{}, nil, fleet.HealthResponse{}, func(Params) (string, url.Values) { return "/api/health", nil }),
 		makeOp("strategy.list", "按服务端状态/行动词列出需要关注的策略；不是全量源目录。", map[string]Field{
 			"state":  enumField("状态词，从 words 或 describe 获取。", fleet.StateWords),
 			"action": enumField("行动词，从 words 或 describe 获取。", fleet.ActionWords),
@@ -91,6 +107,26 @@ func NativeOperations(handler http.Handler) []Operation {
 			}
 			return "/api/windows", q
 		}),
+		makeOp("absent.list", "列出 leader 最近一轮缺失关闭的候选策略：link 名册成员数、本轮决定与时刻、最近一次关闭找到的告警归属（自己/别人/不明）、身份来源与业务和版本、源里现在有没有它、本任期发出关闭的次数与首次时刻（sends、first_sent_at）。"+
+			"发出不等于关掉：execution.active_after_send 是已发出过关闭之后、这次读 link reconcile 仍列为活动的本部署告警数，大于 0 就是 link 没有关掉已发给它的关闭。"+
+			"表只记循环每轮已做的事，读页面不调 link；每页对快照不列的行做一次文档是否存在的检查。"+
+			"局限：alarmd 分不出策略是被删了，还是这个 ID 只在拆分前的旧策略表里存在过，要拿 ID 和业务去 SaaS 策略表查；"+
+			"执行事实只对本任期被决定过关闭的候选才有，重启后要宽限加 ⌈候选数/8⌉ 轮 × 5 分钟才填满；source_now=document 只说明文档键还在，不说明写方为什么不列它；"+
+			"被拒绝的轮次不动表，table.at 早于 last_round.at 时行是旧的。", map[string]Field{
+			"limit":       integer("返回行上限；默认50。", 1, int64(fleet.AbsentPageRows)),
+			"cursor":      text("上一页的 next_cursor。", "absent.list next_cursor"),
+			"outcome":     enumField("按本轮决定过滤。", fleet.AbsentOutcomes),
+			"execution":   enumField("按最近一次关闭的结果过滤。", fleet.AbsentExecutions),
+			"strategy_id": text("只看这个策略 ID（所有租户下的）。", "用户给定或 absent.list 行"),
+		}, nil, fleet.AbsentCandidatesResponse{}, func(p Params) (string, url.Values) {
+			q := url.Values{"limit": {strconv.Itoa(p.Int("limit", fleet.AbsentPageDefaultRows))}}
+			for _, name := range []string{"cursor", "outcome", "execution", "strategy_id"} {
+				if value := p.String(name); value != "" {
+					q.Set(name, value)
+				}
+			}
+			return "/api/absent", q
+		}),
 		makeOp("sample.get", "读取已保留判据样例；无样例不证明没有执行，也不证明输出ACK。", map[string]Field{"query_group": text("运行对象ID。", "strategy.get plans[].query_group"), "limit": integer("样例条数，默认10。", 1, 50)}, []string{"query_group"}, map[string]any{}, func(p Params) (string, url.Values) {
 			return "/api/objects/" + url.PathEscape(p.String("query_group")), url.Values{"samples": {strconv.Itoa(p.Int("limit", 10))}}
 		}),
@@ -100,6 +136,13 @@ func NativeOperations(handler http.Handler) []Operation {
 		if ops[i].ID == "sample.get" || ops[i].ID == "observation.get" {
 			ops[i].EvidenceScope = "shared_records_with_process_diagnostics"
 			ops[i].Targetable = true
+		}
+		if ops[i].ID == "object.get" {
+			// A healthy object's row lives only on the replica tracking it:
+			// targetable by its lease holder, and routed there on its own
+			// when the answering replica can only say which one holds it.
+			ops[i].Targetable = true
+			ops[i].RouteWhenElsewhere = objectElsewhere
 		}
 		if ops[i].ID == "strategy.get" {
 			ops[i].Examples = []Params{{"strategy_id": "1001"}}
@@ -122,6 +165,21 @@ func NativeOperations(handler http.Handler) []Operation {
 		}
 	}
 	return ops
+}
+
+// absentNext points from the deployment's health to the absent close's
+// candidate page wherever the alert link's Console is configured: the page
+// is where the absent_strategy_* counts are named strategy by strategy.
+func absentNext(out *Outcome, result map[string]any) {
+	console, ok := result["linkd_console"].(map[string]any)
+	if !ok {
+		return
+	}
+	if state, _ := console["state"].(string); state == "" || state == fleet.LinkdConsoleNotConfigured {
+		return
+	}
+	out.Next = append(out.Next, Call{Operation: "absent.list", Params: Params{},
+		Reason: "逐条读缺失关闭的候选策略：哪些策略、告警是谁的、身份从哪来、源里还有没有它。"})
 }
 
 func enumField[T ~string](description string, values []T) Field {
@@ -220,19 +278,61 @@ func objectExtentLine(result map[string]any) string {
 // first fact as the fleet API returned it. Nil when the fact does not say
 // so or lacks the windows or the interval to compute it from.
 func objectWindowClears(result map[string]any) *fleet.WindowClearing {
-	raw, ok := result["anomaly"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return nil
-	}
-	var anomaly fleet.Anomaly
-	if json.Unmarshal(encoded, &anomaly) != nil || anomaly.Standing == nil {
+	anomaly, ok := resultAnomaly(result["anomaly"])
+	if !ok || anomaly.Standing == nil {
 		return nil
 	}
 	return fleet.WindowClearsOf(anomaly, *anomaly.Standing)
+}
+
+// resultAnomaly is a fact row of a fleet answer back in its own type, for
+// the computations the fleet package owns; false when it is not one.
+func resultAnomaly(raw any) (fleet.Anomaly, bool) {
+	fields, ok := raw.(map[string]any)
+	if !ok {
+		return fleet.Anomaly{}, false
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return fleet.Anomaly{}, false
+	}
+	var anomaly fleet.Anomaly
+	if json.Unmarshal(encoded, &anomaly) != nil {
+		return fleet.Anomaly{}, false
+	}
+	return anomaly, true
+}
+
+// strategyGuardWarming puts the guard reading on every plan row whose round
+// was filed under GAP_GUARD_WARMING, and says in the summary how many there
+// are and what the guard withholds: the word alone read as a strategy
+// nothing evaluates.
+func strategyGuardWarming(out *Outcome, result map[string]any) {
+	warming := 0
+	plans, _ := result["plans"].([]any)
+	for _, entry := range plans {
+		plan, _ := entry.(map[string]any)
+		rows, _ := plan["rows"].([]any)
+		for _, rawRow := range rows {
+			row, _ := rawRow.(map[string]any)
+			anomaly, ok := resultAnomaly(row)
+			if !ok {
+				continue
+			}
+			if reading := fleet.GuardWarmingOf(anomaly); reading != nil {
+				row["guard_warming"] = reading
+				warming++
+			}
+		}
+	}
+	if warming == 0 {
+		return
+	}
+	if out.Summary != "" {
+		out.Summary += "；"
+	}
+	out.Summary += fmt.Sprintf("%d 个运行对象处于 GAP_GUARD_WARMING：守卫只挡 NORMAL，ABNORMAL 和 RECOVERY 照常判；"+
+		"缺的分钟归谁见各行 guard_warming", warming)
 }
 
 func numberField(m map[string]any, key string) (int64, bool) {
@@ -298,26 +398,26 @@ func (w *capture) Write(b []byte) (int, error) {
 
 func invokeNative(ctx context.Context, handler http.Handler, path string, query url.Values) Outcome {
 	if handler == nil {
-		return Outcome{Error: &Failure{"not_configured", "Fleet evidence API is not configured."}}
+		return Outcome{Error: &Failure{Code: "not_configured", Message: "Fleet evidence API is not configured."}}
 	}
 	req := &http.Request{Method: http.MethodGet, URL: &url.URL{Path: path, RawQuery: query.Encode()}, Header: make(http.Header)}
 	// PathEscape is deliberately undone into URL.Path, the decoded path
 	// contract of net/http. An identifier containing '/' is not a valid object.
 	decoded, err := url.PathUnescape(path)
 	if err != nil {
-		return Outcome{Error: &Failure{"invalid_input", "Invalid object path."}}
+		return Outcome{Error: &Failure{Code: "invalid_input", Message: "Invalid object path."}}
 	}
 	req.URL.Path = decoded
 	w := &capture{header: make(http.Header)}
 	handler.ServeHTTP(w, req.WithContext(ctx))
 	if w.overflow {
-		return Outcome{Error: &Failure{"response_budget_exceeded", "Native evidence exceeded the byte limit."}}
+		return Outcome{Error: &Failure{Code: "response_budget_exceeded", Message: "Native evidence exceeded the byte limit."}}
 	}
 	var result map[string]any
 	dec := json.NewDecoder(bytes.NewReader(w.body.Bytes()))
 	dec.UseNumber()
 	if err := dec.Decode(&result); err != nil || result == nil {
-		return Outcome{Error: &Failure{"invalid_upstream_response", "The evidence handler did not return a JSON object."}}
+		return Outcome{Error: &Failure{Code: "invalid_upstream_response", Message: "The evidence handler did not return a JSON object."}}
 	}
 	out := Outcome{Value: result, Complete: true}
 	if complete, ok := result["complete"].(bool); ok && !complete {
@@ -357,10 +457,20 @@ func invokeNative(ctx context.Context, handler http.Handler, path string, query 
 		// Missing retained data and partial domain responses are evidence,
 		// whereas a bare handler error is a failed call. Neither means healthy.
 		if _, domain := result["query_group"]; !domain {
-			out.Error = &Failure{"evidence_unavailable", fmt.Sprintf("Evidence handler returned HTTP %d; inspect result for the precise reason.", w.status)}
+			out.Error = &Failure{Code: "evidence_unavailable", Message: fmt.Sprintf("Evidence handler returned HTTP %d; inspect result for the precise reason.", w.status)}
 		} else {
 			out.Limitations = append(out.Limitations, fmt.Sprintf("Native HTTP status %d; object or evidence may be absent or unavailable.", w.status))
 		}
 	}
 	return out
+}
+
+// objectElsewhere is the Query Group to route an object read to: one whose
+// answer names the replica holding it, which the object route does only when
+// it has neither a listed row nor a row of its own for it.
+func objectElsewhere(p Params, result any) (string, bool) {
+	body, _ := result.(map[string]any)
+	holder, _ := body["tracked_by"].(string)
+	group := p.String("query_group")
+	return group, holder != "" && group != ""
 }

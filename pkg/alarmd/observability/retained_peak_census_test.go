@@ -44,9 +44,6 @@ func TestTheCensusHoldsEveryQueryGroupTheRosterDoesNot(t *testing.T) {
 		summary.Observe(context.Background(), o)
 		census.Observe(context.Background(), o)
 	}
-	if got := len(summary.RetainedPeaks()); got != 4 {
-		t.Fatalf("the summary with a roster of four reads %d Query Groups; this test needs the roster to be the smaller answer", got)
-	}
 	peaks := census.RetainedPeaks()
 	if len(peaks) != 10 {
 		t.Fatalf("the census reads %d of ten Query Groups", len(peaks))
@@ -56,14 +53,21 @@ func TestTheCensusHoldsEveryQueryGroupTheRosterDoesNot(t *testing.T) {
 			t.Fatalf("reading %d = %+v", i, peak)
 		}
 	}
-	// For a Query Group both hold, the two read the same number the same way:
-	// the larger of the two windows.
+	// For the Query Groups both hold, the two read the same number the same
+	// way, the larger of the two windows: what the summary publishes is the
+	// census's peaks over its roster.
 	now = now.Add(time.Minute)
 	o := slotCompletion("qg-00", 500)
 	summary.Observe(context.Background(), o)
 	census.Observe(context.Background(), o)
-	if summary.RetainedPeaks()[0].RetainedBytesPeak != 1000 || census.RetainedPeaks()[0].RetainedBytesPeak != 1000 {
-		t.Fatalf("summary %d census %d, want both to keep the previous window's larger peak", summary.RetainedPeaks()[0].RetainedBytesPeak, census.RetainedPeaks()[0].RetainedBytesPeak)
+	summary.Publish(now)
+	var rosterSum uint64
+	for _, peak := range census.RetainedPeaks()[:4] {
+		rosterSum += peak.RetainedBytesPeak
+	}
+	if census.RetainedPeaks()[0].RetainedBytesPeak != 1000 || summary.Snapshot().Retained.PeakSumBytes != rosterSum {
+		t.Fatalf("census %d, summary sum %d over the roster's %d: want the previous window's larger peak, and the same peaks on both",
+			census.RetainedPeaks()[0].RetainedBytesPeak, summary.Snapshot().Retained.PeakSumBytes, rosterSum)
 	}
 	now = now.Add(2 * time.Minute)
 	census.Observe(context.Background(), slotCompletion("qg-00", 300))

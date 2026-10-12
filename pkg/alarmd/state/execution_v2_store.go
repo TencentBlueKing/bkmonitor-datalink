@@ -18,7 +18,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
-const executionStateSchemaV2 = "alarmd-runtime-state-v2"
 const executionGapSchemaV2 = "alarmd-plan-gap-v2"
 
 type CompareAndSetBackend interface {
@@ -87,6 +86,9 @@ type ExecutionStoreOptions struct {
 	MinTTL        time.Duration
 	MaxTTL        time.Duration
 	RestartMargin time.Duration
+	// Bound on the scheduler's read hold. A reporting series must survive
+	// an immediate jump to this bound, even if the current Slot has no hold.
+	ReadHoldBound time.Duration
 	// FenceKeys locates the ownership lease that fenced Runtime State writes
 	// verify inside storage. It is optional: without it ApplyRuntimeFenced
 	// applies unfenced and the admission-time fence check stands alone.
@@ -117,18 +119,6 @@ type ExecutionStore struct {
 	}
 }
 
-type runtimeEnvelope struct {
-	Schema         string                                `json:"schema"`
-	Identity       execution.StateKeyIdentity            `json:"identity"`
-	BlobRevision   uint64                                `json:"blob_revision"`
-	ApplyVersion   execution.ApplyVersion                `json:"apply_version"`
-	MutationDigest execution.MutationDigest              `json:"mutation_digest"`
-	LastEventTime  int64                                 `json:"last_event_time"`
-	SeriesGuard    *execution.StateGuardFact             `json:"series_guard,omitempty"`
-	Levels         []execution.RuntimeLevelStateMutation `json:"levels"`
-	History        []execution.StateHistoryPoint         `json:"history"`
-}
-
 type gapEnvelope struct {
 	Schema           string                         `json:"schema"`
 	Identity         execution.PlanGapIdentity      `json:"identity"`
@@ -150,7 +140,8 @@ const DefaultMaxNoDataGroups = 100000
 func NewExecutionStore(options ExecutionStoreOptions) (*ExecutionStore, error) {
 	if options.Prefix == "" || options.Router == nil || options.MaxValueBytes <= 0 ||
 		options.MaxItemsPerCall <= 0 || options.MinTTL <= 0 || options.MaxTTL < options.MinTTL ||
-		options.RestartMargin < 0 || options.MaxNoDataGroups < 0 {
+		options.RestartMargin < 0 || options.MaxNoDataGroups < 0 || options.ReadHoldBound < 0 ||
+		options.ReadHoldBound.Milliseconds() > execution.MaxReadHoldMillis {
 		return nil, fmt.Errorf("state: invalid execution store options")
 	}
 	if options.MaxNoDataGroups == 0 {
@@ -176,6 +167,15 @@ func NewExecutionStore(options ExecutionStoreOptions) (*ExecutionStore, error) {
 // series that never went away. Lowering H therefore shortens lifetimes from
 // the next write on, and raising it lengthens them from the next write on:
 // a key that already expired is gone, so nothing reclaimed comes back.
+//
+// The ceiling bounds the lifetime a key is given, so under a horizon it is
+// held against the capped lifetime, not the retention span. A retention whose
+// span is past the ceiling - fourteen points of a sixty-hour interval are 840
+// hours against a 720-hour ceiling - is written for its horizon cap all the
+// same, which is sixty hours and change. Holding the span against the ceiling
+// first refused every round of such a Plan as STATE_BUDGET_EXCEEDED, for a
+// lifetime it was never going to be given: the strategy stopped detecting and
+// nothing about it changed from one round to the next.
 func (store *ExecutionStore) runtimeTTL(retention []execution.StateRetentionRequirement, horizonSeconds int64) (time.Duration, error) {
 	requirements := make([]LevelRequirement, len(retention))
 	for index, level := range retention {
@@ -183,29 +183,42 @@ func (store *ExecutionStore) runtimeTTL(retention []execution.StateRetentionRequ
 		// and it must read exactly the retention the window was built from.
 		requirements[index] = NewLevelRequirement(level, "", 0)
 	}
-	ttl, err := StateTTL(requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL)
-	if err != nil || horizonSeconds <= 0 {
+	ttl, err := StateTTL(requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.options.ReadHoldBound)
+	if horizonSeconds <= 0 {
 		return ttl, err
 	}
-	return capByHorizon(ttl, requirements, store.options.RestartMargin, store.options.MinTTL,
-		time.Duration(horizonSeconds)*time.Second), nil
+	limit := horizonLimit(requirements, store.options.RestartMargin, store.options.MinTTL, time.Duration(horizonSeconds)*time.Second, store.options.ReadHoldBound)
+	if err != nil {
+		if !errors.Is(err, ErrStateBudget) {
+			return 0, err
+		}
+		// The span is past the ceiling, so it is past the cap too: the
+		// lifetime written is the cap, and the cap is what has to fit.
+		if limit > store.options.MaxTTL {
+			return 0, fmt.Errorf("%w: lifetime capped at the horizon %s exceeds maximum %s", ErrStateBudget, limit, store.options.MaxTTL)
+		}
+		return limit, nil
+	}
+	return min(ttl, limit), nil
 }
 
-// capByHorizon is the retention's lifetime capped at the horizon, and the
-// horizon floored at what a reporting series needs between two writes.
-func capByHorizon(ttl time.Duration, requirements []LevelRequirement, restartMargin, minimum, horizon time.Duration) time.Duration {
-	limit := max(horizon, StateLifetimeFloor(requirements, restartMargin), minimum)
-	return min(ttl, limit)
+// horizonLimit is the longest a series' runtime state lives under a horizon:
+// the horizon, floored at what a reporting series needs between two writes.
+func horizonLimit(requirements []LevelRequirement, restartMargin, minimum, horizon time.Duration, readHoldBound ...time.Duration) time.Duration {
+	return max(horizon, StateLifetimeFloor(requirements, restartMargin, readHoldBound...), minimum)
 }
 
 // StateLifetimeFloor is the shortest lifetime a series' runtime state can
 // have and still survive from one write to the next while the series keeps
 // reporting: the longest evaluation interval plus its lateness, and the
 // restart margin.
-func StateLifetimeFloor(requirements []LevelRequirement, restartMargin time.Duration) time.Duration {
+func StateLifetimeFloor(requirements []LevelRequirement, restartMargin time.Duration, readHoldBound ...time.Duration) time.Duration {
 	var floor time.Duration
 	for _, requirement := range requirements {
 		floor = max(floor, requirement.EvaluationInterval+requirement.LatenessTolerance)
+	}
+	if len(readHoldBound) > 0 {
+		floor += readHoldBound[0]
 	}
 	return floor + restartMargin
 }
@@ -218,8 +231,9 @@ func rejectRuntimeBudget(items []execution.StateMutation) []execution.StateApply
 	results := make([]execution.StateApplyItemResult, len(items))
 	for index, mutation := range items {
 		results[index] = execution.StateApplyItemResult{Identity: mutation.Identity,
-			Status:     execution.StateApplyDeterministicInvalid,
-			ReasonCode: execution.ReasonCode(contract.ReasonStateBudgetExceeded)}
+			Status:      execution.StateApplyDeterministicInvalid,
+			ReasonCode:  execution.ReasonCode(contract.ReasonStateBudgetExceeded),
+			RefusalRule: RuntimeRuleLifetimePastCeiling}
 	}
 	return results
 }
@@ -229,32 +243,20 @@ func rejectRuntimeBudget(items []execution.StateMutation) []execution.StateApply
 // classified on its own; a preflight witness is kept per readable key so the
 // following ApplyRuntime can prove what it saw without reading again.
 //
-// The read is in two passes, and the second one is usually empty. Every series
-// may hold two records - the framed one every binary of this era writes, and
-// the JSON envelope its predecessors wrote - and the round used to fetch both
-// keys of every series whether or not the older one held anything. On a
-// strategy retaining a long window that is the whole cost of the read: 1466
-// points are 7 KB framed and 344 KB as an envelope, so a Query Group of 249
-// series read 87.6 MB per round of which 85.7 MB was a representation with no
-// writer, and a read that size stops fitting in its deadline. The first pass
-// asks for the framed key alone; the second asks for the envelope only of the
-// series whose frame is missing or cannot be read by itself, which is what the
-// envelope was being kept for. A series whose frame answers is classified from
-// the frame in the first pass, exactly as it was when both keys arrived
-// together - the choice between the two records only ever mattered when both
-// held one.
+// Only the framed record is read. The JSON envelope under the older runtime
+// key is not: no binary since the framed record was introduced writes it, the
+// previous upstream snapshot included, so an envelope still present is a
+// record from before that and leaves on its own TTL. A series that only has
+// one starts warming, as a new series does.
 //
-// The older records are not deleted here or anywhere: they are not renewed
-// either (a frozen series is renewed under the representation it was read in),
-// so they leave on their own TTL. EnvelopeReads says how many series still
-// need the second read, which is how a deployment learns when the
-// compatibility pass can go.
+// A second pass reads, for the series still without a record whose Plan
+// carries history from the generation it moved from, that generation's frame.
 func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
 	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.StatePreflightResult{}, fmt.Errorf("state: invalid runtime load request")
 	}
 	result := execution.StatePreflightResult{Items: make([]execution.RuntimeStateView, len(request.Items))}
-	pass := &runtimeLoadPass{frames: make(map[int][]byte)}
+	pass := &runtimeLoadPass{}
 	batch := &runtimeLoadBatch{}
 	roundLargest, anyRead := 0, false
 	flush := func() {
@@ -265,12 +267,7 @@ func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.
 		// was read, and the next round's frame pass reads it there. Leaving it
 		// out committed the empty frame pass's zero as the Query Group's size,
 		// and the next round asked for every carried record in one batch.
-		if read && !pass.envelopes {
-			// Only the frame pass measures. The Query Group's committed size
-			// describes the key every write goes to and the one the next round
-			// reads first; the envelopes are leaving, and a size learned from
-			// them would bound the frame pass by records that will not be
-			// there.
+		if read {
 			anyRead = true
 			if largest > roundLargest {
 				roundLargest = largest
@@ -297,37 +294,10 @@ func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.
 		batch.keys = append(batch.keys, framedKey)
 	}
 	flush()
-	// The second pass, for the series the first one could not answer from the
-	// frame alone. Its bound is what the store accepts as a value and nothing
-	// else - not the frames the first pass measured, and not its own earlier
-	// batches. See envelopeLoadBatchLimit for why both of those are traps.
-	pass.envelopes = true
-	for _, index := range pass.pending {
-		item := request.Items[index]
-		view := execution.RuntimeStateView{Identity: item.Identity, Status: execution.StateMissingWarming}
-		envelopeKey, err := RuntimeStateKeyV2(store.options.Prefix, item.Identity)
-		var target StorageTarget
-		if err == nil {
-			target, err = store.options.Router.Route(item.Identity.Plan.TenantID, item.Identity.Plan.StrategyID)
-		}
-		if err != nil {
-			result.Items[index] = runtimeLoadFailure(view, err)
-			continue
-		}
-		if len(batch.indexes) > 0 && (batch.target.Name != target.Name || len(batch.indexes) >= store.envelopeLoadBatchLimit()) {
-			flush()
-		}
-		batch.target = target
-		batch.indexes = append(batch.indexes, index)
-		batch.keys = append(batch.keys, envelopeKey)
-	}
-	flush()
-	// The third pass, for the series still without a record whose Plan
+	// The second pass, for the series still without a record whose Plan
 	// carries history from the generation it moved from: that generation's
-	// frame, under the same batching and the same byte count as the other
-	// two. Only the frame is read -- a record the previous generation still
-	// held only as an envelope is old enough to warm up again.
-	pass.envelopes, pass.carry = false, true
+	// frame, under the same batching and the same byte count as the first.
+	pass.carry = true
 	for index, item := range request.Items {
 		if item.CarryFrom == "" || item.CarryFrom == item.Identity.StateGeneration || result.Items[index].Status != execution.StateMissingWarming {
 			continue
@@ -343,12 +313,11 @@ func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.
 			pass.carryUnreadable++
 			continue
 		}
-		// Bounded as the envelope pass is, by the largest value the store
-		// accepts and not by anything learned: the frame pass has just found
-		// no record for every one of these series, so what it learned about
-		// this Query Group says nothing about the size of what the previous
-		// generation holds.
-		if len(batch.indexes) > 0 && (batch.target.Name != target.Name || len(batch.indexes) >= store.envelopeLoadBatchLimit()) {
+		// Bounded by the largest value the store accepts and not by anything
+		// learned: the frame pass has just found no record for every one of
+		// these series, so what it learned about this Query Group says nothing
+		// about the size of what the previous generation holds.
+		if len(batch.indexes) > 0 && (batch.target.Name != target.Name || len(batch.indexes) >= store.carryLoadBatchLimit()) {
 			flush()
 		}
 		batch.target = target
@@ -357,11 +326,6 @@ func (store *ExecutionStore) LoadRuntime(ctx context.Context, request execution.
 	}
 	flush()
 	result.CarryFound, result.CarryMissing, result.CarryUnreadable = pass.carryFound, pass.carryMissing, pass.carryUnreadable
-	result.EnvelopeReads = len(pass.pending)
-	result.EnvelopeAnswered, result.NoRecordYet = pass.envelopeAnswered, pass.noRecordYet
-	result.EnvelopeCorrupt = pass.envelopeCorrupt
-	result.FrameCorruptRescued, result.FrameCorruptLost = pass.frameCorruptRescued, pass.frameCorruptLost
-	result.Unclassified = pass.unclassified
 	// One commit for the whole preflight: the round read every key of the
 	// Query Group, so this is a complete measurement of the population rather
 	// than whatever the last batch happened to hold.
@@ -377,11 +341,14 @@ func (store *ExecutionStore) AdmitRuntime(_ context.Context, request execution.S
 		if !errors.Is(err, ErrStateBudget) {
 			return execution.StateAdmissionResult{}, fmt.Errorf("state: invalid runtime admission request: %w", err)
 		}
+		// Every mutation of the Plan, under the rule and with the sentence,
+		// which names the lifetime required and the ceiling.
 		result := execution.StateAdmissionResult{Items: make([]execution.StateAdmissionItemResult, len(request.Items))}
 		for index, mutation := range request.Items {
 			result.Items[index] = execution.StateAdmissionItemResult{Identity: mutation.Identity,
-				Status:     execution.StateAdmissionDeterministicInvalid,
-				ReasonCode: execution.ReasonCode(contract.ReasonStateBudgetExceeded)}
+				Status:      execution.StateAdmissionDeterministicInvalid,
+				ReasonCode:  execution.ReasonCode(contract.ReasonStateBudgetExceeded),
+				RefusalRule: RuntimeRuleLifetimePastCeiling, RefusalText: err.Error()}
 		}
 		return result, result.Validate()
 	}
@@ -396,16 +363,35 @@ func (store *ExecutionStore) AdmitRuntime(_ context.Context, request execution.S
 		}
 		// Sized in the representation the write stores. The revision only
 		// widens one varint in the header, so any revision measures the same.
-		encoded, refusal, rule, legacyIDs := store.encodeForWrite(mutation, mutation.ExpectedBlobRevision+1)
-		if refusal != "" {
-			item.Status, item.ReasonCode = execution.StateAdmissionDeterministicInvalid, execution.ReasonCode(refusal)
-			item.RefusalRule = rule
+		encoded, refusal, legacyIDs := store.encodeForWrite(mutation, mutation.ExpectedBlobRevision+1)
+		if refusal.reason != "" {
+			item.Status, item.ReasonCode = execution.StateAdmissionDeterministicInvalid, execution.ReasonCode(refusal.reason)
+			item.RefusalRule, item.RefusalText = refusal.rule, refusal.text
 		} else {
 			item.EncodedBytes, item.LegacyRecordIDs = len(encoded), legacyIDs
+			// The frame measured is the frame the write stores when the key's
+			// revision is still the one the mutation expects; handed back so
+			// a caller that holds it spares the write the same encode.
+			item.Frame = &execution.EncodedStateFrame{MutationDigest: mutation.MutationDigest,
+				Revision: mutation.ExpectedBlobRevision + 1, Bytes: encoded, LegacyRecordIDs: legacyIDs}
 		}
 		result.Items[index] = item
 	}
 	return result, result.Validate()
+}
+
+// frameForWrite is the frame the write stores for one item: the one admission
+// encoded, when it was encoded from this mutation for this revision, and a
+// fresh encode otherwise. The two are the same bytes where the first is used
+// -- one encoder, one mutation, one revision -- so which one is written is a
+// matter of cost only.
+func (store *ExecutionStore) frameForWrite(request execution.StateApplyRequest, index int, mutation execution.StateMutation, revision uint64) ([]byte, writeRefusal, int) {
+	if index < len(request.Frames) {
+		if frame := request.Frames[index]; frame != nil && frame.Revision == revision && frame.MutationDigest == mutation.MutationDigest {
+			return frame.Bytes, writeRefusal{}, frame.LegacyRecordIDs
+		}
+	}
+	return store.encodeForWrite(mutation, revision)
 }
 
 // ApplyRuntime applies without an owner fence. Items whose key was witnessed by
@@ -415,67 +401,26 @@ func (store *ExecutionStore) ApplyRuntime(ctx context.Context, request execution
 	return store.applyRuntime(ctx, request, nil)
 }
 
-// encodeRuntime writes the JSON envelope: what every binary before the framed
-// record wrote under the runtime key. No production path writes it any more;
-// it stays so a test can seed the key an earlier binary would have left, and
-// so the baseline that records what the envelope costs keeps measuring the
-// real thing.
-func encodeRuntime(mutation execution.StateMutation, revision uint64) ([]byte, error) {
-	levels := append([]execution.RuntimeLevelStateMutation(nil), mutation.Levels...)
-	sort.Slice(levels, func(i, j int) bool { return levels[i].LevelID < levels[j].LevelID })
-	last := int64(0)
-	for _, level := range levels {
-		if level.LastProcessedEventTime > last {
-			last = level.LastProcessedEventTime
-		}
-	}
-	return json.Marshal(runtimeEnvelope{executionStateSchemaV2, mutation.Identity, revision, mutation.ApplyVersion,
-		mutation.MutationDigest, last, mutation.SeriesGuard, levels, mutation.Points})
-}
-
-// decodeRuntime reads a stored record in whichever representation it was
-// written and classifies it against the candidate the caller is about to
-// apply. The shape is read from the bytes, not from the key they came from:
-// the framed record announces itself with its magic, and everything else is
-// the JSON envelope. The view says which one it was.
+// decodeRuntime reads a stored framed record and classifies it against the
+// candidate the caller is about to apply. Bytes that do not carry the frame's
+// magic are corrupt: no writer of this or the previous snapshot stores any
+// other shape under the runtime key.
 func decodeRuntime(raw []byte, identity execution.StateKeyIdentity, contractRef execution.FrozenExecutionContractRef, candidate execution.ApplyVersion) execution.RuntimeStateView {
 	invalid := func(reason string) execution.RuntimeStateView {
 		return execution.RuntimeStateView{Identity: identity, BlobRevision: 1, Status: execution.StateDeterministicInvalid,
 			ReasonCode: execution.ReasonCode(reason)}
 	}
-	var view execution.RuntimeStateView
-	if packedFrame(raw) {
-		decoded, err := decodeRuntimePacked(raw, identity)
-		switch {
-		case errors.Is(err, ErrUnsupportedState):
-			return invalid(contract.ReasonStateSchemaUnsupported)
-		case err != nil:
-			return invalid(contract.ReasonStateCorrupt)
-		}
-		view = decoded
-		view.Representation = execution.StateRepresentationFramed
-	} else {
-		var value runtimeEnvelope
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return invalid(contract.ReasonStateCorrupt)
-		}
-		if value.Schema != executionStateSchemaV2 {
-			return invalid(contract.ReasonStateSchemaUnsupported)
-		}
-		if value.Identity != identity || value.BlobRevision == 0 {
-			return invalid(contract.ReasonStateCorrupt)
-		}
-		levels := make([]execution.RuntimeLevelStateView, len(value.Levels))
-		for i, level := range value.Levels {
-			levels[i] = execution.RuntimeLevelStateView{LevelID: level.LevelID, LevelStateCompatibility: level.LevelStateCompatibility,
-				HistoryCompleteness: level.HistoryCompleteness, GapReasonCode: level.GapReasonCode,
-				WarmupRequirementRef: level.WarmupRequirementRef, LastProcessedEventTime: level.LastProcessedEventTime}
-		}
-		view = execution.RuntimeStateView{Identity: identity, BlobRevision: value.BlobRevision,
-			Representation:        execution.StateRepresentationEnvelope,
-			PersistedApplyVersion: value.ApplyVersion, PersistedMutationDigest: value.MutationDigest,
-			LastProcessedEventTime: value.LastEventTime, SeriesGuard: value.SeriesGuard, Levels: levels, History: value.History}
+	if !packedFrame(raw) {
+		return invalid(contract.ReasonStateCorrupt)
 	}
+	view, err := decodeRuntimePacked(raw, identity)
+	switch {
+	case errors.Is(err, ErrUnsupportedState):
+		return invalid(contract.ReasonStateSchemaUnsupported)
+	case err != nil:
+		return invalid(contract.ReasonStateCorrupt)
+	}
+	view.Representation = execution.StateRepresentationFramed
 	view.Status = storedLoadStatus(view.Levels, view.SeriesGuard)
 	classified, err := execution.ClassifyStatePreflight(execution.StatePreflightRequest{Contract: contractRef,
 		Items: []execution.StatePreflightItem{{Identity: identity, ApplyVersion: candidate}}}, execution.StatePreflightResult{Items: []execution.RuntimeStateView{view}})
@@ -486,8 +431,7 @@ func decodeRuntime(raw []byte, identity execution.StateKeyIdentity, contractRef 
 }
 
 // storedLoadStatus is what the Levels and the series guard say about a record
-// that was found: gapped wins over warming wins over ready, the same reading
-// for both representations.
+// that was found: gapped wins over warming wins over ready.
 func storedLoadStatus(levels []execution.RuntimeLevelStateView, guard *execution.StateGuardFact) execution.StateLoadStatus {
 	status := execution.StateFoundReady
 	for _, level := range levels {
@@ -542,7 +486,7 @@ func (store *ExecutionStore) readOneRenewing(
 		return nil, nil
 	}
 	if err := RenewGenerationKey(ctx, target, resolved, retention,
-		store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.renewals); err != nil {
+		store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.renewals, store.options.ReadHoldBound); err != nil {
 		return nil, err
 	}
 	return values[0], nil
@@ -605,6 +549,17 @@ func (store *ExecutionStore) LoadGapsInto(ctx context.Context, request execution
 func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.GapGuardApplyRequest) (execution.GapGuardApplyResult, error) {
 	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.GapGuardApplyResult{}, fmt.Errorf("state: invalid gap apply request")
+	}
+	// Every marker's lifetime before any is written: a request that does not
+	// say what one of its Plans needs is refused whole, not written in part.
+	lifetimes := make([]time.Duration, len(request.Items))
+	for index, mutation := range request.Items {
+		ttl, err := generationWriteTTL(request.Retention, mutation.Identity.Plan,
+			store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.options.ReadHoldBound)
+		if err != nil {
+			return execution.GapGuardApplyResult{}, fmt.Errorf("state: invalid gap apply request: %w", err)
+		}
+		lifetimes[index] = ttl
 	}
 	result := execution.GapGuardApplyResult{Items: make([]execution.GapGuardApplyItemResult, len(request.Items))}
 	for index, mutation := range request.Items {
@@ -706,14 +661,12 @@ func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.Gap
 			result.Items[index] = item
 			continue
 		}
-		// Written at the floor, not at the Plan's own derived lifetime and not
-		// without one. The load that runs at the start of every Slot renews it
-		// to whatever this Plan actually needs, so the write only has to make
-		// sure the key is never born immortal - which is what a Plan whose last
-		// act was creating this key used to leave behind. Carrying the Plan's
-		// retention here as well would be a third copy of one fact for a value
-		// the next Slot overwrites anyway.
-		applied, applyErr := backend.CompareAndSet(ctx, key, raw, raw == nil, encoded, GenerationScopedFloor)
+		// Written for the Plan's own lifetime, the one the load renews it to.
+		// It used to be written at the floor on the reasoning that the next
+		// load renews it anyway, and that load comes a whole interval later:
+		// for a Plan whose interval is past a day, the marker this round wrote
+		// was gone before the round that had to read it, every round.
+		applied, applyErr := backend.CompareAndSet(ctx, key, raw, raw == nil, encoded, lifetimes[index])
 		if applyErr != nil {
 			item.Status, item.ReasonCode = execution.GapGuardRetryable, execution.ReasonCode(contract.ReasonStateWriteRetryable)
 		} else if !applied {

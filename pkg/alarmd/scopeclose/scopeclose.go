@@ -19,8 +19,9 @@
 //   - the rejection is the target's own verdict on facts that were all read
 //     and current (admission.DefinitelyOutside); a cache that could not
 //     answer is cache_unavailable, never a reason to close;
-//   - the strategy's open set could be judged at all: calibrated, and not
-//     disjoint from this process's own sends; otherwise set_unavailable;
+//   - the strategy's open set could be judged at all: calibrated, and
+//     confirmed by the link's Console (where it is, how it is keyed);
+//     otherwise set_unavailable;
 //   - the fingerprint is in the set (not_member otherwise) and the alert is
 //     this deployment's (producer_foreign otherwise);
 //   - two different Slots turned the same fingerprint away. One Slot is a
@@ -35,9 +36,7 @@
 //
 // Closes are sent at most Batch per step, starting after the last one the
 // previous step decided, so a large backlog is walked rather than retried
-// from its head; and only while the deployment has armed its own inferences
-// (absent_close_send). Unarmed, every close is decided and counted as
-// would_send, and nothing is sent.
+// from its head.
 package scopeclose
 
 import (
@@ -53,11 +52,9 @@ import (
 
 // The outcomes, closed: a metric label is made of them.
 const (
-	// OutcomeClosed counts alerts a close was sent for.
-	OutcomeClosed = "closed"
-	// OutcomeWouldSend counts alerts a close was decided for while the
-	// close was not armed.
-	OutcomeWouldSend = "would_send"
+	// OutcomeCloseSent counts alerts a close was sent for: acknowledged by
+	// the broker, which is not that the link closed them.
+	OutcomeCloseSent = "close_sent"
 	// OutcomeUnconfirmed counts first observations: a fingerprint of an
 	// open alert turned away by one Slot, waiting for a second.
 	OutcomeUnconfirmed = "unconfirmed"
@@ -69,12 +66,19 @@ const (
 	// not an open alert of the strategy - the ordinary case.
 	OutcomeNotMember = "not_member"
 	// OutcomeSetUnavailable counts decisions refused because the open set
-	// could not be judged: not calibrated, disjoint, not read.
+	// could not be judged: not calibrated, not confirmed by the Console, not
+	// read.
 	OutcomeSetUnavailable = "set_unavailable"
 	// OutcomeProducerForeign counts open alerts of another source.
 	OutcomeProducerForeign = "producer_foreign"
 	// OutcomeSendFailed counts alerts whose close the producer refused.
 	OutcomeSendFailed = "send_failed"
+	// OutcomeIdentityInvalid is a close whose request could not be built
+	// from the facts the observation carried: the strategy id not a
+	// positive number, the business zero or not a number, the revision not
+	// positive. Nothing was sent, and the observation is forgotten. The same
+	// word the effective-time close counts the same facts under.
+	OutcomeIdentityInvalid = "close_identity_invalid"
 	// OutcomeMemoryFull counts first observations not recorded because the
 	// observation table was at its bound; the close for them may be delayed
 	// beyond the observation TTL, and is never made on less than two fresh
@@ -97,9 +101,9 @@ const (
 )
 
 // Outcomes lists every outcome, for the metric that pre-creates them.
-var Outcomes = []string{OutcomeClosed, OutcomeWouldSend, OutcomeUnconfirmed, OutcomeCacheUnavailable, OutcomeNotMember,
+var Outcomes = []string{OutcomeCloseSent, OutcomeUnconfirmed, OutcomeCacheUnavailable, OutcomeNotMember,
 	OutcomeSetUnavailable, OutcomeProducerForeign, OutcomeSendFailed, OutcomeMemoryFull, OutcomeFingerprintUnsupported,
-	OutcomeStaleDeferred, OutcomeIndefinite}
+	OutcomeStaleDeferred, OutcomeIndefinite, OutcomeIdentityInvalid}
 
 // The bounds of what the facts carry.
 const (
@@ -124,9 +128,10 @@ type Drop struct {
 
 // OpenSet is what the close asks the open alert copy.
 type OpenSet interface {
-	// Disjoint is the one whole-copy state that makes every set's answer
-	// meaningless; everything else is judged per strategy.
-	Disjoint() bool
+	// Trusted is whether the sets may answer at all: the link's Console has
+	// confirmed where they are and that they are keyed by our alert ids. An
+	// untrusted copy's every "not a member" is a lookup that could not see.
+	Trusted() bool
 	// MemberCount is asked once per strategy per query before any record.
 	MemberCount(key openalerts.StrategyKey) (count int, judged bool)
 	Holds(key openalerts.StrategyKey, fingerprint string) (held, judged bool)
@@ -141,9 +146,7 @@ type Writer interface {
 
 // Options bound the close.
 type Options struct {
-	// Send arms the close; see config.LinkdConfig.AbsentCloseSend.
-	Send bool
-	Now  func() time.Time
+	Now func() time.Time
 	// MaxEntries bounds the fingerprints observed and not yet decided.
 	MaxEntries int
 	// Batch bounds the closes one step decides.
@@ -236,9 +239,6 @@ func (closer *Closer) Bind(set OpenSet, writer Writer) {
 	closer.mu.Unlock()
 }
 
-// Armed says whether closes are sent.
-func (closer *Closer) Armed() bool { return closer.options.Send }
-
 // Screen answers once per strategy per query whether its rejections are
 // worth a fingerprint each: "" when the strategy has open alerts to judge
 // against, and otherwise the outcome all of them are counted under in bulk
@@ -248,7 +248,7 @@ func (closer *Closer) Screen(key openalerts.StrategyKey) string {
 	closer.mu.Lock()
 	set := closer.set
 	closer.mu.Unlock()
-	if set == nil || set.Disjoint() || set.OwnEventSourceID() == "" {
+	if set == nil || !set.Trusted() || set.OwnEventSourceID() == "" {
 		return OutcomeSetUnavailable
 	}
 	count, judged := set.MemberCount(key)
@@ -372,7 +372,7 @@ func (closer *Closer) Step(ctx context.Context) {
 	}
 	sort.Slice(confirmed, func(i, j int) bool { return lessEntry(confirmed[i], confirmed[j]) })
 	own := ""
-	if set != nil && !set.Disjoint() {
+	if set != nil && set.Trusted() {
 		own = set.OwnEventSourceID()
 	}
 	if own == "" {
@@ -416,9 +416,13 @@ func (closer *Closer) Step(ctx context.Context) {
 			closer.forget(ek, OutcomeProducerForeign)
 			continue
 		}
-		request, ok := closer.request(ek, alert, now)
-		if !ok {
-			closer.forget(ek, OutcomeSendFailed)
+		request, built := closer.request(ek, alert, now)
+		switch built {
+		case requestGone:
+			// Forgotten meanwhile, and counted where it was.
+			continue
+		case requestIdentityInvalid:
+			closer.forget(ek, OutcomeIdentityInvalid)
 			continue
 		}
 		batch = append(batch, request)
@@ -430,10 +434,6 @@ func (closer *Closer) Step(ctx context.Context) {
 	if len(batch) == 0 {
 		return
 	}
-	if !closer.options.Send {
-		closer.decide(decided, OutcomeWouldSend, now)
-		return
-	}
 	if writer == nil {
 		closer.countEach(decided, OutcomeSendFailed)
 		return
@@ -443,7 +443,7 @@ func (closer *Closer) Step(ctx context.Context) {
 		closer.countEach(decided, OutcomeSendFailed)
 		return
 	}
-	closer.decide(decided, OutcomeClosed, now)
+	closer.decide(decided, OutcomeCloseSent, now)
 }
 
 // fresh is whether the entry's last observation is recent enough to act on.
@@ -454,24 +454,34 @@ func (closer *Closer) fresh(ek entryKey, now time.Time) bool {
 	return e != nil && now.Sub(e.lastSeen) <= closer.options.Freshness
 }
 
-func (closer *Closer) request(ek entryKey, alert openalerts.Alert, now time.Time) (linkdoutput.CloseRequest, bool) {
+// requestBuilt is what building a close request found: built, the entry
+// gone, or its identity facts unusable.
+type requestBuilt int
+
+const (
+	requestReady requestBuilt = iota
+	requestGone
+	requestIdentityInvalid
+)
+
+func (closer *Closer) request(ek entryKey, alert openalerts.Alert, now time.Time) (linkdoutput.CloseRequest, requestBuilt) {
 	closer.mu.Lock()
 	e := closer.entries[ek]
 	closer.mu.Unlock()
 	if e == nil {
-		return linkdoutput.CloseRequest{}, false
+		return linkdoutput.CloseRequest{}, requestGone
 	}
 	strategyID, err := strconv.ParseInt(ek.key.StrategyID, 10, 64)
 	if err != nil || strategyID <= 0 {
-		return linkdoutput.CloseRequest{}, false
+		return linkdoutput.CloseRequest{}, requestIdentityInvalid
 	}
 	businessID, err := strconv.ParseInt(e.businessID, 10, 64)
 	if err != nil || businessID == 0 || e.revision <= 0 {
-		return linkdoutput.CloseRequest{}, false
+		return linkdoutput.CloseRequest{}, requestIdentityInvalid
 	}
 	return linkdoutput.CloseRequest{TenantID: ek.key.TenantID, Fingerprint: ek.fingerprint, AlertInstanceID: alert.AlertID,
 		StrategyID: strategyID, StrategyRevision: e.revision, BusinessID: businessID, OccurredAt: now,
-		Reason: linkdoutput.CloseReasonTargetOutOfScope}, true
+		Reason: linkdoutput.CloseReasonTargetOutOfScope}, requestReady
 }
 
 func (closer *Closer) forget(ek entryKey, outcome string) {
@@ -546,7 +556,6 @@ func (closer *Closer) Stats() map[string]uint64 {
 
 // Facts is what a replica publishes about the close.
 type Facts struct {
-	Armed                bool
 	Pending, Confirmed   int
 	MaxEntries           int
 	Outcomes             map[string]uint64
@@ -570,7 +579,7 @@ type StrategyFacts struct {
 func (closer *Closer) Facts() Facts {
 	closer.mu.Lock()
 	defer closer.mu.Unlock()
-	facts := Facts{Armed: closer.options.Send, MaxEntries: closer.options.MaxEntries, Outcomes: map[string]uint64{},
+	facts := Facts{MaxEntries: closer.options.MaxEntries, Outcomes: map[string]uint64{},
 		TalliedStrategies: len(closer.tallies), MaxTalliedStrategies: maxTalliedStrategies}
 	for _, outcome := range Outcomes {
 		facts.Outcomes[outcome] = closer.counts[outcome]
@@ -654,13 +663,14 @@ func prefix(value string) string {
 }
 
 // CacheSet is the open alert copy as the close reads it. The whole copy is
-// refused only when disjoint; calibration, freshness and availability are
-// judged per strategy by MemberCount and Holds.
+// refused only when the Console has not confirmed it; calibration,
+// freshness and availability are judged per strategy by MemberCount and
+// Holds.
 func CacheSet(cache *openalerts.Cache) OpenSet { return cacheSet{cache: cache} }
 
 type cacheSet struct{ cache *openalerts.Cache }
 
-func (set cacheSet) Disjoint() bool { return set.cache.Disjoint() }
+func (set cacheSet) Trusted() bool { return set.cache.Trusted() }
 
 func (set cacheSet) MemberCount(key openalerts.StrategyKey) (int, bool) {
 	return set.cache.MemberCount(key)

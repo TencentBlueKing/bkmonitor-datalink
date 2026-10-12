@@ -6,26 +6,51 @@ package openalerts
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"reflect"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 func indexRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
 	client := redis.NewClient(&redis.Options{Addr: address, DialTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second})
 	t.Cleanup(func() { _ = client.Close() })
 	waitRedisReady(t, client)
 	return client
+}
+
+func reserveTCPAddress(t *testing.T) string {
+	t.Helper()
+	return redistest.FreeAddress(t)
+}
+
+func startRedisServer(t *testing.T, _ string, address string) {
+	t.Helper()
+	redistest.StartAt(t, address)
+}
+
+func waitRedisReady(t *testing.T, client *redis.Client) {
+	t.Helper()
+	// The server answered before StartAt returned; what is left is this
+	// client's own connection, under the same bound.
+	deadline := time.Now().Add(redistest.ReadyWithin)
+	for time.Now().Before(deadline) {
+		if err := client.Ping(context.Background()).Err(); err == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("redis-server did not become ready")
 }
 
 func TestSetSourceReadsWithoutHeartbeatAndBoundsPayload(t *testing.T) {
@@ -77,8 +102,11 @@ func TestRedisSubscriberAcknowledgesReconnectAndFiltersInvalidNotices(t *testing
 	ready := make(chan bool, 20)
 	changes := make(chan StrategyKey, 20)
 	done := make(chan error, 1)
+	var refusedMu sync.Mutex
+	refused := map[NoticeRefusal]int{}
 	go func() {
-		done <- subscriber.Watch(ctx, func(value bool) { ready <- value }, func(key StrategyKey) { changes <- key })
+		done <- subscriber.Watch(ctx, func(value bool) { ready <- value }, func(key StrategyKey) { changes <- key },
+			func(reason NoticeRefusal) { refusedMu.Lock(); refused[reason]++; refusedMu.Unlock() })
 	}()
 	waitReady := func(wanted bool) {
 		t.Helper()
@@ -92,7 +120,12 @@ func TestRedisSubscriberAcknowledgesReconnectAndFiltersInvalidNotices(t *testing
 		}
 	}
 	waitReady(true)
-	for _, payload := range []string{`{"bk_tenant_id":"x","strategy_id":"y","key":"foreign"}`, `{"bk_tenant_id":"x","strategy_id":1}`, `{"bk_tenant_id":"a:b","strategy_id":"c"}`} {
+	// Every notice dropped is named by why, never silently: a field this
+	// build does not know, a wrong type, content after the notice, a key
+	// that is not a valid tenant and strategy, and a payload past the bound.
+	oversized := `{"bk_tenant_id":"x","strategy_id":"` + strings.Repeat("y", 64<<10) + `"}`
+	for _, payload := range []string{`{"bk_tenant_id":"x","strategy_id":"y","key":"foreign"}`, `{"bk_tenant_id":"x","strategy_id":1}`,
+		`{"bk_tenant_id":"x","strategy_id":"y"} {}`, `{"bk_tenant_id":"a:b","strategy_id":"c"}`, oversized} {
 		if err := client.Publish(ctx, "test:index:changes", payload).Err(); err != nil {
 			t.Fatal(err)
 		}
@@ -109,6 +142,11 @@ func TestRedisSubscriberAcknowledgesReconnectAndFiltersInvalidNotices(t *testing
 	case <-time.After(3 * time.Second):
 		t.Fatal("valid notice lost")
 	}
+	refusedMu.Lock()
+	if want := map[NoticeRefusal]int{NoticeUndecodable: 3, NoticeInvalidKey: 1, NoticeOversized: 1}; !reflect.DeepEqual(refused, want) {
+		t.Fatalf("refused = %v, want %v", refused, want)
+	}
+	refusedMu.Unlock()
 	if err := client.Do(ctx, "CLIENT", "KILL", "TYPE", "pubsub").Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -128,5 +166,55 @@ func TestRedisSubscriberAcknowledgesReconnectAndFiltersInvalidNotices(t *testing
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("subscriber did not close")
+	}
+}
+
+// The read's size bounds refuse a set as too large - more members than the
+// read may hold before or while it reads, more bytes, more pages - and a
+// member no alert id can be refuses it as incomplete only: the copy counts
+// the first apart (UnavailableTooLarge) and the second as a failed read.
+func TestASetBeyondTheReadsBoundsIsRefusedAsTooLarge(t *testing.T) {
+	client := indexRedis(t)
+	ctx := context.Background()
+	key := "test:index:" + keyA.TenantID + ":" + keyA.StrategyID
+	read := func(limits ReadLimits, members ...string) error {
+		t.Helper()
+		if err := client.Del(ctx, key).Err(); err != nil {
+			t.Fatal(err)
+		}
+		values := make([]any, 0, len(members))
+		for _, member := range members {
+			values = append(values, member)
+		}
+		if err := client.SAdd(ctx, key, values...).Err(); err != nil {
+			t.Fatal(err)
+		}
+		source, err := NewSetSource(client, "test:index", limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = source.ReadSet(ctx, keyA)
+		return err
+	}
+	wide := ReadLimits{MaxMembers: 10, MaxBytes: 1 << 20, MaxPages: 10, PageSize: 10}
+	paged := make([]string, 0, 200)
+	for index := 0; index < 200; index++ {
+		paged = append(paged, "member-"+strconv.Itoa(index))
+	}
+	for name, c := range map[string]struct {
+		limits   ReadLimits
+		members  []string
+		tooLarge bool
+	}{
+		"more members than the read holds": {ReadLimits{MaxMembers: 2, MaxBytes: 1 << 20, MaxPages: 10, PageSize: 10}, []string{"a", "b", "c"}, true},
+		"more bytes than the read holds":   {ReadLimits{MaxMembers: 10, MaxBytes: 4, MaxPages: 10, PageSize: 10}, []string{"abc", "def"}, true},
+		// Past the size a set is kept compact in, so a scan pages it.
+		"more pages than the read takes": {ReadLimits{MaxMembers: 1000, MaxBytes: 1 << 20, MaxPages: 1, PageSize: 1}, paged, true},
+		"a member no alert id can be":    {wide, []string{strings.Repeat("x", 4097)}, false},
+	} {
+		err := read(c.limits, c.members...)
+		if !errors.Is(err, ErrIncomplete) || errors.Is(err, ErrSetTooLarge) != c.tooLarge {
+			t.Errorf("%s: %v, want incomplete and too large %t", name, err, c.tooLarge)
+		}
 	}
 }

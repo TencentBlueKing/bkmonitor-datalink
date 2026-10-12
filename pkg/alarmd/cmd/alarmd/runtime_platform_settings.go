@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 // buildPlatformSettings assembles the process copy of the platform's
@@ -54,9 +55,8 @@ func buildPlatformSettings(ctx context.Context, cfg config.Config, client redis.
 }
 
 // legacyQueryRuntimeFacts is what the legacy query compiler compiles by:
-// the platform settings as the copy answers them now, and the FTA event
-// storage the deployment states. The two device filters' field names are
-// the platform's constants.
+// the platform settings as the copy answers them now. The two device
+// filters' field names are the platform's constants.
 func legacyQueryRuntimeFacts(cfg config.Config, settings platformsettings.Settings) controlplane.LegacyQueryRuntimeFacts {
 	accessBKData := settings.IsAccessBKData
 	facts := controlplane.LegacyQueryRuntimeFacts{
@@ -69,11 +69,19 @@ func legacyQueryRuntimeFacts(cfg config.Config, settings platformsettings.Settin
 			FieldName: config.SystemNetworkFilterField, Values: config.SystemNetworkFilterValues(),
 		},
 	}
-	if storage := cfg.PhaseTwo.Control.LegacyQueryRuntime.FTAEventStorage; storage != nil {
-		copied := *storage
-		facts.FTAEventStorage = &copied
-	}
 	return facts
+}
+
+// newPlanCompiler is the strategy compiler a process evaluates Plans with. It
+// lays the aggregation boundaries of a Plan detected more often than it
+// aggregates in the zone newPlatformBoundPlanner lays every query in, so a
+// boundary is where the query service starts an aligned query's bucket.
+func newPlanCompiler(cfg config.Config) (*strategy.PlanCompiler, error) {
+	location, err := time.LoadLocation(cfg.PhaseTwo.Control.Timezone)
+	if err != nil {
+		return nil, errors.New("alarmd: the control timezone is no time zone")
+	}
+	return strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits(), strategy.WithBoundaryLocation(location))
 }
 
 // newPlatformBoundPlanner is the legacy query compiler over the platform
@@ -93,9 +101,9 @@ func newPlatformBoundPlanner(cfg config.Config, settings *platformsettings.Cache
 // dynamicHostStatusFilter is the host status filter with the states the
 // platform settings copy currently answers. The filter itself is immutable;
 // this holds the one in force and swaps it when the states change, so the
-// access path reads a pointer per plan and never a lock. No filter is in
-// force while the state list is empty, which is the platform saying no host
-// is disabled.
+// access path reads a pointer per plan and never a lock. A filter is always
+// in force: built with one, and an empty state list installs one that
+// disables no host by state.
 type dynamicHostStatusFilter struct {
 	current atomic.Pointer[admission.HostStatusFilter]
 }
@@ -106,14 +114,11 @@ func newDynamicHostStatusFilter(states []string) *dynamicHostStatusFilter {
 	return filter
 }
 
-// Apply installs the filter for states, or none for an empty list, and
-// reports how many states are now in force.
+// Apply installs the filter for states and reports how many states are now in
+// force. An empty list installs a filter all the same: it disables no host by
+// state, and still drops the invalid and unknown hosts Python drops.
 func (filter *dynamicHostStatusFilter) Apply(states []string) int {
-	installed, ok := admission.NewHostStatusFilter(states)
-	if !ok {
-		filter.current.Store(nil)
-		return 0
-	}
+	installed := admission.NewHostStatusFilter(states)
 	filter.current.Store(installed)
 	return len(installed.States())
 }
@@ -121,20 +126,13 @@ func (filter *dynamicHostStatusFilter) Apply(states []string) int {
 // States is what the filter in force decides on, for the surface that
 // reports it.
 func (filter *dynamicHostStatusFilter) States() []string {
-	if current := filter.current.Load(); current != nil {
-		return current.States()
-	}
-	return nil
+	return filter.current.Load().States()
 }
 
 func (*dynamicHostStatusFilter) Name() string { return "host_status" }
 
 func (filter *dynamicHostStatusFilter) Admit(plan admission.PlanContext, facts *admission.Facts) admission.Decision {
-	current := filter.current.Load()
-	if current == nil {
-		return admission.Decision{Admit: true}
-	}
-	return current.Admit(plan, facts)
+	return filter.current.Load().Admit(plan, facts)
 }
 
 // platformSettingsRefresher is what the runtime runs once a minute: read the
@@ -165,6 +163,22 @@ func platformSettingsFactsSource(cache *platformsettings.Cache, now func() time.
 		if !stats.LoadedAt.IsZero() {
 			age := now().Sub(stats.LoadedAt).Seconds()
 			facts.AuthoritativeAgeSeconds = &age
+		}
+		entries := map[platformsettings.Field]int{
+			platformsettings.FieldHostDisableMonitorStates: len(stats.Settings.HostDisableMonitorStates),
+			platformsettings.FieldBKDataCMDBLevelTables:    len(stats.Settings.BKDataCMDBLevelTables),
+			platformsettings.FieldFileSystemTypeIgnore:     len(stats.Settings.FileSystemTypeIgnore),
+		}
+		for _, field := range platformsettings.Fields {
+			row := fleet.PlatformSettingField{Field: string(field), Source: string(stats.Sources[field])}
+			if field == platformsettings.FieldIsAccessBKData {
+				enabled := stats.Settings.IsAccessBKData
+				row.Enabled = &enabled
+			}
+			if n, isList := entries[field]; isList {
+				row.Entries = &n
+			}
+			facts.Fields = append(facts.Fields, row)
 		}
 		return facts
 	}

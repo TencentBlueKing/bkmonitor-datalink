@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -184,5 +185,27 @@ func TestGivingUpTheControlLeaderAuthorityReportsTheStepDown(t *testing.T) {
 	production.clearControlAuthority(authority)
 	if steppedDown != 1 {
 		t.Fatalf("giving up the authority reported %d step-downs, want one", steppedDown)
+	}
+}
+
+type countingStepDown struct{ calls int }
+
+func (c *countingStepDown) StepDown() { c.calls++ }
+
+// What the bundle hands the ownership runtime as its step-down forgets the
+// catalog memory the directory answers from, beside the role's readings: a
+// former Leader otherwise answered the directory from its old term until
+// its next follower tick.
+func TestLosingTheControlLeaderAuthorityForgetsTheCatalogAtOnce(t *testing.T) {
+	reconciler := &countingStepDown{}
+	steppedDown := controlLeaderSteppedDown(reconciler, metric.NewRecorder(metric.BuildInfo{Version: "test"}))
+	steppedDown()
+	if reconciler.calls != 1 {
+		t.Fatalf("a step-down reached the reconciler %d times, want once", reconciler.calls)
+	}
+	// Without a recorder the step-down still reaches the reconciler.
+	controlLeaderSteppedDown(reconciler, nil)()
+	if reconciler.calls != 2 {
+		t.Fatalf("a step-down without a recorder reached the reconciler %d times in total, want twice", reconciler.calls)
 	}
 }

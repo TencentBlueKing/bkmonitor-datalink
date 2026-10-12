@@ -58,11 +58,15 @@ const (
 	// service instance those are the nodes of the instance's module, which
 	// the service-instance fuller resolves.
 	TargetScopeTopoNode TargetScopeField = "TOPO_NODE"
-	// TargetScopeHost covers ip / bk_target_ip. A dynamic group of hosts also
-	// reduces to host identities in Python, and used to be named here as if it
-	// did so on this side too; the compiler refuses that target shape outright,
-	// so no scope this package holds was ever built from one.
+	// TargetScopeHost covers ip / bk_target_ip.
 	TargetScopeHost TargetScopeField = "HOST"
+	// TargetScopeDynamicGroup covers dynamic_group. Its keys are the group
+	// ids the strategy names; what it matches is the hosts those groups hold
+	// when a Slot reads them, from the platform's CMDB cache, the way Python
+	// reduces it to a bk_target_ip condition on host ids at match time
+	// (bkmonitor/utils/range/target.py). A record is matched on the same host
+	// identity as a HOST condition.
+	TargetScopeDynamicGroup TargetScopeField = "DYNAMIC_GROUP"
 	// TargetScopeServiceInstance covers service_instance_id.
 	TargetScopeServiceInstance TargetScopeField = "SERVICE_INSTANCE"
 	// TargetScopeObjectModelInst covers cw_object_model_inst: an instance of
@@ -92,11 +96,6 @@ const (
 	AttributeServiceInstanceID = "service_instance.id"
 	// AttributeHostTopoNode holds the "obj|inst" nodes the record sits under.
 	AttributeHostTopoNode = "host.topo_node"
-	// AttributeHostPrefix is where the CMDB host fuller exposes the scalar
-	// attributes of the resolved host, one per field: "host.attr.bk_state",
-	// "host.attr.bk_os_type" and so on. No field reads them yet; a target on a
-	// host attribute is a row in the table naming one of them.
-	AttributeHostPrefix = "host.attr."
 )
 
 // TargetScopeAttributeSource says where a field's candidates come from.
@@ -156,11 +155,24 @@ const (
 	// looks like; the two are told apart only by seeing both sides, so the
 	// report carries samples of each.
 	TargetScopeReasonObjectIdentityUnmatched = "object_identity_unmatched"
+	// TargetScopeReasonDynamicGroupUnavailable says a dynamic group the
+	// target names could not be read this Slot - absent from the cache, not
+	// decodable, not a group of hosts, or past its staleness bound - and the
+	// record was not among the members known. It is refused, as a group that
+	// adds no members refuses it, and never read as outside the target: the
+	// group was not there to say so.
+	TargetScopeReasonDynamicGroupUnavailable = "dynamic_group_unavailable"
 )
 
 var targetScopeAttributes = map[TargetScopeField]TargetScopeAttribute{
 	TargetScopeHost: {
 		Field: TargetScopeHost, Attribute: AttributeHostIdentity, Source: TargetScopeSourceFacts,
+		Absence: TargetScopeAbsenceSkipCondition, MismatchReason: TargetScopeReasonOutOfScope,
+	},
+	// Python turns the condition into bk_target_ip over the groups' host ids,
+	// so it is read, skipped and failed exactly as a host condition is.
+	TargetScopeDynamicGroup: {
+		Field: TargetScopeDynamicGroup, Attribute: AttributeHostIdentity, Source: TargetScopeSourceFacts,
 		Absence: TargetScopeAbsenceSkipCondition, MismatchReason: TargetScopeReasonOutOfScope,
 	},
 	TargetScopeServiceInstance: {
@@ -268,6 +280,30 @@ func (condition TargetScopeConditionV2) validate() error {
 		}
 	}
 	return nil
+}
+
+// DynamicGroupIDs lists the groups the scope's DYNAMIC_GROUP conditions
+// name, each once, in the order they first appear.
+func (scope *TargetScopeV2) DynamicGroupIDs() []string {
+	if scope == nil {
+		return nil
+	}
+	var ids []string
+	seen := make(map[string]struct{})
+	for _, group := range scope.Groups {
+		for _, condition := range group.Conditions {
+			if condition.Field != TargetScopeDynamicGroup {
+				continue
+			}
+			for _, id := range condition.Keys {
+				if _, duplicate := seen[id]; !duplicate {
+					seen[id] = struct{}{}
+					ids = append(ids, id)
+				}
+			}
+		}
+	}
+	return ids
 }
 
 // CanonicalTargetScopeKeys sorts and de-duplicates in place so the same scope

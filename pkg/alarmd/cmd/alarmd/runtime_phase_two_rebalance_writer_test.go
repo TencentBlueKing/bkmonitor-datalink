@@ -264,8 +264,8 @@ func TestProductionPhaseTwoOwnershipPublishesRebalanceMovesOnceTheReadySetIsStab
 			!reflect.DeepEqual(setOf(round, "worker-1"), []execution.QueryGroupIdentity{"query-group-2", "query-group-3"}) {
 			t.Fatalf("index after round 2 = %+v, want the moved Query Group under worker-2", round)
 		}
-		if fleetFacts := production.LastRebalance(); fleetFacts == nil || fleetFacts.Shadow || fleetFacts.PublishedMoves != 1 {
-			t.Fatalf("fleet rebalance facts = %+v, want a published, non-shadow round", fleetFacts)
+		if fleetFacts := production.LastRebalance(); fleetFacts == nil || fleetFacts.PublishedMoves != 1 {
+			t.Fatalf("fleet rebalance facts = %+v, want a published round", fleetFacts)
 		}
 
 		// 2/1 is parity for three Query Groups: nothing more to move, and

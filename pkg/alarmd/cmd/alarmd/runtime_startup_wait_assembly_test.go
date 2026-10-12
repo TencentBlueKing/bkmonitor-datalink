@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -27,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -61,6 +61,7 @@ func newStartupWaitFixture(t *testing.T) *startupWaitFixture {
 		t.Fatal(err)
 	}
 	uq := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"unused","is_partial":false,"result_table_id":[]}`))
 	}))
 	t.Cleanup(uq.Close)
@@ -93,9 +94,9 @@ func (f *startupWaitFixture) open(ctx context.Context) (*phaseTwoWorkerBundle, e
 		},
 		phaseTwoProductionExternalDependencies{
 			Now: time.Now, HTTPClient: f.uq.Client(), StartupWaitInitial: 20 * time.Millisecond,
-			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+			PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 				return &recordingPhaseTwoEventSink{}, nil
-			},
+			}),
 		},
 	)
 }
@@ -116,10 +117,9 @@ func runningGoroutines(function string) bool {
 // kubelet's backoff decided when it tried again. Now it stays up, not ready
 // under the dependency's name, and joins once that Redis answers.
 func TestAssemblyWaitsForARedisThatIsNotUpAndJoinsWhenItAnswers(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	// Skipped or failed now, before anything is started, when there is no
+	// redis-server to bring the service Redis up with later.
+	redistest.Server(t)
 	f := newStartupWaitFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -147,7 +147,7 @@ func TestAssemblyWaitsForARedisThatIsNotUpAndJoinsWhenItAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, refused := startOwnPhaseTwoRedis(t, executable, port); refused != "" {
+	if _, refused := redistest.TryStartAt(t, net.JoinHostPort("127.0.0.1", port)); refused != "" {
 		t.Skipf("the service Redis port was taken meanwhile: %s", refused)
 	}
 	var result opened

@@ -14,19 +14,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 )
 
-func openProductionRedis(ctx context.Context, connection config.RedisConnectionConfig) (redis.UniversalClient, error) {
-	return openProductionRedisWithHook(ctx, connection, nil)
-}
-
-// openProductionRedisWithHook attaches the command recorder before the first
-// command so the per-command counts cover the whole process lifetime, Ping
-// included. A nil hook keeps the client uninstrumented.
-func openProductionRedisWithHook(
-	ctx context.Context, connection config.RedisConnectionConfig, hook *metric.RedisCallHook,
-) (redis.UniversalClient, error) {
-	return openProductionRedisOptionsWithHook(ctx, productionRedisOptions(connection), hook)
-}
-
 func openProductionRedisOptionsWithHook(ctx context.Context, options *redis.UniversalOptions, hook *metric.RedisCallHook) (redis.UniversalClient, error) {
 	client := redis.NewUniversalClient(options)
 	if hook != nil {

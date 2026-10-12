@@ -27,16 +27,62 @@ func (f reconcilerFunc) Reconcile(ctx context.Context, key StrategyKey) (Reconci
 	return f(ctx, key)
 }
 
-type subscriberFunc func(context.Context, func(bool), func(StrategyKey)) error
+type subscriberFunc func(context.Context, func(bool), func(StrategyKey), func(NoticeRefusal)) error
 
-func (f subscriberFunc) Watch(ctx context.Context, ready func(bool), changed func(StrategyKey)) error {
-	return f(ctx, ready, changed)
+func (f subscriberFunc) Watch(ctx context.Context, ready func(bool), changed func(StrategyKey), refused func(NoticeRefusal)) error {
+	return f(ctx, ready, changed, refused)
 }
 
+// factsStub is the link Console's two facts as a test sets them. asked is
+// whether the keying has been asked; refreshes counts the copy's rounds
+// that asked for the facts.
+type factsStub struct {
+	mu                            sync.Mutex
+	location, keyed, known, asked bool
+	asOf                          time.Time
+	refreshes                     int
+}
+
+func confirmedFacts() *factsStub {
+	return &factsStub{location: true, keyed: true, known: true, asked: true}
+}
+
+func (f *factsStub) KeyingAsked() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.asked
+}
+
+func (f *factsStub) Refresh(context.Context) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshes++
+}
+
+func (f *factsStub) LocationConfirmed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.location
+}
+
+func (f *factsStub) KeyedByAlertID() (bool, time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.keyed, f.asOf, f.known
+}
+
+func (f *factsStub) set(location, keyed, known bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.location, f.keyed, f.known = location, keyed, known
+}
+
+// indexOptions is a copy of a deployment whose Console has confirmed both
+// facts, which is what the index tests read the sets under.
 func indexOptions(c *clock) IndexOptions {
-	return IndexOptions{
+	return IndexOptions{Facts: confirmedFacts(),
 		Source: setReaderFunc(func(context.Context, StrategyKey) ([]string, error) { return nil, nil }),
-		Subscriber: subscriberFunc(func(ctx context.Context, ready func(bool), _ func(StrategyKey)) error {
+		Subscriber: subscriberFunc(func(ctx context.Context, ready func(bool), _ func(StrategyKey), _ func(NoticeRefusal)) error {
 			ready(true)
 			<-ctx.Done()
 			return ctx.Err()
@@ -117,7 +163,7 @@ func TestIndexPartialAndLocalAcknowledgements(t *testing.T) {
 	cache := mustIndex(t, options)
 	_ = cache.SetTracked([]StrategyKey{keyA})
 	cache.Refresh(context.Background())
-	if !cache.Contains(tenant, keyA.StrategyID, "fp") || cache.Stats().Calibrated != 0 || cache.Stats().Mode != ModeSelfMaintained {
+	if !cache.Contains(tenant, keyA.StrategyID, "fp") || cache.Stats().Calibrated != 0 {
 		t.Fatal("uncalibrated index claimed authoritative")
 	}
 	readFail = true
@@ -130,9 +176,12 @@ func TestIndexPartialAndLocalAcknowledgements(t *testing.T) {
 	if !cache.Contains(tenant, keyA.StrategyID, "new") {
 		t.Fatal("local abnormal not retained")
 	}
+	// A RECOVERY changes nothing in the copy: whether the alert closed is
+	// the set's word, and while the set cannot say, this process's own
+	// alert keeps answering open.
 	cache.Acknowledged([]contract.TriggerEventV1{recovery(keyA, "new")})
-	if cache.Contains(tenant, keyA.StrategyID, "new") {
-		t.Fatal("local recovery not applied")
+	if !cache.Contains(tenant, keyA.StrategyID, "new") {
+		t.Fatal("a RECOVERY took this process's alert out of the copy")
 	}
 	cache.Acknowledged([]contract.TriggerEventV1{recovery(keyA, "fp")})
 	readFail = false
@@ -238,7 +287,7 @@ func TestIndexCapacityAndAtomicTracking(t *testing.T) {
 	}
 }
 
-func TestIndexCalibrationDoesNotEraseConcurrentACKAndCanCorrectOldRecovery(t *testing.T) {
+func TestIndexCalibrationDoesNotEraseConcurrentACK(t *testing.T) {
 	c := &clock{at: time.Unix(1700000000, 0)}
 	options := indexOptions(c)
 	var cache *Cache
@@ -255,43 +304,10 @@ func TestIndexCalibrationDoesNotEraseConcurrentACKAndCanCorrectOldRecovery(t *te
 	if !cache.Contains(tenant, keyA.StrategyID, "new") {
 		t.Fatal("concurrent abnormal erased")
 	}
+	// A RECOVERY for a member the calibration lists leaves it a member.
 	cache.Acknowledged([]contract.TriggerEventV1{recovery(keyA, "fp")})
-	if cache.Contains(tenant, keyA.StrategyID, "fp") {
-		t.Fatal("recent recovery did not subtract")
-	}
-	concurrent = false
-	c.advance(time.Hour)
-	cache.RequestReconcile(keyA)
-	cache.Refresh(context.Background())
 	if !cache.Contains(tenant, keyA.StrategyID, "fp") {
-		t.Fatal("old ACK permanently masks still active alert")
-	}
-}
-
-func TestIndexFailedCalibrationDoesNotPermanentlySuppressAnAcknowledgedRecovery(t *testing.T) {
-	c := &clock{at: time.Unix(1700000000, 0)}
-	options := indexOptions(c)
-	options.Source = setReaderFunc(func(context.Context, StrategyKey) ([]string, error) { return []string{"fp"}, nil })
-	fail := false
-	options.Reconciler = reconcilerFunc(func(context.Context, StrategyKey) (Reconciliation, error) {
-		if fail {
-			return Reconciliation{}, ErrIncomplete
-		}
-		return Reconciliation{Members: []string{"fp"}}, nil
-	})
-	cache := mustIndex(t, options)
-	_ = cache.TrackOwned(keyA)
-	cache.Refresh(context.Background())
-	c.advance(time.Minute)
-	cache.Acknowledged([]contract.TriggerEventV1{recovery(keyA, "fp")})
-	if cache.Contains(tenant, keyA.StrategyID, "fp") {
-		t.Fatal("recent recovery was not suppressed")
-	}
-	fail = true
-	c.advance(4 * time.Hour)
-	cache.Refresh(context.Background())
-	if cache.Snapshot(keyA).Calibrated || !cache.Contains(tenant, keyA.StrategyID, "fp") {
-		t.Fatal("failed calibration permanently suppressed an index member after both bounds expired")
+		t.Fatal("a RECOVERY hid a member the calibrated set still lists")
 	}
 }
 
@@ -301,7 +317,7 @@ func TestIndexRunWaitsForSubscribeACKAndReconnectRereads(t *testing.T) {
 	options.RefreshInterval = 10 * time.Millisecond
 	options.IndexInterval = time.Hour
 	ack := make(chan bool, 2)
-	options.Subscriber = subscriberFunc(func(ctx context.Context, ready func(bool), _ func(StrategyKey)) error {
+	options.Subscriber = subscriberFunc(func(ctx context.Context, ready func(bool), _ func(StrategyKey), _ func(NoticeRefusal)) error {
 		for {
 			select {
 			case value := <-ack:
@@ -344,4 +360,41 @@ func waitIndexCondition(t *testing.T, condition func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("condition did not become true")
+}
+
+// A refused notice is counted on the copy, not on the subscriber: a move of
+// the link's location replaces the subscriber, and a count kept there would
+// start again from zero. Two subscriptions, one refusal each, read as two.
+func TestRefusedNoticesAreCountedOnTheCopyAcrossSubscriptions(t *testing.T) {
+	options := indexOptions(&clock{})
+	options.Now = time.Now
+	options.RefreshInterval = 10 * time.Millisecond
+	var mu sync.Mutex
+	subscriptions := 0
+	options.Subscriber = subscriberFunc(func(ctx context.Context, ready func(bool), _ func(StrategyKey), refused func(NoticeRefusal)) error {
+		mu.Lock()
+		subscriptions++
+		first := subscriptions == 1
+		mu.Unlock()
+		if first {
+			refused(NoticeOversized)
+			return nil
+		}
+		refused(NoticeInvalidKey)
+		ready(true)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	cache := mustIndex(t, options)
+	if got := cache.Stats().NoticesRefused; len(got) != 0 {
+		t.Fatalf("refused before any subscription = %v, want none", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- cache.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	waitIndexCondition(t, func() bool { return len(cache.Stats().NoticesRefused) == 2 })
+	if got, want := cache.Stats().NoticesRefused, map[NoticeRefusal]uint64{NoticeOversized: 1, NoticeInvalidKey: 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("refused = %v, want %v", got, want)
+	}
 }

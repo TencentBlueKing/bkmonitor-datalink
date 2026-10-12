@@ -108,11 +108,10 @@ type HashDeltaOutcome struct {
 // field/value pairs follow; ARGV[7] replace the whole record ('1'/'0'); then
 // that many pairs, then the fields to delete.
 //
-// Replace exists because a statement can be derived from a record other than
-// this one -- the whole-memory record a Plan has not yet moved off -- and such
-// a statement carries the entire memory rather than a difference. Applying it
-// on top of what the hash already holds would leave behind every group the
-// other record no longer has, which is not a memory anybody wrote. The delete
+// Replace exists because a statement derived from no record carries the entire
+// memory rather than a difference. Applying it on top of what the hash already
+// holds would leave behind groups the statement does not have, which is not a
+// memory anybody wrote. The delete
 // is inside the same script as the writes, so no reader ever sees the record
 // empty.
 //

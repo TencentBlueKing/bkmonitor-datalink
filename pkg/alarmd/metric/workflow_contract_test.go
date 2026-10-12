@@ -34,9 +34,6 @@ func TestWorkflowContractCountsAndSeriesBound(t *testing.T) {
 		r.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, PermitWait: &observability.PermitWaitFacts{Recovery: recovery}, Duration: time.Millisecond})
 	}
 	r.Observe(ctx, observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageDispatcherSnapshot, Dispatcher: &observability.DispatcherFacts{Active: 2, Ready: 7, Delayed: 3, QueuesKnown: true}})
-	if got := testutil.ToFloat64(r.phaseTwo.workflow.attempted); got != 1 {
-		t.Fatalf("attempted=%v", got)
-	}
 	if got := testutil.ToFloat64(r.phaseTwo.workflow.progress.WithLabelValues(kinds[0])); got != 1 {
 		t.Fatalf("failed commit counted: %v", got)
 	}
@@ -55,7 +52,7 @@ func TestWorkflowContractCountsAndSeriesBound(t *testing.T) {
 	for _, f := range families {
 		name := strings.TrimPrefix(f.GetName(), "bkmonitor_alarmd_")
 		switch name {
-		case "run_one_return_total", "run_one_attempted_total", "execute_return_total", "progress_completed_total", "scheduler_active_executions", "scheduler_ready_runners", "scheduler_delayed_runners", "query_permit_wait_seconds", "slot_operation_duration_seconds":
+		case "run_one_return_total", "execute_return_total", "progress_completed_total", "scheduler_active_executions", "scheduler_ready_runners", "scheduler_delayed_runners", "query_permit_wait_seconds", "slot_operation_duration_seconds":
 		default:
 			continue
 		}
@@ -80,9 +77,10 @@ func TestWorkflowContractCountsAndSeriesBound(t *testing.T) {
 			}
 		}
 	}
-	// 75: the executor's view_not_executable return (decision-016 batch 4b)
-	// is one more execute_return_total series.
-	if count != 75 {
-		t.Fatalf("new series=%d want75 (including +Inf,sum,count, no created)", count)
+	// 74: the executor's view_not_executable return is one more
+	// execute_return_total series, and the attempted counter, which nothing
+	// read, one fewer.
+	if count != 74 {
+		t.Fatalf("new series=%d want 74 (including +Inf,sum,count, no created)", count)
 	}
 }

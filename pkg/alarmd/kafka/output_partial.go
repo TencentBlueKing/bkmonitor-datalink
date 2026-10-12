@@ -10,7 +10,11 @@
 package kafka
 
 import (
+	"context"
+	"errors"
 	"fmt"
+
+	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -54,14 +58,19 @@ func (err *OutputPartiallyRejectedError) Error() string {
 	}
 	first := err.Rejected[0]
 	return fmt.Sprintf("kafka trigger event sink: %s: %d events rejected and %d withheld beside them; first %s: %s (event %s, strategy %s, format %s)",
-		contract.ReasonOutputConversionRejected, len(err.Rejected), len(err.Withheld), first.Rule, first.Detail, first.EventID, first.StrategyID, first.Format)
+		err.OutputRejectionReason(), len(err.Rejected), len(err.Withheld), first.Rule, first.Detail, first.EventID, first.StrategyID, first.Format)
 }
 
 // OutputRejectionReason names the Slot's completion, as a whole rejection
 // does.
+// OutputRejectionReason is whose refusal the first rejected event was: the
+// producer's, once the batch was sent, or the sink's before it.
 func (err *OutputPartiallyRejectedError) OutputRejectionReason() string {
 	if err == nil {
 		return ""
+	}
+	if len(err.Rejected) > 0 && err.Rejected[0].Rule == observability.OutputRejectProducerRefused {
+		return contract.ReasonOutputClientRejected
 	}
 	return contract.ReasonOutputConversionRejected
 }
@@ -72,6 +81,12 @@ func (err *OutputPartiallyRejectedError) OutputRejectionDetail() string {
 		return ""
 	}
 	return err.Rejected[0].Rule + ": " + err.Rejected[0].Detail
+}
+
+// OutputFailureKind: part of the batch was refused before sending or for
+// good by the producer - this deployment's, as a whole refusal is.
+func (err *OutputPartiallyRejectedError) OutputFailureKind() string {
+	return observability.OutputFailureClientRejected
 }
 
 // OutputNotWrittenEventIDs is every event of the batch that was not written,
@@ -168,5 +183,54 @@ func partialRejection(events []contract.TriggerEventV1, formats []string, refuse
 		}
 	}
 	partial.whole = left == 0
+	return partial
+}
+
+// partlyRefused is a batch the producer refused for good only some messages
+// of, as a partial rejection: the refused events named under
+// OutputRejectProducerRefused, and the rest written. SendMessages returns the
+// failed messages alone, and every other one landed (sarama sync_producer.go);
+// the refusals are all of the kind no retry changes, ErrMessageSizeTooLarge
+// among them, which a broker's MESSAGE_TOO_LARGE also comes back as. Reported
+// whole, as "nothing sent", the messages that landed had their Plans' State
+// not move, their alerts unknown to the open-alert copy and the next round
+// send them again.
+//
+// An event of the same series as a refused one is reported not written
+// beside it, though it may have landed: a series moves its State whole (see
+// withholdSeriesOf), and it goes again with its series under the same event
+// id, which the consumer deduplicates. Nil when every message was refused,
+// which is a refusal of the whole batch, or when a refused message cannot be
+// matched to its event.
+func partlyRefused(ctx context.Context, err error, messages []*sarama.ProducerMessage, eventOf []int,
+	events []contract.TriggerEventV1, formats []string, refused []refusal) error {
+	var batch sarama.ProducerErrors
+	if !errors.As(err, &batch) || len(batch) == 0 || len(batch) >= len(messages) {
+		return nil
+	}
+	position := make(map[*sarama.ProducerMessage]int, len(messages))
+	for at, message := range messages {
+		position[message] = eventOf[at]
+	}
+	after := append([]refusal(nil), refused...)
+	for _, failure := range batch {
+		if failure == nil {
+			return nil
+		}
+		index, known := position[failure.Msg]
+		if !known {
+			return nil
+		}
+		detail, _ := oneClientRejection(failure.Err)
+		after[index] = refusal{rule: observability.OutputRejectProducerRefused, detail: detail}
+	}
+	withheld := withholdSeriesOf(events, after)
+	partial := partialRejection(events, formats, after, withheld)
+	if partial == nil {
+		return nil
+	}
+	// The report is the batch's and is replaced, not added to: it carries
+	// the refusals made before sending beside the ones the producer made.
+	observability.ReportOutputRejected(ctx, partial.facts(), len(partial.Withheld))
 	return partial
 }

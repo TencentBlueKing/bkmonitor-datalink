@@ -17,7 +17,7 @@ var admissionResults = map[string]struct{}{"admitted": {}, "rejected": {}}
 // free-form reason turns one series into as many as there are strings.
 var admissionFilters = map[string]struct{}{"target_scope": {}, "target_plan": {}, "host_status": {}, "none": {}}
 var admissionReasons = map[string]struct{}{
-	"in_scope": {}, "out_of_scope": {}, "scope_empty": {}, "plan_not_indexed": {}, "none": {},
+	"in_scope": {}, "out_of_scope": {}, "scope_empty": {}, "none": {},
 	// Target scope on object identity: a record that built no identity is a
 	// defect on the writing or querying side every time, and an identity the
 	// target did not name is either a record outside the target or a target
@@ -25,11 +25,18 @@ var admissionReasons = map[string]struct{}{
 	// apart from out_of_scope so the first is alertable and the second is
 	// readable against in_scope.
 	"object_identity_missing": {}, "object_identity_unmatched": {},
+	// Target scope on a dynamic group the Slot could not read: refused, as
+	// the group's unknown hosts are, and not known to be outside the target.
+	"dynamic_group_unavailable": {},
 	// Target plan: a record that carries no key is a defect on the writing or
 	// querying side, a record outside the resolved members is the filter
 	// working, and a target nobody resolved is this process not filtering -
 	// the third is structurally unreachable and alertable if it ever counts.
+	// A record outside the members of a resolution one of whose selectors
+	// could not answer is neither: target_selector_unavailable, refused as
+	// the contract says, and not known to be outside the target.
 	"in_target": {}, "target_key_missing": {}, "out_of_target": {}, "target_plan_unresolved": {},
+	"target_selector_unavailable": {},
 	// Host status: the reasons matter separately because they call for
 	// different actions - a disabled host is the filter working, an unknown
 	// host is a CMDB gap, and unavailable facts mean it is not filtering.
@@ -62,6 +69,20 @@ func (r *Recorder) RecordSeriesAdmission(filter, result, reason string) {
 	r.phaseTwo.seriesAdmission.WithLabelValues(filter, result, reason).Inc()
 }
 
+// RecordHostPlacement counts one admitted series a Plan read whose host CMDB
+// placed by id or agent, and, when its own address is not that host's, one
+// whose address differs.
+func (r *Recorder) RecordHostPlacement(groupedByTargetIP, addressDiffers bool) {
+	if r == nil {
+		return
+	}
+	grouped := strconv.FormatBool(groupedByTargetIP)
+	r.phaseTwo.cmdbPlacedByHostID.WithLabelValues(grouped).Inc()
+	if addressDiffers {
+		r.phaseTwo.cmdbAddressDiffers.WithLabelValues(grouped).Inc()
+	}
+}
+
 var cmdbIndexReasons = map[string]struct{}{
 	"none": {}, "never_loaded": {}, "index_stale": {}, "index_empty": {}, "no_store": {},
 }
@@ -72,12 +93,18 @@ var cmdbIndexReasons = map[string]struct{}{
 // index is not filtering correctly, and without the age it is impossible to
 // tell a correct "out of scope" from one caused by a cache that stopped being
 // refreshed.
-func (r *Recorder) SetCMDBHostIndex(hosts int, ageSeconds float64, sourceAgeSeconds float64, degraded bool, reason string) {
+//
+// The ages are by kind: index is how long ago alarmd read it; published, how
+// long ago the writer published what was read, which is what staleness is
+// judged on when the writer says (0 when it does not); source, another
+// writer's last full-pass attempt, shown and not judged on.
+func (r *Recorder) SetCMDBHostIndex(hosts int, ageSeconds, publishedAgeSeconds, sourceAgeSeconds float64, degraded bool, reason string) {
 	if r == nil {
 		return
 	}
 	r.phaseTwo.cmdbIndexHosts.Set(float64(hosts))
 	r.phaseTwo.cmdbIndexAge.WithLabelValues("index").Set(ageSeconds)
+	r.phaseTwo.cmdbIndexAge.WithLabelValues("published").Set(publishedAgeSeconds)
 	r.phaseTwo.cmdbIndexAge.WithLabelValues("source").Set(sourceAgeSeconds)
 	if reason == "" {
 		reason = "none"
@@ -103,6 +130,53 @@ func (r *Recorder) SetCMDBServiceInstanceIndex(instances int) {
 	r.phaseTwo.cmdbIndexServiceInstances.Set(float64(instances))
 }
 
+// CMDBBusinessMappings are the published business mappings the CMDB index
+// reads, and CMDBBusinessMappingStates the states of their gauge.
+var (
+	CMDBBusinessMappings      = []string{"bcs_cluster", "bcs_namespace"}
+	CMDBBusinessMappingStates = []string{"held", "refused", "truncated", "read_failed", "missing"}
+)
+
+// SetCMDBBusinessMapping publishes one business mapping the index holds,
+// what its load left out, and whether the latest load could not read it at
+// all (read_failed 1; the held count is then the last read's, kept until a
+// read succeeds) or found no hash under its key (missing 1; nothing is held).
+// A mapping outside CMDBBusinessMappings is dropped rather than creating a
+// series.
+func (r *Recorder) SetCMDBBusinessMapping(mapping string, held, refused, truncated int, readFailed, missing bool) {
+	if r == nil || r.phaseTwo.cmdbIndexBusinessMappings == nil || !knownLabel(CMDBBusinessMappings, mapping) {
+		return
+	}
+	gauge := r.phaseTwo.cmdbIndexBusinessMappings
+	gauge.WithLabelValues(mapping, "held").Set(float64(held))
+	gauge.WithLabelValues(mapping, "refused").Set(float64(refused))
+	gauge.WithLabelValues(mapping, "truncated").Set(float64(truncated))
+	failed := 0.0
+	if readFailed {
+		failed = 1
+	}
+	gauge.WithLabelValues(mapping, "read_failed").Set(failed)
+	absent := 0.0
+	if missing {
+		absent = 1
+	}
+	gauge.WithLabelValues(mapping, "missing").Set(absent)
+}
+
+// CMDBRefusedRecords are the kinds of record a CMDB index load counts as
+// refused.
+var CMDBRefusedRecords = []string{"host", "service_instance", "topo_node"}
+
+// SetCMDBRecordsRefused publishes how many records of one kind the latest
+// CMDB index load refused. A kind outside CMDBRefusedRecords is dropped
+// rather than creating a series.
+func (r *Recorder) SetCMDBRecordsRefused(record string, refused int) {
+	if r == nil || r.phaseTwo.cmdbIndexRecordsRefused == nil || !knownLabel(CMDBRefusedRecords, record) {
+		return
+	}
+	r.phaseTwo.cmdbIndexRecordsRefused.WithLabelValues(record).Set(float64(refused))
+}
+
 // SnapshotPublished records the size of the fleet snapshot this replica just
 // published; SnapshotsLoaded records one fleet view read and the bytes it
 // pulled. Together they make the fleet store's Redis traffic readable on
@@ -120,6 +194,33 @@ func (r *Recorder) SnapshotsLoaded(loaded int, bytes int) {
 	}
 	r.phaseTwo.fleetViewSnapshotLoads.Inc()
 	r.phaseTwo.fleetViewSnapshotBytes.Add(float64(bytes))
+}
+
+// SummaryPublished records the size of the fleet summary this replica just
+// published beside its snapshot; SummariesLoaded and OwnedLoaded record one
+// summarized view's reads, of the summaries and of the owned lists it read
+// when the digests disagreed.
+func (r *Recorder) SummaryPublished(bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetSummaryBytes.Set(float64(bytes))
+}
+
+func (r *Recorder) SummariesLoaded(loaded int, bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetViewSummaryLoads.Inc()
+	r.phaseTwo.fleetViewSummaryBytes.Add(float64(bytes))
+}
+
+func (r *Recorder) OwnedLoaded(loaded int, bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetViewOwnedLoads.Inc()
+	r.phaseTwo.fleetViewOwnedBytes.Add(float64(bytes))
 }
 
 // SetRetainedPeakCensus publishes the heartbeat census's size and how many

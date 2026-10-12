@@ -25,18 +25,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsChanging:
-// a publication that an earlier round confirmed and published but never
-// activated (the process stopped between the two) is still the one the
-// fleet should execute. A periodic Refresh that finds the source changed
-// again reports the new candidate as pending; it used to return there, so
-// the stranded publication was only activated by a later round that
-// published, and a source that changed on every round kept the activation
-// frozen on a publication whose payload had already expired, with no way
-// out. InitialRefresh loops on pending and never had this gap. The pending
-// round now catches the activation up to the latest publication, and says
-// so on the refresh line.
-func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsChanging(t *testing.T) {
+// A publication an earlier round published but never activated (the
+// process stopped between the two) is superseded by the next round that
+// reads the source: every round that reads a change publishes it and
+// activates it, so a source that changes on every round moves the
+// activation on every round. It used to be different: a change waited for a
+// second identical read, a source that changed on every round never gave
+// one, and only a special branch could catch the activation up to the
+// stranded publication while its payload expired. Here the payload of the
+// publication the fleet runs expires too, and the round that follows
+// activates the change it read.
+func TestProductionPhaseTwoRefreshActivatesEveryChangeWhileTheSourceKeepsChanging(t *testing.T) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
@@ -50,6 +49,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 		t.Fatal(err)
 	}
 	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"series":[],"status":null,"trace_id":"unused","is_partial":false,"result_table_id":[]}`))
 	}))
 	defer uqServer.Close()
@@ -79,9 +79,9 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 				defer refreshMu.Unlock()
 				refreshes = append(refreshes, *observation.SourceRefresh)
 			}),
-			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
+			PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 				return &recordingPhaseTwoEventSink{}, nil
-			},
+			}),
 		},
 	)
 	if err != nil {
@@ -98,8 +98,8 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 		t.Fatal(err)
 	}
 
-	// A second publication is confirmed and published without being activated:
-	// the source alone is refreshed, as if the process had stopped in between.
+	// A second publication is published without being activated: the source
+	// alone is refreshed, as if the process had stopped in between.
 	edit := func(oldValue, newValue string) {
 		t.Helper()
 		current, getErr := redisClient.Get(ctx, "alarm-config.strategy_1001").Bytes()
@@ -114,21 +114,10 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 			t.Fatal(err)
 		}
 	}
-	refreshSource := func() controlplane.SourceRefreshResult {
-		t.Helper()
-		result, refreshErr := control.dependencies.Reconciler.Refresh(ctx, control.dependencies.Source, control.dependencies.Planner)
-		if refreshErr != nil {
-			t.Fatalf("source refresh error = %v", refreshErr)
-		}
-		return result
-	}
 	edit(`"threshold": 80`, `"threshold": 81`)
-	if result := refreshSource(); result.Status != controlplane.SourceRefreshPendingConfirmation {
-		t.Fatalf("first changed refresh = %+v, want pending", result)
-	}
-	stranded := refreshSource()
-	if stranded.Status != controlplane.SourceRefreshPublished || stranded.Publication == initial.Current {
-		t.Fatalf("confirmed refresh = %+v, want a new publication", stranded)
+	stranded, refreshErr := control.dependencies.Reconciler.Refresh(ctx, control.dependencies.Source, control.dependencies.Planner)
+	if refreshErr != nil || stranded.Status != controlplane.SourceRefreshPublished || stranded.Publication == initial.Current {
+		t.Fatalf("source refresh of a change = (%+v, %v), want it published by the round that read it", stranded, refreshErr)
 	}
 	if activation, err := repository.LoadActivationHead(ctx); err != nil || activation.Current != initial.Current {
 		t.Fatalf("the source refresh alone must not activate: activation=%+v err=%v", activation, err)
@@ -141,34 +130,11 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 		t.Fatal(err)
 	}
 
-	// The source changes again before the periodic Refresh sees the stranded
-	// publication, and keeps changing on every round after that.
-	edit(`"threshold": 81`, `"threshold": 82`)
-	result, refreshErr := control.Refresh(ctx)
-	if refreshErr != nil || result.Status != phaseTwoControlHealthy || len(result.QueryGroups) != 1 {
-		t.Fatalf("Refresh() with a pending candidate = (%+v, %v), want the stranded publication activated and healthy", result, refreshErr)
-	}
-	activation, err := repository.LoadActivationHead(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if activation.Current != stranded.Publication || activation.RecordRevision != initial.RecordRevision+1 {
-		t.Fatalf("activation = %+v, want the stranded publication %+v at revision %d", activation, stranded.Publication, initial.RecordRevision+1)
-	}
-	if _, err := loadPublishedSnapshot(ctx, repository, activation.Current); err != nil {
-		t.Fatalf("the activated publication must be readable: %v", err)
-	}
-	refreshMu.Lock()
-	last := refreshes[len(refreshes)-1]
-	refreshMu.Unlock()
-	if last.Status != observability.SourceRefreshPending || !last.ActivationCaughtUp ||
-		last.ActivatedEpoch != stranded.Publication.PublicationEpoch || last.SnapshotRevision != "" || !last.CountsKnown {
-		t.Fatalf("the refresh line must say a pending round caught the activation up: %+v", last)
-	}
-
-	// Every later round finds another candidate; the activation stays on the
-	// latest publication and the rounds stay healthy.
-	for round, thresholds := range [][2]string{{"82", "83"}, {"83", "84"}, {"84", "85"}} {
+	// The source changes again before the periodic Refresh runs, and keeps
+	// changing on every round after that. Each round publishes what it read
+	// and the activation follows it.
+	previousEpoch := stranded.Publication.PublicationEpoch
+	for round, thresholds := range [][2]string{{"81", "82"}, {"82", "83"}, {"83", "84"}, {"84", "85"}} {
 		edit(`"threshold": `+thresholds[0], `"threshold": `+thresholds[1])
 		result, refreshErr := control.Refresh(ctx)
 		if refreshErr != nil || result.Status != phaseTwoControlHealthy || len(result.QueryGroups) != 1 {
@@ -177,11 +143,17 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 		refreshMu.Lock()
 		last := refreshes[len(refreshes)-1]
 		refreshMu.Unlock()
-		if last.Status != observability.SourceRefreshPending || last.ActivationCaughtUp {
-			t.Fatalf("round %d must be an ordinary pending round: %+v", round+1, last)
+		if last.Status != observability.SourceRefreshPublished || last.PublicationEpoch <= previousEpoch || !last.CountsKnown {
+			t.Fatalf("round %d refresh line = %+v, want a new publication after epoch %d", round+1, last, previousEpoch)
 		}
-	}
-	if activation, err := repository.LoadActivationHead(ctx); err != nil || activation.Current != stranded.Publication {
-		t.Fatalf("activation after further pending rounds = %+v err=%v, want %+v", activation, err, stranded.Publication)
+		previousEpoch = last.PublicationEpoch
+		activation, err := repository.LoadActivationHead(ctx)
+		if err != nil || activation.Current.PublicationEpoch != last.PublicationEpoch ||
+			string(activation.Current.SnapshotRevision) != last.SnapshotRevision {
+			t.Fatalf("round %d activation = %+v err=%v, want the publication the round made (%+v)", round+1, activation, err, last)
+		}
+		if _, err := loadPublishedSnapshot(ctx, repository, activation.Current); err != nil {
+			t.Fatalf("round %d: the activated publication must be readable: %v", round+1, err)
+		}
 	}
 }

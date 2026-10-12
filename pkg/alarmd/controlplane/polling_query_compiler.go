@@ -2,9 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
-	"fmt"
 	"html"
-	"math/big"
 	"regexp"
 	"sort"
 	"strconv"
@@ -96,7 +94,7 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePromQL(source PrimaryQuerySou
 		TenantID: source.Identity.TenantID, BusinessID: source.Identity.BusinessID, SpaceScope: source.Identity.SpaceScope,
 		PromQL: &execution.PromQLQuery{Expression: c.PromQL, Match: match}, SourceSemantics: sources,
 		StepMillis: interval * 1000, AlignmentMillis: interval * 1000, DownSampleRange: execution.DownSampleNone,
-		Timezone: compiler.timezone, Normalization: n,
+		Timezone: compiler.timezone, Normalization: n, GlobalBusiness: source.Identity.GlobalBusiness,
 	})
 }
 
@@ -157,14 +155,11 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 	if c.AggInterval > (1<<63-1)/1000 {
 		return nil, queryConfigRejected("QUERY_INTERVAL_INVALID", nil)
 	}
-	if c.DataSourceLabel == "bk_fta" {
-		return compiler.compileFTAQuery(c, business)
-	}
 	if c.DataSourceLabel != "bk_log_search" && c.DataTypeLabel == "time_series" {
 		if c.DataSourceLabel == "bk_data" && c.TimeField == "" {
 			c.TimeField = "dtEventTimeStamp"
 		}
-		clauses, err := compiler.compileLegacyQueryConfig(c)
+		clauses, err := compiler.compileLegacyQueryConfig(c, metricConditions)
 		if c.DataSourceLabel == "bk_data" {
 			for i := range clauses {
 				clauses[i].DataSource = "bkdata"
@@ -195,6 +190,14 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 		}
 		if c.TimeField == "" {
 			c.TimeField = "dtEventTimeStamp"
+		}
+		if c.MetricField == "" {
+			// A log query without a field counts documents, whatever method the
+			// strategy names: LogSearchTimeSeriesDataSource.init_by_query_config
+			// takes COUNT on _index when metric_field is empty, and the log
+			// source inherits it. Kept as the strategy's AVG, the provider is
+			// asked to average _index, which the log store refuses.
+			c.MetricField, c.AggMethod = "_index", "COUNT"
 		}
 	} else {
 		c.TimeField = "time"
@@ -229,16 +232,11 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 		c.MetricField = "_index"
 	}
 	// Log operators differ from the time-series compatibility mapping.
-	conditions, err := compileLogConditions(c.AggConditions)
-	if err != nil {
-		return nil, queryConfigRejected("QUERY_CONDITION_INVALID", err)
-	}
-	clauses, err := compiler.compileLegacyQueryConfig(c)
+	clauses, err := compiler.compileLegacyQueryConfig(c, logConditions)
 	if err != nil {
 		return nil, err
 	}
 	for i := range clauses {
-		clauses[i].Conditions = conditions
 		clauses[i].KeepColumns = []string{}
 		clauses[i].DataSource = "bkapm"
 		if c.DataSourceLabel == "bk_log_search" {
@@ -269,136 +267,6 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 func scalarCondition(field, method, value string) legacyCondition {
 	raw, _ := json.Marshal([]string{value})
 	return legacyCondition{Key: field, Method: method, Value: raw, Connector: "and"}
-}
-
-func compileLogConditions(source []legacyCondition) (execution.QueryConditions, error) {
-	result, err := compileConditions(source)
-	if err != nil {
-		return result, err
-	}
-	mapping := map[string]string{"reg": "req", "regexp": "req", "is one of": "eq", "is not one of": "ne", "contains match phrase": "contains", "not contains match phrase": "ncontains", "=": "eq", "!=": "ne", "is": "eq", "is not": "ne", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte", "nreg": "nreq", "neq": "ne", "exists": "existed", "nexists": "nexisted", "include": "contains", "exclude": "ncontains"}
-	for i, original := range source {
-		result.Fields[i].Operator = original.Method
-		if op := mapping[original.Method]; op != "" {
-			result.Fields[i].Operator = op
-		}
-	}
-	return result, nil
-}
-
-func compileFTAConditions(source []legacyCondition) (execution.QueryConditions, error) {
-	normalized := append([]legacyCondition(nil), source...)
-	for i, condition := range normalized {
-		if condition.Method != "gt" && condition.Method != "gte" && condition.Method != "lt" && condition.Method != "lte" {
-			continue
-		}
-		var values []any
-		decoder := json.NewDecoder(strings.NewReader(string(condition.Value)))
-		decoder.UseNumber()
-		if err := decoder.Decode(&values); err != nil || len(values) == 0 {
-			return execution.QueryConditions{}, fmt.Errorf("FTA range requires nonempty scalar list")
-		}
-		bound := values[0]
-		for _, candidate := range values[1:] {
-			var comparison int
-			switch left := bound.(type) {
-			case json.Number:
-				right, ok := candidate.(json.Number)
-				if !ok {
-					return execution.QueryConditions{}, fmt.Errorf("FTA range mixes incomparable scalar types")
-				}
-				l, ok := new(big.Rat).SetString(left.String())
-				if !ok {
-					return execution.QueryConditions{}, fmt.Errorf("FTA numeric bound invalid")
-				}
-				r, ok := new(big.Rat).SetString(right.String())
-				if !ok {
-					return execution.QueryConditions{}, fmt.Errorf("FTA numeric bound invalid")
-				}
-				comparison = l.Cmp(r)
-			case string:
-				right, ok := candidate.(string)
-				if !ok {
-					return execution.QueryConditions{}, fmt.Errorf("FTA range mixes incomparable scalar types")
-				}
-				comparison = strings.Compare(left, right)
-			default:
-				return execution.QueryConditions{}, fmt.Errorf("FTA range bound must be numeric or string")
-			}
-			if (strings.HasPrefix(condition.Method, "gt") && comparison < 0) || (strings.HasPrefix(condition.Method, "lt") && comparison > 0) {
-				bound = candidate
-			}
-		}
-		if number, ok := bound.(json.Number); ok && condition.Key == "time" && !strings.ContainsAny(number.String(), ".eE") {
-			text := number.String()
-			if len(text) > 10 {
-				text = text[:10]
-			}
-			bound = json.Number(text)
-		}
-		normalized[i].Value, _ = json.Marshal([]any{bound})
-	}
-	return compileLogConditions(normalized)
-}
-
-func (compiler *LegacyPrimaryQueryCompiler) compileFTAQuery(c legacyQueryConfig, business string) ([]execution.QueryClause, error) {
-	if compiler.runtimeFacts.FTAEventStorage == nil {
-		return nil, querySourceIncomplete("QUERY_FTA_EVENT_STORAGE_FACT_MISSING", nil)
-	}
-	storage := compiler.runtimeFacts.FTAEventStorage
-	if storage.TimeField.Name != "time" || storage.TimeField.Type != "date" || storage.TimeField.Unit != "millisecond" {
-		return nil, querySourceIncomplete("QUERY_FTA_EVENT_STORAGE_INVALID", nil)
-	}
-	if c.AggInterval == 0 {
-		c.AggInterval = 60
-	}
-	// Python floors this to minutes, but the polling Plan also uses the
-	// configured interval for its schedule and point offsets. A non-integral
-	// minute would require distinct bucket and evaluation steps.
-	if c.AggInterval < 60 || c.AggInterval%60 != 0 {
-		return nil, queryConfigRejected("QUERY_FTA_INTERVAL_INVALID", nil)
-	}
-	if c.AlertName == "" {
-		return nil, queryConfigRejected("QUERY_FTA_ALERT_NAME_MISSING", nil)
-	}
-	userConditions, err := compileFTAConditions(c.AggConditions)
-	if err != nil {
-		return nil, err
-	}
-	c.AggConditions = nil
-	name := c.AlertName
-	c.MetricField, c.AggMethod, c.TimeField, c.ResultTableID = "_index", "COUNT", storage.TimeField.Name, storage.TableID
-	if c.Alias == "" {
-		c.Alias = "_index"
-	}
-	c.AggConditions = append(c.AggConditions, scalarCondition("status", "eq", "ABNORMAL"))
-	if business != "0" {
-		c.AggConditions = append(c.AggConditions, scalarCondition("bk_biz_id", "eq", business))
-	}
-	switch {
-	case name == "__ALL_EVENT_PLUGIN__":
-		c.AggConditions = append(c.AggConditions, scalarCondition("plugin_id", "neq", "bkmonitor"))
-	case strings.HasPrefix(name, "__EVENT_PLUGIN__"):
-		c.AggConditions = append(c.AggConditions, scalarCondition("plugin_id", "eq", strings.TrimPrefix(name, "__EVENT_PLUGIN__")))
-	case name != "":
-		c.AggConditions = append(c.AggConditions, scalarCondition("alert_name.raw", "eq", name))
-	}
-	conditions, err := compileLogConditions(c.AggConditions)
-	if err != nil {
-		return nil, fmt.Errorf("FTA conditions: %w", err)
-	}
-	clauses, err := compiler.compileLegacyQueryConfig(c)
-	if err != nil {
-		return nil, err
-	}
-	for i := range clauses {
-		clauses[i].Driver = "influxdb"
-		clauses[i].FieldSemantics = "fta_event_tags/v1"
-		clauses[i].SourceConditions = &conditions
-		clauses[i].Conditions = userConditions
-		clauses[i].KeepColumns = nil
-	}
-	return clauses, nil
 }
 
 var logSearchSpecial = regexp.MustCompile(`[-+=&|><!(){}\[\]^"~*?:/]|AND|OR|TO|NOT`)

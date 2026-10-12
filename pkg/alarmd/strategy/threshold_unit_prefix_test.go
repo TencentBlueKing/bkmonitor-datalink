@@ -69,3 +69,29 @@ func TestAThresholdPrefixScalesOnlyWhereTheUnitHasAScale(t *testing.T) {
 		})
 	}
 }
+
+// The scales a data unit and a threshold prefix compile to are the ones
+// Python's base conversion gives: the value's factor to the unit's base, and
+// the threshold's. One case differs on purpose: Python takes a prefix a
+// scaled unit does not have (bytes with "bogus") as no conversion, and this
+// compiler refuses it, as the table above pins.
+func TestUnitScalesMatchPythonBaseConversion(t *testing.T) {
+	for _, test := range []struct {
+		name, dataUnit, prefix string
+		value, threshold       int64
+	}{
+		{name: "percent unit", dataUnit: "percentunit", prefix: "%", value: 100, threshold: 1},
+		{name: "binary data", dataUnit: "Data (IEC)||kbytes", prefix: "Mi", value: 1024, threshold: 1024 * 1024},
+		{name: "decimal rate", dataUnit: "MBs", prefix: "k", value: 1_000_000, threshold: 1_000},
+		{name: "time", dataUnit: "s", prefix: "m", value: 1_000_000_000, threshold: 60_000_000_000},
+		{name: "fixed unit", dataUnit: "celsius", prefix: "", value: 1, threshold: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			normalizer, threshold, ok := compileUnitNormalizer(test.dataUnit, test.prefix)
+			if !ok || normalizer.sourceMultiplier != test.value || threshold != test.threshold {
+				t.Fatalf("compileUnitNormalizer(%q, %q) = value %d threshold %d (ok %t), want value %d threshold %d",
+					test.dataUnit, test.prefix, normalizer.sourceMultiplier, threshold, ok, test.value, test.threshold)
+			}
+		})
+	}
+}

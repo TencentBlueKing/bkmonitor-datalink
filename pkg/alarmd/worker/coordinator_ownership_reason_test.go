@@ -132,6 +132,9 @@ func TestTheEventAckedLineCarriesTheSinksOwnRefusal(t *testing.T) {
 		acked.OutputRejection.Detail != "kafka: invalid configuration (Producing headers requires Kafka at least v0.11)" {
 		t.Fatalf("output rejection facts = %+v, want the sink's word and bare sentence", acked.OutputRejection)
 	}
+	if acked.OutputFailureKind != observability.OutputFailureClientRejected {
+		t.Fatalf("output failure kind = %q, want client_rejected from the refusal's type", acked.OutputFailureKind)
+	}
 	// A retryable dependency failure carries no rejection facts and keeps
 	// its own reason.
 	observations = observations[:0]
@@ -182,5 +185,48 @@ func TestTheEventAckedLineCarriesTheSinksCount(t *testing.T) {
 	}
 	if line := acked(); line.OutputWrite != nil {
 		t.Fatalf("a sink that did not count wrote %+v", line.OutputWrite)
+	}
+}
+
+// The kind the sink's error says by its type travels on the event_acked
+// line, and changes nothing about the reason: a snapshot store failure and a
+// failure without a kind are both OUTPUT_ACK_UNKNOWN, one named, the other
+// unknown; a success carries no kind.
+func TestTheEventAckedLineCarriesTheFailuresKindAndKeepsTheReason(t *testing.T) {
+	for _, test := range []struct{ kind, want string }{
+		{observability.OutputFailureSnapshotStore, observability.OutputFailureSnapshotStore},
+		{"", observability.OutputFailureUnknown},
+	} {
+		observations := make([]observability.Observation, 0, 16)
+		observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		})
+		fixture := buildFixture(t, true, "event_ack", observer, &observations)
+		fixture.ports.eventFailureKind = test.kind
+		_, _ = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+		found := false
+		for _, observation := range observations {
+			if observation.Stage != observability.StageEventACKed {
+				continue
+			}
+			found = true
+			if string(observation.ReasonCode) != "OUTPUT_ACK_UNKNOWN" || observation.OutputFailureKind != test.want {
+				t.Fatalf("kind %q: event_acked reason %s kind %q, want OUTPUT_ACK_UNKNOWN and %q", test.kind, observation.ReasonCode, observation.OutputFailureKind, test.want)
+			}
+		}
+		if !found {
+			t.Fatal("no event_acked observation")
+		}
+	}
+	observations := make([]observability.Observation, 0, 16)
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		observations = append(observations, observation)
+	})
+	fixture := buildFixture(t, true, "", observer, &observations)
+	_, _ = fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	for _, observation := range observations {
+		if observation.Stage == observability.StageEventACKed && observation.OutputFailureKind != "" {
+			t.Fatalf("a successful write carries kind %q", observation.OutputFailureKind)
+		}
 	}
 }

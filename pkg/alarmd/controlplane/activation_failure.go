@@ -107,7 +107,10 @@ func activationDependencyIO(err error) error {
 type PersistedActivationCorruptError struct{ Err error }
 
 func (failure *PersistedActivationCorruptError) Error() string {
-	return "alarmd controlplane: persisted activation is corrupt"
+	if failure == nil || failure.Err == nil {
+		return "alarmd controlplane: persisted activation is corrupt"
+	}
+	return "alarmd controlplane: persisted activation is corrupt: " + failure.Err.Error()
 }
 
 func (failure *PersistedActivationCorruptError) Unwrap() error {

@@ -24,9 +24,8 @@ type resolvedTarget struct {
 	members map[string]struct{}
 	facts   execution.TargetResolutionSummary
 	// unresolved is true when nothing resolved the plan at all - no resolver
-	// on this worker - as opposed to a resolution one of whose selectors
-	// could not answer. Only the first admits nothing; the second admits the
-	// members that did resolve.
+	// on this worker. Failed inclusion selectors keep the known members;
+	// unresolved plans and failed exclusions admit nothing.
 	unresolved bool
 	// definitive is the resolution's own account of whether its members are
 	// the whole target; see Definitive.
@@ -62,6 +61,13 @@ func (target *resolvedTarget) Definitive() bool {
 	return target.definitive
 }
 
+// Unavailable says a selector of the resolution could not answer this Slot,
+// nothing resolving it included: a key outside the members is then not known
+// to be outside the target, and the admission filter says so.
+func (target *resolvedTarget) Unavailable() bool {
+	return target != nil && target.absence.State == nodata.TargetResolutionUnavailable
+}
+
 // absenceView is what the no-data round reads; nil when nothing resolved.
 func (target *resolvedTarget) absenceView() *nodata.TargetResolution {
 	if target == nil {
@@ -81,6 +87,7 @@ func (target *resolvedTarget) absenceView() *nodata.TargetResolution {
 // static hosts beside it from being detected. Only a Plan nothing resolved
 // at all is left out; its filter then admits nothing, under the name that
 // says so.
+// An unavailable exclusion keeps its resolution but admits no members.
 func (stream *streamedExecution) ResolvedTargets() execution.TargetMemberships {
 	if len(stream.targetResolutions) == 0 {
 		return nil
@@ -116,7 +123,7 @@ func (stream *streamedExecution) resolveTargetPlans(ctx context.Context) {
 		var resolution *targetplan.Resolution
 		if resolver != nil {
 			interval := time.Duration(due.CompiledPlan.EvaluationSemantics().EvaluationInterval) * time.Second
-			resolution = resolver.Resolve(ctx, plan, interval)
+			resolution = resolver.ResolveFor(ctx, due.Identity.TenantID, plan, interval)
 		}
 		unresolved := resolution == nil
 		if unresolved {
@@ -129,8 +136,66 @@ func (stream *streamedExecution) resolveTargetPlans(ctx context.Context) {
 		target := newResolvedTarget(resolution)
 		target.unresolved = unresolved
 		stream.targetResolutions[due.Identity] = target
-		stream.observeTargetResolution(ctx, due, resolution)
+		stream.observeTargetResolution(ctx, due, resolution, false)
 	}
+}
+
+// ResolvedScopeGroups hands the source the dynamic groups Begin read, so a
+// target scope's group conditions are matched against one reading for the
+// whole Slot.
+func (stream *streamedExecution) ResolvedScopeGroups() execution.ScopeGroupMemberships {
+	if len(stream.scopeGroups) == 0 {
+		return nil
+	}
+	return stream.scopeGroups
+}
+
+// resolveScopeGroups reads, once for this Slot at Begin, every dynamic group
+// the due Plans' target scopes name: the platform keeps a dynamic group
+// target as the group ids, and Python reads the groups' hosts when it
+// matches. Each Plan's groups are reported as one resolution. A worker
+// without the reader reads none, and each is unavailable by name: its
+// condition admits no host, as a target plan nothing resolved admits none.
+func (stream *streamedExecution) resolveScopeGroups(ctx context.Context) {
+	reader := stream.coordinator.ports.ScopeGroups
+	for _, due := range stream.header.DuePlans {
+		ids := due.CompiledPlan.TargetScope().DynamicGroupIDs()
+		if len(ids) == 0 {
+			continue
+		}
+		if stream.scopeGroups == nil {
+			stream.scopeGroups = make(execution.ScopeGroupMemberships)
+		}
+		interval := time.Duration(due.CompiledPlan.EvaluationSemantics().EvaluationInterval) * time.Second
+		resolution := &targetplan.Resolution{Selectors: make([]targetplan.SelectorResult, 0, len(ids))}
+		for _, id := range ids {
+			selector := targetplan.SelectorResult{Kind: targetplan.SelectorKindGroup, ID: id,
+				State: targetplan.SelectorUnavailable, Reason: targetplan.ReasonSourceUnwired}
+			if reader != nil {
+				// Asked per Plan, not once per Slot: the store keeps a group
+				// for as long as the longest period that asks for it.
+				selector = reader.ResolveScopeGroup(ctx, due.Identity.TenantID, id, interval)
+			}
+			stream.scopeGroups[execution.ScopeGroupRef{TenantID: due.Identity.TenantID, GroupID: id}] = scopeGroupMembership(selector)
+			resolution.Selectors = append(resolution.Selectors, selector)
+		}
+		resolution.Compose()
+		stream.observeTargetResolution(ctx, due, resolution, true)
+	}
+}
+
+// scopeGroupMembership is one group's reading as the admission filter takes
+// it: its hosts, known only when it answered in full from current facts. A
+// group served past a failed refresh, or one some of whose members were
+// refused, still admits the hosts it holds; a host outside them is not then
+// known to be outside the target.
+func scopeGroupMembership(selector targetplan.SelectorResult) execution.ScopeGroupMembership {
+	membership := execution.ScopeGroupMembership{HostIDs: make([]string, 0, len(selector.Members)),
+		Known: (selector.State == targetplan.SelectorOK || selector.State == targetplan.SelectorOKEmpty) && selector.StaleAge == 0}
+	for host := range selector.Members {
+		membership.HostIDs = append(membership.HostIDs, host)
+	}
+	return membership
 }
 
 // newResolvedTarget projects one resolution into the two views the Slot
@@ -147,8 +212,15 @@ func newResolvedTarget(resolution *targetplan.Resolution) *resolvedTarget {
 		target.absence.State = nodata.TargetResolutionUnavailable
 	}
 	target.absence.Members = resolution.Members()
+	// A topology reference to a node the topology cache does not list, or to
+	// one under another business, is a resolved, empty answer for that
+	// reference (decision-017 section 3.2): a node the full and fresh
+	// topology does not have is a fact about the topology, not a gap in it.
+	// It adds no member and takes none away, so the plan's other memberships
+	// are as definitive as they would be without it. Only facts that were not
+	// read in full and fresh hold the verdict back.
 	target.definitive = resolution.State == targetplan.ResolutionComplete && resolution.StaleAge == 0 &&
-		len(resolution.Failures) == 0 && len(resolution.NodesMissing) == 0 && len(resolution.NodesForeign) == 0
+		len(resolution.Failures) == 0
 	// One union, read twice: the absence view lists it and the filter
 	// indexes it, so the two cannot disagree about who the members are.
 	members := resolution.Members()
@@ -160,6 +232,11 @@ func newResolvedTarget(resolution *targetplan.Resolution) *resolvedTarget {
 		State: string(resolution.State), NodesMissing: append([]string(nil), resolution.NodesMissing...),
 		NodesForeign: append([]string(nil), resolution.NodesForeign...), StaleAgeSeconds: int64(resolution.StaleAge.Seconds()),
 	}
+	for _, selector := range resolution.Selectors {
+		if selector.Kind == targetplan.SelectorKindExclude && selector.Reason == targetplan.ReasonExcludedAbsent {
+			target.facts.ExcludedAbsent += selector.Dropped
+		}
+	}
 	for _, failure := range resolution.Failures {
 		target.facts.Failures = append(target.facts.Failures, execution.TargetSelectorFailure{
 			Kind: failure.Kind, ID: failure.ID, Reason: failure.Reason, Dropped: failure.Dropped, Kept: failure.Kept,
@@ -168,12 +245,12 @@ func newResolvedTarget(resolution *targetplan.Resolution) *resolvedTarget {
 	return target
 }
 
-// observeTargetResolution writes the one line and the two counters a
+// observeTargetResolution writes the line and counters a
 // resolution leaves: the composed state, the stale age when a selector ate
 // old grain, and each selector by name.
-func (stream *streamedExecution) observeTargetResolution(ctx context.Context, due execution.DuePlan, resolution *targetplan.Resolution) {
+func (stream *streamedExecution) observeTargetResolution(ctx context.Context, due execution.DuePlan, resolution *targetplan.Resolution, scopeGroups bool) {
 	facts := &observability.TargetResolutionFacts{
-		StrategyID: due.Identity.StrategyID, State: string(resolution.State),
+		StrategyID: due.Identity.StrategyID, State: string(resolution.State), ScopeGroups: scopeGroups,
 		StaleAgeSeconds: int64(resolution.StaleAge.Seconds()),
 		Selectors:       make([]observability.TargetSelectorFacts, 0, len(resolution.Selectors)),
 	}

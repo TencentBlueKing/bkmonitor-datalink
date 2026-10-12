@@ -218,10 +218,9 @@ it("drills into processors, checkpoints and alert writes with the same toggle", 
   expect(within(apply).getByText("告警流水校验与落库")).toBeVisible();
 });
 it.each(["missing", "null", "stale", "duplicate", "partial", "mismatch"])(
-  "keeps parent chart when %s child data cannot be trusted",
+  "shows available child data without parent or coverage validation: %s",
   (scenario) => {
     const details: MetricPanel[] = detailPanels(10);
-    // 用 Enrich 首个 processor 验证各种无效样本，避免影响无关父阶段。
     if (scenario === "missing") details[0].series.shift();
     if (scenario === "stale") details[0].series[0].points[0][0] = 9;
     if (scenario === "null") details[0].series[0].points[0][1] = null;
@@ -236,6 +235,31 @@ it.each(["missing", "null", "stale", "duplicate", "partial", "mismatch"])(
       />,
     );
     expect(screen.getByRole("group")).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent("暂无完整子步骤样本");
+    const region = screen.getByRole("region", { name: "Event 丰富耗时明细" });
+    expect(within(region).getByText("资源 processor")).toBeVisible();
+    expect(within(region).getByText("丰富结果校验与保存")).toBeVisible();
+    expect(screen.queryByRole("status")).toBeNull();
   },
 );
+it("keeps parent chart and reports genuinely absent child metrics", () => {
+  render(
+    <LifecycleDurationBreakdown
+      panels={[panel(), waitPanel()]}
+      loading={false}
+      error={false}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("暂无子步骤数据");
+  expect(screen.getByRole("group")).toBeVisible();
+});
+it("labels the full selected range rather than the current calculation window", () => {
+  render(
+    <LifecycleDurationBreakdown
+      panels={[panel(), waitPanel()]}
+      rangeSeconds={900}
+      loading={false}
+      error={false}
+    />,
+  );
+  expect(screen.getByText("15 分钟平均总耗时")).toBeVisible();
+});

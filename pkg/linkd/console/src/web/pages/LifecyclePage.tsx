@@ -252,9 +252,11 @@ export function LifecyclePage() {
         panels={metrics.data?.panels ?? []}
         stage="lifecycle"
         stageLabel="Lifecycle"
+        calculationWindowSeconds={calculationWindowSeconds}
       />
 
       <LifecycleDurationBreakdown
+        rangeSeconds={rangeSeconds}
         panels={metrics.data?.panels ?? []}
         loading={metrics.isLoading}
         error={metrics.isError}

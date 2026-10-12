@@ -53,11 +53,18 @@ export function LifecycleDurationBreakdown({
   panels,
   loading,
   error,
+  rangeSeconds,
 }: {
   panels: MetricPanel[];
   loading: boolean;
   error: boolean;
+  rangeSeconds?: number;
 }) {
+  const rangeLabel = rangeSeconds
+    ? rangeSeconds < 3600
+      ? `${rangeSeconds / 60} 分钟`
+      : `${rangeSeconds / 3600} 小时`
+    : "所选范围";
   const [selected, setSelected] = useState<string>();
   const [ignoreBatch, setIgnoreBatch] = useState(false);
   const panel = panels.find(
@@ -144,8 +151,8 @@ export function LifecycleDurationBreakdown({
           <p className="eyebrow">EVENT · TIME BREAKDOWN</p>
           <h2>单 Event 平均处理耗时分布</h2>
           <p>
-            所选范围内每次 Event
-            尝试的均值，包含失败与重放。点击阶段查看子步骤；执行耗时包含实际
+            {rangeLabel}全范围内每次 Event
+            尝试的均值，包含失败与重放。与上方最近计算窗口的均值不同。点击阶段查看子步骤。执行耗时包含实际
             I/O，并非 CPU 时间。
           </p>
         </div>
@@ -178,7 +185,7 @@ export function LifecycleDurationBreakdown({
               <strong>{duration(storageQueue)}</strong>
             </div>
             <div>
-              <span>平均总耗时</span>
+              <span>{rangeLabel}平均总耗时</span>
               <strong>{duration(total + batchWait + storageQueue)}</strong>
             </div>
             <p>
@@ -245,10 +252,6 @@ export function LifecycleDurationBreakdown({
             phase={active.id}
             label={active.label}
             color={active.color}
-            timestamp={active.timestamp}
-            execution={active.value ?? 0}
-            batch={phaseWait(active.id, "batch_wait")}
-            queue={phaseWait(active.id, "storage_queue")}
             ignoreBatch={ignoreBatch}
           />
         </>

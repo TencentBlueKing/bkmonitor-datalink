@@ -5,6 +5,7 @@ interface StageMetricCardsProps {
   panels: MetricPanel[];
   stage: string;
   stageLabel: string;
+  calculationWindowSeconds?: number;
 }
 
 // StageMetricCards 只聚合指定 linkd_stage 的最新采样点，不跨阶段推导系统状态。
@@ -12,7 +13,11 @@ export function StageMetricCards({
   panels,
   stage,
   stageLabel,
+  calculationWindowSeconds,
 }: StageMetricCardsProps) {
+  const windowLabel = calculationWindowSeconds
+    ? `近 ${calculationWindowSeconds < 60 ? `${calculationWindowSeconds} 秒` : `${calculationWindowSeconds / 60} 分钟`}`
+    : undefined;
   const throughput = latestStageValue(panels, "pipeline-completed", stage);
   const p99 = latestStageValue(panels, "pipeline-p99", stage);
   const average = latestStageValue(panels, "pipeline-average", stage);
@@ -29,7 +34,9 @@ export function StageMetricCards({
           <p className="eyebrow">STAGE METRICS</p>
           <h2>{stageLabel} 当前指标</h2>
           <p>
-            所选时间范围内的最新采样点；耗时按指标计算窗口统计，不是端到端延迟。
+            {windowLabel
+              ? `${windowLabel}计算窗口的最新值；下方分布按完整所选范围统计。`
+              : "所选时间范围内的最新采样点；耗时按指标计算窗口统计，不是端到端延迟。"}
           </p>
         </div>
       </header>
@@ -52,7 +59,7 @@ export function StageMetricCards({
           tone="amber"
         />
         <StageStat
-          title="平均耗时"
+          title={windowLabel ? `${windowLabel}平均总耗时` : "平均耗时"}
           value={formatDuration(average)}
           detail="当前阶段单次尝试均值"
           help="当前阶段总处理耗时除以尝试次数得到的平均值。"

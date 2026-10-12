@@ -203,7 +203,7 @@ describe("PrometheusConnector", () => {
       result.panels.find((p) => p.id === "lifecycle-batch-phases")?.series[0]
         .name,
     ).toBe("write · connection");
-    expect(totals).toHaveLength(7);
+    expect(totals).toHaveLength(6);
     expect(
       totals.every(
         (u) =>
@@ -215,17 +215,16 @@ describe("PrometheusConnector", () => {
     const detail = queries.find((q) =>
       q.includes("phase_step_duration_seconds_sum"),
     );
-    expect(detail).toContain("on (linkd_phase) group_left");
-    expect(detail).toContain("phase_duration_seconds_count");
-    expect(detail).not.toContain("phase_step_duration_seconds_count");
+    expect(detail).toContain("phase_step_duration_seconds_count");
+    expect(detail).not.toContain("phase_duration_seconds_count");
+    expect(detail).not.toContain("group_left");
     expect(
       queries.some((q) =>
         q.includes(
           "min(sum(increase(linkd_lifecycle_event_phase_step_duration_seconds_count",
         ),
       ),
-    ).toBe(true);
-
+    ).toBe(false);
     const paired = queries.find((q) =>
       q.includes("server_took|paired_execution"),
     );

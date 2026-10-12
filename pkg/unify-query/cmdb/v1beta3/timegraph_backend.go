@@ -139,6 +139,9 @@ func (m *Model) buildTimeGraphRequest(
 		req.SourceInfo = make(map[string]string, len(req.SourceExpandInfo))
 	}
 	for key, value := range req.SourceExpandInfo {
+		if sourceValue, exists := req.SourceInfo[key]; exists && sourceValue != value {
+			return nil, nil, fmt.Errorf("source_expand_info conflicts with source_info for field %q", key)
+		}
 		req.SourceInfo[key] = value
 	}
 	if !req.TargetTypeExplicit {

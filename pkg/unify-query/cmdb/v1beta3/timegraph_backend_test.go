@@ -403,3 +403,68 @@ func TestQueryResourceMatcherRangeDefaultsEmptyStep(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildTimeGraphRequestPreservesSourceIdentity(t *testing.T) {
+	provider := contractSchemaProvider{
+		resources: []ResourceType{"source"},
+		primary:   map[ResourceType][]string{"source": {"scope", "id"}},
+		fields:    map[ResourceType][]string{"source": {"scope", "id", "version"}},
+	}
+	tests := []struct {
+		name     string
+		source   cmdb.Matcher
+		expand   cmdb.Matcher
+		want     map[string]string
+		conflict bool
+	}{
+		{name: "conflicting_identity", source: cmdb.Matcher{"scope": "s1", "id": "n1"}, expand: cmdb.Matcher{"id": "n2"}, conflict: true},
+		{name: "same_identity_and_attribute", source: cmdb.Matcher{"scope": "s1", "id": "n1"}, expand: cmdb.Matcher{"id": "n1", "version": "v2"}, want: map[string]string{"scope": "s1", "id": "n1", "version": "v2"}},
+		{name: "complete_partial_identity", source: cmdb.Matcher{"scope": "s1"}, expand: cmdb.Matcher{"id": "n1", "version": "v2"}, want: map[string]string{"scope": "s1", "id": "n1", "version": "v2"}},
+		{name: "attribute_only", expand: cmdb.Matcher{"version": "v2"}, want: map[string]string{"version": "v2"}},
+		{name: "empty_identity_is_unspecified", source: cmdb.Matcher{"id": ""}, expand: cmdb.Matcher{"id": "n2"}, want: map[string]string{"id": "n2"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &Model{schemaProvider: provider}
+			req, _, err := model.buildTimeGraphRequest("test-space", "", "source", tc.source, tc.expand, false, nil)
+			if tc.conflict {
+				require.ErrorContains(t, err, "source_expand_info conflicts with source_info")
+				require.Nil(t, req)
+				require.NotContains(t, err.Error(), "n2")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, req.SourceInfo)
+			require.Equal(t, matcherToMap(tc.expand), req.SourceExpandInfo)
+		})
+	}
+}
+
+func TestTimeGraphLegacyQueriesRejectConflictingSourceIdentityBeforeResolvingBackend(t *testing.T) {
+	for _, rangeQuery := range []bool{false, true} {
+		name := "instant"
+		if rangeQuery {
+			name = "range"
+		}
+		t.Run(name, func(t *testing.T) {
+			model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+			resolverCalls := 0
+			model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+				resolverCalls++
+				return &fakeTimeGraphModel{}, nil
+			})
+			source := cmdb.Matcher{"node": "n1"}
+			expand := cmdb.Matcher{"node": "n2"}
+			var err error
+			if rangeQuery {
+				_, _, _, _, _, err = model.QueryResourceMatcherRange(context.Background(), "", "test-space", "30s", "1700000000", "1700000030", "system", "node", source, expand, false, nil)
+			} else {
+				_, _, _, _, _, err = model.QueryResourceMatcher(context.Background(), "", "test-space", "1700000000", "system", "node", source, expand, false, nil)
+			}
+			require.ErrorContains(t, err, "source_expand_info conflicts with source_info")
+			require.Zero(t, resolverCalls)
+			require.Equal(t, cmdb.Matcher{"node": "n1"}, source)
+			require.Equal(t, cmdb.Matcher{"node": "n2"}, expand)
+		})
+	}
+}

@@ -138,12 +138,11 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 	for field, target := range map[string]*string{"object": &message.Object, "item": &message.Item, "meta_info": &message.MetaInfo, "strategy_id": &message.StrategyID, "dimension_info": &message.DimensionInfo} {
 		if value, found := extra[field]; found {
 			// 固定 KAC 文本字段保持协议类型，显式 0/false/空字符串都不能触发默认值回退。
-			switch value.(type) {
-			case nil, string, bool, json.Number:
-				*target = scalarText(value)
-			default:
-				return kingeye.AlarmMessage{}, fmt.Errorf("KAC legacy field %s requires scalar value", field)
+			text, err := sourceText(field, value)
+			if err != nil {
+				return kingeye.AlarmMessage{}, err
 			}
+			*target = text
 		}
 	}
 	if value, found := extra["field_extra_info"]; found && value != nil {

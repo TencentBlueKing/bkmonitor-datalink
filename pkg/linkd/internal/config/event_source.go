@@ -463,6 +463,40 @@ func (s EventSource) validateFingerprint() error {
 	}
 }
 
+// ValidateNormalization 只验证事件标准化字段，不要求消息消费、丰富或输出资源。
+// 调用方必须自行保证配置来源可信；该验证不构成正式 EventSource 发布准入。
+func (s EventSource) ValidateNormalization(severity SeverityConfig) error {
+	if err := domain.ValidateIdentityPart("event_source_id", s.EventSourceID, 32); err != nil {
+		return err
+	}
+	if s.EventSourceID == domain.BuiltinMergeEventSourceID {
+		return fmt.Errorf("builtin merge source has no external normalization")
+	}
+	if s.RelatedTenantID != "" {
+		if err := domain.ValidateIdentityPart("related_tenant_id", s.RelatedTenantID, 64); err != nil {
+			return err
+		}
+	}
+	if s.Cleaner.Type != CleanerTypeStandard {
+		return fmt.Errorf("cleaner.type is not registered")
+	}
+	if err := s.validateFingerprint(); err != nil {
+		return err
+	}
+	if len(s.SeverityMapping) > 256 {
+		return fmt.Errorf("severity mapping limit exceeded")
+	}
+	for from, to := range s.SeverityMapping {
+		if strings.TrimSpace(from) == "" || len(from) > 32 || !severity.Has(to) {
+			return fmt.Errorf("invalid severity mapping")
+		}
+	}
+	if s.DefaultSeverity != "" && !severity.Has(s.DefaultSeverity) {
+		return fmt.Errorf("unknown default severity")
+	}
+	return nil
+}
+
 func validateFingerprintPath(path string) error {
 	if strings.HasPrefix(path, "dimensions.") && len(path) > len("dimensions.") &&
 		!strings.Contains(strings.TrimPrefix(path, "dimensions."), ".") {

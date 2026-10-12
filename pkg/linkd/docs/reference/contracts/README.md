@@ -3,6 +3,7 @@
 | 契约                               | 内容                                                     |
 | ---------------------------------- | -------------------------------------------------------- |
 | [Linkd 标准事件](standard-event.md) | `RawEventMessage` 信封、`standard` payload 与 KAC V2 发布前校验 |
+| [KAC 插件调试字段预览](kac-ingest-preview.md) | 同步 HTTP 标准化及字段返回；不执行丰富或业务写入 |
 | [kac-alarm-output.md](kac-alarm-output.md) | KAC alarm_collect_topic 扁平 Alarm JSON、身份和固定映射 |
 | [kac-alert-projection-v1.md](kac-alert-projection-v1.md) | 全局插件直接维护 alarm_event、独立版本元数据、字段所有权、持久重试和搜索可见性 |
 | [kac-action-delivery-v2.md](kac-action-delivery-v2.md) | 独立动作身份、即时原子入队、投影门槛、持久重试、控制面自动发送及管理 API；全局插件自动启用；KAC 实际处置接收端另行接入 |

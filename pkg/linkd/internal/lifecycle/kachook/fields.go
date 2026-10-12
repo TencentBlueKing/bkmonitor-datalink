@@ -42,29 +42,8 @@ func mappedPayload(message kingeye.AlarmMessage, alert domain.Alert, fields map[
 	// 目录由 KAC 的租户字段注册表发布到丰富快照；只取有效视图，绝不展开来源 payload。
 	extra, _ := document["extra_data"].(map[string]any)
 	if catalog, present := extra["__kac_custom_fields"]; present {
-		items, ok := catalog.([]any)
-		if !ok || len(items) > 128 {
-			return nil, fmt.Errorf("invalid KAC custom field catalog")
-		}
-		declared := make(map[string]string, len(items))
-		for _, item := range items {
-			name, ok := item.(string)
-			if !ok {
-				return nil, fmt.Errorf("invalid KAC custom field name")
-			}
-			key, _ := json.Marshal(name)
-			declared[name] = "$.extra_data[" + string(key) + "]"
-		}
-		if err := kingeye.ValidateFieldMappings(declared); err != nil {
+		if err := projectCatalog(result, extra, catalog); err != nil {
 			return nil, err
-		}
-		for name := range declared {
-			if value, found := extra[name]; found {
-				result[name], err = json.Marshal(value)
-				if err != nil {
-					return nil, err
-				}
-			}
 		}
 	}
 	for key, path := range fields {
@@ -80,6 +59,35 @@ func mappedPayload(message kingeye.AlarmMessage, alert domain.Alert, fields map[
 		result[key] = encoded
 	}
 	return json.Marshal(result)
+}
+
+func projectCatalog(result map[string]json.RawMessage, extra map[string]any, catalog any) error {
+	items, ok := catalog.([]any)
+	if !ok || len(items) > 128 {
+		return fmt.Errorf("invalid KAC custom field catalog")
+	}
+	declared := make(map[string]string, len(items))
+	for _, item := range items {
+		name, ok := item.(string)
+		if !ok {
+			return fmt.Errorf("invalid KAC custom field name")
+		}
+		key, _ := json.Marshal(name)
+		declared[name] = "$.extra_data[" + string(key) + "]"
+	}
+	if err := kingeye.ValidateFieldMappings(declared); err != nil {
+		return err
+	}
+	for name := range declared {
+		if value, found := extra[name]; found {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			result[name] = encoded
+		}
+	}
+	return nil
 }
 
 func mergeExtraInfo(base, overlay map[string]any) map[string]any {

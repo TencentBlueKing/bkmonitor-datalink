@@ -28,6 +28,7 @@ import (
 	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/eventsource"
 	sourcestore "linkd/internal/eventsource/storage"
+	"linkd/internal/ingestpreview"
 	lifecycleprocess "linkd/internal/lifecycle/process"
 	"linkd/internal/lifecycle/scheduler"
 	mergeflow "linkd/internal/merge"
@@ -137,6 +138,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	}
 	defer func() { _ = policyResources.Close() }()
 	api := &controlapi.API{Policies: policies, Tasks: registry, OneModel: oneModelQueries, Previewer: newEnrichPreview(sources, *cfg.Storage, cfg.Resources), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
+	api.IngestPreviewer = ingestpreview.New(sources, severity.SeveritySnapshot)
 	api.PolicyPreviewer = newPolicyPreview(policies, *cfg.Storage, policyResources, severity)
 	simulationUpgrade := ""
 	if cfg.Lifecycle != nil {

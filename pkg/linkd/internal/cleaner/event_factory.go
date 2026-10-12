@@ -83,6 +83,20 @@ func NewEventFactory(source config.EventSource, severity config.SeverityConfig) 
 	)
 }
 
+// NewNormalizationFactory 复用正式 Build 规则，仅要求标准化配置，供无消息消费的调试使用。
+// 工厂不持有存储或输出端口；输入 RecordID 和 ReceivedAt 必须由调试样本固定。
+func NewNormalizationFactory(source config.EventSource, severity config.SeverityConfig) (*EventFactory, error) {
+	source = source.WithDefaults()
+	severity = severity.WithDefaults()
+	if err := severity.Validate(); err != nil {
+		return nil, err
+	}
+	if err := source.ValidateNormalization(severity); err != nil {
+		return nil, err
+	}
+	return &EventFactory{source: source, severity: severity, severityResolver: DefaultSeverityResolver{}, fingerprintResolver: DefaultFingerprintResolver{}}, nil
+}
+
 // NewEventFactoryWithResolvers 使用显式 resolver 创建 EventFactory。
 // resolver 只覆盖配置驱动算法，不改变 EventFactory 独占的系统字段。
 func NewEventFactoryWithResolvers(

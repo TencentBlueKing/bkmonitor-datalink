@@ -300,17 +300,8 @@ func (c *Client) fields(ctx context.Context, q projection.Request) (map[string]a
 		return nil, "", projection.ErrInvalid
 	}
 	// KAC Integer 字段不能直接写旧消息里的空字符串；缺值写 null，已有数值保持整数精度。
-	for _, key := range []string{"bk_biz_id", "bk_cloud_id", "bk_service_id"} {
-		value, _ := fields[key].(string)
-		if value == "" {
-			fields[key] = nil
-			continue
-		}
-		n, err := strconv.ParseInt(value, 10, 32)
-		if err != nil {
-			return nil, "", projection.Failure{Code: "response_invalid"}
-		}
-		fields[key] = n
+	if err := kachook.NormalizeIntegerFields(fields); err != nil {
+		return nil, "", projection.Failure{Code: "response_invalid"}
 	}
 	fields["source_alarm_status"] = fields["action"]
 	parents := map[string]bool{}

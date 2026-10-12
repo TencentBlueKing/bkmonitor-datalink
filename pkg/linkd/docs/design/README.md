@@ -13,6 +13,7 @@
 | [define.md](define.md)                                           | Event、EventProcessing、Alert、AlertLog 的权威数据模型 |
 | [kac-alarm-hook.md](kac-alarm-hook.md)                           | KAC Alarm 兼容 Hook、字段映射与可靠性边界           |
 | [kac-compatibility-plugin.md](kac-compatibility-plugin.md) | 全局 KAC 插件、原索引直接维护、字段所有权与验收边界 |
+| [kac-alarm-source-debug-preview.md](kac-alarm-source-debug-preview.md) | 首版已实现并完成本地 HTTP/ES/原调试组件联调：verification 样本复用、来源规则及不执行丰富的同步预览；全主站验收待验证 |
 | [architecture.md](architecture.md)                               | 整体架构图、事件处理流程图、模块与可靠性边界             |
 | [deployment.md](deployment.md)                                   | All-in-one 与三进程部署拓扑、职责和演进边界            |
 | [core-storage-contract.md](core-storage-contract.md)             | Repository、处理元数据、CAS 与物理资源                 |

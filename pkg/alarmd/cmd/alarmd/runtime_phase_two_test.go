@@ -1833,6 +1833,8 @@ func TestPhaseTwoWorkerBundleAppliesAssignmentDiffWithoutRestart(t *testing.T) {
 	}
 	waitSignal(t, first.leaseFinished, "removed query-group lease cancellation")
 	waitSignal(t, second.leaseStarted, "new query-group lease maintenance")
+	// The lease is released after its maintenance has ended, not with it.
+	waitUntil(t, signalWaitBound, "removed runner release", func() bool { return first.releaseCount() > 0 })
 	if first.releaseCount() != 1 {
 		t.Fatalf("removed runner release calls = %d, want 1", first.releaseCount())
 	}
@@ -1982,6 +1984,18 @@ func TestPhaseTwoWorkerBundleReportsOwnedQueryGroupsAndFixedOwnershipTransitions
 	}
 	waitSignal(t, runner.leaseFinished, "removed query-group lease cancellation")
 	assertOwnedQueryGroupGauge(t, recorder, 0)
+	// The loss is observed after the lease is released, which follows the end
+	// of its maintenance rather than coming with it.
+	waitUntil(t, signalWaitBound, "the removed Query Group's loss", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, observation := range observations {
+			if observation.Component == observability.ComponentOwnership && observation.Stage == observability.StageAssignmentLost {
+				return true
+			}
+		}
+		return false
+	})
 
 	mu.Lock()
 	gotObservations := append([]observability.Observation(nil), observations...)

@@ -14,7 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/kmstest"
 )
 
-const minimalPayload = `{"schema_version":1,"service":"unify-query","redis":{"default":{"password":"redis-secret"}}}`
+const minimalPayload = `{"redis":{"default":{"password":"redis-secret"}}}`
 
 func configFor(t *testing.T, payload string, extra string) (*viper.Viper, *viper.Viper) {
 	t.Helper()
@@ -27,6 +27,30 @@ func configFor(t *testing.T, payload string, extra string) (*viper.Viper, *viper
 	}
 	runtime.SetDefault("trace.enable", false)
 	return raw, runtime
+}
+
+func TestLegacyPayloadMetadataIsOptionalAndIgnored(t *testing.T) {
+	for name, metadata := range map[string]string{
+		"absent":           "",
+		"legacy":           `"schema_version":1,"service":"unify-query",`,
+		"version only":     `"schema_version":1,`,
+		"service only":     `"service":"unify-query",`,
+		"different values": `"schema_version":2,"service":"other-service",`,
+		"different types":  `"schema_version":"unverified","service":7,`,
+		"null":             `"schema_version":null,"service":null,`,
+		"structured":       `"schema_version":{"value":false},"service":[true],`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, runtime := configFor(t, `{`+metadata+`"redis":{"default":{"password":"redis-secret"}}}`, "")
+			snapshot, err := Load(raw, runtime)
+			require.NoError(t, err)
+			require.False(t, runtime.IsSet("redis.password"), "validation must not partially publish")
+			snapshot.Apply(runtime)
+			require.Equal(t, "redis-secret", runtime.GetString("redis.password"))
+			require.False(t, runtime.IsSet("schema_version"))
+			require.False(t, runtime.IsSet("service"))
+		})
+	}
 }
 
 func TestSDKLoadAndFrozenSnapshot(t *testing.T) {
@@ -52,13 +76,13 @@ func TestSDKLoadAndFrozenSnapshot(t *testing.T) {
 func TestSchemaFailures(t *testing.T) {
 	for name, payload := range map[string]string{
 		"bad JSON":              "{fake-secret",
-		"wrong version":         strings.Replace(minimalPayload, `"schema_version":1`, `"schema_version":2`, 1),
-		"wrong service":         strings.Replace(minimalPayload, "unify-query", "wrong-service", 1),
 		"wrong type":            strings.Replace(minimalPayload, `"redis-secret"`, `123`, 1),
 		"unknown key":           strings.TrimSuffix(minimalPayload, "}") + `,"fake-secret":"fake-secret"}`,
+		"unknown with metadata": strings.TrimSuffix(minimalPayload, "}") + `,"schema_version":1,"service":"unify-query","fake-secret":"fake-secret"}`,
 		"unknown alias":         strings.Replace(minimalPayload, "default", "other", 1),
-		"missing password":      `{"schema_version":1,"service":"unify-query","redis":{"default":{}}}`,
-		"missing redis":         `{"schema_version":1,"service":"unify-query"}`,
+		"missing password":      `{"redis":{"default":{}}}`,
+		"null password":         `{"redis":{"default":{"password":null}}}`,
+		"missing redis":         `{}`,
 		"multiple objects":      minimalPayload + `{}`,
 		"incomplete app":        strings.TrimSuffix(minimalPayload, "}") + `,"bkapp_id_secret":{"default":{"app_code":"fake-secret"}}}`,
 		"incomplete basic auth": strings.TrimSuffix(minimalPayload, "}") + `,"consul":{"default":{"username":"fake-secret"}}}`,

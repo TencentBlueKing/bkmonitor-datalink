@@ -78,8 +78,9 @@ type consulAuth struct {
 	TLSPrivateKey *string `json:"tls_private_key_base64"`
 }
 type payload struct {
-	Version    int                   `json:"schema_version"`
-	Service    string                `json:"service"`
+	// Accept legacy metadata without using it to validate or select credentials.
+	Version    json.RawMessage       `json:"schema_version"`
+	Service    json.RawMessage       `json:"service"`
 	Apps       map[string]app        `json:"bkapp_id_secret"`
 	MySQL      map[string]account    `json:"mysql"`
 	Redis      map[string]password   `json:"redis"`
@@ -241,9 +242,6 @@ func preparePayload(v *viper.Viper, plaintext string) (*Snapshot, error) {
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return nil, fmt.Errorf("kms payload: invalid JSON document")
-	}
-	if p.Version != 1 || p.Service != "bk-monitor-worker" {
-		return nil, fmt.Errorf("kms payload: unsupported schema_version or service")
 	}
 	for _, aliases := range []map[string]bool{
 		allowedAliases(p.Apps, "default"), allowedAliases(p.MySQL, "default"), allowedAliases(p.Consul, "default"),

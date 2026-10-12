@@ -47,6 +47,41 @@ func prepareTestPayload(t *testing.T, v *viper.Viper, p map[string]any) (*Snapsh
 	return preparePayload(v, string(data))
 }
 
+func TestLegacyPayloadMetadataIsOptionalAndIgnored(t *testing.T) {
+	expected, err := prepareTestPayload(t, viper.New(), testPayload(t))
+	require.NoError(t, err)
+	for name, metadata := range map[string]map[string]any{
+		"absent":           {},
+		"legacy":           {"schema_version": 1, "service": "bk-monitor-worker"},
+		"version only":     {"schema_version": 1},
+		"service only":     {"service": "bk-monitor-worker"},
+		"different values": {"schema_version": 2, "service": "other-service"},
+		"different types":  {"schema_version": "unverified", "service": 7},
+		"null":             {"schema_version": nil, "service": nil},
+		"structured":       {"schema_version": map[string]any{"value": false}, "service": []any{true}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := testPayload(t)
+			delete(p, "schema_version")
+			delete(p, "service")
+			for key, value := range metadata {
+				p[key] = value
+			}
+			v := viper.New()
+			v.Set("store.mysql.password", "old")
+			snapshot, err := prepareTestPayload(t, v, p)
+			require.NoError(t, err)
+			require.Equal(t, "old", v.GetString("store.mysql.password"), "validation must not partially publish")
+			require.Equal(t, expected.values, snapshot.values)
+			require.Equal(t, expected.ConsulOptions, snapshot.ConsulOptions)
+			snapshot.Apply(v)
+			require.Equal(t, "test-mysql-password", v.GetString("store.mysql.password"))
+			require.False(t, v.IsSet("schema_version"))
+			require.False(t, v.IsSet("service"))
+		})
+	}
+}
+
 func TestPayloadBindsEmptyValuesAndDistinctRedisPasswords(t *testing.T) {
 	v := viper.New()
 	for _, key := range []string{"broker.redis", "store.redis", "store.dependentRedis"} {
@@ -80,8 +115,6 @@ func TestPayloadBindsEmptyValuesAndDistinctRedisPasswords(t *testing.T) {
 func TestPayloadRejectsInvalidSchemaWithoutPublishing(t *testing.T) {
 	for name, change := range map[string]func(map[string]any){
 		"unknown field": func(p map[string]any) { p["SECRET_MARKER"] = "SECRET_MARKER" },
-		"wrong version": func(p map[string]any) { p["schema_version"] = 2 },
-		"wrong service": func(p map[string]any) { p["service"] = "unify-query" },
 		"wrong type":    func(p map[string]any) { p["redis"].(map[string]any)["broker"].(map[string]any)["password"] = 7 },
 		"missing redis": func(p map[string]any) { delete(p, "redis") },
 		"null redis":    func(p map[string]any) { p["redis"].(map[string]any)["broker"].(map[string]any)["password"] = nil },

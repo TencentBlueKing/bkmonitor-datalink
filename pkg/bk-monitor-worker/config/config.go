@@ -496,7 +496,7 @@ func loadConfig() error {
 	if snapshot != nil {
 		snapshot.Apply(viper.GetViper())
 		StorageConsulClientOptions = snapshot.ConsulOptions
-		logger.Info("deployment credentials initialized: kms enabled, schema_version=1")
+		logger.Info("deployment credentials initialized: kms enabled")
 	}
 	keys = viper.AllKeys()
 

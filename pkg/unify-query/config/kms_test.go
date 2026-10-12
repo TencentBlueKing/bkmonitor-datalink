@@ -24,7 +24,7 @@ func TestKMSConsumersAndTransactionalReload(t *testing.T) {
 	viper.Reset()
 	previous := config.CustomConfigFilePath
 	t.Cleanup(func() { viper.Reset(); config.CustomConfigFilePath = previous })
-	payload := `{"schema_version":1,"service":"unify-query","redis":{"default":{"password":"node-secret"}},"redis_sentinel":{"default":{"password":"sentinel-secret"}},"bkapp_id_secret":{"default":{"app_code":"example-app","app_secret":"app-secret"}},"bkdata":{"default":{"token":"data-secret"}},"telemetry":{"default":{"token":"trace-secret","headers":{}}}}`
+	payload := `{"redis":{"default":{"password":"node-secret"}},"redis_sentinel":{"default":{"password":"sentinel-secret"}},"bkapp_id_secret":{"default":{"app_code":"example-app","app_secret":"app-secret"}},"bkdata":{"default":{"token":"data-secret"}},"telemetry":{"default":{"token":"trace-secret","headers":{}}}}`
 	envelope, key := kmstest.Files(t, payload)
 	config.CustomConfigFilePath = filepath.Join(t.TempDir(), "config.yaml")
 	write := func(mode, suffix string) {
@@ -74,7 +74,7 @@ func TestKMSConsumersAndTransactionalReload(t *testing.T) {
 	require.Equal(t, "second", viper.GetString("query.marker"))
 	require.Equal(t, "node-secret", viper.GetString("redis.password"))
 	// A new startup reads the new Secret, unlike SIGUSR1.
-	newEnvelope, newKey := kmstest.Files(t, `{"schema_version":1,"service":"unify-query","redis":{"default":{"password":"new-node-secret"}},"telemetry":{"default":{"token":"","headers":{}}}}`)
+	newEnvelope, newKey := kmstest.Files(t, `{"redis":{"default":{"password":"new-node-secret"}},"telemetry":{"default":{"token":"","headers":{}}}}`)
 	data = []byte(fmt.Sprintf("kms:\n  enabled: true\n  envelope_file: %s\n  private_key_file: %s\n", newEnvelope, newKey))
 	require.NoError(t, os.WriteFile(config.CustomConfigFilePath, data, 0600))
 	viper.Reset()

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,13 +26,69 @@ type receivedTrace struct {
 }
 type traceReceiver struct {
 	collectortrace.UnimplementedTraceServiceServer
-	output chan receivedTrace
+	output   chan receivedTrace
+	validate func(receivedTrace) error
 }
 
 func (r *traceReceiver) Export(ctx context.Context, req *collectortrace.ExportTraceServiceRequest) (*collectortrace.ExportTraceServiceResponse, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
-	r.output <- receivedTrace{Header: md.Get("authorization")[0], Request: req}
+	result := receivedTrace{Header: strings.Join(md.Get("authorization"), ","), Request: req}
+	select {
+	case r.output <- result:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if r.validate != nil {
+		if err := r.validate(result); err != nil {
+			return nil, err
+		}
+	}
 	return &collectortrace.ExportTraceServiceResponse{}, nil
+}
+
+func newTraceReceiver(t *testing.T, protocol string, validate func(receivedTrace) error) (string, string, <-chan receivedTrace) {
+	t.Helper()
+	output := make(chan receivedTrace, 1)
+	var address string
+	if protocol == "http" {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			data, err := io.ReadAll(req.Body)
+			if err != nil {
+				http.Error(w, "read failed", http.StatusBadRequest)
+				return
+			}
+			body := new(collectortrace.ExportTraceServiceRequest)
+			if proto.Unmarshal(data, body) != nil {
+				http.Error(w, "decode failed", http.StatusBadRequest)
+				return
+			}
+			result := receivedTrace{Header: req.Header.Get("Authorization"), Request: body}
+			select {
+			case output <- result:
+			case <-req.Context().Done():
+				return
+			}
+			if validate != nil && validate(result) != nil {
+				http.Error(w, "permission denied", http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-protobuf")
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(server.Close)
+		address = server.Listener.Addr().String()
+	} else {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		server := grpc.NewServer()
+		collectortrace.RegisterTraceServiceServer(server, &traceReceiver{output: output, validate: validate})
+		go func() { _ = server.Serve(listener) }()
+		t.Cleanup(server.Stop)
+		address = listener.Addr().String()
+	}
+	host, port, err := net.SplitHostPort(address)
+	require.NoError(t, err)
+	return host, port, output
 }
 
 func TestOTelCredentialProtocols(t *testing.T) {
@@ -53,37 +110,8 @@ func TestOTelCredentialProtocols(t *testing.T) {
 				viper.Set("kms.enabled", enabled)
 				viper.Set("trace.otlp.headers", map[string]string{"authorization": "kms-header-secret"})
 				otlpToken, ServiceName = "trace-token-secret", "test-uq"
-				output := make(chan receivedTrace, 1)
-				if protocol == "http" {
-					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-						data, err := io.ReadAll(req.Body)
-						if err != nil {
-							http.Error(w, "read failed", 500)
-							return
-						}
-						body := new(collectortrace.ExportTraceServiceRequest)
-						if proto.Unmarshal(data, body) != nil {
-							http.Error(w, "decode failed", 500)
-							return
-						}
-						output <- receivedTrace{Header: req.Header.Get("Authorization"), Request: body}
-						w.Header().Set("Content-Type", "application/x-protobuf")
-						w.WriteHeader(200)
-					}))
-					defer server.Close()
-					var err error
-					otlpHost, otlpPort, err = net.SplitHostPort(server.Listener.Addr().String())
-					require.NoError(t, err)
-				} else {
-					listener, err := net.Listen("tcp", "127.0.0.1:0")
-					require.NoError(t, err)
-					otlpHost, otlpPort, err = net.SplitHostPort(listener.Addr().String())
-					require.NoError(t, err)
-					server := grpc.NewServer()
-					collectortrace.RegisterTraceServiceServer(server, &traceReceiver{output: output})
-					go func() { _ = server.Serve(listener) }()
-					defer server.Stop()
-				}
+				host, port, output := newTraceReceiver(t, protocol, nil)
+				otlpHost, otlpPort = host, port
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				s := new(Service)

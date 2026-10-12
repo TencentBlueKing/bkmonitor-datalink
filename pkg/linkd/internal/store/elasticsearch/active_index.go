@@ -52,9 +52,9 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 		return nil, fmt.Errorf("empty active index PIT")
 	}
 	filters := []any{map[string]any{"term": map[string]any{"status": "active"}}, map[string]any{"terms": map[string]any{"event_source_id": q.Sources}}}
-	if q.Scope != nil {
+	if tenant := q.TenantID(); tenant != "" {
 		// strategy_id 可能被补丁覆盖，必须在读取 enrich 后按有效值过滤。
-		filters = append(filters, map[string]any{"term": map[string]any{"bk_tenant_id": q.Scope.BKTenantID}})
+		filters = append(filters, map[string]any{"term": map[string]any{"bk_tenant_id": tenant}})
 	}
 	body := map[string]any{"size": 500, "track_total_hits": false, "_source": []string{"bk_tenant_id", "event_source_id", "fingerprint", "labels.strategy_id", "enrich"}, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
 	result := make([]activeindex.Row, 0)

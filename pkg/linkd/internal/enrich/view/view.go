@@ -46,82 +46,135 @@ func EnrichedAlert(alert domain.Alert) (domain.Alert, error) {
 	return result, nil
 }
 
-// EffectiveEnrichPatches 校验处理器信封并提取可应用补丁；真实历史 value 在此处投影。
-func EffectiveEnrichPatches(payload domain.JSONObject) ([]domain.EnrichPatch, error) {
-	var err error
-	all := []domain.EnrichPatch{}
-	if len(payload) > 0 {
-		if len(payload) != 1 || payload["processors"] == nil {
-			return nil, fmt.Errorf("invalid enrich payload")
-		}
+type savedProcessor struct {
+	Name    string               `json:"-"`
+	Status  domain.EnrichStatus  `json:"status"`
+	Patches []domain.EnrichPatch `json:"patches"`
+	Value   domain.JSONObject    `json:"value"`
+}
+
+// savedProcessors 检查顺序与信封，只返回可应用的处理器；不解释无关业务值。
+func savedProcessors(payload domain.JSONObject) ([]savedProcessor, error) {
+	if len(payload) > 0 && (len(payload) != 1 || payload["processors"] == nil) {
+		return nil, fmt.Errorf("invalid enrich payload")
 	}
-	var entries []map[string]struct {
-		Status  domain.EnrichStatus  `json:"status"`
-		Patches []domain.EnrichPatch `json:"patches"`
-		Value   domain.JSONObject    `json:"value"`
-	}
+	var entries []map[string]savedProcessor
 	if raw, ok := payload["processors"]; ok {
 		if err := json.Unmarshal(raw, &entries); err != nil {
 			return nil, err
 		}
 	}
 	seen := map[string]bool{}
+	result := make([]savedProcessor, 0, len(entries))
 	for _, entry := range entries {
 		if len(entry) != 1 {
 			return nil, fmt.Errorf("enrich processor entry requires one key")
 		}
-		for name, result := range entry {
+		for name, processor := range entry {
 			if seen[name] {
 				return nil, fmt.Errorf("duplicate enrich processor")
 			}
 			seen[name] = true
-			if result.Status != domain.EnrichStatusSucceeded && result.Status != domain.EnrichStatusPartial && result.Status != domain.EnrichStatusFailed && result.Status != domain.EnrichStatusSkipped {
+			if processor.Status != domain.EnrichStatusSucceeded && processor.Status != domain.EnrichStatusPartial && processor.Status != domain.EnrichStatusFailed && processor.Status != domain.EnrichStatusSkipped {
 				return nil, fmt.Errorf("invalid processor status")
 			}
-			if result.Status == domain.EnrichStatusFailed || result.Status == domain.EnrichStatusSkipped {
+			if processor.Status == domain.EnrichStatusFailed || processor.Status == domain.EnrichStatusSkipped {
 				continue
 			}
-			patches := result.Patches
-			if patches == nil && result.Value != nil {
-				patches, err = kingeye.ProjectValue(name, result.Value)
-				if err != nil {
-					return nil, err
-				}
+			processor.Name = name
+			result = append(result, processor)
+		}
+	}
+	return result, nil
+}
+
+// EffectiveEnrichPatches 校验处理器信封并提取可应用补丁；真实历史 value 在此处投影。
+func EffectiveEnrichPatches(payload domain.JSONObject) ([]domain.EnrichPatch, error) {
+	processors, err := savedProcessors(payload)
+	if err != nil {
+		return nil, err
+	}
+	all := []domain.EnrichPatch{}
+	for _, result := range processors {
+		patches := result.Patches
+		if patches == nil && result.Value != nil {
+			patches, err = kingeye.ProjectValue(result.Name, result.Value)
+			if err != nil {
+				return nil, err
 			}
-			for _, patch := range patches {
-				if err := patch.Validate(); err != nil {
-					return nil, err
-				}
+		}
+		for _, patch := range patches {
+			if err := patch.Validate(); err != nil {
+				return nil, err
 			}
-			all = append(all, patches...)
-			if len(all) > 4096 {
-				return nil, fmt.Errorf("enrich patch count exceeded")
-			}
+		}
+		all = append(all, patches...)
+		if len(all) > 4096 {
+			return nil, fmt.Errorf("enrich patch count exceeded")
 		}
 	}
 	return all, nil
 }
 
-// EnrichedLabels 为窄索引读取计算标签，不要求读取正文或 extra_data 中的数组父节点。
-func EnrichedLabels(labels domain.DimensionMap, payload domain.JSONObject) (domain.DimensionMap, error) {
-	patches, err := EffectiveEnrichPatches(payload)
+// EnrichedLabel 从已保存结果提取一个有效标签，不校验或解码其他 Patch 的值。
+// 覆盖顺序、失败步骤跳过及历史 value 的标量映射与完整视图一致。
+func EnrichedLabel(labels domain.DimensionMap, payload domain.JSONObject, key string) (domain.Scalar, bool, error) {
+	processors, err := savedProcessors(payload)
 	if err != nil {
-		return nil, err
+		return domain.Scalar{}, false, err
 	}
-	out := labels.Normalize()
-	for _, patch := range patches {
-		target, _ := jsonpath.ParseTarget(patch.Path)
-		parts := target.Parts()
-		if len(parts) != 2 || parts[0] != "labels" {
+	value, exists := labels[key]
+	count := 0
+	for _, result := range processors {
+		if result.Patches == nil {
+			// 旧 display 的三个展示字段不属于 labels，其余仅标量生成标签补丁。
+			if result.Name == "display" && (key == "title" || key == "content" || key == "object") {
+				continue
+			}
+			var scalar domain.Scalar
+			if raw, ok := result.Value[key]; ok && json.Unmarshal(raw, &scalar) == nil {
+				value, exists = scalar, true
+			}
 			continue
 		}
-		var scalar domain.Scalar
-		if err := json.Unmarshal(patch.Value, &scalar); err != nil {
-			return nil, err
+		count += len(result.Patches)
+		if count > 4096 {
+			return domain.Scalar{}, false, fmt.Errorf("enrich patch count exceeded")
 		}
-		out[parts[1].(string)] = scalar
+		for _, patch := range result.Patches {
+			target, err := jsonpath.ParseTarget(patch.Path)
+			if err != nil {
+				return domain.Scalar{}, false, err
+			}
+			parts := target.Parts()
+			if parts[0] != "labels" {
+				continue
+			}
+			if len(parts) != 2 {
+				return domain.Scalar{}, false, fmt.Errorf("invalid label patch target")
+			}
+			label, ok := parts[1].(string)
+			if !ok || label == "" {
+				return domain.Scalar{}, false, fmt.Errorf("invalid label patch key")
+			}
+			if label != key {
+				continue
+			}
+			if patch.Op != "set" {
+				return domain.Scalar{}, false, fmt.Errorf("unsupported label patch operation")
+			}
+			if err := json.Unmarshal(patch.Value, &value); err != nil {
+				return domain.Scalar{}, false, err
+			}
+			exists = true
+		}
 	}
-	return out, nil
+	if exists {
+		if err := (domain.DimensionMap{key: value}).Validate(); err != nil {
+			return domain.Scalar{}, false, err
+		}
+	}
+	return value, exists, nil
 }
 
 // EnrichedEvent 返回指定等级的有效视图；没有该等级的已保存结果时明确报错。

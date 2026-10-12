@@ -98,12 +98,14 @@ type Row struct {
 	Labels        domain.DimensionMap `json:"labels"`
 }
 
-// Query 限定完整读取范围；Scope 为空用于周期发现所有租户和策略。
+// Query 限定完整读取范围；Scope 和 BKTenantID 均为空时周期发现所有租户和策略。
 type Query struct {
-	Sources  []string
-	Scope    *Scope
-	MaxRows  int
-	MaxBytes int
+	Sources []string
+	Scope   *Scope
+	// BKTenantID 用于同租户多策略共享快照，不能与 Scope 同时指定。
+	BKTenantID string
+	MaxRows    int
+	MaxBytes   int
 }
 
 // Validate 校验扫描硬上限，禁止空来源变成全库扫描。
@@ -117,23 +119,43 @@ func (q Query) Validate() error {
 		}
 	}
 	if q.Scope != nil {
+		if q.BKTenantID != "" {
+			return fmt.Errorf("active index query cannot combine tenant and strategy scope")
+		}
 		return q.Scope.Validate()
 	}
+	if q.BKTenantID != "" {
+		return domain.ValidateIdentityPart("bk_tenant_id", q.BKTenantID, 64)
+	}
 	return nil
+}
+
+// TenantID 返回单策略或批次查询的租户；空值仅用于全局周期发现。
+func (q Query) TenantID() string {
+	if q.Scope != nil {
+		return q.Scope.BKTenantID
+	}
+	return q.BKTenantID
 }
 
 // Group 再次核对存储作用域并按租户、策略去重。任意非法行都拒绝整个快照。
 func Group(q Query, rows []Row) (map[Scope][]string, error) {
 	groups := make(map[Scope][]string)
 	for _, row := range rows {
+		if tenant := q.TenantID(); tenant != "" && row.BKTenantID != tenant {
+			return nil, fmt.Errorf("active index tenant mismatch")
+		}
 		if !slices.Contains(q.Sources, row.EventSourceID) || row.Fingerprint == "" || len(row.Fingerprint) > 128 {
 			return nil, fmt.Errorf("invalid active index row")
 		}
-		effective, err := view.EnrichedLabels(row.Labels, row.Enrich)
+		effective, exists, err := view.EnrichedLabel(row.Labels, row.Enrich, "strategy_id")
 		if err != nil {
 			return nil, err
 		}
-		strategy, skip, err := StrategyID(effective)
+		if !exists {
+			continue
+		}
+		strategy, skip, err := StrategyID(domain.DimensionMap{"strategy_id": effective})
 		if err != nil {
 			return nil, err
 		}
@@ -145,9 +167,6 @@ func Group(q Query, rows []Row) (map[Scope][]string, error) {
 			return nil, err
 		}
 		if q.Scope != nil {
-			if scope.BKTenantID != q.Scope.BKTenantID {
-				return nil, fmt.Errorf("active index tenant mismatch")
-			}
 			if scope.StrategyID != q.Scope.StrategyID {
 				continue
 			}

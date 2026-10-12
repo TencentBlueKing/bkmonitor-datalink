@@ -28,7 +28,7 @@ type Settings struct {
 	MaxBytes          int
 }
 
-// Manager 逐策略串行执行完整快照发布，不重放历史 SADD/SREM。
+// Manager 按租户合批读取完整快照，逐策略发布，不重放历史 SADD/SREM。
 // 每个目标有独立任务，目标故障不会阻塞其他目标；同策略并发由目标 Redis 租约隔离。
 type Manager struct {
 	reader        Reader
@@ -99,14 +99,20 @@ func (m *Manager) step(ctx context.Context) (int, int, error) {
 	if err != nil {
 		return 0, 0, errors.Join(discoveryErr, err)
 	}
-	failed := 0
+	// 1. 同一轮的到期提示按租户合并，保持租户首次出现的队列顺序。
+	batches := make(map[string][]Pending)
+	tenants := []string{}
 	for _, p := range pending {
+		if _, exists := batches[p.Scope.BKTenantID]; !exists {
+			tenants = append(tenants, p.Scope.BKTenantID)
+		}
+		batches[p.Scope.BKTenantID] = append(batches[p.Scope.BKTenantID], p)
+	}
+	failed := 0
+	for _, tenant := range tenants {
+		failed += m.reconcileBatch(ctx, batches[tenant])
 		if err := ctx.Err(); err != nil {
 			return len(pending), failed, err
-		}
-		if err := m.reconcile(ctx, p); err != nil && ctx.Err() == nil {
-			failed++
-			m.logger.WarnContext(ctx, "active index strategy refresh failed", "bk_tenant_id", p.Scope.BKTenantID, "strategy_id", p.Scope.StrategyID)
 		}
 	}
 	return len(pending), failed, discoveryErr
@@ -127,7 +133,7 @@ func (m *Manager) discover(ctx context.Context) error {
 		groups = map[Scope][]string{}
 	}
 	// 发现只产生重读提示，不据此发布或删除。某一侧发现失败时，另一侧已知
-	// 策略仍可逐个校准，避免一个超大策略阻止其他现有集合恢复。
+	// 策略仍按租户合批校准，避免全局扫描超限阻止其他租户恢复。
 	old, scanErr := m.cache.Discover(ctx)
 	for _, s := range old {
 		if _, ok := groups[s]; !ok {
@@ -145,34 +151,71 @@ func (m *Manager) discover(ctx context.Context) error {
 	return errors.Join(readErr, scanErr)
 }
 
-func (m *Manager) reconcile(ctx context.Context, p Pending) error {
+// reconcileBatch 的读取只服务于本批已经持有的租约，不跨轮缓存快照。
+func (m *Manager) reconcileBatch(ctx context.Context, pending []Pending) int {
 	call, cancel := context.WithTimeout(ctx, m.settings.OperationTimeout)
 	defer cancel()
-	lease, err := m.cache.Acquire(call, p.Scope, m.settings.OperationTimeout+5*time.Second)
-	if err != nil || lease == "" {
-		return err
+	type heldLease struct {
+		pending Pending
+		token   string
 	}
+	held := make([]heldLease, 0, len(pending))
 	defer func() {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 		defer stop()
-		_ = m.cache.Release(cleanup, p.Scope, lease)
+		for _, lease := range held {
+			_ = m.cache.Release(cleanup, lease.pending.Scope, lease.token)
+		}
 	}()
-	q := m.query(&p.Scope)
-	rows, err := m.reader.ReadActiveIndex(call, q)
+	// 2. 先取得所有待发布策略的租约，再建立快照，避免旧快照覆盖其他持有者的新结果。
+	failed := 0
+	for _, p := range pending {
+		lease, err := m.cache.Acquire(call, p.Scope, m.settings.OperationTimeout+5*time.Second)
+		if err != nil {
+			failed++
+			m.logFailure(ctx, p)
+			continue
+		}
+		if lease != "" {
+			held = append(held, heldLease{pending: p, token: lease})
+		}
+	}
+	if len(held) == 0 {
+		return failed
+	}
+	q := m.query(nil)
+	q.BKTenantID = pending[0].Scope.BKTenantID
+	rows, readErr := m.reader.ReadActiveIndex(call, q)
 	reason := "read_failed"
 	var groups map[Scope][]string
-	if err == nil {
-		groups, err = Group(q, rows)
+	if readErr == nil {
+		groups, readErr = Group(q, rows)
 		reason = "invalid_snapshot"
 	}
-	if err == nil {
-		err = m.cache.Publish(call, p, lease, groups[p.Scope])
-		reason = "publish_failed"
+	// 3. 各策略独立原子发布；失败保留旧集合，token 检查保留扫描期间的新提示。
+	for _, lease := range held {
+		if ctx.Err() != nil {
+			break
+		}
+		err := readErr
+		failureReason := reason
+		if err == nil {
+			err = m.cache.Publish(call, lease.pending, lease.token, groups[lease.pending.Scope])
+			failureReason = "publish_failed"
+		}
+		if err != nil {
+			failed++
+			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+			_ = m.cache.Failed(cleanup, lease.pending, lease.token, failureReason)
+			stop()
+			m.logFailure(ctx, lease.pending)
+		}
 	}
-	if err != nil {
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
-		defer stop()
-		_ = m.cache.Failed(cleanup, p, lease, reason)
+	return failed
+}
+
+func (m *Manager) logFailure(ctx context.Context, p Pending) {
+	if ctx.Err() == nil {
+		m.logger.WarnContext(ctx, "active index strategy refresh failed", "bk_tenant_id", p.Scope.BKTenantID, "strategy_id", p.Scope.StrategyID)
 	}
-	return err
 }

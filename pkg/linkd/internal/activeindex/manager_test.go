@@ -36,12 +36,12 @@ func (r *fakeReader) ReadActiveIndex(ctx context.Context, q Query) ([]Row, error
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	if r.fail || (q.Scope == nil && r.failDiscovery) {
+	if r.fail || (q.TenantID() == "" && r.failDiscovery) {
 		return nil, errors.New("partial snapshot")
 	}
 	result := []Row{}
 	for _, row := range r.rows {
-		if slices.Contains(q.Sources, row.EventSourceID) && (q.Scope == nil || q.Scope.BKTenantID == row.BKTenantID) {
+		if slices.Contains(q.Sources, row.EventSourceID) && (q.TenantID() == "" || q.TenantID() == row.BKTenantID) {
 			result = append(result, row)
 		}
 	}

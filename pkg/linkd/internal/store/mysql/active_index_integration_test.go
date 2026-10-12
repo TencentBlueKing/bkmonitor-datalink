@@ -79,15 +79,24 @@ func TestActiveIndexMySQLIntegration(t *testing.T) {
 	}
 	q := activeindex.Query{Sources: []string{"a", "b"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, MaxRows: 10, MaxBytes: 4096}
 	rows, err := r.ReadActiveIndex(ctx, q)
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("rows=%v error=%v", rows, err)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("tenant rows=%v error=%v", rows, err)
+	}
+	groups, err := activeindex.Group(q, rows)
+	if err != nil || len(groups[*q.Scope]) != 2 {
+		t.Fatalf("effective strategy members=%v error=%v", groups, err)
 	}
 	q.Scope.StrategyID = "00123"
-	rows, err = r.ReadActiveIndex(ctx, q)
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("exact rows=%v error=%v", rows, err)
+	groups, err = activeindex.Group(q, rows)
+	if err != nil || len(groups[*q.Scope]) != 1 {
+		t.Fatalf("exact strategy members=%v error=%v", groups, err)
 	}
-	q.Scope = nil
+	q.Scope, q.BKTenantID = nil, "tenant"
+	rows, err = r.ReadActiveIndex(ctx, q)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("tenant batch rows=%v error=%v", rows, err)
+	}
+	q.BKTenantID = ""
 	q.MaxRows = 1
 	if rows, err := r.ReadActiveIndex(ctx, q); err == nil || rows != nil {
 		t.Fatal("truncated snapshot accepted")

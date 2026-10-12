@@ -66,7 +66,7 @@ func TestActiveIndexPaginationKeepsOneSnapshot(t *testing.T) {
 }
 
 func TestActiveIndexPITCompleteness(t *testing.T) {
-	for _, mode := range []string{"success", "partial", "timeout", "over-limit", "missing"} {
+	for _, mode := range []string{"success", "tenant-batch", "partial", "timeout", "over-limit", "missing"} {
 		t.Run(mode, func(t *testing.T) {
 			closed := false
 			searches := 0
@@ -100,6 +100,11 @@ func TestActiveIndexPITCompleteness(t *testing.T) {
 				if body["pit"] == nil || body["_source"] == nil {
 					t.Fatal("unbounded full-document read")
 				}
+				filters := body["query"].(map[string]any)["bool"].(map[string]any)["filter"].([]any)
+				last := filters[len(filters)-1].(map[string]any)["term"].(map[string]any)
+				if last["bk_tenant_id"] != "tenant" {
+					t.Fatal("query lost tenant isolation")
+				}
 				hits := []any{map[string]any{"_source": map[string]any{"bk_tenant_id": "tenant", "event_source_id": "source", "fingerprint": "fp", "labels": map[string]any{"strategy_id": 123}}}}
 				if mode == "over-limit" {
 					hits = append(hits, hits[0])
@@ -116,8 +121,12 @@ func TestActiveIndexPITCompleteness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rows, err := r.ReadActiveIndex(t.Context(), activeindex.Query{Sources: []string{"source"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, MaxRows: 1, MaxBytes: 1024})
-			if (err == nil) != (mode == "success") {
+			query := activeindex.Query{Sources: []string{"source"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, MaxRows: 1, MaxBytes: 1024}
+			if mode == "tenant-batch" {
+				query.Scope, query.BKTenantID = nil, "tenant"
+			}
+			rows, err := r.ReadActiveIndex(t.Context(), query)
+			if (err == nil) != (mode == "success" || mode == "tenant-batch") {
 				t.Fatalf("rows=%v err=%v", rows, err)
 			}
 			if mode != "missing" && (!closed || searches != 1) {

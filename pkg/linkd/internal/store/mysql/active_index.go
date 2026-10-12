@@ -29,9 +29,9 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 	for _, source := range q.Sources {
 		args = append(args, source)
 	}
-	if q.Scope != nil {
+	if tenant := q.TenantID(); tenant != "" {
 		query += " AND bk_tenant_id=?"
-		args = append(args, q.Scope.BKTenantID)
+		args = append(args, tenant)
 	}
 
 	query += " LIMIT ?"

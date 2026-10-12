@@ -87,6 +87,15 @@ func TestDescriptionConfigurationReadsOnlySplitRecord(t *testing.T) {
 		change     func(map[string]any, *readerTestRows)
 	}{
 		{name: "default without legacy tables", businesses: []int64{2}},
+		{name: "unused runtime index set empty string", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = ""
+		}},
+		{name: "unused runtime index set null", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = nil
+		}},
+		{name: "unused runtime index set string ID", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = "123"
+		}},
 		{name: "same spec across businesses", businesses: []int64{2, 4}},
 		{name: "target multiple businesses one item", businesses: []int64{2}, change: func(p map[string]any, r *readerTestRows) {
 			p["strategy_set"].(map[string]any)["config_type"] = "target"
@@ -115,7 +124,10 @@ func TestDescriptionConfigurationReadsOnlySplitRecord(t *testing.T) {
 		{name: "missing business projection", code: "publication_business_mismatch", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][10] = "[2,4]" }},
 		{name: "runtime count mismatch", code: "publication_runtime_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) { p["runtime_query_configs"] = []any{} }},
 		{name: "runtime query DTO invalid", code: "publication_runtime_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
-			p["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = ""
+			p["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["unit"] = map[string]any{"invalid": true}
+		}},
+		{name: "runtime metric identity invalid", code: "publication_runtime_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["metric_id"] = map[string]any{"invalid": true}
 		}},
 		{name: "disabled frozen config remains rejected for content", code: "configuration_disabled_or_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
 			p["strategy_config"].(map[string]any)["enable"] = false

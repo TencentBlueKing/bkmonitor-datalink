@@ -257,7 +257,7 @@ func Run(
 			lifecycle.WithMergeEvaluator(&policyruntime.Merger{Loader: suppressor, State: policyState, Logger: logger, Observer: telemetryRuntime}),
 			lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: suppressor, Events: observedRepository.GetEvent, Candidates: observedRepository.(store.ActiveAlertReader), CurrentAlert: suppressor.CurrentAlert, Dependency: policyState, Hints: policyState, Relations: policyResources.Relations, Logger: logger, Observer: telemetryRuntime}),
 			lifecycle.WithSeverityUpgradePolicy(lifecycleConfig.SeverityUpgradePolicy),
-			lifecycle.WithAlertContentBuilder(enricher),
+			lifecycle.WithAlertContentBuilder(versionedEnricher),
 		)
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle processor: %w", err)

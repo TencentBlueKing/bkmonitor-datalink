@@ -35,4 +35,6 @@ Content-Type: application/json
 3. 保持与失败 Event 一致的来源 Release，完成 Worker 停止握手后调用恢复接口。
 4. 核对新 epoch、PEL/mailbox 顺序以及最终 Alert.content。失败 Event 创建成功前一直保留；已经保存的 EventPlan 和 Alert.content 不重新生成。
 
-来源版本已切换、历史配置或检测事实仍不可得时，当前 Router 会再次阻止内容生成。恢复接口不提供历史 Release 路由或字段改写功能；这些缺口见[内容生成方案](../../design/alert-content-generation.md#本轮跳过的数据与后续恢复条件2026-09-30-1748)。相同来源配置的 PUT 会被发布服务去重，不能用它替代本接口。
+Lifecycle 的普通丰富与内容构建均按 Event 固定的来源版本读取历史 Release，不把积压交给最新配置。内容配置 Reader 只解析运行时查询中实际使用的 `unit`、`metric_id`；未使用的 `index_set_id` 等扩展字段可为空字符串，不因声明模型的类型约束阻断内容构建。实际使用字段、算法、租户和版本绑定仍严格校验。
+
+历史 Release、策略发布材料或检测事实不可得时仍会保留事件并阻止内容生成，恢复接口不改写这些数据。相同来源配置的 PUT 会被发布服务去重，不能用它替代本接口。

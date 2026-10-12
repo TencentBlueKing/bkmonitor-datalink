@@ -77,8 +77,12 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 		return description.Configuration{}, descriptionFailure("configuration_disabled_or_invalid")
 	}
 	var runtime struct {
-		Error      json.RawMessage                `json:"error"`
-		Queries    []models.StrategyQueryConfig   `json:"query_configs"`
+		Error json.RawMessage `json:"error"`
+		// 内容只依赖单位和指标身份；运行时的其他字段不服从声明查询 DTO 的类型。
+		Queries []struct {
+			Unit     string `json:"unit"`
+			MetricID string `json:"metric_id"`
+		} `json:"query_configs"`
 		Algorithms []description.RuntimeAlgorithm `json:"algorithms"`
 	}
 	if json.Unmarshal(payload.Runtime[0], &runtime) != nil {
@@ -87,5 +91,9 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 	if len(runtime.Error) > 0 || len(runtime.Queries) == 0 || len(runtime.Queries) > 32 || len(runtime.Algorithms) > 32 {
 		return description.Configuration{}, descriptionFailure("publication_runtime_invalid")
 	}
-	return description.Configuration{Identity: query, Spec: strategy.Spec, SetConfig: config, Queries: runtime.Queries, Algorithms: runtime.Algorithms}, nil
+	queries := make([]models.StrategyQueryConfig, len(runtime.Queries))
+	for i, query := range runtime.Queries {
+		queries[i] = models.StrategyQueryConfig{Unit: query.Unit, MetricID: query.MetricID}
+	}
+	return description.Configuration{Identity: query, Spec: strategy.Spec, SetConfig: config, Queries: queries, Algorithms: runtime.Algorithms}, nil
 }

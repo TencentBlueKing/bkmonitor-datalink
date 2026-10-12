@@ -298,6 +298,11 @@ func TestPersistedRotationResumesWithChangedPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending.Processing.Plan = &decoded
+	// 模拟 Repository 的读取边界：JSON 往返后的空集合和时间在交给 Processor 前恢复。
+	pending.Processing, err = pending.Processing.Normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
 	retry := newTestProcessor(t, repository, NoopFinalHook{})
 	retry.upgradePolicy = "update_current"
 	result, err := retry.ProcessEvent(ctx, pending)

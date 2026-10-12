@@ -42,11 +42,12 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		return ProcessResult{}, fmt.Errorf("process lifecycle event requires identity and version")
 	}
 	stored := initial
-	processing, err := stored.Processing.Normalize()
-	if err != nil {
+	if err := stored.Event.ValidateIdentity(); err != nil {
 		return ProcessResult{}, err
 	}
-	stored.Processing = processing
+	if !stored.Processing.State.Valid() {
+		return ProcessResult{}, store.ErrInvalidEventProcessing
+	}
 	var lastErr error
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -123,7 +124,7 @@ func (p *Processor) writeEventResult(ctx context.Context, stored store.StoredEve
 }
 
 func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapshot *store.PolicyContext) (*store.EventPlan, error) {
-	if err := event.Validate(); err != nil {
+	if err := domain.ValidateEvaluations(event.Evaluations); err != nil {
 		return nil, err
 	}
 	plan := &store.EventPlan{ConfigDigest: p.configDigest, UpgradePolicy: p.upgradePolicy, State: domain.EventProcessStateOrphaned, Outcome: string(OutcomeEventOrphaned), ReasonCode: ReasonActiveAlertNotFound}

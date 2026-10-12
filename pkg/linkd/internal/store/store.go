@@ -17,6 +17,8 @@ import (
 
 // EventStore 定义 Event 的创建、读取和处理结果单对象 CAS。
 // 创建成功不承诺列表或搜索立即可见；需要立即读取单个 Event 的调用方必须使用 GetEvent。
+// 读取返回已恢复默认值、时间和处理快照的标准 Event，内部消费者不应再次全量 Normalize。
+// 新丰富结果非法时返回 ErrInvalidArgument，且不提交任何状态，供 Lifecycle 保存失败诊断。
 type EventStore interface {
 	// CompareAndSetEventEnrichment 在处理计划冻结前提交完整丰富结果，返回最新 CAS 版本。
 	// 完成结果只可幂等核对；来源事实、处理状态和关联不受此操作影响。

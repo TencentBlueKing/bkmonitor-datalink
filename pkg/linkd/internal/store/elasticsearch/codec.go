@@ -134,7 +134,7 @@ func decodeEventHit(hit searchHit) (store.StoredEvent, error) {
 	if err := json.Unmarshal(hit.Source, &document); err != nil {
 		return store.StoredEvent{}, fmt.Errorf("decode elasticsearch event: %w", err)
 	}
-	normalized, err := document.Normalize()
+	normalized, err := document.Restore()
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
@@ -150,8 +150,7 @@ func decodeEventHit(hit searchHit) (store.StoredEvent, error) {
 		return store.StoredEvent{}, err
 	}
 	stored := store.StoredEvent{Event: normalized, Processing: processing, Version: version}
-	// Event.Normalize 和 Processing.Normalize 已完成不可信 ES 文档的全量校验；
-	// 此处只检查跨字段关系，避免对动态 JSON 再做一次完整解码和规范化。
+	// 来源事实在读取边界恢复；此处只检查处理状态及跨对象归属，不重新解析业务 JSON。
 	if err := validateNormalizedStoredEvent(stored); err != nil {
 		return store.StoredEvent{}, err
 	}

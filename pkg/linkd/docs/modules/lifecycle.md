@@ -103,6 +103,11 @@ Handler 只负责编排 Mailbox、lease 和 Processor，不包含 Alert 状态�
 Mailbox 队首 Event 后把同一 `StoredEvent` 快照交给 Processor；Processor 仅在并发冲突重裁决时重新读取，
 避免正常路径重复 realtime GET。
 
+Repository 在读取边界恢复默认值、UTC 时间和计划中的空集合。Processor 和 Enrich Scope 直接使用
+该快照，不重复规范化来源 JSON 或校验已经冻结的丰富载荷。新丰富结果由提交接口检查，非法结果在
+没有写入副作用的 `ErrInvalidArgument` 后降级保存；版本冲突和 I/O 故障仍向外返回重试。
+计划与关联更新只检查本次变更和身份、状态关系，深拷贝仅用于隔离可变对象。
+
 ### 2.2 Processor
 
 `lifecycle.Processor` 的依赖是窄能力：

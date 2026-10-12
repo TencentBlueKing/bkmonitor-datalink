@@ -35,8 +35,9 @@ Event、Alert 和 AlertLog 是独立对象，Repository 不提供跨对象事务
 - ID 由稳定输入确定性生成，重投时不变，不使用当前时间或随机值兜底；
 - 所有时间进入领域对象前统一为 UTC，存储精度为纳秒；
 - `dimensions`、`labels` 只接受扁平字符串、有限数字和布尔值；
-- `source_raw_data`、`extra_data`、`enrich` 和 AlertLog `params` 是规范化 JSON object；
-- 动态对象会被深拷贝，调用方不能通过共享 map 修改已存领域事实；
+- `source_raw_data`、`extra_data`、`enrich` 和 AlertLog `params` 是 JSON object；新建入口按契约检查，
+  存储读取保留历史内容，内部状态推进不重复解码或重编码未修改的动态字段；
+- 深拷贝只隔离对象所有权，调用方不能通过共享 map 修改已存领域事实；它不隐含规范化或全量校验；
 - `VersionToken` 只由 Repository 解释，调用方只能从读取结果原样交回同一对象的 CAS。
 
 ## 3. Event

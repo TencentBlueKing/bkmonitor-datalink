@@ -319,15 +319,13 @@ func newRequestCache() *requestCache {
 }
 
 func newScope(event domain.Event, evaluation domain.EventEvaluation, sources Sources, preview bool, cache *requestCache) (*Scope, error) {
-	normalized := event.Clone()
+	normalized := event
 	// 历史丰富只用于预览对比，不能成为新一轮处理器的来源事实。
 	normalized.EventEnrichment = domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}
-	var err error
 	if !preview {
-		normalized, err = normalized.Normalize()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("create enrich scope: %w", err)
+		if err := event.ValidateIdentity(); err != nil {
+			return nil, fmt.Errorf("create enrich scope: %w", err)
+		}
 	}
 	return &Scope{event: normalized.Clone(), original: normalized.Clone(), evaluation: evaluation, sources: sources, enrichContext: &EnrichContext{}, requestCache: cache}, nil
 }

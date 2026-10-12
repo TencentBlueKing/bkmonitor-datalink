@@ -50,6 +50,11 @@ func (l AlertLog) Validate() error {
 	return l.validate(true)
 }
 
+// ValidateMetadata 检查计划中流水的身份、操作类型和时间，不遍历 Params。
+func (l AlertLog) ValidateMetadata() error {
+	return l.validate(false)
+}
+
 // Normalize 的 Params 已经完成校验与深拷贝，不再丢弃第二份规范化结果。
 func (l AlertLog) validate(validateJSON bool) error {
 	required := []struct {

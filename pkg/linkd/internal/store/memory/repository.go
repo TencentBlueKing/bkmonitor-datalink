@@ -446,14 +446,10 @@ func (r *Repository) CompareAndSetEventResult(
 	if entry.version != expected {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
 	}
-	normalizedResult, err := result.Normalize()
-	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q result: %w", store.ErrInvalidArgument, eventID, err)
-	}
 	if entry.processing.State != domain.EventProcessStateUnprocessed {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q is already processed", store.ErrInvalidTransition, eventID)
 	}
-	updated, processing, err := store.ApplyEventResult(cloneStoredEvent(entry), normalizedResult)
+	updated, processing, err := store.ApplyEventResult(cloneStoredEvent(entry), result)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}

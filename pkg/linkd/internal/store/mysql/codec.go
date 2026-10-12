@@ -32,7 +32,7 @@ func decodeEvent(data []byte) (domain.Event, error) {
 	if err := json.Unmarshal(data, &event); err != nil {
 		return domain.Event{}, fmt.Errorf("decode stored event: %w", err)
 	}
-	normalized, err := event.Normalize()
+	normalized, err := event.Restore()
 	if err != nil {
 		return domain.Event{}, fmt.Errorf("normalize stored event: %w", err)
 	}
@@ -40,11 +40,8 @@ func decodeEvent(data []byte) (domain.Event, error) {
 }
 
 func encodeProcessing(processing store.EventProcessing) ([]byte, error) {
-	normalized, err := processing.Normalize()
-	if err != nil {
-		return nil, err
-	}
-	data, err := json.Marshal(normalized)
+	// 处理结果已由 ApplyEventResult 检查；编码不再次遍历计划快照。
+	data, err := json.Marshal(processing)
 	if err != nil {
 		return nil, fmt.Errorf("marshal event processing: %w", err)
 	}

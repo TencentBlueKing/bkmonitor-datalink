@@ -62,7 +62,7 @@ func GenerateEventID(
 
 // GenerateAlertID 根据 opening Event 与稳定创建锚点生成可解析且可重放的 AlertID。
 func GenerateAlertID(event Event, createAt time.Time) (string, error) {
-	if err := event.Validate(); err != nil {
+	if err := event.ValidateIdentity(); err != nil {
 		return "", fmt.Errorf("generate alert id from invalid event: %w", err)
 	}
 	if createAt.IsZero() {

@@ -62,8 +62,7 @@ func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	opening.Content = content
-	if _, err := opening.Normalize(); err != nil {
+	if len(content) > 1<<20 {
 		return "", &contentFailure{code: "opening_alert_invalid"}
 	}
 	if fallback {

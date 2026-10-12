@@ -74,11 +74,15 @@ func (e EventEnrichment) Normalize(evaluations []EventEvaluation) (EventEnrichme
 		}
 		e.Enrich.Evaluations[i].Data = data
 	}
-	return e, e.Validate(evaluations)
+	return e, e.validate(evaluations, false)
 }
 
 // Validate 校验完成性、聚合状态和整条 Event 的载荷预算。
 func (e EventEnrichment) Validate(evaluations []EventEvaluation) error {
+	return e.validate(evaluations, true)
+}
+
+func (e EventEnrichment) validate(evaluations []EventEvaluation, validateJSON bool) error {
 	if e.EnrichStatus == "" || e.EnrichStatus == EnrichStatusPending {
 		if len(e.Enrich.Evaluations) != 0 || e.EnrichedAt != nil || e.EnrichConfigDigest != "" {
 			return fmt.Errorf("pending event enrich must be empty")
@@ -104,8 +108,10 @@ func (e EventEnrichment) Validate(evaluations []EventEvaluation) error {
 		if result.Status == EnrichStatusPending || !result.Status.Valid() {
 			return fmt.Errorf("event enrich evaluation must be complete")
 		}
-		if _, err := result.Data.Normalize(); err != nil {
-			return err
+		if validateJSON {
+			if _, err := result.Data.Normalize(); err != nil {
+				return err
+			}
 		}
 		if err := ValidateEnrichPayload(result.Status, result.Data); err != nil {
 			return err
@@ -177,5 +183,5 @@ func (e Event) WithEnrichment(result EventEnrichment) (Event, error) {
 	}
 	e = e.Clone()
 	e.EventEnrichment = normalized
-	return e.Normalize()
+	return e, nil
 }

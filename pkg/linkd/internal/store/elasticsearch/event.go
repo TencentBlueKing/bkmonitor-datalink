@@ -783,11 +783,7 @@ func (r *Repository) CompareAndSetEventResult(
 	if current.Processing.State != domain.EventProcessStateUnprocessed {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q is already processed", store.ErrInvalidTransition, eventID)
 	}
-	normalizedResult, err := result.Normalize()
-	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: event result: %w", store.ErrInvalidArgument, err)
-	}
-	updated, processing, err := store.ApplyEventResult(current, normalizedResult)
+	updated, processing, err := store.ApplyEventResult(current, result)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
@@ -859,11 +855,7 @@ func (r *Repository) CompareAndSetLifecycleEventResult(
 	if current.Processing.State != domain.EventProcessStateUnprocessed {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q is already processed", store.ErrInvalidTransition, eventID)
 	}
-	normalizedResult, err := result.Normalize()
-	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: event result: %w", store.ErrInvalidArgument, err)
-	}
-	updated, processing, err := store.ApplyEventResult(current, normalizedResult)
+	updated, processing, err := store.ApplyEventResult(current, result)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
@@ -872,7 +864,7 @@ func (r *Repository) CompareAndSetLifecycleEventResult(
 	body, err := json.Marshal(map[string]any{"script": map[string]any{
 		"source": "ctx._source.related_alert_ids = params.related_alert_ids; ctx._source.processing = params.processing",
 		"params": map[string]any{
-			"related_alert_ids": normalizedResult.RelatedAlertIDs,
+			"related_alert_ids": updated.RelatedAlertIDs,
 			"processing":        processing,
 		},
 	}})

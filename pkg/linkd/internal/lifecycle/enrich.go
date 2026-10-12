@@ -12,7 +12,7 @@ package lifecycle
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"time"
 
 	"linkd/internal/domain"
@@ -27,11 +27,8 @@ type EventEnricher interface {
 
 // enrichEvent 先冻结结果再允许计划/策略产生副作用。CAS 失败交由外层重读，已提交结果绝不重算。
 func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (store.StoredEvent, error) {
-	event, err := stored.Event.Normalize()
-	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("normalize event before enrich: %w", err)
-	}
-	if event.EnrichStatus != domain.EnrichStatusPending {
+	event := stored.Event
+	if event.EnrichStatus != "" && event.EnrichStatus != domain.EnrichStatusPending {
 		return stored, nil
 	}
 	startedAt := time.Now()
@@ -65,29 +62,30 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 		}
 	}
 	snapshot := domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest}
+	if failureReason == "" && (!result.Status.Valid() || result.Status == domain.EnrichStatusPending) {
+		failureReason = "invalid_enrich_status"
+	}
+	// 提交边界检查新结果；内部流转不预先执行同一份载荷的完整校验。
+	var updated store.StoredEvent
+	var persistErr error
 	if failureReason == "" {
-		switch {
-		case !result.Status.Valid() || result.Status == domain.EnrichStatusPending:
-			failureReason = "invalid_enrich_status"
-		default:
-			var err error
-			snapshot, err = snapshot.Normalize(event.Evaluations)
-			if err != nil {
-				failureReason = "invalid_enrich_data"
-			}
+		updated, persistErr = p.repository.CompareAndSetEventEnrichment(ctx, event.BKTenantID, event.EventID, stored.Version, snapshot)
+		if errors.Is(persistErr, store.ErrInvalidArgument) {
+			failureReason = "invalid_enrich_data"
 		}
 	}
-	observation.Outcome = enrichMetricOutcome(failureReason)
 	if failureReason != "" {
 		p.logger.WarnContext(ctx, "event enrich degraded", "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "reason_code", failureReason)
 		result = failedEnrichResult(event)
 		snapshot = domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest}
+		updated, persistErr = p.repository.CompareAndSetEventEnrichment(ctx, event.BKTenantID, event.EventID, stored.Version, snapshot)
 	}
+	observation.Outcome = enrichMetricOutcome(failureReason)
 	observation.Status = snapshot.EnrichStatus
 	if encoded, err := json.Marshal(snapshot.Enrich); err == nil {
 		observation.PayloadBytes = int64(len(encoded))
 	}
-	return p.repository.CompareAndSetEventEnrichment(ctx, event.BKTenantID, event.EventID, stored.Version, snapshot)
+	return updated, persistErr
 }
 
 func enrichMetricOutcome(failureReason string) string {

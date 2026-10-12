@@ -68,7 +68,7 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	event := input.Event.Clone()
+	event := input.Event
 	if err := domain.ValidateEvaluations(event.Evaluations); err != nil {
 		return Result{}, err
 	}

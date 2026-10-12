@@ -24,6 +24,14 @@
 
 ## Event
 
+- Repository 在读取边界一次性将文档转成标准 Event：恢复空集合、pending 默认状态及 UTC 时间，
+  检查身份与处理状态关系；不重新编码来源原文、扩展 JSON 或已冻结的丰富结果。历史可选字段缺失
+  保持为空，由实际消费者决定跳过或降级，不在读取时按新建 Event 的完整 schema 拒绝。
+- Lifecycle、Enrich Scope 和处理计划复用读取结果，不再次全量 Normalize Event。
+  新丰富结果在接收时检查完整性和预算；关联更新只检查关联，计划更新只检查计划与事件的
+  租户、来源、身份和状态关系。克隆负责可变数据所有权，不承担 JSON 转换或业务校验。
+- Cleaner 新建事件仍检查输入契约；读取兼容不允许伪造租户、来源版本、事件身份或绕过 CAS。
+
 - `CreateEvent` 只接受 `related_alert_ids` 为空、丰富为 pending 的新 Event；相同身份和内容为幂等，内容不同返回
   `ErrIdentityConflict`。
 - `CreateEvents` 按输入顺序返回逐项创建、幂等、冲突或暂时失败结果；请求级错误表示无法可靠解释

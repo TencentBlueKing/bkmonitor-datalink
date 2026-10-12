@@ -181,6 +181,11 @@ func TestEnricherCreationResults(t *testing.T) {
 		{name: "invalid status", enrich: func(enrich.Input) (enrich.Result, error) {
 			return enrich.Result{Status: "unknown"}, nil
 		}, wantStatus: domain.EnrichStatusFailed},
+		{name: "invalid result degrades at commit", enrich: func(enrich.Input) (enrich.Result, error) {
+			result := testEnrichResult(domain.EnrichStatusSucceeded, domain.JSONObject{})
+			result.Data.Evaluations[0].Data["processors"] = json.RawMessage(`[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.bk_tenant_id","value":"other"}]}}]`)
+			return result, nil
+		}, wantStatus: domain.EnrichStatusFailed},
 		{name: "error", enrich: func(enrich.Input) (enrich.Result, error) {
 			return enrich.Result{}, errors.New("lookup failed")
 		}, wantStatus: domain.EnrichStatusFailed},

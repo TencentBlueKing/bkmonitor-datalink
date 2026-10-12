@@ -77,22 +77,12 @@ type Alert struct {
 	Enrich       JSONObject   `json:"enrich,omitempty"`
 }
 
-// Normalize 深拷贝动态字段、规范时间并校验 Alert。
+// Normalize 用于新建或外部写入，规范动态 JSON 并检查完整载荷。
 func (a Alert) Normalize() (Alert, error) {
-	a.ActionPending = a.ActionPending.Clone()
-	a.Projection = a.Projection.Clone()
-	a.PolicyChange = a.PolicyChange.Clone()
-	a.MergeChange = a.MergeChange.Clone()
-	a.Shield = a.Shield.Clone()
-	a.LastShieldOperation = a.LastShieldOperation.clone()
-	a.Merge = a.Merge.Clone()
-	a.Admission = a.Admission.Clone()
-	a.PolicyTags = slices.Clone(a.PolicyTags)
-	slices.Sort(a.PolicyTags)
-	a.PolicyTags = slices.Compact(a.PolicyTags)
-	a.Dimensions = a.Dimensions.Normalize()
-	a.Labels = a.Labels.Normalize()
-	var err error
+	a, err := a.NormalizeState()
+	if err != nil {
+		return Alert{}, err
+	}
 	a.ExtraData, err = a.ExtraData.Normalize()
 	if err != nil {
 		return Alert{}, fmt.Errorf("alert extra_data: %w", err)
@@ -101,16 +91,31 @@ func (a Alert) Normalize() (Alert, error) {
 	if err != nil {
 		return Alert{}, fmt.Errorf("alert enrich: %w", err)
 	}
+	if err := ValidateEnrichPayload(a.EnrichStatus, a.Enrich); err != nil {
+		return Alert{}, err
+	}
+	return a, nil
+}
+
+// NormalizeState 隔离计划中的快照并统一时间、空集合，不重解析已冻结的业务 JSON。
+func (a Alert) NormalizeState() (Alert, error) {
+	a = a.Clone()
+	slices.Sort(a.PolicyTags)
+	a.PolicyTags = slices.Compact(a.PolicyTags)
+	a.Dimensions = a.Dimensions.Normalize()
+	a.Labels = a.Labels.Normalize()
+	if a.ExtraData == nil {
+		a.ExtraData = JSONObject{}
+	}
+	if a.Enrich == nil {
+		a.Enrich = JSONObject{}
+	}
 	a.LastOccurredAt = normalizeTime(a.LastOccurredAt)
 	a.UpdateAt = normalizeTime(a.UpdateAt)
 	a.BeginAt = normalizeTime(a.BeginAt)
 	a.CreateAt = normalizeTime(a.CreateAt)
 	a.EndAt = normalizeOptionalTime(a.EndAt)
-	a.EndOperation = a.EndOperation.clone()
-	if err := a.validate(false); err != nil {
-		return Alert{}, err
-	}
-	return a, nil
+	return a, a.ValidateState()
 }
 
 // Clone 返回不共享动态字段的 Alert 副本。
@@ -135,11 +140,20 @@ func (a Alert) Clone() Alert {
 
 // Validate 校验 Alert 字段及活动态、终态不变量。
 func (a Alert) Validate() error {
-	return a.validate(true)
+	if err := a.ValidateState(); err != nil {
+		return err
+	}
+	if _, err := a.ExtraData.Normalize(); err != nil {
+		return fmt.Errorf("alert extra_data: %w", err)
+	}
+	if _, err := a.Enrich.Normalize(); err != nil {
+		return fmt.Errorf("alert enrich: %w", err)
+	}
+	return ValidateEnrichPayload(a.EnrichStatus, a.Enrich)
 }
 
-// Normalize 已校验并深拷贝动态 JSON；公共 Validate 不得走此跳过路径。
-func (a Alert) validate(validateJSON bool) error {
+// ValidateState 检查身份、生命周期、投影及动作状态，不重解析已冻结的丰富和扩展数据。
+func (a Alert) ValidateState() error {
 	if o := a.LastShieldOperation; o != nil {
 		if o.validate() != nil {
 			return fmt.Errorf("invalid shield operation")
@@ -235,17 +249,6 @@ func (a Alert) validate(validateJSON bool) error {
 	}
 	if err := a.Labels.Validate(); err != nil {
 		return fmt.Errorf("alert labels: %w", err)
-	}
-	if validateJSON {
-		if _, err := a.ExtraData.Normalize(); err != nil {
-			return fmt.Errorf("alert extra_data: %w", err)
-		}
-		if _, err := a.Enrich.Normalize(); err != nil {
-			return fmt.Errorf("alert enrich: %w", err)
-		}
-	}
-	if err := ValidateEnrichPayload(a.EnrichStatus, a.Enrich); err != nil {
-		return err
 	}
 	for name, value := range map[string]time.Time{
 		"last_occurred_at": a.LastOccurredAt,

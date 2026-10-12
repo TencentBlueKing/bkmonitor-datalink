@@ -110,9 +110,9 @@ type StoredEvent struct {
 	Version    VersionToken
 }
 
-// Validate 校验领域字段与处理元数据之间的关联约束。
+// Validate 检查存储快照的身份与处理状态关系，不重新解析 Event 业务载荷。
 func (s StoredEvent) Validate() error {
-	if err := s.Event.Validate(); err != nil {
+	if err := s.Event.ValidateIdentity(); err != nil {
 		return err
 	}
 	processing, err := s.Processing.Normalize()

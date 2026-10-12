@@ -76,15 +76,19 @@ KAC Converter/Cleaner 直接构造旧 Alarm 字段。Linkd 将对应业务含义
 ## 3. 运行架构
 
 ```text
-Lifecycle 读取并 Normalize Event
+Repository 读取并恢复标准 Event，Lifecycle 直接使用
   → 按 EventSourceID + EventSourceVersion 读取该 Release 的丰富配置
-  → 当前任务版本复用运行时，历史版本最多 4 路临时运行时，用后关闭
+  → 当前任务版本复用运行时，历史版本使用临时运行时，共用消费并发预算，用后关闭
   → 逐 evaluation 执行 Processor，各等级共享请求缓存
   → 保存完整 Event 丰富结果 CAS
   → 冻结生命周期计划并创建/推进 Alert
   → 新 Alert 复制 opening Event 的选中等级结果
   → FinalHook 输出 Alert 快照
 ```
+
+Event 与 Scope 之间只做必要的深拷贝，不再次规范化来源 JSON。
+新丰富结果在提交边界检查等级覆盖、状态和载荷预算；已经冻结的结果在后续计划、关联更新中直接复用。
+内容生成仅检查新 content 的限制，不为检查一个字段而重新校验整份 opening Alert。
 
 主要代码位置：
 

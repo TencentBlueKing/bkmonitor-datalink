@@ -87,7 +87,7 @@ func (p *EventPlan) Clone() *EventPlan {
 	return &result
 }
 
-// Normalize 统一计划内快照的 JSON 空对象和 UTC 时间，保证跨存储往返后仍可判断副作用已完成。
+// Normalize 统一计划内快照的空集合和 UTC 时间，不重解析其业务 JSON，保证跨存储往返后仍可判断副作用已完成。
 func (p *EventPlan) Normalize() (*EventPlan, error) {
 	if p == nil {
 		return nil, nil
@@ -97,36 +97,35 @@ func (p *EventPlan) Normalize() (*EventPlan, error) {
 	}
 	result := p.Clone()
 	if result.SystemClose != nil {
-		a, err := result.SystemClose.Normalize()
+		a, err := result.SystemClose.NormalizeState()
 		if err != nil {
 			return nil, err
 		}
 		result.SystemClose = &a
 	}
 	for i := range result.Mutations {
-		alert, err := result.Mutations[i].Alert.Normalize()
+		alert, err := result.Mutations[i].Alert.NormalizeState()
 		if err != nil {
 			return nil, err
 		}
 		result.Mutations[i].Alert = alert
 	}
 	for i := range result.Logs {
-		log, err := result.Logs[i].Normalize()
-		if err != nil {
-			return nil, err
+		result.Logs[i].CreatedTime = result.Logs[i].CreatedTime.Round(0).UTC()
+		if result.Logs[i].Params == nil {
+			result.Logs[i].Params = domain.JSONObject{}
 		}
-		result.Logs[i] = log
 	}
 	return result, nil
 }
 
-// Validate 校验计划大小和所有持久化目标，实际租户和事件边界由 ApplyEventResult 校验。
+// Validate 校验计划预算与目标状态；动态业务数据由产生它的处理器或目标写入接口负责。
 func (p *EventPlan) Validate() error {
 	if err := p.PolicyDecision.Validate(); err != nil {
 		return err
 	}
 	if p.SystemClose != nil {
-		if err := p.SystemClose.Validate(); err != nil {
+		if err := p.SystemClose.ValidateState(); err != nil {
 			return err
 		}
 		if p.SystemClose.Status != domain.AlertStatusClosed || p.SystemClose.EndType != domain.AlertEndTypeSystem || p.SystemClose.EndReason != "unknown_severity" {
@@ -163,7 +162,7 @@ func (p *EventPlan) Validate() error {
 	}
 	seen := map[string]bool{}
 	for _, mutation := range p.Mutations {
-		if err := mutation.Alert.Validate(); err != nil {
+		if err := mutation.Alert.ValidateState(); err != nil {
 			return fmt.Errorf("plan alert: %w", err)
 		}
 		if mutation.Outcome == "" || seen[mutation.Alert.AlertID] {
@@ -172,7 +171,7 @@ func (p *EventPlan) Validate() error {
 		seen[mutation.Alert.AlertID] = true
 	}
 	for _, log := range p.Logs {
-		if err := log.Validate(); err != nil {
+		if err := log.ValidateMetadata(); err != nil {
 			return fmt.Errorf("plan log: %w", err)
 		}
 	}

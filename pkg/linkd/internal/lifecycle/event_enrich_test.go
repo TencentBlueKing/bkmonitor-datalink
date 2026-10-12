@@ -130,3 +130,17 @@ func TestEventEnrichmentSurvivesPlanFailure(t *testing.T) {
 		t.Fatal("plan retry repeated enrichment")
 	}
 }
+
+func TestFrozenHistoricalEnrichmentIsReusedWithoutPayloadValidation(t *testing.T) {
+	processor := newTestProcessor(t, memory.New(), NoopFinalHook{})
+	engine := &recordingEventEnricher{}
+	processor.enricher = engine
+	event := testEvent("historical", "warning")
+	event.EnrichStatus = domain.EnrichStatusSucceeded
+	event.Enrich.Evaluations = []domain.EvaluationEnrich{{Severity: "warning", Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{"legacy": json.RawMessage(`{"old":true}`)}}}
+	stored := store.StoredEvent{Event: event, Processing: store.NewUnprocessedEventProcessing(), Version: store.NewVersionToken("old")}
+	actual, err := processor.enrichEvent(t.Context(), stored)
+	if err != nil || len(engine.events) != 0 || !reflect.DeepEqual(actual, stored) {
+		t.Fatalf("frozen result was rejected or recomputed: %v", err)
+	}
+}

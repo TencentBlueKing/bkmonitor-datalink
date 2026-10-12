@@ -400,10 +400,6 @@ func (r *Repository) CompareAndSetEventResult(ctx context.Context, tenantID, eve
 	if !ok {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
 	}
-	normalizedResult, err := result.Normalize()
-	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
-	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return store.StoredEvent{}, err
@@ -422,7 +418,7 @@ func (r *Repository) CompareAndSetEventResult(ctx context.Context, tenantID, eve
 	if current.Processing.State != domain.EventProcessStateUnprocessed {
 		return store.StoredEvent{}, fmt.Errorf("%w: event already processed", store.ErrInvalidTransition)
 	}
-	updated, processing, err := store.ApplyEventResult(current, normalizedResult)
+	updated, processing, err := store.ApplyEventResult(current, result)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}

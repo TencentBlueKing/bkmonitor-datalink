@@ -1,8 +1,19 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"linkd/internal/domain"
 )
@@ -38,8 +49,15 @@ func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event
 		}
 	}()
 	content, err = p.contentBuilder.BuildContent(ctx, event.Clone(), evaluation, opening.Clone())
+	// 历史策略发布态已被覆盖时保留触发事件的原文，不用最新策略冒充历史配置。
+	// 只有明确缺失允许降级，歧义、身份校验失败和依赖故障仍按原错误处理。
+	fallback := false
 	if err != nil {
-		return "", fmt.Errorf("build alert content: %w", err)
+		var failure interface{ PermanentContentFailure() string }
+		if !errors.As(err, &failure) || failure.PermanentContentFailure() != "publication_missing" || strings.TrimSpace(event.Content) == "" {
+			return "", fmt.Errorf("build alert content: %w", err)
+		}
+		content, fallback = event.Content, true
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -48,10 +66,16 @@ func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event
 	if _, err := opening.Normalize(); err != nil {
 		return "", &contentFailure{code: "opening_alert_invalid"}
 	}
+	if fallback {
+		p.logger.WarnContext(ctx, "alert content uses source text after missing publication", "bk_tenant_id", event.BKTenantID,
+			"event_source_id", event.EventSourceID, "event_source_version", event.EventSourceVersion,
+			"event_id", event.EventID, "reason_code", "publication_missing", "content_mode", "source_fallback")
+	}
 	return content, nil
 }
 
 type contentFailure struct{ code string }
 
-func (e *contentFailure) Error() string                   { return "build alert content: " + e.code }
+func (e *contentFailure) Error() string { return "build alert content: " + e.code }
+
 func (e *contentFailure) PermanentContentFailure() string { return e.code }

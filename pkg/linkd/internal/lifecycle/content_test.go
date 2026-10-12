@@ -10,13 +10,17 @@
 package lifecycle
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
+	"linkd/internal/enrich/description"
 	"linkd/internal/store"
 	"linkd/internal/store/memory"
 )
@@ -154,5 +158,82 @@ func TestContentFailureDoesNotSavePlanOrCreateAlert(t *testing.T) {
 				t.Fatalf("alert error %v", err)
 			}
 		})
+	}
+}
+
+func TestMissingPublicationFallsBackToOriginalContentAndFreezesPlan(t *testing.T) {
+	repo := memory.New()
+	processor := newTestProcessor(t, repo, NoopFinalHook{})
+	var logs bytes.Buffer
+	processor.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
+		return "", fmt.Errorf("lookup: %w", &description.Error{Code: "publication_missing"})
+	})
+	event := testEvent("missing-publication", "warning")
+	event.Content = "original detection text"
+	created, err := repo.CreateEvent(t.Context(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enriched, err := processor.enrichEvent(t.Context(), created.StoredEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := processor.preparePlan(t.Context(), enriched.Event, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := processor.writeEventResult(t.Context(), enriched, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Event.Content != event.Content || saved.Processing.Plan == nil {
+		t.Fatal("fallback changed source text or failed to persist plan")
+	}
+	if !strings.Contains(logs.String(), "source_fallback") || !strings.Contains(logs.String(), event.EventID) || strings.Contains(logs.String(), event.Content) {
+		t.Fatalf("fallback diagnostic lacks identity or exposes content: %s", logs.String())
+	}
+	processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
+		t.Fatal("retry rebuilt frozen content")
+		return "", nil
+	})
+	result, err := processor.ProcessEvent(t.Context(), saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alert, err := repo.GetAlert(t.Context(), event.BKTenantID, result.AlertIDs[0])
+	if err != nil || alert.Alert.Content != event.Content {
+		t.Fatalf("fallback content %q error %v", alert.Alert.Content, err)
+	}
+}
+
+func TestContentFallbackDoesNotHideOtherFailuresOrCancellation(t *testing.T) {
+	for _, code := range []string{"publication_missing_or_ambiguous", "publication_version_mismatch", "publication_runtime_invalid", "template_invalid"} {
+		t.Run(code, func(t *testing.T) {
+			processor := newTestProcessor(t, memory.New(), NoopFinalHook{})
+			processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
+				return "", &description.Error{Code: code}
+			})
+			event := testEvent("failed", "warning")
+			event.Content = "original detection text"
+			if _, err := processor.buildNewAlertContent(t.Context(), event, domain.EventEvaluation{}, domain.Alert{}); err == nil {
+				t.Fatal("unrelated content failure hidden")
+			}
+		})
+	}
+	processor := newTestProcessor(t, memory.New(), NoopFinalHook{})
+	processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
+		return "", &description.Error{Code: "publication_missing"}
+	})
+	event := testEvent("missing", "warning")
+	event.Content = "  "
+	if _, err := processor.buildNewAlertContent(t.Context(), event, domain.EventEvaluation{}, domain.Alert{}); err == nil {
+		t.Fatal("empty fallback content accepted")
+	}
+	event.Content = "source"
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := processor.buildNewAlertContent(ctx, event, domain.EventEvaluation{}, domain.Alert{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("fallback ignored cancellation: %v", err)
 	}
 }

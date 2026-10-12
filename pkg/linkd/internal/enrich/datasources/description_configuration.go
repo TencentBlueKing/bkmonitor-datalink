@@ -45,7 +45,7 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 		return description.Configuration{}, err
 	}
 	if !found {
-		return description.Configuration{}, descriptionFailure("publication_missing_or_ambiguous")
+		return description.Configuration{}, descriptionFailure("publication_missing")
 	}
 	// 文案入口保留既有严格状态要求；普通 Enrich 可匹配删除或禁用策略。
 	if row.State != "active" || !row.Enabled {

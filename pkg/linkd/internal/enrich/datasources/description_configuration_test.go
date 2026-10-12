@@ -291,7 +291,7 @@ func TestDescriptionConfigurationMissingDependencyAndCancellation(t *testing.T) 
 				}
 			} else {
 				var failure *description.Error
-				if !errors.As(err, &failure) || failure.Code != "publication_missing_or_ambiguous" {
+				if !errors.As(err, &failure) || failure.Code != "publication_missing" {
 					t.Fatal(err)
 				}
 			}

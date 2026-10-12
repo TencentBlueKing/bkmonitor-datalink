@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // twoAlgorithmLevel is a Level detecting with two thresholds, in that order.
@@ -79,7 +80,7 @@ func TestReadingAnAlgorithmListAllocatesNothing(t *testing.T) {
 			sink += len(algorithm.Kind())
 		}
 	})
-	if allocations != 0 {
+	if !racedetector.Enabled && allocations != 0 {
 		t.Fatalf("reading the algorithms allocates %.0f times, want 0", allocations)
 	}
 	_ = sink

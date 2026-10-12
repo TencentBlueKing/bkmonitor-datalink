@@ -5,7 +5,11 @@
 
 package cmdbcache
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
+)
 
 // Python's fuller overwrites bk_target_ip with the CMDB host's address
 // whenever it finds the host by bk_host_id or bk_agent_id (bk-monitor
@@ -58,7 +62,7 @@ func TestARecordPlacedByIDWhoseAddressIsNotTheHostsIsMarked(t *testing.T) {
 func TestComparingAnUnescapedAddressAllocatesNothing(t *testing.T) {
 	host := &HostFacts{IP: "192.0.2.172"}
 	dimensions := jsonDims(t, `{"bk_host_id":"720002","bk_target_ip":"198.51.100.9"}`)
-	if allocations := testing.AllocsPerRun(100, func() { reportedAddressDiffers(dimensions, host) }); allocations != 0 {
+	if allocations := testing.AllocsPerRun(100, func() { reportedAddressDiffers(dimensions, host) }); !racedetector.Enabled && allocations != 0 {
 		t.Fatalf("%v allocations a comparison, want none", allocations)
 	}
 }

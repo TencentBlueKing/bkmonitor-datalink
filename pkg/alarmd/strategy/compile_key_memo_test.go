@@ -13,6 +13,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // A content key already seen is answered with the cache key deriving it
@@ -35,7 +37,7 @@ func TestARememberedContentKeyIsTheCacheKeyItsPlanDerives(t *testing.T) {
 		if _, err := compiler.compileCacheKey(request); err != nil {
 			t.Fatal(err)
 		}
-	}); allocations != 0 {
+	}); !racedetector.Enabled && allocations != 0 {
 		t.Fatalf("a remembered content key allocates %.0f times, want 0: its key was derived again", allocations)
 	}
 	keyed, err := compiler.Compile(context.Background(), request)

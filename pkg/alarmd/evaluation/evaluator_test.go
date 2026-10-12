@@ -13,6 +13,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
@@ -94,7 +95,7 @@ func TestEvaluatorRejectsRecordLimitBeforeCopyingPrimaryView(t *testing.T) {
 		}
 	}
 	runtime.ReadMemStats(&after)
-	if bytesPerOp := (after.TotalAlloc - before.TotalAlloc) / runs; bytesPerOp > 64<<10 {
+	if bytesPerOp := (after.TotalAlloc - before.TotalAlloc) / runs; !racedetector.Enabled && bytesPerOp > 64<<10 {
 		t.Fatalf("oversized PRIMARY was copied before rejection: %d bytes/op", bytesPerOp)
 	}
 }

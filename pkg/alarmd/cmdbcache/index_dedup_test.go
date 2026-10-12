@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // addFieldsDecodingEveryRecord is how host records were filed before the
@@ -165,7 +167,7 @@ func TestAHostsSecondCopyIsNotReadPastItsHostID(t *testing.T) {
 		builder.seen["7"] = &HostFacts{HostID: "7"}
 		builder.addFields([]string{"7", record})
 	})
-	if second*2 > first {
+	if !racedetector.Enabled && second*2 > first {
 		t.Fatalf("filing a host's second copy allocates %.0f times against %.0f for its first: it was read whole", second, first)
 	}
 }

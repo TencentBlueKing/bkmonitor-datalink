@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 var costA = CostPlanIdentity{"tenant", "business", "healthy-large"}
@@ -271,7 +273,7 @@ func TestCostSummaryObserveAllocations(t *testing.T) {
 			case "irrelevant":
 				o.Stage = StageOther
 			}
-			if got := testing.AllocsPerRun(1000, func() { c.Observe(context.Background(), o) }); got != 0 {
+			if got := testing.AllocsPerRun(1000, func() { c.Observe(context.Background(), o) }); !racedetector.Enabled && got != 0 {
 				t.Fatalf("hot observation allocated: %v", got)
 			}
 		})

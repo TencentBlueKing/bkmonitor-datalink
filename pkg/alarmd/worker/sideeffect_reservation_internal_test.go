@@ -9,6 +9,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // This exercises the production aggregation boundary, not synthetic reservation
@@ -53,7 +54,7 @@ func TestProvisionalMeasurementDoesNotCopyLargeEventPayload(t *testing.T) {
 		_, _ = evaluationRetainedSize(execution.StatePreflightResult{}, result)
 	}
 	runtime.ReadMemStats(&after)
-	if bytesPerOp := (after.TotalAlloc - before.TotalAlloc) / runs; bytesPerOp > 64<<10 {
+	if bytesPerOp := (after.TotalAlloc - before.TotalAlloc) / runs; !racedetector.Enabled && bytesPerOp > 64<<10 {
 		t.Fatalf("size accounting copied event payload: %d bytes/op", bytesPerOp)
 	}
 }

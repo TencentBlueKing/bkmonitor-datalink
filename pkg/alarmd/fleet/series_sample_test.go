@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/go-redis/redis/v8"
 )
@@ -150,7 +151,7 @@ func TestSeriesSampleSlowStoreDoesNotBackpressureReservation(t *testing.T) {
 			if s.TryReserve(ctx, c) != nil {
 				t.Fatal("in-flight buffer was released before store completion")
 			}
-		}); got != 0 {
+		}); !racedetector.Enabled && got != 0 {
 			t.Fatalf("slow-store branch allocated %g", got)
 		}
 		// Cancellation interrupts the writer's actual bounded I/O context.

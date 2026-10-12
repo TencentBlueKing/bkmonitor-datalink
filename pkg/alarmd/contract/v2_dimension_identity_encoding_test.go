@@ -15,6 +15,8 @@ import (
 	"math/rand"
 	"sort"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // identityNames are dimension names a writer can send: the characters
@@ -221,7 +223,7 @@ func TestASeriesWithItsIdentityEncodingAllocatesLess(t *testing.T) {
 		_, _ = DeriveSeriesRecordsDigestV2(recordsTestDomain, records, encoded)
 	})
 	fieldsOnly := testing.AllocsPerRun(50, func() { _, _ = CanonicalJSONV2(DimensionIdentityV2{Fields: fields, Digest: identity.Digest}) })
-	if shared > separate-fieldsOnly/2 {
+	if !racedetector.Enabled && shared > separate-fieldsOnly/2 {
 		t.Fatalf("allocations: %v with the encoding shared, %v without; encoding the identity alone is %v", shared, separate, fieldsOnly)
 	}
 }

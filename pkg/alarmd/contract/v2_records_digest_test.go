@@ -15,6 +15,8 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 const recordsTestDomain = "alarmd-provider-series-delivery-v1"
@@ -235,7 +237,7 @@ func TestAssemblingASeriesDigestAllocatesAFractionOfTheCanonicalOne(t *testing.T
 	}
 	canonical := testing.AllocsPerRun(20, func() { _, _ = DeriveCanonicalDigestV2(recordsTestDomain, records) })
 	assembled := testing.AllocsPerRun(20, func() { _, _ = deriveSharedRecordsDigest(recordsTestDomain, records, DimensionIdentityEncodingV2{}) })
-	if assembled*2 > canonical {
+	if !racedetector.Enabled && assembled*2 > canonical {
 		t.Fatalf("assembling allocates %.0f times against %.0f for the canonical encoding", assembled, canonical)
 	}
 }

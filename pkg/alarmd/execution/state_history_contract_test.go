@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -129,7 +130,7 @@ func TestTheBaseCheckDoesNotWalkTheLoadedHistory(t *testing.T) {
 		})
 	}
 	short, long := measure(8), measure(1469)
-	if long > short {
+	if !racedetector.Enabled && long > short {
 		t.Fatalf("validating against a 1469 point record allocated %v and against an 8 point one %v; the "+
 			"base is compared by identity precisely so that this does not grow with the window", long, short)
 	}

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 func TestCompilerCompilesDynamicLevelsInDeterministicOrders(t *testing.T) {
@@ -347,7 +348,7 @@ func TestCompiledPlanReadOnlyViewsDoNotClonePredicateAST(t *testing.T) {
 		readOnlyDetectorsSink = readOnlyLevelsSink[0].Detectors()
 		readOnlyPredicateSink = readOnlyDetectorsSink[0].Predicate()
 	})
-	if allocations > 2 {
+	if !racedetector.Enabled && allocations > 2 {
 		t.Fatalf("read-only views allocated %.1f objects per access, want at most 2 outer slice copies", allocations)
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // longHistoryPoints is a day-long window at a minute's cadence: the shape of
@@ -101,7 +102,7 @@ func TestTheStoreDecodesAFramedRecordOnce(t *testing.T) {
 			t.Fatalf("read back %d points", len(view.History))
 		}
 	})
-	if read > decode*1.25 {
+	if !racedetector.Enabled && read > decode*1.25 {
 		t.Fatalf("reading the record allocated %.0f times against %.0f for one decode: the frame is decoded more than once", read, decode)
 	}
 }

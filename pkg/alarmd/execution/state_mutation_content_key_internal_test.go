@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // The content key is what the payload says: the same payload keyed twice
@@ -74,7 +76,7 @@ func marshalledContentKey(payload stateMutationDigestPayload) ([sha256.Size]byte
 // Keying keeps nothing of the document: it allocates at least the
 // document's length less than marshalling it did.
 func TestTheContentKeyDoesNotKeepTheDocument(t *testing.T) {
-	if raceEnabled {
+	if racedetector.Enabled {
 		// Both arms encode into a buffer from the encoder's pool. The race
 		// detector's pool drops a quarter of the buffers put back, so calls
 		// grow a new one at random and the difference is lost in it: one run

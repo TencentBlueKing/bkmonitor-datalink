@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 func slotDigestContract(group QueryGroupIdentity, at EvaluationTime) FrozenExecutionContractRef {
@@ -100,7 +102,7 @@ func TestAnApplyVersionForARememberedSlotAllocatesNothing(t *testing.T) {
 		if _, err := BuildApplyVersion(contractRef, 1); err != nil {
 			t.Fatal(err)
 		}
-	}); allocations != 0 {
+	}); !racedetector.Enabled && allocations != 0 {
 		t.Fatalf("BuildApplyVersion for a remembered Slot allocates %.0f times, want 0", allocations)
 	}
 }

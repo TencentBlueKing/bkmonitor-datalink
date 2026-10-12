@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // marshalledRetainedSize is the size as it was measured before: the whole
@@ -161,7 +162,7 @@ func allocatedBytesPerCall(call func()) uint64 {
 // number of allocations is the same -- the encoder is one object where the
 // document was one -- so it is the bytes that are held to it.
 func TestTheRetainedSizeDoesNotKeepTheDocument(t *testing.T) {
-	if raceEnabled {
+	if racedetector.Enabled {
 		// Both arms encode through the JSON encoder's pooled buffer. Under the
 		// race detector the pool drops a quarter of what is put back, calls
 		// grow a new buffer at random, and 14 runs in 150 read a difference

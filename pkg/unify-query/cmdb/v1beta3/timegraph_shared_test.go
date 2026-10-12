@@ -168,6 +168,10 @@ func TestDirectSharedGraphBudgetsAndGrid(t *testing.T) {
 			g, err := newSharedTimeGraph(cfg, grid)
 			require.NoError(t, err)
 			err = g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation("calls"), cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.Timestamps...)
+			if test.edges > 0 && err == nil {
+				other := sharedGraphTestRelation("other")
+				err = g.AddTimeRelationWithRelation(context.Background(), other, cmdb.Matcher{"from_id": "a", "to_id": "b"}, grid.Timestamps...)
+			}
 			var limit *ResultLimitError
 			require.ErrorAs(t, err, &limit)
 			require.Equal(t, test.want, limit.Reason)

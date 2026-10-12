@@ -192,3 +192,25 @@ Keep transport/HTTP2 failures separate from these optimization claims. Bounded
 parallel fetch and frontier pushdown remain conditional follow-up experiments
 only when post-reuse backend measurements justify them; this change does not
 increase physical query concurrency or modify ordinary-query routing.
+
+## Attribute Selection and Representation Budgets
+
+`source_expand_info` is consumed by both topology endpoints. It selects roots
+from the resource-info query at each evaluation frame, intersected with observed
+relation endpoints. It does not filter neighboring entities or invent info-only
+roots. Conflicting identity filters fail; primary keys in the expanded matcher
+complete the effective source identity.
+
+Compact output charges each stored node/edge version, including ID and bitmap
+overhead. Snapshot output charges each expanded frame object. Expanded occurrence
+counts remain observable; Matrix input, H/K, graph memory reservation and global
+admission remain independent guards. This change does not certify a workload or
+a production resource limit. The HTTP wrapper reuses owned item buffers through
+the existing segment writer, retaining batch byte limits and failure cleanup.
+
+The four legacy relation endpoints expose optional `partial` and
+`partial_reason` on successful items. Known source-info missing routes and
+backend partial retain available matching data and explicit quality. Complete
+items omit both fields. Each batch item has an independent metadata status scope;
+a failed item remains an error. Required relation missing-route errors are
+unchanged.

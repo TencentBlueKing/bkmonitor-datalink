@@ -80,6 +80,9 @@ func TestYoloSharedTopologyBypassesConfiguredBudgets(t *testing.T) {
 				"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, timestamps...),
 				"middle_target_flow":   nil,
 			})
+			if test.name == "graph edges" {
+				model = sharedTopologyQueryModel(map[string]pl.Matrix{"source_middle_flow": append(contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, timestamps...), contractMatrix(map[string]string{"source_id": "a", "middle_id": "extra"}, timestamps...)...), "middle_target_flow": nil})
+			}
 			for _, enabled := range []bool{false, true, false} {
 				yoloMode = enabled
 				result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{
@@ -93,8 +96,13 @@ func TestYoloSharedTopologyBypassesConfiguredBudgets(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, result.Snapshots, 3)
 				for _, snapshot := range result.Snapshots {
-					require.Len(t, snapshot.Nodes, 2)
-					require.Len(t, snapshot.Edges, 1)
+					if test.name == "graph edges" {
+						require.Len(t, snapshot.Nodes, 3)
+						require.Len(t, snapshot.Edges, 2)
+					} else {
+						require.Len(t, snapshot.Nodes, 2)
+						require.Len(t, snapshot.Edges, 1)
+					}
 				}
 			}
 		})

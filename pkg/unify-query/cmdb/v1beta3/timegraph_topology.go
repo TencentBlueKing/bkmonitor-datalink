@@ -48,6 +48,7 @@ type SharedTopologyQuery struct {
 	AllowedRelationTypes []string
 	Direction            TraversalDirection
 	PartialTimestamps    map[int64]string
+	RootBits             map[uint64]timeBitmap // nil means no extra per-frame root constraint
 }
 
 // SharedTopologyNode 表示快照中的稳定实体身份。
@@ -272,6 +273,9 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		resourceType, info := q.nodeBuilder.Info(node)
 		if resourceType != query.SourceType {
 			continue
+		}
+		if query.RootBits != nil {
+			bits = bits.intersect(query.RootBits[node])
 		}
 		var matchedBits timeBitmap
 		for index, timestamp := range grid.Timestamps {

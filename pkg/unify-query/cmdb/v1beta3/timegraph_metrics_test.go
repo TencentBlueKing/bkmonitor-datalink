@@ -60,6 +60,9 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 				"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000, 1700000100000),
 				"middle_target_flow":   {},
 			}
+			if tt.graphLimit {
+				responses["source_middle_flow"] = append(responses["source_middle_flow"], contractMatrix(map[string]string{"source_id": "a", "middle_id": "extra"}, 1700000000000, 1700000100000)...)
+			}
 			model := sharedTopologyQueryModel(responses)
 			inflight := readTimeGraphMetric(t, "cmdb_topology_inflight", map[string]string{"query_mode": "range"}, "gauge")
 			model.timeGraphVMQueryWithPartial = func(ctx context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {

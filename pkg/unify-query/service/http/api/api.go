@@ -390,7 +390,7 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 		sendWg.Add(1)
 		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
-			queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-v1beta3-item")
+			queryCtx, querySpan := trace.NewSpan(metadata.WithStatusScope(ctx, idx), "handler-api-relation-multi-resource-v1beta3-item")
 			var queryErr error
 			defer querySpan.End(&queryErr)
 			querySpan.Set("query-index", idx)
@@ -409,6 +409,9 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
 				qry.PathResource,
 			)
+			if status := metadata.GetStatus(queryCtx); queryErr == nil && status != nil && status.Code == metadata.QueryTsPartial {
+				d.Partial, d.PartialReason = true, status.Message
+			}
 			if queryErr != nil {
 				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
@@ -519,7 +522,7 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 		sendWg.Add(1)
 		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
-			queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range-v1beta3-item")
+			queryCtx, querySpan := trace.NewSpan(metadata.WithStatusScope(ctx, idx), "handler-api-relation-multi-resource-range-v1beta3-item")
 			var queryErr error
 			defer querySpan.End(&queryErr)
 			querySpan.Set("query-index", idx)
@@ -539,6 +542,9 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
 				qry.PathResource,
 			)
+			if status := metadata.GetStatus(queryCtx); queryErr == nil && status != nil && status.Code == metadata.QueryTsPartial {
+				d.Partial, d.PartialReason = true, status.Message
+			}
 			if queryErr != nil {
 				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest

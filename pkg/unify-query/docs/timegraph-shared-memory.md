@@ -22,15 +22,14 @@ YOLO 模式超过 64 个评估点时，时间位图自动扩展为多个 uint64�
 | `max_shared_topology_points` | 60 | 实际网格；可调低，不能通过配置放宽到 61–64 点，超出范围的配置回退 60 |
 | `max_shared_topology_backend_bytes` | 16777216（16 MiB） | 单次后端 HTTP 响应的解压后大小；VM 调用显式传入，解码前拒绝 |
 | `max_shared_topology_matrix_points` | 1000000 | 一个拓扑查询所有取数阶段的 Matrix 点数总和 |
-| `max_shared_topology_output_elements` | 200000 | 物化的全部快照节点与边之和，包含之后可能被目标类型过滤的候选输出 |
-| `max_shared_topology_output_bytes` | 67108864（64 MiB） | 快照物化前的 JSON 大小保守上界，以及 HTTP 整批响应大小 |
+| `max_shared_topology_output_elements` | 200000 | 实际物化的节点与边对象数：snapshots 按各帧展开，compact 按属性／关系版本 |
+| `max_shared_topology_output_bytes` | 67108864（64 MiB） | 按所选表示计算的 JSON 大小保守上界，以及 HTTP 整批实际响应大小 |
 | `max_shared_topology_request_bytes` | 1048576（1 MiB） | HTTP 请求体大小，直连和代理入口均生效 |
 | `max_shared_topology_queries` | 16 | 单个 HTTP 批次的查询条数 |
 
 既有 `max_graph_nodes`、`max_graph_edges`、`max_graph_node_infos` 继续约束构图。
-Matrix 单次序列数也受 `max_graph_nodes` 限制。边预算保留“端点对 × 有效时间点”
-口径，节点属性预算保留“节点 × 有效时间点”口径，避免改为共享存储时意外放宽取数范围。
-这些逻辑计数不能直接换算为堆大小；多关系身份仍分别保留在共享关系表中。
+Matrix 单次序列数也受 `max_graph_nodes` 限制。共享拓扑的边限额按完整关系身份的唯一有向边计数，属性限额按实际存储的标签版本计数；旧逐时间点路径图仍按各帧计数。相同标签跨帧复用结构限额，同端点不同关系类型、指标、类别或方向分别计数。
+时间出现次数继续作为观测指标保留；Matrix 累计点数、H／K、截止时间及 Matrix／graph／output 的同时存活内存预约仍独立生效。结构计数不是堆大小保证，提高输入或资源参数仍须容量验收。
 
 普通模式默认 HTTP 请求体最多 1 MiB，`query_list` 最多 16 项。批次串行执行，响应累计也受预算限制，
 不能用更多子查询放大单请求输出上限。
@@ -133,3 +132,5 @@ TG_PIPELINE_MODE=shared TG_EDGES=1000 TG_POINTS=60 TG_CONCURRENCY=1 GOMAXPROCS=4
 正式容量验收仍需固定真实业务画像和延迟/内存目标，并验证持续负载对普通查询的影响。
 逐层过滤、候选批读与混合取数会改变进入系统的数据量，应在保持相同结果语义的前提下
 独立比较；本次直接共享构图沿用已有候选取数策略。
+
+属性选根通过 `source_expand_info` 显式请求，先查询 info 并仅按每帧命中身份筛选关系端点根。info-only 孤立节点不产生拓扑答案，邻域节点不受根属性条件限制。冲突身份拒绝，扩展主键可补全身份；未知属性字段拒绝。源 info 缺物理路由允许空结果并标记 `source_info_no_route`，后端 partial 保留 `backend_partial`。

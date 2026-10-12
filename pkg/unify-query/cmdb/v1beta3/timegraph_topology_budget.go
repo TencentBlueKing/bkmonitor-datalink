@@ -211,21 +211,37 @@ func (b *topologyOutputBudget) add(size int64) error {
 }
 
 func (b *topologyOutputBudget) addRepeated(size int64, count int) error {
+	if size < 0 || count < 0 || (count > 0 && size > math.MaxInt64/int64(count)) {
+		return fmt.Errorf("negative or overflowing topology output charge")
+	}
+	return b.addCharge(size*int64(count), count)
+}
+
+func (b *topologyOutputBudget) addCharge(size int64, count int) error {
+	if size < 0 || count < 0 || size > math.MaxInt64-b.bytes || count > math.MaxInt-b.elements {
+		return fmt.Errorf("negative or overflowing topology output charge")
+	}
 	if b.maxElements > 0 && count > b.maxElements-b.elements {
 		return &ResultLimitError{Reason: "max_topology_output_elements", Count: b.elements + count, Limit: b.maxElements}
 	}
-	if err := b.checkBytes(size * int64(count)); err != nil {
+	if err := b.checkBytes(size); err != nil {
 		return err
 	}
-	if b.ctx != nil && 2*(b.bytes+size*int64(count)) > b.reservedBytes {
-		const chunk = 4 * 1024 * 1024
-		want := (2*(b.bytes+size*int64(count)) + chunk - 1) / chunk * chunk
-		if err := ReserveTopologyStage(b.ctx, "output", want); err != nil {
-			return err
+	if b.ctx != nil {
+		const chunk int64 = 4 * 1024 * 1024
+		total := b.bytes + size
+		if total > (math.MaxInt64-chunk+1)/2 {
+			return fmt.Errorf("overflowing topology output memory reservation")
 		}
-		b.reservedBytes = want
+		want := (2*total + chunk - 1) / chunk * chunk
+		if want > b.reservedBytes {
+			if err := ReserveTopologyStage(b.ctx, "output", want); err != nil {
+				return err
+			}
+			b.reservedBytes = want
+		}
 	}
 	b.elements += count
-	b.bytes += size * int64(count)
+	b.bytes += size
 	return nil
 }

@@ -84,6 +84,7 @@ type SharedTopologyQuery struct {
 	Step                     string     `json:"step,omitempty"`
 	SourceType               Resource   `json:"source_type"`
 	SourceInfo               Matcher    `json:"source_info,omitempty"`
+	SourceExpandInfo         Matcher    `json:"source_expand_info,omitempty"`
 	TargetTypes              []Resource `json:"target_types,omitempty"`
 	MaxHops                  int        `json:"max_hops,omitempty"`
 	AllowedCategories        []string   `json:"allowed_categories,omitempty"`
@@ -162,9 +163,11 @@ type RelationPathResourcesRequest struct {
 }
 
 type RelationPathResourcesResponseData struct {
-	Code    int                   `json:"code"`
-	Results []PathResourcesResult `json:"results"`
-	Message string                `json:"message"`
+	Partial       bool                  `json:"partial,omitempty"`
+	PartialReason string                `json:"partial_reason,omitempty"`
+	Code          int                   `json:"code"`
+	Results       []PathResourcesResult `json:"results"`
+	Message       string                `json:"message"`
 }
 
 type RelationPathResourcesResponse struct {
@@ -187,9 +190,11 @@ type RelationPathResourcesRangeRequest struct {
 }
 
 type RelationPathResourcesRangeResponseData struct {
-	Code    int                   `json:"code"`
-	Results []PathResourcesResult `json:"results"`
-	Message string                `json:"message"`
+	Partial       bool                  `json:"partial,omitempty"`
+	PartialReason string                `json:"partial_reason,omitempty"`
+	Code          int                   `json:"code"`
+	Results       []PathResourcesResult `json:"results"`
+	Message       string                `json:"message"`
 }
 
 type RelationPathResourcesRangeResponse struct {
@@ -232,7 +237,9 @@ type RelationMultiResourceRequest struct {
 
 // RelationMultiResourceResponseData 响应数据
 type RelationMultiResourceResponseData struct {
-	Code int `json:"code"`
+	Code          int    `json:"code"`
+	Partial       bool   `json:"partial,omitempty"`
+	PartialReason string `json:"partial_reason,omitempty"`
 
 	SourceType Resource `json:"source_type"`
 	SourceInfo Matcher  `json:"source_info"`
@@ -277,7 +284,9 @@ type RelationMultiResourceRangeRequest struct {
 
 // RelationMultiResourceRangeResponseData 响应数据
 type RelationMultiResourceRangeResponseData struct {
-	Code int `json:"code"`
+	Code          int    `json:"code"`
+	Partial       bool   `json:"partial,omitempty"`
+	PartialReason string `json:"partial_reason,omitempty"`
 
 	SourceType Resource `json:"source_type"`
 	SourceInfo Matcher  `json:"source_info"`

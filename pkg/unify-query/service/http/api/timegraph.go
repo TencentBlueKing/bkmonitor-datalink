@@ -31,6 +31,8 @@ func observeTimeGraphPathQueryMetrics(ctx context.Context, queryMode string, sta
 	result := metric.CMDBRelationResultSuccess
 	if queryErr != nil {
 		result = metric.CMDBRelationResultFailed
+	} else if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+		result = metric.CMDBRelationResultPartial
 	} else if len(results) == 0 {
 		result = metric.CMDBRelationResultEmpty
 	}
@@ -91,7 +93,7 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 	}
 	failedQueryCount := 0
 	for i, queryItem := range request.QueryList {
-		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-path-resources-item")
+		queryCtx, querySpan := trace.NewSpan(metadata.WithStatusScope(ctx, i), "handler-api-relation-path-resources-item")
 		querySpan.Set("query-index", i)
 		querySpan.Set("requested-source-type", queryItem.SourceType)
 		querySpan.Set("requested-target-types", queryItem.TargetTypes)
@@ -104,6 +106,9 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 		querySpan.Set("result-count", len(results))
 		querySpan.End(&queryErr)
 		item := cmdb.RelationPathResourcesResponseData{Code: http.StatusOK, Results: results}
+		if status := metadata.GetStatus(queryCtx); queryErr == nil && status != nil && status.Code == metadata.QueryTsPartial {
+			item.Partial, item.PartialReason = true, status.Message
+		}
 		if queryErr != nil {
 			failedQueryCount++
 			item.Code = http.StatusBadRequest
@@ -148,7 +153,7 @@ func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 	}
 	failedQueryCount := 0
 	for i, queryItem := range request.QueryList {
-		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-path-resources-range-item")
+		queryCtx, querySpan := trace.NewSpan(metadata.WithStatusScope(ctx, i), "handler-api-relation-path-resources-range-item")
 		querySpan.Set("query-index", i)
 		querySpan.Set("requested-source-type", queryItem.SourceType)
 		querySpan.Set("requested-target-types", queryItem.TargetTypes)
@@ -162,6 +167,9 @@ func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 		querySpan.Set("result-count", len(results))
 		querySpan.End(&queryErr)
 		item := cmdb.RelationPathResourcesRangeResponseData{Code: http.StatusOK, Results: results}
+		if status := metadata.GetStatus(queryCtx); queryErr == nil && status != nil && status.Code == metadata.QueryTsPartial {
+			item.Partial, item.PartialReason = true, status.Message
+		}
 		if queryErr != nil {
 			failedQueryCount++
 			item.Code = http.StatusBadRequest

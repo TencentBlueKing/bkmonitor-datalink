@@ -28,7 +28,8 @@ func compactTimeMask(bits timeBitmap) []string {
 }
 
 // FindCompactTopology exports owned dictionaries directly after propagation;
-// it never allocates K complete snapshots. Expanded budgets remain in force.
+// it never allocates K complete snapshots. Output budgets charge stored versions,
+// while occurrence counts remain available for caller and workload observability.
 func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, targets []cmdb.Resource) (result *cmdb.CompactTopology, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-compact-topology")
 	defer finishTimeGraphStage(ctx, span, "topology-materialize", time.Now(), &err)
@@ -91,8 +92,9 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 			if count == 0 {
 				return nil
 			}
-			// Charge before target filtering, matching the compatibility path.
-			if err := budget.addRepeated(topologyNodeByteBound(resource, dimensions), count); err != nil {
+			// Charge each materialized version, including ID and bitmap overhead.
+			// Input/graph budgets continue to bound traversal before target filtering.
+			if err := budget.addCharge(topologyNodeByteBound(resource, dimensions)+64+int64(20*(1+len(bits.rest))), 1); err != nil {
 				return err
 			}
 			if keep {
@@ -130,7 +132,7 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		if count == 0 {
 			continue
 		}
-		if err := budget.addRepeated(topologyEdgeByteBound(edge.key), count); err != nil {
+		if err := budget.addCharge(topologyEdgeByteBound(edge.key)+64+int64(20*(1+len(bits.rest))), 1); err != nil {
 			return nil, err
 		}
 		if !kept[edge.key.source] || !kept[edge.key.target] {

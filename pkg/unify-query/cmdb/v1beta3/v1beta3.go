@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -107,6 +108,8 @@ func (m *Model) QueryResourceMatcher(
 		result := metric.CMDBRelationResultSuccess
 		if err != nil {
 			result = metric.CMDBRelationResultFailed
+		} else if quality := metadata.GetStatus(ctx); quality != nil && quality.Code == metadata.QueryTsPartial {
+			result = metric.CMDBRelationResultPartial
 		} else if len(resMatchers) == 0 {
 			result = metric.CMDBRelationResultEmpty
 		}
@@ -151,6 +154,8 @@ func (m *Model) QueryResourceMatcherRange(
 		status := metric.CMDBRelationResultSuccess
 		if err != nil {
 			status = metric.CMDBRelationResultFailed
+		} else if quality := metadata.GetStatus(ctx); quality != nil && quality.Code == metadata.QueryTsPartial {
+			status = metric.CMDBRelationResultPartial
 		} else if len(result) == 0 {
 			status = metric.CMDBRelationResultEmpty
 		}

@@ -25,12 +25,12 @@ type topologyResponse struct {
 	chunks  [][][]byte
 }
 
-// JSONSegments returns nil for ordinary responses so their rendering is unchanged.
+// JSONSegments reuses owned item buffers without encoding the outer JSON again.
 func (r *topologyResponse) JSONSegments() ([][]byte, error) {
-	if r.chunks == nil {
+	if r.chunks == nil && r.Data == nil {
 		return nil, nil
 	}
-	if len(r.chunks) != len(r.Data) {
+	if r.chunks != nil && len(r.chunks) != len(r.Data) {
 		return nil, fmt.Errorf("topology response has %d chunk lists for %d items", len(r.chunks), len(r.Data))
 	}
 	traceID, err := stdjson.Marshal(r.TraceID)
@@ -42,7 +42,7 @@ func (r *topologyResponse) JSONSegments() ([][]byte, error) {
 		if index != 0 {
 			parts = append(parts, []byte(","))
 		}
-		if len(r.chunks[index]) != 0 {
+		if r.chunks != nil && len(r.chunks[index]) != 0 {
 			parts = append(parts, r.chunks[index]...)
 		} else if len(item) == 0 {
 			parts = append(parts, []byte("null"))

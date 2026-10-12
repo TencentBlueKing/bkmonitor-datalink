@@ -18,12 +18,15 @@ import (
 // 不相交的时间位分组表示，不为每个评估点创建图或 timestamp map。
 // 所有读写由所属 TimeGraph 的锁保护，生命周期仅限单次查询。
 type sharedTimeGraph struct {
-	grid           TopologyGrid
-	timestampIndex map[int64]int
-	nodeBits       map[uint64]timeBitmap
-	nodeInfos      map[uint64][]sharedNodeInfo
-	edgeBits       map[timeGraphTopologyEdgeKey]timeBitmap
-	edgePairBits   map[timeGraphEdgeKey]timeBitmap
+	grid                 TopologyGrid
+	timestampIndex       map[int64]int
+	nodeBits             map[uint64]timeBitmap
+	relationNodeBits     map[uint64]timeBitmap
+	sourceInfoBits       map[uint64]timeBitmap
+	nodeInfoVersionCount int
+	nodeInfos            map[uint64][]sharedNodeInfo
+	edgeBits             map[timeGraphTopologyEdgeKey]timeBitmap
+	edgePairBits         map[timeGraphEdgeKey]timeBitmap
 }
 
 type sharedNodeInfo struct {
@@ -38,12 +41,13 @@ func newSharedTimeGraph(cfg *TimeGraphConfig, grid TopologyGrid) (*TimeGraph, er
 	}
 	q := newTimeGraphWithConfig(cfg)
 	q.shared = &sharedTimeGraph{
-		grid:           grid,
-		timestampIndex: make(map[int64]int, len(grid.Timestamps)),
-		nodeBits:       make(map[uint64]timeBitmap),
-		nodeInfos:      make(map[uint64][]sharedNodeInfo),
-		edgeBits:       make(map[timeGraphTopologyEdgeKey]timeBitmap),
-		edgePairBits:   make(map[timeGraphEdgeKey]timeBitmap),
+		grid:             grid,
+		timestampIndex:   make(map[int64]int, len(grid.Timestamps)),
+		nodeBits:         make(map[uint64]timeBitmap),
+		relationNodeBits: make(map[uint64]timeBitmap),
+		nodeInfos:        make(map[uint64][]sharedNodeInfo),
+		edgeBits:         make(map[timeGraphTopologyEdgeKey]timeBitmap),
+		edgePairBits:     make(map[timeGraphEdgeKey]timeBitmap),
 	}
 	for index, timestamp := range grid.Timestamps {
 		q.shared.timestampIndex[timestamp] = index
@@ -53,6 +57,9 @@ func newSharedTimeGraph(cfg *TimeGraphConfig, grid TopologyGrid) (*TimeGraph, er
 
 func (g *sharedTimeGraph) clear() {
 	clear(g.nodeBits)
+	clear(g.relationNodeBits)
+	clear(g.sourceInfoBits)
+	g.nodeInfoVersionCount = 0
 	clear(g.nodeInfos)
 	clear(g.edgeBits)
 	clear(g.edgePairBits)
@@ -97,9 +104,7 @@ func appendSharedNodeInfo(versions []sharedNodeInfo, active timeBitmap, info cmd
 func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active timeBitmap) error {
 	g := q.shared
 	newPoints := active.subtract(g.nodeBits[node]).count()
-	if q.maxNodeInfos > 0 && newPoints > q.maxNodeInfos-q.nodeInfoCount {
-		return &ResultLimitError{Reason: "max_graph_node_infos", Count: q.nodeInfoCount + newPoints, Limit: q.maxNodeInfos}
-	}
+
 	previous := g.nodeInfos[node]
 	versions := make([]sharedNodeInfo, 0, len(previous)+1)
 	remaining := active
@@ -114,6 +119,11 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 	if !remaining.empty() {
 		versions = appendSharedNodeInfo(versions, remaining, cloneMatcher(info))
 	}
+	versionCount := g.nodeInfoVersionCount + len(versions) - len(previous)
+	if q.maxNodeInfos > 0 && versionCount > q.maxNodeInfos {
+		return &ResultLimitError{Reason: "max_graph_node_infos", Count: versionCount, Limit: q.maxNodeInfos}
+	}
+	g.nodeInfoVersionCount = versionCount
 	g.nodeInfos[node] = versions
 	g.nodeBits[node] = g.nodeBits[node].union(active)
 	q.nodeInfoCount += newPoints
@@ -129,11 +139,19 @@ func (q *TimeGraph) addSharedRelation(ctx context.Context, relation cmdb.Relatio
 	if err != nil {
 		return err
 	}
+	if active.empty() {
+		return nil
+	}
 	pair := timeGraphEdgeKey{source: source, target: target}
-	// 保持既有按端点对 × 时间点计数的候选预算，改变存储方式不放大取数许可。
+	// Storage limits count full relation identities; occurrence metrics and
+	// input-point, memory, time and traversal limits remain independent.
 	newEdges := active.subtract(g.edgePairBits[pair]).count()
-	if q.maxEdges > 0 && newEdges > q.maxEdges-q.edgeCount {
-		return &ResultLimitError{Reason: "max_graph_edges", Count: q.edgeCount + newEdges, Limit: q.maxEdges}
+	key := timeGraphTopologyEdgeKey{source: source, target: target, relation: timeGraphEdgeRelation{
+		relationType: relation.RelationType, metricName: relation.MetricName,
+		category: relation.Category, direction: direction,
+	}}
+	if _, exists := g.edgeBits[key]; !exists && !active.empty() && q.maxEdges > 0 && len(g.edgeBits) >= q.maxEdges {
+		return &ResultLimitError{Reason: "max_graph_edges", Count: len(g.edgeBits) + 1, Limit: q.maxEdges}
 	}
 	if err := q.setSharedNodeInfo(source, sourceInfo, active); err != nil {
 		return err
@@ -141,10 +159,9 @@ func (q *TimeGraph) addSharedRelation(ctx context.Context, relation cmdb.Relatio
 	if err := q.setSharedNodeInfo(target, targetInfo, active); err != nil {
 		return err
 	}
-	key := timeGraphTopologyEdgeKey{source: source, target: target, relation: timeGraphEdgeRelation{
-		relationType: relation.RelationType, metricName: relation.MetricName,
-		category: relation.Category, direction: direction,
-	}}
+
+	g.relationNodeBits[source] = g.relationNodeBits[source].union(active)
+	g.relationNodeBits[target] = g.relationNodeBits[target].union(active)
 	g.edgeBits[key] = g.edgeBits[key].union(active)
 	g.edgePairBits[pair] = g.edgePairBits[pair].union(active)
 	q.edgeCount += newEdges
@@ -172,4 +189,19 @@ func (g *sharedTimeGraph) state(ctx context.Context, grid TopologyGrid, query Sh
 		edges = append(edges, sharedTopologyEdgeState{key: key, activeBits: active})
 	}
 	return g.nodeBits, edges, nil
+}
+
+// sharedTopologyRootBits keeps info-only nodes out of the topology root set.
+// When attributes were requested, only the info query's per-frame matches qualify.
+func (q *TimeGraph) sharedTopologyRootBits() map[uint64]timeBitmap {
+	roots := make(map[uint64]timeBitmap, len(q.shared.relationNodeBits))
+	for id, bits := range q.shared.relationNodeBits {
+		if q.shared.sourceInfoBits != nil {
+			bits = bits.intersect(q.shared.sourceInfoBits[id])
+		}
+		if !bits.empty() {
+			roots[id] = bits
+		}
+	}
+	return roots
 }

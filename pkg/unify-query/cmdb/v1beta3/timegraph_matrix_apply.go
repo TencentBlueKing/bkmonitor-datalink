@@ -86,6 +86,17 @@ func (q *TimeGraph) applySourceMatrix(ctx context.Context, matrix pl.Matrix, sou
 		if err = q.AddTimeNode(ctx, sourceType, info, timestamps...); err != nil {
 			return errors.WithMessage(err, "add source info node")
 		}
+		if q.shared != nil && q.shared.sourceInfoBits != nil {
+			id, idErr := q.nodeBuilder.GetID(sourceType, info)
+			if idErr != nil {
+				return idErr
+			}
+			bits, bitsErr := q.shared.timeBits(timestamps)
+			if bitsErr != nil {
+				return bitsErr
+			}
+			q.shared.sourceInfoBits[id] = q.shared.sourceInfoBits[id].union(bits)
+		}
 	}
 	return nil
 }

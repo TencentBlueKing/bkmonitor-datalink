@@ -55,6 +55,9 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 				"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, stamps...),
 				"middle_target_flow":   {},
 			})
+			if test.graphLimit {
+				model = sharedTopologyQueryModel(map[string]pl.Matrix{"source_middle_flow": append(contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, stamps...), contractMatrix(map[string]string{"source_id": "a", "middle_id": "extra"}, stamps...)...), "middle_target_flow": {}})
+			}
 			backend := model.timeGraphVMQuery
 			model.timeGraphVMQuery = func(c context.Context, q *structured.QueryTs, e string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
 				if q.QueryList[0].FieldName == "source_middle_flow" {

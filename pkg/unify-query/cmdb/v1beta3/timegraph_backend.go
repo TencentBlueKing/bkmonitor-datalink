@@ -320,6 +320,8 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 		pathResult := metric.CMDBRelationResultSuccess
 		if err != nil {
 			pathResult = metric.CMDBRelationResultFailed
+		} else if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+			pathResult = metric.CMDBRelationResultPartial
 		} else if result.rawResultCount == 0 {
 			pathResult = metric.CMDBRelationResultEmpty
 		}
@@ -471,6 +473,8 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		pathResult := metric.CMDBRelationResultSuccess
 		if err != nil {
 			pathResult = metric.CMDBRelationResultFailed
+		} else if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+			pathResult = metric.CMDBRelationResultPartial
 		} else if result.rawResultCount == 0 {
 			pathResult = metric.CMDBRelationResultEmpty
 		}

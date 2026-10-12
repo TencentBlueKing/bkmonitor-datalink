@@ -115,6 +115,9 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if metadata.IsExactTimeGrid(ctx) && timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
 		return "", nil, errors.Errorf("required relation has no physical query route: %s", timeGraphLoadMetricName(queryTs))
 	}
+	if timeGraphQueryStage(ctx) == "source-info" && queryRef.Count() == 0 {
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, "source_info_no_route")
+	}
 	metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
 
 	expr, err := queryTs.ToPromExpr(ctx, nil)
@@ -240,6 +243,9 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	loader.lookBack = lookBack
 
 	if len(sourceExpandInfo) > 0 || (topologyGrid == nil && (len(relations) == 0 || timeGraphForceSourceInfo(ctx))) {
+		if tg.shared != nil && len(sourceExpandInfo) > 0 {
+			tg.shared.sourceInfoBits = make(map[uint64]timeBitmap)
+		}
 		sourceInfoQueryCount, err = loader.addSourceInfo(ctx, spaceUID, sourceType, sourceInfo, sourceExpandInfo)
 		if err != nil {
 			return nil, err
@@ -538,8 +544,12 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 	}
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
 	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。
+	partialReason := "backend_partial"
 	if status := metadata.GetStatus(queryCtx); status != nil {
 		partial = partial || status.Code == metadata.QueryTsPartial
+		if status.Code == metadata.QueryTsPartial && status.Message == "source_info_no_route" {
+			partialReason = status.Message
+		}
 	}
 	if err == nil && partial {
 		partialStart, partialEnd, partialStep := start, end, queryStep
@@ -549,7 +559,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 		if instant {
 			partialStart = partialEnd
 		}
-		tg.markPartialRange(partialStart, partialEnd, partialStep, "backend_partial")
+		tg.markPartialRange(partialStart, partialEnd, partialStep, partialReason)
 	}
 	span.Set("matrix-series-count", len(matrix))
 	span.Set("matrix-point-count", pointCount)
@@ -1105,6 +1115,29 @@ func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	pathResults, queryErr := tg.FindRelationPathResources(ctx, sourceType, targetTypes, matcher, paths)
 	if queryErr != nil {
 		return nil, errors.WithMessagef(queryErr, "find path from %s", sourceType)
+	}
+	if partial := tg.partialTimesCopy(); len(partial) > 0 {
+		reasons := make(map[string]struct{})
+		if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+			for _, reason := range strings.Split(status.Message, ";") {
+				if reason != "" {
+					reasons[reason] = struct{}{}
+				}
+			}
+		}
+		for _, reason := range partial {
+			for _, single := range strings.Split(reason, ";") {
+				if single != "" {
+					reasons[single] = struct{}{}
+				}
+			}
+		}
+		ordered := make([]string, 0, len(reasons))
+		for reason := range reasons {
+			ordered = append(ordered, reason)
+		}
+		sort.Strings(ordered)
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(ordered, ";"))
 	}
 	for _, result := range pathResults {
 		results = append(results, cmdb.PathResourcesResult{

@@ -179,3 +179,29 @@ func largeTopologyBenchmarkItem() cmdb.SharedTopologyResponseData {
 	}
 	return item
 }
+
+func TestTopologyEncodedItemsReusePreservesNilEmptyAndMixedResults(t *testing.T) {
+	for _, items := range [][]stdjson.RawMessage{nil, {}, {nil, stdjson.RawMessage(`{"code":400,"message":"bad"}`), stdjson.RawMessage(`{"code":200,"snapshots":[]}`)}} {
+		response := &topologyResponse{TraceID: "x", Data: items}
+		expected, err := stdjson.Marshal(response)
+		require.NoError(t, err)
+		parts, err := response.JSONSegments()
+		require.NoError(t, err)
+		if items == nil {
+			require.Nil(t, parts)
+			continue
+		}
+		require.JSONEq(t, string(expected), string(bytes.Join(parts, nil)))
+		for _, item := range items {
+			if len(item) > 0 {
+				found := false
+				for _, part := range parts {
+					if len(part) > 0 && &part[0] == &item[0] {
+						found = true
+					}
+				}
+				require.True(t, found, "encoded item copied instead of reused")
+			}
+		}
+	}
+}

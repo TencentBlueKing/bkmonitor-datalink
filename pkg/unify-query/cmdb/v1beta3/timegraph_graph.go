@@ -181,7 +181,16 @@ func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, r
 	defer q.lock.Unlock()
 	for index := uint64(0); index < pointCount; index++ {
 		timestamp := startMs + int64(index)*stepMs
-		q.partialTimes[timestamp] = reason
+		reasons := strings.Split(q.partialTimes[timestamp], ";")
+		found := false
+		for _, existing := range reasons {
+			found = found || existing == reason
+		}
+		if !found {
+			reasons = append(reasons, reason)
+		}
+		sort.Strings(reasons)
+		q.partialTimes[timestamp] = strings.Trim(strings.Join(reasons, ";"), ";")
 	}
 }
 

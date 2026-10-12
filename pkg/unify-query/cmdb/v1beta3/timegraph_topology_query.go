@@ -107,6 +107,26 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "validate topology schema")
 	}
 
+	attributeRequest := &QueryRequest{SpaceUID: request.SpaceUID, SourceType: FromCMDBResource(request.SourceType), SourceInfo: matcherToMap(request.SourceInfo), SourceExpandInfo: cloneMatcher(request.SourceExpandInfo)}
+	if err := validateSourceExpandInfoFields(attributeRequest, provider); err != nil {
+		return cmdb.SharedTopologyResult{}, err
+	}
+	for key, value := range attributeRequest.SourceExpandInfo {
+		if identityValue, exists := attributeRequest.SourceInfo[key]; exists && identityValue != value {
+			return cmdb.SharedTopologyResult{}, fmt.Errorf("source_expand_info conflicts with source_info for field %q", key)
+		}
+	}
+
+	for _, key := range provider.GetResourcePrimaryKeys(request.SpaceUID, attributeRequest.SourceType) {
+		if value, exists := attributeRequest.SourceExpandInfo[key]; exists {
+			if attributeRequest.SourceInfo == nil {
+				attributeRequest.SourceInfo = make(map[string]string)
+			}
+			attributeRequest.SourceInfo[key] = value
+		}
+	}
+	request.SourceInfo = cmdb.Matcher(attributeRequest.SourceInfo)
+
 	_, relationSpan := trace.NewSpan(ctx, "timegraph-resolve-topology-relations")
 	var relationErr error
 	relations := m.sharedTopologyRelations(request.SpaceUID, request.AllowedCategories, request.AllowedRelationTypes, direction)
@@ -155,8 +175,8 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		step,
 		request.SourceType,
 		request.SourceInfo,
-		// 默认拓扑仅由关系端点建立节点；没有关系的帧返回空邻域。
-		nil,
+		// 属性筛选只约束根，不改变邻域内其它节点。
+		request.SourceExpandInfo,
 		rootRelations,
 		relations,
 		lookBack,
@@ -176,6 +196,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		AllowedRelationTypes: canonicalRelationTypes(request.AllowedRelationTypes),
 		Direction:            direction,
 		PartialTimestamps:    graph.partialTimesCopy(),
+		RootBits:             graph.sharedTopologyRootBits(),
 	}
 	if request.ResponseFormat == cmdb.CompactTopologyFormat {
 		compact, compactErr := graph.FindCompactTopology(queryCtx, grid, topologyQuery, request.TargetTypes)

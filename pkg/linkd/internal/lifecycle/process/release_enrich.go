@@ -23,12 +23,12 @@ import (
 
 // releaseEnricher 按 Event 固定的来源发布版本执行。当前任务版本复用连接，其他版本用有界临时运行时。
 // 不把旧 Event 默默交给新配置；历史运行时只在本次调用内有效，关闭后释放全部连接。
+// 历史调用与当前版本共用消费 Runtime 的 WorkerCount 上限，不再额外限制为 4 个。
 type releaseEnricher struct {
 	current config.EventSource
 	engine  lifecycle.EventEnricher
 	read    func(context.Context, string, int64) (config.EventSource, error)
 	open    func(context.Context, config.EventSource) (lifecycle.EventEnricher, func() error, error)
-	slots   chan struct{}
 }
 
 func (r *releaseEnricher) Enrich(ctx context.Context, input enrich.Input) (result enrich.Result, err error) {
@@ -67,24 +67,16 @@ func (r *releaseEnricher) openForEvent(ctx context.Context, event domain.Event) 
 		}
 		return r.engine, func() error { return nil }, nil
 	}
-	select {
-	case r.slots <- struct{}{}:
-	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	}
 	source, err := r.read(ctx, event.EventSourceID, event.EventSourceVersion)
 	if err != nil {
-		<-r.slots
 		return nil, nil, err
 	}
 	if source.Version != event.EventSourceVersion || source.EventSourceID != event.EventSourceID || (source.RelatedTenantID != "" && source.RelatedTenantID != event.BKTenantID) {
-		<-r.slots
 		return nil, nil, fmt.Errorf("event enrich release scope mismatch")
 	}
 	engine, closeRuntime, err := r.open(ctx, source)
 	if err != nil {
-		<-r.slots
 		return nil, nil, err
 	}
-	return engine, func() error { defer func() { <-r.slots }(); return closeRuntime() }, nil
+	return engine, closeRuntime, nil
 }

@@ -186,7 +186,7 @@ func Run(
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}
 		source.Version = task.Version
-		versionedEnricher := &releaseEnricher{current: source, engine: enricher, slots: make(chan struct{}, min(4, lifecycleConfig.Concurrency)),
+		versionedEnricher := &releaseEnricher{current: source, engine: enricher,
 			read: func(ctx context.Context, id string, version int64) (config.EventSource, error) {
 				client := taskdispatch.Client{URL: cfg.Dispatch.WithDefaults().URL, Token: cfg.Dispatch.WorkerToken, WorkerID: task.Worker}
 				var release eventsource.Release

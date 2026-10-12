@@ -12,7 +12,9 @@ package lifecycleprocess
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
@@ -22,13 +24,61 @@ import (
 
 type releaseTestEngine string
 
+type blockingReleaseEngine struct {
+	started chan<- struct{}
+}
+
+func (e blockingReleaseEngine) Enrich(ctx context.Context, _ enrich.Input) (enrich.Result, error) {
+	e.started <- struct{}{}
+	<-ctx.Done()
+	return enrich.Result{}, ctx.Err()
+}
+
+func TestHistoricalEnrichUsesAllConsumerWorkersAndClosesOnCancel(t *testing.T) {
+	const workers = 16
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	started := make(chan struct{}, workers)
+	closed := make(chan struct{}, workers)
+	r := &releaseEnricher{
+		current: config.EventSource{EventSourceID: "host", Version: 2},
+		read: func(_ context.Context, id string, version int64) (config.EventSource, error) {
+			return config.EventSource{EventSourceID: id, Version: version, RelatedTenantID: "t"}, nil
+		},
+		open: func(context.Context, config.EventSource) (lifecycle.EventEnricher, func() error, error) {
+			return blockingReleaseEngine{started: started}, func() error { closed <- struct{}{}; return nil }, nil
+		},
+	}
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			_, err := r.Enrich(ctx, enrich.Input{Event: domain.Event{BKTenantID: "t", EventSourceID: "host", EventSourceVersion: 1}})
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("historical cancellation: %v", err)
+			}
+		})
+	}
+	for range workers {
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatal("historical enrich did not use the available consumer workers")
+		}
+	}
+	cancel()
+	wg.Wait()
+	if len(closed) != workers {
+		t.Fatalf("closed %d historical runtimes, want %d", len(closed), workers)
+	}
+}
+
 func (e releaseTestEngine) Enrich(ctx context.Context, _ enrich.Input) (enrich.Result, error) {
 	return enrich.Result{ConfigDigest: string(e)}, ctx.Err()
 }
 
 func TestReleaseEnricherUsesEventVersionAndClosesHistory(t *testing.T) {
 	reads, opens, closes := 0, 0, 0
-	r := &releaseEnricher{current: config.EventSource{EventSourceID: "host", Version: 2, RelatedTenantID: "t"}, engine: releaseTestEngine("current"), slots: make(chan struct{}, 1),
+	r := &releaseEnricher{current: config.EventSource{EventSourceID: "host", Version: 2, RelatedTenantID: "t"}, engine: releaseTestEngine("current"),
 		read: func(_ context.Context, id string, version int64) (config.EventSource, error) {
 			reads++
 			return config.EventSource{EventSourceID: id, Version: version, RelatedTenantID: "t"}, nil
@@ -65,17 +115,15 @@ func TestReleaseEnricherUsesEventVersionAndClosesHistory(t *testing.T) {
 	if opens != 1 {
 		t.Fatal("invalid scope opened dependency")
 	}
-	r.slots <- struct{}{}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, err := r.Enrich(ctx, enrich.Input{Event: domain.Event{BKTenantID: "t", EventSourceID: "host", EventSourceVersion: 1}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("blocked history cancellation: %v", err)
 	}
-	<-r.slots
 }
 
 func TestReleaseEnricherPropagatesFailureWithoutFallback(t *testing.T) {
-	r := &releaseEnricher{current: config.EventSource{EventSourceID: "host", Version: 2}, engine: releaseTestEngine("current"), slots: make(chan struct{}, 1)}
+	r := &releaseEnricher{current: config.EventSource{EventSourceID: "host", Version: 2}, engine: releaseTestEngine("current")}
 	event := enrich.Input{Event: domain.Event{BKTenantID: "t", EventSourceID: "host", EventSourceVersion: 1}}
 	r.read = func(context.Context, string, int64) (config.EventSource, error) {
 		return config.EventSource{}, errors.New("missing release")
@@ -108,7 +156,7 @@ func (e releaseTestEngine) BuildContent(ctx context.Context, _ domain.Event, _ d
 
 func TestReleaseContentUsesHistoricalVersionAndTenant(t *testing.T) {
 	reads, opens, closes := 0, 0, 0
-	r := &releaseEnricher{current: config.EventSource{EventSourceID: "host", Version: 2, RelatedTenantID: "new-tenant"}, engine: releaseTestEngine("current"), slots: make(chan struct{}, 1), read: func(_ context.Context, id string, version int64) (config.EventSource, error) {
+	r := &releaseEnricher{current: config.EventSource{EventSourceID: "host", Version: 2, RelatedTenantID: "new-tenant"}, engine: releaseTestEngine("current"), read: func(_ context.Context, id string, version int64) (config.EventSource, error) {
 		reads++
 		return config.EventSource{EventSourceID: id, Version: version, RelatedTenantID: "old-tenant"}, nil
 	}, open: func(_ context.Context, source config.EventSource) (lifecycle.EventEnricher, func() error, error) {
@@ -128,16 +176,14 @@ func TestReleaseContentUsesHistoricalVersionAndTenant(t *testing.T) {
 			t.Fatalf("content=%q error=%v", content, err)
 		}
 	}
-	if reads != 1 || opens != 1 || closes != 1 || len(r.slots) != 0 {
+	if reads != 1 || opens != 1 || closes != 1 {
 		t.Fatal("historical content resource leak")
 	}
-	r.slots <- struct{}{}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, err := r.BuildContent(ctx, domain.Event{BKTenantID: "old-tenant", EventSourceID: "host", EventSourceVersion: 1}, domain.EventEvaluation{}, domain.Alert{}); !errors.Is(err, context.Canceled) {
 		t.Fatal("content cancellation ignored", err)
 	}
-	<-r.slots
 	r.current.Enrich.ContentMode = config.ContentModeBKMonitorDescription
 	if _, err := r.BuildContent(t.Context(), domain.Event{BKTenantID: "foreign", EventSourceID: "host", EventSourceVersion: 2}, domain.EventEvaluation{}, domain.Alert{}); err == nil {
 		t.Fatal("content tenant mismatch allowed")

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { detailPanels } from "../fixtures/lifecycle-duration";
 
 test("shows Event diagnostics and physical Bulk counts on desktop and mobile", async ({
   page,
@@ -77,6 +78,7 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
         to: "2026-09-06T01:00:00Z",
         step: 15,
         panels: [
+          ...detailPanels(1788630165),
           {
             id: "lifecycle-phase-execution-average",
             title: "单 Event 平均处理耗时分布",
@@ -177,13 +179,37 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
   await expect(breakdown.getByText("100.00 ms", { exact: true })).toBeVisible();
   await expect(breakdown.getByText("35.00 ms", { exact: true })).toBeVisible();
   await expect(breakdown.getByText("7.00 ms", { exact: true })).toBeVisible();
-  await expect(breakdown.getByText("142.00 ms", { exact: true })).toBeVisible();
+  await expect(
+    breakdown.getByText("142.00 ms", { exact: true }).first(),
+  ).toBeVisible();
   const bar = breakdown.getByRole("group", { name: "各环节耗时占比" });
   await expect(bar.getByRole("button")).toHaveCount(7);
-  await bar.getByRole("button", { name: /Hook 输出/ }).focus();
+  const enrichDetails = breakdown.getByRole("region", {
+    name: "Event 丰富耗时明细",
+  });
+  await expect(enrichDetails.getByText("策略 processor")).toBeVisible();
+  await breakdown.getByRole("button", { name: "忽略合批等待" }).click();
+  await expect(breakdown.getByText("107.00 ms", { exact: true })).toBeVisible();
+  await expect(
+    enrichDetails.getByText("21.00 ms", { exact: true }),
+  ).toBeVisible();
+  await bar.getByRole("button", { name: /计划与结果写入/ }).click();
+  await expect(
+    breakdown.getByText("提交最终处理结果", { exact: true }),
+  ).toBeVisible();
+  await bar.getByRole("button", { name: /告警变更与落库/ }).click();
+  await expect(
+    breakdown.getByText("告警流水校验与落库", { exact: true }),
+  ).toBeVisible();
+  await breakdown.screenshot({
+    path: info.outputPath("lifecycle-alert-details-desktop.png"),
+    style: ".topbar {visibility: hidden;}",
+  });
+  await bar.getByRole("button", { name: /Hook 输出/ }).click();
   await expect(breakdown.getByText(/按顺序调用 Hook/)).toBeVisible();
   await breakdown.screenshot({
     path: info.outputPath("lifecycle-duration-desktop.png"),
+    style: ".topbar {visibility: hidden;}",
   });
   await expect(
     page.getByRole("heading", { name: "ES 分批写入", exact: true }),
@@ -206,8 +232,10 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
+  await bar.getByRole("button", { name: /Event 丰富/ }).click();
   await breakdown.screenshot({
     path: info.outputPath("lifecycle-duration-mobile.png"),
+    style: ".topbar {visibility: hidden;}",
   });
   await expect(
     page.getByRole("heading", { name: "ES 分批写入", exact: true }),

@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"linkd/internal/domain"
+	"linkd/internal/enrich"
 	"linkd/internal/store"
 	"linkd/internal/store/memory"
 )
@@ -171,6 +173,24 @@ func assertPhaseSample(t *testing.T, sample PhaseObservation) {
 	if len(sample.Phases) != phaseCount {
 		t.Fatalf("phases=%d", len(sample.Phases))
 	}
+	if len(sample.Steps) != len(phaseSteps) {
+		t.Fatalf("steps=%d", len(sample.Steps))
+	}
+	for _, phase := range sample.Phases {
+		var wall, batch, queue time.Duration
+		for _, step := range sample.Steps {
+			if step.Phase != phase.Phase {
+				continue
+			}
+			wall += step.Duration
+			batch += step.BatchWait
+			queue += step.StorageQueue
+		}
+		if wall != phase.Duration || batch != phase.BatchWait || queue != phase.StorageQueue {
+			t.Fatalf("%s children=(%v,%v,%v) parent=%#v", phase.Phase, wall, batch, queue, phase)
+		}
+	}
+
 	var sum time.Duration
 	for _, phase := range sample.Phases {
 		if phase.Duration < 0 {
@@ -208,5 +228,102 @@ func TestPhaseTimingAttributesWaitToInnermostStage(t *testing.T) {
 	}
 	if execution != 5*time.Millisecond || batch != 6*time.Millisecond || queue != time.Millisecond || execution+batch+queue != sample.Duration {
 		t.Fatalf("execution=%v batch=%v queue=%v sample=%v", execution, batch, queue, sample.Duration)
+	}
+}
+
+func TestStepTimingExcludesNestedPhasesAndAttributesWaits(t *testing.T) {
+	start := time.Now()
+	timing := &phaseTiming{started: start, last: start}
+	timing.change(phaseApply, start)
+	timing.step = stepIndex(phaseApply, "action")
+	timing.observeWait(store.WaitBatch, time.Millisecond)
+	timing.change(phaseApply, start.Add(3*time.Millisecond))
+	timing.step = stepIndex(phaseApply, "alert_cas")
+	timing.observeWait(store.WaitStorageQueue, time.Millisecond)
+	timing.change(phaseHook, start.Add(5*time.Millisecond))
+	timing.change(phaseApply, start.Add(9*time.Millisecond))
+	timing.change(phaseApply, start.Add(10*time.Millisecond))
+	timing.step = stepIndex(phaseApply, "action")
+	sample := timing.observation(start.Add(12*time.Millisecond), ProcessResult{}, nil)
+	assertPhaseSample(t, sample)
+	for _, step := range sample.Steps {
+		if step.Phase == "apply" && step.Step == "action" && (step.Duration != 5*time.Millisecond || step.BatchWait != time.Millisecond) {
+			t.Fatal(step)
+		}
+		if step.Phase == "apply" && step.Step == "alert_cas" && (step.Duration != 3*time.Millisecond || step.StorageQueue != time.Millisecond) {
+			t.Fatal(step)
+		}
+		if step.Phase == "final_hook" && step.Step == "other" && step.Duration != 4*time.Millisecond {
+			t.Fatal(step)
+		}
+	}
+}
+
+func TestEnrichProcessorStepNamesAreBoundedAndRepeatedCallsAccumulate(t *testing.T) {
+	start := time.Now()
+	timing := &phaseTiming{started: start, last: start}
+	p := &Processor{phaseTiming: timing}
+	timing.change(phaseEnrich, start)
+	for _, name := range []string{"strategy", "strategy", "user-supplied-identity"} {
+		finish := p.measureEnrichProcessor(name)
+		if got := phaseSteps[timing.step].name; got != name && (name != "user-supplied-identity" || got != "custom") {
+			t.Fatal(got)
+		}
+		finish()
+	}
+	sample := timing.observation(time.Now(), ProcessResult{}, nil)
+	assertPhaseSample(t, sample)
+	for _, step := range sample.Steps {
+		if step.Phase == "enrich" && (step.Step == "strategy" || step.Step == "custom") && step.Duration <= 0 {
+			t.Fatal(step)
+		}
+	}
+	if timing.step != 0 {
+		t.Fatal("processor span leaked")
+	}
+}
+
+type phaseTestEnrichProcessor struct{ calls int }
+
+func (*phaseTestEnrichProcessor) Name() string { return "strategy" }
+
+func (*phaseTestEnrichProcessor) Match(context.Context, *enrich.Scope) (bool, error) {
+	return true, nil
+}
+
+func (p *phaseTestEnrichProcessor) Process(context.Context, *enrich.Scope) (enrich.ProcessorResult, error) {
+	p.calls++
+	return enrich.ProcessorResult{Status: domain.EnrichStatusSucceeded, Value: domain.JSONObject{}}, nil
+}
+
+func TestEventDrilldownUsesContextAndKeepsDurableCheckpoints(t *testing.T) {
+	repo := memory.New()
+	p := newTestProcessor(t, repo, NoopFinalHook{})
+	processor := &phaseTestEnrichProcessor{}
+	chain, err := enrich.NewChain([]enrich.Processor{processor}, enrich.Sources{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.enricher = chain
+	recorder := &phaseRecorder{}
+	WithPhaseObserver(recorder)(p)
+	event := testEvent("step-chain", "warning")
+	event.Evaluations = append(event.Evaluations, domain.EventEvaluation{Severity: "critical", Action: domain.EventActionTriggered})
+	persistAndProcess(t, repo, p, event)
+	if processor.calls != 2 || len(recorder.samples) != 1 {
+		t.Fatalf("calls=%d samples=%d", processor.calls, len(recorder.samples))
+	}
+	sample := recorder.samples[0]
+	assertPhaseSample(t, sample)
+	for _, expected := range []struct{ phase, step string }{{"enrich", "strategy"}, {"enrich", "persist"}, {"event_commit", "plan_save"}, {"event_commit", "result_save"}, {"apply", "alert_create"}} {
+		found := false
+		for _, step := range sample.Steps {
+			if step.Phase == expected.phase && step.Step == expected.step && step.Duration > 0 {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing measured step: %+v", expected)
+		}
 	}
 }

@@ -208,6 +208,7 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 }
 
 func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult, outcome string) {
+	defer startProcessorTiming(ctx, processor.Name())()
 	outcome = ProcessorOutcomeCompleted
 	defer func() {
 		if recover() != nil {

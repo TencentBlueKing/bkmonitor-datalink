@@ -45,6 +45,7 @@ func WithShieldEvaluator(shielder ShieldEvaluator) ProcessorOption {
 // planAdmission 在生命周期快照生成后决定本次是否处置，不改变首次丰富快照。
 // 已活动绕过 clip/aggregation 与是否已经放行是两条独立规则，不能相互替代。
 func (p *Processor) planAdmission(ctx context.Context, event domain.Event, snapshot *store.PolicyContext, plan *store.EventPlan, highest int) error {
+	defer p.measureStep(phasePlan, "admission")()
 	if highest < 0 {
 		return nil
 	}

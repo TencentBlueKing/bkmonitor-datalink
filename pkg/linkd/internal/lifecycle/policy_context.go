@@ -25,7 +25,9 @@ func (p *Processor) freezePolicies(ctx context.Context, stored store.StoredEvent
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
+	finish := p.measureStep(phasePolicySnapshot, "read")
 	snapshot, err := p.policies.Snapshot(ctx, stored.Event, at)
+	finish()
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
@@ -38,5 +40,5 @@ func (p *Processor) freezePolicies(ctx context.Context, stored store.StoredEvent
 	if snapshot.ReasonCode != "" {
 		p.logger.WarnContext(ctx, "event policies skipped", "bk_tenant_id", stored.Event.BKTenantID, "event_id", stored.Event.EventID, "reason", snapshot.ReasonCode)
 	}
-	return p.writeEventResult(ctx, stored, store.EventResult{State: stored.Processing.State, PolicyContext: snapshot})
+	return p.writeEventCheckpoint(ctx, stored, store.EventResult{State: stored.Processing.State, PolicyContext: snapshot}, "policy_save")
 }

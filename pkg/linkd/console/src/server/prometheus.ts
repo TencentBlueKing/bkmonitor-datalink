@@ -446,6 +446,30 @@ const panelDefinitions: PanelDefinition[] = [
       `1000 * sum(increase(linkd_lifecycle_event_phase_wait_duration_seconds_sum${selector}[${window}])) by (linkd_phase, linkd_wait_kind) / sum(increase(linkd_lifecycle_event_phase_wait_duration_seconds_count${selector}[${window}])) by (linkd_phase, linkd_wait_kind)`,
   },
   {
+    id: "lifecycle-phase-step-average",
+    title: "单 Event 子步骤耗时",
+    unit: "ms",
+    kind: "stat",
+    rangeTotal: true,
+    processWide: true,
+    description:
+      "同一次 Event 的独占子步骤，按全部尝试次数加权；包含失败、重放及零样本。",
+    query: (selector, window) =>
+      `1000 * sum(increase(linkd_lifecycle_event_phase_step_duration_seconds_sum${selector}[${window}])) by (linkd_phase, linkd_step, linkd_wait_kind) / on (linkd_phase) group_left sum(increase(linkd_lifecycle_event_phase_duration_seconds_count${selector}[${window}])) by (linkd_phase)`,
+  },
+  {
+    id: "lifecycle-phase-step-coverage",
+    title: "子步骤样本覆盖",
+    unit: "ratio",
+    kind: "stat",
+    rangeTotal: true,
+    processWide: true,
+    description:
+      "子步骤与父阶段的样本覆盖比；滚动升级或旧 Worker 混合时不展示不完整的明细。",
+    query: (selector, window) =>
+      `min(sum(increase(linkd_lifecycle_event_phase_step_duration_seconds_count${selector}[${window}])) by (linkd_phase, linkd_step, linkd_wait_kind)) by (linkd_phase) / sum(increase(linkd_lifecycle_event_phase_duration_seconds_count${selector}[${window}])) by (linkd_phase)`,
+  },
+  {
     id: "lifecycle-results",
     title: "Lifecycle 裁决速率",
     unit: "event/s",

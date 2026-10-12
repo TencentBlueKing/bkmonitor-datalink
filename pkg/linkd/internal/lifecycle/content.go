@@ -42,6 +42,7 @@ func WithAlertContentBuilder(builder AlertContentBuilder) ProcessorOption {
 }
 
 func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, opening domain.Alert) (content string, err error) {
+	defer p.measureStep(phasePlan, "content")()
 	// panic 不包含敏感 payload，也不能变成来源文本回退或普通 Enrich 降级。
 	defer func() {
 		if recover() != nil {

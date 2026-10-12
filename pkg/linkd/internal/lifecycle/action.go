@@ -104,6 +104,7 @@ func (p *Processor) FinishActionDelivery(ctx context.Context, tenant, id string)
 }
 
 func (p *Processor) finishActionIntent(ctx context.Context, current store.StoredAlert) (store.StoredAlert, error) {
+	defer p.measureStep(phaseApply, "action")()
 	tenant, id := current.Alert.BKTenantID, current.Alert.AlertID
 	for range maxCASAttempts {
 		if err := ctx.Err(); err != nil {

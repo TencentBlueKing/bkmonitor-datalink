@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -205,5 +206,37 @@ func testAlert() domain.Event {
 		Labels:        domain.DimensionMap{labelStrategyID: strategyID, labelStrategyVersion: strategyVersion, labelBizID: bizID},
 		ExtraData:     domain.JSONObject{"nested": json.RawMessage(`{"value":1}`)},
 		SourceEventID: "source-event-1", OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceRawData: domain.JSONObject{}, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{},
+	}
+}
+
+func TestProcessorTimingBoundarySurvivesFailureAndPanic(t *testing.T) {
+	for _, panics := range []bool{false, true} {
+		t.Run(fmt.Sprint(panics), func(t *testing.T) {
+			starts, finishes := 0, 0
+			ctx := WithProcessorTiming(t.Context(), func(name string) func() {
+				if name != "timed" {
+					t.Fatal(name)
+				}
+				starts++
+				return func() { finishes++ }
+			})
+			processor := &testProcessor{name: "timed", fn: func(context.Context, *Scope) (ProcessorResult, error) {
+				if panics {
+					panic("processor failed")
+				}
+				return ProcessorResult{}, errors.New("failed")
+			}}
+			_, outcome := runProcessor(ctx, processor, nil)
+			if starts != 1 || finishes != 1 {
+				t.Fatalf("start=%d finish=%d", starts, finishes)
+			}
+			want := ProcessorOutcomeProcessError
+			if panics {
+				want = ProcessorOutcomePanic
+			}
+			if outcome != want {
+				t.Fatal(outcome)
+			}
+		})
 	}
 }

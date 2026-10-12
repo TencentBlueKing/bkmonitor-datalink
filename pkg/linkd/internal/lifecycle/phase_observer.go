@@ -31,6 +31,8 @@ type PhaseDuration struct {
 type PhaseObservation struct {
 	// Phases 的独占耗时之和等于 Duration，嵌套环节不重复计时。
 	Phases []PhaseDuration
+	// Steps 与 Phases 使用相同样本，按父环节独占记账。
+	Steps []StepDuration
 	// Duration 不含观察器自身上报耗时。
 	Duration time.Duration
 	// Result 与 Err 是 ProcessEvent 返回给调用方的原始结果。
@@ -64,15 +66,20 @@ const (
 // 返回时恢复父环节，避免 executePlan 与其内部 Hook / Event 写入重复计时。
 // 不挂在共享 Processor 上，其他 fingerprint 的并发调用拥有独立实例。
 type phaseTiming struct {
-	waits     [phaseCount][2]time.Duration
-	durations [phaseCount]time.Duration
-	current   int
-	last      time.Time
-	started   time.Time
+	stepDurations [len(phaseSteps)]time.Duration
+	stepWaits     [len(phaseSteps)][2]time.Duration
+	step          int
+	waits         [phaseCount][2]time.Duration
+	durations     [phaseCount]time.Duration
+	current       int
+	last          time.Time
+	started       time.Time
 }
 
 func (t *phaseTiming) change(phase int, at time.Time) {
-	t.durations[t.current] += at.Sub(t.last)
+	elapsed := at.Sub(t.last)
+	t.durations[t.current] += elapsed
+	t.stepDurations[t.activeStep()] += elapsed
 	t.current, t.last = phase, at
 }
 
@@ -91,8 +98,10 @@ func (t *phaseTiming) observeWait(kind store.WaitKind, duration time.Duration) {
 	switch kind {
 	case store.WaitBatch:
 		t.waits[t.current][0] += duration
+		t.stepWaits[t.activeStep()][0] += duration
 	case store.WaitStorageQueue:
 		t.waits[t.current][1] += duration
+		t.stepWaits[t.activeStep()][1] += duration
 	}
 }
 
@@ -106,5 +115,12 @@ func (t *phaseTiming) observation(at time.Time, result ProcessResult, err error)
 		queue := min(duration-batch, t.waits[i][1])
 		phases[i] = PhaseDuration{Phase: name, Duration: duration, BatchWait: batch, StorageQueue: queue}
 	}
-	return PhaseObservation{Phases: phases, Duration: at.Sub(t.started), Result: result, Err: err}
+	steps := make([]StepDuration, len(phaseSteps))
+	for i, step := range phaseSteps {
+		duration := t.stepDurations[i]
+		batch := min(duration, t.stepWaits[i][0])
+		queue := min(duration-batch, t.stepWaits[i][1])
+		steps[i] = StepDuration{PhaseDuration: PhaseDuration{Phase: names[step.phase], Duration: duration, BatchWait: batch, StorageQueue: queue}, Step: step.name}
+	}
+	return PhaseObservation{Phases: phases, Steps: steps, Duration: at.Sub(t.started), Result: result, Err: err}
 }

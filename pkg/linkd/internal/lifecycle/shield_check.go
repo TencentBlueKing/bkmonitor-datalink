@@ -178,6 +178,7 @@ func shieldCheckOutcome(decision *store.ShieldDecision, changed bool) string {
 // finishPendingChanges 在推进新业务快照之前完成既有状态输出；清理意图不递增 UpdateAt。
 // FinalHook 保持现有普通失败记日志语义，必需 KAC 投影的持久化重试由 P6 的投影任务承接。
 func (p *Processor) finishPendingChanges(ctx context.Context, current store.StoredAlert) (store.StoredAlert, error) {
+	defer p.measureStep(phasePlan, "pending_changes")()
 	var err error
 	current, err = p.finishActionIntent(ctx, current)
 	if err != nil {

@@ -70,6 +70,7 @@ func finalHookLog(cause AlertChangeCause, alert domain.Alert, outcome ProcessOut
 // appendAlertLogs 在一次 lifecycle 决策结束前统一提交全部日志。
 // 任一逐项失败都阻止后续 Event CAS；已经成功的 create 由稳定 log_id 在重试时幂等吸收。
 func (p *Processor) appendAlertLogs(ctx context.Context, logs []domain.AlertLog) error {
+	defer p.measureStep(phaseApply, "logs")()
 	if len(logs) == 0 {
 		return nil
 	}

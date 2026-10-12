@@ -56,3 +56,18 @@ func WithObserver(observer Observer) ChainOption {
 		}
 	}
 }
+
+// WithProcessorTiming 为本次串行 Enrich 调用注入 processor 的 Match/Process 计时边界。
+// 不修改共享 Chain；回调与返回的结束函数都在原 goroutine 同步调用。
+func WithProcessorTiming(ctx context.Context, start func(string) func()) context.Context {
+	return context.WithValue(ctx, processorTimingKey{}, start)
+}
+
+type processorTimingKey struct{}
+
+func startProcessorTiming(ctx context.Context, name string) func() {
+	if start, ok := ctx.Value(processorTimingKey{}).(func(string) func()); ok && start != nil {
+		return start(name)
+	}
+	return func() {}
+}

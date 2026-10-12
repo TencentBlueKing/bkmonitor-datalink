@@ -37,6 +37,7 @@ func WithMergeEvaluator(merger MergeEvaluator) ProcessorOption {
 }
 
 func (p *Processor) planMerge(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, snapshot *store.PolicyContext, plan *store.EventPlan, alert *domain.Alert) error {
+	defer p.measureStep(phasePlan, "merge")()
 	if p.merger == nil {
 		return nil
 	}

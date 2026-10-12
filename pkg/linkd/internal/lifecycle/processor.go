@@ -22,6 +22,7 @@ import (
 var errRetryDecision = errors.New("lifecycle decision changed concurrently")
 
 func (p *Processor) getLifecycleEvent(ctx context.Context, bkTenantID, eventID string) (store.StoredEvent, error) {
+	defer p.measureStep(phaseOther, "event_reload")()
 	if _, ok := p.repository.(store.LifecycleEventSnapshotStore); ok {
 		return p.repository.GetEvent(ctx, bkTenantID, eventID)
 	}
@@ -35,6 +36,7 @@ func (p *Processor) findActiveAlert(
 	ctx context.Context,
 	key store.ActiveAlertKey,
 ) (store.StoredAlert, error) {
+	defer p.measureStep(phasePlan, "active_lookup")()
 	cached, found, err := p.recentAlerts.GetCurrent(ctx, key)
 	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("read recent active alert cache: %w", err)
@@ -59,6 +61,7 @@ func (p *Processor) createAlertAfterActiveLookup(
 	ctx context.Context,
 	alert domain.Alert,
 ) (store.CreateAlertResult, error) {
+	defer p.measureStep(phaseApply, "alert_create")()
 	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
 		return repository.CreateAlertAfterActiveLookup(ctx, alert)
 	}
@@ -70,6 +73,7 @@ func (p *Processor) compareAndSetAlert(
 	current store.StoredAlert,
 	replacement domain.Alert,
 ) (store.StoredAlert, error) {
+	defer p.measureStep(phaseApply, "alert_cas")()
 	var updated store.StoredAlert
 	var err error
 	if repository, ok := p.repository.(store.LifecycleAlertSnapshotStore); ok {
@@ -118,6 +122,7 @@ func (p *Processor) getAlertCurrent(
 	ctx context.Context,
 	bkTenantID, alertID string,
 ) (store.StoredAlert, error) {
+	defer p.measureStep(phaseApply, "alert_read")()
 	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
 		return repository.GetAlertCurrent(ctx, bkTenantID, alertID)
 	}

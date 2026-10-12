@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { MetricPanel } from "../../shared/contracts";
+import { LifecyclePhaseDetails } from "./LifecyclePhaseDetails";
 import "./lifecycle-duration.css";
 
 const phases = [
@@ -25,8 +26,7 @@ const phases = [
     id: "event_commit",
     label: "计划与结果写入",
     color: "#4db9cf",
-    detail:
-      "保存 Event 执行计划和最终处理结果，扣除主动合批与存储排队，保留实际写入耗时。",
+    detail: "保存策略快照、Event 执行计划、最终处理结果及冲突时的计划撤销。",
   },
   {
     id: "apply",
@@ -59,6 +59,7 @@ export function LifecycleDurationBreakdown({
   error: boolean;
 }) {
   const [selected, setSelected] = useState<string>();
+  const [ignoreBatch, setIgnoreBatch] = useState(false);
   const panel = panels.find(
     (p) => p.id === "lifecycle-phase-execution-average",
   );
@@ -119,12 +120,18 @@ export function LifecycleDurationBreakdown({
   const storageQueue = waitTotal("storage_queue");
   const available =
     complete && Number.isFinite(total) && total + batchWait + storageQueue > 0;
-  const largest = values.reduce((a, b) =>
-    (b.value ?? 0) > (a.value ?? 0) ? b : a,
-  );
-  const active = values.find((v) => v.id === selected) ?? largest;
+  const displayed = values.map((v) => ({
+    ...v,
+    shown:
+      (v.value ?? 0) +
+      phaseWait(v.id, "storage_queue") +
+      (ignoreBatch ? 0 : phaseWait(v.id, "batch_wait")),
+  }));
+  const shownTotal = total + storageQueue + (ignoreBatch ? 0 : batchWait);
+  const largest = displayed.reduce((a, b) => (b.shown > a.shown ? b : a));
+  const active = displayed.find((v) => v.id === selected) ?? largest;
   const percent = (value: number) =>
-    `${(total > 0 ? (value / total) * 100 : 0).toFixed(1)}%`;
+    `${(shownTotal > 0 ? (value / shownTotal) * 100 : 0).toFixed(1)}%`;
 
   return (
     <section
@@ -137,14 +144,27 @@ export function LifecycleDurationBreakdown({
           <p className="eyebrow">EVENT · TIME BREAKDOWN</p>
           <h2>单 Event 平均处理耗时分布</h2>
           <p>
-            所选时间范围内的每次处理尝试均值，包含失败与重放。各环节仅统计执行耗时，主动合批与存储排队单独展示；执行耗时包含实际
+            所选范围内每次 Event
+            尝试的均值，包含失败与重放。点击阶段查看子步骤；执行耗时包含实际
             I/O，并非 CPU 时间。
           </p>
         </div>
+        <button
+          type="button"
+          className="lifecycle-duration-toggle"
+          aria-pressed={ignoreBatch}
+          onClick={() => setIgnoreBatch(!ignoreBatch)}
+        >
+          {ignoreBatch ? "已忽略合批等待" : "忽略合批等待"}
+        </button>
       </header>
       {available ? (
         <>
           <div className="lifecycle-duration-summary">
+            <div>
+              <span>{ignoreBatch ? "扣除合批后耗时" : "当前图表耗时"}</span>
+              <strong>{duration(shownTotal)}</strong>
+            </div>
             <div>
               <span>平均执行耗时</span>
               <strong>{duration(total)}</strong>
@@ -162,8 +182,8 @@ export function LifecycleDurationBreakdown({
               <strong>{duration(total + batchWait + storageQueue)}</strong>
             </div>
             <p>
-              执行耗时最多 <b>{largest.label}</b>
-              <strong>{percent(largest.value ?? 0)}</strong>
+              当前口径耗时最多 <b>{largest.label}</b>
+              <strong>{percent(largest.shown)}</strong>
             </p>
           </div>
           <div
@@ -171,33 +191,30 @@ export function LifecycleDurationBreakdown({
             role="group"
             aria-label="各环节耗时占比"
           >
-            {values
-              .filter((v) => (v.value ?? 0) > 0)
+            {displayed
+              .filter((v) => v.shown > 0)
               .map((v) => (
                 <button
                   key={v.id}
                   type="button"
                   style={{
-                    width: `${((v.value ?? 0) / total) * 100}%`,
+                    width: `${(v.shown / shownTotal) * 100}%`,
                     backgroundColor: v.color,
                   }}
-                  title={`${v.label} · ${duration(v.value ?? 0)} · ${percent(v.value ?? 0)}`}
-                  aria-label={`${v.label} ${duration(v.value ?? 0)} ${percent(v.value ?? 0)}`}
+                  title={`${v.label} · ${duration(v.shown)} · ${percent(v.shown)}`}
+                  aria-label={`${v.label} ${duration(v.shown)} ${percent(v.shown)}`}
                   aria-pressed={active.id === v.id}
                   onClick={() => setSelected(v.id)}
-                  onFocus={() => setSelected(v.id)}
-                  onMouseEnter={() => setSelected(v.id)}
                 />
               ))}
           </div>
           <ul className="lifecycle-duration-legend">
-            {values.map((v) => (
+            {displayed.map((v) => (
               <li key={v.id}>
                 <button
                   type="button"
                   aria-pressed={active.id === v.id}
                   onClick={() => setSelected(v.id)}
-                  onMouseEnter={() => setSelected(v.id)}
                 >
                   <span
                     className="lifecycle-duration-dot"
@@ -215,7 +232,7 @@ export function LifecycleDurationBreakdown({
                       </span>
                     </small>
                   </span>
-                  <b>{percent(v.value ?? 0)}</b>
+                  <b>{percent(v.shown)}</b>
                 </button>
               </li>
             ))}
@@ -223,6 +240,17 @@ export function LifecycleDurationBreakdown({
           <p className="lifecycle-duration-detail">
             <b>{active.label}</b> · {active.detail}
           </p>
+          <LifecyclePhaseDetails
+            panels={panels}
+            phase={active.id}
+            label={active.label}
+            color={active.color}
+            timestamp={active.timestamp}
+            execution={active.value ?? 0}
+            batch={phaseWait(active.id, "batch_wait")}
+            queue={phaseWait(active.id, "storage_queue")}
+            ignoreBatch={ignoreBatch}
+          />
         </>
       ) : (
         <div className="lifecycle-duration-empty" role="status">
@@ -236,6 +264,9 @@ export function LifecycleDurationBreakdown({
         </div>
       )}
       <p className="lifecycle-duration-note">
+        {ignoreBatch
+          ? "图表与明细已扣除主动合批等待，存储排队仍计入。"
+          : "图表与明细包含主动合批等待和存储排队。"}
         平均总耗时 = 执行耗时 + 主动合批等待 + 存储排队。统计范围为 ProcessEvent
         开始至返回；不包含 Cleaner、Mailbox 排队、Signal 调度及异步下游处理。
       </p>

@@ -121,6 +121,14 @@ func (p *Processor) runFinalHook(
 	alert domain.Alert,
 	outcome ProcessOutcome,
 ) (*domain.AlertLog, error) {
+	step := hook.Purpose
+	if step == "state" {
+		step = "projection"
+	}
+	if step != "action" && step != "projection" {
+		step = "custom"
+	}
+	defer p.measureStep(phaseHook, step)()
 	public := alert.Clone()
 	public.PolicyChange = nil
 	result, hookFailure := p.callFinalHook(ctx, hook, FinalHookInput{Cause: cause, Alert: public, Outcome: outcome})

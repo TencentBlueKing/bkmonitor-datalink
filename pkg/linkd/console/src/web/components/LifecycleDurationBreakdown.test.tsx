@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { MetricPanel } from "../../shared/contracts";
+import { detailPanels } from "../../../tests/fixtures/lifecycle-duration";
 import { LifecycleDurationBreakdown } from "./LifecycleDurationBreakdown";
 
 afterEach(cleanup);
@@ -59,10 +60,10 @@ it("separates execution, intentional batching and storage queues with the same E
   expect(screen.getByText("100.00 ms")).toBeVisible();
   expect(screen.getByText("70.00 ms")).toBeVisible();
   expect(screen.getByText("14.00 ms")).toBeVisible();
-  expect(screen.getByText("184.00 ms")).toBeVisible();
+  expect(screen.getAllByText("184.00 ms")).toHaveLength(2);
   expect(
     within(screen.getByRole("group")).getByRole("button", {
-      name: "Event 丰富 40.00 ms 40.0%",
+      name: "Event 丰富 52.00 ms 28.3%",
     }),
   ).toBeVisible();
 });
@@ -93,14 +94,14 @@ it("shows one weighted total, proportional segments and interactive phase detail
       error={false}
     />,
   );
-  expect(screen.getAllByText("100.00 ms")).toHaveLength(2);
+  expect(screen.getAllByText("100.00 ms")).toHaveLength(3);
   const chart = screen.getByRole("group", { name: "各环节耗时占比" });
   const enrich = within(chart).getByRole("button", {
     name: "Event 丰富 40.00 ms 40.0%",
   });
   expect(enrich).toHaveStyle({ width: "40%" });
   expect(within(chart).getAllByRole("button")).toHaveLength(7);
-  fireEvent.focus(within(chart).getByRole("button", { name: /Hook 输出/ }));
+  fireEvent.click(within(chart).getByRole("button", { name: /Hook 输出/ }));
   expect(screen.getByText(/按顺序调用 Hook 并构造输出流水/)).toBeVisible();
   expect(enrich).toHaveAttribute("aria-pressed", "false");
 });
@@ -156,3 +157,85 @@ it("distinguishes query failure from loading", () => {
   rerender(<LifecycleDurationBreakdown panels={[]} loading={false} error />);
   expect(screen.getByRole("status")).toHaveTextContent("加载失败");
 });
+
+it("excludes only batch waits and preserves queue time and full latency", () => {
+  render(
+    <LifecycleDurationBreakdown
+      panels={[panel(), waitPanel(10, 2)]}
+      loading={false}
+      error={false}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "忽略合批等待" }));
+  expect(
+    screen.getByRole("button", { name: "已忽略合批等待" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("114.00 ms")).toBeVisible();
+  expect(screen.getByText("184.00 ms")).toBeVisible();
+  expect(
+    within(screen.getByRole("group")).getByRole("button", {
+      name: "Event 丰富 42.00 ms 36.8%",
+    }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "已忽略合批等待" }));
+  expect(screen.getAllByText("184.00 ms")).toHaveLength(2);
+});
+
+it("drills into processors, checkpoints and alert writes with the same toggle", () => {
+  render(
+    <LifecycleDurationBreakdown
+      panels={[panel(), waitPanel(5, 1), ...detailPanels(10)]}
+      loading={false}
+      error={false}
+    />,
+  );
+  const enrich = screen.getByRole("region", { name: "Event 丰富耗时明细" });
+  expect(within(enrich).getByText("策略 processor")).toBeVisible();
+  expect(within(enrich).getByText("26.00 ms")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "忽略合批等待" }));
+  expect(within(enrich).getByText("21.00 ms")).toBeVisible();
+  const chart = screen.getByRole("group");
+  fireEvent.click(
+    within(chart).getByRole("button", { name: /计划与结果写入/ }),
+  );
+  const commits = screen.getByRole("region", {
+    name: "计划与结果写入耗时明细",
+  });
+  expect(within(commits).getByText("保存执行计划")).toBeVisible();
+  expect(within(commits).getByText("提交最终处理结果")).toBeVisible();
+  fireEvent.mouseEnter(
+    within(chart).getByRole("button", { name: /Event 丰富/ }),
+  );
+  expect(commits).toBeVisible();
+  fireEvent.click(
+    within(chart).getByRole("button", { name: /告警变更与落库/ }),
+  );
+  const apply = screen.getByRole("region", { name: "告警变更与落库耗时明细" });
+  expect(within(apply).getByText("读取当前告警")).toBeVisible();
+  expect(
+    within(apply).getByText("条件更新告警（校验 / 编码 / ES）"),
+  ).toBeVisible();
+  expect(within(apply).getByText("告警流水校验与落库")).toBeVisible();
+});
+it.each(["missing", "null", "stale", "duplicate", "partial", "mismatch"])(
+  "keeps parent chart when %s child data cannot be trusted",
+  (scenario) => {
+    const details: MetricPanel[] = detailPanels(10);
+    // 用 Enrich 首个 processor 验证各种无效样本，避免影响无关父阶段。
+    if (scenario === "missing") details[0].series.shift();
+    if (scenario === "stale") details[0].series[0].points[0][0] = 9;
+    if (scenario === "null") details[0].series[0].points[0][1] = null;
+    if (scenario === "duplicate") details[0].series.push(details[0].series[0]);
+    if (scenario === "partial") details[1].series[0].points[0][1] = 0.5;
+    if (scenario === "mismatch") details[0].series[0].points[0][1] = 99;
+    render(
+      <LifecycleDurationBreakdown
+        panels={[panel(), waitPanel(5, 1), ...details]}
+        loading={false}
+        error={false}
+      />,
+    );
+    expect(screen.getByRole("group")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("暂无完整子步骤样本");
+  },
+);

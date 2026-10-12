@@ -38,6 +38,7 @@ func WithNewAlertSuppressor(s NewAlertSuppressor) ProcessorOption {
 // selectNewAlert 只在关联查询没有活动 Alert 时执行，包括所有处置资格状态。
 // 按严重程度依次尝试候选；较高等级被策略抑制不意味着抹掉未命中该策略的较低等级。
 func (p *Processor) selectNewAlert(ctx context.Context, event domain.Event, snapshot *store.PolicyContext, plan *store.EventPlan, active domain.Alert, highest int) (int, error) {
+	defer p.measureStep(phasePlan, "suppression")()
 	if p.suppressor == nil {
 		return highest, nil
 	}

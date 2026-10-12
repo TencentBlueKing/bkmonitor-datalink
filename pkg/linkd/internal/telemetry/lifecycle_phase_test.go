@@ -31,6 +31,7 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 	for _, attemptErr := range []error{nil, errors.New("failed attempt")} {
 		observer.Finished(t.Context(), lifecycle.PhaseObservation{
 			Phases: []lifecycle.PhaseDuration{{Phase: "enrich", Duration: 2 * time.Millisecond, BatchWait: time.Millisecond, StorageQueue: time.Millisecond / 2}, {Phase: "final_hook", Duration: 0}}, Err: attemptErr,
+			Steps: []lifecycle.StepDuration{{PhaseDuration: lifecycle.PhaseDuration{Phase: "enrich", Duration: 2 * time.Millisecond, BatchWait: time.Millisecond, StorageQueue: time.Millisecond / 2}, Step: "persist"}, {PhaseDuration: lifecycle.PhaseDuration{Phase: "enrich"}, Step: "custom"}},
 		})
 	}
 	var data metricdata.ResourceMetrics
@@ -40,6 +41,31 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 	seen := 0
 	for _, scope := range data.ScopeMetrics {
 		for _, metric := range scope.Metrics {
+			if metric.Name == "linkd.lifecycle.event.phase.step.duration" {
+				histogram := metric.Data.(metricdata.Histogram[float64])
+				if len(histogram.DataPoints) != 12 {
+					t.Fatal(histogram)
+				}
+				for _, point := range histogram.DataPoints {
+					if point.Count != 1 || point.Attributes.Len() != 4 {
+						t.Fatal(point)
+					}
+					step, _ := point.Attributes.Value("linkd.step")
+					kind, _ := point.Attributes.Value("linkd.wait_kind")
+					want := 0.0005
+					if kind.AsString() == "batch_wait" {
+						want = 0.001
+					}
+					if step.AsString() == "custom" {
+						want = 0
+					}
+					if point.Sum != want {
+						t.Fatal(point)
+					}
+				}
+				seen++
+				continue
+			}
 			if metric.Name != "linkd.lifecycle.event.phase.duration" && metric.Name != "linkd.lifecycle.event.phase.execution_duration" && metric.Name != "linkd.lifecycle.event.phase.wait_duration" {
 				continue
 			}
@@ -84,7 +110,7 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 			}
 		}
 	}
-	if seen != 3 {
+	if seen != 4 {
 		t.Fatalf("phase metric families=%d", seen)
 	}
 }

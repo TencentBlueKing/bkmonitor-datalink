@@ -93,6 +93,7 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 }
 
 func (p *Processor) writeEventEnrichment(ctx context.Context, stored store.StoredEvent, result domain.EventEnrichment) (store.StoredEvent, error) {
+	defer p.measureStep(phaseEnrich, "persist")()
 	if repo, ok := p.repository.(store.LifecycleEventSnapshotStore); ok {
 		return repo.CompareAndSetEventEnrichmentFromSnapshot(ctx, stored, result)
 	}
@@ -128,6 +129,7 @@ func (p *Processor) callEnricher(
 	ctx context.Context,
 	input enrich.Input,
 ) (result enrich.Result, failureReason string) {
+	defer p.measureStep(phaseEnrich, "chain")()
 	defer func() {
 		if recover() != nil {
 			result = enrich.Result{}

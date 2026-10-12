@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
 	"linkd/internal/store"
 	"linkd/internal/suppressioncleanup"
 )
@@ -34,6 +35,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		local.phaseTiming = &phaseTiming{started: started, last: started}
 		p = &local
 		ctx = store.WithWaitObserver(ctx, local.phaseTiming.observeWait)
+		ctx = enrich.WithProcessorTiming(ctx, p.measureEnrichProcessor)
 		defer func() { p.phaseObserver.Finished(ctx, p.phaseTiming.observation(time.Now(), result, err)) }()
 	}
 	// Processor 被多个 fingerprint 并发使用，复制接收者而不是原地改写共享字段。
@@ -94,7 +96,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 			if err != nil {
 				return ProcessResult{}, err
 			}
-			stored, err = p.writeEventResult(ctx, stored, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
+			stored, err = p.writeEventCheckpoint(ctx, stored, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan}, "plan_save")
 			if err != nil {
 				if errors.Is(err, store.ErrVersionConflict) {
 					lastErr = err
@@ -109,7 +111,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		}
 		if errors.Is(err, errRetryDecision) {
 			// 只有第一项尚未生效且原版本已被其他操作推进时才撤销；已经生效的计划必须补齐。
-			_, clearErr := p.writeEventResult(ctx, stored, store.EventResult{State: domain.EventProcessStateUnprocessed})
+			_, clearErr := p.writeEventCheckpoint(ctx, stored, store.EventResult{State: domain.EventProcessStateUnprocessed}, "plan_clear")
 			if clearErr != nil && !errors.Is(clearErr, store.ErrVersionConflict) {
 				return ProcessResult{}, clearErr
 			}
@@ -123,6 +125,12 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 
 func processResult(stored store.StoredEvent) ProcessResult {
 	return ProcessResult{EventID: stored.Event.EventID, AlertIDs: slices.Clone(stored.Event.RelatedAlertIDs), EventState: stored.Processing.State, Outcome: ProcessOutcome(stored.Processing.Outcome), ReasonCode: stored.Processing.ReasonCode}
+}
+
+func (p *Processor) writeEventCheckpoint(ctx context.Context, stored store.StoredEvent, result store.EventResult, step string) (store.StoredEvent, error) {
+	defer p.measurePhase(phaseEventCommit)()
+	defer p.measureStep(phaseEventCommit, step)()
+	return p.writeEventResult(ctx, stored, result)
 }
 
 func (p *Processor) writeEventResult(ctx context.Context, stored store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
@@ -475,35 +483,46 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (
 		if err != nil {
 			return store.StoredEvent{}, err
 		}
-		if updated.Alert.Status.Terminal() {
-			if err := p.clearSuppression(ctx, updated.Alert); err != nil {
-				return store.StoredEvent{}, err
-			}
-		} else {
-			if p.suppressor != nil && mutation.ExpectedVersion == "" {
-				// 聚合登记要求处置已放行；依赖待处理主只要求真实 Alert 存在。
-				if err := p.suppressor.Bind(ctx, stored.Event, plan.PolicyDecision, updated.Alert); err != nil {
-					return store.StoredEvent{}, err
+		if err := func() error {
+			defer p.measureStep(phaseApply, "bindings")()
+			if updated.Alert.Status.Terminal() {
+				if err := p.clearSuppression(ctx, updated.Alert); err != nil {
+					return err
+				}
+			} else {
+				if p.suppressor != nil && mutation.ExpectedVersion == "" {
+					// 聚合登记要求处置已放行；依赖待处理主只要求真实 Alert 存在。
+					if err := p.suppressor.Bind(ctx, stored.Event, plan.PolicyDecision, updated.Alert); err != nil {
+						return err
+					}
+				}
+				if p.merger != nil {
+					if err := p.merger.Confirm(ctx, stored.Event, plan.PolicyDecision, updated.Alert); err != nil {
+						return err
+					}
+				}
+				if p.dependency != nil {
+					if err := p.dependency.BindDependency(ctx, stored.Event, plan.PolicyDecision, updated.Alert); err != nil {
+						return err
+					}
 				}
 			}
-			if p.merger != nil {
-				if err := p.merger.Confirm(ctx, stored.Event, plan.PolicyDecision, updated.Alert); err != nil {
-					return store.StoredEvent{}, err
-				}
-			}
-			if p.dependency != nil {
-				if err := p.dependency.BindDependency(ctx, stored.Event, plan.PolicyDecision, updated.Alert); err != nil {
-					return store.StoredEvent{}, err
-				}
-			}
+			return nil
+		}(); err != nil {
+			return store.StoredEvent{}, err
 		}
+
 		// 独立关闭命令可能已经推进该快照；不能在重试时向策略索引重发旧 active。
 		superseded[index] = updated.Alert.UpdateAt.After(mutation.Alert.UpdateAt)
-		if updated.Alert.Status == domain.AlertStatusActive {
-			err = p.recentAlerts.PutCurrent(ctx, updated)
-		} else {
-			err = p.recentAlerts.PutTerminal(ctx, updated)
-		}
+		func() {
+			defer p.measureStep(phaseApply, "cache")()
+			if updated.Alert.Status == domain.AlertStatusActive {
+				err = p.recentAlerts.PutCurrent(ctx, updated)
+			} else {
+				err = p.recentAlerts.PutTerminal(ctx, updated)
+			}
+		}()
+
 		if err != nil {
 			return store.StoredEvent{}, err
 		}
@@ -551,7 +570,7 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
-	return p.writeEventResult(ctx, stored, store.EventResult{PolicyDecision: plan.PolicyDecision, State: plan.State, Outcome: plan.Outcome, ReasonCode: plan.ReasonCode, RelatedAlertIDs: plan.RelatedAlertIDs, Evaluations: plan.Evaluations, ProcessedAt: now})
+	return p.writeEventCheckpoint(ctx, stored, store.EventResult{PolicyDecision: plan.PolicyDecision, State: plan.State, Outcome: plan.Outcome, ReasonCode: plan.ReasonCode, RelatedAlertIDs: plan.RelatedAlertIDs, Evaluations: plan.Evaluations, ProcessedAt: now}, "result_save")
 }
 
 func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutation store.AlertMutation, first bool) (store.StoredAlert, error) {

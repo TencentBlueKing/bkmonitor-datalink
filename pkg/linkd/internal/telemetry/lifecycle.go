@@ -53,6 +53,21 @@ func (o *lifecyclePhaseObserver) Finished(ctx context.Context, sample lifecycle.
 			attribute.String("linkd.phase", phase.Phase), attribute.String("linkd.outcome", outcome),
 		))
 	}
+	for _, step := range sample.Steps {
+		for _, component := range [...]struct {
+			kind     string
+			duration time.Duration
+		}{
+			{"execution", max(0, step.Duration-step.BatchWait-step.StorageQueue)},
+			{"batch_wait", step.BatchWait}, {"storage_queue", step.StorageQueue},
+		} {
+			o.metrics.lifecycleStepDuration.Record(ctx, component.duration.Seconds(), metric.WithAttributes(
+				attribute.String("linkd.phase", step.Phase), attribute.String("linkd.step", step.Step),
+				attribute.String("linkd.wait_kind", component.kind), attribute.String("linkd.outcome", outcome),
+			))
+		}
+	}
+
 }
 
 type observedLifecycleProcessor struct {

@@ -69,6 +69,7 @@ type instruments struct {
 	lifecyclePhaseDuration          metric.Float64Histogram
 	lifecyclePhaseExecutionDuration metric.Float64Histogram
 	lifecyclePhaseWaitDuration      metric.Float64Histogram
+	lifecycleStepDuration           metric.Float64Histogram
 	lifecycleMailboxOps             metric.Int64Counter
 	lifecycleDrained                metric.Int64Histogram
 	lifecycleLeaseOps               metric.Int64Counter
@@ -149,6 +150,12 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	if result.lifecyclePhaseWaitDuration, err = meter.Float64Histogram(
 		"linkd.lifecycle.event.phase.wait_duration", describeMetric("Event 环节存储等待", "lifecycle", "latency", "linkd.phase", "linkd.outcome", "linkd.wait_kind"),
 		metric.WithUnit("s"), metric.WithDescription("每次 Event 尝试按环节记录 batch_wait 和 storage_queue，未等待也记录零样本"),
+	); err != nil {
+		return nil, err
+	}
+	if result.lifecycleStepDuration, err = meter.Float64Histogram(
+		"linkd.lifecycle.event.phase.step.duration", describeMetric("Event 子步骤耗时", "lifecycle", "latency", "linkd.phase", "linkd.step", "linkd.outcome", "linkd.wait_kind"),
+		metric.WithUnit("s"), metric.WithDescription("同一次 Event 各子步骤的独占 execution、batch_wait、storage_queue，每次尝试均记录零或实际样本"),
 	); err != nil {
 		return nil, err
 	}

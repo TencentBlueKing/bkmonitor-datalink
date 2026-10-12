@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 func twoLevelPlan(t testing.TB) *CompiledPlan {
@@ -72,7 +73,7 @@ func TestReadingALevelListAllocatesNothing(t *testing.T) {
 			sink += level.Definition().LevelID
 		}
 	})
-	if allocations != 0 {
+	if !racedetector.Enabled && allocations != 0 {
 		t.Fatalf("reading the Levels allocates %.0f times, want 0", allocations)
 	}
 	_ = sink

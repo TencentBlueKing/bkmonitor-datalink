@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
@@ -171,7 +172,7 @@ func TestALoadedHistoryTheWindowRefusesFailsTheSameWayOnEveryPath(t *testing.T) 
 // evaluation allocates less than the rebuilding one by at least nine tenths of
 // what building that window alone allocates.
 func TestTheFirstRecordDoesNotBuildTheWindowAgain(t *testing.T) {
-	if raceEnabled {
+	if racedetector.Enabled {
 		// Plain runs read the same counts every time (reused 1176, rebuilt
 		// 1275: 99 saved against 87 wanted). Under the race detector a pooled
 		// buffer is dropped at random and grown again, the saving swings by

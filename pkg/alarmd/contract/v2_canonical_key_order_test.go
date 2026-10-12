@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // keyOrderPool holds keys as written, each with the key it decodes to. Some
@@ -113,7 +115,7 @@ func TestCanonicalObjectSortAllocatesNothing(t *testing.T) {
 		}
 	}
 	run()
-	if allocations := testing.AllocsPerRun(200, run); allocations != 0 {
+	if allocations := testing.AllocsPerRun(200, run); !racedetector.Enabled && allocations != 0 {
 		t.Fatalf("canonicalising an object allocates %v times on a warm stream, want 0", allocations)
 	}
 }

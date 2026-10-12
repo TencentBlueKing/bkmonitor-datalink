@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
@@ -1089,7 +1090,7 @@ func TestTheZeroHoldPathDoesNotCheckTheScheduleEverySlot(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if allocs > 20 {
+	if !racedetector.Enabled && allocs > 20 {
 		t.Fatalf("a zero-hold Slot allocates %.0f objects; the schedule is checked every Slot again", allocs)
 	}
 }

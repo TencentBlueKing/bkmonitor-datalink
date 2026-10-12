@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // sampleFixture is a sampler as the process builds it, every buffer
@@ -65,7 +67,7 @@ func TestSeriesSampleDisabledAllocatesNothing(t *testing.T) {
 				if r := arm.s.TryReserve(context.Background(), arm.c); r != nil {
 					t.Fatal("unexpected reservation")
 				}
-			}); got != 0 {
+			}); !racedetector.Enabled && got != 0 {
 				t.Fatalf("allocations=%g", got)
 			}
 		})
@@ -83,7 +85,7 @@ func TestSeriesSampleReservationPrecedesMaterialization(t *testing.T) {
 		if s.TryReserve(context.Background(), c) != nil {
 			t.Fatal("materialization admitted without a free buffer")
 		}
-	}); got != 0 {
+	}); !racedetector.Enabled && got != 0 {
 		t.Fatalf("exhaustion allocated %g", got)
 	}
 	if s.Health().QueueDropped == 0 {

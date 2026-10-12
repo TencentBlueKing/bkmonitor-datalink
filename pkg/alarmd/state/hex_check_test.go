@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // The check and the decode as they were before they read in place: decode,
@@ -105,10 +107,10 @@ func TestTheDigestCheckAgreesWithTheReferenceOnEveryCharacter(t *testing.T) {
 // on every record it applies, and the check allocates nothing.
 func TestTheDigestCheckAllocatesNothing(t *testing.T) {
 	value := strings.Repeat("0f", 32)
-	if allocations := testing.AllocsPerRun(100, func() { _ = isSHA256Hex(value) }); allocations != 0 {
+	if allocations := testing.AllocsPerRun(100, func() { _ = isSHA256Hex(value) }); !racedetector.Enabled && allocations != 0 {
 		t.Fatalf("isSHA256Hex allocates %.0f times per call, want 0", allocations)
 	}
-	if allocations := testing.AllocsPerRun(100, func() { _, _ = decodeDigest32(value) }); allocations != 0 {
+	if allocations := testing.AllocsPerRun(100, func() { _, _ = decodeDigest32(value) }); !racedetector.Enabled && allocations != 0 {
 		t.Fatalf("decodeDigest32 allocates %.0f times per call, want 0", allocations)
 	}
 }

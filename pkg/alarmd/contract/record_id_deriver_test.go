@@ -13,6 +13,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // The deriver is DeriveRecordIDV2 with the series fixed: the same bytes for
@@ -103,7 +105,7 @@ func TestDerivingAPointsIDAllocatesOnlyTheID(t *testing.T) {
 		if _, err := deriver.Derive(at); err != nil {
 			t.Fatal(err)
 		}
-	}); allocs > 1 {
+	}); !racedetector.Enabled && allocs > 1 {
 		t.Fatalf("Derive allocated %.0f times a point, want only the id", allocs)
 	}
 }

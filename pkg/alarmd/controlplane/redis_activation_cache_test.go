@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -193,7 +194,7 @@ func TestActivationVersionCacheReadsBodyOncePerHeader(t *testing.T) {
 	if got := c.getCount(r.activationKey()); got != 1 {
 		t.Fatalf("warm reads fetched activation body: total=%d, want 1", got)
 	}
-	if allocs > 40 {
+	if !racedetector.Enabled && allocs > 40 {
 		t.Fatalf("warm read allocations=%.0f, want <=40 without repeated payload parsing or body transfer", allocs)
 	}
 	stats := r.ControlReadCacheStats().Activation

@@ -14,6 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 )
@@ -227,7 +228,7 @@ func TestTheZeroMemberPathDoesNoPerRecordWork(t *testing.T) {
 		adapter.reportScopeDrop(identity, plan, &facts, "target_scope", contract.TargetScopeReasonOutOfScope)
 	}
 	reject()
-	if allocs := testing.AllocsPerRun(1000, reject); allocs != 0 {
+	if allocs := testing.AllocsPerRun(1000, reject); !racedetector.Enabled && allocs != 0 {
 		t.Fatalf("zero-member path allocates %.1f per record, want 0", allocs)
 	}
 	if sink.screens != 1 || len(sink.observed) != 0 {

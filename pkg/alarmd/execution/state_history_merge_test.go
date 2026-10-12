@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 func mergePoint(recordID string, sourceTime int64, result LevelFactResult) StateHistoryPoint {
@@ -125,7 +127,7 @@ func TestTheMergeWalkDoesNotAllocatePerPoint(t *testing.T) {
 		})
 	}
 	short, long := measure(8), measure(2048)
-	if long > short {
+	if !racedetector.Enabled && long > short {
 		t.Fatalf("walking 2048 points allocated %v and walking 8 allocated %v; the walk holds two indices "+
 			"and must not grow with the record", long, short)
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 func sealTestMutation(points int) StateMutation {
@@ -175,7 +176,7 @@ func TestValidateDigestDoesNotRederiveAfterAWholeSlot(t *testing.T) {
 	}
 	runtime.ReadMemStats(&after)
 	perValidate := float64(after.Mallocs-before.Mallocs) / float64(series)
-	if perValidate > 64 {
+	if !racedetector.Enabled && perValidate > 64 {
 		t.Fatalf("validating one mutation of a built Slot allocated %.0f objects; the canonical encoder ran again", perValidate)
 	}
 }

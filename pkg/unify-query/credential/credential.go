@@ -70,8 +70,9 @@ type defaultGroup[T any] struct {
 	Default *T `json:"default"`
 }
 type payload struct {
-	Version   int                        `json:"schema_version"`
-	Service   string                     `json:"service"`
+	// Accept legacy metadata without using it to validate or select credentials.
+	Version   json.RawMessage            `json:"schema_version"`
+	Service   json.RawMessage            `json:"service"`
 	App       *defaultGroup[appIdentity] `json:"bkapp_id_secret"`
 	Redis     *defaultGroup[password]    `json:"redis"`
 	Sentinel  *defaultGroup[password]    `json:"redis_sentinel"`
@@ -204,12 +205,6 @@ func Load(raw, runtime *viper.Viper) (*Snapshot, error) {
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return nil, fmt.Errorf("kms payload must contain one JSON object")
-	}
-	if s.payload.Version != 1 {
-		return nil, fmt.Errorf("kms schema_version is unsupported")
-	}
-	if s.payload.Service != "unify-query" {
-		return nil, fmt.Errorf("kms service must be unify-query")
 	}
 	if err := s.bind(); err != nil {
 		return nil, err

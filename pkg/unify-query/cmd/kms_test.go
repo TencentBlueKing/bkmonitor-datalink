@@ -23,7 +23,7 @@ func TestKMSCLIEntrypoints(t *testing.T) {
 	mr.RequireAuth("kms-node-secret")
 	dir := t.TempDir()
 	configFile, flagsFile, flagFile := filepath.Join(dir, "config.yaml"), filepath.Join(dir, "flags.json"), filepath.Join(dir, "flag.json")
-	envelope, key := kmstest.Files(t, `{"schema_version":1,"service":"unify-query","redis":{"default":{"password":"kms-node-secret"}}}`)
+	envelope, key := kmstest.Files(t, `{"redis":{"default":{"password":"kms-node-secret"}}}`)
 	data := fmt.Sprintf("kms:\n  enabled: true\n  envelope_file: %s\n  private_key_file: %s\ntrace:\n  enable: false\nredis:\n  host: %s\n  port: %s\n  kv_base_path: test:kms\nquery:\n  marker: unchanged\n", envelope, key, mr.Host(), mr.Port())
 	require.NoError(t, os.WriteFile(configFile, []byte(data), 0600))
 	require.NoError(t, os.WriteFile(flagsFile, []byte("{}"), 0600))

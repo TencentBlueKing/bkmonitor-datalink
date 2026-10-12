@@ -111,7 +111,7 @@ func loadConfig(output io.Writer, reload bool) error {
 	activeSnapshot = snapshot
 	fmt.Fprintln(output, "Using config file:", candidate.ConfigFileUsed())
 	if snapshot.Enabled() {
-		fmt.Fprintln(output, "KMS credentials loaded: schema_version=1")
+		fmt.Fprintln(output, "KMS credentials loaded")
 	}
 	// 配置读取后，通知全世界reload读取新的配置
 	eventbus.EventBus.Publish(eventbus.EventSignalConfigPostParse)

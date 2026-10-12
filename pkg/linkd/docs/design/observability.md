@@ -7,6 +7,13 @@ Event Processor 使用 `linkd_pipeline_attempt_duration_seconds`；Signal Handle
 各阶段 P99 不相加；Cleaner 成功规范化数含重复投递，Lifecycle 完成速率取成功 Mailbox ACK，
 两者不取最小值作为端到端吞吐，也不直接相减推算积压。
 
+Event 内部分段使用 `linkd_lifecycle_event_phase_duration_seconds`，每次尝试对固定环节
+记录独占耗时，嵌套调用从父环节中扣除，未执行的环节也记录零样本；各环节具有相同的尝试分母，
+因此其均值可以相加。该计时器仅属于调用内的 Processor 副本，不跨 fingerprint 共享可变状态；
+使用单调时间计时，不依赖业务时钟，也不改变失败、重试和持久化语义。
+该指标与 ES 物理批次指标的采样单位不同，不相加。Console 展示口径及各环节范围见
+[单 Event 耗时分布](../guides/console.md#指标边界)。
+
 以下指标统一以 `linkd_elasticsearch_write_batch_` 为前缀，
 `linkd_batch_kind=read|write` 区分 `_mget` 与 `_bulk`。跨来源请求不添加租户、Event ID 或来源标签。
 

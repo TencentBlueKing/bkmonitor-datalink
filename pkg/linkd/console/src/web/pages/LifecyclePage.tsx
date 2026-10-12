@@ -19,6 +19,7 @@ import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
 import { StageMetricCards } from "../components/StageMetricCards";
 import { LifecycleBatchPanel } from "../components/LifecycleBatchPanel";
+import { LifecycleDurationBreakdown } from "../components/LifecycleDurationBreakdown";
 import { MetricSection } from "../components/MetricSection";
 import {
   ProcessingFlowHeader,
@@ -251,6 +252,12 @@ export function LifecyclePage() {
         panels={metrics.data?.panels ?? []}
         stage="lifecycle"
         stageLabel="Lifecycle"
+      />
+
+      <LifecycleDurationBreakdown
+        panels={metrics.data?.panels ?? []}
+        loading={metrics.isLoading}
+        error={metrics.isError}
       />
 
       {runtime.isError ? (

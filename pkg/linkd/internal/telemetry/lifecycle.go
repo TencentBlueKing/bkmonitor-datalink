@@ -23,6 +23,26 @@ type lifecycleProcessor interface {
 	ProcessEvent(ctx context.Context, stored store.StoredEvent) (lifecycle.ProcessResult, error)
 }
 
+type lifecyclePhaseObserver struct{ metrics *instruments }
+
+// LifecyclePhaseObserver 创建 Event 独占分段观察器；未启用指标时返回 nil。
+func (r *Runtime) LifecyclePhaseObserver() lifecycle.PhaseObserver {
+	if r == nil || r.metrics == nil {
+		return nil
+	}
+	return &lifecyclePhaseObserver{metrics: r.metrics}
+}
+
+func (o *lifecyclePhaseObserver) Finished(ctx context.Context, sample lifecycle.PhaseObservation) {
+	outcome := lifecycleMetricOutcome(sample.Result, sample.Err)
+	// 所有环节每次都记一个样本，零耗时也记录，保证均值使用同一批 Event 尝试。
+	for _, phase := range sample.Phases {
+		o.metrics.lifecyclePhaseDuration.Record(ctx, phase.Duration.Seconds(), metric.WithAttributes(
+			attribute.String("linkd.phase", phase.Phase), attribute.String("linkd.outcome", outcome),
+		))
+	}
+}
+
 type observedLifecycleProcessor struct {
 	next    lifecycleProcessor
 	metrics *instruments

@@ -121,7 +121,7 @@ Alert 详情分开展示入队意图及动作开关。动作页可按需查看�
 
 - 系统总览：按完成速率与积压、等待位置、失败恢复分组诊断；各阶段延迟单独展示，不合计 P99。
 - Cleaner：EventSource、Kafka partition、transform、Event store、Mailbox 和 Kafka confirm。
-- Lifecycle：Event 处理与 Signal 调度分离；独立 Enrich 区域展示同步丰富总体状态、在途调用、平均/P95/P99、Processor 状态与 P99、诊断、DataSource 调用与 P99、payload 大小；独立 ES 合批区展示范围执行次数、提交/成功/失败操作数、每批大小、字节数、排队与执行耗时，并显示配置推导值。
+- Lifecycle：Event 处理与 Signal 调度分离；单 Event 平均处理耗时分布以横向分段条展示各环节的独占耗时、占比和说明；独立 Enrich 区域展示同步丰富总体状态、在途调用、平均/P95/P99、Processor 状态与 P99、诊断、DataSource 调用与 P99、payload 大小；独立 ES 合批区展示范围执行次数、提交/成功/失败操作数、每批大小、字节数、排队与执行耗时，并显示配置推导值。
 - Control Plane：控制面注册的全量任务、运行状态、有限子流程结果、历史计数与生效配置。
 - Events、Alerts、AlertLogs：分对象查询、结构化详情、关联列表与流水、当前 schema 能力内的统计；Alert 详情支持通过控制面主动关闭。
 - KAC 告警：通过独立 KAC ES 连接只读查询 `alarm_event`，支持租户、告警 ID、来源、状态、级别、动作、时间筛选与原始文档详情；见 [KAC 查询](../docs/guides/console.md#kac-alarm_event-查询)。

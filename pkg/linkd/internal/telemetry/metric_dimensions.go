@@ -27,6 +27,7 @@ func metricDimension(key string) (MetricDimension, bool) {
 		"linkd.settlement.mode":     "消息确认方式，individual 或 cumulative",
 		"linkd.action":              "运行时动作，例如 start、stop、pause、resume",
 		"linkd.step":                "Cleaner 可靠性步骤，例如 transform、source_ack",
+		"linkd.phase":               "Event 独占计时环节：enrich、policy_snapshot、plan、event_commit、apply、final_hook、other",
 		"linkd.event.action":        "领域事件动作",
 		"linkd.event.state":         "事件处理后的状态",
 		"linkd.operation":           "固定操作名称；具体枚举由所属组件定义",

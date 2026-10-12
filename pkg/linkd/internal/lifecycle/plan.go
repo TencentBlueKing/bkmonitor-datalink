@@ -24,7 +24,17 @@ import (
 
 // ProcessEvent 在 fingerprint lease 内先保存确定性计划，再执行有界副作用并提交最终结果。
 // 同一事件的所有级别共享该计划；外部 hook 仍遵从至少一次调用边界。
-func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent) (ProcessResult, error) {
+func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent) (result ProcessResult, err error) {
+	if ctx == nil {
+		return ProcessResult{}, fmt.Errorf("process lifecycle event: context must not be nil")
+	}
+	if p.phaseObserver != nil {
+		local := *p
+		started := time.Now()
+		local.phaseTiming = &phaseTiming{started: started, last: started}
+		p = &local
+		defer func() { p.phaseObserver.Finished(ctx, p.phaseTiming.observation(time.Now(), result, err)) }()
+	}
 	// Processor 被多个 fingerprint 并发使用，复制接收者而不是原地改写共享字段。
 	if provider, ok := p.severity.(interface {
 		FreezeSeverity() (SeverityTable, string)
@@ -33,10 +43,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		local := *p
 		local.severity = table
 		local.configDigest = digest
-		return local.ProcessEvent(ctx, initial)
-	}
-	if ctx == nil {
-		return ProcessResult{}, fmt.Errorf("process lifecycle event: context must not be nil")
+		p = &local
 	}
 	if initial.Event.BKTenantID == "" || initial.Event.EventID == "" || initial.Version.IsZero() {
 		return ProcessResult{}, fmt.Errorf("process lifecycle event requires identity and version")
@@ -117,6 +124,7 @@ func processResult(stored store.StoredEvent) ProcessResult {
 }
 
 func (p *Processor) writeEventResult(ctx context.Context, stored store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
+	defer p.measurePhase(phaseEventCommit)()
 	if repo, ok := p.repository.(store.LifecycleEventStore); ok {
 		return repo.CompareAndSetLifecycleEventResult(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result)
 	}
@@ -124,6 +132,7 @@ func (p *Processor) writeEventResult(ctx context.Context, stored store.StoredEve
 }
 
 func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapshot *store.PolicyContext) (*store.EventPlan, error) {
+	defer p.measurePhase(phasePlan)()
 	if err := domain.ValidateEvaluations(event.Evaluations); err != nil {
 		return nil, err
 	}
@@ -426,6 +435,7 @@ func (p *Processor) planNewAlert(ctx context.Context, plan *store.EventPlan, eve
 }
 
 func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (store.StoredEvent, error) {
+	defer p.measurePhase(phaseApply)()
 	plan := stored.Processing.Plan
 	if err := store.ValidateEventPlan(stored.Event, plan); err != nil {
 		return store.StoredEvent{}, err

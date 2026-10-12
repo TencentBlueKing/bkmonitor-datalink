@@ -27,6 +27,7 @@ type EventEnricher interface {
 
 // enrichEvent 先冻结结果再允许计划/策略产生副作用。CAS 失败交由外层重读，已提交结果绝不重算。
 func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (store.StoredEvent, error) {
+	defer p.measurePhase(phaseEnrich)()
 	event := stored.Event
 	if event.EnrichStatus != "" && event.EnrichStatus != domain.EnrichStatusPending {
 		return stored, nil

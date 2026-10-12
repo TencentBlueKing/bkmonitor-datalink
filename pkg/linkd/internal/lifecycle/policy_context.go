@@ -17,6 +17,7 @@ import (
 )
 
 func (p *Processor) freezePolicies(ctx context.Context, stored store.StoredEvent) (store.StoredEvent, error) {
+	defer p.measurePhase(phasePolicySnapshot)()
 	if p.policies == nil || stored.Processing.PolicyContext != nil {
 		return stored, nil
 	}

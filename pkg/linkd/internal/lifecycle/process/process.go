@@ -250,6 +250,7 @@ func Run(
 			lifecycle.SystemClock{},
 			logger,
 			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
+			lifecycle.WithPhaseObserver(telemetryRuntime.LifecyclePhaseObserver()),
 			lifecycle.WithActionRecorder(actionRecorder),
 			lifecycle.WithInitialProjectionTargets(targets),
 			lifecycle.WithPolicySnapshotter(policyruntime.Snapshotter{Catalog: policyCatalog}),

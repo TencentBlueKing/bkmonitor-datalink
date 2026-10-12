@@ -121,6 +121,8 @@ type Processor struct {
 	idGenerator              AlertIDGenerator
 	enricher                 EventEnricher
 	enrichObserver           EnrichObserver
+	phaseObserver            PhaseObserver
+	phaseTiming              *phaseTiming
 	finalHooks               []NamedFinalHook
 	severity                 SeverityTable
 	configDigest             string

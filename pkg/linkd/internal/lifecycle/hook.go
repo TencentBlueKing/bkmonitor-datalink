@@ -91,6 +91,7 @@ func (p *Processor) runFinalHooks(ctx context.Context, cause AlertChangeCause, a
 }
 
 func (p *Processor) runHooks(ctx context.Context, cause AlertChangeCause, alert domain.Alert, outcome ProcessOutcome, actionReady bool) ([]domain.AlertLog, error) {
+	defer p.measurePhase(phaseHook)()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

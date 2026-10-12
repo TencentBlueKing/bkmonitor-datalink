@@ -410,6 +410,18 @@ const panelDefinitions: PanelDefinition[] = [
       `${namedSeries(`sum(rate(linkd_enrich_payload_size_bytes_sum${selector}[${window}])) / sum(rate(linkd_enrich_payload_size_bytes_count${selector}[${window}]))`, "平均")} or ${namedSeries(`histogram_quantile(0.95, sum(rate(linkd_enrich_payload_size_bytes_bucket${selector}[${window}])) by (le))`, "P95")} or ${namedSeries(`histogram_quantile(0.99, sum(rate(linkd_enrich_payload_size_bytes_bucket${selector}[${window}])) by (le))`, "P99")}`,
   },
   {
+    id: "lifecycle-phase-average",
+    title: "单 Event 平均处理耗时分布",
+    unit: "ms",
+    kind: "stat",
+    rangeTotal: true,
+    processWide: true,
+    description:
+      "所选时间范围内各环节独占耗时之和除以 Event 尝试次数，包含失败与重放；嵌套环节不重复计算。",
+    query: (selector, window) =>
+      `1000 * sum(increase(linkd_lifecycle_event_phase_duration_seconds_sum${selector}[${window}])) by (linkd_phase) / sum(increase(linkd_lifecycle_event_phase_duration_seconds_count${selector}[${window}])) by (linkd_phase)`,
+  },
+  {
     id: "lifecycle-results",
     title: "Lifecycle 裁决速率",
     unit: "event/s",

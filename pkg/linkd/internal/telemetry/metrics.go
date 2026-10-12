@@ -66,6 +66,7 @@ type instruments struct {
 	cleanerBackpressureTransitions metric.Int64Counter
 
 	lifecycleResults             metric.Int64Counter
+	lifecyclePhaseDuration       metric.Float64Histogram
 	lifecycleMailboxOps          metric.Int64Counter
 	lifecycleDrained             metric.Int64Histogram
 	lifecycleLeaseOps            metric.Int64Counter
@@ -131,6 +132,12 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	}
 	result := &instruments{}
 	var err error
+	if result.lifecyclePhaseDuration, err = meter.Float64Histogram(
+		"linkd.lifecycle.event.phase.duration", describeMetric("Event 环节独占耗时", "lifecycle", "latency", "linkd.phase", "linkd.outcome"),
+		metric.WithUnit("s"), metric.WithDescription("单次 ProcessEvent 的独占分段耗时；每次尝试为所有环节记录样本，未执行的环节为零"),
+	); err != nil {
+		return nil, err
+	}
 	if result.pipelineAttempts, err = meter.Int64Counter(
 		"linkd.pipeline.attempts", describeMetric("阶段处理尝试", "pipeline", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.outcome", "linkd.trigger", "linkd.reason_code"),
 		metric.WithUnit("{attempt}"),

@@ -77,6 +77,26 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
         to: "2026-09-06T01:00:00Z",
         step: 15,
         panels: [
+          {
+            id: "lifecycle-phase-average",
+            title: "单 Event 平均处理耗时分布",
+            unit: "ms",
+            kind: "stat",
+            status: "available",
+            series: Object.entries({
+              enrich: 40,
+              policy_snapshot: 5,
+              plan: 10,
+              event_commit: 15,
+              apply: 20,
+              final_hook: 8,
+              other: 2,
+            }).map(([phase, value]) => ({
+              name: phase,
+              labels: { linkd_phase: phase },
+              points: [[1788630165, value]],
+            })),
+          },
           line("final-hook-success-ratio", "FinalHook 成功率", "%", {
             "source-a · active-by-strategy": 75,
             "source-a · kac": 90,
@@ -128,6 +148,18 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
     }),
   );
   await page.goto("/lifecycle");
+  const breakdown = page.getByRole("region", {
+    name: "单 Event 平均处理耗时分布",
+    exact: true,
+  });
+  await expect(breakdown.getByText("100.00 ms", { exact: true })).toBeVisible();
+  const bar = breakdown.getByRole("group", { name: "各环节耗时占比" });
+  await expect(bar.getByRole("button")).toHaveCount(7);
+  await bar.getByRole("button", { name: /Hook 输出/ }).focus();
+  await expect(breakdown.getByText(/按顺序调用 Hook/)).toBeVisible();
+  await breakdown.screenshot({
+    path: info.outputPath("lifecycle-duration-desktop.png"),
+  });
   await expect(
     page.getByRole("heading", { name: "ES 分批写入", exact: true }),
   ).toBeVisible();
@@ -149,6 +181,9 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
+  await breakdown.screenshot({
+    path: info.outputPath("lifecycle-duration-mobile.png"),
+  });
   await expect(
     page.getByRole("heading", { name: "ES 分批写入", exact: true }),
   ).toBeVisible();

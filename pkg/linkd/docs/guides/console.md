@@ -471,6 +471,18 @@ Cleaner 指标按 EventSource 聚合，received、settled 和 lane gauge 可以�
 记录 Signal、Mailbox、lease、Event 裁决和 FinalHook。指标禁止包含 tenant、实体 ID、fingerprint、
 topic、group、完整错误或 payload。
 
+Lifecycle 页的「单 Event 平均处理耗时分布」展示丰富、策略快照、生命周期裁决、计划与结果写入、
+告警变更与落库、Hook 输出、其他处理七个环节。每次 `ProcessEvent` 完成后通过
+`linkd_lifecycle_event_phase_duration_seconds` 为每个环节记录独占耗时，未执行环节记录零；
+嵌套 Hook 和 Event 写入从父环节中扣除。丰富和策略快照包含各自结果的持久化，
+告警变更与落库包含计划执行、告警与流水存储、缓存与处置意图。
+各环节均值为所选时间范围内跨 Worker 的耗时增量之和除以尝试次数增量之和，
+包含失败、重放和尝试内 CAS 重试；各均值之和为图中平均总耗时，占比使用该总和作分母。
+该图使用整个所选时间范围，其他速率/时序图仍使用单独的指标计算窗口。
+计时不含 Cleaner、Mailbox 排队、Signal 调度和异步下游处理；不混用 ES 物理批次耗时。
+Worker 需要更新后上报此指标，旧 Worker 的处理不在该图样本中；缺失或无效分段时显示无数据，
+不会把已有 Enrich / Repository 的独立调用均值拼成占比。可悬停、点击分段或图例查看环节说明。
+
 Lifecycle 页的「Hook 输出」及 `final_hook` 节点详情同时展示成功率、调用结果速率与 P95，
 按 EventSource 和 Hook 名称区分实例。成功率使用所选计算窗口内
 `succeeded / (succeeded + failed)`，跨 Worker 按调用量聚合；错误、超时与 panic 计为失败，

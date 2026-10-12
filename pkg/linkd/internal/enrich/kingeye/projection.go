@@ -21,7 +21,24 @@ import (
 
 // ProjectValue 将既有内置处理器结果映射为 Alert 字段；也用于读取真实历史记录。
 func ProjectValue(processor string, value domain.JSONObject) ([]domain.EnrichPatch, error) {
-	patches := make([]domain.EnrichPatch, 0, len(value))
+	assignments, err := ProjectAssignments(processor, value)
+	if err != nil {
+		return nil, err
+	}
+	patches := make([]domain.EnrichPatch, 0, len(assignments))
+	for _, assignment := range assignments {
+		patch, err := assignment.Patch()
+		if err != nil {
+			return nil, err
+		}
+		patches = append(patches, patch)
+	}
+	return patches, nil
+}
+
+// ProjectAssignments 在类型化内置结果边界解码一次，后续处理只使用 Go 值。
+func ProjectAssignments(processor string, value domain.JSONObject) ([]domain.EnrichAssignment, error) {
+	patches := make([]domain.EnrichAssignment, 0, len(value))
 	// domain.JSONObject 遍历顺序不稳定，投影按字段名排序以保证补丁可重放。
 	for _, key := range sortedObjectKeys(value) {
 		raw := value[key]
@@ -54,11 +71,11 @@ func ProjectValue(processor string, value domain.JSONObject) ([]domain.EnrichPat
 		if (path == "$.title" || path == "$.content" || path == "$.subject_name") && strings.TrimSpace(string(raw)) == "\"\"" {
 			continue
 		}
-		p := domain.EnrichPatch{Op: "set", Path: path, Value: append(json.RawMessage(nil), raw...)}
-		if err := p.Validate(); err != nil {
+		assignment, err := domain.PrepareEnrichPatch(domain.EnrichPatch{Op: "set", Path: path, Value: raw})
+		if err != nil {
 			return nil, err
 		}
-		patches = append(patches, p)
+		patches = append(patches, assignment)
 	}
 	return patches, nil
 }

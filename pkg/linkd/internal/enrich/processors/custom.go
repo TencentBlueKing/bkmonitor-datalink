@@ -12,7 +12,6 @@ package processors
 import (
 	"context"
 
-	"linkd/internal/domain"
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/custom"
 )
@@ -38,23 +37,7 @@ func (p *Rules) Name() string { return p.name }
 // Match 将具体匹配交给各条规则，Processor 本身始终适用。
 func (p *Rules) Match(context.Context, *enrich.Scope) (bool, error) { return true, nil }
 
-// Process 顺序执行规则并返回已提交补丁；不直接修改 Scope 或 Alert。
+// Process 在本等级工作对象上顺序执行规则，返回已应用补丁，不覆盖原始 Event 或 Alert。
 func (p *Rules) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	original, err := domain.EventDocument(scope.OriginalEvent(), scope.Evaluation())
-	if err != nil {
-		return enrich.ProcessorResult{}, err
-	}
-	current, err := domain.EventDocument(scope.EffectiveEvent(), scope.Evaluation())
-	if err != nil {
-		return enrich.ProcessorResult{}, err
-	}
-	result, err := p.program.Execute(ctx, original, current, scope.EffectiveEvent().BKTenantID, scope.RuleSources())
-	if err != nil {
-		return enrich.ProcessorResult{}, err
-	}
-	trace := make([]enrich.Trace, len(result.Trace))
-	for i, t := range result.Trace {
-		trace[i] = enrich.Trace{RuleID: t.RuleID, OperationID: t.OperationID, Status: t.Status, Code: t.Code, Matches: t.Matches, DurationMilliseconds: t.DurationMilliseconds}
-	}
-	return enrich.ProcessorResult{Status: result.Status, Patches: result.Patches, Trace: trace}, nil
+	return scope.ExecuteRules(ctx, p.program)
 }

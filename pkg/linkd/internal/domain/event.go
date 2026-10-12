@@ -24,6 +24,8 @@ var eventSourceIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 // 来源事实创建后不可覆盖；Lifecycle 只能冻结 EventEnrichment 并追加 RelatedAlertIDs。
 type Event struct {
 	EventEnrichment
+	// enrichViews 仅在单次 Lifecycle 处理中复用冻结结果，不属于 Event 事实或存储。
+	enrichViews *eventEnrichViews
 	// MergeOrigin 只属于内置合并来源；外部来源即使提交相同字段也不能成为系统合并事件。
 	MergeOrigin *MergeOrigin `json:"merge_origin,omitempty"`
 	// EventSourceVersion 是创建时实际使用的不可变来源发布版本。
@@ -57,6 +59,7 @@ type Event struct {
 
 // Normalize 深拷贝动态字段、规范 UTC 时间并校验 Event。
 func (e Event) Normalize() (Event, error) {
+	e.enrichViews = nil
 	e.MergeOrigin = e.MergeOrigin.Clone()
 	e.Dimensions = e.Dimensions.Normalize()
 	e.Evaluations = slices.Clone(e.Evaluations)
@@ -87,7 +90,7 @@ func (e Event) Normalize() (Event, error) {
 	return e, nil
 }
 
-// Clone 返回不共享 map 或 JSON 字节的 Event 副本。
+// Clone 深拷贝来源字段和丰富载荷；私有冻结视图在本次处理内共享，不属于存储数据。
 func (e Event) Clone() Event {
 	e.MergeOrigin = e.MergeOrigin.Clone()
 	e.EventEnrichment = e.EventEnrichment.Clone()
@@ -104,6 +107,7 @@ func (e Event) Clone() Event {
 // Restore 将存储解码结果转成可处理的快照，不重编码动态 JSON 或重新验证历史丰富载荷。
 // 缺失的可选数据由消费者处理；身份和稳定时间锚点不能用当前时间或新配置补造。
 func (e Event) Restore() (Event, error) {
+	e.enrichViews = nil
 	e = e.Clone()
 	e.Dimensions = e.Dimensions.Normalize()
 	e.Labels = e.Labels.Normalize()
@@ -336,6 +340,7 @@ func ValidateEventReplacement(current, replacement Event) error {
 	}
 	left := current.Clone()
 	right := replacement.Clone()
+	left.enrichViews, right.enrichViews = nil, nil
 	left.RelatedAlertIDs = nil
 	right.RelatedAlertIDs = nil
 	if !reflect.DeepEqual(left, right) {

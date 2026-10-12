@@ -32,7 +32,7 @@ func (EventSource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Pro
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	alert := scope.Event()
+	alert := scope.Facts()
 	values := models.SourceValues{MetaInfo: alert.SourceEventID}
 	source, found, err := scope.AlarmSource(ctx)
 	if err != nil || !found {

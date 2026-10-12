@@ -19,7 +19,7 @@ import (
 	"linkd/internal/enrich/kingeye"
 )
 
-// Processor 是一个可重复执行的只读丰富步骤。
+// Processor 是可重复执行的丰富步骤；外部依赖只读，变更仅限本等级工作对象。
 type Processor interface {
 	Name() string
 	// Match 判断当前告警是否适用该 Processor；无法完成判断时返回错误。
@@ -68,24 +68,33 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	event := input.Event
+	event := input.Event.Clone()
+	event.EventEnrichment = domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}
+	if !input.Preview {
+		if err := event.ValidateIdentity(); err != nil {
+			return Result{}, err
+		}
+	}
 	if err := domain.ValidateEvaluations(event.Evaluations); err != nil {
 		return Result{}, err
 	}
-	result := Result{Data: domain.EventEnrichData{Evaluations: make([]domain.EvaluationEnrich, 0, len(event.Evaluations))}}
+	result := Result{Evaluations: map[string]*domain.EnrichEvaluation{}, Data: domain.EventEnrichData{Evaluations: make([]domain.EvaluationEnrich, 0, len(event.Evaluations))}}
 	cache := newRequestCache()
 	budget := &chainBudget{}
 	statuses := make([]domain.EnrichStatus, 0, len(event.Evaluations))
 	for _, evaluation := range event.Evaluations {
-		scope, err := newScope(event, evaluation, c.sources, input.Preview, cache)
-		if err != nil {
-			return Result{}, err
-		}
+		scope := newOwnedScope(&event, evaluation, c.sources, cache)
 		evaluated, err := c.enrichEvaluation(ctx, scope, budget)
 		if err != nil {
 			return Result{}, err
 		}
 		result.Data.Evaluations = append(result.Data.Evaluations, evaluated)
+		if scope.state != nil {
+			if err := scope.state.FreezeResult(evaluated.Data); err != nil {
+				return Result{}, err
+			}
+			result.Evaluations[evaluation.Severity] = scope.state
+		}
 		statuses = append(statuses, evaluated.Status)
 	}
 	result.Status = domain.AggregateEnrichStatus(statuses)
@@ -96,65 +105,106 @@ type chainBudget struct{ patchCount, payloadBytes int }
 
 func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chainBudget) (domain.EvaluationEnrich, error) {
 	results := make([]ProcessorResult, 0, len(c.processors))
-	entries := make([]ProcessorEntry, 0, len(c.processors))
+	entries := make([]map[string]json.RawMessage, 0, len(c.processors))
 	for _, processor := range c.processors {
 		if err := ctx.Err(); err != nil {
 			return domain.EvaluationEnrich{}, err
 		}
 		startedAt := time.Now()
+		scope.running = true
 		result, outcome := runProcessor(ctx, processor, scope)
+		scope.running = false
 		result, valid := normalizeProcessorResult(result)
-		if result.Patches == nil {
-			patches, projectionErr := kingeye.ProjectValue(processor.Name(), result.Value)
-			if projectionErr != nil {
-				result = invalidProcessorResult()
-				valid = false
-				patches = []domain.EnrichPatch{}
+		assignments := result.RuntimePatches
+		if valid && assignments == nil {
+			var err error
+			if result.Patches != nil {
+				assignments = make([]domain.EnrichAssignment, 0, len(result.Patches))
+				for _, patch := range result.Patches {
+					assignment, e := domain.PrepareEnrichPatch(patch)
+					if e != nil {
+						err = e
+						break
+					}
+					assignments = append(assignments, assignment)
+				}
+			} else {
+				assignments, err = kingeye.ProjectAssignments(processor.Name(), result.Value)
 			}
-			result.Patches = patches
-		}
-		encoded, encodeErr := json.Marshal(ProcessorEnvelope{Status: result.Status, Patches: result.Patches, Trace: result.Trace, Diagnostics: result.Diagnostics})
-		// 整条链共享持久化预算，防止两个分别合法的处理器组合出超大告警。
-		if encodeErr != nil || budget.patchCount+len(result.Patches) > 4096 || budget.payloadBytes+len(encoded) > 900000 {
-			result = invalidProcessorResult()
-			result.Patches = []domain.EnrichPatch{}
-			valid = false
-		} else {
-			budget.patchCount += len(result.Patches)
-			budget.payloadBytes += len(encoded)
-		}
-		if result.Status == domain.EnrichStatusSucceeded || result.Status == domain.EnrichStatusPartial {
-			if err := scope.applyPatches(result.Patches); err != nil {
-				result = invalidProcessorResult()
-				result.Patches = []domain.EnrichPatch{}
+			if err != nil {
 				valid = false
 			}
-		} else {
-			result.Patches = []domain.EnrichPatch{}
 		}
-
+		applicable := valid && (result.Status == domain.EnrichStatusSucceeded || result.Status == domain.EnrichStatusPartial)
+		if applicable && !result.applied {
+			state, err := scope.EvaluationState()
+			if err != nil || state.Apply(assignments) != nil {
+				valid, applicable = false, false
+			}
+		}
+		if !applicable {
+			scope.rollback()
+			assignments = nil
+		}
 		if !valid {
+			result = invalidProcessorResult()
 			outcome = ProcessorOutcomeInvalidResult
 		}
-		c.observer.ProcessorFinished(ctx, ProcessorObservation{
-			Processor: processor.Name(), Status: result.Status, Outcome: outcome,
-			Duration: time.Since(startedAt), Diagnostics: cloneDiagnostics(result.Diagnostics),
-		})
+		// 已求值补丁只在结果协议边界编码；状态仍留在同一个工作对象中。
+		patches := make([]domain.EnrichPatch, 0, len(assignments))
+		for _, assignment := range assignments {
+			patch, err := assignment.Patch()
+			if err != nil {
+				return domain.EvaluationEnrich{}, err
+			}
+			patches = append(patches, patch)
+		}
+		envelope := ProcessorEnvelope{Status: result.Status, Patches: patches, Trace: result.Trace, Diagnostics: cloneDiagnostics(result.Diagnostics)}
+		encoded, err := json.Marshal(envelope)
+		if err != nil {
+			return domain.EvaluationEnrich{}, err
+		}
+		if budget.patchCount+len(patches) > 4096 || budget.payloadBytes+len(encoded) > 900000 {
+			scope.rollback()
+			result = invalidProcessorResult()
+			outcome = ProcessorOutcomeInvalidResult
+			encoded, err = json.Marshal(ProcessorEnvelope{Status: result.Status, Patches: []domain.EnrichPatch{}, Diagnostics: result.Diagnostics})
+			if err != nil {
+				return domain.EvaluationEnrich{}, err
+			}
+		} else {
+			budget.patchCount += len(patches)
+			budget.payloadBytes += len(encoded)
+		}
+		if err := ctx.Err(); err != nil {
+			scope.rollback()
+			return domain.EvaluationEnrich{}, err
+		}
+		if err := scope.commit(); err != nil {
+			scope.rollback()
+			result = invalidProcessorResult()
+			outcome = ProcessorOutcomeInvalidResult
+			encoded, err = json.Marshal(ProcessorEnvelope{Status: result.Status, Patches: []domain.EnrichPatch{}, Diagnostics: result.Diagnostics})
+			if err != nil {
+				return domain.EvaluationEnrich{}, err
+			}
+		}
+		c.observer.ProcessorFinished(ctx, ProcessorObservation{Processor: processor.Name(), Status: result.Status, Outcome: outcome, Duration: time.Since(startedAt), Diagnostics: cloneDiagnostics(result.Diagnostics)})
 		if err := ctx.Err(); err != nil {
 			return domain.EvaluationEnrich{}, err
 		}
 		results = append(results, result)
-		entries = append(entries, ProcessorEntry{processor.Name(): ProcessorEnvelope{
-			Status: result.Status, Patches: result.Patches, Trace: result.Trace, Diagnostics: cloneDiagnostics(result.Diagnostics),
-		}})
+		entries = append(entries, map[string]json.RawMessage{processor.Name(): encoded})
 	}
-	status := aggregateStatus(results)
-	payload := Payload{Processors: entries}
-	data, err := payload.JSONObject()
+	encoded, err := json.Marshal(entries)
 	if err != nil {
 		return domain.EvaluationEnrich{}, err
 	}
-	return domain.EvaluationEnrich{Severity: scope.evaluation.Severity, Status: status, Data: data}, nil
+	data, err := (domain.JSONObject{"processors": encoded}).Normalize()
+	if err != nil {
+		return domain.EvaluationEnrich{}, err
+	}
+	return domain.EvaluationEnrich{Severity: scope.evaluation.Severity, Status: aggregateStatus(results), Data: data}, nil
 }
 
 func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult, outcome string) {
@@ -196,11 +246,11 @@ func normalizeProcessorResult(result ProcessorResult) (ProcessorResult, bool) {
 	if result.Value == nil {
 		result.Value = domain.JSONObject{}
 	}
-	normalized, err := result.Value.Normalize()
-	if err != nil {
-		return invalidProcessorResult(), false
+	for _, diagnostic := range result.Diagnostics {
+		if !diagnostic.Code.Valid() {
+			return invalidProcessorResult(), false
+		}
 	}
-	result.Value = normalized
 	return result, true
 }
 

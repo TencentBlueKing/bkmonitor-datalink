@@ -61,7 +61,7 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 }
 
 func processResource(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	alert := scope.Event()
+	alert := scope.Facts()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
 		value, err := resourceContextValue(scope, models.ResourceValues{})
@@ -118,7 +118,7 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 	}
 	query := projection.QueryConfigs[0]
 	if strings.HasPrefix(query.ResultTableID, "uptimecheck") {
-		result, err := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, scope.Event().Dimensions, bizID)
+		result, err := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, scope.Facts().Dimensions, bizID)
 		if err != nil {
 			return enrich.ProcessorResult{}, err
 		}
@@ -127,7 +127,7 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 	if rules.IsAPMTable(query.ResultTableID) {
 		return processAPMResource(ctx, scope, strategy, query, bizID)
 	}
-	modelCode := dataObjectModelCode(strategy, scope.Event().Dimensions)
+	modelCode := dataObjectModelCode(strategy, scope.Facts().Dimensions)
 	metadata, found, readErr := metricDefinitionMetadata(ctx, scope, strategy, query, modelCode)
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
@@ -143,7 +143,7 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	if businessErr == nil && businessFound && business.TenantID == scope.Event().BKTenantID && business.ModelCode == "cw-biz" && business.InstanceID == fmt.Sprint(bizID) {
+	if businessErr == nil && businessFound && business.TenantID == scope.Facts().BKTenantID && business.ModelCode == "cw-biz" && business.InstanceID == fmt.Sprint(bizID) {
 		if name, ok := rules.FirstStringField(business.Attributes, rules.FieldBKBizName); ok {
 			values.BKBizName = name
 		}
@@ -153,17 +153,17 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		return enrich.ProcessorResult{}, err
 	}
 	diagnostics := []enrich.Diagnostic{}
-	if modelErr != nil || !modelFound || model.TenantID != scope.Event().BKTenantID || model.ModelCode != values.ModelID || model.ModelID == "" {
+	if modelErr != nil || !modelFound || model.TenantID != scope.Facts().BKTenantID || model.ModelCode != values.ModelID || model.ModelID == "" {
 		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
 	} else {
 		enrich.ApplyModelContext(&values, model)
 	}
 	values.CWLabels = enrich.ResourceLabels(values)
 	if values.ModelID == rules.HostModelCode && strings.HasPrefix(query.ResultTableID, rules.SystemTablePrefix) {
-		return processDataHostResource(ctx, scope, values, scope.Event().Dimensions)
+		return processDataHostResource(ctx, scope, values, scope.Facts().Dimensions)
 	}
 	if values.ModelID != rules.OtherModelCode && values.ModelID != rules.HostModelCode {
-		if instanceID, provided, valid := dataInstanceIdentity(scope.Event().Dimensions, values.ModelID); provided {
+		if instanceID, provided, valid := dataInstanceIdentity(scope.Facts().Dimensions, values.ModelID); provided {
 			if !valid {
 				return resourceScenarioResult(scope, values, append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"dimensions.model_id", "dimensions.model_inst_id"}}), true)
 			}
@@ -176,7 +176,7 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 }
 
 func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, query models.StrategyQueryConfig, bizID int64) (enrich.ProcessorResult, error) {
-	dimensions := scope.Event().Dimensions
+	dimensions := scope.Facts().Dimensions
 	application, diagnostics, err := resolveAPMApplication(ctx, scope, strategy, query.ResultTableID, bizID)
 	if err != nil {
 		return enrich.ProcessorResult{}, err
@@ -192,7 +192,7 @@ func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy model
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return enrich.ProcessorResult{}, ctxErr
 	}
-	if readErr == nil && found && business.TenantID == scope.Event().BKTenantID && business.ModelCode == "cw-biz" && business.InstanceID == fmt.Sprint(bizID) {
+	if readErr == nil && found && business.TenantID == scope.Facts().BKTenantID && business.ModelCode == "cw-biz" && business.InstanceID == fmt.Sprint(bizID) {
 		if name, ok := rules.FirstStringField(business.Attributes, rules.FieldBKBizName); ok {
 			values.BKBizName = name
 		}
@@ -237,7 +237,7 @@ func processDataModelInstance(ctx context.Context, scope *enrich.Scope, values m
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	if readErr != nil || !found || instance.TenantID != scope.Event().BKTenantID || instance.ModelCode != values.ModelID || instance.InstanceID != instanceID {
+	if readErr != nil || !found || instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != values.ModelID || instance.InstanceID != instanceID {
 		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
 		return resourceScenarioResult(scope, values, diagnostics, true)
 	}
@@ -263,7 +263,7 @@ func processDataHostResource(ctx context.Context, scope *enrich.Scope, values mo
 	if ctx.Err() != nil {
 		return enrich.ProcessorResult{}, ctx.Err()
 	}
-	if err != nil || !found || instance.TenantID != scope.Event().BKTenantID || instance.ModelCode != rules.HostModelCode || instance.InstanceID == "" || query.InstanceID != "" && query.InstanceID != instance.InstanceID {
+	if err != nil || !found || instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != rules.HostModelCode || instance.InstanceID == "" || query.InstanceID != "" && query.InstanceID != instance.InstanceID {
 		return resourceScenarioResult(scope, values, []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel}}, true)
 	}
 	resource := enrich.ResourceValuesFromInstance(instance, bizIDFromResource(values))

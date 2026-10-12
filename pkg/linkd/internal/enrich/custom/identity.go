@@ -109,33 +109,41 @@ func (i *Identity) read(document map[string]any, field string) any {
 	return nil
 }
 
-func (i *Identity) patches(values map[string]any) ([]domain.EnrichPatch, error) {
+func (i *Identity) patches(values map[string]any) ([]domain.EnrichAssignment, error) {
 	names := make([]string, 0, len(values))
 	for name := range values {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	out := make([]domain.EnrichPatch, 0, len(names))
+	out := make([]domain.EnrichAssignment, 0, len(names))
 	for _, name := range names {
 		path := i.Fields[name]
 		if path == "" {
 			path = "$.extra_data." + name
 		}
-		raw, err := json.Marshal(values[name])
+		target, ok := i.targets[name]
+		if !ok {
+			var err error
+			target, err = jsonpath.ParseTarget(path)
+			if err != nil {
+				return nil, err
+			}
+		}
+		assignment, err := domain.NewEnrichAssignment(target, values[name])
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, domain.EnrichPatch{Op: "set", Path: path, Value: raw})
+		out = append(out, assignment)
 	}
 	return out, nil
 }
 
-func (r *run) matchRule(ctx context.Context, rule Rule, result *Result) (bool, error) {
+func (r *run) matchRule(ctx context.Context, rule Rule, result *RuntimeResult) (bool, error) {
 	if rule.Identity == nil {
 		return r.condition(ctx, rule.When, r.environment(nil))
 	}
 	i := rule.Identity
-	initialObj := i.read(r.initial, "bk_obj_id")
+	initialObj := r.initialIdentity[i]
 	obj, inst := i.read(r.current, "bk_obj_id"), i.read(r.current, "bk_inst_id")
 	alias, aliasInst := i.read(r.current, "cw_object_model_code"), i.read(r.current, "cw_object_model_inst_id")
 	// 入口即有 canonical 身份的告警属于固定对象组，不能被后续对象规则重绑。
@@ -179,7 +187,7 @@ func (r *run) matchRule(ctx context.Context, rule Rule, result *Result) (bool, e
 	return true, r.commit(rule.ID, "identity", patches, result)
 }
 
-func (r *run) bindInstance(ctx context.Context, rule Rule, lookup map[string]any, result *Result) error {
+func (r *run) bindInstance(ctx context.Context, rule Rule, lookup map[string]any, result *RuntimeResult) error {
 	i := rule.Identity
 	id := lookup["model_inst_id"]
 	bkID := id
@@ -205,7 +213,7 @@ func (r *run) bindInstance(ctx context.Context, rule Rule, lookup map[string]any
 	return r.fillTopology(ctx, rule, lookup, result)
 }
 
-func (r *run) fillTopology(ctx context.Context, rule Rule, lookup map[string]any, result *Result) error {
+func (r *run) fillTopology(ctx context.Context, rule Rule, lookup map[string]any, result *RuntimeResult) error {
 	i := rule.Identity
 	id := lookup["model_inst_id"]
 	attributes, _ := lookup["attributes"].(map[string]any)
@@ -294,8 +302,9 @@ func kingeyeText(v any) string {
 	}
 }
 
-func (r *run) fallbackTopology(ctx context.Context, rules []Rule, result *Result) error {
-	r.current = jsonpath.Clone(r.initial).(map[string]any)
+func (r *run) fallbackTopology(ctx context.Context, rules []Rule, result *RuntimeResult) error {
+	r.state.Rollback(r.start)
+	r.patchBytes = 2
 	for _, rule := range rules {
 		if rule.Identity == nil {
 			continue

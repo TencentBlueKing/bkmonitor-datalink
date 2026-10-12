@@ -52,9 +52,9 @@ strategy → resource → display → metric → source
 ### 2.1 输入与副作用
 
 - Enricher 输入固定为 `enrich.Input{Event}`。
-- Scope 保存 `Event.Clone()`，`Scope.Event()` 继续返回隔离副本。
+- 每次 Enrich 拥有一份只读原始 Event，各等级 Scope 共享该事实；每个等级只建立一个 `domain.EnrichEvaluation` 工作对象。`Scope.Event()` 保留隔离快照接口，受控内置步骤通过 `Facts()` 只读访问。
 - Processor 只执行外部只读查询和确定性转换。
-- Processor 不写回 Event 或 Alert，也不把查询响应塞入 `ExtraData`。
+- Processor 不覆盖原始 Event 或已存储 Alert；运行时补丁只修改本等级工作对象的白名单字段，结果仍以 patches 保存。
 - `SourceRawData` 用于人工追溯，Enrich 不将其作为默认输入或缺字段兜底。
 - Enrich 在结果提交前可因 CAS 冲突或进程恢复重复执行，已提交结果重投直接复用，因此实现必须幂等且没有外部业务写入。
 
@@ -86,7 +86,8 @@ Repository 读取并恢复标准 Event，Lifecycle 直接使用
   → FinalHook 输出 Alert 快照
 ```
 
-Event 与 Scope 之间只做必要的深拷贝，不再次规范化来源 JSON。
+原始 Event 在整次 Enrich 入口隔离一次；规则查询直接使用工作对象的 Go 视图，动态 JSON 在输入边界展开，不在步骤间反复构造完整 Event。操作/Processor 使用局部撤销记录，成功后释放旧值。新结果在输出协议边界规范化一次。
+Lifecycle 将冻结对象绑定到实际保存的等级 payload，策略读取直接复用；恢复时仅从已保存补丁惰性构建一次。缓存只属于本次处理，按事件、租户、来源版本、配置摘要和 payload 检查；不入 JSON、不跨消息复用，Normalize/Restore 清除引用。
 新丰富结果在提交边界检查等级覆盖、状态和载荷预算；已经冻结的结果在后续计划、关联更新中直接复用。
 内容生成仅检查新 content 的限制，不为检查一个字段而重新校验整份 opening Alert。
 

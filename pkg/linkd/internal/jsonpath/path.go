@@ -59,6 +59,14 @@ func (q *Query) Select(ctx context.Context, input any) ([]any, error) {
 	if err := ValidateTree(input); err != nil {
 		return nil, err
 	}
+	return q.SelectPrepared(ctx, input)
+}
+
+// SelectPrepared 供已校验且由工作对象维护预算的输入使用；仍检查取消、执行量和结果数。
+func (q *Query) SelectPrepared(ctx context.Context, input any) ([]any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	nodes := []any{input}
 	work := 0
 	for _, segment := range q.path.Query().Segments() {
@@ -215,40 +223,67 @@ func (t Target) Set(input map[string]any, value any) error {
 
 // ValidateTree 限制单次处理树的深度、节点数和编码体积。
 func ValidateTree(v any) error {
-	nodes := 0
-	var visit func(any, int) error
-	visit = func(v any, depth int) error {
-		nodes++
-		if depth > 64 || nodes > 16384 {
-			return fmt.Errorf("JSON tree exceeds depth or node budget")
+	_, err := Measure(v)
+	return err
+}
+
+// SetWithUndo 原地赋值并记录旧节点，包括新建父对象；失败时立即恢复。
+func (t Target) SetWithUndo(input map[string]any, value any) (func(), error) {
+	var parent any = input
+	undo := []func(){}
+	rollback := func() {
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i]()
 		}
-		switch x := v.(type) {
-		case map[string]any:
-			for _, item := range x {
-				if err := visit(item, depth+1); err != nil {
-					return err
-				}
+	}
+	for i, part := range t.parts {
+		last := i == len(t.parts)-1
+		switch key := part.(type) {
+		case string:
+			m, ok := parent.(map[string]any)
+			if !ok {
+				rollback()
+				return nil, fmt.Errorf("target parent is not an object")
 			}
-		case []any:
-			for _, item := range x {
-				if err := visit(item, depth+1); err != nil {
-					return err
+			old, exists := m[key]
+			if last || !exists {
+				if !last {
+					if _, array := t.parts[i+1].(int); array {
+						rollback()
+						return nil, fmt.Errorf("target array must already exist")
+					}
 				}
+				undo = append(undo, func() {
+					if exists {
+						m[key] = old
+					} else {
+						delete(m, key)
+					}
+				})
+				if last {
+					m[key] = value
+					return rollback, nil
+				}
+				m[key] = map[string]any{}
 			}
+			parent = m[key]
+		case int:
+			a, ok := parent.([]any)
+			if !ok || key >= len(a) {
+				rollback()
+				return nil, fmt.Errorf("target array index does not exist")
+			}
+			if last {
+				old := a[key]
+				undo = append(undo, func() { a[key] = old })
+				a[key] = value
+				return rollback, nil
+			}
+			parent = a[key]
 		}
-		return nil
 	}
-	if err := visit(v, 0); err != nil {
-		return err
-	}
-	data, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	if len(data) > 1<<20 {
-		return fmt.Errorf("JSON exceeds 1 MiB")
-	}
-	return nil
+	rollback()
+	return nil, fmt.Errorf("invalid target")
 }
 
 // Clone 深拷贝 JSON 值，保留原始数值表示。

@@ -32,6 +32,7 @@ type Value struct {
 	Default    *Value           `json:"default,omitempty"`
 	Transforms []Transform      `json:"transforms,omitempty"`
 	query      *jsonpath.Query
+	literal    any
 }
 
 // Transform 是取值后的确定性转换或只读展示转换。
@@ -382,6 +383,13 @@ func (p *Program) compileValue(v *Value, depth int) error {
 	}
 	if n != 1 {
 		return fmt.Errorf("value requires exactly one literal/jsonpath/template")
+	}
+	if len(v.Literal) > 0 {
+		decoded, err := jsonpath.Native(v.Literal)
+		if err != nil {
+			return err
+		}
+		v.literal = decoded
 	}
 	if v.Select != "" && v.Select != "one" && v.Select != "all" {
 		return fmt.Errorf("select must be one or all")

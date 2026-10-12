@@ -52,7 +52,7 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	alert := scope.Event()
+	alert := scope.Facts()
 	values := models.K8sValues{
 		BCSClusterID:  dimensionText(alert.Dimensions, rules.FieldBCSClusterID),
 		ClusterName:   dimensionText(alert.Dimensions, "cluster_name"),
@@ -188,7 +188,7 @@ func resolveK8sBusiness(ctx context.Context, scope *enrich.Scope, modelCode stri
 			return bizID, firstInstanceText(candidate, "bk_biz_name"), firstInstanceText(candidate, "cluster_name", "name", "display_name")
 		}
 	}
-	if value, exists := scope.Event().Labels[rules.FieldBKBizID]; exists {
+	if value, exists := scope.Facts().Labels[rules.FieldBKBizID]; exists {
 		return scalarAsIdentity(value), "", clusterName
 	}
 	return nil, "", clusterName

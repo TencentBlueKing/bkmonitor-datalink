@@ -24,7 +24,7 @@
 
 | 根节点 | 语义 |
 |---|---|
-| $.original | 原始 Event 的隔离副本，排除历史 enrich，始终只读 |
+| $.original | 原始 Event 的只读查询视图，排除历史 enrich |
 | $.event | 原始 Event 应用本次前序成功补丁后的当前视图 |
 | $.evaluation | 当前等级的 severity/action/action_reason，只读，不隐式选取其他等级 |
 | $.lookup | 当前 CMDB 规则的查询结果，规则之间不残留上次结果 |
@@ -54,6 +54,19 @@ RFC 9535；用内部适配层隔离库 API，版本升级需要路径一致性�
 必须存在，不填充稀疏数组。null 是赋值而不是删除，并受目标字段类型约束。
 
 ## 3. 补丁和执行协议
+
+### 运行时工作对象（2026-10-12）
+
+本轮改造保持持久化补丁协议和 JSONPath 语义，运行时按以下边界实现：
+
+- Enrich 总入口接收原始 Event；每个 evaluation 只建立一个可变工作对象，固定字段使用类型化 setter，动态字段在首次使用时解码并复用。
+- Processor 与自定义规则共享该工作对象；原始事实始终只读，当前查询视图直接从 Go 值构造，写入或撤销后同步视图，不通过整 Event JSON 往返。
+- 路径在规则装配时解析；运行时补丁持有已求值 Go 值，每个补丁只应用一次，持久化时编码。补丁拥有独立的值，后续修改不能污染已记录结果。
+- 操作与 Processor 使用局部撤销记录恢复失败前状态，保留 partial、rollback_unmatched、取消和 panic 隔离；不同等级不共享可变结果。
+- 查询保留执行预算，完整输入校验放在边界，修改时检查新值和受影响结构；不再为每次查询编码整棵树。
+- 正常处理复用已经计算的有效结果，恢复路径从已保存补丁构造工作对象。持久化检查点及 CAS 仍然有效，冲突后的旧工作对象不得继续用于裁决。
+
+下述 JSON 是存储/接口协议，不要求每个运行步骤都编码、解码该协议。
 
 ```json
 {
@@ -384,3 +397,7 @@ KAC 配置转换的隔离测试可通过仓库 `dev-test-contract-isolated` 运�
 - 新增身份、逐字段失败和最终回滚用例通过竞态检查；正式执行/预览共享链、策略身份和 KAC 集合类型回归通过。
 - KAC `task dev-test-contract-isolated -- -c /dev/null -p no:django -o addopts= kingeye/kac/tests/linkd/test_cmdb_enrich.py`：12 passed；Ruff 检查通过。
 - KAC 完整 `task dev-test` 在 Django 初始化时被 `Unknown MySQL server host 'unittest-mysql'` 阻断，未执行应用级断言；未运行真实 Kingeye/OneModel/Redis 联调。
+
+### 2026-10-12 工作对象改造验证
+
+每等级单工作对象、已解析路径的 Go 值补丁、操作/Processor 局部撤销、冻结视图复用与恢复已实现。`make check` 通过；本地基准和验证边界见[工作对象改造验证](../research/benchmarks/2026-10-12-enrich-evaluation-runtime.md)。未部署到测试环境。

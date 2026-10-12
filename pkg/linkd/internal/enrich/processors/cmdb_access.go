@@ -11,12 +11,12 @@ package processors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
+	"linkd/internal/jsonpath"
 )
 
 // CMDBAccess 在字段规则之后按有效身份补旧 KAC 权限标签和动态分组；保留非空现有值。
@@ -31,10 +31,11 @@ func (CMDBAccess) Match(context.Context, *enrich.Scope) (bool, error) { return t
 
 // Process 只读取租户分组投影，失败不丢弃已经生成的权限标签。
 func (CMDBAccess) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	document, err := domain.EventDocument(scope.EffectiveEvent(), scope.Evaluation())
+	state, err := scope.EvaluationState()
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
+	document := state.Document()
 	read := func(name string) any {
 		for _, root := range []string{"labels", "extra_data", "dimensions"} {
 			obj, _ := document[root].(map[string]any)
@@ -45,13 +46,17 @@ func (CMDBAccess) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 		}
 		return nil
 	}
-	patches := []domain.EnrichPatch{}
+	patches := []domain.EnrichAssignment{}
 	set := func(name string, value any) error {
-		raw, e := json.Marshal(value)
+		target, e := jsonpath.ParseTarget("$.extra_data." + name)
 		if e != nil {
 			return e
 		}
-		patches = append(patches, domain.EnrichPatch{Op: "set", Path: "$.extra_data." + name, Value: raw})
+		assignment, e := domain.NewEnrichAssignment(target, value)
+		if e != nil {
+			return e
+		}
+		patches = append(patches, assignment)
 		return nil
 	}
 	model, inst := "", ""
@@ -76,7 +81,10 @@ func (CMDBAccess) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 			return enrich.ProcessorResult{}, err
 		}
 	}
-	result := enrich.ProcessorResult{Status: domain.EnrichStatusSucceeded, Patches: patches}
+	result, err := scope.AssignmentResult(domain.EnrichStatusSucceeded, patches)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
+	}
 	if read("dynamic_group_id") == nil && model != "" && inst != "" {
 		ids, e := scope.DynamicGroupIDs(ctx, model, inst)
 		if e != nil {
@@ -84,7 +92,7 @@ func (CMDBAccess) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 				return enrich.ProcessorResult{}, ctx.Err()
 			}
 			result.Status = domain.EnrichStatusPartial
-			if len(result.Patches) == 0 {
+			if len(patches) == 0 {
 				result.Status = domain.EnrichStatusFailed
 			}
 			result.Diagnostics = []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: "dynamic_group"}}
@@ -96,7 +104,10 @@ func (CMDBAccess) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 		if err = set("dynamic_group_id", ids); err != nil {
 			return enrich.ProcessorResult{}, err
 		}
-		result.Patches = patches
+		result, err = scope.AssignmentResult(result.Status, patches)
+		if err != nil {
+			return enrich.ProcessorResult{}, err
+		}
 	}
 	return result, nil
 }

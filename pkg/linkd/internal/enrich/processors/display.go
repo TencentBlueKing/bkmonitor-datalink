@@ -40,7 +40,7 @@ func (Display) Match(context.Context, *enrich.Scope) (bool, error) { return true
 
 // Process 生成告警展示字段。
 func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	alert := scope.Event()
+	alert := scope.Facts()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil

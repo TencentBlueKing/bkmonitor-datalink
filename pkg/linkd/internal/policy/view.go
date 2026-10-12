@@ -103,14 +103,11 @@ func EventView(event domain.Event, severity string, mappings map[string]FieldMap
 	if evaluation.Severity == "" {
 		return nil, ErrUnavailable
 	}
-	effective, err := enrichview.EnrichedEvent(event, severity)
+	state, err := enrichview.EventEvaluation(event, severity)
 	if err != nil {
 		return nil, err
 	}
-	document, err := domain.EventDocument(effective, evaluation)
-	if err != nil {
-		return nil, err
-	}
+	document := state.Document()
 	return newFactView(event.BKTenantID, document, severity, string(evaluation.Action), event.OccurredAt, result.Status, result.Data, mappings, level, relation)
 }
 

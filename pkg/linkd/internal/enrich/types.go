@@ -24,6 +24,8 @@ type Result struct {
 	Data         domain.EventEnrichData
 	ConfigDigest string
 	ChainKind    ChainKind
+	// Evaluations 仅在本次处理内复用已经冻结的有效视图，不进入存储协议。
+	Evaluations map[string]*domain.EnrichEvaluation `json:"-"`
 }
 
 // ChainKind 描述 EventSource 实际使用的丰富链类型。

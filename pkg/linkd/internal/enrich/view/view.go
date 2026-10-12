@@ -177,36 +177,53 @@ func EnrichedLabel(labels domain.DimensionMap, payload domain.JSONObject, key st
 	return value, exists, nil
 }
 
-// EnrichedEvent 返回指定等级的有效视图；没有该等级的已保存结果时明确报错。
-func EnrichedEvent(event domain.Event, severity string) (domain.Event, error) {
-	result, ok := event.ForSeverity(severity)
-	if !ok {
-		return domain.Event{}, fmt.Errorf("event has no enrichment for requested severity")
-	}
-	var evaluation domain.EventEvaluation
-	for _, candidate := range event.Evaluations {
-		if candidate.Severity == severity {
-			evaluation = candidate
+// EventEvaluation 返回指定等级的冻结工作对象；恢复只重放存储补丁一次，不执行规则。
+func EventEvaluation(event domain.Event, severity string) (*domain.EnrichEvaluation, error) {
+	return event.EnrichEvaluationView(severity, func() (*domain.EnrichEvaluation, error) {
+		result, ok := event.ForSeverity(severity)
+		if !ok {
+			return nil, fmt.Errorf("event has no enrichment for requested severity")
 		}
-	}
-	document, err := domain.EventDocument(event, evaluation)
+		var evaluation domain.EventEvaluation
+		for _, candidate := range event.Evaluations {
+			if candidate.Severity == severity {
+				evaluation = candidate
+			}
+		}
+		state, err := domain.NewEnrichEvaluation(&event, evaluation)
+		if err != nil {
+			return nil, err
+		}
+		patches, err := EffectiveEnrichPatches(result.Data)
+		if err != nil {
+			return nil, err
+		}
+		assignments := make([]domain.EnrichAssignment, 0, len(patches))
+		for _, patch := range patches {
+			assignment, err := domain.PrepareEnrichPatch(patch)
+			if err != nil {
+				return nil, err
+			}
+			assignments = append(assignments, assignment)
+		}
+		if err := state.Apply(assignments); err != nil {
+			return nil, err
+		}
+		if err := state.FreezeResult(result.Data); err != nil {
+			return nil, err
+		}
+		return state, nil
+	})
+}
+
+// EnrichedEvent 是要求 domain.Event 的读取边界；内部策略直接读取 EventEvaluation。
+func EnrichedEvent(event domain.Event, severity string) (domain.Event, error) {
+	state, err := EventEvaluation(event, severity)
 	if err != nil {
 		return domain.Event{}, err
 	}
-	patches, err := EffectiveEnrichPatches(result.Data)
+	effective, err := state.EventSnapshot()
 	if err != nil {
-		return domain.Event{}, err
-	}
-	document, err = domain.ApplyEnrichPatches(document, patches)
-	if err != nil {
-		return domain.Event{}, err
-	}
-	data, err := json.Marshal(document)
-	if err != nil {
-		return domain.Event{}, err
-	}
-	var effective domain.Event
-	if err := json.Unmarshal(data, &effective); err != nil {
 		return domain.Event{}, err
 	}
 	effective.EventEnrichment = event.EventEnrichment.Clone()

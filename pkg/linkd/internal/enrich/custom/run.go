@@ -10,7 +10,6 @@
 package custom
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -61,33 +60,70 @@ type Result struct {
 }
 
 type run struct {
-	tenant         string
-	original       map[string]any
-	initial        map[string]any
-	current        map[string]any
-	sources        Sources
-	calls          int
-	fieldSucceeded bool
-	cache          map[string][]onemodel.Instance
+	tenant          string
+	original        map[string]any
+	state           *domain.EnrichEvaluation
+	start           int
+	patchBytes      int
+	initialIdentity map[*Identity]any
+	current         map[string]any
+	sources         Sources
+	calls           int
+	fieldSucceeded  bool
+	cache           map[string][]onemodel.Instance
 }
 
-// Execute 对输入副本顺序执行规则；失败操作原子回滚，父取消返回 error。
+// Execute 是独立规则/预览边界，输入隔离后在返回时编码补丁。
 func (p *Program) Execute(ctx context.Context, original, current map[string]any, tenant string, sources Sources) (Result, error) {
-	if ctx == nil || tenant == "" {
-		return Result{}, fmt.Errorf("context and tenant are required")
-	}
-	if err := jsonpath.ValidateTree(original); err != nil {
+	state, err := domain.NewEnrichDocumentEvaluation(original, current)
+	if err != nil {
 		return Result{}, err
 	}
-	if err := jsonpath.ValidateTree(current); err != nil {
+	runtime, err := p.ExecuteEvaluation(ctx, state, tenant, sources)
+	if err != nil {
 		return Result{}, err
 	}
-	r := &run{tenant: tenant, original: jsonpath.Clone(original).(map[string]any), initial: jsonpath.Clone(current).(map[string]any), current: jsonpath.Clone(current).(map[string]any), sources: sources, cache: map[string][]onemodel.Instance{}}
-	result := Result{Patches: []domain.EnrichPatch{}, Trace: []Trace{}}
+	result := Result{Status: runtime.Status, Trace: runtime.Trace, Patches: make([]domain.EnrichPatch, 0, len(runtime.Patches))}
+	for _, assignment := range runtime.Patches {
+		patch, err := assignment.Patch()
+		if err != nil {
+			return Result{}, err
+		}
+		result.Patches = append(result.Patches, patch)
+	}
+	return result, nil
+}
+
+// RuntimeResult 保存运行中已应用的 Go 补丁，不重新编码或再次执行。
+type RuntimeResult struct {
+	Status  domain.EnrichStatus
+	Patches []domain.EnrichAssignment
+	Trace   []Trace
+}
+
+// ExecuteEvaluation 在共享工作对象上顺序执行；错误/取消恢复到本次 Processor 入口。
+func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEvaluation, tenant string, sources Sources) (result RuntimeResult, err error) {
+	if ctx == nil || tenant == "" || state == nil {
+		return RuntimeResult{}, fmt.Errorf("context, tenant and evaluation are required")
+	}
+	point := state.Savepoint()
+	completed := false
+	defer func() {
+		if !completed {
+			state.Rollback(point)
+		}
+	}()
+	r := &run{tenant: tenant, original: state.OriginalDocument(), current: state.Document(), state: state, start: point, patchBytes: 2, initialIdentity: map[*Identity]any{}, sources: sources, cache: map[string][]onemodel.Instance{}}
+	for _, rule := range p.config.Rules {
+		if rule.Identity != nil {
+			r.initialIdentity[rule.Identity] = rule.Identity.read(r.current, "bk_obj_id")
+		}
+	}
+	result = RuntimeResult{Patches: []domain.EnrichAssignment{}, Trace: []Trace{}}
 	ruleStates := []domain.EnrichStatus{}
 	for _, rule := range p.config.Rules {
 		if err := ctx.Err(); err != nil {
-			return Result{}, err
+			return RuntimeResult{}, err
 		}
 		start := time.Now()
 		before := len(result.Patches)
@@ -168,7 +204,7 @@ func (p *Program) Execute(ctx context.Context, original, current map[string]any,
 			result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: "lookup", Status: stateFor(err), Code: errorCode(err), Matches: n})
 		}
 		if err := ctx.Err(); err != nil {
-			return Result{}, err
+			return RuntimeResult{}, err
 		}
 		state := domain.EnrichStatusSucceeded
 		if failed {
@@ -184,7 +220,7 @@ func (p *Program) Execute(ctx context.Context, original, current map[string]any,
 		result.Trace = append(result.Trace, Trace{RuleID: rule.ID, Status: state, Code: code, DurationMilliseconds: time.Since(start).Milliseconds()})
 	}
 	if p.config.RollbackUnmatched && !r.fieldSucceeded {
-		result.Patches = []domain.EnrichPatch{}
+		result.Patches = []domain.EnrichAssignment{}
 		// 失败和查空仍在 trace 中可见；中间身份不能进入后续 fields 与策略。
 		for index := range ruleStates {
 			if ruleStates[index] != domain.EnrichStatusPartial {
@@ -199,7 +235,7 @@ func (p *Program) Execute(ctx context.Context, original, current map[string]any,
 		}
 		err := r.fallbackTopology(ctx, p.config.Rules, &result)
 		if ctx.Err() != nil {
-			return Result{}, ctx.Err()
+			return RuntimeResult{}, ctx.Err()
 		}
 		if err != nil {
 			ruleStates = append(ruleStates, domain.EnrichStatusFailed)
@@ -210,6 +246,7 @@ func (p *Program) Execute(ctx context.Context, original, current map[string]any,
 		result.Trace = append(result.Trace, Trace{RuleID: "cmdb", OperationID: "rollback", Status: domain.EnrichStatusSkipped, Code: "no_cmdb_fields_enriched"})
 	}
 	result.Status = Aggregate(ruleStates)
+	completed = true
 	return result, nil
 }
 
@@ -274,7 +311,7 @@ func (r *run) environment(extra map[string]any) map[string]any {
 	return env
 }
 
-func (r *run) commit(rule, operation string, patches []domain.EnrichPatch, result *Result) error {
+func (r *run) commit(rule, operation string, patches []domain.EnrichAssignment, result *RuntimeResult) error {
 	if len(result.Patches)+len(patches) > 4096 {
 		return fmt.Errorf("patch budget exceeded")
 	}
@@ -282,31 +319,32 @@ func (r *run) commit(rule, operation string, patches []domain.EnrichPatch, resul
 		patches[i].RuleID = rule
 		patches[i].OperationID = operation
 	}
-	current, err := domain.ApplyEnrichPatches(r.current, patches)
-	if err != nil {
-		return err
+	bytes := r.patchBytes
+	for _, patch := range patches {
+		if len(result.Patches) > 0 || bytes > 2 {
+			bytes++
+		}
+		bytes += patch.EncodedSize()
 	}
-	all := append(append([]domain.EnrichPatch(nil), result.Patches...), patches...)
-	data, err := json.Marshal(all)
-	if err != nil {
-		return err
-	}
-	if len(data) > 1<<20 {
+	if bytes > 1<<20 {
 		return fmt.Errorf("patch payload budget exceeded")
 	}
-	r.current = current
-	result.Patches = all
+	if err := r.state.Apply(patches); err != nil {
+		return err
+	}
+	r.patchBytes = bytes
+	result.Patches = append(result.Patches, patches...)
 	return nil
 }
 
-func (r *run) assign(ctx context.Context, assignments []Assignment, env map[string]any) ([]domain.EnrichPatch, error) {
-	out := make([]domain.EnrichPatch, 0, len(assignments))
+func (r *run) assign(ctx context.Context, assignments []Assignment, env map[string]any) ([]domain.EnrichAssignment, error) {
+	out := make([]domain.EnrichAssignment, 0, len(assignments))
 	for _, assignment := range assignments {
 		value, err := r.value(ctx, &assignment.Value, env)
 		if err != nil {
 			return nil, err
 		}
-		patch, err := domain.NewEnrichPatch(assignment.Target, value)
+		patch, err := domain.NewEnrichAssignment(assignment.target, value)
 		if err != nil {
 			return nil, err
 		}
@@ -315,7 +353,7 @@ func (r *run) assign(ctx context.Context, assignments []Assignment, env map[stri
 	return out, nil
 }
 
-func (r *run) operation(ctx context.Context, op Operation) ([]domain.EnrichPatch, error) {
+func (r *run) operation(ctx context.Context, op Operation) ([]domain.EnrichAssignment, error) {
 	env := r.environment(nil)
 	switch op.Type {
 	case "assign":
@@ -335,11 +373,11 @@ func (r *run) operation(ctx context.Context, op Operation) ([]domain.EnrichPatch
 				return nil, fmt.Errorf("replace result limit exceeded")
 			}
 		}
-		patch, err := domain.NewEnrichPatch(op.Target, text)
+		patch, err := domain.NewEnrichAssignment(op.target, text)
 		if err != nil {
 			return nil, err
 		}
-		return []domain.EnrichPatch{patch}, nil
+		return []domain.EnrichAssignment{patch}, nil
 	case "extract":
 		v, err := r.value(ctx, op.Source, env)
 		if err != nil {
@@ -385,12 +423,12 @@ func (r *run) value(ctx context.Context, v *Value, env map[string]any) (any, err
 	var err error
 	switch {
 	case len(v.Literal) > 0:
-		d := json.NewDecoder(bytes.NewReader(v.Literal))
-		d.UseNumber()
-		err = d.Decode(&out)
+		out = v.literal
 	case v.query != nil:
 		var nodes []any
-		nodes, err = v.query.Select(ctx, env)
+		if err = r.state.ValidateEnvironment(env); err == nil {
+			nodes, err = v.query.SelectPrepared(ctx, env)
+		}
 		if err == nil {
 			if v.Select == "all" {
 				out = []any(nodes)

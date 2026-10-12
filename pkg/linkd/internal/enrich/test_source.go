@@ -86,12 +86,12 @@ func (s *Scope) CallTestSource(ctx context.Context, config TestSourceConfig, ind
 	if s.sources.Test == nil {
 		return fmt.Errorf("test datasource is unavailable")
 	}
-	key, err := queryCacheKey("test", s.event.BKTenantID, s.event.EventID, index, config)
+	key, err := queryCacheKey("test", s.original.BKTenantID, s.original.EventID, index, config)
 	if err != nil {
 		return err
 	}
 	_, err = s.Scenario(key, func() (any, error) {
-		return nil, s.sources.Test.Call(ctx, TestRequest{TenantID: s.event.BKTenantID, EventSourceID: s.event.EventSourceID, EventID: s.event.EventID, CallIndex: index, Config: config})
+		return nil, s.sources.Test.Call(ctx, TestRequest{TenantID: s.original.BKTenantID, EventSourceID: s.original.EventSourceID, EventID: s.original.EventID, CallIndex: index, Config: config})
 	})
 	return err
 }

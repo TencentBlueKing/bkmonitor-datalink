@@ -46,7 +46,13 @@ func ValidateEnrichTarget(path string) error {
 	if err != nil {
 		return err
 	}
-	parts := t.Parts()
+	return validateEnrichParts(t.Parts())
+}
+
+func validateEnrichParts(parts []any) error {
+	if len(parts) == 0 {
+		return fmt.Errorf("target must not replace root")
+	}
 	root, ok := parts[0].(string)
 	if !ok {
 		return fmt.Errorf("alert target must be an object field")
@@ -172,24 +178,34 @@ func ApplyEnrichPatches(original map[string]any, patches []EnrichPatch) (map[str
 // EventDocument 返回来源事实与当前 evaluation 的隔离规则视图；不暴露旧丰富和处理关联。
 // 自定义规则使用 $.evaluation.severity/action；补丁仍只能写可丰富字段。
 func EventDocument(event Event, evaluation EventEvaluation) (map[string]any, error) {
-	data, err := json.Marshal(event)
+	// 来源字段直接投影 Go 值；历史 enrich 和处理关联不进入规则输入。
+	fields := map[string]any{
+		"event_source_version": event.EventSourceVersion, "bk_tenant_id": event.BKTenantID, "event_source_id": event.EventSourceID,
+		"event_id": event.EventID, "fingerprint": event.Fingerprint, "title": event.Title, "content": event.Content,
+		"evaluations": event.Evaluations, "dimensions": event.Dimensions, "values": event.Values,
+		"subject_system": event.SubjectSystem, "subject_type": event.SubjectType, "subject_id": event.SubjectID, "subject_name": event.SubjectName,
+		"occurred_at": event.OccurredAt, "produced_at": event.ProducedAt, "received_at": event.ReceivedAt, "create_at": event.CreateAt,
+		"source_event_id": event.SourceEventID, "source_alert_id": event.SourceAlertID, "labels": event.Labels,
+		"evaluation": map[string]any{"severity": evaluation.Severity, "action": string(evaluation.Action), "action_reason": evaluation.ActionReason},
+	}
+	if event.MergeOrigin != nil {
+		fields["merge_origin"] = event.MergeOrigin
+	}
+	if len(event.SourceRawData) > 0 {
+		fields["source_raw_data"] = event.SourceRawData
+	}
+	if len(event.ExtraData) > 0 {
+		fields["extra_data"] = event.ExtraData
+	}
+	value, err := jsonpath.Native(fields)
 	if err != nil {
 		return nil, err
 	}
-	var value map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	for _, key := range []string{"enrich", "enrich_status", "enriched_at", "enrich_config_digest", "related_alert_ids"} {
-		delete(value, key)
-	}
-	value["evaluation"] = map[string]any{"severity": evaluation.Severity, "action": string(evaluation.Action), "action_reason": evaluation.ActionReason}
+	document := value.(map[string]any)
 	for _, key := range []string{"labels", "extra_data"} {
-		if value[key] == nil {
-			value[key] = map[string]any{}
+		if document[key] == nil {
+			document[key] = map[string]any{}
 		}
 	}
-	return value, nil
+	return document, nil
 }

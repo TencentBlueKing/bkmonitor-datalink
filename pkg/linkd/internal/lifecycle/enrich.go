@@ -86,6 +86,9 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 	if encoded, err := json.Marshal(snapshot.Enrich); err == nil {
 		observation.PayloadBytes = int64(len(encoded))
 	}
+	if persistErr == nil {
+		updated.Event = updated.Event.WithEnrichEvaluations(result.Evaluations)
+	}
 	return updated, persistErr
 }
 

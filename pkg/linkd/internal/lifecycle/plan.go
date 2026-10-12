@@ -80,6 +80,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 				}
 				return ProcessResult{}, err
 			}
+			stored.Event = stored.Event.WithEnrichEvaluations(nil)
 			stored, err = p.freezePolicies(ctx, stored)
 			if err != nil {
 				if errors.Is(err, store.ErrVersionConflict) {
@@ -125,13 +126,20 @@ func processResult(stored store.StoredEvent) ProcessResult {
 
 func (p *Processor) writeEventResult(ctx context.Context, stored store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
 	defer p.measurePhase(phaseEventCommit)()
+	var updated store.StoredEvent
+	var err error
 	if repo, ok := p.repository.(store.LifecycleEventSnapshotStore); ok {
-		return repo.CompareAndSetLifecycleEventResultFromSnapshot(ctx, stored, result)
+		updated, err = repo.CompareAndSetLifecycleEventResultFromSnapshot(ctx, stored, result)
+	} else if repo, ok := p.repository.(store.LifecycleEventStore); ok {
+		updated, err = repo.CompareAndSetLifecycleEventResult(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result)
+	} else {
+		updated, err = p.repository.CompareAndSetEventResult(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result)
 	}
-	if repo, ok := p.repository.(store.LifecycleEventStore); ok {
-		return repo.CompareAndSetLifecycleEventResult(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result)
+	if err != nil {
+		return store.StoredEvent{}, err
 	}
-	return p.repository.CompareAndSetEventResult(ctx, stored.Event.BKTenantID, stored.Event.EventID, stored.Version, result)
+	updated.Event = updated.Event.ReuseEnrichEvaluations(stored.Event)
+	return updated, nil
 }
 
 func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapshot *store.PolicyContext) (*store.EventPlan, error) {

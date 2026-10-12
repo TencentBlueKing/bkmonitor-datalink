@@ -85,6 +85,21 @@ func (s Scalar) Valid() bool {
 	}
 }
 
+// JSONValue 返回对应 Go 标量，供运行时查询使用，不经过 JSON 编解码。
+func (s Scalar) JSONValue() (any, error) {
+	if !s.Valid() {
+		return nil, fmt.Errorf("invalid scalar kind %q", s.kind)
+	}
+	switch s.kind {
+	case ScalarKindString:
+		return s.stringValue, nil
+	case ScalarKindNumber:
+		return s.numberValue, nil
+	default:
+		return s.boolValue, nil
+	}
+}
+
 // MarshalJSON 保留标量的原始 JSON 类型。
 func (s Scalar) MarshalJSON() ([]byte, error) {
 	if !s.Valid() {

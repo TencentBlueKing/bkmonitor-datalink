@@ -37,11 +37,14 @@ type Diagnostic struct {
 
 // ProcessorResult 是 Processor 执行后的类型化结果。
 type ProcessorResult struct {
-	Status      domain.EnrichStatus
-	Value       domain.JSONObject
-	Patches     []domain.EnrichPatch
-	Trace       []Trace
-	Diagnostics []Diagnostic
+	Status  domain.EnrichStatus
+	Value   domain.JSONObject
+	Patches []domain.EnrichPatch
+	// RuntimePatches 是新执行路径的已求值 Go 值，进入结果协议时才编码。
+	RuntimePatches []domain.EnrichAssignment
+	applied        bool
+	Trace          []Trace
+	Diagnostics    []Diagnostic
 }
 
 // ProcessorEnvelope 是 Alert.enrich 中一个 Processor 的结果信封。

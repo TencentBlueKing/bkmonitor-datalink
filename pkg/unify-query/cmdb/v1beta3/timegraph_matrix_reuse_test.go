@@ -201,8 +201,10 @@ func TestMatrixReuseExceptionalTopologyParity(t *testing.T) {
 			t.Logf("physical fetches with reuse disabled/enabled: %d/%d", calls[0], calls[1])
 			if tt.partial {
 				require.Less(t, calls[1], calls[0], "reuse must reduce physical fetches without hiding partial")
+			} else if tt.failure != nil {
+				require.Equal(t, calls[0], calls[1], "failed fetches stop before repeated relation reads")
 			} else {
-				require.Equal(t, calls[0], calls[1], "complete empty and failed fetches stop before repeated relation reads")
+				require.LessOrEqual(t, calls[1], calls[0], "incoming root observation can reuse the same complete empty physical selector")
 			}
 		})
 	}

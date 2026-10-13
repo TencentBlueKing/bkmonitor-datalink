@@ -252,6 +252,15 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		}
 	}
 
+	if hops, ok := ctx.Value(timeGraphFrontierHopsKey{}).(int); topologyGrid != nil && ok && tg.completeFrontierIdentity(sourceType, sourceInfo) {
+		span.Set("instance-frontier-enabled", true)
+		relationEdgeQueryCount, err = loader.loadTopologyFrontier(ctx, spaceUID, sourceType, sourceInfo, relations, hops)
+		if err != nil {
+			return nil, err
+		}
+		return tg, nil
+	}
+
 	// targetMatchersByType 保存关系指标实际产生的目标节点身份。
 	// targetIDsByTimestamp 进一步限制 info 指标：只有同一时间点确实出现在
 	// 关系中的节点才能补充属性，避免凭空创建孤立节点。
@@ -385,6 +394,12 @@ type timeGraphMatrixLoader struct {
 }
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
+	if loader.topology && metadata.BackendResponseLimit(queryCtx) > 0 {
+		// Each physical response has its own rejection flag. All aggregation
+		// children of this fetch still share it, so a cap cannot become partial;
+		// a rejected batch must not poison later, smaller identity shards.
+		queryCtx = metadata.WithBackendResponseLimit(queryCtx, metadata.BackendResponseLimit(queryCtx))
+	}
 	if loader.topology {
 		// Include response buffers, decoding and Matrix conversion before fetch.
 		if err := ReserveTopologyStage(queryCtx, "matrix", metadata.BackendResponseLimit(queryCtx)*8); err != nil {

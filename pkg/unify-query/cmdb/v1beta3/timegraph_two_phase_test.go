@@ -66,7 +66,7 @@ func TestSharedTopologyPartialFirstHopIsNotCompleteEmpty(t *testing.T) {
 		StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 2,
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"source_middle_flow", "middle_target_flow"}, fields)
+	require.Equal(t, []string{"source_middle_flow"}, fields, "an unknown frontier remains partial; never query the whole business to replace missing identities")
 	for _, snapshot := range result.Snapshots {
 		require.Empty(t, snapshot.Nodes)
 		require.True(t, snapshot.Partial)
@@ -125,7 +125,7 @@ func TestSharedTopologyRequiredRelationWithoutRouteFails(t *testing.T) {
 		Timestamp: 1700000000, MaxHops: 2,
 	})
 	require.ErrorContains(t, err, "required relation has no physical query route")
-	require.ErrorContains(t, err, "source_middle_flow")
+	require.ErrorContains(t, err, "middle_target_flow")
 	require.Empty(t, result.Snapshots)
 }
 
@@ -171,19 +171,12 @@ func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 		switch q.QueryList[0].FieldName {
 		case "source_middle_flow":
 			sourceQueries++
-			seedFiltered := false
-			for _, field := range q.QueryList[0].Conditions.FieldList {
-				if field.DimensionName == "source_id" && field.Operator == structured.ConditionEqual && len(field.Value) == 1 && field.Value[0] == "a" {
-					seedFiltered = true
-				}
-			}
-			require.False(t, seedFiltered, "incoming roots require an unfiltered candidate read")
-			return append(
+			return filterTopologyRegressionMatrix(q, append(
 				contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
 				contractMatrix(map[string]string{"source_id": "c", "middle_id": "d"}, 1700000000000)...,
-			), nil
+			)), nil
 		case "middle_source_flow":
-			return contractMatrix(map[string]string{"middle_id": "b", "source_id": "c"}, 1700000000000), nil
+			return filterTopologyRegressionMatrix(q, contractMatrix(map[string]string{"middle_id": "b", "source_id": "c"}, 1700000000000)), nil
 		case "middle_target_flow":
 			return nil, nil
 		default:
@@ -196,7 +189,7 @@ func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 		Timestamp: 1700000000, MaxHops: 3,
 	})
 	require.NoError(t, err)
-	require.Equal(t, 1, sourceQueries, "the candidate read also covers reached source instances")
+	require.Equal(t, 2, sourceQueries, "query the root and reached source instance separately without a global scan")
 	require.Len(t, result.Snapshots[0].Nodes, 4)
 	require.Len(t, result.Snapshots[0].Edges, 3)
 }

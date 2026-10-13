@@ -52,20 +52,56 @@ that backend; Matrix point/label counts are not a scan-cost measurement.
 
 ### Candidate Planning
 
-`cmdb.v1beta3.shared_topology_plan_candidates` defaults to `false`.
-The opt-in planner computes an H-hop type reachability upper bound, then keeps
-**all relations incident to reachable types**, in their original order. This
-retains seed/attribute contributions, boundary induced edges, self-relations
-and cycles. Malformed relation shapes fall back to the original candidate set.
-Root matcher pushdown is decided from the original schema relation set;
-`target_types` is never used as a fetch whitelist.
+`cmdb.v1beta3.shared_topology_plan_candidates` defaults to `true`.
+The planner first computes an H-hop type reachability upper bound and retains
+relations between those types plus incoming root observations. `target_types`
+only filters output, never the candidate frontier.
 
-This option is not byte-compatible with every unplanned execution: removing
-unrelated candidate nodes can change encounter-order IDs, and skipped backend
-queries no longer contribute errors/partial status. Use normalized resource
-identity comparisons for graph equivalence and keep it disabled for clients
-depending on exact request-local numbering or the old all-candidate partial
-signal. IDs are not a cross-request entity identity contract.
+When the source has every configured primary key and all values are nonempty,
+shared topology reads an instance frontier instead of entire business-wide
+relation matrices. Incomplete source identities retain the existing type plan
+and full candidate loading. Disabling this option retains the full-scan path
+for identity-normalized comparison.
+
+The instance path validates all planned physical routes before it can return
+an empty result, observes the root at both relation endpoints, and expands
+outgoing planned relations for each discovered complete identity over the
+entire request grid. Dynamic relations keep their original orientation and
+`from_`/`to_` prefixes even when anchored at the target. H-boundary identities
+receive one outgoing closure read so induced edges, back edges, and self edges
+are retained. H+1 nodes discovered during closure do not extend the frontier.
+
+Identity union across frames is only a fetching upper bound. Existing edge
+bitmaps and per-frame BFS determine the final nodes and induced edges; edges
+from different frames cannot be combined into a path. Source attribute info
+continues to restrict eligible roots per frame without restricting neighbors.
+Request identity alone never creates an observed root.
+
+Selectors batch at most 64 complete primary-key tuples. Each tuple is one AND
+group, including all endpoint nonempty guards; groups are joined by OR. No
+per-field IN product is used. Oversized multi-identity responses split identity
+batches first, keeping the same grid. Both the backend size error and a local
+HTTP byte-cap rejection may trigger this split. Each physical fetch receives
+an independent cap flag, shared by its aggregation children so rejection
+cannot be downgraded to partial. A single identity exceeding the normal-mode
+cap remains an explicit error; YOLO retains exact-grid time splitting.
+
+All batches and shards share the loader's deadline, Matrix-point accounting,
+graph/output budgets, admission reservation, and partial timestamps. Missing
+required routes, cancellation, and exhausted budgets remain errors. An empty
+partial frontier returns partial empty frames, never an unrestricted retry.
+Skipped unrelated backend queries no longer contribute their partial signal.
+Candidate changes can renumber request-local IDs, so comparisons must use
+resource type and complete primary-key identity, plus relation identity and
+frame quality, rather than numeric IDs.
+
+`TestTopologyFrontierMatchesFullScanWithCompositeKeysAndChanges` checks both
+formats against the full-scan path with changing frames, composite cross-key
+counterexamples, all directions, cycles, and boundary induced edges. Independent
+per-frame BFS tests also cover the public query. Selector and shard tests cover
+parsed OR groups, the real cap flag (including aggregation swallowing the
+error), partial propagation, cumulative accounting, hard single-identity
+rejection, and cancellation. These do not establish live latency or capacity.
 
 ## Response Formats
 

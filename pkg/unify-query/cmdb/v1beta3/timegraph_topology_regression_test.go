@@ -184,18 +184,17 @@ func TestSharedTopologyReturnsToSourceTypeCases(t *testing.T) {
 
 // filterTopologyRegressionMatrix 模拟后端实际执行下推条件，避免 fixture 掩盖漏边。
 func filterTopologyRegressionMatrix(q *structured.QueryTs, matrix pl.Matrix) pl.Matrix {
+	conditions, err := q.QueryList[0].Conditions.AnalysisConditions()
+	if err != nil {
+		panic(err)
+	}
 	var result pl.Matrix
 	for _, series := range matrix {
-		matched := true
-		for _, field := range q.QueryList[0].Conditions.FieldList {
-			equal := series.Metric.Get(field.DimensionName) == field.Value[0]
-			if field.Operator == structured.ConditionEqual {
-				matched = matched && equal
-			} else if field.Operator == structured.ConditionNotEqual {
-				matched = matched && !equal
-			}
+		info := make(map[string]string, len(series.Metric))
+		for _, label := range series.Metric {
+			info[label.Name] = label.Value
 		}
-		if matched {
+		if topologyFixtureMatchesGroups(conditions, info) {
 			result = append(result, series)
 		}
 	}

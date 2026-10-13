@@ -20,29 +20,45 @@ import (
 // incorrectly pushed-down source matchers.
 func filteredTimeGraphMatrix(t *testing.T, matrix pl.Matrix, conditions structured.Conditions) pl.Matrix {
 	t.Helper()
+	parsed, err := conditions.AnalysisConditions()
+	require.NoError(t, err)
 	var result pl.Matrix
 	for _, series := range matrix {
-		matches := true
-		for _, condition := range conditions.ConditionList {
-			require.Equal(t, structured.ConditionAnd, condition)
+		info := make(map[string]string, len(series.Metric))
+		for _, label := range series.Metric {
+			info[label.Name] = label.Value
 		}
-		for _, field := range conditions.FieldList {
-			require.Len(t, field.Value, 1)
-			equal := series.Metric.Get(field.DimensionName) == field.Value[0]
-			switch field.Operator {
-			case structured.ConditionEqual:
-				matches = matches && equal
-			case structured.ConditionNotEqual:
-				matches = matches && !equal
-			default:
-				t.Fatalf("unexpected operator: %s", field.Operator)
-			}
-		}
+		matches := topologyFixtureMatchesGroups(parsed, info)
 		if matches {
 			result = append(result, series)
 		}
 	}
 	return result
+}
+
+// Evaluate parsed OR groups using exact VM label equality, including empty
+// endpoint guards (result-table routing has different missing-label semantics).
+func topologyFixtureMatchesGroups(groups structured.AllConditions, info map[string]string) bool {
+	if len(groups) == 0 {
+		return true
+	}
+	for _, group := range groups {
+		matched := true
+		for _, field := range group {
+			equal := info[field.DimensionName] == field.Value[0]
+			if field.Operator == structured.ConditionEqual {
+				matched = matched && equal
+			} else if field.Operator == structured.ConditionNotEqual {
+				matched = matched && !equal
+			} else {
+				panic("unsupported fixture operator")
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTimeGraphRandomizedPathsMatchIndependentEnumeration(t *testing.T) {

@@ -34,16 +34,51 @@ func TestListTenantsProtocol(t *testing.T) {
 			defer server.Close()
 			client := newClient(t, server.URL+"/root/", multi)
 			want := []Tenant{{"system", "蓝鲸运营", "enabled"}, {"test", "测试租户", "disabled"}}
+			wantCalls := 2
+			if !multi {
+				want = []Tenant{{"system", "Blueking", "enabled"}}
+				wantCalls = 0
+			}
 			for range 2 {
 				got, err := client.ListTenants(t.Context())
 				if err != nil || !reflect.DeepEqual(got, want) {
 					t.Fatalf("tenants=%v error=%v", got, err)
 				}
+				// 调用方修改返回值不能影响下一次读取的默认目录。
+				got[0].Name = "changed"
 			}
-			if calls != 2 {
+			if calls != wantCalls {
 				t.Fatalf("directory was cached or performed identity lookup: calls=%d", calls)
 			}
 		})
+	}
+}
+
+func TestSingleTenantDirectoryContext(t *testing.T) {
+	directory := SingleTenantDirectory{}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		want error
+	}{
+		{"missing context", nil, ErrUnavailable},
+		{"canceled context", ctx, context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, err := directory.ListTenants(tc.ctx); got != nil || !errors.Is(err, tc.want) {
+				t.Fatalf("tenants=%v error=%v", got, err)
+			}
+		})
+	}
+	client := newClient(t, "http://unused.invalid", false)
+	if got, err := client.ListTenants(ctx); got != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled client query: tenants=%v error=%v", got, err)
+	}
+	client.Close()
+	if got, err := client.ListTenants(t.Context()); got != nil || !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed client query: tenants=%v error=%v", got, err)
 	}
 }
 

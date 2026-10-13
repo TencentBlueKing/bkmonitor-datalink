@@ -139,8 +139,10 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	}
 	defer func() { _ = policyResources.Close() }()
 	api := &controlapi.API{Policies: policies, Tasks: registry, OneModel: oneModelQueries, Previewer: newEnrichPreview(sources, *cfg.Storage, cfg.Resources), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
-	// 租户目录不依赖 CMDB 资源或多租户用户解析开关；未配置蓝鲸连接时保留其他控制面能力。
-	if cfg.Blueking.APIURL != "" {
+	// 单租户目录无需蓝鲸连接；多租户目录独立于 CMDB 资源，缺少连接时由接口明确报告不可用。
+	if !cfg.Blueking.EnableMultiTenantMode {
+		api.Tenants = blueking.SingleTenantDirectory{}
+	} else if cfg.Blueking.APIURL != "" {
 		tenants, err := blueking.New(cfg.Blueking)
 		if err != nil {
 			return err

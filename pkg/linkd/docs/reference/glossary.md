@@ -214,13 +214,13 @@ Event 丰富模型、冻结 CAS、逐等级主流程和预览已落地；策略�
 
 ## 蓝鲸调用配置
 
-`BluekingConfig` 是 Linkd 部署级蓝鲸应用与 APIGW 配置。其多租户开关只控制调用用户解析：单租户
+`BluekingConfig` 是 Linkd 部署级蓝鲸应用与 APIGW 配置。其多租户开关控制租户目录及调用用户解析：单租户
 使用 admin，多租户查询当前租户的 bk_admin；请求租户仍来自现有业务上下文，不改变数据隔离。
 租户管理员成功缓存由控制面/Lifecycle 运行时持有，来源发布与 Event/Alert 不保存调用凭据。
 
-租户目录是用户管理中的全局 `id/name/status` 列表，不表示租户已接入或初始化 Linkd，也不授予业务访问权限。
-控制面的[租户目录接口](contracts/tenant-directory.md)使用固定 `system/admin` 引导身份实时读取，
-独立于业务调用的多租户用户名解析开关。
+租户目录是当前部署模式的 `id/name/status` 列表，不表示租户已接入或初始化 Linkd，也不授予业务访问权限。
+控制面的[租户目录接口](contracts/tenant-directory.md)在单租户模式固定返回 `system/Blueking/enabled`；
+多租户模式使用固定 `system/admin` 引导身份实时读取用户管理目录，失败不回退默认租户。
 
 - Celery 投递确认：KAC 返回原动作身份、请求摘要及本次 task_id，只确认任务已投递；重试可能重复投递，不代表持久去重受理或处置完成。
 - 结束操作（AlertEndOperation）：主动关闭时保存的操作 ID、来源及操作者；与结束原因/时间共同约束幂等重试。

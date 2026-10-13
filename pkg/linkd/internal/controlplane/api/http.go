@@ -39,7 +39,7 @@ import (
 type API struct {
 	// ModuleInfo 提供当前进程白名单连接发现，仅管理 JWT 可请求敏感快照。
 	ModuleInfo *ModuleInfo
-	// Tenants 提供用户管理的全局租户目录，仅向管理 JWT 暴露。
+	// Tenants 提供当前部署模式的租户目录，仅向管理 JWT 暴露。
 	Tenants interface {
 		ListTenants(context.Context) ([]blueking.Tenant, error)
 	}

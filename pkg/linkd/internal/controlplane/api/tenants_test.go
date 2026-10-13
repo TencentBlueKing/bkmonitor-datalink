@@ -23,6 +23,20 @@ func (f tenantReaderFunc) ListTenants(ctx context.Context) ([]blueking.Tenant, e
 	return f(ctx)
 }
 
+func TestSingleTenantDirectoryAPIWithoutBluekingConnection(t *testing.T) {
+	a := &API{
+		Config:  config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"},
+		Tenants: blueking.SingleTenantDirectory{},
+	}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/tenants", nil)
+	r.Header.Set("Internal-Token", testJWT(t, "admin"))
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK || w.Body.String() != "[{\"id\":\"system\",\"name\":\"Blueking\",\"status\":\"enabled\"}]\n" || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestTenantDirectoryAPI(t *testing.T) {
 	for _, tc := range []struct {
 		name, query, token string

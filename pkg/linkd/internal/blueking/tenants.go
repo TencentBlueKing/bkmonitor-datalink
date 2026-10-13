@@ -21,22 +21,47 @@ import (
 
 const maxTenants = 4096
 
-// Tenant 是用户管理返回的租户目录项，不表示该租户已接入 Linkd 或已获业务访问授权。
+// Tenant 是租户目录项，不表示该租户已接入 Linkd 或已获业务访问授权。
 type Tenant struct {
-	ID     string `json:"id"`     // ID 是用户管理中的稳定租户标识。
-	Name   string `json:"name"`   // Name 是用户管理中的租户展示名。
+	ID     string `json:"id"`     // ID 是稳定租户标识，单租户模式固定为 system。
+	Name   string `json:"name"`   // Name 是租户展示名，单租户模式固定为 Blueking。
 	Status string `json:"status"` // Status 保留用户管理的状态值，包括 disabled。
 }
 
-// ListTenants 实时读取用户管理租户目录，不缓存、不筛选状态，也不按来源配置推断租户。
-// 全局目录固定使用 system/admin 引导身份，避免依赖某个尚未知晓的租户或递归解析 bk_admin。
-// 不受多租户用户解析开关影响；完整响应最多 1 MiB/4096 项，失败不返回部分目录。
+// SingleTenantDirectory 在单租户部署中提供固定目录，无需蓝鲸连接或应用凭据。
+// 默认目录与 Kingeye 保持一致，不按来源配置推断租户，也不改变业务数据的租户身份。
+type SingleTenantDirectory struct{}
+
+// ListTenants 返回独立的 system/Blueking/enabled 目录，调用方修改结果不影响后续查询。
+func (SingleTenantDirectory) ListTenants(ctx context.Context) ([]Tenant, error) {
+	if ctx == nil {
+		return nil, ErrUnavailable
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return []Tenant{{ID: "system", Name: "Blueking", Status: "enabled"}}, nil
+}
+
+// ListTenants 在单租户模式返回固定 system 目录，多租户模式实时读取用户管理且不缓存或筛选状态。
+// 多租户目录固定使用 system/admin 引导身份，避免递归解析未知租户的 bk_admin。
+// 完整上游响应最多 1 MiB/4096 项，失败不返回部分目录或回退默认租户。
 func (c *Client) ListTenants(ctx context.Context) ([]Tenant, error) {
 	if ctx == nil {
 		return nil, ErrUnavailable
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	// 本地目录也必须遵守客户端关闭契约；在锁内读取，使它与 Close 的状态切换有明确先后。
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, ErrClosed
+	}
+	if !c.cfg.EnableMultiTenantMode {
+		return (SingleTenantDirectory{}).ListTenants(ctx)
 	}
 	// 不为管理查询积累无界等待者；最多四个目录调用参与共享 HTTP 配额竞争，超额立即失败。
 	select {

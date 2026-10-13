@@ -11,6 +11,7 @@ package influxdb
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -631,6 +632,9 @@ func (i *Instance) grpcStream(
 			"查询异常 %+v",
 			req,
 		).Error(ctx, err)
+		if metadata.IsStrictQueryFailures(ctx) {
+			return storage.ErrSeriesSet(err)
+		}
 		return storage.EmptySeriesSet()
 	}
 	limiter := rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
@@ -695,12 +699,20 @@ func (i *Instance) QuerySeriesSet(
 	span.Set("query-where", where)
 
 	var sets []storage.SeriesSet
+	var queryFailures []error
+	strict := metadata.IsStrictQueryFailures(ctx)
+	if strict && ctx.Err() != nil {
+		return storage.ErrSeriesSet(ctx.Err())
+	}
 	// 在指标模糊匹配的情况下，需要检索符合条件的 Measures + Fields，这时候会有多个，最后合并结果输出
 	multiFieldsFlag := len(query.Measurements) > 1 || len(query.Fields) > 1
 
 	var metricIdx int
 	for _, measurement := range query.Measurements {
 		for _, field := range query.Fields {
+			if strict && ctx.Err() != nil {
+				return storage.ErrSeriesSet(ctx.Err())
+			}
 			var (
 				set        storage.SeriesSet
 				metricName string
@@ -714,6 +726,12 @@ func (i *Instance) QuerySeriesSet(
 			// 判断是否进入降采样逻辑：sum(sum_over_time), count(count_over_time) 等等
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
 				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, metricName, slimit, limit)
+				if strict {
+					if streamErr := set.Err(); streamErr != nil {
+						queryFailures = append(queryFailures, streamErr)
+						continue
+					}
+				}
 			} else {
 				// 复制 ToVmExpand 对象，简化 field、measure 取值，传入查询方法
 				mq := &metadata.Query{
@@ -739,6 +757,9 @@ func (i *Instance) QuerySeriesSet(
 						"查询异常 %+v",
 						mq,
 					).Error(ctx, err)
+					if strict {
+						queryFailures = append(queryFailures, err)
+					}
 					continue
 				}
 				set = promRemote.FromQueryResult(true, res)
@@ -746,11 +767,26 @@ func (i *Instance) QuerySeriesSet(
 			sets = append(sets, set)
 		}
 	}
+	if strict {
+		if ctx.Err() != nil {
+			return storage.ErrSeriesSet(ctx.Err())
+		}
+		if len(queryFailures) > 0 {
+			if len(sets) == 0 {
+				err = errors.WithMessage(stderrors.Join(queryFailures...), "influxdb subqueries failed")
+				return storage.ErrSeriesSet(err)
+			}
+			message := "influxdb_subquery_failed"
+			if status := metadata.GetStatus(ctx); status != nil && status.Message != "" {
+				message = status.Message + "; " + message
+			}
+			metadata.SetStatus(ctx, metadata.QueryTsPartial, message)
+		}
+	}
 	if len(sets) == 0 {
 		return storage.EmptySeriesSet()
-	} else {
-		return storage.NewMergeSeriesSet(sets, storage.ChainedSeriesMerge)
 	}
+	return storage.NewMergeSeriesSet(sets, storage.ChainedSeriesMerge)
 }
 
 // QueryRange 查询范围数据

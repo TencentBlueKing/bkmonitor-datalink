@@ -13,9 +13,13 @@ package timesync
 
 import (
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/beevik/ntp"
 )
 
 func TestQueryChronyTimeoutClosesConn(t *testing.T) {
@@ -62,5 +66,37 @@ func TestQueryChronyTimeoutClosesConn(t *testing.T) {
 	case <-serverDone:
 	case <-time.After(time.Second):
 		t.Fatal("server side connection was not closed in time")
+	}
+}
+
+func TestQueryNtpdDetailedSign(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ntp.conf")
+	if err := os.WriteFile(path, []byte("server 10.0.0.31 iburst\n"), 0o644); err != nil {
+		t.Fatalf("write ntp.conf: %v", err)
+	}
+
+	withQueryNTP(t, func(address string, options ntp.QueryOptions) (*ntp.Response, error) {
+		if address != "10.0.0.31" {
+			t.Fatalf("address = %q, want 10.0.0.31", address)
+		}
+		return &ntp.Response{ClockOffset: -10 * time.Second, Stratum: 1}, nil
+	})
+
+	cli := NewClient(&Option{NtpdPath: path})
+	stat, details, err := cli.QueryAll()
+	if err != nil {
+		t.Fatalf("QueryAll error: %v", err)
+	}
+	if stat.Count != 1 || stat.Sum != -10 {
+		t.Fatalf("legacy stat = %+v, want one -10 sample", stat)
+	}
+	if len(details) != 1 {
+		t.Fatalf("details = %d, want 1", len(details))
+	}
+	if details[0].OffsetSeconds != 10 {
+		t.Fatalf("offset = %v, want 10", details[0].OffsetSeconds)
+	}
+	if details[0].Address != "10.0.0.31" || details[0].Target != "ntpd" || !details[0].Available {
+		t.Fatalf("unexpected detail: %+v", details[0])
 	}
 }

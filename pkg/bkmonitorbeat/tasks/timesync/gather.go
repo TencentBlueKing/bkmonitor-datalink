@@ -36,9 +36,10 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 
 	taskConf := taskConfig.(*configs.TimeSyncConfig)
 	gather.cli = NewClient(&Option{
-		NtpdPath:   taskConf.NtpdPath,
-		ChronyAddr: taskConf.ChronyAddress,
-		Timeout:    taskConf.QueryTimeout,
+		NtpdPath:    taskConf.NtpdPath,
+		ChronyAddr:  taskConf.ChronyAddress,
+		BkNTPSource: taskConf.BkNTPSource,
+		Timeout:     taskConf.QueryTimeout,
 	})
 
 	return gather
@@ -48,19 +49,60 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
 
-	stat, err := g.cli.Query()
+	taskConf := g.TaskConfig.(*configs.TimeSyncConfig)
+	bizID := g.TaskConfig.GetBizID()
+	dataID := g.TaskConfig.GetDataID()
+	labels := g.TaskConfig.GetLabels()
+
+	bkConfigured := taskConf.BkNTPSource != ""
+	stat, details, err := g.cli.QueryAll()
 	if err != nil {
-		logger.Errorf("failed to query stats: %v", err)
-		return
+		if bkConfigured && taskConf.NtpdPath == "" && taskConf.ChronyAddress == "" {
+			logger.Warnf("no local ntp source configured: %v", err)
+		} else {
+			logger.Errorf("failed to query stats: %v", err)
+		}
+	} else if stat != nil {
+		e <- &Event{
+			BizID:  bizID,
+			DataID: dataID,
+			Labels: labels,
+			Data:   stats2Metrics(taskConf.Env, stat),
+		}
 	}
 
-	taskConf := g.TaskConfig.(*configs.TimeSyncConfig)
+	bkResult, bkErr := g.cli.QueryBlueking()
+	if bkConfigured && bkErr != nil {
+		logger.Warnf("failed to query blueking ntp: %v", bkErr)
+	}
+	bkSuccess := bkConfigured && bkErr == nil && bkResult != nil
 
-	e <- &Event{
-		BizID:  g.TaskConfig.GetBizID(),
-		DataID: g.TaskConfig.GetDataID(),
-		Labels: g.TaskConfig.GetLabels(),
-		Data:   stats2Metrics(taskConf.Env, stat),
+	baseTime := time.Now()
+	if bkSuccess {
+		baseTime = bkResult.TBlue
+	}
+
+	includeOffset := !bkConfigured || bkSuccess
+	localItems := buildLocalNTPMetrics(taskConf.Env, details, baseTime, includeOffset)
+	if len(localItems) > 0 {
+		e <- &BatchEvent{
+			BizID:       bizID,
+			DataID:      dataID,
+			Labels:      labels,
+			TimeSeconds: baseTime.Unix(),
+			Data:        localItems,
+		}
+	}
+
+	bkItems := buildBkMetrics(taskConf.Env, taskConf.BkNTPSource, bkResult, bkConfigured, baseTime)
+	if len(bkItems) > 0 {
+		e <- &BatchEvent{
+			BizID:       bizID,
+			DataID:      dataID,
+			Labels:      labels,
+			TimeSeconds: baseTime.Unix(),
+			Data:        bkItems,
+		}
 	}
 }
 
@@ -102,17 +144,72 @@ func stats2Metrics(env string, stat *Stat) *Metrics {
 		named("timesync_query_err"):         float64(stat.Err),
 	}
 
+	return &Metrics{
+		Metrics:   metrics,
+		Target:    stat.Source,
+		Timestamp: time.Now().UnixMilli(),
+		Dimension: hostDimensions(env),
+	}
+}
+
+func hostDimensions(env string) map[string]string {
 	dims := map[string]string{}
 	if env == "host" {
 		info, _ := gse.GetAgentInfo()
 		dims = tasks.HostDimension(info)
 	}
-	return &Metrics{
-		Metrics:   metrics,
-		Target:    stat.Source,
-		Timestamp: time.Now().UnixMilli(),
-		Dimension: dims,
+	return dims
+}
+
+// buildLocalNTPMetrics 按地址组装新增 NTP 指标。
+// includeOffset 为 false 时只上报可用性，不生成偏差点。
+func buildLocalNTPMetrics(env string, details []SourceResult, ts time.Time, includeOffset bool) []Metrics {
+	items := make([]Metrics, 0, len(details))
+	for _, detail := range details {
+		metrics := map[string]float64{}
+		if detail.Available {
+			metrics["system.ntp.available"] = 1
+			if includeOffset {
+				metrics["system.ntp.offset"] = detail.OffsetSeconds
+			}
+		} else {
+			metrics["system.ntp.available"] = 0
+		}
+
+		dims := hostDimensions(env)
+		dims["time_source"] = detail.Address
+		items = append(items, Metrics{
+			Metrics:   metrics,
+			Target:    detail.Target,
+			Timestamp: ts.UnixMilli(),
+			Dimension: dims,
+		})
 	}
+	return items
+}
+
+// buildBkMetrics 组装蓝鲸 NTP 指标。查询成功时生成偏差和可用性，失败或未配置时只生成可用性 0。
+func buildBkMetrics(env, bkSource string, bkResult *BkResult, bkConfigured bool, ts time.Time) []Metrics {
+	metrics := map[string]float64{}
+	dims := hostDimensions(env)
+	target := "ntpd"
+
+	if bkConfigured {
+		dims["time_source"] = bkSource
+	}
+	if bkConfigured && bkResult != nil {
+		metrics["system.ntp.bk_offset"] = bkResult.OffsetSeconds
+		metrics["system.ntp.bk_available"] = 1
+	} else {
+		metrics["system.ntp.bk_available"] = 0
+	}
+
+	return []Metrics{{
+		Metrics:   metrics,
+		Target:    target,
+		Timestamp: ts.UnixMilli(),
+		Dimension: dims,
+	}}
 }
 
 type Event struct {
@@ -157,6 +254,52 @@ func (e *Event) AsMapStr() common.MapStr {
 	}
 }
 
+type BatchEvent struct {
+	BizID       int32
+	DataID      int32
+	Labels      []map[string]string
+	TimeSeconds int64
+	Data        []Metrics
+}
+
+func (e *BatchEvent) GetType() string {
+	return define.ModuleTimeSync
+}
+
+func (e *BatchEvent) IgnoreCMDBLevel() bool {
+	return true
+}
+
+func (e *BatchEvent) AsMapStr() common.MapStr {
+	if len(e.Labels) > 0 {
+		lbs := e.Labels[0] // 只会有一个元素
+		for i := range e.Data {
+			item := &e.Data[i]
+			if item.Dimension == nil {
+				item.Dimension = make(map[string]string)
+			}
+			for k, v := range lbs {
+				if _, ok := item.Dimension[k]; ok {
+					item.Dimension["exported_"+k] = v
+					continue
+				}
+				item.Dimension[k] = v
+			}
+		}
+	}
+
+	data := make([]map[string]interface{}, 0, len(e.Data))
+	for i := range e.Data {
+		data = append(data, e.Data[i].AsMapStr())
+	}
+	return common.MapStr{
+		"dataid":    e.DataID,
+		"data":      data,
+		"time":      e.TimeSeconds,
+		"timestamp": e.TimeSeconds,
+	}
+}
+
 type Stat struct {
 	Source string
 	Min    float64
@@ -191,7 +334,8 @@ func (s *Stat) Add(v float64) {
 }
 
 type Option struct {
-	NtpdPath   string
-	ChronyAddr string
-	Timeout    time.Duration
+	NtpdPath    string
+	ChronyAddr  string
+	BkNTPSource string
+	Timeout     time.Duration
 }

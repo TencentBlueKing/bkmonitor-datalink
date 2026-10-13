@@ -319,9 +319,14 @@ resources:
   cmdb: {}
 ```
 
-`enable_multi_tenant_mode` 缺省为 false：单租户直接使用 `admin`，不调用用户管理 API。
+`enable_multi_tenant_mode` 缺省为 false：单租户业务调用直接使用 `admin`，不调用用户管理解析用户名。
 多租户根据当前请求的租户查询并缓存 `bk_admin`。两种模式均将调用者显式租户写入 APIGW 的 `X-Bk-Tenant-Id` 请求头，
 不会把 Event/Alert、管理 API、Redis 或存储中的租户改为默认租户。全租户应用只需一份凭据，无租户名单。
+
+控制面配置 `blueking.api_url/app_code/app_secret` 后提供 `GET /api/v1/tenants`，
+通过用户管理实时读取全局租户目录；只需管理 JWT，不需要 `resources.cmdb`，也不受
+`enable_multi_tenant_mode` 影响。未配置蓝鲸连接时返回 503，查询失败返回 502；详见
+[租户目录查询 API](../reference/contracts/tenant-directory.md)。
 
 只支持 APIGW。CMDB 默认地址为 `<blueking.api_url>/api/bk-cmdb/prod/`；需要独立地址时使用
 `resources.cmdb.base_url` 覆盖。应用凭据与公共地址必须成组配置，启用 CMDB 时三项均必填。

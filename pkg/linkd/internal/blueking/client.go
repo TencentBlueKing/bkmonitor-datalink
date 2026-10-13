@@ -3,7 +3,7 @@
 // Copyright (C) 2026 Tencent. All rights reserved.
 // Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 
-// Package blueking 负责 APIGW 应用鉴权、租户用户解析和有界 HTTP 调用，不更改业务租户身份。
+// Package blueking 负责 APIGW 应用鉴权、租户目录读取、租户用户解析和有界 HTTP 调用，不更改业务租户身份。
 package blueking
 
 import (
@@ -38,6 +38,7 @@ type Client struct {
 	http      *http.Client
 	transport *http.Transport
 	slots     chan struct{}
+	tenants   chan struct{}
 	mu        sync.Mutex
 	closed    bool
 	closedCh  chan struct{}
@@ -54,7 +55,7 @@ func New(cfg config.BluekingConfig) (*Client, error) {
 		return nil, err
 	}
 	t := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: requestTimeout, KeepAlive: 30 * time.Second}).DialContext, MaxConnsPerHost: 4, MaxIdleConns: 8, MaxIdleConnsPerHost: 4, IdleConnTimeout: 30 * time.Second, TLSHandshakeTimeout: requestTimeout, ResponseHeaderTimeout: requestTimeout}
-	c := &Client{cfg: cfg, transport: t, slots: make(chan struct{}, 4), closedCh: make(chan struct{}), cache: map[string]*list.Element{}, flights: map[string]*userFlight{}, active: map[*http.Request]context.CancelFunc{}}
+	c := &Client{cfg: cfg, transport: t, slots: make(chan struct{}, 4), tenants: make(chan struct{}, 4), closedCh: make(chan struct{}), cache: map[string]*list.Element{}, flights: map[string]*userFlight{}, active: map[*http.Request]context.CancelFunc{}}
 	c.http = &http.Client{Transport: t, Timeout: requestTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return c, nil
 }

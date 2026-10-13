@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"linkd/internal/blueking"
 	"linkd/internal/config"
 	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/dynamicconfig"
@@ -36,6 +37,10 @@ import (
 
 // API 提供 JWT 管理接口和使用独立 Worker Token 的调度协议。
 type API struct {
+	// Tenants 提供用户管理的全局租户目录，仅向管理 JWT 暴露。
+	Tenants interface {
+		ListTenants(context.Context) ([]blueking.Tenant, error)
+	}
 	// Tasks 提供当前进程的只读任务目录及执行快照。
 	Tasks        interface{ Snapshot() taskstate.Snapshot }
 	OneModel     *queryservice.Service
@@ -77,6 +82,7 @@ func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	const kacCloseRoute = "POST /api/v1/integrations/kac/alerts/{id}/close"
 	const kacGetRoute = "GET /api/v1/integrations/kac/alerts/{id}"
+	mux.HandleFunc("GET /api/v1/tenants", a.listTenants)
 	mux.HandleFunc("GET /api/v1/control-plane/tasks", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if a.Tasks == nil {

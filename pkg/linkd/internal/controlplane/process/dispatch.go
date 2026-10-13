@@ -22,6 +22,7 @@ import (
 
 	"linkd/internal/actiondelivery"
 	actionstore "linkd/internal/actiondelivery/storage"
+	"linkd/internal/blueking"
 	"linkd/internal/config"
 	controlapi "linkd/internal/controlplane/api"
 	streams "linkd/internal/controlplane/redisstream"
@@ -138,6 +139,15 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	}
 	defer func() { _ = policyResources.Close() }()
 	api := &controlapi.API{Policies: policies, Tasks: registry, OneModel: oneModelQueries, Previewer: newEnrichPreview(sources, *cfg.Storage, cfg.Resources), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
+	// 租户目录不依赖 CMDB 资源或多租户用户解析开关；未配置蓝鲸连接时保留其他控制面能力。
+	if cfg.Blueking.APIURL != "" {
+		tenants, err := blueking.New(cfg.Blueking)
+		if err != nil {
+			return err
+		}
+		defer tenants.Close()
+		api.Tenants = tenants
+	}
 	api.IngestPreviewer = ingestpreview.New(sources, severity.SeveritySnapshot)
 	api.PolicyPreviewer = newPolicyPreview(policies, *cfg.Storage, policyResources, severity)
 	simulationUpgrade := ""

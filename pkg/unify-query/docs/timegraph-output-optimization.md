@@ -257,7 +257,9 @@ With `cmdb.v1beta3.yolo_mode=true`, TimeGraph does not impose its configured hop
 ceiling, 60-second query deadline, sample/output/memory budgets or admission gate.
 The request-scoped flag also bypasses the local PromQL engine timeout, sample
 budget and admission tracker, and the VM client deadline; instant VM requests
-omit the client-supplied `timeout` field. Shared engines and VM instances are not
+omit the client-supplied `timeout` field. Registered TimeGraph routes also clear
+HTTP body-read and response-write deadlines after routing, so the server write
+window cannot discard a completed long query. Parent cancellation still applies. Shared engines and VM instances are not
 mutated, so ordinary metric queries retain their configured limits.
 
 Caller-specified hops, paths, time grids and positive `Limit` retain their query
@@ -270,3 +272,10 @@ still apply. Downstream service limits and Pod resources are separate settings.
 For the current rollout, sustained YOLO is the accepted operating policy. Normal
 budget-mode capacity acceptance and additional stress scenarios are not release
 prerequisites. This policy does not turn unexecuted scenarios into passed tests.
+
+The scoped HTTP middleware covers the two topology, two v1beta3 multi-resource
+and two TimeGraph path-resource POST routes, including configured route aliases
+and proxy dispatch through the registered handler chain. Ordinary metric/legacy
+VM routes retain server deadlines. Header acquisition and the outer proxy
+envelope happen before the TimeGraph route is identified and retain their
+transport settings; the middleware does not reset caller deadlines.

@@ -122,3 +122,6 @@ func effectivePathSearchMaxHops() int {
 	}
 	return MaxAllowedHops
 }
+
+// YoloModeEnabled reports the current TimeGraph application-limit policy.
+func YoloModeEnabled() bool { return yoloMode }

@@ -12,6 +12,7 @@ package v1beta3
 import (
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"sync"
 
 	xxhash "github.com/cespare/xxhash/v2"
@@ -262,6 +263,14 @@ func resourceConfigSnapshot(cfg *TimeGraphConfig) map[cmdb.Resource]TimeGraphRes
 	return result
 }
 
+// resourceIndexView is only for readers; resourceIndexes keeps its owned slice contract.
+func (n *NodeBuilder) resourceIndexView(resourceType cmdb.Resource) cmdb.Index {
+	if n.config != nil {
+		return n.config[resourceType].Index
+	}
+	return ResourcesIndex(resourceType)
+}
+
 func (n *NodeBuilder) resourceIndexes(resourceTypes ...cmdb.Resource) cmdb.Index {
 	if n.config != nil {
 		var result cmdb.Index
@@ -307,6 +316,11 @@ func (n *NodeBuilder) Length() int {
 	return len(n.data)
 }
 
+// resourceName reads the instance type mapping without copying node attributes.
+func (n *NodeBuilder) resourceName(id uint64) cmdb.Resource {
+	return n.resource.name(uint16(id >> 48))
+}
+
 // Info 根据节点ID获取资源类型和匹配器信息
 // 参数:
 //   - id: 节点ID（uint64，前16位为资源类型ID）
@@ -327,6 +341,19 @@ func (n *NodeBuilder) Info(id uint64) (cmdb.Resource, cmdb.Matcher) {
 	}
 
 	return resourceName, nil
+}
+
+// matchingInfoView only borrows an immutable stored matcher for graph storage.
+// GetID replaces stored maps on updates; only the owning TimeGraph may borrow,
+// while holding its lock, so Clean cannot recycle this map during a graph read.
+func (n *NodeBuilder) matchingInfoView(id uint64, incoming cmdb.Matcher) (cmdb.Matcher, bool) {
+	n.lock.RLock()
+	defer n.lock.RUnlock()
+	stored, exists := n.info[id]
+	if !exists || (stored == nil) != (incoming == nil) || !maps.Equal(stored, incoming) {
+		return nil, false
+	}
+	return stored, true
 }
 
 // ResourceNodeInfo 获取指定资源类型下的所有节点信息
@@ -454,7 +481,7 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 		return 0, errors.New(ErrEmptyMatcher)
 	}
 
-	indexes := n.resourceIndexes(resourceType)
+	indexes := n.resourceIndexView(resourceType)
 	if len(indexes) == 0 {
 		return 0, fmt.Errorf(ErrIndexNotMatchIndex, resourceType)
 	}
@@ -490,9 +517,16 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 	// 检查缓存
 	if id, ok := n.data[hashID]; ok {
 		infoFields := n.resourceInfoFields(resourceType)
-		candidate := make(cmdb.Matcher, len(infoFields))
+		var candidate cmdb.Matcher
 		for _, key := range infoFields {
 			if value, exists := info[key]; exists {
+				current, present := n.info[id][key]
+				if present && value <= current {
+					continue
+				}
+				if candidate == nil {
+					candidate = make(cmdb.Matcher, len(infoFields))
+				}
 				candidate[key] = value
 			}
 		}

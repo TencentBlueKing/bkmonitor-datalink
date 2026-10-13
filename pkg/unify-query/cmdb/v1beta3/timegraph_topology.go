@@ -270,21 +270,25 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		if err := ctx.Err(); err != nil {
 			return nil, seedCount, err
 		}
-		resourceType, info := q.nodeBuilder.Info(node)
+		resourceType := q.nodeBuilder.resourceName(node)
 		if resourceType != query.SourceType {
 			continue
 		}
 		if query.RootBits != nil {
 			bits = bits.intersect(query.RootBits[node])
 		}
-		var matchedBits timeBitmap
-		for index, timestamp := range grid.Timestamps {
-			if !bits.has(index) {
-				continue
-			}
-			_, timestampInfo := q.nodeInfoAt(timestamp, node, info)
-			if q.matchesPartial(timestampInfo, query.SourceMatcher) {
-				matchedBits.set(index)
+		matchedBits := bits.trimTrailingZeroWords()
+		if len(query.SourceMatcher) != 0 {
+			_, info := q.nodeBuilder.Info(node)
+			matchedBits = timeBitmap{}
+			for index, timestamp := range grid.Timestamps {
+				if !bits.has(index) {
+					continue
+				}
+				_, timestampInfo := q.nodeInfoAt(timestamp, node, info)
+				if q.matchesPartial(timestampInfo, query.SourceMatcher) {
+					matchedBits.set(index)
+				}
 			}
 		}
 		if !matchedBits.empty() {
@@ -298,18 +302,65 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		frontierSizes = append(frontierSizes, int64(len(frontier)))
 	}
 
+	// Deep YOLO traversals index the filtered directed edges once. Ordinary and
+	// shallow queries keep their original allocation/scan behavior.
+	var outgoing map[uint64][]sharedTopologyEdgeState
+	if yoloMode && query.MaxHops > 1 && len(frontier) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, seedCount, err
+		}
+		// Export needs the same order. Group slices of request-owned edges instead
+		// of allocating and growing a separate index array for every source.
+		sort.Slice(edges, func(i, j int) bool { return lessTopologyEdgeKey(edges[i].key, edges[j].key) })
+		if err := ctx.Err(); err != nil {
+			return nil, seedCount, err
+		}
+		outgoing = make(map[uint64][]sharedTopologyEdgeState)
+		for start := 0; start < len(edges); {
+			if err := ctx.Err(); err != nil {
+				return nil, seedCount, err
+			}
+			end := start + 1
+			for end < len(edges) && edges[end].key.source == edges[start].key.source {
+				if err := ctx.Err(); err != nil {
+					return nil, seedCount, err
+				}
+				end++
+			}
+			outgoing[edges[start].key.source] = edges[start:end]
+			start = end
+		}
+	}
+
 	for level := 0; level < query.MaxHops && len(frontier) > 0; level++ {
 		if err := ctx.Err(); err != nil {
 			return nil, seedCount, err
 		}
 		discovered := make(map[uint64]timeBitmap)
-		for _, edge := range edges {
-			if err := ctx.Err(); err != nil {
-				return nil, seedCount, err
+		if outgoing != nil {
+			for source, sourceBits := range frontier {
+				if err := ctx.Err(); err != nil {
+					return nil, seedCount, err
+				}
+				for _, edge := range outgoing[source] {
+					if err := ctx.Err(); err != nil {
+						return nil, seedCount, err
+					}
+					candidate := sourceBits.intersect(edge.activeBits).intersect(nodeBits[edge.key.target])
+					if !candidate.empty() {
+						discovered[edge.key.target] = discovered[edge.key.target].union(candidate)
+					}
+				}
 			}
-			candidate := frontier[edge.key.source].intersect(edge.activeBits).intersect(nodeBits[edge.key.target])
-			if !candidate.empty() {
-				discovered[edge.key.target] = discovered[edge.key.target].union(candidate)
+		} else {
+			for _, edge := range edges {
+				if err := ctx.Err(); err != nil {
+					return nil, seedCount, err
+				}
+				candidate := frontier[edge.key.source].intersect(edge.activeBits).intersect(nodeBits[edge.key.target])
+				if !candidate.empty() {
+					discovered[edge.key.target] = discovered[edge.key.target].union(candidate)
+				}
 			}
 		}
 		nextFrontier := make(map[uint64]timeBitmap)
@@ -358,24 +409,65 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 			result[index].PartialReason = reason
 		}
 	}
-	for node, bits := range reachable {
+	appendNode := func(node uint64, bits timeBitmap) error {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		for index := range grid.Timestamps {
 			if !bits.has(index) {
 				continue
 			}
-			_, info := q.nodeBuilder.Info(node)
-			resourceType, info := q.nodeInfoAt(grid.Timestamps[index], node, info)
+			resourceType := q.nodeBuilder.resourceName(node)
+			info, exists := q.storedNodeInfoAt(grid.Timestamps[index], node)
+			if exists {
+				info = cloneMatcher(info)
+			} else {
+				_, info = q.nodeBuilder.Info(node)
+			}
 			if err := budget.add(topologyNodeByteBound(resourceType, info)); err != nil {
-				return nil, err
+				return err
 			}
 			result[index].Nodes = append(result[index].Nodes, SharedTopologyNode{
 				ID:           node,
 				ResourceType: resourceType,
 				Dimensions:   info,
 			})
+		}
+		return nil
+	}
+	// Sorting the request-owned candidates once preserves each frame's order.
+	// Ordinary mode retains its existing allocation and budget behavior.
+	ordered := yoloMode
+	if ordered {
+		nodes := make([]uint64, 0, len(reachable))
+		for node := range reachable {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			nodes = append(nodes, node)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i] < nodes[j] })
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		for _, node := range nodes {
+			if err := appendNode(node, reachable[node]); err != nil {
+				return nil, err
+			}
+		}
+		// Propagation has finished; no adjacency index refers to this slice now.
+		sort.Slice(edges, func(i, j int) bool { return lessTopologyEdgeKey(edges[i].key, edges[j].key) })
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	} else {
+		for node, bits := range reachable {
+			if err := appendNode(node, bits); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, edge := range edges {
@@ -403,29 +495,31 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 			})
 		}
 	}
-	for index := range result {
-		sort.Slice(result[index].Nodes, func(i, j int) bool {
-			return result[index].Nodes[i].ID < result[index].Nodes[j].ID
-		})
-		sort.Slice(result[index].Edges, func(i, j int) bool {
-			left, right := result[index].Edges[i], result[index].Edges[j]
-			if left.Source != right.Source {
-				return left.Source < right.Source
-			}
-			if left.Target != right.Target {
-				return left.Target < right.Target
-			}
-			if left.RelationType != right.RelationType {
-				return left.RelationType < right.RelationType
-			}
-			if left.MetricName != right.MetricName {
-				return left.MetricName < right.MetricName
-			}
-			if left.Category != right.Category {
-				return left.Category < right.Category
-			}
-			return left.Direction < right.Direction
-		})
+	if !ordered {
+		for index := range result {
+			sort.Slice(result[index].Nodes, func(i, j int) bool {
+				return result[index].Nodes[i].ID < result[index].Nodes[j].ID
+			})
+			sort.Slice(result[index].Edges, func(i, j int) bool {
+				left, right := result[index].Edges[i], result[index].Edges[j]
+				if left.Source != right.Source {
+					return left.Source < right.Source
+				}
+				if left.Target != right.Target {
+					return left.Target < right.Target
+				}
+				if left.RelationType != right.RelationType {
+					return left.RelationType < right.RelationType
+				}
+				if left.MetricName != right.MetricName {
+					return left.MetricName < right.MetricName
+				}
+				if left.Category != right.Category {
+					return left.Category < right.Category
+				}
+				return left.Direction < right.Direction
+			})
+		}
 	}
 	return result, nil
 }
@@ -433,21 +527,28 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 // nodeInfoAt 返回节点在指定时间点的属性；没有时间点属性时回退到稳定身份
 // 信息，保证关系指标只提供主键的场景仍能正常输出。
 func (q *TimeGraph) nodeInfoAt(timestamp int64, node uint64, fallback cmdb.Matcher) (cmdb.Resource, cmdb.Matcher) {
-	resourceType, _ := q.nodeBuilder.Info(node)
+	resourceType := q.nodeBuilder.resourceName(node)
+	if info, exists := q.storedNodeInfoAt(timestamp, node); exists {
+		return resourceType, cloneMatcher(info)
+	}
+	return resourceType, fallback
+}
+
+// storedNodeInfoAt borrows attributes only while the caller holds the graph lock.
+// The bool distinguishes a stored nil map from an absent time-specific version.
+func (q *TimeGraph) storedNodeInfoAt(timestamp int64, node uint64) (cmdb.Matcher, bool) {
 	if q.shared != nil {
 		index, ok := q.shared.timestampIndex[timestamp]
 		if !ok {
-			return resourceType, fallback
+			return nil, false
 		}
 		for _, version := range q.shared.nodeInfos[node] {
 			if version.activeBits.has(index) {
-				return resourceType, cloneMatcher(version.dimensions)
+				return version.dimensions, true
 			}
 		}
-		return resourceType, fallback
+		return nil, false
 	}
-	if timestampInfo, ok := q.nodeInfos[timestamp][node]; ok {
-		return resourceType, cloneMatcher(timestampInfo)
-	}
-	return resourceType, fallback
+	info, exists := q.nodeInfos[timestamp][node]
+	return info, exists
 }

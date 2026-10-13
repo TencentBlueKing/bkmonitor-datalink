@@ -16,10 +16,19 @@ import (
 )
 
 func compactTimeMask(bits timeBitmap) []string {
+	encode := func(word uint64) string {
+		const hex = "0123456789abcdef"
+		var buffer [16]byte
+		for index := len(buffer) - 1; index >= 0; index-- {
+			buffer[index] = hex[word&15]
+			word >>= 4
+		}
+		return string(buffer[:])
+	}
 	words := make([]string, 1, len(bits.rest)+1)
-	words[0] = fmt.Sprintf("%016x", bits.first)
+	words[0] = encode(bits.first)
 	for _, word := range bits.rest {
-		words = append(words, fmt.Sprintf("%016x", word))
+		words = append(words, encode(word))
 	}
 	for len(words) > 1 && words[len(words)-1] == "0000000000000000" {
 		words = words[:len(words)-1]
@@ -79,11 +88,38 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 	}
 	slices.Sort(ids)
 	kept := make(map[uint64]bool, len(ids))
+	if yoloMode {
+		// Reserve actual output, rather than the potentially much wider candidates.
+		// Additional attribute versions still grow the node slice normally.
+		keptNodes := 0
+		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			resource := q.nodeBuilder.resourceName(id)
+			keep := len(targets) == 0 || resource == query.SourceType || slices.Contains(targets, resource)
+			kept[id] = keep
+			if keep {
+				keptNodes++
+			}
+		}
+		keptEdges := 0
+		for _, edge := range edges {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if kept[edge.key.source] && kept[edge.key.target] && edge.activeBits.intersectsBoth(reachable[edge.key.source], reachable[edge.key.target]) {
+				keptEdges++
+			}
+		}
+		result.Nodes = make([]cmdb.CompactTopologyNode, 0, keptNodes)
+		result.Edges = make([]cmdb.CompactTopologyEdge, 0, keptEdges)
+	}
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		resource, fallback := q.nodeBuilder.Info(id)
+		resource := q.nodeBuilder.resourceName(id)
 		keep := len(targets) == 0 || resource == query.SourceType || slices.Contains(targets, resource)
 		kept[id] = keep
 		remaining := reachable[id]
@@ -118,8 +154,11 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 			}
 			remaining = remaining.subtract(bits)
 		}
-		if err := appendVersion(remaining, fallback); err != nil {
-			return nil, err
+		if !remaining.empty() {
+			_, fallback := q.nodeBuilder.Info(id)
+			if err := appendVersion(remaining, fallback); err != nil {
+				return nil, err
+			}
 		}
 	}
 	sort.Slice(edges, func(i, j int) bool { return lessTopologyEdgeKey(edges[i].key, edges[j].key) })

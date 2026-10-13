@@ -20,19 +20,27 @@ func (q *TimeGraph) applyRelationMatrix(ctx context.Context, matrix pl.Matrix, r
 	ctx, span := trace.NewSpan(ctx, "timegraph-apply-relation-matrix")
 	defer finishTimeGraphStage(ctx, span, "apply-relation", time.Now(), &err)
 	span.Set("matrix-series-count", len(matrix))
+	// Working buffers are never retained by graph storage or target dictionaries.
+	info := make(cmdb.Matcher)
+	timestamps := make([]int64, 0)
+	sourceBuffer, targetBuffer := make(cmdb.Matcher), make(cmdb.Matcher)
 	for _, series := range matrix {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		info := make(cmdb.Matcher, len(series.Metric))
+		clear(info)
 		for _, label := range series.Metric {
 			info[label.Name] = label.Value
 		}
-		timestamps := make([]int64, len(series.Points))
+		if cap(timestamps) < len(series.Points) {
+			timestamps = make([]int64, len(series.Points))
+		} else {
+			timestamps = timestamps[:len(series.Points)]
+		}
 		for i, point := range series.Points {
 			timestamps[i] = point.T
 		}
-		if err = q.AddTimeRelationWithRelation(ctx, relation, info, timestamps...); err != nil {
+		if err = q.addTimeRelationWithEndpointBuffers(ctx, relation, info, sourceBuffer, targetBuffer, timestamps...); err != nil {
 			return errors.WithMessage(err, "add time relation")
 		}
 
@@ -71,15 +79,22 @@ func (q *TimeGraph) applySourceMatrix(ctx context.Context, matrix pl.Matrix, sou
 	ctx, span := trace.NewSpan(ctx, "timegraph-apply-source-info-matrix")
 	defer finishTimeGraphStage(ctx, span, "apply-source-info", time.Now(), &err)
 	span.Set("matrix-series-count", len(matrix))
+	// Working buffers are never retained by graph storage or target dictionaries.
+	info := make(cmdb.Matcher)
+	timestamps := make([]int64, 0)
 	for _, series := range matrix {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		info := make(cmdb.Matcher, len(series.Metric))
+		clear(info)
 		for _, label := range series.Metric {
 			info[label.Name] = label.Value
 		}
-		timestamps := make([]int64, len(series.Points))
+		if cap(timestamps) < len(series.Points) {
+			timestamps = make([]int64, len(series.Points))
+		} else {
+			timestamps = timestamps[:len(series.Points)]
+		}
 		for i, point := range series.Points {
 			timestamps[i] = point.T
 		}
@@ -105,15 +120,18 @@ func (q *TimeGraph) applyTargetMatrix(ctx context.Context, matrix pl.Matrix, tar
 	ctx, span := trace.NewSpan(ctx, "timegraph-apply-target-info-matrix")
 	defer finishTimeGraphStage(ctx, span, "apply-target-info", time.Now(), &err)
 	span.Set("matrix-series-count", len(matrix))
+	// Working buffers are never retained by graph storage or target dictionaries.
+	info := make(cmdb.Matcher)
+	timestamps := make([]int64, 0)
 	for _, series := range matrix {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		info := make(cmdb.Matcher, len(series.Metric))
+		clear(info)
 		for _, label := range series.Metric {
 			info[label.Name] = label.Value
 		}
-		timestamps := make([]int64, 0, len(series.Points))
+		timestamps = timestamps[:0]
 		key := q.primaryMatcherKey(targetType, info)
 		for _, point := range series.Points {
 			if _, ok := targetIDsByTimestamp[point.T][targetType][key]; ok {

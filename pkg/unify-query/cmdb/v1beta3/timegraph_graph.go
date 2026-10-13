@@ -333,6 +333,11 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 // AddTimeRelationWithRelation 添加随时间变化的关系边，并保留查询该边时使用的
 // 关系身份。同一对节点可能存在多种关系，因此关系身份不能只依赖普通图边。
 func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cmdb.Relation, info cmdb.Matcher, timestamps ...int64) error {
+	return q.addTimeRelationWithEndpointBuffers(ctx, relation, info, nil, nil, timestamps...)
+}
+
+// Builders store owned attributes before these endpoint buffers can be reused.
+func (q *TimeGraph) addTimeRelationWithEndpointBuffers(ctx context.Context, relation cmdb.Relation, info, sourceBuffer, targetBuffer cmdb.Matcher, timestamps ...int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -356,8 +361,8 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 			direction = string(DirectionInbound)
 		}
 	}
-	sourceInfo := q.relationEndpointInfo(info, source, sourcePrefix, dynamic)
-	targetInfo := q.relationEndpointInfo(info, target, targetPrefix, dynamic)
+	sourceInfo := q.relationEndpointInfoInto(info, source, sourcePrefix, dynamic, sourceBuffer)
+	targetInfo := q.relationEndpointInfoInto(info, target, targetPrefix, dynamic, targetBuffer)
 	if len(sourceInfo) == 0 {
 		sourceInfo = info
 	}
@@ -468,18 +473,30 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 }
 
 func (q *TimeGraph) relationEndpointInfo(info cmdb.Matcher, resource cmdb.Resource, prefix string, dynamic bool) cmdb.Matcher {
-	fields := q.nodeBuilder.resourceIndexes(resource)
-	fields = append(fields, q.nodeBuilder.resourceInfoFields(resource)...)
-	result := make(cmdb.Matcher, len(fields))
-	for _, field := range fields {
-		if dynamic {
-			if value, ok := info[prefix+field]; ok {
-				result[field] = value
-				continue
+	return q.relationEndpointInfoInto(info, resource, prefix, dynamic, nil)
+}
+
+// scratch, when provided, is private to one synchronous matrix application.
+func (q *TimeGraph) relationEndpointInfoInto(info cmdb.Matcher, resource cmdb.Resource, prefix string, dynamic bool, scratch cmdb.Matcher) cmdb.Matcher {
+	primary := q.nodeBuilder.resourceIndexView(resource)
+	attributes := q.nodeBuilder.resourceInfoFields(resource)
+	result := scratch
+	if result == nil {
+		result = make(cmdb.Matcher, len(primary)+len(attributes))
+	} else {
+		clear(result)
+	}
+	for _, fields := range [2]cmdb.Index{primary, attributes} {
+		for _, field := range fields {
+			if dynamic {
+				if value, ok := info[prefix+field]; ok {
+					result[field] = value
+					continue
+				}
 			}
-		}
-		if value, ok := info[field]; ok {
-			result[field] = value
+			if value, ok := info[field]; ok {
+				result[field] = value
+			}
 		}
 	}
 	return result

@@ -68,15 +68,23 @@ func marshalLargeTopologySnapshots(item cmdb.SharedTopologyResponseData) ([][]by
 	}
 	parts := make([][]byte, 0, len(item.Snapshots)+5)
 	parts = append(parts, append(header[:len(header)-1], []byte(`,"snapshots":[`)...))
-	for index := range item.Snapshots {
-		encoded, err := stdjson.Marshal(item.Snapshots[index])
+	if len(item.Snapshots) > 1 {
+		frames, err := marshalRepeatedTopologySnapshots(item.Snapshots)
 		if err != nil {
 			return nil, 0, err
 		}
-		if index+1 < len(item.Snapshots) {
-			encoded = append(encoded, ',')
+		parts = append(parts, frames...)
+	} else {
+		for index := range item.Snapshots {
+			encoded, err := stdjson.Marshal(item.Snapshots[index])
+			if err != nil {
+				return nil, 0, err
+			}
+			if index+1 < len(item.Snapshots) {
+				encoded = append(encoded, ',')
+			}
+			parts = append(parts, encoded)
 		}
-		parts = append(parts, encoded)
 	}
 	parts = append(parts, []byte("]"))
 	if item.Message != "" {

@@ -89,3 +89,42 @@ func (b timeBitmap) subtract(other timeBitmap) timeBitmap {
 	}
 	return result
 }
+
+// isSubsetOf checks every word without allocating a difference bitmap.
+func (b timeBitmap) isSubsetOf(other timeBitmap) bool {
+	if b.first&^other.first != 0 {
+		return false
+	}
+	for index, word := range b.rest {
+		if index >= len(other.rest) {
+			if word != 0 {
+				return false
+			}
+		} else if word&^other.rest[index] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// intersectsBoth checks a common time point without allocating intermediate words.
+func (b timeBitmap) intersectsBoth(left, right timeBitmap) bool {
+	if b.first&left.first&right.first != 0 {
+		return true
+	}
+	for index := 0; index < min(len(b.rest), len(left.rest), len(right.rest)); index++ {
+		if b.rest[index]&left.rest[index]&right.rest[index] != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// trimTrailingZeroWords restores the representation produced by per-frame set.
+// Only this slice header changes; shared backing words remain immutable.
+func (b timeBitmap) trimTrailingZeroWords() timeBitmap {
+	for len(b.rest) > 0 && b.rest[len(b.rest)-1] == 0 {
+		b.rest = b.rest[:len(b.rest)-1]
+	}
+	return b
+}

@@ -19,6 +19,7 @@ import (
 // 所有读写由所属 TimeGraph 的锁保护，生命周期仅限单次查询。
 type sharedTimeGraph struct {
 	grid                 TopologyGrid
+	fullGridBits         timeBitmap
 	timestampIndex       map[int64]int
 	nodeBits             map[uint64]timeBitmap
 	relationNodeBits     map[uint64]timeBitmap
@@ -51,6 +52,7 @@ func newSharedTimeGraph(cfg *TimeGraphConfig, grid TopologyGrid) (*TimeGraph, er
 	}
 	for index, timestamp := range grid.Timestamps {
 		q.shared.timestampIndex[timestamp] = index
+		q.shared.fullGridBits.set(index)
 	}
 	return q, nil
 }
@@ -77,6 +79,10 @@ func (q *TimeGraph) timepointCount() int {
 }
 
 func (g *sharedTimeGraph) timeBits(timestamps []int64) (timeBitmap, error) {
+	// The full grid is common; its immutable words need no per-point lookup.
+	if slices.Equal(timestamps, g.grid.Timestamps) {
+		return g.fullGridBits, nil
+	}
 	var active timeBitmap
 	for _, timestamp := range timestamps {
 		index, ok := g.timestampIndex[timestamp]
@@ -106,6 +112,22 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 	newPoints := active.subtract(g.nodeBits[node]).count()
 
 	previous := g.nodeInfos[node]
+	if len(previous) == 1 && active.isSubsetOf(previous[0].activeBits) {
+		unchanged := true
+		for key, value := range info {
+			current, present := previous[0].dimensions[key]
+			if !present || value > current {
+				unchanged = false
+				break
+			}
+		}
+		if unchanged {
+			if q.maxNodeInfos > 0 && g.nodeInfoVersionCount > q.maxNodeInfos {
+				return &ResultLimitError{Reason: "max_graph_node_infos", Count: g.nodeInfoVersionCount, Limit: q.maxNodeInfos}
+			}
+			return nil
+		}
+	}
 	versions := make([]sharedNodeInfo, 0, len(previous)+1)
 	remaining := active
 	for _, version := range previous {
@@ -117,7 +139,15 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 		}
 	}
 	if !remaining.empty() {
-		versions = appendSharedNodeInfo(versions, remaining, cloneMatcher(info))
+		var owned cmdb.Matcher
+		borrowed := false
+		if len(previous) == 0 {
+			owned, borrowed = q.nodeBuilder.matchingInfoView(node, info)
+		}
+		if !borrowed {
+			owned = cloneMatcher(info)
+		}
+		versions = appendSharedNodeInfo(versions, remaining, owned)
 	}
 	versionCount := g.nodeInfoVersionCount + len(versions) - len(previous)
 	if q.maxNodeInfos > 0 && versionCount > q.maxNodeInfos {

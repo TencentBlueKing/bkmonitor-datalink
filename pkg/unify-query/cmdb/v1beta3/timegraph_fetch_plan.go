@@ -69,7 +69,7 @@ func topologyStaticBidirectional(relations []cmdb.Relation) bool {
 // A non-primary attribute projected as another endpoint's primary field can be
 // merged from graph-external series by bulk reads. Narrowing would change that
 // presentation even if identities and edges were unchanged.
-func (q *TimeGraph) topologyProjectionCompatible(relations []cmdb.Relation) bool {
+func (q *TimeGraph) topologyProjectionCompatible(relations []cmdb.Relation, visible map[cmdb.Resource]bool) bool {
 	for _, r := range relations {
 		if len(r.V) != 2 {
 			return false
@@ -83,6 +83,9 @@ func (q *TimeGraph) topologyProjectionCompatible(relations []cmdb.Relation) bool
 			projected[field] = true
 		}
 		for i, endpoint := range r.V {
+			if visible != nil && !visible[endpoint] {
+				continue
+			}
 			primary := q.nodeBuilder.resourceIndexes(endpoint)
 			if len(primary) == 0 {
 				return false
@@ -103,8 +106,9 @@ func (q *TimeGraph) topologyProjectionCompatible(relations []cmdb.Relation) bool
 
 func (q *TimeGraph) topologyFetchMode(source cmdb.Resource, identity cmdb.Matcher, planned []cmdb.Relation, plan timeGraphFetchPlan) (string, []cmdb.Relation) {
 	component := topologyRelationComponent(source, plan.allowed)
+	visible := topologyReachableTypes(source, plan.hops, plan.allowed)
 	if !q.completeFrontierIdentity(source, identity) || !topologyStaticBidirectional(component) ||
-		!q.topologyProjectionCompatible(planned) {
+		!q.topologyProjectionCompatible(planned, visible) {
 		return "bulk", nil
 	}
 	if plan.hops == 1 {
@@ -156,7 +160,8 @@ func (q *TimeGraph) topologyFetchMode(source cmdb.Resource, identity cmdb.Matche
 // induced edge. Other relations remain wide, including cross-scope boundaries.
 func (q *TimeGraph) topologyRangeFilters(source cmdb.Resource, identity cmdb.Matcher, component, planned []cmdb.Relation, hops int) map[timeGraphRelationKey]cmdb.Matcher {
 	filters := map[timeGraphRelationKey]cmdb.Matcher{}
-	if len(component) == 0 || hops < 1 || !q.topologyProjectionCompatible(planned) {
+	visible := topologyReachableTypes(source, hops, component)
+	if len(component) == 0 || hops < 1 || !q.topologyProjectionCompatible(planned, visible) {
 		return filters
 	}
 	type state struct {

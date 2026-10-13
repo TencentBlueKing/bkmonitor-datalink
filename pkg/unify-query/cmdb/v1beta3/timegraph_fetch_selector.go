@@ -133,13 +133,14 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 	// attribute to a retained endpoint. Restore the original ordered wide plan
 	// when projection independence cannot be proved before type pruning.
 	allowedComponent := topologyRelationComponent(source, plan.allowed)
-	if !q.topologyProjectionCompatible(allowedComponent) {
+	visible := topologyReachableTypes(source, plan.hops, plan.allowed)
+	if !q.topologyProjectionCompatible(allowedComponent, visible) {
 		relations = allowedComponent
 	}
 	mode, component := q.topologyFetchMode(source, identity, relations, plan)
 	span.Set("fetch-mode", mode)
 	span.Set("max-hops", plan.hops)
-	reorder := len(component) > 0 && topologyStaticBidirectional(component) && q.topologyProjectionCompatible(relations)
+	reorder := len(component) > 0 && topologyStaticBidirectional(component) && q.topologyProjectionCompatible(relations, visible)
 	filters := q.topologyRangeFilters(source, identity, component, relations, plan.hops)
 	span.Set("range-filter-relation-count", len(filters))
 	wideInputs := []topologyFetchInput{}

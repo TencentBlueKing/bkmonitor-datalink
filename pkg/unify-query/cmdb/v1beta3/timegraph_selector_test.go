@@ -309,3 +309,51 @@ func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *t
 		})
 	}
 }
+
+func TestTopologySelectorIgnoresOnlyUnobservableAttributeCollisions(t *testing.T) {
+	old := SharedTopologyPlanCandidates
+	t.Cleanup(func() { SharedTopologyPlanCandidates = old })
+	provider := selectorProvider()
+	provider.resources = append(provider.resources, "version")
+	provider.primary["version"] = []string{"version"}
+	provider.fields["version"] = []string{"version"}
+	provider.fields["c"] = append(provider.fields["c"], "version")
+	provider.schemas = append(provider.schemas, RelationSchema{RelationType: "cv", Category: RelationCategoryStatic, FromType: "c", ToType: "version", MetricName: "cv"})
+	data := map[string]pl.Matrix{
+		"ab": contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000),
+		"bc": contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000),
+		"cv": contractMatrix(map[string]string{"c_id": "c0", "version": "v1"}, 1700000000000),
+	}
+	for _, hops := range []int{1, 2} {
+		var baseline []string
+		for _, planned := range []bool{false, true} {
+			SharedTopologyPlanCandidates = planned
+			model := &Model{schemaProvider: provider, timeGraphQueryReference: selectorQueryReference}
+			metrics := []string{}
+			model.timeGraphVMQuery = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+				metrics = append(metrics, ts.QueryList[0].FieldName)
+				return filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions), nil
+			}
+			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops})
+			require.NoError(t, err)
+			if !planned {
+				baseline = canonicalTopologyForTest(t, result.Snapshots)
+				continue
+			}
+			require.Equal(t, baseline, canonicalTopologyForTest(t, result.Snapshots))
+			if hops == 1 {
+				require.Equal(t, []string{"ab"}, metrics, "an attribute of an unreachable type cannot disable the star plan")
+			} else {
+				require.Contains(t, metrics, "cv", "a visible endpoint keeps its attribute provider beyond H")
+				found := false
+				for _, node := range result.Snapshots[0].Nodes {
+					if node.ResourceType == "c" {
+						require.Equal(t, "v1", node.Dimensions["version"])
+						found = true
+					}
+				}
+				require.True(t, found)
+			}
+		}
+	}
+}

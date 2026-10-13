@@ -42,6 +42,9 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
+	if runtime.Version() != "test-version" {
+		t.Fatal("runtime lost the actual build version")
+	}
 	if runtime.PrometheusListenAddress() == "" {
 		t.Fatal("PrometheusListenAddress() is empty")
 	}
@@ -248,7 +251,7 @@ func TestDisabledMetricsUsesNoopProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	if runtime.PrometheusListenAddress() != "" || runtime.MeterProvider() == nil {
+	if runtime.PrometheusListenAddress() != "" || runtime.MeterProvider() == nil || runtime.Version() != "test" {
 		t.Fatalf("disabled runtime = %#v", runtime)
 	}
 	if err := runtime.Shutdown(context.Background()); err != nil {

@@ -220,17 +220,7 @@ func newElasticsearchComponents(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	router, err := elasticsearchstore.NewBucketRouter(cfg.IndexPrefix, elasticsearchstore.BucketConfig{
-		EventBucketDays:            cfg.TimePartition.EventBucketDays,
-		AlertHistoryBucketDays:     cfg.TimePartition.AlertHistoryBucketDays,
-		AlertLogBucketDays:         cfg.TimePartition.AlertLogBucketDays,
-		MaxFutureSkew:              cfg.TimePartition.MaxFutureSkew(),
-		RefreshInterval:            cfg.RefreshInterval(),
-		ActiveAlertRefreshInterval: cfg.ActiveAlertRefreshInterval(),
-		AlertLogTranslogDurability: cfg.AlertLogTranslogDurability,
-		NumberOfReplicas:           cfg.NumberOfReplicas,
-		NumberOfShards:             cfg.NumberOfShards,
-	})
+	router, err := newBucketRouter(cfg)
 	if err != nil {
 		transport.Close()
 		return nil, nil, nil, err
@@ -241,6 +231,30 @@ func newElasticsearchComponents(
 		return nil, nil, nil, fmt.Errorf("initialize elasticsearch repository: %w", err)
 	}
 	return repository, router, transport, nil
+}
+
+// ElasticsearchQueryLayout 复用生产 Router 配置，仅计算查询元信息，不连接存储或创建索引。
+func ElasticsearchQueryLayout(cfg config.ElasticsearchConfig) (elasticsearchstore.QueryLayout, error) {
+	router, err := newBucketRouter(cfg)
+	if err != nil {
+		return elasticsearchstore.QueryLayout{}, err
+	}
+	return router.QueryLayout(), nil
+}
+
+func newBucketRouter(cfg config.ElasticsearchConfig) (*elasticsearchstore.BucketRouter, error) {
+	cfg.TimePartition = cfg.TimePartition.WithDefaults()
+	return elasticsearchstore.NewBucketRouter(cfg.IndexPrefix, elasticsearchstore.BucketConfig{
+		EventBucketDays:            cfg.TimePartition.EventBucketDays,
+		AlertHistoryBucketDays:     cfg.TimePartition.AlertHistoryBucketDays,
+		AlertLogBucketDays:         cfg.TimePartition.AlertLogBucketDays,
+		MaxFutureSkew:              cfg.TimePartition.MaxFutureSkew(),
+		RefreshInterval:            cfg.RefreshInterval(),
+		ActiveAlertRefreshInterval: cfg.ActiveAlertRefreshInterval(),
+		AlertLogTranslogDurability: cfg.AlertLogTranslogDurability,
+		NumberOfReplicas:           cfg.NumberOfReplicas,
+		NumberOfShards:             cfg.NumberOfShards,
+	})
 }
 
 func elasticsearchConnectionBudget(requested int) int {

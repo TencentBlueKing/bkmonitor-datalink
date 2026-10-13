@@ -41,6 +41,7 @@ const (
 // Runtime 持有一个 Linkd 进程内共享的 OTel MeterProvider 和 Prometheus 服务。
 // 指标关闭时 Runtime 使用 no-op provider，调用方无需增加条件分支。
 type Runtime struct {
+	version                      string
 	provider                     metric.MeterProvider
 	shutdown                     func(context.Context) error
 	server                       *http.Server
@@ -60,6 +61,9 @@ func Start(ctx context.Context, cfg settings.TelemetryConfig, role Role, version
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	if version == "" {
+		version = "dev"
+	}
 	if !cfg.Enabled() {
 		provider := metricnoop.NewMeterProvider()
 		meter := provider.Meter(instrumentationKey)
@@ -67,7 +71,7 @@ func Start(ctx context.Context, cfg settings.TelemetryConfig, role Role, version
 		if err != nil {
 			return nil, err
 		}
-		runtime := &Runtime{provider: provider, metrics: metrics}
+		runtime := &Runtime{provider: provider, metrics: metrics, version: version}
 		if err := runtime.startProfiling(ctx, cfg.Profiling); err != nil {
 			return nil, err
 		}
@@ -116,6 +120,7 @@ func Start(ctx context.Context, cfg settings.TelemetryConfig, role Role, version
 		IdleTimeout:       time.Minute,
 	}
 	runtime := &Runtime{
+		version:  version,
 		provider: provider,
 		shutdown: provider.Shutdown,
 		server:   server,
@@ -171,6 +176,14 @@ func (r *Runtime) startProfiling(ctx context.Context, cfg settings.TelemetryProf
 	r.previousMutexProfileFraction = goruntime.SetMutexProfileFraction(cfg.MutexProfileFraction)
 	go func() { _ = server.Serve(listener) }()
 	return nil
+}
+
+// Version 返回启动方传入的构建版本；Runtime 为空时不推断版本。
+func (r *Runtime) Version() string {
+	if r == nil {
+		return ""
+	}
+	return r.version
 }
 
 // MeterProvider 返回进程级 provider，供需要 OTel API 的窄基础设施组件使用。

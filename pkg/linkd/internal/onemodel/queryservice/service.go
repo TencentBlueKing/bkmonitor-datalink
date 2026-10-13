@@ -85,6 +85,11 @@ func New(pages Pages, reader Relations) *Service {
 	return &Service{pages: pages, reader: reader, slots: make(chan struct{}, 4)}
 }
 
+// Configured 报告是否已注入分页和关联后端，不探测远端依赖健康。
+func (s *Service) Configured() bool {
+	return s != nil && s.pages != nil && s.reader != nil
+}
+
 func (s *Service) acquire(ctx context.Context) (context.Context, func(), error) {
 	if s.pages == nil || s.reader == nil {
 		return nil, nil, &Error{503, "resources.onemodel is not configured"}

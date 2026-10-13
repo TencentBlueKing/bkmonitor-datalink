@@ -37,6 +37,8 @@ import (
 
 // API 提供 JWT 管理接口和使用独立 Worker Token 的调度协议。
 type API struct {
+	// ModuleInfo 提供当前进程白名单连接发现，仅管理 JWT 可请求敏感快照。
+	ModuleInfo *ModuleInfo
 	// Tenants 提供用户管理的全局租户目录，仅向管理 JWT 暴露。
 	Tenants interface {
 		ListTenants(context.Context) ([]blueking.Tenant, error)
@@ -83,6 +85,7 @@ func (a *API) Handler() http.Handler {
 	const kacCloseRoute = "POST /api/v1/integrations/kac/alerts/{id}/close"
 	const kacGetRoute = "GET /api/v1/integrations/kac/alerts/{id}"
 	mux.HandleFunc("GET /api/v1/tenants", a.listTenants)
+	mux.HandleFunc("GET /api/v1/module-info", a.moduleInfo)
 	mux.HandleFunc("GET /api/v1/control-plane/tasks", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if a.Tasks == nil {

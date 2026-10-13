@@ -32,6 +32,8 @@ dispatch:
 - `LINKD_JWT_SECRET_KEY`、`LINKD_JWT_USERNAME` 分别覆盖 YAML 中的密钥、签发用户名，用户名默认为 `admin`。
 - 控制面与迁移 Job 要求 JWT 密钥非空、且与 Worker Token 不同；纯 Worker 不需要 JWT 密钥。
 - Console 只在服务端持有密钥和签发 Token；浏览器继续使用 Console 自己的访问认证。
+- Admin 模块发现使用同一公共 Kingeye 内部 JWT 密钥，与 Admin 自己的 CLI Token 密钥无关。
+  [模块基础信息 API](module-info.md) 的 `include_secrets=true` 只供 Admin 服务端读取存储连接，不得转发到浏览器或日志。
 - 旧 `dispatch.api_token`、`LINKD_API_TOKEN`、Helm `auth.apiTokenKey` 已移除。Helm 使用 `auth.jwtSecretKey` 指定 Secret key，默认 `jwt-secret-key`。
 - 升级时同步替换控制面、Console、来源导入 CLI 和 Secret；不支持新旧管理认证混用。无需数据库迁移，配置变更需重启相关进程。
 

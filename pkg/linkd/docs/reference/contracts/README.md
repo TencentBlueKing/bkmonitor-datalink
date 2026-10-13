@@ -13,6 +13,7 @@
 | [alert-close.md](alert-close.md) | 管理 API 主动关闭 Alert、操作身份与部分成功重试 |
 | [task-resume.md](task-resume.md) | 确定性任务失败暂停、代次校验和管理 API 显式恢复 |
 | [tenant-directory.md](tenant-directory.md) | 通过用户管理实时查询全局租户目录，仅管理 JWT 可访问 |
+| [module-info.md](module-info.md) | 模块部署、真实存储查询目标、能力与管理端显式连接发现 |
 | [active-alert-strategy-change-v1.md](active-alert-strategy-change-v1.md) | Redis 策略索引成员变更通知 v1、channel 与消费者补读语义 |
 
 输入 Cleaner、Kafka V1 输出和 KAC Alarm 输出分别维护自己的协议边界。当前实现支持 `standard`、

@@ -36,11 +36,12 @@ const (
 	backendRedis = "redis"
 	backendLocal = "local"
 
-	reasonNone     = "none"
-	reasonNoClient = "no_client"
-	reasonTimeout  = "timeout"
-	reasonClosed   = "closed"
-	reasonError    = "error"
+	reasonNone      = "none"
+	reasonNoClient  = "no_client"
+	reasonTimeout   = "timeout"
+	reasonClosed    = "closed"
+	reasonUnhealthy = "unhealthy"
+	reasonError     = "error"
 
 	modeDisabled  = "disabled"
 	modeLocalOnly = "local_only"
@@ -92,11 +93,12 @@ var trafficLimiterMode = promauto.NewGaugeVec(
 // 标签集固定，装载时预解析成 child。判断发生在每请求每服务的热路径上，
 // 不应反复付 WithLabelValues 的标签哈希与 map 查找开销。
 var (
-	decisionRedis         = trafficLimiterDecisionsTotal.WithLabelValues(backendRedis, reasonNone)
-	decisionLocalNoClient = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonNoClient)
-	decisionLocalTimeout  = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonTimeout)
-	decisionLocalClosed   = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonClosed)
-	decisionLocalError    = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonError)
+	decisionRedis          = trafficLimiterDecisionsTotal.WithLabelValues(backendRedis, reasonNone)
+	decisionLocalNoClient  = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonNoClient)
+	decisionLocalTimeout   = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonTimeout)
+	decisionLocalClosed    = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonClosed)
+	decisionLocalUnhealthy = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonUnhealthy)
+	decisionLocalError     = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonError)
 )
 
 // setLimiterMode 让三个 mode 中恰好一个为 1，其余为 0，便于直接用 == 1 做告警。

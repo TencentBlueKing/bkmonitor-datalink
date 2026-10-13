@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,9 +41,24 @@ const (
 	// 连接池借不到连接时最多等这么久。超时后本次 Allow 报错并降级本地，避免 PreCheck 把请求 goroutine 卡死。
 	defaultRedisPoolTimeout = 100 * time.Millisecond
 
-	// 整次 Lua 调用（含排队、EVAL、等返回）的 ctx 上限。这是用户请求回包前同步等待 Redis 的硬顶。
+	// 单次 Lua 调用（含排队、EVAL、等返回）的 ctx 上限，也用作健康探测 PING 的上限。
 	// 它大于单次 IO 超时，是为了覆盖「借连接 + 写 + 读」整段，而不是把 Dial 500ms 也叠进去。
+	// limit() 对请求内每个服务各调一次 Allow，所以熔断生效前一个请求最多等「服务数 × 该值」；
+	// 熔断后 Allow 不再访问 Redis，请求不再为 Redis 等待。
 	defaultRedisOperationTime = 200 * time.Millisecond
+
+	// 后台健康探测的 PING 间隔。降级期间没有业务请求访问 Redis，恢复只能靠探测判断。
+	defaultRedisProbeInterval = time.Second
+
+	// PING 耗时超过该值算一次坏样本，用来发现「没超时但持续偏慢」的 Redis。
+	// 业务 Allow 只把报错（含超时）算作坏样本，避免短暂毛刺把整个实例切到本地 60s。
+	defaultRedisSlowThreshold = 50 * time.Millisecond
+
+	// 连续坏样本（探测与 Allow 共用计数）达到该次数后熔断，Allow 直接降级本地 GCRA。
+	defaultRedisFailureThreshold = 3
+
+	// 熔断后 PING 需要连续这么久都正常，才切回 Redis 共享额度；期间任何坏样本都重新计时。
+	defaultRedisRecoverDuration = time.Minute
 
 	// 每进程 Redis 连接上限。额度打开后每个启用限流的请求最多占用一条连接直到 Lua 返回；
 	// 池满后新请求走 PoolTimeout，再失败则本地 GCRA。64 与 Collector 常见并发同量级，避免无限建连打满 Redis。
@@ -133,10 +149,16 @@ type distributedGCRA interface {
 	Close() error
 }
 
+var errRedisUnhealthy = errors.New("traffic limiter redis is unhealthy")
+
 type redisGCRA struct {
 	client redis.UniversalClient
 	script *redis.Script
 	key    string
+	health redisHealth
+
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func newRedisGCRA(config RedisConfig) distributedGCRA {
@@ -153,17 +175,23 @@ func newRedisGCRA(config RedisConfig) distributedGCRA {
 		PoolTimeout:  defaultRedisPoolTimeout,
 		PoolSize:     defaultRedisPoolSize,
 	})
-	return &redisGCRA{
+	r := &redisGCRA{
 		client: client,
 		script: redis.NewScript(redisGCRAScript),
 		key:    config.Key,
+		done:   make(chan struct{}),
 	}
+	go r.runProbe()
+	return r
 }
 
 func (r *redisGCRA) Allow(token, service string, cost int64, config Config) (bool, error) {
 	if cost > config.BurstBytes {
 		return false, nil
 	} // 通过gcra语义快速判断，不走lua脚本
+	if r.health.unhealthy.Load() {
+		return false, errRedisUnhealthy
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOperationTime)
 	defer cancel()
 
@@ -176,13 +204,83 @@ func (r *redisGCRA) Allow(token, service string, cost int64, config Config) (boo
 		cost,
 	).Int64()
 	if err != nil {
+		r.health.fail(err)
 		return false, err
 	}
+	r.health.succeed()
 	return result == 1, nil
 }
 
+// Close 可能被重复调用（Reload 关闭旧客户端后 Clean 仍持有同一快照），停止探测只能执行一次。
 func (r *redisGCRA) Close() error {
+	r.closeOnce.Do(func() { close(r.done) })
 	return r.client.Close()
+}
+
+func (r *redisGCRA) runProbe() {
+	ticker := time.NewTicker(defaultRedisProbeInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.done:
+			return
+		case <-ticker.C:
+		}
+		start := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOperationTime)
+		err := r.client.Ping(ctx).Err()
+		cancel()
+		now := time.Now()
+		r.health.probe(now.Sub(start), err, now)
+	}
+}
+
+// redisHealth 是单个 Redis 客户端的熔断状态。新客户端从健康开始：
+// 若从熔断开始，每次 Reload 重建客户端都会白白在本地限流 1 分钟，额度放大为「实例数 × 额度」。
+type redisHealth struct {
+	unhealthy atomic.Bool
+	failures  atomic.Int64
+
+	// healthySince 只由探测 goroutine 读写。
+	healthySince time.Time
+}
+
+func (h *redisHealth) fail(err error) {
+	if h.failures.Add(1) >= defaultRedisFailureThreshold && h.unhealthy.CompareAndSwap(false, true) {
+		logger.Warnf("traffic limiter redis is unhealthy, fallback to local GCRA: %v", err)
+	}
+}
+
+// succeed 在热路径上调用，计数已为 0 时不写，避免并发请求反复争抢同一缓存行。
+func (h *redisHealth) succeed() {
+	if h.failures.Load() != 0 {
+		h.failures.Store(0)
+	}
+}
+
+func (h *redisHealth) probe(latency time.Duration, err error, now time.Time) {
+	if err == nil && latency > defaultRedisSlowThreshold {
+		err = errors.Errorf("redis ping latency %s exceeds %s", latency, defaultRedisSlowThreshold)
+	}
+	if err != nil {
+		h.healthySince = time.Time{}
+		h.fail(err)
+		return
+	}
+	if !h.unhealthy.Load() {
+		h.succeed()
+		return
+	}
+	if h.healthySince.IsZero() {
+		h.healthySince = now
+	}
+	if now.Sub(h.healthySince) < defaultRedisRecoverDuration {
+		return
+	}
+	h.healthySince = time.Time{}
+	h.failures.Store(0)
+	h.unhealthy.Store(false)
+	logger.Infof("traffic limiter redis recovered, back to shared GCRA")
 }
 
 // stateKey 对 Token、服务名和额度做摘要，避免在 Redis 中暴露 Token 或服务名。
@@ -215,6 +313,7 @@ func writeHashString(hash hashWriter, value string) {
 //	no_client → 查配置（redis 段非法，或实例刚 Clean 尚未重建）
 //	closed    → Reload 窗口内用了旧快照的客户端，应极少且短暂，通常无需处理
 //	timeout   → 查 Redis 负载与网络
+//	unhealthy → 熔断中，连续失败或 PING 持续偏慢，查 Redis 延迟、负载与网络
 //	error     → 看日志，Redis < 5 的脚本报错落在这里
 //
 // 已知缺口：连接池等待超时（PoolTimeout）也会落进 error。go-redis v8 把 ErrPoolTimeout
@@ -223,6 +322,8 @@ func fallbackDecision(err error) prometheus.Counter {
 	switch {
 	case errors.Is(err, errNoRedisClient):
 		return decisionLocalNoClient
+	case errors.Is(err, errRedisUnhealthy):
+		return decisionLocalUnhealthy
 	case errors.Is(err, redis.ErrClosed):
 		return decisionLocalClosed
 	case errors.Is(err, context.DeadlineExceeded):

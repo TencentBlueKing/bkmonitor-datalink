@@ -38,6 +38,12 @@ Factory 在任何情况下都不返回错误：Processor 构建失败会让整�
 该信号的全部请求随后被判为 400。限流是保护性功能，配置问题只降级、绝不中断数据通路。
 redis 段非法时保留额度语义但退化为每实例本地 GCRA，与 Redis 运行时故障走同一条路径。
 
+Redis 客户端带一个后台健康探测：每秒 PING 一次，PING 报错、超时或耗时超过 50ms 算坏样本，
+业务 Allow 报错（含超时）也算坏样本；连续 3 个坏样本即熔断，熔断期间 Allow 不访问 Redis、
+直接降级本地 GCRA（decisions 指标记 reason="unhealthy"），避免 Redis 卡住或变慢时
+请求耗时随服务数叠加。PING 连续 1 分钟正常后才切回 Redis 共享额度，期间额度同样放大为
+「实例数 × 额度」。
+
 Redis 侧的 GCRA 使用 Lua 在 TIME 之后写入状态，要求 Redis 5 及以上版本。
 更低版本的脚本会直接报错，限流器会持续降级为每个 Collector 独立的本地 GCRA。
 */

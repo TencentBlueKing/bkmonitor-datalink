@@ -296,6 +296,7 @@ func TestFallbackDecisionClassification(t *testing.T) {
 	}{
 		{name: "客户端缺失", err: errNoRedisClient, want: decisionLocalNoClient},
 		{name: "客户端已关闭", err: redis.ErrClosed, want: decisionLocalClosed},
+		{name: "熔断中", err: errRedisUnhealthy, want: decisionLocalUnhealthy},
 		{name: "ctx 超时", err: context.DeadlineExceeded, want: decisionLocalTimeout},
 		{name: "网络读写超时", err: &net.OpError{Err: timeoutError{}}, want: decisionLocalTimeout},
 		{name: "其余（含 Lua 脚本报错）", err: errors.New("ERR unknown command"), want: decisionLocalError},
@@ -307,6 +308,92 @@ func TestFallbackDecisionClassification(t *testing.T) {
 			assert.Same(t, tt.want, fallbackDecision(tt.err))
 		})
 	}
+}
+
+func TestRedisHealthTripsOnConsecutiveFailures(t *testing.T) {
+	var health redisHealth
+	failure := errors.New("redis unavailable")
+
+	for i := 0; i < defaultRedisFailureThreshold-1; i++ {
+		health.fail(failure)
+	}
+	health.succeed()
+	for i := 0; i < defaultRedisFailureThreshold-1; i++ {
+		health.fail(failure)
+	}
+	assert.False(t, health.unhealthy.Load(), "成功样本会打断连续计数")
+
+	health.fail(failure)
+	assert.True(t, health.unhealthy.Load())
+}
+
+func TestRedisHealthProbeLatencyAndRecovery(t *testing.T) {
+	var health redisHealth
+	now := time.Unix(1700000000, 0)
+	slow := defaultRedisSlowThreshold + time.Millisecond
+
+	for i := 0; i < defaultRedisFailureThreshold; i++ {
+		health.probe(slow, nil, now)
+	}
+	require.True(t, health.unhealthy.Load(), "PING 持续偏慢必须熔断")
+
+	health.probe(time.Millisecond, nil, now)
+	health.probe(time.Millisecond, nil, now.Add(defaultRedisRecoverDuration-time.Second))
+	assert.True(t, health.unhealthy.Load(), "正常时长不足恢复窗口时保持熔断")
+
+	health.probe(slow, nil, now.Add(defaultRedisRecoverDuration))
+	health.probe(time.Millisecond, nil, now.Add(defaultRedisRecoverDuration+time.Second))
+	health.probe(time.Millisecond, nil, now.Add(2*defaultRedisRecoverDuration))
+	assert.True(t, health.unhealthy.Load(), "恢复窗口内出现坏样本必须重新计时")
+
+	health.probe(time.Millisecond, nil, now.Add(2*defaultRedisRecoverDuration+time.Second))
+	assert.False(t, health.unhealthy.Load())
+	assert.Zero(t, health.failures.Load())
+}
+
+// TestRedisGCRAFailsFastWhenRedisHangs 覆盖 Redis 只完成握手、从不回包：
+// 连续失败达到阈值后 Allow 不再等待 Redis。
+func TestRedisGCRAFailsFastWhenRedisHangs(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	var (
+		mu    sync.Mutex
+		conns []net.Conn
+	)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+		}
+	}()
+	defer func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+	}()
+
+	limiter := newRedisGCRA(redisTestConfig(listener.Addr().String())).(*redisGCRA)
+	defer limiter.Close()
+	config := limiterConfig(10, 50)
+
+	for i := 0; i < defaultRedisFailureThreshold; i++ {
+		_, err = limiter.Allow("token", "checkout", 1, config)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, errRedisUnhealthy)
+	}
+
+	start := time.Now()
+	_, err = limiter.Allow("token", "checkout", 1, config)
+	assert.ErrorIs(t, err, errRedisUnhealthy)
+	assert.Less(t, time.Since(start), defaultRedisIOTimeout, "熔断后不得再等待 Redis")
 }
 
 type timeoutError struct{}

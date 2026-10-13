@@ -203,6 +203,14 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	}
 	storageSpan.Set("shared", tg.shared != nil)
 	storageSpan.End(&err)
+	// The caller owns successful graphs; failed builds must release their partial storage.
+	// Register before the build observer so it records failure counts before cleanup.
+	defer func() {
+		if err != nil {
+			tg.Clean(ctx)
+		}
+	}()
+
 	sourceInfoQueryCount, relationEdgeQueryCount, targetInfoQueryCount := 0, 0, 0
 	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil}
 	defer func() {

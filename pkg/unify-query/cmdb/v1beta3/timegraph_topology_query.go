@@ -21,7 +21,22 @@ import (
 )
 
 // QuerySharedTopology 查询一个统一时间网格上的完整局部拓扑。
-func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery) (result cmdb.SharedTopologyResult, err error) {
+func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery) (cmdb.SharedTopologyResult, error) {
+	return m.querySharedTopology(ctx, request, nil)
+}
+
+// QuerySharedTopologySnapshotPlan exports owned dictionaries only in YOLO mode.
+// It preserves the snapshots request format and the existing normalization path.
+func (m *Model) QuerySharedTopologySnapshotPlan(ctx context.Context, request cmdb.SharedTopologyQuery) (cmdb.SharedTopologySnapshotPlanResult, error) {
+	var plan *cmdb.SharedTopologySnapshotPlan
+	result, err := m.querySharedTopology(ctx, request, &plan)
+	if err != nil {
+		return cmdb.SharedTopologySnapshotPlanResult{}, err
+	}
+	return cmdb.SharedTopologySnapshotPlanResult{StartTime: result.StartTime, EndTime: result.EndTime, Step: result.Step, PointCount: result.PointCount, Plan: plan}, nil
+}
+
+func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery, planOut **cmdb.SharedTopologySnapshotPlan) (result cmdb.SharedTopologyResult, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-shared-topology")
 	defer span.End(&err)
 	defer func() { SetTimeGraphLimitTrace(span, err) }()
@@ -32,7 +47,14 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	started := time.Now()
 	validated := false
 	metric.CMDBTopologyInFlightAdd(queryMode, 1)
-	defer func() { observeSharedTopologyResult(ctx, queryMode, started, validated, result, err) }()
+	defer func() {
+		if planOut != nil && *planOut != nil {
+			p := *planOut
+			observeSharedTopologyResult(ctx, queryMode, started, validated, result, err, topologySnapshotCounts{nodes: p.NodeOccurrences, edges: p.EdgeOccurrences, partial: len(p.Partial)})
+		} else {
+			observeSharedTopologyResult(ctx, queryMode, started, validated, result, err)
+		}
+	}()
 	span.Set("query-mode", queryMode)
 	span.Set("space-uid", request.SpaceUID)
 	span.Set("source-type", request.SourceType)
@@ -56,6 +78,12 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, fmt.Errorf("unsupported topology response format %q", request.ResponseFormat)
 	}
 	span.Set("response-format", request.ResponseFormat)
+	if planOut != nil && !yoloMode {
+		return cmdb.SharedTopologyResult{}, fmt.Errorf("snapshot plan requires YOLO mode")
+	}
+	if planOut != nil && request.ResponseFormat == cmdb.CompactTopologyFormat {
+		return cmdb.SharedTopologyResult{}, fmt.Errorf("snapshot plan requires snapshots format")
+	}
 
 	maxHops := request.MaxHops
 	if maxHops == 0 {
@@ -215,6 +243,22 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 			PointCount: len(grid.Timestamps),
 			Compact:    compact,
 		}, nil
+	}
+	if planOut != nil {
+		plan, planErr := graph.findSharedTopologySnapshotPlan(queryCtx, grid, topologyQuery, request.TargetTypes)
+		if planErr != nil {
+			return cmdb.SharedTopologyResult{}, errors.WithMessage(planErr, "export snapshot plan")
+		}
+		*planOut = plan
+		result = cmdb.SharedTopologyResult{StartTime: grid.Timestamps[0], EndTime: grid.Timestamps[len(grid.Timestamps)-1], Step: responseStep, PointCount: len(grid.Timestamps)}
+		span.Set("query-start", result.StartTime)
+		span.Set("query-end", result.EndTime)
+		span.Set("point-count", result.PointCount)
+		span.Set("snapshot-count", len(plan.Timestamps))
+		span.Set("snapshot-node-count", plan.NodeOccurrences)
+		span.Set("snapshot-edge-count", plan.EdgeOccurrences)
+		span.Set("partial-snapshot-count", len(plan.Partial))
+		return result, nil
 	}
 	snapshots, err := graph.findSharedTopologyDTO(queryCtx, grid, topologyQuery)
 	if err != nil {

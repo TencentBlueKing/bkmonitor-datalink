@@ -16,7 +16,7 @@ import (
 )
 
 // observeSharedTopologyResult 统一模型终态，区分校验拒绝、执行失败和不完整响应。
-func observeSharedTopologyResult(ctx context.Context, mode string, started time.Time, validated bool, result cmdb.SharedTopologyResult, err error) {
+func observeSharedTopologyResult(ctx context.Context, mode string, started time.Time, validated bool, result cmdb.SharedTopologyResult, err error, planCounts ...topologySnapshotCounts) {
 	metric.CMDBTopologyInFlightAdd(mode, -1)
 	outcome := metric.CMDBTimeGraphErrorResult(err)
 	if err != nil {
@@ -38,6 +38,9 @@ func observeSharedTopologyResult(ctx context.Context, mode string, started time.
 		}
 		if result.Compact != nil {
 			nodes, edges, partial = result.Compact.NodeOccurrences, result.Compact.EdgeOccurrences, len(result.Compact.Partial)
+		}
+		if len(planCounts) > 0 {
+			nodes, edges, partial = planCounts[0].nodes, planCounts[0].edges, planCounts[0].partial
 		}
 		if partial > 0 {
 			outcome = metric.CMDBRelationResultPartial

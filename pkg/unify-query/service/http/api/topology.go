@@ -225,6 +225,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		querySpan.Set("requested-step", query.Step)
 		item := cmdb.SharedTopologyResponseData{Code: http.StatusOK}
 		var result cmdb.SharedTopologyResult
+		var snapshotPlan *cmdb.SharedTopologySnapshotPlan
 		var queryErr error
 		if rangeQuery {
 			if query.Timestamp != 0 {
@@ -238,7 +239,14 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			queryErr = fmt.Errorf("instant topology query requires timestamp")
 		}
 		if queryErr == nil {
-			result, queryErr = topologyModel.QuerySharedTopology(queryCtx, query)
+			if planner, ok := model.(cmdb.SharedTopologySnapshotPlanner); ok && v1beta3.YoloModeEnabled() && query.ResponseFormat != cmdb.CompactTopologyFormat {
+				var planned cmdb.SharedTopologySnapshotPlanResult
+				planned, queryErr = planner.QuerySharedTopologySnapshotPlan(queryCtx, query)
+				result = cmdb.SharedTopologyResult{StartTime: planned.StartTime, EndTime: planned.EndTime, Step: planned.Step, PointCount: planned.PointCount}
+				snapshotPlan = planned.Plan
+			} else {
+				result, queryErr = topologyModel.QuerySharedTopology(queryCtx, query)
+			}
 		} else {
 			// HTTP 时间模式校验未进入模型，单独记录该子查询，避免遗漏或重复计数。
 			metric.CMDBTopologyObserve(queryCtx, metric.CMDBTopologyScopeQuery, queryMode, metric.CMDBRelationResultRejected, time.Since(queryStarted))
@@ -272,6 +280,14 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			nodeCount, edgeCount, partialCount = result.Compact.NodeOccurrences, result.Compact.EdgeOccurrences, len(result.Compact.Partial)
 			querySpan.Set("node-version-count", len(result.Compact.Nodes))
 			querySpan.Set("edge-version-count", len(result.Compact.Edges))
+		}
+		if snapshotPlan != nil {
+			snapshotCount = len(snapshotPlan.Timestamps)
+			nodeCount = snapshotPlan.NodeOccurrences
+			edgeCount = snapshotPlan.EdgeOccurrences
+			partialCount = len(snapshotPlan.Partial)
+			querySpan.Set("node-version-count", len(snapshotPlan.Nodes))
+			querySpan.Set("edge-version-count", len(snapshotPlan.Edges))
 		}
 		// 批次内结果累计也必须有界，不能用 query_list 倍增单查询预算。
 		item.Message = truncateTopologyErrorMessage(item.Message, topologyErrorMessageMaxBytes)
@@ -308,7 +324,10 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 				}
 				elements += len(snapshot.Nodes) + len(snapshot.Edges)
 			}
-			if encodeErr == nil && query.ResponseFormat != cmdb.CompactTopologyFormat && elements > largeTopologyEncodingElementThreshold {
+			if encodeErr == nil && snapshotPlan != nil {
+				chunks, encodedBytes, encodeErr = marshalTopologySnapshotPlan(queryCtx, item, snapshotPlan)
+				snapshotPlan = nil
+			} else if encodeErr == nil && query.ResponseFormat != cmdb.CompactTopologyFormat && elements > largeTopologyEncodingElementThreshold {
 				// Only this private header copy is consumed. The model contract and
 				// the general encoder remain non-destructive.
 				item.Snapshots = append([]cmdb.SharedTopologySnapshot(nil), item.Snapshots...)

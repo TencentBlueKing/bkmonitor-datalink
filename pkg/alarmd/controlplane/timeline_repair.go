@@ -75,11 +75,17 @@ const (
 	// schema version. A build that reads them wrote them, and rewriting them
 	// here would destroy what that build runs by; they are left alone.
 	TimelineRepairOtherSchema TimelineRepairOutcome = "other_schema"
+	// TimelineRepairReopened: the key was not there at all, and the timeline
+	// was opened again, as a cutover opens a missing key - under the
+	// publication the activation already runs, which nothing else would
+	// have done before the next publication.
+	TimelineRepairReopened TimelineRepairOutcome = "reopened"
 )
 
 // TimelineRepairOutcomes is the closed list, for the counter's series.
 var TimelineRepairOutcomes = []TimelineRepairOutcome{
 	TimelineRepairRewritten, TimelineRepairDecodesAgain, TimelineRepairConflict, TimelineRepairFailed, TimelineRepairOtherSchema,
+	TimelineRepairReopened,
 }
 
 // timelineRepairCounts is every outcome this process reached, read at scrape
@@ -290,9 +296,17 @@ func (repository *RedisCatalogRepository) repairedQueryGroupTimeline(
 
 // RepairUnreadableTimelines rewrites, under the current publication, the
 // timelines of the named Query Groups that the Leader cannot decode either,
-// and reports whether it wrote. It is the half of the repair a reconcile
-// with no new publication runs: nothing else would read these timelines
-// again before the next publication, however long that is.
+// opens again the ones whose key it finds absent, and reports whether it
+// wrote. It is the half of the repair a reconcile with no new publication
+// runs: nothing else would read these timelines again before the next
+// publication, however long that is.
+//
+// A missing key is opened again exactly as the cutover opens one: one
+// Segment from the boundary on the content and records the Query Group runs,
+// marked as an absent-key reopen, written only while the key is still absent
+// - a timeline written back in between wins, and the write is counted a
+// conflict. A key Redis answers with an error is neither unreadable nor
+// absent, and fails the round as any read does.
 //
 // Only Query Groups the current activation runs are looked at: its active
 // set, which never holds a draining one - a retirement takes a Query Group
@@ -329,18 +343,17 @@ func (repository *RedisCatalogRepository) RepairUnreadableTimelines(
 	cutover.contentSource = "timeline_repair"
 	updates := make([]scheduleTimelineUpdate, 0, len(candidates))
 	rewritten := make(map[execution.QueryGroupIdentity]struct{}, len(candidates))
+	reopened := 0
 	for _, queryGroup := range candidates {
 		_, raw, readErr := repository.readScheduleTimeline(ctx, queryGroup)
 		cutover.read++
 		var unreadable *DeterministicScheduleError
+		absent := errors.Is(readErr, ErrScheduleTimelineAbsent)
 		switch {
 		case readErr == nil:
 			repository.timelineRepairs.add(TimelineRepairDecodesAgain, 1)
 			continue
-		case errors.Is(readErr, ErrScheduleUnavailable):
-			// Gone rather than unreadable: not what was named, and the
-			// cutover opens a missing key again on its own.
-			continue
+		case absent:
 		case !errors.As(readErr, &unreadable):
 			return false, readErr
 		case writtenByAnotherSchema(raw):
@@ -357,12 +370,17 @@ func (repository *RedisCatalogRepository) RepairUnreadableTimelines(
 		if _, ok := published.groups[queryGroup]; !ok {
 			continue
 		}
+		// The bytes that did not decode fence a rewrite; a missing key is
+		// written only while it is still absent, which no expectation says.
+		mark, expected := execution.SegmentRepair{Kind: execution.SegmentRepairUnreadable, AtUnixMilli: int64(boundary) * 1000}, raw
+		if absent {
+			mark, expected = execution.SegmentRepair{Kind: execution.SegmentRepairAbsent, AtUnixMilli: int64(boundary) * 1000}, nil
+		}
 		opened, buildErr := func() (openedQueryGroupTimeline, error) {
 			if err := repository.materialize(ctx, published, []execution.QueryGroupIdentity{queryGroup}); err != nil {
 				return openedQueryGroupTimeline{}, err
 			}
-			return repository.repairedQueryGroupTimeline(ctx, published, previous, published.groups[queryGroup], boundary, raw,
-				execution.SegmentRepair{Kind: execution.SegmentRepairUnreadable, AtUnixMilli: int64(boundary) * 1000})
+			return repository.repairedQueryGroupTimeline(ctx, published, previous, published.groups[queryGroup], boundary, expected, mark)
 		}()
 		if buildErr != nil {
 			repository.timelineRepairs.add(TimelineRepairFailed, 1)
@@ -371,7 +389,12 @@ func (repository *RedisCatalogRepository) RepairUnreadableTimelines(
 		}
 		updates = append(updates, opened.update)
 		rewritten[queryGroup] = struct{}{}
-		cutover.decided(cutoverRepaired)
+		if absent {
+			reopened++
+			cutover.decided(cutoverReopened)
+		} else {
+			cutover.decided(cutoverRepaired)
+		}
 	}
 	if len(updates) == 0 {
 		return false, nil
@@ -404,7 +427,8 @@ func (repository *RedisCatalogRepository) RepairUnreadableTimelines(
 	if persistErr != nil {
 		return false, persistErr
 	}
-	repository.timelineRepairs.add(TimelineRepairRewritten, len(updates))
+	repository.timelineRepairs.add(TimelineRepairRewritten, len(updates)-reopened)
+	repository.timelineRepairs.add(TimelineRepairReopened, reopened)
 	if len(previous.SkippedTimelines) > 0 {
 		repository.skippedTimelines.stillUnread(previous.SkippedTimelines, rewritten)
 	}

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MemoryLimitEnvironment carries the container's memory limit. The deployment
@@ -38,14 +39,9 @@ const memorySourceFallback = "fallback_default"
 // What they do not yet carry is measured scaling to other container shapes;
 // that calibration changes the formulas below and no interface.
 const (
-	retainedMemoryDivisor    = 4
-	bytesPerSeries           = 4 << 10
-	bytesPerMutation         = 32 << 10
-	queryPermitsPerCPU       = 4
-	recoveryPermitDivisor    = 4
-	queueDepthPerQueryPermit = 32
-
-	activeExecutionsPerQueryPermit = 4
+	retainedMemoryDivisor = 4
+	bytesPerSeries        = 4 << 10
+	bytesPerMutation      = 32 << 10
 
 	// The Go runtime's own budgets are derived from the same container limit.
 	// The soft memory limit takes half of it; the collector target crosses over
@@ -57,6 +53,11 @@ const (
 	// The smallest Schedule timeline that can exist - one Segment carrying one
 	// Plan - is charged over 2 KiB, so no real entry is smaller than this.
 	controlTimelineCacheMinEntryBytes = 1 << 10
+
+	compileCacheMemoryDivisor = 32
+	// Every compile cache entry is charged a 64-byte header before anything
+	// it holds (strategy.estimateCompileResultBytes), so none is smaller.
+	compileCacheMinEntryBytes = 64
 
 	// Only local runs and unit tests reach this: a container states its limit
 	// through the environment, and a host cgroup states it in the files below.
@@ -125,171 +126,188 @@ func detectMemoryLimit() (uint64, string) {
 	return fallbackMemoryLimitBytes, memorySourceFallback
 }
 
-// DerivedScheduler is the query admission and queueing shape for one container.
+// DerivedScheduler is the query admission and queueing shape for one
+// container: the bounds in force, and the ceilings the container's memory
+// sets on them.
 type DerivedScheduler struct {
 	ActiveExecutions      int
 	ProcessQueryPermits   int
 	RecoveryQueryPermits  int
 	ReadyQueueCapacity    int
 	RecoveryQueueCapacity int
+	// ActiveExecutionCeiling is the most executions this container's memory
+	// can hold parked at once, and the bound none of the others exceeds: the
+	// dispatcher runs this many execution slots and the Redis pool covers
+	// them. It does not move while the process runs.
+	ActiveExecutionCeiling int
 }
 
-// DeriveScheduler sizes admission from the CPU budget. Queries spend most of
-// their time waiting on the downstream, so the permit count is a multiple of
-// the budget rather than equal to it; the queues only hold references, so they
-// are sized to keep a full permit set fed rather than to bound memory.
+// The smallest a delivered series and one of its records can be. Every
+// series carries its dimension identity, a 64-character digest, and every
+// record at least a millisecond timestamp, 13 digits. They are floors of the
+// encoding, not estimates: a count bound at the bytes over one of them can
+// only bind after the byte bound would have, unless the bytes were
+// miscounted.
+const (
+	MinimumSeriesBytes = 64
+	MinimumRecordBytes = 13
+)
+
+// The bytes one parked execution holds outside the retained pool: its decoded
+// Schedule, plan set and request structures. Measured when the executions were
+// unbounded - 452 parked on a 32-wide permit gate swung the heap between
+// 170 MiB and 1.58 GiB, about 3 MiB each - and to be measured again from the
+// in-place wait's retention reading against the heap at peak.
+const bytesPerParkedExecution = 3 << 20
+
+// Until the first demand is measured, a query is taken to hold its permit for
+// half a second - three times the 0.153 s a production fleet measured - and an
+// execution to run for a second.
+const (
+	coldStartHold      = 500 * time.Millisecond
+	coldStartExecution = time.Second
+)
+
+// DeriveScheduler is the shape a container starts with: every bound at the
+// ceiling its memory sets, until the work it owns is known and
+// DeriveSchedulerShape sizes the bounds from it.
 //
-// ActiveExecutions bounds how many Runner invocations the dispatcher may have
-// outstanding at once. It was previously unbounded, and production showed what
-// that buys: a Worker owning 461 Query Groups peaked at 452 outstanding
-// invocations, of which the query permits below could admit 32. The other 420
-// were fully prepared executions - decoded Schedule, plan set, request
-// structures - parked on the permit semaphore. Over a minute those queries
-// held permits for 181 seconds and waited for them for 380 seconds, so the
-// unbounded fanout was not producing query throughput. It was producing a
-// heap that swung between 170 MiB and 1.58 GiB, and 278 objects deep on a
-// 32-wide gate.
+// CPU sizes none of them. The permits once came from CPU times four, the
+// executions from four per permit and the queues from thirty-two per permit,
+// and the readings said each was the wrong quantity: a container at 16% of its
+// CPU had 56% of its queries waiting for a permit, the execution slots were
+// full while permits sat free, and of 128 slots 77.5 were inside a Redis round
+// trip. A query permit is held while the query service answers and an
+// execution slot while Redis and the query service answer; neither is CPU
+// work. What a held slot costs this process is memory, so memory sets the
+// ceiling, and what it costs the query service is concurrency, so the work's
+// own rate sets the value under it.
 //
-// The bound has to leave the batch able to finish inside its window. A Slot
-// becomes runnable at its evaluation time plus the ready delay and must
-// complete by its completion deadline, which leaves 30 seconds. Measured over
-// that window, one Worker's batch is 1,207 execute-seconds, of which 368 come
-// from the executions that run longer than 15 seconds. Those do not belong in
-// the batch arithmetic: at 11.8 per minute and about 39 seconds each they hold
-// roughly 7.6 slots continuously, so they are resident occupancy the batch
-// never gets back. The remaining 839 execute-seconds have to fit N slots
-// alongside them, and list scheduling bounds the makespan by the work divided
-// over the slots plus the longest job still in the batch:
-//
-//	839 / (N - 7.6) <= 30 - 15  =>  N >= 63.5
-//
-// Charging the whole 1,207 against the same 15-second longest job instead
-// gives N >= 80.5, which is a cross-check rather than the derivation: it
-// double-counts the resident tail. Neither figure can be read off the actual
-// longest execution, because that is 60 seconds and already exceeds the whole
-// 30-second window - a completion-deadline fault that predates any bound here
-// and that no admission limit can repair.
-//
-// Four per query permit puts this container at 128, comfortably above the 64
-// the measurement demands and 3.2 times the permit budget it has to keep fed,
-// while cutting the parked pile-up from a measured 452 to 128. It also stays
-// far below ReadyQueueCapacity, which is 32 per permit, so the queue is never
-// the binding side of the pair.
-//
-// The premise above no longer describes production. Every figure in it was
-// measured on a Worker owning 461 Query Groups; on 2026-09-14 a Worker owns
-// 1,027 to 1,048, because a Catalog that had been failing to recompile for
-// days was repaired and the fleet went from 979 Query Groups to 2,075 in one
-// step. The derivation was not re-run, so the 128 here is a bound sized for
-// less than half the load it now gates. Anyone changing this number should
-// start from that, not from the arithmetic above.
-//
-// Measured at the doubled load, on both replicas, over a settled window of
-// 1,113 seconds: ActiveExecutions peaks at 127 of 128. It does so in 17 of
-// 96 samples, and in 11 of those 17 the query permits were NOT exhausted -
-// 9 to 29 of the 32 sat free - while ready runners queued behind the bound,
-// up to 798 of them. The clearest single reading is 126 outstanding with 3
-// permits held and 798 runners waiting.
-//
-// So saturating this bound is not the same event as saturating the permit
-// budget, and the two do not imply each other. A dispatch slot is held for
-// the whole of RunOne; a query permit is held only across the query. Anything
-// an execution does outside that - the readiness sleep before the permit is
-// acquired, the turn-away that returns before one is ever asked for, whatever
-// follows its release - occupies a slot while holding nothing. Both of the
-// people who reasoned about this in review reached the wrong bound first, in
-// opposite directions, which is why it is written here rather than left to be
-// re-derived.
-//
-// Which of those actually holds the slots is a separate question from whether
-// they can, and it was answered by looking rather than by reasoning: a
-// goroutine profile taken while the bound was saturated, against one taken
-// while it was not. Of 128 slots held, 86 were inside a Redis round trip, 27
-// in the query, 4 in the readiness sleep and 3 waiting for a permit. The
-// readiness sleep is the idle shape, not the busy one - it held 28 of 28 slots
-// in the unsaturated profile and 4 of 128 in the saturated one - and the
-// turn-aways cost at most 71 ms each, which is about one slot's worth across
-// the whole fleet. Both were proposed as the slot holder before the profile
-// was taken, from counters, and both were wrong. The two profiles are single
-// instants on one replica and one generation, so read them for direction and
-// not as a distribution; the round trip counts behind them are a distribution,
-// and they say about 28 Redis round trips per execution at roughly 6 ms each.
-//
-// The consequence for anyone widening this bound: the slots are not full of
-// work waiting on the permit gate below, so widening the gate above it moves
-// nothing. Sizing here is downstream of how many Redis round trips one
-// execution takes.
-//
-// A later run on a different generation put call sites on that. Sixty goroutine
-// profiles at a fixed cadence, split by how full the bound was at the moment
-// each was taken, give this at saturation, per profile, of 128 slots:
-//
-//	25.0  waiting on this execution's own queries to return
-//	23.5  inside one of those queries
-//	21.5  reading the activation header
-//	14.0  probing the activation's length
-//	13.5  waiting for a query permit
-//	11.5  loading state          10.0  checking an ownership fence
-//	 8.0  reading a control key   5.5  writing state
-//
-// Redis is 77.5 of the 128. The two activation reads are 35.5 of that, and they
-// were the same fact fetched twice; they are one round trip now. What remains
-// is not reducible by merging: the header is read live once per operation by an
-// invariant, and the rest are single round trips already.
-//
-// The resource readings taken in the same window: CPU 1.28 of 8 cores, no
-// meaningful cgroup throttling, zero connection pool timeouts, heap under a
-// third of the container. So this bound is derived from CPU while what holds
-// its slots is network wait, and the two have no relation. That is the shape of
-// the sizing problem, not an argument for a particular number: raising the
-// bound raises how many goroutines may be blocked on Redis at once, which is
-// safe for CPU and not obviously safe for the heap each parked execution holds.
-// Deriving it from the right quantity needs the per-call-site occupancy above
-// as a metric rather than as a profile somebody took by hand.
-//
-// What the bound has not yet cost, measured in the same window: mean permit
-// wait 72 ms, p99 under a second, not one wait above five seconds; zero
-// admission and zero budget query failures; and a completion rate inside the
-// saturated samples, 18.3/s, that is indistinguishable from the rate outside
-// them, 18.8/s. A bound that is reached without slowing anything down is
-// still just a bound.
-//
-// That is the criterion for raising it, and it has to be read in both
-// directions: not "these three are zero so there is nothing wrong", but "any
-// one of them turning non-zero means the bound has begun taking throughput,
-// and that is when raising it is worth discussing". Until then, raising it
-// buys more executions parked on the same permits, against a heap already
-// running at two thirds of GOMEMLIMIT.
-//
-// As written that criterion fires forever after a single event, because all
-// three are cumulative counters and a cumulative counter has no window. It has
-// since read non-zero - nine admission timeouts on one replica - while a 2,504
-// pod-second settled window on the same deployment saw none of them advance at
-// all. Nine events in a process lifetime and nine events a minute are the same
-// reading on a lifetime counter, and only one of them is the bound taking
-// throughput. So the criterion is a rate over a window that excludes the first
-// few minutes after start, not a comparison against zero.
-//
-// The quantity that does say something today is on the same metric and is not
-// a failure at all: worker_query_admission_total{result="started"} counts
-// acquisitions that found no free permit and had to queue. Over that settled
-// window it ran at 10.3 a second against 18.3 successful normal admissions, so
-// 56% of queries waited for a permit - with the container at 16% of its CPU,
-// and a mean wait of 72 ms. Waiting is not failing and the permit budget is
-// there to bound what this process asks of the downstream rather than what it
-// asks of itself, so that number is a question for whoever owns the
-// downstream's capacity, not an argument for changing this table.
+// The ceiling is the memory the runtime may use beyond the retained pool -
+// the soft memory limit less the retained bytes - over what one parked
+// execution holds.
 func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
-	cpu := max(inputs.CPUBudget, 1)
-	permits := cpu * queryPermitsPerCPU
+	ceiling := activeExecutionCeiling(inputs)
+	queries := max(ceiling/startQueryShareOfCeiling, 3)
+	recovery := max(queries/recoveryShareOfQueries, 1)
+	permits := queries - recovery
 	queue := permits * queueDepthPerQueryPermit
 	return DerivedScheduler{
-		ActiveExecutions:      min(permits*activeExecutionsPerQueryPermit, queue),
-		ProcessQueryPermits:   permits,
-		RecoveryQueryPermits:  max(permits/recoveryPermitDivisor, 1),
-		ReadyQueueCapacity:    queue,
-		RecoveryQueueCapacity: queue,
+		ActiveExecutions:       ceiling,
+		ProcessQueryPermits:    permits,
+		RecoveryQueryPermits:   recovery,
+		ReadyQueueCapacity:     queue,
+		RecoveryQueueCapacity:  queue,
+		ActiveExecutionCeiling: ceiling,
 	}
+}
+
+func activeExecutionCeiling(inputs CapacityInputs) int {
+	runtimeBytes := inputs.MemoryLimitBytes / goMemoryLimitDivisor
+	retained := inputs.MemoryLimitBytes / retainedMemoryDivisor
+	if runtimeBytes <= retained {
+		return minimumActiveExecutions
+	}
+	return int(min(max((runtimeBytes-retained)/bytesPerParkedExecution, minimumActiveExecutions), uint64(math.MaxInt32)))
+}
+
+// The smallest shape that can run: one recovery permit, one process permit
+// above it, an execution for each and one more.
+const minimumActiveExecutions = 4
+
+// Until the first derivation half the execution slots may hold a query - a
+// profile of full slots found about a third in one - a quarter of those are
+// recovery permits, and each permit gets thirty-two queue places. All three
+// are start values only: the derivation replaces them with the measured
+// demand.
+const (
+	startQueryShareOfCeiling = 2
+	recoveryShareOfQueries   = 4
+	queueDepthPerQueryPermit = 32
+)
+
+// SchedulerDemand is the work a process owns and how fast it is served, the
+// inputs DeriveSchedulerShape sizes the bounds from.
+type SchedulerDemand struct {
+	// PeakQueriesPerSecond is the most normal queries this process's owned
+	// Query Groups make ready in one second.
+	PeakQueriesPerSecond float64
+	// ReplayQueriesPerSecond is the rate of queries replays and retries ask
+	// a recovery permit for.
+	ReplayQueriesPerSecond float64
+	// PeakSlotsPerSecond is the most Slots made ready in one second. It is
+	// reported, not sized from: the slots are the memory ceiling.
+	PeakSlotsPerSecond float64
+	// Hold is how long a query holds its permit when the query service is
+	// not under pressure (the lowest hourly median); zero before any.
+	Hold time.Duration
+	// Execution is how long a Slot's execution runs, its Redis round trips
+	// included; zero before any. Reported, not sized from.
+	Execution time.Duration
+	// OwnedQueryGroups is how many Query Groups the process owns.
+	OwnedQueryGroups int
+	// MaxQueuedItemsPerQG is how many entries one Query Group may have queued.
+	MaxQueuedItemsPerQG int
+}
+
+// demandHeadroom is how far above the demand's own concurrency a bound sits.
+// At the demand's rate times its hold a bound is fully used and the queue
+// behind it is unbounded; at twice that it is half used, and a multi-server
+// queue at half load waits less than one service time.
+const demandHeadroom = 2
+
+// DeriveSchedulerShape sizes the bounds from the work, given the shape in
+// force (previous) and the permits held now (held).
+//
+//   - Execution slots stay at the container's ceiling. They bound how many
+//     executions are parked in memory at once, which is what the ceiling
+//     measures; an execution slot is a goroutine waiting on Redis or the query
+//     service. Sized from demand they hid the demand: fewer slots ran fewer
+//     Slots, which asked for fewer permits, which read as less demand - a
+//     bound whose input its own output gated, stuck at its floor on a
+//     production deployment within a minute of starting.
+//   - Process permits: peak queries a second times the hold, twice over. The
+//     queries are counted where they ask for a permit, before the permit
+//     budget gates them, and with the slots at the ceiling nothing upstream
+//     gates them either.
+//   - Recovery permits: replay queries a second times the hold, at least one.
+//   - Neither comes down by more than half in one derivation, nor below what
+//     is held now: a minute that measured little does not take a full budget
+//     to its floor, and lowering never takes back what is running.
+//   - Queues: every owned Query Group queued as deep as one may be.
+//
+// The hold is the lowest hourly median, not the latest: a hold that followed
+// the query service as it slowed would raise the budget and put more queries
+// at once on a service that is already slow.
+func DeriveSchedulerShape(ceiling DerivedScheduler, demand SchedulerDemand, previous DerivedScheduler, held int) DerivedScheduler {
+	hold := demand.Hold
+	if hold <= 0 {
+		hold = coldStartHold
+	}
+	top := max(ceiling.ActiveExecutionCeiling, minimumActiveExecutions)
+	gradual := func(derived, before int) int { return max(derived, before/2, held) }
+	// Normal rounds first: recovery permits stay below the process permits,
+	// as the coordinator requires, and the two together under the slots.
+	permits := min(max(gradual(concurrency(demand.PeakQueriesPerSecond, hold), previous.ProcessQueryPermits), 2), top-2)
+	recovery := min(max(concurrency(demand.ReplayQueriesPerSecond, hold), previous.RecoveryQueryPermits/2, 1), permits-1, top-1-permits)
+	queued := max(demand.MaxQueuedItemsPerQG, 1)
+	queue := max(demand.OwnedQueryGroups, 1)*queued + 1
+	return DerivedScheduler{
+		ActiveExecutions:       top,
+		ProcessQueryPermits:    permits,
+		RecoveryQueryPermits:   recovery,
+		ReadyQueueCapacity:     queue,
+		RecoveryQueueCapacity:  queue,
+		ActiveExecutionCeiling: top,
+	}
+}
+
+// concurrency is a rate times a hold, times the headroom, rounded up.
+func concurrency(perSecond float64, hold time.Duration) int {
+	if perSecond <= 0 {
+		return 0
+	}
+	return int(math.Min(math.Ceil(perSecond*hold.Seconds()*demandHeadroom), math.MaxInt32))
 }
 
 // DerivedGoRuntime is the collector's budget for one container.
@@ -403,6 +421,42 @@ func DeriveControlTimelineCache(inputs CapacityInputs) DerivedControlTimelineCac
 	}
 }
 
+// DerivedCompileCache bounds the Plan compile cache for one container.
+type DerivedCompileCache struct {
+	MaxEntries int
+	MaxBytes   int
+}
+
+// DeriveCompileCache sizes the Plan compile cache from the memory limit. The
+// cache holds one compiled Plan per Plan the process compiles: on a Worker the
+// Plans of the Query Groups it owns, each Slot; on the leader every Plan of
+// the deployment, on every catalog build. That second access is a cycle over
+// the whole set, and a least-recently-used cache that is smaller than a cycle
+// misses on every access, so the bound is a cliff rather than a slope: the
+// written 4096 entries and 64 MiB it replaces were fine at the 2,930 Plans of a
+// production deployment and would have recompiled every Plan on every build one deployment
+// size later, with nothing reporting it.
+//
+// One thirty-second of the container holds that cycle many times over: the
+// leader's compiled Plans measured 35 MB of live heap for 2,930 Plans, about
+// 12 KiB each, so 8 GiB holds some twenty thousand. It is a ceiling, not a
+// reservation - the cache only grows to the Plans the process compiles.
+// Floored at one maximum compiled Plan, which the cache must always admit.
+//
+// The entry bound comes from the same budget, as for the timeline cache: how
+// many entries it could hold if every one were the smallest that can exist,
+// so it never binds before the bytes do.
+func DeriveCompileCache(inputs CapacityInputs, maxCompiledPlanBytes int) DerivedCompileCache {
+	budget := max(inputs.MemoryLimitBytes/compileCacheMemoryDivisor, uint64(max(maxCompiledPlanBytes, compileCacheMinEntryBytes)))
+	if budget > uint64(math.MaxInt) {
+		budget = uint64(math.MaxInt)
+	}
+	return DerivedCompileCache{
+		MaxEntries: max(int(budget/compileCacheMinEntryBytes), 1),
+		MaxBytes:   int(budget),
+	}
+}
+
 // DeriveCoordinator sizes the process budgets from the memory limit. Retained
 // bytes take a quarter of it, leaving the rest for the Go heap's own overhead,
 // non-retained allocation and collection headroom, and they are the working
@@ -435,12 +489,20 @@ func DeriveControlTimelineCache(inputs CapacityInputs) DerivedControlTimelineCac
 // single batch's worth of mutations cannot complete the smallest Slot the
 // chunked apply is built around, so a very small container runs with less
 // headroom rather than with a budget no apply can use.
+//
+// The series count is not a budget. It was the retained bytes over 4 KiB, a
+// guess at a series' size, and was checked before the bytes: a Slot of light
+// series was turned away by count while most of its bytes were free, and a
+// container under 8 GiB met the count first at a half-million-series target.
+// The bytes govern. What is left of the count is a runaway guardrail at the
+// smallest size a series can have, so it binds only where the byte accounting
+// itself has gone wrong.
 func DeriveCoordinator(inputs CapacityInputs, storeItemsPerBatch, chunkedApplyBudget uint64) PhaseTwoCoordinatorConfig {
 	retained := max(inputs.MemoryLimitBytes/retainedMemoryDivisor, uint64(bytesPerMutation))
 	guardrail := max(chunkedApplyBudget, storeItemsPerBatch, 1)
 	return PhaseTwoCoordinatorConfig{
 		MaxRetainedBytes:  retained,
-		MaxSeries:         max(retained/bytesPerSeries, 1),
+		MaxSeries:         max(retained/MinimumSeriesBytes, 1),
 		MaxStateMutations: guardrail,
 		MaxGapMutations:   guardrail,
 		MaxEvents:         guardrail,

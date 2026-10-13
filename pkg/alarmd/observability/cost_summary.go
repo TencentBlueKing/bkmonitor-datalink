@@ -87,6 +87,26 @@ func (due costDue) dueIn(start, end int64) bool {
 	return first+offset <= end
 }
 
+// straddling is the latest Slot of the schedule whose completion fell in
+// [start, end] although the Slot began before start: one dueIn does not see,
+// since its whole time is not inside the window. It is how a schedule whose
+// period is longer than the window gets its Slots judged at all.
+func (due costDue) straddling(start, end int64) (int64, bool) {
+	if due.interval <= 0 {
+		return 0, false
+	}
+	offset := due.offset
+	if offset <= 0 {
+		offset = due.interval
+	}
+	last := end - offset - due.alignment
+	if last < 0 {
+		return 0, false
+	}
+	slot := due.alignment + last/due.interval*due.interval
+	return slot, slot < start && slot+offset >= start
+}
+
 func costDueOf(schedule CostSchedule) costDue {
 	return costDue{interval: schedule.IntervalSeconds, alignment: schedule.AlignmentSeconds, offset: schedule.CompletionOffsetSeconds}
 }
@@ -284,6 +304,54 @@ type costWindows struct {
 	epoch    int64
 	current  CostScalars
 	previous CostScalars
+	// slotTime is the evaluation time of the latest Slot an observation of
+	// this object named, and slot what was observed of that Slot alone;
+	// priorTime and prior are the same for the Slot before it. They do not
+	// rotate with the windows: a Plan whose period is longer than the two
+	// windows -- an hourly one, read in windows of minutes -- is judged by a
+	// Slot once that Slot's completion falls in the window, long after the
+	// Slot's own observations rotated out (see costDue.straddling).
+	//
+	// Two, because the next Slot begins while the window that judges the
+	// one before is still open: an hourly Slot completes at the next one's
+	// evaluation time, and that one runs within seconds. With a period
+	// longer than the window no more than one newer Slot can begin while a
+	// Slot is judged, so two records always hold the Slot being judged. A
+	// record answers only for the Slot it names.
+	slotTime  int64
+	slot      CostScalars
+	priorTime int64
+	prior     CostScalars
+}
+
+// slotRecord is what was observed of the named Slot, and whether a record
+// names it.
+func (w costWindows) slotRecord(slot int64) (CostScalars, bool) {
+	switch slot {
+	case w.slotTime:
+		return w.slot, w.slotTime != 0
+	case w.priorTime:
+		return w.prior, w.priorTime != 0
+	}
+	return CostScalars{}, false
+}
+
+// observeSlot adds o to the record of the Slot it names. A newer Slot moves
+// the latest record to the prior one and starts a new latest; an observation
+// of the prior Slot still lands in its record; one of an older Slot is
+// dropped.
+func (w *costWindows) observeSlot(o Observation, trace TraceFields, now time.Time) {
+	switch at := trace.EvaluationTime; {
+	case at <= 0:
+	case at > w.slotTime:
+		w.priorTime, w.prior = w.slotTime, w.slot
+		w.slotTime, w.slot = at, CostScalars{}
+		addCost(&w.slot, o, trace, now)
+	case at == w.slotTime:
+		addCost(&w.slot, o, trace, now)
+	case at == w.priorTime:
+		addCost(&w.prior, o, trace, now)
+	}
 }
 
 // rotate brings the windows to epoch. An epoch older than the one they hold
@@ -350,6 +418,19 @@ func (g *costGroupState) dueIn(start, end int64) bool {
 		}
 	}
 	return false
+}
+
+// straddling is the latest Slot of any of the group's schedules that
+// straddles the window; see costDue.straddling.
+func (g *costGroupState) straddling(start, end int64) (int64, bool) {
+	var latest int64
+	found := false
+	for _, due := range g.due {
+		if slot, ok := due.straddling(start, end); ok && (!found || slot > latest) {
+			latest, found = slot, true
+		}
+	}
+	return latest, found
 }
 
 // costScope is one reconciliation's roster. It is stored whole and never
@@ -946,10 +1027,12 @@ func (c *CostSummary) Observe(ctx context.Context, o Observation) {
 	defer account.mu.Unlock()
 	account.windows.rotate(epoch)
 	addCost(&account.windows.current, o, trace, now)
+	account.windows.observeSlot(o, trace, now)
 	if o.Stage == StageEvaluationCompleted {
 		if p := g.plans[o.EvaluationOwner]; o.EvaluationOwner.valid() && p != nil {
 			p.windows.rotate(epoch)
 			addCost(&p.windows.current, o, trace, now)
+			p.windows.observeSlot(o, trace, now)
 		} else {
 			account.windows.current.UnattributedEvaluations++
 		}
@@ -1278,6 +1361,14 @@ func (c *CostSummary) Publish(now time.Time) {
 					}
 					misses = keepDueMiss(misses, costDueMissOf(entry.group, nil, w, reason))
 				}
+			} else if slot, ok := entry.group.straddling(dueStart, dueEnd); ok {
+				// A Slot longer than the window, judged by the record of the
+				// latest Slot the group was observed at.
+				snapshot.Coverage.DueGroups++
+				if _, recorded := w.slotRecord(slot); !recorded {
+					snapshot.Coverage.UnobservedDueGroups++
+					misses = keepDueMiss(misses, costDueMissOf(entry.group, nil, w, costMissNoRecord))
+				}
 			}
 			if entry.group.since.After(snapshot.WindowStart) {
 				snapshot.Coverage.PartialWindowGroups++
@@ -1296,20 +1387,35 @@ func (c *CostSummary) Publish(now time.Time) {
 			if observed {
 				snapshot.Coverage.ObservedPlans++
 			}
+			unevaluated := func(groupWindow costWindows) {
+				if outcome, accounted := costUnevaluated(groupWindow); accounted {
+					for i := range snapshot.Coverage.UnevaluatedDuePlans {
+						if snapshot.Coverage.UnevaluatedDuePlans[i].Outcome == outcome {
+							snapshot.Coverage.UnevaluatedDuePlans[i].Plans++
+						}
+					}
+				} else {
+					snapshot.Coverage.UnobservedDuePlans++
+					misses = keepDueMiss(misses, costDueMissOf(entry.group, entry.plan, groupWindow, outcome))
+				}
+			}
 			if entry.plan.due.dueIn(dueStart, dueEnd) {
 				snapshot.Coverage.DuePlans++
 				if !observed {
-					groupWindow := groupWindows[entry.group]
-					if outcome, accounted := costUnevaluated(groupWindow); accounted {
-						for i := range snapshot.Coverage.UnevaluatedDuePlans {
-							if snapshot.Coverage.UnevaluatedDuePlans[i].Outcome == outcome {
-								snapshot.Coverage.UnevaluatedDuePlans[i].Plans++
-							}
-						}
-					} else {
-						snapshot.Coverage.UnobservedDuePlans++
-						misses = keepDueMiss(misses, costDueMissOf(entry.group, entry.plan, groupWindow, outcome))
+					unevaluated(groupWindows[entry.group])
+				}
+			} else if slot, ok := entry.plan.due.straddling(dueStart, dueEnd); ok {
+				// A Slot longer than the window: judged by the Plan's record of
+				// that very Slot, or, when it has none, by its group's record of
+				// it, read as costUnevaluated reads a window. A record of an
+				// older Slot answers for nothing here.
+				snapshot.Coverage.DuePlans++
+				if record, recorded := w.slotRecord(slot); !recorded || record.Evaluations == 0 {
+					var groupSlot costWindows
+					if record, recorded := groupWindows[entry.group].slotRecord(slot); recorded {
+						groupSlot.current = record
 					}
+					unevaluated(groupSlot)
 				}
 			}
 			if entry.plan.since.After(snapshot.WindowStart) {

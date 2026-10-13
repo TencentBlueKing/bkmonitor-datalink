@@ -75,6 +75,7 @@ func buildSeriesAdmission(
 		RefreshInterval: cmdbIndexRefreshInterval,
 		MaxAge:          cmdbIndexStalenessBound,
 		PublishedMaxAge: cmdbIndexPublishedStalenessBound,
+		ObserveRead:     recorder.RecordCMDBIndexRead,
 	})
 	if err != nil {
 		return nil, nil, err

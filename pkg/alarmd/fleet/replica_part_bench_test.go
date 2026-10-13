@@ -162,11 +162,11 @@ func BenchmarkSummarizedHealth(b *testing.B) {
 						b.Fatal(err)
 					}
 				}
-				view, part := AggregateSummaries(expectation, digest, summaries, names, now, time.Minute,
+				view, part := aggregateSummaries(expectation, digest, summaries, names, now, time.Minute,
 					func([]string) ([][]string, bool) {
 						b.Fatal("the digests agree: no owned list is read")
 						return nil, false
-					})
+					}, controlRead{})
 				_ = healthOf(&view, part, now)
 			}
 			b.ReportMetric(float64(read), "bytes-read")

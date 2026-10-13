@@ -22,16 +22,21 @@ import (
 // placementFuller stands for CMDB placing the record's host: by id at
 // another address than the record's own, by id at the record's address, or
 // by the address itself.
-type placementFuller struct{ byID, differs bool }
+type placementFuller struct {
+	byID    bool
+	address admission.ReportedAddress
+}
 
 func (placementFuller) Name() string { return "placement" }
 func (fuller placementFuller) Fill(_ map[string]json.RawMessage, facts *admission.Facts) {
-	facts.PlacedByHostID, facts.ReportedAddressDiffers = fuller.byID, fuller.differs
+	facts.PlacedByHostID, facts.ReportedAddress = fuller.byID, fuller.address
 }
 
 // placement is one observed series: the Plan's grouping, and whether its
 // address differed from its host's.
 type placement struct{ grouped, differs bool }
+
+var differing = admission.ReportedAddress{Cause: admission.AddressDiffers, Reported: "198.51.100.9", CMDB: "192.0.2.1", HostID: "11"}
 
 // A series whose host CMDB placed by id or agent is reported once for every
 // Plan that admits it - the count a differing address is read against - with
@@ -62,7 +67,16 @@ func TestAPlacementByIDIsCountedPerAdmittingPlanByItsGrouping(t *testing.T) {
 			attemptNo: 1,
 			admission: admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, fuller},
 				[]admission.Filter{admission.TargetScopeFilter{}}),
-			hostPlacement: func(grouped, differs bool) { counted = append(counted, placement{grouped, differs}) },
+			queryGroup: "qg-1",
+			hostPlacement: func(p HostPlacement) {
+				if p.QueryGroup != "qg-1" || p.Plan.StrategyID == outside.StrategyID {
+					t.Errorf("placement %+v, want an admitting Plan of qg-1", p)
+				}
+				if p.Address.Differs() && p.Address != differing {
+					t.Errorf("placement address %+v, want the fuller's %+v", p.Address, differing)
+				}
+				counted = append(counted, placement{p.GroupedByTargetIP, p.Address.Differs()})
+			},
 			scopes: planScopes{
 				admitted: {StrategyID: admitted.StrategyID},
 				another:  {StrategyID: another.StrategyID},
@@ -80,13 +94,13 @@ func TestAPlacementByIDIsCountedPerAdmittingPlanByItsGrouping(t *testing.T) {
 		return counted
 	}
 	byIP := []string{"bk_target_cloud_id", "bk_target_ip"}
-	if got := count(byIP, placementFuller{byID: true, differs: true}); !reflect.DeepEqual(got, []placement{{true, true}, {true, true}}) {
+	if got := count(byIP, placementFuller{byID: true, address: differing}); !reflect.DeepEqual(got, []placement{{true, true}, {true, true}}) {
 		t.Fatalf("grouped by bk_target_ip, another address: counted %v, want the two admitting Plans, differing, and the outside one not at all", got)
 	}
-	if got := count(byIP, placementFuller{byID: true}); !reflect.DeepEqual(got, []placement{{true, false}, {true, false}}) {
+	if got := count(byIP, placementFuller{byID: true, address: admission.ReportedAddress{Cause: admission.AddressSame}}); !reflect.DeepEqual(got, []placement{{true, false}, {true, false}}) {
 		t.Fatalf("grouped by bk_target_ip, the host's address: counted %v, want the two admitting Plans, not differing", got)
 	}
-	if got := count([]string{"bk_agent_id"}, placementFuller{byID: true, differs: true}); !reflect.DeepEqual(got, []placement{{false, true}, {false, true}}) {
+	if got := count([]string{"bk_agent_id"}, placementFuller{byID: true, address: differing}); !reflect.DeepEqual(got, []placement{{false, true}, {false, true}}) {
 		t.Fatalf("grouped by bk_agent_id: counted %v, want the two admitting Plans under false", got)
 	}
 	if got := count(byIP, placementFuller{}); len(got) != 0 {

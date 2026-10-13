@@ -40,10 +40,15 @@ const (
 	// alone: rebuilding or rewriting them here would destroy what that build
 	// runs by.
 	SkippedTimelineNewerFormat SkippedTimelineReason = "newer_format"
+	// SkippedTimelineAbsent: the key is not there at all - evicted, expired,
+	// deleted. The Leader rebuilds that Query Group's records from the
+	// publication it runs and opens the timeline again, as a cutover does
+	// for a missing key (RepairUnreadableTimelines).
+	SkippedTimelineAbsent SkippedTimelineReason = "absent"
 )
 
 // SkippedTimelineReasons is the closed list, for the counter's series.
-var SkippedTimelineReasons = []SkippedTimelineReason{SkippedTimelineUndecodable, SkippedTimelineNewerFormat}
+var SkippedTimelineReasons = []SkippedTimelineReason{SkippedTimelineUndecodable, SkippedTimelineNewerFormat, SkippedTimelineAbsent}
 
 // MaxNamedSkippedTimelines bounds the names the activation row carries; the
 // count says how many there are in all.
@@ -64,12 +69,13 @@ func skippedTimelineReason(raw []byte) SkippedTimelineReason {
 	return SkippedTimelineUndecodable
 }
 
-// undecodableSkipped is the Query Groups of skipped whose bytes did not
-// decode, as a set; nil when there are none.
-func undecodableSkipped(skipped []SkippedTimeline) map[execution.QueryGroupIdentity]struct{} {
+// rebuildableSkipped is the Query Groups of skipped whose records the Leader
+// rebuilds - their bytes did not decode, or their key is gone - as a set; nil
+// when there are none. One another schema wrote is left alone.
+func rebuildableSkipped(skipped []SkippedTimeline) map[execution.QueryGroupIdentity]struct{} {
 	var set map[execution.QueryGroupIdentity]struct{}
 	for _, entry := range skipped {
-		if entry.Reason != SkippedTimelineUndecodable {
+		if entry.Reason != SkippedTimelineUndecodable && entry.Reason != SkippedTimelineAbsent {
 			continue
 		}
 		if set == nil {

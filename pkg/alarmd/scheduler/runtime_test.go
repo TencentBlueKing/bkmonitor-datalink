@@ -324,6 +324,11 @@ func TestRunnerReusesDelayedReadyAtForExecutionReadiness(t *testing.T) {
 	if got := runner.NextReadyAt(); !got.Equal(readyAt) {
 		t.Fatalf("NextReadyAt()=%s, want %s", got, readyAt)
 	}
+	// The bound says the deferral is the frozen Slot waiting for its data,
+	// and which Slot: its grid point, not when it becomes runnable.
+	if bound := runner.DueBound(); !bound.Deferred || !bound.ReadinessHold || bound.NextSlotUnix != int64(slot.Contract.Slot.EvaluationTime) {
+		t.Fatalf("readiness bound = %+v, want a readiness hold on Slot %d", bound, slot.Contract.Slot.EvaluationTime)
+	}
 	if _, attempted, denied, err = runner.RunOneAdmitted(context.Background(), admission); err != nil || attempted || denied ||
 		executor.calls != 1 || admissions != 1 || releases != 1 {
 		t.Fatalf("RunOneAdmitted(before ready) attempted=%t denied=%t calls=%d admission=%d/%d err=%v",

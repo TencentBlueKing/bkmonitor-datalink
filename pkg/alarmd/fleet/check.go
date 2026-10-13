@@ -971,7 +971,7 @@ func noteProblem(group *CheckGroup, anomaly *Anomaly, code string, now time.Time
 		at := *blocked.LastSuccessAt
 		group.LastSuccess = &at
 	}
-	recent := blocked.At != nil && now.Sub(*blocked.At) <= RecentSkipWindow
+	recent := blocked.At != nil && now.Sub(*blocked.At) <= RecentWindow(intervalOf(*anomaly))
 	switch {
 	case !recent:
 		group.Silent++
@@ -1619,7 +1619,7 @@ func todoRowsOf(columns [][]Anomaly, view *View, now time.Time) Todo {
 				// bookkeeping line counts these itself.
 				return
 			}
-			if graceUnknown && now.Sub(skip.At) <= RecentSkipWindow {
+			if graceUnknown && now.Sub(skip.At) <= RecentWindow(skip.IntervalSeconds) {
 				// Judged without an anchor: counted, so a publisher that
 				// sends none cannot make every recent skip read ONGOING in
 				// silence.
@@ -1642,7 +1642,7 @@ func todoRowsOf(columns [][]Anomaly, view *View, now time.Time) Todo {
 				todo.AfterCooldown++
 			case LossWhileDemoted:
 				whileDemoted[queryGroup] = struct{}{}
-				if now.Sub(skip.At) <= RecentSkipWindow {
+				if now.Sub(skip.At) <= RecentWindow(skip.IntervalSeconds) {
 					todo.WhileDemotedRecent++
 				}
 			default:
@@ -1852,7 +1852,7 @@ func skippedRows(view *View, listed map[string]struct{}, now time.Time) ([]Anoma
 			if consequences[line] == nil {
 				consequences[line] = &Consequence{}
 			}
-			consequences[line].note(skip.At, now)
+			consequences[line].note(skip.At, now, skip.IntervalSeconds)
 			return
 		}
 		if _, already := listed[underKey(check, queryGroup)]; already {

@@ -115,7 +115,7 @@ func TestImpactCutsEveryColumnByWhoActs(t *testing.T) {
 	}
 	demoted := []Anomaly{
 		{QueryGroup: "qg-refused", Kind: KindQueryCooldown, Strategies: ref("3", "8"),
-			Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}},
+			Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}},
 		{QueryGroup: "qg-missing", Kind: KindQueryCooldown, Strategies: ref("4", "8"),
 			Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "response=status_space_table_id_field_is_not_exists"}},
 	}

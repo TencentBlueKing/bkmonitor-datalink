@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -17,12 +19,51 @@ import (
 
 var ErrIncomplete = errors.New("alarmd openalerts: incomplete index observation")
 
-// ErrSetTooLarge is a set larger than one read may hold - more members or
-// bytes than the read's bounds, or more pages than it may take. It is an
+// ErrSetTooLarge is a set larger than this process's read budget - more
+// members or bytes than its memory allows one read to hold. It is an
 // incomplete read to every caller that asks (errors.Is), and named apart so
 // the copy counts it apart from a read that failed: a set this size is not
-// an outage, and is read in no other way yet.
+// an outage. A read refused this way returns a *SetTooLargeError, which says
+// how large and against what budget.
 var ErrSetTooLarge = fmt.Errorf("alarmd openalerts: set too large for one read: %w", ErrIncomplete)
+
+// SetTooLargeError is a set refused for its size: its member count, the
+// bytes it was estimated or found to hold (zero when refused on members),
+// and the budget it exceeded.
+type SetTooLargeError struct {
+	Members              int64
+	Bytes                int64
+	MaxMembers, MaxBytes int
+}
+
+func (e *SetTooLargeError) Error() string {
+	return fmt.Sprintf("%v: %d members, %d bytes against %d members and %d bytes", ErrSetTooLarge, e.Members, e.Bytes, e.MaxMembers, e.MaxBytes)
+}
+
+func (e *SetTooLargeError) Is(target error) bool {
+	return target == ErrSetTooLarge || target == ErrIncomplete
+}
+
+// LargeSetError is a set that fits the budget but whose read would not end
+// inside the caller's deadline: it is to be read on its own, with Budget.
+// Nothing was read.
+type LargeSetError struct {
+	Members int64
+	Budget  time.Duration
+}
+
+func (e *LargeSetError) Error() string {
+	return fmt.Sprintf("alarmd openalerts: a set of %d members needs a read of its own, %s", e.Members, e.Budget)
+}
+
+type largeReadKey struct{}
+
+// WithLargeRead marks ctx as a read of its own: ReadSet reads the set however
+// many pages it takes, inside ctx's deadline.
+func WithLargeRead(ctx context.Context) context.Context {
+	return context.WithValue(ctx, largeReadKey{}, true)
+}
+
 var ErrCapacity = errors.New("alarmd openalerts: cache capacity reached")
 
 // IndexSource returns only a complete bounded read. Empty is an index
@@ -58,18 +99,42 @@ const (
 // NoticeRefusals is every refusal, for the metric that pre-creates them.
 var NoticeRefusals = []NoticeRefusal{NoticeOversized, NoticeUndecodable, NoticeInvalidKey}
 
+// ReadLimits bound one set read by what this process may hold - members and
+// bytes, both derived from its memory - not by a page count: a read goes on
+// until the scan's cursor wraps. PageSize is the scan's COUNT hint, and
+// MaxLargeRead the longest a set read on its own may take.
 type ReadLimits struct {
-	MaxMembers int
-	MaxBytes   int
-	MaxPages   int
-	PageSize   int64
+	MaxMembers   int
+	MaxBytes     int
+	PageSize     int64
+	MaxLargeRead time.Duration
 }
+
+// minLargeRead is the least a read of its own is given: a round's half of
+// the refresh cycle, which an inline read already had.
+const minLargeRead = 2500 * time.Millisecond
+
+// defaultPageTime is a scan page's time before any has been measured.
+const defaultPageTime = 20 * time.Millisecond
 
 type SetSource struct {
 	client redis.Cmdable
 	prefix string
 	limits ReadLimits
+	// pageNanos is a moving average of a scan page's time, pages the
+	// deadline cut included.
+	pageNanos atomic.Int64
+	// refused is each set a read found too large, by its own count then:
+	// refused before reading while it holds at least that many, read again
+	// once it holds fewer. A set is judged by what it was measured to weigh,
+	// never by an average of the sets that passed.
+	refusedMu sync.Mutex
+	refused   map[string]SetTooLargeError
 }
+
+// maxRememberedRefusals bounds the sets remembered as too large; one past it
+// is read again on each attempt, which the byte budget still bounds.
+const maxRememberedRefusals = 4096
 
 func validPrefix(prefix string) bool {
 	return prefix != "" && len(prefix) <= 256 && strings.TrimSpace(prefix) == prefix
@@ -82,12 +147,19 @@ func validStrategyKey(key StrategyKey) bool {
 }
 
 func NewSetSource(client redis.Cmdable, prefix string, limits ReadLimits) (*SetSource, error) {
-	if client == nil || !validPrefix(prefix) || limits.MaxMembers <= 0 || limits.MaxBytes <= 0 || limits.MaxPages <= 0 || limits.PageSize <= 0 {
+	if client == nil || !validPrefix(prefix) || limits.MaxMembers <= 0 || limits.MaxBytes <= 0 || limits.PageSize <= 0 {
 		return nil, errors.New("alarmd openalerts: Redis client, prefix and positive read limits are required")
 	}
 	return &SetSource{client: client, prefix: prefix, limits: limits}, nil
 }
 
+// ReadSet reads a strategy's set whole, or refuses it by name. A set larger
+// than the budget is refused before it is read: by its member count, and,
+// once a read of it was refused for its size, while it holds at least as
+// many members as it did then. A set that fits but would not be read inside the caller's
+// deadline is handed back as a *LargeSetError, to be read on its own under
+// WithLargeRead. Members are counted once each: a scan may return one twice
+// across a rehash.
 func (source *SetSource) ReadSet(ctx context.Context, key StrategyKey) ([]string, error) {
 	if !validStrategyKey(key) {
 		return nil, errors.New("alarmd openalerts: invalid strategy identity")
@@ -97,49 +169,111 @@ func (source *SetSource) ReadSet(ctx context.Context, key StrategyKey) ([]string
 	if err != nil {
 		return nil, err
 	}
+	tooLarge := func(bytes int64) error {
+		return &SetTooLargeError{Members: before, Bytes: bytes, MaxMembers: source.limits.MaxMembers, MaxBytes: source.limits.MaxBytes}
+	}
 	if before > int64(source.limits.MaxMembers) {
-		return nil, ErrSetTooLarge
+		return nil, tooLarge(0)
+	}
+	source.refusedMu.Lock()
+	prior, remembered := source.refused[name]
+	source.refusedMu.Unlock()
+	if remembered && before >= prior.Members {
+		refusal := prior
+		refusal.Members = before
+		return nil, &refusal
+	}
+	// tooLargeRead is a refusal the read measured: remembered for this set.
+	tooLargeRead := func(bytes int64) error {
+		err := tooLarge(bytes)
+		source.refusedMu.Lock()
+		if source.refused == nil {
+			source.refused = make(map[string]SetTooLargeError)
+		}
+		if _, ok := source.refused[name]; ok || len(source.refused) < maxRememberedRefusals {
+			source.refused[name] = *err.(*SetTooLargeError)
+		}
+		source.refusedMu.Unlock()
+		return err
+	}
+	if pages := (before + source.limits.PageSize - 1) / source.limits.PageSize; pages > 1 && ctx.Value(largeReadKey{}) == nil {
+		page := time.Duration(source.pageNanos.Load())
+		if page <= 0 {
+			page = defaultPageTime
+		}
+		need := time.Duration(pages) * page * 2
+		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < need {
+			budget := max(minLargeRead, need)
+			if source.limits.MaxLargeRead > 0 {
+				budget = min(budget, source.limits.MaxLargeRead)
+			}
+			return nil, &LargeSetError{Members: before, Budget: budget}
+		}
 	}
 	members := make(map[string]struct{})
 	var cursor uint64
-	bytes := 0
-	for page := 0; page < source.limits.MaxPages; page++ {
+	var bytes int64
+	for {
+		started := time.Now()
 		values, next, err := source.client.SScan(ctx, name, cursor, "", source.limits.PageSize).Result()
 		if err != nil {
+			// A page the deadline cut took at least this long: left out, the
+			// average would learn only from the pages fast enough to finish.
+			// A cancel (shutdown, takeover) says nothing about pace.
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				source.notePage(time.Since(started))
+			}
 			return nil, err
 		}
+		source.notePage(time.Since(started))
 		for _, value := range values {
-			bytes += len(value)
 			// A member no alert id can be is a read refused, not a set too
 			// large.
 			if value == "" || len(value) > 4096 {
 				return nil, ErrIncomplete
 			}
-			if bytes > source.limits.MaxBytes {
-				return nil, ErrSetTooLarge
+			if _, seen := members[value]; seen {
+				continue
+			}
+			bytes += int64(len(value))
+			if bytes > int64(source.limits.MaxBytes) {
+				return nil, tooLargeRead(bytes)
 			}
 			members[value] = struct{}{}
 			if len(members) > source.limits.MaxMembers {
-				return nil, ErrSetTooLarge
+				return nil, tooLargeRead(bytes)
 			}
 		}
 		cursor = next
 		if cursor == 0 {
-			after, err := source.client.SCard(ctx, name).Result()
-			if err != nil {
-				return nil, err
-			}
-			if after != before || int64(len(members)) != after {
-				return nil, ErrIncomplete
-			}
-			result := make([]string, 0, len(members))
-			for value := range members {
-				result = append(result, value)
-			}
-			return result, nil
+			break
 		}
 	}
-	return nil, ErrSetTooLarge
+	after, err := source.client.SCard(ctx, name).Result()
+	if err != nil {
+		return nil, err
+	}
+	if after != before || int64(len(members)) != after {
+		return nil, ErrIncomplete
+	}
+	source.refusedMu.Lock()
+	delete(source.refused, name)
+	source.refusedMu.Unlock()
+	result := make([]string, 0, len(members))
+	for value := range members {
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+// notePage folds one scan page's time into the moving average.
+func (source *SetSource) notePage(took time.Duration) {
+	previous := source.pageNanos.Load()
+	if previous == 0 {
+		source.pageNanos.Store(int64(took))
+		return
+	}
+	source.pageNanos.Store(previous + (int64(took)-previous)/8)
 }
 
 // RedisSubscriber owns only its PubSub connection, never the supplied client.

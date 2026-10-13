@@ -255,8 +255,8 @@ func TestHandedOverObjectsAreCountedOncePerHolderAndNumbered(t *testing.T) {
 	for _, snapshot := range snapshots {
 		summaries = append(summaries, SummaryOf(snapshot, snapshot.OwnedObjects, time.Minute))
 	}
-	view, _ := AggregateSummaries(Expectation{QueryGroups: len(ids), Known: true, IDs: ids}, DigestOf(ids), summaries, replicas(), now,
-		freshness, func([]string) ([][]string, bool) { return nil, false })
+	view, _ := aggregateSummaries(Expectation{QueryGroups: len(ids), Known: true, IDs: ids}, DigestOf(ids), summaries, replicas(), now,
+		freshness, func([]string) ([][]string, bool) { return nil, false }, controlRead{})
 	if objects, known := HandoverObjects(&view); known {
 		t.Fatalf("handover %d known with the owned lists unread, want unknown", objects)
 	}

@@ -77,13 +77,13 @@ func TestACooldownTransitionCarriesAResultAndAReason(t *testing.T) {
 	slot := frozenSlot("qg")
 	for i := 0; i < 4; i++ {
 		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownLetsRun())
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	}
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	for i := 0; i < 3; i++ {
 		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownLetsRun())
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	}
 
 	want := []struct {
@@ -161,13 +161,13 @@ func TestACooldownLineCarriesTheReasonItsQueryFailedWith(t *testing.T) {
 	runner := newRunner()
 	for i := 0; i < unavailableThreshold; i++ {
 		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, failed(contract.ReasonQueryTargetMissing), 60, runner.queryCooldownLetsRun())
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, failed(contract.ReasonQueryTargetMissing), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	}
 	if event, reason := lastLine(); event != QueryCooldownEntered || reason != contract.ReasonQueryTargetMissing {
 		t.Fatalf("entry = %s/%s, want entered for %s", event, reason, contract.ReasonQueryTargetMissing)
 	}
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, failed(contract.ReasonQueryUnavailable), 60, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, failed(contract.ReasonQueryUnavailable), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	if event, reason := lastLine(); event != QueryCooldownExtended || reason != contract.ReasonQueryUnavailable {
 		t.Fatalf("extension = %s/%s, want extended for the latest failure, %s", event, reason, contract.ReasonQueryUnavailable)
 	}
@@ -182,7 +182,7 @@ func TestACooldownLineCarriesTheReasonItsQueryFailedWith(t *testing.T) {
 		t.Fatalf("restore = %s/%s, want restored for %s", event, reason, contract.ReasonQueryUnavailable)
 	}
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	if event, reason := lastLine(); event != QueryCooldownRecovered || reason != contract.ReasonQueryUnavailable {
 		t.Fatalf("exit = %s/%s, want recovered from %s", event, reason, contract.ReasonQueryUnavailable)
 	}

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -84,15 +86,7 @@ func TestTheScrapeExportsTheHandoverItsSummariesShow(t *testing.T) {
 			snapshot := fleet.Snapshot{Replica: replica, TakenAt: at, Owned: len(owned[replica]), Determined: len(owned[replica])}
 			summaries = append(summaries, fleet.SummaryOf(snapshot, owned[replica], time.Minute))
 		}
-		ids := []string{"qg-a", "qg-b", "qg-moving"}
-		view, part := fleet.AggregateSummaries(fleet.Expectation{QueryGroups: len(ids), Known: true, IDs: ids}, fleet.DigestOf(ids),
-			summaries, []string{"pod-a", "pod-b"}, at, time.Minute, func(replicas []string) ([][]string, bool) {
-				sets := [][]string{}
-				for _, replica := range replicas {
-					sets = append(sets, owned[replica])
-				}
-				return sets, true
-			})
+		view, part := summarizedFleet(t, at, summaries, owned, true)
 		verdict := fleetVerdictOf(view, part, at)
 		want := 0
 		if both {
@@ -110,10 +104,61 @@ func TestTheScrapeExportsTheHandoverItsSummariesShow(t *testing.T) {
 		snapshot := fleet.Snapshot{Replica: replica, TakenAt: at, Owned: len(owned[replica]), Determined: len(owned[replica])}
 		summaries = append(summaries, fleet.SummaryOf(snapshot, owned[replica], time.Minute))
 	}
-	ids := []string{"qg-a", "qg-b", "qg-moving"}
-	view, part := fleet.AggregateSummaries(fleet.Expectation{QueryGroups: len(ids), Known: true, IDs: ids}, fleet.DigestOf(ids),
-		summaries, []string{"pod-a", "pod-b"}, at, time.Minute, func([]string) ([][]string, bool) { return nil, false })
+	view, part := summarizedFleet(t, at, summaries, owned, false)
 	if verdict := fleetVerdictOf(view, part, at); verdict.HandoverObjects != nil {
 		t.Fatalf("handover %d with the owned lists unread, want it absent", *verdict.HandoverObjects)
 	}
+}
+
+// summarizedFleet reads the replicas' summaries through the fleet service, as
+// the scrape does (fleetVerdictSource): three expected objects, the two
+// replicas ready, and their owned lists readable or not.
+func summarizedFleet(t *testing.T, at time.Time, summaries []fleet.ReplicaSummary, owned map[string][]string,
+	ownedReadable bool) (fleet.View, fleet.ReplicaPart) {
+	t.Helper()
+	ids := []string{"qg-a", "qg-b", "qg-moving"}
+	service, err := fleet.NewService(fixedExpectation{fleet.Expectation{QueryGroups: len(ids), Known: true, IDs: ids}},
+		fixedReplicas{"pod-a", "pod-b"}, summaryStore{summaries: summaries, owned: owned, ownedReadable: ownedReadable},
+		time.Minute, func() time.Time { return at })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service.Summarized(context.Background(), time.Minute)
+}
+
+type fixedExpectation struct{ expectation fleet.Expectation }
+
+func (source fixedExpectation) Expectation(context.Context) (fleet.Expectation, error) {
+	return source.expectation, nil
+}
+
+type fixedReplicas []string
+
+func (replicas fixedReplicas) ReadyReplicas(context.Context, time.Time) ([]string, error) {
+	return append([]string(nil), replicas...), nil
+}
+
+// summaryStore publishes summaries and, when readable, the owned lists the
+// service asks for when the digests disagree. No snapshot is ever read.
+type summaryStore struct {
+	summaries     []fleet.ReplicaSummary
+	owned         map[string][]string
+	ownedReadable bool
+}
+
+func (summaryStore) Load(context.Context, []string) ([]fleet.Snapshot, error) { return nil, nil }
+
+func (store summaryStore) LoadSummaries(context.Context, []string) ([]fleet.ReplicaSummary, error) {
+	return append([]fleet.ReplicaSummary(nil), store.summaries...), nil
+}
+
+func (store summaryStore) LoadOwned(_ context.Context, replicas []string) (map[string][]string, error) {
+	if !store.ownedReadable {
+		return nil, errors.New("owned lists unreadable")
+	}
+	lists := make(map[string][]string, len(replicas))
+	for _, replica := range replicas {
+		lists[replica] = store.owned[replica]
+	}
+	return lists, nil
 }

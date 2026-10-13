@@ -67,7 +67,7 @@ if not redis.call('SET', KEYS[2], encoded, 'PX', ARGV[4], 'NX') then
 end
 redis.call('DEL', KEYS[1])
 if paired == 1 then
-  local pairing = cjson.encode({pairing_id = ARGV[5], environment_id = ARGV[1], scope = ARGV[3], epoch = epoch,
+  local pairing = cjson.encode({pairing_id = ARGV[5], environment_id = ARGV[1], scope = record.scope, epoch = epoch,
     admin_binding = ARGV[8], created_at_ms = now, last_used_at_ms = now})
   redis.call('SET', KEYS[3], pairing, 'PX', ARGV[6])
   redis.call('ZADD', KEYS[4], now, ARGV[5])
@@ -135,7 +135,7 @@ if pairing.admin_binding ~= ARGV[3] then
   return {4}
 end
 pairing.last_used_at_ms = now
-local session = cjson.encode({session_id = ARGV[4], environment_id = ARGV[1], scope = ARGV[2], epoch = epoch,
+local session = cjson.encode({session_id = ARGV[4], environment_id = ARGV[1], scope = pairing.scope, epoch = epoch,
   pairing_id = pairing.pairing_id, expires_at_ms = now + tonumber(ARGV[5])})
 if redis.call('EXISTS', KEYS[2]) == 1 or redis.call('EXISTS', KEYS[3]) == 1 then return {2} end
 redis.call('DEL', KEYS[1])
@@ -169,7 +169,7 @@ record.pairing_id = ARGV[3]
 record.epoch = epoch
 local encoded = cjson.encode(record)
 redis.call('SET', KEYS[1], encoded, 'PX', record.expires_at_ms - now, 'XX')
-redis.call('SET', KEYS[2], cjson.encode({pairing_id = ARGV[3], environment_id = ARGV[1], scope = ARGV[2], epoch = epoch,
+redis.call('SET', KEYS[2], cjson.encode({pairing_id = ARGV[3], environment_id = ARGV[1], scope = record.scope, epoch = epoch,
   admin_binding = ARGV[4], created_at_ms = now, last_used_at_ms = now}), 'PX', ARGV[5])
 redis.call('ZADD', KEYS[3], now, ARGV[3])
 return {1, encoded, 0, ARGV[3]}

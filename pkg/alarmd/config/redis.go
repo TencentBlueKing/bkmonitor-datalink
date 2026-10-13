@@ -56,49 +56,30 @@ type RedisConnectionConfig struct {
 // waiting on the pool's semaphore increments neither the miss nor the timeout
 // counter.
 //
-// So the pool follows the container's CPU budget, which is the one quantity
-// known at startup that scales with how much work the Worker is expected to
-// carry, and which automaxprocs already derives from the cgroup. Redis work is
-// network-bound, so useful concurrency per CPU is far above one; the factor
-// below leaves several times the measured steady-state demand. Zero means
-// "derive"; an explicit positive pool_size still wins so an operator can pin
-// it, and a deployment that wants the pool to stop being a gate can raise it
-// without a release.
-const (
-	redisPoolMinimum       = 64
-	redisPoolPerCPU        = 16
-	redisPoolDerivedCeling = 512
-)
+// So the pool covers every execution slot the container can run at once, its
+// memory-derived ceiling (DerivedScheduler.ActiveExecutionCeiling), plus the
+// floor below for what runs outside a slot - the Slot source's control-plane
+// reads for a ready runner, maintenance, the fleet snapshot. A profile of the
+// saturated slots put 77.5 of 128 inside a Redis round trip: a pool smaller
+// than the slots is where they queue, and it becomes the process's real gate
+// while every reading of it looks idle. It was sized from CPU before, which no
+// part of a Redis round trip spends. The pool dials lazily, so the ceiling is
+// what may be open at once, not what is. Zero means "derive"; an explicit
+// positive pool_size still wins so an operator can pin it.
+const redisPoolMinimum = 64
 
-// DeriveRedisPoolSize sizes the pool from the CPU budget the container was
-// given, never below the floor a small deployment needs and never above a
-// ceiling that keeps one Worker's connection count reasonable for a shared
-// Redis.
-func DeriveRedisPoolSize(cpuBudget int) int {
-	size := redisPoolMinimum
-	if covered := cpuBudget * redisPoolPerCPU; covered > size {
-		size = covered
-	}
-	if size > redisPoolDerivedCeling {
-		size = redisPoolDerivedCeling
-	}
-	// The pool must never become the process's execution gate, so the ceiling
-	// yields to the query admission derived from the same CPU budget. Covering
-	// the permits is only the floor: the Slot source reads the control plane
-	// for every ready runner while holding no permit, and that fan-out is what
-	// the block profile found queueing.
-	if admitted := DeriveScheduler(CapacityInputs{CPUBudget: cpuBudget}).AdmittedConcurrency(); size <= admitted {
-		size = admitted + redisPoolMinimum
-	}
-	return size
+// DeriveRedisPoolSize sizes the pool to cover the container's execution
+// ceiling, with the floor above it.
+func DeriveRedisPoolSize(inputs CapacityInputs) int {
+	return DeriveScheduler(inputs).ActiveExecutionCeiling + redisPoolMinimum
 }
 
 // EffectivePoolSize resolves the value actually handed to the client.
-func (c RedisConnectionConfig) EffectivePoolSize(cpuBudget int) int {
+func (c RedisConnectionConfig) EffectivePoolSize(inputs CapacityInputs) int {
 	if c.PoolSize > 0 {
 		return c.PoolSize
 	}
-	return DeriveRedisPoolSize(cpuBudget)
+	return DeriveRedisPoolSize(inputs)
 }
 
 func (c RedisConnectionConfig) clone() RedisConnectionConfig {

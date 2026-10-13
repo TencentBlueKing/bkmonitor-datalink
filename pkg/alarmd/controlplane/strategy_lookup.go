@@ -321,3 +321,33 @@ func (reconciler *SourceReconciler) StepDown() {
 	reconciler.strategies.replace(nil)
 	reconciler.steppedDown.Store(true)
 }
+
+// ForgetTerm is StepDown plus everything else this process kept only to
+// lead: the last observation of the source and the documents it holds, the
+// reusable round's Catalog, the last-good publication, and the compiled
+// candidates. A follower never refreshes, so without it a former Leader
+// carried all of that for as long as it stayed a follower -- the Leader's
+// whole working set, on a replica that no longer uses any of it.
+//
+// None of it is a fact only this process has. A round that starts a new term
+// reads the source in full (SourceReadElected), assembles the current
+// publication from its objects, and compiles every strategy, which is what a
+// process that never led does on its first round, and the publication it
+// finds was in any case possibly made by another Leader in between. The
+// departures are kept: the identity of a strategy that is gone cannot be
+// read back from anywhere, and the memory is bounded (MaxDepartedStrategies).
+//
+// Only from the goroutine that runs Refresh, the control loop's follower
+// tick, since the round-owned fields have no lock of their own; the
+// observation, which the absent close reads, is swapped atomically.
+func (reconciler *SourceReconciler) ForgetTerm() {
+	if reconciler == nil {
+		return
+	}
+	reconciler.StepDown()
+	reconciler.steppedDown.Store(false)
+	reconciler.reusable = nil
+	reconciler.memory.Store(nil)
+	reconciler.lastGood = nil
+	reconciler.candidates.forget()
+}

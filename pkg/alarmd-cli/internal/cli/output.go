@@ -11,6 +11,7 @@ package cli
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -84,6 +85,74 @@ func (a *App) print(value any) int {
 func (a *App) fail(code, message string, exit int) int {
 	a.print(map[string]any{"status": "error", "summary": message, "error": map[string]any{"code": code, "message": message}, "evidence": map[string]any{"complete": false, "limitations": []string{message}}, "next_call": []any{}})
 	return exit
+}
+
+func confirmedExecRejection(response map[string]any, status int) bool {
+	if status < 400 || stringField(objectField(response, "meta"), "channel_version") != channelVersion || response["result"] != nil {
+		return false
+	}
+	code := stringField(objectField(response, "error"), "code")
+	if status < 500 {
+		return code != ""
+	}
+	// These named failures happen at the channel's authentication or local
+	// availability gate, before the provider can run. A missing result after
+	// execution (for example response_budget_exceeded) remains unknown.
+	return code == "auth_store_unavailable" || code == "operation_unavailable" || code == "target_routing_unavailable"
+}
+
+func validateExecReceipt(operation string, response map[string]any) error {
+	receipt := objectField(response, "result")
+	if receipt == nil {
+		return errors.New("execution response is missing an object receipt")
+	}
+	if operation != "pod.exec" {
+		return nil
+	}
+	switch stringField(receipt, "remote_state") {
+	case "remote_not_started", "remote_state_unknown", "remote_timeout_confirmed":
+	case "remote_completed":
+		exit, ok := receipt["exit_code"].(json.Number)
+		if _, err := exit.Int64(); !ok || err != nil {
+			return errors.New("completed Pod execution is missing its exit code")
+		}
+	case "remote_unsupervised":
+		// Nothing in the target could end it: it ended with an exit code,
+		// or this side cut its stream at the deadline.
+		if exit, ok := receipt["exit_code"].(json.Number); ok {
+			if _, err := exit.Int64(); err != nil {
+				return errors.New("unsupervised Pod execution has an invalid exit code")
+			}
+		} else if receipt["stream_cut"] != true {
+			return errors.New("unsupervised Pod execution has neither an exit code nor a cut stream")
+		}
+	case "":
+		return errors.New("Pod execution receipt has no remote_state")
+	default:
+		// A state a newer server reports and this client does not know yet is
+		// shown as the server wrote it, not refused: the receipt is still a
+		// receipt, and refusing it would save a known execution as unknown.
+	}
+	return nil
+}
+
+// unknownExecution saves a bounded, redacted observation of a dispatched call.
+// A decoded but rejected receipt stays explicitly unverified; malformed raw
+// bytes are discarded. Scripts and argv stay represented only by their digest.
+func (a *App) unknownExecution(operation string, params map[string]any, revision string, p Profile, started time.Time, receipt map[string]any, status int, cause string) int {
+	body, _ := json.Marshal(channelBody("invoke", operation, params, revision))
+	digest := sha256.Sum256(body)
+	message := "Remote execution outcome is unconfirmed. Inspect the existing execution and target before an explicit retry; this CLI did not retry."
+	result := map[string]any{"remote_state": "remote_state_unknown", "operation": operation, "request_digest": "sha256:" + hex.EncodeToString(digest[:]), "started_at": started.Format(time.RFC3339Nano), "finished_at": time.Now().UTC().Format(time.RFC3339Nano)}
+	if target, exists := params["target"]; exists {
+		result["target"] = target
+	}
+	if receipt != nil {
+		result["unverified_response"] = receipt
+	}
+	response := map[string]any{"status": "error", "summary": message, "error": map[string]any{"code": "remote_state_unknown", "message": message}, "result": result,
+		"evidence": map[string]any{"complete": false, "limitations": []string{message, cause}}, "meta": map[string]any{"environment_id": p.EnvironmentID, "http_status": status}, "next_call": []any{}}
+	return a.emitResponse(response, []string{p.AccessToken, p.RefreshToken}, http.StatusOK)
 }
 
 func (a *App) emitResponse(raw map[string]any, secrets []string, httpStatus int) int {

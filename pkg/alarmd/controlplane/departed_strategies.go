@@ -223,12 +223,16 @@ type ObservedSnapshot struct {
 // A follower and a leader before its first read have none, which is not an
 // empty source; a read of an empty list is an observation, of no strategy.
 func (reconciler *SourceReconciler) ObservedSnapshot() (ObservedSnapshot, bool) {
-	if reconciler == nil || reconciler.memory == nil {
+	if reconciler == nil {
 		return ObservedSnapshot{}, false
 	}
-	observed := ObservedSnapshot{Observation: reconciler.memory.readAt.UTC().Format(time.RFC3339Nano), ReadAt: reconciler.memory.readAt,
-		HoldsLastGood: reconciler.memory.holdsLastGood}
-	for _, strategy := range reconciler.memory.cycle.strategies {
+	memory := reconciler.memory.Load()
+	if memory == nil {
+		return ObservedSnapshot{}, false
+	}
+	observed := ObservedSnapshot{Observation: memory.readAt.UTC().Format(time.RFC3339Nano), ReadAt: memory.readAt,
+		HoldsLastGood: memory.holdsLastGood}
+	for _, strategy := range memory.cycle.strategies {
 		business, err := strconv.ParseInt(strategy.Identity.BusinessID, 10, 64)
 		if err != nil {
 			business = 0

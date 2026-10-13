@@ -179,11 +179,14 @@ func NewSlotExecutionCoordinator(ports Ports, budget ProvisionalBudget) (*SlotEx
 func (coordinator *SlotExecutionCoordinator) acquireProvisional(series, retainedBytes uint64, stream *streamedExecution, phase string) error {
 	coordinator.reservations.mu.Lock()
 	defer coordinator.reservations.mu.Unlock()
-	if series > coordinator.budget.MaxSeries-coordinator.reservations.series {
-		return budgetRejection(observability.CapacityBudgetSeries, phase, coordinator.reservations.series, series, coordinator.budget.MaxSeries, stream.ownBudget(observability.CapacityBudgetSeries), stream.ownBudgetUsage(coordinator.budget))
-	}
+	// The bytes are the budget and are judged first; the series count is a
+	// guardrail at the smallest a series can encode, which binds only when
+	// the byte accounting has gone wrong.
 	if retainedBytes > coordinator.budget.MaxRetainedBytes-coordinator.reservations.retainedBytes {
 		return budgetRejection(observability.CapacityBudgetRetainedBytes, phase, coordinator.reservations.retainedBytes, retainedBytes, coordinator.budget.MaxRetainedBytes, stream.ownBudget(observability.CapacityBudgetRetainedBytes), stream.ownBudgetUsage(coordinator.budget))
+	}
+	if series > coordinator.budget.MaxSeries-coordinator.reservations.series {
+		return budgetRejection(observability.CapacityBudgetSeries, phase, coordinator.reservations.series, series, coordinator.budget.MaxSeries, stream.ownBudget(observability.CapacityBudgetSeries), stream.ownBudgetUsage(coordinator.budget))
 	}
 	coordinator.reservations.series += series
 	coordinator.reservations.retainedBytes += retainedBytes
@@ -436,7 +439,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		// budgets it used beside an empty clock would read as a Slot that was
 		// never measured rather than one that found nothing to decide.
 		return execution.SlotExecutionResult{Result: queryResult, ReasonCode: queryReason,
-			Usage: stream.budgetUsage(), Timing: stream.timing()}, nil
+			Usage: stream.budgetUsage(), Timing: stream.timing(), InPlaceWait: completion.InPlaceWait}, nil
 	}
 
 	var result execution.SlotExecutionResult
@@ -455,6 +458,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 			if convergeErr != nil {
 				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: converge changed activation: %w", convergeErr)
 			}
+			result.InPlaceWait = completion.InPlaceWait
 			return result, nil
 		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: execute frozen Slot: %w", err)
@@ -464,6 +468,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	// rather than a usage of zero, and the two must not arrive as one number.
 	result.Usage = stream.budgetUsage()
 	result.Timing = stream.timing()
+	result.InPlaceWait = completion.InPlaceWait
 	return result, nil
 }
 
@@ -1669,6 +1674,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	result, err := coordinator.commitProgress(ctx, request, completion, attribution)
 	if err == nil && result.Completed {
 		result.QueryAvailability, result.QueryUnavailableReason = query.availability(), query.unavailableReason()
+		result.QueryUnknownReason = query.unknownReason()
 		result.PrimaryQueryClock = query.clock
 	}
 	return result, err

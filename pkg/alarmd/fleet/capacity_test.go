@@ -76,10 +76,16 @@ func TestCapacityNamesCeilingsTheReplicasDisagreeOn(t *testing.T) {
 	for _, name := range view.Capacity.Disagreement {
 		disagreement[name] = true
 	}
-	for _, want := range []string{"permit_budget_per_replica", "cpu_cores_per_replica", "memory_limit_bytes_per_replica", "state_mutations"} {
+	for _, want := range []string{"cpu_cores_per_replica", "memory_limit_bytes_per_replica", "state_mutations"} {
 		if !disagreement[want] {
 			t.Fatalf("%q disagreement was not reported: %+v", want, view.Capacity.Disagreement)
 		}
+	}
+	// The permit budget is not a ceiling the replicas share: each derives its
+	// own from the work it owns, so two that differ are not a half-finished
+	// rollout. They are summed, and the largest kept under the old name.
+	if disagreement["permit_budget_per_replica"] || view.Capacity.PermitBudgetTotal != 48 || view.Capacity.PermitBudget != 32 {
+		t.Fatalf("permit budgets 32 and 16 read as %+v", view.Capacity)
 	}
 }
 

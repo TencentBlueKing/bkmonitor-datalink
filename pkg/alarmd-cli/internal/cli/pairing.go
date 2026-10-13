@@ -390,6 +390,8 @@ func (a *App) exchange(code string, expected Profile, verifier string, rebind bo
 		return nil, "environment_mismatch", "the code is for another entry"
 	}
 	p := expected
+	// The session is what the code grants.
+	p.Scope = b.Scope
 	p.EnvironmentID, p.EnvironmentName, p.PublicBaseURL = b.EnvironmentID, b.EnvironmentName, b.PublicBaseURL
 	if err := a.Store.checkBinding(p, rebind); err != nil {
 		return nil, "configuration_error", err.Error()
@@ -426,7 +428,7 @@ func (a *App) exchange(code string, expected Profile, verifier string, rebind bo
 	if err := a.Store.save(session, rebind); err != nil {
 		return nil, "configuration_error", err.Error()
 	}
-	return map[string]any{"environment_id": session.EnvironmentID, "expires_at": session.ExpiresAt, "session_id": session.SessionID, "pairing": pairing}, "", ""
+	return map[string]any{"environment_id": session.EnvironmentID, "expires_at": session.ExpiresAt, "session_id": session.SessionID, "pairing": pairing, "scope": session.Scope}, "", ""
 }
 
 // listen runs one loopback login and returns its exit code.
@@ -455,6 +457,7 @@ func (a *App) listen(o options) int {
 	default:
 		return a.fail("invalid_input", "auth listen requires --env <environment_id> or --url <entry URL>", 2)
 	}
+	p.Scope = sessionScope
 	port, err := strconv.Atoi(o.port)
 	if err != nil || port < 1024 || port > 65535 {
 		return a.fail("invalid_input", "--port must be the number the authorization page shows (1024-65535)", 2)

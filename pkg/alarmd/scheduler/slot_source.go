@@ -433,7 +433,8 @@ func (source *ProductionSlotSource) Next(
 	// classification returned the failure raw, so for a Query Group with
 	// Progress - nearly every one - the round failed unclassified and the
 	// Worker never named it SCHEDULE_UNREADABLE, the word its registration
-	// reports the timeline to the leader by.
+	// reports the timeline to the leader by. A timeline key that is not there
+	// at all is blocked the same way, by SCHEDULE_MISSING.
 	defer func() { nextErr = blockUndecodableTimeline(nextErr) }()
 	if source == nil || queryGroup == "" || queryGroup != source.queryGroup {
 		return FrozenSlot{}, false, SlotDueFacts{}, errors.New("alarmd scheduler: SlotSource Query Group mismatch")
@@ -583,7 +584,7 @@ func (source *ProductionSlotSource) Next(
 	dueInterval := minimumAlignedInterval(schedule, nextSlot)
 	if at.Unix() < int64(nextSlot) {
 		decision = "future_slot"
-		return FrozenSlot{}, false, SlotDueFacts{NotDueUntilUnix: int64(nextSlot), IntervalSeconds: dueInterval}, nil
+		return FrozenSlot{}, false, SlotDueFacts{NotDueUntilUnix: int64(nextSlot), NextSlotUnix: int64(nextSlot), IntervalSeconds: dueInterval}, nil
 	}
 	decision = "read_hold"
 	hold, err := source.slotReadHoldMillis(ctx, schedule, load.Progress, nextSlot, initialFence)
@@ -1177,12 +1178,7 @@ func (source *ProductionSlotSource) replayWaitOutlastsDistance(
 	if source.settlingWait <= 0 {
 		return false, nil
 	}
-	// The Slot's read hold is in its deadline, and is not budget for the
-	// settling wait: access chooses the wait within the schedule's own
-	// budget and reads that much later, and so does this estimate.
-	queryBudget := time.Duration(deadline-int64(evaluationTime)*1000-hold) * time.Millisecond
-	readyAt := time.Unix(int64(evaluationTime), 0).
-		Add(execution.SettlingWaitWithinQueryBudget(queryBudget, source.settlingWait)).UnixMilli() + hold
+	readyAt := source.replayReadyAtUnixMilli(evaluationTime, deadline, hold)
 	// The boundary is never earlier than the next grid point while the distance
 	// is still inside the limit, so a read that lands before that point cannot
 	// outlast the boundary and the walk below is not worth its reads. This is
@@ -1217,6 +1213,18 @@ func (source *ProductionSlotSource) replayWaitOutlastsDistance(
 	facts.ReadyAtUnixMilli = readyAt
 	facts.DistanceBoundaryUnixMilli = boundaryMilli
 	return true, nil
+}
+
+// replayReadyAtUnixMilli is when access will read the Slot: the group's read
+// wait (execution.ReadWaitWithinQueryBudget, the call access makes) within
+// the query budget the deadline leaves, then the hold. The Slot's read hold is
+// in its deadline and is not budget for the wait: access chooses the wait
+// within the schedule's own budget and reads that much later, and so does
+// this estimate.
+func (source *ProductionSlotSource) replayReadyAtUnixMilli(evaluationTime execution.EvaluationTime, deadline, hold int64) int64 {
+	queryBudget := time.Duration(deadline-int64(evaluationTime)*1000-hold) * time.Millisecond
+	return time.Unix(int64(evaluationTime), 0).
+		Add(execution.ReadWaitWithinQueryBudget(source.queryGroup, queryBudget, source.settlingWait)).UnixMilli() + hold
 }
 
 // replayDistanceBoundary is the grid point at which this Slot's replay
@@ -1620,13 +1628,15 @@ func (source *ProductionSlotSource) observeCursorAdvance(
 }
 
 // blockUndecodableTimeline is a source error that is a timeline which does
-// not decode, as a blocked source; every other error as it is. A refusal the
-// source already classified keeps its classification.
+// not decode, or a timeline key that is not there at all, as a blocked
+// source; every other error as it is. A refusal the source already
+// classified keeps its classification.
 func blockUndecodableTimeline(err error) error {
 	var undecodable *controlplane.DeterministicScheduleError
 	var blocked *SourceBlockedError
 	var retry *SourceRetryError
-	if err == nil || !errors.As(err, &undecodable) || errors.As(err, &blocked) || errors.As(err, &retry) {
+	timeline := errors.As(err, &undecodable) || errors.Is(err, controlplane.ErrScheduleTimelineAbsent)
+	if err == nil || !timeline || errors.As(err, &blocked) || errors.As(err, &retry) {
 		return err
 	}
 	return &SourceBlockedError{Err: err}

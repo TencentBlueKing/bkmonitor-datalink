@@ -195,10 +195,12 @@ func TestRuntimeTheSuggestionIsReckonedByTheNewestPreparedSegment(t *testing.T) 
 	ctx := context.Background()
 	f, qg, current, _ := thresholdCut(t)
 	holds := f.bundle.dependencies.ReadHolds
-	// A ready delay the current Segment's budget fits and the previous one's
-	// does not, so the two settle differently.
-	holds.cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(20 * time.Second)
-	holds.catalog = previousWith{readHoldTimeline: holds.catalog, at: current.Segment.Start - 1, offsetSeconds: 20}
+	// A ready delay under the settling floor that the current Segment's
+	// budget fits and the previous one's 8 s offset does not, so the two
+	// settle differently: 8 s, against the 10 s floor the previous one falls
+	// back to.
+	holds.cfg.PhaseTwo.Access.MinReadyDelay = config.Duration(8 * time.Second)
+	holds.catalog = previousWith{readHoldTimeline: holds.catalog, at: current.Segment.Start - 1, offsetSeconds: 8}
 	old, err := holds.catalog.ReadFrozenSchedule(ctx, qg, current.Segment.Start-1)
 	if err != nil {
 		t.Fatal(err)

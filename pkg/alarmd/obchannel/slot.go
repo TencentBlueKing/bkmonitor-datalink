@@ -195,8 +195,10 @@ func SlotOperations(options SlotOptions) []Operation {
 	fields["series_digest"] = series
 	fields["max_series"] = integer("返回时序上限，默认5；不限制UQ计算范围。", 1, 10)
 	fields["max_points"] = integer("所有返回时序的总点数上限，默认100。", 1, 500)
-	query := Operation{ID: "slot.query", Summary: "对指定历史Slot的一个物理查询执行有界UQ重查；结果为requery_now。", EvidenceScope: "current_worker_requery", Targetable: true, DefaultOwnerParam: "query_group",
-		Fields: fields, Required: []string{"query_group", "evaluation_time", "contract_digest", "physical_query_digest", "request_digest"}, OutputSchema: SchemaOf(SlotQueryResult{}), Limits: limits, Availability: availability}
+	fields["series_offset"] = integer("从第几个匹配的时序开始返回，默认0；下一页用上一页 next_call 的值。", 0, 1000000)
+	query := Operation{ID: "slot.query", Summary: "对指定历史Slot的一个物理查询执行有界UQ重查；结果为requery_now。重查可用的时间是这个Slot冻结的查询预算加5秒，最长2分钟；解码上限与生产查询相同，返回的时序按 series_offset 分页，还有下一页时给出 next_call。只用诊断专用的单个并发位，不占正式查询的许可。", EvidenceScope: "current_worker_requery", Targetable: true, DefaultOwnerParam: "query_group",
+		ExecutionTimeout: MaxExecutionTimeout,
+		Fields:           fields, Required: []string{"query_group", "evaluation_time", "contract_digest", "physical_query_digest", "request_digest"}, OutputSchema: SchemaOf(SlotQueryResult{}), Limits: limits, Availability: availability}
 	query.Run = func(ctx context.Context, p Params) Outcome {
 		plan, failure := resolveSlot(ctx, options, p)
 		if failure != nil {
@@ -227,8 +229,17 @@ func SlotOperations(options SlotOptions) []Operation {
 			return changed("query_request_changed", "Current worker request differs from the preview; no UQ query executed.")
 		}
 		at := time.Now().UTC()
-		data, err := options.UQ.Query(ctx, selected.Spec, uq.DiagnosticSelection{SeriesDigest: p.String("series_digest"), MaxSeries: p.Int("max_series", 5), MaxPoints: p.Int("max_points", 100)})
+		data, err := options.UQ.Query(ctx, selected.Spec, uq.DiagnosticSelection{SeriesDigest: p.String("series_digest"), Offset: p.Int("series_offset", 0),
+			MaxSeries: p.Int("max_series", 5), MaxPoints: p.Int("max_points", 100)}, requeryBudget(*selected))
 		out := Outcome{Value: SlotQueryResult{Kind: "requery_now", Slot: slot, PhysicalQueryDigest: selected.Spec.Digest, QueriedAt: at, Query: data}, Complete: data.Complete, Limitations: append([]string{slotBoundary}, data.Limitations...)}
+		if data.NextOffset > 0 && err == nil {
+			next := Params{}
+			for key, value := range p {
+				next[key] = value
+			}
+			next["series_offset"] = data.NextOffset
+			out.Next = append(out.Next, Call{Operation: "slot.query", Params: next, Reason: "同一物理查询的下一页时序。"})
+		}
 		if err != nil {
 			code := "query_unavailable"
 			var diagnostic *uq.DiagnosticError
@@ -240,6 +251,19 @@ func SlotOperations(options SlotOptions) []Operation {
 		return out
 	}
 	return []Operation{get, query}
+}
+
+// requeryMargin is what a re-query is given beyond the Slot's own query
+// budget, and the channel's transport margin is kept below the operation's
+// execution timeout.
+const requeryMargin = 5 * time.Second
+
+// requeryBudget is how long a re-query of query may take: the budget the
+// Slot froze for it, from when its window could be read to its deadline,
+// with a margin, within the operation's execution timeout.
+func requeryBudget(query access.PlannedQuery) time.Duration {
+	frozen := time.Duration(query.DeadlineUnixMilli-query.ReadyAtUnixMilli) * time.Millisecond
+	return min(MaxExecutionTimeout-requeryMargin, max(0, frozen)+requeryMargin)
 }
 
 func resolveSlot(ctx context.Context, options SlotOptions, p Params) (SlotPlan, *Failure) {

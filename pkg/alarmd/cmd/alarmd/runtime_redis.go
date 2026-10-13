@@ -39,7 +39,7 @@ func productionRedisOptions(connection config.RedisConnectionConfig) *redis.Univ
 		SentinelUsername: connection.SentinelUsername, SentinelPassword: connection.SentinelPassword,
 		DB: connection.DB, DialTimeout: connection.DialTimeout.Duration(), ReadTimeout: connection.ReadTimeout.Duration(),
 		WriteTimeout: connection.WriteTimeout.Duration(),
-		PoolSize:     connection.EffectivePoolSize(0),
+		PoolSize:     connection.EffectivePoolSize(config.DetectCapacityInputs()),
 		// One attempt. The scheduler already owns retrying: a Go error from
 		// Execute records a failed attempt of the frozen Slot, which is parked
 		// in the delayed queue with exponential backoff and no attempt cap, and

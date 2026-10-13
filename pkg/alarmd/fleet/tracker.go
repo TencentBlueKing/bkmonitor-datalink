@@ -173,7 +173,97 @@ const (
 	// enough that reaching it means something changed, not that the deployment
 	// grew normally.
 	DefaultTrackedQueryGroups = 16384
+	// trackedPerOwned is how many tracked objects the table holds for each
+	// object the replica owns, once it says how many: room for objects it
+	// lost and still hears of, inside the window.
+	trackedPerOwned = 4
+	// MaxTrackerDroppedNamed bounds the objects named as dropped.
+	MaxTrackerDroppedNamed = 8
 )
+
+// The kinds of fact a full table drops, closed: a metric label is made of
+// them.
+const (
+	TrackerDroppedObservation = "observation"
+	TrackerDroppedTruncation  = "truncation"
+	TrackerDroppedRange       = "range"
+)
+
+// TrackerDroppedKinds lists every kind, for the metric that pre-creates them.
+var TrackerDroppedKinds = []string{TrackerDroppedObservation, TrackerDroppedTruncation, TrackerDroppedRange}
+
+// noteDropped counts a fact lost because the table was full and names the
+// object. Called with the lock held.
+func (tracker *Tracker) noteDropped(what, queryGroup string) {
+	if tracker.dropped == nil {
+		tracker.dropped = map[string]uint64{}
+	}
+	tracker.dropped[what]++
+	for index, name := range tracker.droppedRecent {
+		if name == queryGroup {
+			tracker.droppedRecent = append(tracker.droppedRecent[:index], tracker.droppedRecent[index+1:]...)
+			break
+		}
+	}
+	tracker.droppedRecent = append(tracker.droppedRecent, queryGroup)
+	if len(tracker.droppedRecent) > MaxTrackerDroppedNamed {
+		tracker.droppedRecent = tracker.droppedRecent[1:]
+	}
+}
+
+// TrackerDropped is what a full table lost: the counts by kind, every kind
+// present at zero, and the latest objects lost, newest last.
+type TrackerDropped struct {
+	Counts map[string]uint64 `json:"counts"`
+	Recent []string          `json:"recent,omitempty"`
+}
+
+// Lost is whether the table has lost anything.
+func (dropped TrackerDropped) Lost() bool {
+	for _, count := range dropped.Counts {
+		if count > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// aggregateTrackerDropped sums the replicas' losses and names the objects
+// lost, each as replica/object in replica order, keeping the last
+// MaxTrackerDroppedNamed.
+func aggregateTrackerDropped(view *View, snapshots []Snapshot) {
+	var total *TrackerDropped
+	for _, snapshot := range snapshots {
+		dropped := snapshot.TrackerDropped
+		if dropped == nil {
+			continue
+		}
+		if total == nil {
+			total = &TrackerDropped{Counts: map[string]uint64{}}
+		}
+		for kind, count := range dropped.Counts {
+			total.Counts[kind] += count
+		}
+		for _, name := range dropped.Recent {
+			total.Recent = append(total.Recent, snapshot.Replica+"/"+name)
+		}
+	}
+	if total != nil && len(total.Recent) > MaxTrackerDroppedNamed {
+		total.Recent = total.Recent[len(total.Recent)-MaxTrackerDroppedNamed:]
+	}
+	view.TrackerDropped = total
+}
+
+// Dropped reports what the table lost because it was full.
+func (tracker *Tracker) Dropped() TrackerDropped {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	out := TrackerDropped{Counts: make(map[string]uint64, len(TrackerDroppedKinds)), Recent: append([]string(nil), tracker.droppedRecent...)}
+	for _, kind := range TrackerDroppedKinds {
+		out.Counts[kind] = tracker.dropped[kind]
+	}
+	return out
+}
 
 // healthyCompletion reports whether a completion kind means the query group did
 // the job it exists for. FULL_EMPTY counts: no data is a correct business
@@ -819,7 +909,12 @@ type Tracker struct {
 	emptyEveryRoundAfter time.Duration
 	noDataAfter          time.Duration
 	maxTracked           int
-	now                  func() time.Time
+	// dropped counts the observations, truncation and range facts lost
+	// because the table was full, by what; droppedRecent names the latest
+	// objects lost so, newest last, at most MaxTrackerDroppedNamed.
+	dropped       map[string]uint64
+	droppedRecent []string
+	now           func() time.Time
 	// startedAt is when this tracker began counting: what a count kept
 	// since the replica started is counted from.
 	startedAt time.Time
@@ -1017,6 +1112,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	state := tracker.groups[queryGroup]
 	if state == nil {
 		if len(tracker.groups) >= tracker.maxTracked {
+			tracker.noteDropped(TrackerDroppedObservation, queryGroup)
 			return
 		}
 		state = &queryGroupState{strategies: map[StrategyRef]struct{}{}}
@@ -1368,7 +1464,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		// make a retried transient look like a determined verdict.
 		seen := at
 		state.lastFailure = &FailureRef{Stage: failure.Stage, Category: failure.Category,
-			Code: failure.Code, Detail: failure.Detail, At: &seen, Slot: trace.EvaluationTime}
+			Code: failure.Code, Detail: failure.Detail, HTTPStatus: failure.HTTPStatus, At: &seen, Slot: trace.EvaluationTime}
 		if timing := failure.Timing; timing != nil {
 			copied := *timing
 			state.lastFailure.Timing = &copied
@@ -2265,6 +2361,7 @@ func (tracker *Tracker) noteAnswerTruncation(queryGroup string, observation obse
 	}
 	if state == nil {
 		if len(tracker.groups) >= tracker.maxTracked {
+			tracker.noteDropped(TrackerDroppedTruncation, queryGroup)
 			return
 		}
 		state = &queryGroupState{strategies: map[StrategyRef]struct{}{}}
@@ -2290,6 +2387,7 @@ func (tracker *Tracker) noteQueryRanges(queryGroup string, observation observabi
 	state := tracker.groups[queryGroup]
 	if state == nil {
 		if len(tracker.groups) >= tracker.maxTracked {
+			tracker.noteDropped(TrackerDroppedRange, queryGroup)
 			return
 		}
 		state = &queryGroupState{strategies: map[StrategyRef]struct{}{}}
@@ -2483,6 +2581,9 @@ func (tracker *Tracker) Determined() int {
 func (tracker *Tracker) Forget(owned map[string]struct{}) {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
+	// The table holds trackedPerOwned times what the replica owns, never
+	// less than the default.
+	tracker.maxTracked = max(DefaultTrackedQueryGroups, trackedPerOwned*len(owned))
 	for queryGroup, state := range tracker.groups {
 		if _, kept := owned[queryGroup]; !kept {
 			if state.queryCooldown != nil {

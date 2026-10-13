@@ -29,6 +29,7 @@ Commands:
                                             a code bound to this process's PKCE verifier; exits after one login.
   auth login [--env <id>] [--rebind]        Import code from hidden input or protected stdin (fallback when
                                             the browser and the CLI are on different machines).
+                                            Default login is deployment_ops_readonly; renewal preserves it.
   A login pairs this machine: the session renews itself from a rolling renewal credential kept in the
   0600 profile, until the pairing is unused for 30 days, revoked, or the administrator key is rotated.
   Then every command reports credentials_expired with the login page and the auth login command.
@@ -57,7 +58,10 @@ Commands:
                                            it (output refusals whose rule is the strategy's). The items and every
                                            answer they were decided from are saved in meta.result_file.
   describe <operation> --env <id>           Fetch schema, limits, sources and examples.
-  invoke <operation> --env <id> [--input <JSON|@file>]
+  invoke <operation> --env <id> [--input <JSON|@file> | --params-file <file|->]
+             [--stdin-file <file|-> | --script-file <file|->]
+                                           Send file content through the described stdin parameter.
+                                           Scripts are data; no local shell is started.
                                            Fetch describe once, then invoke once with its revision.
   --help / -h                             This guide; no configuration or network required.
   --version                               JSON version; no configuration or network required.
@@ -88,7 +92,8 @@ Storage and transport:
   A successful login without --insecure-tls restores normal verification (optionally --ca-cert).
   profile list and meta.client_transport show the saved/actual verification mode.
   HTTP needs no TLS flags; meta.client_transport.encrypted=false identifies HTTP evidence.
-  Network deadline 30 seconds; response limit 8 MiB; input limit 1 MiB.
+  Invoke network deadline: described execution timeout plus 5 seconds; legacy server default 30 seconds.
+  Response limit 8 MiB; input file limit 1 MiB and each operation's described request/stdin limits.
   No automatic retry, schema cache, arbitrary endpoint or built-in business operations.`)
 	if err != nil {
 		return 1

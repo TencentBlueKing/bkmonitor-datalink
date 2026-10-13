@@ -97,6 +97,25 @@ const (
 )
 
 // Stats is the copy's state and cumulative counts, read for metrics.
+// MaxCalibrationOverAge and MaxTooLargeSets bound the strategies Stats names.
+const (
+	MaxCalibrationOverAge = 16
+	MaxTooLargeSets       = 16
+)
+
+// TooLargeSet is a strategy whose set was refused for its size.
+type TooLargeSet struct {
+	Strategy StrategyKey
+	Refusal  SetTooLargeError
+}
+
+// CalibrationAge is a strategy past CalibrationMaxAge and how long since its
+// last calibration.
+type CalibrationAge struct {
+	Strategy StrategyKey
+	Age      time.Duration
+}
+
 type Stats struct {
 	// Configured is whether there is a Console to take the copy's facts
 	// from; a copy without one reads nothing and is never unavailable.
@@ -127,8 +146,20 @@ type Stats struct {
 	StaleAfter                      time.Duration
 	Stale                           int
 	PendingReads, PendingReconciles int
-	OldestPendingAt                 time.Time
-	SubscriptionReady               bool
+	// CalibrationNeeded is how many strategies a round must calibrate to
+	// cover every tracked one within the calibration interval, and
+	// CalibrationCapacity how many the Console answers in a round;
+	// CalibrationShort is the strategies a whole interval at that capacity
+	// cannot reach. CalibrationOverAge names the strategies past
+	// CalibrationMaxAge, oldest first and bounded, with how long since their
+	// last calibration.
+	CalibrationNeeded, CalibrationCapacity, CalibrationShort int
+	CalibrationOverAge                                       []CalibrationAge
+	// TooLarge names the strategies whose sets were last refused for their
+	// size, largest first and bounded: members, bytes and the budget.
+	TooLarge          []TooLargeSet
+	OldestPendingAt   time.Time
+	SubscriptionReady bool
 	// NoticesRefused is the change notices dropped, by why, since the copy
 	// was built: counted here and not on the subscriber, which a move of the
 	// link's location replaces.

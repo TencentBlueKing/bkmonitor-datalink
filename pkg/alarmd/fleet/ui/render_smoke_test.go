@@ -67,7 +67,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		}),
 		anomaly("qg-failure", func(item *fleet.Anomaly) {
 			item.Failure = &fleet.FailureRef{Stage: "provider", Category: "source_backend",
-				Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}
+				Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}
 		}),
 		anomaly("qg-restored", func(item *fleet.Anomaly) {
 			item.SinceFrom = fleet.SinceRestoredLastFull

@@ -28,14 +28,14 @@ const platformSettingsControlBase = "  control:\n    strategy_cache_prefix: alar
 
 // The platform_settings group is the deployment layer, read as stated.
 func TestPlatformSettingsGroupIsReadDirectly(t *testing.T) {
-	loaded, err := Load(writeConfig(t, platformSettingsConfigContents("", platformSettingsControlBase+`  platform_settings:
+	loaded, err := LoadWithRoles(writeConfig(t, platformSettingsConfigContents("", platformSettingsControlBase+`  platform_settings:
     redis_key_prefix: "bk_monitor_base_test:"
     host_disable_monitor_states: ["备用机"]
     is_access_bk_data: false
     bkdata_cmdb_level_tables: []
-`)))
+`)), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	layer := loaded.PhaseTwo.PlatformSettings.Layer()
 	if loaded.PhaseTwo.PlatformSettings.RedisKeyPrefix != "bk_monitor_base_test:" || layer.HostDisableMonitorStates == nil ||
@@ -49,19 +49,19 @@ func TestPlatformSettingsGroupIsReadDirectly(t *testing.T) {
 // inherited connection would read alarmd's own store as "nothing published"
 // and the copy would call the deployment not_configured for the wrong reason.
 func TestDynamicConfigConnectionIsStatedOrAbsent(t *testing.T) {
-	loaded, err := Load(writeConfig(t, platformSettingsConfigContents("", platformSettingsControlBase)))
+	loaded, err := LoadWithRoles(writeConfig(t, platformSettingsConfigContents("", platformSettingsControlBase)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, configured := loaded.DynamicConfigRedis(); configured {
 		t.Fatal("an unstated distribution connection resolved to something")
 	}
-	loaded, err = Load(writeConfig(t, platformSettingsConfigContents(`
+	loaded, err = LoadWithRoles(writeConfig(t, platformSettingsConfigContents(`
 platform_cache:
   dynamic_config:
     mode: standalone
     address: platform-default:6379
-    db: 0`, platformSettingsControlBase)))
+    db: 0`, platformSettingsControlBase)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

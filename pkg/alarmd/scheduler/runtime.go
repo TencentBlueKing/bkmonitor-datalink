@@ -47,7 +47,8 @@ func (err *SourceBlockedError) Error() string {
 func (err *SourceBlockedError) Unwrap() error { return err.Err }
 
 // ReasonCode is the word a blocked round is named by: SCHEDULE_UNREADABLE
-// when what blocked it is a schedule timeline that does not decode, and
+// when what blocked it is a schedule timeline that does not decode,
+// SCHEDULE_MISSING when the timeline's key is not there at all, and
 // BLOCKED_EXACT_SET_UNAVAILABLE for the rest. The timeline case used to read
 // as the other word, which says the control plane handed nothing to run;
 // told apart, a rollout's old build that cannot read its new timelines is a
@@ -60,6 +61,9 @@ func (err *SourceBlockedError) ReasonCode() execution.ReasonCode {
 	var undecodable *controlplane.DeterministicScheduleError
 	if err != nil && errors.As(err.Err, &undecodable) {
 		return execution.ReasonCode(contract.ReasonScheduleUnreadable)
+	}
+	if err != nil && errors.Is(err.Err, controlplane.ErrScheduleTimelineAbsent) {
+		return execution.ReasonCode(contract.ReasonScheduleMissing)
 	}
 	return execution.ReasonBlockedExactSetUnavailable
 }
@@ -242,6 +246,10 @@ func verifiedOwnershipFrom(
 // no metric would separate that from a deployment where the index is simply
 // not helping.
 type SlotDueFacts struct {
+	// NextSlotUnix is the evaluation time of the Slot a not-due return waits
+	// for, or of the Slot frozen and waiting for its data: the grid point,
+	// as against NotDueUntilUnix, when it becomes runnable. Zero where none.
+	NextSlotUnix int64
 	// NotDueUntilUnix is the wall-clock second before which the facts this call
 	// read say Next cannot return a due Slot. It is filled in only on a not-due
 	// return; zero means the call carries no bound and the Query Group must be
@@ -283,11 +291,17 @@ type FlightCoordinator struct {
 	// active is each Query Group's flight held now, by what; released is
 	// told of each Query Group whose hold turned a Slot away, once the hold
 	// ends (OnTurnedAwayReleased).
-	active                 map[execution.QueryGroupIdentity]flightHold
-	released               func(execution.QueryGroupIdentity)
-	recoveryEnabled        bool
-	limits                 RecoveryLimits
-	now                    func() time.Time
+	active          map[execution.QueryGroupIdentity]flightHold
+	released        func(execution.QueryGroupIdentity)
+	recoveryEnabled bool
+	limits          RecoveryLimits
+	now             func() time.Time
+	// holds is the last day's normal permit holds (HoldReference).
+	holds HourlyDurations
+	// recoveryAcquires is the part of permitAcquires asked by a recovery
+	// operation; normalRequests the normal ones by second.
+	recoveryAcquires       uint64
+	normalRequests         SecondPeak
 	normalWaiters          []*queryPermitWaiter
 	recoveryWaiters        []*queryPermitWaiter
 	recoveryChannelWaiters []*recoveryChannelWaiter
@@ -541,8 +555,11 @@ type Runner struct {
 	attempt        *recoveryAttempt
 	sourceFailures uint32
 	sourceNextAt   time.Time
-	dueBound       RunnerDueBound
-	queryCooldown  queryCooldownState
+	// lastExecutionReturnedAt is when this Runner's latest execution came
+	// back: until then the Runner could start nothing else of its Query Group.
+	lastExecutionReturnedAt time.Time
+	dueBound                RunnerDueBound
+	queryCooldown           queryCooldownState
 	// cooldownMemory, cooldownStore, cooldownLoaded and cooldownFence carry
 	// the pool membership across Runners: what it remembers of the pool, the
 	// store it is kept in, whether it has been read back, and the fence the
@@ -609,6 +626,13 @@ type RunnerDueBound struct {
 	// Executed says this round resolved a frozen Slot and went on to run it.
 	Executed bool
 	Verdict  DueVerdict
+	// NextSlotUnix is the evaluation time of the Slot the bound waits for:
+	// the grid point, where NotDueUntilUnix is when it becomes runnable.
+	// Zero where the bound names no Slot.
+	NextSlotUnix int64
+	// ReadinessHold says a Deferred bound is a frozen Slot waiting for its
+	// data, not a failure's backoff.
+	ReadinessHold bool
 }
 
 // DueBound reports what the last completed round concluded. A Runner that has
@@ -634,7 +658,7 @@ func (runner *Runner) recordDueBound(decision string, facts SlotDueFacts) {
 		// The source read the authoritative cursor and the Slot is in the future,
 		// or the schedule is retired. This is the bound worth having.
 		bound.Verdict = DueVerdictNotDue
-		bound.NotDueUntilUnix, bound.Retired = facts.NotDueUntilUnix, facts.Retired
+		bound.NotDueUntilUnix, bound.Retired, bound.NextSlotUnix = facts.NotDueUntilUnix, facts.Retired, facts.NextSlotUnix
 	case "source_backoff":
 		// The local gate answered before any store read. The Query Group is not
 		// due for a reason of its own, which is exactly what deferred means.
@@ -649,6 +673,7 @@ func (runner *Runner) recordDueBound(decision string, facts SlotDueFacts) {
 	case "query_readiness_deferred":
 		bound.Verdict, bound.Executed, bound.Deferred = DueVerdictDue, true, true
 		bound.NotDueUntilUnix = runnerBoundSecond(runner.NextReadyAt())
+		bound.NextSlotUnix, bound.ReadinessHold = facts.NextSlotUnix, true
 	case "query_cooldown":
 		bound.Verdict = DueVerdictDue
 		bound.QueryCooldown = true
@@ -893,6 +918,16 @@ func (runner *Runner) runOneTracked(
 		diagnosticReadyAt = runner.sourceNextAt.UnixMilli()
 		return execution.SlotExecutionResult{}, false, nil
 	}
+	// A backoff this round is past is spent, the source's and a failed Slot's
+	// alike: NextReadyAt reports the later of the two. Whatever the round
+	// returns sets a new one or none; one left behind would be a ready time
+	// already gone, and the dispatcher queues a Runner ready since then again
+	// on every return, without asking the index. The failed attempt itself is
+	// kept, so its failure count still grows its next backoff.
+	runner.sourceNextAt = time.Time{}
+	if runner.attempt != nil && !runner.now().Before(runner.attempt.nextAt) {
+		runner.attempt.nextAt = time.Time{}
+	}
 	// This stays the Runner's own gate rather than moving into the source. It
 	// is what separates losing the Query Group from failing to read it: an
 	// ownership rejection surfaced from inside Next would be counted as a Slot
@@ -939,6 +974,9 @@ func (runner *Runner) runOneTracked(
 		if err == nil && !due {
 			runner.attempt = nil
 			runner.nextDeadline = time.Time{}
+			// The source answered, so the failures that grew its backoff are
+			// over, as they are below for a due Slot.
+			runner.sourceFailures = 0
 		}
 		return execution.SlotExecutionResult{}, false, err
 	}
@@ -1008,11 +1046,17 @@ func (runner *Runner) runOneTracked(
 	}
 	executeCtx := execution.WithFollowingSlot(execution.ContextWithLeaseAuthority(ctx, runner.session), slot.FollowingSlot)
 	executeCtx = execution.WithStageMarker(executeCtx, &runner.stage)
-	decidesPool := runner.queryCooldownLetsRun()
-	if decidesPool {
-		executeCtx = execution.WithNormalQueryBudget(executeCtx)
-	}
+	decidesPool := runner.queryCooldownDecidedBy(operation)
+	busyUntil := runner.lastExecutionReturnedAt
 	result, err := runner.executor.Execute(executeCtx, request)
+	runner.lastExecutionReturnedAt = runner.now()
+	poolResult := result
+	if decidesPool && runner.queryCooldownExcusesItsOwnDelay(result, busyUntil) {
+		decidesPool = false
+	} else if decidesPool && runner.queryCooldownCountsALateTimeout(result) {
+		poolResult.QueryAvailability = execution.QueryAvailabilityUnavailable
+		poolResult.QueryUnavailableReason = execution.ReasonCode(contract.ReasonQueryTimeout)
+	}
 	if err != nil {
 		// The gate is asked again at execution, and a lease that moved
 		// between the source's reads and here is refused by the same name:
@@ -1026,6 +1070,7 @@ func (runner *Runner) runOneTracked(
 		var deferred interface{ ReadinessReadyAt() time.Time }
 		if errors.As(err, &deferred) {
 			decision = "query_readiness_deferred"
+			sourceFacts.NextSlotUnix = int64(slot.Contract.Slot.EvaluationTime)
 			readyAt := deferred.ReadinessReadyAt()
 			if readyAt.After(runner.now()) {
 				runner.sourceNextAt = readyAt
@@ -1038,7 +1083,7 @@ func (runner *Runner) runOneTracked(
 	if err == nil {
 		runner.nextDeadline = time.Time{}
 		runner.recordResult(slot, result, runner.now())
-		runner.recordQueryAvailability(ctx, slot, operation, result, sourceFacts.IntervalSeconds, decidesPool)
+		runner.recordQueryAvailability(ctx, slot, operation, poolResult, sourceFacts.IntervalSeconds, decidesPool)
 	}
 	decision = "execution_returned"
 	return result, true, err

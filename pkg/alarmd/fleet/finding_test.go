@@ -13,6 +13,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,13 +203,20 @@ func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
 // availability. The detail is the only thing on the row that separates them,
 // and it was being rendered as a symptom without deciding anything.
 func TestARejectedQueryIsNotFiledAsTheBackendsAvailability(t *testing.T) {
+	// An HTTP failure carries its status as a number beside the detail, as
+	// the provider reports it.
+	failure := func(detail string) *FailureRef {
+		ref := &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: detail}
+		if status, ok := strings.CutPrefix(detail, "http_status="); ok {
+			ref.HTTPStatus, _ = strconv.Atoi(status)
+		}
+		return ref
+	}
 	cooldown := func(detail string) Anomaly {
-		return Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE",
-			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: detail}}
+		return Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE", Failure: failure(detail)}
 	}
 	degraded := func(detail string) Anomaly {
-		return Anomaly{Kind: KindDegradedRun, CauseReason: "QUERY_UNAVAILABLE",
-			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: detail}}
+		return Anomaly{Kind: KindDegradedRun, CauseReason: "QUERY_UNAVAILABLE", Failure: failure(detail)}
 	}
 	for _, testCase := range []struct {
 		name    string
@@ -241,6 +250,17 @@ func TestARejectedQueryIsNotFiledAsTheBackendsAvailability(t *testing.T) {
 		// A timeout or a 5xx is the backend not answering: the data's.
 		{"cooldown on a timeout", cooldown("transport=timeout"), CheckBackendNotAnswering, OwnerUndetermined},
 		{"degraded on a 503", degraded("http_status=503"), CheckBackendNotAnswering, OwnerUndetermined},
+		// The status is read as the number the provider decided on, not
+		// parsed out of the text written for a person.
+		{"cooldown on a 403 without its text", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE",
+			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 403}}, CheckQueryRefused, OwnerStrategy},
+		// A row from a replica of an earlier build carries the text alone,
+		// and is still read as refused while the rollout replaces it.
+		{"cooldown on the text of a 4xx from an earlier build", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE",
+			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}}, CheckQueryRefused, OwnerStrategy},
+		// Where the number is there, it decides over the text.
+		{"cooldown whose number is a 5xx", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE",
+			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 503}}, CheckBackendNotAnswering, OwnerUndetermined},
 		// No detail at all: nothing says it was refused, so the coarse reading.
 		{"cooldown without detail", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE"},
 			CheckBackendNotAnswering, OwnerUndetermined},

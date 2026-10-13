@@ -107,6 +107,9 @@ const (
 	CodeOutOfScope = "not_in_scope"
 	// CodeAPIError: any other refusal, with the server's status.
 	CodeAPIError = "apiserver_error"
+	// CodeInvalidRequest: the request names something that is not a
+	// Kubernetes name; nothing was read.
+	CodeInvalidRequest = "invalid_request"
 )
 
 // Codes is every failure code, in the order a reader lists them.

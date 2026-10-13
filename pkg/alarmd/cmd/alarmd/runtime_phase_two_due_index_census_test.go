@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -456,10 +457,14 @@ func (schedule scriptedSchedule) WakeOf(queryGroup string) fleet.WakeFacts {
 }
 
 // The snapshot names the owned objects that are only waiting for their first
-// round, from the tracker and the schedule together: a long object nothing
-// has returned for and whose turn is ahead. A long object that has returned
-// a round (and so concluded), a minute object, one on a backoff bound and one
-// due further out than its period are not waiting.
+// round since this replica took them over, decided on the grid: a minute
+// object before its first Slot, one whose first read comes 35 s after its
+// grid point (a stagger phase) and one held 3 min for its data all wait. One
+// that has concluded is neither waiting nor undetermined. One on a failure
+// backoff, one whose next Slot is a second round since takeover and one with
+// no bound at all are undetermined, and named as such with when they were
+// taken over. A waiting object whose first Slot became runnable and did not
+// run is undetermined from then on, with its takeover time kept.
 func TestFleetPublisherNamesTheObjectsAwaitingTheirFirstRound(t *testing.T) {
 	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
 	at := time.Unix(20_000, 0)
@@ -469,31 +474,74 @@ func TestFleetPublisherNamesTheObjectsAwaitingTheirFirstRound(t *testing.T) {
 	if !tracker.HasConclusion("long-returned") {
 		t.Fatal("fixture: a returned round must have concluded long-returned")
 	}
-	schedule := scriptedSchedule{
-		"long-new":      {Known: true, IntervalSeconds: 7200, DueAt: at.Add(time.Hour)},
-		"long-later":    {Known: true, IntervalSeconds: 216000, DueAt: at.Add(50 * time.Hour)},
-		"long-returned": {Known: true, IntervalSeconds: 7200, DueAt: at.Add(time.Hour)},
-		"minute-new":    {Known: true, IntervalSeconds: 60, DueAt: at.Add(30 * time.Second)},
-		"long-backoff":  {Known: true, IntervalSeconds: 7200, DueAt: at.Add(time.Hour), Deferred: true},
-		"long-far":      {Known: true, IntervalSeconds: 7200, DueAt: at.Add(3 * time.Hour)},
+	slot := func(interval int64, slotIn, runnableIn time.Duration) fleet.WakeFacts {
+		return fleet.WakeFacts{Known: true, IntervalSeconds: interval, NextSlot: at.Add(slotIn), DueAt: at.Add(runnableIn)}
 	}
-	publisher := fleetPublisher{
+	held := slot(60, 20*time.Second, 20*time.Second+3*time.Minute)
+	held.Deferred, held.ReadinessHold = true, true
+	backoff := slot(7200, time.Hour, time.Hour)
+	backoff.Deferred = true
+	schedule := scriptedSchedule{
+		"minute-new":    slot(60, 30*time.Second, 30*time.Second),
+		"long-new":      slot(7200, time.Hour, time.Hour),
+		"phased":        slot(60, 20*time.Second, 55*time.Second),
+		"held":          held,
+		"long-returned": slot(7200, time.Hour, time.Hour),
+		"long-backoff":  backoff,
+		"second-slot":   slot(60, 90*time.Second, 90*time.Second),
+	}
+	publisher := &fleetPublisher{
 		tracker: tracker, replica: "replica-1", now: clock.now,
 		owned: func() []execution.QueryGroupIdentity {
-			return []execution.QueryGroupIdentity{"long-later", "long-new", "long-returned", "minute-new", "long-backoff", "long-far"}
+			return []execution.QueryGroupIdentity{"long-new", "minute-new", "phased", "held", "long-returned", "long-backoff", "second-slot", "no-bound"}
 		},
 		schedule: schedule,
 	}
 	snapshot := publisher.snapshot(context.Background())
-	if snapshot.AwaitingFirstRoundTotal != 2 || len(snapshot.AwaitingFirstRound) != 2 ||
-		snapshot.AwaitingFirstRound[0].QueryGroup != "long-new" || snapshot.AwaitingFirstRound[1].QueryGroup != "long-later" ||
-		snapshot.AwaitingFirstRound[1].IntervalSeconds != 216000 {
-		t.Fatalf("awaiting = %+v total %d, want long-new then long-later, soonest first", snapshot.AwaitingFirstRound, snapshot.AwaitingFirstRoundTotal)
+	var waiting []string
+	for _, wait := range snapshot.AwaitingFirstRound {
+		waiting = append(waiting, wait.QueryGroup)
 	}
-	bare := publisher
+	if fmt.Sprint(waiting) != "[minute-new phased held long-new]" || snapshot.AwaitingFirstRoundTotal != 4 {
+		t.Fatalf("awaiting = %v total %d, want minute-new, phased, held, long-new, soonest runnable first", waiting, snapshot.AwaitingFirstRoundTotal)
+	}
+	want := []fleet.UndeterminedObject{
+		{QueryGroup: "long-backoff", IntervalSeconds: 7200, OwnedSince: at, NextDue: at.Add(time.Hour)},
+		{QueryGroup: "no-bound", OwnedSince: at},
+		{QueryGroup: "second-slot", IntervalSeconds: 60, OwnedSince: at, NextDue: at.Add(90 * time.Second)},
+	}
+	if fmt.Sprint(snapshot.Undetermined) != fmt.Sprint(want) || snapshot.UndeterminedTotal != 3 {
+		t.Fatalf("undetermined = %+v total %d\nwant %+v", snapshot.Undetermined, snapshot.UndeterminedTotal, want)
+	}
+	// 40 s on: the minute object's first Slot was runnable 10 s ago and did
+	// not run; the phased one ran and concluded.
+	clock.at = at.Add(40 * time.Second)
+	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "COMPLETED",
+		Trace: observability.TraceFields{QueryGroupKey: "phased", StrategyID: "3", BusinessID: "2"}})
+	later := publisher.snapshot(context.Background())
+	waiting = waiting[:0]
+	for _, wait := range later.AwaitingFirstRound {
+		waiting = append(waiting, wait.QueryGroup)
+	}
+	if fmt.Sprint(waiting) != "[held long-new]" {
+		t.Fatalf("awaiting later = %v, want held and long-new", waiting)
+	}
+	found := false
+	for _, object := range later.Undetermined {
+		if object.QueryGroup == "minute-new" {
+			found = object.OwnedSince.Equal(at)
+		}
+		if object.QueryGroup == "phased" {
+			t.Fatalf("a concluded object is listed undetermined: %+v", object)
+		}
+	}
+	if !found {
+		t.Fatalf("undetermined later = %+v, want minute-new taken over at %v", later.Undetermined, at)
+	}
+	bare := *publisher
 	bare.schedule = nil
-	if plain := bare.snapshot(context.Background()); plain.AwaitingFirstRoundTotal != 0 {
-		t.Errorf("a publisher with no schedule exempted %d objects", plain.AwaitingFirstRoundTotal)
+	if plain := bare.snapshot(context.Background()); plain.AwaitingFirstRoundTotal != 0 || plain.UndeterminedTotal != 0 {
+		t.Errorf("a publisher with no schedule exempted %d objects and named %d", plain.AwaitingFirstRoundTotal, plain.UndeterminedTotal)
 	}
 }
 
@@ -505,26 +553,33 @@ func TestFleetPublisherNamesTheObjectsAwaitingTheirFirstRound(t *testing.T) {
 func TestTheDueIndexBoundDecidesWhetherAnObjectIsAwaitingItsFirstRound(t *testing.T) {
 	clock := &dueIndexClock{at: time.Unix(50_000, 0)}
 	dispatcher := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 8, 8,
-		map[execution.QueryGroupIdentity]walkRunner{"not-due": {}, "cancelled": {}, "backoff": {}, "cooling": {}})
+		map[execution.QueryGroupIdentity]walkRunner{"not-due": {}, "cancelled": {}, "backoff": {}, "cooling": {}, "held": {}})
 	index := dispatcher.dueIndex
 	record := func(queryGroup execution.QueryGroupIdentity, bound scheduler.RunnerDueBound) {
 		bound.IntervalSeconds = 7200
 		index.Record(queryGroup, dispatcher.bundle.runners[queryGroup], index.versionEpoch, bound, clock.at)
 	}
-	record("not-due", scheduler.RunnerDueBound{NotDueUntilUnix: 50_000 + 3600})
+	record("not-due", scheduler.RunnerDueBound{NotDueUntilUnix: 50_000 + 3600, NextSlotUnix: 50_000 + 3600})
 	record("cancelled", scheduler.RunnerDueBound{})
 	record("backoff", scheduler.RunnerDueBound{NotDueUntilUnix: 50_000 + 600, Deferred: true})
 	record("cooling", scheduler.RunnerDueBound{NotDueUntilUnix: 50_000 + 600, QueryCooldown: true})
+	// A frozen Slot waiting for its data: deferred for readiness, not for a
+	// failure, and still the first Slot since takeover.
+	record("held", scheduler.RunnerDueBound{NotDueUntilUnix: 50_000 + 180, NextSlotUnix: 50_000 - 20, Deferred: true, ReadinessHold: true, Executed: true})
 	publisher := fleetPublisher{
 		tracker: fleet.NewTracker(nil, "replica-1", clock.now), replica: "replica-1", now: clock.now,
 		owned: func() []execution.QueryGroupIdentity {
-			return []execution.QueryGroupIdentity{"not-due", "cancelled", "backoff", "cooling"}
+			return []execution.QueryGroupIdentity{"not-due", "cancelled", "backoff", "cooling", "held"}
 		},
 		schedule: index,
 	}
 	snapshot := publisher.snapshot(context.Background())
-	if snapshot.AwaitingFirstRoundTotal != 1 || len(snapshot.AwaitingFirstRound) != 1 || snapshot.AwaitingFirstRound[0].QueryGroup != "not-due" {
-		t.Fatalf("awaiting = %+v total %d, want only not-due", snapshot.AwaitingFirstRound, snapshot.AwaitingFirstRoundTotal)
+	if snapshot.AwaitingFirstRoundTotal != 2 || len(snapshot.AwaitingFirstRound) != 2 || snapshot.AwaitingFirstRound[0].QueryGroup != "held" ||
+		snapshot.AwaitingFirstRound[1].QueryGroup != "not-due" {
+		t.Fatalf("awaiting = %+v total %d, want held then not-due", snapshot.AwaitingFirstRound, snapshot.AwaitingFirstRoundTotal)
+	}
+	if snapshot.UndeterminedTotal != 3 {
+		t.Fatalf("undetermined = %+v, want cancelled, backoff and cooling", snapshot.Undetermined)
 	}
 	if wake := index.WakeOf("cancelled"); !wake.Known || wake.DueAt.After(clock.at) {
 		t.Fatalf("fixture: a cancelled round's wake %+v should be clamped to now", wake)

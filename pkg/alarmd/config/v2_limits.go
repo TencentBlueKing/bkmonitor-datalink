@@ -24,27 +24,20 @@ import (
 const defaultOutputMaxMessageBytes = 512 << 10
 
 type CompilerLimitsConfig struct {
-	MaxPlanBytes              int      `yaml:"max_plan_bytes"`
-	MaxLevelsPerPlan          int      `yaml:"max_levels_per_plan"`
-	MaxAlgorithmsPerLevel     int      `yaml:"max_algorithms_per_level"`
-	MaxGroupsPerAlgorithm     int      `yaml:"max_groups_per_algorithm"`
-	MaxConditionsPerAlgorithm int      `yaml:"max_conditions_per_algorithm"`
-	MaxASTNodesPerLevel       int      `yaml:"max_ast_nodes_per_level"`
-	MaxRequiredHistoryPoints  uint32   `yaml:"max_required_history_points"`
-	MaxCompiledPlanBytes      int      `yaml:"max_compiled_plan_bytes"`
-	MaxCacheEntries           int      `yaml:"max_cache_entries"`
-	MaxCacheBytes             int      `yaml:"max_cache_bytes"`
-	NegativeCacheTTL          Duration `yaml:"negative_cache_ttl"`
-	BudgetRevision            string   `yaml:"budget_revision"`
-}
-
-// DetectLimitsConfig is what the phase-two runtime still reads by name. The
-// five other budgets it once held - selected records, series and records per
-// Plan's refinements, level facts, predicate evaluations and result bytes -
-// went with the batch evaluation that was their only reader.
-type DetectLimitsConfig struct {
-	MaxPlans            uint64 `yaml:"max_plans"`
-	MaxRecordsPerSeries uint64 `yaml:"max_records_per_series"`
+	MaxPlanBytes              int    `yaml:"max_plan_bytes"`
+	MaxLevelsPerPlan          int    `yaml:"max_levels_per_plan"`
+	MaxAlgorithmsPerLevel     int    `yaml:"max_algorithms_per_level"`
+	MaxGroupsPerAlgorithm     int    `yaml:"max_groups_per_algorithm"`
+	MaxConditionsPerAlgorithm int    `yaml:"max_conditions_per_algorithm"`
+	MaxASTNodesPerLevel       int    `yaml:"max_ast_nodes_per_level"`
+	MaxRequiredHistoryPoints  uint32 `yaml:"max_required_history_points"`
+	MaxCompiledPlanBytes      int    `yaml:"max_compiled_plan_bytes"`
+	// MaxCacheEntries and MaxCacheBytes bound the compile cache. They are
+	// sized from the container (DeriveCompileCache), not configured.
+	MaxCacheEntries  int      `yaml:"-"`
+	MaxCacheBytes    int      `yaml:"-"`
+	NegativeCacheTTL Duration `yaml:"negative_cache_ttl"`
+	BudgetRevision   string   `yaml:"budget_revision"`
 }
 
 type TriggerLimitsConfig struct {
@@ -63,16 +56,17 @@ type CodecLimitsConfig struct {
 	MaxEncodedBytes int `yaml:"max_encoded_bytes"`
 }
 
+// StoreLimitsConfig is the batch the state store applies in. Three byte
+// budgets beside it -- key bytes per batch, loaded and written bytes -- were
+// read by nothing but their own positivity check and are gone; what one
+// Slot's state may cost is the coordinator's retained bytes and the codec's
+// encoded bound.
 type StoreLimitsConfig struct {
-	MaxKeysPerBatch     int `yaml:"max_keys_per_batch"`
-	MaxKeyBytesPerBatch int `yaml:"max_key_bytes_per_batch"`
-	MaxLoadedBytes      int `yaml:"max_loaded_bytes"`
-	MaxWrittenBytes     int `yaml:"max_written_bytes"`
+	MaxKeysPerBatch int `yaml:"max_keys_per_batch"`
 }
 
 type LimitsConfig struct {
 	Compiler CompilerLimitsConfig `yaml:"compiler"`
-	Detect   DetectLimitsConfig   `yaml:"detect"`
 	Trigger  TriggerLimitsConfig  `yaml:"trigger"`
 	Codec    CodecLimitsConfig    `yaml:"codec"`
 	Store    StoreLimitsConfig    `yaml:"store"`
@@ -84,34 +78,24 @@ func defaultLimits() LimitsConfig {
 			MaxPlanBytes: 256 << 10, MaxLevelsPerPlan: 8, MaxAlgorithmsPerLevel: 8,
 			MaxGroupsPerAlgorithm: 16, MaxConditionsPerAlgorithm: 32, MaxASTNodesPerLevel: 512,
 			MaxRequiredHistoryPoints: 4096, MaxCompiledPlanBytes: 512 << 10,
-			MaxCacheEntries: 4096, MaxCacheBytes: 64 << 20, NegativeCacheTTL: Duration(time.Minute),
-			BudgetRevision: "phase-one-default-v1",
+			NegativeCacheTTL: Duration(time.Minute),
+			BudgetRevision:   "phase-one-default-v1",
 		},
-		// Five of the seven budgets that used to live here went with the batch
-		// evaluation that read them. What is left is what the phase-two runtime
-		// reaches for by name: MaxPlans and MaxRecordsPerSeries.
-		//
-		// The two that are gone are worth a sentence, because one of them was
-		// raised as a bound that might be throttling throughput. It could not
-		// be: max_series_per_plan reached production only through a converter
-		// whose one caller was the phase-one runtime, and on the path that runs
-		// it was never read at all. The series bound this deployment does
-		// enforce is PhaseTwo.Coordinator.MaxSeries, derived from the memory
-		// limit and measured at 524,288 against that 500. Two of the three were
-		// additionally unreachable by construction, their budgets being equal to
-		// a larger quantity checked before them - which is why no setting of
-		// them would have changed anything either.
-		Detect: DetectLimitsConfig{MaxPlans: 16, MaxRecordsPerSeries: 500},
+		// There is no detect section any more. Five of its seven budgets went
+		// with the batch evaluation that read them; the last two did not bound
+		// anything real. max_plans was checked to be at least one and read
+		// nowhere else. max_records_per_series, 500, refused every evaluation
+		// of a Plan whose window holds more points than that, a Plan the
+		// compiler had admitted; a series is now bounded by its own window
+		// (evaluation.commonPrimaryRecords), and what a Slot holds in memory
+		// by the coordinator's retained bytes.
 		Trigger: TriggerLimitsConfig{
 			MaxLevels: 8, MaxTriggerWindowSize: 2048, MaxRecoveryConsecutiveWindows: 2048,
 			MaxRequiredHistoryPoints: 4096, MaxLevelResultsPerEvent: 8,
 			MaxEvidenceBytesPerEvent: 64 << 10, MaxComputeCost: 1 << 20,
 		},
 		Codec: CodecLimitsConfig{MaxLevels: 8, MaxPoints: 4096, MaxEncodedBytes: 512 << 10},
-		Store: StoreLimitsConfig{
-			MaxKeysPerBatch: 8192, MaxKeyBytesPerBatch: 2 << 20,
-			MaxLoadedBytes: 64 << 20, MaxWrittenBytes: 64 << 20,
-		},
+		Store: StoreLimitsConfig{MaxKeysPerBatch: 8192},
 	}
 }
 
@@ -151,10 +135,6 @@ func (c LimitsConfig) validate() error {
 		strings.TrimSpace(compiler.BudgetRevision) != compiler.BudgetRevision {
 		return errors.New("limits.compiler budgets must be positive and budget_revision canonical")
 	}
-	detectLimits := c.Detect
-	if detectLimits.MaxPlans == 0 || detectLimits.MaxRecordsPerSeries == 0 {
-		return errors.New("limits.detect budgets must be positive")
-	}
 	triggerLimits := c.Trigger
 	if triggerLimits.MaxLevels == 0 || triggerLimits.MaxTriggerWindowSize == 0 || triggerLimits.MaxRecoveryConsecutiveWindows == 0 ||
 		triggerLimits.MaxRequiredHistoryPoints == 0 || triggerLimits.MaxLevelResultsPerEvent == 0 ||
@@ -166,7 +146,7 @@ func (c LimitsConfig) validate() error {
 		return errors.New("limits.codec budgets must be positive")
 	}
 	store := c.Store
-	if store.MaxKeysPerBatch <= 0 || store.MaxKeyBytesPerBatch <= 0 || store.MaxLoadedBytes <= 0 || store.MaxWrittenBytes <= 0 {
+	if store.MaxKeysPerBatch <= 0 {
 		return errors.New("limits.store budgets must be positive")
 	}
 	if compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevels) ||
@@ -186,9 +166,6 @@ func (c LimitsConfig) validate() error {
 	}
 	if compiler.MaxCompiledPlanBytes > compiler.MaxCacheBytes {
 		return errors.New("compiler cache cannot admit one maximum compiled plan")
-	}
-	if codec.MaxEncodedBytes > store.MaxLoadedBytes || codec.MaxEncodedBytes > store.MaxWrittenBytes {
-		return errors.New("state store cannot admit one maximum encoded window")
 	}
 	return nil
 }

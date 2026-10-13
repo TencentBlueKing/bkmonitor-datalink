@@ -60,7 +60,7 @@ func TestWhetherAnyoneWaitedForAPermitReachesTheCapacityView(t *testing.T) {
 			"from a field that was never set")
 	}
 
-	source := capacitySnapshotSource(flights, config.Config{}, fleet.NewRejectionTally(), nil, nil)
+	source := capacitySnapshotSource(flights, config.Config{}, fleet.NewRejectionTally(), nil, nil, nil)
 	capacity := source()
 	if capacity == nil {
 		t.Fatal("no capacity was published")

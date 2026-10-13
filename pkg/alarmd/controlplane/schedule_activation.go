@@ -168,13 +168,13 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	}
 	reported := reconciler.reportedTimelines()
 	// A Query Group the activation read left out because its timeline did
-	// not decode is named as the Workers name theirs: its records are not in
-	// previous.Plans, which says it is unread, never that it left. Under the
-	// current publication only the undecodable ones are rebuilt and
-	// rewritten below; a cutover to a new publication reads every one of
-	// them and rewrites only the undecodable ones, leaving one another
-	// schema wrote as it is.
-	undecodable := undecodableSkipped(previous.SkippedTimelines)
+	// not decode, or its key was gone, is named as the Workers name theirs:
+	// its records are not in previous.Plans, which says it is unread, never
+	// that it left. Under the current publication only those two are rebuilt
+	// and rewritten or opened again below; a cutover to a new publication
+	// reads every one of them and rewrites or reopens only those, leaving one
+	// another schema wrote as it is.
+	rebuildable := rebuildableSkipped(previous.SkippedTimelines)
 	if len(previous.SkippedTimelines) > 0 {
 		merged := make(map[execution.QueryGroupIdentity]struct{}, len(reported)+len(previous.SkippedTimelines))
 		for queryGroup := range reported {
@@ -203,7 +203,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 			if boundary <= 0 {
 				return ActivationState{}, errors.New("alarmd controlplane: Schedule activation clock must produce a positive Unix second")
 			}
-			candidate, rebuildErr := reconciler.rebuildSkippedRecords(ctx, previous, active, undecodable, boundary)
+			candidate, rebuildErr := reconciler.rebuildSkippedRecords(ctx, previous, active, rebuildable, boundary)
 			if rebuildErr != nil {
 				return ActivationState{}, rebuildErr
 			}
@@ -594,10 +594,11 @@ func withoutNewerFormat(named map[execution.QueryGroupIdentity]struct{}, skipped
 }
 
 // rebuildSkippedRecords is previous with records for the active Query Groups
-// of undecodable compiled again from the publication the activation runs:
-// their records went with the bytes the activation read could not decode,
-// and the repair that rewrites those timelines needs records to carry. Only
-// those Query Groups' records are added; every other record is previous's.
+// of skipped compiled again from the publication the activation runs: their
+// records went with the bytes the activation read could not decode, or with
+// the key that is gone, and the repair that rewrites or reopens those
+// timelines needs records to carry. Only those Query Groups' records are
+// added; every other record is previous's.
 //
 // The rebuilt records are the lost ones in all but the epoch, and they do
 // not warm again. The state generation is the compiled Plan's
@@ -621,19 +622,19 @@ func (reconciler *ScheduleActivationReconciler) rebuildSkippedRecords(
 	ctx context.Context,
 	previous ActivationState,
 	active []execution.QueryGroupIdentity,
-	undecodable map[execution.QueryGroupIdentity]struct{},
+	skipped map[execution.QueryGroupIdentity]struct{},
 	boundary execution.EvaluationTime,
 ) (ActivationState, error) {
-	if len(undecodable) == 0 {
+	if len(skipped) == 0 {
 		return previous, nil
 	}
 	published, err := reconciler.repository.loadPublishedGroups(ctx, previous.Current)
 	if err != nil {
 		return ActivationState{}, err
 	}
-	rebuilt := make([]execution.QueryGroupIdentity, 0, len(undecodable))
+	rebuilt := make([]execution.QueryGroupIdentity, 0, len(skipped))
 	for _, queryGroup := range active {
-		if _, skipped := undecodable[queryGroup]; !skipped {
+		if _, unread := skipped[queryGroup]; !unread {
 			continue
 		}
 		if _, published := published.groups[queryGroup]; published {

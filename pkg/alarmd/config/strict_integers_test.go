@@ -135,13 +135,13 @@ func readBack(decoded strictShape, path string) int64 {
 // written as a fraction is refused by its path, quoted is read, and the
 // document's other keys decode as before.
 func TestLoadHoldsTheRealConfigsIntegersToWholeDecimals(t *testing.T) {
-	_, err := Load(writeConfig(t, strings.Replace(platformCacheConfigContents(""), "  db: 8\n", "  db: 8.5\n", 1)))
+	_, err := LoadWithRoles(writeConfig(t, strings.Replace(platformCacheConfigContents(""), "  db: 8\n", "  db: 8.5\n", 1)), nil)
 	if err == nil || !strings.Contains(err.Error(), "redis.db ") {
-		t.Fatalf("Load() error = %v, want a refusal naming redis.db", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v, want a refusal naming redis.db", err)
 	}
-	loaded, err := Load(writeConfig(t, strings.Replace(platformCacheConfigContents(""), "  db: 8\n", "  db: \"9\"\n", 1)))
+	loaded, err := LoadWithRoles(writeConfig(t, strings.Replace(platformCacheConfigContents(""), "  db: 8\n", "  db: \"9\"\n", 1)), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	if loaded.Redis.DB != 9 {
 		t.Fatalf("redis.db = %d, want 9", loaded.Redis.DB)

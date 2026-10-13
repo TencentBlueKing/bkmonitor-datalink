@@ -91,8 +91,8 @@ func TestACMDBRecordIsReadAsWrittenAndAsAlarmdDecodesIt(t *testing.T) {
 		got, _ := r.Value.(CMDBRecord)
 		decoded, _ := got.Decoded.(map[string]any)
 		if r.Status != "ok" || r.Location.Key != hosts || got.Field != field || decoded["host_id"] != "101" || decoded["ip"] != "192.0.2.10" ||
-			r.Limits.Commands != 7 || r.Limits.Bytes != len(record) {
-			t.Fatalf("host %s = %+v value %+v, want the record, decoded, in 7 commands", field, r, got)
+			r.Limits.Commands != 5 || r.Limits.Bytes != len(record) || r.Limits.Consistency != ConsistencyPipelined {
+			t.Fatalf("host %s = %+v value %+v, want the record, decoded, in 5 commands, read as one pipeline", field, r, got)
 		}
 		if raw, ok := got.Record.(json.RawMessage); !ok || string(raw) != record {
 			t.Fatalf("host %s record = %v, want the payload as written", field, got.Record)
@@ -118,7 +118,7 @@ func TestACMDBRecordIsReadAsWrittenAndAsAlarmdDecodesIt(t *testing.T) {
 			t.Fatalf("host %s ttl = %v, want -1 for a hash with no expiry", field, r.TTLMS)
 		}
 	}
-	if r := host("999"); r.Status != "missing" || r.Reason != "field_absent" || !r.Complete || r.Limits.Commands != 6 {
+	if r := host("999"); r.Status != "missing" || r.Reason != "field_absent" || !r.Complete || r.Limits.Commands != 4 {
 		t.Fatalf("a host the hash does not hold = %+v, want missing/field_absent without reading a value", r)
 	}
 	r := host("102")
@@ -126,7 +126,7 @@ func TestACMDBRecordIsReadAsWrittenAndAsAlarmdDecodesIt(t *testing.T) {
 		t.Fatalf("a record alarmd cannot decode = %+v value %+v, want it as text with the decode error", r, r.Value)
 	}
 	before := hgetCalls(ctx, t, client)
-	if r := host("103"); r.Status != "budget_exceeded" || r.Reason != "document_bytes" || r.Value != nil || r.Limits.Commands != 6 {
+	if r := host("103"); r.Status != "budget_exceeded" || r.Reason != "document_bytes" || r.Value != nil || r.Limits.Commands != 4 {
 		t.Fatalf("a record past the document limit = %+v, want refused unread", r)
 	}
 	if calls := hgetCalls(ctx, t, client) - before; calls != 0 {

@@ -388,7 +388,7 @@ func (fixture *followsFixture) evaluationAt(round int64) int64 {
 // attempt runs one attempt of round n, at the round's time plus delay.
 func (fixture *followsFixture) attempt(round int64, delay time.Duration) bool {
 	fixture.t.Helper()
-	fixture.clock.Store((fixture.evaluationAt(round)+fixture.interval/2)*1000 + delay.Milliseconds())
+	fixture.clock.Store(roundReadAtMillis(fixture.bundle.dependencies.Config, fixture.queryGroup, fixture.evaluationAt(round), fixture.interval) + delay.Milliseconds())
 	_, attempted, err := fixture.runner.RunOne(context.Background())
 	if err != nil {
 		fixture.t.Fatalf("round %d RunOne error = %v", round, err)

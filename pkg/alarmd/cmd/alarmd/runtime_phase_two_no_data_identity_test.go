@@ -277,6 +277,9 @@ func startIdentityFixture(t *testing.T, protocol string, shape noDataFixtureShap
 	}
 	queryGroup := bundle.queryGroups[0]
 	fixture.runner = settledRunner(bundle, queryGroup)
+	fixture.readAt = func(evaluationAt int64) int64 {
+		return roundReadAtMillis(bundle.dependencies.Config, queryGroup, evaluationAt, fixture.interval)
+	}
 	fixture.events = events
 
 	// The Plan must carry no-data detection with the configured horizon, or

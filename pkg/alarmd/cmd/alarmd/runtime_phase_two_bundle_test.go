@@ -39,8 +39,16 @@ func TestDefaultPhaseTwoProductionHTTPClientUsesBoundedConnectionPool(t *testing
 	if dialer.Timeout != 5*time.Second || dialer.KeepAlive != 30*time.Second {
 		t.Fatalf("dialer timeout/keep-alive = %s/%s, want 5s/30s", dialer.Timeout, dialer.KeepAlive)
 	}
-	if transport.MaxIdleConns != 128 || transport.MaxIdleConnsPerHost != 64 {
-		t.Fatalf("idle connections total/per host = %d/%d, want 128/64", transport.MaxIdleConns, transport.MaxIdleConnsPerHost)
+	// Every query the container can have in flight keeps its connection.
+	want := config.DeriveScheduler(config.DetectCapacityInputs()).ActiveExecutionCeiling + 1
+	if transport.MaxIdleConns != want || transport.MaxIdleConnsPerHost != want {
+		t.Fatalf("idle connections total/per host = %d/%d, want %d", transport.MaxIdleConns, transport.MaxIdleConnsPerHost, want)
+	}
+	for _, memory := range []uint64{256 << 20, 4 << 30, 64 << 30} {
+		inputs := config.CapacityInputs{MemoryLimitBytes: memory}
+		if idle, derived := phaseTwoUQIdleConnections(inputs), config.DeriveScheduler(inputs); idle <= derived.AdmittedConcurrency() || idle <= derived.ActiveExecutionCeiling {
+			t.Fatalf("%d MiB: %d idle connections for %d permits and a %d ceiling", memory>>20, idle, derived.AdmittedConcurrency(), derived.ActiveExecutionCeiling)
+		}
 	}
 	if transport.IdleConnTimeout != 90*time.Second {
 		t.Fatalf("idle connection timeout = %s, want 90s", transport.IdleConnTimeout)

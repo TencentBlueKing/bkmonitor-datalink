@@ -44,16 +44,32 @@ const RetainedPeakCensusMaxGroups = 65536
 // the two windows, the evaluation and state wall and not the query or run
 // wall - so a Query Group the summary does track reads the same on both.
 type RetainedPeakCensus struct {
-	mu       sync.Mutex
-	window   time.Duration
-	now      func() time.Time
-	groups   map[string]*censusGroup
-	overflow uint64
+	mu        sync.Mutex
+	window    time.Duration
+	replayAge time.Duration
+	now       func() time.Time
+	groups    map[string]*censusGroup
+	overflow  uint64
 }
 
 type censusGroup struct {
 	epoch             int64
 	current, previous censusWindow
+	slot              censusSlot
+}
+
+// censusSlot is the retained-byte peak of the Query Group's latest Slot,
+// held until its next Slot rather than for the two windows: a Query Group
+// on an hourly or daily period completes one Slot per period, and read from
+// the windows alone it was a reading for ten minutes of each hour and absent
+// for the rest, so the Leader's byte-feasibility moves read an overloaded
+// Worker as light. at is when this Slot's peak was first read, and the hold
+// counts from it.
+type censusSlot struct {
+	evaluation int64
+	peak       uint64
+	interval   time.Duration
+	at         time.Time
 }
 
 type censusWindow struct {
@@ -73,6 +89,63 @@ func NewRetainedPeakCensus(window time.Duration, now func() time.Time) *Retained
 		window = 5 * time.Minute
 	}
 	return &RetainedPeakCensus{window: window, now: now, groups: make(map[string]*censusGroup)}
+}
+
+// SetReplayAge is how long past its next Slot a Query Group's last Slot can
+// still be replayed; a held peak lasts two of its periods and this beyond,
+// so a Slot late by up to the replay age does not lose the reading in
+// between.
+func (c *RetainedPeakCensus) SetReplayAge(age time.Duration) {
+	if c == nil || age < 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.replayAge = age
+}
+
+// holdFor is how long a held Slot peak stays a reading: two of its period
+// and the replay age, or the two windows while its period is not known.
+func (c *RetainedPeakCensus) holdFor(s censusSlot) time.Duration {
+	if s.interval <= 0 {
+		return 2 * c.window
+	}
+	return 2*s.interval + c.replayAge
+}
+
+// heldPeak is the held Slot peak when it is still a reading at now.
+func (c *RetainedPeakCensus) heldPeak(s censusSlot, now time.Time) uint64 {
+	if s.at.IsZero() || now.Sub(s.at) > c.holdFor(s) {
+		return 0
+	}
+	return s.peak
+}
+
+// holdSlot records one retained-byte reading against the Slot it is of. A
+// later Slot replaces the held one; the same Slot, or an earlier one being
+// replayed, keeps the larger. A Slot's period is the distance to the Slot
+// after it, from the completion when it carries it and otherwise learned
+// from two Slots read in turn. A learned period is not corrected: two Slots
+// that straddle a skipped round learn a multiple of it and hold the peak
+// longer, which reads a Worker heavier for a while rather than lighter - the
+// direction that does not send a move to it. Any completion carrying the
+// Slot after it sets the period exactly.
+func (c *RetainedPeakCensus) holdSlot(s *censusSlot, evaluation, following int64, peak uint64, now time.Time) {
+	// A hold that has run out reads nothing more, but its Slot still says
+	// where the next one is from, so the period can be learned across it.
+	expired := s.at.IsZero() || c.heldPeak(*s, now) == 0
+	switch {
+	case expired || evaluation > s.evaluation:
+		if s.evaluation > 0 && evaluation > s.evaluation && s.interval <= 0 {
+			s.interval = time.Duration(evaluation-s.evaluation) * time.Second
+		}
+		s.evaluation, s.peak, s.at = max(s.evaluation, evaluation), peak, now
+	default:
+		s.peak = max(s.peak, peak)
+	}
+	if following > evaluation && evaluation > 0 {
+		s.interval = time.Duration(following-evaluation) * time.Second
+	}
 }
 
 // Observe takes what the summary's addCost takes for the peak and the
@@ -95,11 +168,13 @@ func (c *RetainedPeakCensus) Observe(ctx context.Context, o Observation) {
 	default:
 		return
 	}
-	key := mergeTraceFields(o.Trace, TraceFieldsFromContext(ctx)).QueryGroupKey
+	trace := mergeTraceFields(o.Trace, TraceFieldsFromContext(ctx))
+	key := trace.QueryGroupKey
 	if key == "" {
 		return
 	}
-	epoch := c.now().UnixNano() / int64(c.window)
+	now := c.now()
+	epoch := now.UnixNano() / int64(c.window)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	g := c.groups[key]
@@ -117,10 +192,12 @@ func (c *RetainedPeakCensus) Observe(ctx context.Context, o Observation) {
 	case StageSlotCompleted:
 		if usage := o.SlotBudgetUsage; usage != nil {
 			w.retainedBytesPeak = max(w.retainedBytesPeak, usage.RetainedBytes)
+			c.holdSlot(&g.slot, trace.EvaluationTime, o.FollowingSlot, usage.RetainedBytes, now)
 		}
 	case StageResourceHard:
 		if f := o.CapacityRejection; f != nil && f.OwnUsed != nil {
 			w.retainedBytesPeak = max(w.retainedBytesPeak, *f.OwnUsed+f.Requested)
+			c.holdSlot(&g.slot, trace.EvaluationTime, o.FollowingSlot, *f.OwnUsed+f.Requested, now)
 		}
 	default:
 		if o.Duration >= 0 && (o.DurationKnown || o.Duration > 0) {
@@ -153,23 +230,24 @@ func (g *censusGroup) rotate(epoch int64) {
 }
 
 // RetainedPeaks is every Query Group's reading, in key order: the larger of
-// the two windows' peaks and the sum of their walls, as the summary reads
-// them, over the two windows ending now. A Query Group with neither a peak
-// nor any wall in them is not a reading: one that stopped completing Slots
-// two windows ago reports nothing, as it would from the summary, rather than
-// the last thing it did for as long as it is owned.
+// the two windows' peaks and its latest Slot's held peak, and the sum of the
+// windows' walls, as the summary reads them. A Query Group with neither a
+// peak nor any wall is not a reading: one that stopped completing Slots for
+// two of its periods and the replay age reports nothing, rather than the
+// last thing it did for as long as it is owned.
 func (c *RetainedPeakCensus) RetainedPeaks() []CostRetainedPeak {
 	if c == nil {
 		return nil
 	}
-	epoch := c.now().UnixNano() / int64(c.window)
+	now := c.now()
+	epoch := now.UnixNano() / int64(c.window)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	peaks := make([]CostRetainedPeak, 0, len(c.groups))
 	for key, g := range c.groups {
 		g.rotate(epoch)
 		reading := CostRetainedPeak{QueryGroupKey: key,
-			RetainedBytesPeak:  max(g.current.retainedBytesPeak, g.previous.retainedBytesPeak),
+			RetainedBytesPeak:  max(g.current.retainedBytesPeak, g.previous.retainedBytesPeak, c.heldPeak(g.slot, now)),
 			ComputeWallNS:      g.current.computeWallNS + g.previous.computeWallNS,
 			ComputeWallUnknown: g.current.computeWallUnknown + g.previous.computeWallUnknown}
 		if reading.RetainedBytesPeak > 0 || reading.ComputeWallNS > 0 {

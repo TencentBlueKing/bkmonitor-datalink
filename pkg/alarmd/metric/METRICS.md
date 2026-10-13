@@ -25,6 +25,16 @@ Labels: `disposition`
 
 How each round of the difference ended: none is a round that decided, and the rest name the fact that was not good enough to decide on - link_unavailable (the alert link's roster could not be read), link_unhealthy (the link says its own set maintenance is failing or has not succeeded recently), snapshot_unusable (the source was not observed this round), snapshot_empty and snapshot_stale. Rounds, not strategies. none is the denominator the outcome family is read against.
 
+## bkmonitor_alarmd_access_inplace_held_input_bytes
+
+Retained input bytes a Slot execution held while it waited in place for a later query of the Slot, one observation per execution that waited (the ones access_inplace_readiness_waits_total counts). Exact, from the Slot's own retention accounting: the most input it held at any of its waits. The same value is inplace_held_input_bytes on the slot_completed line, which log admission mostly drops; this is the reading a scrape always has. sum over count is the mean held per waiting execution, and the top buckets reach the retained-bytes budget's default.
+
+## bkmonitor_alarmd_access_inplace_readiness_waits_total
+
+Labels: `wait`
+
+Slot executions that waited in place, holding their execution slot, for a later query of the Slot to become readable, by their total wait. A Slot whose queries become readable at different times is not deferred as a whole; its dispatch waits for each later query while keeping its slot, its prepared plan and the input its earlier queries delivered. Its slot_completed line carries the wait (inplace_wait_ms, inplace_waits, inplace_longest_ms, inplace_sent_before, inplace_wait_before_any_sent_ms) and what it held: inplace_held_input_bytes is exact, from the Slot's own retention accounting; inplace_held_prepared_bytes_estimate is an estimate, the struct sizes of the copies this execution made for itself, not the cached plan they reference, which is shared and held without the wait. Every cell exists from the start.
+
 ## bkmonitor_alarmd_access_response_codec_total
 
 Labels: `codec`, `negotiation`, `completion`
@@ -93,7 +103,7 @@ Timelines a cutover opened again because their key was gone. This used to fail e
 
 Labels: `reason`
 
-Schedule timelines the Control Leader left out when it read the activation's Plan records back from the open Segments, by why: one per Query Group per activation it read. The rest of the activation loads and is cut over as usual. undecodable: the bytes do not decode; the Leader rebuilds that Query Group's records from the publication it runs and rewrites the timeline (timeline_repairs_total). newer_format: the bytes are a timeline of another schema version, written by a build that reads them, and are left alone. A read that fails is never counted here: it fails the activation read as before. The fleet's activation row names the Query Groups. Counted by the Leader; read it summed over replicas. Reader: the release acceptance, from /metrics after each deploy.
+Schedule timelines the Control Leader left out when it read the activation's Plan records back from the open Segments, by why: one per Query Group per activation it read. The rest of the activation loads and is cut over as usual. undecodable: the bytes do not decode; the Leader rebuilds that Query Group's records from the publication it runs and rewrites the timeline (timeline_repairs_total). newer_format: the bytes are a timeline of another schema version, written by a build that reads them, and are left alone. absent: the key is not there at all; the Leader rebuilds that Query Group's records and opens the timeline again (timeline_repairs_total{reopened}). A read that fails is never counted here: it fails the activation read as before. The fleet's activation row names the Query Groups. Counted by the Leader; read it summed over replicas. Reader: the release acceptance, from /metrics after each deploy.
 
 ## bkmonitor_alarmd_active_qg_set_object_bytes
 
@@ -111,15 +121,15 @@ Active Set Redis operation duration.
 
 ## bkmonitor_alarmd_admission_cmdb_address_differs_total
 
-Labels: `grouped_by_target_ip`
+Labels: `grouped_by_target_ip`, `cause`
 
-Admitted series a Plan read whose host CMDB placed by bk_host_id or bk_agent_id while the record's own bk_target_ip was not that host's address (another one, empty or missing), by whether the Plan's alert identity groups by bk_target_ip. Python's fuller overwrites bk_target_ip with the host's address on that branch and reads the alert's target from it; alarmd writes nothing back, so under grouped_by_target_ip="true" these are the series whose alert identity differs from Python's. Counted per admitted series per Plan per round: the rate is distinct (series, Plan) pairs times rounds a second, so for one Plan the pairs are about the rate times its period; it says whether this happens and roughly how much, and a non-zero true is followed by reading the objects; read against admission_cmdb_placed_by_host_id_total, the count these are a part of, which tells a zero here from a branch never taken. The address is compared exactly, as Python's dedupe sees it; a differing cloud area alone is not counted, a known undercount for Plans grouped by it. Reader: the open decision whether an alert's identity follows CMDB's address as Python's does, read through /metrics on each deployment it waits on.
+Admitted series a Plan read whose host CMDB placed by bk_host_id or bk_agent_id while the record's own bk_target_ip was not that host's address (another one, empty or missing), by whether the Plan's alert identity groups by bk_target_ip. Python's fuller overwrites bk_target_ip with the host's address on that branch and reads the alert's target from it; alarmd writes nothing back, so under grouped_by_target_ip="true" these are the series whose alert identity differs from Python's. Counted per admitted series per Plan per round: the rate is distinct (series, Plan) pairs times rounds a second, so for one Plan the pairs are about the rate times its period; it says whether this happens and roughly how much, and a non-zero true is followed by reading the objects; read against admission_cmdb_placed_by_host_id_total, the count these are a part of, which tells a zero here from a branch never taken. The address is compared exactly, as Python's dedupe sees it; a differing cloud area alone is not counted, a known undercount for Plans grouped by it. cause says how it differs: differs (another address), missing (none, or empty), undecodable (not a string); fleet.get address_differs_samples names the latest such records, with the strategy, Query Group, host and both addresses. Reader: the check before a cutover from Python that must continue the alerts Python opened, read on that deployment: the alert identity does not follow CMDB's address, a recorded known difference, and the series counted here are the ones whose Python-opened alerts alarmd would not recover.
 
 ## bkmonitor_alarmd_admission_cmdb_placed_by_host_id_total
 
 Labels: `grouped_by_target_ip`
 
-Admitted series a Plan read whose host CMDB placed by bk_host_id or bk_agent_id, whatever the record's own bk_target_ip, by whether the Plan's alert identity groups by bk_target_ip: the branch Python's fuller overwrites bk_target_ip on, and the count admission_cmdb_address_differs_total is a part of. Counted at the same site, per admitted series per Plan per round. Read beside that counter, so a zero of it tells "placed this way and the address always the host's" (this one rising) from "never placed this way" (this one zero too). Reader: the same decision, through /metrics. Retired with it.
+Admitted series a Plan read whose host CMDB placed by bk_host_id or bk_agent_id, whatever the record's own bk_target_ip, by whether the Plan's alert identity groups by bk_target_ip: the branch Python's fuller overwrites bk_target_ip on, and the count admission_cmdb_address_differs_total is a part of. Counted at the same site, per admitted series per Plan per round. Read beside that counter, so a zero of it tells "placed this way and the address always the host's" (this one rising) from "never placed this way" (this one zero too). Reader: the same cutover check, through /metrics. Retired with it.
 
 ## bkmonitor_alarmd_algorithm_evaluation_total
 
@@ -289,6 +299,12 @@ Whether the CMDB index is unusable for filtering, by bounded reason.
 
 Hosts in the in-memory CMDB index the target filter decides on.
 
+## bkmonitor_alarmd_cmdb_host_index_reads_total
+
+Labels: `result`
+
+Refreshes of the CMDB index, by how they read the cache: full, every hash read into a new index; unchanged, the writer's publish time was where the held index has it and the held index was kept without reading the hashes (only for a writer that publishes whole snapshots with a publish time for every hash read, the service instance hash's included, and no second writer); failed, a read that failed and kept the held index.
+
 ## bkmonitor_alarmd_cmdb_index_business_mappings
 
 Labels: `mapping`, `state`
@@ -384,6 +400,12 @@ Control refresh results this replica applied, by the health fact each carried. s
 Labels: `field`
 
 Invalid control health facts by the field that was wrong. Read beside control_health_facts_total, which grows on every round; this one is zero on a correct program, and naming the field is what makes it actionable rather than a thing to watch.
+
+## bkmonitor_alarmd_control_leader_transitions_total
+
+Labels: `to_class`, `reason`
+
+Control Leader lease moves this process made, by the class the lease moved to (preferred, fallback, or none for a release nobody was named to take) and why: acquire_free (a preferred candidate took a free lease), fallback_takeover (a Worker without the control role took it because no preferred candidate was live and ready), handback (a fallback Leader gave it back once a preferred candidate had been ready for a whole instance record lifetime), release (given up at shutdown). Summed over the processes: fallback_takeover without a handback later is a deployment whose control process has not come back; handback rising faster than fallback_takeover cannot happen, and the two rising together every few minutes is a control process that keeps dying.
 
 ## bkmonitor_alarmd_control_read_duration_seconds
 
@@ -517,6 +539,12 @@ Labels: `outcome`
 
 What the effective-time maintenance did, by outcome. close_acked counts alerts, one per alert the broker acknowledged a close for: the close was sent, at every level of the strategy (__ALL__); whether the alert closed is the consumer's to say. The others count events: maintenance_busy is a close that could not take the Query Group's flight because a Slot was executing (one is nothing, a steady rate is a Query Group whose close never happens); close_precheck_failed is the owner or content check refusing before a send; close_send_failed is the producer not acknowledging; maintenance_plan_uncompilable is an activated Plan the maintenance could not compile and so cannot judge; unavailable is a Query Group whose Plans could not be read or whose owner is not accepting; effective_time_unknown, legacy_effective_time_unavailable and close_identity_invalid name the judgement that could not be made; calendar_deletion_unsettled is a close held back because a calendar the strategy reads deleted has not settled as a deletion: read deleted for too short a time, read present elsewhere, or every calendar this replica's strategies name read deleted at once, a calendar source gone; close_boundary_active is a Plan the recheck just before a send found active again, its batch not sent while the Query Group's other Plans go on (effective_time_unknown counts the same recheck finding the time unreadable). Every cell exists from the start so a zero is a reading and not an absence.
 
+## bkmonitor_alarmd_effective_time_refresh_total
+
+Labels: `result`
+
+Reads of the business timezones and calendars that legacy effective times are resolved from, by result: ok, timeout (the read ran out of the time its caller could spare), error. Only reads that were due count. A dependency that keeps failing past the two-minute trust window resolves EFFECTIVE_TIME_UNKNOWN for every Plan naming it; fleet.get lists those as effective_time_unread. Every result exists from the start.
+
 ## bkmonitor_alarmd_event_business_attribution_total
 
 Labels: `source`
@@ -574,6 +602,12 @@ How long the longest-running anomaly of each kind has lasted, from its own start
 Labels: `code`
 
 The first screen's check lines, by closed code, carrying the count each line prints: objects currently under an object check, replicas under one of the two deployment standings (CUTOVER_FAILING, REPLICA_DEGRADED), which have no objects. Every code is emitted, zero when the line is down, so > 0 is exactly 'this line is on the first screen' and an absent series is a build without this family, not a clear line. Records of past loss retained under DETECTION_ABANDONED and TIMELINE_PRUNED are not current and are not counted; the JSON todo carries those. Each replica counts its own objects at the moment it publishes its summary, and every replica's scrape adds the same summaries up: a code that changes from round to round can differ between replicas within one scrape interval, and for those the comparison is within one replica over time. While an object is handed over, both holders count it (fleet_handover_objects). Aggregate with max, not sum.
+
+## bkmonitor_alarmd_fleet_control_facts_writes_total
+
+Labels: `result`
+
+Writes of the Control Leader's fleet control record, by result: written; invalid (the record lacked its identity or term and was not sent); oversized (past the fleet byte budget, refused whole); failed (the store did not take it). While the Leader writes none, views fall back to the control facts in the replicas' snapshots or the previous term's record.
 
 ## bkmonitor_alarmd_fleet_degradations
 
@@ -674,6 +708,12 @@ Objects whose rounds stopped finishing for longer than the deployment's own budg
 ## bkmonitor_alarmd_fleet_summary_bytes
 
 Bytes of the fleet summary this replica last published beside its snapshot. A summarized fleet view reads every replica's summary, so one costs about the sum of this across the fleet.
+
+## bkmonitor_alarmd_fleet_tracker_dropped_total
+
+Labels: `what`
+
+Facts the replica's fleet object table dropped because it was full, by what: observation (a new object's round never recorded), truncation, range. The table holds four times the objects the replica owns, at least 16384; anything here is an object the page and fleet.get cannot speak for, and fleet.get names the latest of them. Every kind exists from the start.
 
 ## bkmonitor_alarmd_fleet_view_owned_bytes_total
 
@@ -796,6 +836,12 @@ Level verdicts of ABNORMAL, by whether the detection window they were reached on
 Labels: `outcome`, `reason`
 
 Level outcomes the evaluation concluded, by outcome kind and, for UNKNOWN and TERMINAL, by reason. NORMAL, ABNORMAL and RECOVERY carry no reason. UNKNOWN by reason is the reading for a Level that was not judged: EFFECTIVE_TIME_INACTIVE is its configured hours, EFFECTIVE_TIME_UNKNOWN a schedule that could not be resolved, HISTORY_WARMING a window not yet full, GAP_* a guard. This counts Level outcomes per series per evaluation, not alerts and not strategies; read a reason against level_outcome_total summed over every cell for its share.
+
+## bkmonitor_alarmd_linkd_calibration_coverage
+
+Labels: `state`
+
+Tracked strategies by whether calibration at the Console's measured pace reaches them within the calibration interval: covered, or short. A round calibrates enough strategies to cover every tracked one with a quarter to spare, bounded by how many calls the Console answers in half a refresh cycle (from the latest calls' p90); short is the strategies an interval at that bound cannot reach, whose open-alert sets go unjudged and so unclosed. fleet.get names the strategies past their calibration age. Absent without a Console.
 
 ## bkmonitor_alarmd_linkd_console_calls_total
 
@@ -1071,7 +1117,7 @@ What a detection budget holds now, by budget, in the charge its size is in.
 
 Labels: `budget`
 
-A detection budget's size as the line reads it, by budget: retained (the Slots' retained-bytes ceiling), timeline_cache and object_cache (each cache's working set - what it holds and an entry at its largest charge for each one a reader is about to store, up to its ceiling - the object cache charged decoded). Its size less its held bytes is what it holds observation off with; a cache whose size stays well above what it holds between reads is a reader that did not settle.
+A detection budget's size as the line reads it, by budget: retained (the owned Query Groups' measured retained peaks summed and a quarter more, within the Slots' retained-bytes ceiling; the ceiling until every owned Query Group has a reading), timeline_cache and object_cache (each cache's working set - what it holds and an entry at its largest charge for each one a reader is about to store, up to its ceiling - the object cache charged decoded). Its size less its held bytes is what it holds observation off with; a cache whose size stays well above what it holds between reads is a reader that did not settle.
 
 ## bkmonitor_alarmd_observation_memory_headroom_bytes
 
@@ -1139,7 +1185,7 @@ Strategies the copy reads on each refresh: those evaluated by this worker within
 
 Labels: `reason`
 
-Why the copy could not answer from the consumer's sets: read_error (an index read or a calibration failed, each time), too_large (a strategy's set larger than one read may hold - members, bytes or pages - each time; such a set is not read another way yet, and the first one counted is the trigger for reading it a member at a time), location_unconfirmed (the link's Console has not named where the sets are) and keying_unconfirmed (it has not said they are keyed by the alert ids this process sends), each counted once on entering the state; fleet health degrades with OPEN_ALERT_SET_UNCONFIRMED while either lasts. A deployment without the Console counts nothing here.
+Why the copy could not answer from the consumer's sets: read_error (an index read or a calibration failed, each time), too_large (a strategy's set larger than this process's read budget - members or bytes, from its memory - each time, refused before it is scanned once a member's weight is known; fleet.get names these strategies), location_unconfirmed (the link's Console has not named where the sets are) and keying_unconfirmed (it has not said they are keyed by the alert ids this process sends), each counted once on entering the state; fleet health degrades with OPEN_ALERT_SET_UNCONFIRMED while either lasts. A deployment without the Console counts nothing here.
 
 ## bkmonitor_alarmd_operation_total
 
@@ -1209,6 +1255,10 @@ Labels: `mode`
 
 Which state the process copy of the platform's settings (host_disable_monitor_states, is_access_bk_data, bkdata_cmdb_level_tables, file_system_type_ignore) is in, 1 on the current one and 0 on the others; read each scrape from the copy's state. not_configured: the deployment renders no distribution source, the copy answers from its own configuration and the platform's code defaults, which is what alarmd did before it could read the platform, and is not a fault. never_loaded: a source is configured and no read has found a publication since the process started. authoritative: the last read found a publication and every field decoded. stale: there was a publication once and the last read did not yield one; the copy answers from the last publication, and past the staleness bound fleet health degrades.
 
+## bkmonitor_alarmd_platform_settings_read_retry_total
+
+Reads of the distribution whose first try was torn -- the revision changed between its first and last command, a publication landing meanwhile -- and that were tried again, whatever the second try came to. A second try torn as well is also counted in platform_settings_unavailable_total under revision_moved.
+
 ## bkmonitor_alarmd_platform_settings_refresh_total
 
 Labels: `result`
@@ -1219,7 +1269,7 @@ Reads of the distribution by result: authoritative (a publication, every field d
 
 Labels: `reason`
 
-Reads that yielded no publication, by why: read_error (the read did not happen), unpublished (the revision key is absent -- nothing was ever published, and the field keys beside it are not read as no override), decode_error (a field is not of its declared type; the whole publication is refused rather than half of it, and the log line names the field and the value).
+Reads that yielded no publication, by why: read_error (the read did not happen), revision_moved (the store answered and the revision changed during the read on both tries, so the fields may be of two publications and are not used -- a publisher writing faster than a round trip, not the store being down), unpublished (the revision key is absent -- nothing was ever published, and the field keys beside it are not read as no override), decode_error (a field is not of its declared type; the whole publication is refused rather than half of it, and the log line names the field and the value).
 
 ## bkmonitor_alarmd_progress_completed_total
 
@@ -1251,6 +1301,12 @@ Labels: `result`
 
 Writes of a Query Group's query cooldown pool record, by result: written; superseded (a later owner's record is there, so this owner's write was refused -- the successor's pool state stands); failed (the runtime store did not take the write, and the pool state it carried is lost to the next restart or owner). Written on a change of the pool state only, never per round.
 
+## bkmonitor_alarmd_query_downstream_distress_total
+
+Labels: `class`, `contended`
+
+Physical queries whose answer said the query service is overloaded or unreachable, by how and by whether the query had queued for its permit. class is timeout (no answer in time), throttled (HTTP 429), unavailable (HTTP 502, 503 or 504) or unreachable (a connection refused, reset or cut short); a query the service refused as malformed, or answered, is not counted. contended="true" is a query sent when this process's own query budget was full: read the true rate against worker_query_admission_total{result="started"} and the false rate against the remaining admissions. Distress concentrated in contended queries says this process's own bursts bring it on, and is the condition for revisiting how the query budget is derived; distress at the same rate either way comes from the service or its other consumers. Every label is created at startup, so a zero is a zero.
+
 ## bkmonitor_alarmd_query_failure_total
 
 Labels: `stage`, `category`
@@ -1271,9 +1327,9 @@ Actual query admission call wall duration including immediate grants and failure
 
 ## bkmonitor_alarmd_query_unavailable_attribution_total
 
-Labels: `attribution`
+Labels: `attribution`, `http_class`
 
-Physical queries that completed UNAVAILABLE, by where their reason code came from: attempt (an attempt named the reason; the code means what it says), no_attempt_reason (attempts were made and none was classified; the code is a fallback guess about a provider that was reached), no_attempts (nothing was sent; the code says nothing about the provider). QUERY_UNAVAILABLE reads as a provider fault and sends a reader to the provider, and two of these three would send them somewhere there is nothing to find; this is the only reading that tells them apart. One increment per physical query, so a Query Group with several Plans counts once per Plan.
+Physical queries that completed UNAVAILABLE, by where their reason code came from: attempt (an attempt named the reason; the code means what it says), no_attempt_reason (attempts were made and none was classified; the code is a fallback guess about a provider that was reached), no_attempts (nothing was sent; the code says nothing about the provider). QUERY_UNAVAILABLE reads as a provider fault and sends a reader to the provider, and two of these three would send them somewhere there is nothing to find; this is the only reading that tells them apart. One increment per physical query, so a Query Group with several Plans counts once per Plan. http_class is the last failed attempt's HTTP answer: 4xx (the backend refused the query), 5xx (it failed), other (a status of neither kind), none (no HTTP answer: a transport failure, a timeout, a query never sent).
 
 ## bkmonitor_alarmd_range_gate_total
 
@@ -1316,6 +1372,12 @@ Query Groups whose own read hold record did not decode: read as missing, the hol
 ## bkmonitor_alarmd_read_hold_retire_close_failed_total
 
 Retired Query Groups whose read hold closing failed; they retire all the same, and a successor reads the unclosed record as the hold bound.
+
+## bkmonitor_alarmd_read_hold_seeds_total
+
+Labels: `origin`
+
+Query Groups with no read-hold record of their own that started from a seeded arrival age, by where it came from: peer (the 90th percentile of what the groups reading the same tables and data sources measured) or cold_start (no peer had measured: the deployment's ready delay, as the group's schedule allowed it). A seed that would hold nothing is not counted: such a group starts at no hold and keeps no record. Read cold_start against peer: a fleet seeding mostly cold start is one whose new strategies read later than their sources need until they measure their own.
 
 ## bkmonitor_alarmd_read_hold_transition_clamped_total
 
@@ -1601,6 +1663,28 @@ Phase-two source refresh outcomes by fixed status.
 
 Strategy documents source refresh rounds asked the source for. A skipped round adds nothing; a full read adds the whole active set.
 
+## bkmonitor_alarmd_sre_actions_total
+
+Labels: `op`, `result`
+
+Execution, management and Secret-read calls the SRE channel made, by operation (pod.exec, pod.delete, workload.restart, workload.scale, secret.get, configmap.get, workload.set_image, and workload.revert - a revert the channel wrote itself when a changed image did not become ready) and result: done; target_changed (the Pod or workload was replaced since it was read, and nothing was changed); forbidden (the apiserver refused the ServiceAccount); refused (an invalid or unsupported request, a busy provider, or a command that could not start - nothing ran); failed (an apiserver or transport failure); unknown (an execution whose remote end is unconfirmed). Each call also writes one sre_action line naming the session, the request, the namespace and object and the result. Every cell exists once the channel is wired: eight operations by six results, 48 series. A secret.get line names the Secret and whether its values were revealed, never a value.
+
+## bkmonitor_alarmd_sre_receipts_write_total
+
+Labels: `result`
+
+Receipts of SRE actions written to the shared store sre.receipts reads, by result: ok, or error (the store refused or did not answer within its half second; the action itself went ahead, and its sre_action line is the only record). Both cells exist from the start.
+
+## bkmonitor_alarmd_sre_rollouts_total
+
+Labels: `state`
+
+Image changes made through the SRE channel that ended, by final state, counted by the process that ended them: unchanged (the container already ran the image), not_applied (the image was not written), complete, reverted (the new image did not become ready and the previous one is back), revert_failed (the previous image did not become ready either), superseded (someone else changed the image; left as it is), target_changed (the Deployment was replaced or deleted). Each also writes one sre_rollout line with the receipt, both images and who ended it. Reader: the operator after an image change, through /metrics; workload.rollout reads one receipt.
+
+## bkmonitor_alarmd_sre_rollouts_watched
+
+Image-change receipts this process is watching now: zero but in one process during a rollout. Summed over the processes, more than the changes in progress would be a receipt watched twice.
+
 ## bkmonitor_alarmd_startup_dependency_wait_total
 
 Labels: `dependency`
@@ -1717,7 +1801,7 @@ Target plans resolved, once per Plan per Slot, by the composed state the admissi
 
 Labels: `outcome`
 
-What the close of alerts whose target left the strategy's monitoring scope decided, by outcome. unconfirmed is a fingerprint of an open alert turned away by one Slot, waiting for a second; close_sent counts alerts a close was sent for, acknowledged by the broker, not alerts the link closed. cache_unavailable counts rejections decided on facts that were not all read or current, which are never closed; not_member definitive rejections whose fingerprint is not an open alert; set_unavailable decisions refused because the open set could not be judged (not calibrated, disjoint, unavailable); producer_foreign open alerts of another source; send_failed closes the producer refused; close_identity_invalid closes whose request could not be built from the observation's facts (strategy id, business or revision unusable), nothing sent, the word the effective-time close uses for the same facts; memory_full first observations past the table's bound; fingerprint_unsupported definitive rejections of Plans fed by several inputs, whose alert fingerprint no single series carries; stale_deferred closes held back because the last observation was older than the freshness bound; indefinite rejections that are not a verdict on the record's place at all (a key or object identity that could not be built), apart from cache_unavailable, which is a verdict reached without its facts. Every cell exists from the start so a zero is a reading and not an absence.
+What the close of alerts whose target left the strategy's monitoring scope decided, by outcome. unconfirmed is a fingerprint of an open alert turned away by one Slot, waiting for a second; close_sent counts alerts a close was sent for, acknowledged by the broker, not alerts the link closed. cache_unavailable counts rejections decided on facts that were not all read or current, which are never closed; not_member definitive rejections whose fingerprint is not an open alert; set_unavailable decisions refused because the open set could not be judged (not calibrated, disjoint, unavailable); producer_foreign open alerts of another source; send_failed closes the producer refused; close_identity_invalid closes whose request could not be built from the observation's facts (strategy id, business or revision unusable), nothing sent, the word the effective-time close uses for the same facts; memory_full first observations past the table's bound; fingerprint_unsupported definitive rejections of Plans fed by several inputs, whose alert fingerprint no single series carries; stale_deferred closes held back because the last observation was older than the freshness bound; indefinite rejections that are not a verdict on the record's place at all (a key or object identity that could not be built), apart from cache_unavailable, which is a verdict reached without its facts; observation_expired first observations whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least half an hour), forgotten - the strategies counted there are ones this close could not reach, named in its facts. Every cell exists from the start so a zero is a reading and not an absence.
 
 ## bkmonitor_alarmd_target_selector_resolutions_total
 
@@ -1729,11 +1813,11 @@ Selectors of target plans resolved, once per selector per Plan per Slot, by kind
 
 Labels: `outcome`
 
-Schedule timelines the Control Leader looked at because a Worker reported them unreadable (SCHEDULE_UNREADABLE), or because a cutover read bytes that did not decode, by what became of each. rewritten: still unreadable, rewritten as one Segment from the Leader's boundary on the content and the activation records the Query Group runs, marked so its Worker records the Slots lost with the old timeline (SCHEDULE_REPAIRED). decodes_again: the Leader decoded it and left it; a Worker's report outlives the rewrite until its next Slot runs, and a Worker of another build may report a timeline this one reads. conflict: the rewrite lost its compare-and-set and wrote nothing; the report stands and the next round tries again. failed: the replacement could not be built; a line names the Query Group and why. other_schema: the bytes are a timeline of another schema version, written by a build that reads them, and left alone. Counted by the Leader; read it summed over replicas.
+Schedule timelines the Control Leader looked at because a Worker reported them unreadable or missing (SCHEDULE_UNREADABLE, SCHEDULE_MISSING), or because a cutover read bytes that did not decode, by what became of each. rewritten: still unreadable, rewritten as one Segment from the Leader's boundary on the content and the activation records the Query Group runs, marked so its Worker records the Slots lost with the old timeline (SCHEDULE_REPAIRED). decodes_again: the Leader decoded it and left it; a Worker's report outlives the rewrite until its next Slot runs, and a Worker of another build may report a timeline this one reads. conflict: the rewrite lost its compare-and-set and wrote nothing; the report stands and the next round tries again. failed: the replacement could not be built; a line names the Query Group and why. other_schema: the bytes are a timeline of another schema version, written by a build that reads them, and left alone. reopened: the key was not there at all, and the timeline was opened again as a cutover opens a missing key, marked so its Worker records the Slots lost with it (SCHEDULE_REOPENED). Counted by the Leader; read it summed over replicas.
 
 ## bkmonitor_alarmd_timeline_unreadable_reports_total
 
-Owned Query Groups this replica began naming on its registration because a round met a Schedule timeline that does not decode (SCHEDULE_UNREADABLE): one per Query Group each time it goes from unnamed to named. The name is dropped by the first later round of that Query Group that runs a Slot, or when it leaves this replica. A leader reads each named timeline again and rewrites it (timeline_repairs_total). A count that keeps rising for the same Query Groups is a rewrite that does not take. Reader: the release acceptance, from /metrics after each deploy.
+Owned Query Groups this replica began naming on its registration because a round met a Schedule timeline that does not decode or whose key is gone (SCHEDULE_UNREADABLE, SCHEDULE_MISSING): one per Query Group each time it goes from unnamed to named. The name is dropped by the first later round of that Query Group that runs a Slot, or when it leaves this replica. A leader reads each named timeline again and rewrites or reopens it (timeline_repairs_total). A count that keeps rising for the same Query Groups is a rewrite that does not take. Reader: the release acceptance, from /metrics after each deploy.
 
 ## bkmonitor_alarmd_trigger_open_alert_gate_total
 

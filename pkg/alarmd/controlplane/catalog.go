@@ -989,6 +989,20 @@ func (cache *CandidateCache) endRound() {
 	cache.seen = nil
 }
 
+// forget empties the cache and its identity, so the next round compiles
+// every strategy as a first round would.
+func (cache *CandidateCache) forget() {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.entries = make(map[string]cachedCandidate)
+	cache.protocol, cache.compiler, cache.sources, cache.noDataPolicy = "", "", "", ""
+	cache.seen = nil
+	cache.compiled, cache.reused = 0, 0
+}
+
 // Stats reports how many strategies the last round compiled and how many it
 // took from an earlier round. The two add up to the strategies the round
 // asked the compiler about, which excludes the ones the source itself
@@ -1121,9 +1135,53 @@ func lessDisposition(left, right ObjectDisposition) bool {
 	return left.Reason < right.Reason
 }
 
+// deriveSnapshotRevision takes the digest over the catalog's JSON as raw
+// bytes that it encodes itself, one Query Group at a time, rather than handing
+// the whole slice to the encoder in one call.
+//
+// One call grew encoding/json's pooled encode state to the size of the whole
+// catalog -- 32 MB on the reference deployment -- and the pool kept it: every
+// JSON encode in the process takes and returns that state, so on a busy
+// replica it is never idle through the two collections it would take to be
+// dropped, and the Leader carried the catalog's encoding for as long as it ran.
+// One group per call bounds what the pool keeps to the largest group. The
+// buffer here is this function's own and is garbage when it returns.
+//
+// The bytes are the ones the whole-slice encode wrote -- the same array of the
+// same element encodings, addressable as they were inside the slice -- so the
+// revision does not move.
 func deriveSnapshotRevision(groups []QueryGroup) (execution.SnapshotRevision, error) {
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-strategy-snapshot-v1", groups)
+	raw, err := appendQueryGroupsJSON(nil, groups)
+	if err != nil {
+		return "", err
+	}
+	digest, err := contract.DeriveCanonicalDigestV2("alarmd-strategy-snapshot-v1", json.RawMessage(raw))
 	return execution.SnapshotRevision(digest), err
+}
+
+// appendQueryGroupsJSON appends what encoding groups as one value writes, with
+// HTML escaping off as the canonical form has it, encoding each group on its
+// own. Each element is encoded through its address, as it is inside the slice,
+// so a marshaler with a pointer receiver is called the same way.
+func appendQueryGroupsJSON(dst []byte, groups []QueryGroup) ([]byte, error) {
+	if groups == nil {
+		return append(dst, "null"...), nil
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	dst = append(dst, '[')
+	for index := range groups {
+		buffer.Reset()
+		if err := encoder.Encode(&groups[index]); err != nil {
+			return nil, fmt.Errorf("alarmd controlplane: encode snapshot query group %d: %w", index, err)
+		}
+		if index > 0 {
+			dst = append(dst, ',')
+		}
+		dst = append(dst, bytes.TrimSuffix(buffer.Bytes(), []byte{'\n'})...)
+	}
+	return append(dst, ']'), nil
 }
 
 type sourceCandidate struct {

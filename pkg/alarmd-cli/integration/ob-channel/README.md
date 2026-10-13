@@ -8,6 +8,8 @@ BLACKBOX_SERVER_REPO=/path/to/bkmonitor-datalink bash integration/ob-channel/run
 
 默认 CLI 为本仓；server 在 bkmonitor-datalink 的 pkg/ 下时取同仓，否则取同级 bkmonitor-datalink；BLACKBOX_CLI_REPO 可覆盖。脚本使用临时 modfile，不改被测仓库的依赖或提交状态。结果在本目录 results/run-*/report.json，含两端 commit/dirty、被测二进制 SHA256 和各步骤结果。成功执行后测试 session 已撤销。失败时目录可能留有构造测试凭据，不要整包上传结果目录。
 
+跨版本只读合同用相同入口分别组合 `BLACKBOX_CLI_REPO=旧CLI` + 新服务端，以及新CLI + `BLACKBOX_SERVER_REPO=旧服务端`。旧基线首次固定为 `a97ea19914692e72db82efcf2bd29c3e111fa1db`。
+
 分别覆盖私有 CA HTTPS（14 步）、自签且域名不匹配的 HTTPS + `--insecure-tls`（14 步）、部署指定 HTTP（13 步）：贴码登录、discover/describe、真实源阈值 80 与大结果落盘、缺键完整事实、错型 partial、runtime/Fleet 传输、记录缺失 partial、status/logout、撤销后拒绝。两种 HTTPS 均先验证默认拒绝不可信证书且不发送兑换。检查取证回执中的实际传输模式、stdout ≤20 KiB、真实结果文件 0600，以及授权码/token/admin key/源秘密不泄漏。
 
 入口只转发 URL 前缀，不注入任何凭据。各传输用例验证 alarmd 直接接受部署管理员密钥，GET/POST 授权接口拒绝缺失或错误密钥。runtime/Fleet 的业务内容是构造数据；本测试证明跨组件合同，不能代替部署或告警业务验收。

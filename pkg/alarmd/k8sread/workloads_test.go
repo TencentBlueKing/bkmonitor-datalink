@@ -393,3 +393,28 @@ func TestTheHighestRevisionIsTheCurrentRolloutAndARemovedContainerIsListed(t *te
 		t.Fatalf("web = current %s, changed %+v, in window %t; want web-old (revision 3), %+v, not in window", web.Rollouts[0].ReplicaSet, web.Changed, web.InWindow, want)
 	}
 }
+
+// A request names one namespace - any the ServiceAccount may list - and only
+// that namespace is read, named as requested; a name that is not a namespace
+// name is refused before any read.
+func TestWorkloadsInReadsTheOneNamespaceARequestNames(t *testing.T) {
+	api := &namespaceAPI{
+		pods:        map[string][]any{"kube-system": {workloadPodJSON("dns-0", "StatefulSet", "dns", time.Hour, true, 0, "dns:1")}},
+		replicaSets: map[string][]any{"kube-system": {}},
+	}
+	reader := newNamespaceReader(t, api, readAt, "ns")
+	result, err := reader.WorkloadsIn(context.Background(), "kube-system", 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Namespaces) != 1 || result.Namespaces[0].Namespace != "kube-system" || !reflect.DeepEqual(result.Namespaces[0].Origins, []NamespaceOrigin{{Kind: OriginRequested}}) ||
+		result.WindowHours != 6 || len(result.Namespaces[0].Workloads) != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if api.lists["kube-system/pods"] != 1 || api.lists["ns/pods"] != 0 {
+		t.Fatalf("lists %v, want only the requested namespace", api.lists)
+	}
+	if _, err := reader.WorkloadsIn(context.Background(), "Kube_System", 0); err == nil {
+		t.Fatal("a name that is not a namespace name was read")
+	}
+}

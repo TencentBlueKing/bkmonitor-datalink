@@ -24,6 +24,9 @@ type StrategyDirectory interface {
 	ResolveCurrent(ctx context.Context, at time.Time, tenant, business, strategy, group string, expectedRevision ...string) (controlplane.StrategyDirectoryRow, error)
 	EffectivePlan(ctx context.Context, row controlplane.StrategyDirectoryRow) (controlplane.QueryGroupPlanObject, error)
 	EffectiveOutput(ctx context.Context, row controlplane.StrategyDirectoryRow) controlplane.OutputFormatFacts
+	// StrategyCatalog is a page of every strategy the published catalog
+	// accepted, read from memory.
+	StrategyCatalog(offset, limit int) controlplane.StrategyCatalogPage
 }
 
 // toLeader hands a directory request this process cannot answer to the
@@ -54,6 +57,69 @@ func toLeader(w http.ResponseWriter, r *http.Request, directory StrategyDirector
 // One page is built at a time: a page's reads go through the runtime's own
 // connections, and a second request while one is in flight is refused as
 // busy rather than queued behind it.
+// StrategyCatalogResponse is one catalog page and the cursor of the next,
+// empty on the last page.
+type StrategyCatalogResponse struct {
+	controlplane.StrategyCatalogPage
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// serveStrategyCatalog pages every strategy the published catalog accepted,
+// on the Leader, with a cursor naming the publication it was read from: a
+// page ends between strategies, and a cursor from a replaced publication is
+// refused as CURSOR_STALE rather than read against the new one.
+func serveStrategyCatalog(w http.ResponseWriter, r *http.Request, directory StrategyDirectory, forward LeaderForward) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if directory == nil {
+		writeJSON(w, 503, map[string]string{"error": "DIRECTORY_RESOURCE_OR_STORE_UNAVAILABLE"})
+		return
+	}
+	if toLeader(w, r, directory, forward) {
+		return
+	}
+	q := r.URL.Query()
+	limit := 50
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 200 {
+			writeJSON(w, 400, map[string]string{"error": "INVALID_LIMIT"})
+			return
+		}
+		limit = n
+	}
+	offset, revision := 0, ""
+	if cursor := q.Get("cursor"); cursor != "" {
+		b, err := base64.RawURLEncoding.DecodeString(cursor)
+		parts := strings.Split(string(b), "\n")
+		if err != nil || len(parts) != 2 {
+			writeJSON(w, 400, map[string]string{"error": "INVALID_CURSOR"})
+			return
+		}
+		revision = parts[0]
+		if offset, err = strconv.Atoi(parts[1]); err != nil || offset < 0 {
+			writeJSON(w, 400, map[string]string{"error": "INVALID_CURSOR"})
+			return
+		}
+	}
+	page := directory.StrategyCatalog(offset, limit)
+	if page.Reason != "" {
+		writeJSON(w, http.StatusServiceUnavailable, page)
+		return
+	}
+	if revision != "" && revision != page.Revision {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "CURSOR_STALE"})
+		return
+	}
+	body := StrategyCatalogResponse{StrategyCatalogPage: page}
+	if next := offset + len(page.Strategies); len(page.Strategies) > 0 && next < page.Total {
+		body.NextCursor = base64.RawURLEncoding.EncodeToString([]byte(page.Revision + "\n" + strconv.Itoa(next)))
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
 func WithStrategyDirectory(next http.Handler, directory StrategyDirectory, forward LeaderForward, absence CatalogAbsenceFunc,
 	replica string, now func() time.Time) http.Handler {
 	pageRead := make(chan struct{}, 1)
@@ -63,6 +129,10 @@ func WithStrategyDirectory(next http.Handler, directory StrategyDirectory, forwa
 	configRead := make(chan struct{}, 1)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
+		if r.URL.Path == "/api/objects" && q.Get("scope") == "strategy_catalog" {
+			serveStrategyCatalog(w, r, directory, forward)
+			return
+		}
 		if r.URL.Path != "/api/objects" || q.Get("scope") != "strategies" {
 			next.ServeHTTP(w, r)
 			return

@@ -188,7 +188,7 @@ class ReleaseTest(unittest.TestCase):
 
     def test_chart_is_not_a_command_here(self):
         result = self.run_script("chart", success=False)
-        self.assertIn("kingeye", result.stderr)
+        self.assertIn("父 chart", result.stderr)
 
     def test_cleanup_preserves_in_use_and_replaced_tags(self):
         self.run_script("build")

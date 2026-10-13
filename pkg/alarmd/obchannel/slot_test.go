@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access/uq"
@@ -238,6 +239,24 @@ func TestSlotGetSaysTheReadHoldAndWhereItWasReadFrom(t *testing.T) {
 		said := strings.Contains(strings.Join(out.Limitations, "\n"), "keeps no read hold record")
 		if said != tc.caveat {
 			t.Fatalf("%s: limitations %v, want the no-record caveat %t", tc.basis, out.Limitations, tc.caveat)
+		}
+	}
+}
+
+// A re-query may take the budget its Slot froze for the query, with a margin,
+// within the operation's execution timeout, which the operation declares.
+func TestARequeryTakesItsSlotsFrozenBudget(t *testing.T) {
+	query := func(budget time.Duration) access.PlannedQuery {
+		return access.PlannedQuery{ReadyAtUnixMilli: 1_000_000, DeadlineUnixMilli: 1_000_000 + budget.Milliseconds()}
+	}
+	for budget, want := range map[time.Duration]time.Duration{39 * time.Second: 44 * time.Second, 3 * time.Minute: MaxExecutionTimeout - requeryMargin, 0: requeryMargin} {
+		if got := requeryBudget(query(budget)); got != want {
+			t.Errorf("frozen %v: re-query %v, want %v", budget, got, want)
+		}
+	}
+	for _, op := range SlotOperations(SlotOptions{}) {
+		if op.ID == "slot.query" && op.ExecutionTimeout != MaxExecutionTimeout {
+			t.Fatalf("slot.query declares %v, want %v", op.ExecutionTimeout, MaxExecutionTimeout)
 		}
 	}
 }

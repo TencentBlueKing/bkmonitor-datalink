@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
@@ -296,10 +297,12 @@ type productionSourceReconciler interface {
 		controlplane.StrategySource,
 		controlplane.PrimaryQueryCompiler,
 	) (controlplane.SourceRefreshResult, error)
-	// StepDown forgets the catalog memory a Leader answers strategy
-	// lookups from. Called on every follower tick, so a process that lost
-	// the lease stops answering from its old term.
-	StepDown()
+	// ForgetTerm forgets the catalog memory a Leader answers strategy
+	// lookups from and releases everything else it kept only to lead.
+	// Called on every follower tick, on the goroutine that runs Refresh, so
+	// a process that lost the lease stops answering from its old term and
+	// stops carrying the Leader's working set.
+	ForgetTerm()
 }
 
 type productionInitialScheduleActivator interface {
@@ -333,6 +336,7 @@ type productionScheduleProjection interface {
 }
 
 type productionPhaseTwoControlDependencies struct {
+	Roles      roles.Set
 	Source     controlplane.StrategySource
 	Planner    controlplane.PrimaryQueryCompiler
 	Reconciler productionSourceReconciler
@@ -355,6 +359,11 @@ type productionPhaseTwoControlDependencies struct {
 	// Nil Now means the wall clock; zero MaxReplayAge never retires by age.
 	Now          func() time.Time
 	MaxReplayAge time.Duration
+
+	// ControlCandidate is a process without the control role that stands as
+	// a fallback Control Leader candidate: its rounds refresh and publish
+	// when it holds the lease, exactly as a control process's do.
+	ControlCandidate bool
 }
 
 type productionPhaseTwoControl struct {
@@ -374,10 +383,18 @@ func (runtime *productionPhaseTwoControl) recordControlFactUnavailable(fact, rea
 func newProductionPhaseTwoControl(
 	dependencies productionPhaseTwoControlDependencies,
 ) (*productionPhaseTwoControl, error) {
-	if dependencies.Source == nil || dependencies.Planner == nil || dependencies.Reconciler == nil ||
-		dependencies.Activator == nil || dependencies.Repository == nil || dependencies.Schedules == nil ||
+	selected, err := roles.Resolve(dependencies.Roles)
+	if err != nil {
+		return nil, err
+	}
+	dependencies.Roles = selected
+	if dependencies.Repository == nil || dependencies.Schedules == nil ||
 		dependencies.Progress == nil || dependencies.MaxReplayAge < 0 {
 		return nil, errors.New("phase-two production Control dependencies are incomplete")
+	}
+	if (selected.Has(roles.Control) || dependencies.ControlCandidate) && (dependencies.Source == nil || dependencies.Planner == nil ||
+		dependencies.Reconciler == nil || dependencies.Activator == nil) {
+		return nil, errors.New("phase-two production Control publication dependencies are incomplete")
 	}
 	if dependencies.Observer == nil {
 		dependencies.Observer = observability.NopObserver{}
@@ -402,6 +419,10 @@ func (runtime *productionPhaseTwoControl) Refresh(
 ) (phaseTwoControlRefreshResult, error) {
 	if runtime == nil {
 		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
+	}
+	selected, _ := roles.Resolve(runtime.dependencies.Roles)
+	if !selected.Has(roles.Control) && !runtime.dependencies.ControlCandidate {
+		return phaseTwoControlRefreshResult{}, errors.New("control_role_required: strategy refresh requires control role")
 	}
 	return completeControlResult(runtime.refresh(ctx))
 }
@@ -437,8 +458,10 @@ func (runtime *productionPhaseTwoControl) LoadActive(
 		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
 	}
 	// This tick runs as a follower: whatever this process published in an
-	// earlier term is not its to answer from any more.
-	runtime.dependencies.Reconciler.StepDown()
+	// earlier term is not its to answer from any more, nor its to hold.
+	if runtime.dependencies.Reconciler != nil {
+		runtime.dependencies.Reconciler.ForgetTerm()
+	}
 	state, err := runtime.dependencies.Repository.LoadActivationHead(ctx)
 	if err != nil {
 		reason := "read_failed"
@@ -1221,6 +1244,14 @@ type productionPhaseTwoProgressReader interface {
 }
 
 type productionPhaseTwoOwnershipDependencies struct {
+	// Roles is omitted by legacy callers for the shared process. A Control
+	// process has no local executor or flight coordinator.
+	Roles roles.Set
+	// ControlCandidate is a Worker without the control role that stands as
+	// a fallback Control Leader candidate: it takes the lease and publishes
+	// Assignments under it like a control process, and needs the same
+	// coordination dependencies.
+	ControlCandidate bool
 	// QueryCooldowns keeps each owned Query Group's place in the query
 	// cooldown pool across restarts and owners. Nil keeps it in the Runner
 	// alone, which is what every runtime did before.
@@ -1363,22 +1394,35 @@ func (runtime *productionPhaseTwoOwnership) rebalanceStabilisation() time.Durati
 func newProductionPhaseTwoOwnership(
 	dependencies productionPhaseTwoOwnershipDependencies,
 ) (*productionPhaseTwoOwnership, error) {
+	selected, err := roles.Resolve(dependencies.Roles)
+	if err != nil {
+		return nil, err
+	}
+	dependencies.Roles = selected
 	if dependencies.Store == nil || dependencies.WorkerID == "" || dependencies.Catalog == nil ||
-		dependencies.Progress == nil || dependencies.Executor == nil || dependencies.Now == nil ||
-		dependencies.ControlLeaderTTL <= 0 || dependencies.Observer == nil || dependencies.Reconcile == nil ||
-		dependencies.Flights == nil || dependencies.RecoveryLimits.Validate() != nil {
+		dependencies.Progress == nil || dependencies.Now == nil || dependencies.Observer == nil {
 		return nil, errors.New("phase-two production ownership dependencies are incomplete")
 	}
-	if dependencies.PostRecoveryTerminalDelay <= 0 || dependencies.QueryDeadlineReserve <= 0 ||
-		dependencies.SnapshotRetention <= 0 || dependencies.PublicationDelayAllowance <= 0 ||
-		dependencies.SettlingWait <= 0 {
-		return nil, errors.New("phase-two post-recovery terminal delay is required")
+	if selected.Has(roles.Worker) {
+		if dependencies.Executor == nil || dependencies.Flights == nil || dependencies.RecoveryLimits.Validate() != nil {
+			return nil, errors.New("phase-two production Worker execution dependencies are incomplete")
+		}
+		if dependencies.PostRecoveryTerminalDelay <= 0 || dependencies.QueryDeadlineReserve <= 0 ||
+			dependencies.SnapshotRetention <= 0 || dependencies.PublicationDelayAllowance <= 0 ||
+			dependencies.SettlingWait <= 0 {
+			return nil, errors.New("phase-two post-recovery terminal delay is required")
+		}
 	}
-	if dependencies.LeaseTTL <= 0 || dependencies.ReconcileInterval <= 0 {
-		return nil, errors.New("phase-two rebalance stabilisation inputs are required")
-	}
-	if dependencies.ContentScopes == nil {
-		return nil, errors.New("phase-two content scope reader is required")
+	if selected.Has(roles.Control) || dependencies.ControlCandidate {
+		if dependencies.ControlLeaderTTL <= 0 || dependencies.Reconcile == nil {
+			return nil, errors.New("phase-two production Control coordination dependencies are incomplete")
+		}
+		if dependencies.LeaseTTL <= 0 || dependencies.ReconcileInterval <= 0 {
+			return nil, errors.New("phase-two rebalance stabilisation inputs are required")
+		}
+		if dependencies.ContentScopes == nil {
+			return nil, errors.New("phase-two content scope reader is required")
+		}
 	}
 	return &productionPhaseTwoOwnership{
 		dependencies: dependencies, reconciler: dependencies.Reconcile, flights: dependencies.Flights,
@@ -1393,6 +1437,9 @@ func (runtime *productionPhaseTwoOwnership) RegisterWorker(
 	if runtime == nil {
 		return errors.New("phase-two production ownership is not initialized")
 	}
+	if !runtime.hasRole(roles.Worker) {
+		return errors.New("worker_role_required: worker registration requires worker role")
+	}
 	if registration.WorkerID != runtime.dependencies.WorkerID {
 		return errors.New("phase-two worker registration identity mismatch")
 	}
@@ -1406,6 +1453,9 @@ func (runtime *productionPhaseTwoOwnership) TryAcquireControlLeader(
 ) (bool, error) {
 	if runtime == nil || at.IsZero() || ttl != runtime.dependencies.ControlLeaderTTL {
 		return false, errors.New("phase-two production Control Leader acquisition is invalid")
+	}
+	if !runtime.controlCapable() {
+		return false, errors.New("phase-two Control Leader acquisition requires control role")
 	}
 	_, err := runtime.ensureControlAuthority(ctx, at)
 	if errors.Is(err, ownership.ErrLeaseBusy) {
@@ -1479,6 +1529,9 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 ) (err error) {
 	if runtime == nil || at.IsZero() {
 		return newPhaseTwoInvariantError("phase-two production Assignment reconcile is invalid")
+	}
+	if !runtime.controlCapable() {
+		return errors.New("phase-two Assignment publication requires control role")
 	}
 	round := newLeaderRoundTimer(at)
 	authority, err := runtime.ensureControlAuthority(ctx, at)
@@ -2493,6 +2546,9 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 	if runtime == nil {
 		return nil, errors.New("phase-two production ownership is not initialized")
 	}
+	if !runtime.hasRole(roles.Worker) {
+		return nil, errors.New("phase-two Query Group execution requires worker role")
+	}
 	session, err := ownership.OpenSession(ctx, runtime.dependencies.Store, queryGroup, runtime.dependencies.WorkerID, at, ttl)
 	if err != nil {
 		return nil, err
@@ -2569,6 +2625,56 @@ func (runtime *productionPhaseTwoOwnership) Close() error {
 		return nil
 	}
 	return runtime.dependencies.Store.Close()
+}
+
+func (runtime *productionPhaseTwoOwnership) hasRole(role roles.Role) bool {
+	selected, _ := roles.Resolve(runtime.dependencies.Roles)
+	return selected.Has(role)
+}
+
+// controlCapable says this process may hold the Control Leader lease: it
+// has the control role, or it is a fallback candidate.
+func (runtime *productionPhaseTwoOwnership) controlCapable() bool {
+	return runtime.hasRole(roles.Control) || runtime.dependencies.ControlCandidate
+}
+
+// productionControlCandidateStore is what contending for the lease by class
+// reads beyond acquiring it: whether a live lease is held, judged on the
+// store's clock, and which preferred candidates are registered.
+type productionControlCandidateStore interface {
+	ReadActiveControlLeader(context.Context) (ownership.QueryGroupOwner, bool, error)
+	ListPreferredControlCandidates(context.Context, time.Time) ([]ownership.InstanceRegistration, error)
+	ListFallbackControlCandidates(context.Context, time.Time) ([]ownership.InstanceRegistration, error)
+}
+
+// ReadActiveControlLeader passes the store's live lease read through. A
+// store that cannot answer it says so as an error, never as "nobody leads".
+func (runtime *productionPhaseTwoOwnership) ReadActiveControlLeader(ctx context.Context) (ownership.QueryGroupOwner, bool, error) {
+	store, ok := runtime.dependencies.Store.(productionControlCandidateStore)
+	if !ok {
+		return ownership.QueryGroupOwner{}, false, errors.New("phase-two ownership store cannot read the control lease")
+	}
+	return store.ReadActiveControlLeader(ctx)
+}
+
+// ListPreferredControlCandidates passes the store's candidate listing
+// through, under the same rule.
+func (runtime *productionPhaseTwoOwnership) ListPreferredControlCandidates(ctx context.Context, at time.Time) ([]ownership.InstanceRegistration, error) {
+	store, ok := runtime.dependencies.Store.(productionControlCandidateStore)
+	if !ok {
+		return nil, errors.New("phase-two ownership store cannot list control candidates")
+	}
+	return store.ListPreferredControlCandidates(ctx, at)
+}
+
+// ListFallbackControlCandidates passes the store's fallback listing through,
+// under the same rule.
+func (runtime *productionPhaseTwoOwnership) ListFallbackControlCandidates(ctx context.Context, at time.Time) ([]ownership.InstanceRegistration, error) {
+	store, ok := runtime.dependencies.Store.(productionControlCandidateStore)
+	if !ok {
+		return nil, errors.New("phase-two ownership store cannot list control candidates")
+	}
+	return store.ListFallbackControlCandidates(ctx, at)
 }
 
 func (runtime *productionPhaseTwoOwnership) ensureControlAuthority(
@@ -2794,6 +2900,8 @@ func (executor observedProductionSlotExecutor) Execute(
 		Duration: time.Since(started), Trace: trace, Err: observedErr,
 		SlotBudgetUsage: slotBudgetUsageFacts(result.Usage),
 		SlotTiming:      slotTimingFacts(result.Timing),
+		InPlaceWait:     inPlaceWaitFacts(result.InPlaceWait),
+		FollowingSlot:   int64(execution.FollowingSlotOf(ctx)),
 	})
 	observability.EmitTargetFlow(ctx, "execution_outcome", trace, observability.TargetFlowFacts{ExecutionOutcomeKnown: true, Attempted: true, Completed: result.Completed, Completion: string(result.CompletionKind)})
 	return result, err
@@ -3095,21 +3203,29 @@ func slotTimingFacts(timing execution.SlotTiming) *observability.SlotTimingFacts
 // Not holding the lease, or finding it no longer this process's, is not an
 // error: there is nothing to give up.
 func (runtime *productionPhaseTwoOwnership) ReleaseControlLeader(ctx context.Context) error {
+	_, err := runtime.ReleaseHeldControlLeader(ctx)
+	return err
+}
+
+// ReleaseHeldControlLeader is ReleaseControlLeader that also says whether
+// this call is what gave the lease up, which is what a count of lease moves
+// has to be taken from: a process that had already lost it moved nothing.
+func (runtime *productionPhaseTwoOwnership) ReleaseHeldControlLeader(ctx context.Context) (bool, error) {
 	if runtime == nil || runtime.dependencies.Store == nil {
-		return nil
+		return false, nil
 	}
 	runtime.mu.Lock()
 	authority := runtime.authority
 	runtime.mu.Unlock()
 	if authority.Fence.QueryGroup == "" {
-		return nil
+		return false, nil
 	}
 	err := runtime.dependencies.Store.Release(ctx, authority.Fence)
 	runtime.clearControlAuthority(authority)
 	if errors.Is(err, ownership.ErrStaleFence) {
-		return nil
+		return false, nil
 	}
-	return err
+	return err == nil, err
 }
 
 // declinedEverywhereSamples is the round's declined-everywhere sample in the
@@ -3128,4 +3244,15 @@ func declinedEverywhereSamples(settlement scheduler.RoundSettlement) []observabi
 		samples = append(samples, sample)
 	}
 	return samples
+}
+
+// inPlaceWaitFacts is the Slot's in-place readiness wait for its line; nil
+// when it did not wait.
+func inPlaceWaitFacts(wait *execution.InPlaceWaitFacts) *observability.InPlaceWaitFacts {
+	if wait == nil {
+		return nil
+	}
+	return &observability.InPlaceWaitFacts{Waits: wait.Waits, TotalMillis: wait.TotalMillis, LongestMillis: wait.LongestMillis,
+		SentBeforeFirstWait: wait.SentBeforeFirstWait, BeforeAnySentMillis: wait.BeforeAnySentMillis,
+		HeldInputBytes: wait.HeldInputBytes, HeldPreparedBytes: wait.HeldPreparedBytes}
 }

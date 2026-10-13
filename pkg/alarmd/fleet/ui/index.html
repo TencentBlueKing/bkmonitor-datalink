@@ -4109,7 +4109,9 @@ function renderCapacity(cap, gaps, census) {
     if (hint) { var h = document.createElement('div'); h.className = 'k'; h.textContent = hint; d.appendChild(h); }
     box.appendChild(d);
   }
-  var permitCeiling = cap.permit_budget_per_replica * cap.replicas;
+  // Each replica sizes its own budget from the work it owns, so the
+  // deployment's is their sum, not one replica's times the count.
+  var permitCeiling = cap.permit_budget_total || cap.permit_budget_per_replica * cap.replicas;
   var at = Date.now();
   // Every cumulative figure is turned into a rate exactly once per render.
   // betweenReads records the value it was handed, so asking it a second time in
@@ -4301,7 +4303,7 @@ function renderCapacity(cap, gaps, census) {
   // gone from the card: the panel's opening paragraph already says the operator
   // sets two numbers and the program derives every ceiling below them, and
   // saying it again on each card is what pushed the measurement to the end.
-  var ceilingText = '上限 ' + permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget_per_replica + '）';
+  var ceilingText = '上限 ' + permitCeiling + ' 个（' + cap.replicas + ' 副本按各自负载推导之和）';
   // "没有查询在排队。" was a statement about the deployment made from one
   // instant, and both halves of why that is wrong are already written down --
   // one in the Go type beside this field, one in the shape of the workload.

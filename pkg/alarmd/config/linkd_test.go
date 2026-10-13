@@ -72,7 +72,7 @@ func TestLoadingTakesTheConsoleCredentialsFromTheEnvironment(t *testing.T) {
 	t.Setenv(LinkdConsolePasswordEnvironment, "test-password")
 	text := validGoAccessRuntimeConfigYAML("linkd-worker") +
 		"  linkd:\n    console_url: https://console.example.test\n"
-	cfg, err := Load(writeConfig(t, text))
+	cfg, err := LoadWithRoles(writeConfig(t, text), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

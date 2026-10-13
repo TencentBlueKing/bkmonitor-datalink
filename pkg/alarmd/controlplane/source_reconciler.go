@@ -233,8 +233,13 @@ type SourceReconciler struct {
 	// follower's reconciler holds an empty one, as it never refreshes.
 	candidates *CandidateCache
 	// now paces the periodic full read and measures the change signal's age.
-	now    func() time.Time
-	memory *sourceRoundMemory
+	now func() time.Time
+	// memory is the last observation of the source. The round replaces it
+	// and ForgetTerm clears it, both on the control loop; the absent close
+	// reads it from its own goroutine (ObservedSnapshot), so the pointer is
+	// swapped atomically and an observation is never changed after it is
+	// stored, except for steady, which only the round reads.
+	memory atomic.Pointer[sourceRoundMemory]
 	// reusable is the last round that ended UNCHANGED, whole; see
 	// reusableFor. Nil after any round that did not, and after StepDown:
 	// steppedDown says one happened since the last round, which drops it.
@@ -436,7 +441,9 @@ func (reconciler *SourceReconciler) Refresh(
 		}
 		result.ReadMode, result.ReadReason, result.StrategiesRead = read.mode, read.reason, read.strategies
 		result.ChangeSignalPresent, result.ChangeSignalAgeSeconds = read.signalPresent, read.signalAgeSeconds
-		reconciler.memory.steady = result.Status == SourceRefreshUnchanged
+		if memory := reconciler.memory.Load(); memory != nil {
+			memory.steady = result.Status == SourceRefreshUnchanged
+		}
 		if result.Status == SourceRefreshUnchanged {
 			reconciler.reusable = reuseNext
 		} else {
@@ -485,9 +492,12 @@ func (reconciler *SourceReconciler) Refresh(
 	if audit != nil {
 		previousDispositions = audit.Dispositions
 	}
+	// The observation is never nil here: observe stored this round's or
+	// returned the stored one, and ForgetTerm, the only other writer that
+	// clears it, runs on this same loop, never inside a round.
 	catalog, err := BuildCatalog(ctx, BuildRequest{
 		Strategies: cycle.strategies, Planner: planner, LastGood: current, PreviousDispositions: previousDispositions,
-		Now: reconciler.now(), WriterHoldsLastGood: reconciler.memory.holdsLastGood,
+		Now: reconciler.now(), WriterHoldsLastGood: reconciler.memory.Load().holdsLastGood,
 		OutputProtocol: reconciler.outputProtocol, TargetSources: reconciler.targetSources, Cache: reconciler.candidates,
 		NoDataPolicy: policy,
 	})
@@ -614,14 +624,14 @@ func (reconciler *SourceReconciler) observe(ctx context.Context, source Strategy
 	}
 	if reason == "" {
 		read.mode, read.reason = SourceReadSkipped, SourceReadUnchanged
-		return reconciler.memory.cycle, read, nil
+		return reconciler.memory.Load().cycle, read, nil
 	}
 	cycle, err := observeCycle(ctx, source)
 	if err != nil {
 		return observedCycle{}, sourceRead{}, err
 	}
-	reconciler.memory = &sourceRoundMemory{signal: signal, cycle: cycle, readAt: now,
-		holdsLastGood: holdsLastGoodFor(signal, cycle)}
+	reconciler.memory.Store(&sourceRoundMemory{signal: signal, cycle: cycle, readAt: now,
+		holdsLastGood: holdsLastGoodFor(signal, cycle)})
 	read.mode, read.reason, read.strategies = SourceReadFull, reason, len(cycle.strategies)
 	return cycle, read, nil
 }
@@ -649,7 +659,7 @@ func (reconciler *SourceReconciler) fullReadReason(
 	signal SourceChangeSignal,
 	now time.Time,
 ) (SourceReadReason, error) {
-	memory := reconciler.memory
+	memory := reconciler.memory.Load()
 	switch {
 	case memory == nil:
 		return SourceReadElected, nil
@@ -673,8 +683,8 @@ func (reconciler *SourceReconciler) fullReadReason(
 }
 
 func (reconciler *SourceReconciler) unsettle() {
-	if reconciler.memory != nil {
-		reconciler.memory.steady = false
+	if memory := reconciler.memory.Load(); memory != nil {
+		memory.steady = false
 	}
 }
 

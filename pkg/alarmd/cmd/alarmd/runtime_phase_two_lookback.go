@@ -74,20 +74,25 @@ type supplementRunner interface {
 var _ supplementRunner = (*productionPhaseTwoQueryGroup)(nil)
 
 // supplementRunner is the owned Query Group's, when this replica holds its
-// Runner and the Runner runs supplements.
-func (ownership *lookbackOwnership) supplementRunner(queryGroup execution.QueryGroupIdentity) (supplementRunner, bool) {
+// Runner and the Runner runs supplements, with the supplement counted in
+// flight on the Query Group's lifecycle until done is called: a handover
+// waits for it before releasing the lease the supplement writes under.
+func (ownership *lookbackOwnership) supplementRunner(queryGroup execution.QueryGroupIdentity) (runner supplementRunner, done func(), found bool) {
 	bundle := ownership.bundle.Load()
 	if bundle == nil {
-		return nil, false
+		return nil, nil, false
 	}
-	bundle.mu.RLock()
-	defer bundle.mu.RUnlock()
-	lifecycle, owned := bundle.runners[queryGroup]
-	if !owned || lifecycle == nil {
-		return nil, false
+	lifecycle, owned := bundle.enterOwnedWork(queryGroup)
+	if !owned {
+		return nil, nil, false
 	}
+	done = func() { bundle.exitOwnedWork(lifecycle) }
 	runner, supported := lifecycle.runner.(supplementRunner)
-	return runner, supported
+	if !supported {
+		done()
+		return nil, nil, false
+	}
+	return runner, done, true
 }
 
 // lookbackSupplement runs the lookback's supplements on the Runners of the
@@ -106,15 +111,23 @@ func lookbackSupplement(
 	wait func(context.Context, time.Duration) error,
 ) func(context.Context, lookback.SupplementJob) lookback.SupplementOutcome {
 	return func(ctx context.Context, job lookback.SupplementJob) lookback.SupplementOutcome {
-		runner, found := ownership.supplementRunner(job.QueryGroup)
-		if !found {
-			return lookback.SupplementOutcome{Refused: lookback.DirectedFailed}
-		}
 		ctx = scheduler.WithSupplementGuard(access.WithKeptRead(ctx, job.Read), job.Guard)
 		scope := execution.SupplementScope{Series: job.Series}
 		for retried := false; ; retried = true {
+			// Counted per attempt, not across the wait between them: a
+			// handover waits for a supplement writing, not for one waiting
+			// for the Slot to finish.
+			runner, done, found := ownership.supplementRunner(job.QueryGroup)
+			if !found {
+				return lookback.SupplementOutcome{Refused: lookback.DirectedFailed}
+			}
 			started := now()
-			facts, err := runner.Supplement(ctx, job.EvaluationTime, job.ReadHoldMillis, scope)
+			var facts execution.SupplementFacts
+			var err error
+			func() {
+				defer done()
+				facts, err = runner.Supplement(ctx, job.EvaluationTime, job.ReadHoldMillis, scope)
+			}()
 			// A call that was not refused for the flight held it this long:
 			// the time the Query Group's own Slot waited behind it.
 			held := now().Sub(started)

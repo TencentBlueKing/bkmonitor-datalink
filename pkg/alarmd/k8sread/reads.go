@@ -7,11 +7,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +27,23 @@ type deploymentObject struct {
 			MatchLabels      map[string]string `json:"matchLabels"`
 			MatchExpressions []any             `json:"matchExpressions"`
 		} `json:"selector"`
+		Strategy *struct {
+			Type          string `json:"type"`
+			RollingUpdate *struct {
+				MaxSurge       intOrString `json:"maxSurge"`
+				MaxUnavailable intOrString `json:"maxUnavailable"`
+			} `json:"rollingUpdate"`
+		} `json:"strategy"`
+		ProgressDeadlineSeconds *int32 `json:"progressDeadlineSeconds"`
+		Paused                  bool   `json:"paused"`
+		Template                struct {
+			Spec struct {
+				Containers []struct {
+					Name           string       `json:"name"`
+					ReadinessProbe *probeObject `json:"readinessProbe"`
+				} `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"`
 	} `json:"spec"`
 	Status struct {
 		Replicas            int32 `json:"replicas"`
@@ -40,6 +59,46 @@ type deploymentObject struct {
 			LastTransitionTime time.Time `json:"lastTransitionTime"`
 		} `json:"conditions"`
 	} `json:"status"`
+}
+
+// probeObject is the part of a probe the answer reports. An exec probe's
+// command and an HTTP probe's headers are not decoded at all: either can
+// carry a credential.
+type probeObject struct {
+	HTTPGet *struct {
+		Path string      `json:"path"`
+		Port intOrString `json:"port"`
+	} `json:"httpGet"`
+	TCPSocket *struct {
+		Port intOrString `json:"port"`
+	} `json:"tcpSocket"`
+	GRPC *struct {
+		Port intOrString `json:"port"`
+	} `json:"grpc"`
+	Exec                *struct{} `json:"exec"`
+	InitialDelaySeconds int32     `json:"initialDelaySeconds"`
+	PeriodSeconds       int32     `json:"periodSeconds"`
+	TimeoutSeconds      int32     `json:"timeoutSeconds"`
+	FailureThreshold    int32     `json:"failureThreshold"`
+	SuccessThreshold    int32     `json:"successThreshold"`
+}
+
+// intOrString is a Kubernetes IntOrString kept as it was written: a number
+// in decimal, a string (a percentage, a port name) as it is.
+type intOrString string
+
+func (v *intOrString) UnmarshalJSON(data []byte) error {
+	var text string
+	if json.Unmarshal(data, &text) == nil {
+		*v = intOrString(text)
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err != nil {
+		return err
+	}
+	*v = intOrString(number.String())
+	return nil
 }
 
 type podObject struct {
@@ -90,15 +149,74 @@ type containerStatus struct {
 	LastState    containerState `json:"lastState"`
 }
 
-// DeploymentStatus is the Deployment's own account of its rollout.
+// DeploymentStatus is the Deployment's own account of its rollout, and how
+// a rollout replaces its Pods: the strategy, the deadline the controller
+// judges progress by, whether it is paused, and when each container counts
+// as ready. Settings the Deployment does not declare are omitted.
 type DeploymentStatus struct {
-	Desired     int32       `json:"desired"`
-	Replicas    int32       `json:"replicas"`
-	Ready       int32       `json:"ready"`
-	Updated     int32       `json:"updated"`
-	Available   int32       `json:"available"`
-	Unavailable int32       `json:"unavailable"`
-	Conditions  []Condition `json:"conditions,omitempty"`
+	Desired                 int32                `json:"desired"`
+	Replicas                int32                `json:"replicas"`
+	Ready                   int32                `json:"ready"`
+	Updated                 int32                `json:"updated"`
+	Available               int32                `json:"available"`
+	Unavailable             int32                `json:"unavailable"`
+	Conditions              []Condition          `json:"conditions,omitempty"`
+	Strategy                *DeploymentStrategy  `json:"strategy,omitempty"`
+	ProgressDeadlineSeconds *int32               `json:"progress_deadline_seconds,omitempty"`
+	Paused                  bool                 `json:"paused,omitempty"`
+	Containers              []ContainerReadiness `json:"containers,omitempty"`
+}
+
+// DeploymentStrategy is spec.strategy, its surge and unavailability as
+// written: a count or a percentage of the replicas.
+type DeploymentStrategy struct {
+	Type           string `json:"type"`
+	MaxSurge       string `json:"max_surge,omitempty"`
+	MaxUnavailable string `json:"max_unavailable,omitempty"`
+}
+
+// ContainerReadiness is one container of the Pod template and its readiness
+// probe.
+type ContainerReadiness struct {
+	Name      string `json:"name"`
+	Readiness Probe  `json:"readiness"`
+}
+
+// Probe is a readiness probe: its kind (http_get, tcp_socket, grpc, exec,
+// or none when the container declares no probe), where it asks, and its
+// timing. An HTTP path is reported without its query string, which can hold
+// a token; an exec probe reports only its kind.
+type Probe struct {
+	Kind                string `json:"kind"`
+	Path                string `json:"path,omitempty"`
+	Port                string `json:"port,omitempty"`
+	InitialDelaySeconds int32  `json:"initial_delay_seconds,omitempty"`
+	PeriodSeconds       int32  `json:"period_seconds,omitempty"`
+	TimeoutSeconds      int32  `json:"timeout_seconds,omitempty"`
+	FailureThreshold    int32  `json:"failure_threshold,omitempty"`
+	SuccessThreshold    int32  `json:"success_threshold,omitempty"`
+}
+
+func readinessOf(p *probeObject) Probe {
+	if p == nil {
+		return Probe{Kind: "none"}
+	}
+	probe := Probe{InitialDelaySeconds: p.InitialDelaySeconds, PeriodSeconds: p.PeriodSeconds, TimeoutSeconds: p.TimeoutSeconds,
+		FailureThreshold: p.FailureThreshold, SuccessThreshold: p.SuccessThreshold}
+	switch {
+	case p.HTTPGet != nil:
+		path, _, _ := strings.Cut(p.HTTPGet.Path, "?")
+		probe.Kind, probe.Path, probe.Port = "http_get", bounded(path), string(p.HTTPGet.Port)
+	case p.TCPSocket != nil:
+		probe.Kind, probe.Port = "tcp_socket", string(p.TCPSocket.Port)
+	case p.GRPC != nil:
+		probe.Kind, probe.Port = "grpc", string(p.GRPC.Port)
+	case p.Exec != nil:
+		probe.Kind = "exec"
+	default:
+		probe.Kind = "other"
+	}
+	return probe
 }
 
 // Condition is one Deployment condition.
@@ -213,6 +331,16 @@ func (r *Reader) Pods(ctx context.Context) (PodsResult, error) {
 			Available: dep.Status.AvailableReplicas, Unavailable: dep.Status.UnavailableReplicas}}
 	if dep.Spec.Replicas != nil {
 		result.Deployment.Desired = *dep.Spec.Replicas
+	}
+	if st := dep.Spec.Strategy; st != nil {
+		result.Deployment.Strategy = &DeploymentStrategy{Type: st.Type}
+		if ru := st.RollingUpdate; ru != nil {
+			result.Deployment.Strategy.MaxSurge, result.Deployment.Strategy.MaxUnavailable = string(ru.MaxSurge), string(ru.MaxUnavailable)
+		}
+	}
+	result.Deployment.ProgressDeadlineSeconds, result.Deployment.Paused = dep.Spec.ProgressDeadlineSeconds, dep.Spec.Paused
+	for _, c := range dep.Spec.Template.Spec.Containers {
+		result.Deployment.Containers = append(result.Deployment.Containers, ContainerReadiness{Name: c.Name, Readiness: readinessOf(c.ReadinessProbe)})
 	}
 	for _, c := range dep.Status.Conditions {
 		result.Deployment.Conditions = append(result.Deployment.Conditions, Condition{Type: c.Type, Status: c.Status, Reason: c.Reason,

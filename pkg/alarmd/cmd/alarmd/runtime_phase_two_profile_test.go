@@ -81,9 +81,16 @@ func TestPhaseTwoRetainedBudgetProfileUsesResolvedDefaultAndOverride(t *testing.
 	if legacy.Digest == base.Digest || legacy.Capacity.RetainedBytes != 64<<20 || legacy.Capacity.UQBodyBytes != 64<<20 {
 		t.Fatalf("explicit override missing from runtime facts: %+v", legacy)
 	}
-	// Retained bytes also bounds the existing UQ body limit; all other limits stay fixed.
+	// Retained bytes also bounds the existing UQ body limit, and the counts in
+	// one answer follow the body (the smallest series and record it can
+	// hold); all other limits stay fixed.
+	if legacy.Capacity.UQSeries != uint64(legacy.Capacity.UQBodyBytes)/config.MinimumSeriesBytes ||
+		legacy.Capacity.UQRecords != uint64(legacy.Capacity.UQBodyBytes)/config.MinimumRecordBytes {
+		t.Fatalf("UQ counts not derived from the body: %+v", legacy.Capacity)
+	}
 	legacy.Capacity.RetainedBytes = base.Capacity.RetainedBytes
 	legacy.Capacity.UQBodyBytes = base.Capacity.UQBodyBytes
+	legacy.Capacity.UQSeries, legacy.Capacity.UQRecords = base.Capacity.UQSeries, base.Capacity.UQRecords
 	if legacy.Capacity != base.Capacity {
 		t.Fatalf("unrelated capacity changed: before=%+v after=%+v", base.Capacity, legacy.Capacity)
 	}

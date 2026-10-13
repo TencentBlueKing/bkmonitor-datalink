@@ -43,9 +43,11 @@ type compileCache struct {
 	stats       CacheStats
 }
 
+// The map is not sized to maxEntries: that bound is derived so it never binds
+// before the byte bound, and runs to millions on a large container.
 func newCompileCache(maxEntries, maxBytes int, negativeTTL time.Duration) *compileCache {
 	return &compileCache{
-		entries: make(map[string]*list.Element, maxEntries), lru: list.New(),
+		entries: make(map[string]*list.Element), lru: list.New(),
 		maxEntries: maxEntries, maxBytes: maxBytes, negativeTTL: negativeTTL,
 	}
 }

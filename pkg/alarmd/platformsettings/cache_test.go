@@ -28,10 +28,7 @@ type fakeSource struct {
 
 func (source *fakeSource) Read(context.Context, []Field) (Publication, error) {
 	source.reads++
-	if source.err != nil {
-		return Publication{}, source.err
-	}
-	return source.publication, nil
+	return source.publication, source.err
 }
 
 func published(revision string, values map[Field]string) Publication {
@@ -185,6 +182,50 @@ func TestCacheRefusesAPublicationWithAFieldOfTheWrongType(t *testing.T) {
 	fixture.cache.Refresh(ctx)
 	if current := fixture.cache.Current(); fixture.cache.Stats().Mode != ModeAuthoritative || len(current.FileSystemTypeIgnore) != 0 {
 		t.Fatalf("a null list: mode %s current %+v, want authoritative with an empty list", fixture.cache.Stats().Mode, current)
+	}
+}
+
+// A read the source had to try twice is counted whatever came of it, and a
+// read refused because the revision kept moving is revision_moved, not
+// read_error: the second is a publisher writing faster than a round trip,
+// the first a store that did not answer, and a reader has to tell them
+// apart without the log line.
+func TestCacheCountsRetriedReadsAndNamesARevisionThatKeptMoving(t *testing.T) {
+	fixture := newCacheFixture(t, Layer{})
+	ctx := context.Background()
+
+	fixture.source.publication = published("rev-1", map[Field]string{FieldIsAccessBKData: `true`})
+	fixture.cache.Refresh(ctx)
+	if stats := fixture.cache.Stats(); stats.Retries != 0 || stats.Mode != ModeAuthoritative {
+		t.Fatalf("a read on the first try: stats %+v, want no retry", stats)
+	}
+
+	fixture.source.publication.Retried = true
+	fixture.cache.Refresh(ctx)
+	if stats := fixture.cache.Stats(); stats.Retries != 1 || stats.Mode != ModeAuthoritative || stats.Refreshes["authoritative"] != 2 {
+		t.Fatalf("a read on the second try: stats %+v, want one retry and the publication", stats)
+	}
+
+	fixture.source.publication, fixture.source.err = Publication{Retried: true}, ErrRevisionMoved
+	fixture.cache.Refresh(ctx)
+	stats := fixture.cache.Stats()
+	if stats.Retries != 2 || stats.Unavailable[UnavailableRevisionMoved] != 1 || stats.Unavailable[UnavailableReadError] != 0 || stats.Mode != ModeStale {
+		t.Fatalf("two torn tries: stats %+v, want a second retry, revision_moved 1, read_error 0, stale", stats)
+	}
+
+	// A torn first try and a second that failed is a retry and a read error.
+	fixture.source.publication, fixture.source.err = Publication{Retried: true}, errors.New("connection refused")
+	fixture.cache.Refresh(ctx)
+	stats = fixture.cache.Stats()
+	if stats.Retries != 3 || stats.Unavailable[UnavailableRevisionMoved] != 1 || stats.Unavailable[UnavailableReadError] != 1 {
+		t.Fatalf("a torn try then a failed one: stats %+v, want a third retry and one read error", stats)
+	}
+
+	// A failed read that never tore is no retry.
+	fixture.source.publication = Publication{}
+	fixture.cache.Refresh(ctx)
+	if stats := fixture.cache.Stats(); stats.Retries != 3 || stats.Unavailable[UnavailableReadError] != 2 {
+		t.Fatalf("a failed first try: stats %+v, want no new retry", stats)
 	}
 }
 

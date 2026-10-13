@@ -485,7 +485,11 @@ func (w *statusOnly) status() int {
 	return w.code
 }
 
-func (s *Server) readiness(response http.ResponseWriter, _ *http.Request) {
+func (s *Server) readiness(response http.ResponseWriter, request *http.Request) {
+	if values, selected := request.URL.Query()["roles"]; selected {
+		s.roleReadiness(response, values)
+		return
+	}
 	ready := s.ready.Load()
 	if s.healthSource != nil {
 		snapshot := observability.NormalizeHealthSnapshot(s.healthSource.HealthSnapshot())
@@ -503,4 +507,58 @@ func (s *Server) readiness(response http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	response.WriteHeader(http.StatusOK)
+}
+
+// roleReadiness checks only the requested roles, so routing the channel does
+// not wait for worker assignments or business caches. Process-wide shutdown,
+// fatal errors and configuration loading still gate every role.
+func (s *Server) roleReadiness(response http.ResponseWriter, values []string) {
+	if len(values) != 1 {
+		http.Error(response, "roles must be specified once", http.StatusBadRequest)
+		return
+	}
+	selected := strings.Split(values[0], ",")
+	seen := make(map[string]bool, len(selected))
+	for index, role := range selected {
+		role = strings.TrimSpace(role)
+		if role == "" || seen[role] {
+			http.Error(response, "roles must contain unique non-empty names", http.StatusBadRequest)
+			return
+		}
+		seen[role] = true
+		selected[index] = role
+	}
+	if s.healthSource == nil {
+		response.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
+	snapshot := s.healthSource.HealthSnapshot()
+	body := struct {
+		Ready         bool              `json:"ready"`
+		ConfigLoaded  bool              `json:"config_loaded"`
+		Draining      bool              `json:"draining"`
+		Fatal         bool              `json:"fatal"`
+		RoleReadiness map[string]string `json:"role_readiness"`
+	}{
+		ConfigLoaded:  snapshot.ConfigLoaded,
+		Draining:      snapshot.Draining || snapshot.State == observability.HealthDraining,
+		Fatal:         snapshot.State == observability.HealthFatal,
+		RoleReadiness: make(map[string]string, len(selected)),
+	}
+	body.Ready = body.ConfigLoaded && !body.Draining && !body.Fatal
+	for _, role := range selected {
+		state, found := snapshot.RoleReadiness[role]
+		if found {
+			body.RoleReadiness[role] = state
+		}
+		if !found || (state != string(observability.HealthReady) && state != string(observability.HealthDegraded)) {
+			body.Ready = false
+		}
+	}
+	response.Header().Set("Content-Type", "application/json")
+	if !body.Ready {
+		response.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(response).Encode(body)
 }

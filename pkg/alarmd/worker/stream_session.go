@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -86,6 +87,10 @@ type streamedExecution struct {
 	// be incremented by a site that names no phase while every assertion on
 	// the total still passes.
 	retainedByPhase [retainPhaseCount]uint64
+	// retainedInputNow is retainedByPhase's input share kept again for a
+	// reader on another goroutine: access reads it across an in-place
+	// readiness wait while the series path keeps adding.
+	retainedInputNow atomic.Uint64
 	// spentByPhase is this execution's wall clock split the same way, in
 	// nanoseconds, summed over every call of each phase.
 	spentByPhase [slotPhaseCount]uint64
@@ -194,6 +199,15 @@ const (
 // panics here rather than being dropped into the total unattributed.
 func (stream *streamedExecution) retainBytes(phase retainPhase, retained uint64) {
 	stream.retainedByPhase[phase] += retained
+	if phase == retainPhaseInput {
+		stream.retainedInputNow.Add(retained)
+	}
+}
+
+// RetainedInputBytesNow is the input this execution has retained so far,
+// safe to read from any goroutine (execution.RetainedInputReporter).
+func (stream *streamedExecution) RetainedInputBytesNow() uint64 {
+	return stream.retainedInputNow.Load()
 }
 
 // retainedTotal is what this execution holds across all phases.
@@ -377,6 +391,7 @@ func (stream *streamedExecution) releaseProvisional() {
 	stream.effects = effectCounts{}
 	stream.coordinator.releaseProvisional(stream.series, stream.retainedTotal())
 	stream.series, stream.retainedByPhase = 0, [retainPhaseCount]uint64{}
+	stream.retainedInputNow.Store(0)
 }
 
 func streamedRetainedSize(bindings []execution.NamedInputBinding, delivery execution.SeriesDelivery) (uint64, error) {
@@ -712,7 +727,8 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	physical := make(map[execution.PhysicalQueryDigest]classifiedPhysicalCompletion, len(completion.PhysicalQueries))
 	for _, item := range completion.PhysicalQueries {
 		sourceBackend := physicalFailureCategory(item.RouteFacts) == observability.QueryFailureCategorySourceBackend || backendDidNotAnswer(item.RouteFacts)
-		physical[item.PhysicalQuery] = classifiedPhysicalCompletion{PhysicalQueryCompletion: item, sourceBackend: sourceBackend}
+		physical[item.PhysicalQuery] = classifiedPhysicalCompletion{PhysicalQueryCompletion: item, sourceBackend: sourceBackend,
+			sentLate: !sourceBackend && timedOutSentLate(item.RouteFacts)}
 	}
 	completionBindings := make(map[struct {
 		consumer    execution.ConsumerRef
@@ -739,6 +755,7 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 			return completionContractError(codeDuplicateCompletionBinding, "alarmd worker: duplicate completion binding")
 		}
 		stream.queryEvidence.observe(binding, item.PhysicalQueryCompletion, false, item.sourceBackend)
+		stream.queryEvidence.observeSentLate(binding, item.sentLate)
 		stream.noteAnswerTruncation(binding, item.RouteFacts)
 		completionBindings[key] = binding
 	}
@@ -2384,6 +2401,9 @@ func provisionalResult(result execution.EvaluationResult) (observability.Result,
 type classifiedPhysicalCompletion struct {
 	execution.PhysicalQueryCompletion
 	sourceBackend bool
+	// sentLate is a timeout not counted against the backend because the
+	// query was sent late (timedOutSentLate).
+	sentLate bool
 }
 
 // oneTimeClose is the open alert set a no-data close is asked against when it

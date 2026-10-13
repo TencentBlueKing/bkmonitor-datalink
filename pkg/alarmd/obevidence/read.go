@@ -14,8 +14,17 @@ func readOne(ctx context.Context, source string, binding RedisBinding, key strin
 	return results[0], raw[0]
 }
 
-// readMany is one bounded Redis transaction. It keeps TYPE/PTTL/GETRANGE
-// coherent within this read, not with other operations or runtime adoption.
+// readMany is one bounded Redis pipeline: TYPE, PTTL and GETRANGE of each
+// key, in one round trip. It is not a point-in-time snapshot: a write that
+// lands during the round trip can be seen by one key's commands and not by
+// another's, or between one key's TYPE and its GETRANGE, and each result
+// says so (Limits.Consistency).
+//
+// Not a MULTI: go-redis returns from a refused MULTI without reading the
+// rest of its replies and leaves them for the next command on the
+// connection (see redisatomic). Not a script either: these are stores
+// alarmd mostly does not own, read with accounts that may not be allowed
+// EVAL, over keys a proxy in front of a cluster would refuse in one script.
 func readMany(ctx context.Context, source string, binding RedisBinding, keys []string) ([]Result, [][]byte) {
 	results := make([]Result, len(keys))
 	raw := make([][]byte, len(keys))
@@ -32,7 +41,7 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 		}
 		return results, raw
 	}
-	commands := 2 + 3*len(keys) // MULTI/EXEC are included.
+	commands := 3 * len(keys) // TYPE, PTTL, GETRANGE per key.
 	if commands > MaxCommands {
 		for i := range results {
 			results[i].Status = "budget_exceeded"
@@ -48,8 +57,9 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 	limit := min(MaxDocumentBytes, MaxBytes/len(keys)-1)
 	for i := range results {
 		results[i].Limits.DocumentReadLimitBytes = limit
+		results[i].Limits.Consistency = ConsistencyPipelined
 	}
-	_, txErr := binding.Client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	_, pipeErr := binding.Client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
 		for i, key := range keys {
 			types[i] = pipe.Type(ctx, key)
 			ttls[i] = pipe.PTTL(ctx, key)
@@ -67,7 +77,7 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 		// was unavailable: an idle connection the network cut and a command
 		// the server refused are fixed in different places.
 		if types[i] == nil || types[i].Err() != nil || ttls[i].Err() != nil {
-			r.Reason, r.ReasonText = failureReason(txErr, types[i], ttls[i])
+			r.Reason, r.ReasonText = failureReason(pipeErr, types[i], ttls[i])
 			unanswered = r.Reason
 			continue
 		}
@@ -91,7 +101,7 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 			continue
 		}
 		if values[i].Err() != nil {
-			r.Reason, r.ReasonText = failureReason(txErr, values[i])
+			r.Reason, r.ReasonText = failureReason(pipeErr, values[i])
 			unanswered = r.Reason
 			continue
 		}
@@ -120,16 +130,16 @@ func readMany(ctx context.Context, source string, binding RedisBinding, keys []s
 }
 
 // failureReason is why a read went unanswered, and the error's own text:
-// the first failed command's error, else the transaction's, else a reply
-// that was never filled in.
-func failureReason(txErr error, commands ...redis.Cmder) (string, string) {
+// the first failed command's error, else the pipeline's, else a reply that
+// was never filled in.
+func failureReason(pipeErr error, commands ...redis.Cmder) (string, string) {
 	for _, command := range commands {
 		if command != nil && command.Err() != nil {
 			return redisfailure.Reason(command.Err()), redisfailure.Detail(command.Err())
 		}
 	}
-	if txErr != nil {
-		return redisfailure.Reason(txErr), redisfailure.Detail(txErr)
+	if pipeErr != nil {
+		return redisfailure.Reason(pipeErr), redisfailure.Detail(pipeErr)
 	}
-	return redisfailure.MalformedReply, "a reply the transaction did not fill in"
+	return redisfailure.MalformedReply, "a reply the pipeline did not fill in"
 }

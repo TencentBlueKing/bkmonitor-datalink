@@ -38,8 +38,13 @@ type Record struct {
 	PreviousSinceSlot  execution.EvaluationTime `json:"previous_since_slot,omitempty"`
 	// A change is chosen before its next Slot is known. Freeze moves it into
 	// HoldMillis/SinceSlot; until then the previous frozen interval is intact.
-	PendingHoldMillis      *int64                   `json:"pending_hold_ms,omitempty"`
-	ArrivalAgeMillis       int64                    `json:"arrival_age_ms,omitempty"`
+	PendingHoldMillis *int64 `json:"pending_hold_ms,omitempty"`
+	ArrivalAgeMillis  int64  `json:"arrival_age_ms,omitempty"`
+	// ArrivalAgeSeed is where ArrivalAgeMillis came from while the group has
+	// not measured its own (SeedPeer, SeedColdStart); empty once it has. A
+	// seeded age is where reading starts, not a measurement, and nothing
+	// that advises on a measured one reads it.
+	ArrivalAgeSeed         string                   `json:"arrival_age_seed,omitempty"`
 	LastEarlyMillis        int64                    `json:"last_early_ms,omitempty"`
 	MaxEarlyIntervalMillis int64                    `json:"max_early_interval_ms,omitempty"`
 	QuietSinceMillis       int64                    `json:"quiet_since_ms,omitempty"`

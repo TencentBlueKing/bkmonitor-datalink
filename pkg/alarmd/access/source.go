@@ -10,6 +10,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -20,34 +21,17 @@ import (
 
 var ErrFrozenQueryPlanUnavailable = errors.New("alarmd access: frozen QueryPlanFacts unavailable")
 
-// minimumSettlingWait is the shortest wait this product has ever treated as
-// enough for data to land: it is Python's ACCESS_DATA_TIME_DELAY, which that
-// side adds to every strategy's lookback whatever the period. A Slot falls
-// back to it when its completion budget cannot afford the deployment's
-// configured wait.
-//
-// It replaces a constant named thirtySecondReadyDelay whose value was ten
-// seconds and which was applied by listing the interval values that needed
-// it. The name said thirty, the value was ten, and the list had a hole.
-const minimumSettlingWait = execution.MinimumSettlingWait
+// readWaitWithinBudget is how long after its query window closes the group's
+// Slot is read for the schedule one of its Plans carries: the settling wait
+// and the group's phase (execution.ReadWaitWithinQueryBudget).
+func readWaitWithinBudget(queryGroup execution.QueryGroupIdentity, schedule execution.ScheduleSpec, configured, reserve time.Duration) time.Duration {
+	return execution.ReadWaitWithinQueryBudget(queryGroup, queryBudgetOf(schedule, reserve), configured)
+}
 
-// settlingWaitWithinBudget reports how long after its query window closes a
-// Slot waits before reading it, for the schedule one of its Plans carries.
-//
-// The rule itself is execution.SettlingWaitWithinQueryBudget, shared with the
-// scheduler, which needs the same answer to decide whether a replay can still
-// be read before its distance runs out. This function is the translation of a
-// Plan's schedule into that rule's terms: the query budget is the completion
-// offset less the downstream execution reserve.
-//
-// A wait that outlasts its own budget does not delay the read, it cancels it:
-// the consumer fails the readiness comparison at every round and is bound as
-// unavailable forever. That is what intervals of 16 to 35 seconds did, and
-// the strategy serializer accepts any of them -- it validates agg_interval
-// only as a non-negative integer, with no tier list behind it.
-func settlingWaitWithinBudget(schedule execution.ScheduleSpec, configured, reserve time.Duration) time.Duration {
-	budget := time.Duration(schedule.CompletionOffsetSeconds())*time.Second - reserve
-	return execution.SettlingWaitWithinQueryBudget(budget, configured)
+// queryBudgetOf is a Plan's schedule in the readiness rule's terms: the
+// completion offset less the downstream execution reserve.
+func queryBudgetOf(schedule execution.ScheduleSpec, reserve time.Duration) time.Duration {
+	return time.Duration(schedule.CompletionOffsetSeconds())*time.Second - reserve
 }
 
 // lookbackQuery is a physical query as the lookback sees it before it is
@@ -148,12 +132,15 @@ type Config struct {
 	Admission SeriesAdmission
 	// ObserveAdmission counts decisions. Optional.
 	ObserveAdmission AdmissionObserver
-	// ObserveHostPlacement counts each admitted series a Plan reads whose
+	// ObserveHostPlacement hears each admitted series a Plan reads whose
 	// host CMDB placed by id or agent (admission.Facts.PlacedByHostID), with
-	// whether its own address is not that host's
-	// (admission.Facts.ReportedAddressDiffers), by whether the Plan's alert
-	// identity groups by bk_target_ip. Optional.
-	ObserveHostPlacement func(groupedByTargetIP, addressDiffers bool)
+	// how its own address compares with that host's
+	// (admission.Facts.ReportedAddress). Optional.
+	ObserveHostPlacement func(HostPlacement)
+	// ObserveDownstreamDistress hears each query whose answer says the
+	// downstream is overloaded or unreachable (DistressClasses), with whether
+	// the query had queued for its permit. Optional.
+	ObserveDownstreamDistress func(class string, contended bool)
 	// ScopeDrops receives the series the target filters turned away, for
 	// the target-scope close; see ScopeDropSink. Optional.
 	ScopeDrops ScopeDropSink
@@ -327,6 +314,8 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		pending[index] = index
 	}
 	var dispatchErr error
+	var inPlace *execution.InPlaceWaitFacts
+	var sent uint32
 	for len(pending) != 0 {
 		if err := queryCtx.Err(); err != nil {
 			dispatchErr = err
@@ -341,7 +330,15 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			continue
 		}
 		if delay := time.UnixMilli(query.ReadyAtUnixMilli).Sub(source.now()); delay > 0 {
-			if err := source.wait(queryCtx, delay); err != nil {
+			// Waiting here keeps this execution's slot, its prepared plan and
+			// what its earlier queries already delivered: measured, so which
+			// Slots do it and what they hold across the wait can be read.
+			inPlace = noteInPlaceWait(inPlace, delay, sent, consumer, frozen, prepared)
+			err := source.wait(queryCtx, delay)
+			// The queries sent before the wait answer during it: read what
+			// the execution holds again at its end.
+			noteHeldInput(inPlace, consumer)
+			if err != nil {
 				dispatchErr = err
 				break
 			}
@@ -353,17 +350,6 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		if !recoveryDeadline.IsZero() {
 			queryDeadline = recoveryDeadline
 			budgetStart = recoveryStartedAt.UnixMilli()
-			// An execution the query cooldown pool let run decides whether
-			// the Query Group leaves it, so it gets what a normal round of
-			// this Slot has: from its arrival, the span from the query's
-			// readiness to its deadline as prepare plans both for the normal
-			// round. Not the whole interval a catch-up gets.
-			if execution.NormalQueryBudget(ctx) {
-				normal := recoveryStartedAt.Add(time.Duration(query.DeadlineUnixMilli-query.ReadyAtUnixMilli) * time.Millisecond)
-				if normal.Before(queryDeadline) {
-					queryDeadline = normal
-				}
-			}
 		}
 		permit, err := permits.AcquireQueryPermit(queryCtx, request.Contract.Slot, request.Operation, queryDeadline)
 		if err != nil {
@@ -402,12 +388,13 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		// What the query has from its send to its deadline, read here on the
 		// dispatch loop just before it is sent.
 		budgetMillis := attempt.DeadlineUnixMilli - source.now().UnixMilli()
+		sent++
 		running.Add(1)
 		go func(index int, query PlannedQuery, attempt execution.QueryAttempt, permit QueryPermit) {
 			defer running.Done()
 			adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo,
 				admission: source.config.Admission, observe: source.config.ObserveAdmission,
-				hostPlacement: source.config.ObserveHostPlacement, pulled: source.config.ObserveSeriesPulled, scopes: scopes,
+				hostPlacement: source.config.ObserveHostPlacement, queryGroup: request.Contract.Slot.QueryGroup, pulled: source.config.ObserveSeriesPulled, scopes: scopes,
 				scopeSink: source.config.ScopeDrops, outputs: outputs, round: int64(request.Contract.Slot.EvaluationTime),
 				lookback: kept}
 			adapters[index] = adapter
@@ -416,7 +403,7 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			// request to its answer or failure; this goroutine reads no
 			// clock of the Source's, which the dispatch loop owns.
 			results[index].clock = &execution.PhysicalQueryClock{BudgetMillis: budgetMillis,
-				ElapsedMillis: int64(completion.Stats.QueryMillis)}
+				ElapsedMillis: int64(completion.Stats.QueryMillis), ReadyAtUnixMilli: query.ReadyAtUnixMilli}
 			if err != nil {
 				err = fmt.Errorf("alarmd access: execute physical query: %w", err)
 			} else if !trustedProviderCompletion(query.Spec.Digest, completion) {
@@ -463,6 +450,7 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		completion.PhysicalQueries[len(completion.PhysicalQueries)-1].Clock = result.clock
 	}
 	completion.AllRequiredCompleted = true
+	completion.InPlaceWait = inPlace
 	return completion, nil
 }
 
@@ -680,6 +668,11 @@ func (source *Source) executeWithPermit(
 	defer permit.Release()
 	observability.EmitTargetFlow(ctx, "runner_decision", observability.TraceFields{}, observability.TargetFlowFacts{Decision: "query_running"})
 	completion, err := source.provider.Execute(ctx, attempt, adapter)
+	if err == nil && source.config.ObserveDownstreamDistress != nil {
+		if class := downstreamDistressOf(completion); class != "" {
+			source.config.ObserveDownstreamDistress(class, permitWaited(permit))
+		}
+	}
 	if err == nil && completion.Stats.NullIdentityFields > 0 {
 		// Bounded diagnostics marker: at least one declared identity dimension
 		// was absent from a delivered series and was bound to null (the Python
@@ -708,6 +701,17 @@ func trustedProviderCompletion(digest execution.PhysicalQueryDigest, completion 
 type PreparedExecution struct {
 	Header  execution.InternalExecutionHeader
 	Queries []PlannedQuery
+}
+
+// HostPlacement is one admitted series a Plan read whose host CMDB placed by
+// id or agent: the Plan, its Query Group, whether the Plan's alert identity
+// groups by bk_target_ip, and how the series' own address compares with the
+// host's. Passed by value on every such series, so it allocates nothing.
+type HostPlacement struct {
+	Plan              execution.PlanIdentity
+	QueryGroup        execution.QueryGroupIdentity
+	GroupedByTargetIP bool
+	Address           admission.ReportedAddress
 }
 
 type PlannedQuery struct {
@@ -884,7 +888,7 @@ func frozenConsumerReadyAt(
 	// Source delay selects an older data window; it must not move the
 	// scheduler's global readiness boundary earlier by the same amount.
 	window.End += sourceDelaySeconds
-	ready, err := frozenRequirementReadyAt(requirement, window, settlingWaitWithinBudget(schedule, configuredDelay, reserve))
+	ready, err := frozenRequirementReadyAt(requirement, window, readWaitWithinBudget(contractRef.Slot.QueryGroup, schedule, configuredDelay, reserve))
 	if err != nil {
 		return 0, err
 	}
@@ -979,9 +983,12 @@ type seriesAdapter struct {
 	attemptNo uint32
 	admission SeriesAdmission
 	observe   AdmissionObserver
-	// hostPlacement counts an admitted series whose host CMDB placed by id
-	// or agent, with whether its address differs, per Plan. Optional.
-	hostPlacement func(groupedByTargetIP, addressDiffers bool)
+	// hostPlacement hears an admitted series whose host CMDB placed by id
+	// or agent, per Plan. Optional.
+	hostPlacement func(HostPlacement)
+	// queryGroup is the Query Group the query runs for, named on a
+	// placement.
+	queryGroup execution.QueryGroupIdentity
 	// pulled counts the series this query actually handed on. Optional.
 	pulled func(records uint64)
 	scopes planScopes
@@ -1118,7 +1125,8 @@ func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch)
 				adapter.reportScopeDrop(identity, plan, &facts, filter, reason)
 			}
 			if admit && facts.PlacedByHostID && adapter.hostPlacement != nil {
-				adapter.hostPlacement(adapter.query.groupsByTargetIP(), facts.ReportedAddressDiffers)
+				adapter.hostPlacement(HostPlacement{Plan: identity, QueryGroup: adapter.queryGroup,
+					GroupedByTargetIP: adapter.query.groupsByTargetIP(), Address: facts.ReportedAddress})
 			}
 			outside = outside && !admit && admission.DefinitelyOutside(plan, &facts, filter, reason)
 			if adapter.observe != nil {
@@ -1234,4 +1242,63 @@ func waitContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
+}
+
+// noteInPlaceWait adds one in-place readiness wait of delay to facts. The
+// first one notes how many queries were already sent and the estimate of the
+// copies this execution made for itself (inPlacePreparedBytes); every one
+// adds to the wait before any query was sent while none was, and raises the
+// input held to what the consumer retains now, exactly, when it can say.
+func noteInPlaceWait(facts *execution.InPlaceWaitFacts, delay time.Duration, sent uint32,
+	consumer execution.QueryExecutionConsumer, frozen FrozenPlan, prepared PreparedExecution) *execution.InPlaceWaitFacts {
+	if facts == nil {
+		facts = &execution.InPlaceWaitFacts{SentBeforeFirstWait: sent, HeldPreparedBytes: inPlacePreparedBytes(frozen, prepared)}
+	}
+	millis := delay.Milliseconds()
+	facts.Waits++
+	facts.TotalMillis += millis
+	facts.LongestMillis = max(facts.LongestMillis, millis)
+	if sent == 0 {
+		facts.BeforeAnySentMillis += millis
+	}
+	noteHeldInput(facts, consumer)
+	return facts
+}
+
+// noteHeldInput raises facts' held input to what the execution retains now,
+// read at each end of an in-place wait.
+func noteHeldInput(facts *execution.InPlaceWaitFacts, consumer execution.QueryExecutionConsumer) {
+	if reporter, ok := consumer.(execution.RetainedInputReporter); ok {
+		facts.HeldInputBytes = max(facts.HeldInputBytes, reporter.RetainedInputBytesNow())
+	}
+}
+
+// inPlacePreparedBytes estimates what an execution keeps alive across an
+// in-place wait that it built for itself: the slice and map shells of the
+// frozen plan copied for this execution and the prepared queries, by struct
+// size. What those shells reference - the cached plan's requirements,
+// consumers and query facts - is shared with every other execution of the
+// Query Group and would be held without the wait, so it is not counted; the
+// query specs' own strings and slices built per execution are not counted
+// either, so this is a lower bound.
+func inPlacePreparedBytes(frozen FrozenPlan, prepared PreparedExecution) uint64 {
+	size := uintptr(len(frozen.DuePlans))*unsafe.Sizeof(execution.DuePlan{}) +
+		uintptr(len(frozen.Requirements))*unsafe.Sizeof(execution.DataRequirement{}) +
+		uintptr(len(frozen.QueryFacts))*(unsafe.Sizeof(execution.LogicalQueryRef(""))+unsafe.Sizeof(execution.QueryPlanFacts{})) +
+		unsafe.Sizeof(prepared.Header) + uintptr(len(prepared.Queries))*unsafe.Sizeof(PlannedQuery{})
+	for _, query := range prepared.Queries {
+		size += uintptr(len(query.Requirements)+len(query.ReadinessInvalidRequirements)) * unsafe.Sizeof(execution.DataRequirement{})
+	}
+	return uint64(size)
+}
+
+// RetainedInputBytesNow passes the wrapped consumer's reading through, so an
+// in-place wait sees the input the execution holds; zero when the wrapped
+// consumer cannot say. Not under the mutex: the reading is the consumer's own
+// to make safe from any goroutine (execution.RetainedInputReporter).
+func (consumer *serializedQueryConsumer) RetainedInputBytesNow() uint64 {
+	if reporter, ok := consumer.QueryExecutionConsumer.(execution.RetainedInputReporter); ok {
+		return reporter.RetainedInputBytesNow()
+	}
+	return 0
 }

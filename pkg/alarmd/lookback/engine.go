@@ -45,7 +45,11 @@ func rungWindow(rung int, step time.Duration) time.Duration {
 }
 
 const (
-	// RecheckTimeout bounds one recheck, below any formal query's budget.
+	// RecheckTimeout is the least a read of a Query Group's query again - a
+	// recheck, a directed or an early read - is given; past it the read is
+	// given what the query itself has taken (rereadTimeout). It is also how
+	// long a read asked to yield may keep its permit, and how far ahead of
+	// its candidate readiness an earlier read starts.
 	RecheckTimeout = 5 * time.Second
 	// restCap is the longest a Query Group rests between two samples,
 	// whatever its step: how late a source's data is changes over hours -
@@ -315,12 +319,15 @@ type group struct {
 	// took and holds are its last first reads and supplement holds, which
 	// its early reads' lead is the longest of; kept while it is read
 	// directed and after, so a group read directed again starts with them.
-	took      durations
-	holds     durations
-	capturing bool
-	prepared  *earlierSample
-	sample    *sample
-	nextAt    time.Time
+	took  durations
+	holds durations
+	// firstReads is its last whole first reads, directed or not, which every
+	// read of its query again is bounded by (rereadTimeout).
+	firstReads durations
+	capturing  bool
+	prepared   *earlierSample
+	sample     *sample
+	nextAt     time.Time
 	// period is the observed time between two of its Slots, lastSlot the
 	// latest one seen; a Query Group is sampled at its first reads, so how
 	// fresh its measurement can be depends on how often it reads.
@@ -472,6 +479,7 @@ func (engine *Engine) Begin(query Query) *Read {
 		return read
 	}
 	state := engine.groupLocked(query, now)
+	read.queryGroup, read.sentAt = slot.QueryGroup, now
 	if slot.EvaluationTime > state.lastSlot {
 		if state.lastSlot > 0 {
 			state.period = time.Duration(slot.EvaluationTime-state.lastSlot) * time.Second
@@ -513,6 +521,10 @@ type Read struct {
 	engine *Engine
 	source string
 	bytes  *atomic.Uint64
+	// queryGroup and sentAt are set on a Slot's first read, which is timed
+	// for its Query Group's rereads.
+	queryGroup execution.QueryGroupIdentity
+	sentAt     time.Time
 	// The rest is set only on a Query Group's sample.
 	query    Query
 	step     time.Duration
@@ -550,6 +562,14 @@ func (read *Read) Complete(completion execution.ProviderCompletion, err error) {
 		return
 	}
 	defer read.completeEarlier(completion, err)
+	if !read.sentAt.IsZero() && err == nil && completion.Completeness == execution.CompletenessFull {
+		now := read.engine.options.Now()
+		read.engine.mu.Lock()
+		if state := read.engine.groups[read.queryGroup]; state != nil {
+			state.firstReads.add(now.Sub(read.sentAt))
+		}
+		read.engine.mu.Unlock()
+	}
 	if read.directed != nil {
 		now := read.engine.options.Now()
 		read.engine.mu.Lock()
@@ -621,6 +641,23 @@ func (engine *Engine) faultLocked(reason, source string, queryGroup execution.Qu
 	if engine.options.OnFault != nil {
 		engine.options.OnFault(reason, queryGroup)
 	}
+}
+
+// rereadTimeout bounds one read of a Query Group's query again by what the
+// query has taken: the longest of its last whole first reads, never less than
+// RecheckTimeout. A fixed bound below any formal budget stopped every reread
+// of a query that takes longer than it, so the groups whose data is most
+// expensive to read were the ones never measured. The first reads it is
+// taken from finished inside their own formal budget, so it is bounded by
+// that budget too, and a reread holds only a permit nobody is waiting for and
+// gives it back the moment a formal query asks.
+func (engine *Engine) rereadTimeout(queryGroup execution.QueryGroupIdentity) time.Duration {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if state := engine.groups[queryGroup]; state != nil {
+		return max(RecheckTimeout, state.firstReads.longest())
+	}
+	return RecheckTimeout
 }
 
 // Forget drops a Query Group this process no longer owns, with its samples.
@@ -947,7 +984,7 @@ func recheckFrom(candidate *sample) int64 {
 
 func (engine *Engine) recheck(ctx context.Context, candidate *sample, release func(), yield <-chan struct{}) {
 	defer engine.publishReadHold()
-	readCtx, cancel := context.WithTimeout(ctx, RecheckTimeout)
+	readCtx, cancel := context.WithTimeout(ctx, engine.rereadTimeout(candidate.queryGroup))
 	// The watcher waits for the read to come back, not for the read's
 	// context: a read that honours neither the yield nor its deadline is
 	// still holding its permit after its context ended, and a yield that

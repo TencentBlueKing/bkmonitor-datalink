@@ -3,8 +3,7 @@
 # 契约与 pkg/linkd/scripts/ci-release.sh 相同，流水线可以照 linkd 的接。
 # 版本来源二选一：按 tag 发布时只给 SOURCE_TAG（pkg/alarmd/v<版本>，镜像 tag 就是 <版本>，
 # 且 HEAD 必须是该 tag 指向的提交）；不按 tag 发布时给 PACKAGE_VERSION。
-# alarmd 没有 chart 子命令：它的 chart 是鲸眼 chart 的一个模块（charts/kingeye/templates/custom/alarmd），
-# 不从本仓打包。
+# alarmd 没有 chart 子命令：它的 chart 是父 chart 的一个模块，随父 chart 发布，不从本仓打包。
 set -euo pipefail
 set +x
 
@@ -130,7 +129,7 @@ push)
     printf 'Image pushed: %s (Git %s)\n' "$ref" "$revision"
     ;;
 chart)
-    fail 'alarmd 没有 chart 子命令：它的 chart 是鲸眼 chart 的模块（charts/kingeye/templates/custom/alarmd），随鲸眼 chart 发布'
+    fail 'alarmd 没有 chart 子命令：它的 chart 是父 chart 的模块，随父 chart 发布'
     ;;
 *) fail '用法：ci-release.sh build|push|cleanup' ;;
 esac

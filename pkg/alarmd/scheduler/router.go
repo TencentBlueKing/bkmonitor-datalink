@@ -47,7 +47,7 @@ func (eligibility staticWorkerEligibility) Eligible(
 	worker ownership.WorkerRegistration,
 	_ time.Time,
 ) bool {
-	return worker.Compatibility() == eligibility.required
+	return worker.Compatibility().Matches(eligibility.required)
 }
 
 type Router struct {

@@ -27,6 +27,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	model "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
 )
 
 // Health is the answer to "does someone need to look at this".
@@ -311,6 +312,10 @@ type FailureRef struct {
 	// Timing is the failed query read against its budget, when the attempt
 	// measured it. See observability.QueryTiming.
 	Timing *observability.QueryTiming `json:"timing,omitempty"`
+	// HTTPStatus is the backend's non-success HTTP status, zero where the
+	// failure got no HTTP answer. Detail spells it for a person; this is
+	// the number readings decide on.
+	HTTPStatus int `json:"http_status,omitempty"`
 }
 
 // NoDataMemoryRefusal is what the store said when it would not take a Plan's
@@ -1767,8 +1772,13 @@ type Snapshot struct {
 	// whole deployment at UNKNOWN for as long. Bounded; the total counts all.
 	AwaitingFirstRound      []FirstRoundWait `json:"awaiting_first_round,omitempty"`
 	AwaitingFirstRoundTotal int              `json:"awaiting_first_round_total,omitempty"`
-	Anomalies               []Anomaly        `json:"anomalies"`
-	TotalAnomalies          int              `json:"total_anomalies"`
+	// Undetermined names the owned objects with no conclusion that are not
+	// awaiting their first round (UndeterminedObject), longest owned first
+	// and bounded; the total counts them all. Omitted when there are none.
+	Undetermined      []UndeterminedObject `json:"undetermined,omitempty"`
+	UndeterminedTotal int                  `json:"undetermined_total,omitempty"`
+	Anomalies         []Anomaly            `json:"anomalies"`
+	TotalAnomalies    int                  `json:"total_anomalies"`
 	// Demoted are the objects held back because their backend kept answering
 	// unavailable. They are published apart from Anomalies, not folded into
 	// them, because they answer a different question: Anomalies is what this
@@ -1886,6 +1896,18 @@ type Snapshot struct {
 	// TestSnapshotOmitsDispatchOnAReplicaThatDoesNotSuppress rather than a note
 	// here: it asserts on the encoded form, which is where the page reads this.
 	Dispatch *DispatchSuppression `json:"dispatch,omitempty"`
+	// TrackerDropped is what this replica's table lost because it was full,
+	// omitted while it has lost nothing.
+	TrackerDropped *TrackerDropped `json:"tracker_dropped,omitempty"`
+	// EffectiveTimeUnread is the effective-time dependencies this replica
+	// could not read and no longer trusts, so the Plans naming them resolve
+	// EFFECTIVE_TIME_UNKNOWN; at most strategycache.MaxEffectiveTimeUnread,
+	// with the total.
+	EffectiveTimeUnread      []strategycache.EffectiveTimeUnread `json:"effective_time_unread,omitempty"`
+	EffectiveTimeUnreadTotal int                                 `json:"effective_time_unread_total,omitempty"`
+	// AddressDiffers is this replica's latest records whose address is not
+	// their host's (AddressDiffersSamples); omitted when it has none.
+	AddressDiffers []AddressDiffersSample `json:"address_differs,omitempty"`
 	// AppliedActivationRecordRevision is the Activation this replica executes
 	// by, as its record revision. Zero means the replica did not report it,
 	// which the aggregate keeps apart from any lag.
@@ -2411,6 +2433,24 @@ type GateLookupFact struct {
 	InOtherSets []string  `json:"in_other_sets,omitempty"`
 }
 
+// TooLargeSetRow is a strategy whose set was refused for its size.
+type TooLargeSetRow struct {
+	TenantID   string `json:"tenant_id"`
+	StrategyID string `json:"strategy_id"`
+	Members    int64  `json:"members"`
+	Bytes      int64  `json:"bytes,omitempty"`
+	MaxMembers int    `json:"max_members"`
+	MaxBytes   int    `json:"max_bytes"`
+}
+
+// CalibrationOverAgeRow is a strategy past the calibration age and how long
+// since its last calibration.
+type CalibrationOverAgeRow struct {
+	TenantID   string  `json:"tenant_id"`
+	StrategyID string  `json:"strategy_id"`
+	AgeSeconds float64 `json:"age_seconds"`
+}
+
 type OpenAlertSetFacts struct {
 	// CalibrationConfigured is whether a reconciler is bound; false is a
 	// reading, not an absence: with the index protocol and no calibration,
@@ -2458,6 +2498,20 @@ type OpenAlertSetFacts struct {
 	LocationConfirmed  bool       `json:"location_confirmed"`
 	KeyedByAlertID     *bool      `json:"keyed_by_alert_id,omitempty"`
 	KeyedByAlertIDAsOf *time.Time `json:"keyed_by_alert_id_as_of,omitempty"`
+	// CalibrationNeeded is how many strategies a calibration round must take
+	// to cover every tracked one within the calibration interval, and
+	// CalibrationCapacity how many the Console answers in a round; a positive
+	// CalibrationShort is the strategies an interval at that capacity cannot
+	// reach, whose sets go unjudged and unclosed. CalibrationOverAge names the
+	// strategies past the calibration age, oldest first and bounded.
+	CalibrationNeeded   int                     `json:"calibration_needed,omitempty"`
+	CalibrationCapacity int                     `json:"calibration_capacity,omitempty"`
+	CalibrationShort    int                     `json:"calibration_short,omitempty"`
+	CalibrationOverAge  []CalibrationOverAgeRow `json:"calibration_over_age,omitempty"`
+	// TooLarge names the strategies whose open-alert sets were refused for
+	// their size, largest first and bounded: members, bytes and the budget.
+	// Their sets go unread, and so unjudged and unclosed.
+	TooLarge []TooLargeSetRow `json:"too_large,omitempty"`
 	// GateOwnLookups is Lookups for the gate's lookups of this replica's
 	// own open alerts, every answer word present; GateOwnHeld how many of
 	// those the gate answered "not open". A healthy series asks the gate
@@ -2908,6 +2962,10 @@ type View struct {
 	// not in Unknown and do not make the verdict UNKNOWN; they are said here
 	// instead, so a reader sees how many and until when.
 	AwaitingFirstRound *FirstRoundWaits `json:"awaiting_first_round,omitempty"`
+	// Undetermined is which objects Unknown counts, across the replicas,
+	// longest owned first and bounded; UndeterminedTotal counts them all.
+	Undetermined      []UndeterminedObject `json:"undetermined_objects,omitempty"`
+	UndeterminedTotal int                  `json:"undetermined_objects_total,omitempty"`
 	// Degradations are replica-level conditions that make the verdict
 	// DEGRADED on their own, beside the anomalies: what is wrong is a replica's
 	// standing, not any object it evaluates.
@@ -2933,8 +2991,19 @@ type View struct {
 	Schedule *ScheduleCensus `json:"schedule,omitempty"`
 	// Suppression says whether anything in this deployment can be parked at
 	// all. See DispatchSuppression: its absence, not its value, is the answer.
-	Dispatch  *DispatchSuppression `json:"dispatch,omitempty"`
-	Anomalies []Anomaly            `json:"anomalies"`
+	Dispatch *DispatchSuppression `json:"dispatch,omitempty"`
+	// TrackerDropped is what the replicas' tables lost because they were
+	// full: the counts summed, and the latest objects named with their
+	// replica. Nil while none has lost anything.
+	TrackerDropped *TrackerDropped `json:"tracker_dropped,omitempty"`
+	// EffectiveTimeUnread is every replica's unread effective-time
+	// dependencies, each once (aggregateEffectiveTimeUnread).
+	EffectiveTimeUnread      []strategycache.EffectiveTimeUnread `json:"effective_time_unread,omitempty"`
+	EffectiveTimeUnreadTotal int                                 `json:"effective_time_unread_total,omitempty"`
+	// AddressDiffers is every replica's latest records whose address is not
+	// their host's, newest first and bounded.
+	AddressDiffers []AddressDiffersSample `json:"address_differs_samples,omitempty"`
+	Anomalies      []Anomaly              `json:"anomalies"`
 	// Healthy is Determined minus the listed columns. It is computed here
 	// rather than left to the page because it is the column a reader trusts
 	// most, and a page that derives it by subtraction can be made to show a
@@ -3128,6 +3197,10 @@ type View struct {
 	// SourceStanding is Source read against what the deployment executes,
 	// with the two sentences for the first screen. Nil without a round.
 	SourceStanding *SourceStanding `json:"source_standing,omitempty"`
+	// ControlFacts says where the Control Leader's facts above came from: its
+	// record of this term, the replicas' snapshots, the previous term's
+	// record, or none (with the gap). Nil where no control record is wired.
+	ControlFacts *ControlFactsStanding `json:"control_facts,omitempty"`
 	// Dependencies is what one counted replica resolved its external systems
 	// to, and DependenciesReplica which one: the newest snapshot's. Every
 	// replica renders the same coordinates; what differs is what each has
@@ -3169,6 +3242,7 @@ type headFacts struct {
 	cut         map[string]bool
 	coverage    func(counted []string) *Disagreement
 	rowsDecided bool
+	control     controlRead
 }
 
 func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration,
@@ -3177,6 +3251,9 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		Undecidable: []Anomaly{}, ByDesign: []Anomaly{},
 		Replicas: []string{}, PerReplica: []ReplicaView{}, Builds: []BuildGroup{}}
 	ownedByReplica := make([]string, 0, len(expectedReplicas))
+	// embeddedLeaderFacts: some snapshot carried what only a Control Leader
+	// fills, so the view has the Leader's facts without the control record.
+	embeddedLeaderFacts := false
 	// The snapshots this view is willing to speak for. Every other number below
 	// is built from these and not from the argument, because the argument
 	// contains snapshots that were rejected: one too old to describe the
@@ -3350,72 +3427,10 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 				view.PlatformSettingFields.Differing = replica
 			}
 		}
-		if snapshot.ControlSource != nil {
-			if snapshot.ControlSource.StaleBeyondBound {
-				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationControlSourceStale, Replica: replica,
-					Stage: snapshot.ControlSource.LastFailureExit, Text: snapshot.ControlSource.LastFailure})
-			}
-			if snapshot.ControlSource.LeaderAbsentBeyondBound {
-				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationControlLeaderAbsent, Replica: replica})
-			}
-		}
-		if snapshot.Activation != nil {
-			// The leader's standing is the deployment's: only one replica
-			// attempts activation, and what it reports is what every replica
-			// executes. Kept whole, not summarised, so the page can say which
-			// publication is running and which one is not.
-			view.Activation = snapshot.Activation
-			view.ActivationReplica = replica
-			if snapshot.Activation.BehindBeyondBound {
-				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationBehind, Replica: replica})
-			}
-			if snapshot.Activation.BlockedQueryGroups > 0 {
-				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationBlocked, Replica: replica,
-					Text: fmt.Sprintf("%d held back (%s): %s; timeline keys to delete: %s", snapshot.Activation.BlockedQueryGroups,
-						snapshot.Activation.BlockedReasons, snapshot.Activation.BlockedSamples, snapshot.Activation.BlockedKeys)})
-			}
-		}
-		if header := snapshot.ActivationHeader; header != nil {
-			age := header.MissingSeconds
-			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationHeaderMissing, Replica: replica,
-				Text: "last rebuild: " + header.LastRebuild, AgeSeconds: &age})
-		}
-		if snapshot.Rebalance != nil && (view.Rebalance == nil || snapshot.Rebalance.PlannedAt.After(view.Rebalance.PlannedAt)) {
-			facts := *snapshot.Rebalance
-			view.Rebalance, view.RebalanceReplica = &facts, replica
-		}
-		if snapshot.AssignmentScope != nil && (view.AssignmentScope == nil || snapshot.AssignmentScope.At.After(view.AssignmentScope.At)) {
-			facts := *snapshot.AssignmentScope
-			view.AssignmentScope, view.AssignmentScopeReplica = &facts, replica
-		}
-		if snapshot.AssignmentSweep != nil && (view.AssignmentSweep == nil || snapshot.AssignmentSweep.At.After(view.AssignmentSweep.At)) {
-			facts := *snapshot.AssignmentSweep
-			view.AssignmentSweep, view.AssignmentSweepReplica = &facts, replica
-		}
-		if snapshot.LeaderRound != nil && (view.LeaderRound == nil || snapshot.LeaderRound.At.After(view.LeaderRound.At)) {
-			facts := *snapshot.LeaderRound
-			view.LeaderRound, view.LeaderRoundReplica = &facts, replica
-		}
-		if snapshot.ViewStream != nil && snapshot.ViewStream.Leading {
-			if snapshot.ViewStream.PublishFailingBeyondBound {
-				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationViewPublishFailing, Replica: replica,
-					Text: snapshot.ViewStream.PublishFailureReason})
-			}
-			if snapshot.ViewStream.NoSessionsBeyondBound {
-				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationViewStreamNoSessions, Replica: replica})
-			}
-		}
-		if snapshot.ViewStream != nil && viewStreamPreferred(view.ViewStream, snapshot.ViewStream) {
-			facts := *snapshot.ViewStream
-			// A copy that stays a list: appending nothing to a nil slice is
-			// nil, and nil is null on the wire, which a page reading
-			// lagging.length cannot use. Nobody lagging is an empty list.
-			facts.Lagging = append(make([]ViewStreamLagging, 0, len(snapshot.ViewStream.Lagging)), snapshot.ViewStream.Lagging...)
-			view.ViewStream, view.ViewStreamReplica = &facts, replica
-		}
-		if snapshot.Source != nil && (view.Source == nil || snapshot.Source.At.After(view.Source.At)) {
-			facts := *snapshot.Source
-			view.Source, view.SourceReplica = &facts, replica
+		if heads == nil || heads.control.current == nil {
+			embedded := controlFactsOf(snapshot)
+			mergeControlFacts(&view, embedded)
+			embeddedLeaderFacts = embeddedLeaderFacts || carriesLeaderControlFacts(embedded)
 		}
 		if len(snapshot.Dependencies) > 0 {
 			view.DependenciesReplicas++
@@ -3560,6 +3575,10 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	aggregateOverdue(&view, counted)
 	aggregateSchedule(&view, counted)
 	aggregateDispatchSuppression(&view, counted)
+	aggregateAddressDiffers(&view, counted)
+	aggregateTrackerDropped(&view, counted)
+	aggregateEffectiveTimeUnread(&view, counted)
+	aggregateUndetermined(&view, counted)
 
 	// Owning an object is not knowing about it. A replica that has just restarted
 	// owns everything and has observed nothing, so its empty anomaly list is not
@@ -3660,6 +3679,9 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		Attribute(view.LateSeries, now)
 	}
 	view.EmptyEveryRoundTotal = countEmptyEveryRound(view.NoData)
+	if heads != nil && heads.control.wired {
+		view.ControlFacts = settleControlFacts(&view, heads.control, embeddedLeaderFacts)
+	}
 	// Decided on the newest source round rather than inside the replica loop:
 	// a source is one thing, and after a leader change two replicas carry a
 	// round each, of which only the newest says what the source is now. And
@@ -3679,6 +3701,30 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	sortOutputProtocolGroups(view.OutputProtocols)
 	sortRetentionGroups(view.Retentions)
 	return view
+}
+
+// settleControlFacts picks the view's control facts, in order: the current
+// term's record; the facts the replicas' snapshots carry, already merged;
+// the previous term's record, while a new Leader has not written; and only
+// when none of them is there, the gap. So an ordinary takeover, which leaves
+// the old Leader's snapshot or record readable, never makes the view UNKNOWN.
+func settleControlFacts(view *View, read controlRead, embeddedLeaderFacts bool) *ControlFactsStanding {
+	switch {
+	case read.current != nil:
+		mergeControlFacts(view, *read.current)
+		return &ControlFactsStanding{Source: ControlFactsFromRecord, Replica: read.current.Replica,
+			LeaderClass: read.current.CandidacyClass}
+	case embeddedLeaderFacts:
+		return &ControlFactsStanding{Source: ControlFactsFromEmbedded, Unavailable: read.unavailable()}
+	case read.previous != nil:
+		mergeControlFacts(view, *read.previous)
+		return &ControlFactsStanding{Source: ControlFactsFromPreviousTerm, Replica: read.previous.Replica,
+			Unavailable: read.unavailable(), LeaderClass: read.previous.CandidacyClass}
+	}
+	if read.err != nil {
+		view.Gaps = append(view.Gaps, Gap{Kind: GapControlFactsUnavailable, Detail: gapDetail(read.err)})
+	}
+	return &ControlFactsStanding{Source: ControlFactsFromNone, Unavailable: read.unavailable()}
 }
 
 // executingObjects is how many objects the deployment runs, for the source
@@ -4185,6 +4231,10 @@ type SkippedSpan struct {
 	// Absent when the anchor is unknown.
 	RestartOffsetSeconds  *float64 `json:"restart_offset_seconds,omitempty"`
 	TakeoverOffsetSeconds *float64 `json:"takeover_offset_seconds,omitempty"`
+	// RecentWindowSeconds is how long this record is read as still
+	// happening (RecentWindow of its object's period), filled when it is
+	// read.
+	RecentWindowSeconds int64 `json:"recent_window_seconds,omitempty"`
 	// RewrittenAt is when the Control Leader rewrote the timeline whose loss
 	// this span is (a SCHEDULE_REPAIRED record); nil on every other span.
 	RewrittenAt *time.Time `json:"rewritten_at,omitempty"`

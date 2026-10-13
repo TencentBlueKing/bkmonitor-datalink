@@ -416,7 +416,7 @@ func (fixture *lifecycleFixture) evaluationAt(round int64) int64 {
 // says whether a Slot was attempted.
 func (fixture *lifecycleFixture) attempt(round int64, delay time.Duration) bool {
 	fixture.t.Helper()
-	fixture.clock.Store((fixture.evaluationAt(round)+fixture.interval/2)*1000 + delay.Milliseconds())
+	fixture.clock.Store(roundReadAtMillis(fixture.cfg, fixture.queryGroup, fixture.evaluationAt(round), fixture.interval) + delay.Milliseconds())
 	_, attempted, err := fixture.runner.RunOne(context.Background())
 	if err != nil {
 		fixture.t.Fatalf("round %d RunOne error = %v", round, err)

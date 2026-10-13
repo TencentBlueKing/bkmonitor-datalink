@@ -318,7 +318,7 @@ func lossesOfView(view *View, now time.Time) (reading LoadLoss, byLoss map[Loss]
 		case LossAfterCooldown:
 			reading.AfterCooldown++
 		case LossWhileDemoted:
-			if now.Sub(skip.At) <= RecentSkipWindow {
+			if now.Sub(skip.At) <= RecentWindow(skip.IntervalSeconds) {
 				reading.WhileDemotedRecent++
 			}
 		}
@@ -326,7 +326,7 @@ func lossesOfView(view *View, now time.Time) (reading LoadLoss, byLoss map[Loss]
 			return
 		}
 		byLoss[loss]++
-		if unknown && now.Sub(skip.At) <= RecentSkipWindow {
+		if unknown && now.Sub(skip.At) <= RecentWindow(skip.IntervalSeconds) {
 			graceUnknown++
 		}
 	})

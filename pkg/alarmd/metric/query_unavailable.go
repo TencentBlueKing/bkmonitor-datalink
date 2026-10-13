@@ -31,14 +31,18 @@ func newQueryUnavailableMetrics() queryUnavailableMetrics {
 				"the provider). QUERY_UNAVAILABLE reads as a provider fault and sends a reader to the " +
 				"provider, and two of these three would send them somewhere there is nothing to find; " +
 				"this is the only reading that tells them apart. One increment per physical query, so a " +
-				"Query Group with several Plans counts once per Plan.",
-		}, []string{"attribution"}),
+				"Query Group with several Plans counts once per Plan. http_class is the last failed attempt's " +
+				"HTTP answer: 4xx (the backend refused the query), 5xx (it failed), other (a status of neither " +
+				"kind), none (no HTTP answer: a transport failure, a timeout, a query never sent).",
+		}, []string{"attribution", "http_class"}),
 	}
 	// Pre-created so that "no unavailable completions" reads as zeros, not
 	// as an absent family, and so that a fallback that never fires is a
 	// reading rather than a missing series.
 	for _, attribution := range observability.QueryUnavailableAttributions {
-		m.attributions.WithLabelValues(attribution)
+		for _, class := range observability.QueryHTTPClasses {
+			m.attributions.WithLabelValues(attribution, class)
+		}
 	}
 	return m
 }
@@ -48,6 +52,6 @@ func (m queryUnavailableMetrics) observe(o observability.Observation) {
 	// cannot invent a label value the closed set does not contain.
 	o = observability.NormalizeObservation(o)
 	for _, facts := range o.QueryUnavailable {
-		m.attributions.WithLabelValues(facts.Attribution).Inc()
+		m.attributions.WithLabelValues(facts.Attribution, facts.HTTPClass).Inc()
 	}
 }

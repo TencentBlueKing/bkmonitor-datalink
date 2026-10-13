@@ -19,6 +19,24 @@ type indexLoader interface {
 	Load(ctx context.Context, now time.Time) (*Index, error)
 }
 
+// publishMarkReader is a loader that can say, without reading the hashes,
+// whether the writer has published since: Reader.ReadPublishMarks.
+type publishMarkReader interface {
+	ReadPublishMarks(ctx context.Context) (PublishMarks, error)
+}
+
+// How a refresh read the cache, as ObserveRead is told: the whole cache read
+// into a new index; the publish time found where the held index has it and
+// the held index kept; or a read that failed and kept the held index.
+const (
+	ReadFull      = "full"
+	ReadUnchanged = "unchanged"
+	ReadFailed    = "failed"
+)
+
+// ReadResults is the closed set ObserveRead is called with.
+var ReadResults = []string{ReadFull, ReadUnchanged, ReadFailed}
+
 // Store holds the index alarmd is currently filtering against and replaces it
 // wholesale on refresh.
 //
@@ -35,10 +53,13 @@ type Store struct {
 	publishedMaxAge time.Duration
 	now             func() time.Time
 
+	observeRead func(result string)
+
 	mutex     sync.RWMutex
 	index     *Index
 	lastError error
 	refreshes uint64
+	unchanged uint64
 }
 
 type StoreOptions struct {
@@ -54,6 +75,9 @@ type StoreOptions struct {
 	PublishedMaxAge time.Duration
 	// Now is injectable so the age rules are testable without sleeping.
 	Now func() time.Time
+	// ObserveRead is told how each refresh read the cache (ReadResults).
+	// Nil observes nothing.
+	ObserveRead func(result string)
 }
 
 func NewStore(reader indexLoader, options StoreOptions) (*Store, error) {
@@ -73,7 +97,8 @@ func NewStore(reader indexLoader, options StoreOptions) (*Store, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Store{reader: reader, maxAge: options.MaxAge, publishedMaxAge: options.PublishedMaxAge, now: now}, nil
+	return &Store{reader: reader, maxAge: options.MaxAge, publishedMaxAge: options.PublishedMaxAge, now: now,
+		observeRead: options.ObserveRead}, nil
 }
 
 // The reasons an index is not one to decide on, as Health and every caller
@@ -173,15 +198,25 @@ func (store *Store) HostIndexResolved() bool {
 	return reason == ""
 }
 
-// Refresh rebuilds the index once. A failed refresh leaves the previous index
-// in place and is recorded; it is not an error the caller has to handle to keep
-// running.
+// Refresh rebuilds the index once, unless the writer has not published since
+// the held index was read (publishUnchanged). A failed refresh leaves the
+// previous index in place and is recorded; it is not an error the caller has
+// to handle to keep running.
 func (store *Store) Refresh(ctx context.Context) error {
+	if store.publishUnchanged(ctx) {
+		store.mutex.Lock()
+		store.lastError = nil
+		store.unchanged++
+		store.mutex.Unlock()
+		store.observe(ReadUnchanged)
+		return nil
+	}
 	index, err := store.reader.Load(ctx, store.now())
 	store.mutex.Lock()
 	if err != nil {
 		store.lastError = err
 		store.mutex.Unlock()
+		store.observe(ReadFailed)
 		return err
 	}
 	index.carryOptional(store.index)
@@ -189,7 +224,57 @@ func (store *Store) Refresh(ctx context.Context) error {
 	store.lastError = nil
 	store.refreshes++
 	store.mutex.Unlock()
+	store.observe(ReadFull)
 	return nil
+}
+
+// publishUnchanged is whether the held index can stand without reading the
+// cache again: the writer says when it published each hash the load reads,
+// says the same times it did when the held index was read, and is the only
+// writer.
+//
+// The writer publishes in two groups on two schedules: the host, agent,
+// topology and business mapping hashes together under the host and topology
+// time, and the service instance hash alone under a time of its own. Each
+// group is renamed into place, complete, in the same atomic step that writes
+// its time, so a hash changes only when its group's time does. Both times
+// have to be there and unmoved; a writer that publishes no time for the
+// service instance hash is read in full every refresh, as before, since
+// nothing would say when that hash moved. Reading every host each minute in
+// between found the same hosts. A second writer -- the one whose
+// refresh time is the other key -- may change the hashes in place without
+// moving the publish time, so with it present every refresh reads in full, as
+// it does for a writer that publishes no time at all.
+//
+// There is no periodic full read besides. Each way the time could stand
+// still is covered without one: a time that is gone reads as none and the
+// refresh reads in full; a writer that stopped publishing stopped changing
+// the hashes too, and the facts age on the publish time it left, which is
+// what staleness is judged on; two publishes cannot name the same second,
+// since one writer holds the publish lease and a round takes minutes. A
+// writer that changed the hashes without moving the time would be breaking
+// the one thing this rests on, and a timer would neither notice that nor
+// bound it.
+func (store *Store) publishUnchanged(ctx context.Context) bool {
+	marks, ok := store.reader.(publishMarkReader)
+	if !ok {
+		return false
+	}
+	store.mutex.RLock()
+	held := store.index
+	store.mutex.RUnlock()
+	if held == nil || held.PublishedAt().IsZero() || !held.SourceRefreshedAt().IsZero() {
+		return false
+	}
+	read, err := marks.ReadPublishMarks(ctx)
+	return err == nil && !read.OtherWriter && !held.serviceInstancePublishedAt.IsZero() &&
+		read.HostTopo.Equal(held.PublishedAt()) && read.ServiceInstance.Equal(held.serviceInstancePublishedAt)
+}
+
+func (store *Store) observe(result string) {
+	if store.observeRead != nil {
+		store.observeRead(result)
+	}
 }
 
 // Health describes what the filter is currently deciding on.
@@ -213,6 +298,9 @@ type Health struct {
 	Degraded       bool
 	DegradedReason string
 	Refreshes      uint64
+	// Unchanged is how many refreshes found the writer's publish time where
+	// the held index has it and kept the index without reading the cache.
+	Unchanged uint64
 	// ClusterBusinessMapping and NamespaceBusinessMapping describe the BCS
 	// cluster and cluster + namespace -> business mappings the held index
 	// read. Zero held is not a degradation of the store - a writer that does
@@ -235,7 +323,7 @@ func (store *Store) Health() Health {
 	}
 	store.mutex.RLock()
 	defer store.mutex.RUnlock()
-	health := Health{Refreshes: store.refreshes}
+	health := Health{Refreshes: store.refreshes, Unchanged: store.unchanged}
 	if store.index == nil {
 		health.Degraded = true
 		health.DegradedReason = IndexNeverLoaded

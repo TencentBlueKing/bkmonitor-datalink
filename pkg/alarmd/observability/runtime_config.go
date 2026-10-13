@@ -27,10 +27,11 @@ var CPUSources = []string{CPUSourceQuota, CPUSourceQuotaMinimum, CPUSourceEnviro
 // RuntimeConfigFacts is a fixed, credential-free startup evidence surface.
 // It is not a WorkerCompatibility or business identity contract.
 type RuntimeConfigFacts struct {
-	Profile    string `json:"profile"`
-	Source     string `json:"source"`
-	CPUSource  string `json:"cpu_source"`
-	GOMAXPROCS int    `json:"gomaxprocs"`
+	Roles      []string `json:"roles,omitempty"`
+	Profile    string   `json:"profile"`
+	Source     string   `json:"source"`
+	CPUSource  string   `json:"cpu_source"`
+	GOMAXPROCS int      `json:"gomaxprocs"`
 	// The memory limit and where it was read from travel with the budgets
 	// derived from it: a table produced outside the Pod says so itself
 	// instead of passing a fallback off as the container's limit.
@@ -155,7 +156,11 @@ type RuntimeCapacityFacts struct {
 	// field named for a setting sends whoever is reading it to look for a
 	// configuration that does not exist, at the moment they can least afford it.
 	// Nothing outside the process can set either value.
-	DerivedActiveExecutions   int    `json:"derived_active_executions"`
+	DerivedActiveExecutions int `json:"derived_active_executions"`
+	// ActiveExecutionCeiling is the most the runtime may size the execution
+	// slots to, the container's memory over one parked execution; the values
+	// around it are the startup shape the runtime re-derives from its work.
+	ActiveExecutionCeiling    int    `json:"active_execution_ceiling"`
 	EffectiveActiveExecutions int    `json:"effective_active_executions"`
 	QueryPermits              int    `json:"query_permits"`
 	RecoveryQueryPermits      int    `json:"recovery_query_permits"`
@@ -198,15 +203,13 @@ type RuntimeCapacityFacts struct {
 	// container's memory limit and the collector's behaviour had nothing to do
 	// with one another. Zero means no container stated a limit, so the process
 	// left the Go defaults alone rather than enforcing a guess.
-	GoMemoryLimitBytes  int64  `json:"go_memory_limit_bytes"`
-	GoGCPercent         int    `json:"go_gc_percent"`
-	EvaluatorMaxPlans   uint64 `json:"evaluator_max_plans"`
-	EvaluatorMaxRecords uint64 `json:"evaluator_max_records"`
-	EvaluatorMaxLevels  uint64 `json:"evaluator_max_levels"`
-	EvidenceBytes       int    `json:"evidence_bytes"`
-	OutputMessageBytes  int    `json:"output_message_bytes"`
-	UQBodyBytes         int64  `json:"uq_body_bytes"`
-	UQSeriesBytes       int64  `json:"uq_series_bytes"`
-	UQSeries            uint64 `json:"uq_series"`
-	UQRecords           uint64 `json:"uq_records"`
+	GoMemoryLimitBytes int64  `json:"go_memory_limit_bytes"`
+	GoGCPercent        int    `json:"go_gc_percent"`
+	EvaluatorMaxLevels uint64 `json:"evaluator_max_levels"`
+	EvidenceBytes      int    `json:"evidence_bytes"`
+	OutputMessageBytes int    `json:"output_message_bytes"`
+	UQBodyBytes        int64  `json:"uq_body_bytes"`
+	UQSeriesBytes      int64  `json:"uq_series_bytes"`
+	UQSeries           uint64 `json:"uq_series"`
+	UQRecords          uint64 `json:"uq_records"`
 }

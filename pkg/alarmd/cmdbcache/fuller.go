@@ -8,6 +8,7 @@ package cmdbcache
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -76,7 +77,7 @@ func (fuller *HostTopologyFuller) Fill(dimensions map[string]json.RawMessage, fa
 		if host, found := index.Lookup(id); found {
 			placeByID(facts, id, host)
 			facts.PlacedByHostID = true
-			facts.ReportedAddressDiffers = reportedAddressDiffers(dimensions, host)
+			facts.ReportedAddress = reportedAddress(dimensions, host)
 			return
 		}
 		// An id CMDB does not know is a host CMDB does not know: the status
@@ -94,7 +95,7 @@ func (fuller *HostTopologyFuller) Fill(dimensions map[string]json.RawMessage, fa
 		if found {
 			placeByAgent(facts, host)
 			facts.PlacedByHostID = true
-			facts.ReportedAddressDiffers = reportedAddressDiffers(dimensions, host)
+			facts.ReportedAddress = reportedAddress(dimensions, host)
 			return
 		}
 	}
@@ -136,27 +137,49 @@ func (fuller *HostTopologyFuller) tenantStore(tenant string) *Store {
 // branch reached another way: the host's address and topology replace the
 // record's, and its id is written when the record has no bk_host_id
 // dimension at all (fullers.py:66-74).
-// reportedAddressDiffers is whether the record's own bk_target_ip is not the
-// address of the host CMDB placed it at by id or agent: another one, empty,
-// or missing. Python's fuller overwrites the dimension with the host's
-// address on that branch (fullers.py:57-74). Exact: the record's string
-// against CMDB's, as Python's dedupe would see them.
-func reportedAddressDiffers(dimensions map[string]json.RawMessage, host *HostFacts) bool {
+// reportedAddress is how the record's own bk_target_ip compares with the
+// address of the host CMDB placed it at by id or agent: the same, another
+// one, none (missing or empty), or not a string. Python's fuller overwrites
+// the dimension with the host's address on that branch (fullers.py:57-74).
+// Exact: the record's string against CMDB's, as Python's dedupe would see
+// them. Only an address that is not the same names the host and, for
+// another address, what was reported; the same address allocates nothing.
+func reportedAddress(dimensions map[string]json.RawMessage, host *HostFacts) admission.ReportedAddress {
+	differs := func(cause, reported string) admission.ReportedAddress {
+		if len(reported) > admission.MaxReportedAddressBytes {
+			reported = strings.ToValidUTF8(reported[:admission.MaxReportedAddressBytes], "")
+		}
+		return admission.ReportedAddress{Cause: cause, Reported: reported, CMDB: host.IP, HostID: host.HostID, AgentID: host.AgentID}
+	}
 	raw, present := dimensions["bk_target_ip"]
 	if !present {
-		return true
+		return differs(admission.AddressMissing, "")
 	}
 	// A quoted string without an escape is its own value byte for byte:
 	// compared as it is, with nothing decoded or allocated on a path every
 	// series placed by id takes. Anything else is decoded.
 	if n := len(raw); n >= 2 && raw[0] == '"' && raw[n-1] == '"' && bytes.IndexByte(raw, '\\') < 0 {
-		return string(raw[1:n-1]) != host.IP
+		switch value := raw[1 : n-1]; {
+		case string(value) == host.IP:
+			return admission.ReportedAddress{Cause: admission.AddressSame}
+		case len(value) == 0:
+			return differs(admission.AddressMissing, "")
+		default:
+			return differs(admission.AddressDiffers, string(value))
+		}
 	}
 	var reported string
 	if err := json.Unmarshal(raw, &reported); err != nil {
-		return true
+		return differs(admission.AddressUndecodable, "")
 	}
-	return reported != host.IP
+	switch {
+	case reported == host.IP:
+		return admission.ReportedAddress{Cause: admission.AddressSame}
+	case reported == "":
+		return differs(admission.AddressMissing, "")
+	default:
+		return differs(admission.AddressDiffers, reported)
+	}
 }
 
 func placeByAgent(facts *admission.Facts, host *HostFacts) {

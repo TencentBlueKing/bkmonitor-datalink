@@ -139,6 +139,10 @@ func productionLookbackStats(engine *lookback.Engine, holds *productionReadHolds
 			stats.ReadHoldPredecessors[reason] = holds.links[reason]
 		}
 		holds.linksMu.Unlock()
+		stats.ReadHoldSeeds = make(map[string]uint64, len(readhold.SeedOrigins))
+		for _, origin := range readhold.SeedOrigins {
+			stats.ReadHoldSeeds[origin] = controller.Seeds[origin]
+		}
 		stats.ReadHoldClamped = map[string]uint64{readhold.ClampKnown: controller.Clamped[readhold.ClampKnown],
 			readhold.ClampFallback: controller.Clamped[readhold.ClampFallback]}
 		stats.ReadHoldOwnCorrupt, stats.ReadHoldRetireCloseFailed = controller.OwnCorrupt, holds.retireCloseFailed.Load()
@@ -225,7 +229,7 @@ func (holds *productionReadHolds) fleetFacts() map[string]fleet.ReadHoldFacts {
 	bases := make(map[execution.QueryGroupIdentity]readHoldBasis, len(holds.groups))
 	for qg, owned := range holds.groups {
 		groups = append(groups, qg)
-		bases[qg] = readHoldBasis{delay: owned.queryDelay, step: owned.queryStep, unit: owned.delayUnit, settlingWait: owned.settlingWait,
+		bases[qg] = readHoldBasis{delay: owned.queryDelay, step: owned.queryStep, unit: owned.delayUnit, settlingWait: owned.settlingWait, coldStart: holds.cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
 			known: owned.settled && owned.queryRoute != ""}
 	}
 	holds.mu.Unlock()
@@ -314,6 +318,9 @@ func frozenHoldOf(record readhold.Record, base int64) frozenHold {
 // hold is reckoned beyond.
 type readHoldBasis struct {
 	delay, step, settlingWait time.Duration
+	// coldStart is the deployment's ready delay, the wait every group read
+	// at before it was measured per source: the suggestion is reckoned past it.
+	coldStart time.Duration
 	// unit is what the delay was rounded to and the suggestion is: the data
 	// step, or a shorter schedule step for a query read unaligned.
 	unit  time.Duration
@@ -327,8 +334,15 @@ type readHoldBasis struct {
 // rests on three matching earlier reads (readhold, Lowered) -- both
 // measured. A hold that is a predecessor's bound or a degraded freeze
 // writes none, and suggests nothing.
+//
+// A seeded arrival age (record.ArrivalAgeSeed) is where the group started
+// reading, a peer's or a new source's, and suggests nothing either. And the
+// suggestion is reckoned past the cold-start wait, not the settling wait
+// alone: with the wait at its floor, a hold up to the cold-start one is how
+// this process reads a source that lands later than the floor, not a sign the
+// owner's time_delay is short, as it was not when every group read at it.
 func (basis readHoldBasis) suggestion(record readhold.Record) int64 {
-	if record.ArrivalAgeMillis <= 0 {
+	if record.ArrivalAgeMillis <= 0 || record.ArrivalAgeSeed != "" {
 		return 0
 	}
 	unit := basis.unit
@@ -336,5 +350,5 @@ func (basis readHoldBasis) suggestion(record readhold.Record) int64 {
 		unit = basis.step
 	}
 	arrival := time.Duration(record.ArrivalAgeMillis) * time.Millisecond
-	return execution.SuggestedTimeDelaySeconds(arrival-basis.settlingWait, basis.delay, unit)
+	return execution.SuggestedTimeDelaySeconds(arrival-max(basis.settlingWait, basis.coldStart), basis.delay, unit)
 }

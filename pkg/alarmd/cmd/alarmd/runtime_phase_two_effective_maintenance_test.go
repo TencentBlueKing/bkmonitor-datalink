@@ -58,9 +58,14 @@ func (s maintenanceTestIndex) Watch(ctx context.Context, ready func(bool), _ fun
 type maintenanceTestWriter struct {
 	batches [][]linkdoutput.CloseRequest
 	err     error
+	// onWrite, when set, runs as a batch is sent.
+	onWrite func()
 }
 
 func (w *maintenanceTestWriter) WriteCloseBatch(_ context.Context, requests []linkdoutput.CloseRequest) error {
+	if w.onWrite != nil {
+		w.onWrite()
+	}
 	w.batches = append(w.batches, append([]linkdoutput.CloseRequest(nil), requests...))
 	return w.err
 }

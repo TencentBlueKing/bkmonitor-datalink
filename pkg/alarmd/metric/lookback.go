@@ -58,6 +58,7 @@ type lookbackCollector struct {
 	readHoldTransition  *prometheus.Desc
 	readHoldOvertaken   *prometheus.Desc
 	readHoldPredecessor *prometheus.Desc
+	readHoldSeed        *prometheus.Desc
 	readHoldClamped     *prometheus.Desc
 	readHoldCorrupt     *prometheus.Desc
 	readHoldRetireClose *prometheus.Desc
@@ -79,6 +80,13 @@ func newLookbackCollector() *lookbackCollector {
 				"old group's closed record, exactly), zero (no record: a group never held), or -- each read as the hold "+
 				"bound, which costs the successor's first Slots a later read and never a Slot -- record_open, "+
 				"record_corrupt, record_unreadable; and the links it skipped: self_link, invalid_link, expired.", "reason"),
+		readHoldSeed: desc("read_hold_seeds_total",
+			"Query Groups with no read-hold record of their own that started from a seeded arrival age, by where it "+
+				"came from: peer (the 90th percentile of what the groups reading the same tables and data sources "+
+				"measured) or cold_start (no peer had measured: the deployment's ready delay, as the group's schedule "+
+				"allowed it). A seed that would hold nothing is not counted: such a group starts at no hold and keeps no "+
+				"record. Read cold_start against peer: a fleet seeding mostly cold start is one whose new strategies "+
+				"read later than their sources need until they measure their own.", "origin"),
 		readHoldClamped: desc("read_hold_transition_clamped_total",
 			"Slots frozen at the group's hold limit because a transition asked for more, by source: known (a known "+
 				"previous hold asked for it; the old group's last Slot may overtake this one) or fallback (only the hold "+
@@ -210,7 +218,7 @@ func (c *lookbackCollector) Describe(ch chan<- *prometheus.Desc) {
 	for _, desc := range []*prometheus.Desc{c.firstReads, c.checks, c.changed, c.changes, c.classes, c.readEarly, c.seriesLate, c.supplementWindows, c.supplementUnobserved, c.supplementSeries,
 		c.supplementPoints, c.directedBytes, c.supplementHold, c.supplementHoldMax, c.earlyReads, c.earlyUndecided, c.earlyBytes, c.earlierBytes, c.holdIgnored, c.readBytes, c.checkBytes, c.unknown, c.coverage,
 		c.pending, c.yields, c.refused, c.faults, c.readHoldTransition, c.readHoldOvertaken,
-		c.readHoldPredecessor, c.readHoldClamped, c.readHoldCorrupt, c.readHoldRetireClose, c.readHoldCloseSkip, c.readHoldDegraded,
+		c.readHoldPredecessor, c.readHoldSeed, c.readHoldClamped, c.readHoldCorrupt, c.readHoldRetireClose, c.readHoldCloseSkip, c.readHoldDegraded,
 		c.readHoldGroups, c.readHoldMax} {
 		ch <- desc
 	}
@@ -238,6 +246,9 @@ func (c *lookbackCollector) Collect(ch chan<- prometheus.Metric) {
 		for _, reason := range reasons {
 			counter(c.readHoldPredecessor, stats.ReadHoldPredecessors[reason], reason)
 		}
+	}
+	for _, origin := range readhold.SeedOrigins {
+		counter(c.readHoldSeed, stats.ReadHoldSeeds[origin], origin)
 	}
 	for _, source := range readhold.ClampSources {
 		counter(c.readHoldClamped, stats.ReadHoldClamped[source], source)

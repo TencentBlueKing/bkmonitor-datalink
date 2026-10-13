@@ -53,7 +53,7 @@ func TestALineFoldsOnTheProblemAndCountsTheCodesUnderIt(t *testing.T) {
 	// The second fact under DEFECT counts the internal code, not the code
 	// the row is listed for.
 	internal := []Anomaly{{QueryGroup: "f", Kind: KindQueryCooldown, QueryCooldown: &cooldownFacts, ReasonLastAt: at,
-		Failure:  &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"},
+		Failure:  &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400},
 		Internal: &FailureRef{Stage: "execute", Category: "completion_contract", Code: "GAP_SCOPE_REASON_CONFLICT"}}}
 	Attribute(internal, now)
 	reports = ReportChecks([][]Anomaly{nil, internal}, nil, nil, now)

@@ -290,6 +290,13 @@ const (
 	// merged, the previous-build case is gone; the word stays for corrupt
 	// bytes.
 	ReasonScheduleUnreadable = "SCHEDULE_UNREADABLE"
+	// ReasonScheduleMissing names a round the Slot source could not take
+	// because the Query Group's schedule timeline key is not there at all -
+	// evicted, expired, deleted - while the activation runs the Query Group.
+	// It used to share BLOCKED_EXACT_SET_UNAVAILABLE with every other reason
+	// the control plane had nothing to hand over; a missing key is named, and
+	// the Worker reports it so the Control Leader opens the timeline again.
+	ReasonScheduleMissing = "SCHEDULE_MISSING"
 	// ReasonViewNotExecutable names a round the Worker did not run because
 	// its installed executable view does not yet agree with the Assignment
 	// record on the Query Group's content or timeline, or does not carry it

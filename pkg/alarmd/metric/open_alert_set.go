@@ -39,6 +39,7 @@ type openAlertSetCollector struct {
 	tracked     *prometheus.Desc
 	evictions   *prometheus.Desc
 	refused     *prometheus.Desc
+	coverage    *prometheus.Desc
 }
 
 func newOpenAlertSetCollector() *openAlertSetCollector {
@@ -52,9 +53,9 @@ func newOpenAlertSetCollector() *openAlertSetCollector {
 				"the consumer's open alerts for a strategy, reconciled against its index. Absent until one has."),
 		unavailable: descriptor("open_alert_set_unavailable_total",
 			"Why the copy could not answer from the consumer's sets: read_error (an index read or a calibration "+
-				"failed, each time), too_large (a strategy's set larger than one read may hold - members, bytes or "+
-				"pages - each time; such a set is not read another way yet, and the first one counted is the trigger "+
-				"for reading it a member at a time), location_unconfirmed (the link's Console has not named where the sets are) and "+
+				"failed, each time), too_large (a strategy's set larger than this process's read budget - members or "+
+				"bytes, from its memory - each time, refused before it is scanned once a member's weight is known; "+
+				"fleet.get names these strategies), location_unconfirmed (the link's Console has not named where the sets are) and "+
 				"keying_unconfirmed (it has not said they are keyed by the alert ids this process sends), each "+
 				"counted once on entering the state; fleet health degrades with OPEN_ALERT_SET_UNCONFIRMED while "+
 				"either lasts. A deployment without the Console counts nothing here.", "reason"),
@@ -79,6 +80,13 @@ func newOpenAlertSetCollector() *openAlertSetCollector {
 		evictions: descriptor("open_alert_set_evictions_total",
 			"Fingerprints this process sent that were dropped from the copy to stay inside its bound, oldest "+
 				"first."),
+		coverage: descriptor("linkd_calibration_coverage",
+			"Tracked strategies by whether calibration at the Console's measured pace reaches them within the "+
+				"calibration interval: covered, or short. A round calibrates enough strategies to cover every tracked "+
+				"one with a quarter to spare, bounded by how many calls the Console answers in half a refresh cycle "+
+				"(from the latest calls' p90); short is the strategies an interval at that bound cannot reach, whose "+
+				"open-alert sets go unjudged and so unclosed. fleet.get names the strategies past their calibration "+
+				"age. Absent without a Console.", "state"),
 		refused: descriptor("open_alert_set_notices_refused_total",
 			"Change notices on the link's channel this process dropped, by why: oversized (past 64 KiB), "+
 				"undecodable (not a notice under the strict shape: a field this build does not know, a wrong type, "+
@@ -108,6 +116,7 @@ func (c *openAlertSetCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.tracked
 	ch <- c.evictions
 	ch <- c.refused
+	ch <- c.coverage
 }
 
 func (c *openAlertSetCollector) Collect(ch chan<- prometheus.Metric) {
@@ -133,6 +142,10 @@ func (c *openAlertSetCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(stats.Members), "member")
 	ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(stats.Added), "sent_open")
 	ch <- prometheus.MustNewConstMetric(c.tracked, prometheus.GaugeValue, float64(stats.Tracked))
+	if stats.CalibrationConfigured {
+		ch <- prometheus.MustNewConstMetric(c.coverage, prometheus.GaugeValue, float64(max(0, stats.Tracked-stats.CalibrationShort)), "covered")
+		ch <- prometheus.MustNewConstMetric(c.coverage, prometheus.GaugeValue, float64(stats.CalibrationShort), "short")
+	}
 	ch <- prometheus.MustNewConstMetric(c.evictions, prometheus.CounterValue, float64(stats.Evictions))
 	for _, reason := range openalerts.NoticeRefusals {
 		ch <- prometheus.MustNewConstMetric(c.refused, prometheus.CounterValue, float64(stats.NoticesRefused[reason]), string(reason))

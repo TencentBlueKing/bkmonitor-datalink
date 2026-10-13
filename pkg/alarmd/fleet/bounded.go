@@ -112,7 +112,7 @@ func MetricKind(kind string) string {
 func MetricGapKind(kind GapKind) string {
 	switch kind {
 	case GapDenominatorUnavailable, GapReplicaMissing, GapSnapshotStale, GapListTruncated,
-		GapOwnershipShortfall, GapCoverageInconsistent, GapNoReplicas, GapUndetermined,
+		GapOwnershipShortfall, GapCoverageInconsistent, GapNoReplicas, GapUndetermined, GapControlFactsUnavailable,
 		GapRegistryUnavailable, GapSnapshotsUnreadable, GapSnapshotsDeferred:
 		return string(kind)
 	default:

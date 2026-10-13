@@ -181,6 +181,13 @@ type WakeFacts struct {
 	IntervalSeconds int64     `json:"interval_seconds,omitempty"`
 	Deferred        bool      `json:"deferred,omitempty"`
 	Cooling         bool      `json:"cooling,omitempty"`
+	// NextSlot is the evaluation time - the grid point - of the Slot the
+	// bound waits for, zero where the bound names none. DueAt is when that
+	// Slot becomes runnable, after its read wait, phase and read hold.
+	NextSlot time.Time `json:"next_slot,omitempty"`
+	// ReadinessHold says a Deferred bound is the Slot waiting for its data
+	// (a read hold), not a failure's backoff.
+	ReadinessHold bool `json:"readiness_hold,omitempty"`
 }
 
 // ScheduleSource is what the publisher asks the due index for.

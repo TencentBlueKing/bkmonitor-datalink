@@ -30,6 +30,16 @@ type QueryCooldownFacts struct {
 	// the exit it caused, so a reader sees what the leaving answer had and
 	// used. Nil before the pool let any run.
 	LastProbe *QueryCooldownProbe `json:"last_probe,omitempty"`
+	// CeilingMillis is the backend's own cut as this Query Group's failures
+	// showed it: the shortest a query of it ran before the backend answered
+	// unavailable, among the failures that ran longer than any of its
+	// answers. Zero when none has. RunSpreadMillis is the spread of its
+	// recent answered run times, the margin a probe must clear the ceiling
+	// by. Probes are its latest deciding probes, oldest first, each with the
+	// comparison that decided it.
+	CeilingMillis   int64                `json:"ceiling_ms,omitempty"`
+	RunSpreadMillis int64                `json:"run_spread_ms,omitempty"`
+	Probes          []QueryCooldownProbe `json:"probes,omitempty"`
 }
 
 // QueryCooldownProbe is one execution the pool let run. Outcome is what its
@@ -45,7 +55,40 @@ type QueryCooldownProbe struct {
 	Measured      bool      `json:"measured"`
 	BudgetMillis  int64     `json:"budget_ms,omitempty"`
 	ElapsedMillis int64     `json:"elapsed_ms,omitempty"`
+	// Rule is the comparison that decided an answered probe
+	// (QueryCooldownExitRules), with the ceiling and spread it was held to;
+	// empty for a probe that did not answer, which stays by its failure.
+	Rule            string `json:"rule,omitempty"`
+	CeilingMillis   int64  `json:"ceiling_ms,omitempty"`
+	RunSpreadMillis int64  `json:"run_spread_ms,omitempty"`
 }
+
+// The comparisons that decide an answered probe, closed. Every one but
+// near_ceiling takes the Query Group out of the pool.
+//
+// no_ceiling: none of its failures showed a backend cut, so an answer is
+// the evidence it always was. unmeasured: the answer was not timed and
+// cannot be compared. above_ceiling: it answered past the ceiling, so the
+// cut it was held to is no longer there, and the ceiling is dropped.
+// under_ceiling: it answered under the ceiling by more than its own runs
+// spread. answered_in_row: it answered as many deciding probes in a row as
+// its run times keep, near the ceiling every time; a backend that answers
+// that often is answering its normal rounds. near_ceiling: it answered
+// within its spread of the cut, where the next normal round is as likely to
+// be cut as not; it stays, and the next probe decides.
+const (
+	QueryCooldownRuleNoCeiling     = "no_ceiling"
+	QueryCooldownRuleUnmeasured    = "unmeasured"
+	QueryCooldownRuleAboveCeiling  = "above_ceiling"
+	QueryCooldownRuleUnderCeiling  = "under_ceiling"
+	QueryCooldownRuleAnsweredInRow = "answered_in_row"
+	QueryCooldownRuleNearCeiling   = "near_ceiling"
+)
+
+// QueryCooldownExitRules is the closed set a probe's Rule takes.
+var QueryCooldownExitRules = []string{QueryCooldownRuleNoCeiling, QueryCooldownRuleUnmeasured,
+	QueryCooldownRuleAboveCeiling, QueryCooldownRuleUnderCeiling, QueryCooldownRuleAnsweredInRow,
+	QueryCooldownRuleNearCeiling}
 
 // The outcomes a QueryCooldownProbe records, closed.
 const (

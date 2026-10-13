@@ -271,6 +271,9 @@ type QueryExecutionCompletion struct {
 	PhysicalQueries      []PhysicalQueryCompletion
 	CompletionBindings   []NamedInputBinding
 	AllRequiredCompleted bool
+	// InPlaceWait is how long the execution waited in place for its later
+	// queries' readiness; nil when it did not.
+	InPlaceWait *InPlaceWaitFacts
 }
 
 func (completion QueryExecutionCompletion) Validate(header InternalExecutionHeader, delivered []SeriesDelivery) error {

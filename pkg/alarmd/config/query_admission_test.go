@@ -11,12 +11,12 @@ func TestExecutionGuardIsNotAnEnvironmentKnob(t *testing.T) {
 	for _, written := range []string{"0", "2", "17", "-1", "true", `"unlimited"`} {
 		text := validGoAccessRuntimeConfigYAML("admission-worker") +
 			"  scheduler:\n    active_execution_limit: " + written + "\n"
-		if _, err := Load(writeConfig(t, text)); err == nil {
+		if _, err := LoadWithRoles(writeConfig(t, text), nil); err == nil {
 			t.Fatalf("written execution guard %s accepted", written)
 		}
 	}
 
-	cfg, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("admission-worker")))
+	cfg, err := LoadWithRoles(writeConfig(t, validGoAccessRuntimeConfigYAML("admission-worker")), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,8 +36,8 @@ func TestExecutionGuardIsNotAnEnvironmentKnob(t *testing.T) {
 	// Machine-independent half: whatever container this ran on, the resolved
 	// guard and the resolved permits have to have come from the same
 	// derivation. A file that reached either one alone would break this.
-	if cfg.PhaseTwo.Scheduler.ActiveExecutionLimit !=
-		cfg.PhaseTwo.Scheduler.ProcessQueryPermits*activeExecutionsPerQueryPermit {
+	if derived := DeriveScheduler(DetectCapacityInputs()); cfg.PhaseTwo.Scheduler.ActiveExecutionLimit != derived.ActiveExecutionCeiling ||
+		cfg.PhaseTwo.Scheduler.ProcessQueryPermits != derived.ProcessQueryPermits {
 		t.Fatalf("resolved guard %d and resolved permits %d did not come from one derivation",
 			cfg.PhaseTwo.Scheduler.ActiveExecutionLimit, cfg.PhaseTwo.Scheduler.ProcessQueryPermits)
 	}

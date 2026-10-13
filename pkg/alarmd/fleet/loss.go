@@ -73,12 +73,26 @@ const heldByCooldown = "query_cooldown"
 // mechanisms that are not the restart's. It travels on the response.
 const RestartCatchUpGrace = 5 * time.Minute
 
-// RecentSkipWindow is the bound on "still happening". A record younger than
-// this is a loss in progress; older, it is history. Ten minutes is several
-// rounds of any object this deployment schedules, so a record that old
-// belongs to an object that has since run clean for that many rounds. It
-// travels on the response, so the page prints it rather than assuming it.
+// RecentSkipWindow is the least bound on "still happening": a record younger
+// than RecentWindow of its object is a loss in progress; older, it is
+// history. Ten minutes is several rounds of a minute object; an object with
+// a longer period gets recentWindowStrides of its own periods, so an hourly
+// object's skip is not history ten minutes after it happened, while the
+// object has not even had its next round. It travels on the response, so
+// the page prints it rather than assuming it.
 const RecentSkipWindow = 10 * time.Minute
+
+// recentWindowStrides is how many of an object's periods a record of it is
+// read as still happening for, the same count an empty run is judged stalled
+// after (emptyRunStrideStall).
+const recentWindowStrides = 3
+
+// RecentWindow is how long a record of an object with this period is read
+// as still happening: recentWindowStrides of its periods, at least
+// RecentSkipWindow; RecentSkipWindow when the period is not known.
+func RecentWindow(intervalSeconds int64) time.Duration {
+	return max(RecentSkipWindow, time.Duration(recentWindowStrides*intervalSeconds)*time.Second)
+}
 
 // GroupByLoss folds the two record checks on what each record is: the
 // loss kinds above for records, the deciding code for the objects a column
@@ -91,11 +105,11 @@ const GroupByLoss GroupBy = "loss"
 // grace. Order: the pool first (the record is its line's consequence),
 // then the window (a stopped loss is history whatever held it), then what
 // the record says held the Slot, then the restart, then what is left.
-func lossOf(demoted, heldByCooldown, afterRestart bool, at, now time.Time) Loss {
+func lossOf(demoted, heldByCooldown, afterRestart bool, at, now time.Time, intervalSeconds int64) Loss {
 	switch {
 	case demoted:
 		return LossWhileDemoted
-	case now.Sub(at) > RecentSkipWindow:
+	case now.Sub(at) > RecentWindow(intervalSeconds):
 		return LossHistorical
 	case heldByCooldown:
 		return LossAfterCooldown
@@ -158,9 +172,9 @@ type Consequence struct {
 	SkippedNewest *time.Time `json:"skipped_newest,omitempty"`
 }
 
-func (consequence *Consequence) note(at, now time.Time) {
+func (consequence *Consequence) note(at, now time.Time, intervalSeconds int64) {
 	consequence.Skipped++
-	if now.Sub(at) <= RecentSkipWindow {
+	if now.Sub(at) <= RecentWindow(intervalSeconds) {
 		consequence.SkippedRecent++
 	}
 	if consequence.SkippedNewest == nil || at.After(*consequence.SkippedNewest) {
@@ -221,7 +235,8 @@ func lossRecords(view *View, now time.Time, visit func(queryGroup string, check,
 		consequence := isDemoted && object.line != "" && !skip.At.Before(object.since)
 		grace := restartGraceOf(starts, skip)
 		skip.RestartOffsetSeconds, skip.TakeoverOffsetSeconds = grace.restartOffset, grace.takeoverOffset
-		loss := lossOf(consequence, skip.HeldBy == heldByCooldown, grace.inGrace, skip.At, now)
+		loss := lossOf(consequence, skip.HeldBy == heldByCooldown, grace.inGrace, skip.At, now, skip.IntervalSeconds)
+		skip.RecentWindowSeconds = int64(RecentWindow(skip.IntervalSeconds) / time.Second)
 		line := Check("")
 		if loss == LossWhileDemoted {
 			line = object.line

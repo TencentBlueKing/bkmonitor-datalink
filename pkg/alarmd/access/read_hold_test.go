@@ -21,7 +21,7 @@ func TestFrozenReadHoldMovesReadinessAndPreservesDataWindow(t *testing.T) {
 	if err != nil || after != before+60_000 {
 		t.Fatalf("ready %d -> %d err=%v", before, after, err)
 	}
-	if got := settlingWaitWithinBudget(spec, 30*time.Second, 5*time.Second); got != execution.MinimumSettlingWait {
+	if got := execution.SettlingWaitWithinQueryBudget(queryBudgetOf(spec, 5*time.Second), 30*time.Second); got != execution.MinimumSettlingWait {
 		t.Fatalf("settling wait = %v", got)
 	}
 	if window.End != int64(ref.Slot.EvaluationTime) {

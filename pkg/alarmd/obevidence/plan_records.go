@@ -143,7 +143,7 @@ func (service *Service) planRecords(ctx context.Context, request StoreRequest) R
 		return r
 	}
 	// The object's read and this one share the request's budget.
-	commands := r.Limits.Commands + 2 + planRecordCommands*len(reads)
+	commands := r.Limits.Commands + planRecordCommands*len(reads)
 	if commands > MaxCommands {
 		r.Status, r.Complete, r.Reason = "budget_exceeded", false, "plans"
 		return r
@@ -200,14 +200,15 @@ func planRecordReads(family, prefix string, plan controlplane.QueryGroupPlanObje
 	}, nil
 }
 
-// readPlanRecords is one bounded transaction over every record: presence,
-// life, size and header of each read together. It says whether every read
+// readPlanRecords is one bounded pipeline over every record: presence, life,
+// size and header of each read in one round trip, not as a point-in-time
+// snapshot (Limits.Consistency; readMany says why it is not a MULTI). It says whether every read
 // was answered and how many header bytes came back.
 func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planRecordRead, plans []PlanRecords) (bool, int) {
 	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
 	defer cancel()
 	limit := min(MaxDocumentBytes, MaxBytes/len(reads)-1)
-	_, txErr := binding.Client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	_, pipeErr := binding.Client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
 		for i := range reads {
 			read := &reads[i]
 			read.typeCmd = pipe.Type(ctx, read.key)
@@ -226,7 +227,7 @@ func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planReco
 	for _, read := range reads {
 		record := PlanRecord{Kind: read.kind, Key: read.key, Status: "dependency_unavailable"}
 		if read.typeCmd.Err() != nil || read.ttlCmd.Err() != nil {
-			record.Reason, record.ReasonText = failureReason(txErr, read.typeCmd, read.ttlCmd)
+			record.Reason, record.ReasonText = failureReason(pipeErr, read.typeCmd, read.ttlCmd)
 			unanswered, complete = record.Reason, false
 			plans[read.plan].Records = append(plans[read.plan].Records, record)
 			continue
@@ -250,7 +251,7 @@ func readPlanRecords(ctx context.Context, binding RedisBinding, reads []planReco
 		}
 		header := read.headerCmd
 		if read.sizeCmd.Err() != nil || (header.Err() != nil && !errors.Is(header.Err(), redis.Nil)) {
-			record.Reason, record.ReasonText = failureReason(txErr, read.sizeCmd, header)
+			record.Reason, record.ReasonText = failureReason(pipeErr, read.sizeCmd, header)
 			unanswered, complete = record.Reason, false
 			plans[read.plan].Records = append(plans[read.plan].Records, record)
 			continue

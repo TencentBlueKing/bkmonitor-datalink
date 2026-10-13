@@ -467,7 +467,8 @@ func (h *harness) report() {
 	if h.t.Failed() {
 		status = "failed"
 	}
-	data, _ := json.MarshalIndent(map[string]any{"status": status, "steps": h.steps, "transport_mode": h.transportMode, "server_packages": []string{"cliauth", "obchannel", "obevidence"}, "fixture_boundary": "Native Fleet and runtime payloads are constructed fixtures, not live alarmd business acceptance.", "cli_sha256": fileDigest(h.cli), "server_source": sourceState(os.Getenv("BLACKBOX_SERVER_REPO")), "cli_source": sourceState(os.Getenv("BLACKBOX_CLI_REPO"))}, "", "  ")
+	report := map[string]any{"status": status, "steps": h.steps, "transport_mode": h.transportMode, "server_packages": []string{"cliauth", "obchannel", "obevidence"}, "fixture_boundary": "Native Fleet and runtime payloads are constructed fixtures, not live alarmd business acceptance.", "cli_sha256": fileDigest(h.cli), "server_source": sourceState(os.Getenv("BLACKBOX_SERVER_REPO")), "cli_source": sourceState(os.Getenv("BLACKBOX_CLI_REPO"))}
+	data, _ := json.MarshalIndent(report, "", "  ")
 	_ = os.WriteFile(filepath.Join(h.dir, "report.json"), append(data, '\n'), 0600)
 	h.t.Logf("blackbox report: %s", filepath.Join(h.dir, "report.json"))
 }

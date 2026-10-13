@@ -353,16 +353,16 @@ func (runtime *productionPhaseTwoOwnership) publishView(
 	}
 }
 
-// viewStreamDiscovery finds the Leader's stream from the records that
-// already exist: the control leader lease names who leads, that worker's
-// own registration names where. A Leader whose registration carries no
-// endpoint is a binary from before the stream, and "not found" until it
-// is replaced.
+// viewStreamDiscovery reads the control instance named by the leader lease.
+// A leader from before role registration is discovered through its Worker
+// registration. A present instance record is authoritative, including when
+// it has expired or does not declare the control role.
 type viewStreamDiscovery struct {
 	store interface {
 		ReadControlLeader(context.Context) (ownership.ControlLeader, bool, error)
 		ReadWorker(context.Context, string) (ownership.WorkerRegistration, bool, error)
 	}
+	now func() time.Time
 }
 
 // Leader names each way of not finding one apart: the three are read by
@@ -381,6 +381,30 @@ func (discovery viewStreamDiscovery) Leader(ctx context.Context) (viewstream.Lea
 	}
 	if !found {
 		return viewstream.LeaderEndpoint{}, viewstream.MissNoLeader, nil
+	}
+	if instances, ok := discovery.store.(interface {
+		ReadInstance(context.Context, string) (ownership.InstanceRegistration, bool, error)
+	}); ok {
+		instance, present, err := instances.ReadInstance(ctx, leader.OwnerID)
+		if err != nil {
+			return viewstream.LeaderEndpoint{}, "", err
+		}
+		if present {
+			if err := instance.Validate(); err != nil {
+				return viewstream.LeaderEndpoint{}, "", err
+			}
+			at := time.Now()
+			if discovery.now != nil {
+				at = discovery.now()
+			}
+			if instance.InstanceID != leader.OwnerID || !instance.ExpiresAt.After(at) || !instance.ControlCapable() {
+				return viewstream.LeaderEndpoint{}, viewstream.MissLeaderUnregistered, nil
+			}
+			if instance.Endpoint == "" {
+				return viewstream.LeaderEndpoint{}, viewstream.MissLeaderNoEndpoint, nil
+			}
+			return viewstream.LeaderEndpoint{WorkerID: leader.OwnerID, ControlEpoch: leader.OwnerEpoch, Endpoint: instance.Endpoint}, "", nil
+		}
 	}
 	registration, found, err := discovery.store.ReadWorker(ctx, leader.OwnerID)
 	if err != nil {

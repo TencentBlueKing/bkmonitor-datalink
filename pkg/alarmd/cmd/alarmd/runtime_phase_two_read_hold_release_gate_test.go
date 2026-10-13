@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -61,7 +60,7 @@ func TestARevisedSegmentPastItsRetentionRunsEveryStageAfterARestart(t *testing.T
 // say so once through the Slots' degraded line, not once per finding.
 func TestAFindingForADegradedGroupIsNotLoggedAsAFailure(t *testing.T) {
 	ctx := context.Background()
-	var output bytes.Buffer
+	var output lockedLogBuffer
 	f := startCutoverFixtureWith(t, nil, observability.New(observability.ComponentRuntime, &output), nil)
 	_ = runOneSlotFull(t, f)
 	completed := f.progress(ctx).LastCompletion

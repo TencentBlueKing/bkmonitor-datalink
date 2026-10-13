@@ -27,16 +27,18 @@ type timelineRepairCollector struct {
 
 func newTimelineRepairCollector() *timelineRepairCollector {
 	return &timelineRepairCollector{repairs: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "timeline_repairs_total"),
-		"Schedule timelines the Control Leader looked at because a Worker reported them unreadable (SCHEDULE_UNREADABLE), "+
-			"or because a cutover read bytes that did not decode, by what became of each. rewritten: still unreadable, "+
+		"Schedule timelines the Control Leader looked at because a Worker reported them unreadable or missing "+
+			"(SCHEDULE_UNREADABLE, SCHEDULE_MISSING), or because a cutover read bytes that did not decode, by what became "+
+			"of each. rewritten: still unreadable, "+
 			"rewritten as one Segment from the Leader's boundary on the content and the activation records the Query "+
 			"Group runs, marked so its Worker records the Slots lost with the old timeline (SCHEDULE_REPAIRED). "+
 			"decodes_again: the Leader decoded it and left it; a Worker's report outlives the rewrite until its next Slot "+
 			"runs, and a Worker of another build may report a timeline this one reads. conflict: the rewrite lost its "+
 			"compare-and-set and wrote nothing; the report stands and the next round tries again. failed: the replacement "+
 			"could not be built; a line names the Query Group and why. other_schema: the bytes are a timeline of another "+
-			"schema version, written by a build that reads them, and left alone. Counted by the Leader; read it summed "+
-			"over replicas.", []string{"outcome"}, nil)}
+			"schema version, written by a build that reads them, and left alone. reopened: the key was not there at all, "+
+			"and the timeline was opened again as a cutover opens a missing key, marked so its Worker records the Slots "+
+			"lost with it (SCHEDULE_REOPENED). Counted by the Leader; read it summed over replicas.", []string{"outcome"}, nil)}
 }
 
 // SetTimelineRepairSource binds the collector to the repository's counts.
@@ -68,9 +70,10 @@ func newTimelineUnreadableReports() prometheus.Counter {
 	return prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "timeline_unreadable_reports_total",
 		Help: "Owned Query Groups this replica began naming on its registration because a round met a Schedule timeline " +
-			"that does not decode (SCHEDULE_UNREADABLE): one per Query Group each time it goes from unnamed to named. " +
+			"that does not decode or whose key is gone (SCHEDULE_UNREADABLE, SCHEDULE_MISSING): one per Query Group each " +
+			"time it goes from unnamed to named. " +
 			"The name is dropped by the first later round of that Query Group that runs a Slot, or when it leaves this " +
-			"replica. A leader reads each named timeline again and rewrites it (timeline_repairs_total). A count that " +
+			"replica. A leader reads each named timeline again and rewrites or reopens it (timeline_repairs_total). A count that " +
 			"keeps rising for the same Query Groups is a rewrite that does not take." +
 			" Reader: the release acceptance, from /metrics after each deploy.",
 	})

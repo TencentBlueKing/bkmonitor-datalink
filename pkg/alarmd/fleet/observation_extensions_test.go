@@ -109,6 +109,9 @@ func (unreadyDirectory) EffectivePlan(context.Context, controlplane.StrategyDire
 func (unreadyDirectory) EffectiveOutput(context.Context, controlplane.StrategyDirectoryRow) controlplane.OutputFormatFacts {
 	return controlplane.OutputFormatFacts{}
 }
+func (unreadyDirectory) StrategyCatalog(int, int) controlplane.StrategyCatalogPage {
+	return controlplane.StrategyCatalogPage{Reason: "LEADER_CATALOG_NOT_READY", Strategies: []controlplane.StrategyCatalogEntry{}}
+}
 
 // A sample window names a strategy's current row, which only the Leader's
 // directory resolves: a follower hands the open to the Leader with its

@@ -104,6 +104,27 @@ func TestStaticWorkerEligibilityRejectsIncompleteRequirement(t *testing.T) {
 	}
 }
 
+func TestRouterExecutionContractAllowsDifferentResourceBudgets(t *testing.T) {
+	at := time.Unix(1700000000, 0)
+	required := ownership.WorkerCompatibility{DeploymentProfile: "standard", CapabilitiesDigest: "small", ExecutionContractDigest: "execution-v1"}
+	eligibility, err := NewStaticWorkerEligibility(required)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := readyWorker("worker", at)
+	worker.CapabilitiesDigest = "large"
+	worker.ExecutionContractDigest = "execution-v1"
+	router := NewRouter(eligibility)
+	if got, err := router.Select("query-group", []ownership.WorkerRegistration{worker}, at); err != nil || got.WorkerID != worker.WorkerID {
+		t.Fatalf("same execution contract = (%+v, %v)", got, err)
+	}
+	worker.CapabilitiesDigest = "small"
+	worker.ExecutionContractDigest = "execution-v2"
+	if _, err := router.Select("query-group", []ownership.WorkerRegistration{worker}, at); err != ErrNoEligibleWorker {
+		t.Fatalf("different execution contract with equal legacy digest = %v", err)
+	}
+}
+
 func TestReconcilerPublishesRouterDecisionWithControlAuthority(t *testing.T) {
 	now := time.UnixMilli(1_700_000_000_000)
 	authority := ownership.PublicationAuthority{

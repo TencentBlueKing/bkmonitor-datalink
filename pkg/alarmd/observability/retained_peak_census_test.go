@@ -113,36 +113,94 @@ func TestTheRosterPrunesTheCensus(t *testing.T) {
 	}
 }
 
-// A Query Group that stopped completing Slots ages out of its two windows on
-// the read, exactly as the summary rotates it on Publish: the window just
-// past is kept as the previous one, anything older is gone, and a group with
-// nothing in either window is not a reading. Before this the census rotated
-// only when a group was observed, so an idle group reported the last thing it
-// did for as long as it was owned - a sum that read high on every replica
-// with an idle object, in the direction of one more move.
+// slotCompletionOf is one Slot's completion: its evaluation time, the Slot
+// after it when the execution carried it, and its retained bytes.
+func slotCompletionOf(group string, evaluation, following int64, retained uint64) Observation {
+	o := slotCompletion(group, retained)
+	o.Trace.EvaluationTime, o.FollowingSlot = evaluation, following
+	return o
+}
+
+// A Query Group that stopped completing Slots ages out on the read: its
+// windows rotate as the summary rotates them on Publish, and its last Slot's
+// peak is held for two of its periods and the replay age, then gone. Before
+// the windows rotated on read an idle group reported the last thing it did
+// for as long as it was owned - a sum that read high on every replica with
+// an idle object, in the direction of one more move.
 func TestAnIdleQueryGroupAgesOutOfTheCensusOnRead(t *testing.T) {
 	now := time.Unix(600, 0)
 	census := NewRetainedPeakCensus(time.Minute, func() time.Time { return now })
-	census.Observe(context.Background(), slotCompletion("qg-1", 900))
+	census.Observe(context.Background(), slotCompletionOf("qg-1", 600, 660, 900))
 	now = now.Add(time.Minute)
-	census.Observe(context.Background(), slotCompletion("qg-1", 100))
-	// One window later: the 900 is the previous window's, still read.
+	census.Observe(context.Background(), slotCompletionOf("qg-1", 660, 720, 100))
+	// One window later: the next Slot replaced the 900, and the 100 is both
+	// the previous window's and the held Slot's.
 	now = now.Add(time.Minute)
 	if peaks := census.RetainedPeaks(); len(peaks) != 1 || peaks[0].RetainedBytesPeak != 100 {
-		t.Fatalf("one window after the last Slot the census reads %+v, want the last window's 100 as the previous window", peaks)
+		t.Fatalf("one window after the last Slot the census reads %+v, want the last Slot's 100", peaks)
 	}
-	// Two windows later: both windows are past, nothing to read.
-	now = now.Add(time.Minute)
+	// Two of its periods after that Slot it is still held; past them it is gone.
+	now = time.Unix(660, 0).Add(2 * time.Minute)
+	if peaks := census.RetainedPeaks(); len(peaks) != 1 || peaks[0].RetainedBytesPeak != 100 {
+		t.Fatalf("two periods after the last Slot the census reads %+v, want it still held", peaks)
+	}
+	now = now.Add(time.Second)
 	if peaks := census.RetainedPeaks(); len(peaks) != 0 {
-		t.Fatalf("two windows after the last Slot the census still reads %+v", peaks)
+		t.Fatalf("past two periods after the last Slot the census still reads %+v", peaks)
 	}
-	// And a group that skips a window loses its previous window: the
-	// cross-window branch, not the adjacent one.
-	census.Observe(context.Background(), slotCompletion("qg-1", 500))
-	now = now.Add(2 * time.Minute)
-	census.Observe(context.Background(), slotCompletion("qg-1", 50))
-	if peaks := census.RetainedPeaks(); len(peaks) != 1 || peaks[0].RetainedBytesPeak != 50 {
-		t.Fatalf("after a skipped window the census reads %+v, want only the current window's 50", peaks)
+}
+
+// An hourly Query Group completes one Slot an hour. Its peak was a reading
+// for the two windows after that Slot and absent for the rest of the hour,
+// so the Leader's byte-feasibility moves read a Worker carrying it as light
+// for fifty minutes of every hour. Its last Slot's peak is now held until
+// the Slot after it, and for the replay age beyond two periods, and a later
+// Slot replaces it rather than keeping the larger.
+func TestALongPeriodQueryGroupKeepsItsPeakUntilItsNextSlot(t *testing.T) {
+	now := time.Unix(3600, 0)
+	census := NewRetainedPeakCensus(5*time.Minute, func() time.Time { return now })
+	census.SetReplayAge(10 * time.Minute)
+	census.Observe(context.Background(), slotCompletionOf("qg-hourly", 3600, 7200, 900))
+	now = now.Add(50 * time.Minute)
+	if peaks := census.RetainedPeaks(); len(peaks) != 1 || peaks[0].RetainedBytesPeak != 900 {
+		t.Fatalf("fifty minutes after an hourly Slot the census reads %+v, want its 900 held", peaks)
+	}
+	now = time.Unix(7200, 0)
+	census.Observe(context.Background(), slotCompletionOf("qg-hourly", 7200, 10800, 300))
+	now = now.Add(30 * time.Minute)
+	if peaks := census.RetainedPeaks(); len(peaks) != 1 || peaks[0].RetainedBytesPeak != 300 {
+		t.Fatalf("after the next Slot the census reads %+v, want that Slot's 300, not the larger older one", peaks)
+	}
+	// Two periods and the replay age after the last Slot, and no Slot since:
+	// the Query Group is not running here, and holds no reading.
+	now = time.Unix(7200, 0).Add(2*time.Hour + 10*time.Minute)
+	if peaks := census.RetainedPeaks(); len(peaks) != 1 {
+		t.Fatalf("at the end of the hold the census reads %+v, want it still held", peaks)
+	}
+	now = now.Add(time.Second)
+	if peaks := census.RetainedPeaks(); len(peaks) != 0 {
+		t.Fatalf("past the hold the census still reads %+v", peaks)
+	}
+}
+
+// A completion that does not carry the Slot after it - a replay, a retry -
+// still holds its peak, for the two windows until a period is known, and
+// the period is learned from two Slots read in turn. A replay of an earlier
+// Slot keeps the larger of the two: its bytes were held now.
+func TestTheCensusLearnsAPeriodFromTwoSlotsInTurn(t *testing.T) {
+	now := time.Unix(36000, 0)
+	census := NewRetainedPeakCensus(5*time.Minute, func() time.Time { return now })
+	census.Observe(context.Background(), slotCompletionOf("qg-daily", 36000, 0, 700))
+	now = now.Add(10*time.Minute + time.Second)
+	if peaks := census.RetainedPeaks(); len(peaks) != 0 {
+		t.Fatalf("with no period known the census holds %+v past two windows", peaks)
+	}
+	now = time.Unix(36000+86400, 0)
+	census.Observe(context.Background(), slotCompletionOf("qg-daily", 36000+86400, 0, 400))
+	census.Observe(context.Background(), slotCompletionOf("qg-daily", 36000, 0, 650))
+	now = now.Add(12 * time.Hour)
+	if peaks := census.RetainedPeaks(); len(peaks) != 1 || peaks[0].RetainedBytesPeak != 650 {
+		t.Fatalf("half a day after a daily Slot the census reads %+v, want the 650 the replay held, kept by the learned period", peaks)
 	}
 }
 

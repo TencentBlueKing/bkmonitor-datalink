@@ -115,7 +115,12 @@ func TestAQueryWhoseBodyStopsPartwayNamesItself(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A second for the answer to begin, well inside the server's 2 s stall:
+	// this case is a body that stops after its headers, and a deadline the
+	// headers could miss under a loaded run reads as a request that never got
+	// an answer instead (a transport timeout, no body failure at all).
 	attempt := slot()
+	attempt.DeadlineUnixMilli = time.Now().Add(time.Second).UnixMilli()
 	sink := &collectingSink{}
 	_, err = client.Execute(context.Background(), attempt, sink)
 	failure := bodyFailureOf(t, err)
@@ -137,13 +142,15 @@ func TestAQueryWhoseBodyStopsPartwayNamesItself(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The headers come 200 ms in; a second and a half leaves them a second
+	// and more of slack before the deadline, as above.
 	attempt = slot()
-	attempt.DeadlineUnixMilli = time.Now().Add(500 * time.Millisecond).UnixMilli()
+	attempt.DeadlineUnixMilli = time.Now().Add(1500 * time.Millisecond).UnixMilli()
 	_, err = client.Execute(context.Background(), attempt, &collectingSink{})
 	failure = bodyFailureOf(t, err)
 	timing = failure.QueryFailureTiming()
 	if failure.QueryFailureDetail() != "body=timeout" || timing == nil || !whole(timing, attempt) ||
-		timing.ElapsedMillis < 400 || timing.LocalMillis < 0 || timing.LocalMillis > 50 {
+		timing.ElapsedMillis < 1400 || timing.LocalMillis < 0 || timing.LocalMillis > 50 {
 		t.Fatalf("an answer slow to begin, then stalled = %q timing %+v, want the backend's timeout with nothing local", failure.QueryFailureDetail(), timing)
 	}
 

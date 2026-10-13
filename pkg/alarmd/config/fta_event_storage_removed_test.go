@@ -21,8 +21,8 @@ func TestAConfigurationNamingTheFTAEventStorageIsRefused(t *testing.T) {
 	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(path)
+	_, err := LoadWithRoles(path, nil)
 	if err == nil || !strings.Contains(err.Error(), "legacy_query_runtime") {
-		t.Fatalf("Load() = %v, want the group that held fta_event_storage refused", err)
+		t.Fatalf("LoadWithRoles(, nil) = %v, want the group that held fta_event_storage refused", err)
 	}
 }

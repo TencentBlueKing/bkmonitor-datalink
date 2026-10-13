@@ -10,6 +10,7 @@ import (
 	"mime"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -29,6 +30,16 @@ var (
 	errFrameSeries = &responseLimitError{code: "SHARED_SCHEMA_FRAME_SERIES_EXCEEDED", class: execution.ResponseFailureLimitFrameSeries}
 	errDictionary  = &responseLimitError{code: "SHARED_SCHEMA_DICTIONARY_EXCEEDED", class: execution.ResponseFailureLimitDictionary}
 )
+
+// sharedFrameReaders holds the readers a shared-schema response is read
+// through, each with a buffer of one whole frame. A reader of its own per
+// response was 256 KiB allocated for every response, about 1.3 KB per
+// admitted decision fleet-wide. A reader goes back after its response and
+// is reset onto the next one's body, dropping whatever the last left
+// unread; nothing decoded keeps a slice of its buffer - every frame is
+// copied out by wireObject before the next read - so the next response may
+// read through it.
+var sharedFrameReaders = sync.Pool{New: func() any { return bufio.NewReaderSize(nil, sharedFrameBytes) }}
 
 // Protocol failures never include provider payloads in their error text.
 type sharedProtocolError struct{ class string }
@@ -123,7 +134,9 @@ func wireObject(raw []byte) (map[string]json.RawMessage, error) {
 func (client *Client) decodeShared(ctx context.Context, reader io.Reader, attempt queryIdentity, sink execution.ProviderSeriesSink) (completion execution.ProviderCompletion, err error) {
 	session := client.newSeriesDecoder(attempt, sink, nil)
 	defer session.limitCompletion(&completion, &err)
-	lines := bufio.NewReaderSize(reader, sharedFrameBytes)
+	lines := sharedFrameReaders.Get().(*bufio.Reader)
+	lines.Reset(reader)
+	defer sharedFrameReaders.Put(lines)
 	var schemas []sharedSchema
 	var dictionaryBytes uint64
 	var expected uint64

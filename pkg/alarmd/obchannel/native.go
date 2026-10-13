@@ -21,6 +21,13 @@ import (
 // route forwarding or second Fleet aggregation. The existing Leader hop stays
 // owned by Fleet. This preserves its evolving domain decisions without copying
 // them into another service or asking every handler to change its public API.
+// The scopes of strategy.list: the strategies needing attention, as fact
+// rows hold them, or every strategy the published catalog accepted.
+const (
+	strategyScopeAttention = "attention"
+	strategyScopeAccepted  = "accepted"
+)
+
 func NativeOperations(handler http.Handler) []Operation {
 	text := func(description, source string) Field {
 		return Field{Type: "string", Description: description, Source: source, MinLength: 1, MaxLength: 256}
@@ -66,9 +73,15 @@ func NativeOperations(handler http.Handler) []Operation {
 				if id == "fleet.get" {
 					absentNext(&out, result)
 				}
-				if id == "strategy.list" {
+				if id == "strategy.list" && p.String("scope") != strategyScopeAccepted {
 					// This endpoint lists fact rows, not every source strategy.
 					out.Limitations = append(out.Limitations, "Population is strategies represented by current Fleet fact rows, not the complete source catalog.")
+				}
+				if id == "strategy.list" && p.String("scope") == strategyScopeAccepted {
+					if cursor, _ := result["next_cursor"].(string); cursor != "" {
+						out.Next = append(out.Next, Call{Operation: "strategy.list", Params: Params{"scope": strategyScopeAccepted, "limit": p.Int("limit", 50), "cursor": cursor},
+							Reason: "已接受策略目录的下一页；游标对应的发布被替换后返回 CURSOR_STALE，从第一页重读。"})
+					}
 				}
 			}
 			return out
@@ -79,11 +92,21 @@ func NativeOperations(handler http.Handler) []Operation {
 			"rebalance 是 Leader 上一轮再平衡（planned_at 那一轮，不是实时数）：滚动发布时 replaced 是这一轮从不再合格的副本移走的对象数、replacements_deferred 是因每轮交接上限（batch）留到后面轮次的、unplaceable 是这一轮没有就绪副本能接而留在原处的；replacements_deferred 与 unplaceable 都降到 0 才算换完（只有一个为 0 不算）。"+
 			"unplaceable 包含 declined_everywhere：每个合格副本都因执行卡死放弃过的对象（开始提交之前超过这次执行自己的期限一分钟仍没返回，代码没响应取消；见 declined_everywhere_sample 的副本与步骤），它们哪儿都不跑、没有对象行，原因与\"没有就绪副本\"不同，要修代码；"+
 			"per_replica[].declines 是该副本放弃中的对象与执行位（total/fanout，各占一个执行位直到卡住的执行返回；total 等于 fanout 时这个副本什么都不执行而就绪照常）。", map[string]Field{}, nil, fleet.HealthResponse{}, func(Params) (string, url.Values) { return "/api/health", nil }),
-		makeOp("strategy.list", "按服务端状态/行动词列出需要关注的策略；不是全量源目录。", map[string]Field{
-			"state":  enumField("状态词，从 words 或 describe 获取。", fleet.StateWords),
-			"action": enumField("行动词，从 words 或 describe 获取。", fleet.ActionWords),
+		makeOp("strategy.list", "按服务端状态/行动词列出需要关注的策略（scope 不填或 attention），不是全量源目录；"+
+			"scope=accepted 时改为分页列出已发布目录接受的全部策略，每行是策略ID、租户、业务和它的全部 Plan（query_group 与 group_by），一条策略只出现在一页里；用 next_call 的 cursor 翻页。", map[string]Field{
+			"scope":  enumField("attention（默认）列需要关注的策略；accepted 分页列出已接受的全部策略。", []string{strategyScopeAttention, strategyScopeAccepted}),
+			"state":  enumField("状态词，从 words 或 describe 获取；只用于 attention。", fleet.StateWords),
+			"action": enumField("行动词，从 words 或 describe 获取；只用于 attention。", fleet.ActionWords),
 			"limit":  integer("返回策略行上限；默认50，不限制既有快照聚合量。", 1, 200),
+			"cursor": text("accepted 的下一页游标，不自行构造。", "上一页 next_call 的 cursor"),
 		}, nil, fleet.StrategyListResponse{}, func(p Params) (string, url.Values) {
+			if p.String("scope") == strategyScopeAccepted {
+				query := url.Values{"scope": {"strategy_catalog"}, "limit": {strconv.Itoa(p.Int("limit", 50))}}
+				if cursor := p.String("cursor"); cursor != "" {
+					query.Set("cursor", cursor)
+				}
+				return "/api/objects", query
+			}
 			return "/api/strategies", url.Values{"state": {p.String("state")}, "action": {p.String("action")}, "limit": {strconv.Itoa(p.Int("limit", 50))}}
 		}),
 		makeOp("strategy.get", "按策略ID读取接纳/拒绝、发布版本、运行对象和下一步证据入口。", map[string]Field{
@@ -162,6 +185,12 @@ func NativeOperations(handler http.Handler) []Operation {
 				}
 				return nil
 			}
+		}
+	}
+	// strategy.list answers in one of two shapes, by its scope.
+	for index := range ops {
+		if ops[index].ID == "strategy.list" {
+			ops[index].OutputSchema = map[string]any{"oneOf": []any{SchemaOf(fleet.StrategyListResponse{}), SchemaOf(fleet.StrategyCatalogResponse{})}}
 		}
 	}
 	return ops

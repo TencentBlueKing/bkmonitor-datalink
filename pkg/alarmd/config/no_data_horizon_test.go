@@ -25,10 +25,10 @@ import (
 // indistinguishable from one left at its default, so the mistake looks exactly
 // like a deployment that chose not to set it.
 func TestTheNoDataHorizonIsReadFromTheKeyAnOperatorWrites(t *testing.T) {
-	loaded, err := Load(writeConfig(t, platformSettingsConfigContents("",
-		platformSettingsControlBase+"  no_data:\n    tracking_horizon_seconds: 600\n")))
+	loaded, err := LoadWithRoles(writeConfig(t, platformSettingsConfigContents("",
+		platformSettingsControlBase+"  no_data:\n    tracking_horizon_seconds: 600\n")), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	got, stated := loaded.NoDataTrackingHorizonSeconds()
 	if !stated || got != 600 {
@@ -46,9 +46,9 @@ func TestTheNoDataHorizonIsReadFromTheKeyAnOperatorWrites(t *testing.T) {
 	// dynamic value). It reports absence rather than a zero because the two
 	// are different facts and only one of them is writable. Without this the
 	// case above passes on a parser that returns 600 for anything.
-	silent, err := Load(writeConfig(t, platformSettingsConfigContents("", platformSettingsControlBase)))
+	silent, err := LoadWithRoles(writeConfig(t, platformSettingsConfigContents("", platformSettingsControlBase)), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	if got, stated := silent.NoDataTrackingHorizonSeconds(); stated || got != 0 {
 		t.Fatalf("a config stating no horizon reads as (%d, %t), want (0, false)", got, stated)
@@ -82,13 +82,13 @@ func TestANoDataHorizonThatIsNotPositiveIsRefusedAtLoad(t *testing.T) {
 		"words are not a number":                                        "an hour",
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, platformSettingsConfigContents("",
-				platformSettingsControlBase+"  no_data:\n    tracking_horizon_seconds: "+stated+"\n")))
+			_, err := LoadWithRoles(writeConfig(t, platformSettingsConfigContents("",
+				platformSettingsControlBase+"  no_data:\n    tracking_horizon_seconds: "+stated+"\n")), nil)
 			if err == nil {
-				t.Fatalf("Load() accepted %s as a horizon", stated)
+				t.Fatalf("LoadWithRoles(, nil) accepted %s as a horizon", stated)
 			}
 			if !strings.Contains(err.Error(), "tracking_horizon_seconds") {
-				t.Fatalf("Load() error = %v, want it to name the key the operator has to fix", err)
+				t.Fatalf("LoadWithRoles(, nil) error = %v, want it to name the key the operator has to fix", err)
 			}
 		})
 	}
@@ -107,13 +107,13 @@ func TestANoDataHorizonPastWhatALifetimeHoldsIsRefusedAtLoad(t *testing.T) {
 		"one second more":              {stated: contract.MaxNoDataTrackingHorizonSeconds + 1, refused: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, platformSettingsConfigContents("",
-				platformSettingsControlBase+"  no_data:\n    tracking_horizon_seconds: "+strconv.FormatInt(test.stated, 10)+"\n")))
+			_, err := LoadWithRoles(writeConfig(t, platformSettingsConfigContents("",
+				platformSettingsControlBase+"  no_data:\n    tracking_horizon_seconds: "+strconv.FormatInt(test.stated, 10)+"\n")), nil)
 			if test.refused != (err != nil) {
-				t.Fatalf("Load(%d) error = %v, want refused %t", test.stated, err, test.refused)
+				t.Fatalf("LoadWithRoles(%d, nil) error = %v, want refused %t", test.stated, err, test.refused)
 			}
 			if test.refused && !strings.Contains(err.Error(), "tracking_horizon_seconds") {
-				t.Fatalf("Load() error = %v, want it to name the key the operator has to fix", err)
+				t.Fatalf("LoadWithRoles(, nil) error = %v, want it to name the key the operator has to fix", err)
 			}
 		})
 	}
@@ -139,16 +139,16 @@ func TestTheValuesHorizonIsADecimalBareOrQuotedAndATypoIsRefused(t *testing.T) {
 		"a quoted fraction": {leaf: `tracking_horizon_seconds: "1.5"`, refused: "tracking_horizon_seconds"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			loaded, err := Load(writeConfig(t, platformSettingsConfigContents("",
-				platformSettingsControlBase+"  no_data:\n    "+test.leaf+"\n")))
+			loaded, err := LoadWithRoles(writeConfig(t, platformSettingsConfigContents("",
+				platformSettingsControlBase+"  no_data:\n    "+test.leaf+"\n")), nil)
 			if test.refused != "" {
 				if err == nil || !strings.Contains(err.Error(), test.refused) {
-					t.Fatalf("Load() error = %v, want a refusal naming %s", err, test.refused)
+					t.Fatalf("LoadWithRoles(, nil) error = %v, want a refusal naming %s", err, test.refused)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("Load() error = %v", err)
+				t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 			}
 			got := loaded.PhaseTwo.NoData.TrackingHorizonSeconds
 			if test.absent != (got == nil) || (got != nil && *got != test.want) {

@@ -40,9 +40,11 @@ func collectArrivals(t *testing.T, frozen FrozenPlan) (*Source, *[]observability
 	return source, arrivals
 }
 
-// readinessAtThirtySeconds shapes the fixture so its one query becomes readable
-// thirty seconds after the Slot's evaluation time.
-func readinessAtThirtySeconds(t *testing.T) (execution.FrozenExecutionContractRef, FrozenPlan, time.Time) {
+// readinessAtTheFloor shapes the fixture so its one query becomes readable
+// at the settling floor, ten seconds after the Slot's evaluation time: the
+// deployment's thirty-second wait is the cold start of a read hold, which
+// access does not hold.
+func readinessAtTheFloor(t *testing.T) (execution.FrozenExecutionContractRef, FrozenPlan, time.Time) {
 	t.Helper()
 	contractRef, frozen := frozenExecution(t)
 	evaluationTime := time.UnixMilli(int64(contractRef.Slot.EvaluationTime) * 1000)
@@ -58,10 +60,10 @@ func readinessAtThirtySeconds(t *testing.T) (execution.FrozenExecutionContractRe
 // late would show every deferral gone and read as a success, which is why this
 // figure has to exist before anything is changed to reduce deferrals.
 func TestArrivalRecordsHowLongTheDataHadBeenReadable(t *testing.T) {
-	contractRef, frozen, evaluationTime := readinessAtThirtySeconds(t)
+	contractRef, frozen, evaluationTime := readinessAtTheFloor(t)
 	source, arrivals := collectArrivals(t, frozen)
-	// Readable at +30s; this execution turns up at +45s.
-	source.now = func() time.Time { return evaluationTime.Add(45 * time.Second) }
+	// Readable at +10s; this execution turns up at +25s.
+	source.now = func() time.Time { return evaluationTime.Add(25 * time.Second) }
 
 	_, _ = source.Execute(context.Background(), execution.QueryExecutionRequest{
 		Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,
@@ -85,9 +87,9 @@ func TestArrivalRecordsHowLongTheDataHadBeenReadable(t *testing.T) {
 // round of work twice, and would put the early arrival and the later real one
 // in the same distribution, where they pull in opposite directions and cancel.
 func TestATurnedAwayArrivalIsNotRecorded(t *testing.T) {
-	contractRef, frozen, evaluationTime := readinessAtThirtySeconds(t)
+	contractRef, frozen, evaluationTime := readinessAtTheFloor(t)
 	source, arrivals := collectArrivals(t, frozen)
-	// Readable at +30s; this execution turns up at the evaluation time itself
+	// Readable at +10s; this execution turns up at the evaluation time itself
 	// and is deferred.
 	source.now = func() time.Time { return evaluationTime }
 
@@ -107,7 +109,7 @@ func TestATurnedAwayArrivalIsNotRecorded(t *testing.T) {
 // normal scheduling is timed -- and the whole point of the figure is to judge
 // exactly that.
 func TestRecoveryArrivalsAreNotRecorded(t *testing.T) {
-	contractRef, frozen, evaluationTime := readinessAtThirtySeconds(t)
+	contractRef, frozen, evaluationTime := readinessAtTheFloor(t)
 	source, arrivals := collectArrivals(t, frozen)
 	source.now = func() time.Time { return evaluationTime.Add(45 * time.Second) }
 	prepared, err := prepare(contractRef, frozen, 30*time.Second, true)

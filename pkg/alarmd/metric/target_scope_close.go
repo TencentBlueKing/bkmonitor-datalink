@@ -36,7 +36,10 @@ func newTargetScopeCloseCollector() *targetScopeCloseCollector {
 				"whose alert fingerprint no single series carries; stale_deferred closes held back because the "+
 				"last observation was older than the freshness bound; indefinite rejections that are not a verdict on "+
 				"the record's place at all (a key or object identity that could not be built), apart from "+
-				"cache_unavailable, which is a verdict reached without its facts. Every cell exists from the start so a zero is a reading and not an absence.",
+				"cache_unavailable, which is a verdict reached without its facts; observation_expired first observations "+
+				"whose second did not arrive within two of the strategy's periods plus its Slot's read offset (at least "+
+				"half an hour), forgotten - the strategies counted there are ones this close could not reach, named in "+
+				"its facts. Every cell exists from the start so a zero is a reading and not an absence.",
 			[]string{"outcome"}, nil),
 	}
 }

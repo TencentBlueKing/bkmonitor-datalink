@@ -61,8 +61,9 @@ func newObservationMemoryCollector(source ObservationMemorySource) *observationM
 				"the work is done and lets it go. Zero between pages; one that stays above zero is a hold never "+
 				"released.", nil, nil),
 		budgetSize: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "observation_memory_budget_size_bytes"),
-			"A detection budget's size as the line reads it, by budget: retained (the Slots' retained-bytes "+
-				"ceiling), timeline_cache and object_cache (each cache's working set - what it holds and an entry "+
+			"A detection budget's size as the line reads it, by budget: retained (the owned Query Groups' "+
+				"measured retained peaks summed and a quarter more, within the Slots' retained-bytes ceiling; the "+
+				"ceiling until every owned Query Group has a reading), timeline_cache and object_cache (each cache's working set - what it holds and an entry "+
 				"at its largest charge for each one a reader is about to store, up to its ceiling - the object "+
 				"cache charged decoded). Its size less its held bytes is what it holds observation off with; a "+
 				"cache whose size stays well above what it holds between reads is a reader that did not settle.",

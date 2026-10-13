@@ -90,7 +90,7 @@ func (sink scopeDropSink) Screen(plan execution.PlanIdentity) string {
 func (sink scopeDropSink) Observe(drop access.ScopeDrop) {
 	sink.closer.Observe(scopeclose.Drop{TenantID: drop.Plan.TenantID, BusinessID: drop.Plan.BusinessID,
 		StrategyID: drop.Plan.StrategyID, Fingerprint: drop.Fingerprint, StrategyRevision: drop.StrategyRevision,
-		Round: drop.Round})
+		Round: drop.Round, IntervalSeconds: drop.IntervalSeconds, ReadOffset: drop.ReadOffset})
 }
 
 func (sink scopeDropSink) Count(reporter access.ScopeDropReporter, word string, n int) {

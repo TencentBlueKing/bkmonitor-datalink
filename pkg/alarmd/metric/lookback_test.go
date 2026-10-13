@@ -33,6 +33,7 @@ func lookbackSeriesUpperBounds() map[string]int {
 		"read_hold_transition_total":               1,
 		"read_hold_transition_overtaken_total":     1,
 		"read_hold_predecessor_total":              len(readhold.PredecessorReasons) + len(readhold.LinkSkipReasons),
+		"read_hold_seeds_total":                    len(readhold.SeedOrigins),
 		"read_hold_transition_clamped_total":       len(readhold.ClampSources),
 		"read_hold_record_corrupt_total":           1,
 		"read_hold_retire_close_failed_total":      1,

@@ -2,9 +2,36 @@ package progress
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
+
+// ObservationControlKeys is the physical-key contract already implemented by
+// the production ownership store. A diagnostic reader needs no slot resolver
+// or write-capable Progress Store.
+type ObservationControlKeys interface {
+	ObservationControlKey(execution.QueryGroupIdentity, string) (string, error)
+}
+
+type ObservationKeys struct {
+	prefix  string
+	control ObservationControlKeys
+}
+
+func NewObservationKeys(prefix string, control ObservationControlKeys) (*ObservationKeys, error) {
+	if prefix == "" || strings.ContainsAny(prefix, "{} \t\r\n") || control == nil {
+		return nil, errors.New("progress: invalid observation key options")
+	}
+	return &ObservationKeys{prefix: prefix, control: control}, nil
+}
+
+func (keys *ObservationKeys) ObservationKey(group execution.QueryGroupIdentity) (string, error) {
+	if keys == nil || group == "" {
+		return "", errors.New("progress: complete observation identity is required")
+	}
+	return keys.control.ObservationControlKey(group, keys.prefix+":progress")
+}
 
 // ObservationKey delegates both namespace and physical key construction to the
 // stores used by execution; it does not read or change progress.

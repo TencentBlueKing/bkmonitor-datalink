@@ -25,6 +25,14 @@ const scheduleTimelineSchemaVersion = "alarmd-control-schedule-timeline-v1"
 var (
 	ErrScheduleUnavailable = errors.New("alarmd controlplane: schedule unavailable")
 	ErrScheduleConflict    = errors.New("alarmd controlplane: schedule activation conflict")
+	// ErrScheduleTimelineAbsent is a Query Group's Schedule timeline key that
+	// is not there at all - evicted, expired, deleted - as opposed to a
+	// timeline that has no Segment for a Slot, which is unavailable too. It
+	// is ErrScheduleUnavailable to every reader that asks for that, so no
+	// branch that tested for it before goes another way; the Worker names a
+	// round that met it by its own word and reports the Query Group, and the
+	// Control Leader opens the timeline again (RepairUnreadableTimelines).
+	ErrScheduleTimelineAbsent = fmt.Errorf("%w: the timeline key is absent", ErrScheduleUnavailable)
 )
 
 type FreezeSlotContractFailureClass string
@@ -231,19 +239,13 @@ end
 return 1
 `
 
-const (
-	activationDeltaSchemaVersion = "alarmd-control-activation-delta-v1"
-	// activationDeltaMaxQueryGroups bounds the delta a Worker reads after a
-	// header change. Past it the delta says "full" and the Worker drops every
-	// cached timeline, which is what it did before deltas existed and is
-	// cheaper than reading a list that size.
-	activationDeltaMaxQueryGroups = 2000
-)
+const activationDeltaSchemaVersion = "alarmd-control-activation-delta-v1"
 
 // activationDelta is what one activation changed, keyed by its record
 // revision: the Query Groups whose Schedule timelines it wrote. A Worker
 // keeps every other cached timeline across the header change. Full means the
-// list was too long to be worth carrying, and reads as "drop everything".
+// activation rewrote the timeline of every Query Group it leaves active, so
+// the list would say nothing "drop everything" does not, and reads as that.
 type activationDelta struct {
 	SchemaVersion  string                         `json:"schema_version"`
 	RecordRevision uint64                         `json:"record_revision"`
@@ -251,15 +253,40 @@ type activationDelta struct {
 	QueryGroups    []execution.QueryGroupIdentity `json:"query_groups,omitempty"`
 }
 
-func encodeActivationDelta(revision uint64, changed []execution.QueryGroupIdentity) ([]byte, error) {
+// encodeActivationDelta lists what the activation changed unless the list
+// covers every Query Group active after it. There is no count past which the
+// list is cut: it once said "full" past 2000 Query Groups, a number the
+// fleet had already outgrown, and every Worker then dropped every cached
+// timeline and read each one it owns again, where a list would have kept
+// those that did not change. The list is never the large part of the write:
+// it holds at most one identity per Query Group the same write rewrites a
+// whole timeline for, beside the whole active set.
+func encodeActivationDelta(revision uint64, changed []execution.QueryGroupIdentity, active map[execution.QueryGroupIdentity]struct{}) ([]byte, error) {
 	delta := activationDelta{SchemaVersion: activationDeltaSchemaVersion, RecordRevision: revision}
-	if len(changed) > activationDeltaMaxQueryGroups {
+	if coversActive(changed, active) {
 		delta.Full = true
 	} else {
 		delta.QueryGroups = append([]execution.QueryGroupIdentity(nil), changed...)
 		sort.Slice(delta.QueryGroups, func(i, j int) bool { return delta.QueryGroups[i] < delta.QueryGroups[j] })
 	}
 	return json.Marshal(delta)
+}
+
+// coversActive is whether every Query Group in active is in changed.
+func coversActive(changed []execution.QueryGroupIdentity, active map[execution.QueryGroupIdentity]struct{}) bool {
+	if len(changed) < len(active) {
+		return false
+	}
+	listed := make(map[execution.QueryGroupIdentity]struct{}, len(changed))
+	for _, identity := range changed {
+		listed[identity] = struct{}{}
+	}
+	for identity := range active {
+		if _, ok := listed[identity]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (repository *RedisCatalogRepository) activationDeltaKey(revision uint64) string {
@@ -972,7 +999,7 @@ func (timelines *cutoverTimelines) timeline(ctx context.Context, queryGroup exec
 	value := timelines.window[timelines.next-timelines.start]
 	timelines.next++
 	if value.Missing {
-		return persistedScheduleTimeline{}, nil, ErrScheduleUnavailable
+		return persistedScheduleTimeline{}, nil, ErrScheduleTimelineAbsent
 	}
 	timeline, err := decodeScheduleTimeline(queryGroup, value.Raw)
 	if err != nil {
@@ -1423,7 +1450,7 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 	for _, update := range updates {
 		changedGroups = append(changedGroups, update.next.QueryGroup)
 	}
-	deltaPayload, err := encodeActivationDelta(next.RecordRevision, changedGroups)
+	deltaPayload, err := encodeActivationDelta(next.RecordRevision, changedGroups, active)
 	if err != nil {
 		return err
 	}

@@ -53,10 +53,7 @@ type StorageRouter interface {
 }
 
 type StoreLimits struct {
-	MaxKeysPerBatch     int
-	MaxKeyBytesPerBatch int
-	MaxLoadedBytes      int
-	MaxWrittenBytes     int
+	MaxKeysPerBatch int
 }
 
 func StateTTL(requirements []LevelRequirement, restartMargin, minimum, maximum time.Duration, readHoldBound ...time.Duration) (time.Duration, error) {

@@ -285,7 +285,6 @@ func BenchmarkSeriesSampleEvaluator(b *testing.B) {
 				for _, mode := range []string{"disabled", "sibling", "exhausted"} {
 					b.Run(mode, func(b *testing.B) {
 						e := newEvaluator(b)
-						e.limits.MaxRecords = uint64(count)
 						if mode != "disabled" {
 							s, v := evaluatorSampler(b, req)
 							if mode == "sibling" {

@@ -180,6 +180,7 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonViewNotExecutable:          {ReasonViewNotExecutable, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonBlockedExactSetUnavailable: {ReasonBlockedExactSetUnavailable, ReasonClassDeterministic, ReasonDomainObservation},
 	ReasonScheduleUnreadable:         {ReasonScheduleUnreadable, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonScheduleMissing:            {ReasonScheduleMissing, ReasonClassDeterministic, ReasonDomainObservation},
 	// Deterministic: the persisted marker and the proposed one are both facts,
 	// and repeating the attempt compares the same two facts again.
 	ReasonGapGuardConflict: {ReasonGapGuardConflict, ReasonClassDeterministic, ReasonDomainObservation},

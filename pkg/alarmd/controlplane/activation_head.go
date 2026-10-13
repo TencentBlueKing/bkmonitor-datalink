@@ -86,7 +86,7 @@ const openSegmentReadBatch = 256
 func (repository *RedisCatalogRepository) readOpenSegments(
 	ctx context.Context, identities []execution.QueryGroupIdentity, version controlVersion,
 	visit func(execution.QueryGroupIdentity, persistedScheduleSegment) error,
-	undecodable func(execution.QueryGroupIdentity, []byte),
+	skip func(execution.QueryGroupIdentity, SkippedTimelineReason),
 ) error {
 	// Read live, not from the timeline cache: the cache is keyed by the
 	// activation header, and a timeline can be rewritten under an unchanged
@@ -125,14 +125,21 @@ func (repository *RedisCatalogRepository) readOpenSegments(
 		for index, identity := range batch {
 			payload, err := replies[index].Bytes()
 			if errors.Is(err, redis.Nil) {
+				// The key is not there at all. With skip it is named: an active
+				// Query Group without a timeline runs nothing, and its Plans
+				// have no record here, which the caller must read as unread
+				// rather than gone.
+				if skip != nil {
+					skip(identity, SkippedTimelineAbsent)
+				}
 				continue
 			}
 			if err != nil {
 				return activationDependencyIO(err)
 			}
 			timeline, err := decodeScheduleTimeline(identity, payload)
-			if err != nil && undecodable != nil {
-				undecodable(identity, payload)
+			if err != nil && skip != nil {
+				skip(identity, skippedTimelineReason(payload))
 				continue
 			}
 			if err != nil {
@@ -158,13 +165,13 @@ func (repository *RedisCatalogRepository) readOpenSegments(
 func (repository *RedisCatalogRepository) activeOpenSegmentsAt(
 	ctx context.Context, state ActivationState, version controlVersion,
 	visit func(execution.QueryGroupIdentity, persistedScheduleSegment) error,
-	undecodable func(execution.QueryGroupIdentity, []byte),
+	skip func(execution.QueryGroupIdentity, SkippedTimelineReason),
 ) error {
 	identities, err := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
 	if err != nil {
 		return err
 	}
-	return repository.readOpenSegments(ctx, identities, version, visit, undecodable)
+	return repository.readOpenSegments(ctx, identities, version, visit, skip)
 }
 
 // materializeActivationPlans gives a head body back its Plan records, from
@@ -172,23 +179,25 @@ func (repository *RedisCatalogRepository) activeOpenSegmentsAt(
 // one this build's Control Leader works with, so it is labelled with the
 // schema this build writes: the next write persists it with its records.
 //
-// A Query Group whose open Segment cannot be read contributes no records.
-// Held back and without an open Segment, it ran nothing before either; held
-// back with one, its records are on that Segment.
+// A Query Group whose timeline has no open Segment contributes no records:
+// held back without one, it ran nothing before either; held back with one,
+// its records are on that Segment.
 //
-// A Query Group whose timeline does not decode contributes none either, and
-// is named in the state's SkippedTimelines and counted, so that one bad key
-// leaves the activation loadable for every other Query Group and the Leader
-// can see which one to rebuild (Ensure). A read that fails is not a timeline
-// that does not decode, and fails this as before.
+// A Query Group whose timeline does not decode, or whose key is not there at
+// all, contributes none either, and is named in the state's SkippedTimelines
+// and counted, so that one bad or missing key leaves the activation loadable
+// for every other Query Group and the Leader can see which one to rebuild
+// (Ensure). A missing key used to pass unnamed: the Query Group ran nothing,
+// and the first cutover found its Plans with no record and failed whole. A
+// read that fails is neither, and fails this as before.
 func (repository *RedisCatalogRepository) materializeActivationPlans(
 	ctx context.Context, state ActivationState, version controlVersion,
 ) (ActivationState, error) {
 	var plans []PlanActivationRecord
 	var skipped []SkippedTimeline
 	seen := make(map[execution.PlanKey]struct{})
-	undecodable := func(identity execution.QueryGroupIdentity, raw []byte) {
-		skipped = append(skipped, SkippedTimeline{QueryGroup: identity, Reason: skippedTimelineReason(raw)})
+	skip := func(identity execution.QueryGroupIdentity, reason SkippedTimelineReason) {
+		skipped = append(skipped, SkippedTimeline{QueryGroup: identity, Reason: reason})
 	}
 	if err := repository.activeOpenSegmentsAt(ctx, state, version, func(_ execution.QueryGroupIdentity, segment persistedScheduleSegment) error {
 		for _, record := range segment.Plans {
@@ -200,7 +209,7 @@ func (repository *RedisCatalogRepository) materializeActivationPlans(
 			plans = append(plans, record)
 		}
 		return nil
-	}, undecodable); err != nil {
+	}, skip); err != nil {
 		return ActivationState{}, err
 	}
 	sort.Slice(plans, func(i, j int) bool { return lessPlanIdentity(plans[i].Fact.Plan, plans[j].Fact.Plan) })

@@ -49,7 +49,7 @@ func TestK8sReaderUnavailableKeepsProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != domain.EnrichStatusSucceeded {
+	if result.Status != domain.EnrichStatusPartial {
 		t.Fatalf("status=%q", result.Status)
 	}
 }

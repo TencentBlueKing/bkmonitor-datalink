@@ -53,6 +53,22 @@ Lifecycle 为当前 Chain 按需建立连接，任务退出时关闭。处理规
 
 Kafka brokers/topic/consumer_group 默认不可修改；维护请求必须同时携带 expected_revision 和顶层 allow_subscription_change=true 才能发布新版本，旧 Release 保留，授权不持久化；任务由调度器按执行版本交接。不会搬迁消费位点；所有 Kafka 来源优先沿用有效提交位点，没有位点或首次读取时位点越界则从尾部等待新消息，不主动补读历史。来源 ID、租户和 fingerprint 等业务身份保持不变。详见[动态配置](../design/event-source-dynamic-configuration.md#执行版本与重投)。
 
+### K8s 丰富的模型与身份边界
+
+处理器按 `enrich.processors` 的配置顺序执行。`k8s` 优先读取当前等级有效视图的
+`model_id`（依次读取 `labels`、`extra_data`、`dimensions`），包含前序 Resource 和自定义规则的结果。
+已有模型不属于 `cw-K8s_Cluster`、`cw-K8s_Namespace`、`cw-K8s_Service`、`cw-K8s_Workload`、
+`cw-K8s_Pod`、`cw-K8s_Container`、`cw-K8s_Node` 时直接 `skipped`，不查询、不输出补丁。
+
+只有模型未知时才按原始维度识别模型：`workload_name` 非空且 `workload_kind=Pod` 时优先选择 Pod；
+其余依次检查 `container_name`、`pod_name`、`workload_name`、`service`、`node`、`namespace`、
+`bcs_cluster_id`。全部不命中时 `skipped`；已有 K8s 模型不因这些维度的优先级而改变。
+
+选中模型后校验其必要维度，集群也必须提供 `bcs_cluster_id`。维度不足返回 `failed/missing_field`；
+OneModel 不可用、实例不存在或租户/模型/实例身份校验失败返回 `partial/dependency_invalid(onemodel)`。
+这些分支不输出 `model_id`、`model_inst_id` 补丁，保留已有身份；只有验证成功的新身份才覆盖这两个字段。
+本规则作用于新执行的丰富链，不改写已经保存的历史丰富补丁。
+
 完整 YAML 示例和 Cleaner 默认预算见[配置指南](../guides/configuration.md)。
 
 ### KAC 全局插件

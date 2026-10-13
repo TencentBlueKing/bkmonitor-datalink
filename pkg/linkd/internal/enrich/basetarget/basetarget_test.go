@@ -59,7 +59,7 @@ func TestBaseTargetBranches(t *testing.T) {
 			name: "system metric address fallback", branch: rules.BaseTargetSystemMetric, modelCode: rules.HostModelCode,
 			dimensions: domain.DimensionMap{rules.FieldBKTargetIP: domain.NewStringScalar("10.0.0.1"), rules.FieldBKTargetCloudID: number(t, 0)},
 			reader:     hostReader(), wantModel: rules.HostModelCode, wantInst: "101", wantObject: "主机 101",
-			wantStatus: domain.EnrichStatusPartial,
+			wantStatus: domain.EnrichStatusSucceeded,
 			wantLabels: []string{"bk_biz_id", "bk_biz_id|2", "bk_set_id", "bk_set_id|3", "cw-Host", "cw-Host|101"},
 		},
 		{
@@ -205,6 +205,54 @@ func TestBaseTargetIdentityMismatchAndTopologyMiss(t *testing.T) {
 			}
 			if dependency(result.ResourceDiagnostics) != test.wantDep || result.Resource.ModelInstID != test.wantInst || statusForDiagnostics(result.ResourceDiagnostics, result.Resource.ModelInstID != "") != test.wantStatus {
 				t.Fatalf("result=%#v", result)
+			}
+		})
+	}
+}
+
+func TestSystemMetricAddressResolutionStatus(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		change     func(*baseTargetReader)
+		wantStatus domain.EnrichStatus
+		wantDep    string
+		wantInst   string
+	}{
+		{name: "validated address identity", wantStatus: domain.EnrichStatusSucceeded, wantInst: "101"},
+		{name: "query failed", change: func(r *baseTargetReader) { r.instanceErr = errors.New("lookup failed") }, wantStatus: domain.EnrichStatusFailed, wantDep: rules.DependencyOneModel},
+		{name: "instance missing", change: func(r *baseTargetReader) { r.instanceFound = false }, wantStatus: domain.EnrichStatusFailed, wantDep: rules.DependencyOneModel},
+		{name: "foreign tenant", change: func(r *baseTargetReader) { r.instance.TenantID = "tenant-b" }, wantStatus: domain.EnrichStatusFailed, wantDep: rules.DependencyOneModel},
+		{name: "wrong model", change: func(r *baseTargetReader) { r.instance.ModelCode = "cw-Other" }, wantStatus: domain.EnrichStatusFailed, wantDep: rules.DependencyOneModel},
+		{name: "empty identity", change: func(r *baseTargetReader) { r.instance.InstanceID = "" }, wantStatus: domain.EnrichStatusFailed, wantDep: rules.DependencyOneModel},
+		{name: "model metadata failed", change: func(r *baseTargetReader) { r.modelErr = errors.New("model failed") }, wantStatus: domain.EnrichStatusPartial, wantDep: rules.DependencyOneModel, wantInst: "101"},
+		{name: "topology missing", change: func(r *baseTargetReader) { r.topologyFound = false }, wantStatus: domain.EnrichStatusPartial, wantDep: rules.DependencyCollectTopology, wantInst: "101"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reader := hostReader()
+			if test.change != nil {
+				test.change(reader)
+			}
+			dimensions := domain.DimensionMap{rules.FieldBKTargetIP: domain.NewStringScalar("10.0.0.1"), rules.FieldBKTargetCloudID: number(t, 0)}
+			event := baseTargetAlert(t, dimensions)
+			scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+			if err != nil {
+				t.Fatal(err)
+			}
+			code := rules.HostModelCode
+			result, err := Enrich(t.Context(), scope, rules.Classification{Main: rules.MainTarget, BaseTarget: rules.BaseTargetSystemMetric}, models.CWStrategy{ObjectModelCode: &code}, dimensions, 2, event.SubjectName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if statusForDiagnostics(result.ResourceDiagnostics, result.Resource.ModelInstID != "") != test.wantStatus || result.Resource.ModelInstID != test.wantInst || dependency(result.ResourceDiagnostics) != test.wantDep {
+				t.Fatalf("result=%#v", result)
+			}
+			if test.wantInst != "" {
+				for _, diagnostic := range result.ResourceDiagnostics {
+					if diagnostic.Code == enrich.DiagnosticCodeMissingField {
+						t.Fatalf("validated address retained missing ID diagnostic: %#v", diagnostic)
+					}
+				}
 			}
 		})
 	}

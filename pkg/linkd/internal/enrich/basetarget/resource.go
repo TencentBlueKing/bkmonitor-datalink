@@ -50,6 +50,11 @@ func projectResource(resolution resolution, fallbackBizID int64) resourceProject
 		diagnostics = appendDependency(diagnostics, rules.DependencyOneModel)
 		return resourceProjection{Values: values, Diagnostics: diagnostics}
 	}
+	// IP + 云区域是合法的替代定位方式；实例身份复核通过后，缺少输入主机 ID
+	// 不再属于丰富失败。模型元数据和拓扑依赖仍在下方独立判定，不能一并降为成功。
+	if resolution.branch == rules.BaseTargetSystemMetric && resolution.query.InstanceID == "" {
+		diagnostics = nil
+	}
 	values = enrich.ResourceValuesFromInstance(resolution.instance, fallbackBizID)
 	if resolution.modelErr != nil || !resolution.modelFound || !validModel(resolution) {
 		diagnostics = appendDependency(diagnostics, rules.DependencyOneModel)
@@ -73,7 +78,8 @@ func validModel(resolution resolution) bool {
 
 func validInstance(resolution resolution) bool {
 	return resolution.instance.TenantID == resolution.tenantID &&
-		resolution.instance.ModelCode == resolution.modelCode && resolution.instance.InstanceID == resolution.instanceID
+		resolution.instance.ModelCode == resolution.modelCode && resolution.instance.InstanceID != "" &&
+		resolution.instance.InstanceID == resolution.instanceID
 }
 
 func appendDependency(diagnostics []enrich.Diagnostic, dependency string) []enrich.Diagnostic {

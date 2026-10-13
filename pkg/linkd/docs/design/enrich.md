@@ -820,6 +820,8 @@ BaseTarget 二级分支收口实施已完成。以下事项列为**迁移尾声�
 
 ### BaseTarget 已完成细节
 
+SystemMetric 主机支持通过主机 ID 或 `bk_target_ip + bk_target_cloud_id` 定位。地址查询成功并通过租户、模型及非空实例身份复核后，不再因为输入没有主机 ID 返回 `missing_field`；模型元数据和拓扑也成功时 Resource 为 `succeeded`。查询失败、身份无效以及其他依赖异常仍保留相应诊断。
+
 已验证的降级行为：模型元数据异常保留合法实例并返回 Resource partial；核心实例身份不匹配或未命中返回 Resource failed、禁止生成实例标签；关联主机或拓扑缺失保留实例并返回 Resource partial；Context 取消中止 Enrich 链，同一 Scope 中的取消结果不会污染后续重试。单个 Resource failed、其余 Processor succeeded 时最终 Alert.EnrichStatus 依现有聚合算法为 partial。标准事件内的 NoData 标记已通过本地全链路验证；真实 Kingeye tags 到标准事件的上游映射仍待确认。
 
 Basic fixture 已完成：

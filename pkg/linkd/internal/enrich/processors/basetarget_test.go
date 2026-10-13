@@ -36,7 +36,7 @@ func TestBaseTargetFullProcessorPayloads(t *testing.T) {
 	}{
 		{name: "monitor source", modelCode: rules.HostModelCode, dimensions: domain.DimensionMap{rules.FieldBKInstID: processorNumber(t, 101)}, reader: processorHostReader(), wantStatus: domain.EnrichStatusSucceeded},
 		{name: "no data", modelCode: "cw-Service", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar("cw-Service"), rules.FieldModelInstID: processorNumber(t, 2)}, reader: processorServiceReader(), wantStatus: domain.EnrichStatusSucceeded},
-		{name: "system metric fallback", modelCode: rules.HostModelCode, dimensions: domain.DimensionMap{rules.FieldBKTargetIP: domain.NewStringScalar("10.0.0.1"), rules.FieldBKTargetCloudID: processorNumber(t, 0)}, reader: processorHostReader(), wantStatus: domain.EnrichStatusPartial},
+		{name: "system metric fallback", modelCode: rules.HostModelCode, dimensions: domain.DimensionMap{rules.FieldBKTargetIP: domain.NewStringScalar("10.0.0.1"), rules.FieldBKTargetCloudID: processorNumber(t, 0)}, reader: processorHostReader(), wantStatus: domain.EnrichStatusSucceeded},
 		{name: "basic", modelCode: "cw-Disk", dimensions: domain.DimensionMap{}, reader: &processorBaseTargetReader{model: processorModel("tenant-a", "cw-Disk", "磁盘", "disk"), modelFound: true}, wantStatus: domain.EnrichStatusSucceeded},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -87,7 +87,7 @@ func TestBaseTargetBranchesFlowThroughResourceAndDisplay(t *testing.T) {
 	}{
 		{name: "monitor source", modelCode: rules.HostModelCode, dimensions: domain.DimensionMap{rules.FieldBKInstID: processorNumber(t, 101)}, reader: processorHostReader(), wantStatus: domain.EnrichStatusSucceeded, wantInst: "101", wantObject: "主机 101"},
 		{name: "no data", modelCode: "cw-Service", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar("cw-Service"), rules.FieldModelInstID: processorNumber(t, 2)}, reader: processorServiceReader(), wantStatus: domain.EnrichStatusSucceeded, wantInst: "2", wantObject: "服务 2"},
-		{name: "system metric", modelCode: rules.HostModelCode, dimensions: domain.DimensionMap{rules.FieldBKTargetIP: domain.NewStringScalar("10.0.0.1"), rules.FieldBKTargetCloudID: processorNumber(t, 0)}, reader: processorHostReader(), wantStatus: domain.EnrichStatusPartial, wantInst: "101", wantObject: "主机 101"},
+		{name: "system metric", modelCode: rules.HostModelCode, dimensions: domain.DimensionMap{rules.FieldBKTargetIP: domain.NewStringScalar("10.0.0.1"), rules.FieldBKTargetCloudID: processorNumber(t, 0)}, reader: processorHostReader(), wantStatus: domain.EnrichStatusSucceeded, wantInst: "101", wantObject: "主机 101"},
 		{name: "basic", modelCode: "cw-Disk", dimensions: domain.DimensionMap{}, reader: &processorBaseTargetReader{model: processorModel("tenant-a", "cw-Disk", "磁盘", "disk"), modelFound: true}, wantStatus: domain.EnrichStatusSucceeded, wantObject: "source subject"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

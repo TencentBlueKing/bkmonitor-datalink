@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
@@ -33,7 +32,7 @@ var k8sModelCodes = map[string]string{
 }
 
 var k8sIdentityFields = map[string][]string{
-	"cw-K8s_Cluster":   {},
+	"cw-K8s_Cluster":   {rules.FieldBCSClusterID},
 	"cw-K8s_Namespace": {rules.FieldBCSClusterID, rules.FieldNamespace},
 	"cw-K8s_Service":   {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldService},
 	"cw-K8s_Workload":  {rules.FieldBCSClusterID, rules.FieldNamespace, rules.FieldWorkloadKind, rules.FieldWorkloadName},
@@ -46,7 +45,18 @@ type K8s struct{}
 
 func (K8s) Name() string { return rules.K8sProcessor }
 
-func (K8s) Match(context.Context, *enrich.Scope) (bool, error) { return true, nil }
+// Match 优先使用前序步骤确定的模型；只有模型未知时才允许根据维度推断。
+func (K8s) Match(ctx context.Context, scope *enrich.Scope) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	modelCode, err := k8sModelCodeForScope(scope)
+	if err != nil {
+		return false, err
+	}
+	_, known := k8sIdentityFields[modelCode]
+	return known, nil
+}
 
 func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	if err := ctx.Err(); err != nil {
@@ -64,24 +74,27 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		ContainerName: dimensionText(alert.Dimensions, rules.FieldContainerName),
 		CWLabels:      []string{},
 	}
-	modelCode := k8sModelCode(alert.Dimensions)
-	if modelCode != "" {
-		if missing := k8sMissingIdentityFields(modelCode, alert.Dimensions); len(missing) != 0 {
-			return k8sValuesDiagnostic(values, domain.EnrichStatusFailed, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: missing})
-		}
-		instance, found, err := scope.K8sInstance(ctx, modelCode, alert.Dimensions)
-		if err != nil && strings.Contains(err.Error(), "unavailable") {
-			scope.Context().K8s.Set(values)
-			return k8sValuesResult(scope.Context().K8s.Values)
-		}
-		if err != nil || !found || instance.TenantID != alert.BKTenantID || instance.ModelCode != modelCode || instance.InstanceID == "" {
-			return k8sValuesDiagnostic(values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
-		}
-		values.ModelID, values.ModelInstID = instance.ModelCode, instance.InstanceID
-		values.ClusterName = firstInstanceText(instance, "cluster_name", "name", "display_name")
-		values.BKBizID, values.BKBizName, values.ClusterName = resolveK8sBusiness(ctx, scope, modelCode, alert.Dimensions, instance, values.ClusterName)
-		values.CWLabels = k8sLabels(values)
+	modelCode, err := k8sModelCodeForScope(scope)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
 	}
+	if _, known := k8sIdentityFields[modelCode]; !known {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped}, nil
+	}
+	if missing := k8sMissingIdentityFields(modelCode, alert.Dimensions); len(missing) != 0 {
+		return k8sValuesDiagnostic(values, domain.EnrichStatusFailed, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: missing})
+	}
+	instance, found, err := scope.K8sInstance(ctx, modelCode, alert.Dimensions)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return enrich.ProcessorResult{}, ctxErr
+	}
+	if err != nil || !found || instance.TenantID != alert.BKTenantID || instance.ModelCode != modelCode || instance.InstanceID == "" {
+		return k8sValuesDiagnostic(values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
+	}
+	values.ModelID, values.ModelInstID = instance.ModelCode, instance.InstanceID
+	values.ClusterName = firstInstanceText(instance, "cluster_name", "name", "display_name")
+	values.BKBizID, values.BKBizName, values.ClusterName = resolveK8sBusiness(ctx, scope, modelCode, alert.Dimensions, instance, values.ClusterName)
+	values.CWLabels = k8sLabels(values)
 	scope.Context().K8s.Set(values)
 	return k8sValuesResult(scope.Context().K8s.Values)
 }
@@ -104,7 +117,30 @@ func k8sValuesResult(values models.K8sValues) (enrich.ProcessorResult, error) {
 	if err := json.Unmarshal(encoded, &value); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
+	// 只有通过租户、模型和实例校验的新身份才具有覆盖语义。
+	// 维度缺失或查询失败的零值不能清空 Resource/规则步骤已确定的身份。
+	if values.ModelID == "" || values.ModelInstID == "" {
+		delete(value, rules.FieldModelID)
+		delete(value, rules.FieldModelInstID)
+	}
 	return enrich.ProcessorResult{Status: domain.EnrichStatusSucceeded, Value: value}, nil
+}
+
+// k8sModelCodeForScope 为匹配和处理提供同一模型选择规则，不使用可能已被规则覆盖的 Resource 缓存。
+// 优先读取当前 evaluation 的 labels、extra_data、dimensions；模型未知时才按原始维度推断。
+func k8sModelCodeForScope(scope *enrich.Scope) (string, error) {
+	state, err := scope.EvaluationState()
+	if err != nil {
+		return "", err
+	}
+	document := state.Document()
+	for _, root := range []string{"labels", "extra_data", "dimensions"} {
+		fields, _ := document[root].(map[string]any)
+		if model, ok := fields[rules.FieldModelID].(string); ok && model != "" {
+			return model, nil
+		}
+	}
+	return k8sModelCode(scope.Facts().Dimensions), nil
 }
 
 func k8sModelCode(dimensions domain.DimensionMap) string {
@@ -120,9 +156,6 @@ func k8sModelCode(dimensions domain.DimensionMap) string {
 }
 
 func k8sMissingIdentityFields(modelCode string, dimensions domain.DimensionMap) []string {
-	if modelCode == "cw-K8s_Cluster" {
-		return nil
-	}
 	if modelCode == "cw-K8s_Namespace" {
 		if dimensionText(dimensions, rules.FieldBCSClusterID) == "" || dimensionText(dimensions, rules.FieldNamespace) == "" {
 			return []string{"dimensions." + rules.FieldBCSClusterID, "dimensions." + rules.FieldNamespace}

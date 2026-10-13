@@ -107,8 +107,10 @@ func (service *Service) cmdbRecord(ctx context.Context, request StoreRequest) Re
 }
 
 // readHashField is one bounded read of one field of a hash. The key's TYPE
-// and PTTL, whether the field exists and its length come in one
-// transaction; the value follows only when it fits the document limit,
+// and PTTL, whether the field exists and its length come in one pipelined
+// round trip, not a point-in-time snapshot (Limits.Consistency; readMany
+// says why it is not a MULTI); the value follows only when it fits the
+// document limit,
 // since a hash field has no range read and its size has to be asked first.
 // A key that does not exist and a field the hash does not hold are both
 // missing, told apart by the reason: the first is the whole cache gone, the
@@ -123,12 +125,13 @@ func readHashField(ctx context.Context, source string, binding RedisBinding, key
 	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
 	defer cancel()
 	r.Limits.DocumentReadLimitBytes = MaxDocumentBytes
-	r.Limits.Commands = 6 // MULTI, TYPE, PTTL, HEXISTS, HSTRLEN, EXEC
+	r.Limits.Commands = 4 // TYPE, PTTL, HEXISTS, HSTRLEN
+	r.Limits.Consistency = ConsistencyPipelined
 	var kind *redis.StatusCmd
 	var ttl *redis.DurationCmd
 	var exists *redis.BoolCmd
 	var length *redis.Cmd
-	_, txErr := binding.Client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	_, pipeErr := binding.Client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
 		kind = pipe.Type(ctx, key)
 		ttl = pipe.PTTL(ctx, key)
 		exists = pipe.HExists(ctx, key, field)
@@ -139,7 +142,7 @@ func readHashField(ctx context.Context, source string, binding RedisBinding, key
 	at := time.Now().UTC()
 	r.ReadAt = &at
 	if kind == nil || kind.Err() != nil || ttl.Err() != nil {
-		r.Reason, r.ReasonText = failureReason(txErr, kind, ttl)
+		r.Reason, r.ReasonText = failureReason(pipeErr, kind, ttl)
 		binding.failed(r.Reason)
 		return r, nil
 	}
@@ -159,7 +162,7 @@ func readHashField(ctx context.Context, source string, binding RedisBinding, key
 		return r, nil
 	}
 	if exists.Err() != nil || length.Err() != nil {
-		r.Reason, r.ReasonText = failureReason(txErr, exists, length)
+		r.Reason, r.ReasonText = failureReason(pipeErr, exists, length)
 		binding.failed(r.Reason)
 		return r, nil
 	}

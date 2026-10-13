@@ -41,7 +41,8 @@ func TestAReplicaPublishesItsDeclinesWithTheExecutionSlotsItHas(t *testing.T) {
 	cfg.Redis.Address = address
 	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd-declines-wiring"
-	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit, cfg.PhaseTwo.Scheduler.ReadyQueueCapacity = 3, 64
+	// The dispatcher runs the execution ceiling's worth of slots.
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit, cfg.PhaseTwo.Scheduler.ActiveExecutionCeiling, cfg.PhaseTwo.Scheduler.ReadyQueueCapacity = 3, 3, 64
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
 		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}),
 		observability.Discard(observability.ComponentRuntime), newPhaseTwoApplicationHealth(),

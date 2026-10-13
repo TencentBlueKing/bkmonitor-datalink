@@ -29,7 +29,9 @@ func newActivationSkippedTimelinesCollector() *activationSkippedTimelinesCollect
 			"Segments, by why: one per Query Group per activation it read. The rest of the activation loads and is "+
 			"cut over as usual. undecodable: the bytes do not decode; the Leader rebuilds that Query Group's records "+
 			"from the publication it runs and rewrites the timeline (timeline_repairs_total). newer_format: the bytes "+
-			"are a timeline of another schema version, written by a build that reads them, and are left alone. A read "+
+			"are a timeline of another schema version, written by a build that reads them, and are left alone. absent: "+
+			"the key is not there at all; the Leader rebuilds that Query Group's records and opens the timeline again "+
+			"(timeline_repairs_total{reopened}). A read "+
 			"that fails is never counted here: it fails the activation read as before. The fleet's activation row names "+
 			"the Query Groups. Counted by the Leader; read it summed over replicas."+
 			" Reader: the release acceptance, from /metrics after each deploy.",

@@ -326,7 +326,7 @@ func TestTheObservationsAreBoundedAndExpire(t *testing.T) {
 	g.slot(1700000000, drop(fp(1), 0))
 	g.clock.at = g.clock.at.Add(30 * time.Minute)
 	g.slot(1700003600, drop(fp(1), 0))
-	g.want(t, "second observation after the TTL", map[string]uint64{OutcomeUnconfirmed: 2})
+	g.want(t, "second observation after the TTL", map[string]uint64{OutcomeUnconfirmed: 2, OutcomeObservationExpired: 1})
 	if len(g.writer.sent()) != 0 {
 		t.Fatal("closed on two observations further apart than the TTL")
 	}
@@ -409,7 +409,7 @@ func TestTheObservationTTLBoundary(t *testing.T) {
 		sent int
 	}{
 		{30*time.Minute - time.Second, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
-		{30 * time.Minute, map[string]uint64{OutcomeUnconfirmed: 2}, 0},
+		{30 * time.Minute, map[string]uint64{OutcomeUnconfirmed: 2, OutcomeObservationExpired: 1}, 0},
 	} {
 		f := newFixture(openSet(ownSrc, fp(1)), nil)
 		start := f.clock.at
@@ -572,4 +572,56 @@ func TestACloseWhoseIdentityCannotBeBuiltIsNamedNotSendFailed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An observation waits two of its strategy's periods plus its Slot's read
+// offset for the second, at least ObservationTTL, and both sides of that are
+// held: an hourly strategy turned away an hour apart closes, which a fixed
+// half hour never let it; past two hours plus its read offset the first is
+// forgotten and counted as expired. A strategy whose Slots are read eight
+// minutes after their grid point, every twenty minutes, closes on a second
+// observation 45 minutes on - past two periods, not past two periods and its
+// read offset.
+func TestAnObservationLivesTwoPeriodsPlusItsReadOffset(t *testing.T) {
+	observe := func(f *fixture, at time.Time, round, interval int64, offset time.Duration) {
+		f.clock.at = at
+		d := drop(fp(1), round)
+		d.IntervalSeconds, d.ReadOffset = interval, offset
+		f.closer.Observe(d)
+	}
+	for _, c := range []struct {
+		name     string
+		interval int64
+		offset   time.Duration
+		gap      time.Duration
+		want     map[string]uint64
+		sent     int
+	}{
+		{"hourly, an hour apart", 3600, time.Minute, time.Hour, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
+		{"hourly, just inside two hours and the offset", 3600, time.Minute, 2*time.Hour + time.Minute - time.Second, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
+		{"hourly, at two hours and the offset", 3600, time.Minute, 2*time.Hour + time.Minute, map[string]uint64{OutcomeUnconfirmed: 2, OutcomeObservationExpired: 1}, 0},
+		{"held 8 min every 20 min, 45 min apart", 1200, 8 * time.Minute, 45 * time.Minute, map[string]uint64{OutcomeUnconfirmed: 1, OutcomeCloseSent: 1}, 1},
+		{"a minute strategy keeps the half-hour floor", 60, 30 * time.Second, 30 * time.Minute, map[string]uint64{OutcomeUnconfirmed: 2, OutcomeObservationExpired: 1}, 0},
+	} {
+		f := newFixture(openSet(ownSrc, fp(1)), nil)
+		start := f.clock.at
+		observe(f, start, 1700000000, c.interval, c.offset)
+		observe(f, start.Add(c.gap), 1700000000+c.interval, c.interval, c.offset)
+		f.closer.Step(context.Background())
+		f.want(t, c.name, c.want)
+		if len(f.writer.sent()) != c.sent {
+			t.Errorf("%s: sent %d, want %d", c.name, len(f.writer.sent()), c.sent)
+		}
+	}
+}
+
+// An observation left waiting expires at the step too, and is counted.
+func TestAnObservationExpiringAtTheStepIsCounted(t *testing.T) {
+	f := newFixture(openSet(ownSrc, fp(1)), nil)
+	d := drop(fp(1), 1700000000)
+	d.IntervalSeconds = 3600
+	f.closer.Observe(d)
+	f.clock.at = f.clock.at.Add(2*time.Hour + time.Second)
+	f.closer.Step(context.Background())
+	f.want(t, "expired at the step", map[string]uint64{OutcomeUnconfirmed: 1, OutcomeObservationExpired: 1})
 }

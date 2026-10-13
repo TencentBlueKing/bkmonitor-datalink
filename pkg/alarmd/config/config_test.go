@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -167,9 +166,9 @@ func TestLoadRejectsLegacyAndPhaseTwoFields(t *testing.T) {
 		"state CAS":     {contents: "state_cas: true\n", field: "state_cas"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, testCase.contents))
+			_, err := LoadWithRoles(writeConfig(t, testCase.contents), nil)
 			if err == nil || !strings.Contains(err.Error(), testCase.field) {
-				t.Fatalf("Load() error = %v, want strict rejection of %q", err, testCase.field)
+				t.Fatalf("LoadWithRoles(, nil) error = %v, want strict rejection of %q", err, testCase.field)
 			}
 		})
 	}
@@ -202,7 +201,6 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 			cfg.Redis.RestartMargin = Duration(-time.Second)
 		},
 		"zero compiler budget": func(cfg *Config) { cfg.Limits.Compiler.MaxPlanBytes = 0 },
-		"zero detect budget":   func(cfg *Config) { cfg.Limits.Detect.MaxPlans = 0 },
 		"zero trigger budget":  func(cfg *Config) { cfg.Limits.Trigger.MaxLevels = 0 },
 		"compiler levels exceed trigger event": func(cfg *Config) {
 			cfg.Limits.Trigger.MaxLevelResultsPerEvent = uint32(cfg.Limits.Compiler.MaxLevelsPerPlan - 1)
@@ -261,9 +259,9 @@ func TestTheDynamicGroupKeyPrefixIsAbsentOrSpelledAsTheWriterSpellsIt(t *testing
 func TestLoadRejectsRetiredModeKey(t *testing.T) {
 	for _, mode := range []string{"shadow", "owner"} {
 		t.Run(mode, func(t *testing.T) {
-			_, err := Load(writeConfig(t, "mode: "+mode+"\n"))
+			_, err := LoadWithRoles(writeConfig(t, "mode: "+mode+"\n"), nil)
 			if err == nil || !strings.Contains(err.Error(), "mode") {
-				t.Fatalf("Load() error = %v, want retired key rejection", err)
+				t.Fatalf("LoadWithRoles(, nil) error = %v, want retired key rejection", err)
 			}
 		})
 	}
@@ -280,8 +278,8 @@ func TestLoadRejectsInvalidHTTPAndTimeout(t *testing.T) {
 
 	for name, contents := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(writeConfig(t, contents)); err == nil {
-				t.Fatalf("Load() accepted invalid %s", name)
+			if _, err := LoadWithRoles(writeConfig(t, contents), nil); err == nil {
+				t.Fatalf("LoadWithRoles(, nil) accepted invalid %s", name)
 			}
 		})
 	}
@@ -346,7 +344,7 @@ func TestRetiredKeysAreRefusedByName(t *testing.T) {
 		{"phase_two:\n  scheduler:\n    maxreplayage: 1h\n", "maxreplayage"},
 		{"phase_two:\n  scheduler:\n    processquerypermits: 999\n", "processquerypermits"},
 	} {
-		_, err := Load(writeConfig(t, retired.yaml))
+		_, err := LoadWithRoles(writeConfig(t, retired.yaml), nil)
 		if err == nil || !strings.Contains(err.Error(), "field "+retired.name+" not found") {
 			t.Errorf("values carrying %s loaded with %v, want it refused by name", retired.name, err)
 		}
@@ -381,54 +379,51 @@ func writeConfig(t *testing.T, contents string) string {
 	return path
 }
 
-// Zero no longer means "unset and invalid": it means the pool follows the CPU
-// budget the container was given. The cases below pin the floor a one-core
-// deployment keeps, the production sizes, and the ceiling that stops one Worker
-// from opening an unreasonable number of connections to a shared Redis.
-func TestDeriveRedisPoolSizeFollowsCPUBudget(t *testing.T) {
-	tests := []struct {
-		name      string
-		cpuBudget int
-		want      int
-	}{
-		{"a single core keeps the floor", 1, 64},
-		{"the floor still covers four cores", 4, 64},
-		{"the production budget scales past the floor", 8, 128},
-		{"a larger budget keeps scaling", 16, 256},
-		{"the ceiling bounds the connection count", 64, 512},
-		{"an unreported budget still yields a usable pool", 0, 64},
+// Zero no longer means "unset and invalid": it means the pool covers every
+// execution slot the container can run, plus a floor for what runs outside a
+// slot. The cases pin that across container sizes; the cores beside them do
+// not move it.
+func TestDeriveRedisPoolSizeCoversTheExecutionCeiling(t *testing.T) {
+	for _, inputs := range []CapacityInputs{
+		{CPUBudget: 1, MemoryLimitBytes: 256 << 20},
+		{CPUBudget: 4, MemoryLimitBytes: 4 << 30},
+		{CPUBudget: 64, MemoryLimitBytes: 4 << 30},
+		{CPUBudget: 8, MemoryLimitBytes: 32 << 30},
+		{},
+	} {
+		ceiling := DeriveScheduler(inputs).ActiveExecutionCeiling
+		if got := DeriveRedisPoolSize(inputs); got != ceiling+redisPoolMinimum {
+			t.Fatalf("%d MiB, %d CPU: pool %d, want the %d execution slots and the %d floor",
+				inputs.MemoryLimitBytes>>20, inputs.CPUBudget, got, ceiling, redisPoolMinimum)
+		}
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := DeriveRedisPoolSize(test.cpuBudget); got != test.want {
-				t.Fatalf("DeriveRedisPoolSize(%d) = %d, want %d", test.cpuBudget, got, test.want)
-			}
-		})
+	if got := DeriveRedisPoolSize(CapacityInputs{MemoryLimitBytes: 4 << 30}); got != 341+redisPoolMinimum {
+		t.Fatalf("4 GiB pool = %d, want 341 slots and the floor", got)
 	}
 }
 
 func TestEffectivePoolSizeKeepsExplicitOverride(t *testing.T) {
+	inputs := CapacityInputs{CPUBudget: 8, MemoryLimitBytes: 4 << 30}
 	connection := RedisConnectionConfig{PoolSize: 3}
-	if got := connection.EffectivePoolSize(8); got != 3 {
+	if got := connection.EffectivePoolSize(inputs); got != 3 {
 		t.Fatalf("explicit pool_size was not honoured: got %d", got)
 	}
 	connection.PoolSize = 0
-	if got := connection.EffectivePoolSize(8); got != 128 {
+	if got := connection.EffectivePoolSize(inputs); got != DeriveRedisPoolSize(inputs) {
 		t.Fatalf("zero pool_size did not derive: got %d", got)
 	}
 }
 
 // The pool exists so that queueing for a connection never becomes the process's
-// execution gate. The Slot source reads the control plane for every ready
-// runner without holding a query permit, so covering the permits is necessary
-// but nowhere near sufficient; the derived pool must clear them with room left
-// for that fan-out at every budget a container can be given.
+// execution gate: it has to clear every execution slot and every permit the
+// container can have, with room for the reads made outside a slot.
 func TestDerivedRedisPoolClearsAdmittedConcurrencyWithRoom(t *testing.T) {
-	cfg := Default()
-	admitted := cfg.AdmittedQueryConcurrency()
-	for cpuBudget := 0; cpuBudget <= 64; cpuBudget++ {
-		if got := DeriveRedisPoolSize(cpuBudget); got <= admitted {
-			t.Fatalf("pool %d at %d CPU does not exceed admitted concurrency %d", got, cpuBudget, admitted)
+	for memory := uint64(64 << 20); memory <= 512<<30; memory *= 2 {
+		inputs := CapacityInputs{MemoryLimitBytes: memory}
+		derived := DeriveScheduler(inputs)
+		if got := DeriveRedisPoolSize(inputs); got < derived.ActiveExecutionCeiling+redisPoolMinimum || got <= derived.AdmittedConcurrency() {
+			t.Fatalf("pool %d at %d MiB does not clear %d slots and %d permits", got, memory>>20,
+				derived.ActiveExecutionCeiling, derived.AdmittedConcurrency())
 		}
 	}
 }
@@ -439,7 +434,7 @@ func TestWithResolvedRedisPoolSizeResolvesEveryConnection(t *testing.T) {
 	cfg.PlatformCache.Strategy = &platformCache
 	cfg.PlatformCache.CMDB = &platformCache
 	resolved := cfg.WithResolvedRedisPoolSize()
-	want := DeriveRedisPoolSize(runtime.GOMAXPROCS(0))
+	want := DeriveRedisPoolSize(DetectCapacityInputs())
 	if resolved.Redis.PoolSize != want {
 		t.Fatalf("own store pool size = %d, want %d", resolved.Redis.PoolSize, want)
 	}
@@ -461,7 +456,7 @@ func TestWithResolvedRedisPoolSizeResolvesEveryConnection(t *testing.T) {
 // error - it returns nothing, which reads back as "no strategies" or "no
 // hosts". Each therefore has its own stated location.
 func TestEachPlatformCacheIsReadWhereThePlatformWritesIt(t *testing.T) {
-	loaded, err := Load(writeConfig(t, platformCacheConfigContents(`
+	loaded, err := LoadWithRoles(writeConfig(t, platformCacheConfigContents(`
 platform_cache:
   strategy:
     mode: standalone
@@ -471,9 +466,9 @@ platform_cache:
     mode: standalone
     address: cmdb-cache:6379
     db: 8
-`)))
+`)), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	if got := loaded.StrategySourceRedis().Address; got != "strategy-cache:6379" {
 		t.Fatalf("strategy source = %q, want the stated strategy cache", got)
@@ -504,9 +499,9 @@ platform_cache:
 // resolved configuration a release check reads says where each read went
 // instead of saying "inherited".
 func TestAnUnstatedPlatformCacheResolvesToTheTopLevelConnection(t *testing.T) {
-	loaded, err := Load(writeConfig(t, platformCacheConfigContents("")))
+	loaded, err := LoadWithRoles(writeConfig(t, platformCacheConfigContents("")), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	if loaded.PlatformCache.Strategy == nil || loaded.PlatformCache.CMDB == nil {
 		t.Fatalf("platform cache = %+v, want both resolved rather than left unstated", loaded.PlatformCache)
@@ -584,12 +579,12 @@ func TestTheResolvedDestinationNamesCoordinatesAndNoCredentials(t *testing.T) {
 // keys stayed under the key it moved away from, so accepting it quietly would
 // write to the new instance with the old instance's shape.
 func TestTheRemovedRuntimeRedisKeyIsRefusedRatherThanIgnored(t *testing.T) {
-	_, err := Load(writeConfig(t, platformCacheConfigContents("")+`  runtime_redis:
+	_, err := LoadWithRoles(writeConfig(t, platformCacheConfigContents("")+`  runtime_redis:
     mode: standalone
     address: somewhere-else:6379
-`))
+`), nil)
 	if err == nil || !strings.Contains(err.Error(), "runtime_redis") {
-		t.Fatalf("Load() error = %v, want the removed key named", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v, want the removed key named", err)
 	}
 }
 

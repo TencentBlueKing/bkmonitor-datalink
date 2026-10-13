@@ -1570,7 +1570,7 @@ type fakeSourceReconciler struct {
 	stepDowns int
 }
 
-func (reconciler *fakeSourceReconciler) StepDown() { reconciler.stepDowns++ }
+func (reconciler *fakeSourceReconciler) ForgetTerm() { reconciler.stepDowns++ }
 
 func (reconciler *fakeSourceReconciler) Refresh(
 	context.Context,

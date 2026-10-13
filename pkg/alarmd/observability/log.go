@@ -471,6 +471,27 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if f := observation.SlotBudgetUsage; f != nil {
 		attributes = append(attributes, slog.Any("slot_budget_usage", f))
 	}
+	if f := observation.WarmingPeak; f != nil {
+		attributes = append(attributes,
+			slog.Time("warming_hour_start", f.HourStart),
+			slog.Int64("warming_writes", f.Writes),
+			slog.Int("warming_minutes", f.MinutesWithWrites),
+			slog.Int64("warming_median_minute_writes", f.MedianMinuteWrites),
+			slog.Time("warming_peak_minute", f.PeakMinute),
+			slog.Int64("warming_peak_minute_writes", f.PeakMinuteWrites),
+			slog.Any("warming_peak_groups", f.PeakGroups))
+	}
+	// Flat, so a log query can filter and group on them.
+	if f := observation.InPlaceWait; f != nil {
+		attributes = append(attributes,
+			slog.Uint64("inplace_waits", uint64(f.Waits)),
+			slog.Int64("inplace_wait_ms", f.TotalMillis),
+			slog.Int64("inplace_longest_ms", f.LongestMillis),
+			slog.Uint64("inplace_sent_before", uint64(f.SentBeforeFirstWait)),
+			slog.Int64("inplace_wait_before_any_sent_ms", f.BeforeAnySentMillis),
+			slog.Uint64("inplace_held_input_bytes", f.HeldInputBytes),
+			slog.Uint64("inplace_held_prepared_bytes_estimate", f.HeldPreparedBytes))
+	}
 	// Flat keys rather than an object, under its own condition: the two
 	// answer different questions and a row can carry either without the
 	// other.
@@ -506,6 +527,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		attributes = append(attributes, slog.String("failure_stage", f.Stage), slog.String("failure_category", f.Category), slog.String("failure_code", f.Code))
 		if f.Detail != "" {
 			attributes = append(attributes, slog.String("failure_detail", f.Detail))
+		}
+		if f.HTTPStatus != 0 {
+			attributes = append(attributes, slog.Int("failure_http_status", f.HTTPStatus))
 		}
 		if timing := f.Timing; timing != nil {
 			attributes = append(attributes, slog.Int64("failure_settle_ms", timing.SettleMillis), slog.Int64("failure_start_late_ms", timing.StartLateMillis),
@@ -1205,6 +1229,10 @@ func mandatoryLogStage(stage Stage) bool {
 	case StageAssignmentApplied:
 		// One line per assignment change in place of one per Query Group
 		// acquired, lost or taken over: about 2,100 a Pod at every start.
+		return true
+	case StageWarmingPeak:
+		// One line an hour per replica, and only for an hour that had a
+		// warming write: the one account of whose burst it was.
 		return true
 	case StageAssignmentSwept, StageViewPublished, StageViewSession, StageViewInstalled:
 		// Once per term, or once per Worker per connection: rare, and the

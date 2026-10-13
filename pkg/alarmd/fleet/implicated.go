@@ -96,7 +96,7 @@ func recentZero(row Anomaly, plan PlanSeriesMatched) bool {
 	if row.ReasonLastAt.IsZero() || plan.LastSeenAt.IsZero() {
 		return true
 	}
-	return row.ReasonLastAt.Sub(plan.LastSeenAt) <= PlanSeriesZeroWindow
+	return row.ReasonLastAt.Sub(plan.LastSeenAt) <= max(PlanSeriesZeroWindow, time.Duration(recentWindowStrides*intervalOf(row))*time.Second)
 }
 
 // implicatedStrategies is the Plans a row's evidence names, smallest id

@@ -38,14 +38,14 @@ const productionExecutionReserve = 5 * time.Second
 // future interval cannot fall between two enumerations again.
 func TestEverySchedulableIntervalAffordsItsSettlingWait(t *testing.T) {
 	for _, configured := range []time.Duration{
-		5 * time.Second, minimumSettlingWait, 30 * time.Second, time.Minute, 5 * time.Minute,
+		5 * time.Second, execution.MinimumSettlingWait, 30 * time.Second, time.Minute, 5 * time.Minute,
 	} {
 		for interval := int64(1); interval <= 3600; interval++ {
 			spec := execution.DeriveScheduleSpec(interval)
 			if !spec.AffordsSettlingWait() {
 				continue // Named, with its consequence, by the test below.
 			}
-			wait := settlingWaitWithinBudget(spec, configured, productionExecutionReserve)
+			wait := execution.SettlingWaitWithinQueryBudget(queryBudgetOf(spec, productionExecutionReserve), configured)
 			budget := time.Duration(spec.CompletionOffsetSeconds()) * time.Second
 			if wait+productionExecutionReserve >= budget {
 				t.Fatalf("interval=%ds configured=%s: settling %s plus reserve %s does not fit the %s budget; every consumer on this Slot is bound unavailable forever",
@@ -95,16 +95,16 @@ func TestSettlingWaitIsUnchangedForTheReleasedPeriods(t *testing.T) {
 		interval int64
 		want     time.Duration
 	}{
-		{10, minimumSettlingWait},
-		{15, minimumSettlingWait},
-		{30, minimumSettlingWait},
+		{10, execution.MinimumSettlingWait},
+		{15, execution.MinimumSettlingWait},
+		{30, execution.MinimumSettlingWait},
 		{60, deploymentConfigured},
 		{120, deploymentConfigured},
 		{300, deploymentConfigured},
 		{3600, deploymentConfigured},
 	} {
 		spec := execution.DeriveScheduleSpec(testCase.interval)
-		if got := settlingWaitWithinBudget(spec, deploymentConfigured, productionExecutionReserve); got != testCase.want {
+		if got := execution.SettlingWaitWithinQueryBudget(queryBudgetOf(spec, productionExecutionReserve), deploymentConfigured); got != testCase.want {
 			t.Fatalf("interval=%ds settling=%s, want the released %s", testCase.interval, got, testCase.want)
 		}
 	}
@@ -117,13 +117,13 @@ func TestIntervalsBetweenTheTwoListsAreNowSchedulable(t *testing.T) {
 	const deploymentConfigured = 30 * time.Second
 	for _, interval := range []int64{16, 20, 25, 29, 31, 35} {
 		spec := execution.DeriveScheduleSpec(interval)
-		wait := settlingWaitWithinBudget(spec, deploymentConfigured, productionExecutionReserve)
+		wait := execution.SettlingWaitWithinQueryBudget(queryBudgetOf(spec, productionExecutionReserve), deploymentConfigured)
 		budget := time.Duration(spec.CompletionOffsetSeconds()) * time.Second
 		if wait+productionExecutionReserve >= budget {
 			t.Fatalf("interval=%ds is still inert: settling %s, budget %s", interval, wait, budget)
 		}
-		if wait != minimumSettlingWait {
-			t.Fatalf("interval=%ds settling=%s, want the minimum %s", interval, wait, minimumSettlingWait)
+		if wait != execution.MinimumSettlingWait {
+			t.Fatalf("interval=%ds settling=%s, want the minimum %s", interval, wait, execution.MinimumSettlingWait)
 		}
 	}
 }

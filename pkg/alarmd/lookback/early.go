@@ -480,7 +480,7 @@ func (engine *Engine) nextEarlyWake() time.Time {
 // flight against a next Slot that has begun. The permit is given back
 // before the supplement, as a directed read's is.
 func (engine *Engine) earlyRead(ctx context.Context, slot *directedSlot, release func(), yield <-chan struct{}) {
-	readCtx, cancel := context.WithTimeout(ctx, RecheckTimeout)
+	readCtx, cancel := context.WithTimeout(ctx, engine.rereadTimeout(slot.queryGroup))
 	back := make(chan struct{})
 	if yield != nil {
 		go func() {

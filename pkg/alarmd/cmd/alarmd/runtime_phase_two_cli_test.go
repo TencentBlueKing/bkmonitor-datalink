@@ -83,7 +83,7 @@ func TestCLIRuntimeFactsUseAppliedProfileAndObservationOnly(t *testing.T) {
 	}
 }
 
-func TestCLIControlRPCIsBoundOnlyWhenCLIConfigured(t *testing.T) {
+func TestCLIControlRPCIsBoundIndependentlyOfHTTPAuth(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		cfg := config.Default()
 		cfg.CLI = config.CLIConfig{EnvironmentID: "test", EnvironmentName: "Test", PublicBaseURL: "http://ob.example/alarmd/"}
@@ -100,10 +100,7 @@ func TestCLIControlRPCIsBoundOnlyWhenCLIConfigured(t *testing.T) {
 		// Constructing this surface and binding its handler need no live Redis.
 		_, err = server.ReadEvidence(context.Background(), &pb.EvidenceRequest{EnvironmentId: "wrong"})
 		closeCLI()
-		want := codes.Unimplemented
-		if enabled {
-			want = codes.FailedPrecondition
-		}
+		want := codes.FailedPrecondition
 		if status.Code(err) != want {
 			t.Fatalf("enabled=%v: %v", enabled, err)
 		}

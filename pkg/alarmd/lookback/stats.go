@@ -164,6 +164,9 @@ type Stats struct {
 	// ReadHoldPredecessors is what a successor took each moved Plan's
 	// previous hold from, and the links it skipped, by reason.
 	ReadHoldPredecessors map[string]uint64 `json:"read_hold_predecessors,omitempty"`
+	// ReadHoldSeeds is the groups that started from a seeded arrival age, by
+	// where it came from: peer or cold_start.
+	ReadHoldSeeds map[string]uint64 `json:"read_hold_seeds,omitempty"`
 	// ReadHoldClamped is the Slots frozen at the hold limit because a
 	// transition asked for more: known or fallback.
 	ReadHoldClamped map[string]uint64 `json:"read_hold_transition_clamped,omitempty"`

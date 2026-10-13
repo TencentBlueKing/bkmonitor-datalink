@@ -25,6 +25,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -153,8 +154,21 @@ func TestADifferingAddressIsCountedThroughTheProductionBundle(t *testing.T) {
 		}
 		return counts
 	}
-	if counts := counted("admission_cmdb_address_differs_total"); counts["true"] != 1 || counts["false"] != 0 {
-		t.Fatalf("differing: counted %v, want the one series whose address is not its host's, under grouped_by_target_ip=true", counts)
+	if counts := counted("admission_cmdb_address_differs_total"); counts["true"] != 1 || counts["false"] != 0 || counts["differs"] != 1 {
+		t.Fatalf("differing: counted %v, want the one series whose address is not its host's, under grouped_by_target_ip=true and cause differs", counts)
+	}
+	// And which one it was: the strategy, its Query Group, the host and
+	// both addresses, as fleet.get names them.
+	samples := bundle.addressDiffers.Latest()
+	want := fleet.AddressDiffersSample{Cause: "differs", StrategyID: followsStrategyID, QueryGroup: string(bundle.queryGroups[0]),
+		HostID: "1", Reported: "198.51.100.7", CMDBAddress: followsHostA}
+	if len(samples) != 1 {
+		t.Fatalf("samples %+v, want the one series", samples)
+	}
+	got := samples[0]
+	got.At, got.Tenant, got.Business, got.AgentID = time.Time{}, "", "", ""
+	if got != want {
+		t.Fatalf("sample %+v, want %+v", got, want)
 	}
 	if counts := counted("admission_cmdb_placed_by_host_id_total"); counts["true"] != 2 || counts["false"] != 0 {
 		t.Fatalf("placed: counted %v, want both series CMDB placed by bk_host_id, under grouped_by_target_ip=true", counts)

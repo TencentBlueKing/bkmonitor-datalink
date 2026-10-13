@@ -20,6 +20,47 @@ import (
 // first round; the total counts every one.
 const MaxFirstRoundWaits = 64
 
+// MaxUndeterminedObjects bounds the objects a snapshot, and the deployment,
+// names as undetermined; the total counts every one.
+const MaxUndeterminedObjects = 64
+
+// UndeterminedObject is one owned object with no conclusion that is not only
+// waiting for its first round - one of those the verdict holds at UNKNOWN
+// for: when this replica took it over, its period, and when its next Slot is
+// runnable (zero when no bound is known). Replica is set on the deployment's
+// list.
+type UndeterminedObject struct {
+	QueryGroup      string    `json:"query_group"`
+	IntervalSeconds int64     `json:"interval_seconds,omitempty"`
+	OwnedSince      time.Time `json:"owned_since"`
+	NextDue         time.Time `json:"next_due,omitempty"`
+	Replica         string    `json:"replica,omitempty"`
+}
+
+// aggregateUndetermined puts the replicas' undetermined objects together,
+// longest owned first, each naming its replica, within the bound.
+func aggregateUndetermined(view *View, snapshots []Snapshot) {
+	var all []UndeterminedObject
+	total := 0
+	for _, snapshot := range snapshots {
+		total += snapshot.UndeterminedTotal
+		for _, object := range snapshot.Undetermined {
+			object.Replica = snapshot.Replica
+			all = append(all, object)
+		}
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if !all[i].OwnedSince.Equal(all[j].OwnedSince) {
+			return all[i].OwnedSince.Before(all[j].OwnedSince)
+		}
+		return all[i].QueryGroup < all[j].QueryGroup
+	})
+	if len(all) > MaxUndeterminedObjects {
+		all = all[:MaxUndeterminedObjects]
+	}
+	view.Undetermined, view.UndeterminedTotal = all, total
+}
+
 // FirstRoundWait is one object waiting for its first round.
 type FirstRoundWait struct {
 	QueryGroup      string    `json:"query_group"`
@@ -28,9 +69,12 @@ type FirstRoundWait struct {
 }
 
 // AwaitingFirstRound says whether an owned object that has no conclusion is
-// only waiting for its first round: its period is longer than
-// RestartCatchUpGrace, and its wake is a schedule bound -- not a backoff, not
-// a query cooldown -- ahead of now by no more than one period.
+// only waiting for its first round since this replica took it over: the Slot
+// its bound waits for is the first grid point since then (or one pending from
+// before), and that Slot is not yet runnable. The comparison is on the grid,
+// not on when the Slot becomes runnable: the read wait, a stagger phase and a
+// read hold all sit between the two, and a held Slot is deferred for its data,
+// not for a failure, so it is still waiting.
 //
 // The tracker's "no conclusion" alone does not say no round has run: rounds
 // that did not complete -- not due, deferred, still running, cancelled --
@@ -38,23 +82,29 @@ type FirstRoundWait struct {
 // the bound the scheduler writes back for each of those (recordDueBound):
 // a cancelled, preflight, single-flight-busy or source-error round writes a
 // zero bound, so the wake is clamped to now and is not ahead; a backoff,
-// retry, blocked source or failed execution writes a Deferred bound; a query
-// cooldown writes QueryCooldown. The only bound that is ahead and none of
-// those is source_not_due: the turn really has not come. A change to what
-// recordDueBound writes for any of these moves this exemption's premise.
+// retry, blocked source or failed execution writes a Deferred bound that is
+// not a readiness hold; a query cooldown writes QueryCooldown. A round that
+// ran and did not conclude moves the next Slot past the first grid point. A
+// change to what recordDueBound writes for any of these moves this
+// exemption's premise.
 //
-// The period bound is what keeps this from undoing "owning is not knowing".
-// A replica that has just restarted owns everything and has observed nothing;
-// its minute objects are not exempted and still hold the verdict at UNKNOWN
-// until they speak, so a restart that runs nothing still reads UNKNOWN. What
-// is exempted is an object whose first turn cannot have come yet whatever
-// the replica is doing.
-func AwaitingFirstRound(wake WakeFacts, now time.Time) bool {
-	if !wake.Known || wake.Deferred || wake.Cooling || wake.IntervalSeconds <= 0 {
+// A first Slot behind a read hold longer than its period reads as waiting
+// for the whole hold: its turn really has not come. A hold that sits until
+// the replay age gives up on it therefore shows as waiting, not unknown, for
+// up to that age - by design, not a gap in the rule.
+//
+// "Owning is not knowing" still holds: a replica that has just restarted and
+// runs nothing has, once each object's first Slot is runnable and has not
+// run, objects whose wake is no longer ahead, and the verdict is UNKNOWN.
+func AwaitingFirstRound(wake WakeFacts, ownedSince, now time.Time) bool {
+	if !wake.Known || wake.Cooling || wake.Deferred && !wake.ReadinessHold || wake.IntervalSeconds <= 0 {
+		return false
+	}
+	if ownedSince.IsZero() || wake.NextSlot.IsZero() || !wake.DueAt.After(now) {
 		return false
 	}
 	period := time.Duration(wake.IntervalSeconds) * time.Second
-	return period > RestartCatchUpGrace && wake.DueAt.After(now) && !wake.DueAt.After(now.Add(period))
+	return wake.NextSlot.Before(ownedSince.Add(period))
 }
 
 // FirstRoundWaits is the deployment's objects awaiting their first round, by

@@ -151,6 +151,12 @@ type phaseTwoDueEntry struct {
 	// queue, or backing off would become a way to jump the recovery rotation.
 	deferred      bool
 	queryCooldown bool
+	// nextSlotUnix is the evaluation time of the Slot the bound waits for,
+	// and readinessHold a deferral that is that Slot waiting for its data;
+	// together they tell a reader whether an object is only waiting for its
+	// first round (fleet.AwaitingFirstRound).
+	nextSlotUnix  int64
+	readinessHold bool
 	// heldBack marks that the dispatcher pushed this object back at least once
 	// since its last round returned: no room in the ready queue, or not urgent
 	// enough for the recovery queue. Cleared when the next round returns, and
@@ -358,12 +364,14 @@ func (index *phaseTwoDueIndex) Record(
 		existing.dueAtUnix, existing.intervalSeconds = dueAt, interval
 		existing.deferred = bound.Deferred
 		existing.queryCooldown = bound.QueryCooldown
+		existing.nextSlotUnix, existing.readinessHold = bound.NextSlotUnix, bound.ReadinessHold
 		existing.heldBack = false
 		heap.Fix(&index.pending, existing.position)
 	} else {
 		entry := &phaseTwoDueEntry{
 			queryGroup: queryGroup, lifecycle: lifecycle, dueAtUnix: dueAt,
 			intervalSeconds: interval, deferred: bound.Deferred, queryCooldown: bound.QueryCooldown,
+			nextSlotUnix: bound.NextSlotUnix, readinessHold: bound.ReadinessHold,
 		}
 		index.entries[queryGroup] = entry
 		heap.Push(&index.pending, entry)
@@ -701,8 +709,13 @@ func (index *phaseTwoDueIndex) WakeOf(queryGroup string) fleet.WakeFacts {
 	if !ok {
 		return fleet.WakeFacts{}
 	}
-	return fleet.WakeFacts{Known: true, DueAt: time.Unix(entry.dueAtUnix, 0),
-		IntervalSeconds: entry.intervalSeconds, Deferred: entry.deferred, Cooling: entry.queryCooldown}
+	wake := fleet.WakeFacts{Known: true, DueAt: time.Unix(entry.dueAtUnix, 0),
+		IntervalSeconds: entry.intervalSeconds, Deferred: entry.deferred, Cooling: entry.queryCooldown,
+		ReadinessHold: entry.readinessHold}
+	if entry.nextSlotUnix > 0 {
+		wake.NextSlot = time.Unix(entry.nextSlotUnix, 0)
+	}
+	return wake
 }
 
 // dueEntryHeap orders by wake time, then by name so an ordering is total. The

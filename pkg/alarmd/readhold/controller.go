@@ -99,6 +99,9 @@ type Stats struct {
 	// OwnCorrupt is the groups whose own record did not decode: read as
 	// missing, and replaced at the group's next write.
 	OwnCorrupt uint64
+	// Seeds is the groups that started from a seeded arrival age, by where
+	// it came from (SeedOrigins).
+	Seeds map[string]uint64
 }
 
 // Control uses the existing ownership store. A value and its Plan
@@ -179,7 +182,23 @@ type GroupSpec struct {
 	// (execution.LoweredReadHold): the step the early read lowers by too.
 	Step     time.Duration
 	Previous []Previous
+	// SeedArrivalAge is the arrival age a group with no record of its own
+	// starts from, and SeedOrigin where it came from (SeedPeer,
+	// SeedColdStart). Zero seeds nothing: such a group starts at no hold.
+	SeedArrivalAge time.Duration
+	SeedOrigin     string
 }
+
+// Where a group's first arrival age came from: the measured arrival of the
+// other groups reading the same data source, or, on a source no group has
+// measured, the cold-start age of a new source.
+const (
+	SeedPeer      = "peer"
+	SeedColdStart = "cold_start"
+)
+
+// SeedOrigins is the closed list of them.
+var SeedOrigins = []string{SeedPeer, SeedColdStart}
 
 type Evidence struct {
 	Contract   execution.FrozenExecutionContractRef
@@ -218,6 +237,7 @@ type Controller struct {
 	statsMu      sync.Mutex
 	predecessors map[string]uint64
 	clamped      map[string]uint64
+	seeds        map[string]uint64
 	ownCorrupt   uint64
 }
 
@@ -230,7 +250,7 @@ func NewController(options Options) (*Controller, error) {
 		options.Now = time.Now
 	}
 	return &Controller{options: options, groups: make(map[execution.QueryGroupIdentity]*entry),
-		predecessors: make(map[string]uint64), clamped: make(map[string]uint64)}, nil
+		predecessors: make(map[string]uint64), clamped: make(map[string]uint64), seeds: make(map[string]uint64)}, nil
 }
 
 // Stats copies the counts.
@@ -244,6 +264,12 @@ func (controller *Controller) Stats() Stats {
 	}
 	for source, count := range controller.clamped {
 		stats.Clamped[source] = count
+	}
+	if len(controller.seeds) > 0 {
+		stats.Seeds = make(map[string]uint64, len(controller.seeds))
+		for origin, count := range controller.seeds {
+			stats.Seeds[origin] = count
+		}
 	}
 	return stats
 }
@@ -426,6 +452,35 @@ func (controller *Controller) Inspect(qg execution.QueryGroupIdentity) Inspectio
 		Corrupt: state.corrupt}
 }
 
+// Arrival is the group's arrival age and where it came from (empty for a
+// measured one), read without copying the record: a new group's seed reads
+// every peer on its source.
+func (controller *Controller) Arrival(qg execution.QueryGroupIdentity) (int64, string) {
+	controller.mu.RLock()
+	state := controller.groups[qg]
+	controller.mu.RUnlock()
+	if state == nil {
+		return 0, ""
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.record.ArrivalAgeMillis, state.record.ArrivalAgeSeed
+}
+
+// HasOwnRecord is whether the group's own record has been read and is there
+// and decodes: such a group is never seeded, so no seed need be worked out.
+func (controller *Controller) HasOwnRecord(qg execution.QueryGroupIdentity) bool {
+	controller.mu.RLock()
+	state := controller.groups[qg]
+	controller.mu.RUnlock()
+	if state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.loaded && len(state.raw) > 0 && !state.corrupt
+}
+
 func clone(record Record) Record {
 	if record.PendingHoldMillis != nil {
 		hold := *record.PendingHoldMillis
@@ -605,6 +660,17 @@ func (controller *Controller) seed(state *entry, predecessors map[execution.Quer
 					DeadlineMillis: int64(fact.slot)*1000 + fact.hold + fact.offset, Fallback: fact.bound})
 			}
 		}
+	}
+	// A group with no record of its own starts where its data has been seen
+	// to land, not at the settling wait alone: with the wait at its floor, a
+	// group starting at no hold would read every source that lands later
+	// than the floor incomplete until its own early reads raised it.
+	// A seed that holds nothing seeds nothing: a group with no record is a
+	// group at no hold, which is what a missing record tells its successor.
+	if (len(state.raw) == 0 || state.corrupt) && next.ArrivalAgeMillis == 0 &&
+		state.spec.SeedArrivalAge > state.spec.Delay+state.spec.SettlingWait {
+		next.ArrivalAgeMillis, next.ArrivalAgeSeed = state.spec.SeedArrivalAge.Milliseconds(), state.spec.SeedOrigin
+		controller.counted(controller.seeds, state.spec.SeedOrigin)
 	}
 	if next.ArrivalAgeMillis > 0 {
 		hold := max(0, next.ArrivalAgeMillis-state.spec.Delay.Milliseconds()-state.spec.SettlingWait.Milliseconds())
@@ -1006,7 +1072,13 @@ func (controller *Controller) Observe(ctx context.Context, evidence Evidence) er
 			next.MaxEarlyIntervalMillis = max(next.MaxEarlyIntervalMillis, now-next.LastEarlyMillis)
 		}
 		next.LastEarlyMillis, next.QuietSinceMillis, next.EarlierMatches = now, now, 0
-		next.ArrivalAgeMillis = max(next.ArrivalAgeMillis, evidence.ArrivalAge.Milliseconds())
+		// The group's own arrival replaces a seed outright: the seed was
+		// where reading started, not a measurement to keep the larger of.
+		if next.ArrivalAgeSeed != "" {
+			next.ArrivalAgeMillis, next.ArrivalAgeSeed = evidence.ArrivalAge.Milliseconds(), ""
+		} else {
+			next.ArrivalAgeMillis = max(next.ArrivalAgeMillis, evidence.ArrivalAge.Milliseconds())
+		}
 		next.Rung, next.Buckets = evidence.Rung, append([]int64(nil), evidence.Buckets...)
 		for _, ref := range state.spec.Plans {
 			plan := PlanRecord{PlanRef: ref}
@@ -1069,6 +1141,7 @@ func (controller *Controller) EarlierRead(ctx context.Context, evidence EarlierE
 			next.PendingHoldMillis = &candidate
 			next.Lowered, next.EarlierMatches, next.QuietSinceMillis = true, 0, now
 			next.ArrivalAgeMillis = state.spec.Delay.Milliseconds() + state.spec.SettlingWait.Milliseconds() + candidate
+			next.ArrivalAgeSeed = ""
 		}
 	}
 	return controller.persist(ctx, evidence.Contract.Slot.QueryGroup, state, next, nil)

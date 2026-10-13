@@ -30,6 +30,7 @@ func capacitySnapshotSource(
 	rejections *fleet.RejectionTally,
 	rotation func() *fleet.Rotation,
 	pulled *fleet.SeriesPullTally,
+	shape func() *fleet.SchedulerShape,
 ) func() *fleet.Capacity {
 	// The same derivation the startup profile and check-config print, so the
 	// page cannot report a ceiling the process is not actually running with.
@@ -86,6 +87,9 @@ func capacitySnapshotSource(
 			capacity.Rotation = rotation()
 		}
 		capacity.Pulled = pulled.Counts()
+		if shape != nil {
+			capacity.Shape = shape()
+		}
 		if usage.MemoryKnown {
 			capacity.MemoryUsed = usage.MemoryBytes
 		}

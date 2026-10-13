@@ -117,8 +117,9 @@ func TestReadinessIsTheSameInstantForEveryOperation(t *testing.T) {
 					"waited -- every round, for every Slot of this period that misses its live deadline",
 					interval, time.Duration(normal)*time.Millisecond, time.Duration(recovered)*time.Millisecond)
 			}
-			// The wait is still the schedule's own, not one value for everyone.
-			want := settlingWaitWithinBudget(execution.DeriveScheduleSpec(int64(interval/time.Second)), 30*time.Second,
+			// The wait is still the schedule's own, not one value for everyone:
+			// its read wait, the settling floor and the group's phase.
+			want := readWaitWithinBudget(unphasedQueryGroup, execution.DeriveScheduleSpec(int64(interval/time.Second)), 30*time.Second,
 				time.Duration(frozenExecutionReserveMilli(t))*time.Millisecond)
 			if time.Duration(normal)*time.Millisecond != want {
 				t.Fatalf("interval=%s reads at T+%s, want the schedule's settling wait %s",
@@ -271,7 +272,9 @@ func TestSourceFutureReadinessReturnsWithoutWaitingInExecution(t *testing.T) {
 	if !errors.As(err, &deferred) {
 		t.Fatalf("Execute(future readiness) error=%v, want typed readiness deferral", err)
 	}
-	wantReadyAt := evaluationTime.Add(30 * time.Second)
+	// The settling floor: the deployment's 30 s is a read hold's cold start,
+	// which access does not hold.
+	wantReadyAt := evaluationTime.Add(execution.MinimumSettlingWait)
 	if !deferred.ReadinessReadyAt().Equal(wantReadyAt) {
 		t.Fatalf("readiness ready_at=%s, want %s", deferred.ReadinessReadyAt(), wantReadyAt)
 	}
@@ -344,7 +347,9 @@ func TestSourceMixedReadinessPreservesPerQueryWaitInsteadOfSlotWideDeferral(t *t
 	if err != nil {
 		t.Fatalf("Execute(mixed readiness) error=%v, want existing per-query wait path", err)
 	}
-	if waited != 30*time.Second || consumer.begin != 1 || len(provider.attempts) != 2 ||
+	// The dependency is readable on arrival and the primary 10 s later, at
+	// the settling floor: one wait, inside the execution.
+	if waited != execution.MinimumSettlingWait || consumer.begin != 1 || len(provider.attempts) != 2 ||
 		len(permits.attempts) != 2 || len(completion.PhysicalQueries) != 2 {
 		t.Fatalf("wait=%s begin=%d provider=%d permits=%d completion=%+v",
 			waited, consumer.begin, len(provider.attempts), len(permits.attempts), completion)

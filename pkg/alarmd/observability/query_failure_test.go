@@ -72,6 +72,9 @@ func TestQueryFailureCodesFollowBoundedGrammarInsteadOfWhitelist(t *testing.T) {
 		{"provider detail kept", QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: "QUERY_UNAVAILABLE", Detail: "transport=connection_refused"}, QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: "QUERY_UNAVAILABLE", Detail: "transport=connection_refused"}},
 		{"http detail kept", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}},
 		{"free text detail dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "body: {\"error\":\"table x\"}"}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
+		{"http status kept", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}},
+		{"status outside HTTP dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 700}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
+		{"status below HTTP dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 99}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
 		{"long detail dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: strings.Repeat("a", 97)}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -92,7 +95,7 @@ func TestQueryFailureCodesFollowBoundedGrammarInsteadOfWhitelist(t *testing.T) {
 
 func TestQueryFailureFactsSurviveWithoutErrorForDegradedProviderResults(t *testing.T) {
 	var output bytes.Buffer
-	facts := QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}
+	facts := QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503", HTTPStatus: 503}
 	newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{
 		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
 		ReasonCode: "QUERY_UNAVAILABLE", QueryFailure: &facts,
@@ -105,6 +108,7 @@ func TestQueryFailureFactsSurviveWithoutErrorForDegradedProviderResults(t *testi
 	for field, want := range map[string]any{
 		"failure_stage": "provider", "failure_category": "source_backend", "failure_code": "QUERY_UNAVAILABLE",
 		"failure_detail": "http_status=503", "reason_code": "QUERY_UNAVAILABLE", "query_group_key": "query-group-1",
+		"failure_http_status": float64(503),
 	} {
 		if event[field] != want {
 			t.Fatalf("event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)

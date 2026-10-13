@@ -43,7 +43,11 @@ func TestStoreInspectReadsThePoolRecordTheOwnerWrote(t *testing.T) {
 	entered := time.Unix(1_790_000_000, 0).UTC()
 	record := scheduler.QueryCooldownRecord{QueryGroup: "qg-pooled", OwnerEpoch: 7, EnteredAt: entered,
 		Until: entered.Add(3 * time.Minute), LastQueryAt: entered.Add(time.Minute), Failures: 5,
-		ExitedAt: entered.Add(-time.Hour), ExitReason: scheduler.QueryCooldownRecovered, Reentries: 1}
+		ExitedAt: entered.Add(-time.Hour), ExitReason: scheduler.QueryCooldownRecovered, Reentries: 1,
+		RunTimesMillis: []int64{28_100, 29_900}, CeilingMillis: 30_000,
+		Probes: []observability.QueryCooldownProbe{{At: entered, Operation: "normal", Outcome: observability.QueryCooldownProbeAnswered,
+			Measured: true, BudgetMillis: 36_000, ElapsedMillis: 29_900, Rule: observability.QueryCooldownRuleNearCeiling,
+			CeilingMillis: 30_000, RunSpreadMillis: 1_800}}}
 	writer := newProductionQueryCooldownStore(cfg, client, metric.NewRecorder(metric.BuildInfo{}), observability.NopObserver{})
 	fence := execution.OwnerFence{QueryGroup: "qg-pooled", OwnerID: "worker", OwnerEpoch: 7, LeaseToken: "token"}
 	if err := writer.SaveQueryCooldown(ctx, fence, record); err != nil {
@@ -83,7 +87,9 @@ func TestStoreInspectReadsThePoolRecordTheOwnerWrote(t *testing.T) {
 	raw, _ := json.Marshal(got.Value)
 	var back scheduler.QueryCooldownRecord
 	if err := json.Unmarshal(raw, &back); err != nil || back.OwnerEpoch != 7 || back.Failures != 5 || !back.EnteredAt.Equal(entered) ||
-		back.ExitReason != scheduler.QueryCooldownRecovered || back.Reentries != 1 || !back.Until.Equal(record.Until) {
+		back.ExitReason != scheduler.QueryCooldownRecovered || back.Reentries != 1 || !back.Until.Equal(record.Until) ||
+		back.CeilingMillis != 30_000 || len(back.RunTimesMillis) != 2 || len(back.Probes) != 1 ||
+		back.Probes[0].Rule != observability.QueryCooldownRuleNearCeiling || back.Probes[0].RunSpreadMillis != 1_800 {
 		t.Fatalf("record read back = %s (%v), want what the owner wrote", raw, err)
 	}
 	if missing := read("qg-never-pooled"); missing.Status != "missing" {

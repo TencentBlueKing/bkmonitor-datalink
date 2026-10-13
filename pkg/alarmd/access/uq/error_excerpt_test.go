@@ -83,7 +83,7 @@ func TestOnlyADiagnosticReadKeepsTheErrorBody(t *testing.T) {
 		t.Fatalf("attempt %+v, want the status alone", attempt)
 	}
 	diagnostic := diagnosticFixture(t, http.StatusBadRequest, body)
-	result, err := diagnostic.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{})
+	result, err := diagnostic.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{}, 0)
 	if err != nil || result.Completion == nil || result.Completion.ErrorExcerpt != body ||
 		len(result.Completion.RouteDetails) != 1 || result.Completion.RouteDetails[0] != "http_status=400" {
 		t.Fatalf("diagnostic %+v error %v, want the status beside the body's excerpt", result.Completion, err)

@@ -34,6 +34,7 @@ const (
 	ObserverRejectionTally = "rejection_tally"
 	ObserverCostSummary    = "cost_summary"
 	ObserverRetainedPeaks  = "retained_peaks"
+	ObserverWarmingPeak    = "warming_peak"
 	// ObserverUnnamed is an observer a fan-out was given without a name.
 	ObserverUnnamed = "unnamed"
 	// ObserverEntry is a panic outside any fan-out member: in the
@@ -44,7 +45,7 @@ const (
 
 // ObserverNames is every name a panic is counted under.
 var ObserverNames = []string{ObserverTracker, ObserverRecorder, ObserverLogging, ObserverAdditional, ObserverTargetFlow,
-	ObserverRejectionTally, ObserverCostSummary, ObserverRetainedPeaks, ObserverUnnamed, ObserverEntry}
+	ObserverRejectionTally, ObserverCostSummary, ObserverRetainedPeaks, ObserverWarmingPeak, ObserverUnnamed, ObserverEntry}
 
 var observerPanics = func() map[string]*atomic.Uint64 {
 	counts := make(map[string]*atomic.Uint64, len(ObserverNames))

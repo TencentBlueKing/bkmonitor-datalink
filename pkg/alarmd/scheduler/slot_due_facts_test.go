@@ -24,8 +24,8 @@ func TestNextReportsTheFutureSlotAsABound(t *testing.T) {
 	if err != nil || due {
 		t.Fatalf("Next() due=%v error=%v", due, err)
 	}
-	if facts.NotDueUntilUnix != 60 {
-		t.Fatalf("not-due bound = %d, want the Slot second 60", facts.NotDueUntilUnix)
+	if facts.NotDueUntilUnix != 60 || facts.NextSlotUnix != 60 {
+		t.Fatalf("not-due bound = %d, next Slot %d, want the Slot second 60 for both", facts.NotDueUntilUnix, facts.NextSlotUnix)
 	}
 	if facts.IntervalSeconds != 60 {
 		t.Fatalf("interval = %d, want 60; without it a late wake cannot be scaled to its cadence",
@@ -98,7 +98,7 @@ func TestRunnerBoundsFollowTheReturnPath(t *testing.T) {
 	slot := frozenSlot("query-group-1")
 
 	t.Run("not due carries the source bound", func(t *testing.T) {
-		source := &fakeSlotSource{facts: SlotDueFacts{NotDueUntilUnix: 1_060, IntervalSeconds: 60}}
+		source := &fakeSlotSource{facts: SlotDueFacts{NotDueUntilUnix: 1_060, NextSlotUnix: 1_060, IntervalSeconds: 60}}
 		runner, err := NewRunner("query-group-1", &fakeSession{fence: slot.Dispatch.OwnerFence},
 			source, workflowExecutor(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
 				return execution.SlotExecutionResult{Completed: true}, nil
@@ -110,7 +110,7 @@ func TestRunnerBoundsFollowTheReturnPath(t *testing.T) {
 			t.Fatalf("RunOne() attempted=%v error=%v", attempted, err)
 		}
 		bound := runner.DueBound()
-		if bound.Verdict != DueVerdictNotDue || bound.NotDueUntilUnix != 1_060 ||
+		if bound.Verdict != DueVerdictNotDue || bound.NotDueUntilUnix != 1_060 || bound.NextSlotUnix != 1_060 || bound.ReadinessHold ||
 			bound.IntervalSeconds != 60 || bound.Deferred || bound.Executed {
 			t.Fatalf("not-due bound = %+v", bound)
 		}

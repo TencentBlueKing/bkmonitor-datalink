@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -27,10 +29,14 @@ const (
 	legacyTrustWindow = 2 * time.Minute
 	// legacyIdleExpiry drops entries nobody has asked for.
 	legacyIdleExpiry = 5 * time.Minute
-	// legacyRefreshDeadline bounds the read a resolution performs itself
-	// when the entry it needs is missing or due. It is the same bound the
-	// maintenance loop gives its own refresh of one Plan.
-	legacyRefreshDeadline = 250 * time.Millisecond
+	// legacyRefreshFloor and legacyRefreshCeiling bound the read a
+	// resolution, or the maintenance loop, performs itself: half of what the
+	// caller has left, never above the ceiling, never below the floor, and
+	// never past the caller's own deadline (RefreshDeadline).
+	legacyRefreshFloor   = 250 * time.Millisecond
+	legacyRefreshCeiling = time.Second
+	// MaxEffectiveTimeUnread bounds the dependencies Unread names.
+	MaxEffectiveTimeUnread = 16
 	// legacyCalendarEntryBytes is what one calendar entry costs in memory:
 	// the entry keeps a count and a digest, not the occurrences.
 	legacyCalendarEntryBytes = 160
@@ -73,7 +79,42 @@ type LegacyEffectiveTime struct {
 	mu                   sync.RWMutex
 	business             map[string]legacyBusiness
 	calendars            map[string]legacyCalendar
+	// failures is the dependencies whose latest read failed, by dependency
+	// key, until one succeeds or nobody has asked for idle expiry.
+	failures map[string]legacyFailure
+	// refreshes counts the refreshes that read anything, by result.
+	refreshes   [len(EffectiveTimeRefreshResults)]atomic.Uint64
+	failureLine func(dependency, class string, failures uint64)
 }
+
+// EffectiveTimeRefreshResults is every result a refresh is counted under.
+var EffectiveTimeRefreshResults = [...]string{"ok", "timeout", "error"}
+
+type legacyFailure struct {
+	tenant, business string
+	// calendar is 0 for the business timezone entry.
+	calendar    int64
+	class       string
+	since, last time.Time
+	logged      time.Time
+	unlogged    uint64
+}
+
+// legacyReadError is a read that failed on one dependency, with the class
+// it is reported under.
+type legacyReadError struct {
+	calendar int64
+	class    string
+	err      error
+}
+
+func (e *legacyReadError) Error() string { return e.err.Error() }
+func (e *legacyReadError) Unwrap() error { return e.err }
+
+func failedOn(calendar int64, class string, err error) error {
+	return &legacyReadError{calendar: calendar, class: class, err: err}
+}
+
 type legacyBusiness struct {
 	zone     string
 	location *time.Location
@@ -100,7 +141,98 @@ type legacyCalendar struct {
 
 func NewLegacyEffectiveTime(calendar, cmdb redis.Cmdable, prefix string, now func() time.Time, maxEntries, maxBytes int) *LegacyEffectiveTime {
 	return &LegacyEffectiveTime{calendar: calendar, cmdb: cmdb, prefix: prefix, now: now, maxEntries: maxEntries, maxBytes: maxBytes,
-		business: make(map[string]legacyBusiness), calendars: make(map[string]legacyCalendar)}
+		business: make(map[string]legacyBusiness), calendars: make(map[string]legacyCalendar), failures: make(map[string]legacyFailure)}
+}
+
+// SetFailureLine sets what a failed read writes: at most once per
+// legacyReadInterval for each dependency, with the failures since the last
+// line. Set before the first resolution.
+func (c *LegacyEffectiveTime) SetFailureLine(line func(dependency, class string, failures uint64)) {
+	c.failureLine = line
+}
+
+// RefreshDeadline is how long a refresh made on behalf of ctx may take:
+// half of what the caller has left, at most legacyRefreshCeiling, at least
+// legacyRefreshFloor, and never more than the caller has left. A caller
+// without a deadline gets the ceiling.
+func RefreshDeadline(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return legacyRefreshCeiling
+	}
+	return refreshBudget(time.Until(deadline))
+}
+
+func refreshBudget(remaining time.Duration) time.Duration {
+	return max(0, min(remaining, max(legacyRefreshFloor, min(remaining/2, legacyRefreshCeiling))))
+}
+
+// RefreshCounts is the refreshes that read anything, by result, in the
+// order of EffectiveTimeRefreshResults.
+func (c *LegacyEffectiveTime) RefreshCounts() map[string]uint64 {
+	out := make(map[string]uint64, len(EffectiveTimeRefreshResults))
+	for index, result := range EffectiveTimeRefreshResults {
+		out[result] = c.refreshes[index].Load()
+	}
+	return out
+}
+
+// EffectiveTimeUnread is a dependency whose latest read failed and whose
+// memory is not trusted any more, so every Plan that names it resolves
+// UNKNOWN: the business timezone (Calendar 0) or one calendar.
+type EffectiveTimeUnread struct {
+	Tenant   string `json:"tenant"`
+	Business string `json:"business"`
+	Calendar int64  `json:"calendar,omitempty"`
+	Class    string `json:"class"`
+	// FailingSince is the first failed read since the last good one;
+	// LastRead the last good one, absent when it never was (a pointer: the
+	// release toolchain's encoder does not honour omitzero).
+	FailingSince time.Time  `json:"failing_since"`
+	LastRead     *time.Time `json:"last_read,omitempty"`
+}
+
+// Unread names the dependencies a Plan cannot be resolved for now, oldest
+// failure first and at most MaxEffectiveTimeUnread, with how many there are.
+func (c *LegacyEffectiveTime) Unread() ([]EffectiveTimeUnread, int) {
+	if c == nil {
+		return nil, 0
+	}
+	now := c.now()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	var out []EffectiveTimeUnread
+	for _, failure := range c.failures {
+		var read time.Time
+		if failure.calendar == 0 {
+			read = c.business[failure.tenant+"\x00"+failure.business].read
+		} else {
+			read = c.calendars[failure.tenant+"\x00"+strconv.FormatInt(failure.calendar, 10)].read
+		}
+		if now.Sub(read) <= legacyTrustWindow {
+			continue
+		}
+		unread := EffectiveTimeUnread{Tenant: failure.tenant, Business: failure.business, Calendar: failure.calendar,
+			Class: failure.class, FailingSince: failure.since}
+		if !read.IsZero() {
+			unread.LastRead = &read
+		}
+		out = append(out, unread)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].FailingSince.Equal(out[j].FailingSince) {
+			return out[i].FailingSince.Before(out[j].FailingSince)
+		}
+		if out[i].Business != out[j].Business {
+			return out[i].Business < out[j].Business
+		}
+		return out[i].Calendar < out[j].Calendar
+	})
+	total := len(out)
+	if total > MaxEffectiveTimeUnread {
+		out = out[:MaxEffectiveTimeUnread]
+	}
+	return out, total
 }
 
 func (c *LegacyEffectiveTime) Provider() strategy.EffectiveTimeProvider {
@@ -126,8 +258,9 @@ func (c *LegacyEffectiveTime) ensureFresh(ctx context.Context, request strategy.
 	if !c.due(request.TenantID, request.BusinessID, ids) {
 		return
 	}
-	bounded, cancel := context.WithTimeout(ctx, legacyRefreshDeadline)
+	bounded, cancel := context.WithTimeout(ctx, RefreshDeadline(ctx))
 	defer cancel()
+	// Counted, written and named by Refresh; the memory decides.
 	_ = c.Refresh(bounded, request.TenantID, request.BusinessID, ids)
 }
 
@@ -148,11 +281,92 @@ func (c *LegacyEffectiveTime) due(tenant, business string, ids []int64) bool {
 
 // Refresh reads the business timezone and the calendars named. Identical
 // dependencies are read at most once per legacyReadInterval and unused
-// entries expire, with a hard memory bound.
+// entries expire, with a hard memory bound. A refresh that read anything is
+// counted by result; a failed one is remembered against the dependency it
+// failed on, until a read of it succeeds, and written at most once a minute
+// for each.
 func (c *LegacyEffectiveTime) Refresh(ctx context.Context, tenant, business string, ids []int64) error {
 	if c == nil || c.cmdb == nil {
 		return errors.New("legacy effective time cache is unavailable")
 	}
+	if !c.due(tenant, business, ids) {
+		return c.refresh(ctx, tenant, business, ids)
+	}
+	err := c.refresh(ctx, tenant, business, ids)
+	c.noteRefresh(ctx, tenant, business, ids, err)
+	return err
+}
+
+// noteRefresh counts a refresh that was due and keeps its failure: a read
+// error names the dependency it stopped on, and the ones before it were
+// read.
+func (c *LegacyEffectiveTime) noteRefresh(ctx context.Context, tenant, business string, ids []int64, err error) {
+	var failed *legacyReadError
+	if err != nil && !errors.As(err, &failed) {
+		failed = &legacyReadError{class: "error", err: err}
+	}
+	result := 0
+	if failed != nil {
+		result = 2
+		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			result, failed.class = 1, "timeout"
+		}
+	}
+	c.refreshes[result].Add(1)
+	now := c.now()
+	var line func()
+	c.mu.Lock()
+	for key, failure := range c.failures {
+		if now.Sub(failure.last) > legacyIdleExpiry {
+			delete(c.failures, key)
+		}
+	}
+	read := append([]int64{0}, ids...)
+	if failed != nil {
+		for index, id := range read {
+			if id == failed.calendar {
+				read = read[:index]
+				break
+			}
+		}
+	}
+	for _, id := range read {
+		delete(c.failures, failureKey(tenant, business, id))
+	}
+	if failed != nil {
+		key := failureKey(tenant, business, failed.calendar)
+		failure, seen := c.failures[key]
+		if !seen {
+			if len(c.failures) >= c.maxEntries {
+				c.mu.Unlock()
+				return
+			}
+			failure = legacyFailure{tenant: tenant, business: business, calendar: failed.calendar, since: now}
+		}
+		failure.class, failure.last = failed.class, now
+		failure.unlogged++
+		if c.failureLine != nil && now.Sub(failure.logged) >= legacyReadInterval {
+			dependency, class, count := key, failure.class, failure.unlogged
+			line = func() { c.failureLine(dependency, class, count) }
+			failure.logged, failure.unlogged = now, 0
+		}
+		c.failures[key] = failure
+	}
+	c.mu.Unlock()
+	if line != nil {
+		line()
+	}
+}
+
+// failureKey names a dependency the way its failure line does.
+func failureKey(tenant, business string, calendar int64) string {
+	if calendar == 0 {
+		return "business/" + tenant + "/" + business
+	}
+	return "calendar/" + tenant + "/" + strconv.FormatInt(calendar, 10)
+}
+
+func (c *LegacyEffectiveTime) refresh(ctx context.Context, tenant, business string, ids []int64) error {
 	now := c.now()
 	// Nothing due and nothing to prune is answered under the read lock. The
 	// maintenance loop asks once a second for every legacy Plan it holds,
@@ -185,10 +399,10 @@ func (c *LegacyEffectiveTime) Refresh(ctx context.Context, tenant, business stri
 	if now.Sub(b.read) >= legacyReadInterval {
 		raw, err := c.cmdb.HGet(ctx, c.prefix+".cache.cmdb.business", business).Bytes()
 		if err != nil {
-			return err
+			return failedOn(0, "read", err)
 		}
 		if len(raw) > c.maxBytes {
-			return errors.New("legacy business cache exceeds byte budget")
+			return failedOn(0, "too_large", errors.New("legacy business cache exceeds byte budget"))
 		}
 		var value struct {
 			Tenant string `json:"bk_tenant_id"`
@@ -198,7 +412,7 @@ func (c *LegacyEffectiveTime) Refresh(ctx context.Context, tenant, business stri
 			} `json:"extend"`
 		}
 		if err := json.Unmarshal(raw, &value); err != nil {
-			return err
+			return failedOn(0, "decode", err)
 		}
 		if value.Tenant == "" {
 			// constants/common.py DEFAULT_TENANT_ID, as the Python business
@@ -206,14 +420,14 @@ func (c *LegacyEffectiveTime) Refresh(ctx context.Context, tenant, business stri
 			value.Tenant = "system"
 		}
 		if value.Tenant != tenant {
-			return errors.New("legacy business cache tenant mismatch")
+			return failedOn(0, "tenant_mismatch", errors.New("legacy business cache tenant mismatch"))
 		}
 		if value.Extend.Zone != "" {
 			value.Zone = value.Extend.Zone
 		}
 		location, err := time.LoadLocation(value.Zone)
 		if err != nil || value.Zone == "" || value.Zone == "Local" {
-			return errors.New("legacy business timezone missing or invalid")
+			return failedOn(0, "timezone_invalid", errors.New("legacy business timezone missing or invalid"))
 		}
 		c.mu.Lock()
 		if len(c.business) < c.maxEntries || !b.read.IsZero() {
@@ -230,18 +444,18 @@ func (c *LegacyEffectiveTime) Refresh(ctx context.Context, tenant, business stri
 			continue
 		}
 		if c.calendar == nil {
-			return errors.New("legacy calendar connection is unavailable")
+			return failedOn(id, "unavailable", errors.New("legacy calendar connection is unavailable"))
 		}
 		raw, err := c.calendar.GetRange(ctx, c.prefix+".cache.calendar."+strconv.FormatInt(id, 10), 0, int64(c.maxBytes)).Bytes()
 		if err != nil && !errors.Is(err, redis.Nil) {
-			return err
+			return failedOn(id, "read", err)
 		}
 		if len(raw) > c.maxBytes {
-			return errors.New("legacy calendar exceeds byte budget")
+			return failedOn(id, "too_large", errors.New("legacy calendar exceeds byte budget"))
 		}
 		occurrences, err := countLegacyOccurrences(raw, tenant)
 		if err != nil {
-			return err
+			return failedOn(id, "decode", err)
 		}
 		digest := sha256.Sum256(raw)
 		c.mu.Lock()
@@ -249,7 +463,7 @@ func (c *LegacyEffectiveTime) Refresh(ctx context.Context, tenant, business stri
 			c.calendars[key] = legacyCalendar{occurrences: occurrences, revision: hex.EncodeToString(digest[:]), read: now}
 		} else {
 			c.mu.Unlock()
-			return errors.New("legacy calendar memory budget exhausted")
+			return failedOn(id, "memory_budget", errors.New("legacy calendar memory budget exhausted"))
 		}
 		c.mu.Unlock()
 	}

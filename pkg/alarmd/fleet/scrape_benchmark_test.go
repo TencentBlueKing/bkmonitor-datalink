@@ -88,7 +88,7 @@ func BenchmarkFleetVerdictScrape(b *testing.B) {
 						b.Fatal(err)
 					}
 				}
-				view, part := AggregateSummaries(expectation, digest, decoded, names, now, freshness, unread)
+				view, part := aggregateSummaries(expectation, digest, decoded, names, now, freshness, unread, controlRead{})
 				_ = CheckLines(&view, part, now)
 			}
 			b.ReportMetric(float64(size(summaries)), "bytes-read")
@@ -114,7 +114,7 @@ func BenchmarkFleetVerdictScrape(b *testing.B) {
 					}
 					fresh = append(fresh, summaryFromSnapshot(snapshot, stallAfter))
 				}
-				view, part := AggregateSummaries(expectation, digest, fresh, names, now, freshness, unread)
+				view, part := aggregateSummaries(expectation, digest, fresh, names, now, freshness, unread, controlRead{})
 				_ = CheckLines(&view, part, now)
 			}
 			b.ReportMetric(float64(size(oldSummaries)+size(snapshots)), "bytes-read")

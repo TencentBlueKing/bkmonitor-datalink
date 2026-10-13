@@ -32,8 +32,8 @@ func TestClientRecordsHTTPStatusDetailWithoutBody(t *testing.T) {
 	client := fixtureClient(t, http.StatusServiceUnavailable, `{"error":"table secret_table does not exist"}`, DefaultLimits())
 	completion, err := client.Execute(context.Background(), validAttempt(t), &collectingSink{})
 	attempt := failedAttempt(t, completion, err)
-	if attempt.ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) || attempt.Detail != "http_status=503" {
-		t.Fatalf("attempt=%+v, want QUERY_UNAVAILABLE http_status=503", attempt)
+	if attempt.ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) || attempt.Detail != "http_status=503" || attempt.HTTPStatus != 503 {
+		t.Fatalf("attempt=%+v, want QUERY_UNAVAILABLE http_status=503 with the status as a number", attempt)
 	}
 	if completion.DataState != execution.DataStateUnknown {
 		t.Fatalf("non-200 changed data state: %+v", completion)

@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/storecensus"
@@ -85,7 +86,9 @@ type phaseTwoApplicationDependencies struct {
 		*observability.Logger,
 		*phaseTwoApplicationHealth,
 	) (*phaseTwoWorkerBundle, error)
-	newHTTP func(*metric.Recorder, observability.HealthSource, httpSurface) (httpRuntime, error)
+	openRoles      func(config.Config, *metric.Recorder, *observability.RuntimeConfigFacts, *observability.Logger) (*phaseTwoRoleRuntime, error)
+	openRoleBundle func(context.Context, config.Config, *metric.Recorder, *observability.Logger, *phaseTwoApplicationHealth, *phaseTwoRoleRuntime) (*phaseTwoWorkerBundle, error)
+	newHTTP        func(*metric.Recorder, observability.HealthSource, httpSurface) (httpRuntime, error)
 	// lifecycle opens the process's start/stop record; nil records nothing.
 	lifecycle func(config.Config) *lifecycleRecord
 }
@@ -115,6 +118,7 @@ func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {
 	return phaseTwoApplicationDependencies{
 		configureCPU: configurePhaseTwoCPU, lifecycle: newLifecycleRecord,
 		run: runPhaseTwoApplication, openBundle: openProductionPhaseTwoBundle,
+		openRoles: openPhaseTwoRoleRuntime, openRoleBundle: openProductionRoleBundle,
 		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, surface httpSurface) (httpRuntime, error) {
 			options := []httpservice.Option{httpservice.WithDiagnosticsAddress(surface.Diagnostics), httpservice.WithInternalAddress(surface.Internal),
 				httpservice.WithAdminKeySecret(surface.AdminKeySecret)}
@@ -143,7 +147,9 @@ func newPhaseTwoApplication(cfg config.Config) (*phaseTwoApplication, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate phase-two application configuration: %w", err)
 	}
-	return &phaseTwoApplication{health: newPhaseTwoApplicationHealth()}, nil
+	health := newPhaseTwoApplicationHealth()
+	health.selectedRoles = cfg.EffectiveRoles()
+	return &phaseTwoApplication{health: health}, nil
 }
 
 func runPhaseTwoApplication(
@@ -165,7 +171,7 @@ func runPhaseTwoApplicationWithDependencies(
 	if ctx == nil || recorder == nil {
 		return errors.New("phase-two application requires context and metric recorder")
 	}
-	if dependencies.openBundle == nil {
+	if dependencies.openBundle == nil && dependencies.openRoleBundle == nil {
 		return errPhaseTwoWorkerBundleNotAssembled
 	}
 	if dependencies.newHTTP == nil {
@@ -244,7 +250,25 @@ func runPhaseTwoApplicationWithDependencies(
 	}
 	defer lifecycle.close()
 	lifecycle.start()
-	bundle, err := dependencies.openBundle(runtimeContext, cfg, recorder, logger, application.health)
+	var roleRuntime *phaseTwoRoleRuntime
+	if dependencies.openRoles != nil {
+		roleRuntime, err = dependencies.openRoles(cfg, recorder, &profile, logger)
+		if err == nil {
+			defer roleRuntime.Close()
+			server.SetPublicSurfaceRestricted(roleRuntime.Channel.Restricted)
+			server.SetAPI(roleRuntime.Channel.Handler)
+			server.SetGRPC(roleRuntime.EvidenceServer)
+			roleRuntime.Start(runtimeContext, application.health)
+		}
+	}
+	var bundle *phaseTwoWorkerBundle
+	if err == nil {
+		if dependencies.openRoleBundle != nil {
+			bundle, err = dependencies.openRoleBundle(runtimeContext, cfg, recorder, logger, application.health, roleRuntime)
+		} else {
+			bundle, err = dependencies.openBundle(runtimeContext, cfg, recorder, logger, application.health)
+		}
+	}
 	if err == nil && bundle != nil {
 		// Publish startup facts before making the evidence handler reachable.
 		bundle.runtimeConfig = &profile
@@ -271,8 +295,20 @@ func runPhaseTwoApplicationWithDependencies(
 		httpErr := waitRuntimeComponent(httpDone, time.Now().Add(cfg.ShutdownTimeout.Duration()))
 		return errors.Join(err, normalizeRuntimeShutdownError(httpErr, false))
 	}
+	if bundle == nil && roleRuntime == nil {
+		cancelRuntime()
+		cancelHTTP()
+		_ = waitRuntimeComponent(httpDone, time.Now().Add(cfg.ShutdownTimeout.Duration()))
+		return errPhaseTwoWorkerBundleNotAssembled
+	}
 	bundleDone := make(chan error, 1)
-	go func() { bundleDone <- bundle.Run(runtimeContext) }()
+	go func() {
+		if bundle != nil {
+			bundleDone <- bundle.Run(runtimeContext)
+			return
+		}
+		bundleDone <- roleRuntime.Run(runtimeContext, application.health)
+	}()
 
 	var runErr, httpErr error
 	bundleFinished := false
@@ -318,7 +354,11 @@ func runPhaseTwoApplicationWithDependencies(
 	// drained: a stop that cancelled Slots at the deadline is one whose
 	// events may be sent again by the next owner, and this record is the
 	// one reading of it that outlives the Pod.
-	lifecycle.stop(stopReason, stopErr, bundle.shutdownDrain())
+	var drain *observability.SlotDrainFacts
+	if bundle != nil {
+		drain = bundle.shutdownDrain()
+	}
+	lifecycle.stop(stopReason, stopErr, drain)
 	result := errors.Join(
 		normalizeRuntimeShutdownError(runErr, bundleStoppedEarly),
 		normalizeRuntimeShutdownError(httpErr, httpStoppedEarly),
@@ -523,11 +563,12 @@ type phaseTwoQueryGroupLifecycle struct {
 	runner phaseTwoQueryGroupRuntime
 	cancel context.CancelFunc
 	done   chan struct{}
-	// inflight counts this Query Group's Slots that are executing, and idle
-	// is closed when it falls back to zero; both under the bundle's lock. A
-	// Slot is counted in the same step that finds its lifecycle current, so
-	// once a lifecycle is detached no Slot can start on it, and a release
-	// that waits on idle waits for exactly the Slots already running.
+	// inflight counts this Query Group's Slots that are executing, and the
+	// other work acting on its lease (enterOwnedWork), and idle is closed
+	// when it falls back to zero; both under the bundle's lock. Each is
+	// counted in the same step that finds its lifecycle current, so once a
+	// lifecycle is detached nothing can start on it, and a release that
+	// waits on idle waits for exactly what is already running.
 	inflight int
 	idle     chan struct{}
 }
@@ -577,7 +618,11 @@ type phaseTwoQueryGroupRuntime interface {
 }
 
 type phaseTwoWorkerBundleDependencies struct {
-	Config     config.Config
+	Config config.Config
+	// Flights is the process's query coordinator, whose budget the bundle
+	// sizes from the work it owns (schedulerShaper); nil keeps the startup
+	// shape.
+	Flights    *scheduler.FlightCoordinator
 	Health     *phaseTwoApplicationHealth
 	Control    phaseTwoControlRuntime
 	Ownership  phaseTwoOwnershipRuntime
@@ -697,6 +742,16 @@ type phaseTwoWorkerBundle struct {
 	controlRunning   bool
 	controlEpoch     uint64
 	controlDegraded  bool
+	// candidacy is the class this process stands for the Control Leader
+	// lease in (phaseTwoControlCandidacy), fixed at assembly; empty is no
+	// candidate. candidacyReady is set once Start has read the control facts
+	// it can, and with draining and closed it decides whether the process
+	// contends: one still starting, or already stopping, does not.
+	candidacy      string
+	candidacyReady bool
+	// handback is a fallback Leader's memory of the preferred processes it
+	// has seen ready, round to round. The reconcile loop alone touches it.
+	handback controlHandbackWatch
 	// controlFactsSeen says a control round has told this replica which Query
 	// Groups exist at least once. Until then the replica registers as
 	// starting rather than ready and reports not ready: it is up, its
@@ -771,6 +826,16 @@ type phaseTwoWorkerBundle struct {
 	// become due. It lives on the bundle rather than on the dispatcher so a
 	// reader outside the dispatch loop can ask it which objects are overdue.
 	dueIndex *phaseTwoDueIndex
+	// addressDiffers is the latest records whose address is not their
+	// host's, as the fleet snapshot publishes them.
+	addressDiffers *fleet.AddressDiffersSamples
+	// shaper sizes the query budget, execution slots and queues from the
+	// work this bundle owns; nil keeps the startup shape.
+	shaper *schedulerShaper
+	// workerCosts is the census reading the heartbeat carries and the
+	// observation line's retained reservation is sized by; kept so a test
+	// can drive it through the production assembly.
+	workerCosts *workerCostSource
 }
 
 type phaseTwoScheduledRunner struct {
@@ -1012,10 +1077,14 @@ func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*ph
 		return nil, err
 	}
 	bundle := &phaseTwoWorkerBundle{dependencies: dependencies, outputSinkReady: true,
+		candidacy:      phaseTwoControlCandidacy(dependencies.Config),
 		flightReleased: make(chan execution.QueryGroupIdentity, flightReleasedNotices),
 		assigned:       make(map[execution.QueryGroupIdentity]struct{}),
 		runners:        make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle),
 		liveness:       newPhaseTwoLiveness(dependencies.Now, dependencies.Recorder)}
+	if dependencies.Flights != nil {
+		bundle.shaper = newSchedulerShaper(dependencies.Flights, dependencies.Config, dependencies.Now)
+	}
 	if dependencies.Recorder != nil {
 		dependencies.Recorder.SetOwnedQueryGroups(0)
 		dependencies.Recorder.SetControlSourceSource(bundle.controlSourceStats)
@@ -1048,26 +1117,39 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 	if err := bundle.registerAtStartup(ctx, ownership.WorkerStarting); err != nil {
 		return err
 	}
+	// The starting read is a follower's, whatever this process will become.
+	// Only once it is made does the process count as having finished
+	// starting and contend for the Control Leader lease, so a replica still
+	// opening its dependencies never leads (006, section 2.1). It contends
+	// here rather than on the first reconcile tick, so a deployment nobody
+	// leads has a Leader as soon as its first process is up. A process that
+	// takes the lease starts from its own first round instead, exactly as
+	// before: the follower's read only stood in until it knew which it was.
+	followerResult, followerErr := bundle.dependencies.Control.LoadActive(ctx)
+	if followerErr != nil && ctx.Err() != nil {
+		return followerErr
+	}
+	bundle.mu.Lock()
+	bundle.candidacyReady = true
+	bundle.mu.Unlock()
+	bundle.publishControlCandidacy()
 	leader, err := bundle.tryAcquireControlLeader(ctx)
 	if err != nil {
 		// Not knowing whether this replica holds the lease is not the same as
-		// not holding it, but the work is: read what somebody else published
-		// and ask again on the reconcile tick. Ending startup here turned a
-		// store that was still loading its dataset into a crash loop, and a
-		// crash loop is the one state from which this replica can do nothing
-		// at all.
+		// not holding it, but the work is: go on with what was read above and
+		// ask again on the reconcile tick. Ending startup here turned a store
+		// that was still loading its dataset into a crash loop, and a crash
+		// loop is the one state from which this replica can do nothing at all.
 		bundle.dependencies.Recorder.RecordControlFactUnavailable("leader_lease", "read_failed")
 		leader = false
 	} else {
 		bundle.dependencies.Recorder.RecordControlFactRead("leader_lease")
 	}
-	var controlResult phaseTwoControlRefreshResult
-	controlFactsAvailable := true
+	controlResult, err := followerResult, followerErr
 	if leader {
 		controlResult, err = bundle.dependencies.Control.InitialRefresh(ctx)
-	} else {
-		controlResult, err = bundle.dependencies.Control.LoadActive(ctx)
 	}
+	controlFactsAvailable := true
 	if err != nil {
 		if ctx.Err() != nil {
 			return err
@@ -1113,6 +1195,11 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 			}
 			bundle.markControlFollower(err)
 		}
+	}
+	if !bundle.dependencies.Config.HasRole(roles.Worker) {
+		bundle.startMaintenance()
+		bundle.updateReadiness()
+		return nil
 	}
 	assigned, err := bundle.dependencies.Ownership.AssignedQueryGroups(ctx, queryGroups)
 	if err != nil {
@@ -1199,6 +1286,9 @@ func (bundle *phaseTwoWorkerBundle) Run(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), bundle.dependencies.Config.ShutdownTimeout.Duration())
 		defer cancel()
 		return errors.Join(err, bundle.Shutdown(shutdownCtx))
+	}
+	if !bundle.dependencies.Config.HasRole(roles.Worker) {
+		return bundle.runControlRole(ctx)
 	}
 	scheduleTicker := time.NewTicker(bundle.dependencies.Config.PhaseTwo.Scheduler.TickInterval.Duration())
 	refreshTicker := time.NewTicker(bundle.dependencies.Config.PhaseTwo.Control.RefreshInterval.Duration())
@@ -1349,7 +1439,7 @@ func newPhaseTwoRunnerDispatcher(
 	oneShot bool,
 ) *phaseTwoRunnerDispatcher {
 	schedulerConfig := bundle.dependencies.Config.PhaseTwo.Scheduler
-	fanout := phaseTwoDispatcherFanout(schedulerConfig)
+	fanout := phaseTwoDispatcherFanout(bundle)
 	// A fresh dispatcher starts with no bounds. Entries carried over from a
 	// previous one would be answers about a schedule nobody has looked at since,
 	// and starting empty reproduces exactly what the first tick does today.
@@ -1470,6 +1560,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) executeScheduled(ctx context.Context
 		defer dispatcher.bundle.liveness.executionReturned(token)
 		if ctx.Err() == nil && dispatcher.bundle.enterScheduledRunner(scheduled) {
 			result.ran = true
+			defer dispatcher.bundle.shaper.executionStarted()()
 			func() {
 				defer dispatcher.bundle.exitScheduledRunner(scheduled.lifecycle)
 				defer startSlotTiming(runCtx, dispatcher.bundle.dependencies.Observer, observability.StageRunnerCompleted, time.Now)()
@@ -1572,6 +1663,14 @@ func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan
 			selectNormal = true
 		}
 
+		// The execution slots in force: the dispatcher runs the ceiling's
+		// worth of goroutines and offers work only while fewer than the
+		// derived bound are executing. A bound lowered under what is running
+		// takes nothing back; the next offer waits for a result.
+		slotsFull := dispatcher.slotsFull()
+		if slotsFull {
+			selectDelayed, selectNormal = false, false
+		}
 		var dispatch chan phaseTwoScheduledRunner
 		var scheduled phaseTwoScheduledRunner
 		if selectDelayed {
@@ -1584,7 +1683,9 @@ func (dispatcher *phaseTwoRunnerDispatcher) run(ctx context.Context, wake <-chan
 
 		var retryTimer *time.Timer
 		var retryReady <-chan time.Time
-		if canceled == nil && dispatch == nil && len(dispatcher.delayed) > 0 {
+		// With every slot in use a due retry cannot run either: the next
+		// result wakes the loop, and a timer here would spin it.
+		if canceled == nil && dispatch == nil && !slotsFull && len(dispatcher.delayed) > 0 {
 			delay := dispatcher.delayed[0].readyAt.Sub(now)
 			if delay < 0 {
 				delay = 0
@@ -1882,7 +1983,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		// appear anywhere in a 60 second CPU profile, and at a Worker owning tens
 		// of thousands it would. The queue becoming the owned set is what makes
 		// that the next thing to measure, not a reason to keep it too small.
-		limits := dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler
+		limits := dispatcher.bundle.schedulerShape()
 		recoveryCapacity := max(limits.RecoveryQueueCapacity, len(runners))
 		if readyAt.IsZero() {
 			if len(dispatcher.normal) >= limits.ReadyQueueCapacity {
@@ -1925,6 +2026,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 				dispatcher.normal = append(dispatcher.normal, queued)
 			}
 			dispatcher.normalDirty = true
+			dispatcher.bundle.shaper.recordReady()
 		} else {
 			if len(dispatcher.delayed) >= recoveryCapacity {
 				latest := dispatcher.latestDelayedIndex()
@@ -2176,7 +2278,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 		// the first place.
 		return
 	}
-	if len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
+	if len(dispatcher.delayed) >= dispatcher.bundle.schedulerShape().RecoveryQueueCapacity {
 		return
 	}
 	// The same entry the walk would build, not a bare one. This used to write
@@ -2236,7 +2338,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) flightReleased(queryGroup execution.
 func (dispatcher *phaseTwoRunnerDispatcher) queueNow(scheduled phaseTwoScheduledRunner) {
 	if !dispatcher.bundle.isCurrentScheduledRunner(scheduled) || dispatcher.queued[scheduled.queryGroup] != nil ||
 		dispatcher.active[scheduled.queryGroup] != nil ||
-		len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
+		len(dispatcher.delayed) >= dispatcher.bundle.schedulerShape().RecoveryQueueCapacity {
 		return
 	}
 	dispatcher.delayed = append(dispatcher.delayed, dispatcher.queueEntry(scheduled, dispatcher.bundle.schedulerNow()))
@@ -2508,8 +2610,44 @@ func (bundle *phaseTwoWorkerBundle) enterScheduledRunner(scheduled phaseTwoSched
 
 func (bundle *phaseTwoWorkerBundle) exitScheduledRunner(lifecycle *phaseTwoQueryGroupLifecycle) {
 	bundle.mu.Lock()
-	lifecycle.inflight--
 	bundle.slotsRunning--
+	bundle.leaveLifecycleAndUnlock(lifecycle)
+}
+
+// enterOwnedWork is enterScheduledRunner for the work other than a Slot
+// that acts on the Query Group's lease: a lookback supplement, which writes
+// events, and an inactive-time close, which sends closes. It is counted on
+// the Query Group's current lifecycle under the same lock that finds it
+// current, refused once the lifecycle is detached or the replica draining,
+// and a handover's drain waits for it before the lease is released. Left
+// uncounted, a handover released the lease while such a send was in flight
+// and the next owner, free to acquire at once, could send the same window
+// again. Not a Slot: runningSlots does not count it.
+func (bundle *phaseTwoWorkerBundle) enterOwnedWork(queryGroup execution.QueryGroupIdentity) (*phaseTwoQueryGroupLifecycle, bool) {
+	bundle.mu.Lock()
+	defer bundle.mu.Unlock()
+	lifecycle, owned := bundle.runners[queryGroup]
+	if bundle.draining || bundle.closed || !owned || lifecycle == nil {
+		return nil, false
+	}
+	if lifecycle.inflight == 0 {
+		lifecycle.idle = make(chan struct{})
+	}
+	lifecycle.inflight++
+	return lifecycle, true
+}
+
+func (bundle *phaseTwoWorkerBundle) exitOwnedWork(lifecycle *phaseTwoQueryGroupLifecycle) {
+	bundle.mu.Lock()
+	bundle.leaveLifecycleAndUnlock(lifecycle)
+}
+
+// leaveLifecycleAndUnlock takes one piece of work off its lifecycle, with
+// the bundle's lock held, and releases the lock. The last one out closes
+// idle, and lifts the Query Group's decline when that lifecycle's hung
+// execution was what it waited for.
+func (bundle *phaseTwoWorkerBundle) leaveLifecycleAndUnlock(lifecycle *phaseTwoQueryGroupLifecycle) {
+	lifecycle.inflight--
 	var lifted execution.QueryGroupIdentity
 	var entry *declinedQueryGroup
 	if lifecycle.inflight == 0 {
@@ -2531,8 +2669,9 @@ func (bundle *phaseTwoWorkerBundle) exitScheduledRunner(lifecycle *phaseTwoQuery
 	}
 }
 
-// slotsInFlight is how many Slots of a lifecycle are running, and the
-// channel closed when none is; nil when none is now.
+// slotsInFlight is how many Slots of a lifecycle are running, with the
+// other work counted on it (enterOwnedWork), and the channel closed when
+// none is; nil when none is now.
 func (bundle *phaseTwoWorkerBundle) slotsInFlight(lifecycle *phaseTwoQueryGroupLifecycle) (int, <-chan struct{}) {
 	bundle.mu.RLock()
 	defer bundle.mu.RUnlock()
@@ -2593,6 +2732,20 @@ func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {
 		bundle.mu.Unlock()
 		maintenanceErr := waitPhaseTwoGroup(ctx, &bundle.maintenanceWG)
 		result = append(result, maintenanceErr)
+		// What is counted on a lifecycle besides the dispatcher's Slots - a
+		// supplement, a close send - is waited for before its lease goes, as
+		// a handover waits for it; skipped, as the scheduler's group is, when
+		// the drain already left Slots it cancelled unreturned.
+		if drain := bundle.shutdownDrain(); drain == nil || drain.Unreturned == 0 {
+			for _, lifecycle := range runners {
+				if _, idle := bundle.slotsInFlight(lifecycle); idle != nil {
+					select {
+					case <-idle:
+					case <-ctx.Done():
+					}
+				}
+			}
+		}
 		for index, lifecycle := range runners {
 			releaseErr := lifecycle.runner.Release(ctx)
 			result = append(result, releaseErr)
@@ -2607,7 +2760,13 @@ func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {
 		// still writing, and releasing then would let the next leader start
 		// while the old one writes - the overlap the lease exists to prevent.
 		// Left to expire, as it always was, in that case.
-		if releaser, ok := bundle.dependencies.Ownership.(phaseTwoControlLeaderReleaser); ok && maintenanceErr == nil {
+		if releaser, ok := bundle.dependencies.Ownership.(phaseTwoHeldControlLeaderReleaser); ok && maintenanceErr == nil {
+			released, releaseErr := releaser.ReleaseHeldControlLeader(ctx)
+			if released {
+				bundle.dependencies.Recorder.RecordControlLeaderTransition("none", "release")
+			}
+			result = append(result, releaseErr)
+		} else if releaser, ok := bundle.dependencies.Ownership.(phaseTwoControlLeaderReleaser); ok && maintenanceErr == nil {
 			result = append(result, releaser.ReleaseControlLeader(ctx))
 		}
 		if bundle.dependencies.CloseResources != nil {
@@ -2643,6 +2802,7 @@ func (bundle *phaseTwoWorkerBundle) beginDraining(ctx context.Context) error {
 		bundle.mu.Lock()
 		bundle.draining = true
 		bundle.mu.Unlock()
+		bundle.publishControlCandidacy()
 		bundle.dependencies.Health.Update(phaseTwoReadiness{State: observability.HealthDraining})
 		bundle.drainErr = bundle.register(ctx, ownership.WorkerDraining)
 	})
@@ -2718,10 +2878,15 @@ func markPhaseTwoFatal(
 	health.Update(phaseTwoReadiness{
 		State: observability.HealthFatal, Reasons: []observability.ReasonCode{observability.ReasonInternalUnknown},
 	})
-	bundle.observe(ctx, observability.ComponentRuntime, observability.Stage(observability.StageFatal), observability.ResultFailed, err)
+	if bundle != nil {
+		bundle.observe(ctx, observability.ComponentRuntime, observability.Stage(observability.StageFatal), observability.ResultFailed, err)
+	}
 }
 
 func (bundle *phaseTwoWorkerBundle) register(ctx context.Context, readiness ownership.AssignmentReadiness) error {
+	if !bundle.dependencies.Config.HasRole(roles.Worker) {
+		return nil
+	}
 	bundle.registrationMu.Lock()
 	defer bundle.registrationMu.Unlock()
 	if readiness == ownership.WorkerReady {
@@ -2813,12 +2978,17 @@ func phaseTwoWorkerRegistration(
 	if err != nil {
 		return ownership.WorkerRegistration{}, fmt.Errorf("phase-two derive worker capabilities: %w", err)
 	}
+	executionDigest, err := phaseTwoExecutionContractDigest()
+	if err != nil {
+		return ownership.WorkerRegistration{}, err
+	}
 	registration := ownership.WorkerRegistration{
 		WorkerID: cfg.PhaseTwo.Worker.ID, AssignmentReadiness: readiness,
 		DependencyStatus: ownership.DependencyHealthy, DeploymentProfile: cfg.DeploymentProfile(),
-		CapabilitiesDigest: capabilitiesDigest,
-		ExpiresAt:          at.Add(cfg.PhaseTwo.Worker.RegistrationTTL.Duration()),
-		Applied:            applied, Load: load,
+		CapabilitiesDigest:      capabilitiesDigest,
+		ExecutionContractDigest: executionDigest,
+		ExpiresAt:               at.Add(cfg.PhaseTwo.Worker.RegistrationTTL.Duration()),
+		Applied:                 applied, Load: load,
 		// The control contracts this binary takes part in. The leader
 		// starts a contract only when every ready worker declares it.
 		Capabilities: []string{ownership.CapabilityContentScope, ownership.CapabilityShardAware},
@@ -2862,8 +3032,10 @@ func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 			runLookback(bundle.maintenanceCtx, bundle.dependencies.Lookback)
 		}()
 	}
-	bundle.maintenanceWG.Add(1)
-	go bundle.maintainRegistration()
+	if bundle.dependencies.Config.HasRole(roles.Worker) {
+		bundle.maintenanceWG.Add(1)
+		go bundle.maintainRegistration()
+	}
 	if bundle.dependencies.PublishFleet != nil {
 		bundle.maintenanceWG.Add(1)
 		go bundle.publishFleetSnapshots()
@@ -2970,6 +3142,9 @@ func (bundle *phaseTwoWorkerBundle) publishFleetSnapshots() {
 }
 
 func (bundle *phaseTwoWorkerBundle) tryAcquireControlLeader(ctx context.Context) (bool, error) {
+	if bundle.candidacy == "" {
+		return false, nil
+	}
 	bundle.mu.RLock()
 	if bundle.controlLeader {
 		bundle.mu.RUnlock()
@@ -2979,7 +3154,33 @@ func (bundle *phaseTwoWorkerBundle) tryAcquireControlLeader(ctx context.Context)
 		bundle.mu.RUnlock()
 		return false, nil
 	}
+	ready := bundle.candidacyReady && !bundle.draining && !bundle.closed
 	bundle.mu.RUnlock()
+	if !controlContentionAllowed(bundle.candidacy, ready, false, false) {
+		return false, nil
+	}
+	if bundle.candidacy == ownership.ControlCandidacyPreferred {
+		allowed, err := bundle.preferredMayContend(ctx)
+		if err != nil {
+			bundle.noteControlRole(false, err)
+			return false, err
+		}
+		if !allowed {
+			bundle.noteControlRole(false, nil)
+			return false, nil
+		}
+	}
+	if bundle.candidacy == ownership.ControlCandidacyFallback {
+		allowed, err := bundle.fallbackMayContend(ctx)
+		if err != nil {
+			bundle.noteControlRole(false, err)
+			return false, err
+		}
+		if !allowed {
+			bundle.noteControlRole(false, nil)
+			return false, nil
+		}
+	}
 	leader, err := bundle.dependencies.Ownership.TryAcquireControlLeader(
 		ctx, bundle.dependencies.Now(), bundle.dependencies.Config.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
 	)
@@ -2987,6 +3188,8 @@ func (bundle *phaseTwoWorkerBundle) tryAcquireControlLeader(ctx context.Context)
 	if err != nil || !leader {
 		return leader, err
 	}
+	bundle.recordControlTakeover()
+	bundle.handback.reset()
 	bundle.startControlMaintenance()
 	// A new term: publish the stored view before this round's refresh, so a
 	// Worker without a view does not wait for the whole refresh to get one.
@@ -3597,7 +3800,7 @@ func (bundle *phaseTwoWorkerBundle) updateReadiness() {
 	// A declined Query Group still assigned here counts as accounted for: it
 	// is let go on purpose and waits for a leader to place it elsewhere, and
 	// reporting the replica not ready for it would move all the others too.
-	assignmentReady := bundle.assignmentRead && !bundle.draining && !bundle.closed
+	assignmentReady := (bundle.assignmentRead || !bundle.dependencies.Config.HasRole(roles.Worker)) && !bundle.draining && !bundle.closed
 	if assignmentReady {
 		open := 0
 		for queryGroup := range bundle.assigned {
@@ -3618,7 +3821,20 @@ func (bundle *phaseTwoWorkerBundle) updateReadiness() {
 	dependencyDegraded := bundle.dependencyDegraded
 	lastRecoveryAt := bundle.lastControlRecoveryAt
 	sinkReady := bundle.outputSinkReady
+	draining := bundle.draining || bundle.closed
 	bundle.mu.RUnlock()
+	if bundle.dependencies.Config.HasRole(roles.Control) {
+		controlState := observability.HealthReady
+		switch {
+		case draining:
+			controlState = observability.HealthDraining
+		case !factsSeen || !sinkReady:
+			controlState = observability.HealthNotReady
+		case controlDegraded || dependencyDegraded:
+			controlState = observability.HealthDegraded
+		}
+		bundle.dependencies.Health.controlState.Store(&controlState)
+	}
 	state := observability.HealthReady
 	var reasons []observability.ReasonCode
 	if !sinkReady {
@@ -3653,6 +3869,7 @@ func (bundle *phaseTwoWorkerBundle) updateReadiness() {
 		State: state, Reasons: reasons, SnapshotReady: true, AssignmentReady: assignmentReady,
 		RuntimeStateReady: true, OutputSinkReady: sinkReady, LastRecoveryAt: lastRecoveryAt,
 	})
+	bundle.publishControlCandidacy()
 }
 
 // phaseTwoOutputSinkReason is the readiness reason while the output sink is
@@ -3681,7 +3898,8 @@ func (bundle *phaseTwoWorkerBundle) outputSinkChanged(state outputSinkState) {
 
 // noteTimelineReading keeps the unreadable-timeline names in step with what
 // this replica's rounds meet. A round that asked for a Slot and met a
-// timeline that does not decode (SCHEDULE_UNREADABLE) names its Query Group;
+// timeline that does not decode (SCHEDULE_UNREADABLE), or a timeline key
+// that is not there at all (SCHEDULE_MISSING), names its Query Group;
 // a later round of it that ran a Slot - the source read the timeline to
 // freeze it - drops the name. A round that did not ask the source (not due,
 // backing off) or that the source refused for another reason, before or
@@ -3693,7 +3911,8 @@ func (bundle *phaseTwoWorkerBundle) noteTimelineReading(queryGroup execution.Que
 	if !attempted {
 		return
 	}
-	unreadable := outcome.ReasonCode == execution.ReasonCode(contract.ReasonScheduleUnreadable)
+	unreadable := outcome.ReasonCode == execution.ReasonCode(contract.ReasonScheduleUnreadable) ||
+		outcome.ReasonCode == execution.ReasonCode(contract.ReasonScheduleMissing)
 	if !unreadable && outcome.SourceRetry {
 		return
 	}
@@ -3847,13 +4066,19 @@ func (bundle *phaseTwoWorkerBundle) recordHungExecution(
 }
 
 // phaseTwoDispatcherFanout is how many execution slots the dispatcher runs:
-// one goroutine each, taking Slots off the queue. The limit is derived from
-// the container and validated positive, so the floor of one is reached only
-// by a Config assembled field by field in a test. There is no unlimited
-// fanout to fall back to.
-func phaseTwoDispatcherFanout(schedulerConfig config.PhaseTwoSchedulerConfig) int {
+// one goroutine each, taking Slots off the queue. A bundle that sizes its
+// shape from its work runs the container's ceiling and offers work only
+// while fewer than the derived bound execute; one that does not runs the
+// configured limit. The limit is derived from the container and validated
+// positive, so the floor of one is reached only by a Config assembled field
+// by field in a test. There is no unlimited fanout to fall back to.
+func phaseTwoDispatcherFanout(bundle *phaseTwoWorkerBundle) int {
+	schedulerConfig := bundle.dependencies.Config.PhaseTwo.Scheduler
 	fanout := max(schedulerConfig.ActiveExecutionLimit, 1)
-	if schedulerConfig.ReadyQueueCapacity > 0 && schedulerConfig.ReadyQueueCapacity < fanout {
+	if bundle.shaper != nil {
+		fanout = max(schedulerConfig.ActiveExecutionCeiling, fanout)
+	}
+	if schedulerConfig.ReadyQueueCapacity > 0 && schedulerConfig.ReadyQueueCapacity < fanout && bundle.shaper == nil {
 		fanout = schedulerConfig.ReadyQueueCapacity
 	}
 	return fanout
@@ -3874,7 +4099,7 @@ func (bundle *phaseTwoWorkerBundle) declineFleetFacts() *fleet.DeclineFacts {
 		declined = append(declined, fleet.DeclinedQueryGroup{QueryGroup: string(queryGroup), Stage: entry.stage, Since: entry.since.UTC()})
 	}
 	sort.Slice(declined, func(left, right int) bool { return declined[left].QueryGroup < declined[right].QueryGroup })
-	return &fleet.DeclineFacts{Fanout: phaseTwoDispatcherFanout(bundle.dependencies.Config.PhaseTwo.Scheduler), Total: len(declined),
+	return &fleet.DeclineFacts{Fanout: phaseTwoDispatcherFanout(bundle), Total: len(declined),
 		QueryGroups: declined[:min(len(declined), fleet.MaxDeclineSamples)]}
 }
 
@@ -3896,12 +4121,34 @@ func (bundle *phaseTwoWorkerBundle) declinedRegistration() []ownership.DeclinedQ
 
 func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, refresh bool) error {
 	bundle.declineHungExecutions(bundle.dependencies.Now())
+	if bundle.shaper.due() {
+		bundle.mu.RLock()
+		owned := len(bundle.runners)
+		bundle.mu.RUnlock()
+		bundle.shaper.derive(owned)
+	}
 	failureSeq := bundle.controlDependencyFailureSeq()
 	var queryGroups []execution.QueryGroupIdentity
 	var err error
 	bundle.mu.RLock()
 	factsSeenBefore := bundle.controlFactsSeen
+	leadingBefore := bundle.controlLeader
 	bundle.mu.RUnlock()
+	// A candidate contends on every reconcile tick, not only on the refresh
+	// tick, so a lease that ran out or was given back has a holder within one
+	// reconcile interval. A tick that takes it runs as a refresh: a new term
+	// starts by reading its source. Not knowing the lease is not a reason to
+	// skip the rest of the tick, which is this replica's own Assignment.
+	if !refresh && !leadingBefore && bundle.candidacy != "" {
+		acquired, acquireErr := bundle.tryAcquireControlLeader(ctx)
+		if acquireErr != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			bundle.dependencies.Recorder.RecordControlFactUnavailable("leader_lease", "read_failed")
+		}
+		refresh = acquired
+	}
 	if refresh {
 		leader, acquireErr := bundle.tryAcquireControlLeader(ctx)
 		if acquireErr != nil {
@@ -3974,7 +4221,17 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 				return bundle.scopeControlError(ctx, observability.ComponentOwnership, observability.StageAssignmentAcquired, err)
 			}
 			bundle.markControlFollower(err)
+		} else if bundle.candidacy == ownership.ControlCandidacyFallback {
+			// The round has published; a fallback Leader gives the lease back
+			// here, between rounds, once a preferred process has been ready
+			// for the whole window.
+			bundle.considerHandback(ctx)
 		}
+	}
+	if !bundle.dependencies.Config.HasRole(roles.Worker) {
+		bundle.clearControlDependencyDegraded(ctx, failureSeq)
+		bundle.updateReadiness()
+		return nil
 	}
 	assigned, err := bundle.dependencies.Ownership.AssignedQueryGroups(ctx, queryGroups)
 	if err != nil {
@@ -4278,7 +4535,19 @@ type phaseTwoReadiness struct {
 }
 
 type phaseTwoApplicationHealth struct {
-	tracker *observability.HealthTracker
+	tracker       *observability.HealthTracker
+	selectedRoles roles.Set
+	channelState  atomic.Pointer[observability.HealthState]
+	controlState  atomic.Pointer[observability.HealthState]
+	// candidacyReady is the bundle's word on whether this process may
+	// contend for the Control Leader lease, for the instance record. False
+	// until the bundle has started, and again once it drains.
+	candidacyReady atomic.Bool
+	// candidacyReadySince is the record writer's word back: when this
+	// incarnation's record first said ready, in Unix milliseconds, or 0
+	// while it does not. The bundle judges its own stability by it, so the
+	// process and the fallbacks that read its record judge by one time.
+	candidacyReadySince atomic.Int64
 }
 
 func newPhaseTwoApplicationHealth() *phaseTwoApplicationHealth {
@@ -4303,7 +4572,38 @@ func (h *phaseTwoApplicationHealth) HealthSnapshot() observability.HealthSnapsho
 	if h == nil || h.tracker == nil {
 		return observability.NormalizeHealthSnapshot(observability.HealthSnapshot{PhaseTwo: true})
 	}
-	return observability.NormalizeHealthSnapshot(h.tracker.HealthSnapshot())
+	snapshot := observability.NormalizeHealthSnapshot(h.tracker.HealthSnapshot())
+	if len(h.selectedRoles) != 0 {
+		snapshot.RoleReadiness = make(map[string]string, len(h.selectedRoles))
+		for _, role := range h.selectedRoles {
+			state := snapshot.State
+			if role == roles.Control {
+				state = h.controlReadiness(snapshot.State)
+			}
+			if role == roles.Channel && state != observability.HealthFatal && state != observability.HealthDraining {
+				state = h.channelReadiness()
+			}
+			snapshot.RoleReadiness[string(role)] = string(state)
+		}
+	}
+	return snapshot
+}
+
+func (h *phaseTwoApplicationHealth) channelReadiness() observability.HealthState {
+	if state := h.channelState.Load(); state != nil {
+		return *state
+	}
+	return observability.HealthStarting
+}
+
+func (h *phaseTwoApplicationHealth) controlReadiness(overall observability.HealthState) observability.HealthState {
+	if overall == observability.HealthFatal || overall == observability.HealthDraining {
+		return overall
+	}
+	if state := h.controlState.Load(); state != nil {
+		return *state
+	}
+	return observability.HealthStarting
 }
 
 func diagnosticTimeMS(t time.Time) int64 {
@@ -4388,4 +4688,23 @@ func normalizeRuntimeShutdownError(err error, stoppedBeforeShutdown bool) error 
 		return nil
 	}
 	return fmt.Errorf("runtime component: %w", err)
+}
+
+// schedulerShape is the scheduler shape in force: the one the shaper last
+// derived, or the startup shape from the configuration.
+func (bundle *phaseTwoWorkerBundle) schedulerShape() config.DerivedScheduler {
+	if bundle.shaper != nil {
+		return bundle.shaper.shape()
+	}
+	s := bundle.dependencies.Config.PhaseTwo.Scheduler
+	return config.DerivedScheduler{ActiveExecutions: s.ActiveExecutionLimit, ProcessQueryPermits: s.ProcessQueryPermits,
+		RecoveryQueryPermits: s.RecoveryQueryPermits, ReadyQueueCapacity: s.ReadyQueueCapacity,
+		RecoveryQueueCapacity: s.RecoveryQueueCapacity, ActiveExecutionCeiling: max(s.ActiveExecutionCeiling, s.ActiveExecutionLimit)}
+}
+
+// slotsFull is whether every execution slot in force is in use: the
+// dispatcher runs the ceiling's worth of goroutines and offers work only
+// while fewer than the derived bound execute.
+func (dispatcher *phaseTwoRunnerDispatcher) slotsFull() bool {
+	return len(dispatcher.active) >= dispatcher.bundle.schedulerShape().ActiveExecutions
 }

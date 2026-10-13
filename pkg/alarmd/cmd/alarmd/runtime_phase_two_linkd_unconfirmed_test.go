@@ -408,7 +408,7 @@ func redisCommandsOn(t *testing.T, address, prefix string) (stop func() []string
 // to.
 func TestARefusedNoticeReachesTheCopyThroughTheLocationSwitch(t *testing.T) {
 	_, client := startPhaseTwoRedis(t)
-	binding, err := newLinkdBinding(client, config.RedisConnectionConfig{}, "test.linkd", openalerts.ReadLimits{MaxMembers: 10, MaxBytes: 1 << 10, MaxPages: 1, PageSize: 10})
+	binding, err := newLinkdBinding(client, config.RedisConnectionConfig{}, "test.linkd", openalerts.ReadLimits{MaxMembers: 10, MaxBytes: 1 << 10, PageSize: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

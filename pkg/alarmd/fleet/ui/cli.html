@@ -14,8 +14,8 @@ details{margin:8px 0}summary{cursor:pointer;color:#1769c2;font-size:14px}details
 </style>
 </head>
 <body><main>
-<h1>授权 alarmd CLI 读取此环境</h1>
-<p class="lead muted">让本机的 alarmd-cli 读取本部署的运维只读取证（策略配置、运行证据和受限的 Redis 数据）。只需配对一次，之后 CLI 自动续期。</p>
+<h1 id="permission-title">授权 alarmd CLI 运维此环境</h1>
+<p id="permission-lead" class="lead muted">让本机的 alarmd-cli 读取本部署的运维证据（策略配置、运行证据和受限的 Redis 数据），并在集群里执行 Pod 命令、删除 Pod、重启和扩缩容工作负载；每次执行和管理操作都留审计记录。只需配对一次，之后 CLI 自动续期。</p>
 <ol class="steps">
 <li id="step-command" class="current">
 <h2>在本机终端运行命令</h2>
@@ -50,7 +50,7 @@ details{margin:8px 0}summary{cursor:pointer;color:#1769c2;font-size:14px}details
 <p class="muted">先完成上面第 2 步核对环境，再生成授权码。</p>
 <button id="issue" type="button">生成授权码</button>
 <section id="grant" hidden>
-<p>在 CLI 所在机器的终端运行 <code>alarmd-cli auth login</code>，按提示粘贴下方授权码。授权码 5 分钟内有效且仅能兑换一次；不要放入聊天记录、工单或命令参数。</p>
+<p>在 CLI 所在机器的终端运行 <code id="manual-login-command">alarmd-cli auth login</code>，按提示粘贴下方授权码。授权码 5 分钟内有效且仅能兑换一次；不要放入聊天记录、工单或命令参数。</p>
 <label for="code">一次性授权码</label><textarea id="code" readonly autocomplete="off" spellcheck="false"></textarea>
 <button id="copy" type="button">复制授权码</button>
 <p id="expiry" class="muted"></p>
@@ -74,6 +74,8 @@ base.search = ''; base.hash = '';
 const api = path => new URL('api/cli/auth/' + path, base);
 document.getElementById('back').href = base.href;
 const $ = id => document.getElementById(id);
+// One operations session: evidence reads, Pod execution and management.
+const scopeLabel = '部署级运维：取证读取、Pod 命令执行与工作负载管理（每次执行与管理留审计记录）';
 const issue = $('issue');
 const authorize = $('authorize');
 const revoke = $('revoke');
@@ -141,6 +143,8 @@ const HINTS = {
   not_found: 'alarmd 没有开启 CLI，或入口没有把 /api/cli/ 转发到 alarmd：确认镜像版本、values 的 alarmd.cli 段，以及 Ingress 按前缀整体转发。',
   unreachable: '授权接口没有返回 alarmd 的应答：入口没有把 /api/cli/ 转发到 alarmd，或 alarmd 没有开启 CLI。确认 Ingress 按前缀整体转发、不加登录认证，以及 values 的 alarmd.cli 段。',
   invalid_code_challenge: '本机 CLI 给出的校验值不合规：请重新执行上面的命令。',
+  invalid_scope: '权限参数无效：这个部署只有一种运维会话。',
+  scope_mismatch: 'CLI 申请权限与授权码不一致：请复制本页生成的完整命令重新登录。',
   state_mismatch: '本机 CLI 等的不是这个页面：请复制上面这条命令重新执行（每次打开页面命令都不同）。',
   already_completed: '本机 CLI 已经完成过一次登录并退出：如需重新配对，请重新执行上面的命令。',
   cli_unreachable: '连不上本机 CLI：请确认上面的命令还在运行、没有超时退出，并且浏览器和 CLI 在同一台机器上；否则改用复制授权码。'
@@ -238,7 +242,7 @@ inspect.addEventListener('click', async () => {
   try {
     const value = await request('GET', 'grants', adminKey.value);
     if (currentRevision !== revision) return;
-    preview.textContent = `环境：${value.environment_name} (${value.environment_id})\n入口：${value.public_base_url}\n权限：部署级运维只读取证`;
+    preview.textContent = `环境：${value.environment_name} (${value.environment_id})\n入口：${value.public_base_url}\n权限：${scopeLabel}`;
     configuredEntry = new URL(value.public_base_url).origin + new URL(value.public_base_url).pathname;
     // Generation checks that this page's origin is the configured entry's.
     // Said here, before the button, rather than as a refusal after it.

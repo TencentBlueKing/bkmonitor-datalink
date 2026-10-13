@@ -867,7 +867,7 @@ func (repository *RedisCatalogRepository) readScheduleTimeline(
 ) (persistedScheduleTimeline, []byte, error) {
 	payload, err := repository.client.Get(ctx, repository.scheduleTimelineKey(queryGroup)).Bytes()
 	if errors.Is(err, redis.Nil) {
-		return persistedScheduleTimeline{}, nil, ErrScheduleUnavailable
+		return persistedScheduleTimeline{}, nil, ErrScheduleTimelineAbsent
 	}
 	if err != nil {
 		return persistedScheduleTimeline{}, nil, activationDependencyIO(err)

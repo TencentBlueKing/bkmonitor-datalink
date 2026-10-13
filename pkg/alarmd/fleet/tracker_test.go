@@ -1760,7 +1760,7 @@ func TestAnInternalFailureIsASecondFactUnderDefect(t *testing.T) {
 		Code: "GAP_SCOPE_REASON_CONFLICT", Detail: "input_a=QUERY_UNAVAILABLE input_b=QUERY_TIMEOUT"}})
 	observe(observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE", ProgressCompletionCause: "query_failed"})
 	observe(observability.Observation{QueryFailure: &observability.QueryFailureFacts{Stage: "provider", Category: "source_backend",
-		Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}})
+		Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}})
 	observe(observability.Observation{QueryCooldown: &observability.QueryCooldownFacts{Event: "entered", Until: now.Add(time.Minute), LastQueryAt: now, Failures: 3}})
 	rows := tracker.Demoted()
 	Attribute(rows, now)

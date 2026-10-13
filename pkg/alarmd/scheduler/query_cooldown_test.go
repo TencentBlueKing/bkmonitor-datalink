@@ -87,13 +87,13 @@ func TestQueryCooldownDoesNotCountDuplicateOrQueryFreeCompletion(t *testing.T) {
 	runner := &Runner{queryGroup: "qg", now: func() time.Time { return now }, flights: &FlightCoordinator{limits: RecoveryLimits{}}}
 	slot := frozenSlot("qg")
 	for i := 0; i < 10; i++ {
-		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 10, runner.queryCooldownLetsRun())
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 10, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	}
 	if runner.queryCooldown.failures != 1 {
 		t.Fatal("duplicate Slot counted")
 	}
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true}, 10, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true}, 10, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	if runner.queryCooldown.failures != 1 {
 		t.Fatal("query-free completion changed evidence")
 	}
@@ -102,7 +102,7 @@ func TestQueryCooldownDoesNotCountDuplicateOrQueryFreeCompletion(t *testing.T) {
 	if runner.deferUnavailableQuery(context.Background(), slot) {
 		t.Fatal("expired finalization delayed")
 	}
-	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 10, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 10, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	if runner.queryCooldown.failures != 1 || !runner.queryCooldown.until.Equal(now.Add(time.Minute)) {
 		t.Fatal("expired finalization forged recovery")
 	}
@@ -114,7 +114,7 @@ func TestQueryCooldownMaintenanceConfigAndDisable(t *testing.T) {
 	slot := frozenSlot("qg")
 	for i := 0; i < 3; i++ {
 		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownLetsRun())
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	}
 	slot.RecoveryUntilUnixMilli = now.Add(5 * time.Second).UnixMilli()
 	if !runner.deferUnavailableQuery(context.Background(), slot) || !runner.queryCooldown.wakeAt.Equal(now.Add(5*time.Second)) {

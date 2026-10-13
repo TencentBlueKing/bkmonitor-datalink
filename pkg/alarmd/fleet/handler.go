@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
 )
 
 // Paging is mandatory rather than optional. An endpoint that returns everything
@@ -327,6 +329,9 @@ type HealthResponse struct {
 	// whether the cache can update the run, and the two sentences the first
 	// screen shows for the run and for the cache. Absent without a round.
 	SourceStanding *SourceStanding `json:"source_standing,omitempty"`
+	// ControlFacts is where the Control Leader's facts came from, and why the
+	// current term's record was not it.
+	ControlFacts *ControlFactsStanding `json:"control_facts,omitempty"`
 	// NoDataTracking is the fleet's one line on the no-data tracking horizon:
 	// how many Plans decide against which kind of horizon and what their last
 	// deciding rounds counted, summed over the counted replicas. Absent when
@@ -364,6 +369,29 @@ type HealthResponse struct {
 	// above is unreadable: a build that suppresses nothing reports the same zero
 	// as one where every object is being reached on time.
 	Dispatch *DispatchSuppression `json:"dispatch"`
+	// AddressDiffers names the latest records, across the replicas, whose
+	// host CMDB placed by id or agent at another address than their own:
+	// which strategy, Query Group and host, and both addresses. The count
+	// admission_cmdb_address_differs_total says how often.
+	AddressDiffers []AddressDiffersSample `json:"address_differs_samples,omitempty"`
+	// TrackerDropped is what the replicas' object tables lost because they
+	// were full: rounds, truncations and ranges never recorded, with the
+	// latest objects named. Absent while nothing was lost.
+	TrackerDropped *TrackerDropped `json:"tracker_dropped,omitempty"`
+	// EffectiveTimeUnread is the business timezones and calendars that
+	// could not be read and are no longer trusted: every Plan naming one
+	// resolves EFFECTIVE_TIME_UNKNOWN and is not judged. Oldest failure
+	// first, with the class of the latest failure and the last good read;
+	// effective_time_refresh_total counts the reads.
+	EffectiveTimeUnread      []strategycache.EffectiveTimeUnread `json:"effective_time_unread,omitempty"`
+	EffectiveTimeUnreadTotal int                                 `json:"effective_time_unread_total,omitempty"`
+	// AwaitingFirstRound is the objects only waiting for their first round
+	// since their replica took them over, by period; they are covered and not
+	// counted in unknown. Undetermined names the objects unknown does count,
+	// longest owned first and bounded, with the total.
+	AwaitingFirstRound *FirstRoundWaits     `json:"awaiting_first_round,omitempty"`
+	Undetermined       []UndeterminedObject `json:"undetermined_objects,omitempty"`
+	UndeterminedTotal  int                  `json:"undetermined_objects_total,omitempty"`
 	// Schedule is the census the first sentence of the page is built from:
 	// waiting, late, overdue, never yet evaluated, and the on-time rates over
 	// two windows. Absent when no replica has a due index, and the page then
@@ -994,11 +1022,13 @@ func healthOf(view *View, part ReplicaPart, at time.Time) HealthResponse {
 		AssignmentSweep: view.AssignmentSweep, AssignmentSweepReplica: view.AssignmentSweepReplica,
 		LeaderRound: view.LeaderRound, LeaderRoundReplica: view.LeaderRoundReplica,
 		ViewStream: view.ViewStream, ViewStreamReplica: view.ViewStreamReplica,
-		Source: view.Source, SourceReplica: view.SourceReplica, SourceStanding: view.SourceStanding,
+		Source: view.Source, SourceReplica: view.SourceReplica, SourceStanding: view.SourceStanding, ControlFacts: view.ControlFacts,
 		NoDataTracking: view.NoDataTracking,
 		Dependencies:   dependencyList(view.Dependencies), DependenciesReplica: view.DependenciesReplica,
 		DependenciesReplicas: view.DependenciesReplicas, LinkdConsole: view.LinkdConsole, ReplicasNotReady: view.ReplicasNotReady,
-		Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule,
+		Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule, AddressDiffers: view.AddressDiffers, TrackerDropped: view.TrackerDropped,
+		EffectiveTimeUnread: view.EffectiveTimeUnread, EffectiveTimeUnreadTotal: view.EffectiveTimeUnreadTotal,
+		AwaitingFirstRound: view.AwaitingFirstRound, Undetermined: view.Undetermined, UndeterminedTotal: view.UndeterminedTotal,
 		Gaps: view.Gaps, Capacity: view.Capacity,
 		Load: part.Load(view),
 	}

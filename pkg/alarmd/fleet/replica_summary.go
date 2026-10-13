@@ -80,7 +80,7 @@ func headOf(snapshot Snapshot) Snapshot {
 	return head
 }
 
-// AggregateSummaries is Aggregate over replicas' summaries: the view of
+// aggregateSummaries is Aggregate over replicas' summaries: the view of
 // their heads, with what Aggregate reads from rows taken from their parts
 // merged over the replicas the view counts, and that merged part.
 //
@@ -89,11 +89,11 @@ func headOf(snapshot Snapshot) Snapshot {
 // held by several, held unexpected, or expected unheld. Otherwise ownedSets
 // is asked for the counted replicas' owned lists, and whether each is the
 // whole set, and the lists name the objects as Aggregate names them.
-func AggregateSummaries(expectation Expectation, expected SetDigest, summaries []ReplicaSummary, expectedReplicas []string,
-	now time.Time, freshness time.Duration, ownedSets func(replicas []string) ([][]string, bool)) (View, ReplicaPart) {
+func aggregateSummaries(expectation Expectation, expected SetDigest, summaries []ReplicaSummary, expectedReplicas []string,
+	now time.Time, freshness time.Duration, ownedSets func(replicas []string) ([][]string, bool), control controlRead) (View, ReplicaPart) {
 	heads := make([]Snapshot, 0, len(summaries))
 	byReplica := make(map[string]*ReplicaSummary, len(summaries))
-	facts := &headFacts{cut: make(map[string]bool, len(summaries))}
+	facts := &headFacts{cut: make(map[string]bool, len(summaries)), control: control}
 	for index := range summaries {
 		summary := &summaries[index]
 		heads = append(heads, summary.Head)

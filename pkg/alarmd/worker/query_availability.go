@@ -1,6 +1,9 @@
 package worker
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+)
 
 // queryAvailabilityEvidence folds the existing validated binding traversal.
 // Duplicate consumers of a physical query do not change these set predicates.
@@ -22,6 +25,17 @@ type queryAvailabilityEvidence struct {
 	primaryWithheldOtherwise bool
 	// clock is the slowest primary query's budget and elapsed time.
 	clock *execution.PhysicalQueryClock
+	// sentLateTimeout says a primary query timed out after being sent late
+	// (timedOutSentLate).
+	sentLateTimeout bool
+}
+
+// observeSentLate notes a primary query that timed out after being sent
+// late.
+func (e *queryAvailabilityEvidence) observeSentLate(binding execution.NamedInputBinding, sentLate bool) {
+	if binding.Role == execution.InputRolePrimary && sentLate {
+		e.sentLateTimeout = true
+	}
 }
 
 func (e *queryAvailabilityEvidence) observe(binding execution.NamedInputBinding, physical execution.PhysicalQueryCompletion, streamed, sourceBackend bool) {
@@ -95,4 +109,14 @@ func (e queryAvailabilityEvidence) unavailableReason() execution.ReasonCode {
 		return ""
 	}
 	return e.reason
+}
+
+// unknownReason is why a primary query failed when the failure proved
+// nothing about the backend: a timeout of a query sent late, and nothing
+// else.
+func (e queryAvailabilityEvidence) unknownReason() execution.ReasonCode {
+	if e.availability() != execution.QueryAvailabilityUnknown || !e.sentLateTimeout {
+		return ""
+	}
+	return execution.ReasonCode(contract.ReasonQueryTimeout)
 }

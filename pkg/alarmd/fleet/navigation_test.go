@@ -24,7 +24,7 @@ func TestNavigationEveryFactCanBeReadBack(t *testing.T) {
 	snapshots := healthySnapshots()
 	s := &snapshots[0]
 	s.Anomalies = []Anomaly{{QueryGroup: "qg-error", Kind: KindBlockedRun, ReasonCode: "source_error"}}
-	s.Demoted = []Anomaly{{QueryGroup: "qg-pool", Kind: KindQueryCooldown, Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}}}
+	s.Demoted = []Anomaly{{QueryGroup: "qg-pool", Kind: KindQueryCooldown, Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}}}
 	s.Undecidable = []Anomaly{{QueryGroup: "qg-window", Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{Levels: 3, Empty: 2, Short: 2, EmptyRounds: 40, ShortRounds: 40, WorstRequired: 14}}}
 	s.ByDesign = []Anomaly{{QueryGroup: "qg-design", Kind: KindDegradedRun, CauseReason: "EFFECTIVE_TIME_INACTIVE"}}
 	s.NoData = []Anomaly{{QueryGroup: "qg-empty", Kind: KindNoData, ReasonCode: "FULL_EMPTY_COMPLETED", Strategies: []StrategyRef{{StrategyID: "strategy-example", BusinessID: "business-example"}}}}

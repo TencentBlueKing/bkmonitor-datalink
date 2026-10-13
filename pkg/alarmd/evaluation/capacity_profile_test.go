@@ -156,7 +156,6 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			}
 			req.State = loaded
 			evaluator := newEvaluator(t)
-			evaluator.limits.MaxRecords = cfg.Limits.Detect.MaxRecordsPerSeries
 			evaluator.limits.MaxLevels = uint64(cfg.Limits.Trigger.MaxLevels)
 			evaluator.limits.Trigger = cfg.TriggerLimits()
 			// Freeze 100 distinct series before measurement. History is immutable and

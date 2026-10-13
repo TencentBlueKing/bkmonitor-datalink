@@ -482,7 +482,7 @@ func (sink *keptSink) kept(spec execution.PhysicalQuerySpec, completion executio
 // runs: a supplement reads nothing, and it waits for nothing but its own
 // Query Group's flight.
 func (engine *Engine) directedRead(ctx context.Context, slot *directedSlot, release func(), yield <-chan struct{}) {
-	readCtx, cancel := context.WithTimeout(ctx, RecheckTimeout)
+	readCtx, cancel := context.WithTimeout(ctx, engine.rereadTimeout(slot.queryGroup))
 	back := make(chan struct{})
 	if yield != nil {
 		go func() {

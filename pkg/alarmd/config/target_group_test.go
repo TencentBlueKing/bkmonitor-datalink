@@ -63,7 +63,7 @@ func TestTargetGroupConfiguration(t *testing.T) {
 }
 
 func TestTargetGroupYAMLUsesExplicitConnection(t *testing.T) {
-	cfg, err := Load(writeConfig(t, platformCacheConfigContents("\nplatform_cache:\n  target_group:\n    mode: standalone\n    address: groups:6379\n    db: 4\n  dynamic_group_key_prefix: 'groups:'\n")))
+	cfg, err := LoadWithRoles(writeConfig(t, platformCacheConfigContents("\nplatform_cache:\n  target_group:\n    mode: standalone\n    address: groups:6379\n    db: 4\n  dynamic_group_key_prefix: 'groups:'\n")), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -13,7 +12,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
@@ -51,57 +49,38 @@ func TestEvaluatorUsesHistoryForNormalThenRecovery(t *testing.T) {
 	}
 }
 
-func TestEvaluatorRejectsBatchBudgetWithoutSideEffectPorts(t *testing.T) {
-	e := newEvaluator(t)
-	e.limits.MaxRecords = 0
-	if _, err := e.Evaluate(context.Background(), requestFixture(t, json.RawMessage(`80`), nil)); err == nil {
-		t.Fatal("Evaluate accepted zero budget")
-	}
-}
-
-func TestEvaluatorRejectsRecordLimitBeforeCopyingPrimaryView(t *testing.T) {
-	req := requestFixture(t, json.RawMessage(`80`), nil)
-	count := 20_000
-	records := make([]contract.CanonicalRecordV2, count)
-	ordinals := make([]uint32, count)
-	for index := range records {
-		records[index] = contract.CanonicalRecordV2{RecordID: strings.Repeat("b", 64), SourceTime: 60,
-			DimensionIdentity: contract.DimensionIdentityV2{Digest: string(req.Inputs[0].SeriesIdentity)}}
-		ordinals[index] = uint32(index)
-	}
-	dataset := execution.NewDataset(records)
-	view, err := execution.NewDatasetView(dataset, ordinals)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for input := range req.Inputs {
-		for binding := range req.Inputs[input].Inputs {
-			if req.Inputs[input].Inputs[binding].Role == execution.InputRolePrimary {
-				req.Inputs[input].Inputs[binding].Dataset, req.Inputs[input].Inputs[binding].View = dataset, view
+// A series past the 500 records that used to refuse every evaluation of its
+// Plan -- 600 in an hour's window -- is evaluated as one series' records.
+func TestASeriesPastTheOldRecordCountIsOneSeriesRecords(t *testing.T) {
+	withRecords := func(count int, window execution.QueryWindow) []execution.SeriesEvaluationInputRequest {
+		req := requestFixture(t, json.RawMessage(`80`), nil)
+		records := make([]contract.CanonicalRecordV2, count)
+		ordinals := make([]uint32, count)
+		for index := range records {
+			records[index] = contract.CanonicalRecordV2{RecordID: fmt.Sprintf("%064d", index), SourceTime: window.Start + int64(index),
+				DimensionIdentity: contract.DimensionIdentityV2{Digest: string(req.Inputs[0].SeriesIdentity)}}
+			ordinals[index] = uint32(index)
+		}
+		dataset := execution.NewDataset(records)
+		view, err := execution.NewDatasetView(dataset, ordinals)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for input := range req.Inputs {
+			for binding := range req.Inputs[input].Inputs {
+				if req.Inputs[input].Inputs[binding].Role == execution.InputRolePrimary {
+					bound := &req.Inputs[input].Inputs[binding]
+					bound.Dataset, bound.View, bound.QueryWindow = dataset, view, window
+				}
 			}
 		}
+		return req.Inputs
 	}
-	evaluator := newEvaluator(t)
-	// Keep the byte bound that catches copying before rejection, without a
-	// benchmark's time-based calibration in the ordinary regression suite.
-	const runs = 100
-	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
-	for index := 0; index < runs; index++ {
-		_, err := evaluator.Evaluate(context.Background(), req)
-		if err == nil || !strings.Contains(err.Error(), "record budget exceeded") {
-			t.Fatalf("error=%v", err)
-		}
-	}
-	runtime.ReadMemStats(&after)
-	if bytesPerOp := (after.TotalAlloc - before.TotalAlloc) / runs; !racedetector.Enabled && bytesPerOp > 64<<10 {
-		t.Fatalf("oversized PRIMARY was copied before rejection: %d bytes/op", bytesPerOp)
+	if records, err := commonPrimaryRecords(withRecords(600, execution.QueryWindow{Start: 3600, End: 7200})); err != nil || len(records) != 600 {
+		t.Fatalf("600 records in an hour's window = %d, %v; want all of them", len(records), err)
 	}
 }
 
-// Keep the supported 500-record shape and its folded state mutation. Capacity
-// measurement belongs in the opt-in profile, not a calibrated loop in this test.
 func TestEvaluatorRetainsSupportedRecordLimit(t *testing.T) {
 	records := make([]contract.CanonicalRecordV2, 500)
 	for i := range records {
@@ -112,7 +91,6 @@ func TestEvaluatorRetainsSupportedRecordLimit(t *testing.T) {
 	}
 	req := requestFixtureForPlan(t, compiled(t), records, nil)
 	evaluator := newEvaluator(t)
-	evaluator.limits.MaxRecords = 500
 	evaluator.limits.Trigger.MaxEvidenceBytesPerEvent = 64 << 10
 	result, err := evaluator.Evaluate(context.Background(), req)
 	if err != nil {
@@ -613,7 +591,7 @@ func newEvaluator(t testing.TB) *Evaluator {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := New(d, Limits{MaxPlans: 4, MaxRecords: 16, MaxLevels: 16, Trigger: trigger.EvaluationLimitsV2{MaxLevels: 16, MaxTriggerWindowSize: 16, MaxRecoveryConsecutiveWindows: 16, MaxRequiredHistoryPoints: 32, MaxLevelResultsPerEvent: 16, MaxEvidenceBytesPerEvent: 1 << 20, MaxComputeCost: 1 << 20}})
+	e, err := New(d, Limits{MaxLevels: 16, Trigger: trigger.EvaluationLimitsV2{MaxLevels: 16, MaxTriggerWindowSize: 16, MaxRecoveryConsecutiveWindows: 16, MaxRequiredHistoryPoints: 32, MaxLevelResultsPerEvent: 16, MaxEvidenceBytesPerEvent: 1 << 20, MaxComputeCost: 1 << 20}})
 	if err != nil {
 		t.Fatal(err)
 	}

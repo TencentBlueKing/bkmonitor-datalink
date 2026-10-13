@@ -43,6 +43,16 @@ func consoleFailureLine(logger *observability.Logger) func(op, class string, fai
 	}
 }
 
+// effectiveTimeFailureLine writes a failed effective-time read, at most
+// once a minute for each business timezone or calendar, with the failures
+// since the last line.
+func effectiveTimeFailureLine(logger *observability.Logger) func(dependency, class string, failures uint64) {
+	return func(dependency, class string, failures uint64) {
+		logger.Warn("effective_time_refresh_failed", "failed", 0, 0, slog.String("dependency", dependency),
+			slog.String("class", class), slog.Uint64("failures", failures))
+	}
+}
+
 func newLinkdIndex(cfg config.Config, client redis.UniversalClient, connection config.RedisConnectionConfig,
 	discovery *fleet.LinkdDiscoveryFacts, open func(config.RedisConnectionConfig) (redis.UniversalClient, bool), now func() time.Time,
 	logger *observability.Logger) (linkdIndex, error) {
@@ -50,7 +60,8 @@ func newLinkdIndex(cfg config.Config, client redis.UniversalClient, connection c
 	settings := cfg.PhaseTwo.Linkd
 	// One read cannot monopolize the allowance for the whole worker. These
 	// are scan bounds, not an assertion that an oversized SET was empty.
-	limits := openalerts.ReadLimits{MaxMembers: max(1, capacity.Members/4), MaxBytes: max(1, capacity.Bytes/4), MaxPages: 100, PageSize: 256}
+	limits := openalerts.ReadLimits{MaxMembers: max(1, capacity.Members/4), MaxBytes: max(1, capacity.Bytes/4), PageSize: 256,
+		MaxLargeRead: config.LinkdCalibrationInterval / 4}
 	// The sets are read only where the Console named them: a connection its
 	// target named at startup (adopted), or one the deployment stated, which
 	// the first reconciliation then confirms or not. Otherwise nothing is
@@ -86,6 +97,13 @@ func newLinkdIndex(cfg config.Config, client redis.UniversalClient, connection c
 		reconciler, facts = console, console
 		location.console = console
 	}
+	// The calibration rate is not written here. ReconcileBatch is only the
+	// floor, and what a round calibrates before any Console call has been
+	// timed; each round then calibrates what covers every tracked strategy
+	// within the calibration interval, at the pace the Console's measured p90
+	// allows inside half of CycleTimeout (openalerts calibrationPlan), and a
+	// shortfall is reported as calibration_short. RefreshInterval is the
+	// round's cadence and CycleTimeout bounds one round.
 	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: location, Subscriber: location, Reconciler: reconciler, Now: now,
 		Policy: openalerts.PolicySelfMaintain, MaxStrategies: capacity.Strategies, MaxMembers: capacity.Members, MaxBytes: capacity.Bytes,
 		MaxLocalEntries: capacity.LocalEntries, ReadBatch: capacity.ReadBatch, ReconcileBatch: 1, RefreshInterval: time.Second,

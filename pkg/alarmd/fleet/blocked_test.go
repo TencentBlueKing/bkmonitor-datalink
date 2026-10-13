@@ -415,6 +415,40 @@ func TestARoundThatEndedAfterItsErrorIsNotBeingRetried(t *testing.T) {
 // 11 s after its 30 s settling wait with 9 s left, and all of it used,
 // reads as a query begun late - which UNLOCATED alone could not say. A
 // failure kept from an earlier Slot times nothing on this round's row.
+// A refused query's row carries the HTTP status as a number, copied from the
+// round's failure facts: the row says 400 without anyone parsing text, and
+// the reading files it as refused.
+func TestARefusedQuerysRowCarriesItsHTTPStatus(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		slot := int64(100 + 60*round)
+		tracker.Observe(context.Background(), observability.Observation{
+			QueryFailure: &observability.QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE",
+				Detail: "http_status=400", HTTPStatus: 400},
+			Trace: observability.TraceFields{QueryGroupKey: "qg-1", EvaluationTime: slot},
+		})
+		at.at = at.at.Add(time.Millisecond)
+		tracker.Observe(context.Background(), observability.Observation{
+			ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE", ProgressCompletionReason: "QUERY_UNAVAILABLE",
+			Trace: observability.TraceFields{QueryGroupKey: "qg-1", EvaluationTime: slot},
+		})
+		at.at = at.at.Add(time.Minute)
+	}
+	rows := tracker.Anomalies()
+	Attribute(rows, at.at)
+	if len(rows) != 1 || rows[0].Failure == nil || rows[0].Failure.HTTPStatus != 400 {
+		t.Fatalf("rows = %+v, want the failure carrying status 400", rows)
+	}
+	encoded, _ := json.Marshal(rows[0].Failure)
+	if !strings.Contains(string(encoded), `"http_status":400`) {
+		t.Fatalf("failure encodes as %s, want http_status 400", encoded)
+	}
+	if rows[0].Finding.Check != CheckQueryRefused {
+		t.Fatalf("finding %+v, want the query refused", rows[0].Finding)
+	}
+}
+
 func TestATimeoutsRowCarriesThisRoundsQueryAgainstItsBudget(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
@@ -518,7 +552,7 @@ func TestThisRoundsFailureOutranksTheLastCompletionsCause(t *testing.T) {
 	// A refusal the backend gave an earlier Slot does not make this round's
 	// unnamed failure a refusal at the query step either.
 	staleRefusal := staleFailure
-	staleRefusal.Failure = &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", At: &failedAt, Slot: 1060}
+	staleRefusal.Failure = &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400, At: &failedAt, Slot: 1060}
 	rows = []Anomaly{staleRefusal}
 	Attribute(rows, now)
 	if rows[0].Finding.Check != CheckDefect || rows[0].Blocked == nil || rows[0].Blocked.Class == ClassRefused || rows[0].Blocked.Dependency == DependencyQueryBackend {

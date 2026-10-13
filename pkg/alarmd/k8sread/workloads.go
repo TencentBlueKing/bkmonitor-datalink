@@ -58,6 +58,8 @@ const (
 	// name elsewhere, and the origin says so rather than reading like a
 	// namespace the address names.
 	OriginShortName = "short_name"
+	// OriginRequested is the one namespace a request named.
+	OriginRequested = "requested"
 )
 
 // ReasonNoNamespace is why a dependency adds no namespace: its address is not
@@ -395,6 +397,26 @@ func (r *Reader) Workloads(ctx context.Context, dependencies []Dependency, confi
 		result.Namespaces = append(result.Namespaces, *section)
 	}
 	return result, nil
+}
+
+// WorkloadsIn reads the workloads of the one namespace a request names, any
+// namespace the ServiceAccount may list; the same two LISTs as each section
+// of Workloads. A name that is not a namespace name is refused before any
+// read.
+func (r *Reader) WorkloadsIn(ctx context.Context, namespace string, windowHours int) (WorkloadsResult, error) {
+	if !dnsLabel.MatchString(namespace) {
+		return WorkloadsResult{}, &Error{Code: CodeInvalidRequest, Message: "namespace must be one Kubernetes namespace name"}
+	}
+	if windowHours <= 0 {
+		windowHours = DefaultWindowHours
+	}
+	if windowHours > MaxWindowHours {
+		windowHours = MaxWindowHours
+	}
+	now := r.options.Now()
+	section := &NamespaceWorkloads{Namespace: namespace, Origins: []NamespaceOrigin{{Kind: OriginRequested}}, Workloads: []Workload{}}
+	r.readNamespace(ctx, section, now.Add(-time.Duration(windowHours)*time.Hour))
+	return WorkloadsResult{WindowHours: windowHours, ReadAt: now.UTC(), Namespaces: []NamespaceWorkloads{*section}}, nil
 }
 
 func (r *Reader) readNamespace(ctx context.Context, section *NamespaceWorkloads, window time.Time) {

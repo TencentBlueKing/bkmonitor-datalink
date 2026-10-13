@@ -37,11 +37,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
@@ -67,6 +66,11 @@ type productionPhaseTwoEventSink interface {
 }
 
 type phaseTwoProductionExternalDependencies struct {
+	// RoleRuntime is the process's role runtime, opened and started by
+	// startup. Left nil, the opener builds and starts one the same way and the
+	// bundle closes it, so no caller runs the bundle without the wiring
+	// production has.
+	RoleRuntime *phaseTwoRoleRuntime
 	// Now is the clock the bundle schedules and freezes by. It is not the
 	// clock every deadline is measured by: access/uq Client.Execute and
 	// worker/completion_deadline.go turn a Slot's deadline, derived from this
@@ -77,6 +81,11 @@ type phaseTwoProductionExternalDependencies struct {
 	// reads as a query timeout rather than as the clock skew it is.
 	Now        func() time.Time
 	HTTPClient *http.Client
+	// QueryClock is the clock the query client times each query on, nil for
+	// the real clock as in production. A test whose backend answers on the
+	// test's clock sets it to that clock, so a query's elapsed time is the
+	// latency the backend was given.
+	QueryClock func() time.Time
 	// PrepareEvents validates the output coordinates and returns the opener
 	// that connects; validation errors refuse startup, the opener's errors
 	// are retried while the replica reports itself not ready.
@@ -119,21 +128,34 @@ func phaseTwoUQDialer() *net.Dialer {
 // newPhaseTwoUQHTTPClient returns the client used for query provider
 // requests. The zero-value http.Client kept only two idle connections per
 // host, so with P concurrent Slot queries most connections were torn down and
-// re-established after every request. The pool below covers the P/R profiles
-// in use with headroom. Requests are bounded by the per-attempt context
+// re-established after every request. The idle pool covers every query this
+// process can have in flight - the permits never exceed the container's
+// execution ceiling (config.DeriveScheduler) - and the lookback's one more,
+// so a connection a query returns is kept for the next rather than redialed.
+// It was written as 64 per host for the permit tiers of its day, and a budget
+// derived above that would have redialed on every request past it with
+// nothing reporting why. Requests are bounded by the per-attempt context
 // deadline, so no client-level or response-header timeout is set.
 func newPhaseTwoUQHTTPClient() *http.Client {
 	dialer := phaseTwoUQDialer()
+	idle := phaseTwoUQIdleConnections(config.DetectCapacityInputs())
 	return &http.Client{Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
-		MaxIdleConns:          128,
-		MaxIdleConnsPerHost:   64,
+		MaxIdleConns:          idle,
+		MaxIdleConnsPerHost:   idle,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: time.Second,
 		ResponseHeaderTimeout: 0,
 	}}
+}
+
+// phaseTwoUQIdleConnections is the idle connections kept to the query
+// service: one per query the container can have in flight, and one for the
+// lookback.
+func phaseTwoUQIdleConnections(inputs config.CapacityInputs) int {
+	return config.DeriveScheduler(inputs).ActiveExecutionCeiling + 1
 }
 
 func openProductionPhaseTwoBundle(
@@ -160,6 +182,44 @@ func openProductionPhaseTwoBundleWithDependencies(
 	health *phaseTwoApplicationHealth,
 	newStrategySource productionStrategySourceFactory,
 	external phaseTwoProductionExternalDependencies,
+) (*phaseTwoWorkerBundle, error) {
+	if external.RoleRuntime != nil || ctx == nil || recorder == nil || health == nil {
+		return openProductionPhaseTwoBundleAssembly(ctx, cfg, recorder, logger, health, newStrategySource, external)
+	}
+	// Startup opens the role runtime, starts it, then opens the bundle with
+	// it (runPhaseTwoApplication); a caller that passes none gets the same.
+	runtime, err := openPhaseTwoRoleRuntime(cfg, recorder, nil, logger)
+	if err != nil {
+		return nil, err
+	}
+	if external.Now != nil {
+		runtime.now = external.Now
+	}
+	runtime.Start(ctx, health)
+	external.RoleRuntime = runtime
+	bundle, err := openProductionPhaseTwoBundleAssembly(ctx, cfg, recorder, logger, health, newStrategySource, external)
+	if err != nil || bundle == nil {
+		return bundle, errors.Join(err, runtime.Close())
+	}
+	closeResources := bundle.dependencies.CloseResources
+	bundle.dependencies.CloseResources = func(shutdownCtx context.Context) error {
+		var err error
+		if closeResources != nil {
+			err = closeResources(shutdownCtx)
+		}
+		return errors.Join(err, runtime.Close())
+	}
+	return bundle, nil
+}
+
+func openProductionPhaseTwoBundleAssembly(
+	ctx context.Context,
+	cfg config.Config,
+	recorder *metric.Recorder,
+	logger *observability.Logger,
+	health *phaseTwoApplicationHealth,
+	newStrategySource productionStrategySourceFactory,
+	external phaseTwoProductionExternalDependencies,
 ) (_ *phaseTwoWorkerBundle, resultErr error) {
 	if ctx == nil || recorder == nil || logger == nil || health == nil || newStrategySource == nil ||
 		external.Now == nil || external.HTTPClient == nil || external.PrepareEvents == nil {
@@ -168,6 +228,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 	wait := external.startupWaiter(recorder, logger, health)
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+	if !cfg.HasRole(roles.Worker) {
+		return openProductionControlRoleBundle(ctx, cfg, recorder, logger, health, newStrategySource, external)
 	}
 	if !phaseTwoProductionBudgetsFitPlatform(cfg) {
 		return nil, errors.New("phase-two production budgets overflow provider limits")
@@ -187,6 +250,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// anomaly list costs no reads of its own. It forwards every observation
 	// untouched: diagnostics must not change what the pipeline reports.
 	fleetTracker := fleet.NewTracker(baseObserver, cfg.PhaseTwo.Worker.ID, external.Now)
+	recorder.SetFleetTrackerSource(fleetTracker.Dropped)
 	// How long a Query Group may wait for this Worker's view to carry it
 	// before the wait is listed: the old Leader's lease running out, a
 	// candidate taking the lead (and publishing) on a refresh tick, the
@@ -227,6 +291,12 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// bounded diagnostic; the census is every owned Query Group's peak for
 	// the heartbeat, which has to be a census.
 	retainedPeaks := observability.NewRetainedPeakCensus(5*time.Minute, external.Now)
+	// A Query Group's last Slot peak is held for two of its own periods and
+	// the replay age, so an hourly or daily one stays a reading between Slots.
+	retainedPeaks.SetReplayAge(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration())
+	// Whose burst of writes to warming series an hour's busiest minute was:
+	// one line an hour, through the observer it is a member of.
+	warmingPeak := observability.NewWarmingPeak(external.Now)
 	// Each member named, so that a panic in one is counted under it while the
 	// others still receive the observation.
 	observer = observability.Multi(observability.Named(observability.ObserverTracker, observer),
@@ -234,23 +304,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 		observability.Named(observability.ObserverTargetFlow, targetFlow),
 		observability.Named(observability.ObserverRejectionTally, rejectionTally),
 		observability.Named(observability.ObserverCostSummary, costSummary),
-		observability.Named(observability.ObserverRetainedPeaks, retainedPeaks))
+		observability.Named(observability.ObserverRetainedPeaks, retainedPeaks),
+		observability.Named(observability.ObserverWarmingPeak, warmingPeak))
 	observer = phaseTwoRuntimeObserver(observer)
-	compiler, err := newPlanCompiler(cfg)
-	if err != nil {
-		return nil, err
-	}
-	stateSemantics, err := state.RuntimeStateSemantics()
-	if err != nil {
-		return nil, err
-	}
-	strategySemantics := strategy.StateSemantics{
-		StateSchemaVersion:          stateSemantics.StateSchemaVersion,
-		CodecSemanticsVersion:       stateSemantics.CodecSemanticsVersion,
-		IdentitySchemaDigest:        stateSemantics.IdentitySchemaDigest,
-		SourceTimeSemanticsVersion:  stateSemantics.SourceTimeSemanticsVersion,
-		HistoryCellSemanticsVersion: stateSemantics.HistoryCellSemanticsVersion,
-	}
+	warmingPeak.SetEmit(observer)
 
 	sourceConnection := cfg.StrategySourceRedis()
 	runtimeConnection := cfg.RuntimeStoreRedis()
@@ -402,245 +459,25 @@ func openProductionPhaseTwoBundleWithDependencies(
 	fleetTracker.SetPlatformNoDataHorizon(func() int64 {
 		return platformSettings.Current().NoDataTrackingHorizonSeconds
 	})
-	strategySource, err := newStrategySource(redisForCaller(controlClient, redisfailure.CallerStrategySource), cfg.PhaseTwo.Control.StrategyCachePrefix)
+	core, err := openPhaseTwoCoreResources(ctx, cfg, recorder, observer, controlClient, runtimeClient, platformSettings, external.Now,
+		wait, observationMemory, newStrategySource, func() error { controlClosed = true; return controlClient.Close() })
 	if err != nil {
 		return nil, err
 	}
-	// The compiler reads the copy when each control round opens, so a
-	// setting the platform changes reaches the plans on the next round:
-	// every strategy recompiles under it and the cutover carries the new
-	// Catalog out. Within a round the facts are frozen.
-	planner, err := newPlatformBoundPlanner(cfg, platformSettings)
-	if err != nil {
-		return nil, err
-	}
-	repository, err := controlplane.NewRedisCatalogRepository(
-		redisForCaller(runtimeClient, redisfailure.CallerControlPlane), productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog"), phaseTwoCatalogRetention(cfg),
-	)
-	if err != nil {
-		return nil, err
-	}
-	if err := repository.ConfigureDrainingTermination(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()); err != nil {
-		return nil, err
-	}
-	// The cutover prunes a closed Schedule Segment only when the scheduler's
-	// own arithmetic says no Slot in it is read anymore. The three durations
-	// that arithmetic takes are resolved once here and handed to both sides
-	// from the same values, so a change to how one side takes them cannot
-	// leave the other on the old reading.
-	recoveryLimits := cfg.PhaseTwo.Scheduler.RecoveryLimits()
-	retention := execution.SlotRetention{
-		QueryReserve:  cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
-		MaxReplayAge:  recoveryLimits.MaxReplayAge,
-		TerminalDelay: phaseTwoPostRecoveryTerminalDelay(cfg),
-		// A Query Group's read hold is bounded by the replay age: a Slot the
-		// scheduler already tolerates running that late (readhold design,
-		// bound (c)).
-		ReadHoldBound: recoveryLimits.MaxReplayAge,
-	}
-	if err := repository.ConfigureSegmentRetention(retention); err != nil {
-		return nil, err
-	}
-	// The timeline cache budget is derived here rather than inside the
-	// repository: the derivation belongs to the container, and the control
-	// plane package does not depend on configuration.
-	timelineCache := config.DeriveControlTimelineCache(config.DetectCapacityInputs())
-	if err := repository.ConfigureControlTimelineCache(timelineCache.MaxEntries, timelineCache.MaxBytes); err != nil {
-		return nil, err
-	}
-	// Catalog objects are a few kilobytes each and immutable; they take the
-	// same container-derived budget as the timelines they are read next to.
-	if err := repository.ConfigureObjectCache(timelineCache.MaxEntries, timelineCache.MaxBytes); err != nil {
-		return nil, err
-	}
-	// The cache's own reading of what its objects take decoded, against the
-	// charge its unused budget is reserved at.
-	if err := recorder.BindDecodedObjects(func() (uint64, float64, float64) {
-		reading := repository.DecodedObjectReading()
-		return reading.Samples, reading.Last, reading.Max
-	}); err != nil {
-		return nil, err
-	}
-	observationMemory.Reserve("timeline_cache", repository.TimelineCacheBudget)
-	observationMemory.Reserve("object_cache", repository.ObjectCacheBudget)
-	repository.ConfigureObserver(observer)
-	// The cache counters are what said a decoded-timeline cache was worth
-	// building, and nothing consumed them before. The timeline occupancy joins
-	// them so the derived budget can be read against the working set it was
-	// sized for: entries against the Query Groups this Worker owns, evictions
-	// against a version header that is not moving.
-	recorder.SetControlCacheSource(func() []metric.ControlCacheCounts {
-		stats := repository.ControlReadCacheStats()
-		occupancy := stats.TimelineOccupancy
-		objects := repository.ObjectCacheStats()
-		counts := []metric.ControlCacheCounts{
-			{Object: "version", Hits: stats.Version.Hits, Misses: stats.Version.Misses, Refreshes: stats.Version.Refreshes},
-			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
-			// A skipped revision is reported as a clear: the cache dropped
-			// everything because a Worker fell more than one publication
-			// behind, which the delta design assumes does not happen.
-			{Object: "activation_delta", Hits: stats.Delta.Hits, Misses: stats.Delta.Misses, Clears: stats.DeltaSkips,
-				Audit: &metric.ControlCacheAudit{
-					Samples: stats.DeltaAudit.Samples, Agreed: stats.DeltaAudit.Agreed,
-					OverNamed: stats.DeltaAudit.OverNamed, Missed: stats.DeltaAudit.Missed,
-				}},
-			{Object: "catalog_index", Hits: stats.Index.Hits, Misses: stats.Index.Misses},
-			// A timeline read answered by the Worker's revision hint
-			// (decision-016 batch 4): a hit is no Redis command at all, a
-			// miss is one body read, a refresh is a hint the body did not
-			// bear and the read went the header way. Header reads for
-			// hinted Query Groups are what batch 4 removes; the header's
-			// own object above is where that has to fall.
-			{Object: "timeline_by_revision", Hits: stats.HintedTimeline.Hits, Misses: stats.HintedTimeline.Misses,
-				Refreshes: stats.HintedTimeline.Refreshes},
-			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses,
-				Refreshes: stats.Timeline.Refreshes, Evictions: occupancy.Evictions,
-				Occupancy: &metric.ControlCacheOccupancy{
-					Entries: float64(occupancy.Entries), Bytes: float64(occupancy.Bytes),
-					BytesLimit: float64(occupancy.MaxBytes),
-				}},
-			// The Query Group objects and output contexts by digest, in the
-			// stored bytes it is bounded by; the observation memory line
-			// charges them decoded (observation_memory_budget_*_bytes).
-			{Object: "catalog_object", Hits: objects.Hits, Misses: objects.Misses, Evictions: objects.Evictions,
-				Occupancy: &metric.ControlCacheOccupancy{
-					Entries: float64(objects.Occupancy.Entries), Bytes: float64(objects.Occupancy.Bytes),
-					BytesLimit: float64(objects.Occupancy.MaxBytes),
-				}},
-		}
-		// The key segment memos are caches too, and they report through the same
-		// metric rather than a new one. Their interesting outcome is the clear:
-		// the memo drops everything on reaching its bound because its design
-		// assumes the populations stay inside it, so a clear is that assumption
-		// failing rather than a cache being warmed. The two domains differ in how
-		// safe that assumption is - a tenant population is bounded by
-		// configuration, a state generation advances with every publish - so they
-		// are reported apart.
-		//
-		// Occupancy is deliberately not reported for them. Their bound is in
-		// entries rather than bytes, and an entry count that resets to zero on
-		// every clear says more about when the page was scraped than about the
-		// memo. The clear counter does not have that problem.
-		for _, memo := range state.KeySegmentMemoCounts() {
-			counts = append(counts, metric.ControlCacheCounts{
-				Object: memo.Domain,
-				Hits:   memo.Hits, Misses: memo.Misses, Clears: memo.Clears,
-			})
-		}
-		return counts
-	})
-	if phaseTwoCatalogRetention(cfg) < phaseTwoSnapshotMinimumRetention(cfg, 0) {
-		return nil, scheduler.ErrSnapshotRetentionInsufficient
-	}
-	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, strategySemantics,
-		phaseTwoCatalogRetentionAdmission(cfg))
-	if err != nil {
-		return nil, err
-	}
-	_, dynamicGroups := cfg.DynamicGroupKeyPrefix()
-	if err := reconciler.ConfigureTargetSources(controlplane.TargetSources{DynamicGroups: dynamicGroups}); err != nil {
-		return nil, err
-	}
-	if err := reconciler.ConfigureOutputProtocol(cfg.OutputProtocol()); err != nil {
-		return nil, err
-	}
-	// Read per round rather than captured as a value: the reconciler's round
-	// key covers the horizon, so the seam is what lets a deployment move the
-	// setting without every strategy document having to change for the new
-	// value to reach its Plan.
-	if err := reconciler.ConfigureNoDataPolicy(func() controlplane.NoDataPolicy {
-		// Resolved by the platform settings copy: a dynamic value, else the
-		// deployment's values, else the contract's one day. Always positive,
-		// so every Plan with no-data enabled carries a finite horizon.
-		return controlplane.NoDataPolicy{TrackingHorizonSeconds: platformSettings.Current().NoDataTrackingHorizonSeconds}
-	}); err != nil {
-		return nil, err
-	}
-	if err := reconciler.ConfigureClock(external.Now); err != nil {
-		return nil, err
-	}
-	catalog, err := controlplane.NewRedisCatalogRuntime(
-		repository, compiler, strategySemantics, cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	ownershipStore, err := newProductionOwnershipStore(cfg, redisForCaller(runtimeClient, redisfailure.CallerOwnership))
-	if err != nil {
-		return nil, err
-	}
-	if err := wait.await(ctx, "ownership_store", ownershipStore.Ping); err != nil {
-		return nil, err
-	}
-	// A cutover stamps each rewritten timeline's revision on the Query
-	// Group's Assignment record in the same script (decision-016 batch 4);
-	// both live on the runtime Redis, and the catalog learns the record
-	// keys here rather than guessing the ownership prefix.
-	repository.WithAssignmentRecordKey(ownershipStore.AssignmentKey)
-
-	stateBackend, err := state.NewRedisBackendWithClient(productionRedisAddress(runtimeConnection), redisForCaller(runtimeClient, redisfailure.CallerRuntimeState))
-	if err != nil {
-		return nil, err
-	}
-	if err := wait.await(ctx, "state_store", stateBackend.Ping); err != nil {
-		return nil, err
-	}
-	storageRouter, err := state.NewFixedRouter("phase-two-primary", stateBackend)
-	if err != nil {
-		return nil, err
-	}
-	executionStore, err := state.NewExecutionStore(state.ExecutionStoreOptions{
-		Prefix: cfg.Redis.StatePrefix, Router: storageRouter, MaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes,
-		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch,
-		// The store derives each write TTL from the Plan retention the request
-		// carries; these only bound it, exactly as they do for the phase-one
-		// store built in config.StoreOptions.
-		MinTTL: cfg.Redis.MinTTL.Duration(), MaxTTL: cfg.Redis.MaxTTL.Duration(),
-		RestartMargin: cfg.Redis.RestartMargin.Duration(),
-		ReadHoldBound: recoveryLimits.MaxReplayAge,
-		// Runtime State writes verify the owner lease inside Redis; without the
-		// resolver the store would fall back to unfenced batched writes.
-		FenceKeys: ownershipStore,
-	})
-	if err != nil {
-		return nil, err
-	}
-	// A worker that has forgotten the key lives it remembered is back to one
-	// renewal round trip per Plan per Slot, and nothing else in the process
-	// says so: the Slots keep passing and the keys keep being renewed.
-	recorder.SetRenewalGateSource(executionStore.RenewalGateResets)
-	progressStore, err := progress.NewStore(progress.StoreOptions{
-		Prefix: productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "schedule"), Control: ownershipStore,
-		Slots: catalog, Now: external.Now, Observer: observer,
-	})
-	if err != nil {
-		return nil, err
-	}
-	activator, err := controlplane.NewScheduleActivationReconcilerWithProgress(
-		repository, compiler, strategySemantics, progressStore, external.Now,
-	)
-	if err != nil {
-		return nil, err
-	}
-	// What the leader's round reads off the registrations and the next
-	// activation reads: the Query Groups the Workers report an unreadable
-	// timeline for.
-	timelineRepairs := &controlplane.TimelineRepairRequests{}
-	activator.WithTimelineRepairs(timelineRepairs)
-	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
-		Source: strategySource, Planner: planner, Reconciler: reconciler, Activator: activator,
-		Repository: repository, Schedules: catalog, Progress: progressStore,
-		Observer: observer,
-		Recorder: recorder,
-		Now:      external.Now, MaxReplayAge: cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
-		Close: func() error {
-			controlClosed = true
-			return controlClient.Close()
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
+	repository := core.Repository
+	catalog := core.Catalog
+	ownershipStore := core.Ownership
+	progressStore := core.Progress
+	control := core.Control
+	reconciler := core.Reconciler
+	activator := core.Activator
+	timelineRepairs := core.TimelineRepairs
+	timelineCache := core.TimelineCache
+	recoveryLimits := core.RecoveryLimits
+	retention := core.Retention
+	storageRouter := core.StorageRouter
+	executionStore := core.ExecutionStore
+	strategySource := core.StrategySource
 	frozen, err := newProductionFrozenExecution(catalog, repository, external.Now)
 	if err != nil {
 		return nil, err
@@ -651,6 +488,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	queryClient.WithNow(external.QueryClock)
 	flights, err := scheduler.NewFlightCoordinatorWithRecovery(recoveryLimits, external.Now, observer)
 	if err != nil {
 		return nil, err
@@ -710,16 +548,20 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	// The latest records whose address is not their host's, for fleet.get to
+	// name beside the count.
+	addressDiffers := &fleet.AddressDiffersSamples{}
 	querySource, err := access.NewSource(frozen, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
-		MinReadyDelay:        cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
-		Now:                  external.Now,
-		Observer:             observer,
-		Admission:            seriesAdmission,
-		ObserveAdmission:     recorder.RecordSeriesAdmission,
-		ObserveHostPlacement: recorder.RecordHostPlacement,
-		ScopeDrops:           scopeDrops,
-		ObserveSeriesPulled:  seriesPullTally.Add,
-		Lookback:             lookbackEngine,
+		MinReadyDelay:             cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
+		Now:                       external.Now,
+		Observer:                  observer,
+		Admission:                 seriesAdmission,
+		ObserveAdmission:          recorder.RecordSeriesAdmission,
+		ObserveHostPlacement:      hostPlacementObserver(recorder, addressDiffers, external.Now),
+		ObserveDownstreamDistress: recorder.RecordDownstreamDistress,
+		ScopeDrops:                scopeDrops,
+		ObserveSeriesPulled:       seriesPullTally.Add,
+		Lookback:                  lookbackEngine,
 	})
 	if err != nil {
 		return nil, err
@@ -729,7 +571,6 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	evaluator, err := evaluation.New(detector, evaluation.Limits{
-		MaxPlans: cfg.Limits.Detect.MaxPlans, MaxRecords: cfg.Limits.Detect.MaxRecordsPerSeries,
 		MaxLevels: uint64(cfg.Limits.Compiler.MaxLevelsPerPlan), Trigger: cfg.TriggerLimits(),
 	})
 	if err != nil {
@@ -874,6 +715,8 @@ func openProductionPhaseTwoBundleWithDependencies(
 	linkdBudget := config.DeriveLinkdCapacity(config.DetectCapacityInputs())
 	legacyTime := strategycache.NewLegacyEffectiveTime(redisForCaller(controlClient, redisfailure.CallerLegacyEffectiveTime),
 		redisForCaller(cmdbClient, redisfailure.CallerLegacyEffectiveTime), cfg.PlatformKeyPrefix(), external.Now, linkdBudget.Strategies, linkdBudget.Bytes/4)
+	legacyTime.SetFailureLine(effectiveTimeFailureLine(logger))
+	recorder.SetEffectiveTimeRefreshSource(legacyTime.RefreshCounts)
 	// The mark a failed attempt leaves behind. Wired here and asserted by a
 	// test on this function: the port is allowed to be nil, and a production
 	// runtime that left it nil would lose every query-free completion's
@@ -919,8 +762,13 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err := recorder.BindRetainedReservation(func() uint64 { return worker.RetainedReserved(coordinator) }); err != nil {
 		return nil, err
 	}
+	// Sized by what the owned Query Groups were measured to retain, once
+	// every one of them has been: the cost source reads the census for the
+	// Leader's heartbeat, and the reservation from the same reading.
+	workerCosts := newWorkerCostSource(retainedPeaks, recorder, external.Now)
 	observationMemory.Reserve("retained", func() (uint64, uint64) {
-		return cfg.PhaseTwo.Coordinator.MaxRetainedBytes, worker.RetainedReserved(coordinator)
+		held := worker.RetainedReserved(coordinator)
+		return workerCosts.RetainedReservation(cfg.PhaseTwo.Coordinator.MaxRetainedBytes, held), held
 	})
 	// Only the static compatibility is read from this one; the heartbeat that
 	// carries acknowledgement and load is written by the bundle once it exists.
@@ -928,9 +776,14 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// (decision-016): one identity per process, written into the
 	// registration; one server, led and stepped down with the control
 	// authority; the desired set of every round published through it.
-	streamIdentity, err := newViewStreamIdentity(cfg.HTTP.Listen, viewStreamRoutes(cfg.RuntimeStoreRedis())...)
-	if err != nil {
-		return nil, err
+	var streamIdentity viewStreamIdentity
+	if external.RoleRuntime != nil {
+		streamIdentity = external.RoleRuntime.StreamIdentity
+	} else {
+		streamIdentity, err = newViewStreamIdentity(cfg.HTTP.Listen, viewStreamRoutes(cfg.RuntimeStoreRedis())...)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if streamIdentity.Unadvertised != "" {
 		// Said once here, by the process that cannot be reached, rather than
@@ -949,11 +802,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	registration, err := phaseTwoWorkerRegistration(cfg, ownership.WorkerStarting, external.Now(), nil, nil, streamIdentity)
+	expectedCompatibility, err := phaseTwoExpectedWorkerCompatibility(cfg)
 	if err != nil {
 		return nil, err
 	}
-	eligibility, err := scheduler.NewStaticWorkerEligibility(registration.Compatibility())
+	eligibility, err := scheduler.NewStaticWorkerEligibility(expectedCompatibility)
 	if err != nil {
 		return nil, err
 	}
@@ -966,6 +819,8 @@ func openProductionPhaseTwoBundleWithDependencies(
 	assignmentReconciler.WithTimelineRevisions(repository)
 	var executor scheduler.Executor = coordinator
 	productionOwnership, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
+		Roles:               cfg.EffectiveRoles(),
+		ControlCandidate:    phaseTwoControlCandidacy(cfg) == ownership.ControlCandidacyFallback,
 		SteppedDownAsLeader: controlLeaderSteppedDown(reconciler, recorder),
 		QueryCooldowns:      newProductionQueryCooldownStore(cfg, redisForCaller(runtimeClient, redisfailure.CallerQueryCooldown), recorder, observer),
 		ReadHolds:           readHolds,
@@ -996,16 +851,20 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// This Worker's side of the same stream: it finds the Leader from the
 	// lease and the Leader's registration, installs what it is sent, and
 	// asks the catalog whether the objects a view names are there.
-	incarnation, err := newViewStreamIncarnation()
-	if err != nil {
-		return nil, err
+	var incarnation string
+	if external.RoleRuntime != nil {
+		incarnation = external.RoleRuntime.Incarnation
+	} else {
+		incarnation, err = newViewStreamIncarnation()
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Batch 4a of decision-016: each Slot read decides, from the installed
 	// view and the lease the renewal last brought, whether the Query Group
 	// is executed from the view; the receipt counts those that are.
 	viewGate := newViewExecutionGate()
 	viewGate.retryWithin = cfg.PhaseTwo.Ownership.LeaseRenewInterval.Duration()
-	workerCosts := newWorkerCostSource(retainedPeaks, recorder, external.Now)
 	viewClient, err := viewstream.NewClient(
 		viewstream.ClientIdentity{WorkerID: cfg.PhaseTwo.Worker.ID, Incarnation: incarnation, StreamToken: streamIdentity.Token},
 		viewStreamDiscovery{store: ownershipStore}, repository, observer, viewstream.ClientOptions{Now: external.Now, Switched: viewGate,
@@ -1069,6 +928,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	fleetService.SetReplica(cfg.PhaseTwo.Worker.ID)
+	if err := wireRoleControlFacts(fleetService, ownershipStore, fleetStore, external.RoleRuntime); err != nil {
+		return nil, err
+	}
 	// A healthy object's row is in no snapshot; this replica builds it on
 	// request for the objects it tracks.
 	fleetService.SetLocalRows(fleetTracker.TrackedRow)
@@ -1219,15 +1081,27 @@ func openProductionPhaseTwoBundleWithDependencies(
 	var publisher fleetPublisher
 	maintenanceReadings := &maintenanceSource{}
 	fleetAPI = withLookbackAPI(fleetAPI, lookbackEngine, lookbackState, readHolds, external.Now)
-	fleetAPI, closeCLI, publicRestricted := buildPhaseTwoCLI(cfg, fleetAPI, repository, progressStore, platformSettings, func() *observability.RuntimeConfigFacts {
+	readFacts := func() *observability.RuntimeConfigFacts {
 		if bundle == nil {
 			return nil
 		}
 		return bundle.runtimeConfig
-	}, cliControlBinding{Incarnation: incarnation, StreamToken: streamIdentity.Token, Server: viewServer, Metrics: recorder.Gatherer(),
+	}
+	cliBinding := cliControlBinding{Incarnation: incarnation, StreamToken: streamIdentity.Token, Server: viewServer, Metrics: recorder.Gatherer(),
 		PublicWindows: fleet.NewPublicWindowsHandler(windowStore, external.Now), RedisFailures: cliRedisFailures(recorder, observer),
 		RedisDialRetries: recorder.ObserveDiagnosticRedisDialRetry,
-		Lookback:         lookbackEngine, LookbackStanding: lookbackState, ReadHolds: readHolds, Maintenance: maintenanceReadings})
+		Lookback:         lookbackEngine, LookbackStanding: lookbackState, ReadHolds: readHolds, Maintenance: maintenanceReadings}
+	var closeCLI func() error
+	var publicRestricted bool
+	var channelBinding *ChannelBinding
+	if external.RoleRuntime != nil {
+		channelBinding = &ChannelBinding{Native: fleetAPI, Catalog: repository, Progress: progressStore,
+			Settings: platformSettings, Control: cliBinding}
+		fleetAPI, publicRestricted = external.RoleRuntime.Channel.Handler, external.RoleRuntime.Channel.Restricted
+		closeCLI = func() error { return nil }
+	} else {
+		fleetAPI, closeCLI, publicRestricted = buildPhaseTwoCLI(cfg, fleetAPI, repository, progressStore, platformSettings, readFacts, cliBinding)
+	}
 	defer func() {
 		if resultErr != nil {
 			_ = closeCLI()
@@ -1236,6 +1110,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	surface := publicSurfaceStandingOf(cfg, publicRestricted)
 	surface.warn(logger)
 	bundle, err = newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
+		Flights:           flights,
 		Lookback:          lookbackEngine,
 		ReadHolds:         readHolds,
 		ActivationBlocked: repository.ActivationBlockedReading,
@@ -1246,6 +1121,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		FleetAPI: fleetAPI, PublicSurfaceRestricted: publicRestricted,
 		ControlStream: controlStream, StreamIdentity: streamIdentity, ViewStreamStats: viewServer.Stats, ViewClient: viewClient,
 		PublishFleet: func(ctx context.Context) {
+			publishRoleControlFacts(ctx, bundle, fleetStore, external.RoleRuntime)
 			observationRefresh.publish(ctx)
 			publisher.publishOnce(ctx)
 			if costRefresh != nil {
@@ -1303,6 +1179,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	bundle.addressDiffers = addressDiffers
 	lookbackOwner.bind(bundle)
 	// A Slot a supplement or maintenance turned away from its flight runs as
 	// soon as the hold ends, not at its next turn.
@@ -1326,7 +1203,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// its own. It exists only with the alert link's Console: the difference
 	// is the link's roster minus the snapshot, and a deployment without the
 	// link has neither the roster nor the alerts it would close.
-	if linkd.Console != nil {
+	if absentCloseWired(cfg, linkd.Console != nil) {
 		absentClose := newAbsentStrategyClose(bundle, reconciler, linkd.Console, events)
 		absentClose.documents, _ = strategySource.(controlplane.StrategyDocumentPresence)
 		absentPage.bind(absentClose)
@@ -1386,7 +1263,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// that cannot complete has already been promised an end, so a Progress
 		// cursor older than that describes an object that stopped rather than
 		// one between rounds.
-		capacity:  capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts, seriesPullTally),
+		capacity:  capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts, seriesPullTally, bundle.shaper.facts),
 		readEarly: lookbackReadEarly(lookbackEngine, readHolds), lateSeries: lookbackLateSeries(lookbackEngine, readHolds),
 		readHolds: readHolds.fleetFacts,
 		holdOf:    readHolds.holdOf, onOverdue: overdueEpisodeObserver(logger, recorder),
@@ -1400,22 +1277,24 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// Whether anything can be parked at all, from the same bundle. The
 		// overdue count above is only readable next to this: on a build that
 		// suppresses nothing it can only be zero.
-		dispatch:         bundle.dispatchSuppressionFacts,
-		restore:          progressRestoreSource(progressStore, observationAdmit(observationMemory, memoryline.ConsumerFleetRestore)),
-		staleAfter:       stallAfter,
-		restoreBudget:    fleetRestoreBudgetPerPublish,
-		openAlerts:       openAlertFacts,
-		controlSource:    bundle.controlSourceFleetFacts,
-		platformSettings: platformSettingsFactsSource(platformSettings, external.Now),
-		publicSurface:    surface,
-		activation:       bundle.activationFleetFacts,
-		activationHeader: bundle.activationHeaderFleetFacts,
-		rebalance:        bundle.rebalanceFleetFacts,
-		assignmentScope:  bundle.assignmentScopeFleetFacts,
-		assignmentSweep:  bundle.assignmentSweepFleetFacts,
-		leaderRound:      bundle.leaderRoundFleetFacts,
-		viewStream:       viewStreamFleetFacts(bundle.dependencies.ViewStreamStats, external.Now),
-		source:           bundle.sourceFleetFacts,
+		dispatch:            bundle.dispatchSuppressionFacts,
+		addressDiffers:      addressDiffers.Latest,
+		effectiveTimeUnread: legacyTime.Unread,
+		restore:             progressRestoreSource(progressStore, observationAdmit(observationMemory, memoryline.ConsumerFleetRestore)),
+		staleAfter:          stallAfter,
+		restoreBudget:       fleetRestoreBudgetPerPublish,
+		openAlerts:          openAlertFacts,
+		controlSource:       bundle.controlSourceFleetFacts,
+		platformSettings:    platformSettingsFactsSource(platformSettings, external.Now),
+		publicSurface:       surface,
+		activation:          bundle.activationFleetFacts,
+		activationHeader:    bundle.activationHeaderFleetFacts,
+		rebalance:           bundle.rebalanceFleetFacts,
+		assignmentScope:     bundle.assignmentScopeFleetFacts,
+		assignmentSweep:     bundle.assignmentSweepFleetFacts,
+		leaderRound:         bundle.leaderRoundFleetFacts,
+		viewStream:          viewStreamFleetFacts(bundle.dependencies.ViewStreamStats, external.Now),
+		source:              bundle.sourceFleetFacts,
 		endpoints: withTargetGroups(withLinkdConsole(endpointFactsSource(cfg, sharing, recorder, cmdbIndex.Default(), platformSettings,
 			bundle.sourceFleetFacts, events.State, openAlertFacts, external.Now),
 			linkd.Console, linkd.Location, external.Now), groupStore, external.Now),
@@ -1434,6 +1313,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// snapshot publishes, from the same sources.
 	observationRefresh.owned = bundle.ownedLeases
 	workerCosts.boundByOwned(bundle.ownedQueryGroups)
+	bundle.workerCosts = workerCosts
 	bundle.applied = publisher.applied
 	bundle.capacity = publisher.capacity
 	// The first attempt runs now, so a broker that answers is open before the
@@ -1442,6 +1322,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// the ready set until it can publish.
 	events.SetOnChange(bundle.outputSinkChanged)
 	events.Start()
+	if channelBinding != nil {
+		external.RoleRuntime.Channel.Bind(*channelBinding)
+	}
 	return bundle, nil
 }
 
@@ -1760,6 +1643,15 @@ func openAlertSetFacts(stats openalerts.Stats, staleBeyondBound bool, at time.Ti
 		facts.IndexReadAgeSeconds = &age
 	}
 	facts.IndexStaleAfterSeconds, facts.StaleSets = stats.StaleAfter.Seconds(), stats.Stale
+	facts.CalibrationNeeded, facts.CalibrationCapacity, facts.CalibrationShort = stats.CalibrationNeeded, stats.CalibrationCapacity, stats.CalibrationShort
+	for _, large := range stats.TooLarge {
+		facts.TooLarge = append(facts.TooLarge, fleet.TooLargeSetRow{TenantID: large.Strategy.TenantID, StrategyID: large.Strategy.StrategyID,
+			Members: large.Refusal.Members, Bytes: large.Refusal.Bytes, MaxMembers: large.Refusal.MaxMembers, MaxBytes: large.Refusal.MaxBytes})
+	}
+	for _, over := range stats.CalibrationOverAge {
+		facts.CalibrationOverAge = append(facts.CalibrationOverAge, fleet.CalibrationOverAgeRow{TenantID: over.Strategy.TenantID,
+			StrategyID: over.Strategy.StrategyID, AgeSeconds: over.Age.Seconds()})
+	}
 	if !stats.LoadedAt.IsZero() {
 		age := at.Sub(stats.LoadedAt).Seconds()
 		facts.AuthoritativeAgeSeconds = &age
@@ -1808,16 +1700,19 @@ func phaseTwoUQLimits(cfg config.Config) accessuq.Limits {
 	if defaults := accessuq.DefaultLimits(); defaults.MaxSeriesBytes < maximumSeries {
 		maximumSeries = defaults.MaxSeriesBytes
 	}
-	maximumRecords := cfg.PhaseTwo.Coordinator.MaxSeries * cfg.Limits.Detect.MaxRecordsPerSeries
+	// The counts in one answer are what its bytes can hold at the smallest a
+	// series and a record encode: the body cap governs, and these stop only an
+	// answer whose counting has gone wrong. The record cap was once the
+	// coordinator's series count times the detector's records per series,
+	// two numbers that bound other things.
 	return accessuq.Limits{
 		MaxBodyBytes: maximumBody, MaxSeriesBytes: maximumSeries,
-		MaxSeries: cfg.PhaseTwo.Coordinator.MaxSeries, MaxRecords: maximumRecords,
+		MaxSeries: max(uint64(maximumBody)/config.MinimumSeriesBytes, 1), MaxRecords: max(uint64(maximumBody)/config.MinimumRecordBytes, 1),
 	}
 }
 
 func phaseTwoProductionBudgetsFitPlatform(cfg config.Config) bool {
-	return cfg.PhaseTwo.Coordinator.MaxRetainedBytes <= math.MaxInt64 &&
-		cfg.PhaseTwo.Coordinator.MaxSeries <= math.MaxUint64/cfg.Limits.Detect.MaxRecordsPerSeries
+	return cfg.PhaseTwo.Coordinator.MaxRetainedBytes <= math.MaxInt64
 }
 
 // gateLookupFacts is the kept gate lookups as the replica publishes them.

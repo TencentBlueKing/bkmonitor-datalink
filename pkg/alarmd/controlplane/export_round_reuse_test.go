@@ -10,3 +10,10 @@ package controlplane
 func (reconciler *SourceReconciler) ForgetReusableRoundForTest() {
 	reconciler.reusable = nil
 }
+
+// HeldTermForTest says which of the things a Leader keeps between rounds
+// this reconciler holds: the observation, the last-good publication, the
+// reusable round, and how many compiled candidates.
+func (reconciler *SourceReconciler) HeldTermForTest() (observation, lastGood, reusable bool, candidates int) {
+	return reconciler.memory.Load() != nil, reconciler.lastGood != nil, reconciler.reusable != nil, reconciler.candidates.Len()
+}

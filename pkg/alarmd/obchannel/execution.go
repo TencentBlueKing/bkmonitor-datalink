@@ -15,13 +15,14 @@ import (
 // internal Worker RPC. It deliberately contains no CLI token or session.
 // Params contains only domain fields; the entry separates targeting fields.
 type Invocation struct {
-	EnvironmentID string `json:"environment_id"`
-	Version       string `json:"channel_version"`
-	Revision      string `json:"expected_catalog_revision"`
-	Operation     string `json:"operation"`
-	RequestID     string `json:"request_id"`
-	Params        Params `json:"params"`
-	Target        Target `json:"target"`
+	EnvironmentID             string `json:"environment_id"`
+	Version                   string `json:"channel_version"`
+	Revision                  string `json:"expected_catalog_revision"`
+	OperationContractRevision string `json:"operation_contract_revision,omitempty"`
+	Operation                 string `json:"operation"`
+	RequestID                 string `json:"request_id"`
+	Params                    Params `json:"params"`
+	Target                    Target `json:"target"`
 }
 
 type Target struct {
@@ -41,22 +42,22 @@ func (t Target) Explicit() bool {
 	return t.Replica != "" || t.OwnerQueryGroup != "" || t.ControlLeader
 }
 
-func (c *Channel) CatalogRevision() string { return c.revision }
+func (c *EvidenceExecutor) CatalogRevision() string { return c.revision }
 
-func (c *Channel) localMeta(requestID string) Meta {
+func (c *EvidenceExecutor) localMeta(requestID string) Meta {
 	if requestID == "" {
 		var id [16]byte
 		if _, err := rand.Read(id[:]); err == nil {
 			requestID = hex.EncodeToString(id[:])
 		}
 	}
-	return Meta{Version: Version, Revision: c.revision, EnvironmentID: c.options.EnvironmentID, AnsweredBy: c.options.Replica, Build: c.options.Build, Incarnation: c.options.Incarnation, RequestID: requestID}
+	return Meta{Version: Version, Revision: c.revision, EnvironmentID: c.options.EnvironmentID, AnsweredBy: c.options.Replica, Build: c.options.Build, Incarnation: c.options.Incarnation, Roles: c.options.Roles, RequestID: requestID}
 }
 
 // ExecuteEvidence executes only a local registered read. Its caller must first
 // authenticate the internal Worker RPC; it is not an HTTP or CLI auth bypass.
 // This method neither authenticates a CLI session nor renews or forwards it.
-func (c *Channel) ExecuteEvidence(ctx context.Context, invocation Invocation) Response {
+func (c *EvidenceExecutor) ExecuteEvidence(ctx context.Context, invocation Invocation) Response {
 	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
 	defer cancel()
 	meta := c.localMeta(invocation.RequestID)
@@ -67,7 +68,7 @@ func (c *Channel) ExecuteEvidence(ctx context.Context, invocation Invocation) Re
 	if invocation.Version != Version {
 		return fail("unsupported_channel_version", "This target supports "+Version)
 	}
-	if invocation.Revision != c.revision {
+	if invocation.OperationContractRevision == "" && invocation.Revision != c.revision {
 		return fail("target_catalog_mismatch", "The target operation catalog differs; this invocation did not execute.")
 	}
 	if len(invocation.RequestID) > 128 {
@@ -87,7 +88,13 @@ func (c *Channel) ExecuteEvidence(ctx context.Context, invocation Invocation) Re
 	if !ok {
 		return fail("unknown_operation", "Operation is not registered on the target.")
 	}
-	if !op.Targetable {
+	if op.Effect != "read" || op.RequiredScope != "deployment_ops_readonly" || op.ExecutionPool != "evidence" {
+		return fail("operation_not_internal_evidence", "Internal Worker RPC accepts only registered readonly evidence operations.")
+	}
+	if invocation.OperationContractRevision != "" && invocation.OperationContractRevision != c.OperationContractRevision(op.ID) {
+		return fail("target_operation_contract_mismatch", "The target operation execution contract differs; this invocation did not execute.")
+	}
+	if !op.Targetable && !(op.DefaultControlLeader && invocation.Target.ControlLeader) {
 		return fail("operation_not_targetable", "This operation is deployment-scoped and does not accept a process target.")
 	}
 	if err := validate(op, invocation.Params); err != nil {
@@ -112,13 +119,22 @@ func failure(meta Meta, code, message string) Response {
 	return Response{Status: "error", Summary: message, Error: &Failure{Code: code, Message: message}, Meta: meta}
 }
 
-func (c *Channel) run(ctx context.Context, op Operation, params Params, target Target, meta Meta) Response {
+func (c *EvidenceExecutor) run(ctx context.Context, op Operation, params Params, target Target, meta Meta) Response {
 	if ctx.Err() != nil {
 		return failure(meta, "request_timeout", "Evidence execution context ended before execution.")
 	}
 	out := op.Run(ctx, params)
 	if ctx.Err() != nil {
-		return failure(meta, "request_timeout", "Evidence execution exceeded its request context; no complete result is returned.")
+		if op.Effect != "exec" || out.Value == nil {
+			return failure(meta, "request_timeout", "Evidence execution exceeded its request context; no complete result is returned.")
+		}
+		// A cancelled exec may already have run remotely. Preserve the
+		// Provider's receipt, including termination/unknown-state evidence.
+		out.Complete = false
+		if out.Error == nil {
+			out.Error = &Failure{Code: "remote_state_unknown", Message: "Execution context ended; consult the returned remote-state receipt before explicitly retrying."}
+		}
+		out.Limitations = append(out.Limitations, "execution_context_ended")
 	}
 	status := "ok"
 	if !out.Complete {
@@ -203,7 +219,7 @@ func validateInternalTarget(target Target) error {
 	return nil
 }
 
-func (c *Channel) pinNext(calls []Call, target Target) []Call {
+func (c *EvidenceExecutor) pinNext(calls []Call, target Target) []Call {
 	if target.Replica == "" && target.OwnerQueryGroup == "" {
 		return calls
 	}

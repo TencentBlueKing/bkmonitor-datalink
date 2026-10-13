@@ -21,6 +21,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisatomic"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisbatch"
 )
 
@@ -106,12 +107,31 @@ func (store *RedisStore) RegisterWorker(ctx context.Context, worker WorkerRegist
 	if ttl <= 0 {
 		return errors.New("alarmd ownership: worker registration is already expired")
 	}
-	_, err = store.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.Set(ctx, store.workerKey(worker.WorkerID), payload, ttl)
-		pipe.ZAdd(ctx, store.workerRegistryKey(), &redis.Z{Score: float64(worker.ExpiresAt.UnixMilli()), Member: worker.WorkerID})
-		return nil
-	})
-	return err
+	return registerWorkerWrite.Run(ctx, store.client,
+		[]string{store.workerKey(worker.WorkerID), store.workerRegistryKey()},
+		payload, registrationTTLMillis(ttl), worker.ExpiresAt.UnixMilli(), worker.WorkerID)
+}
+
+// registerWorkerWrite stores a Worker's registration with its life and names
+// it in the registry scored by its expiry, as one script rather than a
+// MULTI/EXEC (see redisatomic for why). The registration key and the
+// registry share no hash tag: like the activation scripts
+// (controlplane/activation_rebuild.go) this runs on a standalone or Sentinel
+// server, and the configuration refuses Cluster (config/redis.go).
+var registerWorkerWrite = redisatomic.New(`
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
+return 1
+`)
+
+// registrationTTLMillis is the PX a registration's SET is given: whole
+// milliseconds, and at least one, which is what go-redis sent for the same
+// duration when the write was a client-side SET.
+func registrationTTLMillis(ttl time.Duration) int64 {
+	if ms := ttl.Milliseconds(); ms > 0 {
+		return ms
+	}
+	return 1
 }
 
 // ReadWorker reads one worker's registration: the registration and true,

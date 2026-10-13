@@ -36,7 +36,7 @@ func timeoutResult() execution.SlotExecutionResult {
 func failOnce(runner *Runner, slot *FrozenSlot, now *time.Time, result execution.SlotExecutionResult) {
 	*now = now.Add(time.Minute)
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), *slot, execution.OperationNormal, result, 60, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), *slot, execution.OperationNormal, result, 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 }
 
 func TestTwoTimeoutsDoNotPoolAndTheThirdDoes(t *testing.T) {
@@ -115,7 +115,7 @@ func TestTheTimeoutsAreRestoredWithTheEntryAndClearedWithIt(t *testing.T) {
 
 	now = after.queryCooldown.until
 	slot.Contract.Slot.EvaluationTime++
-	after.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, after.queryCooldownLetsRun())
+	after.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, after.queryCooldownDecidedBy(execution.OperationNormal))
 	if record := store.records["qg"]; !record.Until.IsZero() || record.Timeouts != 0 || !record.FirstTimeoutAt.IsZero() {
 		t.Fatalf("record after a query answered = %+v, want out of the pool with no timeouts", record)
 	}

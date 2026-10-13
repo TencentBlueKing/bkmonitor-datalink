@@ -46,7 +46,12 @@ const (
 	// succeeds. hostTopoRefreshedField is another writer's attempt time,
 	// written whether its pass succeeded or not; the two are kept apart.
 	hostTopoPublishedField = "cache.cmdb_published_at.host_topo"
-	scanBatch              = int64(1000)
+	// serviceInstancePublishedField is the same writer's publish time for
+	// the service instance hash, which it publishes in a group of its own on
+	// its own schedule. Not judged on: it is read only to know whether that
+	// hash has moved since the held index read it (Store.publishUnchanged).
+	serviceInstancePublishedField = "cache.cmdb_published_at.service_instance"
+	scanBatch                     = int64(1000)
 	// clusterBusinessCacheSuffix is the BCS cluster -> business hash the
 	// platform's CMDB cache writer publishes beside the host hash, in the
 	// same round: field the cluster id, value the business id in decimal.
@@ -148,6 +153,9 @@ type Index struct {
 	// publishedAt is when the writer published what this index read, and
 	// zero when the writer publishes no such time.
 	publishedAt time.Time
+	// serviceInstancePublishedAt is when the writer published the service
+	// instance hash this index read, zero when it says nothing about it.
+	serviceInstancePublishedAt time.Time
 	// clusterBusiness is the business of each BCS cluster the writer
 	// published, by cluster id: how a global business Plan's event on
 	// Kubernetes data that names no business finds the one it belongs to.
@@ -515,6 +523,10 @@ func (reader *Reader) HostCacheKey() string { return reader.hostKey() }
 
 func (reader *Reader) ServiceInstanceCacheKey() string { return reader.serviceInstanceKey() }
 
+func (reader *Reader) serviceInstancePublishedKey() string {
+	return reader.prefix + "." + serviceInstancePublishedField
+}
+
 func (reader *Reader) refreshedKey() string {
 	return reader.prefix + "." + hostTopoRefreshedField
 }
@@ -557,6 +569,14 @@ func (reader *Reader) Load(ctx context.Context, now time.Time) (*Index, error) {
 		published = parseEpochSeconds(value)
 	case !errors.Is(err, redis.Nil):
 		return nil, fmt.Errorf("alarmd cmdbcache: read the publish time: %w", err)
+	}
+	// The service instance hash's own publish time, read before that hash
+	// for the same reason. It decides nothing here; a refresh compares it to
+	// know whether the hash has moved, and one that cannot be read is held
+	// as none, which only means the next refresh reads in full.
+	var serviceInstancePublished time.Time
+	if value, err := reader.client.Get(ctx, reader.serviceInstancePublishedKey()).Result(); err == nil {
+		serviceInstancePublished = parseEpochSeconds(value)
 	}
 
 	if err := reader.scan(ctx, reader.hostKey(), builder.addFields); err != nil {
@@ -604,7 +624,36 @@ func (reader *Reader) Load(ctx context.Context, now time.Time) (*Index, error) {
 		index.sourceRefreshedAt = parseEpochSeconds(refreshed)
 	}
 	index.publishedAt = published
+	index.serviceInstancePublishedAt = serviceInstancePublished
 	return index, nil
+}
+
+// PublishMarks is what says, without reading the hashes, whether the cache
+// has moved: the writer's publish times for the host and topology hashes and
+// for the service instance hash, and whether another writer's refresh time
+// is there.
+type PublishMarks struct {
+	HostTopo        time.Time
+	ServiceInstance time.Time
+	OtherWriter     bool
+}
+
+// ReadPublishMarks reads the marks in one round trip. A key that is not
+// there is a writer that publishes no such time, and its time is zero.
+func (reader *Reader) ReadPublishMarks(ctx context.Context) (PublishMarks, error) {
+	values, err := reader.client.MGet(ctx, reader.publishedKey(), reader.serviceInstancePublishedKey(), reader.refreshedKey()).Result()
+	if err != nil {
+		return PublishMarks{}, fmt.Errorf("alarmd cmdbcache: read the publish marks: %w", err)
+	}
+	var marks PublishMarks
+	if value, ok := values[0].(string); ok {
+		marks.HostTopo = parseEpochSeconds(value)
+	}
+	if value, ok := values[1].(string); ok {
+		marks.ServiceInstance = parseEpochSeconds(value)
+	}
+	marks.OtherWriter = values[2] != nil
+	return marks, nil
 }
 
 // readMapping reads one optional "key -> business" hash. A read that fails

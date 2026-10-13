@@ -438,8 +438,11 @@ func TestTheWorkerRefusesWhatDoesNotVerifyAndFollowsTheLeaderItIsSentTo(t *testi
 	if stats.SnapshotsRequested != 2 || stats.InstallFailures[viewstream.FailureDeltaBaseMismatch] != 1 || stats.InstallFailures[viewstream.FailureDeltaDigest] != 1 || stats.Installs["snapshot"] != 2 {
 		t.Fatalf("client stats = %+v, want two snapshot requests, one base and one digest failure, two installs", stats)
 	}
-	if scripted.got("snapshot_request") != 2 || scripted.got("receipt_failed") != 2 || scripted.got("receipt_installed") != 2 {
-		t.Fatalf("leader received: requests=%d failed receipts=%d installed receipts=%d", scripted.got("snapshot_request"), scripted.got("receipt_failed"), scripted.got("receipt_installed"))
+	// The Worker installs before its receipt reaches the Leader: wait for
+	// what the Leader received, then hold it to exactly two of each.
+	eventually(t, "the Leader received both installed receipts", func() bool { return scripted.got("receipt_installed") >= 2 })
+	if requests, failed, installed := scripted.got("snapshot_request"), scripted.got("receipt_failed"), scripted.got("receipt_installed"); requests != 2 || failed != 2 || installed != 2 {
+		t.Fatalf("leader received: requests=%d failed receipts=%d installed receipts=%d", requests, failed, installed)
 	}
 
 	// The Leader steps down: refused NOT_LEADER, the Worker goes back to

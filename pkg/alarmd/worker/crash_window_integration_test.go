@@ -202,8 +202,13 @@ func runG3ACrashWindow(t *testing.T, redisAddress string, index int, test crashW
 		t.Fatalf("acquire old owner: %v", err)
 	}
 
+	// The crashing owner's lease is renewed for as long as it runs, as its
+	// own process would renew it; the lapse the next owner waits out starts
+	// at the crash, not at the parent's acquire.
+	stopRenewing := renewG3ALeaseWhileRunning(t, ownerStore, oldLease)
 	crashOutput := runG3AChild(t, redisAddress, kafkaBroker, ownerPrefix, statePrefix, progressPrefix,
 		topic, test.stage, oldLease.Fence, true)
+	oldLease = stopRenewing()
 	beforeEvents := g3aEventsAtBroker(t, broker)
 	if beforeEvents != test.wantEventsBefore {
 		t.Fatalf("events after crash=%d, want=%d", beforeEvents, test.wantEventsBefore)
@@ -556,11 +561,15 @@ func assertG3AAppliedState(t *testing.T, got execution.RuntimeStateView) {
 // went on describing a version of the worker that no longer existed. It is
 // also the stronger statement: a crash that had committed something would
 // satisfy "missing" only by losing the record entirely.
-// g3aCrashedLeaseTTL is how long the owner that crashes holds its lease.
+// g3aCrashedLeaseTTL is how long the owner that crashes holds its lease past
+// its last renewal.
 //
-// Short because the next owner has to wait it out for real. Long enough that
-// the child, which takes a fraction of it, never has a fenced write refused
-// for a lease that expired underneath it.
+// Short because the next owner has to wait it out for real. The lease is
+// renewed while the crashing child runs (renewG3ALeaseWhileRunning), as its
+// own process would renew it: a child slowed past one TTL - a loaded machine
+// running the whole module under the race detector took longer than 2 s to
+// reach its side effects - is not refused for a lease that expired underneath
+// it, and the lapse starts at the crash.
 //
 // It is shorter than the per-batch output admission needs (decision-016 batch
 // 2 wants OutputAdmissionMargin + OutputBatchBound, eleven seconds, left on
@@ -571,6 +580,39 @@ func assertG3AAppliedState(t *testing.T, got execution.RuntimeStateView) {
 // windows would go quiet rather than red -- so that change has to raise this
 // TTL above the admission window with it.
 const g3aCrashedLeaseTTL = 2 * time.Second
+
+// renewG3ALeaseWhileRunning renews lease every quarter of its TTL until the
+// returned stop is called, and stop returns the last lease held: its
+// deadline is where the lapse after the crash ends. A renewal that fails
+// ends the renewing; the child then meets the refusal it would in production.
+func renewG3ALeaseWhileRunning(t *testing.T, store *ownership.RedisStore, lease ownership.Lease) func() ownership.Lease {
+	t.Helper()
+	done := make(chan struct{})
+	result := make(chan ownership.Lease, 1)
+	go func() {
+		ticker := time.NewTicker(g3aCrashedLeaseTTL / 4)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				result <- lease
+				return
+			case <-ticker.C:
+				renewed, err := store.Renew(context.Background(), lease.Fence, time.Now(), g3aCrashedLeaseTTL)
+				if err != nil {
+					<-done
+					result <- lease
+					return
+				}
+				lease = renewed
+			}
+		}
+	}()
+	return func() ownership.Lease {
+		close(done)
+		return <-result
+	}
+}
 
 // acquireG3AAfterLeaseLapse takes the Query Group over the way a survivor
 // does after a crash: by waiting out the dead owner's lease.

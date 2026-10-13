@@ -317,7 +317,7 @@ func TestAnExecutionInsideItsCommitIsNotDeclinedAndItsStateLands(t *testing.T) {
 		t.Fatalf("runtime state keys %v before round 1, want none", keys)
 	}
 
-	fixture.clock.Store((fixture.evaluationAt(1) + fixture.interval/2) * 1000)
+	fixture.clock.Store(latestRoundReadAtMillis(fixture.bundle, fixture.evaluationAt(1), fixture.interval))
 	ran := make(chan error, 1)
 	go func() { ran <- runScheduledOnceSettled(context.Background(), fixture.bundle) }()
 	select {
@@ -379,7 +379,7 @@ func TestARolloverWithSeveralUnfinishedSlotsDeclinesNoReplay(t *testing.T) {
 	fixture.sink.setMode(followsACKUnknown)
 	var unfinished map[string]unfinishedProgressSlot
 	for round := int64(1); round <= 3 && len(unfinished) < 2; round++ {
-		fixture.clock.Store((fixture.evaluationAt(round) + fixture.interval/2) * 1000)
+		fixture.clock.Store(latestRoundReadAtMillis(fixture.bundle, fixture.evaluationAt(round), fixture.interval))
 		if err := runScheduledOnceSettled(context.Background(), fixture.bundle); err != nil {
 			t.Fatalf("worker 0's pass of round %d: %v", round, err)
 		}

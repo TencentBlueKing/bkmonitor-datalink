@@ -158,6 +158,9 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 		UQCodec:   phaseTwoUQCodecFacts(),
 		Retention: phaseTwoRuntimeRetention(cfg),
 	}
+	for _, role := range cfg.EffectiveRoles() {
+		facts.Roles = append(facts.Roles, string(role))
+	}
 	// Digest the exact logged safe values, with the digest field still empty.
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-config-v2", facts)
 	facts.Digest = digest
@@ -202,6 +205,7 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 	goRuntime := config.DeriveGoRuntime(inputs)
 	return observability.RuntimeCapacityFacts{
 		DerivedActiveExecutions:   s.ActiveExecutionLimit,
+		ActiveExecutionCeiling:    s.ActiveExecutionCeiling,
 		EffectiveActiveExecutions: min(s.ActiveExecutionLimit, s.ReadyQueueCapacity),
 		QueryPermits:              s.ProcessQueryPermits, RecoveryQueryPermits: s.RecoveryQueryPermits,
 		RedisPoolSize: cfg.Redis.PoolSize,
@@ -218,8 +222,7 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 		ControlTimelineCacheEntries: timelineCache.MaxEntries,
 		GoMemoryLimitBytes:          goRuntime.MemoryLimitBytes,
 		GoGCPercent:                 goRuntime.GCPercent,
-		EvaluatorMaxPlans:           cfg.Limits.Detect.MaxPlans, EvaluatorMaxRecords: cfg.Limits.Detect.MaxRecordsPerSeries,
-		EvaluatorMaxLevels: uint64(cfg.Limits.Compiler.MaxLevelsPerPlan), EvidenceBytes: cfg.TriggerLimits().MaxEvidenceBytesPerEvent,
+		EvaluatorMaxLevels:          uint64(cfg.Limits.Compiler.MaxLevelsPerPlan), EvidenceBytes: cfg.TriggerLimits().MaxEvidenceBytesPerEvent,
 		OutputMessageBytes: cfg.Kafka.TriggerEvent.MaxMessageBytes,
 		UQBodyBytes:        uq.MaxBodyBytes, UQSeriesBytes: uq.MaxSeriesBytes, UQSeries: uq.MaxSeries, UQRecords: uq.MaxRecords,
 	}

@@ -67,7 +67,9 @@ type Options struct {
 	// instance record at a time.
 	CMDBCache RedisBinding
 	Catalog   *controlplane.RedisCatalogRepository
-	Progress  *progress.Store
+	Progress  interface {
+		ObservationKey(execution.QueryGroupIdentity) (string, error)
+	}
 }
 type Service struct{ options Options }
 
@@ -115,7 +117,18 @@ type Limits struct {
 	DeadlineMS             int64  `json:"deadline_ms"`
 	Commands               int    `json:"commands"`
 	Bytes                  int    `json:"bytes"`
+	// Consistency is how the read's commands relate in time, when it read
+	// Redis: ConsistencyPipelined for every read here. Empty when no read
+	// was attempted.
+	Consistency string `json:"consistency,omitempty"`
 }
+
+// ConsistencyPipelined says a read's commands went in one round trip but
+// not as a point-in-time snapshot: a write landing during the round trip
+// may be seen by some of them and not others, so a TYPE and the value read
+// after it, or two keys of one read, can be of two moments.
+const ConsistencyPipelined = "one_round_trip_not_point_in_time"
+
 type Result struct {
 	Status string `json:"status"`
 	Source string `json:"source"`

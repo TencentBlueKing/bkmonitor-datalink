@@ -11,7 +11,9 @@ package platformsettings
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -97,11 +99,12 @@ func TestRedisSourceReadsPlatformDomainSettings(t *testing.T) {
 }
 
 // The Redis source against a real server, on the protocol's own keys and
-// in its own shape (one MULTI: GET revision, MGET fields). Nothing
+// in its own shape (one pipeline: GET revision, MGET fields, GET revision
+// again). Nothing
 // published is Published false with no error; an absent field is absent; a
 // present field comes back as the raw JSON the platform wrote, null
 // included, so that "no override" and "present and empty" stay apart.
-func TestRedisSourceReadsTheProtocolKeysInOneTransaction(t *testing.T) {
+func TestRedisSourceReadsTheProtocolKeysInOneVersionCheckedPipeline(t *testing.T) {
 	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
@@ -170,6 +173,101 @@ func TestRedisSourceReadsTheProtocolKeysInOneTransaction(t *testing.T) {
 	}
 	if _, err := NewRedisSource(client, "bad{prefix}"); err == nil {
 		t.Fatal("a prefix with braces was accepted")
+	}
+}
+
+// tearingHook stands in for a publication landing between a read's first
+// and last GET of the revision: for the first tears pipelines it changes
+// the second GET's answer after Redis gave it. It also keeps each
+// pipeline's command names.
+type tearingHook struct {
+	tears     int
+	pipelines [][]string
+}
+
+func (*tearingHook) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+func (*tearingHook) AfterProcess(context.Context, redis.Cmder) error { return nil }
+func (*tearingHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+func (hook *tearingHook) AfterProcessPipeline(_ context.Context, cmds []redis.Cmder) error {
+	names := make([]string, 0, len(cmds))
+	for _, cmd := range cmds {
+		names = append(names, cmd.Name())
+	}
+	hook.pipelines = append(hook.pipelines, names)
+	if hook.tears > 0 {
+		hook.tears--
+		if last, ok := cmds[len(cmds)-1].(*redis.StringCmd); ok {
+			last.SetErr(nil)
+			last.SetVal(last.Val() + "-next")
+		}
+	}
+	return nil
+}
+
+// A read whose revision moved between its first and last GET is a torn
+// read and its fields are not used: one torn read is read again and the
+// stable second read is the answer; two in a row is ErrRevisionMoved and no
+// publication. Each try is one pipeline - GET, MGET, GET - and never a
+// MULTI.
+func TestATornDistributionReadIsReadAgainOnceAndThenRefused(t *testing.T) {
+	server := redistest.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr, MaxRetries: -1})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	key := ConfigKey(DefaultKeyPrefix, Tenant, FieldIsAccessBKData.DBKey())
+	if err := client.MSet(ctx, key, `true`, RevisionKey(DefaultKeyPrefix), "r1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	hook := &tearingHook{}
+	client.AddHook(hook)
+	source, err := NewRedisSource(client, DefaultKeyPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	publication, err := source.Read(ctx, Fields)
+	if err != nil || publication.Retried || len(hook.pipelines) != 1 {
+		t.Fatalf("a stable read = %+v, %v after %d tries; want one try, not retried", publication, err, len(hook.pipelines))
+	}
+
+	hook.tears, hook.pipelines = 1, nil
+	publication, err = source.Read(ctx, Fields)
+	if err != nil || !publication.Published || publication.Revision != "r1" || string(publication.Values[FieldIsAccessBKData]) != `true` {
+		t.Fatalf("one torn read then a stable one = %+v, %v; want the stable read's publication", publication, err)
+	}
+	if !publication.Retried {
+		t.Fatalf("one torn read then a stable one = %+v; want it to say it was read again", publication)
+	}
+	if len(hook.pipelines) != 2 {
+		t.Fatalf("pipelines %v, want the torn read and one more", hook.pipelines)
+	}
+	for _, pipeline := range hook.pipelines {
+		if strings.Join(pipeline, " ") != "get mget get" {
+			t.Fatalf("pipeline %v, want get mget get", pipeline)
+		}
+	}
+
+	hook.tears, hook.pipelines = 2, nil
+	publication, err = source.Read(ctx, Fields)
+	if !errors.Is(err, ErrRevisionMoved) || publication.Published || len(publication.Values) != 0 || !publication.Retried {
+		t.Fatalf("two torn reads = %+v, %v; want ErrRevisionMoved, nothing, and retried", publication, err)
+	}
+	if len(hook.pipelines) != 2 {
+		t.Fatalf("pipelines %v, want two tries and no third", hook.pipelines)
+	}
+
+	// A revision that appears between the two GETs is torn as well: nothing,
+	// then something, is not a stable "unpublished".
+	if err := client.Del(ctx, RevisionKey(DefaultKeyPrefix)).Err(); err != nil {
+		t.Fatal(err)
+	}
+	hook.tears, hook.pipelines = 1, nil
+	if publication, err := source.Read(ctx, Fields); err != nil || publication.Published || !publication.Retried || len(hook.pipelines) != 2 {
+		t.Fatalf("a revision appearing mid-read = %+v, %v after %d tries; want it read again, then unpublished", publication, err, len(hook.pipelines))
 	}
 }
 

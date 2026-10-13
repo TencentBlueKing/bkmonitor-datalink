@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
@@ -37,5 +38,26 @@ func TestEffectiveMaintenancePartialPlanRetainsTrackingWithoutClosing(t *testing
 	f.m.step(context.Background())
 	if len(f.writer.batches) != 0 || f.m.cache.Stats().Tracked != 1 {
 		t.Fatalf("partial plan closes=%d tracked=%d", len(f.writer.batches), f.m.cache.Stats().Tracked)
+	}
+}
+
+type deadlineLegacyRefresh struct{ left time.Duration }
+
+func (d *deadlineLegacyRefresh) Refresh(ctx context.Context, _, _ string, _ []int64) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		d.left = time.Until(deadline)
+	}
+	return nil
+}
+
+// The maintenance loop bounds its refresh round as a resolution does: half
+// of what the step has left, at most a second.
+func TestEffectiveMaintenanceRefreshTakesWhatTheStepCanSpare(t *testing.T) {
+	f := newMaintenanceTestFixture(t, "", maintenanceTime(18, 0), nil)
+	refresh := &deadlineLegacyRefresh{}
+	f.m.legacyCache = refresh
+	f.m.step(context.Background())
+	if refresh.left > time.Second || refresh.left < 900*time.Millisecond {
+		t.Fatalf("the refresh round had %v, want about a second of the step's five", refresh.left)
 	}
 }

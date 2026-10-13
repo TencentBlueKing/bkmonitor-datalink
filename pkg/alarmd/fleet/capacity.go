@@ -12,6 +12,7 @@ package fleet
 import (
 	"encoding/json"
 	"sort"
+	"time"
 )
 
 // Capacity is one replica's answer to "how close am I to my limits".
@@ -105,6 +106,31 @@ type Capacity struct {
 	// Pulled is how much this replica actually read. Absent on a replica that
 	// does not report it.
 	Pulled *SeriesPull `json:"pulled,omitempty"`
+	// Shape is the scheduler shape this replica derived from its own work and
+	// what it derived it from. Absent before the first derivation.
+	Shape *SchedulerShape `json:"scheduler_shape,omitempty"`
+}
+
+// SchedulerShape is one replica's query budget, execution slots and queues
+// as it last derived them from the work it owns (config.DeriveSchedulerShape),
+// beside the inputs: the peaks it measured, the hold and execution length it
+// sized them by, and the ceiling its memory set.
+type SchedulerShape struct {
+	Replica                string    `json:"replica,omitempty"`
+	DerivedAt              time.Time `json:"derived_at"`
+	Applied                bool      `json:"applied"`
+	ProcessQueryPermits    int       `json:"process_query_permits"`
+	RecoveryQueryPermits   int       `json:"recovery_query_permits"`
+	ActiveExecutions       int       `json:"active_executions"`
+	ReadyQueueCapacity     int       `json:"ready_queue_capacity"`
+	RecoveryQueueCapacity  int       `json:"recovery_queue_capacity"`
+	ActiveExecutionCeiling int       `json:"active_execution_ceiling"`
+	PeakQueriesPerSecond   float64   `json:"peak_queries_per_second"`
+	ReplayQueriesPerSecond float64   `json:"replay_queries_per_second"`
+	PeakSlotsPerSecond     float64   `json:"peak_slots_per_second"`
+	HoldMillis             int64     `json:"hold_ms"`
+	ExecutionMillis        int64     `json:"execution_ms"`
+	OwnedQueryGroups       int       `json:"owned_query_groups"`
 }
 
 // MarshalJSON keeps a measured zero on the wire. throttled_seconds and
@@ -252,6 +278,13 @@ type CapacityView struct {
 	// Pulled adds up across replicas: the work is split between them, so what
 	// the deployment read is what its replicas read.
 	Pulled *SeriesPull `json:"pulled,omitempty"`
+	// PermitBudgetTotal and QueueBudgetTotal add up the replicas' budgets in
+	// force: each replica sizes its own from the work it owns, so they differ
+	// by design and are summed, not held to one value. Shapes is each
+	// replica's derivation, in replica order.
+	PermitBudgetTotal int              `json:"permit_budget_total"`
+	QueueBudgetTotal  int              `json:"queue_budget_total"`
+	Shapes            []SchedulerShape `json:"scheduler_shapes,omitempty"`
 	// Disagreement names ceilings the replicas do not agree on. Two replicas
 	// running different limits is a real condition -- a half-finished rollout --
 	// and averaging it would hide exactly the thing worth seeing.
@@ -316,8 +349,17 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 				disagreed[name] = struct{}{}
 			}
 		}
-		setCeiling("permit_budget_per_replica", &capacity.PermitBudget, facts.PermitBudget)
-		setCeiling("queue_budget_per_replica", &capacity.QueueBudget, facts.QueueBudget)
+		// The permit and queue budgets are derived per replica from its own
+		// work, so replicas differ by design: summed, and the largest kept
+		// under the per-replica names for the readers that still use them.
+		capacity.PermitBudgetTotal += facts.PermitBudget
+		capacity.QueueBudgetTotal += facts.QueueBudget
+		capacity.PermitBudget, capacity.QueueBudget = max(capacity.PermitBudget, facts.PermitBudget), max(capacity.QueueBudget, facts.QueueBudget)
+		if facts.Shape != nil {
+			shape := *facts.Shape
+			shape.Replica = snapshot.Replica
+			capacity.Shapes = append(capacity.Shapes, shape)
+		}
 		setCeiling("cpu_cores_per_replica", &capacity.CPUCores, facts.CPUCores)
 		// Two replicas at one share name the one whose name sorts first, so
 		// the replica named does not follow the order the replicas were read.

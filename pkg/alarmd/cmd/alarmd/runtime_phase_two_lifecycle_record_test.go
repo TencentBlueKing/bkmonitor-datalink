@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
@@ -157,4 +158,46 @@ func TestALifecycleWriteTheStoreDidNotTakeSaysWhy(t *testing.T) {
 	if len(heard) != 1 || heard[0] != redisfailure.ConnectionRefused {
 		t.Fatalf("heard %v, want one connection_refused", heard)
 	}
+}
+
+// The record's script on a real server, with the record's own key and
+// arguments: it adds the entry, keeps the list to its bound and renews its
+// life, on a cold, warm and flushed script cache, and a server that refuses
+// it reaches the record's failure count as the server's refusal.
+func TestTheLifecycleRecordScriptRunsAsTheRecordCallsIt(t *testing.T) {
+	const key = "alarmd:lifecycle"
+	const entry = `{"event":"start"}`
+	newRecord := func(client *redis.Client, failed func(string)) *lifecycleRecord {
+		return &lifecycleRecord{client: client, key: key, replica: "pod-a", build: "test", now: time.Now, failed: failed}
+	}
+	redistest.CheckScriptSite(t, redistest.ScriptSite{
+		// A full list, so the trim has one to cut.
+		Prepare: func(t *testing.T, client *redis.Client) {
+			for i := 0; i < lifecycleRecordEntries; i++ {
+				if err := client.LPush(context.Background(), key, "older").Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+		},
+		Call: func(client *redis.Client) error {
+			return newRecord(client, nil).append(context.Background(), []byte(entry))
+		},
+		Written: func(t *testing.T, client *redis.Client) {
+			ctx := context.Background()
+			entries := client.LRange(ctx, key, 0, -1).Val()
+			if len(entries) != lifecycleRecordEntries || entries[0] != entry || entries[len(entries)-1] != "older" {
+				t.Fatalf("entries %d, newest first %v; want %d, the new one first", len(entries), entries[:1], lifecycleRecordEntries)
+			}
+			if ttl := client.TTL(ctx, key).Val(); ttl <= lifecycleRecordTTL-time.Minute || ttl > lifecycleRecordTTL {
+				t.Fatalf("ttl %v, want the record's %v", ttl, lifecycleRecordTTL)
+			}
+		},
+		Refused: func(t *testing.T, client *redis.Client, _ error) {
+			var reasons []string
+			newRecord(client, func(reason string) { reasons = append(reasons, reason) }).start()
+			if len(reasons) != 1 || reasons[0] != redisfailure.ServerError {
+				t.Fatalf("a refused write counted %v, want one %s", reasons, redisfailure.ServerError)
+			}
+		},
+	})
 }

@@ -113,12 +113,13 @@ func singleHeader(r *http.Request, name string) (string, bool) {
 }
 
 type grantPreview struct {
-	EnvironmentID     string `json:"environment_id"`
-	EnvironmentName   string `json:"environment_name"`
-	PublicBaseURL     string `json:"public_base_url"`
-	Scope             string `json:"scope"`
-	GrantTTLSeconds   int    `json:"grant_ttl_seconds"`
-	SessionTTLSeconds int    `json:"session_ttl_seconds"`
+	EnvironmentID     string   `json:"environment_id"`
+	EnvironmentName   string   `json:"environment_name"`
+	PublicBaseURL     string   `json:"public_base_url"`
+	Scope             string   `json:"scope"`
+	GrantTTLSeconds   int      `json:"grant_ttl_seconds"`
+	SessionTTLSeconds int      `json:"session_ttl_seconds"`
+	SupportedScopes   []string `json:"supported_scopes"`
 }
 
 type authorizationPackage struct {
@@ -128,6 +129,8 @@ type authorizationPackage struct {
 	PublicBaseURL   string    `json:"public_base_url"`
 	GrantSecret     string    `json:"grant_secret"`
 	GrantExpiresAt  time.Time `json:"grant_expires_at"`
+	// Omitted for readonly so old CLIs can still decode the original package.
+	Scope string `json:"scope,omitempty"`
 }
 
 func (m *Manager) handleGrants(w http.ResponseWriter, r *http.Request) error {
@@ -139,6 +142,7 @@ func (m *Manager) handleGrants(w http.ResponseWriter, r *http.Request) error {
 	}
 	preview := grantPreview{EnvironmentID: m.environmentID, EnvironmentName: m.environmentName,
 		PublicBaseURL: m.publicBaseURL, Scope: ScopeReadonly,
+		SupportedScopes: []string{ScopeReadonly},
 		GrantTTLSeconds: int(GrantLifetime.Seconds()), SessionTTLSeconds: int(SessionLifetime.Seconds())}
 	if r.Method == http.MethodGet {
 		return writeJSON(w, preview)
@@ -148,7 +152,8 @@ func (m *Manager) handleGrants(w http.ResponseWriter, r *http.Request) error {
 		return failure("origin_denied", "A grant must be requested from the configured deployment origin.", 403)
 	}
 	var input struct {
-		Confirm bool `json:"confirm"`
+		Confirm bool   `json:"confirm"`
+		Scope   string `json:"scope,omitempty"`
 		// A loopback login: the CLI listening on the operator's machine holds
 		// the verifier of CodeChallenge, and the grant answers only it.
 		CodeChallenge       string `json:"code_challenge,omitempty"`
@@ -160,6 +165,15 @@ func (m *Manager) handleGrants(w http.ResponseWriter, r *http.Request) error {
 	if !input.Confirm {
 		return failure("invalid_request", "Explicit authorization confirmation is required.", 400)
 	}
+	// An earlier page or CLI asking for the execution session gets the one
+	// session, which carries execution.
+	if input.Scope == "" || input.Scope == requestedExecScope {
+		input.Scope = ScopeReadonly
+	}
+	if !ValidScope(input.Scope) {
+		return failure("invalid_scope", "Request deployment_ops_readonly, the one deployment operations scope.", 400)
+	}
+	preview.Scope = input.Scope
 	if (input.CodeChallenge != "" || input.CodeChallengeMethod != "") && (input.CodeChallengeMethod != "S256" || !validSecret(input.CodeChallenge)) {
 		return failure("invalid_code_challenge", "A code challenge must be an S256 challenge of 43 URL-safe characters.", 400)
 	}
@@ -170,7 +184,7 @@ func (m *Manager) handleGrants(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	record, _ := json.Marshal(storedRecord{EnvironmentID: m.environmentID, Scope: ScopeReadonly, CodeChallenge: input.CodeChallenge})
+	record, _ := json.Marshal(storedRecord{EnvironmentID: m.environmentID, Scope: input.Scope, CodeChallenge: input.CodeChallenge})
 	result, err := m.run(r.Context(), issueScript, []string{m.prefix + "grant:" + digest(secret), m.epochKey()}, string(record), GrantLifetime.Milliseconds())
 	if err != nil {
 		return err
@@ -215,7 +229,7 @@ type loginResponse struct {
 
 func (m *Manager) login(record storedRecord, token, refresh string) loginResponse {
 	response := loginResponse{EnvironmentID: m.environmentID, EnvironmentName: m.environmentName, PublicBaseURL: m.publicBaseURL,
-		AccessToken: token, SessionID: record.SessionID, ExpiresAt: time.UnixMilli(record.ExpiresAtMS).UTC(), Scope: ScopeReadonly,
+		AccessToken: token, SessionID: record.SessionID, ExpiresAt: time.UnixMilli(record.ExpiresAtMS).UTC(), Scope: record.Scope,
 		Pairing: "paired"}
 	if refresh == "" {
 		response.Pairing = "pairing_limit_reached"
@@ -328,7 +342,7 @@ func (m *Manager) handleRefresh(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	record := storedRecord{SessionID: renewal.Session.ID, ExpiresAtMS: renewal.Session.ExpiresAt.UnixMilli(), PairingID: renewal.PairingID}
+	record := storedRecord{SessionID: renewal.Session.ID, ExpiresAtMS: renewal.Session.ExpiresAt.UnixMilli(), PairingID: renewal.PairingID, Scope: renewal.Session.Scope}
 	return writeJSON(w, m.login(record, renewal.AccessToken, renewal.RefreshToken))
 }
 
@@ -489,7 +503,8 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	w.WriteHeader(public.HTTPStatus)
 	_ = json.NewEncoder(w).Encode(struct {
-		Status string `json:"status"`
-		Error  *Error `json:"error"`
-	}{"error", public})
+		Status          string   `json:"status"`
+		Error           *Error   `json:"error"`
+		SupportedScopes []string `json:"supported_scopes"`
+	}{"error", public, []string{ScopeReadonly}})
 }

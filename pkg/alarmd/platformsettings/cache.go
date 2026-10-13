@@ -55,6 +55,11 @@ type UnavailableReason string
 const (
 	// UnavailableReadError: the read did not happen.
 	UnavailableReadError UnavailableReason = "read_error"
+	// UnavailableRevisionMoved: the read happened and the revision changed
+	// during it on both tries (ErrRevisionMoved), so its fields may be of two
+	// publications. The store answered; a publisher is writing faster than a
+	// round trip.
+	UnavailableRevisionMoved UnavailableReason = "revision_moved"
 	// UnavailableUnpublished: the revision key is absent. Per protocol
 	// nothing was ever published, and the field keys beside it are not read
 	// as "no override": "never published" and "override removed" have to
@@ -67,7 +72,7 @@ const (
 )
 
 // UnavailableReasons is the closed set.
-var UnavailableReasons = []UnavailableReason{UnavailableReadError, UnavailableUnpublished, UnavailableDecodeError}
+var UnavailableReasons = []UnavailableReason{UnavailableReadError, UnavailableRevisionMoved, UnavailableUnpublished, UnavailableDecodeError}
 
 // DefaultStalenessBound is how long the copy may answer from a publication
 // the source no longer yields before the deployment is degraded for it. The
@@ -91,6 +96,9 @@ type Stats struct {
 	LoadedAt    time.Time
 	Unavailable map[UnavailableReason]uint64
 	Refreshes   map[string]uint64
+	// Retries counts the reads whose first try was torn and that were tried
+	// again (Publication.Retried), whatever the second try came to.
+	Retries uint64
 	// Changes counts, per field, the refreshes on which the effective value
 	// changed: the count an operator's page edit produces exactly once.
 	Changes map[Field]uint64
@@ -121,6 +129,7 @@ type Cache struct {
 	loadedAt        time.Time
 	unavailable     map[UnavailableReason]uint64
 	refreshes       map[string]uint64
+	retries         uint64
 	changes         map[Field]uint64
 	lastUnavailable string
 }
@@ -178,6 +187,15 @@ func (cache *Cache) Refresh(ctx context.Context) {
 		return
 	}
 	publication, err := cache.source.Read(ctx, Fields)
+	if publication.Retried {
+		cache.mu.Lock()
+		cache.retries++
+		cache.mu.Unlock()
+	}
+	if errors.Is(err, ErrRevisionMoved) {
+		cache.becomeUnavailable(UnavailableRevisionMoved, err.Error())
+		return
+	}
 	if err != nil {
 		cache.becomeUnavailable(UnavailableReadError, err.Error())
 		return
@@ -227,6 +245,7 @@ func (cache *Cache) Stats() Stats {
 	defer cache.mu.RUnlock()
 	stats := Stats{
 		Mode: cache.mode, Revision: cache.revision, LoadedAt: cache.loadedAt, LastUnavailable: cache.lastUnavailable,
+		Retries:  cache.retries,
 		Settings: cache.current, Sources: make(map[Field]HorizonSource, len(cache.sources)),
 		Unavailable: make(map[UnavailableReason]uint64, len(UnavailableReasons)),
 		Refreshes:   make(map[string]uint64, 2),

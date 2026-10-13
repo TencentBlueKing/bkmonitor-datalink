@@ -154,6 +154,19 @@ func TestProviderFailureFactsProjectLastFailedAttempt(t *testing.T) {
 	if *facts != want {
 		t.Fatalf("facts=%+v, want %+v", facts, want)
 	}
+	// The status is the last failed attempt's, as the timing is: a 503
+	// followed by a replayed attempt the backend refused with 400 reads 400.
+	refused := execution.PhysicalQueryCompletion{
+		Completeness: execution.CompletenessUnavailable,
+		RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{
+			{AttemptNo: 1, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), Detail: execution.HTTPStatusRouteDetail(503), HTTPStatus: 503},
+			{AttemptNo: 2, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), Detail: execution.HTTPStatusRouteDetail(400), HTTPStatus: 400},
+		}},
+	}
+	facts = providerFailureFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{refused}})
+	if facts == nil || facts.HTTPStatus != 400 || facts.Detail != "http_status=400" {
+		t.Fatalf("facts=%+v, want the last attempt's status 400", facts)
+	}
 	// A query that was never sent names that, not the fallback the binding
 	// carries: read as the backend's word, it filed the round under the
 	// backend.
@@ -194,6 +207,28 @@ func TestProviderUnavailableFactsCountEveryUnavailablePhysicalQuery(t *testing.T
 	for index, entry := range facts {
 		if entry.Attribution != want[index] {
 			t.Fatalf("entry %d = %q, want %q", index, entry.Attribution, want[index])
+		}
+	}
+	for index, class := range []string{"none", "none", "none", "none"} {
+		if facts[index].HTTPClass != class {
+			t.Fatalf("entry %d class %q, want %q: none of them got an HTTP answer", index, facts[index].HTTPClass, class)
+		}
+	}
+	// The class is the last failed attempt's answer: 4xx, 5xx, another
+	// status, or none when the last attempt got no HTTP answer.
+	status := func(codes ...int) execution.PhysicalQueryCompletion {
+		item := execution.PhysicalQueryCompletion{Completeness: execution.CompletenessUnavailable}
+		for index, code := range codes {
+			item.RouteFacts.Attempts = append(item.RouteFacts.Attempts, execution.RouteAttemptFact{AttemptNo: uint32(index + 1), Result: execution.RouteAttemptFailed,
+				ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), HTTPStatus: code})
+		}
+		return item
+	}
+	classes := providerUnavailableFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{
+		status(503, 400), status(400, 503), status(302), status(503, 0)}})
+	for index, class := range []string{"4xx", "5xx", "other", "none"} {
+		if classes[index].HTTPClass != class {
+			t.Fatalf("entry %d class %q, want %q", index, classes[index].HTTPClass, class)
 		}
 	}
 	if healthy := providerUnavailableFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{full}}); healthy != nil {

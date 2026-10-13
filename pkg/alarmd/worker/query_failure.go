@@ -280,7 +280,11 @@ func providerUnavailableFacts(completion execution.QueryExecutionCompletion) []o
 			continue
 		}
 		_, attribution := execution.AttributeUnavailable(item.RouteFacts, execution.ReasonCode(contract.ReasonQueryUnavailable))
-		facts = append(facts, observability.QueryUnavailableFacts{Attribution: string(attribution)})
+		status := 0
+		if attempt := lastFailedAttempt(item.RouteFacts); attempt != nil {
+			status = attempt.HTTPStatus
+		}
+		facts = append(facts, observability.QueryUnavailableFacts{Attribution: string(attribution), HTTPClass: observability.QueryHTTPClassOf(status)})
 	}
 	return facts
 }
@@ -302,16 +306,24 @@ func providerFailureFacts(completion execution.QueryExecutionCompletion) *observ
 			Category: physicalFailureCategory(item.RouteFacts),
 			Code:     string(execution.AttributedReason(code, from)),
 		}
-		for index := len(item.RouteFacts.Attempts) - 1; index >= 0; index-- {
-			attempt := item.RouteFacts.Attempts[index]
-			if attempt.Result != execution.RouteAttemptFailed && attempt.ReasonCode == "" {
-				continue
-			}
+		if attempt := lastFailedAttempt(item.RouteFacts); attempt != nil {
 			facts.Detail = attempt.Detail
+			facts.HTTPStatus = attempt.HTTPStatus
 			facts.Timing = queryTimingOf(attempt.Timing)
-			break
 		}
 		return facts
+	}
+	return nil
+}
+
+// lastFailedAttempt is the attempt a failure reports: the last one that
+// failed or named a reason. Its detail, status and timing are read together,
+// so a replayed query reports the attempt it ended on.
+func lastFailedAttempt(route execution.ProviderRouteFacts) *execution.RouteAttemptFact {
+	for index := len(route.Attempts) - 1; index >= 0; index-- {
+		if attempt := &route.Attempts[index]; attempt.Result == execution.RouteAttemptFailed || attempt.ReasonCode != "" {
+			return attempt
+		}
 	}
 	return nil
 }
@@ -375,6 +387,31 @@ func backendDidNotAnswer(routes execution.ProviderRouteFacts) bool {
 		}
 		timing := attempt.Timing
 		return timing.ElapsedMillis-timing.LocalMillis > timing.StartLateMillis+timing.LocalMillis
+	}
+	return false
+}
+
+// timedOutSentLate reports a query whose last failed attempt timed out with
+// no answer, or with the answer stopping partway, but was sent so late that
+// backendDidNotAnswer does not count it against the backend. It is not
+// evidence for entering the degraded pool; a Query Group already in it reads
+// it as its deciding round's timeout (QueryUnknownReason).
+func timedOutSentLate(routes execution.ProviderRouteFacts) bool {
+	for index := len(routes.Attempts) - 1; index >= 0; index-- {
+		attempt := routes.Attempts[index]
+		if attempt.Result != execution.RouteAttemptFailed && attempt.ReasonCode == "" {
+			continue
+		}
+		if attempt.ReasonCode != execution.ReasonCode(contract.ReasonQueryTimeout) || attempt.Timing == nil {
+			return false
+		}
+		switch attempt.Detail {
+		case execution.TransportRouteDetail(execution.TransportFailureTimeout), execution.BodyRouteDetail(execution.TransportFailureTimeout):
+		default:
+			return false
+		}
+		timing := attempt.Timing
+		return timing.ElapsedMillis-timing.LocalMillis <= timing.StartLateMillis+timing.LocalMillis
 	}
 	return false
 }

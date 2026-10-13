@@ -33,6 +33,7 @@ import (
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
@@ -350,9 +351,19 @@ func TestProductionPhaseTwoBundleRebuildsExpiredSnapshotReferencedByPersistentAc
 	if err != nil {
 		t.Fatalf("recovered activation error = %v", err)
 	}
-	if newActivation.Current != oldActivation.Current || newActivation.RecordRevision != oldActivation.RecordRevision {
-		t.Fatalf("expired publication restoration mutated frozen Activation: old=%+v new=%+v",
-			oldActivation, newActivation)
+	// The restoration keeps the publication the activation runs. The keys
+	// deleted above take the Query Group's timeline too, and a missing
+	// timeline is named and opened again under that same publication: the
+	// one write that moves the activation's record revision, by one, and
+	// nothing else.
+	reopened := recoveredControl.dependencies.Repository.(*controlplane.RedisCatalogRepository).TimelineRepairCounts()[controlplane.TimelineRepairReopened]
+	if newActivation.Current != oldActivation.Current || newActivation.RecordRevision != oldActivation.RecordRevision+1 || reopened != 1 {
+		t.Fatalf("expired publication restoration mutated frozen Activation: old=%+v new=%+v reopened=%d, "+
+			"want the same publication and one revision for the reopened timeline", oldActivation, newActivation, reopened)
+	}
+	timelineKey := catalogPrefix + ":schedule_timeline:" + string(recovered.queryGroups[0])
+	if exists, err := redisClient.Exists(ctx, timelineKey).Result(); err != nil || exists != 1 {
+		t.Fatalf("the missing timeline was not opened again: exists=%d error=%v", exists, err)
 	}
 	if _, err := loadPublishedSnapshot(ctx, recoveredControl.dependencies.Repository, newActivation.Current); err != nil {
 		t.Fatalf("recovered active Snapshot is unreadable: %v", err)
@@ -685,10 +696,13 @@ func testProductionPhaseTwoStrandedLatest(
 }
 
 func TestProductionPhaseTwoBundleExecutesFullNonEmptySlotEndToEnd(t *testing.T) {
-	testProductionFullTargetFlow(t, false)
+	testProductionFullTargetFlow(t, false, false)
 }
-func TestTargetFlowProductionFullSequence(t *testing.T) { testProductionFullTargetFlow(t, true) }
-func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
+func TestTargetFlowProductionFullSequence(t *testing.T) { testProductionFullTargetFlow(t, true, false) }
+func TestSplitControlAndWorkerExecuteFullNonEmptySlotEndToEnd(t *testing.T) {
+	testProductionFullTargetFlow(t, false, true)
+}
+func testProductionFullTargetFlow(t *testing.T, diagnostic, split bool) {
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
@@ -754,6 +768,13 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 		defer observationsMu.Unlock()
 		observations = append(observations, observation)
 	})
+	var controlBundle *phaseTwoWorkerBundle
+	if split {
+		controlBundle = openSplitControlForFullPipeline(t, cfg, now, additionalObserver, uqServer.Client())
+		cfg.Roles = roles.Set{roles.Worker}
+		cfg.HTTP.Listen = reserveBundleAddress()
+	}
+	workerRuntime := openRoleRuntimeForTest(t, cfg)
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
 		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
 		newPhaseTwoApplicationHealth(),
@@ -761,7 +782,8 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)
 		},
 		phaseTwoProductionExternalDependencies{
-			Now: now, HTTPClient: uqServer.Client(), AdditionalObserver: additionalObserver,
+			RoleRuntime: workerRuntime,
+			Now:         now, HTTPClient: uqServer.Client(), AdditionalObserver: additionalObserver,
 			PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 				return events, nil
 			}),
@@ -772,6 +794,17 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic bool) {
 	}
 	if err := bundle.Start(ctx); err != nil {
 		t.Fatalf("phase-two production Start() error = %v", err)
+	}
+	if split {
+		if err := controlBundle.refreshAndReconcile(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := bundle.refreshAndReconcile(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.runners) != 1 || len(controlBundle.runners) != 0 {
+			t.Fatal("split control/worker placement did not keep execution on Worker")
+		}
 	}
 	if diagnostic {
 		f, e := observability.NewTargetFlow(observability.New("runtime", &flowOutput))

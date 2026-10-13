@@ -84,21 +84,31 @@ func K8sOperations(reader *k8sread.Reader, dependencies []k8sread.Dependency, co
 		ops[i].Limits = limits
 	}
 	ops = append(ops, Operation{ID: "k8s.workloads",
-		Summary:      "读取 alarmd 所在命名空间、依赖地址所在命名空间和部署列出的命名空间里的全部工作负载，按最近一次发布倒序；每个 Deployment 给出最近几次发布（ReplicaSet）和最近一次镜像从什么变成什么，并标出是否在窗口内。只读镜像和时间，不读 env、Secret、ConfigMap。",
-		Fields:       map[string]Field{"window_hours": {Type: "integer", Description: "多近的发布算最近，默认 24 小时。", Minimum: &minWindow, Maximum: &maxWindow}},
+		Summary: "读取指定的一个命名空间，或者（不指定时）alarmd 所在命名空间、依赖地址所在命名空间和部署列出的命名空间里的全部工作负载，按最近一次发布倒序；每个 Deployment 给出最近几次发布（ReplicaSet）和最近一次镜像从什么变成什么，并标出是否在窗口内。只读镜像和时间，不读 env、Secret、ConfigMap。",
+		Fields: map[string]Field{"window_hours": {Type: "integer", Description: "多近的发布算最近，默认 24 小时。", Minimum: &minWindow, Maximum: &maxWindow},
+			"namespace": {Type: "string", Description: "只读这一个命名空间（集群里任意一个，账号能列举即可）；不指定时读本进程所在的、依赖地址推导出的和部署列出的命名空间。", MinLength: 1, MaxLength: 63}},
 		OutputSchema: SchemaOf(k8sread.WorkloadsResult{}), EvidenceScope: "namespace_workloads", Limits: limits,
-		Examples: []Params{{}, {"window_hours": int64(6)}},
+		Examples: []Params{{}, {"window_hours": int64(6)}, {"namespace": "kube-system"}},
 		Run: func(ctx context.Context, p Params) Outcome {
 			var listed []string
 			if configured != nil {
 				listed = configured()
 			}
-			result, err := reader.Workloads(ctx, dependencies, listed, int(p.Int("window_hours", k8sread.DefaultWindowHours)))
+			window := int(p.Int("window_hours", k8sread.DefaultWindowHours))
+			var result k8sread.WorkloadsResult
+			var err error
+			if namespace := p.String("namespace"); namespace != "" {
+				result, err = reader.WorkloadsIn(ctx, namespace, window)
+			} else {
+				result, err = reader.Workloads(ctx, dependencies, listed, window)
+			}
 			out := k8sOutcome(result, err)
 			if err != nil {
 				return out
 			}
-			out.Limitations = append(out.Limitations, workloadsBoundary)
+			if p.String("namespace") == "" {
+				out.Limitations = append(out.Limitations, workloadsBoundary)
+			}
 			for _, section := range result.Namespaces {
 				if len(section.Failures) > 0 {
 					out.Complete = false

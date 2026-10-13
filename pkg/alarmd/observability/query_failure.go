@@ -8,6 +8,10 @@ package observability
 // "http_status=503" or "transport=connection_refused".
 type QueryFailureFacts struct {
 	Stage, Category, Code, Detail string
+	// HTTPStatus is the backend's non-success HTTP status, 100 to 599, zero
+	// where the failure got no HTTP answer. Like Timing, it is the last
+	// failed attempt's when a query was attempted more than once.
+	HTTPStatus int
 	// Timing is a failed provider query read against its budget; nil where
 	// the attempt did not measure it. See QueryTiming.
 	Timing *QueryTiming
@@ -182,6 +186,9 @@ func normalizeQueryFailure(component Component, stage Stage, input *QueryFailure
 	}
 	if !validQueryFailureDetail(f.Detail) {
 		f.Detail = ""
+	}
+	if f.HTTPStatus < 100 || f.HTTPStatus > 599 {
+		f.HTTPStatus = 0
 	}
 	return &f
 }

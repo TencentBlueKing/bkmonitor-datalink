@@ -29,12 +29,21 @@ func diagnosticSeries(ip string, points int) string {
 
 func diagnosticFixture(t *testing.T, status int, payload string) *DiagnosticClient {
 	t.Helper()
+	return diagnosticFixtureWithLimits(t, status, payload, DiagnosticLimits())
+}
+
+// smallDiagnosticLimits stand in for the production bounds where a test
+// drives a response past them: the production ones are tens of megabytes.
+var smallDiagnosticLimits = Limits{MaxBodyBytes: 4 << 20, MaxSeriesBytes: 512 << 10, MaxSeries: 1000, MaxRecords: 20000}
+
+func diagnosticFixtureWithLimits(t *testing.T, status int, payload string, limits Limits) *DiagnosticClient {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, payload)
 	}))
 	t.Cleanup(server.Close)
-	client, err := NewDiagnosticClient(server.URL, "alarmd-diagnostic", server.Client())
+	client, err := newDiagnosticClient(server.URL, "alarmd-diagnostic", server.Client(), limits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +119,7 @@ func TestDiagnosticPreviewAndQueryUseProductionWire(t *testing.T) {
 			if promql && !bytes.Contains(preview.Body, []byte(`sum(rate(requests`)) || !promql && !bytes.Contains(preview.Body, []byte(`127.0.0.1`)) {
 				t.Fatal("preview hid business expression or condition")
 			}
-			result, err := client.Query(context.Background(), attempt.Spec, DiagnosticSelection{})
+			result, err := client.Query(context.Background(), attempt.Spec, DiagnosticSelection{}, 0)
 			if err != nil || !result.Complete || result.RequestDigest != preview.RequestDigest || result.ReturnedPoints != 2 {
 				t.Fatalf("diagnostic: %+v %v", result, err)
 			}
@@ -152,11 +161,11 @@ func TestDiagnosticSelectionDoesNotModifyQueryOrStopTailDecode(t *testing.T) {
 	defer server.Close()
 	client, _ := NewDiagnosticClient(server.URL, "alarmd-diagnostic", server.Client())
 	spec := validAttempt(t).Spec
-	all, err := client.Query(context.Background(), spec, DiagnosticSelection{MaxPoints: 3})
+	all, err := client.Query(context.Background(), spec, DiagnosticSelection{MaxPoints: 3}, 0)
 	if err != nil || all.Complete || !all.Truncated || all.ReturnedPoints != 3 || all.Scan.Series != 3 || all.Scan.Records != 6 || !all.Scan.Complete || all.Scan.Bytes != uint64(len(payload)) || all.Completion.Completeness != execution.CompletenessPartial || all.Completion.Status.Code != queryTSPartial {
 		t.Fatalf("tail or counters lost: %+v %v", all, err)
 	}
-	selected, err := client.Query(context.Background(), spec, DiagnosticSelection{SeriesDigest: all.Series[1].SeriesDigest})
+	selected, err := client.Query(context.Background(), spec, DiagnosticSelection{SeriesDigest: all.Series[1].SeriesDigest}, 0)
 	if err != nil || len(selected.Series) != 1 || selected.ReturnedPoints != 2 || selected.Scan.Series != 3 || selected.Scan.Records != 6 || selected.MatchedSeries != 1 || selected.Complete {
 		t.Fatalf("selection changed provider work: %+v %v", selected, err)
 	}
@@ -183,7 +192,7 @@ func TestDiagnosticEmptyUnavailableAndMalformedResponsesStayDistinct(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := diagnosticFixture(t, tc.status, tc.payload)
-			result, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{})
+			result, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{}, 0)
 			if tc.code != "" {
 				assertDiagnosticCode(t, err, tc.code)
 			} else if err != nil {
@@ -209,10 +218,12 @@ func TestDiagnosticEmptyUnavailableAndMalformedResponsesStayDistinct(t *testing.
 	}
 }
 
-func TestDiagnosticBudgetsAreSeparateFromProductionAndErrorsAreSafe(t *testing.T) {
-	want := Limits{MaxBodyBytes: 4 << 20, MaxSeriesBytes: 512 << 10, MaxSeries: 1000, MaxRecords: 20000}
-	if DiagnosticLimits() != want || DiagnosticLimits() == DefaultLimits() {
-		t.Fatal("diagnostic defaults are not independent")
+// A re-query decodes under the production query's own bounds - it reads
+// what the Slot read, however large - and a response past whichever bounds
+// are in force fails by a safe name, never as complete evidence.
+func TestDiagnosticBudgetsAreTheProductionOnesAndErrorsAreSafe(t *testing.T) {
+	if DiagnosticLimits() != DefaultLimits() {
+		t.Fatalf("diagnostic limits %+v, want the production query's %+v", DiagnosticLimits(), DefaultLimits())
 	}
 	for _, tc := range []struct{ name, payload, code string }{
 		{"body", `{"ignored":"` + strings.Repeat("x", 4<<20) + `","series":[],"is_partial":false}`, "response_bytes_exceeded"},
@@ -221,8 +232,8 @@ func TestDiagnosticBudgetsAreSeparateFromProductionAndErrorsAreSafe(t *testing.T
 		{"record_count", `{"series":[` + diagnosticSeries("one", 20001) + `],"is_partial":false}`, "total_records_exceeded"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			client := diagnosticFixture(t, 200, tc.payload)
-			result, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{MaxSeries: 1, MaxPoints: 1})
+			client := diagnosticFixtureWithLimits(t, 200, tc.payload, smallDiagnosticLimits)
+			result, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{MaxSeries: 1, MaxPoints: 1}, 0)
 			assertDiagnosticCode(t, err, tc.code)
 			if result.Complete || result.Scan.Complete || result.Completion != nil || !containsDiagnostic(result.Limitations, tc.code) {
 				t.Fatal("budget failure was reported as final complete evidence")
@@ -248,13 +259,13 @@ func TestDiagnosticCancellationConcurrencyAndNoRetry(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	spec := validAttempt(t).Spec
-	go func() { _, err := client.Query(ctx, spec, DiagnosticSelection{}); done <- err }()
+	go func() { _, err := client.Query(ctx, spec, DiagnosticSelection{}, 0); done <- err }()
 	select {
 	case <-started:
 	case <-time.After(time.Second):
 		t.Fatal("query did not start")
 	}
-	_, err := client.Query(context.Background(), spec, DiagnosticSelection{})
+	_, err := client.Query(context.Background(), spec, DiagnosticSelection{}, 0)
 	assertDiagnosticCode(t, err, "diagnostic_busy")
 	cancel()
 	select {
@@ -271,7 +282,7 @@ func TestDiagnosticCancellationConcurrencyAndNoRetry(t *testing.T) {
 		failedCalls.Add(1)
 		return nil, errors.New("fixture-secret-url")
 	})})
-	result, err := client.Query(context.Background(), spec, DiagnosticSelection{})
+	result, err := client.Query(context.Background(), spec, DiagnosticSelection{}, 0)
 	if err != nil || result.Completion.Completeness != execution.CompletenessUnavailable || failedCalls.Load() != 1 {
 		t.Fatal("transport error retried or lost classification")
 	}
@@ -289,12 +300,12 @@ func TestDiagnosticRejectsRedirectAndInvalidSelectionBeforeQuery(t *testing.T) {
 	defer source.Close()
 	client, _ := NewDiagnosticClient(source.URL, "alarmd-diagnostic", source.Client())
 	spec := validAttempt(t).Spec
-	result, err := client.Query(context.Background(), spec, DiagnosticSelection{})
+	result, err := client.Query(context.Background(), spec, DiagnosticSelection{}, 0)
 	if err != nil || result.Complete || targetCalls.Load() != 0 {
 		t.Fatal("diagnostic followed redirect")
 	}
-	for _, selection := range []DiagnosticSelection{{MaxSeries: 11}, {MaxSeries: -1}, {MaxPoints: 501}, {MaxPoints: -1}, {SeriesDigest: "bad"}} {
-		_, err := client.Query(context.Background(), spec, selection)
+	for _, selection := range []DiagnosticSelection{{MaxSeries: 11}, {MaxSeries: -1}, {MaxPoints: 501}, {MaxPoints: -1}, {SeriesDigest: "bad"}, {Offset: -1}} {
+		_, err := client.Query(context.Background(), spec, selection, 0)
 		assertDiagnosticCode(t, err, "query_selection_invalid")
 	}
 	for _, endpoint := range []string{"http://user:fixture-secret@example.test", "http://example.test?token=fixture-secret", "file:///tmp/test"} {
@@ -320,13 +331,13 @@ func TestDiagnosticDeadlineAndMetadataBudget(t *testing.T) {
 	spec := validAttempt(t).Spec
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
-	_, err := client.Query(ctx, spec, DiagnosticSelection{})
+	_, err := client.Query(ctx, spec, DiagnosticSelection{}, 0)
 	assertDiagnosticCode(t, err, "query_timeout")
 	if observedDeadline > 250*time.Millisecond || observedDeadline <= 0 {
 		t.Fatal("caller deadline was extended")
 	}
 	client = diagnosticFixture(t, 200, `{"series":[],"is_partial":false,"result_table_id":["`+strings.Repeat("x", 32<<10)+`"]}`)
-	result, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{})
+	result, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{}, 0)
 	if err != nil || !result.Truncated || result.Complete || !result.Scan.Complete || !containsDiagnostic(result.Limitations, "provider_metadata_truncated") {
 		t.Fatal("metadata escaped output budget")
 	}
@@ -339,11 +350,11 @@ func TestDiagnosticDefaultOutputAndMissingSelectedSeries(t *testing.T) {
 	}
 	client := diagnosticFixture(t, 200, `{"series":[`+strings.Join(series, ",")+`],"is_partial":false}`)
 	spec := validAttempt(t).Spec
-	result, err := client.Query(context.Background(), spec, DiagnosticSelection{})
+	result, err := client.Query(context.Background(), spec, DiagnosticSelection{}, 0)
 	if err != nil || result.ReturnedPoints != 100 || len(result.Series) != 5 || !result.Truncated || result.Complete || result.Scan.Records != 126 {
 		t.Fatalf("default output budget changed: %+v %v", result, err)
 	}
-	missing, err := client.Query(context.Background(), spec, DiagnosticSelection{SeriesDigest: strings.Repeat("0", 64)})
+	missing, err := client.Query(context.Background(), spec, DiagnosticSelection{SeriesDigest: strings.Repeat("0", 64)}, 0)
 	if err != nil || len(missing.Series) != 0 || missing.MatchedSeries != 0 || !missing.Complete || missing.Scan.Records != 126 || missing.RequestDigest != result.RequestDigest {
 		t.Fatal("unmatched selection became empty provider data or changed query")
 	}
@@ -366,4 +377,62 @@ func containsDiagnostic(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// A re-query returns its matching series a page at a time: 25 series in
+// pages of ten are 10, 10 and 5, each page naming the next one's offset and
+// the last none, every series once.
+func TestARequeryPagesItsSeries(t *testing.T) {
+	series := make([]string, 25)
+	for index := range series {
+		series[index] = diagnosticSeries(fmt.Sprintf("192.0.2.%d", index+1), 1)
+	}
+	client := diagnosticFixture(t, 200, `{"series":[`+strings.Join(series, ",")+`],"is_partial":false}`)
+	seen := map[string]bool{}
+	offset, pages := 0, 0
+	for {
+		result, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{Offset: offset, MaxSeries: 10, MaxPoints: 500}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages++
+		for _, s := range result.Series {
+			if seen[s.SeriesDigest] {
+				t.Fatalf("series %s returned twice", s.SeriesDigest)
+			}
+			seen[s.SeriesDigest] = true
+		}
+		if result.NextOffset == 0 {
+			break
+		}
+		offset = result.NextOffset
+	}
+	if pages != 3 || len(seen) != 25 {
+		t.Fatalf("%d pages, %d series, want 3 and 25", pages, len(seen))
+	}
+}
+
+// A re-query is given the budget its caller names - the Slot's own - and
+// not only the three-second floor: an answer that takes longer than the
+// floor arrives within the budget, and times out without it.
+func TestARequeryIsGivenItsSlotsBudget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(DiagnosticTimeout + 500*time.Millisecond):
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = io.WriteString(w, `{"series":[`+diagnosticSeries("192.0.2.1", 1)+`],"is_partial":false}`)
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewDiagnosticClient(server.URL, "alarmd-diagnostic", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{}, 0); err == nil {
+		t.Fatal("an answer slower than the floor arrived without a budget")
+	}
+	if result, err := client.Query(context.Background(), validAttempt(t).Spec, DiagnosticSelection{}, DiagnosticTimeout+3*time.Second); err != nil || len(result.Series) != 1 {
+		t.Fatalf("with the Slot's budget: %+v %v", result, err)
+	}
 }

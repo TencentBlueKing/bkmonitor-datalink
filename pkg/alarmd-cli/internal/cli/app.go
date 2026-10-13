@@ -38,15 +38,16 @@ func New(in io.Reader, out, stderr io.Writer, version string) *App {
 }
 
 type options struct {
-	env, input, caCert string
-	url, port, state   string
-	timeout            time.Duration
-	expectBuild        string
-	window             time.Duration
-	hasWindow          bool
-	hasInput, rebind   bool
-	insecureTLS        bool
-	args               []string
+	env, input, caCert    string
+	paramsFile, stdinFile string
+	url, port, state      string
+	timeout               time.Duration
+	expectBuild           string
+	window                time.Duration
+	hasWindow             bool
+	hasInput, rebind      bool
+	insecureTLS           bool
+	args                  []string
 }
 
 func parse(args []string) (options, error) {
@@ -56,7 +57,7 @@ func parse(args []string) (options, error) {
 		arg := args[i]
 		name, value, equal := strings.Cut(arg, "=")
 		if name == "--env" || name == "--input" || name == "--ca-cert" || name == "--url" || name == "--port" || name == "--state" || name == "--timeout" ||
-			name == "--expect-build" || name == "--window" {
+			name == "--expect-build" || name == "--window" || name == "--params-file" || name == "--stdin-file" || name == "--script-file" {
 			if seen[name] {
 				return o, errors.New("flags may only be provided once")
 			}
@@ -73,6 +74,13 @@ func parse(args []string) (options, error) {
 			}
 			if name == "--expect-build" {
 				o.expectBuild = value
+			} else if name == "--params-file" {
+				o.paramsFile = value
+			} else if name == "--stdin-file" || name == "--script-file" {
+				if o.stdinFile != "" {
+					return o, errors.New("--stdin-file and --script-file are aliases and cannot be combined")
+				}
+				o.stdinFile = value
 			} else if name == "--window" {
 				d, err := time.ParseDuration(value)
 				if err != nil || d < 0 || d > time.Hour {
@@ -115,6 +123,12 @@ func parse(args []string) (options, error) {
 			o.args = append(o.args, arg)
 		}
 	}
+	if o.hasInput && o.paramsFile != "" {
+		return o, errors.New("--input and --params-file cannot be combined")
+	}
+	if o.paramsFile == "-" && o.stdinFile == "-" {
+		return o, errors.New("params and script cannot both read stdin")
+	}
 	return o, nil
 }
 
@@ -155,6 +169,9 @@ func (a *App) Run(args []string) int {
 	}
 	if o.hasInput && command != "invoke" {
 		return a.fail("invalid_input", "--input is only valid with invoke", 2)
+	}
+	if (o.paramsFile != "" || o.stdinFile != "") && command != "invoke" {
+		return a.fail("invalid_input", "--params-file, --stdin-file and --script-file are only valid with invoke", 2)
 	}
 	login := command == "auth login" || (command == "auth listen" && o.url != "")
 	if o.caCert != "" && (!login || !filepath.IsAbs(o.caCert)) {
@@ -212,7 +229,7 @@ func (a *App) Run(args []string) int {
 	}
 	var params map[string]any
 	if command == "invoke" {
-		params, err = inputObject(o)
+		params, err = a.inputObject(o)
 		if err != nil {
 			return a.fail("invalid_input", err.Error(), 2)
 		}
@@ -237,7 +254,7 @@ func (a *App) Run(args []string) int {
 		}
 		p = renewed
 	}
-	if p.EnvironmentID != o.env || (p.AccessToken != "" && p.Scope != sessionScope) || (p.AccessToken == "" && p.RefreshToken == "") {
+	if p.EnvironmentID != o.env || (p.AccessToken != "" && !validScope(p.Scope)) || (p.AccessToken == "" && p.RefreshToken == "") {
 		return a.fail("configuration_error", "stored profile environment, token or scope is invalid; log in again", 1)
 	}
 	if command == "auth status" || command == "auth logout" {
@@ -257,10 +274,17 @@ func (a *App) Run(args []string) int {
 	if len(o.args) > 0 {
 		operation = o.args[0]
 	}
-	return a.channel(command, operation, params, p)
+	return a.channel(command, operation, params, p, o)
 }
 
-func inputObject(o options) (map[string]any, error) {
+func (a *App) inputObject(o options) (map[string]any, error) {
+	if o.paramsFile != "" {
+		data, err := a.readInputFile(o.paramsFile)
+		if err != nil {
+			return nil, err
+		}
+		return decodeObject(data)
+	}
 	if !o.hasInput {
 		return map[string]any{}, nil
 	}
@@ -293,6 +317,7 @@ type loginBundle struct {
 	PublicBaseURL   string `json:"public_base_url"`
 	GrantSecret     string `json:"grant_secret"`
 	GrantExpiresAt  string `json:"grant_expires_at"`
+	Scope           string `json:"scope,omitempty"`
 }
 
 func parseBundle(code string) (loginBundle, error) {
@@ -316,6 +341,12 @@ func parseBundle(code string) (loginBundle, error) {
 	}
 	if b.Version != "alarmd-login/v1" || b.EnvironmentID == "" || b.EnvironmentName == "" || !validSecret(b.GrantSecret) {
 		return b, errors.New("authorization code has an invalid version, environment or secret")
+	}
+	if b.Scope == "" {
+		b.Scope = sessionScope
+	}
+	if !validScope(b.Scope) {
+		return b, errors.New("authorization code has an unsupported scope")
 	}
 	if _, err := time.Parse(time.RFC3339, b.GrantExpiresAt); err != nil {
 		return b, errors.New("authorization code has an invalid expiry")
@@ -347,7 +378,9 @@ func (a *App) login(o options) int {
 	if o.env != "" && o.env != b.EnvironmentID {
 		return a.fail("invalid_input", "--env does not match authorization code", 2)
 	}
-	p := Profile{EnvironmentID: b.EnvironmentID, EnvironmentName: b.EnvironmentName, PublicBaseURL: b.PublicBaseURL, CACert: o.caCert, InsecureTLS: o.insecureTLS}
+	// The session is what the code grants: the one operations session, or an
+	// execution session an earlier server granted.
+	p := Profile{EnvironmentID: b.EnvironmentID, EnvironmentName: b.EnvironmentName, PublicBaseURL: b.PublicBaseURL, Scope: b.Scope, CACert: o.caCert, InsecureTLS: o.insecureTLS}
 	entry, _ := baseURL(p.PublicBaseURL)
 	if entry.Scheme == "http" && (o.insecureTLS || o.caCert != "") {
 		return a.fail("invalid_input", "TLS options apply only to HTTPS environments", 2)
@@ -425,8 +458,10 @@ func (a *App) session(command string, p Profile) int {
 	return a.print(map[string]any{"status": "ok", "session": redact(result, []string{p.AccessToken})})
 }
 
-func (a *App) channel(mode, operation string, params map[string]any, p Profile) int {
+func (a *App) channel(mode, operation string, params map[string]any, p Profile, o options) int {
 	revision := ""
+	timeout := 30 * time.Second // Legacy servers do not describe their deadline.
+	exec := false
 	if mode == "invoke" {
 		fmt.Fprintln(a.Err, "Reading the current operation contract...")
 		m, status, err := a.channelRequest("describe", operation, nil, "", p)
@@ -440,20 +475,89 @@ func (a *App) channel(mode, operation string, params map[string]any, p Profile) 
 			return a.emitOrLapsed(p, m, []string{p.AccessToken}, status)
 		}
 		revision = stringField(objectField(m, "meta"), "catalog_revision")
+		contract := objectField(m, "result")
+		effect := stringField(contract, "effect")
+		if effect != "" && effect != "read" && effect != "exec" {
+			return a.fail("capability_unavailable", "Operation effect is unsupported by this CLI.", 1)
+		}
+		exec = effect == "exec"
+		required := stringField(contract, "required_scope")
+		if required != "" && !allowsScope(p.Scope, required) {
+			return a.fail("permission_denied", "Operation requires "+required+", which this earlier server grants only on a separate login; authorize again from its page.", 1)
+		}
+		if advertised, exists := contract["execution_timeout_ms"]; exists {
+			ms, ok := advertised.(json.Number)
+			v, err := ms.Int64()
+			if !ok || err != nil || v < 1 || v > 120000 {
+				return a.fail("protocol_error", "Operation execution timeout is invalid.", 1)
+			}
+			admissionMS, marginMS := int64(0), int64(5000)
+			limits := objectField(contract, "request_limits")
+			for _, budget := range []struct {
+				key     string
+				maximum int64
+				value   *int64
+			}{{"admission_timeout_ms", 10000, &admissionMS}, {"transport_margin_ms", 30000, &marginMS}} {
+				if declared, exists := limits[budget.key]; exists {
+					number, ok := declared.(json.Number)
+					ms, err := number.Int64()
+					if !ok || err != nil || ms < 1 || ms > budget.maximum {
+						return a.fail("protocol_error", "Operation "+budget.key+" is invalid.", 1)
+					}
+					*budget.value = ms
+				}
+			}
+			timeout = time.Duration(v+admissionMS+marginMS) * time.Millisecond
+		}
+		if o.stdinFile != "" {
+			if err := a.attachStdin(contract, params, o.stdinFile); err != nil {
+				return a.fail("invalid_input", err.Error(), 2)
+			}
+		}
+		if maximum, exists := contract["request_max_bytes"]; exists {
+			n, ok := maximum.(json.Number)
+			limit, err := n.Int64()
+			if !ok || err != nil || limit < 1 || limit > 1<<20 {
+				return a.fail("protocol_error", "Operation request byte limit is invalid.", 1)
+			}
+			body := channelBody(mode, operation, params, revision)
+			encoded, err := json.Marshal(body)
+			if err != nil || int64(len(encoded)) > limit {
+				return a.fail("invalid_input", "Input exceeds the described operation request byte limit.", 2)
+			}
+		}
 	}
 	fmt.Fprintln(a.Err, "Calling the OB channel...")
-	m, status, err := a.channelRequest(mode, operation, params, revision, p)
+	started := time.Now().UTC()
+	m, status, err := a.channelRequestTimeout(mode, operation, params, revision, p, timeout)
 	if err != nil {
+		var unsent *requestNotSent
+		if exec && !errors.As(err, &unsent) {
+			return a.unknownExecution(operation, params, revision, p, started, m, status, err.Error())
+		}
 		return a.fail("request_failed", err.Error(), 1)
 	}
 	// A session the server ended before its local expiry is renewed once from
 	// the pairing; an unpaired one is reported as it is.
-	if status == http.StatusUnauthorized && p.RefreshToken != "" {
+	if status == http.StatusUnauthorized && p.RefreshToken != "" && !exec {
 		if renewed, renewErr := a.ensureSession(p.EnvironmentID, true); renewErr == nil {
 			p = renewed
-			m, status, err = a.channelRequest(mode, operation, params, revision, p)
+			m, status, err = a.channelRequestTimeout(mode, operation, params, revision, p, timeout)
 			if err != nil {
 				return a.fail("request_failed", err.Error(), 1)
+			}
+		}
+	}
+	if exec && status != http.StatusUnauthorized {
+		// A named channel rejection before execution needs no receipt. A
+		// gateway failure or malformed execution answer cannot prove that the
+		// remote process did not start, even when its HTTP status is an error.
+		if !confirmedExecRejection(m, status) {
+			if err := validateChannel(m, p); err != nil {
+				return a.unknownExecution(operation, params, revision, p, started, m, status, err.Error())
+			}
+			if err := validateExecReceipt(operation, m); err != nil {
+				return a.unknownExecution(operation, params, revision, p, started, m, status, err.Error())
 			}
 		}
 	}
@@ -464,6 +568,29 @@ func (a *App) channel(mode, operation string, params map[string]any, p Profile) 
 }
 
 func (a *App) channelRequest(mode, operation string, params map[string]any, revision string, p Profile) (map[string]any, int, error) {
+	return a.channelRequestTimeout(mode, operation, params, revision, p, 30*time.Second)
+}
+
+func (a *App) channelRequestTimeout(mode, operation string, params map[string]any, revision string, p Profile, timeout time.Duration) (map[string]any, int, error) {
+	body := channelBody(mode, operation, params, revision)
+	m, status, err := a.requestTimeout(p, http.MethodPost, "api/cli/channel", body, timeout)
+	if err != nil {
+		return m, status, err
+	}
+	if status < 200 || status >= 300 {
+		return m, status, nil
+	}
+	if err := validateChannel(m, p); err != nil {
+		return m, status, protocolError(err)
+	}
+	s := objectField(objectField(m, "meta"), "session")
+	if err := a.Store.updateExpiry(p, stringField(s, "expires_at")); err != nil {
+		fmt.Fprintln(a.Err, "Warning: server response received, but local expiry hint could not be saved.")
+	}
+	return m, status, nil
+}
+
+func channelBody(mode, operation string, params map[string]any, revision string) map[string]any {
 	body := map[string]any{"channel_version": channelVersion, "mode": mode}
 	if operation != "" {
 		body["operation"] = operation
@@ -473,19 +600,5 @@ func (a *App) channelRequest(mode, operation string, params map[string]any, revi
 		body["expected_catalog_revision"] = revision
 		body["renew_if_due"] = true
 	}
-	m, status, err := a.request(p, http.MethodPost, "api/cli/channel", body)
-	if err != nil {
-		return m, status, err
-	}
-	if status < 200 || status >= 300 {
-		return m, status, nil
-	}
-	if err := validateChannel(m, p); err != nil {
-		return nil, status, protocolError(err)
-	}
-	s := objectField(objectField(m, "meta"), "session")
-	if err := a.Store.updateExpiry(p, stringField(s, "expires_at")); err != nil {
-		fmt.Fprintln(a.Err, "Warning: server response received, but local expiry hint could not be saved.")
-	}
-	return m, status, nil
+	return body
 }

@@ -4337,11 +4337,19 @@ type SlotExecutionResult struct {
 	// (AttributedReason): what the query cooldown that this result feeds
 	// reports its entries and exits under.
 	QueryUnavailableReason ReasonCode
+	// QueryUnknownReason is, with QueryAvailabilityUnknown, QUERY_TIMEOUT
+	// when a primary query timed out after being sent late, which the worker
+	// does not count against the backend; empty otherwise. The query
+	// cooldown reads it for a deciding round, which is decided late as it is.
+	QueryUnknownReason ReasonCode
 	// PrimaryQueryClock is the slowest PRIMARY query's budget and elapsed
 	// time, answered or not; nil when no primary query was measured. Read
 	// with QueryAvailability by the query cooldown pool, which keeps what
 	// the execution that decided its membership had and used.
 	PrimaryQueryClock *PhysicalQueryClock
+	// InPlaceWait is the execution's in-place readiness wait, as access
+	// measured it; nil when it did not wait.
+	InPlaceWait *InPlaceWaitFacts
 	// Set only after a successful Progress commit, not inferred from Result.
 	CompletionKind CompletionKind
 	Completed      bool

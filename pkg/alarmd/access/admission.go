@@ -8,6 +8,7 @@ package access
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -44,6 +45,11 @@ type ScopeDrop struct {
 	// Round is the Slot's evaluation time: two drops of one fingerprint are
 	// two observations only when they come from two Slots.
 	Round int64
+	// IntervalSeconds is the Plan's evaluation period, and ReadOffset how
+	// long after Round the Slot was frozen to read: together, when the next
+	// observation can come.
+	IntervalSeconds int64
+	ReadOffset      time.Duration
 }
 
 // The words the access path counts rejections under by itself, before the
@@ -125,6 +131,8 @@ type planOutput struct {
 	multiInput bool
 	// shard is the Plan's piece of a split strategy, for the reporter.
 	shard execution.ShardRef
+	// intervalSeconds is the Plan's evaluation period.
+	intervalSeconds int64
 }
 
 type planOutputs map[execution.PlanIdentity]planOutput
@@ -149,7 +157,8 @@ func buildPlanOutputs(duePlans []execution.DuePlan, queries []PlannedQuery) plan
 		}
 		ref := due.CompiledPlan.StrategyRef()
 		outputs[due.Identity] = planOutput{strategyID: ref.StrategyID, revision: int64(ref.SnapshotRevision), shard: due.Shard,
-			identity: due.CompiledPlan.OutputIdentity(), multiInput: len(inputs[due.Identity]) > 1}
+			identity: due.CompiledPlan.OutputIdentity(), multiInput: len(inputs[due.Identity]) > 1,
+			intervalSeconds: due.ScheduleSpec.EvaluationIntervalSeconds}
 	}
 	return outputs
 }
@@ -236,8 +245,12 @@ func (adapter *seriesAdapter) reportScopeDrop(identity execution.PlanIdentity, p
 		adapter.tallyScopeDrop(identity, ScopeDropNoFingerprint)
 		return
 	}
+	var readOffset time.Duration
+	if ready := adapter.query.ReadyAtUnixMilli; ready > 0 {
+		readOffset = max(0, time.Duration(ready-adapter.round*1000)*time.Millisecond)
+	}
 	adapter.scopeSink.Observe(ScopeDrop{Plan: identity, Filter: filter, Reason: reason, Fingerprint: fingerprint,
-		StrategyRevision: output.revision, Round: adapter.round})
+		StrategyRevision: output.revision, Round: adapter.round, IntervalSeconds: output.intervalSeconds, ReadOffset: readOffset})
 }
 
 func (adapter *seriesAdapter) tallyScopeDrop(plan execution.PlanIdentity, word string) {

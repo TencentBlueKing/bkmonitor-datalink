@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"reflect"
 	"strings"
@@ -120,14 +121,56 @@ func TestASummarizedPublishCountsTheEvaluatingStrategiesWithoutWritingThem(t *te
 	}
 }
 
-// execCutter is a proxy to Redis that lets a transaction's MULTI and
-// commands through, waits until Redis has queued three of them, and then
-// drops the connection instead of passing EXEC on.
-func execCutter(t *testing.T, target string) (string, func() bool) {
+// The summarized publish script on a real server, as PublishSummarized
+// calls it: the snapshot, the summary and the owned list, each with the
+// store's life, on a cold, warm and flushed script cache; refused, the
+// server's refusal comes back in the store's words and nothing is written.
+func TestThePublishSummarizedScriptRunsAsTheStoreCallsIt(t *testing.T) {
+	var written ReplicaSummary
+	redistest.CheckScriptSite(t, redistest.ScriptSite{
+		Call: func(client *redis.Client) error {
+			summary, err := mustStore(t, client, time.Minute, 0).PublishSummarized(context.Background(), summarizedSnapshot("pod-a", 3), 10*time.Minute)
+			written = summary
+			return err
+		},
+		Written: func(t *testing.T, client *redis.Client) {
+			ctx := context.Background()
+			store := mustStore(t, client, time.Minute, 0)
+			keys := []string{store.snapshotKey("pod-a"), store.summaryKey("pod-a"), store.ownedKey("pod-a")}
+			values := client.MGet(ctx, keys...).Val()
+			if want, err := json.Marshal(written); err != nil || values[1] != string(want) {
+				t.Fatalf("stored summary %v, want the one returned %s", values[1], want)
+			}
+			var owned []string
+			if text, _ := values[2].(string); json.Unmarshal([]byte(text), &owned) != nil || len(owned) != 3 {
+				t.Fatalf("stored owned list %v, want the three", values[2])
+			}
+			if values[0] == nil {
+				t.Fatal("no snapshot stored")
+			}
+			for _, key := range keys {
+				if ttl := client.PTTL(ctx, key).Val(); ttl <= 0 || ttl > time.Minute {
+					t.Fatalf("%s ttl %v, want the store's minute", key, ttl)
+				}
+			}
+		},
+		Refused: func(t *testing.T, _ *redis.Client, err error) {
+			if !strings.HasPrefix(err.Error(), "alarmd fleet: publish snapshot and summary: ") {
+				t.Fatalf("refused publish = %v, want it in the store's words", err)
+			}
+		},
+	})
+}
+
+// scriptCutter is a proxy to Redis that passes a connection's bytes on
+// until it sees a script call, then passes on all of that call but its last
+// byte and drops the connection: Redis has nearly the whole command and
+// never the end of it.
+func scriptCutter(t *testing.T, target string) (string, func() bool) {
 	t.Helper()
-	var cutQueued sync.WaitGroup
+	var cuts sync.WaitGroup
 	var mu sync.Mutex
-	queuedAll := false
+	sawScript := false
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -139,80 +182,61 @@ func execCutter(t *testing.T, target string) (string, func() bool) {
 			if err != nil {
 				return
 			}
-			cutQueued.Add(1)
+			cuts.Add(1)
 			go func() {
-				defer cutQueued.Done()
-				if cutBeforeExec(client, target) {
+				defer cuts.Done()
+				if cutInsideScriptCall(client, target) {
 					mu.Lock()
-					queuedAll = true
+					sawScript = true
 					mu.Unlock()
 				}
 			}()
 		}
 	}()
 	return listener.Addr().String(), func() bool {
-		cutQueued.Wait()
+		cuts.Wait()
 		mu.Lock()
 		defer mu.Unlock()
-		return queuedAll
+		return sawScript
 	}
 }
 
-// cutBeforeExec proxies one connection and says whether Redis had queued
-// three commands when it was cut.
-func cutBeforeExec(client net.Conn, target string) bool {
+// cutInsideScriptCall proxies one connection and says whether it cut one
+// short inside a script call.
+func cutInsideScriptCall(client net.Conn, target string) bool {
 	defer client.Close()
 	server, err := net.Dial("tcp", target)
 	if err != nil {
 		return false
 	}
 	defer server.Close()
-	var mu sync.Mutex
-	queued := 0
-	go func() {
-		buffer := make([]byte, 4096)
-		for {
-			n, err := server.Read(buffer)
-			if n > 0 {
-				mu.Lock()
-				queued += bytes.Count(buffer[:n], []byte("+QUEUED"))
-				mu.Unlock()
-				_, _ = client.Write(buffer[:n])
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
+	go func() { _, _ = io.Copy(client, server) }()
 	var pending []byte
 	buffer := make([]byte, 64<<10)
 	for {
 		n, err := client.Read(buffer)
 		pending = append(pending, buffer[:n]...)
-		if frame := bytes.Index(bytes.ToLower(pending), []byte("*1\r\n$4\r\nexec\r\n")); frame >= 0 {
-			_, _ = server.Write(pending[:frame])
-			for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-				mu.Lock()
-				done := queued >= 3
-				mu.Unlock()
-				if done {
-					return true
-				}
-			}
-			return false
+		lower := bytes.ToLower(pending)
+		if bytes.Contains(lower, []byte("$7\r\nevalsha\r\n")) || bytes.Contains(lower, []byte("$4\r\neval\r\n")) {
+			_, _ = server.Write(pending[:len(pending)-1])
+			time.Sleep(100 * time.Millisecond)
+			return true
 		}
 		if err != nil {
-			_, _ = server.Write(pending)
 			return false
 		}
+		_, _ = server.Write(pending)
+		pending = pending[:0]
 	}
 }
 
-// A connection lost before EXEC leaves all three keys as the publish before
-// left them: Redis had the new snapshot, summary and owned list queued and
-// dropped them together, so no reader finds a summary beside a snapshot it
-// was not made from.
-func TestASummarizedPublishCutBeforeExecLeavesAllThreeAsTheyWere(t *testing.T) {
+// The three writes of a summarized publish are one script call, so a
+// connection lost while it is being sent leaves all three keys as the
+// publish before left them: Redis runs a command it has whole or not at
+// all, and no reader finds a summary beside a snapshot it was not made
+// from. (It was one MULTI/EXEC before, cut between the queued writes and
+// EXEC; a script has no such between.)
+func TestASummarizedPublishCutInsideItsScriptCallLeavesAllThreeAsTheyWere(t *testing.T) {
 	address, client := realRedis(t)
 	before := mustStore(t, client, time.Minute, 0)
 	if _, err := before.PublishSummarized(context.Background(), summarizedSnapshot("pod-a", 3), 10*time.Minute); err != nil {
@@ -221,32 +245,35 @@ func TestASummarizedPublishCutBeforeExecLeavesAllThreeAsTheyWere(t *testing.T) {
 	keys := []string{before.snapshotKey("pod-a"), before.summaryKey("pod-a"), before.ownedKey("pod-a")}
 	old := client.MGet(context.Background(), keys...).Val()
 
-	proxy, queued := execCutter(t, address)
+	proxy, cutScript := scriptCutter(t, address)
 	cut := redis.NewClient(&redis.Options{Addr: proxy, DialTimeout: time.Second, ReadTimeout: 5 * time.Second, MaxRetries: -1})
 	t.Cleanup(func() { _ = cut.Close() })
 	next := summarizedSnapshot("pod-a", 5)
 	next.TakenAt = now.Add(time.Minute)
 	if _, err := mustStore(t, cut, time.Minute, 0).PublishSummarized(context.Background(), next, 10*time.Minute); err == nil {
-		t.Fatal("a publish whose EXEC never arrived reported success")
+		t.Fatal("a publish whose script call never arrived whole reported success")
 	}
 	_ = cut.Close()
-	if !queued() {
-		t.Fatal("Redis had not queued the three writes when the connection was cut: the test proves nothing")
+	if !cutScript() {
+		t.Fatal("the proxy never saw the script call: the test proves nothing")
 	}
 	after := client.MGet(context.Background(), keys...).Val()
 	for index := range keys {
 		if after[index] != old[index] {
-			t.Errorf("%s changed though its transaction never ran", keys[index])
+			t.Errorf("%s changed though its script never ran", keys[index])
 		}
 	}
-	// The same publish straight to Redis replaces all three: the cut is what
-	// kept them.
+	// The same publish straight to Redis replaces all three, each with the
+	// store's life: the cut is what kept them.
 	if _, err := before.PublishSummarized(context.Background(), next, 10*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	for index, value := range client.MGet(context.Background(), keys...).Val() {
 		if value == old[index] {
 			t.Errorf("%s unchanged by a publish that ran", keys[index])
+		}
+		if ttl := client.PTTL(context.Background(), keys[index]).Val(); ttl <= 0 || ttl > time.Minute {
+			t.Errorf("%s ttl = %v, want the store's minute", keys[index], ttl)
 		}
 	}
 }
@@ -323,7 +350,7 @@ func TestEveryListOfASnapshotIsEitherRowsOrKeptInItsHead(t *testing.T) {
 	rows := map[string]bool{"OwnedObjects": true, "Anomalies": true, "Demoted": true, "Undecidable": true, "ByDesign": true,
 		"PrunedSkips": true, "GapSkips": true, "NoData": true, "NoDataMemory": true, "RetainedShare": true, "ReadEarly": true,
 		"LateSeries": true, "ReadHolds": true, "ReadHeld": true, "OverdueEpisodes": true, "EvaluatingStrategies": true}
-	kept := map[string]bool{"AwaitingFirstRound": true, "Recovered": true, "Dependencies": true}
+	kept := map[string]bool{"AwaitingFirstRound": true, "Recovered": true, "Dependencies": true, "AddressDiffers": true, "Undetermined": true, "EffectiveTimeUnread": true}
 	var full Snapshot
 	fill(reflect.ValueOf(&full).Elem(), 0)
 	head := reflect.ValueOf(headOf(full))

@@ -71,10 +71,18 @@ func calibratedCopy(t *testing.T, key openalerts.StrategyKey, index scopeCloseIn
 	done := make(chan struct{})
 	go func() { defer close(done); _ = cache.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
+	// The close reads the set through MemberCount and Holds, which also
+	// need the change subscription ready. Calibration does not wait for it:
+	// TrackOwned's wake can calibrate before the Watch goroutine has called
+	// ready(true), so waiting on Calibrated alone races the subscription.
 	deadline := time.Now().Add(3 * time.Second)
-	for !cache.Snapshot(key).Calibrated {
+	for {
+		_, judged := cache.MemberCount(key)
+		if judged && cache.Snapshot(key).Calibrated {
+			break
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("copy did not calibrate")
+			t.Fatal("copy did not calibrate with its subscription ready")
 		}
 		time.Sleep(time.Millisecond)
 	}

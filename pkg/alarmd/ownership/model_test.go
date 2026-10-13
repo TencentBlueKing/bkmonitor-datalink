@@ -31,3 +31,27 @@ func TestWorkerCompatibilityUsesOnlyStaticDeploymentFacts(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerCompatibilityPrefersDeclaredExecutionContract(t *testing.T) {
+	base := WorkerCompatibility{DeploymentProfile: "standard", CapabilitiesDigest: "resource-small", ExecutionContractDigest: "execution-v1"}
+	for name, test := range map[string]struct {
+		other WorkerCompatibility
+		match bool
+	}{
+		"different resource digest":       {WorkerCompatibility{"standard", "resource-large", "execution-v1"}, true},
+		"new mismatch does not fall back": {WorkerCompatibility{"standard", "resource-small", "execution-v2"}, false},
+		"different profile":               {WorkerCompatibility{"another", "resource-small", "execution-v1"}, false},
+		"old matching digest":             {WorkerCompatibility{"standard", "resource-small", ""}, true},
+		"old different digest":            {WorkerCompatibility{"standard", "resource-large", ""}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := base.Matches(test.other); got != test.match || test.other.Matches(base) != got {
+				t.Fatalf("Matches(%+v) = %v, want symmetric %v", test.other, got, test.match)
+			}
+		})
+	}
+	old := WorkerCompatibility{DeploymentProfile: "standard", CapabilitiesDigest: "resource-small"}
+	if !old.Matches(old) || old.Matches(WorkerCompatibility{DeploymentProfile: "standard", CapabilitiesDigest: "different"}) {
+		t.Fatal("legacy digest comparison changed")
+	}
+}

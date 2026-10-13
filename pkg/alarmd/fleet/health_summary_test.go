@@ -94,14 +94,14 @@ func summariesRoundTrip(t *testing.T, snapshots []Snapshot, expectation Expectat
 		summaries = append(summaries, summary)
 		owned[snapshot.Replica] = snapshot.OwnedObjects
 	}
-	return AggregateSummaries(expectation, DigestOf(expectation.IDs), summaries, names, at, freshness,
+	return aggregateSummaries(expectation, DigestOf(expectation.IDs), summaries, names, at, freshness,
 		func(replicas []string) ([][]string, bool) {
 			sets := make([][]string, 0, len(replicas))
 			for _, replica := range replicas {
 				sets = append(sets, owned[replica])
 			}
 			return sets, true
-		})
+		}, controlRead{})
 }
 
 // externalRows is snapshotsWithAnomalies with rows the backend's -- a
@@ -477,8 +477,8 @@ func TestOwnedListsThatCannotBeReadLeaveTheHandoverNoteWithoutANumber(t *testing
 	for _, snapshot := range snapshots {
 		summaries = append(summaries, SummaryOf(snapshot, snapshot.OwnedObjects, time.Minute))
 	}
-	view, part := AggregateSummaries(expectation, DigestOf(ids), summaries, replicas(), now, freshness,
-		func([]string) ([][]string, bool) { return nil, false })
+	view, part := aggregateSummaries(expectation, DigestOf(ids), summaries, replicas(), now, freshness,
+		func([]string) ([][]string, bool) { return nil, false }, controlRead{})
 	health := healthOf(&view, part, now)
 	if health.Coverage == nil || health.Coverage.Comparable || health.Handover == nil || health.Handover.Objects != nil {
 		t.Fatalf("coverage %+v handover %+v, want an incomparable coverage and a note with no number", health.Coverage, health.Handover)

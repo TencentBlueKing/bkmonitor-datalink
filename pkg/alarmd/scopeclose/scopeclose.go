@@ -98,12 +98,17 @@ const (
 	// built - as opposed to a verdict reached without its facts
 	// (cache_unavailable). Never closed.
 	OutcomeIndefinite = "indefinite"
+	// OutcomeObservationExpired counts first observations whose second did
+	// not arrive inside the observation's lifetime - two periods of the
+	// strategy plus its Slot's read wait, at least ObservationTTL - and were
+	// forgotten. A strategy counted here is one this close could not reach.
+	OutcomeObservationExpired = "observation_expired"
 )
 
 // Outcomes lists every outcome, for the metric that pre-creates them.
 var Outcomes = []string{OutcomeCloseSent, OutcomeUnconfirmed, OutcomeCacheUnavailable, OutcomeNotMember,
 	OutcomeSetUnavailable, OutcomeProducerForeign, OutcomeSendFailed, OutcomeMemoryFull, OutcomeFingerprintUnsupported,
-	OutcomeStaleDeferred, OutcomeIndefinite, OutcomeIdentityInvalid}
+	OutcomeStaleDeferred, OutcomeIndefinite, OutcomeIdentityInvalid, OutcomeObservationExpired}
 
 // The bounds of what the facts carry.
 const (
@@ -124,6 +129,12 @@ type Drop struct {
 	StrategyRevision int64
 	// Round is the Slot's evaluation time.
 	Round int64
+	// IntervalSeconds is the strategy's evaluation period, and ReadOffset
+	// how long after Round its Slot was frozen to read - the settling wait,
+	// any stagger phase and read hold. The second observation arrives when
+	// the next Slot is read, which these two place.
+	IntervalSeconds int64
+	ReadOffset      time.Duration
 }
 
 // OpenSet is what the close asks the open alert copy.
@@ -172,6 +183,16 @@ type entry struct {
 	firstRound int64
 	confirmed  bool
 	lastSeen   time.Time
+	// ttl is how long the observation waits for its second (lifetime).
+	ttl time.Duration
+}
+
+// lifetime is how long an observation of drop waits for its second: two of
+// the strategy's periods plus its Slot's read offset, at least
+// ObservationTTL - a fixed lifetime would never let a strategy whose period
+// reaches it close.
+func (closer *Closer) lifetime(drop Drop) time.Duration {
+	return max(closer.options.ObservationTTL, 2*time.Duration(drop.IntervalSeconds)*time.Second+drop.ReadOffset)
 }
 
 // bulkKey and bulkRound remember, per reporter and outcome, the last round
@@ -320,13 +341,14 @@ func (closer *Closer) Observe(drop Drop) {
 		closer.countLocked(key, OutcomeNotMember, 1)
 		return
 	}
-	if at, done := closer.decided[ek]; done && now.Sub(at) < closer.options.ObservationTTL {
+	if until, done := closer.decided[ek]; done && now.Before(until) {
 		return
 	}
 	existing := closer.entries[ek]
-	if existing != nil && now.Sub(existing.lastSeen) >= closer.options.ObservationTTL {
+	if existing != nil && now.Sub(existing.lastSeen) >= existing.ttl {
 		// Waited too long for its second: the two are not one absence.
 		delete(closer.entries, ek)
+		closer.countLocked(key, OutcomeObservationExpired, 1)
 		existing = nil
 	}
 	if existing == nil {
@@ -334,12 +356,14 @@ func (closer *Closer) Observe(drop Drop) {
 			closer.countLocked(key, OutcomeMemoryFull, 1)
 			return
 		}
-		closer.entries[ek] = &entry{businessID: drop.BusinessID, revision: drop.StrategyRevision, firstRound: drop.Round, lastSeen: now}
+		closer.entries[ek] = &entry{businessID: drop.BusinessID, revision: drop.StrategyRevision, firstRound: drop.Round, lastSeen: now,
+			ttl: closer.lifetime(drop)}
 		closer.countLocked(key, OutcomeUnconfirmed, 1)
 		return
 	}
 	existing.lastSeen = now
 	existing.businessID, existing.revision = drop.BusinessID, drop.StrategyRevision
+	existing.ttl = closer.lifetime(drop)
 	if drop.Round != existing.firstRound {
 		existing.confirmed = true
 	}
@@ -350,12 +374,13 @@ func (closer *Closer) Step(ctx context.Context) {
 	now := closer.options.Now()
 	closer.mu.Lock()
 	for ek, e := range closer.entries {
-		if now.Sub(e.lastSeen) >= closer.options.ObservationTTL {
+		if now.Sub(e.lastSeen) >= e.ttl {
 			delete(closer.entries, ek)
+			closer.countLocked(ek.key, OutcomeObservationExpired, 1)
 		}
 	}
-	for ek, at := range closer.decided {
-		if now.Sub(at) >= closer.options.ObservationTTL {
+	for ek, until := range closer.decided {
+		if !now.Before(until) {
 			delete(closer.decided, ek)
 		}
 	}
@@ -495,9 +520,13 @@ func (closer *Closer) decide(decided []entryKey, outcome string, now time.Time) 
 	closer.mu.Lock()
 	defer closer.mu.Unlock()
 	for _, ek := range decided {
+		ttl := closer.options.ObservationTTL
+		if e := closer.entries[ek]; e != nil {
+			ttl = e.ttl
+		}
 		delete(closer.entries, ek)
 		if len(closer.decided) < closer.options.MaxEntries {
-			closer.decided[ek] = now
+			closer.decided[ek] = now.Add(ttl)
 		}
 		closer.countLocked(ek.key, outcome, 1)
 		t := closer.tallyLocked(ek.key)

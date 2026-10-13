@@ -27,11 +27,24 @@ import (
 )
 
 const (
-	ScopeReadonly    = "deployment_ops_readonly"
-	GrantLifetime    = 5 * time.Minute
-	SessionLifetime  = time.Hour
-	RenewalThreshold = 10 * time.Minute
-	redisTimeout     = time.Second
+	// ScopeReadonly is the one scope a session is granted: this deployment's
+	// operations session, for every operation the channel offers, execution
+	// and management included. The identifier is historical; sessions and
+	// pairings already stored carry it, and renaming it would mean migrating
+	// them for no difference in behaviour.
+	ScopeReadonly = "deployment_ops_readonly"
+	// requestedExecScope is what an alarmd-cli built after the execution
+	// scope was added and before 310f82cf7 may still ask the authorization
+	// page for; it is granted the one scope. No running deployment ever
+	// issued it, so no stored session or pairing carries it and none is read.
+	//
+	// Retire when: no alarmd-cli older than 310f82cf7 is supported - the
+	// CLI that stopped asking for it.
+	requestedExecScope = "deployment_ops_exec"
+	GrantLifetime      = 5 * time.Minute
+	SessionLifetime    = time.Hour
+	RenewalThreshold   = 10 * time.Minute
+	redisTimeout       = time.Second
 	// PairingIdleLifetime is how long a renewal credential lives unused. A
 	// credential is spent and replaced at every renewal, so this bounds only a
 	// device that stopped asking: a month covers a holiday and not a
@@ -41,6 +54,15 @@ const (
 	// it an exchange still logs in, without renewal, and says so.
 	MaxPairings = 64
 )
+
+// ValidScope is whether an operation may require scope: there is one.
+func ValidScope(scope string) bool { return scope == ScopeReadonly }
+
+// AllowsScope is whether a session granted granted may run an operation
+// requiring required.
+func AllowsScope(granted, required string) bool {
+	return granted == ScopeReadonly && ValidScope(required)
+}
 
 // Options uses an independently budgeted Redis client supplied by the caller.
 // Now only controls the process-local HTTP rate window; all credentials use

@@ -17,9 +17,12 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
 )
 
+// Limits is what the evaluator is bounded by beyond what each request says
+// of itself. How many records one series may carry is not here; see
+// commonPrimaryRecords.
 type Limits struct {
-	MaxPlans, MaxRecords, MaxLevels uint64
-	Trigger                         trigger.EvaluationLimitsV2
+	MaxLevels uint64
+	Trigger   trigger.EvaluationLimitsV2
 }
 
 type Evaluator struct {
@@ -69,14 +72,14 @@ func (e *Evaluator) attributeBusiness(event *contract.TriggerEventV1, plan *stra
 }
 
 func New(detector *detect.Evaluator, limits Limits) (*Evaluator, error) {
-	if detector == nil || limits.MaxPlans == 0 || limits.MaxRecords == 0 || limits.MaxLevels == 0 {
+	if detector == nil || limits.MaxLevels == 0 {
 		return nil, errors.New("alarmd evaluation: evaluator and positive limits are required")
 	}
 	return &Evaluator{detect: detector, limits: limits}, nil
 }
 
 func (e *Evaluator) Evaluate(ctx context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
-	if e == nil || len(request.Inputs) == 0 || e.limits.MaxPlans < 1 {
+	if e == nil || len(request.Inputs) == 0 {
 		return execution.EvaluationResult{}, errors.New("alarmd evaluation: invalid or over-budget request")
 	}
 	plan, err := e.evaluateSeries(ctx, request.Header, request.Inputs, request.State, request.Gaps, request.OpenAlerts)
@@ -613,7 +616,7 @@ func (e *Evaluator) evaluateSeries(
 		}
 		ordered[index] = input
 	}
-	primaryRecords, err := commonPrimaryRecords(ordered, e.limits.MaxRecords)
+	primaryRecords, err := commonPrimaryRecords(ordered)
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
@@ -824,7 +827,15 @@ func constrainedOutcomes(
 	return outcomes
 }
 
-func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest, maxRecords uint64) ([]execution.RecordView, error) {
+// commonPrimaryRecords is the one record set every Level's PRIMARY view
+// shares. It counts no records against a budget of its own. A fixed 500 per
+// series did once, which refused every evaluation of a Plan whose window holds
+// more points -- an hourly window at a ten-second step, a day at a minute --
+// while the compiler had admitted it. The records are in memory before they
+// get here, already bounded where they are decoded (the provider's record
+// cap, from its body bytes) and held (the coordinator's retained bytes); a
+// count per series bounded nothing those do not.
+func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest) ([]execution.RecordView, error) {
 	var canonical []execution.RecordView
 	for _, input := range inputs {
 		var primary *execution.DatasetView
@@ -842,9 +853,6 @@ func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest, maxRe
 		}
 		if primary == nil {
 			return nil, errors.New("alarmd evaluation: PRIMARY named input is missing")
-		}
-		if uint64(primary.Len()) > maxRecords {
-			return nil, errors.New("alarmd evaluation: named-input record budget exceeded")
 		}
 		records := make([]execution.RecordView, primary.Len())
 		for index := range records {

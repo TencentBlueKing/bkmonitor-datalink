@@ -302,7 +302,11 @@ var failureFacets = map[string]facets{
 	// The control plane did not hand the runner something to run.
 	"BLOCKED_EXACT_SET_UNAVAILABLE": {StageConfig, ClassUnavailable, ""},
 	// The timeline is there and does not decode: the same bytes every round.
-	"SCHEDULE_UNREADABLE":     {StageConfig, ClassContract, DependencyNone},
+	"SCHEDULE_UNREADABLE": {StageConfig, ClassContract, DependencyNone},
+	// The timeline's key is not there at all: the store lost it - evicted,
+	// expired, deleted - and the Control Leader opens it again once the
+	// Worker reports it.
+	"SCHEDULE_MISSING":        {StageConfig, ClassUnavailable, DependencyRedis},
 	"SLOT_SOURCE_RETRY":       {StageConfig, ClassUnavailable, ""},
 	"VIEW_NOT_EXECUTABLE":     {StageConfig, ClassUnavailable, ""},
 	"PROGRESS_BEGIN_FAILED":   {StageSchedule, ClassUnavailable, ""},

@@ -5,7 +5,12 @@
 
 package metric
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
+)
 
 // Series admission is on the hot path - once per series per plan - so it is
 // counted directly rather than through an observation per decision. Only the
@@ -71,15 +76,17 @@ func (r *Recorder) RecordSeriesAdmission(filter, result, reason string) {
 
 // RecordHostPlacement counts one admitted series a Plan read whose host CMDB
 // placed by id or agent, and, when its own address is not that host's, one
-// whose address differs.
-func (r *Recorder) RecordHostPlacement(groupedByTargetIP, addressDiffers bool) {
+// whose address differs, by how (admission.AddressCauses). The same address,
+// or a cause outside the set, counts as placed only.
+func (r *Recorder) RecordHostPlacement(groupedByTargetIP bool, cause string) {
 	if r == nil {
 		return
 	}
 	grouped := strconv.FormatBool(groupedByTargetIP)
 	r.phaseTwo.cmdbPlacedByHostID.WithLabelValues(grouped).Inc()
-	if addressDiffers {
-		r.phaseTwo.cmdbAddressDiffers.WithLabelValues(grouped).Inc()
+	switch cause {
+	case admission.AddressDiffers, admission.AddressMissing, admission.AddressUndecodable:
+		r.phaseTwo.cmdbAddressDiffers.WithLabelValues(grouped, cause).Inc()
 	}
 }
 
@@ -118,6 +125,21 @@ func (r *Recorder) SetCMDBHostIndex(hosts int, ageSeconds, publishedAgeSeconds, 
 	}
 	r.phaseTwo.cmdbIndexDegraded.Reset()
 	r.phaseTwo.cmdbIndexDegraded.WithLabelValues(reason).Set(value)
+}
+
+// RecordCMDBIndexRead counts one refresh of the CMDB index by how it read
+// the cache: full, unchanged or failed. Any other word is counted as failed
+// rather than as a new series.
+func (r *Recorder) RecordCMDBIndexRead(result string) {
+	if r == nil {
+		return
+	}
+	switch result {
+	case "full", "unchanged", "failed":
+	default:
+		result = "failed"
+	}
+	r.phaseTwo.cmdbIndexReads.WithLabelValues(result).Inc()
 }
 
 // SetCMDBServiceInstanceIndex publishes how many service instances the index
@@ -254,4 +276,18 @@ func (r *Recorder) SetHostDisableMonitorStates(states int) {
 		return
 	}
 	r.phaseTwo.hostDisableMonitorStates.Set(float64(states))
+}
+
+// RecordDownstreamDistress counts one physical query whose answer said the
+// query service is overloaded or unreachable (access.DistressClasses), by
+// whether it had queued for its permit. A class outside the set is not
+// counted: the label set is closed.
+func (r *Recorder) RecordDownstreamDistress(class string, contended bool) {
+	if r == nil {
+		return
+	}
+	switch class {
+	case access.DistressTimeout, access.DistressThrottled, access.DistressUnavailable, access.DistressUnreachable:
+		r.phaseTwo.queryDownstreamDistress.WithLabelValues(class, strconv.FormatBool(contended)).Inc()
+	}
 }

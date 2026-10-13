@@ -66,7 +66,8 @@ func TestAHeldSlotWithQueriesReadyAtDifferentTimesWaitsInTheDueIndex(t *testing.
 	if !errors.As(err, &deferred) {
 		t.Fatalf("Execute(held, mixed readiness) error=%v waited=%s, want a readiness deferral", err, waited)
 	}
-	if want := evaluationTime.Add(330 * time.Second); !deferred.ReadinessReadyAt().Equal(want) {
+	// The window's end, the 10 s settling floor, and the 300 s hold.
+	if want := evaluationTime.Add(310 * time.Second); !deferred.ReadinessReadyAt().Equal(want) {
 		t.Fatalf("deferred to %s, want the primary's held readiness %s", deferred.ReadinessReadyAt(), want)
 	}
 	if waited != 0 || consumer.begin != 0 || len(provider.attempts) != 0 || len(permits.attempts) != 0 {

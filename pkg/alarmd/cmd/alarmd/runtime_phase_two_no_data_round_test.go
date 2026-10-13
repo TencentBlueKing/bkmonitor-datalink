@@ -269,6 +269,8 @@ type noDataFixture struct {
 	runner   phaseTwoQueryGroupRuntime
 	events   *recordingPhaseTwoEventSink
 	interval int64
+	// readAt is when in its period the Query Group is read.
+	readAt func(evaluationAt int64) int64
 	// acked is every event_acked line, for what the rounds decided whether
 	// or not their protocol had a message for it.
 	ackedMu sync.Mutex
@@ -339,7 +341,7 @@ func (fixture *noDataFixture) openAndClose(t *testing.T) (contract.TriggerEventV
 // runSlot moves the clock one period on and runs whatever is due.
 func (fixture *noDataFixture) runSlot(ctx context.Context, round int64) {
 	fixture.t.Helper()
-	fixture.clock.Store((fixture.base + round*fixture.interval + fixture.interval/2) * 1000)
+	fixture.clock.Store(fixture.readAt(fixture.base + round*fixture.interval))
 	for attempt := 0; attempt < 4; attempt++ {
 		_, attempted, err := fixture.runner.RunOne(ctx)
 		if err != nil {
@@ -458,6 +460,9 @@ func startNoDataFixtureWith(t *testing.T, protocol string, continuous int) *noDa
 	queryGroup := bundle.queryGroups[0]
 	fixture.runner = settledRunner(bundle, queryGroup)
 	fixture.events = events
+	fixture.readAt = func(evaluationAt int64) int64 {
+		return roundReadAtMillis(bundle.dependencies.Config, queryGroup, evaluationAt, fixture.interval)
+	}
 
 	// The Plan must actually carry no-data detection, or every round below
 	// would pass by judging nothing at all.

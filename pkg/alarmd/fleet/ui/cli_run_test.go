@@ -176,6 +176,29 @@ func TestTheAuthorizationPageCopiesAndLeadsToTheCheck(t *testing.T) {
 	}
 }
 
+// The page offers the deployment's one operations session whatever scope
+// the link carries - none, the earlier execution scope, against a server that
+// never declared it, or an unknown one: one grant, naming no scope, a command
+// without --scope, and a label that says the session executes and manages.
+func TestThePageOffersTheOneOperationsSession(t *testing.T) {
+	raw := runLoginPage(t)
+	for _, name := range []string{"scope_readonly", "scope_exec", "scope_old_server", "scope_invalid"} {
+		var got struct {
+			Status  string           `json:"status"`
+			Error   bool             `json:"error"`
+			Command string           `json:"command"`
+			Label   string           `json:"label"`
+			Posts   []map[string]any `json:"posts"`
+		}
+		if err := json.Unmarshal(raw[name], &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Error || len(got.Posts) != 1 || got.Posts[0]["scope"] != nil || strings.Contains(got.Command, "--scope") || !strings.Contains(got.Label, "Pod 命令执行") {
+			t.Fatalf("%s: %+v, want the one session", name, got)
+		}
+	}
+}
+
 // runLoginPage runs the authorization page's script against a stubbed
 // document and fetch, and returns every run's result by name.
 func runLoginPage(t *testing.T) map[string]json.RawMessage {
@@ -348,6 +371,18 @@ async function inspect(pageURL, respond, then) {
   const challenge = 'C'.repeat(43);
   const commandState = url => url.searchParams.get('state');
   const grantOK = () => answer(200, { authorization_code: 'alarmd-login-v1.abc', environment_id: 'ns/release', grant_expires_at: '2026-09-23T09:00:00Z' });
+  for (const [name, scope, supported] of [['scope_readonly', '', false], ['scope_exec', 'deployment_ops_exec', true], ['scope_old_server', 'deployment_ops_exec', false], ['scope_invalid', 'admin', true]]) {
+    const posts = [];
+    const page = load(entryPage + (scope ? '?scope=' + scope : ''), (url, options) => {
+      if (options.method === 'POST') { posts.push(JSON.parse(options.body)); return grantOK(); }
+      return answer(200, { ...preview, ...(supported ? { supported_scopes:['deployment_ops_readonly','deployment_ops_exec'] } : {}) });
+    });
+    const e = page.elements;
+    e['admin-key'].value = 'k'.repeat(40);
+    await e.inspect.listeners.click();
+    await e.issue.listeners.click();
+    runs[name] = { ...shown(e), command:e['listen-command'].textContent, label:e.preview.textContent, posts };
+  }
   let callbackBody;
   runs.loopback_ok = await loopbackRun(async (url, options) => {
     if (url.pathname === '/ready') return answer(200, { state: commandState(url), code_challenge: challenge });

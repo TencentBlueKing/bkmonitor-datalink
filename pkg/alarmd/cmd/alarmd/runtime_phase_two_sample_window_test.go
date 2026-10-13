@@ -55,6 +55,10 @@ func (sampleDirectory) EffectiveOutput(context.Context, controlplane.StrategyDir
 	return controlplane.OutputFormatFacts{}
 }
 
+func (sampleDirectory) StrategyCatalog(int, int) controlplane.StrategyCatalogPage {
+	return controlplane.StrategyCatalogPage{Strategies: []controlplane.StrategyCatalogEntry{}}
+}
+
 // sampleReplica is one process's share of a sample window: its own window
 // store and diagnostics over the shared Redis, its own sampler, its applier.
 type sampleReplica struct {

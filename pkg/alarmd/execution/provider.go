@@ -181,6 +181,10 @@ type RouteAttemptFact struct {
 	Result     RouteAttemptResult
 	ReasonCode ReasonCode
 	Detail     string
+	// HTTPStatus is the status of a non-success HTTP answer, zero where the
+	// attempt got none. Detail spells the same status for a person to read;
+	// this is the number a reader decides on, so nothing parses the text.
+	HTTPStatus int
 	// Timing is when a failed attempt ran against the time it was given;
 	// nil where the attempt did not measure it.
 	Timing *AttemptTiming

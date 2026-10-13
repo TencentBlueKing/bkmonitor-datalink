@@ -77,7 +77,7 @@ func fenceAt(epoch uint64) execution.OwnerFence {
 func failInto(runner *Runner, slot *FrozenSlot) {
 	for i := 0; i < unavailableThreshold; i++ {
 		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), *slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownLetsRun())
+		runner.recordQueryAvailability(context.Background(), *slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	}
 }
 
@@ -170,7 +170,7 @@ func TestAReplacedOwnerCannotWriteOverItsSuccessor(t *testing.T) {
 	failInto(successor, &slot)
 	want := store.records["qg"]
 	now = now.Add(time.Minute)
-	old.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, old.queryCooldownLetsRun())
+	old.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, old.queryCooldownDecidedBy(execution.OperationNormal))
 	failInto(old, &slot)
 	if got := store.records["qg"]; got.OwnerEpoch != 2 || got.Until != want.Until {
 		t.Fatalf("record = %+v, want the successor's %+v", got, want)
@@ -203,7 +203,7 @@ func TestAChangeThatIsNotTheQueryBringsAProbeForwardAndDoesNotExit(t *testing.T)
 	}
 	// The probe fails: extended, still in the pool, and the next Slot waits.
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	if !runner.deferUnavailableQuery(context.Background(), slot) {
 		t.Fatal("a failed probe let the next Slot through")
 	}
@@ -234,7 +234,7 @@ func TestAProbeThatProvesNothingDoesNotLetEverySlotThrough(t *testing.T) {
 		t.Fatal("the probe at the end of the cooldown was held")
 	}
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityUnknown}, 60, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityUnknown}, 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	if !runner.deferUnavailableQuery(context.Background(), slot) || !runner.queryCooldown.until.Equal(now.Add(time.Minute)) {
 		t.Fatalf("after an unknown probe until=%s, want the next probe a period away and the Slot held", runner.queryCooldown.until)
 	}
@@ -253,7 +253,7 @@ func TestAnExitOnEvidenceThenAReturnIsAReentry(t *testing.T) {
 	failInto(runner, &slot)
 	now = runner.queryCooldown.until
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, runner.queryCooldownLetsRun())
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	if record := store.records["qg"]; !record.Until.IsZero() || record.ExitReason != QueryCooldownRecovered || !record.ExitedAt.Equal(now) {
 		t.Fatalf("record after the exit = %+v, want out of the pool with the exit kept", record)
 	}
@@ -273,7 +273,7 @@ func TestAnExitOnEvidenceThenAReturnIsAReentry(t *testing.T) {
 	}
 	// Past the window it is a plain entry again.
 	now = now.Add(QueryCooldownReentryWindow + time.Hour)
-	restarted.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, restarted.queryCooldownLetsRun())
+	restarted.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, restarted.queryCooldownDecidedBy(execution.OperationNormal))
 	now = now.Add(QueryCooldownReentryWindow + time.Hour)
 	lines = nil
 	failInto(restarted, &slot)
@@ -331,7 +331,7 @@ func TestAFailedPoolReadIsReadAgainAndNothingIsWrittenBeforeIt(t *testing.T) {
 				for round := 0; round < unavailableThreshold; round++ {
 					runner.restoreQueryCooldown(ctx, fenceAt(2))
 					slot.Contract.Slot.EvaluationTime++
-					runner.recordQueryAvailability(ctx, slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownLetsRun())
+					runner.recordQueryAvailability(ctx, slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 				}
 			}
 			if runner.queryCooldown.until.IsZero() {
@@ -347,7 +347,7 @@ func TestAFailedPoolReadIsReadAgainAndNothingIsWrittenBeforeIt(t *testing.T) {
 				t.Fatalf("memory after the read = %+v, want the record's entry time and re-entries", runner.cooldownMemory)
 			}
 			slot.Contract.Slot.EvaluationTime++
-			runner.recordQueryAvailability(ctx, slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownLetsRun())
+			runner.recordQueryAvailability(ctx, slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 			if got := store.records["qg"]; store.saves == 0 || !got.EnteredAt.Equal(entered) || got.Reentries != 123 || got.OwnerEpoch != 2 {
 				t.Fatalf("%d saves, record %+v; want the next write to carry the entry time and re-entries it read", store.saves, got)
 			}

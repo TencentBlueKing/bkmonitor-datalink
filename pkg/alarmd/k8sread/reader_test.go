@@ -32,6 +32,8 @@ type fakeAPI struct {
 	logBody string
 	// logStream, when set, answers log reads in place of logBody.
 	logStream func(http.ResponseWriter, *http.Request)
+	// deploymentSpec, when set, is merged into the Deployment's spec.
+	deploymentSpec map[string]any
 }
 
 const (
@@ -100,8 +102,12 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "/apis/apps/v1/namespaces/ns/replicasets/alarmd-trigger-abc":
 		write(map[string]any{"metadata": map[string]any{"name": "alarmd-trigger-abc", "ownerReferences": owner("Deployment", "alarmd-trigger")}})
 	case path == "/apis/apps/v1/namespaces/ns/deployments/alarmd-trigger":
+		spec := map[string]any{"replicas": 2, "selector": map[string]any{"matchLabels": map[string]string{"app.kubernetes.io/name": "alarmd", "app.kubernetes.io/component": "trigger"}}}
+		for key, value := range f.deploymentSpec {
+			spec[key] = value
+		}
 		write(map[string]any{"metadata": map[string]any{"name": "alarmd-trigger"},
-			"spec": map[string]any{"replicas": 2, "selector": map[string]any{"matchLabels": map[string]string{"app.kubernetes.io/name": "alarmd", "app.kubernetes.io/component": "trigger"}}},
+			"spec": spec,
 			"status": map[string]any{"replicas": 2, "readyReplicas": 1, "updatedReplicas": 2, "availableReplicas": 1, "unavailableReplicas": 1,
 				"conditions": []map[string]any{{"type": "Available", "status": "False", "reason": "MinimumReplicasUnavailable", "lastTransitionTime": "2026-09-23T07:59:00Z"}}}})
 	case path == "/api/v1/namespaces/ns/pods":
@@ -199,6 +205,81 @@ func TestPodsReadsTheDeploymentFoundFromThisPodsOwners(t *testing.T) {
 	}
 	if got.Pods[1].Ready || !got.Pods[0].Ready || got.Pods[0].Containers[0].State.State != "running" || got.Pods[0].Containers[0].LastTermination != nil {
 		t.Errorf("readiness and states: %+v", got.Pods)
+	}
+}
+
+// The Deployment block says how a rollout replaces Pods and when each
+// container counts as ready, which is what tells whether an image change
+// keeps an old Pod serving until a new one is. A probe's command line and
+// its path's query string are left out: either can carry a credential.
+func TestPodsCarriesTheRolloutSettingsAndReadinessProbes(t *testing.T) {
+	template := map[string]any{"spec": map[string]any{"containers": []map[string]any{
+		{"name": "alarmd", "image": "alarmd:1", "readinessProbe": map[string]any{
+			"httpGet":             map[string]any{"path": "/health?token=fixture-token", "port": 80, "httpHeaders": []map[string]any{{"name": "Authorization", "value": "fixture-header"}}},
+			"initialDelaySeconds": 5, "periodSeconds": 10, "timeoutSeconds": 2, "failureThreshold": 3, "successThreshold": 1}},
+		{"name": "sidecar", "image": "sidecar:1", "readinessProbe": map[string]any{"exec": map[string]any{"command": []string{"check", "--password=fixture-secret"}}}},
+		{"name": "relay", "image": "relay:1", "readinessProbe": map[string]any{"tcpSocket": map[string]any{"port": "relay"}}},
+		{"name": "rpc", "image": "rpc:1", "readinessProbe": map[string]any{"grpc": map[string]any{"port": 81}}},
+		{"name": "plain", "image": "plain:1"},
+	}}}
+	cases := []struct {
+		name     string
+		strategy map[string]any
+		want     DeploymentStrategy
+	}{
+		{"absolute", map[string]any{"type": "RollingUpdate", "rollingUpdate": map[string]any{"maxSurge": 1, "maxUnavailable": 0}}, DeploymentStrategy{Type: "RollingUpdate", MaxSurge: "1", MaxUnavailable: "0"}},
+		{"percent", map[string]any{"type": "RollingUpdate", "rollingUpdate": map[string]any{"maxSurge": "25%", "maxUnavailable": "25%"}}, DeploymentStrategy{Type: "RollingUpdate", MaxSurge: "25%", MaxUnavailable: "25%"}},
+		{"recreate", map[string]any{"type": "Recreate"}, DeploymentStrategy{Type: "Recreate"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &fakeAPI{t: t, deploymentSpec: map[string]any{"strategy": tc.strategy, "progressDeadlineSeconds": 600, "paused": true, "template": template}}
+			got, err := newReader(t, api).Pods(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := got.Deployment
+			if d.Strategy == nil || *d.Strategy != tc.want {
+				t.Errorf("strategy %+v, want %+v", d.Strategy, tc.want)
+			}
+			if d.ProgressDeadlineSeconds == nil || *d.ProgressDeadlineSeconds != 600 || !d.Paused {
+				t.Errorf("progress deadline %v, paused %v", d.ProgressDeadlineSeconds, d.Paused)
+			}
+			want := []ContainerReadiness{
+				{Name: "alarmd", Readiness: Probe{Kind: "http_get", Path: "/health", Port: "80", InitialDelaySeconds: 5, PeriodSeconds: 10, TimeoutSeconds: 2, FailureThreshold: 3, SuccessThreshold: 1}},
+				{Name: "sidecar", Readiness: Probe{Kind: "exec"}},
+				{Name: "relay", Readiness: Probe{Kind: "tcp_socket", Port: "relay"}},
+				{Name: "rpc", Readiness: Probe{Kind: "grpc", Port: "81"}},
+				{Name: "plain", Readiness: Probe{Kind: "none"}},
+			}
+			if fmt.Sprint(d.Containers) != fmt.Sprint(want) {
+				t.Errorf("containers %+v\nwant       %+v", d.Containers, want)
+			}
+			encoded, _ := json.Marshal(got)
+			for _, secret := range []string{"fixture-token", "fixture-header", "fixture-secret", "token=", "Authorization"} {
+				if strings.Contains(string(encoded), secret) {
+					t.Errorf("the answer carries %q: %s", secret, encoded)
+				}
+			}
+		})
+	}
+}
+
+// A Deployment that declares none of the rollout settings reads as before.
+func TestPodsOmitsRolloutSettingsTheDeploymentDoesNotDeclare(t *testing.T) {
+	got, err := newReader(t, &fakeAPI{t: t}).Pods(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := got.Deployment
+	if d.Strategy != nil || d.ProgressDeadlineSeconds != nil || d.Paused || len(d.Containers) != 0 {
+		t.Errorf("deployment %+v", d)
+	}
+	encoded, _ := json.Marshal(d)
+	for _, field := range []string{"strategy", "progress_deadline_seconds", "paused", "containers"} {
+		if strings.Contains(string(encoded), `"`+field+`"`) {
+			t.Errorf("an undeclared %s is in %s", field, encoded)
+		}
 	}
 }
 

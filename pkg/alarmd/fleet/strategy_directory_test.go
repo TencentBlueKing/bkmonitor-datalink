@@ -12,6 +12,7 @@ package fleet
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -28,9 +29,12 @@ import (
 type stubDirectory struct {
 	available bool
 	snapshot  controlplane.StrategyDirectorySnapshot
-	entered   chan struct{}
-	release   chan struct{}
-	pages     atomic.Int32
+	// catalog is the published catalog's strategies, paged as given.
+	catalog         []controlplane.StrategyCatalogEntry
+	catalogRevision string
+	entered         chan struct{}
+	release         chan struct{}
+	pages           atomic.Int32
 }
 
 func (d *stubDirectory) Available() bool { return d.available }
@@ -53,6 +57,77 @@ func (d *stubDirectory) EffectivePlan(context.Context, controlplane.StrategyDire
 
 func (d *stubDirectory) EffectiveOutput(context.Context, controlplane.StrategyDirectoryRow) controlplane.OutputFormatFacts {
 	return controlplane.OutputFormatFacts{}
+}
+
+func (d *stubDirectory) StrategyCatalog(offset, limit int) controlplane.StrategyCatalogPage {
+	if d.catalogRevision == "" {
+		return controlplane.StrategyCatalogPage{Reason: "LEADER_CATALOG_NOT_READY", Strategies: []controlplane.StrategyCatalogEntry{}}
+	}
+	page := controlplane.StrategyCatalogPage{Revision: d.catalogRevision, Total: len(d.catalog), Strategies: []controlplane.StrategyCatalogEntry{}}
+	for index := offset; index < len(d.catalog) && len(page.Strategies) < limit; index++ {
+		page.Strategies = append(page.Strategies, d.catalog[index])
+	}
+	return page
+}
+
+// The catalog is read page by page with an opaque cursor until there is no
+// next one, every strategy once; a cursor from a publication that has since
+// been replaced is refused as stale rather than read against the new one.
+func TestTheStrategyCatalogPagesByCursor(t *testing.T) {
+	directory := &stubDirectory{available: true, catalogRevision: "rev-1:3"}
+	for _, id := range []string{"101", "102", "103", "104", "105"} {
+		directory.catalog = append(directory.catalog, controlplane.StrategyCatalogEntry{StrategyID: id, Tenant: "t", Business: "2"})
+	}
+	handler := WithStrategyDirectory(http.NotFoundHandler(), directory, nil, nil, "pod-a", time.Now)
+	type page struct {
+		controlplane.StrategyCatalogPage
+		NextCursor string `json:"next_cursor"`
+	}
+	read := func(query string) (int, page) {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategy_catalog"+query, nil))
+		var body page
+		_ = json.Unmarshal(recorder.Body.Bytes(), &body)
+		return recorder.Code, body
+	}
+	var listed []string
+	cursor, first := "", ""
+	for pages := 1; ; pages++ {
+		code, body := read("&limit=2&cursor=" + cursor)
+		if code != http.StatusOK || body.Total != 5 || len(body.Strategies) > 2 {
+			t.Fatalf("page %d = %d %+v", pages, code, body)
+		}
+		for _, entry := range body.Strategies {
+			listed = append(listed, entry.StrategyID)
+		}
+		if pages == 1 {
+			first = body.NextCursor
+		}
+		if body.NextCursor == "" {
+			if pages != 3 {
+				t.Fatalf("ended after %d pages, want 3", pages)
+			}
+			break
+		}
+		cursor = body.NextCursor
+	}
+	if fmt.Sprint(listed) != "[101 102 103 104 105]" {
+		t.Fatalf("listed %v, want every strategy once in order", listed)
+	}
+	directory.catalogRevision = "rev-2:1"
+	if code, _ := read("&limit=2&cursor=" + first); code != http.StatusConflict {
+		t.Fatalf("a cursor from a replaced publication = %d, want 409", code)
+	}
+	if code, _ := read("&cursor=not-a-cursor"); code != http.StatusBadRequest {
+		t.Fatalf("a cursor that does not decode = %d, want 400", code)
+	}
+	if code, _ := read("&limit=201"); code != http.StatusBadRequest {
+		t.Fatalf("a limit over 200 = %d, want 400", code)
+	}
+	directory.catalogRevision = ""
+	if code, body := read(""); code != http.StatusServiceUnavailable || body.Reason != "LEADER_CATALOG_NOT_READY" {
+		t.Fatalf("no catalog = %d %+v, want 503 not ready", code, body)
+	}
 }
 
 // One page is built at a time: a second request while one is being built

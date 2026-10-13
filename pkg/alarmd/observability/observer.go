@@ -186,9 +186,13 @@ const (
 	StageStateAdmission      = "state_admission"
 	StageGapGuardCommitted   = "gap_guard_committed"
 	StageMutationCompared    = "mutation_compared"
-	StageEventACKed          = "event_acked"
-	StageStateApplied        = "state_applied"
-	StageProgressCommitted   = "progress_committed"
+	// StageWarmingPeak names a replica's hourly line on its state writes to
+	// series still warming their history: the busiest minute and the groups
+	// behind it (WarmingPeak).
+	StageWarmingPeak       = "state_warming_peak"
+	StageEventACKed        = "event_acked"
+	StageStateApplied      = "state_applied"
+	StageProgressCommitted = "progress_committed"
 	// StageExecutionEvidenceWritten names the mark an attempt leaves when it
 	// wrote state and then could not write the Slot down. It is the only sign
 	// that the mark-writing works at all: nothing downstream fails when it does
@@ -2327,25 +2331,32 @@ type Observation struct {
 	// the result -- the data's; one missing from a round whose query did not
 	// answer was never asked for -- this side's. Nil when the completion
 	// carried no primary fact (a Slot skipped without a query).
-	PrimaryInput        *PrimaryInputFacts
-	Dispatcher          *DispatcherFacts
-	DispatchTurnaway    *DispatchTurnawayFacts
-	PermitWait          *PermitWaitFacts
-	ExpiredRange        *ExpiredRangeFacts
-	Component           Component
-	Stage               Stage
-	Result              Result
-	Operation           Operation
-	Direction           Direction
-	ReasonCode          ReasonCode
-	Duration            time.Duration
-	Counts              Counts
-	Trace               TraceFields
-	Err                 error
-	CapacityBudget      CapacityBudget
-	CapacityRejection   *CapacityRejectionFacts
-	SlotBudgetUsage     *SlotBudgetUsageFacts
-	SlotTiming          *SlotTimingFacts
+	PrimaryInput      *PrimaryInputFacts
+	Dispatcher        *DispatcherFacts
+	DispatchTurnaway  *DispatchTurnawayFacts
+	PermitWait        *PermitWaitFacts
+	ExpiredRange      *ExpiredRangeFacts
+	Component         Component
+	Stage             Stage
+	Result            Result
+	Operation         Operation
+	Direction         Direction
+	ReasonCode        ReasonCode
+	Duration          time.Duration
+	Counts            Counts
+	Trace             TraceFields
+	Err               error
+	CapacityBudget    CapacityBudget
+	CapacityRejection *CapacityRejectionFacts
+	SlotBudgetUsage   *SlotBudgetUsageFacts
+	SlotTiming        *SlotTimingFacts
+	// FollowingSlot is the evaluation time of the Slot after this one, on a
+	// slot_completed line whose execution carried it; zero otherwise. With
+	// the trace's EvaluationTime it is the Query Group's own period.
+	FollowingSlot int64
+	// InPlaceWait is the Slot's in-place readiness wait, on its
+	// slot_completed line; nil when it did not wait.
+	InPlaceWait         *InPlaceWaitFacts
 	SourceKind          SourceKind
 	QueryPermit         *QueryPermitFacts
 	NoDataSlot          *NoDataSlotFacts
@@ -2378,12 +2389,14 @@ type Observation struct {
 	ShortPeriodCompletion *ShortPeriodCompletionFacts
 	StateApplyChunk       *StateApplyChunkFacts
 	StateWriteReuse       *StateWriteReuseFacts
-	StateAlreadyApplied   *StateAlreadyAppliedFacts
-	StateVersionConflict  *StateVersionConflictFacts
-	ActiveQGSet           *ActiveQGSetFacts
-	ScheduleCutover       *ScheduleCutoverFacts
-	ReplayExpiry          *ReplayExpiryFacts
-	ReplayTakeover        *ReplayTakeoverFacts
+	// WarmingPeak is the hour a state_warming_peak line reports.
+	WarmingPeak          *WarmingPeakFacts
+	StateAlreadyApplied  *StateAlreadyAppliedFacts
+	StateVersionConflict *StateVersionConflictFacts
+	ActiveQGSet          *ActiveQGSetFacts
+	ScheduleCutover      *ScheduleCutoverFacts
+	ReplayExpiry         *ReplayExpiryFacts
+	ReplayTakeover       *ReplayTakeoverFacts
 	// HeldBy is what the round before this one did with the Query Group. It
 	// sits on the Observation rather than inside one cohort's fact bundle:
 	// it first shipped inside ShortPeriodCompletionFacts, and every Query
@@ -3448,7 +3461,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageSourceWithheld},
 	{ComponentControlPlane, StageNoDataSuspended},
 	{ComponentState, StageSideEffectAdmission}, {ComponentState, StageGapGuardCommitted},
-	{ComponentState, StageMutationCompared}, {ComponentState, StageStateAdmission},
+	{ComponentState, StageMutationCompared}, {ComponentState, StageStateAdmission}, {ComponentState, StageWarmingPeak},
 	{ComponentState, StageStateApplied}, {ComponentState, StageOutputUnapplied},
 	{ComponentOutput, StageEventACKed},
 	{ComponentProgress, StageProgressCommitted},

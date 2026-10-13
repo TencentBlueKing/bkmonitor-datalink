@@ -10,6 +10,7 @@
 package observability
 
 import (
+	"maps"
 	"sync"
 	"time"
 )
@@ -26,18 +27,19 @@ const (
 )
 
 type HealthSnapshot struct {
-	State             HealthState  `json:"state"`
-	Ready             bool         `json:"ready"`
-	Reasons           []ReasonCode `json:"reasons,omitempty"`
-	ConfigLoaded      bool         `json:"config_loaded"`
-	SchemaReady       bool         `json:"schema_ready"`
-	AssignmentReady   bool         `json:"assignment_ready"`
-	RuntimeStateReady bool         `json:"runtime_state_ready"`
-	OutputSinkReady   bool         `json:"output_sink_ready"`
-	PhaseTwo          bool         `json:"phase_two,omitempty"`
-	SnapshotReady     bool         `json:"snapshot_ready,omitempty"`
-	LastRecoveryAt    time.Time    `json:"last_recovery_at,omitempty"`
-	Draining          bool         `json:"draining"`
+	RoleReadiness     map[string]string `json:"role_readiness,omitempty"`
+	State             HealthState       `json:"state"`
+	Ready             bool              `json:"ready"`
+	Reasons           []ReasonCode      `json:"reasons,omitempty"`
+	ConfigLoaded      bool              `json:"config_loaded"`
+	SchemaReady       bool              `json:"schema_ready"`
+	AssignmentReady   bool              `json:"assignment_ready"`
+	RuntimeStateReady bool              `json:"runtime_state_ready"`
+	OutputSinkReady   bool              `json:"output_sink_ready"`
+	PhaseTwo          bool              `json:"phase_two,omitempty"`
+	SnapshotReady     bool              `json:"snapshot_ready,omitempty"`
+	LastRecoveryAt    time.Time         `json:"last_recovery_at,omitempty"`
+	Draining          bool              `json:"draining"`
 }
 
 type HealthSource interface {
@@ -60,6 +62,7 @@ func (t *HealthTracker) Update(snapshot HealthSnapshot) {
 		return
 	}
 	snapshot = NormalizeHealthSnapshot(snapshot)
+	snapshot.RoleReadiness = maps.Clone(snapshot.RoleReadiness)
 	t.mu.Lock()
 	t.snapshot = snapshot
 	t.mu.Unlock()
@@ -72,6 +75,7 @@ func (t *HealthTracker) HealthSnapshot() HealthSnapshot {
 	t.mu.RLock()
 	snapshot := t.snapshot
 	snapshot.Reasons = append([]ReasonCode(nil), t.snapshot.Reasons...)
+	snapshot.RoleReadiness = maps.Clone(t.snapshot.RoleReadiness)
 	t.mu.RUnlock()
 	return snapshot
 }

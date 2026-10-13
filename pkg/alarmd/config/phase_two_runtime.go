@@ -15,6 +15,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -108,22 +109,28 @@ type PhaseTwoOwnershipConfig struct {
 }
 
 type PhaseTwoSchedulerConfig struct {
-	// ActiveExecutionLimit bounds outstanding Runner invocations. It is derived
-	// from the container's CPU budget alongside the permits below, and there is
-	// no unlimited setting: zero was one until production showed it produced
-	// parked executions rather than query throughput.
-	ActiveExecutionLimit int      `yaml:"-"`
-	TickInterval         Duration `yaml:"-"`
-	// Admission and queue depth are derived from the container's CPU budget.
-	ProcessQueryPermits   int      `yaml:"-"`
-	RecoveryQueryPermits  int      `yaml:"-"`
-	ReadyQueueCapacity    int      `yaml:"-"`
-	RecoveryQueueCapacity int      `yaml:"-"`
-	MaxQueuedItemsPerQG   int      `yaml:"-"`
-	MaxReplaySlots        uint32   `yaml:"-"`
-	MaxReplayAge          Duration `yaml:"-"`
-	RetryMinDelay         Duration `yaml:"-"`
-	RetryMaxDelay         Duration `yaml:"-"`
+	// ActiveExecutionLimit bounds outstanding Runner invocations. It and the
+	// permits and queues below are the shape a process starts with
+	// (config.DeriveScheduler); once it knows the work it owns the runtime
+	// sizes them from that (config.DeriveSchedulerShape), inside
+	// ActiveExecutionCeiling. There is no unlimited setting: zero was one
+	// until production showed it produced parked executions rather than query
+	// throughput.
+	ActiveExecutionLimit int `yaml:"-"`
+	// ActiveExecutionCeiling is the most executions the container's memory
+	// can hold parked: the dispatcher's slot count and the Redis pool's
+	// cover. It does not move while the process runs.
+	ActiveExecutionCeiling int      `yaml:"-"`
+	TickInterval           Duration `yaml:"-"`
+	ProcessQueryPermits    int      `yaml:"-"`
+	RecoveryQueryPermits   int      `yaml:"-"`
+	ReadyQueueCapacity     int      `yaml:"-"`
+	RecoveryQueueCapacity  int      `yaml:"-"`
+	MaxQueuedItemsPerQG    int      `yaml:"-"`
+	MaxReplaySlots         uint32   `yaml:"-"`
+	MaxReplayAge           Duration `yaml:"-"`
+	RetryMinDelay          Duration `yaml:"-"`
+	RetryMaxDelay          Duration `yaml:"-"`
 }
 
 func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits {
@@ -279,6 +286,22 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			// A 60 second TTL survives several missed 10 second renewals
 			// during a short Ownership Store outage before the Worker
 			// drops out of the ready set.
+			//
+			// It is longer than the 30 second lease on purpose, and is not
+			// to be set equal to it. During a store outage of 30 to 60
+			// seconds the leases lapse but the registrations do not, so
+			// once the store is back every Worker takes its own Query
+			// Groups again and nothing moves. At the lease TTL every
+			// registration would lapse together, the Leader's first round
+			// after the outage would see only the Workers that renewed
+			// first, and settle places a Query Group away from a holder
+			// that is not ready with no handover budget: the whole fleet
+			// would move at once. What the shorter TTL buys is a crash
+			// takeover some 30 seconds sooner, which changes whether the
+			// replay window covers the gap only for periods of about 15
+			// to 24 seconds. A faster crash takeover belongs in the
+			// Leader -- hold placements away from absent holders for a
+			// renewal after its own store reads failed -- not here.
 			RegistrationTTL: Duration(60 * time.Second), RegistrationRenewInterval: Duration(10 * time.Second),
 		},
 		Control: PhaseTwoControlConfig{
@@ -298,6 +321,16 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 		// purpose: they are sized from the container by Default, which is the
 		// only place that knows the chunked Store apply budget they are held
 		// against.
+		// MaxReplayAge is a wall-clock window on purpose, counted from the
+		// Slot's own query deadline, which is already its period less the
+		// reserve: a 1h Slot has its hour and then ten minutes, a 1d Slot its
+		// day. A Slot that is still undone past that missed its whole period,
+		// which is an outage rather than a handover (about 71 s), and every
+		// age expiry one production deployment recorded in a week sits on
+		// one of three incidents.
+		// Scaling it by period instead would shorten it for 60 s groups and
+		// stretch the read hold, draining window and state retention it also
+		// bounds to days for 1d groups, for Slots that late.
 		Scheduler: PhaseTwoSchedulerConfig{
 			TickInterval:        Duration(time.Second),
 			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
@@ -322,12 +355,18 @@ func (c *Config) resolvePhaseTwoWorkerIDFromEnvironment() {
 	}
 }
 
-func (c PhaseTwoRuntimeConfig) validate() error {
+func (c PhaseTwoRuntimeConfig) validateRoles(selected roles.Set) error {
 	// Neither half of the old check survives: the deployment profile is derived
 	// from the run mode rather than configured, and the target flow selection is
 	// no longer configuration at all.
 	if !canonicalText(c.Worker.ID) {
 		return errors.New("phase_two worker identity must be canonical text")
+	}
+	if !ttlExceedsRenew(c.Worker.RegistrationTTL, c.Worker.RegistrationRenewInterval) {
+		return errors.New("phase_two worker registration_ttl must exceed registration_renew_interval")
+	}
+	if !selected.Has(roles.Control) && !selected.Has(roles.Worker) {
+		return nil
 	}
 	switch c.Output.protocol() {
 	case OutputProtocolAuto, OutputProtocolLegacy, OutputProtocolNative:
@@ -337,15 +376,10 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 			c.Output.Protocol, OutputProtocolAuto, OutputProtocolLegacy, OutputProtocolNative,
 		)
 	}
-	if !ttlExceedsRenew(c.Worker.RegistrationTTL, c.Worker.RegistrationRenewInterval) {
-		return errors.New("phase_two worker registration_ttl must exceed registration_renew_interval")
-	}
-	if !canonicalText(c.Control.StrategyCachePrefix) || !canonicalText(c.Control.ProviderRoute) ||
-		!canonicalText(c.Control.Timezone) {
-		return errors.New("phase_two control source, provider route and timezone must be canonical text")
-	}
-	if _, err := time.LoadLocation(c.Control.Timezone); err != nil {
-		return errors.New("phase_two control timezone is invalid")
+	if selected.Has(roles.Control) {
+		if err := c.validateControlSource(); err != nil {
+			return err
+		}
 	}
 	if err := platformsettings.ValidateKeyPrefix(c.PlatformSettings.RedisKeyPrefix); err != nil {
 		return fmt.Errorf("phase_two platform_settings.redis_key_prefix: %w", err)
@@ -362,9 +396,10 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 			return fmt.Errorf("phase_two platform_settings.%s must be canonical text", name)
 		}
 	}
-	if c.Control.RefreshInterval.Duration() <= 0 || c.Control.ReconcileInterval.Duration() <= 0 ||
-		c.Control.CatalogTTL.Duration() <= c.Control.RefreshInterval.Duration() {
-		return errors.New("phase_two control refresh, reconcile and catalog TTL are invalid")
+	if selected.Has(roles.Control) {
+		if err := c.validateControlCadence(); err != nil {
+			return err
+		}
 	}
 	if !ttlExceedsRenew(c.Ownership.ControlLeaderTTL, c.Ownership.ControlLeaderRenewInterval) ||
 		!ttlExceedsRenew(c.Ownership.LeaseTTL, c.Ownership.LeaseRenewInterval) {
@@ -375,6 +410,14 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	// here that turns the bound off.
 	if c.Scheduler.ActiveExecutionLimit <= 0 || c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil {
 		return errors.New("phase_two scheduler cadence and recovery limits are invalid")
+	}
+	// The compiler freezes completion offsets using this reserve, so Control
+	// needs it even though only Worker performs the downstream UQ request.
+	if c.Access.DownstreamExecutionReserve.Duration() <= 0 {
+		return errors.New("phase_two access downstream_execution_reserve must be positive")
+	}
+	if !selected.Has(roles.Worker) {
+		return nil
 	}
 	endpoint, err := url.Parse(c.Access.UQEndpoint)
 	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" ||
@@ -388,6 +431,47 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 		return errors.New("phase_two Coordinator and Sequencer budgets must be positive")
 	}
 	return nil
+}
+
+// validateControlSource is what compiling the strategies takes: where they
+// are read from, the route their queries are frozen onto and the timezone
+// they are evaluated in.
+func (c PhaseTwoRuntimeConfig) validateControlSource() error {
+	if !canonicalText(c.Control.StrategyCachePrefix) || !canonicalText(c.Control.ProviderRoute) ||
+		!canonicalText(c.Control.Timezone) {
+		return errors.New("phase_two control source, provider route and timezone must be canonical text")
+	}
+	if _, err := time.LoadLocation(c.Control.Timezone); err != nil {
+		return errors.New("phase_two control timezone is invalid")
+	}
+	return nil
+}
+
+// validateControlCadence is the Leader's round cadence against the catalog
+// retention it renews.
+func (c PhaseTwoRuntimeConfig) validateControlCadence() error {
+	if c.Control.RefreshInterval.Duration() <= 0 || c.Control.ReconcileInterval.Duration() <= 0 ||
+		c.Control.CatalogTTL.Duration() <= c.Control.RefreshInterval.Duration() {
+		return errors.New("phase_two control refresh, reconcile and catalog TTL are invalid")
+	}
+	return nil
+}
+
+// DormantControlInputsError says why a process without the control role
+// could not run the Control Leader's core rounds if it held the lease, or nil
+// when it could. It is the same checks a control process is refused startup
+// on, asked of a Worker instead of required of it: a Worker whose
+// configuration leaves them out is still a valid Worker, and is simply no
+// fallback candidate. Nothing is configured for this; the answer is read off
+// the configuration the Worker already has.
+func (c Config) DormantControlInputsError() error {
+	if err := c.PhaseTwo.validateControlSource(); err != nil {
+		return err
+	}
+	if err := c.PhaseTwo.validateControlCadence(); err != nil {
+		return err
+	}
+	return validateRuntimePrefixIsolation(c.Redis.StatePrefix, c.PhaseTwo.Control.StrategyCachePrefix)
 }
 
 func ttlExceedsRenew(ttl, renew Duration) bool {

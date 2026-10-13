@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisatomic"
 )
 
 // Publishing a snapshot per replica keeps the read side free of fan-out: any
@@ -249,7 +251,7 @@ func (store *RedisStore) Publish(ctx context.Context, snapshot Snapshot) error {
 }
 
 // PublishSummarized writes this replica's snapshot as Publish does, and
-// beside it its summary and its whole owned list, in one MULTI/EXEC, and
+// beside it its summary and its whole owned list, in one script, and
 // returns the summary it wrote: a
 // reader finds the three from one publish, or the three from the one before
 // until they expire -- never a summary of one snapshot beside another. The
@@ -277,12 +279,13 @@ func (store *RedisStore) PublishSummarized(ctx context.Context, snapshot Snapsho
 	if err != nil {
 		return ReplicaSummary{}, fmt.Errorf("alarmd fleet: encode owned objects: %w", err)
 	}
-	if _, err := store.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.Set(ctx, store.snapshotKey(snapshot.Replica), payload, store.ttl)
-		pipe.Set(ctx, store.summaryKey(snapshot.Replica), summaryPayload, store.ttl)
-		pipe.Set(ctx, store.ownedKey(snapshot.Replica), ownedPayload, store.ttl)
-		return nil
-	}); err != nil {
+	ttl := store.ttl.Milliseconds()
+	if ttl < 1 {
+		ttl = 1
+	}
+	if err := publishSummarizedWrite.Run(ctx, store.client,
+		[]string{store.snapshotKey(snapshot.Replica), store.summaryKey(snapshot.Replica), store.ownedKey(snapshot.Replica)},
+		payload, summaryPayload, ownedPayload, ttl); err != nil {
 		return ReplicaSummary{}, fmt.Errorf("alarmd fleet: publish snapshot and summary: %w", err)
 	}
 	if store.meter != nil {
@@ -291,6 +294,19 @@ func (store *RedisStore) PublishSummarized(ctx context.Context, snapshot Snapsho
 	}
 	return summary, nil
 }
+
+// publishSummarizedWrite sets a replica's snapshot, summary and owned list,
+// each with the store's life, as one script rather than a MULTI/EXEC (see
+// redisatomic for why). The three keys share no hash tag: like the
+// activation scripts (controlplane/activation_rebuild.go) this runs on a
+// standalone or Sentinel server, and the configuration refuses Cluster
+// (config/redis.go).
+var publishSummarizedWrite = redisatomic.New(`
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[4])
+redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[4])
+redis.call('SET', KEYS[3], ARGV[3], 'PX', ARGV[4])
+return 1
+`)
 
 // written is the snapshot as it is written: checked, its totals at least
 // its lists, and its lists cut to the budget.

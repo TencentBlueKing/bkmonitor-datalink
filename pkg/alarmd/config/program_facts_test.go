@@ -42,14 +42,14 @@ func programFactsConfig(stated bool) string {
 // Stating another value still takes effect, and an unparseable timezone is
 // still refused.
 func TestProgramFactsLoadTheSameStatedOrAbsent(t *testing.T) {
-	stated, err := Load(writeConfig(t, programFactsConfig(true)))
+	stated, err := LoadWithRoles(writeConfig(t, programFactsConfig(true)), nil)
 	if err != nil {
 		t.Fatalf("stated: %v", err)
 	}
 	// The fixture states its own test prefix; the deployment value is what
 	// the default has to equal, so it is compared on the absent side.
 	stated.Redis.StatePrefix = DefaultStatePrefix
-	absent, err := Load(writeConfig(t, programFactsConfig(false)))
+	absent, err := LoadWithRoles(writeConfig(t, programFactsConfig(false)), nil)
 	if err != nil {
 		t.Fatalf("absent: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestProgramFactsLoadTheSameStatedOrAbsent(t *testing.T) {
 	// The override is spliced into the fixture's existing control block: a
 	// second control block would be a duplicate key the strict decoder refuses.
 	text := strings.Replace(programFactsConfig(false), "    strategy_cache_prefix: alarm-config\n", "    strategy_cache_prefix: alarm-config\n    timezone: UTC\n", 1)
-	overridden, err := Load(writeConfig(t, text))
+	overridden, err := LoadWithRoles(writeConfig(t, text), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestProgramFactsLoadTheSameStatedOrAbsent(t *testing.T) {
 		t.Fatalf("a stated timezone must take effect, got %q", overridden.PhaseTwo.Control.Timezone)
 	}
 	text = strings.Replace(programFactsConfig(false), "    strategy_cache_prefix: alarm-config\n", "    strategy_cache_prefix: alarm-config\n    timezone: Mars/Olympus\n", 1)
-	if _, err := Load(writeConfig(t, text)); err == nil {
+	if _, err := LoadWithRoles(writeConfig(t, text), nil); err == nil {
 		t.Fatal("an unknown timezone must still be refused")
 	}
 }

@@ -42,7 +42,7 @@ import (
 
 // Route through the real Redis-loaded instance factory and InfluxDB HTTP adapter.
 // Only the remote HTTP server and routing metadata are fixtures.
-func setupTimeGraphInfluxDeadline(t *testing.T) *atomic.Int32 {
+func setupTimeGraphInfluxDeadline(t *testing.T, handlers ...http.HandlerFunc) *atomic.Int32 {
 	t.Helper()
 	mock.Init()
 	if http.DefaultTransport == httpmock.DefaultTransport {
@@ -51,6 +51,10 @@ func setupTimeGraphInfluxDeadline(t *testing.T) *atomic.Int32 {
 	}
 	timeouts := &atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(handlers) > 0 {
+			handlers[0](w, r)
+			return
+		}
 		if r.URL.Path != "/query" {
 			t.Errorf("unexpected InfluxDB path: %s", r.URL.Path)
 			http.Error(w, "unexpected path", http.StatusNotFound)

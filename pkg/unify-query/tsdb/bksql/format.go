@@ -529,7 +529,12 @@ func (f *QueryFactory) getTheDateIndexFilters() (string, error) {
 func (f *QueryFactory) BuildWhere() (string, error) {
 	var s []string
 
-	s = append(s, f.expr.ParserRangeTime(f.timeField, f.start, f.end))
+	timeCondition := f.expr.ParserRangeTime(f.timeField, f.start, f.end)
+	if metadata.IsLeftOpenTimeWindow(f.ctx) {
+		// The local engine already advances the left bound; both storage bounds are inclusive.
+		timeCondition = fmt.Sprintf("`%s` >= %d AND `%s` <= %d", f.timeField, f.start.UnixMilli(), f.timeField, f.end.UnixMilli())
+	}
+	s = append(s, timeCondition)
 	theDateFilter, err := f.getTheDateIndexFilters()
 	if err != nil {
 		return "", err

@@ -378,7 +378,7 @@ func (i *Instance) makeSQL(
 	sqlBuilder.WriteString("SELECT ")
 	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
 	sqlBuilder.WriteString("FROM " + influxql.QuoteIdent(query.Measurement) + " ")
-	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano()))
+	sqlBuilder.WriteString("WHERE " + seriesTimeCondition(ctx, start, end))
 	if query.Condition != "" {
 		sqlBuilder.WriteString(" AND (" + query.Condition + ")")
 	}
@@ -669,6 +669,15 @@ func (i *Instance) grpcStream(
 	return seriesSet
 }
 
+// seriesTimeCondition preserves the inclusive bounds supplied by the local engine.
+// For left-open windows the engine already advances the lower bound by one millisecond.
+func seriesTimeCondition(ctx context.Context, start, end time.Time) string {
+	if metadata.IsLeftOpenTimeWindow(ctx) {
+		return fmt.Sprintf("time >= %d and time <= %d", start.UnixNano(), end.UnixNano())
+	}
+	return fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano())
+}
+
 // QuerySeriesSet 给 PromEngine 提供查询接口
 func (i *Instance) QuerySeriesSet(
 	ctx context.Context,
@@ -681,7 +690,7 @@ func (i *Instance) QuerySeriesSet(
 	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw")
 	defer span.End(&err)
 
-	where := fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano())
+	where := seriesTimeCondition(ctx, start, end)
 	if query.Condition != "" {
 		where = fmt.Sprintf("%s and %s", where, query.Condition)
 	}

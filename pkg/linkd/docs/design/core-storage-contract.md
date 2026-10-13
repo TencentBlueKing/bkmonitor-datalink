@@ -275,14 +275,13 @@ ES 的 `merge_decisions`、`merge_members`、`merge_relations` 和 `merge_relati
 
 ## 投影待办与归档
 
-投影任务存储新增按 namespace/租户/work 的有界计数索引；生产和人工恢复共用租户准入租约，
-最多 1024 条未完成任务，失败/成功历史保留且不占执行队列预算。满载不清除 Alert 未确认水位。
+投影任务按 namespace/租户/work 隔离保存；生产和人工恢复不再使用租户准入租约或 1024 待办配额。任务身份及 CAS 保持幂等，失败/成功历史继续保留。
 自动运行器通过全局 KAC 插件装配，直接维护兼容 ES 文档并可靠通知处置；完整约束见
 [投影自动运行器](../reference/contracts/kac-alert-projection-v1.md#自动运行器)。
 
 
 ProjectionWorkStore.ListProjectionWork 是控制面内部跨租户枚举端口，游标按租户/AlertID/target_id
-排序，每页限制 1..16 个目标，同行剩余目标继续翻页。条目带明确租户和物理版本，执行前须按租户实时
+排序，每页按显式扫描预算读取目标，同行剩余目标继续翻页。条目带明确租户和物理版本，执行前须按租户实时
 重读当前 Alert；它不是无租户的管理查询 API。扫描没有最近时间或 active 限制；新插入游标前的工作
 由下一轮发现，不提供跨对象事务快照。
 
@@ -311,7 +310,7 @@ delivered 仍属于待办，succeeded/failed 退出自动待办；失败记录�
 
 MySQL payload 使用 LONGBLOB 保存规范请求的原始字节，避免数据库 JSON 重排破坏已冻结的内容摘要。
 ES 记录相同的规范 JSON 字节，往返与重开通过真实后端契约测试。单文档上限 1 MiB + 16 KiB，
-ES 单次响应上限 32 MiB，覆盖最多 16 个完整任务的读取预算。没有自动 TTL 或失败历史回收。
+ES 单次响应上限 32 MiB，作为单页传输预算，超限时运行器缩小页大小。没有自动 TTL 或失败历史回收。
 
 远端成功确认先落任务 Receipt，再 CAS 逐目标 Alert 水位，最后将任务标记 succeeded。
 三步之间允许重试：已保存 Receipt 时不重发外部请求；本地 ACK 已生效但任务尚未完成时，重复 ACK
@@ -325,14 +324,11 @@ ActionDelivery 与纯状态投影分开保存，使用 ES 部署专属 action �
 的原子条件写。Lifecycle 另以 Alert.action_pending 和业务同次 CAS 保存原动作意图：提交先保证意图持久，
 全部任务持久且排序可见后才清除意图，不宣称 Alert 与任务存储具有跨文档事务。
 
-自动待办为 pending/waiting_projection/sending/retry，每租户最多 1024 条；failed 保留历史并退出自动
-预算，但仍是 unsettled 顺序屏障。最早未结清查询限定租户/Alert/目标，按业务 revision 取一项，执行前
-在与投影共用的目标租约内实时重读。只有 succeeded/skipped 解除屏障；后续任务不能越过前序失败。
-人工恢复和生产共用租户准入锁，原请求或原恢复命令在满额时仍可重投。
+自动待办为 pending/waiting_projection/sending/retry，不再以租户待办量限制新任务准入。failed 保留历史且仅参与同一 Alert/目标的 unsettled 顺序屏障；不能阻塞其他对象。生产及人工恢复通过原任务身份和 CAS 保证一致性。
 
-ES 写入等待刷新；响应未知后的重复 Record 即使实时 GET 命中，也必须由 ConfirmVisible 确认已进入
+ES 动作首次入队等待刷新，进度更新不等待；响应未知后的重复 Record 即使实时 GET 命中，也必须由 ConfirmVisible 确认已进入
 排序索引再承认入队。尚不可见则返回 ErrBusy，生产者保留业务意图并背压，不能直接继续更高版本。
-列表每页最多 16 条，最早未结清只读一条；部分查询、超时、分片失败和非法派生索引都返回错误。
+内部列表页由运行器配置，超过载荷预算时缩小本页重读；最早未结清只读一条；部分查询、超时、分片失败和非法派生索引都返回错误。
 单任务最多 1 MiB + 4096 字节请求再加 16 KiB 元数据，ES 响应最多 32 MiB，没有自动历史过期。
 
 发送前 CAS 保存 sending 和尝试期限。HTTP 受理确认先验证后保存 succeeded/skipped；不修改 Alert
@@ -347,7 +343,7 @@ ES 写入等待刷新；响应未知后的重复 Record 即使实时 GET 命中�
 所有任务入队后以原 CAS 清除意图，revision/update_at 不变；允许清除确认与投影 ACK 竞争后重读补齐。
 新建/业务替换校验要求获准动作与意图同时存在，元数据白名单不能更改目标开关、原因或原快照。
 
-Memory/ES/MySQL 实现 `ActionWorkStore.ListActionWork`，每页 1..16 个 Alert，按租户/AlertID 严格递增，
+Memory/ES/MySQL 实现 `ActionWorkStore.ListActionWork`，每页按显式扫描预算读取 Alert，按租户/AlertID 严格递增，
 满页返回最后一项游标，扫描到末页后从头发现新工作。每项带真实存储版本，执行前须在 fingerprint lease
 内实时重读。该端口为内部跨租户工作发现，不是无租户管理接口。异常载荷、错误身份、部分 ES 查询或
 缺失 hits 返回错误，不能当作空页前进。
@@ -358,3 +354,7 @@ ES 扫描 Active 索引，终态意图未清除时自动归档候选和直接归
 内补扫，双后端验证无新 Event 时的入队和重开恢复；不从扫描快照直接构造动作。
 循环预算与游标规则见[动作自动运行器](../reference/contracts/kac-action-delivery-v2.md#自动补扫与发送运行器)。
 正式来源绑定和生产进程的周期任务装配仍待完成。
+
+### 消息处理失败的终态诊断
+
+普通 Lifecycle 处理失败使用 EventProcessing 的 rejected/processing_failed，记录 processing_failed、handler_panic 或 retry_exhausted 原因。该终态允许保留原 Plan 供排查已经发生的部分副作用，不代表执行成功，也不回滚已提交的 Alert。终态重放直接返回，不再执行 Plan；普通成功终态仍不保留 Plan。失败诊断使用同租户实时读和 CAS，不能覆盖已成功处理的并发结果。

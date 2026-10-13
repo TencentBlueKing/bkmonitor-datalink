@@ -80,7 +80,7 @@ func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Jou
 	}
 	startup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	runtime, err := storeassembly.OpenExisting(startup, *cfg.Storage, 8)
+	runtime, err := storeassembly.OpenExisting(startup, *cfg.Storage, 0)
 	if err != nil {
 		return err
 	}
@@ -168,11 +168,15 @@ func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Jou
 	if err != nil {
 		return err
 	}
-	projectionRunner, err := projection.NewRunner(business, projections, projector, projectionObserver, time.Now)
+	limits := taskgroup.WorkConfig{}
+	if cfg.ControlPlane != nil {
+		limits = cfg.ControlPlane.Delivery
+	}
+	projectionRunner, err := projection.NewRunner(business, projections, projector, projectionObserver, time.Now, limits)
 	if err != nil {
 		return err
 	}
-	actionRunner, err := actiondelivery.NewRunner(business, actions, producer, deliverer, actionObserver, time.Now)
+	actionRunner, err := actiondelivery.NewRunner(business, actions, producer, deliverer, actionObserver, time.Now, limits)
 	if err != nil {
 		return err
 	}

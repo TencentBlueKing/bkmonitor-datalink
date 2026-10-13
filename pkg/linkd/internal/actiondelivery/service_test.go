@@ -353,7 +353,7 @@ func TestActionRetryBudgetAndManualRecoveryPreserveOriginalContent(t *testing.T)
 	a := actionAlert("tenant", 1)
 	first := recordAction(t, s, a, Cause{Type: "source_event", ID: a.LatestEventID})
 	current := first
-	for n := 1; n <= MaxAttempts; n++ {
+	for n := 1; n <= 3; n++ {
 		var e error
 		current, e = s.Deliver(t.Context(), a.BKTenantID, first.Task.ID)
 		if e != nil {
@@ -366,16 +366,16 @@ func TestActionRetryBudgetAndManualRecoveryPreserveOriginalContent(t *testing.T)
 			*now = *current.Task.Progress.DueAt
 		}
 	}
-	if current.Task.Progress.State != "failed" || calls != 8 {
+	if current.Task.Progress.State != "failed" || calls != 3 {
 		t.Fatal(current, calls)
 	}
-	retrier, e := NewRetrier(m, s.locker, func() time.Time { return *now })
+	retrier, e := NewRetrier(m, func() time.Time { return *now })
 	if e != nil {
 		t.Fatal(e)
 	}
 	c := RetryCommand{TenantID: a.BKTenantID, TaskID: first.Task.ID, ExpectedVersion: current.Version, OperationID: "recover", OperatorID: "tester", Reason: "receiver restored"}
 	pending, e := retrier.Retry(t.Context(), c)
-	if e != nil || pending.Task.Progress.Generation != 2 || pending.Task.Progress.TotalAttempts != 8 || pending.Task.Progress.Attempts != 0 {
+	if e != nil || pending.Task.Progress.Generation != 2 || pending.Task.Progress.TotalAttempts != 3 || pending.Task.Progress.Attempts != 0 {
 		t.Fatal(pending, e)
 	}
 	duplicate, e := retrier.Retry(t.Context(), c)
@@ -384,7 +384,7 @@ func TestActionRetryBudgetAndManualRecoveryPreserveOriginalContent(t *testing.T)
 	}
 	fail = false
 	done, e := s.Deliver(t.Context(), a.BKTenantID, first.Task.ID)
-	if e != nil || done.Task.Progress.State != "succeeded" || done.Task.Progress.TotalAttempts != 9 {
+	if e != nil || done.Task.Progress.State != "succeeded" || done.Task.Progress.TotalAttempts != 4 {
 		t.Fatal(done, e)
 	}
 }
@@ -455,11 +455,11 @@ func TestActionConcurrentDeliveryCancellationAndMixedLeaseFailure(t *testing.T) 
 }
 
 func TestActionPendingCapacityAndProjectionMismatch(t *testing.T) {
-	s, m, _ := serviceFixture(t, nil, nil)
+	s, m, now := serviceFixture(t, nil, nil)
 	a := actionAlert("tenant", 1)
 	cause := Cause{Type: "source_event", ID: a.LatestEventID}
 	first := recordAction(t, s, a, cause)
-	for n := 1; n < MaxPendingPerTenant; n++ {
+	for n := 1; n < WorkCountSampleLimit; n++ {
 		b := a.Clone()
 		b.AlertID = fmt.Sprintf("alert-%d", n)
 		task, e := NewTask(b, "kac", cause, first.Task.CreatedAt)
@@ -472,8 +472,9 @@ func TestActionPendingCapacityAndProjectionMismatch(t *testing.T) {
 	}
 	b := a.Clone()
 	b.AlertID = "overflow"
-	if _, e := s.Record(t.Context(), b, "kac", cause); !errors.Is(e, ErrCapacity) {
-		t.Fatal("pending capacity bypassed", e)
+	*now = now.Add(2 * time.Second)
+	if _, e := s.Record(t.Context(), b, "kac", cause); e != nil {
+		t.Fatal("durable backlog blocked new task", e)
 	}
 	if _, e := s.Record(t.Context(), a, "kac", cause); e != nil {
 		t.Fatal("same task rejected at capacity", e)
@@ -497,7 +498,7 @@ func TestActionPendingCapacityAndProjectionMismatch(t *testing.T) {
 }
 
 func TestActionServiceBoundsAndCancelsInFlightCalls(t *testing.T) {
-	entered := make(chan struct{}, 4)
+	entered := make(chan struct{}, 5)
 	var active, maxSeen atomic.Int64
 	s, m, _ := serviceFixture(t, nil, sendFunc(func(ctx context.Context, _ Destination, _ Request) (Receipt, error) {
 		n := active.Add(1)
@@ -526,7 +527,7 @@ func TestActionServiceBoundsAndCancelsInFlightCalls(t *testing.T) {
 	for _, task := range tasks {
 		go func() { _, e := s.Deliver(ctx, task.Task.Request.TenantID, task.Task.ID); done <- e }()
 	}
-	for range 4 {
+	for range 5 {
 		select {
 		case <-entered:
 		case <-time.After(time.Second):
@@ -544,7 +545,7 @@ func TestActionServiceBoundsAndCancelsInFlightCalls(t *testing.T) {
 			t.Fatal("canceled sender did not exit")
 		}
 	}
-	if maxSeen.Load() != 4 || active.Load() != 0 {
+	if maxSeen.Load() != 5 || active.Load() != 0 {
 		t.Fatal("concurrency budget or shutdown", maxSeen.Load(), active.Load())
 	}
 	claimed := 0
@@ -559,7 +560,7 @@ func TestActionServiceBoundsAndCancelsInFlightCalls(t *testing.T) {
 			t.Fatal("cancellation invented a result", row)
 		}
 	}
-	if claimed != 4 {
+	if claimed != 5 {
 		t.Fatal("unstarted action consumed an attempt", claimed)
 	}
 }

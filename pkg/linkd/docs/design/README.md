@@ -9,6 +9,7 @@
 
 | 文档                                                             | 定位                                                   |
 | ---------------------------------------------------------------- | ------------------------------------------------------ |
+| [runtime-capacity-and-recovery.md](runtime-capacity-and-recovery.md) | 并发、容量、失败确认与重试审查清单及配置边界 |
 | [package-structure.md](package-structure.md) | 当前 Go 包职责、依赖方向和装配边界 |
 | [define.md](define.md)                                           | Event、EventProcessing、Alert、AlertLog 的权威数据模型 |
 | [kac-alarm-hook.md](kac-alarm-hook.md)                           | KAC Alarm 兼容 Hook、字段映射与可靠性边界           |

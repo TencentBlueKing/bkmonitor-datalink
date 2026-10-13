@@ -199,3 +199,37 @@ func TestRedisObserverTimeoutReassignmentIntegration(t *testing.T) {
 		t.Fatal("unchanged snapshot counted timeout twice")
 	}
 }
+
+func TestRecoveredOwnersRequireCurrentTaskEpoch(t *testing.T) {
+	address := os.Getenv("LINKD_TEST_DISPATCH_REDIS")
+	if address == "" {
+		t.Skip("set LINKD_TEST_DISPATCH_REDIS for explicit Redis integration")
+	}
+	ctx := t.Context()
+	client := redis.NewClient(&redis.Options{Addr: address})
+	defer func() { _ = client.Close() }()
+	c, err := NewController(ctx, client, eventsource.New(emptySources{}, config.SeverityConfig{}), "recovered-"+uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Del(context.Background(), c.key, c.leader)
+	worker := Worker{ID: "worker", Roles: []string{"lifecycle"}, Runtime: workerRuntime(config.Config{}, []string{"lifecycle"})}
+	task := Task{ID: "source:lifecycle:0", Worker: worker.ID, Role: "lifecycle", Epoch: 7, Phase: "running", Expires: time.Now().Add(LeaseTTL), Retired: []string{"drained", "still-pending"}}
+	if err := c.update(ctx, func(s *State) error { s.Tasks[task.ID] = task; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for i, epoch := range []int64{6, 7} {
+		worker.Seq = int64(i + 1)
+		tasks, err := c.Beat(ctx, Heartbeat{Worker: worker, Reports: []Report{{ID: task.ID, Epoch: epoch, Phase: "running", Recovered: []string{"drained", "unknown-owner"}}}})
+		if err != nil || len(tasks) != 1 {
+			t.Fatal(tasks, err)
+		}
+		expected := 2
+		if epoch == 7 {
+			expected = 1
+		}
+		if len(tasks[0].Retired) != expected || tasks[0].Retired[len(tasks[0].Retired)-1] != "still-pending" {
+			t.Fatal("unsafe recovery cleanup", tasks[0].Retired)
+		}
+	}
+}

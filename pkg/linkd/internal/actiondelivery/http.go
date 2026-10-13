@@ -36,7 +36,7 @@ type Sender interface {
 	Send(context.Context, Destination, Request) (Receipt, error)
 }
 
-// HTTPSender 拥有独立连接池和十秒请求上限；最多四个同主机连接，不接受全局可变 client。
+// HTTPSender 拥有独立连接池和十秒请求上限；执行并发由运行器控制，不接受全局可变 client。
 type HTTPSender struct {
 	client    *http.Client
 	transport *http.Transport
@@ -50,9 +50,9 @@ func NewHTTPSender() (*HTTPSender, error) {
 		return nil, ErrInvalid
 	}
 	tr := base.Clone()
-	tr.MaxConnsPerHost = 4
-	tr.MaxIdleConnsPerHost = 4
-	tr.MaxIdleConns = 16
+	tr.MaxConnsPerHost = 0
+	tr.MaxIdleConnsPerHost = 256
+	tr.MaxIdleConns = 256
 	return &HTTPSender{transport: tr, client: &http.Client{Transport: tr, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 

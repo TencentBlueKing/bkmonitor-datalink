@@ -29,6 +29,7 @@ func TestEventProcessingStateDiagnostics(t *testing.T) {
 		{name: "unprocessed", p: NewUnprocessedEventProcessing()},
 		{name: "planned", p: EventProcessing{State: domain.EventProcessStateUnprocessed, Plan: plan}},
 		{name: "terminal", p: EventProcessing{State: domain.EventProcessStateOrphaned, Outcome: "orphaned", ProcessedAt: &now}},
+		{name: "failure diagnostic keeps plan", p: EventProcessing{State: domain.EventProcessStateRejected, Outcome: "processing_failed", ReasonCode: "handler_panic", ProcessedAt: &now, Plan: plan}},
 		{name: "retained plan", p: EventProcessing{State: domain.EventProcessStateOrphaned, Outcome: "orphaned", ProcessedAt: &now, Plan: plan}, message: "must not retain a plan"},
 		{name: "missing result", p: EventProcessing{State: domain.EventProcessStateOrphaned}, message: "requires outcome and processed_at"},
 		{name: "invalid state", p: EventProcessing{State: "bad"}, message: "state is invalid"},

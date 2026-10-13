@@ -22,6 +22,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -159,7 +160,7 @@ func (p *runtimeRetryProcessor) Process(_ context.Context, message consume.Messa
 	attempt := p.attempts[message.ID]
 	p.mu.Unlock()
 	if message.ID == "a1" && attempt == 1 {
-		return ProcessResult{}, errors.New("temporary processing failure")
+		return ProcessResult{}, processingerror.RetryableError{Err: processingerror.HTTPStatus(502)}
 	}
 	return runtimeTestProcessor{}.Process(context.Background(), message)
 }
@@ -359,7 +360,7 @@ func TestRuntimeProcessingRetryKeepsLaneGap(t *testing.T) {
 }
 
 func TestRuntimePartialBulkResultAdvancesOnlyContinuousPrefix(t *testing.T) {
-	temporary := errors.New("temporary store failure")
+	temporary := processingerror.RetryableError{Err: processingerror.HTTPStatus(503)}
 	session := newRuntimeTestSession(nil,
 		struct{ lane, id string }{"lane-a", "a1"},
 		struct{ lane, id string }{"lane-a", "a2"},

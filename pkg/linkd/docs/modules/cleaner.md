@@ -104,7 +104,7 @@ n 个 lane Receive
 详细步骤：
 
 1. Runtime 有界 Receive，并按 Delivery 到达顺序追加到各 lane 队列；
-2. 消息立即进入共享 worker pool，不使用 fingerprint 或 `OrderKey` 串行纯计算；
+2. 消息按任务内未确认预算懒启动处理 goroutine，不使用 fingerprint 或 `OrderKey` 串行纯计算；
 3. worker 可以乱序返回 Event、Discard 或暂时错误；
 4. 每个 lane 只从队首选择已经连续完成的前缀；
 5. 数量、原始消息字节或最长等待时间任一达到阈值时启动该 lane 的批次；
@@ -113,7 +113,7 @@ n 个 lane Receive
 8. 只有 Stored → MailboxEnqueued、StoredTerminal 或 Discard 的连续 Receipt 前缀可以 Confirm；
 9. Confirm 成功后释放对应 inflight 配额并继续该 lane。
 
-不同 lane 不合并 Event 批次或 Mailbox 写入。全局只用 `max_concurrent_batches` 限制同时执行副作用的
+不同 lane 不合并 Event 批次或 Mailbox 写入。`max_concurrent_batches` 默认跟随任务未确认消息数，可显式降低并行执行副作用的
 lane 数量，因此一个慢 lane 不会阻塞其他 lane。
 
 ## 4. 连续前缀与部分成功
@@ -195,3 +195,7 @@ Cleaner 不扫描 unprocessed Event 补发 Mailbox。确认后 Redis 整体丢�
   立即可见，重复身份通过 realtime GET 核对；
 - RabbitMQ 和 Redis Streams 有通用 Session，但尚未进入 EventSource Cleaner 装配；
 - RocketMQ、声明式 Cleaner 脚本和生产容量压测尚未实现。
+
+### 当前错误与容量策略
+
+Cleaner 实例数不超过 Kafka Topic 分区数。每个任务默认以 512 条未确认消息及载荷字节软背压，确认后释放计数；默认不检查下游 Signal 积压或持久 Mailbox 数量。普通处理错误直接进入丢弃并可确认的前缀，当前没有默认可重试错误白名单；显式标记的错误最多尝试三次。单条计算和批次调用捕获 panic，失败不取消其他 lane 或来源。Kafka 确认仍只推进连续完成前缀；确认结果未知不重新执行已完成业务，也不伪造成功 offset。见[运行容量与恢复](../design/runtime-capacity-and-recovery.md)。

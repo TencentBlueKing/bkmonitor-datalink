@@ -45,7 +45,7 @@ LINKD_TEST_KAFKA_BROKERS=127.0.0.1:9092 go test -race ./internal/consume/kafka -
 
 ## Lifecycle Elasticsearch 合批
 
-Lifecycle 默认并发为 32；`lifecycle.elasticsearch_write_batch` 默认启用，仅作用于 Elasticsearch
+Lifecycle 默认并发为 256；`lifecycle.elasticsearch_write_batch` 默认启用，仅作用于 Elasticsearch
 Lifecycle runtime。Event result update、Alert CAS/create、AlertLog create 跨独立调用合并为 Bulk，
 CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。Lifecycle Event 点读通过 `_source` 投影排除
 不参与裁决的 `source_raw_data`，Event 终态 update 只写 `related_alert_ids` 和 `processing`；
@@ -55,40 +55,26 @@ CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。Lifecycle Event �
 ```yaml
 lifecycle:
   severity_upgrade_policy: close_and_create
-  concurrency: 32
+  concurrency: 256
   elasticsearch_write_batch:
     enabled: true
     max_bytes: 4194304
 ```
 
-`max_bytes` 可配置为 1～16 MiB。其他调度参数只读，由 Lifecycle 并发 C 在启动时自动推导：
-单批操作数 B = `min(128, max(1, floor(C / 2)))`；写侧最大等待为 B 毫秒，B=1 时不等待；
-读侧最大等待为 `min(10, 写侧最大等待)` 毫秒，B=1 时同样不等待；
-执行并发上限为 `min(32, C)`。数量阈值或首项等待期限达到即发送，
-编码字节预算也可提前触发发送。realtime 点读使用独立队列和短收集窗口，
-复用写侧的满批/字节/期限触发规则；达到上限立即发送，不等待写批次期限、不计入写操作阈值。
-读写请求共享总执行并发上限。读取元信息与 mget 外层 JSON/分隔符一并计入字节预算，
-请求仍使用 realtime 语义；短窗口不改变 CAS、逐项结果或失败恢复边界。
-单个合法超预算操作独立发送，仍受
-Repository 单文档/单请求硬上限保护。排队及执行中的调用总数上限为 `concurrency`。
-操作数是 ES 文档操作数，不是 Event 数；同一 Event 的依赖写入不能预先入队。
-单批至多占用一半调用方，给其他阶段留出流水线余量；执行上限不会超过调用方数量。
-等待预算按每项 1ms 取值，这不是 ES 执行时间估计，也不是在线自适应控制。
-单批封顶 128 项/128ms。压测表明，继续随高并发放大到 192～256 项会让更多依赖步骤
-等待同一个响应，并放大客户端解析、GC 和调度延迟；因此高并发只增加调用/在途预算，
-不再继续扩大单个物理批次。
-低流量仍可能由等待期限触发部分批次，实际并行度、吞吐和最优值取决于负载与 ES 服务时间。
+`max_bytes` 可配置为 1～16 MiB。单批操作数 B = `min(128, max(1, floor(C / 2)))`，C 为 Lifecycle 配置并发。写和实时读默认最多收集 10ms，B=1 时不等待；数量、字节或期限任一达到即发送。操作数是 ES 文档操作数，不是 Event 数，同一 Event 的依赖步骤仍逐次等待真实结果。
 
-| Lifecycle 并发 | 操作数上限 | 写最大等待 | 读最大等待 | 执行并发上限 |
+合批器执行名额与聚合名额均跟随 C，不再附加 32 个物理批次的固定封顶。聚合名额已满时原请求直接发送；直接请求仍遵循 CAS、请求字节上限和 Close/取消协议。扩大并发不会放大 10ms 收集窗口；该窗口不包含 ES 执行与响应时间。
+
+| Lifecycle 并发 | 操作数上限 | 写最大等待 | 读最大等待 | 合批 worker（满载可直发） |
 | --- | ---: | ---: | ---: | ---: |
 | 1 | 1 | 0ms | 0ms | 1 |
-| 8 | 4 | 4ms | 4ms | 8 |
-| 32 | 16 | 16ms | 10ms | 32 |
-| 64 | 32 | 32ms | 10ms | 32 |
-| 256 | 128 | 128ms | 10ms | 32 |
-| 384 | 128 | 128ms | 10ms | 32 |
-| 512 | 128 | 128ms | 10ms | 32 |
-| 1024 | 128 | 128ms | 10ms | 32 |
+| 8 | 4 | 10ms | 10ms | 8 |
+| 32 | 16 | 10ms | 10ms | 32 |
+| 64 | 32 | 10ms | 10ms | 64 |
+| 256 | 128 | 10ms | 10ms | 256 |
+| 384 | 128 | 10ms | 10ms | 384 |
+| 512 | 128 | 10ms | 10ms | 512 |
+| 1024 | 128 | 10ms | 10ms | 1024 |
 
 旧的 `max_operations`、`wait_milliseconds`、`max_concurrent_batches` YAML 键已删除，
 严格解析会拒绝它们；应移除这些键，只配置 `lifecycle.concurrency`。
@@ -423,10 +409,7 @@ Helm 仅允许公共 `configuration.plugins.kac`，不接受角色、Worker 组�
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，
 `max_concurrent_batches` 只限制同时执行副作用的 lane 数量，不启用跨 lane 合批。
 
-Elasticsearch HTTP 连接池不增加独立 YAML。每个进程按职责并发预算派生 4～1024 个每节点连接上限：
-Cleaner 使用各 enabled 来源有效 `max_concurrent_batches` 总和加 2，Lifecycle 使用 `concurrency + 4`，
-Control Plane 使用 `archive_worker_count + 4`。每个 Repository runtime 拥有独立连接池，关闭时不会影响
-同进程其他职责。
+Cleaner/Lifecycle 的共享 Repository 连接池不再按任务数派生 4～1024 的额外上限，实际并发由任务内未确认消息软水位控制。各 runtime 保持独立生命周期。合批器队列已满时回退为原始 CAS 请求，避免把优化器变成跨来源限流器。
 
 未声明 severity 或 levels 为空时整体使用默认表。自定义表整体替换默认表；name 和 priority 必须唯一，
 priority 越小越严重。EventSource mapping/default 的目标必须存在于全局表。来源值先匹配 mapping；未命中
@@ -510,13 +493,8 @@ Active Alert `refresh_interval + 5s`，默认为 10 秒。Redis 读写错误不�
 Elasticsearch，而是保留 Event 重试。生产 Redis 应使用 `noeviction`，避免 current/ended key 被提前
 淘汰。MySQL Repository 不创建这些 key。
 
-Cleaner 对目标 Signal Group 启用近似全局背压：默认每秒最多执行一次 `XINFO GROUPS`，查询超时
-1 秒。省略水位时，高水位按 Lifecycle 在途上限的 4 倍派生，低水位按 2 倍派生；默认并发 32 时
-分别为 256 和 128，压测配置并发 256、在途 512 时分别为 2048 和 1024。达到高水位暂停新 Kafka
-fetch，降到低水位恢复，中间区间保持原状态。要求 `0 < low_watermark < high_watermark`、TTL 为
-1～60 秒且查询超时不大于 TTL。查询失败或 lag 未知时保持上次准入状态，明确缺少 Group 时暂停，
-避免短暂观测故障解除已经生效的背压。该水位统计的是 `lag + pending` Signal，并不等同于精确的
-Mailbox Event 数量；容量判断必须同时观察 Mailbox 深度。
+Cleaner 默认不按 Signal 持久积压停止领取：high_watermark/low_watermark 都默认为 0。只有显式配置正数高水位才启用旧采样背压；任务自己的未确认消息计数和字节软水位仍生效。Mailbox max_pending 默认 0，不限制持久队列深度。
+
 
 配置了 `storage.redis` 和 `lifecycle` 后，Redis Signal Stream 的指标采集和安全裁剪默认开启；
 省略 `control_plane.redis_stream` 或整个 `control_plane` 配置段也会使用默认预算。
@@ -735,13 +713,13 @@ dispatch:
   deployment: default
   listen: 127.0.0.1:8090
   url: http://127.0.0.1:8090
-  max_tasks: 16
+  max_tasks: 0 # 不限制进程任务数
 worker:
   labels:
     pool: ingestion
   require_explicit_selector: false
-  max_concurrency: 128
-  max_inflight_bytes: 268435456
+  max_concurrency: 0 # 不按来源声明并发预占配额
+  max_inflight_bytes: 0 # 不按来源最大字节数预占配额
 ```
 
 `LINKD_JWT_SECRET_KEY` 与 `LINKD_WORKER_TOKEN` 必须显式设置且不同；也可在受保护的本地 YAML 中配置 `dispatch.jwt.secret_key` 和 `dispatch.worker_token`。控制面和迁移 Job 要求这两个凭据；纯 Worker 只需要 Worker Token。
@@ -942,3 +920,18 @@ YAML 不自动展开任意环境变量；实际配置通过受保护文件或 Se
 来源实例、数据库、表/前缀或租户切换会使用新的隔离身份。
 
 完整行为、接口与未知等级处理见[动态配置设计](../design/dynamic-configuration.md)。
+
+### 消息并发与后台补扫
+
+默认 Cleaner 每任务未确认消息 512，处理并发和 lane 批次并发跟随该计数预算；Lifecycle 默认未确认 Signal 256，默认处理并发 256。工作 goroutine 懒启动，空闲来源不预建大线程池。显式设置 cleaner.worker_count、cleaner.max_concurrent_batches 或 lifecycle.concurrency 会保留该自定义并发；从旧配置升级时若要使用新默认值，应删除旧显式数值。载荷字节、单次请求大小、取消与所有权边界仍生效。
+
+```yaml
+control_plane:
+  delivery:
+    # 0：每个补建/发送循环默认 max(16, GOMAXPROCS*4)，可显式设置。
+    concurrency: 0
+    # 0：默认 max(64, concurrency*2)。超出响应字节预算时自动缩页，不跳过游标。
+    batch_size: 0
+```
+
+当前 Cleaner/Lifecycle 消息处理不预置可重试错误白名单；普通错误或 panic 记录后确认。后续适配器显式标记可重试时，总尝试上限为三次，不能用较大的旧 retry_max_attempts 绕过。任务取消和 Broker 确认失败仍遵循所有权/确认协议，不属于业务消息重试。

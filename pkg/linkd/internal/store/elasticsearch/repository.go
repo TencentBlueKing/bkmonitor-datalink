@@ -39,7 +39,7 @@ var (
 	_ store.LifecycleAlertStore = (*Repository)(nil)
 	_ store.LifecycleEventStore = (*Repository)(nil)
 	// ErrResponseTooLarge 允许控制面在单次扫描超过响应硬上限时缩小拉取批次后继续处理。
-	ErrResponseTooLarge = errors.New("elasticsearch response is too large")
+	ErrResponseTooLarge = store.ErrPageTooLarge
 	maxDateNanos        = time.Unix(math.MaxInt64/int64(time.Second), math.MaxInt64%int64(time.Second)).UTC()
 )
 

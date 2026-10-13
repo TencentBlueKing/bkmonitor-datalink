@@ -20,17 +20,15 @@ import (
 
 func TestRecorderWithoutDeliveryDependenciesRetainsOriginalIntent(t *testing.T) {
 	tasks := &taskMemory{rows: map[string]StoredTask{}}
-	locker := &targetLocker{held: map[string]bool{}}
-	recorder, err := NewRecorder(tasks, locker, time.Now)
+	recorder, err := NewRecorder(tasks, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range []struct {
-		tasks  RecordingStore
-		locker TargetLocker
-		now    func() time.Time
-	}{{nil, locker, time.Now}, {tasks, nil, time.Now}, {tasks, locker, nil}} {
-		if _, err := NewRecorder(args.tasks, args.locker, args.now); !errors.Is(err, ErrInvalid) {
+		tasks RecordingStore
+		now   func() time.Time
+	}{{nil, time.Now}, {tasks, nil}} {
+		if _, err := NewRecorder(args.tasks, args.now); !errors.Is(err, ErrInvalid) {
 			t.Fatal("missing recorder port accepted", err)
 		}
 	}

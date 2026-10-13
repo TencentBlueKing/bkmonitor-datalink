@@ -38,6 +38,7 @@ import (
 	projectionstore "linkd/internal/projection/storage"
 	"linkd/internal/store"
 	"linkd/internal/store/storetest"
+	"linkd/internal/taskgroup"
 	"linkd/internal/telemetry"
 	"linkd/internal/testkit/projectionfixture"
 )
@@ -195,7 +196,7 @@ func runActionAutomaticLoops(t *testing.T, s *Store, reopen func() *Store, cfg c
 		if err != nil {
 			t.Fatal(err)
 		}
-		runner, err := actiondelivery.NewRunner(business.Repository.(store.ActionWorkStore), tasks, producer, service, runtime.ActionRunnerObserver(nil), clock)
+		runner, err := actiondelivery.NewRunner(business.Repository.(store.ActionWorkStore), tasks, producer, service, runtime.ActionRunnerObserver(nil), clock, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +258,7 @@ func runActionAutomaticLoops(t *testing.T, s *Store, reopen func() *Store, cfg c
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectionRunner, err := projection.NewRunner(business.Repository.(store.ProjectionWorkStore), proofs, projectionService, nil, clock)
+	projectionRunner, err := projection.NewRunner(business.Repository.(store.ProjectionWorkStore), proofs, projectionService, nil, clock, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +283,7 @@ func runActionAutomaticLoops(t *testing.T, s *Store, reopen func() *Store, cfg c
 	if err != nil {
 		t.Fatal(err)
 	}
-	retrier, err := actiondelivery.NewRetrier(s, locker, clock)
+	retrier, err := actiondelivery.NewRetrier(s, clock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +322,7 @@ func runActionAutomaticLoops(t *testing.T, s *Store, reopen func() *Store, cfg c
 		return e == nil && row.Task.Progress.State == "succeeded" && row.Task.Progress.Generation == 2 && row.Task.Progress.Attempts == 2 && row.Task.Progress.TotalAttempts == 3 && row.Task.Progress.PreviousUnconfirmed && row.Task.Request.Hash() == originalTask.Request.Hash()
 	})
 	actionUntil(t, "successful action leaves work index", func() bool {
-		n, e := restored.CountWork(t.Context(), event.BKTenantID, actiondelivery.MaxPendingPerTenant)
+		n, e := restored.CountWork(t.Context(), event.BKTenantID, actiondelivery.WorkCountSampleLimit)
 		return e == nil && n == 0
 	})
 	stopResumed()
@@ -366,7 +367,7 @@ func runActionAutomaticLoops(t *testing.T, s *Store, reopen func() *Store, cfg c
 				return false
 			}
 		}
-		n, e := restored.CountWork(t.Context(), event.BKTenantID, actiondelivery.MaxPendingPerTenant)
+		n, e := restored.CountWork(t.Context(), event.BKTenantID, actiondelivery.WorkCountSampleLimit)
 		return e == nil && n == 0
 	})
 	stopLast()

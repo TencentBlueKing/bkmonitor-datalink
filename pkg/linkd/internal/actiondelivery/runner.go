@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 	"linkd/internal/taskgroup"
 )
@@ -82,7 +83,7 @@ type WorkFailure struct {
 
 // RoundResult 描述一页实际观察；同任务重复扫描可能再次计数，不能当成 HTTP 请求数。
 type RoundResult struct {
-	// Scanned 包含本页未开始执行的项，最多 16。
+	// Scanned 包含本页未开始执行的项。
 	Scanned int
 	// Visited 是本轮已判断执行/延后的项数，不等于连续完成前缀。
 	Visited int
@@ -125,7 +126,7 @@ type WorkReader interface {
 	List(context.Context, Query) ([]StoredTask, error)
 }
 
-// Runner 独立补扫动作意图和自动任务，两个循环共享四个执行名额，不创建或更换目标绑定。
+// Runner 独立补扫动作意图和自动任务，两个循环各自使用配置的执行预算，不创建或更换目标绑定。
 type Runner struct {
 	work      store.ActionWorkStore
 	tasks     WorkReader
@@ -133,19 +134,23 @@ type Runner struct {
 	deliverer Deliverer
 	observer  RunnerObserver
 	now       func() time.Time
-	slots     chan struct{}
+	limits    taskgroup.WorkConfig
 	running   atomic.Bool
 }
 
 // NewRunner 注入全部业务和 I/O 端口；构造不启动 goroutine，也不隐式连接 KAC。
-func NewRunner(work store.ActionWorkStore, tasks WorkReader, producer IntentProducer, deliverer Deliverer, observer RunnerObserver, now func() time.Time) (*Runner, error) {
+func NewRunner(work store.ActionWorkStore, tasks WorkReader, producer IntentProducer, deliverer Deliverer, observer RunnerObserver, now func() time.Time, limits taskgroup.WorkConfig) (*Runner, error) {
 	if work == nil || tasks == nil || producer == nil || deliverer == nil || now == nil {
 		return nil, ErrInvalid
 	}
-	return &Runner{work: work, tasks: tasks, producer: producer, deliverer: deliverer, observer: observer, now: now, slots: make(chan struct{}, 4)}, nil
+	limits = limits.WithDefaults()
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
+	return &Runner{limits: limits, work: work, tasks: tasks, producer: producer, deliverer: deliverer, observer: observer, now: now}, nil
 }
 
-// Run 每页最多 16 项，页面执行上下文九十秒，扫描最多五秒，单项二十秒含等待共享名额。
+// Run 按配置分页，页面执行上下文九十秒，扫描最多五秒，单项二十秒。
 // 取消后仍等待端口的有界租约清理，不把执行上下文期限当成无需清理的强制退出。
 // 满页持续前进；单项失败不饿死后面的记录，扫描失败保留游标。取消等待已启动项退出后返回。
 func (r *Runner) Run(ctx context.Context) error {
@@ -206,12 +211,14 @@ func (r *Runner) loop(ctx context.Context, phase RunnerPhase, interval time.Dura
 
 func (r *Runner) enqueuePage(ctx context.Context, after store.ActionWorkCursor) (store.ActionWorkCursor, RoundResult) {
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, err := r.work.ListActionWork(call, after, 16)
+	page, pageSize, err := store.ReadWorkPage(call, r.limits.BatchSize, func(c context.Context, n int) (store.ActionWorkPage, error) {
+		return r.work.ListActionWork(c, after, n)
+	})
 	cancel()
 	if err != nil {
 		return after, failedScan(ctx)
 	}
-	checked, err := store.ActionWorkPageFromAlerts(page.Items, after, 16)
+	checked, err := store.ActionWorkPageFromAlerts(page.Items, after, pageSize)
 	if err != nil || checked.Next != page.Next {
 		return after, RoundResult{ErrorCode: "invalid_page"}
 	}
@@ -222,7 +229,7 @@ func (r *Runner) enqueuePage(ctx context.Context, after store.ActionWorkCursor) 
 	scopes := make([]string, len(page.Items))
 	var oldest time.Duration
 	for i, row := range page.Items {
-		scopes[i] = row.Alert.BKTenantID
+		scopes[i] = digest("linkd:action-enqueue:v1", row.Alert.BKTenantID, row.Alert.AlertID)
 		oldest = max(oldest, now.Sub(row.Alert.UpdateAt))
 	}
 	result, prefix := r.runItems(ctx, scopes, func(ctx context.Context, i int) itemResult {
@@ -252,12 +259,14 @@ func (r *Runner) enqueuePage(ctx context.Context, after store.ActionWorkCursor) 
 
 func (r *Runner) deliverPage(ctx context.Context, after string) (string, RoundResult) {
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, err := r.tasks.List(call, Query{WorkOnly: true, After: after, Limit: 16})
+	page, pageSize, err := store.ReadWorkPage(call, r.limits.BatchSize, func(c context.Context, n int) ([]StoredTask, error) {
+		return r.tasks.List(c, Query{WorkOnly: true, After: after, Limit: n})
+	})
 	cancel()
 	if err != nil {
 		return after, failedScan(ctx)
 	}
-	if len(page) > 16 {
+	if len(page) > pageSize {
 		return after, RoundResult{ErrorCode: "invalid_page"}
 	}
 	previous := after
@@ -333,7 +342,7 @@ func (r *Runner) deliverPage(ctx context.Context, after string) (string, RoundRe
 		}
 		return page[prefix-1].Task.ID, result
 	}
-	if len(page) == 16 {
+	if len(page) == pageSize {
 		return previous, result
 	}
 	return "", result
@@ -379,7 +388,7 @@ func (v itemResult) withError(err error) itemResult {
 	return v
 }
 
-// 同租户入队、同 Alert/目标发送在一页中各自串行；不同组最多四路，并跨两个循环共用名额。
+// 同 Alert 入队、同 Alert/目标发送在一页中各自串行；不同组按配置并发，两个循环独立。
 // 取消只能推进已尝试的连续前缀；后来完成的组可重读，不能越过尚未启动的前面项。
 func (r *Runner) runItems(ctx context.Context, scopes []string, execute func(context.Context, int) itemResult) (RoundResult, int) {
 	groups := [][]int{}
@@ -401,7 +410,7 @@ func (r *Runner) runItems(ctx context.Context, scopes []string, execute func(con
 	values := make([]itemResult, len(scopes))
 	visited := make([]bool, len(scopes))
 	var wg sync.WaitGroup
-	for range min(4, len(groups)) {
+	for range min(r.limits.Concurrency, len(groups)) {
 		wg.Go(func() {
 			for group := range jobs {
 				for _, i := range group {
@@ -409,14 +418,13 @@ func (r *Runner) runItems(ctx context.Context, scopes []string, execute func(con
 						continue
 					}
 					call, cancel := context.WithTimeout(ctx, 20*time.Second)
-					select {
-					case r.slots <- struct{}{}:
-						if call.Err() == nil {
-							visited[i] = true
-							values[i] = execute(call, i)
+					if call.Err() == nil {
+						visited[i] = true
+						value, err := processingerror.Guard(func() (itemResult, error) { return execute(call, i), nil })
+						if err != nil {
+							value = (itemResult{}).withError(err)
 						}
-						<-r.slots
-					case <-call.Done():
+						values[i] = value
 					}
 					cancel()
 				}

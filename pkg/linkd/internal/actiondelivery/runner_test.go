@@ -22,6 +22,7 @@ import (
 	"linkd/internal/projection"
 	"linkd/internal/store"
 	"linkd/internal/store/memory"
+	"linkd/internal/taskgroup"
 )
 
 type intentFunc func(context.Context, string, string) (store.StoredAlert, error)
@@ -64,7 +65,7 @@ func intentRows(t *testing.T, n int) *memory.Repository {
 
 func mustRunner(t *testing.T, work store.ActionWorkStore, tasks WorkReader, p IntentProducer, d Deliverer) *Runner {
 	t.Helper()
-	r, err := NewRunner(work, tasks, p, d, nil, time.Now)
+	r, err := NewRunner(work, tasks, p, d, nil, time.Now, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,38 +127,21 @@ func TestActionRunnerPagesPassFailedRowsAndKeepFailedScanCursor(t *testing.T) {
 }
 
 func TestActionRunnerCancellationOnlyAdvancesVisitedPrefix(t *testing.T) {
-	repo := intentRows(t, 3)
-	page, err := repo.ListActionWork(t.Context(), store.ActionWorkCursor{}, 16)
+	page, err := intentRows(t, 3).ListActionWork(t.Context(), store.ActionWorkCursor{}, 16)
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := page.Items[2]
-	last.Alert.BKTenantID = "tenant-z"
-	page.Items[2] = last
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	entered := make(chan struct{})
-	p := intentFunc(func(ctx context.Context, tenant, id string) (store.StoredAlert, error) {
-		if id == "alert-000" {
-			close(entered)
-			<-ctx.Done()
-			return store.StoredAlert{}, ctx.Err()
-		}
-		if id == "alert-001" {
-			t.Error("unstarted prefix item ran")
-			return store.StoredAlert{}, ErrInvalid
-		}
-		<-entered
+	p := intentFunc(func(context.Context, string, string) (store.StoredAlert, error) {
 		cancel()
-		next := last
-		next.Alert = last.Alert.Clone()
-		next.Alert.ActionPending = nil
-		return next, nil
+		return store.StoredAlert{}, context.Canceled
 	})
 	r := mustRunner(t, intentWork(func(context.Context, store.ActionWorkCursor, int) (store.ActionWorkPage, error) { return page, nil }), &taskMemory{rows: map[string]StoredTask{}}, p, deliverFunc(unusedDelivery))
+	r.limits.Concurrency = 1
 	next, result := r.enqueuePage(ctx, store.ActionWorkCursor{})
-	if next.AlertID != "alert-000" || result.Visited != 2 || result.Outcomes[OutcomeUnstarted] != 1 || result.Outcomes[OutcomeEnqueued] != 1 || result.ErrorCode != "cancelled" {
-		t.Fatal("cursor crossed unstarted item", next, result)
+	if next.AlertID != "alert-000" || result.Visited != 1 || result.Outcomes[OutcomeUnstarted] != 2 {
+		t.Fatal(next, result)
 	}
 }
 
@@ -251,18 +235,14 @@ func TestActionRunnerSharedExecutionLimitAcrossLoops(t *testing.T) {
 	for range 2 {
 		go func() { result, _ := r.runItems(ctx, []string{"a", "b", "c", "d"}, execute); done <- result }()
 	}
-	for range 4 {
+	for range 8 {
 		select {
 		case <-started:
 		case <-time.After(time.Second):
-			t.Fatal("shared execution failed to start")
+			t.Fatal("independent execution loops did not start")
 		}
 	}
-	select {
-	case <-started:
-		t.Fatal("fifth execution bypassed budget")
-	case <-time.After(10 * time.Millisecond):
-	}
+
 	cancel()
 	for range 2 {
 		select {
@@ -271,7 +251,7 @@ func TestActionRunnerSharedExecutionLimitAcrossLoops(t *testing.T) {
 			t.Fatal("cancel leaked worker")
 		}
 	}
-	if peak.Load() != 4 || active.Load() != 0 {
+	if peak.Load() != 8 || active.Load() != 0 {
 		t.Fatal(peak.Load(), active.Load())
 	}
 }

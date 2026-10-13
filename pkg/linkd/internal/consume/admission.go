@@ -56,3 +56,16 @@ func PartitionObserver(ctx context.Context) func([]string) {
 	f, _ := ctx.Value(partitionObserverKey{}).(func([]string))
 	return f
 }
+
+type retiredObserverKey struct{}
+
+// WithRetiredObserver 注入已确认回收的 consumer 上报，不触发网络 I/O。
+func WithRetiredObserver(ctx context.Context, observe func(string)) context.Context {
+	return context.WithValue(ctx, retiredObserverKey{}, observe)
+}
+
+// RetiredObserver 返回纯状态回调，不要求 Session 保存 Context。
+func RetiredObserver(ctx context.Context) func(string) {
+	f, _ := ctx.Value(retiredObserverKey{}).(func(string))
+	return f
+}

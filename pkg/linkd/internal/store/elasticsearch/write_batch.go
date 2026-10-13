@@ -95,7 +95,7 @@ type WriteBatchTransport struct {
 // EnableWriteBatch 返回使用独立合批 transport 的 Repository，不修改原 Repository。
 // 调用方必须先 Close 合批器，再关闭底层连接池。
 func (r *Repository) EnableWriteBatch(cfg WriteBatchConfig, observer BatchObserver) (*Repository, *WriteBatchTransport, error) {
-	if cfg.MaxOperations < 1 || cfg.MaxOperations > 1000 || cfg.MaxBytes < 1<<20 || cfg.MaxBytes > r.config.MaxRequestBytes || cfg.Wait < 0 || cfg.Wait > 256*time.Millisecond || cfg.ReadWait < 0 || cfg.ReadWait > 10*time.Millisecond || cfg.MaxConcurrentBatches < 1 || cfg.MaxConcurrentBatches > 32 || cfg.MaxCalls < 1 || cfg.Timeout <= 0 {
+	if cfg.MaxOperations < 1 || cfg.MaxOperations > 1000 || cfg.MaxBytes < 1<<20 || cfg.MaxBytes > r.config.MaxRequestBytes || cfg.Wait < 0 || cfg.Wait > 256*time.Millisecond || cfg.ReadWait < 0 || cfg.ReadWait > 10*time.Millisecond || cfg.MaxConcurrentBatches < 1 || cfg.MaxCalls < 1 || cfg.Timeout <= 0 {
 		return nil, nil, fmt.Errorf("invalid lifecycle write batch resource limits")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -114,6 +114,23 @@ func (r *Repository) EnableWriteBatch(cfg WriteBatchConfig, observer BatchObserv
 func (b *WriteBatchTransport) Close() {
 	b.once.Do(func() { b.admission.Lock(); b.cancel(); b.admission.Unlock() })
 	b.wg.Wait()
+}
+
+// performDirect 绕过已满的优化队列，但仍随聚合器取消并等待调用退出。
+func (b *WriteBatchTransport) performDirect(req *http.Request) (*http.Response, error) {
+	b.admission.Lock()
+	if err := b.ctx.Err(); err != nil {
+		b.admission.Unlock()
+		return nil, err
+	}
+	b.wg.Add(1)
+	b.admission.Unlock()
+	defer b.wg.Done()
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+	stop := context.AfterFunc(b.ctx, cancel)
+	defer stop()
+	return b.next.Perform(req.Clone(ctx))
 }
 
 // Perform 将允许合批的内部请求分解为操作，其他请求直接执行。
@@ -149,6 +166,9 @@ func (b *WriteBatchTransport) Perform(req *http.Request) (*http.Response, error)
 		return nil, req.Context().Err()
 	case <-b.ctx.Done():
 		return nil, b.ctx.Err()
+	default:
+		// 聚合器是优化，不是进程级配额；满载直接执行同一 CAS 请求。
+		return b.performDirect(req)
 	}
 	admissionEnded = time.Now()
 	if err := b.ctx.Err(); err != nil {

@@ -31,24 +31,25 @@ type TargetLocker interface {
 // Service 提供冻结动作入队与一次有界投递；投递不重新判断业务策略。
 // 生产者须从持久化准入意图按同 Alert 版本顺序调用 Record；本包不能发现尚未落库的动作意图。
 type Service struct {
-	// Recorder 与发送共享四个执行名额；单独使用 Recorder 不需要接收端连接。
+	// Recorder 只负责入队；发送并发由后台运行器控制。
 	*Recorder
+	locker   TargetLocker
 	tasks    Store
 	gate     Gate
 	resolver Resolver
 	sender   Sender
 }
 
-// New 注入全部 I/O，不启动任务或修改 Alert；每实例最多四项执行，十秒总预算包含排队。
+// New 注入全部 I/O，不启动任务或修改 Alert；单次调用十秒预算。
 func New(tasks Store, gate Gate, resolver Resolver, sender Sender, locker TargetLocker, now func() time.Time) (*Service, error) {
 	if tasks == nil || gate == nil || resolver == nil || sender == nil || locker == nil || now == nil {
 		return nil, ErrInvalid
 	}
-	recorder, err := NewRecorder(tasks, locker, now)
+	recorder, err := NewRecorder(tasks, now)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{Recorder: recorder, tasks: tasks, gate: gate, resolver: resolver, sender: sender}, nil
+	return &Service{Recorder: recorder, locker: locker, tasks: tasks, gate: gate, resolver: resolver, sender: sender}, nil
 }
 
 // Deliver 优先推进该 Alert/目标最早未终结的持久动作，返回实际处理的任务。
@@ -58,12 +59,6 @@ func New(tasks Store, gate Gate, resolver Resolver, sender Sender, locker Target
 func (s *Service) Deliver(ctx context.Context, tenant, id string) (result StoredTask, err error) {
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	select {
-	case s.slots <- struct{}{}:
-		defer func() { <-s.slots }()
-	case <-call.Done():
-		return StoredTask{}, call.Err()
-	}
 	initial, e := s.tasks.Get(call, tenant, id)
 	if e != nil {
 		return StoredTask{}, e
@@ -144,7 +139,8 @@ func (s *Service) deliver(ctx context.Context, current StoredTask) (StoredTask, 
 	if p.State == "failed" {
 		return current, ErrBusy
 	}
-	if p.Attempts == MaxAttempts {
+
+	if p.Attempts >= MaxAttempts {
 		return s.fail(ctx, current, Failure{Code: "attempt_interrupted"})
 	}
 	if CanDefer(e) {
@@ -256,7 +252,7 @@ func (s *Service) fail(ctx context.Context, current StoredTask, f Failure) (Stor
 	next.Progress.LeaseUntil = nil
 	if f.Retryable && next.Progress.Attempts < MaxAttempts {
 		next.Progress.State = "retry"
-		due := now.Add(min(time.Minute, time.Second*time.Duration(1<<uint(next.Progress.Attempts-1))))
+		due := now.Add(min(time.Minute, time.Second*time.Duration(1<<uint(min(next.Progress.Attempts-1, 6)))))
 		next.Progress.DueAt = &due
 	}
 	return s.tasks.Put(ctx, next, current.Version)

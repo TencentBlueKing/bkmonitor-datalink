@@ -44,7 +44,7 @@ func (c BackpressureConfig) validate() error {
 	if c.QueryTimeout <= 0 || c.QueryTimeout > c.CacheTTL {
 		return fmt.Errorf("query timeout must be positive and not exceed cache TTL")
 	}
-	if c.LowWatermark <= 0 || c.HighWatermark <= c.LowWatermark {
+	if c.HighWatermark < 0 || c.LowWatermark < 0 || (c.HighWatermark > 0 && c.HighWatermark <= c.LowWatermark) {
 		return fmt.Errorf("watermarks must satisfy 0 < low < high")
 	}
 	return nil
@@ -133,6 +133,9 @@ func newSignalBackpressureChecker(
 // Redis 查询失败或 lag 未知时维持上次状态，避免短暂观测故障绕过已经生效的背压；
 // Group 明确缺失时 fail-closed。
 func (c *SignalBackpressureChecker) Check(ctx context.Context) ReceiveDecision {
+	if c.config.HighWatermark == 0 {
+		return ReceiveDecision{Allowed: true}
+	}
 	now := c.now()
 	c.mu.Lock()
 	if c.checking || now.Before(c.nextCheckAt) {

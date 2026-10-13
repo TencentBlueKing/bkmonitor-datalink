@@ -61,7 +61,7 @@ func TestRepositoryConnectionBudgetUsesEffectiveBatchConcurrency(t *testing.T) {
 			{Enabled: false, Cleaner: config.CleanerConfig{Runtime: &override}},
 		},
 	}
-	if got, want := repositoryConnectionBudget(cfg), 1024; got != want {
+	if got, want := repositoryConnectionBudget(cfg), 0; got != want {
 		t.Fatalf("repositoryConnectionBudget()=%d, want %d", got, want)
 	}
 }

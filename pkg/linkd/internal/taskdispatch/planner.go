@@ -25,7 +25,11 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 	for id, t := range st.Tasks {
 		if t.Phase != "stopped" && !now.Before(t.Expires.Add(SafetyMargin)) {
 			t.Phase = "stopped"
-			t.Retired = append(t.Retired, ConsumerName(t))
+			if t.Role == "lifecycle" {
+				t.Retired = append(t.Retired, ConsumerName(t))
+			} else {
+				t.Retired = nil
+			}
 			t.Error = "authorization expired"
 			w := st.Workers[t.Worker]
 			w.CooldownUntil = now.Add(60 * time.Second)
@@ -196,13 +200,7 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 					}
 				}
 				maxWorkers, maxBytes := w.MaxConcurrency, w.MaxInflightBytes
-				if maxWorkers == 0 {
-					maxWorkers = 128
-				}
-				if maxBytes == 0 {
-					maxBytes = 256 << 20
-				}
-				if load >= w.MaxTasks || totalWorkers+costWorkers > maxWorkers || totalBytes+costBytes > maxBytes {
+				if (w.MaxTasks > 0 && load >= w.MaxTasks) || (maxWorkers > 0 && totalWorkers+costWorkers > maxWorkers) || (maxBytes > 0 && totalBytes+costBytes > maxBytes) {
 					continue
 				}
 				slot := 0
@@ -211,10 +209,6 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 					old, ok := st.Tasks[key]
 					if !ok || old.Phase == "stopped" {
 						if now.Before(old.RetryAfter) {
-							break
-						}
-						if len(old.Retired) > 1000 {
-							status.Reason = "retired consumer history requires cleanup"
 							break
 						}
 						st.NextEpoch++

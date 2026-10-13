@@ -19,10 +19,10 @@ import (
 	"linkd/internal/domain"
 )
 
-// CountWork 在调用方持有租户准入租约时有界统计未完成任务。写入和待办标记同一 CAS，
+// CountWork 为租户软水位有界统计未完成任务。写入和待办标记同一 CAS，
 // ES Put 等待搜索可见后才确认成功；搜索超时/分片失败必须拒绝准入，不能视作空队列。
 func (s *Store) CountWork(ctx context.Context, tenant string, limit int) (int, error) {
-	if domain.ValidateIdentityPart("tenant", tenant, 64) != nil || limit < 1 || limit > actiondelivery.MaxPendingPerTenant {
+	if domain.ValidateIdentityPart("tenant", tenant, 64) != nil || limit < 1 || limit > actiondelivery.WorkCountSampleLimit {
 		return 0, actiondelivery.ErrInvalid
 	}
 	if err := ctx.Err(); err != nil {

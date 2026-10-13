@@ -63,8 +63,8 @@ linkd scheduling init --confirm-stopped --config <config.yaml>
 
 ## 实现与验证边界
 
-Redis 协调快照有 8 MiB 上限；worker 注册最多 256，单进程任务数默认 16，最多 256。
-静态 worker 默认预算为 128 并发、256 MiB inflight，可显式调整；匹配但容量不足的副本保持 Pending。
+Redis 协调协议保留 8 MiB 报文上限；取消 Worker 数量、来源总数及单进程 256 任务的固定上限。
+`dispatch.max_tasks`、`worker.max_concurrency` 和 `worker.max_inflight_bytes` 默认 0，不施加静态准入配额；只有显式配置正数时才检查声明预算。
 worker 心跳携带本机有效预算：Cleaner 默认运行配置，以及 Lifecycle 每任务并发和在途字节数。
 中心使用目标 worker 的配置合并来源覆盖后分配额度，不能用控制面的默认值代替；同一进程会话内
 预算及总上限不可改变，修改配置需重启 worker。worker 在准备和启动任务时再次检查分配额度与
@@ -79,3 +79,7 @@ worker 必须使用同一版本，本次协议调整不提供旧 worker 回退�
 
 测试应覆盖：重复/乱序心跳、停止交接、授权到期、标签和数量、分片上限及探测失败、Pending 定向 Claim、进程停止、资源共享和 Redis 状态丢失。
 真实外部 E2E 必须显式开启，不用普通单测或“Redis 只有一个 owner”替代端到端运行证据。
+
+### 消息失败与大量来源启动
+
+普通消息错误不生成来源 blocked 状态。Cleaner 仍受 Kafka 分区数量约束，Lifecycle 的 replicas 省略时每个匹配 Worker 一个。Worker 异步准备固定 Release，慢配置读取不阻塞心跳；空闲来源不预建整池处理 goroutine。退休记录不再以 1000 条阻止接管；Lifecycle 仅在旧 consumer 的 PEL 原子确认已空后上报回收，中心只接受当前任务代次的回报。Kafka 不保存 Redis consumer 历史。具体限制清单见[运行容量与恢复](runtime-capacity-and-recovery.md)。

@@ -75,7 +75,7 @@ func Run(
 
 	startupCtx, cancelStartup := context.WithTimeout(ctx, startupTimeout)
 	defer cancelStartup()
-	repositoryRuntime, err := repositoryassembly.Open(startupCtx, *storageConfig, min(1024, lifecycleConfig.Concurrency*cfg.Dispatch.WithDefaults().MaxTasks+4))
+	repositoryRuntime, err := repositoryassembly.Open(startupCtx, *storageConfig, 0)
 	if err != nil {
 		return fmt.Errorf("initialize lifecycle repository: %w", err)
 	}
@@ -128,7 +128,7 @@ func Run(
 	if err := lockClient.Ping(startupCtx).Err(); err != nil {
 		return fmt.Errorf("connect lifecycle redis: %w", err)
 	}
-	actionRecorder, closeActionTasks, err := openActionRecorder(startupCtx, *storageConfig, cfg.Dispatch.WithDefaults().Deployment, lockClient)
+	actionRecorder, closeActionTasks, err := openActionRecorder(startupCtx, *storageConfig, cfg.Dispatch.WithDefaults().Deployment)
 	if err != nil {
 		return fmt.Errorf("initialize lifecycle action recorder: %w", err)
 	}
@@ -272,6 +272,7 @@ func Run(
 		}
 		sc := lc.RedisStreamConfig(*storageConfig.Redis, taskdispatch.ConsumerName(task))
 		sc.RetiredConsumers = append([]string(nil), task.Retired...)
+		sc.OnRetiredDrained = consume.RetiredObserver(taskCtx)
 		stage = "signal_session"
 		session, err := redisstream.NewSession(sc)
 		if err != nil {

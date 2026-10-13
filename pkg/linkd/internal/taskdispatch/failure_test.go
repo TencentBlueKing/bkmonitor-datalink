@@ -46,6 +46,7 @@ func TestTaskFailureDiagnostics(t *testing.T) {
 		{name: "network", err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, reason: "network_error", code: "system_error_code", number: float64(syscall.ECONNREFUSED)},
 		{name: "deadline", err: context.DeadlineExceeded, reason: "deadline_exceeded"},
 		{name: "joined invalid processing", err: errors.Join(fmt.Errorf("private-payload: %w", store.ErrInvalidEventProcessing)), reason: "invalid_event_processing"},
+		{name: "deferred capacity", err: errors.Join(fmt.Errorf("private-payload: %w", consume.ErrDeferredCapacity), errors.New("private-secret")), reason: "deferred_capacity_exhausted"},
 		{name: "unknown", err: errors.New("private-secret private-payload"), reason: "task_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

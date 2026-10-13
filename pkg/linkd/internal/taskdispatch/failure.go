@@ -22,6 +22,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"linkd/internal/config"
 	"linkd/internal/consume"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -33,6 +34,7 @@ type taskError struct {
 type repairRequired struct{ err error }
 
 func (e *repairRequired) Error() string { return "task requires repair: " + e.err.Error() }
+
 func (e *repairRequired) Unwrap() error { return e.err }
 
 // RequireTaskRepair 保留失败并禁止调度器自动重启；修复后须显式恢复原来源版本。
@@ -108,6 +110,8 @@ func (a *Agent) logTaskFailure(ctx context.Context, task Task, err error) {
 	attrs := []any{"event_source_id", task.Source, "role", task.Role, "task_id", task.ID, "assignment_epoch", task.Epoch, "event_source_version", task.Version, "stage", stage, "error_type", fmt.Sprintf("%T", cause)}
 	reason := "task_error"
 	switch {
+	case errors.Is(err, consume.ErrDeferredCapacity):
+		reason = "deferred_capacity_exhausted"
 	case errors.Is(err, consume.ErrStopIncomplete):
 		reason = "stop_incomplete"
 	case errors.Is(err, context.DeadlineExceeded):
@@ -168,11 +172,36 @@ func (a *Agent) logTaskFailure(ctx context.Context, task Task, err error) {
 		reason = "task_requires_repair"
 	}
 	attrs = append(attrs, "reason_code", reason)
+	attrs = append(attrs, "error_types", taskErrorTypes(err))
 	a.Logger.ErrorContext(context.WithoutCancel(ctx), "source task failed", attrs...)
 }
 
+// taskErrorTypes 有界遍历单链及 Join 分支；只输出类型，不携带任意错误正文。
+func taskErrorTypes(err error) []string {
+	result := make([]string, 0, 8)
+	var visit func(error, int)
+	visit = func(e error, depth int) {
+		if e == nil || depth >= 16 || len(result) >= 8 {
+			return
+		}
+		if joined, ok := e.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
+				visit(child, depth+1)
+			}
+			return
+		}
+		if child := errors.Unwrap(e); child != nil {
+			visit(child, depth+1)
+			return
+		}
+		result = append(result, fmt.Sprintf("%T", e))
+	}
+	visit(err, 0)
+	return result
+}
+
 func (a *Agent) runTask(ctx context.Context, task Task, source config.EventSource) error {
-	err := a.RunTask(ctx, task, source)
+	_, err := processingerror.Guard(func() (struct{}, error) { return struct{}{}, a.RunTask(ctx, task, source) })
 	if err == nil && ctx.Err() == nil {
 		err = WithTaskStage("task_return", fmt.Errorf("task exited unexpectedly"))
 	}

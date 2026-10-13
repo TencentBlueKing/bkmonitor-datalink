@@ -24,7 +24,7 @@ import (
 
 func TestHTTPTransportValidatesConnectionBudget(t *testing.T) {
 	t.Parallel()
-	for _, budget := range []int{0, maxHTTPConnectionsPerHost + 1} {
+	for _, budget := range []int{-1} {
 		transport, err := NewHTTPTransport(HTTPTransportConfig{
 			Addresses: []string{"http://127.0.0.1:9200"}, MaxConnectionsPerHost: budget,
 		})

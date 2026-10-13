@@ -24,10 +24,10 @@ import (
 	"linkd/internal/telemetry"
 )
 
-func TestOneModelTransportRejectsExcessiveConnectionBudget(t *testing.T) {
+func TestOneModelTransportRejectsNegativeConnectionBudget(t *testing.T) {
 	t.Parallel()
 	dataSource := &config.OneModelResource{Addresses: []string{"http://127.0.0.1:9200"}}
-	if _, err := onemodelassembly.NewTransport(dataSource, 1025, time.Second); err == nil {
+	if _, err := onemodelassembly.NewTransport(dataSource, -1, time.Second); err == nil {
 		t.Fatal("onemodelassembly.NewTransport() accepted an excessive connection budget")
 	}
 }

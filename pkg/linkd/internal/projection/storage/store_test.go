@@ -63,7 +63,7 @@ func runContract(t *testing.T, s *Store, reopen func() *Store) {
 		if scope == "absent" {
 			want = 0
 		}
-		if n, err := s.CountWork(ctx, scope, projection.MaxPendingPerTenant); err != nil || n != want {
+		if n, err := s.CountWork(ctx, scope, projection.WorkCountSampleLimit); err != nil || n != want {
 			t.Fatal("scoped pending count", scope, n, err)
 		}
 	}
@@ -175,7 +175,7 @@ func runContract(t *testing.T, s *Store, reopen func() *Store) {
 			t.Fatal(err)
 		}
 	}
-	for _, limit := range []int{1, 2, projection.MaxPendingPerTenant} {
+	for _, limit := range []int{1, 2, projection.WorkCountSampleLimit} {
 		if n, err := s.CountWork(t.Context(), "quota", limit); err != nil || n != min(2, limit) {
 			t.Fatal("bounded count differs", limit, n, err)
 		}

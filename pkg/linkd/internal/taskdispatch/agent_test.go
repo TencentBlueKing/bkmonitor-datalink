@@ -29,7 +29,7 @@ import (
 func TestAgentRejectsOverBudgetAssignments(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	runtime := workerRuntime(config.Config{}, []string{"lifecycle"})
+	runtime := workerRuntime(config.Config{Lifecycle: &config.LifecycleConfig{Concurrency: 32}}, []string{"lifecycle"})
 	rejected := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/internal/releases/") {

@@ -94,7 +94,7 @@ KAC 人工关闭等生命周期命令须通过 Linkd 入口执行；直接修改
    只有确认版本、身份和搜索可见性后才推进 Alert 同步水位。
 6. 已持久化同步确认的任务仅补本地 ACK；不重复重置兼容文档。尚未确认的部分写入按同一身份重试。
 
-兼容 HTTP 连接最多四路，单次发送上下文最多十秒，响应最多 8 MiB，请求最多 2 MiB。
+兼容 HTTP 连接不再叠加四路限制，单次发送上下文最多十秒，响应最多 8 MiB，请求最多 2 MiB。
 HTTP 错误仅保留固定分类，不输出连接凭据或远端响应体。取消传播至所有 I/O；运行器退出后关闭连接。
 元数据索引属于可靠同步事实，应与兼容文档一并保留；本版不设计丢失后的全量历史重建。
 
@@ -102,8 +102,8 @@ HTTP 错误仅保留固定分类，不输出连接凭据或远端响应体。取
 
 任务身份固定为租户/Alert/目标/请求业务版本；重试不生成新业务身份。状态为
 pending → sending → delivered → succeeded；临时失败进入 retry，永久失败或预算耗尽进入 failed。
-每轮自动重试最多八次、退避最多一分钟；sending 租约 30 秒。人工恢复保留原请求、总尝试次数和操作者记录。
-每租户待办上限 1024，同租户任务准入和同 Alert/目标投递分别使用稳定 Redis 租约。
+显式可重试失败每轮自动尝试最多三次、退避最多一分钟；sending 租约 30 秒。人工恢复保留原请求、总尝试次数和操作者记录。
+不再限制租户持久待办总量，生产使用任务身份和 CAS；投递保留同 Alert/目标的稳定 Redis 租约。
 
 内部 Receipt 保存身份、应用版本、快照哈希、Linkd 生命周期、搜索可见性及真实物理文档引用。
 应用版本可高于原请求，但只确认本任务请求版本；同版本的哈希和生命周期必须相同。
@@ -114,8 +114,8 @@ pending → sending → delivered → succeeded；临时失败进入 retry，永
 配置 Lifecycle 且 `plugins.kac.enabled=true` 时启动全局运行时：
 
 - `kac-index-maintenance`：每 60 秒维护兼容索引及同步元数据索引。
-- `projection-producer`：每五秒补扫已有 Alert 的待同步水位，包括终态；每页最多 16 条。
-- `projection-delivery`：每秒推进未完成任务；每页最多 16 条，四路执行。
+- `projection-producer`：每五秒补扫已有 Alert 的待同步水位，包括终态；页大小由 control_plane.delivery 配置。
+- `projection-delivery`：每秒推进未完成任务；页大小和并发由 control_plane.delivery 配置。
 - `action-enqueue`、`action-delivery`：补齐持久动作意图并在投影门槛满足后通知 KAC。
 
 扫描最多五秒，执行保留既有容量、取消、分页完整性及失败恢复约束。生产正常启用，无首次启用

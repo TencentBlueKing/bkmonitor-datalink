@@ -32,7 +32,7 @@ func TestPlannerUsesWorkerRuntimeBudget(t *testing.T) {
 			st, release, now := fixture()
 			runtime := workerRuntime(config.Config{Cleaner: config.CleanerRuntimeConfig{WorkerCount: 64}, Lifecycle: &config.LifecycleConfig{Concurrency: 64}}, []string{tc.role})
 			if tc.name == "lifecycle inflight" {
-				runtime = workerRuntime(config.Config{}, []string{tc.role})
+				runtime = workerRuntime(config.Config{Lifecycle: &config.LifecycleConfig{Concurrency: 32}}, []string{tc.role})
 			}
 			st.Workers = map[string]Worker{"worker": {ID: "worker", Roles: []string{tc.role}, Runtime: runtime, Seen: now, MaxTasks: 16, MaxConcurrency: tc.concurrency, MaxInflightBytes: tc.bytes}}
 			second := release
@@ -81,7 +81,7 @@ func TestWorkerAdmissionBudgets(t *testing.T) {
 			}
 		})
 	}
-	a := Agent{Roles: []string{"cleaner", "lifecycle"}, Runtime: workerRuntime(config.Config{}, []string{"cleaner", "lifecycle"}), Worker: config.WorkerConfig{MaxConcurrency: 40}}
+	a := Agent{Roles: []string{"cleaner", "lifecycle"}, Runtime: workerRuntime(config.Config{Lifecycle: &config.LifecycleConfig{Concurrency: 32}}, []string{"cleaner", "lifecycle"}), Worker: config.WorkerConfig{MaxConcurrency: 40}}
 	budget := *a.Runtime.Lifecycle
 	task := Task{ID: "next", Role: "lifecycle", Concurrency: budget.Concurrency, InflightBytes: budget.InflightBytes}
 	locals := map[string]*localTask{"cleaner": {phase: "running", budget: TaskBudget{Concurrency: 8, InflightBytes: 16 << 20}}}

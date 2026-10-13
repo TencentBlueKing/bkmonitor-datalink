@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -167,6 +168,8 @@ func (c *Controller) Snapshot(ctx context.Context) (State, error) {
 
 // Report 描述本次会话观察的确切执行代次。
 type Report struct {
+	// Recovered 仅包含本代次确认 PEL 已排空的旧 consumer，中心按精确代次合并。
+	Recovered []string `json:"recovered,omitempty"`
 	// Blocked 在确切代次停止或排空时持久化，禁止自动重试同来源角色。
 	Blocked    bool     `json:"blocked,omitempty"`
 	ID         string   `json:"id"`
@@ -193,7 +196,7 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 	started := time.Now()
 	defer func() { c.observer.Operation(ctx, "heartbeat_server", runErr == nil, time.Since(started)) }()
 	var tasks []Task
-	if h.Worker.ID == "" || len(h.Worker.ID) > 128 || h.Worker.MaxTasks < 1 || h.Worker.MaxTasks > 256 || len(h.Reports) > 256 {
+	if h.Worker.ID == "" || len(h.Worker.ID) > 128 || h.Worker.MaxTasks < 0 || h.Worker.MaxConcurrency < 0 || h.Worker.MaxInflightBytes < 0 {
 		return nil, fmt.Errorf("invalid worker registration")
 	}
 	if len(h.Worker.Roles) < 1 || len(h.Worker.Roles) > 2 {
@@ -209,11 +212,6 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 	}
 	now := time.Now()
 	e := c.update(ctx, func(s *State) error {
-		if len(s.Workers) >= 256 {
-			if _, exists := s.Workers[h.Worker.ID]; !exists {
-				return fmt.Errorf("worker capacity exceeded")
-			}
-		}
 		w := h.Worker
 		if old, ok := s.Workers[w.ID]; ok && w.Seq <= old.Seq {
 			return fmt.Errorf("stale heartbeat sequence")
@@ -235,13 +233,21 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 			if !ok || t.Worker != w.ID || t.Epoch != r.Epoch {
 				continue
 			}
+			if len(r.Recovered) > 0 {
+				t.Retired = slices.DeleteFunc(t.Retired, func(owner string) bool { return slices.Contains(r.Recovered, owner) })
+				s.Tasks[t.ID] = t
+			}
 			// 清理尚未完成时也保留修复要求；授权到期接管不能丢失永久失败。
 			if r.Blocked && (r.Phase == "stopping" || r.Phase == "stopped") {
 				t.Blocked = true
 			}
 			if r.Phase == "stopped" && t.Phase != "stopped" {
 				t.Phase = "stopped"
-				t.Retired = append(t.Retired, ConsumerName(t))
+				if t.Role == "lifecycle" {
+					t.Retired = append(t.Retired, ConsumerName(t))
+				} else {
+					t.Retired = nil
+				}
 				t.Error = r.Error
 				if r.Error != "" {
 					t.Failures++
@@ -309,9 +315,7 @@ func (c *Controller) releases(ctx context.Context) ([]eventsource.Release, error
 		if len(rs) < 100 {
 			break
 		}
-		if len(all) >= 10000 {
-			return nil, fmt.Errorf("source capacity exceeds 10000")
-		}
+
 	}
 	return all, nil
 }

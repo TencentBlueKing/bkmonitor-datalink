@@ -243,7 +243,7 @@ func TestRemoteReceiptSurvivesLocalACKFailure(t *testing.T) {
 	}
 }
 
-func TestRetryBudgetAndManualRetryPreserveFrozenTask(t *testing.T) {
+func TestRetryableFailureStopsAfterThreeAttemptsAndCanBeRecovered(t *testing.T) {
 	s, tasks, _, _, sender, now, a := projectionFixture(t)
 	pending, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "kac")
 	if err != nil {
@@ -251,25 +251,22 @@ func TestRetryBudgetAndManualRetryPreserveFrozenTask(t *testing.T) {
 	}
 	sender.err = Failure{"remote_unavailable", true}
 	var failed StoredTask
-	for attempt := 1; attempt <= MaxAttempts; attempt++ {
+	for attempt := 1; attempt <= 3; attempt++ {
 		row, err := s.Deliver(t.Context(), a.BKTenantID, pending.Task.ID)
 		if err != nil || row.Task.Progress.Attempts != attempt {
-			t.Fatal("attempt", attempt, err)
+			t.Fatal(err, attempt)
 		}
-		if attempt < MaxAttempts {
-			if row.Task.Progress.State != "retry" || row.Task.Progress.DueAt == nil {
-				t.Fatal("retry state")
-			}
-			if _, err := s.Deliver(t.Context(), a.BKTenantID, pending.Task.ID); !errors.Is(err, ErrBusy) {
-				t.Fatal("backoff bypass", err)
+		if attempt < 3 {
+			if row.Task.Progress.State != "retry" {
+				t.Fatal(row.Task.Progress)
 			}
 			*now = *row.Task.Progress.DueAt
 		} else {
 			failed = row
 		}
 	}
-	if failed.Task.Progress.State != "failed" || sender.calls != MaxAttempts {
-		t.Fatal("retry budget")
+	if failed.Task.Progress.State != "failed" || sender.calls != 3 {
+		t.Fatal(failed.Task.Progress, sender.calls)
 	}
 	if rows, err := tasks.List(t.Context(), Query{WorkOnly: true, Limit: 16}); err != nil || len(rows) != 0 {
 		t.Fatal("failed work still auto runs")
@@ -287,7 +284,7 @@ func TestRetryBudgetAndManualRetryPreserveFrozenTask(t *testing.T) {
 	}
 	sender.err = nil
 	done, err := s.Deliver(t.Context(), a.BKTenantID, pending.Task.ID)
-	if err != nil || done.Task.Progress.TotalAttempts != MaxAttempts+1 {
+	if err != nil || done.Task.Progress.TotalAttempts != 4 {
 		t.Fatal("retry completion", err)
 	}
 }
@@ -471,7 +468,7 @@ func TestDifferentVersionsOfOneTargetCannotSendConcurrently(t *testing.T) {
 func TestDeliveryConcurrencyBoundCancellationAndRelease(t *testing.T) {
 	s, _, repo, _, _, _, a := projectionFixture(t)
 	s.resolver = resolverFunc(func(context.Context, string, string, int64, string) (Destination, error) { return Destination{}, nil })
-	entered := make(chan struct{}, 4)
+	entered := make(chan struct{}, 16)
 	release := make(chan struct{})
 	var concurrent, peak atomic.Int64
 	s.sender = senderFunc(func(ctx context.Context, _ Destination, q Request) (Receipt, error) {
@@ -490,8 +487,8 @@ func TestDeliveryConcurrencyBoundCancellationAndRelease(t *testing.T) {
 		}
 		return receiptFor(q), nil
 	})
-	tasks := make([]StoredTask, 0, 5)
-	for i := range 5 {
+	tasks := make([]StoredTask, 0, 17)
+	for i := range 17 {
 		next := a.Clone()
 		next.AlertID = fmt.Sprint("bounded-", i)
 		next.Fingerprint = next.AlertID
@@ -504,28 +501,28 @@ func TestDeliveryConcurrencyBoundCancellationAndRelease(t *testing.T) {
 		}
 		tasks = append(tasks, row)
 	}
-	result := make(chan error, 4)
-	for _, task := range tasks[:4] {
+	result := make(chan error, 16)
+	for _, task := range tasks[:16] {
 		go func() { _, err := s.Deliver(t.Context(), a.BKTenantID, task.Task.ID); result <- err }()
 	}
-	for range 4 {
+	for range 16 {
 		<-entered
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := s.Deliver(ctx, a.BKTenantID, tasks[4].Task.ID); !errors.Is(err, context.Canceled) {
+	if _, err := s.Deliver(ctx, a.BKTenantID, tasks[16].Task.ID); !errors.Is(err, context.Canceled) {
 		t.Fatal("waiting work ignored cancellation", err)
 	}
 	close(release)
-	for range 4 {
+	for range 16 {
 		if err := <-result; err != nil {
 			t.Fatal(err)
 		}
 	}
-	if peak.Load() != 4 || concurrent.Load() != 0 {
+	if peak.Load() != 16 || concurrent.Load() != 0 {
 		t.Fatal("concurrency/exit bound")
 	}
-	if _, err := s.Deliver(t.Context(), a.BKTenantID, tasks[4].Task.ID); err != nil {
+	if _, err := s.Deliver(t.Context(), a.BKTenantID, tasks[16].Task.ID); err != nil {
 		t.Fatal("slots or locks leaked", err)
 	}
 }
@@ -565,8 +562,8 @@ func TestReleaseUncertaintyIsReportedWithoutDiscardingSuccess(t *testing.T) {
 	s, tasks, _, _, sender, _, a := projectionFixture(t)
 	s.locker = failedReleaseLocker{}
 	pending, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "kac")
-	if err == nil || pending.Task.Validate() != nil {
-		t.Fatal("uncertain admission release must preserve saved task", err)
+	if err != nil || pending.Task.Validate() != nil {
+		t.Fatal("production must not acquire a tenant admission lock", err)
 	}
 	if _, err := s.Deliver(t.Context(), a.BKTenantID, pending.Task.ID); err == nil {
 		t.Fatal("uncertain release reported successful scheduling")
@@ -633,7 +630,7 @@ func TestTaskAndQueryBudgetsRejectInvalidBoundaries(t *testing.T) {
 	for _, edit := range []func(*Task){
 		func(t *Task) { t.Progress.DueAt = nil },
 		func(t *Task) { v := t.Progress.UpdatedAt.Add(time.Hour); t.Progress.DueAt = &v },
-		func(t *Task) { t.Progress.Attempts = MaxAttempts + 1 },
+		func(t *Task) { t.Progress.Attempts = -1 },
 		func(t *Task) {
 			t.Progress.State = "sending"
 			t.Progress.Attempts = 1
@@ -650,7 +647,7 @@ func TestTaskAndQueryBudgetsRejectInvalidBoundaries(t *testing.T) {
 			t.Fatal("invalid task budget accepted")
 		}
 	}
-	for _, q := range []Query{{WorkOnly: true, Limit: 0}, {WorkOnly: true, Limit: 17}, {Limit: 1}, {TenantID: "tenant", After: "invalid", Limit: 1}} {
+	for _, q := range []Query{{WorkOnly: true, Limit: 0}, {WorkOnly: true, Limit: -1}, {Limit: 1}, {TenantID: "tenant", After: "invalid", Limit: 1}} {
 		if q.Validate() == nil {
 			t.Fatal("invalid query budget/scope accepted")
 		}
@@ -668,7 +665,7 @@ func TestRetryAuditIsFrozenAndChangedCommandConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	retrier, err := NewRetrier(tasks, service.locker, service.now)
+	retrier, err := NewRetrier(tasks, service.now)
 	if err != nil {
 		t.Fatal(err)
 	}

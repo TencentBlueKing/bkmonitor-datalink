@@ -14,26 +14,20 @@ import (
 	"errors"
 	"time"
 
-	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/actiondelivery"
 	actionstore "linkd/internal/actiondelivery/storage"
 	"linkd/internal/config"
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
-	projectionlock "linkd/internal/projection/redislock"
 )
 
-// openActionRecorder 仅连接既有任务集合；client 生命周期由装配方管理，不读取任何远端凭据。
-func openActionRecorder(ctx context.Context, storage config.StorageConfig, deployment string, client redis.UniversalClient) (*actiondelivery.Recorder, func() error, error) {
+// openActionRecorder 仅连接既有任务集合；不读取任何远端凭据，也不持有租户级准入锁。
+func openActionRecorder(ctx context.Context, storage config.StorageConfig, deployment string) (*actiondelivery.Recorder, func() error, error) {
 	tasks, err := actionstore.OpenExisting(ctx, storage, deployment)
 	if err != nil {
 		return nil, nil, err
 	}
-	locker, err := projectionlock.New(client, deployment)
-	if err != nil {
-		return nil, nil, errors.Join(err, tasks.Close())
-	}
-	recorder, err := actiondelivery.NewRecorder(tasks, locker, time.Now)
+	recorder, err := actiondelivery.NewRecorder(tasks, time.Now)
 	if err != nil {
 		return nil, nil, errors.Join(err, tasks.Close())
 	}
@@ -45,13 +39,12 @@ func openActionRecorder(ctx context.Context, storage config.StorageConfig, deplo
 type configuredActionRecorder struct {
 	storage    config.StorageConfig
 	deployment string
-	client     redis.UniversalClient
 }
 
 func (r configuredActionRecorder) RecordAction(ctx context.Context, alert domain.Alert, intent domain.AlertActionIntent) (err error) {
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	recorder, closeTasks, err := openActionRecorder(call, r.storage, r.deployment, r.client)
+	recorder, closeTasks, err := openActionRecorder(call, r.storage, r.deployment)
 	if err != nil {
 		return err
 	}

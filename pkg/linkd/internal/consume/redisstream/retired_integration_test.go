@@ -45,7 +45,8 @@ func TestRetiredConsumerClaimIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	session, err := NewSession(Config{Connection: redisclient.Options{Address: address}, Stream: stream, Group: "group", Consumer: "replacement", RetiredConsumers: []string{"retired"}, ClaimMinIdle: 5 * time.Minute})
+	var drained []string
+	session, err := NewSession(Config{OnRetiredDrained: func(owner string) { drained = append(drained, owner) }, Connection: redisclient.Options{Address: address}, Stream: stream, Group: "group", Consumer: "replacement", RetiredConsumers: []string{"retired"}, ClaimMinIdle: 5 * time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,4 +59,15 @@ func TestRetiredConsumerClaimIntegration(t *testing.T) {
 	if err != nil || len(pending) != 1 {
 		t.Fatal("healthy consumer message was stolen", err)
 	}
+	if _, err := session.claimRetired(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if len(drained) != 1 || drained[0] != "retired" {
+		t.Fatal("drained owner not acknowledged", drained)
+	}
+	live, err := client.XPendingExt(ctx, &redis.XPendingExtArgs{Stream: stream, Group: "group", Start: "-", End: "+", Count: 10, Consumer: "replacement"}).Result()
+	if err != nil || len(live) != 1 {
+		t.Fatal("cleanup lost transferred unconfirmed message", err)
+	}
+
 }

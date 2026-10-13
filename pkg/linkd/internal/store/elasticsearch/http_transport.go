@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	defaultHTTPTimeout        = 15 * time.Second
-	maxHTTPConnectionsPerHost = 1024
-	maxHTTPIdleConnections    = 4096
+	defaultHTTPTimeout     = 15 * time.Second
+	maxHTTPIdleConnections = 4096
 )
 
 // HTTPTransportConfig 描述 Elasticsearch HTTP 节点和认证方式。
@@ -31,7 +30,7 @@ type HTTPTransportConfig struct {
 	BasicUsername string
 	BasicPassword string
 	Timeout       time.Duration
-	// MaxConnectionsPerHost 同时限制单节点总连接和可保留的 idle connection 数量。
+	// MaxConnectionsPerHost 为正时限制单节点总连接；0 不限，空闲连接仍有回收预算。
 	MaxConnectionsPerHost int
 	// DisableRedirects 用于兼容存储等外部连接，禁止认证随重定向跨站发送。
 	DisableRedirects bool
@@ -70,11 +69,8 @@ func NewHTTPTransport(config HTTPTransportConfig) (*HTTPTransport, error) {
 	if config.Timeout < time.Second {
 		return nil, fmt.Errorf("create elasticsearch HTTP transport: timeout must be at least one second")
 	}
-	if config.MaxConnectionsPerHost < 1 || config.MaxConnectionsPerHost > maxHTTPConnectionsPerHost {
-		return nil, fmt.Errorf(
-			"create elasticsearch HTTP transport: max connections per host must be between 1 and %d",
-			maxHTTPConnectionsPerHost,
-		)
+	if config.MaxConnectionsPerHost < 0 {
+		return nil, fmt.Errorf("create elasticsearch HTTP transport: max connections per host must be non-negative")
 	}
 	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
@@ -82,8 +78,8 @@ func NewHTTPTransport(config HTTPTransportConfig) (*HTTPTransport, error) {
 	}
 	transport := defaultTransport.Clone()
 	transport.MaxConnsPerHost = config.MaxConnectionsPerHost
-	transport.MaxIdleConnsPerHost = config.MaxConnectionsPerHost
-	transport.MaxIdleConns = min(config.MaxConnectionsPerHost*len(baseURLs), maxHTTPIdleConnections)
+	transport.MaxIdleConnsPerHost = max(config.MaxConnectionsPerHost, 256)
+	transport.MaxIdleConns = min(max(config.MaxConnectionsPerHost, 256)*len(baseURLs), maxHTTPIdleConnections)
 	client := &http.Client{Transport: transport, Timeout: config.Timeout}
 	if config.DisableRedirects {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

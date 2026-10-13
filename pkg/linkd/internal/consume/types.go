@@ -18,6 +18,8 @@ import (
 )
 
 var (
+	// ErrDeferredCapacity 表示延后集合违反在途容量不变量，用于安全错误分类。
+	ErrDeferredCapacity = errors.New("deferred message capacity exhausted")
 	// ErrStopIncomplete 表示消费客户端尚未确认关闭，不能报告任务安全停止。
 	ErrStopIncomplete = errors.New("consumer stop incomplete")
 	// ErrSessionClosed 表示当前 Broker Session 已关闭，Receipt 也随之失效。
@@ -195,7 +197,7 @@ const (
 	OutcomeRetry
 	// OutcomeDiscard 表示确定性错误已形成诊断且产品规则允许跳过，可以确认消息。
 	OutcomeDiscard
-	// OutcomeBlock 表示不能确认当前消息；Runtime 会暂停可暂停的 lane 并以错误退出。
+	// OutcomeBlock 表示普通逻辑处理失败；Runtime 记录丢弃并确认，不升级为来源故障。
 	OutcomeBlock
 	// OutcomeDefer 表示当前没有失败，但应释放 worker 后延迟再次调度；不消耗普通重试预算。
 	OutcomeDefer

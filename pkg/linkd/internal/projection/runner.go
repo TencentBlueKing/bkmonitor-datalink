@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 	"linkd/internal/taskgroup"
 )
@@ -35,7 +36,7 @@ func (p RunnerPhase) Valid() bool { return p == PhaseProduce || p == PhaseDelive
 
 // RoundResult 记录一页的真实工作；延后不表示同步完成。
 type RoundResult struct {
-	// Scanned 是仓储本次返回的待办数，预算最多 16。
+	// Scanned 是仓储本次返回的待办数，按运行器配置。
 	Scanned int
 	// Advanced 是成功建/复用任务或已完整确认的项数，不是新发送 HTTP 的次数。
 	Advanced int
@@ -79,18 +80,23 @@ type Runner struct {
 	executor Executor
 	observer RunnerObserver
 	now      func() time.Time
+	limits   taskgroup.WorkConfig
 	running  atomic.Bool
 }
 
 // NewRunner 注入同部署的业务仓储、任务仓储和有界执行器；不启动 goroutine。
-func NewRunner(work store.ProjectionWorkStore, tasks Store, executor Executor, observer RunnerObserver, now func() time.Time) (*Runner, error) {
+func NewRunner(work store.ProjectionWorkStore, tasks Store, executor Executor, observer RunnerObserver, now func() time.Time, limits taskgroup.WorkConfig) (*Runner, error) {
 	if work == nil || tasks == nil || executor == nil || now == nil {
 		return nil, ErrInvalid
 	}
-	return &Runner{work: work, tasks: tasks, executor: executor, observer: observer, now: now}, nil
+	limits = limits.WithDefaults()
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
+	return &Runner{limits: limits, work: work, tasks: tasks, executor: executor, observer: observer, now: now}, nil
 }
 
-// Run 每页至多 16 项、四路调用，整页至多一分钟。业务行失败仍推进游标，扫描失败保留原游标。
+// Run 按配置分页和并发，整页至多一分钟。业务行失败仍推进游标，扫描失败保留原游标。
 // 同一实例仅允许一个 Run；取消会等本轮 goroutine 退出，重启从头补扫已有持久事实。
 func (r *Runner) Run(ctx context.Context) error {
 	if ctx == nil {
@@ -155,12 +161,14 @@ func (r *Runner) loop(ctx context.Context, phase RunnerPhase, interval time.Dura
 
 func (r *Runner) producePage(ctx context.Context, after store.ProjectionWorkCursor) (store.ProjectionWorkCursor, RoundResult) {
 	scan, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, err := r.work.ListProjectionWork(scan, after, 16)
+	page, pageSize, err := store.ReadWorkPage(scan, r.limits.BatchSize, func(c context.Context, n int) (store.ProjectionWorkPage, error) {
+		return r.work.ListProjectionWork(c, after, n)
+	})
 	cancel()
 	if err != nil {
 		return after, RoundResult{Failed: 1, ErrorCode: "scan_failed"}
 	}
-	if len(page.Items) > 16 || page.Next.Validate(16) != nil || (page.Next.TenantID != "" && page.Next.Compare(after) <= 0) {
+	if len(page.Items) > pageSize || page.Next.Validate(pageSize) != nil || (page.Next.TenantID != "" && page.Next.Compare(after) <= 0) {
 		return after, RoundResult{Failed: 1, ErrorCode: "invalid_page"}
 	}
 	previous := after
@@ -168,7 +176,7 @@ func (r *Runner) producePage(ctx context.Context, after store.ProjectionWorkCurs
 		a := v.Alert.Alert
 		key := store.ProjectionWorkCursor{TenantID: a.BKTenantID, AlertID: a.AlertID, TargetID: v.TargetID}
 		target, exists := a.Projection.Targets[v.TargetID]
-		if key.Validate(16) != nil || key.Compare(previous) <= 0 || v.Alert.Version.IsZero() || a.Validate() != nil || !exists || target.RequiredRevision <= target.SyncedRevision {
+		if key.Validate(pageSize) != nil || key.Compare(previous) <= 0 || v.Alert.Version.IsZero() || a.Validate() != nil || !exists || target.RequiredRevision <= target.SyncedRevision {
 			return after, RoundResult{Failed: 1, ErrorCode: "invalid_page"}
 		}
 		previous = key
@@ -182,7 +190,7 @@ func (r *Runner) producePage(ctx context.Context, after store.ProjectionWorkCurs
 		scopes[i] = v.Alert.Alert.BKTenantID
 		age = max(age, at.Sub(v.Alert.Alert.UpdateAt))
 	}
-	result, visited := runProjectionItems(ctx, len(page.Items), scopes, func(i int) (StoredTask, error) {
+	result, visited := runProjectionItems(ctx, r.limits.Concurrency, len(page.Items), scopes, func(i int) (StoredTask, error) {
 		v := page.Items[i]
 		return r.executor.Produce(ctx, v.Alert.Alert.BKTenantID, v.Alert.Alert.AlertID, v.TargetID)
 	}, true)
@@ -199,12 +207,14 @@ func (r *Runner) producePage(ctx context.Context, after store.ProjectionWorkCurs
 
 func (r *Runner) deliverPage(ctx context.Context, after string) (string, RoundResult) {
 	scan, cancel := context.WithTimeout(ctx, 5*time.Second)
-	page, err := r.tasks.List(scan, Query{WorkOnly: true, After: after, Limit: 16})
+	page, pageSize, err := store.ReadWorkPage(scan, r.limits.BatchSize, func(c context.Context, n int) ([]StoredTask, error) {
+		return r.tasks.List(c, Query{WorkOnly: true, After: after, Limit: n})
+	})
 	cancel()
 	if err != nil {
 		return after, RoundResult{Failed: 1, ErrorCode: "scan_failed"}
 	}
-	if len(page) > 16 {
+	if len(page) > pageSize {
 		return after, RoundResult{Failed: 1, ErrorCode: "invalid_page"}
 	}
 	previous := after
@@ -222,7 +232,7 @@ func (r *Runner) deliverPage(ctx context.Context, after string) (string, RoundRe
 	for _, v := range page {
 		age = max(age, at.Sub(v.Task.CreatedAt))
 	}
-	result, visited := runProjectionItems(ctx, len(page), nil, func(i int) (StoredTask, error) {
+	result, visited := runProjectionItems(ctx, r.limits.Concurrency, len(page), nil, func(i int) (StoredTask, error) {
 		v := page[i]
 		p := v.Task.Progress
 		if (p.DueAt != nil && at.Before(*p.DueAt)) || (p.LeaseUntil != nil && at.Before(*p.LeaseUntil)) {
@@ -238,25 +248,20 @@ func (r *Runner) deliverPage(ctx context.Context, after string) (string, RoundRe
 		return page[visited-1].Task.ID, result
 	}
 	next := ""
-	if len(page) == 16 {
+	if len(page) == pageSize {
 		next = previous
 	}
 	return next, result
 }
 
-// 生产器按页内租户串行，防止自己的四个 Worker 争抢同一准入锁；不同租户仍最多四路。
+// 不同 Alert 独立生产，不再按租户串行；并发由运行器配置。
 // 超时只推进真正尝试过的连续前缀，较后批次已做的工作可安全重读，未启动项不能被游标越过。
-func runProjectionItems(ctx context.Context, count int, scopes []string, execute func(int) (StoredTask, error), produce bool) (RoundResult, int) {
+func runProjectionItems(ctx context.Context, concurrency, count int, _ []string, execute func(int) (StoredTask, error), produce bool) (RoundResult, int) {
 	type batch struct{ start, end int }
 	jobs := make(chan batch, count)
 	batches := 0
 	for i := 0; i < count; {
 		end := i + 1
-		if produce {
-			for end < count && scopes[end] == scopes[i] {
-				end++
-			}
-		}
 		jobs <- batch{i, end}
 		batches++
 		i = end
@@ -265,7 +270,7 @@ func runProjectionItems(ctx context.Context, count int, scopes []string, execute
 	visited := make([]atomic.Bool, count)
 	var wg sync.WaitGroup
 	var advanced, deferred, capacity, failed atomic.Int64
-	for range min(4, batches) {
+	for range min(concurrency, batches) {
 		wg.Go(func() {
 			for group := range jobs {
 				for i := group.start; i < group.end; i++ {
@@ -274,7 +279,7 @@ func runProjectionItems(ctx context.Context, count int, scopes []string, execute
 						continue
 					}
 					visited[i].Store(true)
-					result, err := execute(i)
+					result, err := processingerror.Guard(func() (StoredTask, error) { return execute(i) })
 					switch {
 					case CanDefer(err):
 						deferred.Add(1)

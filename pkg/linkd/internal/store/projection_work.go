@@ -30,7 +30,7 @@ type ProjectionWorkCursor struct {
 
 // Validate 只接受完整的三级游标，以及 1..16 项的预算。
 func (c ProjectionWorkCursor) Validate(limit int) error {
-	if limit < 1 || limit > 16 {
+	if limit < 1 {
 		return fmt.Errorf("%w: projection work budget", ErrInvalidArgument)
 	}
 	if c == (ProjectionWorkCursor{}) {

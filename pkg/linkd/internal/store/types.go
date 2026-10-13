@@ -82,7 +82,7 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 		}
 		return p, nil
 	}
-	if p.Plan != nil {
+	if p.Plan != nil && (p.State != domain.EventProcessStateRejected || p.Outcome != "processing_failed") {
 		return EventProcessing{}, fmt.Errorf("%w: terminal event must not retain a plan", ErrInvalidEventProcessing)
 	}
 	if p.Outcome == "" || p.ProcessedAt == nil || p.ProcessedAt.IsZero() {

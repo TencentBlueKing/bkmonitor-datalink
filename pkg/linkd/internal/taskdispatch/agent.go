@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +49,8 @@ type Agent struct {
 }
 
 type localTask struct {
+	loading    bool
+	recovered  map[string]bool
 	blocked    bool
 	partitions atomic.Value
 	admission  atomic.Bool
@@ -201,6 +204,11 @@ func (a *Agent) Run(ctx context.Context) error {
 			if ps := t.partitions.Load(); ps != nil {
 				r.Partitions = ps.([]string)
 			}
+			for _, owner := range t.task.Retired {
+				if t.recovered[owner] {
+					r.Recovered = append(r.Recovered, owner)
+				}
+			}
 			reports = append(reports, r)
 			if t.phase != "stopped" {
 				remaining++
@@ -244,32 +252,57 @@ func (a *Agent) Run(ctx context.Context) error {
 					} else if t.phase != "stopping" && t.phase != "stopped" {
 						t.deadline = started.Add(time.Duration(task.RemainingMillis)*time.Millisecond - SafetyMargin)
 					}
+					for owner := range t.recovered {
+						if !slices.Contains(task.Retired, owner) {
+							delete(t.recovered, owner)
+						}
+					}
 					t.task = task
 					if t.phase == "running" {
 						t.admission.Store(true)
 					}
 				}
-				if t == nil && !stopping && configReady { // 只加载固定 Release，不在准备期创建 MQ Session。
-					mu.Unlock()
-					fetch, done := context.WithTimeout(observationCtx, 2*time.Second)
-					var rel eventsource.Release
-					err := client.Call(fetch, http.MethodGet, "/internal/releases/"+url.PathEscape(task.Source)+"/"+fmt.Sprint(task.Version)+"?task="+url.QueryEscape(task.ID), nil, &rel)
-					done()
-					mu.Lock()
-					if err != nil {
-						continue
-					}
-					rel.Spec.Version = rel.Version
-					t = &localTask{task: task, spec: rel.Spec, phase: "prepared", deadline: started.Add(time.Duration(task.RemainingMillis)*time.Millisecond - SafetyMargin)}
-					t.budget, err = a.admitTask(task, rel.Spec, locals)
-					if err != nil {
-						t.phase = "stopped"
-						t.err = "worker runtime budget rejected"
-						mu.Unlock()
-						a.logTaskFailure(observationCtx, task, WithTaskStage("task_admission", err))
-						mu.Lock()
-					}
+				if t == nil && !stopping && configReady {
+					t = &localTask{task: task, phase: "preparing", deadline: started.Add(time.Duration(task.RemainingMillis)*time.Millisecond - SafetyMargin)}
 					locals[task.ID] = t
+				}
+				if t != nil && t.phase == "preparing" && !t.loading && !stopping && configReady {
+					// 配置读取独立于心跳；大量慢来源不能让整个 Worker 失去授权。
+					local, assigned := t, task
+					prepareCtx, cancelPrepare := context.WithTimeout(observationCtx, 2*time.Second)
+					local.cancel, local.loading = cancelPrepare, true
+					local.done = make(chan struct{})
+					releaseClient := client
+					releaseClient.OnResponse = nil // 动态配置摘要只从串行心跳更新。
+					go func() {
+						defer cancelPrepare()
+						var rel eventsource.Release
+						err := releaseClient.Call(prepareCtx, http.MethodGet, "/internal/releases/"+url.PathEscape(assigned.Source)+"/"+fmt.Sprint(assigned.Version)+"?task="+url.QueryEscape(assigned.ID), nil, &rel)
+						mu.Lock()
+						defer mu.Unlock()
+						local.loading = false
+						local.cancel = nil
+						close(local.done)
+						if local.phase == "stopping" || stopping {
+							local.phase = "stopped"
+							return
+						}
+						if err != nil {
+							local.err = "release load failed; retrying"
+							return
+						}
+						rel.Spec.Version = rel.Version
+						local.spec = rel.Spec
+						local.budget, err = a.admitTask(assigned, rel.Spec, locals)
+						if err != nil {
+							local.phase = "stopped"
+							local.err = "worker runtime budget rejected"
+							a.logTaskFailure(observationCtx, assigned, WithTaskStage("task_admission", err))
+							return
+						}
+						local.err = ""
+						local.phase = "prepared"
+					}()
 				}
 				if t != nil && t.phase == "prepared" && task.Phase == "starting" && !stopping && configReady && time.Now().Add(DrainTimeout+5*time.Second).Before(t.deadline) {
 					budget, err := a.admitTask(task, t.spec, locals)
@@ -283,6 +316,14 @@ func (a *Agent) Run(ctx context.Context) error {
 					}
 					t.budget = budget
 					work, cancelTask := context.WithCancel(consume.WithPartitionObserver(consume.WithAdmission(observationCtx, &t.admission), func(p []string) { t.partitions.Store(p) }))
+					work = consume.WithRetiredObserver(work, func(owner string) {
+						mu.Lock()
+						defer mu.Unlock()
+						if t.recovered == nil {
+							t.recovered = map[string]bool{}
+						}
+						t.recovered[owner] = true
+					})
 					t.admission.Store(true)
 					t.cancel = cancelTask
 					t.done = make(chan struct{})

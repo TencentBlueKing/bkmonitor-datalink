@@ -42,7 +42,6 @@ import (
 	"linkd/internal/policy/simulation"
 	policystore "linkd/internal/policy/storage"
 	"linkd/internal/projection"
-	projectionlock "linkd/internal/projection/redislock"
 	projectionstore "linkd/internal/projection/storage"
 	"linkd/internal/redisclient"
 	"linkd/internal/runtimeconfig"
@@ -178,16 +177,12 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return err
 	}
 	api.SuppressionCleanups = controlapi.NewSuppressionCleanups(cleanupJournal)
-	projectionLocker, err := projectionlock.New(queryRedis, d.Deployment)
-	if err != nil {
-		return err
-	}
-	projectionRetries, err := projection.NewRetrier(projectionTasks, projectionLocker, time.Now)
+	projectionRetries, err := projection.NewRetrier(projectionTasks, time.Now)
 	if err != nil {
 		return err
 	}
 	api.ProjectionTasks = controlapi.NewProjectionTasks(projectionTasks, projectionRetries)
-	actionRetries, err := actiondelivery.NewRetrier(actionTasks, projectionLocker, time.Now)
+	actionRetries, err := actiondelivery.NewRetrier(actionTasks, time.Now)
 	if err != nil {
 		return err
 	}

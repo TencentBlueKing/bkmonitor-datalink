@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 )
 
 type prefixMailboxWriter struct {
@@ -44,7 +45,7 @@ func TestCleanerMailboxBatchPreservesSuccessfulPrefix(t *testing.T) {
 	for i, d := range s.deliveries {
 		entries[i] = &cleanerEntry{stored: true, delivery: d, event: domain.Event{EventID: d.Message.ID}}
 	}
-	w := &prefixMailboxWriter{failure: errors.New("full")}
+	w := &prefixMailboxWriter{failure: processingerror.RetryableError{Err: processingerror.HTTPStatus(503)}}
 	r := &Runtime{session: s, mailboxes: w}
 	first := r.finishLanePrefix(t.Context(), "lane", entries, nil)
 	if first.settled != 1 || !errors.Is(first.err, w.failure) || !slices.Equal(s.confirmed, []string{"a1"}) {

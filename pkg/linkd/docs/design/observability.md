@@ -7,6 +7,10 @@ Event Processor 使用 `linkd_pipeline_attempt_duration_seconds`；Signal Handle
 各阶段 P99 不相加；Cleaner 成功规范化数含重复投递，Lifecycle 完成速率取成功 Mailbox ACK，
 两者不取最小值作为端到端吞吐，也不直接相减推算积压。
 
+Lifecycle 的裁决、Event 尝试/耗时和 Mailbox process 指标将纯动作背压单列为 `deferred`；
+`ErrBusy`、`ErrCapacity` 及纯等待错误链不再计入 `failed`。混合存储错误、取消、非法输入仍计为失败。
+这些计数的单位是处理尝试，同一 Event 延后后再次执行会再次计数，不能解释为不同消息的最终失败数量。
+
 Event 内部分段使用 `linkd_lifecycle_event_phase_duration_seconds`，每次尝试对固定环节
 记录独占耗时，嵌套调用从父环节中扣除，未执行的环节也记录零样本；各环节具有相同的尝试分母，
 因此其均值可以相加。该计时器仅属于调用内的 Processor 副本，不跨 fingerprint 共享可变状态；

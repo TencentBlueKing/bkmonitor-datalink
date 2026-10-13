@@ -59,7 +59,9 @@ func (o *lifecycleSchedulerObserver) EventProcessed(
 	err error,
 ) {
 	outcome := string(result.Outcome)
-	if err != nil || outcome == "" {
+	if err != nil {
+		outcome = lifecycleMetricOutcome(result, err)
+	} else if outcome == "" {
 		outcome = "failed"
 	}
 	attributes := []attribute.KeyValue{

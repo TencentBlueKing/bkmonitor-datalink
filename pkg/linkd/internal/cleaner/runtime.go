@@ -21,6 +21,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -51,6 +52,8 @@ type Logger interface {
 type cleanerEntry struct {
 	delivery          consume.Delivery
 	processing        bool
+	storeAttempts     int
+	mailboxAttempts   int
 	processAttempt    int
 	processFirstRetry time.Time
 	processRetryAt    time.Time
@@ -165,10 +168,8 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 	var background sync.WaitGroup
 	background.Add(1)
 	go r.receiveLoop(workCtx, receiveRequests, receiveResults, &background)
-	for range r.config.WorkerCount {
-		background.Add(1)
-		go r.workerLoop(workCtx, jobs, processed, &background)
-	}
+	background.Add(1)
+	go r.workerLoop(workCtx, jobs, processed, &background)
 
 	lanes := make(map[string]*cleanerLane)
 	inflightMessages, inflightBytes := 0, 0
@@ -337,8 +338,8 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 				break
 			}
 			for _, delivery := range result.deliveries {
-				if !delivery.Receipt.Valid() || delivery.Message.ID == "" || delivery.Meta.Lane == "" {
-					fatalErr = fmt.Errorf("%w: cleaner delivery is missing receipt, message id or lane", consume.ErrInvalidDelivery)
+				if !delivery.Receipt.Valid() || delivery.Meta.Lane == "" {
+					fatalErr = fmt.Errorf("%w: cleaner delivery is missing receipt or lane", consume.ErrInvalidDelivery)
 					shuttingDown = true
 					shutdownDeadline = time.Now().Add(time.Duration(r.config.ShutdownDrainTimeoutSeconds) * time.Second)
 					break
@@ -357,7 +358,14 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 				lane.entries = append(lane.entries, entry)
 				inflightMessages++
 				inflightBytes += len(delivery.Message.Body)
-				jobs <- processJob{entry: entry}
+				if delivery.Message.ID == "" {
+					entry.processing = false
+					entry.readyAt = time.Now()
+					entry.discard = consume.ErrInvalidDelivery
+					r.logger.WarnContext(ctx, "discard cleaner message metadata", "reason_code", "invalid_metadata", "lane", delivery.Meta.Lane)
+				} else {
+					jobs <- processJob{entry: entry}
+				}
 				if !lane.paused && len(lane.entries) >= r.config.MaxInflightPerLane {
 					if controller, ok := r.session.(consume.LaneController); ok {
 						if err := controller.Pause(ctx, lane.name); err != nil {
@@ -377,8 +385,11 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 			}
 		case result := <-processed:
 			result.entry.processing = false
+			if result.err != nil && (shuttingDown || workCtx.Err() != nil) {
+				continue
+			}
 			if result.err != nil {
-				r.scheduleProcessRetry(result.entry, result.err, time.Now(), &fatalErr, &shuttingDown, &shutdownDeadline)
+				r.scheduleProcessRetry(result.entry, result.err, time.Now())
 			} else {
 				result.entry.readyAt = time.Now()
 				result.entry.event = result.result.Event
@@ -419,7 +430,7 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 				shuttingDown = true
 				shutdownDeadline = time.Now().Add(time.Duration(r.config.ShutdownDrainTimeoutSeconds) * time.Second)
 			} else if result.err != nil {
-				r.scheduleLaneRetry(lane, result.err, time.Now(), &fatalErr, &shuttingDown, &shutdownDeadline)
+				r.scheduleLaneRetry(lane, time.Now())
 			}
 		case event := <-ownershipEvents:
 			if r.observer != nil {
@@ -502,36 +513,52 @@ func (r *Runtime) receiveLoop(ctx context.Context, requests <-chan consume.Recei
 	}
 }
 
+// workerLoop 只为实际接管的消息启动工作，不按来源数量预建空闲 goroutine。
 func (r *Runtime) workerLoop(ctx context.Context, jobs <-chan processJob, results chan<- processResult, wg *sync.WaitGroup) {
 	defer wg.Done()
+	var active sync.WaitGroup
+	defer active.Wait()
+	slots := make(chan struct{}, r.config.WorkerCount)
 	for job := range jobs {
-		workCtx, cancel := context.WithTimeout(ctx, time.Duration(r.config.ProcessTimeoutSeconds)*time.Second)
-		startedAt := time.Now()
-		if r.observer != nil {
-			r.observer.HandlerStarted(workCtx, job.entry.delivery.Message)
-		}
-		result, err := r.processor.Process(workCtx, job.entry.delivery.Message)
-		if r.observer != nil {
-			outcome := consume.OutcomeComplete
-			stepOutcome := "succeeded"
-			if err != nil {
-				outcome = consume.OutcomeRetry
-				stepOutcome = "failed"
-			} else if result.DiscardErr != nil {
-				outcome = consume.OutcomeDiscard
-				stepOutcome = "rejected"
-			}
-			r.observer.HandlerFinished(workCtx, outcome, time.Since(startedAt))
-			r.observer.StepFinished(workCtx, consume.StepObservation{
-				Step: "transform", Outcome: stepOutcome, Items: 1, Duration: time.Since(startedAt),
-			})
-		}
-		cancel()
 		select {
-		case results <- processResult{entry: job.entry, result: result, err: err}:
+		case slots <- struct{}{}:
 		case <-ctx.Done():
 			return
 		}
+		active.Go(func() { defer func() { <-slots }(); r.processOne(ctx, job, results) })
+	}
+}
+
+func (r *Runtime) processOne(ctx context.Context, job processJob, results chan<- processResult) {
+	workCtx, cancel := context.WithTimeout(ctx, time.Duration(r.config.ProcessTimeoutSeconds)*time.Second)
+	startedAt := time.Now()
+	if r.observer != nil {
+		r.observer.HandlerStarted(workCtx, job.entry.delivery.Message)
+	}
+	result, err := processingerror.Guard(func() (ProcessResult, error) { return r.processor.Process(workCtx, job.entry.delivery.Message) })
+	if r.observer != nil {
+		outcome := consume.OutcomeComplete
+		stepOutcome := "succeeded"
+		if err != nil {
+			outcome = consume.OutcomeDiscard
+			if processingerror.Retryable(err) && job.entry.processAttempt+1 < min(r.config.RetryMaxAttempts, processingerror.MaxAttempts) {
+				outcome = consume.OutcomeRetry
+			}
+			stepOutcome = "failed"
+		} else if result.DiscardErr != nil {
+			outcome = consume.OutcomeDiscard
+			stepOutcome = "rejected"
+		}
+		r.observer.HandlerFinished(workCtx, outcome, time.Since(startedAt))
+		r.observer.StepFinished(workCtx, consume.StepObservation{
+			Step: "transform", Outcome: stepOutcome, Items: 1, Duration: time.Since(startedAt),
+		})
+	}
+	cancel()
+	select {
+	case results <- processResult{entry: job.entry, result: result, err: err}:
+	case <-ctx.Done():
+		return
 	}
 }
 
@@ -568,7 +595,13 @@ func (r *Runtime) maybeStartBatch(ctx context.Context, lane *cleanerLane, now ti
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		result := r.runLaneBatch(ctx, lane.name, entries)
+		result, panicErr := processingerror.Guard(func() (laneBatchResult, error) { return r.runLaneBatch(ctx, lane.name, entries), nil })
+		if panicErr != nil {
+			for _, entry := range entries {
+				r.rejectEntry(ctx, entry, panicErr, "handler_panic")
+			}
+			result = laneBatchResult{lane: lane.name, err: panicErr}
+		}
 		// 必须先释放槽位再通知事件循环。否则循环可能消费完成通知后仍看到
 		// 槽位已满，进入等待，而稍后的槽位释放不再产生任何唤醒事件。
 		<-slots
@@ -580,10 +613,14 @@ func (r *Runtime) maybeStartBatch(ctx context.Context, lane *cleanerLane, now ti
 }
 
 func (r *Runtime) runLaneBatch(ctx context.Context, lane string, entries []*cleanerEntry) laneBatchResult {
+	if ctx.Err() != nil {
+		return laneBatchResult{lane: lane, err: ctx.Err()}
+	}
 	toStore := make([]domain.Event, 0, len(entries))
 	storeEntries := make([]*cleanerEntry, 0, len(entries))
 	for _, entry := range entries {
 		if entry.discard == nil && !entry.stored {
+			entry.storeAttempts++
 			toStore = append(toStore, entry.event)
 			storeEntries = append(storeEntries, entry)
 		}
@@ -593,11 +630,20 @@ func (r *Runtime) runLaneBatch(ctx context.Context, lane string, entries []*clea
 		items, err := createNormalizedEvents(ctx, r.events, toStore)
 		if err != nil {
 			r.observeStep(ctx, "event_store", "failed", len(toStore), time.Since(startedAt))
-			return laneBatchResult{lane: lane, err: err}
+			for _, entry := range storeEntries {
+				if !processingerror.Retryable(err) || entry.storeAttempts >= processingerror.MaxAttempts {
+					r.rejectEntry(ctx, entry, err, "event_store_failed")
+				}
+			}
+			return r.finishLanePrefix(ctx, lane, entries, err)
 		}
 		if len(items) != len(storeEntries) {
 			r.observeStep(ctx, "event_store", "failed", len(toStore), time.Since(startedAt))
-			return laneBatchResult{lane: lane, blocked: fmt.Errorf("event batch writer returned %d items for %d events", len(items), len(storeEntries))}
+			err := fmt.Errorf("event batch writer returned invalid item count")
+			for _, entry := range storeEntries {
+				r.rejectEntry(ctx, entry, err, "invalid_store_result")
+			}
+			return r.finishLanePrefix(ctx, lane, entries, nil)
 		}
 		var firstItemErr error
 		outcomes := map[string]int{}
@@ -614,8 +660,8 @@ func (r *Runtime) runLaneBatch(ctx context.Context, lane string, entries []*clea
 				}
 				continue
 			}
-			if errors.Is(item.Err, store.ErrIdentityConflict) || errors.Is(item.Err, store.ErrInvalidArgument) {
-				entry.discard = item.Err
+			if !processingerror.Retryable(item.Err) || entry.storeAttempts >= processingerror.MaxAttempts {
+				r.rejectEntry(ctx, entry, item.Err, "event_store_failed")
 				outcomes["rejected"]++
 				continue
 			}
@@ -681,7 +727,7 @@ func (r *Runtime) finishLanePrefix(ctx context.Context, lane string, entries []*
 		receipts[index] = entries[index].delivery.Receipt
 	}
 	settleStartedAt := time.Now()
-	if err := r.session.Confirm(ctx, receipts); err != nil {
+	if _, err := processingerror.Guard(func() (struct{}, error) { return struct{}{}, r.session.Confirm(ctx, receipts) }); err != nil {
 		if r.observer != nil {
 			r.observer.SettlementFinished(ctx, consume.SettlementObservation{
 				Mode: r.session.Capabilities().Settlement, Lane: lane, Messages: settled,
@@ -695,6 +741,9 @@ func (r *Runtime) finishLanePrefix(ctx context.Context, lane string, entries []*
 			Mode: r.session.Capabilities().Settlement, Lane: lane, Messages: settled,
 			Succeeded: true, Duration: time.Since(settleStartedAt),
 		})
+	}
+	if settled == len(entries) {
+		pendingErr = nil
 	}
 	return laneBatchResult{lane: lane, settled: settled, err: pendingErr}
 }
@@ -711,6 +760,7 @@ func (r *Runtime) enqueueLanePrefix(ctx context.Context, entries []*cleanerEntry
 			break
 		}
 		if !entry.mailbox && !entry.skipMailbox {
+			entry.mailboxAttempts++
 			events = append(events, entry.event)
 			targets = append(targets, entry)
 		}
@@ -723,15 +773,28 @@ func (r *Runtime) enqueueLanePrefix(ctx context.Context, entries []*cleanerEntry
 	elapsed := time.Since(started)
 	if err != nil {
 		r.observeStep(ctx, "mailbox_enqueue", "failed", len(events), elapsed)
+		for _, entry := range targets {
+			if !processingerror.Retryable(err) || entry.mailboxAttempts >= processingerror.MaxAttempts {
+				r.rejectEntry(ctx, entry, err, "mailbox_enqueue_failed")
+			}
+		}
 		return err, nil
 	}
 	if len(results) != len(events) {
-		return nil, fmt.Errorf("mailbox writer returned %d items, want %d", len(results), len(events))
+		err := fmt.Errorf("mailbox writer returned invalid item count")
+		for _, entry := range targets {
+			r.rejectEntry(ctx, entry, err, "invalid_mailbox_result")
+		}
+		return err, nil
 	}
 	added, emitted := 0, 0
 	var firstErr error
 	for i, result := range results {
 		if result.Err != nil {
+			if !processingerror.Retryable(result.Err) || targets[i].mailboxAttempts >= processingerror.MaxAttempts {
+				r.rejectEntry(ctx, targets[i], result.Err, "mailbox_enqueue_failed")
+				continue
+			}
 			if firstErr == nil {
 				firstErr = result.Err
 			}
@@ -761,6 +824,36 @@ func (r *Runtime) enqueueLanePrefix(ctx context.Context, entries []*cleanerEntry
 	return firstErr, nil
 }
 
+// rejectEntry 只终结当前消息；已保存的 Event 尽力写入拒绝诊断，不修改其他消息。
+func (r *Runtime) rejectEntry(ctx context.Context, entry *cleanerEntry, cause error, code string) {
+	if ctx.Err() != nil {
+		return
+	}
+	entry.discard = cause
+	if r.logger != nil {
+		r.logger.WarnContext(ctx, "discard cleaner message", "message_id", entry.delivery.Message.ID, "reason_code", code)
+	}
+	if !entry.stored {
+		return
+	}
+	if writer, ok := r.events.(interface {
+		GetEvent(context.Context, string, string) (store.StoredEvent, error)
+		CompareAndSetEventResult(context.Context, string, string, store.VersionToken, store.EventResult) (store.StoredEvent, error)
+	}); ok {
+		_, err := processingerror.Guard(func() (struct{}, error) {
+			current, err := writer.GetEvent(ctx, entry.event.BKTenantID, entry.event.EventID)
+			if err == nil && !current.Processing.State.Terminal() {
+				_, err = writer.CompareAndSetEventResult(ctx, entry.event.BKTenantID, entry.event.EventID, current.Version, store.EventResult{State: domain.EventProcessStateRejected, Outcome: "processing_failed", ReasonCode: code, ProcessedAt: time.Now().UTC(), Plan: current.Processing.Plan})
+			}
+			return struct{}{}, err
+		})
+		if err != nil && r.logger != nil {
+			r.logger.WarnContext(ctx, "persist discarded cleaner event failed", "event_id", entry.event.EventID, "reason_code", "diagnostic_write_failed")
+		}
+
+	}
+}
+
 func (r *Runtime) observeStep(ctx context.Context, step, outcome string, items int, duration time.Duration) {
 	if r.observer == nil || items <= 0 {
 		return
@@ -770,20 +863,14 @@ func (r *Runtime) observeStep(ctx context.Context, step, outcome string, items i
 	})
 }
 
-func (r *Runtime) scheduleLaneRetry(lane *cleanerLane, cause error, now time.Time, fatalErr *error,
-	shuttingDown *bool, shutdownDeadline *time.Time) {
+func (r *Runtime) scheduleLaneRetry(lane *cleanerLane, now time.Time) {
 	if lane.firstRetry.IsZero() {
 		lane.firstRetry = now
 	}
-	if lane.attempt >= r.config.RetryMaxAttempts || now.Sub(lane.firstRetry) >= time.Duration(r.config.RetryMaxElapsedSeconds)*time.Second {
-		*fatalErr = errors.Join(*fatalErr, fmt.Errorf("cleaner lane %q retry exhausted: %w", lane.name, cause))
-		*shuttingDown = true
-		*shutdownDeadline = now.Add(time.Duration(r.config.ShutdownDrainTimeoutSeconds) * time.Second)
-		return
-	}
+
 	lane.attempt++
 	delay := 100 * time.Millisecond
-	for range lane.attempt - 1 {
+	for range min(lane.attempt-1, 6) {
 		delay = min(delay*2, 5*time.Second)
 	}
 	//nolint:gosec // 重试 jitter 不承担安全或身份用途，不需要密码学随机数。
@@ -794,26 +881,17 @@ func (r *Runtime) scheduleLaneRetry(lane *cleanerLane, cause error, now time.Tim
 	}
 }
 
-func (r *Runtime) scheduleProcessRetry(entry *cleanerEntry, cause error, now time.Time, fatalErr *error,
-	shuttingDown *bool, shutdownDeadline *time.Time) {
-	if entry.processFirstRetry.IsZero() {
-		entry.processFirstRetry = now
-	}
-	if entry.processAttempt >= r.config.RetryMaxAttempts ||
-		now.Sub(entry.processFirstRetry) >= time.Duration(r.config.RetryMaxElapsedSeconds)*time.Second {
-		*fatalErr = errors.Join(*fatalErr, fmt.Errorf("cleaner message %q retry exhausted: %w", entry.delivery.Message.ID, cause))
-		*shuttingDown = true
-		*shutdownDeadline = now.Add(time.Duration(r.config.ShutdownDrainTimeoutSeconds) * time.Second)
+// 单条处理最多三次，普通错误直接进入可确认的丢弃前缀，不停止整条来源。
+func (r *Runtime) scheduleProcessRetry(entry *cleanerEntry, cause error, now time.Time) {
+	entry.processAttempt++
+	if !processingerror.Retryable(cause) || entry.processAttempt >= min(r.config.RetryMaxAttempts, processingerror.MaxAttempts) {
+		entry.discard = cause
+		entry.readyAt = now
+		entry.processRetryAt = time.Time{}
+		r.logger.WarnContext(context.Background(), "discard cleaner message", "message_id", entry.delivery.Message.ID, "reason_code", "processing_failed", "attempts", entry.processAttempt)
 		return
 	}
-	entry.processAttempt++
-	delay := 100 * time.Millisecond
-	for range entry.processAttempt - 1 {
-		delay = min(delay*2, 5*time.Second)
-	}
-	//nolint:gosec // 重试 jitter 不承担安全或身份用途，不需要密码学随机数。
-	delay = time.Duration(float64(delay) * (0.8 + rand.Float64()*0.4))
-	entry.processRetryAt = now.Add(delay)
+	entry.processRetryAt = now.Add(time.Duration(entry.processAttempt) * 100 * time.Millisecond)
 	if r.observer != nil {
 		r.observer.RetryScheduled(context.Background())
 	}

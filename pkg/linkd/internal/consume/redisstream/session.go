@@ -348,14 +348,25 @@ func (s *Session) claimRetired(ctx context.Context, limit int) ([]redis.XMessage
 		return nil, fmt.Errorf("retired consumer recovery requires atomic Redis scripting")
 	}
 	const script = `local pending=redis.call('XPENDING',KEYS[1],ARGV[1],'-','+',ARGV[4],ARGV[2]); local result={}; for _,p in ipairs(pending) do local messages=redis.call('XCLAIM',KEYS[1],ARGV[1],ARGV[3],0,p[1]); for _,m in ipairs(messages) do result[#result+1]=m end end; return result`
-	for len(s.config.RetiredConsumers) > 0 {
+	for checked := 0; len(s.config.RetiredConsumers) > 0 && checked < 16; checked++ {
 		old := s.config.RetiredConsumers[0]
 		values, e := client.Eval(ctx, script, []string{s.config.Stream}, s.config.Group, old, s.config.Consumer, limit).Slice()
 		if e != nil {
 			return nil, e
 		}
 		if len(values) == 0 {
+			const drainedScript = `local p=redis.call('XPENDING',KEYS[1],ARGV[1],'-','+',1,ARGV[2]); if #p>0 then return 0 end; redis.call('XGROUP','DELCONSUMER',KEYS[1],ARGV[1],ARGV[2]); return 1`
+			drained, err := client.Eval(ctx, drainedScript, []string{s.config.Stream}, s.config.Group, old).Int()
+			if err != nil {
+				return nil, err
+			}
+			if drained != 1 {
+				return nil, nil
+			}
 			s.config.RetiredConsumers = s.config.RetiredConsumers[1:]
+			if s.config.OnRetiredDrained != nil {
+				s.config.OnRetiredDrained(old)
+			}
 			continue
 		}
 		messages := make([]redis.XMessage, 0, len(values))

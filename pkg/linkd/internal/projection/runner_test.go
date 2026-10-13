@@ -22,6 +22,7 @@ import (
 	"linkd/internal/store"
 	"linkd/internal/store/memory"
 	"linkd/internal/store/storetest"
+	"linkd/internal/taskgroup"
 )
 
 type runnerExecutor struct {
@@ -91,7 +92,7 @@ func TestRunnerProductionPagesRemainBoundedAndPassFailedRows(t *testing.T) {
 		}
 		return tasks.Put(ctx, task, "")
 	}}
-	r, err := NewRunner(repo, tasks, executor, nil, time.Now)
+	r, err := NewRunner(repo, tasks, executor, nil, time.Now, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestRunnerSkipsFutureDueAndRejectsInvalidScanWithoutEffects(t *testing.T) {
 	}
 	calls := 0
 	executor := runnerExecutor{produce: func(context.Context, string, string, string) (StoredTask, error) { calls++; return StoredTask{}, nil }, deliver: func(context.Context, string, string) (StoredTask, error) { calls++; return StoredTask{}, nil }}
-	r, _ := NewRunner(repo, tasks, executor, nil, func() time.Time { return now })
+	r, _ := NewRunner(repo, tasks, executor, nil, func() time.Time { return now }, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 	after, result := r.deliverPage(t.Context(), "")
 	if after != "" || result.Deferred != 1 || calls != 0 || !result.ObservedAt.Equal(now) || result.OldestObservedAge != 0 {
 		t.Fatal(result, calls)
@@ -161,7 +162,7 @@ func TestRunnerPageObservationUsesBusinessUpdateAndFirstTaskTime(t *testing.T) {
 	runner, err := NewRunner(repo, tasks, runnerExecutor{
 		produce: func(context.Context, string, string, string) (StoredTask, error) { return saved, nil },
 		deliver: func(context.Context, string, string) (StoredTask, error) { return saved, ErrBusy },
-	}, nil, func() time.Time { return at })
+	}, nil, func() time.Time { return at }, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +209,7 @@ func TestRunnerCancellationJoinsLoopsAndCanRestart(t *testing.T) {
 	repo := runnerRows(t, 0)
 	tasks := &taskMemory{rows: map[string]StoredTask{}}
 	observer := &runnerObserver{started: make(chan RunnerPhase, 4)}
-	r, err := NewRunner(repo, tasks, runnerExecutor{}, observer, time.Now)
+	r, err := NewRunner(repo, tasks, runnerExecutor{}, observer, time.Now, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +265,7 @@ func TestProducerRoundDoesNotContendWithItsOwnTenantAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner, err := NewRunner(repo, tasks, service, nil, time.Now)
+	runner, err := NewRunner(repo, tasks, service, nil, time.Now, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +297,7 @@ func TestProducerDeadlineOnlyAdvancesAttemptedPrefix(t *testing.T) {
 		}
 		return tasks.Put(ctx, task, "")
 	}}
-	r, _ := NewRunner(repo, tasks, executor, nil, time.Now)
+	r, _ := NewRunner(repo, tasks, executor, nil, time.Now, taskgroup.WorkConfig{Concurrency: 1, BatchSize: 16})
 	next, result := r.producePage(ctx, store.ProjectionWorkCursor{})
 	if calls != 3 || next.AlertID != "alert-002" || result.Advanced != 2 {
 		t.Fatal("unstarted work skipped", calls, next, result)
@@ -308,7 +309,7 @@ func TestProducerDeadlineOnlyAdvancesAttemptedPrefix(t *testing.T) {
 }
 
 func TestRunnerDoesNotHideLeaseFailureBehindBusyResult(t *testing.T) {
-	result, _ := runProjectionItems(t.Context(), 1, nil, func(int) (StoredTask, error) {
+	result, _ := runProjectionItems(t.Context(), 4, 1, nil, func(int) (StoredTask, error) {
 		return StoredTask{}, errors.Join(ErrBusy, errors.New("release uncertain"))
 	}, false)
 	if result.Failed != 1 || result.Deferred != 0 {

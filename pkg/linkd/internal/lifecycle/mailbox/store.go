@@ -29,7 +29,7 @@ for i = 2, #KEYS do
     results[#results + 1] = -2
     return results
   end
-  if count >= tonumber(ARGV[1]) then
+  if tonumber(ARGV[1]) > 0 and count >= tonumber(ARGV[1]) then
     results[#results + 1] = -1
     return results
   end
@@ -76,7 +76,7 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.KeyPrefix) == "" || strings.TrimSpace(c.SignalStream) == "" {
 		return fmt.Errorf("mailbox key prefix and signal stream are required")
 	}
-	if c.MaxPendingPerMailbox < 1 {
+	if c.MaxPendingPerMailbox < 0 {
 		return fmt.Errorf("mailbox limits are invalid")
 	}
 	return nil

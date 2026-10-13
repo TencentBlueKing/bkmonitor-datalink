@@ -23,6 +23,7 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/enrich/description"
 	"linkd/internal/lifecycle"
+	"linkd/internal/processingerror"
 	"linkd/internal/projection"
 	"linkd/internal/store"
 )
@@ -32,26 +33,18 @@ type fakeEventReader struct {
 	reads  int
 }
 
-func TestContentFailureBlocksAndPreservesMailboxHead(t *testing.T) {
-	for _, permanent := range []bool{true, false} {
+func TestContentFailureDiscardsAndDrainsLaterEvents(t *testing.T) {
+	for _, failure := range []error{errors.New("logic failed"), &description.Error{Code: "history_value_missing"}, processingerror.RetryableError{Err: processingerror.HTTPStatus(502)}} {
 		mailbox := &fakeMailbox{ids: []string{"event-1", "event-2"}}
-		failure := error(errors.New("dependency unavailable"))
-		want := consume.OutcomeRetry
-		if permanent {
-			failure = fmt.Errorf("wrapped: %w", &description.Error{Code: "history_value_missing"})
-			want = consume.OutcomeBlock
-		}
 		processor := &fakeProcessor{err: failure}
-		handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
-		outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
-		if outcome.Kind != want || len(mailbox.ids) != 2 || mailbox.ids[0] != "event-1" || len(processor.ids) != 1 {
-			t.Fatalf("permanent %t outcome %v mailbox %v processed %v", permanent, outcome.Kind, mailbox.ids, processor.ids)
+		h := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
+		out := h.Handle(t.Context(), signalMessage(t, testEvent("event-1")))
+		expected := 2
+		if processingerror.Retryable(failure) {
+			expected = 6
 		}
-		// 配置或事实修复后，用同一 Signal 恢复；两个 Event 仍按原顺序处理。
-		processor.err = nil
-		outcome = handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
-		if outcome.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 {
-			t.Fatalf("repaired outcome %v mailbox %v", outcome.Kind, mailbox.ids)
+		if out.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 || len(processor.ids) != expected {
+			t.Fatal(out, mailbox.ids, processor.ids)
 		}
 	}
 }
@@ -155,16 +148,16 @@ func TestHandlerDefersActionBackpressureAndPreservesMailbox(t *testing.T) {
 		{"action capacity", actiondelivery.ErrCapacity, consume.OutcomeDefer},
 		{"admission lock", fmt.Errorf("record action: %w", projection.ErrBusy), consume.OutcomeDefer},
 		{"joined waits", errors.Join(actiondelivery.ErrBusy, projection.ErrBusy), consume.OutcomeDefer},
-		{"mixed infrastructure", errors.Join(actiondelivery.ErrBusy, backendErr), consume.OutcomeRetry},
-		{"cancelled", errors.Join(actiondelivery.ErrBusy, context.Canceled), consume.OutcomeRetry},
-		{"invalid action", actiondelivery.ErrInvalid, consume.OutcomeRetry},
+		{"mixed infrastructure", errors.Join(actiondelivery.ErrBusy, backendErr), consume.OutcomeComplete},
+		{"upstream cancelled but task active", errors.Join(actiondelivery.ErrBusy, context.Canceled), consume.OutcomeComplete},
+		{"invalid action", actiondelivery.ErrInvalid, consume.OutcomeComplete},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mailbox := &fakeMailbox{ids: []string{"event-1", "event-2"}}
 			processor := &fakeProcessor{err: tc.err}
 			handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
 			outcome := handler.Handle(t.Context(), signalMessage(t, testEvent("event-1")))
-			if outcome.Kind != tc.want || len(mailbox.ids) != 2 || mailbox.ids[0] != "event-1" {
+			if outcome.Kind != tc.want || (tc.want == consume.OutcomeDefer && (len(mailbox.ids) != 2 || mailbox.ids[0] != "event-1")) || (tc.want == consume.OutcomeComplete && len(mailbox.ids) != 0) {
 				t.Fatalf("outcome=%v mailbox=%v", outcome, mailbox.ids)
 			}
 			if tc.want == consume.OutcomeDefer && outcome.RetryAfter != DefaultConfig().LockRetryDelay {
@@ -187,16 +180,13 @@ func TestHandlerYieldsAfterDrainBudget(t *testing.T) {
 	}
 }
 
-func TestHandlerKeepsHeadUntilEventProcessingSucceeds(t *testing.T) {
+func TestHandlerOrdinaryFailureDoesNotKeepHead(t *testing.T) {
 	mailbox := &fakeMailbox{ids: []string{"event-1"}}
-	temporary := errors.New("temporary lifecycle failure")
-	handler := newMailboxHandler(t, mailbox, &fakeProcessor{err: temporary}, &fakeLocker{}, 512)
-	outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
-	if outcome.Kind != consume.OutcomeRetry || !errors.Is(outcome.Err, temporary) {
-		t.Fatalf("outcome=%#v", outcome)
-	}
-	if len(mailbox.ids) != 1 || mailbox.ids[0] != "event-1" {
-		t.Fatalf("mailbox head was removed before success: %v", mailbox.ids)
+	processor := &fakeProcessor{err: errors.New("logic failure")}
+	h := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
+	out := h.Handle(t.Context(), signalMessage(t, testEvent("event-1")))
+	if out.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 || len(processor.ids) != 1 {
+		t.Fatal(out, mailbox.ids, processor.ids)
 	}
 }
 
@@ -206,7 +196,7 @@ func TestHandlerKeepsHeadUntilAckSucceeds(t *testing.T) {
 	processor := &fakeProcessor{}
 	handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
 	outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
-	if outcome.Kind != consume.OutcomeRetry || !errors.Is(outcome.Err, ackErr) {
+	if outcome.Kind != consume.OutcomeDefer {
 		t.Fatalf("outcome=%#v", outcome)
 	}
 	if len(mailbox.ids) != 1 || len(processor.ids) != 1 {
@@ -224,7 +214,7 @@ func TestHandlerBlocksMismatchedMailboxIdentityBeforeProcessing(t *testing.T) {
 	reader.events["event-1"] = stored
 
 	outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
-	if outcome.Kind != consume.OutcomeBlock || len(processor.ids) != 0 || len(mailbox.ids) != 1 || reader.reads != 1 {
+	if outcome.Kind != consume.OutcomeComplete || len(processor.ids) != 0 || len(mailbox.ids) != 0 || reader.reads != 1 {
 		t.Fatalf(
 			"outcome=%#v processed=%v mailbox=%v reads=%d",
 			outcome,

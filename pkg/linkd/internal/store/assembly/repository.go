@@ -81,7 +81,7 @@ func Open(
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("open repository: %w", err)
 	}
-	if maxConnections < 1 {
+	if maxConnections < 0 {
 		return nil, fmt.Errorf("open repository: max connections must be positive")
 	}
 	switch cfg.Repository {
@@ -124,7 +124,7 @@ func openMySQLMode(ctx context.Context, cfg config.MySQLConfig, maxConnections i
 	if err != nil {
 		return nil, fmt.Errorf("open mysql repository: %w", err)
 	}
-	database.SetMaxOpenConns(max(maxConnections, 8))
+	database.SetMaxOpenConns(maxConnections)
 	database.SetMaxIdleConns(max(maxConnections/2, 2))
 	database.SetConnMaxLifetime(databaseMaxLifetime)
 	if err := database.PingContext(ctx); err != nil {
@@ -187,7 +187,7 @@ func OpenElasticsearchManager(
 	if ctx == nil {
 		return nil, fmt.Errorf("open elasticsearch manager: context must not be nil")
 	}
-	if maxConnections < 1 {
+	if maxConnections < 0 {
 		return nil, fmt.Errorf("open elasticsearch manager: max connections must be positive")
 	}
 	repository, router, transport, err := newElasticsearchComponents(cfg, maxConnections)
@@ -258,7 +258,10 @@ func newBucketRouter(cfg config.ElasticsearchConfig) (*elasticsearchstore.Bucket
 }
 
 func elasticsearchConnectionBudget(requested int) int {
-	return min(max(requested, minElasticsearchConnectionsPerHost), maxElasticsearchConnectionsPerHost)
+	if requested == 0 {
+		return 0
+	}
+	return max(requested, minElasticsearchConnectionsPerHost)
 }
 
 func newElasticsearchManager(
@@ -292,7 +295,7 @@ func OpenReadOnly(ctx context.Context, cfg config.StorageConfig, maxConnections 
 // OpenExisting 连接已有存储且不初始化 schema；调用方可以执行既有领域用例的读写。
 // 只读入口应继续使用 OpenReadOnly 并只注入读取端口。
 func OpenExisting(ctx context.Context, cfg config.StorageConfig, maxConnections int) (*Runtime, error) {
-	if ctx == nil || maxConnections < 1 {
+	if ctx == nil || maxConnections < 0 {
 		return nil, fmt.Errorf("read repository requires context and positive connection limit")
 	}
 	cfg = cfg.WithDefaults()

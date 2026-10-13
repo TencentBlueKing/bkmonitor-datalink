@@ -12,6 +12,8 @@ package config
 import (
 	"fmt"
 	"time"
+
+	"linkd/internal/taskgroup"
 )
 
 const (
@@ -29,6 +31,8 @@ const (
 
 // ControlPlaneConfig 描述控制面独占执行的低吞吐管理任务。
 type ControlPlaneConfig struct {
+	// Delivery 分别约束动作与投影补建/发送循环，零值随有效 CPU 扩展。
+	Delivery      taskgroup.WorkConfig             `yaml:"delivery"`
 	ActiveIndex   *ActiveIndexConfig               `yaml:"active_index,omitempty"`
 	DynamicConfig *DynamicConfigConfig             `yaml:"dynamic_config,omitempty"`
 	Elasticsearch *ElasticsearchControlPlaneConfig `yaml:"elasticsearch,omitempty"`
@@ -150,6 +154,9 @@ func (c RedisStreamManagerConfig) WithDefaults() RedisStreamManagerConfig {
 
 // Validate 校验已声明的控制面任务。
 func (c ControlPlaneConfig) Validate() error {
+	if err := c.Delivery.Validate(); err != nil {
+		return err
+	}
 	if c.Elasticsearch == nil && c.RedisStream == nil && c.DynamicConfig == nil && c.ActiveIndex == nil {
 		return fmt.Errorf("control_plane must configure at least one management task")
 	}

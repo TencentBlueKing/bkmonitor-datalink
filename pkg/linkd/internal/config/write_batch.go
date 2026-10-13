@@ -23,7 +23,7 @@ type ElasticsearchWriteBatchConfig struct {
 	WaitMilliseconds int `yaml:"-"`
 	// ReadWaitMilliseconds 为实时点读提供短收集窗口；满批提前发出，不等待写批次期限。
 	ReadWaitMilliseconds int `yaml:"-"`
-	// MaxConcurrentBatches 限制读写物理请求的共同并发。
+	// MaxConcurrentBatches 跟随 Lifecycle 并发，不叠加独立的固定批次封顶。
 	MaxConcurrentBatches int `yaml:"-"`
 }
 
@@ -38,14 +38,14 @@ func (c ElasticsearchWriteBatchConfig) WithDefaults(concurrency int) Elasticsear
 	// 单批最多占一半调用方，并封顶 128 项。超过该值后继续放大批次会让
 	// 更多依赖步骤等待同一个响应，并在高负载下放大解析、GC 和调度延迟。
 	c.MaxOperations = min(128, max(1, concurrency/2))
-	// 每项 1ms 是聚合预算规则，不是对 ES 单项执行时间的估计。
-	c.WaitMilliseconds = c.MaxOperations
+	// 收集窗口固定为 10ms，不随处理并发扩大；单项批次无需等待新项。
+	c.WaitMilliseconds = 10
 	if c.MaxOperations == 1 {
 		c.WaitMilliseconds = 0
 	}
-	// 读结果是后续 CAS 的依赖，最多收集 10ms；小批次不比写侧等得更久。
-	c.ReadWaitMilliseconds = min(10, c.WaitMilliseconds)
-	c.MaxConcurrentBatches = min(32, max(1, concurrency))
+	// 读写独立收集，使用相同期限；每个聚合调用最多占一个批次执行名额。
+	c.ReadWaitMilliseconds = c.WaitMilliseconds
+	c.MaxConcurrentBatches = max(1, concurrency)
 	if c.MaxBytes == 0 {
 		c.MaxBytes = 4 << 20
 	}

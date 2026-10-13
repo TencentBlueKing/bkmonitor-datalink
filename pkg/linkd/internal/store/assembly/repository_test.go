@@ -25,7 +25,7 @@ func TestElasticsearchConnectionBudgetBounds(t *testing.T) {
 	}{
 		{requested: 1, want: minElasticsearchConnectionsPerHost},
 		{requested: 17, want: 17},
-		{requested: maxElasticsearchConnectionsPerHost + 1, want: maxElasticsearchConnectionsPerHost},
+		{requested: maxElasticsearchConnectionsPerHost + 1, want: maxElasticsearchConnectionsPerHost + 1},
 	} {
 		if got := elasticsearchConnectionBudget(test.requested); got != test.want {
 			t.Fatalf("elasticsearchConnectionBudget(%d)=%d, want %d", test.requested, got, test.want)

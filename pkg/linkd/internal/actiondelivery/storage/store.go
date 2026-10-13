@@ -30,6 +30,8 @@ import (
 	"linkd/internal/actiondelivery"
 	"linkd/internal/config"
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
+	"linkd/internal/store"
 	es "linkd/internal/store/elasticsearch"
 )
 
@@ -73,8 +75,8 @@ func open(ctx context.Context, c config.StorageConfig, deployment string, initia
 			return nil, err
 		}
 		s.db = db
-		db.SetMaxOpenConns(8)
-		db.SetMaxIdleConns(4)
+		db.SetMaxOpenConns(0)
+		db.SetMaxIdleConns(64)
 		db.SetConnMaxLifetime(30 * time.Minute)
 		if !initialize {
 			if err := db.PingContext(ctx); err != nil {
@@ -110,7 +112,7 @@ func open(ctx context.Context, c config.StorageConfig, deployment string, initia
 		return nil, actiondelivery.ErrInvalid
 	}
 	x := c.Elasticsearch
-	tc := es.HTTPTransportConfig{Addresses: x.Addresses, APIKey: x.APIKey, MaxConnectionsPerHost: 8}
+	tc := es.HTTPTransportConfig{Addresses: x.Addresses, APIKey: x.APIKey, MaxConnectionsPerHost: 0}
 	if x.BasicAuth != nil {
 		tc.BasicUsername = x.BasicAuth.Username
 		tc.BasicPassword = x.BasicAuth.Password
@@ -139,7 +141,7 @@ func open(ctx context.Context, c config.StorageConfig, deployment string, initia
 		exists := code == 400 && json.Unmarshal(raw, &failure) == nil && failure.Error.Type == "resource_already_exists_exception"
 		if !exists {
 			tr.Close()
-			return nil, fmt.Errorf("initialize action tasks: HTTP %d", code)
+			return nil, fmt.Errorf("initialize action tasks: %w", processingerror.HTTPStatus(code))
 		}
 	}
 	return s, nil
@@ -195,7 +197,7 @@ func (s *Store) Get(ctx context.Context, tenant, id string) (actiondelivery.Stor
 		return actiondelivery.StoredTask{}, actiondelivery.ErrNotFound
 	}
 	if code != 200 {
-		return actiondelivery.StoredTask{}, fmt.Errorf("read action task: HTTP %d", code)
+		return actiondelivery.StoredTask{}, fmt.Errorf("read action task: %w", processingerror.HTTPStatus(code))
 	}
 	var hit esHit
 	if json.Unmarshal(raw, &hit) != nil {
@@ -293,7 +295,11 @@ func (s *Store) Put(ctx context.Context, t actiondelivery.Task, expected string)
 		}
 		return actiondelivery.StoredTask{Task: t.Clone(), Version: strconv.FormatUint(version, 10)}, nil
 	}
-	query := url.Values{"refresh": {"wait_for"}}
+	// 首次入队及恢复未结清屏障必须搜索可见；普通进度推进仅需 CAS 持久确认。
+	query := url.Values{}
+	if current == nil || (!current.Unsettled() && t.Unsettled()) {
+		query.Set("refresh", "wait_for")
+	}
 	if expected == "" {
 		query.Set("op_type", "create")
 	} else {
@@ -316,7 +322,7 @@ func (s *Store) Put(ctx context.Context, t actiondelivery.Task, expected string)
 		return actiondelivery.StoredTask{}, actiondelivery.ErrConflict
 	}
 	if code != 200 && code != 201 {
-		return actiondelivery.StoredTask{}, fmt.Errorf("write action task: HTTP %d", code)
+		return actiondelivery.StoredTask{}, fmt.Errorf("write action task: %w", processingerror.HTTPStatus(code))
 	}
 	var h esHit
 	if json.Unmarshal(response, &h) != nil || h.Index != s.index || h.ID != t.Request.TenantID+"-"+t.ID || h.Seq < 0 || h.Term < 1 {
@@ -325,7 +331,7 @@ func (s *Store) Put(ctx context.Context, t actiondelivery.Task, expected string)
 	return actiondelivery.StoredTask{Task: t.Clone(), Version: fmt.Sprintf("%d:%d", h.Seq, h.Term)}, nil
 }
 
-// List 只读取最多 16 条完整任务；work-only 通过同次 CAS 的派生索引跳过全部已完成和失败历史。
+// List 只读取显式页预算内的完整任务；work-only 通过同次 CAS 的派生索引跳过全部已完成和失败历史。
 // 按 ID 单调游标扫描，新增到旧游标之前的记录下一轮发现，不宣称跨对象一致快照。
 func (s *Store) List(ctx context.Context, q actiondelivery.Query) ([]actiondelivery.StoredTask, error) {
 	if err := q.Validate(); err != nil {
@@ -385,7 +391,7 @@ func (s *Store) List(ctx context.Context, q actiondelivery.Query) ([]actiondeliv
 			return nil, err
 		}
 		if code != 200 {
-			return nil, fmt.Errorf("list action tasks: HTTP %d", code)
+			return nil, fmt.Errorf("list action tasks: %w", processingerror.HTTPStatus(code))
 		}
 		var response struct {
 			TimedOut bool `json:"timed_out"`
@@ -431,7 +437,7 @@ func (s *Store) request(ctx context.Context, method, path string, body []byte) (
 	defer func() { _ = response.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 32<<20+1))
 	if len(raw) > 32<<20 {
-		return response.StatusCode, nil, actiondelivery.ErrInvalid
+		return response.StatusCode, nil, store.ErrPageTooLarge
 	}
 	return response.StatusCode, raw, err
 }

@@ -227,7 +227,7 @@ func applyEventResult(current StoredEvent, result EventResult, snapshot bool) (d
 	if err := ValidatePolicyDecision(current.Event, current.Processing.PolicyContext, result.PolicyDecision); err != nil {
 		return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
-	if current.Processing.Plan != nil && result.State != domain.EventProcessStateUnprocessed {
+	if current.Processing.Plan != nil && result.State != domain.EventProcessStateUnprocessed && (result.State != domain.EventProcessStateRejected || result.Outcome != "processing_failed") {
 		plan := current.Processing.Plan
 		if result.State != plan.State || result.Outcome != plan.Outcome || result.ReasonCode != plan.ReasonCode || !slices.Equal(result.RelatedAlertIDs, plan.RelatedAlertIDs) || !reflect.DeepEqual(result.Evaluations, plan.Evaluations) || !reflect.DeepEqual(result.PolicyDecision, plan.PolicyDecision) {
 			return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: final result differs from saved plan", ErrInvalidTransition)

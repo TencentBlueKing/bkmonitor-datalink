@@ -61,6 +61,76 @@ func TestWriteBatchWaitBoundary(t *testing.T) {
 	}
 }
 
+func TestWriteBatchMoreThan32ConcurrentRequests(t *testing.T) {
+	const concurrent = 64
+	started := make(chan struct{}, concurrent)
+	release := make(chan struct{})
+	releaseAll := sync.OnceFunc(func() { close(release) })
+	defer releaseAll()
+	b := newTestWriteBatch(t, transportFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/_mget" && req.URL.Path != "/_bulk" {
+			return nil, fmt.Errorf("request bypassed aggregation: %s", req.URL)
+		}
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		}
+		if req.URL.Path == "/_mget" {
+			return echoBatchRead(req)
+		}
+		return batchHTTPResponse(200, []byte(`{"items":[{"create":{"status":201}}]}`)), nil
+	}), func(c *WriteBatchConfig) {
+		c.MaxOperations = 1
+		c.Wait, c.ReadWait = 0, 0
+		c.MaxCalls, c.MaxConcurrentBatches = concurrent, concurrent
+		c.Timeout = 5 * time.Second
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, concurrent)
+	for i := range concurrent {
+		go func() {
+			method, path := http.MethodPut, fmt.Sprintf("/alerts/_create/%d?refresh=false", i)
+			if i%2 == 0 {
+				method, path = http.MethodGet, fmt.Sprintf("/events/_doc/%d?realtime=true", i)
+			}
+			req, err := http.NewRequestWithContext(ctx, method, path, strings.NewReader(`{}`))
+			if err == nil {
+				var response *http.Response
+				response, err = b.Perform(req)
+				if response != nil {
+					_ = response.Body.Close()
+					if response.StatusCode != 200 && response.StatusCode != 201 {
+						err = fmt.Errorf("unexpected status %d", response.StatusCode)
+					}
+				}
+			}
+			done <- err
+		}()
+	}
+	// 所有请求都进入物理 transport 后才返回，证明并发并非分两轮各 32 个执行。
+	for n := range concurrent {
+		select {
+		case <-started:
+		case <-ctx.Done():
+			t.Fatalf("only %d/%d read/write batches started before any response", n, concurrent)
+		}
+	}
+	releaseAll()
+	for range concurrent {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal("concurrent batches did not finish")
+		}
+	}
+}
+
 func TestWriteBatchAlreadyQueuedCallsFillBatch(t *testing.T) {
 	for _, wait := range []time.Duration{0, 2 * time.Millisecond, 100 * time.Millisecond, 256 * time.Millisecond} {
 		t.Run(wait.String(), func(t *testing.T) {

@@ -37,7 +37,7 @@ type ActionWorkStore interface {
 
 // Validate 限制游标作用域和页大小。
 func (c ActionWorkCursor) Validate(limit int) error {
-	if limit < 1 || limit > 16 {
+	if limit < 1 {
 		return fmt.Errorf("%w: action work budget", ErrInvalidArgument)
 	}
 	if c == (ActionWorkCursor{}) {

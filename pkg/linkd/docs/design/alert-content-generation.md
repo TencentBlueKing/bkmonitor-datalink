@@ -1,5 +1,7 @@
 # Alert.content 在创建阶段生成的实施草案
 
+> 2026-10-13 错误处理策略更新：普通内容/逻辑错误与 panic 记录消息失败后移出 Mailbox，不再以这类消息错误暂停整个来源；消息错误默认无重试白名单，显式可重试最多三次。本文下方的“确定性失败阻断/修复后自动重放”属于历史行为，当前策略见[运行容量与失败隔离](runtime-capacity-and-recovery.md)。既有 blocked 任务的受控恢复入口保留。
+
 > 状态：本轮可用事实范围的实现与验证已完成；全类型线上验收和来源切换尚未完成。配置 Reader、FactsResolver、创建前入口、content_mode、Display 内容保留、opening Event 预览以及确定性失败暂停/恢复已接入。Threshold/Ping 已完成源码模板对照；先后两次共 32 条真实 Threshold 消息通过版本绑定、描述对照、本地 Alert 入库/重投及只读预览检查，含 target、data、日志关键字、K8s 配置上下文及明确的 APM 样本。真实 Redis 上的失败暂停、管理恢复和队列继续处理验证通过。缺少稳定检测事实或真实样本的组合按用户要求记录并跳过。KAC 固定来源名的实现偏差已修复，完整 `make check` 通过；默认 source 模式继续复制来源内容。调研日期：2026-09-30；Linkd 工作树基线 `ac1331de`，alarmd 二阶段补充核对 `origin/master@8b4c5622`（含 `8c3c859f`），Kingeye `e34c323d`，bk-monitor `51c834dc6`。未切换工作树或修改 alarmd。源码证据及现状见[调研记录](../research/2026-09-30-alert-content-generation.md)。以下历史执行记录保留当时结果，以最新验证小节判断当前状态。
 
 > 2026-10-12 已确认的历史积压处理例外：确切策略发布版本在当前发布表中已不可得时，内容 Reader 返回 `publication_missing`，Lifecycle 可使用该 Event 自带的非空原始 content，并记录 `source_fallback` WARN 诊断。不得借用最新策略生成历史文案。降级内容继续校验并冻结进 EventPlan；发布歧义、身份/模板错误、缺失检测事实、来源 Release 缺失与外部依赖故障不降级。该例外取代下文“所有缺失均阻断”的历史表述，运行契约见 [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。

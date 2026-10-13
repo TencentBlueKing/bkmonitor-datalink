@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	// MaxPendingPerTenant 为每租户未完成自动待办上限；失败历史保留但不占准入名额。
-	MaxPendingPerTenant = 1024
+	// WorkCountSampleLimit 是独立诊断计数的采样上限，不参与消息或任务准入。
+	WorkCountSampleLimit = 1024
 	// MaxAttempts 为每个人工恢复周期的失败/发送尝试上限，正常等待投影不消耗次数。
-	MaxAttempts = 8
+	MaxAttempts = 3
 	// MaxTaskBytes 包含固定请求、两个有界确认及最近恢复记录。
 	MaxTaskBytes = MaxRequestBytes + 16<<10
 )
@@ -80,7 +80,7 @@ type StoredTask struct {
 	Version string
 }
 
-// Query 提供租户管理或内部待办扫描，最多 16 项，After 为上一条任务 ID。
+// Query 提供租户管理或内部待办扫描，按显式预算分页，After 为上一条任务 ID。
 type Query struct {
 	// TenantID 对管理查询必填，内部待办扫描可为空。
 	TenantID string
@@ -88,7 +88,7 @@ type Query struct {
 	After string
 	// WorkOnly 仅枚举自动待办；失败任务另由目标顺序查询保留屏障。
 	WorkOnly bool
-	// Limit 必须处于 1..16。
+	// Limit 必须为正数，载荷仍受响应字节预算保护。
 	Limit int
 }
 
@@ -98,7 +98,6 @@ type Store interface {
 	Get(context.Context, string, string) (StoredTask, error)
 	Put(context.Context, Task, string) (StoredTask, error)
 	List(context.Context, Query) ([]StoredTask, error)
-	CountWork(context.Context, string, int) (int, error)
 	// ConfirmVisible 确认此不可变任务已进入排序查询；结果不确定后的重复生产也必须调用。
 	ConfirmVisible(context.Context, Task) error
 	OldestUnsettled(context.Context, string, string, string) (StoredTask, error)
@@ -167,7 +166,7 @@ func (t Task) Validate() error {
 	if json.Unmarshal(q.Alert, &a) != nil || a.SourceID != t.SourceID {
 		return ErrInvalid
 	}
-	if p.UpdatedAt.IsZero() || p.UpdatedAt.Before(t.CreatedAt) || p.Attempts < 0 || p.Attempts > MaxAttempts || p.TotalAttempts < int64(p.Attempts) || p.TotalAttempts >= 1<<53 || p.Generation < 1 || p.Generation >= 1<<53 || (p.Generation == 1) != (p.LastRetry == nil) {
+	if p.UpdatedAt.IsZero() || p.UpdatedAt.Before(t.CreatedAt) || p.Attempts < 0 || p.TotalAttempts < int64(p.Attempts) || p.TotalAttempts >= 1<<53 || p.Generation < 1 || p.Generation >= 1<<53 || (p.Generation == 1) != (p.LastRetry == nil) {
 		return ErrInvalid
 	}
 	if p.LastRetry != nil {
@@ -195,7 +194,7 @@ func (t Task) Validate() error {
 			return ErrInvalid
 		}
 	case "retry":
-		if p.Attempts < 1 || p.Attempts >= MaxAttempts || p.DueAt == nil || p.LeaseUntil != nil || p.Receipt != nil || (p.ErrorCode == "" || p.ErrorCode == "projection_pending" || p.ErrorCode == "superseded_by_terminal") {
+		if p.Attempts < 1 || p.DueAt == nil || p.LeaseUntil != nil || p.Receipt != nil || (p.ErrorCode == "" || p.ErrorCode == "projection_pending" || p.ErrorCode == "superseded_by_terminal") {
 			return ErrInvalid
 		}
 	case "sending":
@@ -266,6 +265,10 @@ func ValidateWrite(current *Task, next Task) error {
 	sameAttempts := p.Attempts == c.Attempts && p.TotalAttempts == c.TotalAttempts
 	ready := c.DueAt != nil && !p.UpdatedAt.Before(*c.DueAt) || c.LeaseUntil != nil && !p.UpdatedAt.Before(*c.LeaseUntil)
 	switch {
+	// 升级前已超过三次的待重试记录可直接终结，不再额外发送。
+	case c.State == "retry" && p.State == "failed" && c.Attempts >= MaxAttempts && p.ErrorCode == "attempt_interrupted" && sameCycle && sameAttempts:
+		return nil
+
 	case current.Unsettled() && p.State == "skipped" && sameCycle && sameAttempts:
 		if c.State == "sending" && p.Receipt == nil && !ready {
 			return ErrInvalid
@@ -296,7 +299,7 @@ func ValidateWrite(current *Task, next Task) error {
 
 // Validate 限制管理范围与扫描页；跨租户扫描只允许内部待办模式。
 func (q Query) Validate() error {
-	if q.Limit < 1 || q.Limit > 16 || q.TenantID != "" && domain.ValidateIdentityPart("tenant", q.TenantID, 64) != nil || q.After != "" && !validHash(q.After) || q.TenantID == "" && !q.WorkOnly {
+	if q.Limit < 1 || q.TenantID != "" && domain.ValidateIdentityPart("tenant", q.TenantID, 64) != nil || q.After != "" && !validHash(q.After) || q.TenantID == "" && !q.WorkOnly {
 		return ErrInvalid
 	}
 	return nil

@@ -32,6 +32,7 @@ import (
 	"linkd/internal/projection/redislock"
 	"linkd/internal/store"
 	"linkd/internal/store/storetest"
+	"linkd/internal/taskgroup"
 	"linkd/internal/telemetry"
 	"linkd/internal/testkit/projectionfixture"
 )
@@ -211,7 +212,7 @@ func runAutonomousContract(t *testing.T, s *Store, reopen func() *Store) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		runner, err := projection.NewRunner(work, tasks, service, runtime.ProjectionRunnerObserver(nil), time.Now)
+		runner, err := projection.NewRunner(work, tasks, service, runtime.ProjectionRunnerObserver(nil), time.Now, taskgroup.WorkConfig{Concurrency: 4, BatchSize: 16})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -278,7 +279,7 @@ func runAutonomousContract(t *testing.T, s *Store, reopen func() *Store) {
 		t.Fatal(err)
 	}
 	allowBad.Store(true)
-	retrier, err := projection.NewRetrier(restored, locker, time.Now)
+	retrier, err := projection.NewRetrier(restored, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +337,7 @@ func runAutonomousContract(t *testing.T, s *Store, reopen func() *Store) {
 	// 精确 GET 可以先观察到成功 CAS；等工作索引也完成可见性确认，再取消运行器，
 	// 避免测试在 refresh=wait_for 尚未返回时主动打断写方，随后把保守旧计数误判为残留任务。
 	projectionUntil(t, "completed tasks leave searchable work index", func() bool {
-		n, err := restored.CountWork(t.Context(), a.BKTenantID, projection.MaxPendingPerTenant)
+		n, err := restored.CountWork(t.Context(), a.BKTenantID, projection.WorkCountSampleLimit)
 		return err == nil && n == 0
 	})
 	stopResumed()
@@ -355,7 +356,7 @@ func runAutonomousContract(t *testing.T, s *Store, reopen func() *Store) {
 	if mainCalls.Load() != 3 || badCalls.Load() != 2 {
 		t.Fatal("unexpected receiver attempts", mainCalls.Load(), badCalls.Load())
 	}
-	if n, err := restored.CountWork(t.Context(), a.BKTenantID, projection.MaxPendingPerTenant); err != nil || n != 0 {
+	if n, err := restored.CountWork(t.Context(), a.BKTenantID, projection.WorkCountSampleLimit); err != nil || n != 0 {
 		t.Fatal("completed queue capacity not released", n, err)
 	}
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+runtime.PrometheusListenAddress()+"/metrics", nil)

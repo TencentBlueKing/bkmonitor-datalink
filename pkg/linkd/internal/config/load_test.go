@@ -124,7 +124,7 @@ func TestLoadLayers(t *testing.T) {
 			}
 			test.want.Dispatch.JWT.Username = "admin"
 			test.want.Severity = DefaultSeverityConfig()
-			test.want.Cleaner = DefaultCleanerRuntimeConfig()
+			test.want.Cleaner = DefaultCleanerRuntimeConfig().WithDefaults()
 			if !reflect.DeepEqual(cfg, test.want) {
 				t.Fatalf("load() = %#v, want %#v", cfg, test.want)
 			}
@@ -380,14 +380,14 @@ func TestLoadLifecycleWithDefaults(t *testing.T) {
 		lifecycle.Mailbox.Backpressure.QueryTimeoutSeconds != defaultMailboxBackpressureQueryTimeout ||
 		lifecycle.Signal.MaxBatchMessages != defaultSignalMaxBatchMessages ||
 		lifecycle.Signal.MaxInflightMessages != 64 ||
-		lifecycle.Mailbox.Backpressure.HighWatermark != 256 ||
-		lifecycle.Mailbox.Backpressure.LowWatermark != 128 ||
+		lifecycle.Mailbox.Backpressure.HighWatermark != 0 ||
+		lifecycle.Mailbox.Backpressure.LowWatermark != 0 ||
 		lifecycle.Signal.CreateGroup == nil || !*lifecycle.Signal.CreateGroup {
 		t.Fatalf("load() lifecycle defaults = %#v", lifecycle)
 	}
 	runtimeConfig := lifecycle.RuntimeConfig()
 	if runtimeConfig.WorkerCount != 4 || runtimeConfig.MaxInflightMessages != 64 ||
-		runtimeConfig.MaxRetryMessages != 4 {
+		runtimeConfig.MaxRetryMessages != runtimeConfig.MaxInflightMessages {
 		t.Fatalf("load() lifecycle runtime = %#v", lifecycle)
 	}
 }
@@ -413,7 +413,7 @@ func TestLoadRejectsInvalidLifecycle(t *testing.T) {
 		{
 			name: "batch memory bound",
 			override: `  signal:
-    max_batch_messages: 4096
+    max_batch_messages: 9223372036854775807
     max_message_bytes: 1048576
 `,
 			wantError: "batch capacity",

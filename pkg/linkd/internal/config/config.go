@@ -66,7 +66,7 @@ func (c Config) Validate() error {
 		return err
 	}
 	workers, bytes := c.Worker.Limits()
-	if workers < 1 || workers > 65536 || bytes < 1 || bytes > 64<<30 {
+	if workers < 0 || bytes < 0 {
 		return fmt.Errorf("invalid worker resource budgets")
 	}
 	if err := c.Dispatch.Validate(); err != nil {

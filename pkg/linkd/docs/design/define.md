@@ -98,7 +98,7 @@ EventProcessing 是存储层与 Lifecycle 之间的处理元数据，不属于 E
 | `state`        | `unprocessed/accepted/suppressed/orphaned/rejected` | Event 生命周期处理状态                                                                                                                                    |
 | `outcome`      | 终态必填                                            | 具体裁决结果，例如 `alert_created`、`alert_updated`、`alert_severity_changed`、`alert_rotated`、`alert_recovered`、`alert_closed`、`alert_suppressed`、`event_orphaned`、`rejected` |
 | `reason_code`  | 可空                                                | 稳定低基数原因，例如 active Alert 不存在、等级升级或等级抑制                                                                                              |
-| `plan` | 仅 unprocessed 可携带 | 冻结升级策略、最多两项 Alert 目标快照、稳定操作流水和逐级裁决；终态清除 |
+| `plan` | unprocessed 或 processing_failed 诊断 | 冻结升级策略、最多两项 Alert 目标快照、稳定操作流水和逐级裁决；终态清除 |
 | `evaluations` | Lifecycle 终态写入 | 每项包含 severity、action、state、outcome、reason_code 和 related_alert_ids；不覆盖 Event.evaluations |
 | `processed_at` | 终态必填                                            | Lifecycle 完成裁决的 UTC 时间                                                                                                                             |
 
@@ -107,9 +107,9 @@ EventProcessing 是存储层与 Lifecycle 之间的处理元数据，不属于 E
 在 Enrich 完成后，`policy_context` 通过独立 Event Result CAS 保存首次处理时间、精确策略版本引用及配置依赖跳过原因；不允许更新或清空。
 `policy_decision` 保存本次抑制和屏蔽裁决：活动 Alert 绕过原因，或逐等级的策略引用、计数、阈值、代次和跳过原因。
 不同等级可能被聚合到不同主 Alert，事件总体关联列表上限对齐 32 个 evaluation；单级关联最多 2 个（升级终结旧 Alert 并创建新 Alert）。
-裁决先进入不可变 Plan；最终结果必须与 Plan 一致。该字段不进入 Event 来源 JSON，不增加 Alert 生命周期枚举。
+裁决先进入不可变 Plan；成功最终结果必须与 Plan 一致。普通消息处理失败可转 rejected/processing_failed 并保留原 Plan，仅供诊断。该字段不进入 Event 来源 JSON，不增加 Alert 生命周期枚举。
 
-事件终态清除 plan，`EventProcessing.evaluations` 保存每级 severity/action/state/outcome/reason_code/related_alert_ids。
+成功裁决终态清除 plan；rejected/processing_failed 可保留原 Plan 供部分副作用诊断，终态不再执行它。`EventProcessing.evaluations` 保存每级 severity/action/state/outcome/reason_code/related_alert_ids。
 整体 state 按有效生命周期裁决为 accepted、触发被抑制为 suppressed、其余为 orphaned 聚合；明细分别保留。
 同级已放行生命周期的重复触发记录 suppressed/duplicate_trigger，仍推进 Alert 最近事件和时间并输出状态快照，但不触发处置。
 升级优先于旧级别终结，后者明细记录 suppressed/evaluation_superseded（reason_code=severity_upgrade）；不匹配活动级别的终结为 orphaned。

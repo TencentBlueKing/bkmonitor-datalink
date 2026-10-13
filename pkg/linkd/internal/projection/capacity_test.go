@@ -35,65 +35,32 @@ func fillProjectionTasks(t *testing.T, m *taskMemory, a domain.Alert, count int)
 	}
 }
 
-func TestPendingCapacityPreservesRetriesScopesAndUnconfirmedWatermarks(t *testing.T) {
-	s, tasks, repo, _, sender, _, a := projectionFixture(t)
+func TestBacklogDoesNotBlockProductionOrExplicitRecovery(t *testing.T) {
+	s, tasks, _, _, sender, _, a := projectionFixture(t)
+	fillProjectionTasks(t, tasks, a, 2048)
 	first, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "kac")
 	if err != nil {
 		t.Fatal(err)
 	}
-	fillProjectionTasks(t, tasks, a, MaxPendingPerTenant-1)
-	if _, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "audit"); !errors.Is(err, ErrCapacity) {
-		t.Fatal("new task passed full budget", err)
-	}
-	retry, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "kac")
-	if err != nil || retry.Version != first.Version {
-		t.Fatal("full queue blocked duplicate", err)
-	}
-	row, err := repo.GetAlertCurrent(t.Context(), a.BKTenantID, a.AlertID)
-	if err != nil || row.Alert.Projection.Targets["audit"].SyncedRevision != 0 {
-		t.Fatal("capacity failure acknowledged state", err)
-	}
 	sender.err = Failure{"remote_unauthorized", false}
 	failed, err := s.Deliver(t.Context(), a.BKTenantID, first.Task.ID)
 	if err != nil || failed.Task.Progress.State != "failed" {
-		t.Fatal(err)
+		t.Fatal(failed, err)
 	}
-	audit, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "audit")
-	if err != nil {
-		t.Fatal("completed work did not release budget", err)
-	}
-	if _, err := s.Retry(t.Context(), RetryCommand{TenantID: a.BKTenantID, TaskID: failed.Task.ID, ExpectedVersion: failed.Version, OperationID: "manual", OperatorID: "tester", Reason: "恢复测试投影"}); !errors.Is(err, ErrCapacity) {
-		t.Fatal("manual retry exceeded budget", err)
-	}
-	duplicate, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "kac")
-	if err != nil || duplicate.Task.Progress.State != "failed" {
-		t.Fatal("failed task was recreated", err)
-	}
-	other := a.Clone()
-	other.BKTenantID = "other"
-	if _, err := repo.CreateAlert(t.Context(), other); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Produce(t.Context(), other.BKTenantID, other.AlertID, "kac"); err != nil {
-		t.Fatal("capacity crossed tenants", err)
-	}
-	sender.err = nil
-	if _, err := s.Deliver(t.Context(), a.BKTenantID, audit.Task.ID); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := s.Retry(t.Context(), RetryCommand{TenantID: a.BKTenantID, TaskID: failed.Task.ID, ExpectedVersion: failed.Version, OperationID: "manual", OperatorID: "tester", Reason: "恢复测试投影"})
+	command := RetryCommand{TenantID: a.BKTenantID, TaskID: first.Task.ID, ExpectedVersion: failed.Version, OperationID: "restore", OperatorID: "tester", Reason: "receiver restored"}
+	restored, err := s.Retry(t.Context(), command)
 	if err != nil || restored.Task.Progress.Generation != 2 {
-		t.Fatal(err)
+		t.Fatal(restored, err)
 	}
-	again, err := s.Retry(t.Context(), RetryCommand{TenantID: a.BKTenantID, TaskID: failed.Task.ID, ExpectedVersion: failed.Version, OperationID: "manual", OperatorID: "tester", Reason: "恢复测试投影"})
+	again, err := s.Retry(t.Context(), command)
 	if err != nil || again.Version != restored.Version {
-		t.Fatal("full capacity broke stable retry", err)
+		t.Fatal("idempotent retry", err)
 	}
 }
 
-func TestConcurrentProducerInstancesCannotOverfillTenantBudget(t *testing.T) {
+func TestConcurrentProducerInstancesCanPassFormerTenantLimit(t *testing.T) {
 	first, tasks, repo, resolver, sender, now, a := projectionFixture(t)
-	fillProjectionTasks(t, tasks, a, MaxPendingPerTenant-1)
+	fillProjectionTasks(t, tasks, a, WorkCountSampleLimit-1)
 	for i := range 2 {
 		next := a.Clone()
 		next.AlertID = fmt.Sprintf("concurrent-%d", i)
@@ -127,8 +94,8 @@ func TestConcurrentProducerInstancesCannotOverfillTenantBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	n, err := tasks.CountWork(t.Context(), a.BKTenantID, MaxPendingPerTenant+1)
-	if err != nil || success != 1 || n != MaxPendingPerTenant {
+	n, err := tasks.CountWork(t.Context(), a.BKTenantID, WorkCountSampleLimit+1)
+	if err != nil || success != 2 || n != WorkCountSampleLimit+1 {
 		t.Fatal("budget raced", success, n, err)
 	}
 }
@@ -141,15 +108,15 @@ type failingCount struct {
 
 func (f failingCount) CountWork(context.Context, string, int) (int, error) { return f.value, f.err }
 
-func TestProducerRejectsUnknownCapacityBeforeCreatingTask(t *testing.T) {
-	for _, f := range []failingCount{{value: -1}, {value: MaxPendingPerTenant + 1}, {err: errors.New("count unavailable")}} {
+func TestProducerDoesNotDependOnTenantCount(t *testing.T) {
+	for _, f := range []failingCount{{value: -1}, {value: WorkCountSampleLimit + 1}, {err: errors.New("count unavailable")}} {
 		s, tasks, _, _, _, _, a := projectionFixture(t)
 		f.Store = tasks
 		s.tasks = f
-		if _, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "kac"); err == nil {
-			t.Fatal("invalid capacity accepted")
+		if _, err := s.Produce(t.Context(), a.BKTenantID, a.AlertID, "kac"); err != nil {
+			t.Fatal("count should not gate persistence", err)
 		}
-		if len(tasks.rows) != 0 {
+		if len(tasks.rows) != 1 {
 			t.Fatal("count failure created task")
 		}
 	}

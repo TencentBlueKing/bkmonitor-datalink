@@ -38,10 +38,10 @@ var (
 )
 
 const (
-	// MaxPendingPerTenant 限制每租户 pending/sending/retry/delivered 总量；历史 failed/succeeded 仍保留。
-	MaxPendingPerTenant = 1024
+	// WorkCountSampleLimit 是独立诊断计数的采样上限，不参与消息或任务准入。
+	WorkCountSampleLimit = 1024
 	// MaxAttempts 是一次自动重试周期的上限；耗尽后保留 failed，人工重试开启新周期。
-	MaxAttempts = 8
+	MaxAttempts = 3
 	// MaxTaskBytes 包含一个业务快照与有界任务信封，不允许嵌入无限错误历史。
 	MaxTaskBytes = MaxSnapshotBytes + 16<<10
 )
@@ -94,7 +94,7 @@ type StoredTask struct {
 	Version string
 }
 
-// Query 提供控制面待办扫描或租户管理查询；每页 1..16 项，游标是上一条任务 ID。
+// Query 提供控制面待办扫描或租户管理查询；按显式预算分页，游标是上一条任务 ID。
 type Query struct {
 	// TenantID 对管理查询必填；内部全局工作扫描可留空。
 	TenantID string
@@ -102,7 +102,7 @@ type Query struct {
 	After string
 	// WorkOnly 筛选尚未完成的持久任务，不包括 failed。
 	WorkOnly bool
-	// Limit 必须为 1..16。
+	// Limit 必须为正数，载荷仍受响应字节预算保护。
 	Limit int
 }
 
@@ -113,7 +113,6 @@ type Store interface {
 	Put(context.Context, Task, string) (StoredTask, error)
 	List(context.Context, Query) ([]StoredTask, error)
 	// CountWork 在租户准入租约内有界计数，达到 limit 返回 limit；不能把部分搜索失败当作低计数。
-	CountWork(context.Context, string, int) (int, error)
 }
 
 // TaskID 按租户、Alert、目标及原请求版本定位持久任务，不使用回执中的远端版本。
@@ -189,7 +188,7 @@ func (t Task) Validate() error {
 		return ErrInvalid
 	}
 	p := t.Progress
-	if p.UpdatedAt.IsZero() || p.UpdatedAt.Before(t.CreatedAt) || p.Generation < 1 || p.Generation >= 1<<53 || p.Attempts < 0 || p.Attempts > MaxAttempts ||
+	if p.UpdatedAt.IsZero() || p.UpdatedAt.Before(t.CreatedAt) || p.Generation < 1 || p.Generation >= 1<<53 || p.Attempts < 0 ||
 		p.TotalAttempts < int64(p.Attempts) || p.TotalAttempts >= 1<<53 {
 		return ErrInvalid
 	}
@@ -211,7 +210,7 @@ func (t Task) Validate() error {
 			return ErrInvalid
 		}
 	case "retry":
-		if p.Attempts < 1 || p.Attempts >= MaxAttempts || p.DueAt == nil || p.LeaseUntil != nil || p.Receipt != nil || p.ErrorCode == "" {
+		if p.Attempts < 1 || p.DueAt == nil || p.LeaseUntil != nil || p.Receipt != nil || p.ErrorCode == "" {
 			return ErrInvalid
 		}
 	case "sending":
@@ -265,6 +264,10 @@ func ValidateWrite(current *Task, next Task) error {
 	sameCycle := p.Generation == c.Generation && reflect.DeepEqual(p.LastRetry, c.LastRetry)
 	sameAttempts := p.Attempts == c.Attempts && p.TotalAttempts == c.TotalAttempts
 	switch {
+	// 升级前已超过三次的待重试记录可直接终结，不再额外发送。
+	case c.State == "retry" && p.State == "failed" && c.Attempts >= MaxAttempts && p.ErrorCode == "attempt_interrupted" && sameCycle && sameAttempts:
+		return nil
+
 	case (c.State == "pending" || c.State == "retry" || c.State == "sending") && p.State == "sending":
 		ready := c.DueAt != nil && !p.UpdatedAt.Before(*c.DueAt) || c.LeaseUntil != nil && !p.UpdatedAt.Before(*c.LeaseUntil)
 		if sameCycle && ready && p.Attempts == c.Attempts+1 && p.TotalAttempts == c.TotalAttempts+1 {
@@ -288,7 +291,7 @@ func ValidateWrite(current *Task, next Task) error {
 
 // Validate 拒绝越过租户作用域的管理游标和过大的工作页。
 func (q Query) Validate() error {
-	if q.Limit < 1 || q.Limit > 16 || (q.TenantID != "" && domain.ValidateIdentityPart("tenant", q.TenantID, 64) != nil) || (q.After != "" && !validHash(q.After)) {
+	if q.Limit < 1 || (q.TenantID != "" && domain.ValidateIdentityPart("tenant", q.TenantID, 64) != nil) || (q.After != "" && !validHash(q.After)) {
 		return ErrInvalid
 	}
 	if q.TenantID == "" && !q.WorkOnly {

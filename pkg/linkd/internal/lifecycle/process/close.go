@@ -158,7 +158,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	}
 	observed := metrics.ObserveRepository(runtime.Repository)
 	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: configuredCleanupRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
-	opts = append(opts, lifecycle.WithActionRecorder(configuredActionRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment, client: client}))
+	opts = append(opts, lifecycle.WithActionRecorder(configuredActionRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}))
 	if configure != nil {
 		opts = append(opts, configure(observed)...)
 	}

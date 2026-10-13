@@ -113,7 +113,7 @@ func runActionWorkContract(t *testing.T, factory Factory) {
 		if _, err = work.ListActionWork(ctx, store.ActionWorkCursor{}, 16); !errors.Is(err, context.Canceled) {
 			t.Fatal("cancel ignored", err)
 		}
-		for _, limit := range []int{0, 17} {
+		for _, limit := range []int{0, -1} {
 			if _, err = work.ListActionWork(t.Context(), store.ActionWorkCursor{}, limit); err == nil {
 				t.Fatal("invalid limit accepted")
 			}

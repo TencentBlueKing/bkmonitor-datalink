@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	defaultLifecycleConcurrency            = 32
+	defaultLifecycleConcurrency            = 256
 	defaultLifecycleProcessTimeoutSeconds  = 30
 	defaultLifecycleRetryMaxAttempts       = 3
 	defaultLifecycleRetryMaxElapsedSeconds = 120
@@ -33,20 +33,15 @@ const (
 	defaultSignalMaxBatchMessages          = 64
 	defaultSignalMaxMessageBytes           = 64 << 10
 	defaultMailboxKeyPrefix                = "linkd:lifecycle:mailbox"
-	defaultMailboxMaxPending               = 128
+	defaultMailboxMaxPending               = 0
 	defaultMailboxMaxDrainEvents           = 128
 	defaultMailboxBackpressureCacheTTL     = 1
 	defaultMailboxBackpressureQueryTimeout = 1
-	defaultLifecycleInflightFactor         = 2
-	defaultMailboxBackpressureHighFactor   = 4
-	defaultMailboxBackpressureLowFactor    = 2
 	defaultLockKeyPrefix                   = "linkd:lifecycle:lock"
 	defaultLockTTLSeconds                  = 60
 	defaultLockRenewIntervalSeconds        = 20
 	defaultLockRetryDelayMilliseconds      = 500
 	defaultLockReleaseTimeoutSeconds       = 3
-	maxLifecycleBatchBytes                 = 64 << 20
-	maxLifecycleInflightBytes              = 256 << 20
 )
 
 // LifecycleConfig 描述 lifecycle 独立进程的消费、并发、锁和输出配置。
@@ -147,7 +142,7 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 	}
 	if c.Signal.MaxInflightMessages == 0 {
 		c.Signal.MaxInflightMessages = max(
-			c.Concurrency*defaultLifecycleInflightFactor,
+			c.Concurrency,
 			c.Signal.MaxBatchMessages,
 		)
 	}
@@ -168,12 +163,6 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 	}
 	if c.Mailbox.Backpressure.QueryTimeoutSeconds == 0 {
 		c.Mailbox.Backpressure.QueryTimeoutSeconds = defaultMailboxBackpressureQueryTimeout
-	}
-	if c.Mailbox.Backpressure.HighWatermark == 0 {
-		c.Mailbox.Backpressure.HighWatermark = int64(c.Signal.MaxInflightMessages * defaultMailboxBackpressureHighFactor)
-	}
-	if c.Mailbox.Backpressure.LowWatermark == 0 {
-		c.Mailbox.Backpressure.LowWatermark = int64(c.Signal.MaxInflightMessages * defaultMailboxBackpressureLowFactor)
 	}
 	if c.Lock.KeyPrefix == "" {
 		c.Lock.KeyPrefix = defaultLockKeyPrefix
@@ -201,8 +190,8 @@ func (c LifecycleConfig) Validate() error {
 		return fmt.Errorf("lifecycle.severity_upgrade_policy must be close_and_create or update_current")
 	}
 	c = c.WithDefaults()
-	if c.Concurrency < 1 || c.Concurrency > 1024 {
-		return fmt.Errorf("lifecycle.concurrency must be between 1 and 1024")
+	if c.Concurrency < 1 {
+		return fmt.Errorf("lifecycle.concurrency must be positive")
 	}
 	if c.ProcessTimeoutSeconds < 1 || c.ProcessTimeoutSeconds > 3600 {
 		return fmt.Errorf("lifecycle.process_timeout_seconds must be between 1 and 3600")
@@ -228,11 +217,11 @@ func (c LifecycleConfig) Validate() error {
 	if c.Signal.ClaimMinIdleSeconds <= c.ProcessTimeoutSeconds+c.RetryMaxElapsedSeconds {
 		return fmt.Errorf("lifecycle.signal.claim_min_idle_seconds must exceed process timeout plus retry elapsed")
 	}
-	if c.Signal.MaxBatchMessages < 1 || c.Signal.MaxBatchMessages > 4096 {
-		return fmt.Errorf("lifecycle.signal.max_batch_messages must be between 1 and 4096")
+	if c.Signal.MaxBatchMessages < 1 {
+		return fmt.Errorf("lifecycle.signal.max_batch_messages must be positive")
 	}
-	if c.Signal.MaxInflightMessages < c.Signal.MaxBatchMessages || c.Signal.MaxInflightMessages > 4096 {
-		return fmt.Errorf("lifecycle.signal.max_inflight_messages must be between max_batch_messages and 4096")
+	if c.Signal.MaxInflightMessages < c.Signal.MaxBatchMessages {
+		return fmt.Errorf("lifecycle.signal.max_inflight_messages must be at least max_batch_messages")
 	}
 	if c.Signal.MaxMessageBytes < 1 || c.Signal.MaxMessageBytes > 1<<20 {
 		return fmt.Errorf("lifecycle.signal.max_message_bytes must be between 1 and 1048576")
@@ -247,17 +236,17 @@ func (c LifecycleConfig) Validate() error {
 	if backpressure.QueryTimeoutSeconds < 1 || backpressure.QueryTimeoutSeconds > backpressure.CacheTTLSeconds {
 		return fmt.Errorf("lifecycle.mailbox.backpressure.query_timeout_seconds must be between 1 and cache_ttl_seconds")
 	}
-	if backpressure.LowWatermark <= 0 || backpressure.HighWatermark <= backpressure.LowWatermark {
+	if backpressure.HighWatermark < 0 || backpressure.LowWatermark < 0 || (backpressure.HighWatermark > 0 && backpressure.HighWatermark <= backpressure.LowWatermark) {
 		return fmt.Errorf("lifecycle.mailbox.backpressure watermarks must satisfy 0 < low_watermark < high_watermark")
 	}
 	batchBytes := int64(c.Signal.MaxBatchMessages) * int64(c.Signal.MaxMessageBytes)
-	if batchBytes > maxLifecycleBatchBytes {
-		return fmt.Errorf("lifecycle signal batch capacity must not exceed %d bytes", maxLifecycleBatchBytes)
+	if batchBytes/int64(c.Signal.MaxMessageBytes) != int64(c.Signal.MaxBatchMessages) {
+		return fmt.Errorf("lifecycle signal batch capacity overflows")
 	}
 	inflightMessages := c.Signal.MaxInflightMessages
 	inflightBytes := int64(inflightMessages) * int64(c.Signal.MaxMessageBytes)
-	if inflightBytes > maxLifecycleInflightBytes {
-		return fmt.Errorf("lifecycle signal inflight capacity must not exceed %d bytes", maxLifecycleInflightBytes)
+	if inflightBytes/int64(c.Signal.MaxMessageBytes) != int64(inflightMessages) {
+		return fmt.Errorf("lifecycle signal inflight capacity overflows")
 	}
 	if strings.TrimSpace(c.Lock.KeyPrefix) != c.Lock.KeyPrefix || len(c.Lock.KeyPrefix) > 256 {
 		return fmt.Errorf("lifecycle.lock.key_prefix must be at most 256 bytes without surrounding whitespace")
@@ -282,10 +271,8 @@ func (c LifecycleConfig) RuntimeConfig() consume.Config {
 	runtimeConfig.ProcessTimeout = time.Duration(c.ProcessTimeoutSeconds) * time.Second
 	runtimeConfig.RetryMaxAttempts = c.RetryMaxAttempts
 	runtimeConfig.RetryMaxElapsed = time.Duration(c.RetryMaxElapsedSeconds) * time.Second
-	runtimeConfig.MaxRetryMessages = min(
-		c.Concurrency,
-		max(runtimeConfig.MaxInflightMessages/2, 1),
-	)
+	// 已接管 Signal 都可能正常延后，容量必须覆盖整个在途预算。
+	runtimeConfig.MaxRetryMessages = runtimeConfig.MaxInflightMessages
 	return runtimeConfig
 }
 

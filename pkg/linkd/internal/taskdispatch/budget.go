@@ -69,7 +69,7 @@ func (r WorkerRuntime) budgetFor(role string, source config.EventSource) (TaskBu
 		}
 		return TaskBudget{Concurrency: effective.WorkerCount, InflightBytes: int64(effective.MaxInflightBytes)}, nil
 	case "lifecycle":
-		if r.Lifecycle == nil || r.Lifecycle.Concurrency < 1 || r.Lifecycle.Concurrency > 1024 || r.Lifecycle.InflightBytes < 1 || r.Lifecycle.InflightBytes > 256<<20 {
+		if r.Lifecycle == nil || r.Lifecycle.Concurrency < 1 || r.Lifecycle.InflightBytes < 1 {
 			return TaskBudget{}, fmt.Errorf("worker lifecycle budget is missing or invalid")
 		}
 		return *r.Lifecycle, nil
@@ -102,7 +102,7 @@ func (a *Agent) admitTask(task Task, source config.EventSource, locals map[strin
 		inflight += t.budget.InflightBytes
 	}
 	maxConcurrency, maxBytes := a.Worker.Limits()
-	if count > a.Config.WithDefaults().MaxTasks || concurrency > maxConcurrency || inflight > maxBytes {
+	if (a.Config.MaxTasks > 0 && count > a.Config.MaxTasks) || (maxConcurrency > 0 && concurrency > maxConcurrency) || (maxBytes > 0 && inflight > maxBytes) {
 		return TaskBudget{}, fmt.Errorf("worker task capacity exceeded")
 	}
 	return budget, nil

@@ -19,29 +19,26 @@ import (
 	"linkd/internal/domain"
 )
 
-// RecordingStore 只提供原动作入队、预算和排序可见性确认，不暴露扫描或发送顺序读取。
+// RecordingStore 只提供原动作入队和排序可见性确认，不暴露扫描或发送顺序读取。
 type RecordingStore interface {
 	Get(context.Context, string, string) (StoredTask, error)
 	Put(context.Context, Task, string) (StoredTask, error)
-	CountWork(context.Context, string, int) (int, error)
 	ConfirmVisible(context.Context, Task) error
 }
 
 // Recorder 可靠保存已获准动作，不持有 KAC 凭据、来源解析器、投影 Gate 或 HTTP Sender。
-// 与业务意图按原版本共同使用，最多四个并发入队，每次有界排队/锁租约/持久化/排序可见性确认。
+// 与业务意图按原版本共同使用；并发由调用方控制，持久化和排序可见性确认不占租户配额。
 type Recorder struct {
-	tasks  RecordingStore
-	locker TargetLocker
-	now    func() time.Time
-	slots  chan struct{}
+	tasks RecordingStore
+	now   func() time.Time
 }
 
 // NewRecorder 构造仅入队端口；不打开网络连接、不创建 goroutine，不直接执行通知或处置。
-func NewRecorder(tasks RecordingStore, locker TargetLocker, now func() time.Time) (*Recorder, error) {
-	if tasks == nil || locker == nil || now == nil {
+func NewRecorder(tasks RecordingStore, now func() time.Time) (*Recorder, error) {
+	if tasks == nil || now == nil {
 		return nil, ErrInvalid
 	}
-	return &Recorder{tasks: tasks, locker: locker, now: now, slots: make(chan struct{}, 4)}, nil
+	return &Recorder{tasks: tasks, now: now}, nil
 }
 
 // RecordAction 实现 Lifecycle 的可靠入队端口，最多 16 个目标共享十秒预算。
@@ -65,32 +62,21 @@ func (s *Recorder) RecordAction(ctx context.Context, a domain.Alert, intent doma
 	return nil
 }
 
-func withActionAdmission(ctx context.Context, locker TargetLocker, slots chan struct{}, tenant string, run func(context.Context) (StoredTask, error)) (result StoredTask, err error) {
-	call, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	select {
-	case slots <- struct{}{}:
-		defer func() { <-slots }()
-	case <-call.Done():
-		return StoredTask{}, call.Err()
-	}
-	release, e := locker.Acquire(call, digest("linkd:action-admission:v1", tenant))
-	if e != nil {
-		return StoredTask{}, e
-	}
-	if release == nil {
+// withActionCall 只限制单次 I/O 时间；调用方的执行池负责并发，不为持久入队叠加名额。
+func withActionCall(ctx context.Context, run func(context.Context) (StoredTask, error)) (StoredTask, error) {
+	if ctx == nil {
 		return StoredTask{}, ErrInvalid
 	}
-	defer func() {
-		end, stop := context.WithTimeout(context.WithoutCancel(call), 2*time.Second)
-		defer stop()
-		err = errors.Join(err, release(end))
-	}()
+	call, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := call.Err(); err != nil {
+		return StoredTask{}, err
+	}
 	return run(call)
 }
 
 // Record 幂等保存本次原动作，失败必须由业务意图生产者重试，不能按普通 Hook 错误吞掉。
-// 相同业务版本的快照/动作/来源引用变化返回冲突；满额时已存在的相同记录仍可复用。
+// 相同业务版本的快照/动作/来源引用变化返回冲突；已存在的相同记录可复用。
 func (s *Recorder) Record(ctx context.Context, a domain.Alert, target string, cause Cause) (StoredTask, error) {
 	if ctx == nil {
 		return StoredTask{}, ErrInvalid
@@ -102,7 +88,7 @@ func (s *Recorder) Record(ctx context.Context, a domain.Alert, target string, ca
 	if e != nil {
 		return StoredTask{}, e
 	}
-	return withActionAdmission(ctx, s.locker, s.slots, a.BKTenantID, func(ctx context.Context) (StoredTask, error) {
+	return withActionCall(ctx, func(ctx context.Context) (StoredTask, error) {
 		old, e := s.tasks.Get(ctx, a.BKTenantID, t.ID)
 		if e == nil {
 			return s.confirmRecorded(ctx, old, t)
@@ -110,16 +96,7 @@ func (s *Recorder) Record(ctx context.Context, a domain.Alert, target string, ca
 		if !errors.Is(e, ErrNotFound) {
 			return StoredTask{}, e
 		}
-		n, e := s.tasks.CountWork(ctx, a.BKTenantID, MaxPendingPerTenant)
-		if e != nil {
-			return StoredTask{}, e
-		}
-		if n < 0 || n > MaxPendingPerTenant {
-			return StoredTask{}, ErrInvalid
-		}
-		if n == MaxPendingPerTenant {
-			return StoredTask{}, ErrCapacity
-		}
+
 		row, e := s.tasks.Put(ctx, t, "")
 		if e == nil {
 			return s.confirmRecorded(ctx, row, t)

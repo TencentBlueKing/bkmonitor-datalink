@@ -22,6 +22,8 @@ import (
 type Config struct {
 	// RetiredConsumers 仅由中心确认退出或授权强切后提供，允许定向接管。
 	RetiredConsumers []string
+	// OnRetiredDrained 仅在原 owner 的 PEL 已空后通知调度器回收交接记录。
+	OnRetiredDrained func(string)
 	Connection       redisclient.Options
 	Stream           string
 	Group            string

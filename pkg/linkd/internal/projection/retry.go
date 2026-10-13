@@ -52,18 +52,16 @@ type RetryRecord struct {
 
 // Retrier 只允许恢复已存在的失败任务；它不加载来源配置、不发送 HTTP，也不构造新业务快照。
 type Retrier struct {
-	tasks  Store
-	locker TargetLocker
-	now    func() time.Time
-	slots  chan struct{}
+	tasks Store
+	now   func() time.Time
 }
 
-// NewRetrier 为管理请求注入任务存储、租户准入租约和时钟，独立限制四项执行。
-func NewRetrier(tasks Store, locker TargetLocker, now func() time.Time) (*Retrier, error) {
-	if tasks == nil || locker == nil || now == nil {
+// NewRetrier 为管理请求注入任务存储和时钟；同一任务的恢复使用 CAS。
+func NewRetrier(tasks Store, now func() time.Time) (*Retrier, error) {
+	if tasks == nil || now == nil {
 		return nil, ErrInvalid
 	}
-	return &Retrier{tasks: tasks, locker: locker, now: now, slots: make(chan struct{}, 4)}, nil
+	return &Retrier{tasks: tasks, now: now}, nil
 }
 
 // Retry 保留第一次命令原文；同操作身份但版本、操作者或原因不同均返回冲突。
@@ -72,7 +70,7 @@ func (r *Retrier) Retry(ctx context.Context, c RetryCommand) (StoredTask, error)
 	if c.Validate() != nil {
 		return StoredTask{}, ErrInvalid
 	}
-	return withProjectionAdmission(ctx, r.locker, r.slots, c.TenantID, func(call context.Context) (StoredTask, error) { return retryTask(call, r.tasks, c, r.now) })
+	return withProjectionCall(ctx, func(call context.Context) (StoredTask, error) { return retryTask(call, r.tasks, c, r.now) })
 }
 
 func retryTask(ctx context.Context, tasks Store, c RetryCommand, clock func() time.Time) (StoredTask, error) {
@@ -91,16 +89,6 @@ func retryTask(ctx context.Context, tasks Store, c RetryCommand, clock func() ti
 	}
 	if current.Version != c.ExpectedVersion || current.Task.Progress.State != "failed" {
 		return StoredTask{}, ErrConflict
-	}
-	count, err := tasks.CountWork(ctx, c.TenantID, MaxPendingPerTenant)
-	if err != nil {
-		return StoredTask{}, err
-	}
-	if count < 0 || count > MaxPendingPerTenant {
-		return StoredTask{}, ErrInvalid
-	}
-	if count == MaxPendingPerTenant {
-		return StoredTask{}, ErrCapacity
 	}
 	next := current.Task.Clone()
 	now := clock().Round(0).UTC()

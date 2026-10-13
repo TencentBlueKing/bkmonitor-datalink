@@ -6,18 +6,18 @@ FinalHook 分开：入队失败保留原意图并向调用者返回错误，全�
 人工关闭/屏蔽/合并控制入口已注入仅入队 Recorder，控制面后台投递与 Worker 自动目标绑定已接入。
 目标固定于 opening Release，来源修改不重绑已有 Alert，空绑定不补绑。详见 [Lifecycle 原子动作意图](../reference/contracts/kac-action-delivery-v2.md#lifecycle-原子动作意图)。
 
-Elasticsearch runtime 默认使用进程内共享合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
+每个 Lifecycle runtime 默认使用独立合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
 CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；
 调用方收到对应 item 成功后才进入下一步，不能提前输出或 ACK。已有快照的 CAS 不再前置读取；
 独立 ID+版本接口与冲突核对仍使用 realtime `_mget`。快照更新路径首次读取完整 Event，以保留丰富提交的
 完整文档预算检查，后续提交沿用返回快照与新版本；终态 CAS 使用局部
 Bulk update，只修改 `related_alert_ids` 和 `processing`。公共 Event 查询仍返回完整文档。
 写批次参数自动匹配 Lifecycle 并发，不允许独立手调：
-单批上限为并发的一半（向下取整、最少 1、最多 128），写侧等待为该上限的毫秒值（单项不等待），
-执行上限为并发数与 32 的较小值；默认并发 32 对应 16 项、16ms、32 批，字节预算默认 4 MiB。
-读侧等待取写侧等待与 10ms 的较小值，使用独立收集队列；达到操作数或字节上限立即发送，
-未满则在首项期限到达时发送，不等待写期限；
-读写共享执行并发上限。实际批次大小还受调用方并发与写入依赖限制。完整配置见[配置指南](../guides/configuration.md)。
+单批上限为并发的一半（向下取整、最少 1、最多 128），读写最多收集 10ms（单项不等待），
+执行名额跟随 Lifecycle 并发，不再独立封顶为 32；默认并发 256 对应 128 项、10ms、256 个执行名额，字节预算默认 4 MiB。
+聚合名额已满时直接执行原 CAS 请求；读写使用独立收集队列，达到操作数或字节上限立即发送，
+未满则在各自首项期限到达时发送。10ms 只限制主动收集，不包含 ES 执行与响应时间。
+实际批次大小还受调用方并发与写入依赖限制。完整配置见[配置指南](../guides/configuration.md)。
 
 Console 的单 Event 耗时分布默认显示完整处理时间；右上角“忽略合批等待”只扣除主动合批等待，
 保留存储排队，并同时显示执行、合批等待、存储排队与完整总耗时。点击阶段可下钻子步骤。
@@ -67,7 +67,7 @@ MailboxID 同时是 Redis Mailbox 身份、Lifecycle Signal 的 `Message.ID/Orde
 ### 1.3 Mailbox 与 Signal
 
 Redis Mailbox 只使用 `<key_prefix>:<mailbox_id>:events` List，按成功入队顺序保存 Event ID。它不再维护
-去重 Set、scheduled marker 或全局精确计数；单 Mailbox 默认上限为 128。
+去重 Set、scheduled marker 或全局精确计数；单 Mailbox 默认不设置持久积压上限（max_pending=0）。
 
 Signal schema v1 只携带租户、来源、fingerprint、MailboxID 和入队时间，不绑定单个 Event。入队 Lua 先
 读取 `LLEN` 并检查单箱上限；原长度为零时先 `XADD` Signal，再 `RPUSH` Event ID，非空时只追加 List。
@@ -291,9 +291,8 @@ Redis Signal
 10. 达到排空上限但仍非空时释放 lease 并返回 `Defer(0)`，让 Signal 回到本地公平队列；
 11. 最终释放 lease；释放失败只记录警告，不能误删新 owner 的锁。
 
-默认单次最多排空 128 条。ProcessEvent 失败或进程崩溃时队首尚未移除，后续 owner 会重新执行；
-动作入队遇到纯准入锁忙、租户容量背压或搜索尚不可见时，释放 lease 后按 `lock_retry_delay`
-延后原 Signal，不消耗短重试次数，也不确认队首。混合存储/锁释放异常、取消及非法动作仍进入原有有界重试。
+默认单次最多排空 128 条后主动让出。普通 ProcessEvent 错误（含逻辑、JSON 和 panic）记录拒绝诊断后移出该 Event，继续排空后续项。当前不预置错误重试白名单；显式可重试标记最多尝试三次，耗尽同样只结束当前 Event。Event 的 processing 使用 rejected/processing_failed 和固定 reason_code；失败时保留原冻结计划用于排查，但终态重投不再执行它。诊断存储不可用时保留结构化日志，不因诊断写入再次阻塞消息。
+任务上下文取消、lease 撤销和 Mailbox ACK 未确认时保留队首；动作排序索引尚不可见属于协议等待，释放 lease 后延后 Signal。租户待办配额已取消。
 Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 Handler 继续读取；`LPOP` 后的空到非空
 入队会创建新的 Stream ID，确认旧 Signal 不会删除新 Signal。处理期间已创建的新 Signal 可能成为冗余
 空唤醒，可以安全完成。
@@ -449,3 +448,13 @@ rejected 等结果不一定生成日志，不能单独作为“Event 已处理�
 用于关闭后日志/Hook 失败时幂等补齐。Event 包含任何未知等级则整条标记 `rejected/unknown_severity`，
 不执行其余 evaluation 的业务操作，持久化完成后正常确认 Mailbox，不修改已经终态的 Event 或 Alert。
 `__ALL__/closed` 不属于未知等级，无需动态等级表包含该标记。
+
+### 延后容量与积压背压（2026-10-13）
+
+Signal 已接管后，锁忙、动作积压水位和分批处理返回 Defer，仍保留原 Receipt，不能提前 XACK。
+运行时延后容量覆盖全部在途消息；在途预算满后暂停接收，等待既有消息完成。动作入队使用租户积压软水位，
+移除跨 ES 写入及刷新等待的租户准入锁，保留 fingerprint 处理租约、任务幂等、排序可见性确认和目标投递租约。
+
+### 当前容量策略
+
+任务内默认最多接管 256 条 Signal；达到未确认消息/字节软水位后暂停领取，确认后恢复。处理 goroutine 按实际消息懒启动。默认不使用租户动作待办数、Mailbox 深度或 Signal 持久积压作为准入条件。Lifecycle 副本省略时每个可调度 Worker 一个，可通过来源 scheduling.lifecycle.replicas 显式设上限。具体配置与保留的一致性边界见[运行容量与恢复](../design/runtime-capacity-and-recovery.md)。

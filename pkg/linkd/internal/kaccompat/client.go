@@ -59,7 +59,7 @@ func Open(c config.KACPluginConfig, level func(string) (string, error), relation
 	}
 	c = c.WithDefaults()
 	es := c.Elasticsearch
-	options := elasticsearchstore.HTTPTransportConfig{Addresses: es.Addresses, APIKey: es.APIKey, Timeout: 10 * time.Second, MaxConnectionsPerHost: 4, DisableRedirects: true}
+	options := elasticsearchstore.HTTPTransportConfig{Addresses: es.Addresses, APIKey: es.APIKey, Timeout: 10 * time.Second, MaxConnectionsPerHost: 0, DisableRedirects: true}
 	if es.BasicAuth != nil {
 		options.BasicUsername = es.BasicAuth.Username
 		options.BasicPassword = es.BasicAuth.Password

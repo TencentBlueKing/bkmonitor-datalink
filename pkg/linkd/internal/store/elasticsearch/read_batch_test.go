@@ -410,8 +410,8 @@ func TestReadBatchCloseReleasesQueuedAndInflightCalls(t *testing.T) {
 						done = append(done, submitBatchRead(t, b, t.Context(), "events", id))
 						synctest.Wait()
 					}
-					if len(b.slots) != 3 || requests.Load() != 1 {
-						t.Fatalf("unbounded calls or worker use: %d/%d", len(b.slots), requests.Load())
+					if len(b.slots) != 3 || requests.Load() != 2 {
+						t.Fatalf("full batch queue did not bypass to direct request: %d/%d", len(b.slots), requests.Load())
 					}
 				}
 				b.Close()

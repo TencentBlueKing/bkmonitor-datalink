@@ -200,7 +200,7 @@ func TestExpiredSlotMovesOnlyAfterFullLeaseAndMargin(t *testing.T) {
 	}
 	Reconcile(&s, []eventsource.Release{r}, future)
 	replacement := s.Tasks[original.ID]
-	if replacement.Epoch <= original.Epoch || replacement.Worker == original.Worker || len(replacement.Retired) == 0 {
+	if replacement.Epoch <= original.Epoch || replacement.Worker == original.Worker || len(replacement.Retired) != 0 {
 		t.Fatal("safe timeout takeover did not occur")
 	}
 }

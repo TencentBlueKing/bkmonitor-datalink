@@ -119,7 +119,7 @@ func Run(
 }
 
 func repositoryConnectionBudget(cfg config.Config) int {
-	return min(1024, cfg.Dispatch.WithDefaults().MaxTasks*64+2)
+	return 0 // 实际并发由任务内未确认消息限制，不按来源总数预留连接。
 }
 
 // ValidateConfig 校验默认 cleaner 运行所需的共享存储和 lifecycle signal 配置。

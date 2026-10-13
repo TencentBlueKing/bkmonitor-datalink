@@ -50,15 +50,19 @@ const (
 	// 后台健康探测的 PING 间隔。降级期间没有业务请求访问 Redis，恢复只能靠探测判断。
 	defaultRedisProbeInterval = time.Second
 
-	// PING 耗时超过该值算一次坏样本，用来发现「没超时但持续偏慢」的 Redis。
-	// 业务 Allow 只把报错（含超时）算作坏样本，避免短暂毛刺把整个实例切到本地 60s。
+	// PING 或 Allow 报错、或耗时超过该值都算一次坏样本，用来发现「没超时但持续偏慢」的 Redis。
 	defaultRedisSlowThreshold = 50 * time.Millisecond
 
 	// 连续坏样本（探测与 Allow 共用计数）达到该次数后熔断，Allow 直接降级本地 GCRA。
 	defaultRedisFailureThreshold = 3
 
-	// 熔断后 PING 需要连续这么久都正常，才切回 Redis 共享额度；期间任何坏样本都重新计时。
-	defaultRedisRecoverDuration = time.Minute
+	// 熔断后 PING 需要连续正常一个恢复窗口，才切回 Redis 共享额度；期间任何坏样本都重新计时。
+	// 窗口从最小值开始，切回后 defaultRedisFlapWindow 内再次熔断则翻倍，直到最大值；
+	// 切回后稳定超过 defaultRedisFlapWindow 再熔断，重新从最小值开始。
+	// 窗口越长，故障后按「实例数 × 额度」放行的时间越长，短窗口只在反复熔断时才拉长。
+	defaultRedisMinRecoverDuration = 10 * time.Second
+	defaultRedisMaxRecoverDuration = time.Minute
+	defaultRedisFlapWindow         = time.Minute
 
 	// 每进程 Redis 连接上限。额度打开后每个启用限流的请求最多占用一条连接直到 Lua 返回；
 	// 池满后新请求走 PoolTimeout，再失败则本地 GCRA。64 与 Collector 常见并发同量级，避免无限建连打满 Redis。
@@ -195,6 +199,7 @@ func (r *redisGCRA) Allow(token, service string, cost int64, config Config) (boo
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOperationTime)
 	defer cancel()
 
+	start := time.Now()
 	result, err := r.script.Run(
 		ctx,
 		r.client,
@@ -203,11 +208,10 @@ func (r *redisGCRA) Allow(token, service string, cost int64, config Config) (boo
 		config.BurstBytes,
 		cost,
 	).Int64()
+	r.health.observe(time.Since(start), err)
 	if err != nil {
-		r.health.fail(err)
 		return false, err
 	}
-	r.health.succeed()
 	return result == 1, nil
 }
 
@@ -236,13 +240,30 @@ func (r *redisGCRA) runProbe() {
 }
 
 // redisHealth 是单个 Redis 客户端的熔断状态。新客户端从健康开始：
-// 若从熔断开始，每次 Reload 重建客户端都会白白在本地限流 1 分钟，额度放大为「实例数 × 额度」。
+// 若从熔断开始，每次 Reload 重建客户端都会白白在本地限流一个恢复窗口，额度放大为「实例数 × 额度」。
 type redisHealth struct {
 	unhealthy atomic.Bool
 	failures  atomic.Int64
 
-	// healthySince 只由探测 goroutine 读写。
-	healthySince time.Time
+	// 以下字段只由探测 goroutine 读写。熔断可能由 Allow 在任意 goroutine 触发，
+	// 恢复窗口在探测首次看到熔断时才确定，最多晚一个探测间隔。
+	degraded       bool
+	recoverAfter   time.Duration
+	healthySince   time.Time
+	lastRecoveryAt time.Time
+}
+
+// observe 记录一次 Redis 往返，返回该样本是否正常。
+func (h *redisHealth) observe(latency time.Duration, err error) bool {
+	if err == nil && latency > defaultRedisSlowThreshold {
+		err = errors.Errorf("redis latency %s exceeds %s", latency, defaultRedisSlowThreshold)
+	}
+	if err != nil {
+		h.fail(err)
+		return false
+	}
+	h.succeed()
+	return true
 }
 
 func (h *redisHealth) fail(err error) {
@@ -259,28 +280,37 @@ func (h *redisHealth) succeed() {
 }
 
 func (h *redisHealth) probe(latency time.Duration, err error, now time.Time) {
-	if err == nil && latency > defaultRedisSlowThreshold {
-		err = errors.Errorf("redis ping latency %s exceeds %s", latency, defaultRedisSlowThreshold)
-	}
-	if err != nil {
-		h.healthySince = time.Time{}
-		h.fail(err)
+	healthy := h.observe(latency, err)
+	if !h.unhealthy.Load() {
 		return
 	}
-	if !h.unhealthy.Load() {
-		h.succeed()
+	if !h.degraded {
+		h.degraded = true
+		h.recoverAfter = h.nextRecoverDuration(now)
+	}
+	if !healthy {
+		h.healthySince = time.Time{}
 		return
 	}
 	if h.healthySince.IsZero() {
 		h.healthySince = now
 	}
-	if now.Sub(h.healthySince) < defaultRedisRecoverDuration {
+	if now.Sub(h.healthySince) < h.recoverAfter {
 		return
 	}
+	h.degraded = false
 	h.healthySince = time.Time{}
+	h.lastRecoveryAt = now
 	h.failures.Store(0)
 	h.unhealthy.Store(false)
-	logger.Infof("traffic limiter redis recovered, back to shared GCRA")
+	logger.Infof("traffic limiter redis recovered after %s, back to shared GCRA", h.recoverAfter)
+}
+
+func (h *redisHealth) nextRecoverDuration(now time.Time) time.Duration {
+	if h.lastRecoveryAt.IsZero() || now.Sub(h.lastRecoveryAt) >= defaultRedisFlapWindow {
+		return defaultRedisMinRecoverDuration
+	}
+	return min(h.recoverAfter*2, defaultRedisMaxRecoverDuration)
 }
 
 // stateKey 对 Token、服务名和额度做摘要，避免在 Redis 中暴露 Token 或服务名。

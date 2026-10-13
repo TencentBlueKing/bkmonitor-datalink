@@ -327,10 +327,32 @@ func TestRedisHealthTripsOnConsecutiveFailures(t *testing.T) {
 	assert.True(t, health.unhealthy.Load())
 }
 
+// TestRedisHealthSlowAllowTripsWithTraffic 覆盖 Redis 变慢但未超时、同时有业务流量：
+// 偏慢的 Allow 本身就是坏样本，不能把 PING 积累的计数清零。
+func TestRedisHealthSlowAllowTripsWithTraffic(t *testing.T) {
+	var health redisHealth
+	now := time.Unix(1700000000, 0)
+	slow := defaultRedisSlowThreshold + 20*time.Millisecond
+
+	health.probe(slow, nil, now)
+	assert.False(t, health.observe(slow, nil), "偏慢的成功 Allow 也是坏样本")
+	assert.False(t, health.unhealthy.Load())
+	health.observe(slow, nil)
+	assert.True(t, health.unhealthy.Load())
+
+	var fast redisHealth
+	fast.probe(slow, nil, now)
+	fast.observe(slow, nil)
+	assert.True(t, fast.observe(time.Millisecond, nil))
+	fast.observe(slow, nil)
+	assert.False(t, fast.unhealthy.Load(), "正常的 Allow 打断连续计数")
+}
+
 func TestRedisHealthProbeLatencyAndRecovery(t *testing.T) {
 	var health redisHealth
 	now := time.Unix(1700000000, 0)
 	slow := defaultRedisSlowThreshold + time.Millisecond
+	window := defaultRedisMinRecoverDuration
 
 	for i := 0; i < defaultRedisFailureThreshold; i++ {
 		health.probe(slow, nil, now)
@@ -338,17 +360,45 @@ func TestRedisHealthProbeLatencyAndRecovery(t *testing.T) {
 	require.True(t, health.unhealthy.Load(), "PING 持续偏慢必须熔断")
 
 	health.probe(time.Millisecond, nil, now)
-	health.probe(time.Millisecond, nil, now.Add(defaultRedisRecoverDuration-time.Second))
+	health.probe(time.Millisecond, nil, now.Add(window-time.Second))
 	assert.True(t, health.unhealthy.Load(), "正常时长不足恢复窗口时保持熔断")
 
-	health.probe(slow, nil, now.Add(defaultRedisRecoverDuration))
-	health.probe(time.Millisecond, nil, now.Add(defaultRedisRecoverDuration+time.Second))
-	health.probe(time.Millisecond, nil, now.Add(2*defaultRedisRecoverDuration))
+	health.probe(slow, nil, now.Add(window))
+	health.probe(time.Millisecond, nil, now.Add(window+time.Second))
+	health.probe(time.Millisecond, nil, now.Add(2*window))
 	assert.True(t, health.unhealthy.Load(), "恢复窗口内出现坏样本必须重新计时")
 
-	health.probe(time.Millisecond, nil, now.Add(2*defaultRedisRecoverDuration+time.Second))
+	health.probe(time.Millisecond, nil, now.Add(2*window+time.Second))
 	assert.False(t, health.unhealthy.Load())
 	assert.Zero(t, health.failures.Load())
+}
+
+func TestRedisHealthRecoverWindowBacksOffWhenFlapping(t *testing.T) {
+	var health redisHealth
+	now := time.Unix(1700000000, 0)
+	slow := defaultRedisSlowThreshold + time.Millisecond
+	cycle := func() time.Duration {
+		t.Helper()
+		for i := 0; i < defaultRedisFailureThreshold; i++ {
+			health.probe(slow, nil, now)
+		}
+		require.True(t, health.unhealthy.Load())
+		window := health.recoverAfter
+		health.probe(time.Millisecond, nil, now)
+		now = now.Add(window)
+		health.probe(time.Millisecond, nil, now)
+		require.False(t, health.unhealthy.Load())
+		return window
+	}
+
+	assert.Equal(t, defaultRedisMinRecoverDuration, cycle())
+	for _, want := range []time.Duration{20 * time.Second, 40 * time.Second, time.Minute, time.Minute} {
+		now = now.Add(time.Second)
+		assert.Equal(t, want, cycle(), "切回后短时间内再次熔断，窗口翻倍直到上限")
+	}
+
+	now = now.Add(defaultRedisFlapWindow)
+	assert.Equal(t, defaultRedisMinRecoverDuration, cycle(), "稳定超过抖动窗口后重新从最小窗口开始")
 }
 
 // TestRedisGCRAFailsFastWhenRedisHangs 覆盖 Redis 只完成握手、从不回包：

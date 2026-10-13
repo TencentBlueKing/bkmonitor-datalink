@@ -126,7 +126,9 @@ type Relation struct {
 
 // Rule 保留方案的一次匹配与内部操作顺序。
 type Rule struct {
-	ID          string       `json:"id"`
+	ID string `json:"id"`
+	// Name 是来源发布时冻结的展示名，不参与匹配或赋值。
+	Name        string       `json:"name,omitempty"`
 	When        *Condition   `json:"when,omitempty"`
 	Operations  []Operation  `json:"operations,omitempty"`
 	Lookup      *Lookup      `json:"lookup,omitempty"`
@@ -141,6 +143,8 @@ type Config struct {
 	// RollbackUnmatched 对齐旧 KAC 整轮没有字段丰富成功时回滚中间身份的收尾行为。
 	RollbackUnmatched bool   `json:"rollback_unmatched,omitempty"`
 	Rules             []Rule `json:"rules"`
+	// FieldLabels 只用于已提交补丁的展示，键是规范化的字段路径。
+	FieldLabels map[string]string `json:"field_labels,omitempty"`
 }
 
 // Program 是与某次来源发布绑定、可并发只读复用的编译结果。
@@ -177,12 +181,23 @@ func Compile(kind string, raw map[string]any) (*Program, error) {
 	if len(p.config.Rules) > 128 {
 		return nil, fmt.Errorf("at most 128 rules are allowed")
 	}
+	if len(p.config.FieldLabels) > 256 {
+		return nil, fmt.Errorf("field label budget exceeded")
+	}
+	for path, label := range p.config.FieldLabels {
+		if domain.ValidateEnrichTarget(path) != nil || len(label) == 0 || len(label) > 256 {
+			return nil, fmt.Errorf("invalid field display metadata")
+		}
+	}
 	if p.config.RollbackUnmatched && kind != "cmdb" {
 		return nil, fmt.Errorf("rollback_unmatched only supports cmdb")
 	}
 	seen := map[string]bool{}
 	for i := range p.config.Rules {
 		r := &p.config.Rules[i]
+		if len(r.Name) > 256 {
+			return nil, fmt.Errorf("rule display name exceeds budget")
+		}
 		if p.config.RollbackUnmatched && r.Identity == nil {
 			return nil, fmt.Errorf("rollback_unmatched requires identity on every rule")
 		}

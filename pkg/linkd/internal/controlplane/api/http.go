@@ -44,12 +44,13 @@ type API struct {
 		ListTenants(context.Context) ([]blueking.Tenant, error)
 	}
 	// Tasks 提供当前进程的只读任务目录及执行快照。
-	Tasks        interface{ Snapshot() taskstate.Snapshot }
-	OneModel     *queryservice.Service
-	AlertCloser  AlertCloser
-	KACCloser    KACCloser
-	SourceAlerts *SourceAlerts
-	Previewer    interface {
+	Tasks         interface{ Snapshot() taskstate.Snapshot }
+	OneModel      *queryservice.Service
+	AlertCloser   AlertCloser
+	KACCloser     KACCloser
+	SourceAlerts  *SourceAlerts
+	EnrichRecords *EnrichRecords
+	Previewer     interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
 	}
 	// IngestPreviewer 只标准化并返回 KAC 调试字段，不执行丰富和业务写入。
@@ -108,6 +109,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
 	mux.HandleFunc("POST /api/v1/ingest/preview", a.previewIngest)
 	mux.HandleFunc("GET /api/v1/alerts", a.listSourceAlerts)
+	mux.HandleFunc("POST /api/v1/alerts/{id}/enrich-records", a.queryEnrichRecords)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/close", a.closeAlert)
 	mux.HandleFunc(kacCloseRoute, a.closeKACAlert)
 	mux.HandleFunc(kacGetRoute, a.getKACAlert)

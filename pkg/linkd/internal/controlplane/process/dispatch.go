@@ -206,6 +206,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return fmt.Errorf("repository does not support source alert queries")
 	}
 	api.SourceAlerts = controlapi.NewSourceAlerts(sourceReader)
+	api.EnrichRecords = controlapi.NewEnrichRecords(queryRepository.Repository, sources)
 	api.ShieldRuntime = controlapi.NewShieldRuntime(shieldReader)
 	closer := lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics)
 	api.AlertCloser = closer

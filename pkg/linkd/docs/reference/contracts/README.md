@@ -25,3 +25,5 @@ Kafka Alert V1、KAC Alarm 兼容输出与策略索引变更通知 v1；后续�
 - [内部 HTTP JWT 认证](internal-token.md)：Kingeye 互信协议、签发示例和升级配置。
 
 - [策略流转业务事实](policy-flow-records.md)：新策略日志的冻结展示事实、动作角色、稳定身份与旧意图边界。
+
+- [KAC 告警丰富事实查询](kac-enrich-records.md)：准确关联事件的冻结结果、字段前后对比与有界只读接口。

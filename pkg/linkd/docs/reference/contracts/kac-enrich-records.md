@@ -1,0 +1,13 @@
+# KAC 告警丰富事实查询
+
+2026-10-13 确认的 KAC 页面契约。本轮仅实现丰富读取，关闭审计和恢复详情属于后续 KAC 改造。
+
+`POST /api/v1/alerts/{id}/enrich-records` 使用现有管理 JWT；请求包含 `bk_tenant_id`、`event_ids`（1–20 项）和可选 `detail`。同请求 EventID 去重。单请求正文最多 8 KiB，最多两个并发查询、五秒 deadline，响应最多 1 MiB；没有初始化 schema、写业务数据或重跑规则。
+
+先读取指定租户的 Alert，再核对每个 Event 的租户、来源及 `related_alert_ids`。按 Alert 的准确等级取冻结丰富结果，不任选其他等级；缺失和不可读项列在 `unavailable`，不能用当前配置补造结果。来源发布 ID、版本、租户以及丰富配置摘要均需匹配。
+
+响应 `items` 每项包含 `alert_id/event_id/severity/enriched_at/status/enrichment_count/changed_field_count/enrichments`；`detail=true` 另带 `field_changes`。措施包含 `id/type/name/status/code`，来自 CMDB/fields 的实际规则 trace；来源规则 `name` 和 `field_labels` 属于不可变发布配置展示元信息，不复制到 AlertLog。内部字段目录冻结规则不作为业务丰富措施。
+
+字段变化来自已提交补丁，按顺序从原 Event 重放赋值，包含前序处理器有效贡献；绝不重新查 CMDB 或执行表达式。失败和回滚的尝试不冒充生效。相同路径只展示第一次业务修改前与最后提交后值，未发生净变化的不计入数量；关联全部参与措施。`field/display/before_present/before/after_present/after/measures` 区分未设置、null、空字符串、0、false。字段值只在详情返回，超响应预算明确失败，不截断后声称完整。新 API 不返回原始 Event 或发布配置正文。
+
+KAC 对首次触发/恢复的丰富生成独立派生节点；持续更新丰富仅附加到对应明细，保留分组。新弹窗仅展示措施结果和字段对比，屏蔽/合并/抑制和更新明细仍不增加详情入口。未准入告警不因此获得处置或关闭动作，不回填历史日志。

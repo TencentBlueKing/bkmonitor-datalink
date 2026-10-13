@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	stdjson "encoding/json"
 	"fmt"
 	"unicode/utf8"
@@ -55,7 +56,20 @@ func (r *topologyResponse) JSONSegments() ([][]byte, error) {
 
 // marshalLargeTopologySnapshots encodes each frame before response writing,
 // preserving the ability to report an encoding failure as an HTTP error.
-func marshalLargeTopologySnapshots(item cmdb.SharedTopologyResponseData) ([][]byte, int, error) {
+func marshalLargeTopologySnapshotsContext(ctx context.Context, item cmdb.SharedTopologyResponseData) ([][]byte, int, error) {
+	return marshalTopologySnapshotItem(ctx, item, false)
+}
+
+// marshalOwnedTopologySnapshots consumes private frame headers handed over by
+// the handler. It never mutates maps or the public model's original headers.
+func marshalOwnedTopologySnapshots(ctx context.Context, item cmdb.SharedTopologyResponseData) ([][]byte, int, error) {
+	return marshalTopologySnapshotItem(ctx, item, true)
+}
+
+func marshalTopologySnapshotItem(ctx context.Context, item cmdb.SharedTopologyResponseData, consume bool) ([][]byte, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	header, err := stdjson.Marshal(struct {
 		Code       int    `json:"code"`
 		StartTime  int64  `json:"start_time"`
@@ -69,13 +83,16 @@ func marshalLargeTopologySnapshots(item cmdb.SharedTopologyResponseData) ([][]by
 	parts := make([][]byte, 0, len(item.Snapshots)+5)
 	parts = append(parts, append(header[:len(header)-1], []byte(`,"snapshots":[`)...))
 	if len(item.Snapshots) > 1 {
-		frames, err := marshalRepeatedTopologySnapshots(item.Snapshots)
+		frames, err := marshalTopologySnapshotFrames(ctx, item.Snapshots, consume)
 		if err != nil {
 			return nil, 0, err
 		}
 		parts = append(parts, frames...)
 	} else {
 		for index := range item.Snapshots {
+			if err := ctx.Err(); err != nil {
+				return nil, 0, err
+			}
 			encoded, err := stdjson.Marshal(item.Snapshots[index])
 			if err != nil {
 				return nil, 0, err
@@ -84,6 +101,9 @@ func marshalLargeTopologySnapshots(item cmdb.SharedTopologyResponseData) ([][]by
 				encoded = append(encoded, ',')
 			}
 			parts = append(parts, encoded)
+			if consume {
+				item.Snapshots[index].Nodes, item.Snapshots[index].Edges = nil, nil
+			}
 		}
 	}
 	parts = append(parts, []byte("]"))
@@ -97,10 +117,16 @@ func marshalLargeTopologySnapshots(item cmdb.SharedTopologyResponseData) ([][]by
 	parts = append(parts, []byte("}"))
 	size := 0
 	for _, part := range parts {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
 		if len(part) > int(^uint(0)>>1)-size {
 			return nil, 0, fmt.Errorf("topology response size overflows int")
 		}
 		size += len(part)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
 	}
 	return parts, size, nil
 }

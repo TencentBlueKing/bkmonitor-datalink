@@ -258,6 +258,21 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		if item.Snapshots == nil {
 			item.Snapshots = make([]cmdb.SharedTopologySnapshot, 0)
 		}
+		// Record metadata before transferring private snapshot headers to encoding.
+		snapshotCount := len(item.Snapshots)
+		nodeCount, edgeCount, partialCount := 0, 0, 0
+		for _, snapshot := range item.Snapshots {
+			nodeCount += len(snapshot.Nodes)
+			edgeCount += len(snapshot.Edges)
+			if snapshot.Partial {
+				partialCount++
+			}
+		}
+		if result.Compact != nil {
+			nodeCount, edgeCount, partialCount = result.Compact.NodeOccurrences, result.Compact.EdgeOccurrences, len(result.Compact.Partial)
+			querySpan.Set("node-version-count", len(result.Compact.Nodes))
+			querySpan.Set("edge-version-count", len(result.Compact.Edges))
+		}
 		// 批次内结果累计也必须有界，不能用 query_list 倍增单查询预算。
 		item.Message = truncateTopologyErrorMessage(item.Message, topologyErrorMessageMaxBytes)
 		_, encodeSpan := trace.NewSpan(queryCtx, "timegraph-encode-topology-item")
@@ -276,7 +291,10 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			}
 		}
 		// Reserve retained item buffers plus outer encoding/write buffers.
-		encodeErr := v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes+v1beta3.TopologyOutputByteLimit())*3)
+		encodeErr := ctx.Err()
+		if encodeErr == nil {
+			encodeErr = v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes+v1beta3.TopologyOutputByteLimit())*3)
+		}
 		var encoded []byte
 		var chunks [][]byte
 		encodedBytes := 0
@@ -285,13 +303,25 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			// snapshots encode frame by frame to bound encoder buffers.
 			var elements int
 			for _, snapshot := range item.Snapshots {
+				if encodeErr = ctx.Err(); encodeErr != nil {
+					break
+				}
 				elements += len(snapshot.Nodes) + len(snapshot.Edges)
 			}
-			if query.ResponseFormat != cmdb.CompactTopologyFormat && elements > largeTopologyEncodingElementThreshold {
-				chunks, encodedBytes, encodeErr = marshalLargeTopologySnapshots(item)
-			} else {
+			if encodeErr == nil && query.ResponseFormat != cmdb.CompactTopologyFormat && elements > largeTopologyEncodingElementThreshold {
+				// Only this private header copy is consumed. The model contract and
+				// the general encoder remain non-destructive.
+				item.Snapshots = append([]cmdb.SharedTopologySnapshot(nil), item.Snapshots...)
+				result.Snapshots = nil
+				payload = nil
+				chunks, encodedBytes, encodeErr = marshalOwnedTopologySnapshots(queryCtx, item)
+				item.Snapshots = nil
+			} else if encodeErr == nil {
 				encoded, encodeErr = marshalTopologyItem(payload)
 				encodedBytes = len(encoded)
+				if encodeErr == nil {
+					encodeErr = ctx.Err()
+				}
 			}
 		}
 		encodeSpan.Set("encoded-item-bytes", encodedBytes)
@@ -322,20 +352,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		querySpan.Set("query-index", index)
 		querySpan.Set("point-count", item.PointCount)
 		querySpan.Set("response-code", item.Code)
-		querySpan.Set("snapshot-count", len(item.Snapshots))
-		nodeCount, edgeCount, partialCount := 0, 0, 0
-		for _, snapshot := range item.Snapshots {
-			nodeCount += len(snapshot.Nodes)
-			edgeCount += len(snapshot.Edges)
-			if snapshot.Partial {
-				partialCount++
-			}
-		}
-		if result.Compact != nil {
-			nodeCount, edgeCount, partialCount = result.Compact.NodeOccurrences, result.Compact.EdgeOccurrences, len(result.Compact.Partial)
-			querySpan.Set("node-version-count", len(result.Compact.Nodes))
-			querySpan.Set("edge-version-count", len(result.Compact.Edges))
-		}
+		querySpan.Set("snapshot-count", snapshotCount)
 		querySpan.Set("response-node-count", nodeCount)
 		querySpan.Set("response-edge-count", edgeCount)
 		querySpan.Set("partial-snapshot-count", partialCount)

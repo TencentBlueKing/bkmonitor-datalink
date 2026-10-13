@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	stdjson "encoding/json"
 	"fmt"
 	"maps"
@@ -71,16 +72,26 @@ type topologyCachedEdge struct {
 
 // marshalRepeatedTopologySnapshots validates/encodes all values before writing.
 // Each request owns its dictionaries. Public snapshot maps remain independent.
-func marshalRepeatedTopologySnapshots(snapshots []cmdb.SharedTopologySnapshot) ([][]byte, error) {
+func marshalRepeatedTopologySnapshotsContext(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot) ([][]byte, error) {
+	return marshalTopologySnapshotFrames(ctx, snapshots, false)
+}
+
+func marshalTopologySnapshotFrames(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot, consume bool) ([][]byte, error) {
 	b := topologySnapshotChunkBuilder{work: make([]byte, 0, topologyChunkTargetBytes), byHash: make(map[uint64][][]byte)}
 	nodes := make(map[uint64]topologyCachedNode)
 	edges := make(map[cmdb.SharedTopologyEdge]topologyCachedEdge)
 	raw := func(text string) error { return b.append([]byte(text), 1) }
 	fallback := false
 	for frame, snapshot := range snapshots {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if fallback {
 			encoded, err := stdjson.Marshal(snapshot)
 			if err != nil {
+				return nil, err
+			}
+			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
 			if frame+1 < len(snapshots) {
@@ -91,6 +102,9 @@ func marshalRepeatedTopologySnapshots(snapshots []cmdb.SharedTopologySnapshot) (
 			}
 			b.size += len(encoded)
 			b.parts = append(b.parts, encoded)
+			if consume {
+				snapshots[frame].Nodes, snapshots[frame].Edges = nil, nil
+			}
 			continue
 		}
 		frameStart, hitsStart := b.size, b.hitBytes
@@ -117,6 +131,9 @@ func marshalRepeatedTopologySnapshots(snapshots []cmdb.SharedTopologySnapshot) (
 			// Isolate the changing timestamp from otherwise stable node blocks.
 			b.flush()
 			for index, node := range snapshot.Nodes {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				cached, exists := nodes[node.ID]
 				if !exists || cached.node.ResourceType != node.ResourceType || (cached.node.Dimensions == nil) != (node.Dimensions == nil) || !maps.Equal(cached.node.Dimensions, node.Dimensions) {
 					encoded, e := stdjson.Marshal(node)
@@ -152,6 +169,9 @@ func marshalRepeatedTopologySnapshots(snapshots []cmdb.SharedTopologySnapshot) (
 				return nil, err
 			}
 			for index, edge := range snapshot.Edges {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				cached, exists := edges[edge]
 				if !exists {
 					encoded, e := stdjson.Marshal(edge)
@@ -193,12 +213,18 @@ func marshalRepeatedTopologySnapshots(snapshots []cmdb.SharedTopologySnapshot) (
 			}
 		}
 		b.flush()
+		if consume {
+			snapshots[frame].Nodes, snapshots[frame].Edges = nil, nil
+		}
 		// Low reuse can make per-row encoding more expensive than the original
 		// per-frame encoder. Check every frame so stable-to-changing input adapts.
 		if frame > 0 && b.hitBytes-hitsStart < (b.size-frameStart)/8 {
 			fallback = true
 			b.byHash, b.work, nodes, edges = nil, nil, nil, nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return b.parts, nil
 }

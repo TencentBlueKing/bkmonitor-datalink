@@ -216,7 +216,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 			Compact:    compact,
 		}, nil
 	}
-	snapshots, err := graph.FindSharedTopology(queryCtx, grid, topologyQuery)
+	snapshots, err := graph.findSharedTopologyDTO(queryCtx, grid, topologyQuery)
 	if err != nil {
 		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "find shared topology")
 	}
@@ -230,13 +230,17 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	convertSpan.Set("input-node-count", inputNodes)
 	convertSpan.Set("input-edge-count", inputEdges)
 	convertSpan.Set("target-type-count", len(request.TargetTypes))
-	filterSharedTopologySnapshots(snapshots, request.SourceType, request.TargetTypes)
+	if err := filterSharedTopologySnapshots(queryCtx, snapshots, request.SourceType, request.TargetTypes); err != nil {
+		convertSpan.End(&err)
+		metric.CMDBTimeGraphStageObserve(queryCtx, "topology-convert", metric.CMDBTimeGraphErrorResult(err), time.Since(convertStarted))
+		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "filter shared topology")
+	}
 	result = cmdb.SharedTopologyResult{
 		StartTime:  grid.Timestamps[0],
 		EndTime:    grid.Timestamps[len(grid.Timestamps)-1],
 		Step:       responseStep,
 		PointCount: len(grid.Timestamps),
-		Snapshots:  convertSharedTopologySnapshots(snapshots),
+		Snapshots:  snapshots,
 	}
 	convertSpan.Set("snapshot-count", len(result.Snapshots))
 	span.Set("query-start", result.StartTime)
@@ -484,19 +488,28 @@ func toRelationCategories(values []string) []RelationCategory {
 	return result
 }
 
-func filterSharedTopologySnapshots(snapshots []SharedTopologySnapshot, sourceType cmdb.Resource, targetTypes []cmdb.Resource) {
+func filterSharedTopologySnapshots(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot, sourceType cmdb.Resource, targetTypes []cmdb.Resource) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(targetTypes) == 0 {
-		return
+		return nil
 	}
 	allowed := make(map[cmdb.Resource]struct{}, len(targetTypes)+1)
 	allowed[sourceType] = struct{}{}
 	for _, targetType := range targetTypes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		allowed[targetType] = struct{}{}
 	}
 	for index := range snapshots {
 		keptNodes := make(map[uint64]struct{})
 		nodes := snapshots[index].Nodes[:0]
 		for _, node := range snapshots[index].Nodes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if _, ok := allowed[node.ResourceType]; !ok {
 				continue
 			}
@@ -505,6 +518,9 @@ func filterSharedTopologySnapshots(snapshots []SharedTopologySnapshot, sourceTyp
 		}
 		edges := snapshots[index].Edges[:0]
 		for _, edge := range snapshots[index].Edges {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if _, sourceOK := keptNodes[edge.Source]; !sourceOK {
 				continue
 			}
@@ -513,39 +529,11 @@ func filterSharedTopologySnapshots(snapshots []SharedTopologySnapshot, sourceTyp
 			}
 			edges = append(edges, edge)
 		}
+		// Clear removed references in the backing arrays retained by the DTO.
+		clear(snapshots[index].Nodes[len(nodes):])
+		clear(snapshots[index].Edges[len(edges):])
 		snapshots[index].Nodes = nodes
 		snapshots[index].Edges = edges
 	}
-}
-
-func convertSharedTopologySnapshots(snapshots []SharedTopologySnapshot) []cmdb.SharedTopologySnapshot {
-	result := make([]cmdb.SharedTopologySnapshot, len(snapshots))
-	for i, snapshot := range snapshots {
-		result[i] = cmdb.SharedTopologySnapshot{
-			Timestamp:     snapshot.Timestamp,
-			Partial:       snapshot.Partial,
-			PartialReason: snapshot.PartialReason,
-			Nodes:         make([]cmdb.SharedTopologyNode, len(snapshot.Nodes)),
-			Edges:         make([]cmdb.SharedTopologyEdge, len(snapshot.Edges)),
-		}
-		for j, node := range snapshot.Nodes {
-			result[i].Nodes[j] = cmdb.SharedTopologyNode{
-				ID:           node.ID,
-				ResourceType: node.ResourceType,
-				// Materialization already owns this map, independently of graph pools.
-				Dimensions: node.Dimensions,
-			}
-		}
-		for j, edge := range snapshot.Edges {
-			result[i].Edges[j] = cmdb.SharedTopologyEdge{
-				Source:       edge.Source,
-				Target:       edge.Target,
-				RelationType: edge.RelationType,
-				MetricName:   edge.MetricName,
-				Category:     edge.Category,
-				Direction:    edge.Direction,
-			}
-		}
-	}
-	return result
+	return ctx.Err()
 }

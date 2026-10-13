@@ -152,6 +152,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	defer cancel()
 	validated = true
 	queryCtx = metadata.WithExactTimeGrid(queryCtx)
+	queryCtx = metadata.WithLeftOpenTimeWindow(queryCtx)
 	if SharedTopologyPlanCandidates {
 		queryCtx = context.WithValue(queryCtx, timeGraphFrontierHopsKey{}, maxHops)
 	}

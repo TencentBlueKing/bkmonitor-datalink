@@ -364,11 +364,20 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		targetInfoQueryCount, infoErr = loader.addTargetInfo(ctx, spaceUID, targetMatchersByType, targetIDsByTimestamp)
 		if infoErr != nil {
 			var limitErr *ResultLimitError
-			if ctx.Err() != nil || errors.Is(infoErr, context.Canceled) || errors.Is(infoErr, context.DeadlineExceeded) || errors.As(infoErr, &limitErr) {
+			var samplesErr pl.ErrTooManySamples
+			var canceledErr pl.ErrQueryCanceled
+			var timeoutErr pl.ErrQueryTimeout
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if errors.Is(infoErr, context.Canceled) || errors.Is(infoErr, context.DeadlineExceeded) ||
+				errors.Is(infoErr, metadata.ErrBackendResponseTooLarge) || errors.As(infoErr, &limitErr) ||
+				errors.As(infoErr, &samplesErr) || errors.As(infoErr, &canceledErr) || errors.As(infoErr, &timeoutErr) {
 				return nil, infoErr
 			}
-			// Attribute display is optional. The target-info stage already
-			// records its failure; keep the relation topology available.
+			// Keep the relation result while telling callers that the requested
+			// attributes could not be completed. Error details stay in the trace.
+			tg.markPartialRange(start, end, step, "target_info_failed")
 			span.Set("optional-target-info-failed", true)
 		}
 	}
@@ -1373,6 +1382,7 @@ func vectorToMatrix(vector pl.Vector) pl.Matrix {
 }
 
 func withTimeGraphQueryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx = metadata.WithStrictQueryFailures(ctx)
 	if yoloMode {
 		return context.WithCancel(pl.WithQueryLimitsDisabled(ctx))
 	}

@@ -17,6 +17,19 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
+type strictQueryFailuresKey struct{}
+
+// WithStrictQueryFailures includes physical instance setup failures in query
+// errors and partial results. Ordinary queries retain their existing behavior.
+func WithStrictQueryFailures(ctx context.Context) context.Context {
+	return context.WithValue(ctx, strictQueryFailuresKey{}, true)
+}
+
+func IsStrictQueryFailures(ctx context.Context) bool {
+	strict, _ := ctx.Value(strictQueryFailuresKey{}).(bool)
+	return strict
+}
+
 type exactTimeGridKey struct{}
 
 // WithExactTimeGrid 要求查询严格保留评估网格，禁止查询层或后端缓存重新对齐。

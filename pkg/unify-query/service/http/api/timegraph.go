@@ -66,6 +66,15 @@ func getTimeGraphQuerier(ctx context.Context, spaceUID string) (querier timeGrap
 }
 
 // HandlerAPIRelationPathResources queries the complete resource path at one timestamp.
+// @Summary  query complete relation resource paths
+// @ID       relation_path_resources_query
+// @Produce  json
+// @Param    traceparent           header    string                       false  "TraceID"
+// @Param    X-Bk-Scope-Space-Uid   header    string                       false  "空间UID" default(bkcc__2)
+// @Param    data                  body      cmdb.RelationPathResourcesRequest       true   "json data"
+// @Success  200                   {object}  cmdb.RelationPathResourcesResponse
+// @Failure  400                   {object}  ErrResponse
+// @Router   /api/v1/relation/path_resources [post]
 func HandlerAPIRelationPathResources(c *gin.Context) {
 	var err error
 	ctx, span := trace.NewSpan(c.Request.Context(), "handler-api-relation-path-resources")
@@ -126,6 +135,15 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 }
 
 // HandlerAPIRelationPathResourcesRange queries complete resource paths over a time range.
+// @Summary  query complete relation resource paths over a time range
+// @ID       relation_path_resources_query_range
+// @Produce  json
+// @Param    traceparent           header    string                       false  "TraceID"
+// @Param    X-Bk-Scope-Space-Uid   header    string                       false  "空间UID" default(bkcc__2)
+// @Param    data                  body      cmdb.RelationPathResourcesRangeRequest  true   "json data"
+// @Success  200                   {object}  cmdb.RelationPathResourcesRangeResponse
+// @Failure  400                   {object}  ErrResponse
+// @Router   /api/v1/relation/path_resources_range [post]
 func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 	var err error
 	ctx, span := trace.NewSpan(c.Request.Context(), "handler-api-relation-path-resources-range")

@@ -51,7 +51,7 @@ func truncateTopologyErrorMessage(message string, maxBytes int) string {
 // @Param    traceparent            header    string                         false  "TraceID"
 // @Param    X-Bk-Scope-Space-Uid   header    string                         false  "空间UID" default(bkcc__2)
 // @Param    data                  body      cmdb.SharedTopologyRequest      true   "json data"
-// @Success  200                   {object}  cmdb.SharedTopologyResponse
+// @Success  200                   {object}  SharedTopologyResponseDocumentation
 // @Failure  400                   {object}  ErrResponse
 // @Router   /api/v1/relation/v1beta3/topology [post]
 func HandlerAPIRelationV1Beta3Topology(c *gin.Context) {
@@ -65,7 +65,7 @@ func HandlerAPIRelationV1Beta3Topology(c *gin.Context) {
 // @Param    traceparent            header    string                         false  "TraceID"
 // @Param    X-Bk-Scope-Space-Uid   header    string                         false  "空间UID" default(bkcc__2)
 // @Param    data                  body      cmdb.SharedTopologyRequest      true   "json data"
-// @Success  200                   {object}  cmdb.SharedTopologyResponse
+// @Success  200                   {object}  SharedTopologyResponseDocumentation
 // @Failure  400                   {object}  ErrResponse
 // @Router   /api/v1/relation/v1beta3/topology_range [post]
 func HandlerAPIRelationV1Beta3TopologyRange(c *gin.Context) {

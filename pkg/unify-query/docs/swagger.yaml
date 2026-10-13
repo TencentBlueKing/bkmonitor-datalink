@@ -5,6 +5,119 @@ definitions:
       error:
         type: string
     type: object
+  api.SharedTopologyResponseDocumentation:
+    description: Each query_list item selects its response format independently; data
+      can contain both snapshots and compact-v1 items.
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/api.SharedTopologyResponseItemDocumentation'
+        type: array
+      trace_id:
+        type: string
+    type: object
+  api.SharedTopologyResponseItemDocumentation:
+    description: 'Snapshot items contain snapshots and omit response_format/compact.
+      Compact items contain response_format=compact-v1 and compact and omit snapshots.
+      Failed snapshot items contain snapshots: []; failed compact items retain response_format=compact-v1
+      and compact: null.'
+    properties:
+      code:
+        type: integer
+      compact:
+        allOf:
+        - $ref: '#/definitions/cmdb.CompactTopology'
+        description: Compact is present only for compact-v1; it is null when that
+          query failed.
+        x-nullable: true
+      end_time:
+        type: integer
+      message:
+        type: string
+      point_count:
+        type: integer
+      response_format:
+        description: ResponseFormat is present only when compact-v1 was requested,
+          including failures.
+        enum:
+        - compact-v1
+        type: string
+      snapshots:
+        description: Snapshots is present only for the default/snapshots format, including
+          failures.
+        items:
+          $ref: '#/definitions/cmdb.SharedTopologySnapshot'
+        type: array
+      start_time:
+        type: integer
+      step:
+        type: string
+    type: object
+  cmdb.CompactTopology:
+    properties:
+      edge_occurrences:
+        type: integer
+      edges:
+        items:
+          $ref: '#/definitions/cmdb.CompactTopologyEdge'
+        type: array
+      node_occurrences:
+        description: Counts describe the expanded output, not dictionary size.
+        type: integer
+      nodes:
+        items:
+          $ref: '#/definitions/cmdb.CompactTopologyNode'
+        type: array
+      partial:
+        items:
+          $ref: '#/definitions/cmdb.CompactTopologyPartial'
+        type: array
+      timestamps:
+        items:
+          type: integer
+        type: array
+      version:
+        type: integer
+    type: object
+  cmdb.CompactTopologyEdge:
+    properties:
+      category:
+        type: string
+      direction:
+        type: string
+      mask:
+        items:
+          type: string
+        type: array
+      metric_name:
+        type: string
+      relation_type:
+        type: string
+      source:
+        type: string
+      target:
+        type: string
+    type: object
+  cmdb.CompactTopologyNode:
+    properties:
+      dimensions:
+        $ref: '#/definitions/cmdb.Matcher'
+      id:
+        type: string
+      mask:
+        items:
+          type: string
+        type: array
+      resource_type:
+        type: string
+    type: object
+  cmdb.CompactTopologyPartial:
+    properties:
+      index:
+        type: integer
+      reason:
+        type: string
+    type: object
   cmdb.Matcher:
     additionalProperties:
       type: string
@@ -15,6 +128,24 @@ definitions:
         items:
           $ref: '#/definitions/cmdb.Matcher'
         type: array
+      timestamp:
+        type: integer
+    type: object
+  cmdb.PathNode:
+    properties:
+      dimensions:
+        $ref: '#/definitions/cmdb.Matcher'
+      resource_type:
+        type: string
+    type: object
+  cmdb.PathResourcesResult:
+    properties:
+      path:
+        items:
+          $ref: '#/definitions/cmdb.PathNode'
+        type: array
+      target_type:
+        type: string
       timestamp:
         type: integer
     type: object
@@ -87,6 +218,10 @@ definitions:
         type: integer
       message:
         type: string
+      partial:
+        type: boolean
+      partial_reason:
+        type: string
       path:
         items:
           type: string
@@ -158,6 +293,10 @@ definitions:
         type: integer
       message:
         type: string
+      partial:
+        type: boolean
+      partial_reason:
+        type: string
       path:
         items:
           type: string
@@ -182,6 +321,110 @@ definitions:
       truncated_reason:
         description: TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。
         type: string
+    type: object
+  cmdb.RelationPathResourcesRangeRequest:
+    properties:
+      query_list:
+        items:
+          properties:
+            end_time:
+              type: integer
+            look_back_delta:
+              type: string
+            matcher:
+              $ref: '#/definitions/cmdb.Matcher'
+            path_resources:
+              items:
+                items:
+                  type: string
+                type: array
+              type: array
+            source_type:
+              type: string
+            start_time:
+              type: integer
+            step:
+              type: string
+            target_types:
+              items:
+                type: string
+              type: array
+          type: object
+        type: array
+    type: object
+  cmdb.RelationPathResourcesRangeResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/cmdb.RelationPathResourcesRangeResponseData'
+        type: array
+      trace_id:
+        type: string
+    type: object
+  cmdb.RelationPathResourcesRangeResponseData:
+    properties:
+      code:
+        type: integer
+      message:
+        type: string
+      partial:
+        type: boolean
+      partial_reason:
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/cmdb.PathResourcesResult'
+        type: array
+    type: object
+  cmdb.RelationPathResourcesRequest:
+    properties:
+      query_list:
+        items:
+          properties:
+            look_back_delta:
+              type: string
+            matcher:
+              $ref: '#/definitions/cmdb.Matcher'
+            path_resources:
+              items:
+                items:
+                  type: string
+                type: array
+              type: array
+            source_type:
+              type: string
+            target_types:
+              items:
+                type: string
+              type: array
+            timestamp:
+              type: integer
+          type: object
+        type: array
+    type: object
+  cmdb.RelationPathResourcesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/cmdb.RelationPathResourcesResponseData'
+        type: array
+      trace_id:
+        type: string
+    type: object
+  cmdb.RelationPathResourcesResponseData:
+    properties:
+      code:
+        type: integer
+      message:
+        type: string
+      partial:
+        type: boolean
+      partial_reason:
+        type: string
+      results:
+        items:
+          $ref: '#/definitions/cmdb.PathResourcesResult'
+        type: array
     type: object
   cmdb.SharedTopologyEdge:
     properties:
@@ -225,6 +468,15 @@ definitions:
         type: string
       max_hops:
         type: integer
+      response_format:
+        description: ResponseFormat selects snapshots (default) or compact-v1 for
+          this query item.
+        enum:
+        - snapshots
+        - compact-v1
+        type: string
+      source_expand_info:
+        $ref: '#/definitions/cmdb.Matcher'
       source_info:
         $ref: '#/definitions/cmdb.Matcher'
       source_type:
@@ -1225,6 +1477,68 @@ paths:
           schema:
             $ref: '#/definitions/api.ErrResponse'
       summary: query relation multi resource
+  /api/v1/relation/path_resources:
+    post:
+      operationId: relation_path_resources_query
+      parameters:
+      - description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/cmdb.RelationPathResourcesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/cmdb.RelationPathResourcesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrResponse'
+      summary: query complete relation resource paths
+  /api/v1/relation/path_resources_range:
+    post:
+      operationId: relation_path_resources_query_range
+      parameters:
+      - description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/cmdb.RelationPathResourcesRangeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/cmdb.RelationPathResourcesRangeResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrResponse'
+      summary: query complete relation resource paths over a time range
   /api/v1/relation/v1beta3/multi_resource:
     post:
       operationId: relation_multi_resource_query_v1beta3
@@ -1312,7 +1626,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/cmdb.SharedTopologyResponse'
+            $ref: '#/definitions/api.SharedTopologyResponseDocumentation'
         "400":
           description: Bad Request
           schema:
@@ -1343,7 +1657,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/cmdb.SharedTopologyResponse'
+            $ref: '#/definitions/api.SharedTopologyResponseDocumentation'
         "400":
           description: Bad Request
           schema:

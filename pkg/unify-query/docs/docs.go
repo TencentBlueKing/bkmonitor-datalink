@@ -112,6 +112,100 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/relation/path_resources": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query complete relation resource paths",
+                "operationId": "relation_path_resources_query",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationPathResourcesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationPathResourcesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/relation/path_resources_range": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query complete relation resource paths over a time range",
+                "operationId": "relation_path_resources_query_range",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationPathResourcesRangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationPathResourcesRangeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/relation/v1beta3/multi_resource": {
             "post": {
                 "produces": [
@@ -241,7 +335,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/cmdb.SharedTopologyResponse"
+                            "$ref": "#/definitions/api.SharedTopologyResponseDocumentation"
                         }
                     },
                     "400": {
@@ -288,7 +382,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/cmdb.SharedTopologyResponse"
+                            "$ref": "#/definitions/api.SharedTopologyResponseDocumentation"
                         }
                     },
                     "400": {
@@ -1363,6 +1457,167 @@ const docTemplate = `{
                 }
             }
         },
+        "api.SharedTopologyResponseDocumentation": {
+            "description": "Each query_list item selects its response format independently; data can contain both snapshots and compact-v1 items.",
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SharedTopologyResponseItemDocumentation"
+                    }
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.SharedTopologyResponseItemDocumentation": {
+            "description": "Snapshot items contain snapshots and omit response_format/compact. Compact items contain response_format=compact-v1 and compact and omit snapshots. Failed snapshot items contain snapshots: []; failed compact items retain response_format=compact-v1 and compact: null.",
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "compact": {
+                    "description": "Compact is present only for compact-v1; it is null when that query failed.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/cmdb.CompactTopology"
+                        }
+                    ],
+                    "x-nullable": true
+                },
+                "end_time": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "point_count": {
+                    "type": "integer"
+                },
+                "response_format": {
+                    "description": "ResponseFormat is present only when compact-v1 was requested, including failures.",
+                    "type": "string",
+                    "enum": [
+                        "compact-v1"
+                    ]
+                },
+                "snapshots": {
+                    "description": "Snapshots is present only for the default/snapshots format, including failures.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologySnapshot"
+                    }
+                },
+                "start_time": {
+                    "type": "integer"
+                },
+                "step": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.CompactTopology": {
+            "type": "object",
+            "properties": {
+                "edge_occurrences": {
+                    "type": "integer"
+                },
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.CompactTopologyEdge"
+                    }
+                },
+                "node_occurrences": {
+                    "description": "Counts describe the expanded output, not dictionary size.",
+                    "type": "integer"
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.CompactTopologyNode"
+                    }
+                },
+                "partial": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.CompactTopologyPartial"
+                    }
+                },
+                "timestamps": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "cmdb.CompactTopologyEdge": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "direction": {
+                    "type": "string"
+                },
+                "mask": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "metric_name": {
+                    "type": "string"
+                },
+                "relation_type": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "target": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.CompactTopologyNode": {
+            "type": "object",
+            "properties": {
+                "dimensions": {
+                    "$ref": "#/definitions/cmdb.Matcher"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mask": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "resource_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.CompactTopologyPartial": {
+            "type": "object",
+            "properties": {
+                "index": {
+                    "type": "integer"
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
         "cmdb.Matcher": {
             "type": "object",
             "additionalProperties": {
@@ -1377,6 +1632,34 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/cmdb.Matcher"
                     }
+                },
+                "timestamp": {
+                    "type": "integer"
+                }
+            }
+        },
+        "cmdb.PathNode": {
+            "type": "object",
+            "properties": {
+                "dimensions": {
+                    "$ref": "#/definitions/cmdb.Matcher"
+                },
+                "resource_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.PathResourcesResult": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.PathNode"
+                    }
+                },
+                "target_type": {
+                    "type": "string"
                 },
                 "timestamp": {
                     "type": "integer"
@@ -1489,6 +1772,12 @@ const docTemplate = `{
                 "message": {
                     "type": "string"
                 },
+                "partial": {
+                    "type": "boolean"
+                },
+                "partial_reason": {
+                    "type": "string"
+                },
                 "path": {
                     "type": "array",
                     "items": {
@@ -1593,6 +1882,12 @@ const docTemplate = `{
                 "message": {
                     "type": "string"
                 },
+                "partial": {
+                    "type": "boolean"
+                },
+                "partial_reason": {
+                    "type": "string"
+                },
                 "path": {
                     "type": "array",
                     "items": {
@@ -1627,6 +1922,166 @@ const docTemplate = `{
                 "truncated_reason": {
                     "description": "TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。",
                     "type": "string"
+                }
+            }
+        },
+        "cmdb.RelationPathResourcesRangeRequest": {
+            "type": "object",
+            "properties": {
+                "query_list": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "end_time": {
+                                "type": "integer"
+                            },
+                            "look_back_delta": {
+                                "type": "string"
+                            },
+                            "matcher": {
+                                "$ref": "#/definitions/cmdb.Matcher"
+                            },
+                            "path_resources": {
+                                "type": "array",
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "source_type": {
+                                "type": "string"
+                            },
+                            "start_time": {
+                                "type": "integer"
+                            },
+                            "step": {
+                                "type": "string"
+                            },
+                            "target_types": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "cmdb.RelationPathResourcesRangeResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.RelationPathResourcesRangeResponseData"
+                    }
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.RelationPathResourcesRangeResponseData": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "partial": {
+                    "type": "boolean"
+                },
+                "partial_reason": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.PathResourcesResult"
+                    }
+                }
+            }
+        },
+        "cmdb.RelationPathResourcesRequest": {
+            "type": "object",
+            "properties": {
+                "query_list": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "look_back_delta": {
+                                "type": "string"
+                            },
+                            "matcher": {
+                                "$ref": "#/definitions/cmdb.Matcher"
+                            },
+                            "path_resources": {
+                                "type": "array",
+                                "items": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "source_type": {
+                                "type": "string"
+                            },
+                            "target_types": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "timestamp": {
+                                "type": "integer"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "cmdb.RelationPathResourcesResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.RelationPathResourcesResponseData"
+                    }
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.RelationPathResourcesResponseData": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "partial": {
+                    "type": "boolean"
+                },
+                "partial_reason": {
+                    "type": "string"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.PathResourcesResult"
+                    }
                 }
             }
         },
@@ -1693,6 +2148,17 @@ const docTemplate = `{
                 },
                 "max_hops": {
                     "type": "integer"
+                },
+                "response_format": {
+                    "description": "ResponseFormat selects snapshots (default) or compact-v1 for this query item.",
+                    "type": "string",
+                    "enum": [
+                        "snapshots",
+                        "compact-v1"
+                    ]
+                },
+                "source_expand_info": {
+                    "$ref": "#/definitions/cmdb.Matcher"
                 },
                 "source_info": {
                     "$ref": "#/definitions/cmdb.Matcher"

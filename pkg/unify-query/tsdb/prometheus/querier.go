@@ -141,8 +141,9 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		setCh    = make(chan storage.SeriesSet, 1)
 		recvDone = make(chan struct{})
 
-		errorMessage strings.Builder
-		lock         sync.Mutex
+		errorMessage  strings.Builder
+		queryFailures []error
+		lock          sync.Mutex
 
 		wg  sync.WaitGroup
 		err error
@@ -186,6 +187,9 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		}
 		lock.Lock()
 		errorMessage.WriteString(fmt.Sprintf("query error: %s ", queryErr.Error()))
+		if metadata.IsStrictQueryFailures(ctx) {
+			queryFailures = append(queryFailures, queryErr)
+		}
 		lock.Unlock()
 	}
 
@@ -282,10 +286,14 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 			metadata.SetStatus(ctx, metadata.QueryTsPartial, fullMsg)
 		} else {
+			queryErr := errors.New(partialDetail)
+			if metadata.IsStrictQueryFailures(ctx) {
+				queryErr = errors.Join(queryFailures...)
+			}
 			return storage.ErrSeriesSet(metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"查询异常",
-			).Error(ctx, errors.New(partialDetail)))
+			).Error(ctx, queryErr))
 		}
 	}
 

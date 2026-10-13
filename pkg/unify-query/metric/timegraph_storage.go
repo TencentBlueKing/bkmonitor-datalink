@@ -24,6 +24,11 @@ var (
 		Help:    "per-build cumulative matrix query time or remaining local wall time, not CPU time",
 		Buckets: secondsBuckets,
 	}, []string{"storage", "phase", "result"})
+	cmdbTimeGraphMatrixQueriesPerBuild = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "unify_query", Name: "cmdb_timegraph_matrix_queries_per_build",
+		Help:    "logical Matrix calls, backend fetches and reuse hits per completed graph build; backend fetches are not individual HTTP requests",
+		Buckets: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256},
+	}, []string{"storage", "kind", "result"})
 	cmdbTopologyAdmissionActive = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_admission_active",
 		Help: "active topology requests, including HTTP response writing",
@@ -53,6 +58,18 @@ func CMDBTimeGraphBuildPhaseObserve(ctx context.Context, storage, phase, result 
 		return
 	}
 	observe(ctx, cmdbTimeGraphBuildPhaseSeconds.WithLabelValues(storage, phase, result), duration.Seconds())
+}
+
+// CMDBTimeGraphMatrixQueriesObserve preserves per-build request amplification,
+// including zero-call and failed builds after storage initialization, without
+// metric-name or request labels.
+func CMDBTimeGraphMatrixQueriesObserve(ctx context.Context, storage, result string, logical, physical, reused int) {
+	if !timeGraphStorage(storage) || !timeGraphResult(result) || logical < 0 || physical < 0 || reused < 0 {
+		return
+	}
+	for kind, count := range map[string]int{"logical": logical, "physical": physical, "reused": reused} {
+		observe(ctx, cmdbTimeGraphMatrixQueriesPerBuild.WithLabelValues(storage, kind, result), float64(count))
+	}
 }
 
 // CMDBTopologyAdmissionSet 由活动计数锁保护更新，嵌套模型调用不重复计数。

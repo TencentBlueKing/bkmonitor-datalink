@@ -86,6 +86,7 @@ func observeTimeGraphBuild(ctx context.Context, span *trace.Span, graph *TimeGra
 	local := time.Since(started) - loader.queryDuration
 	metric.CMDBTimeGraphBuildPhaseObserve(ctx, storage, "matrix", outcome, loader.queryDuration)
 	metric.CMDBTimeGraphBuildPhaseObserve(ctx, storage, "local", outcome, local)
+	metric.CMDBTimeGraphMatrixQueriesObserve(ctx, storage, outcome, loader.queryCount, loader.physicalQueryCount, loader.reusedQueryCount)
 	span.Set("matrix-query-duration-seconds", loader.queryDuration.Seconds())
 	span.Set("local-build-duration-seconds", local.Seconds())
 	span.Set("graph-legacy-timepoint-count", len(graph.timeGraph))

@@ -11,7 +11,55 @@ import (
 
 	"github.com/prometheus/procfs"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
+
+func TestTopologyReservationRejectionTrace(t *testing.T) {
+	oldYolo, oldBudget, oldRequest, oldMargin, oldHeadroom := yoloMode, MaxSharedTopologyReservedBytes, SharedTopologyRequestMemoryBytes, SharedTopologyMemoryHeadroom, topologyMemoryHeadroom
+	t.Cleanup(func() {
+		yoloMode, MaxSharedTopologyReservedBytes, SharedTopologyRequestMemoryBytes, SharedTopologyMemoryHeadroom, topologyMemoryHeadroom = oldYolo, oldBudget, oldRequest, oldMargin, oldHeadroom
+	})
+	yoloMode = false
+	MaxSharedTopologyReservedBytes = 1000
+	SharedTopologyRequestMemoryBytes = 100
+	SharedTopologyMemoryHeadroom = 50
+	topologyMemoryHeadroom = func() (int64, bool) { return 10000, true }
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous); require.NoError(t, provider.Shutdown(context.Background())) })
+
+	ctx, release, err := AcquireSharedTopology(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(release)
+	require.NoError(t, ReserveTopologyStage(ctx, "matrix", 200))
+	require.NoError(t, ReserveTopologyStage(ctx, "graph", 300))
+	err = ReserveTopologyStage(ctx, "output", 501)
+	require.ErrorContains(t, err, "max_topology_reserved_bytes")
+
+	var found bool
+	for _, span := range recorder.Ended() {
+		if span.Name() != "timegraph-reserve-memory" || span.Status().Code != codes.Error {
+			continue
+		}
+		attributes := map[string]any{}
+		for _, attribute := range span.Attributes() {
+			attributes[string(attribute.Key)] = attribute.Value.AsInterface()
+		}
+		require.Equal(t, "output", attributes["memory-stage"])
+		require.Equal(t, int64(501), attributes["stage-estimated-bytes"])
+		require.Equal(t, "max_topology_reserved_bytes", attributes["limit-reason"])
+		require.Equal(t, int64(1001), attributes["limit-count"])
+		require.Equal(t, int64(1000), attributes["limit-maximum"])
+		found = true
+	}
+	require.True(t, found, "rejected reservation span must identify its stage and limit")
+}
 
 func TestTopologyReservationAdmissionAndRelease(t *testing.T) {
 	oldYolo, oldConcurrent, oldBudget, oldRequest, oldHeadroom, oldRead := yoloMode, MaxSharedTopologyConcurrent, MaxSharedTopologyReservedBytes, SharedTopologyRequestMemoryBytes, SharedTopologyMemoryHeadroom, topologyMemoryHeadroom

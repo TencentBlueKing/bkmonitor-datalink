@@ -131,7 +131,12 @@ func ReserveTopologyStage(ctx context.Context, stage string, bytes int64) (err e
 		}
 	}
 	_, span := trace.NewSpan(ctx, "timegraph-reserve-memory")
-	defer span.End(&err)
+	defer func() {
+		SetTimeGraphLimitTrace(span, err)
+		span.End(&err)
+	}()
+	span.Set("memory-stage", stage)
+	span.Set("stage-estimated-bytes", bytes)
 	topologyAdmission.Lock()
 	defer topologyAdmission.Unlock()
 	if lease.released {
@@ -150,8 +155,6 @@ func ReserveTopologyStage(ctx context.Context, stage string, bytes int64) (err e
 		return err
 	}
 	lease.stages[stage] = bytes
-	span.Set("memory-stage", stage)
-	span.Set("stage-estimated-bytes", bytes)
 	span.Set("request-reserved-bytes", lease.reserved)
 	metric.CMDBTopologyReservedSet(topologyAdmission.reserved)
 	return nil

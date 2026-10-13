@@ -78,6 +78,13 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 				before[kind] = readTimeGraphMetric(t, "cmdb_timegraph_storage_size", storageLabels(kind), "sum")
 			}
 			countBefore := readTimeGraphMetric(t, "cmdb_timegraph_storage_size", storageLabels("nodes"), "count")
+			matrixBefore := map[string]float64{}
+			matrixCountBefore := map[string]float64{}
+			for _, kind := range []string{"logical", "physical", "reused"} {
+				labels := map[string]string{"storage": "shared", "kind": kind, "result": test.outcome}
+				matrixBefore[kind] = readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", labels, "sum")
+				matrixCountBefore[kind] = readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", labels, "count")
+			}
 			_, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 1})
 			if test.name == "success" {
 				require.NoError(t, err)
@@ -102,6 +109,11 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 			attrs := map[string]any{}
 			for _, a := range build.Attributes() {
 				attrs[string(a.Key)] = a.Value.AsInterface()
+			}
+			for kind, attribute := range map[string]string{"logical": "matrix-query-count", "physical": "matrix-physical-query-count", "reused": "matrix-reused-query-count"} {
+				labels := map[string]string{"storage": "shared", "kind": kind, "result": test.outcome}
+				require.Equal(t, matrixCountBefore[kind]+1, readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", labels, "count"), kind)
+				require.Equal(t, matrixBefore[kind]+float64(attrs[attribute].(int64)), readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", labels, "sum"), kind)
 			}
 			require.Equal(t, int64(0), attrs["graph-legacy-timepoint-count"])
 			require.Equal(t, "shared", attrs["graph-storage-mode"])

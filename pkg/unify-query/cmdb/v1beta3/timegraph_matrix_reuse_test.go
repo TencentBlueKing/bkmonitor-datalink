@@ -101,6 +101,11 @@ func TestMatrixReuseDirectionsKeepAnswerAndInput(t *testing.T) {
 			return ref, err
 		}
 		calls := 0
+		matrixLabels := func(kind string) map[string]string {
+			return map[string]string{"storage": "shared", "kind": kind, "result": "success"}
+		}
+		physicalBefore := readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("physical"), "sum")
+		reusedBefore := readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("reused"), "sum")
 		fetch := model.timeGraphVMQuery
 		model.timeGraphVMQuery = func(ctx context.Context, query *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
 			calls++
@@ -108,6 +113,13 @@ func TestMatrixReuseDirectionsKeepAnswerAndInput(t *testing.T) {
 		}
 		result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 2})
 		require.NoError(t, err)
+		require.Equal(t, physicalBefore+float64(calls), readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("physical"), "sum"))
+		reuseHits := readTimeGraphMetric(t, "cmdb_timegraph_matrix_queries_per_build", matrixLabels("reused"), "sum") - reusedBefore
+		if enabled {
+			require.Positive(t, reuseHits)
+		} else {
+			require.Zero(t, reuseHits)
+		}
 		results = append(results, result)
 		counts = append(counts, calls)
 		oldLimit := MaxSharedTopologyMatrixPoints

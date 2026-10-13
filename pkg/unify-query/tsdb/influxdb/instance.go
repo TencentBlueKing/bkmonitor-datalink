@@ -129,7 +129,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		where = fmt.Sprintf("%s and %s", where, query.Condition)
 	}
 
-	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
+	limit, slimit := i.getLimitAndSlimit(ctx, query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 	if limit > 0 {
 		sLimitStr = fmt.Sprintf(" slimit %d", slimit)
 	}
@@ -302,7 +302,10 @@ func (i *Instance) getRawData(columns []string, data []any) (time.Time, float64,
 }
 
 // getLimitAndSlimit 获取真实的 limit 和 slimit
-func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
+func (i *Instance) getLimitAndSlimit(ctx context.Context, limit, slimit int) (int64, int64) {
+	if promPromql.QueryLimitsDisabled(ctx) {
+		return int64(max(limit, 0)), int64(max(slimit, 0))
+	}
 	var resultLimit, resultSLimit int
 
 	if limit > 0 {
@@ -383,7 +386,7 @@ func (i *Instance) makeSQL(
 		sqlBuilder.WriteString(" GROUP BY " + strings.Join(groupList, ", "))
 	}
 
-	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
+	limit, slimit := i.getLimitAndSlimit(ctx, query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 	if limit > 0 {
 		sqlBuilder.WriteString(fmt.Sprintf(` LIMIT %d`, limit))
 	}
@@ -446,7 +449,11 @@ func (i *Instance) query(
 	span.Set("query-params", values.Encode())
 	span.Set("http-url", urlPath)
 
-	ctx, cancel = context.WithTimeout(ctx, i.timeout)
+	if promPromql.QueryLimitsDisabled(ctx) {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, i.timeout)
+	}
 	defer cancel()
 	startAnaylize = time.Now()
 
@@ -565,10 +572,10 @@ func (i *Instance) query(
 		})
 	}
 
-	if pointNum > i.maxLimit {
+	if !promPromql.QueryLimitsDisabled(ctx) && pointNum > i.maxLimit {
 		metadata.SetStatus(ctx, metadata.ExceedsMaximumLimit, fmt.Sprintf("query points > max: %d", i.maxLimit))
 	}
-	if seriesNum > i.maxSLimit {
+	if !promPromql.QueryLimitsDisabled(ctx) && seriesNum > i.maxSLimit {
 		metadata.SetStatus(ctx, metadata.ExceedsMaximumSlimit, fmt.Sprintf("query series > max: %d", i.maxSLimit))
 	}
 
@@ -637,7 +644,13 @@ func (i *Instance) grpcStream(
 		}
 		return storage.EmptySeriesSet()
 	}
-	limiter := rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
+	timeout := i.timeout
+	var limiter *rate.Limiter
+	if promPromql.QueryLimitsDisabled(ctx) {
+		timeout = 0
+	} else {
+		limiter = rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
+	}
 
 	name := fmt.Sprintf("%s://%s", i.protocol, i.host)
 
@@ -648,7 +661,7 @@ func (i *Instance) grpcStream(
 			Span:       span,
 			Stream:     stream,
 			Limiter:    limiter,
-			Timeout:    i.timeout,
+			Timeout:    timeout,
 			MetricName: metricName,
 		},
 	)
@@ -673,7 +686,7 @@ func (i *Instance) QuerySeriesSet(
 		where = fmt.Sprintf("%s and %s", where, query.Condition)
 	}
 
-	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
+	limit, slimit := i.getLimitAndSlimit(ctx, query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 
 	user := metadata.GetUser(ctx)
 	span.Set("query-space-uid", user.SpaceUID)

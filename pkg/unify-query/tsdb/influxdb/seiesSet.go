@@ -105,7 +105,9 @@ func StartStreamSeriesSet(
 
 				span.Set("query-cost-second", int(sub.Seconds()))
 				span.Set("query-cost", sub.String())
-				span.Set("query-rate-limiter", int(s.limiter.Limit()))
+				if s.limiter != nil {
+					span.Set("query-rate-limiter", int(s.limiter.Limit()))
+				}
 				span.Set("resp-series-num", seriesNum)
 				span.Set("resp-point-num", pointsNum)
 

@@ -22,7 +22,6 @@ import (
 
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/pkg/errors"
-	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/storage/remote"
 	"github.com/samber/lo"
@@ -130,12 +129,7 @@ func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Cli
 		elastic.SetSniff(false),
 		elastic.SetHealthcheck(i.healthCheck),
 	}
-	var cancel context.CancelFunc
-	if promql.QueryLimitsDisabled(ctx) {
-		ctx, cancel = context.WithCancel(ctx)
-	} else {
-		ctx, cancel = context.WithTimeout(ctx, i.timeout)
-	}
+	ctx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()
 
 	headers := metadata.Headers(ctx, cloneStringMap(i.headers))
@@ -543,36 +537,9 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 
 	metricLabel := qo.query.MetricLabels(ctx)
 
-	var sr *elastic.SearchResult
-	completeQuery := promql.QueryLimitsDisabled(ctx) && qo.query.Size <= 0
-	for {
-		if completeQuery && ctx.Err() != nil {
-			return storage.ErrSeriesSet(ctx.Err())
-		}
-		sr, err = i.esQuery(ctx, qo, fact)
-		if err != nil {
-			return storage.ErrSeriesSet(err)
-		}
-		if !completeQuery {
-			break
-		}
-		if sr == nil || sr.Aggregations == nil {
-			return storage.ErrSeriesSet(fmt.Errorf("ES aggregation completeness is unknown"))
-		}
-		var complete bool
-		complete, err = termsAggregationsComplete(sr.Aggregations, fact.aggInfoList)
-		if err != nil {
-			return storage.ErrSeriesSet(err)
-		}
-		if complete {
-			break
-		}
-		if fact.size > int(^uint(0)>>1)/2 {
-			return storage.ErrSeriesSet(fmt.Errorf("ES terms size cannot grow further"))
-		}
-		// Rebuild the request factory: EsAgg appends aggregation metadata.
-		fact = newSeriesFormatFactory(ctx, qo.query, fact.fieldsMap, qo.start, qo.end,
-			metadata.GetQueryParams(ctx).TimeUnit, fact.size*2)
+	sr, err := i.esQuery(ctx, qo, fact)
+	if err != nil {
+		return storage.ErrSeriesSet(err)
 	}
 
 	if sr == nil || sr.Aggregations == nil {
@@ -667,7 +634,7 @@ func (i *Instance) explainDB(ctx context.Context, db string, needAddTime bool, s
 
 	if left > int64(time.Hour.Seconds()*24*14) {
 		halfYear := time.Hour * 24 * 30 * 6
-		if !promql.QueryLimitsDisabled(ctx) && left > int64(halfYear.Seconds()) {
+		if left > int64(halfYear.Seconds()) {
 			start = end.Add(halfYear * -1)
 		}
 
@@ -879,16 +846,7 @@ func (i *Instance) QuerySeriesSet(
 	span.Set("field-map-length", len(fieldMap))
 
 	var size int
-	if promql.QueryLimitsDisabled(ctx) {
-		if query.Size > 0 {
-			size = query.Size
-		} else {
-			size = i.maxSize
-			if size <= 0 {
-				size = 10
-			}
-		}
-	} else if query.Size > 0 && query.Size < i.maxSize {
+	if query.Size > 0 && query.Size < i.maxSize {
 		size = query.Size
 	} else {
 		size = i.maxSize

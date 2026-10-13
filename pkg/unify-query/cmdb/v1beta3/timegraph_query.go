@@ -1027,14 +1027,17 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 	pathFinder := NewPathFinder(
 		WithSchemaProvider(m.getSchemaProvider()),
 		WithNamespace(spaceUID),
-		WithMaxHops(MaxAllowedHops),
+		WithMaxHops(effectivePathSearchMaxHops()),
 	)
 	for _, targetType := range targetTypes {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		graphPaths, err := pathFinder.FindAllPaths(ResourceType(sourceType), ResourceType(targetType), nil)
+		graphPaths, err := pathFinder.FindAllPathsContext(ctx, ResourceType(sourceType), ResourceType(targetType), nil)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			continue
 		}
 		for _, graphPath := range graphPaths {
@@ -1099,7 +1102,7 @@ func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 		span.Set("range-points", points)
 	}
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeout(ctx, timeGraphQueryTimeout)
+	ctx, cancel = withTimeGraphQueryContext(ctx)
 	defer cancel()
 	span.Set("space-uid", spaceUID)
 	span.Set("source-type", sourceType)
@@ -1367,4 +1370,11 @@ func vectorToMatrix(vector pl.Vector) pl.Matrix {
 		})
 	}
 	return matrix
+}
+
+func withTimeGraphQueryContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if yoloMode {
+		return context.WithCancel(pl.WithQueryLimitsDisabled(ctx))
+	}
+	return context.WithTimeout(ctx, timeGraphQueryTimeout)
 }

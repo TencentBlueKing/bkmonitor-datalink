@@ -9,7 +9,10 @@
 
 package v1beta3
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type resourcePathStep struct {
 	ResourceType string
@@ -92,10 +95,20 @@ func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 
 // FindAllPaths 查找从 source 到 target 的所有路径
 func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []ResourceType) ([]resourcePath, error) {
+	return pf.FindAllPathsContext(context.Background(), source, target, pathResource)
+}
+
+func (pf *PathFinder) FindAllPathsContext(ctx context.Context, source, target ResourceType, pathResource []ResourceType) ([]resourcePath, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if source == target && len(pathResource) == 0 {
 		// 显式 source==target 优先解释为“查真实自关联边”；
 		// 只有 schema 中完全没有自关联时，才回退成单节点信息展示路径。
 		paths := pf.findSelfRelationPaths(source)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(paths) > 0 {
 			return paths, nil
 		}
@@ -108,7 +121,9 @@ func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []R
 	currentPath := []resourcePathStep{{ResourceType: string(source)}}
 	visited[source] = true
 
-	pf.dfs(source, target, pathConstraint, visited, currentPath, &results)
+	if err := pf.dfs(ctx, source, target, pathConstraint, visited, currentPath, &results); err != nil {
+		return nil, err
+	}
 	if directOnly {
 		results = filterDirectPaths(results)
 	}
@@ -179,14 +194,18 @@ func filterDirectPaths(paths []resourcePath) []resourcePath {
 
 // dfs 深度优先搜索所有路径
 func (pf *PathFinder) dfs(
+	ctx context.Context,
 	current, target ResourceType,
 	pathResource []ResourceType,
 	visited map[ResourceType]bool,
 	currentPath []resourcePathStep,
 	results *[]resourcePath,
-) {
-	if len(currentPath) > pf.maxHops+1 {
-		return
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(currentPath)-1 > pf.maxHops {
+		return nil
 	}
 
 	if current == target && len(currentPath) > 1 {
@@ -195,7 +214,7 @@ func (pf *PathFinder) dfs(
 			copy(pathCopy, currentPath)
 			*results = append(*results, resourcePath{Steps: pathCopy})
 		}
-		return
+		return nil
 	}
 
 	relations := pf.getRelationsForType(current)
@@ -222,13 +241,16 @@ func (pf *PathFinder) dfs(
 		}
 		currentPath = append(currentPath, nextStep)
 
-		pf.dfs(nextType, target, pathResource, visited, currentPath, results)
+		if err := pf.dfs(ctx, nextType, target, pathResource, visited, currentPath, results); err != nil {
+			return err
+		}
 
 		currentPath = currentPath[:len(currentPath)-1]
 		if !wasVisited {
 			visited[nextType] = false
 		}
 	}
+	return ctx.Err()
 }
 
 // satisfiesPathConstraint 检查路径是否满足 pathResource 约束

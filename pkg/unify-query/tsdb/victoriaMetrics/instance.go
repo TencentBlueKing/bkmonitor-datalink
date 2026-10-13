@@ -534,7 +534,11 @@ func (i *Instance) vmQuery(
 		return err
 	}
 
-	ctx, cancel = context.WithTimeout(ctx, i.timeout)
+	if promql.QueryLimitsDisabled(ctx) {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, i.timeout)
+	}
 	defer cancel()
 	startAnaylize = time.Now()
 
@@ -742,11 +746,11 @@ func (i *Instance) DirectQueryWithPartial(
 		APIParams: struct {
 			Query   string `json:"query"`
 			Time    int64  `json:"time"`
-			Timeout int64  `json:"timeout"`
+			Timeout *int64 `json:"timeout,omitempty"`
 		}{
 			Query:   promqlStr,
 			Time:    end.Unix(),
-			Timeout: int64(i.timeout.Seconds()),
+			Timeout: i.queryTimeoutSeconds(ctx),
 		},
 		UseNativeOr:           i.useNativeOr,
 		MetricFilterCondition: vmExpand.MetricFilterCondition,
@@ -1074,4 +1078,12 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *metadata.Query, start, end time.Time, matchers ...*labels.Matcher) (*decoder.Response, error) {
 	panic("implement me")
+}
+
+func (i *Instance) queryTimeoutSeconds(ctx context.Context) *int64 {
+	if promql.QueryLimitsDisabled(ctx) {
+		return nil
+	}
+	timeout := int64(i.timeout.Seconds())
+	return &timeout
 }

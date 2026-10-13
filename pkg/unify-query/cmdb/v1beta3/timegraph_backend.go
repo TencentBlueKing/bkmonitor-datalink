@@ -92,6 +92,7 @@ func (m *Model) getTimeGraphQuerier(ctx context.Context, spaceUID string) (queri
 }
 
 func (m *Model) buildTimeGraphRequest(
+	ctx context.Context,
 	spaceUID string,
 	target, source cmdb.Resource,
 	indexMatcher, expandMatcher cmdb.Matcher,
@@ -129,7 +130,7 @@ func (m *Model) buildTimeGraphRequest(
 			return nil, nil, err
 		}
 	}
-	if err := adjustMaxHopsForUnconstrainedPath(req, provider); err != nil {
+	if err := adjustMaxHopsForUnconstrainedPath(ctx, req, provider); err != nil {
 		return nil, nil, err
 	}
 	// 保持现有 v1beta3 旧接口的兼容语义：先用主键字段确定源资源，再用
@@ -155,7 +156,7 @@ func (m *Model) buildTimeGraphRequest(
 		WithSchemaProvider(provider),
 		WithNamespace(req.SchemaNamespace()),
 	)
-	paths, err := pathFinder.FindAllPaths(req.SourceType, req.TargetType, req.PathResource)
+	paths, err := pathFinder.FindAllPathsContext(ctx, req.SourceType, req.TargetType, req.PathResource)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -328,7 +329,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 		metric.CMDBRelationPathResultInc(ctx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeInstant, pathResult)
 	}()
 
-	req, paths, err := m.buildTimeGraphRequest(spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
+	req, paths, err := m.buildTimeGraphRequest(ctx, spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
 	if err != nil {
 		return timeGraphLegacyResult{}, err
 	}
@@ -481,7 +482,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		metric.CMDBRelationPathResultInc(ctx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeRange, pathResult)
 	}()
 
-	req, paths, err := m.buildTimeGraphRequest(spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
+	req, paths, err := m.buildTimeGraphRequest(ctx, spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}

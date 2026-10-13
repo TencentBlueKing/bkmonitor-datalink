@@ -96,7 +96,7 @@ func (q *TimeGraph) sharedTopologyState(ctx context.Context, grid TopologyGrid, 
 	if query.MaxHops < 0 {
 		return nil, nil, fmt.Errorf("topology max hops must not be negative")
 	}
-	if MaxAllowedHops > 0 && query.MaxHops > MaxAllowedHops {
+	if !yoloMode && MaxAllowedHops > 0 && query.MaxHops > MaxAllowedHops {
 		return nil, nil, fmt.Errorf("topology max hops %d exceeds maximum %d", query.MaxHops, MaxAllowedHops)
 	}
 

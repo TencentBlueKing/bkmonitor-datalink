@@ -167,7 +167,7 @@ The following settings are under `cmdb.v1beta3`:
 | `max_shared_topology_reserved_bytes` | 4294967296 | Process-wide estimated in-flight reservation cap |
 | `shared_topology_request_memory_bytes` | 536870912 | Minimum full-flight reservation per request |
 | `shared_topology_memory_headroom_bytes` | 536870912 | Additional margin below observed available memory |
-| `yolo_mode` | false | Explicit bypass of quantity/data/admission budgets; validation and cancellation remain |
+| `yolo_mode` | false | Sustained bypass of TimeGraph quantity/data/admission budgets, configured hop ceilings and internal query deadlines; requested scope, validation and cancellation remain |
 
 Nonpositive values use the finite defaults, not unlimited mode. These starting
 values are conservative configuration defaults, **not a recommended capacity
@@ -250,3 +250,23 @@ backend partial retain available matching data and explicit quality. Complete
 items omit both fields. Each batch item has an independent metadata status scope;
 a failed item remains an error. Required relation missing-route errors are
 unchanged.
+
+## Sustained YOLO operation (2026-10-13)
+
+With `cmdb.v1beta3.yolo_mode=true`, TimeGraph does not impose its configured hop
+ceiling, 60-second query deadline, sample/output/memory budgets or admission gate.
+The request-scoped flag also bypasses the local PromQL engine timeout, sample
+budget and admission tracker, and the VM client deadline; instant VM requests
+omit the client-supplied `timeout` field. Shared engines and VM instances are not
+mutated, so ordinary metric queries retain their configured limits.
+
+Caller-specified hops, paths, time grids and positive `Limit` retain their query
+meaning. YOLO does not inject the default root `Limit`; the current legacy
+adapter already disables that default and the execution layer does not consume
+it. Automatic schema path searches enumerate finite simple resource-type paths
+and respond to parent cancellation. Input/schema validity and parent deadlines
+still apply. Downstream service limits and Pod resources are separate settings.
+
+For the current rollout, sustained YOLO is the accepted operating policy. Normal
+budget-mode capacity acceptance and additional stress scenarios are not release
+prerequisites. This policy does not turn unexecuted scenarios into passed tests.

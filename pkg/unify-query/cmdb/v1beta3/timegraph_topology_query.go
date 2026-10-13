@@ -61,7 +61,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	if maxHops == 0 {
 		maxHops = DefaultMaxHops
 	}
-	if maxHops < 0 || maxHops > MaxAllowedHops {
+	if maxHops < 0 || (!yoloMode && maxHops > MaxAllowedHops) {
 		return cmdb.SharedTopologyResult{}, fmt.Errorf("max hops %d is outside [0, %d]", maxHops, MaxAllowedHops)
 	}
 
@@ -148,7 +148,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	planSpan.Set("max-hops", maxHops)
 	planSpan.End(&relationErr)
 
-	queryCtx, cancel := context.WithTimeout(ctx, timeGraphQueryTimeout)
+	queryCtx, cancel := withTimeGraphQueryContext(ctx)
 	defer cancel()
 	validated = true
 	queryCtx = metadata.WithExactTimeGrid(queryCtx)

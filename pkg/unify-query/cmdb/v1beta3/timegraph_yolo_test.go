@@ -2,6 +2,7 @@ package v1beta3
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -131,4 +132,150 @@ func TestYoloDoesNotInstallBackendResponseBudget(t *testing.T) {
 		require.NoError(t, err)
 		require.Positive(t, calls)
 	}
+}
+
+func TestYoloKeepsExplicitHopsAndLimitWithoutDefaults(t *testing.T) {
+	oldYolo, oldMax := yoloMode, MaxAllowedHops
+	t.Cleanup(func() { yoloMode, MaxAllowedHops = oldYolo, oldMax })
+	MaxAllowedHops = 1
+	for _, enabled := range []bool{false, true, false} {
+		yoloMode = enabled
+		req := &QueryRequest{MaxHops: 11, Limit: 7}
+		req.Normalize()
+		require.Equal(t, 7, req.Limit)
+		if enabled {
+			require.Equal(t, 11, req.MaxHops)
+		} else {
+			require.Equal(t, 1, req.MaxHops)
+		}
+		req = &QueryRequest{}
+		req.Normalize()
+		if enabled {
+			require.Zero(t, req.Limit)
+		} else {
+			require.Equal(t, DefaultLimit, req.Limit)
+		}
+	}
+}
+
+func TestYoloTopologyHopsAndDeadlineReachBackend(t *testing.T) {
+	oldYolo, oldMax, oldTimeout := yoloMode, MaxAllowedHops, timeGraphQueryTimeout
+	t.Cleanup(func() { yoloMode, MaxAllowedHops, timeGraphQueryTimeout = oldYolo, oldMax, oldTimeout })
+	MaxAllowedHops, timeGraphQueryTimeout = 1, 0
+	request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 11}
+	for _, format := range []string{"", cmdb.CompactTopologyFormat} {
+		request.ResponseFormat = format
+		yoloMode = false
+		_, err := sharedTopologyQueryModel(nil).QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+		require.Error(t, err)
+		yoloMode = true
+		calls := 0
+		model := sharedTopologyQueryModel(nil)
+		model.timeGraphVMQuery = func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+			calls++
+			_, hasDeadline := ctx.Deadline()
+			require.False(t, hasDeadline)
+			require.True(t, pl.QueryLimitsDisabled(ctx))
+			return nil, ctx.Err()
+		}
+		_, err = model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+		require.NoError(t, err)
+		require.Positive(t, calls)
+		parent, cancel := context.WithCancel(initTimeGraphQueryTestEnvironment())
+		cancel()
+		_, err = model.QuerySharedTopology(parent, request)
+		require.ErrorIs(t, err, context.Canceled)
+	}
+	parent, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	ctx, finish := withTimeGraphQueryContext(parent)
+	defer finish()
+	want, _ := parent.Deadline()
+	got, _ := ctx.Deadline()
+	require.Equal(t, want, got)
+}
+
+func yoloLongPathProvider() contractSchemaProvider {
+	provider := contractSchemaProvider{primary: map[ResourceType][]string{}, fields: map[ResourceType][]string{}}
+	for i := 0; i <= 12; i++ {
+		name := ResourceType(fmt.Sprintf("r%d", i))
+		provider.resources = append(provider.resources, name)
+		provider.primary[name] = []string{"id"}
+		provider.fields[name] = []string{"id"}
+		if i > 0 {
+			provider.schemas = append(provider.schemas, RelationSchema{RelationType: RelationType(fmt.Sprintf("edge%d", i)), Category: RelationCategoryStatic, FromType: provider.resources[i-1], ToType: name, MetricName: fmt.Sprintf("edge%d", i)})
+		}
+	}
+	return provider
+}
+
+func TestYoloAutomaticPathsBeyondConfiguredHops(t *testing.T) {
+	oldYolo, oldMax := yoloMode, MaxAllowedHops
+	t.Cleanup(func() { yoloMode, MaxAllowedHops = oldYolo, oldMax })
+	MaxAllowedHops = 2
+	provider := yoloLongPathProvider()
+	model := &Model{schemaProvider: provider}
+	for _, enabled := range []bool{false, true} {
+		yoloMode = enabled
+		paths, err := model.resolveTimeGraphPaths(context.Background(), "space", "r0", []cmdb.Resource{"r12"}, nil)
+		if !enabled {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		require.Len(t, paths, 1)
+		require.Len(t, paths[0].Steps, 13)
+		req, legacyPaths, err := model.buildTimeGraphRequest(context.Background(), "space", "r12", "r0", nil, nil, false, nil)
+		require.NoError(t, err)
+		require.Equal(t, 12, req.MaxHops)
+		require.Len(t, legacyPaths, 1)
+		require.Len(t, legacyPaths[0].Steps, 13)
+		cancelled, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = model.resolveTimeGraphPaths(cancelled, "space", "r0", []cmdb.Resource{"r12"}, nil)
+		require.ErrorIs(t, err, context.Canceled)
+	}
+}
+
+type cancellingPathProvider struct {
+	contractSchemaProvider
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (p *cancellingPathProvider) ListRelationSchemas(namespace string) []RelationSchema {
+	p.calls++
+	if p.calls == 3 {
+		p.cancel()
+	}
+	return p.contractSchemaProvider.ListRelationSchemas(namespace)
+}
+
+func TestUnlimitedPathSearchHonorsCancellationDuringTraversal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	provider := &cancellingPathProvider{contractSchemaProvider: yoloLongPathProvider(), cancel: cancel}
+	finder := NewPathFinder(WithSchemaProvider(provider), WithMaxHops(int(^uint(0)>>1)))
+	paths, err := finder.FindAllPathsContext(ctx, "r0", "r12", nil)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, paths)
+	require.Equal(t, 3, provider.calls)
+}
+
+func TestYoloRelationPathPropagatesUnboundedQueryContext(t *testing.T) {
+	oldYolo, oldTimeout := yoloMode, timeGraphQueryTimeout
+	t.Cleanup(func() { yoloMode, timeGraphQueryTimeout = oldYolo, oldTimeout })
+	yoloMode, timeGraphQueryTimeout = true, 0
+	model := sharedTopologyQueryModel(nil)
+	calls := 0
+	model.timeGraphVMQuery = func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+		calls++
+		_, deadline := ctx.Deadline()
+		require.False(t, deadline)
+		require.True(t, pl.QueryLimitsDisabled(ctx))
+		return nil, ctx.Err()
+	}
+	_, err := model.QueryRelationPathResourcesRange(initTimeGraphQueryTestEnvironment(), "5m", "space", "1m", "1700000000", "1700000060", "source", []cmdb.Resource{"middle"}, []cmdb.RelationPath{{Steps: []cmdb.RelationPathStep{{ResourceType: "source"}, {ResourceType: "middle"}}}}, cmdb.Matcher{"source_id": "a"})
+	require.NoError(t, err)
+	require.Positive(t, calls)
 }

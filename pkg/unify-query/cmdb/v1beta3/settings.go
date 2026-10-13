@@ -61,8 +61,8 @@ var (
 	SharedTopologyMemoryHeadroom     = 512 * 1024 * 1024
 	DefaultLookBackDelta             = int64(86400000) // 24小时（毫秒）
 
-	// yoloMode is an explicit capacity-test switch. It defaults to false and
-	// can be enabled for an isolated test Pod through configuration.
+	// yoloMode disables TimeGraph application limits for sustained operation.
+	// It defaults to false and is enabled explicitly through configuration.
 	yoloMode bool
 )
 
@@ -115,3 +115,10 @@ func TopologyRequestByteLimit() int {
 }
 
 func TopologyQueryLimit() int { return effectiveTimeGraphLimit(MaxSharedTopologyQueries, 16) }
+
+func effectivePathSearchMaxHops() int {
+	if yoloMode {
+		return int(^uint(0) >> 1)
+	}
+	return MaxAllowedHops
+}

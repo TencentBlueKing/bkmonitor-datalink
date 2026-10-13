@@ -339,23 +339,26 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 }
 
 // adjustMaxHopsForUnconstrainedPath 允许服务端发现超过历史两跳默认值的路径，
-// 同时仍然执行硬性的安全上限约束，最大跳数由 MaxAllowedHops 配置。
-func adjustMaxHopsForUnconstrainedPath(req *QueryRequest, provider SchemaProvider) error {
+// 普通模式执行 MaxAllowedHops 上限，YOLO 搜索全部有限 schema 路径。
+func adjustMaxHopsForUnconstrainedPath(ctx context.Context, req *QueryRequest, provider SchemaProvider) error {
 	if req == nil || provider == nil || len(req.PathResource) > 0 || req.SourceType == "" || req.TargetType == "" || req.SourceType == req.TargetType {
 		return nil
 	}
-	if req.MaxHops >= MaxAllowedHops {
+	if !yoloMode && req.MaxHops >= MaxAllowedHops {
 		return nil
 	}
 	pathFinder := NewPathFinder(
 		WithAllowedCategories(req.AllowedRelationTypes...),
 		WithDynamicDirection(req.DynamicRelationDirection),
-		WithMaxHops(MaxAllowedHops),
+		WithMaxHops(effectivePathSearchMaxHops()),
 		WithSchemaProvider(provider),
 		WithNamespace(req.SchemaNamespace()),
 	)
-	paths, err := pathFinder.FindAllPaths(req.SourceType, req.TargetType, nil)
+	paths, err := pathFinder.FindAllPathsContext(ctx, req.SourceType, req.TargetType, nil)
 	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return nil
 	}
 	for _, path := range paths {
@@ -364,7 +367,7 @@ func adjustMaxHopsForUnconstrainedPath(req *QueryRequest, provider SchemaProvide
 			req.MaxHops = hops
 		}
 	}
-	if req.MaxHops > MaxAllowedHops {
+	if !yoloMode && req.MaxHops > MaxAllowedHops {
 		req.MaxHops = MaxAllowedHops
 	}
 	return nil
@@ -454,7 +457,7 @@ func computeMaxHops(source, target cmdb.Resource, pathResource []cmdb.Resource) 
 		return DefaultMaxHops
 	}
 	maxHops := DefaultMaxHops + len(pathConstraint) + 1
-	if maxHops > MaxAllowedHops {
+	if !yoloMode && maxHops > MaxAllowedHops {
 		return MaxAllowedHops
 	}
 	return maxHops

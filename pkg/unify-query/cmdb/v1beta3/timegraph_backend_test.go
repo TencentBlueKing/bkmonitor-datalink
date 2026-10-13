@@ -278,7 +278,7 @@ func TestBuildTimeGraphRequestAppliesSourceExpandInfo(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req, _, err := model.buildTimeGraphRequest(
+			req, _, err := model.buildTimeGraphRequest(context.Background(),
 				"bkcc__2", "system", "node",
 				cmdb.Matcher{"node": "n1"}, tc.expand, true, nil,
 			)
@@ -291,7 +291,7 @@ func TestBuildTimeGraphRequestAppliesSourceExpandInfo(t *testing.T) {
 
 func TestBuildTimeGraphRequestInfersLegacySourceAndImplicitTarget(t *testing.T) {
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	req, paths, err := model.buildTimeGraphRequest(
+	req, paths, err := model.buildTimeGraphRequest(context.Background(),
 		"bkcc__2", "", "",
 		cmdb.Matcher{"node": "n1"}, nil, false, nil,
 	)
@@ -426,7 +426,7 @@ func TestBuildTimeGraphRequestPreservesSourceIdentity(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			model := &Model{schemaProvider: provider}
-			req, _, err := model.buildTimeGraphRequest("test-space", "", "source", tc.source, tc.expand, false, nil)
+			req, _, err := model.buildTimeGraphRequest(context.Background(), "test-space", "", "source", tc.source, tc.expand, false, nil)
 			if tc.conflict {
 				require.ErrorContains(t, err, "source_expand_info conflicts with source_info")
 				require.Nil(t, req)

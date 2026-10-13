@@ -34,11 +34,15 @@ func unlimitedBKSQLContext(unlimited bool) context.Context {
 	}
 	return ctx
 }
+
 func unlimitedBKSQLQuery() *metadata.Query {
-	return &metadata.Query{DataSource: "bkdata", TableID: "graph.doris", DB: "graph", Measurement: "doris", Field: "value",
+	return &metadata.Query{
+		DataSource: "bkdata", TableID: "graph.doris", DB: "graph", Measurement: "doris", Field: "value",
 		TimeField:  metadata.TimeField{Name: "dtEventTimeStamp", Type: "long", Unit: "millisecond"},
-		Aggregates: metadata.Aggregates{{Name: "count", Window: time.Minute, Dimensions: []string{"src", "dst"}}}}
+		Aggregates: metadata.Aggregates{{Name: "count", Window: time.Minute, Dimensions: []string{"src", "dst"}}},
+	}
 }
+
 func unlimitedBKSQLConsume(set storage.SeriesSet) (int, error) {
 	count := 0
 	for set.Next() {

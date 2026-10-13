@@ -88,8 +88,10 @@ func TestUnlimitedInfluxHTTPDeadlineAndStatus(t *testing.T) {
 	require.NoError(t, err)
 	port, err := strconv.Atoi(portText)
 	require.NoError(t, err)
-	i, err := NewInstance(mockCtx, &Options{Host: host, Port: port, Protocol: influxrouter.HTTP,
-		ContentType: ContentTypeJson, Curl: &curl.HttpCurl{}, Timeout: 20 * time.Millisecond, MaxLimit: 1, MaxSlimit: 1})
+	i, err := NewInstance(mockCtx, &Options{
+		Host: host, Port: port, Protocol: influxrouter.HTTP,
+		ContentType: ContentTypeJson, Curl: &curl.HttpCurl{}, Timeout: 20 * time.Millisecond, MaxLimit: 1, MaxSlimit: 1,
+	})
 	require.NoError(t, err)
 	for _, unlimited := range []bool{false, true} {
 		for _, slow := range []bool{false, true} {
@@ -176,8 +178,10 @@ func TestUnlimitedInfluxRealRawStream(t *testing.T) {
 	require.NoError(t, err)
 	port, err := strconv.Atoi(portText)
 	require.NoError(t, err)
-	i, err := NewInstance(ctx, &Options{Host: host, GrpcPort: port, Protocol: influxrouter.GRPC,
-		Timeout: 20 * time.Millisecond, ReadRateLimit: 1, MaxLimit: 2, MaxSlimit: 2, Tolerance: 1})
+	i, err := NewInstance(ctx, &Options{
+		Host: host, GrpcPort: port, Protocol: influxrouter.GRPC,
+		Timeout: 20 * time.Millisecond, ReadRateLimit: 1, MaxLimit: 2, MaxSlimit: 2, Tolerance: 1,
+	})
 	require.NoError(t, err)
 	for _, unlimited := range []bool{false, true} {
 		ctx := unlimitedInfluxContext(t, unlimited)

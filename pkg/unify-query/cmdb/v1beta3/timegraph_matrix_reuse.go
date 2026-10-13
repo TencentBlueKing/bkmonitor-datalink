@@ -56,8 +56,11 @@ func (loader *timeGraphMatrixLoader) loadPrepared(ctx context.Context, query *st
 func (loader *timeGraphMatrixLoader) matrixReuseKey(ctx context.Context, query *structured.QueryTs, expression string, params *metadata.QueryParams) string {
 	user := *metadata.GetUser(ctx)
 	user.HashID = ""
-	storage := params.StorageType.ToArray()
-	sort.Strings(storage)
+	var storage []string
+	if params != nil && params.StorageType != nil {
+		storage = params.StorageType.ToArray()
+		sort.Strings(storage)
+	}
 	key := struct {
 		Query           *structured.QueryTs
 		Expression      string

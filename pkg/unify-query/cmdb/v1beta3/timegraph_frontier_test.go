@@ -26,7 +26,7 @@ func frontierCompositeProvider() contractSchemaProvider {
 	}
 }
 
-func TestTopologyFrontierMatchesFullScanWithCompositeKeysAndChanges(t *testing.T) {
+func TestTopologySelectorDynamicFallbackMatchesFullScanWithCompositeKeysAndChanges(t *testing.T) {
 	old := SharedTopologyPlanCandidates
 	t.Cleanup(func() { SharedTopologyPlanCandidates = old })
 	const stamp int64 = 1700000000000
@@ -80,7 +80,7 @@ func TestTopologyFrontierMatchesFullScanWithCompositeKeysAndChanges(t *testing.T
 					require.Equal(t, canonical, canonicalTopologyForTest(t, decodeCompactForTest(t, compact.Compact)))
 					request.ResponseFormat = ""
 				}
-				require.Less(t, counts[1], counts[0]/20, "instance candidates must avoid the unrelated business-wide series")
+				require.LessOrEqual(t, counts[1], counts[0], "dynamic relations use fixed broad groups without per-instance expansion")
 			})
 		}
 	}

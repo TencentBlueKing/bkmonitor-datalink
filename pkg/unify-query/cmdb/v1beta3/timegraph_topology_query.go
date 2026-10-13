@@ -137,6 +137,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	relationSpan.End(&relationErr)
 	span.Set("relation-count", len(relations))
 	_, planSpan := trace.NewSpan(ctx, "timegraph-plan-topology-fetch")
+	allowedRelations := relations
 	rootRelations := sharedTopologyRootRelationKeys(request.SourceType, maxHops, relations)
 	planSpan.Set("relation-count", len(relations))
 	if SharedTopologyPlanCandidates {
@@ -154,7 +155,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	queryCtx = metadata.WithExactTimeGrid(queryCtx)
 	queryCtx = metadata.WithLeftOpenTimeWindow(queryCtx)
 	if SharedTopologyPlanCandidates {
-		queryCtx = context.WithValue(queryCtx, timeGraphFrontierHopsKey{}, maxHops)
+		queryCtx = context.WithValue(queryCtx, timeGraphFetchPlanKey{}, timeGraphFetchPlan{hops: maxHops, allowed: allowedRelations})
 	}
 	queryCtx, release, err := AcquireSharedTopology(queryCtx)
 	if err != nil {

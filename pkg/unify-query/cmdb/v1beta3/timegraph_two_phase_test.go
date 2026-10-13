@@ -66,7 +66,7 @@ func TestSharedTopologyPartialFirstHopIsNotCompleteEmpty(t *testing.T) {
 		StartTime: 1700000000, EndTime: 1700000100, Step: "100s", MaxHops: 2,
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"source_middle_flow"}, fields, "an unknown frontier remains partial; never query the whole business to replace missing identities")
+	require.Equal(t, []string{"source_middle_flow", "middle_target_flow"}, fields, "an incomplete first stage continues the broad plan without repeating the root probe")
 	for _, snapshot := range result.Snapshots {
 		require.Empty(t, snapshot.Nodes)
 		require.True(t, snapshot.Partial)
@@ -189,7 +189,7 @@ func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 		Timestamp: 1700000000, MaxHops: 3,
 	})
 	require.NoError(t, err)
-	require.Equal(t, 2, sourceQueries, "query the root and reached source instance separately without a global scan")
+	require.Equal(t, 1, sourceQueries, "the directed type cycle uses one broad read covering every reached source instance")
 	require.Len(t, result.Snapshots[0].Nodes, 4)
 	require.Len(t, result.Snapshots[0].Edges, 3)
 }

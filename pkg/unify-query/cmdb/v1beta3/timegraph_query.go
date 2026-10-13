@@ -252,9 +252,8 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		}
 	}
 
-	if hops, ok := ctx.Value(timeGraphFrontierHopsKey{}).(int); topologyGrid != nil && ok && tg.completeFrontierIdentity(sourceType, sourceInfo) {
-		span.Set("instance-frontier-enabled", true)
-		relationEdgeQueryCount, err = loader.loadTopologyFrontier(ctx, spaceUID, sourceType, sourceInfo, relations, hops)
+	if plan, ok := ctx.Value(timeGraphFetchPlanKey{}).(timeGraphFetchPlan); topologyGrid != nil && ok {
+		relationEdgeQueryCount, err = loader.loadSelectedTopology(ctx, spaceUID, sourceType, sourceInfo, rootRelations, relations, plan)
 		if err != nil {
 			return nil, err
 		}
@@ -560,11 +559,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 	}
 	pointCount, err := loader.validateMatrix(queryCtx, matrix, err)
 	if err == nil && loader.topology {
-		size := timeGraphReturnedMatrixSize(matrix)
-		// Budget both direction applications, including maps, versions and
-		// target-info indexes. Coefficients are conservative calibration inputs.
-		loader.graphEstimatedBytes += int64(size.Points)*256 + int64(size.Series)*1024 + int64(size.LabelBytes)*8
-		err = ReserveTopologyStage(queryCtx, "graph", loader.graphEstimatedBytes)
+		err = loader.reserveRelationApplication(queryCtx, matrix)
 	}
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
 	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。

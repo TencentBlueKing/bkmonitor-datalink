@@ -11,6 +11,7 @@ package pipeline
 
 import (
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/assert"
@@ -76,6 +77,10 @@ func TestValidateTrafficLimiter(t *testing.T) {
 	t.Run("too many requests", func(t *testing.T) {
 		getter, p := newGetter(1)
 		defer p.Clean()
+		// 不欠账时单个请求可以透支放行，随后按速率还清；欠账越过透支线后才返回 429。
+		code, _, err := validatePreCheckProcessors(record, getter)
+		require.Equal(t, define.StatusCodeOK, code)
+		require.NoError(t, err)
 		code, name, err := validatePreCheckProcessors(record, getter)
 		assert.Equal(t, define.StatusCodeTooManyRequests, code)
 		assert.Equal(t, define.ProcessorTrafficLimiter, name)
@@ -107,8 +112,8 @@ func TestValidateTrafficLimiter(t *testing.T) {
 		}
 
 		p, err := trafficlimiter.NewFactory(map[string]any{
-			"bytes_per_second": int64(1),
-			"burst_bytes":      int64(1024),
+			"bytes_per_second": int64(1 << 20),
+			"burst_bytes":      int64(1 << 20),
 			"redis": map[string]any{
 				"mode":  "standalone",
 				"db":    0,
@@ -131,6 +136,16 @@ func TestValidateTrafficLimiter(t *testing.T) {
 			instance: instance,
 			pipeline: NewPipeline("traces", define.RecordTraces, instance),
 		}
+
+		// 第一次两个服务都在透支线内放行，payment 由此欠账越过透支线；第二次只剩 checkout。
+		first := ptrace.NewTraces()
+		mixed.CopyTo(first)
+		code, _, err := validatePreCheckProcessors(&define.Record{
+			Token: mixedRecord.Token, RecordType: define.RecordTraces, Data: first,
+		}, getter)
+		require.Equal(t, define.StatusCodeOK, code)
+		require.NoError(t, err)
+		require.Equal(t, 2, first.ResourceSpans().Len())
 
 		code, name, err := validatePreCheckProcessors(mixedRecord, getter)
 		assert.Equal(t, define.StatusCodeOK, code)
@@ -215,7 +230,9 @@ bk-collector:
 	assert.NoError(t, err)
 	assert.Empty(t, name)
 	assert.Equal(t, define.StatusCodeOK, code)
-	assert.NotEmpty(t, redisServer.Keys(), "新启用的限流器应该真正在共享 Redis 上扣减额度")
+	// 扣减由后台同步提交，首次同步带随机偏移，最多一个同步周期后出现在 Redis 上。
+	assert.Eventually(t, func() bool { return len(redisServer.Keys()) > 0 }, 3*time.Second, 10*time.Millisecond,
+		"新启用的限流器应该真正在共享 Redis 上扣减额度")
 }
 
 // TestPipelineSurvivesInvalidTrafficLimiterRedis 守住限流器配置问题的爆炸半径。

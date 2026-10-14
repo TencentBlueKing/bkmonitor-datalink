@@ -61,87 +61,140 @@ func TestRedisConfigValidate(t *testing.T) {
 	}
 }
 
-func TestRedisGCRABurstRefillAndTTL(t *testing.T) {
+func TestRedisLeaseGrantsWithinBucket(t *testing.T) {
 	server := miniredis.RunT(t)
 	base := time.Unix(1700000000, 0)
 	server.SetTime(base)
-	limiter := newRedisGCRA(redisTestConfig(server.Addr())).(*redisGCRA)
-	defer limiter.Close()
+	leaser := newRedisLeaser(redisTestConfig(server.Addr())).(*redisLeaser)
+	defer leaser.Close()
 	config := limiterConfig(10, 50)
+	lease := func(want int64) int64 {
+		t.Helper()
+		return leaseOne(t, leaser, "token", "checkout", config, want)
+	}
 
-	allowed, err := limiter.Allow("token", "checkout", 20, config)
-	require.NoError(t, err)
-	assert.True(t, allowed)
-	allowed, err = limiter.Allow("token", "checkout", 30, config)
-	require.NoError(t, err)
-	assert.True(t, allowed)
-	allowed, err = limiter.Allow("token", "checkout", 1, config)
-	require.NoError(t, err)
-	assert.False(t, allowed)
+	assert.Equal(t, int64(30), lease(30))
+	assert.Equal(t, int64(20), lease(30), "只授予桶里剩下的部分")
+	assert.Zero(t, lease(1), "共享桶已空")
 
-	key := limiter.stateKey("token", "checkout", config)
-	assert.Equal(t, 5*time.Second, server.TTL(key))
+	key := leaser.stateKey("token", "checkout", config)
+	assert.Equal(t, 5*time.Second, server.TTL(key), "Key 在欠账完全恢复后过期")
 	assert.False(t, strings.Contains(key, "token"))
 	assert.False(t, strings.Contains(key, "checkout"))
 
 	server.SetTime(base.Add(time.Second))
-	allowed, err = limiter.Allow("token", "checkout", 10, config)
-	require.NoError(t, err)
-	assert.True(t, allowed)
+	assert.Equal(t, int64(10), lease(30), "按速率恢复")
 }
 
-func TestRedisGCRASharedByCollectorsAndResetByPolicy(t *testing.T) {
+func TestRedisLeaseSharedByCollectorsAndResetByPolicy(t *testing.T) {
 	server := miniredis.RunT(t)
 	server.SetTime(time.Unix(1700000000, 0))
-	first := newRedisGCRA(redisTestConfig(server.Addr())).(*redisGCRA)
-	second := newRedisGCRA(redisTestConfig(server.Addr())).(*redisGCRA)
+	first := newRedisLeaser(redisTestConfig(server.Addr()))
+	second := newRedisLeaser(redisTestConfig(server.Addr()))
 	defer first.Close()
 	defer second.Close()
 
 	config := limiterConfig(1, 10)
-	allowed, err := first.Allow("token", "checkout", 10, config)
-	require.NoError(t, err)
-	assert.True(t, allowed)
-	allowed, err = second.Allow("token", "checkout", 1, config)
-	require.NoError(t, err)
-	assert.False(t, allowed, "不同 Collector 必须共享同一个服务额度")
+	assert.Equal(t, int64(10), leaseOne(t, first, "token", "checkout", config, 10))
+	assert.Zero(t, leaseOne(t, second, "token", "checkout", config, 1), "不同 Collector 必须共享同一个服务额度")
 
 	changed := limiterConfig(1, 20)
-	allowed, err = second.Allow("token", "checkout", 20, changed)
-	require.NoError(t, err)
-	assert.True(t, allowed, "额度变化后按新策略创建满桶")
+	assert.Equal(t, int64(20), leaseOne(t, second, "token", "checkout", changed, 20), "额度变化后按新策略创建满桶")
 	assert.Len(t, server.Keys(), 2)
 }
 
-func TestRedisFailureUsesOneLocalBucketPerOutage(t *testing.T) {
-	remote := &sequenceDistributedGCRA{steps: []sequenceStep{
-		{err: errors.New("redis unavailable")},
-		{err: errors.New("redis unavailable")},
-		{allowed: false},
-		{err: errors.New("redis unavailable again")},
-	}}
+func TestRedisLeaseBatch(t *testing.T) {
+	server := miniredis.RunT(t)
+	server.SetTime(time.Unix(1700000000, 0))
+	leaser := newRedisLeaser(redisTestConfig(server.Addr()))
+	defer leaser.Close()
+
+	grants, err := leaser.Lease(context.Background(), []leaseRequest{
+		{key: serviceKey{token: "token", service: "checkout"}, config: limiterConfig(10, 50), want: 60},
+		{key: serviceKey{token: "token", service: "payment"}, config: limiterConfig(10, 5), want: 3},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{50, 3}, grants, "同一批里各服务按各自的桶授予")
+
+	grants, err = leaser.Lease(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, grants)
+}
+
+// TestRedisLeaseCapacityCoversSyncInterval 覆盖 burst_bytes 小于一个同步周期额度的配置：
+// 租约容量必须放大到至少 defaultSyncStaleAfter 的额度，否则实际速率会被压到「burst / 周期」。
+func TestRedisLeaseCapacityCoversSyncInterval(t *testing.T) {
+	server := miniredis.RunT(t)
+	base := time.Unix(1700000000, 0)
+	server.SetTime(base)
+	leaser := newRedisLeaser(redisTestConfig(server.Addr()))
+	defer leaser.Close()
+	config := limiterConfig(1000, 100) // 一个周期 500 字节，远大于 burst
+
+	var granted int64
+	for i := 1; i <= 10; i++ {
+		server.SetTime(base.Add(time.Duration(i) * defaultSyncInterval))
+		granted += leaseOne(t, leaser, "token", "checkout", config, 1000)
+	}
+	assert.GreaterOrEqual(t, granted, int64(5000), "5 秒内应领到不少于 5000 字节，与 bytes_per_second 一致")
+}
+
+func TestSyncSkipsRedisWithoutRequests(t *testing.T) {
+	leaser := &fakeLeaser{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	close(leaser.release)
 	clock := newFakeClock()
-	factory, err := newFactoryWithRedisFactory(
-		mainConfigMap(1, 10),
-		nil,
-		clock.Now,
-		func(RedisConfig) distributedGCRA { return remote },
+	factory, err := newFactoryWithLeaser(
+		mainConfigMap(1, 1), nil, clock.Now, func(RedisConfig) quotaLeaser { return leaser }, 0,
 	)
 	require.NoError(t, err)
 	defer factory.Clean()
 
-	decision, err := factory.limitSnapshot("token", map[string]int{"checkout": 10})
-	require.NoError(t, err)
-	assert.True(t, decision.accepted)
-	decision, err = factory.limitSnapshot("token", map[string]int{"checkout": 1})
-	require.NoError(t, err)
-	assert.False(t, decision.accepted, "同一次故障不能为每个请求重新创建满桶")
-	decision, err = factory.limitSnapshot("token", map[string]int{"checkout": 1})
-	require.NoError(t, err)
-	assert.False(t, decision.accepted, "Redis 明确拒绝时不能绕过到本地桶")
-	decision, err = factory.limitSnapshot("token", map[string]int{"checkout": 10})
-	require.NoError(t, err)
-	assert.True(t, decision.accepted, "Redis 拒绝也表示连接已恢复，下一次独立故障应重新从满桶开始")
+	clock.Advance(defaultSyncStaleAfter * 2)
+	factory.syncNow()
+	assert.Empty(t, leaser.entered, "没有活跃服务时不访问 Redis")
+	assert.True(t, factory.quota.shared(clock.Now()), "空同步记为成功")
+}
+
+// TestSharedQuotaAcrossCollectors 端到端验证两个 Collector 通过后台同步共享同一个服务额度：
+// 先同步的实例领走共享桶，后同步的实例领不到，只能在透支线内放行。
+func TestSharedQuotaAcrossCollectors(t *testing.T) {
+	server := miniredis.RunT(t)
+	base := time.Unix(1700000000, 0)
+	server.SetTime(base)
+	conf := policyMap(100, 100) // 透支线为 50
+	conf["redis"] = map[string]any{
+		"mode": redisModeStandalone, "db": 0,
+		"key": "shared.traffic_limiter", "addrs": []string{server.Addr()},
+	}
+	newCollector := func() *trafficLimiter {
+		t.Helper()
+		clock := newFakeClock()
+		factory, err := newFactoryWithLeaser(conf, nil, clock.Now, newRedisLeaser, 0)
+		require.NoError(t, err)
+		t.Cleanup(factory.Clean)
+		return factory
+	}
+	first, second := newCollector(), newCollector()
+	accepted := func(t *testing.T, factory *trafficLimiter, size int) bool {
+		t.Helper()
+		decision, err := factory.limitSnapshot("token", map[string]int{"checkout": size})
+		require.NoError(t, err)
+		return decision.accepted
+	}
+
+	assert.True(t, accepted(t, first, 100), "冷启动靠透支线放行，不等 Redis")
+	first.syncNow() // 申请 min(用量 + 欠账, burst) = 100，领走整个共享桶
+
+	assert.True(t, accepted(t, second, 100))
+	second.syncNow() // 共享桶已空，领不到额度
+	assert.False(t, accepted(t, second, 1), "共享额度被另一个实例领走后只能在透支线内放行")
+
+	assert.True(t, accepted(t, first, 60), "领到额度的实例余额为 0，仍可透支放行")
+	assert.False(t, accepted(t, first, 1))
+
+	server.SetTime(base.Add(time.Second))
+	first.syncNow()
+	assert.True(t, accepted(t, first, 1), "共享桶按速率恢复后，下一次同步重新领到额度")
 }
 
 // TestFactoryWithoutRedisConfig 覆盖「主配置没有 redis 段」：处理器必须能正常装载并整体空转，
@@ -195,9 +248,11 @@ func TestFactoryInvalidRedisConfigDegradesToLocal(t *testing.T) {
 	assert.Nil(t, view.redis)
 
 	_, err = factory.Process(record)
-	require.NoError(t, err, "首个请求由本地满桶放行")
+	require.NoError(t, err, "本地模式从满桶开始")
 	_, err = factory.Process(record)
-	assert.Error(t, err, "额度仍然生效，只是退化为每实例本地 GCRA")
+	require.NoError(t, err, "余额为 0 时仍在透支线内")
+	_, err = factory.Process(record)
+	assert.Error(t, err, "额度仍然生效，只是退化为每实例本地限流")
 }
 
 // TestFactoryBrokenMainConfigDisables 覆盖主配置结构本身损坏的情形，同样只降级不报错。
@@ -244,6 +299,8 @@ func TestReloadTogglesRedisConfig(t *testing.T) {
 	factory.Reload(enabled, nil)
 	assert.True(t, factory.view.Load().enabled)
 	_, err = factory.Process(newRecord())
+	require.NoError(t, err, "冷启动在透支线内放行")
+	_, err = factory.Process(newRecord())
 	assert.Error(t, err, "补上 Redis 配置后额度立即生效")
 
 	factory.Reload(disabled, nil)
@@ -255,8 +312,7 @@ func TestReloadTogglesRedisConfig(t *testing.T) {
 
 // TestTrafficLimiterRecoversAfterClean 覆盖 Pipeline Manager 的装配路径：
 // Reload 会先 Clean 全部新建的 Processor，再把上一代配置中不存在的那些直接装配进来。
-// 被 Clean 过的限流器必须重建客户端继续访问 Redis，否则新启用限流的 Collector
-// 会把该 Token 的全部请求判为超限。
+// 被 Clean 过的限流器必须重建客户端继续同步，否则会一直停在本地模式。
 func TestTrafficLimiterRecoversAfterClean(t *testing.T) {
 	server := miniredis.RunT(t)
 	conf := policyMap(1024, 4096)
@@ -285,7 +341,10 @@ func TestTrafficLimiterRecoversAfterClean(t *testing.T) {
 		Data:       data,
 	})
 	require.NoError(t, err)
-	assert.NotEmpty(t, server.Keys(), "Clean 之后应重建客户端并继续在 Redis 上扣减")
+	require.NotNil(t, factory.snapshot().redis, "Clean 之后应重建客户端")
+	factory.syncNow()
+	assert.Eventually(t, func() bool { return len(server.Keys()) > 0 }, 3*time.Second, 10*time.Millisecond,
+		"重建后的同步应继续在 Redis 上扣减")
 }
 
 func TestFallbackDecisionClassification(t *testing.T) {
@@ -294,9 +353,7 @@ func TestFallbackDecisionClassification(t *testing.T) {
 		err  error
 		want prometheus.Counter
 	}{
-		{name: "客户端缺失", err: errNoRedisClient, want: decisionLocalNoClient},
 		{name: "客户端已关闭", err: redis.ErrClosed, want: decisionLocalClosed},
-		{name: "熔断中", err: errRedisUnhealthy, want: decisionLocalUnhealthy},
 		{name: "ctx 超时", err: context.DeadlineExceeded, want: decisionLocalTimeout},
 		{name: "网络读写超时", err: &net.OpError{Err: timeoutError{}}, want: decisionLocalTimeout},
 		{name: "其余（含 Lua 脚本报错）", err: errors.New("ERR unknown command"), want: decisionLocalError},
@@ -310,95 +367,9 @@ func TestFallbackDecisionClassification(t *testing.T) {
 	}
 }
 
-// TestRedisHealthProbeOffsetsFailures 覆盖计数规则：失败 +1，PING 正常只抵消一次失败且不低于 0。
-func TestRedisHealthProbeOffsetsFailures(t *testing.T) {
-	var health redisHealth
-	now := time.Unix(1700000000, 0)
-	failure := errors.New("redis unavailable")
-
-	health.probe(nil, now)
-	health.probe(nil, now)
-	assert.Zero(t, health.failures.Load(), "计数不能低于 0，否则空闲期会攒下抵消额度")
-
-	health.fail(failure)
-	health.fail(failure)
-	health.probe(nil, now)
-	assert.Equal(t, int64(1), health.failures.Load(), "PING 正常只抵消一次失败")
-	health.fail(failure)
-	assert.False(t, health.unhealthy.Load())
-
-	health.probe(failure, now)
-	assert.True(t, health.unhealthy.Load(), "Allow 与 PING 的失败共用计数")
-}
-
-func TestRedisGCRASuccessKeepsFailureCount(t *testing.T) {
-	server := miniredis.RunT(t)
-	limiter := newRedisGCRA(redisTestConfig(server.Addr())).(*redisGCRA)
-	defer limiter.Close()
-
-	limiter.health.failures.Store(defaultRedisFailureThreshold - 1)
-	_, err := limiter.Allow("token", "checkout", 1, limiterConfig(10, 50))
-	require.NoError(t, err)
-	assert.Equal(t, int64(defaultRedisFailureThreshold-1), limiter.health.failures.Load(),
-		"Allow 成功不改计数，判断以 PING 为准")
-}
-
-func TestRedisHealthProbeRecovery(t *testing.T) {
-	var health redisHealth
-	now := time.Unix(1700000000, 0)
-	failure := errors.New("redis unavailable")
-	window := defaultRedisMinRecoverDuration
-
-	for i := 0; i < defaultRedisFailureThreshold; i++ {
-		health.probe(failure, now)
-	}
-	require.True(t, health.unhealthy.Load(), "PING 连续失败必须熔断")
-
-	health.probe(nil, now)
-	health.probe(nil, now.Add(window-time.Second))
-	assert.True(t, health.unhealthy.Load(), "正常时长不足恢复窗口时保持熔断")
-
-	health.probe(failure, now.Add(window))
-	health.probe(nil, now.Add(window+time.Second))
-	health.probe(nil, now.Add(2*window))
-	assert.True(t, health.unhealthy.Load(), "恢复窗口内出现失败必须重新计时")
-
-	health.probe(nil, now.Add(2*window+time.Second))
-	assert.False(t, health.unhealthy.Load())
-	assert.Zero(t, health.failures.Load())
-}
-
-func TestRedisHealthRecoverWindowBacksOffWhenFlapping(t *testing.T) {
-	var health redisHealth
-	now := time.Unix(1700000000, 0)
-	failure := errors.New("redis unavailable")
-	cycle := func() time.Duration {
-		t.Helper()
-		for i := 0; i < defaultRedisFailureThreshold; i++ {
-			health.probe(failure, now)
-		}
-		require.True(t, health.unhealthy.Load())
-		window := health.recoverAfter
-		health.probe(nil, now)
-		now = now.Add(window)
-		health.probe(nil, now)
-		require.False(t, health.unhealthy.Load())
-		return window
-	}
-
-	assert.Equal(t, defaultRedisMinRecoverDuration, cycle())
-	for _, want := range []time.Duration{20 * time.Second, 40 * time.Second, time.Minute, time.Minute} {
-		now = now.Add(time.Second)
-		assert.Equal(t, want, cycle(), "切回后短时间内再次熔断，窗口翻倍直到上限")
-	}
-
-	now = now.Add(defaultRedisFlapWindow)
-	assert.Equal(t, defaultRedisMinRecoverDuration, cycle(), "稳定超过抖动窗口后重新从最小窗口开始")
-}
-
-// TestRedisGCRAFailsFastWhenRedisHangs 覆盖 Redis 只完成握手、从不回包：
-// 连续失败达到阈值后 Allow 不再等待 Redis。
-func TestRedisGCRAFailsFastWhenRedisHangs(t *testing.T) {
+// TestRedisHangsDoesNotBlockRequests 覆盖 Redis 只完成握手、从不回包：
+// 请求路径不访问 Redis，不受影响；同步超时后记为失败，超过 defaultSyncStaleAfter 再切到本地模式。
+func TestRedisHangsDoesNotBlockRequests(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer listener.Close()
@@ -425,20 +396,41 @@ func TestRedisGCRAFailsFastWhenRedisHangs(t *testing.T) {
 		}
 	}()
 
-	limiter := newRedisGCRA(redisTestConfig(listener.Addr().String())).(*redisGCRA)
-	defer limiter.Close()
-	config := limiterConfig(10, 50)
-
-	for i := 0; i < defaultRedisFailureThreshold; i++ {
-		_, err = limiter.Allow("token", "checkout", 1, config)
-		require.Error(t, err)
-		assert.NotErrorIs(t, err, errRedisUnhealthy)
+	conf := policyMap(1<<20, 1<<20)
+	conf["redis"] = map[string]any{
+		"mode": redisModeStandalone, "db": 0,
+		"key": "hang.traffic_limiter", "addrs": []string{listener.Addr().String()},
 	}
+	clock := newFakeClock()
+	factory, err := newFactoryWithLeaser(conf, nil, clock.Now, newRedisLeaser, 0)
+	require.NoError(t, err)
+	defer factory.Clean()
 
+	_, err = factory.limitSnapshot("token", map[string]int{"checkout": 1})
+	require.NoError(t, err)
+
+	before := testutil.ToFloat64(syncFailed)
+	synced := make(chan struct{})
 	start := time.Now()
-	_, err = limiter.Allow("token", "checkout", 1, config)
-	assert.ErrorIs(t, err, errRedisUnhealthy)
-	assert.Less(t, time.Since(start), defaultRedisIOTimeout, "熔断后不得再等待 Redis")
+	go func() {
+		defer close(synced)
+		factory.syncNow()
+	}()
+
+	requestStart := time.Now()
+	decision, err := factory.limitSnapshot("token", map[string]int{"checkout": 1})
+	require.NoError(t, err)
+	assert.True(t, decision.accepted)
+	assert.Less(t, time.Since(requestStart), 100*time.Millisecond, "请求不得等待 Redis")
+	<-synced
+	assert.Less(t, time.Since(start), defaultSyncTimeout+time.Second, "同步必须在超时后返回")
+	assert.Equal(t, before+1, testutil.ToFloat64(syncFailed))
+
+	clock.Advance(defaultSyncStaleAfter + time.Millisecond)
+	beforeTimeout := testutil.ToFloat64(decisionLocalTimeout)
+	_, err = factory.limitSnapshot("token", map[string]int{"checkout": 1})
+	require.NoError(t, err)
+	assert.Equal(t, beforeTimeout+1, testutil.ToFloat64(decisionLocalTimeout), "长时间未同步成功后切到本地模式")
 }
 
 type timeoutError struct{}
@@ -486,40 +478,41 @@ func TestLimiterModeGauge(t *testing.T) {
 	assertMode(t, modeShared)
 }
 
-// TestDecisionsCounter 验证成功与降级分别记在对应的 backend 上。
+// TestDecisionsCounter 验证共享与本地模式分别记在对应的 backend 上：
+// 单次同步失败仍保持共享，超过 defaultSyncStaleAfter 才记为本地，同步恢复后立即回到共享。
 func TestDecisionsCounter(t *testing.T) {
-	data := ptrace.NewTraces()
-	appendTraceResource(data, "checkout", true, 128)
-	record := func() *define.Record {
-		clone := ptrace.NewTraces()
-		data.CopyTo(clone)
-		return &define.Record{
-			Token: define.Token{Original: "decisions-token"}, RecordType: define.RecordTraces, Data: clone,
-		}
-	}
-
-	server := miniredis.RunT(t)
-	conf := policyMap(1, 1<<20)
-	conf["redis"] = map[string]any{
-		"mode": redisModeStandalone, "db": 0,
-		"key": "decisions.traffic_limiter", "addrs": []string{server.Addr()},
-	}
-
-	factory, err := newFactory(conf, nil, time.Now)
+	leaser := &fakeLeaser{}
+	clock := newFakeClock()
+	factory, err := newFactoryWithLeaser(
+		mainConfigMap(1<<20, 1<<20), nil, clock.Now, func(RedisConfig) quotaLeaser { return leaser }, 0,
+	)
 	require.NoError(t, err)
 	defer factory.Clean()
+	request := func() {
+		t.Helper()
+		_, err := factory.limitSnapshot("decisions-token", map[string]int{"checkout": 1})
+		require.NoError(t, err)
+	}
 
 	before := testutil.ToFloat64(decisionRedis)
-	_, err = factory.Process(record())
-	require.NoError(t, err)
-	assert.Equal(t, before+1, testutil.ToFloat64(decisionRedis), "走通 Redis 应记在 backend=redis")
+	request()
+	assert.Equal(t, before+1, testutil.ToFloat64(decisionRedis), "新客户端从共享模式开始")
 
-	// 关掉客户端制造运行时故障，此时应记 closed 而不是 redis。
-	beforeClosed := testutil.ToFloat64(decisionLocalClosed)
-	require.NoError(t, factory.view.Load().redis.Close())
-	_, err = factory.Process(record())
-	require.NoError(t, err, "降级后仍应放行")
-	assert.Equal(t, beforeClosed+1, testutil.ToFloat64(decisionLocalClosed))
+	leaser.setErr(context.DeadlineExceeded)
+	factory.syncNow()
+	clock.Advance(defaultSyncInterval)
+	request()
+	assert.Equal(t, before+2, testutil.ToFloat64(decisionRedis), "单次同步失败不切换模式")
+
+	beforeTimeout := testutil.ToFloat64(decisionLocalTimeout)
+	clock.Advance(defaultSyncStaleAfter)
+	request()
+	assert.Equal(t, beforeTimeout+1, testutil.ToFloat64(decisionLocalTimeout))
+
+	leaser.setErr(nil)
+	factory.syncNow()
+	request()
+	assert.Equal(t, before+3, testutil.ToFloat64(decisionRedis), "同步恢复后立即回到共享模式")
 }
 
 func redisTestConfig(address string) RedisConfig {
@@ -531,25 +524,12 @@ func redisTestConfig(address string) RedisConfig {
 	}
 }
 
-type sequenceStep struct {
-	allowed bool
-	err     error
+func leaseOne(t *testing.T, leaser quotaLeaser, token, service string, config Config, want int64) int64 {
+	t.Helper()
+	grants, err := leaser.Lease(context.Background(), []leaseRequest{
+		{key: serviceKey{token: token, service: service}, config: config, want: want},
+	})
+	require.NoError(t, err)
+	require.Len(t, grants, 1)
+	return grants[0]
 }
-
-type sequenceDistributedGCRA struct {
-	mu    sync.Mutex
-	steps []sequenceStep
-}
-
-func (g *sequenceDistributedGCRA) Allow(string, string, int64, Config) (bool, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if len(g.steps) == 0 {
-		return false, errors.New("no scripted redis result")
-	}
-	step := g.steps[0]
-	g.steps = g.steps[1:]
-	return step.allowed, step.err
-}
-
-func (g *sequenceDistributedGCRA) Close() error { return nil }

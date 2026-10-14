@@ -36,12 +36,11 @@ const (
 	backendRedis = "redis"
 	backendLocal = "local"
 
-	reasonNone      = "none"
-	reasonNoClient  = "no_client"
-	reasonTimeout   = "timeout"
-	reasonClosed    = "closed"
-	reasonUnhealthy = "unhealthy"
-	reasonError     = "error"
+	reasonNone     = "none"
+	reasonNoClient = "no_client"
+	reasonTimeout  = "timeout"
+	reasonClosed   = "closed"
+	reasonError    = "error"
 
 	modeDisabled  = "disabled"
 	modeLocalOnly = "local_only"
@@ -49,8 +48,6 @@ const (
 )
 
 var limiterModes = [...]string{modeDisabled, modeLocalOnly, modeShared}
-
-var errNoRedisClient = errors.New("traffic limiter has no redis client")
 
 var trafficLimiterBytesTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
@@ -66,10 +63,10 @@ var (
 	metricResults     = [...]string{resultAccepted, resultRejected}
 )
 
-// trafficLimiterDecisionsTotal 回答「额度判断走的是共享 Redis 还是本地降级」。
-// 降级是逐次判断发生的事件而不是进程级开关：连接池打满时完全可能一部分服务走通 Redis、
-// 一部分退本地，用 0/1 表达不了这个比例；而且 Prometheus 按间隔抓取，短于抓取间隔的
-// 降级窗口在 Gauge 上会整段丢失。Counter 单调累加，任何一次降级都会体现在差值里。
+// trafficLimiterDecisionsTotal 回答「额度判断用的是共享额度还是本地降级」。
+// backend="redis" 表示判断时处于共享模式（余额来自 Redis 授予），backend="local" 表示
+// 同步已超过 defaultSyncStaleAfter 未成功，余额在本地按速率补充，reason 是最近一次同步失败的原因。
+// 用 Counter 而不是 Gauge：Prometheus 按间隔抓取，短于抓取间隔的降级窗口在 Gauge 上会整段丢失。
 var trafficLimiterDecisionsTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: define.MonitoringNamespace,
@@ -77,6 +74,16 @@ var trafficLimiterDecisionsTotal = promauto.NewCounterVec(
 		Help:      "Traffic limiter quota decisions by backend and fallback reason",
 	},
 	[]string{"backend", "reason"},
+)
+
+// trafficLimiterSyncTotal 是后台同步的结果计数，失败持续增长时额度正在退化为「实例数 × 额度」。
+var trafficLimiterSyncTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: define.MonitoringNamespace,
+		Name:      "traffic_limiter_sync_total",
+		Help:      "Traffic limiter quota sync with redis by result",
+	},
+	[]string{"result"},
 )
 
 // trafficLimiterMode 是配置态而非运行态，只在 Reload 时变化，不会抖动。
@@ -93,12 +100,14 @@ var trafficLimiterMode = promauto.NewGaugeVec(
 // 标签集固定，装载时预解析成 child。判断发生在每请求每服务的热路径上，
 // 不应反复付 WithLabelValues 的标签哈希与 map 查找开销。
 var (
-	decisionRedis          = trafficLimiterDecisionsTotal.WithLabelValues(backendRedis, reasonNone)
-	decisionLocalNoClient  = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonNoClient)
-	decisionLocalTimeout   = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonTimeout)
-	decisionLocalClosed    = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonClosed)
-	decisionLocalUnhealthy = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonUnhealthy)
-	decisionLocalError     = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonError)
+	decisionRedis         = trafficLimiterDecisionsTotal.WithLabelValues(backendRedis, reasonNone)
+	decisionLocalNoClient = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonNoClient)
+	decisionLocalTimeout  = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonTimeout)
+	decisionLocalClosed   = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonClosed)
+	decisionLocalError    = trafficLimiterDecisionsTotal.WithLabelValues(backendLocal, reasonError)
+
+	syncSucceeded = trafficLimiterSyncTotal.WithLabelValues("success")
+	syncFailed    = trafficLimiterSyncTotal.WithLabelValues("failure")
 )
 
 // setLimiterMode 让三个 mode 中恰好一个为 1，其余为 0，便于直接用 == 1 做告警。
@@ -124,7 +133,7 @@ func setLimiterMode(enabled, redisReady bool) {
 // Weights 是各信号类型的计费单价：计费字节 = 逻辑字节 × 权重。
 // 权重大于 1 表示同样的字节数消耗更多额度，等价于限得更严。
 //
-// 它必须是可比较类型（不能用 map），因为本地降级用 Config 的相等性判断策略是否变化。
+// 它必须是可比较类型（不能用 map），因为本地余额用 Config 的相等性判断策略是否变化。
 type Weights struct {
 	Traces  float64 `config:"traces" mapstructure:"traces"`
 	Metrics float64 `config:"metrics" mapstructure:"metrics"`
@@ -214,6 +223,19 @@ func (c Config) limited() bool {
 	return c.BytesPerSecond > 0
 }
 
+// overdraftBytes 是透支线：余额低于它的相反数时拒绝。取一个同步周期的额度，
+// 让冷启动和两次同步之间的请求不必等 Redis；跨实例的超额因此至多为每实例「透支线 + 一个请求」。
+func (c Config) overdraftBytes() int64 {
+	return max(int64(float64(c.BytesPerSecond)*defaultSyncInterval.Seconds()), 1)
+}
+
+// leaseCapacity 是共享桶按租约发放时的容量。一次同步至多领到一个桶的额度，
+// 若容量小于一个同步周期的额度，实际速率会被压到「容量 / 周期」，达不到 bytes_per_second。
+// 因此容量至少取 defaultSyncStaleAfter 的额度，给同步间隔的抖动留出余量；burst_bytes 更大时按它。
+func (c Config) leaseCapacity() int64 {
+	return max(c.BurstBytes, int64(float64(c.BytesPerSecond)*defaultSyncStaleAfter.Seconds()))
+}
+
 // limitIndex 回答「某个 Token 下是否存在任何启用了额度的服务」。
 // 未启用额度的 Token 在 Process 入口直接返回，因此灰度期间既不计算逻辑字节也不访问 Redis，
 // 开销只落在已经开启限流的应用上。
@@ -292,16 +314,16 @@ func newFactory(
 	customized []processor.SubConfigProcessor,
 	now func() time.Time,
 ) (*trafficLimiter, error) {
-	return newFactoryWithRedisFactory(conf, customized, now, newRedisGCRA)
+	return newFactoryWithLeaser(conf, customized, now, newRedisLeaser, defaultSyncInterval)
 }
 
-type redisGCRAFactory func(RedisConfig) distributedGCRA
-
-func newFactoryWithRedisFactory(
+// newFactoryWithLeaser 允许替换额度来源与同步间隔；syncInterval 为 0 时不启动后台同步，由测试手动驱动。
+func newFactoryWithLeaser(
 	conf map[string]any,
 	customized []processor.SubConfigProcessor,
 	now func() time.Time,
-	newRedis redisGCRAFactory,
+	newLeaser quotaLeaserFactory,
+	syncInterval time.Duration,
 ) (*trafficLimiter, error) {
 	loaded, err := newTierConfigs(conf, customized)
 	if err != nil {
@@ -316,8 +338,9 @@ func newFactoryWithRedisFactory(
 	limiter := &trafficLimiter{
 		CommonProcessor: processor.NewCommonProcessor(conf, customized),
 		redisConfig:     loaded.redisConfig,
-		newRedis:        newRedis,
-		fallback:        newLocalGCRAManager(now),
+		newLeaser:       newLeaser,
+		syncInterval:    syncInterval,
+		quota:           newQuotaManager(now),
 		activity:        newServiceActivityTracker(now, deleteTrafficMetrics),
 		sizer:           newServiceSizer(),
 		now:             now,
@@ -329,7 +352,7 @@ func newFactoryWithRedisFactory(
 		redisReady: loaded.redisReady,
 	}
 	if view.redisReady {
-		view.redis = newRedis(loaded.redisConfig)
+		view.redis = limiter.startSync(loaded.redisConfig)
 	}
 	limiter.view.Store(view)
 	setLimiterMode(view.enabled, view.redisReady)
@@ -356,7 +379,7 @@ type loadedConfigs struct {
 
 	// enabled 表示主配置里出现了 redis 段，额度需要执行；
 	// redisReady 进一步表示该段合法、可以建立客户端。两者都为真才是跨实例共享额度，
-	// enabled 为真而 redisReady 为假时退化成每实例本地 GCRA。
+	// enabled 为真而 redisReady 为假时退化成每实例本地限流。
 	enabled    bool
 	redisReady bool
 }
@@ -406,11 +429,11 @@ func newTierConfigs(
 			logger.Warnf("traffic limiter redis is not configured, all configured quotas are ignored")
 		}
 	default:
-		// 配置非法等同于 Redis 不可用：保留额度语义，退化成每实例本地 GCRA，
+		// 配置非法等同于 Redis 不可用：保留额度语义，退化成每实例本地限流，
 		// 而不是让 Processor 构建失败连累整条 Pipeline。
 		if err := redisConfig.Validate(); err != nil {
 			logger.Errorf(
-				"invalid traffic limiter redis config, degraded to per-instance local GCRA: %v", err,
+				"invalid traffic limiter redis config, degraded to per-instance local limiting: %v", err,
 			)
 		} else {
 			loaded.redisReady = true
@@ -461,27 +484,25 @@ type trafficLimiter struct {
 	processor.CommonProcessor
 
 	// mu 只串行化 Reload、Clean 和客户端重建这些写者，请求路径不参与竞争。
-	mu          sync.Mutex
-	view        atomic.Pointer[limiterView]
-	redisConfig RedisConfig
-	newRedis    redisGCRAFactory
-	fallback    *localGCRAManager
-	activity    *serviceActivityTracker
-	sizer       *serviceSizer
-	now         func() time.Time
+	mu           sync.Mutex
+	view         atomic.Pointer[limiterView]
+	redisConfig  RedisConfig
+	newLeaser    quotaLeaserFactory
+	syncInterval time.Duration
+	quota        *quotaManager
+	activity     *serviceActivityTracker
+	sizer        *serviceSizer
+	now          func() time.Time
 }
 
-// limiterView 是一次请求使用的配置代与 Redis 客户端快照，整体替换而不原地修改。
-// 请求路径只读一次指针，随后的计量和 Redis 往返都在快照上进行，不持锁做网络 I/O：
-// 否则 Reload 的写者要等全部在途 Redis 调用返回，而排在写者后面的新请求也一并停住，
-// 一次 Redis 抖动就会被这条常规的周期性操作放大成所有 Receiver goroutine 的停顿。
-//
-// 代价是取快照之后发生的 Reload 对本次请求不可见（Reload 本来就不是原子切换点），
-// 且快照到的客户端可能已被 Reload 关闭，那次判断会退化成本地 GCRA，好过阻塞所有请求。
+// limiterView 是一次请求使用的配置代与同步器快照，整体替换而不原地修改。
+// 请求路径只读一次指针，随后只在本地余额上判断，从不访问 Redis；Redis 往返全部在后台同步里。
+// 取快照之后发生的 Reload 对本次请求不可见，Reload 本来就不是原子切换点。
 type limiterView struct {
 	configs *confengine.TierConfig // type: Config
 	index   *limitIndex
-	redis   distributedGCRA
+	// redis 是绑定当前 Redis 客户端的后台同步器，nil 表示没有可用客户端。
+	redis *quotaSyncer
 
 	// enabled 为假表示主配置没有 redis 段，整个处理器空转。
 	// redisReady 区分「配置合法、客户端只是被 Clean 掉了」和「配置本身非法」：
@@ -506,19 +527,24 @@ func (p *trafficLimiter) snapshot() *limiterView {
 	return p.view.Load()
 }
 
-// ensureRedis 在客户端缺失时按保留下来的 Redis 配置重建，只有确实要访问 Redis 的请求才会走到这里。
+// startSync 按 Redis 配置建立客户端并启动后台同步。
+func (p *trafficLimiter) startSync(config RedisConfig) *quotaSyncer {
+	return newQuotaSyncer(p.newLeaser(config), p.quota, p.now, p.syncInterval)
+}
+
+// ensureRedis 在客户端缺失时按保留下来的 Redis 配置重建，只有开启了限流的请求才会走到这里。
 // Pipeline Manager 的 Reload 会先 Clean 全部新建的 Processor，再把上一代配置中不存在的那些
 // 直接装配进来且不再调用它们的 Reload，框架因此隐含要求 Clean 之后 Process 仍然可用。
 // 新增的限流器拿到的正是这样一个已经关闭客户端的实例，它必须能自愈，
-// 否则该 Token 的全部 OTLP 流量都会被判为超限。
-func (p *trafficLimiter) ensureRedis() distributedGCRA {
+// 否则该 Token 会一直停在本地模式，额度放大为「实例数 × 额度」。
+func (p *trafficLimiter) ensureRedis() *quotaSyncer {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	current := p.view.Load()
 	if current.redis != nil || !current.redisReady {
 		return current.redis
 	}
-	redis := p.newRedis(p.redisConfig)
+	redis := p.startSync(p.redisConfig)
 	p.view.Store(&limiterView{
 		configs: current.configs, index: current.index, redis: redis,
 		enabled: current.enabled, redisReady: true,
@@ -526,8 +552,8 @@ func (p *trafficLimiter) ensureRedis() distributedGCRA {
 	return redis
 }
 
-// Reload 在服务配置变化时只替换额度索引；Redis 连接参数变化时才替换客户端。
-// GCRA 的 Redis Key 包含额度摘要，因此服务额度变化后会自然使用一个新的满桶，
+// Reload 在服务配置变化时只替换额度索引；Redis 连接参数变化时才替换客户端与后台同步。
+// Redis Key 与本地余额都按额度区分，服务额度变化后会自然使用一个新的满桶，
 // 不需要扫描或迁移旧配置对应的状态。
 func (p *trafficLimiter) Reload(conf map[string]any, customized []processor.SubConfigProcessor) {
 	loaded, err := newTierConfigs(conf, customized)
@@ -538,16 +564,20 @@ func (p *trafficLimiter) Reload(conf map[string]any, customized []processor.SubC
 
 	p.mu.Lock()
 	redis := p.view.Load().redis
-	var oldRedis distributedGCRA
+	redisChanged := !reflect.DeepEqual(p.redisConfig, loaded.redisConfig)
+	var oldRedis *quotaSyncer
 	switch {
 	case !loaded.redisReady:
-		// Redis 段被移除或变得非法，释放客户端；额度若仍启用则由本地 GCRA 承担。
+		// Redis 段被移除或变得非法，释放客户端；额度若仍启用则退化为本地限流。
 		oldRedis, redis = redis, nil
-		p.fallback.Clean()
-	case redis == nil || !reflect.DeepEqual(p.redisConfig, loaded.redisConfig):
+	case redis == nil || redisChanged:
 		oldRedis = redis
-		redis = p.newRedis(loaded.redisConfig)
-		p.fallback.Clean()
+		redis = p.startSync(loaded.redisConfig)
+	}
+	if redisChanged {
+		// 换了 Redis 就换了共享桶，旧 Redis 领到的余额与欠账不再有意义。
+		// 只在 Redis 配置变化时清空：Reload 是周期性的常规操作，配置不变时清空会每次重新发放满桶。
+		p.quota.Clean()
 	}
 	p.redisConfig = loaded.redisConfig
 	p.CommonProcessor = processor.NewCommonProcessor(conf, customized)
@@ -563,7 +593,7 @@ func (p *trafficLimiter) Reload(conf map[string]any, customized []processor.SubC
 	}
 }
 
-// Clean 释放 Redis 连接池，避免被丢弃的实例泄漏连接和后台 goroutine：
+// Clean 释放 Redis 连接池并停止后台同步，避免被丢弃的实例泄漏连接和 goroutine：
 // Manager.Reload 每次都会完整构造一套新 Processor，不 Close 就是每次热加载泄漏一个连接池和一个 goroutine。
 // 但客户端置空只表示「当前没有可用客户端」，不代表限流器永久失效，ensureRedis 会在下次请求时重建。
 func (p *trafficLimiter) Clean() {
@@ -573,7 +603,7 @@ func (p *trafficLimiter) Clean() {
 		configs: current.configs, index: current.index,
 		enabled: current.enabled, redisReady: current.redisReady,
 	})
-	p.fallback.Clean()
+	p.quota.Clean()
 	p.activity.Clean()
 	p.mu.Unlock()
 
@@ -639,15 +669,21 @@ func (p *trafficLimiter) Process(record *define.Record) (*define.Record, error) 
 	)
 }
 
-// limit 使用一份配置快照判断各服务的额度，Redis 往返不持有 p.mu。
+// limit 使用一份配置快照在本地余额上判断各服务的额度，不访问 Redis，也不持有 p.mu。
 func (p *trafficLimiter) limit(
 	configs *confengine.TierConfig,
-	redis distributedGCRA,
+	syncer *quotaSyncer,
 	token string,
 	recordType define.RecordType,
 	sizes map[string]int,
 ) (limitDecision, error) {
 	now := p.now()
+	shared := syncer != nil && p.quota.shared(now)
+	decision := decisionRedis
+	if !shared {
+		decision = p.localDecision(syncer)
+	}
+
 	accepted := false
 	rejected := make([]string, 0)
 	for service, size := range sizes {
@@ -665,31 +701,16 @@ func (p *trafficLimiter) limit(
 
 		serviceConfig := config.(Config)
 		if !serviceConfig.limited() {
-			p.fallback.Delete(token, service)
+			p.quota.Delete(token, service)
 			accepted = true
 			continue
 		}
 
-		// 没有可用客户端时按 Redis 故障处理。限流器自身状态异常不应该放大成整个 Token 的流量损失：
-		// Redis 运行时故障都已经降级到本地 GCRA，客户端缺失更没有理由 fail-closed。
-		// 额度按计费字节扣减：不同信号的单位价值不同，用权重折算后再进同一个桶。
+		// 额度按计费字节扣减：不同信号的单位价值不同，用权重折算后再进同一个余额。
 		// 指标仍然记录原始逻辑字节，两者的换算关系由权重配置给出。
 		cost := serviceConfig.chargedBytes(size, recordType)
-		allowed, redisErr := false, error(errNoRedisClient)
-		if redis != nil {
-			allowed, redisErr = redis.Allow(token, service, cost, serviceConfig)
-		}
-		if redisErr != nil {
-			warnRedisFailure(redisErr)
-			fallbackDecision(redisErr).Inc()
-			allowed = p.fallback.Allow(token, service, cost, serviceConfig, now)
-		} else {
-			decisionRedis.Inc()
-			// Redis 一旦恢复成功判断，就丢弃该服务的本地降级状态；
-			// 下一次独立故障会重新从满桶开始。
-			p.fallback.Delete(token, service)
-		}
-		if allowed {
+		decision.Inc()
+		if p.quota.Allow(token, service, cost, serviceConfig, now, shared) {
 			accepted = true
 			continue
 		}
@@ -697,6 +718,14 @@ func (p *trafficLimiter) limit(
 	}
 	sort.Strings(rejected)
 	return limitDecision{accepted: accepted, rejected: rejected}, nil
+}
+
+// localDecision 返回本地模式下的 decisions 计数：没有客户端时记 no_client，否则记最近一次同步失败的原因。
+func (p *trafficLimiter) localDecision(syncer *quotaSyncer) prometheus.Counter {
+	if syncer == nil {
+		return decisionLocalNoClient
+	}
+	return p.quota.failureDecision()
 }
 
 func observeTrafficBytes(

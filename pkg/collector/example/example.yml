@@ -358,7 +358,7 @@ bk-collector:
         burst: 1000
 
     # TrafficLimiter: 按 Token 和服务限制 Traces、Metrics、Logs 的逻辑字节流量。
-    # Redis 运行时不可用时才临时降级到从满桶开始的本地 GCRA。
+    # 请求只在本地余额上判断，后台每 500ms 与 Redis 同步一次额度；同步持续失败时按速率在本地补充。
     - name: "traffic_limiter/gcra"
       config:
         bytes_per_second: 10485760

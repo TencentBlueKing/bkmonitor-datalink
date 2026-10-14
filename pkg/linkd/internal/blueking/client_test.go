@@ -277,6 +277,10 @@ func TestUserLookupTimeoutAndResponseBudget(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
 		t.Cleanup(server.Close)
 		c := newClient(t, server.URL, true)
+		// 默认共享查询、HTTP Client 与响应头等待同为 3 秒，计时器竞争会使
+		// transport 超时先返回。本例只验证共享 context，传输预算必须更长。
+		c.http.Timeout = 2 * requestTimeout
+		c.transport.ResponseHeaderTimeout = 2 * requestTimeout
 		if _, err := c.Username(t.Context(), "one"); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatal("lookup deadline missing", err)
 		}

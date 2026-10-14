@@ -365,6 +365,10 @@ Worker 先 Bulk create-only 写入对应 History 时间桶，再只对 History �
 原 `_seq_no/_primary_term` 执行 Bulk delete。单项失败保留 Active 并在下一轮扫描重试，不阻塞当前轮后续
 Alert，也不让 Lifecycle 重试已经成功的终态 CAS。归档过渡期间 Active 与 History 中允许存在内容完全一致的
 同一 Alert，逻辑读取将其折叠为一个对象。History create 和 Active delete 都使用 `refresh=false`，
+Active 删除的 409 若 realtime 确认版本变化，只记录归档并发冲突并留待下一轮，不清除新版本、
+不立即循环重试、不将任务标记异常；批次满足 `Scanned = Archived + Conflicts + Failed`，冲突不能冒充已归档。
+History 内容冲突、读取/写入失败仍保留失败语义。
+
 409 幂等冲突使用 realtime `_mget` 核对；搜索可见性由 Elasticsearch refresh 最终提供，不属于归档提交点。
 
 ## 6. 幂等与部分成功恢复

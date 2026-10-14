@@ -59,7 +59,7 @@ type RedisStreamManagerConfig struct {
 	Enabled *bool `yaml:"enabled,omitempty"`
 	// ReconcileIntervalSeconds 是指标采集和裁剪周期。
 	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds"`
-	// OperationTimeoutSeconds 限制单轮 Redis 操作总时间。
+	// OperationTimeoutSeconds 分别限制来源目录读取与单个来源的 Redis 采集/裁剪时间。
 	OperationTimeoutSeconds int `yaml:"operation_timeout_seconds"`
 	// MaxEntries 是触发安全裁剪的软长度上限。
 	MaxEntries int64 `yaml:"max_entries"`
@@ -256,7 +256,7 @@ func (c RedisStreamManagerConfig) ReconcileInterval() time.Duration {
 	return time.Duration(c.ReconcileIntervalSeconds) * time.Second
 }
 
-// OperationTimeout 返回单轮 Redis 管理操作的最大时间。
+// OperationTimeout 返回目录读取或单个来源 Redis 管理操作的最大时间。
 func (c RedisStreamManagerConfig) OperationTimeout() time.Duration {
 	return time.Duration(c.OperationTimeoutSeconds) * time.Second
 }

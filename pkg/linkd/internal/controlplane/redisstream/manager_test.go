@@ -21,6 +21,7 @@ import (
 type fakeRedis struct {
 	exists         int64
 	existsErr      error
+	existsFunc     func(context.Context) *redis.IntCmd
 	info           redis.XInfoStream
 	groups         []redis.XInfoGroup
 	groupSnapshots [][]redis.XInfoGroup
@@ -36,7 +37,10 @@ type fakeRedis struct {
 	trimLimits     []int64
 }
 
-func (f *fakeRedis) Exists(context.Context, ...string) *redis.IntCmd {
+func (f *fakeRedis) Exists(ctx context.Context, _ ...string) *redis.IntCmd {
+	if f.existsFunc != nil {
+		return f.existsFunc(ctx)
+	}
 	return redis.NewIntResult(f.exists, f.existsErr)
 }
 
@@ -391,3 +395,59 @@ func newTestManager(
 var _ redisClient = (*fakeRedis)(nil)
 
 var _ Observer = (*recordingObserver)(nil)
+
+func TestRedisCommandErrorRetainsOperationAndCause(t *testing.T) {
+	existsError := errors.New("private connection failure")
+	manager := newTestManager(t, &fakeRedis{existsErr: existsError}, &recordingObserver{}, time.Now())
+	err := manager.ReconcileOnce(t.Context())
+	var failure *OperationError
+	if !errors.As(err, &failure) || failure.Operation != "EXISTS" || !errors.Is(err, existsError) {
+		t.Fatal(err)
+	}
+	trimError := errors.New("private trim failure")
+	manager = newTestManager(t, &fakeRedis{exists: 1, info: redis.XInfoStream{Length: 101, FirstEntry: redis.XMessage{ID: "1000-0"}}, groups: []redis.XInfoGroup{{Name: "lifecycle", LastDeliveredID: "9000-0"}}, trimErrors: []error{trimError}}, &recordingObserver{}, time.Now())
+	err = manager.ReconcileOnce(t.Context())
+	if !errors.As(err, &failure) || failure.Operation != "XTRIM" || !errors.Is(err, trimError) {
+		t.Fatal(err)
+	}
+}
+
+func TestManagerSeparatesCancellationFromSourceTimeout(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"already canceled", "canceled during command", "source timeout"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			if name == "source timeout" {
+				cancel()
+				ctx, cancel = context.WithTimeout(t.Context(), 10*time.Millisecond)
+			}
+			defer cancel()
+			if name == "already canceled" {
+				cancel()
+			}
+			calls := 0
+			client := &fakeRedis{existsFunc: func(call context.Context) *redis.IntCmd {
+				calls++
+				if name != "source timeout" {
+					cancel()
+				}
+				<-call.Done()
+				return redis.NewIntResult(0, call.Err())
+			}}
+			observer := &recordingObserver{}
+			manager := newTestManager(t, client, observer, time.Now())
+			err := manager.ReconcileOnce(ctx)
+			if name == "source timeout" {
+				if !errors.Is(err, context.DeadlineExceeded) || len(observer.outcomes) != 1 || observer.outcomes[0] != "failed" {
+					t.Fatalf("err=%v outcomes=%v", err, observer.outcomes)
+				}
+			} else if !errors.Is(err, context.Canceled) || len(observer.outcomes) != 0 {
+				t.Fatalf("err=%v outcomes=%v", err, observer.outcomes)
+			}
+			if len(observer.snapshots) != 0 || (name == "already canceled" && calls != 0) || (name != "already canceled" && calls != 1) {
+				t.Fatalf("calls=%d snapshots=%v", calls, observer.snapshots)
+			}
+		})
+	}
+}

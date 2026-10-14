@@ -63,7 +63,7 @@ func TestCanceledArchiveRoundDoesNotCountAsFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	started := make(chan struct{})
 	done := make(chan error, 1)
-	task := newAlertArchiveTask(slog.New(slog.NewTextHandler(io.Discard, nil)), config.ElasticsearchControlPlaneConfig{}.WithDefaults(), taskObserver{registry, "elasticsearch-alert-archiver", nil}, func(context.Context, int, int, int) {}, func(ctx context.Context, _ elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
+	task := newAlertArchiveTask(slog.New(slog.NewTextHandler(io.Discard, nil)), config.ElasticsearchControlPlaneConfig{}.WithDefaults(), taskObserver{registry, "elasticsearch-alert-archiver", nil}, func(context.Context, elasticsearchstore.ArchiveBatchResult) {}, func(ctx context.Context, _ elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
 		close(started)
 		<-ctx.Done()
 		return elasticsearchstore.ArchiveBatchResult{}, ctx.Err()

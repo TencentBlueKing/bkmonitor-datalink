@@ -338,19 +338,28 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return runActiveIndexes(ctx, cfg, sources, logger, registry, metrics)
 	}})
 	if settings := cfg.RedisStreamSettings(); settings != nil && settings.IsEnabled() && cfg.Lifecycle != nil {
+		// 维护连接单独服从来源截止时间，避免裁剪请求占用调度器的共享连接池。
+		streamOptions := cfg.Storage.Redis.ClientOptions()
+		streamOptions.ContextTimeoutEnabled = true
+		streamClient, err := redisclient.New(streamOptions)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = streamClient.Close() }()
 		after := ""
 		tasks = append(tasks, newSourceStreamTask(metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskRedisStreamManager), func(ctx context.Context) error {
 			ticker := time.NewTicker(settings.ReconcileInterval())
 			defer ticker.Stop()
 			for {
 				after = reconcileSourceStreams(ctx, settings.OperationTimeout(), sources, after, registry, func(call context.Context, r eventsource.Record) error {
+					started := time.Now()
 					lc := cfg.Lifecycle.ForSource(d.Deployment, r.ID)
-					manager, err := streams.NewManager(client, streams.Config{Stream: lc.Signal.Stream, ExpectedGroup: lc.Signal.Group, ReconcileInterval: settings.ReconcileInterval(), OperationTimeout: settings.OperationTimeout(), MaxEntries: settings.MaxEntries, TrimBatchSize: settings.TrimBatchSize, MaxTrimEntriesPerCycle: settings.MaxTrimEntriesPerCycle}, metrics.RedisStreamObserver())
+					manager, err := streams.NewManager(streamClient, streams.Config{Stream: lc.Signal.Stream, ExpectedGroup: lc.Signal.Group, ReconcileInterval: settings.ReconcileInterval(), OperationTimeout: settings.OperationTimeout(), MaxEntries: settings.MaxEntries, TrimBatchSize: settings.TrimBatchSize, MaxTrimEntriesPerCycle: settings.MaxTrimEntriesPerCycle}, metrics.RedisStreamObserver())
 					if err == nil {
 						err = manager.ReconcileOnce(call)
 					}
-					if err != nil {
-						logger.WarnContext(ctx, "source stream reconcile failed", "event_source_id", r.ID)
+					if err != nil && ctx.Err() == nil {
+						logSourceStreamFailure(ctx, logger, r.ID, time.Since(started), err)
 					}
 					return err
 				})
@@ -401,7 +410,10 @@ func newSourceStreamTask(observer interface{ SetActive(context.Context, bool) },
 	}}
 }
 
+const sourceStreamPageSize = 16
+
 // reconcileSourceStreams 把来源读取失败和逐来源失败纳入同一轮结果。
+// 来源读取与每个来源各自持有超时预算，防止慢来源耗尽后续来源的期限。
 // 详情仅属于最近一页，最多 16 项；不把一次分页扫描解释为全部来源健康。
 func reconcileSourceStreams(ctx context.Context, timeout time.Duration, sources interface {
 	List(context.Context, string, int) ([]eventsource.Record, error)
@@ -410,28 +422,37 @@ func reconcileSourceStreams(ctx context.Context, timeout time.Duration, sources 
 	registry.Begin("redis-stream-manager", "", "")
 	registry.RetainSteps("redis-stream-manager", nil)
 	call, stop := context.WithTimeout(ctx, timeout)
-	defer stop()
-	records, err := sources.List(call, after, 16)
+	records, err := sources.List(call, after, sourceStreamPageSize)
+	stop()
 	code := ""
-	failed := 0
+	failed, processed := 0, 0
 	if err != nil {
 		code = "source_list_failed"
+		if errors.Is(err, context.DeadlineExceeded) {
+			code = "source_list_timeout"
+		}
 	} else {
 		for _, record := range records {
+			if ctx.Err() != nil {
+				break
+			}
 			after = record.ID
+			processed++
 			start := time.Now()
+			call, stop := context.WithTimeout(ctx, timeout)
 			err := reconcile(call, record)
+			stop()
 			reason := ""
-			if err != nil {
-				reason = "stream_reconcile_failed"
+			if err != nil && ctx.Err() == nil {
+				reason = sourceStreamErrorCode(err)
 				failed++
 			}
 			registry.Finish(ctx, "redis-stream-manager", record.ID, record.ID, time.Since(start), 1, 0, reason)
 		}
-		if len(records) < 16 {
+		if ctx.Err() == nil && len(records) < sourceStreamPageSize {
 			after = ""
 		}
 	}
-	registry.Finish(ctx, "redis-stream-manager", "", "", time.Since(started), len(records), failed, code)
+	registry.Finish(ctx, "redis-stream-manager", "", "", time.Since(started), processed, failed, code)
 	return after
 }

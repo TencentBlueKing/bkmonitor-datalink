@@ -61,7 +61,7 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 	if cfg.ControlPlane != nil && cfg.ControlPlane.RedisStream != nil {
 		redisSource = "explicit"
 	}
-	redisTask := makeTask("redis-stream-manager", "Redis Stream Manager", "消息与存储维护", "periodic", "每轮扫描最多 16 个来源并采集、检查安全裁剪边界。", hasRedisStreamTask(cfg), rs.ReconcileInterval().Seconds(), rs.OperationTimeout().Seconds(), redisSource, map[string]any{"sourcePageSize": 16, "operationTimeoutSeconds": rs.OperationTimeoutSeconds, "maxEntries": rs.MaxEntries, "trimBatchSize": rs.TrimBatchSize, "maxTrimEntriesPerCycle": rs.MaxTrimEntriesPerCycle})
+	redisTask := makeTask("redis-stream-manager", "Redis Stream Manager", "消息与存储维护", "periodic", "每轮扫描最多 16 个来源，各来源独立限时采集并检查安全裁剪边界。", hasRedisStreamTask(cfg), rs.ReconcileInterval().Seconds(), rs.OperationTimeout().Seconds()*float64(sourceStreamPageSize+1), redisSource, map[string]any{"sourcePageSize": sourceStreamPageSize, "operationTimeoutSeconds": rs.OperationTimeoutSeconds, "maxEntries": rs.MaxEntries, "trimBatchSize": rs.TrimBatchSize, "maxTrimEntriesPerCycle": rs.MaxTrimEntriesPerCycle})
 	redisTask.DisabledReason = "需要 Redis 与 Lifecycle 配置"
 	if !rs.IsEnabled() {
 		redisTask.DisabledReason = "control_plane.redis_stream.enabled 显式设为 false"

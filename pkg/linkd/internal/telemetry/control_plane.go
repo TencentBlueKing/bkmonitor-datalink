@@ -114,8 +114,8 @@ func (o *ControlPlaneTaskObserver) RunFinished(ctx context.Context, duration tim
 	}
 }
 
-// ObserveElasticsearchArchiveBatch 记录 Archiver 一批的扫描、成功和隔离失败工作量。
-func (r *Runtime) ObserveElasticsearchArchiveBatch(ctx context.Context, scanned, archived, failed int) {
+// ObserveElasticsearchArchiveBatch 分开记录归档成功、并发更新冲突与真实失败；冲突留待下轮扫描。
+func (r *Runtime) ObserveElasticsearchArchiveBatch(ctx context.Context, scanned, archived, failed, conflicts int) {
 	if r == nil || r.metrics == nil {
 		return
 	}
@@ -128,6 +128,10 @@ func (r *Runtime) ObserveElasticsearchArchiveBatch(ctx context.Context, scanned,
 	r.metrics.elasticsearchScanLast.Record(ctx, scannedValue)
 	r.metrics.elasticsearchArchiveLast.Record(ctx, archivedValue)
 	r.metrics.elasticsearchFailureLast.Record(ctx, failedValue)
+	r.metrics.elasticsearchConflictLast.Record(ctx, int64(conflicts))
+	if conflicts > 0 {
+		r.metrics.elasticsearchConflictedAlerts.Add(ctx, int64(conflicts))
+	}
 	r.metrics.elasticsearchScannedAlerts.Add(ctx, scannedValue)
 	if archivedValue > 0 {
 		r.metrics.elasticsearchArchivedAlerts.Add(ctx, archivedValue)

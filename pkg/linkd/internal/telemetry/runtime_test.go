@@ -111,8 +111,8 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	taskObserver := runtime.ControlPlaneTaskObserver(ControlPlaneTaskElasticsearchAlertArchiver)
 	taskObserver.SetActive(ctx, true)
 	taskObserver.RunFinished(ctx, 20*time.Millisecond, true)
-	runtime.ObserveElasticsearchArchiveBatch(ctx, 9, 7, 2)
-	runtime.ObserveElasticsearchArchiveBatch(ctx, 0, 0, 0)
+	runtime.ObserveElasticsearchArchiveBatch(ctx, 12, 7, 2, 3)
+	runtime.ObserveElasticsearchArchiveBatch(ctx, 0, 0, 0, 0)
 
 	request, err := http.NewRequestWithContext(
 		context.Background(),
@@ -190,6 +190,8 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		"linkd_elasticsearch_alert_archiver_last_batch_scanned",
 		"linkd_elasticsearch_alert_archiver_last_batch_items",
 		"linkd_elasticsearch_alert_archiver_last_batch_failed",
+		"linkd_elasticsearch_alert_archiver_conflicted_alerts_total",
+		"linkd_elasticsearch_alert_archiver_last_batch_conflicted",
 		`linkd_task="elasticsearch-alert-archiver"`,
 		"target_info",
 		`linkd_stage="clean"`,
@@ -199,6 +201,22 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("metrics missing %q:\n%s", expected, text)
+		}
+	}
+	for name, value := range map[string]string{
+		"linkd_elasticsearch_alert_archiver_conflicted_alerts_total": "3",
+		"linkd_elasticsearch_alert_archiver_last_batch_conflicted":   "3",
+		"linkd_elasticsearch_alert_archiver_failed_alerts_total":     "2",
+		"linkd_elasticsearch_alert_archiver_last_batch_failed":       "2",
+	} {
+		found := false
+		for _, line := range strings.Split(text, "\n") {
+			if strings.HasPrefix(line, name+"{") && strings.HasSuffix(line, " "+value) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("metric %s did not retain value %s after empty batch", name, value)
 		}
 	}
 	for _, forbidden := range []string{"bk_tenant_id", "event_id", "alert_id", "raw-events", `consumer_group="`, "sensitive-tenant", "private-invalid-outcome"} {

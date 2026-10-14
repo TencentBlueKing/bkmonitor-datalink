@@ -485,6 +485,13 @@ func (m *Manager) ArchiveTerminalAlerts(
 			result.Archived++
 			continue
 		}
+		if item.conflicted {
+			result.Conflicts++
+			if len(result.ConflictItems) < maxArchiveFailureSamples {
+				result.ConflictItems = append(result.ConflictItems, ArchiveConflict{Index: item.index, DocumentID: item.documentID})
+			}
+			continue
+		}
 		reason := "archive worker returned neither success nor error"
 		if item.err != nil {
 			reason = item.err.Error()
@@ -494,7 +501,7 @@ func (m *Manager) ArchiveTerminalAlerts(
 			Code: item.stage + "_failed", Reason: reason,
 		})
 	}
-	result.Failed = result.Scanned - result.Archived
+	result.Failed = result.Scanned - result.Archived - result.Conflicts
 	if result.Scanned == request.Limit {
 		if err := json.Unmarshal(response.Hits.Hits[len(response.Hits.Hits)-1].Sort[0], &result.NextCursor); err != nil {
 			return ArchiveBatchResult{}, fmt.Errorf("decode active alert archive cursor: %w", err)

@@ -246,7 +246,7 @@ func TestArchiveTerminalAlertsKeepsActiveDocumentAfterRealVersionConflict(t *tes
 			return jsonResponse(t, map[string]any{"docs": []any{
 				map[string]any{
 					"_index": "linkd-test-alerts-active-000001", "_id": alertDocumentID(terminal.Alert),
-					"found": true,
+					"found": true, "_seq_no": 8, "_primary_term": 2,
 				},
 			}}), nil
 		default:
@@ -266,7 +266,7 @@ func TestArchiveTerminalAlertsKeepsActiveDocumentAfterRealVersionConflict(t *tes
 		t.Fatal(err)
 	}
 	results := repository.archiveTerminalAlertsBulk(context.Background(), []store.StoredAlert{terminal})
-	if len(results) != 1 || results[0].archived || results[0].stage != "active_delete" || results[0].err == nil ||
+	if len(results) != 1 || results[0].archived || !results[0].conflicted || results[0].err != nil ||
 		requests != 3 {
 		t.Fatalf("results=%#v requests=%d", results, requests)
 	}
@@ -410,4 +410,131 @@ func jsonResponse(t *testing.T, value any) *http.Response {
 		t.Fatal(err)
 	}
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(body)))}
+}
+
+func TestActiveDeleteConflictRequiresReliableRealtimeEvidence(t *testing.T) {
+	t.Parallel()
+	terminal := archiveStoredAlert(t, "verify", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+	version, _ := decodeVersion(terminal.Version)
+	for _, tc := range []struct {
+		name      string
+		seq       int64
+		term      int64
+		index     string
+		found     bool
+		itemError bool
+		conflict  bool
+		archived  bool
+	}{
+		{"updated", 8, 2, version.Index, true, false, true, false},
+		{"new primary", 7, 3, version.Index, true, false, true, false},
+		{"already removed", 0, 0, version.Index, false, false, false, true},
+		{"same version", 7, 2, version.Index, true, false, false, false},
+		{"missing version", 0, 0, version.Index, true, false, false, false},
+		{"wrong identity", 8, 2, "other-index", true, false, false, false},
+		{"read item failed", 0, 0, version.Index, false, true, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+				if request.URL.Path != "/_mget" || request.URL.Query().Get("realtime") != "true" {
+					t.Fatal(request.URL)
+				}
+				doc := map[string]any{"_index": tc.index, "_id": version.DocumentID, "found": tc.found, "_seq_no": tc.seq, "_primary_term": tc.term}
+				if tc.itemError {
+					doc["error"] = map[string]any{"type": "unavailable"}
+				}
+				return jsonResponse(t, map[string]any{"docs": []any{doc}}), nil
+			})
+			router, err := NewStaticRouter("linkd-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository, err := New(transport, router, DefaultConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			results := []archiveItemResult{{}}
+			repository.verifyActiveDeleteConflicts(t.Context(), []*preparedArchiveItem{{terminal: terminal, activeVersion: version}}, []int{0}, results)
+			result := results[0]
+			if result.conflicted != tc.conflict || result.archived != tc.archived || (result.err != nil) == (tc.conflict || tc.archived) {
+				t.Fatalf("result=%+v", result)
+			}
+		})
+	}
+}
+
+func TestArchiveBatchCountsConflictsApartFromSuccessAndStorageFailure(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	terminals := []store.StoredAlert{archiveStoredAlert(t, "raced", now), archiveStoredAlert(t, "archived", now), archiveStoredAlert(t, "storage-failure", now)}
+	requests := 0
+	transport := transportFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if !strings.HasSuffix(request.URL.Path, "/_search") {
+				t.Fatal(request.URL)
+			}
+			hits := make([]map[string]any, 0, 3)
+			for _, item := range terminals {
+				source, err := encodeAlertDocument(item.Alert)
+				if err != nil {
+					t.Fatal(err)
+				}
+				version, _ := decodeVersion(item.Version)
+				hits = append(hits, map[string]any{"_index": version.Index, "_id": version.DocumentID, "_seq_no": version.SeqNo, "_primary_term": version.PrimaryTerm, "_source": json.RawMessage(source), "sort": []string{item.Alert.AlertID}})
+			}
+			return jsonResponse(t, map[string]any{"hits": map[string]any{"hits": hits}}), nil
+		case 2:
+			items := make([]map[string]any, 0, 3)
+			for i, terminal := range terminals {
+				status := 201
+				if i == 2 {
+					status = 429
+				}
+				items = append(items, map[string]any{"create": map[string]any{"_index": "history", "_id": alertDocumentID(terminal.Alert), "_seq_no": 0, "_primary_term": 1, "status": status}})
+			}
+			return jsonResponse(t, map[string]any{"items": items}), nil
+		case 3:
+			body, err := io.ReadAll(request.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(body), alertDocumentID(terminals[2].Alert)) {
+				t.Fatal("history failure was deleted")
+			}
+			items := make([]map[string]any, 0, 2)
+			for i, terminal := range terminals[:2] {
+				status := 200
+				if i == 0 {
+					status = 409
+				}
+				version, _ := decodeVersion(terminal.Version)
+				items = append(items, map[string]any{"delete": map[string]any{"_index": version.Index, "_id": version.DocumentID, "status": status}})
+			}
+			return jsonResponse(t, map[string]any{"items": items}), nil
+		case 4:
+			version, _ := decodeVersion(terminals[0].Version)
+			return jsonResponse(t, map[string]any{"docs": []any{map[string]any{"_index": version.Index, "_id": version.DocumentID, "found": true, "_seq_no": 8, "_primary_term": 2}}}), nil
+		default:
+			t.Fatal("unexpected immediate retry", requests)
+			return nil, nil
+		}
+	})
+	router, err := newBucketRouter("linkd-test", BucketConfig{EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, MaxFutureSkew: time.Minute, ActiveAlertRefreshInterval: 5 * time.Second}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{repository: repository, router: router}
+	result, err := manager.ArchiveTerminalAlerts(t.Context(), ArchiveBatchRequest{Limit: 3, WorkerCount: 1})
+	if err != nil || result.Scanned != 3 || result.Archived != 1 || result.Conflicts != 1 || result.Failed != 1 || result.NextCursor != terminals[2].Alert.AlertID || requests != 4 {
+		t.Fatal(result, err, requests)
+	}
+	if len(result.FailureItems) != 1 || result.FailureItems[0].Stage != "history_create" || len(result.ConflictItems) != 1 || result.ConflictItems[0].DocumentID != alertDocumentID(terminals[0].Alert) {
+		t.Fatal(result)
+	}
 }

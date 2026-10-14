@@ -520,6 +520,11 @@ control_plane:
     max_trim_entries_per_cycle: 100000
 ```
 
+`operation_timeout_seconds` 分别限制来源目录读取和每个来源的采集/裁剪，不再由整页来源共用。
+维护任务复用独立且服从调用截止时间的 Redis 连接池，不占用调度器的连接池。
+每页最多 16 个来源顺序执行，单个来源超时后继续下一个；进程取消时立即停止遍历，未执行来源不记为失败。
+来源错误日志只记录来源 ID、固定 Redis 操作名、脱敏错误类别和耗时，不输出连接凭据或原始响应。
+
 `max_entries` 是软上限。只有 Stream 超过该值时才启动裁剪；`trim_batch_size` 限制单条
 Redis 命令的删除量，`max_trim_entries_per_cycle` 限制单轮累计删除量。后者省略时默认为
 `10 × trim_batch_size`，且必须不小于单批、不超过单批的 100 倍。每批后控制面都重新读取全部
@@ -655,7 +660,10 @@ storage:
 限制为每 5 秒 1000 条。每个 Worker
 使用 Bulk create History 和 Bulk CAS delete Active，单个 Bulk 子批最多 500 条并受 Repository 16 MiB
 请求上限约束。History create 和 Active delete 使用 `refresh=false`，归档成功不代表搜索立即可见；
-409 冲突通过 realtime `_mget` 核对。`archive_interval_seconds` 是一次完整 sweep 到达尾部或请求失败后的
+409 冲突通过 realtime `_mget` 核对：Active 已消失视为完成；确认版本已变化则保留 Active，
+记入独立的 `conflicted_alerts` / `last_batch_conflicted` 指标，下一轮重新扫描，不计入失败且不占用重试队列。
+无法核对、身份不符、版本未变化、History 内容冲突及真实存储错误仍记为失败。
+`archive_interval_seconds` 是一次完整 sweep 到达尾部或请求失败后的
 等待时间，默认 5 秒；有后续页时批次连续执行，不等待该间隔。这避免 Active 删除在下一次 refresh 前被立即重复
 扫描。单次搜索仍受 64 MiB 响应上限保护，超过时会自动缩小本轮拉取数量。
 

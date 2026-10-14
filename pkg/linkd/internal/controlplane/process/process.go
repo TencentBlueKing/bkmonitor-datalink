@@ -231,10 +231,11 @@ func openRuntime(
 				logger,
 				settings,
 				taskObserver{registry, "elasticsearch-alert-archiver", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchAlertArchiver)},
-				func(ctx context.Context, scanned, archived, failed int) {
-					telemetryRuntime.ObserveElasticsearchArchiveBatch(ctx, scanned, archived, failed)
-					registry.Workload("elasticsearch-alert-archiver", scanned, failed)
-					registry.Finish(ctx, "elasticsearch-alert-archiver", "batch", "归档批次", 0, scanned, failed, "")
+				func(ctx context.Context, result elasticsearchstore.ArchiveBatchResult) {
+					telemetryRuntime.ObserveElasticsearchArchiveBatch(ctx, result.Scanned, result.Archived, result.Failed, result.Conflicts)
+					registry.Workload("elasticsearch-alert-archiver", result.Scanned, result.Failed)
+					registry.Finish(ctx, "elasticsearch-alert-archiver", "batch", "归档批次", 0, result.Scanned, result.Failed, "")
+					registry.Finish(ctx, "elasticsearch-alert-archiver", "conflicts", "并发更新冲突（下轮处理）", 0, result.Conflicts, 0, "")
 				},
 				elasticsearchRuntime.Manager.ArchiveTerminalAlerts,
 			),
@@ -316,7 +317,7 @@ type archiveBatchRunner func(
 	elasticsearchstore.ArchiveBatchRequest,
 ) (elasticsearchstore.ArchiveBatchResult, error)
 
-type archiveBatchObserver func(context.Context, int, int, int)
+type archiveBatchObserver func(context.Context, elasticsearchstore.ArchiveBatchResult)
 
 func newAlertArchiveTask(
 	logger *slog.Logger,
@@ -379,7 +380,7 @@ func newAlertArchiveTask(
 					continue
 				}
 
-				observeBatch(ctx, result.Scanned, result.Archived, result.Failed)
+				observeBatch(ctx, result)
 				if result.Scanned > 0 {
 					logger.DebugContext(
 						ctx,
@@ -389,6 +390,10 @@ func newAlertArchiveTask(
 						"archived", result.Archived,
 						"failed", result.Failed,
 					)
+				}
+				if result.Conflicts > 0 {
+					logger.DebugContext(ctx, "alert archive deferred after concurrent updates",
+						"task", taskName, "conflicts", result.Conflicts, "conflict_samples", result.ConflictItems)
 				}
 				if result.Failed > 0 {
 					logger.WarnContext(

@@ -217,7 +217,7 @@ func TestAlertArchiveTaskDrainsSweepPagesWithoutIntervalDelay(t *testing.T) {
 			ArchiveIntervalSeconds: 30, ArchiveBatchSize: 1000, ArchiveWorkerCount: 4,
 		},
 		&recordingTaskObserver{},
-		func(context.Context, int, int, int) {},
+		func(context.Context, elasticsearchstore.ArchiveBatchResult) {},
 		func(_ context.Context, request elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
 			requests = append(requests, request)
 			switch len(requests) {
@@ -262,7 +262,7 @@ func TestAlertArchiveTaskWaitsAfterCompletedSweepWithProgress(t *testing.T) {
 			ArchiveIntervalSeconds: 30, ArchiveBatchSize: 1000, ArchiveWorkerCount: 4,
 		},
 		observer,
-		func(context.Context, int, int, int) {},
+		func(context.Context, elasticsearchstore.ArchiveBatchResult) {},
 		func(context.Context, elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
 			calls++
 			if calls == 1 {
@@ -308,7 +308,7 @@ func TestAlertArchiveTaskShrinksOversizedScan(t *testing.T) {
 			ArchiveIntervalSeconds: 30, ArchiveBatchSize: 1000, ArchiveWorkerCount: 4,
 		},
 		&recordingTaskObserver{},
-		func(context.Context, int, int, int) {},
+		func(context.Context, elasticsearchstore.ArchiveBatchResult) {},
 		func(_ context.Context, request elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
 			limits <- request.Limit
 			if request.Limit == 1000 {
@@ -332,4 +332,36 @@ type testWriter struct{ t *testing.T }
 func (w testWriter) Write(data []byte) (int, error) {
 	w.t.Log(strings.TrimSpace(string(data)))
 	return len(data), nil
+}
+
+func TestArchiveConflictsAdvanceCursorWithoutFailureWarningOrImmediateRetry(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var logs strings.Builder
+	observer := &recordingTaskObserver{}
+	calls, conflicts := 0, 0
+	task := newAlertArchiveTask(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})), config.ElasticsearchControlPlaneConfig{ArchiveIntervalSeconds: 30, ArchiveBatchSize: 1000, ArchiveWorkerCount: 1}, observer,
+		func(_ context.Context, result elasticsearchstore.ArchiveBatchResult) {
+			conflicts += result.Conflicts
+			if result.Scanned == 0 {
+				cancel()
+			}
+		},
+		func(_ context.Context, request elasticsearchstore.ArchiveBatchRequest) (elasticsearchstore.ArchiveBatchResult, error) {
+			calls++
+			if calls == 1 {
+				return elasticsearchstore.ArchiveBatchResult{Scanned: 1, Conflicts: 1, NextCursor: "after-conflict"}, nil
+			}
+			if calls != 2 || request.AfterAlertID != "after-conflict" {
+				t.Fatal(calls, request)
+			}
+			return elasticsearchstore.ArchiveBatchResult{}, nil
+		})
+	if err := task.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || conflicts != 1 || logs.Len() != 0 || fmt.Sprint(observer.succeeded) != "[true true]" {
+		t.Fatal(calls, conflicts, logs.String(), observer.succeeded)
+	}
 }

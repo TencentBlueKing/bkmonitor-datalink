@@ -87,16 +87,18 @@ type instruments struct {
 	enrichDatasourceOperations metric.Int64Counter
 	enrichDatasourceDuration   metric.Float64Histogram
 
-	controlPlaneTaskActive      metric.Int64Gauge
-	controlPlaneTaskRuns        metric.Int64Counter
-	controlPlaneTaskRunDuration metric.Float64Histogram
-	controlPlaneTaskLastSuccess metric.Int64Gauge
-	elasticsearchScannedAlerts  metric.Int64Counter
-	elasticsearchArchivedAlerts metric.Int64Counter
-	elasticsearchFailedAlerts   metric.Int64Counter
-	elasticsearchScanLast       metric.Int64Gauge
-	elasticsearchArchiveLast    metric.Int64Gauge
-	elasticsearchFailureLast    metric.Int64Gauge
+	controlPlaneTaskActive        metric.Int64Gauge
+	controlPlaneTaskRuns          metric.Int64Counter
+	controlPlaneTaskRunDuration   metric.Float64Histogram
+	controlPlaneTaskLastSuccess   metric.Int64Gauge
+	elasticsearchScannedAlerts    metric.Int64Counter
+	elasticsearchArchivedAlerts   metric.Int64Counter
+	elasticsearchFailedAlerts     metric.Int64Counter
+	elasticsearchConflictedAlerts metric.Int64Counter
+	elasticsearchScanLast         metric.Int64Gauge
+	elasticsearchArchiveLast      metric.Int64Gauge
+	elasticsearchFailureLast      metric.Int64Gauge
+	elasticsearchConflictLast     metric.Int64Gauge
 
 	redisStreamExists               metric.Int64Gauge
 	redisStreamExpectedGroupPresent metric.Int64Gauge
@@ -538,7 +540,7 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	}
 	if result.elasticsearchFailedAlerts, err = meter.Int64Counter(
 		"linkd.elasticsearch_alert_archiver.failed_alerts", describeMetric("归档失败告警数", "archiver", "reliability"), metric.WithUnit("{alert}"),
-		metric.WithDescription("Elasticsearch Alert Archiver 未完成归档的 Alert 数"),
+		metric.WithDescription("Elasticsearch Alert Archiver 真实归档失败次数，不含并发更新冲突"),
 	); err != nil {
 		return nil, err
 	}
@@ -556,11 +558,23 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	}
 	if result.elasticsearchFailureLast, err = meter.Int64Gauge(
 		"linkd.elasticsearch_alert_archiver.last_batch_failed", describeMetric("最近一批归档失败数", "archiver", "reliability"), metric.WithUnit("{alert}"),
-		metric.WithDescription("Elasticsearch Alert Archiver 最近一批未完成归档的 Alert 数"),
+		metric.WithDescription("Elasticsearch Alert Archiver 最近一批真实失败的 Alert 数，不含并发更新冲突"),
 	); err != nil {
 		return nil, err
 	}
 
+	if result.elasticsearchConflictedAlerts, err = meter.Int64Counter(
+		"linkd.elasticsearch_alert_archiver.conflicted_alerts", describeMetric("归档并发更新冲突数", "archiver", "reliability"), metric.WithUnit("{alert}"),
+		metric.WithDescription("Active 条件删除时确认版本已变化的次数，留待下轮扫描，不计作存储失败"),
+	); err != nil {
+		return nil, err
+	}
+	if result.elasticsearchConflictLast, err = meter.Int64Gauge(
+		"linkd.elasticsearch_alert_archiver.last_batch_conflicted", describeMetric("最近一批归档并发更新冲突数", "archiver", "reliability"), metric.WithUnit("{alert}"),
+		metric.WithDescription("最近非空批次中因 Active 并发更新而未归档的条目数，不计作存储失败"),
+	); err != nil {
+		return nil, err
+	}
 	if result.redisStreamExists, err = meter.Int64Gauge(
 		"linkd.redis_stream.exists", describeMetric("信号流存在状态", "redis_stream", "state"), metric.WithUnit("1"),
 		metric.WithDescription("受管 Redis Stream 是否存在"),

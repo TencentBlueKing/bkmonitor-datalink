@@ -45,13 +45,24 @@ type ArchiveFailure struct {
 	Reason string
 }
 
+// ArchiveConflict 标识因 Active 并发更新而留待下一轮扫描的文档，不承载业务载荷。
+type ArchiveConflict struct {
+	Index      string
+	DocumentID string
+}
+
 // ArchiveBatchResult 描述一次扫描批次的逐项收敛结果。
+// Scanned 等于 Archived、Conflicts 与 Failed 之和；冲突不表示归档完成。
 type ArchiveBatchResult struct {
 	// Scanned 是本批从 Active 索引读取的终态 Alert 数。
 	Scanned int
 	// Archived 是已确认写入 History 且完成 Active 条件删除的数量。
 	Archived int
-	// Failed 是保留在 Active 等待后续重试的数量。
+	// Conflicts 是 History 已确认、但 Active 并发更新而留待下一轮扫描的数量。
+	Conflicts int
+	// ConflictItems 只保留有限身份样本，不增加持久重试队列。
+	ConflictItems []ArchiveConflict
+	// Failed 是本轮真实失败并保留在 Active 的数量。
 	Failed int
 	// NextCursor 非空表示同一轮扫描还有后续页。
 	NextCursor string
@@ -63,6 +74,7 @@ type archiveItemResult struct {
 	index      string
 	documentID string
 	archived   bool
+	conflicted bool
 	stage      string
 	err        error
 }
@@ -480,11 +492,20 @@ func (r *Repository) verifyActiveDeleteConflicts(
 			results[resultIndex].archived = true
 			continue
 		}
-		results[resultIndex].stage = "active_delete"
-		results[resultIndex].err = fmt.Errorf(
-			"archive alert %q: active document still exists after version conflict",
-			prepared[resultIndex].terminal.Alert.AlertID,
-		)
+		version := prepared[resultIndex].activeVersion
+		if document.Index != version.Index || document.ID != version.DocumentID || document.PrimaryTerm <= 0 || document.SeqNo < 0 {
+			results[resultIndex].stage = "active_verify"
+			results[resultIndex].err = fmt.Errorf("active delete conflict returned an invalid identity or version")
+			continue
+		}
+		if document.SeqNo == version.SeqNo && document.PrimaryTerm == version.PrimaryTerm {
+			results[resultIndex].stage = "active_verify"
+			results[resultIndex].err = fmt.Errorf("active delete conflict did not change the observed version")
+			continue
+		}
+		// History 已持久化，但这里读到的是另一版本；不能删除它或在本批循环争抢。
+		// 独立计数后让游标继续前进，下一轮重新验证 History 与新的 Active 快照。
+		results[resultIndex].conflicted = true
 	}
 }
 

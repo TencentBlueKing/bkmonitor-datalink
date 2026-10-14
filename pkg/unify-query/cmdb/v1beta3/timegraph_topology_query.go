@@ -230,7 +230,7 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		SourceMatcher:        request.SourceInfo,
 		MaxHops:              maxHops,
 		AllowedCategories:    toRelationCategories(request.AllowedCategories),
-		AllowedRelationTypes: canonicalRelationTypes(request.AllowedRelationTypes),
+		AllowedRelationTypes: append([]string(nil), request.AllowedRelationTypes...),
 		Direction:            direction,
 		PartialTimestamps:    graph.partialTimesCopy(),
 		RootBits:             graph.sharedTopologyRootBits(),
@@ -464,7 +464,7 @@ func (m *Model) sharedTopologyRelations(namespace string, allowedCategories, all
 	}
 	relationTypeSet := make(map[string]struct{}, len(allowedRelationTypes))
 	for _, relationType := range allowedRelationTypes {
-		relationTypeSet[canonicalRelationType(relationType)] = struct{}{}
+		relationTypeSet[relationType] = struct{}{}
 	}
 
 	result := make([]cmdb.Relation, 0)
@@ -517,14 +517,6 @@ func (m *Model) sharedTopologyRelations(namespace string, allowedCategories, all
 		}
 		return left.Direction < right.Direction
 	})
-	return result
-}
-
-func canonicalRelationTypes(names []string) []string {
-	result := make([]string, len(names))
-	for i, name := range names {
-		result[i] = canonicalRelationType(name)
-	}
 	return result
 }
 

@@ -154,7 +154,7 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 	}
 }
 
-func TestTimeGraphRedisBusinessSetAliasMatchesStaticTopology(t *testing.T) {
+func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 	ctx := initTimeGraphQueryTestEnvironment()
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -177,30 +177,69 @@ func TestTimeGraphRedisBusinessSetAliasMatchesStaticTopology(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, provider.Close()) })
 
 	staticModel := &Model{schemaProvider: NewStaticSchemaProvider()}
-	for _, alias := range []string{"business_set", "business_with_set"} {
-		t.Run(alias, func(t *testing.T) {
-			redisModel := &Model{schemaProvider: NewSchemaProviderFromRelation(provider)}
-			want := staticModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_set"}, DirectionBoth)
-			got := redisModel.sharedTopologyRelations("bkcc__2", nil, []string{alias}, DirectionBoth)
-			require.NotEmpty(t, want)
-			require.Equal(t, want, got)
+	redisModel := &Model{schemaProvider: NewSchemaProviderFromRelation(provider)}
+	wantRelations := staticModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, DirectionBoth)
+	require.Len(t, wantRelations, 2)
+	require.Equal(t, wantRelations, redisModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_with_set"}, DirectionBoth))
+	for _, item := range wantRelations {
+		require.Equal(t, "business_with_set", item.RelationType)
+	}
 
-			redisModel.timeGraphQueryReference = timeGraphTestQueryReference
-			redisModel.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+	for _, fixture := range []struct {
+		name  string
+		model *Model
+	}{
+		{name: "static", model: staticModel},
+		{name: "redis", model: redisModel},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			model := fixture.model
+			// The retired spelling must not select the relation through an alias.
+			require.Empty(t, model.sharedTopologyRelations("bkcc__2", nil, []string{"business_set"}, DirectionBoth))
+			model.timeGraphQueryReference = timeGraphTestQueryReference
+			model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, start, end time.Time, _ time.Duration) (pl.Matrix, error) {
 				require.Equal(t, "business_with_set_relation", q.QueryList[0].FieldName)
-				matrix := contractMatrix(map[string]string{"bk_biz_id": "2", "bk_set_id": "3"}, 1700000000000)
+				var timestamps []int64
+				for timestamp := start; !timestamp.After(end); timestamp = timestamp.Add(time.Minute) {
+					timestamps = append(timestamps, timestamp.UnixMilli())
+				}
+				matrix := contractMatrix(map[string]string{"bk_biz_id": "2", "bk_set_id": "3"}, timestamps...)
 				return filteredTimeGraphMatrix(t, matrix, q.QueryList[0].Conditions), nil
 			}
-			result, err := redisModel.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{
-				SpaceUID: "bkcc__2", Timestamp: 1700000000, SourceType: "business",
-				SourceInfo: cmdb.Matcher{"bk_biz_id": "2"}, MaxHops: 1,
-				AllowedRelationTypes: []string{alias},
-			})
-			require.NoError(t, err)
-			require.Len(t, result.Snapshots, 1)
-			require.Len(t, result.Snapshots[0].Edges, 2)
-			for _, edge := range result.Snapshots[0].Edges {
-				require.Equal(t, "business_set", edge.RelationType)
+			for _, format := range []string{"snapshots", cmdb.CompactTopologyFormat} {
+				for _, pointCount := range []int{1, 3} {
+					t.Run(fmt.Sprintf("%s/%d-points", format, pointCount), func(t *testing.T) {
+						request := cmdb.SharedTopologyQuery{
+							SpaceUID: "bkcc__2", Timestamp: 1700000000, SourceType: "business",
+							SourceInfo: cmdb.Matcher{"bk_biz_id": "2"}, MaxHops: 1,
+							AllowedRelationTypes: []string{"business_with_set"}, ResponseFormat: format,
+						}
+						if pointCount > 1 {
+							request.Timestamp = 0
+							request.StartTime, request.EndTime, request.Step = 1700000000, 1700000120, "60s"
+						}
+						result, err := model.QuerySharedTopology(ctx, request)
+						require.NoError(t, err)
+						require.Equal(t, pointCount, result.PointCount)
+						snapshots := result.Snapshots
+						if format == cmdb.CompactTopologyFormat {
+							require.NotNil(t, result.Compact)
+							require.Equal(t, 2*pointCount, result.Compact.NodeOccurrences)
+							require.Equal(t, 2*pointCount, result.Compact.EdgeOccurrences)
+							snapshots = decodeCompactForTest(t, result.Compact)
+						}
+						require.Len(t, snapshots, pointCount)
+						for i, snapshot := range snapshots {
+							require.Equal(t, int64(1700000000000+i*60000), snapshot.Timestamp)
+							require.Len(t, snapshot.Nodes, 2)
+							require.Len(t, snapshot.Edges, 2)
+							require.False(t, snapshot.Partial)
+							for _, edge := range snapshot.Edges {
+								require.Equal(t, "business_with_set", edge.RelationType)
+							}
+						}
+					})
+				}
 			}
 		})
 	}

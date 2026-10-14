@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package api
 
 import (
@@ -164,7 +173,19 @@ func (a *API) queryEnrichRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func projectEnrichRecord(alert domain.Alert, event domain.Event, release eventsource.Release, detail bool) (enrichRecord, error) {
-	result := enrichRecord{AlertID: alert.AlertID, EventID: event.EventID, Severity: alert.Severity, Enrichments: []enrichMeasure{}}
+	severity := alert.Severity
+	// 全等级关闭是明确保留标记；只有该 Event 含此唯一关闭评估才取它的丰富结果。
+	if len(event.Evaluations) == 1 && event.Evaluations[0].Severity == domain.SeverityAll && event.Evaluations[0].Action == domain.EventActionClosed {
+		severity = domain.SeverityAll
+	}
+	result, err := projectEventEnrichment(event, release, severity, detail)
+	result.AlertID = alert.AlertID
+	return result, err
+}
+
+// projectEventEnrichment 从已提交的逐等级补丁读取事实，也用于无 Alert 的来源调试。
+func projectEventEnrichment(event domain.Event, release eventsource.Release, severity string, detail bool) (enrichRecord, error) {
+	result := enrichRecord{EventID: event.EventID, Severity: severity, Enrichments: []enrichMeasure{}}
 	encoded, err := json.Marshal(release.Spec.Enrich)
 	if err != nil {
 		return result, err
@@ -172,11 +193,6 @@ func projectEnrichRecord(alert domain.Alert, event domain.Event, release eventso
 	digest := sha256.Sum256(encoded)
 	if release.ID != event.EventSourceID || release.Version != event.EventSourceVersion || release.Spec.EventSourceID != event.EventSourceID || release.Deleted || (release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != event.BKTenantID) || hex.EncodeToString(digest[:]) != event.EnrichConfigDigest || event.EnrichedAt == nil {
 		return result, fmt.Errorf("enrich release identity mismatch")
-	}
-	severity := alert.Severity
-	// 全等级关闭是明确保留标记；只有该 Event 含此唯一关闭评估才取它的丰富结果。
-	if len(event.Evaluations) == 1 && event.Evaluations[0].Severity == domain.SeverityAll && event.Evaluations[0].Action == domain.EventActionClosed {
-		severity = domain.SeverityAll
 	}
 	evaluation, found := event.ForSeverity(severity)
 	if !found {

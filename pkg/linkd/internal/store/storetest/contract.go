@@ -34,6 +34,7 @@ func RunRepositoryContract(t *testing.T, factory Factory) {
 	runShieldDependentsContract(t, factory)
 	runActiveCandidatesContract(t, factory)
 	runSourceAlertsContract(t, factory)
+	runSourceEventsContract(t, factory)
 	runMergeContract(t, factory)
 	runMergeWorkContract(t, factory)
 	runMergeOriginContract(t, factory)

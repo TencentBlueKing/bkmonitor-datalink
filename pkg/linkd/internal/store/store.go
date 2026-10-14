@@ -27,6 +27,8 @@ type EventStore interface {
 	CreateEvents(ctx context.Context, events []domain.Event) ([]CreateEventItemResult, error)
 	GetEvent(ctx context.Context, bkTenantID, eventID string) (StoredEvent, error)
 	GetEvents(ctx context.Context, bkTenantID string, eventIDs []string) (EventBatch, error)
+	// ListEventsBySource 按来源及显式接收时间读取 Event，不要求已产生 Alert。
+	ListEventsBySource(ctx context.Context, bkTenantID, sourceID string, request EventBySourceRequest) (EventPage, error)
 	ListEventsByAlert(
 		ctx context.Context,
 		bkTenantID, alertID string,

@@ -96,6 +96,28 @@ func ValidateFieldMappings(fields map[string]string) error {
 	if len(fields) > 128 {
 		return fmt.Errorf("KAC custom field limit exceeded")
 	}
+	for name, path := range fields {
+		if !customName.MatchString(name) || IsReservedAlarmField(name) {
+			return fmt.Errorf("KAC field mapping cannot target reserved or invalid field %q", name)
+		}
+		target, err := jsonpath.ParseTarget(path)
+		if err != nil {
+			return err
+		}
+		parts := target.Parts()
+		if len(parts) < 2 || (parts[0] != "labels" && parts[0] != "extra_data") {
+			return fmt.Errorf("KAC custom mapping source must be labels or extra_data")
+		}
+	}
+	return nil
+}
+
+// IsReservedAlarmField 标识正式 KAC 协议字段，避免自定义目录覆盖固定投影。
+func IsReservedAlarmField(name string) bool {
+	return reservedAlarmFields[name]
+}
+
+var reservedAlarmFields = func() map[string]bool {
 	reserved := map[string]bool{}
 	// 这些字段由 Lifecycle、投影协议或 KAC 处置维护，不属于来源自定义字段。
 	for _, name := range strings.Fields("status storage_time source_alarm_status tag_info associate_alarm_id associate_count conductor notify_status converge_reason duration strategy strategy_config_uid strategy_config_version source_event_id source_alert_id linkd_alert_id __kac_custom_fields") {
@@ -112,18 +134,5 @@ func ValidateFieldMappings(fields map[string]string) error {
 		}
 		reserved[name] = true
 	}
-	for name, path := range fields {
-		if !customName.MatchString(name) || reserved[name] {
-			return fmt.Errorf("KAC field mapping cannot target reserved or invalid field %q", name)
-		}
-		target, err := jsonpath.ParseTarget(path)
-		if err != nil {
-			return err
-		}
-		parts := target.Parts()
-		if len(parts) < 2 || (parts[0] != "labels" && parts[0] != "extra_data") {
-			return fmt.Errorf("KAC custom mapping source must be labels or extra_data")
-		}
-	}
-	return nil
-}
+	return reserved
+}()

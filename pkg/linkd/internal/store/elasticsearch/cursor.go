@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	cursorKindEvent        = "elasticsearch_unprocessed_event_v2"
-	cursorKindAllEvent     = "elasticsearch_all_unprocessed_event_v2"
-	cursorKindEventByAlert = "elasticsearch_event_by_alert_v2"
-	cursorKindAlertLog     = "elasticsearch_alert_log_v2"
+	cursorKindEvent         = "elasticsearch_unprocessed_event_v2"
+	cursorKindAllEvent      = "elasticsearch_all_unprocessed_event_v2"
+	cursorKindEventByAlert  = "elasticsearch_event_by_alert_v2"
+	cursorKindEventBySource = "elasticsearch_event_by_source_v2"
+	cursorKindAlertLog      = "elasticsearch_alert_log_v2"
 )
 
 type cursorPayload struct {

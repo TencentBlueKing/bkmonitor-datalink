@@ -27,3 +27,5 @@ Kafka Alert V1、KAC Alarm 兼容输出与策略索引变更通知 v1；后续�
 - [策略流转业务事实](policy-flow-records.md)：新策略日志的冻结展示事实、动作角色、稳定身份与旧意图边界。
 
 - [KAC 告警丰富事实查询](kac-enrich-records.md)：准确关联事件的冻结结果、字段前后对比与有界只读接口。
+
+- [Event 丰富窗口查询](event-enrich-window.md)：内置与第三方来源的真实事件采样、逐等级结果、窗口分页及诊断。

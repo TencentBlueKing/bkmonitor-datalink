@@ -171,6 +171,74 @@ func (r *Repository) GetEvents(
 	return result, nil
 }
 
+// ListEventsBySource 读取来源时间窗口内的事件，包含尚未关联 Alert 的事件。
+func (r *Repository) ListEventsBySource(
+	ctx context.Context,
+	bkTenantID, sourceID string,
+	request store.EventBySourceRequest,
+) (store.EventPage, error) {
+	if err := contextError(ctx); err != nil {
+		return store.EventPage{}, err
+	}
+	from, to := request.ReceivedFrom, request.ReceivedTo
+	page, err := request.Page.Normalize()
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	expected := cursorPayload{
+		Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+		RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(),
+	}
+	var cursor cursorPayload
+	if page.Cursor != "" {
+		cursor, err = decodeCursor(page.Cursor, expected)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	r.mu.RLock()
+	candidates := make([]eventEntry, 0)
+	for key, entry := range r.events {
+		if key.tenantID == bkTenantID && entry.event.EventSourceID == sourceID &&
+			!entry.event.ReceivedAt.Before(from) && !entry.event.ReceivedAt.After(to) {
+			candidates = append(candidates, entry)
+		}
+	}
+	r.mu.RUnlock()
+	sort.Slice(candidates, func(i, j int) bool {
+		left, right := candidates[i].event, candidates[j].event
+		if left.ReceivedAt.Equal(right.ReceivedAt) {
+			return left.EventID < right.EventID
+		}
+		return left.ReceivedAt.Before(right.ReceivedAt)
+	})
+	start := 0
+	if page.Cursor != "" {
+		start = sort.Search(len(candidates), func(index int) bool {
+			candidate := candidates[index].event
+			return candidate.ReceivedAt.UnixNano() > cursor.TimeNS ||
+				(candidate.ReceivedAt.UnixNano() == cursor.TimeNS && candidate.EventID > cursor.ObjectID)
+		})
+	}
+	end := min(start+page.Limit, len(candidates))
+	result := store.EventPage{Events: make([]store.StoredEvent, 0, end-start)}
+	for _, entry := range candidates[start:end] {
+		result.Events = append(result.Events, cloneStoredEvent(entry))
+	}
+	if end < len(candidates) {
+		last := candidates[end-1].event
+		result.NextCursor, err = encodeCursor(cursorPayload{
+			Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+			RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(),
+			TimeNS: last.ReceivedAt.UnixNano(), ObjectID: last.EventID,
+		})
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	return result, nil
+}
+
 // ListEventsByAlert 按关联 Alert 和 received_at 稳定分页。
 func (r *Repository) ListEventsByAlert(
 	ctx context.Context,

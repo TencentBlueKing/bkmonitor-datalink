@@ -8,6 +8,7 @@ Linkd 项目仍处于早期开发阶段。文档中心区分当前代码、测�
 
 ## 开发实施方案
 
+- [三类策略的内存匹配与增量运行](design/policy-runtime-scaling.md)：尚未实现的性能改造方案；候选索引、共享依赖、60 秒时效、OneModel 通知覆盖、依赖主索引与按窗口批量推进。
 - [KAC 告警源插件调试接入 Linkd 方案](design/kac-alarm-source-debug-preview.md)：首版代码已实现；保留原 KAC 字段与调试步骤，
   复用 verification 索引、不执行丰富并同步 HTTP 返回；本地 HTTP/索引及原调试组件已联调，全主站验收待验证。
 - [Event 丰富与抑制、屏蔽、合并开发方案](design/event-enrich-and-alarm-policies.md)：Event Enrich 前移、

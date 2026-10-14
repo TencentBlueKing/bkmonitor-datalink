@@ -153,6 +153,82 @@ func (r *Repository) GetEvents(ctx context.Context, tenantID string, eventIDs []
 	return result, nil
 }
 
+// ListEventsBySource 读取来源时间窗口内的事件，包含尚未关联 Alert 的事件。
+func (r *Repository) ListEventsBySource(
+	ctx context.Context,
+	bkTenantID, sourceID string,
+	request store.EventBySourceRequest,
+) (store.EventPage, error) {
+	if err := contextError(ctx); err != nil {
+		return store.EventPage{}, err
+	}
+	from, to := request.ReceivedFrom, request.ReceivedTo
+	page, err := request.Page.Normalize()
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	expected := cursorPayload{
+		Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+		RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(),
+	}
+	var cursor cursorPayload
+	if page.Cursor != "" {
+		cursor, err = decodeCursor(page.Cursor, expected)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	query := `SELECT event_id, received_at_ns, ` + storedEventColumns + ` FROM linkd_events
+		WHERE bk_tenant_id=? AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.event_source_id'))=?
+		AND received_at_ns>=? AND received_at_ns<=?`
+	args := []any{bkTenantID, sourceID, from.UnixNano(), to.UnixNano()}
+	if page.Cursor != "" {
+		query += ` AND (received_at_ns>? OR (received_at_ns=? AND event_id>?))`
+		args = append(args, cursor.TimeNS, cursor.TimeNS, cursor.ObjectID)
+	}
+	query += ` ORDER BY received_at_ns,event_id LIMIT ?`
+	args = append(args, page.Limit+1)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]store.StoredEvent, 0, page.Limit+1)
+	times := make([]int64, 0, page.Limit+1)
+	for rows.Next() {
+		var id string
+		var receivedNS int64
+		var payload, processing []byte
+		var version uint64
+		if err := rows.Scan(&id, &receivedNS, &payload, &processing, &version); err != nil {
+			return store.EventPage{}, err
+		}
+		stored, err := storedEventFromColumns(payload, processing, version)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+		items = append(items, stored)
+		times = append(times, receivedNS)
+	}
+	if err := rows.Err(); err != nil {
+		return store.EventPage{}, err
+	}
+	result := store.EventPage{Events: items}
+	if len(items) > page.Limit {
+		last := items[page.Limit-1]
+		result.NextCursor, err = encodeCursor(cursorPayload{
+			Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+			RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(),
+			TimeNS: times[page.Limit-1], ObjectID: last.Event.EventID,
+		})
+		if err != nil {
+			return store.EventPage{}, err
+		}
+		result.Events = items[:page.Limit]
+	}
+	return result, nil
+}
+
 // ListEventsByAlert 按关联 Alert 和 received_at 稳定分页。
 func (r *Repository) ListEventsByAlert(
 	ctx context.Context,

@@ -99,6 +99,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/ingest/preview", a.previewIngest)
 	mux.HandleFunc("GET /api/v1/alerts", a.listSourceAlerts)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/enrich-records", a.queryEnrichRecords)
+	mux.HandleFunc("POST /api/v1/events/enrich-records/query", a.queryEventEnrichWindow)
+	mux.HandleFunc("POST /api/v1/events/{id}/enrich-record", a.queryEventEnrichDetail)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/recovery-record", a.queryRecoveryRecord)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/close", a.closeAlert)
 	mux.HandleFunc(kacCloseRoute, a.closeKACAlert)

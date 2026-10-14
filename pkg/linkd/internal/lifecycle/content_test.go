@@ -192,7 +192,7 @@ func TestContentFallbackDoesNotHideOtherFailuresOrCancellation(t *testing.T) {
 	}
 }
 
-func TestNoDataContentFailuresFallBackToSourceAndFreezePlan(t *testing.T) {
+func TestNoDataContentFailuresFallBackToSourceAndKeepCreatedContent(t *testing.T) {
 	t.Parallel()
 	for _, code := range []string{"nodata_identity_invalid", "nodata_configuration_invalid", "nodata_evidence_missing", "nodata_evidence_invalid"} {
 		t.Run(code, func(t *testing.T) {
@@ -218,17 +218,17 @@ func TestNoDataContentFailuresFallBackToSourceAndFreezePlan(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			saved, err := processor.writeEventResult(t.Context(), enriched, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
+			saved, err := processor.executePlan(t.Context(), enriched, plan)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(logs.String(), `"reason_code":"`+code+`"`) || !strings.Contains(logs.String(), "source_fallback") || strings.Contains(logs.String(), strings.TrimSpace(event.Content)) {
 				t.Fatal("fallback diagnostic omitted reason or exposed source content")
 			}
-			// 配置修复或进程重启不能重新生成已经冻结的兜底文案。
+			// 告警已经创建、Event 已完成后，重投不能重新生成其创建文案。
 			restarted := newTestProcessor(t, repo, NoopFinalHook{})
 			restarted.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
-				t.Fatal("saved fallback plan rebuilt content")
+				t.Fatal("completed fallback Event rebuilt content")
 				return "", nil
 			})
 			result, err := restarted.ProcessEvent(t.Context(), saved)

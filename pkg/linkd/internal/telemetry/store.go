@@ -119,6 +119,17 @@ func (r *observedRepository) GetEvents(
 	return result, err
 }
 
+func (r *observedRepository) ListEventsBySource(
+	ctx context.Context,
+	bkTenantID, sourceID string,
+	request store.EventBySourceRequest,
+) (store.EventPage, error) {
+	startedAt := time.Now()
+	result, err := r.next.ListEventsBySource(ctx, bkTenantID, sourceID, request)
+	r.record(ctx, "event", "list_by_source", startedAt, err)
+	return result, err
+}
+
 func (r *observedRepository) ListEventsByAlert(
 	ctx context.Context,
 	bkTenantID, alertID string,

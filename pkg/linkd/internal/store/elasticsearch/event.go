@@ -390,6 +390,106 @@ func (r *Repository) GetEvents(
 	return batch, nil
 }
 
+// ListEventsBySource 读取来源时间窗口内的事件，包含尚未关联 Alert 的事件。
+func (r *Repository) ListEventsBySource(
+	ctx context.Context,
+	bkTenantID, sourceID string,
+	request store.EventBySourceRequest,
+) (store.EventPage, error) {
+	if err := contextError(ctx); err != nil {
+		return store.EventPage{}, err
+	}
+	from, to := request.ReceivedFrom, request.ReceivedTo
+	page, err := request.Page.Normalize()
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	if err := validateDateNanos("received_from", from); err != nil {
+		return store.EventPage{}, err
+	}
+	if err := validateDateNanos("received_to", to); err != nil {
+		return store.EventPage{}, err
+	}
+	targets, err := r.router.EventRangeTargets(ctx, from, to)
+	if err != nil {
+		return store.EventPage{}, fmt.Errorf("route events for source %q: %w", sourceID, err)
+	}
+	if len(targets) > r.config.MaxReadTargets {
+		targets, err = r.router.EventScanTargets(ctx, to)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	targets, err = normalizeTargets(targets, r.config.MaxReadTargets)
+	if err != nil {
+		return store.EventPage{}, err
+	}
+	expectedCursor := cursorPayload{
+		Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+		RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(), TargetsDigest: targetsDigest(targets),
+	}
+	var cursor cursorPayload
+	if page.Cursor != "" {
+		cursor, err = decodeCursor(page.Cursor, expectedCursor)
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	}
+	body := map[string]any{
+		"size": page.Limit + 1, "track_total_hits": false, "seq_no_primary_term": true,
+		"query": map[string]any{"bool": map[string]any{"filter": []any{
+			map[string]any{"term": map[string]any{"bk_tenant_id": bkTenantID}},
+			map[string]any{"term": map[string]any{"event_source_id": sourceID}},
+			map[string]any{"range": map[string]any{"received_at": map[string]any{
+				"gte": from.Format(time.RFC3339Nano), "lte": to.Format(time.RFC3339Nano),
+			}}},
+		}}},
+		"sort": []any{
+			map[string]any{"received_at": map[string]any{"order": "asc"}},
+			map[string]any{"event_id": map[string]any{"order": "asc"}},
+			map[string]any{"_index": map[string]any{"order": "asc"}},
+		},
+	}
+	if page.Cursor != "" {
+		body["search_after"] = cursor.SearchAfter
+	}
+	response, pitID, err := r.searchWithPIT(ctx, targets, cursor.PITID, body)
+	if err != nil {
+		return store.EventPage{}, fmt.Errorf("list events for source %q: %w", sourceID, err)
+	}
+	count := min(len(response.Hits.Hits), page.Limit)
+	result := store.EventPage{Events: make([]store.StoredEvent, 0, count)}
+	for _, hit := range response.Hits.Hits[:count] {
+		if len(hit.Sort) != 3 {
+			return store.EventPage{}, fmt.Errorf("elasticsearch event-by-source search returned invalid sort values")
+		}
+		stored, decodeErr := decodeEventHit(hit)
+		if decodeErr != nil {
+			return store.EventPage{}, decodeErr
+		}
+		if stored.Event.BKTenantID != bkTenantID || stored.Event.EventSourceID != sourceID {
+			return store.EventPage{}, fmt.Errorf("elasticsearch event-by-source search returned an unexpected identity")
+		}
+		result.Events = append(result.Events, stored)
+	}
+	if len(response.Hits.Hits) > page.Limit {
+		lastHit := response.Hits.Hits[page.Limit-1]
+		last := result.Events[len(result.Events)-1].Event
+		result.NextCursor, err = encodeCursor(cursorPayload{
+			Kind: cursorKindEventBySource, TenantID: bkTenantID, ParentID: sourceID,
+			RangeStartNS: from.UnixNano(), BoundaryNS: to.UnixNano(), TargetsDigest: targetsDigest(targets),
+			TimeNS: last.ReceivedAt.UnixNano(), ObjectID: last.EventID, PITID: pitID,
+			SearchAfter: append([]json.RawMessage(nil), lastHit.Sort...),
+		})
+		if err != nil {
+			return store.EventPage{}, err
+		}
+	} else if err := r.closePIT(ctx, pitID); err != nil {
+		return store.EventPage{}, err
+	}
+	return result, nil
+}
+
 // ListEventsByAlert 按 related_alert_ids 和 received_at 稳定分页读取一次 Alert 关联的 Event。
 func (r *Repository) ListEventsByAlert(
 	ctx context.Context,

@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	cursorKindEvent        = "mysql_unprocessed_event"
-	cursorKindAllEvent     = "mysql_all_unprocessed_event"
-	cursorKindEventByAlert = "mysql_event_by_alert"
-	cursorKindAlertLog     = "mysql_alert_log"
+	cursorKindEvent         = "mysql_unprocessed_event"
+	cursorKindAllEvent      = "mysql_all_unprocessed_event"
+	cursorKindEventByAlert  = "mysql_event_by_alert"
+	cursorKindEventBySource = "mysql_event_by_source"
+	cursorKindAlertLog      = "mysql_alert_log"
 )
 
 type cursorPayload struct {

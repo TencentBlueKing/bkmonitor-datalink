@@ -167,6 +167,13 @@ type EventPage struct {
 	NextCursor string
 }
 
+// EventBySourceRequest 定义来源调试窗口的显式时间范围与游标分页。
+type EventBySourceRequest struct {
+	ReceivedFrom time.Time
+	ReceivedTo   time.Time
+	Page         PageRequest
+}
+
 // EventByAlertRequest 定义按关联 Alert 查询 Event 的可选接收时间范围和分页。
 // 零时间由 Repository 根据 Alert 生命周期边界补齐。
 type EventByAlertRequest struct {

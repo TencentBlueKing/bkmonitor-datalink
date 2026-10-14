@@ -106,7 +106,12 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 	var err error
 	if body != nil {
 		data, err = json.Marshal(body)
-		if err != nil || len(data) > 2<<20 {
+		maxBytes := 2 << 20
+		if _, ok := body.(stateDocument); ok && err == nil {
+			data, err = projection.PreserveSnapshot(data, "state", "request")
+			maxBytes = 4 << 20
+		}
+		if err != nil || len(data) > maxBytes {
 			return projection.ErrInvalid
 		}
 	}

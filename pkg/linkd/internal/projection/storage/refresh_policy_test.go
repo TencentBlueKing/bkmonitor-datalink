@@ -60,7 +60,8 @@ func TestProgressCASDoesNotWaitForRefresh(t *testing.T) {
 			if err := json.Unmarshal(doc.Payload, &payload); err != nil {
 				t.Error(err)
 			}
-			if string(payload.Request.Alert) != string(task.Request.Alert) {
+			frozen, restoreErr := projection.RestoreSnapshot(payload.Request.Alert, payload.Request.ContentHash)
+			if restoreErr != nil || string(frozen) != string(task.Request.Alert) {
 				t.Error("progress update modified frozen snapshot")
 			}
 			payload.Progress = patch.Script.Params.Progress

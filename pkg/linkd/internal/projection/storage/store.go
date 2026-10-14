@@ -246,7 +246,12 @@ func (s *Store) decodeHit(h esHit, tenant, id string) (projection.StoredTask, er
 
 func decode(raw []byte, tenant, id, version string, work bool) (projection.StoredTask, error) {
 	var t projection.Task
-	if len(raw) > projection.MaxTaskBytes || json.Unmarshal(raw, &t) != nil || t.Validate() != nil || t.ID != id || t.Request.TenantID != tenant || t.HasWork() != work || version == "" || version == "0" {
+	if len(raw) > 2*projection.MaxTaskBytes+2 || json.Unmarshal(raw, &t) != nil {
+		return projection.StoredTask{}, projection.ErrInvalid
+	}
+	var snapshotErr error
+	t.Request.Alert, snapshotErr = projection.RestoreSnapshot(t.Request.Alert, t.Request.ContentHash)
+	if snapshotErr != nil || t.Validate() != nil || t.ID != id || t.Request.TenantID != tenant || t.HasWork() != work || version == "" || version == "0" {
 		return projection.StoredTask{}, projection.ErrInvalid
 	}
 	return projection.StoredTask{Task: t, Version: version}, nil
@@ -321,6 +326,13 @@ func (s *Store) Put(ctx context.Context, t projection.Task, expected string) (pr
 		}
 		query.Set("if_seq_no", strconv.FormatInt(seq, 10))
 		query.Set("if_primary_term", strconv.FormatInt(term, 10))
+	}
+	if expected == "" {
+		var err error
+		raw, err = projection.PreserveSnapshot(raw, "request")
+		if err != nil {
+			return projection.StoredTask{}, err
+		}
 	}
 	body, err := json.Marshal(esDocument{ID: t.ID, TenantID: t.Request.TenantID, Work: t.HasWork(), Payload: raw})
 	if err != nil {

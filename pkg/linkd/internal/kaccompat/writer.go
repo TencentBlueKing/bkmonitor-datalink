@@ -199,6 +199,11 @@ func (c *Client) getState(ctx context.Context, q projection.Request) (storedStat
 	if err != nil {
 		return out, err
 	}
+	var snapshotErr error
+	out.Source.State.Request.Alert, snapshotErr = projection.RestoreSnapshot(out.Source.State.Request.Alert, out.Source.State.Request.ContentHash)
+	if snapshotErr != nil {
+		return out, projection.Failure{Code: "response_invalid"}
+	}
 	s := out.Source.State
 	if !out.Found || out.Term < 1 || s.Request.Validate() != nil || s.Request.TenantID != q.TenantID || s.Request.AlertID != q.AlertID || s.Request.TargetID != q.TargetID || !c.physicalIndex(s.Index) || s.StorageTime == "" || len(s.Fields) == 0 {
 		return out, projection.Failure{Code: "response_invalid"}

@@ -31,6 +31,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/domain"
 	"linkd/internal/processingerror"
+	"linkd/internal/projection"
 	"linkd/internal/store"
 	es "linkd/internal/store/elasticsearch"
 )
@@ -250,7 +251,12 @@ func (s *Store) decodeHit(h esHit, tenant, id string) (actiondelivery.StoredTask
 
 func decode(raw []byte, tenant, id, version string, work, unsettled bool, alertID, targetID string, revision int64) (actiondelivery.StoredTask, error) {
 	var t actiondelivery.Task
-	if len(raw) > actiondelivery.MaxTaskBytes || json.Unmarshal(raw, &t) != nil || t.Validate() != nil || t.ID != id || t.Request.TenantID != tenant || t.HasWork() != work || t.Unsettled() != unsettled || t.Request.AlertID != alertID || t.Request.TargetID != targetID || t.Request.Revision != revision || version == "" || version == "0" {
+	if len(raw) > 2*actiondelivery.MaxTaskBytes+2 || json.Unmarshal(raw, &t) != nil {
+		return actiondelivery.StoredTask{}, actiondelivery.ErrInvalid
+	}
+	var snapshotErr error
+	t.Request.Alert, snapshotErr = projection.RestoreSnapshot(t.Request.Alert, t.Request.ContentHash)
+	if snapshotErr != nil || t.Validate() != nil || t.ID != id || t.Request.TenantID != tenant || t.HasWork() != work || t.Unsettled() != unsettled || t.Request.AlertID != alertID || t.Request.TargetID != targetID || t.Request.Revision != revision || version == "" || version == "0" {
 		return actiondelivery.StoredTask{}, actiondelivery.ErrInvalid
 	}
 	return actiondelivery.StoredTask{Task: t, Version: version}, nil
@@ -325,6 +331,13 @@ func (s *Store) Put(ctx context.Context, t actiondelivery.Task, expected string)
 		}
 		query.Set("if_seq_no", strconv.FormatInt(seq, 10))
 		query.Set("if_primary_term", strconv.FormatInt(term, 10))
+	}
+	if expected == "" {
+		var err error
+		raw, err = projection.PreserveSnapshot(raw, "request")
+		if err != nil {
+			return actiondelivery.StoredTask{}, err
+		}
 	}
 	body, err := json.Marshal(esDocument{ID: t.ID, TenantID: t.Request.TenantID, Work: t.HasWork(), Unsettled: t.Unsettled(), AlertID: t.Request.AlertID, TargetID: t.Request.TargetID, Revision: t.Request.Revision, Payload: raw})
 	if err != nil {

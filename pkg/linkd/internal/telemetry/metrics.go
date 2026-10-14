@@ -21,8 +21,7 @@ type instruments struct {
 	policyCheckDelay        metric.Float64Histogram
 	policySamples           metric.Int64Counter
 	policyStateInit         metric.Int64Counter
-	projection              *projectionInstruments
-	actionDelivery          *actionInstruments
+	kac                     *kacInstruments
 	shieldHints             metric.Int64Counter
 	shieldDecisions         metric.Int64Counter
 	mergeDecisions          metric.Int64Counter
@@ -725,10 +724,7 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	); err != nil {
 		return nil, err
 	}
-	if result.actionDelivery, err = newActionInstruments(meter); err != nil {
-		return nil, err
-	}
-	if result.projection, err = newProjectionInstruments(meter); err != nil {
+	if result.kac, err = newKACInstruments(meter); err != nil {
 		return nil, err
 	}
 	if result.dispatch, err = newDispatchInstruments(meter); err != nil {

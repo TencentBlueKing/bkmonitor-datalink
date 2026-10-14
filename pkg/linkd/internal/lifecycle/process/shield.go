@@ -69,7 +69,7 @@ func (s *ShieldChecker) CheckShield(ctx context.Context, tenant, id string) erro
 func (s *ShieldChecker) CheckHint(ctx context.Context, tenant, id string) error {
 	result, err := s.checkFrom(ctx, tenant, id, 0, "", "hint")
 	if err != nil && ctx.Err() == nil && s.logger != nil {
-		s.logger.WarnContext(ctx, "shield hinted check incomplete", "bk_tenant_id", tenant, "alert_id", id,
+		s.logger.WarnContext(ctx, "shield hinted check incomplete", "module", "lifecycle", "operation", "shield_hint", "error", err, "bk_tenant_id", tenant, "alert_id", id,
 			"error_code", shieldCheckCode(err), "check_error_code", result.ErrorCode, "outcome", result.Report.Outcome,
 			"changed", result.Report.Changed, "observed_revision", result.Report.ObservedRevision, "result_revision", result.Report.ResultRevision)
 	}

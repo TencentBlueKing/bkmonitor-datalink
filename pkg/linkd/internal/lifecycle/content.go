@@ -67,7 +67,7 @@ func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event
 		return "", &contentFailure{code: "opening_alert_invalid"}
 	}
 	if fallback {
-		p.logger.WarnContext(ctx, "alert content uses source text after missing publication", "bk_tenant_id", event.BKTenantID,
+		p.logger.WarnContext(ctx, "alert content uses source text after missing publication", "module", "lifecycle", "operation", "build_content", "error", err, "bk_tenant_id", event.BKTenantID,
 			"event_source_id", event.EventSourceID, "event_source_version", event.EventSourceVersion,
 			"event_id", event.EventID, "reason_code", "publication_missing", "content_mode", "source_fallback")
 	}

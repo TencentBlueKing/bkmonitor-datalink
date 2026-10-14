@@ -10,6 +10,7 @@
 package api
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 
@@ -28,4 +29,9 @@ func writePolicyRuntimeLimit(w http.ResponseWriter, result any, limit int) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(raw)
+}
+
+func policyRuntimeHashID(value string) bool {
+	raw, err := hex.DecodeString(value)
+	return err == nil && len(raw) == 32 && hex.EncodeToString(raw) == value
 }

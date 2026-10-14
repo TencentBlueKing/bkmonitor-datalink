@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func TestRetryClassificationAndPanicIsolation(t *testing.T) {
 		}
 	}
 	_, err := Guard(func() (int, error) { panic("private request body") })
-	if !errors.Is(err, ErrPanic) || Retryable(err) {
+	if !errors.Is(err, ErrPanic) || Retryable(err) || strings.Contains(err.Error(), "private request body") || !strings.Contains(err.Error(), "errors_test.go") {
 		t.Fatal("panic not safely classified", err)
 	}
 }

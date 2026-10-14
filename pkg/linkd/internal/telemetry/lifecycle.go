@@ -15,7 +15,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"linkd/internal/actiondelivery"
 	"linkd/internal/lifecycle"
 	"linkd/internal/store"
 )
@@ -110,9 +109,6 @@ func (p *observedLifecycleProcessor) ProcessEvent(
 
 func lifecycleMetricOutcome(result lifecycle.ProcessResult, err error) string {
 	if err != nil {
-		if actiondelivery.CanDefer(err) {
-			return "deferred"
-		}
 		return "failed"
 	}
 	switch result.Outcome {

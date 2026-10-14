@@ -88,8 +88,8 @@ func cancellationOnly(err error) bool {
 	return errors.Is(err, context.Canceled)
 }
 
-// logTaskFailure 记录来源、代次、失败阶段及依赖错误码。驱动错误的自由文本
-// 可能包含密码、DSN 或业务 payload，因此只提取可审查的结构化字段。
+// logTaskFailure 记录来源、代次、失败阶段、错误链及依赖错误码。
+// 统一日志 Handler 脱敏常见凭据，调用方不得在错误中包含业务正文。
 func (a *Agent) logTaskFailure(ctx context.Context, task Task, err error) {
 	if err == nil || expectedTaskCancellation(ctx, err) {
 		return
@@ -107,7 +107,7 @@ func (a *Agent) logTaskFailure(ctx context.Context, task Task, err error) {
 		}
 		cause = next
 	}
-	attrs := []any{"event_source_id", task.Source, "role", task.Role, "task_id", task.ID, "assignment_epoch", task.Epoch, "event_source_version", task.Version, "stage", stage, "error_type", fmt.Sprintf("%T", cause)}
+	attrs := []any{"module", "taskdispatch", "operation", stage, "error", err, "event_source_id", task.Source, "role", task.Role, "task_id", task.ID, "assignment_epoch", task.Epoch, "event_source_version", task.Version, "stage", stage, "error_type", fmt.Sprintf("%T", cause)}
 	reason := "task_error"
 	switch {
 	case errors.Is(err, consume.ErrDeferredCapacity):

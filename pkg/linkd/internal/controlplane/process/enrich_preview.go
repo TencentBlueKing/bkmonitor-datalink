@@ -11,6 +11,7 @@ package controlplaneprocess
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"linkd/internal/config"
@@ -22,7 +23,11 @@ import (
 )
 
 // newEnrichPreview 使用无 schema 初始化的事件读取与共享丰富运行时。
-func newEnrichPreview(sources *eventsource.Service, storage config.StorageConfig, resources config.ResourcesConfig) *preview.Service {
+func newEnrichPreview(sources *eventsource.Service, storage config.StorageConfig, resources config.ResourcesConfig, loggers ...*slog.Logger) *preview.Service {
+	var logger *slog.Logger
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
 	return preview.New(sources, func(ctx context.Context, tenant, id string) (domain.Event, error) {
 		r, err := storeassembly.OpenReadOnly(ctx, storage, 4)
 		if err != nil {
@@ -36,7 +41,11 @@ func newEnrichPreview(sources *eventsource.Service, storage config.StorageConfig
 		if err != nil {
 			return nil, nil, err
 		}
-		router, err := r.Router(source, nil)
+		options := []enrichruntime.RouterOption{}
+		if logger != nil {
+			options = append(options, enrichruntime.WithLogger(logger))
+		}
+		router, err := r.Router(source, nil, options...)
 		if err != nil {
 			_ = r.Close()
 			return nil, nil, err

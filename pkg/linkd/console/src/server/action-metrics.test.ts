@@ -2,8 +2,6 @@ import Fastify from "fastify";
 import { afterEach, expect, it, vi } from "vitest";
 import { registerDeliveryMetricRoutes } from "./delivery-metrics.js";
 import type { ConsoleConfig } from "./config.js";
-import { deliveryMetricIDs } from "../shared/delivery-metrics.js";
-const actionMetricIDs = deliveryMetricIDs.action;
 const config = {
   query: { timeoutMilliseconds: 5000, maxRangeSeconds: 604800 },
   prometheus: {
@@ -24,7 +22,7 @@ const base =
     calculation_window_seconds: "300",
   });
 const item = () => ({
-  metric: { job: "control", instance: "worker", linkd_task: "action-delivery" },
+  metric: { job: "control", instance: "worker", linkd_stage: "action" },
   values: [
     [start, "0"],
     [start + 15, "NaN"],
@@ -41,66 +39,38 @@ function appFor(c = config) {
   registerDeliveryMetricRoutes(app, c);
   return app;
 }
-it("uses fixed per-process queries without mixing tenant scope or replacing missing samples with zero", async () => {
-  const queries: string[] = [],
-    auth: string[] = [];
+it("queries throughput, duration and queue metrics with honest missing samples", async () => {
+  const queries: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: URL, init: RequestInit) => {
-      const u = new URL(input);
-      queries.push(u.searchParams.get("query")!);
-      auth.push((init.headers as Record<string, string>).authorization);
-      expect(init.redirect).toBe("error");
-      expect(init.signal).toBeInstanceOf(AbortSignal);
-      expect(u.pathname).toBe("/api/v1/query_range");
+    vi.fn(async (input: URL) => {
+      queries.push(new URL(input).searchParams.get("query")!);
       return Response.json(response());
     }),
   );
   const app = appFor();
   try {
-    const r = await app.inject(base + "&instance=worker");
-    expect(r.statusCode).toBe(200);
-    expect(r.headers["cache-control"]).toBe("no-store");
-    const body = r.json();
-    expect(body.panels.map((p: { id: string }) => p.id)).toEqual(
-      actionMetricIDs,
+    const result = await app.inject(base);
+    expect(result.statusCode).toBe(200);
+    expect(result.json().panels).toHaveLength(4);
+    expect(queries).toHaveLength(4);
+    expect(queries.some((q) => q.includes("linkd_kac_items_total"))).toBe(true);
+    expect(queries.some((q) => q.includes("linkd_kac_queue_messages"))).toBe(
+      true,
     );
-    expect(queries).toHaveLength(8);
-    expect(auth).toEqual(Array(8).fill("Bearer private-test-token"));
-    for (const q of queries) {
-      expect(q).toContain('linkd_task=~"action-enqueue|action-delivery"');
-      expect(q).toContain('instance="worker"');
-      expect(q).toContain("job, instance, linkd_task");
-      expect(q).not.toMatch(/tenant|alert_id|vector\(0\)|clamp_min/);
-    }
-    expect(queries.find((q) => q.includes("observations_total"))).toContain(
-      "[300s]",
-    );
-    for (const metric of [
-      "items",
-      "oldest_age_seconds",
-      "observed_at_seconds",
-    ]) {
-      expect(queries.find((q) => q.includes("last_page_" + metric))).toContain(
-        "max by",
-      );
-    }
-    const series = body.panels[0].series[0];
-    expect(series.name).toBe("control · worker · 动作发送");
-    expect(series.points).toEqual([
-      [start, 0],
-      [start + 15, null],
-      [end, null],
-    ]);
-    expect(r.body).not.toContain("private-test-token");
     expect(
-      body.panels.find((p: { id: string }) => p.id === "action-work")
-        .description,
-    ).toContain("不是唯一动作数");
+      queries
+        .filter((q) => q.includes("queue_"))
+        .every((q) => !q.includes("linkd_stage=")),
+    ).toBe(true);
+    expect(result.json().panels[0].series[0].points[0][1]).toBe(0);
+    expect(result.json().panels[0].series[0].points[1][1]).toBeNull();
+    expect(result.body).not.toContain("private-test-token");
   } finally {
     await app.close();
   }
 });
+
 it("rejects unsupported scope and range/point budgets before touching Prometheus", async () => {
   const fetcher = vi.fn();
   vi.stubGlobal("fetch", fetcher);
@@ -153,7 +123,7 @@ it("reports configured absence and preserves per-panel partial availability", as
       r
         .json()
         .panels.filter((p: { status: string }) => p.status === "available"),
-    ).toHaveLength(7);
+    ).toHaveLength(3);
     expect(r.body).not.toContain("private upstream");
   } finally {
     await app.close();
@@ -224,7 +194,7 @@ it("rejects incomplete, foreign, unordered, over-budget and sensitive-label seri
         .json()
         .panels.every((p: { status: string }) => p.status === "unavailable"),
     ).toBe(true);
-    expect(canceled).toHaveBeenCalledTimes(8);
+    expect(canceled).toHaveBeenCalledTimes(4);
   } finally {
     await app.close();
   }

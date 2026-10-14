@@ -11,12 +11,9 @@ package controlplaneprocess
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
-	"linkd/internal/actiondelivery"
 	"linkd/internal/controlplane/taskstate"
-	"linkd/internal/projection"
 	"linkd/internal/telemetry"
 )
 
@@ -73,63 +70,3 @@ func (o *deliveryTaskObservation) finished(ctx context.Context, id string, durat
 		o.metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTask(id)).RunFinished(ctx, duration, code == "" && failed == 0)
 	}
 }
-
-type projectionTaskObserver struct {
-	state   *deliveryTaskObservation
-	metrics *telemetry.ProjectionRunnerObserver
-}
-
-func newProjectionTaskObserver(registry *taskstate.Registry, metrics *telemetry.Runtime, logger *slog.Logger) (*projectionTaskObserver, error) {
-	state, err := newDeliveryTaskObservation(registry, metrics, string(projection.PhaseDeliver))
-	if err != nil {
-		return nil, err
-	}
-	return &projectionTaskObserver{state, metrics.ProjectionRunnerObserver(logger)}, nil
-}
-
-func (o *projectionTaskObserver) SetRunning(ctx context.Context, phase projection.RunnerPhase, active bool) {
-	o.state.setRunning(ctx, string(phase), active)
-	o.metrics.SetRunning(ctx, phase, active)
-}
-
-func (o *projectionTaskObserver) RoundStarted(ctx context.Context, phase projection.RunnerPhase) {
-	o.state.started(string(phase))
-	o.metrics.RoundStarted(ctx, phase)
-}
-
-func (o *projectionTaskObserver) RoundFinished(ctx context.Context, phase projection.RunnerPhase, result projection.RoundResult) {
-	o.state.finished(ctx, string(phase), result.Duration, result.Scanned, result.Failed, result.ErrorCode)
-	o.metrics.RoundFinished(ctx, phase, result)
-}
-
-type actionTaskObserver struct {
-	state   *deliveryTaskObservation
-	metrics *telemetry.ActionRunnerObserver
-}
-
-func newActionTaskObserver(registry *taskstate.Registry, metrics *telemetry.Runtime, logger *slog.Logger) (*actionTaskObserver, error) {
-	state, err := newDeliveryTaskObservation(registry, metrics, string(actiondelivery.PhaseEnqueue), string(actiondelivery.PhaseDeliver))
-	if err != nil {
-		return nil, err
-	}
-	return &actionTaskObserver{state, metrics.ActionRunnerObserver(logger)}, nil
-}
-
-func (o *actionTaskObserver) SetRunning(ctx context.Context, phase actiondelivery.RunnerPhase, active bool) {
-	o.state.setRunning(ctx, string(phase), active)
-	o.metrics.SetRunning(ctx, phase, active)
-}
-
-func (o *actionTaskObserver) RoundStarted(ctx context.Context, phase actiondelivery.RunnerPhase) {
-	o.state.started(string(phase))
-	o.metrics.RoundStarted(ctx, phase)
-}
-
-func (o *actionTaskObserver) RoundFinished(ctx context.Context, phase actiondelivery.RunnerPhase, result actiondelivery.RoundResult) {
-	o.state.finished(ctx, string(phase), result.Duration, result.Scanned, result.Outcomes[actiondelivery.OutcomeFailed], result.ErrorCode)
-	o.metrics.RoundFinished(ctx, phase, result)
-}
-
-var _ projection.RunnerObserver = (*projectionTaskObserver)(nil)
-
-var _ actiondelivery.RunnerObserver = (*actionTaskObserver)(nil)

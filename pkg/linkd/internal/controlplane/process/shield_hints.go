@@ -118,7 +118,7 @@ func runShieldHints(ctx context.Context, listener shieldHintListener, reader sto
 			registry.Finish(ctx, "shield-hints", "subscription", "事件提示订阅", time.Since(started), 0, 1, "hint_subscription_failed")
 			metrics.ObserveShieldHint(ctx, "subscription_failed")
 			if logger != nil {
-				logger.WarnContext(ctx, "shield hint subscription unavailable", "reason_code", "hint_subscription_failed")
+				logger.WarnContext(ctx, "shield hint subscription unavailable", "module", "controlplane", "operation", "shield_hint_subscribe", "error", err, "reason_code", "hint_subscription_failed")
 			}
 			// 返回 nil 也不能把意外退出当成健康；重连有五秒退避，绝不拖停定时检查。
 			_ = err
@@ -159,7 +159,7 @@ func runShieldHints(ctx context.Context, listener shieldHintListener, reader sto
 				metrics.ObserveShieldHint(ctx, outcome)
 				metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskShieldHints).RunFinished(ctx, time.Since(started), err == nil)
 				if err != nil && logger != nil {
-					logger.WarnContext(ctx, "shield hinted page failed", "bk_tenant_id", item.hint.TenantID, "main_alert_id", item.hint.MainAlertID, "reason_code", code, "failed", failed)
+					logger.WarnContext(ctx, "shield hinted page failed", "module", "controlplane", "operation", "shield_hint_page", "error", err, "bk_tenant_id", item.hint.TenantID, "main_alert_id", item.hint.MainAlertID, "reason_code", code, "failed", failed)
 				}
 			}
 		}

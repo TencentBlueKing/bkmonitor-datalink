@@ -38,7 +38,7 @@ type loggedSuppressionExecutor struct {
 func (l loggedSuppressionExecutor) Execute(ctx context.Context, r suppressioncheck.Request) error {
 	err := l.executor.Execute(ctx, r)
 	if err != nil && ctx.Err() == nil && !suppressioncheck.CanDefer(err) {
-		l.logger.WarnContext(ctx, "suppression request execution failed", "bk_tenant_id", r.Command.TenantID, "kind", r.Command.Kind, "window_id", r.Command.WindowID, "request_id", r.ID, "error_code", "suppression_execution_failed")
+		l.logger.WarnContext(ctx, "suppression request execution failed", "module", "controlplane", "operation", "suppression_request_execute", "error", err, "bk_tenant_id", r.Command.TenantID, "kind", r.Command.Kind, "window_id", r.Command.WindowID, "request_id", r.ID, "error_code", "suppression_execution_failed")
 	}
 	return err
 }
@@ -107,7 +107,7 @@ func runSuppressionRequests(ctx context.Context, work suppressionRequestWork, ex
 		if err != nil {
 			code = "suppression_requests_failed"
 			if ctx.Err() == nil {
-				logger.WarnContext(ctx, "suppression requests failed", "error_code", code, "failed", failed)
+				logger.WarnContext(ctx, "suppression requests failed", "module", "controlplane", "operation", "suppression_requests", "error", err, "error_code", code, "failed", failed)
 			}
 		}
 		registry.Finish(ctx, "suppression-requests", "", "", time.Since(start), n, failed, code)

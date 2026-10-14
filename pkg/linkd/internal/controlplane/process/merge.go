@@ -96,7 +96,7 @@ func runMergeJobs(ctx context.Context, runner *mergeJobRunner, jobs []mergeJob) 
 					}
 					failed.Add(1)
 					if ctx.Err() == nil && runner.logger != nil {
-						runner.logger.WarnContext(ctx, "merge control step failed", "bk_tenant_id", job.tenant, "window_id", job.window, "error_code", mergeStepCode(err))
+						runner.logger.WarnContext(ctx, "merge control step failed", "module", "controlplane", "operation", "merge_step", "error", err, "bk_tenant_id", job.tenant, "window_id", job.window, "error_code", mergeStepCode(err))
 					}
 				}
 			}
@@ -154,7 +154,7 @@ func runMergeLoop(ctx context.Context, id telemetry.ControlPlaneTask, interval t
 		if err != nil {
 			code = "merge_check_failed"
 			if ctx.Err() == nil {
-				logger.WarnContext(ctx, "merge control page failed", "task", string(id), "error_code", code, "failed", failed)
+				logger.WarnContext(ctx, "merge control page failed", "module", "controlplane", "operation", "merge_page", "error", err, "task", string(id), "error_code", code, "failed", failed)
 			}
 		}
 		registry.Finish(ctx, string(id), "", "", time.Since(started), len(jobs), failed, code)

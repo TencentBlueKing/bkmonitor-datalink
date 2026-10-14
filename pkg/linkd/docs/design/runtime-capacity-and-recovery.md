@@ -1,5 +1,8 @@
 # 运行并发、容量与故障恢复
 
+> KAC 输出已在 2026-10-14 改为轻量队列。旧 `control_plane.delivery`、任务容量和持久补偿描述由[控制面批量输出](control-plane-batch-delivery.md)取代；Lifecycle 自身容量与业务恢复规则保留。
+
+
 2026-10-13；本轮审查基线为 `41d0825c` 及 test 恢复补丁。用户明确要求单进程可纵向扩容，默认放开无依据的限制。本文件记录本轮目标与逐项验收；未完成项不能视为上线能力。
 
 ## 设计边界
@@ -42,7 +45,7 @@
 | 10 | `config.LifecycleConfig` 默认并发 | 默认 256，与默认未确认 Signal 数对齐；不是整个进程共享 32 个名额 |
 | 11 | Cleaner/Lifecycle 资源配置校验 | 删除并发 1024、批次数 64、在途 4096、固定 64/256 MiB 等无上下文常量封顶；保留正数、大小关系与乘法溢出校验 |
 | 12 | `lifecycle.mailbox.Config.MaxPendingPerMailbox` | 默认 128 改为 0，不限制持久 Mailbox 深度；显式正数仍可主动开启 |
-| 13 | `cleaner.SignalBackpressureChecker` | 不再默认以 Signal lag+pending 的倍数阻止 Cleaner 领取；0 直接放行，不查询 Redis 准入 |
+| 13 | `cleaner.SignalBackpressureChecker` | 2026-10-14 调整：Helm 默认显式配置 2048/1024 高低水位；0/0 关闭消费暂停控制，但仍按缓存周期采样 lag+pending |
 | 14 | `consume.New` 延后集合 | 覆盖全部已接管消息；消除 256 个在途 Signal 对 64 个延后位置的容量失配 |
 | 15 | `consume.Runtime` 消息重试/Block | 默认普通错误确认；显式标记最多三次；耗尽不会 failLane 或令整个来源退出 |
 | 16 | `cleaner.Runtime` 纯计算失败 | 普通错误与 panic 只终结该消息，后续连续确认前缀继续推进 |
@@ -94,8 +97,9 @@ lifecycle:
   mailbox:
     max_pending: 0
     backpressure:
-      high_watermark: 0
-      low_watermark: 0
+      # Helm 默认值；直接运行需显式配置。0/0 关闭控制，仍采样积压。
+      high_watermark: 2048
+      low_watermark: 1024
 control_plane:
   delivery:
     concurrency: 0

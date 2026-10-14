@@ -236,7 +236,8 @@ type apmApplicationResult struct {
 }
 
 // Scope 保存单次 Enrich 调用的只读 Event 快照和请求内数据。
-func (s *Scope) CloudResource(ctx context.Context, cloudID, resourceType, instanceID string) (models.CloudResource, bool, error) {
+func (s *Scope) CloudResource(ctx context.Context, cloudID, resourceType, instanceID string) (returned models.CloudResource, found bool, err error) {
+	defer func() { s.recordDependencyError("cloud_resource", err) }()
 	if s.sources.CloudResource == nil {
 		return models.CloudResource{}, false, fmt.Errorf("cloud resource reader is unavailable")
 	}
@@ -262,12 +263,14 @@ func (s *Scope) CloudResource(ctx context.Context, cloudID, resourceType, instan
 }
 
 type Scope struct {
-	original      *domain.Event
-	state         *domain.EnrichEvaluation
-	running       bool
-	evaluation    domain.EventEvaluation
-	sources       Sources
-	enrichContext *EnrichContext
+	dependencyErrors []error
+	dependencies     []string
+	original         *domain.Event
+	state            *domain.EnrichEvaluation
+	running          bool
+	evaluation       domain.EventEvaluation
+	sources          Sources
+	enrichContext    *EnrichContext
 
 	*requestCache
 }
@@ -352,7 +355,8 @@ func (s *Scope) Event() domain.Event {
 }
 
 // DynamicGroupIDs 只使用原始 Event 的租户身份；未配置投影时保持空列表。
-func (s *Scope) DynamicGroupIDs(ctx context.Context, modelCode, instanceID string) ([]string, error) {
+func (s *Scope) DynamicGroupIDs(ctx context.Context, modelCode, instanceID string) (returned []string, err error) {
+	defer func() { s.recordDependencyError("dynamic_group", err) }()
 	if s.sources.DynamicGroup == nil {
 		return []string{}, nil
 	}
@@ -360,7 +364,8 @@ func (s *Scope) DynamicGroupIDs(ctx context.Context, modelCode, instanceID strin
 }
 
 // CWStrategy 惰性读取并复用当前 Event 指定的策略发布材料。
-func (s *Scope) CWStrategy(ctx context.Context) (models.CWStrategy, bool, error) {
+func (s *Scope) CWStrategy(ctx context.Context) (returned models.CWStrategy, found bool, err error) {
+	defer func() { s.recordDependencyError("strategy_publication", err) }()
 	s.strategyOnce.Do(func() {
 		if s.sources.CWStrategy == nil {
 			s.strategy.err = fmt.Errorf("strategy config reader is unavailable")
@@ -377,7 +382,8 @@ func (s *Scope) CWStrategy(ctx context.Context) (models.CWStrategy, bool, error)
 }
 
 // IsGlobalBusiness 惰性读取策略所属 BKCC 业务是否为全局业务。
-func (s *Scope) IsGlobalBusiness(ctx context.Context, bizID int64) (bool, bool, error) {
+func (s *Scope) IsGlobalBusiness(ctx context.Context, bizID int64) (returned bool, found bool, err error) {
+	defer func() { s.recordDependencyError("business", err) }()
 	s.businessOnce.Do(func() {
 		if s.sources.Business == nil {
 			s.business.err = fmt.Errorf("business reader is unavailable")
@@ -393,7 +399,8 @@ func (s *Scope) IsGlobalBusiness(ctx context.Context, bizID int64) (bool, bool, 
 }
 
 // MetricMetadata 按事件租户和业务作用域读取并复用本次调用的指标目录结果。
-func (s *Scope) MetricMetadata(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
+func (s *Scope) MetricMetadata(ctx context.Context, query models.MetricQuery) (returned models.MetricMetadata, found bool, err error) {
+	defer func() { s.recordDependencyError("metric_catalog", err) }()
 	if err := ctx.Err(); err != nil {
 		return models.MetricMetadata{}, false, err
 	}
@@ -428,7 +435,8 @@ func (s *Scope) MetricMetadata(ctx context.Context, query models.MetricQuery) (m
 }
 
 // APMApplications 按业务和名称读取租户内 APM 应用候选项，并在单次 Enrich 内复用结果。
-func (s *Scope) APMApplications(ctx context.Context, bizID int64, name string) ([]models.APMApplication, error) {
+func (s *Scope) APMApplications(ctx context.Context, bizID int64, name string) (returned []models.APMApplication, err error) {
+	defer func() { s.recordDependencyError("apm_application", err) }()
 	query := apmApplicationQuery{bizID: bizID, name: name}
 	if result, exists := s.apmApplications[query]; exists {
 		return append([]models.APMApplication(nil), result.values...), result.err
@@ -447,7 +455,8 @@ func (s *Scope) APMApplications(ctx context.Context, bizID int64, name string) (
 }
 
 // K8sInstance 读取 K8s 对象模型对应的统一实例。
-func (s *Scope) K8sInstance(ctx context.Context, modelCode string, dimensions domain.DimensionMap) (Instance, bool, error) {
+func (s *Scope) K8sInstance(ctx context.Context, modelCode string, dimensions domain.DimensionMap) (returned Instance, found bool, err error) {
+	defer func() { s.recordDependencyError("k8s_instance", err) }()
 	if s.sources.K8s == nil {
 		return Instance{}, false, fmt.Errorf("k8s reader is unavailable")
 	}
@@ -467,7 +476,8 @@ func (s *Scope) K8sInstance(ctx context.Context, modelCode string, dimensions do
 }
 
 // LogTheme 惰性读取并复用本次调用的日志主题结果。
-func (s *Scope) LogTheme(ctx context.Context, themeID int64) (models.LogTheme, bool, error) {
+func (s *Scope) LogTheme(ctx context.Context, themeID int64) (returned models.LogTheme, found bool, err error) {
+	defer func() { s.recordDependencyError("log_theme", err) }()
 	if result, exists := s.logThemes[themeID]; exists {
 		return result.value, result.found, result.err
 	}
@@ -484,7 +494,8 @@ func (s *Scope) LogTheme(ctx context.Context, themeID int64) (models.LogTheme, b
 }
 
 // AlarmSource 惰性读取并复用本次调用的告警源。
-func (s *Scope) AlarmSource(ctx context.Context) (models.AlarmSource, bool, error) {
+func (s *Scope) AlarmSource(ctx context.Context) (returned models.AlarmSource, found bool, err error) {
+	defer func() { s.recordDependencyError("alarm_source", err) }()
 	s.alarmSourceOnce.Do(func() {
 		if s.sources.AlarmSource == nil {
 			s.alarmSource.err = fmt.Errorf("alarm source reader is unavailable")
@@ -519,7 +530,8 @@ func (s *Scope) Scenario(key string, load func() (any, error)) (any, error) {
 }
 
 // CollectConfig 读取采集任务配置。
-func (s *Scope) CollectConfig(ctx context.Context, taskID string) (models.CollectConfig, bool, error) {
+func (s *Scope) CollectConfig(ctx context.Context, taskID string) (returned models.CollectConfig, found bool, err error) {
+	defer func() { s.recordDependencyError("collect_config", err) }()
 	if result, exists := s.collectConfigs[taskID]; exists {
 		return result.value, result.found, result.err
 	}
@@ -536,7 +548,8 @@ func (s *Scope) CollectConfig(ctx context.Context, taskID string) (models.Collec
 }
 
 // UptimeTask 读取拨测任务。
-func (s *Scope) UptimeTask(ctx context.Context, taskID string) (models.UptimeTask, bool, error) {
+func (s *Scope) UptimeTask(ctx context.Context, taskID string) (returned models.UptimeTask, found bool, err error) {
+	defer func() { s.recordDependencyError("uptime_task", err) }()
 	if result, exists := s.uptimeTasks[taskID]; exists {
 		return result.value, result.found, result.err
 	}
@@ -553,7 +566,8 @@ func (s *Scope) UptimeTask(ctx context.Context, taskID string) (models.UptimeTas
 }
 
 // UptimeNode 读取拨测节点。
-func (s *Scope) UptimeNode(ctx context.Context, nodeID string) (models.UptimeNode, bool, error) {
+func (s *Scope) UptimeNode(ctx context.Context, nodeID string) (returned models.UptimeNode, found bool, err error) {
+	defer func() { s.recordDependencyError("uptime_node", err) }()
 	if result, exists := s.uptimeNodes[nodeID]; exists {
 		return result.value, result.found, result.err
 	}
@@ -571,7 +585,8 @@ func (s *Scope) UptimeNode(ctx context.Context, nodeID string) (models.UptimeNod
 
 // ModelByCode 读取统一实例协议中的模型元数据。
 // 当前 OneModelReader 可选实现 ModelReader；统一实例 alias 只保证 model_id 时返回代码级模型身份。
-func (s *Scope) ModelByCode(ctx context.Context, modelCode string) (Model, bool, error) {
+func (s *Scope) ModelByCode(ctx context.Context, modelCode string) (returned Model, found bool, err error) {
+	defer func() { s.recordDependencyError("onemodel_model", err) }()
 	if result, exists := s.models[modelCode]; exists {
 		return result.value, result.found, result.err
 	}
@@ -588,7 +603,8 @@ func (s *Scope) ModelByCode(ctx context.Context, modelCode string) (Model, bool,
 }
 
 // RelatedHost 读取采集对象关联的主机实例。
-func (s *Scope) RelatedHost(ctx context.Context, modelCode, instanceID, relation string) (Instance, bool, error) {
+func (s *Scope) RelatedHost(ctx context.Context, modelCode, instanceID, relation string) (returned Instance, found bool, err error) {
+	defer func() { s.recordDependencyError("related_host", err) }()
 	key := modelCode + "\x00" + instanceID + "\x00" + relation
 	if result, exists := s.relatedHosts[key]; exists {
 		return result.value, result.found, result.err
@@ -608,7 +624,8 @@ func (s *Scope) RelatedHost(ctx context.Context, modelCode, instanceID, relation
 }
 
 // HostTopology 读取主机业务拓扑。
-func (s *Scope) HostTopology(ctx context.Context, hostID string) (models.ResourceTopology, bool, error) {
+func (s *Scope) HostTopology(ctx context.Context, hostID string) (returned models.ResourceTopology, found bool, err error) {
+	defer func() { s.recordDependencyError("host_topology", err) }()
 	if result, exists := s.topologies[hostID]; exists {
 		return result.value, result.found, result.err
 	}
@@ -650,7 +667,8 @@ func instanceQueryKey(query InstanceQuery) (string, error) {
 }
 
 // Instance 按稳定查询身份复用本次调用定位到的 OneModel 实例。
-func (s *Scope) Instance(ctx context.Context, query InstanceQuery) (Instance, bool, error) {
+func (s *Scope) Instance(ctx context.Context, query InstanceQuery) (returned Instance, found bool, err error) {
+	defer func() { s.recordDependencyError("onemodel_instance", err) }()
 	key, err := instanceQueryKey(query)
 	if err != nil {
 		return Instance{}, false, err

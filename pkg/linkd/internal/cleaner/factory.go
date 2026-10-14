@@ -106,6 +106,7 @@ func (f *Factory) NewFlow(ctx context.Context, source config.EventSource) (Flow,
 		_ = session.Close(context.Background())
 		return nil, err
 	}
+	runtime.sourceID, runtime.sourceVersion = source.EventSourceID, source.Version
 	return FlowFunc(runtime.Run), nil
 }
 

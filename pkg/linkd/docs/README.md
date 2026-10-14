@@ -65,4 +65,6 @@ Lifecycle 等模块复用；包含停止确认、失联自停、超时强切及�
 - `research/`：带版本和证据的历史技术输入。
 - `reviews/`：特定时间点的审查快照。
 
-控制面读写合批、投影水位局部确认和 KAC 字段增量更新见[控制面批处理](design/control-plane-batch-delivery.md)。
+控制面队列展批、优雅重启和 KAC 字段增量更新见[控制面批处理](design/control-plane-batch-delivery.md)。
+
+- [KAC 输出 V3 本地验收](research/2026-10-14-kac-output-v3-validation.md)

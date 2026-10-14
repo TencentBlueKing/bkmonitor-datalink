@@ -9,12 +9,11 @@ export function projectionMetricsFixture(q: URLSearchParams, empty = false) {
     message: empty
       ? "查询范围内没有投影运行时序；不能据此判定任务已完成"
       : undefined,
-    description:
-      "advanced 在生产阶段表示创建或复用任务，在投递阶段表示本地 ACK 已完成；不是 HTTP 请求数。",
+    description: "投影写入条数与耗时，失败通过日志定位。",
     series: result.panels[index].series.map((series) => ({
       ...series,
       name: `control · ${q.get("instance") ?? "worker-a"} · 投影投递`,
-      labels: { ...series.labels, linkd_task: "projection-delivery" },
+      labels: { ...series.labels, linkd_stage: "projection" },
     })),
   }));
   return result;

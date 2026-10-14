@@ -1,18 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { explorerCapabilities } from "../fixtures/explorer";
 import { policyRecord, policyRelease } from "../../src/test-fixtures/policies";
-import {
-  projectionFixture,
-  projectionID,
-  projectionTenant,
-} from "../../src/test-fixtures/projection-tasks";
 
-test("simulation timeline, scoped statistics and optional KAC navigation", async ({
-  page,
-}, info) => {
+test("simulation timeline and scoped statistics", async ({ page }, info) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  let configured = false;
   const writes: string[] = [];
   await page.route("**/local-api/**", async (route) => {
     const req = route.request(),
@@ -29,17 +21,6 @@ test("simulation timeline, scoped statistics and optional KAC navigation", async
           type: "suppression",
           url: null,
           reason: "not_configured",
-        },
-      });
-    if (url.pathname === "/local-api/kac-alert-link")
-      return route.fulfill({
-        json: {
-          bk_tenant_id: projectionTenant,
-          alarm_id: projectionFixture().alarm_id,
-          url: configured
-            ? "https://kac.example/#/kac/alarmDetail?id=" +
-              projectionFixture().alarm_id
-            : null,
         },
       });
     if (url.pathname === "/local-api/policies/statistics")
@@ -104,16 +85,6 @@ test("simulation timeline, scoped statistics and optional KAC navigation", async
         },
       });
     }
-    if (url.pathname.startsWith("/local-api/projection-tasks"))
-      return route.fulfill({
-        json: url.pathname.includes(projectionID)
-          ? projectionFixture("delivered")
-          : {
-              bk_tenant_id: projectionTenant,
-              items: [projectionFixture("delivered")],
-              next: "",
-            },
-      });
     if (url.pathname === "/local-api/policies")
       return route.fulfill({ json: { items: [policyRecord()], next: "" } });
     if (url.pathname.includes("/releases/"))
@@ -156,18 +127,6 @@ test("simulation timeline, scoped statistics and optional KAC navigation", async
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
-  await page.goto(
-    `/projection-tasks?bk_tenant_id=${projectionTenant}&id=${projectionID}`,
-  );
-  await expect(
-    page.getByRole("link", { name: "查看当前 Alert" }),
-  ).toBeVisible();
-  await expect(page.getByRole("link", { name: /查看 KAC/ })).toHaveCount(0);
-  configured = true;
-  await page.reload();
-  const link = page.getByRole("link", { name: /查看 KAC/ });
-  await expect(link).toHaveAttribute("href", /https:\/\/kac\.example/);
-  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
   expect(writes).toEqual(["/local-api/policies/simulate"]);
   expect(errors).toEqual([]);
 });

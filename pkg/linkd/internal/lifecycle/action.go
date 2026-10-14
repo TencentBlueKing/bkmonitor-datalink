@@ -11,136 +11,26 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"maps"
 
-	"linkd/internal/actiondelivery"
 	"linkd/internal/domain"
-	"linkd/internal/store"
 )
 
-// ActionRecorder 仅负责把原动作可靠入队；成功必须保证全部目标任务持久化且可被排序查询发现。
-// 允许部分目标已成功后返回错误，重试必须按原版本/原因幂等，不得在这里等待远端处置完成。
-type ActionRecorder interface {
-	RecordAction(context.Context, domain.Alert, domain.AlertActionIntent) error
+// AlertChangePublisher 只发布轻量通知，发布失败不回滚已经保存的业务事实。
+type AlertChangePublisher interface {
+	Publish(context.Context, domain.AlertChange) error
 }
 
-// WithActionRecorder 注入必需动作入队端口，错误向输入/控制任务传播，不沿用普通 Hook 的忽略策略。
-func WithActionRecorder(recorder ActionRecorder) ProcessorOption {
-	return func(p *Processor) { p.actionRecorder = recorder }
+// WithAlertChangePublisher 注入通知出口，Lifecycle 不依赖 KAC 的连接、任务或协议。
+func WithAlertChangePublisher(publisher AlertChangePublisher) ProcessorOption {
+	return func(p *Processor) { p.publisher = publisher }
 }
 
-// WithInitialProjectionTargets 为新 Alert 绑定装配方启用的全局插件目标。
-// map 值显式决定是否投递获准动作；已有 Alert 在整个生命周期保留原绑定，本选项不更新它。
-func WithInitialProjectionTargets(targets map[string]bool) ProcessorOption {
-	frozen := maps.Clone(targets)
-	return func(p *Processor) { p.initialProjectionTargets = maps.Clone(frozen) }
-}
-
-func (p *Processor) initialProjection(ctx context.Context, event domain.Event) (domain.AlertProjection, error) {
-	targets := p.initialProjectionTargets
-	if err := ctx.Err(); err != nil {
-		return domain.AlertProjection{}, err
+func (p *Processor) publishChange(ctx context.Context, a domain.Alert, cause AlertChangeCause, ready bool) {
+	if p.publisher == nil {
+		return
 	}
-
-	projection := domain.AlertProjection{}
-	if len(targets) > 16 {
-		return projection, fmt.Errorf("projection target budget exceeded")
+	change := domain.NewAlertChange(a, domain.AlertActionCause{Type: cause.Type, ID: cause.ID}, ready)
+	if err := p.publisher.Publish(ctx, change); err != nil {
+		p.logger.WarnContext(ctx, "alert change enqueue failed", "module", "lifecycle", "operation", "publish_change", "error", err, "event_source_id", a.EventSourceID, "bk_tenant_id", a.BKTenantID, "alert_id", a.AlertID, "cause_id", cause.ID, "error_code", "queue_publish_failed")
 	}
-	if len(targets) > 0 {
-		projection.Targets = make(map[string]domain.ProjectionTargetState, len(targets))
-	}
-	for id, actions := range targets {
-		if actions && p.actionRecorder == nil {
-			return domain.AlertProjection{}, fmt.Errorf("selected action target requires reliable recorder")
-		}
-		projection.Targets[id] = domain.ProjectionTargetState{SourceVersion: event.EventSourceVersion, RequiredRevision: 1, ActionEnabled: actions}
-	}
-	if err := projection.Validate(1); err != nil {
-		return domain.AlertProjection{}, err
-	}
-	return projection, nil
-}
-
-func freezeAction(a *domain.Alert, revision int64, cause AlertChangeCause, ready bool) error {
-	if !ready {
-		return nil
-	}
-	// 控制面变更尚未经过仓储版本计算；先按已读取的下一版冻结，CAS 再核对版本和水位。
-	a.Revision = revision
-	var err error
-	a.Projection, err = a.Projection.RequireRevision(revision)
-	if err != nil {
-		return err
-	}
-	a.ActionPending, err = domain.NewAlertActionIntent(*a, cause.Type, cause.ID)
-	if err != nil || a.ActionPending == nil {
-		return err
-	}
-	// 在提交业务 CAS 前验证同一冻结快照能被实际协议编码；超预算不能提交成永远无法入队的意图。
-	// 目标的格式/发布已由领域校验覆盖，完整快照预算只需对其中一个目标检查。
-	for id := range a.ActionPending.Targets {
-		_, err = actiondelivery.BuildRequest(*a, id, actiondelivery.Cause{Type: cause.Type, ID: cause.ID})
-		break
-	}
-	return err
-}
-
-// FinishActionDelivery 在该 Alert 的 fingerprint lease 内补齐既有动作入队，不重新评估策略。
-// 后台补扫和输入重试共用本用例；它只确认任务入队，不代表接收端已受理或业务已处置。
-func (p *Processor) FinishActionDelivery(ctx context.Context, tenant, id string) (store.StoredAlert, error) {
-	if ctx == nil || domain.ValidateIdentityPart("tenant", tenant, 64) != nil || id == "" || len(id) > domain.EntityIDMaxBytes {
-		return store.StoredAlert{}, store.ErrInvalidArgument
-	}
-	current, err := p.getAlertCurrent(ctx, tenant, id)
-	if err != nil {
-		return store.StoredAlert{}, err
-	}
-	if current.Alert.BKTenantID != tenant || current.Alert.AlertID != id {
-		return store.StoredAlert{}, store.ErrInvalidArgument
-	}
-	return p.finishActionIntent(ctx, current)
-}
-
-func (p *Processor) finishActionIntent(ctx context.Context, current store.StoredAlert) (store.StoredAlert, error) {
-	defer p.measureStep(phaseApply, "action")()
-	tenant, id := current.Alert.BKTenantID, current.Alert.AlertID
-	for range maxCASAttempts {
-		if err := ctx.Err(); err != nil {
-			return store.StoredAlert{}, err
-		}
-		// 业务载荷已由仓储读取/写入边界验证；补齐入队只核对状态，不重解析丰富结果。
-		if current.Version.IsZero() || current.Alert.ValidateState() != nil || current.Alert.BKTenantID != tenant || current.Alert.AlertID != id {
-			return store.StoredAlert{}, store.ErrInvalidArgument
-		}
-		intent := current.Alert.ActionPending
-		if intent == nil {
-			return current, nil
-		}
-		if p.actionRecorder == nil {
-			return store.StoredAlert{}, fmt.Errorf("durable action recorder is not configured")
-		}
-		if err := p.actionRecorder.RecordAction(ctx, current.Alert.Clone(), *intent.Clone()); err != nil {
-			return store.StoredAlert{}, fmt.Errorf("record alert action: %w", err)
-		}
-		next := current.Alert.Clone()
-		next.ActionPending = nil
-		updated, err := p.compareAndSetAlert(ctx, current, next)
-		if errors.Is(err, store.ErrVersionConflict) {
-			current, err = p.getAlertCurrent(ctx, current.Alert.BKTenantID, current.Alert.AlertID)
-			if err != nil {
-				return store.StoredAlert{}, err
-			}
-			continue
-		}
-		if err != nil {
-			return store.StoredAlert{}, err
-		}
-		if err := p.cacheMergeSnapshot(ctx, updated); err != nil {
-			return store.StoredAlert{}, err
-		}
-		return updated, nil
-	}
-	return store.StoredAlert{}, store.ErrVersionConflict
 }

@@ -23,16 +23,8 @@ type ControlPlaneTask string
 const (
 	// ControlPlaneTaskKACIndexMaintenance 维护兼容索引并观测定义冲突或依赖故障。
 	ControlPlaneTaskKACIndexMaintenance ControlPlaneTask = "kac-index-maintenance"
-	// ControlPlaneTaskKACDelivery 监督可靠投影与动作循环的共享运行资源。
+	// ControlPlaneTaskKACDelivery 记录队列投影与动作发送的运行状态。
 	ControlPlaneTaskKACDelivery ControlPlaneTask = "kac-delivery"
-	// ControlPlaneTaskProjectionProducer 从持久 Alert 水位补齐投影任务。
-	ControlPlaneTaskProjectionProducer ControlPlaneTask = "projection-producer"
-	// ControlPlaneTaskProjectionDelivery 执行可靠投影及本地 ACK。
-	ControlPlaneTaskProjectionDelivery ControlPlaneTask = "projection-delivery"
-	// ControlPlaneTaskActionEnqueue 在正式指纹租约内补齐已持久化动作意图。
-	ControlPlaneTaskActionEnqueue ControlPlaneTask = "action-enqueue"
-	// ControlPlaneTaskActionDelivery 执行投影门槛、原顺序动作发送与受理确认。
-	ControlPlaneTaskActionDelivery ControlPlaneTask = "action-delivery"
 	// ControlPlaneTaskShieldHints 记录可丢失的依赖主终态提示与加速复查。
 	ControlPlaneTaskShieldHints ControlPlaneTask = "shield-hints"
 	// ControlPlaneTaskMergeRequests 记录显式合并接续和关系检查，不把业务条件失败等同于任务故障。

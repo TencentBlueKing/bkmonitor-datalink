@@ -44,6 +44,8 @@ type Sources struct {
 
 // Trace 描述规则或操作的执行状态；Code 是脱敏稳定原因码。
 type Trace struct {
+	// Error 只用于当前调用日志，不进入结果 JSON。
+	Error                error               `json:"-"`
 	RuleID               string              `json:"rule_id"`
 	OperationID          string              `json:"operation_id,omitempty"`
 	Status               domain.EnrichStatus `json:"status"`
@@ -154,7 +156,7 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 						state = domain.EnrichStatusSkipped
 					}
 				}
-				result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: op.ID, Status: state, Code: errorCode(err), DurationMilliseconds: time.Since(opStart).Milliseconds()})
+				result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: op.ID, Status: state, Code: errorCode(err), Error: err, DurationMilliseconds: time.Since(opStart).Milliseconds()})
 				if err != nil {
 					break
 				}
@@ -168,7 +170,7 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 						// 旧 builtin_cmdb_enrich 失败不阻止已命中实例的显式属性丰富。
 						failed = true
 						code = errorCode(err)
-						result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: "topology", Status: stateFor(err), Code: errorCode(err)})
+						result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: "topology", Status: stateFor(err), Code: errorCode(err), Error: err})
 						err = nil
 					}
 				}
@@ -201,7 +203,7 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 				failed = !skipped
 				code = errorCode(err)
 			}
-			result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: "lookup", Status: stateFor(err), Code: errorCode(err), Matches: n})
+			result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: "lookup", Status: stateFor(err), Code: errorCode(err), Error: err, Matches: n})
 		}
 		if err := ctx.Err(); err != nil {
 			return RuntimeResult{}, err
@@ -217,7 +219,7 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 			state = domain.EnrichStatusPartial
 		}
 		ruleStates = append(ruleStates, state)
-		result.Trace = append(result.Trace, Trace{RuleID: rule.ID, Status: state, Code: code, DurationMilliseconds: time.Since(start).Milliseconds()})
+		result.Trace = append(result.Trace, Trace{RuleID: rule.ID, Status: state, Code: code, Error: err, DurationMilliseconds: time.Since(start).Milliseconds()})
 	}
 	if p.config.RollbackUnmatched && !r.fieldSucceeded {
 		result.Patches = []domain.EnrichAssignment{}
@@ -242,7 +244,7 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 		} else if len(result.Patches) > 0 {
 			ruleStates = append(ruleStates, domain.EnrichStatusSucceeded)
 		}
-		result.Trace = append(result.Trace, Trace{RuleID: "cmdb", OperationID: "fallback_topology", Status: stateFor(err), Code: errorCode(err)})
+		result.Trace = append(result.Trace, Trace{RuleID: "cmdb", OperationID: "fallback_topology", Status: stateFor(err), Code: errorCode(err), Error: err})
 		result.Trace = append(result.Trace, Trace{RuleID: "cmdb", OperationID: "rollback", Status: domain.EnrichStatusSkipped, Code: "no_cmdb_fields_enriched"})
 	}
 	result.Status = Aggregate(ruleStates)

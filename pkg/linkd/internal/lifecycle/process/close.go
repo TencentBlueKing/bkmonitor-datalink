@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"linkd/internal/config"
-	"linkd/internal/deliverysource"
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
 	"linkd/internal/eventsource"
@@ -49,12 +48,13 @@ type closeSourceReader interface {
 
 // AlertProjectionSynchronizer 确认主动关闭的业务版本已经投影并可搜索；失败不能回滚关闭事实。
 type AlertProjectionSynchronizer interface {
-	Synchronize(context.Context, string, string, string, int64) error
+	ProjectNow(context.Context, string, string) error
 }
 
 // AlertCloser 为用户或系统关闭装配当前已发布来源的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
 // 最多四个并发请求；重试必须携带相同命令，终态部分成功不等同于未执行。
 type AlertCloser struct {
+	logger     *slog.Logger
 	slots      chan struct{}
 	run        func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error)
 	read       func(context.Context, string, string) (domain.Alert, error)
@@ -63,7 +63,7 @@ type AlertCloser struct {
 
 // NewAlertCloser 创建控制面专用的有界关闭入口，不启动消费者或修改存储 schema。
 func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, projection AlertProjectionSynchronizer) *AlertCloser {
-	closer := &AlertCloser{slots: make(chan struct{}, 4), projection: projection}
+	closer := &AlertCloser{slots: make(chan struct{}, 4), projection: projection, logger: logger}
 	closer.run = func(ctx context.Context, command lifecycle.CloseAlertCommand) (result lifecycle.CloseAlertResult, err error) {
 		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, command.BKTenantID, command.AlertID, nil, func(p *lifecycle.Processor) error {
 			var err error
@@ -131,7 +131,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	if release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != tenant {
 		return &CloseError{Status: 403, Code: "tenant_mismatch", Message: "event source tenant mismatch"}
 	}
-	hooks, closeHooks, err := openHooksWithSeverity(release.Spec.Hooks, metrics, severity)
+	hooks, closeHooks, err := openHooksWithSeverity(kacHooks(release.Spec.Hooks, cfg.Plugins.KACEnabled()), metrics, severity)
 	if err != nil {
 		return err
 	}
@@ -165,10 +165,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	}
 	observed := metrics.ObserveRepository(runtime.Repository)
 	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: configuredCleanupRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
-	opts = append(opts, lifecycle.WithActionRecorder(configuredActionRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}))
-	if cfg.Plugins.KACEnabled() {
-		opts = append(opts, lifecycle.WithAlertProjector(configuredAlertProjector{dispatch: cfg.Dispatch}))
-	}
+	opts = append(opts, lifecycle.WithAlertChangePublisher(changePublisher(cfg, client, metrics)))
 	if configure != nil {
 		opts = append(opts, configure(observed)...)
 	}
@@ -204,8 +201,12 @@ func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAle
 	result, err := s.run(ctx, command)
 	if err == nil {
 		if s.projection != nil {
-			if err := s.projection.Synchronize(ctx, result.Alert.BKTenantID, result.Alert.AlertID, deliverysource.TargetID, result.Alert.Revision); err != nil {
-				return result, &CloseError{Status: 502, Code: "result_uncertain", Message: "alert closed but KAC projection is unconfirmed; retry the same operation"}
+			if err := s.projection.ProjectNow(ctx, result.Alert.BKTenantID, result.Alert.AlertID); err != nil {
+				if s.logger != nil {
+					s.logger.WarnContext(ctx, "synchronous close projection failed", "module", "lifecycle", "operation", "close_projection", "error", err,
+						"bk_tenant_id", command.BKTenantID, "alert_id", command.AlertID, "operation_id", command.OperationID)
+				}
+				return result, &CloseError{Status: 502, Code: "result_uncertain", Message: "alert closed but KAC write failed; retry the same operation"}
 			}
 		}
 		return result, nil
@@ -225,6 +226,10 @@ func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAle
 	}
 	if errors.Is(err, store.ErrVersionConflict) {
 		return result, &CloseError{Status: 409, Code: "version_conflict", Message: "alert version changed; retry the same operation"}
+	}
+	if s.logger != nil {
+		s.logger.WarnContext(ctx, "close alert failed", "module", "lifecycle", "operation", "close_alert", "error", err,
+			"bk_tenant_id", command.BKTenantID, "alert_id", command.AlertID, "operation_id", command.OperationID)
 	}
 	return result, &CloseError{Status: 502, Code: "result_uncertain", Message: "close result uncertain; retry the same operation"}
 }
@@ -257,6 +262,9 @@ func (s *AlertCloser) GetAlert(ctx context.Context, tenantID, alertID string) (d
 	var classified *CloseError
 	if errors.As(err, &classified) {
 		return domain.Alert{}, classified
+	}
+	if s.logger != nil {
+		s.logger.WarnContext(ctx, "read alert for close failed", "module", "lifecycle", "operation", "close_read", "error", err, "bk_tenant_id", tenantID, "alert_id", alertID)
 	}
 	return domain.Alert{}, &CloseError{Status: 502, Code: "result_uncertain", Message: "alert lookup failed"}
 }

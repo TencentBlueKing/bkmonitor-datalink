@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 )
 
 const (
@@ -95,6 +96,7 @@ func (p *Processor) runHooks(ctx context.Context, cause AlertChangeCause, alert 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	p.publishChange(ctx, alert, cause, actionReady)
 	logs := make([]domain.AlertLog, 0, len(p.finalHooks))
 	for _, hook := range p.finalHooks {
 		if hook.Purpose == "action" && !actionReady {
@@ -131,7 +133,7 @@ func (p *Processor) runFinalHook(
 	defer p.measureStep(phaseHook, step)()
 	public := alert.Clone()
 	public.PolicyChange = nil
-	result, hookFailure := p.callFinalHook(ctx, hook, FinalHookInput{Cause: cause, Alert: public, Outcome: outcome})
+	result, hookFailure, failure := p.callFinalHook(ctx, hook, FinalHookInput{Cause: cause, Alert: public, Outcome: outcome})
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -141,6 +143,7 @@ func (p *Processor) runFinalHook(
 	if hookFailure == "" {
 		if err := result.validate(); err != nil {
 			hookFailure = "invalid_hook_result"
+			failure = err
 		}
 	}
 	if hookFailure != "" && result.validate() != nil {
@@ -149,7 +152,7 @@ func (p *Processor) runFinalHook(
 	reasonCode := HookReasonSucceeded
 	if hookFailure != "" {
 		reasonCode = HookReasonFailed
-		p.logger.WarnContext(ctx, "alert final hook failed", "bk_tenant_id", alert.BKTenantID,
+		p.logger.WarnContext(ctx, "alert final hook failed", "module", "lifecycle", "operation", "final_hook", "error", failure, "event_source_id", alert.EventSourceID, "bk_tenant_id", alert.BKTenantID,
 			"cause_type", cause.Type, "cause_id", cause.ID, "alert_id", alert.AlertID,
 			"hook_name", result.Name, "transport", result.Transport, "destination", result.Destination,
 			"reason_code", hookFailure)
@@ -161,19 +164,19 @@ func (p *Processor) runFinalHook(
 	return &log, nil
 }
 
-func (p *Processor) callFinalHook(ctx context.Context, hook NamedFinalHook, input FinalHookInput) (result FinalHookResult, failureReason string) {
+func (p *Processor) callFinalHook(ctx context.Context, hook NamedFinalHook, input FinalHookInput) (result FinalHookResult, failureReason string, err error) {
 	defer func() {
 		if recover() != nil {
 			result = FinalHookResult{}
 			failureReason = "hook_panic"
+			err = processingerror.CapturePanic()
 		}
 	}()
-	var err error
 	result, err = hook.Execute(ctx, input)
 	if err != nil {
-		return result, "hook_error"
+		return result, "hook_error", err
 	}
-	return result, ""
+	return result, "", nil
 }
 
 func (result FinalHookResult) validate() error {

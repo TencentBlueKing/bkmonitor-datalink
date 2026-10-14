@@ -198,4 +198,4 @@ Cleaner 不扫描 unprocessed Event 补发 Mailbox。确认后 Redis 整体丢�
 
 ### 当前错误与容量策略
 
-Cleaner 实例数不超过 Kafka Topic 分区数。每个任务默认以 512 条未确认消息及载荷字节软背压，确认后释放计数；默认不检查下游 Signal 积压或持久 Mailbox 数量。普通处理错误直接进入丢弃并可确认的前缀，当前没有默认可重试错误白名单；显式标记的错误最多尝试三次。单条计算和批次调用捕获 panic，失败不取消其他 lane 或来源。Kafka 确认仍只推进连续完成前缀；确认结果未知不重新执行已完成业务，也不伪造成功 offset。见[运行容量与恢复](../design/runtime-capacity-and-recovery.md)。
+Cleaner 实例数不超过 Kafka Topic 分区数。每个任务默认以 512 条未确认消息及载荷字节软背压，确认后释放计数；Helm 默认按下游 Signal 的 `lag + pending` 启用 2048/1024 高低水位背压，可通过 values 修改或设为 0/0 关闭；直接运行的水位缺省仍为 0/0。关闭背压控制后仍采样 Signal 积压供 Admin 观测，不限制持久 Mailbox 数量。普通处理错误直接进入丢弃并可确认的前缀，当前没有默认可重试错误白名单；显式标记的错误最多尝试三次。单条计算和批次调用捕获 panic，失败不取消其他 lane 或来源。Kafka 确认仍只推进连续完成前缀；确认结果未知不重新执行已完成业务，也不伪造成功 offset。见[运行容量与恢复](../design/runtime-capacity-and-recovery.md)。

@@ -11,6 +11,8 @@ package logging
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -21,6 +23,32 @@ func TestDefaultConfig(t *testing.T) {
 	want := Config{Level: LevelInfo, Format: FormatJSON}
 	if got := DefaultConfig(); got != want {
 		t.Fatalf("DefaultConfig() = %#v, want %#v", got, want)
+	}
+}
+
+func TestErrorLogIncludesCallerAndRedactsCredentials(t *testing.T) {
+	var output bytes.Buffer
+	logger, err := New(DefaultConfig(), &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.Warn("dependency failed", "module", "enrich", "operation", "processor_process", "error", errors.New(
+		`connect https://reader:private-url@service/query?token=private-query: timeout; reader:private-dsn@tcp(mysql:3306)/db; password="private password" api_key=private-api authorization=Bearer private-bearer`))
+	var record struct {
+		Source struct {
+			Function, File string
+			Line           int
+		}
+		Error string
+	}
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(record.Source.Function, "TestErrorLogIncludesCallerAndRedactsCredentials") || !strings.HasSuffix(record.Source.File, "logging_test.go") || record.Source.Line == 0 {
+		t.Fatalf("caller missing: %+v", record.Source)
+	}
+	if strings.Contains(record.Error, "private") || !strings.Contains(record.Error, "timeout") || !strings.Contains(record.Error, "mysql:3306") {
+		t.Fatalf("error redaction lost cause or leaked credentials: %s", record.Error)
 	}
 }
 

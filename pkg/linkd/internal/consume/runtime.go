@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,7 @@ import (
 // Runtime 编排一个 Session 的拉取、并发处理、重试和确认生命周期。
 // Runtime 实例只能调用一次 Run。
 type Runtime struct {
+	logger   *slog.Logger
 	config   Config
 	session  Session
 	handler  Handler
@@ -229,7 +231,10 @@ func (r *Runtime) handle(parent context.Context, message Message) (outcome Outco
 	startedAt := time.Now()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			outcome = Discard(processingerror.ErrPanic)
+			outcome = Discard(processingerror.CapturePanic())
+			if r.logger != nil && parent.Err() == nil {
+				r.logger.WarnContext(parent, "consumer handler panicked", "module", "consume", "operation", "handle", "error", outcome.Err, "message_id", message.ID, "bk_tenant_id", message.TenantID)
+			}
 		}
 		if parent.Err() != nil {
 			outcome = Defer(0)
@@ -240,6 +245,9 @@ func (r *Runtime) handle(parent context.Context, message Message) (outcome Outco
 	r.observer.HandlerStarted(ctx, message)
 	outcome = r.handler.Handle(ctx, message)
 	if err := outcome.validate(); err != nil {
+		if r.logger != nil {
+			r.logger.WarnContext(ctx, "invalid consumer handler result", "module", "consume", "operation", "handle_result", "error", err, "message_id", message.ID)
+		}
 		return Discard(fmt.Errorf("handler returned invalid outcome: %w", err))
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) &&
@@ -247,6 +255,9 @@ func (r *Runtime) handle(parent context.Context, message Message) (outcome Outco
 		return Retry(context.DeadlineExceeded, 0)
 	}
 	if outcome.Kind == OutcomeBlock || (outcome.Kind == OutcomeRetry && !processingerror.Retryable(outcome.Err)) {
+		if r.logger != nil {
+			r.logger.WarnContext(ctx, "discard nonretryable consumer failure", "module", "consume", "operation", "handle", "error", outcome.Err, "message_id", message.ID, "bk_tenant_id", message.TenantID)
+		}
 		return Discard(outcome.Err)
 	}
 	return outcome
@@ -538,7 +549,7 @@ func (s *runtimeState) handleWorkerResult(
 		}
 		s.scheduleRetry(entry, outcome, now, cancelReceive)
 	case OutcomeBlock:
-		s.discard(entry, "processing_failed")
+		s.discard(entry, "processing_failed", outcome.Err)
 	case OutcomeDefer:
 		if s.shuttingDown {
 			return
@@ -568,11 +579,11 @@ func (s *runtimeState) scheduleRetry(
 	cancelReceive context.CancelFunc,
 ) {
 	if !processingerror.Retryable(outcome.Err) {
-		s.discard(entry, "processing_failed")
+		s.discard(entry, "processing_failed", outcome.Err)
 		return
 	}
 	if entry.attempt >= min(s.runtime.config.RetryMaxAttempts, processingerror.MaxAttempts) {
-		s.discard(entry, "retry_exhausted")
+		s.discard(entry, "retry_exhausted", outcome.Err)
 		return
 	}
 	delay := outcome.RetryAfter
@@ -580,7 +591,7 @@ func (s *runtimeState) scheduleRetry(
 		delay = s.retryBackoff(entry.attempt)
 	}
 	if now.Sub(entry.firstAt)+delay > s.runtime.config.RetryMaxElapsed {
-		s.discard(entry, "retry_exhausted")
+		s.discard(entry, "retry_exhausted", outcome.Err)
 		return
 	}
 	entry.attempt++
@@ -591,7 +602,8 @@ func (s *runtimeState) scheduleRetry(
 }
 
 // discard 终结当前消息，累计确认仍等待同分区前面的消息，不跨越未完成 offset。
-func (s *runtimeState) discard(entry *trackedDelivery, reason string) {
+func (s *runtimeState) discard(entry *trackedDelivery, reason string, err error) {
+	s.logDiscard(entry, reason, err)
 	entry.terminal = true
 	s.releaseOrderKey(entry)
 	s.queueSettlement(entry)
@@ -771,6 +783,10 @@ func (s *runtimeState) handleSettleResult(result settleResult, now time.Time) {
 		Succeeded: result.err == nil, Duration: duration,
 	})
 	if result.err != nil {
+		if s.runtime.logger != nil {
+			s.runtime.logger.WarnContext(context.Background(), "confirm consumer batch failed", "module", "consume", "operation", "confirm",
+				"error", result.err, "event_source_id", s.runtime.labels.EventSourceID, "lane", result.batch.lane, "messages", len(result.batch.entries))
+		}
 		result.batch.nextAttempt = now.Add(s.runtime.config.ConfirmRetryBackoff)
 		result.batch.startedAt = time.Time{}
 		return

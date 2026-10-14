@@ -24,6 +24,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"linkd/internal/config"
 	"linkd/internal/consume"
+	"linkd/internal/logging"
 	"linkd/internal/store"
 )
 
@@ -40,19 +41,23 @@ func TestTaskFailureDiagnostics(t *testing.T) {
 		reason, code string
 		number       float64
 	}{
-		{name: "mysql", err: &mysql.MySQLError{Number: 1045, Message: "password=private-secret payload=private-payload"}, reason: "mysql_error", code: "mysql_error_code", number: 1045},
+		{name: "mysql", err: &mysql.MySQLError{Number: 1045, Message: "access denied password=private-secret"}, reason: "mysql_error", code: "mysql_error_code", number: 1045},
 		{name: "kafka", err: kerr.SaslAuthenticationFailed, reason: "kafka_error", code: "kafka_error_code", number: 58},
-		{name: "redis", err: redisFailure("WRONGPASS private-secret private-payload"), reason: "redis_error"},
+		{name: "redis", err: redisFailure("WRONGPASS authentication failed token=private-secret"), reason: "redis_error"},
 		{name: "network", err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, reason: "network_error", code: "system_error_code", number: float64(syscall.ECONNREFUSED)},
 		{name: "deadline", err: context.DeadlineExceeded, reason: "deadline_exceeded"},
-		{name: "joined invalid processing", err: errors.Join(fmt.Errorf("private-payload: %w", store.ErrInvalidEventProcessing)), reason: "invalid_event_processing"},
-		{name: "deferred capacity", err: errors.Join(fmt.Errorf("private-payload: %w", consume.ErrDeferredCapacity), errors.New("private-secret")), reason: "deferred_capacity_exhausted"},
-		{name: "unknown", err: errors.New("private-secret private-payload"), reason: "task_error"},
+		{name: "joined invalid processing", err: errors.Join(fmt.Errorf("read checkpoint: %w", store.ErrInvalidEventProcessing)), reason: "invalid_event_processing"},
+		{name: "deferred capacity", err: errors.Join(fmt.Errorf("read checkpoint: %w", consume.ErrDeferredCapacity), errors.New("connection lost password=private-secret")), reason: "deferred_capacity_exhausted"},
+		{name: "unknown", err: errors.New("unknown transport failure password=private-secret"), reason: "task_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			a := Agent{Logger: slog.New(slog.NewJSONHandler(&out, nil)), RunTask: func(context.Context, Task, config.EventSource) error {
+			logger, logErr := logging.New(logging.DefaultConfig(), &out)
+			if logErr != nil {
+				t.Fatal(logErr)
+			}
+			a := Agent{Logger: logger, RunTask: func(context.Context, Task, config.EventSource) error {
 				return WithTaskStage("enrich_datasources", fmt.Errorf("connect: %w", tc.err))
 			}}
 			task := Task{ID: "source:lifecycle:0", Source: "source", Role: "lifecycle", Epoch: 12, Version: 3}
@@ -69,6 +74,9 @@ func TestTaskFailureDiagnostics(t *testing.T) {
 			}
 			if record["event_source_id"] != "source" || record["role"] != "lifecycle" || record["assignment_epoch"] != float64(12) || record["stage"] != "enrich_datasources" || record["reason_code"] != tc.reason {
 				t.Fatalf("diagnostic context=%v", record)
+			}
+			if record["module"] != "taskdispatch" || record["operation"] != "enrich_datasources" || record["error"] == nil {
+				t.Fatal(record)
 			}
 			if tc.code != "" && record[tc.code] != tc.number {
 				t.Fatalf("error code missing: %v", record)

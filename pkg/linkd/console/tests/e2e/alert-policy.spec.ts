@@ -5,12 +5,11 @@ import {
   explorerStats,
 } from "../fixtures/explorer";
 
-test("Alert policy dimensions and projection confirmation stay independent through refresh", async ({
+test("Alert policy dimensions remain visible after refresh", async ({
   page,
 }, info) => {
   const errors: string[] = [];
   const writes: string[] = [];
-  let confirmed = false;
   page.on("pageerror", (error) => errors.push(error.message));
   await page.route("**/local-api/**", async (route) => {
     const request = route.request();
@@ -49,22 +48,6 @@ test("Alert policy dimensions and projection confirmation stay independent throu
           relation_ids: [],
         },
         admission: { admitted_at: alertFixture.timestamp, severity: "warning" },
-        projection: {
-          targets: {
-            kac: {
-              source_version: 5,
-              required_revision: 8,
-              synced_revision: confirmed ? 8 : 7,
-              synced_at: alertFixture.timestamp,
-            },
-            audit: {
-              source_version: 5,
-              required_revision: 8,
-              synced_revision: 8,
-              synced_at: alertFixture.timestamp,
-            },
-          },
-        },
       },
     };
     if (url.pathname.endsWith("/stats"))
@@ -84,25 +67,14 @@ test("Alert policy dimensions and projection confirmation stay independent throu
   await page
     .getByRole("button", { name: alertFixture.payload.title as string })
     .click();
-  const policy = page.getByRole("region", { name: "策略与投影状态" });
+  const policy = page.getByRole("region", { name: "策略状态" });
   await expect(policy.getByText("屏蔽中", { exact: true })).toBeVisible();
   await expect(policy.getByText("等待合并裁决", { exact: true })).toBeVisible();
   await expect(policy.getByText("放行级别：warning")).toBeVisible();
-  const table = policy.getByRole("table", { name: "投影目标水位" });
-  await expect(table.getByRole("row").filter({ hasText: "kac" })).toContainText(
-    "待同步",
-  );
-  await expect(
-    table.getByRole("row").filter({ hasText: "audit" }),
-  ).toContainText("已确认");
   await policy.getByText("合并等待窗口（1）", { exact: true }).click();
   await expect(policy.getByText("merge-policy / 4")).toBeVisible();
   await policy.screenshot({ path: info.outputPath("alert-policy-dark.png") });
-  confirmed = true;
   await page.getByRole("button", { name: "刷新详情" }).click();
-  await expect(table.getByRole("row").filter({ hasText: "kac" })).toContainText(
-    "已确认",
-  );
   await expect(policy.getByText("屏蔽中", { exact: true })).toBeVisible();
   await expect(policy.getByText("等待合并裁决", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 780, height: 1000 });

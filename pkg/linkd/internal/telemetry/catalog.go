@@ -61,7 +61,7 @@ type Catalog struct {
 func metricModules() []MetricCategory {
 	return []MetricCategory{
 		{"pipeline", "处理流水线"}, {"messaging", "消息消费"}, {"cleaner", "接入清洗"},
-		{"policy", "告警策略"}, {"lifecycle", "告警生命周期"}, {"enrich", "告警丰富"}, {"final_hook", "结果输出"}, {"action_delivery", "动作投递"}, {"projection", "告警投影"},
+		{"policy", "告警策略"}, {"lifecycle", "告警生命周期"}, {"enrich", "告警丰富"}, {"final_hook", "结果输出"}, {"action_delivery", "动作投递"}, {"projection", "告警投影"}, {"kac", "KAC 输出"},
 		{"store", "存储访问"}, {"elasticsearch", "ES 批次读写"}, {"archiver", "告警归档"},
 		{"redis_stream", "Redis Stream"}, {"control_plane", "控制面任务"}, {"dispatch", "任务调度"},
 		{"go", "Go 运行时"}, {"process", "进程资源"}, {"exporter", "采集元信息"},

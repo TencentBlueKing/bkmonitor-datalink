@@ -178,20 +178,6 @@ export function ExplorerDetail({
                   {entity === "alerts" && (
                     <Link
                       to={
-                        "/projection-tasks?" +
-                        new URLSearchParams({
-                          bk_tenant_id: tenant,
-                          alert_id: id,
-                        })
-                      }
-                      onClick={onClose}
-                    >
-                      查看告警投影任务 ↗
-                    </Link>
-                  )}
-                  {entity === "alerts" && (
-                    <Link
-                      to={
                         "/shield-runtime?" +
                         new URLSearchParams({ bk_tenant_id: tenant, id })
                       }

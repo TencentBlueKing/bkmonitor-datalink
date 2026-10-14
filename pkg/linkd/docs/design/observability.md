@@ -1,5 +1,87 @@
 # Linkd 可观测性设计
 
+## 主流程日志规则
+
+进程统一使用 `internal/logging.New` 创建的结构化 slog Logger。JSON 与 text 输出都默认携带
+`source`（日志调用函数、文件、行号），无需开启 debug。源码位置是记录错误的边界；结合
+`operation`、Processor 名称和 `error` 错误链定位具体失败功能，不能把边界行号当成底层依赖的报错行号。
+
+| 字段 | 约定 |
+| --- | --- |
+| `module` | 固定模块名：`cleaner`、`lifecycle`、`enrich`、`consume`、`policy`、`taskdispatch`、`kac`、`controlplane`、`activeindex`、`dynamicconfig` |
+| `operation` | 代码中固定的功能名，例如 `normalize`、`event_store`、`mailbox_enqueue`、`processor_match`、`processor_process`、`confirm`、`close_projection` |
+| `error` | 有错误对象时必须保留错误链，使用 `%w` 逐层说明操作；不能只打印 `processing_failed` 或错误类型 |
+| `reason_code` / `error_code` | 保留当前已有分类，供聚合检索；分类不能替代 `error` |
+| `bk_tenant_id`、`event_source_id`、`event_source_version` | 已知时携带租户、来源和发布版本；清洗前租户可能尚未解析，不猜测填值 |
+| `message_id`、`event_id`、`alert_id` | 携带本阶段已有身份，不为日志生成新业务 ID |
+| `lane`、`position`、`mailbox_id`、`attempts` | 消费、入队、确认及重试的定位信息；单批确认记录 lane 和消息数量 |
+| `processor`、`dependencies`、`severity`、`diagnostics`、`trace` | Enrich 的处理器名、失败依赖、等级、稳定诊断，以及自定义规则/操作 ID |
+| `operation_id`、`cause_id`、`action_id`、`hook_name` | 主动关闭、输出通知、动作和 Hook 的已有调用身份 |
+
+日志级别与记录位置：
+
+- `ERROR`：来源任务退出、无法继续运行的故障；记录任务、来源、阶段和完整错误链。
+- `WARN`：单条消息终结、依赖失败、部分失败、降级或需要重试；记录当前操作的实际后果。
+- `INFO`：进程和来源任务启动、停止等低频状态变化。
+- `DEBUG`：正常 Mailbox 消费完成等高频成功信息。正常处理器成功/不匹配不逐条打印日志。
+- 底层返回错误并由最终决定丢弃、重试或降级的边界记录；不要在每层机械重复打印。
+  被转换为 `partial/failed` 的错误必须在丢失原始 error 前保留。业务跳过或未匹配没有错误对象时，只记业务原因。
+- 正常父 Context 取消不作为 Enrich/任务故障告警；超时、退出时额外清理失败仍需记录。
+  panic 记录有限调用栈和固定分类，不打印 panic value。
+
+`error` 字段在统一 Handler 中去除 URL 用户信息及查询参数、MySQL DSN 凭据、常见 password/token/
+Authorization 值，并限制为 8KiB。该处理不修改业务错误对象。适配器仍禁止把请求头、完整 DSN、
+Event 原文、告警正文或依赖响应正文拼入错误；任意未标记的敏感字符串不能依赖通用脱敏识别。
+错误文本不写入指标标签，也不加入 Event/Alert 丰富快照；指标继续使用已有低基数分类。
+
+### 覆盖位置
+
+| 链路 | 错误定位 |
+| --- | --- |
+| Cleaner | 原始消息解码/映射拒绝、存储逐项失败、Mailbox 入队、批次重试、Broker 确认及失败诊断写入 |
+| Lifecycle | Signal 解码、lease 获取/续租/释放、Mailbox 读取/确认、Event 读取/处理、Enrich 降级、内容生成、计划保存、Hook 和轻量通知发布 |
+| Enrich | Match/Process 异常或 panic、结果与补丁应用失败、依赖读取降级；自定义规则错误保留 rule/operation ID |
+| 策略与控制面 | 抑制、屏蔽、合并降级与后台执行、来源同步、Redis Stream 管理和活跃告警索引 |
+| KAC / 主动关闭 | 投影、refresh、动作发送、队列确认；同步关闭的错误在转成 HTTP 502 前记录 |
+| 消费与任务 | 处理器 panic/非法结果、重试耗尽、批次确认、来源初始化/运行/清理失败 |
+
+Enrich 每个失败 Processor / 等级记录一条诊断。依赖错误在本次 Scope 中保留，到 Processor 边界合并记录，
+即使 Processor 返回 `partial` 和 nil error，也不会丢失具体的依赖错误。Scope 不跨 Event 共享，正常路径
+不创建错误集合，成功处理器不输出日志。
+
+示例（字段值为示意，行号以实际输出为准）：
+
+```json
+{
+  "level": "WARN",
+  "msg": "enrich processor failed",
+  "module": "enrich",
+  "operation": "processor_process",
+  "processor": "resource",
+  "bk_tenant_id": "tenant-a",
+  "event_source_id": "built_in_bk",
+  "event_id": "event-123",
+  "severity": "critical",
+  "status": "partial",
+  "error": "strategy_publication: read strategy publication: connection refused",
+  "source": {"function": "linkd/internal/enrich.(*Chain).logProcessorFailure", "file": "linkd/internal/enrich/logging.go", "line": 60}
+}
+```
+
+排查先按 `event_id` 或 `message_id` 查同条事件；按 `module=enrich` 和 `processor=resource` 聚合查同类故障。
+检查 `operation`、`error`、`source`，再看 `reason_code` / `status` 判断是终结、重试还是局部降级。
+上例的 `partial` 只描述丰富结果，不代表整个生命周期失败。
+
+### Lifecycle 失败结果
+
+`discard lifecycle event` 表示当前 Event 处理终结，随后确认 Mailbox 队首，继续处理后续 Event。
+`reason_code=processing_failed` 是普通处理失败的分类，不是底层错误原因；明确临时错误最多执行三次，
+耗尽时为 `retry_exhausted`。`stage` 与 `operation` 区分 `event_read`、`event_identity` 和 `event_process`，
+生命周期处理内部的具体操作由错误链说明。
+
+失败时可能已经产生部分副作用，需结合 Event 保存的执行计划和关联 Alert 判断影响。
+若失败终态保存失败，`persist discarded event diagnostic failed` 另外记录保存错误，不阻塞后续 Event。
+
 ## Lifecycle 与 ES 合批指标口径
 
 Event Processor 使用 `linkd_pipeline_attempt_duration_seconds`；Signal Handler 单独使用
@@ -251,75 +333,13 @@ Prometheus endpoint 暴露以下 Redis Stream 指标：
 条目尚未被所有 Group 确认，控制面必须继续保留；应结合 `pending`、`max_lag` 和最老 Pending 年龄告警。
 `trim_last_entries` 记录整轮多批裁剪的累计量，不是最后一条 `XTRIM` 命令的返回值。
 
-## 动作运行器观测
+## KAC 输出观测
 
-以下指标已注册在 `action_delivery` 模块，观察器由调用方为每个动作 Runner 单独创建。
-独立运行器测试已实际抓取；正式控制面在 Lifecycle 与非空 resources.kac_delivery 同时配置时启动循环。
-任务目录的四个阶段由实际开始/退出和页面回调驱动；注册在目录不等于已有运行数据。
-每个指标仅使用固定 `linkd.task`（action-enqueue/action-delivery），结果类另带固定 `linkd.outcome`。
-租户、Alert/任务 ID、目标、摘要及错误正文不进入标签。
-
-| OTel 指标 | 类型 | 口径 |
-| --- | --- | --- |
-| linkd.action.runner.active | up/down counter | 进程当前监督的阶段实例数；多个 Runner 累计，退出归零 |
-| linkd.action.runner.inflight | up/down counter | 正在扫描或处理页面的阶段实例数，不是 HTTP 并发数 |
-| linkd.action.runner.rounds | counter | 页面结束数，结果 succeeded/failed/cancelled |
-| linkd.action.runner.duration | histogram / 秒 | 一页墙钟耗时，包含有界清理，非纯 HTTP 耗时 |
-| linkd.action.work.observations | counter | 每页互斥工作观察结果，可重复统计同一个任务 |
-| linkd.action.last_page.items | gauge | 最近合法扫描页的项目数，0..16；不是全局队列总量 |
-| linkd.action.last_page.oldest_age | gauge / 秒 | 该页在观察时的最大待办年龄；不是全局最老积压 |
-| linkd.action.last_page.observed_at | gauge / Unix 秒 | 该页观察时间，扫描失败不覆盖；与页面年龄同时解读 |
-| linkd.action.work.unconfirmed | counter | 返回任务保留 previous_unconfirmed 的观察次数，非唯一任务数 |
-
-补扫年龄以 Alert.update_at 为起点，任务年龄以首次 created_at 为起点，均不因人工恢复而重新计算。
-页面样本按实例抓取；多个进程的最近页面不是同一个全局快照，不能相加得到全局队列长度。
-正常等待、锁忙、退避和预算满不伪装成已处置。queued 表示返回任务已有 Celery 投递确认，
-不保证该确认在本轮首次产生；同一失败屏障也可被不同后序工作项重复观察。
-
-每次失败页最多一条概况日志和四条业务定位样本，原因由固定集合归一化，不输出依赖错误正文、
-endpoint、token 或原请求。业务 ID 只用于日志定位；取消退出不写失败告警日志。非法观察值不记录
-计数，但仍清除已结束页的执行中水位。执行与游标约束见[动作运行器契约](../reference/contracts/kac-action-delivery-v2.md#自动补扫与发送运行器)。
-Console 动作页已提供按需进程指标面板、任务日志定位字段和业务流水入口，查询预算与缺失数据语义见
-[Console 运行观测](../reference/contracts/kac-action-delivery-v2.md#console-运行观测)。浏览器筛选不把租户或
-Alert ID 传给 Prometheus，进程日志尚无 Console 搜索后端。正式进程的本地真实时序与任务状态已通过
-ES/MySQL、临时 Prometheus 和 Chrome 联合验收；模拟接收端不代表真实 KAC，观察指标不能替代处置结果。
-
-## 投影运行器观测
-
-`projection` 模块的指标由每个投影 Runner 的独立观察器记录；运行器负责发出真实开始/退出回调，
-多个实例共享进程指标时活跃数叠加，停止后归零。目录注册不代表正式控制面已经启动可靠投影。
-标签只包含固定 `linkd.task=projection-producer/projection-delivery`，结果类另带固定 `linkd.outcome`。
-租户、Alert、任务 ID、目的端 URL、凭据和错误正文不进入指标或概况日志。
-
-| OTel 指标 | 类型 | 口径 |
-| --- | --- | --- |
-| linkd.projection.runner.active | up/down counter | 当前进程监督的生产/投递循环实例数 |
-| linkd.projection.runner.inflight | up/down counter | 正在扫描或执行一页工作的循环实例数，非 HTTP 并发 |
-| linkd.projection.runner.rounds | counter | 页面结束数，succeeded/failed/cancelled |
-| linkd.projection.runner.duration | histogram / 秒 | 页面墙钟耗时，包含有界退出清理 |
-| linkd.projection.work.observations | counter | 已读合法页的 advanced/deferred/capacity/failed 互斥观察结果 |
-| linkd.projection.last_page.items | gauge | 最近合法页的 0..16 项，非全局待办数量 |
-| linkd.projection.last_page.oldest_age | gauge / 秒 | 该页在观察时的最大年龄，非全局最老积压 |
-| linkd.projection.last_page.observed_at | gauge / Unix 秒 | 完整合法页面读取后的观察时间 |
-
-生产阶段的 advanced 只表示任务已创建或复用，复用已有失败任务也不等于已恢复发送；投递阶段表示
-返回任务已经完成本地 ACK，不等于本轮发出了新的 HTTP。deferred 排除已单列的容量不足 capacity；
-锁忙、未到期、等待可见性/ACK 仍可能出现在 deferred。failed 包含本轮执行失败以及取消时未开始的项，
-不能直接解释为永久失败任务数。同一任务可以跨轮次重复观察。
-
-生产页年龄从当前待同步业务的 update_at 计算，投递页从任务首次 created_at 计算；未来时间按零年龄。
-这不是“第一次出现未同步版本以来”的全程等待计时。空的合法页明确记录零条目/零年龄；读取失败或
-不完整页保留上一合法页及其观察时间，不补成零，也不把扫描失败伪造成一条 failed 业务项。
-每次异常页最多一条固定阶段/错误码/数量的概况日志；取消退出不写失败日志，页内超时单独分类。
-业务定位与原始失败原因仍从持久任务查询，观测值不能代替投影回执或修改业务水位。
-
-单元及真实双后端独立运行器测试直接抓取本机临时 Prometheus exporter，验证指标与运行器退出。
-Console 投影任务页已提供独立的七个进程面板，与动作观测共用查询限额和展示组件，接口见
-[投影运行观测](../reference/contracts/kac-alert-projection-v1.md#console-运行观测)。正式进程、真实存储、
-独立 Prometheus 与浏览器联合验收见 [可靠投递 Console E2E](../../tests/e2e/allinone/README.md#console-可靠投递的真实时序)。
-图表有数据时仍只表示本地运行观察；不把模拟接收端或合成业务称为生产 KAC 数据。孤立有限采样点
-（包括零）显示圆点，缺失样本不连线；时间标签自动避让，避免短窗口刻度重叠。投影/动作面板的横轴
-固定使用该次查询的 from/to，单点数据不能让图表自动扩展出未查询的历史或未来时间。
+当前使用 `linkd.kac.items`（阶段成功/失败条数）、`linkd.kac.duration`（耗时）、
+`linkd.kac.queue.messages`（含 PEL 的积压）与 `linkd.kac.queue.oldest_age`（最早等待）。
+阶段标签包括 enqueue/projection/action/refresh/read/decode/settle/action_buffer；业务身份仅写日志。
+旧 action/projection runner、最近页和未确认回执指标已移除。Console `/kac-output` 展示进程指标，
+不带租户或 Alert 条件；缺失时序不解释为零。详见[动作 V3](../reference/contracts/kac-action-delivery-v3.md#console-运行观测)。
 
 ## 建议 Span
 

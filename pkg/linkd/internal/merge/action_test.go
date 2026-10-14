@@ -14,43 +14,30 @@ import (
 	"reflect"
 	"testing"
 
-	"linkd/internal/actiondelivery"
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/store/storetest"
 )
 
 type durableRelationActions struct {
-	items map[string]actiondelivery.Request
+	items map[string]domain.AlertAction
 }
 
-func (r *durableRelationActions) RecordAction(ctx context.Context, a domain.Alert, intent domain.AlertActionIntent) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := intent.Validate(a); err != nil {
-		return err
-	}
-	for id := range intent.Targets {
-		q, err := actiondelivery.BuildRequest(a, id, actiondelivery.Cause{Type: intent.CauseType, ID: intent.CauseID})
-		if err != nil {
-			return err
-		}
+func (r *durableRelationActions) Publish(_ context.Context, change domain.AlertChange) error {
+	if change.Action != nil {
 		if r.items == nil {
-			r.items = map[string]actiondelivery.Request{}
+			r.items = map[string]domain.AlertAction{}
 		}
-		r.items[q.ActionID] = q
+		r.items[change.Action.ID] = *change.Action
 	}
 	return nil
 }
 
-func TestDurableMergeActionsParentAdmissionRecoveryAndManualUnlink(t *testing.T) {
+func TestQueuedMergeActionsParentAdmissionRecoveryAndManualUnlink(t *testing.T) {
 	for _, ending := range []string{"manual parent close", "all children recovered"} {
 		t.Run(ending, func(t *testing.T) {
 			recorder := &durableRelationActions{}
-			f := newConfiguredRelationFixture(t, func(a *domain.Alert) {
-				a.Projection.Targets = map[string]domain.ProjectionTargetState{"kac": {SourceVersion: a.EventSourceVersion, RequiredRevision: 1, ActionEnabled: true}}
-			}, lifecycle.WithActionRecorder(recorder), lifecycle.WithInitialProjectionTargets(map[string]bool{"kac": true}))
+			f := newConfiguredRelationFixture(t, nil, lifecycle.WithAlertChangePublisher(recorder))
 			if len(recorder.items) != 0 {
 				t.Fatal("unready parent already enqueued action")
 			}
@@ -69,7 +56,7 @@ func TestDurableMergeActionsParentAdmissionRecoveryAndManualUnlink(t *testing.T)
 					t.Fatal("unlink enqueued child action", len(recorder.items))
 				}
 				released, err := f.repo.GetAlert(t.Context(), f.decision.TenantID, "a")
-				if err != nil || released.Alert.ActionPending != nil || released.Alert.Status != domain.AlertStatusActive || !reflect.DeepEqual(released.Alert.Admission, child.Alert.Admission) {
+				if err != nil || released.Alert.Status != domain.AlertStatusActive || !reflect.DeepEqual(released.Alert.Admission, child.Alert.Admission) {
 					t.Fatal("unlink changed child admission", err)
 				}
 				e := storetest.Event(f.decision.TenantID, "next-trigger", child.Alert.Fingerprint, child.Alert.Severity)
@@ -93,7 +80,7 @@ func TestDurableMergeActionsParentAdmissionRecoveryAndManualUnlink(t *testing.T)
 				}
 				recovered := false
 				for _, q := range recorder.items {
-					if q.Action == "resolved" && q.Cause.Type == "system_operation" {
+					if q.Type == "resolved" && q.Cause.Type == "system_operation" {
 						recovered = true
 					}
 				}

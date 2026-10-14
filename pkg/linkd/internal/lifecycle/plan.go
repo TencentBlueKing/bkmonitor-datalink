@@ -81,7 +81,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 					lastErr = err
 					continue
 				}
-				return ProcessResult{}, err
+				return ProcessResult{}, fmt.Errorf("enrich event: %w", err)
 			}
 			stored.Event = stored.Event.WithEnrichEvaluations(nil)
 			stored, err = p.freezePolicies(ctx, stored)
@@ -90,11 +90,11 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 					lastErr = err
 					continue
 				}
-				return ProcessResult{}, err
+				return ProcessResult{}, fmt.Errorf("freeze policies: %w", err)
 			}
 			plan, err := p.preparePlan(ctx, stored.Event, stored.Processing.PolicyContext)
 			if err != nil {
-				return ProcessResult{}, err
+				return ProcessResult{}, fmt.Errorf("prepare lifecycle plan: %w", err)
 			}
 			stored, err = p.writeEventCheckpoint(ctx, stored, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan}, "plan_save")
 			if err != nil {
@@ -102,7 +102,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 					lastErr = err
 					continue
 				}
-				return ProcessResult{}, err
+				return ProcessResult{}, fmt.Errorf("persist lifecycle plan: %w", err)
 			}
 		}
 		completed, err := p.executePlan(ctx, stored)
@@ -158,7 +158,7 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 	}
 	plan := &store.EventPlan{ConfigDigest: p.configDigest, UpgradePolicy: p.upgradePolicy, State: domain.EventProcessStateOrphaned, Outcome: string(OutcomeEventOrphaned), ReasonCode: ReasonActiveAlertNotFound}
 	active, err := p.findActiveAlert(ctx, store.ActiveAlertKey{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint})
-	if err == nil && (active.Alert.PolicyChange != nil || active.Alert.MergeChange != nil || active.Alert.ActionPending != nil) {
+	if err == nil && (active.Alert.PolicyChange != nil || active.Alert.MergeChange != nil) {
 		active, err = p.finishPendingChanges(ctx, active)
 	}
 	hasActive := err == nil
@@ -182,7 +182,7 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 			closed.EndAt = &now
 			plan.SystemClose = &closed
 			hasActive = false
-			p.logger.WarnContext(ctx, "closing active alert with unknown severity", "bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID, "alert_id", active.Alert.AlertID, "severity", active.Alert.Severity, "config_digest", p.configDigest)
+			p.logger.WarnContext(ctx, "closing active alert with unknown severity", "module", "lifecycle", "operation", "severity_close", "bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID, "alert_id", active.Alert.AlertID, "severity", active.Alert.Severity, "config_digest", p.configDigest)
 		}
 	}
 	unknown := []string{}
@@ -201,7 +201,7 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 		for _, evaluation := range event.Evaluations {
 			plan.Evaluations = append(plan.Evaluations, store.EvaluationResult{Severity: evaluation.Severity, Action: evaluation.Action, State: domain.EventProcessStateRejected, Outcome: plan.Outcome, ReasonCode: plan.ReasonCode})
 		}
-		p.logger.WarnContext(ctx, "rejecting event with unknown severity", "bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID, "event_id", event.EventID, "unknown_severities", unknown, "config_digest", p.configDigest)
+		p.logger.WarnContext(ctx, "rejecting event with unknown severity", "module", "lifecycle", "operation", "severity_check", "bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID, "event_id", event.EventID, "unknown_severities", unknown, "config_digest", p.configDigest)
 		return plan, plan.Validate()
 	}
 	highest := -1
@@ -315,12 +315,6 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 	if err := p.planAdmission(ctx, event, snapshot, plan, highest); err != nil {
 		return nil, err
 	}
-	for i := range plan.Mutations {
-		m := &plan.Mutations[i]
-		if err := freezeAction(&m.Alert, m.Alert.Revision, sourceEventCause(event), m.ActionReady || (m.Alert.Status.Terminal() && m.Alert.Admission.AdmittedAt != nil)); err != nil {
-			return nil, err
-		}
-	}
 	// 终态清理没有后续触发准入阶段，用同一持久化 EventPlan 保存原绑定，日志重试不丢历史。
 	if associatedActive.Shield.Active {
 		for _, mutation := range plan.Mutations {
@@ -379,11 +373,6 @@ func setEvaluationResult(plan *store.EventPlan, index int, state domain.EventPro
 func advanceAlert(current domain.Alert, event domain.Event, now time.Time) domain.Alert {
 	result := current.Clone()
 	result.Revision = current.Revision + 1
-	// 输入已通过领域校验；越界仍由最终计划校验拒绝，不能冻结一个遗漏 required_revision 的业务快照。
-	for id, target := range result.Projection.Targets {
-		target.RequiredRevision = result.Revision
-		result.Projection.Targets[id] = target
-	}
 	result.LatestEventID = event.EventID
 	result.LastOccurredAt = event.OccurredAt
 	result.UpdateAt = nextAlertUpdateTime(now, current.UpdateAt)
@@ -432,10 +421,6 @@ func (p *Processor) planNewAlert(ctx context.Context, plan *store.EventPlan, eve
 		alert.Merge = &domain.AlertMerge{Role: "aggregate", State: "none", OperationID: event.MergeOrigin.OperationID}
 		alert.PolicyTags = slices.Clone(event.MergeOrigin.AlarmTags)
 	}
-	alert.Projection, err = p.initialProjection(ctx, event)
-	if err != nil {
-		return domain.Alert{}, err
-	}
 	enriched, ok := event.ForSeverity(evaluation.Severity)
 	if !ok {
 		return domain.Alert{}, fmt.Errorf("opening event has no enrich result for selected severity")
@@ -476,10 +461,6 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (
 	superseded := make([]bool, len(plan.Mutations))
 	for index, mutation := range plan.Mutations {
 		updated, err := p.applyMutation(ctx, stored.Event, mutation, index == 0)
-		if err != nil {
-			return store.StoredEvent{}, err
-		}
-		updated, err = p.finishActionIntent(ctx, updated)
 		if err != nil {
 			return store.StoredEvent{}, err
 		}
@@ -578,7 +559,7 @@ func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutat
 	current, err := p.getAlertCurrent(ctx, event.BKTenantID, target.AlertID)
 	if err == nil {
 		if domain.SameAlertBusinessSnapshot(current.Alert, target) {
-			return p.projectAlert(ctx, current), nil
+			return current, nil
 		}
 		// 源写入之后，控制任务可能继续屏蔽/合并/关闭该生命周期。revision 加上保留的源事件/创建锚点
 		// 证明旧计划已经生效；不能把输出重试当成身份冲突，也不能用旧快照覆盖较新的业务结果。
@@ -587,7 +568,7 @@ func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutat
 			return current, nil
 		}
 		if mutation.ExpectedVersion == "" {
-			p.logger.WarnContext(ctx, "saved create plan conflicts with persisted alert",
+			p.logger.WarnContext(ctx, "saved create plan conflicts with persisted alert", "module", "lifecycle", "operation", "execute_create_plan",
 				"bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID,
 				"event_id", event.EventID, "alert_id", target.AlertID,
 				"planned_revision", target.Revision, "current_revision", current.Alert.Revision,

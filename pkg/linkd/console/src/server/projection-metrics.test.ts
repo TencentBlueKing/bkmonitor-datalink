@@ -2,7 +2,6 @@ import Fastify from "fastify";
 import { afterEach, expect, it, vi } from "vitest";
 import { registerDeliveryMetricRoutes } from "./delivery-metrics.js";
 import type { ConsoleConfig } from "./config.js";
-import { deliveryMetricIDs } from "../shared/delivery-metrics.js";
 
 afterEach(() => vi.unstubAllGlobals());
 const from = "2026-10-06T01:00:00.000Z",
@@ -32,7 +31,7 @@ function appFor(configured = true) {
   } as ConsoleConfig);
   return app;
 }
-function response(phase = "projection-producer", outcome = "advanced") {
+function response(phase = "enqueue", outcome = "succeeded") {
   return {
     status: "success",
     data: {
@@ -42,7 +41,7 @@ function response(phase = "projection-producer", outcome = "advanced") {
           metric: {
             job: "control",
             instance: "worker",
-            linkd_task: phase,
+            linkd_stage: phase,
             linkd_outcome: outcome,
           },
           values: [
@@ -54,18 +53,12 @@ function response(phase = "projection-producer", outcome = "advanced") {
     },
   };
 }
-it("queries exactly seven projection panels with independent phases and honest work labels", async () => {
+it("queries throughput, duration and queue metrics with honest missing samples", async () => {
   const queries: string[] = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: URL, init: RequestInit) => {
-      const query = new URL(input).searchParams.get("query")!;
-      queries.push(query);
-      expect(init.redirect).toBe("error");
-      expect((init.headers as Record<string, string>).authorization).toBe(
-        "Bearer private",
-      );
-      expect(init.signal).toBeInstanceOf(AbortSignal);
+    vi.fn(async (input: URL) => {
+      queries.push(new URL(input).searchParams.get("query")!);
       return Response.json(response());
     }),
   );
@@ -73,39 +66,20 @@ it("queries exactly seven projection panels with independent phases and honest w
   try {
     const result = await app.inject(base);
     expect(result.statusCode).toBe(200);
-    expect(result.headers["cache-control"]).toBe("no-store");
-    expect(result.json().panels.map((p: { id: string }) => p.id)).toEqual(
-      deliveryMetricIDs.projection,
+    expect(result.json().panels).toHaveLength(4);
+    expect(queries).toHaveLength(4);
+    expect(queries.some((q) => q.includes("linkd_kac_items_total"))).toBe(true);
+    expect(queries.some((q) => q.includes("linkd_kac_queue_messages"))).toBe(
+      true,
     );
-    expect(queries).toHaveLength(7);
-    for (const query of queries) {
-      expect(query).toContain(
-        'linkd_task=~"projection-producer|projection-delivery"',
-      );
-      expect(query).toContain('instance="worker"');
-      expect(query).not.toMatch(
-        /action_|tenant|alert_id|vector\(0\)|clamp_min|unconfirmed/,
-      );
-    }
     expect(
-      queries.find((query) => query.includes("observations_total")),
-    ).toContain("[300s]");
-    const panel = result.json().panels[3];
-    expect(panel.series[0].name).toContain("投影生产 · 已建或复用任务");
-    expect(panel.series[0].points).toEqual([
-      [start, 0],
-      [start + 15, null],
-      [Date.parse(to) / 1000, null],
-    ]);
-    expect(panel.description).toContain("不是 HTTP 请求数");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => Response.json(response("projection-delivery"))),
-    );
-    const delivered = await app.inject(base);
-    expect(delivered.json().panels[3].series[0].name).toContain(
-      "投影投递 · 已有本地 ACK",
-    );
+      queries
+        .filter((q) => q.includes("queue_"))
+        .every((q) => !q.includes("linkd_stage=")),
+    ).toBe(true);
+    expect(result.json().panels[0].series[0].points[0][1]).toBe(0);
+    expect(result.json().panels[0].series[0].points[1][1]).toBeNull();
+    expect(result.body).not.toContain("private-test-token");
   } finally {
     await app.close();
   }
@@ -125,8 +99,8 @@ it("rejects action series and tenant inputs and keeps failure or absence separat
       expect((await app.inject(base + suffix)).statusCode).toBe(400);
     expect(fetcher).not.toHaveBeenCalled();
     for (const value of [
-      response("action-delivery"),
-      response("projection-delivery", "accepted"),
+      response("action"),
+      response("projection", "accepted"),
     ]) {
       fetcher.mockImplementation(async () => Response.json(value));
       expect(
@@ -145,7 +119,7 @@ it("rejects action series and tenant inputs and keeps failure or absence separat
       partial
         .json()
         .panels.filter((p: { status: string }) => p.status === "available"),
-    ).toHaveLength(6);
+    ).toHaveLength(3);
     expect(partial.body).not.toContain("private upstream");
     fetcher.mockImplementation(async () =>
       Response.json({

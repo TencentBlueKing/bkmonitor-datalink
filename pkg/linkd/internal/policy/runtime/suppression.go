@@ -82,23 +82,23 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 			return result, err
 		}
 		step := store.SuppressionStep{Policy: ref, Scheme: "match"}
-		appendStep := func(outcome, reason string) {
+		appendStep := func(outcome, reason string, causes ...error) {
 			step.Outcome = outcome
 			step.ReasonCode = reason
 			result.Steps = append(result.Steps, step)
-			s.observe(ctx, event, step)
+			s.observe(ctx, event, step, causes...)
 		}
 		frozen, err := s.load(call, event.BKTenantID, ref)
 		if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 			return result, err
 		}
 		if err != nil {
-			appendStep("skipped", "release_unavailable")
+			appendStep("skipped", "release_unavailable", err)
 			continue
 		}
 		view, err := policy.EventView(event, evaluation.Severity, frozen.Compiled.Common.FieldMappings, level, policy.RelationContext{})
 		if err != nil {
-			appendStep("skipped", "event_view_unavailable")
+			appendStep("skipped", "event_view_unavailable", err)
 			continue
 		}
 		verdict, err := s.evaluate(call, frozen.Release, frozen.Compiled, view, s.Targets, snapshot.EvaluatedAt, false, false)
@@ -107,13 +107,13 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 				return result, ctx.Err()
 			}
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, policy.ErrUnavailable) {
-				appendStep("skipped", "evaluation_unavailable")
+				appendStep("skipped", "evaluation_unavailable", err)
 				continue
 			}
 			return result, err
 		}
 		if !verdict.Evaluated {
-			appendStep("skipped", verdict.Reason)
+			appendStep("skipped", verdict.Reason, err)
 			continue
 		}
 		if !verdict.Matched {
@@ -125,7 +125,7 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 			if scheme.Type == "aggregation" {
 				group, reason, err := policy.EvaluateGrouping(call, frozen.Compiled, view)
 				if err != nil {
-					appendStep("skipped", reason)
+					appendStep("skipped", reason, err)
 					break
 				}
 				step, err = s.aggregation(call, event, ref, snapshot.EvaluatedAt, scheme.Seconds, group)
@@ -136,7 +136,7 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 					if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 						return result, err
 					}
-					appendStep("skipped", "evaluation_unavailable")
+					appendStep("skipped", "evaluation_unavailable", err)
 					break
 				}
 				appendStep(step.Outcome, step.ReasonCode)
@@ -150,7 +150,7 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 				continue
 			}
 			if s.State == nil {
-				appendStep("skipped", "redis_unavailable")
+				appendStep("skipped", "redis_unavailable", err)
 				break
 			}
 			request := clipRequest(event, ref, snapshot.EvaluatedAt, scheme.Seconds, scheme.Count)
@@ -159,7 +159,7 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 				return result, ctx.Err()
 			}
 			if err != nil {
-				appendStep("skipped", "redis_unavailable")
+				appendStep("skipped", "redis_unavailable", err)
 				break
 			}
 			step.Count = decision.Count
@@ -235,7 +235,7 @@ func (s *Suppressor) Bind(ctx context.Context, event domain.Event, decision *sto
 				if !alert.AdmittedActiveMain() {
 					if s.Aggregation != nil && step.Window != nil {
 						if _, err := s.Aggregation.ReleaseAggregation(ctx, event.BKTenantID, windowDecision(step.Window, "candidate")); err != nil {
-							s.observe(ctx, event, store.SuppressionStep{Policy: step.Policy, Scheme: "aggregation", Outcome: "skipped", ReasonCode: "candidate_release_failed"})
+							s.observe(ctx, event, store.SuppressionStep{Policy: step.Policy, Scheme: "aggregation", Outcome: "skipped", ReasonCode: "candidate_release_failed"}, err)
 						}
 					}
 					if ctx.Err() != nil {
@@ -307,7 +307,7 @@ func (s *Suppressor) Clear(ctx context.Context, cause suppressioncleanup.Cause) 
 		}
 		if cleanupErr != nil {
 			if s.Logger != nil {
-				s.Logger.WarnContext(call, "suppression cleanup skipped", "bk_tenant_id", cause.TenantID, "event_source_id", cause.SourceID, "alert_id", cause.AlertID, "reason", "redis_unavailable")
+				s.Logger.WarnContext(call, "suppression cleanup skipped", "module", "policy", "operation", "suppression_cleanup", "error", cleanupErr, "bk_tenant_id", cause.TenantID, "event_source_id", cause.SourceID, "alert_id", cause.AlertID, "reason", "redis_unavailable")
 			}
 			if s.Observer != nil {
 				s.Observer.ObserveSuppression(call, "cleanup", "skipped", "redis_unavailable")
@@ -322,7 +322,7 @@ func (s *Suppressor) Clear(ctx context.Context, cause suppressioncleanup.Cause) 
 	return err
 }
 
-func (s *Suppressor) observe(ctx context.Context, event domain.Event, step store.SuppressionStep) {
+func (s *Suppressor) observe(ctx context.Context, event domain.Event, step store.SuppressionStep, causes ...error) {
 	if step.Outcome == "skipped" {
 		s.fault(ctx, event.BKTenantID, "suppression", step.Policy.ID)
 	}
@@ -330,6 +330,6 @@ func (s *Suppressor) observe(ctx context.Context, event domain.Event, step store
 		s.Observer.ObserveSuppression(ctx, step.Scheme, step.Outcome, step.ReasonCode)
 	}
 	if step.Outcome == "skipped" && s.Logger != nil {
-		s.Logger.WarnContext(ctx, "suppression policy skipped", "bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID, "event_id", event.EventID, "policy_id", step.Policy.ID, "policy_version", step.Policy.Version, "scheme", step.Scheme, "reason", step.ReasonCode)
+		s.Logger.WarnContext(ctx, "suppression policy skipped", "module", "policy", "operation", "suppression_evaluate", "error", errors.Join(causes...), "bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID, "event_id", event.EventID, "policy_id", step.Policy.ID, "policy_version", step.Policy.Version, "scheme", step.Scheme, "reason", step.ReasonCode)
 	}
 }

@@ -187,19 +187,9 @@ Event 丰富模型、冻结 CAS、逐等级主流程和预览已落地；策略�
 | opening Event | 实际创建 Alert 的首条有效触发 Event；防抖前置事件不一定是 opening Event；Alert 展示与丰富快照固定取自该 Event |
 | KAC alarm_event 兼容层 | 一个 Linkd Alert 生命周期对应的一条稳定 KAC 兼容文档；已确认由 Linkd 直接维护原索引和告警状态，KAC 查询并修改处置字段，不按每条 Event 新建；由[全局插件](../design/kac-compatibility-plugin.md)直接维护 |
 | KAC 全局兼容插件 | 内置插件，一个部署级开关统一启用 alarm_event 维护及后续处置通知，覆盖所有来源和租户，不配置逐来源/逐租户目标；数据、任务及幂等身份仍按租户隔离 |
-| 投影版本与同步水位 | Alert 业务 revision 从 1 递增；每个目标独立保存 required_revision/synced_revision，同步 ACK 自身不推进业务 revision/update_at |
-| ProjectionTargetState | Alert 中的有界目标引用与同步水位，最多 16 项；source_version 记录 opening 来源版本而不解析路由；全局 KAC 插件固定使用目标 kac 并启用动作，不在 Alert 存放 endpoint 或凭据 |
-| ProjectionWorkCursor | 内部补扫的租户/Alert/目标游标，每页最多 16 个待确认目标；覆盖活动、终态和历史索引，不设最近时间过滤 |
-| ProjectionTask | 按租户/Alert/目标/业务版本固定的持久投递任务；保存业务快照、来源发布引用、有界尝试进度及远端确认，不保存连接凭据 |
-| ProjectionReceipt | Linkd 兼容存储适配器确认的文档身份、应用版本、内容摘要、生命周期和搜索可见性；单次 HTTP 200 不等于该确认 |
-| ActionDelivery | 对本次已获准动作保存的独立持久任务，冻结原 Alert/原因/目标发布；按同 Alert/目标版本顺序执行，不从最新状态补造历史动作 |
-| 动作入队意图（AlertActionIntent） | Alert.action_pending，与获准业务变更同次 CAS 保存的原版本、动作、原因和目标发布；全部动作任务持久且排序可见后清除。意图存在时禁止推进下一业务版本，投影 ACK 仍可更新 |
-| 动作受理确认（ActionReceipt） | 接收端对动作身份和完整请求摘要的持久幂等受理或明确过期跳过；受理成功不表示通知/工单执行完成，也不用于推进投影同步水位 |
-| 动作顺序屏障（unsettled） | 尚未成功受理或确认过期跳过的动作，包含 failed；较新动作不能绕过前序失败，较新终态可见后才允许旧 firing 跳过 |
-| Projection RetryCommand / RetryRecord | 对既有失败任务的完整人工恢复命令及首次受理时间；固定租户、任务、CAS 版本、操作 ID、操作者和原因，只保存最近一条记录，重投不重置预算 |
-| delivered | 投影任务已持久化远端确认，尚需推进本地 Alert 水位；重试只补本地 ACK |
-| succeeded | 投影任务已完成远端确认和本地水位处理；不表示对应的处置动作已经执行 |
-| 策略跳过 | 本次策略因依赖或协调失败未执行，记录诊断、指标和日志后继续；不冒充正常未命中，也不吞掉核心持久化或租户校验错误 |
+| AlertChange | 保存 Alert 后的轻量队列通知，包含租户、Alert ID 与可选动作 |
+| KAC projection lane | 按租户/Alert 固定分配的串行执行通道，默认 64 个 |
+| KAC action V3 | 独立并发发送的小参数动作协议，成功只表示接收端投递 Celery |
 
 ## 屏蔽事件提示
 
@@ -222,7 +212,5 @@ Event 丰富模型、冻结 CAS、逐等级主流程和预览已落地；策略�
 控制面的[租户目录接口](contracts/tenant-directory.md)在单租户模式固定返回 `system/Blueking/enabled`；
 多租户模式使用固定 `system/admin` 引导身份实时读取用户管理目录，失败不回退默认租户。
 
-- Celery 投递确认：KAC 返回原动作身份、请求摘要及本次 task_id，只确认任务已投递；重试可能重复投递，不代表持久去重受理或处置完成。
+- Celery 投递结果：KAC 返回 queued 和本次 task_id，只表示已投递；重复消息可能重复发送，不代表处置完成。
 - 结束操作（AlertEndOperation）：主动关闭时保存的操作 ID、来源及操作者；与结束原因/时间共同约束幂等重试。
-
-- 投影补偿：Linkd Alert 保存后同步投影未确认时生成的固定版本待办；正式运行器仅补偿一次，失败保留记录并终结自动发送，不自动补扫或重建失败任务。

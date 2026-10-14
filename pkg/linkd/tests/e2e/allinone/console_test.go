@@ -23,14 +23,9 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
-	"linkd/internal/actiondelivery"
-	actionstore "linkd/internal/actiondelivery/storage"
-	"linkd/internal/config"
 	"linkd/internal/domain"
 	mergeflow "linkd/internal/merge"
 	"linkd/internal/policy"
-	"linkd/internal/projection"
-	projectionstore "linkd/internal/projection/storage"
 	"linkd/internal/shieldcheck"
 	"linkd/internal/suppressioncheck"
 )
@@ -112,12 +107,6 @@ type consolePolicyFixture struct {
 	MergeChildren     []string `json:"merge_children"`
 	MergeWindow       string   `json:"merge_window"`
 	MergeWaiting      string   `json:"merge_waiting"`
-	ActionTask        string   `json:"action_task"`
-	ActionVersion     string   `json:"action_version"`
-	ActionHash        string   `json:"action_hash"`
-	ProjectionTask    string   `json:"projection_task"`
-	ProjectionVersion string   `json:"projection_version"`
-	ProjectionHash    string   `json:"projection_hash"`
 }
 
 func (h *policyHarness) prepareConsolePolicies() consolePolicyFixture {
@@ -162,94 +151,10 @@ func (h *policyHarness) prepareConsolePolicies() consolePolicyFixture {
 	waiting := onlyAlert(h.t, h.send("merge", "policy-a", "browser-waiting", "waiting", "merge-a", "waiting-group", "warning", "triggered"))
 	wait := h.alert(waiting, func(a domain.Alert) bool { return a.Merge != nil && len(a.Merge.Pending) == 1 })
 	h.expect(waiting)
-	queued := h.prepareConsoleProjection(blocked)
-	action := h.prepareConsoleAction(h.alert(main, func(a domain.Alert) bool { return a.AdmittedActiveMain() }))
-	return consolePolicyFixture{ActionTask: action.Task.ID, ActionVersion: action.Version, ActionHash: action.Task.Request.Hash(), ClipWindow: clipWindow.ID, ClipEvent: clip.Event.EventID, AggregationWindow: aggWindow.ID, AggregationEvent: child.Event.EventID, AggregationOwner: main, ShieldAlert: shield, ShieldRevision: blocked.Revision, MergeDecision: parent.Merge.RelationIDs[0], MergeParent: parent.AlertID, MergeChildren: []string{first, second}, MergeWindow: wait.Merge.Pending[0].WindowID, MergeWaiting: waiting, ProjectionTask: queued.Task.ID, ProjectionVersion: queued.Version, ProjectionHash: queued.Task.Request.ContentHash}
+	return consolePolicyFixture{ClipWindow: clipWindow.ID, ClipEvent: clip.Event.EventID, AggregationWindow: aggWindow.ID, AggregationEvent: child.Event.EventID, AggregationOwner: main, ShieldAlert: shield, ShieldRevision: blocked.Revision, MergeDecision: parent.Merge.RelationIDs[0], MergeParent: parent.AlertID, MergeChildren: []string{first, second}, MergeWindow: wait.Merge.Pending[0].WindowID, MergeWaiting: waiting}
 }
 
-// prepareConsoleProjection 只在本次部署集合中构造失败任务，测试管理链路。
-// 来源绑定与正式投递器尚未装配，不修改真实 Alert，不声称由正式生产器产生任务。
-func (h *policyHarness) prepareConsoleProjection(alert domain.Alert) projection.StoredTask {
-	h.t.Helper()
-	cfg, err := config.Load(h.configPath, config.Overrides{})
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	tasks, err := projectionstore.Open(h.ctx, *cfg.Storage, cfg.Dispatch.WithDefaults().Deployment)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	defer func() { _ = tasks.Close() }()
-	snapshot := alert.Clone()
-	snapshot.Projection = domain.AlertProjection{Targets: map[string]domain.ProjectionTargetState{"kac": {SourceVersion: alert.EventSourceVersion, RequiredRevision: alert.Revision}}}
-	task, err := projection.NewTask(snapshot, "kac", time.Now())
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	row, err := tasks.Put(h.ctx, task, "")
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	attempt := row.Task.Clone()
-	deadline := attempt.CreatedAt.Add(30 * time.Second)
-	attempt.Progress.State = "sending"
-	attempt.Progress.Attempts, attempt.Progress.TotalAttempts = 1, 1
-	attempt.Progress.DueAt, attempt.Progress.LeaseUntil = nil, &deadline
-	row, err = tasks.Put(h.ctx, attempt, row.Version)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	failed := row.Task.Clone()
-	failed.Progress.State, failed.Progress.ErrorCode = "failed", "remote_unauthorized"
-	failed.Progress.LeaseUntil = nil
-	row, err = tasks.Put(h.ctx, failed, row.Version)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	return row
-}
-
-// prepareConsoleAction 仅以真实已获准 Alert 的快照构造隔离失败任务，验证管理读取/恢复。
 // 它不修改原 Alert，不代表正式来源出口已启用，也不发送真实 KAC HTTP 处置。
-func (h *policyHarness) prepareConsoleAction(alert domain.Alert) actiondelivery.StoredTask {
-	h.t.Helper()
-	cfg, err := config.Load(h.configPath, config.Overrides{})
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	tasks, err := actionstore.Open(h.ctx, *cfg.Storage, cfg.Dispatch.WithDefaults().Deployment)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	defer func() { _ = tasks.Close() }()
-	snapshot := alert.Clone()
-	snapshot.Projection = domain.AlertProjection{Targets: map[string]domain.ProjectionTargetState{"kac": {SourceVersion: alert.EventSourceVersion, RequiredRevision: alert.Revision}}}
-	task, err := actiondelivery.NewTask(snapshot, "kac", actiondelivery.Cause{Type: alert.Admission.CauseType, ID: alert.Admission.CauseID}, time.Now())
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	row, err := tasks.Put(h.ctx, task, "")
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	attempt := row.Task.Clone()
-	deadline := attempt.CreatedAt.Add(30 * time.Second)
-	attempt.Progress.State = "sending"
-	attempt.Progress.Attempts, attempt.Progress.TotalAttempts = 1, 1
-	attempt.Progress.DueAt, attempt.Progress.LeaseUntil = nil, &deadline
-	row, err = tasks.Put(h.ctx, attempt, row.Version)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	failed := row.Task.Clone()
-	failed.Progress.State, failed.Progress.ErrorCode = "failed", "response_invalid"
-	failed.Progress.LeaseUntil = nil
-	row, err = tasks.Put(h.ctx, failed, row.Version)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	return row
-}
 
 func (h *policyHarness) startConsole(root string, extraEnv ...string) (*linkdProcess, string) {
 	h.t.Helper()
@@ -352,24 +257,6 @@ func (h *policyHarness) verifyConsolePolicies(f consolePolicyFixture) {
 	h.call(http.MethodGet, checkBase+"/"+checks.Items[0].ID+"?bk_tenant_id=clip", nil, &checked)
 	if checked.Validate() != nil || checked.State != "completed" || checked.Result.Outcome != "retained" || checked.Result.Reason != "unbound_counter" || checked.Result.Changed || checked.Command.OperatorID != "console-local" || checked.Command.Reason != "真实 Console 复核当前计数" {
 		h.t.Fatal("browser suppression check changed new counter", checked)
-	}
-	var task struct {
-		Progress    projection.Progress `json:"progress"`
-		ContentHash string              `json:"content_hash"`
-	}
-	h.call(http.MethodGet, "/api/v1/projection-tasks/"+f.ProjectionTask+"?bk_tenant_id=shield", nil, &task)
-	p := task.Progress
-	if p.State != "pending" || p.Generation != 2 || p.TotalAttempts != 1 || p.Attempts != 0 || p.Receipt != nil || p.LastRetry == nil || p.LastRetry.Command.OperatorID != "console-local" || p.LastRetry.Command.ExpectedVersion != f.ProjectionVersion || p.LastRetry.Command.Reason != "真实 Console 验证恢复原任务" || task.ContentHash != f.ProjectionHash {
-		h.t.Fatal("browser projection retry did not preserve snapshot/audit or attempted unexpected delivery")
-	}
-	var actionTask struct {
-		Progress    actiondelivery.Progress `json:"progress"`
-		RequestHash string                  `json:"request_hash"`
-	}
-	h.call(http.MethodGet, "/api/v1/action-deliveries/"+f.ActionTask+"?bk_tenant_id=aggregation", nil, &actionTask)
-	ap := actionTask.Progress
-	if ap.State != "pending" || ap.Generation != 2 || ap.TotalAttempts != 1 || ap.Attempts != 0 || ap.Receipt != nil || ap.LastRetry == nil || ap.LastRetry.Command.OperatorID != "console-local" || ap.LastRetry.Command.ExpectedVersion != f.ActionVersion || ap.LastRetry.Command.Reason != "真实 Console 恢复原动作" || actionTask.RequestHash != f.ActionHash {
-		h.t.Fatal("browser action retry changed original request or lost audit")
 	}
 	var requests struct {
 		Items []shieldcheck.Request `json:"items"`

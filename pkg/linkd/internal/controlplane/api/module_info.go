@@ -291,8 +291,6 @@ func (a *API) moduleCapabilities() map[string]moduleCapability {
 		{"merge_runtime", "/api/v1/policy-runtime/merge/windows", a.MergeRuntime != nil},
 		{"shield_runtime", "/api/v1/policy-runtime/shield/alerts", a.ShieldRuntime != nil},
 		{"suppression_runtime", "/api/v1/policy-runtime/suppression/clip", a.SuppressionRuntime != nil},
-		{"projection_tasks", "/api/v1/projection-tasks", a.ProjectionTasks != nil},
-		{"action_deliveries", "/api/v1/action-deliveries", a.ActionDeliveries != nil},
 		{"onemodel", "/api/v1/onemodel/search", a.OneModel.Configured()},
 		{"enrich_preview", "/api/v1/enrich/preview", a.Previewer != nil},
 		{"ingest_preview", "/api/v1/ingest/preview", a.IngestPreviewer != nil},

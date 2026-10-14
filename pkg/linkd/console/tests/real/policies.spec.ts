@@ -25,12 +25,6 @@ const fixture = z
     merge_children: z.array(id).length(2),
     merge_window: id,
     merge_waiting: id,
-    action_task: id,
-    action_version: id,
-    action_hash: id,
-    projection_task: id,
-    projection_version: id,
-    projection_hash: id,
   })
   .parse(
     JSON.parse(readFileSync(process.env.LINKD_CONSOLE_REAL_FIXTURE!, "utf8")),
@@ -294,63 +288,6 @@ test("real Event enrichment and policy runtime remain coherent through browser c
   expect(current.admission?.admitted_at).toBeUndefined();
   expect(current.content).toBe("content-browser-merge-a");
   await page.goto(
-    url("/projection-tasks", {
-      bk_tenant_id: "shield",
-      id: fixture.projection_task,
-    }),
-  );
-  await expect(
-    page.getByRole("heading", { name: "告警投影任务", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(fixture.projection_hash, { exact: true }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "查看冻结快照" }).click();
-  await expect(
-    page.locator(".projection-snapshot .json-viewer pre"),
-  ).toContainText("content-browser-shield");
-  await page.getByLabel("恢复原因").fill("真实 Console 验证恢复原任务");
-  await page.getByRole("button", { name: "恢复原任务" }).click();
-  await expect(page.getByText(/恢复操作已被接受/)).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "最近一次人工恢复" }),
-  ).toBeVisible();
-  await page.reload();
-  await expect(
-    page.getByRole("heading", { name: "最近一次人工恢复" }),
-  ).toBeVisible();
-  await expect(page.getByText("console-local", { exact: false })).toBeVisible();
-  await expect(page.getByRole("button", { name: "恢复原任务" })).toHaveCount(0);
-  await screenshot("projection-retry-light");
-  await page.goto(
-    url("/action-deliveries", {
-      bk_tenant_id: "aggregation",
-      id: fixture.action_task,
-    }),
-  );
-  await expect(
-    page.getByRole("heading", { name: "告警动作投递", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(fixture.action_hash, { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText(/当前任务是可见队首/)).toBeVisible();
-  await page.getByRole("button", { name: "查看冻结快照" }).click();
-  await expect(
-    page.locator(".projection-snapshot .json-viewer pre"),
-  ).toContainText("content-browser-agg-main");
-  await page.getByLabel("恢复原因").fill("真实 Console 恢复原动作");
-  await page.getByRole("button", { name: "恢复原任务" }).click();
-  await expect(page.getByText(/恢复操作已被接受/)).toBeVisible();
-  await page.reload();
-  await expect(
-    page.getByRole("heading", { name: "最近一次人工恢复" }),
-  ).toBeVisible();
-  await expect(page.getByText("console-local", { exact: false })).toBeVisible();
-  await expect(page.getByRole("button", { name: "恢复原任务" })).toHaveCount(0);
-  await screenshot("action-retry-light");
-
-  await page.goto(
     url("/suppression-cleanups", {
       bk_tenant_id: "merge",
       alert_id: fixture.merge_parent,
@@ -372,8 +309,6 @@ test("real Event enrichment and policy runtime remain coherent through browser c
     `POST /real-console/local-api/policy-runtime/shield/alerts/${fixture.shield_alert}/reconcile`,
     `POST /real-console/local-api/policy-runtime/merge/relations/${fixture.merge_decision}/requests`,
     `POST /real-console/local-api/alerts/${fixture.merge_parent}/close`,
-    `POST /real-console/local-api/projection-tasks/${fixture.projection_task}/retry`,
-    `POST /real-console/local-api/action-deliveries/${fixture.action_task}/retry`,
   ]);
   expect(failures).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { KACOutputPage } from "./pages/KACOutputPage";
 import { OneModelPage } from "./pages/OneModelPage";
 import { EnrichPreviewPage } from "./pages/EnrichPreviewPage";
 import { EventSourcesPage } from "./pages/EventSourcesPage";
@@ -37,16 +38,6 @@ const MergeRuntimePage = lazy(() =>
 const SuppressionCleanupsPage = lazy(() =>
   import("./pages/SuppressionCleanupsPage").then((module) => ({
     default: module.SuppressionCleanupsPage,
-  })),
-);
-const ActionDeliveriesPage = lazy(() =>
-  import("./pages/ActionDeliveriesPage").then((module) => ({
-    default: module.ActionDeliveriesPage,
-  })),
-);
-const ProjectionTasksPage = lazy(() =>
-  import("./pages/ProjectionTasksPage").then((module) => ({
-    default: module.ProjectionTasksPage,
   })),
 );
 const ShieldRuntimePage = lazy(() =>
@@ -133,6 +124,7 @@ const navigationGroups: Array<{
       { to: "/cleaner", label: "Cleaner", glyph: "C" },
       { to: "/lifecycle", label: "Lifecycle", glyph: "Y" },
       { to: "/control-plane", label: "Control Plane", glyph: "P" },
+      { to: "/kac-output", label: "KAC 输出", glyph: "K" },
     ],
   },
   {
@@ -148,8 +140,6 @@ const navigationGroups: Array<{
       { to: "/suppression-runtime", label: "抑制运行态", glyph: "D" },
       { to: "/merge-runtime", label: "合并运行态", glyph: "M" },
       { to: "/shield-runtime", label: "屏蔽运行态", glyph: "S" },
-      { to: "/projection-tasks", label: "告警投影任务", glyph: "T" },
-      { to: "/action-deliveries", label: "告警动作投递", glyph: "D" },
     ],
   },
   {
@@ -280,11 +270,7 @@ export function App() {
                           ? "SUPPRESSION OPERATIONS"
                           : routeLocation.pathname === "/merge-runtime"
                             ? "MERGE OPERATIONS"
-                            : routeLocation.pathname === "/action-deliveries"
-                              ? "ACTION OPERATIONS"
-                              : routeLocation.pathname === "/projection-tasks"
-                                ? "PROJECTION OPERATIONS"
-                                : "READ ONLY"}
+                            : "READ ONLY"}
                 </span>
                 <button
                   className="theme-button"
@@ -329,6 +315,7 @@ function PageRoutes() {
   return (
     <PageErrorBoundary resetKey={resetKey}>
       <Routes key={location.pathname} location={location}>
+        <Route path="/kac-output" element={<KACOutputPage />} />
         <Route
           path="/metrics/catalog"
           element={
@@ -452,8 +439,6 @@ function PageRoutes() {
           path="/suppression-cleanups"
           element={<SuppressionCleanupsPage />}
         />
-        <Route path="/projection-tasks" element={<ProjectionTasksPage />} />
-        <Route path="/action-deliveries" element={<ActionDeliveriesPage />} />
         <Route
           path="/shield-runtime"
           element={

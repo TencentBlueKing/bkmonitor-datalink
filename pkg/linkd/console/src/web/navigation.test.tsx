@@ -60,7 +60,7 @@ describe("sidebar navigation", () => {
     });
     const expectedGroups = [
       ["总览", ["/overview"]],
-      ["模块", ["/cleaner", "/lifecycle", "/control-plane"]],
+      ["模块", ["/cleaner", "/lifecycle", "/control-plane", "/kac-output"]],
       [
         "核心数据",
         [
@@ -74,8 +74,6 @@ describe("sidebar navigation", () => {
           "/suppression-runtime",
           "/merge-runtime",
           "/shield-runtime",
-          "/projection-tasks",
-          "/action-deliveries",
         ],
       ],
       [

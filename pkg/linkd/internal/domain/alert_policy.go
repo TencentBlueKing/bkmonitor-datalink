@@ -209,8 +209,6 @@ func ValidateAlertPolicyReplacement(current, replacement Alert) error {
 		before.MergeChange = after.MergeChange.Clone()
 		before.UpdateAt = after.UpdateAt
 		before.Revision = after.Revision
-		before.Projection = after.Projection.Clone()
-		before.ActionPending = after.ActionPending.Clone()
 		if after.MergeChange.Kind == "parent_recover" {
 			if current.Status != AlertStatusActive {
 				return fmt.Errorf("merge recovery requires active parent")
@@ -302,14 +300,6 @@ func (c *AlertPolicyChange) Validate(a Alert) error {
 func alertPolicyBookkeeping(current, replacement Alert) bool {
 	before, after := current, replacement
 	changed := false
-	if before.ActionPending != nil && after.ActionPending == nil {
-		before.ActionPending = nil
-		changed = true
-	}
-	if projectionACKOnly(before.Projection, after.Projection) && !reflect.DeepEqual(before.Projection, after.Projection) {
-		before.Projection = after.Projection.Clone()
-		changed = true
-	}
 	if before.MergeChange != nil && after.MergeChange == nil {
 		before.MergeChange = nil
 		changed = true

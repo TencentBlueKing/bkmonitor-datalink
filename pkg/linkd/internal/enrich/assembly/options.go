@@ -15,8 +15,14 @@ import (
 )
 
 type routerOptions struct {
+	logger   enrich.Logger
 	observer enrich.Observer
 	facts    description.FactsResolver
+}
+
+// WithLogger 注入丰富链错误日志，预览与主流程使用相同字段约定。
+func WithLogger(logger enrich.Logger) RouterOption {
+	return func(options *routerOptions) { options.logger = logger }
 }
 
 // WithDescriptionFacts 注入内容创建与预览共用的冻结事实解析器。

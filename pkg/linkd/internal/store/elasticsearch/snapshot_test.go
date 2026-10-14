@@ -172,9 +172,8 @@ func TestSnapshotEventRejectsInvalidIdentityTransitionBudgetAndCancellation(t *t
 	}
 }
 
-func TestSnapshotAlertCASProtectsConcurrentACKAndBusinessRevision(t *testing.T) {
+func TestSnapshotAlertCASProtectsConcurrentBusinessRevision(t *testing.T) {
 	a := storetest.Alert("tenant", "alert", "opening", "fp", "warning")
-	a.Projection = domain.AlertProjection{Targets: map[string]domain.ProjectionTargetState{"kac": {SourceVersion: 1, RequiredRevision: 1}}}
 	token, err := encodeVersion(versionPayload{Index: "linkd-test-alerts", DocumentID: alertDocumentID(a), SeqNo: 4, PrimaryTerm: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -201,18 +200,14 @@ func TestSnapshotAlertCASProtectsConcurrentACKAndBusinessRevision(t *testing.T) 
 	next.LastOccurredAt = next.LastOccurredAt.Add(time.Second)
 	next.UpdateAt = next.UpdateAt.Add(time.Second)
 	saved, err := repo.CompareAndSetAlertFromSnapshot(t.Context(), current, next)
-	if err != nil || saved.Alert.Revision != 2 || saved.Alert.Projection.Targets["kac"].RequiredRevision != 2 || current.Alert.Revision != 1 {
+	if err != nil || saved.Alert.Revision != 2 || current.Alert.Revision != 1 {
 		t.Fatalf("business CAS: %v", err)
 	}
-	ack := saved.Alert.Clone()
-	at := ack.UpdateAt.Add(time.Second)
-	ack.Projection, _, err = ack.Projection.Acknowledge("kac", 1, 2, at)
+	concurrent := saved.Alert.Clone()
+	concurrent.UpdateAt = concurrent.UpdateAt.Add(time.Second)
+	confirmed, err := repo.CompareAndSetAlertFromSnapshot(t.Context(), saved, concurrent)
 	if err != nil {
 		t.Fatal(err)
-	}
-	confirmed, err := repo.CompareAndSetAlertFromSnapshot(t.Context(), saved, ack)
-	if err != nil || confirmed.Alert.Revision != 2 {
-		t.Fatalf("ACK changed revision: %v", err)
 	}
 	late := saved.Alert.Clone()
 	late.LatestEventID = "late"

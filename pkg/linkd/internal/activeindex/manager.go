@@ -62,7 +62,7 @@ func (m *Manager) Run(ctx context.Context, observers ...func(context.Context, ti
 			observe(ctx, time.Since(started), work, failed, err)
 		}
 		if err != nil && ctx.Err() == nil {
-			m.logger.WarnContext(ctx, "active index reconciliation failed")
+			m.logger.WarnContext(ctx, "active index reconciliation failed", "module", "activeindex", "operation", "reconcile", "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -173,7 +173,7 @@ func (m *Manager) reconcileBatch(ctx context.Context, pending []Pending) int {
 		lease, err := m.cache.Acquire(call, p.Scope, m.settings.OperationTimeout+5*time.Second)
 		if err != nil {
 			failed++
-			m.logFailure(ctx, p)
+			m.logFailure(ctx, p, err)
 			continue
 		}
 		if lease != "" {
@@ -208,14 +208,14 @@ func (m *Manager) reconcileBatch(ctx context.Context, pending []Pending) int {
 			cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 			_ = m.cache.Failed(cleanup, lease.pending, lease.token, failureReason)
 			stop()
-			m.logFailure(ctx, lease.pending)
+			m.logFailure(ctx, lease.pending, err)
 		}
 	}
 	return failed
 }
 
-func (m *Manager) logFailure(ctx context.Context, p Pending) {
+func (m *Manager) logFailure(ctx context.Context, p Pending, err error) {
 	if ctx.Err() == nil {
-		m.logger.WarnContext(ctx, "active index strategy refresh failed", "bk_tenant_id", p.Scope.BKTenantID, "strategy_id", p.Scope.StrategyID)
+		m.logger.WarnContext(ctx, "active index strategy refresh failed", "module", "activeindex", "operation", "refresh_strategy", "error", err, "bk_tenant_id", p.Scope.BKTenantID, "strategy_id", p.Scope.StrategyID)
 	}
 }

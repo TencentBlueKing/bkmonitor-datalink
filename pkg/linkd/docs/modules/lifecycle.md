@@ -1,10 +1,8 @@
 # Lifecycle
 
-可靠动作现已提供与业务 CAS 同时持久的 action_pending、按序幂等入队和独立补扫端口。它与普通
-FinalHook 分开：入队失败保留原意图并向调用者返回错误，全部目标任务可被排序发现后才清除，随后
-允许下一业务版本。投影 ACK 不受此屏障阻塞；仅解联或定时解除屏蔽不生成新动作。Worker 与共享的
-人工关闭/屏蔽/合并控制入口已注入仅入队 Recorder，控制面后台投递与 Worker 自动目标绑定已接入。
-目标固定于 opening Release，来源修改不重绑已有 Alert，空绑定不补绑。详见 [Lifecycle 原子动作意图](../reference/contracts/kac-action-delivery-v2.md#lifecycle-原子动作意图)。
+Alert 业务保存后发布租户、Alert ID 和必要动作信息，普通路径不等待 KAC 投影或动作接口。
+动作资格沿用原策略裁决；解除屏蔽和解联只同步状态。发布失败记录日志和指标，业务事实仍保留。
+控制面按[动作 V3](../reference/contracts/kac-action-delivery-v3.md)执行批量投影与独立发送。
 
 每个 Lifecycle runtime 默认使用独立合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
 CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；
@@ -465,8 +463,7 @@ Signal 已接管后，锁忙、动作积压水位和分批处理返回 Defer，�
 
 任务内默认最多接管 256 条 Signal；达到未确认消息/字节软水位后暂停领取，确认后恢复。处理 goroutine 按实际消息懒启动。默认不使用租户动作待办数、Mailbox 深度或 Signal 持久积压作为准入条件。Lifecycle 副本省略时每个可调度 Worker 一个，可通过来源 scheduling.lifecycle.replicas 显式设上限。具体配置与保留的一致性边界见[运行容量与恢复](../design/runtime-capacity-and-recovery.md)。
 
-### KAC 同步写入与补偿边界
+### KAC 队列与同步关闭
 
-Linkd Alert 写入是主流程成功依据。业务版本写入后直接尝试 KAC，失败仅记录并入队一次补偿，
-不能回滚 Alert 或阻塞消息确认；不运行全量水位补扫。投影补偿再失败即终结，相关动作记录
-`projection_failed` 并退出顺序屏障，后续版本继续处理。详细规则见[兼容存储契约](../reference/contracts/kac-alert-projection-v1.md)。
+普通更新交给控制面队列投影；主动关闭保存终态后直接写 KAC 并 refresh，失败返回 502，允许原命令重试。
+不再保存 ActionPending、投影水位或输出任务；生命周期自身的业务 CAS、计划和审计保持原语义。

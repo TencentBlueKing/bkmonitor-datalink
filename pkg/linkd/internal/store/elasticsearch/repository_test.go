@@ -182,9 +182,9 @@ func TestMappings(t *testing.T) {
 	alerts := alertProperties()
 	logs := alertLogProperties()
 	assertMappingFields(t, processing, reflect.TypeFor[store.EventProcessing]())
-	assertMappingFields(t, alerts, reflect.TypeFor[domain.Alert](), "merge_work", "projection_work", "action_work", "shield_main_alert_ids")
+	assertMappingFields(t, alerts, reflect.TypeFor[domain.Alert](), "merge_work", "shield_main_alert_ids")
 	assertPropertyTypes(t, alerts, "keyword", "shield_main_alert_ids")
-	assertPropertyTypes(t, alerts, "boolean", "merge_work", "projection_work", "action_work")
+	assertPropertyTypes(t, alerts, "boolean", "merge_work")
 	assertMappingFields(t, logs, reflect.TypeFor[domain.AlertLog]())
 
 	assertPropertyTypes(t, events, "keyword", "bk_tenant_id", "event_source_id", "related_alert_ids", "event_id", "fingerprint", "title", "content", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id")
@@ -910,47 +910,6 @@ func TestSearchRejectsPartialSuccessAcrossAPIs(t *testing.T) {
 					t.Fatalf("error=%v", err)
 				}
 			})
-		}
-	}
-}
-
-func TestActionWorkRejectsPartialOrMissingSearchResults(t *testing.T) {
-	for _, body := range []string{`{}`, `{"hits":{"hits":null}}`, `{"timed_out":true,"hits":{"hits":[]}}`, `{"_shards":{"failed":1},"hits":{"hits":[]}}`, `{"hits":{"hits":[{}]}}`} {
-		t.Run(body, func(t *testing.T) {
-			repo, err := New(transportFunc(func(*http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
-			}), mustStaticRouter(t), DefaultConfig())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = repo.ListActionWork(t.Context(), store.ActionWorkCursor{}, 16); err == nil {
-				t.Fatal("invalid query accepted as no work")
-			}
-		})
-	}
-}
-
-func TestAlertDecodeRejectsActionIndexMismatch(t *testing.T) {
-	a := storetest.Alert("tenant", "alert", "opening", "fp", "warning")
-	at := a.UpdateAt
-	a.Admission = domain.AlertAdmission{AdmittedAt: &at, Severity: a.Severity, CauseType: "source_event", CauseID: a.LatestEventID}
-	a.Projection.Targets = map[string]domain.ProjectionTargetState{"kac": {ActionEnabled: true, SourceVersion: 1, RequiredRevision: 1}}
-	var err error
-	a.ActionPending, err = domain.NewAlertActionIntent(a, "source_event", a.LatestEventID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, pending := range []bool{false, true} {
-		value := a.Clone()
-		if !pending {
-			value.ActionPending = nil
-		}
-		raw, err := json.Marshal(alertDocument{Alert: value, ActionWork: !pending})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = decodeAlertHit(searchHit{ID: alertDocumentID(value), Index: "test-alerts", SeqNo: 1, PrimaryTerm: 1, Source: raw}); err == nil {
-			t.Fatal("wrong action index accepted")
 		}
 	}
 }

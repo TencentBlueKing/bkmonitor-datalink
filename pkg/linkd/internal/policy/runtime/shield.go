@@ -80,18 +80,18 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 			continue
 		}
 		step := store.ShieldStep{Policy: ref}
-		record := func(outcome, reason string) {
+		record := func(outcome, reason string, causes ...error) {
 			step.Outcome = outcome
 			step.ReasonCode = reason
 			result.Decision.Steps = append(result.Decision.Steps, step)
-			s.observe(ctx, event.BKTenantID, alert.AlertID, event.EventID, step)
+			s.observe(ctx, event.BKTenantID, alert.AlertID, event.EventID, step, causes...)
 		}
 		frozen, err := s.Loader.load(call, event.BKTenantID, ref)
 		if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 			return result, err
 		}
 		if err != nil {
-			record("skipped", "release_unavailable")
+			record("skipped", "release_unavailable", err)
 			continue
 		}
 		if !frozen.Compiled.Active(snapshot.EvaluatedAt) {
@@ -111,7 +111,7 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 				return result, err
 			}
 			if err != nil {
-				record("skipped", reason)
+				record("skipped", reason, err)
 				continue
 			}
 			if reserved != nil {
@@ -127,7 +127,7 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 			slices.Sort(tags)
 			tags = slices.Compact(tags)
 			if len(tags) > 256 {
-				record("skipped", "policy_tag_budget")
+				record("skipped", "policy_tag_budget", err)
 				continue
 			}
 			next := snapshot.EvaluatedAt.Add(5 * time.Second)
@@ -139,7 +139,7 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 		}
 		view, err := policy.EventView(event, evaluation.Severity, frozen.Compiled.Common.FieldMappings, level, policy.RelationContext{})
 		if err != nil {
-			record("skipped", "event_view_unavailable")
+			record("skipped", "event_view_unavailable", err)
 			continue
 		}
 		verdict, err := s.Loader.evaluate(call, frozen.Release, frozen.Compiled, view, s.Loader.Targets, snapshot.EvaluatedAt, false, false)
@@ -148,13 +148,13 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 		}
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, policy.ErrUnavailable) {
-				record("skipped", "evaluation_unavailable")
+				record("skipped", "evaluation_unavailable", err)
 				continue
 			}
 			return result, err
 		}
 		if !verdict.Evaluated {
-			record("skipped", verdict.Reason)
+			record("skipped", verdict.Reason, err)
 			continue
 		}
 		if !verdict.Matched {
@@ -165,13 +165,13 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 		slices.Sort(tags)
 		tags = slices.Compact(tags)
 		if len(tags) > 256 {
-			record("skipped", "policy_tag_budget")
+			record("skipped", "policy_tag_budget", err)
 			continue
 		}
 		binding := domain.ShieldBinding{Periods: frozen.Compiled.Schedule.Periods(snapshot.EvaluatedAt), Policy: domain.PolicyVersion{ID: ref.ID, Version: ref.Version, Digest: ref.Digest}, Type: "time_shield", SourceEventID: event.EventID, Severity: evaluation.Severity, BoundAt: snapshot.EvaluatedAt, Reason: frozen.Compiled.Shield.Reason}
 		activation, err := frozen.Compiled.Schedule.Occurrence(snapshot.EvaluatedAt)
 		if err != nil {
-			record("skipped", "activation_unavailable")
+			record("skipped", "activation_unavailable", err)
 			continue
 		}
 		binding.ActivationID = activation
@@ -304,7 +304,7 @@ func (s *Shielder) keepBinding(ctx context.Context, tenant string, alert domain.
 	return verdict.Matched, "", nil
 }
 
-func (s *Shielder) observe(ctx context.Context, tenant, alertID, eventID string, step store.ShieldStep) {
+func (s *Shielder) observe(ctx context.Context, tenant, alertID, eventID string, step store.ShieldStep, causes ...error) {
 	if step.Outcome == "skipped" {
 		s.Loader.fault(ctx, tenant, "shield", step.Policy.ID)
 	}
@@ -312,7 +312,7 @@ func (s *Shielder) observe(ctx context.Context, tenant, alertID, eventID string,
 		s.Observer.ObserveShield(ctx, step.Outcome, step.ReasonCode)
 	}
 	if step.Outcome == "skipped" && s.Logger != nil {
-		s.Logger.WarnContext(ctx, "shield policy skipped", "bk_tenant_id", tenant, "alert_id", alertID, "event_id", eventID, "policy_id", step.Policy.ID, "policy_version", step.Policy.Version, "binding_id", step.BindingID, "reason", step.ReasonCode)
+		s.Logger.WarnContext(ctx, "shield policy skipped", "module", "policy", "operation", "shield_evaluate", "error", errors.Join(causes...), "bk_tenant_id", tenant, "alert_id", alertID, "event_id", eventID, "policy_id", step.Policy.ID, "policy_version", step.Policy.Version, "binding_id", step.BindingID, "reason", step.ReasonCode)
 	}
 }
 

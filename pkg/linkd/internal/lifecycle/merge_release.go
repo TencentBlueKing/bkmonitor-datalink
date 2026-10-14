@@ -78,7 +78,7 @@ func (p *Processor) ReleaseMergeWindowWithReason(ctx context.Context, tenant, id
 		if ready {
 			if _, known := p.severity.Priority(replacement.Severity); !known {
 				ready = false
-				p.logger.WarnContext(ctx, "merge release cannot admit removed severity", "error_code", "unknown_severity", "bk_tenant_id", tenant, "alert_id", id, "window_id", window)
+				p.logger.WarnContext(ctx, "merge release cannot admit removed severity", "module", "lifecycle", "operation", "merge_release", "error_code", "unknown_severity", "bk_tenant_id", tenant, "alert_id", id, "window_id", window)
 			}
 		}
 		if ready {
@@ -90,9 +90,6 @@ func (p *Processor) ReleaseMergeWindowWithReason(ctx context.Context, tenant, id
 			return store.StoredAlert{}, err
 		}
 		replacement.MergeChange.LogParams["reason_code"], _ = json.Marshal(reason)
-		if err := freezeAction(&replacement, current.Alert.Revision+1, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: operation}, ready); err != nil {
-			return store.StoredAlert{}, err
-		}
 		updated, err := p.compareAndSetAlert(ctx, current, replacement)
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue
@@ -120,10 +117,6 @@ func (p *Processor) FinishMergeChanges(ctx context.Context, tenant, id string) (
 // finishMergeChange 使用保存的稳定 cause 和首次快照重试输出；普通 Hook 失败语义仍由 P6 的可靠投递替换。
 func (p *Processor) finishMergeChange(ctx context.Context, current store.StoredAlert) (store.StoredAlert, error) {
 	var err error
-	current, err = p.finishActionIntent(ctx, current)
-	if err != nil {
-		return store.StoredAlert{}, err
-	}
 	intent := current.Alert.MergeChange
 	if intent == nil {
 		return current, nil

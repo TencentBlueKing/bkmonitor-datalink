@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -76,57 +75,6 @@ func TestHookCloseIsIdempotent(t *testing.T) {
 	hook.Close()
 	if producer.closeCount != 1 {
 		t.Fatalf("close count=%d", producer.closeCount)
-	}
-}
-
-func TestLegacyKACSkipsAlertsOwnedByReliableActionTargets(t *testing.T) {
-	for _, status := range []domain.AlertStatus{domain.AlertStatusActive, domain.AlertStatusRecovered, domain.AlertStatusClosed} {
-		for _, reliable := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/reliable=%t", status, reliable), func(t *testing.T) {
-				a := testAlert()
-				a.Status = status
-				outcome := lifecycle.OutcomeAlertCreated
-				if status.Terminal() {
-					a.EndAt = &a.UpdateAt
-					a.EndType, a.EndReason = domain.AlertEndTypeSource, "source ended"
-					outcome = lifecycle.OutcomeAlertRecovered
-					if status == domain.AlertStatusClosed {
-						outcome = lifecycle.OutcomeAlertClosed
-					}
-				}
-				a.Projection.Targets = map[string]domain.ProjectionTargetState{"state-only": {SourceVersion: 1, RequiredRevision: a.Revision}, "kac": {SourceVersion: 1, RequiredRevision: a.Revision, ActionEnabled: reliable}}
-				producer := &fakeProducer{}
-				hook := newHook(Config{Brokers: []string{"kafka:9092"}, Topic: "legacy", MaxMessageBytes: 1 << 20}, "legacy", producer)
-				levelCalls := 0
-				hook.UseLevelResolver(func(value string) (string, error) { levelCalls++; return kacLevel(value) })
-				input := lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event"}, Alert: a, Outcome: outcome}
-				result, err := hook.Execute(t.Context(), input)
-				if err != nil || result.Skipped != reliable || result.Name != "legacy" || result.Transport != "kafka" {
-					t.Fatal("wrong legacy ownership result", result, err)
-				}
-				if reliable {
-					if len(producer.records) != 0 || levelCalls != 0 {
-						t.Fatal("reliable action was converted/published through legacy KAC")
-					}
-				} else if len(producer.records) != 1 || levelCalls != 1 {
-					t.Fatal("state-only projection disabled legacy actions")
-				}
-				ctx, cancel := context.WithCancel(t.Context())
-				cancel()
-				if _, err := hook.Execute(ctx, input); !errors.Is(err, context.Canceled) {
-					t.Fatal("cancel swallowed", err)
-				}
-				invalidCause := input
-				invalidCause.Cause = lifecycle.AlertChangeCause{}
-				if result, err := hook.Execute(t.Context(), invalidCause); err == nil || result.Skipped {
-					t.Fatal("invalid cause silently skipped", err)
-				}
-				input.Alert.Projection.Targets["kac"] = domain.ProjectionTargetState{ActionEnabled: true}
-				if result, err := hook.Execute(t.Context(), input); err == nil || result.Skipped {
-					t.Fatal("invalid binding silently skipped", err)
-				}
-			})
-		}
 	}
 }
 

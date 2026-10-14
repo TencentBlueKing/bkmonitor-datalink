@@ -226,7 +226,7 @@ func TestProcessorTimingBoundarySurvivesFailureAndPanic(t *testing.T) {
 				}
 				return ProcessorResult{}, errors.New("failed")
 			}}
-			_, outcome := runProcessor(ctx, processor, nil)
+			_, outcome, _ := runProcessor(ctx, processor, nil)
 			if starts != 1 || finishes != 1 {
 				t.Fatalf("start=%d finish=%d", starts, finishes)
 			}

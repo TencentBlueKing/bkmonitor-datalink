@@ -1,5 +1,8 @@
 # Event 丰富与告警抑制、屏蔽、合并开发方案
 
+> 2026-10-14 更新：本文的 P6 持久投影/动作任务、快照、hash、水位和恢复页面描述均为历史方案，已由[控制面队列输出](control-plane-batch-delivery.md)和[动作 V3](../reference/contracts/kac-action-delivery-v3.md)取代。策略业务 CAS、裁决与审计不在本次删除范围。
+
+
 > 2026-10-08 新决策：[KAC 全局兼容插件](kac-compatibility-plugin.md)统一启用兼容存储和处置通知，
 > Linkd 直接接管原 alarm_event 索引及告警状态，移除逐来源/逐租户目标和 projection_endpoint。
 > 正文按当前实现维护；第 11.1 节中带日期的 HTTP 投影、来源目标及验收记录保留为历史，不能覆盖新实现。
@@ -1242,7 +1245,7 @@ ES 合并文档写入不等待搜索刷新，逐步推进使用实时 GET/CAS；
 `POST /api/v1/projection-tasks/{id}/retry` 恢复失败任务；动作任务使用 `/api/v1/action-deliveries`。
 重试沿用原身份，不创建新的 Alert 或 KAC 文档。完整路径、请求字段及版本要求分别见
 [策略 API](../reference/contracts/policy-api.md)、[运行态 API](../reference/contracts/policy-runtime-api.md)、
-[兼容存储](../reference/contracts/kac-alert-projection-v1.md)和[动作投递](../reference/contracts/kac-action-delivery-v2.md)。
+[兼容存储](../reference/contracts/kac-alert-projection-v1.md)和[动作投递](../reference/contracts/kac-action-delivery-v3.md)。
 
 所有请求显式提供租户并复核对象归属；管理 API 使用 `Internal-Token: Bearer <JWT>`，认证见
 [内部 HTTP JWT 契约](../reference/contracts/internal-token.md)；Worker 内部配置读取使用独立 Worker Token。
@@ -1254,113 +1257,9 @@ Linkd 的编辑、已发布和待发布版本不能直接代表所有 Worker 已
 
 ### 10.2 Hook 分类与 KAC 投影契约
 
-来源装配将 Kafka V1 和活动策略索引 Hook 标记为 `state`，旧 KAC 输入 Hook 标记为 `action`。
-动作 Hook 只接收已获准触发和曾放行告警的终态；状态 Hook 保留屏蔽、合并等独立状态变化。
-已有 Alert 保存可靠动作目标时，旧 KAC Hook 额外跳过输出，避免后续来源重新启用旧 Hook 引起重复
-处置。全局插件为新 Alert 统一绑定 `kac`，同时开启兼容存储与可靠动作，没有逐来源的仅投影配置。
-旧 Hook 的独立边界见[旧 KAC 输出契约](../reference/contracts/kac-alarm-output.md)。
-
-#### 10.2.1 数据关系与权威边界
-
-**KAC alarm_event 是 Linkd Alert 在 KAC 中的兼容投影。** 保留它是为了让现有查询、关联和处置逻辑
-继续工作，不再把它定义为“每来一条 Event 就新增一条 KAC 告警记录”。
-
-```text
-多个 Linkd Event → 一个 Linkd Alert 生命周期 → 一个稳定 KAC alarm_event 投影
-无 Alert 的被抑制 Event → Linkd Event/诊断查询，不创建 KAC alarm_event
-Alert 恢复/关闭/屏蔽/合并变化 → 更新同一条 alarm_event
-```
-
-这里 alarm_event 沿用 KAC 现有 ES 文档/索引的称呼，不代表新增关系型表。
-Linkd 是共享告警事实、生命周期、屏蔽和合并状态的权威端；KAC 保留独有的分派、处理人、工单、通知
-执行记录等业务字段。投影采用字段所有权明确的局部更新，不整篇覆盖 KAC 独有内容。
-
-| 数据                                            | 写入规则                                                                                        |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 稳定身份、初始展示/丰富、当前等级、来源生命周期 | 由 Alert 映射；初始展示仍来自 opening Event                                                     |
-| 屏蔽状态、合并状态、父子关系与终态原因          | 由 Linkd 当前业务状态投影；KAC 不再次执行三类策略                                               |
-| KAC 分派、处理人、工单及执行记录                | 由 KAC 维护，普通同步重试不清空、不重置                                                         |
-| KAC 旧单一 status                               | 通过兼容适配把 Linkd 多个状态维度与 KAC 本地处置态合成为旧读路径需要的值；不能每次重置 received |
-| KAC 发起的人工关闭及策略配置修改                | 分别经 Linkd 生命周期命令或策略 API 生效；KAC 不独立修改共享告警事实                            |
-
-兼容 status 映射、优先级和处置态恢复已实现，唯一权威位置是
-[兼容存储的字段所有权](../reference/contracts/kac-alert-projection-v1.md#索引与字段所有权)。
-普通同步保留 KAC 处置态，生命周期/屏蔽/合并转换按兼容规则更新，解除后恢复保存的处置态。
-KAC 独有处置字段无需反向复制成 Linkd 生命周期字段；KAC 应用仍须适配命令入口与写入边界。
-
-#### 10.2.2 稳定身份、版本与写入
-
-- 新投影使用 `(bk_tenant_id, AlertID)` 唯一定位，alarm_id 为确定性的 `linkd-` 前缀 UUID。
-  不把 UpdateAt、EventID 或本次 outcome 纳入文档身份；内部任务保存 linkd_alert_id 供精确回查。
-- [KAC Alert 兼容存储 V1](../reference/contracts/kac-alert-projection-v1.md)由 Linkd 直接写 ES，
-  后台任务、即时动作入队和全局自动绑定已装配，不要求 KAC 提供状态投影 HTTP 接收端。
-- Alert 使用单调业务 revision。版本、摘要、物理索引、待应用快照及暂存处置态保存在独立隐藏
-  `.linkd-kac-state-<alias摘要>` 索引，不向 KAC 原 mapping 增加 linkd_revision/linkd_alert_id 字段。
-  同版本同内容幂等，低版本不能覆盖高版本，同版本不同内容显式冲突；Repository VersionToken 不作业务版本。
-- 同一 Alert 始终更新同一条投影，包括终态。ES rollover 后要定位该文档真实索引并更新，不因 write alias
-  变化重新创建另一份同 ID 文档；需要稳定路由/文档定位信息及重复投影检测。
-- 初次写入只初始化一次 KAC 本地默认字段。重试不重写首次 storage_time，不把已分派/已关闭状态重置 received。
-
-#### 10.2.3 待同步记录与重试
-
-Alert revision、同步水位、持久化任务、独立补扫/写入循环、失败重试、ACK、未完成任务预算和
-Console 管理已接入正式进程。Linkd Repository 可使用 ES 或 MySQL，兼容文档始终直接写 KAC ES。
-revision 必填且范围为 1..2^53-1；ACK 不推进业务 revision/update_at。source_version 仅记录业务来源版本，
-不参与路由或凭据选择。全局插件开启后，普通与内置来源的新 Alert 均绑定 `kac`；冻结计划和已生成任务
-继续复用原身份及快照。本版不做首次启用回填或旧目标迁移，配置见[全局插件](kac-compatibility-plugin.md)。
-
-补扫每页最多 16 个目标，按租户/Alert/目标分页，包含终态及所有历史桶；ES 归档不等待投影完成。
-归档过渡期间只合并确认水位，不覆盖业务差异。具体仓储约束见[核心存储契约](core-storage-contract.md#投影待办与归档)。
-
-插件无需在 EventSource 或租户中分别声明。同步水位按稳定 target_id 保存；生产内置目标固定为 `kac`。
-采用持久化同步目标及任务，Redis 仅可用于唤醒或加速：
-
-1. Alert 业务变更时，同一次 CAS 递增 revision 并设置 projection.targets[target_id].required_revision；同步 ACK 的元数据更新
-   不递增业务 revision。这样进程在“Alert 已提交、投影任务未生成”之间退出，仍能发现未同步状态。
-2. 投影任务生产器分页扫描 required_revision 大于 synced_revision 的对象，幂等创建待投递任务。
-   身份至少包含租户、AlertID、目标和 revision，保存目标快照及安全错误上下文。
-3. 每个 Alert/目标串行发送，其他 Alert 独立并发；失败退避重试，单次执行有超时和并发上限。
-4. Linkd 兼容写入器确认 ES 文档版本、身份和搜索可见性后推进 synced_revision；
-   先写 ES、后确认本地导致的重试由稳定身份和独立元数据版本收敛。
-5. 自动重试耗尽转为 failed 保留记录，Console 支持按稳定操作身份恢复投递；未确认记录不得按短期窗口 TTL 删除。
-6. 周期补扫修复漏建任务和漏 ACK，并核对投影落后状态；此补扫仅为可靠投影，不重建防抖计数或合并窗口。
-7. Alert 归档到 History 时保留未确认同步标记和投递任务，补扫必须覆盖未完成同步的终态对象；
-   不能只扫描 Active 索引而漏掉恢复/关闭，也不能在必需投递确认前回收唯一的快照与任务。
-
-纯状态同步允许追上当前最新完整快照，不要求 KAC 重演每条中间 Event；有处置语义的动作必须有独立
-持久化 ActionDelivery，不能因状态合并而丢掉。尚未创建投影任务期间源 Alert 已升级/终结，也要最终
-同步当前状态，不能补发一个旧 firing 把 KAC 再次打开。
-
-#### 10.2.4 与处置触发的关系
-
-| 用途           | 输入与保证                                                     |
-| -------------- | -------------------------------------------------------------- |
-| 通用状态观测   | Event 裁决或 Alert/关系变化；Event-only 消息不写入 alarm_event |
-| KAC Alert 投影 | 以 Alert 为主体的有版本状态同步，持久化重试并可查询同步水位    |
-| 处置触发       | 仅本次获准动作，持久化独立投递身份；重复请求由接收方幂等处理   |
-
-KAC 处置依赖对应 alarm_event 已经入库并可查询。ActionDelivery 必须等待所需投影版本确认可见，
-不能仅以消息已发出或 ES HTTP 200 判定可继续；兼容写入器检查写入及 refresh 分片结果并确认搜索可见性。
-同一告警的状态与动作按版本/操作顺序协调；若较新终态已经应用，不能再执行会重新激活它的旧触发动作，
-应记录过期动作跳过原因。单个目标失败不会阻塞其他告警的投递。
-
-已实现独立的 [KAC 动作投递 V1](../reference/contracts/kac-action-delivery-v2.md)：冻结获准动作、
-ES/MySQL 持久任务、与投影共用目标租约、按业务版本执行、投影可见性门槛、HTTP 受理确认和有界重试。
-前序失败保留顺序屏障，较新终态可见后旧 firing 可以跳过；结果不确定时保存标记并重投相同动作身份。
-Lifecycle 已接入与 Alert 业务 CAS 同时持久的 action_pending 及独立 ActionRecorder 端口；全部目标入队
-并确认排序可见前保留原意图，阻止下一业务版本覆盖原动作快照。投影 ACK 仍可更新；清除意图不改变
-revision/update_at。不能将 Record 注册成普通失败后仅记流水的 Hook。详细字段、重试、扫描与归档约束见
-[Lifecycle 原子动作意图](../reference/contracts/kac-action-delivery-v2.md#lifecycle-原子动作意图)。
-动作查询、冻结请求、顺序观察、失败恢复 API 及 Console 页面已接入正式管理入口。
-独立动作补扫/发送、持久投影确认 Gate 与 Console 按需指标、日志定位已实现；
-控制面启动、业务入口即时动作入队和 Lifecycle 全局目标自动绑定均已装配。
-模拟接收端测试不代表真实 KAC 已接入。
-
-当前普通 Hook 失败后只记流水的行为，不足以实现新的 KAC 投影。新可靠投递路径明确注册用途，现行
-Kafka Alert V1 和 KAC Alarm 协议仍按各自版本说明；不能给所有既有插件自动宣称新增保证。
-
-KAC 仍需实现动作接收端、转交生命周期命令并退出旧告警事实写入和索引维护。
-Linkd 直接写兼容 ES 已有本地验收，但真实 KAC 幂等受理、页面查询与并发处置协作仍需联调。
+普通 FinalHook 保持既有行为；全局 KAC 插件开启后不走旧 KAC Kafka Hook。
+业务保存后向 Redis Streams 发布轻量身份通知；控制面合批读取最新 Alert、新建或局部更新 KAC，独立并发发送获准动作。
+主动关闭共用投影通道并同步 refresh。现行字段所有权见[投影契约](../reference/contracts/kac-alert-projection-v1.md)，失败和重启见[动作 V3](../reference/contracts/kac-action-delivery-v3.md)。
 
 ### 10.3 Console 页面
 
@@ -1938,7 +1837,7 @@ Console 增加最新检查事实、逐绑定原因、请求历史和手动复查
 第二十八阶段（2026-10-05）完成可靠投影的独立自动运行器和未完成任务准入预算。
 新任务与人工恢复按租户串行校验 1024 待办上限，满载保留业务水位供后续补扫；既有任务与同命令重试
 不重置元数据。生产、发送和恢复共享四个用例名额，自动扫描/退避/补 ACK 独立运行，轮次统计保留安全错误类别。
-具体规则与当前装配边界见[自动投影运行器](../reference/contracts/kac-alert-projection-v1.md#自动运行器)。
+具体规则与当前装配边界见[自动投影运行器](../reference/contracts/kac-alert-projection-v1.md)。
 
 测试先复现并修正同页生产器自相争抢租户锁的问题：十六条同租户工作曾只推进一条，现按租户分组顺序处理，
 跨租户仍四路并行。页内取消只推进实际尝试前缀，后面的任务可从后续页继续；租约释放失败不能被同一错误链
@@ -1957,7 +1856,7 @@ ES 测试区分实时 GET 可见与写方搜索确认返回，等待工作索引
 游标固定租户和过滤条件。最新恢复记录保存完整原命令和首次受理时间，同 ID 不同内容冲突；
 保留原请求、来源发布引用、创建时间与累计次数，不把恢复受理当作远端同步。
 这仅保存最近一次恢复记录，完整审计历史不在此实现内。具体合同见
-[投影管理查询与人工恢复](../reference/contracts/kac-alert-projection-v1.md#管理查询与人工恢复)。
+[投影管理查询与人工恢复](../reference/contracts/kac-alert-projection-v1.md)。
 
 Console 增加投影任务入口和 Alert 详情关联，冻结快照按需读取；明确区分任务业务版本、任务 CAS、
 远端确认、待本地 ACK 和任务完成。恢复原因和原 CAS/操作 ID 保存在会话中，网络不确定及页面刷新后
@@ -2081,7 +1980,7 @@ Console 构建、Helm 与发布脚本检查。25 份受影响文档的 273 个�
 当前仍待完整 CMDB 目标、可靠投影正式装配、ActionDelivery 和剩余观测页面，不能将本阶段完成等同于整项目标完成。
 
 第三十三阶段（2026-10-06）完成独立 ActionDelivery 基础，协议以
-[KAC 动作投递 V1](../reference/contracts/kac-action-delivery-v2.md)为权威位置。动作由原获准 Alert、
+[KAC 动作投递 V1](../reference/contracts/kac-action-delivery-v3.md)为权威位置。动作由原获准 Alert、
 cause、目标和业务 revision 确定，冻结首次请求与来源 Release；同目标/版本的不同内容不能另建任务。
 firing 还须证明本次 admission 与 update_at/cause 一致，防止把已处置后的普通活动快照当成新动作。
 父人工关闭后的解联保留子真实生命周期和 admission，不产生新 action，仍等下一条触发 Event 再判断。
@@ -2143,7 +2042,7 @@ TestAllInOneEnabledPoliciesE2E 通过真实 Kafka/Redis/ES/MySQL 和正式后台
 26 份受影响文档的 286 个本地链接/锚点和 20 个 JSON 示例校验通过，git diff --check 无错误。
 
 第三十五阶段（2026-10-06）完成 ActionDelivery 管理查询、失败恢复的正式控制面装配和 Console 页面。
-权威协议见[动作投递管理契约](../reference/contracts/kac-action-delivery-v2.md#管理查询与人工恢复)。
+权威协议见[动作投递管理契约](../reference/contracts/kac-action-delivery-v3.md)。
 列表按租户、Alert、目标、来源、动作和阶段筛选，最多四条扫描结果，空筛选页保留绑定条件的游标。
 摘要不含完整快照、endpoint 或凭据；原请求单独加载。恢复仅使用原 CAS/操作身份/操作者/原因，
 不能改写请求、来源发布或累计尝试，不能重启 succeeded/skipped，API 不执行 HTTP 动作投递。
@@ -2178,7 +2077,7 @@ Console 构建、Helm 与发布脚本检查。动作出口正式配置/生产/�
 首次立即执行；每页最多 16 项，两循环共享四个执行名额。同租户入队、同 Alert/目标发送在页内串行。
 扫描失败保留游标，单项失败继续扫描其他记录；取消仅推进已尝试的连续前缀。锁内实时重读只补齐原
 action_pending，不重跑丰富或策略，也不读取最新 Release 改写原目标。完整行为和预算以
-[动作运行器契约](../reference/contracts/kac-action-delivery-v2.md#自动补扫与发送运行器)为准。
+[动作运行器契约](../reference/contracts/kac-action-delivery-v3.md)为准。
 
 动作模块新增本地指标和有界失败日志。指标分开显示运行器实例、页面耗时、工作观察结果、最近页
 年龄/观察时间及此前未确认次数；重复观察不当作唯一动作或 HTTP 请求。实际 Prometheus 抓取验证
@@ -2897,7 +2796,7 @@ EventSource 管理配置和输出。细节以第 8.3 节为唯一权威位置，
 
 KAC 的当前接入工作、完成条件和真实环境验证统一见
 [第 11.2 节 K1—K4](#112-当前能力与剩余差距2026-10-08)。
-动作受理遵守[动作 V1](../reference/contracts/kac-action-delivery-v2.md)，字段所有权遵守
+动作受理遵守[动作 V1](../reference/contracts/kac-action-delivery-v3.md)，字段所有权遵守
 [兼容存储 V1](../reference/contracts/kac-alert-projection-v1.md)；KAC 不再承担状态投影接收与 ACK。
 本版不做首次启用回填或历史状态迁移；真实 KAC 接入尚未完成，不能以本地协议模拟替代。
 
@@ -2963,7 +2862,7 @@ KAC 详情使用可选的全局 Console 模板，不配置时隐藏入口；与�
 ## KAC 接入需求调整（2026-10-08，L1–L4、L6）
 
 本节覆盖前文历史阶段的动作 V1 持久受理和接收端冻结快照约束；历史测试记录保留其当时语义。
-当前权威协议为[动作 V2](../reference/contracts/kac-action-delivery-v2.md)、
+当前权威协议为[动作 V2](../reference/contracts/kac-action-delivery-v3.md)、
 [关闭命令](../reference/contracts/alert-close.md)、[快捷屏蔽](../reference/contracts/policy-api.md#指定-alert-快捷屏蔽)。
 
 L1/L2 保留 Linkd 原动作、持久任务、投影门槛与有界重试，回执改为 queued/task_id；不要求 KAC 账本，

@@ -174,6 +174,84 @@ func TestSignalBackpressureCheckerKeepsPausedStateWhenObservationFails(t *testin
 	}
 }
 
+func TestSignalBackpressureCheckerSamplesWhenDisabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		groups  []redis.XInfoGroup
+		err     error
+		outcome string
+		backlog int64
+	}{
+		{name: "backlog remains observable", groups: []redis.XInfoGroup{{Name: "lifecycle", Lag: 100000, Pending: 7}}, outcome: "sampled", backlog: 100007},
+		{name: "empty queue", groups: []redis.XInfoGroup{{Name: "lifecycle"}}, outcome: "sampled"},
+		{name: "missing group does not pause", groups: []redis.XInfoGroup{{Name: "other"}}, outcome: "group_missing", backlog: -1},
+		{name: "missing stream does not pause", err: backpressureTestRedisError("ERR no such key"), outcome: "group_missing", backlog: -1},
+		{name: "query failure does not pause", err: errors.New("redis unavailable"), outcome: "query_failed", backlog: -1},
+		{name: "unknown lag does not become zero", groups: []redis.XInfoGroup{{Name: "lifecycle", Lag: -1}}, outcome: "lag_unknown", backlog: -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &backpressureTestRedis{groups: tt.groups, err: tt.err}
+			observer := &backpressureTestObserver{}
+			cfg := backpressureTestConfig()
+			cfg.HighWatermark, cfg.LowWatermark = 0, 0
+			now := time.Unix(100, 0)
+			checker, err := newSignalBackpressureChecker(client, cfg, observer, func() time.Time { return now })
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if decision := checker.Check(t.Context()); !decision.Allowed {
+					t.Fatalf("disabled backpressure paused consumption: %+v", decision)
+				}
+			}
+			if client.callCount() != 1 || len(observer.checks) != 1 {
+				t.Fatalf("sampling must use cache: calls=%d observations=%+v", client.callCount(), observer.checks)
+			}
+			if got := observer.checks[0]; got.Outcome != tt.outcome || got.Unresolved != tt.backlog || got.Paused {
+				t.Fatalf("observation=%+v", got)
+			}
+			now = now.Add(cfg.CacheTTL)
+			client.set([]redis.XInfoGroup{{Name: "lifecycle", Lag: 12, Pending: 3}}, nil)
+			if decision := checker.Check(t.Context()); !decision.Allowed || client.callCount() != 2 || len(observer.checks) != 2 || observer.checks[1].Unresolved != 15 {
+				t.Fatalf("resample decision=%+v calls=%d observations=%+v", decision, client.callCount(), observer.checks)
+			}
+			if len(observer.transitions) != 0 {
+				t.Fatalf("disabled backpressure transitioned: %v", observer.transitions)
+			}
+		})
+	}
+}
+
+func TestSignalBackpressureCheckerDisabledSamplingCanBeCanceled(t *testing.T) {
+	client := &backpressureTestRedis{started: make(chan struct{}, 1), release: make(chan struct{})}
+	cfg := backpressureTestConfig()
+	cfg.HighWatermark, cfg.LowWatermark = 0, 0
+	observer := &backpressureTestObserver{}
+	checker, err := newSignalBackpressureChecker(client, cfg, observer, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan ReceiveDecision, 1)
+	go func() { done <- checker.Check(ctx) }()
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("sampling did not start")
+	}
+	cancel()
+	select {
+	case decision := <-done:
+		if !decision.Allowed || len(observer.checks) != 1 || observer.checks[0].Outcome != "query_failed" {
+			t.Fatalf("decision=%+v observations=%+v", decision, observer.checks)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sampling ignored cancellation")
+	}
+}
+
 func TestSignalBackpressureCheckerAllowsConcurrentCallersToUseCache(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})

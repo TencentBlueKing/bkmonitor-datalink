@@ -31,25 +31,17 @@ func payloadAlert(tb testing.TB) domain.Alert {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	a.Projection = domain.AlertProjection{Targets: map[string]domain.ProjectionTargetState{"kac": {SourceVersion: 1, RequiredRevision: 1}}}
 	return a
 }
 
 func TestPreparedAlertReplacementMatchesFullValidation(t *testing.T) {
-	for _, name := range []string{"business", "ack", "json_format", "bad_json", "bad_enrich", "changed_status", "anchor", "revision", "projection", "terminal"} {
+	for _, name := range []string{"business", "json_format", "bad_json", "bad_enrich", "changed_status", "anchor", "revision", "terminal"} {
 		t.Run(name, func(t *testing.T) {
 			current := payloadAlert(t)
 			next := current.Clone()
 			next.UpdateAt = current.UpdateAt.Add(time.Second)
 			next.LatestEventID = "next"
 			switch name {
-			case "ack":
-				next = current.Clone()
-				target := next.Projection.Targets["kac"]
-				target.SyncedRevision = 1
-				at := current.UpdateAt
-				target.SyncedAt = &at
-				next.Projection.Targets["kac"] = target
 			case "json_format":
 				next.ExtraData["data"] = append([]byte(" \n"), next.ExtraData["data"]...)
 			case "bad_json":
@@ -62,10 +54,6 @@ func TestPreparedAlertReplacementMatchesFullValidation(t *testing.T) {
 				next.TriggerEventID = "other"
 			case "revision":
 				next.Revision = 7
-			case "projection":
-				target := next.Projection.Targets["kac"]
-				target.SyncedRevision = 2
-				next.Projection.Targets["kac"] = target
 			case "terminal":
 				current.Status = domain.AlertStatusRecovered
 				at := current.UpdateAt
@@ -80,7 +68,7 @@ func TestPreparedAlertReplacementMatchesFullValidation(t *testing.T) {
 			before, replacement := current.Clone(), next.Clone()
 			full, fullErr := domain.PrepareAlertReplacement(current, next)
 			fast, fastErr := domain.PrepareAlertReplacementFromSnapshot(current, next)
-			wantSuccess := name == "business" || name == "ack" || name == "json_format"
+			wantSuccess := name == "business" || name == "json_format"
 			if (fullErr == nil) != wantSuccess {
 				t.Fatalf("full validation success=%v, want %v: %v", fullErr == nil, wantSuccess, fullErr)
 			}
@@ -94,7 +82,7 @@ func TestPreparedAlertReplacementMatchesFullValidation(t *testing.T) {
 				t.Fatal("preparation mutated inputs")
 			}
 			if name == "business" {
-				if fast.Revision != 2 || fast.Projection.Targets["kac"].RequiredRevision != 2 || current.Projection.Targets["kac"].RequiredRevision != 1 {
+				if fast.Revision != 2 {
 					t.Fatal("revision/projection ownership lost")
 				}
 				next.ExtraData["data"][0] = '!'
@@ -103,26 +91,6 @@ func TestPreparedAlertReplacementMatchesFullValidation(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestAlertComparisonsDoNotMutateProjectionOrPayload(t *testing.T) {
-	a := payloadAlert(t)
-	b := a.Clone()
-	at := a.UpdateAt
-	target := b.Projection.Targets["kac"]
-	target.SyncedRevision = 1
-	target.SyncedAt = &at
-	b.Projection.Targets["kac"] = target
-	left, right := a.Clone(), b.Clone()
-	if !domain.SameAlertBusinessSnapshot(a, b) {
-		t.Fatal("ACK changed business snapshot")
-	}
-	if err := domain.ValidateAlertReplacement(a, b); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(a, left) || !reflect.DeepEqual(b, right) {
-		t.Fatal("comparison mutated snapshots")
 	}
 }
 

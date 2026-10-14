@@ -38,7 +38,7 @@ func (p *Processor) freezePolicies(ctx context.Context, stored store.StoredEvent
 		return store.StoredEvent{}, err
 	}
 	if snapshot.ReasonCode != "" {
-		p.logger.WarnContext(ctx, "event policies skipped", "bk_tenant_id", stored.Event.BKTenantID, "event_id", stored.Event.EventID, "reason", snapshot.ReasonCode)
+		p.logger.WarnContext(ctx, "event policies skipped", "module", "lifecycle", "operation", "freeze_policies", "bk_tenant_id", stored.Event.BKTenantID, "event_id", stored.Event.EventID, "reason", snapshot.ReasonCode)
 	}
 	return p.writeEventCheckpoint(ctx, stored, store.EventResult{State: stored.Processing.State, PolicyContext: snapshot}, "policy_save")
 }

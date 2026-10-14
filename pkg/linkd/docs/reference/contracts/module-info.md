@@ -62,8 +62,7 @@
   "runtime_settings": {},
   "capabilities": {
     "event_sources": {"status": "available", "endpoint": "/api/v1/event-sources"},
-    "policies": {"status": "available", "endpoint": "/api/v1/policies"},
-    "projection_tasks": {"status": "available", "endpoint": "/api/v1/projection-tasks"}
+    "policies": {"status": "available", "endpoint": "/api/v1/policies"}
   }
 }
 ```

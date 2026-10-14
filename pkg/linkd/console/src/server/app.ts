@@ -5,8 +5,6 @@ import { registerPolicyLinkRoutes } from "./policy-links.js";
 import { registerMergeRetryRoutes } from "./merge-retries.js";
 import { registerSuppressionCheckRoutes } from "./suppression-checks.js";
 import { registerSuppressionCleanupRoutes } from "./suppression-cleanups.js";
-import { registerActionDeliveryRoutes } from "./action-deliveries.js";
-import { registerProjectionTaskRoutes } from "./projection-tasks.js";
 import { registerShieldCheckRoutes } from "./shield-checks.js";
 import { internalTokenHeaders } from "./internal-token.js";
 import { registerOneModelRoutes } from "./onemodel.js";
@@ -116,8 +114,6 @@ async function registerConsoleRoutes(
   registerPolicyLinkRoutes(app, config);
   registerPolicyDiagnostics(app, config);
   registerKACAlertLinkRoute(app, config);
-  registerProjectionTaskRoutes(app, config);
-  registerActionDeliveryRoutes(app, config);
   registerDeliveryMetricRoutes(app, config);
   const mergeProxy = createPolicyProxy(config, 16, "合并");
   registerMergeRuntimeRoutes(app, config, mergeProxy);

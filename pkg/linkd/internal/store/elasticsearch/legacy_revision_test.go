@@ -47,14 +47,6 @@ func TestDecodeLegacyAlertRevision(t *testing.T) {
 				{name: "null", revision: json.RawMessage(`null`)},
 				{name: "negative", revision: json.RawMessage(`-1`)},
 				{name: "overflow", revision: json.RawMessage(`9007199254740992`)},
-				{name: "projection_without_revision", modify: func(f map[string]json.RawMessage) {
-					f["projection"] = json.RawMessage(`{"targets":{"kac":{"source_version":1,"required_revision":1}}}`)
-				}},
-				{name: "action_without_revision", modify: func(f map[string]json.RawMessage) {
-					f["action_pending"] = json.RawMessage(`{"revision":1}`)
-					f["action_work"] = json.RawMessage(`true`)
-				}},
-				{name: "projection_work_without_revision", modify: func(f map[string]json.RawMessage) { f["projection_work"] = json.RawMessage(`true`) }},
 				{name: "merge_work_without_revision", modify: func(f map[string]json.RawMessage) { f["merge_work"] = json.RawMessage(`true`) }},
 			} {
 				t.Run(tc.name, func(t *testing.T) {

@@ -40,7 +40,7 @@ func (r *Repository) CreateAlert(ctx context.Context, alert domain.Alert) (store
 	if err != nil {
 		return store.CreateAlertResult{}, err
 	}
-	_, err = r.db.ExecContext(ctx, `INSERT INTO linkd_alerts (bk_tenant_id,alert_id,version,status,event_source_id,fingerprint,severity,latest_event_id,end_type,end_at_ns,active_marker,policy_work,merge_work,projection_work,action_work,payload) VALUES (?,?,1,?,?,?,?,?,NULL,NULL,1,?,?,?,?,?)`, normalized.BKTenantID, normalized.AlertID, normalized.Status, normalized.EventSourceID, normalized.Fingerprint, normalized.Severity, normalized.LatestEventID, store.HasShieldWork(normalized), store.HasMergeWork(normalized), normalized.Projection.Pending(), normalized.ActionPending != nil, payload)
+	_, err = r.db.ExecContext(ctx, `INSERT INTO linkd_alerts (bk_tenant_id,alert_id,version,status,event_source_id,fingerprint,severity,latest_event_id,end_type,end_at_ns,active_marker,policy_work,merge_work,payload) VALUES (?,?,1,?,?,?,?,?,NULL,NULL,1,?,?,?)`, normalized.BKTenantID, normalized.AlertID, normalized.Status, normalized.EventSourceID, normalized.Fingerprint, normalized.Severity, normalized.LatestEventID, store.HasShieldWork(normalized), store.HasMergeWork(normalized), payload)
 	if err == nil {
 		return store.CreateAlertResult{StoredAlert: store.StoredAlert{Alert: normalized.Clone(), Version: versionToken(1)}, Created: true}, nil
 	}
@@ -211,7 +211,7 @@ func (r *Repository) CompareAndSetAlert(ctx context.Context, tenantID, alertID s
 	if normalized.Status.Terminal() {
 		active = nil
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE linkd_alerts SET payload=?,version=?,status=?,latest_event_id=?,end_type=?,end_at_ns=?,active_marker=?,policy_work=?,merge_work=?,projection_work=?,action_work=? WHERE bk_tenant_id=? AND alert_id=? AND version=?`, payload, newVersion, normalized.Status, normalized.LatestEventID, endType, endAt, active, store.HasShieldWork(normalized), store.HasMergeWork(normalized), normalized.Projection.Pending(), normalized.ActionPending != nil, tenantID, alertID, expectedVersion)
+	result, err := tx.ExecContext(ctx, `UPDATE linkd_alerts SET payload=?,version=?,status=?,latest_event_id=?,end_type=?,end_at_ns=?,active_marker=?,policy_work=?,merge_work=? WHERE bk_tenant_id=? AND alert_id=? AND version=?`, payload, newVersion, normalized.Status, normalized.LatestEventID, endType, endAt, active, store.HasShieldWork(normalized), store.HasMergeWork(normalized), tenantID, alertID, expectedVersion)
 	if err != nil {
 		if isDuplicateKey(err) {
 			return store.StoredAlert{}, fmt.Errorf("%w: active fingerprint", store.ErrIdentityConflict)

@@ -3,69 +3,54 @@
 // Copyright (C) 2026 Tencent. All rights reserved.
 // Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
 
-// Package kaccompat 直接维护 KAC alarm_event 索引和兼容文档；不执行告警策略或处置。
-// 版本、物理位置和暂存处置态保存于独立元数据索引，保持 KAC 原 mapping。
+// Package kaccompat 在控制面批量写入 KAC 兼容文档并发送轻量动作。
 package kaccompat
 
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
-	"linkd/internal/projection"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
 )
 
-// Transport 必须传播请求取消、不自动重试写入，并由装配方限制连接数与重定向。
+// Transport 传播调用上下文，连接由 Client 关闭。
 type Transport interface {
 	Perform(*http.Request) (*http.Response, error)
 }
 
-// Relations 读取稳定合并关系身份，供 KAC 兼容关联字段映射；不执行关系裁决。
+// Relations 只读取合并关系，不重新裁决。
 type Relations interface {
 	GetMergeRelation(context.Context, string, string) (domain.MergeRelation, error)
 }
 
-// Client 拥有兼容存储连接；并发由外层投递运行器控制，单次操作遵守调用上下文。
+// Client 复用连接与物理索引缓存，不保存同步版本或回执。
 type Client struct {
-	transport  Transport
-	close      func()
-	config     config.KACPluginConfig
-	stateIndex string
-	level      func(string) (string, error)
-	relations  Relations
-	batch      *elasticsearchstore.WriteBatchTransport
-	refreshMu  sync.Mutex
-	refreshes  map[string]*refreshRound
-	ready      atomic.Bool
+	transport Transport
+	close     func()
+	config    config.KACPluginConfig
+	level     func(string) (string, error)
+	relations Relations
+	mu        sync.Mutex
+	locations map[string]string
 }
 
-// Open 创建独立连接池；Maintain 成功前写入返回依赖未就绪，调用方可独立重试索引维护。Close 应在全部调用退出后执行。
+// Open 装配连接；索引维护和写入使用同一 Client。
 func Open(c config.KACPluginConfig, level func(string) (string, error), relations Relations) (*Client, error) {
-	if err := (config.PluginsConfig{KAC: &c}).Validate(); err != nil {
-		return nil, err
-	}
-	if !c.Enabled || level == nil {
-		return nil, projection.ErrInvalid
-	}
 	c = c.WithDefaults()
 	es := c.Elasticsearch
-	options := elasticsearchstore.HTTPTransportConfig{Addresses: es.Addresses, APIKey: es.APIKey, Timeout: 10 * time.Second, MaxConnectionsPerHost: 0, DisableRedirects: true}
+	options := elasticsearchstore.HTTPTransportConfig{Addresses: es.Addresses, APIKey: es.APIKey, Timeout: 10 * time.Second, DisableRedirects: true}
 	if es.BasicAuth != nil {
-		options.BasicUsername = es.BasicAuth.Username
-		options.BasicPassword = es.BasicAuth.Password
+		options.BasicUsername, options.BasicPassword = es.BasicAuth.Username, es.BasicAuth.Password
 	}
 	tr, err := elasticsearchstore.NewHTTPTransport(options)
 	if err != nil {
@@ -77,16 +62,11 @@ func Open(c config.KACPluginConfig, level func(string) (string, error), relation
 }
 
 func newClient(c config.KACPluginConfig, tr Transport, closeFn func(), level func(string) (string, error)) *Client {
-	// 独立点前缀不能匹配合法 KAC alias 的 {alias}* 模板，避免同步元数据被 KAC ILM 轮转。
-	sum := sha256.Sum256([]byte(c.AlarmEventIndex))
-	return &Client{transport: tr, close: closeFn, config: c.WithDefaults(), stateIndex: ".linkd-kac-state-" + hex.EncodeToString(sum[:16]), level: level, refreshes: map[string]*refreshRound{}}
+	return &Client{transport: tr, close: closeFn, config: c.WithDefaults(), level: level, locations: make(map[string]string)}
 }
 
-// Close 释放专属空闲连接；调用方先取消并等待所有任务退出。
+// Close 在运行器与同步请求退出后释放连接。
 func (c *Client) Close() {
-	if c.batch != nil {
-		c.batch.Close()
-	}
 	if c.close != nil {
 		c.close()
 	}
@@ -94,95 +74,48 @@ func (c *Client) Close() {
 
 type httpFailure struct{ status int }
 
-func (f httpFailure) Error() string { return "KAC compatibility storage request failed" }
+func (f httpFailure) Error() string { return fmt.Sprintf("KAC Elasticsearch HTTP %d", f.status) }
 
 func hasStatus(err error, status int) bool {
-	var f httpFailure
-	return errors.As(err, &f) && f.status == status
+	var failure httpFailure
+	return errors.As(err, &failure) && failure.status == status
 }
 
-func (c *Client) request(ctx context.Context, method, path string, query url.Values, body any, out any) error {
-	var data []byte
+func (c *Client) request(ctx context.Context, method, path string, query url.Values, body, out any) error {
+	var raw []byte
 	var err error
 	if body != nil {
-		data, err = json.Marshal(body)
-		maxBytes := 2 << 20
-		if _, ok := body.(stateDocument); ok && err == nil {
-			data, err = projection.PreserveSnapshot(data, "state", "request")
-			maxBytes = 4 << 20
-		}
-		if err != nil || len(data) > maxBytes {
-			return projection.ErrInvalid
+		raw, err = json.Marshal(body)
+		if err != nil {
+			return err
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(data))
+	return c.requestRaw(ctx, method, path, query, raw, "application/json", out)
+}
+
+func (c *Client) requestRaw(ctx context.Context, method, path string, query url.Values, raw []byte, contentType string, out any) error {
+	request, err := http.NewRequestWithContext(ctx, method, path, bytes.NewReader(raw))
 	if err != nil {
-		return projection.ErrInvalid
+		return err
 	}
-	req.URL.RawQuery = query.Encode()
-	req.Header.Set("Content-Type", "application/json")
-	res, err := c.transport.Perform(req)
+	request.URL.RawQuery = query.Encode()
+	request.Header.Set("Content-Type", contentType)
+	response, err := c.transport.Perform(request)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return projection.Failure{Code: "transport_failed", Retryable: true}
+		return fmt.Errorf("KAC Elasticsearch transport failed")
 	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return httpFailure{res.StatusCode}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return httpFailure{response.StatusCode}
 	}
-	raw, err := io.ReadAll(io.LimitReader(res.Body, 8<<20+1))
-	if err != nil {
-		return projection.Failure{Code: "transport_failed", Retryable: true}
-	}
-	if len(raw) > 8<<20 {
-		return projection.Failure{Code: "response_too_large"}
-	}
-	if out != nil {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		if decoder.Decode(out) != nil {
-			return projection.Failure{Code: "response_invalid"}
-		}
-		var extra any
-		if !errors.Is(decoder.Decode(&extra), io.EOF) {
-			return projection.Failure{Code: "response_invalid"}
-		}
-	}
-	return nil
-}
-
-func classify(err error) error {
-	if err == nil {
-		return nil
-	}
-	var h httpFailure
-	if !errors.As(err, &h) {
+	if out == nil {
+		_, err = io.Copy(io.Discard, response.Body)
 		return err
 	}
-	switch {
-	case h.status == 409:
-		return projection.Failure{Code: "revision_conflict", Retryable: true}
-	case h.status == 401 || h.status == 403:
-		return projection.Failure{Code: "remote_unauthorized"}
-	case h.status == 404 || h.status == 429 || h.status >= 500:
-		return projection.Failure{Code: "remote_unavailable", Retryable: true}
-	default:
-		return projection.Failure{Code: "remote_rejected"}
-	}
-}
-
-func (c *Client) physicalIndex(index string) bool {
-	return validPhysicalName(index) && (strings.HasPrefix(index, c.config.AlarmEventIndex+"-") || strings.HasPrefix(index, c.config.AlarmEventIndex+"_v"))
-}
-
-// EnableWriteBatch 在运行器启动前装配同集群读写合批；不改变每项回执与 CAS。
-func (c *Client) EnableWriteBatch(cfg elasticsearchstore.WriteBatchConfig, observer elasticsearchstore.BatchObserver) error {
-	batch, err := elasticsearchstore.NewWriteBatchTransport(c.transport, cfg, 16<<20, observer)
-	if err != nil {
-		return err
-	}
-	c.batch, c.transport = batch, batch
-	return nil
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 32<<20))
+	decoder.UseNumber()
+	return decoder.Decode(out)
 }

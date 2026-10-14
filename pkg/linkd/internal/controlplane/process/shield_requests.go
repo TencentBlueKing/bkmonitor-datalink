@@ -46,7 +46,7 @@ func runShieldRequests(ctx context.Context, work shieldRequestWork, executor shi
 		if err != nil {
 			code = "shield_requests_failed"
 			if ctx.Err() == nil {
-				logger.WarnContext(ctx, "shield requests failed", "error_code", code, "failed", failed)
+				logger.WarnContext(ctx, "shield requests failed", "module", "controlplane", "operation", "shield_requests", "error", err, "error_code", code, "failed", failed)
 			}
 		}
 		registry.Finish(ctx, "shield-requests", "", "", time.Since(started), count, failed, code)

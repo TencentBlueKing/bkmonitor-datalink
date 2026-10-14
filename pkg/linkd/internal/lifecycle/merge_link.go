@@ -204,9 +204,6 @@ func (p *Processor) commitMergeRelationChange(ctx context.Context, current store
 	if err := freezeMergeFlow(next.MergeChange, &r); err != nil {
 		return store.StoredAlert{}, err
 	}
-	if err := freezeAction(&next, current.Alert.Revision+1, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: operation}, ready); err != nil {
-		return store.StoredAlert{}, err
-	}
 	updated, err := p.compareAndSetAlert(ctx, current, next)
 	if err != nil {
 		return store.StoredAlert{}, err

@@ -107,29 +107,27 @@ type PolicySnapshotter interface {
 }
 
 type Processor struct {
-	contentBuilder           AlertContentBuilder
-	actionRecorder           ActionRecorder
-	projector                AlertProjector
-	initialProjectionTargets map[string]bool
-	shielder                 ShieldEvaluator
-	merger                   MergeEvaluator
-	mergeRelations           MergeRelationReader
-	dependency               DependencyRegistry
-	suppressor               NewAlertSuppressor
-	policies                 PolicySnapshotter
-	repository               store.Repository
-	recentAlerts             RecentAlertCache
-	idGenerator              AlertIDGenerator
-	enricher                 EventEnricher
-	enrichObserver           EnrichObserver
-	phaseObserver            PhaseObserver
-	phaseTiming              *phaseTiming
-	finalHooks               []NamedFinalHook
-	severity                 SeverityTable
-	configDigest             string
-	upgradePolicy            string
-	clock                    Clock
-	logger                   Logger
+	contentBuilder AlertContentBuilder
+	publisher      AlertChangePublisher
+	shielder       ShieldEvaluator
+	merger         MergeEvaluator
+	mergeRelations MergeRelationReader
+	dependency     DependencyRegistry
+	suppressor     NewAlertSuppressor
+	policies       PolicySnapshotter
+	repository     store.Repository
+	recentAlerts   RecentAlertCache
+	idGenerator    AlertIDGenerator
+	enricher       EventEnricher
+	enrichObserver EnrichObserver
+	phaseObserver  PhaseObserver
+	phaseTiming    *phaseTiming
+	finalHooks     []NamedFinalHook
+	severity       SeverityTable
+	configDigest   string
+	upgradePolicy  string
+	clock          Clock
+	logger         Logger
 }
 
 func NewProcessor(
@@ -173,15 +171,6 @@ func NewProcessor(
 	}
 	if processor.contentBuilder == nil {
 		return nil, fmt.Errorf("lifecycle content builder must not be nil")
-	}
-	if len(processor.initialProjectionTargets) > 16 {
-		return nil, fmt.Errorf("projection target budget exceeded")
-	}
-
-	for id, actions := range processor.initialProjectionTargets {
-		if domain.ValidateIdentityPart("target", id, 64) != nil || (actions && processor.actionRecorder == nil) {
-			return nil, fmt.Errorf("invalid initial output target or missing action recorder")
-		}
 	}
 	return processor, nil
 }

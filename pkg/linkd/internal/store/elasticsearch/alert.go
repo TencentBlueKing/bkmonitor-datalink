@@ -553,19 +553,6 @@ func collapseAlertHits(hits []searchHit, bkTenantID, alertID string) (store.Stor
 			continue
 		}
 		if !reflect.DeepEqual(selected.Alert, stored.Alert) {
-			// 归档 create 与 Active 条件删除之间，投影 ACK 可能继续推进。仅水位不同可以选取
-			// 覆盖另一副本全部确认的实际文档；不合成没有真实 CAS token 的虚拟 Alert。
-			left := selected.Alert.Clone()
-			left.Projection = stored.Alert.Projection.Clone()
-			if reflect.DeepEqual(left, stored.Alert) {
-				if _, changed, err := selected.Alert.Projection.MergeAcknowledgments(stored.Alert.Projection); err == nil && !changed {
-					continue
-				}
-				if _, changed, err := stored.Alert.Projection.MergeAcknowledgments(selected.Alert.Projection); err == nil && !changed {
-					selected = stored
-					continue
-				}
-			}
 			return store.StoredAlert{}, fmt.Errorf(
 				"%w: alert %q exists with different content in multiple elasticsearch indices",
 				store.ErrIdentityConflict, alertID,
@@ -605,3 +592,60 @@ func validateAlertIdentity(alert domain.Alert) error {
 }
 
 var _ store.AlertStore = (*Repository)(nil)
+
+// GetAlertsCurrent 使用一次 _mget 读取活动/历史位置，按路由优先级选择当前文档。
+func (r *Repository) GetAlertsCurrent(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	docs := []map[string]string{}
+	positions := []string{}
+	for _, id := range ids {
+		route, err := r.router.AlertRoute(ctx, id)
+		if err != nil {
+			return store.AlertBatch{}, err
+		}
+		seen := map[string]bool{}
+		for _, index := range append([]string{route.WriteTarget}, route.ReadTargets...) {
+			if seen[index] {
+				continue
+			}
+			seen[index] = true
+			docs = append(docs, map[string]string{"_index": index, "_id": documentID(tenant, id)})
+			positions = append(positions, id)
+		}
+	}
+	body, err := marshalRequest(map[string]any{"docs": docs})
+	if err != nil {
+		return store.AlertBatch{}, err
+	}
+	var response struct {
+		Docs []getResponse `json:"docs"`
+	}
+	if err = r.performJSON(ctx, http.MethodPost, "/_mget", url.Values{"realtime": {"true"}}, body, &response); err != nil {
+		return store.AlertBatch{}, err
+	}
+	selected := map[string]store.StoredAlert{}
+	for i, doc := range response.Docs {
+		if !doc.Found {
+			continue
+		}
+		row, err := decodeAlertHit(doc.hit())
+		if err != nil {
+			return store.AlertBatch{}, err
+		}
+		id := positions[i]
+		if row.Alert.BKTenantID != tenant {
+			return store.AlertBatch{}, store.ErrNotFound
+		}
+		if _, ok := selected[id]; !ok {
+			selected[id] = row
+		}
+	}
+	result := store.AlertBatch{}
+	for _, id := range ids {
+		if row, ok := selected[id]; ok {
+			result.Alerts = append(result.Alerts, row)
+		} else {
+			result.NotFound = append(result.NotFound, id)
+		}
+	}
+	return result, nil
+}

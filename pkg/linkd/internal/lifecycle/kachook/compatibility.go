@@ -6,11 +6,13 @@
 package kachook
 
 import (
+	"encoding/json"
+
+	"github.com/google/uuid"
 	"linkd/internal/domain"
 	"linkd/internal/enrich/kingeye"
 	"linkd/internal/enrich/view"
 	"linkd/internal/lifecycle"
-	"linkd/internal/projection"
 )
 
 // CompatibilityPayload 在固定协议字段之外按冻结的 KAC 字段目录输出有效自定义字段。
@@ -33,17 +35,12 @@ func CompatibilityMessage(a domain.Alert, level func(string) (string, error)) (k
 	case domain.AlertStatusClosed:
 		outcome = lifecycle.OutcomeAlertClosed
 	}
-	// 投影快照不携带复查调度时间；仅为领域校验补足，绝不向兼容文档输出此元数据。
-	if a.Shield.Active && a.Shield.NextCheckAt == nil {
-		t := a.UpdateAt
-		a.Shield.NextCheckAt = &t
-	}
 	input := lifecycle.FinalHookInput{Alert: a, Outcome: outcome, Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSystemOperation, ID: a.AlertID}}
 	m, err := convertFieldsWithLevel(input, level, false)
 	if err != nil {
 		return m, err
 	}
-	m.AlarmID, err = projection.AlarmID(a.BKTenantID, a.AlertID)
+	m.AlarmID, err = AlarmID(a.BKTenantID, a.AlertID)
 	if err != nil {
 		return m, err
 	}
@@ -58,4 +55,13 @@ func CompatibilityMessage(a domain.Alert, level func(string) (string, error)) (k
 	m.SourceName = firstNonEmpty(values.source.SourceName, a.EventSourceID)
 	m.SourceID = firstNonEmpty(values.source.SourceID, a.EventSourceID)
 	return m, nil
+}
+
+// AlarmID 由租户与 Alert ID 定位一个 KAC 告警，沿用既有文档身份。
+func AlarmID(tenant, alert string) (string, error) {
+	raw, err := json.Marshal([]string{"linkd:kac-alert-projection:v1", tenant, alert})
+	if err != nil {
+		return "", err
+	}
+	return "linkd-" + uuid.NewSHA1(uuid.NameSpaceURL, raw).String(), nil
 }

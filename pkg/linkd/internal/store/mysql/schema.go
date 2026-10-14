@@ -41,7 +41,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 			return fmt.Errorf("execute mysql schema statement: %w", err)
 		}
 	}
-	for _, column := range []string{"policy_work", "merge_work", "projection_work", "action_work"} {
+	for _, column := range []string{"policy_work", "merge_work"} {
 		if err := r.ensureAlertWorkIndex(ctx, column); err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 
 // 已有表只追加未出现过的控制面工作标记与索引，保留原数据；并发初始化重读确认胜出结果。
 func (r *Repository) ensureAlertWorkIndex(ctx context.Context, column string) error {
-	if column != "policy_work" && column != "merge_work" && column != "projection_work" && column != "action_work" {
+	if column != "policy_work" && column != "merge_work" {
 		return fmt.Errorf("invalid alert work column")
 	}
 	indexName := "idx_linkd_alert_" + column

@@ -21,10 +21,6 @@ import (
 type Alert struct {
 	// Revision 是业务快照的单调版本，首次为 1；与仓储 CAS token 及输出确认元数据无关。
 	Revision int64 `json:"revision"`
-	// Projection 保存可靠投影的目标要求及确认水位；ACK 不推进业务 Revision。
-	Projection AlertProjection `json:"projection"`
-	// ActionPending 保留同次业务写入的获准动作；入队确认前不得推进下一业务版本。
-	ActionPending *AlertActionIntent `json:"action_pending,omitempty"`
 	// EventSourceVersion 是创建时实际使用的不可变来源发布版本。
 	EventSourceVersion int64        `json:"event_source_version"`
 	AlertID            string       `json:"alert_id"`
@@ -137,8 +133,6 @@ func (a Alert) Clone() Alert {
 
 // cloneState 隔离可变状态；动态 JSON 仅由可信不可变快照路径共享。
 func (a Alert) cloneState() Alert {
-	a.ActionPending = a.ActionPending.Clone()
-	a.Projection = a.Projection.Clone()
 	a.PolicyChange = a.PolicyChange.Clone()
 	a.MergeChange = a.MergeChange.Clone()
 	a.Shield = a.Shield.Clone()
@@ -175,12 +169,6 @@ func (a Alert) ValidateState() error {
 		}
 	}
 
-	if err := a.Projection.Validate(a.Revision); err != nil {
-		return err
-	}
-	if err := a.ActionPending.Validate(a); err != nil {
-		return err
-	}
 	if a.Revision < 1 || a.Revision >= 1<<53 {
 		return fmt.Errorf("alert revision must be within 1..2^53-1")
 	}
@@ -402,14 +390,8 @@ func validateAlertReplacementTransition(current, replacement Alert) error {
 	if current.Revision >= 1<<53-1 || replacement.Revision != current.Revision+1 {
 		return fmt.Errorf("business alert replacement must increment revision exactly once")
 	}
-	if err := validateProjectionBusinessReplacement(current, replacement); err != nil {
-		return err
-	}
-	if current.PolicyChange != nil || current.MergeChange != nil || current.ActionPending != nil {
+	if current.PolicyChange != nil || current.MergeChange != nil {
 		return fmt.Errorf("pending policy change must be completed before business mutation")
-	}
-	if err := validateActionTransition(&current, replacement); err != nil {
-		return err
 	}
 	if err := ValidateAlertPolicyReplacement(current, replacement); err != nil {
 		return err
@@ -418,8 +400,6 @@ func validateAlertReplacementTransition(current, replacement Alert) error {
 	left, right := current, replacement
 	clearLifecycle := func(alert *Alert) {
 		alert.Revision = 0
-		alert.Projection = AlertProjection{}
-		alert.ActionPending = nil
 		alert.PolicyChange = nil
 		alert.MergeChange = nil
 		alert.Shield = AlertShield{}

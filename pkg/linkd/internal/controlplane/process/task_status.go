@@ -20,7 +20,6 @@ import (
 	"linkd/internal/dynamicconfig"
 	"linkd/internal/taskdispatch"
 	"linkd/internal/taskdispatch/observation"
-	"linkd/internal/taskgroup"
 	"linkd/internal/telemetry"
 )
 
@@ -116,33 +115,21 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 		task.DisabledReason = "需要 Lifecycle 配置"
 		tasks = append(tasks, task)
 	}
-	limits := taskgroup.WorkConfig{}.WithDefaults()
-	if cfg.ControlPlane != nil {
-		limits = cfg.ControlPlane.Delivery.WithDefaults()
+	delivery := config.KACDeliveryConfig{}.WithDefaults()
+	if cfg.Plugins.KAC != nil {
+		delivery = cfg.Plugins.KAC.Delivery.WithDefaults()
 	}
-	deliveryRuntime := makeTask("kac-delivery", "KAC 可靠投递", "投影与配置", "service", "监督全局 KAC 插件的兼容索引维护、状态写入和处置通知。", hasKACDelivery(cfg), 0, 0, "explicit", map[string]any{"projectionConcurrency": limits.Concurrency, "actionConcurrency": limits.Concurrency})
-	deliveryRuntime.DisabledReason = "需要 Lifecycle 和已启用的 plugins.kac"
-	tasks = append(tasks, deliveryRuntime)
-	for _, spec := range []struct {
-		id, name, description string
-		interval, deadline    float64
-	}{
-		{"kac-index-maintenance", "KAC 兼容索引维护", "维护原 alarm_event 模板、ILM、引导索引与同步元数据索引，不清理历史数据。", 60, 30},
-		{"projection-producer", "KAC 投影补扫", "按既有 Alert 目标水位补齐持久任务，不创建或迁移目标绑定。", 5, 60},
-		{"projection-delivery", "KAC 投影投递", "按原来源版本投递状态并确认本地 ACK；原任务失败后可受控恢复。", 1, 60},
-		{"action-enqueue", "KAC 动作入队", "在正式指纹租约内补齐原动作意图，不重新丰富或判断策略。", 5, 90},
-		{"action-delivery", "KAC 动作投递", "校验持久投影可见性与原版本顺序，发送获准动作并保存受理确认。", 1, 90},
+	for _, spec := range []struct{ id, name, description string }{
+		{"kac-delivery", "KAC 队列投影", "消费 Redis Stream，批量局部更新兼容告警并独立并发发送动作。"},
+		{"kac-index-maintenance", "KAC 兼容索引维护", "维护原 alarm_event 模板、ILM 与字段，不创建同步元数据。"},
 	} {
-		task := makeTask(spec.id, spec.name, "投影与配置", "periodic", spec.description, hasKACDelivery(cfg), spec.interval, spec.deadline, "default", map[string]any{"pageSize": limits.BatchSize, "scanTimeoutSeconds": 5, "executionConcurrency": limits.Concurrency})
+		task := makeTask(spec.id, spec.name, "投影与配置", "service", spec.description, hasKACDelivery(cfg), 0, 0, "explicit", map[string]any{"projectionConcurrency": delivery.ProjectionConcurrency, "actionConcurrency": delivery.ActionConcurrency, "batchSize": delivery.BatchSize})
 		if spec.id == "kac-index-maintenance" {
-			task.Settings = map[string]any{"maxReadIndices": 512, "requestConcurrency": 4}
+			task.Kind = "periodic"
+			task.IntervalSeconds = 60
+			task.DeadlineSeconds = 30
 		}
-		task.DisabledReason = deliveryRuntime.DisabledReason
-		if spec.id == "projection-producer" {
-			task.Enabled = false
-			task.DisabledReason = "Alert 主流程直接投影，后台仅消费失败补偿"
-		}
-		task.DependsOn = []string{"kac-delivery"}
+		task.DisabledReason = "需要 Lifecycle 和已启用的 plugins.kac"
 		tasks = append(tasks, task)
 	}
 	for i := range tasks {

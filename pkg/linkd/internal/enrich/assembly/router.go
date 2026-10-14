@@ -91,7 +91,7 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 			chainKinds[source.EventSourceID] = enrich.ChainNoop
 			continue
 		}
-		chain, err := enrich.NewChain(chainProcessors, dataSources, enrich.WithObserver(settings.observer))
+		chain, err := enrich.NewChain(chainProcessors, dataSources, enrich.WithObserver(settings.observer), enrich.WithLogger(settings.logger))
 		if err != nil {
 			return nil, fmt.Errorf("event_sources[%d].enrich: %w", sourceIndex, err)
 		}

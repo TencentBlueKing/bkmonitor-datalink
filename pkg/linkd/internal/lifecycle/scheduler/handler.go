@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"time"
 
-	"linkd/internal/actiondelivery"
 	"linkd/internal/consume"
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
@@ -37,7 +36,7 @@ type Mailbox interface {
 }
 
 type Logger interface {
-	InfoContext(ctx context.Context, message string, args ...any)
+	DebugContext(ctx context.Context, message string, args ...any)
 	WarnContext(ctx context.Context, message string, args ...any)
 }
 
@@ -82,14 +81,14 @@ func NewHandler(
 func (h *Handler) Handle(ctx context.Context, message consume.Message) (outcome consume.Outcome) {
 	defer func() {
 		if recover() != nil {
-			h.logger.WarnContext(ctx, "lifecycle scheduler operation panicked", "message_id", message.ID, "reason_code", "scheduler_panic")
+			h.logger.WarnContext(ctx, "lifecycle scheduler operation panicked", "module", "lifecycle", "operation", "schedule", "error", processingerror.CapturePanic(), "message_id", message.ID, "reason_code", "scheduler_panic")
 			// Event 处理的 panic 在消息边界终结；队列/租约协议异常不能直接丢弃唤醒。
 			outcome = consume.Defer(h.config.LockRetryDelay)
 		}
 	}()
 	signal, err := DecodeSignal(message.Body)
 	if err != nil {
-		h.logger.WarnContext(ctx, "discard invalid lifecycle mailbox signal", "message_id", message.ID, "reason_code", "invalid_signal")
+		h.logger.WarnContext(ctx, "discard invalid lifecycle mailbox signal", "module", "lifecycle", "operation", "decode_signal", "error", err, "message_id", message.ID, "reason_code", "invalid_signal")
 		return consume.Discard(fmt.Errorf("invalid lifecycle mailbox signal: %w", err))
 	}
 	if h.expectedSource != "" && signal.EventSourceID != h.expectedSource {
@@ -106,6 +105,7 @@ func (h *Handler) Handle(ctx context.Context, message consume.Message) (outcome 
 	}
 	if err != nil {
 		h.observer.LeaseOperation(ctx, "acquire", "failed")
+		h.logger.WarnContext(ctx, "acquire lifecycle mailbox lease failed", "module", "lifecycle", "operation", "lease_acquire", "error", err, "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID, "mailbox_id", signal.MailboxID)
 		return consume.Defer(h.config.LockRetryDelay)
 	}
 	h.observer.LeaseOperation(ctx, "acquire", "succeeded")
@@ -134,7 +134,7 @@ func (h *Handler) Handle(ctx context.Context, message consume.Message) (outcome 
 		_, releaseErr := processingerror.Guard(func() (struct{}, error) { return struct{}{}, h.locker.Release(releaseCtx, lease) })
 		if releaseErr != nil {
 			h.observer.LeaseOperation(ctx, "release", "failed")
-			h.logger.WarnContext(ctx, "release lifecycle mailbox lease failed", "mailbox_id", signal.MailboxID, "reason_code", "lease_release_failed")
+			h.logger.WarnContext(ctx, "release lifecycle mailbox lease failed", "module", "lifecycle", "operation", "lease_release", "error", releaseErr, "mailbox_id", signal.MailboxID, "reason_code", "lease_release_failed")
 		} else {
 			h.observer.LeaseOperation(ctx, "release", "succeeded")
 		}
@@ -145,6 +145,7 @@ func (h *Handler) Handle(ctx context.Context, message consume.Message) (outcome 
 	processed, lastResult, complete, blockErr, processErr := h.drain(workCtx, signal)
 	renewErr := cleanup()
 	if renewErr != nil {
+		h.logger.WarnContext(ctx, "renew lifecycle mailbox lease failed", "module", "lifecycle", "operation", "lease_renew", "error", renewErr, "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID, "mailbox_id", signal.MailboxID)
 		return consume.Defer(h.config.LockRetryDelay)
 	}
 	if blockErr != nil {
@@ -160,7 +161,7 @@ func (h *Handler) Handle(ctx context.Context, message consume.Message) (outcome 
 			eventSourceID = signal.EventSourceID
 		}
 		h.observer.MailboxDrained(ctx, eventSourceID, "completed", processed)
-		h.logger.InfoContext(ctx, "lifecycle mailbox drained", "mailbox_id", signal.MailboxID, "processed", processed,
+		h.logger.DebugContext(ctx, "lifecycle mailbox drained", "module", "lifecycle", "operation", "mailbox_drain", "mailbox_id", signal.MailboxID, "processed", processed,
 			"event_id", lastResult.EventID, "alert_ids", lastResult.AlertIDs, "outcome", lastResult.Outcome)
 		return consume.Complete()
 	}
@@ -179,6 +180,7 @@ func (h *Handler) drain(
 	for processed < h.config.MaxDrainEvents {
 		eventID, peekErr := h.mailbox.Peek(ctx, signal.MailboxID)
 		if peekErr != nil {
+			h.logger.WarnContext(ctx, "read lifecycle mailbox head failed", "module", "lifecycle", "operation", "mailbox_peek", "error", peekErr, "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID, "mailbox_id", signal.MailboxID)
 			h.observer.MailboxOperation(ctx, "", "peek", "failed")
 			return processed, last, false, nil, peekErr
 		}
@@ -186,12 +188,9 @@ func (h *Handler) drain(
 		if eventID == "" {
 			return processed, last, true, nil, nil
 		}
-		stored, result, attempts, processErr := h.processMailboxEvent(ctx, signal, eventID)
+		stored, result, attempts, stage, processErr := h.processMailboxEvent(ctx, signal, eventID)
 		if ctx.Err() != nil {
 			return processed, last, false, nil, ctx.Err()
-		}
-		if actiondelivery.CanDefer(processErr) {
-			return processed, last, false, nil, processErr
 		}
 		h.observer.EventProcessed(ctx, signal.EventSourceID, eventAction(stored.Event.Evaluations), result, processErr)
 		if processErr != nil {
@@ -201,7 +200,9 @@ func (h *Handler) drain(
 			} else if processingerror.Retryable(processErr) && attempts >= processingerror.MaxAttempts {
 				reason = "retry_exhausted"
 			}
-			h.logger.WarnContext(ctx, "discard lifecycle event", "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID, "event_id", eventID, "mailbox_id", signal.MailboxID, "reason_code", reason, "attempts", attempts)
+			h.logger.WarnContext(ctx, "discard lifecycle event", "module", "lifecycle", "operation", stage, "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID,
+				"event_id", eventID, "mailbox_id", signal.MailboxID, "reason_code", reason, "attempts", attempts,
+				"stage", stage, "error", processErr)
 			h.recordFailure(ctx, signal.BKTenantID, eventID, reason)
 			h.observer.MailboxOperation(ctx, signal.EventSourceID, "process", "discarded")
 		} else {
@@ -211,6 +212,7 @@ func (h *Handler) drain(
 			return processed, last, false, nil, ctx.Err()
 		}
 		if ackErr := h.mailbox.AckHead(ctx, signal.MailboxID, eventID); ackErr != nil {
+			h.logger.WarnContext(ctx, "acknowledge lifecycle mailbox head failed", "module", "lifecycle", "operation", "mailbox_ack", "error", ackErr, "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID, "event_id", eventID, "mailbox_id", signal.MailboxID)
 			h.observer.MailboxOperation(ctx, stored.Event.EventSourceID, "ack", "failed")
 			return processed, last, false, nil, ackErr
 		}
@@ -222,19 +224,22 @@ func (h *Handler) drain(
 }
 
 // processMailboxEvent 的重试粒度是具体 Event；每次重读持久检查点，最多三次。
-func (h *Handler) processMailboxEvent(ctx context.Context, signal Signal, id string) (stored store.StoredEvent, result lifecycle.ProcessResult, attempts int, err error) {
+func (h *Handler) processMailboxEvent(ctx context.Context, signal Signal, id string) (stored store.StoredEvent, result lifecycle.ProcessResult, attempts int, stage string, err error) {
 	for attempts = 1; attempts <= processingerror.MaxAttempts; attempts++ {
+		stage = "event_read"
 		stored, err = processingerror.Guard(func() (store.StoredEvent, error) {
 			return readLifecycleEvent(ctx, h.eventReader, signal.BKTenantID, id)
 		})
 		if err == nil {
+			stage = "event_identity"
 			if stored.Event.EventSourceID != signal.EventSourceID || stored.Event.Fingerprint != signal.Fingerprint {
 				err = fmt.Errorf("mailbox event identity mismatch")
 			} else {
+				stage = "event_process"
 				result, err = processingerror.Guard(func() (lifecycle.ProcessResult, error) { return h.processor.ProcessEvent(ctx, stored) })
 			}
 		}
-		if err == nil || ctx.Err() != nil || actiondelivery.CanDefer(err) || !processingerror.Retryable(err) || attempts == processingerror.MaxAttempts {
+		if err == nil || ctx.Err() != nil || !processingerror.Retryable(err) || attempts == processingerror.MaxAttempts {
 			return
 		}
 		timer := time.NewTimer(time.Duration(attempts) * 100 * time.Millisecond)
@@ -271,7 +276,7 @@ func (h *Handler) recordFailure(ctx context.Context, tenant, id, reason string) 
 		return store.StoredEvent{}, store.ErrVersionConflict
 	})
 	if err != nil {
-		h.logger.WarnContext(ctx, "persist discarded event diagnostic failed", "bk_tenant_id", tenant, "event_id", id, "reason_code", "diagnostic_write_failed")
+		h.logger.WarnContext(ctx, "persist discarded event diagnostic failed", "module", "lifecycle", "operation", "persist_rejection", "bk_tenant_id", tenant, "event_id", id, "reason_code", "diagnostic_write_failed", "error", err)
 	}
 }
 

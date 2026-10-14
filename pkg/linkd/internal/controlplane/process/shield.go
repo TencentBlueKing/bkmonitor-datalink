@@ -54,7 +54,7 @@ func runShieldChecks(ctx context.Context, cfg config.Config, checker shieldCheck
 		if err != nil {
 			code = "shield_check_failed"
 			if ctx.Err() == nil {
-				logger.WarnContext(ctx, "shield check failed", "error_code", code, "failed", failed)
+				logger.WarnContext(ctx, "shield check failed", "module", "controlplane", "operation", "shield_check", "error", err, "error_code", code, "failed", failed)
 			}
 		}
 		registry.Finish(ctx, "shield-check", "", "", time.Since(started), count, failed, code)

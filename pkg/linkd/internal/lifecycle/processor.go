@@ -64,15 +64,9 @@ func (p *Processor) createAlertAfterActiveLookup(
 	defer p.measureStep(phaseApply, "alert_create")()
 	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
 		result, err := repository.CreateAlertAfterActiveLookup(ctx, alert)
-		if err == nil {
-			result.StoredAlert = p.projectAlert(ctx, result.StoredAlert)
-		}
 		return result, err
 	}
 	result, err := p.repository.CreateAlert(ctx, alert)
-	if err == nil {
-		result.StoredAlert = p.projectAlert(ctx, result.StoredAlert)
-	}
 	return result, err
 }
 
@@ -94,9 +88,6 @@ func (p *Processor) compareAndSetAlert(
 		updated, err = p.compareAndSetAlertWithoutSnapshot(ctx, current, replacement)
 	}
 	if !errors.Is(err, store.ErrVersionConflict) {
-		if err == nil && updated.Alert.Revision > current.Alert.Revision {
-			updated = p.projectAlert(ctx, updated)
-		}
 		return updated, err
 	}
 	if repairErr := p.repairRecentAlert(ctx, current.Alert.BKTenantID, current.Alert.AlertID); repairErr != nil {
@@ -231,9 +222,6 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		replacement.EndType = endType
 		replacement.EndReason = command.Reason
 		replacement.EndOperation = &operation
-		if err := freezeAction(&replacement, stored.Alert.Revision+1, AlertChangeCause{Type: causeType, ID: command.OperationID}, replacement.Admission.AdmittedAt != nil); err != nil {
-			return CloseAlertResult{}, err
-		}
 		updated, err := p.compareAndSetAlert(ctx, stored, replacement)
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue

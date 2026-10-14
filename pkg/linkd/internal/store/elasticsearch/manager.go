@@ -440,7 +440,6 @@ func (m *Manager) ArchiveTerminalAlerts(
 			map[string]any{"term": map[string]any{"status": domain.AlertStatusActive}},
 			map[string]any{"exists": map[string]any{"field": "merge_change.operation_id"}},
 			map[string]any{"exists": map[string]any{"field": "policy_change.operation_id"}},
-			map[string]any{"term": map[string]any{"action_work": true}},
 		}}},
 		"sort": []any{map[string]any{"alert_id": map[string]any{"order": "asc"}}},
 	}

@@ -55,7 +55,7 @@ func reconcilePolicyPublication(ctx context.Context, service policyRecoverer, af
 		code = "policy_publication_recovery_failed"
 		failed = 1
 		if ctx.Err() == nil {
-			logger.WarnContext(ctx, "policy publication recovery failed", "error_code", code)
+			logger.WarnContext(ctx, "policy publication recovery failed", "module", "controlplane", "operation", "policy_publication", "error", err, "error_code", code)
 		}
 	}
 	elapsed := time.Since(started)

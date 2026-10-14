@@ -75,18 +75,18 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 			continue
 		}
 		step := store.MergeStep{Policy: ref}
-		record := func(outcome, reason string) {
+		record := func(outcome, reason string, causes ...error) {
 			step.Outcome = outcome
 			step.ReasonCode = reason
 			result.Decision.Steps = append(result.Decision.Steps, step)
-			m.observe(ctx, event, step)
+			m.observe(ctx, event, step, causes...)
 		}
 		f, err := m.Loader.load(call, event.BKTenantID, ref)
 		if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 			return result, err
 		}
 		if err != nil {
-			record("skipped", "release_unavailable")
+			record("skipped", "release_unavailable", err)
 			continue
 		}
 		if !f.Compiled.Active(snapshot.EvaluatedAt) {
@@ -94,12 +94,12 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 			continue
 		}
 		if result.Merge != nil && len(result.Merge.Pending) >= 32 {
-			record("skipped", "merge_wait_budget")
+			record("skipped", "merge_wait_budget", err)
 			continue
 		}
 		view, err := policy.EventView(event, evaluation.Severity, f.Compiled.Common.FieldMappings, level, policy.RelationContext{})
 		if err != nil {
-			record("skipped", "event_view_unavailable")
+			record("skipped", "event_view_unavailable", err)
 			continue
 		}
 		verdict, err := m.Loader.evaluate(call, f.Release, f.Compiled, view, m.Loader.Targets, snapshot.EvaluatedAt, false, true)
@@ -110,11 +110,11 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 			return result, err
 		}
 		if err != nil {
-			record("skipped", "evaluation_unavailable")
+			record("skipped", "evaluation_unavailable", err)
 			continue
 		}
 		if !verdict.Evaluated {
-			record("skipped", verdict.Reason)
+			record("skipped", verdict.Reason, err)
 			continue
 		}
 		if !verdict.Matched {
@@ -122,7 +122,7 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 			continue
 		}
 		if m.State == nil {
-			record("skipped", "merge_state_unavailable")
+			record("skipped", "merge_state_unavailable", err)
 			continue
 		}
 		groups := []int{}
@@ -136,7 +136,7 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 			return result, ctx.Err()
 		}
 		if err != nil {
-			record("skipped", "merge_join_unavailable")
+			record("skipped", "merge_join_unavailable", err)
 			continue
 		}
 		window, found, err := m.State.ReadMergeWindow(call, event.BKTenantID, wait.WindowID)
@@ -144,12 +144,12 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 			return result, ctx.Err()
 		}
 		if err != nil || !found || window.Policy != wait.Policy || window.GroupKey != wait.GroupKey {
-			record("skipped", "merge_window_unavailable")
+			record("skipped", "merge_window_unavailable", err)
 			continue
 		}
 		// 冻结发生在候选 CAS 之前时不把已裁决窗口重新挂回告警。CAS 之后的竞态由原截止时间及控制面补偿。
 		if window.Frozen != nil {
-			record("skipped", "merge_window_decided")
+			record("skipped", "merge_window_decided", err)
 			continue
 		}
 		if result.Merge == nil {
@@ -195,7 +195,7 @@ func (m *Merger) Confirm(ctx context.Context, event domain.Event, decision *stor
 	return nil
 }
 
-func (m *Merger) observe(ctx context.Context, event domain.Event, step store.MergeStep) {
+func (m *Merger) observe(ctx context.Context, event domain.Event, step store.MergeStep, causes ...error) {
 	if step.Outcome == "skipped" {
 		m.Loader.fault(ctx, event.BKTenantID, "merge", step.Policy.ID)
 	}
@@ -203,6 +203,6 @@ func (m *Merger) observe(ctx context.Context, event domain.Event, step store.Mer
 		m.Observer.ObserveMerge(ctx, step.Outcome, step.ReasonCode)
 	}
 	if step.Outcome == "skipped" && m.Logger != nil {
-		m.Logger.WarnContext(ctx, "merge policy skipped", "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "policy_id", step.Policy.ID, "policy_version", step.Policy.Version, "reason", step.ReasonCode)
+		m.Logger.WarnContext(ctx, "merge policy skipped", "module", "policy", "operation", "merge_evaluate", "error", errors.Join(causes...), "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "policy_id", step.Policy.ID, "policy_version", step.Policy.Version, "reason", step.ReasonCode)
 	}
 }

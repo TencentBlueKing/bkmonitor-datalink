@@ -7,7 +7,7 @@ Linkd 是独立的 Go 告警接入和生命周期处理项目。当前领域事�
 
 项目处于早期开发阶段，没有稳定 Go API 或历史版本兼容承诺。当前配置、领域身份和物理资源直接描述
 当前实现；早期草案中的 `AlertEvent`、固定 RawEvent 映射、
-`severity_priority` 和 `terminal_event_id` 不属于当前模型。Alert 的业务 `revision` 已用于可靠同步和动作排序。
+`severity_priority` 和 `terminal_event_id` 不属于当前模型。Alert 的业务 `revision` 用于生命周期 CAS 与稳定动作身份。
 
 ## 当前链路
 
@@ -24,9 +24,9 @@ MQ delivery
   → Event Enrich 并 CAS 冻结结果、策略版本与裁决上下文
   → Elasticsearch Recent Alert 缓存优先裁决
   → 新告警抑制 / Alert 生命周期 / 屏蔽判定 / 合并入窗 / 处置准入
-  → Alert / AlertLog / 状态输出及持久动作意图
+  → Alert / AlertLog / 轻量 Redis Streams 通知
   → 控制面独立推进屏蔽复查、合并裁决及父子关系
-  → 全局 KAC 插件直接维护 alarm_event，确认可搜索后可靠通知获准动作
+  → 控制面 64 通道批量写 KAC → 独立 refresh 与 64 并发动作投递
 ```
 
 - Event 使用 evaluations 记录多个级别的 `triggered | resolved | closed` 判定，values 记录本次数值。
@@ -39,7 +39,7 @@ MQ delivery
   生命周期、屏蔽、合并、处置准入和同步水位分别保存。定时解除屏蔽或父关闭解联只更新关系，等待下一条触发 Event。
 - `plugins.kac` 全局开启兼容存储和处置通知，覆盖普通来源、内置合并来源及各租户；
   `alarm_event` 沿用 KAC 原索引定义，一个 Alert 生命周期对应一条稳定文档。
-  普通来源 Hook（Kafka V1 / Redis 活跃策略索引等）保留自己的输出保证；已绑定可靠动作的 Alert 跳过旧 KAC Kafka Hook。
+  普通来源 Hook（Kafka V1 / Redis 活跃策略索引等）保留自己的输出保证；全局 KAC 插件启用时跳过旧 KAC Kafka Hook。
 - MySQL 和 Elasticsearch 都只承诺单对象 CAS；跨对象步骤依赖稳定身份和幂等流水恢复。Cleaner 确认
   原消息后不再扫描 Event 补发 Signal，因此 Redis Mailbox 必须依靠自身持久化和复制保证已确认数据。
 - Elasticsearch Event create 使用 `refresh=false`；Cleaner 在主分片确认后入 Mailbox，Lifecycle 和重复
@@ -167,3 +167,5 @@ Linkd Console 使用独立镜像，在当前目录执行 `make console-image IMA
 
 GitHub Actions 支持手动选择构建 Linkd、Console 或两个镜像并推送到 GHCR；没有自动触发事件。
 参数、权限和版本标签约定见 [手动构建与发布镜像](docs/guides/image-release.md)。
+
+KAC 输出的重启边界和真实本地验收见[输出 V3 验收记录](docs/research/2026-10-14-kac-output-v3-validation.md)。

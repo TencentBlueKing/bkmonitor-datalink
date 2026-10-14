@@ -26,15 +26,17 @@ type PluginsConfig struct {
 	KAC *KACPluginConfig `yaml:"kac,omitempty" json:"kac,omitempty"`
 }
 
-// KACPluginConfig 同时启用直接维护 alarm_event 和可靠处置通知，覆盖全部来源及租户。
+// KACPluginConfig 同时启用直接维护 alarm_event 和处置通知，覆盖全部来源及租户。
 type KACPluginConfig struct {
+	// Delivery 控制队列展批、投影及动作并发。
+	Delivery KACDeliveryConfig `yaml:"delivery" json:"delivery"`
 	// Enabled 一并启用兼容存储与处置通知，不提供逐租户或逐来源开关。
 	Enabled bool `yaml:"enabled" json:"enabled"`
-	// Elasticsearch 指向原 KAC 集群，与 Linkd Repository 的连接相互独立。
+	// Elasticsearch 指向KAC 集群，与 Linkd Repository 的连接相互独立。
 	Elasticsearch KACElasticsearchConfig `yaml:"elasticsearch" json:"elasticsearch"`
 	// AlarmEventIndex 是 KAC 原查询/写入 alias，不能使用 Linkd Repository 的索引前缀替代。
 	AlarmEventIndex string `yaml:"alarm_event_index" json:"alarm_event_index"`
-	// ActionEndpoint 必须实现动作 V2 的持久幂等受理，不得指向旧告警 pipeline。
+	// ActionEndpoint 使用轻量 V3 动作协议，不得指向旧告警 pipeline。
 	ActionEndpoint string `yaml:"action_endpoint" json:"action_endpoint"`
 	// JWT 保存 KAC 的签名密钥与调用身份；每次投递重新签发，不保存已签发 Token。
 	JWT JWTConfig `yaml:"jwt" json:"jwt"`
@@ -51,7 +53,7 @@ type KACElasticsearchConfig struct {
 	BasicAuth *ResourceBasicAuth `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
 	// NumberOfShards 首次创建模板时的主分片数，缺省 3。
 	NumberOfShards int `yaml:"number_of_shards,omitempty" json:"number_of_shards,omitempty"`
-	// NumberOfReplicas 首次创建模板及元数据索引的副本数，nil 为 2，允许显式 0。
+	// NumberOfReplicas 首次创建模板的副本数，nil 为 2，允许显式 0。
 	NumberOfReplicas *int `yaml:"number_of_replicas,omitempty" json:"number_of_replicas,omitempty"`
 	// MaxResultWindow 首次创建模板时的查询窗口上限，缺省 50000。
 	MaxResultWindow int `yaml:"max_result_window,omitempty" json:"max_result_window,omitempty"`
@@ -66,6 +68,7 @@ func (c PluginsConfig) KACEnabled() bool { return c.KAC != nil && c.KAC.Enabled 
 
 // WithDefaults 使用 KAC 源码的索引默认参数；连接和 alias 必须由部署显式提供。
 func (c KACPluginConfig) WithDefaults() KACPluginConfig {
+	c.Delivery = c.Delivery.WithDefaults()
 	if c.JWT.Username == "" {
 		c.JWT.Username = "admin"
 	}
@@ -99,6 +102,9 @@ func (c PluginsConfig) Validate() error {
 	v := c.KAC.WithDefaults()
 	if !v.Enabled {
 		return nil
+	}
+	if err := v.Delivery.Validate(); err != nil {
+		return err
 	}
 	if !kacIndexName.MatchString(v.AlarmEventIndex) || strings.Contains(v.AlarmEventIndex, "..") {
 		return fmt.Errorf("plugins.kac.alarm_event_index is invalid")
@@ -168,4 +174,46 @@ func kacEndpointOrigin(raw string, onlyOrigin bool) (string, error) {
 		return "", fmt.Errorf("invalid KAC port")
 	}
 	return u.Scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), strconv.Itoa(n)), nil
+}
+
+// KACDeliveryConfig 只限制进程内批次与并发，不限制 Stream 持久积压量。
+type KACDeliveryConfig struct {
+	ProjectionConcurrency int `yaml:"projection_concurrency" json:"projection_concurrency"`
+	BatchSize             int `yaml:"batch_size" json:"batch_size"`
+	BatchWaitMilliseconds int `yaml:"batch_wait_ms" json:"batch_wait_ms"`
+	MaxBatchBytes         int `yaml:"max_batch_bytes" json:"max_batch_bytes"`
+	ActionConcurrency     int `yaml:"action_concurrency" json:"action_concurrency"`
+	ActionBuffer          int `yaml:"action_buffer" json:"action_buffer"`
+}
+
+// WithDefaults 使用 64 投影通道与独立的 64 动作并发。
+func (c KACDeliveryConfig) WithDefaults() KACDeliveryConfig {
+	if c.ProjectionConcurrency == 0 {
+		c.ProjectionConcurrency = 64
+	}
+	if c.BatchSize == 0 {
+		c.BatchSize = 500
+	}
+	if c.BatchWaitMilliseconds == 0 {
+		c.BatchWaitMilliseconds = 10
+	}
+	if c.MaxBatchBytes == 0 {
+		c.MaxBatchBytes = 4 << 20
+	}
+	if c.ActionConcurrency == 0 {
+		c.ActionConcurrency = 64
+	}
+	if c.ActionBuffer == 0 {
+		c.ActionBuffer = 10000
+	}
+	return c
+}
+
+// Validate 只在配置入口检查资源参数。
+func (c KACDeliveryConfig) Validate() error {
+	c = c.WithDefaults()
+	if c.ProjectionConcurrency < 1 || c.BatchSize < 1 || c.BatchWaitMilliseconds < 1 || c.MaxBatchBytes < 1024 || c.ActionConcurrency < 1 || c.ActionBuffer < 1 {
+		return fmt.Errorf("plugins.kac.delivery budgets must be positive")
+	}
+	return nil
 }

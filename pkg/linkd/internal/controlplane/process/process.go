@@ -366,14 +366,14 @@ func newAlertArchiveTask(
 						effectiveLimit = max(1, effectiveLimit/2)
 						logger.WarnContext(
 							ctx,
-							"alert archive scan exceeded response limit; reducing batch",
+							"alert archive scan exceeded response limit; reducing batch", "module", "controlplane", "operation", "alert_archive",
 							"task", taskName,
 							"effective_batch_size", effectiveLimit,
 							"error", err,
 						)
 						continue
 					}
-					logger.ErrorContext(ctx, "alert archive batch failed", "task", taskName, "error", err)
+					logger.ErrorContext(ctx, "alert archive batch failed", "module", "controlplane", "operation", "alert_archive", "task", taskName, "error", err)
 					if !waitForArchiveRetry(ctx, settings.ArchiveInterval()) {
 						return nil
 					}
@@ -398,7 +398,7 @@ func newAlertArchiveTask(
 				if result.Failed > 0 {
 					logger.WarnContext(
 						ctx,
-						"alert archive batch contains isolated failures",
+						"alert archive batch contains isolated failures", "module", "controlplane", "operation", "alert_archive",
 						"task", taskName,
 						"failed", result.Failed,
 						"failure_samples", result.FailureItems,

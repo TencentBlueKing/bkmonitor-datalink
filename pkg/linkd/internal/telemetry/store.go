@@ -452,16 +452,6 @@ var _ store.LifecycleAlertStore = (*observedRepository)(nil)
 var _ store.LifecycleEventStore = (*observedRepository)(nil)
 
 // ListProjectionWork 保留归档后终态及逐目标补扫语义。
-func (r *observedRepository) ListProjectionWork(ctx context.Context, after store.ProjectionWorkCursor, limit int) (store.ProjectionWorkPage, error) {
-	next, ok := r.next.(store.ProjectionWorkStore)
-	if !ok {
-		return store.ProjectionWorkPage{}, store.ErrInvalidArgument
-	}
-	started := time.Now()
-	result, err := next.ListProjectionWork(ctx, after, limit)
-	r.record(ctx, "alert", "projection_work", started, err)
-	return result, err
-}
 
 // ListMergeWork 保留持久化窗口及意图的逐项分页语义。
 func (r *observedRepository) ListMergeWork(ctx context.Context, after store.MergeWorkCursor, limit int) (store.MergeWorkPage, error) {
@@ -476,16 +466,6 @@ func (r *observedRepository) ListMergeWork(ctx context.Context, after store.Merg
 }
 
 // ListActionWork 保留动作意图的有界分页语义。
-func (r *observedRepository) ListActionWork(ctx context.Context, after store.ActionWorkCursor, limit int) (store.ActionWorkPage, error) {
-	next, ok := r.next.(store.ActionWorkStore)
-	if !ok {
-		return store.ActionWorkPage{}, store.ErrInvalidArgument
-	}
-	started := time.Now()
-	result, err := next.ListActionWork(ctx, after, limit)
-	r.record(ctx, "alert", "action_work", started, err)
-	return result, err
-}
 
 // ListShieldAlerts 保留管理查询的明确租户范围及未来待检查绑定。
 func (r *observedRepository) ListShieldAlerts(ctx context.Context, tenant, after string, limit int) (store.ShieldAlertPage, error) {
@@ -533,17 +513,4 @@ func (r *observedRepository) ListShieldDependents(ctx context.Context, tenant, m
 	result, err := next.ListShieldDependents(ctx, tenant, main, after, limit)
 	r.record(ctx, "alert", "shield_dependents", started, err)
 	return result, err
-}
-
-// AcknowledgeProjection 保留局部 ACK 能力及其独立指标，不降级为整篇 Alert 替换。
-func (r *observedRepository) AcknowledgeProjection(ctx context.Context, ack store.ProjectionAcknowledgment) error {
-	started := time.Now()
-	var err error
-	if next, ok := r.next.(store.ProjectionAcknowledger); ok {
-		err = next.AcknowledgeProjection(ctx, ack)
-	} else {
-		err = store.AcknowledgeProjection(ctx, r.next, ack)
-	}
-	r.record(ctx, "alert", "projection_ack", started, err)
-	return err
 }

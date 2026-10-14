@@ -16,6 +16,9 @@ import (
 	"log/slog"
 	"testing"
 	"time"
+
+	"linkd/internal/config"
+	"linkd/internal/controlplane/taskstate"
 )
 
 type indexMaintainerFunc func(context.Context) error
@@ -58,4 +61,19 @@ func TestKACIndexFailureRemainsObservedWithoutStoppingRuntime(t *testing.T) {
 	if deliveryTask(t, registry, "kac-index-maintenance").Active {
 		t.Fatal("cancelled maintenance stayed active")
 	}
+}
+
+func deliveryConfigFixture() config.Config {
+	return config.Config{Lifecycle: &config.LifecycleConfig{}, Plugins: config.PluginsConfig{KAC: &config.KACPluginConfig{Enabled: true, ActionEndpoint: "https://kac.example/action", JWT: config.JWTConfig{SecretKey: "private-token"}}}}
+}
+
+func deliveryTask(t *testing.T, r *taskstate.Registry, id string) taskstate.Task {
+	t.Helper()
+	for _, task := range r.Snapshot().Tasks {
+		if task.ID == id {
+			return task
+		}
+	}
+	t.Fatal("missing task", id)
+	return taskstate.Task{}
 }

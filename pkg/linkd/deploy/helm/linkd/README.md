@@ -24,6 +24,8 @@ Chart 版本为 `0.1.12`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/t
 - [异步 migrate Job](examples/migrate-async.yaml)：默认等待模式使用 pre-install/pre-upgrade Hook，watch=false 使用普通 Job。
 - [ServiceMonitor 指标采集](examples/servicemonitor.yaml)：覆盖 Control Plane 和全部 worker 组的 `/metrics`。
 
+Cleaner 的下游背压默认开启，`configuration.lifecycle.mailbox.backpressure` 的高低水位为 2048/1024，可在 values 中覆盖；0/0 关闭控制，仍保留积压采样。采用已有配置 Secret 时设置 `configuration: null` 清除 Chart 内联默认值，并在 Secret 内自行配置水位。
+
 在模块根目录执行 `make helm-check`。需要 Helm 3、Node.js、已安装的 Console 依赖和 Go。
 测试只构建配置校验器、执行本地渲染和校验，不连接 Kubernetes 或中间件。
 

@@ -38,7 +38,7 @@ type loggedMergeExecutor struct {
 func (l loggedMergeExecutor) Execute(ctx context.Context, r mergeflow.RetryRequest) error {
 	err := l.executor.Execute(ctx, r)
 	if err != nil && ctx.Err() == nil && !mergeflow.RetryCanDefer(err) {
-		l.logger.WarnContext(ctx, "merge request execution failed", "bk_tenant_id", r.Command.TenantID, "kind", r.Command.Kind, "target_id", r.Command.TargetID, "window_id", r.WindowID, "request_id", r.ID, "error_code", "merge_execution_failed")
+		l.logger.WarnContext(ctx, "merge request execution failed", "module", "controlplane", "operation", "merge_request_execute", "error", err, "bk_tenant_id", r.Command.TenantID, "kind", r.Command.Kind, "target_id", r.Command.TargetID, "window_id", r.WindowID, "request_id", r.ID, "error_code", "merge_execution_failed")
 	}
 	return err
 }
@@ -107,7 +107,7 @@ func runMergeRequests(ctx context.Context, work mergeRequestWork, executor merge
 		if err != nil {
 			code = "merge_requests_failed"
 			if ctx.Err() == nil {
-				logger.WarnContext(ctx, "merge requests failed", "error_code", code, "failed", failed)
+				logger.WarnContext(ctx, "merge requests failed", "module", "controlplane", "operation", "merge_requests", "error", err, "error_code", code, "failed", failed)
 			}
 		}
 		registry.Finish(ctx, "merge-requests", "", "", time.Since(start), n, failed, code)

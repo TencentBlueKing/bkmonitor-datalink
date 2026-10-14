@@ -57,13 +57,15 @@ func sourceStreamErrorCode(err error) string {
 
 func logSourceStreamFailure(ctx context.Context, logger *slog.Logger, source string, duration time.Duration, err error) {
 	operation := "unknown"
+	cause := err
 	var failure *streams.OperationError
 	if errors.As(err, &failure) {
+		cause = failure.Err
 		switch failure.Operation {
 		case "EXISTS", "XINFO STREAM", "XINFO GROUPS", "MEMORY USAGE", "XPENDING", "XTRIM":
 			operation = failure.Operation
 		}
 	}
-	logger.WarnContext(ctx, "source stream reconcile failed", "event_source_id", source,
+	logger.WarnContext(ctx, "source stream reconcile failed", "module", "controlplane", "error", cause, "event_source_id", source,
 		"operation", operation, "error_code", sourceStreamErrorCode(err), "duration_ms", duration.Milliseconds())
 }

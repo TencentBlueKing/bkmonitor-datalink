@@ -10,21 +10,22 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
-	"linkd/internal/actiondelivery"
 	"linkd/internal/consume"
 	"linkd/internal/domain"
 	"linkd/internal/enrich/description"
 	"linkd/internal/lifecycle"
 	"linkd/internal/processingerror"
-	"linkd/internal/projection"
 	"linkd/internal/store"
 )
 
@@ -46,6 +47,60 @@ func TestContentFailureDiscardsAndDrainsLaterEvents(t *testing.T) {
 		if out.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 || len(processor.ids) != expected {
 			t.Fatal(out, mailbox.ids, processor.ids)
 		}
+	}
+}
+
+func TestHandlerLogsDiscardCause(t *testing.T) {
+	contentErr := fmt.Errorf("build alert content: resolve description facts: %w", &description.Error{Code: "nodata_evidence_missing"})
+	for _, tc := range []struct {
+		name     string
+		failure  error
+		stage    string
+		reason   string
+		attempts float64
+	}{
+		{name: "content failure", failure: contentErr, stage: "event_process", reason: "processing_failed", attempts: 1},
+		{name: "read failure", failure: store.ErrNotFound, stage: "event_read", reason: "processing_failed", attempts: 1},
+		{name: "identity mismatch", failure: errors.New("mailbox event identity mismatch"), stage: "event_identity", reason: "processing_failed", attempts: 1},
+		{name: "retry exhausted", failure: processingerror.RetryableError{Err: processingerror.HTTPStatus(502)}, stage: "event_process", reason: "retry_exhausted", attempts: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mailbox := &fakeMailbox{ids: []string{"event-1"}}
+			h := newMailboxHandler(t, mailbox, &fakeProcessor{err: tc.failure}, &fakeLocker{}, 512)
+			reader := h.eventReader.(*fakeEventReader)
+			stored := reader.events["event-1"]
+			stored.Event.Content = "private alert content"
+			if tc.stage == "event_identity" {
+				stored.Event.Fingerprint = "other"
+			}
+			reader.events["event-1"] = stored
+			if tc.stage == "event_read" {
+				delete(reader.events, "event-1")
+			}
+			var logs bytes.Buffer
+			h.logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			out := h.Handle(t.Context(), signalMessage(t, testEvent("event-1")))
+			if out.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 {
+				t.Fatalf("outcome=%#v mailbox=%v", out, mailbox.ids)
+			}
+			var entry map[string]any
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil {
+				t.Fatal(err)
+			}
+			for field, expected := range map[string]any{
+				"msg": "discard lifecycle event", "module": "lifecycle", "operation": tc.stage, "error": tc.failure.Error(), "stage": tc.stage,
+				"reason_code": tc.reason, "attempts": tc.attempts, "bk_tenant_id": "tenant-1",
+				"event_source_id": "source-1", "event_id": "event-1",
+				"mailbox_id": NewSignal(testEvent("event-1"), time.Unix(100, 0)).MailboxID,
+			} {
+				if entry[field] != expected {
+					t.Errorf("log field %s=%v, want %v", field, entry[field], expected)
+				}
+			}
+			if strings.Contains(logs.String(), stored.Event.Content) {
+				t.Fatal("discard log contains alert content")
+			}
+		})
 	}
 }
 
@@ -134,40 +189,6 @@ func TestHandlerDefersBusyLeaseWithoutRetry(t *testing.T) {
 	outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
 	if outcome.Kind != consume.OutcomeDefer || outcome.RetryAfter != DefaultConfig().LockRetryDelay {
 		t.Fatalf("outcome=%#v", outcome)
-	}
-}
-
-func TestHandlerDefersActionBackpressureAndPreservesMailbox(t *testing.T) {
-	backendErr := errors.New("lease release failed")
-	for _, tc := range []struct {
-		name string
-		err  error
-		want consume.OutcomeKind
-	}{
-		{"action visibility", actiondelivery.ErrBusy, consume.OutcomeDefer},
-		{"action capacity", actiondelivery.ErrCapacity, consume.OutcomeDefer},
-		{"admission lock", fmt.Errorf("record action: %w", projection.ErrBusy), consume.OutcomeDefer},
-		{"joined waits", errors.Join(actiondelivery.ErrBusy, projection.ErrBusy), consume.OutcomeDefer},
-		{"mixed infrastructure", errors.Join(actiondelivery.ErrBusy, backendErr), consume.OutcomeComplete},
-		{"upstream cancelled but task active", errors.Join(actiondelivery.ErrBusy, context.Canceled), consume.OutcomeComplete},
-		{"invalid action", actiondelivery.ErrInvalid, consume.OutcomeComplete},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			mailbox := &fakeMailbox{ids: []string{"event-1", "event-2"}}
-			processor := &fakeProcessor{err: tc.err}
-			handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
-			outcome := handler.Handle(t.Context(), signalMessage(t, testEvent("event-1")))
-			if outcome.Kind != tc.want || (tc.want == consume.OutcomeDefer && (len(mailbox.ids) != 2 || mailbox.ids[0] != "event-1")) || (tc.want == consume.OutcomeComplete && len(mailbox.ids) != 0) {
-				t.Fatalf("outcome=%v mailbox=%v", outcome, mailbox.ids)
-			}
-			if tc.want == consume.OutcomeDefer && outcome.RetryAfter != DefaultConfig().LockRetryDelay {
-				t.Fatalf("unbounded hot retry: %v", outcome.RetryAfter)
-			}
-			processor.err = nil
-			if next := handler.Handle(t.Context(), signalMessage(t, testEvent("event-1"))); next.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 {
-				t.Fatalf("recovery outcome=%v mailbox=%v", next, mailbox.ids)
-			}
-		})
 	}
 }
 

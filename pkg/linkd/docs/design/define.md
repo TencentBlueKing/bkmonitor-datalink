@@ -168,7 +168,7 @@ ACK 不改写时间，超过要求的 ACK 拒绝，过期来源发布引用的 A
 - 业务变更的 `update_at` 必须严格大于旧快照，`revision` 必须为旧值加一；每个已绑定目标的 required_revision 同一次 CAS 推进到该版本。同一 Event 幂等重投不推进二者；
 - 完成 policy_change/merge_change、向后安排 next_check_at 或确认投影的白名单元数据 CAS 不改变业务 revision/update_at，但仓储 VersionToken 改变；
 - active Alert 不得包含 end 字段；终态 Alert 必须包含合法 end_at/end_type；
-- recovered/closed 的业务事实不可再修改或重新打开；只允许完成已经记录的状态输出意图和确认投影水位，同一问题再次发生时创建新的 Alert；
+- recovered/closed 的业务事实不可再修改或重新打开；只允许补齐业务流水并重新发布状态通知，同一问题再次发生时创建新的 Alert；
 - 存在未完成 `policy_change` 时先补齐输出尝试和流水，再推进下一次业务变更；绑定不能以同一 ID 更换主告警、版本或起点；
 - 后续 Event 与 Alert 的继承字段差异不会改写 Alert，需要最新来源描述时按 latest_event_id 回查 Event。
 

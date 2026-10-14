@@ -355,6 +355,13 @@ plugins:
   kac:
     enabled: true
     alarm_event_index: cw_kac_saas_3.0_alarm_event
+    delivery:
+      projection_concurrency: 64
+      batch_size: 500
+      batch_wait_ms: 10
+      max_batch_bytes: 4194304
+      action_concurrency: 64
+      action_buffer: 10000
     elasticsearch:
       addresses: [https://kac-es.example.com:9200]
       basic_auth:
@@ -379,27 +386,24 @@ ES 认证可选 `api_key` 或 `basic_auth`，不能同时配置。
 | elasticsearch.number_of_replicas | 首次创建模板时默认 2，范围 0..10，可显式设为 0 |
 | elasticsearch.max_result_window | 首次创建模板时默认 50000，范围 1..1000000 |
 | elasticsearch.total_fields_limit | 首次创建模板时默认 5000，范围 1..100000 |
-| action_endpoint | 完整 HTTP(S) 动作 V2 接口，不接受 userinfo、query、fragment，不使用旧 KAC pipeline |
+| action_endpoint | 完整 HTTP(S) 动作 V3 接口，不接受 userinfo、query、fragment，不使用旧 KAC pipeline |
 | jwt.secret_key | 必填，与 KAC 的 `BKAPP_JWT_SECRET_KEY` 相同，非空白且最多 16384 字节；拒绝脱敏占位值；填写签名密钥，不填写 JWT 或 Bearer 前缀 |
 | jwt.username | 签发的内部调用身份，默认 `admin`，非空白且最多 256 字节；不替代动作租户或业务操作人 |
 
-每次动作请求及重试均通过公共签发器生成 HS256 JWT，包含 `username`、`iat` 和五分钟后的 `exp`，
-使用 `Internal-Token: Bearer <JWT>` 发送。JWT 不进入持久任务，签名不改变动作身份、请求摘要或业务重试规则。
-同一秒的签发结果可能相同；每次签发不代表防重放。密钥更新后需重启使用该配置的进程。
+每次动作请求通过公共签发器生成 HS256 JWT，使用 `Internal-Token: Bearer <JWT>`；凭据只在配置和请求头中。
+控制面负责原 KAC 模板、ILM、alias、mapping 和索引维护；已有索引不重建，已有模板运维参数保留。
+位置缓存仅在内存中，原处置态保存在 KAC 告警的 `linkd_disposal_status` 字段；无同步元数据索引。
 
-控制面需要 ES 的模板、ILM、alias、mapping、索引创建、读写与 refresh 权限。新建索引沿用 KAC
-mapping、分析器和 30gb/60d 的 hot rollover；已有物理索引不重建，不重置其分片/副本；已有模板的运维参数不会被插件缺省值覆盖。
-版本、物理索引位置和暂存处置态保存在独立 `.linkd-kac-state-<alias摘要>` 索引中，不改变 KAC 原字段定义。
-
-普通同步保留 KAC 的处置字段和处置状态；屏蔽、合并和终态变化按兼容规则更新 status，
-解除关系后恢复保存的处置状态。同步达到搜索可见后才发送获准动作。失败保留持久任务，并提供有界重试。
-兼容索引未就绪时维护任务独立重试，不因 KAC ES 依赖失败停止告警主流程。
-生产按正常启用设计，不增加首次启用的历史补齐、旧目标迁移和启停切换流程。
+上述 delivery 六项均支持配置，零值采用所示默认值。普通消息失败记录日志和指标后结束，不创建失败任务；动作缓冲满也按失败结束当前消息。
+普通投影和动作 I/O 有 10 秒超时；停止时等待已开始调用完成，未开始消息保留在 Stream 供下一次单活动控制面恢复。
+HTTP 优雅退出预算 30 秒，Helm terminationGracePeriodSeconds 默认 60 秒。不要在新旧控制面之间重叠运行消费者。
+主动关闭使用同一执行通道优先写入，`refresh=true` 后返回；失败 502 保留 Linkd 终态并支持原命令重试。
+旧任务数据不迁移、不自动删除。完整行为见[动作 V3](../reference/contracts/kac-action-delivery-v3.md)。
 
 `resources.kac_delivery`、`event_sources[].kac_targets`、`projection_endpoint` 及 `plugins.kac.internal_token` 均已移除，旧字段明确拒绝。
 连接和凭据只保存在部署配置及运行时内存，Go/Console 展示均脱敏。
 Helm 仅允许公共 `configuration.plugins.kac`，不接受角色、Worker 组或 migrate 覆盖；独立配置文件需保持一致，
-变更后重启相关进程。KAC 侧仍须接入动作 V2 并停止旧告警状态写入，不能用协议模拟代替实际应用联调。
+变更后重启相关进程。Kingeye/KAC 需使用配套 V3 接收端，并停止旧告警状态写入。
 
 设计见[KAC 全局兼容插件](../design/kac-compatibility-plugin.md)。
 
@@ -493,7 +497,16 @@ Active Alert `refresh_interval + 5s`，默认为 10 秒。Redis 读写错误不�
 Elasticsearch，而是保留 Event 重试。生产 Redis 应使用 `noeviction`，避免 current/ended key 被提前
 淘汰。MySQL Repository 不创建这些 key。
 
-Cleaner 默认不按 Signal 持久积压停止领取：high_watermark/low_watermark 都默认为 0。只有显式配置正数高水位才启用旧采样背压；任务自己的未确认消息计数和字节软水位仍生效。Mailbox max_pending 默认 0，不限制持久队列深度。
+Helm 默认通过 `configuration.lifecycle.mailbox.backpressure` 配置高水位 2048、低水位 1024，开启 Cleaner 的下游背压。各来源 Signal Consumer Group 的 `lag + pending` 达到高水位时暂停该来源的新消息消费，降到低水位恢复；已接收消息与 Lifecycle 继续处理。可覆盖 values 调整水位；显式设置两者为 0 关闭控制。直接使用程序 YAML 且不配置水位时仍为 0/0。无论是否开启控制，Cleaner 都按 `cache_ttl_seconds` 懒采样并上报积压，Admin 使用同一指标显示；查询失败或 lag 未知保留未知语义，不显示为零。任务自己的未确认消息计数和字节软水位仍生效，Mailbox `max_pending` 默认 0。
+
+```yaml
+configuration:
+  lifecycle:
+    mailbox:
+      backpressure:
+        high_watermark: 2048
+        low_watermark: 1024
+```
 
 
 配置了 `storage.redis` 和 `lifecycle` 后，Redis Signal Stream 的指标采集和安全裁剪默认开启；

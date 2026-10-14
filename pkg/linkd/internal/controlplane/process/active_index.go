@@ -193,7 +193,7 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 			if errors.Is(err, errIndexPrefixOverlap) {
 				reason = "overlapping_prefixes"
 			}
-			logger.WarnContext(ctx, "active index target discovery failed", "reason_code", reason)
+			logger.WarnContext(ctx, "active index target discovery failed", "module", "controlplane", "operation", "active_index_discovery", "error", err, "reason_code", reason)
 		} else {
 			// 配置变化先取消旧任务；同目标不会同时使用两个来源范围。
 			for id, r := range managed {
@@ -213,7 +213,7 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 				if !ok {
 					initFailures++
 					registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], 0, 0, 1, "reader_unavailable")
-					logger.WarnContext(ctx, "active index repository reader unavailable")
+					logger.WarnContext(ctx, "active index repository reader unavailable", "module", "controlplane", "operation", "active_index_reader", "error", "repository does not implement activeindex.Reader")
 					continue
 				}
 				options := target.Redis.ClientOptions()
@@ -223,7 +223,7 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 				if err != nil {
 					initFailures++
 					registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], 0, 0, 1, "client_initialization_failed")
-					logger.WarnContext(ctx, "active index client initialization failed")
+					logger.WarnContext(ctx, "active index client initialization failed", "module", "controlplane", "operation", "active_index_client", "error", err)
 					continue
 				}
 				cache := activeindex.NewRedisCache(client, target.Prefix, settings.MaxRows, settings.MaxBytes)

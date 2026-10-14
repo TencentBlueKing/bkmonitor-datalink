@@ -1,16 +1,7 @@
 import type { MetricsResponse } from "../shared/contracts.js";
 import { deliveryMetricIDs } from "../shared/delivery-metrics.js";
 const actionMetricIDs = deliveryMetricIDs.action;
-const titles = [
-  "运行与执行中实例",
-  "扫描页结束速率",
-  "扫描页耗时 P95",
-  "工作观察结果速率",
-  "最近页项目数",
-  "最近页最大待办年龄",
-  "最近页观察距今",
-  "此前结果未确认观察速率",
-];
+const titles = ["KAC 处理吞吐", "处理耗时 P95", "队列积压", "最早消息等待"];
 export function actionMetricsFixture(
   q: URLSearchParams,
   empty = false,
@@ -27,13 +18,13 @@ export function actionMetricsFixture(
     panels: actionMetricIDs.map((id, i) => ({
       id,
       title: titles[i],
-      unit: ["实例", "页/s", "s", "观察项/s", "项", "s", "s", "观察项/s"][i],
+      unit: ["条/s", "s", "条", "s"][i],
       kind: "line",
       status: empty ? "unavailable" : "available",
       message: empty
         ? "查询范围内没有动作运行时序；不能据此判定任务已完成"
         : undefined,
-      description: "每页工作观察可重复统计，不能作为唯一动作数或处置执行数。",
+      description: "按阶段区分成功和失败，队列包含执行中消息。",
       series: empty
         ? []
         : [
@@ -42,7 +33,7 @@ export function actionMetricsFixture(
               labels: {
                 job: "control",
                 instance: q.get("instance") ?? "worker-a",
-                linkd_task: "action-delivery",
+                linkd_stage: "action",
               },
               points: [
                 [start, i + 1],

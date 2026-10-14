@@ -64,16 +64,17 @@ linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
 {{- define "linkd.configuration" -}}
 {{- $root := .root -}}
 {{- $w := .workload -}}
-{{- $config := deepCopy $root.Values.configuration -}}
+{{- $globalConfig := $root.Values.configuration | default dict -}}
+{{- $config := deepCopy $globalConfig -}}
 {{- if $w.group }}{{ $config = mergeOverwrite $config (deepCopy ($w.cluster.configuration | default dict)) }}{{ end -}}
 {{- $config = mergeOverwrite $config (deepCopy ($w.settings.configuration | default dict)) -}}
 {{/* 显式 null 不能清除公共蓝鲸配置并使全局模式回落为 false。 */}}
-{{- if hasKey $root.Values.configuration "blueking" -}}
-{{- $blueking := mergeOverwrite (deepCopy ($root.Values.configuration.blueking | default dict)) (deepCopy ($config.blueking | default dict)) -}}
+{{- if hasKey $globalConfig "blueking" -}}
+{{- $blueking := mergeOverwrite (deepCopy ($globalConfig.blueking | default dict)) (deepCopy ($config.blueking | default dict)) -}}
 {{- $_ := set $config "blueking" $blueking -}}
 {{- end -}}
 {{/* KAC 插件属于部署整体，角色 null 不能擦除公共配置。 */}}
-{{- $globalPlugins := $root.Values.configuration.plugins | default dict -}}
+{{- $globalPlugins := $globalConfig.plugins | default dict -}}
 {{- if hasKey $globalPlugins "kac" -}}
 {{- $plugins := deepCopy ($config.plugins | default dict) -}}
 {{- $_ := set $plugins "kac" (deepCopy $globalPlugins.kac) -}}

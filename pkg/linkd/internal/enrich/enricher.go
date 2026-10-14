@@ -17,6 +17,7 @@ import (
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich/kingeye"
+	"linkd/internal/processingerror"
 )
 
 // Processor 是可重复执行的丰富步骤；外部依赖只读，变更仅限本等级工作对象。
@@ -32,6 +33,7 @@ type Chain struct {
 	processors []Processor
 	sources    Sources
 	observer   Observer
+	logger     Logger
 }
 
 // NewChain 创建不可变的 Processor 执行链。
@@ -108,11 +110,13 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 	entries := make([]map[string]json.RawMessage, 0, len(c.processors))
 	for _, processor := range c.processors {
 		if err := ctx.Err(); err != nil {
-			return domain.EvaluationEnrich{}, err
+			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 		}
 		startedAt := time.Now()
+		scope.dependencyErrors = nil
+		scope.dependencies = nil
 		scope.running = true
-		result, outcome := runProcessor(ctx, processor, scope)
+		result, outcome, failure := runProcessor(ctx, processor, scope)
 		scope.running = false
 		result, valid := normalizeProcessorResult(result)
 		assignments := result.RuntimePatches
@@ -133,13 +137,18 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 			}
 			if err != nil {
 				valid = false
+				failure = fmt.Errorf("prepare processor patches: %w", err)
 			}
 		}
 		applicable := valid && (result.Status == domain.EnrichStatusSucceeded || result.Status == domain.EnrichStatusPartial)
 		if applicable && !result.applied {
 			state, err := scope.EvaluationState()
-			if err != nil || state.Apply(assignments) != nil {
+			if err == nil {
+				err = state.Apply(assignments)
+			}
+			if err != nil {
 				valid, applicable = false, false
+				failure = fmt.Errorf("apply processor patches: %w", err)
 			}
 		}
 		if !applicable {
@@ -147,6 +156,9 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 			assignments = nil
 		}
 		if !valid {
+			if failure == nil {
+				failure = fmt.Errorf("invalid processor status or diagnostics")
+			}
 			result = invalidProcessorResult()
 			outcome = ProcessorOutcomeInvalidResult
 		}
@@ -155,22 +167,23 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 		for _, assignment := range assignments {
 			patch, err := assignment.Patch()
 			if err != nil {
-				return domain.EvaluationEnrich{}, err
+				return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 			}
 			patches = append(patches, patch)
 		}
 		envelope := ProcessorEnvelope{Status: result.Status, Patches: patches, Trace: result.Trace, Diagnostics: cloneDiagnostics(result.Diagnostics)}
 		encoded, err := json.Marshal(envelope)
 		if err != nil {
-			return domain.EvaluationEnrich{}, err
+			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 		}
 		if budget.patchCount+len(patches) > 4096 || budget.payloadBytes+len(encoded) > 900000 {
+			failure = fmt.Errorf("processor output exceeds event patch or payload budget")
 			scope.rollback()
 			result = invalidProcessorResult()
 			outcome = ProcessorOutcomeInvalidResult
 			encoded, err = json.Marshal(ProcessorEnvelope{Status: result.Status, Patches: []domain.EnrichPatch{}, Diagnostics: result.Diagnostics})
 			if err != nil {
-				return domain.EvaluationEnrich{}, err
+				return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 			}
 		} else {
 			budget.patchCount += len(patches)
@@ -178,20 +191,22 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 		}
 		if err := ctx.Err(); err != nil {
 			scope.rollback()
-			return domain.EvaluationEnrich{}, err
+			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 		}
 		if err := scope.commit(); err != nil {
+			failure = fmt.Errorf("commit processor patches: %w", err)
 			scope.rollback()
 			result = invalidProcessorResult()
 			outcome = ProcessorOutcomeInvalidResult
 			encoded, err = json.Marshal(ProcessorEnvelope{Status: result.Status, Patches: []domain.EnrichPatch{}, Diagnostics: result.Diagnostics})
 			if err != nil {
-				return domain.EvaluationEnrich{}, err
+				return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 			}
 		}
+		c.logProcessorFailure(ctx, scope, processor.Name(), outcome, result, failure)
 		c.observer.ProcessorFinished(ctx, ProcessorObservation{Processor: processor.Name(), Status: result.Status, Outcome: outcome, Duration: time.Since(startedAt), Diagnostics: cloneDiagnostics(result.Diagnostics)})
 		if err := ctx.Err(); err != nil {
-			return domain.EvaluationEnrich{}, err
+			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 		}
 		results = append(results, result)
 		entries = append(entries, map[string]json.RawMessage{processor.Name(): encoded})
@@ -207,27 +222,28 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 	return domain.EvaluationEnrich{Severity: scope.evaluation.Severity, Status: aggregateStatus(results), Data: data}, nil
 }
 
-func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult, outcome string) {
+func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult, outcome string, err error) {
 	defer startProcessorTiming(ctx, processor.Name())()
 	outcome = ProcessorOutcomeCompleted
 	defer func() {
 		if recover() != nil {
 			result = failedProcessorResult(processor.Name())
 			outcome = ProcessorOutcomePanic
+			err = processingerror.CapturePanic()
 		}
 	}()
 	matched, err := processor.Match(ctx, scope)
 	if err != nil {
-		return failedProcessorResult(processor.Name()), ProcessorOutcomeMatchError
+		return failedProcessorResult(processor.Name()), ProcessorOutcomeMatchError, err
 	}
 	if !matched {
-		return ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, ProcessorOutcomeCompleted
+		return ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, ProcessorOutcomeCompleted, nil
 	}
 	result, err = processor.Process(ctx, scope)
 	if err != nil {
-		return failedProcessorResult(processor.Name()), ProcessorOutcomeProcessError
+		return failedProcessorResult(processor.Name()), ProcessorOutcomeProcessError, err
 	}
-	return result, outcome
+	return result, outcome, nil
 }
 
 func failedProcessorResult(name string) ProcessorResult {

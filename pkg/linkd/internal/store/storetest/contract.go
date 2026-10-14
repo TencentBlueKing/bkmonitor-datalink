@@ -36,8 +36,6 @@ func RunRepositoryContract(t *testing.T, factory Factory) {
 	runSourceAlertsContract(t, factory)
 	runMergeContract(t, factory)
 	runMergeWorkContract(t, factory)
-	runActionWorkContract(t, factory)
-	runProjectionRevisionContract(t, factory)
 	runMergeOriginContract(t, factory)
 	t.Run("event create and processing CAS", func(t *testing.T) {
 		repo := factory(t)

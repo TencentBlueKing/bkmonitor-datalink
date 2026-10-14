@@ -26,7 +26,7 @@ func New(cfg Config, output io.Writer) (*slog.Logger, error) {
 		return nil, err
 	}
 
-	options := &slog.HandlerOptions{Level: level}
+	options := &slog.HandlerOptions{Level: level, AddSource: true, ReplaceAttr: redactError}
 	var handler slog.Handler
 	switch cfg.Format {
 	case FormatJSON:

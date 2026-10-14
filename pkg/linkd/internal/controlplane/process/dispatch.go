@@ -20,14 +20,12 @@ import (
 	"strings"
 	"time"
 
-	"linkd/internal/actiondelivery"
-	actionstore "linkd/internal/actiondelivery/storage"
+	"linkd/internal/alertqueue"
 	"linkd/internal/blueking"
 	"linkd/internal/config"
 	controlapi "linkd/internal/controlplane/api"
 	streams "linkd/internal/controlplane/redisstream"
 	"linkd/internal/controlplane/taskstate"
-	"linkd/internal/deliverysource"
 	"linkd/internal/eventsource"
 	sourcestore "linkd/internal/eventsource/storage"
 	"linkd/internal/ingestpreview"
@@ -43,9 +41,6 @@ import (
 	policyruntime "linkd/internal/policy/runtime"
 	"linkd/internal/policy/simulation"
 	policystore "linkd/internal/policy/storage"
-	"linkd/internal/projection"
-	projectionlock "linkd/internal/projection/redislock"
-	projectionstore "linkd/internal/projection/storage"
 	"linkd/internal/redisclient"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/shieldcheck"
@@ -75,16 +70,6 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return err
 	}
 	defer func() { _ = policyDocs.Close() }()
-	projectionTasks, err := projectionstore.Open(startup, *cfg.Storage, d.Deployment)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = projectionTasks.Close() }()
-	actionTasks, err := actionstore.Open(startup, *cfg.Storage, d.Deployment)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = actionTasks.Close() }()
 	shieldJournal, err := shieldcheck.NewJournal(policyDocs)
 	if err != nil {
 		return err
@@ -140,7 +125,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return err
 	}
 	defer func() { _ = policyResources.Close() }()
-	api := &controlapi.API{Policies: policies, Tasks: registry, OneModel: oneModelQueries, Previewer: newEnrichPreview(sources, *cfg.Storage, cfg.Resources), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
+	api := &controlapi.API{Policies: policies, Tasks: registry, OneModel: oneModelQueries, Previewer: newEnrichPreview(sources, *cfg.Storage, cfg.Resources, logger), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
 	// 单租户目录无需蓝鲸连接；多租户目录独立于 CMDB 资源，缺少连接时由接口明确报告不可用。
 	if !cfg.Blueking.EnableMultiTenantMode {
 		api.Tenants = blueking.SingleTenantDirectory{}
@@ -180,17 +165,12 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return err
 	}
 	api.SuppressionCleanups = controlapi.NewSuppressionCleanups(cleanupJournal)
-	projectionRetries, err := projection.NewRetrier(projectionTasks, time.Now)
-	if err != nil {
-		return err
+	// 查询 API 保留原 8 个连接，投影读取连接预算随通道数扩展。
+	queryConnections := 8
+	if hasKACDelivery(cfg) {
+		queryConnections += cfg.Plugins.KAC.Delivery.WithDefaults().ProjectionConcurrency
 	}
-	api.ProjectionTasks = controlapi.NewProjectionTasks(projectionTasks, projectionRetries)
-	actionRetries, err := actiondelivery.NewRetrier(actionTasks, time.Now)
-	if err != nil {
-		return err
-	}
-	api.ActionDeliveries = controlapi.NewActionDeliveries(actionTasks, actionRetries)
-	queryRepository, err := storeassembly.OpenReadOnly(ctx, *cfg.Storage, 8)
+	queryRepository, err := storeassembly.OpenReadOnly(ctx, *cfg.Storage, queryConnections)
 	if err != nil {
 		return err
 	}
@@ -207,37 +187,18 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	api.EnrichRecords = controlapi.NewEnrichRecords(queryRepository.Repository, sources)
 	api.ShieldRuntime = controlapi.NewShieldRuntime(shieldReader)
 	var closeProjection lifecycleprocess.AlertProjectionSynchronizer
+	var kacRuntime *kaccompat.Runtime
 	var projectionSender *kaccompat.Client
 	if hasKACDelivery(cfg) {
-		projectionSender, err = openKACProjectionSender(cfg, severity, mergeJournal, metrics)
+		projectionSender, err = openKACProjectionSender(cfg, severity, mergeJournal)
 		if err != nil {
 			return err
 		}
 		defer projectionSender.Close()
-		closeRepository, err := storeassembly.OpenExisting(ctx, *cfg.Storage, 4)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = closeRepository.Close() }()
-		business, err := newDeliveryBusinessStore(metrics.ObserveRepository(closeRepository.Repository))
-		if err != nil {
-			return err
-		}
-		locker, err := projectionlock.New(queryRedis, d.Deployment)
-		if err != nil {
-			return err
-		}
-		resolver, err := deliverysource.New(cfg.Plugins)
-		if err != nil {
-			return err
-		}
-		projector, openErr := projection.NewCompensator(projectionTasks, business, resolver, projectionSender, locker, time.Now, cfg.ControlPlane.Delivery.WithDefaults().Concurrency)
-		err = openErr
-		if err != nil {
-			return err
-		}
-		closeProjection = projector
-		api.InlineProjection = projector
+		sender := kaccompat.NewHTTPSender(*cfg.Plugins.KAC)
+		defer sender.Close()
+		kacRuntime = kaccompat.NewRuntime(cfg.Plugins.KAC.Delivery, queryRedis, alertqueue.Stream(d.Deployment), kacAlertReader{queryRepository.Repository}, projectionSender, sender, metrics, logger)
+		closeProjection = kacRuntime
 	}
 	closer := lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics, closeProjection)
 	api.AlertCloser = closer
@@ -330,7 +291,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 			}
 			return err
 		case <-ctx.Done():
-			shutdown, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			shutdown, stop := context.WithTimeout(context.Background(), 30*time.Second)
 			defer stop()
 			return server.Shutdown(shutdown)
 		}
@@ -339,8 +300,27 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return runPolicyPublication(ctx, policies, logger, registry, metrics)
 	}})
 	if hasKACDelivery(cfg) {
+		tasks = append(tasks, taskgroup.Task{Name: "kac-index-maintenance", Run: func(ctx context.Context) error {
+			return runKACIndexMaintenance(ctx, projectionSender, registry, metrics, logger)
+		}})
 		tasks = append(tasks, taskgroup.Task{Name: "kac-delivery", Run: func(ctx context.Context) error {
-			return runKACDelivery(ctx, cfg, projectionSender, projectionTasks, actionTasks, severity, logger, registry, metrics)
+			// 首次索引准备完成后才消费，避免新部署把缺失索引当成单条失败丢弃。
+			for {
+				err := projectionSender.Maintain(ctx)
+				if err == nil {
+					break
+				}
+				if ctx.Err() != nil {
+					return nil
+				}
+				logger.WarnContext(ctx, "KAC queue waiting for index initialization", "module", "kac", "operation", "wait_index", "error", err)
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(time.Second):
+				}
+			}
+			return kacRuntime.Run(ctx)
 		}})
 	}
 	if cfg.Lifecycle != nil {
@@ -409,7 +389,9 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	}
 	for i, provider := range providers {
 		tasks = append(tasks, taskgroup.Task{Name: fmt.Sprintf("source-provider-%d", i), Run: func(ctx context.Context) error {
-			return sources.RunProvider(ctx, provider, 30*time.Second, func(error) { logger.WarnContext(ctx, "event source provider reconciliation failed") }, providerTaskObserver{registry, metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskProviders), i})
+			return sources.RunProvider(ctx, provider, 30*time.Second, func(err error) {
+				logger.WarnContext(ctx, "event source provider reconciliation failed", "module", "controlplane", "operation", "source_reconcile", "error", err, "provider_index", i)
+			}, providerTaskObserver{registry, metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskProviders), i})
 		}})
 	}
 	for i := range tasks {

@@ -73,12 +73,8 @@ type API struct {
 	SuppressionCleanups *SuppressionCleanups
 	SuppressionChecks   *SuppressionChecks
 	MergeRetries        *MergeRetries
-	ProjectionTasks     *ProjectionTasks
-	ActionDeliveries    *ActionDeliveries
-	// InlineProjection 只接受 Worker Token，经实时读取投影已保存的 Alert。
-	InlineProjection InlineProjection
-	Controller       Controller
-	Config           config.DispatchConfig
+	Controller          Controller
+	Config              config.DispatchConfig
 }
 
 // Handler 创建有身份校验的正式接口。
@@ -97,15 +93,6 @@ func (a *API) Handler() http.Handler {
 		}
 		output(w, a.Tasks.Snapshot())
 	})
-	mux.HandleFunc("GET /api/v1/action-deliveries", a.listActionDeliveries)
-	mux.HandleFunc("GET /api/v1/action-deliveries/{id}", a.getActionDelivery)
-	mux.HandleFunc("GET /api/v1/action-deliveries/{id}/snapshot", a.actionDeliverySnapshot)
-	mux.HandleFunc("GET /api/v1/action-deliveries/{id}/order", a.actionDeliveryOrder)
-	mux.HandleFunc("POST /api/v1/action-deliveries/{id}/retry", a.retryActionDelivery)
-	mux.HandleFunc("GET /api/v1/projection-tasks", a.listProjectionTasks)
-	mux.HandleFunc("GET /api/v1/projection-tasks/{id}", a.getProjectionTask)
-	mux.HandleFunc("GET /api/v1/projection-tasks/{id}/snapshot", a.projectionTaskSnapshot)
-	mux.HandleFunc("POST /api/v1/projection-tasks/{id}/retry", a.retryProjectionTask)
 	mux.HandleFunc("POST /api/v1/onemodel/{operation}", a.queryOneModel)
 	mux.Handle("GET /api/v1/metrics/catalog", metricCatalogHandler())
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
@@ -162,7 +149,6 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /internal/settings/severity", a.workerSeverity)
 	mux.HandleFunc("POST /internal/heartbeat", a.beat)
 	mux.HandleFunc("GET /internal/releases/{id}/{version}", a.workerRelease)
-	mux.HandleFunc("POST /internal/alerts/{id}/projection", a.projectAlert)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, route := mux.Handler(r)
 		kacRequest := (r.Method == http.MethodPost && route == kacCloseRoute) || (r.Method == http.MethodGet && route == kacGetRoute)

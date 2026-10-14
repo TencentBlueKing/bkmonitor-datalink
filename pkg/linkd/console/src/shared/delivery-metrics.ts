@@ -31,23 +31,16 @@ export const deliveryMetricQuery = z
 export type DeliveryMetricQuery = z.infer<typeof deliveryMetricQuery>;
 export const deliveryMetricIDs = {
   action: [
-    "action-runners",
-    "action-rounds",
-    "action-duration",
     "action-work",
+    "action-duration",
     "action-page-items",
     "action-page-age",
-    "action-page-freshness",
-    "action-unconfirmed",
   ] as const,
   projection: [
-    "projection-runners",
-    "projection-rounds",
-    "projection-duration",
     "projection-work",
+    "projection-duration",
     "projection-page-items",
     "projection-page-age",
-    "projection-page-freshness",
   ] as const,
 };
 export const deliveryMetricKindSchema = z.enum(["action", "projection"]);

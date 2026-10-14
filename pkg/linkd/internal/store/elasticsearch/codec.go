@@ -32,8 +32,6 @@ type alertDocument struct {
 	domain.Alert
 	ShieldMainAlertIDs []string `json:"shield_main_alert_ids,omitempty"`
 	MergeWork          bool     `json:"merge_work"`
-	ProjectionWork     bool     `json:"projection_work"`
-	ActionWork         bool     `json:"action_work"`
 }
 
 type alertLogDocument struct {
@@ -185,16 +183,13 @@ func validateNormalizedStoredEvent(stored store.StoredEvent) error {
 }
 
 func encodeAlertDocument(alert domain.Alert) ([]byte, error) {
-	return json.Marshal(alertDocument{Alert: alert, ShieldMainAlertIDs: store.ShieldMainAlertIDs(alert), MergeWork: store.HasMergeWork(alert), ProjectionWork: alert.Projection.Pending(), ActionWork: alert.ActionPending != nil})
+	return json.Marshal(alertDocument{Alert: alert, ShieldMainAlertIDs: store.ShieldMainAlertIDs(alert), MergeWork: store.HasMergeWork(alert)})
 }
 
 func decodeAlertHit(hit searchHit) (store.StoredAlert, error) {
 	var document alertDocument
 	if err := json.Unmarshal(hit.Source, &document); err != nil {
 		return store.StoredAlert{}, err
-	}
-	if document.ActionWork != (document.ActionPending != nil) {
-		return store.StoredAlert{}, fmt.Errorf("alert action work index differs from durable intent")
 	}
 	// 旧版 ES Alert 没有业务版本，只有完全缺字段且没有新版版本状态时可取初始基线。
 	// 不把显式 0/null 或损坏的投影/动作状态解释成旧数据，也不在读取时写回。
@@ -204,9 +199,8 @@ func decodeAlertHit(hit searchHit) (store.StoredAlert, error) {
 	if err := json.Unmarshal(hit.Source, &storedVersion); err != nil {
 		return store.StoredAlert{}, err
 	}
-	if len(storedVersion.Revision) == 0 && len(document.Projection.Targets) == 0 &&
-		document.ActionPending == nil && document.PolicyChange == nil && document.MergeChange == nil &&
-		!document.ProjectionWork && !document.ActionWork && !document.MergeWork {
+	if len(storedVersion.Revision) == 0 && document.PolicyChange == nil && document.MergeChange == nil &&
+		!document.MergeWork {
 		document.Revision = 1
 	}
 	normalized, err := document.Normalize()

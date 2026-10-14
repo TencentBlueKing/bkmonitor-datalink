@@ -15,7 +15,7 @@ import {
 } from "../metricRange";
 import "./delivery-metrics.css";
 
-// 此组件独立于任务列表的租户条件，只有显式展开才开始读指标，收起时取消请求。
+// 只查询进程级指标，不携带租户或告警身份。
 export function DeliveryMetricsPanel({ kind }: { kind: DeliveryMetricKind }) {
   const subject = kind === "action" ? "动作" : "投影";
   const [range, setRange] = useState(defaultMetricRangeSeconds),
@@ -55,10 +55,7 @@ export function DeliveryMetricsPanel({ kind }: { kind: DeliveryMetricKind }) {
       <div className="delivery-metrics-heading">
         <div>
           <h2>{subject}运行观测</h2>
-          <p>
-            按 Prometheus 进程和阶段观察，不受上方租户、Alert
-            或任务筛选影响。仅按需读取，刷新不推进任务。
-          </p>
+          <p>按进程和阶段观察队列积压、吞吐、耗时及失败。</p>
         </div>
         <button
           type="button"
@@ -82,12 +79,7 @@ export function DeliveryMetricsPanel({ kind }: { kind: DeliveryMetricKind }) {
         onCalculationWindowChange={setWindow}
       />
       <p className="merge-note">
-        最近页最多 16
-        项，不代表全局积压；页面年龄与观察距今需要一起查看。工作观察可重复统计同一任务。
-        {kind === "action"
-          ? "queued 只表示已投递 Celery。"
-          : "advanced 在生产阶段表示建或复用任务，在投递阶段表示完成本地 ACK；扫描成功不等于已同步。"}
-        没有时序不等于零，也不证明任务已完成。
+        动作成功表示 KAC 已接受投递；业务执行结果由 KAC 记录。没有时序不等于零。
       </p>
       {metrics.isPending && <p role="status">正在读取{subject}指标…</p>}
       {metrics.isError && (
@@ -102,8 +94,8 @@ export function DeliveryMetricsPanel({ kind }: { kind: DeliveryMetricKind }) {
             {formatTime(metrics.data.to, mode)}
           </p>
           <MetricSection
-            title="补扫与投递"
-            description="运行器、工作观察和最近页事实；未启用自动发送的部署可能没有这些时序。"
+            title="队列与执行"
+            description="队列包含执行中和重启待恢复的消息。"
             panels={metrics.data.panels}
             range={{ from: metrics.data.from, to: metrics.data.to }}
             ids={[...deliveryMetricIDs[kind]]}

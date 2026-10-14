@@ -10,7 +10,9 @@
 package lifecycleprocess
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/logging"
 	"linkd/internal/store"
 )
 
@@ -172,10 +175,10 @@ func TestAlertCloserCapacityCancellationAndReuse(t *testing.T) {
 	}
 }
 
-type closeProjectionFunc func(context.Context, string, string, string, int64) error
+type closeProjectionFunc func(context.Context, string, string) error
 
-func (f closeProjectionFunc) Synchronize(ctx context.Context, tenant, alert, target string, revision int64) error {
-	return f(ctx, tenant, alert, target, revision)
+func (f closeProjectionFunc) ProjectNow(ctx context.Context, tenant, alert string) error {
+	return f(ctx, tenant, alert)
 }
 
 func TestAlertCloserSynchronizesBothEntrypointsAndRetries(t *testing.T) {
@@ -183,7 +186,12 @@ func TestAlertCloserSynchronizesBothEntrypointsAndRetries(t *testing.T) {
 		t.Run(map[bool]string{false: "management", true: "kac"}[kac], func(t *testing.T) {
 			command := validCloseCommand()
 			runCalls, syncCalls := 0, 0
-			closer := &AlertCloser{slots: make(chan struct{}, 4)}
+			var output bytes.Buffer
+			logger, logErr := logging.New(logging.DefaultConfig(), &output)
+			if logErr != nil {
+				t.Fatal(logErr)
+			}
+			closer := &AlertCloser{slots: make(chan struct{}, 4), logger: logger}
 			closer.run = func(ctx context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 				if c != command {
 					t.Fatal("operation identity changed")
@@ -191,9 +199,9 @@ func TestAlertCloserSynchronizesBothEntrypointsAndRetries(t *testing.T) {
 				runCalls++
 				return lifecycle.CloseAlertResult{Alert: domain.Alert{BKTenantID: c.BKTenantID, AlertID: c.AlertID, Status: domain.AlertStatusClosed, Revision: 2}, AlreadyClosed: runCalls > 1}, nil
 			}
-			closer.projection = closeProjectionFunc(func(ctx context.Context, tenant, alert, target string, revision int64) error {
+			closer.projection = closeProjectionFunc(func(ctx context.Context, tenant, alert string) error {
 				syncCalls++
-				if runCalls != syncCalls || tenant != command.BKTenantID || alert != command.AlertID || target != "kac" || revision != 2 {
+				if runCalls != syncCalls || tenant != command.BKTenantID || alert != command.AlertID {
 					t.Fatal("projection did not follow close", runCalls, syncCalls)
 				}
 				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 10*time.Second {
@@ -212,6 +220,13 @@ func TestAlertCloserSynchronizesBothEntrypointsAndRetries(t *testing.T) {
 			var classified *CloseError
 			if !errors.As(err, &classified) || classified.Status != 502 || classified.Code != "result_uncertain" || result.Alert.Status != domain.AlertStatusClosed {
 				t.Fatal("partial close misreported", result, err)
+			}
+			var record map[string]any
+			if decodeErr := json.Unmarshal(output.Bytes(), &record); decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			if record["operation"] != "close_projection" || record["operation_id"] != command.OperationID || record["error"] != "private projection failure" {
+				t.Fatal(record)
 			}
 			result, err = close(t.Context(), command)
 			if err != nil || !result.AlreadyClosed || syncCalls != 2 {
@@ -232,7 +247,7 @@ func TestAlertCloserCancelsProjection(t *testing.T) {
 	entered := make(chan struct{})
 	closer := &AlertCloser{slots: make(chan struct{}, 4), run: func(_ context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 		return lifecycle.CloseAlertResult{Alert: domain.Alert{BKTenantID: c.BKTenantID, AlertID: c.AlertID, Revision: 2}}, nil
-	}, projection: closeProjectionFunc(func(ctx context.Context, _, _, _ string, _ int64) error {
+	}, projection: closeProjectionFunc(func(ctx context.Context, _, _ string) error {
 		close(entered)
 		<-ctx.Done()
 		return ctx.Err()

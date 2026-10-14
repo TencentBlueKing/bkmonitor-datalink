@@ -14,6 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
 )
 
 // MaxAttempts 包含第一次调用；重试不能把一条消息升级为来源故障。
@@ -21,6 +23,23 @@ const MaxAttempts = 3
 
 // ErrPanic 表示单条处理异常，错误文本不包含 panic 的业务载荷。
 var ErrPanic = errors.New("message handler panic")
+
+// CapturePanic 在 recover 边界保留调用位置，不记录可能包含凭据或正文的 panic value。
+// 仅异常路径采集有限栈帧；Unwrap 保留既有 panic 分类和重试语义。
+func CapturePanic() error {
+	pcs := make([]uintptr, 16)
+	n := runtime.Callers(2, pcs)
+	frames := runtime.CallersFrames(pcs[:n])
+	var stack strings.Builder
+	for {
+		frame, more := frames.Next()
+		fmt.Fprintf(&stack, "\n%s %s:%d", frame.Function, frame.File, frame.Line)
+		if !more {
+			break
+		}
+	}
+	return fmt.Errorf("%w:%s", ErrPanic, stack.String())
+}
 
 // HTTPStatus 保留可判定的 HTTP 状态，不保存地址、响应体或凭据。
 type HTTPStatus int
@@ -66,7 +85,7 @@ func Retryable(err error) bool {
 func Guard[T any](run func() (T, error)) (result T, err error) {
 	defer func() {
 		if recover() != nil {
-			err = ErrPanic
+			err = CapturePanic()
 		}
 	}()
 	return run()

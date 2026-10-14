@@ -339,7 +339,7 @@ func (s *Shielder) BindDependency(ctx context.Context, event domain.Event, decis
 		if err != nil || !ok {
 			step.Outcome = "skipped"
 			step.ReasonCode = "main_registration_lost"
-			s.observe(ctx, event.BKTenantID, alert.AlertID, event.EventID, step)
+			s.observe(ctx, event.BKTenantID, alert.AlertID, event.EventID, step, err)
 		}
 	}
 	return nil
@@ -355,7 +355,7 @@ func (s *Shielder) ClearDependency(ctx context.Context, tenant, id string) error
 		return ctx.Err()
 	}
 	if err != nil {
-		s.observe(ctx, tenant, id, "", store.ShieldStep{Outcome: "skipped", ReasonCode: "main_cleanup_failed"})
+		s.observe(ctx, tenant, id, "", store.ShieldStep{Outcome: "skipped", ReasonCode: "main_cleanup_failed"}, err)
 	}
 	if s.Hints != nil {
 		count, hintErr := s.Hints.PublishShieldHint(ctx, tenant, id)
@@ -369,7 +369,7 @@ func (s *Shielder) ClearDependency(ctx context.Context, tenant, id string) error
 			observer.ObserveShieldHint(ctx, outcome)
 		}
 		if hintErr != nil && ctx.Err() == nil && s.Logger != nil {
-			s.Logger.WarnContext(ctx, "shield terminal hint failed", "bk_tenant_id", tenant, "main_alert_id", id, "reason_code", "hint_publish_failed")
+			s.Logger.WarnContext(ctx, "shield terminal hint failed", "module", "policy", "operation", "shield_hint_publish", "error", hintErr, "bk_tenant_id", tenant, "main_alert_id", id, "reason_code", "hint_publish_failed")
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()

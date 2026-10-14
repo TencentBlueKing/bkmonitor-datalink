@@ -128,11 +128,6 @@ func Run(
 	if err := lockClient.Ping(startupCtx).Err(); err != nil {
 		return fmt.Errorf("connect lifecycle redis: %w", err)
 	}
-	actionRecorder, closeActionTasks, err := openActionRecorder(startupCtx, *storageConfig, cfg.Dispatch.WithDefaults().Deployment)
-	if err != nil {
-		return fmt.Errorf("initialize lifecycle action recorder: %w", err)
-	}
-	defer func() { runErr = errors.Join(runErr, closeActionTasks()) }()
 	recentAlerts := lifecycle.RecentAlertCache(lifecycle.NoopRecentAlertCache{})
 	recentAlertCacheEnabled := false
 	recentAlertCacheTTL := time.Duration(0)
@@ -181,7 +176,7 @@ func Run(
 			}
 		}()
 		stage = "enricher"
-		enricher, err := enrichRuntime.Router(source, telemetryRuntime)
+		enricher, err := enrichRuntime.Router(source, telemetryRuntime, assembly.WithLogger(logger))
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}
@@ -205,7 +200,7 @@ func Run(
 				if err != nil {
 					return nil, nil, err
 				}
-				router, err := runtime.Router(spec, telemetryRuntime)
+				router, err := runtime.Router(spec, telemetryRuntime, assembly.WithLogger(logger))
 				if err != nil {
 					_ = runtime.Close()
 					return nil, nil, err
@@ -213,19 +208,14 @@ func Run(
 				return router, runtime.Close, nil
 			},
 		}
-		// 全局插件覆盖所有来源及租户，来源发布不再提供出口配置。
-		targets := map[string]bool{}
-		if cfg.Plugins.KACEnabled() {
-			targets["kac"] = true
-		}
 		stage = "hooks"
-		hooks, closeHooks, err := openHooksWithSeverity(source.Hooks, telemetryRuntime, severityState)
+		hooks, closeHooks, err := openHooksWithSeverity(kacHooks(source.Hooks, cfg.Plugins.KACEnabled()), telemetryRuntime, severityState)
 		if err != nil {
 			return fmt.Errorf("initialize source hooks: %w", err)
 		}
 		defer func() {
 			if err := closeHooks(); err != nil {
-				logger.WarnContext(taskCtx, "source hook cleanup failed", "event_source_id", source.EventSourceID)
+				logger.WarnContext(taskCtx, "source hook cleanup failed", "module", "lifecycle", "operation", "hook_cleanup", "error", err, "event_source_id", source.EventSourceID)
 			}
 		}()
 		stage = "processor"
@@ -251,9 +241,7 @@ func Run(
 			logger,
 			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
 			lifecycle.WithPhaseObserver(telemetryRuntime.LifecyclePhaseObserver()),
-			lifecycle.WithActionRecorder(actionRecorder),
-			lifecycle.WithAlertProjector(configuredAlertProjector{dispatch: cfg.Dispatch}),
-			lifecycle.WithInitialProjectionTargets(targets),
+			lifecycle.WithAlertChangePublisher(changePublisher(cfg, lockClient, telemetryRuntime)),
 			lifecycle.WithPolicySnapshotter(policyruntime.Snapshotter{Catalog: policyCatalog}),
 			lifecycle.WithNewAlertSuppressor(suppressor),
 			lifecycle.WithMergeEvaluator(&policyruntime.Merger{Loader: suppressor, State: policyState, Logger: logger, Observer: telemetryRuntime}),
@@ -297,7 +285,7 @@ func Run(
 		rc.ShutdownDrainTimeout = taskdispatch.DrainTimeout
 		logger.InfoContext(taskCtx, "lifecycle source started", "event_source_id", source.EventSourceID, "stream", lc.Signal.Stream, "consumer", sc.Consumer, "recent_alert_cache_enabled", recentAlertCacheEnabled, "recent_alert_cache_ttl_seconds", recentAlertCacheTTL.Seconds())
 		stage = "consume"
-		err = consume.New(rc, session, handler, consume.WithObserver(labels, telemetryRuntime.ConsumeObserver(labels))).Run(taskCtx)
+		err = consume.New(rc, session, handler, consume.WithObserver(labels, telemetryRuntime.ConsumeObserver(labels)), consume.WithLogger(logger)).Run(taskCtx)
 		var contentFailure interface{ PermanentContentFailure() string }
 		if errors.As(err, &contentFailure) {
 			return taskdispatch.RequireTaskRepair(err)

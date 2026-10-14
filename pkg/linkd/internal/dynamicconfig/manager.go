@@ -184,19 +184,19 @@ func (m *Manager) Sync(ctx context.Context) {
 	raw, err := m.source.Read(call)
 	cancel()
 	if err != nil {
-		m.failed(ctx, "source_error")
+		m.failed(ctx, "source_error", err)
 		return
 	}
 	snapshot, err := decodeLevels(raw, m.defaultSeverity)
 	if err != nil {
-		m.failed(ctx, "invalid_config")
+		m.failed(ctx, "invalid_config", err)
 		return
 	}
 	call, cancel = context.WithTimeout(ctx, m.settings.Timeout())
 	previous, token, err := m.store.Load(call, m.key)
 	cancel()
 	if err != nil && !errors.Is(err, ErrNotFound) && token == "" {
-		m.failed(ctx, "persistence_error")
+		m.failed(ctx, "persistence_error", err)
 		return
 	}
 	r := Record{SchemaVersion: 1, Deployment: m.deployment, Item: "severity", SourceIdentity: m.identity, PersistedAt: now, Snapshot: snapshot}
@@ -207,13 +207,13 @@ func (m *Manager) Sync(ctx context.Context) {
 		err = m.store.Save(call, m.key, token, r)
 		cancel()
 		if err != nil {
-			m.failed(ctx, "persistence_error")
+			m.failed(ctx, "persistence_error", err)
 			return
 		}
 	}
 	// 保存成功后崩溃可在下次启动恢复；绝不先发布尚未持久化的配置。
 	if err = m.state.Install(r.Snapshot); err != nil {
-		m.failed(ctx, "invalid_config")
+		m.failed(ctx, "invalid_config", err)
 		return
 	}
 	m.mu.Lock()
@@ -225,13 +225,13 @@ func (m *Manager) Sync(ctx context.Context) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) failed(ctx context.Context, code string) {
+func (m *Manager) failed(ctx context.Context, code string, err error) {
 	m.mu.Lock()
 	m.status.SyncState = code
 	m.status.Error = code
 	m.mu.Unlock()
-	// 不记录驱动错误中的 SQL、远端载荷或连接材料。
-	m.logger.WarnContext(ctx, "dynamic config synchronization failed; retaining current configuration", "source", m.status.Source, "stage", code)
+	// 详细错误只进入日志，不进入配置状态；日志 Handler 负责凭据脱敏。
+	m.logger.WarnContext(ctx, "dynamic config synchronization failed; retaining current configuration", "module", "dynamicconfig", "operation", "sync", "error", err, "config_source", m.status.Source, "stage", code)
 }
 
 // RunObserver 只接收串行同步的开始与完整结果；实现不得执行外部 I/O。

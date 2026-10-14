@@ -147,8 +147,7 @@ func Open(
 }
 
 // Router 为当前来源 Release 构建固定的 Processor Chain。
-func (r *Runtime) Router(source config.EventSource, telemetryRuntime *telemetry.Runtime) (*Router, error) {
-	options := []RouterOption{}
+func (r *Runtime) Router(source config.EventSource, telemetryRuntime *telemetry.Runtime, options ...RouterOption) (*Router, error) {
 	if source.Enrich.EffectiveContentMode() == config.ContentModeBKMonitorDescription {
 		resolver, err := description.NewResolver(r.sources.DescriptionConfiguration)
 		if err != nil {

@@ -69,7 +69,7 @@ type LifecycleEventSnapshotStore interface {
 
 // AlertStore 定义逻辑 Alert 的创建、读取、活动关联查询和单对象 CAS。
 // 具体存储可以在内部使用多个物理集合，但不得向调用方暴露位置或归档编排状态。
-// 创建必须为 revision=1；业务 CAS 根据当前计数器推进 revision 和投影要求，元数据确认保持原业务版本。
+// 创建必须为 revision=1；业务 CAS 根据当前计数器推进 revision。
 // replacement 可保留读取时的 revision，或携带已冻结的下一业务版本；返回值始终包含实际保存的版本。
 type AlertStore interface {
 	CreateAlert(ctx context.Context, alert domain.Alert) (CreateAlertResult, error)

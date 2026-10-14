@@ -79,9 +79,6 @@ func (p *Processor) RecoverMergeParent(ctx context.Context, tenant, id, relation
 		if err := freezeMergeFlow(next.MergeChange, &r); err != nil {
 			return store.StoredAlert{}, err
 		}
-		if err := freezeAction(&next, current.Alert.Revision+1, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: operation}, next.Admission.AdmittedAt != nil); err != nil {
-			return store.StoredAlert{}, err
-		}
 		updated, err := p.compareAndSetAlert(ctx, current, next)
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue

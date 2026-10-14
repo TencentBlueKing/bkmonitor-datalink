@@ -13,10 +13,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -40,7 +42,7 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 	p.enrichObserver.Started(ctx, event.EventSourceID)
 	observation := EnrichObservation{EventSourceID: event.EventSourceID, Status: domain.EnrichStatusFailed, Outcome: EnrichOutcomeError, ChainKind: chainKind}
 	defer func() { observation.Duration = time.Since(startedAt); p.enrichObserver.Finished(ctx, observation) }()
-	result, failureReason := p.callEnricher(ctx, enrich.Input{Event: event.Clone()})
+	result, failureReason, failure := p.callEnricher(ctx, enrich.Input{Event: event.Clone()})
 	if result.ChainKind != "" {
 		observation.ChainKind = result.ChainKind
 	}
@@ -60,11 +62,13 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 		digest = "unavailable"
 		if failureReason == "" {
 			failureReason = "invalid_enrich_data"
+			failure = fmt.Errorf("invalid enrich configuration digest")
 		}
 	}
 	snapshot := domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest}
 	if failureReason == "" && (!result.Status.Valid() || result.Status == domain.EnrichStatusPending) {
 		failureReason = "invalid_enrich_status"
+		failure = fmt.Errorf("enricher returned invalid status %q", result.Status)
 	}
 	// 提交边界检查新结果；内部流转不预先执行同一份载荷的完整校验。
 	var updated store.StoredEvent
@@ -73,10 +77,11 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 		updated, persistErr = p.writeEventEnrichment(ctx, stored, snapshot)
 		if errors.Is(persistErr, store.ErrInvalidArgument) {
 			failureReason = "invalid_enrich_data"
+			failure = persistErr
 		}
 	}
 	if failureReason != "" {
-		p.logger.WarnContext(ctx, "event enrich degraded", "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "reason_code", failureReason)
+		p.logger.WarnContext(ctx, "event enrich degraded", "module", "lifecycle", "operation", "enrich", "error", failure, "event_source_id", event.EventSourceID, "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "reason_code", failureReason)
 		result = failedEnrichResult(event)
 		snapshot = domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest}
 		updated, persistErr = p.writeEventEnrichment(ctx, stored, snapshot)
@@ -128,18 +133,18 @@ func failedEnrichResult(event domain.Event) enrich.Result {
 func (p *Processor) callEnricher(
 	ctx context.Context,
 	input enrich.Input,
-) (result enrich.Result, failureReason string) {
+) (result enrich.Result, failureReason string, err error) {
 	defer p.measureStep(phaseEnrich, "chain")()
 	defer func() {
 		if recover() != nil {
 			result = enrich.Result{}
 			failureReason = "enricher_panic"
+			err = processingerror.CapturePanic()
 		}
 	}()
-	var err error
 	result, err = p.enricher.Enrich(ctx, input)
 	if err != nil {
-		return result, "enricher_error"
+		return result, "enricher_error", err
 	}
-	return result, ""
+	return result, "", nil
 }

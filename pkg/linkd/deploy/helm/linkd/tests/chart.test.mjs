@@ -191,16 +191,25 @@ test("Console HTTP subpath config reaches both Ingress and application", () => {
     assert.match(result.stderr, /basePath/);
   }
 });
-test("storage-only values include required lifecycle config and preserve explicit settings", () => {
+test("storage-only values enable Signal backpressure and preserve explicit settings", () => {
   const minimal = {auth: base.auth, configuration: {storage: base.configuration.storage}};
   const docs = render(minimal);
   for (const deploy of deployments(docs)) {
-    assert.deepEqual(parse(configFor(docs, deploy)).lifecycle, {});
+    assert.deepEqual(parse(configFor(docs, deploy)).lifecycle.mailbox.backpressure, {high_watermark: 2048, low_watermark: 1024});
   }
   validateConfigs(docs);
   const explicit = render({...minimal, configuration: {...minimal.configuration, lifecycle: {concurrency: 16}}});
   for (const deploy of deployments(explicit)) {
     assert.equal(parse(configFor(explicit, deploy)).lifecycle.concurrency, 16);
+  }
+});
+test("Signal backpressure watermarks can be changed or disabled", () => {
+  for (const [high, low] of [[4096, 2048], [0, 0]]) {
+    const docs = render({...base, configuration: {...base.configuration, lifecycle: {mailbox: {backpressure: {high_watermark: high, low_watermark: low}}}}});
+    for (const deploy of deployments(docs)) {
+      assert.deepEqual(parse(configFor(docs, deploy)).lifecycle.mailbox.backpressure, {high_watermark: high, low_watermark: low});
+    }
+    validateConfigs(docs);
   }
 });
 test("default GHCR release images reach all roles, Console and migration", () => {

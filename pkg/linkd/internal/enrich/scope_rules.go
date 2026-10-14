@@ -49,6 +49,9 @@ func (s *Scope) ExecuteRules(ctx context.Context, program *custom.Program) (Proc
 	result.applied = true
 	result.Trace = make([]Trace, len(runtime.Trace))
 	for i, t := range runtime.Trace {
+		if t.Status == domain.EnrichStatusFailed {
+			s.recordDependencyError("rule "+t.RuleID+" operation "+t.OperationID, t.Error)
+		}
 		result.Trace[i] = Trace{RuleID: t.RuleID, OperationID: t.OperationID, Status: t.Status, Code: t.Code, Matches: t.Matches, DurationMilliseconds: t.DurationMilliseconds}
 	}
 	return result, nil

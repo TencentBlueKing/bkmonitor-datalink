@@ -14,7 +14,7 @@ import (
 	"linkd/internal/telemetry"
 )
 
-// runKACIndexMaintenance 周期检查兼容索引；失败保留运行和任务，错误仅输出固定分类。
+// runKACIndexMaintenance 周期检查兼容索引；失败保留运行和任务，日志保留失败操作和原始错误链。
 func runKACIndexMaintenance(ctx context.Context, client interface{ Maintain(context.Context) error }, registry *taskstate.Registry, metrics *telemetry.Runtime, logger *slog.Logger) error {
 	const id = "kac-index-maintenance"
 	observation, err := newDeliveryTaskObservation(registry, metrics, id)
@@ -35,7 +35,7 @@ func runKACIndexMaintenance(ctx context.Context, client interface{ Maintain(cont
 			code = "item_failed"
 			failed = 1
 			if ctx.Err() == nil {
-				logger.WarnContext(ctx, "KAC compatibility index maintenance failed", "error_code", code)
+				logger.WarnContext(ctx, "KAC compatibility index maintenance failed", "module", "kac", "operation", "index_maintenance", "error", err, "error_code", code)
 			}
 		}
 		observation.finished(ctx, id, time.Since(started), 1, failed, code)

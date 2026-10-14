@@ -19,14 +19,6 @@ func ValidateAlertCreation(a Alert) error {
 	if a.Status != AlertStatusActive || a.Revision != 1 {
 		return fmt.Errorf("new alert must be active at revision 1")
 	}
-	if err := validateActionTransition(nil, a); err != nil {
-		return err
-	}
-	for _, target := range a.Projection.Targets {
-		if target.SyncedRevision != 0 || target.SyncedAt != nil {
-			return fmt.Errorf("new alert cannot start with confirmed projection")
-		}
-	}
 	return nil
 }
 
@@ -62,11 +54,6 @@ func prepareAlertReplacement(current, replacement Alert, trusted bool) (Alert, e
 		return Alert{}, fmt.Errorf("replacement revision differs from current or next business version")
 	}
 	next.Revision = revision
-	if revision > current.Revision {
-		if err := advanceProjectionRequirements(current, &next); err != nil {
-			return Alert{}, err
-		}
-	}
 	next, err := next.normalizeState()
 	if err != nil {
 		return Alert{}, err
@@ -86,4 +73,32 @@ func prepareAlertReplacement(current, replacement Alert, trusted bool) (Alert, e
 		return Alert{}, err
 	}
 	return next, nil
+}
+
+// SameAlertBusinessSnapshot 忽略已完成意图和复查时间，供已落库计划的幂等恢复判断。
+// revision 仍属于比较范围，不能用新业务快照确认旧计划完成。
+func SameAlertBusinessSnapshot(a, b Alert) bool {
+	strip := func(v Alert) Alert {
+		v.PolicyChange = nil
+		v.MergeChange = nil
+		v.Shield.NextCheckAt = nil
+		return v
+	}
+	a, b = strip(a), strip(b)
+	aExtra, bExtra, aEnrich, bEnrich := a.ExtraData, b.ExtraData, a.Enrich, b.Enrich
+	a.ExtraData, b.ExtraData, a.Enrich, b.Enrich = nil, nil, nil, nil
+	if !reflect.DeepEqual(a, b) {
+		return false
+	}
+	// 计划保留来源 JSON，存储读取可能已规范化；仅在幂等恢复边界比较 JSON 语义。
+	// 身份、revision 和其他业务字段仍须严格相同，不能用格式差异掩盖业务冲突。
+	sameJSON := func(left, right JSONObject) bool {
+		if reflect.DeepEqual(left, right) {
+			return true
+		}
+		left, leftErr := left.Normalize()
+		right, rightErr := right.Normalize()
+		return leftErr == nil && rightErr == nil && reflect.DeepEqual(left, right)
+	}
+	return sameJSON(aExtra, bExtra) && sameJSON(aEnrich, bEnrich)
 }

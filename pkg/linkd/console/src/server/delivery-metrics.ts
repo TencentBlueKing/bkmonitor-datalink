@@ -35,47 +35,29 @@ const families: Family[] = [
     kind: "action",
     name: "动作",
     definitions: actionDefinitions,
-    phases: ["action-enqueue", "action-delivery"],
-    outcomes: [
-      "succeeded",
-      "failed",
-      "cancelled",
-      "enqueued",
-      "queued",
-      "skipped",
-      "waiting_projection",
-      "blocked",
-      "retrying",
-      "deferred",
-      "capacity",
-      "unstarted",
-    ],
-    phaseNames: { "action-enqueue": "意图补扫", "action-delivery": "动作发送" },
+    phases: ["action", "refresh", "action_buffer"],
+    outcomes: ["succeeded", "failed"],
+    phaseNames: {
+      action: "动作发送",
+      refresh: "批次刷新",
+      action_buffer: "动作缓冲",
+    },
     outcomeName: (outcome) => actionOutcomeNames[outcome],
   },
   {
     kind: "projection",
     name: "投影",
     definitions: projectionDefinitions,
-    phases: ["projection-producer", "projection-delivery"],
-    outcomes: [
-      "succeeded",
-      "failed",
-      "cancelled",
-      "advanced",
-      "deferred",
-      "capacity",
-    ],
+    phases: ["enqueue", "projection", "read", "decode", "settle"],
+    outcomes: ["succeeded", "failed"],
     phaseNames: {
-      "projection-producer": "投影生产",
-      "projection-delivery": "投影投递",
+      enqueue: "入队",
+      projection: "投影",
+      read: "消费",
+      decode: "解码",
+      settle: "消费完成",
     },
-    outcomeName: (outcome, phase) =>
-      outcome === "advanced"
-        ? phase === "projection-producer"
-          ? "已建或复用任务"
-          : "已有本地 ACK"
-        : actionOutcomeNames[outcome],
+    outcomeName: (outcome) => actionOutcomeNames[outcome],
   },
 ];
 function matrixSchema(family: Family) {
@@ -83,7 +65,7 @@ function matrixSchema(family: Family) {
     .object({
       job: z.string().max(512).optional(),
       instance: z.string().max(512).optional(),
-      linkd_task: z.enum(family.phases),
+      linkd_stage: z.enum(family.phases).optional(),
       linkd_outcome: z.enum(family.outcomes).optional(),
       linkd_statistic: z.enum(["运行", "执行中"]).optional(),
     })
@@ -197,7 +179,7 @@ async function readPanel(
   if (!config.prometheus) return unavailable(d, "Prometheus 未配置");
   try {
     signal.throwIfAborted();
-    const scope = `{linkd_task=~"${family.phases.join("|")}"${q.instance ? ",instance=" + JSON.stringify(q.instance) : ""}}`;
+    const scope = `{linkd_stage=~"${family.phases.join("|")}"${q.instance ? ",instance=" + JSON.stringify(q.instance) : ""}}`;
     const url = new URL(
       config.prometheus.baseUrl.replace(/\/$/, "") + "/api/v1/query_range",
     );
@@ -248,12 +230,12 @@ async function readPanel(
         name: [
           item.metric.job,
           item.metric.instance,
-          family.phaseNames[item.metric.linkd_task],
+          family.phaseNames[item.metric.linkd_stage ?? ""] ?? "队列",
           item.metric.linkd_statistic,
           item.metric.linkd_outcome
             ? family.outcomeName(
                 item.metric.linkd_outcome,
-                item.metric.linkd_task,
+                item.metric.linkd_stage ?? "",
               )
             : undefined,
         ]

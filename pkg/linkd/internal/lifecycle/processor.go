@@ -62,11 +62,20 @@ func (p *Processor) createAlertAfterActiveLookup(
 	alert domain.Alert,
 ) (store.CreateAlertResult, error) {
 	defer p.measureStep(phaseApply, "alert_create")()
+	var result store.CreateAlertResult
+	var err error
 	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
-		result, err := repository.CreateAlertAfterActiveLookup(ctx, alert)
-		return result, err
+		result, err = repository.CreateAlertAfterActiveLookup(ctx, alert)
+	} else {
+		result, err = p.repository.CreateAlert(ctx, alert)
 	}
-	result, err := p.repository.CreateAlert(ctx, alert)
+	if err != nil && ctx.Err() == nil {
+		// 创建可能已提交但响应丢失；同一 opening 身份直接采用真实状态，不再次创建。
+		current, readErr := p.getAlertCurrent(ctx, alert.BKTenantID, alert.AlertID)
+		if readErr == nil && current.Alert.EventSourceID == alert.EventSourceID && current.Alert.Fingerprint == alert.Fingerprint && current.Alert.TriggerEventID == alert.TriggerEventID {
+			return store.CreateAlertResult{StoredAlert: current, Created: false}, nil
+		}
+	}
 	return result, err
 }
 

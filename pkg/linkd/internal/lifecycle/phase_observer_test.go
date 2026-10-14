@@ -162,8 +162,8 @@ func TestPhaseObserverKeepsNestedStorageFailure(t *testing.T) {
 		if phase.Phase == "event_commit" && phase.Duration <= 0 {
 			t.Fatal("missing failed write duration")
 		}
-		if (phase.Phase == "apply" || phase.Phase == "final_hook") && phase.Duration != 0 {
-			t.Fatal("timed an unexecuted phase")
+		if (phase.Phase == "apply" || phase.Phase == "final_hook") && phase.Duration <= 0 {
+			t.Fatal("missing work before final result failure")
 		}
 	}
 }
@@ -315,7 +315,7 @@ func TestEventDrilldownUsesContextAndKeepsDurableCheckpoints(t *testing.T) {
 	}
 	sample := recorder.samples[0]
 	assertPhaseSample(t, sample)
-	for _, expected := range []struct{ phase, step string }{{"enrich", "strategy"}, {"enrich", "persist"}, {"event_commit", "plan_save"}, {"event_commit", "result_save"}, {"apply", "alert_create"}} {
+	for _, expected := range []struct{ phase, step string }{{"enrich", "strategy"}, {"enrich", "persist"}, {"event_commit", "result_save"}, {"apply", "alert_create"}} {
 		found := false
 		for _, step := range sample.Steps {
 			if step.Phase == expected.phase && step.Step == expected.step && step.Duration > 0 {

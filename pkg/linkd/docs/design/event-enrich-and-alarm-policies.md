@@ -103,7 +103,7 @@ flowchart TD
     A[MQ 消息] --> B[Cleaner 标准化并持久化 Event]
     B --> C[Mailbox 与 fingerprint lease]
     C --> D[Event Enrich 并 CAS 保存结果]
-    D --> E[冻结策略版本与裁决上下文]
+    D --> E[读取当前策略并在内存裁决]
     E --> F{按 evaluation 动作处理}
     F -->|triggered| Q{关联到活动 Alert}
     Q -->|是| R[沿用等级和生命周期裁决]
@@ -196,24 +196,30 @@ KAC 的“同一事件计数”中，`event_id` 表达告警关联身份。它�
 - 保存完成结果前不得执行 Redis 计数、占位、入窗或外部业务动作。
 - 预览只执行只读计算，不写 Event、不计数、不创建窗口。
 
-### 3.2 EventProcessing 与 EventPlan
+### 3.2 EventProcessing 与内存裁决
+
+2026-10-14 调整：取消 `processing.plan` 与 `processing.policy_context` 的持久化、重读恢复与快照一致性约束。
+`EventPlan` 仅作为一次调用内的变更集合，在内存中计算并执行；重投按真实 Alert 状态重新判断，
+不承诺复用此前计划或补齐已丢失的动作/流水。普通错误终结当前事件并继续后续事件。
+已有 Alert ID、Event ID、租户边界和 CAS 保留；同一 opening Event 已创建的 Alert 不因重新计算的时间不同
+产生身份冲突。告警写入确认前后发生故障时，以 realtime GET 修复 Recent Alert 缓存；已生效的业务状态不回滚。
+后续合法触发、恢复、关闭必须仍可正常处理，不允许依赖人工清理半完成计划才能继续。
+
+本文历史阶段中关于持久化 EventPlan、策略版本快照和冻结重放的描述由此替代。每次尝试从当前策略目录读取配置，只在内存中供本次判断使用；最终 policy_decision 仍记录实际采用的策略版本供诊断。
 
 当前在现有对象中保存以下信息，不另建一套互相竞争的 Event 总状态：
 
 | 对象/字段                         | 内容                                                      |
 | --------------------------------- | --------------------------------------------------------- |
 | `EventProcessing.policy_decision` | 保存抑制、屏蔽和合并裁决摘要及逐 evaluation 结果             |
-| `EventProcessing.policy_context.releases` | 已实现：冻结策略 ID、类型、版本和编译摘要；不保存完整配置副本 |
-| `policy_context.evaluated_at` | 已实现：首次策略时间，重试复用 |
-| `policy_context.reason_code` | 已实现：配置依赖失败时记录 `policy_load_failed`，与无策略区分 |
+| 内存策略输入 | 当前策略 ID、类型、版本和编译摘要，不持久化 |
+| 本次判断时间 | 每次尝试重新读取 |
+| 策略读取失败 | 日志与最终裁决中记录跳过原因 |
 | `Event.merge_origin` | 内置来源的不可变裁决引用：operation_id、策略版本、window_id、成员摘要/数量；外部来源不能写入 |
 | `policy_decision.shield` | 新匹配或复查绑定的策略版本、原因、绑定 ID；复查旧绑定显式标记 `from_binding` |
 | `policy_decision.suppression`     | 已实现活动 Alert 绕过、逐等级计数/阈值、策略版本、固定聚合窗口及主 Alert 引用；失败按独立 skipped 诊断保存 |
-| `EventPlan` 扩展                  | 稳定步骤 ID、待执行的策略状态变更、输出意图及其完成标记   |
+| `EventPlan`（内存）                  | 本次计算的告警变更、流水与处理结果，不写入 Event   |
 
-`policy_context` 在 Event Enrich 完成后、Plan 或任何策略 Redis 操作前通过 Event Result CAS 保存。
-它只允许首次写入或相同值重试；后续 CAS 省略该字段表示保留，不能用 nil 清空。临时 Plan 撤销、
-最终结果提交和消息重投均保留这份上下文。授权或租户错误仍拒绝处理，不按普通配置读取失败降级。
 
 原因码包括 `duplicate_trigger`、`clip_below_threshold`、`aggregation_suppressed`；既有
 `severity_suppressed`、`evaluation_superseded` 保持各自含义。失败诊断使用独立错误字段，不能把

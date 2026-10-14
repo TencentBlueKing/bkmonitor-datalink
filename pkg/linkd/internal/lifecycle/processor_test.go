@@ -282,11 +282,6 @@ func TestResumePartiallyCreatedAlert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	planned, err := processor.writeEventResult(context.Background(), stored.StoredEvent, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stored.StoredEvent = planned
 	alert := plan.Mutations[0].Alert
 	if _, err := repo.CreateAlert(context.Background(), alert); err != nil {
 		t.Fatal(err)
@@ -295,11 +290,11 @@ func TestResumePartiallyCreatedAlert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != OutcomeAlertCreated || result.AlertIDs[len(result.AlertIDs)-1] != alert.AlertID {
+	if result.Outcome != OutcomeAlertSuppressed || result.AlertIDs[len(result.AlertIDs)-1] != alert.AlertID {
 		t.Fatalf("result=%#v", result)
 	}
 	updated, _ := repo.GetEvent(context.Background(), event.BKTenantID, event.EventID)
-	if updated.Version == stored.Version || updated.Processing.State != domain.EventProcessStateAccepted {
+	if updated.Version == stored.Version || updated.Processing.State != domain.EventProcessStateSuppressed {
 		t.Fatalf("event=%#v", updated)
 	}
 }
@@ -464,7 +459,7 @@ func TestProcessEventBatchesLogsBeforeFinalEventCAS(t *testing.T) {
 			processor := newTestProcessor(t, repository, trackingHook{repository: repository})
 			persistAndProcess(t, repository, processor, tt.event)
 			calls, batches := repository.snapshot()
-			if !slices.Equal(calls, append([]string{"event_cas"}, tt.wantCalls...)) {
+			if !slices.Equal(calls, tt.wantCalls) {
 				t.Fatalf("calls=%v, want %v", calls, tt.wantCalls)
 			}
 			if len(tt.wantKinds) == 0 {
@@ -507,7 +502,7 @@ func TestProcessEventDoesNotFinishEventWhenLogBatchHasItemFailure(t *testing.T) 
 		t.Fatalf("event state=%q, want unprocessed", stored.Processing.State)
 	}
 	calls, batches := repository.snapshot()
-	if !slices.Equal(calls, []string{"event_cas", "alert_create", "hook", "logs"}) || len(batches) != 1 || len(batches[0]) != 2 {
+	if !slices.Equal(calls, []string{"alert_create", "hook", "logs"}) || len(batches) != 1 || len(batches[0]) != 2 {
 		t.Fatalf("calls=%v batches=%v", calls, batches)
 	}
 
@@ -516,7 +511,7 @@ func TestProcessEventDoesNotFinishEventWhenLogBatchHasItemFailure(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.EventState != domain.EventProcessStateAccepted {
+	if result.EventState != domain.EventProcessStateSuppressed {
 		t.Fatalf("retry result=%#v", result)
 	}
 	calls, _ = repository.snapshot()
@@ -577,7 +572,7 @@ func TestProcessEventUsesRecentActiveAlertBeforeRepositorySearch(t *testing.T) {
 	}
 }
 
-func TestProcessEventResumesPersistedTerminalPlan(t *testing.T) {
+func TestProcessEventAfterAppliedTerminalMutation(t *testing.T) {
 	ctx := context.Background()
 	base := memory.New()
 	processor := newTestProcessor(t, base, NoopFinalHook{})
@@ -593,10 +588,7 @@ func TestProcessEventResumesPersistedTerminalPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, err := processor.writeEventResult(ctx, created.StoredEvent, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
-	if err != nil {
-		t.Fatal(err)
-	}
+	saved := created.StoredEvent
 	mutation := plan.Mutations[0]
 	ended, err := base.CompareAndSetAlert(ctx, event.BKTenantID, mutation.Alert.AlertID, store.NewVersionToken(mutation.ExpectedVersion), mutation.Alert)
 	if err != nil {
@@ -612,7 +604,7 @@ func TestProcessEventResumesPersistedTerminalPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != OutcomeAlertRecovered || repository.findActiveCalls != 0 || repository.findEndedCalls != 0 {
+	if result.Outcome != OutcomeEventOrphaned || repository.findActiveCalls != 0 || repository.findEndedCalls != 0 {
 		t.Fatalf("result=%+v searches=%d/%d", result, repository.findActiveCalls, repository.findEndedCalls)
 	}
 }
@@ -732,7 +724,7 @@ func TestProcessEventRecoversRotationFromRecentEndedAlert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != OutcomeAlertRotated || repository.findActiveCalls != 0 || repository.findEndedCalls != 0 {
+	if result.Outcome != OutcomeAlertSuppressed || repository.findActiveCalls != 0 || repository.findEndedCalls != 0 {
 		t.Fatalf("result=%#v active_calls=%d ended_calls=%d", result, repository.findActiveCalls, repository.findEndedCalls)
 	}
 }

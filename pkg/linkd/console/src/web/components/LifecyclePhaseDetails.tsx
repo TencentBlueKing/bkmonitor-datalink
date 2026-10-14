@@ -19,7 +19,7 @@ const steps: Record<string, Record<string, string>> = {
     persist: "丰富结果校验与保存",
     other: "输入准备 / 诊断与其他",
   },
-  policy_snapshot: { read: "读取策略快照", other: "快照校验与编排" },
+  policy_snapshot: { read: "读取当前策略", other: "策略读取编排" },
   plan: {
     active_lookup: "查找活动告警（缓存 / ES）",
     content: "生成新告警内容",

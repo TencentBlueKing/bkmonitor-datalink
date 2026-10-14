@@ -278,7 +278,7 @@ func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
 			}
 			for _, finish := range []bool{false, true} {
 				planned, planErr := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, projected.Version, store.EventResult{
-					State: domain.EventProcessStateUnprocessed, Plan: plan,
+					State: domain.EventProcessStateUnprocessed,
 				})
 				if planErr != nil {
 					t.Fatal(planErr)
@@ -301,7 +301,7 @@ func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if projected.Processing.Plan != nil || projected.Processing.State != result.State {
+				if projected.Processing.State != result.State {
 					t.Fatalf("finish=%v persisted processing=%#v", finish, projected.Processing)
 				}
 			}
@@ -316,7 +316,7 @@ func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
 				t.Fatalf("cross-tenant event read error=%v", err)
 			}
 			redelivered, err := repository.CreateEvent(ctx, event)
-			if err != nil || redelivered.Created || redelivered.Processing.Plan != nil || redelivered.Processing.State != plan.State {
+			if err != nil || redelivered.Created || redelivered.Processing.State != plan.State {
 				t.Fatalf("terminal event redelivery=%#v,%v", redelivered, err)
 			}
 		})
@@ -655,8 +655,4 @@ func TestElasticsearchAddsEnrichmentMappingPreservingExistingEvent(t *testing.T)
 		t.Fatal("existing facts were not preserved")
 	}
 
-	frozen, err := repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, enriched.Version, store.EventResult{State: domain.EventProcessStateUnprocessed, PolicyContext: &store.PolicyContext{EvaluatedAt: event.CreateAt.Add(time.Second), Releases: []store.PolicyReleaseRef{}}})
-	if err != nil || frozen.Processing.PolicyContext == nil || frozen.Event.Title != event.Title {
-		t.Fatalf("additive policy context mapping failed: %v", err)
-	}
 }

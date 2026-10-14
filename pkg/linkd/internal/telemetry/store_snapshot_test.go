@@ -69,7 +69,7 @@ func TestSnapshotCapabilitiesForwardAndFallbackWithoutDoubleCounting(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = snapshots.CompareAndSetLifecycleEventResultFromSnapshot(t.Context(), enriched, store.EventResult{State: domain.EventProcessStateUnprocessed, PolicyContext: &store.PolicyContext{EvaluatedAt: event.ReceivedAt}})
+			_, err = snapshots.CompareAndSetLifecycleEventResultFromSnapshot(t.Context(), enriched, store.EventResult{State: domain.EventProcessStateOrphaned, Outcome: "orphaned", ProcessedAt: event.ReceivedAt})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -72,7 +72,7 @@ Event 的首次读取使用完整 `GetEvent`，保证丰富提交的完整文档
 - Elasticsearch 使用 `_bulk?refresh=false` 的逐项 `create`；成功表示主分片已确认写入，不保证搜索立即
   可见。409 使用 realtime GET 回读并校验内容，429/5xx 保持可重试。MySQL 首版通过统一批量接口逐项
   写入，不宣称多行 SQL 性能。
-- `CompareAndSetEventEnrichment` 在计划保存前通过同一 Event 版本冻结全部 evaluation 的结果、完成时间和配置摘要；
+- `CompareAndSetEventEnrichment` 在裁决前通过同一 Event 版本保存全部 evaluation 的结果、完成时间和配置摘要；
   完成后相同结果可幂等核对，修改结果被拒绝。来源事实、processing 和关联保持不变；过期版本返回冲突。
 - `CompareAndSetEventResult` 在一次 CAS 中同时写 processing 和 `related_alert_ids`。accepted 必须关联 Alert；
   suppressed 可无关联，orphaned 与 rejected 必须保持为空。
@@ -83,10 +83,10 @@ Event 的首次读取使用完整 `GetEvent`，保证丰富提交的完整文档
   路由到写 alias 并使用 realtime GET，使 Cleaner 幂等核对和 Lifecycle 处理不依赖 refresh；列表和统计
   查询仍接受 refresh 延迟。
 
-`CompareAndSetEventResult` 也接受 unprocessed + plan 的计划 CAS；计划先保存才允许执行副作用。
-终态结果必须与已有计划一致，且不得残留 `plan`。ES 的 Lifecycle 投影 CAS 使用固定脚本整体
-替换 `processing`，保留 `_seq_no/_primary_term` 条件；撤销计划也清除旧对象，不能用对象局部合并
-代替替换。非法处理快照返回 `ErrInvalidEventProcessing`。ES evaluations 使用 nested，values、plan、policy_context 和 policy_decision 只保留原始对象、不建立动态索引。
+`CompareAndSetEventResult` 保存最终结果，不再保存策略上下文或执行计划。
+ES 的 Lifecycle CAS 使用固定脚本整体替换 `processing`，保留 `_seq_no/_primary_term` 条件；
+非法处理快照返回 `ErrInvalidEventProcessing`。历史文档中的 plan/policy_context 字段不参与新处理流程，
+无需迁移，后续 processing 整体写入自然去除。ES evaluations 使用 nested，values 和 policy_decision 只保留原始对象、不建立动态索引。
 MySQL related_alert_ids 使用 JSON 数组，查询通过 JSON_CONTAINS 判断成员关系并使用租户/接收时间索引。
 这是内部 schema 的直接调整，不提供存量单动作事件或旧 related_alert_id 字段的迁移。
 
@@ -108,7 +108,7 @@ Elasticsearch 存量 Alert JSON 完全缺少 `revision`，且没有投影目标�
 - 新建 Alert 必须为 active/revision=1，不能预置已同步水位。业务 CAS 在读取版本边界计算 current.revision+1，并原子推进全部已绑定目标的 required_revision；调用方可以提交读到的 revision 或已冻结的下一版，不能任意指定版本。
 - 元数据 CAS 保持 revision/update_at；ACK 不改变绑定或 required_revision，按目标单调确认。CAS 冲突不推进业务版本。
 - `FindAlertEndedByEvent` 只匹配 `latest_event_id` 等于目标 Event 且 `end_type` 为 source 或
-  severity_upgrade 的终态 Alert，保留为只读查询能力，Lifecycle 重试改用持久化计划与 Alert 实时读取。
+  severity_upgrade 的终态 Alert，保留为只读查询能力，Lifecycle 重投使用当前策略与 Alert 实时状态重新判断。
 - Lifecycle 专用 Alert create/CAS 使用 `refresh=false`，写成功后必须先更新 Recent Alert 缓存再推进
   Hook、日志和 Event；普通 Repository 契约仍可使用 `refresh=wait_for` 保证独立调用后的搜索可见性。
 - CAS 冲突修复按 VersionToken 指向的物理文档执行 realtime GET，不依赖 `_search` refresh。

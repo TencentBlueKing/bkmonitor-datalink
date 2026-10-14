@@ -135,7 +135,7 @@ func TestContentReviewLiveSamples(t *testing.T) {
 				record.Status, record.ReasonCode = "blocked", permanent.PermanentContentFailure()
 			}
 			kept, readErr := repo.GetEvent(t.Context(), event.BKTenantID, event.EventID)
-			record.NoPlanOnFailure = readErr == nil && kept.Processing.Plan == nil && kept.Processing.State == domain.EventProcessStateUnprocessed && len(result.AlertIDs) == 0
+			record.NoPlanOnFailure = readErr == nil && kept.Processing.State == domain.EventProcessStateUnprocessed && len(result.AlertIDs) == 0
 			record.EventPreserved = readErr == nil && kept.Event.Content == event.Content
 			if !record.NoPlanOnFailure || !record.EventPreserved {
 				t.Error("failed content generation changed local persistent state")

@@ -101,7 +101,7 @@ func (NoopRecentAlertCache) PutTerminal(context.Context, store.StoredAlert) erro
 
 func (NoopRecentAlertCache) Repair(context.Context, store.StoredAlert) error { return nil }
 
-// PolicySnapshotter 固定一次 Event 的配置引用；普通配置依赖失败由实现记录跳过，授权失败仍返回 error。
+// PolicySnapshotter 读取本次尝试的配置引用；普通配置依赖失败由实现记录跳过，授权失败仍返回 error。
 type PolicySnapshotter interface {
 	Snapshot(context.Context, domain.Event, time.Time) (*store.PolicyContext, error)
 }

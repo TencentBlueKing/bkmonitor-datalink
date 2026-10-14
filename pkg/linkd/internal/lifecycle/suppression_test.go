@@ -122,7 +122,7 @@ func TestNewAlertSuppressionPersistsWithoutAlertAndRecoveryClears(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Processing.Plan != nil || saved.Processing.PolicyDecision.Suppression.Evaluations[0].Steps[0].Count != 1 {
+	if saved.Processing.PolicyDecision.Suppression.Evaluations[0].Steps[0].Count != 1 {
 		t.Fatalf("lost committed decision %+v", saved.Processing)
 	}
 	end := testEvent("no-active-recovery", "warning")
@@ -178,14 +178,11 @@ func TestSuppressionDecisionResumesSavedPlanWithoutCallingRedis(t *testing.T) {
 		t.Fatal("expected create failure")
 	}
 	pending, _ := repo.GetEvent(t.Context(), event.BKTenantID, event.EventID)
-	if pending.Processing.Plan == nil || pending.Processing.Plan.PolicyDecision == nil {
-		t.Fatal("decision not frozen")
+	if pending.Processing.State != domain.EventProcessStateUnprocessed {
+		t.Fatal("interrupted event unexpectedly completed")
 	}
-	s.check = func(domain.EventEvaluation) (store.SuppressionEvaluation, error) {
-		return store.SuppressionEvaluation{}, errors.New("must not reevaluate")
-	}
-	if _, err := p.ProcessEvent(t.Context(), pending); err != nil || len(s.checks) != 1 {
-		t.Fatalf("saved plan re-evaluated %v", err)
+	if _, err := p.ProcessEvent(t.Context(), pending); err != nil || len(s.checks) != 2 {
+		t.Fatalf("decision not recalculated %v", err)
 	}
 }
 
@@ -216,7 +213,7 @@ func (r *suppressionOutputFailure) CompareAndSetEventResult(ctx context.Context,
 	return r.Repository.CompareAndSetEventResult(ctx, tenant, id, version, result)
 }
 
-func TestAggregationSuppressionWritesOwnerLogAndRetriesFrozenDecision(t *testing.T) {
+func TestAggregationSuppressionWritesOwnerLogAndRecalculatesAfterFailure(t *testing.T) {
 	for _, mode := range []string{"success", "bulk failure", "committed item failure", "terminal CAS failure"} {
 		t.Run(mode, func(t *testing.T) {
 			base := memory.New()
@@ -252,15 +249,12 @@ func TestAggregationSuppressionWritesOwnerLogAndRetriesFrozenDecision(t *testing
 					t.Fatal("output failure was ignored")
 				}
 				pending := mustGetStoredEvent(t, base, event)
-				if pending.Processing.State != domain.EventProcessStateUnprocessed || pending.Processing.Plan == nil || len(pending.Processing.Plan.Logs) != 1 {
+				if pending.Processing.State != domain.EventProcessStateUnprocessed {
 					t.Fatal("lost retryable log plan")
-				}
-				s.check = func(domain.EventEvaluation) (store.SuppressionEvaluation, error) {
-					return store.SuppressionEvaluation{}, errors.New("must not reevaluate")
 				}
 				result, err = p.ProcessEvent(t.Context(), pending)
 			}
-			if err != nil || result.EventState != domain.EventProcessStateSuppressed || !reflect.DeepEqual(result.AlertIDs, []string{ownerID}) || len(s.checks) != 1 || len(hook.inputs) != 0 {
+			if err != nil || result.EventState != domain.EventProcessStateSuppressed || !reflect.DeepEqual(result.AlertIDs, []string{ownerID}) || len(s.checks) != map[bool]int{true: 1, false: 2}[mode == "success"] || len(hook.inputs) != 0 {
 				t.Fatalf("suppression result %+v checks=%v err=%v", result, s.checks, err)
 			}
 			logs, err := base.ListAlertLogs(t.Context(), event.BKTenantID, ownerID, store.PageRequest{})
@@ -296,7 +290,7 @@ func TestAggregationSuppressionWritesOwnerLogAndRetriesFrozenDecision(t *testing
 				t.Fatal(err)
 			}
 			again, err := base.ListAlertLogs(t.Context(), event.BKTenantID, ownerID, store.PageRequest{})
-			if err != nil || len(again.Logs) != len(logs.Logs) || len(s.checks) != 1 {
+			if err != nil || len(again.Logs) != len(logs.Logs) || len(s.checks) != map[bool]int{true: 1, false: 2}[mode == "success"] {
 				t.Fatal("replay duplicated suppression", err)
 			}
 		})

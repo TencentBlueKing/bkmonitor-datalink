@@ -35,10 +35,6 @@ func (t VersionToken) String() string { return t.value }
 // EventProcessing 是 Event JSON 之外的生命周期处理元数据。
 type EventProcessing struct {
 	PolicyDecision *PolicyDecision `json:"policy_decision,omitempty"`
-	// PolicyContext 固定首次策略裁决上下文，与可撤销的生命周期 Plan 分开保存。
-	PolicyContext *PolicyContext `json:"policy_context,omitempty"`
-	// Plan 是已冻结的裁决计划，先持久化再执行副作用，防止重试读取新配置重新裁决。
-	Plan *EventPlan `json:"plan,omitempty"`
 	// Evaluations 保存逐级最终结果，事件级 State 是聚合结果。
 	Evaluations []EvaluationResult       `json:"evaluations,omitempty"`
 	State       domain.EventProcessState `json:"state"`
@@ -56,19 +52,6 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 	if err := p.PolicyDecision.Validate(); err != nil {
 		return EventProcessing{}, fmt.Errorf("%w: %w", ErrInvalidEventProcessing, err)
 	}
-	if err := p.PolicyContext.Validate(); err != nil {
-		return EventProcessing{}, fmt.Errorf("%w: %w", ErrInvalidEventProcessing, err)
-	}
-	if p.PolicyContext != nil {
-		p.PolicyContext.EvaluatedAt = p.PolicyContext.EvaluatedAt.Round(0).UTC()
-	}
-	if p.Plan != nil {
-		normalized, err := p.Plan.Normalize()
-		if err != nil {
-			return EventProcessing{}, fmt.Errorf("%w: plan: %w", ErrInvalidEventProcessing, err)
-		}
-		p.Plan = normalized
-	}
 	if !p.State.Valid() {
 		return EventProcessing{}, fmt.Errorf("%w: state is invalid: %q", ErrInvalidEventProcessing, p.State)
 	}
@@ -82,9 +65,6 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 		}
 		return p, nil
 	}
-	if p.Plan != nil && (p.State != domain.EventProcessStateRejected || p.Outcome != "processing_failed") {
-		return EventProcessing{}, fmt.Errorf("%w: terminal event must not retain a plan", ErrInvalidEventProcessing)
-	}
 	if p.Outcome == "" || p.ProcessedAt == nil || p.ProcessedAt.IsZero() {
 		return EventProcessing{}, fmt.Errorf("%w: terminal event processing requires outcome and processed_at", ErrInvalidEventProcessing)
 	}
@@ -93,8 +73,6 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 
 func (p EventProcessing) Clone() EventProcessing {
 	p.PolicyDecision = p.PolicyDecision.Clone()
-	p.Plan = p.Plan.Clone()
-	p.PolicyContext = p.PolicyContext.Clone()
 	p.Evaluations = cloneEvaluationResults(p.Evaluations)
 	if p.ProcessedAt != nil {
 		value := *p.ProcessedAt
@@ -119,18 +97,8 @@ func (s StoredEvent) Validate() error {
 	if err != nil {
 		return err
 	}
-	if processing.Plan != nil {
-		if err := ValidateEventPlan(s.Event, processing.Plan); err != nil {
-			return err
-		}
-	}
-	if err := ValidatePolicyDecision(s.Event, processing.PolicyContext, processing.PolicyDecision); err != nil {
+	if err := ValidatePolicyDecision(s.Event, nil, processing.PolicyDecision); err != nil {
 		return err
-	}
-	if processing.Plan != nil {
-		if err := ValidatePolicyDecision(s.Event, processing.PolicyContext, processing.Plan.PolicyDecision); err != nil {
-			return err
-		}
 	}
 	if s.Version.IsZero() {
 		return fmt.Errorf("stored event version must not be empty")
@@ -243,10 +211,7 @@ type AlertLogPage struct {
 
 // EventResult 是一次生命周期裁决写回 Event 的完整结果。
 type EventResult struct {
-	PolicyDecision *PolicyDecision
-	// PolicyContext 只在首次冻结时显式提供；省略表示保留已有上下文，不能用 nil 清空。
-	PolicyContext   *PolicyContext
-	Plan            *EventPlan
+	PolicyDecision  *PolicyDecision
 	Evaluations     []EvaluationResult
 	State           domain.EventProcessState
 	RelatedAlertIDs []string
@@ -255,9 +220,9 @@ type EventResult struct {
 	ProcessedAt     time.Time
 }
 
-// Processing 返回与本次 CAS 对应的技术状态，未完成计划不带完成时间。
+// Processing 返回与本次 CAS 对应的技术状态，未处理结果不带完成时间。
 func (r EventResult) Processing() EventProcessing {
-	p := EventProcessing{PolicyDecision: r.PolicyDecision.Clone(), PolicyContext: r.PolicyContext.Clone(), State: r.State, Outcome: r.Outcome, ReasonCode: r.ReasonCode, Plan: r.Plan.Clone(), Evaluations: cloneEvaluationResults(r.Evaluations)}
+	p := EventProcessing{PolicyDecision: r.PolicyDecision.Clone(), State: r.State, Outcome: r.Outcome, ReasonCode: r.ReasonCode, Evaluations: cloneEvaluationResults(r.Evaluations)}
 	if r.State != domain.EventProcessStateUnprocessed {
 		at := r.ProcessedAt
 		p.ProcessedAt = &at
@@ -270,8 +235,7 @@ func (r EventResult) Normalize() (EventResult, error) {
 	if err != nil {
 		return EventResult{}, err
 	}
-	r.Plan, r.Evaluations = processing.Plan, processing.Evaluations
-	r.PolicyContext = processing.PolicyContext
+	r.Evaluations = processing.Evaluations
 	r.PolicyDecision = processing.PolicyDecision
 	r.RelatedAlertIDs = slices.Clone(r.RelatedAlertIDs)
 	slices.Sort(r.RelatedAlertIDs)

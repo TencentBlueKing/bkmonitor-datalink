@@ -18,7 +18,7 @@ import (
 )
 
 // PolicyDecision 保存事件策略诊断；业务终态仍由 Evaluations/State 表达。
-// 与 Plan 一起冻结并在最终 CAS 时复制，不能在重投时按当前配置覆盖。
+// 在内存中计算并在最终 CAS 时保存；已终态的 Event 不重新裁决。
 type PolicyDecision struct {
 	Merge       *MergeDecision       `json:"merge,omitempty"`
 	Shield      *ShieldDecision      `json:"shield,omitempty"`
@@ -294,7 +294,7 @@ func ValidatePolicyDecision(event domain.Event, snapshot *PolicyContext, decisio
 			return fmt.Errorf("merge severity differs from event")
 		}
 		for _, step := range decision.Merge.Steps {
-			if !step.FromWaiting && (snapshot == nil || !slices.Contains(snapshot.Releases, step.Policy)) {
+			if !step.FromWaiting && (snapshot != nil && !slices.Contains(snapshot.Releases, step.Policy)) {
 				return fmt.Errorf("merge release differs from context")
 			}
 		}
@@ -314,8 +314,8 @@ func ValidatePolicyDecision(event domain.Event, snapshot *PolicyContext, decisio
 				return fmt.Errorf("dependency reservation differs from event")
 			}
 
-			if !step.FromBinding && (snapshot == nil || !slices.Contains(snapshot.Releases, step.Policy)) {
-				return fmt.Errorf("shield release differs from frozen context")
+			if !step.FromBinding && (snapshot != nil && !slices.Contains(snapshot.Releases, step.Policy)) {
+				return fmt.Errorf("shield release differs from context")
 			}
 		}
 	}
@@ -333,8 +333,8 @@ func ValidatePolicyDecision(event domain.Event, snapshot *PolicyContext, decisio
 			return fmt.Errorf("suppression evaluation differs from event")
 		}
 		for _, step := range e.Steps {
-			if snapshot == nil || !slices.Contains(snapshot.Releases, step.Policy) {
-				return fmt.Errorf("suppression release differs from frozen context")
+			if snapshot != nil && !slices.Contains(snapshot.Releases, step.Policy) {
+				return fmt.Errorf("suppression release differs from context")
 			}
 		}
 	}

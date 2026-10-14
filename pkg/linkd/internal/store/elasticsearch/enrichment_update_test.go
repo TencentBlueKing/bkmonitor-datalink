@@ -14,7 +14,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"linkd/internal/domain"
 	"linkd/internal/store"
@@ -39,7 +38,6 @@ func TestEnrichmentUpdateUsesExactFullDocumentBudget(t *testing.T) {
 				}
 			}
 			p := store.NewUnprocessedEventProcessing()
-			p.PolicyContext = &store.PolicyContext{EvaluatedAt: e.ReceivedAt.Add(time.Second)}
 			full, err := encodeEventDocument(e, p)
 			if err != nil {
 				t.Fatal(err)

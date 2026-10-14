@@ -13,32 +13,33 @@ import (
 	"context"
 	"fmt"
 
+	"linkd/internal/domain"
 	"linkd/internal/store"
 )
 
-func (p *Processor) freezePolicies(ctx context.Context, stored store.StoredEvent) (store.StoredEvent, error) {
+func (p *Processor) readPolicies(ctx context.Context, event domain.Event) (*store.PolicyContext, error) {
 	defer p.measurePhase(phasePolicySnapshot)()
-	if p.policies == nil || stored.Processing.PolicyContext != nil {
-		return stored, nil
+	if p.policies == nil {
+		return nil, nil
 	}
 	at, err := p.now()
 	if err != nil {
-		return store.StoredEvent{}, err
+		return nil, err
 	}
 	finish := p.measureStep(phasePolicySnapshot, "read")
-	snapshot, err := p.policies.Snapshot(ctx, stored.Event, at)
+	snapshot, err := p.policies.Snapshot(ctx, event, at)
 	finish()
 	if err != nil {
-		return store.StoredEvent{}, err
+		return nil, err
 	}
 	if snapshot == nil {
-		return store.StoredEvent{}, fmt.Errorf("policy snapshot missing")
+		return nil, fmt.Errorf("policy snapshot missing")
 	}
 	if err := snapshot.Validate(); err != nil {
-		return store.StoredEvent{}, err
+		return nil, err
 	}
 	if snapshot.ReasonCode != "" {
-		p.logger.WarnContext(ctx, "event policies skipped", "module", "lifecycle", "operation", "freeze_policies", "bk_tenant_id", stored.Event.BKTenantID, "event_id", stored.Event.EventID, "reason", snapshot.ReasonCode)
+		p.logger.WarnContext(ctx, "event policies skipped", "module", "lifecycle", "operation", "read_policies", "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "reason", snapshot.ReasonCode)
 	}
-	return p.writeEventCheckpoint(ctx, stored, store.EventResult{State: stored.Processing.State, PolicyContext: snapshot}, "policy_save")
+	return snapshot, nil
 }

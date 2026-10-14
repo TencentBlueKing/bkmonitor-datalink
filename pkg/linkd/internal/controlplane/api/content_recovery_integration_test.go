@@ -209,7 +209,7 @@ func TestContentFailureSignalResumeIntegration(t *testing.T) {
 		t.Fatal("failed mailbox head advanced", err)
 	}
 	stored, err := repo.GetEvent(ctx, first.BKTenantID, first.EventID)
-	if err != nil || stored.Processing.Plan != nil || stored.Processing.State != domain.EventProcessStateUnprocessed {
+	if err != nil || stored.Processing.State != domain.EventProcessStateUnprocessed {
 		t.Fatal("failed content persisted a plan", err)
 	}
 	key := store.ActiveAlertKey{BKTenantID: first.BKTenantID, EventSourceID: first.EventSourceID, Fingerprint: first.Fingerprint}

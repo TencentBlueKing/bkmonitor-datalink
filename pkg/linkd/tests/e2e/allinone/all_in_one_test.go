@@ -1322,29 +1322,13 @@ func assertEvents(
 	if len(expectedPolicies) > 0 {
 		policyReleases = expectedPolicies[0]
 	}
-	expectedReferences := 0
-	if len(policyReleases) > 0 {
-		expectedReferences = 1
-	}
 	for _, stored := range events {
 		event := stored.Event
-		if stored.Processing.PolicyContext == nil || stored.Processing.PolicyContext.ReasonCode != "" || len(stored.Processing.PolicyContext.Releases) != expectedReferences {
-			t.Fatalf("policy snapshot was not frozen through worker API: %s %+v", event.EventID, stored.Processing.PolicyContext)
-		}
-		if err := stored.Processing.PolicyContext.Validate(); err != nil {
-			t.Fatal(err)
-		}
-
-		if expectedReferences > 0 {
+		for _, ref := range eventPolicyReferences(stored.Processing) {
 			expectedPolicy, ok := policyReleases[event.BKTenantID]
-			if !ok {
-				t.Fatal("missing expected tenant policy")
+			if !ok || ref.ID != expectedPolicy.ID || ref.Version != expectedPolicy.Version || ref.Digest != expectedPolicy.Compiled.Digest || ref.Kind != string(expectedPolicy.Kind) {
+				t.Fatalf("decision used another tenant/version: %+v", ref)
 			}
-			ref := stored.Processing.PolicyContext.Releases[0]
-			if ref.ID != expectedPolicy.ID || ref.Version != expectedPolicy.Version || ref.Digest != expectedPolicy.Compiled.Digest || ref.Kind != string(expectedPolicy.Kind) {
-				t.Fatalf("worker froze another tenant/version: %+v", ref)
-			}
-
 		}
 		if event.EnrichStatus != domain.EnrichStatusSucceeded || event.EnrichedAt == nil || event.EnrichConfigDigest == "" || event.EnrichConfigDigest == "unavailable" || len(event.Enrich.Evaluations) != len(event.Evaluations) {
 			t.Fatalf("Event enrichment was not persisted before completion: %s", event.EventID)
@@ -1848,4 +1832,33 @@ func publishDatasetPolicies(ctx context.Context, t *testing.T, path string, data
 		releases[record.BKTenantID] = release
 	}
 	return releases
+}
+
+// 只核对实际参与裁决的版本，不再要求保存全部当前策略引用。
+func eventPolicyReferences(processing store.EventProcessing) []store.PolicyReleaseRef {
+	decisions := []*store.PolicyDecision{processing.PolicyDecision}
+	var refs []store.PolicyReleaseRef
+	for _, decision := range decisions {
+		if decision == nil {
+			continue
+		}
+		if decision.Suppression != nil {
+			for _, evaluation := range decision.Suppression.Evaluations {
+				for _, step := range evaluation.Steps {
+					refs = append(refs, step.Policy)
+				}
+			}
+		}
+		if decision.Shield != nil {
+			for _, step := range decision.Shield.Steps {
+				refs = append(refs, step.Policy)
+			}
+		}
+		if decision.Merge != nil {
+			for _, step := range decision.Merge.Steps {
+				refs = append(refs, step.Policy)
+			}
+		}
+	}
+	return refs
 }

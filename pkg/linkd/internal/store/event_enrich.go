@@ -15,7 +15,7 @@ import (
 	"linkd/internal/domain"
 )
 
-// ApplyEventEnrichment 在各后端共享同一完成性检查。已有计划或最终处理结果禁止补写丰富。
+// ApplyEventEnrichment 在各后端共享同一完成性检查。最终处理结果禁止补写丰富。
 // 必须在后端的单对象 CAS 边界内调用，不能用读取成功代替并发版本验证。
 func ApplyEventEnrichment(current StoredEvent, result domain.EventEnrichment) (domain.Event, error) {
 	return applyEventEnrichment(current, result, false)
@@ -27,8 +27,8 @@ func ApplyEventEnrichmentFromSnapshot(current StoredEvent, result domain.EventEn
 }
 
 func applyEventEnrichment(current StoredEvent, result domain.EventEnrichment, snapshot bool) (domain.Event, error) {
-	if current.Processing.State != domain.EventProcessStateUnprocessed || current.Processing.Plan != nil || current.Processing.PolicyContext != nil {
-		return domain.Event{}, fmt.Errorf("%w: enrichment must precede lifecycle plan", ErrInvalidTransition)
+	if current.Processing.State != domain.EventProcessStateUnprocessed {
+		return domain.Event{}, fmt.Errorf("%w: enrichment must precede final result", ErrInvalidTransition)
 	}
 	var updated domain.Event
 	var err error

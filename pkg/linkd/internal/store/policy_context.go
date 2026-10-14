@@ -18,7 +18,7 @@ import (
 	"linkd/internal/domain"
 )
 
-// PolicyReleaseRef 是 Event 首次策略裁决冻结的版本，租户作用域继承所属 Event。
+// PolicyReleaseRef 是 本次策略裁决采用的版本，租户作用域继承所属 Event。
 type PolicyReleaseRef struct {
 	Kind    string `json:"type"`
 	ID      string `json:"id"`
@@ -41,7 +41,7 @@ func (ref PolicyReleaseRef) Validate() error {
 	return nil
 }
 
-// PolicyContext 在任何策略副作用前 CAS 保存；计划撤销、终态提交和重试均不能清除或替换。
+// PolicyContext 是当前处理尝试的内存策略输入，不保存到 Event；重投允许读取新版本。
 // 配置依赖失败时保存明确跳过原因，不能伪装成确实没有匹配策略。
 type PolicyContext struct {
 	EvaluatedAt time.Time          `json:"evaluated_at"`

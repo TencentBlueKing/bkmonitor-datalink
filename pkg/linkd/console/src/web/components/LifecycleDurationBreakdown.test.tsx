@@ -195,11 +195,9 @@ it("drills into processors, checkpoints and alert writes with the same toggle", 
   fireEvent.click(screen.getByRole("button", { name: "忽略合批等待" }));
   expect(within(enrich).getByText("21.00 ms")).toBeVisible();
   const chart = screen.getByRole("group");
-  fireEvent.click(
-    within(chart).getByRole("button", { name: /计划与结果写入/ }),
-  );
+  fireEvent.click(within(chart).getByRole("button", { name: /结果写入/ }));
   const commits = screen.getByRole("region", {
-    name: "计划与结果写入耗时明细",
+    name: "结果写入耗时明细",
   });
   expect(within(commits).getByText("保存执行计划")).toBeVisible();
   expect(within(commits).getByText("提交最终处理结果")).toBeVisible();

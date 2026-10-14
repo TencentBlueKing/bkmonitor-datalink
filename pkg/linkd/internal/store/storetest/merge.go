@@ -151,13 +151,8 @@ func runMergeContract(t *testing.T, factory Factory) {
 			t.Fatal(err)
 		}
 		ref := store.PolicyReleaseRef{Kind: "merge", ID: w.Policy.ID, Version: w.Policy.Version, Digest: w.Policy.Digest}
-		snapshot := &store.PolicyContext{EvaluatedAt: e.CreateAt, Releases: []store.PolicyReleaseRef{ref}}
 		d := &store.PolicyDecision{Merge: &store.MergeDecision{Severity: "warning", Steps: []store.MergeStep{{Policy: ref, Outcome: "joined", Wait: &w}}}}
-		frozen, err := repo.CompareAndSetEventResult(t.Context(), e.BKTenantID, e.EventID, enriched.Version, store.EventResult{State: domain.EventProcessStateUnprocessed, PolicyContext: snapshot})
-		if err != nil {
-			t.Fatal(err)
-		}
-		result, err := repo.CompareAndSetEventResult(t.Context(), e.BKTenantID, e.EventID, frozen.Version, store.EventResult{State: domain.EventProcessStateAccepted, Outcome: "alert_created", RelatedAlertIDs: []string{a.AlertID}, ProcessedAt: e.CreateAt.Add(time.Second), PolicyContext: snapshot, PolicyDecision: d})
+		result, err := repo.CompareAndSetEventResult(t.Context(), e.BKTenantID, e.EventID, enriched.Version, store.EventResult{State: domain.EventProcessStateAccepted, Outcome: "alert_created", RelatedAlertIDs: []string{a.AlertID}, ProcessedAt: e.CreateAt.Add(time.Second), PolicyDecision: d})
 		if err != nil {
 			t.Fatal(err)
 		}

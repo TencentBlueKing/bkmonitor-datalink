@@ -50,10 +50,6 @@ func (r *snapshotRepository) CompareAndSetLifecycleEventResultFromSnapshot(ctx c
 		return store.StoredEvent{}, errors.New("caller reused an earlier event version")
 	}
 	switch {
-	case result.PolicyContext != nil:
-		r.stages = append(r.stages, "policy")
-	case result.Plan != nil:
-		r.stages = append(r.stages, "plan")
 	default:
 		r.stages = append(r.stages, "final")
 	}
@@ -76,7 +72,7 @@ func (r *snapshotRepository) CompareAndSetAlertFromSnapshot(ctx context.Context,
 	return r.CompareAndSetAlert(ctx, current.Alert.BKTenantID, current.Alert.AlertID, current.Version, replacement)
 }
 
-func TestSnapshotProcessorUsesReturnedVersionsAndKeepsThreeStateCommits(t *testing.T) {
+func TestSnapshotProcessorUsesReturnedVersionsAndKeepsOnlyFinalStateCommit(t *testing.T) {
 	for _, conflict := range []bool{false, true} {
 		t.Run(map[bool]string{false: "normal", true: "conflicting_owner"}[conflict], func(t *testing.T) {
 			base := memory.New()
@@ -103,11 +99,11 @@ func TestSnapshotProcessorUsesReturnedVersionsAndKeepsThreeStateCommits(t *testi
 				t.Fatal("enrichment repeated")
 			}
 			if conflict {
-				if repo.eventReads != 2 || result.EventState != domain.EventProcessStateRejected || !reflect.DeepEqual(repo.stages, []string{"policy"}) {
+				if repo.eventReads != 2 || result.EventState != domain.EventProcessStateRejected || !reflect.DeepEqual(repo.stages, []string{"final"}) {
 					t.Fatalf("conflict did not reload completed event: reads=%d stages=%v state=%s", repo.eventReads, repo.stages, result.EventState)
 				}
 			} else {
-				if repo.eventReads != 1 || result.EventState != domain.EventProcessStateAccepted || !reflect.DeepEqual(repo.stages, []string{"policy", "plan", "final"}) {
+				if repo.eventReads != 1 || result.EventState != domain.EventProcessStateAccepted || !reflect.DeepEqual(repo.stages, []string{"final"}) {
 					t.Fatalf("normal snapshot chain: reads=%d stages=%v state=%s", repo.eventReads, repo.stages, result.EventState)
 				}
 				next := storetest.Event("tenant", "next-event", "fp", "warning")

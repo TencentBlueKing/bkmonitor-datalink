@@ -11,7 +11,6 @@ package store
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
 
 	"linkd/internal/domain"
@@ -37,8 +36,8 @@ type AlertMutation struct {
 	Outcome         string       `json:"outcome"`
 }
 
-// EventPlan 保存副作用执行前的裁决快照。最多结束一个旧 Alert 并创建一个新 Alert。
-// 来源事实、排序配置或全局升级策略变化，都不能改变已经提交的计划。
+// EventPlan 是当前调用内的变更集合，最多结束一个旧 Alert 并创建一个新 Alert。
+// 不保存到 Event；中断后允许按最新真实状态重新裁决。
 type EventPlan struct {
 	PolicyDecision *PolicyDecision `json:"policy_decision,omitempty"`
 	// SystemClose 保存事件裁决前的未知等级清理，独立于事件业务关联，重试使用同一时间。
@@ -184,7 +183,7 @@ func (p *EventPlan) Validate() error {
 }
 
 // ApplyEventResult 将一次计划或终态 CAS 投影为新快照，保持来源事实不变。
-// 计划一旦存在只能原样重试、在未产生副作用时由 Lifecycle 撤销，或提交它的完整最终结果。
+// 最终结果不依赖持久化策略快照或执行计划。
 func ApplyEventResult(current StoredEvent, result EventResult) (domain.Event, EventProcessing, error) {
 	return applyEventResult(current, result, false)
 }
@@ -202,36 +201,8 @@ func applyEventResult(current StoredEvent, result EventResult, snapshot bool) (d
 	if err != nil {
 		return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
-	if result.PolicyContext != nil {
-		if current.Event.EnrichStatus == domain.EnrichStatusPending || current.Event.EnrichStatus == "" {
-			return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: policy context requires completed enrichment", ErrInvalidTransition)
-		}
-		if current.Processing.PolicyContext != nil && !reflect.DeepEqual(current.Processing.PolicyContext, result.PolicyContext) {
-			return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: policy context is immutable", ErrInvalidTransition)
-		}
-		if current.Processing.Plan != nil && current.Processing.PolicyContext == nil {
-			return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: cannot freeze policies after plan", ErrInvalidTransition)
-		}
-	}
-	if result.Plan != nil {
-		if current.Processing.Plan != nil && !reflect.DeepEqual(current.Processing.Plan, result.Plan) {
-			return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: event plan is immutable", ErrInvalidTransition)
-		}
-		if err := ValidateEventPlan(current.Event, result.Plan); err != nil {
-			return domain.Event{}, EventProcessing{}, err
-		}
-		if err := ValidatePolicyDecision(current.Event, current.Processing.PolicyContext, result.Plan.PolicyDecision); err != nil {
-			return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-		}
-	}
-	if err := ValidatePolicyDecision(current.Event, current.Processing.PolicyContext, result.PolicyDecision); err != nil {
+	if err := ValidatePolicyDecision(current.Event, nil, result.PolicyDecision); err != nil {
 		return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-	if current.Processing.Plan != nil && result.State != domain.EventProcessStateUnprocessed && (result.State != domain.EventProcessStateRejected || result.Outcome != "processing_failed") {
-		plan := current.Processing.Plan
-		if result.State != plan.State || result.Outcome != plan.Outcome || result.ReasonCode != plan.ReasonCode || !slices.Equal(result.RelatedAlertIDs, plan.RelatedAlertIDs) || !reflect.DeepEqual(result.Evaluations, plan.Evaluations) || !reflect.DeepEqual(result.PolicyDecision, plan.PolicyDecision) {
-			return domain.Event{}, EventProcessing{}, fmt.Errorf("%w: final result differs from saved plan", ErrInvalidTransition)
-		}
 	}
 	var updated domain.Event
 	if snapshot {
@@ -243,13 +214,10 @@ func applyEventResult(current StoredEvent, result EventResult, snapshot bool) (d
 		return domain.Event{}, EventProcessing{}, err
 	}
 	processing := result.Processing()
-	if processing.PolicyContext == nil {
-		processing.PolicyContext = current.Processing.PolicyContext.Clone()
-	}
 	return updated, processing, nil
 }
 
-// ValidateEventPlan 校验持久化计划属于当前租户、来源、fingerprint 和事件；读取后执行前也必须调用。
+// ValidateEventPlan 校验本次内存变更属于当前租户、来源、fingerprint 和事件。
 func ValidateEventPlan(event domain.Event, plan *EventPlan) error {
 	if err := plan.Validate(); err != nil {
 		return err

@@ -12,9 +12,9 @@ const phases = [
   },
   {
     id: "policy_snapshot",
-    label: "策略快照",
+    label: "策略读取",
     color: "#ad83eb",
-    detail: "读取并冻结本次 Event 使用的策略配置。",
+    detail: "读取本次处理使用的当前策略配置，不保存版本快照。",
   },
   {
     id: "plan",
@@ -24,16 +24,16 @@ const phases = [
   },
   {
     id: "event_commit",
-    label: "计划与结果写入",
+    label: "结果写入",
     color: "#4db9cf",
-    detail: "保存策略快照、Event 执行计划、最终处理结果及冲突时的计划撤销。",
+    detail: "保存 Event 最终处理结果。",
   },
   {
     id: "apply",
     label: "告警变更与落库",
     color: "#82bd46",
     detail:
-      "执行计划、保存告警与流水、更新缓存和处置意图；扣除 Event 写入及 Hook 耗时。",
+      "应用本次裁决、保存告警与流水、更新缓存和处置意图；扣除 Event 写入及 Hook 耗时。",
   },
   {
     id: "final_hook",

@@ -103,22 +103,13 @@ func TestSnapshotEventCommitsReadOnceAndKeepAllCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contextResult := store.EventResult{State: domain.EventProcessStateUnprocessed, PolicyContext: &store.PolicyContext{EvaluatedAt: event.ReceivedAt}}
-	current, err = repo.CompareAndSetLifecycleEventResultFromSnapshot(t.Context(), current, contextResult)
-	if err != nil || current.Processing.PolicyContext == nil || current.Processing.Plan != nil {
-		t.Fatalf("context checkpoint: %v", err)
-	}
 	plan := &store.EventPlan{UpgradePolicy: "update_current", State: domain.EventProcessStateSuppressed, Outcome: "suppressed", Evaluations: []store.EvaluationResult{{Severity: "warning", Action: domain.EventActionTriggered, State: domain.EventProcessStateSuppressed, Outcome: "suppressed"}}}
-	current, err = repo.CompareAndSetLifecycleEventResultFromSnapshot(t.Context(), current, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
-	if err != nil || current.Processing.Plan == nil {
-		t.Fatalf("plan checkpoint: %v", err)
-	}
 	old := current
 	current, err = repo.CompareAndSetLifecycleEventResultFromSnapshot(t.Context(), current, store.EventResult{State: plan.State, Outcome: plan.Outcome, Evaluations: plan.Evaluations, ProcessedAt: event.ReceivedAt.Add(time.Second)})
-	if err != nil || current.Processing.Plan != nil || current.Processing.PolicyContext == nil {
+	if err != nil || current.Processing.State != plan.State {
 		t.Fatalf("final checkpoint: %v", err)
 	}
-	if old.Processing.Plan == nil || !reflect.DeepEqual(current.Event.SourceRawData, original.SourceRawData) || f.gets != 1 || f.writes != 4 {
+	if old.Processing.State != domain.EventProcessStateUnprocessed || !reflect.DeepEqual(current.Event.SourceRawData, original.SourceRawData) || f.gets != 1 || f.writes != 2 {
 		t.Fatalf("snapshot lost source / mutated old plan / requests: reads=%d writes=%d", f.gets, f.writes)
 	}
 	// 旧 owner 迟到提交不能把完成结果覆盖回 unprocessed；只有上层显式重读才增加 GET。

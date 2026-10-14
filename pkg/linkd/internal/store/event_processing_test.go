@@ -10,6 +10,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -20,17 +21,14 @@ import (
 
 func TestEventProcessingStateDiagnostics(t *testing.T) {
 	now := time.Now()
-	plan := &EventPlan{UpgradePolicy: "close_and_create", State: domain.EventProcessStateOrphaned, Outcome: "orphaned", Evaluations: []EvaluationResult{{Severity: "warning", Action: domain.EventActionResolved, State: domain.EventProcessStateOrphaned, Outcome: "orphaned"}}}
 	for _, tc := range []struct {
 		name    string
 		p       EventProcessing
 		message string
 	}{
 		{name: "unprocessed", p: NewUnprocessedEventProcessing()},
-		{name: "planned", p: EventProcessing{State: domain.EventProcessStateUnprocessed, Plan: plan}},
 		{name: "terminal", p: EventProcessing{State: domain.EventProcessStateOrphaned, Outcome: "orphaned", ProcessedAt: &now}},
-		{name: "failure diagnostic keeps plan", p: EventProcessing{State: domain.EventProcessStateRejected, Outcome: "processing_failed", ReasonCode: "handler_panic", ProcessedAt: &now, Plan: plan}},
-		{name: "retained plan", p: EventProcessing{State: domain.EventProcessStateOrphaned, Outcome: "orphaned", ProcessedAt: &now, Plan: plan}, message: "must not retain a plan"},
+		{name: "failure diagnostic", p: EventProcessing{State: domain.EventProcessStateRejected, Outcome: "processing_failed", ReasonCode: "handler_panic", ProcessedAt: &now}},
 		{name: "missing result", p: EventProcessing{State: domain.EventProcessStateOrphaned}, message: "requires outcome and processed_at"},
 		{name: "invalid state", p: EventProcessing{State: "bad"}, message: "state is invalid"},
 		{name: "unprocessed result", p: EventProcessing{State: domain.EventProcessStateUnprocessed, Outcome: "orphaned"}, message: "must not contain process result"},
@@ -47,5 +45,23 @@ func TestEventProcessingStateDiagnostics(t *testing.T) {
 				t.Fatalf("error=%v", err)
 			}
 		})
+	}
+}
+
+// 已部署 Event 的旧 checkpoint 字段不阻止解码，也不进入新处理流程。
+func TestEventProcessingIgnoresRetiredCheckpoints(t *testing.T) {
+	var processing EventProcessing
+	if err := json.Unmarshal([]byte(`{"state":"unprocessed","plan":{"obsolete":true},"policy_context":{"obsolete":true}}`), &processing); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := processing.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(processing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"plan"`) || strings.Contains(string(raw), `"policy_context"`) {
+		t.Fatalf("retired checkpoints retained: %s", raw)
 	}
 }

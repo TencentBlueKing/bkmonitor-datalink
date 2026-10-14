@@ -476,15 +476,12 @@ func (h *policyHarness) sendRecord(tenant, id, severity string, record *kgo.Reco
 		}
 		return false
 	})
-	if found.Event.EnrichStatus != domain.EnrichStatusSucceeded || found.Processing.PolicyContext == nil {
-		h.t.Fatalf("Event enrich/policy context missing: %+v", found)
+	if found.Event.EnrichStatus != domain.EnrichStatusSucceeded {
+		h.t.Fatalf("Event enrich missing: %+v", found)
 	}
-	if len(found.Processing.PolicyContext.Releases) != len(h.wantPolicies[tenant]) || found.Processing.PolicyContext.ReasonCode != "" {
-		h.t.Fatalf("enabled policy release was not frozen: %+v", found.Processing.PolicyContext)
-	}
-	for _, ref := range found.Processing.PolicyContext.Releases {
+	for _, ref := range eventPolicyReferences(found.Processing) {
 		if !h.wantPolicies[tenant][ref.Kind+"/"+ref.ID] {
-			h.t.Fatal("unexpected policy in frozen context")
+			h.t.Fatal("unexpected policy in decision")
 		}
 	}
 	effective, err := view.EnrichedEvent(found.Event, severity)

@@ -12,7 +12,6 @@ package lifecycle
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -34,14 +33,14 @@ type failPolicyPlanOnce struct {
 }
 
 func (r *failPolicyPlanOnce) CompareAndSetEventResult(ctx context.Context, tenant, id string, version store.VersionToken, result store.EventResult) (store.StoredEvent, error) {
-	if result.Plan != nil && !r.failed {
+	if result.State != domain.EventProcessStateUnprocessed && !r.failed {
 		r.failed = true
-		return store.StoredEvent{}, errors.New("plan unavailable")
+		return store.StoredEvent{}, errors.New("result unavailable")
 	}
 	return r.Repository.CompareAndSetEventResult(ctx, tenant, id, version, result)
 }
 
-func TestPolicyContextSurvivesPlanFailureAndDoesNotReload(t *testing.T) {
+func TestPoliciesReloadAfterInterruptedAttempt(t *testing.T) {
 	repo := &failPolicyPlanOnce{Repository: memory.New()}
 	p := newTestProcessor(t, repo, &recordingHook{})
 	calls := 0
@@ -51,7 +50,7 @@ func TestPolicyContextSurvivesPlanFailureAndDoesNotReload(t *testing.T) {
 			t.Fatal("snapshot before enrich")
 		}
 		saved, err := repo.GetEvent(ctx, event.BKTenantID, event.EventID)
-		if err != nil || saved.Event.EnrichStatus == domain.EnrichStatusPending || saved.Processing.Plan != nil {
+		if err != nil || saved.Event.EnrichStatus == domain.EnrichStatusPending {
 			t.Fatal("snapshot ordering invalid")
 		}
 		return &store.PolicyContext{EvaluatedAt: at, Releases: []store.PolicyReleaseRef{{Kind: "suppression", ID: "p1", Version: int64(calls), Digest: strings.Repeat("a", 64)}}}, nil
@@ -62,21 +61,21 @@ func TestPolicyContextSurvivesPlanFailureAndDoesNotReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := p.ProcessEvent(t.Context(), created.StoredEvent); err == nil {
-		t.Fatal("expected first plan failure")
+		t.Fatal("expected first result failure")
 	}
 	frozen, err := repo.GetEvent(t.Context(), event.BKTenantID, event.EventID)
-	if err != nil || frozen.Processing.PolicyContext == nil || frozen.Processing.Plan != nil {
-		t.Fatalf("context not committed before plan %+v %v", frozen.Processing, err)
+	if err != nil || frozen.Processing.State != domain.EventProcessStateUnprocessed {
+		t.Fatalf("failed result unexpectedly completed %+v %v", frozen.Processing, err)
 	}
 	result, err := p.ProcessEvent(t.Context(), frozen)
-	if err != nil || len(result.AlertIDs) != 1 || calls != 1 {
+	if err != nil || len(result.AlertIDs) != 1 || calls != 2 {
 		t.Fatalf("retry reloaded policies %+v calls=%d %v", result, calls, err)
 	}
 	saved, err := repo.GetEvent(t.Context(), event.BKTenantID, event.EventID)
-	if err != nil || !reflect.DeepEqual(saved.Processing.PolicyContext, frozen.Processing.PolicyContext) {
-		t.Fatal("final result lost policy context")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := p.ProcessEvent(t.Context(), saved); err != nil || calls != 1 {
+	if _, err := p.ProcessEvent(t.Context(), saved); err != nil || calls != 2 {
 		t.Fatal("completed replay reloaded configuration")
 	}
 }
@@ -106,10 +105,7 @@ func TestPolicyContextErrorAndRecordedSkip(t *testing.T) {
 			if err != nil || len(result.AlertIDs) != 1 {
 				t.Fatalf("dependency skip blocked event %v", err)
 			}
-			saved, _ := repo.GetEvent(t.Context(), event.BKTenantID, event.EventID)
-			if saved.Processing.PolicyContext.ReasonCode != "policy_load_failed" {
-				t.Fatal("skip reason lost")
-			}
+
 		}
 	}
 }

@@ -23,7 +23,7 @@ import (
 	"linkd/internal/suppressioncleanup"
 )
 
-// ProcessEvent 在 fingerprint lease 内先保存确定性计划，再执行有界副作用并提交最终结果。
+// ProcessEvent 在 fingerprint lease 内计算本次变更，执行有界副作用并提交最终结果。
 // 同一事件的所有级别共享该计划；外部 hook 仍遵从至少一次调用边界。
 func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent) (result ProcessResult, err error) {
 	if ctx == nil {
@@ -59,6 +59,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		return ProcessResult{}, store.ErrInvalidEventProcessing
 	}
 	var lastErr error
+	var plan *store.EventPlan
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return ProcessResult{}, err
@@ -73,7 +74,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		if stored.Processing.State != domain.EventProcessStateUnprocessed {
 			return processResult(stored), nil
 		}
-		if stored.Processing.Plan == nil {
+		if plan == nil {
 			var err error
 			stored, err = p.enrichEvent(ctx, stored)
 			if err != nil {
@@ -84,37 +85,26 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 				return ProcessResult{}, fmt.Errorf("enrich event: %w", err)
 			}
 			stored.Event = stored.Event.WithEnrichEvaluations(nil)
-			stored, err = p.freezePolicies(ctx, stored)
+			snapshot, err := p.readPolicies(ctx, stored.Event)
 			if err != nil {
 				if errors.Is(err, store.ErrVersionConflict) {
 					lastErr = err
 					continue
 				}
-				return ProcessResult{}, fmt.Errorf("freeze policies: %w", err)
+				return ProcessResult{}, fmt.Errorf("read policies: %w", err)
 			}
-			plan, err := p.preparePlan(ctx, stored.Event, stored.Processing.PolicyContext)
+			plan, err = p.preparePlan(ctx, stored.Event, snapshot)
 			if err != nil {
 				return ProcessResult{}, fmt.Errorf("prepare lifecycle plan: %w", err)
 			}
-			stored, err = p.writeEventCheckpoint(ctx, stored, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan}, "plan_save")
-			if err != nil {
-				if errors.Is(err, store.ErrVersionConflict) {
-					lastErr = err
-					continue
-				}
-				return ProcessResult{}, fmt.Errorf("persist lifecycle plan: %w", err)
-			}
 		}
-		completed, err := p.executePlan(ctx, stored)
+		completed, err := p.executePlan(ctx, stored, plan)
 		if err == nil {
 			return processResult(completed), nil
 		}
 		if errors.Is(err, errRetryDecision) {
-			// 只有第一项尚未生效且原版本已被其他操作推进时才撤销；已经生效的计划必须补齐。
-			_, clearErr := p.writeEventCheckpoint(ctx, stored, store.EventResult{State: domain.EventProcessStateUnprocessed}, "plan_clear")
-			if clearErr != nil && !errors.Is(clearErr, store.ErrVersionConflict) {
-				return ProcessResult{}, clearErr
-			}
+			// 首项尚未生效时可重新裁决；其他冲突在当前调用内复用已计算的变更。
+			plan = nil
 		} else if !errors.Is(err, store.ErrVersionConflict) {
 			return ProcessResult{}, err
 		}
@@ -127,14 +117,9 @@ func processResult(stored store.StoredEvent) ProcessResult {
 	return ProcessResult{EventID: stored.Event.EventID, AlertIDs: slices.Clone(stored.Event.RelatedAlertIDs), EventState: stored.Processing.State, Outcome: ProcessOutcome(stored.Processing.Outcome), ReasonCode: stored.Processing.ReasonCode}
 }
 
-func (p *Processor) writeEventCheckpoint(ctx context.Context, stored store.StoredEvent, result store.EventResult, step string) (store.StoredEvent, error) {
-	defer p.measurePhase(phaseEventCommit)()
-	defer p.measureStep(phaseEventCommit, step)()
-	return p.writeEventResult(ctx, stored, result)
-}
-
 func (p *Processor) writeEventResult(ctx context.Context, stored store.StoredEvent, result store.EventResult) (store.StoredEvent, error) {
 	defer p.measurePhase(phaseEventCommit)()
+	defer p.measureStep(phaseEventCommit, "result_save")()
 	var updated store.StoredEvent
 	var err error
 	if repo, ok := p.repository.(store.LifecycleEventSnapshotStore); ok {
@@ -303,7 +288,10 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 				current = created
 				setEvaluationResult(plan, highest, domain.EventProcessStateAccepted, string(OutcomeAlertCreated), "", []string{created.AlertID})
 			case evaluation.Severity == active.Alert.Severity:
-				updated := advanceAlert(active.Alert, event, now)
+				updated := active.Alert.Clone()
+				if active.Alert.LatestEventID != event.EventID {
+					updated = advanceAlert(active.Alert, event, now)
+				}
 				if err := planMutation(plan, event, active.Version, updated, OutcomeAlertUpdated, "", "", nil); err != nil {
 					return nil, err
 				}
@@ -315,7 +303,7 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 	if err := p.planAdmission(ctx, event, snapshot, plan, highest); err != nil {
 		return nil, err
 	}
-	// 终态清理没有后续触发准入阶段，用同一持久化 EventPlan 保存原绑定，日志重试不丢历史。
+	// 终态清理没有后续触发准入阶段，本次内存裁决保留原绑定供流水展示。
 	if associatedActive.Shield.Active {
 		for _, mutation := range plan.Mutations {
 			if mutation.Alert.AlertID != associatedActive.AlertID || !mutation.Alert.Status.Terminal() {
@@ -439,9 +427,8 @@ func (p *Processor) planNewAlert(ctx context.Context, plan *store.EventPlan, eve
 	return alert, err
 }
 
-func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (store.StoredEvent, error) {
+func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent, plan *store.EventPlan) (store.StoredEvent, error) {
 	defer p.measurePhase(phaseApply)()
-	plan := stored.Processing.Plan
 	if err := store.ValidateEventPlan(stored.Event, plan); err != nil {
 		return store.StoredEvent{}, err
 	}
@@ -461,6 +448,18 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (
 	superseded := make([]bool, len(plan.Mutations))
 	for index, mutation := range plan.Mutations {
 		updated, err := p.applyMutation(ctx, stored.Event, mutation, index == 0)
+		if err != nil {
+			return store.StoredEvent{}, err
+		}
+		// 告警已写入后立即发布真实缓存，后续绑定/流水失败不能留下旧 current。
+		func() {
+			defer p.measureStep(phaseApply, "cache")()
+			if updated.Alert.Status == domain.AlertStatusActive {
+				err = p.recentAlerts.PutCurrent(ctx, updated)
+			} else {
+				err = p.recentAlerts.PutTerminal(ctx, updated)
+			}
+		}()
 		if err != nil {
 			return store.StoredEvent{}, err
 		}
@@ -495,18 +494,6 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (
 
 		// 独立关闭命令可能已经推进该快照；不能在重试时向策略索引重发旧 active。
 		superseded[index] = updated.Alert.UpdateAt.After(mutation.Alert.UpdateAt)
-		func() {
-			defer p.measureStep(phaseApply, "cache")()
-			if updated.Alert.Status == domain.AlertStatusActive {
-				err = p.recentAlerts.PutCurrent(ctx, updated)
-			} else {
-				err = p.recentAlerts.PutTerminal(ctx, updated)
-			}
-		}()
-
-		if err != nil {
-			return store.StoredEvent{}, err
-		}
 	}
 	// 没有 Alert 的恢复/关闭仍清理未绑定计数；存在新触发时不能在其计数后撤销新窗口。
 	if p.suppressor != nil && len(plan.Mutations) == 0 {
@@ -551,7 +538,7 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
-	return p.writeEventCheckpoint(ctx, stored, store.EventResult{PolicyDecision: plan.PolicyDecision, State: plan.State, Outcome: plan.Outcome, ReasonCode: plan.ReasonCode, RelatedAlertIDs: plan.RelatedAlertIDs, Evaluations: plan.Evaluations, ProcessedAt: now}, "result_save")
+	return p.writeEventResult(ctx, stored, store.EventResult{PolicyDecision: plan.PolicyDecision, State: plan.State, Outcome: plan.Outcome, ReasonCode: plan.ReasonCode, RelatedAlertIDs: plan.RelatedAlertIDs, Evaluations: plan.Evaluations, ProcessedAt: now})
 }
 
 func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutation store.AlertMutation, first bool) (store.StoredAlert, error) {
@@ -562,13 +549,13 @@ func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutat
 			return current, nil
 		}
 		// 源写入之后，控制任务可能继续屏蔽/合并/关闭该生命周期。revision 加上保留的源事件/创建锚点
-		// 证明旧计划已经生效；不能把输出重试当成身份冲突，也不能用旧快照覆盖较新的业务结果。
+		// 证明该源事件已经生效；不能把输出重试当成身份冲突，也不能用旧快照覆盖较新的业务结果。
 		sameLifecycle := current.Alert.BKTenantID == target.BKTenantID && current.Alert.EventSourceID == target.EventSourceID && current.Alert.Fingerprint == target.Fingerprint && current.Alert.TriggerEventID == target.TriggerEventID
-		if sameLifecycle && current.Alert.Revision > target.Revision && (current.Alert.LatestEventID == event.EventID || (mutation.ExpectedVersion == "" && current.Alert.TriggerEventID == event.EventID)) {
+		if sameLifecycle && (mutation.ExpectedVersion == "" || current.Alert.Revision > target.Revision) && (current.Alert.LatestEventID == event.EventID || (mutation.ExpectedVersion == "" && current.Alert.TriggerEventID == event.EventID)) {
 			return current, nil
 		}
 		if mutation.ExpectedVersion == "" {
-			p.logger.WarnContext(ctx, "saved create plan conflicts with persisted alert", "module", "lifecycle", "operation", "execute_create_plan",
+			p.logger.WarnContext(ctx, "create decision conflicts with persisted alert", "module", "lifecycle", "operation", "execute_create_plan",
 				"bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID,
 				"event_id", event.EventID, "alert_id", target.AlertID,
 				"planned_revision", target.Revision, "current_revision", current.Alert.Revision,

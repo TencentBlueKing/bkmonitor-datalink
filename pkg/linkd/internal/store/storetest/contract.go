@@ -28,7 +28,7 @@ type Factory func(t *testing.T) store.Repository
 func RunRepositoryContract(t *testing.T, factory Factory) {
 	t.Helper()
 	runEventEnrichmentContract(t, factory)
-	runPolicyContextContract(t, factory)
+	runPolicyDecisionContract(t, factory)
 	runShieldWorkContract(t, factory)
 	runShieldQueryContract(t, factory)
 	runShieldDependentsContract(t, factory)

@@ -21,7 +21,7 @@ Console 的单 Event 耗时分布默认显示完整处理时间；右上角“�
 保留存储排队，并同时显示执行、合批等待、存储排队与完整总耗时。点击阶段可下钻子步骤。
 子步骤使用同一次 Event 的独占计时，包含零样本、失败、重放及尝试内重试；所有子步骤之和等于父阶段。
 Enrich 分别计时内置 processor 的 Match/Process、链编排/补丁编码与丰富结果保存；自定义名称归为 custom，
-不把动态配置 ID 放入指标。计划写入区分策略快照、计划保存、最终提交和冲突撤销；告警执行区分
+不把动态配置 ID 放入指标。Event 写入只统计最终结果提交；告警执行区分
 读取、创建/CAS、动作投递、策略绑定、缓存与流水保存。父子计时均将实际执行、合批等待、存储排队拆开。
 新 `linkd.lifecycle.event.phase.step.duration` 以固定 `linkd.step` 和 `linkd.wait_kind`
 （execution、batch_wait、storage_queue）维度记录；子步骤均值的分母为 Event 尝试次数，不是 processor 调用次数。
@@ -89,7 +89,7 @@ Elasticsearch 后端使用所有 Lifecycle 实例共享的 Redis Recent Alert �
 Alert 事实源，也不会保存全部 active Alert。
 
 首次裁决先查 current 缓存；命中 active 时直接使用，命中 terminal 时视为“当前无 active”。
-已有 processing.plan 的事件直接按计划实时读取目标 Alert，恢复不再依赖 ended 查询或当前升级配置。
+重投读取当前策略和真实 Alert 状态重新判断，不再恢复 processing.plan。
 只有 current 缓存明确不存在时才查询 Elasticsearch；缓存错误、损坏或身份不一致均保留队首重试。
 ended 条目仍由缓存接口维护，但不是当前 Processor 的恢复入口。MySQL 后端不启用该缓存。
 
@@ -146,21 +146,20 @@ Repository 在读取边界恢复默认值、UTC 时间和计划中的空集合�
 - `Clock`：服务端状态时间；
 - `Logger`：记录降级和失败上下文。
 
-Processor 最多进行 3 次 CAS 循环。冲突后重新读取 Event，优先恢复已保存计划；仅第一项尚未生效、
-原版本已被其他操作推进时才撤销并重裁决，不能拿旧 replacement 覆盖并发状态。
+Processor 最多进行 3 次 CAS 循环。冲突后重新读取 Event；当前调用可复用内存裁决，第一项尚未生效且被并发操作推进时重新裁决。跨调用重投读取当前策略，不恢复已保存计划，不用旧 replacement 覆盖并发状态。
 
 当前防抖已接入正式 Worker：按冻结时间在 Redis 统计不同 EventID，未达到阈值的 Event 完成处理但不创建 Alert。
 所有活动 Alert（包括后续屏蔽/合并状态）都绕过防抖与关联聚合，同级、低等级、升级以及同 Event 终态/触发组合继续沿用生命周期裁决。
 候选按严重程度依次判断；高等级未达阈值不覆盖低等级独立判定。选中一个放行等级后，其余未判定的触发仍按等级抑制处理。
-抑制计数和跳过原因先随 `EventPlan.policy_decision` 固定，最终保存到 `EventProcessing.policy_decision`，重投不再计算。
+抑制计数和跳过原因在内存裁决中计算，随最终结果保存到 `EventProcessing.policy_decision`；未终态重投允许重新判断。
 
-有明确主告警的汇总抑制还生成 `suppress` AlertLog，绑定冻结裁决中的真实主 AlertID；流水保存来源 EventID、等级、策略版本及窗口引用。日志身份由租户、事件、主告警、等级与策略版本确定，先随 EventPlan 冻结，全部流水写入成功后才完成 Event CAS。日志失败重试不重跑计数、不重复写入，也不修改主告警生命周期。防抖未达门槛时没有真实 Alert，继续仅保存 Event 诊断，不伪造 AlertID，也不在后续告警产生后追补这些事件。
+有明确主告警的汇总抑制还生成 `suppress` AlertLog，绑定冻结裁决中的真实主 AlertID；流水保存来源 EventID、等级、策略版本及窗口引用。日志身份由租户、事件、主告警、等级与策略版本确定，先在本次内存裁决中构造，全部流水写入成功后才完成 Event CAS。跨调用重投允许重新裁决，不承诺补齐本次缺失流水；流水继续使用既有稳定身份。防抖未达门槛时没有真实 Alert，继续仅保存 Event 诊断，不伪造 AlertID，也不在后续告警产生后追补这些事件。
 
 屏蔽/解除屏蔽和合并等待、建联、释放、结束均属于独立策略流转。合并控制面日志保留操作、窗口和关系身份；合并成员全部结束导致系统恢复时保留系统操作类型，不描述为告警源恢复。不修改既有不可变流水的参数与身份。
 
 新策略记录保存准确策略版本与当次执行事实。屏蔽绑定直接保存 `periods`（实际命中的 UTC 时段）和操作人；合并等待、关系与抑制裁决不保存策略名称、字段展示名、时区等静态副本。静态说明由 KAC 查询准确不可变 Release，其 `origin` 关联发布时完整 KAC 快照。合并控制日志明确保留 `change_kind`、`merge_role`、主告警身份/当时标题、成员数量及确认的结束/释放原因，不复制完整成员列表。释放失败裁决、缓存丢失及落选成员分别标识 `conditions_not_met`、`window_missing`、`member_not_selected`，不重新推测原因。
 
-新日志使用 `display_version=2` 与 `policy-flow-log-v2` 身份命名空间；控制面屏蔽意图固定 `log_version=2`，合并意图固定 `log_params`。旧已冻结流水意图使用原 payload 和 LogID，EventPlan 中已保存的 Logs 原样重试；不回填历史数据。ES 仅追加必要映射，不重写历史文档。对外读取契约见[策略流转业务事实](../reference/contracts/policy-flow-records.md)。
+新日志使用 `display_version=2` 与 `policy-flow-log-v2` 身份命名空间；控制面屏蔽意图固定 `log_version=2`，合并意图固定 `log_params`。控制面已有冻结流水意图沿用原 payload 和 LogID；Lifecycle 不再保存 EventPlan 或回填历史数据。ES 仅追加必要映射，不重写历史文档。对外读取契约见[策略流转业务事实](../reference/contracts/policy-flow-records.md)。
 
 无 Alert 的单独恢复/关闭会清理未绑定计数；实际告警终态和人工关闭按 owner 清理，旧告警不能删除新代次。
 关联聚合也已接入：跨来源候选先抢占 pending 窗口，真实主 Alert 创建后登记，其他来源实时复核活动性并原子确认关联。
@@ -212,7 +211,7 @@ type FinalHook interface {
 }
 ```
 
-Enricher 对每条不同 Event 在计划保存前同步执行；逐 evaluation 保存结果，共享本次 Event 的查询缓存。
+Enricher 对每条不同 Event 在裁决前同步执行；逐 evaluation 保存结果，共享本次 Event 的查询缓存。
 结果专用 CAS 一旦成功，处理计划失败或重投均复用该结果。error、panic、非法状态/数据降级为 failed，父取消停止处理。
 恢复/关闭和低等级被抑制 Event 也保存丰富结果。创建 Alert 时直接复制 opening Event 对应等级的 data；
 后续 Event 不刷新既有 Alert。`trigger_event_id` 是稳定的首次丰富来源，无需再增加重复的 enrich_event_id。
@@ -289,7 +288,7 @@ Redis Signal
 10. 达到排空上限但仍非空时释放 lease 并返回 `Defer(0)`，让 Signal 回到本地公平队列；
 11. 最终释放 lease；释放失败只记录警告，不能误删新 owner 的锁。
 
-默认单次最多排空 128 条后主动让出。普通 ProcessEvent 错误（含逻辑、JSON 和 panic）记录拒绝诊断后移出该 Event，继续排空后续项。当前不预置错误重试白名单；显式可重试标记最多尝试三次，耗尽同样只结束当前 Event。Event 的 processing 使用 rejected/processing_failed 和固定 reason_code；失败时保留原冻结计划用于排查，但终态重投不再执行它。诊断存储不可用时保留结构化日志，不因诊断写入再次阻塞消息。
+默认单次最多排空 128 条后主动让出。普通 ProcessEvent 错误（含逻辑、JSON 和 panic）记录拒绝诊断后移出该 Event，继续排空后续项。当前不预置错误重试白名单；显式可重试标记最多尝试三次，耗尽同样只结束当前 Event。Event 的 processing 使用 rejected/processing_failed 和固定 reason_code；不再保存失败执行计划，终态重投直接返回已有结果。诊断存储不可用时保留结构化日志，不因诊断写入再次阻塞消息。
 任务上下文取消、lease 撤销和 Mailbox ACK 未确认时保留队首；动作排序索引尚不可见属于协议等待，释放 lease 后延后 Signal。租户待办配额已取消。
 Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 Handler 继续读取；`LPOP` 后的空到非空
 入队会创建新的 Stream ID，确认旧 Signal 不会删除新 Signal。处理期间已创建的新 Signal 可能成为冗余
@@ -335,21 +334,26 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
 两种策略都不执行原地降级。当前高级别恢复且低级别再次触发时，结束旧 Alert 并创建新 Alert。
 `last_occurred_at` 仍取本次被接受 Event 的 occurred_at；`update_at` 严格单调。
 
-## 5. 裁决计划与副作用
+## 5. 内存裁决与副作用
+
+2026-10-14 取消执行计划和策略版本快照落盘。策略与裁决集合仅在当前调用内使用；进程中断后的重投按当时策略与真实告警状态重新判断。
+允许本次事件/输出丢失，不承诺补齐历史副作用，但不能留下阻塞后续触发、恢复或关闭的身份冲突。
+写入响应不确定时复用 realtime GET 和 Recent Alert 缓存修复；保留稳定 ID、单对象 CAS 与租户隔离。
+本节替代本文件其他段落关于冻结 EventPlan 重放的历史说明。
+
 
 ```text
 读取 Event / active Alert，完整裁决全部级别
   → 冻结 Event Enrich，构造稳定 Alert ID、目标快照与流水
-  → Event CAS 保存 processing.plan（仍为 unprocessed）
   → 按计划执行最多两项 Alert CAS/create
   → 每项写入后更新 Recent Alert 缓存
   → 按旧告警、新告警顺序执行 FinalHook
   → 一次批量追加操作与输出流水
-  → Event CAS 提交逐级结果及 related_alert_ids，清除 plan
+  → Event CAS 提交逐级结果及 related_alert_ids
   → Mailbox 出队
 ```
 
-纯抑制也保存计划和稳定流水，不输出 Alert 快照。来源事实（包含 values 和 evaluations）不被处理结果覆盖。
+纯抑制保存最终裁决和稳定流水，不持久化执行计划，不输出 Alert 快照。来源事实（包含 values 和 evaluations）不被处理结果覆盖。
 EventProcessing.state/outcome 是整个事件的摘要；每个级别的结果保存在 processing.evaluations。
 
 ### 5.1 Elasticsearch 终态归档
@@ -371,11 +375,10 @@ History 内容冲突、读取/写入失败仍保留失败语义。
 
 ## 6. 幂等与部分成功恢复
 
-上述步骤不是一个事务。Event 终态直接返回；未完成时使用已保存计划，不按重启后的策略重新裁决。
-每项 Alert 通过 realtime GET 核对目标快照：一致则补齐缓存和后续步骤；尚未应用时按原 VersionToken
-进行 CAS，创建使用稳定 ID 和 create-only。若该源事件的 active 快照已被独立关闭命令推进为更晚终态，
-保留关闭结果且跳过旧 active hook，避免重试将活跃策略索引重新加入。第一项尚未生效且已被独立操作推进时，修复缓存并撤销计划后
-重裁决；已有副作用则继续原计划。计划读写与执行前都校验租户、来源、fingerprint 和 Event ID。
+上述步骤不是一个事务。Event 终态直接返回；未完成重投读取当前策略和真实 Alert 状态重新裁决。
+Alert 创建仍使用 opening Event 的稳定 ID 和 create-only，业务更新保留原有 CAS。创建已提交但响应丢失时，
+失败路径按同一 Alert ID 回读真实状态；同一源事件已生效或后续控制命令已推进告警时，不能用旧快照覆盖。
+告警写入后先发布缓存，再执行绑定、Hook、流水与 Event 最终结果，不增加新的持久化补偿状态。
 
 同一次裁决产生的 AlertLog 在一次 Bulk 中提交。只有全部日志项成功后才执行独立的 Event CAS，避免
 Bulk 部分成功时 Event 已经终态而日志无法由现有重试路径补齐。Alert 与 Event/AlertLog 位于不同
@@ -392,8 +395,8 @@ AlertLog 或 Event CAS。Active 索引 `refresh_interval` 由
 Elasticsearch 不使用 Active 文档 `_id` 额外防御跨进程 fingerprint 重复；正常处理路径依赖 Mailbox
 lease 串行化同一 fingerprint。物理归档由 Alert Archiver 异步完成，不属于 Event 的处理成功条件。
 
-如果副作用完成但 Event CAS 前崩溃，Event 仍在 Mailbox 队首；重试从持久化计划继续，不重复关闭 Alert
-或创建不同身份的流水。
+如果副作用完成但 Event CAS 前崩溃，Event 仍在 Mailbox 队首；重投重新裁决。允许本次输出或流水缺失，
+但同 fingerprint 后续合法触发、恢复和关闭应继续工作，无需人工清理旧计划。
 
 重复 Mailbox 引用在 Event 已终态后不会再次执行领域副作用；这不等价于外部 exactly-once。若
 FinalHook 已完成但 Event 终态 CAS 尚未成功，恢复仍可能再次调用 FinalHook，下游继续按稳定
@@ -466,4 +469,4 @@ Signal 已接管后，锁忙、动作积压水位和分批处理返回 Defer，�
 ### KAC 队列与同步关闭
 
 普通更新交给控制面队列投影；主动关闭保存终态后直接写 KAC 并 refresh，失败返回 502，允许原命令重试。
-不再保存 ActionPending、投影水位或输出任务；生命周期自身的业务 CAS、计划和审计保持原语义。
+不再保存 ActionPending、投影水位或输出任务；生命周期自身保留业务 CAS 和审计，执行计划只在内存中存在。

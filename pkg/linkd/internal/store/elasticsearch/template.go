@@ -260,9 +260,7 @@ func eventProperties() map[string]any {
 		"labels":          flattenedProperty(),
 		"extra_data":      opaqueObjectProperty(),
 		"processing": strictObjectProperty(map[string]any{
-			"policy_context":  opaqueObjectProperty(),
 			"policy_decision": opaqueObjectProperty(),
-			"plan":            opaqueObjectProperty(),
 			"evaluations":     map[string]any{"type": "object", "enabled": false},
 			"state":           keywordProperty(),
 			"outcome":         keywordProperty(),
@@ -413,7 +411,7 @@ func (r *Repository) ensureEventPolicyMapping(ctx context.Context, index string,
 		roots["merge_origin"] = opaqueObjectProperty()
 	}
 	nested, _ := processing["properties"].(map[string]any)
-	for _, name := range []string{"policy_context", "policy_decision"} {
+	for _, name := range []string{"policy_decision"} {
 		if current, exists := nested[name]; exists {
 			field, ok := current.(map[string]any)
 			if !ok || field["type"] != "object" || field["enabled"] != false {

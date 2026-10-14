@@ -254,7 +254,7 @@ func (h *Handler) processMailboxEvent(ctx context.Context, signal Signal, id str
 }
 
 // recordFailure 尽力保存明确的终态；诊断存储失败不能再次卡住该 Event。
-// 冻结计划保留供排查部分副作用，终态重投不会再执行计划。
+// 失败事件直接终结，终态重投不会重复处理。
 func (h *Handler) recordFailure(ctx context.Context, tenant, id, reason string) {
 	writer, ok := h.eventReader.(interface {
 		CompareAndSetEventResult(context.Context, string, string, store.VersionToken, store.EventResult) (store.StoredEvent, error)
@@ -268,7 +268,7 @@ func (h *Handler) recordFailure(ctx context.Context, tenant, id, reason string) 
 			if err != nil || current.Processing.State.Terminal() {
 				return current, err
 			}
-			next, err := writer.CompareAndSetEventResult(ctx, tenant, id, current.Version, store.EventResult{State: domain.EventProcessStateRejected, Outcome: "processing_failed", ReasonCode: reason, ProcessedAt: time.Now().UTC(), Plan: current.Processing.Plan})
+			next, err := writer.CompareAndSetEventResult(ctx, tenant, id, current.Version, store.EventResult{State: domain.EventProcessStateRejected, Outcome: "processing_failed", ReasonCode: reason, ProcessedAt: time.Now().UTC()})
 			if !errors.Is(err, store.ErrVersionConflict) {
 				return next, err
 			}

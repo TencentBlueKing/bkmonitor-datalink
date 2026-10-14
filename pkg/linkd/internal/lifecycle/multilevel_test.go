@@ -11,7 +11,6 @@ package lifecycle
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
@@ -134,7 +133,7 @@ func TestAllSeverityCloseResumesAfterLogFailure(t *testing.T) {
 		t.Fatalf("close not applied: %+v %v", closed, err)
 	}
 	result, err := p.ProcessEvent(ctx, mustGetStoredEvent(t, repo, event))
-	if err != nil || result.Outcome != OutcomeAlertClosed || result.EventState != domain.EventProcessStateAccepted {
+	if err != nil || result.Outcome != OutcomeEventOrphaned || result.EventState != domain.EventProcessStateOrphaned {
 		t.Fatalf("retry=%+v err=%v", result, err)
 	}
 	after, err := repo.GetAlert(ctx, event.BKTenantID, first.AlertIDs[0])
@@ -224,7 +223,7 @@ func TestMultipleEvaluationsAndUpgradePolicies(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if stored.Processing.Plan != nil || len(stored.Processing.Evaluations) != len(event.Evaluations) || stored.Event.Values["cpu"] != 92.5 {
+				if len(stored.Processing.Evaluations) != len(event.Evaluations) || stored.Event.Values["cpu"] != 92.5 {
 					t.Fatalf("stored=%+v", stored)
 				}
 				for _, id := range stored.Event.RelatedAlertIDs {
@@ -265,7 +264,7 @@ func (r *failNextCreateRepository) CreateAlert(ctx context.Context, alert domain
 	return r.Repository.CreateAlert(ctx, alert)
 }
 
-func TestPersistedRotationResumesWithChangedPolicy(t *testing.T) {
+func TestInterruptedRotationRecalculatesWithChangedPolicy(t *testing.T) {
 	ctx := context.Background()
 	base := memory.New()
 	repository := &failNextCreateRepository{Repository: base}
@@ -286,22 +285,8 @@ func TestPersistedRotationResumesWithChangedPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending.Processing.Plan == nil || pending.Processing.State != domain.EventProcessStateUnprocessed {
-		t.Fatal("plan not persisted")
-	}
-	encoded, err := json.Marshal(pending.Processing.Plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded store.EventPlan
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	pending.Processing.Plan = &decoded
-	// 模拟 Repository 的读取边界：JSON 往返后的空集合和时间在交给 Processor 前恢复。
-	pending.Processing, err = pending.Processing.Normalize()
-	if err != nil {
-		t.Fatal(err)
+	if pending.Processing.State != domain.EventProcessStateUnprocessed {
+		t.Fatal("interrupted event unexpectedly completed")
 	}
 	retry := newTestProcessor(t, repository, NoopFinalHook{})
 	retry.upgradePolicy = "update_current"
@@ -309,7 +294,7 @@ func TestPersistedRotationResumesWithChangedPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != OutcomeAlertRotated || len(result.AlertIDs) != 2 {
+	if result.Outcome != OutcomeAlertCreated || len(result.AlertIDs) != 1 {
 		t.Fatalf("result=%+v", result)
 	}
 	ended, err := base.GetAlert(ctx, event.BKTenantID, old.AlertIDs[0])
@@ -342,13 +327,10 @@ func TestPlanTenantIsolationAndLaterClose(t *testing.T) {
 	}
 	wrong := plan.Clone()
 	wrong.Mutations[0].Alert.BKTenantID = "other-tenant"
-	if _, err := processor.writeEventResult(ctx, created.StoredEvent, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: wrong}); err == nil {
+	if _, err := processor.executePlan(ctx, created.StoredEvent, wrong); err == nil {
 		t.Fatal("cross-tenant plan accepted")
 	}
-	saved, err := processor.writeEventResult(ctx, created.StoredEvent, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
-	if err != nil {
-		t.Fatal(err)
-	}
+	saved := created.StoredEvent
 	target := plan.Mutations[0].Alert
 	if _, err := repo.CreateAlert(ctx, target); err != nil {
 		t.Fatal(err)

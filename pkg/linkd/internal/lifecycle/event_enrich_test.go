@@ -120,7 +120,7 @@ func TestEventEnrichmentSurvivesPlanFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending.Event.EnrichStatus != domain.EnrichStatusSucceeded || pending.Processing.Plan != nil {
+	if pending.Event.EnrichStatus != domain.EnrichStatusSucceeded {
 		t.Fatal("enrich was not frozen before plan")
 	}
 	if _, err := p.ProcessEvent(t.Context(), pending); err != nil {

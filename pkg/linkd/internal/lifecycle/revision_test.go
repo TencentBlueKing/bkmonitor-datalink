@@ -14,11 +14,12 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/store"
 	"linkd/internal/store/memory"
 	"linkd/internal/store/storetest"
 )
 
-func TestEventPlanRetryPreservesLaterActiveControlMutation(t *testing.T) {
+func TestEventReplayPreservesLaterActiveControlMutation(t *testing.T) {
 	for _, create := range []bool{false, true} {
 		t.Run(map[bool]string{false: "update", true: "create"}[create], func(t *testing.T) {
 			base := memory.New()
@@ -40,63 +41,32 @@ func TestEventPlanRetryPreservesLaterActiveControlMutation(t *testing.T) {
 				t.Fatal("log failure ignored")
 			}
 			pending, err := base.GetEvent(t.Context(), e.BKTenantID, e.EventID)
-			if err != nil || pending.Processing.Plan == nil {
+			if err != nil {
 				t.Fatal("frozen plan lost", err)
 			}
-			target := pending.Processing.Plan.Mutations[0].Alert
-			current, err := base.GetAlert(t.Context(), e.BKTenantID, target.AlertID)
+			target, err := base.FindActiveAlert(t.Context(), store.ActiveAlertKey{BKTenantID: e.BKTenantID, EventSourceID: e.EventSourceID, Fingerprint: e.Fingerprint})
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, err := base.GetAlert(t.Context(), e.BKTenantID, target.Alert.AlertID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			later := current.Alert.Clone()
 			later.UpdateAt = later.UpdateAt.Add(time.Second)
 			later.PolicyTags = []int64{9}
-			updated, err := base.CompareAndSetAlert(t.Context(), e.BKTenantID, target.AlertID, current.Version, later)
+			updated, err := base.CompareAndSetAlert(t.Context(), e.BKTenantID, target.Alert.AlertID, current.Version, later)
 			if err != nil {
 				t.Fatal(err)
 			}
 			result, err := p.ProcessEvent(t.Context(), pending)
-			if err != nil || result.EventState != domain.EventProcessStateAccepted {
+			if err != nil || result.EventState != domain.EventProcessStateSuppressed {
 				t.Fatal("later active state broke source retry", err)
 			}
-			final, err := base.GetAlert(t.Context(), e.BKTenantID, target.AlertID)
-			if err != nil || final.Version != updated.Version || final.Alert.Revision != target.Revision+1 || len(final.Alert.PolicyTags) != 1 {
+			final, err := base.GetAlert(t.Context(), e.BKTenantID, target.Alert.AlertID)
+			if err != nil || final.Version != updated.Version || final.Alert.Revision != target.Alert.Revision+1 || len(final.Alert.PolicyTags) != 1 {
 				t.Fatal("old source plan overwrote control mutation", err)
 			}
 		})
-	}
-}
-
-func TestEventPlanRetryAcceptsEquivalentJSONAfterAlertPersistence(t *testing.T) {
-	base := memory.New()
-	repo := &failCloseLogs{Repository: base, fail: true}
-	p := newTestProcessor(t, repo, NoopFinalHook{})
-	e := storetest.Event("tenant", "json-retry", "json-fingerprint", "warning")
-	e.ExtraData = domain.JSONObject{"nested": []byte(`{"a":1,"z":2}`)}
-	created, err := base.CreateEvent(t.Context(), e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.ProcessEvent(t.Context(), created.StoredEvent); err == nil {
-		t.Fatal("log failure ignored")
-	}
-	pending, err := base.GetEvent(t.Context(), e.BKTenantID, e.EventID)
-	if err != nil || pending.Processing.Plan == nil || len(pending.Processing.Plan.Mutations) != 1 {
-		t.Fatal("create plan not preserved", err)
-	}
-	target := &pending.Processing.Plan.Mutations[0].Alert
-	before, err := base.GetAlert(t.Context(), e.BKTenantID, target.AlertID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 模拟计划保留原始 JSON，而告警读取边界已经规范化同一业务对象。
-	target.ExtraData["nested"] = []byte(`{ "z": 2, "a": 1 }`)
-	result, err := p.ProcessEvent(t.Context(), pending)
-	if err != nil || result.EventState != domain.EventProcessStateAccepted {
-		t.Fatal("JSON representation broke frozen create plan retry", err)
-	}
-	after, err := base.GetAlert(t.Context(), e.BKTenantID, target.AlertID)
-	if err != nil || after.Version != before.Version || after.Alert.Revision != before.Alert.Revision {
-		t.Fatal("retry rewrote committed alert", err)
 	}
 }

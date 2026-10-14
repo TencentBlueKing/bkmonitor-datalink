@@ -83,44 +83,6 @@ func TestGeneratedContentPersistsAndRemainsImmutable(t *testing.T) {
 	}
 }
 
-func TestSavedPlanFreezesGeneratedContentAcrossRestart(t *testing.T) {
-	repo := memory.New()
-	processor := newTestProcessor(t, repo, NoopFinalHook{})
-	processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
-		return "frozen", nil
-	})
-	event := testEvent("planned", "warning")
-	created, err := repo.CreateEvent(context.Background(), event)
-	if err != nil {
-		t.Fatal(err)
-	}
-	enriched, err := processor.enrichEvent(context.Background(), created.StoredEvent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := processor.preparePlan(context.Background(), enriched.Event, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	saved, err := processor.writeEventResult(context.Background(), enriched, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
-	if err != nil {
-		t.Fatal(err)
-	}
-	restarted := newTestProcessor(t, repo, NoopFinalHook{})
-	restarted.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
-		t.Fatal("saved plan called builder again")
-		return "", errors.New("configuration changed")
-	})
-	result, err := restarted.ProcessEvent(context.Background(), saved)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stored, err := repo.GetAlert(context.Background(), event.BKTenantID, result.AlertIDs[0])
-	if err != nil || stored.Alert.Content != "frozen" {
-		t.Fatalf("content %q error %v", stored.Alert.Content, err)
-	}
-}
-
 func TestContentFailureDoesNotSavePlanOrCreateAlert(t *testing.T) {
 	for _, failure := range []string{"error", "panic", "invalid content", "cancel"} {
 		t.Run(failure, func(t *testing.T) {
@@ -150,7 +112,7 @@ func TestContentFailureDoesNotSavePlanOrCreateAlert(t *testing.T) {
 				t.Fatal("accepted failed content")
 			}
 			stored := mustGetStoredEvent(t, repo, event)
-			if stored.Processing.Plan != nil || stored.Processing.State != domain.EventProcessStateUnprocessed || stored.Event.EnrichStatus == domain.EnrichStatusPending {
+			if stored.Processing.State != domain.EventProcessStateUnprocessed || stored.Event.EnrichStatus == domain.EnrichStatusPending {
 				t.Fatal("saved failed plan")
 			}
 			id, _ := processor.idGenerator.Generate(event)
@@ -183,25 +145,17 @@ func TestMissingPublicationFallsBackToOriginalContentAndFreezesPlan(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, err := processor.writeEventResult(t.Context(), enriched, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if saved.Event.Content != event.Content || saved.Processing.Plan == nil {
-		t.Fatal("fallback changed source text or failed to persist plan")
+	if enriched.Event.Content != event.Content {
+		t.Fatal("fallback changed source text")
 	}
 	if !strings.Contains(logs.String(), "source_fallback") || !strings.Contains(logs.String(), event.EventID) || strings.Contains(logs.String(), event.Content) {
 		t.Fatalf("fallback diagnostic lacks identity or exposes content: %s", logs.String())
 	}
-	processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
-		t.Fatal("retry rebuilt frozen content")
-		return "", nil
-	})
-	result, err := processor.ProcessEvent(t.Context(), saved)
+	result, err := processor.executePlan(t.Context(), enriched, plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	alert, err := repo.GetAlert(t.Context(), event.BKTenantID, result.AlertIDs[0])
+	alert, err := repo.GetAlert(t.Context(), event.BKTenantID, result.Event.RelatedAlertIDs[0])
 	if err != nil || alert.Alert.Content != event.Content {
 		t.Fatalf("fallback content %q error %v", alert.Alert.Content, err)
 	}

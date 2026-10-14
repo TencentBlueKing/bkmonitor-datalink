@@ -23,7 +23,7 @@ import (
 	"linkd/internal/policy"
 )
 
-// MergeRequest 的首次时间来自冻结 PolicyContext；身份是 Alert，Event 仅用于固定首次裁决。
+// MergeRequest 的首次时间来自本次内存策略上下文；身份是 Alert，Event 仅用于固定首次裁决。
 type MergeRequest struct {
 	TenantID   string
 	Policy     domain.PolicyVersion

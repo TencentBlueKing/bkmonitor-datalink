@@ -50,14 +50,7 @@ func runEventEnrichmentContract(t *testing.T, factory Factory) {
 		}
 		evaluation := store.EvaluationResult{Severity: "warning", Action: domain.EventActionTriggered, State: domain.EventProcessStateSuppressed, Outcome: "event_suppressed", ReasonCode: "clip_below_threshold"}
 		plan := &store.EventPlan{UpgradePolicy: "close_and_create", State: domain.EventProcessStateSuppressed, Outcome: evaluation.Outcome, ReasonCode: evaluation.ReasonCode, Evaluations: []store.EvaluationResult{evaluation}}
-		planned, err := repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, enriched.Version, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := repo.CompareAndSetEventEnrichment(ctx, event.BKTenantID, event.EventID, planned.Version, Enrichment(event)); !errors.Is(err, store.ErrInvalidTransition) {
-			t.Fatalf("enrichment changed after plan: %v", err)
-		}
-		_, err = repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, planned.Version, store.EventResult{State: plan.State, Outcome: plan.Outcome, ReasonCode: plan.ReasonCode, Evaluations: plan.Evaluations, ProcessedAt: event.CreateAt.Add(time.Minute)})
+		_, err = repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, enriched.Version, store.EventResult{State: plan.State, Outcome: plan.Outcome, ReasonCode: plan.ReasonCode, Evaluations: plan.Evaluations, ProcessedAt: event.CreateAt.Add(time.Minute)})
 		if err != nil {
 			t.Fatal(err)
 		}

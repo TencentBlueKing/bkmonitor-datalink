@@ -848,7 +848,7 @@ func (r *Runtime) rejectEntry(ctx context.Context, entry *cleanerEntry, cause er
 		_, err := processingerror.Guard(func() (struct{}, error) {
 			current, err := writer.GetEvent(ctx, entry.event.BKTenantID, entry.event.EventID)
 			if err == nil && !current.Processing.State.Terminal() {
-				_, err = writer.CompareAndSetEventResult(ctx, entry.event.BKTenantID, entry.event.EventID, current.Version, store.EventResult{State: domain.EventProcessStateRejected, Outcome: "processing_failed", ReasonCode: code, ProcessedAt: time.Now().UTC(), Plan: current.Processing.Plan})
+				_, err = writer.CompareAndSetEventResult(ctx, entry.event.BKTenantID, entry.event.EventID, current.Version, store.EventResult{State: domain.EventProcessStateRejected, Outcome: "processing_failed", ReasonCode: code, ProcessedAt: time.Now().UTC()})
 			}
 			return struct{}{}, err
 		})

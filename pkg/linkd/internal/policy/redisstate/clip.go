@@ -93,7 +93,7 @@ func (i Identity) Validate() error {
 	return nil
 }
 
-// ClipRequest 的 At 必须来自已经持久化的 PolicyContext，EventID 在多等级和重试间相同。
+// ClipRequest 的 At 必须来自当前内存策略上下文，EventID 在多等级和重试间相同。
 type ClipRequest struct {
 	Identity
 	PolicyID  string

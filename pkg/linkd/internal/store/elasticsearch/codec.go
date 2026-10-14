@@ -156,18 +156,8 @@ func decodeEventHit(hit searchHit) (store.StoredEvent, error) {
 }
 
 func validateNormalizedStoredEvent(stored store.StoredEvent) error {
-	if err := store.ValidatePolicyDecision(stored.Event, stored.Processing.PolicyContext, stored.Processing.PolicyDecision); err != nil {
+	if err := store.ValidatePolicyDecision(stored.Event, nil, stored.Processing.PolicyDecision); err != nil {
 		return err
-	}
-	if stored.Processing.Plan != nil {
-		if err := store.ValidatePolicyDecision(stored.Event, stored.Processing.PolicyContext, stored.Processing.Plan.PolicyDecision); err != nil {
-			return err
-		}
-	}
-	if stored.Processing.Plan != nil {
-		if err := store.ValidateEventPlan(stored.Event, stored.Processing.Plan); err != nil {
-			return err
-		}
 	}
 	if stored.Version.IsZero() {
 		return fmt.Errorf("stored event version must not be empty")

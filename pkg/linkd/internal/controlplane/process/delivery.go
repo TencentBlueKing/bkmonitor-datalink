@@ -18,6 +18,7 @@ import (
 
 	"linkd/internal/actiondelivery"
 	actionproducer "linkd/internal/actiondelivery/producer"
+	actionstorage "linkd/internal/actiondelivery/storage"
 	"linkd/internal/config"
 	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/deliverysource"
@@ -28,10 +29,12 @@ import (
 	"linkd/internal/merge"
 	"linkd/internal/projection"
 	projectionlock "linkd/internal/projection/redislock"
+	projectionstorage "linkd/internal/projection/storage"
 	"linkd/internal/redisclient"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/store"
 	storeassembly "linkd/internal/store/assembly"
+	elasticsearchstore "linkd/internal/store/elasticsearch"
 	"linkd/internal/taskgroup"
 	"linkd/internal/telemetry"
 )
@@ -72,6 +75,14 @@ func (r *deliveryBusinessStore) GetAlertCurrent(ctx context.Context, tenant, id 
 	return r.current(ctx, tenant, id)
 }
 
+// AcknowledgeProjection 透传专用元数据更新，通用后端仍使用原 CAS。
+func (r *deliveryBusinessStore) AcknowledgeProjection(ctx context.Context, ack store.ProjectionAcknowledgment) error {
+	if writer, ok := r.Repository.(store.ProjectionAcknowledger); ok {
+		return writer.AcknowledgeProjection(ctx, ack)
+	}
+	return store.AcknowledgeProjection(ctx, r.Repository, ack)
+}
+
 // runKACDelivery 只推进已有投影要求/动作意图，不创建目标绑定或解释来源目标迁移。
 // 同一目标的投影、动作和管理重试复用部署租约空间；动作补扫复用正式 fingerprint lease 和近期缓存。
 func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Journal, projections projection.Store, actions actiondelivery.Store, severity *runtimeconfig.Severity, logger *slog.Logger, registry *taskstate.Registry, metrics *telemetry.Runtime) (runErr error) {
@@ -85,6 +96,45 @@ func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Jou
 		return err
 	}
 	defer storeassembly.JoinCloseError(&runErr, runtime)
+	limits := taskgroup.WorkConfig{}
+	if cfg.ControlPlane != nil {
+		limits = cfg.ControlPlane.Delivery
+	}
+	limits = limits.WithDefaults()
+	batchConfig := elasticsearchstore.WriteBatchConfig{MaxOperations: min(1000, limits.Concurrency), MaxBytes: 4 << 20, Wait: 10 * time.Millisecond, ReadWait: 10 * time.Millisecond, MaxConcurrentBatches: limits.Concurrency, MaxCalls: limits.Concurrency * 4, Timeout: 10 * time.Second}
+	batchObserver, err := metrics.NewWriteBatchObserver()
+	if err != nil {
+		return err
+	}
+	// 独立视图避免修改 API 共用仓储；全部运行器退出后先关闭合批器再释放连接。
+	if repository, ok := runtime.Repository.(*elasticsearchstore.Repository); ok {
+		batched, batch, err := repository.EnableWriteBatch(batchConfig, batchObserver)
+		if err != nil {
+			return err
+		}
+		defer batch.Close()
+		runtime.Repository = batched
+	}
+	if taskStore, ok := projections.(*projectionstorage.Store); ok {
+		batched, batch, err := taskStore.WithWriteBatch(batchConfig, batchObserver)
+		if err != nil {
+			return err
+		}
+		if batch != nil {
+			defer batch.Close()
+		}
+		projections = batched
+	}
+	if taskStore, ok := actions.(*actionstorage.Store); ok {
+		batched, batch, err := taskStore.WithWriteBatch(batchConfig, batchObserver)
+		if err != nil {
+			return err
+		}
+		if batch != nil {
+			defer batch.Close()
+		}
+		actions = batched
+	}
 	observed := metrics.ObserveRepository(runtime.Repository)
 	business, err := newDeliveryBusinessStore(observed)
 	if err != nil {
@@ -127,6 +177,9 @@ func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Jou
 		return err
 	}
 	defer projectionSender.Close()
+	if err := projectionSender.EnableWriteBatch(batchConfig, batchObserver); err != nil {
+		return err
+	}
 	actionSender, err := actiondelivery.NewHTTPSender()
 	if err != nil {
 		return err
@@ -167,10 +220,6 @@ func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Jou
 	actionObserver, err := newActionTaskObserver(registry, metrics, logger)
 	if err != nil {
 		return err
-	}
-	limits := taskgroup.WorkConfig{}
-	if cfg.ControlPlane != nil {
-		limits = cfg.ControlPlane.Delivery
 	}
 	projectionRunner, err := projection.NewRunner(business, projections, projector, projectionObserver, time.Now, limits)
 	if err != nil {

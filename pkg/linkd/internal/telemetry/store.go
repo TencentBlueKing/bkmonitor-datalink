@@ -534,3 +534,16 @@ func (r *observedRepository) ListShieldDependents(ctx context.Context, tenant, m
 	r.record(ctx, "alert", "shield_dependents", started, err)
 	return result, err
 }
+
+// AcknowledgeProjection 保留局部 ACK 能力及其独立指标，不降级为整篇 Alert 替换。
+func (r *observedRepository) AcknowledgeProjection(ctx context.Context, ack store.ProjectionAcknowledgment) error {
+	started := time.Now()
+	var err error
+	if next, ok := r.next.(store.ProjectionAcknowledger); ok {
+		err = next.AcknowledgeProjection(ctx, ack)
+	} else {
+		err = store.AcknowledgeProjection(ctx, r.next, ack)
+	}
+	r.record(ctx, "alert", "projection_ack", started, err)
+	return err
+}

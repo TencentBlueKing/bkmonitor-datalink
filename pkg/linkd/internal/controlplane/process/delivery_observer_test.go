@@ -120,3 +120,17 @@ func TestActionObservationKeepsWaitingDistinctFromFailures(t *testing.T) {
 		t.Fatal("action loop remained active")
 	}
 }
+
+func TestDeliveryObserverAcceptsConfiguredLargePages(t *testing.T) {
+	r := taskCatalog(deliveryConfigFixture(), 0)
+	o, err := newProjectionTaskObserver(r, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.RoundStarted(t.Context(), projection.PhaseProduce)
+	o.RoundFinished(t.Context(), projection.PhaseProduce, projection.RoundResult{Scanned: 64, Advanced: 64, Duration: time.Millisecond})
+	v := deliveryTask(t, r, string(projection.PhaseProduce))
+	if v.Execution.Failed != 0 || v.Execution.Work != 64 || v.Execution.ErrorCode != "" {
+		t.Fatal("large page became a fake failure", v.Execution)
+	}
+}

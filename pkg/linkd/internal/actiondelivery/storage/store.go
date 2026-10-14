@@ -38,7 +38,7 @@ import (
 // Store 使用单对象 CAS 保存任务，payload、work 与目标顺序索引同次写入，不自动回收失败记录。
 type Store struct {
 	db               *sql.DB
-	transport        *es.HTTPTransport
+	transport        es.Transport
 	namespace, index string
 }
 
@@ -147,13 +147,29 @@ func open(ctx context.Context, c config.StorageConfig, deployment string, initia
 	return s, nil
 }
 
+// WithWriteBatch 返回独立合批视图，不修改管理 API 共用的原 Store。
+func (s *Store) WithWriteBatch(cfg es.WriteBatchConfig, observer es.BatchObserver) (*Store, *es.WriteBatchTransport, error) {
+	if s.db != nil {
+		return s, nil, nil
+	}
+	batch, err := es.NewWriteBatchTransport(s.transport, cfg, 16<<20, observer)
+	if err != nil {
+		return nil, nil, err
+	}
+	copy := *s
+	copy.transport = batch
+	return &copy, batch, nil
+}
+
 // Close 释放连接池，不删除任务或业务数据。
 func (s *Store) Close() error {
 	if s.db != nil {
 		return s.db.Close()
 	}
 	if s.transport != nil {
-		s.transport.Close()
+		if closer, ok := s.transport.(interface{ Close() }); ok {
+			closer.Close()
+		}
 	}
 	return nil
 }
@@ -189,7 +205,7 @@ func (s *Store) Get(ctx context.Context, tenant, id string) (actiondelivery.Stor
 		}
 		return decode(raw, tenant, id, strconv.FormatUint(version, 10), work, unsettled, alertID, targetID, revision)
 	}
-	code, raw, err := s.request(ctx, http.MethodGet, "/"+s.index+"/_doc/"+tenant+"-"+id, nil)
+	code, raw, err := s.request(ctx, http.MethodGet, "/"+s.index+"/_doc/"+tenant+"-"+id+"?realtime=true", nil)
 	if err != nil {
 		return actiondelivery.StoredTask{}, err
 	}
@@ -314,7 +330,21 @@ func (s *Store) Put(ctx context.Context, t actiondelivery.Task, expected string)
 	if err != nil {
 		return actiondelivery.StoredTask{}, err
 	}
-	code, response, err := s.request(ctx, http.MethodPut, "/"+s.index+"/_doc/"+t.Request.TenantID+"-"+t.ID+"?"+query.Encode(), body)
+	method, path := http.MethodPut, "/"+s.index+"/_doc/"+t.Request.TenantID+"-"+t.ID
+	if expected != "" {
+		method, path = http.MethodPost, "/"+s.index+"/_update/"+t.Request.TenantID+"-"+t.ID
+		if query.Get("refresh") == "" {
+			query.Set("refresh", "false")
+		}
+		body, err = json.Marshal(map[string]any{"script": map[string]any{
+			"source": "ctx._source.payload.progress = params.progress; ctx._source.work = params.work; ctx._source.unsettled = params.unsettled;",
+			"params": map[string]any{"progress": t.Progress, "work": t.HasWork(), "unsettled": t.Unsettled()},
+		}})
+		if err != nil {
+			return actiondelivery.StoredTask{}, err
+		}
+	}
+	code, response, err := s.request(ctx, method, path+"?"+query.Encode(), body)
 	if err != nil {
 		return actiondelivery.StoredTask{}, err
 	}

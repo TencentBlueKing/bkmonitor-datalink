@@ -10,12 +10,12 @@
 package projection
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"time"
 
 	"linkd/internal/domain"
@@ -56,6 +56,33 @@ func New(tasks Store, alerts Alerts, resolver Resolver, sender Sender, locker Ta
 		return nil, ErrInvalid
 	}
 	return &Service{tasks: tasks, alerts: alerts, resolver: resolver, sender: sender, now: now, locker: locker}, nil
+}
+
+// errAlreadyProduced 仅表示稳定身份已持久化，不能据此宣称任务已投递。
+var errAlreadyProduced = errors.New("projection task already recorded")
+
+// ProduceCandidate 让补扫跳过已有任务；缺失项仍实时重读再冻结，失败项不自动重建。
+func (s *Service) ProduceCandidate(ctx context.Context, row store.StoredAlert, target string) (StoredTask, error) {
+	if lookup, ok := s.tasks.(interface {
+		Exists(context.Context, string, string) (bool, error)
+	}); ok {
+		ref, exists := row.Alert.Projection.Targets[target]
+		if !exists {
+			return StoredTask{}, ErrInvalid
+		}
+		id, err := TaskID(row.Alert.BKTenantID, row.Alert.AlertID, target, ref.RequiredRevision)
+		if err != nil {
+			return StoredTask{}, err
+		}
+		known, err := lookup.Exists(ctx, row.Alert.BKTenantID, id)
+		if err != nil {
+			return StoredTask{}, err
+		}
+		if known {
+			return StoredTask{}, errAlreadyProduced
+		}
+	}
+	return s.Produce(ctx, row.Alert.BKTenantID, row.Alert.AlertID, target)
 }
 
 // Produce 实时重读补扫候选并幂等建任务，允许合并到当前最新业务版本；失败不能推进水位。
@@ -122,7 +149,7 @@ func sameProducedTask(current StoredTask, next Task) (StoredTask, error) {
 	old, candidate := current.Task.Clone(), next.Clone()
 	old.Progress, candidate.Progress = Progress{}, Progress{}
 	old.CreatedAt, candidate.CreatedAt = time.Time{}, time.Time{}
-	if !reflect.DeepEqual(old, candidate) {
+	if old.ID != candidate.ID || old.SourceID != candidate.SourceID || old.SourceVersion != candidate.SourceVersion || old.Request.SchemaVersion != candidate.Request.SchemaVersion || old.Request.TenantID != candidate.Request.TenantID || old.Request.TargetID != candidate.Request.TargetID || old.Request.AlertID != candidate.Request.AlertID || old.Request.AlarmID != candidate.Request.AlarmID || old.Request.Revision != candidate.Request.Revision || old.Request.ContentHash != candidate.Request.ContentHash || !bytes.Equal(old.Request.Alert, candidate.Request.Alert) {
 		return StoredTask{}, ErrConflict
 	}
 	return current, nil
@@ -258,6 +285,18 @@ func (s *Service) confirm(ctx context.Context, current StoredTask) (StoredTask, 
 	t := current.Task
 	if t.Progress.Receipt == nil || t.Progress.Receipt.ValidateFor(t.Request) != nil {
 		return StoredTask{}, ErrInvalidReceipt
+	}
+	if writer, ok := s.alerts.(store.ProjectionAcknowledger); ok {
+		ack := store.ProjectionAcknowledgment{TenantID: t.Request.TenantID, AlertID: t.Request.AlertID, TargetID: t.Request.TargetID, SourceVersion: t.SourceVersion, Revision: t.Request.Revision, At: s.timeAfter(t.Progress.UpdatedAt)}
+		if err := writer.AcknowledgeProjection(ctx, ack); err != nil {
+			return current, err
+		}
+		if t.Progress.State == "succeeded" {
+			return current, nil
+		}
+		done := t.Clone()
+		done.Progress.State, done.Progress.UpdatedAt = "succeeded", s.timeAfter(t.Progress.UpdatedAt)
+		return s.tasks.Put(ctx, done, current.Version)
 	}
 	for attempt := 0; attempt < 4; attempt++ {
 		row, err := s.alerts.GetAlertCurrent(ctx, t.Request.TenantID, t.Request.AlertID)

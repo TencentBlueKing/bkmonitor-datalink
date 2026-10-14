@@ -154,7 +154,7 @@ func (o *ProjectionRunnerObserver) RoundFinished(ctx context.Context, phase proj
 }
 
 func validProjectionRound(r projection.RoundResult) bool {
-	if r.Scanned < 0 || r.Scanned > 16 || r.Advanced < 0 || r.Advanced > 16 || r.Deferred < 0 || r.Deferred > 16 || r.CapacityDeferred < 0 || r.CapacityDeferred > r.Deferred || r.Failed < 0 || r.Failed > 16 || r.Duration < 0 || r.OldestObservedAge < 0 {
+	if r.Scanned < 0 || r.Advanced < 0 || r.Deferred < 0 || r.CapacityDeferred < 0 || r.CapacityDeferred > r.Deferred || r.Failed < 0 || r.Duration < 0 || r.OldestObservedAge < 0 {
 		return false
 	}
 	switch r.ErrorCode {

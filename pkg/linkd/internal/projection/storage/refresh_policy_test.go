@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"linkd/internal/projection"
 	es "linkd/internal/store/elasticsearch"
 )
 
@@ -28,7 +29,7 @@ func TestProgressCASDoesNotWaitForRefresh(t *testing.T) {
 		if r.Method == http.MethodPut {
 			if r.URL.Query().Get("op_type") == "create" {
 				creates++
-				expected := ""
+				expected := "false"
 				if r.URL.Query().Get("refresh") != expected {
 					t.Error("wrong create visibility boundary")
 				}
@@ -38,6 +39,33 @@ func TestProgressCASDoesNotWaitForRefresh(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
 				t.Error(err)
 			}
+			seq++
+		}
+		if r.Method == http.MethodPost {
+			if r.URL.Query().Get("refresh") != "false" {
+				t.Error("progress write waited for refresh")
+			}
+			var patch struct {
+				Script struct {
+					Params struct {
+						Progress projection.Progress `json:"progress"`
+						Work     bool                `json:"work"`
+					} `json:"params"`
+				} `json:"script"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+				t.Error(err)
+			}
+			var payload projection.Task
+			if err := json.Unmarshal(doc.Payload, &payload); err != nil {
+				t.Error(err)
+			}
+			if string(payload.Request.Alert) != string(task.Request.Alert) {
+				t.Error("progress update modified frozen snapshot")
+			}
+			payload.Progress = patch.Script.Params.Progress
+			doc.Work = patch.Script.Params.Work
+			doc.Payload, _ = json.Marshal(payload)
 			seq++
 		}
 		_ = json.NewEncoder(w).Encode(esHit{Index: "tasks", ID: task.Request.TenantID + "-" + task.ID, Seq: seq, Term: 1, Source: doc})

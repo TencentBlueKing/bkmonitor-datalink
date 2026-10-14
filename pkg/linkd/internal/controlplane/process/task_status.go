@@ -20,6 +20,7 @@ import (
 	"linkd/internal/dynamicconfig"
 	"linkd/internal/taskdispatch"
 	"linkd/internal/taskdispatch/observation"
+	"linkd/internal/taskgroup"
 	"linkd/internal/telemetry"
 )
 
@@ -115,7 +116,11 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 		task.DisabledReason = "需要 Lifecycle 配置"
 		tasks = append(tasks, task)
 	}
-	deliveryRuntime := makeTask("kac-delivery", "KAC 可靠投递", "投影与配置", "service", "监督全局 KAC 插件的兼容索引维护、状态写入和处置通知。", hasKACDelivery(cfg), 0, 0, "explicit", map[string]any{"projectionConcurrency": 4, "actionConcurrency": 4})
+	limits := taskgroup.WorkConfig{}.WithDefaults()
+	if cfg.ControlPlane != nil {
+		limits = cfg.ControlPlane.Delivery.WithDefaults()
+	}
+	deliveryRuntime := makeTask("kac-delivery", "KAC 可靠投递", "投影与配置", "service", "监督全局 KAC 插件的兼容索引维护、状态写入和处置通知。", hasKACDelivery(cfg), 0, 0, "explicit", map[string]any{"projectionConcurrency": limits.Concurrency, "actionConcurrency": limits.Concurrency})
 	deliveryRuntime.DisabledReason = "需要 Lifecycle 和已启用的 plugins.kac"
 	tasks = append(tasks, deliveryRuntime)
 	for _, spec := range []struct {
@@ -128,7 +133,7 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 		{"action-enqueue", "KAC 动作入队", "在正式指纹租约内补齐原动作意图，不重新丰富或判断策略。", 5, 90},
 		{"action-delivery", "KAC 动作投递", "校验持久投影可见性与原版本顺序，发送获准动作并保存受理确认。", 1, 90},
 	} {
-		task := makeTask(spec.id, spec.name, "投影与配置", "periodic", spec.description, hasKACDelivery(cfg), spec.interval, spec.deadline, "default", map[string]any{"pageSize": 16, "scanTimeoutSeconds": 5, "executionConcurrency": 4, "pendingPerTenant": 1024})
+		task := makeTask(spec.id, spec.name, "投影与配置", "periodic", spec.description, hasKACDelivery(cfg), spec.interval, spec.deadline, "default", map[string]any{"pageSize": limits.BatchSize, "scanTimeoutSeconds": 5, "executionConcurrency": limits.Concurrency})
 		if spec.id == "kac-index-maintenance" {
 			task.Settings = map[string]any{"maxReadIndices": 512, "requestConcurrency": 4}
 		}

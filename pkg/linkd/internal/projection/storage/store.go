@@ -38,7 +38,7 @@ import (
 // Store 使用单对象 CAS 保存任务，payload 和 work 标记同次写入，不自动回收失败记录。
 type Store struct {
 	db               *sql.DB
-	transport        *es.HTTPTransport
+	transport        es.Transport
 	namespace, index string
 }
 
@@ -122,13 +122,29 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 	return s, nil
 }
 
+// WithWriteBatch 返回独立合批视图，不修改管理 API 共用的原 Store。
+func (s *Store) WithWriteBatch(cfg es.WriteBatchConfig, observer es.BatchObserver) (*Store, *es.WriteBatchTransport, error) {
+	if s.db != nil {
+		return s, nil, nil
+	}
+	batch, err := es.NewWriteBatchTransport(s.transport, cfg, 16<<20, observer)
+	if err != nil {
+		return nil, nil, err
+	}
+	copy := *s
+	copy.transport = batch
+	return &copy, batch, nil
+}
+
 // Close 释放连接池，不删除任务或业务数据。
 func (s *Store) Close() error {
 	if s.db != nil {
 		return s.db.Close()
 	}
 	if s.transport != nil {
-		s.transport.Close()
+		if closer, ok := s.transport.(interface{ Close() }); ok {
+			closer.Close()
+		}
 	}
 	return nil
 }
@@ -139,6 +155,33 @@ func identity(tenant, id string) error {
 		return projection.ErrInvalid
 	}
 	return nil
+}
+
+// Exists 只检查稳定身份，已存在任务不读取和校验完整冻结快照。
+func (s *Store) Exists(ctx context.Context, tenant, id string) (bool, error) {
+	if err := identity(tenant, id); err != nil {
+		return false, err
+	}
+	if s.db != nil {
+		var exists bool
+		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM linkd_projection_tasks WHERE namespace=? AND bk_tenant_id=? AND id=?)`, s.namespace, tenant, id).Scan(&exists)
+		return exists, err
+	}
+	code, raw, err := s.request(ctx, http.MethodGet, "/"+s.index+"/_doc/"+tenant+"-"+id+"?realtime=true&_source_includes=id,bk_tenant_id", nil)
+	if err != nil {
+		return false, err
+	}
+	if code == 404 {
+		return false, nil
+	}
+	if code != 200 {
+		return false, processingerror.HTTPStatus(code)
+	}
+	var head esHit
+	if json.Unmarshal(raw, &head) != nil || head.Index != s.index || head.ID != tenant+"-"+id || head.Source.TenantID != tenant || head.Source.ID != id || head.Term < 1 {
+		return false, projection.ErrInvalid
+	}
+	return true, nil
 }
 
 // Get 使用显式租户与任务 ID 实时读取，并核对载荷和后端索引身份。
@@ -162,7 +205,7 @@ func (s *Store) Get(ctx context.Context, tenant, id string) (projection.StoredTa
 		}
 		return decode(raw, tenant, id, strconv.FormatUint(version, 10), work)
 	}
-	code, raw, err := s.request(ctx, http.MethodGet, "/"+s.index+"/_doc/"+tenant+"-"+id, nil)
+	code, raw, err := s.request(ctx, http.MethodGet, "/"+s.index+"/_doc/"+tenant+"-"+id+"?realtime=true", nil)
 	if err != nil {
 		return projection.StoredTask{}, err
 	}
@@ -231,9 +274,13 @@ func (s *Store) Put(ctx context.Context, t projection.Task, expected string) (pr
 	if err := projection.ValidateWrite(current, t); err != nil {
 		return projection.StoredTask{}, err
 	}
-	raw, err := json.Marshal(t)
-	if err != nil || len(raw) > projection.MaxTaskBytes {
-		return projection.StoredTask{}, projection.ErrInvalid
+	var raw []byte
+	var err error
+	if s.db != nil || expected == "" {
+		raw, err = json.Marshal(t)
+		if err != nil || len(raw) > projection.MaxTaskBytes {
+			return projection.StoredTask{}, projection.ErrInvalid
+		}
 	}
 	if s.db != nil {
 		var result sql.Result
@@ -279,7 +326,19 @@ func (s *Store) Put(ctx context.Context, t projection.Task, expected string) (pr
 	if err != nil {
 		return projection.StoredTask{}, err
 	}
-	code, response, err := s.request(ctx, http.MethodPut, "/"+s.index+"/_doc/"+t.Request.TenantID+"-"+t.ID+"?"+query.Encode(), body)
+	query.Set("refresh", "false")
+	method, path := http.MethodPut, "/"+s.index+"/_doc/"+t.Request.TenantID+"-"+t.ID
+	if expected != "" {
+		method, path = http.MethodPost, "/"+s.index+"/_update/"+t.Request.TenantID+"-"+t.ID
+		body, err = json.Marshal(map[string]any{"script": map[string]any{
+			"source": "ctx._source.payload.progress = params.progress; ctx._source.work = params.work;",
+			"params": map[string]any{"progress": t.Progress, "work": t.HasWork()},
+		}})
+		if err != nil {
+			return projection.StoredTask{}, err
+		}
+	}
+	code, response, err := s.request(ctx, method, path+"?"+query.Encode(), body)
 	if err != nil {
 		return projection.StoredTask{}, err
 	}

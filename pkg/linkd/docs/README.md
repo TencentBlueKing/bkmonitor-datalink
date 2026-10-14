@@ -64,3 +64,5 @@ Lifecycle 等模块复用；包含停止确认、失联自停、超时强切及�
 - `reference/`：统一术语与外部协议。
 - `research/`：带版本和证据的历史技术输入。
 - `reviews/`：特定时间点的审查快照。
+
+控制面读写合批、投影水位局部确认和 KAC 字段增量更新见[控制面批处理](design/control-plane-batch-delivery.md)。

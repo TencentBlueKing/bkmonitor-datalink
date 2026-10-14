@@ -165,7 +165,7 @@ func (o *ActionRunnerObserver) RoundFinished(ctx context.Context, phase actionde
 }
 
 func validActionRound(r actiondelivery.RoundResult) bool {
-	if r.Scanned < 0 || r.Scanned > 16 || r.Visited < 0 || r.Visited > r.Scanned || r.Unconfirmed < 0 || r.Unconfirmed > r.Visited || r.Duration < 0 || r.OldestObservedAge < 0 || len(r.Failures) > 4 {
+	if r.Scanned < 0 || r.Visited < 0 || r.Visited > r.Scanned || r.Unconfirmed < 0 || r.Unconfirmed > r.Visited || r.Duration < 0 || r.OldestObservedAge < 0 || len(r.Failures) > 4 {
 		return false
 	}
 	switch r.ErrorCode {

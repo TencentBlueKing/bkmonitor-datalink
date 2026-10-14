@@ -51,6 +51,7 @@ type batchOperation struct {
 	Source   json.RawMessage
 	// sourceExcludes 只用于 realtime _mget 投影，并随每个 doc 独立编码。
 	sourceExcludes []string
+	sourceIncludes []string
 	// encodedRead 复用点读元信息编码；收集预算和物理请求使用同一份字节。
 	encodedRead []byte
 	// encodedWrite 在物理切批时生成并在发送时复用，避免重复编码和复制文档。
@@ -95,19 +96,28 @@ type WriteBatchTransport struct {
 // EnableWriteBatch 返回使用独立合批 transport 的 Repository，不修改原 Repository。
 // 调用方必须先 Close 合批器，再关闭底层连接池。
 func (r *Repository) EnableWriteBatch(cfg WriteBatchConfig, observer BatchObserver) (*Repository, *WriteBatchTransport, error) {
-	if cfg.MaxOperations < 1 || cfg.MaxOperations > 1000 || cfg.MaxBytes < 1<<20 || cfg.MaxBytes > r.config.MaxRequestBytes || cfg.Wait < 0 || cfg.Wait > 256*time.Millisecond || cfg.ReadWait < 0 || cfg.ReadWait > 10*time.Millisecond || cfg.MaxConcurrentBatches < 1 || cfg.MaxCalls < 1 || cfg.Timeout <= 0 {
-		return nil, nil, fmt.Errorf("invalid lifecycle write batch resource limits")
+	b, err := NewWriteBatchTransport(r.transport, cfg, r.config.MaxRequestBytes, observer)
+	if err != nil {
+		return nil, nil, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	b := &WriteBatchTransport{next: r.transport, config: cfg, maxRequestBytes: r.config.MaxRequestBytes, observer: observer, ctx: ctx, cancel: cancel, queue: make(chan *batchCall, cfg.MaxCalls), slots: make(chan struct{}, cfg.MaxCalls), workers: make(chan struct{}, cfg.MaxConcurrentBatches)}
-	b.readQueue = make(chan *batchCall, cfg.MaxCalls)
-	b.wg.Add(2)
-	go b.run(b.queue, cfg.Wait)
-	// realtime 读复用满批/字节/期限触发规则，但独立收集，不能等待写侧的长聚合期限。
-	go b.run(b.readQueue, cfg.ReadWait)
 	copy := *r
 	copy.transport = b
 	return &copy, b, nil
+}
+
+// NewWriteBatchTransport 为同一 ES 集群的控制面或 Lifecycle 调用复用读写合批。
+// 不拥有 next；调用方先 Close 聚合器，再释放原连接池。
+func NewWriteBatchTransport(next Transport, cfg WriteBatchConfig, maxRequestBytes int, observer BatchObserver) (*WriteBatchTransport, error) {
+	if next == nil || cfg.MaxOperations < 1 || cfg.MaxOperations > 1000 || cfg.MaxBytes < 1<<20 || cfg.MaxBytes > maxRequestBytes || cfg.Wait < 0 || cfg.Wait > 256*time.Millisecond || cfg.ReadWait < 0 || cfg.ReadWait > 10*time.Millisecond || cfg.MaxConcurrentBatches < 1 || cfg.MaxCalls < 1 || cfg.Timeout <= 0 {
+		return nil, fmt.Errorf("invalid Elasticsearch batch resource limits")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	b := &WriteBatchTransport{next: next, config: cfg, maxRequestBytes: maxRequestBytes, observer: observer, ctx: ctx, cancel: cancel, queue: make(chan *batchCall, cfg.MaxCalls), slots: make(chan struct{}, cfg.MaxCalls), workers: make(chan struct{}, cfg.MaxConcurrentBatches)}
+	b.readQueue = make(chan *batchCall, cfg.MaxCalls)
+	b.wg.Add(2)
+	go b.run(b.queue, cfg.Wait)
+	go b.run(b.readQueue, cfg.ReadWait)
+	return b, nil
 }
 
 // Close 取消待处理与在途批次，等待所有 worker 退出；可重复调用。
@@ -189,7 +199,7 @@ func (b *WriteBatchTransport) Perform(req *http.Request) (*http.Response, error)
 	}
 	if read || write {
 		action := "index"
-		if write && parts[1] == "_create" {
+		if write && (parts[1] == "_create" || query.Get("op_type") == "create") {
 			action = "create"
 		} else if updateWrite {
 			action = "update"
@@ -215,6 +225,9 @@ func (b *WriteBatchTransport) Perform(req *http.Request) (*http.Response, error)
 					operation.sourceExcludes = append(operation.sourceExcludes, value)
 				}
 			}
+		}
+		if includes := query.Get("_source_includes"); read && includes != "" {
+			operation.sourceIncludes = strings.Split(includes, ",")
 		}
 		c.operations = []batchOperation{operation}
 		if read {
@@ -494,16 +507,17 @@ func encodeBatchOperation(op batchOperation, read bool) ([]byte, error) {
 		if op.encodedRead != nil {
 			return op.encodedRead, nil
 		}
-		if len(op.sourceExcludes) == 0 {
+		if len(op.sourceExcludes) == 0 && len(op.sourceIncludes) == 0 {
 			return json.Marshal(map[string]string{"_index": op.Target, "_id": op.ID})
 		}
-		return json.Marshal(map[string]any{
-			"_index": op.Target,
-			"_id":    op.ID,
-			"_source": map[string]any{
-				"excludes": op.sourceExcludes,
-			},
-		})
+		source := map[string]any{}
+		if len(op.sourceExcludes) > 0 {
+			source["excludes"] = op.sourceExcludes
+		}
+		if len(op.sourceIncludes) > 0 {
+			source["includes"] = op.sourceIncludes
+		}
+		return json.Marshal(map[string]any{"_index": op.Target, "_id": op.ID, "_source": source})
 	}
 	if op.encodedWrite != nil {
 		return op.encodedWrite, nil

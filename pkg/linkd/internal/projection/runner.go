@@ -192,6 +192,11 @@ func (r *Runner) producePage(ctx context.Context, after store.ProjectionWorkCurs
 	}
 	result, visited := runProjectionItems(ctx, r.limits.Concurrency, len(page.Items), scopes, func(i int) (StoredTask, error) {
 		v := page.Items[i]
+		if producer, ok := r.executor.(interface {
+			ProduceCandidate(context.Context, store.StoredAlert, string) (StoredTask, error)
+		}); ok {
+			return producer.ProduceCandidate(ctx, v.Alert, v.TargetID)
+		}
 		return r.executor.Produce(ctx, v.Alert.Alert.BKTenantID, v.Alert.Alert.AlertID, v.TargetID)
 	}, true)
 	result.ObservedAt, result.OldestObservedAge = at, age
@@ -281,6 +286,8 @@ func runProjectionItems(ctx context.Context, concurrency, count int, _ []string,
 					visited[i].Store(true)
 					result, err := processingerror.Guard(func() (StoredTask, error) { return execute(i) })
 					switch {
+					case produce && errors.Is(err, errAlreadyProduced):
+						advanced.Add(1)
 					case CanDefer(err):
 						deferred.Add(1)
 						if errors.Is(err, ErrCapacity) {

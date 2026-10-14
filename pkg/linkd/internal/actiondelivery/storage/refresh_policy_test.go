@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"linkd/internal/actiondelivery"
 	es "linkd/internal/store/elasticsearch"
 )
 
@@ -38,6 +39,31 @@ func TestProgressCASDoesNotWaitForRefresh(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
 				t.Error(err)
 			}
+			seq++
+		}
+		if r.Method == http.MethodPost {
+			if r.URL.Query().Get("refresh") != "false" {
+				t.Error("progress write waited for refresh")
+			}
+			var patch struct {
+				Script struct {
+					Params struct {
+						Progress  actiondelivery.Progress `json:"progress"`
+						Work      bool                    `json:"work"`
+						Unsettled bool                    `json:"unsettled"`
+					} `json:"params"`
+				} `json:"script"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+				t.Error(err)
+			}
+			var payload actiondelivery.Task
+			if err := json.Unmarshal(doc.Payload, &payload); err != nil {
+				t.Error(err)
+			}
+			payload.Progress = patch.Script.Params.Progress
+			doc.Work, doc.Unsettled = patch.Script.Params.Work, patch.Script.Params.Unsettled
+			doc.Payload, _ = json.Marshal(payload)
 			seq++
 		}
 		_ = json.NewEncoder(w).Encode(esHit{Index: "tasks", ID: task.Request.TenantID + "-" + task.ID, Seq: seq, Term: 1, Source: doc})

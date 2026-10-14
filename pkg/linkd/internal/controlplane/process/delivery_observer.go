@@ -62,7 +62,7 @@ func (o *deliveryTaskObservation) finished(ctx context.Context, id string, durat
 	default:
 		code = "invalid_result"
 	}
-	if scanned < 0 || scanned > 16 || failed < 0 || failed > 16 || duration < 0 {
+	if scanned < 0 || failed < 0 || duration < 0 {
 		scanned, failed, duration, code = 0, 1, 0, "invalid_result"
 	}
 	if code != "" && failed == 0 {

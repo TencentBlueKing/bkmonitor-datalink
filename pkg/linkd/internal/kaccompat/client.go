@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,7 +38,7 @@ type Relations interface {
 	GetMergeRelation(context.Context, string, string) (domain.MergeRelation, error)
 }
 
-// Client 拥有兼容存储连接；并发上限为四，单次操作预算由调用上下文和十秒 HTTP 超时共同限制。
+// Client 拥有兼容存储连接；并发由外层投递运行器控制，单次操作遵守调用上下文。
 type Client struct {
 	transport  Transport
 	close      func()
@@ -45,7 +46,9 @@ type Client struct {
 	stateIndex string
 	level      func(string) (string, error)
 	relations  Relations
-	slots      chan struct{}
+	batch      *elasticsearchstore.WriteBatchTransport
+	refreshMu  sync.Mutex
+	refreshes  map[string]*refreshRound
 	ready      atomic.Bool
 }
 
@@ -76,11 +79,14 @@ func Open(c config.KACPluginConfig, level func(string) (string, error), relation
 func newClient(c config.KACPluginConfig, tr Transport, closeFn func(), level func(string) (string, error)) *Client {
 	// 独立点前缀不能匹配合法 KAC alias 的 {alias}* 模板，避免同步元数据被 KAC ILM 轮转。
 	sum := sha256.Sum256([]byte(c.AlarmEventIndex))
-	return &Client{transport: tr, close: closeFn, config: c.WithDefaults(), stateIndex: ".linkd-kac-state-" + hex.EncodeToString(sum[:16]), level: level, slots: make(chan struct{}, 4)}
+	return &Client{transport: tr, close: closeFn, config: c.WithDefaults(), stateIndex: ".linkd-kac-state-" + hex.EncodeToString(sum[:16]), level: level, refreshes: map[string]*refreshRound{}}
 }
 
 // Close 释放专属空闲连接；调用方先取消并等待所有任务退出。
 func (c *Client) Close() {
+	if c.batch != nil {
+		c.batch.Close()
+	}
 	if c.close != nil {
 		c.close()
 	}
@@ -110,12 +116,6 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 	}
 	req.URL.RawQuery = query.Encode()
 	req.Header.Set("Content-Type", "application/json")
-	select {
-	case c.slots <- struct{}{}:
-		defer func() { <-c.slots }()
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 	res, err := c.transport.Perform(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -170,4 +170,14 @@ func classify(err error) error {
 
 func (c *Client) physicalIndex(index string) bool {
 	return validPhysicalName(index) && (strings.HasPrefix(index, c.config.AlarmEventIndex+"-") || strings.HasPrefix(index, c.config.AlarmEventIndex+"_v"))
+}
+
+// EnableWriteBatch 在运行器启动前装配同集群读写合批；不改变每项回执与 CAS。
+func (c *Client) EnableWriteBatch(cfg elasticsearchstore.WriteBatchConfig, observer elasticsearchstore.BatchObserver) error {
+	batch, err := elasticsearchstore.NewWriteBatchTransport(c.transport, cfg, 16<<20, observer)
+	if err != nil {
+		return err
+	}
+	c.batch, c.transport = batch, batch
+	return nil
 }

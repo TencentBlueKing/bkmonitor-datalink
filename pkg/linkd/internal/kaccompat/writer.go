@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"time"
@@ -24,6 +25,7 @@ type syncState struct {
 	Request        projection.Request `json:"request"`
 	Index          string             `json:"index"`
 	Fields         map[string]any     `json:"fields"`
+	PendingFields  map[string]any     `json:"pending_fields"`
 	Mode           string             `json:"mode"`
 	PreviousMode   string             `json:"previous_mode"`
 	DisposalStatus string             `json:"disposal_status"`
@@ -91,6 +93,14 @@ func (c *Client) Send(ctx context.Context, d projection.Destination, q projectio
 			}
 			next := current
 			next.Request = q.Clone()
+			next.PendingFields = changedFields(current.Fields, fields)
+			if !current.Applied {
+				pending := current.PendingFields
+				if pending == nil {
+					pending = current.Fields
+				}
+				next.PendingFields = mergeFields(pending, next.PendingFields)
+			}
 			next.Fields = fields
 			next.Mode = mode
 			next.Applied = false
@@ -120,7 +130,11 @@ func (c *Client) Send(ctx context.Context, d projection.Destination, q projectio
 			}
 			continue
 		}
-		patch := cloneFields(current.Fields)
+		changes := current.PendingFields
+		if changes == nil {
+			changes = current.Fields
+		}
+		patch := cloneFields(changes)
 		if current.Mode != "active" && (current.Mode != current.PreviousMode || isPolicyStatus(status) && status != current.Mode) {
 			patch["status"] = current.Mode
 		} else if current.Mode == "active" && (current.PreviousMode != "active" || status == "" || isPolicyStatus(status)) {
@@ -136,10 +150,10 @@ func (c *Client) Send(ctx context.Context, d projection.Destination, q projectio
 			patch["status"] = status
 		}
 		// field_extra_info 中 KAC 可以增加快照/工单链接，不能用初始展示 URL 覆盖整个对象。
-		if previous, ok := document.Source["field_extra_info"].(map[string]any); ok {
+		if previous, ok := document.Source["field_extra_info"].(map[string]any); ok && patch["field_extra_info"] != nil {
 			patch["field_extra_info"] = mergeFields(previous, patch["field_extra_info"])
 		}
-		if tags, ok := document.Source["tag_info"].([]any); ok {
+		if tags, ok := document.Source["tag_info"].([]any); ok && patch["tag_info"] != nil {
 			patch["tag_info"] = mergeTags(tags, patch["tag_info"])
 		}
 		var response version
@@ -150,9 +164,9 @@ func (c *Client) Send(ctx context.Context, d projection.Destination, q projectio
 			patch["storage_time"] = current.StorageTime
 			patch["conductor"] = []string{}
 			patch["notify_status"] = ""
-			err = c.request(call, http.MethodPut, "/"+url.PathEscape(index)+"/_create/"+url.PathEscape(q.AlarmID), nil, patch, &response)
+			err = c.request(call, http.MethodPut, "/"+url.PathEscape(index)+"/_create/"+url.PathEscape(q.AlarmID), batchWriteQuery(nil), patch, &response)
 		} else {
-			err = c.request(call, http.MethodPost, "/"+url.PathEscape(index)+"/_update/"+url.PathEscape(q.AlarmID), document.query(), map[string]any{"doc": patch}, &response)
+			err = c.request(call, http.MethodPost, "/"+url.PathEscape(index)+"/_update/"+url.PathEscape(q.AlarmID), batchWriteQuery(document.query()), map[string]any{"doc": patch}, &response)
 		}
 		if hasStatus(err, 409) {
 			continue
@@ -161,24 +175,15 @@ func (c *Client) Send(ctx context.Context, d projection.Destination, q projectio
 			return receipt, err
 		}
 		// 同版本重试可能是 update noop；显式 refresh 也覆盖响应丢失后的重复写，不把 GET 可见当作搜索可见。
-		var refreshed struct {
-			Shards *struct {
-				Total  int `json:"total"`
-				Failed int `json:"failed"`
-			} `json:"_shards"`
-		}
-		if err = c.request(call, http.MethodPost, "/"+url.PathEscape(index)+"/_refresh", nil, nil, &refreshed); err != nil {
-			return receipt, err
-		}
 		if response.Term < 1 {
 			return receipt, projection.Failure{Code: "response_invalid"}
 		}
-		if refreshed.Shards == nil || refreshed.Shards.Total < 1 || refreshed.Shards.Failed != 0 {
-			return receipt, projection.Failure{Code: "visibility_pending", Retryable: true}
+		if err = c.refreshIndex(call, index); err != nil {
+			return receipt, err
 		}
 		current.Applied = true
 		current.PreviousMode = current.Mode
-		if err = c.putState(call, q.AlarmID, current, state.version); hasStatus(err, 409) {
+		if err = c.patchState(call, q.AlarmID, map[string]any{"applied": true, "previous_mode": current.Mode, "pending_fields": nil}, state.version); hasStatus(err, 409) {
 			continue
 		} else if err != nil {
 			return receipt, err
@@ -190,7 +195,7 @@ func (c *Client) Send(ctx context.Context, d projection.Destination, q projectio
 
 func (c *Client) getState(ctx context.Context, q projection.Request) (storedState, error) {
 	var out storedState
-	err := c.request(ctx, http.MethodGet, "/"+c.stateIndex+"/_doc/"+url.PathEscape(q.AlarmID), nil, nil, &out)
+	err := c.request(ctx, http.MethodGet, "/"+c.stateIndex+"/_doc/"+url.PathEscape(q.AlarmID), url.Values{"realtime": {"true"}}, nil, &out)
 	if err != nil {
 		return out, err
 	}
@@ -207,7 +212,7 @@ func (c *Client) putState(ctx context.Context, id string, s syncState, v version
 		ID     string `json:"_id"`
 		Result string `json:"result"`
 	}
-	err := c.request(ctx, http.MethodPut, "/"+c.stateIndex+"/_doc/"+url.PathEscape(id), v.query(), stateDocument{State: s}, &out)
+	err := c.request(ctx, http.MethodPut, "/"+c.stateIndex+"/_doc/"+url.PathEscape(id), batchWriteQuery(v.query()), stateDocument{State: s}, &out)
 	if err != nil {
 		return err
 	}
@@ -219,7 +224,7 @@ func (c *Client) putState(ctx context.Context, id string, s syncState, v version
 
 func (c *Client) getAlarm(ctx context.Context, index, id string) (alarmDocument, error) {
 	var out alarmDocument
-	err := c.request(ctx, http.MethodGet, "/"+url.PathEscape(index)+"/_doc/"+url.PathEscape(id), nil, nil, &out)
+	err := c.request(ctx, http.MethodGet, "/"+url.PathEscape(index)+"/_doc/"+url.PathEscape(id), url.Values{"realtime": {"true"}, "_source_includes": {"bk_tenant_id,alarm_id,status,field_extra_info,tag_info"}}, nil, &out)
 	if err == nil && (!out.Found || out.Term < 1) {
 		return out, projection.Failure{Code: "response_invalid"}
 	}
@@ -272,8 +277,8 @@ func (c *Client) initialize(ctx context.Context, q projection.Request) (storedSt
 	if json.Unmarshal(q.Alert, &a) != nil {
 		return storedState{}, projection.ErrInvalid
 	}
-	s := syncState{Request: q.Clone(), Index: index, Fields: fields, Mode: mode, StorageTime: time.Now().In(kacZone).Format(kacTimeLayout)}
-	err = c.request(ctx, http.MethodPut, "/"+c.stateIndex+"/_create/"+url.PathEscape(q.AlarmID), nil, stateDocument{State: s}, nil)
+	s := syncState{Request: q.Clone(), Index: index, Fields: fields, PendingFields: fields, Mode: mode, StorageTime: time.Now().In(kacZone).Format(kacTimeLayout)}
+	err = c.request(ctx, http.MethodPut, "/"+c.stateIndex+"/_create/"+url.PathEscape(q.AlarmID), batchWriteQuery(nil), stateDocument{State: s}, nil)
 	if err != nil && !hasStatus(err, 409) {
 		return storedState{}, err
 	}
@@ -432,4 +437,38 @@ func mergeTags(previous []any, patch any) []any {
 		}
 	}
 	return out
+}
+
+func batchWriteQuery(query url.Values) url.Values {
+	if query == nil {
+		query = url.Values{}
+	}
+	query.Set("refresh", "false")
+	return query
+}
+
+// changedFields 比较已经映射的投影字段；生命周期仅改状态时不重发 opening Event 的展示载荷。
+func changedFields(previous, next map[string]any) map[string]any {
+	patch := map[string]any{}
+	for key, value := range next {
+		if !reflect.DeepEqual(previous[key], value) {
+			patch[key] = value
+		}
+	}
+	return patch
+}
+
+func (c *Client) patchState(ctx context.Context, id string, fields map[string]any, v version) error {
+	var out struct {
+		version
+		ID     string `json:"_id"`
+		Result string `json:"result"`
+	}
+	if err := c.request(ctx, http.MethodPost, "/"+c.stateIndex+"/_update/"+url.PathEscape(id), batchWriteQuery(v.query()), map[string]any{"doc": map[string]any{"state": fields}}, &out); err != nil {
+		return err
+	}
+	if out.Term < 1 || out.ID != id || (out.Result != "updated" && out.Result != "noop") {
+		return projection.Failure{Code: "response_invalid"}
+	}
+	return nil
 }

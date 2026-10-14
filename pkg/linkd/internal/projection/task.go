@@ -10,6 +10,7 @@
 package projection
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -187,6 +188,18 @@ func (t Task) Validate() error {
 	if err != nil || t.ID != id {
 		return ErrInvalid
 	}
+	if err := t.validateProgress(); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(t)
+	if err != nil || len(raw) > MaxTaskBytes {
+		return ErrInvalid
+	}
+	return nil
+}
+
+// validateProgress 校验变化的执行元数据，不重新编码不可变业务快照。
+func (t Task) validateProgress() error {
 	p := t.Progress
 	if p.UpdatedAt.IsZero() || p.UpdatedAt.Before(t.CreatedAt) || p.Generation < 1 || p.Generation >= 1<<53 || p.Attempts < 0 ||
 		p.TotalAttempts < int64(p.Attempts) || p.TotalAttempts >= 1<<53 {
@@ -231,17 +244,24 @@ func (t Task) Validate() error {
 	if p.DueAt != nil && (p.DueAt.IsZero() || p.DueAt.Before(p.UpdatedAt) || p.DueAt.Sub(p.UpdatedAt) > time.Minute || p.State == "pending" && !p.DueAt.Equal(p.UpdatedAt)) {
 		return ErrInvalid
 	}
-	raw, err := json.Marshal(t)
-	if err != nil || len(raw) > MaxTaskBytes {
-		return ErrInvalid
-	}
 	return nil
 }
 
 // ValidateWrite 将转换校验放在持久化边界，避免 CAS 被用于重写已冻结内容或确认。
 func ValidateWrite(current *Task, next Task) error {
-	if err := next.Validate(); err != nil {
-		return err
+	if current == nil {
+		if err := next.Validate(); err != nil {
+			return err
+		}
+	} else {
+		// current 来自已校验的持久记录；身份与冻结字节相同即可复用首次校验。
+		a, b := current.Request, next.Request
+		if current.ID != next.ID || current.SourceID != next.SourceID || current.SourceVersion != next.SourceVersion || !current.CreatedAt.Equal(next.CreatedAt) || a.SchemaVersion != b.SchemaVersion || a.TenantID != b.TenantID || a.TargetID != b.TargetID || a.AlertID != b.AlertID || a.AlarmID != b.AlarmID || a.Revision != b.Revision || a.ContentHash != b.ContentHash || !bytes.Equal(a.Alert, b.Alert) {
+			return ErrConflict
+		}
+		if err := next.validateProgress(); err != nil {
+			return err
+		}
 	}
 	p := next.Progress
 	if current == nil {
@@ -249,13 +269,6 @@ func ValidateWrite(current *Task, next Task) error {
 			return ErrInvalid
 		}
 		return nil
-	}
-	old := current.Clone()
-	n := next.Clone()
-	old.Progress = Progress{}
-	n.Progress = Progress{}
-	if !reflect.DeepEqual(old, n) {
-		return ErrConflict
 	}
 	c := current.Progress
 	if p.UpdatedAt.Before(c.UpdatedAt) {

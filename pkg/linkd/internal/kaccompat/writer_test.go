@@ -119,6 +119,12 @@ func (f *fakeES) Perform(req *http.Request) (*http.Response, error) {
 		}
 		next := cloneFields(old.source)
 		for k, v := range body["doc"].(map[string]any) {
+			if previous, ok := next[k].(map[string]any); ok {
+				if patch, ok := v.(map[string]any); ok {
+					next[k] = mergeFields(previous, patch)
+					continue
+				}
+			}
 			next[k] = v
 		}
 		body = next
@@ -360,7 +366,7 @@ func TestWriterConcurrentTenantsAndCancellation(t *testing.T) {
 	}
 }
 
-func TestClientBoundsParallelRequestsAndExitsOnCancel(t *testing.T) {
+func TestClientUsesCallerConcurrencyAndExitsOnCancel(t *testing.T) {
 	c, es, _ := fixture(t)
 	var in, max atomic.Int64
 	es.before = func(r *http.Request) {
@@ -376,7 +382,7 @@ func TestClientBoundsParallelRequestsAndExitsOnCancel(t *testing.T) {
 		wg.Go(func() { _ = c.request(ctx, http.MethodGet, "/_alias/kac_alarm_event", nil, nil, nil) })
 	}
 	deadline := time.After(time.Second)
-	for max.Load() < 4 {
+	for max.Load() < 12 {
 		select {
 		case <-deadline:
 			t.Fatal("requests did not start")
@@ -386,7 +392,7 @@ func TestClientBoundsParallelRequestsAndExitsOnCancel(t *testing.T) {
 	}
 	cancel()
 	wg.Wait()
-	if max.Load() != 4 || in.Load() != 0 {
+	if max.Load() != 12 || in.Load() != 0 {
 		t.Fatal("request bound or exit", max.Load(), in.Load())
 	}
 }

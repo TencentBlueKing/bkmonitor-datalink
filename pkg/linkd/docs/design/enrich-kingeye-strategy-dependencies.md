@@ -32,6 +32,16 @@ DATA 多业务材料先验证各份完整 spec 相等，再按 Kingeye 投影规
 
 完整丰富还会读取独立的 指标目录、业务空间、OneModel 实例、模型与拓扑、采集/拨测配置及告警源；这些数据由各自 Reader 提供。
 
+原生指标的 `query_configs[].metric_ref_id` 按事件租户精确读取 `metric` 目录。
+目录的 `result_table_id`（为空时使用 `data_label`）和 `physical_field` 决定指标取数位置，
+覆盖 resolved 策略中空缺或过期的物理引用；同时用于 `result_table_id`、`metric_unique_id`
+和 `metric_query_params.query_configs`。显式目录引用缺失、非原生定义或物理位置不完整时，
+Metric 返回 `dependency_invalid(metric_catalog)`，不把空查询标记为成功。衍生指标保留原有定义语义。
+
+KAC/KMC 普通指标查询拒绝非空 `expression`。只有一个 query、表达式严格等于其非空别名，
+且 query 与全局均无函数、不是衍生指标时，输出空表达式并沿用普通指标取数。
+计算表达式、多 query、函数与衍生定义保持原样，不能通过清空表达式丢弃其语义。
+
 ## 版本约束
 
 版本不匹配明确失败，不使用最新版本替代。SplitRecord 是可更新当前态，不是历史快照存储；

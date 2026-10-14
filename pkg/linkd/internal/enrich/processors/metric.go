@@ -82,6 +82,13 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	if !businessMatches {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyKingeyeStrategy)
 	}
+	projection, err = resolveMetricQueryLocations(ctx, scope, strategy, projection)
+	if ctx.Err() != nil {
+		return enrich.ProcessorResult{}, ctx.Err()
+	}
+	if err != nil {
+		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricCatalog)
+	}
 	query := projection.QueryConfigs[0]
 	metricName := cleanMetricName(strategy, projection, query)
 	unit, err := cleanUnit(ctx, scope, strategy, query)
@@ -168,6 +175,15 @@ func buildMetricQueryParams(
 		QueryConfigs: make([]metricQueryConfig, 0, len(projection.QueryConfigs)),
 		Function:     metricQueryParamFunctions{TimeCompare: []string{}}, BKBizID: bizID,
 	}
+	// 单指标的别名只引用自身，不需要表达式求值。KMC 普通指标接口拒绝非空
+	// expression；只有无函数的恒等引用可以省略，不能丢弃计算或衍生语义。
+	if len(projection.QueryConfigs) == 1 && strategy.Spec.FieldTag != models.CWStrategyFieldTagDerivedMetric {
+		query := projection.QueryConfigs[0]
+		if query.Alias != "" && strings.TrimSpace(params.Expression) == query.Alias &&
+			!hasFunctions(projection.Functions) && !hasFunctions(query.Functions) {
+			params.Expression = ""
+		}
+	}
 	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
 		params.FieldTag = strategy.Spec.FieldTag
 	}
@@ -185,6 +201,37 @@ func buildMetricQueryParams(
 		})
 	}
 	return params
+}
+
+// 指标目录策略只冻结目录身份，resolved 策略中的物理表可以为空或过期。
+// 显式目录引用必须按租户精确读取主引用；不修改发布材料，也不猜测表名。
+func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, projection models.StrategyItemProjection) (models.StrategyItemProjection, error) {
+	if strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
+		return projection, nil
+	}
+	modelCode := ""
+	if strategy.ObjectModelCode != nil {
+		modelCode = *strategy.ObjectModelCode
+	}
+	for i := range projection.QueryConfigs {
+		query := &projection.QueryConfigs[i]
+		if query.MetricRefID == 0 {
+			continue
+		}
+		metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, *query, modelCode)
+		if err != nil {
+			return projection, err
+		}
+		if !found || metadata.Kind != "native" || metadata.PhysicalField == "" || (metadata.TableID == "" && metadata.DataLabel == "") {
+			return projection, fmt.Errorf("%w: native metric catalog location is incomplete", enrich.ErrInvalidDataSourceResponse)
+		}
+		query.ResultTableID = metadata.TableID
+		if query.ResultTableID == "" {
+			query.ResultTableID = metadata.DataLabel
+		}
+		query.MetricField = metadata.PhysicalField
+	}
+	return projection, nil
 }
 
 type translatedMetricQuery struct {

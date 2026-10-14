@@ -155,12 +155,18 @@ type MetricQuery struct {
 // MetricMetadata 是指标丰富和展示所需的元数据。
 type MetricMetadata struct {
 	ObjectModelCode string
-	FieldName       string
-	FieldCNName     string
-	Description     string
-	Unit            string
-	ValueMapping    []MetricValueMapping
-	Dimensions      []MetricDimension
+	// Kind 区分原生物理指标与衍生定义，禁止把衍生定义降级为普通取数。
+	Kind string
+	// TableID、DataLabel 和 PhysicalField 是目录持有的原生指标主引用。
+	TableID       string
+	DataLabel     string
+	PhysicalField string
+	FieldName     string
+	FieldCNName   string
+	Description   string
+	Unit          string
+	ValueMapping  []MetricValueMapping
+	Dimensions    []MetricDimension
 }
 
 // MetricDimension 将指标目录 dimensions[].id/name 投影为丰富展示定义。

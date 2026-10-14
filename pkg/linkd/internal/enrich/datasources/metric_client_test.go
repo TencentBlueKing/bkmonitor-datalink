@@ -75,6 +75,9 @@ func TestMetricClientCatalogProjection(t *testing.T) {
 			})
 			client, _ := NewMetricClient(MetricClientConfig{DB: db})
 			got, found, err := client.FindMetric(context.Background(), tc.query)
+			if got.Kind != "native" || got.TableID != "system.cpu" || got.DataLabel != "plugin.cpu" || got.PhysicalField != "usage" {
+				t.Fatalf("catalog physical reference lost: %#v", got)
+			}
 			if err != nil || !found || calls != 1 || got.FieldCNName != "CPU 使用率" || got.FieldName != "usage" || got.Unit != "percent" || got.ObjectModelCode != "cw-Host" || len(got.Dimensions) != 1 || got.Dimensions[0].Key != "bk_target_ip" || got.Dimensions[0].Name != "目标IP" || len(got.ValueMapping) != 1 || got.ValueMapping[0].MappedValue != "正常" {
 				t.Fatalf("projection=%#v found=%v err=%v calls=%d", got, found, err, calls)
 			}
@@ -175,8 +178,10 @@ func TestMetricClientLocatorValidation(t *testing.T) {
 func TestMetricClientCancellation(t *testing.T) {
 	t.Parallel()
 	calls := 0
+	entered := make(chan struct{}, 1)
 	db := openReaderTestDB(t, func(ctx context.Context, _ string, _ []driver.NamedValue) (driver.Rows, error) {
 		calls++
+		entered <- struct{}{}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
@@ -188,10 +193,29 @@ func TestMetricClientCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || calls != 0 {
 		t.Fatalf("canceled err=%v calls=%d", err, calls)
 	}
+	// 先确认查询已经进入 Reader，再取消，确定性覆盖阻塞 I/O 的退出路径。
+	ctx, cancel = context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, _, readErr := client.FindMetric(ctx, query)
+		result <- readErr
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("query did not start")
+	}
+	cancel()
+	if err = <-result; !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Fatalf("in-flight canceled err=%v calls=%d", err, calls)
+	}
+	calls = 0
 	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	_, _, err = client.FindMetric(ctx, query)
-	if !errors.Is(err, context.DeadlineExceeded) || calls != 1 {
+	// 期限可能在连接池准入前到期；零次或一次查询都应保留 DeadlineExceeded。
+	if !errors.Is(err, context.DeadlineExceeded) || calls > 1 {
 		t.Fatalf("timeout err=%v calls=%d", err, calls)
 	}
 	//nolint:staticcheck // 显式验证调用方违反非空 Context 契约时返回错误。

@@ -315,7 +315,7 @@
               "path": "$[\"extra_data\"][\"metric_query_params\"]",
               "value": {
                 "bk_biz_id": 2,
-                "expression": "A",
+                "expression": "",
                 "function": {
                   "time_compare": []
                 },

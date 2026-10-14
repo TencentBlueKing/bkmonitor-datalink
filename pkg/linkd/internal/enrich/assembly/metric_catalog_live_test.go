@@ -67,7 +67,9 @@ func (r *liveCatalogReader) FindMetric(ctx context.Context, q models.MetricQuery
 		}
 	}
 	if len(candidates) == 1 {
-		if err != nil || !found || !reflect.DeepEqual(metadata, candidates[0].Metadata) {
+		expected := candidates[0].Metadata
+		expected.Kind, expected.TableID, expected.DataLabel, expected.PhysicalField = candidates[0].Kind, candidates[0].TableID, candidates[0].DataLabel, candidates[0].PhysicalField
+		if err != nil || !found || !reflect.DeepEqual(metadata, expected) {
 			r.t.Errorf("metric projection differs from independent snapshot: metric_id=%d table=%s field=%s", q.MetricID, q.TableID, q.FieldName)
 		}
 	} else if found || (len(candidates) > 1 && err == nil) || (len(candidates) == 0 && q.TableID != "" && err != nil) {

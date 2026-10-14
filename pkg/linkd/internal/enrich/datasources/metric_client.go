@@ -143,5 +143,5 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 		}
 		outputDimensions = append(outputDimensions, models.MetricDimension{Key: dimension.ID, Name: dimension.Name})
 	}
-	return models.MetricMetadata{ObjectModelCode: row.ObjectModelCode, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Description: row.Description, Unit: row.Unit, ValueMapping: mapping, Dimensions: outputDimensions}, true, nil
+	return models.MetricMetadata{ObjectModelCode: row.ObjectModelCode, Kind: row.Kind, TableID: row.TableID, DataLabel: row.DataLabel, PhysicalField: row.PhysicalField, FieldName: row.FieldName, FieldCNName: row.FieldCNName, Description: row.Description, Unit: row.Unit, ValueMapping: mapping, Dimensions: outputDimensions}, true, nil
 }

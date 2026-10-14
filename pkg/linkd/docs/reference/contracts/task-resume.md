@@ -2,6 +2,10 @@
 
 状态：本次实施新增的管理契约，尚未线上发布。中心与 Worker 使用同一版本。
 
+> 当前错误处理更新：普通消息错误按[运行容量与失败隔离](../../design/runtime-capacity-and-recovery.md)
+> 记录失败后移出 Mailbox，不再默认暂停整个来源。本文暂停/恢复流程用于历史 blocked 任务。
+> 创建和只读内容预览共享原文兜底白名单，当前范围见下方内容边界。
+
 ## 暂停与诊断
 
 `bkmonitor_description` 内容构建出现确定性错误时，Lifecycle 保留 mailbox 队首，Signal 不 XACK，且不保存该 Event 的处理计划或创建错误 Alert。消费 Runtime 退出后，Worker 的确切任务代次报告 `blocked=true`。中心将标记存入协调快照，停止同来源、同角色的其他副本，并禁止自动重新分配该来源角色。中心或 Worker 重启、时间推进、扩容和新 Release 都不会自动解除标记。暂时性连接失败继续走原有有界重试和调度退避。
@@ -39,9 +43,18 @@ Lifecycle 的普通丰富与内容构建均按 Event 固定的来源版本读取
 
 历史丰富与当前版本共用 `lifecycle.concurrency` 的消费 Worker 预算，不另设固定 4 并发上限；每次历史调用仍独立打开并关闭所需资源，不改变租户、发布版本绑定或同告警 mailbox 顺序。
 
-策略发布材料的确切版本已不可得（`publication_missing`）时，Lifecycle 沿用该 Event 自带的非空原始 `content`，通过 WARN 日志记录租户、来源、Event ID、`publication_missing` 和 `source_fallback`；不读取最新策略来替代历史版本。降级内容仍经过 Alert 校验，并随 EventPlan 固定，后续重试或配置变化不重算已有内容。
+策略发布材料的确切版本已不可得（`publication_missing`），或无数据文案返回
+`nodata_identity_invalid`、`nodata_configuration_invalid`、`nodata_evidence_missing`、
+`nodata_evidence_invalid` 时，Lifecycle 沿用该 Event 自带的非空原始 `content`，
+通过 WARN 日志记录租户、来源、Event ID、具体失败错误码和 `source_fallback`；
+不读取最新策略来替代历史版本，不解析原文补算无数据事实。
+只读 opening Event 内容预览使用同一白名单。降级内容仍经过 Alert 校验，并随
+EventPlan 固定，后续重试或配置变化不重算已有内容。
 
-原始内容为空、发布材料存在歧义、历史来源 Release 缺失、身份或模板校验失败、检测事实缺失及依赖故障均不在此降级范围，继续保留事件并按现有规则暂停或重试。恢复接口不改写这些数据。相同来源配置的 PUT 会被发布服务去重，不能用它替代本接口。
+原始内容为空/空白或超限、发布材料存在歧义、历史来源 Release 缺失、来源/租户身份或
+模板绑定校验失败、其他检测事实缺失及依赖故障均不在此降级范围，仍按当前消息失败策略处理。
+无数据文案内部的标记/等级冲突可兜底，不放宽事件的来源与租户身份校验。
+恢复接口不改写这些数据。相同来源配置的 PUT 会被发布服务去重，不能用它替代本接口。
 
 ## 已落库计划的幂等比较
 

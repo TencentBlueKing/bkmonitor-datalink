@@ -1,10 +1,19 @@
 # Alert.content 在创建阶段生成的实施草案
 
+> 2026-10-14 无数据接入更新：用户确认直接使用 alarmd 原始 `extra_data.no_data_periods`
+> 生成无数据周期描述，省略无法证明的旧延时文字，保持 alarmd 输出不变。
+> Resolver 已接入标记/family 一致性、同版本无数据配置启用/等级校验和周期数校验；
+> 上述四类无数据文案错误发生且 Event 自带非空 content 时，创建和只读预览
+> 均采用原文兜底，记录具体失败原因；其他错误继续沿原边界处理。
+> 下方“无数据本轮跳过”及全量逐字一致要求对此分支属于历史边界。
+> 当前契约见[标准事件的无数据事实](../reference/contracts/standard-event.md#无数据描述的检测事实)，
+> 实际验证见[2026-10-14 无数据接入](../research/samples/2026-10-14-nodata-content/README.md)。
+
 > 2026-10-13 错误处理策略更新：普通内容/逻辑错误与 panic 记录消息失败后移出 Mailbox，不再以这类消息错误暂停整个来源；消息错误默认无重试白名单，显式可重试最多三次。本文下方的“确定性失败阻断/修复后自动重放”属于历史行为，当前策略见[运行容量与失败隔离](runtime-capacity-and-recovery.md)。既有 blocked 任务的受控恢复入口保留。
 
 > 状态：本轮可用事实范围的实现与验证已完成；全类型线上验收和来源切换尚未完成。配置 Reader、FactsResolver、创建前入口、content_mode、Display 内容保留、opening Event 预览以及确定性失败暂停/恢复已接入。Threshold/Ping 已完成源码模板对照；先后两次共 32 条真实 Threshold 消息通过版本绑定、描述对照、本地 Alert 入库/重投及只读预览检查，含 target、data、日志关键字、K8s 配置上下文及明确的 APM 样本。真实 Redis 上的失败暂停、管理恢复和队列继续处理验证通过。缺少稳定检测事实或真实样本的组合按用户要求记录并跳过。KAC 固定来源名的实现偏差已修复，完整 `make check` 通过；默认 source 模式继续复制来源内容。调研日期：2026-09-30；Linkd 工作树基线 `ac1331de`，alarmd 二阶段补充核对 `origin/master@8b4c5622`（含 `8c3c859f`），Kingeye `e34c323d`，bk-monitor `51c834dc6`。未切换工作树或修改 alarmd。源码证据及现状见[调研记录](../research/2026-09-30-alert-content-generation.md)。以下历史执行记录保留当时结果，以最新验证小节判断当前状态。
 
-> 2026-10-12 已确认的历史积压处理例外：确切策略发布版本在当前发布表中已不可得时，内容 Reader 返回 `publication_missing`，Lifecycle 可使用该 Event 自带的非空原始 content，并记录 `source_fallback` WARN 诊断。不得借用最新策略生成历史文案。降级内容继续校验并冻结进 EventPlan；发布歧义、身份/模板错误、缺失检测事实、来源 Release 缺失与外部依赖故障不降级。该例外取代下文“所有缺失均阻断”的历史表述，运行契约见 [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
+> 2026-10-12 已确认的历史积压处理例外：确切策略发布版本在当前发布表中已不可得时，内容 Reader 返回 `publication_missing`，Lifecycle 可使用该 Event 自带的非空原始 content，并记录 `source_fallback` WARN 诊断。不得借用最新策略生成历史文案。降级内容继续校验并冻结进 EventPlan；发布歧义、身份/模板错误、来源 Release 缺失与外部依赖故障不降级。无数据的四类文案错误按上方 2026-10-14 边界允许原文兜底，其余缺失检测事实不降级。运行契约见 [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
 
 
 ## 当前策略读取边界（2026-10-08）
@@ -28,7 +37,7 @@
 - `alarmd.TriggerEventV1` 输出保持原样。opening Event 的 `content` 和 `source_raw_data` 仍是来源事实。已创建 Alert 的 `content` 不允许被后续 Enrich、Lifecycle、重投或修复任务改写；现有 `ValidateAlertReplacement` 约束保持有效。
 - `enrich.Result` 继续仅返回 `enrich_status/enrich`。只在构造**尚未持久化**的新 Alert 时赋一次核心 `content`。来源不采用 bk-monitor 对齐模式时继续用 `event.Content`，且必须是 EventSource 明确配置的行为。
 
-“一致”按字节级字符串对照，包括算法组合顺序、连接词、空格、数值精度、单位、指标名和空值语义。对必须依赖已丢失的历史检测事实的组合，不能用实时查询、当前策略或解析旧中文 `content` 伪造一致性；该组合在事实补齐前不得宣称验收通过。
+普通指标的“一致”按字节级字符串对照，包括算法组合顺序、连接词、空格、数值精度、单位、指标名和空值语义。无数据按 2026-10-14 确认的来源周期描述验收，不还原旧延时文字。对仍必须依赖已丢失的历史检测事实的组合，不能用实时查询、当前策略或解析旧中文 `content` 伪造一致性；该组合在事实补齐前不得宣称验收通过。
 
 ## 当前链路与目标链路
 

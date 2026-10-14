@@ -93,6 +93,136 @@ func TestResolverRejectsUnprovenFacts(t *testing.T) {
 	}
 }
 
+func noDataResolverFixture(t *testing.T) (domain.Event, domain.EventEvaluation, domain.Alert, Configuration) {
+	t.Helper()
+	event, evaluation, opening, configuration := resolverFixture(t)
+	event.Dimensions = domain.DimensionMap{"__NO_DATA_DIMENSION__": domain.NewBoolScalar(true)}
+	event.Values = nil
+	event.SourceRawData = nil
+	event.ExtraData = domain.JSONObject{
+		"evaluation_family": json.RawMessage(`"no_data"`),
+		"no_data_periods":   json.RawMessage(`196`),
+		// 滚动窗口的计数和起点不能作为累计周期数或延时的来源。
+		"window":             json.RawMessage(`{"size":5,"anomalies":5,"required":5}`),
+		"anomaly_begin_time": json.RawMessage(`"2026-10-13T18:08:00Z"`),
+	}
+	configuration.Spec.StrategyItem.NoDataConfig = domain.JSONObject{
+		"is_enabled": json.RawMessage(`true`), "level": json.RawMessage(`2`), "continuous": json.RawMessage(`5`),
+	}
+	// 无数据等级独立于普通指标算法，专用指标的测量值改写也不参与无数据描述。
+	configuration.Algorithms = nil
+	configuration.Queries[0].MetricID = "bk_monitor.os_restart"
+	return event, evaluation, opening, configuration
+}
+
+func TestResolverNoDataUsesReportedPeriodsWithoutMeasurementOrDelay(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ periods, want string }{
+		{"1", "当前指标(AVG(CPU))已经有1个周期无数据上报"},
+		{"196", "当前指标(AVG(CPU))已经有196个周期无数据上报"},
+		{"1000000", "当前指标(AVG(CPU))已经有1000000个周期无数据上报"},
+	} {
+		t.Run(tc.periods, func(t *testing.T) {
+			event, evaluation, opening, configuration := noDataResolverFixture(t)
+			event.ExtraData["no_data_periods"] = json.RawMessage(tc.periods)
+			before, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolver, err := NewResolver(configurationReaderFunc(func(context.Context, ConfigurationQuery) (Configuration, error) { return configuration, nil }))
+			if err != nil {
+				t.Fatal(err)
+			}
+			builder, err := NewBuilder(resolver)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := builder.BuildContent(t.Context(), event, evaluation, opening)
+			if err != nil || got != tc.want {
+				t.Fatalf("content=%q error=%v want=%q", got, err, tc.want)
+			}
+			after, err := json.Marshal(event)
+			if err != nil || string(after) != string(before) {
+				t.Fatal("description changed source Event")
+			}
+		})
+	}
+}
+
+func TestResolverNoDataRejectsMissingInvalidOrConflictingFacts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, code string
+		change     func(*domain.Event, *Configuration)
+	}{
+		{"missing periods", "nodata_evidence_missing", func(e *domain.Event, _ *Configuration) { delete(e.ExtraData, "no_data_periods") }},
+		{"missing family", "nodata_identity_invalid", func(e *domain.Event, _ *Configuration) { delete(e.ExtraData, "evaluation_family") }},
+		{"wrong family", "nodata_identity_invalid", func(e *domain.Event, _ *Configuration) {
+			e.ExtraData["evaluation_family"] = json.RawMessage(`"metric_algorithm"`)
+		}},
+		{"missing marker", "nodata_identity_invalid", func(e *domain.Event, _ *Configuration) { e.Dimensions = nil }},
+		{"false marker", "nodata_identity_invalid", func(e *domain.Event, _ *Configuration) {
+			e.Dimensions["__NO_DATA_DIMENSION__"] = domain.NewBoolScalar(false)
+		}},
+		{"disabled no data", "nodata_configuration_invalid", func(_ *domain.Event, c *Configuration) {
+			c.Spec.StrategyItem.NoDataConfig["is_enabled"] = json.RawMessage(`false`)
+		}},
+		{"wrong level", "nodata_configuration_invalid", func(_ *domain.Event, c *Configuration) {
+			c.Spec.StrategyItem.NoDataConfig["level"] = json.RawMessage(`1`)
+		}},
+		{"missing level", "nodata_configuration_invalid", func(_ *domain.Event, c *Configuration) { delete(c.Spec.StrategyItem.NoDataConfig, "level") }},
+		{"missing item", "strategy_item_invalid", func(_ *domain.Event, c *Configuration) { c.Spec.StrategyItem = nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event, evaluation, opening, configuration := noDataResolverFixture(t)
+			tc.change(&event, &configuration)
+			resolver, err := NewResolver(configurationReaderFunc(func(context.Context, ConfigurationQuery) (Configuration, error) { return configuration, nil }))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = resolver.Resolve(t.Context(), event, evaluation, opening)
+			var failure *Error
+			if !errors.As(err, &failure) || failure.Code != tc.code {
+				t.Fatalf("error=%v want=%s", err, tc.code)
+			}
+		})
+	}
+	for _, raw := range []string{`null`, `true`, `"196"`, `0`, `-1`, `1.5`, `1000001`, `9223372036854775808`, `{}`, `[]`} {
+		t.Run("periods="+raw, func(t *testing.T) {
+			event, evaluation, opening, configuration := noDataResolverFixture(t)
+			event.ExtraData["no_data_periods"] = json.RawMessage(raw)
+			resolver, err := NewResolver(configurationReaderFunc(func(context.Context, ConfigurationQuery) (Configuration, error) { return configuration, nil }))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = resolver.Resolve(t.Context(), event, evaluation, opening)
+			var failure *Error
+			if !errors.As(err, &failure) || failure.Code != "nodata_evidence_invalid" {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+}
+
+func TestResolverFalseNoDataMarkerKeepsMetricDescription(t *testing.T) {
+	t.Parallel()
+	event, evaluation, opening, configuration := resolverFixture(t)
+	event.Dimensions = domain.DimensionMap{"__NO_DATA_DIMENSION__": domain.NewBoolScalar(false)}
+	event.ExtraData = domain.JSONObject{"evaluation_family": json.RawMessage(`"metric_algorithm"`)}
+	resolver, err := NewResolver(configurationReaderFunc(func(context.Context, ConfigurationQuery) (Configuration, error) { return configuration, nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := resolver.Resolve(t.Context(), event, evaluation, opening)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Render(facts)
+	if err != nil || got != "AVG(CPU) > 80.0%, 当前值99%" {
+		t.Fatalf("content=%q error=%v", got, err)
+	}
+}
+
 func TestResolverPreservesWireNumberType(t *testing.T) {
 	t.Parallel()
 	event, _, _, _ := resolverFixture(t)

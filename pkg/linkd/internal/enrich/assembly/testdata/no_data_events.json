@@ -1,0 +1,86 @@
+[
+  {
+    "name": "log",
+    "partition": 0,
+    "offset": 2559132,
+    "payload": {
+      "evaluations": [
+        {
+          "severity": "critical",
+          "action": "triggered",
+          "action_reason": ""
+        }
+      ],
+      "occurred_at": "2026-10-14T08:52:00Z",
+      "produced_at": "2026-10-14T08:54:00Z",
+      "labels": {
+        "strategy_id": 115,
+        "strategy_version": 1791959436354060,
+        "bk_biz_id": 2
+      },
+      "extra_data": {
+        "evaluation_family": "no_data",
+        "no_data_periods": 634,
+        "window": {
+          "size": 5,
+          "anomalies": 5,
+          "required": 5
+        },
+        "anomaly_begin_time": "2026-10-14T08:44:00Z",
+        "signal_type": "log"
+      },
+      "bk_tenant_id": "tenant-fixture",
+      "event_id": "source-event-log",
+      "alert_id": "source-alert-log",
+      "title": "Strategy 115 level 1 triggered",
+      "content": "no data for 634 periods, as of 2026-10-14T08:52:00Z",
+      "dimensions": {
+        "__NO_DATA_DIMENSION__": true
+      }
+    },
+    "item_name": "COUNT(关键字指标)",
+    "expected": "当前指标(COUNT(关键字指标))已经有634个周期无数据上报"
+  },
+  {
+    "name": "metric",
+    "partition": 0,
+    "offset": 2559116,
+    "payload": {
+      "evaluations": [
+        {
+          "severity": "critical",
+          "action": "triggered",
+          "action_reason": ""
+        }
+      ],
+      "occurred_at": "2026-10-14T08:54:00Z",
+      "produced_at": "2026-10-14T08:55:00Z",
+      "labels": {
+        "strategy_id": 121,
+        "strategy_version": 1791959436354060,
+        "bk_biz_id": 2
+      },
+      "extra_data": {
+        "evaluation_family": "no_data",
+        "no_data_periods": 69,
+        "window": {
+          "size": 5,
+          "anomalies": 5,
+          "required": 5
+        },
+        "anomaly_begin_time": "2026-10-14T08:50:00Z",
+        "signal_type": "metric"
+      },
+      "bk_tenant_id": "tenant-fixture",
+      "event_id": "source-event-metric",
+      "alert_id": "source-alert-metric",
+      "title": "Strategy 121 level 1 triggered",
+      "content": "no data for 69 periods, as of 2026-10-14T08:54:00Z",
+      "dimensions": {
+        "__NO_DATA_DIMENSION__": true
+      }
+    },
+    "item_name": "COUNT(主机ID)",
+    "expected": "当前指标(COUNT(主机ID))已经有69个周期无数据上报"
+  }
+]

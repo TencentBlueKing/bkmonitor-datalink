@@ -57,20 +57,19 @@ func TestForecastGoldenDescriptions(t *testing.T) {
 func TestNoDataGoldenDescriptions(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		missing, anomaly int64
-		want             string
+		periods int64
+		want    string
 	}{
-		{5, 5, "当前指标(AVG(指标))已经有5个周期无数据上报"},
-		{5, 3, "当前指标(AVG(指标))已经有5个周期无数据上报，并且数据上报延时2个周期"},
-		{0, 3, "当前指标(AVG(指标))已经有3个周期无数据上报"},
+		{5, "当前指标(AVG(指标))已经有5个周期无数据上报"},
+		{3, "当前指标(AVG(指标))已经有3个周期无数据上报"},
 	} {
-		got, err := Render(Facts{ItemName: "AVG(指标)", NoData: &NoDataEvidence{NoDataPeriods: tc.missing, AnomalyPeriods: tc.anomaly}})
+		got, err := Render(Facts{ItemName: "AVG(指标)", NoData: &NoDataEvidence{Periods: tc.periods}})
 		if err != nil || got != tc.want {
 			t.Fatalf("got %q err %v want %q", got, err, tc.want)
 		}
 	}
-	for _, h := range []NoDataEvidence{{}, {NoDataPeriods: -1}, {AnomalyPeriods: 1_000_001}} {
-		if text, err := Render(Facts{NoData: &h}); err == nil || text != "" {
+	for _, h := range []NoDataEvidence{{}, {Periods: -1}, {Periods: 1_000_001}} {
+		if text, err := Render(Facts{ItemName: "AVG(指标)", NoData: &h}); err == nil || text != "" {
 			t.Fatal("accepted invalid no data evidence")
 		}
 	}

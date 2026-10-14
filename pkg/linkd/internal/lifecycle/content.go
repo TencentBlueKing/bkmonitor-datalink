@@ -11,11 +11,11 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
 )
 
 // AlertContentBuilder 为尚未持久化的 Alert 生成不可变 content。
@@ -50,15 +50,15 @@ func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event
 		}
 	}()
 	content, err = p.contentBuilder.BuildContent(ctx, event.Clone(), evaluation, opening.Clone())
-	// 历史策略发布态已被覆盖时保留触发事件的原文，不用最新策略冒充历史配置。
-	// 只有明确缺失允许降级，歧义、身份校验失败和依赖故障仍按原错误处理。
-	fallback := false
+	// 历史发布材料缺失或无数据文案事实不可用时，保留该 Event 的来源原文。
+	// 无数据文案内部的标记/等级冲突只影响描述；租户、来源身份、发布材料
+	// 绑定和外部依赖错误仍拒绝，不能将所有内容错误都静默变成成功。
+	fallbackReason := enrich.SourceContentFallbackReason(err)
 	if err != nil {
-		var failure interface{ PermanentContentFailure() string }
-		if !errors.As(err, &failure) || failure.PermanentContentFailure() != "publication_missing" || strings.TrimSpace(event.Content) == "" {
+		if fallbackReason == "" || strings.TrimSpace(event.Content) == "" {
 			return "", fmt.Errorf("build alert content: %w", err)
 		}
-		content, fallback = event.Content, true
+		content = event.Content
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -66,10 +66,10 @@ func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event
 	if len(content) > 1<<20 {
 		return "", &contentFailure{code: "opening_alert_invalid"}
 	}
-	if fallback {
-		p.logger.WarnContext(ctx, "alert content uses source text after missing publication", "module", "lifecycle", "operation", "build_content", "error", err, "bk_tenant_id", event.BKTenantID,
+	if fallbackReason != "" {
+		p.logger.WarnContext(ctx, "alert content uses source text after description failure", "module", "lifecycle", "operation", "build_content", "error", err, "bk_tenant_id", event.BKTenantID,
 			"event_source_id", event.EventSourceID, "event_source_version", event.EventSourceVersion,
-			"event_id", event.EventID, "reason_code", "publication_missing", "content_mode", "source_fallback")
+			"event_id", event.EventID, "reason_code", fallbackReason, "content_mode", "source_fallback")
 	}
 	return content, nil
 }

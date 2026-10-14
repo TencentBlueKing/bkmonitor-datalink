@@ -27,6 +27,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | Event           | 标准化后的不可变来源事实；生命周期只允许补写 `related_alert_ids`                                   |
 | source_raw_data | Event 保存的完整来源 payload 的 JSON 对象快照，创建后不可修改，定位为人工追溯资料；本次丰富迁移尽量不读取它，不将其作为默认输入或缺字段兜底 |
 | extra_data      | Event 中不进入核心字段的来源扩展数据，创建时确定并保持不可变；不承担丰富结果或处理工作区的职责      |
+| 无数据周期数（no_data_periods） | alarmd 检测时按 LastSeen 或 FirstAbsent 选定并冻结的无数据周期数，标准输入保存在 extra_data；不是配置 continuous、滚动窗口异常数或旧 bk-monitor 的延时周期数。文案边界见[标准事件](contracts/standard-event.md#无数据描述的检测事实)。 |
 | EventProcessing | 独立于 Event JSON 的技术元数据，包含 state、outcome、reason 和 processed_at                       |
 | EventSource     | 配置中的事件源定义，包含租户覆盖、Cleaner、fingerprint、Severity 和 MQ subscription               |
 | fingerprint     | EventSource 按稳定 Event 字段生成的 Alert 关联键；Lifecycle 唯一关联条件为租户、来源、fingerprint |
@@ -67,7 +68,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | 鲸眼声明式策略查询投影 | SplitRecord 的 `resolved_strategies[*].spec.strategy_item` 中的聚合、表达式和 `query_configs`；供丰富处理器在单 Event 内共享。 |
 | 指标查询参数 | 丰富结果中用于查询本次告警对应观测数据的参数；当前由鲸眼声明式策略 `spec.strategy_item.query_configs` 与 Event.Dimensions 构造，不回查蓝鲸策略当前表或历史表 |
 | 维度条件文本（where_condition） | 按旧过滤和拼接规则从工作维度生成的条件文本，保存到 enrich.metric.where_condition；生成过程不修改 Event 的来源维度 |
-| 首次异常点时间（anomaly_begin_time） | 上游提供的本次告警对应首次异常点时间，从 Event.ExtraData.anomaly_begin_time 读取；仅接受字符串并原样保存到 enrich.metric.anomaly_begin_time，空字符串也保留，缺失时省略 |
+| 首次异常点时间（anomaly_begin_time） | 上游提供的异常点时间，从 Event.ExtraData.anomaly_begin_time 读取；仅接受字符串并原样保存到 enrich.metric.anomaly_begin_time，空字符串也保留，缺失时省略。alarmd 标准输出表示滚动 Trigger 窗口内最早异常点，不保证是整次无数据过程的首次异常点。 |
 | 来源业务 | Event.Labels.bk_biz_id 表示的业务上下文；`built_in_bk` 来源要求该标签为数字 Scalar 正整数，替代旧回调 F05–F07 的业务输入，用于对应的来源业务和查询消费位置 |
 | 业务观测维度 | Event.Dimensions.bk_biz_id 表示的指标观测值，仅在指标需要该维度时参与查询过滤或分组，不替代来源业务 |
 | 资源所属业务 | 从拨测任务、CMDB 等依赖取得的资源业务归属，供资源展示和拓扑逻辑使用并保存到 enrich.resource，不覆盖来源业务标签 |

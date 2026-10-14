@@ -15,6 +15,7 @@ import (
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich/models"
+	"linkd/internal/enrich/rules"
 )
 
 // Resolver 按事件身份取得已验证发布配置，再整理检测描述输入。
@@ -73,6 +74,25 @@ func (r *Resolver) Resolve(ctx context.Context, event domain.Event, evaluation d
 	if configuration.Identity != identity {
 		return Facts{}, invalid("configuration_identity_mismatch")
 	}
+	if err := ctx.Err(); err != nil {
+		return Facts{}, err
+	}
+	var family string
+	if raw, ok := event.ExtraData["evaluation_family"]; ok && (json.Unmarshal(raw, &family) != nil || family == "") {
+		return Facts{}, invalid("detection_evidence_missing")
+	}
+	noData := rules.ScalarProvided(event.Dimensions[rules.FieldNoDataDimension])
+	if noData || family == "no_data" {
+		if !noData || family != "no_data" {
+			return Facts{}, invalid("nodata_identity_invalid")
+		}
+		// 无数据不依赖观测值、单位或普通指标算法；这些字段的缺失是来源契约，
+		// 不是缺测值需要补零。先核验同版本无数据配置，再读取冻结的周期数。
+		return resolveNoData(event, evaluation, configuration)
+	}
+	if family != "" && family != "metric_algorithm" {
+		return Facts{}, invalid("detection_evidence_missing")
+	}
 	// 发布投影器会在编译以后重写专用指标的表达式。Ping 的描述只依赖
 	// 原始丢包率，且 EventExecutor 已冻结 PingUnreachable 算法；仅接受这一
 	// 明确组合。其他专用指标不能当作普通阈值处理。
@@ -99,13 +119,6 @@ func (r *Resolver) Resolve(ctx context.Context, event domain.Event, evaluation d
 	}
 	if err := ctx.Err(); err != nil {
 		return Facts{}, err
-	}
-	if _, nodata := event.Dimensions["__NO_DATA_DIMENSION__"]; nodata {
-		return Facts{}, invalid("nodata_evidence_missing")
-	}
-	var family string
-	if raw, ok := event.ExtraData["evaluation_family"]; ok && (json.Unmarshal(raw, &family) != nil || family != "metric_algorithm") {
-		return Facts{}, invalid("detection_evidence_missing")
 	}
 	value, err := eventObservedNumber(event)
 	if err != nil {
@@ -167,6 +180,33 @@ func (r *Resolver) Resolve(ctx context.Context, event domain.Event, evaluation d
 		return Facts{}, invalid("selected_level_missing")
 	}
 	return facts, nil
+}
+
+func resolveNoData(event domain.Event, evaluation domain.EventEvaluation, configuration Configuration) (Facts, error) {
+	name, err := configurationItemName(configuration.Spec)
+	if err != nil {
+		return Facts{}, err
+	}
+	var enabled bool
+	var level int64
+	config := configuration.Spec.StrategyItem.NoDataConfig
+	selectedLevel := map[string]int64{"critical": 1, "warning": 2, "info": 3}[evaluation.Severity]
+	if json.Unmarshal(config["is_enabled"], &enabled) != nil || !enabled ||
+		json.Unmarshal(config["level"], &level) != nil || selectedLevel == 0 || level != selectedLevel {
+		return Facts{}, invalid("nodata_configuration_invalid")
+	}
+	raw, ok := event.ExtraData["no_data_periods"]
+	if !ok {
+		return Facts{}, invalid("nodata_evidence_missing")
+	}
+	var periods int64
+	if json.Unmarshal(raw, &periods) != nil || periods <= 0 || periods > maxNoDataPeriods {
+		return Facts{}, invalid("nodata_evidence_invalid")
+	}
+	// alarmd 已按检测时的 LastSeen/FirstAbsent 选择并冻结周期数。
+	// window.anomalies 与 anomaly_begin_time 只覆盖滚动窗口，不能据此补算
+	// 旧 bk-monitor 的累计异常或延时周期；生产描述仅陈述来源能证明的周期数。
+	return Facts{ItemName: name, NoData: &NoDataEvidence{Periods: periods}}, nil
 }
 
 // 普通 Data/Target/Log/APM 继承 Kingeye BaseExecutor.build_items；PromQL

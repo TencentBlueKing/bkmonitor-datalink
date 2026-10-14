@@ -74,29 +74,20 @@ func renderHistory(u unitDefinition, a Algorithm) (string, bool, error) {
 
 func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
 
-// NoDataEvidence 是无数据检测时的两个周期计数，不是配置的 continuous。
+const maxNoDataPeriods int64 = 1_000_000
+
+// NoDataEvidence 保存来源检测时已经选定的无数据周期数，不是配置的 continuous。
+// 它不携带旧 bk-monitor 的延时事实，不能推导数据上报延时。
 type NoDataEvidence struct {
-	NoDataPeriods  int64
-	AnomalyPeriods int64
+	Periods int64
 }
 
 func renderNoData(f Facts) (string, error) {
 	h := f.NoData
-	if len(f.Algorithms) != 0 || len(f.ItemName) > 4096 || !utf8.ValidString(f.ItemName) || h.NoDataPeriods < 0 || h.AnomalyPeriods < 0 || h.NoDataPeriods > 1_000_000 || h.AnomalyPeriods > 1_000_000 {
+	if len(f.Algorithms) != 0 || f.ItemName == "" || len(f.ItemName) > 4096 || !utf8.ValidString(f.ItemName) || h.Periods <= 0 || h.Periods > maxNoDataPeriods {
 		return "", invalid("nodata_evidence_invalid")
 	}
-	periods := h.NoDataPeriods
-	if periods == 0 {
-		periods = h.AnomalyPeriods
-	}
-	if periods == 0 {
-		return "", invalid("not_triggered")
-	}
-	content := fmt.Sprintf("当前指标(%s)已经有%d个周期无数据上报", f.ItemName, periods)
-	if h.NoDataPeriods > h.AnomalyPeriods {
-		content += fmt.Sprintf("，并且数据上报延时%d个周期", h.NoDataPeriods-h.AnomalyPeriods)
-	}
-	return content, nil
+	return fmt.Sprintf("当前指标(%s)已经有%d个周期无数据上报", f.ItemName, h.Periods), nil
 }
 
 // ForecastEvidence 保存检测选中的预测点，不用当前预测结果重算文案。

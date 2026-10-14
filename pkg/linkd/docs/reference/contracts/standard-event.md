@@ -105,6 +105,40 @@ fingerprint、确定性 Event ID、接收时间和原始快照。Event 创建或
 Redis Mailbox 后，原消息才允许确认；Signal 只唤醒 Mailbox，不承载单条 Event 的处理责任。
 这些规则描述 Linkd 通用接收边界；下文 KAC V2 插件在发布到 Kafka 前还有额外校验。
 
+## 无数据描述的检测事实
+
+2026-10-14 确认：`content_mode: bkmonitor_description` 正式接入 alarmd 已有的无数据事实，
+保持 alarmd 输出契约不变。输入同时满足以下条件时，内容构建器创建
+`当前指标(X)已经有N个周期无数据上报`：
+
+- `dimensions.__NO_DATA_DIMENSION__` 按既有 `ScalarProvided` 真值规则成立，
+  且 `extra_data.evaluation_family` 为 `"no_data"`；标记与 family 冲突返回 `nodata_identity_invalid`。
+  标记为 `false`、`0` 或空字符串时不进入无数据分支，普通指标描述照常处理。
+- 事件标签绑定的同租户、同策略版本发布配置中，`strategy_item.no_data_config.is_enabled`
+  为 `true`，整数 `level` 对应当前 opening Alert 的等级（1→critical、2→warning、3→info）；
+  不满足则返回 `nodata_configuration_invalid`，不借用普通指标算法等级。
+- `extra_data.no_data_periods` 为 JSON 整数，范围 `[1, 1000000]`。缺失返回
+  `nodata_evidence_missing`，null、字符串、小数、非正数和超限返回 `nodata_evidence_invalid`。
+  配置的 `continuous` 不替代这次检测的周期数。
+
+`X` 使用同版本发布配置的监控项名称规则；`N` 原样使用来源周期数。
+无数据分支不要求 `values.value`、单位或普通指标算法，不为缺测值补零。
+`window.anomalies` 和 `anomaly_begin_time` 只描述滚动窗口，不能补算累计异常或数据延时。
+因此本分支**不生成**旧 bk-monitor 的“并且数据上报延时M个周期”，也不宣称复现其
+两套 checkpoint 的全部语义；这是对历史逐字一致目标的已确认收窄。
+
+普通指标描述及精确版本配置校验保持既有契约。生成内容只赋给新 Alert，Event.content、
+SourceRawData、ExtraData 和已创建 Alert.content 均保持不变。
+2026-10-14 补充确认：上述 `nodata_identity_invalid`、`nodata_configuration_invalid`、
+`nodata_evidence_missing`、`nodata_evidence_invalid` 属于无数据文案失败；
+Event 自带非空原始 `content` 时，Lifecycle 直接将原文作为新 Alert.content，
+以 WARN 记录具体错误码和 `source_fallback`，避免文案失败阻止告警创建。
+只读 opening Event 内容预览采用同一兜底白名单，候选内容与创建结果一致。
+原始内容为空、空白或超限时仍失败；取消、来源/租户身份校验、发布材料绑定、
+依赖故障及其他算法错误不因此降级。兜底不修正 Event 的字段或无数据判定，
+不代表检测事实已补齐；其内容仍经 Alert 校验并冻结到 EventPlan。
+真实输入的验证与部署边界见[无数据接入验证](../../research/samples/2026-10-14-nodata-content/README.md)。
+
 ## 实例来源与告警维度
 
 ### `subject`：实例数据来源

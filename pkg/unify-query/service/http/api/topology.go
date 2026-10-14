@@ -73,6 +73,9 @@ func HandlerAPIRelationV1Beta3TopologyRange(c *gin.Context) {
 }
 
 func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
+	// A batch can outlive the global metadata TTL. Keep its identity and routing
+	// metadata request-owned through every item and the final response write.
+	c.Request = c.Request.WithContext(metadata.WithQueryMetadata(c.Request.Context()))
 	proxy.TraceJSONEncoding(c)
 	spanName := "handler-api-relation-v1beta3-topology"
 	if rangeQuery {

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,7 +61,7 @@ func TestProgressCASDoesNotWaitForRefresh(t *testing.T) {
 			if err := json.Unmarshal(doc.Payload, &payload); err != nil {
 				t.Error(err)
 			}
-			frozen, restoreErr := projection.RestoreSnapshot(payload.Request.Alert, payload.Request.ContentHash)
+			frozen, restoreErr := projection.RestoreSnapshot(payload.Request.Alert)
 			if restoreErr != nil || string(frozen) != string(task.Request.Alert) {
 				t.Error("progress update modified frozen snapshot")
 			}
@@ -94,5 +95,32 @@ func TestProgressCASDoesNotWaitForRefresh(t *testing.T) {
 	}
 	if creates != 1 {
 		t.Fatal("create-only identity lost")
+	}
+}
+
+func TestTaskReadDoesNotRecomputeSnapshotDigest(t *testing.T) {
+	for _, storedAsString := range []bool{false, true} {
+		task := testTask(t, "tenant")
+		task.Request.ContentHash = strings.Repeat("0", 64)
+		raw, err := json.Marshal(task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if storedAsString {
+			raw, err = projection.PreserveSnapshot(raw, "request")
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		row, err := decode(raw, task.Request.TenantID, task.ID, "1:1", true)
+		if err != nil || row.Task.Request.ContentHash != task.Request.ContentHash {
+			t.Fatal("stored hash rejected or replaced", err)
+		}
+		if _, err := decode(raw, "other", task.ID, "1:1", true); err == nil {
+			t.Fatal("tenant isolation lost")
+		}
+		if _, err := decode(raw, task.Request.TenantID, task.ID, "1:1", false); err == nil {
+			t.Fatal("work/state consistency lost")
+		}
 	}
 }

@@ -255,7 +255,7 @@ func decode(raw []byte, tenant, id, version string, work, unsettled bool, alertI
 		return actiondelivery.StoredTask{}, actiondelivery.ErrInvalid
 	}
 	var snapshotErr error
-	t.Request.Alert, snapshotErr = projection.RestoreSnapshot(t.Request.Alert, t.Request.ContentHash)
+	t.Request.Alert, snapshotErr = projection.RestoreSnapshot(t.Request.Alert)
 	if snapshotErr != nil || t.Validate() != nil || t.ID != id || t.Request.TenantID != tenant || t.HasWork() != work || t.Unsettled() != unsettled || t.Request.AlertID != alertID || t.Request.TargetID != targetID || t.Request.Revision != revision || version == "" || version == "0" {
 		return actiondelivery.StoredTask{}, actiondelivery.ErrInvalid
 	}

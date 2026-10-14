@@ -178,7 +178,7 @@ func (t Task) Validate() error {
 	if p.Projection != nil && ValidateProjection(q, *p.Projection) != nil {
 		return ErrInvalid
 	}
-	if p.Receipt != nil && p.Receipt.ValidateFor(q) != nil {
+	if p.Receipt != nil && p.Receipt.validateIdentityFor(q) != nil {
 		return ErrInvalid
 	}
 	if p.ErrorCode != "" && !validFailureCode(p.ErrorCode) {
@@ -247,6 +247,10 @@ func ValidateWrite(current *Task, next Task) error {
 		return ErrConflict
 	}
 	c := current.Progress
+	// 新回执持久化前核对完整请求；历史回执读取不重复计算快照摘要。
+	if p.Receipt != nil && c.Receipt == nil && p.Receipt.ValidateFor(next.Request) != nil {
+		return ErrInvalid
+	}
 	if p.UpdatedAt.Before(c.UpdatedAt) || c.PreviousUnconfirmed && !p.PreviousUnconfirmed {
 		return ErrInvalid
 	}

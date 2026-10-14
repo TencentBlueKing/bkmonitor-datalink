@@ -102,14 +102,14 @@ func BuildRequest(a domain.Alert, target string) (Request, error) {
 // Clone 返回独立的快照字节，任务不能持有调用方可修改的原始数据。
 func (r Request) Clone() Request { r.Alert = bytes.Clone(r.Alert); return r }
 
-// Validate 验证信封、摘要和快照作用域；输入必须来自已验证 Alert 的 BuildRequest。
+// Validate 验证信封和快照作用域，不在读取时重新计算快照摘要。
+// ContentHash 在构造时生成；并发一致性由业务身份、版本与存储 CAS 保护。
 func (r Request) Validate() error {
 	id, err := AlarmID(r.TenantID, r.AlertID)
 	if err != nil || r.SchemaVersion != SchemaVersion || r.AlarmID != id || domain.ValidateIdentityPart("target", r.TargetID, 64) != nil || r.Revision < 1 || r.Revision >= 1<<53 || len(r.Alert) == 0 || len(r.Alert) > MaxSnapshotBytes {
 		return ErrInvalid
 	}
-	sum := sha256.Sum256(r.Alert)
-	if r.ContentHash != hex.EncodeToString(sum[:]) {
+	if !validHash(r.ContentHash) {
 		return ErrInvalid
 	}
 	var p struct {

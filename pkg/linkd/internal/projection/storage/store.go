@@ -250,7 +250,7 @@ func decode(raw []byte, tenant, id, version string, work bool) (projection.Store
 		return projection.StoredTask{}, projection.ErrInvalid
 	}
 	var snapshotErr error
-	t.Request.Alert, snapshotErr = projection.RestoreSnapshot(t.Request.Alert, t.Request.ContentHash)
+	t.Request.Alert, snapshotErr = projection.RestoreSnapshot(t.Request.Alert)
 	if snapshotErr != nil || t.Validate() != nil || t.ID != id || t.Request.TenantID != tenant || t.HasWork() != work || version == "" || version == "0" {
 		return projection.StoredTask{}, projection.ErrInvalid
 	}

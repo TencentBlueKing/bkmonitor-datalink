@@ -200,7 +200,7 @@ func (c *Client) getState(ctx context.Context, q projection.Request) (storedStat
 		return out, err
 	}
 	var snapshotErr error
-	out.Source.State.Request.Alert, snapshotErr = projection.RestoreSnapshot(out.Source.State.Request.Alert, out.Source.State.Request.ContentHash)
+	out.Source.State.Request.Alert, snapshotErr = projection.RestoreSnapshot(out.Source.State.Request.Alert)
 	if snapshotErr != nil {
 		return out, projection.Failure{Code: "response_invalid"}
 	}

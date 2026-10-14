@@ -10,9 +10,8 @@
 package actiondelivery
 
 import (
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,9 +91,8 @@ func TestActionRequestPreservesFrozenAdmissionAndStableIdentity(t *testing.T) {
 	}
 	noncanonical := first.Clone()
 	noncanonical.Alert = append([]byte(" "), noncanonical.Alert...)
-	noncanonical.ContentHash = fmt.Sprintf("%x", sha256.Sum256(noncanonical.Alert))
-	if noncanonical.Validate() == nil {
-		t.Fatal("unstable RawMessage accepted")
+	if noncanonical.Validate() != nil {
+		t.Fatal("JSON formatting rejected during task validation")
 	}
 	r := confirmed(first)
 	if r.ValidateFor(first) != nil {
@@ -112,5 +110,37 @@ func TestActionRequestPreservesFrozenAdmissionAndStableIdentity(t *testing.T) {
 	r.RequestHash = q.Hash()
 	if r.ValidateFor(first) == nil {
 		t.Fatal("different payload receipt accepted")
+	}
+}
+
+func TestStoredActionReceiptChecksIdentityAndNewReceiptChecksDigest(t *testing.T) {
+	task := actionTask(t, "tenant", 1)
+	task.Progress.State = "succeeded"
+	task.Progress.Attempts, task.Progress.TotalAttempts = 1, 1
+	task.Progress.DueAt = nil
+	proof, receipt := visible(task.Request), confirmed(task.Request)
+	task.Progress.Projection, task.Progress.Receipt = &proof, &receipt
+	receipt.RequestHash = strings.Repeat("0", 64)
+	if err := task.Validate(); err != nil {
+		t.Fatal("stored receipt recomputed request digest", err)
+	}
+	if receipt.ValidateFor(task.Request) == nil {
+		t.Fatal("new receipt accepted a different request digest")
+	}
+	sending := task.Clone()
+	sending.Progress.State = "sending"
+	sending.Progress.Receipt = nil
+	until := sending.Progress.UpdatedAt.Add(30 * time.Second)
+	sending.Progress.LeaseUntil = &until
+	if ValidateWrite(&sending, task) == nil {
+		t.Fatal("new receipt persisted without checking request digest")
+	}
+	receipt.RequestHash = task.Request.Hash()
+	if err := ValidateWrite(&sending, task); err != nil {
+		t.Fatal("valid new receipt rejected", err)
+	}
+	receipt.TenantID = "other"
+	if task.Validate() == nil {
+		t.Fatal("cross-tenant stored receipt accepted")
 	}
 }

@@ -148,11 +148,6 @@ func (q Request) Validate() error {
 	if decoder.Decode(&a) != nil || a.Validate() != nil {
 		return ErrInvalid
 	}
-	// RawMessage 再编码会压缩空白并转义字符；只接受构造器的规范快照，避免保存成功后摘要失配。
-	canonical, err := projection.BuildRequest(a, q.TargetID)
-	if err != nil || !bytes.Equal(canonical.Alert, q.Alert) {
-		return ErrInvalid
-	}
 	if a.Admission.AdmittedAt == nil {
 		return ErrInvalid
 	}
@@ -211,7 +206,15 @@ type Receipt struct {
 
 // ValidateFor 校验原动作与本次投递引用，不要求接收端保存受理账本或返回投影证明。
 func (r Receipt) ValidateFor(q Request) error {
-	if q.Validate() != nil || r.SchemaVersion != SchemaVersion || r.TenantID != q.TenantID || r.TargetID != q.TargetID || r.AlertID != q.AlertID || r.AlarmID != q.AlarmID || r.ActionID != q.ActionID || r.RequestHash != q.Hash() || r.Outcome != "queued" || domain.ValidateIdentityPart("task_id", r.TaskID, 256) != nil {
+	if r.validateIdentityFor(q) != nil || r.RequestHash != q.Hash() {
+		return ErrInvalidReceipt
+	}
+	return nil
+}
+
+// validateIdentityFor 用于已持久回执读取；完整请求摘要只在接收新回执时核对。
+func (r Receipt) validateIdentityFor(q Request) error {
+	if q.Validate() != nil || r.SchemaVersion != SchemaVersion || r.TenantID != q.TenantID || r.TargetID != q.TargetID || r.AlertID != q.AlertID || r.AlarmID != q.AlarmID || r.ActionID != q.ActionID || !validHash(r.RequestHash) || r.Outcome != "queued" || domain.ValidateIdentityPart("task_id", r.TaskID, 256) != nil {
 		return ErrInvalidReceipt
 	}
 	return nil

@@ -11,29 +11,26 @@ package projection
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 )
 
-// RestoreSnapshot 恢复持久层重新排列 JSON 对象后的规范字节，不修改原摘要。
-// ES update 会重新序列化整篇 _source；字段顺序不是业务变化。只有规范化后仍匹配
-// 首次冻结摘要的数据才可恢复，数值使用 json.Number，避免精度损失或掩盖内容篡改。
-func RestoreSnapshot(raw json.RawMessage, hash string) (json.RawMessage, error) {
+// RestoreSnapshot 解码持久快照，不执行字节摘要校验。
+// 旧对象形式恢复稳定字段顺序供协议边界使用；json.Number 保留数值精度。
+func RestoreSnapshot(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) > 0 && raw[0] == '"' {
 		var frozen string
 		if len(raw) > 2*MaxSnapshotBytes+2 || json.Unmarshal(raw, &frozen) != nil {
 			return nil, ErrInvalid
 		}
 		raw = []byte(frozen)
-	}
-	if len(raw) == 0 || len(raw) > MaxSnapshotBytes || !validHash(hash) {
-		return nil, ErrInvalid
-	}
-	sum := sha256.Sum256(raw)
-	if hex.EncodeToString(sum[:]) == hash {
+		if len(raw) == 0 || len(raw) > MaxSnapshotBytes || !json.Valid(raw) {
+			return nil, ErrInvalid
+		}
 		return raw, nil
+	}
+	if len(raw) == 0 || len(raw) > MaxSnapshotBytes {
+		return nil, ErrInvalid
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
@@ -47,10 +44,6 @@ func RestoreSnapshot(raw json.RawMessage, hash string) (json.RawMessage, error) 
 	}
 	canonical, err := json.Marshal(value)
 	if err != nil {
-		return nil, ErrInvalid
-	}
-	sum = sha256.Sum256(canonical)
-	if hex.EncodeToString(sum[:]) != hash {
 		return nil, ErrInvalid
 	}
 	return canonical, nil

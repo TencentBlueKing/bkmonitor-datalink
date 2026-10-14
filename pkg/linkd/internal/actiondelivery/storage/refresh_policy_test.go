@@ -13,10 +13,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"linkd/internal/actiondelivery"
+	"linkd/internal/projection"
 	es "linkd/internal/store/elasticsearch"
 )
 
@@ -91,5 +93,33 @@ func TestProgressCASDoesNotWaitForRefresh(t *testing.T) {
 	}
 	if creates != 1 {
 		t.Fatal("create-only identity lost")
+	}
+}
+
+func TestTaskReadDoesNotRecomputeSnapshotDigest(t *testing.T) {
+	for _, storedAsString := range []bool{false, true} {
+		task := testAction(t, "tenant", 1)
+		task.Request.ContentHash = strings.Repeat("0", 64)
+		raw, err := json.Marshal(task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if storedAsString {
+			raw, err = projection.PreserveSnapshot(raw, "request")
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		q := task.Request
+		row, err := decode(raw, q.TenantID, task.ID, "1:1", true, true, q.AlertID, q.TargetID, q.Revision)
+		if err != nil || row.Task.Request.ContentHash != q.ContentHash {
+			t.Fatal("stored hash rejected or replaced", err)
+		}
+		if _, err := decode(raw, "other", task.ID, "1:1", true, true, q.AlertID, q.TargetID, q.Revision); err == nil {
+			t.Fatal("tenant isolation lost")
+		}
+		if _, err := decode(raw, q.TenantID, task.ID, "1:1", true, true, q.AlertID, q.TargetID, q.Revision+1); err == nil {
+			t.Fatal("revision identity lost")
+		}
 	}
 }

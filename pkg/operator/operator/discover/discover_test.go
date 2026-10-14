@@ -10,6 +10,7 @@
 package discover
 
 import (
+	"context"
 	"testing"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -138,4 +139,12 @@ func TestMatchSelector(t *testing.T) {
 			assert.Equal(t, c.matched, matchSelector(c.labels, c.selector))
 		})
 	}
+}
+
+func TestPreStartResetsFetched(t *testing.T) {
+	d := NewBaseDiscover(context.Background(), &CommonOptions{Name: "test-discover"})
+	d.fetched = true
+	d.PreStart()
+	assert.False(t, d.fetched)
+	d.cancel()
 }

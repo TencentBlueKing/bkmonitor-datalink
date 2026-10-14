@@ -29,6 +29,11 @@ func TestRecoveryFieldsUsesFrozenEventAndCommittedPatches(t *testing.T) {
 		patch.RuleID = "title"
 		patches = append(patches, patch)
 	}
+	metricQuery, err := domain.NewEnrichPatch("$.extra_data.metric_query_params", map[string]any{"expression": "A", "query_configs": []any{map[string]any{"bk_biz_id": 10}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	patches = append(patches, metricQuery)
 	payload, err := (enrich.Payload{Processors: []enrich.ProcessorEntry{{"fields": {Status: domain.EnrichStatusSucceeded, Patches: patches, Trace: []enrich.Trace{{RuleID: "title", Status: domain.EnrichStatusSucceeded}}}}}}).JSONObject()
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +45,9 @@ func TestRecoveryFieldsUsesFrozenEventAndCommittedPatches(t *testing.T) {
 	}
 	if fields["name"] != "丰富后的恢复标题" || fields["content"] != "当次恢复正文" || fields["enabled"] != false || fields["action"] != "resolved" || fields["source_name"] != "当时告警源" || fields["source_id"] != "kac-source" || e.Title != "before" {
 		t.Fatalf("wrong fields: %+v", fields)
+	}
+	if fields["metric_query_params"] != `{"expression":"A","query_configs":[{"bk_biz_id":10}]}` {
+		t.Fatalf("metric_query_params = %#v", fields["metric_query_params"])
 	}
 	encoded, err := json.Marshal(fields)
 	if err != nil {

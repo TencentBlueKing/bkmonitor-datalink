@@ -16,4 +16,6 @@ KAC 对首次触发/恢复的丰富生成独立派生节点；持续更新丰富
 
 `POST /api/v1/alerts/{id}/recovery-record` 使用相同管理 JWT。请求包含 `bk_tenant_id/event_id/severity`，单请求 2 KiB，与丰富查询共用两个并发槽位、五秒超时，响应上限 1 MiB。租户、来源、Alert/Event 关联及准确等级必须匹配，仅接受当次 resolved/closed 来源评估（唯一全等级 closed 评估使用其保留标记）。复用准确发布版本和丰富摘要校验，读取失败明确返回错误。
 
+恢复详情的 `metric_query_params` 与正式 KAC 输出共用 JSON object 字符串编码：Event 中的结构化对象编码一次，已有 JSON 字符串先解析再规范编码；显式 null 输出 `{}`，未提供则不补字段，非法 JSON、数组和非对象标量返回错误。该转换仅处理已保存事实，不重跑丰富或修改 Event。
+
 响应 `alert_id/event_id/severity/fields` 的 fields 由原 Event 应用已保存的生效补丁后转换；不重跑规则、不读取当前 Alert 正文、不返回原始 payload 或完整配置。复用 KAC 业务字段转换，只展开已知字段和发布时声明的自定义目录，保留 false/0。KAC 按已持久的流转引用请求，并转换成旧面板 data/category。未准入动作资格、人工/策略/合并系统关闭和历史日志均不因该读取接口改变。

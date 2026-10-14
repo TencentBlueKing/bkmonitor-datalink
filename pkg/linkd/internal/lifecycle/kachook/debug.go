@@ -67,6 +67,16 @@ func DebugFields(event domain.Event, evaluation domain.EventEvaluation, sourceID
 		if denied[name] || !exists {
 			continue
 		}
+		if name == "metric_query_params" {
+			// Event 保存结构化查询，KAC 详情协议要求 JSON object 字符串；
+			// 与正式输出共用编码，避免恢复详情把对象误当普通文本拒绝。
+			query, err := encodeMetricQueryParams(value)
+			if err != nil {
+				return nil, err
+			}
+			result[name] = query
+			continue
+		}
 		if field.Type.Kind() == reflect.String {
 			text, err := sourceText(name, value)
 			if err != nil {

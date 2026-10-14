@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/deliverysource"
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
 	"linkd/internal/eventsource"
@@ -46,17 +47,23 @@ type closeSourceReader interface {
 	GetRelease(context.Context, string, int64) (eventsource.Release, error)
 }
 
+// AlertProjectionSynchronizer 确认主动关闭的业务版本已经投影并可搜索；失败不能回滚关闭事实。
+type AlertProjectionSynchronizer interface {
+	Synchronize(context.Context, string, string, string, int64) error
+}
+
 // AlertCloser 为用户或系统关闭装配当前已发布来源的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
 // 最多四个并发请求；重试必须携带相同命令，终态部分成功不等同于未执行。
 type AlertCloser struct {
-	slots chan struct{}
-	run   func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error)
-	read  func(context.Context, string, string) (domain.Alert, error)
+	slots      chan struct{}
+	run        func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error)
+	read       func(context.Context, string, string) (domain.Alert, error)
+	projection AlertProjectionSynchronizer
 }
 
 // NewAlertCloser 创建控制面专用的有界关闭入口，不启动消费者或修改存储 schema。
-func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime) *AlertCloser {
-	closer := &AlertCloser{slots: make(chan struct{}, 4)}
+func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, projection AlertProjectionSynchronizer) *AlertCloser {
+	closer := &AlertCloser{slots: make(chan struct{}, 4), projection: projection}
 	closer.run = func(ctx context.Context, command lifecycle.CloseAlertCommand) (result lifecycle.CloseAlertResult, err error) {
 		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, command.BKTenantID, command.AlertID, nil, func(p *lifecycle.Processor) error {
 			var err error
@@ -193,6 +200,11 @@ func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAle
 	defer cancel()
 	result, err := s.run(ctx, command)
 	if err == nil {
+		if s.projection != nil {
+			if err := s.projection.Synchronize(ctx, result.Alert.BKTenantID, result.Alert.AlertID, deliverysource.TargetID, result.Alert.Revision); err != nil {
+				return result, &CloseError{Status: 502, Code: "result_uncertain", Message: "alert closed but KAC projection is unconfirmed; retry the same operation"}
+			}
+		}
 		return result, nil
 	}
 	var classified *CloseError

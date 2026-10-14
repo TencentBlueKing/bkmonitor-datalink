@@ -155,6 +155,46 @@ func sameProducedTask(current StoredTask, next Task) (StoredTask, error) {
 	return current, nil
 }
 
+// Synchronize 在调用方预算内同步推进持久任务，只有目标水位覆盖指定业务版本才成功。
+// 与后台投递共用任务身份、目标租约及退避预算；失败保留待办，不绕过 failed 状态重发。
+func (s *Service) Synchronize(ctx context.Context, tenant, alert, target string, revision int64) error {
+	if ctx == nil || domain.ValidateIdentityPart("tenant", tenant, 64) != nil || alert == "" || len(alert) > domain.EntityIDMaxBytes || domain.ValidateIdentityPart("target", target, 64) != nil || revision < 1 || revision >= 1<<53 {
+		return ErrInvalid
+	}
+	call, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	synced := func() (bool, error) {
+		row, err := s.alerts.GetAlertCurrent(call, tenant, alert)
+		if err != nil {
+			return false, err
+		}
+		ref, exists := row.Alert.Projection.Targets[target]
+		if row.Alert.BKTenantID != tenant || row.Alert.AlertID != alert || row.Version.IsZero() || !exists || row.Alert.Revision < revision {
+			return false, ErrInvalid
+		}
+		return ref.SyncedRevision >= revision, nil
+	}
+	if done, err := synced(); err != nil || done {
+		return err
+	}
+	task, err := s.Produce(call, tenant, alert, target)
+	if err == nil {
+		task, err = s.Deliver(call, tenant, task.Task.ID)
+		if err == nil && task.Task.Progress.State != "succeeded" {
+			return ErrBusy
+		}
+	}
+	// Produce/Deliver 可能与后台确认竞争。仅锁忙允许核对已完成水位；
+	// 其他错误（尤其租约释放不确定）不能被水位掩盖。
+	if err != nil && (!errors.Is(err, ErrBusy) || !CanDefer(err)) {
+		return err
+	}
+	if done, readErr := synced(); readErr != nil || done {
+		return readErr
+	}
+	return ErrBusy
+}
+
 // Deliver 在 10 秒上下文内推进一次尝试；持久 sending 预留 30 秒，进程丢失后按同一身份重试。
 // 成功 Receipt 先持久化，再 ACK Alert；ACK 失败不重发已经确认的外部请求。
 func (s *Service) Deliver(ctx context.Context, tenant, id string) (result StoredTask, err error) {

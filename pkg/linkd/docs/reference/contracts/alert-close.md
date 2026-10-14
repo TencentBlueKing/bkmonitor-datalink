@@ -1,6 +1,6 @@
 # Alert 主动关闭 API
 
-状态：2026-10-08。接口复用 Lifecycle 的 `CloseAlert`，支持显式人工和系统关闭。
+状态：2026-10-14。接口复用 Lifecycle 的 `CloseAlert`，支持显式人工和系统关闭。
 
 `POST /api/v1/alerts/{alert_id}/close` 使用控制面管理 JWT（`Internal-Token: Bearer <JWT>`）；worker token 无权调用。
 Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也不能获取管理 JWT。
@@ -35,6 +35,12 @@ Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也
 成功返回 `200` 和 `{ "alert": <关闭后的 Alert>, "already_closed": false }`；重复完成返回 `already_closed: true`。
 响应为 `Cache-Control: no-store`。结束类型按操作者保存 user/system，不接受关闭以外动作；不创建 Event、不会更改 latest_event_id。
 执行当前已发布来源的全部 FinalHook（不重新丰富），普通 Hook 失败记录在 push 流水中，不回滚已保存状态。
+启用 `plugins.kac` 时，管理入口与 KAC 集成入口均在返回 200 前同步推进本次关闭版本的
+[KAC 持久投影任务](kac-alert-projection-v1.md#持久任务与同步确认)，确认兼容文档可搜索并完成本地水位 ACK。
+同步执行与后台共用稳定任务身份、目标租约和重试预算，不等待五秒补扫或一秒投递周期。
+投影未就绪、锁忙、退避、失败或超时返回 502；关闭事实不回滚，原命令重试补齐投影，后台仍推进未完成待办。
+失败任务遵循原有三次尝试及人工恢复规则，不因重复关闭重新生成任务或重置重试预算。
+未启用插件时不执行 KAC 投影；同步投影成功不代表 KAC 后续处置已完成。
 
 | 状态码 | 含义 |
 | --- | --- |
@@ -46,7 +52,7 @@ Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也
 | 502 | 依赖失败或执行结果不确定，可能已保存终态；使用原命令重试 |
 | 503 | 未配置 Lifecycle、Repository 或 Redis |
 
-请求预算十秒；超时不承诺回滚。成功保存后读取列表或流水仍可能受 ES refresh 延迟影响。
+请求预算十秒，包含同步 KAC 投影；超时不承诺回滚。Linkd 列表或流水仍可能受自身 ES refresh 延迟影响。
 入口与 Lifecycle Worker 共用按租户、来源和 fingerprint 隔离的 Redis lease；请求取消后仍有界释放。
 来源发布配置可能在两次请求间变化；重试保持同一操作身份，但按请求时的发布配置装配 Hook。
 此边界不提供“恰好一次”外部投递保证，下游继续使用稳定消息身份去重。
@@ -65,10 +71,11 @@ KAC 使用 `BKAPP_KAC_LINKD_API_URL` 调用 `POST /api/v1/integrations/kac/alert
 请求字段与管理入口相同。接口同步执行单个 Alert 的状态转换；返回 200 时，`alert.status` 为 `closed`，
 `alert.close_operation_id` 是已保存的 `Alert.end_operation.id`，须与请求的 `operation_id` 一致。
 响应中的 `alert` 只包含 `bk_tenant_id`、`alert_id`、`status`、`close_operation_id`，不返回告警正文或扩展数据。
-`already_closed=true` 表示同一命令此前已生效，并在本次补齐缓存、Hook 和流水。
+`already_closed=true` 表示同一命令此前已生效，并在本次补齐缓存、Hook、流水及启用的 KAC 投影。
 
 `GET /api/v1/integrations/kac/alerts/{alert_id}?bk_tenant_id={tenant_id}` 返回同样的最小快照，
-供 KAC 在 409 或不确定结果后核对关闭身份。只有状态和操作 ID 都匹配，才可认定本命令已关闭目标。
+供 KAC 在 409 或不确定结果后核对关闭身份。只有状态和操作 ID 都匹配，才可认定本命令已关闭 Linkd 目标；GET 快照不证明 KAC 投影完成，
+关闭请求返回 502 后仍须复用原命令重试 POST，以取得同步投影确认。
 KAC 在超时、429 或 5xx 后复用原命令重试；接口每次只关闭一条 Alert。
 
 集成入口错误响应为 `{ "error_code": "...", "message": "..." }`：400 `invalid_command`、

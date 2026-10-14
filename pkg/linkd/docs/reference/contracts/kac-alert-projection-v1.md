@@ -113,6 +113,17 @@ pending → sending → delivered → succeeded；临时失败进入 retry，永
 应用版本可高于原请求，但只确认本任务请求版本；同版本的哈希和生命周期必须相同。
 同步 ACK 不推进 Alert 业务 revision/update_at，不替代[动作受理确认](kac-action-delivery-v2.md)。
 
+## 主动关闭的同步执行
+
+[主动关闭 API](alert-close.md) 在启用全局 KAC 插件时，保存 Linkd 关闭事实后立即生产或复用
+当前业务版本的持久任务，并同步调用同一投递服务。仅在可搜索确认及本地 ACK 覆盖本次关闭版本后
+返回成功，不等待自动运行器的扫描周期。API 与后台运行器共享 KAC 写入器及索引就绪状态，
+并使用相同部署的 Alert/目标租约。
+
+同步执行不重置退避、尝试次数或 failed 状态；未确认返回 502，关闭事实保留，使用原关闭命令重试。
+已有 Receipt 的任务只补本地 ACK，已有确认水位的重复命令不重发投影。
+请求取消传播至投影 I/O；总预算仍为关闭 API 的十秒。后续处置通知继续由动作运行器推进。
+
 ## 自动运行器
 
 配置 Lifecycle 且 `plugins.kac.enabled=true` 时启动全局运行时：

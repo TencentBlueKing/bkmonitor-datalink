@@ -692,3 +692,157 @@ func TestRetryAuditIsFrozenAndChangedCommandConflicts(t *testing.T) {
 		t.Fatal("retry record alias leaked", err)
 	}
 }
+
+func TestSynchronizeConfirmsVisibilityAndReusesTask(t *testing.T) {
+	service, tasks, repo, _, sender, _, alert := projectionFixture(t)
+	row, err := repo.GetAlertCurrent(t.Context(), alert.BKTenantID, alert.AlertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := row.Alert.Clone()
+	closed.Status = domain.AlertStatusClosed
+	closed.UpdateAt = closed.UpdateAt.Add(time.Second)
+	closed.EndAt = &closed.UpdateAt
+	closed.EndType = domain.AlertEndTypeUser
+	closed.EndReason = "manual"
+	row, err = repo.CompareAndSetAlert(t.Context(), alert.BKTenantID, alert.AlertID, row.Version, closed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alert = row.Alert
+	if err := service.Synchronize(t.Context(), alert.BKTenantID, alert.AlertID, "kac", alert.Revision); err != nil {
+		t.Fatal(err)
+	}
+	row, err = repo.GetAlertCurrent(t.Context(), alert.BKTenantID, alert.AlertID)
+	if err != nil || row.Alert.Projection.Targets["kac"].SyncedRevision != alert.Revision {
+		t.Fatal("watermark not confirmed", err)
+	}
+	id, _ := TaskID(alert.BKTenantID, alert.AlertID, "kac", alert.Revision)
+	task, err := tasks.Get(t.Context(), alert.BKTenantID, id)
+	if err != nil || task.Task.Progress.State != "succeeded" || !task.Task.Progress.Receipt.SearchVisible || task.Task.Progress.Receipt.AppliedStatus != domain.AlertStatusClosed {
+		t.Fatal("visibility not confirmed", err)
+	}
+	if err := service.Synchronize(t.Context(), alert.BKTenantID, alert.AlertID, "kac", alert.Revision); err != nil || sender.calls != 1 {
+		t.Fatal("confirmed task resent", err, sender.calls)
+	}
+}
+
+func TestSynchronizeRetainsFailedWorkAndRepairsACK(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		fail  func(*ackRepository, *testSender)
+		state string
+	}{
+		{"transport", func(_ *ackRepository, s *testSender) { s.err = Failure{Code: "transport_failed", Retryable: true} }, "retry"},
+		{"permanent", func(_ *ackRepository, s *testSender) { s.err = Failure{Code: "response_invalid"} }, "failed"},
+		{"invisible", func(_ *ackRepository, s *testSender) {
+			s.mutate = func(q Request) Receipt { r := receiptFor(q); r.SearchVisible = false; return r }
+		}, "failed"},
+		{"ack", func(r *ackRepository, _ *testSender) { r.fail = true }, "delivered"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service, tasks, repo, _, sender, now, alert := projectionFixture(t)
+			tc.fail(repo, sender)
+			if err := service.Synchronize(t.Context(), alert.BKTenantID, alert.AlertID, "kac", alert.Revision); err == nil {
+				t.Fatal("unconfirmed projection accepted")
+			}
+			id, _ := TaskID(alert.BKTenantID, alert.AlertID, "kac", alert.Revision)
+			task, err := tasks.Get(t.Context(), alert.BKTenantID, id)
+			if err != nil || task.Task.Progress.State != tc.state {
+				t.Fatal("durable work lost", task.Task.Progress, err)
+			}
+			sender.err, sender.mutate = nil, nil
+			if tc.state == "retry" {
+				if err := service.Synchronize(t.Context(), alert.BKTenantID, alert.AlertID, "kac", alert.Revision); err == nil || sender.calls != 1 {
+					t.Fatal("retry bypassed backoff", err)
+				}
+				*now = now.Add(time.Minute)
+			}
+			err = service.Synchronize(t.Context(), alert.BKTenantID, alert.AlertID, "kac", alert.Revision)
+			if tc.state == "failed" {
+				if err == nil || sender.calls != 1 {
+					t.Fatal("failed task resent", err)
+				}
+			} else if err != nil || tc.state == "delivered" && sender.calls != 1 {
+				t.Fatal("retry did not converge", err, sender.calls)
+			}
+		})
+	}
+}
+
+func TestSynchronizeRejectsInvalidScopeAndCancellation(t *testing.T) {
+	service, _, _, _, sender, _, alert := projectionFixture(t)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, tc := range []struct {
+		name           string
+		ctx            context.Context
+		tenant, target string
+		revision       int64
+	}{
+		{"canceled", canceled, alert.BKTenantID, "kac", alert.Revision},
+		{"other tenant", t.Context(), "tenant-b", "kac", alert.Revision},
+		{"missing target", t.Context(), alert.BKTenantID, "unknown", alert.Revision},
+		{"future revision", t.Context(), alert.BKTenantID, "kac", alert.Revision + 1},
+		{"invalid revision", t.Context(), alert.BKTenantID, "kac", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := service.Synchronize(tc.ctx, tc.tenant, alert.AlertID, tc.target, tc.revision); err == nil {
+				t.Fatal("invalid synchronization accepted")
+			}
+		})
+	}
+	if sender.calls != 0 {
+		t.Fatal("invalid input sent")
+	}
+}
+
+func TestSynchronizeSharesBackgroundTargetLease(t *testing.T) {
+	service, _, _, _, _, _, alert := projectionFixture(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	var calls atomic.Int64
+	service.sender = senderFunc(func(ctx context.Context, _ Destination, q Request) (Receipt, error) {
+		calls.Add(1)
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return Receipt{}, ctx.Err()
+		}
+		return receiptFor(q), nil
+	})
+	task, err := service.Produce(t.Context(), alert.BKTenantID, alert.AlertID, "kac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := service.Deliver(ctx, alert.BKTenantID, task.Task.ID); done <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("background delivery did not start")
+	}
+	if err := service.Synchronize(t.Context(), alert.BKTenantID, alert.AlertID, "kac", alert.Revision); !errors.Is(err, ErrBusy) || calls.Load() != 1 {
+		t.Fatal("concurrent synchronization bypassed lease", err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("background delivery did not cancel")
+	}
+}
+
+func TestSynchronizePreservesReleaseUncertainty(t *testing.T) {
+	service, _, _, _, sender, _, alert := projectionFixture(t)
+	service.locker = failedReleaseLocker{}
+	if err := service.Synchronize(t.Context(), alert.BKTenantID, alert.AlertID, "kac", alert.Revision); err == nil {
+		t.Fatal("lease release failure hidden by ACK")
+	}
+	if err := service.Synchronize(t.Context(), alert.BKTenantID, alert.AlertID, "kac", alert.Revision); err != nil || sender.calls != 1 {
+		t.Fatal("confirmed receipt resent on retry", err)
+	}
+}

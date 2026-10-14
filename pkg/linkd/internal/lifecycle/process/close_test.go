@@ -171,3 +171,92 @@ func TestAlertCloserCapacityCancellationAndReuse(t *testing.T) {
 		t.Fatalf("reuse = %#v, %v", result, err)
 	}
 }
+
+type closeProjectionFunc func(context.Context, string, string, string, int64) error
+
+func (f closeProjectionFunc) Synchronize(ctx context.Context, tenant, alert, target string, revision int64) error {
+	return f(ctx, tenant, alert, target, revision)
+}
+
+func TestAlertCloserSynchronizesBothEntrypointsAndRetries(t *testing.T) {
+	for _, kac := range []bool{false, true} {
+		t.Run(map[bool]string{false: "management", true: "kac"}[kac], func(t *testing.T) {
+			command := validCloseCommand()
+			runCalls, syncCalls := 0, 0
+			closer := &AlertCloser{slots: make(chan struct{}, 4)}
+			closer.run = func(ctx context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+				if c != command {
+					t.Fatal("operation identity changed")
+				}
+				runCalls++
+				return lifecycle.CloseAlertResult{Alert: domain.Alert{BKTenantID: c.BKTenantID, AlertID: c.AlertID, Status: domain.AlertStatusClosed, Revision: 2}, AlreadyClosed: runCalls > 1}, nil
+			}
+			closer.projection = closeProjectionFunc(func(ctx context.Context, tenant, alert, target string, revision int64) error {
+				syncCalls++
+				if runCalls != syncCalls || tenant != command.BKTenantID || alert != command.AlertID || target != "kac" || revision != 2 {
+					t.Fatal("projection did not follow close", runCalls, syncCalls)
+				}
+				if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 10*time.Second {
+					t.Fatal("projection budget missing")
+				}
+				if syncCalls == 1 {
+					return errors.New("private projection failure")
+				}
+				return nil
+			})
+			close := closer.CloseAlert
+			if kac {
+				close = closer.CloseKACAlert
+			}
+			result, err := close(t.Context(), command)
+			var classified *CloseError
+			if !errors.As(err, &classified) || classified.Status != 502 || classified.Code != "result_uncertain" || result.Alert.Status != domain.AlertStatusClosed {
+				t.Fatal("partial close misreported", result, err)
+			}
+			result, err = close(t.Context(), command)
+			if err != nil || !result.AlreadyClosed || syncCalls != 2 {
+				t.Fatal("projection retry lost", result, err)
+			}
+			closer.run = func(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+				return lifecycle.CloseAlertResult{}, store.ErrInvalidTransition
+			}
+			_, _ = close(t.Context(), command)
+			if syncCalls != 2 {
+				t.Fatal("failed close projected")
+			}
+		})
+	}
+}
+
+func TestAlertCloserCancelsProjection(t *testing.T) {
+	entered := make(chan struct{})
+	closer := &AlertCloser{slots: make(chan struct{}, 4), run: func(_ context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+		return lifecycle.CloseAlertResult{Alert: domain.Alert{BKTenantID: c.BKTenantID, AlertID: c.AlertID, Revision: 2}}, nil
+	}, projection: closeProjectionFunc(func(ctx context.Context, _, _, _ string, _ int64) error {
+		close(entered)
+		<-ctx.Done()
+		return ctx.Err()
+	})}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := closer.CloseAlert(ctx, validCloseCommand()); done <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("projection did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		var classified *CloseError
+		if !errors.As(err, &classified) || classified.Status != 502 {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("projection did not cancel")
+	}
+	if len(closer.slots) != 0 {
+		t.Fatal("close capacity leaked")
+	}
+}

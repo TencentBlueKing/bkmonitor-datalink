@@ -26,7 +26,6 @@ import (
 	"linkd/internal/kaccompat"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/recentalert"
-	"linkd/internal/merge"
 	"linkd/internal/projection"
 	projectionlock "linkd/internal/projection/redislock"
 	projectionstorage "linkd/internal/projection/storage"
@@ -85,8 +84,8 @@ func (r *deliveryBusinessStore) AcknowledgeProjection(ctx context.Context, ack s
 
 // runKACDelivery 只推进已有投影要求/动作意图，不创建目标绑定或解释来源目标迁移。
 // 同一目标的投影、动作和管理重试复用部署租约空间；动作补扫复用正式 fingerprint lease 和近期缓存。
-func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Journal, projections projection.Store, actions actiondelivery.Store, severity *runtimeconfig.Severity, logger *slog.Logger, registry *taskstate.Registry, metrics *telemetry.Runtime) (runErr error) {
-	if !hasKACDelivery(cfg) || cfg.Storage == nil || cfg.Storage.Redis == nil {
+func runKACDelivery(ctx context.Context, cfg config.Config, projectionSender *kaccompat.Client, projections projection.Store, actions actiondelivery.Store, severity *runtimeconfig.Severity, logger *slog.Logger, registry *taskstate.Registry, metrics *telemetry.Runtime) (runErr error) {
+	if !hasKACDelivery(cfg) || cfg.Storage == nil || cfg.Storage.Redis == nil || projectionSender == nil {
 		return fmt.Errorf("KAC delivery requires lifecycle, storage, Redis and enabled global plugin")
 	}
 	startup, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -101,7 +100,7 @@ func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Jou
 		limits = cfg.ControlPlane.Delivery
 	}
 	limits = limits.WithDefaults()
-	batchConfig := elasticsearchstore.WriteBatchConfig{MaxOperations: min(1000, limits.Concurrency), MaxBytes: 4 << 20, Wait: 10 * time.Millisecond, ReadWait: 10 * time.Millisecond, MaxConcurrentBatches: limits.Concurrency, MaxCalls: limits.Concurrency * 4, Timeout: 10 * time.Second}
+	batchConfig := deliveryBatchConfig(cfg)
 	batchObserver, err := metrics.NewWriteBatchObserver()
 	if err != nil {
 		return err
@@ -160,26 +159,6 @@ func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Jou
 	if err != nil {
 		return err
 	}
-	projectionSender, err := kaccompat.Open(*cfg.Plugins.KAC, func(name string) (string, error) {
-		if severity.SeveritySnapshot().NativeNames {
-			return name, nil
-		}
-		switch name {
-		case "critical":
-			return "fatal", nil
-		case "info":
-			return "remind", nil
-		default:
-			return name, nil
-		}
-	}, relations)
-	if err != nil {
-		return err
-	}
-	defer projectionSender.Close()
-	if err := projectionSender.EnableWriteBatch(batchConfig, batchObserver); err != nil {
-		return err
-	}
 	actionSender, err := actiondelivery.NewHTTPSender()
 	if err != nil {
 		return err
@@ -232,4 +211,44 @@ func runKACDelivery(ctx context.Context, cfg config.Config, relations *merge.Jou
 	return taskgroup.Run(ctx, []taskgroup.Task{{Name: "projection", Run: projectionRunner.Run}, {Name: "action", Run: actionRunner.Run}, {Name: "kac-index-maintenance", Run: func(ctx context.Context) error {
 		return runKACIndexMaintenance(ctx, projectionSender, registry, metrics, logger)
 	}}})
+}
+
+// deliveryBatchConfig 让同步关闭与后台投递使用同一容量配置。
+func deliveryBatchConfig(cfg config.Config) elasticsearchstore.WriteBatchConfig {
+	limits := taskgroup.WorkConfig{}
+	if cfg.ControlPlane != nil {
+		limits = cfg.ControlPlane.Delivery
+	}
+	limits = limits.WithDefaults()
+	return elasticsearchstore.WriteBatchConfig{MaxOperations: min(1000, limits.Concurrency), MaxBytes: 4 << 20, Wait: 10 * time.Millisecond, ReadWait: 10 * time.Millisecond, MaxConcurrentBatches: limits.Concurrency, MaxCalls: limits.Concurrency * 4, Timeout: 10 * time.Second}
+}
+
+// openKACProjectionSender 在 API 和后台任务启动前装配共享写入器。
+// readiness 由后台索引维护统一推进，不能为同步请求创建永远未就绪的独立写入器。
+func openKACProjectionSender(cfg config.Config, severity *runtimeconfig.Severity, relations kaccompat.Relations, metrics *telemetry.Runtime) (*kaccompat.Client, error) {
+	sender, err := kaccompat.Open(*cfg.Plugins.KAC, func(name string) (string, error) {
+		if severity.SeveritySnapshot().NativeNames {
+			return name, nil
+		}
+		switch name {
+		case "critical":
+			return "fatal", nil
+		case "info":
+			return "remind", nil
+		default:
+			return name, nil
+		}
+	}, relations)
+	if err != nil {
+		return nil, err
+	}
+	observer, err := metrics.NewWriteBatchObserver()
+	if err == nil {
+		err = sender.EnableWriteBatch(deliveryBatchConfig(cfg), observer)
+	}
+	if err != nil {
+		sender.Close()
+		return nil, err
+	}
+	return sender, nil
 }

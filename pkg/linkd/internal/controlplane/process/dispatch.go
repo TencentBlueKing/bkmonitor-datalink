@@ -27,9 +27,11 @@ import (
 	controlapi "linkd/internal/controlplane/api"
 	streams "linkd/internal/controlplane/redisstream"
 	"linkd/internal/controlplane/taskstate"
+	"linkd/internal/deliverysource"
 	"linkd/internal/eventsource"
 	sourcestore "linkd/internal/eventsource/storage"
 	"linkd/internal/ingestpreview"
+	"linkd/internal/kaccompat"
 	lifecycleprocess "linkd/internal/lifecycle/process"
 	"linkd/internal/lifecycle/scheduler"
 	mergeflow "linkd/internal/merge"
@@ -42,6 +44,7 @@ import (
 	"linkd/internal/policy/simulation"
 	policystore "linkd/internal/policy/storage"
 	"linkd/internal/projection"
+	projectionlock "linkd/internal/projection/redislock"
 	projectionstore "linkd/internal/projection/storage"
 	"linkd/internal/redisclient"
 	"linkd/internal/runtimeconfig"
@@ -203,7 +206,37 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	api.SourceAlerts = controlapi.NewSourceAlerts(sourceReader)
 	api.EnrichRecords = controlapi.NewEnrichRecords(queryRepository.Repository, sources)
 	api.ShieldRuntime = controlapi.NewShieldRuntime(shieldReader)
-	closer := lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics)
+	var closeProjection lifecycleprocess.AlertProjectionSynchronizer
+	var projectionSender *kaccompat.Client
+	if hasKACDelivery(cfg) {
+		projectionSender, err = openKACProjectionSender(cfg, severity, mergeJournal, metrics)
+		if err != nil {
+			return err
+		}
+		defer projectionSender.Close()
+		closeRepository, err := storeassembly.OpenExisting(ctx, *cfg.Storage, 4)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = closeRepository.Close() }()
+		business, err := newDeliveryBusinessStore(metrics.ObserveRepository(closeRepository.Repository))
+		if err != nil {
+			return err
+		}
+		locker, err := projectionlock.New(queryRedis, d.Deployment)
+		if err != nil {
+			return err
+		}
+		resolver, err := deliverysource.New(cfg.Plugins)
+		if err != nil {
+			return err
+		}
+		closeProjection, err = projection.New(projectionTasks, business, resolver, projectionSender, locker, time.Now)
+		if err != nil {
+			return err
+		}
+	}
+	closer := lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics, closeProjection)
 	api.AlertCloser = closer
 	api.KACCloser = closer
 	api.ManualShieldBinder = lifecycleprocess.NewManualShieldBinder(cfg, sources, policies, severity, logger, metrics)
@@ -304,7 +337,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	}})
 	if hasKACDelivery(cfg) {
 		tasks = append(tasks, taskgroup.Task{Name: "kac-delivery", Run: func(ctx context.Context) error {
-			return runKACDelivery(ctx, cfg, mergeJournal, projectionTasks, actionTasks, severity, logger, registry, metrics)
+			return runKACDelivery(ctx, cfg, projectionSender, projectionTasks, actionTasks, severity, logger, registry, metrics)
 		}})
 	}
 	if cfg.Lifecycle != nil {

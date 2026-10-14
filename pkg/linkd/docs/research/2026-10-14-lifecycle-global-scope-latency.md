@@ -101,3 +101,24 @@ Linkd 与 Console 的 amd64/arm64 镜像均发布为 `0.1.0-ci.49.latency.202610
 本地 Chart 已打包；SSH 堡垒机认证成功但目标命令无返回，用户确认中控机故障并明确暂缓处理，因此未执行本次 Helm upgrade。
 Admin `runtime.processes` 查询确认当前三个角色仍为 `.latency.20261014.2`；本节没有新版本线上耗时验收结论。
 GitHub upstream 同名分支存在另一项无数据告警提交，与本地已发布历史分叉；本次未强推覆盖该分支。
+
+
+## 22:05 统一发布 Linkd 与 Event 丰富调试接口
+
+独立工作目录中的 Event 丰富窗口实现已合入 `feat/linkd-dev`，并与删除处理检查点、无数据告警文案改造一起通过 `make check`。
+统一代码提交 `8a7c5a8e0`，Linkd 与 Console 的 amd64/arm64 镜像均发布 `0.1.0-ci.49.latency.20261014.4` 并按 digest 回拉核对。
+22:05:21 发起 Helm revision 75，三个角色均确认 `.4`、新 Pod 无重启；Console 维持环境既有关闭状态。
+
+真实 HTTP 只读验收：内置 `built_in_bk` 返回“linkd丰富”方案，详情含 35 个实际字段变化；`test` 来源返回实际字段变化。
+分页没有重复 Event，未命中筛选页保留下一页游标；跨租户游标、越界窗口、无认证请求被拒绝，错误来源/租户不能读取详情。
+这些请求没有重新执行丰富或创建测试告警；Kingeye 页面本轮未发布，接口验收不等于页面验收。
+
+独立短窗口 22:07:00–22:09:09：阶段平均总耗时 399.29 ms（执行 348.15 ms、等待 51.14 ms）。
+末点最近 60 秒均值 463.19 ms、P99 近似 1.075 s、完成速率 5.02/s，Signal 积压 0。
+当前子步骤只有 `result_save`，没有 `policy_save`、`plan_save` 或 `plan_clear`。
+约三分钟时 Lifecycle CPU 抽样 563m、内存 52 MiB，无重启；日志抽样仍有普通丰富处理器失败，无身份冲突或重复活跃告警错误。
+短窗口仅说明本次真实观测，不外推为长期容量承诺。
+
+Kingeye 配套前后端已分别提交并推送，90 项后端相关测试、7 项页面测试、37 条导入边界和前端完整构建通过。
+用户随后明确要求先只更新 Linkd，因此未执行 Kingeye Helm upgrade 或数据库迁移；环境仍为 revision 480 / 5.3.0.1876。
+GitHub upstream 的 `feat/linkd-dev` 已更新；Kingeye Git 镜像远端仍是 rebase 前的同名分支历史，本轮非快进推送被拒绝，未强推覆盖。

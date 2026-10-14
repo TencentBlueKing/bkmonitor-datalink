@@ -50,10 +50,9 @@ const (
 	// 后台健康探测的 PING 间隔。降级期间没有业务请求访问 Redis，恢复只能靠探测判断。
 	defaultRedisProbeInterval = time.Second
 
-	// PING 或 Allow 报错、或耗时超过该值都算一次坏样本，用来发现「没超时但持续偏慢」的 Redis。
-	defaultRedisSlowThreshold = 50 * time.Millisecond
-
-	// 连续坏样本（探测与 Allow 共用计数）达到该次数后熔断，Allow 直接降级本地 GCRA。
+	// 失败计数达到该值后熔断，Allow 直接降级本地 GCRA。Allow 或 PING 报错（含超时）各 +1，
+	// PING 正常 -1（不低于 0），Allow 成功不改计数：判断以 PING 为准，零星的 Allow 失败会被
+	// 后续正常的 PING 抵消。不看耗时，延迟只有超过 IO 超时、表现为报错时才计入。
 	defaultRedisFailureThreshold = 3
 
 	// 熔断后 PING 需要连续正常一个恢复窗口，才切回 Redis 共享额度；期间任何坏样本都重新计时。
@@ -199,7 +198,6 @@ func (r *redisGCRA) Allow(token, service string, cost int64, config Config) (boo
 	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOperationTime)
 	defer cancel()
 
-	start := time.Now()
 	result, err := r.script.Run(
 		ctx,
 		r.client,
@@ -208,8 +206,8 @@ func (r *redisGCRA) Allow(token, service string, cost int64, config Config) (boo
 		config.BurstBytes,
 		cost,
 	).Int64()
-	r.health.observe(time.Since(start), err)
 	if err != nil {
+		r.health.fail(err)
 		return false, err
 	}
 	return result == 1, nil
@@ -230,12 +228,10 @@ func (r *redisGCRA) runProbe() {
 			return
 		case <-ticker.C:
 		}
-		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), defaultRedisOperationTime)
 		err := r.client.Ping(ctx).Err()
 		cancel()
-		now := time.Now()
-		r.health.probe(now.Sub(start), err, now)
+		r.health.probe(err, time.Now())
 	}
 }
 
@@ -253,34 +249,29 @@ type redisHealth struct {
 	lastRecoveryAt time.Time
 }
 
-// observe 记录一次 Redis 往返，返回该样本是否正常。
-func (h *redisHealth) observe(latency time.Duration, err error) bool {
-	if err == nil && latency > defaultRedisSlowThreshold {
-		err = errors.Errorf("redis latency %s exceeds %s", latency, defaultRedisSlowThreshold)
-	}
-	if err != nil {
-		h.fail(err)
-		return false
-	}
-	h.succeed()
-	return true
-}
-
 func (h *redisHealth) fail(err error) {
 	if h.failures.Add(1) >= defaultRedisFailureThreshold && h.unhealthy.CompareAndSwap(false, true) {
 		logger.Warnf("traffic limiter redis is unhealthy, fallback to local GCRA: %v", err)
 	}
 }
 
-// succeed 在热路径上调用，计数已为 0 时不写，避免并发请求反复争抢同一缓存行。
+// succeed 抵消一次失败，计数不低于 0。只由探测调用，与 Allow 的 fail 并发，因此用 CAS。
 func (h *redisHealth) succeed() {
-	if h.failures.Load() != 0 {
-		h.failures.Store(0)
+	for {
+		failures := h.failures.Load()
+		if failures <= 0 || h.failures.CompareAndSwap(failures, failures-1) {
+			return
+		}
 	}
 }
 
-func (h *redisHealth) probe(latency time.Duration, err error, now time.Time) {
-	healthy := h.observe(latency, err)
+func (h *redisHealth) probe(err error, now time.Time) {
+	healthy := err == nil
+	if healthy {
+		h.succeed()
+	} else {
+		h.fail(err)
+	}
 	if !h.unhealthy.Load() {
 		return
 	}

@@ -310,65 +310,60 @@ func TestFallbackDecisionClassification(t *testing.T) {
 	}
 }
 
-func TestRedisHealthTripsOnConsecutiveFailures(t *testing.T) {
+// TestRedisHealthProbeOffsetsFailures 覆盖计数规则：失败 +1，PING 正常只抵消一次失败且不低于 0。
+func TestRedisHealthProbeOffsetsFailures(t *testing.T) {
 	var health redisHealth
+	now := time.Unix(1700000000, 0)
 	failure := errors.New("redis unavailable")
 
-	for i := 0; i < defaultRedisFailureThreshold-1; i++ {
-		health.fail(failure)
-	}
-	health.succeed()
-	for i := 0; i < defaultRedisFailureThreshold-1; i++ {
-		health.fail(failure)
-	}
-	assert.False(t, health.unhealthy.Load(), "成功样本会打断连续计数")
+	health.probe(nil, now)
+	health.probe(nil, now)
+	assert.Zero(t, health.failures.Load(), "计数不能低于 0，否则空闲期会攒下抵消额度")
 
 	health.fail(failure)
-	assert.True(t, health.unhealthy.Load())
-}
-
-// TestRedisHealthSlowAllowTripsWithTraffic 覆盖 Redis 变慢但未超时、同时有业务流量：
-// 偏慢的 Allow 本身就是坏样本，不能把 PING 积累的计数清零。
-func TestRedisHealthSlowAllowTripsWithTraffic(t *testing.T) {
-	var health redisHealth
-	now := time.Unix(1700000000, 0)
-	slow := defaultRedisSlowThreshold + 20*time.Millisecond
-
-	health.probe(slow, nil, now)
-	assert.False(t, health.observe(slow, nil), "偏慢的成功 Allow 也是坏样本")
+	health.fail(failure)
+	health.probe(nil, now)
+	assert.Equal(t, int64(1), health.failures.Load(), "PING 正常只抵消一次失败")
+	health.fail(failure)
 	assert.False(t, health.unhealthy.Load())
-	health.observe(slow, nil)
-	assert.True(t, health.unhealthy.Load())
 
-	var fast redisHealth
-	fast.probe(slow, nil, now)
-	fast.observe(slow, nil)
-	assert.True(t, fast.observe(time.Millisecond, nil))
-	fast.observe(slow, nil)
-	assert.False(t, fast.unhealthy.Load(), "正常的 Allow 打断连续计数")
+	health.probe(failure, now)
+	assert.True(t, health.unhealthy.Load(), "Allow 与 PING 的失败共用计数")
 }
 
-func TestRedisHealthProbeLatencyAndRecovery(t *testing.T) {
+func TestRedisGCRASuccessKeepsFailureCount(t *testing.T) {
+	server := miniredis.RunT(t)
+	limiter := newRedisGCRA(redisTestConfig(server.Addr())).(*redisGCRA)
+	defer limiter.Close()
+
+	limiter.health.failures.Store(defaultRedisFailureThreshold - 1)
+	_, err := limiter.Allow("token", "checkout", 1, limiterConfig(10, 50))
+	require.NoError(t, err)
+	assert.Equal(t, int64(defaultRedisFailureThreshold-1), limiter.health.failures.Load(),
+		"Allow 成功不改计数，判断以 PING 为准")
+}
+
+func TestRedisHealthProbeRecovery(t *testing.T) {
 	var health redisHealth
 	now := time.Unix(1700000000, 0)
-	slow := defaultRedisSlowThreshold + time.Millisecond
+	failure := errors.New("redis unavailable")
 	window := defaultRedisMinRecoverDuration
 
 	for i := 0; i < defaultRedisFailureThreshold; i++ {
-		health.probe(slow, nil, now)
+		health.probe(failure, now)
 	}
-	require.True(t, health.unhealthy.Load(), "PING 持续偏慢必须熔断")
+	require.True(t, health.unhealthy.Load(), "PING 连续失败必须熔断")
 
-	health.probe(time.Millisecond, nil, now)
-	health.probe(time.Millisecond, nil, now.Add(window-time.Second))
+	health.probe(nil, now)
+	health.probe(nil, now.Add(window-time.Second))
 	assert.True(t, health.unhealthy.Load(), "正常时长不足恢复窗口时保持熔断")
 
-	health.probe(slow, nil, now.Add(window))
-	health.probe(time.Millisecond, nil, now.Add(window+time.Second))
-	health.probe(time.Millisecond, nil, now.Add(2*window))
-	assert.True(t, health.unhealthy.Load(), "恢复窗口内出现坏样本必须重新计时")
+	health.probe(failure, now.Add(window))
+	health.probe(nil, now.Add(window+time.Second))
+	health.probe(nil, now.Add(2*window))
+	assert.True(t, health.unhealthy.Load(), "恢复窗口内出现失败必须重新计时")
 
-	health.probe(time.Millisecond, nil, now.Add(2*window+time.Second))
+	health.probe(nil, now.Add(2*window+time.Second))
 	assert.False(t, health.unhealthy.Load())
 	assert.Zero(t, health.failures.Load())
 }
@@ -376,17 +371,17 @@ func TestRedisHealthProbeLatencyAndRecovery(t *testing.T) {
 func TestRedisHealthRecoverWindowBacksOffWhenFlapping(t *testing.T) {
 	var health redisHealth
 	now := time.Unix(1700000000, 0)
-	slow := defaultRedisSlowThreshold + time.Millisecond
+	failure := errors.New("redis unavailable")
 	cycle := func() time.Duration {
 		t.Helper()
 		for i := 0; i < defaultRedisFailureThreshold; i++ {
-			health.probe(slow, nil, now)
+			health.probe(failure, now)
 		}
 		require.True(t, health.unhealthy.Load())
 		window := health.recoverAfter
-		health.probe(time.Millisecond, nil, now)
+		health.probe(nil, now)
 		now = now.Add(window)
-		health.probe(time.Millisecond, nil, now)
+		health.probe(nil, now)
 		require.False(t, health.unhealthy.Load())
 		return window
 	}

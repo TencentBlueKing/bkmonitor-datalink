@@ -194,8 +194,7 @@ func (c *topologySnapshotCounts) add(nodes, edges int, partial bool) {
 
 type topologyMaterializer func(context.Context, TopologyGrid, SharedTopologyQuery, map[uint64]timeBitmap, []sharedTopologyEdgeState) (topologySnapshotCounts, error)
 
-// findSharedTopologyDTO keeps the public graph snapshot types independent while
-// materializing only the response representation needed by the model.
+// findSharedTopologyDTO 只物化模型需要的响应结构，避免先生成公开图快照再复制一次。
 func (q *TimeGraph) findSharedTopologyDTO(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (snapshots []cmdb.SharedTopologySnapshot, err error) {
 	_, err = q.findSharedTopology(ctx, grid, query, func(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) (topologySnapshotCounts, error) {
 		var e error
@@ -330,15 +329,13 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		frontierSizes = append(frontierSizes, int64(len(frontier)))
 	}
 
-	// Deep YOLO traversals index the filtered directed edges once. Ordinary and
-	// shallow queries keep their original allocation/scan behavior.
+	// YOLO 深跳查询为已过滤的有向边建立一次索引；普通或浅层查询沿用原扫描方式。
 	var outgoing map[uint64][]sharedTopologyEdgeState
 	if yoloMode && query.MaxHops > 1 && len(frontier) > 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, seedCount, err
 		}
-		// Export needs the same order. Group slices of request-owned edges instead
-		// of allocating and growing a separate index array for every source.
+		// 输出也要使用相同边序；直接分组本请求持有的边，避免为每个源点扩容索引数组。
 		sort.Slice(edges, func(i, j int) bool { return lessTopologyEdgeKey(edges[i].key, edges[j].key) })
 		if err := ctx.Err(); err != nil {
 			return nil, seedCount, err
@@ -361,6 +358,7 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 	}
 
 	for level := 0; level < query.MaxHops && len(frontier) > 0; level++ {
+		// 每跳只传播源点、关系和目标点共同活跃的帧；一个节点可在不同帧首次到达。
 		if err := ctx.Err(); err != nil {
 			return nil, seedCount, err
 		}
@@ -392,6 +390,7 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 			}
 		}
 		nextFrontier := make(map[uint64]timeBitmap)
+		// 已可达的时间位不再进入下一层，避免环路反复传播，但保留其他帧的新可达性。
 		for node, candidate := range discovered {
 			newBits := candidate.subtract(reachable[node])
 			if !newBits.empty() {
@@ -497,7 +496,7 @@ func (q *TimeGraph) materializeSharedTopologyDTO(ctx context.Context, grid Topol
 	return result, nil
 }
 
-// Only the YOLO response collector requests these exact unfiltered capacities.
+// 只有 YOLO 响应收集器会按未过滤的精确容量预分配。
 func topologyFrameCounts(ctx context.Context, points int, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) ([]int, []int, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -579,7 +578,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 			return err
 		}
 	}
-	// Resolve storage-grid positions once under the graph read lock.
+	// 持有图读锁时一次性定位存储网格，避免每帧重复查找。
 	var infoFrameIndices []int
 	if q.shared != nil {
 		infoFrameIndices = make([]int, len(grid.Timestamps))
@@ -646,8 +645,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 		}
 		return nil
 	}
-	// Sorting the request-owned candidates once preserves each frame's order.
-	// Ordinary mode retains its existing allocation and budget behavior.
+	// 本请求持有的候选只排序一次，各帧顺序保持一致；普通模式沿用原分配和预算逻辑。
 	if ordered {
 		nodes := make([]uint64, 0, len(reachable))
 		for node := range reachable {
@@ -668,7 +666,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 				return err
 			}
 		}
-		// Propagation has finished; no adjacency index refers to this slice now.
+		// 传播已结束，邻接索引不再引用此切片，可以复用其容量。
 		sort.Slice(edges, func(i, j int) bool { return lessTopologyEdgeKey(edges[i].key, edges[j].key) })
 		if err := ctx.Err(); err != nil {
 			return err
@@ -729,8 +727,8 @@ func (q *TimeGraph) nodeInfoAt(timestamp int64, node uint64, fallback cmdb.Match
 	return resourceType, fallback
 }
 
-// storedNodeInfoAt borrows attributes only while the caller holds the graph lock.
-// The bool distinguishes a stored nil map from an absent time-specific version.
+// storedNodeInfoAt 仅在调用方持有图锁时借用属性。
+// bool 用于区分“存储的 nil map”和“该时间点没有属性版本”。
 func (q *TimeGraph) storedNodeInfoAt(timestamp int64, node uint64) (cmdb.Matcher, bool) {
 	if q.shared != nil {
 		index, ok := q.shared.timestampIndex[timestamp]

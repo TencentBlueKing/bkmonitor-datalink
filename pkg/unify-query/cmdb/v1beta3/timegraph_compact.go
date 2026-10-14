@@ -36,9 +36,9 @@ func compactTimeMask(bits timeBitmap) []string {
 	return words
 }
 
-// FindCompactTopology exports owned dictionaries directly after propagation;
-// it never allocates K complete snapshots. Output budgets charge stored versions,
-// while occurrence counts remain available for caller and workload observability.
+// FindCompactTopology 传播后直接导出自有的节点、关系版本及时间 mask，
+// 避免按 K 个时间点分配完整快照。输出预算按实际存储版本收费，
+// 展开后的出现次数仍供调用方和负载观测使用。
 func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, targets []cmdb.Resource) (result *cmdb.CompactTopology, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-compact-topology")
 	defer finishTimeGraphStage(ctx, span, "topology-materialize", time.Now(), &err)
@@ -89,8 +89,7 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 	slices.Sort(ids)
 	kept := make(map[uint64]bool, len(ids))
 	if yoloMode {
-		// Reserve actual output, rather than the potentially much wider candidates.
-		// Additional attribute versions still grow the node slice normally.
+		// 按实际输出预分配，而非按更宽的候选集合；额外属性版本按需扩容。
 		keptNodes := 0
 		for _, id := range ids {
 			if err := ctx.Err(); err != nil {
@@ -128,8 +127,7 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 			if count == 0 {
 				return nil
 			}
-			// Charge each materialized version, including ID and bitmap overhead.
-			// Input/graph budgets continue to bound traversal before target filtering.
+			// 每个物化版本都计入 ID 和位图开销；目标筛选前仍受输入与图预算约束。
 			if err := budget.addCharge(topologyNodeByteBound(resource, dimensions)+64+int64(20*(1+len(bits.rest))), 1); err != nil {
 				return err
 			}

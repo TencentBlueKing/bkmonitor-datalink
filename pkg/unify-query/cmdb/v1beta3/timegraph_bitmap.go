@@ -7,15 +7,14 @@ package v1beta3
 
 import "math/bits"
 
-// timeBitmap keeps the normal <=64-point case allocation-free. Larger grids
-// use additional words. Set operations never mutate either operand, so maps
-// and attribute versions can safely share their backing words.
+// timeBitmap 在不超过 64 帧时不分配额外存储；更多帧用后续字扩展。
+// 集合运算不修改操作数，节点与属性版本可以安全共享底层位图字。
 type timeBitmap struct {
 	first uint64
 	rest  []uint64
 }
 
-// set is only used while constructing a private bitmap, before it is shared.
+// set 仅在私有位图构建阶段调用，共享后不再修改。
 func (b *timeBitmap) set(index int) {
 	if index < 64 {
 		b.first |= uint64(1) << index
@@ -90,7 +89,7 @@ func (b timeBitmap) subtract(other timeBitmap) timeBitmap {
 	return result
 }
 
-// isSubsetOf checks every word without allocating a difference bitmap.
+// isSubsetOf 逐字检查包含关系，避免分配差集位图。
 func (b timeBitmap) isSubsetOf(other timeBitmap) bool {
 	if b.first&^other.first != 0 {
 		return false
@@ -107,7 +106,7 @@ func (b timeBitmap) isSubsetOf(other timeBitmap) bool {
 	return true
 }
 
-// intersectsBoth checks a common time point without allocating intermediate words.
+// intersectsBoth 不分配中间位图，直接检查三组位是否存在共同时间点。
 func (b timeBitmap) intersectsBoth(left, right timeBitmap) bool {
 	if b.first&left.first&right.first != 0 {
 		return true
@@ -120,8 +119,8 @@ func (b timeBitmap) intersectsBoth(left, right timeBitmap) bool {
 	return false
 }
 
-// trimTrailingZeroWords restores the representation produced by per-frame set.
-// Only this slice header changes; shared backing words remain immutable.
+// trimTrailingZeroWords 去掉末尾的零字，恢复逐帧 set 构造出的表示形式。
+// 只调整切片头，不修改共享的底层位图字。
 func (b timeBitmap) trimTrailingZeroWords() timeBitmap {
 	for len(b.rest) > 0 && b.rest[len(b.rest)-1] == 0 {
 		b.rest = b.rest[:len(b.rest)-1]

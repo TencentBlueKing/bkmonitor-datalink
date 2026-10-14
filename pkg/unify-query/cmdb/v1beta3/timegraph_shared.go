@@ -145,7 +145,7 @@ func (q *TimeGraph) timepointCount() int {
 }
 
 func (g *sharedTimeGraph) timeBits(timestamps []int64) (timeBitmap, error) {
-	// The full grid is common; its immutable words need no per-point lookup.
+	// 完整网格可共用不变的位图字，无须逐点查索引。
 	if slices.Equal(timestamps, g.grid.Timestamps) {
 		return g.fullGridBits, nil
 	}
@@ -260,8 +260,7 @@ func (q *TimeGraph) addSharedRelationWithBits(ctx context.Context, relation cmdb
 		return nil
 	}
 	pair := timeGraphEdgeKey{source: source, target: target}
-	// Storage limits count full relation identities; occurrence metrics and
-	// input-point, memory, time and traversal limits remain independent.
+	// 存储上限按完整关系身份计数；出现次数、输入点、内存、时间及遍历上限独立计量。
 	var newEdges int
 	if g.wordPairs != nil {
 		newEdges = bits.OnesCount64(active.first &^ g.wordPairs[pair])
@@ -359,8 +358,8 @@ func (g *sharedTimeGraph) state(ctx context.Context, grid TopologyGrid, query Sh
 	return g.nodeBits, edges, nil
 }
 
-// sharedTopologyRootBits keeps info-only nodes out of the topology root set.
-// When attributes were requested, only the info query's per-frame matches qualify.
+// sharedTopologyRootBits 排除只由 info 查询产生的孤立节点。
+// 请求属性时，只有 info 查询在该帧匹配的关系节点才可作为根。
 func (q *TimeGraph) sharedTopologyRootBits() map[uint64]timeBitmap {
 	roots := make(map[uint64]timeBitmap, len(q.shared.relationNodeBits))
 	for id, bits := range q.shared.relationNodeBits {

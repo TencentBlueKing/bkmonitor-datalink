@@ -66,9 +66,8 @@ func topologyStaticBidirectional(relations []cmdb.Relation) bool {
 	return true
 }
 
-// A non-primary attribute projected as another endpoint's primary field can be
-// merged from graph-external series by bulk reads. Narrowing would change that
-// presentation even if identities and edges were unchanged.
+// 非主键属性若投影为另一端的主键字段，宽读取可能从图外序列合并其值。
+// 此时缩小候选虽不改变节点和边身份，却可能改变最终属性呈现，不能使用窄计划。
 func (q *TimeGraph) topologyProjectionCompatible(relations []cmdb.Relation, visible map[cmdb.Resource]bool) bool {
 	for _, r := range relations {
 		if len(r.V) != 2 {
@@ -76,7 +75,7 @@ func (q *TimeGraph) topologyProjectionCompatible(relations []cmdb.Relation, visi
 		}
 		sourcePrefix, targetPrefix := q.relationEndpointPrefixes(r, r.V[0], r.V[1])
 		dynamic := r.Category == string(RelationCategoryDynamic)
-		// These are exactly the dimensions emitted by MakeQueryTsWithWindow.
+		// 与 MakeQueryTsWithWindow 实际输出的维度保持一致。
 		fields, _ := q.relationQueryFields(nil, r.V[0], r.V[1], sourcePrefix, targetPrefix, dynamic)
 		projected := make(map[string]bool, len(fields))
 		for _, field := range fields {
@@ -157,10 +156,9 @@ func (q *TimeGraph) topologyFetchMode(source cmdb.Resource, identity cmdb.Matche
 	return "bulk", component
 }
 
-// Compute which types can lose a root field within H. A shared bare primary
-// label on both static endpoints preserves equality; crossing a missing field
-// loses it permanently. One still-bound endpoint suffices to constrain an
-// induced edge. Other relations remain wide, including cross-scope boundaries.
+// topologyRangeFilters 推导 H 跳内哪些类型仍继承根主键条件。
+// 静态关系两端共有的裸主键标签可继续约束相等；经过缺失该字段的端点后条件不能恢复。
+// 诱导边只需一端仍受约束即可下推，其余关系（含跨 scope 边界）保持宽读取。
 func (q *TimeGraph) topologyRangeFilters(source cmdb.Resource, identity cmdb.Matcher, component, planned []cmdb.Relation, hops int) map[timeGraphRelationKey]cmdb.Matcher {
 	filters := map[timeGraphRelationKey]cmdb.Matcher{}
 	visible := topologyReachableTypes(source, hops, component)

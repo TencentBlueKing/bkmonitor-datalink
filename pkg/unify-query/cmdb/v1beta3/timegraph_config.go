@@ -7,16 +7,14 @@ package v1beta3
 
 import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 
-// TimeGraphResourceConfig contains the fields needed to identify and render a
-// resource node in the in-memory graph.
+// TimeGraphResourceConfig 保存内存图中识别和呈现资源节点所需的字段。
 type TimeGraphResourceConfig struct {
 	Name  cmdb.Resource
 	Index cmdb.Index
 	Info  cmdb.Index
 }
 
-// TimeGraphRelationConfig describes the metric and relation identity used to
-// materialize one graph edge.
+// TimeGraphRelationConfig 描述生成一条图边所需的指标和关系身份。
 type TimeGraphRelationConfig struct {
 	Resources     []cmdb.Resource
 	RelationType  string
@@ -25,9 +23,8 @@ type TimeGraphRelationConfig struct {
 	IsDirectional bool
 }
 
-// TimeGraphConfig is the namespace-scoped snapshot consumed by TimeGraph.
-// Keeping this snapshot immutable for the duration of one query prevents a
-// concurrent schema reload from changing node identity rules mid-query.
+// TimeGraphConfig 是 TimeGraph 使用的命名空间级配置快照。
+// 单次查询内保持不变，避免并发 schema 重载在查询中途改变节点身份规则。
 type TimeGraphConfig struct {
 	Resource     []TimeGraphResourceConfig
 	Relation     []TimeGraphRelationConfig
@@ -89,9 +86,8 @@ func defaultTimeGraphConfig() *TimeGraphConfig {
 	return buildTimeGraphConfig(GetSchemaProvider(), "")
 }
 
-// The helpers below are kept for callers that construct a TimeGraph without a
-// namespace-specific snapshot. Serving queries always pass a snapshot from
-// timeGraphConfig; these fallbacks use the static v1beta3 schema.
+// 以下辅助函数供未传入命名空间快照的调用方构图。
+// 实际服务查询始终使用 timeGraphConfig 快照；回退路径使用静态 v1beta3 schema。
 func ResourcesIndex(resources ...cmdb.Resource) cmdb.Index {
 	config := defaultTimeGraphConfig()
 	byResource := make(map[cmdb.Resource]TimeGraphResourceConfig, len(config.Resource))

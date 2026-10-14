@@ -14,7 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-// Bound each selector independently of the number of instances in the graph.
+// 每个选择器最多包含 64 组完整身份，避免条件规模随图中的实例数无限增长。
 const timeGraphFrontierBatchSize = 64
 
 type timeGraphFrontier map[cmdb.Resource]map[string]cmdb.Matcher
@@ -32,9 +32,8 @@ func (q *TimeGraph) completeFrontierIdentity(resource cmdb.Resource, info cmdb.M
 	return true
 }
 
-// Anchor selectors retain the original relation orientation, even when observing
-// its target. Each OR group includes the complete identity AND endpoint guards;
-// separate per-field IN selectors would admit crossed composite identities.
+// frontierQuery 即使从目标端观察关系，也保留原关系方向。
+// 每个 OR 分组包含一组完整联合主键和端点条件；逐字段 IN 会错误匹配交叉组合。
 func (loader *timeGraphMatrixLoader) frontierQuery(ctx context.Context, space string, relation cmdb.Relation, targetAnchor bool, identities []cmdb.Matcher) (*structured.QueryTs, error) {
 	q := loader.graph
 	ts, err := q.MakeQueryTsWithWindow(ctx, space, nil, loader.start, loader.end, loader.step, loader.lookBack, relation)
@@ -80,9 +79,8 @@ func (loader *timeGraphMatrixLoader) frontierQuery(ctx context.Context, space st
 	return ts, nil
 }
 
-// Prefer splitting identity tuples before time: this prevents a wide selector
-// from rereading a large candidate set at every timestamp. A single identity
-// retains the existing bounded exact-grid time sharding and shared budgets.
+// loadFrontierBatch 遇到过大响应时先拆分身份组，避免每个时间片重复读取整批候选。
+// 单组身份仍走原有的精确时间网格分片，并共用请求预算。
 func (loader *timeGraphMatrixLoader) loadFrontierBatch(ctx context.Context, space string, relation cmdb.Relation, targetAnchor bool, identities []cmdb.Matcher, apply func(context.Context, pl.Matrix) error, queries *int) error {
 	if err := ctx.Err(); err != nil {
 		return err

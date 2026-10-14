@@ -4,9 +4,8 @@ package v1beta3
 
 import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 
-// Exact reverse projections share endpoint identities and attributes. Under
-// unlimited shared storage their second application needs only the reverse
-// edge, not another scan, identity lookup, or node-attribute merge.
+// 完全反向投影共享端点身份及属性。在无存储上限的共享图中，第二次应用
+// 只需补反向边，无须再次扫描、查询身份或合并节点属性。
 func (q *TimeGraph) topologyReversePair(relations []cmdb.Relation) bool {
 	if !yoloMode || q.shared == nil || len(relations) != 2 || q.maxNodes > 0 || q.maxEdges > 0 || q.maxNodeInfos > 0 {
 		return false

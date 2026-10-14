@@ -336,7 +336,7 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 	return q.addTimeRelationWithEndpointBuffers(ctx, relation, info, nil, nil, timestamps...)
 }
 
-// Builders store owned attributes before these endpoint buffers can be reused.
+// 构图器在复用端点缓冲前已保存属性副本，后续写入不会改动图中节点。
 func (q *TimeGraph) addTimeRelationWithEndpointBuffers(ctx context.Context, relation cmdb.Relation, info, sourceBuffer, targetBuffer cmdb.Matcher, timestamps ...int64) error {
 	return q.addTimeRelationWithReverse(ctx, relation, nil, info, sourceBuffer, targetBuffer, timestamps...)
 }
@@ -490,7 +490,7 @@ func (q *TimeGraph) relationEndpointInfo(info cmdb.Matcher, resource cmdb.Resour
 	return q.relationEndpointInfoInto(info, resource, prefix, dynamic, nil)
 }
 
-// scratch, when provided, is private to one synchronous matrix application.
+// 非空 scratch 只由当前同步 Matrix 应用独占使用。
 func (q *TimeGraph) relationEndpointInfoInto(info cmdb.Matcher, resource cmdb.Resource, prefix string, dynamic bool, scratch cmdb.Matcher) cmdb.Matcher {
 	primary := q.nodeBuilder.resourceIndexView(resource)
 	attributes := q.nodeBuilder.resourceInfoFields(resource)
@@ -1138,8 +1138,7 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 					return nil, err
 				}
 				resourceType, _ := q.nodeBuilder.Info(neighbor)
-				// An actual self-edge consumes one explicit hop; it is not a zero-hop
-				// result. Keep excluding cycles through earlier, distinct nodes.
+				// 实际自环占用一次显式跳数，不属于零跳结果；仍排除经过更早不同节点的环。
 				if resourceType != expectedPath[index].ResourceType || (neighbor != current && containsNode(currentPath, neighbor)) {
 					continue
 				}

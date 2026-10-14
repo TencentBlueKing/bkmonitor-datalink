@@ -15,6 +15,8 @@ func ownedTopologyTimeMask(bits timeBitmap) cmdb.SharedTopologyTimeMask {
 	return cmdb.SharedTopologyTimeMask{First: bits.first, Rest: append([]uint64(nil), bits.rest...)}
 }
 
+// findSharedTopologySnapshotPlan 在图锁内把可达结果转为自有的属性版本和时间 mask。
+// 调用方可在 graph.Clean 后逐帧编码，无须持有图存储或复制整张快照。
 func (q *TimeGraph) findSharedTopologySnapshotPlan(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, targets []cmdb.Resource) (*cmdb.SharedTopologySnapshotPlan, error) {
 	var plan *cmdb.SharedTopologySnapshotPlan
 	_, err := q.findSharedTopology(ctx, grid, query, func(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) (topologySnapshotCounts, error) {
@@ -68,6 +70,7 @@ func (q *TimeGraph) findSharedTopologySnapshotPlan(ctx context.Context, grid Top
 			}
 			resource := q.nodeBuilder.resourceName(id)
 			remaining := reachable[id]
+			// 各属性版本从剩余可达时间位中取交集，保证同一节点每帧只输出一个版本。
 			appendVersion := func(bits timeBitmap, dimensions cmdb.Matcher) {
 				if bits.empty() {
 					return
@@ -97,6 +100,7 @@ func (q *TimeGraph) findSharedTopologySnapshotPlan(ctx context.Context, grid Top
 			if !kept[key.source] || !kept[key.target] {
 				continue
 			}
+			// 只要两端在同一帧均可达，就保留该帧的关系；非树边也属于诱导子图。
 			active := edge.activeBits.intersect(reachable[key.source]).intersect(reachable[key.target])
 			if active.empty() {
 				continue

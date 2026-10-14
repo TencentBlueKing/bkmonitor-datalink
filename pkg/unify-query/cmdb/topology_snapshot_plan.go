@@ -4,8 +4,8 @@ package cmdb
 
 import "context"
 
-// SharedTopologySnapshotPlanner is an optional owned snapshot export capability.
-// Ordinary queries retain QuerySharedTopology and its per-frame budgets.
+// SharedTopologySnapshotPlanner 是可选的自有快照编码能力。
+// 普通查询仍使用 QuerySharedTopology 及其逐帧预算。
 type SharedTopologySnapshotPlanner interface {
 	QuerySharedTopologySnapshotPlan(context.Context, SharedTopologyQuery) (SharedTopologySnapshotPlanResult, error)
 }
@@ -16,7 +16,7 @@ type SharedTopologySnapshotPlanResult struct {
 	Plan               *SharedTopologySnapshotPlan
 }
 
-// SharedTopologyTimeMask owns its words; bit i denotes timestamp i.
+// SharedTopologyTimeMask 自有位图字；第 i 位对应第 i 个时间戳。
 type (
 	SharedTopologyTimeMask struct {
 		First uint64
@@ -34,10 +34,9 @@ type (
 		Index  int
 		Reason string
 	}
-	// SharedTopologySnapshotPlan preserves numeric IDs, independent attribute maps,
-	// full edge identities and chronological frames without allocating each frame.
-	// Nodes are ordered by numeric ID, with disjoint versions of the same ID.
-	// Edges use the snapshot edge order. All fields remain valid after graph Clean.
+	// SharedTopologySnapshotPlan 不逐帧分配完整快照，但保留数字 ID、独立属性、
+	// 完整关系身份和时间顺序。同一 ID 的属性版本时间位互不重叠，节点按 ID 排序，
+	// 关系沿用快照顺序；图 Clean 后这些字段仍有效。
 	SharedTopologySnapshotPlan struct {
 		Timestamps                       []int64
 		Nodes                            []SharedTopologySnapshotPlanNode

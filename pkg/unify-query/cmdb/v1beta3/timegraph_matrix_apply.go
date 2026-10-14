@@ -24,7 +24,7 @@ func (q *TimeGraph) applyRelationMatrixWithReverse(ctx context.Context, matrix p
 	ctx, span := trace.NewSpan(ctx, "timegraph-apply-relation-matrix")
 	defer finishTimeGraphStage(ctx, span, "apply-relation", time.Now(), &err)
 	span.Set("matrix-series-count", len(matrix))
-	// Working buffers are never retained by graph storage or target dictionaries.
+	// 工作缓冲不会被图存储或目标字典持有，可在当前 Matrix 应用后复用。
 	info := make(cmdb.Matcher)
 	timestamps := make([]int64, 0)
 	sourceBuffer, targetBuffer := make(cmdb.Matcher), make(cmdb.Matcher)
@@ -83,7 +83,7 @@ func (q *TimeGraph) applySourceMatrix(ctx context.Context, matrix pl.Matrix, sou
 	ctx, span := trace.NewSpan(ctx, "timegraph-apply-source-info-matrix")
 	defer finishTimeGraphStage(ctx, span, "apply-source-info", time.Now(), &err)
 	span.Set("matrix-series-count", len(matrix))
-	// Working buffers are never retained by graph storage or target dictionaries.
+	// 工作缓冲不会被图存储或目标字典持有，可在当前 Matrix 应用后复用。
 	info := make(cmdb.Matcher)
 	timestamps := make([]int64, 0)
 	for _, series := range matrix {
@@ -124,7 +124,7 @@ func (q *TimeGraph) applyTargetMatrix(ctx context.Context, matrix pl.Matrix, tar
 	ctx, span := trace.NewSpan(ctx, "timegraph-apply-target-info-matrix")
 	defer finishTimeGraphStage(ctx, span, "apply-target-info", time.Now(), &err)
 	span.Set("matrix-series-count", len(matrix))
-	// Working buffers are never retained by graph storage or target dictionaries.
+	// 工作缓冲不会被图存储或目标字典持有，可在当前 Matrix 应用后复用。
 	info := make(cmdb.Matcher)
 	timestamps := make([]int64, 0)
 	for _, series := range matrix {

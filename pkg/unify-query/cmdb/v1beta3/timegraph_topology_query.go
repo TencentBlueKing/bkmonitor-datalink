@@ -25,8 +25,8 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	return m.querySharedTopology(ctx, request, nil)
 }
 
-// QuerySharedTopologySnapshotPlan exports owned dictionaries only in YOLO mode.
-// It preserves the snapshots request format and the existing normalization path.
+// QuerySharedTopologySnapshotPlan 在 YOLO 模式下输出自有的快照编码计划。
+// 它沿用 snapshots 的请求格式和时间网格校验，供 HTTP 层逐帧写出。
 func (m *Model) QuerySharedTopologySnapshotPlan(ctx context.Context, request cmdb.SharedTopologyQuery) (cmdb.SharedTopologySnapshotPlanResult, error) {
 	var plan *cmdb.SharedTopologySnapshotPlan
 	result, err := m.querySharedTopology(ctx, request, &plan)
@@ -146,6 +146,7 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	}
 
 	for _, key := range provider.GetResourcePrimaryKeys(request.SpaceUID, attributeRequest.SourceType) {
+		// 扩展条件里的主键也属于查询身份；非主键只参与根节点的属性筛选。
 		if value, exists := attributeRequest.SourceExpandInfo[key]; exists {
 			if attributeRequest.SourceInfo == nil {
 				attributeRequest.SourceInfo = make(map[string]string)
@@ -168,6 +169,7 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	allowedRelations := relations
 	rootRelations := sharedTopologyRootRelationKeys(request.SourceType, maxHops, relations)
 	planSpan.Set("relation-count", len(relations))
+	// 候选裁剪只减少取数范围；遍历仍使用完整的关系身份和逐帧时间状态。
 	if SharedTopologyPlanCandidates {
 		relations = planSharedTopologyCandidates(request.SourceType, maxHops, relations)
 	}
@@ -180,6 +182,7 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	queryCtx, cancel := withTimeGraphQueryContext(ctx)
 	defer cancel()
 	validated = true
+	// VM 的取数边界与拓扑评估网格必须一致，避免首末帧被隐式对齐或重复读取。
 	queryCtx = metadata.WithExactTimeGrid(queryCtx)
 	queryCtx = metadata.WithLeftOpenTimeWindow(queryCtx)
 	if SharedTopologyPlanCandidates {
@@ -418,9 +421,8 @@ func sharedTopologyRootRelationKeys(source cmdb.Resource, maxHops int, relations
 	return result
 }
 
-// topologyRootProbeCoversEndpoints reports whether filtering the outgoing
-// relations by the root identity also observes every incoming root endpoint.
-// The reverse relation must read the same metric with the opposite direction.
+// topologyRootProbeCoversEndpoints 判断按根身份筛选出边时，是否也能观察到全部入边端点。
+// 每条入边必须有读取同一指标、方向相反的对应关系，首跳判空才安全。
 func topologyRootProbeCoversEndpoints(source cmdb.Resource, relations []cmdb.Relation) bool {
 	for _, incoming := range relations {
 		if len(incoming.V) != 2 || incoming.V[1] != source {
@@ -569,7 +571,7 @@ func filterSharedTopologySnapshots(ctx context.Context, snapshots []cmdb.SharedT
 			}
 			edges = append(edges, edge)
 		}
-		// Clear removed references in the backing arrays retained by the DTO.
+		// 清空 DTO 底层数组中已移除的引用，避免继续持有属性对象。
 		clear(snapshots[index].Nodes[len(nodes):])
 		clear(snapshots[index].Edges[len(edges):])
 		snapshots[index].Nodes = nodes

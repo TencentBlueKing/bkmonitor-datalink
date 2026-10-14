@@ -33,9 +33,8 @@ var topologyMemoryPaths = sync.OnceValue(func() []topologyMemoryFiles {
 	return topologyCgroupMemoryPaths(groups, mounts)
 })
 
-// Walk all visible ancestors and all matching mounts. Hidden ancestors cannot
-// be certified from a container namespace; the configured reservation cap
-// always applies, including when discovery is incomplete or unavailable.
+// 检查所有可见祖先 cgroup 和匹配挂载。容器内无法核实隐藏祖先的限制；
+// 即使发现不完整或不可用，配置的预留上限仍始终生效。
 func topologyCgroupMemoryPaths(groups []procfs.Cgroup, mounts []*procfs.MountInfo) []topologyMemoryFiles {
 	var result []topologyMemoryFiles
 	seen := make(map[string]bool)
@@ -47,7 +46,7 @@ func topologyCgroupMemoryPaths(groups []procfs.Cgroup, mounts []*procfs.MountInf
 			if !v1 && !v2 {
 				continue
 			}
-			// procfs exposes mountinfo octal escapes, not decoded paths.
+			// procfs 的 mountinfo 使用八进制转义，路径尚未解码。
 			unescape := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
 			root, point := unescape.Replace(mount.Root), unescape.Replace(mount.MountPoint)
 			rel, err := filepath.Rel(root, group.Path)
@@ -82,7 +81,7 @@ func topologyMemoryValue(path string) (int64, bool) {
 		return 0, false
 	}
 	value, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	// v2 'max' and v1's near-MaxInt64 sentinel are unlimited, not headroom.
+	// v2 的 max 和 v1 接近 MaxInt64 的哨兵表示无限制，不能当作剩余内存。
 	return value, err == nil && value >= 0 && value < 1<<60
 }
 

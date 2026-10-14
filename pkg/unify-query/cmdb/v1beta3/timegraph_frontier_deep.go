@@ -10,10 +10,9 @@ import (
 	pl "github.com/prometheus/prometheus/promql"
 )
 
-// Narrow only static bidirectional, projection-independent components. The
-// time-union frontier is a superset of every frame's reachable identities;
-// traversal still uses the original per-frame bits. Fetch the boundary too,
-// retaining induced edges rather than only a traversal tree.
+// loadDeepTopologyFrontier 仅对静态双向且属性投影互不依赖的关系缩小取数范围。
+// 各帧身份的时间并集覆盖每一帧的可达节点，最终遍历仍使用原始逐帧位图。
+// 多取一层边界关系，才能保留诱导子图中的非树边。
 func (loader *timeGraphMatrixLoader) loadDeepTopologyFrontier(ctx context.Context, space string, source cmdb.Resource, identity cmdb.Matcher, relations []cmdb.Relation, hops int, reorder bool, queries *int) (bool, error) {
 	q := loader.graph
 	key := q.primaryMatcherKey(source, identity)
@@ -21,8 +20,7 @@ func (loader *timeGraphMatrixLoader) loadDeepTopologyFrontier(ctx context.Contex
 	seen := timeGraphFrontier{source: first}
 	frontier := timeGraphFrontier{source: first}
 	overflow, incomplete := false, false
-	// This is a query-plan crossover, not an answer limit. As in the two-hop
-	// plan, 129 is a sentinel: all fetched series are applied before reading wide.
+	// 129 只是切换宽读取计划的哨兵，不限制结果；已取回的序列先全部写入同一张图。
 	add := func(resource cmdb.Resource, info cmdb.Matcher, next timeGraphFrontier) {
 		if !q.completeFrontierIdentity(resource, info) {
 			incomplete = true
@@ -105,8 +103,8 @@ func (loader *timeGraphMatrixLoader) loadDeepTopologyFrontier(ctx context.Contex
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		// Missing/partial input cannot prove the identity union complete. Continue
-		// on the same graph and metadata, retaining all quality and cumulative cost.
+		// 身份缺失或部分成功时无法证明候选并集完整，交给同一图上的宽读取补齐；
+		// 已有的质量状态与累计取数成本继续保留。
 		if overflow || incomplete || len(q.partialTimes) > 0 {
 			return false, nil
 		}

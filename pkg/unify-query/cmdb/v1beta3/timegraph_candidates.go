@@ -5,11 +5,9 @@ package v1beta3
 
 import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 
-// Keep induced edges between types reachable within H hops, including edges
-// outside the BFS tree. Incoming root edges are also needed to discover root
-// instances when no outgoing edge exists for them.
-// Input order is preserved, but removing unrelated nodes can renumber IDs;
-// callers must compare topology by identity rather than numeric node ID.
+// planSharedTopologyCandidates 保留 H 跳可达类型之间的全部诱导边，包括 BFS 树外的边。
+// 根的入边也要保留，否则无出边的根实例可能无法被发现。
+// 裁剪保持关系顺序，但可能改变节点数字 ID；结果应按身份而非 ID 比较。
 func planSharedTopologyCandidates(source cmdb.Resource, hops int, relations []cmdb.Relation) []cmdb.Relation {
 	reachable := topologyReachableTypes(source, hops, relations)
 	if reachable == nil {
@@ -24,7 +22,7 @@ func planSharedTopologyCandidates(source cmdb.Resource, hops int, relations []cm
 	return result
 }
 
-// Type reachability also bounds which endpoint attributes can be observable.
+// 类型可达范围也限定了哪些端点属性可能出现在结果中。
 func topologyReachableTypes(source cmdb.Resource, hops int, relations []cmdb.Relation) map[cmdb.Resource]bool {
 	adjacency := make(map[cmdb.Resource][]cmdb.Resource)
 	for _, relation := range relations {

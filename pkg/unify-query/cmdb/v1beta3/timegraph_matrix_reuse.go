@@ -23,8 +23,8 @@ type timeGraphMatrixSlot struct {
 	partial bool
 }
 
-// A single request-local slot retains at most one Matrix. Preparation still
-// runs on every logical query, so route changes cannot hit a stale input key.
+// loadPrepared 在单次请求内最多保留一个 Matrix；每条逻辑查询仍重新准备，
+// 路由或权限变化就会生成不同键，不能命中过期输入。
 func (loader *timeGraphMatrixLoader) loadPrepared(ctx context.Context, query *structured.QueryTs, expression string,
 	params *metadata.QueryParams, fetch func() (pl.Matrix, bool, error),
 ) (pl.Matrix, bool, error) {
@@ -40,7 +40,7 @@ func (loader *timeGraphMatrixLoader) loadPrepared(ctx context.Context, query *st
 		loader.reusedQueryCount++
 		return loader.lastMatrix.matrix, loader.lastMatrix.partial, nil
 	}
-	// Drop the previous Matrix before fetching a different one, not afterwards.
+	// 先释放旧 Matrix 的引用再取新数据，避免两份大输入同时存活。
 	loader.lastMatrix = timeGraphMatrixSlot{}
 	loader.physicalQueryCount++
 	matrix, partial, err := fetch()

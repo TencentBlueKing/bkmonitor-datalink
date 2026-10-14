@@ -182,7 +182,7 @@ func resourcePathSortKey(path resourcePath) string {
 	return strings.Join(parts, "|")
 }
 
-// Legacy queries stop at the first hit and isolate failures of alternative paths.
+// 旧路径查询遇到首个有效结果即停止；其他候选路径失败不会直接中断查询。
 func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query func(resourcePath) ([]cmdb.PathResourcesResult, error)) ([]cmdb.PathResourcesResult, error) {
 	var failures []error
 	for _, path := range paths {
@@ -514,8 +514,8 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 			return timeGraphRangeResult{}, fmt.Errorf("look back delta must be positive")
 		}
 	}
-	// Legacy lookback bounded raw-data retrieval, not per-bucket liveness.
-	// VM evaluates each bucket directly, so its window must always equal step.
+	// 旧版 lookback 限制原始数据读取范围，而非每个采样桶的存活判断。
+	// VM 直接评估每个桶，因此其窗口必须等于采样步长。
 	lookBackDelta = normalizedStep
 	if _, err := validateRangeBuckets(startMs, endMs, stepMs); err != nil {
 		return timeGraphRangeResult{}, err

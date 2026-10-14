@@ -246,8 +246,7 @@ type NodeBuilder struct {
 	// keyID 和 valueID 都是通过 StringDict 压缩得到的
 	compressedInfo map[uint64]map[uint64]uint64
 
-	// Private owned-snapshot queries do not read compressed attributes. The
-	// default public builder keeps eager dictionary population.
+	// 私有自有快照查询不读取压缩属性；默认公开构图器仍即时填充字典。
 	deferCompression bool
 
 	// 字符串字典引用，支持使用TimeGraph的局部字典
@@ -269,7 +268,7 @@ func resourceConfigSnapshot(cfg *TimeGraphConfig) map[cmdb.Resource]TimeGraphRes
 	return result
 }
 
-// resourceIndexView is only for readers; resourceIndexes keeps its owned slice contract.
+// resourceIndexView 仅供内部只读访问；resourceIndexes 仍返回自有切片。
 func (n *NodeBuilder) resourceIndexView(resourceType cmdb.Resource) cmdb.Index {
 	if n.config != nil {
 		return n.config[resourceType].Index
@@ -322,7 +321,7 @@ func (n *NodeBuilder) Length() int {
 	return len(n.data)
 }
 
-// resourceName reads the instance type mapping without copying node attributes.
+// resourceName 直接读取实例类型映射，不复制节点属性。
 func (n *NodeBuilder) resourceName(id uint64) cmdb.Resource {
 	return n.resource.name(uint16(id >> 48))
 }
@@ -349,9 +348,9 @@ func (n *NodeBuilder) Info(id uint64) (cmdb.Resource, cmdb.Matcher) {
 	return resourceName, nil
 }
 
-// matchingInfoView only borrows an immutable stored matcher for graph storage.
-// GetID replaces stored maps on updates; only the owning TimeGraph may borrow,
-// while holding its lock, so Clean cannot recycle this map during a graph read.
+// matchingInfoView 只借用存储中不可变的 matcher，供图存储使用。
+// GetID 更新时会替换旧 map；只有所属 TimeGraph 持锁期间可以借用，
+// 因而 Clean 不会在读图过程中回收该 map。
 func (n *NodeBuilder) matchingInfoView(id uint64, incoming cmdb.Matcher) (cmdb.Matcher, bool) {
 	n.lock.RLock()
 	defer n.lock.RUnlock()

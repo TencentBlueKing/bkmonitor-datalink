@@ -3,16 +3,15 @@
 
 package cmdb
 
-// CompactTopology contains independent full object versions and little-endian
-// arrays of hexadecimal uint64 time-mask words. IDs are decimal strings.
-// Version 1 preserves the snapshot contract through lazy per-frame decoding.
+// CompactTopology 保存独立的完整对象版本及低位字在前的十六进制 uint64 时间位图字；
+// ID 使用十进制字符串。版本 1 可按帧延迟解码，保持 snapshots 的输出语义。
 type CompactTopology struct {
 	Version    int                      `json:"version"`
 	Timestamps []int64                  `json:"timestamps"`
 	Nodes      []CompactTopologyNode    `json:"nodes"`
 	Edges      []CompactTopologyEdge    `json:"edges"`
 	Partial    []CompactTopologyPartial `json:"partial"`
-	// Counts describe the expanded output, not dictionary size.
+	// 出现次数按展开后的输出计数，不是字典条目数。
 	NodeOccurrences int `json:"node_occurrences"`
 	EdgeOccurrences int `json:"edge_occurrences"`
 }

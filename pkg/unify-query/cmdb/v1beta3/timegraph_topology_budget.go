@@ -32,8 +32,8 @@ type topologyLease struct {
 	yolo           bool
 }
 
-// AcquireSharedTopology reserves process-wide capacity without queueing.
-// The HTTP lease lasts through response writing. Nested calls reuse it.
+// AcquireSharedTopology 无排队地预留进程容量。HTTP 租约覆盖响应写出，
+// 嵌套调用沿用同一租约，避免重复预留。
 func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, releaseFn func(), err error) {
 	_, span := trace.NewSpan(ctx, "timegraph-admission")
 	defer finishTimeGraphStage(ctx, span, "admission", time.Now(), &err)
@@ -89,8 +89,8 @@ func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, re
 	return context.WithValue(ctx, topologyAdmissionKey{}, lease), release, nil
 }
 
-// reserve requires the admission lock. Reservations are estimates, not a hard
-// RSS guarantee; current cgroup/host headroom is an additional rejection gate.
+// reserve 需持有准入锁。预留值是估算量，不能保证 RSS 上限；
+// 当前 cgroup 或宿主机剩余内存是额外的拒收条件。
 func (lease *topologyLease) reserve(want int64, span *trace.Span) error {
 	delta := want - lease.reserved
 	if delta > 0 {
@@ -104,7 +104,7 @@ func (lease *topologyLease) reserve(want int64, span *trace.Span) error {
 		if known {
 			margin := int64(effectiveTimeGraphLimit(SharedTopologyMemoryHeadroom, 512*1024*1024))
 			usable := max(int64(0), available-margin)
-			// Deliberately conservative: live usage may include existing leases.
+			// 保守扣除已有租约，因为当前内存用量可能已包含这些预留。
 			if delta > usable-topologyAdmission.reserved {
 				return &ResultLimitError{Reason: "max_topology_memory_headroom", Count: int(topologyAdmission.reserved + delta), Limit: int(usable)}
 			}
@@ -115,8 +115,8 @@ func (lease *topologyLease) reserve(want int64, span *trace.Span) error {
 	return nil
 }
 
-// ReserveTopologyStage updates an estimated simultaneously-live stage before
-// allocation. Zero releases that stage, including on a canceled context.
+// ReserveTopologyStage 在分配前更新并发存活阶段的估算量。
+// 传入零可释放该阶段的预留，即使请求已取消也有效。
 func ReserveTopologyStage(ctx context.Context, stage string, bytes int64) (err error) {
 	lease, _ := ctx.Value(topologyAdmissionKey{}).(*topologyLease)
 	if lease == nil || lease.yolo {

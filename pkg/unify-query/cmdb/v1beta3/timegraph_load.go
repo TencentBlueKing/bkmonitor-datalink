@@ -12,8 +12,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-// The query is generated from the resolved schema. Never label observations with
-// expressions, matchers, entity IDs or response labels supplied by the backend.
+// 查询由已解析的 schema 生成。观测标签不得使用表达式、筛选条件、
+// 实体 ID 或后端响应标签，避免泄露查询内容及产生高基数指标。
 func timeGraphLoadMetricName(query *structured.QueryTs) string {
 	if query == nil || len(query.QueryList) == 0 {
 		return "__unknown__"

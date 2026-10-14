@@ -149,7 +149,7 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 }
 
 func validateTimeGraphPrecision(start, end time.Time, step time.Duration) error {
-	// QueryTs and the VM gateway transport timestamps and step as integer seconds.
+	// QueryTs 和 VM 网关以整数秒传递时间戳与步长。
 	if start.Nanosecond() != 0 || end.Nanosecond() != 0 {
 		return errors.New("TimeGraph timestamp must have whole-second precision")
 	}
@@ -214,8 +214,8 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	}
 	storageSpan.Set("shared", tg.shared != nil)
 	storageSpan.End(&err)
-	// The caller owns successful graphs; failed builds must release their partial storage.
-	// Register before the build observer so it records failure counts before cleanup.
+	// 成功时由调用方持有图；失败时必须释放已构建的存储。
+	// 先注册清理，再注册构建观察器，使失败计数在清理前可见。
 	defer func() {
 		if err != nil {
 			tg.Clean(ctx)
@@ -326,9 +326,8 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		return true, observed, loadErr
 	}
 
-	// Probe first hops only when they cover every relation endpoint that can
-	// observe the root. Otherwise a directed incoming edge can observe the
-	// root even though it cannot be traversed from the root.
+	// 只有首跳探测覆盖所有可能观察到根的关系端点时才能用它判空。
+	// 否则有向入边虽不能从根向外遍历，却仍可能让根出现在关系结果中。
 	queriedRoots := make(map[timeGraphRelationKey]struct{})
 	if topologyGrid != nil && topologyRootProbeCoversEndpoints(sourceType, relations) {
 		rootObserved := false
@@ -357,8 +356,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		key := timeGraphRelationKeyFor(relation)
 		if topologyGrid != nil {
 			if _, queried := queriedRoots[key]; queried {
-				// A type cycle may reach a different instance of the source
-				// type. Its edges need one unfiltered candidate read.
+				// 资源类型成环时可能到达同类型的另一个实例，此关系仍需无根条件读取一次。
 				if _, safe := rootRelations[key]; safe || len(sourceInfo) == 0 {
 					continue
 				}
@@ -393,8 +391,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 				errors.As(infoErr, &samplesErr) || errors.As(infoErr, &canceledErr) || errors.As(infoErr, &timeoutErr) {
 				return nil, infoErr
 			}
-			// Keep the relation result while telling callers that the requested
-			// attributes could not be completed. Error details stay in the trace.
+			// 属性补全失败时保留关系结果，并向调用方标记不完整；错误细节留在 trace。
 			tg.markPartialRange(start, end, step, "target_info_failed")
 			span.Set("optional-target-info-failed", true)
 		}
@@ -422,13 +419,12 @@ type timeGraphMatrixLoader struct {
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
 	if loader.topology && metadata.BackendResponseLimit(queryCtx) > 0 {
-		// Each physical response has its own rejection flag. All aggregation
-		// children of this fetch still share it, so a cap cannot become partial;
-		// a rejected batch must not poison later, smaller identity shards.
+		// 一次物理响应的聚合子查询共用拒收标记，防止预算超限被误判为 partial；
+		// 不同身份分片各有标记，先前的大分片失败不会污染后续小分片。
 		queryCtx = metadata.WithBackendResponseLimit(queryCtx, metadata.BackendResponseLimit(queryCtx))
 	}
 	if loader.topology {
-		// Include response buffers, decoding and Matrix conversion before fetch.
+		// 取数前预留响应缓冲、解码及 Matrix 转换所需的内存。
 		if err := ReserveTopologyStage(queryCtx, "matrix", metadata.BackendResponseLimit(queryCtx)*8); err != nil {
 			return nil, false, err
 		}
@@ -571,8 +567,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 			})
 		}
 	}
-	// Capture the returned Matrix before validation can reject it and clear the
-	// named return value. A budget rejection still incurred this input cost.
+	// 校验可能清空命名返回值；先记录已返回的 Matrix，预算拒收也要计入输入成本。
 	if err == nil && loader.reusedQueryCount == reuseBefore {
 		loadSize = timeGraphReturnedMatrixSize(matrix)
 	}
@@ -620,14 +615,13 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 	return matrix, partial, nil
 }
 
-// queryAndApply keeps oversized-range recovery bounded to one shard Matrix at a
-// time. Only the explicitly enabled YOLO path may split, and only for exact
-// time-grid requests rejected by the VM response-size guard.
 type timeGraphShardPlan struct {
 	successfulPoints    int64
 	singlePointRequired bool
 }
 
+// queryAndApply 逐片应用过大响应，内存中一次只保留一个分片 Matrix。
+// 仅显式启用的 YOLO 精确时间网格请求，且 VM 明确拒绝响应大小时，才拆分时间。
 func (loader *timeGraphMatrixLoader) queryAndApply(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error) error {
 	plan := timeGraphShardPlan{}
 	return loader.queryAndApplyShard(ctx, queryTs, apply, 0, &plan)
@@ -652,8 +646,8 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 
 	_, _, _, pointCount, exact := timeGraphQueryRange(queryTs)
 	if exact && plan.successfulPoints > 0 && pointCount > plan.successfulPoints {
-		// Keep each chunk on the original grid. Successful width is only a
-		// request-local scheduling hint; every later chunk may still split.
+		// 分片仍落在原网格上；成功宽度只在本请求内帮助安排后续分片，
+		// 之后的分片若再次超限仍可继续拆分。
 		remaining := queryTs
 		for {
 			_, _, _, count, ok := timeGraphQueryRange(remaining)
@@ -835,8 +829,7 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 	return loader.validateMatrixWithGrid(queryCtx, matrix, err, true)
 }
 
-// Exact reverse-pair application uses the same already-validated immutable
-// Matrix. Its logical cost and cancellation are still charged independently.
+// 完全反向的关系共用已校验且不变的 Matrix，但第二条逻辑关系仍单独计量并检查取消。
 func (loader *timeGraphMatrixLoader) validateMatrixWithGrid(queryCtx context.Context, matrix pl.Matrix, err error, checkGrid bool) (pointCount int, validationErr error) {
 	queryCtx, span := trace.NewSpan(queryCtx, "timegraph-validate-matrix")
 	defer finishTimeGraphStage(queryCtx, span, "matrix-validation", time.Now(), &validationErr)

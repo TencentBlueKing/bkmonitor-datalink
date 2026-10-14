@@ -26,8 +26,8 @@ type topologyFetchGroup struct {
 	relations []cmdb.Relation
 }
 
-// Routes, projections, conditions, user and backend semantics all participate
-// in grouping. Preparation runs before any empty-frontier shortcut.
+// compileTopologyFetches 仅合并路由、投影、条件、用户和后端语义均相同的物理查询。
+// 即使前沿为空也先完成查询准备，以便缺少必需路由时仍明确报错。
 func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context, space string, inputs []topologyFetchInput, reorder bool) ([]topologyFetchGroup, error) {
 	groups := []topologyFetchGroup{}
 	indexes := map[string]int{}
@@ -44,8 +44,8 @@ func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context,
 			ts, err = loader.frontierQuery(queryCtx, space, input.relation, input.targetAnchor, input.identities)
 		} else {
 			ts, err = loader.graph.MakeQueryTsWithWindow(queryCtx, space, input.filter, loader.start, loader.end, loader.step, loader.lookBack, input.relation)
-			// Range constraints can belong to either endpoint. MakeQueryTs accepts only
-			// source identity filters, so set the proven projected labels explicitly.
+			// 范围条件可能落在关系的任一端；MakeQueryTs 只接受源端身份，
+			// 因此仅显式写入已证明可投影的标签条件。
 			if ts != nil {
 				for i, field := range ts.QueryList[0].Conditions.FieldList {
 					if value, ok := input.filter[field.DimensionName]; ok {
@@ -119,7 +119,7 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup
 			}
 			if i > 0 {
 				loader.reusedQueryCount++
-				// One physical input still incurs each logical graph application.
+				// 共用一次物理取数，但每条逻辑关系仍分别计量并写入图。
 				if _, err := loader.validateMatrix(ctx, matrix, nil); err != nil {
 					return err
 				}
@@ -147,9 +147,8 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 	ctx, span := trace.NewSpan(ctx, "timegraph-select-fetch")
 	defer span.End(&err)
 	q := loader.graph
-	// A relation beyond the traversal boundary may still supply a projected
-	// attribute to a retained endpoint. Restore the original ordered wide plan
-	// when projection independence cannot be proved before type pruning.
+	// H 跳边界外的关系也可能给保留节点提供属性。无法证明投影独立时，
+	// 在按资源类型裁剪之前恢复原有有序宽读取，维持属性覆盖顺序。
 	allowedComponent := topologyRelationComponent(source, plan.allowed)
 	visible := topologyReachableTypes(source, plan.hops, plan.allowed)
 	if !q.topologyProjectionCompatible(allowedComponent, visible) {
@@ -242,8 +241,7 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 					continue
 				}
 				candidates := first[relation.V[1]]
-				// 129 is an overflow sentinel, not a result limit. Graph application
-				// always retains every returned series; overflowing groups read wide.
+				// 129 只是切换宽读取的哨兵，不截断结果；取回的序列始终全部写入图。
 				if len(candidates) <= 2*timeGraphFrontierBatchSize {
 					candidates[q.primaryMatcherKey(relation.V[1], info)] = q.primaryMatcher(relation.V[1], info)
 				}
@@ -299,8 +297,8 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		}
 		return queries, nil
 	}
-	// Partial first-stage input cannot prove the Y union complete. Continue on
-	// the same graph and loader; retain quality, attributes and cumulative cost.
+	// 首阶段部分成功不能证明二部图另一侧候选完整，继续用同一图和取数器宽读取；
+	// 已有属性、质量状态及累计成本均保留。
 	if mode == "bipartite" {
 		span.Set("fetch-mode", "bulk-after-partial")
 	}

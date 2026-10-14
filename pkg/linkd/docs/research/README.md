@@ -16,6 +16,8 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-10-14-lifecycle-global-scope-latency.md](2026-10-14-lifecycle-global-scope-latency.md) | 全局业务逐事件重复扫描的根因、修复、回归与测试环境性能复核 |
+| [2026-10-14-kac-output-v3-validation.md](2026-10-14-kac-output-v3-validation.md) | KAC V3 队列输出、真实服务联调与突发压测验收边界 |
 | [2026-10-14-kac-metric-query-live-validation.md](2026-10-14-kac-metric-query-live-validation.md) | KAC 单指标别名与目录物理引用修复、回归测试和真实告警指标查询验证 |
 | [2026-10-12-kac-debug-preview-local-validation.md](2026-10-12-kac-debug-preview-local-validation.md) | KAC V2 调试到 Linkd 的真实本地 HTTP、verification 存储、失败恢复与页面组件验证边界 |
 | [2026-10-09-metric-catalog-live-validation.md](2026-10-09-metric-catalog-live-validation.md) | test-bkee5 22 条真实活跃告警的指标目录读取、四个丰富 Processor 只读重放与缺失引用边界 |

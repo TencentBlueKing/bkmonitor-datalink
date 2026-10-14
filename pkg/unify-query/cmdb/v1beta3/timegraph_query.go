@@ -79,7 +79,7 @@ type timeGraphRelationKey struct {
 // 以免子查询改写父请求。
 func newTimeGraphSubqueryContext(ctx context.Context) context.Context {
 	user := *metadata.GetUser(ctx)
-	queryCtx := metadata.InitHashID(ctx)
+	queryCtx := metadata.WithQueryMetadata(metadata.InitHashID(ctx))
 	metadata.SetUser(queryCtx, &user)
 	return queryCtx
 }
@@ -160,6 +160,7 @@ func validateTimeGraphPrecision(start, end time.Time, step time.Duration) error 
 }
 
 func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery, topologyGrid *TopologyGrid) (graph *TimeGraph, err error) {
+	ctx = metadata.WithQueryMetadata(ctx)
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
 	started := time.Now()

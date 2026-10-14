@@ -164,7 +164,7 @@ func runKACDelivery(ctx context.Context, cfg config.Config, projectionSender *ka
 		return err
 	}
 	defer actionSender.Close()
-	projector, err := projection.New(projections, business, resolver, projectionSender, locker, time.Now)
+	projector, err := projection.NewCompensator(projections, business, resolver, projectionSender, locker, time.Now, limits.Concurrency)
 	if err != nil {
 		return err
 	}
@@ -208,7 +208,7 @@ func runKACDelivery(ctx context.Context, cfg config.Config, projectionSender *ka
 	if err != nil {
 		return err
 	}
-	return taskgroup.Run(ctx, []taskgroup.Task{{Name: "projection", Run: projectionRunner.Run}, {Name: "action", Run: actionRunner.Run}, {Name: "kac-index-maintenance", Run: func(ctx context.Context) error {
+	return taskgroup.Run(ctx, []taskgroup.Task{{Name: "projection", Run: projectionRunner.RunCompensation}, {Name: "action", Run: actionRunner.Run}, {Name: "kac-index-maintenance", Run: func(ctx context.Context) error {
 		return runKACIndexMaintenance(ctx, projectionSender, registry, metrics, logger)
 	}}})
 }

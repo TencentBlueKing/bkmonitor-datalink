@@ -109,6 +109,7 @@ type PolicySnapshotter interface {
 type Processor struct {
 	contentBuilder           AlertContentBuilder
 	actionRecorder           ActionRecorder
+	projector                AlertProjector
 	initialProjectionTargets map[string]bool
 	shielder                 ShieldEvaluator
 	merger                   MergeEvaluator

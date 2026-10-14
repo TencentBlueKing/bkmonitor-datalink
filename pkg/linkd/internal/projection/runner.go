@@ -123,6 +123,23 @@ func (r *Runner) Run(ctx context.Context) error {
 	}}})
 }
 
+// RunCompensation 仅消费已保存的失败补偿及 ACK 待办；不扫描 Alert 水位补建任务。
+func (r *Runner) RunCompensation(ctx context.Context) error {
+	if ctx == nil {
+		return ErrInvalid
+	}
+	if !r.running.CompareAndSwap(false, true) {
+		return ErrBusy
+	}
+	defer r.running.Store(false)
+	after := ""
+	return r.loop(ctx, PhaseDeliver, time.Second, func(call context.Context) (bool, RoundResult) {
+		var result RoundResult
+		after, result = r.deliverPage(call, after)
+		return after != "", result
+	})
+}
+
 func (r *Runner) loop(ctx context.Context, phase RunnerPhase, interval time.Duration, step func(context.Context) (bool, RoundResult)) error {
 	if r.observer != nil {
 		r.observer.SetRunning(ctx, phase, true)

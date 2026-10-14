@@ -11,6 +11,7 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"slices"
@@ -73,6 +74,21 @@ func actionProcessor(t *testing.T, repo store.Repository, recorder ActionRecorde
 	p.initialProjectionTargets = map[string]bool{"kac": true, "audit": false, "second": true}
 	p.upgradePolicy = "update_current"
 	return p
+}
+
+func TestFinishedActionChecksStateWithoutReinterpretingDynamicPayload(t *testing.T) {
+	p := actionProcessor(t, memory.New(), nil)
+	a := storetest.Alert("tenant", "alert", "opening", "fp", "warning")
+	a.Enrich = domain.JSONObject{"processors": json.RawMessage(`"opaque stored result"`)}
+	row := store.StoredAlert{Alert: a, Version: store.NewVersionToken("stored")}
+	got, err := p.finishActionIntent(t.Context(), row)
+	if err != nil || !reflect.DeepEqual(got, row) {
+		t.Fatal("completed action revalidated dynamic payload", err)
+	}
+	row.Alert.Revision = 0
+	if _, err := p.finishActionIntent(t.Context(), row); !errors.Is(err, store.ErrInvalidArgument) {
+		t.Fatal("invalid business state accepted", err)
+	}
 }
 
 func TestActionIntentPartialEnqueueBlocksNewBusinessAndReplaysFrozenPlan(t *testing.T) {

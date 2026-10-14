@@ -231,10 +231,13 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		if err != nil {
 			return err
 		}
-		closeProjection, err = projection.New(projectionTasks, business, resolver, projectionSender, locker, time.Now)
+		projector, openErr := projection.NewCompensator(projectionTasks, business, resolver, projectionSender, locker, time.Now, cfg.ControlPlane.Delivery.WithDefaults().Concurrency)
+		err = openErr
 		if err != nil {
 			return err
 		}
+		closeProjection = projector
+		api.InlineProjection = projector
 	}
 	closer := lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics, closeProjection)
 	api.AlertCloser = closer

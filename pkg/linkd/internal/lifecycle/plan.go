@@ -578,7 +578,7 @@ func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutat
 	current, err := p.getAlertCurrent(ctx, event.BKTenantID, target.AlertID)
 	if err == nil {
 		if domain.SameAlertBusinessSnapshot(current.Alert, target) {
-			return current, nil
+			return p.projectAlert(ctx, current), nil
 		}
 		// 源写入之后，控制任务可能继续屏蔽/合并/关闭该生命周期。revision 加上保留的源事件/创建锚点
 		// 证明旧计划已经生效；不能把输出重试当成身份冲突，也不能用旧快照覆盖较新的业务结果。

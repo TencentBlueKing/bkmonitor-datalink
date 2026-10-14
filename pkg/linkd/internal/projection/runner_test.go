@@ -316,3 +316,20 @@ func TestRunnerDoesNotHideLeaseFailureBehindBusyResult(t *testing.T) {
 		t.Fatal("lease failure treated as ordinary delay", result)
 	}
 }
+
+func TestCompensationRunnerDoesNotScanAlertWatermarks(t *testing.T) {
+	tasks := &taskMemory{rows: map[string]StoredTask{}}
+	work := runnerWork(func(context.Context, store.ProjectionWorkCursor, int) (store.ProjectionWorkPage, error) {
+		t.Error("compensation scanned Alert watermarks")
+		return store.ProjectionWorkPage{}, nil
+	})
+	runner, err := NewRunner(work, tasks, runnerExecutor{}, nil, time.Now, taskgroup.WorkConfig{Concurrency: 1, BatchSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if err := runner.RunCompensation(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

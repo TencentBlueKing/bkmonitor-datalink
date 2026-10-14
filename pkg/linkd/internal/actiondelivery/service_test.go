@@ -687,3 +687,21 @@ func TestCeleryRetryMayReturnDifferentTaskID(t *testing.T) {
 		t.Fatal("fresh Celery reference rejected", done, err)
 	}
 }
+
+func TestFailedProjectionEndsActionWithoutBlockingLaterVersions(t *testing.T) {
+	s, tasks, _ := serviceFixture(t, gateFunc(func(context.Context, Task) (projection.Receipt, error) {
+		return projection.Receipt{}, ErrProjectionFailed
+	}), nil)
+	a := actionAlert("tenant", 1)
+	row, err := s.Record(t.Context(), a, "kac", Cause{Type: "source_event", ID: a.LatestEventID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, err := s.Deliver(t.Context(), a.BKTenantID, row.Task.ID)
+	if err != nil || failed.Task.Progress.State != "failed" || failed.Task.Progress.ErrorCode != "projection_failed" || failed.Task.Unsettled() {
+		t.Fatal("projection failure remains a barrier", failed.Task.Progress, err)
+	}
+	if _, err := tasks.OldestUnsettled(t.Context(), a.BKTenantID, a.AlertID, "kac"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("old action blocks later versions", err)
+	}
+}

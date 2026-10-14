@@ -155,6 +155,9 @@ func (s *Service) deliver(ctx context.Context, current StoredTask) (StoredTask, 
 		return StoredTask{}, saveErr
 	}
 	if e != nil {
+		if errors.Is(e, ErrProjectionFailed) {
+			return s.fail(ctx, claimed, Failure{Code: "projection_failed"})
+		}
 		return s.fail(ctx, claimed, Failure{Code: "projection_unavailable", Retryable: !errors.Is(e, ErrInvalidReceipt)})
 	}
 	destination, e := s.resolver.ResolveAction(ctx, claimed.Task.Request.TenantID, claimed.Task.SourceID, claimed.Task.SourceVersion, claimed.Task.Request.TargetID)

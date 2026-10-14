@@ -44,6 +44,8 @@ var (
 	ErrBusy = errors.New("action delivery not ready")
 	// ErrInvalidReceipt 表示未取得符合协议的 Celery 投递确认。
 	ErrInvalidReceipt = errors.New("invalid action receipt")
+	// ErrProjectionFailed 表示本动作所需投影的有限补偿已耗尽，不再等待或阻塞较新动作。
+	ErrProjectionFailed = errors.New("action projection compensation failed")
 )
 
 // Cause 固定原 Event 或控制操作身份，不能用发送时间兜底。
@@ -115,9 +117,10 @@ func (q Request) ProjectionRequest() projection.Request {
 
 // BuildRequest 只接受明确获准触发或曾获准告警的终态；解屏、解联和普通状态变化不能借此产生动作。
 func BuildRequest(a domain.Alert, target string, cause Cause) (Request, error) {
-	if cause.Validate() != nil || a.Validate() != nil {
+	if cause.Validate() != nil {
 		return Request{}, ErrInvalid
 	}
+	// 投影构造器统一验证并规范化完整载荷，避免动作入口先扫描一次相同的丰富结果。
 	q, e := projection.BuildRequest(a, target)
 	if e != nil {
 		return Request{}, ErrInvalid
@@ -137,7 +140,8 @@ func BuildRequest(a domain.Alert, target string, cause Cause) (Request, error) {
 // Clone 隔离冻结 JSON，不向调用者共享任务内存。
 func (q Request) Clone() Request { q.Alert = bytes.Clone(q.Alert); return q }
 
-// Validate 同时校验信封、真实业务快照与准入；不能仅凭 active 或解除关系生成 firing。
+// Validate 校验信封、快照状态与准入，不重复解释已冻结的 extra_data/enrich。
+// 完整动态载荷在 BuildRequest 构造边界验证；不能仅凭 active 或解除关系生成 firing。
 func (q Request) Validate() error {
 	if q.SchemaVersion != SchemaVersion || q.Cause.Validate() != nil || q.ActionID != q.identity() || q.ProjectionRequest().Validate() != nil {
 		return ErrInvalid
@@ -145,7 +149,7 @@ func (q Request) Validate() error {
 	var a domain.Alert
 	decoder := json.NewDecoder(bytes.NewReader(q.Alert))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&a) != nil || a.Validate() != nil {
+	if decoder.Decode(&a) != nil || a.ValidateState() != nil {
 		return ErrInvalid
 	}
 	if a.Admission.AdmittedAt == nil {

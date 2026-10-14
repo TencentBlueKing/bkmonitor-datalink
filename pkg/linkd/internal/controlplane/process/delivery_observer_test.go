@@ -42,7 +42,7 @@ func TestDeliveryCatalogMatchesActivationAndKeepsSecretsPrivate(t *testing.T) {
 		registry := taskCatalog(cfg, 0)
 		for _, id := range []string{"projection-producer", "projection-delivery", "action-enqueue", "action-delivery"} {
 			row := deliveryTask(t, registry, id)
-			if row.Enabled != hasKACDelivery(cfg) || row.Active || !row.Enabled && row.DisabledReason == "" || row.Enabled && row.DisabledReason != "" {
+			if row.Enabled != (hasKACDelivery(cfg) && id != "projection-producer") || row.Active || !row.Enabled && row.DisabledReason == "" || row.Enabled && row.DisabledReason != "" {
 				t.Fatal("catalog/activation mismatch", id)
 			}
 		}
@@ -63,7 +63,7 @@ func TestProjectionObservationReportsIdleFailureAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	phase := projection.PhaseProduce
+	phase := projection.PhaseDeliver
 	o.SetRunning(t.Context(), phase, true)
 	o.RoundStarted(t.Context(), phase)
 	if v := deliveryTask(t, r, string(phase)); !v.Active || !v.Execution.Running {
@@ -127,9 +127,9 @@ func TestDeliveryObserverAcceptsConfiguredLargePages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o.RoundStarted(t.Context(), projection.PhaseProduce)
-	o.RoundFinished(t.Context(), projection.PhaseProduce, projection.RoundResult{Scanned: 64, Advanced: 64, Duration: time.Millisecond})
-	v := deliveryTask(t, r, string(projection.PhaseProduce))
+	o.RoundStarted(t.Context(), projection.PhaseDeliver)
+	o.RoundFinished(t.Context(), projection.PhaseDeliver, projection.RoundResult{Scanned: 64, Advanced: 64, Duration: time.Millisecond})
+	v := deliveryTask(t, r, string(projection.PhaseDeliver))
 	if v.Execution.Failed != 0 || v.Execution.Work != 64 || v.Execution.ErrorCode != "" {
 		t.Fatal("large page became a fake failure", v.Execution)
 	}

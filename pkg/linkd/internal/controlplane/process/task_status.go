@@ -138,6 +138,10 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 			task.Settings = map[string]any{"maxReadIndices": 512, "requestConcurrency": 4}
 		}
 		task.DisabledReason = deliveryRuntime.DisabledReason
+		if spec.id == "projection-producer" {
+			task.Enabled = false
+			task.DisabledReason = "Alert 主流程直接投影，后台仅消费失败补偿"
+		}
 		task.DependsOn = []string{"kac-delivery"}
 		tasks = append(tasks, task)
 	}

@@ -265,7 +265,10 @@ func ValidateWrite(current *Task, next Task) error {
 	}
 	p := next.Progress
 	if current == nil {
-		if p.State != "pending" || p.Generation != 1 || p.TotalAttempts != 0 || p.LastRetry != nil || !p.UpdatedAt.Equal(next.CreatedAt) {
+		// 同步写入已经取得可见回执时可直接保存 delivered；它仍须补本地 ACK 才算 succeeded。
+		initial := p.State == "pending" && p.TotalAttempts == 0 && p.UpdatedAt.Equal(next.CreatedAt)
+		confirmed := p.State == "delivered" && p.Attempts == 1 && p.TotalAttempts == 1
+		if (!initial && !confirmed) || p.Generation != 1 || p.LastRetry != nil {
 			return ErrInvalid
 		}
 		return nil
@@ -277,8 +280,10 @@ func ValidateWrite(current *Task, next Task) error {
 	sameCycle := p.Generation == c.Generation && reflect.DeepEqual(p.LastRetry, c.LastRetry)
 	sameAttempts := p.Attempts == c.Attempts && p.TotalAttempts == c.TotalAttempts
 	switch {
-	// 升级前已超过三次的待重试记录可直接终结，不再额外发送。
-	case c.State == "retry" && p.State == "failed" && c.Attempts >= MaxAttempts && p.ErrorCode == "attempt_interrupted" && sameCycle && sameAttempts:
+	// 新补偿预算已耗尽的旧 retry/sending 记录直接终结，不能因重启再发送一次。
+	case (c.State == "retry" || c.State == "sending") && p.State == "failed" && c.Attempts >= 1 && p.ErrorCode == "attempt_interrupted" && sameCycle && sameAttempts:
+		return nil
+	case c.State == "pending" && p.State == "delivered" && sameCycle && p.Attempts == 1 && p.TotalAttempts == c.TotalAttempts+1:
 		return nil
 
 	case (c.State == "pending" || c.State == "retry" || c.State == "sending") && p.State == "sending":

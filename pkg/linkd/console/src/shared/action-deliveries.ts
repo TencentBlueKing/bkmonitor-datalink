@@ -86,6 +86,7 @@ export const actionDelivery = z
       error_code: z
         .enum([
           "projection_pending",
+          "projection_failed",
           "projection_unavailable",
           "target_unavailable",
           "transport_failed",

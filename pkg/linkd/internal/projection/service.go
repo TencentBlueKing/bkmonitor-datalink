@@ -41,12 +41,14 @@ type TargetLocker interface {
 
 // Service 编排持久任务、单次外部确认和本地水位；同一 Alert/目标串行，不同对象可独立执行。
 type Service struct {
-	tasks    Store
-	alerts   Alerts
-	resolver Resolver
-	sender   Sender
-	now      func() time.Time
-	locker   TargetLocker
+	tasks       Store
+	alerts      Alerts
+	resolver    Resolver
+	sender      Sender
+	now         func() time.Time
+	locker      TargetLocker
+	maxAttempts int
+	inlineSlots chan struct{}
 }
 
 // New 注入全部 I/O 和时钟，不创建 goroutine；生产/人工重试使用任务 CAS，投递取得 Alert/目标租约。
@@ -55,7 +57,20 @@ func New(tasks Store, alerts Alerts, resolver Resolver, sender Sender, locker Ta
 	if tasks == nil || alerts == nil || resolver == nil || sender == nil || locker == nil || now == nil {
 		return nil, ErrInvalid
 	}
-	return &Service{tasks: tasks, alerts: alerts, resolver: resolver, sender: sender, now: now, locker: locker}, nil
+	return &Service{tasks: tasks, alerts: alerts, resolver: resolver, sender: sender, now: now, locker: locker, maxAttempts: MaxAttempts}, nil
+}
+
+// NewCompensator 供正式主流程与后台共用；每个补偿或人工恢复周期只允许一次发送。
+func NewCompensator(tasks Store, alerts Alerts, resolver Resolver, sender Sender, locker TargetLocker, now func() time.Time, concurrency int) (*Service, error) {
+	if concurrency < 1 {
+		return nil, ErrInvalid
+	}
+	s, err := New(tasks, alerts, resolver, sender, locker, now)
+	if err == nil {
+		s.maxAttempts = 1
+		s.inlineSlots = make(chan struct{}, concurrency)
+	}
+	return s, err
 }
 
 // errAlreadyProduced 仅表示稳定身份已持久化，不能据此宣称任务已投递。
@@ -246,7 +261,7 @@ func (s *Service) deliver(call context.Context, tenant, id string) (StoredTask, 
 	if p.DueAt != nil && now.Before(*p.DueAt) || p.LeaseUntil != nil && now.Before(*p.LeaseUntil) {
 		return current, ErrBusy
 	}
-	if p.Attempts >= MaxAttempts {
+	if p.Attempts >= s.maxAttempts {
 		return s.fail(call, current, Failure{Code: "attempt_interrupted"})
 	}
 
@@ -304,7 +319,7 @@ func (s *Service) fail(ctx context.Context, current StoredTask, f Failure) (Stor
 	next.Progress.UpdatedAt = now
 	next.Progress.LeaseUntil = nil
 	next.Progress.DueAt = nil
-	if f.Retryable && next.Progress.Attempts < MaxAttempts {
+	if f.Retryable && next.Progress.Attempts < s.maxAttempts {
 		next.Progress.State = "retry"
 		// 固定有界退避使操作身份及重启行为可解释；同一目标的外层租约保证不会并行穿透重试。
 		due := now.Add(min(time.Minute, time.Second*time.Duration(1<<uint(min(next.Progress.Attempts-1, 6)))))

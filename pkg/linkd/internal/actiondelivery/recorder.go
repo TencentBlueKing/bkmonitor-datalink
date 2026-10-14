@@ -44,7 +44,8 @@ func NewRecorder(tasks RecordingStore, now func() time.Time) (*Recorder, error) 
 // RecordAction 实现 Lifecycle 的可靠入队端口，最多 16 个目标共享十秒预算。
 // 部分成功后返回错误时保留原 Alert 意图；重试复用所有已存在任务，直到全部排序可见。
 func (s *Recorder) RecordAction(ctx context.Context, a domain.Alert, intent domain.AlertActionIntent) error {
-	if ctx == nil || a.Validate() != nil || intent.Validate(a) != nil || !reflect.DeepEqual(a.ActionPending, &intent) {
+	// 入队不重新解释已经冻结的动态载荷；构造请求时统一完成规范化和载荷预算检查。
+	if ctx == nil || a.ValidateState() != nil || !reflect.DeepEqual(a.ActionPending, &intent) {
 		return ErrInvalid
 	}
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)

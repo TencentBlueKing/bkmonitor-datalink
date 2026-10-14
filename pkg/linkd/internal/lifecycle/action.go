@@ -110,7 +110,8 @@ func (p *Processor) finishActionIntent(ctx context.Context, current store.Stored
 		if err := ctx.Err(); err != nil {
 			return store.StoredAlert{}, err
 		}
-		if current.Version.IsZero() || current.Alert.Validate() != nil || current.Alert.BKTenantID != tenant || current.Alert.AlertID != id {
+		// 业务载荷已由仓储读取/写入边界验证；补齐入队只核对状态，不重解析丰富结果。
+		if current.Version.IsZero() || current.Alert.ValidateState() != nil || current.Alert.BKTenantID != tenant || current.Alert.AlertID != id {
 			return store.StoredAlert{}, store.ErrInvalidArgument
 		}
 		intent := current.Alert.ActionPending

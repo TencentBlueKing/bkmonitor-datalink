@@ -200,7 +200,7 @@ action Hook，下一条触发 Event 再判断。多父共享成员时保留其�
 
 Hook 内部角色区分 `state/action`：通用 Kafka 快照与策略索引属于状态输出，现行 KAC 消息属于处置触发。
 动作只在本次 `EventPlan.mutations[].action_ready` 为真，或曾放行告警进入终态时发送；定时解除仅调用状态 Hook。
-可靠 KAC 投影与动作使用独立的持久任务、投影确认 Gate 和后台重试；旧 KAC Hook 不具备该保证。已有可靠动作目标的 Alert 跳过旧 KAC Hook，通用状态输出仍保留。
+KAC 投影默认在 Alert 业务写入后同步尝试，失败进入一次后台补偿；动作仍使用独立持久任务及投影确认 Gate。已有可靠动作目标的 Alert 跳过旧 KAC Hook，通用状态输出仍保留。
 
 ### 2.4 Enricher 与 FinalHook
 
@@ -464,3 +464,9 @@ Signal 已接管后，锁忙、动作积压水位和分批处理返回 Defer，�
 ### 当前容量策略
 
 任务内默认最多接管 256 条 Signal；达到未确认消息/字节软水位后暂停领取，确认后恢复。处理 goroutine 按实际消息懒启动。默认不使用租户动作待办数、Mailbox 深度或 Signal 持久积压作为准入条件。Lifecycle 副本省略时每个可调度 Worker 一个，可通过来源 scheduling.lifecycle.replicas 显式设上限。具体配置与保留的一致性边界见[运行容量与恢复](../design/runtime-capacity-and-recovery.md)。
+
+### KAC 同步写入与补偿边界
+
+Linkd Alert 写入是主流程成功依据。业务版本写入后直接尝试 KAC，失败仅记录并入队一次补偿，
+不能回滚 Alert 或阻塞消息确认；不运行全量水位补扫。投影补偿再失败即终结，相关动作记录
+`projection_failed` 并退出顺序屏障，后续版本继续处理。详细规则见[兼容存储契约](../reference/contracts/kac-alert-projection-v1.md)。

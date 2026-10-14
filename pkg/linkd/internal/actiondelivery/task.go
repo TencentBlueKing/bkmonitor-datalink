@@ -149,9 +149,9 @@ func (t Task) HasWork() bool {
 	return t.Progress.State != "succeeded" && t.Progress.State != "skipped" && t.Progress.State != "failed"
 }
 
-// Unsettled 是否仍阻止同目标较新版本动作先执行。
+// Unsettled 是否仍阻止同目标较新版本动作先执行；投影补偿耗尽的动作明确放弃，不保留屏障。
 func (t Task) Unsettled() bool {
-	return t.Progress.State != "succeeded" && t.Progress.State != "skipped"
+	return t.Progress.State != "succeeded" && t.Progress.State != "skipped" && (t.Progress.State != "failed" || t.Progress.ErrorCode != "projection_failed")
 }
 
 // Validate 限制全部阶段、确认身份、重试计数和载荷预算。
@@ -321,7 +321,7 @@ func (f Failure) Error() string { return "action delivery: " + f.Code }
 
 func validFailureCode(code string) bool {
 	switch code {
-	case "projection_pending", "projection_unavailable", "target_unavailable", "transport_failed", "remote_unauthorized", "identity_conflict", "remote_unavailable", "remote_rejected", "response_too_large", "response_invalid", "visibility_pending", "attempt_interrupted", "superseded_by_terminal":
+	case "projection_pending", "projection_failed", "projection_unavailable", "target_unavailable", "transport_failed", "remote_unauthorized", "identity_conflict", "remote_unavailable", "remote_rejected", "response_too_large", "response_invalid", "visibility_pending", "attempt_interrupted", "superseded_by_terminal":
 		return true
 	}
 	return false

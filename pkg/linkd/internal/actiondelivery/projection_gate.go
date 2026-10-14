@@ -11,6 +11,7 @@ package actiondelivery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -59,6 +60,27 @@ func (g *ProjectionGate) Check(ctx context.Context, task Task) (projection.Recei
 		return projection.Receipt{}, err
 	}
 	if ref.SyncedRevision < task.Request.Revision || before.Status.Terminal() && ref.SyncedRevision < before.Revision {
+		required := task.Request.Revision
+		if before.Status.Terminal() {
+			required = before.Revision
+		}
+		id, err := projection.TaskID(task.Request.TenantID, task.Request.AlertID, task.Request.TargetID, required)
+		if err != nil {
+			return projection.Receipt{}, ErrInvalidReceipt
+		}
+		row, err := g.proofs.Get(call, task.Request.TenantID, id)
+		if errors.Is(err, projection.ErrNotFound) {
+			return projection.Receipt{}, ErrBusy
+		}
+		if err != nil {
+			return projection.Receipt{}, err
+		}
+		if row.Version == "" || row.Task.Validate() != nil || row.Task.ID != id || row.Task.SourceID != task.SourceID || row.Task.SourceVersion != task.SourceVersion {
+			return projection.Receipt{}, ErrInvalidReceipt
+		}
+		if row.Task.Progress.State == "failed" {
+			return projection.Receipt{}, ErrProjectionFailed
+		}
 		return projection.Receipt{}, ErrBusy
 	}
 	id, err := projection.TaskID(task.Request.TenantID, task.Request.AlertID, task.Request.TargetID, ref.SyncedRevision)
@@ -79,17 +101,11 @@ func (g *ProjectionGate) Check(ctx context.Context, task Task) (projection.Recei
 		return projection.Receipt{}, ErrInvalidReceipt
 	}
 	receipt := *proof.Progress.Receipt
-	if ValidateProjection(task.Request, receipt) != nil || proof.Request.Revision == task.Request.Revision && proof.Request.ContentHash != task.Request.ContentHash {
+	if ValidateProjection(task.Request, receipt) != nil {
 		return projection.Receipt{}, ErrInvalidReceipt
 	}
-	// ACK/待输出元数据不进入业务摘要；相同 revision 的证明必须与仓储中的真实业务内容一致。
-	if proof.Request.Revision == before.Revision || receipt.AppliedRevision == before.Revision {
-		current, err := projection.BuildRequest(before, task.Request.TargetID)
-		if err != nil || proof.Request.Revision == before.Revision && proof.Request.ContentHash != current.ContentHash ||
-			receipt.AppliedRevision == before.Revision && receipt.ValidateFor(current) != nil {
-			return projection.Receipt{}, ErrInvalidReceipt
-		}
-	}
+	// 本地一致性使用身份、业务版本及 ACK；不重新编码当前 Alert 或交叉比对各份快照。
+	// 回执与原请求的对应关系已由 ValidateProjection 和持久证明的读取边界核对。
 	after, finalRef, err := g.readAlert(call, task)
 	if err != nil {
 		return projection.Receipt{}, err
@@ -113,7 +129,7 @@ func (g *ProjectionGate) readAlert(ctx context.Context, task Task) (domain.Alert
 	}
 	a := row.Alert
 	ref, exists := a.Projection.Targets[task.Request.TargetID]
-	if row.Version.IsZero() || a.Validate() != nil || a.BKTenantID != task.Request.TenantID || a.AlertID != task.Request.AlertID || a.EventSourceID != task.SourceID ||
+	if row.Version.IsZero() || a.ValidateState() != nil || a.BKTenantID != task.Request.TenantID || a.AlertID != task.Request.AlertID || a.EventSourceID != task.SourceID ||
 		a.Revision < task.Request.Revision || !exists || ref.SourceVersion != task.SourceVersion || ref.RequiredRevision != a.Revision {
 		return domain.Alert{}, domain.ProjectionTargetState{}, ErrInvalidReceipt
 	}

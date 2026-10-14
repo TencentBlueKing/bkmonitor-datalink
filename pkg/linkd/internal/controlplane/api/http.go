@@ -75,8 +75,10 @@ type API struct {
 	MergeRetries        *MergeRetries
 	ProjectionTasks     *ProjectionTasks
 	ActionDeliveries    *ActionDeliveries
-	Controller          Controller
-	Config              config.DispatchConfig
+	// InlineProjection 只接受 Worker Token，经实时读取投影已保存的 Alert。
+	InlineProjection InlineProjection
+	Controller       Controller
+	Config           config.DispatchConfig
 }
 
 // Handler 创建有身份校验的正式接口。
@@ -160,6 +162,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /internal/settings/severity", a.workerSeverity)
 	mux.HandleFunc("POST /internal/heartbeat", a.beat)
 	mux.HandleFunc("GET /internal/releases/{id}/{version}", a.workerRelease)
+	mux.HandleFunc("POST /internal/alerts/{id}/projection", a.projectAlert)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, route := mux.Handler(r)
 		kacRequest := (r.Method == http.MethodPost && route == kacCloseRoute) || (r.Method == http.MethodGet && route == kacGetRoute)

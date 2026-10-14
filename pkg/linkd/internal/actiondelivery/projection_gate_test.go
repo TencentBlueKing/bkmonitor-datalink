@@ -11,6 +11,7 @@ package actiondelivery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -88,6 +89,7 @@ func TestProjectionGateRequiresBoundPersistentProof(t *testing.T) {
 		"proof tenant differs", "proof alert differs", "proof target differs", "proof source differs", "proof release differs",
 		"proof token absent", "proof ID differs", "proof revision differs", "receipt absent", "receipt invisible",
 		"same revision different content", "newer proof different current content", "remote current content differs",
+		"current content differs", "current dynamic result is opaque", "receipt same version different digest",
 		"local revision behind action", "terminal action status differs",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -110,13 +112,14 @@ func TestProjectionGateRequiresBoundPersistentProof(t *testing.T) {
 				proof.Task.Progress.State = "delivered"
 			case "terminal not acknowledged":
 				current = gateCurrent(gateTerminal(domain.AlertStatusClosed), 1)
-				want, expectedProofReads = ErrBusy, 0
+				proof = gateProof(t, gateTerminal(domain.AlertStatusClosed))
+				want, expectedProofReads = ErrBusy, 1
 			case "terminal acknowledged":
 				current = gateCurrent(gateTerminal(domain.AlertStatusClosed), 3)
 				proof = gateProof(t, gateTerminal(domain.AlertStatusClosed))
 			case "no ACK":
 				current = gateCurrent(original, 0)
-				want, expectedProofReads = ErrBusy, 0
+				want, expectedProofReads = ErrBusy, 1
 			case "different tenant":
 				current.Alert.BKTenantID = "other"
 				want, expectedProofReads = ErrInvalidReceipt, 0
@@ -177,20 +180,26 @@ func TestProjectionGateRequiresBoundPersistentProof(t *testing.T) {
 				other := original.Clone()
 				other.Title = "different"
 				proof = gateProof(t, other)
-				// 更高远端版本也不能掩盖同一原请求 revision 的内容冲突。
+				// 已确认较高版本时，只核对原动作所需的身份、版本和状态。
 				proof.Task.Progress.Receipt.AppliedRevision = 2
-				want = ErrInvalidReceipt
 			case "newer proof different current content":
 				current = gateCurrent(actionAlert("tenant", 2), 2)
 				other := actionAlert("tenant", 2)
 				other.Title = "different"
 				proof = gateProof(t, other)
-				want = ErrInvalidReceipt
 			case "remote current content differs":
 				current = gateCurrent(actionAlert("tenant", 2), 1)
 				other := actionAlert("tenant", 2)
 				other.Title = "different"
 				proof.Task.Progress.Receipt = gateProof(t, other).Task.Progress.Receipt
+			case "current content differs":
+				current.Alert.Title = "different"
+			case "current dynamic result is opaque":
+				current.Alert.Enrich = domain.JSONObject{"processors": json.RawMessage(`"opaque stored result"`)}
+			case "receipt same version different digest":
+				other := original.Clone()
+				other.Title = "different"
+				proof = gateProof(t, other)
 				want = ErrInvalidReceipt
 			case "local revision behind action":
 				task = actionTask(t, "tenant", 2)
@@ -218,7 +227,14 @@ func TestProjectionGateRequiresBoundPersistentProof(t *testing.T) {
 				return out, nil
 			}), gateProofReader(func(_ context.Context, tenant, id string) (projection.StoredTask, error) {
 				proofReads++
-				expectedID, _ := projection.TaskID(task.Request.TenantID, task.Request.AlertID, task.Request.TargetID, current.Alert.Projection.Targets["kac"].SyncedRevision)
+				revision := current.Alert.Projection.Targets["kac"].SyncedRevision
+				if revision < task.Request.Revision {
+					revision = task.Request.Revision
+				}
+				if current.Alert.Status.Terminal() {
+					revision = current.Alert.Revision
+				}
+				expectedID, _ := projection.TaskID(task.Request.TenantID, task.Request.AlertID, task.Request.TargetID, revision)
 				if tenant != task.Request.TenantID || id != expectedID {
 					t.Fatal("proof selected by remote version or wrong scope")
 				}

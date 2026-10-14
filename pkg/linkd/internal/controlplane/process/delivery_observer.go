@@ -80,7 +80,7 @@ type projectionTaskObserver struct {
 }
 
 func newProjectionTaskObserver(registry *taskstate.Registry, metrics *telemetry.Runtime, logger *slog.Logger) (*projectionTaskObserver, error) {
-	state, err := newDeliveryTaskObservation(registry, metrics, string(projection.PhaseProduce), string(projection.PhaseDeliver))
+	state, err := newDeliveryTaskObservation(registry, metrics, string(projection.PhaseDeliver))
 	if err != nil {
 		return nil, err
 	}

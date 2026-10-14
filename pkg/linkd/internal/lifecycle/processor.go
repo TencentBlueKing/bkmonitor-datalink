@@ -63,9 +63,17 @@ func (p *Processor) createAlertAfterActiveLookup(
 ) (store.CreateAlertResult, error) {
 	defer p.measureStep(phaseApply, "alert_create")()
 	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
-		return repository.CreateAlertAfterActiveLookup(ctx, alert)
+		result, err := repository.CreateAlertAfterActiveLookup(ctx, alert)
+		if err == nil {
+			result.StoredAlert = p.projectAlert(ctx, result.StoredAlert)
+		}
+		return result, err
 	}
-	return p.repository.CreateAlert(ctx, alert)
+	result, err := p.repository.CreateAlert(ctx, alert)
+	if err == nil {
+		result.StoredAlert = p.projectAlert(ctx, result.StoredAlert)
+	}
+	return result, err
 }
 
 func (p *Processor) compareAndSetAlert(
@@ -86,6 +94,9 @@ func (p *Processor) compareAndSetAlert(
 		updated, err = p.compareAndSetAlertWithoutSnapshot(ctx, current, replacement)
 	}
 	if !errors.Is(err, store.ErrVersionConflict) {
+		if err == nil && updated.Alert.Revision > current.Alert.Revision {
+			updated = p.projectAlert(ctx, updated)
+		}
 		return updated, err
 	}
 	if repairErr := p.repairRecentAlert(ctx, current.Alert.BKTenantID, current.Alert.AlertID); repairErr != nil {

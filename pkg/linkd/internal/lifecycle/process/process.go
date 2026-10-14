@@ -252,6 +252,7 @@ func Run(
 			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
 			lifecycle.WithPhaseObserver(telemetryRuntime.LifecyclePhaseObserver()),
 			lifecycle.WithActionRecorder(actionRecorder),
+			lifecycle.WithAlertProjector(configuredAlertProjector{dispatch: cfg.Dispatch}),
 			lifecycle.WithInitialProjectionTargets(targets),
 			lifecycle.WithPolicySnapshotter(policyruntime.Snapshotter{Catalog: policyCatalog}),
 			lifecycle.WithNewAlertSuppressor(suppressor),

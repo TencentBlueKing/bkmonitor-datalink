@@ -144,3 +144,44 @@ func TestStoredActionReceiptChecksIdentityAndNewReceiptChecksDigest(t *testing.T
 		t.Fatal("cross-tenant stored receipt accepted")
 	}
 }
+
+func TestActionRequestValidatesDynamicPayloadOnlyAtConstruction(t *testing.T) {
+	for _, name := range []string{"invalid JSON", "invalid enrich result"} {
+		t.Run(name, func(t *testing.T) {
+			a := actionAlert("tenant", 1)
+			if name == "invalid JSON" {
+				a.ExtraData = domain.JSONObject{"value": json.RawMessage(`{`)}
+			} else {
+				a.Enrich = domain.JSONObject{"processors": json.RawMessage(`"not an array"`)}
+			}
+			if _, err := BuildRequest(a, "kac", Cause{Type: "source_event", ID: a.LatestEventID}); err == nil {
+				t.Fatal("invalid new payload accepted")
+			}
+		})
+	}
+
+	task := actionTask(t, "tenant", 1)
+	var snapshot map[string]json.RawMessage
+	if err := json.Unmarshal(task.Request.Alert, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	// 已保存的动态结果仅作为 JSON 携带，动作读取不再次解释处理器结果结构。
+	snapshot["enrich"] = json.RawMessage(`{"processors":"opaque stored result"}`)
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Request.Alert = raw
+	if err := task.Validate(); err != nil {
+		t.Fatal("stored dynamic payload revalidated", err)
+	}
+	snapshot["admission"] = json.RawMessage(`{}`)
+	raw, err = json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Request.Alert = raw
+	if task.Validate() == nil {
+		t.Fatal("missing action admission accepted")
+	}
+}

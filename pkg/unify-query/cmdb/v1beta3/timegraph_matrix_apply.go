@@ -16,7 +16,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-func (q *TimeGraph) applyRelationMatrix(ctx context.Context, matrix pl.Matrix, relation cmdb.Relation, targetMatchersByType map[cmdb.Resource]map[string]cmdb.Matcher, targetIDsByTimestamp map[int64]map[cmdb.Resource]map[string]struct{}) (err error) {
+func (q *TimeGraph) applyRelationMatrix(ctx context.Context, matrix pl.Matrix, relation cmdb.Relation, targetMatchersByType map[cmdb.Resource]map[string]cmdb.Matcher, targetIDsByTimestamp map[int64]map[cmdb.Resource]map[string]struct{}) error {
+	return q.applyRelationMatrixWithReverse(ctx, matrix, relation, nil, targetMatchersByType, targetIDsByTimestamp)
+}
+
+func (q *TimeGraph) applyRelationMatrixWithReverse(ctx context.Context, matrix pl.Matrix, relation cmdb.Relation, reverse *cmdb.Relation, targetMatchersByType map[cmdb.Resource]map[string]cmdb.Matcher, targetIDsByTimestamp map[int64]map[cmdb.Resource]map[string]struct{}) (err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-apply-relation-matrix")
 	defer finishTimeGraphStage(ctx, span, "apply-relation", time.Now(), &err)
 	span.Set("matrix-series-count", len(matrix))
@@ -40,7 +44,7 @@ func (q *TimeGraph) applyRelationMatrix(ctx context.Context, matrix pl.Matrix, r
 		for i, point := range series.Points {
 			timestamps[i] = point.T
 		}
-		if err = q.addTimeRelationWithEndpointBuffers(ctx, relation, info, sourceBuffer, targetBuffer, timestamps...); err != nil {
+		if err = q.addTimeRelationWithReverse(ctx, relation, reverse, info, sourceBuffer, targetBuffer, timestamps...); err != nil {
 			return errors.WithMessage(err, "add time relation")
 		}
 

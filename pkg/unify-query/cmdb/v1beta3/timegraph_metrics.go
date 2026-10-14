@@ -73,7 +73,7 @@ func observeTimeGraphBuild(ctx context.Context, span *trace.Span, graph *TimeGra
 	relations, versions := len(graph.topologyEdges), graph.nodeInfoCount
 	if graph.shared != nil {
 		storage = "shared"
-		relations, versions = len(graph.shared.edgeBits), 0
+		relations, versions = graph.shared.edgeCount(), 0
 		for _, infos := range graph.shared.nodeInfos {
 			versions += len(infos)
 		}

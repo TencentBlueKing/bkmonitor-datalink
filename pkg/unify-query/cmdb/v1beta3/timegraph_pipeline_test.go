@@ -191,7 +191,7 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 				row["legacy_graphs"] = len(graph.timeGraph)
 				row["edge_time_entries"] = graph.edgeCount
 				if graph.shared != nil {
-					row["shared_edges"] = len(graph.shared.edgeBits)
+					row["shared_edges"] = graph.shared.edgeCount()
 				}
 				row["after_build_heap"] = pipelineMem().HeapAlloc
 				began = time.Now()

@@ -202,6 +202,16 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	} else {
 		tg = NewTimeGraphWithConfig(config)
 	}
+	if deferred, _ := ctx.Value(timeGraphDeferredCompressionKey{}).(bool); tg.shared != nil && deferred {
+		tg.nodeBuilder.deferCompression = true
+		if len(tg.shared.grid.Timestamps) <= 64 {
+			tg.shared.wordEdges = make(map[sharedCompactEdgeKey]uint64)
+			tg.shared.wordPairs = make(map[timeGraphEdgeKey]uint64)
+		} else {
+			tg.shared.compactEdges = make(map[sharedCompactEdgeKey]timeBitmap)
+		}
+		tg.shared.relationIDs = make(map[timeGraphEdgeRelation]uint64)
+	}
 	storageSpan.Set("shared", tg.shared != nil)
 	storageSpan.End(&err)
 	// The caller owns successful graphs; failed builds must release their partial storage.
@@ -613,11 +623,17 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 // queryAndApply keeps oversized-range recovery bounded to one shard Matrix at a
 // time. Only the explicitly enabled YOLO path may split, and only for exact
 // time-grid requests rejected by the VM response-size guard.
-func (loader *timeGraphMatrixLoader) queryAndApply(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error) error {
-	return loader.queryAndApplyShard(ctx, queryTs, apply, 0)
+type timeGraphShardPlan struct {
+	successfulPoints    int64
+	singlePointRequired bool
 }
 
-func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error, depth int) (err error) {
+func (loader *timeGraphMatrixLoader) queryAndApply(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error) error {
+	plan := timeGraphShardPlan{}
+	return loader.queryAndApplyShard(ctx, queryTs, apply, 0, &plan)
+}
+
+func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error, depth int, plan *timeGraphShardPlan) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -634,10 +650,33 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 	span.Set("shard-step", queryTs.Step)
 	defer span.End(&err)
 
+	_, _, _, pointCount, exact := timeGraphQueryRange(queryTs)
+	if exact && plan.successfulPoints > 0 && pointCount > plan.successfulPoints {
+		// Keep each chunk on the original grid. Successful width is only a
+		// request-local scheduling hint; every later chunk may still split.
+		remaining := queryTs
+		for {
+			_, _, _, count, ok := timeGraphQueryRange(remaining)
+			if !ok || count <= plan.successfulPoints {
+				return loader.queryAndApplyShard(shardCtx, remaining, apply, depth+1, plan)
+			}
+			left, right, ok := splitTimeGraphQueryRangeAt(remaining, plan.successfulPoints)
+			if !ok {
+				return loader.queryAndApplyShard(shardCtx, remaining, apply, depth+1, plan)
+			}
+			if err = loader.queryAndApplyShard(shardCtx, left, apply, depth+1, plan); err != nil {
+				return err
+			}
+			remaining = right
+		}
+	}
 	matrix, _, queryErr := loader.query(shardCtx, queryTs)
 	if queryErr == nil {
 		if err = apply(shardCtx, matrix); err != nil {
 			return err
+		}
+		if exact && (pointCount > 1 || plan.singlePointRequired) && pointCount > plan.successfulPoints {
+			plan.successfulPoints = pointCount
 		}
 		if depth > 0 {
 			loader.lastMatrix = timeGraphMatrixSlot{}
@@ -646,6 +685,9 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 	}
 	if !loader.topology || !yoloMode || !metadata.IsExactTimeGrid(shardCtx) || !errors.Is(queryErr, metadata.ErrBackendResponseTooLarge) {
 		return queryErr
+	}
+	if exact && pointCount == 2 {
+		plan.singlePointRequired = true
 	}
 	left, right, ok := splitTimeGraphQueryRange(queryTs)
 	if !ok {
@@ -656,41 +698,53 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 	span.Set("left-end", left.End)
 	span.Set("right-start", right.Start)
 	span.Set("right-end", right.End)
-	if err = loader.queryAndApplyShard(shardCtx, left, apply, depth+1); err != nil {
+	if err = loader.queryAndApplyShard(shardCtx, left, apply, depth+1, plan); err != nil {
 		return err
 	}
-	if err = loader.queryAndApplyShard(shardCtx, right, apply, depth+1); err != nil {
+	if err = loader.queryAndApplyShard(shardCtx, right, apply, depth+1, plan); err != nil {
 		return err
 	}
 	return nil
 }
 
-func splitTimeGraphQueryRange(query *structured.QueryTs) (left, right *structured.QueryTs, ok bool) {
+func timeGraphQueryRange(query *structured.QueryTs) (startMs, endMs, stepMs, pointCount int64, ok bool) {
 	if query == nil || query.Instant || query.Start == "" || query.End == "" || query.Step == "" {
-		return nil, nil, false
+		return 0, 0, 0, 0, false
 	}
 	startMs, err := parseTimestamp(query.Start)
 	if err != nil {
-		return nil, nil, false
+		return 0, 0, 0, 0, false
 	}
-	endMs, err := parseTimestamp(query.End)
-	if err != nil || endMs <= startMs {
-		return nil, nil, false
+	endMs, err = parseTimestamp(query.End)
+	if err != nil || endMs < startMs {
+		return 0, 0, 0, 0, false
 	}
 	step, err := time.ParseDuration(query.Step)
 	if err != nil || step < time.Second || step%time.Second != 0 || step.Milliseconds() <= 0 {
-		return nil, nil, false
+		return 0, 0, 0, 0, false
 	}
 	distance := endMs - startMs
-	stepMs := step.Milliseconds()
-	if distance%stepMs != 0 {
+	stepMs = step.Milliseconds()
+	if distance%stepMs != 0 || startMs%1000 != 0 || endMs%1000 != 0 {
+		return 0, 0, 0, 0, false
+	}
+	pointCount = distance/stepMs + 1
+	return startMs, endMs, stepMs, pointCount, pointCount >= 1
+}
+
+func splitTimeGraphQueryRange(query *structured.QueryTs) (left, right *structured.QueryTs, ok bool) {
+	_, _, _, points, ok := timeGraphQueryRange(query)
+	if !ok {
 		return nil, nil, false
 	}
-	pointCount := distance/stepMs + 1
-	if pointCount < 2 || startMs%1000 != 0 || endMs%1000 != 0 {
+	return splitTimeGraphQueryRangeAt(query, points/2)
+}
+
+func splitTimeGraphQueryRangeAt(query *structured.QueryTs, leftCount int64) (left, right *structured.QueryTs, ok bool) {
+	startMs, _, stepMs, pointCount, ok := timeGraphQueryRange(query)
+	if !ok || leftCount < 1 || leftCount >= pointCount {
 		return nil, nil, false
 	}
-	leftCount := pointCount / 2
 	leftEnd := startMs + (leftCount-1)*stepMs
 	rightStart := leftEnd + stepMs
 	left, right = new(structured.QueryTs), new(structured.QueryTs)
@@ -777,7 +831,13 @@ func (loader *timeGraphMatrixLoader) addTargetInfo(ctx context.Context, spaceUID
 	return queryCount, nil
 }
 
-func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, matrix pl.Matrix, err error) (pointCount int, validationErr error) {
+func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, matrix pl.Matrix, err error) (int, error) {
+	return loader.validateMatrixWithGrid(queryCtx, matrix, err, true)
+}
+
+// Exact reverse-pair application uses the same already-validated immutable
+// Matrix. Its logical cost and cancellation are still charged independently.
+func (loader *timeGraphMatrixLoader) validateMatrixWithGrid(queryCtx context.Context, matrix pl.Matrix, err error, checkGrid bool) (pointCount int, validationErr error) {
 	queryCtx, span := trace.NewSpan(queryCtx, "timegraph-validate-matrix")
 	defer finishTimeGraphStage(queryCtx, span, "matrix-validation", time.Now(), &validationErr)
 	defer func() {
@@ -786,7 +846,7 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 		span.Set("matrix-cumulative-point-count", loader.pointCount)
 	}()
 	tg := loader.graph
-	start, end, queryStep := loader.start, loader.end, loader.step
+	startMillis, endMillis, stepMillis := loader.start.UnixMilli(), loader.end.UnixMilli(), loader.step.Milliseconds()
 	if loader.topology && !yoloMode && metadata.BackendResponseLimitExceeded(queryCtx) {
 		err = &ResultLimitError{Reason: "max_response_bytes", Count: int(metadata.BackendResponseLimit(queryCtx)) + 1, Limit: int(metadata.BackendResponseLimit(queryCtx))}
 	}
@@ -809,9 +869,9 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 				err = &ResultLimitError{Reason: "max_topology_matrix_points", Count: loader.pointCount, Limit: limit}
 			}
 		}
-		if err == nil && metadata.IsExactTimeGrid(queryCtx) {
+		if err == nil && checkGrid && metadata.IsExactTimeGrid(queryCtx) {
 			for _, point := range series.Points {
-				if point.T < start.UnixMilli() || point.T > end.UnixMilli() || (point.T-start.UnixMilli())%queryStep.Milliseconds() != 0 {
+				if point.T < startMillis || point.T > endMillis || (point.T-startMillis)%stepMillis != 0 {
 					err = errors.New("backend sample timestamp does not match topology time grid")
 					break
 				}

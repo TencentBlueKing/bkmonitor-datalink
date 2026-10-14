@@ -338,6 +338,10 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 
 // Builders store owned attributes before these endpoint buffers can be reused.
 func (q *TimeGraph) addTimeRelationWithEndpointBuffers(ctx context.Context, relation cmdb.Relation, info, sourceBuffer, targetBuffer cmdb.Matcher, timestamps ...int64) error {
+	return q.addTimeRelationWithReverse(ctx, relation, nil, info, sourceBuffer, targetBuffer, timestamps...)
+}
+
+func (q *TimeGraph) addTimeRelationWithReverse(ctx context.Context, relation cmdb.Relation, reverse *cmdb.Relation, info, sourceBuffer, targetBuffer cmdb.Matcher, timestamps ...int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -387,7 +391,17 @@ func (q *TimeGraph) addTimeRelationWithEndpointBuffers(ctx context.Context, rela
 	}
 
 	if q.shared != nil {
-		return q.addSharedRelation(ctx, relation, direction, sourceNode, targetNode, sourceInfo, targetInfo, timestamps)
+		if reverse == nil {
+			return q.addSharedRelation(ctx, relation, direction, sourceNode, targetNode, sourceInfo, targetInfo, timestamps)
+		}
+		active, err := q.shared.timeBits(timestamps)
+		if err != nil {
+			return err
+		}
+		if err := q.addSharedRelationWithBits(ctx, relation, direction, sourceNode, targetNode, sourceInfo, targetInfo, active, true); err != nil {
+			return err
+		}
+		return q.addSharedRelationWithBits(ctx, *reverse, reverse.Direction, targetNode, sourceNode, targetInfo, sourceInfo, active, false)
 	}
 
 	// 批量创建缺失的时间图，减少重复的 map 查找

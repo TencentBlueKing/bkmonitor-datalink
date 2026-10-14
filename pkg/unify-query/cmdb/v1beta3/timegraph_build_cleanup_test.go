@@ -136,6 +136,10 @@ func TestBuildTimeGraphCleansFailedStorage(t *testing.T) {
 						require.Empty(t, graph.shared.nodeBits)
 						require.Empty(t, graph.shared.nodeInfos)
 						require.Empty(t, graph.shared.edgeBits)
+						require.Empty(t, graph.shared.compactEdges)
+						require.Empty(t, graph.shared.wordEdges)
+						require.Empty(t, graph.shared.relationIDs)
+						require.Empty(t, graph.shared.relations)
 					}
 				} else {
 					require.Nil(t, graph)

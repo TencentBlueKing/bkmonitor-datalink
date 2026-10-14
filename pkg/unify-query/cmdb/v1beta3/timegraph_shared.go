@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math/bits"
 	"slices"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -21,6 +22,9 @@ type sharedTimeGraph struct {
 	grid                 TopologyGrid
 	fullGridBits         timeBitmap
 	timestampIndex       map[int64]int
+	uniformStart         int64
+	uniformEnd           int64
+	uniformStep          int64
 	nodeBits             map[uint64]timeBitmap
 	relationNodeBits     map[uint64]timeBitmap
 	sourceInfoBits       map[uint64]timeBitmap
@@ -28,6 +32,46 @@ type sharedTimeGraph struct {
 	nodeInfos            map[uint64][]sharedNodeInfo
 	edgeBits             map[timeGraphTopologyEdgeKey]timeBitmap
 	edgePairBits         map[timeGraphEdgeKey]timeBitmap
+	compactEdges         map[sharedCompactEdgeKey]timeBitmap
+	wordEdges            map[sharedCompactEdgeKey]uint64
+	wordPairs            map[timeGraphEdgeKey]uint64
+	relationIDs          map[timeGraphEdgeRelation]uint64
+	relations            []timeGraphEdgeRelation
+	relationCache        [2]sharedRelationSlot
+}
+
+type (
+	sharedCompactEdgeKey struct{ source, target, relation uint64 }
+	sharedRelationSlot   struct {
+		identity timeGraphEdgeRelation
+		id       uint64
+	}
+)
+
+func (g *sharedTimeGraph) edgeCount() int {
+	if g.wordEdges != nil {
+		return len(g.wordEdges)
+	}
+	if g.compactEdges != nil {
+		return len(g.compactEdges)
+	}
+	return len(g.edgeBits)
+}
+
+func (g *sharedTimeGraph) compactRelationID(identity timeGraphEdgeRelation) uint64 {
+	for _, slot := range g.relationCache {
+		if slot.id != 0 && slot.identity == identity {
+			return slot.id
+		}
+	}
+	id, ok := g.relationIDs[identity]
+	if !ok {
+		g.relations = append(g.relations, identity)
+		id = uint64(len(g.relations))
+		g.relationIDs[identity] = id
+	}
+	g.relationCache[id&1] = sharedRelationSlot{identity, id}
+	return id
 }
 
 type sharedNodeInfo struct {
@@ -54,6 +98,22 @@ func newSharedTimeGraph(cfg *TimeGraphConfig, grid TopologyGrid) (*TimeGraph, er
 		q.shared.timestampIndex[timestamp] = index
 		q.shared.fullGridBits.set(index)
 	}
+	if len(grid.Timestamps) > 1 {
+		first, last := grid.Timestamps[0], grid.Timestamps[len(grid.Timestamps)-1]
+		step, span := grid.Timestamps[1]-first, last-first
+		if step > 0 && span >= 0 && int64(len(grid.Timestamps)-1) <= span/step {
+			uniform := true
+			for index, timestamp := range grid.Timestamps {
+				if timestamp != first+int64(index)*step {
+					uniform = false
+					break
+				}
+			}
+			if uniform {
+				q.shared.uniformStart, q.shared.uniformEnd, q.shared.uniformStep = first, last, step
+			}
+		}
+	}
 	return q, nil
 }
 
@@ -65,6 +125,12 @@ func (g *sharedTimeGraph) clear() {
 	clear(g.nodeInfos)
 	clear(g.edgeBits)
 	clear(g.edgePairBits)
+	clear(g.compactEdges)
+	clear(g.wordEdges)
+	clear(g.wordPairs)
+	clear(g.relationIDs)
+	g.relations = nil
+	g.relationCache = [2]sharedRelationSlot{}
 }
 
 func (q *TimeGraph) timepointCount() int {
@@ -84,6 +150,20 @@ func (g *sharedTimeGraph) timeBits(timestamps []int64) (timeBitmap, error) {
 		return g.fullGridBits, nil
 	}
 	var active timeBitmap
+	if g.uniformStep > 0 {
+		for _, timestamp := range timestamps {
+			if timestamp < g.uniformStart || timestamp > g.uniformEnd {
+				return timeBitmap{}, fmt.Errorf("sample timestamp %d does not match topology time grid", timestamp)
+			}
+			offset := timestamp - g.uniformStart
+			index := offset / g.uniformStep
+			if offset-index*g.uniformStep != 0 {
+				return timeBitmap{}, fmt.Errorf("sample timestamp %d does not match topology time grid", timestamp)
+			}
+			active.set(int(index))
+		}
+		return active, nil
+	}
 	for _, timestamp := range timestamps {
 		index, ok := g.timestampIndex[timestamp]
 		if !ok {
@@ -164,36 +244,70 @@ func (q *TimeGraph) addSharedRelation(ctx context.Context, relation cmdb.Relatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	g := q.shared
-	active, err := g.timeBits(timestamps)
+	active, err := q.shared.timeBits(timestamps)
 	if err != nil {
 		return err
 	}
+	return q.addSharedRelationWithBits(ctx, relation, direction, source, target, sourceInfo, targetInfo, active, true)
+}
+
+func (q *TimeGraph) addSharedRelationWithBits(ctx context.Context, relation cmdb.Relation, direction string, source, target uint64, sourceInfo, targetInfo cmdb.Matcher, active timeBitmap, updateNodes bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	g := q.shared
 	if active.empty() {
 		return nil
 	}
 	pair := timeGraphEdgeKey{source: source, target: target}
 	// Storage limits count full relation identities; occurrence metrics and
 	// input-point, memory, time and traversal limits remain independent.
-	newEdges := active.subtract(g.edgePairBits[pair]).count()
+	var newEdges int
+	if g.wordPairs != nil {
+		newEdges = bits.OnesCount64(active.first &^ g.wordPairs[pair])
+	} else {
+		newEdges = active.subtract(g.edgePairBits[pair]).count()
+	}
 	key := timeGraphTopologyEdgeKey{source: source, target: target, relation: timeGraphEdgeRelation{
 		relationType: relation.RelationType, metricName: relation.MetricName,
 		category: relation.Category, direction: direction,
 	}}
-	if _, exists := g.edgeBits[key]; !exists && !active.empty() && q.maxEdges > 0 && len(g.edgeBits) >= q.maxEdges {
-		return &ResultLimitError{Reason: "max_graph_edges", Count: len(g.edgeBits) + 1, Limit: q.maxEdges}
+	var compact sharedCompactEdgeKey
+	_, exists := g.edgeBits[key]
+	if g.wordEdges != nil || g.compactEdges != nil {
+		compact = sharedCompactEdgeKey{source, target, g.compactRelationID(key.relation)}
+		if g.wordEdges != nil {
+			_, exists = g.wordEdges[compact]
+		} else {
+			_, exists = g.compactEdges[compact]
+		}
 	}
-	if err := q.setSharedNodeInfo(source, sourceInfo, active); err != nil {
-		return err
+	if !exists && q.maxEdges > 0 && g.edgeCount() >= q.maxEdges {
+		return &ResultLimitError{Reason: "max_graph_edges", Count: g.edgeCount() + 1, Limit: q.maxEdges}
 	}
-	if err := q.setSharedNodeInfo(target, targetInfo, active); err != nil {
-		return err
+	if updateNodes {
+		if err := q.setSharedNodeInfo(source, sourceInfo, active); err != nil {
+			return err
+		}
+		if err := q.setSharedNodeInfo(target, targetInfo, active); err != nil {
+			return err
+		}
+		g.relationNodeBits[source] = g.relationNodeBits[source].union(active)
+		g.relationNodeBits[target] = g.relationNodeBits[target].union(active)
 	}
-
-	g.relationNodeBits[source] = g.relationNodeBits[source].union(active)
-	g.relationNodeBits[target] = g.relationNodeBits[target].union(active)
-	g.edgeBits[key] = g.edgeBits[key].union(active)
-	g.edgePairBits[pair] = g.edgePairBits[pair].union(active)
+	switch {
+	case g.wordEdges != nil:
+		g.wordEdges[compact] |= active.first
+	case g.compactEdges != nil:
+		g.compactEdges[compact] = g.compactEdges[compact].union(active)
+	default:
+		g.edgeBits[key] = g.edgeBits[key].union(active)
+	}
+	if g.wordPairs != nil {
+		g.wordPairs[pair] |= active.first
+	} else {
+		g.edgePairBits[pair] = g.edgePairBits[pair].union(active)
+	}
 	q.edgeCount += newEdges
 	return nil
 }
@@ -202,22 +316,46 @@ func (g *sharedTimeGraph) state(ctx context.Context, grid TopologyGrid, query Sh
 	if !slices.Equal(grid.Timestamps, g.grid.Timestamps) {
 		return nil, nil, fmt.Errorf("topology query grid does not match shared graph grid")
 	}
-	edges := make([]sharedTopologyEdgeState, 0, len(g.edgeBits))
-	for key, active := range g.edgeBits {
+	edges := make([]sharedTopologyEdgeState, 0, g.edgeCount())
+	appendEdge := func(key timeGraphTopologyEdgeKey, active timeBitmap) error {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+			return err
 		}
 		if len(query.AllowedCategories) > 0 && !slices.Contains(query.AllowedCategories, RelationCategory(key.relation.category)) {
-			continue
+			return nil
 		}
 		if len(query.AllowedRelationTypes) > 0 && !slices.Contains(query.AllowedRelationTypes, key.relation.relationType) {
-			continue
+			return nil
 		}
 		if key.relation.category == string(RelationCategoryDynamic) && query.Direction != "" && query.Direction != DirectionBoth && key.relation.direction != "" && key.relation.direction != string(query.Direction) {
-			continue
+			return nil
 		}
 		edges = append(edges, sharedTopologyEdgeState{key: key, activeBits: active})
+		return nil
 	}
+	switch {
+	case g.wordEdges != nil:
+		for key, active := range g.wordEdges {
+			full := timeGraphTopologyEdgeKey{source: key.source, target: key.target, relation: g.relations[key.relation-1]}
+			if err := appendEdge(full, timeBitmap{first: active}); err != nil {
+				return nil, nil, err
+			}
+		}
+	case g.compactEdges != nil:
+		for key, active := range g.compactEdges {
+			full := timeGraphTopologyEdgeKey{source: key.source, target: key.target, relation: g.relations[key.relation-1]}
+			if err := appendEdge(full, active); err != nil {
+				return nil, nil, err
+			}
+		}
+	default:
+		for key, active := range g.edgeBits {
+			if err := appendEdge(key, active); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
 	return g.nodeBits, edges, nil
 }
 

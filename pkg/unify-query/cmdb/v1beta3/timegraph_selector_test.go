@@ -175,16 +175,19 @@ func TestTopologySelectorRangeProofPreservesCrossScopeBoundaries(t *testing.T) {
 				model.timeGraphVMQuery = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
 					if planned && ts.QueryList[0].FieldName == "np" && hops >= 4 {
 						queriedNP = true
-						cluster := ""
-						for _, field := range ts.QueryList[0].Conditions.FieldList {
-							if field.DimensionName == "cluster" && field.Operator == structured.ConditionEqual {
-								cluster = field.Value[0]
+						graph := NewTimeGraphWithConfig(model.timeGraphConfig("space"))
+						allowed := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+						filters := graph.topologyRangeFilters("container", cmdb.Matcher{"cluster": "alpha", "namespace": "one", "container_id": "root"}, topologyRelationComponent("container", allowed), allowed, hops)
+						for _, relation := range allowed {
+							if relation.MetricName != "np" {
+								continue
 							}
-						}
-						if hops == 4 {
-							require.Equal(t, "alpha", cluster)
-						} else {
-							require.Empty(t, cluster, "the System bridge makes cross-cluster Pods reachable at H5")
+							cluster := filters[timeGraphRelationKeyFor(relation)]["cluster"]
+							if hops == 4 {
+								require.Equal(t, "alpha", cluster)
+							} else {
+								require.Empty(t, cluster, "range narrowing must not exclude cross-cluster Pods at H5")
+							}
 						}
 					}
 					return filteredTimeGraphMatrix(t, data[ts.QueryList[0].FieldName], ts.QueryList[0].Conditions), nil
@@ -210,6 +213,9 @@ func TestTopologySelectorRangeProofPreservesCrossScopeBoundaries(t *testing.T) {
 }
 
 func TestTopologySelectorRejectsUnprovedClosedNeighborhood(t *testing.T) {
+	oldYolo := yoloMode
+	yoloMode = true
+	t.Cleanup(func() { yoloMode = oldYolo })
 	old := SharedTopologyPlanCandidates
 	t.Cleanup(func() { SharedTopologyPlanCandidates = old })
 	for _, kind := range []string{"neighbor-edge", "self-edge", "attribute-outside-star", "one-way"} {
@@ -231,7 +237,7 @@ func TestTopologySelectorRejectsUnprovedClosedNeighborhood(t *testing.T) {
 			case "one-way":
 				provider.schemas[0].IsDirectional = true
 			}
-			for _, hops := range []int{1, 2} {
+			for _, hops := range []int{1, 2, 10} {
 				var baseline []string
 				for _, planned := range []bool{false, true} {
 					SharedTopologyPlanCandidates = planned
@@ -273,40 +279,45 @@ func TestTopologySelectorDoesNotRestoreDisconnectedAttributeRoutes(t *testing.T)
 }
 
 func TestTopologySelectorPartialFirstStageRetainsQualityAndChecksWideRoutes(t *testing.T) {
-	for _, missing := range []bool{false, true} {
-		t.Run(fmt.Sprint(missing), func(t *testing.T) {
-			model := &Model{schemaProvider: selectorProvider()}
-			preparations, fetches := map[string]int{}, map[string]int{}
-			model.timeGraphQueryReference = func(ctx context.Context, ts *structured.QueryTs) (metadata.QueryReference, error) {
-				metric := ts.QueryList[0].FieldName
-				preparations[metric]++
-				if missing && metric == "bc" {
-					return metadata.QueryReference{}, nil
+	oldYolo := yoloMode
+	yoloMode = true
+	t.Cleanup(func() { yoloMode = oldYolo })
+	for _, hops := range []int{2, 10} {
+		for _, missing := range []bool{false, true} {
+			t.Run(fmt.Sprintf("hops=%d/missing=%v", hops, missing), func(t *testing.T) {
+				model := &Model{schemaProvider: selectorProvider()}
+				preparations, fetches := map[string]int{}, map[string]int{}
+				model.timeGraphQueryReference = func(ctx context.Context, ts *structured.QueryTs) (metadata.QueryReference, error) {
+					metric := ts.QueryList[0].FieldName
+					preparations[metric]++
+					if missing && metric == "bc" {
+						return metadata.QueryReference{}, nil
+					}
+					return selectorQueryReference(ctx, ts)
 				}
-				return selectorQueryReference(ctx, ts)
-			}
-			model.timeGraphVMQueryWithPartial = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
-				metric := ts.QueryList[0].FieldName
-				fetches[metric]++
-				if metric == "ab" {
-					return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), true, nil
+				model.timeGraphVMQueryWithPartial = func(_ context.Context, ts *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+					metric := ts.QueryList[0].FieldName
+					fetches[metric]++
+					if metric == "ab" {
+						return contractMatrix(map[string]string{"a_id": "root", "b_id": "b0"}, 1700000000000), true, nil
+					}
+					return contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000), false, nil
 				}
-				return contractMatrix(map[string]string{"b_id": "b0", "c_id": "c0"}, 1700000000000), false, nil
-			}
-			result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: 2})
-			if missing {
-				require.ErrorContains(t, err, "required relation has no physical query route: bc")
-				require.Empty(t, fetches, "validate the planned second stage even before the first stage can be empty")
-				return
-			}
-			require.NoError(t, err)
-			require.Positive(t, preparations["bc"])
-			require.Len(t, result.Snapshots[0].Nodes, 3)
-			require.Len(t, result.Snapshots[0].Edges, 4)
-			require.True(t, result.Snapshots[0].Partial)
-			require.Equal(t, "backend_partial", result.Snapshots[0].PartialReason)
-			require.Equal(t, map[string]int{"ab": 2, "bc": 1}, fetches, "continue the same loader without repeating source preparation or root probing")
-		})
+				result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", SourceInfo: cmdb.Matcher{"a_id": "root"}, Timestamp: 1700000000, MaxHops: hops})
+				if missing {
+					require.ErrorContains(t, err, "required relation has no physical query route: bc")
+					require.Empty(t, fetches, "validate the planned second stage even before the first stage can be empty")
+					return
+				}
+				require.NoError(t, err)
+				require.Positive(t, preparations["bc"])
+				require.Len(t, result.Snapshots[0].Nodes, 3)
+				require.Len(t, result.Snapshots[0].Edges, 4)
+				require.True(t, result.Snapshots[0].Partial)
+				require.Equal(t, "backend_partial", result.Snapshots[0].PartialReason)
+				require.Equal(t, map[string]int{"ab": 2, "bc": 1}, fetches, "continue the same loader without repeating source preparation or root probing")
+			})
+		}
 	}
 }
 

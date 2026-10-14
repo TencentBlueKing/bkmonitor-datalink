@@ -95,6 +95,24 @@ func (loader *timeGraphMatrixLoader) reserveRelationApplication(ctx context.Cont
 
 func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {
 	apply := func(ctx context.Context, matrix pl.Matrix) error {
+		if !timeGraphTargetInfoShow(ctx) && loader.graph.topologyReversePair(group.relations) {
+			loader.reusedQueryCount++
+			if _, err := loader.validateMatrixWithGrid(ctx, matrix, nil, false); err != nil {
+				return err
+			}
+			if err := loader.reserveRelationApplication(ctx, matrix); err != nil {
+				return err
+			}
+			if err := loader.graph.applyRelationMatrixWithReverse(ctx, matrix, group.relations[0], &group.relations[1], nil, nil); err != nil {
+				return err
+			}
+			if collect != nil {
+				for _, relation := range group.relations {
+					collect(relation, matrix)
+				}
+			}
+			return nil
+		}
 		for i, relation := range group.relations {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -152,6 +170,23 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		return queries, err
 	}
 	span.Set("wide-physical-group-count", len(wideGroups))
+
+	if mode == "frontier" {
+		complete, fetchErr := loader.loadDeepTopologyFrontier(ctx, space, source, identity, relations, plan.hops, reorder, &queries)
+		if fetchErr != nil {
+			return queries, fetchErr
+		}
+		if complete {
+			return queries, nil
+		}
+		span.Set("fetch-mode", "bulk-after-frontier")
+		for _, group := range wideGroups {
+			if err = loader.fetchTopologyGroup(group, space, &queries, nil); err != nil {
+				return queries, err
+			}
+		}
+		return queries, nil
+	}
 
 	if mode == "star" {
 		inputs := []topologyFetchInput{}

@@ -274,6 +274,10 @@ func TestSharedEmptyEdgesAndVersionBudgetRelease(t *testing.T) {
 		require.NoError(t, g.AddTimeRelationWithRelation(context.Background(), sharedGraphTestRelation(kind), cmdb.Matcher{"from_id": "a", "to_id": "b"}))
 	}
 	require.Empty(t, g.shared.edgeBits)
+	require.Empty(t, g.shared.compactEdges)
+	require.Empty(t, g.shared.wordEdges)
+	require.Empty(t, g.shared.relationIDs)
+	require.Empty(t, g.shared.relations)
 	require.NoError(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a", "version": "v1"}, times...))
 	require.NoError(t, g.AddTimeNode(context.Background(), "entity", cmdb.Matcher{"id": "a", "version": "v2"}, times[0]))
 	require.Equal(t, 2, g.shared.nodeInfoVersionCount)

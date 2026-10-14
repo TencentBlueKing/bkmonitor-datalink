@@ -139,7 +139,7 @@ func snapshotPlanMask(ctx context.Context, mask cmdb.SharedTopologyTimeMask, fra
 	return nil
 }
 
-func marshalTopologySnapshotPlan(ctx context.Context, item cmdb.SharedTopologyResponseData, plan *cmdb.SharedTopologySnapshotPlan) ([][]byte, int, error) {
+func marshalTopologySnapshotPlanIndexed(ctx context.Context, item cmdb.SharedTopologyResponseData, plan *cmdb.SharedTopologySnapshotPlan) ([][]byte, int, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
@@ -148,32 +148,11 @@ func marshalTopologySnapshotPlan(ctx context.Context, item cmdb.SharedTopologyRe
 	}
 	b := snapshotPlanBuilder{ctx: ctx, cache: make(map[uint64][]snapshotPlanBlock)}
 	frames := len(plan.Timestamps)
-	nodes := make([][]int, frames)
-	edges := make([][]int, frames)
-	nodeCounts, edgeCounts := make([]int, frames), make([]int, frames)
-	for _, node := range plan.Nodes {
-		if err := ctx.Err(); err != nil {
-			return nil, 0, err
-		}
-		if e := snapshotPlanMask(ctx, node.Mask, frames, func(i int) { nodeCounts[i]++ }); e != nil {
-			return nil, 0, e
-		}
+	nodes, edges, err := snapshotPlanFrameRows(ctx, plan)
+	if err != nil {
+		return nil, 0, err
 	}
-	for _, edge := range plan.Edges {
-		if err := ctx.Err(); err != nil {
-			return nil, 0, err
-		}
-		if e := snapshotPlanMask(ctx, edge.Mask, frames, func(i int) { edgeCounts[i]++ }); e != nil {
-			return nil, 0, e
-		}
-	}
-	for i := range nodes {
-		if err := ctx.Err(); err != nil {
-			return nil, 0, err
-		}
-		nodes[i] = make([]int, 0, nodeCounts[i])
-		edges[i] = make([]int, 0, edgeCounts[i])
-	}
+
 	b.rows = make([]snapshotPlanRow, 0, 2*(len(plan.Nodes)+len(plan.Edges))+100)
 	b.pending = make([]int, 0, 512)
 	b.key = make([]byte, 0, 2048)
@@ -308,4 +287,35 @@ func marshalTopologySnapshotPlan(ctx context.Context, item cmdb.SharedTopologyRe
 		return nil, 0, err
 	}
 	return b.parts, b.size, nil
+}
+
+func snapshotPlanFrameRows(ctx context.Context, plan *cmdb.SharedTopologySnapshotPlan) ([][]int, [][]int, error) {
+	frames := len(plan.Timestamps)
+	nodes := make([][]int, frames)
+	edges := make([][]int, frames)
+	nodeCounts, edgeCounts := make([]int, frames), make([]int, frames)
+	for _, node := range plan.Nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if e := snapshotPlanMask(ctx, node.Mask, frames, func(i int) { nodeCounts[i]++ }); e != nil {
+			return nil, nil, e
+		}
+	}
+	for _, edge := range plan.Edges {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if e := snapshotPlanMask(ctx, edge.Mask, frames, func(i int) { edgeCounts[i]++ }); e != nil {
+			return nil, nil, e
+		}
+	}
+	for i := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		nodes[i] = make([]int, 0, nodeCounts[i])
+		edges[i] = make([]int, 0, edgeCounts[i])
+	}
+	return nodes, edges, nil
 }

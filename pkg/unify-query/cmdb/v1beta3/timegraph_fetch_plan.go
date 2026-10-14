@@ -151,6 +151,9 @@ func (q *TimeGraph) topologyFetchMode(source cmdb.Resource, identity cmdb.Matche
 		}
 		return "bipartite", component
 	}
+	if yoloMode {
+		return "frontier", component
+	}
 	return "bulk", component
 }
 

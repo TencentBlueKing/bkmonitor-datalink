@@ -228,6 +228,8 @@ func newNodeBuilder(stringDict *StringDict, cfg *TimeGraphConfig) *NodeBuilder {
 // NodeBuilder 节点构建器
 // 负责创建和管理唯一的节点ID，将复杂的资源匹配器压缩为 uint64 ID
 // 使用字符串字典压缩节点信息中的字符串，进一步节省内存
+type timeGraphDeferredCompressionKey struct{}
+
 type NodeBuilder struct {
 	lock sync.RWMutex // 读写锁，保证并发安全
 
@@ -243,6 +245,10 @@ type NodeBuilder struct {
 	// 结构: nodeID -> (keyID -> valueID)
 	// keyID 和 valueID 都是通过 StringDict 压缩得到的
 	compressedInfo map[uint64]map[uint64]uint64
+
+	// Private owned-snapshot queries do not read compressed attributes. The
+	// default public builder keeps eager dictionary population.
+	deferCompression bool
 
 	// 字符串字典引用，支持使用TimeGraph的局部字典
 	stringDict *StringDict
@@ -419,9 +425,16 @@ func appendLengthPrefixed(buf []byte, value string) []byte {
 //
 // 返回: 压缩后的信息映射表（keyID -> valueID），如果节点不存在则返回 nil
 func (n *NodeBuilder) GetCompressedInfo(nodeID uint64) map[uint64]uint64 {
-	n.lock.RLock()
-	defer n.lock.RUnlock()
-
+	if n.deferCompression {
+		n.lock.Lock()
+		defer n.lock.Unlock()
+		if _, cached := n.compressedInfo[nodeID]; !cached && n.info[nodeID] != nil {
+			n.compressedInfo[nodeID] = n.compressInfo(n.info[nodeID])
+		}
+	} else {
+		n.lock.RLock()
+		defer n.lock.RUnlock()
+	}
 	if compressed, ok := n.compressedInfo[nodeID]; ok {
 		result := make(map[uint64]uint64, len(compressed))
 		for key, value := range compressed {
@@ -430,6 +443,14 @@ func (n *NodeBuilder) GetCompressedInfo(nodeID uint64) map[uint64]uint64 {
 		return result
 	}
 	return nil
+}
+
+func (n *NodeBuilder) compressInfo(info cmdb.Matcher) map[uint64]uint64 {
+	compressed := make(map[uint64]uint64, len(info))
+	for key, value := range info {
+		compressed[n.stringDict.GetID(key)] = n.stringDict.GetID(value)
+	}
+	return compressed
 }
 
 // GetOriginalInfoFromCompressed 从压缩信息还原原始匹配器信息
@@ -533,11 +554,11 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 		if len(candidate) > 0 {
 			merged := mergeMatcher(n.info[id], candidate)
 			n.info[id] = merged
-			compressed := make(map[uint64]uint64, len(merged))
-			for key, value := range merged {
-				compressed[n.stringDict.GetID(key)] = n.stringDict.GetID(value)
+			if n.deferCompression {
+				delete(n.compressedInfo, id)
+			} else {
+				n.compressedInfo[id] = n.compressInfo(merged)
 			}
-			n.compressedInfo[id] = compressed
 		}
 		return id, nil
 	}
@@ -554,33 +575,45 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 	}
 
 	// 创建压缩存储映射
-	compressedMap := make(map[uint64]uint64, len(indexes))
+	var compressedMap map[uint64]uint64
+	if !n.deferCompression {
+		compressedMap = make(map[uint64]uint64, len(indexes))
+	}
 
 	// 填充索引字段，同时创建压缩映射
 	for _, k := range indexes {
 		matcher[k] = info[k]
 		// 使用局部字符串字典压缩键名和值
-		keyID := n.stringDict.GetID(k)
-		valueID := n.stringDict.GetID(info[k])
-		compressedMap[keyID] = valueID
+		if !n.deferCompression {
+			keyID := n.stringDict.GetID(k)
+			valueID := n.stringDict.GetID(info[k])
+			compressedMap[keyID] = valueID
+		}
 	}
 
 	// 同时存储信息字段
 	infoFields := n.resourceInfoFields(resourceType)
 	for _, k := range infoFields {
+		if _, present := matcher[k]; present {
+			continue // Indexes and repeated info fields were already populated.
+		}
 		if v, ok := info[k]; ok {
 			matcher[k] = v
 			// 使用局部字符串字典压缩键名和值
-			keyID := n.stringDict.GetID(k)
-			valueID := n.stringDict.GetID(v)
-			compressedMap[keyID] = valueID
+			if !n.deferCompression {
+				keyID := n.stringDict.GetID(k)
+				valueID := n.stringDict.GetID(v)
+				compressedMap[keyID] = valueID
+			}
 		}
 	}
 
 	n.data[hashID] = finaID
 	n.reData[finaID] = hashID
 	n.info[finaID] = matcher
-	n.compressedInfo[finaID] = compressedMap
+	if !n.deferCompression {
+		n.compressedInfo[finaID] = compressedMap
+	}
 	n.index++
 
 	return finaID, nil

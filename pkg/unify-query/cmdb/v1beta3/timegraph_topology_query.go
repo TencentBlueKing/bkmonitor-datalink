@@ -200,6 +200,10 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		span.Set("matrix-point-limit", effectiveTimeGraphLimit(MaxSharedTopologyMatrixPoints, 1000000))
 	}
 
+	if planOut != nil && yoloMode {
+		queryCtx = context.WithValue(queryCtx, timeGraphDeferredCompressionKey{}, true)
+	}
+
 	graph, err := m.buildTimeGraph(
 		queryCtx,
 		request.SpaceUID,

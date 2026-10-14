@@ -43,20 +43,23 @@ type dependencyMain struct {
 // 候选扫描是顺序执行；该对象不共享给其他生命周期 goroutine。
 type evaluationTargets struct {
 	reader  policy.TargetReader
-	scope   *onemodel.TargetScope
+	scopes  map[int64]onemodel.TargetScope
 	targets *onemodel.TargetResult
 }
 
-func (t *evaluationTargets) ResolveScope(ctx context.Context, tenant, space string) (onemodel.TargetScope, error) {
-	if t.scope != nil {
-		return *t.scope, nil
+func (t *evaluationTargets) ResolveBusinessScope(ctx context.Context, tenant, space string, businessID int64) (onemodel.TargetScope, error) {
+	if scope, ok := t.scopes[businessID]; ok {
+		return scope, nil
 	}
 	if t.reader == nil {
 		return onemodel.TargetScope{}, policy.ErrUnavailable
 	}
-	v, err := t.reader.ResolveScope(ctx, tenant, space)
+	v, err := t.reader.ResolveBusinessScope(ctx, tenant, space, businessID)
 	if err == nil {
-		t.scope = &v
+		if t.scopes == nil {
+			t.scopes = make(map[int64]onemodel.TargetScope)
+		}
+		t.scopes[businessID] = v
 	}
 	return v, err
 }

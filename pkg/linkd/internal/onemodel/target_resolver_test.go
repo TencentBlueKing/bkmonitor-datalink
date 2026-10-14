@@ -302,3 +302,60 @@ func TestRepeatedDynamicSelectorsShareCandidateBudget(t *testing.T) {
 		})
 	}
 }
+
+func TestEventBusinessScopeQueriesOnlyRequestedBusiness(t *testing.T) {
+	d, p, _ := targetFixtures()
+	p.pages = []Page{{Instances: []Instance{targetInstance("cw-biz", "2", 2)}}}
+	r := NewTargetResolver(d, p, nil)
+	scope, err := r.ResolveBusinessScope(t.Context(), "t", "bkcc__99", 2)
+	want := Filter{Field: "model_inst_id", Type: InstanceAttributeKeyword, Operator: "eq", Value: "2"}
+	if err != nil || !reflect.DeepEqual(scope.BusinessIDs, []int64{2}) || len(p.queries) != 1 || p.queries[0].ModelID != "cw-biz" || !reflect.DeepEqual(p.queries[0].Where, want) {
+		t.Fatalf("scope=%+v err=%v queries=%+v", scope, err, p.queries)
+	}
+	for _, tc := range []struct {
+		space string
+		biz   int64
+		want  []int64
+	}{
+		{"bkcc__2", 2, []int64{2}}, {"bkcc__2", 8, []int64{}}, {"bkcc__99", 99, []int64{}},
+	} {
+		got, err := r.ResolveBusinessScope(t.Context(), "t", tc.space, tc.biz)
+		if err != nil || !reflect.DeepEqual(got.BusinessIDs, tc.want) || len(p.queries) != 1 {
+			t.Fatalf("case=%+v scope=%+v err=%v", tc, got, err)
+		}
+	}
+}
+
+func TestEventBusinessScopeKeepsMissingFailureAndTenantIsolation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rows    []Instance
+		err     error
+		wantErr bool
+	}{
+		{name: "missing", rows: []Instance{}},
+		{name: "backend failure", err: errors.New("unavailable"), wantErr: true},
+		{name: "wrong business", rows: []Instance{targetInstance("cw-biz", "8", 8)}, wantErr: true},
+		{name: "foreign tenant", rows: []Instance{{TenantID: "other", ModelCode: "cw-biz", InstanceID: "2"}}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, p, _ := targetFixtures()
+			p.pages = []Page{{Instances: tc.rows}}
+			if tc.err != nil {
+				p.failAt = 1
+				p.err = tc.err
+			}
+			scope, err := NewTargetResolver(d, p, nil).ResolveBusinessScope(t.Context(), "t", "bkcc__99", 2)
+			if (err != nil) != tc.wantErr || len(scope.BusinessIDs) != 0 {
+				t.Fatalf("scope=%+v err=%v", scope, err)
+			}
+		})
+	}
+	d, p, _ := targetFixtures()
+	r := NewTargetResolver(d, p, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := r.ResolveBusinessScope(ctx, "t", "bkcc__99", 2); !errors.Is(err, context.Canceled) || len(p.queries) != 0 {
+		t.Fatal(err, p.queries)
+	}
+}

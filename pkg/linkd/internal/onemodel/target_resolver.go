@@ -200,6 +200,50 @@ func (r *TargetResolver) resolveScope(ctx context.Context, tenant, spaceCode str
 	return scope, nil
 }
 
+// ResolveBusinessScope 只判断指定业务是否属于策略空间，不为单个事件展开全租户业务。
+// 完整目标解析仍使用 ResolveScope；这里不缓存跨 Event 的业务成员。
+func (r *TargetResolver) ResolveBusinessScope(ctx context.Context, tenant, spaceCode string, businessID int64) (TargetScope, error) {
+	scope := TargetScope{TenantID: tenant, SpaceCode: spaceCode, BusinessIDs: []int64{}}
+	if ctx == nil {
+		return scope, ErrInvalidQuery
+	}
+	if err := ctx.Err(); err != nil {
+		return scope, err
+	}
+	if err := validateOneModelIdentity("tenant", tenant, 64); err != nil {
+		return scope, err
+	}
+	id, err := ParseBusinessSpace(spaceCode)
+	if err != nil {
+		return scope, err
+	}
+	space, err := r.space(ctx, tenant, id)
+	if err != nil {
+		return scope, err
+	}
+	if businessID == id {
+		if !space.Global {
+			scope.BusinessIDs = []int64{businessID}
+		}
+		return scope, nil
+	}
+	if !space.Global {
+		return scope, nil
+	}
+	businesses, err := r.all(ctx, tenant, bizModelCode, Filter{Field: "model_inst_id", Type: InstanceAttributeKeyword, Operator: "eq", Value: strconv.FormatInt(businessID, 10)}, &targetBudget{})
+	if err != nil {
+		return scope, err
+	}
+	if len(businesses) == 0 {
+		return scope, nil
+	}
+	if len(businesses) != 1 || businesses[0].InstanceID != strconv.FormatInt(businessID, 10) {
+		return scope, ErrInvalidDataSourceResponse
+	}
+	scope.BusinessIDs = []int64{businessID}
+	return scope, nil
+}
+
 // Resolve 不返回部分目标：静态实例缺失、动态组越界、分页超限或任一 selector 失败都会拒绝本次集合。
 func (r *TargetResolver) Resolve(ctx context.Context, tenant, spaceCode string, descriptor TargetDescriptor) (TargetResult, error) {
 	if ctx == nil {

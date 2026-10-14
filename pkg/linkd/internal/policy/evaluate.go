@@ -22,7 +22,7 @@ import (
 
 // TargetReader 解析当前业务范围与完整实例目标；生命周期和预览复用同一只读契约。
 type TargetReader interface {
-	ResolveScope(context.Context, string, string) (onemodel.TargetScope, error)
+	ResolveBusinessScope(context.Context, string, string, int64) (onemodel.TargetScope, error)
 	Resolve(context.Context, string, string, onemodel.TargetDescriptor) (onemodel.TargetResult, error)
 }
 
@@ -76,15 +76,26 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		result.Reason = reason
 		return result, nil
 	}
+	// 先排除不具备目标身份的事件，避免无意义的全局范围与目标 I/O。
+	var candidate onemodel.InstanceRef
+	if compiled.Common.Targets != nil && !rely {
+		var found bool
+		var err error
+		candidate, found, err = view.CanonicalInstance(ctx)
+		if err != nil {
+			return skip("instance_field_unavailable", err)
+		}
+		if !found {
+			result.Reason = "instance_field_missing"
+			return result, nil
+		}
+		if candidate.ModelID != compiled.Common.ModelID {
+			result.Reason = "outside_target_model"
+			return result, nil
+		}
+	}
 	if targets == nil {
 		return skip("target_reader_unavailable", ErrUnavailable)
-	}
-	scope, err := targets.ResolveScope(ctx, release.TenantID, compiled.Common.SpaceCode)
-	if err != nil {
-		return skip("business_scope_unavailable", err)
-	}
-	if scope.TenantID != view.TenantID || scope.SpaceCode != compiled.Common.SpaceCode {
-		return result, fmt.Errorf("resolved business scope tenant mismatch")
 	}
 	business, err := view.Field(ctx, "bk_biz_id")
 	if err != nil {
@@ -103,23 +114,18 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 	if err != nil || id < 1 {
 		return skip("business_field_invalid", err)
 	}
+	scope, err := targets.ResolveBusinessScope(ctx, release.TenantID, compiled.Common.SpaceCode, id)
+	if err != nil {
+		return skip("business_scope_unavailable", err)
+	}
+	if scope.TenantID != view.TenantID || scope.SpaceCode != compiled.Common.SpaceCode {
+		return result, fmt.Errorf("resolved business scope tenant mismatch")
+	}
 	if !slices.Contains(scope.BusinessIDs, id) {
 		result.Reason = "outside_business_scope"
 		return result, nil
 	}
 	if compiled.Common.Targets != nil && !rely {
-		candidate, found, err := view.CanonicalInstance(ctx)
-		if err != nil {
-			return skip("instance_field_unavailable", err)
-		}
-		if !found {
-			result.Reason = "instance_field_missing"
-			return result, nil
-		}
-		if candidate.ModelID != compiled.Common.ModelID {
-			result.Reason = "outside_target_model"
-			return result, nil
-		}
 		resolved, err := targets.Resolve(ctx, release.TenantID, compiled.Common.SpaceCode, *compiled.Common.Targets)
 		if err != nil {
 			return skip("target_resolution_failed", err)
@@ -127,7 +133,7 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		if resolved.Scope.TenantID != view.TenantID || resolved.Scope.SpaceCode != compiled.Common.SpaceCode {
 			return result, fmt.Errorf("resolved target scope mismatch")
 		}
-		found = false
+		found := false
 		for _, ref := range resolved.Instances {
 			if ref.ModelID != compiled.Common.ModelID || ref.EntityUID != ref.ModelID+"|"+ref.InstanceID {
 				return skip("target_identity_invalid", ErrUnavailable)

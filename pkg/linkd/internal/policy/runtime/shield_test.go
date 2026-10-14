@@ -78,12 +78,12 @@ func (d *shieldDirectory) List(_ context.Context, scope policy.Scope, after stri
 
 type shieldTargets struct{ err error }
 
-func (s shieldTargets) ResolveScope(_ context.Context, tenant, space string) (onemodel.TargetScope, error) {
+func (s shieldTargets) ResolveBusinessScope(_ context.Context, tenant, space string, _ int64) (onemodel.TargetScope, error) {
 	return onemodel.TargetScope{TenantID: tenant, SpaceCode: space, BusinessIDs: []int64{2}}, s.err
 }
 
 func (s shieldTargets) Resolve(ctx context.Context, tenant, space string, d onemodel.TargetDescriptor) (onemodel.TargetResult, error) {
-	scope, err := s.ResolveScope(ctx, tenant, space)
+	scope, err := s.ResolveBusinessScope(ctx, tenant, space, 2)
 	return onemodel.TargetResult{Scope: scope, Instances: d.Selectors[0].Instances}, err
 }
 

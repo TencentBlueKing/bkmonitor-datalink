@@ -141,12 +141,16 @@ func TestPolicyViewKeepsAlertOpeningResultAndCurrentLevel(t *testing.T) {
 }
 
 type policyTargets struct {
+	reads  *int
 	err    error
 	tenant string
 	refs   []onemodel.InstanceRef
 }
 
-func (r policyTargets) ResolveScope(_ context.Context, tenant, space string) (onemodel.TargetScope, error) {
+func (r policyTargets) ResolveBusinessScope(_ context.Context, tenant, space string, _ int64) (onemodel.TargetScope, error) {
+	if r.reads != nil {
+		*r.reads++
+	}
 	if r.tenant != "" {
 		tenant = r.tenant
 	}
@@ -154,7 +158,7 @@ func (r policyTargets) ResolveScope(_ context.Context, tenant, space string) (on
 }
 
 func (r policyTargets) Resolve(ctx context.Context, tenant, space string, _ onemodel.TargetDescriptor) (onemodel.TargetResult, error) {
-	scope, err := r.ResolveScope(ctx, tenant, space)
+	scope, err := r.ResolveBusinessScope(ctx, tenant, space, 2)
 	return onemodel.TargetResult{Scope: scope, Instances: r.refs}, err
 }
 
@@ -260,6 +264,34 @@ func TestRelatedValidatesEntireSetBeforeMatching(t *testing.T) {
 				}
 			} else if err != nil || matched != (len(tc.rows) > 0) {
 				t.Fatalf("matched=%t err=%v", matched, err)
+			}
+		})
+	}
+}
+
+func TestPolicyMissingOrDifferentTargetDoesNotReadBusinessScope(t *testing.T) {
+	for _, model := range []string{"", "cw-biz"} {
+		t.Run(model, func(t *testing.T) {
+			spec := policySpecMap(t, Shield)
+			compiled, err := Compile(Shield, encodeSpec(t, spec))
+			if err != nil {
+				t.Fatal(err)
+			}
+			release := Release{Scope: Scope{TenantID: "tenant", Kind: Shield}, ID: "p", Version: 1, Spec: compiled.Canonical, Compiled: compiled.Summary}
+			event := policyEvent(`[]`, domain.EnrichStatusSucceeded)
+			if model != "" {
+				event.Labels["model_id"] = domain.NewStringScalar(model)
+				event.Labels["model_inst_id"] = domain.NewStringScalar("123")
+			}
+			view := mustEventView(t, event, nil)
+			reads := 0
+			result, err := Evaluate(t.Context(), release, compiled, view, policyTargets{reads: &reads, err: errors.New("scope must not be read")}, event.OccurredAt, false)
+			want := "instance_field_missing"
+			if model != "" {
+				want = "outside_target_model"
+			}
+			if err != nil || !result.Evaluated || result.Matched || result.Reason != want || reads != 0 {
+				t.Fatalf("result=%+v err=%v reads=%d", result, err, reads)
 			}
 		})
 	}

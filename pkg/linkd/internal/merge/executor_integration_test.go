@@ -38,7 +38,7 @@ import (
 
 type executorTargets struct{}
 
-func (executorTargets) ResolveScope(_ context.Context, tenant, space string) (onemodel.TargetScope, error) {
+func (executorTargets) ResolveBusinessScope(_ context.Context, tenant, space string, _ int64) (onemodel.TargetScope, error) {
 	return onemodel.TargetScope{TenantID: tenant, SpaceCode: space, BusinessIDs: []int64{2}}, nil
 }
 

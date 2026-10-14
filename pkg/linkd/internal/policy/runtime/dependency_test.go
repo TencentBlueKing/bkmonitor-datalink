@@ -659,3 +659,49 @@ func TestDependencyTerminalHintIsBestEffortAndKeepsCancellation(t *testing.T) {
 		})
 	}
 }
+
+func TestUnrelatedDependencyEventsDoNotScanActiveAlerts(t *testing.T) {
+	repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
+	// 很多存量告警或候选后端故障，都不能让无关 Event 进入租户扫描。
+	a := admittedMainFixture(t, repo, clock, "stored-main")
+	stored, err := repo.GetAlert(t.Context(), "tenant", a.AlertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &capacityCandidates{template: stored, count: 4097, finalError: errors.New("candidate backend unavailable")}
+	s.Candidates = reader
+	p := dependencyProcessor(t, repo, clock, s, state, action)
+	for i := range 20 {
+		e := dependencyEvent(fmt.Sprintf("unrelated-%d", i), "unrelated-source", "unrelated", clock)
+		e.Labels["source_id"] = domain.NewStringScalar("unrelated-source")
+		result := mustProcessAggregation(t, repo, p, e)
+		a, err := repo.GetAlert(t.Context(), "tenant", result.Event.RelatedAlertIDs[0])
+		if err != nil || a.Alert.Shield.Active || a.Alert.Admission.AdmittedAt == nil {
+			t.Fatalf("unrelated event affected: %v", err)
+		}
+	}
+	if reader.seen != 0 {
+		t.Fatalf("unrelated events scanned %d active alerts", reader.seen)
+	}
+}
+
+func TestUnrelatedMainCandidateDoesNotReadCMDB(t *testing.T) {
+	repo, clock, s, _, _ := dependencyFixture(t, "custom_shield")
+	a := admittedMainFixture(t, repo, clock, "unrelated")
+	stored, err := repo.GetAlert(t.Context(), "tenant", a.AlertID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Alert.Title = "unrelated"
+	s.Candidates = &capacityCandidates{template: stored, count: 1}
+	release := dependencyRelease(t, "custom_shield")
+	compiled, err := policy.Compile(release.Kind, release.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 本地条件不匹配时，连不可用的目标后端也不应访问。
+	_, found, err := s.admittedMain(t.Context(), policy.FrozenPolicy{Release: release, Compiled: compiled}, unavailableDependencyTargets{failScope: true}, clock.at, nil)
+	if err != nil || found {
+		t.Fatalf("unrelated candidate reached CMDB: found=%t err=%v", found, err)
+	}
+}

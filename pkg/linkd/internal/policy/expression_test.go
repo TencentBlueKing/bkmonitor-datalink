@@ -132,3 +132,56 @@ func TestKACTermTermsAndPhraseRemainDistinct(t *testing.T) {
 		})
 	}
 }
+
+func TestPossibleMatchOnlyRejectsDefiniteLocalMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name, expression string
+		want             bool
+	}{
+		{"and rejects unrelated", "A and B", false},
+		{"or retains unknown", "A or B", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := json.RawMessage(`{"expression":"` + tc.expression + `","A":{"condition":"term","target_key":"strategy_id","target_value":"146"},"B":{"condition":"must_not_term","target_key":"name","target_value":"${object}","is_alarm_field_referenced":true}}`)
+			e, err := compileExpression(raw, KACFields(), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := e.PossibleMatch(t.Context(), Fields{Values: map[string]any{"strategy_id": "999"}})
+			if err != nil || got != tc.want {
+				t.Fatalf("possible=%t err=%v", got, err)
+			}
+		})
+	}
+	e, err := CompileExpression(expressionJSON("must_not_term", "name", "main"), KACFields())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		fields Fields
+		want   bool
+	}{
+		{Fields{Values: map[string]any{"name": "main"}}, false},
+		{Fields{Values: map[string]any{"name": "child"}}, true},
+	} {
+		got, err := e.PossibleMatch(t.Context(), tc.fields)
+		if err != nil || got != tc.want {
+			t.Fatalf("possible=%t err=%v", got, err)
+		}
+	}
+	if got, err := e.PossibleMatch(t.Context(), Fields{Unavailable: map[string]bool{"name": true}}); got || !errors.Is(err, ErrUnavailable) {
+		t.Fatal("unavailable field became a match", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := e.PossibleMatch(ctx, Fields{}); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	relation, err := CompileExpression(json.RawMessage(`{"expression":"A","A":{"condition":"term","target_key":"model_id","target_value":"cw-Host","bk_obj_asst_id":"host_switch"}}`), KACFields())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if possible, err := relation.PossibleMatch(t.Context(), Fields{}); err != nil || !possible {
+		t.Fatal("relation was evaluated without a main", err)
+	}
+}

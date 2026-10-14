@@ -113,11 +113,7 @@ func EventView(event domain.Event, severity string, mappings map[string]FieldMap
 
 // AlertView 只使用 opening Event 的固定丰富快照，当前 severity/action 仍来自 Alert 的真实状态。
 func AlertView(alert domain.Alert, mappings map[string]FieldMapping, level LevelMapper, relation RelationContext) (*FactView, error) {
-	effective, err := enrichview.EnrichedAlert(alert)
-	if err != nil {
-		return nil, err
-	}
-	document, err := domain.AlertDocument(effective)
+	document, err := enrichview.EnrichedAlertDocument(alert)
 	if err != nil {
 		return nil, err
 	}

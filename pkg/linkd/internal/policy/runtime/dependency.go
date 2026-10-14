@@ -131,6 +131,16 @@ func (s *Shielder) admittedMain(ctx context.Context, f policy.FrozenPolicy, targ
 			if err != nil {
 				return chosen, false, err
 			}
+			possible, err := f.Compiled.Conditions[0].PossibleMatch(ctx, view)
+			if errors.Is(err, policy.ErrUnavailable) {
+				continue
+			}
+			if err != nil {
+				return chosen, false, err
+			}
+			if !possible {
+				continue
+			}
 			verdict, err := s.Loader.evaluate(ctx, f.Release, f.Compiled, view, targets, at, false, false)
 			if err != nil {
 				return chosen, false, err
@@ -382,6 +392,26 @@ func (s *Shielder) ClearDependency(ctx context.Context, tenant, id string) error
 }
 
 func (s *Shielder) newDependencyBinding(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, alert domain.Alert, f policy.FrozenPolicy, at time.Time, level func(string) (string, error)) (*domain.ShieldBinding, *domain.DependencyMain, string, error) {
+	// 1. 无关事件先退出，避免每个 Event 都遍历租户活动告警。
+	view, err := policy.EventView(event, evaluation.Severity, f.Compiled.Common.FieldMappings, level, policy.RelationContext{})
+	if err != nil {
+		return nil, nil, "dependency_child_unavailable", err
+	}
+	mainPossible, mainErr := f.Compiled.Conditions[0].PossibleMatch(ctx, view)
+	if mainErr != nil && !errors.Is(mainErr, policy.ErrUnavailable) {
+		return nil, nil, "dependency_main_unavailable", mainErr
+	}
+	childPossible, childErr := f.Compiled.Rely.PossibleMatch(ctx, view)
+	if childErr != nil && !errors.Is(childErr, policy.ErrUnavailable) {
+		return nil, nil, "dependency_child_unavailable", childErr
+	}
+	if !mainPossible && !childPossible {
+		if mainErr != nil || childErr != nil {
+			return nil, nil, "dependency_child_unavailable", policy.ErrUnavailable
+		}
+		return nil, nil, "dependency_not_matched", nil
+	}
+	// 2. 可能匹配的事件才完整选主，并保留现有登记和绑定规则。
 	targets := &evaluationTargets{reader: s.Loader.Targets}
 	main, reserved, found, err := s.selectDependencyMain(ctx, event, evaluation, alert, f, targets, at, level)
 	if err != nil {

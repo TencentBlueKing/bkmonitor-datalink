@@ -198,6 +198,35 @@ func (e *Expression) Match(ctx context.Context, reader Reader) (MatchResult, err
 	return e.match(ctx, reader, nil)
 }
 
+// PossibleMatch 只做无外部关系查询的预筛，不代表正式命中。
+// 引用和关系按可能命中处理；本地字段不可读则与正式 Match 一样不可求值。
+// 布尔树仅有 AND/OR，故无需主信息的明确未命中不会排除真实匹配。
+func (e *Expression) PossibleMatch(ctx context.Context, reader Reader) (bool, error) {
+	values := make(map[string]bool, len(e.order))
+	for _, id := range e.order {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		clause := e.clauses[id]
+		values[id] = true
+		if len(clause.reference) != 0 || clause.condition.Relation != "" {
+			continue
+		}
+		matched, err := clause.match(ctx, reader)
+		if errors.Is(err, ErrAccess) {
+			return false, err
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if err != nil {
+			return false, ErrUnavailable
+		}
+		values[id] = matched
+	}
+	return e.root.evaluate(values), nil
+}
+
 func (e *Expression) match(ctx context.Context, reader Reader, origin Reader) (MatchResult, error) {
 	result := MatchResult{Evaluated: true, Conditions: make([]ConditionResult, 0, len(e.order))}
 	values := map[string]bool{}

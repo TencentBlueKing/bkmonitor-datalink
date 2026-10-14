@@ -21,15 +21,7 @@ import (
 
 // EnrichedAlert 返回按处理器顺序合成的临时视图；原始 domain.Alert 和存储内容均不改变。
 func EnrichedAlert(alert domain.Alert) (domain.Alert, error) {
-	document, err := domain.AlertDocument(alert)
-	if err != nil {
-		return domain.Alert{}, err
-	}
-	patches, err := EffectiveEnrichPatches(alert.Enrich)
-	if err != nil {
-		return domain.Alert{}, err
-	}
-	document, err = domain.ApplyEnrichPatches(document, patches)
+	document, err := EnrichedAlertDocument(alert)
 	if err != nil {
 		return domain.Alert{}, err
 	}
@@ -44,6 +36,19 @@ func EnrichedAlert(alert domain.Alert) (domain.Alert, error) {
 	result.Enrich = alert.Enrich.Clone()
 	result.EnrichStatus = alert.EnrichStatus
 	return result, nil
+}
+
+// EnrichedAlertDocument 直接合成隔离的有效 JSON 视图，供字段匹配使用，避免反复转回 Alert。
+func EnrichedAlertDocument(alert domain.Alert) (map[string]any, error) {
+	document, err := domain.AlertDocument(alert)
+	if err != nil {
+		return nil, err
+	}
+	patches, err := EffectiveEnrichPatches(alert.Enrich)
+	if err != nil {
+		return nil, err
+	}
+	return domain.ApplyEnrichPatches(document, patches)
 }
 
 type savedProcessor struct {

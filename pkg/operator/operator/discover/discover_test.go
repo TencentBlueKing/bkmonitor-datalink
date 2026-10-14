@@ -145,6 +145,7 @@ func TestPreStartResetsFetched(t *testing.T) {
 	d := NewBaseDiscover(context.Background(), &CommonOptions{Name: "test-discover"})
 	d.fetched = true
 	d.PreStart()
+	defer d.Stop()
+
 	assert.False(t, d.fetched)
-	d.cancel()
 }

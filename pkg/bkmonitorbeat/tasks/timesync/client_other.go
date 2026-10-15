@@ -94,11 +94,13 @@ func (c *Client) queryNtpdDetailed() (*Stat, []SourceResult, error) {
 		}
 
 		delay := rsp.ClockOffset.Seconds()
+		// 新增指标的时间戳取服务器应答里的发送时间。
 		details = append(details, SourceResult{
 			Address:       server,
 			Target:        "ntpd",
 			OffsetSeconds: ntpResponseOffsetSeconds(rsp),
 			Available:     true,
+			SourceTime:    rsp.Time,
 		})
 		if delay == 0 {
 			continue

@@ -108,11 +108,13 @@ func (c *Client) queryNtpdDetailed() (*Stat, []SourceResult, error) {
 		delay := rsp.ClockOffset.Seconds()
 		// 旧聚合指标保持原行为：直接累加 ClockOffset，0 值跳过。
 		// 新增指标统一为目标机时间 - 时间源时间，因此取 -ClockOffset。
+		// 时间戳使用服务器应答里的发送时间。
 		details = append(details, SourceResult{
 			Address:       address,
 			Target:        "ntpd",
 			OffsetSeconds: ntpResponseOffsetSeconds(rsp),
 			Available:     true,
+			SourceTime:    rsp.Time,
 		})
 		if delay == 0 {
 			continue
@@ -150,6 +152,8 @@ func (c *Client) queryChronyDetailed() (*Stat, []SourceResult, error) {
 
 	stat := newStat("chrony")
 	details := make([]SourceResult, 0, sources.NSources)
+	// chrony 回包没有时间源自己的发送时间戳，新增明细统一使用本次采集时刻。
+	collectedAt := time.Now()
 	for i := 0; i < sources.NSources; i++ {
 		packet, err = c.communicateChrony(conn, &client, chrony.NewSourceDataPacket(int32(i)))
 		if err != nil {
@@ -164,27 +168,19 @@ func (c *Client) queryChronyDetailed() (*Stat, []SourceResult, error) {
 			continue
 		}
 
-		// 本地时钟 忽略
-		if sourceData.LatestMeas == 0 {
-			continue
+		// 旧聚合：保持合并前的判定顺序——LatestMeas 为 0 时跳过，不可达节点计 Err，其余累加。
+		if sourceData.LatestMeas != 0 {
+			if sourceData.State == chrony.SourceStateUnreach {
+				stat.Err++
+			} else {
+				stat.Add(sourceData.LatestMeas)
+			}
 		}
 
-		address := sourceData.IPAddr.String()
-		// 异常节点：旧指标累加 Err，新指标上报 available=0。
-		if sourceData.State == chrony.SourceStateUnreach {
-			stat.Err++
-			details = append(details, SourceResult{Address: address, Target: "chrony", Available: false})
-			continue
+		// 新增明细与旧聚合的零值过滤解耦：真实的 0 偏差、未取样的不可达源都要生成数据点。
+		if detail, ok := chronySourceDetail(&sourceData.SourceData, collectedAt); ok {
+			details = append(details, detail)
 		}
-
-		stat.Add(sourceData.LatestMeas)
-		// chrony LatestMeas 为本机时间 - 时间源时间，新指标直接使用。
-		details = append(details, SourceResult{
-			Address:       address,
-			Target:        "chrony",
-			OffsetSeconds: sourceData.LatestMeas,
-			Available:     true,
-		})
 	}
 	return stat, details, nil
 }

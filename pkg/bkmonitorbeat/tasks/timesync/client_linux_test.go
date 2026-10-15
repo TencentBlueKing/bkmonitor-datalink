@@ -75,11 +75,13 @@ func TestQueryNtpdDetailedSign(t *testing.T) {
 		t.Fatalf("write ntp.conf: %v", err)
 	}
 
+	sourceTime := time.Unix(1700000000, 0)
+
 	withQueryNTP(t, func(address string, options ntp.QueryOptions) (*ntp.Response, error) {
 		if address != "10.0.0.31" {
 			t.Fatalf("address = %q, want 10.0.0.31", address)
 		}
-		return &ntp.Response{ClockOffset: -10 * time.Second, Stratum: 1}, nil
+		return &ntp.Response{Time: sourceTime, ClockOffset: -10 * time.Second, Stratum: 1}, nil
 	})
 
 	cli := NewClient(&Option{NtpdPath: path})
@@ -95,6 +97,9 @@ func TestQueryNtpdDetailedSign(t *testing.T) {
 	}
 	if details[0].OffsetSeconds != 10 {
 		t.Fatalf("offset = %v, want 10", details[0].OffsetSeconds)
+	}
+	if !details[0].SourceTime.Equal(sourceTime) {
+		t.Fatalf("source time = %v, want %v", details[0].SourceTime, sourceTime)
 	}
 	if details[0].Address != "10.0.0.31" || details[0].Target != "ntpd" || !details[0].Available {
 		t.Fatalf("unexpected detail: %+v", details[0])

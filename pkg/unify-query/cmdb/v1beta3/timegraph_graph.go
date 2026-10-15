@@ -34,21 +34,23 @@ type TimeGraph struct {
 	shared *sharedTimeGraph // 拓扑入口直接保存时间位，不创建逐桶图。
 	lock   sync.RWMutex     // 读写锁，保证并发安全
 
-	nodeBuilder   *NodeBuilder                          // 节点构建器，负责节点的创建和去重
-	stringDict    *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
-	timeGraph     map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
-	edgeTypes     map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
-	nodeInfos     map[int64]map[uint64]cmdb.Matcher               // timestamp -> node -> time-specific dimensions
-	topologyNodes map[uint64]map[int64]struct{}                   // 共享节点身份 -> 观测时间点
-	topologyEdges map[timeGraphTopologyEdgeKey]map[int64]struct{} // 共享关系身份 -> 有效时间点
-	partialTimes  map[int64]string                                // 时间点 -> 数据不完整原因
-	maxNodes      int
-	maxEdges      int
-	maxResults    int
-	maxNodeInfos  int
-	edgeCount     int
-	nodeInfoCount int
-	relations     []TimeGraphRelationConfig
+	nodeBuilder     *NodeBuilder                          // 节点构建器，负责节点的创建和去重
+	stringDict      *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
+	timeGraph       map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
+	edgeTypes       map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
+	nodeInfos       map[int64]map[uint64]cmdb.Matcher               // timestamp -> node -> time-specific dimensions
+	topologyNodes   map[uint64]map[int64]struct{}                   // 共享节点身份 -> 观测时间点
+	topologyEdges   map[timeGraphTopologyEdgeKey]map[int64]struct{} // 共享关系身份 -> 有效时间点
+	partialTimes    map[int64]string                                // 时间点 -> 数据不完整原因
+	residency       *graphResidency
+	matrixResidency *matrixResidency
+	maxNodes        int
+	maxEdges        int
+	maxResults      int
+	maxNodeInfos    int
+	edgeCount       int
+	nodeInfoCount   int
+	relations       []TimeGraphRelationConfig
 }
 
 type timeGraphEdgeKey struct {
@@ -163,6 +165,8 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 	}
 	q.edgeCount = 0
 	q.nodeInfoCount = 0
+	q.residency.clear()
+	q.matrixResidency.clear()
 }
 
 func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, reason string) {
@@ -293,7 +297,7 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	if q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
+	if (q.shared == nil || q.residency == nil) && q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
 		return &ResultLimitError{Reason: "max_graph_nodes", Count: q.nodeBuilder.Length(), Limit: q.maxNodes}
 	}
 	if q.shared != nil {
@@ -386,7 +390,7 @@ func (q *TimeGraph) addTimeRelationWithReverse(ctx context.Context, relation cmd
 
 	q.lock.Lock()
 	defer q.lock.Unlock()
-	if q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
+	if (q.shared == nil || q.residency == nil) && q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
 		return &ResultLimitError{Reason: "max_graph_nodes", Count: q.nodeBuilder.Length(), Limit: q.maxNodes}
 	}
 

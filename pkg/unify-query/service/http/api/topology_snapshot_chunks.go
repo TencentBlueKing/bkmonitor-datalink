@@ -17,6 +17,8 @@ const (
 )
 
 type topologySnapshotChunkBuilder struct {
+	ctx      context.Context
+	meter    *topologyEncodeMeter
 	work     []byte
 	parts    [][]byte
 	byHash   map[uint64][][]byte
@@ -28,19 +30,47 @@ func (b *topologySnapshotChunkBuilder) append(part []byte, boundary uint64) erro
 	if len(part) > int(^uint(0)>>1)-b.size {
 		return fmt.Errorf("topology response size overflows int")
 	}
+	if err := b.meter.wirePart(len(part)); err != nil {
+		return err
+	}
+	need := len(b.work) + len(part)
+	if need > cap(b.work) {
+		next := max(topologyChunkTargetBytes, cap(b.work)*2)
+		for next < need {
+			next *= 2
+		}
+		if b.meter != nil {
+			b.meter.working = int64(next + cap(b.work))
+			if err := b.meter.reserve(); err != nil {
+				return err
+			}
+		}
+		owned := make([]byte, len(b.work), next)
+		copy(owned, b.work)
+		b.work = owned
+		if b.meter != nil {
+			b.meter.working = int64(cap(b.work))
+		}
+	}
 	b.size += len(part)
 	b.work = append(b.work, part...)
 	// Stable row boundaries let unchanged sections align after inserted/removed rows.
 	// These sizes switch encoding fragments; they never limit the answer.
 	if len(b.work) >= topologyChunkTargetBytes || (len(b.work) >= topologyChunkMinBytes && boundary&127 == 0) {
-		b.flush()
+		return b.flush()
 	}
 	return nil
 }
 
-func (b *topologySnapshotChunkBuilder) flush() {
+func (b *topologySnapshotChunkBuilder) flush() error {
 	if len(b.work) == 0 {
-		return
+		return nil
+	}
+	if b.meter != nil {
+		b.meter.container += 3 * 24
+		if err := b.meter.reserve(); err != nil {
+			return err
+		}
 	}
 	hash := xxhash.Sum64(b.work)
 	for _, owned := range b.byHash[hash] {
@@ -48,15 +78,23 @@ func (b *topologySnapshotChunkBuilder) flush() {
 			b.hitBytes += len(owned)
 			b.parts = append(b.parts, owned)
 			b.work = b.work[:0]
-			return
+			return nil
 		}
 	}
 	// Copy the used bytes: retaining a full working-buffer capacity per small block
 	// would increase memory for changing snapshots. Cached blocks are immutable.
-	owned := append([]byte(nil), b.work...)
+	if b.meter != nil {
+		b.meter.container += 128
+		if err := b.meter.retain(int64(len(b.work))); err != nil {
+			return err
+		}
+	}
+	owned := make([]byte, len(b.work))
+	copy(owned, b.work)
 	b.byHash[hash] = append(b.byHash[hash], owned)
 	b.parts = append(b.parts, owned)
 	b.work = b.work[:0]
+	return nil
 }
 
 type topologyCachedNode struct {
@@ -77,7 +115,7 @@ func marshalRepeatedTopologySnapshotsContext(ctx context.Context, snapshots []cm
 }
 
 func marshalTopologySnapshotFrames(ctx context.Context, snapshots []cmdb.SharedTopologySnapshot, consume bool) ([][]byte, error) {
-	b := topologySnapshotChunkBuilder{work: make([]byte, 0, topologyChunkTargetBytes), byHash: make(map[uint64][][]byte)}
+	b := topologySnapshotChunkBuilder{ctx: ctx, meter: topologyMeter(ctx), byHash: make(map[uint64][][]byte)}
 	nodes := make(map[uint64]topologyCachedNode)
 	edges := make(map[cmdb.SharedTopologyEdge]topologyCachedEdge)
 	raw := func(text string) error { return b.append([]byte(text), 1) }
@@ -86,7 +124,7 @@ func marshalTopologySnapshotFrames(ctx context.Context, snapshots []cmdb.SharedT
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if fallback {
+		if fallback && b.meter == nil {
 			encoded, err := stdjson.Marshal(snapshot)
 			if err != nil {
 				return nil, err
@@ -108,9 +146,7 @@ func marshalTopologySnapshotFrames(ctx context.Context, snapshots []cmdb.SharedT
 			continue
 		}
 		frameStart, hitsStart := b.size, b.hitBytes
-		header, err := stdjson.Marshal(struct {
-			Timestamp int64 `json:"timestamp"`
-		}{snapshot.Timestamp})
+		header, err := b.meter.marshal(topologySnapshotHeader{snapshot.Timestamp})
 		if err != nil {
 			return nil, err
 		}
@@ -129,34 +165,45 @@ func marshalTopologySnapshotFrames(ctx context.Context, snapshots []cmdb.SharedT
 				return nil, err
 			}
 			// Isolate the changing timestamp from otherwise stable node blocks.
-			b.flush()
+			if err := b.flush(); err != nil {
+				return nil, err
+			}
 			for index, node := range snapshot.Nodes {
 				if err := ctx.Err(); err != nil {
 					return nil, err
 				}
 				cached, exists := nodes[node.ID]
 				if !exists || cached.node.ResourceType != node.ResourceType || (cached.node.Dimensions == nil) != (node.Dimensions == nil) || !maps.Equal(cached.node.Dimensions, node.Dimensions) {
-					encoded, e := stdjson.Marshal(node)
+					encoded, e := b.meter.marshal(node)
 					if e != nil {
 						return nil, e
 					}
-					encoded = append(encoded, ',')
+					charge := int64(cap(encoded) - cap(cached.encoded))
+					if !exists {
+						charge += 128
+					}
+					if e = b.meter.cache(charge); e != nil {
+						return nil, e
+					}
 					cached = topologyCachedNode{node: node, encoded: encoded, boundary: xxhash.Sum64(encoded)}
 					nodes[node.ID] = cached
 				}
-				part := cached.encoded
-				if index+1 == len(snapshot.Nodes) {
-					part = part[:len(part)-1]
-				}
-				if err = b.append(part, cached.boundary); err != nil {
+				if err = b.append(cached.encoded, cached.boundary); err != nil {
 					return nil, err
+				}
+				if index+1 < len(snapshot.Nodes) {
+					if err = b.append([]byte(","), 1); err != nil {
+						return nil, err
+					}
 				}
 			}
 			if err = raw("]"); err != nil {
 				return nil, err
 			}
 		}
-		b.flush()
+		if err := b.flush(); err != nil {
+			return nil, err
+		}
 		if err = raw(`,"edges":`); err != nil {
 			return nil, err
 		}
@@ -174,30 +221,30 @@ func marshalTopologySnapshotFrames(ctx context.Context, snapshots []cmdb.SharedT
 				}
 				cached, exists := edges[edge]
 				if !exists {
-					encoded, e := stdjson.Marshal(edge)
+					encoded, e := b.meter.marshal(edge)
 					if e != nil {
 						return nil, e
 					}
-					encoded = append(encoded, ',')
+					if e = b.meter.cache(int64(cap(encoded)) + 192); e != nil {
+						return nil, e
+					}
 					cached = topologyCachedEdge{encoded: encoded, boundary: xxhash.Sum64(encoded)}
 					edges[edge] = cached
 				}
-				part := cached.encoded
-				if index+1 == len(snapshot.Edges) {
-					part = part[:len(part)-1]
-				}
-				if err = b.append(part, cached.boundary); err != nil {
+				if err = b.append(cached.encoded, cached.boundary); err != nil {
 					return nil, err
+				}
+				if index+1 < len(snapshot.Edges) {
+					if err = b.append([]byte(","), 1); err != nil {
+						return nil, err
+					}
 				}
 			}
 			if err = raw("]"); err != nil {
 				return nil, err
 			}
 		}
-		trailer, err := stdjson.Marshal(struct {
-			Partial bool   `json:"partial"`
-			Reason  string `json:"partial_reason,omitempty"`
-		}{snapshot.Partial, snapshot.PartialReason})
+		trailer, err := b.meter.marshal(topologySnapshotTrailer{snapshot.Partial, snapshot.PartialReason})
 		if err != nil {
 			return nil, err
 		}
@@ -212,13 +259,15 @@ func marshalTopologySnapshotFrames(ctx context.Context, snapshots []cmdb.SharedT
 				return nil, err
 			}
 		}
-		b.flush()
+		if err := b.flush(); err != nil {
+			return nil, err
+		}
 		if consume {
 			snapshots[frame].Nodes, snapshots[frame].Edges = nil, nil
 		}
 		// Low reuse can make per-row encoding more expensive than the original
 		// per-frame encoder. Check every frame so stable-to-changing input adapts.
-		if frame > 0 && b.hitBytes-hitsStart < (b.size-frameStart)/8 {
+		if b.meter == nil && frame > 0 && b.hitBytes-hitsStart < (b.size-frameStart)/8 {
 			fallback = true
 			b.byHash, b.work, nodes, edges = nil, nil, nil, nil
 		}

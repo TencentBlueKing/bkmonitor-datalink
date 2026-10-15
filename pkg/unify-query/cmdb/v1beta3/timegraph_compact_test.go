@@ -104,7 +104,7 @@ func TestCompactOwnershipFallbackBudgetAndClient(t *testing.T) {
 		encoded, err := json.Marshal([]any{map[string]any{"compact": compact, "snapshots": expected}})
 		require.NoError(t, err)
 		path := filepath.Join(t.TempDir(), "compact.json")
-		require.NoError(t, os.WriteFile(path, encoded, 0600))
+		require.NoError(t, os.WriteFile(path, encoded, 0o600))
 		cmd := exec.Command(node, "--test", "../../docs/examples/topology-compact.test.mjs")
 		cmd.Env = append(os.Environ(), "TG_COMPACT_FIXTURE="+path)
 		output, err := cmd.CombinedOutput()
@@ -131,8 +131,9 @@ func TestCompactModelTargetFilterAndBudgets(t *testing.T) {
 	old := MaxSharedTopologyOutputElements
 	MaxSharedTopologyOutputElements = 1
 	t.Cleanup(func() { MaxSharedTopologyOutputElements = old })
-	_, err = model.QuerySharedTopology(ctx, request)
-	require.ErrorContains(t, err, "max_topology_output_elements")
+	underOldCountLimit, err := model.QuerySharedTopology(ctx, request)
+	require.NoError(t, err)
+	require.Equal(t, got, underOldCountLimit)
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
 	_, err = model.QuerySharedTopology(canceled, request)

@@ -193,11 +193,14 @@ func TestCompactBudgetsRepresentationAndIntegerSafety(t *testing.T) {
 	bytes, err := json.Marshal(compact)
 	require.NoError(t, err)
 	require.Less(t, len(bytes), 16000)
-	_, err = g.FindSharedTopology(context.Background(), grid, query)
-	var limit *ResultLimitError
-	require.ErrorAs(t, err, &limit)
-	require.Equal(t, "max_topology_output_elements", limit.Reason)
-	b := &topologyOutputBudget{maxBytes: math.MaxInt64}
+	snapshots, err := g.FindSharedTopology(context.Background(), grid, query)
+	require.NoError(t, err)
+	require.Len(t, snapshots, 60)
+	for _, frame := range snapshots {
+		require.Len(t, frame.Nodes, 2)
+		require.Len(t, frame.Edges, 1)
+	}
+	b := &topologyOutputBudget{}
 	require.Error(t, b.addRepeated(math.MaxInt64, 2))
 	require.Zero(t, b.bytes)
 	require.Zero(t, b.elements)
@@ -290,8 +293,8 @@ func TestSharedEmptyEdgesAndVersionBudgetRelease(t *testing.T) {
 
 func TestOutputChargesDoNotMutateOnOverflowOrReservationFailure(t *testing.T) {
 	cases := []*topologyOutputBudget{
-		{bytes: math.MaxInt64, maxBytes: math.MaxInt64},
-		{elements: math.MaxInt, maxBytes: math.MaxInt64},
+		{bytes: math.MaxInt64},
+		{elements: math.MaxInt},
 	}
 	for _, b := range cases {
 		bytes, elements := b.bytes, b.elements
@@ -301,7 +304,7 @@ func TestOutputChargesDoNotMutateOnOverflowOrReservationFailure(t *testing.T) {
 	}
 	ctx, release, err := AcquireSharedTopology(context.Background())
 	require.NoError(t, err)
-	b := &topologyOutputBudget{ctx: ctx, maxBytes: math.MaxInt64}
+	b := &topologyOutputBudget{ctx: ctx}
 	require.Error(t, b.addCharge(math.MaxInt64/2, 1))
 	require.Zero(t, b.bytes)
 	require.Zero(t, b.elements)

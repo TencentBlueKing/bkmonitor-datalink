@@ -43,7 +43,7 @@ func (loader *timeGraphMatrixLoader) loadPrepared(ctx context.Context, query *st
 	// 先释放旧 Matrix 的引用再取新数据，避免两份大输入同时存活。
 	loader.lastMatrix = timeGraphMatrixSlot{}
 	loader.physicalQueryCount++
-	matrix, partial, err := fetch()
+	matrix, partial, err := loader.fetchResident(ctx, fetch)
 	if status := metadata.GetStatus(ctx); status != nil {
 		partial = partial || status.Code == metadata.QueryTsPartial
 	}

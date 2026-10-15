@@ -14,7 +14,7 @@ flowchart TD
     D --> E{Same complete direct-VM input as previous relation?}
     E -->|yes| F[Reuse one request-local read-only Matrix]
     E -->|no| G[Fetch with backend response budget]
-    F --> H[Validate and charge logical budget]
+    F --> H[Validate grid and count logical work]
     G --> H
     H --> I[Apply relation direction to shared graph]
     I --> J[Propagate per-time reachability]
@@ -38,8 +38,8 @@ Ephemeral metadata hash IDs are excluded. Only direct-VM relation queries
 are eligible; aggregated/non-direct routes fall back to fetching.
 
 Empty and partial results can be reused. Errors cannot. Both applications
-still validate the grid, contribute to partial status and consume logical
-Matrix/graph budgets. The previous slot is dropped before a different fetch.
+still validate the grid and contribute to partial status and logical counters.
+Reusing the same live Matrix does not allocate another resident copy. The previous slot is dropped before a different fetch.
 Apply never mutates the Matrix. There is no retry or cross-request cache.
 
 `matrix-query-count` remains the logical loader count. New trace attributes
@@ -86,8 +86,8 @@ an independent cap flag, shared by its aggregation children so rejection
 cannot be downgraded to partial. A single identity exceeding the normal-mode
 cap remains an explicit error; YOLO retains exact-grid time splitting.
 
-All batches and shards share the loader's deadline, Matrix-point accounting,
-graph/output budgets, admission reservation, and partial timestamps. Missing
+All batches and shards share the loader's deadline, logical Matrix-point counters,
+live graph/output reservations, admission lease, and partial timestamps. Missing
 required routes, cancellation, and exhausted budgets remain errors. An empty
 partial frontier returns partial empty frames, never an unrestricted retry.
 Skipped unrelated backend queries no longer contribute their partial signal.
@@ -152,10 +152,10 @@ const reader = createTopologyReader(successfulItem.compact);
 const frame = reader.frame(64);
 ```
 
-Normal-mode expanded element/byte budgets are still charged **before target
-filtering**, matching the snapshot path. Compact transport bytes are checked
-separately by the HTTP batch budget. A smaller wire payload does not grant a
-larger graph or expanded client view. Version-heavy inputs may compress poorly.
+Normal mode reserves the complete graph and traversal workspace before target
+filtering, then reserves the DTO containers actually emitted. HTTP checks actual
+encoded batch bytes. Repeated observations and conservative JSON upper bounds
+are not independent rejection limits. Version-heavy inputs may compress poorly.
 
 ## Resource Protection
 
@@ -163,9 +163,9 @@ The following settings are under `cmdb.v1beta3`:
 
 | Setting | Default | Meaning |
 | --- | ---: | --- |
-| `max_shared_topology_concurrent_requests` | 8 | Process-wide HTTP/model requests; immediate rejection, no queue |
+| `max_shared_topology_concurrent_requests` | 8 | Execution slots; FIFO queue holds at most the same number of waiting requests |
 | `max_shared_topology_reserved_bytes` | 4294967296 | Process-wide estimated in-flight reservation cap |
-| `shared_topology_request_memory_bytes` | 536870912 | Minimum full-flight reservation per request |
+| `shared_topology_request_memory_bytes` | Deprecated | Read for configuration compatibility; empty leases no longer reserve a fixed floor |
 | `shared_topology_memory_headroom_bytes` | 536870912 | Additional margin below observed available memory |
 | `yolo_mode` | false | Sustained bypass of TimeGraph quantity/data/admission budgets, configured hop ceilings and internal query deadlines; requested scope, validation and cancellation remain |
 
@@ -174,36 +174,48 @@ values are conservative configuration defaults, **not a recommended capacity
 for every Pod**. Calibrate them for the actual CPU/memory limits, ordinary-query
 baseline, labels, versions, GC behavior and downstream service capacity.
 
-Reservations cover estimated simultaneous request/decode buffers, backend
-buffers and Matrix conversion, cumulative graph/index costs, output objects,
-retained encoded items and final encoding/write buffers. Estimates grow before
-fetch/apply/output allocation and are rounded for output allocation chunks.
-Stage estimates include 8x bounded backend bytes, 256 bytes per logical point,
-1024 per returned series, 8x label bytes, and output/buffer multipliers. They
-are deliberately conservative calibration inputs, **not exact object sizes**.
-The full-flight minimum remains until the request completes. Existing hard
-input, Matrix and graph/output limits remain; they are not replaced by estimates.
+Reservations follow simultaneously live stages. Request reading reserves 6x the
+body cap; backend receiving/decoding reserves 8x the response cap, then switches
+to Matrix slice capacity and retained labels. Shared graph accounting follows
+unique nodes, full relation identity, indexes and attribute versions, including
+old/new storage during replacement; it updates in 256 KiB blocks. Traversal
+workspaces are reserved separately. DTO and encoder growth use 4 MiB blocks.
+Prior batch items' encoded buffers remain charged while the next graph executes.
+These are calibration estimates, not exact allocation or RSS guarantees.
+
+`materialized` confirms only lower bounds of initialized, request-owned storage
+that remains live. Borrowed strings, map capacity allowances and unused capacity
+stay pending. `pending = reserved - materialized`; headroom checks subtract
+pending reservations from current available memory after the configured margin.
+Zeroing a stage also clears its credit, including after cancellation. A failed
+growth does not wait while holding a graph.
+
+Normal requests wait for execution slots in a bounded FIFO queue, sharing the
+original request deadline. A queued HTTP request drains only its bounded body,
+allowing HTTP/1 peer closure detection, and counts that body in the total ledger.
+The queue is checked before reading additional bodies. Queue-full, cancellation,
+deadline and body failures release queued state without starting model work.
 
 Admission and reservation growth additionally inspect host MemAvailable and
 all visible cgroup v1/v2 memory limit/usage pairs, including visible ancestors.
 Unlimited sentinels and read failures do not become infinite reservations: the
 configured cap still applies. Namespace-hidden parents and shared external
 activity cannot be certified by these reads. Memory paths are discovered once
-per process; restart after moving a process to another cgroup. Observed current
-usage may already include existing leases, so adding their reservations again
-can reject conservatively. A check is not an atomic promise about future RSS.
+per process; restart after moving a process to another cgroup. Only confirmed owned storage already reflected in current usage receives
+materialized credit; unknown ownership remains conservative. A check is not an
+atomic promise about future RSS.
 
 The lease spans actual response writing, including proxy envelopes and write
-failures. Nested model calls share it; release is idempotent. Active requests
-and estimated reserved bytes are separate metrics. Rejections expose stable
-`max_topology_concurrent_requests`, `max_topology_reserved_bytes` or
+failures. Nested model calls share it; release is idempotent. Proxy cleanup clears retained response data before releasing the lease. Active
+requests, waiters, reserved bytes and materialized bytes have separate gauges.
+Rejections expose stable `max_topology_admission_waiters`, `max_topology_reserved_bytes` or
 `max_topology_memory_headroom` reasons and count/limit attributes. Response
 encoding and network writing have separate `http-response-encode` and
 `http-response-write` spans; neither is a CPU-time measurement.
 
 ## Verification and Rollout
 
-Tests cover independent/combined fetch reuse and planning, logical budget
+Tests cover independent/combined fetch reuse and planning, logical counters without duplicate resident
 charging on reuse, immutable Matrix application, owned results after cleanup,
 randomized historical attributes/directions/partial at 1..257 points, exact
 uint64 client IDs, induced edges, target post-filtering, cancellation, resource

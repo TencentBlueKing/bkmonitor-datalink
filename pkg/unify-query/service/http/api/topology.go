@@ -6,10 +6,10 @@
 package api
 
 import (
+	"context"
 	stdjson "encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +27,8 @@ import (
 )
 
 const topologyErrorMessageMaxBytes = 4096
+
+const topologyInvalidRequestReason = "invalid_request"
 
 func truncateTopologyErrorMessage(message string, maxBytes int) string {
 	if maxBytes <= 0 {
@@ -109,41 +111,66 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	span.Set("query-mode", queryMode)
 	span.Set("handler-headers", c.Request.Header)
 
-	ctx, release, err := v1beta3.AcquireSharedTopology(ctx)
+	maxRequestBytes := v1beta3.TopologyRequestByteLimit()
+	var body []byte
+	bodyRead := false
+	// Only admission/body failure reporting survives cancellation. No query or
+	// successful large payload executes under the detached context.
+	failBeforeQuery := func(failureCtx context.Context, failure error) {
+		failureCtx = context.WithoutCancel(failureCtx)
+		c.Request = c.Request.WithContext(failureCtx)
+		resp.failed(failureCtx, errors.New(truncateTopologyErrorMessage(failure.Error(), topologyErrorMessageMaxBytes)))
+	}
+	prepareBody := func(readCtx context.Context) error {
+		if bodyRead {
+			return nil
+		}
+		bodyRead = true
+		var readErr error
+		body, readErr = readTopologyRequestBody(readCtx, c.Request.Body, c.Writer, maxRequestBytes)
+		if readErr != nil {
+			requestResult = metric.CMDBRelationResultRejected
+			reason := topologyInvalidRequestReason
+			var limit interface{ TruncationReason() string }
+			if errors.As(readErr, &limit) {
+				reason = limit.TruncationReason()
+			}
+			metric.CMDBTopologyRejectInc(readCtx, queryMode, reason)
+			metric.CMDBTopologyPayloadObserve(readCtx, "request-body", metric.CMDBRelationResultRejected, len(body))
+		}
+		return readErr
+	}
+	ctx, release, err := v1beta3.AcquireSharedTopologyWithQueuedPreparation(ctx, prepareBody)
 	if err != nil {
 		handlerErr = err
 		var limit interface{ TruncationReason() string }
-		if errors.As(err, &limit) {
+		if requestResult != metric.CMDBRelationResultRejected && errors.As(err, &limit) {
 			requestResult = metric.CMDBRelationResultRejected
 			metric.CMDBTopologyRejectInc(ctx, queryMode, limit.TruncationReason())
 		}
-		resp.failed(ctx, err)
+		// Admission has already canceled/released its lease. Report the bounded
+		// failure rather than silently producing an empty HTTP 200; no query or
+		// success payload runs under this context. Socket WriteTimeout remains.
+		failBeforeQuery(ctx, err)
 		return
 	}
+	// Keep the admission deadline through the proxy's final segmented write.
+	c.Request = c.Request.WithContext(ctx)
 	if _, proxied := c.Get(proxy.ContextConfigUnifyResponseProcess); proxied {
-		proxy.DeferResponseCleanup(c, release)
+		proxy.DeferResponseCleanup(c, func() {
+			// Gin pools the Context without resetting its Keys at request exit.
+			// Drop the encoded payload after proxy writing, before releasing its lease.
+			c.Set(proxy.ContextKeyResponseData, nil)
+			release()
+		})
 	} else {
 		defer release()
 	}
-	maxRequestBytes := v1beta3.TopologyRequestByteLimit()
-	if err := v1beta3.ReserveTopologyStage(ctx, "request", int64(maxRequestBytes)*6); err != nil {
+	if err := prepareBody(ctx); err != nil {
 		handlerErr = err
-		resp.failed(ctx, err)
+		failBeforeQuery(ctx, err)
 		return
 	}
-	_, readSpan := trace.NewSpan(ctx, "topology-read-request-body")
-	var reader io.Reader = c.Request.Body
-	if maxRequestBytes > 0 && maxRequestBytes < int(^uint(0)>>1) {
-		reader = io.LimitReader(reader, int64(maxRequestBytes)+1)
-	}
-	body, err := io.ReadAll(reader)
-	if err == nil && maxRequestBytes > 0 && len(body) > maxRequestBytes {
-		err = fmt.Errorf("topology request exceeds maximum size of %d bytes: %w", maxRequestBytes, &v1beta3.ResultLimitError{Reason: "max_topology_request_bytes", Count: len(body), Limit: maxRequestBytes})
-	}
-	readSpan.Set("request-body-bytes", len(body))
-	readSpan.Set("request-body-byte-limit", maxRequestBytes)
-	v1beta3.SetTimeGraphLimitTrace(readSpan, err)
-	readSpan.End(&err)
 	request := new(cmdb.SharedTopologyRequest)
 	if err == nil {
 		_, decodeSpan := trace.NewSpan(ctx, "topology-decode-request")
@@ -155,7 +182,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	if err != nil {
 		handlerErr = err
 		requestResult = metric.CMDBRelationResultRejected
-		reason := "invalid_request"
+		reason := topologyInvalidRequestReason
 		if maxRequestBytes > 0 && len(body) > maxRequestBytes {
 			reason = "max_topology_request_bytes"
 		}
@@ -196,6 +223,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		Data:    make([]stdjson.RawMessage, len(request.QueryList)),
 	}
 	responseBytes := 1024
+	responseOwnedBytes := topologyEncodedOwnership{}
 	defer func() {
 		span.Set("response-budget-bytes-used", responseBytes)
 		span.Set("response-budget-bytes-limit", v1beta3.TopologyOutputByteLimit())
@@ -253,7 +281,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		} else {
 			// HTTP 时间模式校验未进入模型，单独记录该子查询，避免遗漏或重复计数。
 			metric.CMDBTopologyObserve(queryCtx, metric.CMDBTopologyScopeQuery, queryMode, metric.CMDBRelationResultRejected, time.Since(queryStarted))
-			metric.CMDBTopologyRejectInc(queryCtx, queryMode, "invalid_request")
+			metric.CMDBTopologyRejectInc(queryCtx, queryMode, topologyInvalidRequestReason)
 		}
 		if queryErr != nil {
 			failedQueryCount++
@@ -311,13 +339,17 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		}
 		// Reserve retained item buffers plus outer encoding/write buffers.
 		encodeErr := ctx.Err()
-		if encodeErr == nil {
+		if encodeErr == nil && v1beta3.YoloModeEnabled() {
 			encodeErr = v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes+v1beta3.TopologyOutputByteLimit())*3)
 		}
 		var encoded []byte
 		var chunks [][]byte
 		encodedBytes := 0
-		if encodeErr == nil {
+		itemOwnedBytes := topologyEncodedOwnership{}
+		if encodeErr == nil && !v1beta3.YoloModeEnabled() {
+			chunks, encodedBytes, itemOwnedBytes, encodeErr = marshalTopologyBounded(queryCtx, payload, v1beta3.TopologyOutputByteLimit()-responseBytes, responseOwnedBytes)
+		}
+		if encodeErr == nil && v1beta3.YoloModeEnabled() {
 			// The usual element budget already bounds small snapshots. Large
 			// snapshots encode frame by frame to bound encoder buffers.
 			var elements int
@@ -335,7 +367,6 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 				// the general encoder remain non-destructive.
 				item.Snapshots = append([]cmdb.SharedTopologySnapshot(nil), item.Snapshots...)
 				result.Snapshots = nil
-				payload = nil
 				chunks, encodedBytes, encodeErr = marshalOwnedTopologySnapshots(queryCtx, item)
 				item.Snapshots = nil
 			} else if encodeErr == nil {
@@ -369,8 +400,16 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			return
 		}
 		responseBytes += encodedBytes + 1
+		item.Snapshots = nil
+		result.Snapshots = nil
+		result.Compact = nil
 		_ = v1beta3.ReserveTopologyStage(ctx, "output", 0)
-		_ = v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes)*3)
+		if v1beta3.YoloModeEnabled() {
+			_ = v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes)*3)
+		} else {
+			responseOwnedBytes.reserved += itemOwnedBytes.reserved
+			responseOwnedBytes.materialized += itemOwnedBytes.materialized
+		}
 		querySpan.Set("query-index", index)
 		querySpan.Set("point-count", item.PointCount)
 		querySpan.Set("response-code", item.Code)

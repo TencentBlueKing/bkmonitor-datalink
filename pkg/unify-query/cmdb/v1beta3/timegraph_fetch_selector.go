@@ -88,9 +88,7 @@ func (loader *timeGraphMatrixLoader) compileTopologyFetches(ctx context.Context,
 }
 
 func (loader *timeGraphMatrixLoader) reserveRelationApplication(ctx context.Context, matrix pl.Matrix) error {
-	size := timeGraphReturnedMatrixSize(matrix)
-	loader.graphEstimatedBytes += int64(size.Points)*256 + int64(size.Series)*1024 + int64(size.LabelBytes)*8
-	return ReserveTopologyStage(ctx, "graph", loader.graphEstimatedBytes)
+	return ctx.Err() // Graph growth is charged where unique retained objects are added.
 }
 
 func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {

@@ -187,7 +187,7 @@ func appendSharedNodeInfo(versions []sharedNodeInfo, active timeBitmap, info cmd
 	return append(versions, sharedNodeInfo{activeBits: active, dimensions: info})
 }
 
-func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active timeBitmap) error {
+func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active timeBitmap) (err error) {
 	g := q.shared
 	newPoints := active.subtract(g.nodeBits[node]).count()
 
@@ -207,6 +207,17 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 			}
 			return nil
 		}
+	}
+	if q.residency != nil {
+		reservation, reserveErr := q.reserveInfoChange(node, info, active)
+		if reserveErr != nil {
+			return reserveErr
+		}
+		defer func() {
+			if settleErr := reservation.settle(g.nodeInfos[node], err == nil); err == nil {
+				err = settleErr
+			}
+		}()
 	}
 	versions := make([]sharedNodeInfo, 0, len(previous)+1)
 	remaining := active
@@ -271,6 +282,9 @@ func (q *TimeGraph) addSharedRelationWithBits(ctx context.Context, relation cmdb
 		relationType: relation.RelationType, metricName: relation.MetricName,
 		category: relation.Category, direction: direction,
 	}}
+	if err := q.reserveSharedEdge(key, pair); err != nil {
+		return err
+	}
 	var compact sharedCompactEdgeKey
 	_, exists := g.edgeBits[key]
 	if g.wordEdges != nil || g.compactEdges != nil {
@@ -281,7 +295,7 @@ func (q *TimeGraph) addSharedRelationWithBits(ctx context.Context, relation cmdb
 			_, exists = g.compactEdges[compact]
 		}
 	}
-	if !exists && q.maxEdges > 0 && g.edgeCount() >= q.maxEdges {
+	if q.residency == nil && !exists && q.maxEdges > 0 && g.edgeCount() >= q.maxEdges {
 		return &ResultLimitError{Reason: "max_graph_edges", Count: g.edgeCount() + 1, Limit: q.maxEdges}
 	}
 	if updateNodes {

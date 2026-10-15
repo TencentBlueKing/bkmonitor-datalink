@@ -29,20 +29,25 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 		graphLimit, outputLimit, canceled, failed bool
 	}{
 		{name: "success", outcome: "success"},
-		{name: "build rejection", outcome: "rejected", reason: "max_graph_edges", graphLimit: true},
-		{name: "output rejection", outcome: "success", reason: "max_topology_output_elements", outputLimit: true},
+		{name: "build rejection", outcome: "rejected", reason: "max_graph_node_infos", graphLimit: true},
+		{name: "output rejection", outcome: "success", reason: "max_topology_reserved_bytes", outputLimit: true},
 		{name: "backend cancellation", outcome: "canceled", canceled: true},
 		{name: "backend error", outcome: "failed", failed: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
-			oldEdges, oldOutput := MaxGraphEdges, MaxSharedTopologyOutputElements
-			t.Cleanup(func() { MaxGraphEdges, MaxSharedTopologyOutputElements = oldEdges, oldOutput })
+			oldBackend := MaxSharedTopologyBackendBytes
+			if test.outputLimit {
+				MaxSharedTopologyBackendBytes = 1024
+			}
+			t.Cleanup(func() { MaxSharedTopologyBackendBytes = oldBackend })
+			oldEdges, oldOutput := MaxGraphNodeInfos, MaxSharedTopologyReservedBytes
+			t.Cleanup(func() { MaxGraphNodeInfos, MaxSharedTopologyReservedBytes = oldEdges, oldOutput })
 			if test.graphLimit {
-				MaxGraphEdges = 1
+				MaxGraphNodeInfos = 2
 			}
 			if test.outputLimit {
-				MaxSharedTopologyOutputElements = 1
+				MaxSharedTopologyReservedBytes = 2 * 1024 * 1024
 			}
 			recorder := tracetest.NewSpanRecorder()
 			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))

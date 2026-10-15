@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"time"
+	"unsafe"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -240,6 +241,12 @@ func (q *TimeGraph) findSharedTopology(ctx context.Context, grid TopologyGrid, q
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 
+	ctx, releaseTraversal, err := q.withTraversalReservation(ctx)
+	if err != nil {
+		return topologySnapshotCounts{}, err
+	}
+	defer releaseTraversal()
+
 	_, stateSpan := trace.NewSpan(ctx, "timegraph-build-shared-topology-state")
 	var stateErr error
 	stateSpan.Set("source-type", query.SourceType)
@@ -415,6 +422,9 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := ReserveTopologyStage(ctx, "output", int64(len(grid.Timestamps))*int64(unsafe.Sizeof(SharedTopologySnapshot{}))); err != nil {
+		return nil, err
+	}
 	result := make([]SharedTopologySnapshot, len(grid.Timestamps))
 	for index, timestamp := range grid.Timestamps {
 		if err := ctx.Err(); err != nil {
@@ -428,7 +438,25 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 	}
 	err := q.emitSharedTopology(ctx, grid, query, reachable, edges,
 		func(index int, node SharedTopologyNode) { result[index].Nodes = append(result[index].Nodes, node) },
-		func(index int, edge SharedTopologyEdge) { result[index].Edges = append(result[index].Edges, edge) }, nil,
+		func(index int, edge SharedTopologyEdge) { result[index].Edges = append(result[index].Edges, edge) },
+		func(_ bool, budget *topologyOutputBudget) error {
+			nodes, counts, e := topologyFrameCounts(ctx, len(grid.Timestamps), reachable, edges)
+			if e != nil {
+				return e
+			}
+			if e = budget.addCharge(topologySnapshotContainers(nodes, counts), 0); e != nil {
+				return e
+			}
+			for i := range result {
+				if nodes[i] > 0 {
+					result[i].Nodes = make([]SharedTopologyNode, 0, nodes[i])
+				}
+				if counts[i] > 0 {
+					result[i].Edges = make([]SharedTopologyEdge, 0, counts[i])
+				}
+			}
+			return nil
+		},
 		func() {
 			for index := range result {
 				sort.Slice(result[index].Nodes, func(i, j int) bool { return result[index].Nodes[i].ID < result[index].Nodes[j].ID })
@@ -443,6 +471,9 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 
 func (q *TimeGraph) materializeSharedTopologyDTO(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) ([]cmdb.SharedTopologySnapshot, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ReserveTopologyStage(ctx, "output", int64(len(grid.Timestamps))*int64(unsafe.Sizeof(cmdb.SharedTopologySnapshot{}))); err != nil {
 		return nil, err
 	}
 	result := make([]cmdb.SharedTopologySnapshot, len(grid.Timestamps))
@@ -465,12 +496,12 @@ func (q *TimeGraph) materializeSharedTopologyDTO(ctx context.Context, grid Topol
 		func(index int, edge SharedTopologyEdge) {
 			result[index].Edges = append(result[index].Edges, cmdb.SharedTopologyEdge(edge))
 		},
-		func(ordered bool) error {
-			if !ordered {
-				return nil
-			}
+		func(ordered bool, budget *topologyOutputBudget) error {
 			nodes, edgeCounts, err := topologyFrameCounts(ctx, len(grid.Timestamps), reachable, edges)
 			if err != nil {
+				return err
+			}
+			if err := budget.addCharge(topologySnapshotContainers(nodes, edgeCounts), 0); err != nil {
 				return err
 			}
 			for index := range result {
@@ -493,10 +524,13 @@ func (q *TimeGraph) materializeSharedTopologyDTO(ctx context.Context, grid Topol
 	if err != nil {
 		return nil, err
 	}
+	if err := commitTopologyOutput(ctx, func() int64 { return topologySnapshotOwnedLowerBound(result) }); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
-// 只有 YOLO 响应收集器会按未过滤的精确容量预分配。
+// 响应收集器按已计数的逐帧容量预分配，并在分配前预约 DTO 容器内存。
 func topologyFrameCounts(ctx context.Context, points int, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) ([]int, []int, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -555,7 +589,7 @@ func lessSharedTopologyEdge(left, right SharedTopologyEdge) bool {
 	return left.Direction < right.Direction
 }
 
-func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState, emitNode func(int, SharedTopologyNode), emitEdge func(int, SharedTopologyEdge), prepare func(bool) error, finish func()) (err error) {
+func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState, emitNode func(int, SharedTopologyNode), emitEdge func(int, SharedTopologyEdge), prepare func(bool, *topologyOutputBudget) error, finish func()) (err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-materialize-topology")
 	defer span.End(&err)
 	started := time.Now()
@@ -563,9 +597,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 	budget.ctx = ctx
 	defer func() {
 		span.Set("output-budget-elements-used", budget.elements)
-		span.Set("output-budget-elements-limit", budget.maxElements)
 		span.Set("output-budget-bytes-used", budget.bytes)
-		span.Set("output-budget-bytes-limit", budget.maxBytes)
 		SetTimeGraphLimitTrace(span, err)
 		metric.CMDBTimeGraphStageObserve(ctx, "topology-materialize", metric.CMDBTimeGraphErrorResult(err), time.Since(started))
 	}()
@@ -574,7 +606,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 	}
 	ordered := yoloMode
 	if prepare != nil {
-		if err := prepare(ordered); err != nil {
+		if err := prepare(ordered, budget); err != nil {
 			return err
 		}
 	}
@@ -593,59 +625,8 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 			}
 		}
 	}
-	appendNode := func(node uint64, bits timeBitmap) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		resourceType := q.nodeBuilder.resourceName(node)
-		var versions []sharedNodeInfo
-		if q.shared != nil {
-			versions = q.shared.nodeInfos[node]
-		}
-		for index := range grid.Timestamps {
-			if index%256 == 0 {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			if !bits.has(index) {
-				continue
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			var info cmdb.Matcher
-			var exists bool
-			if q.shared != nil {
-				storedIndex := infoFrameIndices[index]
-				if storedIndex >= 0 {
-					for _, version := range versions {
-						if version.activeBits.has(storedIndex) {
-							info, exists = version.dimensions, true
-							break
-						}
-					}
-				}
-			} else {
-				info, exists = q.storedNodeInfoAt(grid.Timestamps[index], node)
-			}
-			if exists {
-				info = cloneMatcher(info)
-			} else {
-				_, info = q.nodeBuilder.Info(node)
-			}
-			if err := budget.add(topologyNodeByteBound(resourceType, info)); err != nil {
-				return err
-			}
-			emitNode(index, SharedTopologyNode{
-				ID:           node,
-				ResourceType: resourceType,
-				Dimensions:   info,
-			})
-		}
-		return nil
-	}
-	// 本请求持有的候选只排序一次，各帧顺序保持一致；普通模式沿用原分配和预算逻辑。
+
+	// YOLO 按已排序候选输出；普通模式仍按帧排序，输出契约相同。
 	if ordered {
 		nodes := make([]uint64, 0, len(reachable))
 		for node := range reachable {
@@ -662,7 +643,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 			return err
 		}
 		for _, node := range nodes {
-			if err := appendNode(node, reachable[node]); err != nil {
+			if err := q.emitSharedTopologyNode(ctx, grid, infoFrameIndices, budget, node, reachable[node], emitNode); err != nil {
 				return err
 			}
 		}
@@ -673,7 +654,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 		}
 	} else {
 		for node, bits := range reachable {
-			if err := appendNode(node, bits); err != nil {
+			if err := q.emitSharedTopologyNode(ctx, grid, infoFrameIndices, budget, node, bits, emitNode); err != nil {
 				return err
 			}
 		}
@@ -686,6 +667,9 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 		if activeBits.empty() {
 			continue
 		}
+		if err := budget.retainEdge(edge.key); err != nil {
+			return err
+		}
 		for index := range grid.Timestamps {
 			if index%256 == 0 {
 				if err := ctx.Err(); err != nil {
@@ -695,7 +679,7 @@ func (q *TimeGraph) emitSharedTopology(ctx context.Context, grid TopologyGrid, q
 			if !activeBits.has(index) {
 				continue
 			}
-			if err := budget.add(topologyEdgeByteBound(edge.key)); err != nil {
+			if err := budget.add(0); err != nil {
 				return err
 			}
 			emitEdge(index, SharedTopologyEdge{
@@ -744,4 +728,72 @@ func (q *TimeGraph) storedNodeInfoAt(timestamp int64, node uint64) (cmdb.Matcher
 	}
 	info, exists := q.nodeInfos[timestamp][node]
 	return info, exists
+}
+
+func (q *TimeGraph) emitSharedTopologyNode(ctx context.Context, grid TopologyGrid, infoFrameIndices []int, budget *topologyOutputBudget, node uint64, bits timeBitmap, emitNode func(int, SharedTopologyNode)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	resourceType := q.nodeBuilder.resourceName(node)
+	var versions []sharedNodeInfo
+	if q.shared != nil {
+		versions = q.shared.nodeInfos[node]
+		// Borrowed strings are kept once per version, not once per frame.
+		for _, version := range versions {
+			if err := budget.retainMatcher(resourceType, version.dimensions); err != nil {
+				return err
+			}
+		}
+	}
+	fallbackRetained := false
+	for index := range grid.Timestamps {
+		if index%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if !bits.has(index) {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var info cmdb.Matcher
+		var exists bool
+		if q.shared != nil {
+			storedIndex := infoFrameIndices[index]
+			if storedIndex >= 0 {
+				for _, version := range versions {
+					if version.activeBits.has(storedIndex) {
+						info, exists = version.dimensions, true
+						break
+					}
+				}
+			}
+		} else {
+			info, exists = q.storedNodeInfoAt(grid.Timestamps[index], node)
+		}
+		if !exists {
+			info = q.topologyBorrowedNodeInfo(node)
+		}
+		entries := len(info)
+		if q.shared == nil || (!exists && !fallbackRetained) {
+			if err := budget.retainMatcher(resourceType, info); err != nil {
+				return err
+			}
+			if !exists {
+				fallbackRetained = true
+			}
+		}
+		if err := budget.add(topologyMatcherMemory(entries)); err != nil {
+			return err
+		}
+		info = cloneMatcher(info)
+		emitNode(index, SharedTopologyNode{
+			ID:           node,
+			ResourceType: resourceType,
+			Dimensions:   info,
+		})
+	}
+	return nil
 }

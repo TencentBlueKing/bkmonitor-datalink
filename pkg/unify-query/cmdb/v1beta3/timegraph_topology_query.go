@@ -200,7 +200,6 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	if !yoloMode {
 		queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(effectiveTimeGraphLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
 		span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(queryCtx))
-		span.Set("matrix-point-limit", effectiveTimeGraphLimit(MaxSharedTopologyMatrixPoints, 1000000))
 	}
 
 	if planOut != nil && yoloMode {
@@ -227,6 +226,11 @@ func (m *Model) querySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "build shared topology")
 	}
 	defer graph.Clean(queryCtx)
+	queryCtx, releaseTraversal, err := graph.withTraversalReservation(queryCtx)
+	if err != nil {
+		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "reserve topology traversal")
+	}
+	defer releaseTraversal()
 
 	topologyQuery := SharedTopologyQuery{
 		SourceType:           request.SourceType,

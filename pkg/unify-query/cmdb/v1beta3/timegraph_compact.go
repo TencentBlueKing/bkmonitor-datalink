@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"time"
+	"unsafe"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -54,6 +55,11 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 	if q.shared == nil {
 		return nil, fmt.Errorf("compact topology requires shared storage")
 	}
+	ctx, releaseTraversal, err := q.withTraversalReservation(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseTraversal()
 	nodeBits, edges, err := q.sharedTopologyState(ctx, grid, query)
 	if err != nil {
 		return nil, err
@@ -69,18 +75,24 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		span.Set("expanded-budget-elements", budget.elements)
 		span.Set("expanded-budget-bytes", budget.bytes)
 	}()
+	if err := budget.addCharge(int64(unsafe.Sizeof(cmdb.CompactTopology{}))+int64(len(grid.Timestamps))*8+int64(len(query.PartialTimestamps))*int64(unsafe.Sizeof(cmdb.CompactTopologyPartial{})), 0); err != nil {
+		return nil, err
+	}
 	if err := budget.checkBytes(0); err != nil {
 		return nil, err
 	}
 	result = &cmdb.CompactTopology{
 		Version: 1, Timestamps: append([]int64(nil), grid.Timestamps...),
 		Nodes: make([]cmdb.CompactTopologyNode, 0), Edges: make([]cmdb.CompactTopologyEdge, 0),
-		Partial: make([]cmdb.CompactTopologyPartial, 0),
+		Partial: make([]cmdb.CompactTopologyPartial, 0, len(query.PartialTimestamps)),
 	}
 	for i, ts := range grid.Timestamps {
 		if reason, ok := query.PartialTimestamps[ts]; ok {
 			result.Partial = append(result.Partial, cmdb.CompactTopologyPartial{Index: i, Reason: reason})
 		}
+	}
+	if err := budget.addCharge(int64(len(reachable))*(8+48)+128, 0); err != nil {
+		return nil, err
 	}
 	ids := make([]uint64, 0, len(reachable))
 	for id := range reachable {
@@ -127,11 +139,14 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 			if count == 0 {
 				return nil
 			}
-			// 每个物化版本都计入 ID 和位图开销；目标筛选前仍受输入与图预算约束。
-			if err := budget.addCharge(topologyNodeByteBound(resource, dimensions)+64+int64(20*(1+len(bits.rest))), 1); err != nil {
-				return err
-			}
 			if keep {
+				if err := budget.retainMatcher(resource, dimensions); err != nil {
+					return err
+				}
+				charge := 3*int64(unsafe.Sizeof(cmdb.CompactTopologyNode{})) + topologyMatcherMemory(len(dimensions)) + 20 + int64(1+len(bits.rest))*(16+int64(unsafe.Sizeof("")))
+				if err := budget.addCharge(charge, 1); err != nil {
+					return err
+				}
 				result.Nodes = append(result.Nodes, cmdb.CompactTopologyNode{
 					ID:           strconv.FormatUint(id, 10),
 					ResourceType: resource,
@@ -153,7 +168,7 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 			remaining = remaining.subtract(bits)
 		}
 		if !remaining.empty() {
-			_, fallback := q.nodeBuilder.Info(id)
+			fallback := q.topologyBorrowedNodeInfo(id)
 			if err := appendVersion(remaining, fallback); err != nil {
 				return nil, err
 			}
@@ -169,11 +184,15 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 		if count == 0 {
 			continue
 		}
-		if err := budget.addCharge(topologyEdgeByteBound(edge.key)+64+int64(20*(1+len(bits.rest))), 1); err != nil {
-			return nil, err
-		}
 		if !kept[edge.key.source] || !kept[edge.key.target] {
 			continue
+		}
+		if err := budget.retainEdge(edge.key); err != nil {
+			return nil, err
+		}
+		charge := 3*int64(unsafe.Sizeof(cmdb.CompactTopologyEdge{})) + 40 + int64(1+len(bits.rest))*(16+int64(unsafe.Sizeof("")))
+		if err := budget.addCharge(charge, 1); err != nil {
+			return nil, err
 		}
 		key := edge.key
 		result.Edges = append(result.Edges, cmdb.CompactTopologyEdge{
@@ -191,6 +210,9 @@ func (q *TimeGraph) FindCompactTopology(ctx context.Context, grid TopologyGrid, 
 	span.Set("edge-version-count", len(result.Edges))
 	span.Set("snapshot-node-count", result.NodeOccurrences)
 	span.Set("snapshot-edge-count", result.EdgeOccurrences)
+	if err := commitTopologyOutput(ctx, func() int64 { return topologyCompactOwnedLowerBound(result) }); err != nil {
+		return nil, err
+	}
 	return result, ctx.Err()
 }
 

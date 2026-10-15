@@ -108,7 +108,7 @@ func CMDBTopologyRejectInc(ctx context.Context, mode, reason string) {
 	case "invalid_request", "max_shared_topology_points", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos", "max_graph_results", "max_targets",
 		"max_response_bytes", "max_topology_matrix_points", "max_topology_matrix_series",
 		"max_topology_output_elements", "max_topology_output_bytes", "max_topology_queries", "max_topology_request_bytes",
-		"max_topology_concurrent_requests", "max_topology_reserved_bytes", "max_topology_memory_headroom":
+		"max_topology_concurrent_requests", "max_topology_admission_waiters", "max_topology_reserved_bytes", "max_topology_memory_headroom":
 	default:
 		reason = "other"
 	}

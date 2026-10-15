@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -121,9 +122,11 @@ type topologyAdmissionWriter struct {
 
 func (w *topologyAdmissionWriter) Write(body []byte) (int, error) {
 	require.Equal(w.t, 1.0, topologyObservation(w.t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
-	_, release, err := v1beta3.AcquireSharedTopology(context.Background())
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancelWait()
+	_, release, err := v1beta3.AcquireSharedTopology(waitCtx)
 	if w.rejectNext {
-		require.ErrorContains(w.t, err, "max_topology_concurrent_requests")
+		require.ErrorIs(w.t, err, context.DeadlineExceeded)
 		return w.ResponseRecorder.Write(body)
 	}
 	require.NoError(w.t, err)

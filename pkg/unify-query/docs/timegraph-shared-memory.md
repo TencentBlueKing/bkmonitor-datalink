@@ -21,15 +21,17 @@ YOLO 模式超过 64 个评估点时，时间位图自动扩展为多个 uint64�
 | --- | --- | --- |
 | `max_shared_topology_points` | 60 | 实际网格；可调低，不能通过配置放宽到 61–64 点，超出范围的配置回退 60 |
 | `max_shared_topology_backend_bytes` | 16777216（16 MiB） | 单次后端 HTTP 响应的解压后大小；VM 调用显式传入，解码前拒绝 |
-| `max_shared_topology_matrix_points` | 1000000 | 一个拓扑查询所有取数阶段的 Matrix 点数总和 |
-| `max_shared_topology_output_elements` | 200000 | 实际物化的节点与边对象数：snapshots 按各帧展开，compact 按属性／关系版本 |
-| `max_shared_topology_output_bytes` | 67108864（64 MiB） | 按所选表示计算的 JSON 大小保守上界，以及 HTTP 整批实际响应大小 |
+| `max_shared_topology_matrix_points` | 已弃用 | 配置仍可读取；不再用累计逻辑点数拒绝共享拓扑 |
+| `max_shared_topology_output_elements` | 已弃用 | 配置仍可读取；DTO按存活内存预约 |
+| `max_shared_topology_output_bytes` | 67108864（64 MiB） | HTTP 整批实际编码响应大小；保守JSON上界只用于内存预约 |
 | `max_shared_topology_request_bytes` | 1048576（1 MiB） | HTTP 请求体大小，直连和代理入口均生效 |
 | `max_shared_topology_queries` | 16 | 单个 HTTP 批次的查询条数 |
 
-既有 `max_graph_nodes`、`max_graph_edges`、`max_graph_node_infos` 继续约束构图。
-Matrix 单次序列数也受 `max_graph_nodes` 限制。共享拓扑的边限额按完整关系身份的唯一有向边计数，属性限额按实际存储的标签版本计数；旧逐时间点路径图仍按各帧计数。相同标签跨帧复用结构限额，同端点不同关系类型、指标、类别或方向分别计数。
-时间出现次数继续作为观测指标保留；Matrix 累计点数、H／K、截止时间及 Matrix／graph／output 的同时存活内存预约仍独立生效。结构计数不是堆大小保证，提高输入或资源参数仍须容量验收。
+共享拓扑的节点、完整关系身份、索引和属性替换按结构内存估算，不再按
+`max_graph_nodes` / `max_graph_edges` 或Matrix序列数独立拒绝。
+旧逐时间点图的这些限制仍生效；共享拓扑保留 `max_graph_node_infos` 属性版本兜底。
+Matrix累计点数和时间出现次数作为观测数据，不按每次逻辑复用重复收取存活内存。
+普通模式的H／K、请求期限、真实后端字节以及所有同时存活stage的总预约仍生效。
 
 普通模式默认 HTTP 请求体最多 1 MiB，`query_list` 最多 16 项。批次串行执行，响应累计也受预算限制，
 不能用更多子查询放大单请求输出上限。
@@ -50,7 +52,8 @@ Matrix 点数、图节点/边/结果/节点属性数量、物化输出元素和�
 不需要把各个上限逐个调大；改回 `false` 并重新加载配置即可恢复正常模式保护。
 
 YOLO 不改变查询语义：时间戳/步长、方向和 schema 等参数仍须合法，
-`max_hops` 仍决定局部拓扑深度并遵守现有最大跳数配置；取消和查询超时仍生效。
+`max_hops` 仍决定所请求的拓扑深度；YOLO不施加配置跳数上限或内部查询期限，
+仍继承父context的取消和期限。
 该开关只控制本服务的上述预算，不绕过 VM、网关或容器自身的限制。
 它不会自动扩容，开启后大范围查询仍可能耗尽内存，应在隔离实例上使用。
 
@@ -60,7 +63,9 @@ YOLO 不改变查询语义：时间戳/步长、方向和 schema 等参数仍须
 
 ## 并发请求与活动计数
 
-普通模式使用可配置的并发、进程预留量与可见内存余量保护，立即拒绝、不排队。
+普通模式满执行槽时进入FIFO队列，队列最多容纳一波执行槽数量的等待项。
+等待计入原请求期限；队列满明确拒绝。等待项只预留/读取有界body，不取数或构图；
+断连、取消、读体失败会移除等待项。已执行请求的资源增长不足时立即失败，不持图等内存。
 YOLO 绕过这些预算；多个请求可同时取数和构图，并不是固定只能两个查询。
 新键为 `max_shared_topology_concurrent_requests`；旧的
 `max_shared_topology_concurrency` 不再生效。默认值和估算边界见
@@ -75,15 +80,17 @@ YOLO 绕过这些预算；多个请求可同时取数和构图，并不是固定
    成功、失败、取消均清理，重复调用 release 只清理一次。
 
 `cmdb_topology_admission_active` 观测实际活动数，`cmdb_topology_reserved_bytes`
-观测估算预留量，而非 RSS。旧 `cmdb_topology_admission_limit` 和
+观测估算预留量，而非 RSS。`cmdb_topology_admission_waiters`观测等待项，
+`cmdb_topology_materialized_bytes`观测已确认且仍存活的owned存储下界。旧 `cmdb_topology_admission_limit` 和
 `max_topology_concurrency` 未恢复。`TestSharedTopologyConcurrentLoadingAndRecovery` 覆盖普通/YOLO
 模式下 8 个请求同时到达后端，以及成功、取消、后端失败后的计数恢复；HTTP 回归还覆盖
 已有两个活动请求时 instant/range 及代理入口继续处理请求。
 
 ## 请求预算与错误
 
-JSON 物化预算采用包括转义开销的保守估计，可能在实际编码字节数达到上限前拒绝。
-这是为了在创建大快照前终止。内部共享不消除 60 份快照本身的输出量。
+DTO在分配前预约容器、属性副本和保留字符串；编码前预留scratch与缓存，逐块累计
+实际JSON字节。保守JSON上界不能作为独立响应字节拒绝，但内存预约不足仍会拒绝。
+内部共享不消除60份快照的传输字节。
 HTTP 批次超限整体失败；单个查询触发模型预算时，沿用批次中的失败项语义。
 外层 HTTP 200 仍不表示每个子查询成功。
 
@@ -99,9 +106,9 @@ HTTP 批次超限整体失败；单个查询触发模型预算时，沿用批次
 - `graph-attribute-version-count` 是实际保存的节点属性版本数。
 - `graph-timepoint-count` 表示有节点观测的时间点数，不再等于内存中的图对象个数。
 
-`graph-edge-count` 和 `graph-node-info-count` 仍是上述逻辑预算计数。
+`graph-edge-count` 和 `graph-node-info-count` 仍是逻辑出现次数观测。
 `build` span 包含后端取数，不能把它全部解释为内存图分配时间。
-响应字节、Matrix 点数及输出元素/字节拒绝均有固定 reason 指标；
+响应字节与资源拒绝有固定reason指标，旧数量拒绝标签保留兼容但不由新共享路径产生；
 见 [指标说明](timegraph-relation-observability.md)。
 
 ## 同口径测量
@@ -111,8 +118,8 @@ VM 响应，经过真实 HttpCurl、JSON 解码、VM Matrix 转换、构图、�
 转换、图清理和 JSON 编码。`legacy` 与 `shared` 只切换构图存储方式。
 路由解析、真实存储以及公网 HTTP handler 不在这个隔离探针范围内。
 
-探针为比较相同大响应，把两个模式的输出预算都临时设为 100 万元素 / 256 MiB；
-这只作用于测试进程。并发档位比较核心流水线成本，不经过公开 HTTP handler，不能据此
+历史探针仍设置100万元素/256 MiB配置；元素配置已弃用，模型输出使用内存预约。
+这些设置只作用于测试进程。并发档位比较核心流水线成本，不经过公开 HTTP handler，不能据此
 承诺生产吞吐或峰值内存。HTTP 批次、活动计数及代理生命周期由另外的回归测试验证。
 
 从仓库根目录执行：

@@ -37,26 +37,29 @@ const (
 )
 
 var (
-	DefaultMaxHops                   = 2
-	MaxAllowedHops                   = 5
-	DefaultLimit                     = 100
-	MaxRangePoints                   = 11000
-	MaxTargets                       = 5000
-	MaxGraphNodes                    = 100000
-	MaxGraphEdges                    = 200000
-	MaxGraphResults                  = 10000
-	MaxGraphNodeInfos                = 1000000
-	MaxSharedTopologyPoints          = 60
-	MaxSharedTopologyBackendBytes    = 16 * 1024 * 1024
-	MaxSharedTopologyMatrixPoints    = 1000000
-	MaxSharedTopologyOutputElements  = 200000
-	MaxSharedTopologyOutputBytes     = 64 * 1024 * 1024
-	MaxSharedTopologyRequestBytes    = 1024 * 1024
-	MaxSharedTopologyQueries         = 16
-	SharedTopologyReuseMatrix        = true
-	SharedTopologyPlanCandidates     = true
-	MaxSharedTopologyConcurrent      = 8
-	MaxSharedTopologyReservedBytes   = 4 * 1024 * 1024 * 1024
+	DefaultMaxHops                = 2
+	MaxAllowedHops                = 5
+	DefaultLimit                  = 100
+	MaxRangePoints                = 11000
+	MaxTargets                    = 5000
+	MaxGraphNodes                 = 100000
+	MaxGraphEdges                 = 200000
+	MaxGraphResults               = 10000
+	MaxGraphNodeInfos             = 1000000
+	MaxSharedTopologyPoints       = 60
+	MaxSharedTopologyBackendBytes = 16 * 1024 * 1024
+	// Deprecated: retained for configuration compatibility; live stage memory replaces this proxy budget.
+	MaxSharedTopologyMatrixPoints = 1000000
+	// Deprecated: retained for configuration compatibility; live stage memory replaces this proxy budget.
+	MaxSharedTopologyOutputElements = 200000
+	MaxSharedTopologyOutputBytes    = 64 * 1024 * 1024
+	MaxSharedTopologyRequestBytes   = 1024 * 1024
+	MaxSharedTopologyQueries        = 16
+	SharedTopologyReuseMatrix       = true
+	SharedTopologyPlanCandidates    = true
+	MaxSharedTopologyConcurrent     = 8
+	MaxSharedTopologyReservedBytes  = 4 * 1024 * 1024 * 1024
+	// Deprecated: retained for configuration compatibility; live stage memory replaces this proxy budget.
 	SharedTopologyRequestMemoryBytes = 512 * 1024 * 1024
 	SharedTopologyMemoryHeadroom     = 512 * 1024 * 1024
 	DefaultLookBackDelta             = int64(86400000) // 24小时（毫秒）

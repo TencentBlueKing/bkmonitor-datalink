@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
@@ -38,7 +39,8 @@ func TestTimeGraphLoadAttributionPreservesRejectedInput(t *testing.T) {
 			t.Cleanup(func() { MaxSharedTopologyMatrixPoints, yoloMode = oldLimit, oldYolo })
 			yoloMode = false
 			if test.rejected {
-				MaxSharedTopologyMatrixPoints = 1
+				ctx = metadata.WithBackendResponseLimit(ctx, 16)
+				metadata.MarkBackendResponseLimitExceeded(ctx)
 			}
 			matrix := contractMatrix(map[string]string{"from_id": "a", "to_id": "b"}, 1700000000000, 1700000060000)
 			if test.empty {
@@ -47,7 +49,12 @@ func TestTimeGraphLoadAttributionPreservesRejectedInput(t *testing.T) {
 			loader := timeGraphMatrixLoader{
 				model: &Model{}, graph: NewTimeGraph(), topology: true,
 				start: time.Unix(1700000000, 0), end: time.Unix(1700000060, 0), step: time.Minute,
-				override: func(context.Context, *structured.QueryTs) (pl.Matrix, error) { return matrix, test.backendErr },
+				override: func(fetchCtx context.Context, _ *structured.QueryTs) (pl.Matrix, error) {
+					if test.rejected {
+						metadata.MarkBackendResponseLimitExceeded(fetchCtx)
+					}
+					return matrix, test.backendErr
+				},
 			}
 			name := "load_test_" + test.name
 			query := &structured.QueryTs{QueryList: []*structured.Query{{FieldName: name}}}
@@ -132,15 +139,7 @@ func TestTimeGraphCumulativePointsIndependentOfBudgetMode(t *testing.T) {
 				count, err := loader.validateMatrix(context.Background(), matrix, nil)
 				require.Equal(t, 2, count)
 				require.Equal(t, call*2, loader.pointCount)
-				if test.topology && !test.yolo && call == 2 {
-					var limit *ResultLimitError
-					require.ErrorAs(t, err, &limit)
-					require.Equal(t, "max_topology_matrix_points", limit.Reason)
-					require.Equal(t, 4, limit.Count)
-					require.Equal(t, 3, limit.Limit)
-				} else {
-					require.NoError(t, err)
-				}
+				require.NoError(t, err)
 			}
 			count, err := loader.validateMatrix(context.Background(), nil, nil)
 			require.NoError(t, err)

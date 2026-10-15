@@ -56,7 +56,9 @@ func LoadConfig() {
 	MaxGraphNodeInfos = viper.GetInt(MaxGraphNodeInfosConfigPath)
 	MaxSharedTopologyPoints = viper.GetInt(MaxSharedTopologyPointsConfigPath)
 	MaxSharedTopologyBackendBytes = viper.GetInt(MaxSharedTopologyBackendBytesConfigPath)
+	// Deprecated: retained for configuration compatibility; live stage memory replaces this proxy budget.
 	MaxSharedTopologyMatrixPoints = viper.GetInt(MaxSharedTopologyMatrixPointsConfigPath)
+	// Deprecated: retained for configuration compatibility; live stage memory replaces this proxy budget.
 	MaxSharedTopologyOutputElements = viper.GetInt(MaxSharedTopologyOutputElementsConfigPath)
 	MaxSharedTopologyOutputBytes = viper.GetInt(MaxSharedTopologyOutputBytesConfigPath)
 	MaxSharedTopologyRequestBytes = viper.GetInt(MaxSharedTopologyRequestBytesConfigPath)
@@ -66,6 +68,7 @@ func LoadConfig() {
 	SharedTopologyPlanCandidates = viper.GetBool(SharedTopologyPlanCandidatesConfigPath)
 	MaxSharedTopologyConcurrent = viper.GetInt(MaxSharedTopologyConcurrentConfigPath)
 	MaxSharedTopologyReservedBytes = viper.GetInt(MaxSharedTopologyReservedBytesConfigPath)
+	// Deprecated: retained for configuration compatibility; live stage memory replaces this proxy budget.
 	SharedTopologyRequestMemoryBytes = viper.GetInt(SharedTopologyRequestMemoryBytesConfigPath)
 	SharedTopologyMemoryHeadroom = viper.GetInt(SharedTopologyMemoryHeadroomConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)

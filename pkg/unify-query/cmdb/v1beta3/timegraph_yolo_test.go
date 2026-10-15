@@ -90,7 +90,7 @@ func TestYoloSharedTopologyBypassesConfiguredBudgets(t *testing.T) {
 					SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
 					StartTime: timestamps[0], EndTime: timestamps[2], Step: "1s", MaxHops: 1,
 				})
-				if !enabled {
+				if !enabled && test.name == "node attributes" {
 					require.Error(t, err)
 					continue
 				}

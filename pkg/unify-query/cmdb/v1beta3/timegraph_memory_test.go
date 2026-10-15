@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/prometheus/procfs"
 	"github.com/stretchr/testify/require"
@@ -80,7 +81,7 @@ func TestTopologyReservationAdmissionAndRelease(t *testing.T) {
 	ctx, release, err := AcquireSharedTopology(context.Background())
 	require.NoError(t, err)
 	t.Cleanup(release)
-	require.Equal(t, int64(100), topologyAdmission.reserved)
+	require.Zero(t, topologyAdmission.reserved)
 	nested, nestedRelease, err := AcquireSharedTopology(ctx)
 	require.NoError(t, err)
 	nestedRelease()
@@ -112,8 +113,10 @@ func TestTopologyReservationAdmissionAndRelease(t *testing.T) {
 		releases = append(releases, r)
 		t.Cleanup(r)
 	}
-	_, _, err = AcquireSharedTopology(context.Background())
-	require.ErrorContains(t, err, "max_topology_concurrent_requests")
+	waitingCtx, stopWaiting := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer stopWaiting()
+	_, _, err = AcquireSharedTopology(waitingCtx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	yoloMode = true
 	ctx, yoloRelease, err := AcquireSharedTopology(context.Background())
 	require.NoError(t, err)
@@ -132,17 +135,17 @@ func TestTopologyVisibleAncestorMemoryHeadroom(t *testing.T) {
 	dir := t.TempDir()
 	paths := []topologyMemoryFiles{{filepath.Join(dir, "child.max"), filepath.Join(dir, "child.current")}, {filepath.Join(dir, "parent.max"), filepath.Join(dir, "parent.current")}}
 	for path, value := range map[string]string{paths[0].limit: "1000", paths[0].usage: "100", paths[1].limit: "800", paths[1].usage: "600"} {
-		require.NoError(t, os.WriteFile(path, []byte(value), 0600))
+		require.NoError(t, os.WriteFile(path, []byte(value), 0o600))
 	}
 	topologyMemoryPaths = func() []topologyMemoryFiles { return paths }
 	available, known := readTopologyMemoryHeadroom()
 	require.True(t, known)
 	require.Equal(t, int64(200), available)
-	require.NoError(t, os.WriteFile(paths[1].limit, []byte("max"), 0600))
+	require.NoError(t, os.WriteFile(paths[1].limit, []byte("max"), 0o600))
 	available, known = readTopologyMemoryHeadroom()
 	require.True(t, known)
 	require.Equal(t, int64(900), available)
-	require.NoError(t, os.WriteFile(paths[0].usage, []byte("1001"), 0600))
+	require.NoError(t, os.WriteFile(paths[0].usage, []byte("1001"), 0o600))
 	available, known = readTopologyMemoryHeadroom()
 	require.True(t, known)
 	require.Zero(t, available)
@@ -163,11 +166,11 @@ func TestTopologyCgroupPaths(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "memory.max")
 	for _, value := range []string{"max", "9223372036854771712", "invalid", "-1"} {
-		require.NoError(t, os.WriteFile(path, []byte(value), 0600))
+		require.NoError(t, os.WriteFile(path, []byte(value), 0o600))
 		_, ok := topologyMemoryValue(path)
 		require.False(t, ok)
 	}
-	require.NoError(t, os.WriteFile(path, []byte("1048576\n"), 0600))
+	require.NoError(t, os.WriteFile(path, []byte("1048576\n"), 0o600))
 	value, ok := topologyMemoryValue(path)
 	require.True(t, ok)
 	require.Equal(t, int64(1048576), value)

@@ -124,9 +124,10 @@ func TestMatrixReuseDirectionsKeepAnswerAndInput(t *testing.T) {
 		counts = append(counts, calls)
 		oldLimit := MaxSharedTopologyMatrixPoints
 		MaxSharedTopologyMatrixPoints = 2
-		_, budgetErr := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 2})
+		withOldCountLimit, budgetErr := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 2})
 		MaxSharedTopologyMatrixPoints = oldLimit
-		require.ErrorContains(t, budgetErr, "max_topology_matrix_points", "reuse must charge both logical applications")
+		require.NoError(t, budgetErr)
+		require.Equal(t, result, withOldCountLimit, "logical reuse must not be charged as additional resident memory")
 	}
 	require.Equal(t, results[0], results[1])
 	require.Equal(t, counts[0]-1, counts[1])

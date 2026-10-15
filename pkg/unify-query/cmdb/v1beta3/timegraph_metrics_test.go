@@ -30,7 +30,7 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 		{name: "不完整结果", outcome: "partial", partial: true},
 		{name: "空但不完整", outcome: "partial", empty: true, partial: true},
 		{name: "取数失败", outcome: "failed", backendErr: fmt.Errorf("backend failure")},
-		{name: "构图容量拒绝", outcome: "rejected", graphLimit: true, reject: "max_graph_edges"},
+		{name: "构图容量拒绝", outcome: "rejected", graphLimit: true, reject: "max_graph_node_infos"},
 		{name: "时间点超限", outcome: "rejected", gridLimit: true, reject: "max_shared_topology_points"},
 		{name: "参数无效", outcome: "rejected", invalid: true, reject: "invalid_request"},
 		{name: "提前取消", outcome: "canceled", cancel: true},
@@ -41,9 +41,9 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
 			if tt.graphLimit {
-				oldLimit := MaxGraphEdges
-				MaxGraphEdges = 1
-				t.Cleanup(func() { MaxGraphEdges = oldLimit })
+				oldLimit := MaxGraphNodeInfos
+				MaxGraphNodeInfos = 2
+				t.Cleanup(func() { MaxGraphNodeInfos = oldLimit })
 			}
 			if tt.cancel {
 				var cancel context.CancelFunc

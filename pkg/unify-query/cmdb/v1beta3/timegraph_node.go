@@ -231,7 +231,8 @@ func newNodeBuilder(stringDict *StringDict, cfg *TimeGraphConfig) *NodeBuilder {
 type timeGraphDeferredCompressionKey struct{}
 
 type NodeBuilder struct {
-	lock sync.RWMutex // 读写锁，保证并发安全
+	residencyAdjust func(int64) error
+	lock            sync.RWMutex // 读写锁，保证并发安全
 
 	resource *resourceType // 资源类型映射器
 
@@ -302,6 +303,8 @@ func (n *NodeBuilder) Clean() {
 
 	// 归还所有Matcher对象到池中
 	for _, matcher := range n.info {
+		// Keep reusable map capacity without retaining this request's labels.
+		clear(matcher)
 		matcherPool.Put(matcher)
 	}
 
@@ -551,6 +554,29 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 			}
 		}
 		if len(candidate) > 0 {
+			oldCost, newCost := int64(0), int64(0)
+			if n.residencyAdjust != nil {
+				oldCost = graphMatcherCost(n.info[id])
+				newCost = graphMergedMatcherCost(n.info[id], candidate)
+			}
+			oldCompressedCost, newCompressedCost, dictionaryCost := int64(0), int64(0), int64(0)
+			if n.residencyAdjust != nil && !n.deferCompression {
+				fields := len(n.info[id])
+				for key := range candidate {
+					if _, ok := n.info[id][key]; !ok {
+						fields++
+					}
+				}
+				oldCompressedCost = graphCompressedMapCost(len(n.info[id]))
+				newCompressedCost = graphCompressedMapCost(fields)
+				dictionaryCost = graphCandidateDictionaryCost(candidate)
+			}
+			if n.residencyAdjust != nil {
+				// Reserve old+new coexistence before allocating the replacement.
+				if err := n.residencyAdjust(newCost + newCompressedCost + dictionaryCost); err != nil {
+					return 0, err
+				}
+			}
 			merged := mergeMatcher(n.info[id], candidate)
 			n.info[id] = merged
 			if n.deferCompression {
@@ -558,10 +584,20 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 			} else {
 				n.compressedInfo[id] = n.compressInfo(merged)
 			}
+			if n.residencyAdjust != nil {
+				if err := n.residencyAdjust(-oldCost - oldCompressedCost); err != nil {
+					return 0, err
+				}
+			}
 		}
 		return id, nil
 	}
 
+	if n.residencyAdjust != nil {
+		if err := n.residencyAdjust(graphNodeBuilderCost(indexes, n.resourceInfoFields(resourceType), info, !n.deferCompression)); err != nil {
+			return 0, err
+		}
+	}
 	// 创建新的节点ID
 	rtID := n.resource.id(resourceType)
 	finaID := (uint64(rtID) << 48) | (n.index & 0xFFFFFFFFFFFF)

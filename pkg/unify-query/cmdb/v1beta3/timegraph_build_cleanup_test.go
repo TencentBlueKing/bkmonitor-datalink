@@ -74,11 +74,11 @@ func TestBuildTimeGraphCleansFailedStorage(t *testing.T) {
 				storage = "shared"
 			}
 			t.Run(storage+"/"+mode, func(t *testing.T) {
-				oldYolo, oldEdges := yoloMode, MaxGraphEdges
-				t.Cleanup(func() { yoloMode, MaxGraphEdges = oldYolo, oldEdges })
+				oldYolo, oldEdges := yoloMode, MaxGraphNodeInfos
+				t.Cleanup(func() { yoloMode, MaxGraphNodeInfos = oldYolo, oldEdges })
 				yoloMode = mode != "ordinary-graph-budget"
 				if !yoloMode {
-					MaxGraphEdges = 1
+					MaxGraphNodeInfos = 2
 				}
 				observer := newBuildCleanupObserver(t)
 				parent, cancel := context.WithCancel(initTimeGraphQueryTestEnvironment())
@@ -152,7 +152,7 @@ func TestBuildTimeGraphCleansFailedStorage(t *testing.T) {
 					case "ordinary-graph-budget":
 						var limit *ResultLimitError
 						require.ErrorAs(t, err, &limit)
-						require.Equal(t, "max_graph_edges", limit.Reason)
+						require.Equal(t, "max_graph_node_infos", limit.Reason)
 					}
 					require.Equal(t, codes.Error, observer.status["build-time-graph-from-relations"])
 				}

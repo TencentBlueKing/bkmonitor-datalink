@@ -212,8 +212,13 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		}
 		tg.shared.relationIDs = make(map[timeGraphEdgeRelation]uint64)
 	}
+	err = tg.enableResidency(ctx)
 	storageSpan.Set("shared", tg.shared != nil)
 	storageSpan.End(&err)
+	if err != nil {
+		tg.Clean(ctx)
+		return nil, err
+	}
 	// 成功时由调用方持有图；失败时必须释放已构建的存储。
 	// 先注册清理，再注册构建观察器，使失败计数在清理前可见。
 	defer func() {
@@ -225,7 +230,19 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	sourceInfoQueryCount, relationEdgeQueryCount, targetInfoQueryCount := 0, 0, 0
 	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil}
 	defer func() {
+		loader.lastMatrix = timeGraphMatrixSlot{}
+		tg.matrixResidency.clear()
+	}()
+	defer func() {
 		observeTimeGraphBuild(ctx, span, tg, loader, started, err)
+		graphMemory := graphResidencyState(tg)
+		span.Set("graph-structural-estimated-bytes", graphMemory.EstimatedBytes)
+		span.Set("graph-structural-reserved-bytes", graphMemory.ReservedBytes)
+		span.Set("graph-structural-owned-lower-bound-bytes", graphMemory.MaterializedLowerBoundBytes)
+		matrixMemory := matrixResidencyState(tg)
+		span.Set("matrix-receiving-bytes", matrixMemory.ReceivingBytes)
+		span.Set("matrix-resident-bytes", matrixMemory.ResidentBytes)
+		span.Set("matrix-residency-peak-bytes", matrixMemory.PeakTotalBytes)
 		span.Set("source-info-query-count", sourceInfoQueryCount)
 		span.Set("relation-edge-query-count", relationEdgeQueryCount)
 		span.Set("target-info-query-count", targetInfoQueryCount)
@@ -414,7 +431,6 @@ type timeGraphMatrixLoader struct {
 	physicalQueryCount     int
 	reusedQueryCount       int
 	lastMatrix             timeGraphMatrixSlot
-	graphEstimatedBytes    int64
 }
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
@@ -422,12 +438,6 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 		// 一次物理响应的聚合子查询共用拒收标记，防止预算超限被误判为 partial；
 		// 不同身份分片各有标记，先前的大分片失败不会污染后续小分片。
 		queryCtx = metadata.WithBackendResponseLimit(queryCtx, metadata.BackendResponseLimit(queryCtx))
-	}
-	if loader.topology {
-		// 取数前预留响应缓冲、解码及 Matrix 转换所需的内存。
-		if err := ReserveTopologyStage(queryCtx, "matrix", metadata.BackendResponseLimit(queryCtx)*8); err != nil {
-			return nil, false, err
-		}
 	}
 	m, tg := loader.model, loader.graph
 	start, end, queryStep, lookBack := loader.start, loader.end, loader.step, loader.lookBack
@@ -492,7 +502,10 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 		span.Set("query-source", "test-matrix")
 		loader.lastMatrix = timeGraphMatrixSlot{}
 		loader.physicalQueryCount++
-		matrix, err = matrixQuery(queryCtx, queryTs)
+		matrix, partial, err = loader.fetchResident(queryCtx, func() (pl.Matrix, bool, error) {
+			value, queryErr := matrixQuery(queryCtx, queryTs)
+			return value, false, queryErr
+		})
 	case m.timeGraphVMQueryWithPartial != nil:
 		span.Set("query-source", "test-vm-with-partial")
 		var expr string
@@ -838,13 +851,9 @@ func (loader *timeGraphMatrixLoader) validateMatrixWithGrid(queryCtx context.Con
 		span.Set("matrix-counted-point-count", pointCount)
 		span.Set("matrix-cumulative-point-count", loader.pointCount)
 	}()
-	tg := loader.graph
 	startMillis, endMillis, stepMillis := loader.start.UnixMilli(), loader.end.UnixMilli(), loader.step.Milliseconds()
 	if loader.topology && !yoloMode && metadata.BackendResponseLimitExceeded(queryCtx) {
 		err = &ResultLimitError{Reason: "max_response_bytes", Count: int(metadata.BackendResponseLimit(queryCtx)) + 1, Limit: int(metadata.BackendResponseLimit(queryCtx))}
-	}
-	if loader.topology && err == nil && tg.maxNodes > 0 && len(matrix) > tg.maxNodes {
-		err = &ResultLimitError{Reason: "max_topology_matrix_series", Count: len(matrix), Limit: tg.maxNodes}
 	}
 	pointCount = 0
 	for _, series := range matrix {
@@ -856,12 +865,6 @@ func (loader *timeGraphMatrixLoader) validateMatrixWithGrid(queryCtx context.Con
 		}
 		pointCount += len(series.Points)
 		loader.pointCount += len(series.Points)
-		if loader.topology && err == nil && !yoloMode {
-			limit := effectiveTimeGraphLimit(MaxSharedTopologyMatrixPoints, 1000000)
-			if loader.pointCount > limit {
-				err = &ResultLimitError{Reason: "max_topology_matrix_points", Count: loader.pointCount, Limit: limit}
-			}
-		}
 		if err == nil && checkGrid && metadata.IsExactTimeGrid(queryCtx) {
 			for _, point := range series.Points {
 				if point.T < startMillis || point.T > endMillis || (point.T-startMillis)%stepMillis != 0 {

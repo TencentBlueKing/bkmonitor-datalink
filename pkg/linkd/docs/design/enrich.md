@@ -585,6 +585,7 @@ Event.Dimensions.task_id
 - 从策略 `source_config` 读取 `log_theme_id/log_theme_name/query_string`；有 `LogThemeReader` 时按租户读取主题名称并复核主题 ID，Reader 未配置时保留策略名称回退；
 - 日志指标使用查询语句作为 metric 展示名，日志关键字为空查询时回退 `--`；
 - 日志场景使用空 Resource 语义，Display 使用空 object；
+- 日志指标名称沿用旧 KAC `LogMetricCLear.clean_name`：优先使用完整告警别名 `alarm_alias`，否则生成“日志主题名 + 发生了 + 监控项展示名 + 告警”。主题名使用租户限定查询结果，未命中时回退发布材料中的 `log_theme_name`，仍为空才使用原始 `SubjectName`；监控项展示名优先 `alias_name`，否则沿用通用 `cleanItem`，不以检索语句或 `--` 覆盖。无数据事件使用相同名称规则。Display 与 Log 复用 Scope 缓存的主题查询，原始 Event 保持不变；
 - 关键字从 `Event.ExtraData.log_related_info` 读取关联信息；
 - 日志 Display 内容先拼接 `Alert.SubjectName`，再执行日志内容裁剪：日志指标移除“关联信息”尾部；日志关键字命中内容生成“匹配到【query】关键字次数 ...”，无数据内容生成“【query】关键字 ...”；`Alert.SubjectName` 为空时保持原内容形态；
 - 输出日志主题、查询语句、关联信息和 `cw_labels`；

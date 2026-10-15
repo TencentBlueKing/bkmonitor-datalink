@@ -108,7 +108,9 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
 	}
 	itemName, err := displayItem(ctx, scope, strategy, projection)
-	if rules.IsLogDisplay(classification.Main) {
+	if classification.Main == rules.DisplayLogMetric && strategy.Spec.AliasName != "" {
+		itemName = strategy.Spec.AliasName
+	} else if classification.Main == rules.DisplayLogKeyword {
 		itemName = sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString)
 		if itemName == "" {
 			itemName = rules.LogMetricFallback
@@ -146,7 +148,17 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 	if err != nil {
 		return failedDependency(rules.DependencyMetricCatalog), nil
 	}
-	title := cleanDisplayTitle(classification.Main, strategy, alert, objectName, itemName)
+	titleSubject := alert.SubjectName
+	if classification.Main == rules.DisplayLogMetric {
+		// 旧链路在转换前把日志主题写入 alarm_obj；原始 Event 的 subject 可以为空。
+		_, themeName, themeDiagnostics := resolveLogTheme(ctx, scope, strategy.Spec.SourceConfig)
+		if err := ctx.Err(); err != nil {
+			return enrich.ProcessorResult{}, err
+		}
+		titleSubject = logDisplaySubject(themeName, alert.SubjectName)
+		displayDiagnostics = append(displayDiagnostics, themeDiagnostics...)
+	}
+	title := cleanDisplayTitle(classification.Main, strategy, titleSubject, objectName, itemName)
 	dimensionText := buildDimensionText(
 		dimensions,
 		classification.Main,
@@ -327,8 +339,7 @@ func replaceMetricValue(content, original, mapped string) string {
 func cleanDisplayTitle(
 	classification rules.DisplayClassification,
 	strategy models.CWStrategy,
-	alert domain.Event,
-	objectName, itemName string,
+	subjectName, objectName, itemName string,
 ) string {
 	if strategy.Spec.AlarmAlias != "" {
 		return strategy.Spec.AlarmAlias
@@ -337,9 +348,9 @@ func cleanDisplayTitle(
 	case rules.DisplayData:
 		return itemName + "发生了告警"
 	case rules.DisplayLogMetric:
-		return alert.SubjectName + "发生了" + itemName + "告警"
+		return subjectName + "发生了" + itemName + "告警"
 	case rules.DisplayLogKeyword:
-		subjectName := logDisplaySubject(alert.SubjectName, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldLogThemeName))
+		subjectName := logDisplaySubject(subjectName, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldLogThemeName))
 		queryString := sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString)
 		return subjectName + "发生了【" + queryString + "】关键字告警"
 	default:

@@ -7,7 +7,9 @@ import (
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
+	"linkd/internal/cleaner"
 	"linkd/internal/config"
+	"linkd/internal/consume"
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/datasources"
@@ -36,12 +38,30 @@ func TestPublishedStrategyLiveTitle(t *testing.T) {
 		t.Fatal("read Alert fixture failed")
 	}
 	var fixture struct {
-		Event              domain.Event `json:"event"`
-		ExpectedTitle      string       `json:"expected_title"`
-		ExpectedTemplateID int64        `json:"expected_template_id"`
+		Event              domain.Event    `json:"event"`
+		RawPayload         json.RawMessage `json:"raw_payload"`
+		ExpectedTitle      string          `json:"expected_title"`
+		ExpectedTemplateID int64           `json:"expected_template_id"`
 	}
 	if json.Unmarshal(raw, &fixture) != nil || fixture.ExpectedTitle == "" || fixture.ExpectedTemplateID <= 0 {
 		t.Fatal("invalid Alert fixture")
+	}
+	if len(fixture.RawPayload) != 0 {
+		// Kafka 原文从 Standard Cleaner 开始回放，并与捕获的持久化 Event 核对来源事实。
+		source := baseCollectEventSource()
+		source.RelatedTenantID = fixture.Event.BKTenantID
+		mapper, mapErr := cleaner.NewMapper(source, config.DefaultSeverityConfig())
+		if mapErr != nil {
+			t.Fatal(mapErr)
+		}
+		mapped, mapErr := mapper.MapMessage(t.Context(), consume.Message{ID: "captured-title-event", TenantID: source.RelatedTenantID, EnqueuedAt: fixture.Event.ReceivedAt, Body: fixture.RawPayload})
+		if mapErr != nil {
+			t.Fatal(mapErr)
+		}
+		if mapped.SourceEventID != fixture.Event.SourceEventID || mapped.Title != fixture.Event.Title || mapped.Content != fixture.Event.Content {
+			t.Fatal("raw payload does not match captured Event")
+		}
+		fixture.Event = mapped
 	}
 	databaseConfig, err := mysql.ParseDSN(dsn)
 	if err != nil {

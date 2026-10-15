@@ -57,20 +57,8 @@ func (Log) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if !relatedValid {
 		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.log_related_info"}})
 	}
-	themeID, themeName := logTheme(strategy.Spec.SourceConfig)
-	if themeID == "" {
-		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"spec.source_config.log_theme_id"}})
-	} else if parsedID, parseErr := strconv.ParseInt(themeID, 10, 64); parseErr == nil {
-		theme, themeFound, themeErr := scope.LogTheme(ctx, parsedID)
-		if themeErr == nil && themeFound && theme.TenantID == alert.BKTenantID && theme.ID == parsedID {
-			themeName = theme.Name
-		} else if (themeErr != nil && !strings.Contains(themeErr.Error(), "unavailable")) || (themeFound && (theme.TenantID != alert.BKTenantID || theme.ID != parsedID)) {
-			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyLogTheme})
-		}
-	}
-	if themeName == "" {
-		themeName = sourceConfigString(strategy.Spec.SourceConfig, "log_theme_name")
-	}
+	themeID, themeName, themeDiagnostics := resolveLogTheme(ctx, scope, strategy.Spec.SourceConfig)
+	diagnostics = append(diagnostics, themeDiagnostics...)
 	values := models.LogValues{LogThemeID: logThemeValue(themeID), LogThemeName: themeName, LogQueryString: query, LogRelateInfo: relatedInfo, CWLabels: logLabels(ids.BizID, themeID)}
 	if classification == rules.DisplayLogKeyword && query == "" {
 		values.LogQueryString = rules.LogMetricFallback
@@ -95,6 +83,26 @@ func (Log) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 
 func logFailure(dependency string) (enrich.ProcessorResult, error) {
 	return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: dependency}}}, nil
+}
+
+// 名称清洗和日志字段使用同一份租户限定主题；Scope 缓存查询，避免依赖 Processor 顺序。
+func resolveLogTheme(ctx context.Context, scope *enrich.Scope, source domain.JSONObject) (string, string, []enrich.Diagnostic) {
+	themeID, themeName := logTheme(source)
+	var diagnostics []enrich.Diagnostic
+	if themeID == "" {
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"spec.source_config.log_theme_id"}})
+	} else if parsedID, parseErr := strconv.ParseInt(themeID, 10, 64); parseErr == nil {
+		theme, found, err := scope.LogTheme(ctx, parsedID)
+		if err == nil && found && theme.TenantID == scope.Facts().BKTenantID && theme.ID == parsedID {
+			themeName = theme.Name
+		} else if (err != nil && !strings.Contains(err.Error(), "unavailable")) || (found && (theme.TenantID != scope.Facts().BKTenantID || theme.ID != parsedID)) {
+			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyLogTheme})
+		}
+	}
+	if themeName == "" {
+		themeName = sourceConfigString(source, "log_theme_name")
+	}
+	return themeID, themeName, diagnostics
 }
 
 func logTheme(source domain.JSONObject) (string, string) {

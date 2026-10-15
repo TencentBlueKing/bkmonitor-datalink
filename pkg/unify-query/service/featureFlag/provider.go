@@ -24,7 +24,8 @@ type FeatureFlagProvider interface {
 	GetFeatureFlagsPath() string
 }
 
-// fallbackFeatureFlagProvider 优先读取 Redis；Key 缺失时读取并回填 Consul 快照。
+// fallbackFeatureFlagProvider 优先读取 Redis；Key 缺失时迁移 Consul 快照，
+// 未配置 fallback 时初始化空快照，保留各开关默认值。
 // Redis 读取失败直接报错，由 Service 保留最后有效配置。
 type fallbackFeatureFlagProvider struct {
 	primary    FeatureFlagProvider
@@ -60,27 +61,33 @@ func (p *fallbackFeatureFlagProvider) GetFeatureFlags(ctx context.Context) ([]by
 		return nil, ctx.Err()
 	}
 
-	if p.fallback == nil {
-		return nil, nil
-	}
-
-	data, fallbackErr := p.fallback.GetFeatureFlags(ctx)
-	if fallbackErr != nil {
-		return nil, fallbackErr
+	data = []byte("{}")
+	source := "defaults"
+	if p.fallback != nil {
+		var fallbackErr error
+		data, fallbackErr = p.fallback.GetFeatureFlags(ctx)
+		if fallbackErr != nil {
+			return nil, fallbackErr
+		}
+		source = "consul"
 	}
 	if err := inner.ValidateFeatureFlagSnapshot(data); err != nil {
-		return nil, fmt.Errorf("invalid fallback feature flag snapshot: %w", err)
+		return nil, fmt.Errorf("invalid %s feature flag snapshot: %w", source, err)
 	}
 	if p.initialize != nil {
 		created, err := p.initialize(ctx, data)
 		if err == nil {
 			if created {
+				log.Infof(ctx, "feature flag snapshot initialized in redis: source=%s", source)
 				return data, nil
 			}
 			return p.primary.GetFeatureFlags(ctx)
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		if p.fallback == nil {
+			return nil, fmt.Errorf("initialize default feature flags in redis: %w", err)
 		}
 		log.Warnf(ctx, "failed to backfill feature flags to redis, using consul snapshot: %v", err)
 	}

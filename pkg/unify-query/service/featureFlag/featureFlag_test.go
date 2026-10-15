@@ -11,10 +11,14 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	goRedis "github.com/go-redis/redis/v8"
+	"github.com/spf13/viper"
 
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	redisStorage "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 )
 
 type featureFlagProviderStub struct {
@@ -324,5 +328,171 @@ func TestFallbackFeatureFlagProviderReportsConcurrentRedisReadFailure(t *testing
 	})
 	if _, err := provider.GetFeatureFlags(context.Background()); !errors.Is(err, readErr) {
 		t.Fatalf("must not use stale Consul snapshot after losing initialization to a Redis writer, got %v", err)
+	}
+}
+
+func newRedisOnlyFeatureFlagProvider(t *testing.T) (*miniredis.Miniredis, FeatureFlagProvider) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	primary := redisStorage.NewFeatureFlagClient(client, "test")
+	return mr, newFallbackFeatureFlagProvider(primary, nil, primary.InitializeFeatureFlags)
+}
+
+func TestRedisOnlyFeatureFlagProviderInitializesDefaults(t *testing.T) {
+	mr, provider := newRedisOnlyFeatureFlagProvider(t)
+	ctx := metadata.InitHashID(context.Background())
+	service := &Service{provider: provider}
+	defer service.Close()
+	if err := service.reconcileFeatureFlags(ctx); err != nil {
+		t.Fatalf("initialize default flags: %v", err)
+	}
+	key := provider.GetFeatureFlagsPath()
+	if actual, err := mr.Get(key); err != nil || actual != "{}" || mr.TTL(key) != 0 {
+		t.Fatalf("expected persistent empty snapshot, got %q, error: %v", actual, err)
+	}
+	if !service.clientInitialized || !inner.GetMustVmQueryFeatureFlag(ctx, "test-table") ||
+		inner.GetIsK8sFeatureFlag(ctx) || inner.GetBkDataTableIDCheck(ctx, "test-table") ||
+		inner.IntVariation(ctx, inner.FFUser("test-user", nil), "range-vm-query", 0) != 0 {
+		t.Fatal("empty Redis snapshot must initialize the client and preserve existing flag defaults")
+	}
+}
+
+func TestRedisOnlyFeatureFlagProviderPreservesExistingRuntime(t *testing.T) {
+	mr, provider := newRedisOnlyFeatureFlagProvider(t)
+	ctx := context.Background()
+	key := provider.GetFeatureFlagsPath()
+	snapshot := string(featureFlagConfig(false))
+	if err := mr.Set(key, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{provider: provider}
+	defer service.Close()
+	if err := service.reconcileFeatureFlags(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if actual, _ := mr.Get(key); actual != snapshot || inner.BoolVariation(ctx, inner.FFUser("test-user", nil), "test-flag", true) {
+		t.Fatal("existing custom flags must remain unchanged and control runtime evaluation")
+	}
+	for _, invalid := range []string{"", "{", `{"test-flag":{}}`} {
+		if err := mr.Set(key, invalid); err != nil {
+			t.Fatal(err)
+		}
+		if err := service.reconcileFeatureFlags(ctx); err == nil {
+			t.Fatal("invalid existing snapshot must fail instead of initializing defaults")
+		}
+		if actual, _ := mr.Get(key); actual != invalid || inner.BoolVariation(ctx, inner.FFUser("test-user", nil), "test-flag", true) {
+			t.Fatal("invalid snapshot must not be overwritten or replace the last valid runtime flags")
+		}
+	}
+	mr.SetError("ERR redis unavailable")
+	if err := service.reconcileFeatureFlags(ctx); err == nil || inner.BoolVariation(ctx, inner.FFUser("test-user", nil), "test-flag", true) {
+		t.Fatal("Redis read errors must be reported while retaining the last valid runtime flags")
+	}
+}
+
+func TestRedisOnlyFeatureFlagProviderUsesConcurrentRedisWrite(t *testing.T) {
+	mr, provider := newRedisOnlyFeatureFlagProvider(t)
+	p := provider.(*fallbackFeatureFlagProvider)
+	initialize := p.initialize
+	snapshot := string(featureFlagConfig(false))
+	p.initialize = func(ctx context.Context, data []byte) (bool, error) {
+		if err := mr.Set(provider.GetFeatureFlagsPath(), snapshot); err != nil {
+			t.Fatal(err)
+		}
+		return initialize(ctx, data)
+	}
+	service := &Service{provider: provider}
+	defer service.Close()
+	if err := service.reconcileFeatureFlags(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if actual, _ := mr.Get(provider.GetFeatureFlagsPath()); actual != snapshot ||
+		inner.BoolVariation(context.Background(), inner.FFUser("test-user", nil), "test-flag", true) {
+		t.Fatal("concurrent custom configuration must take precedence over default initialization")
+	}
+}
+
+func TestRedisOnlyFeatureFlagProviderRetriesFailedInitialization(t *testing.T) {
+	mr, provider := newRedisOnlyFeatureFlagProvider(t)
+	mr.Server().SetPreHook(func(peer *server.Peer, command string, _ ...string) bool {
+		if command == "SETNX" || command == "SET" {
+			peer.WriteError("ERR write rejected")
+			return true
+		}
+		return false
+	})
+	service := &Service{provider: provider}
+	defer service.Close()
+	ctx := context.Background()
+	if err := service.reconcileFeatureFlags(ctx); err == nil || service.clientInitialized || mr.Exists(provider.GetFeatureFlagsPath()) {
+		t.Fatal("failed initialization must report an error without claiming the client or snapshot is initialized")
+	}
+	mr.Server().SetPreHook(nil)
+	if err := service.reconcileFeatureFlags(ctx); err != nil || !service.clientInitialized {
+		t.Fatalf("reconcile must recover after Redis writes recover, error: %v", err)
+	}
+	if actual, _ := mr.Get(provider.GetFeatureFlagsPath()); actual != "{}" || mr.TTL(provider.GetFeatureFlagsPath()) != 0 {
+		t.Fatal("recovered initialization must persist the empty snapshot without expiration")
+	}
+}
+
+func TestFallbackFeatureFlagProviderDoesNotReplaceUnavailableConsulWithDefaults(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	primary := redisStorage.NewFeatureFlagClient(client, "test")
+	consulErr := errors.New("consul unavailable")
+	fallback := &featureFlagProviderStub{err: consulErr, data: featureFlagConfig(false)}
+	provider := newFallbackFeatureFlagProvider(primary, fallback, primary.InitializeFeatureFlags)
+	service := &Service{provider: provider}
+	defer service.Close()
+	if err := service.reconcileFeatureFlags(context.Background()); !errors.Is(err, consulErr) || mr.Exists(primary.GetFeatureFlagsPath()) {
+		t.Fatal("Consul failure must leave the Redis key missing for the original migration to recover")
+	}
+	fallback.err = nil
+	if err := service.reconcileFeatureFlags(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if actual, _ := mr.Get(primary.GetFeatureFlagsPath()); actual != string(fallback.data) ||
+		inner.BoolVariation(context.Background(), inner.FFUser("test-user", nil), "test-flag", true) {
+		t.Fatal("recovery must migrate the original Consul rules instead of defaulting them")
+	}
+}
+
+func TestNewFeatureFlagProviderHonorsConsulEnabled(t *testing.T) {
+	viper.Reset()
+	previousBasePath := redisService.KVBasePath
+	t.Cleanup(func() { viper.Reset(); redisService.KVBasePath = previousBasePath })
+	mr := miniredis.RunT(t)
+	if err := redisStorage.SetInstance(context.Background(), "test", "test", &goRedis.UniversalOptions{Addrs: []string{mr.Addr()}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(redisStorage.Close)
+	redisService.KVBasePath = "test"
+	viper.Set("consul.enabled", false)
+	provider, err := newFeatureFlagProvider(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := provider.(*fallbackFeatureFlagProvider); !ok || p.fallback != nil {
+		t.Fatal("disabled Consul must not create a Consul provider")
+	}
+	redisService.KVBasePath = ""
+	if _, err := newFeatureFlagProvider(context.Background()); err == nil {
+		t.Fatal("disabled Consul with an empty Redis prefix must fail instead of falling back")
+	}
+	viper.Reset()
+	if _, err := newFeatureFlagProvider(context.Background()); err != nil {
+		t.Fatalf("legacy deployments must retain their Consul fallback: %v", err)
+	}
+	redisService.KVBasePath = "test"
+	provider, err = newFeatureFlagProvider(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := provider.(*fallbackFeatureFlagProvider); !ok || p.fallback == nil {
+		t.Fatal("unset consul.enabled must retain Consul migration")
 	}
 }

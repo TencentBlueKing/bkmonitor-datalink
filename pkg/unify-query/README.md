@@ -18,7 +18,11 @@
 
 ### 设置 Feature Flag
 
-服务优先读取 Redis，只有 Key 不存在时读取 Consul，校验成功后自动回填 Redis，无需手工迁移。回填采用 `SET NX`，已有或并发写入的 Redis 配置优先；回填失败会继续使用本次有效的 Consul 快照，并在后续调和时重试。回填后以 Redis 为准，后续 Consul 修改不再同步。Redis 读取失败或已有快照非法时保留运行中的最后有效配置，不重新读取 Consul；首次启动没有有效配置时持续重试。变更通过 Redis Pub/Sub 通知，通知丢失时由每分钟全量调和恢复。
+`consul.enabled` 未设置时默认为 `true`。服务优先读取 Redis，只有 Key 不存在时读取 Consul，校验成功后自动回填 Redis，无需手工迁移。回填采用 `SET NX`，已有或并发写入的 Redis 配置优先；回填失败会继续使用本次有效的 Consul 快照，并在后续调和时重试。回填后以 Redis 为准，后续 Consul 修改不再同步。Redis 读取失败或已有快照非法时保留运行中的最后有效配置，不重新读取 Consul；首次启动没有有效配置时持续重试。变更通过 Redis Pub/Sub 通知，通知丢失时由每分钟全量调和恢复。
+
+设置 `consul.enabled=false` 时必须同时设置 `storage.source=redis`。Feature Flag 不再读取 Consul；Redis Key 缺失时通过 `SET NX` 初始化无过期时间的 `{}`，保留 `must-vm-query=true`、`range-vm-query=0`、`is-k8s=false` 和 `bk-data-table-id-auth=false` 的默认值。已有配置和并发写入优先，Redis 读取、校验或默认快照写入失败时报告错误并重试。成功初始化会记录 `source=defaults` 或 `source=consul`，不打印快照内容。
+
+旧部署关闭 Consul 前应先确认需要保留的规则已迁入 Redis。初始化空快照后再启用 Consul 不会自动重新迁移，因为 Redis Key 已存在。
 
 使用运行服务相同的配置文件，将完整的 go-feature-flag JSON 快照写入 Redis：
 
@@ -52,13 +56,13 @@ unify-query --config /path/to/unify-query.yaml config update-feature-flag --name
 unify-query --config /path/to/unify-query.yaml config delete-feature-flag --name new-query
 ```
 
-单项操作要求 Redis 已有快照；缺失时先等待在线 UQ 从 Consul 自动回填，或使用整份 `set-feature-flags` 明确初始化，避免单项新增抢占迁移并遗漏 Consul 中的其他开关。新增要求名称尚不存在；更新和删除要求名称已存在。更新替换该开关的完整定义，所有单项操作均保留其他开关，使用 SDK 校验更新后的完整快照，不设过期时间，并发布通知供在线 UQ 刷新。删除最后一个开关时写入 `{}`，保留 Redis Key，避免重新从 Consul 回填。Redis 快照或查询名称不存在时，查询命令返回错误。
+单项操作要求 Redis 已有快照；缺失时先等待在线 UQ 按当前 Consul 模式完成初始化，或使用整份 `set-feature-flags` 明确初始化，避免单项新增抢占迁移并遗漏 Consul 中的其他开关。新增要求名称尚不存在；更新和删除要求名称已存在。更新替换该开关的完整定义，所有单项操作均保留其他开关，使用 SDK 校验更新后的完整快照，不设过期时间，并发布通知供在线 UQ 刷新。删除最后一个开关时写入 `{}`，保留 Redis Key，避免重新从 Consul 回填。Redis 快照或查询名称不存在时，查询命令返回错误。
 
 单项写入通过 `WATCH` 事务检查并发修改；发生冲突时返回错误并提示重试，不自动覆盖其他写入。
 
 ### 重新从 Consul 迁移 Feature Flag
 
-先准备好 Consul 中的配置，再在 UQ 容器内使用运行服务相同的配置文件执行，无需安装 `redis-cli`：
+此命令要求 `consul.enabled=true`（未设置时默认为启用）；关闭时拒绝执行且不会删除快照。需要清空现有开关时使用 `set-feature-flags` 写入 `{}`。先准备好 Consul 中的配置，再在 UQ 容器内使用运行服务相同的配置文件执行，无需安装 `redis-cli`：
 
 ```bash
 unify-query --config /path/to/unify-query.yaml config reset-feature-flags

@@ -369,7 +369,22 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		if err := ctx.Err(); err != nil {
 			return nil, seedCount, err
 		}
-		discovered := make(map[uint64]timeBitmap)
+		nextFrontier := make(map[uint64]timeBitmap)
+		discover := func(sourceBits timeBitmap, edge sharedTopologyEdgeState) {
+			// frontier is fixed for this level. Accumulate only previously unseen
+			// target frames; cycles and parallel edges need not enter a second map.
+			target := edge.key.target
+			candidate := sourceBits.intersect(edge.activeBits).subtract(reachable[target])
+			if candidate.empty() {
+				return
+			}
+			candidate = candidate.intersect(nodeBits[target])
+			if candidate.empty() {
+				return
+			}
+			reachable[target] = reachable[target].union(candidate)
+			nextFrontier[target] = nextFrontier[target].union(candidate)
+		}
 		if outgoing != nil {
 			for source, sourceBits := range frontier {
 				if err := ctx.Err(); err != nil {
@@ -379,10 +394,7 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 					if err := ctx.Err(); err != nil {
 						return nil, seedCount, err
 					}
-					candidate := sourceBits.intersect(edge.activeBits).intersect(nodeBits[edge.key.target])
-					if !candidate.empty() {
-						discovered[edge.key.target] = discovered[edge.key.target].union(candidate)
-					}
+					discover(sourceBits, edge)
 				}
 			}
 		} else {
@@ -390,19 +402,7 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 				if err := ctx.Err(); err != nil {
 					return nil, seedCount, err
 				}
-				candidate := frontier[edge.key.source].intersect(edge.activeBits).intersect(nodeBits[edge.key.target])
-				if !candidate.empty() {
-					discovered[edge.key.target] = discovered[edge.key.target].union(candidate)
-				}
-			}
-		}
-		nextFrontier := make(map[uint64]timeBitmap)
-		// 已可达的时间位不再进入下一层，避免环路反复传播，但保留其他帧的新可达性。
-		for node, candidate := range discovered {
-			newBits := candidate.subtract(reachable[node])
-			if !newBits.empty() {
-				reachable[node] = reachable[node].union(newBits)
-				nextFrontier[node] = newBits
+				discover(frontier[edge.key.source], edge)
 			}
 		}
 		frontier = nextFrontier

@@ -57,7 +57,30 @@ func marshalTopologySnapshotPlan(ctx context.Context, item cmdb.SharedTopologyRe
 // once, then reference immutable byte blocks in every participating frame.
 // All row JSON and frame headers are encoded before any HTTP write.
 func marshalTopologySnapshotRuns(ctx context.Context, item cmdb.SharedTopologyResponseData, plan *cmdb.SharedTopologySnapshotPlan) ([][]byte, int, error) {
-	nodes, err := buildSnapshotMaskRuns(ctx, len(plan.Nodes), func(i int) cmdb.SharedTopologyTimeMask { return plan.Nodes[i].Mask }, func(i int) ([]byte, error) { return marshalTopologyItem(plan.Nodes[i].Node) })
+	resourceLabels := make(map[cmdb.Resource][]byte)
+	nodes, err := buildSnapshotMaskRuns(ctx, len(plan.Nodes), func(i int) cmdb.SharedTopologyTimeMask { return plan.Nodes[i].Mask }, func(i int, dst []byte) ([]byte, error) {
+		node := plan.Nodes[i].Node
+		resource, ok := resourceLabels[node.ResourceType]
+		if !ok {
+			encoded, err := stdjson.Marshal(node.ResourceType)
+			if err != nil {
+				return nil, err
+			}
+			resource = encoded
+			resourceLabels[node.ResourceType] = resource
+		}
+		dimensions, err := marshalTopologyItem(node.Dimensions)
+		if err != nil {
+			return nil, err
+		}
+		dst = append(dst, `{"id":`...)
+		dst = strconv.AppendUint(dst, node.ID, 10)
+		dst = append(dst, `,"resource_type":`...)
+		dst = append(dst, resource...)
+		dst = append(dst, `,"dimensions":`...)
+		dst = append(dst, dimensions...)
+		return append(dst, '}'), nil
+	})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -68,7 +91,7 @@ func marshalTopologySnapshotRuns(ctx context.Context, item cmdb.SharedTopologyRe
 		Direction    string `json:"direction"`
 	}
 	suffixes := make(map[edgeLabels][]byte)
-	edges, err := buildSnapshotMaskRuns(ctx, len(plan.Edges), func(i int) cmdb.SharedTopologyTimeMask { return plan.Edges[i].Mask }, func(i int) ([]byte, error) {
+	edges, err := buildSnapshotMaskRuns(ctx, len(plan.Edges), func(i int) cmdb.SharedTopologyTimeMask { return plan.Edges[i].Mask }, func(i int, encoded []byte) ([]byte, error) {
 		edge := plan.Edges[i].Edge
 		labels := edgeLabels{edge.RelationType, edge.MetricName, edge.Category, edge.Direction}
 		suffix, ok := suffixes[labels]
@@ -80,7 +103,6 @@ func marshalTopologySnapshotRuns(ctx context.Context, item cmdb.SharedTopologyRe
 			suffix = append([]byte{','}, encoded[1:]...)
 			suffixes[labels] = suffix
 		}
-		encoded := make([]byte, 0, 64+len(suffix))
 		encoded = append(encoded, `{"source":`...)
 		encoded = strconv.AppendUint(encoded, edge.Source, 10)
 		encoded = append(encoded, `,"target":`...)
@@ -204,7 +226,7 @@ func marshalTopologySnapshotRuns(ctx context.Context, item cmdb.SharedTopologyRe
 	return parts, size, nil
 }
 
-func buildSnapshotMaskRuns(ctx context.Context, count int, maskAt func(int) cmdb.SharedTopologyTimeMask, rowAt func(int) ([]byte, error)) ([]snapshotMaskRun, error) {
+func buildSnapshotMaskRuns(ctx context.Context, count int, maskAt func(int) cmdb.SharedTopologyTimeMask, appendRow func(int, []byte) ([]byte, error)) ([]snapshotMaskRun, error) {
 	runs := []snapshotMaskRun{}
 	for first := 0; first < count; {
 		if err := ctx.Err(); err != nil {
@@ -226,11 +248,13 @@ func buildSnapshotMaskRuns(ctx context.Context, count int, maskAt func(int) cmdb
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			data, err := rowAt(i)
-			if err != nil {
-				return nil, err
-			}
 			if work == nil {
+				// Only the first row sizes a new block. Later rows append directly
+				// into that block instead of allocating and copying a temporary row.
+				data, err := appendRow(i, nil)
+				if err != nil {
+					return nil, err
+				}
 				capacity := len(data) + 1
 				if capacity < topologyChunkTargetBytes {
 					if last-i < topologyChunkTargetBytes/capacity {
@@ -240,8 +264,14 @@ func buildSnapshotMaskRuns(ctx context.Context, count int, maskAt func(int) cmdb
 					}
 				}
 				work = make([]byte, 0, capacity)
+				work = append(work, data...)
+			} else {
+				var err error
+				work, err = appendRow(i, work)
+				if err != nil {
+					return nil, err
+				}
 			}
-			work = append(work, data...)
 			work = append(work, ',')
 			if len(work) >= topologyChunkTargetBytes {
 				run.parts = append(run.parts, work)

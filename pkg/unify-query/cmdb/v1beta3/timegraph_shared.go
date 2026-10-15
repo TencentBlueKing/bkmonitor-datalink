@@ -189,8 +189,6 @@ func appendSharedNodeInfo(versions []sharedNodeInfo, active timeBitmap, info cmd
 
 func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active timeBitmap) (err error) {
 	g := q.shared
-	newPoints := active.subtract(g.nodeBits[node]).count()
-
 	previous := g.nodeInfos[node]
 	if len(previous) == 1 && active.isSubsetOf(previous[0].activeBits) {
 		unchanged := true
@@ -208,6 +206,7 @@ func (q *TimeGraph) setSharedNodeInfo(node uint64, info cmdb.Matcher, active tim
 			return nil
 		}
 	}
+	newPoints := active.subtract(g.nodeBits[node]).count()
 	if q.residency != nil {
 		reservation, reserveErr := q.reserveInfoChange(node, info, active)
 		if reserveErr != nil {
@@ -286,17 +285,24 @@ func (q *TimeGraph) addSharedRelationWithBits(ctx context.Context, relation cmdb
 		return err
 	}
 	var compact sharedCompactEdgeKey
-	_, exists := g.edgeBits[key]
 	if g.wordEdges != nil || g.compactEdges != nil {
 		compact = sharedCompactEdgeKey{source, target, g.compactRelationID(key.relation)}
-		if g.wordEdges != nil {
-			_, exists = g.wordEdges[compact]
-		} else {
-			_, exists = g.compactEdges[compact]
-		}
 	}
-	if q.residency == nil && !exists && q.maxEdges > 0 && g.edgeCount() >= q.maxEdges {
-		return &ResultLimitError{Reason: "max_graph_edges", Count: g.edgeCount() + 1, Limit: q.maxEdges}
+	// A membership lookup is only needed at the configured edge limit. Below
+	// it (or with no limit), inserting or updating a relation is always allowed.
+	if q.residency == nil && q.maxEdges > 0 && g.edgeCount() >= q.maxEdges {
+		var exists bool
+		switch {
+		case g.wordEdges != nil:
+			_, exists = g.wordEdges[compact]
+		case g.compactEdges != nil:
+			_, exists = g.compactEdges[compact]
+		default:
+			_, exists = g.edgeBits[key]
+		}
+		if !exists {
+			return &ResultLimitError{Reason: "max_graph_edges", Count: g.edgeCount() + 1, Limit: q.maxEdges}
+		}
 	}
 	if updateNodes {
 		if err := q.setSharedNodeInfo(source, sourceInfo, active); err != nil {
@@ -375,6 +381,11 @@ func (g *sharedTimeGraph) state(ctx context.Context, grid TopologyGrid, query Sh
 // sharedTopologyRootBits 排除只由 info 查询产生的孤立节点。
 // 请求属性时，只有 info 查询在该帧匹配的关系节点才可作为根。
 func (q *TimeGraph) sharedTopologyRootBits() map[uint64]timeBitmap {
+	// The private query only reads this map before graph cleanup. Without an
+	// info condition, the relation endpoint masks are already the exact roots.
+	if q.shared.sourceInfoBits == nil {
+		return q.shared.relationNodeBits
+	}
 	roots := make(map[uint64]timeBitmap, len(q.shared.relationNodeBits))
 	for id, bits := range q.shared.relationNodeBits {
 		if q.shared.sourceInfoBits != nil {

@@ -29,44 +29,38 @@ func (q *TimeGraph) findSharedTopologySnapshotPlan(ctx context.Context, grid Top
 				plan.Partial = append(plan.Partial, cmdb.SharedTopologySnapshotPlanPartial{Index: i, Reason: reason})
 			}
 		}
+		// Output filtering applies after traversal. Keep the original reachability
+		// map when all resource types are requested; no second membership map is needed.
+		selected := reachable
+		if len(targets) > 0 {
+			selected = make(map[uint64]timeBitmap, len(reachable))
+		}
 		ids := make([]uint64, 0, len(reachable))
-		for id := range reachable {
+		for id, active := range reachable {
 			if err := ctx.Err(); err != nil {
 				return topologySnapshotCounts{}, err
+			}
+			if len(targets) > 0 {
+				resource := q.nodeBuilder.resourceName(id)
+				if resource != query.SourceType && !slices.Contains(targets, resource) {
+					continue
+				}
+				selected[id] = active
 			}
 			ids = append(ids, id)
 		}
 		slices.Sort(ids)
-		kept := make(map[uint64]bool, len(ids))
-		nodeCount := 0
+		// The state slice is local to this traversal. Compute the final induced
+		// edge masks once, before allocating the exported DTOs or sorting rows.
+		edges, err := snapshotPlanReachableEdges(ctx, selected, edges)
+		if err != nil {
+			return topologySnapshotCounts{}, err
+		}
+		plan.Nodes = make([]cmdb.SharedTopologySnapshotPlanNode, 0, len(ids))
+		plan.Edges = make([]cmdb.SharedTopologySnapshotPlanEdge, 0, len(edges))
 		for _, id := range ids {
 			if err := ctx.Err(); err != nil {
 				return topologySnapshotCounts{}, err
-			}
-			resource := q.nodeBuilder.resourceName(id)
-			keep := len(targets) == 0 || resource == query.SourceType || slices.Contains(targets, resource)
-			kept[id] = keep
-			if keep {
-				nodeCount++
-			}
-		}
-		edgeCount := 0
-		for _, edge := range edges {
-			if err := ctx.Err(); err != nil {
-				return topologySnapshotCounts{}, err
-			}
-			if kept[edge.key.source] && kept[edge.key.target] && edge.activeBits.intersectsBoth(reachable[edge.key.source], reachable[edge.key.target]) {
-				edgeCount++
-			}
-		}
-		plan.Nodes = make([]cmdb.SharedTopologySnapshotPlanNode, 0, nodeCount)
-		plan.Edges = make([]cmdb.SharedTopologySnapshotPlanEdge, 0, edgeCount)
-		for _, id := range ids {
-			if err := ctx.Err(); err != nil {
-				return topologySnapshotCounts{}, err
-			}
-			if !kept[id] {
-				continue
 			}
 			resource := q.nodeBuilder.resourceName(id)
 			remaining := reachable[id]
@@ -97,14 +91,7 @@ func (q *TimeGraph) findSharedTopologySnapshotPlan(ctx context.Context, grid Top
 				return topologySnapshotCounts{}, err
 			}
 			key := edge.key
-			if !kept[key.source] || !kept[key.target] {
-				continue
-			}
-			// 只要两端在同一帧均可达，就保留该帧的关系；非树边也属于诱导子图。
-			active := edge.activeBits.intersect(reachable[key.source]).intersect(reachable[key.target])
-			if active.empty() {
-				continue
-			}
+			active := edge.activeBits
 			plan.Edges = append(plan.Edges, cmdb.SharedTopologySnapshotPlanEdge{Edge: cmdb.SharedTopologyEdge{Source: key.source, Target: key.target, RelationType: key.relation.relationType, MetricName: key.relation.metricName, Category: key.relation.category, Direction: key.relation.direction}, Mask: ownedTopologyTimeMask(active)})
 			plan.EdgeOccurrences += active.count()
 		}
@@ -114,4 +101,23 @@ func (q *TimeGraph) findSharedTopologySnapshotPlan(ctx context.Context, grid Top
 		return nil, err
 	}
 	return plan, nil
+}
+
+// snapshotPlanReachableEdges compacts a traversal-owned state slice. Bitmap
+// intersections allocate their own words and never mutate the graph's masks.
+func snapshotPlanReachableEdges(ctx context.Context, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) ([]sharedTopologyEdgeState, error) {
+	kept := edges[:0]
+	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		active := edge.activeBits.intersect(reachable[edge.key.source]).intersect(reachable[edge.key.target])
+		if active.empty() {
+			continue
+		}
+		edge.activeBits = active
+		kept = append(kept, edge)
+	}
+	clear(edges[len(kept):])
+	return kept, nil
 }

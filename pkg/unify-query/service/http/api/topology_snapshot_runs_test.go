@@ -6,6 +6,7 @@ import (
 	stdjson "encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -123,5 +124,55 @@ func TestSnapshotRunEdgeSuffixKeepsEscapesEmptyAndInvalidUTF8(t *testing.T) {
 		if size != len(want) || !bytes.Equal(bytes.Join(parts, nil), want) {
 			t.Fatal("suffix cache changed exact edge wire")
 		}
+	}
+}
+
+func TestSnapshotRunNodesKeepExactWireAcrossBlocks(t *testing.T) {
+	for _, resource := range []string{"", "node", "中文<&>\u2028\u2029", "quote\"\\\n", string([]byte{0xff, 'x'})} {
+		t.Run(fmt.Sprintf("%x", resource), func(t *testing.T) {
+			item, plan := expandedSnapshotRunsFixture(64)
+			decorate := func(node *cmdb.SharedTopologyNode) {
+				node.ResourceType = cmdb.Resource(resource)
+				if node.Dimensions != nil && len(node.Dimensions) > 0 {
+					node.Dimensions["large"] = strings.Repeat("<&>\"\\\n", 512)
+				}
+			}
+			for i := range plan.Nodes {
+				decorate(&plan.Nodes[i].Node)
+			}
+			for i := range item.Snapshots {
+				for j := range item.Snapshots[i].Nodes {
+					decorate(&item.Snapshots[i].Nodes[j])
+				}
+			}
+			before, err := stdjson.Marshal(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := stdjson.Marshal(item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parts, size, err := marshalTopologySnapshotRuns(context.Background(), item, plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if size != len(want) || !bytes.Equal(bytes.Join(parts, nil), want) {
+				t.Fatal("node encoding changed exact JSON bytes")
+			}
+			after, err := stdjson.Marshal(plan)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("node encoding mutated the plan")
+			}
+			for i := range plan.Nodes {
+				plan.Nodes[i].Node.ResourceType = "changed"
+				if plan.Nodes[i].Node.Dimensions != nil {
+					plan.Nodes[i].Node.Dimensions["large"] = "changed"
+				}
+			}
+			if !bytes.Equal(bytes.Join(parts, nil), want) {
+				t.Fatal("encoded blocks retained mutable input")
+			}
+		})
 	}
 }

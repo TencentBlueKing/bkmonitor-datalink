@@ -245,3 +245,68 @@ func TestSnapshotPlanPublicResultAndRejectionMetrics(t *testing.T) {
 		})
 	}
 }
+
+func TestSnapshotPlanFilteredInducedEdgesAcrossWords(t *testing.T) {
+	enableSnapshotPlanForTest(t)
+	ctx := context.Background()
+	times := sharedGraphTestTimes(130)
+	grid, err := NewTopologyGrid(times)
+	require.NoError(t, err)
+	cfg := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "root", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version"}},
+		{Name: "middle", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version"}},
+		{Name: "target", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version"}},
+	}}
+	graph, err := newSharedTimeGraph(cfg, grid)
+	require.NoError(t, err)
+	t.Cleanup(func() { graph.Clean(ctx) })
+	add := func(source, target cmdb.Resource, from, to, name string, active ...int64) {
+		relation := cmdb.Relation{V: []cmdb.Resource{source, target}, RelationType: name, MetricName: name + "_flow", Category: "dynamic", Direction: "outbound"}
+		require.NoError(t, graph.AddTimeRelationWithRelation(ctx, relation, cmdb.Matcher{"from_id": from, "from_version": "v1", "to_id": to, "to_version": "v1"}, active...))
+	}
+	add("root", "middle", "a", "b", "first", times...)
+	add("middle", "root", "b", "c", "return", times[0], times[64], times[129])
+	add("middle", "target", "b", "d", "second", times...)
+	add("root", "target", "a", "d", "direct", times...)
+	add("root", "target", "a", "d", "parallel", times...)
+	add("root", "target", "c", "d", "boundary", times[129])
+	id := func(kind cmdb.Resource, value string) uint64 {
+		valueID, idErr := graph.nodeBuilder.GetID(kind, cmdb.Matcher{"id": value})
+		require.NoError(t, idErr)
+		return valueID
+	}
+	a, c, d := id("root", "a"), id("root", "c"), id("target", "d")
+	query := SharedTopologyQuery{SourceType: "root", SourceMatcher: cmdb.Matcher{"id": "a"}, MaxHops: 2, RootBits: graph.sharedTopologyRootBits()}
+	before, err := graph.findSharedTopologyDTO(ctx, grid, query)
+	require.NoError(t, err)
+	for _, targets := range [][]cmdb.Resource{{"target"}, {"absent"}, {"target", "target"}} {
+		plan, planErr := graph.findSharedTopologySnapshotPlan(ctx, grid, query, targets)
+		require.NoError(t, planErr)
+		frames := expandSnapshotPlanForTest(t, plan)
+		for index, frame := range frames {
+			nodes := []cmdb.SharedTopologyNode{{ID: a, ResourceType: "root", Dimensions: cmdb.Matcher{"id": "a", "version": "v1"}}}
+			if index == 0 || index == 64 || index == 129 {
+				nodes = append(nodes, cmdb.SharedTopologyNode{ID: c, ResourceType: "root", Dimensions: cmdb.Matcher{"id": "c", "version": "v1"}})
+			}
+			edges := []cmdb.SharedTopologyEdge{}
+			if targets[0] == "target" {
+				nodes = append(nodes, cmdb.SharedTopologyNode{ID: d, ResourceType: "target", Dimensions: cmdb.Matcher{"id": "d", "version": "v1"}})
+				for _, name := range []string{"direct", "parallel"} {
+					edges = append(edges, cmdb.SharedTopologyEdge{Source: a, Target: d, RelationType: name, MetricName: name + "_flow", Category: "dynamic", Direction: "outbound"})
+				}
+				if index == 129 {
+					edges = append(edges, cmdb.SharedTopologyEdge{Source: c, Target: d, RelationType: "boundary", MetricName: "boundary_flow", Category: "dynamic", Direction: "outbound"})
+				}
+			}
+			require.Equal(t, times[index], frame.Timestamp)
+			require.ElementsMatch(t, nodes, frame.Nodes, "frame %d", index)
+			require.ElementsMatch(t, edges, frame.Edges, "frame %d", index)
+			require.False(t, frame.Partial)
+		}
+	}
+	// In-place filtering may only mutate the traversal's private edge slice.
+	// The next query must retain all middle nodes and original mask words.
+	after, err := graph.findSharedTopologyDTO(ctx, grid, query)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}

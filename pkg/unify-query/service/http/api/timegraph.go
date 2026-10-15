@@ -68,11 +68,15 @@ func getTimeGraphQuerier(ctx context.Context, spaceUID string) (querier timeGrap
 // HandlerAPIRelationPathResources queries the complete resource path at one timestamp.
 // @Summary  query complete relation resource paths
 // @ID       relation_path_resources_query
+// @Description Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed queries; it has no built-in default. JWT authorization is conditional on server configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md for time, empty/partial, and migration contracts.
+// @Accept json
 // @Produce  json
 // @Param    traceparent           header    string                       false  "TraceID"
-// @Param    X-Bk-Scope-Space-Uid   header    string                       false  "空间UID" default(bkcc__2)
+// @Param X-Bkapi-Jwt header string false "Gateway-signed JWT; required when jwt.enabled is true. BasicAuth is not enforced by these relation handlers."
+// @Param X-Bk-Scope-Space-Uid header string false "Routing space UID; no default. Required for physical routing and when configured JWT space authorization requires it."
 // @Param    data                  body      cmdb.RelationPathResourcesRequest       true   "json data"
 // @Success  200                   {object}  cmdb.RelationPathResourcesResponse
+// @Failure 401 {object} ErrResponse "JWT authorization failed when enabled"
 // @Failure  400                   {object}  ErrResponse
 // @Router   /api/v1/relation/path_resources [post]
 func HandlerAPIRelationPathResources(c *gin.Context) {
@@ -137,11 +141,15 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 // HandlerAPIRelationPathResourcesRange queries complete resource paths over a time range.
 // @Summary  query complete relation resource paths over a time range
 // @ID       relation_path_resources_query_range
+// @Description Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed queries; it has no built-in default. JWT authorization is conditional on server configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md for time, empty/partial, and migration contracts.
+// @Accept json
 // @Produce  json
 // @Param    traceparent           header    string                       false  "TraceID"
-// @Param    X-Bk-Scope-Space-Uid   header    string                       false  "空间UID" default(bkcc__2)
+// @Param X-Bkapi-Jwt header string false "Gateway-signed JWT; required when jwt.enabled is true. BasicAuth is not enforced by these relation handlers."
+// @Param X-Bk-Scope-Space-Uid header string false "Routing space UID; no default. Required for physical routing and when configured JWT space authorization requires it."
 // @Param    data                  body      cmdb.RelationPathResourcesRangeRequest  true   "json data"
 // @Success  200                   {object}  cmdb.RelationPathResourcesRangeResponse
+// @Failure 401 {object} ErrResponse "JWT authorization failed when enabled"
 // @Failure  400                   {object}  ErrResponse
 // @Router   /api/v1/relation/path_resources_range [post]
 func HandlerAPIRelationPathResourcesRange(c *gin.Context) {

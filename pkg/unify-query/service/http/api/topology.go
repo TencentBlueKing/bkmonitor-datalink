@@ -49,11 +49,15 @@ func truncateTopologyErrorMessage(message string, maxBytes int) string {
 // 该接口与旧 path/multi_resource 接口分离，返回每个快照的节点和关系。
 // @Summary  query relation shared topology
 // @ID       relation_shared_topology_query_v1beta3
+// @Description Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed queries; it has no built-in default. JWT authorization is conditional on server configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md for time, empty/partial, and migration contracts.
+// @Accept json
 // @Produce  json
 // @Param    traceparent            header    string                         false  "TraceID"
-// @Param    X-Bk-Scope-Space-Uid   header    string                         false  "空间UID" default(bkcc__2)
+// @Param X-Bkapi-Jwt header string false "Gateway-signed JWT; required when jwt.enabled is true. BasicAuth is not enforced by these relation handlers."
+// @Param X-Bk-Scope-Space-Uid header string false "Routing space UID; no default. Required for physical routing and when configured JWT space authorization requires it."
 // @Param    data                  body      cmdb.SharedTopologyRequest      true   "json data"
 // @Success  200                   {object}  SharedTopologyResponseDocumentation
+// @Failure 401 {object} ErrResponse "JWT authorization failed when enabled"
 // @Failure  400                   {object}  ErrResponse
 // @Router   /api/v1/relation/v1beta3/topology [post]
 func HandlerAPIRelationV1Beta3Topology(c *gin.Context) {
@@ -63,11 +67,15 @@ func HandlerAPIRelationV1Beta3Topology(c *gin.Context) {
 // HandlerAPIRelationV1Beta3TopologyRange 查询统一时间网格上的完整局部拓扑。
 // @Summary  query relation shared topology range
 // @ID       relation_shared_topology_query_range_v1beta3
+// @Description Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed queries; it has no built-in default. JWT authorization is conditional on server configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md for time, empty/partial, and migration contracts.
+// @Accept json
 // @Produce  json
 // @Param    traceparent            header    string                         false  "TraceID"
-// @Param    X-Bk-Scope-Space-Uid   header    string                         false  "空间UID" default(bkcc__2)
+// @Param X-Bkapi-Jwt header string false "Gateway-signed JWT; required when jwt.enabled is true. BasicAuth is not enforced by these relation handlers."
+// @Param X-Bk-Scope-Space-Uid header string false "Routing space UID; no default. Required for physical routing and when configured JWT space authorization requires it."
 // @Param    data                  body      cmdb.SharedTopologyRequest      true   "json data"
 // @Success  200                   {object}  SharedTopologyResponseDocumentation
+// @Failure 401 {object} ErrResponse "JWT authorization failed when enabled"
 // @Failure  400                   {object}  ErrResponse
 // @Router   /api/v1/relation/v1beta3/topology_range [post]
 func HandlerAPIRelationV1Beta3TopologyRange(c *gin.Context) {

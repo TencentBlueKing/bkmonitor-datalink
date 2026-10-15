@@ -17,6 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
 func readSwaggerDocument(t *testing.T) map[string]any {
@@ -195,4 +196,60 @@ func TestTimeGraphSwaggerDescribesMixedWireResponse(t *testing.T) {
 		response := schemaObject(t, schemaObject(t, operation["responses"])["200"])
 		checkWireFields(t, document, schemaObject(t, response["schema"]), wire, route)
 	}
+}
+
+func TestTimeGraphCatalogue(t *testing.T) {
+	body, err := os.ReadFile("api/timegraph-schema.json")
+	require.NoError(t, err)
+	var got struct {
+		Resources []*relation.ResourceDefinition `json:"resources"`
+		Relations []*relation.RelationDefinition `json:"relations"`
+	}
+	require.NoError(t, json.Unmarshal(body, &got))
+	require.Equal(t, relation.DefaultResourceDefinitions(), got.Resources, "regenerate the published resource catalogue")
+	require.Equal(t, relation.DefaultRelationDefinitions(), got.Relations, "regenerate the published relation catalogue")
+	doc, err := os.ReadFile("api/timegraph-schema.md")
+	require.NoError(t, err)
+	for _, resource := range got.Resources {
+		require.Contains(t, string(doc), "| "+resource.Name+" | "+strings.Join(resource.GetPrimaryKeys(), ", ")+" |")
+	}
+	for _, definition := range got.Relations {
+		require.Contains(t, string(doc), "| "+definition.Name+" | "+definition.FromResource+" | "+definition.ToResource+" |")
+	}
+}
+
+func TestTimeGraphSwaggerUsageContract(t *testing.T) {
+	document := readSwaggerDocument(t)
+	definitions := schemaObject(t, document["definitions"])
+	topology := schemaObject(t, definitions["cmdb.SharedTopologyQuery"])
+	require.Contains(t, topology["required"], "source_type")
+	properties := schemaObject(t, topology["properties"])
+	for name, value := range properties {
+		field := schemaObject(t, value)
+		require.NotEmpty(t, field["description"], "public topology field %s needs usage semantics", name)
+	}
+	for name, expected := range map[string]any{"step": "1m", "max_hops": float64(2), "look_back_delta": "24h", "dynamic_relation_direction": "both", "response_format": "snapshots"} {
+		require.Equal(t, expected, schemaObject(t, properties[name])["default"])
+	}
+	paths := schemaObject(t, document["paths"])
+	count := 0
+	for path, value := range paths {
+		if !strings.HasPrefix(path, "/api/v1/relation/") {
+			continue
+		}
+		count++
+		post := schemaObject(t, schemaObject(t, value)["post"])
+		require.Contains(t, post["description"], "each data item code")
+		require.Contains(t, schemaObject(t, post["responses"]), "401")
+		headers := make(map[string]map[string]any)
+		for _, value := range post["parameters"].([]any) {
+			parameter := schemaObject(t, value)
+			if parameter["in"] == "header" {
+				headers[parameter["name"].(string)] = parameter
+			}
+		}
+		require.Contains(t, headers["X-Bkapi-Jwt"]["description"], "jwt.enabled")
+		require.NotContains(t, headers["X-Bk-Scope-Space-Uid"], "default", "space must not silently default to another scope")
+	}
+	require.Equal(t, 8, count)
 }

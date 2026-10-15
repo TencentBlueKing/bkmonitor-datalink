@@ -1,58 +1,5 @@
 basePath: /
 definitions:
-  api.ErrResponse:
-    properties:
-      error:
-        type: string
-    type: object
-  api.SharedTopologyResponseDocumentation:
-    description: Each query_list item selects its response format independently; data
-      can contain both snapshots and compact-v1 items.
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/api.SharedTopologyResponseItemDocumentation'
-        type: array
-      trace_id:
-        type: string
-    type: object
-  api.SharedTopologyResponseItemDocumentation:
-    description: 'Snapshot items contain snapshots and omit response_format/compact.
-      Compact items contain response_format=compact-v1 and compact and omit snapshots.
-      Failed snapshot items contain snapshots: []; failed compact items retain response_format=compact-v1
-      and compact: null.'
-    properties:
-      code:
-        type: integer
-      compact:
-        allOf:
-        - $ref: '#/definitions/cmdb.CompactTopology'
-        description: Compact is present only for compact-v1; it is null when that
-          query failed.
-        x-nullable: true
-      end_time:
-        type: integer
-      message:
-        type: string
-      point_count:
-        type: integer
-      response_format:
-        description: ResponseFormat is present only when compact-v1 was requested,
-          including failures.
-        enum:
-        - compact-v1
-        type: string
-      snapshots:
-        description: Snapshots is present only for the default/snapshots format, including
-          failures.
-        items:
-          $ref: '#/definitions/cmdb.SharedTopologySnapshot'
-        type: array
-      start_time:
-        type: integer
-      step:
-        type: string
-    type: object
   cmdb.CompactTopology:
     properties:
       edge_occurrences:
@@ -62,7 +9,7 @@ definitions:
           $ref: '#/definitions/cmdb.CompactTopologyEdge'
         type: array
       node_occurrences:
-        description: Counts describe the expanded output, not dictionary size.
+        description: 出现次数按展开后的输出计数，不是字典条目数。
         type: integer
       nodes:
         items:
@@ -177,28 +124,49 @@ definitions:
         items:
           properties:
             end_time:
+              description: Range end in Unix seconds or milliseconds; used with start_time.
               type: integer
             look_back_delta:
+              description: Positive Go duration; empty uses configured lookback (built-in
+                24h), independent of range step.
               type: string
             path_resource:
+              description: Optional legacy resource-type path; preserve the old target/path
+                response contract.
               items:
                 type: string
               type: array
             return_all_paths:
               type: boolean
             source_expand_info:
-              $ref: '#/definitions/cmdb.Matcher'
+              allOf:
+              - $ref: '#/definitions/cmdb.Matcher'
+              description: Explicit source attribute predicates; preserve this object
+                through consumer serializers.
             source_info:
-              $ref: '#/definitions/cmdb.Matcher'
+              allOf:
+              - $ref: '#/definitions/cmdb.Matcher'
+              description: Source identity dimensions as strings; partial identities
+                can match multiple roots.
             source_type:
+              description: Source resource type. For path_resources, may be inferred
+                from explicit path_resources.
               type: string
             start_time:
+              description: Range start in Unix seconds or milliseconds; used with
+                end_time.
               type: integer
             step:
+              description: Positive whole-second Go duration; omitted defaults to
+                1m.
               type: string
             target_info_show:
+              description: Whether to return target information fields in the legacy
+                target response.
               type: boolean
             target_type:
+              description: Requested legacy target resource type, not a topology output
+                filter.
               type: string
           type: object
         type: array
@@ -253,8 +221,12 @@ definitions:
         items:
           properties:
             look_back_delta:
+              description: Positive Go duration; empty uses configured lookback (built-in
+                24h), independent of range step.
               type: string
             path_resource:
+              description: Optional legacy resource-type path; preserve the old target/path
+                response contract.
               items:
                 type: string
               type: array
@@ -264,16 +236,30 @@ definitions:
                 未开启时保持原有的首条有效路径语义。
               type: boolean
             source_expand_info:
-              $ref: '#/definitions/cmdb.Matcher'
+              allOf:
+              - $ref: '#/definitions/cmdb.Matcher'
+              description: Explicit source attribute predicates; preserve this object
+                through consumer serializers.
             source_info:
-              $ref: '#/definitions/cmdb.Matcher'
+              allOf:
+              - $ref: '#/definitions/cmdb.Matcher'
+              description: Source identity dimensions as strings; partial identities
+                can match multiple roots.
             source_type:
+              description: Source resource type. For path_resources, may be inferred
+                from explicit path_resources.
               type: string
             target_info_show:
+              description: Whether to return target information fields in the legacy
+                target response.
               type: boolean
             target_type:
+              description: Requested legacy target resource type, not a topology output
+                filter.
               type: string
             timestamp:
+              description: Unix seconds or milliseconds; see the endpoint guide for
+                instant/default-time behavior.
               type: integer
           type: object
         type: array
@@ -328,24 +314,40 @@ definitions:
         items:
           properties:
             end_time:
+              description: Range end in Unix seconds or milliseconds; used with start_time.
               type: integer
             look_back_delta:
+              description: Positive Go duration; empty uses configured lookback (built-in
+                24h), independent of range step.
               type: string
             matcher:
-              $ref: '#/definitions/cmdb.Matcher'
+              allOf:
+              - $ref: '#/definitions/cmdb.Matcher'
+              description: Source identity dimensions as strings for the explicit/derived
+                paths.
             path_resources:
+              description: Explicit resource-type paths; otherwise source_type and
+                target_types drive path planning.
               items:
                 items:
                   type: string
                 type: array
               type: array
             source_type:
+              description: Source resource type. For path_resources, may be inferred
+                from explicit path_resources.
               type: string
             start_time:
+              description: Range start in Unix seconds or milliseconds; used with
+                end_time.
               type: integer
             step:
+              description: Positive whole-second Go duration; omitted defaults to
+                1m.
               type: string
             target_types:
+              description: Requested path target types; topology uses a separate output-filter
+                contract.
               items:
                 type: string
               type: array
@@ -382,22 +384,35 @@ definitions:
         items:
           properties:
             look_back_delta:
+              description: Positive Go duration; empty uses configured lookback (built-in
+                24h), independent of range step.
               type: string
             matcher:
-              $ref: '#/definitions/cmdb.Matcher'
+              allOf:
+              - $ref: '#/definitions/cmdb.Matcher'
+              description: Source identity dimensions as strings for the explicit/derived
+                paths.
             path_resources:
+              description: Explicit resource-type paths; otherwise source_type and
+                target_types drive path planning.
               items:
                 items:
                   type: string
                 type: array
               type: array
             source_type:
+              description: Source resource type. For path_resources, may be inferred
+                from explicit path_resources.
               type: string
             target_types:
+              description: Requested path target types; topology uses a separate output-filter
+                contract.
               items:
                 type: string
               type: array
             timestamp:
+              description: Unix seconds or milliseconds; see the endpoint guide for
+                instant/default-time behavior.
               type: integer
           type: object
         type: array
@@ -453,79 +468,101 @@ definitions:
   cmdb.SharedTopologyQuery:
     properties:
       allowed_categories:
+        description: Relation category allowlist. Empty allows all categories; unknown
+          categories match no relations.
         items:
           type: string
         type: array
       allowed_relation_types:
+        description: Exact relation-type allowlist from the active schema. Empty allows
+          all types; unknown names match no relations. Intersects allowed_categories.
         items:
           type: string
         type: array
       dynamic_relation_direction:
+        default: both
+        description: Traversal orientation for directional relations; non-directional
+          static relations remain bidirectional.
+        enum:
+        - both
+        - outbound
+        - inbound
         type: string
       end_time:
+        description: Inclusive range end; must be >= start_time and exactly aligned
+          to step. Same units as timestamp.
         type: integer
       look_back_delta:
+        default: 24h
+        description: Positive Go duration used by count_over_time observation windows,
+          independent of step. Empty uses configured lookback (built-in 24h); observed
+          edges do not prove exact simultaneous existence.
         type: string
       max_hops:
+        default: 2
+        description: Hop count. Zero/omitted uses configured default (built-in 2);
+          negative is invalid. Ordinary-mode configured ceiling defaults to 5; YOLO
+          bypasses the ceiling.
+        minimum: 0
         type: integer
       response_format:
-        description: ResponseFormat selects snapshots (default) or compact-v1 for
-          this query item.
+        default: snapshots
+        description: Per-item output format. Omitted or empty selects snapshots; compact-v1
+          is opt-in.
         enum:
         - snapshots
         - compact-v1
         type: string
       source_expand_info:
-        $ref: '#/definitions/cmdb.Matcher'
+        allOf:
+        - $ref: '#/definitions/cmdb.Matcher'
+        description: Explicit root attribute predicates, evaluated per frame. Defined
+          primary keys may complete identity, but conflicting identity or unknown
+          fields fail. Does not filter neighbor attributes.
       source_info:
-        $ref: '#/definitions/cmdb.Matcher'
+        allOf:
+        - $ref: '#/definitions/cmdb.Matcher'
+        description: Root identity matchers (string values). Partial or empty identity
+          selects multiple relation endpoints; use the resource catalogue for complete
+          primary keys.
       source_type:
+        description: Root resource type from the active schema; required for either
+          endpoint.
         type: string
       start_time:
+        description: Required and nonzero with end_time for topology_range; forbidden
+          for topology. Same units as timestamp.
         type: integer
       step:
+        default: 1m
+        description: Range grid spacing, a positive whole-second Go duration. Empty
+          defaults to 1m. Independent of look_back_delta. Ignored by instant topology
+          (response step 0s).
         type: string
       target_types:
+        description: Output node-type filter after traversal, always retaining source_type
+          nodes. Removes excluded nodes and incident edges, never collapses paths.
+          Empty returns all reachable types.
         items:
           type: string
         type: array
       timestamp:
+        description: Required and nonzero for topology; forbidden for topology_range.
+          Unix seconds (<1e12) or whole-second Unix milliseconds (>=1e12). Responses
+          always use milliseconds.
         type: integer
+    required:
+    - source_type
     type: object
   cmdb.SharedTopologyRequest:
     properties:
       query_list:
+        description: Ordered batch; empty or omitted returns an empty data array.
+          Each item has its own code; HTTP 200 alone does not imply all succeeded.
+          Ordinary mode defaults to at most 16 items; YOLO bypasses this limit.
         items:
           $ref: '#/definitions/cmdb.SharedTopologyQuery'
         type: array
-    type: object
-  cmdb.SharedTopologyResponse:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/cmdb.SharedTopologyResponseData'
-        type: array
-      trace_id:
-        type: string
-    type: object
-  cmdb.SharedTopologyResponseData:
-    properties:
-      code:
-        type: integer
-      end_time:
-        type: integer
-      message:
-        type: string
-      point_count:
-        type: integer
-      snapshots:
-        items:
-          $ref: '#/definitions/cmdb.SharedTopologySnapshot'
-        type: array
-      start_time:
-        type: integer
-      step:
-        type: string
     type: object
   cmdb.SharedTopologySnapshot:
     properties:
@@ -544,137 +581,359 @@ definitions:
       timestamp:
         type: integer
     type: object
-  http.CheckQueryTsDataResponse:
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.AggregateMethod:
     properties:
-      data:
-        description: |-
-          Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL 写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则该项不出现在 data 中。
-          Data 可为空：当仅有路由预览（RouteInfo 非空）且各存储未实现 GetRequestBody 预览体时，不调真实 TSDB 仍返回 200。
-        items: {}
-        type: array
-      route_info:
-        description: RouteInfo 与 ToQueryReference 展开后的每条子查询一一对应，用于路由排障（如 table_id、db
-          是否为空）。与 data 是否为空无关。
-        items:
-          $ref: '#/definitions/metadata.RouteInfo'
-        type: array
-      trace_id:
-        description: TraceID 链路 ID（与 trace span 一致）。
-        type: string
-    type: object
-  http.ErrResponse:
-    properties:
-      error:
-        type: string
-      trace_id:
-        type: string
-    type: object
-  http.ListData:
-    properties:
-      done:
-        type: boolean
-      list:
-        items:
-          additionalProperties: {}
-          type: object
-        type: array
-      result_table_id:
-        description: ResultTableID 来自 QueryReference 路由解析结果，不随分页、scroll 或返回行裁剪。
+      dimensions:
+        description: Dimensions 聚合维度
+        example:
+        - bk_target_ip
+        - bk_target_cloud_id
         items:
           type: string
         type: array
-      result_table_options:
-        $ref: '#/definitions/metadata.ResultTableOptions'
-      status:
-        $ref: '#/definitions/metadata.Status'
-      total:
-        type: integer
-      trace_id:
+      field:
+        description: Field 聚合字段，默认为指标字段，指定则会进行覆盖
+        example: field
         type: string
-    type: object
-  http.NamedOutputData:
-    properties:
-      invalid_points:
-        description: InvalidPoints 是被过滤的 NaN/Inf 点数。
-        type: integer
-      is_partial:
-        description: IsPartial 表示本输出是否部分成功或失败。
+      is_sub_query:
+        description: IsSubQuery 判断是否为子查询
         type: boolean
-      reference_name:
-        description: ReferenceName 对应请求 output_list 中的 reference_name。
-        example: A
+      method:
+        description: Method 聚合方法
+        example: mean
         type: string
-      series:
-        description: Tables 使用与旧 PromData.series 相同的序列结构。
-        items:
-          $ref: '#/definitions/http.TablesItem'
-        type: array
-      state:
-        allOf:
-        - $ref: '#/definitions/http.OutputState'
-        description: State 取值为 SUCCESS、SUCCESS_EMPTY、PARTIAL 或 ERROR。
-        enum:
-        - SUCCESS
-        - SUCCESS_EMPTY
-        - PARTIAL
-        - ERROR
-        example: SUCCESS
-      status:
-        allOf:
-        - $ref: '#/definitions/metadata.Status'
-        description: Status 保留本输出的路由或查询状态。
+      window:
+        description: Window 聚合周期
+        example: 60s
+        type: string
+      without:
+        description: Without
+        type: boolean
     type: object
-  http.OutputState:
-    enum:
-    - SUCCESS
-    - SUCCESS_EMPTY
-    - PARTIAL
-    - ERROR
-    type: string
-    x-enum-varnames:
-    - OutputStateSuccess
-    - OutputStateSuccessEmpty
-    - OutputStatePartial
-    - OutputStateError
-  http.Params:
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.ConditionField:
     properties:
+      field_name:
+        description: DimensionName 过滤字段
+        example: bk_biz_id
+        type: string
+      is_prefix:
+        description: IsPrefix 是否是前缀
+        type: boolean
+      is_suffix:
+        description: IsSuffix 是否是后缀
+        type: boolean
+      is_wildcard:
+        description: IsWildcard 是否是通配符
+        type: boolean
+      op:
+        description: Operator 操作符，包含：eq,ne,erq,nreq,contains,ncontains
+        example: contains
+        type: string
+      value:
+        description: Value 查询值
+        example:
+        - "2"
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.Conditions:
+    properties:
+      condition_list:
+        description: ConditionList 组合条件，长度 = len(FieldList) - 1的数组，支持 and,or
+        example:
+        - and
+        items:
+          type: string
+        type: array
+      field_list:
+        description: FieldList 查询条件
+        items:
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.ConditionField'
+        type: array
+    type: object
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.Query:
+    properties:
+      collapse:
+        allOf:
+        - $ref: '#/definitions/metadata.Collapse'
+        description: Collapse
       conditions:
-        $ref: '#/definitions/structured.Conditions'
-      data_source:
+        allOf:
+        - $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.Conditions'
+        description: Conditions 过滤条件
+      dimensions:
+        description: Dimensions promQL 使用维度
+        example:
+        - bk_target_ip
+        - bk_target_cloud_id
+        items:
+          type: string
+        type: array
+      field_name:
+        description: FieldName 查询指标
+        example: usage
         type: string
-      end_time:
-        type: string
+      from:
+        description: From 翻页开启数字
+        example: 0
+        type: integer
+      function:
+        description: AggregateMethodList 维度聚合函数
+        items:
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.AggregateMethod'
+        type: array
+      is_dom_sampled:
+        description: IsDomSampled 是否命中降采样算法
+        type: boolean
+      is_prefix:
+        description: IsPrefix 是否启用前缀匹配
+        type: boolean
       is_regexp:
         description: IsRegexp 指标是否使用正则查询
         example: false
         type: boolean
-      keys:
+      limit:
+        description: Limit 点数限制数量
+        example: 0
+        type: integer
+      offset:
+        description: Offset 偏移量
+        example: ""
+        type: string
+      offset_forward:
+        description: OffsetForward 偏移方向，默认 false 为向前偏移
+        example: false
+        type: boolean
+      query_string:
+        description: QueryString 关键字查询
+        type: string
+      reference_name:
+        description: ReferenceName 别名，用于表达式计算
+        example: a
+        type: string
+      slimit:
+        description: Slimit 维度限制数量
+        example: 0
+        type: integer
+      sql:
+        description: SQL doris sql 解析
+        type: string
+      start_or_end:
+        description: StartOrEnd @-modifier 标记，start or end
+        type: integer
+      table_id:
+        description: TableID 数据实体ID，容器指标可以为空
+        example: system.cpu_summary
+        type: string
+      table_id_conditions:
+        description: TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __bk_query_label_selector_<维度>
+          写入此字段，用于路由选表）；AllConditions 形态，内层 AND、外层 OR。
+        items:
+          items:
+            $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.ConditionField'
+          type: array
+        type: array
+      time_aggregation:
+        allOf:
+        - $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.TimeAggregation'
+        description: TimeAggregation 时间聚合方法
+      timestamp:
+        description: Timestamp @-modifier 标记
+        type: integer
+      vector_offset:
+        description: VectorOffset
+        type: integer
+    type: object
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryOutput:
+    properties:
+      expression:
+        description: Expression 输出表达式；非 legacy 输出仅允许 query reference identity 表达式。
+        example: A
+        type: string
+      reference_name:
+        description: ReferenceName 输出引用名，在同一 output_list 中必须唯一。
+        example: A
+        type: string
+    type: object
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryPromQL:
+    properties:
+      add_dimensions:
+        description: AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
         items:
           type: string
         type: array
+      bk_biz_ids:
+        items:
+          type: string
+        type: array
+      down_sample_range:
+        description: DownSampleRange 降采样：大于Step才能生效，可以为空
+        example: 5m
+        type: string
+      end:
+        type: string
+      instant:
+        description: 瞬时数据
+        type: boolean
+      is_verify_dimensions:
+        type: boolean
+      legacy_output_ref:
+        type: string
       limit:
         type: integer
-      metric_name:
+      look_back_delta:
+        description: LookBackDelta 偏移量
         type: string
-      query_string:
-        description: QueryString 日志查询串，用于在枚举维度值前过滤日志数据集。
+      match:
+        type: string
+      max_source_resolution:
+        type: string
+      not_align_influxdb:
+        description: 不与influxdb对齐
+        type: boolean
+      not_time_align:
+        type: boolean
+      output_list:
+        items:
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryOutput'
+        type: array
+      promql:
+        type: string
+      reference:
+        type: boolean
+      response_contract:
         type: string
       slimit:
         type: integer
-      start_time:
+      start:
         type: string
-      table_id:
+      step:
         type: string
-      table_id_conditions:
-        description: |-
-          TableIDConditions 表标签条件；与 /query/ts 的 body.table_id_conditions 一致，
-          仅在未指定 table_id / data_label 的全空间扫表场景下按结果表 Labels 收窄候选 RT。
-        items:
-          items:
-            $ref: '#/definitions/structured.ConditionField'
-          type: array
-        type: array
       timezone:
+        description: Timezone 时区
+        example: Asia/Shanghai
+        type: string
+    type: object
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs:
+    properties:
+      add_dimensions:
+        description: AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
+        items:
+          type: string
+        type: array
+      clear_cache:
+        description: ClearCache 是否强制清理已存在的缓存会话
+        type: boolean
+      down_sample_range:
+        description: DownSampleRange 降采样：大于Step才能生效，可以为空
+        example: 5m
+        type: string
+      dry_run:
+        description: DryRun 是否启用 DryRun
+        type: boolean
+      end_time:
+        description: End 结束时间：单位为任意长度的时间戳
+        example: "1657851600"
+        type: string
+      from:
+        description: From 翻页起始位置。Doris SearchAfter 在缺少稳定游标字段时会降级为 offset 分页。
+        example: 0
+        type: integer
+      highlight:
+        allOf:
+        - $ref: '#/definitions/metadata.HighLight'
+        description: HighLight 是否开启高亮
+      instant:
+        description: Instant 瞬时数据
+        type: boolean
+      is_es_batch:
+        description: IsESBatch 是否启用 query_raw 的 ES 批量查询
+        type: boolean
+      is_merge_db:
+        description: IsMergeDB 是否启用合并 db 特性
+        type: boolean
+      is_multi_from:
+        description: IsMultiFrom 是否启用 MultiFrom 查询
+        type: boolean
+      is_search_after:
+        description: IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch
+          使用原生游标；Doris 优先使用 __unique_key__，缺少时尝试 dtEventTimeStamp、gseIndex、iterationIndex
+          组合游标，再缺少时降级为 offset 分页；不能与 scroll 同时使用。
+        type: boolean
+      legacy_output_ref:
+        description: LegacyOutputRef 指向与 MetricMerge 等价的输出，供旧服务兼容降级。
+        example: C
+        type: string
+      limit:
+        description: |-
+          增加公共限制
+          Limit 点数限制数量
+        example: 0
+        type: integer
+      look_back_delta:
+        description: LookBackDelta 偏移量
+        type: string
+      metric_merge:
+        description: MetricMerge 表达式：支持所有PromQL语法
+        example: a
+        type: string
+      not_time_align:
+        description: |-
+          NotTimeAlign 查询开始时间和聚合是否需要对齐
+          例如
+          true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:13, 10:13 - 10:23
+          false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+        type: boolean
+      order_by:
+        description: OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
+        items:
+          type: string
+        type: array
+      output_list:
+        description: OutputList 按请求顺序声明命名输出。
+        items:
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryOutput'
+        type: array
+      query_list:
+        description: QueryList 查询实例
+        items:
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.Query'
+        type: array
+      reference:
+        description: |-
+          Reference 查询开始时间是否需要对齐，
+          例如：
+          true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+          false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
+        type: boolean
+      response_contract:
+        description: ResponseContract 显式选择命名多输出响应契约；为空时保持旧单输出行为。
+        enum:
+        - named_outputs/v1
+        example: named_outputs/v1
+        type: string
+      result_table_options:
+        $ref: '#/definitions/metadata.ResultTableOptions'
+      scroll:
+        description: Scroll 是否启用 Scroll 查询
+        type: string
+      slice_max:
+        description: SliceMax 最大切片数量
+        type: integer
+      space_uid:
+        description: SpaceUid 空间ID
+        type: string
+      start_time:
+        description: Start 开始时间：单位为任意长度的时间戳
+        example: "1657848000"
+        type: string
+      step:
+        description: Step 步长：最终返回的点数的时间间隔
+        example: 1m
+        type: string
+      timezone:
+        description: Timezone 时区
         example: Asia/Shanghai
         type: string
       tsdb_map:
@@ -682,129 +941,25 @@ definitions:
           items:
             $ref: '#/definitions/query.TsDBV2'
           type: array
+        description: TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name
         type: object
     type: object
-  http.PromData:
+  github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.TimeAggregation:
     properties:
-      is_partial:
+      function:
+        description: Function 时间聚合方法
+        example: avg_over_time
+        type: string
+      is_sub_query:
+        description: IsSubQuery 判断是否为子查询
         type: boolean
-      result_table_id:
-        description: ResultTableID 来自 QueryReference 路由解析结果；查询响应只暴露 RT 列表，不返回完整 RouteInfo。
-        items:
-          type: string
-        type: array
-      series:
-        items:
-          $ref: '#/definitions/http.TablesItem'
-        type: array
-      status:
-        $ref: '#/definitions/metadata.Status'
-      trace_id:
+      node_index:
+        description: NodeIndex 聚合函数的位置，用于还原 promql 的定位
+        type: integer
+      window:
+        description: Window 聚合周期
+        example: 60s
         type: string
-    type: object
-  http.QueryTsResponse:
-    properties:
-      contract_version:
-        description: ContractVersion 仅在 named_outputs/v1 响应中返回。
-        enum:
-        - named_outputs/v1
-        example: named_outputs/v1
-        type: string
-      is_partial:
-        type: boolean
-      outputs:
-        description: Outputs 仅在 named_outputs/v1 响应中返回。
-        items:
-          $ref: '#/definitions/http.NamedOutputData'
-        type: array
-      result_table_id:
-        items:
-          type: string
-        type: array
-      series:
-        description: Series 是未指定 response_contract 时的旧单输出结果。
-        items:
-          $ref: '#/definitions/http.TablesItem'
-        type: array
-      status:
-        $ref: '#/definitions/metadata.Status'
-      trace_id:
-        type: string
-    type: object
-  http.SeriesData:
-    properties:
-      keys:
-        items:
-          type: string
-        type: array
-      measurement:
-        type: string
-      series:
-        items:
-          items:
-            type: string
-          type: array
-        type: array
-      trace_id:
-        type: string
-    type: object
-  http.StatItem:
-    properties:
-      avg:
-        $ref: '#/definitions/http.StatPoint'
-      count:
-        $ref: '#/definitions/http.StatPoint'
-      last:
-        $ref: '#/definitions/http.StatPoint'
-      max:
-        $ref: '#/definitions/http.StatPoint'
-      min:
-        $ref: '#/definitions/http.StatPoint'
-      sum:
-        $ref: '#/definitions/http.StatPoint'
-    type: object
-  http.StatPoint:
-    type: object
-  http.TablesItem:
-    properties:
-      columns:
-        items:
-          type: string
-        type: array
-      group_keys:
-        items:
-          type: string
-        type: array
-      group_values:
-        items:
-          type: string
-        type: array
-      metric_name:
-        type: string
-      name:
-        type: string
-      stat:
-        $ref: '#/definitions/http.StatItem'
-      types:
-        items:
-          type: string
-        type: array
-      values:
-        items:
-          items: {}
-          type: array
-        type: array
-    type: object
-  http.TagValuesData:
-    properties:
-      trace_id:
-        type: string
-      values:
-        additionalProperties:
-          items:
-            type: string
-          type: array
-        type: object
     type: object
   metadata.Collapse:
     properties:
@@ -978,360 +1133,137 @@ definitions:
       vm_rt:
         type: string
     type: object
-  structured.AggregateMethod:
+  service_http.CheckQueryTsDataResponse:
     properties:
-      dimensions:
-        description: Dimensions 聚合维度
-        example:
-        - bk_target_ip
-        - bk_target_cloud_id
-        items:
-          type: string
+      data:
+        description: |-
+          Data 每项为子查询对应 tsdb.Instance.GetRequestBody(ctx) 的序列化结果。直查 VM 常为单元素 VmQueryCheckBody：metricql 由 vmCheckMetricql 生成后经 metadata.SetCheckPreviewMetricQL 写入，VM 实例在 GetRequestBody 中与 GetExpand 一并读出。非直查若某存储无预览体则该项不出现在 data 中。
+          Data 可为空：当仅有路由预览（RouteInfo 非空）且各存储未实现 GetRequestBody 预览体时，不调真实 TSDB 仍返回 200。
+        items: {}
         type: array
-      field:
-        description: Field 聚合字段，默认为指标字段，指定则会进行覆盖
-        example: field
+      route_info:
+        description: RouteInfo 与 ToQueryReference 展开后的每条子查询一一对应，用于路由排障（如 table_id、db
+          是否为空）。与 data 是否为空无关。
+        items:
+          $ref: '#/definitions/metadata.RouteInfo'
+        type: array
+      trace_id:
+        description: TraceID 链路 ID（与 trace span 一致）。
         type: string
-      is_sub_query:
-        description: IsSubQuery 判断是否为子查询
-        type: boolean
-      method:
-        description: Method 聚合方法
-        example: mean
-        type: string
-      window:
-        description: Window 聚合周期
-        example: 60s
-        type: string
-      without:
-        description: Without
-        type: boolean
     type: object
-  structured.ConditionField:
+  service_http.ErrResponse:
     properties:
-      field_name:
-        description: DimensionName 过滤字段
-        example: bk_biz_id
+      error:
         type: string
-      is_prefix:
-        description: IsPrefix 是否是前缀
-        type: boolean
-      is_suffix:
-        description: IsSuffix 是否是后缀
-        type: boolean
-      is_wildcard:
-        description: IsWildcard 是否是通配符
-        type: boolean
-      op:
-        description: Operator 操作符，包含：eq,ne,erq,nreq,contains,ncontains
-        example: contains
+      trace_id:
         type: string
-      value:
-        description: Value 查询值
-        example:
-        - "2"
-        items:
-          type: string
-        type: array
     type: object
-  structured.Conditions:
+  service_http.ListData:
     properties:
-      condition_list:
-        description: ConditionList 组合条件，长度 = len(FieldList) - 1的数组，支持 and,or
-        example:
-        - and
+      done:
+        type: boolean
+      list:
+        items:
+          additionalProperties: {}
+          type: object
+        type: array
+      result_table_id:
+        description: ResultTableID 来自 QueryReference 路由解析结果，不随分页、scroll 或返回行裁剪。
         items:
           type: string
         type: array
-      field_list:
-        description: FieldList 查询条件
-        items:
-          $ref: '#/definitions/structured.ConditionField'
-        type: array
-    type: object
-  structured.Query:
-    properties:
-      collapse:
-        allOf:
-        - $ref: '#/definitions/metadata.Collapse'
-        description: Collapse
-      conditions:
-        allOf:
-        - $ref: '#/definitions/structured.Conditions'
-        description: Conditions 过滤条件
-      dimensions:
-        description: Dimensions promQL 使用维度
-        example:
-        - bk_target_ip
-        - bk_target_cloud_id
-        items:
-          type: string
-        type: array
-      field_name:
-        description: FieldName 查询指标
-        example: usage
-        type: string
-      field_semantics:
-        description: FieldSemantics selects a versioned physical field schema.
-        type: string
-      from:
-        description: From 翻页开启数字
-        example: 0
+      result_table_options:
+        $ref: '#/definitions/metadata.ResultTableOptions'
+      status:
+        $ref: '#/definitions/metadata.Status'
+      total:
         type: integer
-      function:
-        description: AggregateMethodList 维度聚合函数
+      trace_id:
+        type: string
+    type: object
+  service_http.NamedOutputData:
+    properties:
+      invalid_points:
+        description: InvalidPoints 是被过滤的 NaN/Inf 点数。
+        type: integer
+      is_partial:
+        description: IsPartial 表示本输出是否部分成功或失败。
+        type: boolean
+      reference_name:
+        description: ReferenceName 对应请求 output_list 中的 reference_name。
+        example: A
+        type: string
+      series:
+        description: Tables 使用与旧 PromData.series 相同的序列结构。
         items:
-          $ref: '#/definitions/structured.AggregateMethod'
+          $ref: '#/definitions/service_http.TablesItem'
         type: array
-      is_dom_sampled:
-        description: IsDomSampled 是否命中降采样算法
-        type: boolean
-      is_prefix:
-        description: IsPrefix 是否启用前缀匹配
-        type: boolean
+      state:
+        allOf:
+        - $ref: '#/definitions/service_http.OutputState'
+        description: State 取值为 SUCCESS、SUCCESS_EMPTY、PARTIAL 或 ERROR。
+        enum:
+        - SUCCESS
+        - SUCCESS_EMPTY
+        - PARTIAL
+        - ERROR
+        example: SUCCESS
+      status:
+        allOf:
+        - $ref: '#/definitions/metadata.Status'
+        description: Status 保留本输出的路由或查询状态。
+    type: object
+  service_http.OutputState:
+    enum:
+    - SUCCESS
+    - SUCCESS_EMPTY
+    - PARTIAL
+    - ERROR
+    type: string
+    x-enum-varnames:
+    - OutputStateSuccess
+    - OutputStateSuccessEmpty
+    - OutputStatePartial
+    - OutputStateError
+  service_http.Params:
+    properties:
+      conditions:
+        $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.Conditions'
+      data_source:
+        type: string
+      end_time:
+        type: string
       is_regexp:
         description: IsRegexp 指标是否使用正则查询
         example: false
         type: boolean
+      keys:
+        items:
+          type: string
+        type: array
       limit:
-        description: Limit 点数限制数量
-        example: 0
         type: integer
-      offset:
-        description: Offset 偏移量
-        example: ""
+      metric_name:
         type: string
-      offset_forward:
-        description: OffsetForward 偏移方向，默认 false 为向前偏移
-        example: false
-        type: boolean
       query_string:
-        description: QueryString 关键字查询
-        type: string
-      reference_name:
-        description: ReferenceName 别名，用于表达式计算
-        example: a
+        description: QueryString 日志查询串，用于在枚举维度值前过滤日志数据集。
         type: string
       slimit:
-        description: Slimit 维度限制数量
-        example: 0
         type: integer
-      source_conditions:
-        allOf:
-        - $ref: '#/definitions/structured.Conditions'
-        description: SourceConditions keeps intrinsic source filters outside the user's
-          bool group.
-      sql:
-        description: SQL doris sql 解析
+      start_time:
         type: string
-      start_or_end:
-        description: StartOrEnd @-modifier 标记，start or end
-        type: integer
       table_id:
-        description: TableID 数据实体ID，容器指标可以为空
-        example: system.cpu_summary
         type: string
       table_id_conditions:
-        description: TableIDConditions 表标签条件（Body table_id_conditions 与 PromQL __bk_query_label_selector_<维度>
-          写入此字段，用于路由选表）；AllConditions 形态，内层 AND、外层 OR。
+        description: |-
+          TableIDConditions 表标签条件；与 /query/ts 的 body.table_id_conditions 一致，
+          仅在未指定 table_id / data_label 的全空间扫表场景下按结果表 Labels 收窄候选 RT。
         items:
           items:
-            $ref: '#/definitions/structured.ConditionField'
+            $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.ConditionField'
           type: array
         type: array
-      time_aggregation:
-        allOf:
-        - $ref: '#/definitions/structured.TimeAggregation'
-        description: TimeAggregation 时间聚合方法
-      timestamp:
-        description: Timestamp @-modifier 标记
-        type: integer
-      vector_offset:
-        allOf:
-        - $ref: '#/definitions/time.Duration'
-        description: VectorOffset
-    type: object
-  structured.QueryOutput:
-    properties:
-      expression:
-        description: Expression 输出表达式；非 legacy 输出仅允许 query reference identity 表达式。
-        example: A
-        type: string
-      reference_name:
-        description: ReferenceName 输出引用名，在同一 output_list 中必须唯一。
-        example: A
-        type: string
-    type: object
-  structured.QueryPromQL:
-    properties:
-      add_dimensions:
-        description: AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
-        items:
-          type: string
-        type: array
-      bk_biz_ids:
-        items:
-          type: string
-        type: array
-      down_sample_range:
-        description: DownSampleRange 降采样：大于Step才能生效，可以为空
-        example: 5m
-        type: string
-      end:
-        type: string
-      instant:
-        description: 瞬时数据
-        type: boolean
-      is_verify_dimensions:
-        type: boolean
-      limit:
-        type: integer
-      look_back_delta:
-        description: LookBackDelta 偏移量
-        type: string
-      match:
-        type: string
-      max_source_resolution:
-        type: string
-      not_align_influxdb:
-        description: 不与influxdb对齐
-        type: boolean
-      not_time_align:
-        type: boolean
-      promql:
-        type: string
-      reference:
-        type: boolean
-      slimit:
-        type: integer
-      start:
-        type: string
-      step:
-        type: string
       timezone:
-        description: Timezone 时区
-        example: Asia/Shanghai
-        type: string
-    type: object
-  structured.QueryTs:
-    properties:
-      add_dimensions:
-        description: AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
-        items:
-          type: string
-        type: array
-      clear_cache:
-        description: ClearCache 是否强制清理已存在的缓存会话
-        type: boolean
-      down_sample_range:
-        description: DownSampleRange 降采样：大于Step才能生效，可以为空
-        example: 5m
-        type: string
-      dry_run:
-        description: DryRun 是否启用 DryRun
-        type: boolean
-      end_time:
-        description: End 结束时间：单位为任意长度的时间戳
-        example: "1657851600"
-        type: string
-      from:
-        description: From 翻页起始位置。Doris SearchAfter 在缺少稳定游标字段时会降级为 offset 分页。
-        example: 0
-        type: integer
-      highlight:
-        allOf:
-        - $ref: '#/definitions/metadata.HighLight'
-        description: HighLight 是否开启高亮
-      instant:
-        description: Instant 瞬时数据
-        type: boolean
-      is_es_batch:
-        description: IsESBatch 是否启用 query_raw 的 ES 批量查询
-        type: boolean
-      is_merge_db:
-        description: IsMergeDB 是否启用合并 db 特性
-        type: boolean
-      is_multi_from:
-        description: IsMultiFrom 是否启用 MultiFrom 查询
-        type: boolean
-      is_search_after:
-        description: IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch
-          使用原生游标；Doris 优先使用 __unique_key__，缺少时尝试 dtEventTimeStamp、gseIndex、iterationIndex
-          组合游标，再缺少时降级为 offset 分页；不能与 scroll 同时使用。
-        type: boolean
-      legacy_output_ref:
-        description: LegacyOutputRef 指向与 MetricMerge 等价的输出，供旧服务兼容降级。
-        example: C
-        type: string
-      limit:
-        description: |-
-          增加公共限制
-          Limit 点数限制数量
-        example: 0
-        type: integer
-      look_back_delta:
-        description: LookBackDelta 偏移量
-        type: string
-      metric_merge:
-        description: MetricMerge 表达式：支持所有PromQL语法
-        example: a
-        type: string
-      not_time_align:
-        description: |-
-          NotTimeAlign 查询开始时间和聚合是否需要对齐
-          例如
-          true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:13, 10:13 - 10:23
-          false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
-        type: boolean
-      order_by:
-        description: OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
-        items:
-          type: string
-        type: array
-      output_list:
-        description: OutputList 按请求顺序声明命名输出。
-        items:
-          $ref: '#/definitions/structured.QueryOutput'
-        type: array
-      query_list:
-        description: QueryList 查询实例
-        items:
-          $ref: '#/definitions/structured.Query'
-        type: array
-      reference:
-        description: |-
-          Reference 查询开始时间是否需要对齐，
-          例如：
-          true:  range: 10:03 - 10:23 window: 10m -> 10:03 - 10:10, 10:10 - 10:20, 10:20 - 10:23
-          false: range: 10:03 - 10:23 window: 10m -> 10:00 - 10:10, 10:10 - 10:20, 10:20 - 10:23
-        type: boolean
-      response_contract:
-        description: ResponseContract 显式选择命名多输出响应契约；为空时保持旧单输出行为。
-        enum:
-        - named_outputs/v1
-        example: named_outputs/v1
-        type: string
-      result_table_options:
-        $ref: '#/definitions/metadata.ResultTableOptions'
-      scroll:
-        description: Scroll 是否启用 Scroll 查询
-        type: string
-      slice_max:
-        description: SliceMax 最大切片数量
-        type: integer
-      space_uid:
-        description: SpaceUid 空间ID
-        type: string
-      start_time:
-        description: Start 开始时间：单位为任意长度的时间戳
-        example: "1657848000"
-        type: string
-      step:
-        description: Step 步长：最终返回的点数的时间间隔
-        example: 1m
-        type: string
-      timezone:
-        description: Timezone 时区
         example: Asia/Shanghai
         type: string
       tsdb_map:
@@ -1339,74 +1271,183 @@ definitions:
           items:
             $ref: '#/definitions/query.TsDBV2'
           type: array
-        description: TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name
         type: object
     type: object
-  structured.TimeAggregation:
+  service_http.PromData:
     properties:
-      function:
-        description: Function 时间聚合方法
-        example: avg_over_time
-        type: string
-      is_sub_query:
-        description: IsSubQuery 判断是否为子查询
+      is_partial:
         type: boolean
-      node_index:
-        description: NodeIndex 聚合函数的位置，用于还原 promql 的定位
-        type: integer
-      window:
-        description: Window 聚合周期
-        example: 60s
+      result_table_id:
+        description: ResultTableID 来自 QueryReference 路由解析结果；查询响应只暴露 RT 列表，不返回完整 RouteInfo。
+        items:
+          type: string
+        type: array
+      series:
+        items:
+          $ref: '#/definitions/service_http.TablesItem'
+        type: array
+      status:
+        $ref: '#/definitions/metadata.Status'
+      trace_id:
         type: string
     type: object
-  time.Duration:
-    enum:
-    - -9223372036854775808
-    - 9223372036854775807
-    - 1
-    - 1000
-    - 1000000
-    - 1000000000
-    - 60000000000
-    - 3600000000000
-    - -9223372036854775808
-    - 9223372036854775807
-    - 1
-    - 1000
-    - 1000000
-    - 1000000000
-    - 60000000000
-    - 3600000000000
-    - 1
-    - 1000
-    - 1000000
-    - 1000000000
-    - 60000000000
-    - 3600000000000
-    type: integer
-    x-enum-varnames:
-    - minDuration
-    - maxDuration
-    - Nanosecond
-    - Microsecond
-    - Millisecond
-    - Second
-    - Minute
-    - Hour
-    - minDuration
-    - maxDuration
-    - Nanosecond
-    - Microsecond
-    - Millisecond
-    - Second
-    - Minute
-    - Hour
-    - Nanosecond
-    - Microsecond
-    - Millisecond
-    - Second
-    - Minute
-    - Hour
+  service_http.QueryTsResponse:
+    properties:
+      contract_version:
+        description: ContractVersion 仅在 named_outputs/v1 响应中返回。
+        enum:
+        - named_outputs/v1
+        example: named_outputs/v1
+        type: string
+      is_partial:
+        type: boolean
+      outputs:
+        description: Outputs 仅在 named_outputs/v1 响应中返回。
+        items:
+          $ref: '#/definitions/service_http.NamedOutputData'
+        type: array
+      result_table_id:
+        items:
+          type: string
+        type: array
+      series:
+        description: Series 是未指定 response_contract 时的旧单输出结果。
+        items:
+          $ref: '#/definitions/service_http.TablesItem'
+        type: array
+      status:
+        $ref: '#/definitions/metadata.Status'
+      trace_id:
+        type: string
+    type: object
+  service_http.SeriesData:
+    properties:
+      keys:
+        items:
+          type: string
+        type: array
+      measurement:
+        type: string
+      series:
+        items:
+          items:
+            type: string
+          type: array
+        type: array
+      trace_id:
+        type: string
+    type: object
+  service_http.StatItem:
+    properties:
+      avg:
+        $ref: '#/definitions/service_http.StatPoint'
+      count:
+        $ref: '#/definitions/service_http.StatPoint'
+      last:
+        $ref: '#/definitions/service_http.StatPoint'
+      max:
+        $ref: '#/definitions/service_http.StatPoint'
+      min:
+        $ref: '#/definitions/service_http.StatPoint'
+      sum:
+        $ref: '#/definitions/service_http.StatPoint'
+    type: object
+  service_http.StatPoint:
+    type: object
+  service_http.TablesItem:
+    properties:
+      columns:
+        items:
+          type: string
+        type: array
+      group_keys:
+        items:
+          type: string
+        type: array
+      group_values:
+        items:
+          type: string
+        type: array
+      metric_name:
+        type: string
+      name:
+        type: string
+      stat:
+        $ref: '#/definitions/service_http.StatItem'
+      types:
+        items:
+          type: string
+        type: array
+      values:
+        items:
+          items: {}
+          type: array
+        type: array
+    type: object
+  service_http.TagValuesData:
+    properties:
+      trace_id:
+        type: string
+      values:
+        additionalProperties:
+          items:
+            type: string
+          type: array
+        type: object
+    type: object
+  service_http_api.ErrResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  service_http_api.SharedTopologyResponseDocumentation:
+    description: Each query_list item selects its response format independently; data
+      can contain both snapshots and compact-v1 items.
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/service_http_api.SharedTopologyResponseItemDocumentation'
+        type: array
+      trace_id:
+        type: string
+    type: object
+  service_http_api.SharedTopologyResponseItemDocumentation:
+    description: 'Snapshot items contain snapshots and omit response_format/compact.
+      Compact items contain response_format=compact-v1 and compact and omit snapshots.
+      Failed snapshot items contain snapshots: []; failed compact items retain response_format=compact-v1
+      and compact: null.'
+    properties:
+      code:
+        type: integer
+      compact:
+        allOf:
+        - $ref: '#/definitions/cmdb.CompactTopology'
+        description: Compact is present only for compact-v1; it is null when that
+          query failed.
+        x-nullable: true
+      end_time:
+        type: integer
+      message:
+        type: string
+      point_count:
+        type: integer
+      response_format:
+        description: ResponseFormat is present only when compact-v1 was requested,
+          including failures.
+        enum:
+        - compact-v1
+        type: string
+      snapshots:
+        description: Snapshots is present only for the default/snapshots format, including
+          failures.
+        items:
+          $ref: '#/definitions/cmdb.SharedTopologySnapshot'
+        type: array
+      start_time:
+        type: integer
+      step:
+        type: string
+    type: object
 info:
   contact: {}
   description: bk unify-query swagger api
@@ -1415,6 +1456,12 @@ info:
 paths:
   /api/v1/relation/multi_resource:
     post:
+      consumes:
+      - application/json
+      description: Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed
+        queries; it has no built-in default. JWT authorization is conditional on server
+        configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md
+        for time, empty/partial, and migration contracts.
       operationId: relation_multi_resource_query
       parameters:
       - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
@@ -1422,8 +1469,13 @@ paths:
         in: header
         name: traceparent
         type: string
-      - default: bkcc__2
-        description: 空间UID
+      - description: Gateway-signed JWT; required when jwt.enabled is true. BasicAuth
+          is not enforced by these relation handlers.
+        in: header
+        name: X-Bkapi-Jwt
+        type: string
+      - description: Routing space UID; no default. Required for physical routing
+          and when configured JWT space authorization requires it.
         in: header
         name: X-Bk-Scope-Space-Uid
         type: string
@@ -1443,10 +1495,20 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/api.ErrResponse'
+            $ref: '#/definitions/service_http_api.ErrResponse'
+        "401":
+          description: JWT authorization failed when enabled
+          schema:
+            $ref: '#/definitions/service_http_api.ErrResponse'
       summary: query relation multi resource
   /api/v1/relation/multi_resource_range:
     post:
+      consumes:
+      - application/json
+      description: Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed
+        queries; it has no built-in default. JWT authorization is conditional on server
+        configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md
+        for time, empty/partial, and migration contracts.
       operationId: relation_multi_resource_query_range
       parameters:
       - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
@@ -1454,8 +1516,13 @@ paths:
         in: header
         name: traceparent
         type: string
-      - default: bkcc__2
-        description: 空间UID
+      - description: Gateway-signed JWT; required when jwt.enabled is true. BasicAuth
+          is not enforced by these relation handlers.
+        in: header
+        name: X-Bkapi-Jwt
+        type: string
+      - description: Routing space UID; no default. Required for physical routing
+          and when configured JWT space authorization requires it.
         in: header
         name: X-Bk-Scope-Space-Uid
         type: string
@@ -1475,18 +1542,33 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/api.ErrResponse'
+            $ref: '#/definitions/service_http_api.ErrResponse'
+        "401":
+          description: JWT authorization failed when enabled
+          schema:
+            $ref: '#/definitions/service_http_api.ErrResponse'
       summary: query relation multi resource
   /api/v1/relation/path_resources:
     post:
+      consumes:
+      - application/json
+      description: Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed
+        queries; it has no built-in default. JWT authorization is conditional on server
+        configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md
+        for time, empty/partial, and migration contracts.
       operationId: relation_path_resources_query
       parameters:
       - description: TraceID
         in: header
         name: traceparent
         type: string
-      - default: bkcc__2
-        description: 空间UID
+      - description: Gateway-signed JWT; required when jwt.enabled is true. BasicAuth
+          is not enforced by these relation handlers.
+        in: header
+        name: X-Bkapi-Jwt
+        type: string
+      - description: Routing space UID; no default. Required for physical routing
+          and when configured JWT space authorization requires it.
         in: header
         name: X-Bk-Scope-Space-Uid
         type: string
@@ -1506,18 +1588,33 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/api.ErrResponse'
+            $ref: '#/definitions/service_http_api.ErrResponse'
+        "401":
+          description: JWT authorization failed when enabled
+          schema:
+            $ref: '#/definitions/service_http_api.ErrResponse'
       summary: query complete relation resource paths
   /api/v1/relation/path_resources_range:
     post:
+      consumes:
+      - application/json
+      description: Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed
+        queries; it has no built-in default. JWT authorization is conditional on server
+        configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md
+        for time, empty/partial, and migration contracts.
       operationId: relation_path_resources_query_range
       parameters:
       - description: TraceID
         in: header
         name: traceparent
         type: string
-      - default: bkcc__2
-        description: 空间UID
+      - description: Gateway-signed JWT; required when jwt.enabled is true. BasicAuth
+          is not enforced by these relation handlers.
+        in: header
+        name: X-Bkapi-Jwt
+        type: string
+      - description: Routing space UID; no default. Required for physical routing
+          and when configured JWT space authorization requires it.
         in: header
         name: X-Bk-Scope-Space-Uid
         type: string
@@ -1537,18 +1634,33 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/api.ErrResponse'
+            $ref: '#/definitions/service_http_api.ErrResponse'
+        "401":
+          description: JWT authorization failed when enabled
+          schema:
+            $ref: '#/definitions/service_http_api.ErrResponse'
       summary: query complete relation resource paths over a time range
   /api/v1/relation/v1beta3/multi_resource:
     post:
+      consumes:
+      - application/json
+      description: Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed
+        queries; it has no built-in default. JWT authorization is conditional on server
+        configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md
+        for time, empty/partial, and migration contracts.
       operationId: relation_multi_resource_query_v1beta3
       parameters:
       - description: TraceID
         in: header
         name: traceparent
         type: string
-      - default: bkcc__2
-        description: 空间UID
+      - description: Gateway-signed JWT; required when jwt.enabled is true. BasicAuth
+          is not enforced by these relation handlers.
+        in: header
+        name: X-Bkapi-Jwt
+        type: string
+      - description: Routing space UID; no default. Required for physical routing
+          and when configured JWT space authorization requires it.
         in: header
         name: X-Bk-Scope-Space-Uid
         type: string
@@ -1568,18 +1680,33 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/api.ErrResponse'
+            $ref: '#/definitions/service_http_api.ErrResponse'
+        "401":
+          description: JWT authorization failed when enabled
+          schema:
+            $ref: '#/definitions/service_http_api.ErrResponse'
       summary: query relation multi resource (v1beta3, TimeGraph)
   /api/v1/relation/v1beta3/multi_resource_range:
     post:
+      consumes:
+      - application/json
+      description: Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed
+        queries; it has no built-in default. JWT authorization is conditional on server
+        configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md
+        for time, empty/partial, and migration contracts.
       operationId: relation_multi_resource_query_range_v1beta3
       parameters:
       - description: TraceID
         in: header
         name: traceparent
         type: string
-      - default: bkcc__2
-        description: 空间UID
+      - description: Gateway-signed JWT; required when jwt.enabled is true. BasicAuth
+          is not enforced by these relation handlers.
+        in: header
+        name: X-Bkapi-Jwt
+        type: string
+      - description: Routing space UID; no default. Required for physical routing
+          and when configured JWT space authorization requires it.
         in: header
         name: X-Bk-Scope-Space-Uid
         type: string
@@ -1599,18 +1726,33 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/api.ErrResponse'
+            $ref: '#/definitions/service_http_api.ErrResponse'
+        "401":
+          description: JWT authorization failed when enabled
+          schema:
+            $ref: '#/definitions/service_http_api.ErrResponse'
       summary: query relation multi resource range (v1beta3, TimeGraph)
   /api/v1/relation/v1beta3/topology:
     post:
+      consumes:
+      - application/json
+      description: Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed
+        queries; it has no built-in default. JWT authorization is conditional on server
+        configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md
+        for time, empty/partial, and migration contracts.
       operationId: relation_shared_topology_query_v1beta3
       parameters:
       - description: TraceID
         in: header
         name: traceparent
         type: string
-      - default: bkcc__2
-        description: 空间UID
+      - description: Gateway-signed JWT; required when jwt.enabled is true. BasicAuth
+          is not enforced by these relation handlers.
+        in: header
+        name: X-Bkapi-Jwt
+        type: string
+      - description: Routing space UID; no default. Required for physical routing
+          and when configured JWT space authorization requires it.
         in: header
         name: X-Bk-Scope-Space-Uid
         type: string
@@ -1626,22 +1768,37 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SharedTopologyResponseDocumentation'
+            $ref: '#/definitions/service_http_api.SharedTopologyResponseDocumentation'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/api.ErrResponse'
+            $ref: '#/definitions/service_http_api.ErrResponse'
+        "401":
+          description: JWT authorization failed when enabled
+          schema:
+            $ref: '#/definitions/service_http_api.ErrResponse'
       summary: query relation shared topology
   /api/v1/relation/v1beta3/topology_range:
     post:
+      consumes:
+      - application/json
+      description: Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed
+        queries; it has no built-in default. JWT authorization is conditional on server
+        configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md
+        for time, empty/partial, and migration contracts.
       operationId: relation_shared_topology_query_range_v1beta3
       parameters:
       - description: TraceID
         in: header
         name: traceparent
         type: string
-      - default: bkcc__2
-        description: 空间UID
+      - description: Gateway-signed JWT; required when jwt.enabled is true. BasicAuth
+          is not enforced by these relation handlers.
+        in: header
+        name: X-Bkapi-Jwt
+        type: string
+      - description: Routing space UID; no default. Required for physical routing
+          and when configured JWT space authorization requires it.
         in: header
         name: X-Bk-Scope-Space-Uid
         type: string
@@ -1657,11 +1814,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/api.SharedTopologyResponseDocumentation'
+            $ref: '#/definitions/service_http_api.SharedTopologyResponseDocumentation'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/api.ErrResponse'
+            $ref: '#/definitions/service_http_api.ErrResponse'
+        "401":
+          description: JWT authorization failed when enabled
+          schema:
+            $ref: '#/definitions/service_http_api.ErrResponse'
       summary: query relation shared topology range
   /check/query/ts:
     post:
@@ -1687,18 +1848,18 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryTs'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.CheckQueryTsDataResponse'
+            $ref: '#/definitions/service_http.CheckQueryTsDataResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: query ts monitor check by ts
   /check/query/ts/promql:
     post:
@@ -1724,61 +1885,19 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryPromQL'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryPromQL'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.CheckQueryTsDataResponse'
+            $ref: '#/definitions/service_http.CheckQueryTsDataResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: query promql monitor check by ts
-  /query/promql:
-    post:
-      operationId: query_promql
-      parameters:
-      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
-        description: TraceID
-        in: header
-        name: traceparent
-        type: string
-      - default: username:goodman
-        description: 来源
-        in: header
-        name: Bk-Query-Source
-        type: string
-      - default: bkcc__2
-        description: 空间UID
-        in: header
-        name: X-Bk-Scope-Space-Uid
-        type: string
-      - default: ""
-        description: 是否跳过空间验证
-        in: header
-        name: X-Bk-Scope-Skip-Space
-        type: string
-      - description: json data
-        in: body
-        name: data
-        required: true
-        schema:
-          $ref: '#/definitions/structured.QueryPromQL'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/http.PromData'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/http.ErrResponse'
-      summary: query monitor by promql
   /query/raw:
     post:
       operationId: query_raw
@@ -1808,18 +1927,18 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryTs'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.ListData'
+            $ref: '#/definitions/service_http.ListData'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: query monitor by raw data
   /query/raw_with_scroll:
     post:
@@ -1850,18 +1969,18 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryTs'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.ListData'
+            $ref: '#/definitions/service_http.ListData'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: query monitor by raw data with scroll
   /query/reference:
     post:
@@ -1892,18 +2011,18 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryTs'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.PromData'
+            $ref: '#/definitions/service_http.PromData'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: query monitor by reference
   /query/ts:
     post:
@@ -1934,7 +2053,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryTs'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs'
       produces:
       - application/json
       responses:
@@ -1942,11 +2061,11 @@ paths:
           description: 未指定 response_contract 时返回 legacy PromData；named_outputs/v1
             返回命名多输出
           schema:
-            $ref: '#/definitions/http.QueryTsResponse'
+            $ref: '#/definitions/service_http.QueryTsResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: query monitor by ts
   /query/ts/exemplar:
     post:
@@ -1977,18 +2096,18 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryTs'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.PromData'
+            $ref: '#/definitions/service_http.PromData'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: query monitor by ts exemplar
   /query/ts/info/field_keys:
     post:
@@ -2019,7 +2138,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/http.Params'
+          $ref: '#/definitions/service_http.Params'
       produces:
       - application/json
       responses:
@@ -2034,7 +2153,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: info field keys
   /query/ts/info/field_map:
     post:
@@ -2065,7 +2184,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/http.Params'
+          $ref: '#/definitions/service_http.Params'
       produces:
       - application/json
       responses:
@@ -2073,12 +2192,12 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/http.SeriesData'
+              $ref: '#/definitions/service_http.SeriesData'
             type: array
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: info field map
   /query/ts/info/series:
     post:
@@ -2109,7 +2228,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/http.Params'
+          $ref: '#/definitions/service_http.Params'
       produces:
       - application/json
       responses:
@@ -2117,12 +2236,12 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/http.SeriesData'
+              $ref: '#/definitions/service_http.SeriesData'
             type: array
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: info series
   /query/ts/info/tag_keys:
     post:
@@ -2153,7 +2272,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/http.Params'
+          $ref: '#/definitions/service_http.Params'
       produces:
       - application/json
       responses:
@@ -2168,7 +2287,7 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: info tag keys
   /query/ts/info/tag_values:
     post:
@@ -2199,18 +2318,18 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/http.Params'
+          $ref: '#/definitions/service_http.Params'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/http.TagValuesData'
+            $ref: '#/definitions/service_http.TagValuesData'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: info tag values
   /query/ts/info/time_series:
     post:
@@ -2241,7 +2360,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/http.Params'
+          $ref: '#/definitions/service_http.Params'
       produces:
       - application/json
       responses:
@@ -2249,12 +2368,12 @@ paths:
           description: OK
           schema:
             items:
-              $ref: '#/definitions/http.SeriesData'
+              $ref: '#/definitions/service_http.SeriesData'
             type: array
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: info time series
   /query/ts/label/{label_name}/values:
     get:
@@ -2285,7 +2404,7 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/http.Params'
+          $ref: '#/definitions/service_http.Params'
       produces:
       - application/json
       responses:
@@ -2300,8 +2419,50 @@ paths:
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: info label values
+  /query/ts/promql:
+    post:
+      operationId: query_promql
+      parameters:
+      - default: 00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01
+        description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: username:goodman
+        description: 来源
+        in: header
+        name: Bk-Query-Source
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - default: ""
+        description: 是否跳过空间验证
+        in: header
+        name: X-Bk-Scope-Skip-Space
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryPromQL'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/service_http.QueryTsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/service_http.ErrResponse'
+      summary: query monitor by promql
   /query/ts/promql_to_struct:
     post:
       operationId: transform_promql_to_struct
@@ -2326,18 +2487,18 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryPromQL'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryPromQL'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/structured.QueryTs'
+            $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: promql to struct
   /query/ts/struct_to_promql:
     post:
@@ -2363,18 +2524,18 @@ paths:
         name: data
         required: true
         schema:
-          $ref: '#/definitions/structured.QueryTs'
+          $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryTs'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/structured.QueryPromQL'
+            $ref: '#/definitions/github_com_TencentBlueKing_bkmonitor-datalink_pkg_unify-query_query_structured.QueryPromQL'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/http.ErrResponse'
+            $ref: '#/definitions/service_http.ErrResponse'
       summary: query struct to promql
 securityDefinitions:
   BasicAuth:

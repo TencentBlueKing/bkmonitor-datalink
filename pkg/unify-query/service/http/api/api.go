@@ -30,11 +30,15 @@ import (
 // HandlerAPIRelationMultiResource
 // @Summary  query relation multi resource
 // @ID       relation_multi_resource_query
+// @Description Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed queries; it has no built-in default. JWT authorization is conditional on server configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md for time, empty/partial, and migration contracts.
+// @Accept json
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param X-Bkapi-Jwt header string false "Gateway-signed JWT; required when jwt.enabled is true. BasicAuth is not enforced by these relation handlers."
+// @Param X-Bk-Scope-Space-Uid header string false "Routing space UID; no default. Required for physical routing and when configured JWT space authorization requires it."
 // @Param    data                  	body      cmdb.RelationMultiResourceRequest			  true   "json data"
 // @Success  200                   	{object}  cmdb.RelationMultiResourceResponse
+// @Failure 401 {object} ErrResponse "JWT authorization failed when enabled"
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /api/v1/relation/multi_resource [post]
 func HandlerAPIRelationMultiResource(c *gin.Context) {
@@ -172,11 +176,15 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 // HandlerAPIRelationMultiResourceRange
 // @Summary  query relation multi resource
 // @ID       relation_multi_resource_query_range
+// @Description Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed queries; it has no built-in default. JWT authorization is conditional on server configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md for time, empty/partial, and migration contracts.
+// @Accept json
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID" default(00-3967ac0f1648bf0216b27631730d7eb9-8e3c31d5109e78dd-01)
-// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param X-Bkapi-Jwt header string false "Gateway-signed JWT; required when jwt.enabled is true. BasicAuth is not enforced by these relation handlers."
+// @Param X-Bk-Scope-Space-Uid header string false "Routing space UID; no default. Required for physical routing and when configured JWT space authorization requires it."
 // @Param    data                  	body      cmdb.RelationMultiResourceRangeRequest			  true   "json data"
 // @Success  200                   	{object}  cmdb.RelationMultiResourceRangeResponse
+// @Failure 401 {object} ErrResponse "JWT authorization failed when enabled"
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /api/v1/relation/multi_resource_range [post]
 func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
@@ -327,11 +335,15 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 // HandlerAPIRelationV1Beta3MultiResource
 // @Summary  query relation multi resource (v1beta3, TimeGraph)
 // @ID       relation_multi_resource_query_v1beta3
+// @Description Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed queries; it has no built-in default. JWT authorization is conditional on server configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md for time, empty/partial, and migration contracts.
+// @Accept json
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID"
-// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param X-Bkapi-Jwt header string false "Gateway-signed JWT; required when jwt.enabled is true. BasicAuth is not enforced by these relation handlers."
+// @Param X-Bk-Scope-Space-Uid header string false "Routing space UID; no default. Required for physical routing and when configured JWT space authorization requires it."
 // @Param    data                  	body      cmdb.RelationMultiResourceRequest			  true   "json data"
 // @Success  200                   	{object}  cmdb.RelationMultiResourceResponse
+// @Failure 401 {object} ErrResponse "JWT authorization failed when enabled"
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /api/v1/relation/v1beta3/multi_resource [post]
 func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
@@ -459,11 +471,15 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 // HandlerAPIRelationV1Beta3MultiResourceRange
 // @Summary  query relation multi resource range (v1beta3, TimeGraph)
 // @ID       relation_multi_resource_query_range_v1beta3
+// @Description Direct relation endpoint. Send X-Bk-Scope-Space-Uid for routed queries; it has no built-in default. JWT authorization is conditional on server configuration. HTTP 200 still requires checking each data item code. See docs/api/timegraph.md for time, empty/partial, and migration contracts.
+// @Accept json
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID"
-// @Param    X-Bk-Scope-Space-Uid   header    string                          false  "空间UID" default(bkcc__2)
+// @Param X-Bkapi-Jwt header string false "Gateway-signed JWT; required when jwt.enabled is true. BasicAuth is not enforced by these relation handlers."
+// @Param X-Bk-Scope-Space-Uid header string false "Routing space UID; no default. Required for physical routing and when configured JWT space authorization requires it."
 // @Param    data                  	body      cmdb.RelationMultiResourceRangeRequest			  true   "json data"
 // @Success  200                   	{object}  cmdb.RelationMultiResourceRangeResponse
+// @Failure 401 {object} ErrResponse "JWT authorization failed when enabled"
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /api/v1/relation/v1beta3/multi_resource_range [post]
 func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {

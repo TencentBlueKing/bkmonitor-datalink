@@ -12,6 +12,8 @@ package timesync
 import (
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 )
 
 // 全负偏移（本地时钟超前 NTP 源，即"时间调至未来"）时，Max 应取最接近 0 的负值，
@@ -76,42 +78,67 @@ func TestStats2MetricsNegativeOffset(t *testing.T) {
 }
 
 func TestBuildLocalNTPMetrics(t *testing.T) {
-	ts := time.Unix(1700000000, 0)
+	fallback := time.Unix(1700000000, 0)
+	sourceTime := time.Unix(1700000100, 0)
 	details := []SourceResult{
-		{Address: "10.0.0.31", Target: "chrony", OffsetSeconds: 1.5, Available: true},
+		{Address: "10.0.0.31", Target: "chrony", OffsetSeconds: 1.5, Available: true, SourceTime: sourceTime},
 		{Address: "10.0.0.32", Target: "chrony", Available: false},
+		{Address: "10.0.0.33", Target: "ntpd", Available: true, SourceTime: sourceTime},
 	}
 
-	items := buildLocalNTPMetrics("test", details, ts, true)
-	if len(items) != 2 {
-		t.Fatalf("items = %d, want 2", len(items))
+	items := buildLocalNTPMetrics("test", details, fallback)
+	if len(items) != 3 {
+		t.Fatalf("items = %d, want 3", len(items))
 	}
-	if got := items[0].Metrics["system.ntp.offset"]; got != 1.5 {
+
+	// 成功源：offset + available，时间戳取时间源自己的时间
+	if got := items[0].Metrics["offset"]; got != 1.5 {
 		t.Fatalf("offset = %v, want 1.5", got)
 	}
-	if got := items[0].Metrics["system.ntp.available"]; got != 1 {
+	if got := items[0].Metrics["available"]; got != 1 {
 		t.Fatalf("available = %v, want 1", got)
 	}
 	if got := items[0].Dimension["time_source"]; got != "10.0.0.31" {
 		t.Fatalf("time_source = %q, want 10.0.0.31", got)
 	}
-	if got := items[0].Timestamp; got != ts.UnixMilli() {
-		t.Fatalf("timestamp = %d, want %d", got, ts.UnixMilli())
+	if got := items[0].Timestamp; got != sourceTime.UnixMilli() {
+		t.Fatalf("timestamp = %d, want source time %d", got, sourceTime.UnixMilli())
 	}
 
-	if got := items[1].Metrics["system.ntp.available"]; got != 0 {
+	// 失败源：只报可用性，时间戳回落本地采集时间
+	if got := items[1].Metrics["available"]; got != 0 {
 		t.Fatalf("available = %v, want 0", got)
 	}
-	if _, ok := items[1].Metrics["system.ntp.offset"]; ok {
+	if _, ok := items[1].Metrics["offset"]; ok {
 		t.Fatalf("failed source must not emit offset")
 	}
-
-	items = buildLocalNTPMetrics("test", details, ts, false)
-	if _, ok := items[0].Metrics["system.ntp.offset"]; ok {
-		t.Fatalf("offset must be suppressed when includeOffset=false")
+	if got := items[1].Timestamp; got != fallback.UnixMilli() {
+		t.Fatalf("timestamp = %d, want fallback %d", got, fallback.UnixMilli())
 	}
-	if got := items[0].Metrics["system.ntp.available"]; got != 1 {
-		t.Fatalf("available = %v, want 1", got)
+
+	// 真实 0 偏差照常上报
+	if got, ok := items[2].Metrics["offset"]; !ok || got != 0 {
+		t.Fatalf("zero offset must be reported, ok=%v got=%v", ok, got)
+	}
+}
+
+func TestGatherReloadRefreshesClient(t *testing.T) {
+	confA := &configs.TimeSyncConfig{BaseTaskParam: configs.NewBaseTaskParam(), BkNTPSource: "10.0.0.20:123", QueryTimeout: time.Second}
+	confB := &configs.TimeSyncConfig{BaseTaskParam: configs.NewBaseTaskParam(), BkNTPSource: "10.0.0.21:123", QueryTimeout: 2 * time.Second}
+
+	task := New(nil, confA).(*Gather)
+	if got := task.cli.opt.BkNTPSource; got != "10.0.0.20:123" {
+		t.Fatalf("initial bk source = %q, want 10.0.0.20:123", got)
+	}
+
+	// 调度器 reload 对同一实例先 SetConfig 再 Reload，Client 必须使用最新配置
+	task.SetConfig(confB)
+	task.Reload()
+	if got := task.cli.opt.BkNTPSource; got != "10.0.0.21:123" {
+		t.Fatalf("bk source after reload = %q, want 10.0.0.21:123", got)
+	}
+	if got := task.cli.opt.Timeout; got != 2*time.Second {
+		t.Fatalf("timeout after reload = %v, want 2s", got)
 	}
 }
 
@@ -121,10 +148,10 @@ func TestBuildBkMetrics(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("items = %d, want 1", len(items))
 	}
-	if got := items[0].Metrics["system.ntp.bk_offset"]; got != 2.5 {
+	if got := items[0].Metrics["bk_offset"]; got != 2.5 {
 		t.Fatalf("bk_offset = %v, want 2.5", got)
 	}
-	if got := items[0].Metrics["system.ntp.bk_available"]; got != 1 {
+	if got := items[0].Metrics["bk_available"]; got != 1 {
 		t.Fatalf("bk_available = %v, want 1", got)
 	}
 	if got := items[0].Dimension["time_source"]; got != "10.0.0.20:123" {
@@ -132,19 +159,16 @@ func TestBuildBkMetrics(t *testing.T) {
 	}
 
 	items = buildBkMetrics("test", "10.0.0.20:123", nil, true, ts)
-	if got := items[0].Metrics["system.ntp.bk_available"]; got != 0 {
+	if got := items[0].Metrics["bk_available"]; got != 0 {
 		t.Fatalf("bk_available = %v, want 0", got)
 	}
-	if _, ok := items[0].Metrics["system.ntp.bk_offset"]; ok {
+	if _, ok := items[0].Metrics["bk_offset"]; ok {
 		t.Fatalf("failed blueking source must not emit bk_offset")
 	}
 
 	items = buildBkMetrics("test", "", nil, false, ts)
-	if got := items[0].Metrics["system.ntp.bk_available"]; got != 0 {
-		t.Fatalf("bk_available = %v, want 0", got)
-	}
-	if _, ok := items[0].Dimension["time_source"]; ok {
-		t.Fatalf("unconfigured blueking source must not set time_source")
+	if len(items) != 0 {
+		t.Fatalf("unconfigured blueking source must emit nothing, got %d items", len(items))
 	}
 }
 
@@ -154,8 +178,8 @@ func TestBatchEventAsMapStr(t *testing.T) {
 		DataID:      1100030,
 		TimeSeconds: ts.Unix(),
 		Data: []Metrics{
-			{Metrics: map[string]float64{"system.ntp.offset": 1.5}, Target: "chrony", Timestamp: ts.UnixMilli(), Dimension: map[string]string{"time_source": "10.0.0.31"}},
-			{Metrics: map[string]float64{"system.ntp.available": 0}, Target: "ntpd", Timestamp: ts.UnixMilli(), Dimension: map[string]string{"time_source": "10.0.0.32"}},
+			{Metrics: map[string]float64{"offset": 1.5}, Target: "chrony", Timestamp: ts.UnixMilli(), Dimension: map[string]string{"time_source": "10.0.0.31"}},
+			{Metrics: map[string]float64{"available": 0}, Target: "ntpd", Timestamp: ts.UnixMilli(), Dimension: map[string]string{"time_source": "10.0.0.32"}},
 		},
 	}
 
@@ -184,7 +208,7 @@ func TestBatchEventAsMapStrWithLabels(t *testing.T) {
 		DataID: 1100030,
 		Labels: []map[string]string{{"node": "n1"}},
 		Data: []Metrics{{
-			Metrics:   map[string]float64{"system.ntp.available": 1},
+			Metrics:   map[string]float64{"available": 1},
 			Target:    "chrony",
 			Timestamp: time.Now().UnixMilli(),
 			Dimension: map[string]string{"time_source": "10.0.0.31"},

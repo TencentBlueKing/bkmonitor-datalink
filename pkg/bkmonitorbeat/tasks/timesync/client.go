@@ -18,11 +18,14 @@ import (
 
 // SourceResult 表示一个本地 NTP 时间源的采集结果。
 // OffsetSeconds 统一为目标机时间减去时间源时间，供新增指标使用。
+// SourceTime 为时间源自己的时间戳，用作该源偏移指标的时间轴；
+// 零值表示本次采集没有可用的源时间，由上层回落本地采集时间。
 type SourceResult struct {
 	Address       string
 	Target        string
 	OffsetSeconds float64
 	Available     bool
+	SourceTime    time.Time
 }
 
 // BkResult 表示一次蓝鲸 NTP 查询的结果。

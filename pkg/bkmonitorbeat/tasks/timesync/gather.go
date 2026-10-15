@@ -34,15 +34,29 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.TaskConfig = taskConfig
 	gather.Init()
 
-	taskConf := taskConfig.(*configs.TimeSyncConfig)
-	gather.cli = NewClient(&Option{
+	gather.cli = newClient(taskConfig.(*configs.TimeSyncConfig))
+
+	return gather
+}
+
+func newClient(taskConf *configs.TimeSyncConfig) *Client {
+	return NewClient(&Option{
 		NtpdPath:    taskConf.NtpdPath,
 		ChronyAddr:  taskConf.ChronyAddress,
 		BkNTPSource: taskConf.BkNTPSource,
 		Timeout:     taskConf.QueryTimeout,
 	})
+}
 
-	return gather
+// Reload 在调度器热加载后按最新 TaskConfig 重建 Client。
+// 调度器 reload 对同一 Gather 实例执行 SetConfig + Reload；基类 Reload 是空实现，
+// 若不重建 Client，bk_ntp_source 等新配置在本周期不会生效。
+func (g *Gather) Reload() {
+	taskConf, ok := g.TaskConfig.(*configs.TimeSyncConfig)
+	if !ok {
+		return
+	}
+	g.cli = newClient(taskConf)
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
@@ -77,30 +91,31 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 	}
 	bkSuccess := bkConfigured && bkErr == nil && bkResult != nil
 
-	baseTime := time.Now()
-	if bkSuccess {
-		baseTime = bkResult.TBlue
-	}
-
-	includeOffset := !bkConfigured || bkSuccess
-	localItems := buildLocalNTPMetrics(taskConf.Env, details, baseTime, includeOffset)
+	// 本地偏移与蓝鲸查询相互独立：本地源查询成功就上报偏移，蓝鲸成败只影响蓝鲸指标。
+	collectedAt := time.Now()
+	localItems := buildLocalNTPMetrics(taskConf.Env, details, collectedAt)
 	if len(localItems) > 0 {
 		e <- &BatchEvent{
 			BizID:       bizID,
 			DataID:      dataID,
 			Labels:      labels,
-			TimeSeconds: baseTime.Unix(),
+			TimeSeconds: collectedAt.Unix(),
 			Data:        localItems,
 		}
 	}
 
-	bkItems := buildBkMetrics(taskConf.Env, taskConf.BkNTPSource, bkResult, bkConfigured, baseTime)
+	// 蓝鲸指标的时间轴使用蓝鲸 NTP 时间（T_blue）；未配置或查询失败时回落本地采集时间。
+	bkTime := collectedAt
+	if bkSuccess {
+		bkTime = bkResult.TBlue
+	}
+	bkItems := buildBkMetrics(taskConf.Env, taskConf.BkNTPSource, bkResult, bkConfigured, bkTime)
 	if len(bkItems) > 0 {
 		e <- &BatchEvent{
 			BizID:       bizID,
 			DataID:      dataID,
 			Labels:      labels,
-			TimeSeconds: baseTime.Unix(),
+			TimeSeconds: bkTime.Unix(),
 			Data:        bkItems,
 		}
 	}
@@ -162,18 +177,22 @@ func hostDimensions(env string) map[string]string {
 }
 
 // buildLocalNTPMetrics 按地址组装新增 NTP 指标。
-// includeOffset 为 false 时只上报可用性，不生成偏差点。
-func buildLocalNTPMetrics(env string, details []SourceResult, ts time.Time, includeOffset bool) []Metrics {
+// 每个已查询到的地址都会生成一条数据点：成功报 offset + available=1（真实 0 偏差照常上报），
+// 失败只报 available=0。时间戳优先使用时间源自己的时间，缺少源时间时回落本地采集时间。
+func buildLocalNTPMetrics(env string, details []SourceResult, fallback time.Time) []Metrics {
 	items := make([]Metrics, 0, len(details))
 	for _, detail := range details {
 		metrics := map[string]float64{}
 		if detail.Available {
-			metrics["system.ntp.available"] = 1
-			if includeOffset {
-				metrics["system.ntp.offset"] = detail.OffsetSeconds
-			}
+			metrics["available"] = 1
+			metrics["offset"] = detail.OffsetSeconds
 		} else {
-			metrics["system.ntp.available"] = 0
+			metrics["available"] = 0
+		}
+
+		ts := detail.SourceTime
+		if ts.IsZero() {
+			ts = fallback
 		}
 
 		dims := hostDimensions(env)
@@ -188,25 +207,28 @@ func buildLocalNTPMetrics(env string, details []SourceResult, ts time.Time, incl
 	return items
 }
 
-// buildBkMetrics 组装蓝鲸 NTP 指标。查询成功时生成偏差和可用性，失败或未配置时只生成可用性 0。
+// buildBkMetrics 组装蓝鲸 NTP 指标。未配置蓝鲸源时不生成任何数据点；
+// 配置后查询成功时生成偏差和可用性，查询失败时只生成可用性 0。
+// 数据点时间戳使用蓝鲸 NTP 时间（T_blue）；查询失败时由调用方传入本地采集时间。
 func buildBkMetrics(env, bkSource string, bkResult *BkResult, bkConfigured bool, ts time.Time) []Metrics {
+	if !bkConfigured {
+		return nil
+	}
+
 	metrics := map[string]float64{}
 	dims := hostDimensions(env)
-	target := "ntpd"
+	dims["time_source"] = bkSource
 
-	if bkConfigured {
-		dims["time_source"] = bkSource
-	}
-	if bkConfigured && bkResult != nil {
-		metrics["system.ntp.bk_offset"] = bkResult.OffsetSeconds
-		metrics["system.ntp.bk_available"] = 1
+	if bkResult != nil {
+		metrics["bk_offset"] = bkResult.OffsetSeconds
+		metrics["bk_available"] = 1
 	} else {
-		metrics["system.ntp.bk_available"] = 0
+		metrics["bk_available"] = 0
 	}
 
 	return []Metrics{{
 		Metrics:   metrics,
-		Target:    target,
+		Target:    "ntpd",
 		Timestamp: ts.UnixMilli(),
 		Dimension: dims,
 	}}

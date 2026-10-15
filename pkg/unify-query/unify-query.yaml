@@ -3,9 +3,6 @@ consul:
   consul_address: http://127.0.0.1:8500
   service_name: bkmonitorv3
   kv_base_path: bkmonitorv3/unify-query
-  metadata_path: bkmonitorv3/metadata
-  bcs_path: bkmonitorv3/metadata/project_id
-  metric_path: bkmonitorv3/metadata/influxdb_metrics
 redis:
   mode: standalone
   host: 127.0.0.1

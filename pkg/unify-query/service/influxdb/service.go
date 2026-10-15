@@ -34,9 +34,6 @@ type Service struct {
 	storageMu  sync.Mutex
 
 	storageHash string
-	tableHash   string
-	routerHash  string
-	metricHash  string
 }
 
 var (
@@ -81,26 +78,6 @@ func (s *Service) Reload(ctx context.Context) {
 		log.Errorf(context.TODO(), "start loop reload es storage failed for->[%s]", err)
 	}
 
-	err = s.loopReloadTableInfo(s.ctx)
-	if err != nil {
-		log.Errorf(context.TODO(), "start loop reload table info failed,error:%s", err)
-	}
-
-	err = s.loopReloadRouter(s.ctx)
-	if err != nil {
-		log.Errorf(context.TODO(), "start loop reload query router failed,error:%s", err)
-	}
-
-	err = s.loopReloadBCSInfo(s.ctx)
-	if err != nil {
-		log.Errorf(context.TODO(), "start loop reload bcs info failed,err:%s", err)
-	}
-
-	err = s.loopReloadDownsampledInfo(s.ctx)
-	if err != nil {
-		log.Errorf(context.TODO(), "start loop reload downsampled info failed,err:%s", err)
-	}
-
 	err = s.reloadInfluxDBRouter(s.ctx)
 	if err != nil {
 		log.Errorf(context.TODO(), "start loop reload influxdb router failed,err:%s", err)
@@ -130,23 +107,6 @@ func (s *Service) Close() {
 	}
 	activeServiceMu.Unlock()
 	log.Infof(context.TODO(), "influxdb service context cancel func called.")
-}
-
-// reloadTableInfo
-func (s *Service) reloadTableInfo() error {
-	newData, err := consul.GetInfluxdbTableInfo()
-	if err != nil {
-		log.Errorf(context.TODO(), "get data from consul failed,error:%s", err)
-		return err
-	}
-	hash := utils.HashIt(newData)
-	if hash == s.tableHash {
-		log.Debugf(context.TODO(), "table hash not changed")
-		return err
-	}
-	inner.SetTablesInfo(newData)
-	s.tableHash = hash
-	return nil
 }
 
 // ReloadStorage refreshes the active InfluxDB storage map for diagnostic recovery.
@@ -292,37 +252,6 @@ func (s *Service) loopReloadStorage(ctx context.Context) error {
 	return nil
 }
 
-// loopReloadTableInfo
-func (s *Service) loopReloadTableInfo(ctx context.Context) error {
-	err := s.reloadTableInfo()
-	if err != nil {
-		log.Errorf(context.TODO(), "reload table info failed,error:%s", err)
-		return err
-	}
-	ch, err := consul.WatchInfluxdbTableInfo(ctx)
-	if err != nil {
-		return err
-	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				log.Warnf(context.TODO(), "table reload loop exit")
-				return
-			case <-ch:
-				log.Debugf(context.TODO(), "get table info changed notify")
-				err1 := s.reloadTableInfo()
-				if err1 != nil {
-					log.Errorf(context.TODO(), "reload table info failed,error:%s", err1)
-				}
-			}
-		}
-	}()
-	return nil
-}
-
 // reloadInfluxDBRouter 重新加载 InfluxDBRouter
 func (s *Service) reloadInfluxDBRouter(ctx context.Context) error {
 	dialOpts := []grpc.DialOption{
@@ -417,165 +346,6 @@ func (s *Service) reloadSpaceTsDbRouter(ctx context.Context) error {
 				err = ir.ReloadByChannel(ctx, msg.Channel, msg.Payload)
 				if err != nil {
 					log.Errorf(ctx, "[SpaceTSDB Router] Subscribe msg with error, %s, %v", msg.String(), err)
-				}
-			}
-		}
-	}()
-	return nil
-}
-
-// reloadStorage: 重载
-func (s *Service) reloadRouter() error {
-	newData, err := consul.ReloadRouterInfo()
-	if err != nil {
-		log.Errorf(context.TODO(), "get query router info from consul failed,error:%s", err)
-		return err
-	}
-	hash := utils.HashIt(newData)
-	if hash == s.routerHash {
-		log.Debugf(context.TODO(), "table hash not changed")
-		return err
-	}
-	inner.ReloadTableInfos(newData)
-	s.routerHash = hash
-	return nil
-}
-
-// reloadMetricRouter: 重载指标路由
-func (s *Service) reloadMetricRouter() error {
-	newData, err := consul.ReloadMetricInfo()
-	if err != nil {
-		log.Errorf(context.TODO(), "get query router info from consul failed,error:%s", err)
-		return err
-	}
-	hash := utils.HashIt(newData)
-	if hash == s.metricHash {
-		log.Debugf(context.TODO(), "metric hash not changed")
-		return nil
-	}
-	inner.ReloadMetricRouter(newData)
-	s.metricHash = hash
-	return nil
-}
-
-// loopReloadRouter: 重载 router
-func (s *Service) loopReloadRouter(ctx context.Context) error {
-	err := s.reloadRouter()
-	if err != nil {
-		log.Errorf(context.TODO(), "reload query router failed,error:%s", err)
-		return err
-	}
-	err = s.reloadMetricRouter()
-	if err != nil {
-		log.Errorf(context.TODO(), "reload metric router failed,error:%s", err)
-		return err
-	}
-
-	ch, err := consul.WatchQueryRouter(ctx)
-	if err != nil {
-		return err
-	}
-
-	metricCh, err := consul.WatchMetricRouter(ctx)
-	if err != nil {
-		return err
-	}
-
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				log.Warnf(context.TODO(), "query router reload loop exit")
-				return
-			case <-ch:
-				log.Debugf(context.TODO(), "get query router info changed notify")
-				err1 := s.reloadRouter()
-				if err1 != nil {
-					log.Errorf(context.TODO(), "reload query router failed,error:%s", err1)
-				}
-			case <-metricCh:
-				log.Debugf(context.TODO(), "get metric router info changed notify")
-				err1 := s.reloadMetricRouter()
-				if err1 != nil {
-					log.Errorf(context.TODO(), "reload metric router failed,error:%s", err1)
-				}
-			}
-		}
-	}()
-	return nil
-}
-
-// reloadBCSInfo: 重载BCSInfo
-func (s *Service) reloadBCSInfo() error {
-	err := consul.ReloadBCSInfo()
-	if err != nil {
-		log.Errorf(context.TODO(), "get bcs info info from consul failed,error:%s", err)
-		return err
-	}
-
-	return err
-}
-
-// loopReloadBCSInfo
-func (s *Service) loopReloadBCSInfo(ctx context.Context) error {
-	err := s.reloadBCSInfo()
-	if err != nil {
-		log.Errorf(context.TODO(), "reload bcs info failed,error:%s", err)
-		return err
-	}
-	ch, err := consul.WatchBCSInfo(ctx)
-	if err != nil {
-		return err
-	}
-
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				log.Warnf(context.TODO(), "bcs info reload loop exit")
-				return
-			case <-ch:
-				log.Debugf(context.TODO(), "get bcs info changed notify")
-				err1 := s.reloadBCSInfo()
-				if err1 != nil {
-					log.Errorf(context.TODO(), "reload bcs info failed,error:%s", err1)
-				}
-			}
-		}
-	}()
-	return nil
-}
-
-// loopReloadDownsampledInfo 重载DownsampledInfo
-func (s *Service) loopReloadDownsampledInfo(ctx context.Context) error {
-	var err error
-	err = consul.LoadDownsampledInfo()
-	if err != nil {
-		log.Errorf(context.TODO(), "reload downsampled info failed,error:%s", err)
-		return err
-	}
-	ch, err := consul.WatchDownsampledInfo(ctx)
-	if err != nil {
-		return err
-	}
-
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				log.Warnf(context.TODO(), "downsampled info reload loop exit")
-				return
-			case <-ch:
-				log.Debugf(context.TODO(), "get downsampled info changed notify")
-				err = consul.LoadDownsampledInfo()
-				if err != nil {
-					log.Errorf(context.TODO(), "reload downsampled info failed, err: %s", err)
 				}
 			}
 		}

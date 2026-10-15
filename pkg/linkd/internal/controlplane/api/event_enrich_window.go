@@ -66,6 +66,20 @@ type eventWindowDiagnostic struct {
 	Dependency string `json:"dependency,omitempty"`
 }
 
+// eventWindowStep 保留处理阶段及其逐次生效变化，展示范围由调用方决定。
+type eventWindowStep struct {
+	Processor string                  `json:"processor"`
+	Status    domain.EnrichStatus     `json:"status"`
+	Rules     map[string]string       `json:"rules"`
+	Changes   []eventWindowStepChange `json:"changes"`
+}
+
+type eventWindowStepChange struct {
+	enrichFieldChange
+	RuleID      string `json:"rule_id,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+}
+
 type eventWindowItem struct {
 	enrichRecord
 	SourceID        string                   `json:"event_source_id"`
@@ -77,6 +91,7 @@ type eventWindowItem struct {
 	Original        map[string]any           `json:"original,omitempty"`
 	Diagnostics     []eventWindowDiagnostic  `json:"diagnostics"`
 	Unavailable     bool                     `json:"unavailable"`
+	Steps           *[]eventWindowStep       `json:"steps,omitempty"`
 }
 
 func (a *API) queryEventEnrichWindow(w http.ResponseWriter, r *http.Request) {
@@ -230,9 +245,23 @@ func projectEventWindowItem(stored store.StoredEvent, evaluation domain.EventEva
 	}
 	current := original
 	fieldMeasures := map[string][]string{}
+	// 1. 展示元信息来自事件自己的发布版本，净变化为零的字段也保留历史名称。
+	rules, labels, err := eventWindowMetadata(release)
+	if err != nil {
+		item.Unavailable = true
+		item.Diagnostics = append(item.Diagnostics, eventWindowDiagnostic{Code: "enrich_history_unavailable"})
+		return item
+	}
+	steps := []eventWindowStep{}
+	completeSteps := true
 
+	// 2. 沿已保存顺序应用赋值；只计算中间展示值，不执行规则或依赖查询。
 	for _, entry := range payload.Processors {
 		for kind, envelope := range entry {
+			step := eventWindowStep{Processor: kind, Status: envelope.Status, Rules: rules[kind], Changes: []eventWindowStepChange{}}
+			if step.Rules == nil {
+				step.Rules = map[string]string{}
+			}
 			if kind != "fields" && kind != "cmdb" {
 				names := map[string]string{"strategy": "策略丰富", "resource": "资源丰富", "k8s": "Kubernetes 丰富", "apm": "APM 丰富", "log": "日志丰富", "display": "展示信息丰富", "metric": "指标丰富", "source": "告警源丰富", "cmdb-access": "对象权限丰富"}
 				name := names[kind]
@@ -245,7 +274,11 @@ func projectEventWindowItem(stored store.StoredEvent, evaluation domain.EventEva
 				item.Diagnostics = append(item.Diagnostics, eventWindowDiagnostic{Processor: kind, Code: string(diagnostic.Code), Dependency: diagnostic.Dependency})
 			}
 			if envelope.Status != domain.EnrichStatusSucceeded && envelope.Status != domain.EnrichStatusPartial {
+				steps = append(steps, step)
 				continue
+			}
+			if envelope.Patches == nil && len(envelope.Value) > 0 {
+				completeSteps = false
 			}
 			for _, patch := range envelope.Patches {
 				target, parseErr := jsonpath.ParseTarget(patch.Path)
@@ -255,29 +288,106 @@ func projectEventWindowItem(stored store.StoredEvent, evaluation domain.EventEva
 				field := enrichFieldName(target)
 				measure := kind
 				if kind == "fields" || kind == "cmdb" {
-					if strings.HasPrefix(patch.RuleID, "kac_custom_catalog") {
-						continue
-					}
 					measure = kind + ":" + patch.RuleID
 				}
-				fieldMeasures[field] = append(fieldMeasures[field], measure)
+				if !strings.HasPrefix(patch.RuleID, "kac_custom_catalog") {
+					fieldMeasures[field] = append(fieldMeasures[field], measure)
+				}
+				if !detail {
+					continue
+				}
+				before := eventWindowAlarm(current, evaluation.Severity)
+				targetBefore, targetBeforePresent := target.Get(current)
+				current, err = domain.ApplyEnrichPatches(current, []domain.EnrichPatch{patch})
+				if err != nil {
+					item.Unavailable = true
+					item.Diagnostics = append(item.Diagnostics, eventWindowDiagnostic{Processor: kind, Code: "enrich_patch_unavailable"})
+					return item
+				}
+				changes := eventWindowChanges(before, eventWindowAlarm(current, evaluation.Severity), labels, nil)
+				// 目录冻结可能晚于字段赋值；同名 label 遮盖 extra_data 时仍保留真实赋值。
+				if len(target.Parts()) == 2 && !strings.HasPrefix(field, "__kac_") {
+					targetAfter, targetAfterPresent := target.Get(current)
+					beforeJSON, _ := json.Marshal(targetBefore)
+					afterJSON, _ := json.Marshal(targetAfter)
+					found := false
+					for _, change := range changes {
+						found = found || change.Field == field
+					}
+					if !found && (targetBeforePresent != targetAfterPresent || !bytes.Equal(beforeJSON, afterJSON)) {
+						label := labels[field]
+						if label == "" {
+							label = field
+						}
+						changes = append(changes, enrichFieldChange{Field: field, Display: label, BeforePresent: targetBeforePresent, Before: beforeJSON, AfterPresent: targetAfterPresent, After: afterJSON, Measures: []string{}})
+					}
+				}
+				for _, change := range changes {
+					step.Changes = append(step.Changes, eventWindowStepChange{enrichFieldChange: change, RuleID: patch.RuleID, OperationID: patch.OperationID})
+				}
 			}
-			current, err = domain.ApplyEnrichPatches(current, envelope.Patches)
-			if err != nil {
-				item.Unavailable = true
-				item.Diagnostics = append(item.Diagnostics, eventWindowDiagnostic{Processor: kind, Code: "enrich_patch_unavailable"})
-				return item
+			if !detail {
+				current, err = domain.ApplyEnrichPatches(current, envelope.Patches)
+				if err != nil {
+					item.Unavailable = true
+					item.Diagnostics = append(item.Diagnostics, eventWindowDiagnostic{Processor: kind, Code: "enrich_patch_unavailable"})
+					return item
+				}
 			}
+			steps = append(steps, step)
 		}
 	}
+	// 3. 原始值、最终值及汇总结果保持兼容，详情额外提供完整步骤。
 	item.Alarm = eventWindowAlarm(current, evaluation.Severity)
-	changes := eventWindowChanges(eventWindowAlarm(original, evaluation.Severity), item.Alarm, record.FieldChanges, fieldMeasures)
+	changes := eventWindowChanges(eventWindowAlarm(original, evaluation.Severity), item.Alarm, labels, fieldMeasures)
 	item.ChangedFieldCount = len(changes)
 	item.EnrichmentCount = len(item.Enrichments)
 	if detail {
 		item.FieldChanges = changes
+		if completeSteps {
+			item.Steps = &steps
+		} else {
+			item.Unavailable = true
+			item.Diagnostics = append(item.Diagnostics, eventWindowDiagnostic{Code: "enrich_steps_unavailable"})
+		}
 	}
 	return item
+}
+
+func eventWindowMetadata(release eventsource.Release) (map[string]map[string]string, map[string]string, error) {
+	rules := map[string]map[string]string{}
+	labels := map[string]string{}
+	for _, processor := range release.Spec.Enrich.Processors {
+		if processor.Type != "fields" && processor.Type != "cmdb" {
+			continue
+		}
+		var metadata struct {
+			Rules []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"rules"`
+			FieldLabels map[string]string `json:"field_labels"`
+		}
+		encoded, err := json.Marshal(processor.Config)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := json.Unmarshal(encoded, &metadata); err != nil {
+			return nil, nil, err
+		}
+		rules[processor.Type] = map[string]string{}
+		for _, rule := range metadata.Rules {
+			rules[processor.Type][rule.ID] = rule.Name
+		}
+		for path, label := range metadata.FieldLabels {
+			target, err := jsonpath.ParseTarget(path)
+			if err != nil {
+				return nil, nil, err
+			}
+			labels[enrichFieldName(target)] = label
+		}
+	}
+	return rules, labels, nil
 }
 
 func eventWindowAlarm(event map[string]any, severity string) map[string]any {
@@ -379,11 +489,7 @@ func matchEventWindowFilters(item eventWindowItem, filters map[string]eventWindo
 }
 
 // eventWindowChanges 比较最终展示字段，保留内置丰富和自定义规则的真实前后值。
-func eventWindowChanges(original, effective map[string]any, business []enrichFieldChange, measures map[string][]string) []enrichFieldChange {
-	labels := map[string]string{}
-	for _, change := range business {
-		labels[change.Field] = change.Display
-	}
+func eventWindowChanges(original, effective map[string]any, labels map[string]string, measures map[string][]string) []enrichFieldChange {
 	keys := map[string]bool{}
 	for key := range original {
 		keys[key] = true

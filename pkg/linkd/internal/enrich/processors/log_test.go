@@ -19,6 +19,7 @@ import (
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/models"
 	"linkd/internal/enrich/rules"
+	"linkd/internal/enrich/view"
 )
 
 func TestLogDisplayWithoutCatalogReference(t *testing.T) {
@@ -209,7 +210,7 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 		wantTitle   string
 		wantContent string
 	}{
-		{name: "metric", itemType: models.CWMonitorItemTypeLog, query: "level:error", expected: "level:error", wantTitle: "日志主题发生了level:error告警", wantContent: "日志主题source content"},
+		{name: "metric", itemType: models.CWMonitorItemTypeLog, query: "level:error", expected: "level:error", wantTitle: "日志主题发生了日志主题告警", wantContent: "日志主题source content"},
 		{name: "keyword", itemType: models.CWMonitorItemTypeLogKeyword, query: "error", expected: "error", related: `{"host":"web-1"}`, wantTitle: "日志主题发生了【error】关键字告警", wantContent: "日志主题匹配到【error】关键字次数 source content"},
 		{name: "keyword fallback", itemType: models.CWMonitorItemTypeLogKeyword, expected: "--", wantTitle: "日志主题发生了【】关键字告警", wantContent: "日志主题匹配到【】关键字次数 source content"},
 	} {
@@ -266,6 +267,66 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 			}
 			if content != tc.wantContent {
 				t.Fatalf("content=%q want=%q", content, tc.wantContent)
+			}
+		})
+	}
+}
+
+func TestLogMetricTitleLegacyRules(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, subject, alias, alarmAlias, query, want string
+		theme                                         models.LogTheme
+		found                                         bool
+		preserveContent                               bool
+		wantStatus                                    domain.EnrichStatus
+	}{
+		{name: "empty source subject", alias: "主机ID别名", want: "日志主题发生了主机ID别名告警"},
+		{name: "alias before query", alias: "主机ID别名", query: "level:error", want: "日志主题发生了主机ID别名告警"},
+		{name: "item name before query", query: "level:error", want: "日志主题发生了主机ID告警"},
+		{name: "empty query", want: "日志主题发生了主机ID告警"},
+		{name: "alarm alias", alias: "主机ID别名", alarmAlias: "自定义告警", want: "自定义告警"},
+		{name: "resolved theme before source subject", subject: "原始对象", theme: models.LogTheme{TenantID: "tenant-a", ID: 2, Name: "最新主题"}, found: true, want: "最新主题发生了主机ID告警"},
+		{name: "foreign theme rejected", theme: models.LogTheme{TenantID: "tenant-b", ID: 2, Name: "其他租户"}, found: true, want: "日志主题发生了主机ID告警", wantStatus: domain.EnrichStatusPartial},
+		{name: "wrong theme rejected", theme: models.LogTheme{TenantID: "tenant-a", ID: 3, Name: "其他主题"}, found: true, want: "日志主题发生了主机ID告警", wantStatus: domain.EnrichStatusPartial},
+		{name: "no data content preserved", alias: "主机ID别名", preserveContent: true, want: "日志主题发生了主机ID别名告警"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			strategy := logStrategy("metric", tc.query)
+			strategy.Spec.Name, strategy.Spec.AliasName, strategy.Spec.AlarmAlias = "主机ID", tc.alias, tc.alarmAlias
+			reader := &logTestReader{strategy: strategy, theme: tc.theme, themeFound: tc.found}
+			event := processorBaseTargetAlert(t, domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true)})
+			event.SubjectName, event.Content = tc.subject, "no data for 5 periods"
+			before, err := json.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{PreserveContent: tc.preserveContent}}, enrich.Sources{CWStrategy: reader, Metric: reader, LogTheme: reader})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := chain.Enrich(t.Context(), enrich.Input{Event: event})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantStatus := tc.wantStatus
+			if wantStatus == "" {
+				wantStatus = domain.EnrichStatusSucceeded
+			}
+			if result.Status != wantStatus {
+				t.Fatalf("status=%s want=%s", result.Status, wantStatus)
+			}
+			after, err := json.Marshal(event)
+			if err != nil || string(before) != string(after) {
+				t.Fatal("source Event changed")
+			}
+			event.Enrich = result.Data
+			effective, err := view.EnrichedEvent(event, event.Evaluations[0].Severity)
+			if err != nil || effective.Title != tc.want {
+				t.Fatalf("title=%q want=%q error=%v", effective.Title, tc.want, err)
+			}
+			if tc.preserveContent && effective.Content != event.Content {
+				t.Fatal("title enrichment changed preserved content")
 			}
 		})
 	}

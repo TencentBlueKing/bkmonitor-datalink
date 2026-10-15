@@ -11,6 +11,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -217,5 +219,182 @@ func TestEventWindowIncludesBuiltinChangesAndRuleProvenance(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("resource field change missing")
+	}
+}
+
+func TestEventWindowStepsKeepEveryCommittedChangeInOrder(t *testing.T) {
+	_, event, release := enrichRecordFixture(t)
+	patch := func(path string, value any, rule, operation string) domain.EnrichPatch {
+		t.Helper()
+		p, err := domain.NewEnrichPatch(path, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.RuleID, p.OperationID = rule, operation
+		return p
+	}
+	payload := enrich.Payload{Processors: []enrich.ProcessorEntry{
+		{"resource": {Status: domain.EnrichStatusSucceeded, Patches: []domain.EnrichPatch{patch("$.title", "A", "", "")}}},
+		{"fields": {Status: domain.EnrichStatusSucceeded, Trace: []enrich.Trace{{RuleID: "title", Status: domain.EnrichStatusSucceeded}}, Patches: []domain.EnrichPatch{
+			patch("$.title", "B", "title", "first"),
+			patch("$.extra_data.owner", "alice", "title", "owner"),
+			patch("$.title", "C", "title", "second"),
+			patch("$.title", "A", "title", "restore"),
+			patch("$.title", "A", "title", "same"),
+		}}},
+		{"metric": {Status: domain.EnrichStatusFailed, Patches: []domain.EnrichPatch{patch("$.title", "uncommitted", "", "")}}},
+		{"source": {Status: domain.EnrichStatusSkipped, Patches: []domain.EnrichPatch{}}},
+	}}
+	var err error
+	event.Enrich.Evaluations[0].Data, err = payload.JSONObject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := projectEventWindowItem(store.StoredEvent{Event: event}, event.Evaluations[0], release, true)
+	if item.Unavailable || item.Steps == nil || item.Original["name"] != "before" || item.Alarm["name"] != "A" {
+		t.Fatalf("invalid facts: %+v", item)
+	}
+	steps := *item.Steps
+	if len(steps) != 4 || steps[0].Processor != "resource" || len(steps[0].Changes) != 1 || steps[1].Rules["title"] != "标题规范化" {
+		t.Fatalf("steps=%+v", steps)
+	}
+	changes := steps[1].Changes
+	if len(changes) != 4 {
+		t.Fatalf("lost intermediate changes: %+v", changes)
+	}
+	want := []struct{ field, before, after, operation string }{
+		{"name", `"A"`, `"B"`, "first"},
+		{"owner", "null", `"alice"`, "owner"},
+		{"name", `"B"`, `"C"`, "second"},
+		{"name", `"C"`, `"A"`, "restore"},
+	}
+	for i, expected := range want {
+		got := changes[i]
+		if got.Field != expected.field || string(got.Before) != expected.before || string(got.After) != expected.after || got.RuleID != "title" || got.OperationID != expected.operation {
+			t.Fatalf("change %d=%+v", i, got)
+		}
+	}
+	if changes[0].Display != "告警名称" || changes[1].BeforePresent || len(steps[2].Changes) != 0 || len(steps[3].Changes) != 0 {
+		t.Fatalf("invalid labels/presence/failed stages: %+v", steps)
+	}
+	summary := projectEventWindowItem(store.StoredEvent{Event: event}, event.Evaluations[0], release, false)
+	if summary.Steps != nil || summary.Alarm["name"] != item.Alarm["name"] || event.Title != "before" {
+		t.Fatal("summary leaked steps or query changed facts")
+	}
+}
+
+func TestEventWindowStepsKeepLabelsWhenFinalValueReturnsToOriginal(t *testing.T) {
+	_, event, release := enrichRecordFixture(t)
+	payload, err := enrich.DecodePayload(event.Enrich.Evaluations[0].Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := payload.Processors[0]["fields"]
+	envelope.Patches[1].Value = json.RawMessage(`"before"`)
+	payload.Processors[0]["fields"] = envelope
+	event.Enrich.Evaluations[0].Data, err = payload.JSONObject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := projectEventWindowItem(store.StoredEvent{Event: event}, event.Evaluations[0], release, true)
+	if item.Steps == nil || len(item.FieldChanges) != 0 || len((*item.Steps)[0].Changes) != 2 || (*item.Steps)[0].Changes[1].Display != "告警名称" {
+		t.Fatalf("round trip lost steps or frozen label: %+v", item)
+	}
+}
+
+func TestEventWindowStepsKeepFalsyValuesAndInternalRules(t *testing.T) {
+	_, event, release := enrichRecordFixture(t)
+	release.Spec.Enrich.Processors[0].Config["rules"] = []any{map[string]any{"id": "kac_custom_catalog", "name": ""}}
+	encoded, _ := json.Marshal(release.Spec.Enrich)
+	digest := sha256.Sum256(encoded)
+	event.EnrichConfigDigest = hex.EncodeToString(digest[:])
+	patches := []domain.EnrichPatch{}
+	for _, value := range []any{nil, "", 0, false} {
+		patch, err := domain.NewEnrichPatch("$.extra_data.value", value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		patch.RuleID = "kac_custom_catalog"
+		patches = append(patches, patch)
+	}
+	var err error
+	event.Enrich.Evaluations[0].Data, err = (enrich.Payload{Processors: []enrich.ProcessorEntry{{"fields": {Status: domain.EnrichStatusSucceeded, Patches: patches}}}}).JSONObject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := projectEventWindowItem(store.StoredEvent{Event: event}, event.Evaluations[0], release, true)
+	if item.Steps == nil || len((*item.Steps)[0].Changes) != 4 {
+		t.Fatalf("complete facts missing: %+v", item)
+	}
+	changes := (*item.Steps)[0].Changes
+	for i, want := range []string{"null", `""`, "0", "false"} {
+		if string(changes[i].After) != want || !changes[i].AfterPresent || changes[i].RuleID != "kac_custom_catalog" {
+			t.Fatalf("change %d=%+v", i, changes[i])
+		}
+	}
+	if changes[0].BeforePresent || !changes[1].BeforePresent {
+		t.Fatal("missing and null were conflated")
+	}
+}
+
+func TestEventWindowStepsUnavailableWithoutCommittedBuiltinEvidence(t *testing.T) {
+	_, event, release := enrichRecordFixture(t)
+	payload, err := enrich.DecodePayload(event.Enrich.Evaluations[0].Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload.Processors = append([]enrich.ProcessorEntry{{"resource": {Status: domain.EnrichStatusSucceeded, Value: domain.JSONObject{"model_name": json.RawMessage(`"host"`)}}}}, payload.Processors...)
+	event.Enrich.Evaluations[0].Data, err = payload.JSONObject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := projectEventWindowItem(store.StoredEvent{Event: event}, event.Evaluations[0], release, true)
+	if !item.Unavailable || item.Steps != nil {
+		t.Fatal("missing steps were presented as complete history")
+	}
+}
+
+func TestEventWindowStepsRetainSuccessfulStageWithoutChanges(t *testing.T) {
+	_, event, release := enrichRecordFixture(t)
+	payload, err := enrich.DecodePayload(event.Enrich.Evaluations[0].Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload.Processors = append([]enrich.ProcessorEntry{{"resource": {Status: domain.EnrichStatusSucceeded, Value: domain.JSONObject{}, Patches: []domain.EnrichPatch{}}}}, payload.Processors...)
+	event.Enrich.Evaluations[0].Data, err = payload.JSONObject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := projectEventWindowItem(store.StoredEvent{Event: event}, event.Evaluations[0], release, true)
+	if item.Unavailable || item.Steps == nil || len(*item.Steps) != 2 || len((*item.Steps)[0].Changes) != 0 {
+		t.Fatalf("empty successful stage was lost: %+v", item)
+	}
+}
+
+func TestEventWindowStepsRetainCustomAssignmentBeforeCatalogFreeze(t *testing.T) {
+	_, event, release := enrichRecordFixture(t)
+	event.Labels = domain.DimensionMap{"owner": domain.NewStringScalar("label-owner")}
+	event.ExtraData = domain.JSONObject{"owner": json.RawMessage(`"original-owner"`)}
+	p1, err := domain.NewEnrichPatch("$.extra_data.owner", "custom-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1.RuleID = "title"
+	p2, err := domain.NewEnrichPatch("$.extra_data.__kac_custom_fields", []string{"owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2.RuleID = "kac_custom_catalog"
+	event.Enrich.Evaluations[0].Data, err = (enrich.Payload{Processors: []enrich.ProcessorEntry{{"fields": {Status: domain.EnrichStatusSucceeded, Patches: []domain.EnrichPatch{p1, p2}, Trace: []enrich.Trace{{RuleID: "title", Status: domain.EnrichStatusSucceeded}}}}}}).JSONObject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := projectEventWindowItem(store.StoredEvent{Event: event}, event.Evaluations[0], release, true)
+	if item.Unavailable || item.Steps == nil || item.Alarm["owner"] != "custom-owner" {
+		t.Fatalf("item=%+v", item)
+	}
+	changes := (*item.Steps)[0].Changes
+	if len(changes) != 2 || changes[0].RuleID != "title" || changes[0].Field != "owner" || string(changes[0].Before) != `"original-owner"` || string(changes[0].After) != `"custom-owner"` {
+		t.Fatalf("catalog hid a committed user assignment: %+v", changes)
 	}
 }

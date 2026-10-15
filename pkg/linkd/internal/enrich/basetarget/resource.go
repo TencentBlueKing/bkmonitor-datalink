@@ -39,15 +39,20 @@ func projectResource(resolution resolution, fallbackBizID int64) resourceProject
 		values.CWLabels = enrich.ResourceLabels(values)
 		return resourceProjection{Values: values, Diagnostics: diagnostics}
 	}
-	if resolution.inputState != inputValid {
-		return resourceProjection{Values: values, Diagnostics: diagnostics}
-	}
 	// 模型元数据可独立于实例确认；核心实例失败时仍保留有效模型上下文。
 	if resolution.modelErr == nil && resolution.modelFound && validModel(resolution) {
 		enrich.ApplyModelContext(&values, resolution.model)
 	}
+	if resolution.inputState != inputValid {
+		values.CWLabels = enrich.ResourceLabels(values)
+		return resourceProjection{Values: values, Diagnostics: diagnostics}
+	}
 	if resolution.instanceErr != nil || !resolution.instanceFound || !validInstance(resolution) {
 		diagnostics = appendDependency(diagnostics, rules.DependencyOneModel)
+		if resolution.topologyErr == nil && resolution.topologyFound {
+			enrich.ApplyTopology(&values, resolution.topology)
+		}
+		values.CWLabels = enrich.ResourceLabels(values)
 		return resourceProjection{Values: values, Diagnostics: diagnostics}
 	}
 	// IP + 云区域是合法的替代定位方式；实例身份复核通过后，缺少输入主机 ID
@@ -66,6 +71,9 @@ func projectResource(resolution resolution, fallbackBizID int64) resourceProject
 			diagnostics = appendDependency(diagnostics, rules.DependencyCollectTopology)
 		} else {
 			enrich.ApplyTopology(&values, resolution.topology)
+		}
+		if resolution.relatedHostErr == nil && resolution.relatedHostFound && resolution.relatedHost.TenantID == resolution.tenantID {
+			enrich.ApplyHostCloudContext(&values, resolution.relatedHost)
 		}
 	}
 	values.CWLabels = enrich.ResourceLabels(values)

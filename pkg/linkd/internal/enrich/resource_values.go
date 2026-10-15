@@ -63,6 +63,33 @@ func ApplyTopology(values *models.ResourceValues, topology models.ResourceTopolo
 	}
 }
 
+// ApplyHostCloudContext 从已验证的关联主机补齐云区域；资源自身的区域身份优先，
+// 不把不同区域的名称拼到已有区域 ID 上。租户及关联身份由查询方复核。
+func ApplyHostCloudContext(values *models.ResourceValues, host Instance) {
+	if host.ModelCode != rules.HostModelCode || host.InstanceID == "" {
+		return
+	}
+	fields := make(map[string]any, len(host.Attributes)+len(host.Fields))
+	for key, value := range host.Attributes {
+		fields[key] = value
+	}
+	for key, value := range host.Fields {
+		fields[key] = value
+	}
+	cloudID, found := rules.FirstField(fields, rules.FieldBKCloudID)
+	if !found || cloudID == nil || values.BKCloudID != nil && fmt.Sprint(values.BKCloudID) != fmt.Sprint(cloudID) {
+		return
+	}
+	if values.BKCloudID == nil {
+		values.BKCloudID = cloudID
+	}
+	if values.BKCloudName == "" {
+		if name, ok := rules.FirstStringField(fields, rules.FieldBKCloudName); ok {
+			values.BKCloudName = name
+		}
+	}
+}
+
 // ResourceValuesFromInstance 将统一实例文档投影为 resource 分组的公共字段。
 func ResourceValuesFromInstance(instance Instance, fallbackBizID int64) models.ResourceValues {
 	fields := make(map[string]any, len(instance.Fields)+len(instance.Attributes))

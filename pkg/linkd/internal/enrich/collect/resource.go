@@ -13,6 +13,7 @@
 package collect
 
 import (
+	"errors"
 	"fmt"
 
 	"linkd/internal/enrich"
@@ -27,7 +28,7 @@ type resourceProjection struct {
 }
 
 func projectResource(resolution Resolution, fallbackBizID int64) resourceProjection {
-	values := models.ResourceValues{DynamicGroupID: []string{}, CWLabels: []string{}}
+	values := models.ResourceValues{BKBizID: fallbackBizID, DynamicGroupID: []string{}, CWLabels: []string{}}
 	diagnostics := make([]enrich.Diagnostic, 0, 2)
 
 	switch resolution.taskInputState {
@@ -45,9 +46,21 @@ func projectResource(resolution Resolution, fallbackBizID int64) resourceProject
 			break
 		}
 		values.ModelID = resolution.config.BKObjectCode
-		values.ModelInstID = fmt.Sprint(resolution.config.BKInstID)
+		// 配置和模型可独立确认；实例不可读时仍保留模型及业务补偿，
+		// 不把配置中尚未验证的实例 ID 变成资源绑定或权限标签。
+		if resolution.config.FinalBizID != nil && *resolution.config.FinalBizID > 0 {
+			values.BKBizID = *resolution.config.FinalBizID
+		}
+		applyModelContext(&values, resolution)
 		if resolution.instanceErr != nil || !resolution.instanceFound || !validInstance(resolution) {
 			diagnostics = appendDependency(diagnostics, rules.DependencyOneModel)
+			if resolution.hostTopologyErr == nil && resolution.hostTopologyFound &&
+				resolution.config.BKObjectCode == rules.HostModelCode &&
+				(!resolution.instanceFound || resolution.instanceErr != nil) &&
+				!errors.Is(resolution.instanceErr, enrich.ErrInvalidDataSourceResponse) {
+				enrich.ApplyTopology(&values, resolution.hostTopology)
+			}
+			values.CWLabels = enrich.ResourceLabels(values)
 			break
 		}
 		values = enrich.ResourceValuesFromInstance(resolution.instance, fallbackBizID)
@@ -64,7 +77,8 @@ func projectResource(resolution Resolution, fallbackBizID int64) resourceProject
 }
 
 func applyModelContext(values *models.ResourceValues, resolution Resolution) {
-	if resolution.modelErr != nil || !resolution.modelFound {
+	if resolution.modelErr != nil || !resolution.modelFound || resolution.model.TenantID != resolution.tenantID ||
+		resolution.model.ModelCode != resolution.config.BKObjectCode || resolution.model.ModelID == "" {
 		return
 	}
 	enrich.ApplyModelContext(values, resolution.model)
@@ -75,53 +89,24 @@ func applyCloudHostContext(values *models.ResourceValues, resolution Resolution)
 		resolution.cloudHost.TenantID != resolution.tenantID || resolution.cloudHost.ModelCode != rules.HostModelCode {
 		return
 	}
-	applyRelatedHostCloudContext(values, resolution.cloudHost)
+	enrich.ApplyHostCloudContext(values, resolution.cloudHost)
 }
 
 func applyServiceAndRemoteContext(values *models.ResourceValues, resolution Resolution) {
 	if resolution.config.FinalBizID != nil && *resolution.config.FinalBizID > 0 && values.BKBizID == nil {
 		values.BKBizID = *resolution.config.FinalBizID
 	}
-	if !resolution.topologyRequired || resolution.relatedHostErr != nil || !resolution.relatedHostFound {
+	if !resolution.topologyRequired || resolution.relatedHostErr != nil || !resolution.relatedHostFound ||
+		resolution.relatedHost.TenantID != resolution.tenantID || resolution.relatedHost.ModelCode != rules.HostModelCode || resolution.relatedHost.InstanceID == "" {
 		return
 	}
 	// KAC 的云区域名称来自全局映射。OneModel 关联主机已携带同一 CMDB 属性，
 	// 因此可在请求内直接补齐名称，避免为同一事实新增独立外部查询。
-	applyRelatedHostCloudContext(values, resolution.relatedHost)
+	enrich.ApplyHostCloudContext(values, resolution.relatedHost)
 	if resolution.hostTopologyErr != nil || !resolution.hostTopologyFound {
 		return
 	}
 	enrich.ApplyTopology(values, resolution.hostTopology)
-}
-
-func applyRelatedHostCloudContext(values *models.ResourceValues, host enrich.Instance) {
-	fields := make(map[string]any, len(host.Fields)+len(host.Attributes))
-	for key, value := range host.Attributes {
-		fields[key] = value
-	}
-	for key, value := range host.Fields {
-		fields[key] = value
-	}
-	hostCloudID, found := rules.FirstField(fields, rules.FieldBKCloudID)
-	if !found || hostCloudID == nil {
-		return
-	}
-	// 保留资源实例自身的云区域身份；关联主机只为相同 ID 补名称。
-	// 将不同主机的名称拼到资源 ID 上会产生错误的云区域展示。
-	if values.BKCloudID != nil && fmt.Sprint(values.BKCloudID) != fmt.Sprint(hostCloudID) {
-		return
-	}
-	if values.BKCloudID == nil {
-		values.BKCloudID = hostCloudID
-	}
-	if values.BKCloudName == "" {
-		if value, found := rules.FirstField(fields, rules.FieldBKCloudName); found && value != nil {
-			name := fmt.Sprint(value)
-			if name != "" && name != "<nil>" {
-				values.BKCloudName = name
-			}
-		}
-	}
 }
 
 func validInstance(resolution Resolution) bool {

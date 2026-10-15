@@ -330,8 +330,6 @@
                     "filter_dict": {},
                     "functions": [],
                     "group_by": [
-                      "model_id",
-                      "model_inst_id",
                       "bk_biz_id"
                     ],
                     "index_set_id": 0,
@@ -353,22 +351,6 @@
                         "method": "eq",
                         "value": [
                           2
-                        ]
-                      },
-                      {
-                        "condition": "and",
-                        "key": "model_id",
-                        "method": "eq",
-                        "value": [
-                          "cw-Service"
-                        ]
-                      },
-                      {
-                        "condition": "and",
-                        "key": "model_inst_id",
-                        "method": "eq",
-                        "value": [
-                          "2"
                         ]
                       }
                     ]
@@ -399,7 +381,7 @@
             {
               "op": "set",
               "path": "$[\"labels\"][\"where_condition\"]",
-              "value": "bk_biz_id='2' and model_id='cw-Service' and model_inst_id='2'"
+              "value": "bk_biz_id='2'"
             }
           ]
         }

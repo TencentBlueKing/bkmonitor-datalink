@@ -76,11 +76,16 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 			return enrich.ProcessorResult{}, uptimeErr
 		}
 		uptimeResult = &result
-		objectName = result.Object
+		if result.Object != "" {
+			objectName = result.Object
+		}
 		displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
 	}
 	if classification.Main == rules.MainData {
-		objectName = ""
+		objectName, err = dataResourceDisplay(ctx, scope, strategy)
+		if err != nil {
+			return enrich.ProcessorResult{}, err
+		}
 		resultTableID := projection.QueryConfigs[0].ResultTableID
 		if rules.IsAPMTable(resultTableID) {
 			objectName = rules.DimensionText(alert.Dimensions, rules.FieldServiceName)
@@ -98,15 +103,17 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		if collectErr != nil {
 			return enrich.ProcessorResult{}, collectErr
 		}
-		objectName = result.Object
+		if result.Object != "" {
+			objectName = result.Object
+		}
 	} else if classification.Main != rules.MainData && classification.BaseTarget != rules.BaseTargetUptimeCheck {
 		result, targetErr := basetarget.Enrich(ctx, scope, classification, strategy, alert.Dimensions, ids.BizID, alert.SubjectName)
 		if targetErr != nil {
 			return enrich.ProcessorResult{}, targetErr
 		}
-		// Basic 没有解析实例，空 SubjectName 不能清空已从 K8s node
-		// 等来源维度取得的展示名称；其他分支仍保留各自的覆盖契约。
-		if result.Object != "" || classification.BaseTarget != rules.BaseTargetBasic {
+		// 实例展示名不可用时保留已从主机 IP、K8s node 或 Subject
+		// 得到的名称，避免降级结果再次清空合法来源展示值。
+		if result.Object != "" {
 			objectName = result.Object
 		}
 		displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
@@ -185,6 +192,41 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		status = domain.EnrichStatusPartial
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: displayDiagnostics}, nil
+}
+
+// DATA 与目标类复用同一已确认资源的展示名；查询未命中时保留来源名称或主机 IP。
+// 主机路径使用场景缓存，避免 Display 与 Resource 的独立读取产生不同对象。
+func dataResourceDisplay(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy) (string, error) {
+	event := scope.Facts()
+	values := scope.Context().Resource.Values
+	if values.ModelID == rules.HostModelCode {
+		code := rules.HostModelCode
+		strategy.ObjectModelCode = &code
+		ids, _ := enrich.ValidateRequiredIDs(event)
+		branch := rules.BaseTargetSystemMetric
+		if rules.ScalarProvided(event.Dimensions[rules.FieldNoDataDimension]) {
+			branch = rules.BaseTargetNoData
+		}
+		result, err := basetarget.Enrich(ctx, scope, rules.Classification{Main: rules.MainData, BaseTarget: branch}, strategy, event.Dimensions, ids.BizID, event.SubjectName)
+		if err != nil {
+			return "", err
+		}
+		if result.Object != "" {
+			return result.Object, nil
+		}
+	}
+	if values.ModelID != "" && values.ModelInstID != "" && values.ModelID != rules.HostModelCode {
+		instance, found, err := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: values.ModelID, InstanceID: values.ModelInstID})
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if err == nil && found && instance.TenantID == event.BKTenantID && instance.ModelCode == values.ModelID && instance.InstanceID == values.ModelInstID {
+			if name, ok := rules.FirstStringField(mergeInstanceFields(instance.Fields, instance.Attributes), rules.FieldBKInstDisplayName, rules.FieldBKInstName, "display_name"); ok {
+				return name, nil
+			}
+		}
+	}
+	return cleanDisplayObject(event, strategy, values), nil
 }
 
 func logDisplaySubject(alertSubject string, logThemeName string) string {

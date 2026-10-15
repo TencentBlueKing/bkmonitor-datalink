@@ -97,12 +97,13 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	}
 	aggregateFunc := cleanAggregateFunc(strategy)
 	timeInterval := cleanTimeInterval(strategy)
-	metricQueryParams := buildMetricQueryParams(projection, strategy, scope.Facts().Dimensions, ids.BizID)
+	queryDimensions := metricDimensions(scope.Facts().Dimensions)
+	metricQueryParams := buildMetricQueryParams(projection, strategy, queryDimensions, ids.BizID)
 	displayName, err := cleanItem(ctx, scope, strategy, projection, query)
 	if err != nil {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricCatalog)
 	}
-	whereCondition := cleanWhereCondition(scope.Facts().Dimensions)
+	whereCondition := cleanWhereCondition(queryDimensions)
 	values.DisplayName = displayName
 	values.MetricName = metricName
 	values.Unit = unit
@@ -405,6 +406,18 @@ func parseAnomalyBeginTime(extraData domain.JSONObject) (string, bool, bool) {
 		return "", true, false
 	}
 	return value, true, true
+}
+
+// 无数据的规范模型身份用于资源定位，不是指标序列的过滤条件；
+// 普通事件仍保留原有查询维度，所有处理都在副本上完成。
+func metricDimensions(dimensions domain.DimensionMap) domain.DimensionMap {
+	if !rules.ScalarProvided(dimensions[rules.FieldNoDataDimension]) {
+		return dimensions
+	}
+	result := dimensions.Clone()
+	delete(result, rules.FieldModelID)
+	delete(result, rules.FieldModelInstID)
+	return result
 }
 
 func cleanWhereCondition(dimensions domain.DimensionMap) string {

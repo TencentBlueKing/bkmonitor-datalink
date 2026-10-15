@@ -207,8 +207,10 @@ func TestStandardNoDataMarkerReachesEnrich(t *testing.T) {
 				if resource.Status != domain.EnrichStatusSucceeded || string(resource.Value["model_inst_id"]) != `"101"` {
 					t.Fatalf("resource=%#v", resource)
 				}
-			} else if resource.Status != domain.EnrichStatusFailed || string(resource.Value["model_inst_id"]) != `""` {
-				t.Fatalf("unmapped source tag changed resource identity: %#v", resource)
+			} else if resource.Status != domain.EnrichStatusSucceeded || string(resource.Value["model_inst_id"]) != `"101"` {
+				// 未映射的原始 tag 不改变分类；SystemMetric 仍可独立使用
+				// 标准 Subject 中的 CMDB 主机身份，不能把补偿误判为 tag 映射。
+				t.Fatalf("standard host subject fallback failed: %#v", resource)
 			}
 		})
 	}

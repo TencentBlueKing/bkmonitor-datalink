@@ -158,7 +158,8 @@ func resolve(
 			resolution.relatedHost, resolution.relatedHostFound, resolution.relatedHostErr = scope.RelatedHost(
 				ctx, resolution.config.BKObjectCode, strconv.FormatInt(resolution.config.BKInstID, 10), field,
 			)
-			if resolution.relatedHostFound && resolution.relatedHostErr == nil {
+			if resolution.relatedHostFound && resolution.relatedHostErr == nil &&
+				resolution.relatedHost.TenantID == resolution.tenantID && resolution.relatedHost.ModelCode == rules.HostModelCode && resolution.relatedHost.InstanceID != "" {
 				hostID := rules.FirstStringFieldValue(resolution.relatedHost.Fields, rules.FieldBKHostID, rules.FieldBKInstID, rules.FieldModelInstID)
 				if hostID != "" {
 					resolution.hostTopology, resolution.hostTopologyFound, resolution.hostTopologyErr = scope.HostTopology(ctx, hostID)

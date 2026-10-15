@@ -117,7 +117,7 @@ func TestBaseTargetBranchesFlowThroughResourceAndDisplay(t *testing.T) {
 			if !reflect.DeepEqual(alert, original) {
 				t.Fatalf("Alert changed: before=%#v after=%#v", original, alert)
 			}
-			if test.reader.modelCalls != 1 || test.reader.instanceCalls > 1 || test.reader.topologyCalls > 1 {
+			if test.reader.modelCalls != 1 || test.reader.instanceCalls > 2 || test.reader.topologyCalls > 1 {
 				t.Fatalf("calls model=%d instance=%d topology=%d", test.reader.modelCalls, test.reader.instanceCalls, test.reader.topologyCalls)
 			}
 		})
@@ -136,9 +136,9 @@ func TestNoDataFiveProcessorFailures(t *testing.T) {
 		wantDep    string
 		wantObject string
 	}{
-		{name: "missing instance field", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar(modelCode)}, reader: processorServiceReader(), wantStatus: domain.EnrichStatusFailed, wantCode: enrich.DiagnosticCodeMissingField, wantObject: "source subject"},
-		{name: "invalid instance field", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar(modelCode), rules.FieldModelInstID: domain.NewStringScalar("02")}, reader: processorServiceReader(), wantStatus: domain.EnrichStatusFailed, wantCode: enrich.DiagnosticCodeInvalidField, wantObject: "source subject"},
-		{name: "instance not found", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar(modelCode), rules.FieldModelInstID: processorNumber(t, 2)}, reader: func() *processorBaseTargetReader { r := processorServiceReader(); r.instanceFound = false; return r }(), wantStatus: domain.EnrichStatusFailed, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantDep: rules.DependencyOneModel, wantObject: "source subject"},
+		{name: "missing instance field", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar(modelCode)}, reader: processorServiceReader(), wantStatus: domain.EnrichStatusPartial, wantCode: enrich.DiagnosticCodeMissingField, wantObject: "source subject"},
+		{name: "invalid instance field", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar(modelCode), rules.FieldModelInstID: domain.NewStringScalar("02")}, reader: processorServiceReader(), wantStatus: domain.EnrichStatusPartial, wantCode: enrich.DiagnosticCodeInvalidField, wantObject: "source subject"},
+		{name: "instance not found", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar(modelCode), rules.FieldModelInstID: processorNumber(t, 2)}, reader: func() *processorBaseTargetReader { r := processorServiceReader(); r.instanceFound = false; return r }(), wantStatus: domain.EnrichStatusPartial, wantCode: enrich.DiagnosticCodeDependencyInvalid, wantDep: rules.DependencyOneModel, wantObject: "source subject"},
 		{name: "model dependency failed", dimensions: domain.DimensionMap{rules.FieldNoDataDimension: domain.NewBoolScalar(true), rules.FieldModelID: domain.NewStringScalar(modelCode), rules.FieldModelInstID: processorNumber(t, 2)}, reader: func() *processorBaseTargetReader {
 			r := processorServiceReader()
 			r.modelErr = errors.New("unavailable")
@@ -194,22 +194,22 @@ func TestBaseTargetFiveProcessorFailureBoundaries(t *testing.T) {
 	}{
 		{name: "basic model not found", modelCode: "cw-Disk", dimensions: domain.DimensionMap{}, reader: &processorBaseTargetReader{}, wantDep: rules.DependencyOneModel, wantModel: "cw-Disk"},
 		{name: "basic model error", modelCode: "cw-Disk", dimensions: domain.DimensionMap{}, reader: &processorBaseTargetReader{modelErr: errors.New("unavailable")}, wantDep: rules.DependencyOneModel, wantModel: "cw-Disk"},
-		{name: "monitor instance not found", modelCode: "cw-Service", dimensions: domain.DimensionMap{rules.FieldBKInstID: processorNumber(t, 2)}, reader: &processorBaseTargetReader{model: processorModel("tenant-a", "cw-Service", "服务", "service"), modelFound: true}, wantDep: rules.DependencyOneModel, wantModel: "cw-Service", wantResourceStatus: domain.EnrichStatusFailed},
+		{name: "monitor instance not found", modelCode: "cw-Service", dimensions: domain.DimensionMap{rules.FieldBKInstID: processorNumber(t, 2)}, reader: &processorBaseTargetReader{model: processorModel("tenant-a", "cw-Service", "服务", "service"), modelFound: true}, wantDep: rules.DependencyOneModel, wantModel: "cw-Service", wantResourceStatus: domain.EnrichStatusPartial},
 		{name: "monitor instance wrong tenant", modelCode: "cw-Service", dimensions: domain.DimensionMap{rules.FieldBKInstID: processorNumber(t, 2)}, reader: func() *processorBaseTargetReader {
 			r := processorServiceReader()
 			r.instance.TenantID = "tenant-b"
 			return r
-		}(), wantDep: rules.DependencyOneModel, wantModel: "cw-Service", wantResourceStatus: domain.EnrichStatusFailed},
+		}(), wantDep: rules.DependencyOneModel, wantModel: "cw-Service", wantResourceStatus: domain.EnrichStatusPartial},
 		{name: "monitor instance wrong model", modelCode: "cw-Service", dimensions: domain.DimensionMap{rules.FieldBKInstID: processorNumber(t, 2)}, reader: func() *processorBaseTargetReader {
 			r := processorServiceReader()
 			r.instance.ModelCode = "cw-Other"
 			return r
-		}(), wantDep: rules.DependencyOneModel, wantModel: "cw-Service", wantResourceStatus: domain.EnrichStatusFailed},
+		}(), wantDep: rules.DependencyOneModel, wantModel: "cw-Service", wantResourceStatus: domain.EnrichStatusPartial},
 		{name: "monitor instance wrong ID", modelCode: "cw-Service", dimensions: domain.DimensionMap{rules.FieldBKInstID: processorNumber(t, 2)}, reader: func() *processorBaseTargetReader {
 			r := processorServiceReader()
 			r.instance.InstanceID = "999"
 			return r
-		}(), wantDep: rules.DependencyOneModel, wantModel: "cw-Service", wantResourceStatus: domain.EnrichStatusFailed},
+		}(), wantDep: rules.DependencyOneModel, wantModel: "cw-Service", wantResourceStatus: domain.EnrichStatusPartial},
 		{name: "system topology invalid", modelCode: rules.HostModelCode, dimensions: domain.DimensionMap{rules.FieldBKHostID: processorNumber(t, 101)}, reader: func() *processorBaseTargetReader {
 			r := processorHostReader()
 			r.topologyFound = false

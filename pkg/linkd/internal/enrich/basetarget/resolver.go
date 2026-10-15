@@ -16,6 +16,7 @@ package basetarget
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -121,21 +122,66 @@ func resolve(
 	if err != nil {
 		return resolution{}, err
 	}
-	if result.inputState != inputValid || result.query.ModelCode == "" ||
-		result.query.InstanceID == "" && len(result.query.AttributeFilters) == 0 {
-		return result, nil
+	if branch == rules.BaseTargetNoData && result.modelCode == rules.HostModelCode {
+		_, hasModel := dimensions[rules.FieldModelID]
+		_, hasInstance := dimensions[rules.FieldModelInstID]
+		// 显式提供的规范身份不完整或非法时不得换用其他身份掩盖错误。
+		if !hasModel && !hasInstance {
+			result.query, result.queryDiagnostics, result.inputState = nativeHostQuery(dimensions, scope.Facts())
+		}
+		if (hasModel || hasInstance) && result.inputState == inputValid {
+			for _, field := range []string{rules.FieldBKTargetHostID, rules.FieldBKHostID} {
+				value, provided := dimensions[field]
+				if !provided || !rules.ScalarProvided(value) {
+					continue
+				}
+				identity, valid := positiveIntegerIdentity(value)
+				if !valid || identity != result.query.InstanceID {
+					result.inputState = inputInvalid
+					result.queryDiagnostics = invalidField(field)
+				}
+				break
+			}
+		}
+		if result.inputState == inputValid && hostSubjectConflict(scope.Facts(), result.query.InstanceID) {
+			result.inputState = inputInvalid
+			result.queryDiagnostics = []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"subject_id", "dimensions.model_inst_id"}}}
+		}
 	}
-	result.modelCode = result.query.ModelCode
+	if branch == rules.BaseTargetSystemMetric && result.modelCode == rules.HostModelCode {
+		result.query, result.queryDiagnostics, result.inputState = nativeHostQuery(dimensions, scope.Facts())
+		if result.inputState == inputValid && hostSubjectConflict(scope.Facts(), result.query.InstanceID) {
+			result.inputState = inputInvalid
+			result.queryDiagnostics = []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"subject_id"}}}
+		}
+	}
+	if result.inputState == inputValid && result.query.ModelCode != "" {
+		result.modelCode = result.query.ModelCode
+	}
 	result.instanceID = result.query.InstanceID
+	// 模型上下文独立于实例定位，缺少或拒绝实例身份也不能抹掉已确认的模型信息。
 	result.model, result.modelFound, result.modelErr = scope.ModelByCode(ctx, result.modelCode)
 	if err := ctx.Err(); err != nil {
 		return resolution{}, err
+	}
+	if result.inputState != inputValid || result.query.ModelCode == "" ||
+		result.query.InstanceID == "" && len(result.query.AttributeFilters) == 0 {
+		return result, nil
 	}
 	result.instance, result.instanceFound, result.instanceErr = scope.Instance(ctx, result.query)
 	if err := ctx.Err(); err != nil {
 		return resolution{}, err
 	}
 	if result.instanceErr != nil || !result.instanceFound {
+		// 主机文档暂不可读时，明确的主机主键仍可用于独立拓扑补偿；
+		// 不生成实例绑定，也不在错误响应或跨身份结果后继续补偿。
+		if result.modelCode == rules.HostModelCode && result.instanceID != "" &&
+			!errors.Is(result.instanceErr, enrich.ErrInvalidDataSourceResponse) {
+			result.topology, result.topologyFound, result.topologyErr = scope.HostTopology(ctx, result.instanceID)
+			if err := ctx.Err(); err != nil {
+				return resolution{}, err
+			}
+		}
 		return result, nil
 	}
 	// 带主键的查询必须保留请求身份用于投影前复核；地址查询只有在

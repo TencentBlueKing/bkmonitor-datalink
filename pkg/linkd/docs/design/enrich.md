@@ -64,7 +64,7 @@ strategy → resource → display → metric → source
 - 单个 Processor 的 error 或 panic 转换为该 Processor 的 failed envelope，后续 Processor 继续执行。
 - 可预期输入错误和依赖故障通过 `ProcessorResult` 与 diagnostics 表达。
 - 场景已有核心身份但可选名称、拓扑或标签依赖失败：Processor 返回 `partial`，保留已确认字段。
-- 场景核心身份缺失、输入非法、实例未命中或响应身份不匹配：Resource 返回 `failed`，保留模型代码、来源业务和展示回退，禁止生成不可信实例标签。
+- 场景核心身份缺失、输入非法、实例未命中或响应身份不匹配：已有已验证模型名称或 CMDB 映射时 Resource 返回 `partial`，发布独立成立的模型、业务和展示补偿；没有可用上下文时返回 `failed`。两种情况都保留诊断，禁止生成未验证的实例绑定与实例标签。
 - Chain 最终状态按现有聚合规则计算：所有适用 Processor 成功为 `succeeded`，所有适用 Processor 失败为 `failed`，其余组合为 `partial`；因此单个 Resource failed 且其他 Processor succeeded 时，该 evaluation 状态为 `partial`；Event 再汇总全部 evaluation。
 - Enrich failed 不阻断 Alert 创建；Lifecycle 会持久化合法失败 payload。
 - 当前不提供查询重试、Enrich 重试、后台补丰富或已创建 Alert 的重丰富接口。
@@ -207,8 +207,8 @@ BaseTarget 降级矩阵：
 | 情况 | Resource Processor | 保留内容 |
 | --- | --- | --- |
 | 模型元数据未命中或身份不匹配，实例已确认 | `partial + dependency_invalid=onemodel` | 实例身份和已确认的资源字段，模型名称留空 |
-| 实例／租户／模型响应身份不匹配 | `failed + dependency_invalid=onemodel` | 模型代码、已确认模型上下文和来源业务；不生成实例标签 |
-| 实例未命中 | `failed + dependency_invalid=onemodel` | 已确认模型上下文、来源业务、Display 回退 |
+| 实例／租户／模型响应身份不匹配 | 已确认模型上下文时 `partial`，否则 `failed`；保留 `dependency_invalid=onemodel` | 仅保留独立验证的模型和来源业务，不使用错误响应、不生成实例标签 |
+| 实例未命中 | 已确认模型上下文时 `partial`，否则 `failed`；保留 `dependency_invalid=onemodel` | 已确认模型上下文、业务名称、可信主机主键的独立拓扑补偿、Display 回退；不生成实例绑定 |
 | 关联主机未命中 | `partial + dependency_invalid=collect_topology` | 已取得实例、业务和已有云区域字段 |
 | 拓扑祖先非法或缺失 | `partial + dependency_invalid=collect_topology` | 已取得实例和业务字段 |
 | 可选名称／云区域名称未命中 | `partial` | 对应 ID 与其他资源字段 |
@@ -445,7 +445,7 @@ Kingeye 原始 `event.tags` 与 Linkd 标准事件属于两个协议层。已通
 | UptimeCheck | 非 DATA 且策略 `object_model_code == cw-web_service` |
 | MonitorSource | `bk_inst_id` 有值，或 `obj_model_id + obj_model_inst_id` 同时有值 |
 | CollectTask | `bk_collect_config_id` 有值 |
-| NoData | `__NO_DATA_DIMENSION__` 为真值；`model_id` 是模型代码且必须与策略 `object_model_code` 一致，`model_inst_id` 是资源定位所需实例 ID |
+| NoData | `__NO_DATA_DIMENSION__` 为真值；优先验证 `model_id + model_inst_id`，主机在规范身份均未提供时允许原生主机 ID、明确的 CMDB 主机 Subject 或带云区域的 IP 定位 |
 | SystemMetric | 策略 `object_model_code == cw-Host`，按主机 ID 或 IP + 云区域定位 |
 | Basic | 其余 BaseTarget；保留模型和来源业务并跳过实例查询 |
 
@@ -829,7 +829,7 @@ BaseTarget 二级分支收口实施已完成。以下事项列为**迁移尾声�
 
 SystemMetric 主机支持通过主机 ID 或 `bk_target_ip + bk_target_cloud_id` 定位。地址查询成功并通过租户、模型及非空实例身份复核后，不再因为输入没有主机 ID 返回 `missing_field`；模型元数据和拓扑也成功时 Resource 为 `succeeded`。查询失败、身份无效以及其他依赖异常仍保留相应诊断。
 
-已验证的降级行为：模型元数据异常保留合法实例并返回 Resource partial；核心实例身份不匹配或未命中返回 Resource failed、禁止生成实例标签；关联主机或拓扑缺失保留实例并返回 Resource partial；Context 取消中止 Enrich 链，同一 Scope 中的取消结果不会污染后续重试。单个 Resource failed、其余 Processor succeeded 时最终 Alert.EnrichStatus 依现有聚合算法为 partial。标准事件内的 NoData 标记已通过本地全链路验证；真实 Kingeye tags 到标准事件的上游映射仍待确认。
+已验证的降级行为：模型元数据异常保留合法实例并返回 Resource partial；核心实例身份不匹配或未命中时，已验证模型上下文可使 Resource partial；没有可用模型上下文时仍 failed，禁止生成实例绑定和实例标签；关联主机或拓扑缺失保留实例并返回 Resource partial；Context 取消中止 Enrich 链，同一 Scope 中的取消结果不会污染后续重试。单个 Resource failed、其余 Processor succeeded 时最终 Alert.EnrichStatus 依现有聚合算法为 partial。标准事件内的 NoData 标记已通过本地全链路验证；真实 Kingeye tags 到标准事件的上游映射仍待确认。
 
 Basic fixture 已完成：
 
@@ -858,9 +858,9 @@ NoData 迁移已完成：
 
 1. `__NO_DATA_DIMENSION__` 的真值决定 NoData 分类；`model_id`（模型代码）与 `model_inst_id`（实例 ID）只负责资源定位，普通资源身份不会触发 NoData；
 2. 旧 `cw_object_model_*` 字段不再参与分类和查询；
-3. `model_id` 必须与策略 `object_model_code` 一致；
+3. 显式 `model_id` 必须与策略 `object_model_code` 一致；规范身份不完整或非法时不回退，主机规范身份与原生主机 ID／CMDB Subject 冲突时拒绝实例定位；K8s 未提供规范身份时复用 K8s Reader 按集群、node/pod 等自然维度定位，不额外要求整数实例 ID；
 4. NoData 沿用 KAC 通用展示规则：content 保留 Alert 原文，object 使用实例展示名并回退 SubjectName，title 使用 `AlarmAlias` 或“对象发生了监控项告警”；
-5. 控制维度 `__NO_DATA_DIMENSION__` 不参与 Metric 查询筛选与 `where_condition`；标准 Cleaner 可保留标准输入 `dimensions` 中的标记，真实上游 tag 映射仍待验证；
+5. 控制维度 `__NO_DATA_DIMENSION__` 和无数据事件中用于资源定位的规范 `model_id/model_inst_id` 不参与 Metric 查询筛选与 `where_condition`；普通事件的查询维度保持既有语义；标准 Cleaner 可保留标准输入 `dimensions` 中的标记，真实上游 tag 映射仍待验证；
 6. 已增加规范身份的完整五 Processor fixture，以及普通身份、缺字段、非法身份、模型冲突、实例未命中和依赖失败测试。
 
 ### DATA 已完成纵切：普通时序、system 主机、uptimecheck、hardware_、多模型身份、枚举与查询语义
@@ -968,3 +968,15 @@ Kingeye / OneModel / 其他来源
 - 自定义规则与开发验证：[自定义丰富开发规格](custom-enrichment.md)
 
 本文维护内置 Enrich 场景、迁移状态和 Observation；自定义规则与补丁协议以[自定义丰富开发规格](custom-enrichment.md)为准。研究文档保留带版本的证据，不覆盖实现和已确认规格。
+
+
+### 2026-10-15：无数据主机定位与旧 KAC 降级补偿
+
+用户确认迁移旧 KAC 的资源补偿，并允许其他类型先使用构造数据验证。以下行为以当前实现和回归测试为边界，不表示已部署或完成全部类型的真实验证：
+
+1. NoData 分类只表达无数据语义。策略模型为 `cw-Host` 且规范模型身份两个键均未提供时，按 `bk_inst_id`、`bk_target_host_id`、`bk_host_id`，再按 `subject_system=cmdb + subject_type=host + subject_id` 定位；最后允许可信 IP 与非负云区域的组合，支持 `ip/bk_cloud_id` 别名。显式非法身份、规范身份不完整和 Subject 冲突不能触发替代身份回退。
+2. MonitorSource、NoData、SystemMetric、Basic 的模型上下文独立于实例查询；合法模型信息可作为 partial 补丁输出。主机文档未命中或暂不可读时，以已确认的输入主机主键独立查询拓扑；错误响应、跨身份结果不能触发这条补偿，也不生成未验证的实例绑定或实例权限标签。
+3. DATA system 主机复用 BaseTarget 的解析与补偿；采集任务在实例失败时保留已确认模型、配置业务和主机拓扑。业务名称缺失时按最终业务 ID 查询同租户 OneModel `cw-biz`，不使用策略的全局业务覆盖资源业务；模型与实例均不可读时，独立验证的业务名称仍可作为 partial 输出。
+4. BaseTarget 与 Collect 共用关联主机云区域补偿：资源自身区域优先，只为同一云区域补名称；关联主机必须属于当前租户。拨测已有任务删除回退、业务名称与可信地址云区域补偿继续沿用。
+5. 实例展示名缺失时保留来源 Subject、主机 IP 或 K8s node 回退。DATA 已确认实例的展示名不再被空结果清除。所有补偿保留原始 Event 维度，不从 SourceRawData 读兜底，也不向指标维度注入身份。
+6. 已增加原生/规范身份、冲突/非法/部分身份、跨租户、实例缺失、模型保留、拓扑与云区域补偿、DATA/Collect 展示回退、K8s 自然维度与单次查询复用、无数据查询条件隔离的构造数据回归。当前真实回放以指定 test-bkee5-vpn Event 为准，其他类型与 Redis 展示/动态分组仍需要真实验证；不重写历史 Alert。

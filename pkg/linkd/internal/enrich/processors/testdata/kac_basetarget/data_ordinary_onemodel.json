@@ -134,7 +134,7 @@
       ]
     },
     "display": {
-      "object": "",
+      "object": "fixture-mysql-17",
       "title": "指标丨请求量发生了告警",
       "content": "AVG(requests) >= 80count, current value is 90count"
     },
@@ -305,6 +305,11 @@
                   "value": "mysql"
                 }
               ]
+            },
+            {
+              "op": "set",
+              "path": "$.subject_name",
+              "value": "fixture-mysql-17"
             },
             {
               "op": "set",

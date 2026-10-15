@@ -66,7 +66,7 @@ func TestResolverAndProjectors(t *testing.T) {
 		{
 			name:       "config missing",
 			dimensions: domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewStringScalar("missing")},
-			reader:     &collectReader{}, wantObject: "source subject",
+			reader:     &collectReader{}, wantObject: "source subject", wantBizID: int64(2),
 			wantDependency: rules.DependencyCollectConfig,
 		},
 		{
@@ -78,13 +78,13 @@ func TestResolverAndProjectors(t *testing.T) {
 					BKObjectCode: "cw-Service", BKInstID: 2,
 				}, configFound: true, instanceErr: errors.New("unavailable"),
 			},
-			wantModel: "cw-Service", wantInstance: "2", wantObject: "source subject",
+			wantModel: "cw-Service", wantObject: "source subject", wantBizID: int64(2), wantLabels: []string{"bk_biz_id", "bk_biz_id|2"},
 			wantDependency: rules.DependencyOneModel,
 		},
 		{
 			name:       "boolean task identity",
 			dimensions: domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewBoolScalar(true)},
-			reader:     &collectReader{}, wantObject: "source subject", wantCode: enrich.DiagnosticCodeInvalidField,
+			reader:     &collectReader{}, wantObject: "source subject", wantBizID: int64(2), wantCode: enrich.DiagnosticCodeInvalidField,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

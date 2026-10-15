@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
@@ -38,11 +37,36 @@ func (Resource) Match(context.Context, *enrich.Scope) (bool, error) { return tru
 // Process 查询资源依赖并生成资源上下文。
 func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	result, err := processResource(ctx, scope)
-	if err != nil || result.Status == domain.EnrichStatusFailed {
+	if err != nil {
 		return result, err
 	}
 	values := scope.Context().Resource.Values
-	if values.ModelID == "" || values.ModelInstID == "" {
+	// 旧 KAC 的业务名称映射独立于实例读取。保留已确认业务 ID，
+	// 只在名称缺失时按同租户 cw-biz 身份补偿，不用策略的全局业务覆盖资源业务。
+	if id := bizIDFromResource(values); values.ModelID != "" && values.BKBizName == "" && id > 0 {
+		businessID := strconv.FormatInt(id, 10)
+		business, found, readErr := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: businessID})
+		if ctx.Err() != nil {
+			return enrich.ProcessorResult{}, ctx.Err()
+		}
+		if readErr != nil {
+			result.Status = domain.EnrichStatusPartial
+			result.Diagnostics = appendResourceDependency(result.Diagnostics, rules.DependencyOneModel)
+		} else if found && business.TenantID == scope.Facts().BKTenantID && business.ModelCode == "cw-biz" && business.InstanceID == businessID {
+			fields := mergeInstanceFields(business.Fields, business.Attributes)
+			if name, ok := rules.FirstStringField(fields, rules.FieldBKBizName, rules.FieldBKInstName, "display_name"); ok {
+				values.BKBizName = name
+				if result.Status == domain.EnrichStatusFailed {
+					result.Status = domain.EnrichStatusPartial
+				}
+			}
+		}
+		result.Value, err = resourceContextValue(scope, values)
+		if err != nil {
+			return enrich.ProcessorResult{}, err
+		}
+	}
+	if result.Status == domain.EnrichStatusFailed || values.ModelID == "" || values.ModelInstID == "" {
 		return result, nil
 	}
 	groupIDs, err := scope.DynamicGroupIDs(ctx, values.ModelID, values.ModelInstID)
@@ -58,6 +82,15 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 	values.DynamicGroupID = groupIDs
 	result.Value, err = resourceContextValue(scope, values)
 	return result, err
+}
+
+func appendResourceDependency(diagnostics []enrich.Diagnostic, dependency string) []enrich.Diagnostic {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == enrich.DiagnosticCodeDependencyInvalid && diagnostic.Dependency == dependency {
+			return diagnostics
+		}
+	}
+	return append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: dependency})
 }
 
 func processResource(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
@@ -87,6 +120,14 @@ func processResource(ctx context.Context, scope *enrich.Scope) (enrich.Processor
 	}
 	if strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
+	}
+	if classification.BaseTarget == rules.BaseTargetNoData {
+		_, knownK8s := k8sIdentityFields[*strategy.ObjectModelCode]
+		_, hasModel := dimensions[rules.FieldModelID]
+		_, hasInstance := dimensions[rules.FieldModelInstID]
+		if knownK8s && !hasModel && !hasInstance {
+			return processK8sResource(ctx, scope, *strategy.ObjectModelCode, ids.BizID)
+		}
 	}
 	if classification.BaseTarget == rules.BaseTargetUptimeCheck {
 		result, err := uptimeenrich.Enrich(ctx, scope, *strategy.ObjectModelCode, dimensions, ids.BizID)
@@ -162,6 +203,13 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 	if values.ModelID == rules.HostModelCode && strings.HasPrefix(query.ResultTableID, rules.SystemTablePrefix) {
 		return processDataHostResource(ctx, scope, values, scope.Facts().Dimensions)
 	}
+	if _, knownK8s := k8sIdentityFields[values.ModelID]; knownK8s {
+		_, hasModel := scope.Facts().Dimensions[rules.FieldModelID]
+		_, hasInstance := scope.Facts().Dimensions[rules.FieldModelInstID]
+		if !hasModel && !hasInstance {
+			return processK8sResource(ctx, scope, values.ModelID, bizID)
+		}
+	}
 	if values.ModelID != rules.OtherModelCode && values.ModelID != rules.HostModelCode {
 		if instanceID, provided, valid := dataInstanceIdentity(scope.Facts().Dimensions, values.ModelID); provided {
 			if !valid {
@@ -173,6 +221,31 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"dimensions.model_id", "dimensions.model_inst_id"}})
 	}
 	return resourceScenarioResult(scope, values, diagnostics, false)
+}
+
+// K8s 使用集群、命名空间、node/pod 等原生身份；无数据标记不能使这些
+// 事件额外依赖整数模型实例 ID。Resource 与 K8s Processor 共用 Scope 的查询结果。
+func processK8sResource(ctx context.Context, scope *enrich.Scope, code string, bizID int64) (enrich.ProcessorResult, error) {
+	base, err := basetarget.Enrich(ctx, scope, rules.Classification{BaseTarget: rules.BaseTargetBasic}, models.CWStrategy{ObjectModelCode: &code}, scope.Facts().Dimensions, bizID, scope.Facts().SubjectName)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
+	}
+	values, diagnostics := base.Resource, base.ResourceDiagnostics
+	if missing := k8sMissingIdentityFields(code, scope.Facts().Dimensions); len(missing) != 0 {
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: missing})
+		return resourceScenarioResult(scope, values, diagnostics, true)
+	}
+	instance, found, readErr := scope.K8sInstance(ctx, code, scope.Facts().Dimensions)
+	if ctx.Err() != nil {
+		return enrich.ProcessorResult{}, ctx.Err()
+	}
+	if readErr != nil || !found || instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != code || instance.InstanceID == "" {
+		return resourceScenarioResult(scope, values, appendResourceDependency(diagnostics, rules.DependencyOneModel), true)
+	}
+	resource := enrich.ResourceValuesFromInstance(instance, bizID)
+	resource.ModelName, resource.BKObjID = values.ModelName, values.BKObjID
+	resource.CWLabels = enrich.ResourceLabels(resource)
+	return resourceScenarioResult(scope, resource, diagnostics, true)
 }
 
 func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, query models.StrategyQueryConfig, bizID int64) (enrich.ProcessorResult, error) {
@@ -252,73 +325,27 @@ func processDataModelInstance(ctx context.Context, scope *enrich.Scope, values m
 	return resourceScenarioResult(scope, resource, diagnostics, true)
 }
 
-// processDataHostResource 按 KAC DATA system 主机身份优先级解析资源；主键和地址查询
-// 均由 OneModel Reader 做租户与 entity_uid 复核，实例未命中时保留已确认的模型与业务。
+// processDataHostResource 复用目标类主机的实例、模型和拓扑补偿；
+// 指标目录已确认模型为主机，不能因 DATA 分类而跳过相同资源的降级边界。
 func processDataHostResource(ctx context.Context, scope *enrich.Scope, values models.ResourceValues, dimensions domain.DimensionMap) (enrich.ProcessorResult, error) {
-	query, ok := dataHostQuery(dimensions)
-	if !ok {
-		return resourceScenarioResult(scope, values, []enrich.Diagnostic{{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"dimensions.bk_target_host_id", "dimensions.bk_target_ip", "dimensions.bk_target_cloud_id"}}}, true)
+	code := rules.HostModelCode
+	branch := rules.BaseTargetSystemMetric
+	if rules.ScalarProvided(dimensions[rules.FieldNoDataDimension]) {
+		branch = rules.BaseTargetNoData
 	}
-	instance, found, err := scope.Instance(ctx, query)
-	if ctx.Err() != nil {
-		return enrich.ProcessorResult{}, ctx.Err()
+	result, err := basetarget.Enrich(ctx, scope, rules.Classification{Main: rules.MainData, BaseTarget: branch}, models.CWStrategy{ObjectModelCode: &code}, dimensions, bizIDFromResource(values), scope.Facts().SubjectName)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
 	}
-	if err != nil || !found || instance.TenantID != scope.Facts().BKTenantID || instance.ModelCode != rules.HostModelCode || instance.InstanceID == "" || query.InstanceID != "" && query.InstanceID != instance.InstanceID {
-		return resourceScenarioResult(scope, values, []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel}}, true)
+	if result.Resource.BKBizName == "" && fmt.Sprint(result.Resource.BKBizID) == fmt.Sprint(values.BKBizID) {
+		result.Resource.BKBizName = values.BKBizName
 	}
-	resource := enrich.ResourceValuesFromInstance(instance, bizIDFromResource(values))
-	resource.ModelName = values.ModelName
-	resource.BKObjID = values.BKObjID
-	resource.CWLabels = enrich.ResourceLabels(resource)
-	return resourceScenarioResult(scope, resource, nil, true)
+	return resourceScenarioResult(scope, result.Resource, result.ResourceDiagnostics, true)
 }
 
 func bizIDFromResource(values models.ResourceValues) int64 {
-	if id, ok := values.BKBizID.(int64); ok {
-		return id
-	}
-	return 0
-}
-
-func dataHostQuery(dimensions domain.DimensionMap) (enrich.InstanceQuery, bool) {
-	if value, ok := dimensions[rules.FieldBKTargetHostID]; ok {
-		if id, valid := dataPositiveIdentity(value); valid {
-			return enrich.InstanceQuery{ModelCode: rules.HostModelCode, InstanceID: id}, true
-		}
-	}
-	ip, exists := dimensions[rules.FieldBKTargetIP]
-	cloud, cloudExists := dimensions[rules.FieldBKTargetCloudID]
-	ipText, ipValid := ip.StringValue()
-	cloudID, cloudValid := dataCloudID(cloud)
-	if !exists || !cloudExists || !ipValid || ipText == "" || !cloudValid {
-		return enrich.InstanceQuery{}, false
-	}
-	return enrich.InstanceQuery{ModelCode: rules.HostModelCode, AttributeFilters: []enrich.InstanceAttributeFilter{
-		{Field: rules.FieldBKHostInnerIP, Type: enrich.InstanceAttributeKeyword, Value: ipText},
-		{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: cloudID},
-	}}, true
-}
-
-func dataPositiveIdentity(value domain.Scalar) (string, bool) {
-	if number, ok := value.NumberValue(); ok && number > 0 && number < float64(math.MaxInt64) && math.Trunc(number) == number {
-		return strconv.FormatInt(int64(number), 10), true
-	}
-	if text, ok := value.StringValue(); ok {
-		id, err := strconv.ParseInt(text, 10, 64)
-		return text, err == nil && id > 0 && strconv.FormatInt(id, 10) == text
-	}
-	return "", false
-}
-
-func dataCloudID(value domain.Scalar) (int64, bool) {
-	if number, ok := value.NumberValue(); ok && number >= 0 && number < float64(math.MaxInt64) && math.Trunc(number) == number {
-		return int64(number), true
-	}
-	if text, ok := value.StringValue(); ok {
-		id, err := strconv.ParseInt(text, 10, 64)
-		return id, err == nil && id >= 0 && strconv.FormatInt(id, 10) == text
-	}
-	return 0, false
+	id, _ := strconv.ParseInt(fmt.Sprint(values.BKBizID), 10, 64)
+	return id
 }
 
 func resourceScenarioResult(scope *enrich.Scope, values models.ResourceValues, diagnostics []enrich.Diagnostic, requiresInstance bool) (enrich.ProcessorResult, error) {
@@ -329,7 +356,9 @@ func resourceScenarioResult(scope *enrich.Scope, values models.ResourceValues, d
 	status := domain.EnrichStatusSucceeded
 	if len(diagnostics) != 0 {
 		status = domain.EnrichStatusPartial
-		if requiresInstance && values.ModelInstID == "" {
+		// 已确认模型的名称/CMDB 映射可以独立输出。实例缺失仍保留诊断，
+		// 但不能让 failed 丢弃这些补丁，也不能伪造实例绑定。
+		if requiresInstance && values.ModelInstID == "" && values.ModelName == "" && values.BKObjID == nil {
 			status = domain.EnrichStatusFailed
 		}
 	}

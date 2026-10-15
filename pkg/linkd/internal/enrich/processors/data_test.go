@@ -80,7 +80,7 @@ func TestDATAFailureMatrix(t *testing.T) {
 func TestDATACancelledDependencyDoesNotBecomeCachedFailure(t *testing.T) {
 	t.Parallel()
 	reader := &dataSliceReader{model: "cw-Others", cancelReads: true}
-	scope, err := enrich.NewScope(processorBaseTargetAlert(t, domain.DimensionMap{}), enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+	scope, err := enrich.NewScope(processorBaseTargetAlert(t, domain.DimensionMap{}), enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestDATAFunctionMetricPreservesFunctionsAndDisablesEnumMapping(t *testing.T
 	reader.strategy = strategy
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{})
 	alert.Content = "rate(usage) >= 1, current value is 1"
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestDATAUnitAlgorithmUsesSeverityOverride(t *testing.T) {
 	strategy := reader.strategyForTest()
 	strategy.Spec.StrategyDetectAlgorithms = []models.CWStrategyDetectAlgorithm{{LevelStatus: "warning", AlgorithmConfig: domain.JSONObject{"algorithmUnit": json.RawMessage(`"ms"`)}}}
 	reader.strategy = strategy
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestDATAEnumValueMappingEnrichesDisplayContent(t *testing.T) {
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{})
 	alert.Content = "AVG(status) >= 1, current value is 1"
 	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
-		CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader,
+		CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +289,7 @@ func TestDATAHostIdentityAndFailure(t *testing.T) {
 			alert := processorBaseTargetAlert(t, tc.dimensions)
 			original := alert.Clone()
 			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
-				CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader,
+				CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -336,7 +336,7 @@ func TestDATAOrdinaryModelUsesCanonicalIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := &dataSliceReader{model: "cw-MySQL", instance: tc.instance, found: tc.found}
 			alert := processorBaseTargetAlert(t, tc.dimensions)
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -353,7 +353,7 @@ func TestDATAOrdinaryModelUsesCanonicalIdentity(t *testing.T) {
 				t.Fatalf("resource=%#v query=%#v", resource, reader.query)
 			}
 			if tc.wantPartial {
-				if result.Status != domain.EnrichStatusPartial || resource.Status != domain.EnrichStatusFailed || len(resource.Diagnostics) == 0 || resource.Diagnostics[len(resource.Diagnostics)-1].Code != tc.wantCode || len(resource.Patches) != 0 {
+				if result.Status != domain.EnrichStatusPartial || resource.Status != domain.EnrichStatusPartial || len(resource.Diagnostics) == 0 || resource.Diagnostics[len(resource.Diagnostics)-1].Code != tc.wantCode || string(resource.Value["model_id"]) != `"cw-MySQL"` {
 					t.Fatalf("status=%q resource=%#v", result.Status, resource)
 				}
 			} else if result.Status != domain.EnrichStatusSucceeded || resource.Status != domain.EnrichStatusSucceeded || string(resource.Value["cw_labels"]) != `["bk_biz_id","bk_biz_id|2","cw-MySQL","cw-MySQL|svc|opaque-17"]` {
@@ -384,7 +384,7 @@ func TestDATAHardwareAndMultiModelUseCanonicalIdentity(t *testing.T) {
 				reader.model = "cw-Unknown"
 			}
 			alert := processorBaseTargetAlert(t, tc.dimensions)
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -412,7 +412,7 @@ func TestDATAOrdinaryModelKeepsPartialUntilIdentityConfirmed(t *testing.T) {
 	t.Parallel()
 	reader := &dataSliceReader{model: "cw-MySQL"}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{})
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +656,7 @@ func TestMetricDefinitionIDReachesAllProcessors(t *testing.T) {
 				t.Fatal(err)
 			}
 			reader := &dataSliceReader{model: "cw-Others", strategy: models.CWStrategy{BKBizID: func() *int64 { v := int64(2); return &v }(), ObjectModelCode: optionalModelCode("cw-Others"), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "CPU", StrategyItem: &models.CWStrategyItem{QueryConfigs: []models.StrategyQueryConfig{query}}}}}
-			scope, err := enrich.NewScope(processorBaseTargetAlert(t, domain.DimensionMap{}), enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+			scope, err := enrich.NewScope(processorBaseTargetAlert(t, domain.DimensionMap{}), enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader, AlarmSource: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -688,4 +688,12 @@ func TestMetricDefinitionQueryUsesPublishedIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (*dataSliceReader) FindRelatedHost(context.Context, string, string, string, string) (enrich.Instance, bool, error) {
+	return enrich.Instance{}, false, nil
+}
+
+func (*dataSliceReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
+	return models.ResourceTopology{BKBizID: 2, BKBizName: "业务"}, true, nil
 }

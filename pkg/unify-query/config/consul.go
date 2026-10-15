@@ -30,5 +30,8 @@ func validateConsulConfig(candidate *viper.Viper) error {
 	if !enabled && candidate.GetString("storage.source") != "redis" {
 		return fmt.Errorf("consul.enabled=false requires storage.source=redis")
 	}
+	if !enabled && candidate.IsSet("redis.kv_base_path") && candidate.GetString("redis.kv_base_path") == "" {
+		return fmt.Errorf("consul.enabled=false requires a nonempty redis.kv_base_path")
+	}
 	return nil
 }

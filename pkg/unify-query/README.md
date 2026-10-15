@@ -16,6 +16,23 @@
 
 ## 🚀 快速开始
 
+### 仅使用 Redis 部署
+
+```yaml
+consul:
+  enabled: false
+storage:
+  source: redis
+redis:
+  host: 127.0.0.1
+  port: 6379
+  kv_base_path: bkmonitorv3:unify-query
+```
+
+此模式不创建 Consul 客户端、注册服务或监听 KV；调用方需要通过部署提供的服务地址访问 UQ。Storage、空间及表路由仍需由配置发布端写入 Redis，Redis 连接、认证和数据库按实际部署配置。显式关闭时，冲突的 Storage 来源和空 Redis Key 前缀会在启动或配置重载前被拒绝；重载失败会保留上一份配置。
+
+未设置 `consul.enabled` 的旧部署继续启用 Consul，保留 Storage 读取、Feature Flag 首次迁移和服务注册能力。切换前先确认 Redis 中的配置完整、调用方服务地址可用，再关闭 Consul；使用 Helm Chart 时需同时使用支持此开关的 Chart，以跳过初始化容器中的 Consul 等待。
+
 ### 设置 Feature Flag
 
 `consul.enabled` 未设置时默认为 `true`。服务优先读取 Redis，只有 Key 不存在时读取 Consul，校验成功后自动回填 Redis，无需手工迁移。回填采用 `SET NX`，已有或并发写入的 Redis 配置优先；回填失败会继续使用本次有效的 Consul 快照，并在后续调和时重试。回填后以 Redis 为准，后续 Consul 修改不再同步。Redis 读取失败或已有快照非法时保留运行中的最后有效配置，不重新读取 Consul；首次启动没有有效配置时持续重试。变更通过 Redis Pub/Sub 通知，通知丢失时由每分钟全量调和恢复。

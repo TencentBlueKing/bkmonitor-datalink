@@ -60,3 +60,17 @@ func TestConsulConfigurationRejectsInvalidReload(t *testing.T) {
 	require.False(t, ConsulEnabled())
 	require.Equal(t, "redis", viper.GetString("storage.source"))
 }
+
+func TestRedisOnlyConfigurationRejectsEmptyPrefixBeforeReload(t *testing.T) {
+	viper.Reset()
+	previous := CustomConfigFilePath
+	t.Cleanup(func() { viper.Reset(); CustomConfigFilePath = previous })
+	CustomConfigFilePath = filepath.Join(t.TempDir(), "config.yaml")
+	config := "consul:\n  enabled: false\nstorage:\n  source: redis\nredis:\n  kv_base_path: test:uq\n"
+	require.NoError(t, os.WriteFile(CustomConfigFilePath, []byte(config), 0600))
+	require.NoError(t, InitConfigWithWriter(io.Discard))
+	require.NoError(t, os.WriteFile(CustomConfigFilePath, []byte("consul:\n  enabled: false\nstorage:\n  source: redis\nredis:\n  kv_base_path: ''\n"), 0600))
+	require.ErrorContains(t, ReloadConfigWithWriter(io.Discard), "nonempty redis.kv_base_path")
+	require.Equal(t, "test:uq", viper.GetString("redis.kv_base_path"))
+	require.ErrorContains(t, InitConfigWithWriter(io.Discard), "nonempty redis.kv_base_path")
+}

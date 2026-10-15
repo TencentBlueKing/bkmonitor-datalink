@@ -11,8 +11,10 @@ package consul
 
 import (
 	"context"
+
 	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -36,10 +38,7 @@ func (s *Service) Start(ctx context.Context) {
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
-	// 关闭上一次的consul instance
-	if s.cancelFunc != nil {
-		s.cancelFunc()
-	}
+	s.Close()
 
 	log.Debugf(context.TODO(), "waiting for consul service close")
 	// 等待上一个注册彻底关闭
@@ -48,6 +47,10 @@ func (s *Service) Reload(ctx context.Context) {
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 	log.Debugf(context.TODO(), "consul service context update success.")
+	if !config.ConsulEnabled() {
+		log.Infof(ctx, "consul service is disabled")
+		return
+	}
 
 	var auth *base.AuthConfig
 	if viper.GetBool("kms.enabled") {
@@ -81,6 +84,9 @@ func (s *Service) Wait() {
 
 // Close
 func (s *Service) Close() {
-	s.cancelFunc()
+	if s.cancelFunc != nil {
+		s.cancelFunc()
+	}
+	consul.Close()
 	log.Infof(context.TODO(), "consul service context cancel func called.")
 }

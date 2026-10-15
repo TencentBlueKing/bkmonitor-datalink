@@ -36,8 +36,6 @@ type Instance struct {
 	address     string
 	port        int
 	ttl         string
-	watchPaths  map[string]<-chan any
-	pathLock    sync.Mutex
 }
 
 // NewConsulInstance
@@ -76,7 +74,6 @@ func NewConsulInstanceWithAuth(
 		address:     address,
 		port:        port,
 		ttl:         ttl,
-		watchPaths:  make(map[string]<-chan any),
 	}, err
 }
 
@@ -178,16 +175,6 @@ func (i *Instance) CheckPass() error {
 // Watch
 func (i *Instance) Watch(path string) (<-chan any, error) {
 	return i.client.Watch(path, "")
-}
-
-// WatchOnce: 仅监听，触发一次
-func (i *Instance) WatchOnce(path, separator string) (<-chan any, error) {
-	i.pathLock.Lock()
-	defer i.pathLock.Unlock()
-	if ch, has := i.watchPaths[path]; has {
-		return ch, nil
-	}
-	return i.client.Watch(path, separator)
 }
 
 // GetDataWithPrefix

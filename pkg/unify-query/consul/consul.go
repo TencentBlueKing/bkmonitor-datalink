@@ -11,8 +11,10 @@ package consul
 
 import (
 	"context"
+	"errors"
 	"sync"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
 	"github.com/hashicorp/consul/api"
 )
@@ -27,6 +29,17 @@ var globalInstance *Instance
 
 var lock *sync.RWMutex
 
+var errUnavailable = errors.New("consul is disabled or not initialized")
+
+func currentInstance() (*Instance, error) {
+	lock.RLock()
+	defer lock.RUnlock()
+	if !config.ConsulEnabled() || globalInstance == nil {
+		return nil, errUnavailable
+	}
+	return globalInstance, nil
+}
+
 // init 初始化读写锁
 func init() {
 	lock = new(sync.RWMutex)
@@ -34,8 +47,24 @@ func init() {
 
 // Wait 等待实例释放
 func Wait() {
-	if globalInstance != nil {
-		globalInstance.Wait()
+	lock.RLock()
+	instance := globalInstance
+	lock.RUnlock()
+	if instance != nil {
+		instance.Wait()
+	}
+}
+
+// Close releases registration and every watch before a reload disables Consul.
+func Close() {
+	lock.Lock()
+	instance := globalInstance
+	globalInstance = nil
+	lock.Unlock()
+	if instance != nil {
+		instance.cancel()
+		_ = instance.client.Close()
+		instance.Wait()
 	}
 }
 
@@ -51,6 +80,9 @@ func SetInstanceWithAuth(ctx context.Context, kvBasePath, serviceName, consulAdd
 ) error {
 	lock.Lock()
 	defer lock.Unlock()
+	if !config.ConsulEnabled() {
+		return errUnavailable
+	}
 	var err error
 	if kvBasePath != "" {
 		basePath = kvBasePath
@@ -67,49 +99,56 @@ func SetInstanceWithAuth(ctx context.Context, kvBasePath, serviceName, consulAdd
 
 // LoopAwakeService 注册服务，并循环激活
 func LoopAwakeService() error {
-	lock.RLock()
-	defer lock.RUnlock()
-	return globalInstance.LoopAwakeService()
+	instance, err := currentInstance()
+	if err != nil {
+		return err
+	}
+	return instance.LoopAwakeService()
 }
 
 // StopAwakeService 停止服务的激活动作,并注销服务
 func StopAwakeService() error {
-	lock.RLock()
-	defer lock.RUnlock()
-	return globalInstance.StopAwakeService()
+	instance, err := currentInstance()
+	if err != nil {
+		return err
+	}
+	return instance.StopAwakeService()
 }
 
 // WatchChange 监听指定地址，监听触发时，channel将会传出信息
 var WatchChange = func(ctx context.Context, watchPath string) (<-chan any, error) {
-	kvChan, err := globalInstance.Watch(watchPath)
+	instance, err := currentInstance()
 	if err != nil {
 		return nil, err
 	}
-	return kvChan, nil
-}
-
-// WatchChangeOnce 监听指定地址，监听触发时，channel将会传出信息
-var WatchChangeOnce = func(ctx context.Context, watchPath, separator string) (<-chan any, error) {
-	kvChan, err := globalInstance.WatchOnce(watchPath, separator)
-	if err != nil {
-		return nil, err
-	}
-	return kvChan, nil
+	return instance.Watch(watchPath)
 }
 
 // GetDataWithPrefix 通过前缀获取 kv 列表
 var GetDataWithPrefix = func(prefix string) (api.KVPairs, error) {
-	return globalInstance.GetDataWithPrefix(prefix)
+	instance, err := currentInstance()
+	if err != nil {
+		return nil, err
+	}
+	return instance.GetDataWithPrefix(prefix)
 }
 
 // GetDataWithPrefixContext 通过前缀获取 KV 列表，并传递取消信号。
 var GetDataWithPrefixContext = func(ctx context.Context, prefix string) (api.KVPairs, error) {
-	return globalInstance.GetDataWithPrefixContext(ctx, prefix)
+	instance, err := currentInstance()
+	if err != nil {
+		return nil, err
+	}
+	return instance.GetDataWithPrefixContext(ctx, prefix)
 }
 
 // GetKVData 通过 path 路径获取 value
 var GetKVData = func(path string) ([]byte, error) {
-	res, err := globalInstance.GetData(path)
+	instance, err := currentInstance()
+	if err != nil {
+		return nil, err
+	}
+	res, err := instance.GetData(path)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +160,11 @@ var GetKVData = func(path string) ([]byte, error) {
 
 // GetKVDataContext 读取 KV，并将取消信号传递到底层 HTTP 请求。
 var GetKVDataContext = func(ctx context.Context, path string) ([]byte, error) {
-	res, err := globalInstance.GetDataContext(ctx, path)
+	instance, err := currentInstance()
+	if err != nil {
+		return nil, err
+	}
+	res, err := instance.GetDataContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}

@@ -98,6 +98,9 @@ func cwStrategyFromPublication(row strategyPublicationRow, payload strategyPubli
 	if row.ParentID == nil && spec.ConfigType != payload.Set.ConfigType {
 		return models.CWStrategy{}, descriptionFailure("publication_binding_invalid")
 	}
+	if err := bindPublishedMetricReferences(&spec, payload); err != nil {
+		return models.CWStrategy{}, err
+	}
 	// 覆盖记录的实例标签允许整数或字符串，数据库列的字符串形态不再参与转换。
 	var instanceID *string
 	if raw := labels.ObjectInstanceID; len(raw) != 0 && string(raw) != "null" {

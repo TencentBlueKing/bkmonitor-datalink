@@ -311,6 +311,13 @@ meta_info
 
 `log`、`cloud_resource`、`k8s`、`apm` 已有 Processor、类型化输出、Router 注册和派生测试。LogTheme、CloudResource、K8s 和 APM Application 已接入生产 Reader；是否运行由各 EventSource 的 Processor 列表决定。
 
+K8s Reader 按模型将来源维度映射到 OneModel 身份：Node 的 `node`、Service 的 `service`、
+Workload 的 `workload_name`、Pod 的 `pod_name`、Container 的 `container_name` 分别对应实例 `name`，
+并保留集群、命名空间、工作负载类型和 Pod 名等所属条件。独立 Pod 的
+`workload_kind=Pod + workload_name` 表达仍受支持。缺少必要维度时在本地拒绝查询，错误链保留
+具体维度；不能把其他模型的名称维度当作兜底。Display 从 Node 维度取得的名称不会被 Basic 分支
+返回的空 `subject_name` 清除；其他资源分支仍遵循自己的展示覆盖规则。
+
 ## 7. DataSource 现状
 
 ### 7.1 已装配

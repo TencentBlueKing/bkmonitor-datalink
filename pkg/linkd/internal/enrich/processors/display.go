@@ -104,7 +104,11 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		if targetErr != nil {
 			return enrich.ProcessorResult{}, targetErr
 		}
-		objectName = result.Object
+		// Basic 没有解析实例，空 SubjectName 不能清空已从 K8s node
+		// 等来源维度取得的展示名称；其他分支仍保留各自的覆盖契约。
+		if result.Object != "" || classification.BaseTarget != rules.BaseTargetBasic {
+			objectName = result.Object
+		}
 		displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
 	}
 	itemName, err := displayItem(ctx, scope, strategy, projection)

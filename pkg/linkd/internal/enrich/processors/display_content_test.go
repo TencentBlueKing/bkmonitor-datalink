@@ -22,6 +22,46 @@ import (
 	"linkd/internal/store/storetest"
 )
 
+func TestDisplayKeepsK8sNodeNameAcrossBasicTarget(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, subject string
+		dimensions    domain.DimensionMap
+		want          string
+	}{
+		{"node dimension", "", domain.DimensionMap{rules.FieldNode: domain.NewStringScalar("node-1")}, "node-1"},
+		{"source subject", "source-node", domain.DimensionMap{rules.FieldNode: domain.NewStringScalar("node-1")}, "source-node"},
+		{"instance fallback", "", domain.DimensionMap{rules.FieldInstance: domain.NewStringScalar("10.0.0.1:9100")}, "10.0.0.1"},
+		{"missing name", "", domain.DimensionMap{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := processorBaseTargetAlert(t, tc.dimensions)
+			event.SubjectName = tc.subject
+			chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{PreserveContent: true}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: rules.K8sNodeModelCode}, Metric: processorBaseTargetMetric{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := chain.Enrich(t.Context(), enrich.Input{Event: event})
+			if err != nil {
+				t.Fatal(err)
+			}
+			effectiveEvent := event.Clone()
+			effectiveEvent.Enrich = result.Data
+			effectiveEvent.EnrichStatus = result.Status
+			effective, err := view.EnrichedEvent(effectiveEvent, event.Evaluations[0].Severity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if effective.Title != tc.want+"发生了可用率告警" {
+				t.Fatalf("title=%q want prefix=%q", effective.Title, tc.want)
+			}
+			if effective.Content != event.Content {
+				t.Fatal("display changed preserved content")
+			}
+		})
+	}
+}
+
 func TestDisplayPreservesCreatedContentForDataAndLogs(t *testing.T) {
 	t.Parallel()
 	for _, scene := range []string{"data", "log_metric", "log_keyword"} {

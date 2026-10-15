@@ -3,6 +3,7 @@ package assembly
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -36,9 +37,10 @@ func TestPublishedStrategyLiveTitle(t *testing.T) {
 		t.Fatal("read Alert fixture failed")
 	}
 	var fixture struct {
-		Event              domain.Event `json:"event"`
-		ExpectedTitle      string       `json:"expected_title"`
-		ExpectedTemplateID int64        `json:"expected_template_id"`
+		Event                   domain.Event `json:"event"`
+		ExpectedTitle           string       `json:"expected_title"`
+		ExpectedTemplateID      int64        `json:"expected_template_id"`
+		ExpectedModelInstanceID string       `json:"expected_model_instance_id"`
 	}
 	if json.Unmarshal(raw, &fixture) != nil || fixture.ExpectedTitle == "" || fixture.ExpectedTemplateID <= 0 {
 		t.Fatal("invalid Alert fixture")
@@ -78,16 +80,24 @@ func TestPublishedStrategyLiveTitle(t *testing.T) {
 		t.Fatal("publication template does not match fixture")
 	}
 	sources.OneModel, sources.CollectTopology = client, client
-	chain, err := enrich.NewChain([]enrich.Processor{processors.Strategy{}, processors.Resource{}, processors.Display{}, processors.Metric{}}, sources)
+	sources.K8s, err = datasources.NewOneModelK8sReader(client)
 	if err != nil {
 		t.Fatal(err)
 	}
+	chain, err := enrich.NewChain([]enrich.Processor{processors.Strategy{}, processors.Resource{}, processors.K8s{}, processors.Display{}, processors.Metric{}}, sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := fixture.Event.Clone()
 	result, err := chain.Enrich(t.Context(), enrich.Input{Event: fixture.Event, Preview: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result.Data.Evaluations) != 1 {
 		t.Fatal("expected one source evaluation")
+	}
+	if !reflect.DeepEqual(original, fixture.Event) {
+		t.Fatal("read-only replay changed its input Event")
 	}
 	evaluation := result.Data.Evaluations[0]
 	payload, err := enrich.DecodePayload(evaluation.Data)
@@ -97,7 +107,9 @@ func TestPublishedStrategyLiveTitle(t *testing.T) {
 	for _, entry := range payload.Processors {
 		for name, output := range entry {
 			t.Logf("processor=%s status=%s diagnostics=%v", name, output.Status, output.Diagnostics)
-			if (name == rules.StrategyProcessor || name == rules.DisplayProcessor || name == rules.MetricProcessor) && output.Status != domain.EnrichStatusSucceeded {
+			required := name == rules.StrategyProcessor || name == rules.DisplayProcessor || name == rules.MetricProcessor ||
+				(name == rules.K8sProcessor && fixture.ExpectedModelInstanceID != "")
+			if required && output.Status != domain.EnrichStatusSucceeded {
 				t.Fatalf("processor %s did not succeed", name)
 			}
 		}
@@ -109,12 +121,27 @@ func TestPublishedStrategyLiveTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"strategy_id", "strategy_version", "bk_biz_id"} {
+		// K8s 的 OneModel 属性允许十进制字符串业务 ID；比较业务身份，
+		// 不把读取视图的表示差异误报为串业务。原 Event 仍由上面的深比较保护。
+		if key == "bk_biz_id" && fixture.ExpectedModelInstanceID != "" {
+			if rules.ScalarIdentity(effective.Labels[key]) != rules.ScalarIdentity(fixture.Event.Labels[key]) {
+				t.Fatal("K8s business identity changed")
+			}
+			continue
+		}
 		if effective.Labels[key] != fixture.Event.Labels[key] {
 			t.Fatalf("source identity %s changed", key)
 		}
 	}
 	if effective.Title != fixture.ExpectedTitle {
 		t.Fatalf("title=%q want=%q", effective.Title, fixture.ExpectedTitle)
+	}
+	if fixture.ExpectedModelInstanceID != "" {
+		got, ok := effective.Labels["model_inst_id"].StringValue()
+		if !ok || got != fixture.ExpectedModelInstanceID {
+			t.Fatalf("model instance=%q want=%q", got, fixture.ExpectedModelInstanceID)
+		}
+		t.Logf("model_inst_id=%q", got)
 	}
 	if value, ok := effective.Labels["monitor_template_id"].NumberValue(); !ok || value != float64(fixture.ExpectedTemplateID) {
 		t.Fatalf("wrong monitor template: %v", effective.Labels["monitor_template_id"])

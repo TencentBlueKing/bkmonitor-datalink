@@ -79,8 +79,8 @@ type strategyPublication struct {
 	} `json:"strategy_set"`
 	Config   json.RawMessage    `json:"strategy_config"`
 	Resolved []resolvedStrategy `json:"resolved_strategies"`
-	// Runtime 只供文案入口读取；普通 Enrich 不解码不使用的运行时字段，
-	// 避免运行时 DTO 的字段形态阻断已验证的 resolved 策略投影。
+	// Runtime 为文案入口提供执行事实，也可按唯一查询身份补齐普通 Enrich
+	// 缺失的目录引用；各入口只解码自己需要的字段，避免 DTO 差异相互阻断。
 	Runtime []json.RawMessage `json:"runtime_query_configs"`
 }
 

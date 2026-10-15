@@ -19,6 +19,13 @@ Event 在策略裁决前完成 Enrich。`labels.strategy_id`、`labels.strategy_
 DATA 多业务材料先验证各份完整 spec 相等，再按 Kingeye 投影规则使用模板所属业务（未提供时取首项业务）；target 仅接受一个 resolved 项。
 配置身份、租户、模板、default 标记和业务名册必须完整一致，不能按事件业务猜选配置。
 
+原生声明查询缺少 `metric_ref_id` 且声明与 spec 均没有物理表时，读取同版本 payload 的
+`runtime_query_configs` 补齐目录身份。查询别名和物理字段必须唯一对应；单条无别名查询仍须字段相同，
+多业务执行查询须得出相同目录 ID。数量不符、重复别名、编译错误或展开后不能唯一关联时返回
+`publication_metric_binding_invalid`，不按数组首项、旧 `source_config.metric_id` 或名称猜测。
+只补目录引用，保留声明中的条件、表达式和已有明确身份；衍生指标保留定义身份，不替换为展开成员。
+运行时无关 DTO 字段仍不参与普通 Enrich 解码。整个适配只作用于内存，不更新发布材料。
+
 ## 所需策略数据
 
 | 数据 | Enrich 用途 |
@@ -53,6 +60,6 @@ KAC/KMC 普通指标查询拒绝非空 `expression`。只有一个 query、表�
 不再比较当前 Set/Config 表；单位和算法来自同一条发布材料。版本读取及文案限制见
 [告警内容生成](alert-content-generation.md)。
 
-本次修复只放宽普通 Enrich 的删除/启停状态筛选；`bkmonitor_description` 保留既有严格状态检查。版本读取已收窄为 SQL 中的租户、拆分 ID 与版本三项条件，并继续复核返回身份；不能用来源事件业务直接筛选全局模板配置。
+普通 Enrich 允许匹配删除或禁用的发布配置；`bkmonitor_description` 保留既有严格状态检查。版本读取使用 SQL 中的租户、拆分 ID 与版本三项条件，并继续复核返回身份；不能用来源事件业务直接筛选全局模板配置。
 
-普通 Enrich 只解析其使用的 resolved 策略投影，不要求 `runtime_query_configs` 的文案 DTO 字段能够解码；文案入口单独执行运行时参数校验，避免无关运行时字段阻断标题丰富。2026-10-09 在最新 Event 丰富接口上以 test-bkee5 告警历史快照中的来源事实进行只读回放：拆分 ID 27、版本 `1790758899573486`、来源业务 2、模板 79、全局策略业务 524；Strategy、Resource、Display、Metric 均成功，标题为 `10.10.28.19_0_v10发生了CPU使用率告警`。该回放不写线上告警，不代表已部署或验证 Kafka 消费链路。
+普通 Enrich 解析 resolved 策略投影，并在上述身份缺失场景读取必要的 runtime 身份字段；文案入口单独执行运行时参数校验，避免无关运行时字段阻断标题丰富。2026-10-09 在最新 Event 丰富接口上以 test-bkee5 告警历史快照中的来源事实进行只读回放：拆分 ID 27、版本 `1790758899573486`、来源业务 2、模板 79、全局策略业务 524；Strategy、Resource、Display、Metric 均成功，标题为 `10.10.28.19_0_v10发生了CPU使用率告警`。该回放不写线上告警，不代表已部署或验证 Kafka 消费链路。

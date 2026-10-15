@@ -31,6 +31,9 @@ func NewOneModelK8sReader(instances enrich.OneModelReader) (*OneModelK8sReader, 
 
 // FindK8sInstance 按 K8s 对象模型和旧 KAC 身份字段查询统一实例。
 func (r *OneModelK8sReader) FindK8sInstance(ctx context.Context, tenantID, modelCode string, dimensions domain.DimensionMap) (enrich.Instance, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return enrich.Instance{}, false, err
+	}
 	filters, err := k8sInstanceFilters(modelCode, dimensions)
 	if err != nil {
 		return enrich.Instance{}, false, err
@@ -51,21 +54,25 @@ func k8sInstanceFilters(modelCode string, dimensions domain.DimensionMap) ([]enr
 	if fields == nil {
 		return nil, fmt.Errorf("unsupported k8s model code %q", modelCode)
 	}
-	values := map[string]string{
-		"cluster_id": dimensionsText(dimensions, "bcs_cluster_id"),
-		"namespace":  dimensionsText(dimensions, "namespace"),
-		"name":       dimensionsText(dimensions, "service"),
-		"type":       dimensionsText(dimensions, "workload_kind"),
-		"pod_name":   dimensionsText(dimensions, "pod_name"),
-	}
+	nameDimension := map[string]string{
+		"cw-K8s_Service": "service", "cw-K8s_Workload": "workload_name",
+		"cw-K8s_Pod": "pod_name", "cw-K8s_Container": "container_name", "cw-K8s_Node": "node",
+	}[modelCode]
+	// 独立 Pod 由来源的 workload_kind=Pod 与 workload_name 表达；
+	// 其余模型的 name 必须来自各自维度，不能共享 Service 的字段。
 	if modelCode == "cw-K8s_Pod" && dimensionsText(dimensions, "workload_kind") == "Pod" {
-		values["name"] = dimensionsText(dimensions, "workload_name")
+		nameDimension = "workload_name"
+	}
+	dimensionByField := map[string]string{
+		"cluster_id": "bcs_cluster_id", "namespace": "namespace", "name": nameDimension,
+		"type": "workload_kind", "pod_name": "pod_name",
 	}
 	filters := make([]enrich.InstanceAttributeFilter, 0, len(fields))
 	for _, field := range fields {
-		value := values[field]
+		dimension := dimensionByField[field]
+		value := dimensionsText(dimensions, dimension)
 		if value == "" {
-			return nil, fmt.Errorf("k8s identity field %q is empty", field)
+			return nil, fmt.Errorf("k8s identity dimension %q is empty", dimension)
 		}
 		filters = append(filters, enrich.InstanceAttributeFilter{Field: field, Type: enrich.InstanceAttributeKeyword, Value: value})
 	}

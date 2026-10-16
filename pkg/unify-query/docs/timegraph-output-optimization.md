@@ -50,6 +50,25 @@ A loader fetch attempt is not necessarily one downstream HTTP request for
 non-direct routes. Backend scanning cost remains unknown unless reported by
 that backend; Matrix point/label counts are not a scan-cost measurement.
 
+### Independent Relation Fetches
+
+Independent relation groups use up to four workers and share the process-wide
+four-fetch limit. A worker retains at most one unapplied Matrix and waits for
+its application before fetching the next shard. Graph writes remain serial.
+
+Static bidirectional groups whose endpoint projections contain no conflicting
+non-primary attributes may deliver through one shared channel. This allows a
+ready group's next shard to proceed while an earlier group is still fetching.
+Groups with attribute-sensitive projections, target details, or a collection
+callback retain the original group order. The existing memory accounting,
+cancellation, backend limits, complete time grid and full result contract apply
+to both paths. Request-local numeric IDs may be allocated in a different order;
+cross-request comparisons must use full resource identities and relation keys.
+
+This removes cross-group head-of-line waiting. It does not parallelize a group's
+recursive shard tree or eliminate backend scanning, discovery probes or transfer
+cost, and it does not establish a production latency target.
+
 ### Candidate Planning
 
 `cmdb.v1beta3.shared_topology_plan_candidates` defaults to `true`.

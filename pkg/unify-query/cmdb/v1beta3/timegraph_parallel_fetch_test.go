@@ -5,6 +5,7 @@ package v1beta3
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,187 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
+
+func TestTopologyReadyGroupFailureReleasesWorkersAndReservations(t *testing.T) {
+	for _, unlimited := range []bool{false, true} {
+		for _, outcome := range []string{"backend", "apply", "cancel"} {
+			t.Run(strconv.FormatBool(unlimited)+"/"+outcome, func(t *testing.T) {
+				topologyAdmissionTestEnvironment(t, 1)
+				MaxSharedTopologyReservedBytes = 1 << 30
+				topologyMemoryHeadroom = func() (int64, bool) { return 4 << 30, true }
+				yoloMode = unlimited
+				parent, cancel := context.WithTimeout(metadata.WithExactTimeGrid(initTimeGraphQueryTestEnvironment()), time.Second)
+				defer cancel()
+				ctx, release, err := AcquireSharedTopology(parent)
+				require.NoError(t, err)
+				defer release()
+				provider := selectorProvider()
+				provider.schemas = provider.schemas[:1]
+				model := &Model{schemaProvider: provider}
+				grid, err := NewTopologyGrid([]int64{1700000000000})
+				require.NoError(t, err)
+				graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
+				require.NoError(t, err)
+				defer graph.Clean(ctx)
+				require.NoError(t, graph.enableResidency(ctx))
+				loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.Unix(1700000000, 0), end: time.Unix(1700000000, 0), step: time.Minute}
+				started := make(chan struct{})
+				var active atomic.Int32
+				failure := errors.New("later group backend unavailable")
+				loader.override = func(ctx context.Context, query *structured.QueryTs) (pl.Matrix, error) {
+					active.Add(1)
+					defer active.Add(-1)
+					if query.SpaceUid == "0" {
+						close(started)
+						<-ctx.Done()
+						return nil, ctx.Err()
+					}
+					select {
+					case <-started:
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					}
+					switch outcome {
+					case "cancel":
+						cancel()
+						return nil, ctx.Err()
+					case "apply":
+						return contractMatrix(map[string]string{"a_id": "root"}, grid.Timestamps...), nil
+					default:
+						return nil, failure
+					}
+				}
+				relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+				groups := make([]topologyFetchGroup, 2)
+				for i := range groups {
+					groups[i] = topologyFetchGroup{ctx: ctx, query: &structured.QueryTs{SpaceUid: strconv.Itoa(i), Start: "1700000000", End: "1700000000", Step: "1m0s"}, relations: relations}
+				}
+				queries := 0
+				err = loader.fetchTopologyGroups(groups, "space", &queries, nil, true)
+				if outcome == "backend" {
+					require.ErrorIs(t, err, failure)
+				} else if outcome == "cancel" {
+					require.ErrorIs(t, err, context.Canceled)
+				} else {
+					require.ErrorContains(t, err, "b_id")
+				}
+				require.Zero(t, active.Load())
+				require.Zero(t, len(topologyBackendSlots))
+				require.Zero(t, matrixResidencyState(graph).ReceivingBytes)
+				require.Zero(t, matrixResidencyState(graph).ResidentBytes)
+				graph.Clean(ctx)
+				release()
+				require.Equal(t, map[string]int64{"active": 0, "waiters": 0, "reserved": 0, "materialized": 0}, topologyAdmissionTestState())
+			})
+		}
+	}
+}
+
+func TestTopologyAttributeSensitiveGroupsKeepOrderedApplication(t *testing.T) {
+	old := yoloMode
+	yoloMode = true
+	t.Cleanup(func() { yoloMode = old })
+	provider := selectorProvider()
+	provider.schemas = provider.schemas[:1]
+	provider.fields["a"] = []string{"a_id", "b_id"}
+	model := &Model{schemaProvider: provider}
+	grid, err := NewTopologyGrid([]int64{1700000000000})
+	require.NoError(t, err)
+	var baseline []string
+	for _, parallel := range []bool{false, true} {
+		ctx := metadata.WithExactTimeGrid(initTimeGraphQueryTestEnvironment())
+		graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
+		require.NoError(t, err)
+		loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.Unix(1700000000, 0), end: time.Unix(1700000000, 0), step: time.Minute}
+		loader.override = func(_ context.Context, query *structured.QueryTs) (pl.Matrix, error) {
+			return contractMatrix(map[string]string{"a_id": "root", "b_id": query.SpaceUid}, grid.Timestamps...), nil
+		}
+		relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+		groups := make([]topologyFetchGroup, 2)
+		for i := range groups {
+			groups[i] = topologyFetchGroup{ctx: ctx, query: &structured.QueryTs{SpaceUid: strconv.Itoa(1 - i), Start: "1700000000", End: "1700000000", Step: "1m0s"}, relations: relations}
+		}
+		require.False(t, loader.canApplyTopologyGroupsAsReady(groups, nil))
+		queries := 0
+		require.NoError(t, loader.fetchTopologyGroups(groups, "space", &queries, nil, parallel))
+		snapshots, err := graph.findSharedTopologyDTO(ctx, grid, SharedTopologyQuery{SourceType: "a", SourceMatcher: cmdb.Matcher{"a_id": "root"}, MaxHops: 2})
+		require.NoError(t, err)
+		canonical := canonicalTopologyForTest(t, snapshots)
+		if !parallel {
+			baseline = canonical
+		} else {
+			require.Equal(t, baseline, canonical, "a projected non-primary attribute retains the original overwrite order")
+		}
+		graph.Clean(ctx)
+	}
+}
+
+func TestTopologySafeGroupsDrainShardsWithoutWaitingForFirstGroup(t *testing.T) {
+	old := yoloMode
+	yoloMode = true
+	t.Cleanup(func() { yoloMode = old })
+	provider := selectorProvider()
+	provider.schemas = provider.schemas[:1]
+	model := &Model{schemaProvider: provider}
+	grid, err := NewTopologyGrid([]int64{1700000000000, 1700000060000})
+	require.NoError(t, err)
+	relations := model.sharedTopologyRelations("space", nil, nil, DirectionBoth)
+	var baseline []string
+	for _, parallel := range []bool{false, true} {
+		ctx, cancel := context.WithTimeout(metadata.WithExactTimeGrid(initTimeGraphQueryTestEnvironment()), time.Second)
+		graph, err := newSharedTimeGraph(model.timeGraphConfig("space"), grid)
+		require.NoError(t, err)
+		secondFinished := make(chan struct{})
+		loader := &timeGraphMatrixLoader{model: model, graph: graph, topology: true, start: time.Unix(1700000000, 0), end: time.Unix(1700000060, 0), step: time.Minute}
+		loader.override = func(ctx context.Context, query *structured.QueryTs) (pl.Matrix, error) {
+			if query.SpaceUid == "0" && parallel {
+				select {
+				case <-secondFinished:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			if query.SpaceUid == "1" && query.Start != query.End {
+				return nil, metadata.ErrBackendResponseTooLarge
+			}
+			if query.SpaceUid == "1" && query.Start == "1700000060" {
+				close(secondFinished)
+			}
+			start, end, step, _, ok := timeGraphQueryRange(query)
+			if !ok {
+				return nil, context.Canceled
+			}
+			timestamps := []int64{}
+			for stamp := start; stamp <= end; stamp += step {
+				timestamps = append(timestamps, stamp)
+			}
+			return contractMatrix(map[string]string{"a_id": "root", "b_id": query.SpaceUid}, timestamps...), nil
+		}
+		groups := make([]topologyFetchGroup, 2)
+		for i := range groups {
+			groups[i] = topologyFetchGroup{ctx: ctx, query: &structured.QueryTs{SpaceUid: strconv.Itoa(i), Start: "1700000000", End: "1700000060", Step: "1m0s"}, relations: relations}
+		}
+		queries := 0
+		err = loader.fetchTopologyGroups(groups, "space", &queries, nil, parallel)
+		cancel()
+		if err != nil {
+			graph.Clean(context.Background())
+			t.Fatalf("parallel=%v: a ready later group's next shard must not wait for the first group: %v", parallel, err)
+		}
+		require.Equal(t, 2, queries)
+		require.Equal(t, 4, loader.physicalQueryCount)
+		snapshots, err := graph.findSharedTopologyDTO(context.Background(), grid, SharedTopologyQuery{SourceType: "a", SourceMatcher: cmdb.Matcher{"a_id": "root"}, MaxHops: 2})
+		require.NoError(t, err)
+		require.Len(t, snapshots, 2)
+		canonical := canonicalTopologyForTest(t, snapshots)
+		if !parallel {
+			baseline = canonical
+		} else {
+			require.Equal(t, baseline, canonical, "complete attributes, relations, quality and both frames remain identical across request-local ID allocation orders")
+		}
+		graph.Clean(context.Background())
+	}
+}
 
 func TestTopologyBackendFetchesShareFourProcessSlots(t *testing.T) {
 	var active, peak atomic.Int32

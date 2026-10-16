@@ -167,9 +167,26 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroupWithDelivery(group topolo
 	return loader.queryAndApply(group.ctx, group.query, apply)
 }
 
-// Fetch independently planned groups in parallel, but apply every Matrix in
-// the original group order. Each worker can hold at most one unapplied Matrix;
-// the shared matrix meter charges all of them when admission is enabled.
+// Only identity-only, static bidirectional groups without a collector may be
+// applied as they arrive. All other groups retain their attribute/collector
+// ordering. Graph mutation remains serial in both cases.
+func (loader *timeGraphMatrixLoader) canApplyTopologyGroupsAsReady(groups []topologyFetchGroup, collect func(cmdb.Relation, pl.Matrix)) bool {
+	if collect != nil || loader.graph == nil || loader.graph.shared == nil {
+		return false
+	}
+	for _, group := range groups {
+		if timeGraphTargetInfoShow(group.ctx) || !topologyStaticBidirectional(group.relations) ||
+			!loader.graph.topologyProjectionCompatible(group.relations, nil) {
+			return false
+		}
+	}
+	return true
+}
+
+// Fetch independently planned groups in parallel. Drain identity-only groups
+// as they arrive so a later group's first shard cannot block its next fetch
+// behind an earlier group's complete shard tree. Each worker still holds at
+// most one unapplied Matrix, charged while admission is enabled.
 func (loader *timeGraphMatrixLoader) fetchTopologyGroups(groups []topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix), parallel bool) error {
 	if !parallel || len(groups) < 2 || loader.lastMatrix.key != "" {
 		for _, group := range groups {
@@ -189,8 +206,16 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroups(groups []topologyFetchG
 	const workers = 4
 	events := make([]chan topologyFetchEvent, len(groups))
 	cancels := make([]context.CancelFunc, len(groups))
+	var ready chan topologyFetchEvent
+	if loader.canApplyTopologyGroupsAsReady(groups, collect) {
+		ready = make(chan topologyFetchEvent)
+	}
 	for i := range groups {
-		events[i] = make(chan topologyFetchEvent)
+		if ready != nil {
+			events[i] = ready
+		} else {
+			events[i] = make(chan topologyFetchEvent)
+		}
 		groups[i].ctx, cancels[i] = context.WithCancel(groups[i].ctx)
 	}
 	defer func() {

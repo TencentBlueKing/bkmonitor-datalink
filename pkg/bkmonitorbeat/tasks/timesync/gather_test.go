@@ -127,17 +127,17 @@ func TestGatherReloadRefreshesClient(t *testing.T) {
 	confB := &configs.TimeSyncConfig{BaseTaskParam: configs.NewBaseTaskParam(), BkNTPSource: "10.0.0.21:123", QueryTimeout: 2 * time.Second}
 
 	task := New(nil, confA).(*Gather)
-	if got := task.cli.opt.BkNTPSource; got != "10.0.0.20:123" {
+	if got := task.snapshot().cli.opt.BkNTPSource; got != "10.0.0.20:123" {
 		t.Fatalf("initial bk source = %q, want 10.0.0.20:123", got)
 	}
 
 	// 调度器 reload 对同一实例先 SetConfig 再 Reload，Client 必须使用最新配置
 	task.SetConfig(confB)
 	task.Reload()
-	if got := task.cli.opt.BkNTPSource; got != "10.0.0.21:123" {
+	if got := task.snapshot().cli.opt.BkNTPSource; got != "10.0.0.21:123" {
 		t.Fatalf("bk source after reload = %q, want 10.0.0.21:123", got)
 	}
-	if got := task.cli.opt.Timeout; got != 2*time.Second {
+	if got := task.snapshot().cli.opt.Timeout; got != 2*time.Second {
 		t.Fatalf("timeout after reload = %v, want 2s", got)
 	}
 }

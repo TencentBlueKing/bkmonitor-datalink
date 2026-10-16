@@ -12,6 +12,7 @@ package timesync
 import (
 	"context"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -23,9 +24,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+type gatherState struct {
+	taskConf *configs.TimeSyncConfig
+	cli      *Client
+}
+
 type Gather struct {
 	tasks.BaseTask
-	cli *Client
+
+	stateLock sync.RWMutex
+	state     *gatherState
 }
 
 func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
@@ -34,7 +42,8 @@ func New(globalConfig define.Config, taskConfig define.TaskConfig) define.Task {
 	gather.TaskConfig = taskConfig
 	gather.Init()
 
-	gather.cli = newClient(taskConfig.(*configs.TimeSyncConfig))
+	taskConf := taskConfig.(*configs.TimeSyncConfig)
+	gather.state = &gatherState{taskConf: taskConf, cli: newClient(taskConf)}
 
 	return gather
 }
@@ -48,28 +57,39 @@ func newClient(taskConf *configs.TimeSyncConfig) *Client {
 	})
 }
 
-// Reload 在调度器热加载后按最新 TaskConfig 重建 Client。
-// 调度器 reload 对同一 Gather 实例执行 SetConfig + Reload；基类 Reload 是空实现，
-// 若不重建 Client，bk_ntp_source 等新配置在本周期不会生效。
+// Reload 在调度器热加载后，用最新 TaskConfig 一次性替换配置与 Client 快照。
+// 调度器 reload 对同一 Gather 实例执行 SetConfig + Reload；基类 Reload 是空实现。
 func (g *Gather) Reload() {
 	taskConf, ok := g.TaskConfig.(*configs.TimeSyncConfig)
 	if !ok {
 		return
 	}
-	g.cli = newClient(taskConf)
+
+	state := &gatherState{taskConf: taskConf, cli: newClient(taskConf)}
+	g.stateLock.Lock()
+	g.state = state
+	g.stateLock.Unlock()
+}
+
+func (g *Gather) snapshot() *gatherState {
+	g.stateLock.RLock()
+	defer g.stateLock.RUnlock()
+	return g.state
 }
 
 func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
+	state := g.snapshot()
+	taskConf := state.taskConf
+
 	g.PreRun(ctx)
 	defer g.PostRun(ctx)
 
-	taskConf := g.TaskConfig.(*configs.TimeSyncConfig)
-	bizID := g.TaskConfig.GetBizID()
-	dataID := g.TaskConfig.GetDataID()
-	labels := g.TaskConfig.GetLabels()
+	bizID := taskConf.GetBizID()
+	dataID := taskConf.GetDataID()
+	labels := taskConf.GetLabels()
 
 	bkConfigured := taskConf.BkNTPSource != ""
-	stat, details, err := g.cli.QueryAll()
+	stat, details, err := state.cli.QueryAll()
 	if err != nil {
 		if bkConfigured && taskConf.NtpdPath == "" && taskConf.ChronyAddress == "" {
 			logger.Warnf("no local ntp source configured: %v", err)
@@ -85,7 +105,7 @@ func (g *Gather) Run(ctx context.Context, e chan<- define.Event) {
 		}
 	}
 
-	bkResult, bkErr := g.cli.QueryBlueking()
+	bkResult, bkErr := state.cli.QueryBlueking()
 	if bkConfigured && bkErr != nil {
 		logger.Warnf("failed to query blueking ntp: %v", bkErr)
 	}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -22,6 +23,7 @@ import (
 
 // setDefaultConfig
 func setDefaultConfig() {
+	viper.SetDefault(config.ConsulEnabledConfigPath, true)
 	viper.SetDefault(ServiceNameConfigPath, "")
 	viper.SetDefault(KVBasePathConfigPath, "bkmonitorv3/unify-query")
 	viper.SetDefault(AddressConfigPath, "http://127.0.0.1:8500")

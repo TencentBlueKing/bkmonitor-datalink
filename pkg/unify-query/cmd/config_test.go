@@ -167,4 +167,18 @@ func TestResetFeatureFlagsCommand(t *testing.T) {
 	if !strings.Contains(output.String(), "snapshot deleted") || strings.Contains(output.String(), "test-secret") {
 		t.Fatalf("unexpected command output: %q", output.String())
 	}
+
+	if err := os.WriteFile(configFile, []byte(configData+"consul:\n  enabled: false\nstorage:\n  source: redis\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mr.DB(3).Set(key, "preserved snapshot")
+	output.Reset()
+	commandsBefore := mr.CommandCount()
+	rootCmd.SetArgs([]string{"--config", configFile, "config", "reset-feature-flags"})
+	if err := rootCmd.Execute(); err == nil || !strings.Contains(err.Error(), "requires consul.enabled=true") {
+		t.Fatalf("reset with disabled Consul must fail explicitly, got %v", err)
+	}
+	if actual, _ := mr.DB(3).Get(key); actual != "preserved snapshot" || mr.CommandCount() != commandsBefore {
+		t.Fatal("rejected reset must not delete the snapshot or issue Redis commands")
+	}
 }

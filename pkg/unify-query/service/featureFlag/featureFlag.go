@@ -17,6 +17,7 @@ import (
 
 	ffclient "github.com/thomaspoignant/go-feature-flag"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -224,17 +225,21 @@ func (s *Service) Reload(ctx context.Context) {
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 
-	// Feature Flag 迁移期间优先读取 Redis，Redis 没有快照或不可用时回退到 Consul。
-	s.provider = newFeatureFlagProvider(s.ctx)
+	provider, err := newFeatureFlagProvider(s.ctx)
+	if err != nil {
+		log.Errorf(s.ctx, "create feature flag provider failed, error: %s", err)
+		return
+	}
+	s.provider = provider
 
-	err := s.loopReloadFeatureFlags(s.ctx)
+	err = s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {
 		log.Errorf(s.ctx, "start loop feature flags failed,error: %s", err)
 		return
 	}
 	s.registerAsActive()
 
-	log.Infof(s.ctx, "feature flag service reloaded or start success.")
+	log.Infof(s.ctx, "feature flag service reload loop started.")
 }
 
 // Wait
@@ -261,23 +266,28 @@ func (s *Service) Close() {
 	s.clientMu.Unlock()
 }
 
-// newFeatureFlagProvider 创建 Redis 优先、Consul 回退的 Feature Flag Provider。
-// Redis 尚未初始化或缺少 key 前缀时仍保留 Consul 读取能力，保证迁移期间现有
-// Consul 配置继续生效。
-func newFeatureFlagProvider(ctx context.Context) FeatureFlagProvider {
-	consulProvider := consul.NewFeatureFlagProvider()
-	redisClient := redis.Client()
-	if redisClient == nil {
-		log.Warnf(ctx, "redis client is not initialized, feature flags will use consul fallback")
-		return consulProvider
+// newFeatureFlagProvider 仅在启用 Consul 时保留迁移来源，否则由 Redis 初始化默认快照。
+func newFeatureFlagProvider(ctx context.Context) (FeatureFlagProvider, error) {
+	var consulProvider FeatureFlagProvider
+	if config.ConsulEnabled() {
+		consulProvider = consul.NewFeatureFlagProvider()
 	}
-
+	redisClient := redis.Client()
 	basePath := redisService.KVBasePath
-	if basePath == "" {
-		log.Warnf(ctx, "redis kv base path is not configured, feature flags will use consul fallback")
-		return consulProvider
+	var redisErr error
+	if redisClient == nil {
+		redisErr = fmt.Errorf("redis client is not initialized")
+	} else if basePath == "" {
+		redisErr = fmt.Errorf("redis.kv_base_path must not be empty")
+	}
+	if redisErr != nil {
+		if consulProvider == nil {
+			return nil, redisErr
+		}
+		log.Warnf(ctx, "feature flags will use consul fallback: %s", redisErr)
+		return consulProvider, nil
 	}
 
 	provider := redis.NewFeatureFlagClient(redisClient, basePath)
-	return newFallbackFeatureFlagProvider(provider, consulProvider, provider.InitializeFeatureFlags)
+	return newFallbackFeatureFlagProvider(provider, consulProvider, provider.InitializeFeatureFlags), nil
 }

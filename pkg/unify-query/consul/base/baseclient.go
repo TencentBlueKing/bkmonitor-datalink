@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
@@ -27,8 +28,10 @@ type Client struct {
 	apiClient *api.Client
 	auth      *AuthConfig
 
-	watchPlanMap       map[string]*watch.Plan
-	watchPrefixPlanMap map[string]*watch.Plan
+	watchMu            sync.Mutex
+	closed             bool
+	watchPlanMap       map[string][]*watch.Plan
+	watchPrefixPlanMap map[string][]*watch.Plan
 
 	// 链接相关信息
 	// address IP:Port
@@ -58,8 +61,8 @@ func NewClientWithAuth(address, caFile, keyFile, certFile string, auth *AuthConf
 			keyFilePath:        keyFile,
 			certFilePath:       certFile,
 			auth:               auth,
-			watchPlanMap:       make(map[string]*watch.Plan),
-			watchPrefixPlanMap: make(map[string]*watch.Plan),
+			watchPlanMap:       make(map[string][]*watch.Plan),
+			watchPrefixPlanMap: make(map[string][]*watch.Plan),
 		}
 	)
 
@@ -127,7 +130,11 @@ var GetPlan = func(params map[string]any, outchan chan<- any) (*watch.Plan, erro
 		return nil, err
 	}
 	plan.Handler = func(num uint64, inter any) {
-		outchan <- inter
+		// Consumers reload a full snapshot, so coalesce pending notifications.
+		select {
+		case outchan <- inter:
+		default:
+		}
 	}
 	return plan, nil
 }
@@ -339,11 +346,16 @@ func (bc *Client) makeWatchParams(path string, separator string) (map[string]any
 
 // addPlanIntoList 将plan添加到列表中
 func (bc *Client) addPlanIntoList(plan *watch.Plan, path string, separator string) error {
+	bc.watchMu.Lock()
+	defer bc.watchMu.Unlock()
+	if bc.closed {
+		return fmt.Errorf("consul client is closed")
+	}
 	if separator == "" {
-		bc.watchPlanMap[path] = plan
+		bc.watchPlanMap[path] = append(bc.watchPlanMap[path], plan)
 		return nil
 	}
-	bc.watchPrefixPlanMap[path] = plan
+	bc.watchPrefixPlanMap[path] = append(bc.watchPrefixPlanMap[path], plan)
 	return nil
 }
 
@@ -357,10 +369,13 @@ func (bc *Client) Watch(path string, separator string) (<-chan any, error) {
 		return nil, err
 	}
 	// 若监听到消息则向外输出
-	outChan := make(chan any)
+	outChan := make(chan any, 1)
 	// consulAPI提供的监听方案
 	plan, err := GetPlan(watchParams, outChan)
 	if err != nil {
+		return nil, err
+	}
+	if err := bc.addPlanIntoList(plan, path, separator); err != nil {
 		return nil, err
 	}
 	go func() {
@@ -374,25 +389,22 @@ func (bc *Client) Watch(path string, separator string) (<-chan any, error) {
 			}
 		}
 	}()
-	// 添加到队列里进行记录
-	err = bc.addPlanIntoList(plan, path, separator)
-	if err != nil {
-		return nil, err
-	}
 	return outChan, nil
 }
 
 // stopPlan 关闭plan，并且删除列表
-func (bc *Client) stopPlan(planMap map[string]*watch.Plan, path string) {
-	if !planMap[path].IsStopped() {
-		planMap[path].Stop()
+func (bc *Client) stopPlan(planMap map[string][]*watch.Plan, path string) {
+	for _, plan := range planMap[path] {
+		plan.Stop()
 	}
 	delete(planMap, path)
 }
 
 // StopWatch 停止对指定path的监听，plantype: path|prefix
 func (bc *Client) StopWatch(path string, planType string) error {
-	var planMap map[string]*watch.Plan
+	bc.watchMu.Lock()
+	defer bc.watchMu.Unlock()
+	var planMap map[string][]*watch.Plan
 	switch planType {
 	case "path":
 		planMap = bc.watchPlanMap
@@ -413,6 +425,9 @@ func (bc *Client) StopWatch(path string, planType string) error {
 
 // Close 停止该client下的所有监听
 func (bc *Client) Close() error {
+	bc.watchMu.Lock()
+	defer bc.watchMu.Unlock()
+	bc.closed = true
 	// 关闭所有监听
 	for path := range bc.watchPlanMap {
 		bc.stopPlan(bc.watchPlanMap, path)

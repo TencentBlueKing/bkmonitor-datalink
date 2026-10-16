@@ -90,6 +90,9 @@ func loadConfig(output io.Writer, reload bool) error {
 	if err := candidate.ReadConfig(bytes.NewReader(data)); err != nil {
 		return fmt.Errorf("parse config file failed")
 	}
+	if err := validateConsulConfig(&candidate); err != nil {
+		return err
+	}
 	snapshot := activeSnapshot
 	if reload {
 		if snapshot == nil {

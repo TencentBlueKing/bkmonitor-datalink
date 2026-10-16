@@ -12,9 +12,11 @@ package http
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 )
 
 func TestHandleFeatureFlagDoesNotRejectSourceParameter(t *testing.T) {
@@ -27,5 +29,37 @@ func TestHandleFeatureFlagDoesNotRejectSourceParameter(t *testing.T) {
 
 	if writer.Code != http.StatusOK {
 		t.Fatalf("expected source parameter not to reject fallback refresh, got status %d", writer.Code)
+	}
+}
+
+func TestHandlePrintUsesCurrentDiagnosticPaths(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	paths := map[string]string{
+		SpacePrintHandlePathConfigPath:    "/current-spaces",
+		TsDBPrintHandlePathConfigPath:     "/current-storage",
+		InfluxDBPrintHandlePathConfigPath: "/current-influxdb",
+	}
+	for key, path := range paths {
+		previous := viper.Get(key)
+		viper.Set(key, path)
+		t.Cleanup(func() { viper.Set(key, previous) })
+	}
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/print", nil)
+
+	HandlePrint(ctx)
+
+	if writer.Code != http.StatusOK {
+		t.Fatalf("expected compatible diagnostic entry, got status %d", writer.Code)
+	}
+	body := writer.Body.String()
+	if !strings.Contains(body, "retired") {
+		t.Fatalf("expected retired diagnostic notice, got %q", body)
+	}
+	for _, path := range paths {
+		if !strings.Contains(body, path) {
+			t.Errorf("expected current diagnostic path %q in %q", path, body)
+		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-func partitionTestMatches(t *testing.T, ts *structured.QueryTs, ls labels.Labels) bool {
+func partitionTestMatches(t testing.TB, ts *structured.QueryTs, ls labels.Labels) bool {
 	t.Helper()
 	groups, err := ts.QueryList[0].Conditions.AnalysisConditions()
 	require.NoError(t, err)
@@ -97,7 +98,7 @@ func TestTopologyPartitionComplementsPreserveORAndUnknownValues(t *testing.T) {
 	require.Equal(t, before, after)
 }
 
-func partitionTestModel(t *testing.T, limited, partialProbe, failProbe, cancelProbe bool, records *partitionTestRecords, cancel context.CancelFunc) *Model {
+func partitionTestModel(t testing.TB, limited, partialProbe, failProbe, cancelProbe bool, records *partitionTestRecords, cancel context.CancelFunc) *Model {
 	provider := selectorProvider()
 	provider.resources = []ResourceType{"a", "b"}
 	provider.primary = map[ResourceType][]string{"a": {"a_id"}, "b": {"b_id"}}
@@ -116,6 +117,8 @@ func partitionTestModel(t *testing.T, limited, partialProbe, failProbe, cancelPr
 		data = append(data, contractMatrix(map[string]string{"a_id": fmt.Sprintf("root-%02d", i), "b_id": "target"}, stamps...)...)
 	}
 	m.timeGraphVMQueryWithPartial = func(ctx context.Context, ts *structured.QueryTs, _ string, _ bool, s, e time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+		records.mu.Lock()
+		defer records.mu.Unlock()
 		require.True(t, metadata.GetQueryParams(ctx).IsSkipK8s)
 		if timeGraphQueryStage(ctx) == "relation-partition" {
 			records.probes++
@@ -172,7 +175,11 @@ func partitionTestModel(t *testing.T, limited, partialProbe, failProbe, cancelPr
 		// Large repeated label payload makes time slicing expensive. Cardinality
 		// slices can carry the entire grid with the same independent byte budget.
 		bytes := len(selected)*1000 + points*10
-		if limited && bytes > 16300 {
+		limit := records.responseLimit
+		if limit == 0 {
+			limit = 16300
+		}
+		if limited && bytes > limit {
 			records.rejected++
 			return nil, false, metadata.ErrBackendResponseTooLarge
 		}
@@ -189,6 +196,8 @@ func partitionTestModel(t *testing.T, limited, partialProbe, failProbe, cancelPr
 }
 
 type partitionTestRecords struct {
+	responseLimit                             int
+	mu                                        sync.Mutex
 	probes, fetches, rejected, series, points int
 	coverage                                  map[string]int
 }

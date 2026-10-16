@@ -434,6 +434,7 @@ type timeGraphMatrixLoader struct {
 	lastMatrix             timeGraphMatrixSlot
 	matrixToken            string
 	queryTiming            *timeGraphQueryTiming
+	partitionDispatch      func(context.Context, []*structured.QueryTs, []string, int) error
 }
 
 // Track the union of query intervals so build wall time remains meaningful
@@ -747,16 +748,24 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 		plan.successfulPoints = 0
 	}
 	if exact && len(plan.partitionFields) > 0 {
-		left, right, remaining, split, splitErr := loader.partitionTopologyQuery(shardCtx, queryTs, plan.partitionFields)
+		fanout := 2
+		if loader.partitionDispatch != nil {
+			fanout = 4
+		}
+		parts, remaining, splitErr := loader.partitionTopologyQuery(shardCtx, queryTs, plan.partitionFields, fanout)
 		// A dimension is attempted once on each branch. Failed/ineffective probes
 		// fall back to the original exact time shards without repeatedly probing.
 		plan.partitionFields = nil
 		if splitErr != nil {
 			return splitErr
 		}
-		if split {
+		if len(parts) > 1 {
 			span.Set("shard-partition", true)
-			for _, part := range []*structured.QueryTs{left, right} {
+			span.Set("shard-partition-count", len(parts))
+			if loader.partitionDispatch != nil {
+				return loader.partitionDispatch(shardCtx, parts, remaining, depth+1)
+			}
+			for _, part := range parts {
 				childPlan := timeGraphShardPlan{partitionFields: remaining}
 				if err = loader.queryAndApplyShard(shardCtx, part, apply, depth+1, &childPlan); err != nil {
 					return err

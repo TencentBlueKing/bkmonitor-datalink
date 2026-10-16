@@ -61,7 +61,7 @@ func topologyPartitionFields(ts *structured.QueryTs) []string {
 // The complementary !~ branch always runs, including for values absent from a
 // partial probe or appearing later. Both branches retain the full original
 // time grid, conditions, aggregation dimensions and endpoint identities.
-func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context, ts *structured.QueryTs, fields []string) (left, right *structured.QueryTs, remaining []string, split bool, err error) {
+func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context, ts *structured.QueryTs, fields []string, fanout int) (parts []*structured.QueryTs, remaining []string, err error) {
 	for i, field := range fields {
 		if err = ctx.Err(); err != nil {
 			return
@@ -90,27 +90,88 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 			return
 		}
 		if probeErr != nil {
-			return nil, nil, nil, false, nil
+			return nil, nil, nil
 		}
-		pattern, ok := topologyPartitionPattern(matrix, field)
-		if !ok {
-			continue
-		}
-		if _, compileErr := labels.NewMatcher(labels.MatchRegexp, field, pattern); compileErr != nil {
-			continue
-		}
-
-		left, err = topologyQueryWithPartition(ts, field, pattern, structured.ConditionRegEqual)
+		parts, err = topologyPartitionQueries(ts, matrix, field, fanout)
 		if err != nil {
 			return
 		}
-		right, err = topologyQueryWithPartition(ts, field, pattern, structured.ConditionNotRegEqual)
-		if err != nil {
-			return
+		if len(parts) > 1 {
+			return parts, fields[i+1:], nil
 		}
-		return left, right, fields[i+1:], true, nil
 	}
-	return nil, nil, nil, false, nil
+	return nil, nil, nil
+}
+
+// Reuse one probe to split its heaviest observed bucket up to fanout ways.
+// Every replacement is a positive/negative pair, so even a partial or stale
+// sample covers all unseen, missing and future values exactly once. Samples
+// choose the plan only; no probe Matrix is retained by the queued queries.
+func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field string, fanout int) ([]*structured.QueryTs, error) {
+	type bucket struct {
+		query  *structured.QueryTs
+		sample pl.Matrix
+	}
+	buckets := []bucket{{query: ts, sample: matrix}}
+	for len(buckets) < fanout {
+		chosen := -1
+		weight := 0.0
+		pattern := ""
+		for i, candidate := range buckets {
+			candidatePattern, ok := topologyPartitionPattern(candidate.sample, field)
+			if !ok {
+				continue
+			}
+			candidateWeight := 0.0
+			for _, series := range candidate.sample {
+				candidateWeight += topologyPartitionSeriesWeight(series)
+			}
+			if chosen < 0 || candidateWeight > weight {
+				chosen, weight, pattern = i, candidateWeight, candidatePattern
+			}
+		}
+		if chosen < 0 {
+			break
+		}
+		matcher, err := labels.NewMatcher(labels.MatchRegexp, field, pattern)
+		if err != nil {
+			break
+		}
+		parent := buckets[chosen]
+		left, err := topologyQueryWithPartition(parent.query, field, pattern, structured.ConditionRegEqual)
+		if err != nil {
+			return nil, err
+		}
+		right, err := topologyQueryWithPartition(parent.query, field, pattern, structured.ConditionNotRegEqual)
+		if err != nil {
+			return nil, err
+		}
+		leftBucket, rightBucket := bucket{query: left}, bucket{query: right}
+		for _, series := range parent.sample {
+			if matcher.Matches(series.Metric.Get(field)) {
+				leftBucket.sample = append(leftBucket.sample, series)
+			} else {
+				rightBucket.sample = append(rightBucket.sample, series)
+			}
+		}
+		buckets[chosen] = leftBucket
+		buckets = append(buckets, rightBucket)
+	}
+	parts := make([]*structured.QueryTs, len(buckets))
+	for i, bucket := range buckets {
+		parts[i] = bucket.query
+	}
+	return parts, nil
+}
+
+func topologyPartitionSeriesWeight(series pl.Series) float64 {
+	weight := 1.0
+	for _, point := range series.Points {
+		if !math.IsNaN(point.V) && !math.IsInf(point.V, 0) && point.V > weight {
+			weight = point.V
+		}
+	}
+	return weight
 }
 
 // Choose a character-position split using approximate physical series counts.
@@ -124,12 +185,7 @@ func topologyPartitionPattern(matrix pl.Matrix, field string) (string, bool) {
 		if len(series.Points) == 0 {
 			continue
 		}
-		weight := 1.0
-		for _, point := range series.Points {
-			if !math.IsNaN(point.V) && !math.IsInf(point.V, 0) && point.V > weight {
-				weight = point.V
-			}
-		}
+		weight := topologyPartitionSeriesWeight(series)
 		value := series.Metric.Get(field)
 		weights[value] = max(weights[value], weight)
 	}

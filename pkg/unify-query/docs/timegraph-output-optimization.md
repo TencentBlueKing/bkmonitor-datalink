@@ -65,9 +65,27 @@ cancellation, backend limits, complete time grid and full result contract apply
 to both paths. Request-local numeric IDs may be allocated in a different order;
 cross-request comparisons must use full resource identities and relation keys.
 
-This removes cross-group head-of-line waiting. It does not parallelize a group's
-recursive shard tree or eliminate backend scanning, discovery probes or transfer
-cost, and it does not establish a production latency target.
+For eligible groups, a response-size rejection can also return independent
+cardinality branches to the same four-worker queue. A single large relation
+can therefore use idle workers after smaller relations finish. The queue holds
+query plans, not fetched Matrices; it does not create a new worker pool for
+each relation or recursive split. Cancellation stops queued and running work
+before the graph is cleaned up.
+
+One single-point partition probe can produce up to four branches by splitting
+the heaviest observed bucket again in memory. Each split adds complementary
+positive/negative filters, preserving the original OR conditions, aggregation
+dimensions and complete time grid. Missing, unseen and later labels still
+belong to exactly one branch, even when the probe was partial. Probe values
+choose a query plan and are never used as an exhaustive identity list. Probe
+Matrices are discarded rather than cached in queued plans. Further oversized
+branches retain the existing dimension and exact-time fallback.
+
+Time shards remain serial within their worker to reuse an observed successful
+width. Backend scanning, discovery and transfer costs remain; neither the
+four-worker scheduler nor the controlled-delay benchmark establishes a
+production latency target. No input limit, cross-request cache or new runtime
+configuration is introduced.
 
 ### Candidate Planning
 

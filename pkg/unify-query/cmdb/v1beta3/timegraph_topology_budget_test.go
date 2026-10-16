@@ -132,16 +132,20 @@ func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
 						done <- err
 					}()
 				}
-				for i := 0; i < concurrency; i++ {
+				// Admission still accepts eight requests, while the process lets
+				// only four physical backend calls run at the same time.
+				for i := 0; i < cap(topologyBackendSlots); i++ {
 					select {
 					case <-entered:
 					case err := <-done:
-						t.Fatalf("query completed before all requests reached the backend: %v", err)
+						t.Fatalf("query completed before four requests reached the backend: %v", err)
 					case <-ctx.Done():
-						t.Fatal("concurrent requests did not all reach the backend")
+						t.Fatal("four concurrent requests did not reach the backend")
 					}
 				}
-				require.Equal(t, float64(concurrency), readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
+				require.Eventually(t, func() bool {
+					return float64(concurrency) == readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge")
+				}, time.Second, 10*time.Millisecond)
 				if outcome == "canceled" {
 					cancel()
 				} else {
@@ -157,6 +161,9 @@ func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
 					case "backend failure":
 						require.ErrorIs(t, err, backendErr)
 					}
+				}
+				if outcome != "canceled" {
+					require.Len(t, entered, concurrency-cap(topologyBackendSlots))
 				}
 				require.Zero(t, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
 			})

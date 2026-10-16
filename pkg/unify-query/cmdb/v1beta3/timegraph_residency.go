@@ -338,6 +338,10 @@ type matrixResidency struct {
 	stats   matrixResidencyStats
 }
 
+// Bound physical topology fetches across requests in the process. A request
+// waiting to apply a fetched Matrix does not occupy a backend slot.
+var topologyBackendSlots = make(chan struct{}, 4)
+
 func (m *matrixResidency) set(token string, next matrixHolder) error {
 	if m == nil {
 		return nil
@@ -423,22 +427,34 @@ func (loader *timeGraphMatrixLoader) matrixMemory() *matrixResidency {
 }
 
 func (loader *timeGraphMatrixLoader) fetchResident(ctx context.Context, fetch func() (pl.Matrix, bool, error)) (matrix pl.Matrix, partial bool, err error) {
+	if loader.topology {
+		select {
+		case topologyBackendSlots <- struct{}{}:
+			defer func() { <-topologyBackendSlots }()
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+	}
 	meter := loader.matrixMemory()
 	if meter == nil {
 		return fetch()
 	}
-	if err = meter.release("current"); err != nil {
+	token := loader.matrixToken
+	if token == "" {
+		token = "current"
+	}
+	if err = meter.release(token); err != nil {
 		return nil, false, err
 	}
-	if err = meter.begin("current", metadata.BackendResponseLimit(ctx)); err != nil {
+	if err = meter.begin(token, metadata.BackendResponseLimit(ctx)); err != nil {
 		return nil, false, err
 	}
 	matrix, partial, err = fetch()
 	if err == nil {
-		err = meter.commit("current", matrix)
+		err = meter.commit(token, matrix)
 	}
 	if err != nil {
-		_ = meter.release("current")
+		_ = meter.release(token)
 		return nil, partial, err
 	}
 	return matrix, partial, nil

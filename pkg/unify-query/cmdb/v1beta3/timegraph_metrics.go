@@ -85,12 +85,17 @@ func observeTimeGraphBuild(ctx context.Context, span *trace.Span, graph *TimeGra
 	for kind, count := range map[string]int{"nodes": graph.nodeBuilder.Length(), "edges": graph.edgeCount, "node_infos": graph.nodeInfoCount, "timepoints": graph.timepointCount()} {
 		metric.CMDBTimeGraphSizeObserve(ctx, "build", kind, count)
 	}
-	// Matrix 调用当前串行；余下墙钟包含 query 构造、属性与目标索引，不是纯 CPU 时间。
-	local := time.Since(started) - loader.queryDuration
-	metric.CMDBTimeGraphBuildPhaseObserve(ctx, storage, "matrix", outcome, loader.queryDuration)
+	// 并行查询按时间区间并集计入构建墙钟；单次查询指标仍保留各自耗时。
+	matrixWall := loader.queryDuration
+	if loader.queryTiming != nil {
+		matrixWall = loader.queryTiming.elapsed()
+	}
+	local := max(time.Duration(0), time.Since(started)-matrixWall)
+	metric.CMDBTimeGraphBuildPhaseObserve(ctx, storage, "matrix", outcome, matrixWall)
 	metric.CMDBTimeGraphBuildPhaseObserve(ctx, storage, "local", outcome, local)
 	metric.CMDBTimeGraphMatrixQueriesObserve(ctx, storage, outcome, loader.queryCount, loader.physicalQueryCount, loader.reusedQueryCount)
-	span.Set("matrix-query-duration-seconds", loader.queryDuration.Seconds())
+	span.Set("matrix-query-duration-seconds", matrixWall.Seconds())
+	span.Set("matrix-query-service-seconds", loader.queryDuration.Seconds())
 	span.Set("local-build-duration-seconds", local.Seconds())
 	span.Set("graph-legacy-timepoint-count", len(graph.timeGraph))
 	if graph.shared != nil {

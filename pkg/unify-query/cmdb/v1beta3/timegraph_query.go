@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -228,7 +229,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	}()
 
 	sourceInfoQueryCount, relationEdgeQueryCount, targetInfoQueryCount := 0, 0, 0
-	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil}
+	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil, queryTiming: &timeGraphQueryTiming{}}
 	defer func() {
 		loader.lastMatrix = timeGraphMatrixSlot{}
 		tg.matrixResidency.clear()
@@ -431,6 +432,44 @@ type timeGraphMatrixLoader struct {
 	physicalQueryCount     int
 	reusedQueryCount       int
 	lastMatrix             timeGraphMatrixSlot
+	matrixToken            string
+	queryTiming            *timeGraphQueryTiming
+}
+
+// Track the union of query intervals so build wall time remains meaningful
+// when physical calls overlap. Per-query stage metrics still report each call.
+type timeGraphQueryTiming struct {
+	sync.Mutex
+	active   int
+	started  time.Time
+	duration time.Duration
+}
+
+func (timing *timeGraphQueryTiming) begin(now time.Time) {
+	timing.Lock()
+	if timing.active == 0 {
+		timing.started = now
+	}
+	timing.active++
+	timing.Unlock()
+}
+
+func (timing *timeGraphQueryTiming) end() {
+	timing.Lock()
+	timing.active--
+	if timing.active == 0 {
+		timing.duration += time.Since(timing.started)
+	}
+	timing.Unlock()
+}
+
+func (timing *timeGraphQueryTiming) elapsed() time.Duration {
+	timing.Lock()
+	defer timing.Unlock()
+	if timing.active > 0 {
+		return timing.duration + time.Since(timing.started)
+	}
+	return timing.duration
 }
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, bool, error) {
@@ -454,6 +493,10 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 		queryTs.NotTimeAlign = true
 	}
 	queryStarted := time.Now()
+	if loader.queryTiming != nil {
+		loader.queryTiming.begin(queryStarted)
+		defer loader.queryTiming.end()
+	}
 	stage := timeGraphQueryStage(queryCtx)
 	loadMetricName := timeGraphLoadMetricName(queryTs)
 	var loadSize metric.TimeGraphLoadSize

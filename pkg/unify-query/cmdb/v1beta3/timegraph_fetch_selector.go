@@ -4,7 +4,9 @@ package v1beta3
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
@@ -24,6 +26,16 @@ type topologyFetchGroup struct {
 	ctx       context.Context
 	query     *structured.QueryTs
 	relations []cmdb.Relation
+}
+
+type topologyMatrixDelivery func(context.Context, pl.Matrix, func(context.Context, pl.Matrix) error) error
+
+type topologyFetchEvent struct {
+	ctx    context.Context
+	matrix pl.Matrix
+	apply  func(context.Context, pl.Matrix) error
+	ack    chan error
+	err    error
 }
 
 // compileTopologyFetches 仅合并路由、投影、条件、用户和后端语义均相同的物理查询。
@@ -92,6 +104,10 @@ func (loader *timeGraphMatrixLoader) reserveRelationApplication(ctx context.Cont
 }
 
 func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix)) error {
+	return loader.fetchTopologyGroupWithDelivery(group, space, queries, collect, nil)
+}
+
+func (loader *timeGraphMatrixLoader) fetchTopologyGroupWithDelivery(group topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix), delivery topologyMatrixDelivery) error {
 	apply := func(ctx context.Context, matrix pl.Matrix) error {
 		if !timeGraphTargetInfoShow(ctx) && loader.graph.topologyReversePair(group.relations) {
 			loader.reusedQueryCount++
@@ -134,6 +150,12 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup
 		}
 		return nil
 	}
+	if delivery != nil {
+		actual := apply
+		apply = func(ctx context.Context, matrix pl.Matrix) error {
+			return delivery(ctx, matrix, actual)
+		}
+	}
 	if len(group.input.identities) > 0 {
 		return loader.loadFrontierBatch(group.ctx, space, group.input.relation, group.input.targetAnchor, group.input.identities, apply, queries)
 	}
@@ -143,6 +165,134 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup
 		return loader.queryAndApplyShard(group.ctx, group.query, apply, 0, &plan)
 	}
 	return loader.queryAndApply(group.ctx, group.query, apply)
+}
+
+// Fetch independently planned groups in parallel, but apply every Matrix in
+// the original group order. Each worker can hold at most one unapplied Matrix;
+// the shared matrix meter charges all of them when admission is enabled.
+func (loader *timeGraphMatrixLoader) fetchTopologyGroups(groups []topologyFetchGroup, space string, queries *int, collect func(cmdb.Relation, pl.Matrix), parallel bool) error {
+	if !parallel || len(groups) < 2 || loader.lastMatrix.key != "" {
+		for _, group := range groups {
+			if err := loader.fetchTopologyGroup(group, space, queries, collect); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// The serial loader's last physical response has no future reuse here.
+	if meter := loader.matrixMemory(); meter != nil {
+		if err := meter.release("current"); err != nil {
+			return err
+		}
+	}
+
+	const workers = 4
+	events := make([]chan topologyFetchEvent, len(groups))
+	cancels := make([]context.CancelFunc, len(groups))
+	for i := range groups {
+		events[i] = make(chan topologyFetchEvent)
+		groups[i].ctx, cancels[i] = context.WithCancel(groups[i].ctx)
+	}
+	defer func() {
+		for _, cancel := range cancels {
+			cancel()
+		}
+	}()
+	jobs := make(chan int, len(groups))
+	for i := range groups {
+		jobs <- i
+	}
+	close(jobs)
+	var running sync.WaitGroup
+	results := make([]*timeGraphMatrixLoader, len(groups))
+	counts := make([]int, len(groups))
+	defer func() {
+		running.Wait()
+		for index, child := range results {
+			if child == nil {
+				continue
+			}
+			*queries += counts[index]
+			loader.queryCount += child.queryCount
+			loader.pointCount += child.pointCount
+			loader.queryDuration += child.queryDuration
+			loader.physicalQueryCount += child.physicalQueryCount
+			loader.reusedQueryCount += child.reusedQueryCount
+		}
+	}()
+	for worker := 0; worker < min(workers, len(groups)); worker++ {
+		running.Add(1)
+		go func(worker int) {
+			defer running.Done()
+			for index := range jobs {
+				group := groups[index]
+				child := *loader
+				child.queryCount, child.pointCount, child.physicalQueryCount, child.reusedQueryCount = 0, 0, 0, 0
+				child.queryDuration = 0
+				child.lastMatrix = timeGraphMatrixSlot{}
+				child.matrixToken = fmt.Sprintf("parallel-%d", worker)
+				count := 0
+				deliver := func(ctx context.Context, matrix pl.Matrix, apply func(context.Context, pl.Matrix) error) error {
+					ack := make(chan error, 1)
+					select {
+					case events[index] <- topologyFetchEvent{ctx: ctx, matrix: matrix, apply: apply, ack: ack}:
+					case <-group.ctx.Done():
+						return group.ctx.Err()
+					}
+					select {
+					case err := <-ack:
+						return err
+					case <-group.ctx.Done():
+						return group.ctx.Err()
+					}
+				}
+				err := child.fetchTopologyGroupWithDelivery(group, space, &count, collect, deliver)
+				child.lastMatrix = timeGraphMatrixSlot{}
+				if meter := child.matrixMemory(); meter != nil {
+					if releaseErr := meter.release(child.matrixToken); err == nil {
+						err = releaseErr
+					}
+				}
+				results[index], counts[index] = &child, count
+				select {
+				case events[index] <- topologyFetchEvent{err: err}:
+				case <-group.ctx.Done():
+				}
+			}
+		}(worker)
+	}
+	for index, stream := range events {
+		for {
+			select {
+			case event := <-stream:
+				if event.apply != nil {
+					err := event.apply(event.ctx, event.matrix)
+					event.ack <- err
+					if err != nil {
+						for _, cancel := range cancels {
+							cancel()
+						}
+						return err
+					}
+					continue
+				}
+				if event.err != nil {
+					for _, cancel := range cancels {
+						cancel()
+					}
+					return event.err
+				}
+				goto nextGroup
+			case <-groups[index].ctx.Done():
+				for _, cancel := range cancels {
+					cancel()
+				}
+				return groups[index].ctx.Err()
+			}
+		}
+	nextGroup:
+	}
+	return nil
 }
 
 func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, space string, source cmdb.Resource, identity cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, plan timeGraphFetchPlan) (queries int, err error) {
@@ -159,7 +309,7 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 	mode, component := q.topologyFetchMode(source, identity, relations, plan)
 	span.Set("fetch-mode", mode)
 	span.Set("max-hops", plan.hops)
-	reorder := len(component) > 0 && topologyStaticBidirectional(component) && q.topologyProjectionCompatible(relations, visible)
+	reorder := topologyStaticBidirectional(relations) && q.topologyProjectionCompatible(relations, visible)
 	filters := q.topologyRangeFilters(source, identity, component, relations, plan.hops)
 	span.Set("range-filter-relation-count", len(filters))
 	wideInputs := []topologyFetchInput{}
@@ -171,6 +321,13 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		return queries, err
 	}
 	span.Set("wide-physical-group-count", len(wideGroups))
+	// An unfiltered root already needs the complete relation component. Reading
+	// its first edge alone only delays independent relations; an empty root is
+	// still empty after the full read and final traversal.
+	if len(identity) == 0 && mode == "bulk" {
+		err = loader.fetchTopologyGroups(wideGroups, space, &queries, nil, true)
+		return queries, err
+	}
 
 	if mode == "frontier" {
 		complete, fetchErr := loader.loadDeepTopologyFrontier(ctx, space, source, identity, relations, plan.hops, reorder, &queries)
@@ -181,12 +338,8 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 			return queries, nil
 		}
 		span.Set("fetch-mode", "bulk-after-frontier")
-		for _, group := range wideGroups {
-			if err = loader.fetchTopologyGroup(group, space, &queries, nil); err != nil {
-				return queries, err
-			}
-		}
-		return queries, nil
+		err = loader.fetchTopologyGroups(wideGroups, space, &queries, nil, reorder)
+		return queries, err
 	}
 
 	if mode == "star" {
@@ -198,12 +351,8 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 		if compileErr != nil {
 			return queries, compileErr
 		}
-		for _, group := range groups {
-			if err = loader.fetchTopologyGroup(group, space, &queries, nil); err != nil {
-				return queries, err
-			}
-		}
-		return queries, nil
+		err = loader.fetchTopologyGroups(groups, space, &queries, nil, reorder)
+		return queries, err
 	}
 
 	queriedRoots := map[timeGraphRelationKey]struct{}{}
@@ -253,10 +402,8 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 				}
 			}
 		}
-		for _, group := range groups {
-			if err = loader.fetchTopologyGroup(group, space, &queries, collect); err != nil {
-				return queries, err
-			}
+		if err = loader.fetchTopologyGroups(groups, space, &queries, collect, reorder); err != nil {
+			return queries, err
 		}
 		if !observed && len(q.partialTimes) == 0 {
 			return queries, nil
@@ -296,12 +443,8 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 			return queries, compileErr
 		}
 		span.Set("second-stage-physical-group-count", len(groups))
-		for _, group := range groups {
-			if err = loader.fetchTopologyGroup(group, space, &queries, nil); err != nil {
-				return queries, err
-			}
-		}
-		return queries, nil
+		err = loader.fetchTopologyGroups(groups, space, &queries, nil, reorder)
+		return queries, err
 	}
 	// 首阶段部分成功不能证明二部图另一侧候选完整，继续用同一图和取数器宽读取；
 	// 已有属性、质量状态及累计成本均保留。
@@ -322,10 +465,6 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 	if compileErr != nil {
 		return queries, compileErr
 	}
-	for _, group := range groups {
-		if err = loader.fetchTopologyGroup(group, space, &queries, nil); err != nil {
-			return queries, err
-		}
-	}
-	return queries, nil
+	err = loader.fetchTopologyGroups(groups, space, &queries, nil, reorder)
+	return queries, err
 }

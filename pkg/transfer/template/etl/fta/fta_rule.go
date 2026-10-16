@@ -11,32 +11,21 @@ package fta
 
 import (
 	"fmt"
-	"regexp"
 
-	"github.com/cstockton/go-conv"
 	"github.com/jmespath/go-jmespath"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/logging"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
-)
-
-const (
-	RuleConditionOr = "or"
-
-	RuleMethodEq    = "eq"
-	RuleMethodNeq   = "neq"
-	RuleMethodRegex = "reg"
 )
 
 // CleanConfig 清洗配置
 type CleanConfig struct {
 	// 支持多个清洗配置，可以通过rules配置来决定使用哪个配置
 	CleanConfigs []*struct {
-		Alerts         []*Alert         `mapstructure:"alert_config" json:"alert_config"`
-		Normalizations []*Normalization `mapstructure:"normalization_config" json:"normalization_config"`
-		Rules          []*Rule          `mapstructure:"rules" json:"rules"`
+		Alerts         []*Alert           `mapstructure:"alert_config" json:"alert_config"`
+		Normalizations []*Normalization   `mapstructure:"normalization_config" json:"normalization_config"`
+		Rules          []*utils.MatchRule `mapstructure:"rules" json:"rules"`
 
 		exprMap map[string]*jmespath.JMESPath `mapstructure:"-"`
 	} `mapstructure:"clean_configs" json:"clean_configs"`
@@ -92,7 +81,7 @@ func NewCleanConfig(config interface{}) (*CleanConfig, error) {
 func (c *CleanConfig) GetMatchConfig(data interface{}) ([]*Alert, map[string]*jmespath.JMESPath, error) {
 	// 遍历所有配置，如果匹配到，则返回
 	for _, c := range c.CleanConfigs {
-		if isRulesMatch(c.Rules, data) {
+		if utils.IsRulesMatch(c.Rules, data) {
 			return c.Alerts, c.exprMap, nil
 		}
 	}
@@ -126,8 +115,8 @@ func ConvertToJMESPath(normalizations []*Normalization) (map[string]*jmespath.JM
 
 // Alert 告警名称匹配规则
 type Alert struct {
-	Name  string  `mapstructure:"name" json:"name"`
-	Rules []*Rule `mapstructure:"rules" json:"rules"`
+	Name  string             `mapstructure:"name" json:"name"`
+	Rules []*utils.MatchRule `mapstructure:"rules" json:"rules"`
 }
 
 // Init 初始化
@@ -143,7 +132,7 @@ func (a *Alert) Init() error {
 
 // IsMatch 判断当前数据是否满足匹配规则
 func (a *Alert) IsMatch(data interface{}) bool {
-	return isRulesMatch(a.Rules, data)
+	return utils.IsRulesMatch(a.Rules, data)
 }
 
 // GetMatchAlertName 匹配告警名称
@@ -154,161 +143,4 @@ func getMatchAlertName(alerts []*Alert, data interface{}) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no alert name matched")
-}
-
-// Rule 单条匹配规则
-type Rule struct {
-	Key       string   `json:"key" mapstructure:"key"`
-	Value     []string `json:"value" mapstructure:"value"`
-	Method    string   `json:"method" mapstructure:"method"`
-	Condition string   `json:"condition" mapstructure:"condition"`
-	searcher  *jmespath.JMESPath
-	matcher   Matcher
-}
-
-// isRulesMatch 判断当前数据是否满足匹配规则
-func isRulesMatch(rules []*Rule, data interface{}) bool {
-	logging.Debugf("trigger match start, data: %+v", data)
-	if len(rules) == 0 {
-		// 如果条件为空，则必定为 true
-		return true
-	}
-
-	isMatch := true
-	for i, rule := range rules {
-		// 如果是第一次匹配，则直接匹配
-		// 如果是or，且目前状态为false，则继续匹配
-		// 如果是and，且目前状态为true，则继续匹配
-		if i == 0 || (isMatch && rule.Condition != RuleConditionOr) || (!isMatch && rule.Condition == RuleConditionOr) {
-			isMatch, _ = rule.IsMatch(data)
-			continue
-		}
-		// 如果有一个分组匹配完成，且结果为true，后续的or条件不再匹配
-		if isMatch && rule.Condition == RuleConditionOr {
-			return true
-		}
-		// 如果结果已经为false，则跳过后续的and条件
-		if !isMatch && rule.Condition != RuleConditionOr {
-			continue
-		}
-	}
-	// 如果没有匹配到，则返回false
-	return isMatch
-}
-
-func (r *Rule) Init() error {
-	var err error
-	if r.searcher == nil {
-		r.searcher, err = utils.CompileJMESPathCustom(r.Key)
-		if err != nil {
-			return errors.WithMessagef(err, "rule compiled error for key->(%s)", r.Key)
-		}
-	}
-	matcher, err := NewMatcher(r.Method, r.Value)
-	if err != nil {
-		return errors.WithMessagef(err, "matcher init failed for rule->(%+v)", r)
-	}
-	r.matcher = matcher
-	return nil
-}
-
-func (r *Rule) IsMatch(actual interface{}) (bool, error) {
-	search, err := r.searcher.Search(actual)
-	if err != nil {
-		return false, errors.WithMessagef(err, "search data error: %+v", actual)
-	}
-	return r.matcher.IsMatch(search)
-}
-
-type Matcher interface {
-	SetExcepted(excepted []string) error
-	IsMatch(actual interface{}) (bool, error)
-}
-
-func NewMatcher(method string, excepted []string) (Matcher, error) {
-	var matcher Matcher
-	switch method {
-	case RuleMethodEq:
-		matcher = new(EqualMatcher)
-	case RuleMethodNeq:
-		matcher = new(NotEqualMatcher)
-	case RuleMethodRegex:
-		matcher = new(RegexMatcher)
-	default:
-		return nil, fmt.Errorf("unsupported rule method type->(%s)", method)
-	}
-	err := matcher.SetExcepted(excepted)
-	if err != nil {
-		return nil, err
-	}
-	return matcher, nil
-}
-
-// BaseMatcher 匹配器的基类
-type BaseMatcher struct {
-	Excepted []string
-}
-
-func (m *BaseMatcher) SetExcepted(excepted []string) error {
-	m.Excepted = excepted
-	return nil
-}
-
-// EqualMatcher 相等条件匹配器
-type EqualMatcher struct {
-	BaseMatcher
-}
-
-func (m *EqualMatcher) IsMatch(actual interface{}) (bool, error) {
-	actualString := conv.String(actual)
-	for _, exceptedString := range m.Excepted {
-		if actualString == exceptedString {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// NotEqualMatcher 不相等条件匹配器
-type NotEqualMatcher struct {
-	BaseMatcher
-}
-
-func (m *NotEqualMatcher) IsMatch(actual interface{}) (bool, error) {
-	actualString := conv.String(actual)
-	for _, exceptedString := range m.Excepted {
-		if actualString == exceptedString {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-// RegexMatcher 正则条件匹配器
-type RegexMatcher struct {
-	BaseMatcher
-	regexps []*regexp.Regexp
-}
-
-func (m *RegexMatcher) IsMatch(actual interface{}) (bool, error) {
-	actualString := []byte(conv.String(actual))
-	for _, regex := range m.regexps {
-		if regex.Match(actualString) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (m *RegexMatcher) SetExcepted(excepted []string) error {
-	m.Excepted = excepted
-	m.regexps = nil
-	for _, regexString := range excepted {
-		regex, err := regexp.Compile(regexString)
-		if err != nil {
-			return errors.WithMessagef(err, "regex compile error for string->(%s)", regexString)
-		}
-		m.regexps = append(m.regexps, regex)
-	}
-	return nil
 }

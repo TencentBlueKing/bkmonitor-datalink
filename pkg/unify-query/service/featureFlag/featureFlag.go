@@ -17,7 +17,6 @@ import (
 
 	ffclient "github.com/thomaspoignant/go-feature-flag"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -149,6 +148,10 @@ func (s *Service) reconcileFeatureFlags(ctx context.Context) error {
 
 	changed, err := s.reloadFeatureFlags(ctx)
 	if err != nil {
+		// 保留已有内存快照；全新实例仍可使用内置默认值，后台继续重试迁移。
+		if initErr := s.ensureFeatureFlagClient(ctx); initErr != nil {
+			return fmt.Errorf("reload feature flags: %w; initialize client: %v", err, initErr)
+		}
 		return err
 	}
 	if changed {
@@ -266,12 +269,9 @@ func (s *Service) Close() {
 	s.clientMu.Unlock()
 }
 
-// newFeatureFlagProvider 仅在启用 Consul 时保留迁移来源，否则由 Redis 初始化默认快照。
+// newFeatureFlagProvider 优先读取 Redis，缺 Key 时保留 Consul 迁移来源。
 func newFeatureFlagProvider(ctx context.Context) (FeatureFlagProvider, error) {
-	var consulProvider FeatureFlagProvider
-	if config.ConsulEnabled() {
-		consulProvider = consul.NewFeatureFlagProvider()
-	}
+	consulProvider := consul.NewFeatureFlagProvider()
 	redisClient := redis.Client()
 	basePath := redisService.KVBasePath
 	var redisErr error
@@ -281,9 +281,6 @@ func newFeatureFlagProvider(ctx context.Context) (FeatureFlagProvider, error) {
 		redisErr = fmt.Errorf("redis.kv_base_path must not be empty")
 	}
 	if redisErr != nil {
-		if consulProvider == nil {
-			return nil, redisErr
-		}
 		log.Warnf(ctx, "feature flags will use consul fallback: %s", redisErr)
 		return consulProvider, nil
 	}

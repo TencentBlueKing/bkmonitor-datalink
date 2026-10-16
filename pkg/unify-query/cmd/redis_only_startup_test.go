@@ -39,13 +39,44 @@ func TestRedisOnlyStartupHelper(t *testing.T) {
 }
 
 func TestRedisOnlyFreshStartup(t *testing.T) {
+	for _, legacySwitch := range []bool{false, true} {
+		name := "storage-source-only"
+		if legacySwitch {
+			name = "legacy-disabled-field"
+		}
+		t.Run(name, func(t *testing.T) { testRedisOnlyFreshStartup(t, legacySwitch) })
+	}
+}
+
+func testRedisOnlyFreshStartup(t *testing.T, legacySwitch bool) {
 	redis := miniredis.RunT(t)
-	var consulRequests, vmRequests atomic.Int32
-	consul := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var consulRequests, unexpectedConsulRequests, vmRequests atomic.Int32
+	var consulAvailable atomic.Bool
+	timedOut := make(chan struct{}, 1)
+	const migratedFlags = `{"startup-flag":{"variations":{"enabled":true,"disabled":false},"defaultRule":{"variation":"enabled"}}}`
+	consul := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		consulRequests.Add(1)
-		http.Error(w, "Consul is unavailable", http.StatusServiceUnavailable)
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/kv/") || !strings.HasSuffix(r.URL.Path, "/feature_flag") {
+			unexpectedConsulRequests.Add(1)
+			http.Error(w, "only Feature Flag migration may contact Consul", http.StatusServiceUnavailable)
+			return
+		}
+		if !consulAvailable.Load() {
+			// A connected but unresponsive Consul must not hold startup indefinitely.
+			<-r.Context().Done()
+			select {
+			case timedOut <- struct{}{}:
+			default:
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"Key":   strings.TrimPrefix(r.URL.Path, "/v1/kv/"),
+			"Value": []byte(migratedFlags), "ModifyIndex": 1,
+		}})
 	}))
-	defer consul.Close()
+	t.Cleanup(consul.Close)
 
 	const start, end = int64(1700000040), int64(1700000100)
 	vm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +103,7 @@ func TestRedisOnlyFreshStartup(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"result":true,"code":"00","data":{"list":[{"status":"success","data":{"resultType":"matrix","result":[{"metric":{"__name__":"value"},"values":[[%d,"7"],[%d,"9"]]}]}}]}}`, start, end)
 	}))
-	defer vm.Close()
+	t.Cleanup(vm.Close)
 
 	// Only the new Redis sources are populated; no Consul snapshot or local
 	// bbolt cache is available to make a partially migrated startup appear valid.
@@ -99,11 +130,12 @@ func TestRedisOnlyFreshStartup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	consulConfig := map[string]any{"consul_address": consul.URL, "service_name": "startup-test", "check_ttl": "30s"}
+	if legacySwitch {
+		consulConfig["enabled"] = false
+	}
 	configData, err := json.Marshal(map[string]any{
-		"consul": map[string]any{
-			"enabled": false, "consul_address": consul.URL,
-			"service_name": "startup-test", "check_ttl": "30s",
-		},
+		"consul":  consulConfig,
 		"storage": map[string]any{"source": "redis"},
 		"redis": map[string]any{
 			"mode": "standalone", "host": redis.Host(), "port": redisPort,
@@ -231,13 +263,43 @@ func TestRedisOnlyFreshStartup(t *testing.T) {
 		}
 	}
 
-	deadline = time.Now().Add(3 * time.Second)
+	select {
+	case <-timedOut:
+	case <-time.After(7 * time.Second):
+		t.Fatal("missing Feature Flag must attempt Consul with a bounded deadline")
+	}
+	if redis.Exists(featureFlagsKey) {
+		t.Fatal("unavailable Consul must not persist an empty migration snapshot")
+	}
+
+	// Recovery uses the same running process and original missing key.
+	consulAvailable.Store(true)
+	deadline = time.Now().Add(5 * time.Second)
 	for !redis.Exists(featureFlagsKey) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+		response, err = client.Get(baseURL + "/ff?r=1")
+		if err == nil {
+			response.Body.Close()
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
-	if snapshot, err := redis.Get(featureFlagsKey); err != nil || snapshot != "{}" || redis.TTL(featureFlagsKey) != 0 {
-		t.Errorf("expected persistent empty Feature Flag snapshot, got value=%q err=%v ttl=%s", snapshot, err, redis.TTL(featureFlagsKey))
+	if snapshot, err := redis.Get(featureFlagsKey); err != nil || snapshot != migratedFlags || redis.TTL(featureFlagsKey) != 0 {
+		t.Fatalf("expected recovered Consul rules with no TTL, got value=%q err=%v ttl=%s", snapshot, err, redis.TTL(featureFlagsKey))
 	}
+	consulAvailable.Store(false)
+	callsBefore := consulRequests.Load()
+	response, err = client.Get(baseURL + "/ff?r=1&c=startup-flag&t=bool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || !strings.Contains(string(data), "true => 100") || strings.Contains(string(data), "refresh feature flags err") {
+		t.Fatalf("migrated rules must remain effective using Redis: body=%s err=%v", data, err)
+	}
+	if consulRequests.Load() != callsBefore {
+		t.Fatal("an existing Redis snapshot must not access Consul")
+	}
+
 	response, err = client.Get(baseURL + "/storage_print")
 	if err != nil {
 		t.Fatal(err)
@@ -268,8 +330,8 @@ func TestRedisOnlyFreshStartup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Error("root command did not stop after SIGTERM")
 	}
-	if calls := consulRequests.Load(); calls != 0 {
-		t.Errorf("consul.enabled=false made %d Consul requests, want zero", calls)
+	if calls := unexpectedConsulRequests.Load(); calls != 0 {
+		t.Errorf("Redis Storage must not register services, renew TTL or read Consul Storage; unexpected requests=%d", calls)
 	}
 	t.Logf("root command stopped; VM requests=%d, Consul requests=%d", vmRequests.Load(), consulRequests.Load())
 }

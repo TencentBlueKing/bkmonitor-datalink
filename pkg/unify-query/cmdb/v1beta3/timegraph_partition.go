@@ -115,6 +115,7 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 			return nil, nil, nil
 		}
 		plannedFanout := fanout
+		targetPoints := 0.0
 		if preflight {
 			_, _, _, points, _ := timeGraphQueryRange(ts)
 			estimate := 0.0
@@ -122,6 +123,7 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 				estimate += topologyPartitionSeriesWeight(series) * float64(max(int64(1), points))
 			}
 			if estimate > topologyPartitionTargetPoints {
+				targetPoints = topologyPartitionTargetPoints
 				// Avoid four small data reads when two or three are estimated to
 				// fit. Low estimates still prepare the usual fallback fanout.
 				plannedFanout = 2
@@ -130,7 +132,7 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 				}
 			}
 		}
-		parts, err = topologyPartitionQueries(ts, matrix, field, plannedFanout)
+		parts, err = topologyPartitionQueries(ts, matrix, field, plannedFanout, targetPoints)
 		if err != nil {
 			return
 		}
@@ -150,12 +152,16 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 // Every replacement is a positive/negative pair, so even a partial or stale
 // sample covers all unseen, missing and future values exactly once. Samples
 // choose the plan only; no probe Matrix is retained by the queued queries.
-func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field string, fanout int) ([]topologyPartition, error) {
+func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field string, fanout int, targetPoints float64) ([]topologyPartition, error) {
 	type bucket struct {
 		query  *structured.QueryTs
 		sample pl.Matrix
 	}
 	buckets := []bucket{{query: ts, sample: matrix}}
+	_, _, _, pointCount, exact := timeGraphQueryRange(ts)
+	if !exact {
+		pointCount = 1
+	}
 	for len(buckets) < fanout {
 		chosen := -1
 		weight := 0.0
@@ -168,6 +174,13 @@ func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field st
 			candidateWeight := 0.0
 			for _, series := range candidate.sample {
 				candidateWeight += topologyPartitionSeriesWeight(series)
+			}
+			// A heavy single-value bucket needs the next dimension. Splitting
+			// its already-small siblings merely to fill fanout cannot help it.
+			// Zero retains full fanout for an underestimated query's prepared
+			// fallback and for an actual backend response-size rejection.
+			if targetPoints > 0 && candidateWeight*float64(pointCount) <= targetPoints {
+				continue
 			}
 			if chosen < 0 || candidateWeight > weight {
 				chosen, weight, pattern = i, candidateWeight, candidatePattern
@@ -199,10 +212,6 @@ func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field st
 		}
 		buckets[chosen] = leftBucket
 		buckets = append(buckets, rightBucket)
-	}
-	_, _, _, pointCount, exact := timeGraphQueryRange(ts)
-	if !exact {
-		pointCount = 1
 	}
 	parts := make([]topologyPartition, len(buckets))
 	for i, bucket := range buckets {

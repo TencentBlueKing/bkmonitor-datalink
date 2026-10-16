@@ -104,6 +104,15 @@ always issuing four data reads. These numbers are planning heuristics: they do
 not cap input, change the grid, guarantee a backend response size, or measure
 heap usage. The backend's byte and JSON-object guards remain authoritative.
 
+For a preflight estimate above the target, stop splitting a bucket once its own
+estimated work fits the target, even if fewer than the planned maximum number
+of branches remain. In a skewed sample, one heavy identity may need another
+dimension; splitting its light siblings again cannot reduce that heavy branch.
+Keep the light siblings together with their complementary filter, including
+unknown and late labels. This stopping rule does not apply to the prepared
+fallback for a low estimate or to a confirmed response-size rejection: those
+still use the full existing fanout, since the estimate may understate real size.
+
 ```mermaid
 flowchart TD
     A[Eligible broad long-grid query] --> B[Single-point dimension probe]

@@ -31,7 +31,7 @@ func TestTopologyPartitionFanoutComplementsCoverUnknownValues(t *testing.T) {
 		values = append(values, value)
 		matrix = append(matrix, contractMatrix(map[string]string{"id": value}, 1700000000000)...)
 	}
-	parts, err := topologyPartitionQueries(query, matrix, "id", 4)
+	parts, err := topologyPartitionQueries(query, matrix, "id", 4, 0)
 	require.NoError(t, err)
 	require.Len(t, parts, 4)
 	for _, tenant := range []string{"one", "two", "other"} {

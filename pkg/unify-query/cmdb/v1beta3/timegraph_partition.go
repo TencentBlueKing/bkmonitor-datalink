@@ -16,6 +16,28 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
+// These are planning hints, not input or response limits. A long broad query
+// can amortize one single-point probe; roughly a million estimated points per
+// branch leaves headroom for labels and backend object expansion. Late series,
+// wide labels and backend-specific budgets still use the size-error fallback.
+const (
+	topologyPartitionPreflightPoints = 32
+	topologyPartitionTargetPoints    = 1 << 20
+)
+
+type topologyPartition struct {
+	query           *structured.QueryTs
+	estimatedPoints float64
+}
+
+func topologyPartitionPoints(parts []topologyPartition) float64 {
+	points := 0.0
+	for _, part := range parts {
+		points += part.estimatedPoints
+	}
+	return points
+}
+
 // Only the relation builder's single count-over-time/count-by query is eligible.
 // Each partition label survives aggregation, so filtering it cannot split an
 // aggregate group. Callers must also prove that series order cannot change node
@@ -61,7 +83,7 @@ func topologyPartitionFields(ts *structured.QueryTs) []string {
 // The complementary !~ branch always runs, including for values absent from a
 // partial probe or appearing later. Both branches retain the full original
 // time grid, conditions, aggregation dimensions and endpoint identities.
-func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context, ts *structured.QueryTs, fields []string, fanout int) (parts []*structured.QueryTs, remaining []string, err error) {
+func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context, ts *structured.QueryTs, fields []string, fanout int, preflight bool) (parts []topologyPartition, remaining []string, err error) {
 	for i, field := range fields {
 		if err = ctx.Err(); err != nil {
 			return
@@ -92,12 +114,33 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 		if probeErr != nil {
 			return nil, nil, nil
 		}
-		parts, err = topologyPartitionQueries(ts, matrix, field, fanout)
+		plannedFanout := fanout
+		if preflight {
+			_, _, _, points, _ := timeGraphQueryRange(ts)
+			estimate := 0.0
+			for _, series := range matrix {
+				estimate += topologyPartitionSeriesWeight(series) * float64(max(int64(1), points))
+			}
+			if estimate > topologyPartitionTargetPoints {
+				// Avoid four small data reads when two or three are estimated to
+				// fit. Low estimates still prepare the usual fallback fanout.
+				plannedFanout = 2
+				for plannedFanout < fanout && estimate > float64(plannedFanout)*topologyPartitionTargetPoints {
+					plannedFanout++
+				}
+			}
+		}
+		parts, err = topologyPartitionQueries(ts, matrix, field, plannedFanout)
 		if err != nil {
 			return
 		}
 		if len(parts) > 1 {
 			return parts, fields[i+1:], nil
+		}
+		if preflight && topologyPartitionPoints(parts) <= topologyPartitionTargetPoints {
+			// A small/empty estimate is not evidence of an empty graph. Fetch the
+			// original range and keep untried fields for a real size rejection.
+			return nil, fields[i+1:], nil
 		}
 	}
 	return nil, nil, nil
@@ -107,7 +150,7 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 // Every replacement is a positive/negative pair, so even a partial or stale
 // sample covers all unseen, missing and future values exactly once. Samples
 // choose the plan only; no probe Matrix is retained by the queued queries.
-func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field string, fanout int) ([]*structured.QueryTs, error) {
+func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field string, fanout int) ([]topologyPartition, error) {
 	type bucket struct {
 		query  *structured.QueryTs
 		sample pl.Matrix
@@ -157,9 +200,16 @@ func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field st
 		buckets[chosen] = leftBucket
 		buckets = append(buckets, rightBucket)
 	}
-	parts := make([]*structured.QueryTs, len(buckets))
+	_, _, _, pointCount, exact := timeGraphQueryRange(ts)
+	if !exact {
+		pointCount = 1
+	}
+	parts := make([]topologyPartition, len(buckets))
 	for i, bucket := range buckets {
-		parts[i] = bucket.query
+		parts[i].query = bucket.query
+		for _, series := range bucket.sample {
+			parts[i].estimatedPoints += topologyPartitionSeriesWeight(series) * float64(pointCount)
+		}
 	}
 	return parts, nil
 }

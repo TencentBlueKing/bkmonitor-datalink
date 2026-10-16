@@ -258,7 +258,7 @@ func TestTopologyPartitionCancellationStopsBeforeChildQueries(t *testing.T) {
 	records := partitionTestRecords{coverage: map[string]int{}}
 	_, err := partitionTestModel(t, true, false, false, true, &records, cancel).QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "a", StartTime: 1700000000, EndTime: 1700003540, Step: "60s", MaxHops: 2})
 	require.ErrorIs(t, err, context.Canceled)
-	require.Equal(t, 1, records.fetches)
+	require.Zero(t, records.fetches, "preflight cancellation must stop before the full-range read")
 	require.Equal(t, 1, records.probes)
 	require.Zero(t, records.points)
 }

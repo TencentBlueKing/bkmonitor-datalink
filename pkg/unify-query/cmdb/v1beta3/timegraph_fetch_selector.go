@@ -164,6 +164,9 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroupWithDelivery(group topolo
 	*queries++
 	if loader.graph.topologyProjectionCompatible(group.relations, nil) {
 		plan := timeGraphShardPlan{partitionFields: topologyPartitionFields(group.query)}
+		_, _, _, points, exact := timeGraphQueryRange(group.query)
+		plan.prepartition = SharedTopologyPlanCandidates && loader.partitionDispatch != nil &&
+			len(group.input.filter) == 0 && exact && points >= topologyPartitionPreflightPoints
 		if group.shardPlan != nil {
 			plan = *group.shardPlan
 		}

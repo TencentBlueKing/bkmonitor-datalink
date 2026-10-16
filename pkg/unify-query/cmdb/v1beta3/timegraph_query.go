@@ -434,7 +434,7 @@ type timeGraphMatrixLoader struct {
 	lastMatrix             timeGraphMatrixSlot
 	matrixToken            string
 	queryTiming            *timeGraphQueryTiming
-	partitionDispatch      func(context.Context, []*structured.QueryTs, []string, int) error
+	partitionDispatch      func(context.Context, []topologyPartition, []string, int) error
 }
 
 // Track the union of query intervals so build wall time remains meaningful
@@ -678,6 +678,7 @@ func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, 
 
 type timeGraphShardPlan struct {
 	partitionFields     []string
+	prepartition        bool
 	successfulPoints    int64
 	singlePointRequired bool
 }
@@ -726,6 +727,28 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 			remaining = right
 		}
 	}
+	var parts []topologyPartition
+	var remainingFields []string
+	if plan.prepartition && exact && loader.topology && yoloMode && metadata.IsExactTimeGrid(shardCtx) && len(plan.partitionFields) > 0 {
+		plan.prepartition = false
+		span.Set("shard-partition-preflight", true)
+		parts, remainingFields, err = loader.partitionTopologyQuery(shardCtx, queryTs, plan.partitionFields, 4, true)
+		plan.partitionFields = remainingFields
+		if err != nil {
+			return err
+		}
+		if len(parts) > 0 {
+			span.Set("shard-estimated-points", topologyPartitionPoints(parts))
+		}
+		if len(parts) > 1 && topologyPartitionPoints(parts) > topologyPartitionTargetPoints {
+			span.Set("shard-partition", true)
+			span.Set("shard-partition-count", len(parts))
+			return loader.applyTopologyPartitions(shardCtx, parts, remainingFields, apply, depth+1)
+		}
+		// Keep only the complementary query plans, not the probe Matrix. If a
+		// small or partial estimate was low, a size rejection can use these
+		// plans without another probe of the same dimension.
+	}
 	matrix, _, queryErr := loader.query(shardCtx, queryTs)
 	if queryErr == nil {
 		if err = apply(shardCtx, matrix); err != nil {
@@ -752,27 +775,21 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 		if loader.partitionDispatch != nil {
 			fanout = 4
 		}
-		parts, remaining, splitErr := loader.partitionTopologyQuery(shardCtx, queryTs, plan.partitionFields, fanout)
+		var splitErr error
+		if len(parts) < 2 {
+			parts, remainingFields, splitErr = loader.partitionTopologyQuery(shardCtx, queryTs, plan.partitionFields, fanout, false)
+		}
 		// A dimension is attempted once on each branch. Failed/ineffective probes
 		// fall back to the original exact time shards without repeatedly probing.
 		plan.partitionFields = nil
 		if splitErr != nil {
 			return splitErr
 		}
-		if len(parts) > 1 {
-			span.Set("shard-partition", true)
-			span.Set("shard-partition-count", len(parts))
-			if loader.partitionDispatch != nil {
-				return loader.partitionDispatch(shardCtx, parts, remaining, depth+1)
-			}
-			for _, part := range parts {
-				childPlan := timeGraphShardPlan{partitionFields: remaining}
-				if err = loader.queryAndApplyShard(shardCtx, part, apply, depth+1, &childPlan); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
+	}
+	if len(parts) > 1 {
+		span.Set("shard-partition", true)
+		span.Set("shard-partition-count", len(parts))
+		return loader.applyTopologyPartitions(shardCtx, parts, remainingFields, apply, depth+1)
 	}
 	if exact && pointCount == 2 {
 		plan.singlePointRequired = true
@@ -791,6 +808,19 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 	}
 	if err = loader.queryAndApplyShard(shardCtx, right, apply, depth+1, plan); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (loader *timeGraphMatrixLoader) applyTopologyPartitions(ctx context.Context, parts []topologyPartition, fields []string, apply func(context.Context, pl.Matrix) error, depth int) error {
+	if loader.partitionDispatch != nil {
+		return loader.partitionDispatch(ctx, parts, fields, depth)
+	}
+	for _, part := range parts {
+		plan := timeGraphShardPlan{partitionFields: fields}
+		if err := loader.queryAndApplyShard(ctx, part.query, apply, depth, &plan); err != nil {
+			return err
+		}
 	}
 	return nil
 }

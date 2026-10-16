@@ -87,6 +87,53 @@ four-worker scheduler nor the controlled-delay benchmark establishes a
 production latency target. No input limit, cross-request cache or new runtime
 configuration is introduced.
 
+### Planning Before a Large Read
+
+With candidate planning enabled, a broad, projection-safe, static bidirectional
+YOLO query with an exact grid of at least 32 points can probe before its first
+data read. This applies only to the existing ready-worker path, without root
+filters, identity batches, attribute-sensitive ordering, target details or a
+collector. Ordinary mode and short grids keep their existing fetch path.
+
+The probe aggregates one retained identity dimension at the first evaluation
+point. Its physical-series weights, multiplied by the original grid length,
+estimate branch work. Above a soft target of 1,048,576 points, it plans two to
+four complementary branches. A heavy child probes the next eligible dimension
+before attempting its full response. Fanout follows the estimate rather than
+always issuing four data reads. These numbers are planning heuristics: they do
+not cap input, change the grid, guarantee a backend response size, or measure
+heap usage. The backend's byte and JSON-object guards remain authoritative.
+
+```mermaid
+flowchart TD
+    A[Eligible broad long-grid query] --> B[Single-point dimension probe]
+    B --> C{Estimated work above soft target?}
+    C -->|yes and splittable| D[Queue complementary branches]
+    D --> E{Heavy branch with another dimension?}
+    E -->|yes| B
+    E -->|no| F[Fetch full original grid]
+    C -->|no or unavailable| F
+    F --> G{Response-size rejection?}
+    G -->|yes| H[Reuse prepared split or existing partition/time fallback]
+    G -->|no| I[Validate and apply complete Matrix]
+```
+
+A small estimate still fetches the entire original query. Only its prepared
+query plans are retained until that read completes, so an underestimated read
+can reuse the split without probing the same dimension twice. Probe Matrices
+never enter the graph or remain in queued jobs. Empty, partial, failed or stale
+probes cannot define the result's identities or quality; unseen and later
+identities remain in a complementary branch. Cancellation stops planning and
+running children through the existing request context.
+
+A small eligible long-grid query pays for an extra single-point probe. Large
+queries can avoid discarded root responses and intermediate size rejections,
+but the tradeoff must be checked against real backend latency and cardinality.
+No cross-request hints, raised backend limits or extra fetch concurrency are
+introduced. `shard-partition-preflight`, `shard-estimated-points` and the existing
+partition-count attributes expose planning decisions for the next acceptance
+run; estimates are not actual scan or returned-point counts.
+
 ### Candidate Planning
 
 `cmdb.v1beta3.shared_topology_plan_candidates` defaults to `true`.

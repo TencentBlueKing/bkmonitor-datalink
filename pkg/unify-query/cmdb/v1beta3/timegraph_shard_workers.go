@@ -9,8 +9,6 @@ import (
 	"sync"
 
 	pl "github.com/prometheus/prometheus/promql"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 type topologyReadyEvent struct {
@@ -83,13 +81,16 @@ func (loader *timeGraphMatrixLoader) fetchTopologyReadyGroups(groups []topologyF
 				child.queryDuration = 0
 				child.lastMatrix = timeGraphMatrixSlot{}
 				child.matrixToken = fmt.Sprintf("parallel-%d", worker)
-				child.partitionDispatch = func(ctx context.Context, parts []*structured.QueryTs, fields []string, depth int) error {
+				child.partitionDispatch = func(ctx context.Context, parts []topologyPartition, fields []string, depth int) error {
 					children := make([]topologyFetchGroup, len(parts))
 					for i, part := range parts {
 						children[i] = group
-						children[i].ctx, children[i].query = ctx, part
+						children[i].ctx, children[i].query = ctx, part.query
 						children[i].shardDepth = depth
-						children[i].shardPlan = &timeGraphShardPlan{partitionFields: fields}
+						children[i].shardPlan = &timeGraphShardPlan{
+							partitionFields: fields,
+							prepartition:    part.estimatedPoints > topologyPartitionTargetPoints,
+						}
 					}
 					if !send(topologyReadyEvent{children: children}) {
 						return context.Canceled

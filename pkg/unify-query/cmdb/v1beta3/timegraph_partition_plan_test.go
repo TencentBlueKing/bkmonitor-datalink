@@ -37,7 +37,8 @@ func TestTopologyPartitionFanoutComplementsCoverUnknownValues(t *testing.T) {
 	for _, tenant := range []string{"one", "two", "other"} {
 		for _, value := range values {
 			count := 0
-			for _, part := range parts {
+			for _, partition := range parts {
+				part := partition.query
 				require.Equal(t, query.Start, part.Start)
 				require.Equal(t, query.End, part.End)
 				require.Equal(t, query.Step, part.Step)
@@ -52,7 +53,7 @@ func TestTopologyPartitionFanoutComplementsCoverUnknownValues(t *testing.T) {
 			}
 		}
 	}
-	parts[0].QueryList[0].Conditions.FieldList[0].Value[0] = "changed"
+	parts[0].query.QueryList[0].Conditions.FieldList[0].Value[0] = "changed"
 	after, err := json.Marshal(query)
 	require.NoError(t, err)
 	require.Equal(t, before, after)

@@ -48,7 +48,7 @@ func CompatibilityMessage(a domain.Alert, level func(string) (string, error)) (k
 	if err != nil {
 		return m, err
 	}
-	values, err := decodeEffectiveEnrich(effective)
+	values, err := decodeEffectiveEnrich(effective.Labels, effective.ExtraData)
 	if err != nil {
 		return m, err
 	}

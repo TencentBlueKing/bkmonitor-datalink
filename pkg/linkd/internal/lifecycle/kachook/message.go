@@ -59,7 +59,7 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 		return kingeye.AlarmMessage{}, err
 	}
 	input.Alert = effective
-	values, err := decodeEffectiveEnrich(effective)
+	values, err := decodeEffectiveEnrich(effective.Labels, effective.ExtraData)
 	if err != nil {
 		return kingeye.AlarmMessage{}, err
 	}
@@ -317,8 +317,8 @@ func preferredLabels(candidates ...[]string) []string {
 	return []string{}
 }
 
-func decodeEffectiveEnrich(alert domain.Alert) (enrichValues, error) {
-	flat := alert.ExtraData.Clone()
+func decodeEffectiveEnrich(labels domain.DimensionMap, extra domain.JSONObject) (enrichValues, error) {
+	flat := extra.Clone()
 	if flat == nil {
 		flat = domain.JSONObject{}
 	}
@@ -327,7 +327,7 @@ func decodeEffectiveEnrich(alert domain.Alert) (enrichValues, error) {
 	for _, field := range []string{"object", "item", "meta_info", "strategy_id", "dimension_info"} {
 		delete(flat, field)
 	}
-	for key, value := range alert.Labels {
+	for key, value := range labels {
 		data, err := json.Marshal(value)
 		if err != nil {
 			return enrichValues{}, err

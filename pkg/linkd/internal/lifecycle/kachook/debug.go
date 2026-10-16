@@ -14,6 +14,25 @@ import (
 	"linkd/internal/enrich/kingeye"
 )
 
+// RecoveryFields 转换已应用冻结丰富补丁的来源恢复 Event，并补齐内置策略关联投影。
+// 调用方负责核对 Event/Alert 关系和恢复动作；此处不读取当前策略、不生成旧查询参数。
+func RecoveryFields(event domain.Event, evaluation domain.EventEvaluation, sourceID, sourceName string, catalog []string, level func(string) (string, error)) (map[string]any, error) {
+	fields, err := DebugFields(event, evaluation, sourceID, sourceName, catalog, level)
+	if err != nil || event.EventSourceID != "built_in_bk" {
+		return fields, err
+	}
+	values, err := decodeEffectiveEnrich(event.Labels, event.ExtraData)
+	if err != nil {
+		return nil, err
+	}
+	extra := strategyFieldExtraInfo(event.BKTenantID, values.strategy)
+	if sourceExtra, ok := fields["field_extra_info"].(map[string]any); ok {
+		extra = mergeExtraInfo(extra, sourceExtra)
+	}
+	fields["field_extra_info"] = extra
+	return fields, nil
+}
+
 // DebugFields 只转换来源已有事实；不构造 Alert、不执行丰富或内容生成。
 // 编号属于隔离调试身份，不能作为正式告警操作目标；终态输入不推断历史开始时间或处置状态。
 func DebugFields(event domain.Event, evaluation domain.EventEvaluation, sourceID, sourceName string, catalog []string, level func(string) (string, error)) (map[string]any, error) {

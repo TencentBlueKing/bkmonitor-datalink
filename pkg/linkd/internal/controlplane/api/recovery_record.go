@@ -141,7 +141,7 @@ func recoveryFields(alert domain.Alert, event domain.Event, release eventsource.
 	if source.SourceName == "" {
 		source.SourceName = event.EventSourceID
 	}
-	fields, err := kachook.DebugFields(effective, evaluation, source.SourceID, source.SourceName, catalog, func(severity string) (string, error) { return severity, nil })
+	fields, err := kachook.RecoveryFields(effective, evaluation, source.SourceID, source.SourceName, catalog, func(severity string) (string, error) { return severity, nil })
 	if err != nil {
 		return nil, err
 	}

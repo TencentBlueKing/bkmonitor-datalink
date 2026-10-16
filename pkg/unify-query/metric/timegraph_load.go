@@ -83,7 +83,7 @@ type TimeGraphLoadSize struct {
 }
 
 func CMDBTimeGraphLoadObserve(ctx context.Context, stage, metricName, result string, duration time.Duration, size TimeGraphLoadSize) {
-	if (stage != "source-info" && stage != "relation-edge" && stage != "target-info") || !timeGraphResult(result) || duration < 0 {
+	if (stage != "source-info" && stage != "relation-edge" && stage != "relation-partition" && stage != "target-info") || !timeGraphResult(result) || duration < 0 {
 		return
 	}
 	if size.Series < 0 || size.Points < 0 || size.LabelBytes < 0 {

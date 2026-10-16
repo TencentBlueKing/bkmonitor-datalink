@@ -6,13 +6,27 @@
 package metric
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPartitionProbeLoadIsMeasured(t *testing.T) {
+	counter := cmdbTimeGraphLoadOperations.WithLabelValues("relation-partition", "container_with_pod_relation", "success")
+	before := &dto.Metric{}
+	require.NoError(t, counter.Write(before))
+	CMDBTimeGraphLoadObserve(context.Background(), "relation-partition", "container_with_pod_relation", "success", time.Second, TimeGraphLoadSize{Returned: true, Series: 2, Points: 2})
+	after := &dto.Metric{}
+	require.NoError(t, counter.Write(after))
+	require.Equal(t, before.GetCounter().GetValue()+1, after.GetCounter().GetValue())
+	require.True(t, timeGraphStage("relation-partition"))
+}
 
 func TestTimeGraphMetricNamesBoundedUnderConcurrentSchemaChurn(t *testing.T) {
 	names := timeGraphMetricNames{names: make(map[string]struct{})}

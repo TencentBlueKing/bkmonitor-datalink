@@ -432,6 +432,52 @@ default:
               {%- endfor %}
 {%- endif %}
 
+{% if span_processor_config is defined %}
+      - name: '{{ span_processor_config.name }}'
+        config:
+          {%- if span_processor_config.drop is defined %}
+          drop:
+            {%- for item in span_processor_config.drop %}
+            - match_rules:
+                {%- for match_rule in item.match_rules %}
+                - key: '{{ match_rule.key }}'
+                  op: '{{ match_rule.op }}'
+                  value:
+                    {%- for v in match_rule.value %}
+                    - '{{ v }}'
+                    {%- endfor %}
+                  link: '{{ match_rule.link }}'
+                {%- endfor %}
+            {%- endfor %}
+          {%- endif %}
+          {%- if span_processor_config.replace_value is defined %}
+          replace_value:
+            {%- for item in span_processor_config.replace_value %}
+            - predicate_key: '{{ item.predicate_key }}'
+              rules:
+                {%- for rule in item.rules %}
+                - filters:
+                    {%- for filter in rule.filters %}
+                    - key: '{{ filter.key }}'
+                      op: '{{ filter.op }}'
+                      value:
+                        {%- for v in filter.value %}
+                        - '{{ v }}'
+                        {%- endfor %}
+                      link: '{{ filter.link }}'
+                    {%- endfor %}
+                  replace_from:
+                    source:
+                      {%- for key in rule.replace_from.source %}
+                      - '{{ key }}'
+                      {%- endfor %}
+                    separator: '{{ rule.replace_from.separator }}'
+                    const_val: '{{ rule.replace_from.const_val }}'
+                {%- endfor %}
+            {%- endfor %}
+          {%- endif %}
+{%- endif %}
+
 {% if service_configs is defined %}
 service:
 {%- for service_config in service_configs %}

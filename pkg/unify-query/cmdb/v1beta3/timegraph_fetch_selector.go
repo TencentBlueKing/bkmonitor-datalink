@@ -138,6 +138,10 @@ func (loader *timeGraphMatrixLoader) fetchTopologyGroup(group topologyFetchGroup
 		return loader.loadFrontierBatch(group.ctx, space, group.input.relation, group.input.targetAnchor, group.input.identities, apply, queries)
 	}
 	*queries++
+	if loader.graph.topologyProjectionCompatible(group.relations, nil) {
+		plan := timeGraphShardPlan{partitionFields: topologyPartitionFields(group.query)}
+		return loader.queryAndApplyShard(group.ctx, group.query, apply, 0, &plan)
+	}
 	return loader.queryAndApply(group.ctx, group.query, apply)
 }
 
@@ -208,8 +212,12 @@ func (loader *timeGraphMatrixLoader) loadSelectedTopology(ctx context.Context, s
 	incompleteIdentity := false
 	if topologyRootProbeCoversEndpoints(source, relations) {
 		inputs := []topologyFetchInput{}
+		// An unfiltered root probe already reads the full physical relation.
+		// Include its safe reverse view now: a split response cannot be kept in
+		// lastMatrix for a second pass later, and would otherwise be fetched twice.
+		probeBoth := len(identity) == 0 && topologyStaticBidirectional(relations) && q.topologyProjectionCompatible(relations, nil)
 		for _, relation := range relations {
-			if relation.V[0] != source {
+			if relation.V[0] != source && !(probeBoth && relation.V[1] == source) {
 				continue
 			}
 			first[relation.V[1]] = map[string]cmdb.Matcher{}

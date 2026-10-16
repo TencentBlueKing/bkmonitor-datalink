@@ -433,7 +433,11 @@ type timeGraphMatrixLoader struct {
 	lastMatrix             timeGraphMatrixSlot
 }
 
-func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
+func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, bool, error) {
+	return loader.queryWithQuality(queryCtx, queryTs, true)
+}
+
+func (loader *timeGraphMatrixLoader) queryWithQuality(queryCtx context.Context, queryTs *structured.QueryTs, applyQuality bool) (matrix pl.Matrix, partial bool, err error) {
 	if loader.topology && metadata.BackendResponseLimit(queryCtx) > 0 {
 		// 一次物理响应的聚合子查询共用拒收标记，防止预算超限被误判为 partial；
 		// 不同身份分片各有标记，先前的大分片失败不会污染后续小分片。
@@ -597,7 +601,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 			partialReason = status.Message
 		}
 	}
-	if err == nil && partial {
+	if err == nil && partial && applyQuality {
 		partialStart, partialEnd, partialStep := start, end, queryStep
 		if relationQueryParams != nil {
 			partialStart, partialEnd, partialStep = relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step
@@ -629,6 +633,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 }
 
 type timeGraphShardPlan struct {
+	partitionFields     []string
 	successfulPoints    int64
 	singlePointRequired bool
 }
@@ -692,6 +697,30 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 	}
 	if !loader.topology || !yoloMode || !metadata.IsExactTimeGrid(shardCtx) || !errors.Is(queryErr, metadata.ErrBackendResponseTooLarge) {
 		return queryErr
+	}
+	if exact && pointCount <= plan.successfulPoints {
+		// Cardinality can increase later in the same window. A width that just
+		// failed is no longer a useful plan for all remaining time shards.
+		plan.successfulPoints = 0
+	}
+	if exact && len(plan.partitionFields) > 0 {
+		left, right, remaining, split, splitErr := loader.partitionTopologyQuery(shardCtx, queryTs, plan.partitionFields)
+		// A dimension is attempted once on each branch. Failed/ineffective probes
+		// fall back to the original exact time shards without repeatedly probing.
+		plan.partitionFields = nil
+		if splitErr != nil {
+			return splitErr
+		}
+		if split {
+			span.Set("shard-partition", true)
+			for _, part := range []*structured.QueryTs{left, right} {
+				childPlan := timeGraphShardPlan{partitionFields: remaining}
+				if err = loader.queryAndApplyShard(shardCtx, part, apply, depth+1, &childPlan); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 	}
 	if exact && pointCount == 2 {
 		plan.singlePointRequired = true

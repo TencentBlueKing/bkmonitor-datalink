@@ -61,6 +61,12 @@ func TestSharedTopologyYoloSplitsOversizedVMResponses(t *testing.T) {
 		model.timeGraphVMQueryWithPartial = func(ctx context.Context, query *structured.QueryTs, _ string, _ bool, shardStart, shardEnd time.Time, step time.Duration) (pl.Matrix, bool, error) {
 			*calls++
 			require.True(t, metadata.GetQueryParams(ctx).IsSkipK8s, "shards must preserve query routing flags")
+			if timeGraphQueryStage(ctx) == "relation-partition" {
+				// This mock has no label filter engine; an empty discovery result
+				// exercises the time-shard fallback without counting a probe as
+				// a graph input.
+				return nil, false, nil
+			}
 			field := query.QueryList[0].FieldName
 			points := int(shardEnd.Sub(shardStart)/step) + 1
 			if otherError {
@@ -120,7 +126,7 @@ func TestSharedTopologyResponseSizeSplitGates(t *testing.T) {
 	}{
 		{name: "default mode does not split", yolo: false, alwaysFail: true, wantCalls: 1, wantErr: "response body size exceeds"},
 		{name: "non-size error does not retry", yolo: true, otherError: true, wantCalls: 1, wantErr: "backend unavailable"},
-		{name: "single point leaf terminates", yolo: true, alwaysFail: true, wantCalls: 4, wantErr: "response body size exceeds"},
+		{name: "single point leaf terminates", yolo: true, alwaysFail: true, wantCalls: 5, wantErr: "response body size exceeds"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			oldYolo := yoloMode

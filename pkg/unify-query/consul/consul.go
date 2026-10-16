@@ -14,7 +14,6 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
 	"github.com/hashicorp/consul/api"
 )
@@ -29,12 +28,12 @@ var globalInstance *Instance
 
 var lock *sync.RWMutex
 
-var errUnavailable = errors.New("consul is disabled or not initialized")
+var errUnavailable = errors.New("consul is not initialized")
 
 func currentInstance() (*Instance, error) {
 	lock.RLock()
 	defer lock.RUnlock()
-	if !config.ConsulEnabled() || globalInstance == nil {
+	if globalInstance == nil {
 		return nil, errUnavailable
 	}
 	return globalInstance, nil
@@ -45,17 +44,7 @@ func init() {
 	lock = new(sync.RWMutex)
 }
 
-// Wait 等待实例释放
-func Wait() {
-	lock.RLock()
-	instance := globalInstance
-	lock.RUnlock()
-	if instance != nil {
-		instance.Wait()
-	}
-}
-
-// Close releases registration and every watch before a reload disables Consul.
+// Close releases the KV client and stops every watch before reload.
 func Close() {
 	lock.Lock()
 	instance := globalInstance
@@ -64,55 +53,23 @@ func Close() {
 	if instance != nil {
 		instance.cancel()
 		_ = instance.client.Close()
-		instance.Wait()
 	}
 }
 
-// SetInstance 创建 consul 实例
-func SetInstance(ctx context.Context, kvBasePath, serviceName, consulAddress string,
-	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string,
-) error {
-	return SetInstanceWithAuth(ctx, kvBasePath, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, nil)
+// SetInstance creates a KV client without contacting Consul.
+func SetInstance(ctx context.Context, kvBasePath, consulAddress, caFile, keyFile, certFile string) error {
+	return SetInstanceWithAuth(ctx, kvBasePath, consulAddress, caFile, keyFile, certFile, nil)
 }
 
-func SetInstanceWithAuth(ctx context.Context, kvBasePath, serviceName, consulAddress string,
-	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string, auth *base.AuthConfig,
-) error {
+func SetInstanceWithAuth(ctx context.Context, kvBasePath, consulAddress, caFile, keyFile, certFile string, auth *base.AuthConfig) error {
 	lock.Lock()
 	defer lock.Unlock()
-	if !config.ConsulEnabled() {
-		return errUnavailable
-	}
 	var err error
 	if kvBasePath != "" {
 		basePath = kvBasePath
 	}
-
-	globalInstance, err = NewConsulInstanceWithAuth(
-		ctx, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, auth,
-	)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// LoopAwakeService 注册服务，并循环激活
-func LoopAwakeService() error {
-	instance, err := currentInstance()
-	if err != nil {
-		return err
-	}
-	return instance.LoopAwakeService()
-}
-
-// StopAwakeService 停止服务的激活动作,并注销服务
-func StopAwakeService() error {
-	instance, err := currentInstance()
-	if err != nil {
-		return err
-	}
-	return instance.StopAwakeService()
+	globalInstance, err = NewConsulInstanceWithAuth(ctx, consulAddress, caFile, keyFile, certFile, auth)
+	return err
 }
 
 // WatchChange 监听指定地址，监听触发时，channel将会传出信息

@@ -88,9 +88,6 @@ func newResetFeatureFlagsCmd() *cobra.Command {
 			if err := loadFeatureFlagConfig(cmd); err != nil {
 				return err
 			}
-			if !config.ConsulEnabled() {
-				return fmt.Errorf("reset-feature-flags requires consul.enabled=true; use set-feature-flags with {} to clear flags")
-			}
 			client := goRedis.NewUniversalClient(redisService.ClientOptions())
 			defer client.Close()
 			flags := redis.NewFeatureFlagClient(client, redisService.KVBasePath)

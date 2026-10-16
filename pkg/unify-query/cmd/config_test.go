@@ -173,12 +173,14 @@ func TestResetFeatureFlagsCommand(t *testing.T) {
 	}
 	mr.DB(3).Set(key, "preserved snapshot")
 	output.Reset()
-	commandsBefore := mr.CommandCount()
 	rootCmd.SetArgs([]string{"--config", configFile, "config", "reset-feature-flags"})
-	if err := rootCmd.Execute(); err == nil || !strings.Contains(err.Error(), "requires consul.enabled=true") {
-		t.Fatalf("reset with disabled Consul must fail explicitly, got %v", err)
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("legacy consul.enabled=false must not prevent reset: %v", err)
 	}
-	if actual, _ := mr.DB(3).Get(key); actual != "preserved snapshot" || mr.CommandCount() != commandsBefore {
-		t.Fatal("rejected reset must not delete the snapshot or issue Redis commands")
+	if mr.DB(3).Exists(key) {
+		t.Fatal("reset must delete the snapshot even with legacy consul.enabled=false")
+	}
+	if _, err := subscription.ReceiveMessage(ctx); err != nil {
+		t.Fatalf("missing reset notification with legacy configuration: %v", err)
 	}
 }

@@ -23,7 +23,6 @@ import (
 // Client 标准consul读写
 type Client struct {
 	KV        *api.KV
-	Agent     *api.Agent
 	Session   *api.Session
 	apiClient *api.Client
 	auth      *AuthConfig
@@ -117,7 +116,6 @@ var GetAPI = func(client *Client) error {
 	}
 	client.Session = apiClient.Session()
 	client.KV = apiClient.KV()
-	client.Agent = apiClient.Agent()
 	client.apiClient = apiClient
 
 	return nil
@@ -137,111 +135,6 @@ var GetPlan = func(params map[string]any, outchan chan<- any) (*watch.Plan, erro
 		}
 	}
 	return plan, nil
-}
-
-// ServiceRegister 注册service,name既是ID
-func (bc *Client) ServiceRegister(serviceID, serviceName string, tags []string, address string, port int) error {
-	option := new(api.AgentServiceRegistration)
-
-	option.Name = serviceName
-	option.Tags = tags
-	option.Address = address
-	option.Port = port
-
-	option.ID = serviceID
-
-	err := bc.Agent.ServiceRegister(option)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// ServiceDeregister 注册service,name既是ID
-func (bc *Client) ServiceDeregister(serviceID string) error {
-	err := bc.Agent.ServiceDeregister(serviceID)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// ServiceAwake 测试service，若不存在则创建
-func (bc *Client) ServiceAwake(serviceID, serviceName string, tags []string, address string, port int) error {
-	_, options, err := bc.Agent.AgentHealthServiceByID(serviceID)
-	if options == nil && err == nil {
-		option := new(api.AgentServiceRegistration)
-
-		option.Name = serviceName
-		option.ID = serviceID
-		option.Tags = tags
-		option.Address = address
-		option.Port = port
-
-		err := bc.Agent.ServiceRegister(option)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	return nil
-}
-
-// CheckRegister 注册check
-func (bc *Client) CheckRegister(serviceID, checkID string, ttl string) error {
-	option := new(api.AgentCheckRegistration)
-	option.Name = checkID
-	option.TTL = ttl
-	option.ServiceID = serviceID
-
-	err := bc.Agent.CheckRegister(option)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// CheckDeregister 取消注册
-func (bc *Client) CheckDeregister(checkID string) error {
-	err := bc.Agent.CheckDeregister(checkID)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// CheckFail health state修改为fail
-func (bc *Client) CheckFail(checkID, note string) error {
-	err := bc.Agent.FailTTL(checkID, note)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// CheckPass health state修改为pass
-func (bc *Client) CheckPass(checkID, note string) error {
-	err := bc.Agent.PassTTL(checkID, note)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// CheckStatus :
-func (bc *Client) CheckStatus(checkID string) (string, error) {
-	checksMap, err := bc.Agent.ChecksWithFilter("Name==" + checkID)
-	if err != nil {
-		return "", err
-	}
-	var value string
-	res, ok := checksMap[checkID]
-	if !ok {
-		return "", ErrNoCheckIDFound
-	}
-	value = res.Status
-	return value, nil
 }
 
 // formatPrefix 给prefix加分隔符

@@ -10,24 +10,15 @@
 package consul
 
 const (
-	ServiceNameConfigPath = "consul.service_name"
 	KVBasePathConfigPath  = "consul.kv_base_path"
 	AddressConfigPath     = "consul.consul_address"
 	TLSCaFileConfigPath   = "consul.tls.ca_file"
 	TLSKeyFileConfigPath  = "consul.tls.key_file"
 	TLSCertFileConfigPath = "consul.tls.cert_file"
-	HTTPAddressConfigPath = "http.address"
-	PortConfigPath        = "http.port"
-	TTLConfigPath         = "consul.check_ttl"
 )
 
 var (
-	ServiceName string
-	KVBasePath  string
-
-	HTTPAddress string
-	Port        int
-	TTL         string
+	KVBasePath string
 
 	Address      string
 	CaFilePath   string

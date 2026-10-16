@@ -67,7 +67,10 @@ func (httpService *Service) recoverAllService() error {
 
 func (httpService *Service) refreshAllServiceWithoutLock(flowLog *logging.Entry) error {
 	flowLog.Infof("start to refresh all service")
-	var err error
+	var (
+		err        error
+		refreshErr error
+	)
 	err = httpService.switchAvailable(httpService.address, false)
 	if err != nil {
 		flowLog.Errorf("switchAvailable to false failed,error:%s", err)
@@ -87,16 +90,23 @@ func (httpService *Service) refreshAllServiceWithoutLock(flowLog *logging.Entry)
 	// 加载主机异常会回滚为先前的数据
 	err = backend.Refresh()
 	if err != nil {
+		refreshErr = err
 		flowLog.Errorf("backendManage Refresh failed,error:%s", err)
 	}
 	// 加载主机异常会回滚为先前的数据
 	// 如果 backend 数据成功，但是集群失败，只是影响查不到数据
 	err = cluster.Refresh()
 	if err != nil {
+		if refreshErr == nil {
+			refreshErr = err
+		}
 		flowLog.Errorf("clusterManage Refresh failed,error:%s", err)
 	}
 	err = route.Refresh()
 	if err != nil {
+		if refreshErr == nil {
+			refreshErr = err
+		}
 		flowLog.Errorf("route Refresh failed,error:%s", err)
 	}
 	// refreshAllService执行成功,表明三个模块的服务正确启动，此时状态位为true
@@ -105,6 +115,9 @@ func (httpService *Service) refreshAllServiceWithoutLock(flowLog *logging.Entry)
 		flowLog.Errorf("switchAvailable to true failed,error:%s", err)
 		// 上面已经重新注册了，这里没必要再注册一次
 		// return err
+	}
+	if refreshErr != nil {
+		return refreshErr
 	}
 	flowLog.Infof("refresh all service successful")
 	return nil

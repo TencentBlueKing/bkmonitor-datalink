@@ -98,9 +98,11 @@ collector. Ordinary mode and short grids keep their existing fetch path.
 The probe aggregates one retained identity dimension at the first evaluation
 point. Its physical-series weights, multiplied by the original grid length,
 estimate branch work. Above a soft target of 1,048,576 points, it plans two to
-four complementary branches. A heavy child probes the next eligible dimension
-before attempting its full response. Fanout follows the estimate rather than
-always issuing four data reads. These numbers are planning heuristics: they do
+four complementary branches. Reuse the sample up to the existing four-branch
+ceiling, stopping each bucket when its own estimate fits the target. Do not
+preselect `ceil(total/target)` branches: binary splits can leave a 2:1:1 shape
+with an overweight bucket even when the same sample can split it again. Two
+sufficient buckets still stop at two. These numbers are planning heuristics: they do
 not cap input, change the grid, guarantee a backend response size, or measure
 heap usage. The backend's byte and JSON-object guards remain authoritative.
 
@@ -118,14 +120,47 @@ flowchart TD
     A[Eligible broad long-grid query] --> B[Single-point dimension probe]
     B --> C{Estimated work above soft target?}
     C -->|yes and splittable| D[Queue complementary branches]
-    D --> E{Heavy branch with another dimension?}
-    E -->|yes| B
-    E -->|no| F[Fetch full original grid]
+    D --> E{Known heavy child with at least two dimensions?}
+    E -->|yes| J[Joint single-point probe of two dimensions]
+    J --> K{Complete usable sample?}
+    K -->|yes| L[Sum marginals and plan both levels locally]
+    L --> D
+    K -->|no| B
+    E -->|only one dimension| B
+    E -->|light or no dimensions| F[Fetch full original grid]
     C -->|no or unavailable| F
     F --> G{Response-size rejection?}
     G -->|yes| H[Reuse prepared split or existing partition/time fallback]
     G -->|no| I[Validate and apply complete Matrix]
 ```
+
+A known-heavy child with at least two remaining dimensions can request a joint
+single-point count grouped by the next two dimensions. The root probe remains
+single-dimensional, so small broad queries retain their previous probe and data
+call counts. Sum joint tuple counts to obtain each dimension's marginal weights;
+using the maximum tuple count would underestimate a label shared by many tuples.
+Split sample rows using only each newly created matcher, since inherited filters
+may reference dimensions that the joint sample no longer contains. For each
+heavy first-level bucket, reuse its sample to plan the second dimension locally.
+Light buckets keep that second dimension for a later size-error fallback.
+
+This produces at most sixteen query plans from one two-dimensional sample,
+using the same four workers and global fetch limit. Each plan owns its remaining
+dimensions; no Matrix, sample bucket or histogram enters the work queue. A failed,
+partial, empty or malformed joint sample is discarded before the original
+single-dimension planner runs. This fallback can cost one extra optional probe.
+A valid low estimate still prepares the full first-dimension fallback and does
+not consume an untried second dimension. Unseen and late labels remain covered
+by complementary full-grid data reads, including when no sampled dimension can
+split a heavy bucket.
+
+Joint grouping can return more rows than a single-dimension probe, and its
+response remains subject to the existing backend byte and object guards. Fewer
+calls are a structural benefit, not proof of reduced physical scans or end-to-end
+latency. Acceptance must compare probe rows/bytes/time, data reads, size failures,
+peak memory and complete output, as well as small queries. Trace attributes
+`shard-partition-joint-attempted`, `shard-partition-joint-used` and
+`shard-partition-probes-reused` distinguish the attempted plan from local reuse.
 
 A small estimate still fetches the entire original query. Only its prepared
 query plans are retained until that read completes, so an underestimated read

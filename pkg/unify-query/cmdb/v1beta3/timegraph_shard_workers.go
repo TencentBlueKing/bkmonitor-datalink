@@ -81,14 +81,14 @@ func (loader *timeGraphMatrixLoader) fetchTopologyReadyGroups(groups []topologyF
 				child.queryDuration = 0
 				child.lastMatrix = timeGraphMatrixSlot{}
 				child.matrixToken = fmt.Sprintf("parallel-%d", worker)
-				child.partitionDispatch = func(ctx context.Context, parts []topologyPartition, fields []string, depth int) error {
+				child.partitionDispatch = func(ctx context.Context, parts []topologyPartition, depth int) error {
 					children := make([]topologyFetchGroup, len(parts))
 					for i, part := range parts {
 						children[i] = group
 						children[i].ctx, children[i].query = ctx, part.query
 						children[i].shardDepth = depth
 						children[i].shardPlan = &timeGraphShardPlan{
-							partitionFields: fields,
+							partitionFields: part.remainingFields,
 							prepartition:    part.estimatedPoints > topologyPartitionTargetPoints,
 						}
 					}

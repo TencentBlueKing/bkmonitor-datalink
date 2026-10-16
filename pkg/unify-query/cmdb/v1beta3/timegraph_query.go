@@ -434,7 +434,7 @@ type timeGraphMatrixLoader struct {
 	lastMatrix             timeGraphMatrixSlot
 	matrixToken            string
 	queryTiming            *timeGraphQueryTiming
-	partitionDispatch      func(context.Context, []topologyPartition, []string, int) error
+	partitionDispatch      func(context.Context, []topologyPartition, int) error
 }
 
 // Track the union of query intervals so build wall time remains meaningful
@@ -732,7 +732,27 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 	if plan.prepartition && exact && loader.topology && yoloMode && metadata.IsExactTimeGrid(shardCtx) && len(plan.partitionFields) > 0 {
 		plan.prepartition = false
 		span.Set("shard-partition-preflight", true)
-		parts, remainingFields, err = loader.partitionTopologyQuery(shardCtx, queryTs, plan.partitionFields, 4, true)
+		fields := plan.partitionFields
+		jointUsed := false
+		if depth > 0 && len(fields) >= 2 {
+			span.Set("shard-partition-joint-attempted", true)
+			joint, jointErr := loader.partitionTopologyJointQuery(shardCtx, queryTs, fields, 4)
+			err, jointUsed = jointErr, joint.used
+			span.Set("shard-partition-joint-used", jointUsed)
+			span.Set("shard-partition-probes-reused", joint.reused)
+			if err != nil {
+				return err
+			}
+			if jointUsed {
+				parts, remainingFields = joint.parts, joint.remaining
+				if len(parts) < 2 && joint.estimatedPoints > topologyPartitionTargetPoints && len(remainingFields) > 0 {
+					parts, remainingFields, err = loader.partitionTopologyQuery(shardCtx, queryTs, remainingFields, 4, true)
+				}
+			}
+		}
+		if !jointUsed {
+			parts, remainingFields, err = loader.partitionTopologyQuery(shardCtx, queryTs, fields, 4, true)
+		}
 		plan.partitionFields = remainingFields
 		if err != nil {
 			return err
@@ -743,7 +763,7 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 		if len(parts) > 1 && topologyPartitionPoints(parts) > topologyPartitionTargetPoints {
 			span.Set("shard-partition", true)
 			span.Set("shard-partition-count", len(parts))
-			return loader.applyTopologyPartitions(shardCtx, parts, remainingFields, apply, depth+1)
+			return loader.applyTopologyPartitions(shardCtx, parts, apply, depth+1)
 		}
 		// Keep only the complementary query plans, not the probe Matrix. If a
 		// small or partial estimate was low, a size rejection can use these
@@ -789,7 +809,7 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 	if len(parts) > 1 {
 		span.Set("shard-partition", true)
 		span.Set("shard-partition-count", len(parts))
-		return loader.applyTopologyPartitions(shardCtx, parts, remainingFields, apply, depth+1)
+		return loader.applyTopologyPartitions(shardCtx, parts, apply, depth+1)
 	}
 	if exact && pointCount == 2 {
 		plan.singlePointRequired = true
@@ -812,12 +832,12 @@ func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, que
 	return nil
 }
 
-func (loader *timeGraphMatrixLoader) applyTopologyPartitions(ctx context.Context, parts []topologyPartition, fields []string, apply func(context.Context, pl.Matrix) error, depth int) error {
+func (loader *timeGraphMatrixLoader) applyTopologyPartitions(ctx context.Context, parts []topologyPartition, apply func(context.Context, pl.Matrix) error, depth int) error {
 	if loader.partitionDispatch != nil {
-		return loader.partitionDispatch(ctx, parts, fields, depth)
+		return loader.partitionDispatch(ctx, parts, depth)
 	}
 	for _, part := range parts {
-		plan := timeGraphShardPlan{partitionFields: fields}
+		plan := timeGraphShardPlan{partitionFields: part.remainingFields}
 		if err := loader.queryAndApplyShard(ctx, part.query, apply, depth, &plan); err != nil {
 			return err
 		}

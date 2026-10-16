@@ -28,6 +28,7 @@ const (
 type topologyPartition struct {
 	query           *structured.QueryTs
 	estimatedPoints float64
+	remainingFields []string
 }
 
 func topologyPartitionPoints(parts []topologyPartition) float64 {
@@ -79,6 +80,30 @@ func topologyPartitionFields(ts *structured.QueryTs) []string {
 	})
 }
 
+func (loader *timeGraphMatrixLoader) queryTopologyPartitionSample(ctx context.Context, ts *structured.QueryTs, fields []string) (pl.Matrix, bool, error) {
+	probe := *ts
+	// A probe only chooses a split. Positive and negative filters still cover
+	// values that first appear later, so one point is sufficient for the
+	// estimate and avoids returning a full-range probe matrix.
+	probe.End = probe.Start
+	q := *ts.QueryList[0]
+	q.Conditions.FieldList = slices.Clone(q.Conditions.FieldList)
+	q.Conditions.ConditionList = slices.Clone(q.Conditions.ConditionList)
+	for j := range q.Conditions.FieldList {
+		q.Conditions.FieldList[j].Value = slices.Clone(q.Conditions.FieldList[j].Value)
+	}
+	q.AggregateMethodList = slices.Clone(q.AggregateMethodList)
+	q.AggregateMethodList[0].Dimensions = slices.Clone(fields)
+	probe.QueryList = []*structured.Query{&q}
+	probeCtx := newTimeGraphSubqueryContext(ctx)
+	metadata.GetQueryParams(probeCtx).SetIsSkipK8s(metadata.GetQueryParams(ctx).IsSkipK8s)
+	probeCtx = withTimeGraphQueryStage(probeCtx, "relation-partition")
+	matrix, partial, probeErr := loader.queryWithQuality(probeCtx, &probe, false)
+	// A probe is not graph input and must not remain in the matrix reuse slot.
+	loader.lastMatrix = timeGraphMatrixSlot{}
+	return matrix, partial, probeErr
+}
+
 // Probes only choose a partition; they never select the result's identity set.
 // The complementary !~ branch always runs, including for values absent from a
 // partial probe or appearing later. Both branches retain the full original
@@ -88,33 +113,13 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 		if err = ctx.Err(); err != nil {
 			return
 		}
-		probe := *ts
-		// A probe only chooses a split. Positive and negative filters still cover
-		// values that first appear later, so one point is sufficient for the
-		// estimate and avoids returning a full-range probe matrix.
-		probe.End = probe.Start
-		q := *ts.QueryList[0]
-		q.Conditions.FieldList = slices.Clone(q.Conditions.FieldList)
-		q.Conditions.ConditionList = slices.Clone(q.Conditions.ConditionList)
-		for j := range q.Conditions.FieldList {
-			q.Conditions.FieldList[j].Value = slices.Clone(q.Conditions.FieldList[j].Value)
-		}
-		q.AggregateMethodList = slices.Clone(q.AggregateMethodList)
-		q.AggregateMethodList[0].Dimensions = []string{field}
-		probe.QueryList = []*structured.Query{&q}
-		probeCtx := newTimeGraphSubqueryContext(ctx)
-		metadata.GetQueryParams(probeCtx).SetIsSkipK8s(metadata.GetQueryParams(ctx).IsSkipK8s)
-		probeCtx = withTimeGraphQueryStage(probeCtx, "relation-partition")
-		matrix, _, probeErr := loader.queryWithQuality(probeCtx, &probe, false)
-		// A probe is not graph input and must not remain in the matrix reuse slot.
-		loader.lastMatrix = timeGraphMatrixSlot{}
+		matrix, _, probeErr := loader.queryTopologyPartitionSample(ctx, ts, []string{field})
 		if err = ctx.Err(); err != nil {
 			return
 		}
 		if probeErr != nil {
 			return nil, nil, nil
 		}
-		plannedFanout := fanout
 		targetPoints := 0.0
 		if preflight {
 			_, _, _, points, _ := timeGraphQueryRange(ts)
@@ -124,19 +129,19 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 			}
 			if estimate > topologyPartitionTargetPoints {
 				targetPoints = topologyPartitionTargetPoints
-				// Avoid four small data reads when two or three are estimated to
-				// fit. Low estimates still prepare the usual fallback fanout.
-				plannedFanout = 2
-				for plannedFanout < fanout && estimate > float64(plannedFanout)*topologyPartitionTargetPoints {
-					plannedFanout++
-				}
+				// Reuse the sample up to the existing fanout ceiling. Binary
+				// splits need not produce ceil(total/target) equally sized buckets;
+				// each bucket's own estimate decides when splitting can stop.
 			}
 		}
-		parts, err = topologyPartitionQueries(ts, matrix, field, plannedFanout, targetPoints)
+		parts, err = topologyPartitionQueries(ts, matrix, field, fanout, targetPoints)
 		if err != nil {
 			return
 		}
 		if len(parts) > 1 {
+			for n := range parts {
+				parts[n].remainingFields = slices.Clone(fields[i+1:])
+			}
 			return parts, fields[i+1:], nil
 		}
 		if preflight && topologyPartitionPoints(parts) <= topologyPartitionTargetPoints {
@@ -148,16 +153,113 @@ func (loader *timeGraphMatrixLoader) partitionTopologyQuery(ctx context.Context,
 	return nil, nil, nil
 }
 
+type topologyJointPlan struct {
+	parts           []topologyPartition
+	remaining       []string
+	estimatedPoints float64
+	used            bool
+	reused          int
+}
+
+// Only a complete two-dimension sample is reusable. All sample references are
+// local to this call, including rejected samples before the caller retries the
+// original single-dimension path. Empty strings are valid dimension values.
+func (loader *timeGraphMatrixLoader) partitionTopologyJointQuery(ctx context.Context, ts *structured.QueryTs, fields []string, fanout int) (plan topologyJointPlan, err error) {
+	if len(fields) < 2 {
+		return
+	}
+	matrix, partial, probeErr := loader.queryTopologyPartitionSample(ctx, ts, fields[:2])
+	if err = ctx.Err(); err != nil {
+		return
+	}
+	if probeErr != nil || partial || len(matrix) == 0 {
+		return
+	}
+	seen := make(map[[2]string]struct{}, len(matrix))
+	for _, series := range matrix {
+		if err = ctx.Err(); err != nil {
+			return
+		}
+		if !series.Metric.Has(fields[0]) || !series.Metric.Has(fields[1]) || len(series.Points) != 1 {
+			return
+		}
+		value := series.Points[0].V
+		if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+			return
+		}
+		key := [2]string{series.Metric.Get(fields[0]), series.Metric.Get(fields[1])}
+		if _, duplicate := seen[key]; duplicate {
+			return
+		}
+		seen[key] = struct{}{}
+	}
+	plan.used = true
+	_, _, _, points, _ := timeGraphQueryRange(ts)
+	for _, series := range matrix {
+		plan.estimatedPoints += topologyPartitionSeriesWeight(series) * float64(points)
+	}
+	target := 0.0
+	if plan.estimatedPoints > topologyPartitionTargetPoints {
+		target = topologyPartitionTargetPoints
+	}
+	first, err := topologyPartitionBuckets(ts, matrix, fields[0], fanout, target, true)
+	if err != nil {
+		return plan, err
+	}
+	plan.remaining = fields[1:]
+	if target == 0 {
+		// Preserve the full prepared fallback when this complete sample is low.
+		if len(first) > 1 {
+			plan.parts = topologyPartitionsFromBuckets(first, plan.remaining)
+		}
+		return plan, ctx.Err()
+	}
+	for _, bucket := range first {
+		if err = ctx.Err(); err != nil {
+			return
+		}
+		leaf := topologyPartitionsFromBuckets([]topologyPartitionBucket{bucket}, fields[1:])[0]
+		if leaf.estimatedPoints <= topologyPartitionTargetPoints {
+			plan.parts = append(plan.parts, leaf)
+			continue
+		}
+		second, splitErr := topologyPartitionBuckets(bucket.query, bucket.sample, fields[1], fanout, topologyPartitionTargetPoints, true)
+		if splitErr != nil {
+			return plan, splitErr
+		}
+		plan.reused++
+		plan.parts = append(plan.parts, topologyPartitionsFromBuckets(second, fields[2:])...)
+	}
+	if len(plan.parts) < 2 {
+		// Both sampled dimensions were ineffective; continue with untried
+		// dimensions only after this function releases the joint sample.
+		plan.parts = nil
+		plan.remaining = fields[2:]
+	}
+	return plan, ctx.Err()
+}
+
 // Reuse one probe to split its heaviest observed bucket up to fanout ways.
 // Every replacement is a positive/negative pair, so even a partial or stale
 // sample covers all unseen, missing and future values exactly once. Samples
 // choose the plan only; no probe Matrix is retained by the queued queries.
+type topologyPartitionBucket struct {
+	query  *structured.QueryTs
+	sample pl.Matrix
+}
+
 func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field string, fanout int, targetPoints float64) ([]topologyPartition, error) {
-	type bucket struct {
-		query  *structured.QueryTs
-		sample pl.Matrix
+	buckets, err := topologyPartitionBuckets(ts, matrix, field, fanout, targetPoints, false)
+	if err != nil {
+		return nil, err
 	}
-	buckets := []bucket{{query: ts, sample: matrix}}
+	return topologyPartitionsFromBuckets(buckets, nil), nil
+}
+
+// Joint samples are only local planning inputs. No bucket or Matrix is stored
+// in a queued partition, and only newly generated matchers divide its rows.
+func topologyPartitionBuckets(ts *structured.QueryTs, matrix pl.Matrix, field string, fanout int, targetPoints float64, joint bool) ([]topologyPartitionBucket, error) {
+	buckets := []topologyPartitionBucket{{query: ts, sample: matrix}}
 	_, _, _, pointCount, exact := timeGraphQueryRange(ts)
 	if !exact {
 		pointCount = 1
@@ -167,10 +269,6 @@ func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field st
 		weight := 0.0
 		pattern := ""
 		for i, candidate := range buckets {
-			candidatePattern, ok := topologyPartitionPattern(candidate.sample, field)
-			if !ok {
-				continue
-			}
 			candidateWeight := 0.0
 			for _, series := range candidate.sample {
 				candidateWeight += topologyPartitionSeriesWeight(series)
@@ -182,6 +280,21 @@ func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field st
 			if targetPoints > 0 && candidateWeight*float64(pointCount) <= targetPoints {
 				continue
 			}
+			var candidatePattern string
+			var ok bool
+			if joint {
+				weights := make(map[string]float64, len(candidate.sample))
+				for _, series := range candidate.sample {
+					weights[series.Metric.Get(field)] += topologyPartitionSeriesWeight(series)
+				}
+				candidatePattern, ok = topologyPartitionPatternWeights(weights)
+			} else {
+				candidatePattern, ok = topologyPartitionPattern(candidate.sample, field)
+			}
+			if !ok {
+				continue
+			}
+
 			if chosen < 0 || candidateWeight > weight {
 				chosen, weight, pattern = i, candidateWeight, candidatePattern
 			}
@@ -202,7 +315,7 @@ func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field st
 		if err != nil {
 			return nil, err
 		}
-		leftBucket, rightBucket := bucket{query: left}, bucket{query: right}
+		leftBucket, rightBucket := topologyPartitionBucket{query: left}, topologyPartitionBucket{query: right}
 		for _, series := range parent.sample {
 			if matcher.Matches(series.Metric.Get(field)) {
 				leftBucket.sample = append(leftBucket.sample, series)
@@ -213,14 +326,23 @@ func topologyPartitionQueries(ts *structured.QueryTs, matrix pl.Matrix, field st
 		buckets[chosen] = leftBucket
 		buckets = append(buckets, rightBucket)
 	}
+	return buckets, nil
+}
+
+func topologyPartitionsFromBuckets(buckets []topologyPartitionBucket, fields []string) []topologyPartition {
 	parts := make([]topologyPartition, len(buckets))
 	for i, bucket := range buckets {
+		_, _, _, pointCount, exact := timeGraphQueryRange(bucket.query)
+		if !exact {
+			pointCount = 1
+		}
 		parts[i].query = bucket.query
+		parts[i].remainingFields = slices.Clone(fields)
 		for _, series := range bucket.sample {
 			parts[i].estimatedPoints += topologyPartitionSeriesWeight(series) * float64(pointCount)
 		}
 	}
-	return parts, nil
+	return parts
 }
 
 func topologyPartitionSeriesWeight(series pl.Series) float64 {
@@ -248,6 +370,10 @@ func topologyPartitionPattern(matrix pl.Matrix, field string) (string, bool) {
 		value := series.Metric.Get(field)
 		weights[value] = max(weights[value], weight)
 	}
+	return topologyPartitionPatternWeights(weights)
+}
+
+func topologyPartitionPatternWeights(weights map[string]float64) (string, bool) {
 	if len(weights) < 2 {
 		return "", false
 	}

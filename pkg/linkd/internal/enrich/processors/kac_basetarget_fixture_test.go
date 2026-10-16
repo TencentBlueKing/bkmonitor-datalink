@@ -253,7 +253,7 @@ func (f kacFixtureStrategy) value() models.CWStrategy {
 	bizID, templateID, configID, modelCode := f.BKBizID, f.MonitorTemplateID, f.ConfigID, f.ObjectModelCode
 	return models.CWStrategy{
 		ObjectModelCode: optionalModelCode(modelCode), BKBizID: &bizID, MonitorTemplateID: &templateID, ConfigID: &configID,
-		IsDefault: &f.IsDefault,
+		IsDefault: &f.IsDefault, Kind: models.CWStrategyKindStrategy,
 		Spec: models.CWStrategySpec{ConfigType: f.ConfigType, Name: f.Name, AlarmAlias: f.AlarmAlias, DataSource: f.DataSource, TableID: f.QueryConfigs[0].ResultTableID,
 			FieldName: f.QueryConfigs[0].MetricField, StrategyItem: &models.CWStrategyItem{
 				AggregateMethod: f.AggregateMethod, AggregatePeriod: period, Expression: f.Expression,

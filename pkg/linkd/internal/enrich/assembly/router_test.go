@@ -258,9 +258,13 @@ func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 		!strings.Contains(string(strategy["strategy_name"]), "CPU") {
 		t.Fatalf("strategy=%#v", strategy)
 	}
-	if got := string(strategy["url"]); got != `"/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=1\u0026strategy_config_id=strategyconfig1"` {
-		t.Fatalf("strategy url=%s", got)
+	if _, exists := strategy["url"]; exists {
+		t.Fatalf("strategy contains frontend URL: %#v", strategy)
 	}
+	if string(strategy["is_default"]) != "true" {
+		t.Fatalf("strategy facts=%#v", strategy)
+	}
+
 	if _, exists := strategy["monitor_strategy_id"]; exists {
 		t.Fatalf("strategy retains monitor_strategy_id: %#v", strategy)
 	}
@@ -304,8 +308,8 @@ func TestRouterPassesProcessorConfigToStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	strategy, ok := processor.(processors.Strategy)
-	if !ok || strategy.WebSaaSModuleURL() != "https://example.com/kingeye/" {
+	_, ok := processor.(processors.Strategy)
+	if !ok {
 		t.Fatalf("processor=%#v", processor)
 	}
 }
@@ -403,11 +407,8 @@ func assertBaseCollectEnrichment(t *testing.T, payload enrich.Payload) {
 		string(metric["anomaly_begin_time"]) != `"2026-09-01T00:00:00Z"` {
 		t.Fatalf("metric=%#v", metric)
 	}
-	var queryParams struct {
-		BKBizID int64 `json:"bk_biz_id"`
-	}
-	if err := json.Unmarshal(metric["metric_query_params"], &queryParams); err != nil || queryParams.BKBizID != 2 {
-		t.Fatalf("metric query params=%s error=%v", metric["metric_query_params"], err)
+	if _, exists := metric["metric_query_params"]; exists {
+		t.Fatalf("builtin query params must be assembled by KAC: %s", metric["metric_query_params"])
 	}
 	source := payload.Processors[4]["source"].Value
 	if string(source["source_id"]) != `"built_in_bk"` || string(source["source_name"]) != `"鲸眼监控"` ||

@@ -21,12 +21,11 @@ import (
 	"linkd/internal/enrich/rules"
 )
 
+// 旧 EventSourceRelease 仍可能携带此键；只校验，不参与新丰富结果。
 const strategyConfigWebSaaSModuleURL = "web_saas_module_url"
 
 // Strategy 丰富告警关联的策略信息。
-type Strategy struct {
-	webSaaSModuleURL string
-}
+type Strategy struct{}
 
 // NewStrategy 校验并创建 Strategy Processor。
 func NewStrategy(config map[string]any) (Strategy, error) {
@@ -39,17 +38,13 @@ func NewStrategy(config map[string]any) (Strategy, error) {
 		if !ok {
 			return Strategy{}, fmt.Errorf("strategy processor config %s must be a string", key)
 		}
-		normalized, err := normalizeWebSaaSModuleURL(moduleURL)
+		_, err := normalizeWebSaaSModuleURL(moduleURL)
 		if err != nil {
 			return Strategy{}, err
 		}
-		processor.webSaaSModuleURL = normalized
 	}
 	return processor, nil
 }
-
-// WebSaaSModuleURL 返回规范化后的 Web SaaS 模块基础地址。
-func (p Strategy) WebSaaSModuleURL() string { return p.webSaaSModuleURL }
 
 // Name 返回稳定的 Processor 名称。
 func (Strategy) Name() string { return rules.StrategyProcessor }
@@ -77,10 +72,16 @@ func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 		if strategy.ConfigID != nil {
 			configID := strings.ReplaceAll(*strategy.ConfigID, "-", "")
 			values.StrategyConfigID = configID
-			if strategy.MonitorTemplateID != nil {
-				if strategyURL, ok := p.buildStrategyURL(ctx, scope, strategy, configID, *strategy.MonitorTemplateID); ok {
-					values.URL = strategyURL
-				}
+		}
+		values.StrategyKind = strategy.Kind
+		if strategy.IsDefault != nil {
+			isDefault := *strategy.IsDefault
+			values.IsDefault = &isDefault
+		}
+		if strategy.Kind != models.CWStrategyKindCloud && values.IsDefault != nil && !*values.IsDefault {
+			values.StrategyInstance, _ = strategyInstanceFacts(ctx, scope, strategy)
+			if err := ctx.Err(); err != nil {
+				return enrich.ProcessorResult{}, err
 			}
 		}
 		values.StrategyName = legacyKACStrategyName(strategy)
@@ -137,41 +138,28 @@ func strategyDependencyDiagnostics(strategyFound bool, strategyErr error) []enri
 	return diagnostics
 }
 
-func (p Strategy) buildStrategyURL(
-	ctx context.Context,
-	scope *enrich.Scope,
-	strategy models.CWStrategy,
-	strategyConfigID string,
-	monitorStrategyID int64,
-) (string, bool) {
-	isCloudStrategy := strategy.Kind == models.CWStrategyKindCloud
-	if isCloudStrategy || strategy.IsDefault != nil && *strategy.IsDefault {
-		query := url.Values{
-			"id":                 []string{fmt.Sprint(monitorStrategyID)},
-			"strategy_config_id": []string{strategyConfigID},
-		}
-		return p.absoluteStrategyURL(rules.StrategyManagePath + query.Encode()), true
-	}
+// strategyInstanceFacts 复用策略分类和租户作用域查询，冻结实例身份，供产品读取时组装导航。
+func strategyInstanceFacts(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy) (*models.StrategyInstance, bool) {
 	if strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
-		return "", false
+		return nil, false
 	}
 	classification := rules.Classify(strategy, scope.Facts().Dimensions)
 	queryInstance, ok := strategyInstanceQuery(classification.BaseTarget, *strategy.ObjectModelCode, scope.Facts().Dimensions)
 	if !ok {
-		return "", false
+		return nil, false
 	}
 	instance, found, err := scope.Instance(ctx, queryInstance)
 	if err != nil || !found {
-		return "", false
+		return nil, false
 	}
 	instanceFields := mergeInstanceFields(instance.Fields, instance.Attributes)
 	bkObjID, ok := rules.HasTextField(instanceFields, rules.FieldBKObjID)
 	if !ok {
-		return "", false
+		return nil, false
 	}
 	classID, ok := fieldText(instanceFields, rules.FieldObjectModelGroupID)
 	if !ok {
-		return "", false
+		return nil, false
 	}
 	bkInstID := instance.InstanceID
 	if value, exists := fieldText(instanceFields, rules.FieldBKInstID); exists {
@@ -179,15 +167,9 @@ func (p Strategy) buildStrategyURL(
 	} else if value, exists := fieldText(instanceFields, rules.FieldBKHostID); exists {
 		bkInstID = value
 	}
-	query := url.Values{
-		"bk_obj_id":         []string{bkObjID},
-		"bk_inst_id":        []string{bkInstID},
-		"strategy_id":       []string{fmt.Sprint(monitorStrategyID)},
-		"strategy_item_id":  []string{strategyConfigID},
-		"classId":           []string{classID},
-		"object_model_code": []string{*strategy.ObjectModelCode},
-	}
-	return p.absoluteStrategyURL(rules.StrategyScenePath + query.Encode()), true
+	return &models.StrategyInstance{
+		ObjectModelCode: *strategy.ObjectModelCode, BKObjID: bkObjID, BKInstID: bkInstID, ObjectModelGroupID: classID,
+	}, true
 }
 
 func strategyInstanceQuery(branch rules.BaseTargetBranch, modelCode string, dimensions domain.DimensionMap) (enrich.InstanceQuery, bool) {
@@ -215,13 +197,6 @@ func strategyInstanceQuery(branch rules.BaseTargetBranch, modelCode string, dime
 		}
 	}
 	return enrich.InstanceQuery{}, false
-}
-
-func (p Strategy) absoluteStrategyURL(path string) string {
-	if p.webSaaSModuleURL == "" {
-		return path
-	}
-	return strings.TrimSuffix(p.webSaaSModuleURL, "/") + path
 }
 
 func normalizeWebSaaSModuleURL(value string) (string, error) {

@@ -157,16 +157,30 @@ KAC `AlarmEvent` ES 模型已声明 `bk_tenant_id`，见
   "data_source": "system",
   "field_extra_info": {
     "strategy_name": {
-      "url": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=1&strategy_config_id=strategyconfig1"
+      "strategy_context": {
+        "bk_tenant_id": "tenant-a",
+        "strategy_set_split_record_id": 123,
+        "strategy_set_split_record_version": 1,
+        "monitor_template_id": 1,
+        "strategy_config_id": "strategyconfig1",
+        "strategy_kind": "Strategy",
+        "is_default": true
+      }
     }
   },
-  "metric_query_params": "{\"expression\":\"A\",\"query_configs\":[]}",
+  "metric_query_params": "{}",
   "dynamic_group_id": [],
   "cw_labels": []
 }
 ```
 
 该示例是本方案目标 DTO，字段值来自 Linkd 示例数据，未经过真实 KAC 环境验证。
+2026-10-15 确认用 `strategy_set_split_record_id/strategy_set_split_record_version` 明确拆分记录引用，
+字段命名已在本地输出实现，未提交、未部署；KAC 查询兼容可信历史短名。
+2026-10-16 按用户确认，ID/version 分别来自 alarmd `strategy_id/strategy_version`，
+对应不可变历史 Reader 的 `strategy_id/strategy_revision`；KAC 当前临时传告警租户和告警业务 ID，
+待公共接口移除附加参数后精简调用，不另存完整查询定义。完整边界见
+[KAC 投影契约](../reference/contracts/kac-alert-projection-v1.md#策略关联事实与详情导航2026-10-15)。
 
 ### 4.2 身份、动作与时间
 
@@ -265,7 +279,8 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 | --- | --- | --- |
 | `strategy_id` | `strategy.monitor_template_id` | 十进制字符串；保留旧 KAC 字段语义 |
 | `strategy_name` | `strategy.strategy_name` | 缺失输出空字符串 |
-| `field_extra_info.strategy_name.url` | `strategy.url` | 始终输出 object，URL 可空 |
+| `field_extra_info.strategy_name.strategy_context` | `strategy` 冻结事实及 Alert 租户 | 策略类别明确时输出，不补造缺失的默认属性；字段契约见 [KAC 投影](../reference/contracts/kac-alert-projection-v1.md) |
+| `field_extra_info.strategy_name.url` | 历史 `strategy.url` 或来源自定义字段 | 只透传已有链接，新丰富不生成 URL |
 | `data_source` | `strategy.data_source` | 字符串 |
 | `bk_obj_id` / `bk_inst_id` | `resource.bk_obj_id` / `resource.bk_inst_id` | 标量转稳定文本；null 转空字符串 |
 | `model_id` / `model_inst_id` / `model_name` | `resource` 同名字段 | 字符串 |
@@ -285,7 +300,7 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 | `time_interval` | `metric.time_interval` | 标量转稳定文本，null 转空字符串 |
 | `where_condition` | `metric.where_condition` | 字符串 |
 | `anomaly_begin_time` | `metric.anomaly_begin_time` | 有值时输出；nil 时输出 JSON null，以匹配现有样例 |
-| `metric_query_params` | `metric.metric_query_params` | 规范 JSON 后编码成 JSON 字符串；nil 使用 `{}`；已经是字符串时先严格解码为 JSON object，再规范编码一次，拒绝非法 JSON 和二次编码 |
+| `metric_query_params` | `metric.metric_query_params` | 新内置不生成计划，nil 使用空占位 `{}`；历史/非内置对象规范 JSON 后编码成 JSON 字符串；已经是字符串时先严格解码为 JSON object，再规范编码一次，拒绝非法 JSON 和二次编码 |
 | `meta_info` | `source.meta_info` → `Alert.SourceEventID` | 字符串 |
 
 `bk_service_id` 和 `Namespace` 当前 Enrich 设计没有等价值，首版固定输出空字符串，与已取证旧实现一致

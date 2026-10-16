@@ -7,6 +7,8 @@ package kachook
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/enrich/custom"
 	"linkd/internal/enrich/kingeye"
+	"linkd/internal/enrich/models"
 	"linkd/internal/lifecycle"
 )
 
@@ -382,5 +385,81 @@ func TestCMDBIdentityAndTopologyCollectionsReachKACOutput(t *testing.T) {
 	}
 	if document["model_inst_id"] != "202" || document["bk_inst_id"] != "202" || len(document["bk_set_id"].([]any)) != 2 || len(document["bk_module_name"].([]any)) != 2 {
 		t.Fatal(document)
+	}
+}
+
+func TestStrategyNavigationFactsReachKACWithoutFrontendURL(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		t.Run(fmt.Sprint(terminal), func(t *testing.T) {
+			alert := testAlert()
+			alert.Enrich = jsonObject(`{"processors":[{"strategy":{"status":"succeeded","value":{
+				"strategy_id":123,"strategy_version":2,"monitor_template_id":42,"strategy_config_id":"config1",
+				"strategy_name":"CPU","strategy_kind":"Strategy","is_default":false,
+				"strategy_instance":{"object_model_code":"cw-Host","bk_obj_id":"host","bk_inst_id":"host|101","object_model_group_id":"7"}
+			}}}]}`)
+			if terminal {
+				alert.Status = domain.AlertStatusRecovered
+				alert.EndType = domain.AlertEndTypeSource
+				alert.EndReason = "source recovered"
+				end := alert.BeginAt.Add(time.Minute)
+				alert.EndAt = &end
+			}
+			outcome := lifecycle.OutcomeAlertCreated
+			if terminal {
+				outcome = lifecycle.OutcomeAlertRecovered
+			}
+			message, err := convertMessage(lifecycle.FinalHookInput{
+				Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event"}, Alert: alert, Outcome: outcome,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			info := message.FieldExtraInfo["strategy_name"].(map[string]any)
+			if _, exists := info["url"]; exists {
+				t.Fatalf("generated URL: %#v", info)
+			}
+			want := map[string]any{"bk_tenant_id": "tenant-1", "strategy_set_split_record_id": int64(123), "strategy_set_split_record_version": int64(2),
+				"monitor_template_id": int64(42), "strategy_config_id": "config1", "strategy_kind": models.CWStrategyKindStrategy,
+				"is_default": false, "strategy_instance": map[string]any{"object_model_code": "cw-Host", "bk_obj_id": "host", "bk_inst_id": "host|101", "object_model_group_id": "7"}}
+			if !reflect.DeepEqual(info["strategy_context"], want) {
+				t.Fatalf("facts=%#v want=%#v", info["strategy_context"], want)
+			}
+			if message.StrategyID != "42" || message.Content != alert.Content {
+				t.Fatalf("message=%#v", message)
+			}
+		})
+	}
+}
+
+func TestHistoricalStrategyURLAndExternalCustomURLSurviveProjection(t *testing.T) {
+	alert := testAlert()
+	input := lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event"}, Alert: alert, Outcome: lifecycle.OutcomeAlertCreated}
+	message, err := convertMessage(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := message.FieldExtraInfo["strategy_name"].(map[string]any)
+	if info["url"] != "/strategy/7" || info["strategy_context"] != nil {
+		t.Fatalf("legacy=%#v", info)
+	}
+	alert.ExtraData["field_extra_info"] = json.RawMessage(`{"strategy_name":{"url":"https://external.example.test/#/kmc/scene/monitorViewDetails?custom=1"}}`)
+	input.Alert = alert
+	message, err = convertMessage(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := message.FieldExtraInfo["strategy_name"].(map[string]any)["url"]; got != "https://external.example.test/#/kmc/scene/monitorViewDetails?custom=1" {
+		t.Fatalf("external URL=%v", got)
+	}
+}
+
+func TestCloudStrategyFactsDoNotRequireDefaultAttribute(t *testing.T) {
+	fields := strategyFieldExtraInfo("tenant-a", models.StrategyValues{StrategyKind: models.CWStrategyKindCloud, MonitorTemplateID: 42, StrategyConfigID: "cfg"})
+	context := fields["strategy_name"].(map[string]any)["strategy_context"].(map[string]any)
+	if _, exists := context["is_default"]; exists {
+		t.Fatalf("invented default attribute: %#v", context)
+	}
+	if context["monitor_template_id"] != int64(42) || context["strategy_kind"] != models.CWStrategyKindCloud {
+		t.Fatalf("cloud context=%#v", context)
 	}
 }

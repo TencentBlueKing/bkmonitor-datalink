@@ -109,7 +109,7 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 		ResultTableID: values.metric.ResultTableID, TimeInterval: scalarText(values.metric.TimeInterval),
 		AggregateFunc: values.metric.AggregateFunc, WhereCondition: values.metric.WhereCondition,
 		Unit: values.metric.Unit, DataSource: values.strategy.DataSource,
-		FieldExtraInfo:    map[string]any{"strategy_name": map[string]any{"url": values.strategy.URL}},
+		FieldExtraInfo:    strategyFieldExtraInfo(input.Alert.BKTenantID, values.strategy),
 		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.apm.CWLabels, values.resource.CWLabels),
 		LogThemeID: scalarInt64(values.log.LogThemeID), LogThemeName: values.log.LogThemeName,
 		LogQueryString: values.log.LogQueryString, LogRelateInfo: values.log.LogRelateInfo,
@@ -347,4 +347,30 @@ func decodeEffectiveEnrich(alert domain.Alert) (enrichValues, error) {
 		}
 	}
 	return values, nil
+}
+
+// strategyFieldExtraInfo 透传冻结的策略关联；旧结果的 URL 只供 KAC 读侧兼容。
+func strategyFieldExtraInfo(tenant string, strategy models.StrategyValues) map[string]any {
+	info := map[string]any{}
+	if strategy.URL != "" {
+		info["url"] = strategy.URL
+	}
+	if strategy.StrategyKind != "" || strategy.URL == "" && strategy.StrategyID > 0 && strategy.StrategyVersion > 0 {
+		facts := map[string]any{
+			"bk_tenant_id": tenant, "strategy_set_split_record_id": strategy.StrategyID,
+			"strategy_set_split_record_version": strategy.StrategyVersion, "monitor_template_id": strategy.MonitorTemplateID,
+			"strategy_config_id": strategy.StrategyConfigID, "strategy_kind": strategy.StrategyKind,
+		}
+		if strategy.IsDefault != nil {
+			facts["is_default"] = *strategy.IsDefault
+		}
+		if instance := strategy.StrategyInstance; instance != nil {
+			facts["strategy_instance"] = map[string]any{
+				"object_model_code": instance.ObjectModelCode, "bk_obj_id": instance.BKObjID,
+				"bk_inst_id": instance.BKInstID, "object_model_group_id": instance.ObjectModelGroupID,
+			}
+		}
+		info["strategy_context"] = facts
+	}
+	return map[string]any{"strategy_name": info}
 }

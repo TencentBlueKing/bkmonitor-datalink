@@ -152,8 +152,6 @@ event_sources:
     enrich:
       processors:
         - type: strategy
-          config:
-            web_saas_module_url: https://kingeye.example.com/
         - { type: resource }
         - { type: display }
         - { type: metric }
@@ -168,9 +166,10 @@ event_sources:
 ```
 
 `event_sources[].enrich.processors[].config` 是归属该 Processor 的 JSON-compatible 配置 map，由对应
-Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。当前 `strategy` 支持
-`web_saas_module_url`，值为可选的绝对 HTTP(S) 基础地址，禁止 query 和 fragment；配置后
-`strategy.url` 输出完整 URL，省略时继续输出站内相对路径。`test` 支持下述负载模拟参数；其余 Processor 当前只接受空 config。
+Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。`strategy` 只输出冻结的策略关联事实，
+不生成产品 URL；旧 Release 的 `web_saas_module_url` 仍按绝对 HTTP(S) 地址校验并接受，但不再使用。
+新发布器不携带此键。KAC 详情读取时生成链接及兼容历史 URL，具体字段见
+[KAC 投影契约](../reference/contracts/kac-alert-projection-v1.md)。`test` 支持下述负载模拟参数；其余 Processor 当前只接受空 config。
 
 `event_sources[].enrich.processors` 是每条 Event 在策略前执行的有序丰富链。当前注册名为
 `strategy/resource/display/metric/source/log/cloud_resource/k8s/apm/test/cmdb/fields/cmdb-access`；空列表输出 `{"processors":[]}`。

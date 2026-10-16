@@ -158,11 +158,6 @@ const (
 	LogMetricFallback    = "--"
 )
 
-const (
-	StrategyManagePath = "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?"
-	StrategyScenePath  = "/#/kmc/scene/monitorViewDetails?"
-)
-
 // Classification 是一次丰富调用共享的主分类和 BaseTarget 二级分支结果。
 type Classification struct {
 	Main       DisplayClassification

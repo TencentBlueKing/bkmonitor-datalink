@@ -112,8 +112,18 @@ func TestMetricCatalogQueryLocation(t *testing.T) {
 			if got.Status != domain.EnrichStatusSucceeded || value.ResultTableID != wantTable || value.MetricName != tc.physical || value.MetricUniqueID != wantTable+"."+tc.physical {
 				t.Fatalf("metric=%#v status=%s", value, got.Status)
 			}
+			if value.MetricQueryParams != nil {
+				t.Fatalf("builtin query params must be assembled by KAC: %#v", value.MetricQueryParams)
+			}
+			// 非内置兼容协议仍可按相同目录定位生成参数。
+			projection, err := reader.strategy.StrategyItemProjection()
+			if err != nil {
+				t.Fatal(err)
+			}
+			projection.QueryConfigs[0].ResultTableID = wantTable
+			projection.QueryConfigs[0].MetricField = tc.physical
 			var params metricQueryParams
-			encoded, _ := json.Marshal(value.MetricQueryParams)
+			encoded, _ := json.Marshal(buildMetricQueryParams(projection, reader.strategy, event.Dimensions, 2))
 			if err := json.Unmarshal(encoded, &params); err != nil {
 				t.Fatal(err)
 			}
@@ -126,6 +136,35 @@ func TestMetricCatalogQueryLocation(t *testing.T) {
 			after, _ := json.Marshal(reader.strategy)
 			if !reflect.DeepEqual(before, after) {
 				t.Fatal("published strategy mutated")
+			}
+		})
+	}
+}
+
+func TestMetricParameterMigrationPreservesOtherFactsAndExternalProtocol(t *testing.T) {
+	for _, source := range []string{"built_in_bk", "external"} {
+		t.Run(source, func(t *testing.T) {
+			reader := &metricLocationReader{metadata: models.MetricMetadata{Kind: "native", TableID: "system.cpu", PhysicalField: "usage"}}
+			reader.strategy = reader.strategyForTest()
+			event := processorBaseTargetAlert(t, domain.DimensionMap{})
+			event.EventSourceID = source
+			scope, err := enrich.NewScope(event, enrich.Sources{CWStrategy: reader, Metric: reader})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := (Metric{}).Process(t.Context(), scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var values models.MetricValues
+			if err := json.Unmarshal(mustRawObject(t, got.Value), &values); err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != domain.EnrichStatusSucceeded || values.MetricUniqueID == "" {
+				t.Fatalf("lost matching facts: %#v", got)
+			}
+			if (values.MetricQueryParams == nil) != (source == "built_in_bk") {
+				t.Fatalf("wrong query ownership: %#v", values.MetricQueryParams)
 			}
 		})
 	}

@@ -147,6 +147,11 @@
             },
             {
               "op": "set",
+              "path": "$[\"labels\"][\"is_default\"]",
+              "value": true
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"monitor_template_id\"]",
               "value": 495
             },
@@ -162,6 +167,11 @@
             },
             {
               "op": "set",
+              "path": "$[\"labels\"][\"strategy_kind\"]",
+              "value": "Strategy"
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"strategy_name\"]",
               "value": "指标丨Single Endpoint Availability Rate (ICMP)"
             },
@@ -169,11 +179,6 @@
               "op": "set",
               "path": "$[\"labels\"][\"strategy_version\"]",
               "value": 2
-            },
-            {
-              "op": "set",
-              "path": "$[\"labels\"][\"url\"]",
-              "value": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=495&strategy_config_id=fixtureuptimeconfig"
             }
           ]
         }
@@ -312,72 +317,6 @@
               "op": "set",
               "path": "$[\"labels\"][\"metric_name\"]",
               "value": "available"
-            },
-            {
-              "op": "set",
-              "path": "$[\"extra_data\"][\"metric_query_params\"]",
-              "value": {
-                "bk_biz_id": 2,
-                "expression": "A",
-                "function": {
-                  "time_compare": []
-                },
-                "functions": [],
-                "query_configs": [
-                  {
-                    "bk_biz_id": 2,
-                    "custom_event_name": "",
-                    "data_source_label": "bk_monitor",
-                    "data_type_label": "time_series",
-                    "extend_fields": {},
-                    "filter_dict": {},
-                    "functions": [],
-                    "group_by": [
-                      "target",
-                      "target_type",
-                      "bk_biz_id"
-                    ],
-                    "index_set_id": 0,
-                    "interval": 60,
-                    "metrics": [
-                      {
-                        "alias": "a",
-                        "field": "available",
-                        "method": "AVG"
-                      }
-                    ],
-                    "promql": "",
-                    "query_string": "",
-                    "table": "uptimecheck.icmp",
-                    "time_field": null,
-                    "where": [
-                      {
-                        "key": "bk_biz_id",
-                        "method": "eq",
-                        "value": [
-                          2
-                        ]
-                      },
-                      {
-                        "condition": "and",
-                        "key": "target",
-                        "method": "eq",
-                        "value": [
-                          "192.0.2.12"
-                        ]
-                      },
-                      {
-                        "condition": "and",
-                        "key": "target_type",
-                        "method": "eq",
-                        "value": [
-                          "ip"
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
             },
             {
               "op": "set",

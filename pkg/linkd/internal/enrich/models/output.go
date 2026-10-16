@@ -27,8 +27,27 @@ type StrategyValues struct {
 	MonitorTemplateID int64  `json:"monitor_template_id"`
 	StrategyConfigID  string `json:"strategy_config_id"`
 	StrategyName      string `json:"strategy_name"`
-	URL               string `json:"url"`
-	DataSource        string `json:"data_source"`
+	// URL 仅解码和重放历史丰富结果；新处理不生成产品链接。
+	URL string `json:"url,omitempty"`
+	// StrategyKind 是冻结的策略资源类别，不是产品页面类型。
+	StrategyKind CWStrategyKind `json:"strategy_kind,omitempty"`
+	// IsDefault 的 nil 表示历史结果未保存该属性，不能当成 false。
+	IsDefault *bool `json:"is_default,omitempty"`
+	// StrategyInstance 保存非默认策略关联实例的冻结身份。
+	StrategyInstance *StrategyInstance `json:"strategy_instance,omitempty"`
+	DataSource       string            `json:"data_source"`
+}
+
+// StrategyInstance 冻结策略关联实例的身份，不携带产品路由或当前实例状态。
+type StrategyInstance struct {
+	// ObjectModelCode 标识关联对象模型。
+	ObjectModelCode string `json:"object_model_code"`
+	// BKObjID 是 KAC 场景读取的 CMDB 对象身份。
+	BKObjID string `json:"bk_obj_id"`
+	// BKInstID 保留不透明实例身份，不转换成数值。
+	BKInstID string `json:"bk_inst_id"`
+	// ObjectModelGroupID 是关联对象模型的分类身份。
+	ObjectModelGroupID string `json:"object_model_group_id"`
 }
 
 // ResourceValues 定义 resource Processor 的完整输出字段。
@@ -70,7 +89,7 @@ type MetricValues struct {
 	AggregateFunc     string  `json:"aggregate_func"`
 	TimeInterval      any     `json:"time_interval"`
 	WhereCondition    string  `json:"where_condition"`
-	MetricQueryParams any     `json:"metric_query_params"`
+	MetricQueryParams any     `json:"metric_query_params,omitempty"`
 	AnomalyBeginTime  *string `json:"anomaly_begin_time"`
 }
 

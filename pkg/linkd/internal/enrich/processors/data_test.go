@@ -120,17 +120,8 @@ func TestDATAFunctionMetricPreservesFunctionsAndDisablesEnumMapping(t *testing.T
 	if values.MetricName != "" {
 		t.Fatalf("metric name=%q", values.MetricName)
 	}
-	params, ok := values.MetricQueryParams.(map[string]any)
-	if !ok {
-		t.Fatalf("params=%#v", values.MetricQueryParams)
-	}
-	if _, ok := params["functions"].([]any); !ok {
-		t.Fatalf("strategy functions=%#v", params["functions"])
-	}
-	queries := params["query_configs"].([]any)
-	query := queries[0].(map[string]any)
-	if _, ok := query["functions"].([]any); !ok {
-		t.Fatalf("query functions=%#v", query["functions"])
+	if values.MetricQueryParams != nil {
+		t.Fatalf("builtin query params must move to KAC: %#v", values.MetricQueryParams)
 	}
 	var displayContent string
 	if err := json.Unmarshal(payload.Processors[2][rules.DisplayProcessor].Value["content"], &displayContent); err != nil {
@@ -495,21 +486,8 @@ func TestDataDerivedAndMultiMetricQuerySemantics(t *testing.T) {
 			if values.MetricName != tc.wantName || values.MetricUniqueID != tc.wantUnique {
 				t.Fatalf("metric=%#v", values)
 			}
-			params, ok := values.MetricQueryParams.(map[string]any)
-			if !ok {
-				t.Fatalf("params=%#v", values.MetricQueryParams)
-			}
-			queries := params["query_configs"].([]any)
-			if len(queries) != func() int {
-				if tc.reader.multi {
-					return 2
-				}
-				return 1
-			}() {
-				t.Fatalf("queries=%#v", queries)
-			}
-			if tc.wantTag != "" && params["field_tag"] != string(tc.wantTag) {
-				t.Fatalf("params=%#v", params)
+			if values.MetricQueryParams != nil {
+				t.Fatalf("builtin query params must move to KAC: %#v", values.MetricQueryParams)
 			}
 		})
 	}

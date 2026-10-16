@@ -121,6 +121,11 @@
             },
             {
               "op": "set",
+              "path": "$[\"labels\"][\"is_default\"]",
+              "value": true
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"monitor_template_id\"]",
               "value": 77
             },
@@ -136,6 +141,11 @@
             },
             {
               "op": "set",
+              "path": "$[\"labels\"][\"strategy_kind\"]",
+              "value": "Strategy"
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"strategy_name\"]",
               "value": "指标丨cpu_load"
             },
@@ -143,11 +153,6 @@
               "op": "set",
               "path": "$[\"labels\"][\"strategy_version\"]",
               "value": 2
-            },
-            {
-              "op": "set",
-              "path": "$[\"labels\"][\"url\"]",
-              "value": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=77&strategy_config_id=2509adddb9e640559c598183aee9cb86"
             }
           ]
         }
@@ -259,54 +264,6 @@
               "op": "set",
               "path": "$[\"labels\"][\"metric_name\"]",
               "value": "cpu_load"
-            },
-            {
-              "op": "set",
-              "path": "$[\"extra_data\"][\"metric_query_params\"]",
-              "value": {
-                "bk_biz_id": 5,
-                "expression": "A",
-                "function": {
-                  "time_compare": []
-                },
-                "functions": [],
-                "query_configs": [
-                  {
-                    "bk_biz_id": 5,
-                    "custom_event_name": "",
-                    "data_source_label": "custom",
-                    "data_type_label": "time_series",
-                    "extend_fields": {},
-                    "filter_dict": {},
-                    "functions": [],
-                    "group_by": [
-                      "bk_biz_id"
-                    ],
-                    "index_set_id": 0,
-                    "interval": 60,
-                    "metrics": [
-                      {
-                        "alias": "a",
-                        "field": "cpu_load",
-                        "method": "AVG"
-                      }
-                    ],
-                    "promql": "",
-                    "query_string": "",
-                    "table": "5_bkmonitor_time_series_1576329.__default__",
-                    "time_field": null,
-                    "where": [
-                      {
-                        "key": "bk_biz_id",
-                        "method": "eq",
-                        "value": [
-                          5
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
             },
             {
               "op": "set",

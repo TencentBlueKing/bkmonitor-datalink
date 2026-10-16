@@ -189,8 +189,6 @@ event_sources:
     enrich:
       processors:
         - type: strategy
-          config:
-            web_saas_module_url: https://kingeye.example.com/
         - type: resource
         - type: display
         - type: metric

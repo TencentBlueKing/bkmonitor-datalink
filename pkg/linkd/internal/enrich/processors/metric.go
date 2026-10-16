@@ -98,7 +98,6 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	aggregateFunc := cleanAggregateFunc(strategy)
 	timeInterval := cleanTimeInterval(strategy)
 	queryDimensions := metricDimensions(scope.Facts().Dimensions)
-	metricQueryParams := buildMetricQueryParams(projection, strategy, queryDimensions, ids.BizID)
 	displayName, err := cleanItem(ctx, scope, strategy, projection, query)
 	if err != nil {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricCatalog)
@@ -112,7 +111,10 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	values.AggregateFunc = aggregateFunc
 	values.TimeInterval = timeInterval
 	values.WhereCondition = whereCondition
-	values.MetricQueryParams = metricQueryParams
+	// 新内置查询由 KAC 结合不可变策略历史和准确 Event 事实组装；其他来源保留既有协议。
+	if alert.EventSourceID != "built_in_bk" {
+		values.MetricQueryParams = buildMetricQueryParams(projection, strategy, queryDimensions, ids.BizID)
+	}
 	value, encodeErr := metricResultValue(scope, values)
 	if encodeErr != nil {
 		return enrich.ProcessorResult{}, encodeErr

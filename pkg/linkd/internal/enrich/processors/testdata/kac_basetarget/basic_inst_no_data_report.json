@@ -69,6 +69,11 @@
             },
             {
               "op": "set",
+              "path": "$[\"labels\"][\"is_default\"]",
+              "value": true
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"monitor_template_id\"]",
               "value": 257
             },
@@ -84,6 +89,11 @@
             },
             {
               "op": "set",
+              "path": "$[\"labels\"][\"strategy_kind\"]",
+              "value": "Strategy"
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"strategy_name\"]",
               "value": "指标丨CPU使用率"
             },
@@ -91,11 +101,6 @@
               "op": "set",
               "path": "$[\"labels\"][\"strategy_version\"]",
               "value": 2
-            },
-            {
-              "op": "set",
-              "path": "$[\"labels\"][\"url\"]",
-              "value": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=257&strategy_config_id=8dd434d844cf4856a9a159ad39b449f2"
             }
           ]
         }
@@ -271,90 +276,6 @@
               "op": "set",
               "path": "$[\"labels\"][\"metric_name\"]",
               "value": "usage"
-            },
-            {
-              "op": "set",
-              "path": "$[\"extra_data\"][\"metric_query_params\"]",
-              "value": {
-                "bk_biz_id": 2,
-                "expression": "A",
-                "function": {
-                  "time_compare": []
-                },
-                "functions": [],
-                "query_configs": [
-                  {
-                    "bk_biz_id": 2,
-                    "custom_event_name": "",
-                    "data_source_label": "bk_monitor",
-                    "data_type_label": "time_series",
-                    "extend_fields": {},
-                    "filter_dict": {},
-                    "functions": [],
-                    "group_by": [
-                      "bk_target_cloud_id",
-                      "bk_biz_id",
-                      "hostname",
-                      "device_name",
-                      "bk_target_ip"
-                    ],
-                    "index_set_id": 0,
-                    "interval": 60,
-                    "metrics": [
-                      {
-                        "alias": "a",
-                        "field": "usage",
-                        "method": "AVG"
-                      }
-                    ],
-                    "promql": "",
-                    "query_string": "",
-                    "table": "system.cpu_summary",
-                    "time_field": null,
-                    "where": [
-                      {
-                        "key": "bk_biz_id",
-                        "method": "eq",
-                        "value": [
-                          "2"
-                        ]
-                      },
-                      {
-                        "condition": "and",
-                        "key": "bk_target_cloud_id",
-                        "method": "eq",
-                        "value": [
-                          0
-                        ]
-                      },
-                      {
-                        "condition": "and",
-                        "key": "bk_target_ip",
-                        "method": "eq",
-                        "value": [
-                          "192.0.2.33"
-                        ]
-                      },
-                      {
-                        "condition": "and",
-                        "key": "device_name",
-                        "method": "eq",
-                        "value": [
-                          "cpu-total"
-                        ]
-                      },
-                      {
-                        "condition": "and",
-                        "key": "hostname",
-                        "method": "eq",
-                        "value": [
-                          "fixture-host-33"
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
             },
             {
               "op": "set",

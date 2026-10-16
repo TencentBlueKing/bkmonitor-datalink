@@ -12,7 +12,6 @@ package processors
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -139,19 +138,6 @@ func TestStrategyUsesOnlyTemplateNameForPromQL(t *testing.T) {
 	}
 }
 
-func TestBuildStrategyURLUsesConfiguredWebSaaSModuleURL(t *testing.T) {
-	t.Parallel()
-	processor, err := NewStrategy(map[string]any{"web_saas_module_url": "https://example.com/kingeye"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	isDefault := true
-	got, ok := processor.buildStrategyURL(context.Background(), nil, models.CWStrategy{IsDefault: &isDefault}, "config1", 42)
-	if !ok || got != "https://example.com/kingeye/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=42&strategy_config_id=config1" {
-		t.Fatalf("buildStrategyURL()=%q,%v", got, ok)
-	}
-}
-
 func TestNewStrategyValidatesConfig(t *testing.T) {
 	t.Parallel()
 	for _, config := range []map[string]any{
@@ -166,34 +152,7 @@ func TestNewStrategyValidatesConfig(t *testing.T) {
 	}
 }
 
-func TestBuildStrategyURLDefault(t *testing.T) {
-	t.Parallel()
-	isDefault := true
-	monitorStrategyID := int64(42)
-	processor, err := NewStrategy(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok := processor.buildStrategyURL(context.Background(), nil, models.CWStrategy{IsDefault: &isDefault}, "config1", monitorStrategyID)
-	if !ok || got != "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=42&strategy_config_id=config1" {
-		t.Fatalf("buildStrategyURL()=%q,%v", got, ok)
-	}
-}
-
-func TestBuildStrategyURLCloudUsesDefaultRoute(t *testing.T) {
-	t.Parallel()
-	isDefault := false
-	processor, err := NewStrategy(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok := processor.buildStrategyURL(context.Background(), nil, models.CWStrategy{Kind: models.CWStrategyKindCloud, IsDefault: &isDefault}, "config1", 42)
-	if !ok || !strings.Contains(got, "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?") {
-		t.Fatalf("buildStrategyURL()=%q,%v", got, ok)
-	}
-}
-
-func TestBuildStrategyURLInstance(t *testing.T) {
+func TestStrategyInstanceFacts(t *testing.T) {
 	t.Parallel()
 	isDefault := false
 	modelCode := "cw-Host"
@@ -208,24 +167,14 @@ func TestBuildStrategyURLInstance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	processor, err := NewStrategy(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok := processor.buildStrategyURL(context.Background(), scope, models.CWStrategy{
+	got, ok := strategyInstanceFacts(context.Background(), scope, models.CWStrategy{
 		IsDefault: &isDefault, ObjectModelCode: &modelCode,
-	}, "config1", 42)
-	if !ok {
-		t.Fatalf("buildStrategyURL()=%q,%v", got, ok)
+	})
+	want := models.StrategyInstance{ObjectModelCode: "cw-Host", BKObjID: "host", BKInstID: "101", ObjectModelGroupID: "7"}
+	if !ok || got == nil || *got != want {
+		t.Fatalf("strategyInstanceFacts()=%#v,%v", got, ok)
 	}
-	for _, expected := range []string{
-		"/#/kmc/scene/monitorViewDetails?", "bk_obj_id=host", "bk_inst_id=101", "strategy_id=42",
-		"strategy_item_id=config1", "classId=7", "object_model_code=cw-Host",
-	} {
-		if !strings.Contains(got, expected) {
-			t.Fatalf("buildStrategyURL()=%q missing %q", got, expected)
-		}
-	}
+
 }
 
 func strategyTestAlert(t *testing.T, bizID int64) domain.Event {

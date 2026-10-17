@@ -469,6 +469,8 @@ cause 执行 FinalHook，再把 close 与 push AlertLog 一次批量写入。相
 ## 8. 恢复与数据安全边界
 
 - Signal 未 XACK 时，Redis Streams PEL/XAUTOCLAIM 负责重新投递；
+- XAUTOCLAIM 完成一轮空扫描后，按 Signal 的 `read_block_milliseconds` 间隔再检查，默认一秒；
+  未结束的扫描游标、已发现的待恢复消息和失败重试继续处理，已退休 consumer 的定向接管不受此间隔影响；
 - Signal XACK 只清理 PEL 引用，不删除 Stream entry；配置 Redis 与 Lifecycle 后，控制面默认执行安全裁剪，
   在软长度上限触发时只裁剪所有 Consumer Group 都已经确认的连续前缀；
   可通过 `control_plane.redis_stream.enabled: false` 显式关闭，预算说明见[配置指南](../guides/configuration.md)；

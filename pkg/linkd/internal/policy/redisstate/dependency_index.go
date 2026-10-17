@@ -134,8 +134,8 @@ func (s *Store) ApplyDependencyCandidateBatch(ctx context.Context, updates []Dep
 
 const applyDependencyCandidateScript = `
 local revision=tonumber(ARGV[1]);local clear=ARGV[2]=='1';local member=ARGV[3]
-local global=tonumber(redis.call('HGET',KEYS[2],'_revision') or '0')
-local cleared=tonumber(redis.call('HGET',KEYS[2],'_cleared') or '0')
+local state=redis.call('HMGET',KEYS[2],'_revision','_cleared')
+local global=tonumber(state[1] or '0');local cleared=tonumber(state[2] or '0')
 if clear then
  if global>revision then return 0 end
  local owners=redis.call('HKEYS',KEYS[2])
@@ -154,29 +154,36 @@ local previous=tonumber(redis.call('HGET',KEYS[1],'_revision') or '0')
 if previous>revision then return 0 end
 -- 在清任何旧成员之前检查依赖时间；CAS 较新不代表其 Worker 读取的目标事实也较新。
 for i=4,#KEYS do
- local stamp=ARGV[2*i-3];local oldstamp=redis.call('HGET',KEYS[3],KEYS[i])
- if stamp~='!' and oldstamp and oldstamp~='!' and stamp<oldstamp then return 2 end
-end
-if revision>previous then
- local old=redis.call('HGETALL',KEYS[1])
- for i=1,#old,2 do
-  if old[i]~='_revision' then
-   if string.sub(old[i],1,1)~='_' then redis.call('ZREM',old[i],old[i+1]) end
-   redis.call('HDEL',KEYS[1],old[i])
-  end
+ local stamp=ARGV[2*i-3]
+ if stamp~='!' then
+  local oldstamp=redis.call('HGET',KEYS[3],KEYS[i])
+  if oldstamp and oldstamp~='!' and stamp<oldstamp then return 2 end
  end
 end
-redis.call('HSET',KEYS[1],'_revision',ARGV[1]);redis.call('PERSIST',KEYS[1])
-redis.call('HSET',KEYS[2],KEYS[1],'1','_revision',math.max(global,revision));redis.call('PERSIST',KEYS[2])
+local advanced=revision>previous
+if advanced then
+ local old=redis.call('HGETALL',KEYS[1])
+ for i=1,#old,2 do
+  if string.sub(old[i],1,1)~='_' then redis.call('ZREM',old[i],old[i+1]) end
+ end
+ -- 当前成员和纯字段标记随 revision 整体替换；源时间 floor 位于独立的 times key，必须保留。
+ if #old>2 then redis.call('DEL',KEYS[1]) end
+end
+redis.call('HSET',KEYS[1],'_revision',ARGV[1])
+redis.call('HSET',KEYS[2],KEYS[1],'1','_revision',math.max(global,revision))
+-- owner 从不设置 TTL；全局 owner 只在清理后重新获得资格时撤销清理 TTL。
+if cleared>0 and global==cleared then redis.call('PERSIST',KEYS[2]) end
 for i=4,#KEYS do
  local stamp=ARGV[2*i-3];local localkey='_local:'..KEYS[i]
  -- 纯字段 false 在本 Alert revision 内不受外部快照替换，已见的源时间仍留作后续版本的 floor。
- if stamp=='!' or redis.call('HEXISTS',KEYS[1],localkey)==0 then
-  local old=redis.call('HGET',KEYS[1],KEYS[i]);if old then redis.call('ZREM',KEYS[i],old) end
+ if advanced or stamp=='!' or redis.call('HEXISTS',KEYS[1],localkey)==0 then
+  local old=false
+  if not advanced then old=redis.call('HGET',KEYS[1],KEYS[i]) end
+  if old then redis.call('ZREM',KEYS[i],old) end
   if stamp=='!' then redis.call('HSET',KEYS[1],localkey,'1') else redis.call('HSET',KEYS[3],KEYS[i],stamp) end
   if ARGV[2*i-4]=='1' then
    redis.call('ZADD',KEYS[i],0,member);redis.call('HSET',KEYS[1],KEYS[i],member)
-  else redis.call('HDEL',KEYS[1],KEYS[i]) end
+  elseif old then redis.call('HDEL',KEYS[1],KEYS[i]) end
  end
 end
 return 1`

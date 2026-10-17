@@ -13,6 +13,72 @@ import (
 	"time"
 )
 
+// 命令预算保护逐告警热路径；计数在脚本内完成，不依赖共享 Redis 的全局统计。
+func TestRedisDependencyNegativeMembershipCommandBudget(t *testing.T) {
+	for _, count := range []int{0, 1, 2, 32} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			s := redisClipStore(t)
+			u := DependencyCandidateUpdate{TenantID: "tenant", AlertID: "unmatched", Revision: 1, BeginAt: time.Now().UTC()}
+			for i := range count {
+				p := dependencyFixture().Policy
+				p.ID = fmt.Sprintf("policy-%d", i)
+				u.Memberships = append(u.Memberships, DependencyMembership{Policy: p})
+			}
+			if err := s.ApplyDependencyCandidates(t.Context(), u); err != nil {
+				t.Fatal(err)
+			}
+			u.Revision++
+			keys, args, err := s.dependencyCandidateArgs(u)
+			if err != nil {
+				t.Fatal(err)
+			}
+			script := "local calls=0;local call=redis.call;local redis={call=function(...) calls=calls+1;return call(...) end};local function apply()\n" + applyDependencyCandidateScript + "\nend;local result=apply();return {result,calls}"
+			result, err := s.client.Eval(t.Context(), script, keys, args...).Int64Slice()
+			if err != nil || len(result) != 2 || result[0] != 1 {
+				t.Fatalf("update = %v, %v", result, err)
+			}
+			if result[1] > int64(count+6) {
+				t.Fatalf("negative update used %d Redis commands for %d rules; budget %d", result[1], count, count+6)
+			}
+			for _, m := range u.Memberships {
+				ref := DependencyIndexRef{PolicyVersion: m.Policy}
+				if err := s.MarkDependencyIndexReady(t.Context(), u.TenantID, ref); err != nil {
+					t.Fatal(err)
+				}
+				if row, ready, err := s.TopDependencyCandidate(t.Context(), u.TenantID, ref); err != nil || !ready || row.AlertID != "" {
+					t.Fatalf("negative membership became eligible: %+v, %t, %v", row, ready, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRedisDependencyReactivationKeepsOwnerPersistent(t *testing.T) {
+	s := redisClipStore(t)
+	p := dependencyFixture().Policy
+	u := DependencyCandidateUpdate{TenantID: "tenant", AlertID: "main", Revision: 1, BeginAt: time.Now().UTC(), Memberships: []DependencyMembership{{Policy: p, Matched: true}}}
+	for _, state := range []struct {
+		revision int64
+		clear    bool
+	}{{1, false}, {2, true}, {3, false}, {4, false}} {
+		u.Revision, u.Clear = state.revision, state.clear
+		if err := s.ApplyDependencyCandidates(t.Context(), u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, key := range []string{s.dependencyCandidateOwner(u.TenantID, u.AlertID, ""), s.dependencyCandidateAllOwners(u.TenantID, u.AlertID)} {
+		if ttl, err := s.client.TTL(t.Context(), key).Result(); err != nil || ttl != -1 {
+			t.Fatalf("active owner must remain persistent: %s %v %v", key, ttl, err)
+		}
+	}
+	if err := s.MarkDependencyIndexReady(t.Context(), u.TenantID, DependencyIndexRef{PolicyVersion: p}); err != nil {
+		t.Fatal(err)
+	}
+	if row, _, err := s.TopDependencyCandidate(t.Context(), u.TenantID, DependencyIndexRef{PolicyVersion: p}); err != nil || row.AlertID != u.AlertID || row.Revision != 4 {
+		t.Fatalf("reactivated candidate lost: %+v %v", row, err)
+	}
+}
+
 func TestRedisDependencyCandidateOrderingTenantAndSharedInstances(t *testing.T) {
 	s := redisClipStore(t)
 	other := &Store{client: s.client, namespace: s.namespace}

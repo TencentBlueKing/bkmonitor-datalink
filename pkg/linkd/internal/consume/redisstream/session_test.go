@@ -20,6 +20,7 @@ import (
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/consume"
 	"linkd/internal/redisclient"
+	"testing/synctest"
 )
 
 func TestSessionClaimsPendingAndAcknowledgesStreamID(t *testing.T) {
@@ -139,11 +140,14 @@ func testRedisConfig() Config {
 }
 
 type fakeRedisClient struct {
-	mu      sync.Mutex
-	claimed []redis.XMessage
-	streams []redis.XStream
-	acked   []string
-	closed  bool
+	mu         sync.Mutex
+	claimed    []redis.XMessage
+	streams    []redis.XStream
+	acked      []string
+	closed     bool
+	claimCalls int
+	claimNext  string
+	claimErr   error
 }
 
 func (c *fakeRedisClient) XReadGroup(ctx context.Context, _ *redis.XReadGroupArgs) *redis.XStreamSliceCmd {
@@ -159,9 +163,101 @@ func (c *fakeRedisClient) XAutoClaim(ctx context.Context, _ *redis.XAutoClaimArg
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	command := redis.NewXAutoClaimCmd(ctx)
-	command.SetVal(append([]redis.XMessage(nil), c.claimed...), "0-0")
+	c.claimCalls++
+	next := c.claimNext
+	if next == "" {
+		next = "0-0"
+	}
+	command.SetVal(append([]redis.XMessage(nil), c.claimed...), next)
+	command.SetErr(c.claimErr)
 	c.claimed = nil
 	return command
+}
+
+func TestSessionEmptyClaimWaitsOneReadInterval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := &fakeRedisClient{}
+		session := newSession(testRedisConfig(), client)
+		limits := consume.ReceiveLimits{MaxMessages: 1, MaxBytes: 1024}
+		for range 3 {
+			if _, err := session.Receive(t.Context(), limits); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if client.claimCalls != 1 {
+			t.Fatalf("empty scans = %d, want 1", client.claimCalls)
+		}
+		time.Sleep(session.config.ReadBlock)
+		if _, err := session.Receive(t.Context(), limits); err != nil {
+			t.Fatal(err)
+		}
+		if client.claimCalls != 2 {
+			t.Fatalf("recovery scan did not resume: %d", client.claimCalls)
+		}
+	})
+}
+
+func TestSessionClaimContinuesPagesAndRetriesErrorsImmediately(t *testing.T) {
+	for _, mode := range []string{"cursor", "messages", "error"} {
+		t.Run(mode, func(t *testing.T) {
+			client := &fakeRedisClient{}
+			switch mode {
+			case "cursor":
+				client.claimNext = "123-0"
+			case "messages":
+				client.claimed = []redis.XMessage{{ID: "123-0", Values: map[string]any{"payload": "body", "bk_tenant_id": "tenant"}}}
+			case "error":
+				client.claimErr = errors.New("temporary Redis error")
+			}
+			session := newSession(testRedisConfig(), client)
+			limits := consume.ReceiveLimits{MaxMessages: 1, MaxBytes: 1024}
+			_, err := session.Receive(t.Context(), limits)
+			if (err != nil) != (mode == "error") {
+				t.Fatalf("first receive: %v", err)
+			}
+			client.claimErr = nil
+			if _, err := session.Receive(t.Context(), limits); err != nil {
+				t.Fatal(err)
+			}
+			if client.claimCalls != 2 {
+				t.Fatalf("unfinished recovery was delayed: %d", client.claimCalls)
+			}
+		})
+	}
+}
+
+func TestSessionConcurrentEmptyClaimCancellationAndClose(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := &fakeRedisClient{}
+		session := newSession(testRedisConfig(), client)
+		limits := consume.ReceiveLimits{MaxMessages: 1, MaxBytes: 1024}
+		var wg sync.WaitGroup
+		for range 20 {
+			wg.Go(func() {
+				if _, err := session.Receive(t.Context(), limits); err != nil {
+					t.Error(err)
+				}
+			})
+		}
+		wg.Wait()
+		if client.claimCalls != 1 {
+			t.Fatalf("concurrent empty scans = %d, want 1", client.claimCalls)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if _, err := session.Receive(ctx, limits); !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled receive: %v", err)
+		}
+		if err := session.Close(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := session.Receive(t.Context(), limits); err == nil {
+			t.Fatal("closed session received")
+		}
+		if client.claimCalls != 1 {
+			t.Fatal("cancel/close started another claim")
+		}
+	})
 }
 
 func (c *fakeRedisClient) XAck(ctx context.Context, _, _ string, ids ...string) *redis.IntCmd {

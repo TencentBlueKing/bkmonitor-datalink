@@ -39,6 +39,11 @@
 
 实现入口：[Catalog](../../internal/policy/catalog.go)、[候选索引](../../internal/policy/candidate.go)、[Snapshotter](../../internal/policy/runtime/snapshot.go)、[条件求值](../../internal/policy/evaluate.go)、[共享依赖](../../internal/policy/runtime/dependencies.go)、[Worker 依赖读取](../../internal/policy/runtime/worker_dependencies.go)、[依赖主索引](../../internal/policy/runtime/dependency_index.go)、[合并执行](../../internal/merge/executor.go)。
 
+依赖主索引仍保留不匹配标记、Alert revision 和外部快照时间，保证后台旧回填不能恢复失效资格。
+revision 推进时整体替换当前成员 Hash，保留独立的源时间记录；纯字段不匹配不读取源时间，
+新 revision 不重复读取刚清理的成员，只有从清理状态恢复时才撤销全局 owner 的 TTL。
+这些调整减少 Redis 命令，不改变主资格或恢复协议；无匹配规则也不能直接跳过旧成员撤销。
+
 以上为工作区实现范围，验证范围以第 10 节为准，不代表生产部署或大规模长期吞吐验收完成。
 
 ## 3. 查询来源与变更通知核验

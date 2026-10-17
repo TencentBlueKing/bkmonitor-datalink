@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/consume"
@@ -44,6 +45,7 @@ type Session struct {
 	receipts    map[uint64]receiptData
 	outstanding map[string]uint64
 	claimStart  string
+	nextClaim   time.Time
 	closed      bool
 }
 
@@ -186,7 +188,14 @@ func (s *Session) claim(ctx context.Context, maxMessages int) ([]redis.XMessage,
 		}
 	}
 	s.mu.Lock()
+	if time.Now().Before(s.nextClaim) {
+		s.mu.Unlock()
+		return nil, false, nil
+	}
 	start := s.claimStart
+	// 空 PEL 不随每次拉新消息反复扫描；沿用阻塞读取间隔，最多增加一个读取周期的接管延迟。
+	// 先占用本次扫描窗口，避免并发 Receive 同时发起空扫描；退休 owner 仍在上方立即接管。
+	s.nextClaim = time.Now().Add(s.config.ReadBlock)
 	s.mu.Unlock()
 	messages, next, err := s.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream:   s.config.Stream,
@@ -197,6 +206,9 @@ func (s *Session) claim(ctx context.Context, maxMessages int) ([]redis.XMessage,
 		Count:    int64(maxMessages),
 	}).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
+		s.mu.Lock()
+		s.nextClaim = time.Time{}
+		s.mu.Unlock()
 		return nil, false, fmt.Errorf("redis streams auto claim: %w", err)
 	}
 	if next == "" {
@@ -204,6 +216,10 @@ func (s *Session) claim(ctx context.Context, maxMessages int) ([]redis.XMessage,
 	}
 	s.mu.Lock()
 	s.claimStart = next
+	// 未扫描完的 PEL 和已找到的待恢复消息继续排空，不被空扫描间隔限速。
+	if next != "0-0" || len(messages) > 0 {
+		s.nextClaim = time.Time{}
+	}
 	s.mu.Unlock()
 	return messages, len(messages) > 0, nil
 }

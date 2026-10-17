@@ -162,6 +162,7 @@ reason、groups（逐条件结果）及可用的 group_key。`evaluated=false` �
 `{mode:"matching_only",at,items:[{alert_id,severity,evaluated,matched,reason,fields}]}`；
 缺失记录或字段不可用逐项标记，租户不符拒绝请求。展示字段只读取已注册的有效事实，不能返回原始载荷。
 KAC 在调用前裁剪用户权限，Linkd 保留租户门禁；接口不扫描租户全部告警，不产生屏蔽绑定或其它写入。
+`alert_ids` 接收实际存储的完整 Alert ID（包括点号分隔格式），每项 1 至 160 字节；不得使用租户或来源身份片段的字符限制。
 
 时间屏蔽支持有效 target_descriptor 配合空 policy，依赖屏蔽仍要求非空主／子条件。
 屏蔽主、子条件及引用替换统一使用 regexp2，不提供引擎配置项。
@@ -200,6 +201,7 @@ Worker 进程共享目录，后台每 5 秒刷新；控制面共享目录每 60 
 
 - `GET /internal/policy-catalog`：query 为 task、bk_tenant_id；复用同一 Worker/任务授权，返回完整已发布 Release 数组，避免 Worker 逐页请求。
 - `POST /internal/policy-dependencies`：query 为 task、bk_tenant_id；body 指定 `kind=scope|targets|relations`、租户及空间/目标/关系身份。
+  `scope/targets` 接受完整空间身份（含非 BKCC），与正式空间目录使用相同解析；非 BKCC 的负业务 ID 仍由当前租户目录提供。
   响应带源读取时间 `loaded_at` 及内容变化时间 `changed_at`；控制面按依赖去重，Worker 复用本地成员集合。正常后台提前刷新，成功快照最长使用 60 秒；
   两层缓存不重置源时间，同内容刷新只推进 `loaded_at`。首次读取合并等待，失败不返回空集合。该接口不接受任意存储查询或外部服务凭据。
 

@@ -48,7 +48,7 @@ func (a *API) workerDependencies(w http.ResponseWriter, r *http.Request) {
 	}
 	switch request.Kind {
 	case "scope", "targets":
-		if _, err := onemodel.ParseBusinessSpace(request.SpaceCode); err != nil {
+		if _, _, err := onemodel.ParseSpaceCode(request.SpaceCode); err != nil {
 			policyFailure(w, policy.ErrInvalid)
 			return
 		}

@@ -68,6 +68,10 @@ func TestWorkerDependenciesAPIAuthorizationAndScope(t *testing.T) {
 		code                                         int
 	}{
 		{"scope", "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", `{"kind":"scope","bk_tenant_id":"tenant","space_code":"bkcc__2"}`, "w", "worker", "lifecycle", "running", 200},
+		{"non-BKCC scope", "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", `{"kind":"scope","bk_tenant_id":"tenant","space_code":"bkci__project-a"}`, "w", "worker", "lifecycle", "running", 200},
+		{"non-BKCC targets", "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", `{"kind":"targets","bk_tenant_id":"tenant","space_code":"default__custom","target":{"schema_version":1,"model_id":"cw-Host","selectors":[{"type":"instances","instances":[{"model_id":"cw-Host","model_inst_id":"1","entity_uid":"cw-Host|1"}]}]}}`, "w", "worker", "lifecycle", "running", 200},
+		{"empty non-BKCC space identity", "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", `{"kind":"scope","bk_tenant_id":"tenant","space_code":"bkci__"}`, "w", "worker", "lifecycle", "running", 400},
+		{"zero BKCC space identity", "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", `{"kind":"scope","bk_tenant_id":"tenant","space_code":"bkcc__0"}`, "w", "worker", "lifecycle", "running", 400},
 		{"targets", "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", `{"kind":"targets","bk_tenant_id":"tenant","space_code":"bkcc__2","target":{"schema_version":1,"model_id":"cw-Host","selectors":[{"type":"instances","instances":[{"model_id":"cw-Host","model_inst_id":"1","entity_uid":"cw-Host|1"}]}]}}`, "w", "worker", "lifecycle", "running", 200},
 		{"relations", "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", `{"kind":"relations","bk_tenant_id":"tenant","origin":{"model_id":"cw-biz","model_inst_id":"2","entity_uid":"cw-biz|2"},"relation":"rel","model_id":"cw-Host"}`, "w", "worker", "lifecycle", "running", 200},
 		{"foreign query tenant", "/internal/policy-dependencies?task=task&bk_tenant_id=other", `{"kind":"scope","bk_tenant_id":"other","space_code":"bkcc__2"}`, "w", "worker", "lifecycle", "running", 403},

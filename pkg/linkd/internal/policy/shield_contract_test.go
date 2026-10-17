@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +118,7 @@ func TestShieldBatchPreviewUsesRealMatchingAndNoWrites(t *testing.T) {
 	spec["field_mappings"] = map[string]FieldMapping{"strategy_name": {Path: "$.extra_data.strategy_name", ReadPath: `$["extra_data","labels"]["strategy_name"]`, Kind: FieldText}}
 	spec["timezone"] = "Asia/Shanghai"
 	spec["activate_times"] = []ActiveTime{{Period: "everyday", OpenClock: "09:00:00", CloseClock: "10:00:00"}}
-	a := storetest.Alert("tenant", "alert-1", "e", "f", "warning")
+	a := storetest.Alert("tenant", "20261017010000.tenant.source.1234567890abcdef", "e", "f", "warning")
 	a.Labels["model_id"] = domain.NewStringScalar("cmdb.host")
 	a.Labels["model_inst_id"] = domain.NewStringScalar("123")
 	a.Labels["bk_biz_id"] = domain.NewStringScalar("2")
@@ -134,6 +135,13 @@ func TestShieldBatchPreviewUsesRealMatchingAndNoWrites(t *testing.T) {
 	}
 	if !reflect.DeepEqual(facts.alerts[a.AlertID], original) {
 		t.Fatal("preview mutated alert")
+	}
+	for _, id := range []string{"", strings.Repeat("a", domain.EntityIDMaxBytes+1)} {
+		invalid := req
+		invalid.AlertIDs = []string{id}
+		if _, err := p.PreviewBatch(t.Context(), invalid); !errors.Is(err, ErrInvalid) {
+			t.Fatal("invalid alert ID length accepted", err)
+		}
 	}
 	// 北京时间的时段不能在 UTC 同一钟面时间误命中。
 	at = at.Add(8 * time.Hour)

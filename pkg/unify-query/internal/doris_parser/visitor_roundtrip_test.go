@@ -71,8 +71,8 @@ var roundTripCases = []roundTripCase{
 	// logic
 	{"where", "(a = 1 OR b = 2) AND c = 3", "", ""},
 	{"where", "a = 1 OR (b = 2 AND c = 3)", "", ""},
-	{"where", "NOT a = 1", "", "silent:A"},
-	{"where", "NOT (a = 1 OR b = 2)", "", "silent:A"},
+	{"where", "NOT a = 1", "", ""},
+	{"where", "NOT (a = 1 OR b = 2)", "", ""},
 	// CASE
 	{"select", "CASE WHEN a > 1 THEN 'x' ELSE 'y' END AS x", "", ""},
 	{"select", "CASE WHEN a > 1 THEN b * 2 ELSE b END AS x", "", ""},

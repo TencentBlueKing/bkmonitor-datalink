@@ -2106,6 +2106,9 @@ func (v *WhereNode) String() string {
 		switch n.(type) {
 		case *LogicNode:
 			v.LogicInc.Append(nodeToString(n))
+		case *NotNode:
+			// NOT 是其后条件的前缀，不能消耗挂起的 AND / OR。
+			list = append(list, nodeToString(n))
 		default:
 			v.LogicInc.Inc(n)
 			item := nodeToString(n)
@@ -2134,6 +2137,9 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) any {
 				Name: strings.ToUpper(n.GetOperator().GetText()),
 			},
 		})
+	case *gen.LogicalNotContext:
+		// 丢掉 NOT 会静默反转过滤条件；! 与 NOT 同义，统一输出 NOT。
+		v.add(&NotNode{})
 	case *gen.ParenthesizedExpressionContext:
 		v.add(&LeftParenNode{})
 		defer func() {
@@ -2151,6 +2157,14 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = on
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
+}
+
+type NotNode struct {
+	baseNode
+}
+
+func (v *NotNode) String() string {
+	return "NOT"
 }
 
 type LeftParenNode struct {

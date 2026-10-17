@@ -2651,6 +2651,36 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
 
+// ParenExprNode 保留表达式中的括号分组；去掉括号会改变运算优先级，如 (a + 0) / 60000。
+// 括号内按算术子式处理，列只做物理列映射，不套用 SELECT 列表的「列 AS 展示名」规则。
+type ParenExprNode struct {
+	baseNode
+
+	node *FieldNode
+}
+
+func (v *ParenExprNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	if v.node != nil {
+		v.node.WithAliasScope(aliases)
+	}
+}
+
+func (v *ParenExprNode) String() string {
+	inner := nodeToString(v.node)
+	if inner == "" {
+		return ""
+	}
+	return fmt.Sprintf("(%s)", inner)
+}
+
+func (v *ParenExprNode) VisitChildren(ctx antlr.RuleNode) any {
+	if v.node == nil {
+		v.node = &FieldNode{exprType: whereCtxType}
+	}
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, v.node, ctx)
+}
+
 type FunctionNode struct {
 	baseNode
 
@@ -2977,6 +3007,13 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 	case *gen.SearchedCaseContext:
 		node.node = &SearchCaseNode{}
 		next = node.node
+	case *gen.ParenthesizedExpressionContext:
+		// 只在子式（算术操作数、条件操作数）里保留括号；SELECT / GROUP BY / ORDER BY 项最外层的括号
+		// 不影响结果，沿用原有渲染（如 DISTINCT(a) 由 SelectNode 自行加括号）。
+		if node.exprType == whereCtxType {
+			node.node = &ParenExprNode{}
+			next = node.node
+		}
 	case *gen.ArithmeticBinaryContext:
 		node.node = &BinaryNode{}
 		next = node.node

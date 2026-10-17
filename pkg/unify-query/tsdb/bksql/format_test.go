@@ -510,7 +510,7 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT a, b FROM tbl WHERE (dim1 = 'x' OR dim2 > 1) AND dim3 IS NOT NULL ORDER BY a DESC, b ASC LIMIT 20 OFFSET 2",
-				wantSQL: "SELECT NULL AS a, NULL AS b FROM `132_lol_new_login_queue_login_1min` WHERE ( NULL = 'x' OR NULL > 1 ) AND NULL IS NOT NULL  AND " + whereTime + " LIMIT 20 OFFSET 2",
+				wantSQL: "SELECT NULL AS a, NULL AS b FROM `132_lol_new_login_queue_login_1min` WHERE ( NULL = 'x' OR NULL > 1 ) AND NULL IS NOT NULL AND " + whereTime + " LIMIT 20 OFFSET 2",
 			},
 			{
 				name:    "match_phrase_count_order_by",

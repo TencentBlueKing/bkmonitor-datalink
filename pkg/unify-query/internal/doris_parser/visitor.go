@@ -2281,6 +2281,10 @@ type OperatorNode struct {
 func (v *OperatorNode) String() string {
 	left := nodeToString(v.Left)
 	op := nodeToString(v.Op)
+	if _, ok := v.Op.(*PredicateNode); ok {
+		// BETWEEN / IN / LIKE / IS ... render their own operands in order
+		return fmt.Sprintf("%s %s", left, op)
+	}
 	right := nodeToString(v.Right)
 
 	if strings.ToUpper(op) == "IN" {
@@ -2323,7 +2327,10 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 			}
 			next = v.Left
 		} else if v.Right == nil {
-			v.Right = &ValueNode{}
+			// 右操作数与左操作数一样是表达式：此前按常量列表处理，右侧的列被整个丢掉（a = b 渲染成 a =）。
+			v.Right = &FieldNode{
+				exprType: whereCtxType,
+			}
 			next = v.Right
 		} else {
 			next = v.Right
@@ -2338,8 +2345,59 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 			v.Right = &BinaryNode{}
 			next = v.Right
 		}
+	case *gen.PredicateContext:
+		// BETWEEN x AND y、[NOT] IN (...)、LIKE p ESCAPE e、IS [NOT] NULL 等按原顺序输出关键字与操作数；
+		// 此前把关键字拼成运算符、操作数拼成逗号列表，BETWEEN 变成 BETWEEN AND 1, 5，NOT IN 丢了括号。
+		pn := &PredicateNode{}
+		v.Op = pn
+		next = pn
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
+}
+
+// PredicateNode renders a predicate tail as written: its keywords, punctuation and operand expressions in order.
+type PredicateNode struct {
+	baseNode
+
+	items []Node
+}
+
+func (v *PredicateNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	for _, item := range v.items {
+		item.WithAliasScope(aliases)
+	}
+}
+
+func (v *PredicateNode) VisitTerminal(node antlr.TerminalNode) any {
+	v.items = append(v.items, &StringNode{Name: node.GetText()})
+	return nil
+}
+
+func (v *PredicateNode) VisitChildren(ctx antlr.RuleNode) any {
+	operand := &FieldNode{exprType: whereCtxType}
+	operand.WithAddIgnoreField(v.AddIgnoreField)
+	operand.WithEncode(v.Encode)
+	operand.WithAliasScope(v.aliasScope)
+	v.items = append(v.items, operand)
+	return operand.VisitChildren(ctx)
+}
+
+func (v *PredicateNode) String() string {
+	var b strings.Builder
+	prev := ""
+	for _, item := range v.items {
+		s := nodeToString(item)
+		if s == "" {
+			continue
+		}
+		if b.Len() > 0 && prev != "(" && s != ")" && s != "," {
+			b.WriteString(" ")
+		}
+		b.WriteString(s)
+		prev = s
+	}
+	return b.String()
 }
 
 type TableNode struct {

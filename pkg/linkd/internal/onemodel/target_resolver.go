@@ -52,7 +52,7 @@ type DynamicGroupDefinition struct {
 // 实现不得回退到其他租户或 dynamic_group_member_v2 成员快照。
 type TargetDirectory interface {
 	Model(context.Context, string, string) (ModelDefinition, bool, error)
-	Space(context.Context, string, int64) (BusinessSpace, bool, error)
+	Space(context.Context, string, string) (BusinessSpace, bool, error)
 	DynamicGroup(context.Context, string, string) (DynamicGroupDefinition, bool, error)
 }
 
@@ -87,6 +87,7 @@ func WithLiveTargetReader(reader LiveTargetReader) TargetResolverOption {
 type TargetScope struct {
 	TenantID    string
 	SpaceCode   string
+	Global      bool
 	BusinessIDs []int64
 }
 
@@ -135,15 +136,29 @@ func ParseBusinessSpace(code string) (int64, error) {
 	return id, nil
 }
 
-func (r *TargetResolver) space(ctx context.Context, tenant string, id int64) (BusinessSpace, error) {
+// ParseSpaceCode 保留完整空间身份；非 BKCC 的数值归属必须从目录主键解析。
+func ParseSpaceCode(code string) (string, string, error) {
+	kind, id, ok := strings.Cut(code, "__")
+	if !ok || kind == "" || id == "" || len(code) > 128 || strings.TrimSpace(code) != code {
+		return "", "", fmt.Errorf("%w: space must use <type>__<id>", ErrInvalidQuery)
+	}
+	if kind == "bkcc" {
+		if _, err := ParseBusinessSpace(code); err != nil {
+			return "", "", err
+		}
+	}
+	return kind, id, nil
+}
+
+func (r *TargetResolver) space(ctx context.Context, tenant, code string) (BusinessSpace, error) {
 	if r.directory == nil {
 		return BusinessSpace{}, ErrTargetUnavailable
 	}
-	space, found, err := r.directory.Space(ctx, tenant, id)
+	space, found, err := r.directory.Space(ctx, tenant, code)
 	if err != nil {
 		return BusinessSpace{}, err
 	}
-	if !found || space.TenantID != tenant || space.BusinessID != id {
+	if !found || space.TenantID != tenant {
 		return BusinessSpace{}, fmt.Errorf("%w: space not found or identity mismatch", ErrTargetUnavailable)
 	}
 	return space, nil
@@ -167,16 +182,17 @@ func (r *TargetResolver) resolveScope(ctx context.Context, tenant, spaceCode str
 	if err := ctx.Err(); err != nil {
 		return scope, err
 	}
-	id, err := ParseBusinessSpace(spaceCode)
+	_, _, err := ParseSpaceCode(spaceCode)
 	if err != nil {
 		return scope, err
 	}
-	space, err := r.space(ctx, tenant, id)
+	space, err := r.space(ctx, tenant, spaceCode)
 	if err != nil {
 		return scope, err
 	}
+	scope.Global = space.Global
 	if !space.Global {
-		scope.BusinessIDs = []int64{id}
+		scope.BusinessIDs = []int64{space.BusinessID}
 		return scope, nil
 	}
 	businesses, err := r.all(ctx, tenant, bizModelCode, Filter{}, budget)
@@ -189,7 +205,7 @@ func (r *TargetResolver) resolveScope(ctx context.Context, tenant, spaceCode str
 		if !ok {
 			return scope, fmt.Errorf("%w: invalid business identity", ErrTargetUnavailable)
 		}
-		if biz != id {
+		if biz != space.BusinessID {
 			seen[biz] = true
 		}
 	}
@@ -200,9 +216,9 @@ func (r *TargetResolver) resolveScope(ctx context.Context, tenant, spaceCode str
 	return scope, nil
 }
 
-// ResolveBusinessScope 只判断指定业务是否属于策略空间，不为单个事件展开全租户业务。
-// 完整目标解析仍使用 ResolveScope；这里不缓存跨 Event 的业务成员。
-func (r *TargetResolver) ResolveBusinessScope(ctx context.Context, tenant, spaceCode string, businessID int64) (TargetScope, error) {
+// ResolvePolicyScope 只读取策略空间身份；全局准入不依赖告警业务或 CMDB 业务集合。
+// 具体实例目标仍由 ResolveScope/Resolve 按真实业务范围展开。
+func (r *TargetResolver) ResolvePolicyScope(ctx context.Context, tenant, spaceCode string) (TargetScope, error) {
 	scope := TargetScope{TenantID: tenant, SpaceCode: spaceCode, BusinessIDs: []int64{}}
 	if ctx == nil {
 		return scope, ErrInvalidQuery
@@ -213,34 +229,18 @@ func (r *TargetResolver) ResolveBusinessScope(ctx context.Context, tenant, space
 	if err := validateOneModelIdentity("tenant", tenant, 64); err != nil {
 		return scope, err
 	}
-	id, err := ParseBusinessSpace(spaceCode)
+	_, _, err := ParseSpaceCode(spaceCode)
 	if err != nil {
 		return scope, err
 	}
-	space, err := r.space(ctx, tenant, id)
+	space, err := r.space(ctx, tenant, spaceCode)
 	if err != nil {
 		return scope, err
 	}
-	if businessID == id {
-		if !space.Global {
-			scope.BusinessIDs = []int64{businessID}
-		}
-		return scope, nil
-	}
+	scope.Global = space.Global
 	if !space.Global {
-		return scope, nil
+		scope.BusinessIDs = []int64{space.BusinessID}
 	}
-	businesses, err := r.all(ctx, tenant, bizModelCode, Filter{Field: "model_inst_id", Type: InstanceAttributeKeyword, Operator: "eq", Value: strconv.FormatInt(businessID, 10)}, &targetBudget{})
-	if err != nil {
-		return scope, err
-	}
-	if len(businesses) == 0 {
-		return scope, nil
-	}
-	if len(businesses) != 1 || businesses[0].InstanceID != strconv.FormatInt(businessID, 10) {
-		return scope, ErrInvalidDataSourceResponse
-	}
-	scope.BusinessIDs = []int64{businessID}
 	return scope, nil
 }
 
@@ -344,8 +344,8 @@ func inBusinessScope(instance Instance, scope TargetScope) (bool, error) {
 	}
 	found := false
 	for _, v := range values {
-		id, ok := positiveInt64(v)
-		if !ok {
+		id, err := strconv.ParseInt(fmt.Sprint(v), 10, 64)
+		if err != nil || id == 0 {
 			return false, fmt.Errorf("%w: invalid instance business", ErrTargetUnavailable)
 		}
 		if slices.Contains(scope.BusinessIDs, id) {
@@ -481,15 +481,12 @@ func (r *TargetResolver) dynamic(ctx context.Context, scope TargetScope, model M
 		return nil, fmt.Errorf("%w: dynamic group model family unsupported", ErrTargetUnavailable)
 	}
 	if group.SpaceCode != "" {
-		biz, err := ParseBusinessSpace(group.SpaceCode)
-		if err != nil {
-			return nil, err
-		}
-		space, err := r.space(ctx, scope.TenantID, biz)
+		space, err := r.space(ctx, scope.TenantID, group.SpaceCode)
 		if err != nil {
 			return nil, err
 		}
 		if !space.Global {
+			biz := space.BusinessID
 			if !slices.Contains(scope.BusinessIDs, biz) {
 				return nil, fmt.Errorf("%w: dynamic group outside business scope", ErrTargetUnavailable)
 			}
@@ -523,6 +520,9 @@ func (r *TargetResolver) topo(ctx context.Context, scope TargetScope, model Mode
 	members := map[string]Instance{}
 	found := false
 	for _, biz := range scope.BusinessIDs {
+		if biz < 1 {
+			return nil, fmt.Errorf("%w: CMDB topology requires BKCC business", ErrTargetUnavailable)
+		}
 		if selector.BizID != nil && *selector.BizID != biz {
 			continue
 		}

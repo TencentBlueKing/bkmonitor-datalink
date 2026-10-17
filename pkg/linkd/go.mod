@@ -3,6 +3,7 @@ module linkd
 go 1.26.7
 
 require (
+	github.com/dlclark/regexp2/v2 v2.9.1
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/prometheus/client_golang v1.24.1

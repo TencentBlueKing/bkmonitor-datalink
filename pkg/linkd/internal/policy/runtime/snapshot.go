@@ -62,7 +62,7 @@ func (s Snapshotter) Snapshot(ctx context.Context, event domain.Event, at time.T
 // eventCandidateReader 联合全部等级的有效视图，不让高等级字段排除低等级可命中的策略。
 // 同一字段映射只读一次；任一等级不可求值时保守保留相应字段的全部 posting。
 func eventCandidateReader(event domain.Event, level policy.LevelMapper) policy.CandidateReader {
-	type viewKey struct{ severity, field, path string }
+	type viewKey struct{ severity, field, path, readPath string }
 	views := make(map[viewKey]*policy.FactView)
 	return func(ctx context.Context, field string, mapping policy.FieldMapping) (policy.Value, error) {
 		if len(event.Evaluations) == 0 {
@@ -75,6 +75,7 @@ func eventCandidateReader(event domain.Event, level policy.LevelMapper) policy.C
 			if mapping.Path != "" {
 				key.field = field
 				key.path = mapping.Path
+				key.readPath = mapping.ReadPath
 				mappings = map[string]policy.FieldMapping{field: mapping}
 			}
 			view := views[key]

@@ -151,7 +151,7 @@ func TestMergeTemplateRejectsInvalidPublishedConfiguration(t *testing.T) {
 			s["new_alarm_config"] = []TemplateField{{Key: "name", Value: 1}, {Key: "level", Value: "warning"}}
 		}},
 		{"oversized title", func(s map[string]any) {
-			s["new_alarm_config"] = []TemplateField{{Key: "name", Value: strings.Repeat("名", 257)}, {Key: "level", Value: "warning"}}
+			s["new_alarm_config"] = []TemplateField{{Key: "name", Value: strings.Repeat("名", 1<<20)}, {Key: "level", Value: "warning"}}
 		}},
 		{"system field", func(s map[string]any) {
 			s["new_alarm_config"] = append(s["new_alarm_config"].([]TemplateField), TemplateField{Key: "bk_tenant_id", Value: "other"})

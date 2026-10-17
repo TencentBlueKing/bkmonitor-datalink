@@ -49,7 +49,7 @@ type suppressionTargets struct {
 	foreign bool
 }
 
-func (r suppressionTargets) ResolveBusinessScope(_ context.Context, tenant, space string, _ int64) (onemodel.TargetScope, error) {
+func (r suppressionTargets) ResolvePolicyScope(_ context.Context, tenant, space string) (onemodel.TargetScope, error) {
 	if r.foreign {
 		tenant = "foreign"
 	}

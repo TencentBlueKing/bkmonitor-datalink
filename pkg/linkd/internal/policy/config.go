@@ -36,8 +36,28 @@ func (k Kind) Valid() bool { return k == Suppression || k == Shield || k == Merg
 
 // FieldMapping 显式声明自定义 KAC 字段的有效 Event/Alert 路径与查询类型，禁止原始 payload 兜底。
 type FieldMapping struct {
-	Path string    `json:"path"`
-	Kind FieldKind `json:"kind"`
+	Path     string    `json:"path"`
+	ReadPath string    `json:"read_path,omitempty"`
+	Kind     FieldKind `json:"kind"`
+}
+
+// ReadTargets 编译配置指定的读取路径；写入仍使用 Path，不猜测字段所在位置。
+func (m FieldMapping) ReadTargets() ([]jsonpath.Target, error) {
+	path := m.ReadPath
+	if path == "" {
+		path = m.Path
+	}
+	targets, err := jsonpath.ReadTargets(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, target := range targets {
+		parts := target.Parts()
+		if len(parts) < 2 || (parts[0] != "labels" && parts[0] != "extra_data") {
+			return nil, fmt.Errorf("only labels/extra_data are readable")
+		}
+	}
+	return targets, nil
 }
 
 // CommonSpec 保存三类策略公共配置；租户和策略身份在发布信封中提供。
@@ -199,7 +219,7 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 	if strings.TrimSpace(result.Common.Name) == "" || len(result.Common.Name) > 256 || result.Common.UpdatedAt.IsZero() || result.Common.SpaceCode == "" || len(result.Common.SpaceCode) > 128 {
 		return nil, fmt.Errorf("name, updated_at and bounded space_code are required")
 	}
-	if _, err := onemodel.ParseBusinessSpace(result.Common.SpaceCode); err != nil {
+	if _, _, err := onemodel.ParseSpaceCode(result.Common.SpaceCode); err != nil {
 		return nil, err
 	}
 	if result.Common.Timezone == "" {
@@ -239,6 +259,9 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 		if len(parts) < 2 || (parts[0] != "labels" && parts[0] != "extra_data") {
 			return nil, fmt.Errorf("field_mappings.%s: only labels/extra_data are readable", key)
 		}
+		if _, err := mapping.ReadTargets(); err != nil {
+			return nil, fmt.Errorf("field_mappings.%s: %w", key, err)
+		}
 		switch mapping.Kind {
 		case FieldText, FieldKeyword, FieldNumber, FieldBoolean, FieldDate:
 		default:
@@ -249,8 +272,12 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 	if len(policies) == 0 || len(policies) > 32 {
 		return nil, fmt.Errorf("policy requires 1..32 condition groups")
 	}
-	for i, policy := range policies {
-		expression, err := CompileExpression(policy, fields)
+	for i, rawPolicy := range policies {
+		// 仅实例抑制/时间屏蔽仍经过空间、目标及时间门禁；依赖主条件不可为空。
+		if result.targetOnlyAllowed() && string(rawPolicy) == "{}" {
+			continue
+		}
+		expression, err := compileExpression(rawPolicy, fields, false)
 		if err != nil {
 			return nil, fmt.Errorf("policy[%d]: %w", i, err)
 		}
@@ -305,7 +332,7 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 		if spec.Targets == nil {
 			return nil, fmt.Errorf("shield requires target_descriptor")
 		}
-		if len(spec.Reason) > 4096 || spec.Before < 0 || spec.Before > 10080 || spec.After < 0 || spec.After > 10080 {
+		if len(spec.Reason) > 4096 || spec.Before < 0 || spec.Before > 65535 || spec.After < 0 || spec.After > 65535 {
 			return nil, fmt.Errorf("shield reason/time range exceeds budget")
 		}
 		if err := validateTags(spec.AlarmTags); err != nil {
@@ -357,6 +384,10 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 	digest := sha256.Sum256(append([]byte("policy-compiler-v1:"+string(kind)+":"), result.Canonical...))
 	result.Summary.Digest = hex.EncodeToString(digest[:])
 	return result, nil
+}
+
+func (c *Compiled) targetOnlyAllowed() bool {
+	return c.Common.Targets != nil && (c.Kind == Suppression || (c.Shield != nil && c.Shield.ShieldType == "time_shield"))
 }
 
 func durationSeconds(value int64, unit string) (int64, error) {

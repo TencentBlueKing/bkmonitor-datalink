@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	redis "github.com/redis/go-redis/v9"
@@ -62,5 +63,16 @@ func TestDisplayFormattingTenantAndFullOrganizationID(t *testing.T) {
 	client = NewDisplayClient(displayCacheStub{err: errors.New("redis failure")}, displayModelStub{}, "")
 	if _, err := client.Format(t.Context(), "t", "cw-Host", "owner", "alice"); err == nil {
 		t.Fatal("cache error swallowed")
+	}
+}
+
+func TestRelatedInstanceArraysDisplayEachValueBeforeJoining(t *testing.T) {
+	cache := displayCacheStub{values: map[string]string{"cmdb_object_attribute_cache_key:t/host": `{"enum":{"status":{"0":"禁用"}}}`}}
+	client := NewDisplayClient(cache, displayModelStub{}, "")
+	input := []any{[]any{json.Number("0"), false}, []any{nil, ""}}
+	got, err := client.Format(t.Context(), "t", "cw-Host", "status", input)
+	want := []any{[]any{"禁用", false}, []any{nil, ""}}
+	if err != nil || !reflect.DeepEqual(got, want) || input[0].([]any)[0] != json.Number("0") {
+		t.Fatalf("nested values lost or mutated: %#v %v", got, err)
 	}
 }

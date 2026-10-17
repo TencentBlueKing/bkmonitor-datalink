@@ -16,6 +16,25 @@ import (
 	"testing"
 )
 
+func TestQueryPrefixUsesParsedNames(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"$.lookup.relations.branch[*]", true}, {"$['lookup']['relations'].branch[*]", true},
+		{"$['lookup','event'].relations", false}, {"$..lookup.relations", false},
+		{"$.lookup.relations_extra", false}, {"$.lookup", false},
+	} {
+		q, err := Compile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := q.HasPrefix("lookup", "relations"); got != tc.want {
+			t.Fatalf("%s: %v", tc.path, got)
+		}
+	}
+}
+
 func TestNumberFiltersAndSingularTargets(t *testing.T) {
 	q, err := Compile(`$.items[?@.n >= 2].n`)
 	if err != nil {

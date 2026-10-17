@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich/custom"
 	"linkd/internal/onemodel"
 	"linkd/internal/store/storetest"
 )
@@ -125,6 +126,80 @@ func TestPolicyMissingAndFailedEnrichDifferForNegativeConditions(t *testing.T) {
 	}
 }
 
+func TestCustomPartialKeepsCommittedFieldsAvailable(t *testing.T) {
+	var config map[string]any
+	if err := json.Unmarshal([]byte(`{"rules":[{"id":"r","operations":[{"id":"missing","type":"assign","assignments":[{"target":"$.content","value":{"jsonpath":"$.event.labels.absent"}}]},{"id":"later","type":"assign","assignments":[{"target":"$.title","value":{"literal":"updated"}},{"target":"$.labels.bk_biz_id","value":{"literal":2}},{"target":"$.labels.source_id","value":{"literal":"source"}}]}]}]}`), &config); err != nil {
+		t.Fatal(err)
+	}
+	p, err := custom.Compile("fields", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := map[string]any{"title": "old", "content": "keep"}
+	result, err := p.Execute(t.Context(), input, input, "tenant", custom.Sources{})
+	if err != nil || result.Status != domain.EnrichStatusPartial {
+		t.Fatalf("%+v %v", result, err)
+	}
+	for _, name := range []string{"cmdb", "fields"} {
+		payload, err := json.Marshal([]any{map[string]any{name: map[string]any{"status": result.Status, "patches": result.Patches}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		event := policyEvent(string(payload), result.Status)
+		view := mustEventView(t, event, nil)
+		value, err := view.Field(t.Context(), "name")
+		if err != nil || value.Data != "updated" {
+			t.Fatalf("committed title unavailable: %+v %v", value, err)
+		}
+		if _, err := view.Field(t.Context(), "content"); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("unwritten field must remain unavailable: %v", err)
+		}
+		compiled, err := Compile(Suppression, testSpec("partial"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		release := Release{Scope: Scope{TenantID: "tenant", Kind: Suppression}, ID: "p", Version: 1, Spec: compiled.Canonical, Compiled: compiled.Summary}
+		verdict, err := Evaluate(t.Context(), release, compiled, view, policyTargets{}, time.Date(2026, 9, 30, 1, 0, 0, 0, time.UTC), false)
+		if err != nil || !verdict.Evaluated || !verdict.Matched {
+			t.Fatalf("partial policy not matched: %+v %v", verdict, err)
+		}
+		alert := storetest.Alert("tenant", "a1", "e1", "f1", "warning")
+		alert.EnrichStatus, alert.Enrich = result.Status, event.Enrich.Evaluations[0].Data
+		alertView, err := AlertView(alert, nil, nil, RelationContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err = alertView.Field(t.Context(), "name")
+		if err != nil || value.Data != "updated" {
+			t.Fatalf("alert lost committed title: %+v %v", value, err)
+		}
+	}
+}
+
+func TestPartialAvailabilityKeepsProcessorOrderAndFailureBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, payload string
+		available     bool
+	}{
+		{"partial overrides earlier failure", `[{"resource":{"status":"failed","patches":[]}},{"cmdb":{"status":"partial","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}}]`, true},
+		{"later failure blocks partial", `[{"cmdb":{"status":"partial","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}},{"fields":{"status":"failed","patches":[]}}]`, false},
+		{"failed patch not applied", `[{"cmdb":{"status":"failed","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}}]`, false},
+		{"builtin partial unchanged", `[{"resource":{"status":"partial","patches":[{"op":"set","path":"$.labels.model_id","value":"host"}]}}]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			view := mustEventView(t, policyEvent(tc.payload, domain.EnrichStatusPartial), nil)
+			value, err := view.Field(t.Context(), "model_id")
+			if tc.available {
+				if err != nil || value.Data != "host" {
+					t.Fatalf("%+v %v", value, err)
+				}
+			} else if !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("failure was cleared: %+v %v", value, err)
+			}
+		})
+	}
+}
+
 func TestPolicyViewKeepsAlertOpeningResultAndCurrentLevel(t *testing.T) {
 	a := storetest.Alert("tenant", "a1", "opening", "f", "critical")
 	a.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"display":{"status":"succeeded","patches":[{"op":"set","path":"$.title","value":"opening title"}]}}]`)}
@@ -147,7 +222,7 @@ type policyTargets struct {
 	refs   []onemodel.InstanceRef
 }
 
-func (r policyTargets) ResolveBusinessScope(_ context.Context, tenant, space string, _ int64) (onemodel.TargetScope, error) {
+func (r policyTargets) ResolvePolicyScope(_ context.Context, tenant, space string) (onemodel.TargetScope, error) {
 	if r.reads != nil {
 		*r.reads++
 	}
@@ -158,7 +233,7 @@ func (r policyTargets) ResolveBusinessScope(_ context.Context, tenant, space str
 }
 
 func (r policyTargets) Resolve(ctx context.Context, tenant, space string, _ onemodel.TargetDescriptor) (onemodel.TargetResult, error) {
-	scope, err := r.ResolveBusinessScope(ctx, tenant, space, 2)
+	scope, err := r.ResolvePolicyScope(ctx, tenant, space)
 	return onemodel.TargetResult{Scope: scope, Instances: r.refs}, err
 }
 

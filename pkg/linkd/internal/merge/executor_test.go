@@ -11,6 +11,7 @@ package merge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -79,11 +80,24 @@ type executorFixture struct {
 	source *eventsource.Release
 }
 
-func newExecutorFixture(t *testing.T) executorFixture {
+func newExecutorFixture(t *testing.T, editSpec ...func(*policy.MergeSpec)) executorFixture {
 	t.Helper()
 	j, docs := newJournal(t)
 	repo := memory.New()
 	d, members, source, severity := renderFixture(t)
+	if len(editSpec) > 0 {
+		var spec policy.MergeSpec
+		if err := json.Unmarshal(d.Policy.Spec, &spec); err != nil {
+			t.Fatal(err)
+		}
+		editSpec[0](&spec)
+		raw, _ := json.Marshal(spec)
+		compiled, err := policy.Compile(policy.Merge, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Policy.Spec, d.Policy.Compiled = compiled.Canonical, compiled.Summary
+	}
 	state := &executorWindows{result: policyruntime.MergeJudgment{Frozen: true, Window: redisstate.MergeWindow{ID: d.WindowID, TenantID: d.TenantID, Policy: domain.PolicyVersion{ID: d.Policy.ID, Version: d.Policy.Version, Digest: d.Policy.Compiled.Digest}, GroupKey: d.GroupKey, StartedAtMillis: d.StartedAt.UnixMilli(), DeadlineMillis: d.Deadline.UnixMilli(), Frozen: &redisstate.MergeVerdict{Outcome: d.Outcome, OperationID: d.ID, AtMillis: d.FrozenAt.UnixMilli(), MemberIDs: d.MemberIDs}}}}
 	for _, id := range d.WaitMemberIDs {
 		state.result.Window.Members = append(state.result.Window.Members, redisstate.MergeMember{Main: domain.DependencyMain{AlertID: id}})

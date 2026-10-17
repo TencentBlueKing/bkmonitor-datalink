@@ -15,11 +15,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"linkd/internal/domain"
 	"linkd/internal/jsonpath"
 	"linkd/internal/onemodel"
+	"linkd/internal/textregexp"
 )
 
 // Value 描述一种取值及其顺序转换；Literal 的显式 null 与未配置不同。
@@ -44,7 +46,7 @@ type Transform struct {
 	Mapping   map[string]any `json:"mapping,omitempty"`
 	ModelID   string         `json:"model_id,omitempty"`
 	Field     string         `json:"field,omitempty"`
-	regex     *regexp.Regexp
+	regex     *textregexp.Expression
 }
 
 // Condition 是只在规则开始时求值一次的条件树。
@@ -55,6 +57,7 @@ type Condition struct {
 	Left     *Value      `json:"left,omitempty"`
 	Operator string      `json:"operator,omitempty"`
 	Right    *Value      `json:"right,omitempty"`
+	regex    *textregexp.Expression
 }
 
 // Assignment 描述一个确定目标的赋值。
@@ -79,7 +82,10 @@ type Operation struct {
 	Target       string        `json:"target,omitempty"`
 	Replacements []Replacement `json:"replacements,omitempty"`
 	Assignments  []Assignment  `json:"assignments,omitempty"`
-	regex        *regexp.Regexp
+	MatchMode    string        `json:"match_mode,omitempty"`
+	MatchIndex   int           `json:"match_index,omitempty"`
+	Separator    string        `json:"separator,omitempty"`
+	regex        *textregexp.Expression
 	target       jsonpath.Target
 }
 
@@ -127,6 +133,8 @@ type Relation struct {
 // Rule 保留方案的一次匹配与内部操作顺序。
 type Rule struct {
 	ID string `json:"id"`
+	// TenantID 限定全局来源中的租户私有方案，独立于可被已有身份跳过的对象条件。
+	TenantID string `json:"bk_tenant_id,omitempty"`
 	// Name 是来源发布时冻结的展示名，不参与匹配或赋值。
 	Name        string       `json:"name,omitempty"`
 	When        *Condition   `json:"when,omitempty"`
@@ -158,7 +166,12 @@ type Program struct {
 func (p *Program) NeedsDisplay() bool { return p.display }
 
 // Compile 完成不依赖外部服务的严格校验，所有表达式在发布时编译。
-func Compile(kind string, raw map[string]any) (*Program, error) {
+func Compile(kind string, raw map[string]any) (_ *Program, err error) {
+	defer func() {
+		if err != nil {
+			err = &ConfigurationError{cause: err}
+		}
+	}()
 	if kind != "cmdb" && kind != "fields" {
 		return nil, fmt.Errorf("unknown rule processor %q", kind)
 	}
@@ -210,6 +223,13 @@ func Compile(kind string, raw map[string]any) (*Program, error) {
 	}
 	return p, nil
 }
+
+// ConfigurationError 标记可反馈给配置编辑者的编译错误，不包含依赖连接错误。
+type ConfigurationError struct{ cause error }
+
+func (e *ConfigurationError) Error() string { return e.cause.Error() }
+
+func (e *ConfigurationError) Unwrap() error { return e.cause }
 
 func checkID(id string, seen map[string]bool) error {
 	if id == "" || len(id) > 64 || strings.Trim(id, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" || seen[id] {
@@ -322,11 +342,19 @@ func (p *Program) compileRule(r *Rule) error {
 			if err := p.compileValue(o.Source, 0); err != nil {
 				return err
 			}
-			re, err := regexp.Compile(o.Pattern)
+			if o.MatchMode != "" && o.MatchMode != "first" && o.MatchMode != "all" || o.MatchIndex < 0 || o.MatchIndex >= 1024 {
+				return fmt.Errorf("extract requires first/all match mode and match index in 0..1023")
+			}
+			re, err := textregexp.Compile(o.Pattern)
 			if err != nil {
 				return fmt.Errorf("operation %s regexp: %w", o.ID, err)
 			}
 			o.regex = re
+			for _, assignment := range o.Assignments {
+				if err := validateExtractCaptures(assignment.Value, re.NumSubexp()); err != nil {
+					return fmt.Errorf("operation %s: %w", o.ID, err)
+				}
+			}
 			if err := p.compileAssignments(o.Assignments); err != nil {
 				return err
 			}
@@ -443,12 +471,12 @@ func (p *Program) compileValue(v *Value, depth int) error {
 	for i := range v.Transforms {
 		t := &v.Transforms[i]
 		switch t.Type {
-		case "string", "kingeye_string", "number", "bool", "join", "map":
+		case "string", "kingeye_string", "display_text", "number", "bool", "join", "map":
 		case "regex_extract":
 			if len(t.Pattern) > 2048 {
 				return fmt.Errorf("pattern too long")
 			}
-			r, err := regexp.Compile(t.Pattern)
+			r, err := textregexp.Compile(t.Pattern)
 			if err != nil {
 				return err
 			}
@@ -524,7 +552,8 @@ func (p *Program) compileCondition(c *Condition, depth int) error {
 		if err := p.compileValue(c.Right, 0); err != nil {
 			return err
 		}
-		if (c.Operator == "regex" || c.Operator == "not_regex") && len(c.Right.Literal) > 0 {
+		// 转换后的模式由运行时求值；只有未经转换的字面量可直接缓存。
+		if (c.Operator == "regex" || c.Operator == "not_regex") && len(c.Right.Literal) > 0 && len(c.Right.Transforms) == 0 {
 			var pattern string
 			if err := json.Unmarshal(c.Right.Literal, &pattern); err != nil {
 				return fmt.Errorf("regex requires string")
@@ -532,9 +561,11 @@ func (p *Program) compileCondition(c *Condition, depth int) error {
 			if len(pattern) > 2048 {
 				return fmt.Errorf("pattern too long")
 			}
-			if _, err := regexp.Compile(pattern); err != nil {
+			compiled, err := textregexp.Compile(pattern)
+			if err != nil {
 				return err
 			}
+			c.regex = compiled
 		}
 		return nil
 	}
@@ -598,6 +629,15 @@ func (p *Program) compilePredicate(f *Predicate, depth int) error {
 			if err := p.compileValue(f.Value, 0); err != nil {
 				return err
 			}
+			if (f.Operator == "regex" || f.Operator == "not_regex") && len(f.Value.Literal) > 0 && len(f.Value.Transforms) == 0 {
+				var pattern string
+				if err := json.Unmarshal(f.Value.Literal, &pattern); err != nil {
+					return fmt.Errorf("query regex requires string")
+				}
+				if _, err := textregexp.Compile(pattern); err != nil {
+					return fmt.Errorf("query field %s: %w", f.Field, err)
+				}
+			}
 		}
 		dummy := any("")
 		switch f.Type {
@@ -616,6 +656,28 @@ func (p *Program) compilePredicate(f *Predicate, depth int) error {
 }
 
 var variablePattern = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+var capturePathPattern = regexp.MustCompile(`^\$\.extraction\.matches\[[0-9]+\]\.groups\[([0-9]+)\]$`)
+
+func validateExtractCaptures(value Value, count int) error {
+	if value.Default != nil {
+		if err := validateExtractCaptures(*value.Default, count); err != nil {
+			return err
+		}
+	}
+	if match := capturePathPattern.FindStringSubmatch(value.JSONPath); match != nil {
+		index, err := strconv.Atoi(match[1])
+		if err != nil || index >= count {
+			return fmt.Errorf("capture reference exceeds %d groups", count)
+		}
+	}
+	for _, variable := range value.Variables {
+		if err := validateExtractCaptures(variable, count); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // validateTarget 保护由受控资源处理器计算的权限与动态分组结果。
 func validateTarget(path string) error {

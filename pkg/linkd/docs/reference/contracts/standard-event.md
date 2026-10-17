@@ -66,7 +66,7 @@ Event 的已知字段，只保留在完整的 `Event.source_raw_data` 快照中�
 | --- | --- |
 | `bk_tenant_id` | Value 与 header 可只提供一处；两处非空时须一致，且最终租户不能为空。EventSource 的 `related_tenant_id` 非空时由该配置覆盖。 |
 | `event_id`、`alert_id` | 分别映射到 `Event.source_event_id`、`Event.source_alert_id`，通用 Cleaner 允许为空；EventFactory 使用稳定 `RecordID` 和 Kafka record timestamp 生成内部 Event ID；来源 ID 不承担消息唯一性。具体来源若按 `source_alert_id` 关联，仍须提供稳定且非空的 `alert_id`。 |
-| `title`、`content` | `title` 是事件标题，`content` 是可选的来源内容；缺失 `content` 不从标题推导。 |
+| `title`、`content` | `title` 是事件标题，最多保留 2000 个 Unicode 字符，超出自动截断；`subject_name` 使用相同上限。`content` 是可选的来源内容，仍保留 1 MiB 上限；缺失 `content` 不从标题推导。 |
 | `evaluations` | 必填，1–32 项；每项 `action` 只能是 `triggered`、`resolved`、`closed`，`severity` 为来源等级标识或关闭专用标记 `__ALL__`。来源等级映射后不得重复；数组顺序不决定裁决顺序，未出现的等级不隐含恢复或关闭。 |
 | `values` | 可选的扁平数值对象，最多 256 项；key 为 1–256 bytes，value 必须是有限数字，不接受字符串、布尔值、null 或嵌套值。缺失、显式 null 和 `{}` 都形成空对象，不给缺失的数值项补零。 |
 | `dimensions`、`labels` | 扁平标量对象，value 只接受字符串、有限数字或布尔值；通用 Cleaner 对缺失或显式 null 规范为空对象。维度与标签各自的业务完整性由来源负责。 |

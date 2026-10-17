@@ -138,53 +138,27 @@ func (i *Identity) patches(values map[string]any) ([]domain.EnrichAssignment, er
 	return out, nil
 }
 
-func (r *run) matchRule(ctx context.Context, rule Rule, result *RuntimeResult) (bool, error) {
+func (r *run) matchRule(ctx context.Context, rule Rule, _ *RuntimeResult) (bool, error) {
+	if rule.TenantID != "" && rule.TenantID != r.tenant {
+		return false, nil
+	}
 	if rule.Identity == nil {
 		return r.condition(ctx, rule.When, r.environment(nil))
 	}
-	i := rule.Identity
-	initialObj := r.initialIdentity[i]
-	obj, inst := i.read(r.current, "bk_obj_id"), i.read(r.current, "bk_inst_id")
-	alias, aliasInst := i.read(r.current, "cw_object_model_code"), i.read(r.current, "cw_object_model_inst_id")
-	// 入口即有 canonical 身份的告警属于固定对象组，不能被后续对象规则重绑。
-	if (!identityProvided(obj) || !identityProvided(inst)) && identityProvided(alias) && identityProvided(aliasInst) {
-		if fmt.Sprint(alias) != rule.Lookup.ModelID {
-			return false, nil
+	identity := rule.Identity
+	for _, field := range []string{"model_id", "cw_object_model_code"} {
+		if model := identity.read(r.current, field); identityProvided(model) {
+			return fmt.Sprint(model) == rule.Lookup.ModelID, nil
 		}
-		values := map[string]any{}
-		if !identityProvided(obj) {
-			obj = i.BKObjID
-			values["bk_obj_id"] = obj
-		}
-		if !identityProvided(inst) {
-			inst = aliasInst
-			values["bk_inst_id"] = inst
-		}
-		patches, err := i.patches(values)
-		if err != nil {
-			return false, err
-		}
-		if err = r.commit(rule.ID, "identity", patches, result); err != nil {
-			return false, err
-		}
-		initialObj = obj
 	}
-	if identityProvided(initialObj) || identityProvided(obj) && identityProvided(inst) {
-		return fmt.Sprint(obj) == i.BKObjID, nil
+	if object := identity.read(r.current, "bk_obj_id"); identityProvided(object) {
+		return fmt.Sprint(object) == identity.BKObjID, nil
 	}
 	if rule.When == nil {
 		return false, nil
 	}
-	matches, err := r.condition(ctx, rule.When, r.environment(nil))
-	if err != nil || !matches {
-		return matches, err
-	}
-	patches, err := i.patches(map[string]any{"bk_obj_id": i.BKObjID, "model_id": rule.Lookup.ModelID, "model_name": i.ModelName})
-	if err != nil {
-		return false, err
-	}
-	// 对象已经确定，即使随后的查询为空或失败，也保留这一阶段的结果。
-	return true, r.commit(rule.ID, "identity", patches, result)
+	// 对象条件只选择候选方案；定位成功之前不提交中间身份。
+	return r.condition(ctx, rule.When, r.environment(nil))
 }
 
 func (r *run) bindInstance(ctx context.Context, rule Rule, lookup map[string]any, result *RuntimeResult) error {
@@ -200,13 +174,15 @@ func (r *run) bindInstance(ctx context.Context, rule Rule, lookup map[string]any
 	if identityProvided(attributes[attribute]) {
 		bkID = attributes[attribute]
 	}
-	patches, err := i.patches(map[string]any{"bk_inst_id": bkID, "model_inst_id": id})
+	patches, err := i.patches(map[string]any{"bk_obj_id": i.BKObjID, "model_id": rule.Lookup.ModelID, "model_name": i.ModelName, "bk_inst_id": bkID, "model_inst_id": id})
 	if err != nil {
 		return err
 	}
 	if err = r.commit(rule.ID, "identity", patches, result); err != nil {
 		return err
 	}
+	// 身份定位成功独立于后续展示字段是否成功。
+	r.fieldSucceeded = true
 	if len(rule.Assignments) == 0 {
 		return nil
 	}
@@ -306,7 +282,7 @@ func (r *run) fallbackTopology(ctx context.Context, rules []Rule, result *Runtim
 	r.state.Rollback(r.start)
 	r.patchBytes = 2
 	for _, rule := range rules {
-		if rule.Identity == nil {
+		if rule.Identity == nil || rule.TenantID != "" && rule.TenantID != r.tenant {
 			continue
 		}
 		i := rule.Identity

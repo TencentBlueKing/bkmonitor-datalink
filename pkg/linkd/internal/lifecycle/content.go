@@ -16,6 +16,7 @@ import (
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
+	"linkd/internal/enrich/view"
 )
 
 // AlertContentBuilder 为尚未持久化的 Alert 生成初始 content；持续触发直接采用 Event.content。
@@ -43,6 +44,12 @@ func WithAlertContentBuilder(builder AlertContentBuilder) ProcessorOption {
 
 func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, opening domain.Alert) (content string, err error) {
 	defer p.measureStep(phasePlan, "content")()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if text, found, err := view.CustomText(opening.Enrich, "content"); err != nil || found {
+		return text, err
+	}
 	// panic 不包含敏感 payload，也不能变成来源文本回退或普通 Enrich 降级。
 	defer func() {
 		if recover() != nil {

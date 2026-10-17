@@ -22,6 +22,7 @@ import (
 	"linkd/internal/enrich/custom"
 	"linkd/internal/jsonpath"
 	"linkd/internal/onemodel"
+	"linkd/internal/textregexp"
 )
 
 // Model 提供不能从告警源规则推断的租户模型目录。
@@ -66,15 +67,19 @@ type settingRule struct {
 	Value      string `json:"value"`
 	Expression string `json:"expression"`
 	Condition  string `json:"condition"`
+	Group      int    `json:"group,omitempty"`
 }
 
 type normal struct {
 	Name     string                     `json:"name"`
 	Match    map[string]json.RawMessage `json:"match_rules"`
 	Settings []struct {
-		Type   string        `json:"type"`
-		Fields []field       `json:"fields"`
-		Rules  []settingRule `json:"rules"`
+		Type       string        `json:"type"`
+		MatchMode  string        `json:"match_mode,omitempty"`
+		MatchIndex int           `json:"match_index,omitempty"`
+		Separator  *string       `json:"separator,omitempty"`
+		Fields     []field       `json:"fields"`
+		Rules      []settingRule `json:"rules"`
 	} `json:"enrich_settings"`
 }
 
@@ -118,7 +123,7 @@ func Convert(input Input) (Result, error) {
 				rule, err = c.cmdb(raw, item.RuleID)
 			}
 			if err == nil {
-				data, _ := json.Marshal(custom.Config{Rules: []custom.Rule{rule}, RollbackUnmatched: kind == "cmdb"})
+				data, _ := json.Marshal(custom.Config{Rules: []custom.Rule{rule}})
 				var config map[string]any
 				err = json.Unmarshal(data, &config)
 				if err == nil {
@@ -135,7 +140,7 @@ func Convert(input Input) (Result, error) {
 			out.Report = append(out.Report, item)
 		}
 		if len(rules) > 0 {
-			data, _ := json.Marshal(custom.Config{Rules: rules, RollbackUnmatched: kind == "cmdb"})
+			data, _ := json.Marshal(custom.Config{Rules: rules})
 			var cfg map[string]any
 			if err := json.Unmarshal(data, &cfg); err != nil {
 				return Result{}, err
@@ -208,18 +213,14 @@ func (c converter) template(text string, captures int) (custom.Value, error) {
 			}
 		} else {
 			index, _ := strconv.Atoi(parts[2])
-			if captures < 0 || index < 1 {
+			if captures < 0 || index > captures {
 				failure = fmt.Errorf("invalid extraction reference %q", token)
 			}
-			path := ""
-			switch captures {
-			case 0:
-				path = fmt.Sprintf("$.extraction.matches[%d].text", index-1)
-			case 1:
-				path = fmt.Sprintf("$.extraction.matches[%d].groups[0]", index-1)
-			default:
+			path := "$.extraction.matches[0].text"
+			if index > 0 {
 				path = fmt.Sprintf("$.extraction.matches[0].groups[%d]", index-1)
 			}
+
 			v = custom.Value{JSONPath: path}
 		}
 		vars[key] = v
@@ -258,9 +259,6 @@ func (c converter) normal(raw json.RawMessage, id string) (custom.Rule, error) {
 				}
 				op := custom.Operation{ID: fmt.Sprintf("%s_%d", base, j+1), Type: "replace", Target: target}
 				for _, rep := range setting.Rules {
-					if strings.Contains(rep.Field, "@{") || strings.Contains(rep.Value, "@{") {
-						return rule, fmt.Errorf("KAC replacement sentinel needs manual review")
-					}
 					op.Replacements = append(op.Replacements, custom.Replacement{From: rep.Field, To: rep.Value})
 				}
 				rule.Operations = append(rule.Operations, op)
@@ -282,15 +280,23 @@ func (c converter) normal(raw json.RawMessage, id string) (custom.Rule, error) {
 				return rule, fmt.Errorf("extract needs exactly one regex")
 			}
 			r := setting.Rules[0]
-			pattern, err := regexp.Compile(r.Value)
+			pattern, err := textregexp.Compile(r.Value)
 			if err != nil {
-				return rule, fmt.Errorf("python regex unsupported by Go: %w", err)
+				return rule, fmt.Errorf("invalid enrichment regex: %w", err)
 			}
 			source, err := c.source(r.Field)
 			if err != nil {
 				return rule, err
 			}
-			op := custom.Operation{ID: base, Type: "extract", Source: &source, Pattern: r.Value}
+			mode := setting.MatchMode
+			if mode == "" {
+				mode = "first"
+			}
+			separator := ","
+			if setting.Separator != nil {
+				separator = *setting.Separator
+			}
+			op := custom.Operation{ID: base, Type: "extract", Source: &source, Pattern: r.Value, MatchMode: mode, MatchIndex: setting.MatchIndex, Separator: separator}
 			for _, f := range setting.Fields {
 				target, err := c.path(f.Key)
 				if err != nil {
@@ -300,11 +306,7 @@ func (c converter) normal(raw json.RawMessage, id string) (custom.Rule, error) {
 				if err != nil {
 					return rule, err
 				}
-				for _, v := range value.Variables {
-					if strings.HasPrefix(v.JSONPath, "$.event") {
-						return rule, fmt.Errorf("extract field references alert state; split dependent assignments manually")
-					}
-				}
+
 				op.Assignments = append(op.Assignments, custom.Assignment{Target: target, Value: value})
 			}
 			rule.Operations = append(rule.Operations, op)
@@ -340,15 +342,15 @@ func (c converter) conditions(old map[string]json.RawMessage) (*custom.Condition
 			return custom.Condition{}, err
 		}
 		if leaf.Condition == "regexp_extract" {
-			pattern, err := regexp.Compile(leaf.Expression)
+			pattern, err := textregexp.Compile(leaf.Expression)
 			if err != nil {
 				return custom.Condition{}, err
 			}
 			_ = pattern
-			value.Transforms = append(value.Transforms, custom.Transform{Type: "regex_extract", Pattern: leaf.Expression, Group: 0})
+			value.Transforms = append(value.Transforms, custom.Transform{Type: "regex_extract", Pattern: leaf.Expression, Group: leaf.Group})
 		}
 		if op == "regex" {
-			if _, err := regexp.Compile(leaf.Value); err != nil {
+			if _, err := textregexp.Compile(leaf.Value); err != nil {
 				return custom.Condition{}, err
 			}
 		}
@@ -416,14 +418,12 @@ func (c converter) cmdb(raw json.RawMessage, id string) (custom.Rule, error) {
 			return custom.Condition{}, err
 		}
 		if leaf.Condition == "regexp_extract" {
-			pattern, err := regexp.Compile(leaf.Expression)
+			pattern, err := textregexp.Compile(leaf.Expression)
 			if err != nil {
 				return custom.Condition{}, err
 			}
-			group := 0
-			if pattern.NumSubexp() > 0 {
-				group = 1
-			}
+			_ = pattern
+			group := leaf.Group
 			v.Transforms = append(v.Transforms, custom.Transform{Type: "regex_extract", Pattern: leaf.Expression, Group: group})
 		}
 		field := literal(leaf.Value)
@@ -503,7 +503,7 @@ func (c converter) cmdb(raw json.RawMessage, id string) (custom.Rule, error) {
 			return rule, err
 		}
 		path, _ := jsonpath.ParseTarget("$[" + strconv.Quote(f.Value) + "]")
-		rule.Assignments = append(rule.Assignments, custom.Assignment{Target: target, Value: custom.Value{JSONPath: "$.lookup.attributes" + strings.TrimPrefix(path.String(), "$"), Default: &custom.Value{Literal: json.RawMessage(`""`)}, Transforms: []custom.Transform{{Type: "kingeye_string"}, {Type: "display", ModelID: model.ModelID, Field: f.Value}}}})
+		rule.Assignments = append(rule.Assignments, custom.Assignment{Target: target, Value: custom.Value{JSONPath: "$.lookup.attributes" + strings.TrimPrefix(path.String(), "$"), Transforms: []custom.Transform{{Type: "display", ModelID: model.ModelID, Field: f.Value}, {Type: "display_text"}}}})
 	}
 	return rule, nil
 }

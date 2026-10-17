@@ -6,6 +6,30 @@
 [Enrich 设计](enrich.md)，KAC 源码事实见[源码调研](../research/2026-09-22-kingeye-alarm-source-enrichment.md)。
 实现进度与设计目标分别记录，未验证事项不表述为已经支持。
 
+## 本次改造契约（2026-10-17）
+
+本节与下文共同规定当前开发契约。代码已加入对应实现与回归，真实部署验收单列，不能由本地测试推断。
+
+- KAC 页面允许配置的常规/CMDB 自定义丰富完整执行；KAC 保存时事务内同步调用 Linkd 编译发布，
+  失败回滚本地事务并直接反馈页面，不新增 KAC 同步状态、记录表或页面状态展示。远端 HTTP 不属于本地数据库事务。
+- 固定采用 github.com/dlclark/regexp2/v2 v2.9.1（MIT），默认模式加 OptionMaintainCaptureOrder，
+  显式配置 MatchTimeout；标准库缺少断言/反向引用，升级需回归语义、并发和错误。用户说明采用 .NET 风格，
+  不承诺 Python/.NET 全量等价，不使用 RE2 兼容开关或双引擎回退。
+- $0 为整段匹配，$n 固定为捕获组，匹配序号/全部匹配显式表达；允许捕获与告警字段混合模板。
+  提取后比较明确选择整段/分组；无匹配、分组未参与和空匹配分别处理，错误不伪装为条件不成立。
+- 文字替换对步骤原输入执行一次，按位置及规则顺序选择，新生成文本不再次替换；保留操作原子提交。
+- KAC 将多模型链和关联字段转换为现有 relations，明确链路节点、关系、方向和属性所属模型。
+  主模型属性和独立关系分支分别完成；一条分支失败不阻断其他分支。中间单实例、末端可多实例。
+- 主实例成功定位后提交完整业务身份，属性展示失败不撤销身份；未定位不提交中间半套身份。
+  不再以任意属性字段成功与否决定整轮身份保留。受控权限补充沿最终有效身份执行。
+- 属性先按其所属模型逐项做展示转换，再处理目标类型和文本拼接；保留组织完整 ID、0、false 和多值顺序。
+- 自定义 CMDB 查询正则最终按同一 regexp2 语义求值。OneModel 负责按租户/模型/关系及安全普通条件
+  缩小候选，完整保留 AND/OR/NOT，分页与容量沿既有预算；不能原样下推为 ES regexp 或把首批当完整结果。
+- 自定义名称/内容成功输出不能被后续自动内容生成无提示覆盖；校验、试算和正式执行共用编译器。
+  真实预览保留历史 Event 步骤事实，不重算、不新增 KAC 状态展示。
+- 验收覆盖页面配置→同步保存→发布→Event→策略/告警输出→预览，以及租户隔离、失败回滚和连续事件不污染。
+  本次不改插件输入协议、接入 Python 清洗、策略算法和生命周期，不新增通用规则平台或迁移框架。
+
 ## 1. 已确认目标
 
 1. 平替 KAC CMDB 和常规字段丰富的核心能力，保留可核验的差异，不复制旧缺陷。
@@ -87,11 +111,12 @@ RFC 9535；用内部适配层隔离库 API，版本升级需要路径一致性�
 首版只有 set，value 是已求值 JSON，不保存待执行模板。Processor/rule/operation 都按数组顺序执行。
 一个操作对快照完成取值和校验后，原子提交全部补丁；操作内部重复/父子重叠目标拒绝。
 跨操作允许重复目标并保存实际顺序，后续操作读取已经提交的结果。
-失败操作无补丁，停止当前规则剩余操作，继续后续规则；父 Context 取消立即结束整个调用。
+失败操作无补丁，独立后续操作和规则继续；父 Context 取消立即结束整个调用并恢复当前处理器入口。
 规则的 when 只在规则开始时判断一次，不因前一步修改匹配字段而重新判断。
 
 每个 Processor 只有一份 patches。规则/操作状态、ID、诊断、耗时和命中数作为执行记录，不复制输出。
 succeeded/partial 中已提交补丁参与合成，failed/skipped 不应用补丁；顶层 enrich_status 按适用步骤聚合。
+策略读取自定义 cmdb/fields 的 partial 结果时，已提交补丁对应的字段仍为已知事实；未写入字段保留不可求值标记，后续处理器失败仍可使相应字段不可用。
 历史内置 value 仅在读取边界提供确定投影，保护已有真实告警；所有新执行仅写 patches，不双写或回填历史数据。
 
 ## 4. EventSource 配置
@@ -176,20 +201,28 @@ enrich:
 when 支持嵌套 all/any/not，叶条件为 left/operator/right；eq/ne/contains/not_contains/regex/not_regex/in/not_in/exists。
 省略 when 匹配所有输入。Value 的 literal/jsonpath/template 三选一，可另设 select、default 和顺序 transforms。
 transforms 包括类型转换、join、字典映射、正则提取和展示值转换。
-缺失路径默认跳过当前规则；缺少模板变量不隐式变为空串。所有静态表达式在发布前编译。
+缺失路径跳过当前赋值步骤；缺少模板变量不隐式变为空串。所有静态表达式在发布前编译。
+正则条件只缓存未经转换的字面量模式；带 transforms 的模式按转换后的实际值编译和匹配。
 
 ### 4.2 常规丰富
 
 - assign：常量、复制、模板和转换后赋值。跨字段依赖拆为同一规则内多个操作。
 - replace：目标已有字符串，按 replacements 做文字替换。旧 is_regex 不影响 KAC 当前实际替换语义。
 - extract：source 只读一次，find-all 返回 matches[].text/groups/named_groups；多个赋值使用同一提取结果。
-- 采用 Go regexp，无法表达的 Python 环视、回溯引用等明确拒绝，不静默改变语义。
-- KAC 零/一捕获组按匹配次数编号、多捕获组按首匹配分组编号；转换器必须区分。
+- 用户表达式采用 regexp2/v2 v2.9.1 默认模式加 OptionMaintainCaptureOrder；支持 Unicode、断言和反向引用，不启用 RE2 模式。
+- KAC `$0` 始终为完整匹配，`$n` 始终为捕获组；`match_mode: first` 配合从 0 开始的 `match_index` 选择一次匹配，`all` 逐次渲染后用 `separator` 拼接。原生 API 省略模式时仍可直接读取 matches 数组。
+- 表达式内引用使用 `\1`/`\k<name>`，命名组为 `(?<name>...)`，模板内 `${field}` 为告警字段。可选组未参与匹配视为缺失，成功空捕获保留。
+- 可选捕获组与关联分支的缺失判断使用解析后的 JSONPath，点号和 bracket notation 等价，显式 null 的普通事件字段语义不变。
+- `all` 边渲染边累计输出，使用既有 1 MiB 补丁预算；名称/对象只保存前 2000 个 Unicode 字符。截断后仍求值后续匹配，任何取值失败或取消均不提交当前操作的部分补丁。
+- 每次引擎匹配预算 100ms，使用原生超时，精度受引擎周期影响。超时是失败，不经取反变为命中；错误日志不包含输入原文。
+- replace 使用单次字面量替换：A→B、B→C 将 `A B` 变为 `B C`；两个步骤才能级联。
 
 ### 4.3 CMDB 丰富
 
 lookup 描述 model_id、expect（one/first/many）、where；where 的 field/type/operator/value 不包含物理 ES DSL。
 查询值复用 Value，可先正则提取再查询。租户来自运行上下文，配置不能覆盖。
+规则的可选 `bk_tenant_id` 只限制适用租户，不改变查询租户；在已有实例身份判断之前执行，供全局来源的租户私有方案使用。
+`rollback_unmatched` 的拓扑回退同样遵守规则租户范围。
 one 的零命中为 skipped，多命中为冲突；first 在后端按模型/实例 ID 排序只读取首条；many 返回有界列表，超限失败。
 普通规则的已有身份和附加条件都明确表达；显式 identity 绑定按第 8.1 节执行旧 KAC 的已有身份优先分支。
 
@@ -268,19 +301,19 @@ Console “丰富调试”页面：ID/JSON 两模式，租户/来源选择，JSO
 ## 8. Kingeye 离线转换
 
 输入为 cmdb_rules/normal_rules、同租户模型目录和来源字段映射；纯转换函数不查规则表、不发布。
-CLI 从文件读取，向 stdout 输出配置和报告，供未来配置同步复用。
+CLI 从文件读取，向 stdout 输出配置和报告。KAC 在线保存使用其自身的 `kac/linkd/enrich.py`，并不调用该离线 CLI。
 cmdb_rules 整组→cmdb.config.rules，normal_rules 整组→fields.config.rules，enrich_settings→operations。
 保留一次匹配和操作顺序；条件表达式解析为树，不使用 eval；模型通过目录映射为 canonical 身份。多模型关联还需要关系标识和方向，当前转换器将其明确标为 unsupported，保留原配置供人工配置 `relations`，不会猜测。
 name→title、content→content、object→subject_name；普通自定义字段显式映射到 labels/extra_data；strategy_id 等必须明确映射，不能按名称猜测。
 每条规则报告 converted/needs_review/unsupported，带源 JSON 路径及原因。非法正则/目标、缺失映射不得静默丢规则。
 多命中、空值和失败回退差异明确记录，不承诺任意旧配置无损迁移。
 
-### 8.1 CMDB 旧行为对齐（2026-10-08）
+### 8.1 CMDB 身份与在线转换（2026-10-17）
 
 旧 CMDB 转换使用显式 `identity`（`bk_obj_id`、`model_name` 和业务字段目标映射）及 `lookup.expect: first`。
 无有效对象身份时才按 `when` 判断对象；已有对象限定模型，已有实例 ID 覆盖实例条件。
-模型匹配成功先保存中间模型补丁，供后续规则继续匹配；整轮没有任何 CMDB 字段成功时由 `rollback_unmatched: true` 回滚中间身份，按入口身份补内置拓扑。已有字段成功时保留后续规则的部分结果。
-同一次 cmdb 执行固定入口身份分组，未绑定实例的无对象告警可继续按后续规则匹配模型。
+主实例定位成功后才提交完整身份；未匹配不提交中间模型，后续方案仍可尝试。属性展示失败不撤销已定位身份。
+新转换不生成 `rollback_unmatched`；该旧字段只保留读取兼容，不再以展示字段是否成功判断有效身份。
 `cw_object_model_code/cw_object_model_inst_id` 通过同租户模型目录归一化，原始 Event 主体和指纹不变。
 
 `first` 在后端按 canonical 实例 ID 升序只取一条，对齐当前 KAC OneModel 的稳定排序；
@@ -288,7 +321,9 @@ name→title、content→content、object→subject_name；普通自定义字段
 字段丰富结束后的 `cmdb-access` 处理器使用有效身份补权限标签与动态分组；非空现有值保留。
 身份、拓扑和属性结果均通过补丁进入策略有效视图和 KAC 输出，预览复用正式链路且不写业务存储。
 
-单模型配置在行为对照通过后可发布；多模型链仍要求明确关系元数据，未提供时按配置位置拒绝发布。
+KAC 在线转换从同租户 OneModel 目录解析多模型关系、方向和属性所属模型，支持多条链和末端多实例；同一模型经不同链路出现时按节点引用区分。分支失败只影响依赖分支，字段独立赋值。离线 CLI 输入尚无关系目录，因此仍明确报告关联链需要手工补全；这不限制页面在线路径。
+CMDB 正则不下推 ES regexp：先下推普通必要条件，再通过已有分页器检查完整条件。单查询候选预算 1024，首条跨页查找，多条必须完整或明确报超限。
+分页期间固定页大小，避免改变游标参数。组合条件中的日期按时刻、IP 按地址比较；`exists` 将空数组和仅含 null 的数组视为无值，空字符串、0 和 false 仍表示存在。
 展示转换保留现有完整组织 ID 修正，不复制旧实现只取组织 ID 首字符的缺陷。
 验证覆盖身份分支、首条选择、部分失败、规则顺序、展示空值、租户隔离及下游投影；真实环境联调单列。
 
@@ -311,7 +346,7 @@ go run ./cmd/linkd enrich convert-kingeye --file kingeye-enrich.json > converted
 
 输出 enrich 和 report；无有效规则时保留空 processors。报告中每条输入都有对应项，unsupported 项不产生
 半条规则。单模型 CMDB 规则保留身份分支与首条查询，标 converted；缺失模型身份或关联关系时标 unsupported。展示转换仍需配置相应连接。
-常规转换保留字段调整的逐字段依赖；提取操作内依赖其他告警字段时要求手工拆分，避免误改旧顺序。
+常规转换支持混合告警字段和捕获组模板；同一步使用同一输入快照，不同操作按顺序读取前序成功结果。
 
 ### 8.3 展示转换与 KAC 输出连接示例
 
@@ -324,12 +359,12 @@ resources:
 ```
 
 在相应 Value 中配置 `transforms: [{type: display, model_id: cw-Host, field: operator}]`。
-数组展示值逐个转换后，另接 `{type: join, separator: ','}`；单次展示转换最多 64 个值/用户名。
+数组展示值逐个转换后，页面规则使用 `{type: display_text}` 拼接；支持多实例属性本身为数组。单次展示转换最多 64 个值/用户名。
 缓存缺失保留原值，缓存损坏或连接故障导致当前操作失败，不伪装成成功。字段值为空、0 或 false 不被跳过。
 
 KAC Hook 的 `config.field_mappings` 示例：`owner: $.labels.owner`、`environment: $.labels.environment`。
 只能新增非固定协议字段；固定 title/content 等映射自动读取有效视图。`monitor_template_id` 对应 KAC strategy_id，
-`labels.strategy_id` 不自动覆盖该协议字段。查询型 regex 使用 ES/Lucene 语义，常规匹配/提取使用 Go regexp。
+`labels.strategy_id` 不自动覆盖该协议字段。自定义 CMDB 查询与常规匹配/提取使用同一 regexp2 语义；内部 JSONPath/模板解析仍可使用标准库正则。
 
 ## 9. 验收与实施状态
 
@@ -349,7 +384,8 @@ SDK：租户、唯一/多命中、关系方向、超限、部分 ES 失败、取
 - [x] 预览 API 和 Console，两种输入、无写入和浏览器交互回归。
 - [x] Kingeye 离线转换与常规规则源码样例回归；CMDB 候选附复核报告。
 - [x] `make check`、离线 CLI、预览页面 Playwright E2E。
-- [ ] 真实 Kingeye/OneModel 环境联调及多模型旧配置的自动转换；当前没有可用环境和真实来源配置。
+- [x] KAC 在线多模型配置转换与 regexp2 执行契约（2026-10-17）。
+- [ ] 真实 Kingeye/OneModel 环境联调；本地测试不替代部署验收。
 
 ### 9.1 本次验证记录
 
@@ -380,6 +416,8 @@ SDK：租户、唯一/多命中、关系方向、超限、部分 ES 失败、取
 
 ### 9.3 旧 CMDB 单模型行为验证（2026-10-08）
 
+历史记录：身份回滚和旧捕获编号已被 2026-10-17 契约取代，以下对照结果不代表当前目标仍与旧实现完全等价。
+
 本次实现身份分支、已有实例精确查询、后端首条选择、逐字段部分成功、无字段成功时的整轮回滚，
 并接通完整主机集群/模块集合、权限与动态分组及策略/KAC 消费。默认业务身份输出到 labels；原始字段仍只读。
 
@@ -401,3 +439,10 @@ KAC 配置转换的隔离测试可通过仓库 `dev-test-contract-isolated` 运�
 ### 2026-10-12 工作对象改造验证
 
 每等级单工作对象、已解析路径的 Go 值补丁、操作/Processor 局部撤销、冻结视图复用与恢复已实现。`make check` 通过；本地基准和验证边界见[工作对象改造验证](../research/benchmarks/2026-10-12-enrich-evaluation-runtime.md)。未部署到测试环境。
+
+### 2026-10-17 自定义丰富验证
+
+`make check` 通过：Go 测试、vet、race、lint，Console 检查/构建，Helm 和发布脚本门禁均通过；Console 449 passed、8 个外部条件用例 skipped。
+新增回归覆盖 Unicode/断言/反向引用、捕获顺序、可选与空捕获、超时脱敏及并发复用；选定/全部匹配、混合模板、非级联替换、独立步骤；CMDB 分支部分失败、已有身份的租户限制、跨页筛选、嵌套多值展示；自定义内容优先级与结构化 422 编译错误。
+KAC 转换、发布编排和 HTTP 客户端聚焦测试 33 passed，页面行为 4 passed，语言包、lint、生产构建和 import 边界通过。
+数据库事务用例已补充，但本机 `unittest-mysql` 无法解析，在 Django 初始化时中止，未运行数据库断言；未进行真实 Kingeye/OneModel/Redis 联调或部署。

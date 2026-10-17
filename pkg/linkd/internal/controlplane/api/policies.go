@@ -268,3 +268,26 @@ func (a *API) previewPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	output(w, response)
 }
+
+func (a *API) previewPolicyBatch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if a.PolicyPreviewer == nil {
+		http.Error(w, "policy preview unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := policyQuery(r); err != nil {
+		policyFailure(w, err)
+		return
+	}
+	var request policy.BatchPreviewRequest
+	if err := decodePolicy(r, &request); err != nil {
+		policyFailure(w, err)
+		return
+	}
+	response, err := a.PolicyPreviewer.PreviewBatch(r.Context(), request)
+	if err != nil {
+		policyFailure(w, err)
+		return
+	}
+	output(w, response)
+}

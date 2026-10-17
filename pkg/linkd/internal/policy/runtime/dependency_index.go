@@ -45,13 +45,13 @@ func dependencyPolicy(f policy.FrozenPolicy) bool {
 }
 
 func alertCandidateReader(a domain.Alert, level policy.LevelMapper) policy.CandidateReader {
-	type viewKey struct{ field, path string }
+	type viewKey struct{ field, path, readPath string }
 	views := map[viewKey]*policy.FactView{}
 	return func(ctx context.Context, field string, mapping policy.FieldMapping) (policy.Value, error) {
 		key := viewKey{}
 		var mappings map[string]policy.FieldMapping
 		if mapping.Path != "" {
-			key = viewKey{field: field, path: mapping.Path}
+			key = viewKey{field: field, path: mapping.Path, readPath: mapping.ReadPath}
 			mappings = map[string]policy.FieldMapping{field: mapping}
 		}
 		view := views[key]

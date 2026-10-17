@@ -36,17 +36,14 @@ func NewEnrichAssignment(target jsonpath.Target, value any) (EnrichAssignment, e
 	if err != nil {
 		return EnrichAssignment{}, err
 	}
-	m, err := jsonpath.Measure(v)
-	if err != nil {
-		return EnrichAssignment{}, err
-	}
 	parts := target.Parts()
 	switch parts[0] {
 	case "title", "content", "subject_name":
 		text, ok := v.(string)
-		limit := 256
-		if parts[0] == "content" {
-			limit = 1 << 20
+		limit := 1 << 20
+		if ok && parts[0] != "content" {
+			text = TruncateDisplayText(text)
+			v = text
 		}
 		if !ok || len(text) > limit {
 			return EnrichAssignment{}, fmt.Errorf("invalid text patch")
@@ -55,6 +52,10 @@ func NewEnrichAssignment(target jsonpath.Target, value any) (EnrichAssignment, e
 		if _, err := ScalarFromValue(v); err != nil {
 			return EnrichAssignment{}, err
 		}
+	}
+	m, err := jsonpath.Measure(v)
+	if err != nil {
+		return EnrichAssignment{}, err
 	}
 	return EnrichAssignment{target: target, path: path, value: v, measure: m}, nil
 }

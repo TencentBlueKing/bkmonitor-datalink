@@ -105,6 +105,8 @@ func (a Alert) NormalizeState() (Alert, error) {
 }
 
 func (a Alert) normalizeState() (Alert, error) {
+	a.Title = TruncateDisplayText(a.Title)
+	a.SubjectName = TruncateDisplayText(a.SubjectName)
 	slices.Sort(a.PolicyTags)
 	a.PolicyTags = slices.Compact(a.PolicyTags)
 	a.Dimensions = a.Dimensions.Normalize()
@@ -228,11 +230,11 @@ func (a Alert) ValidateState() error {
 		max   int
 	}{
 		{"content", a.Content, 1 << 20},
-		{"title", a.Title, 256},
+		{"title", a.Title, DisplayTextMaxChars * 4},
 		{"subject_system", a.SubjectSystem, 32},
 		{"subject_type", a.SubjectType, 128},
 		{"subject_id", a.SubjectID, 256},
-		{"subject_name", a.SubjectName, 256},
+		{"subject_name", a.SubjectName, DisplayTextMaxChars * 4},
 		{"source_event_id", a.SourceEventID, 256},
 		{"source_alert_id", a.SourceAlertID, 256},
 		{"end_reason", a.EndReason, 256},

@@ -63,14 +63,13 @@ func recordDependencyRead(ctx context.Context, at time.Time) {
 }
 
 type dependencyEntry struct {
-	request    DependencyRequest
-	value      DependencySnapshot
-	instances  map[onemodel.InstanceRef]struct{}
-	businesses map[int64]struct{}
-	loading    chan struct{}
-	next       time.Time
-	used       time.Time
-	err        error
+	request   DependencyRequest
+	value     DependencySnapshot
+	instances map[onemodel.InstanceRef]struct{}
+	loading   chan struct{}
+	next      time.Time
+	used      time.Time
+	err       error
 }
 
 // Dependencies 在进程内复用目标/业务/关系读取，后台刷新不占 Event 的查询路径。
@@ -201,7 +200,7 @@ func (d *Dependencies) refresh(key string, old *dependencyEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	now := d.now()
-	next := &dependencyEntry{request: old.request, value: old.value, instances: old.instances, businesses: old.businesses, used: old.used, err: err, next: now.Add(5 * time.Second)}
+	next := &dependencyEntry{request: old.request, value: old.value, instances: old.instances, used: old.used, err: err, next: now.Add(5 * time.Second)}
 	if err == nil {
 		if value.LoadedAt.IsZero() || now.Sub(value.LoadedAt) >= dependencyMaxAge {
 			next.err = policy.ErrUnavailable
@@ -230,14 +229,6 @@ func (d *Dependencies) refresh(key string, old *dependencyEntry) {
 			for _, ref := range value.Targets.Instances {
 				next.instances[ref] = struct{}{}
 			}
-			businessIDs := value.Scope.BusinessIDs
-			if old.request.Kind == "targets" {
-				businessIDs = value.Targets.Scope.BusinessIDs
-			}
-			next.businesses = make(map[int64]struct{}, len(businessIDs))
-			for _, id := range businessIDs {
-				next.businesses[id] = struct{}{}
-			}
 		}
 	}
 	d.entries[key] = next
@@ -255,17 +246,12 @@ func (d *Dependencies) PrepareTargets(ctx context.Context, tenant, space string,
 
 type preparedTargetView struct{ entry *dependencyEntry }
 
-func (p preparedTargetView) ResolveBusinessScope(ctx context.Context, _, _ string, id int64) (onemodel.TargetScope, error) {
+func (p preparedTargetView) ResolvePolicyScope(ctx context.Context, _, _ string) (onemodel.TargetScope, error) {
 	if err := ctx.Err(); err != nil {
 		return onemodel.TargetScope{}, err
 	}
 	recordDependencyRead(ctx, p.entry.value.ChangedAt)
-	scope := p.entry.value.Targets.Scope
-	scope.BusinessIDs = nil
-	if _, found := p.entry.businesses[id]; found {
-		scope.BusinessIDs = []int64{id}
-	}
-	return scope, nil
+	return p.entry.value.Targets.Scope, nil
 }
 
 func (p preparedTargetView) ContainsTarget(ctx context.Context, _, _ string, _ *onemodel.TargetDescriptor, ref onemodel.InstanceRef) (bool, error) {
@@ -360,18 +346,14 @@ func (d *Dependencies) Read(ctx context.Context, r DependencyRequest) (Dependenc
 	return e.value, nil
 }
 
-// ResolveBusinessScope 只做共享业务集合查找，保持普通/全局业务的现有范围语义。
-func (d *Dependencies) ResolveBusinessScope(ctx context.Context, tenant, space string, id int64) (onemodel.TargetScope, error) {
+// ResolvePolicyScope 复用真实空间身份，全局标记与目标快照一起传递。
+func (d *Dependencies) ResolvePolicyScope(ctx context.Context, tenant, space string) (onemodel.TargetScope, error) {
 	e, err := d.entry(ctx, DependencyRequest{Kind: "scope", TenantID: tenant, SpaceCode: space})
 	if err != nil {
 		return onemodel.TargetScope{}, err
 	}
 	recordDependencyRead(ctx, e.value.ChangedAt)
-	result := onemodel.TargetScope{TenantID: tenant, SpaceCode: space}
-	if _, ok := e.businesses[id]; ok {
-		result.BusinessIDs = []int64{id}
-	}
-	return result, nil
+	return e.value.Scope, nil
 }
 
 // Resolve 复用同一租户、空间和目标描述的完整展开结果。
@@ -430,7 +412,7 @@ func sourceDependencyLoader(targets *onemodel.TargetResolver, relations policy.R
 		var err error
 		switch r.Kind {
 		case "scope":
-			value.Scope, err = targets.ResolveScope(ctx, r.TenantID, r.SpaceCode)
+			value.Scope, err = targets.ResolvePolicyScope(ctx, r.TenantID, r.SpaceCode)
 		case "targets":
 			if r.Target == nil {
 				return value, policy.ErrInvalid

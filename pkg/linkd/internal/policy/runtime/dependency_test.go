@@ -275,11 +275,11 @@ type unavailableDependencyTargets struct {
 	failScope bool
 }
 
-func (s unavailableDependencyTargets) ResolveBusinessScope(ctx context.Context, tenant, space string, businessID int64) (onemodel.TargetScope, error) {
+func (s unavailableDependencyTargets) ResolvePolicyScope(ctx context.Context, tenant, space string) (onemodel.TargetScope, error) {
 	if s.failScope {
 		return onemodel.TargetScope{}, policy.ErrUnavailable
 	}
-	return s.shieldTargets.ResolveBusinessScope(ctx, tenant, space, businessID)
+	return s.shieldTargets.ResolvePolicyScope(ctx, tenant, space)
 }
 
 func (s unavailableDependencyTargets) Resolve(context.Context, string, string, onemodel.TargetDescriptor) (onemodel.TargetResult, error) {

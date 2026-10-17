@@ -71,7 +71,7 @@ func TestMySQLTargetDirectory(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 	for _, ddl := range []string{
-		`CREATE TABLE metadata_space (bk_tenant_id VARCHAR(64),space_type_id VARCHAR(16),space_id VARCHAR(64),is_global BOOLEAN)`,
+		`CREATE TABLE metadata_space (id BIGINT AUTO_INCREMENT PRIMARY KEY,bk_tenant_id VARCHAR(64),space_type_id VARCHAR(16),space_id VARCHAR(64),is_global BOOLEAN)`,
 		`CREATE TABLE object_model_v2 (bk_tenant_id VARCHAR(64),model_id VARCHAR(128),datasource VARCHAR(32),bk_cmdb_obj_id VARCHAR(255),attribute_config JSON)`,
 		`CREATE TABLE dynamic_group_v2 (bk_tenant_id VARCHAR(64),dynamic_group_id BIGINT,object_model_code VARCHAR(128),space_code VARCHAR(128),condition_list JSON)`,
 	} {
@@ -79,7 +79,7 @@ func TestMySQLTargetDirectory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.ExecContext(t.Context(), "INSERT INTO metadata_space VALUES(?,?,?,?),(?,?,?,?)", "t", "bkcc", "99", true, "t", "bkcc", "2", false); err != nil {
+	if _, err := db.ExecContext(t.Context(), "INSERT INTO metadata_space (bk_tenant_id,space_type_id,space_id,is_global) VALUES(?,?,?,?),(?,?,?,?)", "t", "bkcc", "99", true, "t", "bkcc", "2", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(t.Context(), "INSERT INTO object_model_v2 VALUES(?,?,?,?,?)", "t", "cw-Host", "cmdb", "host", `{"config":[{"bk_property_id":"cpu","bk_property_type":"int"}]}`); err != nil {
@@ -89,7 +89,7 @@ func TestMySQLTargetDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory, _ := New(db)
-	space, found, err := directory.Space(t.Context(), "t", 99)
+	space, found, err := directory.Space(t.Context(), "t", "bkcc__99")
 	if err != nil || !found || !space.Global {
 		t.Fatalf("space %+v %v", space, err)
 	}
@@ -111,7 +111,7 @@ func TestMySQLTargetDirectory(t *testing.T) {
 	if _, found, err := directory.Model(t.Context(), "other", "cw-Host"); err != nil || found {
 		t.Fatal("model tenant leaked")
 	}
-	if _, found, err := directory.Space(t.Context(), "other", 99); err != nil || found {
+	if _, found, err := directory.Space(t.Context(), "other", "bkcc__99"); err != nil || found {
 		t.Fatal("space tenant leaked")
 	}
 	if _, found, err := directory.DynamicGroup(t.Context(), "other", "23"); err != nil || found {
@@ -123,10 +123,10 @@ func TestMySQLTargetDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 不依赖表唯一约束兜底；重复身份必须明确失败，不能任意挑一行。
-	if _, err := db.ExecContext(t.Context(), "INSERT INTO metadata_space VALUES(?,?,?,?)", "t", "bkcc", "99", false); err != nil {
+	if _, err := db.ExecContext(t.Context(), "INSERT INTO metadata_space (bk_tenant_id,space_type_id,space_id,is_global) VALUES(?,?,?,?)", "t", "bkcc", "99", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := directory.Space(t.Context(), "t", 99); !errors.Is(err, onemodel.ErrInvalidDataSourceResponse) {
+	if _, _, err := directory.Space(t.Context(), "t", "bkcc__99"); !errors.Is(err, onemodel.ErrInvalidDataSourceResponse) {
 		t.Fatalf("duplicate accepted %v", err)
 	}
 	models, err := directory.CMDBModels(t.Context(), "t")

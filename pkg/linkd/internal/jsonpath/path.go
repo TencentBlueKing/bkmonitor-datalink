@@ -23,6 +23,26 @@ import (
 // Query 是发布阶段编译、调用之间只读共享的 JSONPath。
 type Query struct{ path *jp.Path }
 
+// HasPrefix 判断查询是否从给定的确定属性路径开始，点号和括号写法等价。
+// 递归、多选或通配不能被当成确定的前缀。
+func (q *Query) HasPrefix(names ...string) bool {
+	segments := q.path.Query().Segments()
+	if len(segments) < len(names) {
+		return false
+	}
+	for i, name := range names {
+		segment := segments[i]
+		if segment.IsDescendant() || len(segment.Selectors()) != 1 {
+			return false
+		}
+		selected, ok := segment.Selectors()[0].(spec.Name)
+		if !ok || string(selected) != name {
+			return false
+		}
+	}
+	return true
+}
+
 // Compile 编译路径并限制递归及过滤组合，避免本地求值脱离请求预算。
 func Compile(expression string) (*Query, error) {
 	if len(expression) == 0 || len(expression) > 2048 {
@@ -95,6 +115,44 @@ func (q *Query) SelectPrepared(ctx context.Context, input any) ([]any, error) {
 
 // Target 是仅包含属性名和非负下标的确定 JSONPath。
 type Target struct{ parts []any }
+
+// ReadTargets 展开 JSONPath 中有序的名称/下标选择，供读取方选择第一个存在的节点。
+// 不改变精确写路径的约束；返回路径保留配置顺序，便于复用字段可用性判定。
+func ReadTargets(path string) ([]Target, error) {
+	q, err := Compile(path)
+	if err != nil {
+		return nil, err
+	}
+	paths := []Target{{}}
+	for _, segment := range q.path.Query().Segments() {
+		if segment.IsDescendant() {
+			return nil, fmt.Errorf("read path cannot use descendants")
+		}
+		next := []Target{}
+		for _, prefix := range paths {
+			for _, selector := range segment.Selectors() {
+				var part any
+				switch value := selector.(type) {
+				case spec.Name:
+					part = string(value)
+				case spec.Index:
+					if value < 0 {
+						return nil, fmt.Errorf("read path cannot use negative indexes")
+					}
+					part = int(value)
+				default:
+					return nil, fmt.Errorf("read path only supports names and nonnegative indexes")
+				}
+				next = append(next, Target{parts: append(prefix.Parts(), part)})
+			}
+		}
+		if len(next) > 1024 {
+			return nil, fmt.Errorf("read path selects too many paths")
+		}
+		paths = next
+	}
+	return paths, nil
+}
 
 // ParseTarget 拒绝过滤、多选和递归写入，字段名中的点通过 bracket notation 保留。
 func ParseTarget(path string) (Target, error) {

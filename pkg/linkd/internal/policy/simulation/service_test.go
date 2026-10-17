@@ -28,7 +28,7 @@ var start = time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
 
 type targets struct{ err error }
 
-func (t targets) ResolveBusinessScope(_ context.Context, tenant, space string, _ int64) (onemodel.TargetScope, error) {
+func (t targets) ResolvePolicyScope(_ context.Context, tenant, space string) (onemodel.TargetScope, error) {
 	return onemodel.TargetScope{TenantID: tenant, SpaceCode: space, BusinessIDs: []int64{2}}, t.err
 }
 

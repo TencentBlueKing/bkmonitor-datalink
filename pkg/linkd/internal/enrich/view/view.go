@@ -121,6 +121,35 @@ func EffectiveEnrichPatches(payload domain.JSONObject) ([]domain.EnrichPatch, er
 	return all, nil
 }
 
+// CustomText 返回自定义 CMDB/字段步骤显式写入的文本，包括显式空字符串。
+// 用于自动文案生成的边界，不能以“与原文不同”判断用户是否配置了覆盖。
+func CustomText(payload domain.JSONObject, field string) (string, bool, error) {
+	processors, err := savedProcessors(payload)
+	if err != nil {
+		return "", false, err
+	}
+	text, found := "", false
+	for _, result := range processors {
+		if result.Name != "cmdb" && result.Name != "fields" {
+			continue
+		}
+		for _, patch := range result.Patches {
+			target, err := jsonpath.ParseTarget(patch.Path)
+			if err != nil {
+				return "", false, err
+			}
+			parts := target.Parts()
+			if len(parts) == 1 && parts[0] == field {
+				if err := json.Unmarshal(patch.Value, &text); err != nil {
+					return "", false, err
+				}
+				found = true
+			}
+		}
+	}
+	return text, found, nil
+}
+
 // EnrichedLabel 从已保存结果提取一个有效标签，不校验或解码其他 Patch 的值。
 // 覆盖顺序、失败步骤跳过及历史 value 的标量映射与完整视图一致。
 func EnrichedLabel(labels domain.DimensionMap, payload domain.JSONObject, key string) (domain.Scalar, bool, error) {

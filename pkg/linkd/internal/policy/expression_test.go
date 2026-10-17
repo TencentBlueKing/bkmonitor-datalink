@@ -86,7 +86,7 @@ func TestExpressionValidation(t *testing.T) {
 			t.Errorf("invalid config accepted: %s", raw)
 		}
 	}
-	for _, pattern := range []string{`^a$`, `\d+`, `(?i)a`, `a&b`, `~a`, `@`, `#`, `<1-9>`, `[[:digit:]]`, strings.Repeat("a", 257)} {
+	for _, pattern := range []string{`[`, `(?unknown)a`, `(?<unterminated`, strings.Repeat("a", 257)} {
 		if _, err := CompileExpression(expressionJSON("regexp", "name", pattern), KACFields()); err == nil {
 			t.Errorf("unsupported regex accepted: %s", pattern)
 		}
@@ -111,8 +111,9 @@ func TestKACTermTermsAndPhraseRemainDistinct(t *testing.T) {
 		{"wildcard", "name", "数据库", "数据 库连接失败", true},
 		{"wildcard", "source_name", "cpu", "CPU", false},
 		{"wildcard", "name", "a*b", "axb", false},
-		{"regexp", "name", "a.*b", "a\nb", true},
-		{"regexp", "name", "cpu", "xxcpuxx", false},
+		{"regexp", "name", "a.*b", "a\nb", false},
+		{"regexp", "name", "(?s)a.*b", "a\nb", true},
+		{"regexp", "name", "cpu", "xxcpuxx", true},
 		{"term", "name", "b", []any{"a", "b"}, true},
 		{"wildcard", "name", "ab", []any{"a", "b"}, false},
 		{"must_not_term", "name", "a", nil, true},

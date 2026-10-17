@@ -71,6 +71,9 @@ func (c *Client) Search(ctx context.Context, tenant string, q Query) ([]Instance
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if hasTextRegex(q.Where) {
+		return c.searchTextRegex(ctx, tenant, q)
+	}
 	filters := []any{term("bk_tenant_id", tenant), term("model_id", q.ModelID)}
 	if !q.Where.Empty() {
 		clause, err := q.Where.Compile()

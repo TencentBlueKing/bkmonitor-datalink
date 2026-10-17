@@ -75,8 +75,8 @@ func TestCMDBIdentityBranches(t *testing.T) {
 		{name: "已有实例忽略缺失查询字段", input: `{"bk_obj_id":"host","bk_inst_id":202}`, calls: 1, status: domain.EnrichStatusSucceeded, instance: "202"},
 		{name: "已有其他对象不重绑", input: `{"bk_obj_id":"switch","match":"yes","ip":"10.0.0.1"}`, status: domain.EnrichStatusSkipped},
 		{name: "对象未匹配不查询", input: `{"ip":"10.0.0.1"}`, status: domain.EnrichStatusSkipped},
-		{name: "查空保留模型阶段", input: `{"match":"yes","ip":"10.0.0.1"}`, calls: 1, status: domain.EnrichStatusPartial, model: "cw-Host", empty: true},
-		{name: "查询失败保留模型阶段", input: `{"match":"yes","ip":"10.0.0.1"}`, calls: 1, status: domain.EnrichStatusPartial, model: "cw-Host", failed: true},
+		{name: "查空不提交中间身份", input: `{"match":"yes","ip":"10.0.0.1"}`, calls: 1, status: domain.EnrichStatusSkipped, empty: true},
+		{name: "查询失败不提交中间身份", input: `{"match":"yes","ip":"10.0.0.1"}`, calls: 1, status: domain.EnrichStatusFailed, failed: true},
 		{name: "旧canonical身份归一化", input: `{"cw_object_model_code":"cw-Host","cw_object_model_inst_id":"303"}`, calls: 1, status: domain.EnrichStatusSucceeded, instance: "303"},
 		{name: "其他canonical模型不被重绑", input: `{"cw_object_model_code":"cw-Service","cw_object_model_inst_id":"303","match":"yes"}`, status: domain.EnrichStatusSkipped},
 	} {
@@ -119,11 +119,11 @@ func TestCMDBModelOnlyAndRuleOrder(t *testing.T) {
 	p := compileTest(t, "cmdb", `{"rules":[{"id":"first","identity":{"bk_obj_id":"host","model_name":"主机"},"when":{"left":{"literal":1},"operator":"eq","right":{"literal":1}},"lookup":{"model_id":"cw-Host","expect":"first"}}, {"id":"second","identity":{"bk_obj_id":"service","model_name":"服务"},"when":{"left":{"literal":1},"operator":"eq","right":{"literal":1}},"lookup":{"model_id":"cw-Service","expect":"first"}}]}`)
 	input := map[string]any{"extra_data": map[string]any{}}
 	result, err := p.Execute(t.Context(), input, input, "t", Sources{})
-	if err != nil || result.Status != domain.EnrichStatusPartial {
+	if err != nil || result.Status != domain.EnrichStatusSkipped {
 		t.Fatal(result, err)
 	}
 	effective, _ := domain.ApplyEnrichPatches(input, result.Patches)
-	if effective["labels"].(map[string]any)["model_id"] != "cw-Service" {
+	if len(result.Patches) != 0 {
 		t.Fatal(effective)
 	}
 	noWhen := compileTest(t, "cmdb", `{"rules":[{"id":"host","identity":{"bk_obj_id":"host","model_name":"主机"},"lookup":{"model_id":"cw-Host","expect":"first"}}]}`)
@@ -197,7 +197,7 @@ func TestCMDBIdentityRejectsUnsafeConfig(t *testing.T) {
 	}
 }
 
-func TestConvertedCMDBRollsBackOnlyWhenNoFieldSucceeded(t *testing.T) {
+func TestCMDBIdentityDoesNotDependOnDisplayAssignments(t *testing.T) {
 	for _, success := range []bool{false, true} {
 		var raw map[string]any
 		_ = json.Unmarshal([]byte(`{"rollback_unmatched":true,"rules":[`+identityRule+`]}`), &raw)
@@ -215,16 +215,13 @@ func TestConvertedCMDBRollsBackOnlyWhenNoFieldSucceeded(t *testing.T) {
 		}
 		effective, _ := domain.ApplyEnrichPatches(input, result.Patches)
 		labels, _ := effective["labels"].(map[string]any)
-		if success && labels["model_id"] != "cw-Host" {
+		if labels["model_id"] != "cw-Host" {
 			t.Fatal(effective)
-		}
-		if !success && len(result.Patches) != 0 {
-			t.Fatal(result)
 		}
 	}
 }
 
-func TestUnmatchedCMDBFallbackUsesOnlyInitialIdentity(t *testing.T) {
+func TestExistingInstanceIsBoundWithoutDisplayAssignments(t *testing.T) {
 	p := compileTest(t, "cmdb", `{"rollback_unmatched":true,"rules":[{"id":"host","identity":{"bk_obj_id":"host","model_name":"主机"},"lookup":{"model_id":"cw-Host","expect":"first"}}]}`)
 	input := map[string]any{"extra_data": map[string]any{"bk_obj_id": "host", "bk_inst_id": "101"}}
 	result, err := p.Execute(t.Context(), input, input, "t", Sources{Instances: &identityReader{}})
@@ -236,7 +233,7 @@ func TestUnmatchedCMDBFallbackUsesOnlyInitialIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	labels, _ := effective["labels"].(map[string]any)
-	if labels["model_id"] != nil || labels["model_inst_id"] != nil || len(effective["extra_data"].(map[string]any)["bk_module_id"].([]any)) != 2 {
+	if labels["model_id"] != "cw-Host" || labels["model_inst_id"] != "101" {
 		t.Fatal(effective)
 	}
 }

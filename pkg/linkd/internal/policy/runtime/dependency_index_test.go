@@ -225,9 +225,9 @@ type preparedDependencyTargets struct {
 	found    bool
 }
 
-func (r *preparedDependencyTargets) ResolveBusinessScope(ctx context.Context, tenant, space string, id int64) (onemodel.TargetScope, error) {
+func (r *preparedDependencyTargets) ResolvePolicyScope(ctx context.Context, tenant, space string) (onemodel.TargetScope, error) {
 	recordDependencyRead(ctx, r.at.Add(-time.Second))
-	return r.shieldTargets.ResolveBusinessScope(ctx, tenant, space, id)
+	return r.shieldTargets.ResolvePolicyScope(ctx, tenant, space)
 }
 
 func (r *preparedDependencyTargets) ContainsTarget(ctx context.Context, _, _ string, _ *onemodel.TargetDescriptor, _ onemodel.InstanceRef) (bool, error) {

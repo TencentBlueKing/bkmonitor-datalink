@@ -266,3 +266,38 @@ func TestJournalPreparesRenderedEventOnceAndLifecycleCopiesTags(t *testing.T) {
 		t.Fatal("parent tags or relation gate incorrect")
 	}
 }
+
+func TestRenderParentWithoutBusinessKeepsValidEvent(t *testing.T) {
+	decision, members, source, severity := renderFixture(t)
+	var spec policy.MergeSpec
+	if err := json.Unmarshal(decision.Policy.Spec, &spec); err != nil {
+		t.Fatal(err)
+	}
+	spec.Fields = []string{"source_id"}
+	spec.Template = []policy.TemplateField{{Key: "name", Value: "无业务告警 ${alarm_num}"}, {Key: "level", Value: "warning"}}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := policy.Compile(policy.Merge, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision.Policy.Spec, decision.Policy.Compiled = compiled.Canonical, compiled.Summary
+	for i := range members {
+		delete(members[i].Alert.ExtraData, "bk_biz_id")
+	}
+	event, err := renderParent(t.Context(), decision, members, source, severity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = event.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := event.ExtraData["bk_biz_id"]; exists {
+		t.Fatal("merge invented business ownership")
+	}
+	if _, exists := event.Dimensions["bk_biz_id"]; exists {
+		t.Fatal("merge invented business dimension")
+	}
+}

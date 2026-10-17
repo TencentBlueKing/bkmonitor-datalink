@@ -14,13 +14,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"linkd/internal/textregexp"
 )
 
 type compiledCondition struct {
@@ -29,7 +30,7 @@ type compiledCondition struct {
 	operator  string
 	negative  bool
 	values    []string
-	pattern   *regexp.Regexp
+	pattern   *textregexp.Expression
 	reference []referencePart
 }
 
@@ -94,11 +95,12 @@ func compileCondition(condition Condition, fields FieldCatalog) (compiledConditi
 		result.values = append(result.values, text)
 	}
 	if result.operator == "regexp" {
-		pattern, err := compileLuceneSubset(result.values[0])
-		if err != nil {
-			return result, err
+		if len(result.values[0]) > 1024 || utf8.RuneCountInString(result.values[0]) > 256 {
+			return result, fmt.Errorf("regexp exceeds 256 characters or 1024 bytes")
 		}
-		result.pattern = pattern
+		compiled, err := textregexp.Compile(result.values[0])
+		result.pattern = compiled
+		return result, err
 	}
 	return result, nil
 }
@@ -141,13 +143,17 @@ func (c compiledCondition) match(ctx context.Context, reader Reader) (bool, erro
 				if c.operator == "regexp" && len(text) > 8192 {
 					return false, fmt.Errorf("regexp input exceeds 8 KiB")
 				}
-				if c.kind == FieldText && (c.operator == "term" || c.operator == "regexp") && utf16Length(text) > 8191 {
+				if c.kind == FieldText && c.operator == "term" && utf16Length(text) > 8191 {
 					continue
 				}
 				for _, wanted := range c.values {
 					switch c.operator {
 					case "regexp":
-						matched = matched || c.pattern.MatchString(text)
+						value, err := c.pattern.MatchString(text)
+						if err != nil {
+							return false, err
+						}
+						matched = matched || value
 					case "wildcard":
 						if c.kind == FieldText {
 							matched = matched || containsTokens(kacTokens(text), kacTokens(wanted))
@@ -294,57 +300,4 @@ func utf16Length(s string) int {
 		n += utf16.RuneLen(r)
 	}
 	return n
-}
-
-// compileLuceneSubset 只接受已对照的公共语法。Lucene 其他操作符和 RE2 专有语法都明确拒绝。
-func compileLuceneSubset(pattern string) (*regexp.Regexp, error) {
-	if len(pattern) > 1024 || utf8.RuneCountInString(pattern) > 256 {
-		return nil, fmt.Errorf("regexp exceeds 256 characters")
-	}
-	if strings.Contains(pattern, "(?") || strings.Contains(pattern, "[:") {
-		return nil, fmt.Errorf("unsupported regexp extension")
-	}
-	inClass := false
-	classFirst := false
-	var converted strings.Builder
-	runes := []rune(pattern)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		if r == '\\' {
-			i++
-			if i == len(runes) {
-				return nil, fmt.Errorf("unfinished regexp escape")
-			}
-			next := runes[i]
-			if unicode.IsLetter(next) || unicode.IsDigit(next) {
-				return nil, fmt.Errorf("regexp character escapes are not equivalent to Lucene")
-			}
-			converted.WriteString(regexp.QuoteMeta(string(next)))
-			continue
-		}
-		if r == '[' && !inClass {
-			inClass = true
-			classFirst = true
-			converted.WriteRune(r)
-			continue
-		}
-		if r == ']' && inClass {
-			inClass = false
-			converted.WriteRune(r)
-			continue
-		}
-		if !inClass && strings.ContainsRune("^$#@&~<>\"", r) {
-			return nil, fmt.Errorf("unsupported Lucene regexp operator")
-		}
-		if inClass && r == '^' && !classFirst {
-			return nil, fmt.Errorf("ambiguous regexp class anchor")
-		}
-		classFirst = false
-		converted.WriteRune(r)
-	}
-	compiled, err := regexp.Compile(`\A(?s:` + converted.String() + `)\z`)
-	if err != nil {
-		return nil, fmt.Errorf("invalid or unsupported regexp syntax")
-	}
-	return compiled, nil
 }

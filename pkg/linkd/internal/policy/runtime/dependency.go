@@ -42,31 +42,27 @@ type dependencyMain struct {
 // evaluationTargets 只在一次策略求值内复用完整目标/业务范围，不能跨 Event 缓存当前 CMDB 成员。
 // 候选扫描是顺序执行；该对象不共享给其他生命周期 goroutine。
 type evaluationTargets struct {
-	reader     policy.TargetReader
-	scopes     map[int64]onemodel.TargetScope
-	targets    *onemodel.TargetResult
-	scopeTimes map[int64]time.Time
-	targetsAt  time.Time
+	reader    policy.TargetReader
+	scope     *onemodel.TargetScope
+	targets   *onemodel.TargetResult
+	scopeAt   time.Time
+	targetsAt time.Time
 }
 
-func (t *evaluationTargets) ResolveBusinessScope(ctx context.Context, tenant, space string, businessID int64) (onemodel.TargetScope, error) {
-	if scope, ok := t.scopes[businessID]; ok {
-		recordDependencyRead(ctx, t.scopeTimes[businessID])
-		return scope, nil
+func (t *evaluationTargets) ResolvePolicyScope(ctx context.Context, tenant, space string) (onemodel.TargetScope, error) {
+	if t.scope != nil {
+		recordDependencyRead(ctx, t.scopeAt)
+		return *t.scope, nil
 	}
 	if t.reader == nil {
 		return onemodel.TargetScope{}, policy.ErrUnavailable
 	}
 	call, read := TrackDependencyReads(ctx)
-	v, err := t.reader.ResolveBusinessScope(call, tenant, space, businessID)
+	v, err := t.reader.ResolvePolicyScope(call, tenant, space)
 	if err == nil {
-		if t.scopes == nil {
-			t.scopes = make(map[int64]onemodel.TargetScope)
-			t.scopeTimes = make(map[int64]time.Time)
-		}
-		t.scopes[businessID] = v
-		t.scopeTimes[businessID] = read.Time()
-		recordDependencyRead(ctx, read.Time())
+		t.scope = &v
+		t.scopeAt = read.Time()
+		recordDependencyRead(ctx, t.scopeAt)
 	}
 	return v, err
 }

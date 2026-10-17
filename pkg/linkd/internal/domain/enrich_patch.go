@@ -107,9 +107,9 @@ func (p EnrichPatch) Validate() error {
 		if !ok {
 			return fmt.Errorf("text patch must be a string")
 		}
-		limit := 256
-		if parts[0] == "content" {
-			limit = 1 << 20
+		limit := 1 << 20
+		if parts[0] != "content" {
+			limit = DisplayTextMaxChars * 4
 		}
 		if len(text) > limit {
 			return fmt.Errorf("text patch exceeds field limit")

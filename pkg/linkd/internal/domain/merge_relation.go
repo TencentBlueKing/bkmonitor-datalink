@@ -59,7 +59,7 @@ func (r MergeRelation) Clone() MergeRelation {
 
 // Validate 限制作用域、固定成员集合和准备阶段的完整性，不把 preparing 解释成已经合并。
 func (r MergeRelation) Validate() error {
-	if len(r.ParentTitle) > 256 {
+	if len(r.ParentTitle) > DisplayTextMaxChars*4 {
 		return fmt.Errorf("merge parent title exceeds budget")
 	}
 	if ValidateIdentityPart("tenant", r.TenantID, 64) != nil || r.Policy.Validate() != nil || r.ParentAlertID == "" || len(r.ParentAlertID) > EntityIDMaxBytes || r.ParentFingerprint == "" || len(r.ParentFingerprint) > 128 || r.CreatedAt.IsZero() || r.UpdatedAt.Before(r.CreatedAt) {

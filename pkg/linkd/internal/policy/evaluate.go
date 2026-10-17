@@ -22,7 +22,7 @@ import (
 
 // TargetReader 解析当前业务范围与完整实例目标；生命周期和预览复用同一只读契约。
 type TargetReader interface {
-	ResolveBusinessScope(context.Context, string, string, int64) (onemodel.TargetScope, error)
+	ResolvePolicyScope(context.Context, string, string) (onemodel.TargetScope, error)
 	Resolve(context.Context, string, string, onemodel.TargetDescriptor) (onemodel.TargetResult, error)
 }
 
@@ -110,23 +110,7 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 	if targets == nil {
 		return skip("target_reader_unavailable", ErrUnavailable)
 	}
-	business, err := view.Field(ctx, "bk_biz_id")
-	if err != nil {
-		return skip("business_field_unavailable", err)
-	}
-	if !business.Present || business.Data == nil {
-		result.Reason = "business_field_missing"
-		return result, nil
-	}
-	text, err := queryScalar(FieldNumber, business.Data)
-	if err != nil {
-		return skip("business_field_invalid", err)
-	}
-	// canonicalNumber 是有理数文本；业务 ID 只允许正整数，不接受布尔、负值和分数。
-	id, err := strconv.ParseInt(text, 10, 64)
-	if err != nil || id < 1 {
-		return skip("business_field_invalid", err)
-	}
+	// 1. 有目标时固定同一份空间/实例快照；无目标时只读取空间定义。
 	if compiled.Common.Targets != nil && !rely {
 		if prepared, ok := targets.(PreparedTargetReader); ok {
 			targets, err = prepared.PrepareTargets(ctx, release.TenantID, compiled.Common.SpaceCode, compiled.Common.Targets)
@@ -141,7 +125,7 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 			}
 		}
 	}
-	scope, err := targets.ResolveBusinessScope(ctx, release.TenantID, compiled.Common.SpaceCode, id)
+	scope, err := targets.ResolvePolicyScope(ctx, release.TenantID, compiled.Common.SpaceCode)
 	if err != nil {
 		if errors.Is(err, ErrAccess) {
 			return result, err
@@ -151,10 +135,31 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 	if scope.TenantID != view.TenantID || scope.SpaceCode != compiled.Common.SpaceCode {
 		return result, fmt.Errorf("resolved business scope tenant mismatch")
 	}
-	if !slices.Contains(scope.BusinessIDs, id) {
-		result.Reason = "outside_business_scope"
-		return result, nil
+	// 2. 全局策略不要求告警带业务 ID；具体空间保留原有业务归属检查。
+	if !scope.Global {
+		business, err := view.Field(ctx, "bk_biz_id")
+		if err != nil {
+			return skip("business_field_unavailable", err)
+		}
+		if !business.Present || business.Data == nil {
+			result.Reason = "business_field_missing"
+			return result, nil
+		}
+		text, err := queryScalar(FieldNumber, business.Data)
+		if err != nil {
+			return skip("business_field_invalid", err)
+		}
+		// 非 BKCC 使用目录的负主键；零和非整数不表示合法空间。
+		id, err := strconv.ParseInt(text, 10, 64)
+		if err != nil || id == 0 {
+			return skip("business_field_invalid", err)
+		}
+		if !slices.Contains(scope.BusinessIDs, id) {
+			result.Reason = "outside_business_scope"
+			return result, nil
+		}
 	}
+	// 3. 全局策略仍须命中显式目标和业务条件，不放宽 CMDB/OneModel 范围。
 	if compiled.Common.Targets != nil && !rely {
 		found, err := targetContains(ctx, targets, release.TenantID, compiled.Common.SpaceCode, compiled.Common.Targets, candidate)
 		if err != nil {
@@ -172,6 +177,7 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		}
 	}
 	expressions := compiled.Conditions
+	result.Matched = len(expressions) == 0 && compiled.targetOnlyAllowed()
 	if rely {
 		expressions = []*Expression{compiled.Rely}
 	}

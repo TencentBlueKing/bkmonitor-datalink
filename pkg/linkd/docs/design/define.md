@@ -55,14 +55,14 @@ Event 的 `event_source_version` 是正整数，记录实际使用的来源 Rele
 | `event_id`                         | 1–160 bytes                    | UTC 秒、租户、来源和 64-bit 稳定摘要组成的可解析身份                       |
 | `fingerprint`                      | 1–128 bytes                    | Lifecycle 关联 active Alert 的业务键，由 EventSource 配置生成             |
 | `related_alert_ids` | 最多 32 个 ID，每个 1–160 bytes | Cleaner 创建时为空；Lifecycle 终态 CAS 写入受到影响或实施抑制的 Alert，排序去重 |
-| `title`                            | 0–256 bytes                    | 来源标题；当前校验允许为空                                                |
+| `title`                            | 最多 2000 个 Unicode 字符，超出截断                    | 来源标题；当前校验允许为空                                                |
 | `content`                          | 0–1 MiB                        | 来源描述                                                                  |
 | `evaluations` | 1–32 项，标准 severity 唯一 | 每项包含 severity、action（triggered/resolved/closed）与 action_reason（最多 256 bytes）；顺序无语义 |
 | `values` | 最多 256 个有限数字，key 为 1–256 bytes | 本次事件的观测值；缺失/顶层 null 统一为空对象，字段值 null 非法，缺失字段不补零，不参与 fingerprint；ES 只存储不索引 |
 | `dimensions`                       | 扁平 `DimensionMap`            | 参与检索和可选 fingerprint 计算的维度                                     |
 | `subject_system`                   | 0–32 bytes                     | 来源声明的对象命名空间，当前不校验枚举                                    |
 | `subject_type`                     | 0–128 bytes                    | 来源对象类型                                                              |
-| `subject_id` / `subject_name`      | 各 0–256 bytes                 | 来源对象身份和展示名称                                                    |
+| `subject_id` / `subject_name`      | 身份 0–256 bytes；名称最多 2000 个 Unicode 字符，超出截断                 | 来源对象身份和展示名称                                                    |
 | `occurred_at`                      | 非零 UTC 时间                  | 事实发生时间；来源缺失时使用稳定 received_at                              |
 | `produced_at`                      | 非零 UTC 时间                  | 来源产生时间；来源缺失时使用稳定 received_at                              |
 | `received_at`                      | 非零 UTC 时间                  | MQ 适配器提供的稳定接收时间                                               |

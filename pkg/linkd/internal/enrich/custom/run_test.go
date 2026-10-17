@@ -89,7 +89,7 @@ func TestJSONPathFiltersMissingNullAndConcurrency(t *testing.T) {
 func TestRejectInvalidConfiguration(t *testing.T) {
 	for _, config := range []string{
 		`{"rules":[{"id":"x","operations":[{"id":"op","type":"assign","assignments":[{"target":"$.severity","value":{"literal":"fatal"}}]}]}]}`,
-		`{"rules":[{"id":"x","operations":[{"id":"op","type":"extract","pattern":"(?<=x)y","source":{"literal":"xy"},"assignments":[{"target":"$.title","value":{"literal":"x"}}]}]}]}`,
+		`{"rules":[{"id":"x","operations":[{"id":"op","type":"extract","pattern":"(?<unterminated","source":{"literal":"xy"},"assignments":[{"target":"$.title","value":{"literal":"x"}}]}]}]}`,
 		`{"rules":[{"id":"x","operations":[{"id":"op","type":"assign","assignments":[{"target":"$.extra_data.x","value":{"literal":{}}},{"target":"$.extra_data.x.y","value":{"literal":1}}]}]}]}`,
 		`{"rules":[],"typo":true}`,
 	} {

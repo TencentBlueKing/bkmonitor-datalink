@@ -17,7 +17,6 @@ import (
 	"math"
 	"math/big"
 	"reflect"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +25,7 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/jsonpath"
 	"linkd/internal/onemodel"
+	"linkd/internal/textregexp"
 )
 
 // ErrMissing 表示正常的缺失/未命中，不包含依赖故障。
@@ -62,17 +62,16 @@ type Result struct {
 }
 
 type run struct {
-	tenant          string
-	original        map[string]any
-	state           *domain.EnrichEvaluation
-	start           int
-	patchBytes      int
-	initialIdentity map[*Identity]any
-	current         map[string]any
-	sources         Sources
-	calls           int
-	fieldSucceeded  bool
-	cache           map[string][]onemodel.Instance
+	tenant         string
+	original       map[string]any
+	state          *domain.EnrichEvaluation
+	start          int
+	patchBytes     int
+	current        map[string]any
+	sources        Sources
+	calls          int
+	fieldSucceeded bool
+	cache          map[string][]onemodel.Instance
 }
 
 // Execute 是独立规则/预览边界，输入隔离后在返回时编码补丁。
@@ -115,12 +114,7 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 			state.Rollback(point)
 		}
 	}()
-	r := &run{tenant: tenant, original: state.OriginalDocument(), current: state.Document(), state: state, start: point, patchBytes: 2, initialIdentity: map[*Identity]any{}, sources: sources, cache: map[string][]onemodel.Instance{}}
-	for _, rule := range p.config.Rules {
-		if rule.Identity != nil {
-			r.initialIdentity[rule.Identity] = rule.Identity.read(r.current, "bk_obj_id")
-		}
-	}
+	r := &run{tenant: tenant, original: state.OriginalDocument(), current: state.Document(), state: state, start: point, patchBytes: 2, sources: sources, cache: map[string][]onemodel.Instance{}}
 	result = RuntimeResult{Patches: []domain.EnrichAssignment{}, Trace: []Trace{}}
 	ruleStates := []domain.EnrichStatus{}
 	for _, rule := range p.config.Rules {
@@ -129,6 +123,7 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 		}
 		start := time.Now()
 		before := len(result.Patches)
+		traceStart := len(result.Trace)
 		failed := false
 		skipped := false
 		code := ""
@@ -157,12 +152,10 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 					}
 				}
 				result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: op.ID, Status: state, Code: errorCode(err), Error: err, DurationMilliseconds: time.Since(opStart).Milliseconds()})
-				if err != nil {
-					break
-				}
+				// 单步输出原子提交；后续步骤仍可读取之前成功的字段。
 			}
 		} else {
-			lookup, n, err := r.lookup(ctx, rule)
+			lookup, n, err := r.lookup(ctx, rule, &result)
 			if err == nil {
 				if rule.Identity != nil {
 					err = r.bindInstance(ctx, rule, lookup.(map[string]any), &result)
@@ -179,14 +172,18 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 				env := r.environment(map[string]any{"lookup": lookup})
 				if rule.Identity != nil {
 					// 旧 KAC 逐字段赋值；某个展示字段失败时，前面完成的字段仍有效。
-					for _, assignment := range rule.Assignments {
+					for index, assignment := range rule.Assignments {
+						operationID := fmt.Sprintf("field_%d", index+1)
 						patches, e := r.assign(ctx, []Assignment{assignment}, env)
 						if e == nil {
-							e = r.commit(rule.ID, "", patches, &result)
+							e = r.commit(rule.ID, operationID, patches, &result)
 						}
+						result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: operationID, Status: stateFor(e), Code: errorCode(e), Error: e})
 						if e != nil {
-							err = e
-							break
+							if err == nil {
+								err = e
+							}
+							continue
 						}
 						r.fieldSucceeded = true
 					}
@@ -208,12 +205,16 @@ func (p *Program) ExecuteEvaluation(ctx context.Context, state *domain.EnrichEva
 		if err := ctx.Err(); err != nil {
 			return RuntimeResult{}, err
 		}
-		state := domain.EnrichStatusSucceeded
-		if failed {
-			state = domain.EnrichStatusFailed
+		for _, trace := range result.Trace[traceStart:] {
+			failed = failed || trace.Status == domain.EnrichStatusFailed
+			skipped = skipped || trace.Status == domain.EnrichStatusSkipped
 		}
+		state := domain.EnrichStatusSucceeded
 		if skipped {
 			state = domain.EnrichStatusSkipped
+		}
+		if failed {
+			state = domain.EnrichStatusFailed
 		}
 		if (failed || skipped) && len(result.Patches) > before {
 			state = domain.EnrichStatusPartial
@@ -299,6 +300,9 @@ func errorCode(err error) string {
 	if errors.Is(err, ErrMissing) {
 		return "missing_field"
 	}
+	if errors.Is(err, textregexp.ErrTimeout) {
+		return "regex_timeout"
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "cancelled"
 	}
@@ -369,11 +373,14 @@ func (r *run) operation(ctx context.Context, op Operation) ([]domain.EnrichAssig
 		if !ok {
 			return nil, fmt.Errorf("replace target is not text")
 		}
+		pairs := make([]string, 0, len(op.Replacements)*2)
 		for _, rep := range op.Replacements {
-			text = strings.ReplaceAll(text, rep.From, rep.To)
-			if len(text) > 1<<20 {
-				return nil, fmt.Errorf("replace result limit exceeded")
-			}
+			pairs = append(pairs, rep.From, rep.To)
+		}
+		// 一次替换只扫描原输入；替换生成的文本留给后续显式步骤处理。
+		text = strings.NewReplacer(pairs...).Replace(text)
+		if len(text) > 1<<20 {
+			return nil, fmt.Errorf("replace result limit exceeded")
 		}
 		patch, err := domain.NewEnrichAssignment(op.target, text)
 		if err != nil {
@@ -389,29 +396,110 @@ func (r *run) operation(ctx context.Context, op Operation) ([]domain.EnrichAssig
 		if !ok {
 			return nil, fmt.Errorf("extract source is not text")
 		}
-		matches := op.regex.FindAllStringSubmatch(text, 1025)
+		limit := 1025
+		if op.MatchMode == "first" || (op.MatchMode == "" && op.MatchIndex > 0) {
+			limit = op.MatchIndex + 1
+		}
+		matches, err := op.regex.FindAll(text, limit)
+		if err != nil {
+			return nil, err
+		}
 		if len(matches) > 1024 {
 			return nil, fmt.Errorf("extract match limit exceeded")
 		}
+		if len(matches) == 0 {
+			return nil, ErrMissing
+		}
 		items := make([]any, 0, len(matches))
 		for _, m := range matches {
-			named := map[string]any{}
-			for i, name := range op.regex.SubexpNames() {
-				if i > 0 && name != "" {
-					named[name] = m[i]
-				}
+			items = append(items, map[string]any{"text": m.Text, "groups": m.Groups, "named_groups": m.NamedGroups})
+		}
+		if op.MatchMode == "all" {
+			return r.assignAllMatches(ctx, op, env, items)
+		}
+		if op.MatchMode == "first" || op.MatchIndex > 0 {
+			if op.MatchIndex >= len(items) {
+				return nil, ErrMissing
 			}
-			groups := make([]any, 0, len(m)-1)
-			for _, g := range m[1:] {
-				groups = append(groups, g)
-			}
-			items = append(items, map[string]any{"text": m[0], "groups": groups, "named_groups": named})
+			items = items[op.MatchIndex : op.MatchIndex+1]
 		}
 		env["extraction"] = map[string]any{"matches": items}
 		return r.assign(ctx, op.Assignments, env)
 	default:
 		return nil, fmt.Errorf("unknown operation")
 	}
+}
+
+// assignAllMatches 逐字段累计匹配结果，复用既有 1 MiB 补丁预算后一次提交。
+// 展示文本只保存前 2000 字符；截断之后仍求值后续匹配，不能掩盖错误或取消。
+func (r *run) assignAllMatches(ctx context.Context, op Operation, env map[string]any, items []any) ([]domain.EnrichAssignment, error) {
+	patches := make([]domain.EnrichAssignment, 0, len(op.Assignments))
+	bytes := r.patchBytes
+	for _, assignment := range op.Assignments {
+		var output strings.Builder
+		root := assignment.target.Parts()[0]
+		display := root == "title" || root == "subject_name"
+		chars := 0
+		appendText := func(text string) error {
+			if display {
+				if chars == domain.DisplayTextMaxChars {
+					return nil
+				}
+				for offset := range text {
+					if chars == domain.DisplayTextMaxChars {
+						text = text[:offset]
+						break
+					}
+					chars++
+				}
+			}
+			if bytes+output.Len()+len(text) > 1<<20 {
+				return fmt.Errorf("patch payload budget exceeded")
+			}
+			output.WriteString(text)
+			return nil
+		}
+		for index, item := range items {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			env["extraction"] = map[string]any{"matches": []any{item}}
+			if index > 0 {
+				if err := appendText(op.Separator); err != nil {
+					return nil, err
+				}
+			}
+			value := &assignment.Value
+			if value.Template != nil && len(value.Transforms) == 0 {
+				// 不先生成包含完整正文的临时模板字符串，再丢弃截断部分。
+				if err := r.renderTemplate(ctx, value, env, appendText); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			v, err := r.value(ctx, value, env)
+			if err != nil {
+				return nil, err
+			}
+			text, err := scalarText(v)
+			if err != nil {
+				return nil, err
+			}
+			if err := appendText(text); err != nil {
+				return nil, err
+			}
+		}
+		patch, err := domain.NewEnrichAssignment(assignment.target, output.String())
+		if err != nil {
+			return nil, err
+		}
+		bytes += patch.EncodedSize() + 1
+		if bytes > 1<<20 {
+			return nil, fmt.Errorf("patch payload budget exceeded")
+		}
+		patches = append(patches, patch)
+	}
+	return patches, nil
 }
 
 func (r *run) value(ctx context.Context, v *Value, env map[string]any) (any, error) {
@@ -434,34 +522,32 @@ func (r *run) value(ctx context.Context, v *Value, env map[string]any) (any, err
 		if err == nil {
 			if v.Select == "all" {
 				out = []any(nodes)
+				if len(nodes) == 0 && v.query.HasPrefix("lookup", "relations") {
+					err = ErrMissing
+				}
 			} else if len(nodes) == 0 {
 				err = ErrMissing
 			} else if len(nodes) > 1 {
 				err = fmt.Errorf("JSONPath expected one node")
 			} else {
 				out = nodes[0]
+				if out == nil && v.query.HasPrefix("extraction") {
+					err = ErrMissing
+				}
 			}
 		}
 	case v.Template != nil:
-		variables := map[string]string{}
-		names := make([]string, 0, len(v.Variables))
-		for name := range v.Variables {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			variable := v.Variables[name]
-			value, e := r.value(ctx, &variable, env)
-			if e != nil {
-				return nil, e
+		var output strings.Builder
+		if err := r.renderTemplate(ctx, v, env, func(text string) error {
+			if output.Len()+len(text) > 1<<20 {
+				return fmt.Errorf("template result limit exceeded")
 			}
-			s, e := scalarText(value)
-			if e != nil {
-				return nil, e
-			}
-			variables[name] = s
+			output.WriteString(text)
+			return nil
+		}); err != nil {
+			return nil, err
 		}
-		out = variablePattern.ReplaceAllStringFunc(*v.Template, func(token string) string { return variables[token[2:len(token)-1]] })
+		out = output.String()
 	default:
 		err = ErrMissing
 	}
@@ -481,6 +567,39 @@ func (r *run) value(ctx context.Context, v *Value, env map[string]any) (any, err
 		return nil, err
 	}
 	return out, nil
+}
+
+// renderTemplate 先求全部变量，再逐段输出；输出端截断不会跳过变量失败。
+func (r *run) renderTemplate(ctx context.Context, v *Value, env map[string]any, write func(string) error) error {
+	variables := make(map[string]string, len(v.Variables))
+	names := make([]string, 0, len(v.Variables))
+	for name := range v.Variables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		variable := v.Variables[name]
+		value, err := r.value(ctx, &variable, env)
+		if err != nil {
+			return err
+		}
+		text, err := scalarText(value)
+		if err != nil {
+			return err
+		}
+		variables[name] = text
+	}
+	text, offset := *v.Template, 0
+	for _, match := range variablePattern.FindAllStringIndex(text, -1) {
+		if err := write(text[offset:match[0]]); err != nil {
+			return err
+		}
+		if err := write(variables[text[match[0]+2:match[1]-1]]); err != nil {
+			return err
+		}
+		offset = match[1]
+	}
+	return write(text[offset:])
 }
 
 func scalarText(v any) (string, error) {
@@ -504,8 +623,29 @@ func scalarText(v any) (string, error) {
 	}
 }
 
+// displayText 在展示转换之后拼接数组，不复刻 Python 容器的 repr 文本。
+func displayText(value any) (string, error) {
+	if values, ok := value.([]any); ok {
+		parts := make([]string, len(values))
+		for index, item := range values {
+			text, err := displayText(item)
+			if err != nil {
+				return "", err
+			}
+			parts[index] = text
+		}
+		return strings.Join(parts, ","), nil
+	}
+	return scalarText(value)
+}
+
 func (r *run) transform(ctx context.Context, t Transform, v any) (any, error) {
 	switch t.Type {
+	case "display_text":
+		if v == nil {
+			return nil, nil
+		}
+		return displayText(v)
 	case "kingeye_string":
 		return kingeyeText(v), nil
 	case "string":
@@ -565,11 +705,21 @@ func (r *run) transform(ctx context.Context, t Transform, v any) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("regexp source must be text")
 		}
-		m := t.regex.FindStringSubmatch(s)
-		if len(m) == 0 {
+		matches, err := t.regex.FindAll(s, 1)
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) == 0 {
 			return nil, ErrMissing
 		}
-		return m[t.Group], nil
+		if t.Group == 0 {
+			return matches[0].Text, nil
+		}
+		value := matches[0].Groups[t.Group-1]
+		if value == nil {
+			return nil, ErrMissing
+		}
+		return value, nil
 	case "display":
 		if r.sources.Display == nil {
 			return nil, fmt.Errorf("display datasource unavailable")
@@ -670,11 +820,19 @@ func (r *run) condition(ctx context.Context, c *Condition, env map[string]any) (
 		}
 		match := strings.Contains(l, rr)
 		if c.Operator == "regex" || c.Operator == "not_regex" {
-			pattern, err := regexp.Compile(rr)
+			pattern := c.regex
+			if pattern == nil {
+				var err error
+				pattern, err = textregexp.Compile(rr)
+				if err != nil {
+					return false, err
+				}
+			}
+			var err error
+			match, err = pattern.MatchString(l)
 			if err != nil {
 				return false, err
 			}
-			match = pattern.MatchString(l)
 		}
 		if c.Operator == "not_contains" || c.Operator == "not_regex" {
 			match = !match
@@ -747,17 +905,26 @@ func (r *run) externalCall() error {
 	return nil
 }
 
-func (r *run) lookup(ctx context.Context, rule Rule) (any, int, error) {
-	if rule.Identity != nil && rule.Lookup.Where == nil && !identityProvided(rule.Identity.read(r.current, "bk_inst_id")) {
-		return nil, 0, ErrMissing
+func (r *run) lookup(ctx context.Context, rule Rule, result *RuntimeResult) (any, int, error) {
+	var instance any
+	if rule.Identity != nil {
+		for _, field := range []string{"model_inst_id", "bk_inst_id", "cw_object_model_inst_id"} {
+			if value := rule.Identity.read(r.current, field); identityProvided(value) {
+				instance = value
+				break
+			}
+		}
+		if rule.Lookup.Where == nil && instance == nil {
+			return nil, 0, ErrMissing
+		}
 	}
 	if r.sources.Instances == nil {
 		return nil, 0, fmt.Errorf("onemodel datasource unavailable")
 	}
 	var where onemodel.Filter
 	var err error
-	if rule.Identity != nil && identityProvided(rule.Identity.read(r.current, "bk_inst_id")) {
-		text, e := scalarText(rule.Identity.read(r.current, "bk_inst_id"))
+	if instance != nil {
+		text, e := scalarText(instance)
 		if e != nil {
 			return nil, 0, e
 		}
@@ -798,36 +965,39 @@ func (r *run) lookup(ctx context.Context, rule Rule) (any, int, error) {
 	}
 	roots := map[string][]onemodel.Instance{"root": items}
 	relations := map[string]any{}
+	if obj, ok := lookup.(map[string]any); ok {
+		obj["relations"] = relations
+	}
 	for _, rel := range rule.Relations {
-		env := r.environment(map[string]any{"lookup": lookup})
-		filter, err := r.predicate(ctx, rel.Where, env)
-		if err != nil {
-			return nil, len(items), err
+		// 1. 每个节点只依赖明确的前置结果，失败分支不调用后续查询。
+		var found []onemodel.Instance
+		var value any
+		relationErr := ErrMissing
+		if len(roots[rel.From]) > 0 {
+			env := r.environment(map[string]any{"lookup": lookup})
+			filter, e := r.predicate(ctx, rel.Where, env)
+			relationErr = e
+			if relationErr == nil {
+				q := onemodel.Query{ModelID: rel.ModelID, Where: filter, Limit: 1024, First: rel.Expect == "first"}
+				if q.First {
+					q.Limit = 1
+				} else if rel.Expect == "one" {
+					q.Limit = 2
+				}
+				relationErr = r.externalCall()
+				if relationErr == nil {
+					found, relationErr = r.sources.Instances.Related(ctx, r.tenant, roots[rel.From], rel.Relation, rel.Direction, q)
+				}
+				if relationErr == nil {
+					value, relationErr = lookupValue(found, rel.Expect)
+				}
+			}
 		}
-		q := onemodel.Query{ModelID: rel.ModelID, Where: filter, Limit: 1024}
-		q.First = rel.Expect == "first"
-		if q.First {
-			q.Limit = 1
+		// 2. 只暴露成功节点的结果；下一条独立链仍从主实例开始。
+		if relationErr == nil {
+			relations[rel.ID], roots[rel.ID] = value, found
 		}
-		if rel.Expect == "one" {
-			q.Limit = 2
-		}
-		if err := r.externalCall(); err != nil {
-			return nil, len(items), err
-		}
-		found, err := r.sources.Instances.Related(ctx, r.tenant, roots[rel.From], rel.Relation, rel.Direction, q)
-		if err != nil {
-			return nil, len(items), err
-		}
-		v, err := lookupValue(found, rel.Expect)
-		if err != nil {
-			return nil, len(items), err
-		}
-		relations[rel.ID] = v
-		roots[rel.ID] = found
-		if obj, ok := lookup.(map[string]any); ok {
-			obj["relations"] = relations
-		}
+		result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: rel.ID, Status: stateFor(relationErr), Code: errorCode(relationErr), Error: relationErr, Matches: len(found)})
 	}
 	if rule.Topology {
 		reader, ok := r.sources.Instances.(interface {

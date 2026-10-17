@@ -20,18 +20,23 @@ import (
 )
 
 type targetDirectoryFake struct {
-	model      ModelDefinition
-	spaces     map[int64]BusinessSpace
-	group      DynamicGroupDefinition
-	groupsRead int
-	err        error
+	model       ModelDefinition
+	spaces      map[int64]BusinessSpace
+	otherSpaces map[string]BusinessSpace
+	group       DynamicGroupDefinition
+	groupsRead  int
+	err         error
 }
 
 func (d *targetDirectoryFake) Model(context.Context, string, string) (ModelDefinition, bool, error) {
 	return d.model, d.model.ModelID != "", d.err
 }
 
-func (d *targetDirectoryFake) Space(_ context.Context, _ string, id int64) (BusinessSpace, bool, error) {
+func (d *targetDirectoryFake) Space(_ context.Context, _ string, code string) (BusinessSpace, bool, error) {
+	if v, ok := d.otherSpaces[code]; ok {
+		return v, true, d.err
+	}
+	id, _ := ParseBusinessSpace(code)
 	v, ok := d.spaces[id]
 	return v, ok, d.err
 }
@@ -303,59 +308,45 @@ func TestRepeatedDynamicSelectorsShareCandidateBudget(t *testing.T) {
 	}
 }
 
-func TestEventBusinessScopeQueriesOnlyRequestedBusiness(t *testing.T) {
+func TestPolicyScopeReadsOnlyTenantSpaceDefinition(t *testing.T) {
 	d, p, _ := targetFixtures()
-	p.pages = []Page{{Instances: []Instance{targetInstance("cw-biz", "2", 2)}}}
 	r := NewTargetResolver(d, p, nil)
-	scope, err := r.ResolveBusinessScope(t.Context(), "t", "bkcc__99", 2)
-	want := Filter{Field: "model_inst_id", Type: InstanceAttributeKeyword, Operator: "eq", Value: "2"}
-	if err != nil || !reflect.DeepEqual(scope.BusinessIDs, []int64{2}) || len(p.queries) != 1 || p.queries[0].ModelID != "cw-biz" || !reflect.DeepEqual(p.queries[0].Where, want) {
-		t.Fatalf("scope=%+v err=%v queries=%+v", scope, err, p.queries)
-	}
 	for _, tc := range []struct {
-		space string
-		biz   int64
-		want  []int64
+		space      string
+		global     bool
+		businesses []int64
 	}{
-		{"bkcc__2", 2, []int64{2}}, {"bkcc__2", 8, []int64{}}, {"bkcc__99", 99, []int64{}},
+		{"bkcc__99", true, []int64{}}, {"bkcc__2", false, []int64{2}},
 	} {
-		got, err := r.ResolveBusinessScope(t.Context(), "t", tc.space, tc.biz)
-		if err != nil || !reflect.DeepEqual(got.BusinessIDs, tc.want) || len(p.queries) != 1 {
-			t.Fatalf("case=%+v scope=%+v err=%v", tc, got, err)
+		scope, err := r.ResolvePolicyScope(t.Context(), "t", tc.space)
+		if err != nil || scope.Global != tc.global || !reflect.DeepEqual(scope.BusinessIDs, tc.businesses) || len(p.queries) != 0 {
+			t.Fatalf("scope=%+v err=%v queries=%+v", scope, err, p.queries)
 		}
 	}
 }
 
-func TestEventBusinessScopeKeepsMissingFailureAndTenantIsolation(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		rows    []Instance
-		err     error
-		wantErr bool
-	}{
-		{name: "missing", rows: []Instance{}},
-		{name: "backend failure", err: errors.New("unavailable"), wantErr: true},
-		{name: "wrong business", rows: []Instance{targetInstance("cw-biz", "8", 8)}, wantErr: true},
-		{name: "foreign tenant", rows: []Instance{{TenantID: "other", ModelCode: "cw-biz", InstanceID: "2"}}, wantErr: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+func TestPolicyScopeKeepsMissingFailureAndTenantIsolation(t *testing.T) {
+	for _, name := range []string{"missing", "backend failure", "foreign tenant"} {
+		t.Run(name, func(t *testing.T) {
 			d, p, _ := targetFixtures()
-			p.pages = []Page{{Instances: tc.rows}}
-			if tc.err != nil {
-				p.failAt = 1
-				p.err = tc.err
+			switch name {
+			case "missing":
+				delete(d.spaces, 99)
+			case "backend failure":
+				d.err = errors.New("unavailable")
+			case "foreign tenant":
+				d.spaces[99] = BusinessSpace{TenantID: "other", BusinessID: 99, Global: true}
 			}
-			scope, err := NewTargetResolver(d, p, nil).ResolveBusinessScope(t.Context(), "t", "bkcc__99", 2)
-			if (err != nil) != tc.wantErr || len(scope.BusinessIDs) != 0 {
+			scope, err := NewTargetResolver(d, p, nil).ResolvePolicyScope(t.Context(), "t", "bkcc__99")
+			if err == nil || scope.Global || len(p.queries) != 0 {
 				t.Fatalf("scope=%+v err=%v", scope, err)
 			}
 		})
 	}
 	d, p, _ := targetFixtures()
-	r := NewTargetResolver(d, p, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := r.ResolveBusinessScope(ctx, "t", "bkcc__99", 2); !errors.Is(err, context.Canceled) || len(p.queries) != 0 {
+	if _, err := NewTargetResolver(d, p, nil).ResolvePolicyScope(ctx, "t", "bkcc__99"); !errors.Is(err, context.Canceled) || len(p.queries) != 0 {
 		t.Fatal(err, p.queries)
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/dynamicconfig"
+	"linkd/internal/enrich/custom"
 	"linkd/internal/enrich/preview"
 	"linkd/internal/eventsource"
 	"linkd/internal/ingestpreview"
@@ -118,6 +119,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/event-sources/{id}/releases/{version}", a.release)
 	mux.HandleFunc("POST /api/v1/event-sources/{id}/tasks/{task}/resume", a.resumeTask)
 	mux.HandleFunc("POST /api/v1/policies/preview", a.previewPolicy)
+	mux.HandleFunc("POST /api/v1/policies/preview-batch", a.previewPolicyBatch)
 	mux.HandleFunc("POST /api/v1/policies/simulate", a.simulatePolicy)
 	mux.HandleFunc("GET /api/v1/policies/statistics", a.policyStatistics)
 	mux.HandleFunc("GET /api/v1/policies", a.listPolicies)
@@ -195,6 +197,13 @@ func output(w http.ResponseWriter, value any) {
 }
 
 func failure(w http.ResponseWriter, e error) {
+	var invalid *custom.ConfigurationError
+	if errors.As(e, &invalid) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		output(w, map[string]any{"error": map[string]string{"message": e.Error()}})
+		return
+	}
 	code := http.StatusBadRequest
 	if errors.Is(e, eventsource.ErrNotFound) {
 		code = 404

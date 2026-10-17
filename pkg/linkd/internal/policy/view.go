@@ -71,7 +71,7 @@ type FactView struct {
 	document   map[string]any
 	facts      map[string]any
 	levelError bool
-	mappings   map[string]jsonpath.Target
+	mappings   map[string][]jsonpath.Target
 	uncertain  []uncertainPath
 	certain    []certainPath
 	relation   RelationContext
@@ -142,17 +142,16 @@ func newFactView(tenant string, document map[string]any, severity, action string
 	if kacAction == "" || occurred.IsZero() {
 		return nil, ErrUnavailable
 	}
-	view := &FactView{TenantID: tenant, document: document, facts: map[string]any{"bk_tenant_id": tenant, "level": kacLevel, "action": kacAction, "alarm_time": occurred.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04:05")}, levelError: levelErr != nil, mappings: map[string]jsonpath.Target{}, relation: relation}
+	view := &FactView{TenantID: tenant, document: document, facts: map[string]any{"bk_tenant_id": tenant, "level": kacLevel, "action": kacAction, "alarm_time": occurred.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04:05")}, levelError: levelErr != nil, mappings: map[string][]jsonpath.Target{}, relation: relation}
 	for name, mapping := range mappings {
-		target, err := jsonpath.ParseTarget(mapping.Path)
+		targets, err := mapping.ReadTargets()
 		if err != nil {
 			return nil, err
 		}
-		parts := target.Parts()
-		if len(parts) < 2 || (parts[0] != "labels" && parts[0] != "extra_data") || KACFields()[name] != "" {
+		if KACFields()[name] != "" {
 			return nil, fmt.Errorf("invalid policy field mapping")
 		}
-		view.mappings[name] = target
+		view.mappings[name] = targets
 	}
 	if err := view.readAvailability(status, payload); err != nil {
 		return nil, err
@@ -202,7 +201,10 @@ func (v *FactView) readAvailability(status domain.EnrichStatus, payload domain.J
 				}
 				block(paths, i+1)
 			}
-			if result.Status != domain.EnrichStatusSucceeded {
+			// 自定义 partial 只保存原子提交成功的补丁，它们仍是有效事实。
+			// 未写入字段继续保守封锁；内置 partial 的历史 value 不作成功输出解释。
+			committedPartial := result.Status == domain.EnrichStatusPartial && (name == "cmdb" || name == "fields") && result.Patches != nil
+			if result.Status != domain.EnrichStatusSucceeded && !committedPartial {
 				continue
 			}
 			patches := result.Patches
@@ -286,7 +288,7 @@ func (v *FactView) readPath(target jsonpath.Target) (Value, error) {
 		if uncertain {
 			cleared := false
 			for _, item := range v.certain {
-				if item.step > blocked && item.target.Overlaps(target) && len(item.target.Parts()) <= len(target.Parts()) {
+				if item.step >= blocked && item.target.Overlaps(target) && len(item.target.Parts()) <= len(target.Parts()) {
 					cleared = true
 				}
 			}
@@ -321,8 +323,14 @@ func (v *FactView) Field(ctx context.Context, name string) (Value, error) {
 	if value, ok := v.facts[name]; ok {
 		return Value{Data: value, Present: true}, nil
 	}
-	if target, ok := v.mappings[name]; ok {
-		return v.readPath(target)
+	if targets, ok := v.mappings[name]; ok {
+		for _, target := range targets {
+			value, err := v.readPath(target)
+			if err != nil || value.Present {
+				return value, err
+			}
+		}
+		return Value{}, nil
 	}
 	if KACFields()[name] == "" {
 		return Value{}, fmt.Errorf("unknown policy field")

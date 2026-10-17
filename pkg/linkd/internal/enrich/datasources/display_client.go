@@ -166,20 +166,24 @@ func (c *DisplayClient) Format(ctx context.Context, tenant, model, field string,
 		}
 		return v, nil
 	}
-	if values, ok := value.([]any); ok {
-		if len(values) > 64 {
-			return nil, fmt.Errorf("display value limit exceeded")
-		}
-		out := make([]any, len(values))
-		for i, v := range values {
-			out[i], err = one(v)
-			if err != nil {
-				return nil, err
+	var format func(any) (any, error)
+	format = func(value any) (any, error) {
+		if values, ok := value.([]any); ok {
+			if len(values) > 64 {
+				return nil, fmt.Errorf("display value limit exceeded")
 			}
+			out := make([]any, len(values))
+			for i, v := range values {
+				out[i], err = format(v)
+				if err != nil {
+					return nil, err
+				}
+			}
+			return out, nil
 		}
-		return out, nil
+		return one(value)
 	}
-	return one(value)
+	return format(value)
 }
 
 func displayScalar(v any) (string, error) {

@@ -66,7 +66,7 @@ func TestWorkerDependenciesShareSourceTimeAndAssignedTask(t *testing.T) {
 	clock := newDependencyClock(loaded.Add(59 * time.Second))
 	setDependencyClock(worker.Dependencies, clock)
 	tracked, stamp := TrackDependencyReads(t.Context())
-	if _, err := worker.ResolveBusinessScope(tracked, "tenant", "bkcc__2", 2); err != nil || !stamp.Time().Equal(loaded) {
+	if _, err := worker.ResolvePolicyScope(tracked, "tenant", "bkcc__2"); err != nil || !stamp.Time().Equal(loaded) {
 		t.Fatal("worker renewed source time", stamp.Time(), err)
 	}
 	clock.Advance(2 * time.Second)

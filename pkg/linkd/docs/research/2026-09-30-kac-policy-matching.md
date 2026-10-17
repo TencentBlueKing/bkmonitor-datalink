@@ -1,5 +1,7 @@
 # KAC 策略条件与 Linkd 匹配器对照
 
+> 2026-10-17：本文正则子集与 ES 对照结论已被统一 regexp2 语义取代；当前契约见[策略配置 API](../reference/contracts/policy-api.md)。非正则条件的对照范围保持不变。
+
 调查日期：2026-09-30。KAC 源码：Kingeye `1874066858`；Linkd 开发基线：`49e0db23`，本地未提交实现。
 对照对象是 Python 构造的 ES DSL 与实际 mapping/analyzer，不能用操作符名称直接推断语义。
 实际实现见 `internal/policy/expression.go`、`condition.go`、`schedule.go`、`value.go`；总体规则见

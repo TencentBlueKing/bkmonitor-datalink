@@ -115,14 +115,14 @@ func TestDependenciesCoalesceConcurrentAndShareAcrossDescriptors(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("source was read per strategy", calls.Load())
 	}
-	scope, err := d.ResolveBusinessScope(t.Context(), "tenant", "bkcc__2", 2)
+	scope, err := d.ResolvePolicyScope(t.Context(), "tenant", "bkcc__2")
 	if err != nil || len(scope.BusinessIDs) != 1 {
 		t.Fatal(scope, err)
 	}
 	if calls.Load() != 2 {
 		t.Fatal("scope has its own shared dependency", calls.Load())
 	}
-	if _, err = d.ResolveBusinessScope(t.Context(), "other", "bkcc__2", 2); err != nil {
+	if _, err = d.ResolvePolicyScope(t.Context(), "other", "bkcc__2"); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 3 {
@@ -154,7 +154,7 @@ func TestDependenciesFreshnessFailureAndSourceReadTracking(t *testing.T) {
 		t.Fatal("failed refresh replaced a still-fresh source snapshot", cached, err)
 	}
 	tracked, stamp := TrackDependencyReads(t.Context())
-	if _, err = d.ResolveBusinessScope(tracked, "tenant", "bkcc__2", 2); err != nil {
+	if _, err = d.ResolvePolicyScope(tracked, "tenant", "bkcc__2"); err != nil {
 		t.Fatal(err)
 	}
 	if !stamp.Time().Equal(first.ChangedAt) || !first.ChangedAt.Equal(first.LoadedAt) {
@@ -313,7 +313,7 @@ func TestDependenciesPreparedTargetsKeepScopeAndMembershipOnOneVersion(t *testin
 	clock.Advance(time.Second)
 	refreshDependencyNow(t, d, DependencyRequest{Kind: "targets", TenantID: "tenant", SpaceCode: "bkcc__2", Target: target})
 	ctx, stamp := TrackDependencyReads(t.Context())
-	scope, err := fixed.ResolveBusinessScope(ctx, "tenant", "bkcc__2", 2)
+	scope, err := fixed.ResolvePolicyScope(ctx, "tenant", "bkcc__2")
 	if err != nil || len(scope.BusinessIDs) != 1 {
 		t.Fatal("prepared scope changed during evaluation", scope, err)
 	}
@@ -324,7 +324,7 @@ func TestDependenciesPreparedTargetsKeepScopeAndMembershipOnOneVersion(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err = latest.ResolveBusinessScope(ctx, "tenant", "bkcc__2", 2)
+	scope, err = latest.ResolvePolicyScope(ctx, "tenant", "bkcc__2")
 	if err != nil || len(scope.BusinessIDs) != 0 || !stamp.Time().After(first) {
 		t.Fatal("new complete snapshot lost scope/content change", scope, stamp.Time(), err)
 	}
@@ -359,7 +359,7 @@ func TestDependenciesChangedContentsCoalesceAndKeepReturnedSnapshot(t *testing.T
 	if len(changed) != 1 || changed[0] != "tenant" || len(d.DrainChangedTenants()) != 0 {
 		t.Fatal("change notifications not coalesced", changed)
 	}
-	scope, err := d.ResolveBusinessScope(t.Context(), "tenant", "bkcc__2", 4)
+	scope, err := d.ResolvePolicyScope(t.Context(), "tenant", "bkcc__2")
 	if err != nil || len(scope.BusinessIDs) != 1 {
 		t.Fatal(scope, err)
 	}
@@ -432,5 +432,40 @@ func TestDependenciesConcurrentCloseAndFirstReads(t *testing.T) {
 		if started.Load() != finished.Load() {
 			t.Fatal("Close returned with source loader alive", started.Load(), finished.Load())
 		}
+	}
+}
+
+func TestGlobalScopeSurvivesSharedAndPreparedDependencies(t *testing.T) {
+	d := NewDependencies(t.Context(), func(_ context.Context, r DependencyRequest) (DependencySnapshot, error) {
+		value := dependencyValue(r, time.Now())
+		value.Scope.Global = true
+		value.Scope.BusinessIDs = nil
+		value.Targets.Scope.Global = true
+		// 控制面与 Worker 通过同一 JSON 快照传递全局标记。
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return value, err
+		}
+		var received DependencySnapshot
+		err = json.Unmarshal(encoded, &received)
+		return received, err
+	})
+	t.Cleanup(d.Close)
+	scope, err := d.ResolvePolicyScope(t.Context(), "tenant", "bkcc__99")
+	if err != nil || !scope.Global || len(scope.BusinessIDs) != 0 {
+		t.Fatal(scope, err)
+	}
+	prepared, err := d.PrepareTargets(t.Context(), "tenant", "bkcc__99", testDependencyTarget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err = prepared.ResolvePolicyScope(t.Context(), "tenant", "bkcc__99")
+	if err != nil || !scope.Global {
+		t.Fatal(scope, err)
+	}
+	wrapped := &evaluationTargets{reader: d}
+	scope, err = wrapped.ResolvePolicyScope(t.Context(), "tenant", "bkcc__99")
+	if err != nil || !scope.Global {
+		t.Fatal(scope, err)
 	}
 }

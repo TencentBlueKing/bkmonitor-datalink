@@ -114,18 +114,18 @@ func attributeTypes(raw []byte) (map[string]onemodel.InstanceAttributeType, erro
 	return result, nil
 }
 
-// Space 按真实租户业务主键读取全局属性，不将固定 ID 当成全局标记。
-func (d *Directory) Space(ctx context.Context, tenant string, biz int64) (onemodel.BusinessSpace, bool, error) {
-	if biz < 1 {
-		return onemodel.BusinessSpace{}, false, onemodel.ErrInvalidQuery
+// Space 按租户和完整空间身份查询；非 BKCC 沿用 Kingeye 的负主键业务标识。
+func (d *Directory) Space(ctx context.Context, tenant, code string) (onemodel.BusinessSpace, bool, error) {
+	kind, id, err := onemodel.ParseSpaceCode(code)
+	if err != nil {
+		return onemodel.BusinessSpace{}, false, err
 	}
 	call, cancel, err := queryScope(ctx, tenant)
 	if err != nil {
 		return onemodel.BusinessSpace{}, false, err
 	}
 	defer cancel()
-	id := strconv.FormatInt(biz, 10)
-	rows, err := d.db.QueryContext(call, "SELECT bk_tenant_id, space_id, is_global FROM metadata_space WHERE bk_tenant_id=? AND space_type_id=? AND space_id=? LIMIT 2", tenant, "bkcc", id)
+	rows, err := d.db.QueryContext(call, "SELECT bk_tenant_id, space_id, is_global, id FROM metadata_space WHERE bk_tenant_id=? AND space_type_id=? AND space_id=? LIMIT 2", tenant, kind, id)
 	if err != nil {
 		return onemodel.BusinessSpace{}, false, err
 	}
@@ -135,13 +135,19 @@ func (d *Directory) Space(ctx context.Context, tenant string, biz int64) (onemod
 	}
 	var result onemodel.BusinessSpace
 	var saved string
-	if err := rows.Scan(&result.TenantID, &saved, &result.Global); err != nil {
+	var primaryKey int64
+	if err := rows.Scan(&result.TenantID, &saved, &result.Global, &primaryKey); err != nil {
 		return onemodel.BusinessSpace{}, false, err
 	}
 	if rows.Next() || result.TenantID != tenant || saved != id {
 		return onemodel.BusinessSpace{}, false, onemodel.ErrInvalidDataSourceResponse
 	}
-	result.BusinessID = biz
+	if kind == "bkcc" {
+		result.BusinessID, _ = strconv.ParseInt(id, 10, 64)
+	} else {
+		result.BusinessID = -primaryKey
+		result.Global = false
+	}
 	return result, true, rows.Err()
 }
 

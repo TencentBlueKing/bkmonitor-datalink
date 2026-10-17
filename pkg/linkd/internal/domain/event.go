@@ -59,6 +59,8 @@ type Event struct {
 
 // Normalize 深拷贝动态字段、规范 UTC 时间并校验 Event。
 func (e Event) Normalize() (Event, error) {
+	e.Title = TruncateDisplayText(e.Title)
+	e.SubjectName = TruncateDisplayText(e.SubjectName)
 	e.enrichViews = nil
 	e.MergeOrigin = e.MergeOrigin.Clone()
 	e.Dimensions = e.Dimensions.Normalize()
@@ -210,12 +212,12 @@ func (e Event) validate(validateJSON bool) error {
 		value string
 		max   int
 	}{
-		{"title", e.Title, 256},
+		{"title", e.Title, DisplayTextMaxChars * 4},
 		{"content", e.Content, 1 << 20},
 		{"subject_system", e.SubjectSystem, 32},
 		{"subject_type", e.SubjectType, 128},
 		{"subject_id", e.SubjectID, 256},
-		{"subject_name", e.SubjectName, 256},
+		{"subject_name", e.SubjectName, DisplayTextMaxChars * 4},
 		{"source_event_id", e.SourceEventID, 256},
 		{"source_alert_id", e.SourceAlertID, 256},
 	} {

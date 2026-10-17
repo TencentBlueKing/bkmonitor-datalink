@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"linkd/internal/domain"
 	"linkd/internal/jsonpath"
 )
 
@@ -205,7 +206,8 @@ func (f mergeTemplateField) outputValue(value any) (any, error) {
 		maximum := mergeTemplateBytes
 		switch f.key {
 		case "name", "object":
-			maximum = 256
+			text = domain.TruncateDisplayText(text)
+			value = text
 		case "level":
 			maximum = 32
 		}
@@ -267,7 +269,7 @@ func (f mergeTemplateField) outputValue(value any) (any, error) {
 }
 
 // Render 返回新的 Event 字段树；members 必须是已去重、按 AlertID 排序的冻结成员。
-// 只在成员值求解时应用 cw_merged 字符截断，完整输出超过 1 MiB 则失败，禁止静默截断合法 Event 字段。
+// 成员值按 cw_merged 配置截断；名称/对象最终截断到 2000 字符，整体输出保留 1 MiB 预算。
 func (t *MergeTemplate) Render(ctx context.Context, members []TemplateReader) (map[string]any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

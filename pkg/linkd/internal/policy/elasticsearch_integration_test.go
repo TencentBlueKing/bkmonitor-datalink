@@ -103,6 +103,7 @@ func TestKACElasticsearchConditionBehaviorComparison(t *testing.T) {
 	if err := request(t.Context(), http.MethodPost, "/"+index+"/_refresh", nil, nil); err != nil {
 		t.Fatal(err)
 	}
+	// 正则统一使用 regexp2，语法与匹配范围不再对照 Lucene；由 regexp_contract_test.go 验证。
 	cases := []struct {
 		operator, field string
 		value           any
@@ -112,7 +113,6 @@ func TestKACElasticsearchConditionBehaviorComparison(t *testing.T) {
 		{"terms", "name", []any{"CPU"}}, {"terms", "name", []any{"c", "数"}},
 		{"wildcard", "name", "cpu使用率"}, {"wildcard", "name", "使用 率"}, {"wildcard", "name", "CPU数据库"}, {"wildcard", "name", " "},
 		{"wildcard", "name", "a\u0085b"}, {"wildcard", "name", "a\u00a0b"}, {"wildcard", "name", "ab"}, {"wildcard", "name", "iσß😀"},
-		{"regexp", "name", "CPU.*"}, {"regexp", "name", "a.b"}, {"regexp", "name", "(CPU|数据库)"}, {"regexp", "name", "[A-Z]+"},
 		{"must_not_term", "name", "CPU"}, {"must_not_wildcard", "name", "数据库"},
 		{"term", "bk_biz_id", "0"}, {"terms", "bk_biz_id", []any{0, 2}}, {"wildcard", "bk_biz_id", "2"},
 		{"term", "source_id", false}, {"term", "source_id", 12}, {"wildcard", "source_id", "cpu"},
@@ -126,7 +126,7 @@ func TestKACElasticsearchConditionBehaviorComparison(t *testing.T) {
 			field := tc.field
 			operator := strings.TrimPrefix(tc.operator, "must_not_")
 			value := tc.value
-			if field == "name" && (operator == "term" || operator == "regexp") {
+			if field == "name" && operator == "term" {
 				field += ".keyword"
 			}
 			if operator == "term" {
@@ -165,10 +165,7 @@ func TestKACElasticsearchConditionBehaviorComparison(t *testing.T) {
 			}
 			for i, doc := range fixtures {
 				result, err := compiled.Match(t.Context(), Fields{Values: doc})
-				if err != nil { // 超过正则输入预算的值明确不可评估，不假装与 ES 一致。
-					if tc.operator == "regexp" && i == 10 {
-						continue
-					}
+				if err != nil {
 					t.Fatalf("case=%+v doc=%d: %v", tc, i, err)
 				}
 				if result.Matched != expected[strconv.Itoa(i)] {

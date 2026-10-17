@@ -7,6 +7,20 @@
 Worker Token 不能调用这些管理接口。租户必须显式传入，不能从 EventSource 或当前登录用户猜测。
 API 成功表示配置已发布，不表示全部 Worker 已加载或相关运行窗口已处理。
 
+## KAC 抑制配置适配（2026-10-17）
+
+- `suppression` 在具有有效实例目标时允许空 `policy={}`；无目标且无条件仍拒绝。
+- `field_mappings` 可声明 `read_path`，例如 `$['extra_data','labels']['strategy_name']`。
+  读取支持有序名称/下标选择，采用第一个存在的节点；显式 null、空串、0 和 false 保留。
+  `path` 继续表示原有精确路径，供未声明 `read_path` 的读取及模板输出使用；不按字段名硬编码回退。
+- 抑制、屏蔽、合并统一使用与告警丰富相同的 regexp2／.NET 风格正则，默认查找任意位置，
+  整段匹配使用 `\A...\z`，点号跨行匹配需显式使用 `(?s)`。不提供引擎配置项，不保留旧正则实现或版本兼容分支。
+- 窗口上限 30 天、防抖次数上限 10000、分组字段上限 32、生效时间段上限 64 保持不变。
+- 空间通过当前租户的 `metadata_space` 解析；BKCC 业务 ID 为正 `space_id`，非 BKCC 为 `-id`。
+  负 ID 只代表对应空间，不代表全局。实例和动态组按同一归属过滤；CMDB 专用读取继续要求正业务。
+
+合并模板输出的 name/object 统一保留前 2000 个 Unicode 字符，超出直接截断；Event、Alert、丰富赋值、合并关系和 KAC 投影沿用同一结果，不为截断新增序列化。content 的 1 MiB 上限与整体模板／对象预算保持不变。
+
 ## 路径和请求
 
 | 接口 | 请求 | 结果 |
@@ -20,8 +34,14 @@ API 成功表示配置已发布，不表示全部 Worker 已加载或相关运�
 | `POST /api/v1/policies/simulate` | JSON：下方模拟信封 | 请求私有状态的事件/时间轨迹 |
 | `GET /api/v1/policies/statistics` | query：`bk_tenant_id`、`type`、`ids`、`hours` | 指定策略的执行观察 |
 
-`spec.space_code` 只接受 canonical `bkcc__<正整数业务 ID>`；全局属性在执行时读取当前租户业务目录，
-不把 0 或固定业务 ID 当成全局业务。
+`spec.space_code` 接受当前租户的 `<space_type>__<space_id>`；BKCC 的 ID 为正整数，其他类型的
+数值归属在执行时从 `metadata_space.id` 取负值。全局属性只由真实 BKCC 全局业务决定，0 和负 ID 不表示全局。
+
+全局策略不以告警的 `bk_biz_id` 限定准入：缺失、null、空串或 0 都不因此跳过策略，
+也不为告警补造业务归属。具体空间策略仍要求告警归属于该空间。租户、启用时段、显式条件、
+分组字段和目标实例约束继续生效；显式条件中配置的 `bk_biz_id` 仍正常匹配。
+CMDB/OneModel 目标解析保留策略空间范围，动态分组与拓扑查询不因全局事件准入而变成无范围查询。
+无业务归属的 Event/Alert、策略状态和 KAC 投影允许保存；缺失业务 ID 不作为通用存储错误。
 
 `type` 为 `suppression`、`shield`、`merge`。PUT 的 `id/type` 必须与路径一致；不允许用 PUT 的
 `deleted` 字段绕过 DELETE。PUT/DELETE 不使用 query 参数传递租户，避免同一请求具有两份作用域。
@@ -134,6 +154,19 @@ reason、groups（逐条件结果）及可用的 group_key。`evaluated=false` �
 
 ## 有效字段读取
 
+### 时间屏蔽批量匹配预览
+
+`POST /api/v1/policies/preview-batch` 使用管理 JWT，接收 `bk_tenant_id`、`type=shield`、
+时间屏蔽草稿 `spec`、可选 RFC3339 `at`、1 至 32 个 `alert_ids` 和可选展示 `fields`。
+同一请求固定编译结果和时间，共用单条预览的并发限制与十秒期限。结果为
+`{mode:"matching_only",at,items:[{alert_id,severity,evaluated,matched,reason,fields}]}`；
+缺失记录或字段不可用逐项标记，租户不符拒绝请求。展示字段只读取已注册的有效事实，不能返回原始载荷。
+KAC 在调用前裁剪用户权限，Linkd 保留租户门禁；接口不扫描租户全部告警，不产生屏蔽绑定或其它写入。
+
+时间屏蔽支持有效 target_descriptor 配合空 policy，依赖屏蔽仍要求非空主／子条件。
+屏蔽主、子条件及引用替换统一使用 regexp2，不提供引擎配置项。
+前后依赖窗口最大 65535 分钟。以上不改写已发布的旧版本和已有绑定。
+
 `name/content` 来自保存补丁合成的 title/content。旧清洗同名 `extra_data.object/item/meta_info/strategy_id/dimension_info`
 优先使用有效视图中的值；显式空值、0、false 不触发回退。没有旧字段时，object 使用 subject_name/subject_id，
 meta_info 使用有效同名丰富值或 source_event_id。
@@ -149,7 +182,9 @@ alarm_time 保留 KAC 字段表示：将来源发生时间投影为 Asia/Shangha
 
 已失败/partial 的内置处理器使其输出字段不可求值，后续成功覆盖的具体字段可恢复为已知值。
 缺少目标声明的自定义处理器失败时，对全部可变字段保守标记不可求值，避免负条件误命中；
-skipped 处理器不产生这种失败标记。自定义字段仅使用配置显式声明的 labels/extra_data 精确路径。
+自定义 cmdb/fields 的 partial 结果中，已提交补丁对应的字段可正常读取，未写入字段仍不可求值，后续失败处理器的标记继续生效。
+skipped 处理器不产生失败标记。自定义字段使用显式 `read_path` 中按顺序排列的 labels/extra_data
+名称/下标路径，选择第一个存在的值；省略时使用原有精确 `path`。
 
 ## Worker 读取与 Event 上下文
 

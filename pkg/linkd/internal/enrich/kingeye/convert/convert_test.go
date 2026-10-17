@@ -45,8 +45,8 @@ func TestKingeyeNormalFixtureKeepsGroupingAndOrder(t *testing.T) {
 }
 
 func TestCaptureNumberingAndUnsupportedAreReported(t *testing.T) {
-	for _, tc := range []struct{ pattern, source, want string }{{`[0-9]+`, `x12 y34`, `12/34`}, {`([0-9]+)`, `x12 y34`, `12/34`}, {`([a-z]+)=([0-9]+)`, `a=12 b=34`, `a/12`}} {
-		raw, _ := json.Marshal(map[string]any{"enrich_settings": []any{map[string]any{"type": "extract", "rules": []any{map[string]any{"field": "content", "value": tc.pattern}}, "fields": []any{map[string]any{"key": "name", "value": "$1/$2"}}}}})
+	for _, tc := range []struct{ pattern, source, template, want string }{{`[0-9]+`, `x12 y34`, `$0`, `12`}, {`([0-9]+)`, `x12 y34`, `$1`, `12`}, {`([a-z]+)=([0-9]+)`, `a=12 b=34`, `$1/$2`, `a/12`}} {
+		raw, _ := json.Marshal(map[string]any{"enrich_settings": []any{map[string]any{"type": "extract", "rules": []any{map[string]any{"field": "content", "value": tc.pattern}}, "fields": []any{map[string]any{"key": "name", "value": tc.template}}}}})
 		r, err := Convert(Input{NormalRules: []json.RawMessage{raw}})
 		if err != nil || len(r.Enrich.Processors) != 1 {
 			t.Fatalf("%+v %v", r, err)

@@ -91,7 +91,7 @@
 - 参数说明和示例
 - 错误码说明
 
-**快速链接**：[查看完整 API 文档](./api/api.md)
+**快速链接**：[查看完整 API 文档](./api/api.md) · [TimeGraph 关系查询接入](./api/timegraph.md) · [资源与关系目录](./api/timegraph-schema.md)
 
 
 ---

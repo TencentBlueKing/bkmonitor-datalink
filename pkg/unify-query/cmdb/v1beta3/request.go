@@ -13,7 +13,7 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 
 // QueryRequest 关联查询请求
 type QueryRequest struct {
-	SpaceUID                 string             `json:"space_uid,omitempty"`                  // 空间 UID（bkcc__<biz> 形式），用于定位 binding
+	SpaceUID                 string             `json:"space_uid,omitempty"`                  // 空间 UID（bkcc__<biz> 形式），用于定位 metadata namespace
 	Timestamp                int64              `json:"timestamp"`                            // 查询时间点（毫秒时间戳）
 	SourceType               ResourceType       `json:"source_type"`                          // 源资源类型
 	SourceInfo               map[string]string  `json:"source_info"`                          // 源资源过滤条件
@@ -22,12 +22,12 @@ type QueryRequest struct {
 	TargetTypeExplicit       bool               `json:"-"`                                    // target_type 是否由调用方显式传入
 	TargetInfoShow           bool               `json:"target_info_show,omitempty"`           // 是否展示目标资源扩展信息
 	PathResource             []ResourceType     `json:"path_resource,omitempty"`              // 路径约束资源类型
-	MaxHops                  int                `json:"max_hops,omitempty"`                   // 最大跳数（默认2，范围1-5）
+	MaxHops                  int                `json:"max_hops,omitempty"`                   // 最大跳数（默认2，YOLO跳过配置上限）
 	AllowedRelationTypes     []RelationCategory `json:"allowed_relation_types,omitempty"`     // 允许的关系类别
 	DynamicRelationDirection TraversalDirection `json:"dynamic_relation_direction,omitempty"` // 动态关系方向（默认both）
 	LookBackDelta            int64              `json:"look_back_delta,omitempty"`            // 回溯时间窗口（毫秒，默认86400000）
 	LookBackDeltaSet         bool               `json:"-"`                                    // look_back_delta 是否由调用方显式传入
-	Limit                    int                `json:"limit,omitempty"`                      // 返回的Root数量限制（默认100）
+	Limit                    int                `json:"limit,omitempty"`                      // 返回的Root数量限制（YOLO不注入默认值）
 	LegacyCompatibility      bool               `json:"-"`                                    // 是否使用旧 Relation API 兼容语义
 	DisableRootLimit         bool               `json:"-"`                                    // 是否取消 root LIMIT（仅供兼容路由使用）
 }
@@ -37,10 +37,10 @@ func (r *QueryRequest) Normalize() {
 	if r.MaxHops <= 0 {
 		r.MaxHops = DefaultMaxHops
 	}
-	if r.MaxHops > MaxAllowedHops {
+	if !yoloMode && r.MaxHops > MaxAllowedHops {
 		r.MaxHops = MaxAllowedHops
 	}
-	if r.Limit <= 0 && !r.DisableRootLimit {
+	if r.Limit <= 0 && !r.DisableRootLimit && !yoloMode {
 		r.Limit = DefaultLimit
 	}
 	if !r.LookBackDeltaSet && r.LookBackDelta <= 0 {

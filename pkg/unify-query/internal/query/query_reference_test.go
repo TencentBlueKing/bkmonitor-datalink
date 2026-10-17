@@ -11,8 +11,6 @@ package query
 
 import (
 	"context"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -188,17 +186,10 @@ func TestVmExpand(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			VmExpand := ToVmExpand(ctx, c.queryRef)
-
-			//
-			for k, v := range VmExpand.MetricFilterCondition {
-				or := " or "
-				arr := strings.Split(v, or)
-				sort.Strings(arr)
-				VmExpand.MetricFilterCondition[k] = strings.Join(arr, or)
+			for i := 0; i < 64; i++ {
+				vmExpand := ToVmExpand(ctx, c.queryRef)
+				assert.Equal(t, c.VmExpand, vmExpand, "VM condition order changed at iteration %d", i)
 			}
-
-			assert.Equal(t, c.VmExpand, VmExpand)
 		})
 	}
 }

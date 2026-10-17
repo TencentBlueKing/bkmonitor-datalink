@@ -9,13 +9,17 @@
 
 package v1beta3
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type resourcePathStep struct {
 	ResourceType string
 	RelationType string
 	Category     string
 	Direction    string
+	MetricName   string
 }
 
 type resourcePath struct {
@@ -91,10 +95,20 @@ func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 
 // FindAllPaths 查找从 source 到 target 的所有路径
 func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []ResourceType) ([]resourcePath, error) {
+	return pf.FindAllPathsContext(context.Background(), source, target, pathResource)
+}
+
+func (pf *PathFinder) FindAllPathsContext(ctx context.Context, source, target ResourceType, pathResource []ResourceType) ([]resourcePath, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if source == target && len(pathResource) == 0 {
 		// 显式 source==target 优先解释为“查真实自关联边”；
 		// 只有 schema 中完全没有自关联时，才回退成单节点信息展示路径。
 		paths := pf.findSelfRelationPaths(source)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(paths) > 0 {
 			return paths, nil
 		}
@@ -107,7 +121,9 @@ func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []R
 	currentPath := []resourcePathStep{{ResourceType: string(source)}}
 	visited[source] = true
 
-	pf.dfs(source, target, pathConstraint, visited, currentPath, &results)
+	if err := pf.dfs(ctx, source, target, pathConstraint, visited, currentPath, &results); err != nil {
+		return nil, err
+	}
 	if directOnly {
 		results = filterDirectPaths(results)
 	}
@@ -132,6 +148,7 @@ func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType) []resourc
 				RelationType: string(rel.Schema.RelationType),
 				Category:     string(rel.Schema.Category),
 				Direction:    string(rel.Direction),
+				MetricName:   rel.Schema.MetricName,
 			},
 		}})
 	}
@@ -177,14 +194,18 @@ func filterDirectPaths(paths []resourcePath) []resourcePath {
 
 // dfs 深度优先搜索所有路径
 func (pf *PathFinder) dfs(
+	ctx context.Context,
 	current, target ResourceType,
 	pathResource []ResourceType,
 	visited map[ResourceType]bool,
 	currentPath []resourcePathStep,
 	results *[]resourcePath,
-) {
-	if len(currentPath) > pf.maxHops+1 {
-		return
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(currentPath)-1 > pf.maxHops {
+		return nil
 	}
 
 	if current == target && len(currentPath) > 1 {
@@ -193,7 +214,7 @@ func (pf *PathFinder) dfs(
 			copy(pathCopy, currentPath)
 			*results = append(*results, resourcePath{Steps: pathCopy})
 		}
-		return
+		return nil
 	}
 
 	relations := pf.getRelationsForType(current)
@@ -216,16 +237,20 @@ func (pf *PathFinder) dfs(
 			RelationType: string(rel.Schema.RelationType),
 			Category:     string(rel.Schema.Category),
 			Direction:    string(rel.Direction),
+			MetricName:   rel.Schema.MetricName,
 		}
 		currentPath = append(currentPath, nextStep)
 
-		pf.dfs(nextType, target, pathResource, visited, currentPath, results)
+		if err := pf.dfs(ctx, nextType, target, pathResource, visited, currentPath, results); err != nil {
+			return err
+		}
 
 		currentPath = currentPath[:len(currentPath)-1]
 		if !wasVisited {
 			visited[nextType] = false
 		}
 	}
+	return ctx.Err()
 }
 
 // satisfiesPathConstraint 检查路径是否满足 pathResource 约束
@@ -273,9 +298,15 @@ func containsContiguousResourcePath(pathTypes []ResourceType, pathResource []Res
 	return false
 }
 
+type pathRelation struct {
+	Schema     *RelationSchema
+	Direction  TraversalDirection
+	TargetType ResourceType
+}
+
 // getRelationsForType 获取指定资源类型的所有可用关系
-func (pf *PathFinder) getRelationsForType(resourceType ResourceType) []*RelationQueryInfo {
-	var results []*RelationQueryInfo
+func (pf *PathFinder) getRelationsForType(resourceType ResourceType) []*pathRelation {
+	var results []*pathRelation
 
 	// 从 SchemaProvider 获取所有关联 Schema
 	schemas := pf.schemaProvider.ListRelationSchemas(pf.namespace)
@@ -312,77 +343,50 @@ func (pf *PathFinder) isRelationCategoryAllowed(category RelationCategory) bool 
 	return false
 }
 
-// buildStaticRelationInfos 构建静态关系查询信息
-func (pf *PathFinder) buildStaticRelationInfos(schema *RelationSchema, currentType ResourceType) []*RelationQueryInfo {
-	info := &RelationQueryInfo{
-		Schema:    schema,
-		KeySuffix: "",
-	}
+// buildStaticRelationInfos 构建静态关系路径信息
+func (pf *PathFinder) buildStaticRelationInfos(schema *RelationSchema, currentType ResourceType) []*pathRelation {
+	info := &pathRelation{Schema: schema}
 
 	if schema.FromType == currentType {
 		info.Direction = DirectionOutbound
-		info.WhereField = fieldIn
-		info.SelectField = fieldOut
-		info.TargetField = fieldOut
 		info.TargetType = schema.ToType
 		if schema.ToType == currentType && !schema.IsDirectional {
-			// 非定向自关联同一张关系表既可从 in->out 走，也可从 out->in 走。
-			// 这里拆成两个带不同 key 后缀的 transition，避免 SQL 结果 map 中同名字段互相覆盖。
-			reverseInfo := &RelationQueryInfo{
-				Schema:      schema,
-				Direction:   DirectionInbound,
-				KeySuffix:   "_inbound",
-				WhereField:  fieldOut,
-				SelectField: fieldIn,
-				TargetField: fieldIn,
-				TargetType:  schema.FromType,
-			}
-			info.KeySuffix = "_outbound"
-			return []*RelationQueryInfo{info, reverseInfo}
+			// 非定向自关联既可沿 outbound 也可沿 inbound 方向遍历。
+			reverseInfo := &pathRelation{Schema: schema, Direction: DirectionInbound, TargetType: schema.FromType}
+			return []*pathRelation{info, reverseInfo}
 		}
 	} else {
 		if schema.IsDirectional {
 			return nil
 		}
 		info.Direction = DirectionInbound
-		info.WhereField = fieldOut
-		info.SelectField = fieldIn
-		info.TargetField = fieldIn
 		info.TargetType = schema.FromType
 	}
 
-	return []*RelationQueryInfo{info}
+	return []*pathRelation{info}
 }
 
-// buildDynamicRelationInfos 构建动态关系查询信息
-func (pf *PathFinder) buildDynamicRelationInfos(schema *RelationSchema, currentType ResourceType) []*RelationQueryInfo {
-	var results []*RelationQueryInfo
+// buildDynamicRelationInfos 构建动态关系路径信息
+func (pf *PathFinder) buildDynamicRelationInfos(schema *RelationSchema, currentType ResourceType) []*pathRelation {
+	var results []*pathRelation
 	direction := pf.dynamicDirection
 
 	canOutbound := schema.FromType == currentType
 	canInbound := schema.ToType == currentType
 
 	if (direction == DirectionOutbound || direction == DirectionBoth) && canOutbound {
-		results = append(results, &RelationQueryInfo{
-			Schema:      schema,
-			Direction:   DirectionOutbound,
-			KeySuffix:   "_outbound",
-			WhereField:  fieldIn,
-			SelectField: fieldOut,
-			TargetField: fieldOut,
-			TargetType:  schema.ToType,
+		results = append(results, &pathRelation{
+			Schema:     schema,
+			Direction:  DirectionOutbound,
+			TargetType: schema.ToType,
 		})
 	}
 
 	if (direction == DirectionInbound || direction == DirectionBoth) && canInbound {
-		results = append(results, &RelationQueryInfo{
-			Schema:      schema,
-			Direction:   DirectionInbound,
-			KeySuffix:   "_inbound",
-			WhereField:  fieldOut,
-			SelectField: fieldIn,
-			TargetField: fieldIn,
-			TargetType:  schema.FromType,
+		results = append(results, &pathRelation{
+			Schema:     schema,
+			Direction:  DirectionInbound,
+			TargetType: schema.FromType,
 		})
 	}
 

@@ -373,14 +373,17 @@ func TestConvertRelationDefinition(t *testing.T) {
 
 	t.Run("dynamic relation", func(t *testing.T) {
 		rd := &relation.RelationDefinition{
-			Namespace:    "",
-			Name:         "system_to_pod",
-			FromResource: "system",
-			ToResource:   "pod",
-			Category:     string(relation.RelationCategoryDynamic),
+			Namespace:     "",
+			Name:          "system_to_pod",
+			FromResource:  "system",
+			ToResource:    "pod",
+			Category:      string(relation.RelationCategoryDynamic),
+			IsDirectional: true,
 		}
 
-		_, ok := convertRelationDefinition(rd)
-		assert.False(t, ok)
+		conf, ok := convertRelationDefinition(rd)
+		assert.True(t, ok)
+		assert.Equal(t, "system_to_pod_flow", conf.MetricName)
+		assert.Equal(t, string(relation.RelationCategoryDynamic), conf.Category)
 	})
 }

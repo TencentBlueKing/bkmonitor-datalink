@@ -1,0 +1,1820 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": 3646,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "容量观察：加载 → 构图 → 输出 → 资源影响",
+      "options": {
+        "mode": "markdown",
+        "content": "沿下面板从上到下观察同一时间窗口：**实际输入 → 图规模与处理耗时 → 输出放大 → Pod 内存/CPU → 普通查询影响**。\n\n**逐关联指标明细待新埋点部署**：当前已有数据可按取数阶段统计；尚不能从现有指标还原每条关系的加载量。后面的「逐关联指标明细」已预置查询，部署前保持折叠。\n\n容量主视图按 **Pod 正则** 选择。业务 ID 只影响普通查询对照；模式只影响 topology 面板。无样本保持为空，不能解释成零成本。\n\n加载点数、标签字节、图对象和编码字节均不能直接换算成堆内存。新增关系的内存增量应在固定窗口/种子/H/并发下做 A/B 对照。"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 7
+      }
+    },
+    {
+      "id": 150,
+      "type": "row",
+      "title": "逐关联指标明细（待新埋点部署）",
+      "collapsed": true,
+      "panels": [
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "description": "需要部署新增 load 埋点。聚合所选 Pod，无业务/模式筛选。名称来自实际执行的 Schema 查询，包含自定义指标和资源 info 指标；空结果有调用次数。Matrix 返回后校验拒绝仍计入输入。label_bytes 仅标签名和值的文本长度，不是 heap/wire bytes。正反向及重复取数重复累计；__overflow__ 为名称基数保护汇总，__mixed__ 为多指标无法拆分。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "blue",
+                "mode": "fixed"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "decimals": 1,
+              "min": 0,
+              "noValue": "无样本",
+              "unit": "short"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "最近取数时间"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "dateTimeAsIso"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 0
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 8,
+            "w": 24,
+            "h": 8
+          },
+          "id": 151,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            },
+            "sortBy": [
+              {
+                "displayName": "关联指标 / 阶段",
+                "desc": false
+              }
+            ]
+          },
+          "pluginVersion": "10.2.2",
+          "targets": [
+            {
+              "datasource": {
+                "type": "bkmonitor-timeseries-datasource",
+                "uid": "000000002"
+              },
+              "refId": "A",
+              "source": "label_join((label_replace((sum by (metric_name,stage) (increase(unify_query_cmdb_timegraph_load_size_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",kind=\"series\"}[${window:raw}]))),\"column\",\"series\",\"metric_name\",\".*\") or label_replace((sum by (metric_name,stage) (increase(unify_query_cmdb_timegraph_load_size_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",kind=\"points\"}[${window:raw}]))),\"column\",\"points\",\"metric_name\",\".*\") or label_replace((sum by (metric_name,stage) (increase(unify_query_cmdb_timegraph_load_size_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",kind=\"label_bytes\"}[${window:raw}]))),\"column\",\"label_bytes\",\"metric_name\",\".*\") or label_replace((sum by (metric_name,stage) (increase(unify_query_cmdb_timegraph_load_operations_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}]))),\"column\",\"calls\",\"metric_name\",\".*\") or label_replace((sum by (metric_name,stage) (increase(unify_query_cmdb_timegraph_load_seconds_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}]))),\"column\",\"seconds\",\"metric_name\",\".*\") or label_replace((1000 * max by (metric_name,stage) (unify_query_cmdb_timegraph_load_last_timestamp_seconds{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"})),\"column\",\"last_seen\",\"metric_name\",\".*\")),\"item\",\" / \",\"metric_name\",\"stage\")",
+              "alias": "",
+              "promqlAlias": "",
+              "mode": "code",
+              "format": "table",
+              "step": "1m",
+              "type": "instant"
+            }
+          ],
+          "title": "逐关联指标加载账本 · 近 $window",
+          "transformations": [
+            {
+              "id": "groupingToMatrix",
+              "options": {
+                "rowField": "item",
+                "columnField": "column",
+                "valueField": "Value",
+                "emptyValue": "null"
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "renameByName": {
+                  "item\\column": "关联指标 / 阶段",
+                  "calls": "调用次数",
+                  "series": "实际返回序列次数",
+                  "points": "实际返回样本点",
+                  "label_bytes": "标签文本字节",
+                  "seconds": "累计取数耗时（秒）",
+                  "last_seen": "最近取数时间"
+                },
+                "excludeByName": {},
+                "indexByName": {
+                  "item\\column": 0,
+                  "calls": 1,
+                  "series": 2,
+                  "points": 3,
+                  "label_bytes": 4,
+                  "seconds": 5,
+                  "last_seen": 6
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "description": "新增埋点部署后生效。按真实返回 Matrix 点数速率排序；不是指标库中存量序列，也不是内存占比。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "min": 0,
+              "noValue": "无样本",
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 16,
+            "w": 24,
+            "h": 8
+          },
+          "id": 152,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "bkmonitor-timeseries-datasource",
+                "uid": "000000002"
+              },
+              "refId": "A",
+              "source": "topk(20, sum by (metric_name) (rate(unify_query_cmdb_timegraph_load_size_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=\"relation-edge\",kind=\"points\"}[${window:raw}])))",
+              "alias": "$tag_metric_name",
+              "promqlAlias": "$tag_metric_name",
+              "mode": "code",
+              "format": "time_series",
+              "step": "1m",
+              "type": "range"
+            }
+          ],
+          "title": "关联指标输入点数 Top 20",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "description": "新增埋点部署后生效。包含成功、空、partial 和失败的 Matrix 调用墙钟，不等于该指标独占 CPU 或整个拓扑请求耗时。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "min": 0,
+              "noValue": "无样本",
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 24,
+            "w": 24,
+            "h": 8
+          },
+          "id": 153,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "bkmonitor-timeseries-datasource",
+                "uid": "000000002"
+              },
+              "refId": "A",
+              "source": "sum by (metric_name,stage) (rate(unify_query_cmdb_timegraph_load_seconds_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}])) / (sum by (metric_name,stage) (rate(unify_query_cmdb_timegraph_load_operations_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}])) > 0)",
+              "alias": "$tag_metric_name $tag_stage",
+              "promqlAlias": "$tag_metric_name $tag_stage",
+              "mode": "code",
+              "format": "time_series",
+              "step": "1m",
+              "type": "range"
+            }
+          ],
+          "title": "关联指标平均取数耗时",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "description": "新增埋点部署后生效。区分成功、空、partial、失败、超限拒绝、取消、超时。未发起取数的指标不会出现，不能把不存在的指标解释为零容量。",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "showPoints": "never",
+                "spanNulls": false
+              },
+              "min": 0,
+              "noValue": "无样本",
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 32,
+            "w": 24,
+            "h": 8
+          },
+          "id": 154,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "bkmonitor-timeseries-datasource",
+                "uid": "000000002"
+              },
+              "refId": "A",
+              "source": "sum by (metric_name,stage,result) (increase(unify_query_cmdb_timegraph_load_operations_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}]))",
+              "alias": "$tag_metric_name $tag_stage $tag_result",
+              "promqlAlias": "$tag_metric_name $tag_stage $tag_result",
+              "mode": "code",
+              "format": "time_series",
+              "step": "1m",
+              "type": "range"
+            }
+          ],
+          "title": "逐指标取数终态 · 近 $window",
+          "type": "timeseries"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "01 · 实际加载了多少数据",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按所选 Pod 统计，不受业务 ID 或查询模式筛选；共用取数同时包含 topology 和旧路径入口。 increase 是窗口估算；相同序列被多次读取会重复累计，正反方向也分别计入。旧埋点不包含失败或 Matrix 校验拒绝的输入量；失败并非无成本。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "decimals": 1,
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 8
+      },
+      "id": 101,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": [
+          {
+            "displayName": "Pod / 取数阶段",
+            "desc": false
+          }
+        ]
+      },
+      "pluginVersion": "10.2.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "refId": "A",
+          "source": "label_join((label_replace((sum by (pod,stage) (increase(unify_query_cmdb_timegraph_size_count{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=~\"source-info|relation-edge|target-info\",kind=\"points\"}[${window:raw}]))),\"column\",\"calls\",\"pod\",\".*\") or label_replace((sum by (pod,stage) (increase(unify_query_cmdb_timegraph_size_sum{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=~\"source-info|relation-edge|target-info\",kind=\"series\"}[${window:raw}]))),\"column\",\"series\",\"pod\",\".*\") or label_replace((sum by (pod,stage) (increase(unify_query_cmdb_timegraph_size_sum{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=~\"source-info|relation-edge|target-info\",kind=\"points\"}[${window:raw}]))),\"column\",\"points\",\"pod\",\".*\")),\"item\",\" / \",\"pod\",\"stage\")",
+          "alias": "",
+          "promqlAlias": "",
+          "mode": "code",
+          "format": "table",
+          "step": "1m",
+          "type": "instant"
+        }
+      ],
+      "title": "输入账本 · 近 $window（成功取回并通过校验）",
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "rowField": "item",
+            "columnField": "column",
+            "valueField": "Value",
+            "emptyValue": "null"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "item\\column": "Pod / 取数阶段",
+              "calls": "取数次数",
+              "series": "累计序列次数",
+              "points": "累计样本点"
+            },
+            "excludeByName": {},
+            "indexByName": {
+              "item\\column": 0,
+              "calls": 1,
+              "series": 2,
+              "points": 3
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按所选 Pod 统计，不受业务 ID 或查询模式筛选；共用取数同时包含 topology 和旧路径入口。 已成功取回并通过校验的 Matrix 点数增速，非图当前驻留点数。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 12,
+        "h": 8
+      },
+      "id": 102,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "refId": "A",
+          "source": "sum by (pod,stage) (rate(unify_query_cmdb_timegraph_size_sum{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=~\"source-info|relation-edge|target-info\",kind=\"points\"}[${window:raw}]))",
+          "alias": "$tag_pod $tag_stage",
+          "promqlAlias": "$tag_pod $tag_stage",
+          "mode": "code",
+          "format": "time_series",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "输入吞吐 · 样本点/秒",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按所选 Pod 统计，不受业务 ID 或查询模式筛选；共用取数同时包含 topology 和旧路径入口。 sum/count 计算每次 Matrix 调用的平均输入点数，非整个 HTTP 请求的累计点数。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 17,
+        "w": 12,
+        "h": 8
+      },
+      "id": 103,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "refId": "A",
+          "source": "sum by (pod,stage) (rate(unify_query_cmdb_timegraph_size_sum{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=~\"source-info|relation-edge|target-info\",kind=\"points\"}[${window:raw}])) / (sum by (pod,stage) (rate(unify_query_cmdb_timegraph_size_count{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=~\"source-info|relation-edge|target-info\",kind=\"points\"}[${window:raw}])) > 0)",
+          "alias": "$tag_pod $tag_stage",
+          "promqlAlias": "$tag_pod $tag_stage",
+          "mode": "code",
+          "format": "time_series",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "平均单次取数 · 样本点",
+      "type": "timeseries"
+    },
+    {
+      "id": 110,
+      "type": "row",
+      "title": "02 · 构图规模与处理成本",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按所选 Pod 统计，不受业务 ID 或查询模式筛选；共用取数同时包含 topology 和旧路径入口。 每次构图退出时计数，失败也记录。shared 跨时间复用；time-buckets 是旧路径。对象数不是字节。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "id": 111,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "refId": "A",
+          "source": "sum by (pod,storage,kind,result) (rate(unify_query_cmdb_timegraph_storage_size_sum{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",kind=~\"nodes|relations|attribute_versions\"}[${window:raw}])) / (sum by (pod,storage,kind,result) (rate(unify_query_cmdb_timegraph_storage_size_count{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",kind=~\"nodes|relations|attribute_versions\"}[${window:raw}])) > 0)",
+          "alias": "$tag_pod $tag_storage $tag_kind $tag_result",
+          "promqlAlias": "$tag_pod $tag_storage $tag_kind $tag_result",
+          "mode": "code",
+          "format": "time_series",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "平均每次构图 · 唯一节点 / 关系 / 属性版本",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按所选 Pod 统计，不受业务 ID 或查询模式筛选；共用取数同时包含 topology 和旧路径入口。 matrix 是累计 Matrix 调用墙钟；local 是剩余本地墙钟，不是 CPU 时间。两者在同一 build 独立记录，不相减 P95。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "id": 112,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "refId": "A",
+          "source": "sum by (pod,storage,phase,result) (rate(unify_query_cmdb_timegraph_build_phase_seconds_sum{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}])) / (sum by (pod,storage,phase,result) (rate(unify_query_cmdb_timegraph_build_phase_seconds_count{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}])) > 0)",
+          "alias": "$tag_pod $tag_storage $tag_phase $tag_result",
+          "promqlAlias": "$tag_pod $tag_storage $tag_phase $tag_result",
+          "mode": "code",
+          "format": "time_series",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "平均每次构图耗时 · 取数 / 本地处理",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按 Pod 和统计窗口聚合；无业务标签，不受业务 ID 筛选。共用阶段没有 query_mode 标签，不受查询模式筛选。",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 26,
+        "w": 8,
+        "h": 8
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod $tag_stage $tag_result P95",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod $tag_stage $tag_result P95",
+          "refId": "A",
+          "source": "histogram_quantile(0.95, sum by (pod, le, stage, result) (rate(unify_query_cmdb_timegraph_stage_seconds_bucket{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}])))",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "阶段耗时 P95 · 辅助定位",
+      "type": "timeseries"
+    },
+    {
+      "id": 120,
+      "type": "row",
+      "title": "03 · 输出放大与字节量",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "节点和边按全部时间快照累计，非去重图对象。最高有限桶 100 万，不能当精确最大值。仅成功/partial 返回有规模样本。跟随 Pod/模式，不受业务筛选。",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "id": 32,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod $tag_query_mode $tag_kind P95",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod $tag_query_mode $tag_kind P95",
+          "refId": "A",
+          "source": "histogram_quantile(0.95, sum by (pod, le, query_mode, kind) (rate(unify_query_cmdb_topology_size_bucket{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",query_mode=~\"^(${query_mode:regex})$\"}[${window:raw}])))",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "输出快照规模 P95 · 时间点 / 节点 / 边",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "单个拓扑子项在预算检查时实际编码的字节；不是整批最终网络响应，也不是堆内存。无 query_mode/业务标签，不受这些筛选。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 35,
+        "w": 12,
+        "h": 8
+      },
+      "id": 121,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "refId": "A",
+          "source": "sum by (pod,result) (rate(unify_query_cmdb_topology_payload_bytes_sum{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=\"response-item\"}[${window:raw}])) / (sum by (pod,result) (rate(unify_query_cmdb_topology_payload_bytes_count{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",stage=\"response-item\"}[${window:raw}])) > 0)",
+          "alias": "$tag_pod $tag_result",
+          "promqlAlias": "$tag_pod $tag_result",
+          "mode": "code",
+          "format": "time_series",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "平均单项编码响应大小",
+      "type": "timeseries"
+    },
+    {
+      "id": 130,
+      "type": "row",
+      "title": "04 · Pod 资源与请求驻留",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "同一 cluster/namespace/container 聚合后按 pod 匹配，避免重复采集与标签不一致。百分比只是观测，不设置容量保证或自动限制。 不受「业务 ID」筛选：该指标不带业务标签，仍按原有 Pod/模式范围展示。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod working set / limit",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod working set / limit",
+          "refId": "A",
+          "source": "max by (pod) (container_memory_working_set_bytes{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",container=\"unify-query\"}) / on (pod) max by (pod) (kube_pod_container_resource_limits_memory_bytes{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",container=\"unify-query\"})",
+          "step": "1m",
+          "type": "range"
+        },
+        {
+          "alias": "$tag_pod container RSS / limit",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod container RSS / limit",
+          "refId": "B",
+          "source": "max by (pod) (container_memory_rss{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",container=\"unify-query\"}) / on (pod) max by (pod) (kube_pod_container_resource_limits_memory_bytes{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",container=\"unify-query\"})",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "容器内存 / Limit",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "HeapAlloc 为当前已分配堆，不等于 GC 后存活堆。GC goal 不是容器 limit。进程 RSS 与容器 working set 统计范围、采样时间不同，不相加。 不受「业务 ID」筛选：该指标不带业务标签，仍按原有 Pod/模式范围展示。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod 当前 heap alloc",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod 当前 heap alloc",
+          "refId": "A",
+          "source": "max by (pod) (go_memstats_heap_alloc_bytes{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"})",
+          "step": "1m",
+          "type": "range"
+        },
+        {
+          "alias": "$tag_pod next GC goal",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod next GC goal",
+          "refId": "B",
+          "source": "max by (pod) (go_memstats_next_gc_bytes{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"})",
+          "step": "1m",
+          "type": "range"
+        },
+        {
+          "alias": "$tag_pod process RSS",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod process RSS",
+          "refId": "C",
+          "source": "max by (pod) (process_resident_memory_bytes{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"})",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "Go Heap / GC Goal / 进程 RSS",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "整个 UQ 容器 CPU，包含普通查询及关系查询，不能按指标名拆账。不受业务/模式筛选。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "cores"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      },
+      "id": 133,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "refId": "A",
+          "source": "max by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",container=\"unify-query\"}[${window:raw}]))",
+          "alias": "$tag_pod CPU cores",
+          "promqlAlias": "$tag_pod CPU cores",
+          "mode": "code",
+          "format": "time_series",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "UQ 容器 CPU · 核数",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "整个进程的分配压力；包含普通查询、缓存等。不能除以 TimeGraph 请求数后称为每次 TimeGraph 分配量。 不受「业务 ID」筛选：该指标不带业务标签，仍按原有 Pod/模式范围展示。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 8,
+        "h": 8
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod 分配 bytes/s",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod 分配 bytes/s",
+          "refId": "A",
+          "source": "sum by (pod) (rate(go_memstats_alloc_bytes_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}]))",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "堆内存分配速率",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "累计 GC 暂停时间的每秒增量；不是 GC CPU 使用率，也不涵盖全部并发 GC 工作。GC CPU 专属指标尚待补齐。 不受「业务 ID」筛选：该指标不带业务标签，仍按原有 Pod/模式范围展示。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 52,
+        "w": 8,
+        "h": 8
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod GC pause / wall time",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod GC pause / wall time",
+          "refId": "A",
+          "source": "sum by (pod) (rate(go_gc_duration_seconds_sum{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\"}[${window:raw}]))",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "GC 暂停时间占比",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按 Pod 和统计窗口聚合；无业务标签，不受业务 ID 筛选。跟随查询模式筛选。",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 52,
+        "w": 8,
+        "h": 8
+      },
+      "id": 31,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod $tag_query_mode 在途",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod $tag_query_mode 在途",
+          "refId": "A",
+          "source": "sum by (pod, query_mode) (unify_query_cmdb_topology_inflight{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",query_mode=~\"^(${query_mode:regex})$\"})",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "共享拓扑在途查询",
+      "type": "timeseries"
+    },
+    {
+      "id": 140,
+      "type": "row",
+      "title": "05 · 查询结果与普通查询影响",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按 Pod 和统计窗口聚合；无业务标签，不受业务 ID 筛选。跟随查询模式筛选。",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 8,
+        "h": 8
+      },
+      "id": 28,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod $tag_scope $tag_query_mode $tag_result",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod $tag_scope $tag_query_mode $tag_result",
+          "refId": "A",
+          "source": "sum by (pod, scope, query_mode, result) (rate(unify_query_cmdb_topology_operations_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",query_mode=~\"^(${query_mode:regex})$\"}[${window:raw}]))",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "共享拓扑请求与子查询结果",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按 Pod 和统计窗口聚合；无业务标签，不受业务 ID 筛选。跟随查询模式筛选。",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 61,
+        "w": 8,
+        "h": 8
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod $tag_scope $tag_query_mode P95",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod $tag_scope $tag_query_mode P95",
+          "refId": "A",
+          "source": "histogram_quantile(0.95, sum by (pod, le, scope, query_mode) (rate(unify_query_cmdb_topology_operation_seconds_bucket{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",query_mode=~\"^(${query_mode:regex})$\"}[${window:raw}])))",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "共享拓扑请求与子查询 P95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "按 Pod 和统计窗口聚合；无业务标签，不受业务 ID 筛选。跟随查询模式筛选。",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 61,
+        "w": 8,
+        "h": 8
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod $tag_query_mode $tag_reason",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod $tag_query_mode $tag_reason",
+          "refId": "A",
+          "source": "sum by (pod, query_mode, reason) (rate(unify_query_cmdb_topology_rejections_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^${pod:raw}$\",query_mode=~\"^(${query_mode:regex})$\"}[${window:raw}]))",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "共享拓扑拒绝原因",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "跟随顶部「业务 ID」单选/多选/全部，比较 test 与普通 UQ。多选或全部时，同一 Pod/API 合并所选业务的直方图样本计算 P95，不是各业务 P95 的平均。不受 Pod 正则/TimeGraph 模式筛选影响。用于观察伴随变化，不证明慢查询一定由 TimeGraph 引起。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 69,
+        "w": 12,
+        "h": 8
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod $tag_api P95",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod $tag_api P95",
+          "refId": "A",
+          "source": "histogram_quantile(0.95, sum by (le, pod, api) (rate(unify_query_api_request_second_bucket{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^bk-datalink-unify-query-(test-.*|[a-f0-9]+-.*)$\",space_uid=~\"^bkcc__(${relation_biz_id:regex})$\",api=~\"^/query/ts(/promql)?$\"}[${window:raw}])))",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "所选业务普通查询 P95 · test / 普通 Pod",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "description": "跟随顶部「业务 ID」单选/多选/全部，比较 test 与普通 UQ；多选时按同一 Pod/API 合并所选业务的失败数和接收数再计算比例，不是各业务失败率的平均。不受 Pod 正则/TimeGraph 模式筛选影响。无请求不显示为 0% 成功；仅当 received 存在时补缺失 failed 为 0，分子分母为窗口增量估算。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "noValue": "无样本",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 69,
+        "w": 12,
+        "h": 8
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "alias": "$tag_pod $tag_api failed / received",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          },
+          "format": "time_series",
+          "mode": "code",
+          "promqlAlias": "$tag_pod $tag_api failed / received",
+          "refId": "A",
+          "source": "(sum by (pod, api) (increase(unify_query_api_request_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^bk-datalink-unify-query-(test-.*|[a-f0-9]+-.*)$\",space_uid=~\"^bkcc__(${relation_biz_id:regex})$\",api=~\"^/query/ts(/promql)?$\",status=\"failed\"}[${window:raw}])) or on (pod, api) (0 * sum by (pod, api) (increase(unify_query_api_request_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^bk-datalink-unify-query-(test-.*|[a-f0-9]+-.*)$\",space_uid=~\"^bkcc__(${relation_biz_id:regex})$\",api=~\"^/query/ts(/promql)?$\",status=\"received\"}[${window:raw}])))) / (sum by (pod, api) (increase(unify_query_api_request_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^bk-datalink-unify-query-(test-.*|[a-f0-9]+-.*)$\",space_uid=~\"^bkcc__(${relation_biz_id:regex})$\",api=~\"^/query/ts(/promql)?$\",status=\"received\"}[${window:raw}])) > 0)",
+          "step": "1m",
+          "type": "range"
+        }
+      ],
+      "title": "所选业务普通查询失败率 · test / 普通 Pod",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "unify-query",
+    "cmdb",
+    "relation",
+    "timegraph",
+    "v1beta3",
+    "capacity",
+    "memory",
+    "gc"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": "[0-9]+",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "bkmonitor-timeseries-datasource",
+          "uid": "000000002"
+        },
+        "definition": "query_result(count by (space_uid) (unify_query_api_request_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^bk-datalink-unify-query-.*$\",space_uid=~\"^bkcc__[0-9]+$\",status=\"received\",api=~\"^/api/v1/relation/(v1beta3/)?multi_resource(_range)?$\"}))",
+        "description": "筛选 Relation 请求量表及普通查询 P95/失败率；不筛选无业务标签的 Pod 内存、GC、TimeGraph 模型及下游指标。候选项来自 BKOP 最近 15 分钟有 Relation 接口计数器样本的 CMDB 业务，并非业务资产全集。",
+        "hide": 0,
+        "includeAll": true,
+        "label": "业务 ID",
+        "multi": true,
+        "name": "relation_biz_id",
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "2",
+            "value": "2"
+          },
+          {
+            "selected": false,
+            "text": "6",
+            "value": "6"
+          },
+          {
+            "selected": false,
+            "text": "7",
+            "value": "7"
+          },
+          {
+            "selected": false,
+            "text": "9",
+            "value": "9"
+          },
+          {
+            "selected": false,
+            "text": "10",
+            "value": "10"
+          }
+        ],
+        "query": {
+          "promql": "query_result(count by (space_uid) (unify_query_api_request_total{namespace=\"blueking\",bcs_cluster_id=\"BCS-K8S-00000\",pod=~\"^bk-datalink-unify-query-.*$\",space_uid=~\"^bkcc__[0-9]+$\",status=\"received\",api=~\"^/api/v1/relation/(v1beta3/)?multi_resource(_range)?$\"}))",
+          "queryType": "prometheus"
+        },
+        "refresh": 2,
+        "regex": "/space_uid=\"bkcc__([0-9]+)\"/",
+        "skipUrlSync": false,
+        "sort": 3,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "bk-datalink-unify-query-test-.*",
+          "value": "bk-datalink-unify-query-test-.*"
+        },
+        "hide": 0,
+        "label": "Pod 正则（默认 test）",
+        "name": "pod",
+        "options": [
+          {
+            "selected": true,
+            "text": "bk-datalink-unify-query-test-.*",
+            "value": "bk-datalink-unify-query-test-.*"
+          }
+        ],
+        "query": "bk-datalink-unify-query-test-.*",
+        "skipUrlSync": false,
+        "type": "textbox"
+      },
+      {
+        "allValue": "instant|range",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "label": "TimeGraph 模式",
+        "multi": true,
+        "name": "query_mode",
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "instant",
+            "value": "instant"
+          },
+          {
+            "selected": false,
+            "text": "range",
+            "value": "range"
+          }
+        ],
+        "query": "instant,range",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "15m",
+          "value": "15m"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "统计窗口",
+        "multi": false,
+        "name": "window",
+        "options": [
+          {
+            "selected": false,
+            "text": "5m",
+            "value": "5m"
+          },
+          {
+            "selected": true,
+            "text": "15m",
+            "value": "15m"
+          },
+          {
+            "selected": false,
+            "text": "1h",
+            "value": "1h"
+          }
+        ],
+        "query": "5m,15m,1h",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "unify-query TimeGraph 加载与容量",
+  "uid": "uq-timegraph-v1beta3",
+  "version": 7
+}

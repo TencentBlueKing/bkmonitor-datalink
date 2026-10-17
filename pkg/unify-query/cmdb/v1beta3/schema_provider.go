@@ -245,6 +245,9 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 	schemas := make([]relation.RelationSchema, 0, len(definitions))
 	for _, definition := range definitions {
 		schema := relation.ToRelationSchema(definition)
+		if schema.MetricName == "" && schema.IsDirectional {
+			schema.MetricName = definition.GetRelationName()
+		}
 		schemas = append(schemas, schema)
 	}
 	result := make([]RelationSchema, len(schemas))
@@ -256,6 +259,7 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 			ToType:        ResourceType(schema.ToType),
 			IsDirectional: schema.IsDirectional,
 			IsBelongsTo:   schema.IsBelongsTo,
+			MetricName:    schema.MetricName,
 		}
 	}
 	sort.SliceStable(result, func(i, j int) bool {
@@ -328,6 +332,7 @@ func (a *v1beta3SchemaProviderAdapter) GetRelationSchema(relationType RelationTy
 		ToType:        ResourceType(schema.ToType),
 		IsDirectional: schema.IsDirectional,
 		IsBelongsTo:   schema.IsBelongsTo,
+		MetricName:    schema.MetricName,
 	}, nil
 }
 

@@ -10,13 +10,19 @@
 package api
 
 import (
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/endpoint"
 )
 
 func RegisterRelation(registerHandler *endpoint.RegisterHandler) {
+	deadline := timeGraphHTTPDeadline(v1beta3.YoloModeEnabled)
 	registerHandler.Register("POST", RelationMultiResource, HandlerAPIRelationMultiResource)
 	registerHandler.Register("POST", RelationMultiResourceRange, HandlerAPIRelationMultiResourceRange)
+	registerHandler.Register("POST", RelationPathResources, deadline, HandlerAPIRelationPathResources)
+	registerHandler.Register("POST", RelationPathResourcesRange, deadline, HandlerAPIRelationPathResourcesRange)
 
-	registerHandler.Register("POST", RelationV1Beta3MultiResource, HandlerAPIRelationV1Beta3MultiResource)
-	registerHandler.Register("POST", RelationV1Beta3MultiResourceRange, HandlerAPIRelationV1Beta3MultiResourceRange)
+	registerHandler.Register("POST", RelationV1Beta3MultiResource, deadline, HandlerAPIRelationV1Beta3MultiResource)
+	registerHandler.Register("POST", RelationV1Beta3MultiResourceRange, deadline, HandlerAPIRelationV1Beta3MultiResourceRange)
+	registerHandler.Register("POST", RelationV1Beta3Topology, deadline, HandlerAPIRelationV1Beta3Topology)
+	registerHandler.Register("POST", RelationV1Beta3TopologyRange, deadline, HandlerAPIRelationV1Beta3TopologyRange)
 }

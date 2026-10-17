@@ -78,6 +78,11 @@ func (q *Querier) checkCtxDone() bool {
 }
 
 func (q *Querier) getQueryList(matchers []*labels.Matcher) (string, QueryList) {
+	reference, queries, _ := q.getQueryListWithFailures(matchers)
+	return reference, queries
+}
+
+func (q *Querier) getQueryListWithFailures(matchers []*labels.Matcher) (string, QueryList, QueryList) {
 	var (
 		ctx           = q.ctx
 		referenceName string
@@ -97,28 +102,29 @@ func (q *Querier) getQueryList(matchers []*labels.Matcher) (string, QueryList) {
 	}
 
 	queryList = make(QueryList, 0)
+	var failedQueries QueryList
 	queryReference.Range(referenceName, func(qry *metadata.Query) {
 		instance := GetTsDbInstance(ctx, qry)
+		query := &Query{
+			instance: instance, qry: qry,
+			start: qry.RouteStart, end: qry.RouteEnd,
+			endInclusive: qry.RouteEndInclusive,
+			queryStart:   qry.RouteQueryStart, queryEnd: qry.RouteQueryEnd,
+		}
 		if instance == nil {
 			metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"查询实例为空",
 			).Warn(ctx)
+			if metadata.IsStrictQueryFailures(ctx) {
+				failedQueries = append(failedQueries, query)
+			}
 			return
 		}
-
-		queryList = append(queryList, &Query{
-			instance:     instance,
-			qry:          qry,
-			start:        qry.RouteStart,
-			end:          qry.RouteEnd,
-			endInclusive: qry.RouteEndInclusive,
-			queryStart:   qry.RouteQueryStart,
-			queryEnd:     qry.RouteQueryEnd,
-		})
+		queryList = append(queryList, query)
 	})
 
-	return referenceName, queryList
+	return referenceName, queryList, failedQueries
 }
 
 // selectFn 获取原始数据
@@ -135,8 +141,9 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		setCh    = make(chan storage.SeriesSet, 1)
 		recvDone = make(chan struct{})
 
-		errorMessage strings.Builder
-		lock         sync.Mutex
+		errorMessage  strings.Builder
+		queryFailures []error
+		lock          sync.Mutex
 
 		wg  sync.WaitGroup
 		err error
@@ -149,7 +156,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 	span.Set("max-routing", q.maxRouting)
 
-	referenceName, queryList := q.getQueryList(matchers)
+	referenceName, queryList, failedQueries := q.getQueryListWithFailures(matchers)
 	span.Set("reference_name", referenceName)
 	mergeFunc := queryList.mergeFuncName(hints)
 	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step)
@@ -180,7 +187,24 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		}
 		lock.Lock()
 		errorMessage.WriteString(fmt.Sprintf("query error: %s ", queryErr.Error()))
+		if metadata.IsStrictQueryFailures(ctx) {
+			queryFailures = append(queryFailures, queryErr)
+		}
 		lock.Unlock()
+	}
+
+	var startTime, endTime time.Time
+	if qp.IsReference || hints == nil {
+		startTime, endTime = qp.Start, qp.End
+	} else {
+		// SelectHints are milliseconds; retain the request's sub-millisecond tail.
+		startTime = function.MsIntMergeNs(hints.Start, qp.Start)
+		endTime = function.MsIntMergeNs(hints.End, qp.End)
+	}
+	for _, failed := range failedQueries {
+		if _, relevant := failed.calcSelectStrategyWithMergeContext(startTime, endTime, mergeFunc); relevant {
+			recordQueryError(fmt.Errorf("query instance unavailable for storage type %q", failed.qry.StorageType))
+		}
 	}
 
 	for i, query := range queryList {
@@ -195,19 +219,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			span.Set(fmt.Sprintf("query_%d_qry_db", i), query.qry.DB)
 			span.Set(fmt.Sprintf("query_%d_qry_vmrt", i), query.qry.VmRt)
 
-			var (
-				startTime time.Time
-				endTime   time.Time
-			)
-			if qp.IsReference {
-				startTime = qp.Start
-				endTime = qp.End
-			} else {
-				// Prometheus SelectHints.Start/End 是毫秒时间戳；UQ 的 qp.Start/End 是 time.Time，保留了纳秒精度。
-				// 这里用 hints 决定 PromQL 实际需要的取数范围，再从 qp.Start/End 补回毫秒以下的纳秒尾数。
-				startTime = function.MsIntMergeNs(hints.Start, qp.Start)
-				endTime = function.MsIntMergeNs(hints.End, qp.End)
-			}
 			strategy, ok := query.calcSelectStrategyWithMergeContext(startTime, endTime, mergeFunc)
 			if !ok {
 				return
@@ -257,6 +268,10 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	close(setCh)
 	<-recvDone
 
+	if metadata.IsStrictQueryFailures(ctx) && ctx.Err() != nil {
+		return storage.ErrSeriesSet(ctx.Err())
+	}
+
 	// 多路并发后的兜底语义：
 	// 1) 至少一路成功：返回成功数据，并通过 status 标记部分失败；
 	// 2) 全部失败：保持历史行为，整体返回错误。
@@ -271,10 +286,14 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 			metadata.SetStatus(ctx, metadata.QueryTsPartial, fullMsg)
 		} else {
+			queryErr := errors.New(partialDetail)
+			if metadata.IsStrictQueryFailures(ctx) {
+				queryErr = errors.Join(queryFailures...)
+			}
 			return storage.ErrSeriesSet(metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"查询异常",
-			).Error(ctx, errors.New(partialDetail)))
+			).Error(ctx, queryErr))
 		}
 	}
 
@@ -354,27 +373,29 @@ func (q *Querier) selectorKey(hints *storage.SelectHints, matchers ...*labels.Ma
 	sort.Strings(routeDigest)
 	params := metadata.GetQueryParams(q.ctx)
 	payload := struct {
-		ReferenceName string
-		Matchers      []string
-		Hints         *storage.SelectHints
-		Grouping      []string
-		Min           int64
-		Max           int64
-		Start         int64
-		End           int64
-		Step          int64
-		Routes        []string
+		ReferenceName  string
+		Matchers       []string
+		Hints          *storage.SelectHints
+		Grouping       []string
+		Min            int64
+		Max            int64
+		Start          int64
+		End            int64
+		Step           int64
+		Routes         []string
+		StrictFailures bool
 	}{
-		ReferenceName: referenceName,
-		Matchers:      matcherValues,
-		Hints:         hints,
-		Grouping:      grouping,
-		Min:           q.min.UnixNano(),
-		Max:           q.max.UnixNano(),
-		Start:         params.Start.UnixNano(),
-		End:           params.End.UnixNano(),
-		Step:          params.Step.Nanoseconds(),
-		Routes:        routeDigest,
+		ReferenceName:  referenceName,
+		Matchers:       matcherValues,
+		Hints:          hints,
+		Grouping:       grouping,
+		Min:            q.min.UnixNano(),
+		Max:            q.max.UnixNano(),
+		Start:          params.Start.UnixNano(),
+		End:            params.End.UnixNano(),
+		Step:           params.Step.Nanoseconds(),
+		Routes:         routeDigest,
+		StrictFailures: metadata.IsStrictQueryFailures(q.ctx),
 	}
 	encoded, _ := json.Marshal(payload)
 	digest := sha256.Sum256(encoded)

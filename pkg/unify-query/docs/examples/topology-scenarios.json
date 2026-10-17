@@ -1,0 +1,441 @@
+{
+  "description": "Synthetic local fixture; example-cluster/demo and names below are not deployment identifiers. Three frames, t0/t0+60/t0+120 seconds. app-a is v1 then v2; app-b is always v2.",
+  "cases": [
+    {
+      "name": "known-node",
+      "path": "v1beta3/topology_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "max_hops": 1,
+        "source_type": "node",
+        "source_info": {
+          "bcs_cluster_id": "example-cluster",
+          "node": "node-a"
+        },
+        "allowed_relation_types": [
+          "node_with_pod"
+        ]
+      },
+      "expected_node_counts": [
+        2,
+        2,
+        2
+      ],
+      "expected_entities_by_frame": [
+        [
+          "node:node-a",
+          "pod:pod-a"
+        ],
+        [
+          "node:node-a",
+          "pod:pod-a"
+        ],
+        [
+          "node:node-a",
+          "pod:pod-a"
+        ]
+      ],
+      "expected_edge_counts": [
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "name": "known-pod",
+      "path": "v1beta3/topology_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "max_hops": 1,
+        "source_type": "pod",
+        "source_info": {
+          "bcs_cluster_id": "example-cluster",
+          "namespace": "demo",
+          "pod": "pod-a"
+        },
+        "allowed_relation_types": [
+          "node_with_pod",
+          "container_with_pod"
+        ]
+      },
+      "expected_node_counts": [
+        3,
+        3,
+        3
+      ],
+      "expected_entities_by_frame": [
+        [
+          "pod:pod-a",
+          "node:node-a",
+          "container:app-a"
+        ],
+        [
+          "pod:pod-a",
+          "node:node-a",
+          "container:app-a"
+        ],
+        [
+          "pod:pod-a",
+          "node:node-a",
+          "container:app-a"
+        ]
+      ],
+      "expected_edge_counts": [
+        4,
+        4,
+        4
+      ]
+    },
+    {
+      "name": "deployment-workload",
+      "path": "v1beta3/topology_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "max_hops": 2,
+        "source_type": "deployment",
+        "source_info": {
+          "bcs_cluster_id": "example-cluster",
+          "namespace": "demo",
+          "deployment": "web"
+        },
+        "allowed_relation_types": [
+          "deployment_with_replicaset",
+          "pod_with_replicaset"
+        ]
+      },
+      "expected_node_counts": [
+        4,
+        4,
+        4
+      ],
+      "expected_entities_by_frame": [
+        [
+          "deployment:web",
+          "replicaset:web-rs",
+          "pod:pod-a",
+          "pod:pod-b"
+        ],
+        [
+          "deployment:web",
+          "replicaset:web-rs",
+          "pod:pod-a",
+          "pod:pod-b"
+        ],
+        [
+          "deployment:web",
+          "replicaset:web-rs",
+          "pod:pod-a",
+          "pod:pod-b"
+        ]
+      ],
+      "expected_edge_counts": [
+        6,
+        6,
+        6
+      ]
+    },
+    {
+      "name": "attribute-roots",
+      "path": "v1beta3/topology_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "max_hops": 1,
+        "source_type": "container",
+        "source_info": {
+          "bcs_cluster_id": "example-cluster",
+          "namespace": "demo"
+        },
+        "allowed_relation_types": [
+          "container_with_pod"
+        ],
+        "source_expand_info": {
+          "version": "v2"
+        }
+      },
+      "expected_node_counts": [
+        2,
+        4,
+        4
+      ],
+      "expected_entities_by_frame": [
+        [
+          "container:app-b",
+          "pod:pod-b"
+        ],
+        [
+          "container:app-a",
+          "pod:pod-a",
+          "container:app-b",
+          "pod:pod-b"
+        ],
+        [
+          "container:app-a",
+          "pod:pod-a",
+          "container:app-b",
+          "pod:pod-b"
+        ]
+      ],
+      "expected_edge_counts": [
+        2,
+        4,
+        4
+      ]
+    },
+    {
+      "name": "historical-detail",
+      "path": "v1beta3/topology_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "max_hops": 1,
+        "source_type": "container",
+        "source_info": {
+          "bcs_cluster_id": "example-cluster",
+          "namespace": "demo",
+          "pod": "pod-a",
+          "container": "app-a"
+        },
+        "allowed_relation_types": [
+          "container_with_pod"
+        ],
+        "source_expand_info": {
+          "container": "app-a"
+        }
+      },
+      "expected_node_counts": [
+        2,
+        2,
+        2
+      ],
+      "expected_entities_by_frame": [
+        [
+          "container:app-a",
+          "pod:pod-a"
+        ],
+        [
+          "container:app-a",
+          "pod:pod-a"
+        ],
+        [
+          "container:app-a",
+          "pod:pod-a"
+        ]
+      ],
+      "expected_edge_counts": [
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "name": "output-filter",
+      "path": "v1beta3/topology_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "max_hops": 2,
+        "source_type": "deployment",
+        "source_info": {
+          "bcs_cluster_id": "example-cluster",
+          "namespace": "demo",
+          "deployment": "web"
+        },
+        "allowed_relation_types": [
+          "deployment_with_replicaset",
+          "pod_with_replicaset"
+        ],
+        "target_types": [
+          "pod"
+        ]
+      },
+      "expected_node_counts": [
+        3,
+        3,
+        3
+      ],
+      "expected_entities_by_frame": [
+        [
+          "deployment:web",
+          "pod:pod-a",
+          "pod:pod-b"
+        ],
+        [
+          "deployment:web",
+          "pod:pod-a",
+          "pod:pod-b"
+        ],
+        [
+          "deployment:web",
+          "pod:pod-a",
+          "pod:pod-b"
+        ]
+      ],
+      "expected_edge_counts": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "empty-roots",
+      "path": "v1beta3/topology_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "max_hops": 1,
+        "source_type": "node",
+        "source_info": {
+          "bcs_cluster_id": "example-cluster",
+          "node": "not-present"
+        },
+        "allowed_relation_types": [
+          "node_with_pod"
+        ]
+      },
+      "expected_node_counts": [
+        0,
+        0,
+        0
+      ],
+      "expected_entities_by_frame": [
+        [],
+        [],
+        []
+      ],
+      "expected_edge_counts": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "legacy-target",
+      "path": "v1beta3/multi_resource_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "source_type": "node",
+        "source_info": {
+          "bcs_cluster_id": "example-cluster",
+          "node": "node-a"
+        },
+        "target_type": "pod",
+        "path_resource": [
+          "node",
+          "pod"
+        ],
+        "target_info_show": false
+      }
+    },
+    {
+      "name": "explicit-path",
+      "path": "path_resources_range",
+      "query": {
+        "start_time": 1700000000,
+        "end_time": 1700000120,
+        "step": "1m",
+        "look_back_delta": "5m",
+        "source_type": "node",
+        "matcher": {
+          "bcs_cluster_id": "example-cluster",
+          "node": "node-a"
+        },
+        "target_types": [
+          "pod"
+        ],
+        "path_resources": [
+          [
+            "node",
+            "pod"
+          ]
+        ]
+      }
+    }
+  ],
+  "entities": {
+    "node:node-a": {
+      "resource_type": "node",
+      "dimensions": {
+        "bcs_cluster_id": "example-cluster",
+        "node": "node-a"
+      }
+    },
+    "pod:pod-a": {
+      "resource_type": "pod",
+      "dimensions": {
+        "bcs_cluster_id": "example-cluster",
+        "pod": "pod-a",
+        "namespace": "demo"
+      }
+    },
+    "container:app-a": {
+      "resource_type": "container",
+      "dimensions": {
+        "bcs_cluster_id": "example-cluster",
+        "container": "app-a",
+        "namespace": "demo",
+        "pod": "pod-a"
+      }
+    },
+    "node:node-b": {
+      "resource_type": "node",
+      "dimensions": {
+        "bcs_cluster_id": "example-cluster",
+        "node": "node-b"
+      }
+    },
+    "pod:pod-b": {
+      "resource_type": "pod",
+      "dimensions": {
+        "bcs_cluster_id": "example-cluster",
+        "pod": "pod-b",
+        "namespace": "demo"
+      }
+    },
+    "container:app-b": {
+      "resource_type": "container",
+      "dimensions": {
+        "bcs_cluster_id": "example-cluster",
+        "container": "app-b",
+        "namespace": "demo",
+        "pod": "pod-b"
+      }
+    },
+    "deployment:web": {
+      "resource_type": "deployment",
+      "dimensions": {
+        "bcs_cluster_id": "example-cluster",
+        "namespace": "demo",
+        "deployment": "web"
+      }
+    },
+    "replicaset:web-rs": {
+      "resource_type": "replicaset",
+      "dimensions": {
+        "bcs_cluster_id": "example-cluster",
+        "namespace": "demo",
+        "replicaset": "web-rs"
+      }
+    }
+  }
+}

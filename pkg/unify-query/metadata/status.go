@@ -69,6 +69,9 @@ func SetStatus(ctx context.Context, code, message string) {
 
 // GetStatus
 func GetStatus(ctx context.Context) *Status {
+	if md == nil {
+		return nil
+	}
 	r, ok := md.get(ctx, statusKey(ctx))
 	if ok {
 		if v, ok := r.(*Status); ok {

@@ -73,3 +73,36 @@ func TestParseDorisSQLWithVisitorKeepsArithmeticParentheses(t *testing.T) {
 		})
 	}
 }
+
+// 括号内的字段同样经过维度映射，且不带 AS；登记的忽略字段与不带括号时一致。
+// WHERE 中的逻辑分组由条件节点自行输出括号，不受本修复影响。
+func TestParseDorisSQLWithVisitorParenthesesKeepFieldMapping(t *testing.T) {
+	fieldAlias := map[string]string{"pod_namespace": "__ext.io_kubernetes_pod_namespace"}
+	parse := func(q string) (string, []string) {
+		var ignored []string
+		opt := &Option{
+			DimensionTransform: func(s string) (string, string) {
+				if v, ok := fieldAlias[s]; ok {
+					return v, s
+				}
+				return s, ""
+			},
+			AddIgnoreField: func(s string) { ignored = append(ignored, s) },
+			Tables:         []string{"t.doris"},
+		}
+		sql, err := ParseDorisSQLWithVisitor(metadata.InitHashID(context.Background()), q, opt)
+		assert.Nil(t, err)
+		return sql, ignored
+	}
+
+	grouped, groupedIgnored := parse("SELECT (pod_namespace + 0) / 2 AS x")
+	assert.Equal(t, "SELECT (__ext.io_kubernetes_pod_namespace + 0) / 2 AS x FROM t.doris LIMIT 100", grouped)
+	_, plainIgnored := parse("SELECT pod_namespace + 0 / 2 AS x")
+	assert.Equal(t, plainIgnored, groupedIgnored)
+
+	sql, _ := parse("SELECT COUNT(*) AS n WHERE (pod_namespace + 1) > 2")
+	assert.Equal(t, "SELECT COUNT(*) AS n FROM t.doris WHERE (__ext.io_kubernetes_pod_namespace + 1) > 2 LIMIT 100", sql)
+
+	sql, _ = parse("SELECT pod_namespace AS p, COUNT(*) AS n WHERE (a = 1 OR b = 2) AND c = 3 GROUP BY pod_namespace")
+	assert.Equal(t, "SELECT __ext.io_kubernetes_pod_namespace AS p, COUNT(*) AS n FROM t.doris WHERE ( a = 1 OR b = 2 ) AND c = 3 GROUP BY __ext.io_kubernetes_pod_namespace LIMIT 100", sql)
+}

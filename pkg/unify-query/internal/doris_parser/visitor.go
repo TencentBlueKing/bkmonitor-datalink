@@ -1793,11 +1793,9 @@ func (v *Statement) String() string {
 			}
 
 			if v.Where != "" {
-				if res == "" {
-					res = v.Where
-				} else {
-					res = fmt.Sprintf("%s AND %s", res, v.Where)
-				}
+				// 用户条件与注入条件各自加括号再合并：用户条件含 OR 时，直接用 AND 拼接会让注入的时间条件
+				// 只约束最后一个 OR 分支。
+				res = joinWhereConditions(res, v.Where)
 			}
 		case LimitItem:
 			key = ""

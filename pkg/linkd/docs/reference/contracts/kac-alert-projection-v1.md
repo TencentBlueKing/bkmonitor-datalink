@@ -14,7 +14,7 @@ namespace 使用 URL，name 为紧凑 JSON 数组 `["linkd:kac-alert-projection:
 控制面按租户与 Alert 固定分配到 64 个通道，同一告警串行，不同告警并发。
 每个通道最多收集 500 条、等待 10ms；批内重复投影合并，动作独立保留。
 按租户批量读取最新 Alert，ES 使用 realtime `_mget`，不依赖搜索 refresh。
-新建执行既有 KAC 结构转换；更新通过 `_bulk` 只写等级、动作、生命周期、关闭信息、合并关系和策略标签。
+新建执行既有 KAC 结构转换；更新通过 `_bulk` 只写最新内容、等级、动作、生命周期、关闭信息、合并关系和策略标签。
 每次 Bulk 默认不超过 4MiB；单条超过预算记失败。只执行当前消息，无补偿扫描或投影 CAS。
 
 ## 索引与字段所有权
@@ -25,8 +25,8 @@ rollover 后继续更新原物理索引，不能总向当前 write alias upsert�
 
 | 字段 | 行为 |
 | --- | --- |
-| 身份、来源、内容、丰富数据、storage_time 和处置默认值 | 新建时转换，后续普通同步不重置 |
-| level、action、source_alarm_status、close_reason、close_time | 从最新 Alert 更新 |
+| 身份、来源、丰富数据、storage_time 和处置默认值 | 新建时转换，后续普通同步不重置 |
+| content、level、action、source_alarm_status、close_reason、close_time | 从最新 Alert 更新；content 包含持续触发更新及显式空串 |
 | associate_alarm_id、associate_count | 同步当前合并关系及解联 |
 | status | 屏蔽、合并及终态按业务转换；普通 active 保留 KAC 处置状态 |
 | linkd_disposal_status | KAC 文档内的业务字段；屏蔽/合并前保存原处置状态，解除后恢复 |

@@ -74,6 +74,7 @@ func TestElasticsearchBulkLifecycleAndDisposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	alert.Severity = "critical"
+	alert.Content = "updated source content"
 	alert.PolicyTags = []int64{7}
 	for _, blocked := range []bool{true, false} {
 		alert.Shield = domain.AlertShield{Active: blocked}
@@ -87,6 +88,9 @@ func TestElasticsearchBulkLifecycleAndDisposition(t *testing.T) {
 		}
 		if doc["status"] != want || doc["level"] != "critical" {
 			t.Fatal("state mapping", doc["status"], doc["level"])
+		}
+		if doc["content"] != alert.Content {
+			t.Fatalf("current Alert content was not projected: %v", doc["content"])
 		}
 		if len(doc["tag_info"].([]any)) != 2 || doc["conductor"].([]any)[0] != "operator" || doc["field_extra_info"].(map[string]any)["snapshot"] != "kac-snapshot" {
 			t.Fatal("KAC fields overwritten")

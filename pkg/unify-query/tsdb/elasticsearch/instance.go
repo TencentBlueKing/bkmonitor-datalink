@@ -351,6 +351,9 @@ func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFac
 	}
 
 	source := elastic.NewSearchSource()
+	if qb.ExactTotal {
+		source.TrackTotalHits(true)
+	}
 	for _, order := range fact.Orders() {
 		fs := elastic.NewFieldSort(order.Name).Order(order.Ast)
 		unmappedType := order.UnmappedType

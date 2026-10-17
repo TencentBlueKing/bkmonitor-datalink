@@ -24,7 +24,6 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
@@ -97,7 +96,8 @@ func getSetListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]map
 	cmdbApi := getCmdbApi(bkTenantId)
 
 	// 请求集群信息
-	result, err := api.BatchApiRequest(
+	result, err := BatchApiRequest(
+		ctx,
 		cmdbApiPageSize,
 		func(resp any) (int, error) {
 			var result cmdb.SearchSetResp

@@ -1,0 +1,61 @@
+{
+  "priority": 100,
+  "index_patterns": [
+    "rum_global_session_precalculate_auto_*",
+    "write_*_rum_global_session_precalculate_auto_*"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 3,
+      "number_of_replicas": 0,
+      "refresh_interval": "10s"
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "time": { "type": "long" },
+        "bk_biz_id": { "type": "integer" },
+        "app_name": { "type": "keyword" },
+        "window_id": { "type": "keyword" },
+        "attributes.session.id": { "type": "keyword" },
+        "attributes.user.id": { "type": "keyword" },
+        "attributes.session.has_replay": { "type": "boolean" },
+        "resource.service.name": { "type": "keyword" },
+        "resource.service.version": { "type": "keyword" },
+        "resource.deployment.environment.name": { "type": "keyword" },
+        "resource.telemetry.sdk.name": { "type": "keyword" },
+        "resource.telemetry.sdk.language": { "type": "keyword" },
+        "resource.telemetry.sdk.version": { "type": "keyword" },
+        "resource.user_agent.name": { "type": "keyword" },
+        "resource.user_agent.version": { "type": "keyword" },
+        "resource.user_agent.os.name": { "type": "keyword" },
+        "resource.device.type": { "type": "keyword" },
+        "attributes.network.effective_type": { "type": "keyword" },
+        "trace_count": { "type": "integer" },
+        "close_reason": { "type": "keyword" },
+        "duration": { "type": "long" },
+        "updated_at_ts": { "type": "long" },
+        "close_time": { "type": "long" },
+        "closed": { "type": "boolean" },
+        "is_active": { "type": "boolean" },
+        "min_start_time": { "type": "long" },
+        "max_end_time": { "type": "long" },
+        "date": { "type": "date", "format": "strict_date" },
+        "view_count": { "type": "integer" },
+        "action_count": { "type": "long" },
+        "resource_count": { "type": "long" },
+        "error_count": { "type": "long" },
+        "request_count": { "type": "long" },
+        "long_task_count": { "type": "long" },
+        "frustration_count": { "type": "long" },
+        "enter_url_template": { "type": "keyword", "ignore_above": 2048 },
+        "exit_url_template": { "type": "keyword", "ignore_above": 2048 },
+        "attributes.view.loading_time": { "type": "long" },
+        "request_error_count": { "type": "integer" },
+        "web_vitals.lcp": { "type": "long" },
+        "web_vitals.inp": { "type": "long" },
+        "web_vitals.cls": { "type": "double" }
+      }
+    }
+  }
+}

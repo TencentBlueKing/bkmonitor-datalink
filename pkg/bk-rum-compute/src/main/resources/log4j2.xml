@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] %logger{36} - %msg%n"/>
+        </Console>
+    </Appenders>
+    <Loggers>
+        <!-- 应用日志(INFO):view/session 聚合、ES 写入、窗口关闭等 -->
+        <Logger name="com.tencent.bk.bkmonitor.rum" level="debug"/>
+        <!-- Flink 框架日志降噪;需要看作业图/启动信息可改为 INFO -->
+        <Logger name="org.apache.flink" level="WARN"/>
+        <Root level="INFO">
+            <AppenderRef ref="Console"/>
+        </Root>
+    </Loggers>
+</Configuration>

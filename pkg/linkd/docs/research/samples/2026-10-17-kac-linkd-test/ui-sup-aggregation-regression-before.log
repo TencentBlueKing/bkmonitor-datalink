@@ -1,0 +1,46 @@
+
+> @kingeye/kef@1.0.17 test:kac-suppression
+> node --test tests/kac/suppression-contract.cjs
+
+✔ suppression candidate fields exclude disposition fields and retain custom fields (0.344083ms)
+✔ changing duration units uses the same thirty-day ceiling (0.068542ms)
+✔ policy limits accept regexp2 and target-only rules, reject unsupported fields and oversized regex (0.161ms)
+✔ active-time control stops before adding a sixty-fifth period (12.245083ms)
+✔ regexp help remains a compilable shared component (5.324833ms)
+✔ filter-only save submits a canonical empty target and keeps non-BKCC space (0.275416ms)
+✖ aggregation detail refreshes labels when the field catalog arrives after policy detail (13.838792ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 6
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 205.031166
+
+✖ failing tests:
+
+test at tests/kac/suppression-contract.cjs:86:1
+✖ aggregation detail refreshes labels when the field catalog arrives after policy detail (13.838792ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    [
+  +   undefined,
+  +   undefined,
+  +   undefined
+  -   '告警名称',
+  -   '自定义责任人',
+  -   'removed_field'
+    ]
+
+      at TestContext.<anonymous> (${KINGEYE_WORKSPACE}/src/web/tests/kac/suppression-contract.cjs:97:10)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ undefined, undefined, undefined ],
+    expected: [ '告警名称', '自定义责任人', 'removed_field' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

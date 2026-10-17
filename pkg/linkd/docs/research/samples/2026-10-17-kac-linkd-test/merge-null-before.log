@@ -1,0 +1,109 @@
+task: [dev-test] uv run python -m pytest --maxfail=5 --durations=10 --reuse-db --disable-warnings kingeye/kac/tests/linkd/test_merge_save.py -k 'optional_target_from_page or model_without_target' -q
+${KINGEYE_WORKSPACE}/.venv/lib/python3.11/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (1.26.20) or chardet (7.4.3)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+F.F...                                                                   [100%]
+=================================== FAILURES ===================================
+_____ test_optional_target_from_page_is_normalized_before_save[False-None] _____
+
+environment = ('system', <Mock id='4723192784'>), target = None
+
+    @pytest.mark.parametrize("target", [None, {}])
+    def test_optional_target_from_page_is_normalized_before_save(environment, target):
+        tenant, send = environment
+        data = payload()
+        data["target_descriptor"] = target
+        with TestCase.captureOnCommitCallbacks(execute=True):
+>           instance = save(data)
+
+kingeye/kac/tests/linkd/test_merge_save.py:118:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+kingeye/kac/tests/linkd/test_merge_save.py:84: in save
+    serializer.is_valid(raise_exception=True)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = AlarmMergeSerializer(None, data={'name': '联合故障', 'is_enable': True, 'space_code': 'bkcc__2', 'model_id': '', 'target_d...quired=False, style={'base_template': 'textarea.html'})
+    is_cycle_merge = BooleanField(label='周期合并', required=False)
+
+    def is_valid(self, *, raise_exception=False):
+        assert hasattr(self, 'initial_data'), (
+            'Cannot call `.is_valid()` as no `data=` keyword argument was '
+            'passed when instantiating the serializer instance.'
+        )
+
+        if not hasattr(self, '_validated_data'):
+            try:
+                self._validated_data = self.run_validation(self.initial_data)
+            except ValidationError as exc:
+                self._validated_data = {}
+                self._errors = exc.detail
+            else:
+                self._errors = {}
+
+        if self._errors and raise_exception:
+>           raise ValidationError(self.errors)
+E           rest_framework.exceptions.ValidationError: {'target_descriptor': [ErrorDetail(string='该字段不能为 null。', code='null')]}
+
+../.venv/lib/python3.11/site-packages/rest_framework/serializers.py:231: ValidationError
+---------------------------- Captured stdout setup -----------------------------
+INFO 2026-10-17 22:54:57 ${KINGEYE_WORKSPACE}/src/kingeye/kmc/home_application/signals/init_settings.py:435 check_migrate() PID:72424 TID:8290099584
+  first deploy，SysSetting未创建
+
+INFO 2026-10-17 22:54:57 ${KINGEYE_WORKSPACE}/src/kingeye/kmc/home_application/signals/init_settings.py:435 check_migrate() PID:72424 TID:8290099584
+  first deploy，SysSetting未创建
+
+Cache table 'django_cache' already exists.
+Cache table 'license_cache' already exists.
+------------------------------ Captured log setup ------------------------------
+INFO     app:init_settings.py:435 first deploy，SysSetting未创建
+_____ test_optional_target_from_page_is_normalized_before_save[True-None] ______
+
+environment = ('merge-contract-tenant', <Mock id='4715743504'>), target = None
+
+    @pytest.mark.parametrize("target", [None, {}])
+    def test_optional_target_from_page_is_normalized_before_save(environment, target):
+        tenant, send = environment
+        data = payload()
+        data["target_descriptor"] = target
+        with TestCase.captureOnCommitCallbacks(execute=True):
+>           instance = save(data)
+
+kingeye/kac/tests/linkd/test_merge_save.py:118:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+kingeye/kac/tests/linkd/test_merge_save.py:84: in save
+    serializer.is_valid(raise_exception=True)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = AlarmMergeSerializer(None, data={'name': '联合故障', 'is_enable': True, 'space_code': 'bkcc__2', 'model_id': '', 'target_d...quired=False, style={'base_template': 'textarea.html'})
+    is_cycle_merge = BooleanField(label='周期合并', required=False)
+
+    def is_valid(self, *, raise_exception=False):
+        assert hasattr(self, 'initial_data'), (
+            'Cannot call `.is_valid()` as no `data=` keyword argument was '
+            'passed when instantiating the serializer instance.'
+        )
+
+        if not hasattr(self, '_validated_data'):
+            try:
+                self._validated_data = self.run_validation(self.initial_data)
+            except ValidationError as exc:
+                self._validated_data = {}
+                self._errors = exc.detail
+            else:
+                self._errors = {}
+
+        if self._errors and raise_exception:
+>           raise ValidationError(self.errors)
+E           rest_framework.exceptions.ValidationError: {'target_descriptor': [ErrorDetail(string='该字段不能为 null。', code='null')]}
+
+../.venv/lib/python3.11/site-packages/rest_framework/serializers.py:231: ValidationError
+============================= slowest 10 durations =============================
+0.75s setup    src/kingeye/kac/tests/linkd/test_merge_save.py::test_optional_target_from_page_is_normalized_before_save[False-None]
+0.02s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_optional_target_from_page_is_normalized_before_save[True-target1]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_optional_target_from_page_is_normalized_before_save[False-target1]
+
+(7 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED kingeye/kac/tests/linkd/test_merge_save.py::test_optional_target_from_page_is_normalized_before_save[False-None]
+FAILED kingeye/kac/tests/linkd/test_merge_save.py::test_optional_target_from_page_is_normalized_before_save[True-None]
+2 failed, 4 passed, 20 deselected, 62 warnings in 0.97s
+task: Failed to run task "dev-test": exit status 1

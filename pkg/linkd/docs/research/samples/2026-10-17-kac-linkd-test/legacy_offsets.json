@@ -1,0 +1,18 @@
+{
+  "at": "2026-10-17T13:48:37.045913+00:00",
+  "exit": 0,
+  "results": [
+    {
+      "source_id": "5c27f9ab-34f3-48d4-a74e-13f00abe2658",
+      "topic": "cw_kingeye_linkd_system_alarm_source_kac_iafeclpqfkb6z53zfulq",
+      "group": "linkd-kac_iafeclpqfkb6z53zfulq",
+      "offsets": [
+        {
+          "partition": 0,
+          "end": 4,
+          "committed": 4
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1274 @@
+{
+  "summary": {
+    "final_counts": {
+      "serializer": {
+        "total": 24,
+        "passed": 24,
+        "failed": 0
+      },
+      "runtime": {
+        "total": 19,
+        "passed": 19,
+        "failed": 0
+      },
+      "ui": {
+        "total": 11,
+        "passed": 11,
+        "failed": 0
+      },
+      "http": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0
+      },
+      "delivery": {
+        "total": 1,
+        "passed": 1,
+        "failed": 0
+      }
+    },
+    "final_total": 57,
+    "final_passed": 57,
+    "final_failed": 0,
+    "regression_unit_tests": {
+      "passed": 12,
+      "failed": 0,
+      "eslint": "passed"
+    },
+    "before_fix_failures": 2,
+    "delivery_incidents_resolved": 1,
+    "improvement_items": 2,
+    "cleanup": {
+      "policies_remaining": 0,
+      "deleted_policy_tombstones": 3,
+      "closed_children": 6,
+      "closed_parents": 3,
+      "active_alerts": 0,
+      "shared_source_changed": false,
+      "new_tags_created": 0
+    },
+    "evidence_files": {
+      "serializer": [
+        "backend_boundaries.json"
+      ],
+      "runtime": [
+        "live_immediate.json",
+        "live_periodic.json",
+        "live_32.json",
+        "close_alerts.json",
+        "delete_tombstone.json"
+      ],
+      "ui": [
+        "refresh-immediate.json",
+        "null-target-retest.json",
+        "invalid-variable-ui.json",
+        "clone-and-32-ui.json",
+        "toggle-preserve-ui.json",
+        "clear-fields-ui.json",
+        "output-field-filter-ui.json",
+        "parent-children-ui.json",
+        "code-missing-after.json",
+        "code-save-after.json",
+        "delete-ui.json"
+      ],
+      "http": [
+        "http-boundary-code-fixture.json"
+      ],
+      "delivery": [
+        "static-delivery-retest.json"
+      ]
+    },
+    "invalid_trials": "invalid-trials.json",
+    "findings": "findings.json",
+    "screenshot": "ui-merge.png",
+    "final_assertions": [
+      {
+        "case": "merge_backend_two_group_valid",
+        "result": "passed",
+        "accepted": true,
+        "expected": true,
+        "error": "",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_32_group_valid",
+        "result": "passed",
+        "accepted": true,
+        "expected": true,
+        "error": "",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_33_group_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'policy': [ErrorDetail(string='合并规则必须包含1至32个非空条件组', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_empty_group_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'policy': [ErrorDetail(string='合并规则必须包含1至32个非空条件组', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_missing_group_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'policy': [ErrorDetail(string='合并规则必须包含1至32个非空条件组', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_unknown_template_field_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'params_error': [ErrorDetail(string=\"unknown custom policy fields: ['E2E_UI_MERGE_unknown']\", code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_protected_output_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'params_error': [ErrorDetail(string='新告警配置不支持字段：source_id', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_identity_condition_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'params_error': [ErrorDetail(string='合并不支持字段：linkd_alert_id', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_unknown_variable_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'params_error': [ErrorDetail(string='merge template variable E2E_UI_MERGE_unknown must name an aggregate field', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_plain_unaggregated_variable_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'params_error': [ErrorDetail(string='merge template variable content must name an aggregate field', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_cw_merged_readable_variable_valid",
+        "result": "passed",
+        "accepted": true,
+        "expected": true,
+        "error": "",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_plain_aggregated_variable_valid",
+        "result": "passed",
+        "accepted": true,
+        "expected": true,
+        "error": "",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_malformed_variable_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'params_error': [ErrorDetail(string='合并模板变量格式错误，请使用 ${字段名}', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_127_variable_refs_valid",
+        "result": "passed",
+        "accepted": true,
+        "expected": true,
+        "error": "",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_128_variable_refs_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'new_alarm_config': [ErrorDetail(string='单个模板值最多引用127次变量', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_duplicate_output_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'new_alarm_config': [ErrorDetail(string='新告警字段不能重复，必须包含名称和等级', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_blank_name_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'new_alarm_config': [ErrorDetail(string='名称、对象等文本字段必须是字符串，名称和等级不能为空', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_missing_level_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'new_alarm_config': [ErrorDetail(string='新告警字段不能重复，必须包含名称和等级', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_duplicate_aggregate_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'aggregate_fields': [ErrorDetail(string='聚合字段不能重复且最多配置2个', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_cross_midnight_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'params_error': [ErrorDetail(string='生效时间格式错误，结束时间不能早于开始时间；跨午夜请拆为两段', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_negative_cycle_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'merge_cycle': [ErrorDetail(string='合并周期必须是1至86400秒的整数', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_bool_cycle_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'merge_cycle': [ErrorDetail(string='请填写合法的整数值。', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_65534_byte_string_valid",
+        "result": "passed",
+        "accepted": true,
+        "expected": true,
+        "error": "",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_backend_65535_byte_string_rejected",
+        "result": "passed",
+        "accepted": false,
+        "expected": false,
+        "error": "{'new_alarm_config': [ErrorDetail(string='模板值不能为空且JSON编码不能超过64 KiB', code='invalid')]}",
+        "evidence": "backend_boundaries.json",
+        "category": "serializer"
+      },
+      {
+        "case": "merge_ui_created_policy_async_published",
+        "result": "passed",
+        "published": 1,
+        "policy_id": "02296b94-1364-474f-bd6b-8daf8dcf2c0c",
+        "evidence": "live_immediate.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_source_http_accepted",
+        "result": "passed",
+        "http_status": 200,
+        "evidence": "live_immediate.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_immediate_two_groups_real_chain",
+        "result": "passed",
+        "child_count": 2,
+        "states": [
+          "merged",
+          "merged"
+        ],
+        "child_alert_ids": [
+          "20261017145807.system.kac_jhqhzb4bixlin2fy6kbq.602d9b8a350903b5",
+          "20261017145807.system.kac_jhqhzb4bixlin2fy6kbq.1bc4f9320fdcabad"
+        ],
+        "evidence": "live_immediate.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_parent_projection_members",
+        "result": "passed",
+        "parent_count": 1,
+        "parent_alert_id": "20261017145810.system.builtin_alarm_merge.5797f6a6d70c84ba",
+        "kac_parent_id": "linkd-666c3b67-e8bb-5bd7-95da-52346b417b8c",
+        "member_count": 2,
+        "evidence": "live_immediate.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_periodic_created_policy_async_published",
+        "result": "passed",
+        "published": 1,
+        "policy_id": "8e59e68b-7f62-4503-af56-81bf78a05357",
+        "evidence": "live_periodic.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_periodic_source_http_accepted",
+        "result": "passed",
+        "http_status": 200,
+        "evidence": "live_periodic.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_periodic_window_real_chain",
+        "result": "passed",
+        "child_count": 2,
+        "states": [
+          "merged",
+          "merged"
+        ],
+        "child_alert_ids": [
+          "20261017150218.system.kac_jhqhzb4bixlin2fy6kbq.188e89a5940b3fc3",
+          "20261017150218.system.kac_jhqhzb4bixlin2fy6kbq.0aced955872b5c35"
+        ],
+        "evidence": "live_periodic.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_periodic_parent_projection_members",
+        "result": "passed",
+        "parent_count": 1,
+        "parent_alert_id": "20261017150229.system.builtin_alarm_merge.88397ee9ef5bcc39",
+        "kac_parent_id": "linkd-0524e8cc-3611-5c2b-9e8b-dada0359d5a6",
+        "member_count": 2,
+        "evidence": "live_periodic.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_32_created_policy_async_published",
+        "result": "passed",
+        "published": 5,
+        "policy_id": "edad0abc-2193-4fb4-bab7-1efd05f4ee39",
+        "evidence": "live_32.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_32_source_http_accepted",
+        "result": "passed",
+        "http_status": 200,
+        "evidence": "live_32.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_32_condition_groups_real_chain",
+        "result": "passed",
+        "child_count": 2,
+        "states": [
+          "merged",
+          "merged"
+        ],
+        "child_alert_ids": [
+          "20261017150704.system.kac_jhqhzb4bixlin2fy6kbq.1ddb4e94421fc40a",
+          "20261017150704.system.kac_jhqhzb4bixlin2fy6kbq.5ac632d3ff44c459"
+        ],
+        "evidence": "live_32.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_32_parent_projection_members",
+        "result": "passed",
+        "parent_count": 1,
+        "parent_alert_id": "20261017150715.system.builtin_alarm_merge.e9bb524af3909af3",
+        "kac_parent_id": "linkd-4ac033e3-cb85-5057-ae8b-2e07dba69548",
+        "member_count": 2,
+        "evidence": "live_32.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_parent_manual_close_reaches_linkd",
+        "result": "passed",
+        "status": "closed",
+        "end_operation": {
+          "id": "e83d8e88-9430-48a0-baa8-6b9e9eac74f6",
+          "source": "manual",
+          "operator_kind": "user",
+          "operator_id": "admin"
+        },
+        "evidence": "close_alerts.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_cleanup_parent_E2E_UI_MERGE_periodic_parent 2",
+        "result": "passed",
+        "evidence": "close_alerts.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_cleanup_parent_E2E_UI_MERGE_32_parent 2",
+        "result": "passed",
+        "evidence": "close_alerts.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_cleanup_no_active_alerts",
+        "result": "passed",
+        "children": 6,
+        "parents": 3,
+        "active": 0,
+        "evidence": "close_alerts.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_delete_async_tombstones",
+        "result": "passed",
+        "tombstone_count": 3,
+        "versions": [
+          3,
+          2,
+          7
+        ],
+        "evidence": "delete_tombstone.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_cleanup_no_policy_rows",
+        "result": "passed",
+        "remaining": 0,
+        "evidence": "delete_tombstone.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_final_no_active_parent_child",
+        "result": "passed",
+        "children": 6,
+        "parents": 3,
+        "active": 0,
+        "evidence": "delete_tombstone.json",
+        "category": "runtime"
+      },
+      {
+        "case": "merge_ui_refresh_replay",
+        "fields": {
+          "group_count": 2,
+          "is_cycle_merge": false,
+          "merge_cycle": 10,
+          "target": {},
+          "template_name": "E2E_UI_MERGE_parent ${alarm_num}"
+        },
+        "result": "passed",
+        "evidence": "refresh-immediate.json",
+        "category": "ui"
+      },
+      {
+        "case": "merge_ui_no_target_save_retest",
+        "messages": [],
+        "original_target": null,
+        "result": "passed",
+        "route": "#/kac/alarmMerge",
+        "saved": {
+          "cycle": 10,
+          "groups": 2,
+          "id": "8e59e68b-7f62-4503-af56-81bf78a05357",
+          "periodic": true,
+          "target": {}
+        },
+        "evidence": "null-target-retest.json",
+        "category": "ui"
+      },
+      {
+        "case": "merge_ui_unaggregated_variable_rejected",
+        "observed": [
+          "新告警配置最多64个字段，单个模板值最多64 KiB；变量必须有效，普通变量必须是聚合字段。"
+        ],
+        "result": "passed",
+        "evidence": "invalid-variable-ui.json",
+        "category": "ui"
+      },
+      {
+        "add_disabled": true,
+        "after_count": 32,
+        "before": {
+          "groups": 2,
+          "name": "E2E_UI_MERGE_periodic_2303_克隆",
+          "periodic": true
+        },
+        "case": "merge_ui_clone_and_32_group_button_limit",
+        "dom_group_count": 32,
+        "result": "passed",
+        "evidence": "clone-and-32-ui.json",
+        "category": "ui"
+      },
+      {
+        "after": {
+          "aggregate": [
+            "source_name"
+          ],
+          "groups": 32,
+          "tags": 1
+        },
+        "before": {
+          "enabled": true,
+          "groups": 32,
+          "tags": 1
+        },
+        "case": "merge_ui_toggle_preserves_configuration",
+        "disabled": true,
+        "re_enabled": true,
+        "result": "passed",
+        "evidence": "toggle-preserve-ui.json",
+        "category": "ui"
+      },
+      {
+        "after": {
+          "aggregate": 0,
+          "groups": 32,
+          "tags": 0
+        },
+        "before": {
+          "aggregate": [
+            "source_name"
+          ],
+          "groups": 32,
+          "tags": 1
+        },
+        "case": "merge_ui_32_group_refresh_and_clear_tags_aggregation",
+        "result": "passed",
+        "evidence": "clear-fields-ui.json",
+        "category": "ui"
+      },
+      {
+        "case": "merge_ui_template_output_excludes_protected_fields",
+        "result": "passed",
+        "unexpected": [],
+        "visible_candidate_count": 64,
+        "evidence": "output-field-filter-ui.json",
+        "category": "ui"
+      },
+      {
+        "case": "merge_ui_parent_children_relation_read",
+        "member_count": 2,
+        "parent_visible": true,
+        "result": "passed",
+        "states": [
+          "被合并",
+          "被合并"
+        ],
+        "evidence": "parent-children-ui.json",
+        "category": "ui"
+      },
+      {
+        "case": "merge_ui_api_condition_key_replay_after_fix",
+        "entry": [
+          "app.d14b64be62e505c4be47.js"
+        ],
+        "first_group_text": "条件组1\nA\n告警名称",
+        "group_count": 32,
+        "missing_count": 0,
+        "result": "passed",
+        "evidence": "code-missing-after.json",
+        "category": "ui"
+      },
+      {
+        "aggregate_empty": true,
+        "case": "merge_ui_no_code_edit_save_roundtrip",
+        "expression_preserved": true,
+        "group_count": 32,
+        "result": "passed",
+        "tags_empty": true,
+        "undefined_keys": 0,
+        "evidence": "code-save-after.json",
+        "category": "ui"
+      },
+      {
+        "case": "merge_ui_batch_delete_only_own_three",
+        "remaining_own": 0,
+        "result": "passed",
+        "unrelated_rows": 1,
+        "evidence": "delete-ui.json",
+        "category": "ui"
+      },
+      {
+        "case": "merge_http_33_groups_reject_without_change",
+        "persisted_groups": 32,
+        "result": "passed",
+        "server_message": "{'policy': ['合并规则必须包含1至32个非空条件组']}（3600400）",
+        "evidence": "http-boundary-code-fixture.json",
+        "category": "http"
+      },
+      {
+        "case": "merge_http_legal_condition_without_code_accepted",
+        "result": "passed",
+        "server_code": "20000",
+        "evidence": "http-boundary-code-fixture.json",
+        "category": "http"
+      },
+      {
+        "assets": [
+          {
+            "file": "runtime.8a11657d25f460bc3de2.js",
+            "status": 200
+          },
+          {
+            "file": "vendors.092b6f3fb9ca03a2e5bb.js",
+            "status": 200
+          },
+          {
+            "file": "app.d14b64be62e505c4be47.js",
+            "status": 200
+          }
+        ],
+        "case": "merge_ui_new_static_assets_available",
+        "result": "passed",
+        "evidence": "static-delivery-retest.json",
+        "category": "delivery"
+      }
+    ]
+  },
+  "evidence": {
+    "backend_boundaries.json": {
+      "at": "2026-10-17T14:50:36.254412+00:00",
+      "exit": 0,
+      "results": [
+        {
+          "case": "merge_backend_two_group_valid",
+          "result": "passed",
+          "accepted": true,
+          "expected": true,
+          "error": ""
+        },
+        {
+          "case": "merge_backend_32_group_valid",
+          "result": "passed",
+          "accepted": true,
+          "expected": true,
+          "error": ""
+        },
+        {
+          "case": "merge_backend_33_group_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'policy': [ErrorDetail(string='合并规则必须包含1至32个非空条件组', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_empty_group_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'policy': [ErrorDetail(string='合并规则必须包含1至32个非空条件组', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_missing_group_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'policy': [ErrorDetail(string='合并规则必须包含1至32个非空条件组', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_unknown_template_field_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'params_error': [ErrorDetail(string=\"unknown custom policy fields: ['E2E_UI_MERGE_unknown']\", code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_protected_output_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'params_error': [ErrorDetail(string='新告警配置不支持字段：source_id', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_identity_condition_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'params_error': [ErrorDetail(string='合并不支持字段：linkd_alert_id', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_unknown_variable_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'params_error': [ErrorDetail(string='merge template variable E2E_UI_MERGE_unknown must name an aggregate field', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_plain_unaggregated_variable_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'params_error': [ErrorDetail(string='merge template variable content must name an aggregate field', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_cw_merged_readable_variable_valid",
+          "result": "passed",
+          "accepted": true,
+          "expected": true,
+          "error": ""
+        },
+        {
+          "case": "merge_backend_plain_aggregated_variable_valid",
+          "result": "passed",
+          "accepted": true,
+          "expected": true,
+          "error": ""
+        },
+        {
+          "case": "merge_backend_malformed_variable_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'params_error': [ErrorDetail(string='合并模板变量格式错误，请使用 ${字段名}', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_127_variable_refs_valid",
+          "result": "passed",
+          "accepted": true,
+          "expected": true,
+          "error": ""
+        },
+        {
+          "case": "merge_backend_128_variable_refs_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'new_alarm_config': [ErrorDetail(string='单个模板值最多引用127次变量', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_duplicate_output_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'new_alarm_config': [ErrorDetail(string='新告警字段不能重复，必须包含名称和等级', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_blank_name_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'new_alarm_config': [ErrorDetail(string='名称、对象等文本字段必须是字符串，名称和等级不能为空', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_missing_level_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'new_alarm_config': [ErrorDetail(string='新告警字段不能重复，必须包含名称和等级', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_duplicate_aggregate_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'aggregate_fields': [ErrorDetail(string='聚合字段不能重复且最多配置2个', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_cross_midnight_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'params_error': [ErrorDetail(string='生效时间格式错误，结束时间不能早于开始时间；跨午夜请拆为两段', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_negative_cycle_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'merge_cycle': [ErrorDetail(string='合并周期必须是1至86400秒的整数', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_bool_cycle_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'merge_cycle': [ErrorDetail(string='请填写合法的整数值。', code='invalid')]}"
+        },
+        {
+          "case": "merge_backend_65534_byte_string_valid",
+          "result": "passed",
+          "accepted": true,
+          "expected": true,
+          "error": ""
+        },
+        {
+          "case": "merge_backend_65535_byte_string_rejected",
+          "result": "passed",
+          "accepted": false,
+          "expected": false,
+          "error": "{'new_alarm_config': [ErrorDetail(string='模板值不能为空且JSON编码不能超过64 KiB', code='invalid')]}"
+        }
+      ]
+    },
+    "clear-fields-ui.json": {
+      "after": {
+        "aggregate": 0,
+        "groups": 32,
+        "tags": 0
+      },
+      "before": {
+        "aggregate": [
+          "source_name"
+        ],
+        "groups": 32,
+        "tags": 1
+      },
+      "case": "merge_ui_32_group_refresh_and_clear_tags_aggregation",
+      "result": "passed"
+    },
+    "clone-and-32-ui.json": {
+      "add_disabled": true,
+      "after_count": 32,
+      "before": {
+        "groups": 2,
+        "name": "E2E_UI_MERGE_periodic_2303_克隆",
+        "periodic": true
+      },
+      "case": "merge_ui_clone_and_32_group_button_limit",
+      "dom_group_count": 32,
+      "result": "passed"
+    },
+    "close_alerts.json": {
+      "at": "2026-10-17T15:08:09.468618+00:00",
+      "exit": 0,
+      "results": [
+        {
+          "case": "merge_ui_parent_manual_close_reaches_linkd",
+          "result": "passed",
+          "status": "closed",
+          "end_operation": {
+            "id": "e83d8e88-9430-48a0-baa8-6b9e9eac74f6",
+            "source": "manual",
+            "operator_kind": "user",
+            "operator_id": "admin"
+          }
+        },
+        {
+          "case": "merge_cleanup_parent_E2E_UI_MERGE_periodic_parent 2",
+          "result": "passed"
+        },
+        {
+          "case": "merge_cleanup_parent_E2E_UI_MERGE_32_parent 2",
+          "result": "passed"
+        },
+        {
+          "case": "merge_ui_cleanup_no_active_alerts",
+          "result": "passed",
+          "children": 6,
+          "parents": 3,
+          "active": 0
+        }
+      ]
+    },
+    "code-missing-after.json": {
+      "case": "merge_ui_api_condition_key_replay_after_fix",
+      "entry": [
+        "app.d14b64be62e505c4be47.js"
+      ],
+      "first_group_text": "条件组1\nA\n告警名称",
+      "group_count": 32,
+      "missing_count": 0,
+      "result": "passed"
+    },
+    "code-save-after.json": {
+      "aggregate_empty": true,
+      "case": "merge_ui_no_code_edit_save_roundtrip",
+      "expression_preserved": true,
+      "group_count": 32,
+      "result": "passed",
+      "tags_empty": true,
+      "undefined_keys": 0
+    },
+    "delete-ui.json": {
+      "case": "merge_ui_batch_delete_only_own_three",
+      "remaining_own": 0,
+      "result": "passed",
+      "unrelated_rows": 1
+    },
+    "delete_tombstone.json": {
+      "at": "2026-10-17T15:17:24.790447+00:00",
+      "exit": 0,
+      "results": [
+        {
+          "case": "merge_ui_delete_async_tombstones",
+          "result": "passed",
+          "tombstone_count": 3,
+          "versions": [
+            3,
+            2,
+            7
+          ]
+        },
+        {
+          "case": "merge_ui_cleanup_no_policy_rows",
+          "result": "passed",
+          "remaining": 0
+        },
+        {
+          "case": "merge_ui_final_no_active_parent_child",
+          "result": "passed",
+          "children": 6,
+          "parents": 3,
+          "active": 0
+        }
+      ]
+    },
+    "findings.json": {
+      "defects": [
+        {
+          "id": "MERGE-1",
+          "status": "fixed_and_live_retested",
+          "title": "未选择实例的新增策略无法保存",
+          "steps": "新增合并→选择权限空间→仅配置告警名称条件→不选择对象模型/实例→填写必配模板→保存",
+          "observed": "target_descriptor 为 null 被 HTTP JSONField 提前拒绝",
+          "impact": "阻断按告警字段匹配的正常新增策略",
+          "fix": "KAC 5.3.0.1924-e2e.2 接受无模型的 null 并归一化为空对象；原始页面已复测通过",
+          "evidence": [
+            "ui-results.json",
+            "null-target-retest.json"
+          ]
+        },
+        {
+          "id": "MERGE-2",
+          "status": "fixed_and_live_retested",
+          "title": "合法 API 条件没有冗余 code 时编辑页丢失条件身份",
+          "steps": "HTTP 保存条件对象 A（不填 code）→进入编辑页",
+          "observed": "32组条件的 A 标识全部消失，内部 code 为 undefined",
+          "impact": "API 创建的合法策略无法可靠回显和再次编辑，表达式引用可能破坏",
+          "fix": "页面 formatPolicy 以条件对象键恢复 code，新增不修改原对象/覆盖过时冗余code回归；12项组件检查及ESLint通过；KAC Web 5.3.0.1924-e2e.4 冷刷新后32组全部恢复A，页面保存成功且无undefined键。",
+          "evidence": [
+            "http-boundary-code-fixture.json",
+            "code-missing-before.json",
+            "merge-code-regression-before.log",
+            "merge-code-regression-after.log",
+            "code-missing-after.json",
+            "code-save-after.json"
+          ]
+        }
+      ],
+      "improvements": [
+        {
+          "id": "MERGE-UX-1",
+          "type": "提示可定位性",
+          "steps": "模板使用未选择为聚合字段的 ${content}，点击保存",
+          "observed": "统一提示同时列出64字段/64KiB/变量有效性及普通变量聚合要求，没有指出哪个变量/哪个字段触发限制",
+          "impact": "复杂模板需要人工逐项排查，容易把变量问题误当作大小问题",
+          "suggestion": "指出具体模板字段和变量，例如“告警名称中的 content 不是聚合字段”，保留原预算提示作为帮助信息",
+          "evidence": "invalid-variable-ui.json"
+        },
+        {
+          "id": "MERGE-UX-2",
+          "type": "列表可辨识性",
+          "steps": "分别保存10秒即时合并和10秒周期结束合并，返回列表",
+          "observed": "列表仅显示合并周期，未展示合并方式；相同周期的两种行为只能逐个点详情/编辑确认",
+          "impact": "批量核对配置和排查等待耗时的成本较高",
+          "suggestion": "在周期列附近直接展示“立即合并/周期结束合并”，或支持合并方式列",
+          "evidence": "列表源码及真实页面两条测试策略对照；行为正确，不作为阻断缺陷"
+        }
+      ],
+      "automation_notes": [
+        "Chrome MCP 每Agent实例不能共用原有pipe浏览器，使用独立 agent-browser 临时会话正常登录；未读取或持久化Cookie/密码。",
+        "后台标签页触发Vue过渡节流，激活稳定tab后恢复；此现象从产品缺陷中排除。",
+        "32组批量填入使用浏览器表单状态辅助构造测试数据，新增组按钮、保存、刷新、克隆、启停、清空与服务端HTTP均实际执行。"
+      ],
+      "delivery_incident": {
+        "title": "e2e.3新静态bundle未完整入镜像",
+        "status": "fixed_and_live_retested",
+        "observed": "HTML引用app/runtime/vendors新文件而静态请求404，冷刷新白屏",
+        "fix": "e2e.4归档复制构建产物，新三文件HTTP200，页面恢复",
+        "evidence": [
+          "static-delivery-404.json",
+          "static-delivery-retest.json"
+        ]
+      }
+    },
+    "http-boundary-code-fixture.json": {
+      "fixture_id": "edad0abc-2193-4fb4-bab7-1efd05f4ee39",
+      "results": [
+        {
+          "case": "merge_http_33_groups_reject_without_change",
+          "persisted_groups": 32,
+          "result": "passed",
+          "server_message": "{'policy': ['合并规则必须包含1至32个非空条件组']}（3600400）"
+        },
+        {
+          "case": "merge_http_legal_condition_without_code_accepted",
+          "result": "passed",
+          "server_code": "20000"
+        }
+      ]
+    },
+    "invalid-trials.json": {
+      "not_counted_as_product_assertions": [
+        {
+          "trial": "首轮即时运行脚本读取发布配置的 spec.enabled",
+          "reason": "策略使用 is_enable；在发送任何事件前 KeyError，修正字段后完整重跑通过。"
+        },
+        {
+          "trial": "手工打开告警详情URL未带 type=all",
+          "reason": "未按当前页面路由合同构造地址，造成详情读取函数未选择；补齐查询参数后关联告警页面读取通过。"
+        },
+        {
+          "trial": "后台标签页过渡不结束/下拉项不可点击",
+          "reason": "并行浏览器导致标签 hidden，激活各自tab后恢复，不计产品缺陷。"
+        },
+        {
+          "trial": "自动化首次填值/即时toast采样",
+          "reason": "控件重渲染或toast采样时机造成值为空或未观察到提示；采用稳定DOM后重新真实交互，最终断言另存。"
+        }
+      ]
+    },
+    "invalid-variable-ui.json": {
+      "case": "merge_ui_unaggregated_variable_rejected",
+      "observed": [
+        "新告警配置最多64个字段，单个模板值最多64 KiB；变量必须有效，普通变量必须是聚合字段。"
+      ],
+      "result": "passed"
+    },
+    "live_32.json": {
+      "at": "2026-10-17T15:07:24.183297+00:00",
+      "exit": 0,
+      "results": [
+        {
+          "case": "merge_ui_32_created_policy_async_published",
+          "result": "passed",
+          "published": 5,
+          "policy_id": "edad0abc-2193-4fb4-bab7-1efd05f4ee39"
+        },
+        {
+          "case": "merge_ui_32_source_http_accepted",
+          "result": "passed",
+          "http_status": 200
+        },
+        {
+          "case": "merge_ui_32_condition_groups_real_chain",
+          "result": "passed",
+          "child_count": 2,
+          "states": [
+            "merged",
+            "merged"
+          ],
+          "child_alert_ids": [
+            "20261017150704.system.kac_jhqhzb4bixlin2fy6kbq.1ddb4e94421fc40a",
+            "20261017150704.system.kac_jhqhzb4bixlin2fy6kbq.5ac632d3ff44c459"
+          ]
+        },
+        {
+          "case": "merge_ui_32_parent_projection_members",
+          "result": "passed",
+          "parent_count": 1,
+          "parent_alert_id": "20261017150715.system.builtin_alarm_merge.e9bb524af3909af3",
+          "kac_parent_id": "linkd-4ac033e3-cb85-5057-ae8b-2e07dba69548",
+          "member_count": 2
+        },
+        {
+          "ui_parent_read": {
+            "alarm_id": "linkd-4ac033e3-cb85-5057-ae8b-2e07dba69548",
+            "name": "E2E_UI_MERGE_32_parent 2",
+            "associate_count": 2
+          }
+        }
+      ]
+    },
+    "live_immediate.json": {
+      "at": "2026-10-17T14:58:19.263183+00:00",
+      "exit": 0,
+      "results": [
+        {
+          "case": "merge_ui_created_policy_async_published",
+          "result": "passed",
+          "published": 1,
+          "policy_id": "02296b94-1364-474f-bd6b-8daf8dcf2c0c"
+        },
+        {
+          "case": "merge_ui_source_http_accepted",
+          "result": "passed",
+          "http_status": 200
+        },
+        {
+          "case": "merge_ui_immediate_two_groups_real_chain",
+          "result": "passed",
+          "child_count": 2,
+          "states": [
+            "merged",
+            "merged"
+          ],
+          "child_alert_ids": [
+            "20261017145807.system.kac_jhqhzb4bixlin2fy6kbq.602d9b8a350903b5",
+            "20261017145807.system.kac_jhqhzb4bixlin2fy6kbq.1bc4f9320fdcabad"
+          ]
+        },
+        {
+          "case": "merge_ui_parent_projection_members",
+          "result": "passed",
+          "parent_count": 1,
+          "parent_alert_id": "20261017145810.system.builtin_alarm_merge.5797f6a6d70c84ba",
+          "kac_parent_id": "linkd-666c3b67-e8bb-5bd7-95da-52346b417b8c",
+          "member_count": 2
+        },
+        {
+          "ui_parent_read": {
+            "alarm_id": "linkd-666c3b67-e8bb-5bd7-95da-52346b417b8c",
+            "name": "E2E_UI_MERGE_parent 2",
+            "associate_count": 2
+          }
+        }
+      ]
+    },
+    "live_periodic.json": {
+      "at": "2026-10-17T15:02:39.816049+00:00",
+      "exit": 0,
+      "results": [
+        {
+          "case": "merge_ui_periodic_created_policy_async_published",
+          "result": "passed",
+          "published": 1,
+          "policy_id": "8e59e68b-7f62-4503-af56-81bf78a05357"
+        },
+        {
+          "case": "merge_ui_periodic_source_http_accepted",
+          "result": "passed",
+          "http_status": 200
+        },
+        {
+          "case": "merge_ui_periodic_window_real_chain",
+          "result": "passed",
+          "child_count": 2,
+          "states": [
+            "merged",
+            "merged"
+          ],
+          "child_alert_ids": [
+            "20261017150218.system.kac_jhqhzb4bixlin2fy6kbq.188e89a5940b3fc3",
+            "20261017150218.system.kac_jhqhzb4bixlin2fy6kbq.0aced955872b5c35"
+          ]
+        },
+        {
+          "case": "merge_ui_periodic_parent_projection_members",
+          "result": "passed",
+          "parent_count": 1,
+          "parent_alert_id": "20261017150229.system.builtin_alarm_merge.88397ee9ef5bcc39",
+          "kac_parent_id": "linkd-0524e8cc-3611-5c2b-9e8b-dada0359d5a6",
+          "member_count": 2
+        },
+        {
+          "ui_parent_read": {
+            "alarm_id": "linkd-0524e8cc-3611-5c2b-9e8b-dada0359d5a6",
+            "name": "E2E_UI_MERGE_periodic_parent 2",
+            "associate_count": 2
+          }
+        }
+      ]
+    },
+    "null-target-retest.json": {
+      "case": "merge_ui_no_target_save_retest",
+      "messages": [],
+      "original_target": null,
+      "result": "passed",
+      "route": "#/kac/alarmMerge",
+      "saved": {
+        "cycle": 10,
+        "groups": 2,
+        "id": "8e59e68b-7f62-4503-af56-81bf78a05357",
+        "periodic": true,
+        "target": {}
+      }
+    },
+    "output-field-filter-ui.json": {
+      "case": "merge_ui_template_output_excludes_protected_fields",
+      "result": "passed",
+      "unexpected": [],
+      "visible_candidate_count": 64
+    },
+    "parent-children-ui.json": {
+      "case": "merge_ui_parent_children_relation_read",
+      "member_count": 2,
+      "parent_visible": true,
+      "result": "passed",
+      "states": [
+        "被合并",
+        "被合并"
+      ]
+    },
+    "refresh-immediate.json": {
+      "case": "merge_ui_refresh_replay",
+      "fields": {
+        "group_count": 2,
+        "is_cycle_merge": false,
+        "merge_cycle": 10,
+        "target": {},
+        "template_name": "E2E_UI_MERGE_parent ${alarm_num}"
+      },
+      "result": "passed"
+    },
+    "static-delivery-retest.json": {
+      "assets": [
+        {
+          "file": "runtime.8a11657d25f460bc3de2.js",
+          "status": 200
+        },
+        {
+          "file": "vendors.092b6f3fb9ca03a2e5bb.js",
+          "status": 200
+        },
+        {
+          "file": "app.d14b64be62e505c4be47.js",
+          "status": 200
+        }
+      ],
+      "case": "merge_ui_new_static_assets_available",
+      "result": "passed"
+    },
+    "toggle-preserve-ui.json": {
+      "after": {
+        "aggregate": [
+          "source_name"
+        ],
+        "groups": 32,
+        "tags": 1
+      },
+      "before": {
+        "enabled": true,
+        "groups": 32,
+        "tags": 1
+      },
+      "case": "merge_ui_toggle_preserves_configuration",
+      "disabled": true,
+      "re_enabled": true,
+      "result": "passed"
+    }
+  }
+}

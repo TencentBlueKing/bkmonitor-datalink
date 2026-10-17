@@ -1,0 +1,567 @@
+{
+  "summary": {
+    "environment": "test：KAC管理页面、KAC接入与配置服务、Linkd处理链，独立外部浏览器临时会话；未披露主机地址或凭据",
+    "scope": "屏蔽页面真实创建、编辑、保存失败、时区/时间、匹配预览、依赖字段引用、类型切换、数据执行、删除同步",
+    "valid_assertions": 39,
+    "passed_assertions": 39,
+    "failed_assertions_after_fixes": 0,
+    "counts_note": "有效结构化断言包含准备/同步/清理；另列页面观察有重叠，不重复计数。错误动作、错误终态预期、Date对象比较和有界分页未到旧样本均列无效试验。",
+    "assertions": [
+      {
+        "case": "ui_shield_preview_prepare_http",
+        "result": "passed",
+        "evidence_file": "prepare.json",
+        "facts": {
+          "count": 12
+        }
+      },
+      {
+        "case": "ui_shield_preview_prepare_12_projected",
+        "result": "passed",
+        "evidence_file": "prepare.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_live_kac_linkd_preview",
+        "result": "passed",
+        "evidence_file": "preview_live.json",
+        "facts": {
+          "scanned": 75,
+          "matching_samples": 12
+        }
+      },
+      {
+        "case": "ui_shield_live_preview_ten_cap",
+        "result": "passed",
+        "evidence_file": "preview_live.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_empty_page_cursor_continues",
+        "result": "passed",
+        "evidence_file": "preview_live.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_backend_fixture_published",
+        "result": "passed",
+        "evidence_file": "create_policy.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_duplicate_save_no_extra_row",
+        "result": "passed",
+        "evidence_file": "time_execution.json",
+        "facts": {
+          "count": 2
+        }
+      },
+      {
+        "case": "ui_shield_real_ui_created",
+        "result": "passed",
+        "evidence_file": "time_execution.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_normal_save_not_retroactive",
+        "result": "passed",
+        "evidence_file": "time_execution.json",
+        "facts": {
+          "count": 12
+        }
+      },
+      {
+        "case": "ui_shield_live_new_trigger_blocked",
+        "result": "passed",
+        "evidence_file": "time_execution.json",
+        "facts": {
+          "active": true
+        }
+      },
+      {
+        "case": "ui_shield_edit_save_keeps_utc_once",
+        "result": "passed",
+        "evidence_file": "time_ui_saved.json",
+        "facts": {
+          "timezones": [
+            "UTC",
+            "UTC"
+          ],
+          "once_start": "2026-10-17T14:51:21+00:00",
+          "period_kinds": [
+            "once",
+            "everyday"
+          ]
+        }
+      },
+      {
+        "case": "ui_shield_resolved_event_recovers",
+        "result": "passed",
+        "evidence_file": "time_ui_saved.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_time_to_dependency_clears_periods",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {
+          "period_count": 0
+        }
+      },
+      {
+        "case": "ui_shield_dependency_published",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {
+          "revision": 4,
+          "published": 4
+        }
+      },
+      {
+        "case": "ui_shield_parent_ingest",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {
+          "http": 200
+        }
+      },
+      {
+        "case": "ui_shield_parent_active",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_child_ingest",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {
+          "http": 200
+        }
+      },
+      {
+        "case": "ui_shield_reference_child_blocked",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {
+          "active": true
+        }
+      },
+      {
+        "case": "ui_shield_parent_resolved_ingest",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_parent_recovered",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_parent_recovery_releases_child_without_admission",
+        "result": "passed",
+        "evidence_file": "dependency_execute.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_cleanup_close_accepted",
+        "result": "passed",
+        "evidence_file": "cleanup_alerts.json",
+        "facts": {
+          "count": 25,
+          "http": 200
+        }
+      },
+      {
+        "case": "ui_shield_cleanup_no_active_alerts",
+        "result": "passed",
+        "evidence_file": "cleanup_alerts.json",
+        "facts": {
+          "total": 27,
+          "closed": 25,
+          "recovered": 2,
+          "remaining": []
+        }
+      },
+      {
+        "case": "ui_shield_preview_fresh_prepare_http",
+        "result": "passed",
+        "evidence_file": "prepare_fresh.json",
+        "facts": {
+          "count": 12
+        }
+      },
+      {
+        "case": "ui_shield_preview_fresh_prepare_12_projected",
+        "result": "passed",
+        "evidence_file": "prepare_fresh.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_dependency_to_time_clears_references",
+        "result": "passed",
+        "evidence_file": "final_before_delete.json",
+        "facts": {
+          "period_count": 1,
+          "child_conditions": 0,
+          "mode": "",
+          "before": 0,
+          "after": 0
+        }
+      },
+      {
+        "case": "ui_shield_no_code_fixed_save_persists_valid_keys",
+        "result": "passed",
+        "evidence_file": "final_before_delete.json",
+        "facts": {
+          "count": 2
+        }
+      },
+      {
+        "case": "ui_shield_final_type_sync_E2E_UI_SHIELD_CREATED_20261017",
+        "result": "passed",
+        "evidence_file": "final_before_delete.json",
+        "facts": {
+          "revision": 3,
+          "published": 3
+        }
+      },
+      {
+        "case": "ui_shield_final_type_sync_E2E_UI_SHIELD_TIME_20261017",
+        "result": "passed",
+        "evidence_file": "final_before_delete.json",
+        "facts": {
+          "revision": 7,
+          "published": 7
+        }
+      },
+      {
+        "case": "ui_shield_cleanup_no_local_policies",
+        "result": "passed",
+        "evidence_file": "cleanup_policy_verify.json",
+        "facts": {
+          "remaining": 0
+        }
+      },
+      {
+        "case": "ui_shield_cleanup_tombstone_1",
+        "result": "passed",
+        "evidence_file": "cleanup_policy_verify.json",
+        "facts": {
+          "revision": 4,
+          "published": 4,
+          "deleted": true
+        }
+      },
+      {
+        "case": "ui_shield_cleanup_tombstone_2",
+        "result": "passed",
+        "evidence_file": "cleanup_policy_verify.json",
+        "facts": {
+          "revision": 8,
+          "published": 8,
+          "deleted": true
+        }
+      },
+      {
+        "case": "ui_shield_final_no_active_alerts",
+        "result": "passed",
+        "evidence_file": "cleanup_policy_verify.json",
+        "facts": {
+          "total": 27,
+          "active": 0
+        }
+      },
+      {
+        "case": "ui_shield_real_preview_ten_cap",
+        "result": "passed",
+        "evidence_file": "preview_ui_walk.json",
+        "facts": {
+          "same_at": true
+        }
+      },
+      {
+        "case": "ui_no_code_dependency_after_deploy",
+        "result": "passed",
+        "evidence_file": "ui_no_code_dependency_after.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_no_code_time_preview_after_deploy",
+        "result": "passed",
+        "evidence_file": "ui_no_code_time_preview_after.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_new_release_http",
+        "result": "passed",
+        "evidence_file": "ui_release_http.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_delete_both_owned_policies",
+        "result": "passed",
+        "evidence_file": "ui_delete_after.json",
+        "facts": {}
+      },
+      {
+        "case": "ui_shield_real_ui_empty_page_continues",
+        "result": "passed",
+        "evidence_file": "ui_empty_cursor_summary.json",
+        "facts": {
+          "scanned": 416,
+          "same_at": true,
+          "matched_after_empty": 1
+        }
+      }
+    ],
+    "fix": {
+      "problem": "合法API条件未带冗余code时，编辑页面丢失条件键，预览发送undefined键导致上游400/页面500",
+      "solution": "由policy/rely_policy真实对象键恢复编辑器code，保留原对象，覆盖主/子条件及错误冗余code往返",
+      "regression": "修前失败；npm run test:kac-shield（10项contract及字段引用行为检查）通过，定向eslint、diff check通过",
+      "deployment": "KAC Web 5.3.0.1924-e2e.4，真实新入口及依赖script 200；无code页面编辑/预览/保存复验通过",
+      "commit": "22972175be"
+    },
+    "cleanup": {
+      "owned_policy_rows": 0,
+      "published_tombstones": 2,
+      "tombstone_revisions": [
+        4,
+        8
+      ],
+      "test_alerts": 27,
+      "active_alerts": 0,
+      "closed_alerts": 25,
+      "recovered_alerts": 2,
+      "shared_source_note": "未停用或修改共享main来源，后续由父任务统一收尾"
+    },
+    "remaining_ux_issues": [
+      {
+        "category": "ux",
+        "priority": "P2",
+        "name": "实例目录超时后空白弹窗缺持久提示与重试",
+        "repro": "选择模型后打开实例选择器，能力/字段请求504",
+        "impact": "只剩空白和确定取消，不知道仍在加载还是失败；关闭重开可恢复",
+        "suggestion": "在空白区域显示失败状态和重试入口；加载时说明正在读取目录"
+      },
+      {
+        "category": "ux",
+        "priority": "P2",
+        "name": "实例目标必填与高级筛选提示不一致",
+        "repro": "时间屏蔽表单提示实例选择和高级筛选至少一项；实际canonical目标必填",
+        "impact": "用户可能只填高级筛选并看到预览可点，点击后仍被要求实例目标",
+        "suggestion": "提示改为先选择实例，可再加高级筛选；禁用条件和保存校验一致"
+      },
+      {
+        "category": "error_mapping",
+        "priority": "P2",
+        "name": "预览无效表达式归类为系统异常",
+        "repro": "页面丢编号产生undefined键，Linkd400在KAC变成50000通用错误",
+        "impact": "缺少可修正条件的具体提示",
+        "suggestion": "输入边界拒绝缺失表达式条件，或将上游400映射为参数错误",
+        "status": "recorded_no_scope_expansion"
+      }
+    ],
+    "invalid_trials": [
+      {
+        "files": [
+          "time_execution.json",
+          "recovery_retry.json",
+          "recovery_resolved.json"
+        ],
+        "reason": "前两次恢复动作误写recovered；纠正为resolved成功后断言误要求ended，实际正确状态recovered。time_ui_saved.json已确认正确终态，均不计产品失败。"
+      },
+      {
+        "files": [
+          "preview_ui_walk_old.json"
+        ],
+        "reason": "初次有界分页未到旧样本，只覆盖空页继续，不足以证明10条上限；后续以新样本重试"
+      },
+      {
+        "files": [
+          "fixture_continue.json initial run"
+        ],
+        "reason": "测试partial更新漏is_enable，按该接口合同补齐后成功；不计产品失败。"
+      },
+      {
+        "files": [
+          "ui_time_edit_before.json"
+        ],
+        "reason": "组件日期控件将字符串转换为Date对象；初始断言误以字符串直接比较。UI墙钟回显已观察正确，time_ui_saved.json实际保存保持UTC/+00:00的断言通过。"
+      }
+    ],
+    "evidence_files": [
+      "prepare.json",
+      "preview_live.json",
+      "create_policy.json",
+      "time_execution.json",
+      "time_ui_saved.json",
+      "dependency_execute.json",
+      "cleanup_alerts.json",
+      "prepare_fresh.json",
+      "final_before_delete.json",
+      "cleanup_policy_verify.json",
+      "preview_ui_walk.json",
+      "ui_no_code_dependency_after.json",
+      "ui_no_code_time_preview_after.json",
+      "ui_release_http.json",
+      "ui_delete_after.json",
+      "ui_empty_cursor_summary.json",
+      "ui_observations.json",
+      "regression_before.log",
+      "regression_after.log"
+    ],
+    "privacy": "交付summary.json无IP、域名、真实CMDB属性、凭据；原始测试脚本与草稿仅留临时目录，勿整目录发布。"
+  },
+  "selected_evidence": {
+    "ui_release_http.json": {
+      "case": "ui_shield_new_release_http",
+      "passed": true,
+      "requests": [
+        {
+          "kind": "javascript",
+          "file": "runtime.8a11657d25f460bc3de2.js",
+          "http": 200
+        },
+        {
+          "kind": "javascript",
+          "file": "vendors.092b6f3fb9ca03a2e5bb.js",
+          "http": 200
+        },
+        {
+          "kind": "javascript",
+          "file": "app.d14b64be62e505c4be47.js",
+          "http": 200
+        },
+        {
+          "kind": "preview",
+          "http": 200,
+          "result": true,
+          "code": 0,
+          "count": 0,
+          "scanned": 32,
+          "unavailable_count": 2
+        },
+        {
+          "kind": "save",
+          "http": 200,
+          "result": true,
+          "code": "20000"
+        },
+        {
+          "kind": "save",
+          "http": 200,
+          "result": true,
+          "code": "20000"
+        },
+        {
+          "kind": "save",
+          "http": 200,
+          "result": true,
+          "code": "20000"
+        }
+      ]
+    },
+    "ui_no_code_dependency_after.json": {
+      "case": "ui_no_code_dependency_after_deploy",
+      "child": {
+        "A": {
+          "code": "A",
+          "condition": "wildcard",
+          "isEmpty": false,
+          "is_alarm_field_referenced": false,
+          "is_monitor": false,
+          "show_add": false,
+          "target_key": "name",
+          "target_key_display": "告警名称",
+          "target_value": "E2E20261017_2112 ui_shield_child"
+        },
+        "B": {
+          "code": "B",
+          "condition": "term",
+          "isEmpty": false,
+          "is_alarm_field_referenced": true,
+          "is_monitor": false,
+          "show_add": true,
+          "target_key": "object",
+          "target_key_display": "告警对象",
+          "target_value": "${object}"
+        },
+        "expression": "A and B"
+      },
+      "originalChildHasCode": false,
+      "originalPrimaryHasCode": false,
+      "passed": true,
+      "primary": {
+        "A": {
+          "code": "A",
+          "condition": "wildcard",
+          "isEmpty": false,
+          "is_monitor": false,
+          "show_add": true,
+          "target_key": "name",
+          "target_key_display": "告警名称",
+          "target_value": "E2E20261017_2112 ui_shield_parent"
+        },
+        "expression": "A"
+      }
+    },
+    "ui_no_code_time_preview_after.json": {
+      "case": "ui_no_code_time_preview_after_deploy",
+      "originalHasCode": false,
+      "passed": true,
+      "preview": {
+        "count": 0,
+        "error": "",
+        "hasNext": true,
+        "scanned": 32
+      },
+      "primary": {
+        "A": {
+          "code": "A",
+          "condition": "term",
+          "isEmpty": false,
+          "is_monitor": false,
+          "show_add": true,
+          "target_key": "name",
+          "target_key_display": "告警名称",
+          "target_value": "E2E_UI_SHIELD_NEVER_MATCH"
+        },
+        "expression": "A"
+      }
+    },
+    "cleanup_policy_verify.json": {
+      "at": "2026-10-17T15:21:30.108220+00:00",
+      "exit": 0,
+      "results": [
+        {
+          "case": "ui_shield_cleanup_no_local_policies",
+          "result": "passed",
+          "remaining": 0
+        },
+        {
+          "case": "ui_shield_cleanup_tombstone_1",
+          "result": "passed",
+          "deleted": true,
+          "revision": 4,
+          "published": 4
+        },
+        {
+          "case": "ui_shield_cleanup_tombstone_2",
+          "result": "passed",
+          "deleted": true,
+          "revision": 8,
+          "published": 8
+        },
+        {
+          "case": "ui_shield_final_no_active_alerts",
+          "result": "passed",
+          "total": 27,
+          "active": 0
+        }
+      ]
+    }
+  }
+}

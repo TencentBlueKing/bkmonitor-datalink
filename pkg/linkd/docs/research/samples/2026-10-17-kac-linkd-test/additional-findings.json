@@ -1,0 +1,131 @@
+{
+  "updated_at": "2026-10-17T15:23:26.962714+00:00",
+  "items": [
+    {
+      "id": "UX-01",
+      "category": "性能体验",
+      "status": "记录待分析",
+      "component": "来源克隆",
+      "observation": "真实已登录HTTP克隆请求成功，但浏览器ResourceTiming记录耗时61515ms；原请求403不计入本值。",
+      "impact": "用户等待长，容易重复提交。",
+      "recommendation": "拆解IAM授权、复制、Kafka确认及配置发布耗时，优先处理最慢依赖；当前不据此认定某一步是根因。"
+    },
+    {
+      "id": "UX-02",
+      "category": "语义提示",
+      "status": "改进建议",
+      "component": "配置生效",
+      "observation": "配置已发布后立即注入事件，Worker仍可能采用刷新前目录；既有Worker目录每5秒刷新。",
+      "impact": "保存后立刻试发容易误判策略未生效。",
+      "recommendation": "测试按正式版本和Event处理记录核对，用户指引明确配置传播语义，避免以保存成功替代运行态已生效。"
+    },
+    {
+      "id": "UX-03",
+      "category": "字段展示",
+      "status": "改进建议",
+      "component": "丰富历史详情",
+      "observation": "同一详情中业务字段使用中文，内置content仍显示英文key；null、0、false区分正确。",
+      "impact": "普通使用者理解字段名称需要额外对应。",
+      "recommendation": "按字段目录统一展示名，同时保留技术key的可查看入口。"
+    },
+    {
+      "id": "UX-04",
+      "category": "文案一致性",
+      "status": "改进建议",
+      "component": "来源详情",
+      "observation": "自建推送源在列表显示已接收告警数，详情显示已同步告警数。",
+      "impact": "接入方式与计数口径的文案不一致。",
+      "recommendation": "推送/拉取按同一来源类型统一计数名称。"
+    },
+    {
+      "id": "UX-05",
+      "category": "时间入参",
+      "status": "记录待修复",
+      "component": "Console关闭命令",
+      "observation": "等价UTC时间的Z形式可用，+00:00形式被Console schema拒绝，错误提示笼统。",
+      "impact": "复制带偏移ISO时间调用时失败。",
+      "recommendation": "明确仅接受UTC Z或在请求边界接受等价时区形式，并返回具体字段错误。"
+    },
+    {
+      "id": "SUP-UX-01",
+      "category": "提示改进",
+      "severity": "P3",
+      "title": "最小值错误文案不包含合法边界1",
+      "steps": [
+        "新增防抖方案，窗口或次数填0。",
+        "页面提示“请输入大于1的整数”。"
+      ],
+      "impact": "实际1合法，但文案表达1不合法，容易误导配置。",
+      "suggestion": "改为“大于或等于1”或统一“请输入1至上限的整数”。",
+      "status": "记录建议，本轮不改公共数字组件"
+    },
+    {
+      "id": "SUP-UX-02",
+      "category": "语义待核对",
+      "severity": "P2",
+      "title": "列表首次匹配停止提示可能不符合Linkd继续评估语义",
+      "steps": [
+        "读取抑制列表顶部说明：匹配到对应策略执行后不再往下匹配。",
+        "对照Linkd runtime/suppression.go：匹配且放行后继续后续策略，仅被抑制才return。"
+      ],
+      "impact": "用户可能以为首个命中的放行策略能屏蔽后续抑制策略。",
+      "suggestion": "补两条唯一匹配策略的现场反例后，按当前执行契约更新提示。",
+      "status": "UI和源码已核对；未完成双策略现场反例，不计运行失败。"
+    },
+    {
+      "id": "MERGE-UX-1",
+      "type": "提示可定位性",
+      "steps": "模板使用未选择为聚合字段的 ${content}，点击保存",
+      "observed": "统一提示同时列出64字段/64KiB/变量有效性及普通变量聚合要求，没有指出哪个变量/哪个字段触发限制",
+      "impact": "复杂模板需要人工逐项排查，容易把变量问题误当作大小问题",
+      "suggestion": "指出具体模板字段和变量，例如“告警名称中的 content 不是聚合字段”，保留原预算提示作为帮助信息",
+      "evidence": "invalid-variable-ui.json"
+    },
+    {
+      "id": "MERGE-UX-2",
+      "type": "列表可辨识性",
+      "steps": "分别保存10秒即时合并和10秒周期结束合并，返回列表",
+      "observed": "列表仅显示合并周期，未展示合并方式；相同周期的两种行为只能逐个点详情/编辑确认",
+      "impact": "批量核对配置和排查等待耗时的成本较高",
+      "suggestion": "在周期列附近直接展示“立即合并/周期结束合并”，或支持合并方式列",
+      "evidence": "列表源码及真实页面两条测试策略对照；行为正确，不作为阻断缺陷"
+    },
+    {
+      "id": "SHIELD-UX-1",
+      "category": "ux",
+      "priority": "P2",
+      "name": "实例目录超时后空白弹窗缺持久提示与重试",
+      "repro": "选择模型后打开实例选择器，能力/字段请求504",
+      "impact": "只剩空白和确定取消，不知道仍在加载还是失败；关闭重开可恢复",
+      "suggestion": "在空白区域显示失败状态和重试入口；加载时说明正在读取目录"
+    },
+    {
+      "id": "SHIELD-UX-2",
+      "category": "ux",
+      "priority": "P2",
+      "name": "实例目标必填与高级筛选提示不一致",
+      "repro": "时间屏蔽表单提示实例选择和高级筛选至少一项；实际canonical目标必填",
+      "impact": "用户可能只填高级筛选并看到预览可点，点击后仍被要求实例目标",
+      "suggestion": "提示改为先选择实例，可再加高级筛选；禁用条件和保存校验一致"
+    },
+    {
+      "id": "SHIELD-UX-3",
+      "category": "error_mapping",
+      "priority": "P2",
+      "name": "预览无效表达式归类为系统异常",
+      "repro": "页面丢编号产生undefined键，Linkd400在KAC变成50000通用错误",
+      "impact": "缺少可修正条件的具体提示",
+      "suggestion": "输入边界拒绝缺失表达式条件，或将上游400映射为参数错误",
+      "status": "recorded_no_scope_expansion"
+    },
+    {
+      "id": "BUILD-01",
+      "category": "构建风险",
+      "status": "本轮KAC范围之外，未作运行验证",
+      "component": "KMC/KAPM前端",
+      "observation": "生产构建5项warning：KMC两个拓扑组件导入getLineConnectNulls但@kef/utils未导出；KAPM动态依赖表达式；资源及入口体积超限。",
+      "impact": "KMC相关页面有运行错误风险，不能用KAC页面通过代表这些模块可用。",
+      "recommendation": "单独核对共享工具导出和KMC调用；KAPM动态依赖及资源体积另作专项。"
+    }
+  ]
+}

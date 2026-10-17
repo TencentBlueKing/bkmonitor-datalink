@@ -1,0 +1,302 @@
+{
+  "operation": "linkd.metrics.query",
+  "http_status": 200,
+  "ok": true,
+  "data": {
+    "from": "2026-10-17T15:06:39.000Z",
+    "to": "2026-10-17T15:09:39.000Z",
+    "step": 15,
+    "panels": [
+      {
+        "id": "lifecycle-phase-execution-average",
+        "title": "单 Event 执行耗时分布",
+        "unit": "ms",
+        "kind": "stat",
+        "rangeTotal": true,
+        "processWide": true,
+        "description": "每次 Event 尝试的独占执行耗时，扣除主动合批和存储排队，保留实际 I/O、编解码及业务处理。",
+        "status": "available",
+        "series": [
+          {
+            "name": "series-1",
+            "labels": {
+              "linkd_phase": "apply"
+            },
+            "points": [
+              [
+                1792249779,
+                488.91065911546724
+              ]
+            ]
+          },
+          {
+            "name": "series-2",
+            "labels": {
+              "linkd_phase": "enrich"
+            },
+            "points": [
+              [
+                1792249779,
+                375.0524892710555
+              ]
+            ]
+          },
+          {
+            "name": "series-3",
+            "labels": {
+              "linkd_phase": "event_commit"
+            },
+            "points": [
+              [
+                1792249779,
+                160.244952509137
+              ]
+            ]
+          },
+          {
+            "name": "series-4",
+            "labels": {
+              "linkd_phase": "final_hook"
+            },
+            "points": [
+              [
+                1792249779,
+                61.99414325440492
+              ]
+            ]
+          },
+          {
+            "name": "series-5",
+            "labels": {
+              "linkd_phase": "other"
+            },
+            "points": [
+              [
+                1792249779,
+                0.03704227364644509
+              ]
+            ]
+          },
+          {
+            "name": "series-6",
+            "labels": {
+              "linkd_phase": "plan"
+            },
+            "points": [
+              [
+                1792249779,
+                90.72635277886329
+              ]
+            ]
+          },
+          {
+            "name": "series-7",
+            "labels": {
+              "linkd_phase": "policy_snapshot"
+            },
+            "points": [
+              [
+                1792249779,
+                5.082944970972108
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lifecycle-phase-wait-average",
+        "title": "单 Event 存储等待",
+        "unit": "ms",
+        "kind": "stat",
+        "rangeTotal": true,
+        "processWide": true,
+        "description": "按每条 Event 的逻辑调用区分主动合批与存储排队；与执行耗时使用相同尝试分母，不能用物理批次均值代替。",
+        "status": "available",
+        "series": [
+          {
+            "name": "series-1",
+            "labels": {
+              "linkd_phase": "apply",
+              "linkd_wait_kind": "batch_wait"
+            },
+            "points": [
+              [
+                1792249779,
+                22.45122597195032
+              ]
+            ]
+          },
+          {
+            "name": "series-2",
+            "labels": {
+              "linkd_phase": "apply",
+              "linkd_wait_kind": "storage_queue"
+            },
+            "points": [
+              [
+                1792249779,
+                0.999652821591664
+              ]
+            ]
+          },
+          {
+            "name": "series-3",
+            "labels": {
+              "linkd_phase": "enrich",
+              "linkd_wait_kind": "batch_wait"
+            },
+            "points": [
+              [
+                1792249779,
+                6.754330334964232
+              ]
+            ]
+          },
+          {
+            "name": "series-4",
+            "labels": {
+              "linkd_phase": "enrich",
+              "linkd_wait_kind": "storage_queue"
+            },
+            "points": [
+              [
+                1792249779,
+                0.26580600848011554
+              ]
+            ]
+          },
+          {
+            "name": "series-5",
+            "labels": {
+              "linkd_phase": "event_commit",
+              "linkd_wait_kind": "batch_wait"
+            },
+            "points": [
+              [
+                1792249779,
+                7.269324146771276
+              ]
+            ]
+          },
+          {
+            "name": "series-6",
+            "labels": {
+              "linkd_phase": "event_commit",
+              "linkd_wait_kind": "storage_queue"
+            },
+            "points": [
+              [
+                1792249779,
+                0.2758513760600114
+              ]
+            ]
+          },
+          {
+            "name": "series-7",
+            "labels": {
+              "linkd_phase": "final_hook",
+              "linkd_wait_kind": "batch_wait"
+            },
+            "points": [
+              [
+                1792249779,
+                0
+              ]
+            ]
+          },
+          {
+            "name": "series-8",
+            "labels": {
+              "linkd_phase": "final_hook",
+              "linkd_wait_kind": "storage_queue"
+            },
+            "points": [
+              [
+                1792249779,
+                0
+              ]
+            ]
+          },
+          {
+            "name": "series-9",
+            "labels": {
+              "linkd_phase": "other",
+              "linkd_wait_kind": "batch_wait"
+            },
+            "points": [
+              [
+                1792249779,
+                0
+              ]
+            ]
+          },
+          {
+            "name": "series-10",
+            "labels": {
+              "linkd_phase": "other",
+              "linkd_wait_kind": "storage_queue"
+            },
+            "points": [
+              [
+                1792249779,
+                0
+              ]
+            ]
+          },
+          {
+            "name": "series-11",
+            "labels": {
+              "linkd_phase": "plan",
+              "linkd_wait_kind": "batch_wait"
+            },
+            "points": [
+              [
+                1792249779,
+                0
+              ]
+            ]
+          },
+          {
+            "name": "series-12",
+            "labels": {
+              "linkd_phase": "plan",
+              "linkd_wait_kind": "storage_queue"
+            },
+            "points": [
+              [
+                1792249779,
+                0
+              ]
+            ]
+          },
+          {
+            "name": "series-13",
+            "labels": {
+              "linkd_phase": "policy_snapshot",
+              "linkd_wait_kind": "batch_wait"
+            },
+            "points": [
+              [
+                1792249779,
+                0
+              ]
+            ]
+          },
+          {
+            "name": "series-14",
+            "labels": {
+              "linkd_phase": "policy_snapshot",
+              "linkd_wait_kind": "storage_queue"
+            },
+            "points": [
+              [
+                1792249779,
+                0
+              ]
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

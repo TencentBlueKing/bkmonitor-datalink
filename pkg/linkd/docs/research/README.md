@@ -16,6 +16,8 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-10-17-test-kac-linkd-validation.md](2026-10-17-test-kac-linkd-validation.md) | test 环境 KAC→Linkd 全流程、边界、Hook 性能与修复后的真实验证记录 |
+| [2026-10-17-redis-capacity-assessment.md](2026-10-17-redis-capacity-assessment.md) | Event 请求/命令计数、策略与控制面规模关系、Redis 数据族/TTL、test 内存采样及容量估算公式 |
 | [2026-10-15-log-metric-title-live-validation.md](2026-10-15-log-metric-title-live-validation.md) | 日志指标名称恢复旧 KAC 规则、真实 Kafka 普通及无数据事件只读回放与交付边界 |
 | [2026-10-14-lifecycle-global-scope-latency.md](2026-10-14-lifecycle-global-scope-latency.md) | 全局业务逐事件重复扫描的根因、修复、回归与测试环境性能复核 |
 | [2026-10-14-kac-output-v3-validation.md](2026-10-14-kac-output-v3-validation.md) | KAC V3 队列输出、真实服务联调与突发压测验收边界 |

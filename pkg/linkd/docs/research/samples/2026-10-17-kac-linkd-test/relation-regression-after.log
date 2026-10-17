@@ -1,0 +1,8 @@
+task: [dev-test] uv run python -m pytest --maxfail=5 --durations=10 --reuse-db --disable-warnings kingeye/base/tests/domains/onemodel/test_relations_domain.py -q
+${KINGEYE_WORKSPACE}/.venv/lib/python3.11/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (1.26.20) or chardet (7.4.3)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+.................................                                        [100%]
+============================= slowest 10 durations =============================
+
+(10 durations < 0.005s hidden.  Use -vv to show these durations.)
+33 passed, 47 warnings in 0.03s

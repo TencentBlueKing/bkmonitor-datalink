@@ -1,0 +1,4 @@
+=== RUN   TestShieldBatchPreviewUsesRealMatchingAndNoWrites
+--- PASS: TestShieldBatchPreviewUsesRealMatchingAndNoWrites (0.00s)
+PASS
+ok  	linkd/internal/policy	0.386s

@@ -1,0 +1,19 @@
+
+> @kingeye/kef@1.0.17 test:kac-suppression
+> node --test tests/kac/suppression-contract.cjs
+
+✔ suppression candidate fields exclude disposition fields and retain custom fields (0.400917ms)
+✔ changing duration units uses the same thirty-day ceiling (0.071167ms)
+✔ policy limits accept regexp2 and target-only rules, reject unsupported fields and oversized regex (0.164084ms)
+✔ active-time control stops before adding a sixty-fifth period (10.721583ms)
+✔ regexp help remains a compilable shared component (4.953417ms)
+✔ filter-only save submits a canonical empty target and keeps non-BKCC space (0.255958ms)
+✔ aggregation detail refreshes labels when the field catalog arrives after policy detail (11.710041ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 184.3005

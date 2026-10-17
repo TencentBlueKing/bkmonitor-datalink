@@ -1,0 +1,38 @@
+=== RUN   TestIndependentCMDBBranchesAndFieldsKeepSuccessfulIdentity
+--- PASS: TestIndependentCMDBBranchesAndFieldsKeepSuccessfulIdentity (0.00s)
+=== RUN   TestCMDBLiteralRegexIsValidatedAtPublication
+--- PASS: TestCMDBLiteralRegexIsValidatedAtPublication (0.00s)
+=== RUN   TestCMDBIdentityBranches
+=== RUN   TestCMDBIdentityBranches/无身份匹配后补模型实例
+=== RUN   TestCMDBIdentityBranches/对象身份已有时跳过对象条件
+=== RUN   TestCMDBIdentityBranches/已有实例忽略缺失查询字段
+=== RUN   TestCMDBIdentityBranches/已有其他对象不重绑
+=== RUN   TestCMDBIdentityBranches/对象未匹配不查询
+=== RUN   TestCMDBIdentityBranches/查空不提交中间身份
+=== RUN   TestCMDBIdentityBranches/查询失败不提交中间身份
+=== RUN   TestCMDBIdentityBranches/旧canonical身份归一化
+=== RUN   TestCMDBIdentityBranches/其他canonical模型不被重绑
+--- PASS: TestCMDBIdentityBranches (0.00s)
+    --- PASS: TestCMDBIdentityBranches/无身份匹配后补模型实例 (0.00s)
+    --- PASS: TestCMDBIdentityBranches/对象身份已有时跳过对象条件 (0.00s)
+    --- PASS: TestCMDBIdentityBranches/已有实例忽略缺失查询字段 (0.00s)
+    --- PASS: TestCMDBIdentityBranches/已有其他对象不重绑 (0.00s)
+    --- PASS: TestCMDBIdentityBranches/对象未匹配不查询 (0.00s)
+    --- PASS: TestCMDBIdentityBranches/查空不提交中间身份 (0.00s)
+    --- PASS: TestCMDBIdentityBranches/查询失败不提交中间身份 (0.00s)
+    --- PASS: TestCMDBIdentityBranches/旧canonical身份归一化 (0.00s)
+    --- PASS: TestCMDBIdentityBranches/其他canonical模型不被重绑 (0.00s)
+=== RUN   TestCMDBModelOnlyAndRuleOrder
+--- PASS: TestCMDBModelOnlyAndRuleOrder (0.00s)
+=== RUN   TestCMDBTopologyFailureStillAssignsAndPreservesIdentity
+--- PASS: TestCMDBTopologyFailureStillAssignsAndPreservesIdentity (0.00s)
+=== RUN   TestCMDBIdentityConcurrentAndCancellation
+--- PASS: TestCMDBIdentityConcurrentAndCancellation (0.00s)
+=== RUN   TestCMDBIdentityRejectsUnsafeConfig
+--- PASS: TestCMDBIdentityRejectsUnsafeConfig (0.00s)
+=== RUN   TestCMDBIdentityDoesNotDependOnDisplayAssignments
+--- PASS: TestCMDBIdentityDoesNotDependOnDisplayAssignments (0.00s)
+=== RUN   TestCMDBTypedInputAndMultipleMatches
+--- PASS: TestCMDBTypedInputAndMultipleMatches (0.00s)
+PASS
+ok  	linkd/internal/enrich/custom	0.580s

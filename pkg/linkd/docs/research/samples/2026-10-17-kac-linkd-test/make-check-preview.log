@@ -1,0 +1,581 @@
+/Library/Developer/CommandLineTools/usr/bin/make fmt-check
+cd console && ./node_modules/.bin/prettier --check .
+Checking formatting...
+All matched files use Prettier code style!
+/Library/Developer/CommandLineTools/usr/bin/make test
+go test ./...
+?   	linkd/cmd/linkd	[no test files]
+ok  	linkd/cmd/linkd-cli	(cached)
+ok  	linkd/cmd/linkd-eventgen	(cached)
+ok  	linkd/internal/activeindex	(cached)
+ok  	linkd/internal/aicli	(cached)
+?   	linkd/internal/alertqueue	[no test files]
+ok  	linkd/internal/blueking	(cached)
+ok  	linkd/internal/cleaner	(cached)
+ok  	linkd/internal/cleaner/process	(cached)
+ok  	linkd/internal/cli	1.587s
+ok  	linkd/internal/cmdb	(cached)
+ok  	linkd/internal/config	(cached)
+ok  	linkd/internal/consume	(cached)
+ok  	linkd/internal/consume/kafka	(cached)
+ok  	linkd/internal/consume/rabbitmq	(cached)
+ok  	linkd/internal/consume/redisstream	(cached)
+ok  	linkd/internal/controlplane/api	2.245s
+ok  	linkd/internal/controlplane/process	(cached)
+ok  	linkd/internal/controlplane/redisstream	(cached)
+ok  	linkd/internal/controlplane/taskstate	(cached)
+ok  	linkd/internal/domain	(cached)
+ok  	linkd/internal/dynamicconfig	(cached)
+ok  	linkd/internal/dynamicconfig/storage	(cached)
+ok  	linkd/internal/enrich	(cached)
+ok  	linkd/internal/enrich/assembly	(cached)
+ok  	linkd/internal/enrich/basetarget	(cached)
+ok  	linkd/internal/enrich/collect	(cached)
+ok  	linkd/internal/enrich/custom	(cached)
+ok  	linkd/internal/enrich/datasources	(cached)
+ok  	linkd/internal/enrich/description	(cached)
+?   	linkd/internal/enrich/kingeye	[no test files]
+ok  	linkd/internal/enrich/kingeye/convert	(cached)
+ok  	linkd/internal/enrich/models	(cached)
+ok  	linkd/internal/enrich/preview	(cached)
+ok  	linkd/internal/enrich/processors	(cached)
+ok  	linkd/internal/enrich/rules	(cached)
+ok  	linkd/internal/enrich/uptime	(cached)
+ok  	linkd/internal/enrich/view	(cached)
+ok  	linkd/internal/eventgen	(cached)
+ok  	linkd/internal/eventsource	(cached)
+ok  	linkd/internal/eventsource/storage	(cached)
+ok  	linkd/internal/ingestpreview	(cached)
+ok  	linkd/internal/internaltoken	(cached)
+ok  	linkd/internal/jsonpath	(cached)
+ok  	linkd/internal/kaccompat	(cached)
+ok  	linkd/internal/kafkaclient	(cached)
+ok  	linkd/internal/lifecycle	(cached)
+ok  	linkd/internal/lifecycle/kachook	(cached)
+ok  	linkd/internal/lifecycle/kafkahook	(cached)
+ok  	linkd/internal/lifecycle/mailbox	(cached)
+ok  	linkd/internal/lifecycle/process	(cached)
+ok  	linkd/internal/lifecycle/recentalert	(cached)
+ok  	linkd/internal/lifecycle/scheduler	(cached)
+ok  	linkd/internal/lifecycle/strategyhook	(cached)
+ok  	linkd/internal/logging	(cached)
+ok  	linkd/internal/merge	(cached)
+ok  	linkd/internal/onemodel	(cached)
+ok  	linkd/internal/onemodel/assembly	(cached)
+ok  	linkd/internal/onemodel/metadatastore	(cached)
+ok  	linkd/internal/onemodel/queryservice	(cached)
+ok  	linkd/internal/policy	2.138s
+ok  	linkd/internal/policy/redisstate	(cached)
+ok  	linkd/internal/policy/runtime	(cached)
+ok  	linkd/internal/policy/simulation	(cached)
+ok  	linkd/internal/policy/storage	1.364s
+ok  	linkd/internal/processingerror	(cached)
+ok  	linkd/internal/redisclient	(cached)
+ok  	linkd/internal/runtimeconfig	(cached)
+ok  	linkd/internal/shieldcheck	(cached)
+ok  	linkd/internal/store	(cached)
+ok  	linkd/internal/store/assembly	(cached)
+ok  	linkd/internal/store/elasticsearch	(cached)
+ok  	linkd/internal/store/memory	(cached)
+ok  	linkd/internal/store/mysql	(cached)
+?   	linkd/internal/store/storetest	[no test files]
+ok  	linkd/internal/suppressioncheck	(cached)
+ok  	linkd/internal/suppressioncleanup	(cached)
+ok  	linkd/internal/taskdispatch	(cached)
+?   	linkd/internal/taskdispatch/observation	[no test files]
+ok  	linkd/internal/taskgroup	(cached)
+ok  	linkd/internal/telemetry	1.836s
+ok  	linkd/internal/testkit/rawgen	(cached)
+ok  	linkd/internal/textregexp	(cached)
+ok  	linkd/tests/e2e/allinone	(cached)
+ok  	linkd/tests/tools/rawgen	(cached)
+/Library/Developer/CommandLineTools/usr/bin/make vet
+go vet ./...
+/Library/Developer/CommandLineTools/usr/bin/make race
+go test -race ./...
+?   	linkd/cmd/linkd	[no test files]
+ok  	linkd/cmd/linkd-cli	(cached)
+ok  	linkd/cmd/linkd-eventgen	(cached)
+ok  	linkd/internal/activeindex	(cached)
+ok  	linkd/internal/aicli	(cached)
+?   	linkd/internal/alertqueue	[no test files]
+ok  	linkd/internal/blueking	(cached)
+ok  	linkd/internal/cleaner	(cached)
+ok  	linkd/internal/cleaner/process	(cached)
+ok  	linkd/internal/cli	2.672s
+ok  	linkd/internal/cmdb	(cached)
+ok  	linkd/internal/config	(cached)
+ok  	linkd/internal/consume	(cached)
+ok  	linkd/internal/consume/kafka	(cached)
+ok  	linkd/internal/consume/rabbitmq	(cached)
+ok  	linkd/internal/consume/redisstream	(cached)
+ok  	linkd/internal/controlplane/api	4.710s
+ok  	linkd/internal/controlplane/process	(cached)
+ok  	linkd/internal/controlplane/redisstream	(cached)
+ok  	linkd/internal/controlplane/taskstate	(cached)
+ok  	linkd/internal/domain	(cached)
+ok  	linkd/internal/dynamicconfig	(cached)
+ok  	linkd/internal/dynamicconfig/storage	(cached)
+ok  	linkd/internal/enrich	(cached)
+ok  	linkd/internal/enrich/assembly	(cached)
+ok  	linkd/internal/enrich/basetarget	(cached)
+ok  	linkd/internal/enrich/collect	(cached)
+ok  	linkd/internal/enrich/custom	(cached)
+ok  	linkd/internal/enrich/datasources	(cached)
+ok  	linkd/internal/enrich/description	(cached)
+?   	linkd/internal/enrich/kingeye	[no test files]
+ok  	linkd/internal/enrich/kingeye/convert	(cached)
+ok  	linkd/internal/enrich/models	(cached)
+ok  	linkd/internal/enrich/preview	(cached)
+ok  	linkd/internal/enrich/processors	(cached)
+ok  	linkd/internal/enrich/rules	(cached)
+ok  	linkd/internal/enrich/uptime	(cached)
+ok  	linkd/internal/enrich/view	(cached)
+ok  	linkd/internal/eventgen	(cached)
+ok  	linkd/internal/eventsource	(cached)
+ok  	linkd/internal/eventsource/storage	(cached)
+ok  	linkd/internal/ingestpreview	(cached)
+ok  	linkd/internal/internaltoken	(cached)
+ok  	linkd/internal/jsonpath	(cached)
+ok  	linkd/internal/kaccompat	(cached)
+ok  	linkd/internal/kafkaclient	(cached)
+ok  	linkd/internal/lifecycle	(cached)
+ok  	linkd/internal/lifecycle/kachook	(cached)
+ok  	linkd/internal/lifecycle/kafkahook	(cached)
+ok  	linkd/internal/lifecycle/mailbox	(cached)
+ok  	linkd/internal/lifecycle/process	(cached)
+ok  	linkd/internal/lifecycle/recentalert	(cached)
+ok  	linkd/internal/lifecycle/scheduler	(cached)
+ok  	linkd/internal/lifecycle/strategyhook	(cached)
+ok  	linkd/internal/logging	(cached)
+ok  	linkd/internal/merge	(cached)
+ok  	linkd/internal/onemodel	(cached)
+ok  	linkd/internal/onemodel/assembly	(cached)
+ok  	linkd/internal/onemodel/metadatastore	(cached)
+ok  	linkd/internal/onemodel/queryservice	(cached)
+ok  	linkd/internal/policy	10.555s
+ok  	linkd/internal/policy/redisstate	(cached)
+ok  	linkd/internal/policy/runtime	(cached)
+ok  	linkd/internal/policy/simulation	(cached)
+ok  	linkd/internal/policy/storage	2.609s
+ok  	linkd/internal/processingerror	(cached)
+ok  	linkd/internal/redisclient	(cached)
+ok  	linkd/internal/runtimeconfig	(cached)
+ok  	linkd/internal/shieldcheck	(cached)
+ok  	linkd/internal/store	(cached)
+ok  	linkd/internal/store/assembly	(cached)
+ok  	linkd/internal/store/elasticsearch	(cached)
+ok  	linkd/internal/store/memory	(cached)
+ok  	linkd/internal/store/mysql	(cached)
+?   	linkd/internal/store/storetest	[no test files]
+ok  	linkd/internal/suppressioncheck	(cached)
+ok  	linkd/internal/suppressioncleanup	(cached)
+ok  	linkd/internal/taskdispatch	(cached)
+?   	linkd/internal/taskdispatch/observation	[no test files]
+ok  	linkd/internal/taskgroup	(cached)
+ok  	linkd/internal/telemetry	3.726s
+ok  	linkd/internal/testkit/rawgen	(cached)
+ok  	linkd/internal/textregexp	(cached)
+ok  	linkd/tests/e2e/allinone	(cached)
+ok  	linkd/tests/tools/rawgen	(cached)
+/Library/Developer/CommandLineTools/usr/bin/make lint
+golangci-lint run ./...
+0 issues.
+/Library/Developer/CommandLineTools/usr/bin/make console-check
+cd console && ./node_modules/.bin/eslint . --max-warnings 0
+cd console && ./node_modules/.bin/tsc -p tsconfig.web.json --noEmit
+cd console && ./node_modules/.bin/tsc -p tsconfig.server.json --noEmit
+cd console && ./node_modules/.bin/vitest run
+
+ RUN  v4.1.11 ${WORKSPACE}/console
+
+{"level":30,"time":1792245794246,"pid":46045,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794249,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/policy-runtime/suppression/clip/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794259,"pid":46045,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794266,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/strategy-index/targets","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794270,"pid":46045,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794276,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/apps/linkd/local-api/action-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794290,"pid":46045,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794288,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794294,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794299,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794307,"pid":46045,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794314,"pid":46045,"hostname":"test-runner","reqId":"req-1","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"console.example","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794249,"pid":46045,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":401},"responseTime":2.2159999999998945,"msg":"request completed"}
+{"level":30,"time":1792245794249,"pid":46045,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/assets/example.js","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":401},"responseTime":0.1646659999998974,"msg":"request completed"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":401},"responseTime":0.06562499999995453,"msg":"request completed"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":401},"responseTime":0.05883300000004965,"msg":"request completed"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-5","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-5","res":{"statusCode":401},"responseTime":0.05587500000001455,"msg":"request completed"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-6","req":{"method":"GET","url":"/local-api/unknown","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-6","res":{"statusCode":401},"responseTime":0.04666599999995924,"msg":"request completed"}
+{"level":30,"time":1792245794250,"pid":46045,"hostname":"test-runner","reqId":"req-7","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794251,"pid":46045,"hostname":"test-runner","reqId":"req-7","res":{"statusCode":401},"responseTime":0.046708000000080574,"msg":"request completed"}
+{"level":30,"time":1792245794259,"pid":46045,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":401},"responseTime":0.14870799999994233,"msg":"request completed"}
+{"level":30,"time":1792245794259,"pid":46045,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/assets/example.js","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794259,"pid":46045,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":401},"responseTime":0.09266600000000835,"msg":"request completed"}
+{"level":30,"time":1792245794259,"pid":46045,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794259,"pid":46045,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":401},"responseTime":0.08225000000015825,"msg":"request completed"}
+{"level":30,"time":1792245794260,"pid":46045,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794260,"pid":46045,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":401},"responseTime":0.051333000000113316,"msg":"request completed"}
+{"level":30,"time":1792245794260,"pid":46045,"hostname":"test-runner","reqId":"req-5","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794260,"pid":46045,"hostname":"test-runner","reqId":"req-5","res":{"statusCode":401},"responseTime":0.03262500000005275,"msg":"request completed"}
+{"level":30,"time":1792245794260,"pid":46045,"hostname":"test-runner","reqId":"req-6","req":{"method":"GET","url":"/local-api/unknown","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794260,"pid":46045,"hostname":"test-runner","reqId":"req-6","res":{"statusCode":401},"responseTime":0.03345800000010968,"msg":"request completed"}
+{"level":30,"time":1792245794260,"pid":46045,"hostname":"test-runner","reqId":"req-7","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794260,"pid":46045,"hostname":"test-runner","reqId":"req-7","res":{"statusCode":401},"responseTime":0.032959000000118976,"msg":"request completed"}
+{"level":30,"time":1792245794270,"pid":46045,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":401},"responseTime":0.09533299999998235,"msg":"request completed"}
+{"level":30,"time":1792245794270,"pid":46045,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/assets/example.js","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794270,"pid":46045,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":401},"responseTime":0.034542000000101325,"msg":"request completed"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":401},"responseTime":0.02279199999998127,"msg":"request completed"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":401},"responseTime":0.022875000000112777,"msg":"request completed"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-5","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-5","res":{"statusCode":401},"responseTime":0.01933399999984431,"msg":"request completed"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-6","req":{"method":"GET","url":"/local-api/unknown","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-6","res":{"statusCode":401},"responseTime":0.017708000000084212,"msg":"request completed"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-7","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794271,"pid":46045,"hostname":"test-runner","reqId":"req-7","res":{"statusCode":401},"responseTime":0.016958999999815205,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":401},"responseTime":0.09825000000000728,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/assets/example.js","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":401},"responseTime":0.03145800000015697,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":401},"responseTime":0.023957999999993262,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":401},"responseTime":0.024417000000084954,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-5","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-5","res":{"statusCode":401},"responseTime":0.025040999999873748,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-6","req":{"method":"GET","url":"/local-api/unknown","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-6","res":{"statusCode":401},"responseTime":0.027209000000084416,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-7","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794277,"pid":46045,"hostname":"test-runner","reqId":"req-7","res":{"statusCode":401},"responseTime":0.02391699999998309,"msg":"request completed"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":401},"responseTime":0.09779199999979937,"msg":"request completed"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/assets/example.js","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":401},"responseTime":0.033334000000195374,"msg":"request completed"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":401},"responseTime":0.02358300000014424,"msg":"request completed"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":401},"responseTime":0.0257090000000062,"msg":"request completed"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-5","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794285,"pid":46045,"hostname":"test-runner","reqId":"req-5","res":{"statusCode":401},"responseTime":0.02529200000003584,"msg":"request completed"}
+{"level":30,"time":1792245794286,"pid":46045,"hostname":"test-runner","reqId":"req-6","req":{"method":"GET","url":"/local-api/unknown","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794286,"pid":46045,"hostname":"test-runner","reqId":"req-6","res":{"statusCode":401},"responseTime":0.021583000000191532,"msg":"request completed"}
+{"level":30,"time":1792245794286,"pid":46045,"hostname":"test-runner","reqId":"req-7","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794286,"pid":46045,"hostname":"test-runner","reqId":"req-7","res":{"statusCode":401},"responseTime":0.026749999999992724,"msg":"request completed"}
+{"level":30,"time":1792245794290,"pid":46045,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":401},"responseTime":0.08395900000004985,"msg":"request completed"}
+{"level":30,"time":1792245794290,"pid":46045,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/assets/example.js","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794290,"pid":46045,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":401},"responseTime":0.03379100000006474,"msg":"request completed"}
+{"level":30,"time":1792245794290,"pid":46045,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794290,"pid":46045,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":401},"responseTime":0.030209000000013475,"msg":"request completed"}
+{"level":30,"time":1792245794290,"pid":46045,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794290,"pid":46045,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":401},"responseTime":0.021958999999924345,"msg":"request completed"}
+{"level":30,"time":1792245794291,"pid":46045,"hostname":"test-runner","reqId":"req-5","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794291,"pid":46045,"hostname":"test-runner","reqId":"req-5","res":{"statusCode":401},"responseTime":0.017749999999978172,"msg":"request completed"}
+{"level":30,"time":1792245794291,"pid":46045,"hostname":"test-runner","reqId":"req-6","req":{"method":"GET","url":"/local-api/unknown","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794291,"pid":46045,"hostname":"test-runner","reqId":"req-6","res":{"statusCode":401},"responseTime":0.018500000000130967,"msg":"request completed"}
+{"level":30,"time":1792245794291,"pid":46045,"hostname":"test-runner","reqId":"req-7","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794291,"pid":46045,"hostname":"test-runner","reqId":"req-7","res":{"statusCode":401},"responseTime":0.01700000000005275,"msg":"request completed"}
+{"level":30,"time":1792245794308,"pid":46045,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":200},"responseTime":0.37016700000003766,"msg":"request completed"}
+{"level":30,"time":1792245794308,"pid":46045,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/local-api/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794308,"pid":46045,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":200},"responseTime":0.15283400000021174,"msg":"request completed"}
+{"level":30,"time":1792245794308,"pid":46045,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794308,"pid":46045,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":200},"responseTime":0.09504100000003746,"msg":"request completed"}
+{"level":30,"time":1792245794315,"pid":46045,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":403},"responseTime":0.8447089999999662,"msg":"request completed"}
+{"level":30,"time":1792245794315,"pid":46045,"hostname":"test-runner","reqId":"req-2","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"console.example","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794315,"pid":46045,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":403},"responseTime":0.10045799999988958,"msg":"request completed"}
+{"level":30,"time":1792245794315,"pid":46045,"hostname":"test-runner","reqId":"req-3","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"console.example","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794315,"pid":46045,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":403},"responseTime":0.05124999999998181,"msg":"request completed"}
+{"level":30,"time":1792245794315,"pid":46045,"hostname":"test-runner","reqId":"req-4","req":{"method":"DELETE","url":"/local-api/event-sources/test","host":"console.example","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794316,"pid":46045,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":200},"responseTime":0.6694999999999709,"msg":"request completed"}
+{"level":30,"time":1792245794338,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/events/event-a","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794343,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/infrastructure/redis/pending?limit=101","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794359,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/metrics?from=2026-09-04T00%3A00%3A00.000Z&to=2026-09-04T01%3A00%3A00.000Z&step=15&calculation_window_seconds=60","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794366,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/infrastructure/redis","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794373,"pid":46030,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/runtime/control-plane","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794252,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":400},"responseTime":3.3368339999999534,"msg":"request completed"}
+{"level":30,"time":1792245794266,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":200},"responseTime":0.4426669999998012,"msg":"request completed"}
+{"level":30,"time":1792245794267,"pid":46030,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/local-api/strategy-index/reconcile?event_source_id=source&hook_name=active","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794268,"pid":46030,"hostname":"test-runner","reqId":"req-2","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794268,"pid":46030,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":400},"responseTime":0.9683749999999236,"msg":"request completed"}
+{"level":30,"time":1792245794268,"pid":46030,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/local-api/strategy-index/browse?event_source_id=source&hook_name=active&count=201","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794269,"pid":46030,"hostname":"test-runner","reqId":"req-3","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794269,"pid":46030,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":400},"responseTime":0.5511659999999665,"msg":"request completed"}
+{"level":30,"time":1792245794269,"pid":46030,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/strategy-index/browse?event_source_id=source&hook_name=active","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794269,"pid":46030,"hostname":"test-runner","reqId":"req-4","err":{"name":"Error"},"msg":"local API request failed"}
+{"level":30,"time":1792245794269,"pid":46030,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":400},"responseTime":0.1784580000000915,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":401},"responseTime":0.17574999999987995,"msg":"request completed"}
+{"level":30,"time":1792245794277,"pid":46030,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/apps/linkd/local-api/action-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":200},"responseTime":0.8287500000001273,"msg":"request completed"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/local-api/action-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-3","msg":"Route GET:/local-api/action-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15 not found"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":404},"responseTime":0.13304199999993216,"msg":"request completed"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/apps/linkd/local-api/projection-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":401},"responseTime":0.07608299999992596,"msg":"request completed"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-5","req":{"method":"GET","url":"/apps/linkd/local-api/projection-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-5","res":{"statusCode":200},"responseTime":0.1298330000001897,"msg":"request completed"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-6","req":{"method":"GET","url":"/local-api/projection-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794278,"pid":46030,"hostname":"test-runner","reqId":"req-6","msg":"Route GET:/local-api/projection-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15 not found"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-6","res":{"statusCode":404},"responseTime":0.057792000000063126,"msg":"request completed"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-7","req":{"method":"GET","url":"/apps/linkd/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-7","res":{"statusCode":401},"responseTime":0.03337499999997817,"msg":"request completed"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-8","req":{"method":"GET","url":"/apps/linkd/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-8","res":{"statusCode":200},"responseTime":0.11666700000000674,"msg":"request completed"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-9","req":{"method":"GET","url":"/local-api/version","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-9","msg":"Route GET:/local-api/version not found"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-9","res":{"statusCode":404},"responseTime":0.04566700000009405,"msg":"request completed"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-a","req":{"method":"GET","url":"/apps/linkd/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-a","res":{"statusCode":401},"responseTime":0.03129199999989396,"msg":"request completed"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-b","req":{"method":"GET","url":"/apps/linkd/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-b","res":{"statusCode":200},"responseTime":0.10029099999997015,"msg":"request completed"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-c","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-c","msg":"Route GET:/local-api/capabilities not found"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-c","res":{"statusCode":404},"responseTime":0.04399999999986903,"msg":"request completed"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-d","req":{"method":"GET","url":"/apps/linkd/local-api/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-d","res":{"statusCode":401},"responseTime":0.03350000000000364,"msg":"request completed"}
+{"level":30,"time":1792245794279,"pid":46030,"hostname":"test-runner","reqId":"req-e","req":{"method":"GET","url":"/apps/linkd/local-api/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-e","res":{"statusCode":200},"responseTime":0.15304100000003018,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-f","req":{"method":"GET","url":"/local-api/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-f","msg":"Route GET:/local-api/config not found"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-f","res":{"statusCode":404},"responseTime":0.039416999999957625,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-g","req":{"method":"GET","url":"/apps/linkd/local-api/strategy-index/targets","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-g","res":{"statusCode":401},"responseTime":0.022292000000106782,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-h","req":{"method":"GET","url":"/apps/linkd/local-api/strategy-index/targets","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-h","res":{"statusCode":200},"responseTime":0.05512500000008913,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-i","req":{"method":"GET","url":"/local-api/strategy-index/targets","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-i","msg":"Route GET:/local-api/strategy-index/targets not found"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-i","res":{"statusCode":404},"responseTime":0.0314579999999296,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-j","req":{"method":"GET","url":"/apps/linkd/local-api/strategy-index/audits","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-j","res":{"statusCode":401},"responseTime":0.022582999999940512,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-k","req":{"method":"GET","url":"/apps/linkd/local-api/strategy-index/audits","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-k","res":{"statusCode":200},"responseTime":0.0388749999999618,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-l","req":{"method":"GET","url":"/local-api/strategy-index/audits","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-l","msg":"Route GET:/local-api/strategy-index/audits not found"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-l","res":{"statusCode":404},"responseTime":0.02483299999994415,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-m","req":{"method":"GET","url":"/apps/linkd/local-api/strategy-index/browse?event_source_id=source&hook_name=active","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-m","res":{"statusCode":401},"responseTime":0.016458000000056927,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-n","req":{"method":"GET","url":"/apps/linkd/local-api/strategy-index/browse?event_source_id=source&hook_name=active","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-n","err":{"name":"Error"},"msg":"local API request failed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-n","res":{"statusCode":400},"responseTime":0.106708000000026,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-o","req":{"method":"POST","url":"/apps/linkd/local-api/strategy-index/audits","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-o","res":{"statusCode":401},"responseTime":0.019375000000081855,"msg":"request completed"}
+{"level":30,"time":1792245794280,"pid":46030,"hostname":"test-runner","reqId":"req-p","req":{"method":"POST","url":"/apps/linkd/local-api/strategy-index/audits","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794282,"pid":46030,"hostname":"test-runner","reqId":"req-p","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794282,"pid":46030,"hostname":"test-runner","reqId":"req-p","res":{"statusCode":400},"responseTime":1.3284590000000662,"msg":"request completed"}
+{"level":30,"time":1792245794282,"pid":46030,"hostname":"test-runner","reqId":"req-q","req":{"method":"GET","url":"/apps/linkd/local-api/event-sources","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794282,"pid":46030,"hostname":"test-runner","reqId":"req-q","res":{"statusCode":503},"responseTime":0.3010420000000522,"msg":"request completed"}
+{"level":30,"time":1792245794282,"pid":46030,"hostname":"test-runner","reqId":"req-r","req":{"method":"GET","url":"/apps/linkd-other/local-api/config","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794282,"pid":46030,"hostname":"test-runner","reqId":"req-r","msg":"Route GET:/apps/linkd-other/local-api/config not found"}
+{"level":30,"time":1792245794282,"pid":46030,"hostname":"test-runner","reqId":"req-r","res":{"statusCode":404},"responseTime":0.0399160000001757,"msg":"request completed"}
+{"level":30,"time":1792245794288,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":200},"responseTime":0.11508299999991323,"msg":"request completed"}
+{"level":30,"time":1792245794294,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":200},"responseTime":0.10045900000000074,"msg":"request completed"}
+{"level":30,"time":1792245794299,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":200},"responseTime":0.09316600000011022,"msg":"request completed"}
+{"level":40,"time":1792245794338,"pid":46030,"hostname":"test-runner","reqId":"req-1","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794338,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":400},"responseTime":0.4550840000001699,"msg":"request completed"}
+{"level":40,"time":1792245794343,"pid":46030,"hostname":"test-runner","reqId":"req-1","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794343,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":400},"responseTime":0.33029199999987213,"msg":"request completed"}
+{"level":30,"time":1792245794359,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":200},"responseTime":0.6789999999998599,"msg":"request completed"}
+{"level":30,"time":1792245794359,"pid":46030,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/local-api/metrics?from=2026-09-04T00%3A00%3A00.000Z&to=2026-09-04T01%3A00%3A00.000Z&step=15&calculation_window_seconds=14","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794360,"pid":46030,"hostname":"test-runner","reqId":"req-2","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794360,"pid":46030,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":400},"responseTime":0.13520800000014788,"msg":"request completed"}
+{"level":30,"time":1792245794366,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":200},"responseTime":0.2285420000000613,"msg":"request completed"}
+{"level":30,"time":1792245794373,"pid":46030,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":503},"responseTime":0.31608300000016243,"msg":"request completed"}
+{"level":30,"time":1792245794655,"pid":46052,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/kingeye-linkd/local-api/runtime/control-plane","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794671,"pid":46052,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/kingeye-linkd/local-api/runtime/control-plane","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794677,"pid":46052,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/kingeye-linkd/local-api/runtime/control-plane","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794684,"pid":46052,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/kingeye-linkd/local-api/runtime/control-plane","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794657,"pid":46052,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":401},"responseTime":1.2333330000001297,"msg":"request completed"}
+{"level":30,"time":1792245794657,"pid":46052,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/kingeye-linkd/local-api/runtime/control-plane","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794661,"pid":46052,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":200},"responseTime":3.9580419999999776,"msg":"request completed"}
+{"level":30,"time":1792245794671,"pid":46052,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":502},"responseTime":0.39495800000008785,"msg":"request completed"}
+{"level":30,"time":1792245794678,"pid":46052,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":502},"responseTime":0.6231669999999667,"msg":"request completed"}
+{"level":30,"time":1792245794685,"pid":46052,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":502},"responseTime":0.23841599999991558,"msg":"request completed"}
+{"level":30,"time":1792245794812,"pid":46055,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794845,"pid":46055,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/kac-alarms","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794848,"pid":46055,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/kac-alarms?bk_tenant_id=tenant-a","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794864,"pid":46055,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/kac-alarms?bk_tenant_id=tenant-a&id=missing","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794869,"pid":46055,"hostname":"test-runner","reqId":"req-1","req":{"method":"GET","url":"/local-api/kac-alarms?bk_tenant_id=tenant-a&id=missing","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794816,"pid":46055,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":200},"responseTime":2.9951670000000377,"msg":"request completed"}
+{"level":30,"time":1792245794816,"pid":46055,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/local-api/kac-alarms?bk_tenant_id=tenant-a&from=2026-10-09T00:00:00Z&to=2026-10-09T02:00:00Z&source_id=source-a&status=executing&level=critical&action=firing&event_id=event-a","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794826,"pid":46055,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":200},"responseTime":9.380499999999984,"msg":"request completed"}
+{"level":30,"time":1792245794827,"pid":46055,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/local-api/kac-alarms/stats?bk_tenant_id=tenant-a&from=2026-10-09T00:00:00Z&to=2026-10-09T02:00:00Z&source_id=source-a&status=executing&level=critical&action=firing&event_id=event-a","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794828,"pid":46055,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":200},"responseTime":0.7057910000000902,"msg":"request completed"}
+{"level":30,"time":1792245794828,"pid":46055,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/kac-alarms/legacy-id?bk_tenant_id=tenant-b","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794828,"pid":46055,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":404},"responseTime":0.530666999999994,"msg":"request completed"}
+{"level":40,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-1","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":400},"responseTime":0.6744170000001759,"msg":"request completed"}
+{"level":30,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/local-api/kac-alarms/stats","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-2","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":400},"responseTime":0.13220800000021882,"msg":"request completed"}
+{"level":30,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-3","req":{"method":"GET","url":"/local-api/kac-alarms/legacy-id","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-3","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-3","res":{"statusCode":400},"responseTime":0.233791999999994,"msg":"request completed"}
+{"level":30,"time":1792245794846,"pid":46055,"hostname":"test-runner","reqId":"req-4","req":{"method":"GET","url":"/local-api/kac-alarms?bk_tenant_id=%20","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794847,"pid":46055,"hostname":"test-runner","reqId":"req-4","err":{"name":"ZodError"},"msg":"local API request failed"}
+{"level":30,"time":1792245794847,"pid":46055,"hostname":"test-runner","reqId":"req-4","res":{"statusCode":400},"responseTime":0.21424999999999272,"msg":"request completed"}
+{"level":30,"time":1792245794847,"pid":46055,"hostname":"test-runner","reqId":"req-5","req":{"method":"GET","url":"/local-api/kac-alarms?bk_tenant_id=tenant-a&limit=201","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794847,"pid":46055,"hostname":"test-runner","reqId":"req-5","err":{"name":"Error"},"msg":"local API request failed"}
+{"level":30,"time":1792245794847,"pid":46055,"hostname":"test-runner","reqId":"req-5","res":{"statusCode":400},"responseTime":0.1871249999999236,"msg":"request completed"}
+{"level":30,"time":1792245794847,"pid":46055,"hostname":"test-runner","reqId":"req-6","req":{"method":"GET","url":"/local-api/kac-alarms?bk_tenant_id=tenant-a&from=2026-09-01T00:00:00Z&to=2026-10-09T00:00:00Z","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":40,"time":1792245794847,"pid":46055,"hostname":"test-runner","reqId":"req-6","err":{"name":"Error"},"msg":"local API request failed"}
+{"level":30,"time":1792245794847,"pid":46055,"hostname":"test-runner","reqId":"req-6","res":{"statusCode":400},"responseTime":0.12829199999987395,"msg":"request completed"}
+{"level":40,"time":1792245794865,"pid":46055,"hostname":"test-runner","reqId":"req-1","err":{"name":"Error"},"msg":"local API request failed"}
+{"level":30,"time":1792245794865,"pid":46055,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":502},"responseTime":0.39229199999999764,"msg":"request completed"}
+{"level":40,"time":1792245794869,"pid":46055,"hostname":"test-runner","reqId":"req-1","err":{"name":"Error"},"msg":"local API request failed"}
+{"level":30,"time":1792245794870,"pid":46055,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":502},"responseTime":0.2980840000000171,"msg":"request completed"}
+{"level":40,"time":1792245794848,"pid":46055,"hostname":"test-runner","reqId":"req-1","err":{"name":"Error"},"msg":"local API request failed"}
+{"level":30,"time":1792245794848,"pid":46055,"hostname":"test-runner","reqId":"req-1","res":{"statusCode":502},"responseTime":0.10637500000007094,"msg":"request completed"}
+{"level":30,"time":1792245794848,"pid":46055,"hostname":"test-runner","reqId":"req-2","req":{"method":"GET","url":"/local-api/capabilities","host":"localhost:80","remoteAddress":"<address>"},"msg":"incoming request"}
+{"level":30,"time":1792245794848,"pid":46055,"hostname":"test-runner","reqId":"req-2","res":{"statusCode":200},"responseTime":0.05833400000005895,"msg":"request completed"}
+
+ Test Files  84 passed | 7 skipped (91)
+      Tests  449 passed | 8 skipped (457)
+   Start at  22:03:09
+   Duration  8.29s (transform 5.16s, setup 13.51s, import 18.93s, tests 17.45s, environment 45.76s)
+
+cd console && ./node_modules/.bin/vite build
+vite v8.2.2 building client environment for production...
+transforming...
+✓ 908 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                    0.76 kB │ gzip:   0.37 kB
+dist/assets/suppression-runtime-Cv2WSUKj.css       0.17 kB │ gzip:   0.12 kB
+dist/assets/MergeRuntimePage-FMv7b9Lz.css          0.39 kB │ gzip:   0.22 kB
+dist/assets/SuppressionRuntimePage-BsN54aQ3.css    0.42 kB │ gzip:   0.22 kB
+dist/assets/ShieldRuntimePage-D29F8DKW.css         1.02 kB │ gzip:   0.46 kB
+dist/assets/merge-runtime-CCsthtzI.css             1.71 kB │ gzip:   0.67 kB
+dist/assets/LifecyclePage-B-kWDqBa.css             4.35 kB │ gzip:   1.13 kB
+dist/assets/policies-9ykW52PP.css                  4.56 kB │ gzip:   1.31 kB
+dist/assets/ControlPlanePage-BNn7v1oT.css          6.44 kB │ gzip:   1.76 kB
+dist/assets/index-CwTaC1Kj.css                    97.96 kB │ gzip:  17.98 kB
+dist/assets/ConfigPage-C-lCmIvQ.js                 0.86 kB │ gzip:   0.59 kB
+dist/assets/policy-links-BRzp_h-0.js               0.88 kB │ gzip:   0.62 kB
+dist/assets/policy-simulation-D_5Guxzo.js          2.36 kB │ gzip:   1.20 kB
+dist/assets/shield-runtime-Gi3uGF6P.js             2.71 kB │ gzip:   1.08 kB
+dist/assets/merge-runtime-ClPrJ5Sq.js              2.89 kB │ gzip:   1.20 kB
+dist/assets/suppression-runtime-UAfgXiIt.js        2.96 kB │ gzip:   1.06 kB
+dist/assets/shield-checks-BIMxgJvL.js              3.41 kB │ gzip:   1.40 kB
+dist/assets/StepGuide-DpLFEIFi.js                  3.56 kB │ gzip:   1.71 kB
+dist/assets/HelpTip-003-a9Lp.js                    4.95 kB │ gzip:   1.97 kB
+dist/assets/OverviewPage-CitiK5QR.js               8.73 kB │ gzip:   3.99 kB
+dist/assets/MetricCatalogPage-BJcDdKeV.js          8.77 kB │ gzip:   2.94 kB
+dist/assets/SuppressionCleanupsPage-M1nm-uO7.js   11.13 kB │ gzip:   4.11 kB
+dist/assets/ControlPlanePage-Cn-jLP2Q.js          15.89 kB │ gzip:   5.79 kB
+dist/assets/CleanerPage-Ycq4k-FM.js               16.05 kB │ gzip:   6.25 kB
+dist/assets/ShieldRuntimePage-CF6gr1zl.js         17.06 kB │ gzip:   5.81 kB
+dist/assets/StrategyIndexPage-ClAWnkGx.js         17.52 kB │ gzip:   5.57 kB
+dist/assets/ElasticsearchPage-Bi3qWL4t.js         18.89 kB │ gzip:   6.12 kB
+dist/assets/SuppressionRuntimePage-2wdk0GHr.js    20.64 kB │ gzip:   6.61 kB
+dist/assets/KafkaPage-D38ldaci.js                 21.29 kB │ gzip:   6.76 kB
+dist/assets/PoliciesPage-BmaNzdja.js              24.12 kB │ gzip:   7.71 kB
+dist/assets/MergeRuntimePage-tcoWthqJ.js          24.16 kB │ gzip:   7.78 kB
+dist/assets/RedisPage-B3SgShQp.js                 25.87 kB │ gzip:   8.26 kB
+dist/assets/LifecyclePage-Nm679HiH.js             30.37 kB │ gzip:  11.31 kB
+dist/assets/base-path-BEmAFVKu.js                 32.61 kB │ gzip:  11.11 kB
+dist/assets/schemas-DtK0OktU.js                   88.72 kB │ gzip:  24.34 kB
+dist/assets/index-BoKvx1Dq.js                    986.32 kB │ gzip: 319.95 kB
+
+✓ built in 188ms
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 600 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+cd console && ./node_modules/.bin/tsc -p tsconfig.server.build.json
+/Library/Developer/CommandLineTools/usr/bin/make helm-check
+helm lint --strict deploy/helm/linkd -f deploy/helm/linkd/examples/external-services.yaml -f deploy/helm/linkd/examples/clusters.yaml -f deploy/helm/linkd/examples/console-ingress.yaml -f deploy/helm/linkd/examples/servicemonitor.yaml
+==> Linting deploy/helm/linkd
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed
+helm lint --strict deploy/helm/linkd -f deploy/helm/linkd/examples/existing-secrets.yaml
+engine.go:227: [INFO] Fail: test-release-linkd-control-plane: existingSecret 与适用的内联 configuration 互斥
+engine.go:227: [INFO] Fail: test-release-linkd-alarmd-cleaner: existingSecret 与适用的内联 configuration 互斥
+engine.go:227: [INFO] Fail: test-release-linkd-alarmd-lifecycle: existingSecret 与适用的内联 configuration 互斥
+engine.go:227: [INFO] Fail: test-release-linkd-default-cleaner: existingSecret 与适用的内联 configuration 互斥
+engine.go:227: [INFO] Fail: test-release-linkd-default-lifecycle: existingSecret 与适用的内联 configuration 互斥
+==> Linting deploy/helm/linkd
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed
+node --test deploy/helm/linkd/tests/chart.test.mjs
+✔ default three roles, stable selectors and valid runtime configs (745.315208ms)
+✔ eventgen stays disabled by default and when instances are preconfigured (39.944625ms)
+✔ Console KAC links are tenant-scoped configuration, emitted only to Console (151.622667ms)
+✔ direct Kafka eventgen passes addresses and topic without mounting a config Secret (37.850625ms)
+✔ direct Kafka eventgen rejects incomplete or conflicting connection options (138.584292ms)
+✔ eventgen instances use independent selectors, parameters and Secret keys (74.274458ms)
+✔ finite eventgen runs use Jobs without automatic retries and support image overrides (37.383791ms)
+✔ invalid eventgen instances fail before installation (317.155167ms)
+✔ packaged eventgen source example passes Linkd config validation (8.527708ms)
+✔ Console HTTP subpath config reaches both Ingress and application (245.957708ms)
+✔ storage-only values enable Signal backpressure and preserve explicit settings (92.5535ms)
+✔ Signal backpressure watermarks can be changed or disabled (115.417333ms)
+✔ default GHCR release images reach all roles, Console and migration (36.492125ms)
+✔ explicit image registry, tag and digest override release defaults (67.139958ms)
+✔ worker groups isolate labels, replicas, resources and config Secrets (84.06825ms)
+✔ existing Secret can share different keys across groups, labels reach actual config loader (46.558416ms)
+✔ Console Ingress uses authenticated Service and server-only secrets (37.7665ms)
+✔ zero replicas, metrics disabled, digest, checksum and bounded names (123.244834ms)
+✔ invalid values fail before installation (298.054292ms)
+✔ watch migration has self-contained pre hooks with ordered Secret and ServiceAccount (70.187333ms)
+✔ async migration uses regular revision Job and config snapshot, disabled emits nothing (66.824333ms)
+✔ migration mounts pre-existing config and account without creating hook replacements (35.412083ms)
+✔ migration validates bounds and prevents reserved environment overrides (133.349459ms)
+✔ ServiceMonitor discovers every worker group and control-plane metrics endpoint only (44.912ms)
+✔ ServiceMonitor supports discovery namespace, annotations, labels and relabeling configuration (34.997583ms)
+✔ ServiceMonitor remains opt-in and rejects invalid configuration (156.376ms)
+✔ shared resources reach control plane and lifecycle without source credentials (33.726ms)
+✔ global BlueKing mode and credentials reach every role (58.691917ms)
+✔ role and cluster BlueKing mode overrides are rejected (173.0385ms)
+✔ JWT secret is injected only into management consumers (37.1355ms)
+✔ global KAC plugin reaches every role and cannot be overridden (147.109083ms)
+✔ optional global KAC alert navigation is only injected into Console (75.176ms)
+✔ direct authentication values reach roles and both migration modes without an auth Secret (127.687416ms)
+✔ existing authentication Secrets override direct values and retain custom keys (36.76075ms)
+✔ direct authentication rejects missing fields, matching tokens and invalid types (193.915042ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 35
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8219.578917
+/Library/Developer/CommandLineTools/usr/bin/make release-check
+python3 scripts/test_ci_release.py
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 4.164s
+
+OK
+NODE_PATH="${WORKSPACE}/console/node_modules" node --test scripts/test-prepare-release-chart.cjs
+✔ Chart 默认 amd64，另一架构覆盖仓库及节点选择 (205.147375ms)
+✔ Chart 默认 arm64，另一架构覆盖仓库及节点选择 (191.736667ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 439.631167
+NODE_PATH="${WORKSPACE}/console/node_modules" node --test scripts/test-image-workflow.cjs
+✔ workflow remains manual and default all excludes eventgen (6.871ms)
+✔ eventgen uses only its own version, including the unique-tag fallback (19.588625ms)
+✔ invalid selected versions and unknown components fail before building (25.118542ms)
+✔ each optional image resolves its real build context and Dockerfile (15.593458ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 119.336916

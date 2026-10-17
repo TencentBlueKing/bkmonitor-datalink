@@ -1,0 +1,31 @@
+task: [dev-test] uv run python -m pytest --maxfail=5 --durations=10 --reuse-db --disable-warnings kingeye/kac/tests/linkd kingeye/kac/tests/alarm_collect/test_linkd_ingestion.py kingeye/kac/tests/alarm_collect/test_linkd_debug_preview.py kingeye/kac/tests/alarm_collect/test_enrich_preview kingeye/base/tests/domains/onemodel/test_relations_domain.py -q
+${KINGEYE_WORKSPACE}/.venv/lib/python3.11/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (1.26.20) or chardet (7.4.3)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+......................................................s................. [  7%]
+........................................................................ [ 15%]
+........................................................................ [ 23%]
+........................................................................ [ 30%]
+........................................................................ [ 38%]
+........................................................................ [ 46%]
+........................................................................ [ 53%]
+........................................................................ [ 61%]
+........................................................................ [ 69%]
+........................................................................ [ 76%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+........................................................................ [ 99%]
+...                                                                      [100%]
+============================= slowest 10 durations =============================
+1.37s setup    src/kingeye/kac/tests/linkd/test_enrich_save.py::test_create_publishes_uncommitted_configuration_and_rolls_back_every_local_write[False]
+0.98s teardown src/kingeye/kac/tests/linkd/test_policy_origin.py::test_freeze_writes_complete_snapshot_in_isolated_database[False]
+0.32s teardown src/kingeye/kac/tests/linkd/test_shield_requests.py::test_concurrent_preparation_persists_one_command_before_any_send
+0.30s teardown src/kingeye/kac/tests/linkd/test_policy_origin.py::test_freeze_writes_complete_snapshot_in_isolated_database[True]
+0.29s teardown src/kingeye/kac/tests/linkd/test_shield_requests.py::test_forward_migration_creates_tenant_unique_request_schema
+0.04s call     src/kingeye/kac/tests/linkd/test_shield_requests.py::test_reconciliation_has_hard_batch_limit
+0.02s call     src/kingeye/kac/tests/linkd/test_shield_requests.py::test_forward_migration_creates_tenant_unique_request_schema
+0.02s call     src/kingeye/kac/tests/linkd/test_shield_requests.py::test_concurrent_preparation_persists_one_command_before_any_send
+0.02s call     src/kingeye/kac/tests/linkd/test_shield_requests.py::test_quick_shield_timezone_survives_serializer_and_entity_defaults[None-False]
+0.02s call     src/kingeye/kac/tests/linkd/test_shield_requests.py::test_quick_shield_timezone_survives_serializer_and_entity_defaults[America/New_York-False]
+=========================== short test summary info ============================
+SKIPPED [1] kingeye/kac/tests/linkd/test_action_live_integration.py:15: requires isolated KAC live services
+938 passed, 1 skipped, 83 warnings in 4.80s

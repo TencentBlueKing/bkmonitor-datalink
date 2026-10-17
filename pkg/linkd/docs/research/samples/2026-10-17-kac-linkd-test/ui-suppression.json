@@ -1,0 +1,487 @@
+{
+  "final_summary.json": {
+    "valid_passed_assertions": 48,
+    "counted_files": {
+      "backend_boundaries.json": 14,
+      "runtime.json": 9,
+      "cleanup_alerts.json": 2,
+      "disabled_flow.json": 5,
+      "final_cleanup.json": 3,
+      "ui_observations.json": 15
+    },
+    "invalid_trials": [
+      {
+        "file": "runtime.json",
+        "case": "ui_sup_runtime_cleanup",
+        "reason": "Fixture used recovered instead of valid V2 action resolved; corrected cleanup passed."
+      }
+    ],
+    "not_double_counted": [
+      "post_deploy_final.json duplicates final UI entries for deployment evidence"
+    ],
+    "local_regression_passed": 7,
+    "local_lint_passed": true,
+    "policy_deleted": true,
+    "remote_tombstone": true,
+    "owned_active_alerts": 0,
+    "remaining_product_issues": [
+      "SUP-UX-01 min bound wording",
+      "SUP-UX-02 first match banner semantics requires runtime confirmation"
+    ],
+    "fixed_defect": "SUP-BUG-01 async field catalog labels",
+    "privacy": "No IPs, credentials, cookies or real CMDB properties in delivered JSON and verified screenshots."
+  },
+  "ui_observations.json": {
+    "at": "2026-10-17T15:16:58.087515+00:00",
+    "environment": "test，已登录独立外部浏览器会话；无IP、凭据、Cookie或真实CMDB属性",
+    "policy_name": "E2E_UI_SUP_20261017_combined",
+    "results": [
+      {
+        "case": "ui_sup_create_advanced_filter",
+        "result": "passed",
+        "evidence": "页面以全局业务+唯一标题lookbehind正则创建，未选择CMDB实例。"
+      },
+      {
+        "case": "ui_sup_dotnet_regex_help",
+        "result": "passed",
+        "evidence": "页面帮助声明.NET风格、任意位置匹配、Unicode、断言和反向引用、\\A/\\z与(?s)。"
+      },
+      {
+        "case": "ui_sup_zero_duration_blocked",
+        "result": "passed",
+        "evidence": "窗口输入0，确定后保留方案弹窗并显示最小值错误。"
+      },
+      {
+        "case": "ui_sup_count_over_10000_blocked",
+        "result": "passed",
+        "evidence": "防抖次数10001，确定后显示1-10000并阻止新增。"
+      },
+      {
+        "case": "ui_sup_window_over_30days_blocked",
+        "result": "passed",
+        "evidence": "聚合窗口43201分钟，确定后显示1-43200并阻止新增。"
+      },
+      {
+        "case": "ui_sup_duplicate_scheme_disabled",
+        "result": "passed",
+        "evidence": "添加防抖后，第二方案的防抖选项禁用。"
+      },
+      {
+        "case": "ui_sup_two_scheme_limit",
+        "result": "passed",
+        "evidence": "两种方案均添加后，新增方案按钮禁用。"
+      },
+      {
+        "case": "ui_sup_create_save_list",
+        "result": "passed",
+        "evidence": "真实页面保存成功并返回列表，出现唯一测试策略。"
+      },
+      {
+        "case": "ui_sup_reload_name_and_condition",
+        "result": "passed",
+        "evidence": "刷新列表后进入编辑，策略名称和lookbehind正则完整回显。"
+      },
+      {
+        "case": "ui_sup_reload_scheme_values",
+        "result": "passed",
+        "evidence": "防抖30秒2次及聚合2分钟窗口回显正确。"
+      },
+      {
+        "case": "ui_sup_reload_aggregation_field_label",
+        "result": "passed",
+        "evidence": "新前端e2e.4已复验：目录晚到前显示原key，目录到达后自动更新为告警名称，无undefined。post_deploy_final.json与aggregation-reload-fixed.png。",
+        "initial_result": "failed"
+      },
+      {
+        "case": "ui_sup_modify_save",
+        "result": "passed",
+        "evidence": "通过页面把聚合窗口改成3分钟并保存，列表更新时间变化；后端另行核对持久化。"
+      },
+      {
+        "case": "ui_sup_disable_ui",
+        "result": "passed",
+        "evidence": "通过自建策略开关停用，行状态变为未生效；后端另行核对停用和真实执行。"
+      },
+      {
+        "case": "ui_sup_new_frontend_entry_resources",
+        "result": "passed",
+        "files": [
+          "runtime.8a11657d25f460bc3de2.js",
+          "vendors.092b6f3fb9ca03a2e5bb.js",
+          "app.d14b64be62e505c4be47.js"
+        ],
+        "http_statuses": [
+          200,
+          200,
+          200
+        ]
+      },
+      {
+        "case": "ui_sup_delete_ui",
+        "result": "passed",
+        "details": "点击唯一自建策略的删除及确认后，该策略从页面消失。"
+      }
+    ],
+    "excluded_trials": [
+      {
+        "case": "ui_sup_runtime_cleanup",
+        "reason": "首次脚本误用recovered作为来源action；应使用resolved。无效输入未恢复不是产品缺陷；cleanup_alerts.json已使用正确协议确认恢复和零自有活动告警。"
+      },
+      {
+        "case": "ui_sup_editPage_flag",
+        "reason": "观测脚本误用editRestrainStrategy路由名，实际路径为editAlarmRestrain；正文和真实编辑回显均正确。"
+      },
+      {
+        "case": "ui_sup_dropdown_after_escape",
+        "reason": "后台Chrome节流导致浮层延迟；激活tab后hidden=false重验无残留，剔除产品问题。"
+      }
+    ],
+    "final_policy_state": "已通过UI删除，后端tombstone核对单列final_cleanup.json"
+  },
+  "backend_boundaries.json": {
+    "at": "2026-10-17T14:49:03.277776+00:00",
+    "exit": 0,
+    "results": [
+      {
+        "case": "ui_sup_backend_duration_min_1",
+        "result": "passed",
+        "expected_valid": true,
+        "actual_valid": true,
+        "error_fields": []
+      },
+      {
+        "case": "ui_sup_backend_duration_zero_rejected",
+        "result": "passed",
+        "expected_valid": false,
+        "actual_valid": false,
+        "error_fields": [
+          "scheme"
+        ]
+      },
+      {
+        "case": "ui_sup_backend_count_max_10000",
+        "result": "passed",
+        "expected_valid": true,
+        "actual_valid": true,
+        "error_fields": []
+      },
+      {
+        "case": "ui_sup_backend_count_over_10000_rejected",
+        "result": "passed",
+        "expected_valid": false,
+        "actual_valid": false,
+        "error_fields": [
+          "scheme"
+        ]
+      },
+      {
+        "case": "ui_sup_backend_window_30_days",
+        "result": "passed",
+        "expected_valid": true,
+        "actual_valid": true,
+        "error_fields": []
+      },
+      {
+        "case": "ui_sup_backend_window_over_30_days_rejected",
+        "result": "passed",
+        "expected_valid": false,
+        "actual_valid": false,
+        "error_fields": [
+          "scheme"
+        ]
+      },
+      {
+        "case": "ui_sup_backend_duplicate_algorithm_rejected",
+        "result": "passed",
+        "expected_valid": false,
+        "actual_valid": false,
+        "error_fields": [
+          "scheme"
+        ]
+      },
+      {
+        "case": "ui_sup_backend_combined_algorithms",
+        "result": "passed",
+        "expected_valid": true,
+        "actual_valid": true,
+        "error_fields": []
+      },
+      {
+        "case": "ui_sup_backend_aggregation_duplicate_field_rejected",
+        "result": "passed",
+        "expected_valid": false,
+        "actual_valid": false,
+        "error_fields": [
+          "scheme"
+        ]
+      },
+      {
+        "case": "ui_sup_backend_post_enrichment_field_rejected",
+        "result": "passed",
+        "expected_valid": false,
+        "actual_valid": false,
+        "error_fields": [
+          "policy"
+        ]
+      },
+      {
+        "case": "ui_sup_backend_regex_257_chars_rejected",
+        "result": "passed",
+        "expected_valid": false,
+        "actual_valid": false,
+        "error_fields": [
+          "policy"
+        ]
+      },
+      {
+        "case": "ui_sup_backend_regexp2_lookbehind_accepted",
+        "result": "passed",
+        "expected_valid": true,
+        "actual_valid": true,
+        "error_fields": []
+      },
+      {
+        "case": "ui_sup_backend_cross_midnight_rejected",
+        "result": "passed",
+        "expected_valid": false,
+        "actual_valid": false,
+        "error_fields": [
+          "activate_times"
+        ]
+      },
+      {
+        "case": "ui_sup_backend_two_midnight_segments",
+        "result": "passed",
+        "expected_valid": true,
+        "actual_valid": true,
+        "error_fields": []
+      }
+    ]
+  },
+  "runtime.json": {
+    "at": "2026-10-17T14:55:07.828579+00:00",
+    "exit": 0,
+    "results": [
+      {
+        "case": "ui_sup_created_policy_published",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_first_ingest",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_combined_first_below_clip",
+        "result": "passed",
+        "states": [
+          "suppressed"
+        ]
+      },
+      {
+        "case": "ui_sup_second_ingest",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_combined_second_admitted",
+        "result": "passed",
+        "states": [
+          "suppressed",
+          "accepted"
+        ]
+      },
+      {
+        "case": "ui_sup_real_alert_and_kac_projection",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_duplicate_ingest",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_combined_aggregation_after_clip",
+        "result": "passed",
+        "states": [
+          "suppressed",
+          "accepted",
+          "suppressed",
+          "suppressed"
+        ]
+      },
+      {
+        "case": "ui_sup_aggregation_does_not_create_second_alert",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_runtime_cleanup",
+        "result": "failed"
+      }
+    ]
+  },
+  "cleanup_alerts.json": {
+    "at": "2026-10-17T14:56:05.838231+00:00",
+    "exit": 0,
+    "results": [
+      {
+        "case": "ui_sup_runtime_cleanup_resolved_protocol",
+        "result": "passed",
+        "status": "recovered"
+      },
+      {
+        "case": "ui_sup_no_owned_active_alerts",
+        "result": "passed"
+      }
+    ]
+  },
+  "disabled_flow.json": {
+    "at": "2026-10-17T15:00:37.894806+00:00",
+    "exit": 0,
+    "results": [
+      {
+        "case": "ui_sup_ui_modify_persisted",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_ui_disable_persisted",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_release_after_disable",
+        "top_keys": [
+          "bk_tenant_id",
+          "type",
+          "origin",
+          "id",
+          "revision",
+          "published",
+          "compiled",
+          "spec",
+          "deleted"
+        ],
+        "published_keys": null
+      },
+      {
+        "case": "ui_sup_disable_probe_ingest",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_disabled_policy_first_event_admitted",
+        "result": "passed",
+        "states": [
+          "accepted"
+        ]
+      },
+      {
+        "case": "ui_sup_disable_probe_recovered",
+        "result": "passed"
+      }
+    ]
+  },
+  "final_cleanup.json": {
+    "at": "2026-10-17T15:16:53.083490+00:00",
+    "exit": 0,
+    "results": [
+      {
+        "case": "ui_sup_policy_deleted_from_kac",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_policy_delete_published_tombstone",
+        "result": "passed"
+      },
+      {
+        "case": "ui_sup_final_zero_active_alerts",
+        "result": "passed",
+        "owned_count": 2,
+        "active_count": 0
+      }
+    ]
+  },
+  "post_deploy_final.json": {
+    "at": "2026-10-17T15:16:58.087515+00:00",
+    "web_version": "test e2e.4",
+    "results": [
+      {
+        "case": "ui_sup_new_frontend_entry_resources",
+        "result": "passed",
+        "files": [
+          "runtime.8a11657d25f460bc3de2.js",
+          "vendors.092b6f3fb9ca03a2e5bb.js",
+          "app.d14b64be62e505c4be47.js"
+        ],
+        "http_statuses": [
+          200,
+          200,
+          200
+        ]
+      },
+      {
+        "case": "ui_sup_postdeploy_catalog_late_refresh",
+        "result": "passed",
+        "new_bundle_loaded": true,
+        "document_hidden": false,
+        "active_loaders": 0,
+        "display_before_catalog": "name",
+        "display_after_catalog": "告警名称",
+        "undefined_present": false,
+        "evidence": "aggregation-reload-fixed.png"
+      },
+      {
+        "case": "ui_sup_delete_ui",
+        "result": "passed",
+        "details": "点击唯一自建策略的删除及确认后，该策略从页面消失。"
+      }
+    ]
+  },
+  "issues.json": {
+    "issues": [
+      {
+        "id": "SUP-BUG-01",
+        "category": "明确缺陷",
+        "severity": "P2",
+        "title": "抑制聚合字段在冷刷新后的编辑页显示undefined",
+        "steps": [
+          "用高级筛选和告警名称聚合创建策略并保存。",
+          "刷新浏览器，再进入策略编辑。",
+          "在字段目录晚于策略详情返回时，聚合规则文字显示undefined，编辑方案弹窗中的实际选中字段仍是告警名称。"
+        ],
+        "impact": "无法从规则摘要辨认实际聚合字段；真实执行和保存字段仍正确。",
+        "cause": "restrain-table只监听策略/旧字段prop，没有监听异步enrichFieldMap变化，初次undefined结果留在tableData。",
+        "fix": "监听字段目录重算展示；删除字段保留原key。",
+        "status": "已修复并部署test e2e.4，冷刷新真实页面复验通过",
+        "regression": "修前6通过1失败；修后7通过；单文件ESLint通过。",
+        "evidence": [
+          "aggregation-reload-undefined.png",
+          "aggregation-regression-before.log",
+          "aggregation-regression-after.log",
+          "aggregation-reload-fixed.png"
+        ]
+      },
+      {
+        "id": "SUP-UX-01",
+        "category": "提示改进",
+        "severity": "P3",
+        "title": "最小值错误文案不包含合法边界1",
+        "steps": [
+          "新增防抖方案，窗口或次数填0。",
+          "页面提示“请输入大于1的整数”。"
+        ],
+        "impact": "实际1合法，但文案表达1不合法，容易误导配置。",
+        "suggestion": "改为“大于或等于1”或统一“请输入1至上限的整数”。",
+        "status": "记录建议，本轮不改公共数字组件"
+      },
+      {
+        "id": "SUP-UX-02",
+        "category": "语义待核对",
+        "severity": "P2",
+        "title": "列表首次匹配停止提示可能不符合Linkd继续评估语义",
+        "steps": [
+          "读取抑制列表顶部说明：匹配到对应策略执行后不再往下匹配。",
+          "对照Linkd runtime/suppression.go：匹配且放行后继续后续策略，仅被抑制才return。"
+        ],
+        "impact": "用户可能以为首个命中的放行策略能屏蔽后续抑制策略。",
+        "suggestion": "补两条唯一匹配策略的现场反例后，按当前执行契约更新提示。",
+        "status": "UI和源码已核对；未完成双策略现场反例，不计运行失败。"
+      }
+    ]
+  }
+}

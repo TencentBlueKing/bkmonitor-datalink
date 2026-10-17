@@ -1,0 +1,137 @@
+task: [dev-test] uv run python -m pytest --maxfail=5 --durations=10 --reuse-db --disable-warnings kingeye/base/tests/domains/onemodel/test_relations_domain.py -k canonical_edges_restore -q
+${KINGEYE_WORKSPACE}/.venv/lib/python3.11/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (1.26.20) or chardet (7.4.3)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+_ TestSearchInstanceRelations.test_canonical_edges_restore_legacy_endpoints_before_filtering[query0] _
+
+self = <src.kingeye.base.tests.domains.onemodel.test_relations_domain.TestSearchInstanceRelations object at 0x118aa3250>
+fake_relations_plane = {'calls': {'inst': [{'bk_tenant_id': 'system', 'conditions': [{'field': 'producer', 'operator': 'eq', 'value': 'cmdb_f...dule', 'bk_tenant_id': 'system', 'producer': 'cmdb_fact', 'relation_identity': 'host_belong_module', ...}], 'obj': []}}
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x118a80090>
+query = {'bk_inst_id': '1', 'bk_obj_id': 'host'}
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            {"bk_obj_id": "host", "bk_inst_id": "1"},
+            {"bk_asst_obj_id": "module", "bk_asst_inst_id": "10"},
+            {"bk_obj_id": "host", "bk_asst_obj_id": "module", "bk_obj_asst_id": "host_belong_module"},
+        ],
+    )
+    def test_canonical_edges_restore_legacy_endpoints_before_filtering(self, fake_relations_plane, monkeypatch, query):
+        monkeypatch.setattr(
+            relations_module,
+            "normalize_cmdb_bk_obj_id",
+            lambda *, model_id, bk_tenant_id: {"cw-Host": "host", "cw-Module": "module"}[model_id],
+            raising=False,
+        )
+        fake_relations_plane["results"]["inst"] = [
+            {
+                "bk_tenant_id": DEFAULT_TENANT_ID,
+                "producer": "cmdb_fact",
+                "source_model_id": "cw-Host",
+                "source_entity_uid": "cw-Host|1",
+                "target_model_id": "cw-Module",
+                "target_entity_uid": "cw-Module|10",
+                "relation_identity": "host_belong_module",
+                "bk_obj_asst_id": "host_belong_module",
+            }
+        ]
+
+        total, records = onemodel.search_instance_relations(**query)
+
+>       assert total == 1
+E       assert 0 == 1
+
+kingeye/base/tests/domains/onemodel/test_relations_domain.py:131: AssertionError
+_ TestSearchInstanceRelations.test_canonical_edges_restore_legacy_endpoints_before_filtering[query1] _
+
+self = <src.kingeye.base.tests.domains.onemodel.test_relations_domain.TestSearchInstanceRelations object at 0x118aa3810>
+fake_relations_plane = {'calls': {'inst': [{'bk_tenant_id': 'system', 'conditions': [{'field': 'producer', 'operator': 'eq', 'value': 'cmdb_f...dule', 'bk_tenant_id': 'system', 'producer': 'cmdb_fact', 'relation_identity': 'host_belong_module', ...}], 'obj': []}}
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x118a800d0>
+query = {'bk_asst_inst_id': '10', 'bk_asst_obj_id': 'module'}
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            {"bk_obj_id": "host", "bk_inst_id": "1"},
+            {"bk_asst_obj_id": "module", "bk_asst_inst_id": "10"},
+            {"bk_obj_id": "host", "bk_asst_obj_id": "module", "bk_obj_asst_id": "host_belong_module"},
+        ],
+    )
+    def test_canonical_edges_restore_legacy_endpoints_before_filtering(self, fake_relations_plane, monkeypatch, query):
+        monkeypatch.setattr(
+            relations_module,
+            "normalize_cmdb_bk_obj_id",
+            lambda *, model_id, bk_tenant_id: {"cw-Host": "host", "cw-Module": "module"}[model_id],
+            raising=False,
+        )
+        fake_relations_plane["results"]["inst"] = [
+            {
+                "bk_tenant_id": DEFAULT_TENANT_ID,
+                "producer": "cmdb_fact",
+                "source_model_id": "cw-Host",
+                "source_entity_uid": "cw-Host|1",
+                "target_model_id": "cw-Module",
+                "target_entity_uid": "cw-Module|10",
+                "relation_identity": "host_belong_module",
+                "bk_obj_asst_id": "host_belong_module",
+            }
+        ]
+
+        total, records = onemodel.search_instance_relations(**query)
+
+>       assert total == 1
+E       assert 0 == 1
+
+kingeye/base/tests/domains/onemodel/test_relations_domain.py:131: AssertionError
+_ TestSearchInstanceRelations.test_canonical_edges_restore_legacy_endpoints_before_filtering[query2] _
+
+self = <src.kingeye.base.tests.domains.onemodel.test_relations_domain.TestSearchInstanceRelations object at 0x118aa3f10>
+fake_relations_plane = {'calls': {'inst': [{'bk_tenant_id': 'system', 'conditions': [{'field': 'producer', 'operator': 'eq', 'value': 'cmdb_f...dule', 'bk_tenant_id': 'system', 'producer': 'cmdb_fact', 'relation_identity': 'host_belong_module', ...}], 'obj': []}}
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1189f4950>
+query = {'bk_asst_obj_id': 'module', 'bk_obj_asst_id': 'host_belong_module', 'bk_obj_id': 'host'}
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            {"bk_obj_id": "host", "bk_inst_id": "1"},
+            {"bk_asst_obj_id": "module", "bk_asst_inst_id": "10"},
+            {"bk_obj_id": "host", "bk_asst_obj_id": "module", "bk_obj_asst_id": "host_belong_module"},
+        ],
+    )
+    def test_canonical_edges_restore_legacy_endpoints_before_filtering(self, fake_relations_plane, monkeypatch, query):
+        monkeypatch.setattr(
+            relations_module,
+            "normalize_cmdb_bk_obj_id",
+            lambda *, model_id, bk_tenant_id: {"cw-Host": "host", "cw-Module": "module"}[model_id],
+            raising=False,
+        )
+        fake_relations_plane["results"]["inst"] = [
+            {
+                "bk_tenant_id": DEFAULT_TENANT_ID,
+                "producer": "cmdb_fact",
+                "source_model_id": "cw-Host",
+                "source_entity_uid": "cw-Host|1",
+                "target_model_id": "cw-Module",
+                "target_entity_uid": "cw-Module|10",
+                "relation_identity": "host_belong_module",
+                "bk_obj_asst_id": "host_belong_module",
+            }
+        ]
+
+        total, records = onemodel.search_instance_relations(**query)
+
+>       assert total == 1
+E       assert 0 == 1
+
+kingeye/base/tests/domains/onemodel/test_relations_domain.py:131: AssertionError
+============================= slowest 10 durations =============================
+
+(9 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED kingeye/base/tests/domains/onemodel/test_relations_domain.py::TestSearchInstanceRelations::test_canonical_edges_restore_legacy_endpoints_before_filtering[query0]
+FAILED kingeye/base/tests/domains/onemodel/test_relations_domain.py::TestSearchInstanceRelations::test_canonical_edges_restore_legacy_endpoints_before_filtering[query1]
+FAILED kingeye/base/tests/domains/onemodel/test_relations_domain.py::TestSearchInstanceRelations::test_canonical_edges_restore_legacy_endpoints_before_filtering[query2]
+3 failed, 30 deselected, 47 warnings in 0.17s
+task: Failed to run task "dev-test": exit status 1

@@ -1,0 +1,23 @@
+
+> @kingeye/kef@1.0.17 test:kac-shield
+> node tests/kac/shield-field-reference.cjs && node --test tests/kac/shield-contract.cjs
+
+KAC shield field reference behavior tests passed (Vue templates and actual component methods).
+✔ timezone wall clock respects Shanghai, UTC and both DST seasons (11.092709ms)
+✔ zero, false and empty values with real conditions are not silently dropped (0.09475ms)
+✔ ordinary fields and referenced variables use the same exclusion set (0.337708ms)
+✔ CMDB dependency uses is_global instead of a magic space id (0.089125ms)
+✔ edit and clone retain the existing timezone without mutating source periods (1.0165ms)
+✔ clone waits for permission spaces before deciding whether to clear its scope (0.149125ms)
+✔ save and preview share complete draft periods, including target-only policy (0.439917ms)
+✔ preview empty page continues at the same time and caps display at ten (0.289167ms)
+✔ failed or obsolete requests do not appear as an empty successful preview (0.293583ms)
+✔ shield UI copy exists in all three locales and sentinel remains last (14.721083ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 251.29825

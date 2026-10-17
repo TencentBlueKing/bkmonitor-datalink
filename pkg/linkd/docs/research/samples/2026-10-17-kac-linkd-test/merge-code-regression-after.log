@@ -1,0 +1,20 @@
+✔ read and write candidates reject identity and disposition fields while retaining explicit business and instance fields (0.400667ms)
+✔ existing invalid fields remain in the form and produce explicit validation feedback (0.340958ms)
+✔ custom fields use the current field directory for every purpose (0.071333ms)
+✔ condition group, expression, value and regex budgets match Linkd (0.582792ms)
+✔ template validation permits long names and macros but rejects invalid variables and overflow (0.321167ms)
+✔ add save preserves empty tags and explicit fields, and blocks invalid fields before the API (0.337ms)
+✔ edit save preserves empty tags and explicit fields, and blocks invalid fields before the API (0.144833ms)
+✔ clone save preserves empty tags and explicit fields, and blocks invalid fields before the API (0.135542ms)
+✔ detail condition keys restore UI codes without mutating API conditions (0.146375ms)
+✔ adding a thirty-third condition group is blocked without changing existing data (0.081ms)
+✔ an existing unsupported condition is visible before saving and retains its value (0.0965ms)
+✔ shared regex help selects examples for the actual page engine (6.522292ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 160.0735

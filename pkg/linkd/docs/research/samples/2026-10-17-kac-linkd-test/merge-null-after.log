@@ -1,0 +1,19 @@
+task: [dev-test] uv run python -m pytest --maxfail=5 --durations=10 --reuse-db --disable-warnings kingeye/kac/tests/linkd/test_merge_save.py kingeye/kac/tests/linkd/test_merge_validation.py -q
+${KINGEYE_WORKSPACE}/.venv/lib/python3.11/site-packages/requests/__init__.py:109: RequestsDependencyWarning: urllib3 (1.26.20) or chardet (7.4.3)/charset_normalizer (3.4.7) doesn't match a supported version!
+  warnings.warn(
+........................................................................ [ 32%]
+........................................................................ [ 64%]
+........................................................................ [ 96%]
+........                                                                 [100%]
+============================= slowest 10 durations =============================
+0.70s setup    src/kingeye/kac/tests/linkd/test_merge_save.py::test_create_clone_edit_and_clear_tags_sync_after_commit[False]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_create_clone_edit_and_clear_tags_sync_after_commit[False]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_batch_change_and_rollback_sync_actual_rows[True-False-disable]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_create_clone_edit_and_clear_tags_sync_after_commit[True]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_batch_change_and_rollback_sync_actual_rows[False-True-enable]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_batch_change_and_rollback_sync_actual_rows[True-False-enable]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_batch_change_and_rollback_sync_actual_rows[True-True-enable]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_batch_change_and_rollback_sync_actual_rows[False-False-enable]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_batch_change_and_rollback_sync_actual_rows[True-True-disable]
+0.01s call     src/kingeye/kac/tests/linkd/test_merge_save.py::test_batch_change_and_rollback_sync_actual_rows[False-True-disable]
+224 passed, 62 warnings in 0.98s

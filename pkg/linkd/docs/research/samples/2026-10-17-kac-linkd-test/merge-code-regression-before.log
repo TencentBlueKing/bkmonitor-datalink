@@ -1,0 +1,49 @@
+✔ read and write candidates reject identity and disposition fields while retaining explicit business and instance fields (0.39025ms)
+✔ existing invalid fields remain in the form and produce explicit validation feedback (0.319292ms)
+✔ custom fields use the current field directory for every purpose (0.066083ms)
+✔ condition group, expression, value and regex budgets match Linkd (0.554041ms)
+✔ template validation permits long names and macros but rejects invalid variables and overflow (0.323333ms)
+✔ add save preserves empty tags and explicit fields, and blocks invalid fields before the API (0.29625ms)
+✔ edit save preserves empty tags and explicit fields, and blocks invalid fields before the API (0.123958ms)
+✔ clone save preserves empty tags and explicit fields, and blocks invalid fields before the API (0.114333ms)
+✖ detail condition keys restore UI codes without mutating API conditions (0.544125ms)
+✔ adding a thirty-third condition group is blocked without changing existing data (0.078792ms)
+✔ an existing unsupported condition is visible before saving and retains its value (0.09125ms)
+✔ shared regex help selects examples for the actual page engine (6.356833ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 11
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 166.208167
+
+✖ failing tests:
+
+test at tests/kac/merge-contract.cjs:133:1
+✖ detail condition keys restore UI codes without mutating API conditions (0.544125ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+    [
+  +   undefined,
+  +   'stale'
+  -   'A',
+  -   'B'
+    ]
+
+      at TestContext.<anonymous> (${KINGEYE_WORKSPACE}/src/web/tests/kac/merge-contract.cjs:139:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ undefined, 'stale' ],
+    expected: [ 'A', 'B' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

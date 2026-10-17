@@ -1,0 +1,296 @@
+{
+  "definition": "初轮130之外的补充断言；重复复测不重复计数。",
+  "passed_assertions": 39,
+  "cases": [
+    {
+      "evidence_group": "cmdb_positive_flow",
+      "captured_at": "2026-10-17T14:25:16.076373+00:00",
+      "case": "cmdb_nonempty_multivalue_real_relation",
+      "result": "passed",
+      "expected_instances": 3,
+      "all_values_present": true,
+      "alert_id": "20261017142505.system.kac_xk57purdx5uzsomtekla.f97ad17b1f4e3918",
+      "version": 7
+    },
+    {
+      "evidence_group": "cmdb_positive_flow",
+      "captured_at": "2026-10-17T14:25:16.076373+00:00",
+      "case": "cmdb_same_model_two_branches_isolated",
+      "result": "passed",
+      "filtered_matches": 1
+    },
+    {
+      "evidence_group": "cmdb_positive_flow",
+      "captured_at": "2026-10-17T14:25:16.076373+00:00",
+      "case": "cmdb_empty_branch_keeps_other_branches",
+      "result": "passed",
+      "main_identity_preserved": true
+    },
+    {
+      "evidence_group": "cmdb_positive_flow",
+      "captured_at": "2026-10-17T14:25:16.076373+00:00",
+      "case": "cmdb_partial_event_still_accepted",
+      "result": "passed",
+      "statuses": [
+        "partial"
+      ]
+    },
+    {
+      "evidence_group": "cmdb_positive_flow",
+      "captured_at": "2026-10-17T14:25:16.076373+00:00",
+      "case": "cmdb_positive_fixture_closed",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "cmdb_reverse_flow",
+      "captured_at": "2026-10-17T14:27:38.228512+00:00",
+      "case": "cmdb_reverse_real_relation",
+      "result": "passed",
+      "reverse_value_present": true,
+      "root_identity_preserved": true,
+      "alert_id": "20261017142728.system.kac_xk57purdx5uzsomtekla.738341281930a8ae"
+    },
+    {
+      "evidence_group": "cmdb_reverse_flow",
+      "captured_at": "2026-10-17T14:27:38.228512+00:00",
+      "case": "cmdb_reverse_root_value_independent",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "cmdb_reverse_flow",
+      "captured_at": "2026-10-17T14:27:38.228512+00:00",
+      "case": "cmdb_reverse_event_accepted",
+      "result": "passed",
+      "statuses": [
+        "succeeded"
+      ]
+    },
+    {
+      "evidence_group": "cmdb_reverse_flow",
+      "captured_at": "2026-10-17T14:27:38.228512+00:00",
+      "case": "cmdb_reverse_fixture_closed",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "relation_live_after",
+      "captured_at": "2026-10-17T14:36:32.431577+00:00",
+      "case": "onemodel_facade_canonical_endpoints_live",
+      "result": "passed",
+      "count": 3,
+      "has_endpoints": true
+    },
+    {
+      "evidence_group": "relation_live_after",
+      "captured_at": "2026-10-17T14:36:32.431577+00:00",
+      "case": "onemodel_facade_tenant_isolation_live",
+      "result": "passed",
+      "count": 0
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "global_suppression_without_business_missing",
+      "result": "passed",
+      "states": [
+        "suppressed"
+      ]
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "global_suppression_without_business_null",
+      "result": "passed",
+      "states": [
+        "suppressed"
+      ]
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "global_suppression_without_business_empty",
+      "result": "passed",
+      "states": [
+        "suppressed"
+      ]
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "global_suppression_without_business_zero",
+      "result": "passed",
+      "states": [
+        "suppressed"
+      ]
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "global_suppression_second_admitted_missing",
+      "result": "passed",
+      "alert_id": "20261017143828.system.kac_jhqhzb4bixlin2fy6kbq.c0dea3db91dd6e6e"
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "global_suppression_second_admitted_null",
+      "result": "passed",
+      "alert_id": "20261017143828.system.kac_jhqhzb4bixlin2fy6kbq.0a7d7e5ee96e1bd7"
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "global_suppression_second_admitted_empty",
+      "result": "passed",
+      "alert_id": "20261017143828.system.kac_jhqhzb4bixlin2fy6kbq.6affcf9c1ca81e70"
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "global_suppression_second_admitted_zero",
+      "result": "passed",
+      "alert_id": "20261017143828.system.kac_jhqhzb4bixlin2fy6kbq.47a9b6a040e0f9f6"
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "unicode_title_2000_boundary",
+      "result": "passed",
+      "length": 2000
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "unicode_subject_2000_boundary",
+      "result": "passed",
+      "length": 2000
+    },
+    {
+      "evidence_group": "global_policy_retest_paged",
+      "captured_at": "2026-10-17T14:38:58.686209+00:00",
+      "case": "unicode_title_kac_projection",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "legacy_extra_flow",
+      "captured_at": "2026-10-17T14:40:58.968567+00:00",
+      "case": "legacy_extra_term_overrides_base_name",
+      "result": "passed",
+      "ingested": true
+    },
+    {
+      "evidence_group": "legacy_extra_flow",
+      "captured_at": "2026-10-17T14:40:58.968567+00:00",
+      "case": "legacy_extra_python_regex_overrides_content",
+      "result": "passed",
+      "content": "1234"
+    },
+    {
+      "evidence_group": "legacy_extra_flow",
+      "captured_at": "2026-10-17T14:40:58.968567+00:00",
+      "case": "legacy_extra_kac_projection",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "legacy_extra_flow",
+      "captured_at": "2026-10-17T14:40:58.968567+00:00",
+      "case": "legacy_extra_recovery_same_identity",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "clone_verify",
+      "captured_at": "2026-10-17T14:46:18.382209+00:00",
+      "case": "source_clone_http_saved_disabled",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "clone_verify",
+      "captured_at": "2026-10-17T14:46:18.382209+00:00",
+      "case": "source_clone_independent_linkd_identity",
+      "result": "passed",
+      "source_id": "cf4b0c29-6e00-42f3-9541-e8a8a2c64cc8"
+    },
+    {
+      "evidence_group": "clone_verify",
+      "captured_at": "2026-10-17T14:46:18.382209+00:00",
+      "case": "source_clone_copies_enrich_configuration",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "clone_flow",
+      "captured_at": "2026-10-17T14:57:48.600463+00:00",
+      "case": "cloned_source_independent_runtime",
+      "result": "passed",
+      "source_id": "cf4b0c29-6e00-42f3-9541-e8a8a2c64cc8",
+      "alert_id": "20261017145735.system.kac_t5eczd6dv2cpqve23ioa.f385640ee25bfa0a"
+    },
+    {
+      "evidence_group": "clone_flow",
+      "captured_at": "2026-10-17T14:57:48.600463+00:00",
+      "case": "cloned_source_enrichment_executes",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "clone_flow",
+      "captured_at": "2026-10-17T14:57:48.600463+00:00",
+      "case": "cloned_source_closed_and_disabled",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "ui_enrich_flow",
+      "captured_at": "2026-10-17T14:41:09.970408+00:00",
+      "case": "ui_enrich_save_persisted_backend",
+      "result": "passed",
+      "rule_name": "E2E20261017_2112_regex_ui"
+    },
+    {
+      "evidence_group": "ui_enrich_flow",
+      "captured_at": "2026-10-17T14:41:09.970408+00:00",
+      "case": "ui_saved_enrichment_reaches_kac",
+      "result": "passed",
+      "alert_id": "20261017144104.system.kac_jhqhzb4bixlin2fy6kbq.f214f2130bba6ff9",
+      "version": 12
+    },
+    {
+      "evidence_group": "ui_source",
+      "captured_at": "2026-10-17T14:51:19.171138+00:00",
+      "case": "ui_source_enrich_config_saved_reloaded",
+      "result": "passed",
+      "rule_name": "E2E20261017_2112_regex_ui"
+    },
+    {
+      "evidence_group": "ui_source",
+      "captured_at": "2026-10-17T14:51:19.171138+00:00",
+      "case": "ui_source_enrich_history_detail",
+      "result": "passed",
+      "changes": [
+        "capture",
+        "content",
+        "zero",
+        "false"
+      ],
+      "content_before": "ID=42 ID=84 A B",
+      "content_after": "ID=42 ID=84 B C",
+      "zero": "0",
+      "false": "false",
+      "screenshot": "ui-enrich-preview.png"
+    },
+    {
+      "evidence_group": "nonbkcc_stable_flow",
+      "captured_at": "2026-10-17T14:53:57.840903+00:00",
+      "case": "nonbkcc_negative_id_scope_matches",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "nonbkcc_stable_flow",
+      "captured_at": "2026-10-17T14:53:57.840903+00:00",
+      "case": "nonbkcc_second_trigger_admitted",
+      "result": "passed"
+    },
+    {
+      "evidence_group": "nonbkcc_stable_flow",
+      "captured_at": "2026-10-17T14:53:57.840903+00:00",
+      "case": "nonbkcc_does_not_capture_bkcc_space",
+      "result": "passed"
+    }
+  ]
+}

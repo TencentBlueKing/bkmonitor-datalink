@@ -1,0 +1,116 @@
+{
+  "final": {
+    "at": "2026-10-17T15:21:12.778601+00:00",
+    "exit": 0,
+    "results": [
+      {
+        "source_without_control_plane_record": "debug",
+        "enabled": false,
+        "historical_alerts": 0
+      },
+      {
+        "case": "final_sources_disabled_and_alerts_terminal",
+        "result": "passed",
+        "sources": [
+          {
+            "source_label": "clone",
+            "enabled": false,
+            "linkd_enabled": false,
+            "active_alerts": 0,
+            "historical_alerts": 1,
+            "config_exists": true
+          },
+          {
+            "source_label": "debug",
+            "enabled": false,
+            "linkd_enabled": null,
+            "active_alerts": 0,
+            "historical_alerts": 0,
+            "config_exists": false
+          },
+          {
+            "source_label": "legacy_extra",
+            "enabled": false,
+            "linkd_enabled": false,
+            "active_alerts": 0,
+            "historical_alerts": 1,
+            "config_exists": true
+          },
+          {
+            "source_label": "main",
+            "enabled": false,
+            "linkd_enabled": false,
+            "active_alerts": 0,
+            "historical_alerts": 277,
+            "config_exists": true
+          },
+          {
+            "source_label": "pull",
+            "enabled": false,
+            "linkd_enabled": false,
+            "active_alerts": 0,
+            "historical_alerts": 2,
+            "config_exists": true
+          },
+          {
+            "source_label": "secondary",
+            "enabled": false,
+            "linkd_enabled": false,
+            "active_alerts": 0,
+            "historical_alerts": 7,
+            "config_exists": true
+          }
+        ]
+      },
+      {
+        "case": "final_test_source_tasks_stopped",
+        "result": "passed",
+        "remaining_tasks": 0
+      },
+      {
+        "case": "final_test_policies_removed",
+        "result": "passed",
+        "remaining": {
+          "suppression": [],
+          "shield": [],
+          "merge": []
+        }
+      },
+      {
+        "case": "final_test_merge_parents_terminal",
+        "result": "passed",
+        "parent_count": 7,
+        "statuses": [
+          "closed",
+          "closed",
+          "closed",
+          "closed",
+          "closed",
+          "closed",
+          "closed"
+        ]
+      }
+    ]
+  },
+  "root_supplement": {
+    "at": "2026-10-17T15:15:29.550412+00:00",
+    "exit": 0,
+    "results": [
+      {
+        "case": "supplement_cleanup_close_accepted",
+        "result": "passed",
+        "count": 4
+      },
+      {
+        "case": "supplement_cleanup_root_active_zero",
+        "result": "passed",
+        "closed_count": 4
+      },
+      {
+        "case": "supplement_global_policy_deleted",
+        "result": "passed",
+        "policy_id": "7c8f879a-e501-4f23-b43b-d5459e8fc28d"
+      }
+    ]
+  }
+}

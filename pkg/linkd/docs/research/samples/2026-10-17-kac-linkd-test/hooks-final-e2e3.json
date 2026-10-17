@@ -1,0 +1,193 @@
+{
+  "operation": "linkd.metrics.query",
+  "http_status": 200,
+  "ok": true,
+  "data": {
+    "from": "2026-10-17T14:07:17.106Z",
+    "to": "2026-10-17T14:09:17.106Z",
+    "step": 30,
+    "panels": [
+      {
+        "id": "final-hook",
+        "title": "FinalHook 速率",
+        "unit": "operation/s",
+        "kind": "line",
+        "status": "available",
+        "series": [
+          {
+            "name": "failed · built_in_bk · active-by-strategy · failed · redis",
+            "labels": {
+              "linkd_event_source_id": "built_in_bk",
+              "linkd_hook_name": "active-by-strategy",
+              "linkd_outcome": "failed",
+              "messaging_system": "redis"
+            },
+            "points": [
+              [
+                1792246037.106,
+                0.04444444444444444
+              ],
+              [
+                1792246067.106,
+                0
+              ],
+              [
+                1792246097.106,
+                0
+              ],
+              [
+                1792246127.106,
+                0
+              ],
+              [
+                1792246157.106,
+                0
+              ]
+            ]
+          },
+          {
+            "name": "succeeded · built_in_bk · active-by-strategy · succeeded · redis",
+            "labels": {
+              "linkd_event_source_id": "built_in_bk",
+              "linkd_hook_name": "active-by-strategy",
+              "linkd_outcome": "succeeded",
+              "messaging_system": "redis"
+            },
+            "points": [
+              [
+                1792246037.106,
+                27.977777777777774
+              ],
+              [
+                1792246067.106,
+                18.777777777777775
+              ],
+              [
+                1792246097.106,
+                28.04444444444444
+              ],
+              [
+                1792246127.106,
+                24.799999999999997
+              ],
+              [
+                1792246157.106,
+                27.999999999999996
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "id": "final-hook-success-ratio",
+        "title": "FinalHook 成功率",
+        "unit": "%",
+        "kind": "line",
+        "description": "按 EventSource 和 Hook 名称统计计算窗口内的成功调用 /（成功 + 失败）。失败包含返回错误、超时和 panic；skipped 不计入。全部失败为 0%，无调用或仅跳过时无成功率；表示 Hook 调用结果，不代表下游业务处理完成。",
+        "status": "available",
+        "series": [
+          {
+            "name": "built_in_bk · active-by-strategy",
+            "labels": {
+              "linkd_event_source_id": "built_in_bk",
+              "linkd_hook_name": "active-by-strategy"
+            },
+            "points": [
+              [
+                1792246037.106,
+                99.84139571768438
+              ],
+              [
+                1792246067.106,
+                100
+              ],
+              [
+                1792246097.106,
+                100
+              ],
+              [
+                1792246127.106,
+                100
+              ],
+              [
+                1792246157.106,
+                100
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "id": "final-hook-p95",
+        "title": "FinalHook P95",
+        "unit": "s",
+        "kind": "line",
+        "status": "available",
+        "series": [
+          {
+            "name": "failed · built_in_bk · active-by-strategy · failed · redis",
+            "labels": {
+              "linkd_event_source_id": "built_in_bk",
+              "linkd_hook_name": "active-by-strategy",
+              "linkd_outcome": "failed",
+              "messaging_system": "redis"
+            },
+            "points": [
+              [
+                1792246037.106,
+                4.8
+              ],
+              [
+                1792246067.106,
+                null
+              ],
+              [
+                1792246097.106,
+                null
+              ],
+              [
+                1792246127.106,
+                null
+              ],
+              [
+                1792246157.106,
+                null
+              ]
+            ]
+          },
+          {
+            "name": "succeeded · built_in_bk · active-by-strategy · succeeded · redis",
+            "labels": {
+              "linkd_event_source_id": "built_in_bk",
+              "linkd_hook_name": "active-by-strategy",
+              "linkd_outcome": "succeeded",
+              "messaging_system": "redis"
+            },
+            "points": [
+              [
+                1792246037.106,
+                0.4705651105651105
+              ],
+              [
+                1792246067.106,
+                0.48916155419222895
+              ],
+              [
+                1792246097.106,
+                0.4964521739130434
+              ],
+              [
+                1792246127.106,
+                0.4662745098039215
+              ],
+              [
+                1792246157.106,
+                0.458095238095238
+              ]
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

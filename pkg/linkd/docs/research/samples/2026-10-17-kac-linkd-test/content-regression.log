@@ -1,0 +1,10 @@
+=== RUN   TestProjectionUpdatesCurrentContentIncludingEmptyText
+=== RUN   TestProjectionUpdatesCurrentContentIncludingEmptyText/new_detection_content
+=== RUN   TestProjectionUpdatesCurrentContentIncludingEmptyText/#00
+--- PASS: TestProjectionUpdatesCurrentContentIncludingEmptyText (0.00s)
+    --- PASS: TestProjectionUpdatesCurrentContentIncludingEmptyText/new_detection_content (0.00s)
+    --- PASS: TestProjectionUpdatesCurrentContentIncludingEmptyText/#00 (0.00s)
+=== RUN   TestElasticsearchBulkLifecycleAndDisposition
+--- PASS: TestElasticsearchBulkLifecycleAndDisposition (0.28s)
+PASS
+ok  	linkd/internal/kaccompat	0.669s

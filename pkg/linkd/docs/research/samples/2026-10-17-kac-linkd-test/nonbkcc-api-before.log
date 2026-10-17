@@ -1,0 +1,8 @@
+--- FAIL: TestWorkerDependenciesAPIAuthorizationAndScope (0.00s)
+    --- FAIL: TestWorkerDependenciesAPIAuthorizationAndScope/non-BKCC_scope (0.00s)
+        worker_dependencies_test.go:98: code=400 body=Bad Request
+    --- FAIL: TestWorkerDependenciesAPIAuthorizationAndScope/non-BKCC_targets (0.00s)
+        worker_dependencies_test.go:98: code=400 body=Bad Request
+FAIL
+FAIL	linkd/internal/controlplane/api	0.748s
+FAIL

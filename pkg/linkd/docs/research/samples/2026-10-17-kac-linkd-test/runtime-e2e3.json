@@ -1,0 +1,28 @@
+{
+  "operation": "linkd.runtime.processes",
+  "http_status": 200,
+  "ok": true,
+  "data": {
+    "status": "available",
+    "items": [
+      {
+        "job": "linkd-control-plane",
+        "role": "control-plane",
+        "version": "0.1.0-test.20261017.e2e.3",
+        "up": true
+      },
+      {
+        "job": "linkd-cleaner",
+        "role": "cleaner",
+        "version": "0.1.0-test.20261017.e2e.3",
+        "up": true
+      },
+      {
+        "job": "linkd-lifecycle",
+        "role": "lifecycle",
+        "version": "0.1.0-test.20261017.e2e.3",
+        "up": true
+      }
+    ]
+  }
+}

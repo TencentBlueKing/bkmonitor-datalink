@@ -1,0 +1,58 @@
+{
+  "captured_at": "2026-10-17T15:21:12.778601+00:00",
+  "linkd": {
+    "branch": "feat/linkd-dev",
+    "code_commit": "2f61aaea5",
+    "included_parallel_commits": [
+      "c8de40b1c",
+      "a44824624"
+    ],
+    "image_tag": "0.1.0-test.20261017.e2e.4",
+    "image_digest": "sha256:dcce0fc1c9055861a9d6abeef03033628bc6bae5cd54aca744498160aa6dd337",
+    "helm_revision": 86,
+    "ready_roles": 3,
+    "profiling_enabled": false
+  },
+  "kingeye": {
+    "branch": "develop/5.3.0",
+    "code_commit": "22972175be",
+    "relation_commit": "d6a8f74f42",
+    "web_image_tag": "5.3.0.1924-e2e.4",
+    "web_image_digest": "sha256:261962a82766bc7d5887d206a72e5b35f45b833f65a5c78c397b490a99cf0731",
+    "web_ready_replicas": 1,
+    "other_roles_updated": false,
+    "startup_budget_seconds": 300,
+    "deployment_overrides_require_helm_integration": true
+  },
+  "cleanup": {
+    "retained_disabled_sources": 6,
+    "sources_with_control_plane_configuration": 5,
+    "debug_source_without_formal_configuration": 1,
+    "remaining_test_policies": 0,
+    "active_test_alerts": 0,
+    "running_test_source_tasks": 0,
+    "merge_parents_closed": 7
+  },
+  "earlier_e2e3_checkpoint": {
+    "source_base": "c8de40b1c",
+    "additional_change": "批量屏蔽预览接受完整 Alert ID",
+    "image_tag": "0.1.0-test.20261017.e2e.3",
+    "platform": "linux/amd64",
+    "image_digest": "sha256:400681bd967b7f6bf94dab3c7d5680340577909d1c6b2506ae3fb2c6babbd3c7",
+    "helm_revision": 85,
+    "deployed_at": "2026-10-17T22:05:56+08:00",
+    "profiling_enabled": false,
+    "check": "make check exited 0",
+    "console_tests": {
+      "passed": 449,
+      "skipped": 8
+    },
+    "cleanup": {
+      "retained_disabled_sources": 4,
+      "deleted_test_policies": 7,
+      "active_test_alerts": 0,
+      "running_test_source_tasks": 0,
+      "merge_parents_ended": 4
+    }
+  }
+}

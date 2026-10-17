@@ -1,0 +1,6 @@
+
+${KINGEYE_WORKSPACE}/src/web/src/projects/kac/src/views/alarm-config/components/detail/restrain-table.vue
+  85:17  warning  'val' is defined but never used  @typescript-eslint/no-unused-vars
+  99:17  warning  'val' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 2 problems (0 errors, 2 warnings)

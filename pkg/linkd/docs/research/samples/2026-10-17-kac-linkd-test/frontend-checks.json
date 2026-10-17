@@ -1,0 +1,43 @@
+{
+  "verified_at": "2026-10-17T15:05:29.728143+00:00",
+  "commands": [
+    {
+      "command": "npm run test:kac-source-plugin",
+      "passed": 4
+    },
+    {
+      "command": "npm run test:kac-enrich-window",
+      "passed": 11
+    },
+    {
+      "command": "npm run test:kac-suppression",
+      "passed": 7
+    },
+    {
+      "command": "npm run test:kac-shield",
+      "passed_contracts": 10,
+      "field_reference_component_tests": "passed"
+    },
+    {
+      "command": "npm run test:kac-merge",
+      "passed": 12
+    }
+  ],
+  "exit_code": 0,
+  "build": {
+    "command": "NODE_OPTIONS=--max-old-space-size=8192 npm run build",
+    "exit_code": 0,
+    "warnings": 5,
+    "duration_ms": 52578,
+    "bundled_changes": [
+      "suppression field labels refresh",
+      "shield condition identity",
+      "merge condition identity"
+    ],
+    "warning_details": [
+      "KMC associated-alerts.vue/core-metrics.vue import missing getLineConnectNulls export (2 warnings)",
+      "KAPM dynamic dependency expression (1 warning)",
+      "asset size and entrypoint size budgets (2 warnings)"
+    ]
+  }
+}

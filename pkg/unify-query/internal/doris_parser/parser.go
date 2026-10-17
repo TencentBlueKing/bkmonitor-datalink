@@ -20,13 +20,15 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (string, error) {
+func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (sql string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			_ = metadata.NewMessage(
+			// 解析异常必须作为错误返回；此前返回空 SQL 和 nil，调用方无从得知。
+			err = metadata.NewMessage(
 				metadata.MsgParserDoris,
 				"Doris 语法解析异常",
 			).Error(ctx, fmt.Errorf("%v", r))
+			sql = ""
 		}
 	}()
 
@@ -36,9 +38,16 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 	// 创建词法分析器
 	lexer := gen.NewDorisLexer(is)
 
+	// 语法错误必须拒绝；默认监听器只打印，解析器会跳过错误继续，生成残缺的查询。
+	syntaxErrors := &syntaxErrorListener{DefaultErrorListener: antlr.NewDefaultErrorListener()}
+	lexer.RemoveErrorListeners()
+	lexer.AddErrorListener(syntaxErrors)
+
 	// 创建Token流
 	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
 	parser := gen.NewDorisParserParser(tokens)
+	parser.RemoveErrorListeners()
+	parser.AddErrorListener(syntaxErrors)
 
 	// 创建解析树
 	// visitor := NewDorisVisitor(ctx, q).WithOptions(opt)
@@ -59,11 +68,20 @@ func ParseDorisSQLWithVisitor(ctx context.Context, q string, opt *Option) (strin
 	log.Debugf(ctx, `"action","type","text"`)
 
 	// 开始解析
-	parser.Query().Accept(stmt)
+	tree := parser.Query()
+	if err = syntaxErrors.Error(); err != nil {
+		return "", fmt.Errorf("parse doris sql (%s) error: %v", q, err.Error())
+	}
+	if err = checkInputConsumed(tokens); err != nil {
+		return "", fmt.Errorf("parse doris sql (%s) error: %v", q, err.Error())
+	}
+	if err = checkSupportedSyntax(tree); err != nil {
+		return "", fmt.Errorf("parse doris sql (%s) error: %v", q, err.Error())
+	}
+	tree.Accept(stmt)
 
-	sql := stmt.String()
-	err := stmt.Error()
-	if err != nil {
+	sql = stmt.String()
+	if err = stmt.Error(); err != nil {
 		return "", fmt.Errorf("parse doris sql (%s) error: %v", q, err.Error())
 	}
 

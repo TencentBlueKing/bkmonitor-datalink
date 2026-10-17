@@ -2328,6 +2328,16 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 		} else {
 			next = v.Right
 		}
+	case *gen.ArithmeticBinaryContext:
+		// 比较两侧的算术子式整体作为一个操作数，否则其运算符和操作数会被拆进比较运算符与右值，
+		// 如 a * 2 > 2 渲染成 a * > 2, 2。
+		if v.Left == nil {
+			v.Left = &BinaryNode{}
+			next = v.Left
+		} else if v.Right == nil {
+			v.Right = &BinaryNode{}
+			next = v.Right
+		}
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }

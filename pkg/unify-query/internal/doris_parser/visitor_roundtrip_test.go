@@ -48,8 +48,8 @@ var roundTripCases = []roundTripCase{
 	{"select", "a - (b - c) AS x", "", "silent:P"},
 	{"select", "a % 3 AS x", "", ""},
 	{"select", "((a + b) * c - d) / 2 AS x", "", "silent:P"},
-	{"where", "a * 2 > 2", "", "silent:W"},
-	{"where", "2 < a * 2", "", "silent:W"},
+	{"where", "a * 2 > 2", "", ""},
+	{"where", "2 < a * 2", "", ""},
 	{"where", "(a + b) * 2 > c - 1", "", "silent:P+W"},
 	{"where", "a + 1 = b", "", "silent:C"},
 	// BETWEEN

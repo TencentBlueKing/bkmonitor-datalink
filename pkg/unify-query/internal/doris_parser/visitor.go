@@ -2365,6 +2365,14 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 		pn := &PredicateNode{}
 		v.Op = pn
 		next = pn
+	case *gen.ArithmeticUnaryContext:
+		if v.Left == nil {
+			v.Left = &UnaryNode{}
+			next = v.Left
+		} else if v.Right == nil {
+			v.Right = &UnaryNode{}
+			next = v.Right
+		}
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
@@ -2641,6 +2649,14 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 			v.Right = &BinaryNode{}
 			next = v.Right
 		}
+	case *gen.ArithmeticUnaryContext:
+		if v.Op == nil {
+			v.Left = &UnaryNode{}
+			next = v.Left
+		} else {
+			v.Right = &UnaryNode{}
+			next = v.Right
+		}
 	case *gen.ValueExpressionDefaultContext:
 		// 算术子式中的列（含函数参数内的 dt/3600 等）应只做物理列映射，不应套用 SELECT 列表的「列 AS 展示名」规则。
 		if v.Op == nil {
@@ -2693,6 +2709,55 @@ func (v *ParenExprNode) VisitChildren(ctx antlr.RuleNode) any {
 		v.node = &FieldNode{exprType: whereCtxType}
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, v.node, ctx)
+}
+
+// UnaryNode keeps a unary + / - (and ~). Dropping it changes the value: -a was rendered as a.
+// The operand is an arithmetic sub-expression: columns get the physical mapping without "AS".
+type UnaryNode struct {
+	baseNode
+
+	Op   string
+	node *FieldNode
+}
+
+func (v *UnaryNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	if v.node != nil {
+		v.node.WithAliasScope(aliases)
+	}
+}
+
+func (v *UnaryNode) String() string {
+	operand := nodeToString(v.node)
+	if operand == "" {
+		return ""
+	}
+	if _, grouped := v.node.node.(*ParenExprNode); grouped {
+		// -(a + b): the operand already keeps its own parentheses
+		return v.Op + operand
+	}
+	if strings.ContainsAny(operand, " (") || strings.HasPrefix(operand, "-") || strings.HasPrefix(operand, "+") {
+		// keep the operand whole: -(a + b), -(FLOOR(x)); and never emit "--", which starts a comment
+		operand = fmt.Sprintf("(%s)", operand)
+	}
+	return v.Op + operand
+}
+
+func (v *UnaryNode) VisitTerminal(node antlr.TerminalNode) any {
+	if v.Op == "" {
+		v.Op = node.GetText()
+	}
+	return nil
+}
+
+func (v *UnaryNode) VisitChildren(ctx antlr.RuleNode) any {
+	if v.node == nil {
+		v.node = &FieldNode{exprType: whereCtxType}
+	}
+	v.node.WithAddIgnoreField(v.AddIgnoreField)
+	v.node.WithEncode(v.Encode)
+	v.node.WithAliasScope(v.aliasScope)
+	return v.node.VisitChildren(ctx)
 }
 
 type FunctionNode struct {
@@ -2756,6 +2821,10 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 		bn := &BinaryNode{}
 		v.Values = append(v.Values, bn)
 		next = bn
+	case *gen.ArithmeticUnaryContext:
+		un := &UnaryNode{}
+		v.Values = append(v.Values, un)
+		next = un
 	case *gen.CastContext:
 		bn := &CastNode{}
 		v.Values = append(v.Values, bn)
@@ -2826,6 +2895,10 @@ func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 		bn := &BinaryNode{}
 		v.nodes = append(v.nodes, bn)
 		next = bn
+	case *gen.ArithmeticUnaryContext:
+		un := &UnaryNode{}
+		v.nodes = append(v.nodes, un)
+		next = un
 	case *gen.CastContext:
 		bn := &CastNode{}
 		v.nodes = append(v.nodes, bn)
@@ -2880,6 +2953,9 @@ func (v *CastNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ArithmeticBinaryContext:
 		// CAST(FLOOR(x)*n AS T) 的内层是乘法，必须先建 BinaryNode，否则 n 会按 ConstantDefaultContext 被追加到 FLOOR 的 FunctionNode 上。
 		v.Value = &BinaryNode{}
+		next = v.Value
+	case *gen.ArithmeticUnaryContext:
+		v.Value = &UnaryNode{}
 		next = v.Value
 	case *gen.FunctionCallContext:
 		v.Value = &FunctionNode{}
@@ -3028,6 +3104,9 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 			node.node = &ParenExprNode{}
 			next = node.node
 		}
+	case *gen.ArithmeticUnaryContext:
+		node.node = &UnaryNode{}
+		next = node.node
 	case *gen.ArithmeticBinaryContext:
 		node.node = &BinaryNode{}
 		next = node.node

@@ -34,11 +34,11 @@ type roundTripCase struct {
 
 var roundTripCases = []roundTripCase{
 	// unary
-	{"select", "-a AS x", "", "silent:B"},
-	{"select", "+a AS x", "", "silent:B"},
-	{"select", "-(a + b) AS x", "", "silent:B"},
+	{"select", "-a AS x", "", ""},
+	{"select", "+a AS x", "", ""},
+	{"select", "-(a + b) AS x", "", ""},
 	{"select", "a * -1 AS x", "", ""},
-	{"where", "-a > 1", "", "silent:B"},
+	{"where", "-a > 1", "", ""},
 	{"where", "a > -1", "", ""},
 	// arithmetic and precedence
 	{"select", "a + b * c AS x", "", ""},
@@ -129,7 +129,7 @@ var roundTripCases = []roundTripCase{
 	{"where", "m IN ('x')", "__ext.m IN ('x')", ""},
 	{"where", "m BETWEEN 1 AND 5", "__ext.m BETWEEN 1 AND 5", ""},
 	{"where", "m IS NULL", "__ext.m IS NULL", ""},
-	{"where", "-m > 1", "-__ext.m > 1", "silent:B"},
+	{"where", "-m > 1", "-__ext.m > 1", ""},
 	{"group", "m", "__ext.m", ""},
 	{"order", "m DESC", "__ext.m DESC", ""},
 }

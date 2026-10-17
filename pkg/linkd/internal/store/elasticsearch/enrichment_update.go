@@ -21,11 +21,12 @@ import (
 // 字段集与 EventEnrichment 保持一致；等价测试防止新增字段导致预算漂移。
 type eventWithoutEnrichment struct {
 	domain.Event
-	EnrichStatus       *domain.EnrichStatus  `json:"enrich_status,omitempty"`
-	Enrich             json.RawMessage       `json:"enrich,omitempty"`
-	EnrichedAt         *time.Time            `json:"enriched_at,omitempty"`
-	EnrichConfigDigest string                `json:"enrich_config_digest,omitempty"`
-	Processing         store.EventProcessing `json:"processing"`
+	EnrichStatus        *domain.EnrichStatus  `json:"enrich_status,omitempty"`
+	Enrich              json.RawMessage       `json:"enrich,omitempty"`
+	EnrichedAt          *time.Time            `json:"enriched_at,omitempty"`
+	EnrichConfigDigest  string                `json:"enrich_config_digest,omitempty"`
+	EnrichSourceVersion int64                 `json:"enrich_source_version,omitempty"`
+	Processing          store.EventProcessing `json:"processing"`
 }
 
 // encodeEnrichmentUpdate 复用一次丰富编码构造局部写入，并检查等价的完整文档大小。

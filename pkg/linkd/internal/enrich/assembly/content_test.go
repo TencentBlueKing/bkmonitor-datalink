@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package assembly
 
 import (
@@ -24,7 +33,7 @@ func (f contentFactsFunc) Resolve(ctx context.Context, e domain.Event, v domain.
 func TestContentRouteCreatesPersistedDescriptionAndRetainsSourceEvent(t *testing.T) {
 	event := storetest.Event("tenant-a", "opening", "fingerprint", "warning")
 	event.EventSourceID = "bk"
-	event.EventSourceVersion = 7
+	event.EventSourceVersion = 6
 	event.Content = "source"
 	calls := 0
 	resolver := contentFactsFunc(func(_ context.Context, e domain.Event, v domain.EventEvaluation, a domain.Alert) (description.Facts, error) {
@@ -74,15 +83,17 @@ func TestContentRouteCreatesPersistedDescriptionAndRetainsSourceEvent(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kept.Event.Content != "source" {
-		t.Fatal("Event overwritten")
+	if kept.Event.Content != "source" || kept.Event.EventSourceVersion != 6 || kept.Event.EnrichSourceVersion != 7 {
+		t.Fatal("source facts or executed enrich version lost", kept.Event)
 	}
 	old := event.Clone()
-	old.EventSourceVersion = 6
-	_, err = router.BuildContent(t.Context(), old, event.Evaluations[0], alert.Alert)
-	var contentErr *description.Error
-	if !errors.As(err, &contentErr) || contentErr.Code != "content_source_version" || calls != 1 {
-		t.Fatalf("version err=%v calls=%d", err, calls)
+	old.EventSourceVersion = 5
+	oldOpening := alert.Alert.Clone()
+	oldOpening.EventSourceVersion = old.EventSourceVersion
+	oldOpening.Content = old.Content
+	content, err := router.BuildContent(t.Context(), old, event.Evaluations[0], oldOpening)
+	if err != nil || content != want || calls != 2 {
+		t.Fatalf("current source config not used: content=%q err=%v calls=%d", content, err, calls)
 	}
 }
 

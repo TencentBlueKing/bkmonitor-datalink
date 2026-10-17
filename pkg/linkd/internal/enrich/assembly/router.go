@@ -24,7 +24,7 @@ import (
 	"linkd/internal/enrich/rules"
 )
 
-// Router 依据 Event.EventSourceID 选择启动时冻结的 Processor Chain。
+// Router 依据 Event.EventSourceID 选择当前任务加载的 Processor Chain，接入版本不影响路由。
 type Router struct {
 	routes        map[string]executor
 	chainKinds    map[string]enrich.ChainKind
@@ -101,8 +101,7 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 	return &Router{routes: routes, chainKinds: chainKinds, contentRoutes: contentRoutes, digests: digests}, nil
 }
 
-// BuildContent 依据冻结来源配置生成新 Alert 的内容；已保存 Alert 不调用此入口。
-// 来源版本不符时返回描述诊断，由创建/预览边界保留原文，不借用当前配置生成旧事件文本。
+// BuildContent 依据当前任务的来源配置生成新 Alert 的内容；已保存 Alert 不调用此入口。
 func (r *Router) BuildContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, opening domain.Alert) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -117,9 +116,6 @@ func (r *Router) BuildContent(ctx context.Context, event domain.Event, evaluatio
 	if event.BKTenantID != opening.BKTenantID || event.EventSourceID != opening.EventSourceID ||
 		(route.tenant != "" && route.tenant != event.BKTenantID) {
 		return "", &description.Error{Code: "content_route_identity"}
-	}
-	if route.version > 0 && event.EventSourceVersion != route.version {
-		return "", &description.Error{Code: "content_source_version"}
 	}
 	if route.builder == nil {
 		return event.Content, nil
@@ -148,8 +144,13 @@ func (r *Router) Enrich(ctx context.Context, input enrich.Input) (enrich.Result,
 	if !exists {
 		return enrich.Result{}, fmt.Errorf("event source %q has no enrich route", input.Event.EventSourceID)
 	}
+	route := r.contentRoutes[input.Event.EventSourceID]
+	if route.tenant != "" && route.tenant != input.Event.BKTenantID {
+		return enrich.Result{}, fmt.Errorf("event enrich tenant mismatch")
+	}
 	result, err := enricher.Enrich(ctx, input)
 	result.ConfigDigest = r.digests[input.Event.EventSourceID]
+	result.SourceVersion = route.version
 	result.ChainKind = r.chainKinds[input.Event.EventSourceID]
 	return result, err
 }

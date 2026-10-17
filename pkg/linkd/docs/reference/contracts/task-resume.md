@@ -37,12 +37,12 @@ Content-Type: application/json
 
 1. 从 runtime 和 Scheduler 日志定位失败 Event、错误码与任务代次。
 2. 修复读取/模板实现或补齐稳定检测事实，并用 opening Event 的只读预览验证。修复依赖不意味着可以用最新策略替代触发时策略。
-3. 保持与失败 Event 一致的来源 Release，完成 Worker 停止握手后调用恢复接口。
+3. 确认当前发布的来源配置符合预期，完成 Worker 停止握手后调用恢复接口。
 4. 核对新 epoch、PEL/mailbox 顺序以及最终 Alert.content。失败 Event 创建成功前一直保留；已经保存的 EventPlan 和 Alert.content 不重新生成。
 
-Lifecycle 的普通丰富与内容构建均按 Event 固定的来源版本读取历史 Release，不把积压交给最新配置。内容配置 Reader 只解析运行时查询中实际使用的 `unit`、`metric_id`；未使用的 `index_set_id` 等扩展字段可为空字符串，不因声明模型的类型约束阻断内容构建。实际使用字段、算法、租户和版本绑定仍严格校验。
+Lifecycle 的普通丰富与内容构建均使用当前任务加载的来源配置，积压 Event 不再读取接入时的历史 Release。内容配置 Reader 只解析运行时查询中实际使用的 `unit`、`metric_id`；未使用的 `index_set_id` 等扩展字段可为空字符串，不因声明模型的类型约束阻断内容构建。实际使用字段、算法、租户和版本绑定仍严格校验。
 
-历史丰富与当前版本共用 `lifecycle.concurrency` 的消费 Worker 预算，不另设固定 4 并发上限；每次历史调用仍独立打开并关闭所需资源，不改变租户、发布版本绑定或同告警 mailbox 顺序。
+所有待处理 Event 共用当前任务运行时及 `lifecycle.concurrency` 的消费预算，不再为旧来源版本独立创建连接。原接入版本保留，实际丰富版本记入 `enrich_source_version`；租户隔离、同告警 mailbox 顺序和已提交结果复用不变。
 
 策略发布材料的确切版本已不可得（`publication_missing`），或无数据文案返回
 `nodata_identity_invalid`、`nodata_configuration_invalid`、`nodata_evidence_missing`、
@@ -52,7 +52,7 @@ Lifecycle 的普通丰富与内容构建均按 Event 固定的来源版本读取
 只读 opening Event 内容预览使用同一白名单。降级内容仍经过 Alert 校验，并随
 EventPlan 固定，后续重试或配置变化不重算已有内容。
 
-原始内容为空/空白或超限、发布材料存在歧义、历史来源 Release 缺失、来源/租户身份或
+原始内容为空/空白或超限、发布材料存在歧义、来源/租户身份或
 模板绑定校验失败、其他检测事实缺失及依赖故障均不在此降级范围，仍按当前消息失败策略处理。
 无数据文案内部的标记/等级冲突可兜底，不放宽事件的来源与租户身份校验。
 恢复接口不改写这些数据。相同来源配置的 PUT 会被发布服务去重，不能用它替代本接口。

@@ -25,7 +25,7 @@ import (
 // Enrichment 构造具有两种等级隔离输出的完成结果，供后端契约使用。
 func Enrichment(event domain.Event) domain.EventEnrichment {
 	at := event.CreateAt.Add(time.Second)
-	result := domain.EventEnrichment{EnrichStatus: domain.EnrichStatusSucceeded, EnrichedAt: &at, EnrichConfigDigest: "config-v1"}
+	result := domain.EventEnrichment{EnrichStatus: domain.EnrichStatusSucceeded, EnrichedAt: &at, EnrichConfigDigest: "config-v1", EnrichSourceVersion: event.EventSourceVersion + 1}
 	for _, evaluation := range event.Evaluations {
 		patch, _ := domain.NewEnrichPatch("$.title", "enriched "+evaluation.Severity)
 		raw, _ := json.Marshal([]map[string]any{{"fields": map[string]any{"status": "succeeded", "patches": []domain.EnrichPatch{patch}}}})

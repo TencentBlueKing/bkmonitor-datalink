@@ -13,13 +13,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"linkd/internal/internaltoken"
+	"linkd/internal/processingerror"
 )
 
 // Client 是 CLI、worker 和嵌入方使用的有界控制面客户端。
@@ -85,13 +89,15 @@ func (c Client) Call(ctx context.Context, method, path string, in, out any) erro
 	}
 	response, e := h.Do(r)
 	if e != nil {
-		return fmt.Errorf("control plane unavailable")
+		return controlPlaneTransportError(e)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if c.OnResponse != nil {
 		c.OnResponse(response.Header)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		// Worker 直连集群 Service；HTTP 状态只能说明请求失败，不能证明控制面不可达。
+		// 包括 502/503/504 在内均保留普通响应错误，避免配置或程序错误造成无限等待。
 		return &ResponseError{StatusCode: response.StatusCode}
 	}
 	if out == nil {
@@ -101,7 +107,37 @@ func (c Client) Call(ctx context.Context, method, path string, in, out any) erro
 	if limit <= 0 {
 		limit = 8 << 20
 	}
-	return json.NewDecoder(io.LimitReader(response.Body, limit)).Decode(out)
+	// 先在既有字节预算内完成 HTTP 读取，再解析 JSON；否则两者的 unexpected EOF 无法区分。
+	body, err := io.ReadAll(io.LimitReader(response.Body, limit))
+	if err != nil {
+		return controlPlaneTransportError(err)
+	}
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(out); err != nil {
+		return errors.New("invalid control plane response")
+	}
+	return nil
+}
+
+// controlPlaneTransportError 只保留确定的故障种类，不输出可能含 URL、凭据或响应正文的原始错误。
+func controlPlaneTransportError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	var timeout net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeout) && timeout.Timeout()) {
+		return errors.Join(processingerror.ErrControlPlaneUnavailable, context.DeadlineExceeded)
+	}
+	for _, cause := range []error{syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE, syscall.ENETUNREACH, syscall.EHOSTUNREACH, net.ErrClosed, io.EOF, io.ErrUnexpectedEOF} {
+		if errors.Is(err, cause) {
+			return errors.Join(processingerror.ErrControlPlaneUnavailable, cause)
+		}
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) && dns.IsTemporary {
+		return fmt.Errorf("%w: temporary DNS failure", processingerror.ErrControlPlaneUnavailable)
+	}
+	// 证书、地址配置、重定向和未知错误不推断为可恢复的控制面故障。
+	return errors.New("control plane request failed")
 }
 
 // ResponseError 只保留安全的 HTTP 状态，让 Worker 区分授权失败和依赖故障。

@@ -156,6 +156,12 @@ func (d *Dependencies) entryKey(ctx context.Context, r DependencyRequest, key st
 		d.mu.Unlock()
 		return e, nil
 	}
+	if e.loading == nil && e.err == nil {
+		// 缓存过期本身不是控制面故障，立即读取一次以取得真实结果；并发调用共享此次刷新。
+		e.loading = make(chan struct{})
+		d.wg.Add(1)
+		go func() { defer d.wg.Done(); d.refresh(key, e) }()
+	}
 	loading := e.loading
 	err = e.err
 	d.mu.Unlock()

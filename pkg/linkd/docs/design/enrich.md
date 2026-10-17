@@ -15,7 +15,7 @@
 Enrich 在 Lifecycle 为每条不同 Event 同步执行，输入为 `domain.Event`。来源事实不被覆盖，结果保存为：
 
 ```text
-Event.enrich_status / enriched_at / enrich_config_digest
+Event.enrich_status / enriched_at / enrich_config_digest / enrich_source_version
 Event.enrich.evaluations[].{severity,status,data}
 data.processors[] = 有序处理器信封
 ```
@@ -77,8 +77,8 @@ KAC Converter/Cleaner 直接构造旧 Alarm 字段。Linkd 将对应业务含义
 
 ```text
 Repository 读取并恢复标准 Event，Lifecycle 直接使用
-  → 按 EventSourceID + EventSourceVersion 读取该 Release 的丰富配置
-  → 当前任务版本复用运行时，历史版本使用临时运行时，共用消费并发预算，用后关闭
+  → 按 EventSourceID 复用当前任务的丰富配置和运行时，积压事件不回读历史来源版本
+  → 保留 EventSourceVersion 作为接入事实，记录 enrich_source_version 作为实际丰富配置版本
   → 逐 evaluation 执行 Processor，各等级共享请求缓存
   → 保存完整 Event 丰富结果 CAS
   → 冻结生命周期计划并创建/推进 Alert

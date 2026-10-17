@@ -24,6 +24,8 @@ type Result struct {
 	Data         domain.EventEnrichData
 	ConfigDigest string
 	ChainKind    ChainKind
+	// SourceVersion 是实际执行丰富的来源发布版本，不改变 Event 的接入版本。
+	SourceVersion int64
 	// Evaluations 仅在本次处理内复用已经冻结的有效视图，不进入存储协议。
 	Evaluations map[string]*domain.EnrichEvaluation `json:"-"`
 }

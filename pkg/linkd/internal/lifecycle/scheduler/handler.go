@@ -189,7 +189,8 @@ func (h *Handler) drain(
 			return processed, last, true, nil, nil
 		}
 		stored, result, attempts, stage, processErr := h.processMailboxEvent(ctx, signal, eventID)
-		if policyPreparationPending(processErr) {
+		if processingPending(processErr) {
+			h.logger.WarnContext(ctx, "lifecycle event waiting for dependency", "module", "lifecycle", "operation", stage, "error", processErr, "bk_tenant_id", signal.BKTenantID, "event_source_id", signal.EventSourceID, "event_id", eventID, "mailbox_id", signal.MailboxID)
 			return processed, last, false, processErr, nil
 		}
 		if ctx.Err() != nil {
@@ -226,7 +227,7 @@ func (h *Handler) drain(
 	return processed, last, false, nil, nil
 }
 
-// processMailboxEvent 的重试粒度是具体 Event；每次重读持久检查点，最多三次。
+// processMailboxEvent 每次重读 Event 持久检查点；普通临时错误最多三次，控制面/索引等待直接让出调度。
 func (h *Handler) processMailboxEvent(ctx context.Context, signal Signal, id string) (stored store.StoredEvent, result lifecycle.ProcessResult, attempts int, stage string, err error) {
 	for attempts = 1; attempts <= processingerror.MaxAttempts; attempts++ {
 		stage = "event_read"
@@ -242,7 +243,7 @@ func (h *Handler) processMailboxEvent(ctx context.Context, signal Signal, id str
 				result, err = processingerror.Guard(func() (lifecycle.ProcessResult, error) { return h.processor.ProcessEvent(ctx, stored) })
 			}
 		}
-		if err == nil || policyPreparationPending(err) || ctx.Err() != nil || !processingerror.Retryable(err) || attempts == processingerror.MaxAttempts {
+		if err == nil || processingPending(err) || ctx.Err() != nil || !processingerror.Retryable(err) || attempts == processingerror.MaxAttempts {
 			return
 		}
 		timer := time.NewTimer(time.Duration(attempts) * 100 * time.Millisecond)
@@ -256,10 +257,10 @@ func (h *Handler) processMailboxEvent(ctx context.Context, signal Signal, id str
 	return
 }
 
-// 索引准备是有所有者的后台工作，保留当前 Mailbox 头并让出 lease，不能按普通三次错误丢弃 Event。
-func policyPreparationPending(err error) bool {
+// 控制面传输故障与索引准备均保留 Mailbox 头并让出 lease，不能按普通三次错误丢弃 Event。
+func processingPending(err error) bool {
 	var pending interface{ PolicyPreparationPending() bool }
-	return errors.As(err, &pending) && pending.PolicyPreparationPending()
+	return errors.Is(err, processingerror.ErrControlPlaneUnavailable) || (errors.As(err, &pending) && pending.PolicyPreparationPending())
 }
 
 // recordFailure 尽力保存明确的终态；诊断存储失败不能再次卡住该 Event。

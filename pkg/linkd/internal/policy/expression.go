@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 )
 
 // FieldKind 是 KAC 索引字段语义，不从某次值的 Go 类型猜测 ES mapping。
@@ -213,7 +214,7 @@ func (e *Expression) PossibleMatch(ctx context.Context, reader Reader) (bool, er
 			continue
 		}
 		matched, err := clause.match(ctx, reader)
-		if errors.Is(err, ErrAccess) {
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, ErrAccess) {
 			return false, err
 		}
 		if ctx.Err() != nil {
@@ -240,8 +241,8 @@ func (e *Expression) match(ctx context.Context, reader Reader, origin Reader) (M
 		if err == nil {
 			matched, err = clause.match(ctx, reader)
 		}
-		// 明确的租户/授权错误不得降级为普通不可求值，避免策略跳过掩盖错误作用域。
-		if errors.Is(err, ErrAccess) {
+		// 控制面传输故障与明确的租户/授权错误必须保留，不能被条件不可求值吞掉。
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, ErrAccess) {
 			return result, err
 		}
 		if ctx.Err() != nil {

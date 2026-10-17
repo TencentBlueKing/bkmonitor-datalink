@@ -218,8 +218,9 @@ func TestDependenciesContentTimeOnlyAdvancesOnChanges(t *testing.T) {
 				t.Fatal("changed content retained old version", same, next, err)
 			}
 			clock.Advance(60 * time.Second)
-			if _, err := d.Read(t.Context(), request); !errors.Is(err, policy.ErrUnavailable) {
-				t.Fatal("content timestamp extended freshness", err)
+			refreshed, err := d.Read(t.Context(), request)
+			if err != nil || !refreshed.LoadedAt.Equal(clock.Now()) || !refreshed.ChangedAt.Equal(next.ChangedAt) {
+				t.Fatal("expired snapshot did not reload unchanged source facts", refreshed, err)
 			}
 		})
 	}

@@ -24,6 +24,7 @@ import (
 
 	"linkd/internal/onemodel"
 	"linkd/internal/policy"
+	"linkd/internal/processingerror"
 	"linkd/internal/taskdispatch"
 )
 
@@ -70,11 +71,11 @@ func TestWorkerDependenciesShareSourceTimeAndAssignedTask(t *testing.T) {
 		t.Fatal("worker renewed source time", stamp.Time(), err)
 	}
 	clock.Advance(2 * time.Second)
-	if _, err := worker.Read(t.Context(), DependencyRequest{Kind: "scope", TenantID: "tenant", SpaceCode: "bkcc__2"}); !errors.Is(err, policy.ErrUnavailable) {
-		t.Fatal("worker extended CP snapshot beyond 60s", err)
+	if _, err := worker.Read(t.Context(), DependencyRequest{Kind: "scope", TenantID: "tenant", SpaceCode: "bkcc__2"}); !errors.Is(err, policy.ErrUnavailable) || errors.Is(err, processingerror.ErrControlPlaneUnavailable) {
+		t.Fatal("stale response extended freshness or became a transport failure", err)
 	}
-	if calls.Load() != 1 {
-		t.Fatal("expired result unexpectedly used an extra source response", calls.Load())
+	if calls.Load() != 2 {
+		t.Fatal("expired snapshot did not query the actual source result", calls.Load())
 	}
 }
 

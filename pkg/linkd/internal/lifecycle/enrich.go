@@ -43,6 +43,9 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 	observation := EnrichObservation{EventSourceID: event.EventSourceID, Status: domain.EnrichStatusFailed, Outcome: EnrichOutcomeError, ChainKind: chainKind}
 	defer func() { observation.Duration = time.Since(startedAt); p.enrichObserver.Finished(ctx, observation) }()
 	result, failureReason, failure := p.callEnricher(ctx, enrich.Input{Event: event.Clone()})
+	if errors.Is(failure, processingerror.ErrControlPlaneUnavailable) {
+		return store.StoredEvent{}, failure
+	}
 	if result.ChainKind != "" {
 		observation.ChainKind = result.ChainKind
 	}
@@ -65,7 +68,8 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 			failure = fmt.Errorf("invalid enrich configuration digest")
 		}
 	}
-	snapshot := domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest}
+	sourceVersion := result.SourceVersion
+	snapshot := domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest, EnrichSourceVersion: sourceVersion}
 	if failureReason == "" && (!result.Status.Valid() || result.Status == domain.EnrichStatusPending) {
 		failureReason = "invalid_enrich_status"
 		failure = fmt.Errorf("enricher returned invalid status %q", result.Status)
@@ -83,7 +87,7 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 	if failureReason != "" {
 		p.logger.WarnContext(ctx, "event enrich degraded", "module", "lifecycle", "operation", "enrich", "error", failure, "event_source_id", event.EventSourceID, "bk_tenant_id", event.BKTenantID, "event_id", event.EventID, "reason_code", failureReason)
 		result = failedEnrichResult(event)
-		snapshot = domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest}
+		snapshot = domain.EventEnrichment{EnrichStatus: result.Status, Enrich: result.Data, EnrichedAt: &at, EnrichConfigDigest: digest, EnrichSourceVersion: sourceVersion}
 		updated, persistErr = p.writeEventEnrichment(ctx, stored, snapshot)
 	}
 	observation.Outcome = enrichMetricOutcome(failureReason)

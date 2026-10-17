@@ -12,6 +12,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -140,5 +141,27 @@ func TestWorkerDependenciesAPIAcceptsPolicySizedDescriptor(t *testing.T) {
 	response := workerRequest(t, api.Handler(), http.MethodPost, "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", string(raw), "w", "worker")
 	if response.Code != 200 || reader.calls.Load() != 1 {
 		t.Fatal("valid policy-sized target descriptor rejected", response.Code, response.Body.String())
+	}
+}
+
+func TestWorkerDependencyQueryDistinguishesMissingTargetAndReadFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"not found", errors.Join(policy.ErrUnavailable, policy.ErrNotFound), 404},
+		{"unresolvable target", errors.Join(policy.ErrUnavailable, onemodel.ErrTargetUnavailable), 422},
+		{"invalid target identity", errors.Join(policy.ErrUnavailable, policy.ErrTargetIdentity), 422},
+		{"query failed", errors.Join(policy.ErrUnavailable, errors.New("database unavailable")), 503},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := workerReadAPI()
+			api.PolicyDependencies = &workerDependencyReader{err: tc.err}
+			response := workerRequest(t, api.Handler(), http.MethodPost, "/internal/policy-dependencies?task=task&bk_tenant_id=tenant", `{"kind":"scope","bk_tenant_id":"tenant","space_code":"bkcc__2"}`, "w", "worker")
+			if response.Code != tc.status {
+				t.Fatal(response.Code, response.Body.String())
+			}
+		})
 	}
 }

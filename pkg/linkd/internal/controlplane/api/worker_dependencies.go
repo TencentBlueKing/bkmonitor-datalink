@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"linkd/internal/onemodel"
@@ -67,6 +68,15 @@ func (a *API) workerDependencies(w http.ResponseWriter, r *http.Request) {
 	}
 	value, err := a.PolicyDependencies.Read(r.Context(), request)
 	if err != nil {
+		// 已完成查询但目标不存在或不能按规则解析，不能伪装成控制面故障而无限等待。
+		if errors.Is(err, policy.ErrNotFound) {
+			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, onemodel.ErrTargetUnavailable) || errors.Is(err, policy.ErrTargetIdentity) {
+			http.Error(w, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+			return
+		}
 		policyFailure(w, err)
 		return
 	}

@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"linkd/internal/processingerror"
 )
 
 func expressionJSON(operator, field string, value any) json.RawMessage {
@@ -184,5 +186,21 @@ func TestPossibleMatchOnlyRejectsDefiniteLocalMismatch(t *testing.T) {
 	}
 	if possible, err := relation.PossibleMatch(t.Context(), Fields{}); err != nil || !possible {
 		t.Fatal("relation was evaluated without a main", err)
+	}
+}
+
+type unavailableRelationReader struct{ Fields }
+
+func (unavailableRelationReader) Related(context.Context, Condition) (bool, error) {
+	return false, errors.Join(ErrUnavailable, processingerror.ErrControlPlaneUnavailable)
+}
+
+func TestRelationQueryFailurePreservesControlPlaneClassification(t *testing.T) {
+	expression, err := CompileExpression(json.RawMessage(`{"expression":"A","A":{"condition":"term","target_key":"model_id","target_value":"cw-Host","bk_obj_asst_id":"host_switch"}}`), KACFields())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := expression.Match(t.Context(), unavailableRelationReader{}); !errors.Is(err, processingerror.ErrControlPlaneUnavailable) {
+		t.Fatal("relation failure became ordinary non-match", err)
 	}
 }

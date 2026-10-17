@@ -63,13 +63,13 @@ func TestCatalogFreezesPublishedScopeAndRefreshesAtomically(t *testing.T) {
 	if err != nil || cached[0].Release.Version != 1 {
 		t.Fatal("cache not frozen")
 	}
-	now = now.Add(6 * time.Second)
+	now = now.Add(time.Minute + time.Second)
 	updated, err := catalog.Freeze(t.Context(), "tenant")
 	if err != nil || updated[0].Release.Version != 2 || first[0].Release.Version != 1 {
 		t.Fatalf("refresh %+v %v", updated, err)
 	}
 	reader.fail = true
-	now = now.Add(6 * time.Second)
+	now = now.Add(time.Minute + time.Second)
 	if _, err := catalog.Freeze(t.Context(), "tenant"); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("expired snapshot used after load failure")
 	}
@@ -165,7 +165,7 @@ func TestCatalogCandidatesAndExactVersionsAcrossRefresh(t *testing.T) {
 	edit.ExpectedVersion = 1
 	edit.Spec = testSpec("second")
 	second := mustApply(t, service, edit)
-	now = now.Add(6 * time.Second)
+	now = now.Add(time.Minute + time.Second)
 	if _, err = catalog.Candidates(t.Context(), "tenant", nil); err != nil {
 		t.Fatal(err)
 	}

@@ -54,31 +54,35 @@ type catalogEntry struct {
 	latest     map[policyIdentity]FrozenPolicy
 	policies   []FrozenPolicy
 	expires    time.Time
+	refreshAt  time.Time
 	used       time.Time
 	bytes      int
 }
 
-// Catalog 默认缓存已发布配置五秒；跨租户最多 32 项/32 MiB 原配置。
+// Catalog 默认保留已发布配置一分钟，每五秒后台刷新；跨租户最多 32 项/32 MiB 原配置。
 // 失败不复用已经过期的快照；仅返回完整一次读取，不能把半页当作策略停用。
 type Catalog struct {
-	reader  RecordReader
-	mu      sync.Mutex
-	entries map[string]catalogEntry
-	loading chan struct{}
-	ttl     time.Duration
-	dirty   map[string]bool
-	reading string
-	now     func() time.Time
+	reader          RecordReader
+	mu              sync.Mutex
+	entries         map[string]catalogEntry
+	loading         chan struct{}
+	ttl             time.Duration
+	refreshInterval time.Duration
+	dirty           map[string]bool
+	reading         string
+	now             func() time.Time
 }
 
 // NewCatalog 装配受租户约束的 Reader；后台调度与运行时加载分离。
 func NewCatalog(reader RecordReader) *Catalog {
-	return NewCatalogWithTTL(reader, 5*time.Second)
+	c := NewCatalogWithTTL(reader, time.Minute)
+	c.refreshInterval = 5 * time.Second
+	return c
 }
 
-// NewCatalogWithTTL 为共享控制面目录配置刷新周期；Worker 默认周期仍为五秒。
+// NewCatalogWithTTL 为控制面目录设置可用时间和刷新周期；发布时仍立即失效对应租户。
 func NewCatalogWithTTL(reader RecordReader, ttl time.Duration) *Catalog {
-	return &Catalog{reader: reader, entries: map[string]catalogEntry{}, loading: make(chan struct{}, 1), ttl: ttl, dirty: make(map[string]bool), now: time.Now}
+	return &Catalog{reader: reader, entries: map[string]catalogEntry{}, loading: make(chan struct{}, 1), ttl: ttl, refreshInterval: ttl, dirty: make(map[string]bool), now: time.Now}
 }
 
 // Invalidate 只让指定租户目录过期，保留在途裁决需要的精确旧版本。
@@ -88,6 +92,7 @@ func (c *Catalog) Invalidate(tenant string) {
 	defer c.mu.Unlock()
 	if entry, ok := c.entries[tenant]; ok {
 		entry.expires = time.Time{}
+		entry.refreshAt = time.Time{}
 		c.entries[tenant] = entry
 		c.dirty[tenant] = true
 	} else if c.reading == tenant {
@@ -167,6 +172,7 @@ func (c *Catalog) loadEntry(ctx context.Context, tenant string, refresh bool) (c
 	}
 	now := c.now()
 	entry.expires = now.Add(c.ttl)
+	entry.refreshAt = now.Add(c.refreshInterval)
 	entry.used = now
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -178,6 +184,7 @@ func (c *Catalog) loadEntry(ctx context.Context, tenant string, refresh bool) (c
 	}
 	if c.dirty[tenant] {
 		entry.expires = time.Time{}
+		entry.refreshAt = time.Time{}
 	}
 	delete(c.entries, tenant)
 	total := 0
@@ -366,7 +373,7 @@ func (c *Catalog) Run(ctx context.Context) error {
 			now := c.now()
 			tenants := []string{}
 			for tenant, entry := range c.entries {
-				if !now.Add(time.Second).Before(entry.expires) && now.Sub(entry.used) < time.Minute {
+				if !now.Before(entry.refreshAt) && now.Sub(entry.used) < time.Minute {
 					tenants = append(tenants, tenant)
 				}
 			}

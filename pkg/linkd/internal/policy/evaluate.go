@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"linkd/internal/onemodel"
+	"linkd/internal/processingerror"
 )
 
 // TargetReader 解析当前业务范围与完整实例目标；生命周期和预览复用同一只读契约。
@@ -81,6 +82,9 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		return result, fmt.Errorf("rely evaluation requires dependency shield")
 	}
 	skip := func(reason string, err error) (Verdict, error) {
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) {
+			return result, err
+		}
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
@@ -115,7 +119,7 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		if prepared, ok := targets.(PreparedTargetReader); ok {
 			targets, err = prepared.PrepareTargets(ctx, release.TenantID, compiled.Common.SpaceCode, compiled.Common.Targets)
 			if err != nil {
-				if errors.Is(err, ErrAccess) {
+				if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, ErrAccess) {
 					return result, err
 				}
 				if errors.Is(err, ErrTargetIdentity) {
@@ -127,7 +131,7 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 	}
 	scope, err := targets.ResolvePolicyScope(ctx, release.TenantID, compiled.Common.SpaceCode)
 	if err != nil {
-		if errors.Is(err, ErrAccess) {
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, ErrAccess) {
 			return result, err
 		}
 		return skip("business_scope_unavailable", err)
@@ -163,7 +167,7 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 	if compiled.Common.Targets != nil && !rely {
 		found, err := targetContains(ctx, targets, release.TenantID, compiled.Common.SpaceCode, compiled.Common.Targets, candidate)
 		if err != nil {
-			if errors.Is(err, ErrAccess) {
+			if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, ErrAccess) {
 				return result, err
 			}
 			if errors.Is(err, ErrTargetIdentity) {
@@ -189,7 +193,7 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		match, err := expression.match(ctx, view, origin)
 		result.Groups = append(result.Groups, GroupMatch{Index: i, MatchResult: match})
 		if err != nil {
-			if !errors.Is(err, ErrUnavailable) {
+			if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || !errors.Is(err, ErrUnavailable) {
 				return result, err
 			}
 			result.Evaluated = false

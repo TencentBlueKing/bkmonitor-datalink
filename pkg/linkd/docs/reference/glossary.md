@@ -171,7 +171,7 @@ Event 丰富模型、冻结 CAS、逐等级主流程和预览已落地；策略�
 | 关联聚合抑制（aggregation） | 仅对尚无活动 Alert 的候选，按策略配置字段将 Event 关联到主告警；未选来源字段时可以跨 EventSource |
 | 终态抑制清理记录（SuppressionCleanup） | 按终态 Alert 版本或未生成 Alert 的终态 Event 固定身份，独立保存清理意图及两类确认结果；Lua 原子返回被删窗口/代次，元信息丢失显式标记；计数为登记引用数，Redis 失败不伪装为零 |
 | 抑制受控对账（SuppressionCheck） | 固定窗口 ID、owner、代次与操作意图，在正式 owner fingerprint lease 内复核真实资格；保留未绑定计数和有效候选，条件删除失效登记，不重建窗口或触发处置；请求与结果独立持久化 |
-| 屏蔽关系（ShieldBinding） | 告警由于有效时间或依赖条件暂不进入后续处理的关联；固定建立时的策略和主告警，独立于 Alert.status；origin=manual 为指定告警快捷绑定，定时检查不重跑普通匹配条件 |
+| 屏蔽关系（ShieldBinding） | 告警由于有效时间或依赖条件暂不进入后续处理的关联；记录建立时的策略版本和原主告警，每次复查按最新已发布策略判断，独立于 Alert.status；origin=manual 为指定告警快捷绑定，只复查最新启用状态、类型和有效期，不重跑普通匹配条件 |
 | DependencyMain | Redis 原子登记的跨来源待处理主引用；保存 Alert 身份和冻结 Event/等级，Alert CAS 成功后才能绑定，但不代表处置已经放行 |
 | 解除屏蔽 | 结束有效屏蔽关系并同步状态；本次已确认不主动触发处置，等待下一条触发 Event |
 | 合并窗口（MergeWindow） | Redis 中按租户、策略版本与分组收集成员的固定半开窗口；成员以 Alert 去重，实际落库后才确认，冻结仅代表待持久化裁决 |

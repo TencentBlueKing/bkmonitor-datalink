@@ -19,8 +19,17 @@ func (pendingPolicyPreparation) Error() string { return "dependency policy initi
 func (pendingPolicyPreparation) PolicyPreparationPending() bool { return true }
 
 func TestPolicyPreparationDefersMailboxHeadUntilIndexIsReady(t *testing.T) {
+	testPendingMailbox(t, processingerror.RetryableError{Err: pendingPolicyPreparation{}})
+}
+
+func TestControlPlaneFailurePreservesMailboxBeyondRetryBudget(t *testing.T) {
+	testPendingMailbox(t, processingerror.ErrControlPlaneUnavailable)
+}
+
+func testPendingMailbox(t *testing.T, failure error) {
+	t.Helper()
 	mailbox := &fakeMailbox{ids: []string{"event-1", "event-2"}}
-	processor := &fakeProcessor{err: fmt.Errorf("prepare dependency policy: %w", processingerror.RetryableError{Err: pendingPolicyPreparation{}})}
+	processor := &fakeProcessor{err: fmt.Errorf("prepare dependency policy: %w", failure)}
 	handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 128)
 	reader := &diagnosticReader{fakeEventReader: handler.eventReader.(*fakeEventReader), saved: map[string]store.EventResult{}}
 	handler.eventReader = reader

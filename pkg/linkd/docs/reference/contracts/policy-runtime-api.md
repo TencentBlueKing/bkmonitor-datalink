@@ -380,7 +380,7 @@ Console 的运行态、成员、控制点和请求共用两路代理及最多 16
 ## 屏蔽复查与请求
 
 以下路径以 `/api/v1/policy-runtime/shield/alerts/{id}` 开头。读取前均确认该租户的真实 Alert 存在；
-`id` 为 URL 编码的 Alert ID。复查使用 Lifecycle 的原始冻结绑定、策略版本和 fingerprint lease。
+`id` 为 URL 编码的 Alert ID。复查使用 Lifecycle 的原始绑定、最新已发布策略和 fingerprint lease；绑定中的旧策略版本仅供历史追溯。
 
 | 方法/路径 | 参数与结果 |
 | --- | --- |

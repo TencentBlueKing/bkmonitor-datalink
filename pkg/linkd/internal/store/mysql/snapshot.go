@@ -46,7 +46,7 @@ func (r *Repository) CompareAndSetEventEnrichmentFromSnapshot(ctx context.Contex
 		return store.StoredEvent{}, err
 	}
 	// JSON_SET 替换整个丰富值；MERGE_PATCH 会删除丰富内部的合法 null 字段。
-	written, err := r.db.ExecContext(ctx, `UPDATE linkd_events SET payload=JSON_SET(payload,'$.enrich',CAST(? AS JSON),'$.enrich_status',?,'$.enriched_at',?,'$.enrich_config_digest',?),version=version+1 WHERE bk_tenant_id=? AND event_id=? AND version=?`, string(payload), updated.EnrichStatus, updated.EnrichedAt.Format(time.RFC3339Nano), updated.EnrichConfigDigest, current.Event.BKTenantID, current.Event.EventID, version)
+	written, err := r.db.ExecContext(ctx, `UPDATE linkd_events SET payload=JSON_SET(payload,'$.enrich',CAST(? AS JSON),'$.enrich_status',?,'$.enriched_at',?,'$.enrich_config_digest',?,'$.enrich_source_version',?),version=version+1 WHERE bk_tenant_id=? AND event_id=? AND version=?`, string(payload), updated.EnrichStatus, updated.EnrichedAt.Format(time.RFC3339Nano), updated.EnrichConfigDigest, updated.EnrichSourceVersion, current.Event.BKTenantID, current.Event.EventID, version)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}

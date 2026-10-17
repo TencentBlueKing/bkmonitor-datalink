@@ -388,10 +388,11 @@ func (r *Repository) ensureEventEnrichmentMapping(ctx context.Context, index str
 
 func eventEnrichmentProperties() map[string]map[string]any {
 	return map[string]map[string]any{
-		"enrich_status":        keywordProperty(),
-		"enrich":               opaqueObjectProperty(),
-		"enriched_at":          dateNanosProperty(),
-		"enrich_config_digest": keywordProperty(),
+		"enrich_status":         keywordProperty(),
+		"enrich":                opaqueObjectProperty(),
+		"enriched_at":           dateNanosProperty(),
+		"enrich_config_digest":  keywordProperty(),
+		"enrich_source_version": {"type": "long"},
 	}
 }
 

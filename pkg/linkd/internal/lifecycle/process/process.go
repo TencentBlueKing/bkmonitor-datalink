@@ -14,9 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +21,6 @@ import (
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
 	"linkd/internal/enrich/assembly"
-	"linkd/internal/eventsource"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/recentalert"
@@ -184,34 +180,6 @@ func Run(
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}
-		source.Version = task.Version
-		versionedEnricher := &releaseEnricher{current: source, engine: enricher,
-			read: func(ctx context.Context, id string, version int64) (config.EventSource, error) {
-				client := taskdispatch.Client{URL: cfg.Dispatch.WithDefaults().URL, Token: cfg.Dispatch.WorkerToken, WorkerID: task.Worker}
-				var release eventsource.Release
-				err := client.Call(ctx, http.MethodGet, "/internal/releases/"+url.PathEscape(id)+"/"+strconv.FormatInt(version, 10)+"?purpose=enrich&task="+url.QueryEscape(task.ID), nil, &release)
-				if err != nil {
-					return config.EventSource{}, err
-				}
-				if release.Deleted {
-					return config.EventSource{}, fmt.Errorf("enrich release is deleted")
-				}
-				release.Spec.Version = release.Version
-				return release.Spec, nil
-			},
-			open: func(ctx context.Context, spec config.EventSource) (lifecycle.EventEnricher, func() error, error) {
-				runtime, err := assembly.Open(ctx, spec, cfg.Resources, 1, time.Duration(lifecycleConfig.ProcessTimeoutSeconds)*time.Second, telemetryRuntime)
-				if err != nil {
-					return nil, nil, err
-				}
-				router, err := runtime.Router(spec, telemetryRuntime, assembly.WithLogger(logger))
-				if err != nil {
-					_ = runtime.Close()
-					return nil, nil, err
-				}
-				return router, runtime.Close, nil
-			},
-		}
 		stage = "hooks"
 		hooks, closeHooks, err := openHooksWithSeverity(kacHooks(source.Hooks, cfg.Plugins.KACEnabled()), telemetryRuntime, severityState)
 		if err != nil {
@@ -236,7 +204,7 @@ func Run(
 			observedRepository,
 			recentAlerts,
 			lifecycle.DeterministicAlertIDGenerator{},
-			versionedEnricher,
+			enricher,
 			hooks,
 			severityState,
 			lifecycle.SystemClock{},
@@ -249,7 +217,7 @@ func Run(
 			lifecycle.WithMergeEvaluator(&policyruntime.Merger{Loader: suppressor, State: policyState, Logger: logger, Observer: telemetryRuntime}),
 			lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: suppressor, Events: observedRepository.GetEvent, Candidates: observedRepository.(store.ActiveAlertReader), CurrentAlert: suppressor.CurrentAlert, Dependency: policyState, Index: policyState, Hints: policyState, Relations: policyDependencies.Dependencies, Logger: logger, Observer: telemetryRuntime}),
 			lifecycle.WithSeverityUpgradePolicy(lifecycleConfig.SeverityUpgradePolicy),
-			lifecycle.WithAlertContentBuilder(versionedEnricher),
+			lifecycle.WithAlertContentBuilder(enricher),
 		)
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle processor: %w", err)

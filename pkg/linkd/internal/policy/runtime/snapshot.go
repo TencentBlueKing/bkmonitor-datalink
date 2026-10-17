@@ -17,10 +17,11 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/policy"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
-// Snapshotter 在一次内存求值中固定候选版本；依赖错误记录跳过，身份错误不能降级。
+// Snapshotter 在一次内存求值中固定候选版本；明确的控制面传输故障必须等待恢复，不能发布空策略快照。
 type Snapshotter struct {
 	Catalog *policy.Catalog
 	Level   policy.LevelMapper
@@ -43,7 +44,7 @@ func (s Snapshotter) Snapshot(ctx context.Context, event domain.Event, at time.T
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
+	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 		return nil, err
 	}
 	if err != nil {

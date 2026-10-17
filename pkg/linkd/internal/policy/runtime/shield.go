@@ -22,6 +22,7 @@ import (
 	"linkd/internal/lifecycle"
 	"linkd/internal/policy"
 	"linkd/internal/policy/redisstate"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -149,7 +150,7 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 			s.observe(ctx, event.BKTenantID, alert.AlertID, event.EventID, step, causes...)
 		}
 		frozen, err := s.Loader.load(call, event.BKTenantID, ref)
-		if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 			return result, err
 		}
 		if err != nil {
@@ -169,7 +170,7 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 			if ctx.Err() != nil {
 				return result, ctx.Err()
 			}
-			if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) || errors.Is(err, ErrDependencyIndexNotReady) || errors.Is(err, redisstate.ErrDependencySnapshotStale) {
+			if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) || errors.Is(err, ErrDependencyIndexNotReady) || errors.Is(err, redisstate.ErrDependencySnapshotStale) {
 				return result, err
 			}
 			if err != nil {
@@ -209,6 +210,9 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 			return result, ctx.Err()
 		}
 		if err != nil {
+			if errors.Is(err, processingerror.ErrControlPlaneUnavailable) {
+				return result, err
+			}
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, policy.ErrUnavailable) {
 				record("skipped", "evaluation_unavailable", err)
 				continue
@@ -265,7 +269,7 @@ func shieldBindingID(tenant, alertID string, b domain.ShieldBinding) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// retain 不因普通配置编辑改变既有绑定版本；停用/删除是明确的提前解除条件。
+// retain 按最新已发布策略复查既有绑定；绑定中的版本只保留建立时的历史事实。
 // 目标/配置/事件读取失败无法证明可以解除，必须继续保留，不能把失败当成条件未命中。
 func (s *Shielder) retain(ctx context.Context, tenant string, alert domain.Alert, snapshot *store.PolicyContext, level func(string) (string, error)) (domain.AlertShield, []store.ShieldStep, error) {
 	result := alert.Shield.Clone()
@@ -274,10 +278,11 @@ func (s *Shielder) retain(ctx context.Context, tenant string, alert domain.Alert
 	for _, binding := range alert.Shield.Bindings {
 		ref := store.PolicyReleaseRef{Kind: "shield", ID: binding.Policy.ID, Version: binding.Policy.Version, Digest: binding.Policy.Digest}
 		step := store.ShieldStep{Policy: ref, BindingID: binding.BindingID, FromBinding: true}
-		keep, reason, err := s.keepBinding(ctx, tenant, alert, binding, snapshot, level)
+		keep, reason, evaluated, err := s.keepBinding(ctx, tenant, alert, binding, snapshot, level)
 		if err != nil {
 			return domain.AlertShield{}, nil, err
 		}
+		step.Policy = evaluated
 		step.ReasonCode = reason
 		if keep {
 			result.Bindings = append(result.Bindings, binding)
@@ -298,12 +303,10 @@ func (s *Shielder) retain(ctx context.Context, tenant string, alert domain.Alert
 	return result, steps, nil
 }
 
-func (s *Shielder) keepBinding(ctx context.Context, tenant string, alert domain.Alert, b domain.ShieldBinding, snapshot *store.PolicyContext, level func(string) (string, error)) (bool, string, error) {
-	if b.Origin == "manual" {
-		return s.keepManualBinding(ctx, tenant, b, snapshot.EvaluatedAt)
-	}
+func (s *Shielder) keepBinding(ctx context.Context, tenant string, alert domain.Alert, b domain.ShieldBinding, snapshot *store.PolicyContext, level func(string) (string, error)) (bool, string, store.PolicyReleaseRef, error) {
+	ref := store.PolicyReleaseRef{Kind: "shield", ID: b.Policy.ID, Version: b.Policy.Version, Digest: b.Policy.Digest}
 	if snapshot.ReasonCode != "" {
-		return true, "policy_load_failed", nil
+		return true, "policy_load_failed", ref, nil
 	}
 	var current policy.FrozenPolicy
 	var err error
@@ -311,7 +314,7 @@ func (s *Shielder) keepBinding(ctx context.Context, tenant string, alert domain.
 		var found bool
 		current, found, err = s.Loader.Catalog.Latest(ctx, policy.Scope{TenantID: tenant, Kind: policy.Shield}, b.Policy.ID)
 		if err == nil && !found {
-			return false, "policy_disabled", nil
+			return false, "policy_disabled", ref, nil
 		}
 	} else {
 		var latest *store.PolicyReleaseRef
@@ -323,57 +326,62 @@ func (s *Shielder) keepBinding(ctx context.Context, tenant string, alert domain.
 			}
 		}
 		if latest == nil {
-			return false, "policy_disabled", nil
+			return false, "policy_disabled", ref, nil
 		}
 		current, err = s.Loader.load(ctx, tenant, *latest)
 	}
-	if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
-		return true, "", err
+	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
+		return true, "", ref, err
 	}
 	if err != nil {
-		return true, "release_unavailable", nil
+		return true, "release_unavailable", ref, nil
 	}
+	ref = store.PolicyReleaseRef{Kind: "shield", ID: current.Release.ID, Version: current.Release.Version, Digest: current.Release.Compiled.Digest}
 	if !current.Compiled.Common.Enabled {
-		return false, "policy_disabled", nil
+		return false, "policy_disabled", ref, nil
 	}
-	frozen, err := s.Loader.load(ctx, tenant, store.PolicyReleaseRef{Kind: "shield", ID: b.Policy.ID, Version: b.Policy.Version, Digest: b.Policy.Digest})
-	if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
-		return true, "", err
+	if current.Compiled.Shield.ShieldType != b.Type {
+		return false, "policy_type_changed", ref, nil
 	}
-	if err != nil {
-		return true, "release_unavailable", nil
+	if !current.Compiled.Active(snapshot.EvaluatedAt) {
+		return false, "policy_inactive", ref, nil
 	}
-	if !frozen.Compiled.Active(snapshot.EvaluatedAt) {
-		return false, "policy_inactive", nil
+	// 手动绑定指定了具体告警，只按最新启用状态和有效期复查，不重新匹配目标与条件。
+	if b.Origin == "manual" {
+		return true, "", ref, nil
 	}
 	if b.Type != "time_shield" {
-		return s.keepDependencyBinding(ctx, tenant, alert, b, frozen, snapshot.EvaluatedAt, level)
+		keep, reason, err := s.keepDependencyBinding(ctx, tenant, alert, b, current, snapshot.EvaluatedAt, level)
+		return keep, reason, ref, err
 	}
 	if s.Events == nil {
-		return true, "binding_event_unavailable", nil
+		return true, "binding_event_unavailable", ref, nil
 	}
 	original, err := s.Events(ctx, tenant, b.SourceEventID)
 	if err != nil {
-		return true, "binding_event_unavailable", nil
+		return true, "binding_event_unavailable", ref, nil
 	}
 	if original.Event.BKTenantID != tenant || original.Event.EventID != b.SourceEventID || original.Event.EventSourceID != alert.EventSourceID || original.Event.Fingerprint != alert.Fingerprint {
-		return true, "", policy.ErrAccess
+		return true, "", ref, policy.ErrAccess
 	}
-	view, err := policy.EventView(original.Event, b.Severity, frozen.Compiled.Common.FieldMappings, level, policy.RelationContext{})
+	view, err := policy.EventView(original.Event, b.Severity, current.Compiled.Common.FieldMappings, level, policy.RelationContext{})
 	if err != nil {
-		return true, "event_view_unavailable", nil
+		return true, "event_view_unavailable", ref, nil
 	}
-	verdict, err := s.Loader.evaluate(ctx, frozen.Release, frozen.Compiled, view, s.Loader.Targets, snapshot.EvaluatedAt, false, false)
+	verdict, err := s.Loader.evaluate(ctx, current.Release, current.Compiled, view, s.Loader.Targets, snapshot.EvaluatedAt, false, false)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, policy.ErrUnavailable) {
-			return true, "evaluation_unavailable", nil
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) {
+			return true, "", ref, err
 		}
-		return true, "", err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, policy.ErrUnavailable) {
+			return true, "evaluation_unavailable", ref, nil
+		}
+		return true, "", ref, err
 	}
 	if !verdict.Evaluated {
-		return true, verdict.Reason, nil
+		return true, verdict.Reason, ref, nil
 	}
-	return verdict.Matched, "", nil
+	return verdict.Matched, "", ref, nil
 }
 
 func (s *Shielder) observe(ctx context.Context, tenant, alertID, eventID string, step store.ShieldStep, causes ...error) {

@@ -11,10 +11,12 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/view"
+	"linkd/internal/processingerror"
 )
 
 // AlertContentBuilder 为尚未持久化的 Alert 生成初始 content；持续触发直接采用 Event.content。
@@ -55,6 +57,9 @@ func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event
 		}
 	}()
 	content, err = p.contentBuilder.BuildContent(ctx, event.Clone(), evaluation, opening.Clone())
+	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) {
+		return "", err
+	}
 	// 描述转换失败只影响展示，保留来源原文，不阻断告警创建。
 	fallbackReason := enrich.SourceContentFallbackReason(err)
 	if err != nil {

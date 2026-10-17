@@ -56,7 +56,7 @@
 
 当前与 Event 前置丰富统一后的实现先冻结 Event 丰富，再进行策略准入；只有实际新建的 Alert 才在
 `planNewAlert` 中复制 opening Event 的选中等级结果并调用内容构建器，之后保存 EventPlan。
-`releaseEnricher` 为丰富和内容构建读取同一 EventSourceVersion，不用当前发布覆盖历史积压。
+丰富和内容构建统一复用当前任务加载的来源配置；积压 Event 不再按 EventSourceVersion 回读历史 Release。Event 的接入版本保持原样，丰富结果另外记录实际执行的 enrich_source_version；已保存的结果不重算。
 
 ```text
 Event → 前置 Processor Chain → 持久化 Event.enrich

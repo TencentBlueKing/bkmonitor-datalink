@@ -14,7 +14,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"slices"
 	"time"
 
@@ -69,51 +68,9 @@ func (s *Shielder) BindManual(ctx context.Context, a domain.Alert, c lifecycle.S
 	if err = shield.Validate(a.AlertID, a.Status); err != nil {
 		return lifecycle.ShieldEvaluation{}, policy.ErrInvalid
 	}
+	// 刚发布的快捷策略可能尚未进入目录；下次统一复查必须重新读取发布集合。
+	if s.Loader.Catalog != nil {
+		s.Loader.Catalog.Invalidate(c.TenantID)
+	}
 	return lifecycle.ShieldEvaluation{Shield: shield, Tags: slices.Clone(frozen.Compiled.Shield.AlarmTags)}, nil
-}
-
-// 手动绑定直接读取发布指针，不借用可能尚未包含新策略的目录缓存。普通编辑不改变冻结有效期。
-func (s *Shielder) keepManualBinding(ctx context.Context, tenant string, b domain.ShieldBinding, at time.Time) (bool, string, error) {
-	records, ok := s.Loader.Releases.(interface {
-		Get(context.Context, policy.Scope, string) (policy.Record, error)
-	})
-	if !ok {
-		return true, "release_unavailable", nil
-	}
-	scope := policy.Scope{TenantID: tenant, Kind: policy.Shield}
-	current, err := records.Get(ctx, scope, b.Policy.ID)
-	if errors.Is(err, policy.ErrNotFound) {
-		return false, "policy_disabled", nil
-	}
-	if err != nil {
-		return true, "release_unavailable", nil
-	}
-	if current.Scope != scope || current.ID != b.Policy.ID {
-		return true, "", policy.ErrAccess
-	}
-	if current.Deleted {
-		return false, "policy_disabled", nil
-	}
-	compiled, err := policy.Compile(policy.Shield, current.Spec)
-	if err != nil {
-		return true, "release_unavailable", nil
-	}
-	if !compiled.Common.Enabled {
-		return false, "policy_disabled", nil
-	}
-	frozen, err := s.Loader.load(ctx, tenant, store.PolicyReleaseRef{Kind: "shield", ID: b.Policy.ID, Version: b.Policy.Version, Digest: b.Policy.Digest})
-	if err != nil {
-		return true, "release_unavailable", nil
-	}
-	if !frozen.Compiled.Active(at) {
-		return false, "policy_inactive", nil
-	}
-	activation, err := frozen.Compiled.Schedule.Occurrence(at)
-	if err != nil {
-		return true, "activation_unavailable", nil
-	}
-	if activation != b.ActivationID {
-		return false, "policy_inactive", nil
-	}
-	return true, "", nil
 }

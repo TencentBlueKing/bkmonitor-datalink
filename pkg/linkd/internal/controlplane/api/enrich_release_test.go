@@ -15,7 +15,7 @@ import (
 	"linkd/internal/taskdispatch"
 )
 
-func TestWorkerHistoricalEnrichReleaseScope(t *testing.T) {
+func TestWorkerReleaseOnlyAllowsAssignedVersion(t *testing.T) {
 	task := taskdispatch.Task{Worker: "worker-a", Source: "host", Role: "lifecycle", Version: 2, Phase: "running"}
 	for _, tc := range []struct {
 		name, worker, source, purpose string
@@ -24,8 +24,8 @@ func TestWorkerHistoricalEnrichReleaseScope(t *testing.T) {
 	}{
 		{"assigned", "worker-a", "host", "", 2, true},
 		{"ordinary history denied", "worker-a", "host", "", 1, false},
-		{"event history", "worker-a", "host", "enrich", 1, true},
-		{"new event version", "worker-a", "host", "enrich", 3, true},
+		{"event history denied", "worker-a", "host", "enrich", 1, false},
+		{"new event version denied", "worker-a", "host", "enrich", 3, false},
 		{"target history", "worker-a", "host", "targets", 1, false},
 		{"target new event version", "worker-a", "host", "targets", 3, false},
 		{"target cross worker", "worker-b", "host", "targets", 1, false},

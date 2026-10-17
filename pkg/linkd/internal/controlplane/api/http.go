@@ -436,10 +436,6 @@ func (a *API) workerRelease(w http.ResponseWriter, r *http.Request) {
 	rel, e := a.Sources.GetRelease(r.Context(), t.Source, version)
 	if e == nil {
 		rel = releaseForRole(rel, t.Role)
-		switch purpose {
-		case "enrich":
-			rel.Spec = config.EventSource{EventSourceID: rel.Spec.EventSourceID, Version: rel.Version, RelatedTenantID: rel.Spec.RelatedTenantID, Enrich: rel.Spec.Enrich}
-		}
 	}
 	if e != nil {
 		failure(w, e)
@@ -481,14 +477,10 @@ type Controller interface {
 	Beat(context.Context, taskdispatch.Heartbeat) ([]taskdispatch.Task, error)
 }
 
-// canReadWorkerRelease 保留普通任务的固定版本边界；只有 Lifecycle 可为同来源 Event 读取历史丰富或目标。
-// purpose=enrich 只返回对应元数据，移除 MQ、Cleaner 和 Hook，不能读取跨来源配置或部署凭据。
+// canReadWorkerRelease 只允许读取当前分配任务的来源版本，不提供按 Event 回读历史配置的入口。
 func canReadWorkerRelease(task taskdispatch.Task, worker, source string, version int64, purpose string) bool {
 	if version <= 0 || version >= 1<<53 || task.Worker != worker || task.Source != source || task.Phase == "stopped" {
 		return false
-	}
-	if purpose == "enrich" {
-		return task.Role == "lifecycle"
 	}
 	return purpose == "" && task.Version == version
 }

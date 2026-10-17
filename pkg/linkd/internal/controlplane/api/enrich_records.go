@@ -142,7 +142,7 @@ func (a *API) queryEnrichRecords(w http.ResponseWriter, r *http.Request) {
 			unavailable = append(unavailable, id)
 			continue
 		}
-		release, readErr := service.releases.GetRelease(ctx, event.Event.EventSourceID, event.Event.EventSourceVersion)
+		release, readErr := service.releases.GetRelease(ctx, event.Event.EventSourceID, event.Event.EnrichSourceReleaseVersion())
 		if readErr != nil {
 			unavailable = append(unavailable, id)
 			continue
@@ -191,7 +191,7 @@ func projectEventEnrichment(event domain.Event, release eventsource.Release, sev
 		return result, err
 	}
 	digest := sha256.Sum256(encoded)
-	if release.ID != event.EventSourceID || release.Version != event.EventSourceVersion || release.Spec.EventSourceID != event.EventSourceID || release.Deleted || (release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != event.BKTenantID) || hex.EncodeToString(digest[:]) != event.EnrichConfigDigest || event.EnrichedAt == nil {
+	if release.ID != event.EventSourceID || release.Version != event.EnrichSourceReleaseVersion() || release.Spec.EventSourceID != event.EventSourceID || release.Deleted || (release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != event.BKTenantID) || hex.EncodeToString(digest[:]) != event.EnrichConfigDigest || event.EnrichedAt == nil {
 		return result, fmt.Errorf("enrich release identity mismatch")
 	}
 	evaluation, found := event.ForSeverity(severity)

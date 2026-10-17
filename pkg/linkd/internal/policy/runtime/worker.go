@@ -70,6 +70,8 @@ func workerPolicyError(err error) error {
 			return errors.Join(policy.ErrAccess, err)
 		case http.StatusNotFound:
 			return errors.Join(policy.ErrNotFound, err)
+		case http.StatusUnprocessableEntity:
+			return errors.Join(policy.ErrUnavailable, err)
 		}
 	}
 	return err

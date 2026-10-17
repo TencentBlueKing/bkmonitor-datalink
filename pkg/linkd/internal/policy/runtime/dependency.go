@@ -222,7 +222,7 @@ func (s *Shielder) loadDependencyMain(ctx context.Context, tenant, id string, re
 		return result, policy.ErrUnavailable
 	}
 	e, err := s.Events(ctx, tenant, ref.EventID)
-	if errors.Is(err, policy.ErrAccess) {
+	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) {
 		return result, err
 	}
 	if err != nil {
@@ -452,7 +452,7 @@ func (s *Shielder) newDependencyBinding(ctx context.Context, event domain.Event,
 
 func (s *Shielder) keepDependencyBinding(ctx context.Context, tenant string, alert domain.Alert, b domain.ShieldBinding, f policy.FrozenPolicy, at time.Time, level func(string) (string, error)) (bool, string, error) {
 	main, err := s.loadDependencyMain(ctx, tenant, b.MainAlertID, b.MainCandidate, f, level)
-	if errors.Is(err, policy.ErrAccess) {
+	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) {
 		return true, "", err
 	}
 	if errors.Is(err, store.ErrNotFound) || (err == nil && main.alert.Status.Terminal()) {
@@ -461,11 +461,23 @@ func (s *Shielder) keepDependencyBinding(ctx context.Context, tenant string, ale
 	if err != nil {
 		return true, "dependency_main_unavailable", nil
 	}
+	// 保留原主关系，但策略修改后必须重新检查其最新主条件和目标范围。
+	targets := &evaluationTargets{reader: s.Loader.Targets}
+	matched, err := s.dependencyMatch(ctx, f, main.view, targets, at, false)
+	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) {
+		return true, "", err
+	}
+	if err != nil {
+		return true, "dependency_main_unavailable", nil
+	}
+	if !matched {
+		return false, "dependency_no_longer_matches", nil
+	}
 	if s.Events == nil {
 		return true, "binding_event_unavailable", nil
 	}
 	original, err := s.Events(ctx, tenant, b.SourceEventID)
-	if errors.Is(err, policy.ErrAccess) {
+	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) {
 		return true, "", err
 	}
 	if err != nil {
@@ -475,8 +487,8 @@ func (s *Shielder) keepDependencyBinding(ctx context.Context, tenant string, ale
 	if e.BKTenantID != tenant || e.EventID != b.SourceEventID || e.EventSourceID != alert.EventSourceID || e.Fingerprint != alert.Fingerprint {
 		return true, "", policy.ErrAccess
 	}
-	matched, err := s.dependencyChild(ctx, e, b.Severity, main, f, &evaluationTargets{reader: s.Loader.Targets}, at, level)
-	if errors.Is(err, policy.ErrAccess) {
+	matched, err = s.dependencyChild(ctx, e, b.Severity, main, f, targets, at, level)
+	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) {
 		return true, "", err
 	}
 	if err != nil {

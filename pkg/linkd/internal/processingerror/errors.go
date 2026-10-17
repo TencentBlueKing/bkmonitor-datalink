@@ -24,6 +24,11 @@ const MaxAttempts = 3
 // ErrPanic 表示单条处理异常，错误文本不包含 panic 的业务载荷。
 var ErrPanic = errors.New("message handler panic")
 
+// ErrControlPlaneUnavailable 只表示连接失败、中断或请求超时等可识别的传输故障。
+// HTTP 错误响应、配置解析失败和本地缓存状态不能使用此标记。消费边界保留消息等待恢复，
+// 不消耗普通消息的三次重试预算；长期失联由 Worker 授权管理停止任务。
+var ErrControlPlaneUnavailable = errors.New("control plane unavailable")
+
 // CapturePanic 在 recover 边界保留调用位置，不记录可能包含凭据或正文的 panic value。
 // 仅异常路径采集有限栈帧；Unwrap 保留既有 panic 分类和重试语义。
 func CapturePanic() error {

@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package api
 
 import (
@@ -63,6 +72,20 @@ func TestEnrichRecordCommittedDiffAndFrozenNames(t *testing.T) {
 	summary, err := projectEnrichRecord(alert, event, release, false)
 	if err != nil || summary.ChangedFieldCount != 1 || len(summary.FieldChanges) != 0 {
 		t.Fatal("summary leaked field values")
+	}
+}
+
+func TestEnrichRecordUsesExecutedSourceVersion(t *testing.T) {
+	alert, event, release := enrichRecordFixture(t)
+	event.EventSourceVersion = 1
+	event.EnrichSourceVersion = release.Version
+	result, err := projectEnrichRecord(alert, event, release, true)
+	if err != nil || result.EnrichmentCount != 1 || result.Enrichments[0].Name != "标题规范化" {
+		t.Fatalf("executed source metadata unavailable: %+v %v", result, err)
+	}
+	release.Version = event.EventSourceVersion
+	if _, err := projectEnrichRecord(alert, event, release, true); err == nil {
+		t.Fatal("intake version was used for newer enrichment")
 	}
 }
 
@@ -173,10 +196,12 @@ func (s *enrichRecordStub) GetAlert(ctx context.Context, tenant, id string) (sto
 	}
 	return store.StoredAlert{Alert: s.alert}, nil
 }
+
 func (s *enrichRecordStub) GetEvent(ctx context.Context, tenant, id string) (store.StoredEvent, error) {
 	s.reads++
 	return store.StoredEvent{Event: s.event}, s.err
 }
+
 func (s *enrichRecordStub) GetRelease(ctx context.Context, id string, version int64) (eventsource.Release, error) {
 	return s.release, nil
 }

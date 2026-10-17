@@ -139,10 +139,10 @@ func (a *API) queryEventEnrichWindow(w http.ResponseWriter, r *http.Request) {
 	// 2. 同一页复用版本读取；每个等级使用它自己的已提交丰富结果。
 	for _, stored := range page.Events {
 		event := stored.Event
-		release, found := releases[event.EventSourceVersion]
+		release, found := releases[event.EnrichSourceReleaseVersion()]
 		if !found && event.EnrichStatus != domain.EnrichStatusPending {
-			release, _ = service.releases.GetRelease(ctx, event.EventSourceID, event.EventSourceVersion)
-			releases[event.EventSourceVersion] = release
+			release, _ = service.releases.GetRelease(ctx, event.EventSourceID, event.EnrichSourceReleaseVersion())
+			releases[event.EnrichSourceReleaseVersion()] = release
 		}
 		for _, evaluation := range event.Evaluations {
 			item := projectEventWindowItem(stored, evaluation, release, false)
@@ -197,7 +197,7 @@ func (a *API) queryEventEnrichDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		release := eventsource.Release{}
 		if event.EnrichStatus != domain.EnrichStatusPending {
-			release, _ = service.releases.GetRelease(ctx, event.EventSourceID, event.EventSourceVersion)
+			release, _ = service.releases.GetRelease(ctx, event.EventSourceID, event.EnrichSourceReleaseVersion())
 		}
 		output(w, projectEventWindowItem(stored, evaluation, release, true))
 		return

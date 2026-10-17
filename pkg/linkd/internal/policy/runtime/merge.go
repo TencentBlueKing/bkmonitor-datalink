@@ -18,6 +18,7 @@ import (
 	"linkd/internal/lifecycle"
 	"linkd/internal/policy"
 	"linkd/internal/policy/redisstate"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -82,7 +83,7 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 			m.observe(ctx, event, step, causes...)
 		}
 		f, err := m.Loader.load(call, event.BKTenantID, ref)
-		if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 			return result, err
 		}
 		if err != nil {
@@ -106,7 +107,7 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
-		if errors.Is(err, policy.ErrAccess) {
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) {
 			return result, err
 		}
 		if err != nil {

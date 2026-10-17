@@ -18,6 +18,7 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/policy"
 	"linkd/internal/policy/redisstate"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 	"linkd/internal/suppressioncleanup"
 )
@@ -44,7 +45,7 @@ type policyLogger interface {
 }
 
 // Suppressor 执行新告警候选的抑制规则；活动 Alert 的绕过边界由 Lifecycle 控制。
-// 所有依赖有超时；普通策略故障记录跳过，身份/上下文错误不能降级。
+// 所有依赖有超时；普通策略故障记录跳过，控制面传输故障、身份/上下文错误向上传递。
 type Suppressor struct {
 	// Observations 聚合匹配耗时及逐策略尽力采样；模拟和只读预览不注入。
 	Observations *Observations
@@ -89,7 +90,7 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 			s.observe(ctx, event, step, causes...)
 		}
 		frozen, err := s.load(call, event.BKTenantID, ref)
-		if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
+		if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 			return result, err
 		}
 		if err != nil {
@@ -105,6 +106,9 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 		if err != nil {
 			if ctx.Err() != nil {
 				return result, ctx.Err()
+			}
+			if errors.Is(err, processingerror.ErrControlPlaneUnavailable) {
+				return result, err
 			}
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, policy.ErrUnavailable) {
 				appendStep("skipped", "evaluation_unavailable", err)
@@ -133,7 +137,7 @@ func (s *Suppressor) Check(ctx context.Context, event domain.Event, evaluation d
 					return result, ctx.Err()
 				}
 				if err != nil {
-					if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
+					if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 						return result, err
 					}
 					appendStep("skipped", "evaluation_unavailable", err)

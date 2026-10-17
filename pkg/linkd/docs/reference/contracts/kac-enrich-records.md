@@ -4,7 +4,7 @@
 
 `POST /api/v1/alerts/{id}/enrich-records` 使用现有管理 JWT；请求包含 `bk_tenant_id`、`event_ids`（1–20 项）和可选 `detail`。同请求 EventID 去重。单请求正文最多 8 KiB，最多两个并发查询、五秒 deadline，响应最多 1 MiB；没有初始化 schema、写业务数据或重跑规则。
 
-先读取指定租户的 Alert，再核对每个 Event 的租户、来源及 `related_alert_ids`。按 Alert 的准确等级取冻结丰富结果，不任选其他等级；缺失和不可读项列在 `unavailable`，不能用当前配置补造结果。来源发布 ID、版本、租户以及丰富配置摘要均需匹配。
+先读取指定租户的 Alert，再核对每个 Event 的租户、来源及 `related_alert_ids`。按 Alert 的准确等级取冻结丰富结果，不任选其他等级；缺失和不可读项列在 `unavailable`，不能用当前配置补造结果。来源发布 ID、实际丰富版本、租户以及丰富配置摘要均需匹配。实际版本取 `enrich_source_version`，缺少该字段的既有记录沿用 `event_source_version`；读取展示元信息不会触发丰富或修改接入事实。
 
 响应 `items` 每项包含 `alert_id/event_id/severity/enriched_at/status/enrichment_count/changed_field_count/enrichments`；`detail=true` 另带 `field_changes`。措施包含 `id/type/name/status/code`，来自 CMDB/fields 的实际规则 trace；来源规则 `name` 和 `field_labels` 属于不可变发布配置展示元信息，不复制到 AlertLog。内部字段目录冻结规则不作为业务丰富措施。
 

@@ -38,6 +38,16 @@ type EventEnrichment struct {
 	Enrich             EventEnrichData `json:"enrich"`
 	EnrichedAt         *time.Time      `json:"enriched_at,omitempty"`
 	EnrichConfigDigest string          `json:"enrich_config_digest,omitempty"`
+	// EnrichSourceVersion 记录实际执行丰富的来源版本，供展示已保存结果时读取对应配置。
+	EnrichSourceVersion int64 `json:"enrich_source_version,omitempty"`
+}
+
+// EnrichSourceReleaseVersion 返回丰富实际使用的来源版本；既有记录使用原接入版本。
+func (e Event) EnrichSourceReleaseVersion() int64 {
+	if e.EnrichSourceVersion > 0 {
+		return e.EnrichSourceVersion
+	}
+	return e.EventSourceVersion
 }
 
 // Clone 返回不共享结果、时间指针和 JSON 字节的副本。
@@ -84,7 +94,7 @@ func (e EventEnrichment) Validate(evaluations []EventEvaluation) error {
 
 func (e EventEnrichment) validate(evaluations []EventEvaluation, validateJSON bool) error {
 	if e.EnrichStatus == "" || e.EnrichStatus == EnrichStatusPending {
-		if len(e.Enrich.Evaluations) != 0 || e.EnrichedAt != nil || e.EnrichConfigDigest != "" {
+		if len(e.Enrich.Evaluations) != 0 || e.EnrichedAt != nil || e.EnrichConfigDigest != "" || e.EnrichSourceVersion != 0 {
 			return fmt.Errorf("pending event enrich must be empty")
 		}
 		return nil

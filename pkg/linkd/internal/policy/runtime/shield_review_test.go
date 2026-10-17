@@ -52,7 +52,7 @@ func TestShieldBindingSurvivesCatalogEviction(t *testing.T) {
 				next.Version, next.Spec, next.Compiled = 2, compiled.Canonical, compiled.Summary
 				directory.releases = append(directory.releases, next)
 			}
-			keep, reason, err := s.keepBinding(t.Context(), "tenant", current.Alert, current.Alert.Shield.Bindings[0], snapshot, nil)
+			keep, reason, _, err := s.keepBinding(t.Context(), "tenant", current.Alert, current.Alert.Shield.Bindings[0], snapshot, nil)
 			if err != nil || keep != (mode == "evicted" || mode == "reload-failed") {
 				t.Fatalf("keep=%v reason=%s error=%v", keep, reason, err)
 			}

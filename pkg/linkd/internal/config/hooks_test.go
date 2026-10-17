@@ -30,6 +30,8 @@ func TestHookValidation(t *testing.T) {
 		valid  bool
 	}{
 		{"default", func(*HookConfig) {}, true},
+		{"single connection", func(h *HookConfig) { h.Config.PoolSize = 1 }, true},
+		{"negative pool", func(h *HookConfig) { h.Config.PoolSize = -1 }, false},
 		{"milliseconds", func(h *HookConfig) { ms := int64(100); h.Config.TimeoutMilliseconds = &ms }, true},
 		{"zero", func(h *HookConfig) { ms := int64(0); h.Config.TimeoutMilliseconds = &ms }, false},
 		{"negative", func(h *HookConfig) { ms := int64(-1); h.Config.TimeoutMilliseconds = &ms }, false},
@@ -54,6 +56,9 @@ func TestHookValidation(t *testing.T) {
 		})
 	}
 	h := strategyConfig()
+	if h.WithDefaults().Config.PoolSize != 16 || h.Config.PoolSize != 0 {
+		t.Fatal("pool default mutated source or is not 16")
+	}
 	if *h.WithDefaults().Config.TimeoutMilliseconds != 1000 || h.Config.TimeoutMilliseconds != nil {
 		t.Fatal("default mutated source or is not milliseconds")
 	}

@@ -60,6 +60,8 @@ type HookParameters struct {
 	Redis               *RedisConfig               `yaml:"redis,omitempty" json:"redis,omitempty"`
 	KeyPrefix           string                     `yaml:"key_prefix,omitempty" json:"key_prefix,omitempty"`
 	TimeoutMilliseconds *int64                     `yaml:"timeout_milliseconds,omitempty" json:"timeout_milliseconds,omitempty"`
+	// PoolSize 限制策略索引 Hook 的 Redis 连接数；零值使用 16。
+	PoolSize int `yaml:"pool_size,omitempty" json:"pool_size,omitempty"`
 }
 
 // UnmarshalJSON 对插件参数执行严格解码，provider 和管理 API 使用相同字段边界。
@@ -135,6 +137,9 @@ func (h HookConfig) WithDefaults() HookConfig {
 		}
 		h.Config.Security = h.Config.Security.WithDefaults()
 	case HookTypeActiveAlertByStrategy:
+		if h.Config.PoolSize == 0 {
+			h.Config.PoolSize = 16
+		}
 		if h.Config.TimeoutMilliseconds == nil {
 			ms := int64(1000)
 			h.Config.TimeoutMilliseconds = &ms
@@ -243,11 +248,14 @@ func (h HookConfig) validate() error {
 	}
 	switch h.Type {
 	case HookTypeKafka, HookTypeKAC:
-		if c.Redis != nil || c.KeyPrefix != "" || c.TimeoutMilliseconds != nil {
+		if c.Redis != nil || c.KeyPrefix != "" || c.TimeoutMilliseconds != nil || c.PoolSize != 0 {
 			return fmt.Errorf("%s does not accept redis index parameters", h.Type)
 		}
 		return h.KafkaConfig().Validate()
 	case HookTypeActiveAlertByStrategy:
+		if c.PoolSize < 1 {
+			return fmt.Errorf("pool_size must be positive")
+		}
 		if len(c.Brokers) != 0 || c.Topic != "" || c.ClientID != "" || c.MaxMessageBytes != 0 || !reflect.ValueOf(c.Security).IsZero() {
 			return fmt.Errorf("active-alert-by-strategy does not accept kafka parameters")
 		}

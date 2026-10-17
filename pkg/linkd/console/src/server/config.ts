@@ -200,6 +200,7 @@ const hookSchema = z.discriminatedUnion("type", [
             .positive()
             .max(9223372036854)
             .default(1000),
+          pool_size: z.number().int().nonnegative().optional(),
         })
         .strict(),
     })

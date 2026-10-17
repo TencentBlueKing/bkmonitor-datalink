@@ -20,12 +20,18 @@ hooks:
         database: 8
       key_prefix: alarmd:open_alerts
       timeout_milliseconds: 1000
+      pool_size: 16
 ```
 
 环境变量占位符仅适用于支持环境展开的进程 YAML 加载入口；通过管理 API 提交 JSON 时传入真实配置值，
 不能假定 API 会展开 `${...}`。支持 Sentinel，其认证字段与 `storage.redis` 相同；此处连接独立配置。
 Hook 缺省超时 1000ms，只限制提交提示。普通失败记录 `hook_failed` 后继续主流程，由周期校准恢复。
 `hook_succeeded` 表示提示已提交，不表示缓存已经发布。
+
+每个来源任务的 Hook Redis 连接池默认最多 16 个连接，可用 `pool_size` 调整，零值采用默认值。
+等待连接和 Redis I/O 共用上述超时。连接池过小会使并发事件的提示排队，Redis 本身正常时也可能
+超时；应结合事件突发并发与 Redis 往返耗时设置预算，增加超时时间不能消除排队。
+该预算仅用于 Lifecycle 的提示客户端，不改变控制面每个目标 4 个连接的维护池。
 
 有此类 Hook 时控制面自动启动投影任务，不需要额外启用开关。可选调整：
 

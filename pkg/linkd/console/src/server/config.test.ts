@@ -477,6 +477,7 @@ event_sources:
           redis: {address: 'redis:6379', password: redis-private}
           key_prefix: active
           timeout_milliseconds: 100
+          pool_size: 16
     storage:
       type: kafka
       kafka: {brokers: [kafka:9092], topic: raw, consumer_group: cleaner}
@@ -514,6 +515,7 @@ event_sources:
         yaml.replace("timeout_milliseconds", "timeout_seconds"),
         yaml.replace("name: second", "name: first"),
         yaml.replace("timeout_milliseconds: 100", "timeout_milliseconds: 0"),
+        yaml.replace("pool_size: 16", "pool_size: -1"),
       ]) {
         await writeFile(configPath, invalid);
         await expect(loadConfig(configPath)).rejects.toThrow();

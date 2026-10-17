@@ -111,7 +111,9 @@ func openHook(spec config.HookConfig) (lifecycle.FinalHook, func() error, error)
 	case config.HookTypeActiveAlertByStrategy:
 		options := spec.Config.Redis.ClientOptions()
 		options.ContextTimeoutEnabled = true
-		options.PoolSize = 2
+		// 一个任务并发处理多个 Event；两个固定连接会把突发提示串行排队到超时。
+		// 连接上限由来源预算控制，等待连接和 Redis I/O 共用 Hook 的截止时间。
+		options.PoolSize = spec.Config.PoolSize
 		client, err := redisclient.New(options)
 		if err != nil {
 			return nil, nil, err

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
@@ -121,10 +122,14 @@ func (d *InfoData) Fill(tables *influxdb.Tables) error {
 	return nil
 }
 
-// HandlePrint  打印路由信息
+// HandlePrint 保留旧诊断入口，指向当前使用的路由诊断。
 func HandlePrint(c *gin.Context) {
-	res := influxdb.Print()
-	c.String(200, res)
+	c.String(200,
+		"Legacy Consul query-router diagnostics have been retired.\nCurrent diagnostics: space routes %s; storage %s; InfluxDB routes %s.\n",
+		viper.GetString(SpacePrintHandlePathConfigPath),
+		viper.GetString(TsDBPrintHandlePathConfigPath),
+		viper.GetString(InfluxDBPrintHandlePathConfigPath),
+	)
 }
 
 func HandlerHealth(c *gin.Context) {

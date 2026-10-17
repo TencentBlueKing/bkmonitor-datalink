@@ -222,6 +222,8 @@ type Query struct {
 	Source []string `json:"source,omitempty"`
 	From   int      `json:"from,omitempty"`
 	Size   int      `json:"size,omitempty"`
+	// ExactTotal asks Elasticsearch to count every hit (track_total_hits); only set when the caller requests it.
+	ExactTotal bool `json:"exact_total,omitempty"`
 
 	Scroll            string             `json:"scroll,omitempty"`
 	IsSearchAfter     bool               `json:"is_search_after,omitempty"`

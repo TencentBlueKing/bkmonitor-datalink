@@ -11,6 +11,7 @@ package consul
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
@@ -27,89 +28,84 @@ var globalInstance *Instance
 
 var lock *sync.RWMutex
 
+var errUnavailable = errors.New("consul is not initialized")
+
+func currentInstance() (*Instance, error) {
+	lock.RLock()
+	defer lock.RUnlock()
+	if globalInstance == nil {
+		return nil, errUnavailable
+	}
+	return globalInstance, nil
+}
+
 // init 初始化读写锁
 func init() {
 	lock = new(sync.RWMutex)
 }
 
-// Wait 等待实例释放
-func Wait() {
-	if globalInstance != nil {
-		globalInstance.Wait()
+// Close releases the KV client and stops every watch before reload.
+func Close() {
+	lock.Lock()
+	instance := globalInstance
+	globalInstance = nil
+	lock.Unlock()
+	if instance != nil {
+		instance.cancel()
+		_ = instance.client.Close()
 	}
 }
 
-// SetInstance 创建 consul 实例
-func SetInstance(ctx context.Context, kvBasePath, serviceName, consulAddress string,
-	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string,
-) error {
-	return SetInstanceWithAuth(ctx, kvBasePath, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, nil)
+// SetInstance creates a KV client without contacting Consul.
+func SetInstance(ctx context.Context, kvBasePath, consulAddress, caFile, keyFile, certFile string) error {
+	return SetInstanceWithAuth(ctx, kvBasePath, consulAddress, caFile, keyFile, certFile, nil)
 }
 
-func SetInstanceWithAuth(ctx context.Context, kvBasePath, serviceName, consulAddress string,
-	tags []string, address string, port int, ttl string, caFile, keyFile, certFile string, auth *base.AuthConfig,
-) error {
+func SetInstanceWithAuth(ctx context.Context, kvBasePath, consulAddress, caFile, keyFile, certFile string, auth *base.AuthConfig) error {
 	lock.Lock()
 	defer lock.Unlock()
 	var err error
 	if kvBasePath != "" {
 		basePath = kvBasePath
 	}
-
-	globalInstance, err = NewConsulInstanceWithAuth(
-		ctx, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, auth,
-	)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// LoopAwakeService 注册服务，并循环激活
-func LoopAwakeService() error {
-	lock.RLock()
-	defer lock.RUnlock()
-	return globalInstance.LoopAwakeService()
-}
-
-// StopAwakeService 停止服务的激活动作,并注销服务
-func StopAwakeService() error {
-	lock.RLock()
-	defer lock.RUnlock()
-	return globalInstance.StopAwakeService()
+	globalInstance, err = NewConsulInstanceWithAuth(ctx, consulAddress, caFile, keyFile, certFile, auth)
+	return err
 }
 
 // WatchChange 监听指定地址，监听触发时，channel将会传出信息
 var WatchChange = func(ctx context.Context, watchPath string) (<-chan any, error) {
-	kvChan, err := globalInstance.Watch(watchPath)
+	instance, err := currentInstance()
 	if err != nil {
 		return nil, err
 	}
-	return kvChan, nil
-}
-
-// WatchChangeOnce 监听指定地址，监听触发时，channel将会传出信息
-var WatchChangeOnce = func(ctx context.Context, watchPath, separator string) (<-chan any, error) {
-	kvChan, err := globalInstance.WatchOnce(watchPath, separator)
-	if err != nil {
-		return nil, err
-	}
-	return kvChan, nil
+	return instance.Watch(watchPath)
 }
 
 // GetDataWithPrefix 通过前缀获取 kv 列表
 var GetDataWithPrefix = func(prefix string) (api.KVPairs, error) {
-	return globalInstance.GetDataWithPrefix(prefix)
+	instance, err := currentInstance()
+	if err != nil {
+		return nil, err
+	}
+	return instance.GetDataWithPrefix(prefix)
 }
 
 // GetDataWithPrefixContext 通过前缀获取 KV 列表，并传递取消信号。
 var GetDataWithPrefixContext = func(ctx context.Context, prefix string) (api.KVPairs, error) {
-	return globalInstance.GetDataWithPrefixContext(ctx, prefix)
+	instance, err := currentInstance()
+	if err != nil {
+		return nil, err
+	}
+	return instance.GetDataWithPrefixContext(ctx, prefix)
 }
 
 // GetKVData 通过 path 路径获取 value
 var GetKVData = func(path string) ([]byte, error) {
-	res, err := globalInstance.GetData(path)
+	instance, err := currentInstance()
+	if err != nil {
+		return nil, err
+	}
+	res, err := instance.GetData(path)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +117,11 @@ var GetKVData = func(path string) ([]byte, error) {
 
 // GetKVDataContext 读取 KV，并将取消信号传递到底层 HTTP 请求。
 var GetKVDataContext = func(ctx context.Context, path string) ([]byte, error) {
-	res, err := globalInstance.GetDataContext(ctx, path)
+	instance, err := currentInstance()
+	if err != nil {
+		return nil, err
+	}
+	res, err := instance.GetDataContext(ctx, path)
 	if err != nil {
 		return nil, err
 	}

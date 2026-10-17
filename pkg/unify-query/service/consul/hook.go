@@ -22,10 +22,8 @@ import (
 
 // setDefaultConfig
 func setDefaultConfig() {
-	viper.SetDefault(ServiceNameConfigPath, "")
 	viper.SetDefault(KVBasePathConfigPath, "bkmonitorv3/unify-query")
 	viper.SetDefault(AddressConfigPath, "http://127.0.0.1:8500")
-	viper.SetDefault(TTLConfigPath, "30s")
 	viper.SetDefault(TLSCertFileConfigPath, "")
 	viper.SetDefault(TLSCaFileConfigPath, "")
 	viper.SetDefault(TLSKeyFileConfigPath, "")
@@ -33,12 +31,7 @@ func setDefaultConfig() {
 
 // LoadConfig
 func LoadConfig() {
-	ServiceName = viper.GetString(ServiceNameConfigPath)
 	KVBasePath = viper.GetString(KVBasePathConfigPath)
-
-	HTTPAddress = viper.GetString(HTTPAddressConfigPath)
-	Port = viper.GetInt(PortConfigPath)
-	TTL = viper.GetString(TTLConfigPath)
 
 	Address = viper.GetString(AddressConfigPath)
 	CaFilePath = viper.GetString(TLSCaFileConfigPath)
@@ -46,8 +39,7 @@ func LoadConfig() {
 	CertFilePath = viper.GetString(TLSCertFileConfigPath)
 
 	log.Debugf(context.TODO(),
-		"reload success new config target service name:%s,consul address:%s,address:%s,port:%d,ttl:%s",
-		ServiceName, credential.RedactURL(Address), credential.RedactURL(HTTPAddress), Port, TTL,
+		"reload success consul KV address:%s", credential.RedactURL(Address),
 	)
 }
 

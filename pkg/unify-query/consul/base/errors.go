@@ -19,5 +19,4 @@ var (
 	ErrWatchPathRepeat = errors.New("watching path exist")
 	ErrWrongPlanType   = errors.New("wrong plan type")
 	ErrPlanNotFound    = errors.New("plan not found")
-	ErrNoCheckIDFound  = errors.New("check id match failed")
 )

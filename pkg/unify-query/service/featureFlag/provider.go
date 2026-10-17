@@ -12,6 +12,7 @@ package featureFlag
 import (
 	"context"
 	"fmt"
+	"time"
 
 	inner "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -24,7 +25,9 @@ type FeatureFlagProvider interface {
 	GetFeatureFlagsPath() string
 }
 
-// fallbackFeatureFlagProvider 优先读取 Redis；Key 缺失时读取并回填 Consul 快照。
+const consulFallbackTimeout = 3 * time.Second
+
+// fallbackFeatureFlagProvider 优先读取 Redis；Key 缺失时迁移 Consul 快照，
 // Redis 读取失败直接报错，由 Service 保留最后有效配置。
 type fallbackFeatureFlagProvider struct {
 	primary    FeatureFlagProvider
@@ -61,20 +64,22 @@ func (p *fallbackFeatureFlagProvider) GetFeatureFlags(ctx context.Context) ([]by
 	}
 
 	if p.fallback == nil {
-		return nil, nil
+		return nil, fmt.Errorf("consul feature flag fallback is not initialized")
 	}
-
-	data, fallbackErr := p.fallback.GetFeatureFlags(ctx)
-	if fallbackErr != nil {
-		return nil, fallbackErr
+	fallbackCtx, cancel := context.WithTimeout(ctx, consulFallbackTimeout)
+	defer cancel()
+	data, err := p.fallback.GetFeatureFlags(fallbackCtx)
+	if err != nil {
+		return nil, err
 	}
 	if err := inner.ValidateFeatureFlagSnapshot(data); err != nil {
-		return nil, fmt.Errorf("invalid fallback feature flag snapshot: %w", err)
+		return nil, fmt.Errorf("invalid consul feature flag snapshot: %w", err)
 	}
 	if p.initialize != nil {
 		created, err := p.initialize(ctx, data)
 		if err == nil {
 			if created {
+				log.Infof(ctx, "feature flag snapshot initialized in redis: source=consul")
 				return data, nil
 			}
 			return p.primary.GetFeatureFlags(ctx)

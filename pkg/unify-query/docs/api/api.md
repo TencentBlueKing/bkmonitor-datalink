@@ -420,6 +420,8 @@
 
 **请求体**: 同结构体查询
 
+`query_list[].exact_total`（bool，默认 `false`）：请求 Elasticsearch 返回精确命中总数（`track_total_hits`）。仅对单个、非聚合、全部路由到 ES 的原始查询生效（不含 `sql`、`scroll`、`collapse`、多查询合并），其他情况直接报错而不是返回看似精确的总数；ES 响应超时、分片失败或 `total.relation` 不为 `eq` 时报错；任一 ES 路由缺少索引前缀时报错（不请求时仍按原逻辑跳过该路由）。满足时响应带 `"total_exact": true`。不设置时请求体与响应与之前一致。
+
 **响应格式**: 返回 `ListData` 格式
 
 **响应示例**:
@@ -1068,13 +1070,13 @@
 
 **响应**: HTTP 200 表示服务正常
 
-### 7.2 打印路由信息
+### 7.2 旧路由诊断兼容入口
 
 **接口**: `GET /print`
 
-**描述**: 打印当前的路由信息（用于调试）。
+**描述**: 旧 Consul 表属性和 DataID 路由缓存已退出，此接口保留兼容入口，不再加载或打印旧缓存。
 
-**响应**: 文本格式的路由信息
+**响应**: HTTP 200，文本说明旧诊断已退出，并返回当前配置的空间、Storage 和 InfluxDB 路由诊断地址；默认分别为 `/space_print`、`/tsdb_print` 和 `/influxdb_print`。
 
 ### 7.3 打印 InfluxDB 信息
 

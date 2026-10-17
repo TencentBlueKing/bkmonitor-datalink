@@ -25,7 +25,7 @@ import (
 func TestGetESData(t *testing.T) {
 	log.InitTestLogger()
 	_ = consul.SetInstance(
-		context.Background(), "", "test-unify", "http://127.0.0.1:8500", []string{}, "127.0.0.1", 10205, "30s", "", "", "",
+		context.Background(), "", "http://127.0.0.1:8500", "", "", "",
 	)
 	kv1 := api.KVPairs{
 		{

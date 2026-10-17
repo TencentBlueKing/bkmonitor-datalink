@@ -17,6 +17,15 @@ var (
 	Version    = "?.?.?"
 	CommitHash = "unknown"
 
+	// Build metadata, set through -ldflags at build time; empty when the build did not provide it.
+	GitTag        = ""
+	GitCommitter  = ""
+	GitCommitTime = ""
+	BuildTime     = ""
+	BuildId       = ""
+	BuildNo       = ""
+	Release       = ""
+
 	// 自定义配置路径
 	CustomConfigFilePath string
 )

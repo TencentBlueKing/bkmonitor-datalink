@@ -11,168 +11,30 @@ package consul
 
 import (
 	"context"
-	"fmt"
-	"hash/fnv"
-	"sync"
-	"time"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/prometheus/common/model"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
-// Instance
+// Instance owns a Consul KV client.
 type Instance struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          *sync.WaitGroup
-	client      *base.Client
-	serviceID   string
-	serviceName string
-	checkID     string
-	tags        []string
-	address     string
-	port        int
-	ttl         string
-	watchPaths  map[string]<-chan any
-	pathLock    sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	client *base.Client
 }
 
-// NewConsulInstance
-func NewConsulInstance(
-	ctx context.Context, serviceName, consulAddress string, tags []string,
-	address string, port int, ttl string, caFile, keyFile, certFile string,
-) (*Instance, error) {
-	return NewConsulInstanceWithAuth(ctx, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, nil)
+func NewConsulInstance(ctx context.Context, consulAddress, caFile, keyFile, certFile string) (*Instance, error) {
+	return NewConsulInstanceWithAuth(ctx, consulAddress, caFile, keyFile, certFile, nil)
 }
 
-func NewConsulInstanceWithAuth(
-	ctx context.Context, serviceName, consulAddress string, tags []string,
-	address string, port int, ttl string, caFile, keyFile, certFile string, auth *base.AuthConfig,
-) (*Instance, error) {
-	hash := fnv.New32a()
-	_, err := hash.Write([]byte(fmt.Sprintf("%s:%d", address, port)))
-	if err != nil {
-		return nil, err
-	}
-	serviceID := fmt.Sprintf("%s-unify-query-%d", serviceName, hash.Sum32())
-	checkID := fmt.Sprintf("%s:%d", address, port)
+func NewConsulInstanceWithAuth(ctx context.Context, consulAddress, caFile, keyFile, certFile string, auth *base.AuthConfig) (*Instance, error) {
 	client, err := base.NewClientWithAuth(consulAddress, caFile, keyFile, certFile, auth)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	return &Instance{
-		ctx:         ctx,
-		cancel:      cancel,
-		wg:          new(sync.WaitGroup),
-		client:      client,
-		serviceID:   serviceID,
-		serviceName: serviceName,
-		checkID:     checkID,
-		tags:        tags,
-		address:     address,
-		port:        port,
-		ttl:         ttl,
-		watchPaths:  make(map[string]<-chan any),
-	}, err
-}
-
-// Wait
-func (i *Instance) Wait() {
-	i.wg.Wait()
-}
-
-// AwakeService 如果服务不存在，则创建
-func (i *Instance) AwakeService() error {
-	return i.client.ServiceAwake(i.serviceID, i.serviceName, i.tags, i.address, i.port)
-}
-
-// CancelService 注销服务
-func (i *Instance) CancelService() error {
-	return i.client.ServiceDeregister(i.serviceID)
-}
-
-// StopAwakeService
-func (i *Instance) StopAwakeService() error {
-	i.cancel()
-	return nil
-}
-
-// LoopAwakeService
-func (i *Instance) LoopAwakeService() error {
-	// 增加 serviceName 作为是否开启服务注册的开关
-	if i.serviceName == "" {
-		return nil
-	}
-	var dTmp model.Duration
-	var duration time.Duration
-	dTmp, err := model.ParseDuration(i.ttl)
-	if err != nil {
-		return err
-	}
-	// 1/3 of ttl to awake check
-	duration = time.Duration(dTmp) / 3
-	if duration <= 0 {
-		return ErrWrongTTL
-	}
-	err = i.AwakeService()
-	if err != nil {
-		return err
-	}
-	log.Debugf(context.TODO(), "consul service id:%s awaked", i.serviceID)
-	err = i.CheckRegister()
-	if err != nil {
-		return err
-	}
-	log.Debugf(context.TODO(), "consul check id:%s registered", i.checkID)
-	ticker := time.NewTicker(duration)
-	i.wg.Add(1)
-	go func() {
-		defer i.wg.Done()
-		defer func() {
-			err := i.CheckDeregister()
-			if err != nil {
-				log.Errorf(context.TODO(), "consul check id:%s deregistered", i.checkID)
-			}
-			err = i.CancelService()
-			if err != nil {
-				log.Errorf(context.TODO(), "consul service id:%s canceled", i.serviceID)
-			}
-			log.Warnf(context.TODO(), "consul service id:%s canceled", i.serviceID)
-		}()
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-i.ctx.Done():
-				return
-			case <-ticker.C:
-				log.Debugf(context.TODO(), "consul check id:%s send", i.checkID)
-				if err := i.CheckPass(); err != nil {
-					log.Errorf(context.TODO(), "consul check id:%s send failed", i.checkID)
-				}
-			}
-		}
-	}()
-	return nil
-}
-
-// CheckRegister
-func (i *Instance) CheckRegister() error {
-	return i.client.CheckRegister(i.serviceID, i.checkID, i.ttl)
-}
-
-// CheckDeregister
-func (i *Instance) CheckDeregister() error {
-	return i.client.CheckDeregister(i.checkID)
-}
-
-// CheckPass
-func (i *Instance) CheckPass() error {
-	return i.client.CheckPass(i.checkID, "pass")
+	return &Instance{ctx: ctx, cancel: cancel, client: client}, nil
 }
 
 // Watch
@@ -180,19 +42,9 @@ func (i *Instance) Watch(path string) (<-chan any, error) {
 	return i.client.Watch(path, "")
 }
 
-// WatchOnce: 仅监听，触发一次
-func (i *Instance) WatchOnce(path, separator string) (<-chan any, error) {
-	i.pathLock.Lock()
-	defer i.pathLock.Unlock()
-	if ch, has := i.watchPaths[path]; has {
-		return ch, nil
-	}
-	return i.client.Watch(path, separator)
-}
-
 // GetDataWithPrefix
 func (i *Instance) GetDataWithPrefix(prefix string) (api.KVPairs, error) {
-	result, _, err := i.client.KV.List(prefix, nil)
+	result, _, err := i.client.KV.List(prefix, (&api.QueryOptions{}).WithContext(i.ctx))
 	return result, err
 }
 
@@ -204,7 +56,7 @@ func (i *Instance) GetDataWithPrefixContext(ctx context.Context, prefix string) 
 
 // GetData
 func (i *Instance) GetData(path string) (*api.KVPair, error) {
-	result, _, err := i.client.KV.Get(path, nil)
+	result, _, err := i.client.KV.Get(path, (&api.QueryOptions{}).WithContext(i.ctx))
 	return result, err
 }
 

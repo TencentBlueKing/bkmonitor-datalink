@@ -28,8 +28,7 @@ import (
 func TestFormatStorageInfo(t *testing.T) {
 	log.InitTestLogger()
 	_ = consul.SetInstance(
-		context.Background(), "", "test-format-storage", "http://127.0.0.1:8500",
-		[]string{}, "127.0.0.1", 10205, "30s", "", "", "",
+		context.Background(), "", "http://127.0.0.1:8500", "", "", "",
 	)
 
 	tests := []struct {
@@ -164,8 +163,7 @@ func TestFormatStorageInfo(t *testing.T) {
 func TestGetStorageInfo(t *testing.T) {
 	log.InitTestLogger()
 	_ = consul.SetInstance(
-		context.Background(), "", "test-storage", "http://127.0.0.1:8500",
-		[]string{}, "127.0.0.1", 10205, "30s", "", "", "",
+		context.Background(), "", "http://127.0.0.1:8500", "", "", "",
 	)
 
 	tests := []struct {
@@ -312,8 +310,7 @@ func TestWatchStorageInfo(t *testing.T) {
 	defer cancel()
 
 	_ = consul.SetInstance(
-		ctx, "", "test-watch-storage", "http://127.0.0.1:8500",
-		[]string{}, "127.0.0.1", 10205, "30s", "", "", "",
+		ctx, "", "http://127.0.0.1:8500", "", "", "",
 	)
 
 	t.Run("正常启动监听", func(t *testing.T) {

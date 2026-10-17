@@ -18,7 +18,7 @@ import (
 	"linkd/internal/enrich"
 )
 
-// AlertContentBuilder 为尚未持久化的 Alert 生成不可变 content。
+// AlertContentBuilder 为尚未持久化的 Alert 生成初始 content；持续触发直接采用 Event.content。
 // 实现必须无写副作用、可取消且可重试；不得修改来源 Event 或已有 Alert。
 type AlertContentBuilder interface {
 	BuildContent(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error)

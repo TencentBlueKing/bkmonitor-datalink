@@ -238,7 +238,7 @@ type FinalHook interface {
 Enricher 对每条不同 Event 在裁决前同步执行；逐 evaluation 保存结果，共享本次 Event 的查询缓存。
 结果专用 CAS 一旦成功，处理计划失败或重投均复用该结果。error、panic、非法状态/数据降级为 failed，父取消停止处理。
 恢复/关闭和低等级被抑制 Event 也保存丰富结果。创建 Alert 时直接复制 opening Event 对应等级的 data；
-后续 Event 不刷新既有 Alert。`trigger_event_id` 是稳定的首次丰富来源，无需再增加重复的 enrich_event_id。
+后续 Event 不刷新既有 Alert 的丰富快照。`trigger_event_id` 是稳定的首次丰富来源，无需再增加重复的 enrich_event_id。
 
 输入为 `enrich.Input{Event}`；Scope 返回隔离的 Event 与显式 evaluation，未构造虚拟 Alert。
 运行时读取 Event 记录的来源 Release。当前任务版本复用连接，历史版本在同来源授权范围内读取，
@@ -334,7 +334,7 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
    同一事件中旧级别的 resolved/closed 被升级替代，记录 suppressed/evaluation_superseded。
 2. 没有更高级别触发时，只允许与 active 同级的 resolved/closed 结束它。
 3. 当前不存在 active（包括刚刚恢复/关闭）时，最高 triggered 创建新 Alert。
-4. 当前 active 与最高 triggered 同级时推进生命周期；更低的 triggered 被抑制。
+4. 当前 active 与最高 triggered 同级时推进生命周期，并直接用本次 `Event.content` 更新 `Alert.content`；更低的 triggered 被抑制。
 5. 未出现的级别不隐含恢复；历史被抑制的低级别不会自动激活，必须由本次或后续事件明确触发。
 
 | 当前 active | 本次判定 | 结果 |
@@ -342,15 +342,20 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
 | 无 | critical 与 warning triggered | 创建 critical，抑制 warning |
 | warning | critical triggered + warning resolved/closed | 按全局策略升级，旧级别终结判定被替代 |
 | critical | critical resolved + warning triggered | 恢复 critical，创建 warning |
-| critical | critical triggered + warning resolved | 更新 critical，warning 恢复为 orphaned |
+| critical | critical triggered + warning resolved | 更新 critical 的内容和生命周期，warning 恢复为 orphaned |
 | critical | 只有 warning triggered | 抑制 warning，critical 继续活动 |
 | 任意级别 | __ALL__ closed | 关闭当前 Alert，保留原级别 |
 | warning | __ALL__ closed + critical triggered | 来源关闭 warning，再创建 critical，与升级策略无关 |
 
+同级持续触发的 `content`、`latest_event_id`、`last_occurred_at`、`update_at` 与 `revision`
+在原有一次 Alert CAS 中一起保存，不增加内容查询或独立写请求，不重跑创建内容构建器。
+`content` 原样采用本次 Event 的值（包括空字符串），不依赖 `content_mode`；
+标题、维度、标签、创建锚点和首次丰富快照保持不变。低等级被抑制、恢复和关闭不改写内容。
+
 策略只有两个取值，默认 `close_and_create`：
 
-- `update_current`：原 Alert 保持 active 和 alert_id，更新 severity/latest_event_id/last_occurred_at/update_at；
-  保留 begin_at/create_at/trigger_event_id、来源版本、描述、维度和首次丰富结果。追加包含 from_severity、
+- `update_current`：原 Alert 保持 active 和 alert_id，在同一次 CAS 中更新 severity/content/latest_event_id/last_occurred_at/update_at/revision；
+  content 直接采用本次 Event.content，保留 begin_at/create_at/trigger_event_id、来源版本、维度和首次丰富结果。追加包含 from_severity、
   to_severity 的 severity_change 流水，只输出一个 active 快照。
 - `close_and_create`：旧 Alert 进入 closed/severity_upgrade，按本次 Event 创建新的高等级 Alert，复制本次 Event 的丰富结果；
   先输出旧告警 closed，再输出新告警 active。一个 Event 关联旧、新两条 Alert。

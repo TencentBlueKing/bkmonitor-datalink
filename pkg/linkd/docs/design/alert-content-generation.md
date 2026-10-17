@@ -1,5 +1,10 @@
 # Alert.content 在创建阶段生成的实施草案
 
+> 2026-10-17 持续关联更新：同级触发和 `update_current` 升级默认直接使用本次 `Event.content`，
+> 与时间字段和 `revision` 在原有一次 Alert CAS 中保存；不新增内容查询，不重跑创建构建器。
+> 空字符串原样覆盖，恢复、关闭和低等级抑制保留已有内容。新建 Alert 仍按 `content_mode` 生成初始内容。
+> 首次 Enrich 快照保持不变；本文历史执行记录中的“已存 content 不可变”已由此规则替代。
+
 > 2026-10-14 无数据接入更新：用户确认直接使用 alarmd 原始 `extra_data.no_data_periods`
 > 生成无数据周期描述，省略无法证明的旧延时文字，保持 alarmd 输出不变。
 > Resolver 已接入标记/family 一致性、同版本无数据配置启用/等级校验和周期数校验；
@@ -34,8 +39,8 @@
 
 - 对已配置启用的 bk-monitor/KAC 来源，**新建** Alert 的 `content` 由 Linkd 在 Enrich 准备阶段按 bk-monitor 检测事件 `description` 规则生成。以同一触发事实和同一策略版本下的 bk-monitor `Event.description` 为对照；不把通知阶段添加的“新告警”“已持续”等文字计入对照。
 - 覆盖 Linkd 当前内置 Enrich 能识别的告警场景；以实际 EventSource 和真实输入清单界定可交付的具体组合。`DATA`、`LOG_METRIC`、`LOG_KEYWORD`、BaseTarget 的六个分支、UptimeCheck、Cloud 均须列入矩阵。K8s/APM 是资源和展示上下文，须与其实际检测类型交叉验收，不能视为独立的描述算法。
-- `alarmd.TriggerEventV1` 输出保持原样。opening Event 的 `content` 和 `source_raw_data` 仍是来源事实。已创建 Alert 的 `content` 不允许被后续 Enrich、Lifecycle、重投或修复任务改写；现有 `ValidateAlertReplacement` 约束保持有效。
-- `enrich.Result` 继续仅返回 `enrich_status/enrich`。只在构造**尚未持久化**的新 Alert 时赋一次核心 `content`。来源不采用 bk-monitor 对齐模式时继续用 `event.Content`，且必须是 EventSource 明确配置的行为。
+- `alarmd.TriggerEventV1` 输出保持原样。opening Event 的 `content` 和 `source_raw_data` 仍是来源事实。已创建 Alert 的 `content` 在后续同级触发或原地升级时直接采用本次 Event.content，与时间和版本一次写入；标题、维度与首次丰富快照继续保留。
+- `enrich.Result` 继续仅返回 `enrich_status/enrich`。构造**尚未持久化**的新 Alert 时按 `content_mode` 生成初始 `content`；持续更新统一使用本次来源内容，不重新执行内容查询或构建器。
 
 普通指标的“一致”按字节级字符串对照，包括算法组合顺序、连接词、空格、数值精度、单位、指标名和空值语义。无数据按 2026-10-14 确认的来源周期描述验收，不还原旧延时文字。对仍必须依赖已丢失的历史检测事实的组合，不能用实时查询、当前策略或解析旧中文 `content` 伪造一致性；该组合在事实补齐前不得宣称验收通过。
 
@@ -54,7 +59,7 @@ Event → 前置 Processor Chain → 持久化 Event.enrich
     → 后续策略与持久化 EventPlan → Alert CAS、日志和 Hook
 ```
 
-同级别连续触发和 `update_current` 级别升级不重新生成内容，因为仍是同一个 Alert；`close_and_create` 升级会创建新 Alert，应以该新 Alert 的 opening Event 和选中级别重新生成。所有输出端读取持久化 `Alert.content`，不能把 `display.content` 的临时补丁误当成核心字段已更新。
+同级别连续触发和 `update_current` 级别升级直接使用本次 `Event.content`，不调用内容构建器，与生命周期时间和 `revision` 合并在同一次 Alert CAS 中保存；`close_and_create` 升级会创建新 Alert，应以该新 Alert 的 opening Event 和选中级别重新生成。`display.content` 的临时补丁仍属于首次丰富快照，不代表持久化核心字段。
 
 ## 实施接口与依赖位置
 
@@ -340,7 +345,7 @@ Cloud 的源码补查确认 `TargetExecutor` 按对象模型进入 is_cloud 分�
 
 ## 与现有 Display 和读取视图的关系
 
-`internal/enrich/processors/display.go` 当前以 `alert.Content` 为输入，通过日志裁剪、阈值单位和数值映射生成 `display.content`；Kingeye 投影可将其补丁施加到读取时的临时 `$.content`。启用新模式前应逐条检查该处理是否会二次加单位、重复指标前缀或把核心新文本再改写为另一句。优先使 `display.content` 直接引用生成后的 `alert.Content`，只把对象、维度、标题等额外展示字段留在 Display；确实需要展示专用格式时必须显式命名并对外明确，与 `Alert.content` 对照测试。持久化字段的不可变校验不放松。
+`internal/enrich/processors/display.go` 当前以 `alert.Content` 为输入，通过日志裁剪、阈值单位和数值映射生成 `display.content`；Kingeye 投影可将其补丁施加到读取时的临时 `$.content`。启用新模式前应逐条检查该处理是否会二次加单位、重复指标前缀或把核心新文本再改写为另一句。优先使 `display.content` 直接引用生成后的 `alert.Content`，只把对象、维度、标题等额外展示字段留在 Display；确实需要展示专用格式时必须显式命名并对外明确，与 `Alert.content` 对照测试。本次仅允许持久化 content 随触发更新，其他创建字段和首次丰富快照的不可变约束保持不变；已有 content 展示补丁仍可能覆盖读取视图中的核心内容。
 
 ## 工程步骤与完成条件
 
@@ -348,11 +353,11 @@ Cloud 的源码补查确认 `TargetExecutor` 按对象模型进入 is_cloud 分�
 | --- | --- | --- |
 | 0. 固定输入与对照 | EventSource 清单、转换链路、脱敏真实样本、bk-monitor 黄金描述、事实来源与保留期 | 每个实际启用组合均有样本和事实来源；缺口有明确 blocked 项。 |
 | 1. 固定触发时快照 | 增加版本化策略/检测事实读取端口，校验版本和租户；必要时补 Linkd 可读的上游持久化 | 重投、策略更新后仍取得同一事实；历史证据不从实时数据重算。 |
-| 2. 内容构建器 | `internal/enrich` 的 Resolver、纯 Renderer、按来源路由和显式配置；Lifecycle 新建入口接入 | 新 Alert 内容只初始化一次；Event 和已存 Alert 不变；未知算法拒绝切换。 |
+| 2. 内容构建器 | `internal/enrich` 的 Resolver、纯 Renderer、按来源路由和显式配置；Lifecycle 新建入口接入 | 新 Alert 内容按模式初始化，后续触发直接复制 Event.content；Event 不变；未知算法拒绝切换。 |
 | 3. Display 与运行错误 | 删除/收敛重复文本处理，内容错误分类、Block/恢复观测、预览 | 核心、读取视图、Hook/输出的目标内容一致；缺事实不会产生错误 Alert。 |
 | 4. 分场景启用 | 按来源发布配置切换；覆盖上述三个批次和所有已启用组合 | 对照样本逐字一致，失败和回滚演练通过；保留版本化配置可退回 `source` 处理新事件。 |
 
-重点测试：Renderer 的表驱动黄金用例；Resolver 的租户/版本/缺字段/超时用例；Lifecycle 的新建、`close_and_create`、`update_current`、同级触发、计划持久化后重放、CAS 冲突；Domain 仍拒绝修改已存 `content`；Enrich 失败只写其自身字段；Display/查询/Hook 的输出一致性。执行 `make check`，并用同一批脱敏输入做 bk-monitor 与 Linkd 的跨系统对照。单元测试或静态检查不能代替真实数据链路验收。
+重点测试：Renderer 的表驱动黄金用例；Resolver 的租户/版本/缺字段/超时用例；Lifecycle 的新建、`close_and_create`、`update_current`、同级触发、重投、CAS 冲突；内容与时间、版本单次更新，失败前后不部分写入，持续触发不重复调用内容构建器；Domain 允许活动告警更新 content 并保留其余创建字段；Enrich 失败只写其自身字段；Display/查询/Hook 的输出边界。执行 `make check`，并用同一批脱敏输入做 bk-monitor 与 Linkd 的跨系统对照。单元测试或静态检查不能代替真实数据链路验收。
 
 ## 当前待确认事项
 

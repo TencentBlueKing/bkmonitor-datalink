@@ -121,6 +121,7 @@ func TestInterruptedStepsWithoutPersistentCheckpoints(t *testing.T) {
 					persistAndProcess(t, repo, p, testEvent("opening", "warning"))
 				}
 				event := testEvent("interrupted", "warning")
+				event.Content = "updated content"
 				if stage == "close" {
 					event.Evaluations[0].Action = domain.EventActionResolved
 				}
@@ -139,6 +140,16 @@ func TestInterruptedStepsWithoutPersistentCheckpoints(t *testing.T) {
 				if _, err = p.ProcessEvent(ctx, created.StoredEvent); err == nil {
 					t.Fatal("fault was not observed")
 				}
+				if stage == "update" {
+					active, err := base.FindActiveAlert(t.Context(), store.ActiveAlertKey{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint})
+					wantContent, wantRevision := "", int64(1)
+					if after {
+						wantContent, wantRevision = event.Content, 2
+					}
+					if err != nil || active.Alert.Content != wantContent || active.Alert.Revision != wantRevision {
+						t.Fatalf("partial content/revision write: content=%q revision=%d error=%v", active.Alert.Content, active.Alert.Revision, err)
+					}
+				}
 				saved, err := base.GetEvent(t.Context(), event.BKTenantID, event.EventID)
 				if err != nil {
 					t.Fatal(err)
@@ -155,6 +166,12 @@ func TestInterruptedStepsWithoutPersistentCheckpoints(t *testing.T) {
 				restarted.clock = fixedClock{time.Date(2026, 9, 1, 0, 20, 0, 0, time.UTC)}
 				if _, err = restarted.ProcessEvent(t.Context(), saved); err != nil {
 					t.Fatalf("replay stuck after %s: %v", stage, err)
+				}
+				if stage == "update" {
+					active, err := base.FindActiveAlert(t.Context(), store.ActiveAlertKey{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint})
+					if err != nil || active.Alert.Content != event.Content || active.Alert.Revision != 2 {
+						t.Fatalf("replay lost content or advanced revision twice: content=%q revision=%d error=%v", active.Alert.Content, active.Alert.Revision, err)
+					}
 				}
 				next := testEvent("next", "critical")
 				persistAndProcess(t, repo, restarted, next)

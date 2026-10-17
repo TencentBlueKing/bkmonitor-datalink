@@ -182,6 +182,7 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	replacement := normalized.Clone()
 
 	replacement.LatestEventID = "event-2"
+	replacement.Content = "latest event content"
 	replacement.LastOccurredAt = replacement.LastOccurredAt.Add(-time.Minute)
 	replacement.Revision++
 	replacement.UpdateAt = replacement.UpdateAt.Add(time.Nanosecond)

@@ -240,6 +240,7 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 		if p.upgradePolicy == "update_current" {
 			updated := advanceAlert(active.Alert, event, now)
 			updated.Severity = evaluation.Severity
+			updated.Content = event.Content
 			if err := planMutation(plan, event, active.Version, updated, OutcomeAlertSeverityChanged, domain.OperationKindSeverityChange, ReasonSeverityUpgrade, map[string]string{"from_severity": active.Alert.Severity, "to_severity": updated.Severity}); err != nil {
 				return nil, err
 			}
@@ -288,6 +289,8 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 				updated := active.Alert.Clone()
 				if active.Alert.LatestEventID != event.EventID {
 					updated = advanceAlert(active.Alert, event, now)
+					// 内容随同一次时间和版本更新写入，不重跑创建时的内容查询。
+					updated.Content = event.Content
 				}
 				if err := planMutation(plan, event, active.Version, updated, OutcomeAlertUpdated, "", "", nil); err != nil {
 					return nil, err

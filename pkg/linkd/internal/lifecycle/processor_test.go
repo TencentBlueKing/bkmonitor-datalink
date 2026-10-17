@@ -36,6 +36,7 @@ func TestProcessEventCreateAndRepeatedTrigger(t *testing.T) {
 	}
 	second := testEvent("event-2", "warning")
 	second.Title = "changed title"
+	second.Content = "latest content"
 	second.OccurredAt = second.OccurredAt.Add(-time.Minute)
 	updated := persistAndProcess(t, repo, processor, second)
 	if updated.Outcome != OutcomeAlertSuppressed || updated.ReasonCode != "duplicate_trigger" || updated.AlertIDs[len(updated.AlertIDs)-1] != created.AlertIDs[len(created.AlertIDs)-1] {
@@ -45,7 +46,7 @@ func TestProcessEventCreateAndRepeatedTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if alert.Alert.Title != first.Title || alert.Alert.LatestEventID != second.EventID || !alert.Alert.LastOccurredAt.Equal(second.OccurredAt) {
+	if alert.Alert.Title != first.Title || alert.Alert.Content != second.Content || alert.Alert.LatestEventID != second.EventID || !alert.Alert.LastOccurredAt.Equal(second.OccurredAt) {
 		t.Fatalf("alert=%#v", alert.Alert)
 	}
 	if len(hook.inputs) != 2 {

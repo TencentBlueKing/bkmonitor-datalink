@@ -28,7 +28,7 @@ type Alert struct {
 	EventSourceID      string       `json:"event_source_id"`
 	Fingerprint        string       `json:"fingerprint"`
 	Title              string       `json:"title"`
-	Content            string       `json:"content"`
+	Content            string       `json:"content"` // Content 创建时生成，后续同级触发或原地升级时直接采用该 Event.content。
 	Severity           string       `json:"severity"`
 	Dimensions         DimensionMap `json:"dimensions"`
 	SubjectSystem      string       `json:"subject_system"`
@@ -370,7 +370,7 @@ func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
 	return nil
 }
 
-// ValidateAlertReplacement 校验 CAS 仅修改当前级别和生命周期字段，终态不可重开。
+// ValidateAlertReplacement 校验 CAS 仅修改内容、当前级别和生命周期字段，终态不可重开。
 // 级别优先级由 Lifecycle 的冻结配置校验，Repository 不自行解释级别排序。
 func ValidateAlertReplacement(current, replacement Alert) error {
 	if err := current.Validate(); err != nil {
@@ -400,6 +400,7 @@ func validateAlertReplacementTransition(current, replacement Alert) error {
 	left, right := current, replacement
 	clearLifecycle := func(alert *Alert) {
 		alert.Revision = 0
+		alert.Content = ""
 		alert.PolicyChange = nil
 		alert.MergeChange = nil
 		alert.Shield = AlertShield{}

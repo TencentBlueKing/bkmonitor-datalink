@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,7 +32,7 @@ func (f contentBuilderFunc) BuildContent(ctx context.Context, event domain.Event
 	return f(ctx, event, evaluation, opening)
 }
 
-func TestGeneratedContentPersistsAndRemainsImmutable(t *testing.T) {
+func TestGeneratedContentOnlyRunsOnCreation(t *testing.T) {
 	for _, policy := range []string{"close_and_create", "update_current"} {
 		t.Run(policy, func(t *testing.T) {
 			repo := memory.New()
@@ -56,17 +57,25 @@ func TestGeneratedContentPersistsAndRemainsImmutable(t *testing.T) {
 			opening := testEvent("opening", "warning")
 			opening.Content = "source text"
 			created := persistAndProcess(t, repo, processor, opening)
-			persistAndProcess(t, repo, processor, testEvent("repeat", "warning"))
-			upgrade := persistAndProcess(t, repo, processor, testEvent("upgrade", "critical"))
+			repeat := testEvent("repeat", "warning")
+			repeat.Content = "latest source text"
+			persistAndProcess(t, repo, processor, repeat)
+			higher := testEvent("upgrade", "critical")
+			higher.Content = "upgraded source text"
+			upgrade := persistAndProcess(t, repo, processor, higher)
 			old, err := repo.GetAlert(context.Background(), opening.BKTenantID, created.AlertIDs[0])
-			if err != nil || old.Alert.Content != "generated:opening" || old.Alert.EnrichStatus != domain.EnrichStatusFailed {
+			wantOldContent := repeat.Content
+			if policy == "update_current" {
+				wantOldContent = higher.Content
+			}
+			if err != nil || old.Alert.Content != wantOldContent || old.Alert.EnrichStatus != domain.EnrichStatusFailed {
 				t.Fatalf("old content/status = %q/%s error %v", old.Alert.Content, old.Alert.EnrichStatus, err)
 			}
 			storedEvent := mustGetStoredEvent(t, repo, opening)
 			if storedEvent.Event.Content != "source text" || len(storedEvent.Event.Labels) != 0 {
 				t.Fatal("builder changed persisted Event")
 			}
-			wantCalls, wantContent := 1, "generated:opening"
+			wantCalls, wantContent := 1, higher.Content
 			if policy == "close_and_create" {
 				wantCalls, wantContent = 2, "generated:upgrade"
 			}
@@ -74,10 +83,77 @@ func TestGeneratedContentPersistsAndRemainsImmutable(t *testing.T) {
 			if err != nil || current.Alert.Content != wantContent || calls != wantCalls {
 				t.Fatalf("current content %q calls %d error %v", current.Alert.Content, calls, err)
 			}
-			replacement := current.Alert.Clone()
-			replacement.Content = "overwrite"
-			if err := domain.ValidateAlertReplacement(current.Alert, replacement); err == nil {
-				t.Fatal("domain accepted content overwrite")
+		})
+	}
+}
+
+func TestRepeatedTriggerUpdatesContentInSingleAlertWrite(t *testing.T) {
+	for _, content := range []string{"latest source text", "", "  "} {
+		t.Run(fmt.Sprintf("content=%q", content), func(t *testing.T) {
+			base := memory.New()
+			repo := &snapshotRepository{Repository: base}
+			hook := &recordingHook{}
+			processor := newTestProcessor(t, repo, hook)
+			opening := testEvent("opening", "warning")
+			opening.Content = "opening content"
+			created := persistAndProcess(t, repo, processor, opening)
+			before, err := base.GetAlert(t.Context(), opening.BKTenantID, created.AlertIDs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
+				t.Fatal("repeated trigger requested content generation")
+				return "", nil
+			})
+			event := testEvent("repeat", "warning")
+			event.Content = content
+			event.Title = "new title"
+			event.EventSourceVersion++
+			persistAndProcess(t, repo, processor, event)
+			after, err := base.GetAlert(t.Context(), event.BKTenantID, before.Alert.AlertID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if repo.alertWrites != 1 || after.Alert.Content != content || after.Alert.Revision != before.Alert.Revision+1 ||
+				after.Alert.LatestEventID != event.EventID || !after.Alert.LastOccurredAt.Equal(event.OccurredAt) || !after.Alert.UpdateAt.After(before.Alert.UpdateAt) {
+				t.Fatalf("content/time/revision did not update together: writes=%d alert=%+v", repo.alertWrites, after.Alert)
+			}
+			if after.Alert.Title != before.Alert.Title || after.Alert.TriggerEventID != before.Alert.TriggerEventID ||
+				after.Alert.EventSourceVersion != before.Alert.EventSourceVersion || !reflect.DeepEqual(after.Alert.Enrich, before.Alert.Enrich) {
+				t.Fatal("content update changed opening fields")
+			}
+			if len(hook.inputs) != 2 || hook.inputs[1].Alert.Content != content || hook.inputs[1].Alert.Revision != after.Alert.Revision {
+				t.Fatal("hook did not receive the updated content and revision")
+			}
+			if _, err := processor.ProcessEvent(t.Context(), mustGetStoredEvent(t, base, event)); err != nil {
+				t.Fatal(err)
+			}
+			if repo.alertWrites != 1 {
+				t.Fatal("completed Event replay rewrote Alert")
+			}
+		})
+	}
+}
+
+func TestNonTriggeringEventsKeepAlertContent(t *testing.T) {
+	for _, evaluation := range []domain.EventEvaluation{
+		{Severity: "info", Action: domain.EventActionTriggered},
+		{Severity: "warning", Action: domain.EventActionResolved},
+		{Severity: "warning", Action: domain.EventActionClosed},
+	} {
+		t.Run(evaluation.Severity+"/"+string(evaluation.Action), func(t *testing.T) {
+			repo := memory.New()
+			processor := newTestProcessor(t, repo, NoopFinalHook{})
+			opening := testEvent("opening", "warning")
+			opening.Content = "last trigger content"
+			created := persistAndProcess(t, repo, processor, opening)
+			event := testEvent("next", evaluation.Severity)
+			event.Evaluations = []domain.EventEvaluation{evaluation}
+			event.Content = "unrelated content"
+			persistAndProcess(t, repo, processor, event)
+			after, err := repo.GetAlert(t.Context(), event.BKTenantID, created.AlertIDs[0])
+			if err != nil || after.Alert.Content != opening.Content {
+				t.Fatalf("content=%q error=%v", after.Alert.Content, err)
 			}
 		})
 	}

@@ -128,7 +128,8 @@ Redis Mailbox 后，原消息才允许确认；Signal 只唤醒 Mailbox，不承
 两套 checkpoint 的全部语义；这是对历史逐字一致目标的已确认收窄。
 
 普通指标描述及精确版本配置校验保持既有契约。生成内容只赋给新 Alert，Event.content、
-SourceRawData、ExtraData 和已创建 Alert.content 均保持不变。
+SourceRawData、ExtraData 保持不变。已创建 Alert 在后续同级触发或 `update_current` 升级时，
+将本次 Event.content 与时间、revision 一起写入，不重新查询或生成描述；恢复、关闭和低等级抑制保留已有内容。
 2026-10-14 补充确认：上述 `nodata_identity_invalid`、`nodata_configuration_invalid`、
 `nodata_evidence_missing`、`nodata_evidence_invalid` 属于无数据文案失败；
 Event 自带非空原始 `content` 时，Lifecycle 直接将原文作为新 Alert.content，

@@ -26,6 +26,8 @@
 `message_id` 由租户、`alert_id` 和 `update_at` 确定性生成；partition key 由租户和 `alert_id` 确定性生成。生产端等待 all-ISR ACK，失败不伪装成已投递。
 
 Alert 快照中的 `event_source_version` 为正整数，记录创建时继承的来源发布版本；同级更新与 update_current 升级不覆盖。
+同级触发和 `update_current` 升级直接采用本次 `Event.content`，与时间字段和 `revision` 在同一次 Alert CAS 中保存，
+输出携带该快照的内容；低等级抑制、恢复和关闭不改写内容。标题和首次丰富快照保持创建时的值。
 完整 Alert 快照现在包含必填 `revision`（1..2^53-1）以及 `projection` 目标水位。业务变更推进 revision，
 单独确认同步水位不生成新业务快照，也不触发本 Hook。目标引用只含来源版本，不包含 endpoint 或凭据。
 这两个字段不改变 V1 的 message_id/partition key 规则；新的可靠 KAC 投影协议与任务独立实现，正式生产装配仍在开发，

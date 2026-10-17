@@ -78,8 +78,15 @@ func TestPhaseObserverNormalReplayFailureAndCancellation(t *testing.T) {
 	if len(recorder.samples) != 4 {
 		t.Fatalf("samples=%d", len(recorder.samples))
 	}
-	for _, sample := range recorder.samples {
+	for i, sample := range recorder.samples {
 		assertPhaseSample(t, sample)
+		wantSource := event.EventSourceID
+		if i == 2 {
+			wantSource = ""
+		}
+		if sample.EventSourceID != wantSource {
+			t.Fatalf("attempt %d source=%q want=%q", i, sample.EventSourceID, wantSource)
+		}
 	}
 	if recorder.samples[0].Result.Outcome != result.Outcome || recorder.samples[1].Result.Outcome != result.Outcome {
 		t.Fatalf("outcomes: %#v", recorder.samples)
@@ -113,6 +120,7 @@ func TestPhaseObserverConcurrentEvents(t *testing.T) {
 	for i := range 16 {
 		event := testEvent(fmt.Sprintf("timed-%d", i), "warning")
 		event.Fingerprint = fmt.Sprintf("fingerprint-%d", i)
+		event.EventSourceID = fmt.Sprintf("source-%d", i)
 		created, err := repo.CreateEvent(t.Context(), event)
 		if err != nil {
 			t.Fatal(err)
@@ -127,8 +135,15 @@ func TestPhaseObserverConcurrentEvents(t *testing.T) {
 	if len(r.samples) != 16 {
 		t.Fatalf("samples=%d", len(r.samples))
 	}
+	sources := make(map[string]int)
 	for _, sample := range r.samples {
 		assertPhaseSample(t, sample)
+		sources[sample.EventSourceID]++
+	}
+	for i := range 16 {
+		if sources[fmt.Sprintf("source-%d", i)] != 1 {
+			t.Fatalf("concurrent source samples=%v", sources)
+		}
 	}
 }
 

@@ -140,25 +140,25 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	result := &instruments{}
 	var err error
 	if result.lifecyclePhaseDuration, err = meter.Float64Histogram(
-		"linkd.lifecycle.event.phase.duration", describeMetric("Event 环节独占耗时", "lifecycle", "latency", "linkd.phase", "linkd.outcome"),
+		"linkd.lifecycle.event.phase.duration", describeMetric("Event 环节独占耗时", "lifecycle", "latency", "linkd.event_source_id", "linkd.phase", "linkd.outcome"),
 		metric.WithUnit("s"), metric.WithDescription("单次 ProcessEvent 的独占分段耗时；每次尝试为所有环节记录样本，未执行的环节为零"),
 	); err != nil {
 		return nil, err
 	}
 	if result.lifecyclePhaseExecutionDuration, err = meter.Float64Histogram(
-		"linkd.lifecycle.event.phase.execution_duration", describeMetric("Event 环节执行耗时", "lifecycle", "latency", "linkd.phase", "linkd.outcome"),
+		"linkd.lifecycle.event.phase.execution_duration", describeMetric("Event 环节执行耗时", "lifecycle", "latency", "linkd.event_source_id", "linkd.phase", "linkd.outcome"),
 		metric.WithUnit("s"), metric.WithDescription("扣除逻辑调用的主动合批与存储排队；包含实际 I/O 和编解码，不等同于 CPU 时间"),
 	); err != nil {
 		return nil, err
 	}
 	if result.lifecyclePhaseWaitDuration, err = meter.Float64Histogram(
-		"linkd.lifecycle.event.phase.wait_duration", describeMetric("Event 环节存储等待", "lifecycle", "latency", "linkd.phase", "linkd.outcome", "linkd.wait_kind"),
+		"linkd.lifecycle.event.phase.wait_duration", describeMetric("Event 环节存储等待", "lifecycle", "latency", "linkd.event_source_id", "linkd.phase", "linkd.outcome", "linkd.wait_kind"),
 		metric.WithUnit("s"), metric.WithDescription("每次 Event 尝试按环节记录 batch_wait 和 storage_queue，未等待也记录零样本"),
 	); err != nil {
 		return nil, err
 	}
 	if result.lifecycleStepDuration, err = meter.Float64Histogram(
-		"linkd.lifecycle.event.phase.step.duration", describeMetric("Event 子步骤耗时", "lifecycle", "latency", "linkd.phase", "linkd.step", "linkd.outcome", "linkd.wait_kind"),
+		"linkd.lifecycle.event.phase.step.duration", describeMetric("Event 子步骤耗时", "lifecycle", "latency", "linkd.event_source_id", "linkd.phase", "linkd.step", "linkd.outcome", "linkd.wait_kind"),
 		metric.WithUnit("s"), metric.WithDescription("同一次 Event 各子步骤的独占 execution、batch_wait、storage_queue，每次尝试均记录零或实际样本"),
 	); err != nil {
 		return nil, err

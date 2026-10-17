@@ -96,6 +96,10 @@ Lifecycle 的裁决、Event 尝试/耗时和 Mailbox process 指标将纯动作�
 Event 内部分段使用 `linkd_lifecycle_event_phase_duration_seconds`，每次尝试对固定环节
 记录独占耗时，嵌套调用从父环节中扣除，未执行的环节也记录零样本；各环节具有相同的尝试分母，
 因此其均值可以相加。该计时器仅属于调用内的 Processor 副本，不跨 fingerprint 共享可变状态；
+阶段总耗时、执行耗时、等待耗时及子步骤统一携带 `linkd.event_source_id`，取自本次输入 Event，
+失败、重放与取消路径同样保留来源。Prometheus 导出为 `linkd_event_source_id`；查询可按来源精确过滤，
+分子、分母与子步骤覆盖率必须使用同一条件。未过滤时仍按尝试次数跨来源/Worker 加权，旧的无来源
+标签样本仅参与汇总，不能追溯拆分。不增加租户、Event ID、fingerprint 或来源版本维度。
 使用单调时间计时，不依赖业务时钟，也不改变失败、重试和持久化语义。
 该指标与 ES 物理批次指标的采样单位不同，不相加。Console 展示口径及各环节范围见
 [单 Event 耗时分布](../guides/console.md#指标边界)。

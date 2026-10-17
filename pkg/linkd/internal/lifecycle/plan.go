@@ -36,7 +36,11 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		p = &local
 		ctx = store.WithWaitObserver(ctx, local.phaseTiming.observeWait)
 		ctx = enrich.WithProcessorTiming(ctx, p.measureEnrichProcessor)
-		defer func() { p.phaseObserver.Finished(ctx, p.phaseTiming.observation(time.Now(), result, err)) }()
+		defer func() {
+			sample := p.phaseTiming.observation(time.Now(), result, err)
+			sample.EventSourceID = initial.Event.EventSourceID
+			p.phaseObserver.Finished(ctx, sample)
+		}()
 	}
 	// Processor 被多个 fingerprint 并发使用，复制接收者而不是原地改写共享字段。
 	if provider, ok := p.severity.(interface {

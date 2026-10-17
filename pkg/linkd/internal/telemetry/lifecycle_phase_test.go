@@ -30,7 +30,8 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 	observer := (&Runtime{metrics: metrics}).LifecyclePhaseObserver()
 	for _, attemptErr := range []error{nil, errors.New("failed attempt")} {
 		observer.Finished(t.Context(), lifecycle.PhaseObservation{
-			Phases: []lifecycle.PhaseDuration{{Phase: "enrich", Duration: 2 * time.Millisecond, BatchWait: time.Millisecond, StorageQueue: time.Millisecond / 2}, {Phase: "final_hook", Duration: 0}}, Err: attemptErr,
+			EventSourceID: "source-a",
+			Phases:        []lifecycle.PhaseDuration{{Phase: "enrich", Duration: 2 * time.Millisecond, BatchWait: time.Millisecond, StorageQueue: time.Millisecond / 2}, {Phase: "final_hook", Duration: 0}}, Err: attemptErr,
 			Steps: []lifecycle.StepDuration{{PhaseDuration: lifecycle.PhaseDuration{Phase: "enrich", Duration: 2 * time.Millisecond, BatchWait: time.Millisecond, StorageQueue: time.Millisecond / 2}, Step: "persist"}, {PhaseDuration: lifecycle.PhaseDuration{Phase: "enrich"}, Step: "custom"}},
 		})
 	}
@@ -47,7 +48,7 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 					t.Fatal(histogram)
 				}
 				for _, point := range histogram.DataPoints {
-					if point.Count != 1 || point.Attributes.Len() != 4 {
+					if point.Count != 1 || point.Attributes.Len() != 5 {
 						t.Fatal(point)
 					}
 					step, _ := point.Attributes.Value("linkd.step")
@@ -70,9 +71,9 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 				continue
 			}
 			seen++
-			wantPoints, wantAttrs := 4, 2
+			wantPoints, wantAttrs := 4, 3
 			if metric.Name == "linkd.lifecycle.event.phase.wait_duration" {
-				wantPoints, wantAttrs = 8, 3
+				wantPoints, wantAttrs = 8, 4
 			}
 			histogram, ok := metric.Data.(metricdata.Histogram[float64])
 			if !ok || len(histogram.DataPoints) != wantPoints {
@@ -112,5 +113,61 @@ func TestLifecyclePhaseMetricsKeepZeroSamplesAndAttemptOutcomes(t *testing.T) {
 	}
 	if seen != 4 {
 		t.Fatalf("phase metric families=%d", seen)
+	}
+}
+
+func TestLifecyclePhaseMetricsSeparateEventSources(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { _ = provider.Shutdown(t.Context()) })
+	metrics, err := newInstruments(provider.Meter("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := (&Runtime{metrics: metrics}).LifecyclePhaseObserver()
+	for source, duration := range map[string]time.Duration{"source-a": time.Millisecond, "source-b": 4 * time.Millisecond} {
+		phase := lifecycle.PhaseDuration{Phase: "enrich", Duration: duration}
+		observer.Finished(t.Context(), lifecycle.PhaseObservation{
+			EventSourceID: source,
+			Phases:        []lifecycle.PhaseDuration{phase},
+			Steps:         []lifecycle.StepDuration{{PhaseDuration: phase, Step: "persist"}},
+		})
+	}
+	var data metricdata.ResourceMetrics
+	if err := reader.Collect(t.Context(), &data); err != nil {
+		t.Fatal(err)
+	}
+	families := 0
+	for _, scope := range data.ScopeMetrics {
+		for _, metric := range scope.Metrics {
+			switch metric.Name {
+			case "linkd.lifecycle.event.phase.duration", "linkd.lifecycle.event.phase.execution_duration", "linkd.lifecycle.event.phase.wait_duration", "linkd.lifecycle.event.phase.step.duration":
+			default:
+				continue
+			}
+			families++
+			seen := make(map[string]bool)
+			for _, point := range metric.Data.(metricdata.Histogram[float64]).DataPoints {
+				source, _ := point.Attributes.Value("linkd.event_source_id")
+				seen[source.AsString()] = true
+				want, ok := map[string]float64{"source-a": 0.001, "source-b": 0.004}[source.AsString()]
+				if !ok {
+					t.Fatalf("missing or unexpected source: %v", point.Attributes)
+				}
+				kind, _ := point.Attributes.Value("linkd.wait_kind")
+				if kind.AsString() == "batch_wait" || kind.AsString() == "storage_queue" {
+					want = 0
+				}
+				if point.Count != 1 || point.Sum != want {
+					t.Fatalf("%s source=%s count=%d sum=%v want=%v", metric.Name, source.AsString(), point.Count, point.Sum, want)
+				}
+			}
+			if len(seen) != 2 {
+				t.Fatalf("%s sources=%v", metric.Name, seen)
+			}
+		}
+	}
+	if families != 4 {
+		t.Fatalf("phase metric families=%d", families)
 	}
 }

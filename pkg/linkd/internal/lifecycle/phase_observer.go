@@ -29,6 +29,8 @@ type PhaseDuration struct {
 
 // PhaseObservation 覆盖一次 Event 尝试，包括失败、重放和尝试内的 CAS 重试。
 type PhaseObservation struct {
+	// EventSourceID 来自本次输入 Event，失败与重放也保留来源。
+	EventSourceID string
 	// Phases 的独占耗时之和等于 Duration，嵌套环节不重复计时。
 	Phases []PhaseDuration
 	// Steps 与 Phases 使用相同样本，按父环节独占记账。

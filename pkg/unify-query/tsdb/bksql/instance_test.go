@@ -195,7 +195,7 @@ func TestInstance_TSpider(t *testing.T) {
 			},
 			start:       time.Unix(1741795260, 0),
 			end:         time.Unix(1741796260, 0),
-			wantUserSQL: "SELECT `dsname`, SUM(`bot_num`) AS total FROM `36_game_bot_num_5min_stat` WHERE (`game_id` = 1) AND (`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313') GROUP BY `dsname` ORDER BY `total` DESC LIMIT 50",
+			wantUserSQL: "SELECT `dsname`, SUM(`bot_num`) AS total FROM `36_game_bot_num_5min_stat` WHERE (`game_id` = 1) AND ((`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313')) GROUP BY `dsname` ORDER BY `total` DESC LIMIT 50",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1780,7 +1780,7 @@ ORDER BY
 				QueryString: "buy weekly card success",
 				SQL:         `SELECT log_1, log WHERE log_1 ='1' AND log IN ('1', '2') GROUP BY log_1, log ORDER BY log_1, log`,
 			},
-			expected: "SELECT NULL AS log_1, `log` FROM `bklog_index_set_21692_analysis`.doris WHERE (NULL = '1' AND `log` IN ('1', '2')) AND (`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR `log` = 'weekly' OR `log` = 'card' OR `log` = 'success')) GROUP BY `log` ORDER BY `log` LIMIT 100",
+			expected: "SELECT NULL AS log_1, `log` FROM `bklog_index_set_21692_analysis`.doris WHERE (NULL = '1' AND `log` IN ('1', '2')) AND ((`dtEventTimeStamp` >= 1755069858000 AND `dtEventTimeStamp` <= 1757661858000 AND `dtEventTime` >= '2025-08-13 15:24:18' AND `dtEventTime` <= '2025-09-12 15:24:19' AND `thedate` >= '20250813' AND `thedate` <= '20250912' AND (`log` = 'buy' OR `log` = 'weekly' OR `log` = 'card' OR `log` = 'success'))) GROUP BY `log` ORDER BY `log` LIMIT 100",
 		},
 		{
 			name: "object field eq and aggregate with sql and union table",
@@ -1806,7 +1806,7 @@ ORDER BY
 			},
 			start:    time.UnixMilli(1758607200000),
 			end:      time.UnixMilli(1758610800000),
-			expected: "SELECT `path`, COUNT(*) AS total_count FROM (SELECT `path` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`thedate` >= '20250923' AND `thedate` <= '20250923') AND (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL) UNION ALL SELECT `path` FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE (`thedate` >= '20250923' AND `thedate` <= '20250923') AND (`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL)) AS combined_data GROUP BY `path` LIMIT 100",
+			expected: "SELECT `path`, COUNT(*) AS total_count FROM (SELECT `path` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`thedate` >= '20250923' AND `thedate` <= '20250923') AND ((`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL)) UNION ALL SELECT `path` FROM `100915_bklog_pub_svrlog_pangusvr_other_9_analysis`.doris WHERE (`thedate` >= '20250923' AND `thedate` <= '20250923') AND ((`dtEventTimeStamp` >= 1758607200000 AND `dtEventTimeStamp` <= 1758610800000 AND `dtEventTime` >= '2025-09-23 14:00:00' AND `dtEventTime` <= '2025-09-23 15:00:01' AND `thedate` = '20250923' AND `thedate` IS NOT NULL))) AS combined_data GROUP BY `path` LIMIT 100",
 		},
 		{
 			name: "用户 SQL 多表 union 提前校验缺失字段",
@@ -1899,7 +1899,7 @@ WHERE
 			},
 			start:    time.UnixMilli(1783526400000),
 			end:      time.UnixMilli(1783612799000),
-			expected: "SELECT COUNT(DISTINCT(regexp_extract(`log`, 'openid:(\\\\d+)', 1))) AS openid FROM (SELECT `log` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his`.doris WHERE (`thedate` = '20260709' AND `log` MATCH_PHRASE 'login success') AND (`dtEventTimeStamp` >= 1783526400000 AND `dtEventTimeStamp` <= 1783612799000 AND `dtEventTime` >= '2026-07-09 00:00:00' AND `dtEventTime` <= '2026-07-10 00:00:00' AND `thedate` = '20260709') UNION ALL SELECT `log` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`thedate` = '20260709' AND `log` MATCH_PHRASE 'login success') AND (`dtEventTimeStamp` >= 1783526400000 AND `dtEventTimeStamp` <= 1783612799000 AND `dtEventTime` >= '2026-07-09 00:00:00' AND `dtEventTime` <= '2026-07-10 00:00:00' AND `thedate` = '20260709')) AS combined_data LIMIT 100",
+			expected: "SELECT COUNT(DISTINCT(regexp_extract(`log`, 'openid:(\\\\d+)', 1))) AS openid FROM (SELECT `log` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis_his`.doris WHERE (`thedate` = '20260709' AND `log` MATCH_PHRASE 'login success') AND ((`dtEventTimeStamp` >= 1783526400000 AND `dtEventTimeStamp` <= 1783612799000 AND `dtEventTime` >= '2026-07-09 00:00:00' AND `dtEventTime` <= '2026-07-10 00:00:00' AND `thedate` = '20260709')) UNION ALL SELECT `log` FROM `100915_bklog_pub_svrlog_pangusvr_lobby_analysis`.doris WHERE (`thedate` = '20260709' AND `log` MATCH_PHRASE 'login success') AND ((`dtEventTimeStamp` >= 1783526400000 AND `dtEventTimeStamp` <= 1783612799000 AND `dtEventTime` >= '2026-07-09 00:00:00' AND `dtEventTime` <= '2026-07-10 00:00:00' AND `thedate` = '20260709'))) AS combined_data LIMIT 100",
 		},
 		{
 			name: "object field eq and aggregate with sql and union table",
@@ -2590,7 +2590,7 @@ LIMIT
 			},
 			start:    time.UnixMilli(1751958582292),
 			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE (`log` MATCH_ALL 'Reliable RPC called out of limit') AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `ns`, `ct` LIMIT 1000",
+			expected: "SELECT CAST(__ext['pod']['namespace'] AS STRING) AS ns, split_part(`log`, '|', 3) AS ct, count(*) FROM `100968_bklog_proz_ds_analysis`.doris WHERE (`log` MATCH_ALL 'Reliable RPC called out of limit') AND ((`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen')) GROUP BY `ns`, `ct` LIMIT 1000",
 		},
 		{
 			name: "object field eq and aggregate with sql - 2",
@@ -2623,7 +2623,7 @@ LIMIT
 			},
 			start:    time.UnixMilli(1751958582292),
 			end:      time.UnixMilli(1752563382292),
-			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE (`log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal') AND (`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen') GROUP BY `serverIp`, `et` LIMIT 1000",
+			expected: "SELECT `serverIp`, CAST(events['attributes']['exception.type'] AS TEXT ARRAY) AS et, COUNT(*) AS log_count FROM `100968_bklog_proz_ds_analysis`.doris WHERE (`log` MATCH_PHRASE 'Error' OR `log` MATCH_PHRASE 'Fatal') AND ((`dtEventTimeStamp` >= 1751958582292 AND `dtEventTimeStamp` <= 1752563382292 AND `dtEventTime` >= '2025-07-08 15:09:42' AND `dtEventTime` <= '2025-07-15 15:09:43' AND `thedate` >= '20250708' AND `thedate` <= '20250715' AND (`log` = 'test') AND `log` = 'MetricsOnRPCSendBunch a big bunch happen')) GROUP BY `serverIp`, `et` LIMIT 1000",
 		},
 	}
 

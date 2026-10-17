@@ -1678,6 +1678,10 @@ func isASClauseAt(s string, idx int) bool {
 	return idx+len(" AS ") <= len(s) && strings.EqualFold(s[idx:idx+len(" AS ")], " AS ")
 }
 
+// joinWhereConditions ANDs non-empty conditions. With more than one, each is always wrapped in parentheses:
+// deciding that a condition "is already parenthesized" means scanning SQL text (quotes, escapes, identifiers),
+// and a wrong answer silently changes precedence, e.g. a user OR escaping the injected time range. A redundant
+// pair of parentheses is harmless.
 func joinWhereConditions(conditions ...string) string {
 	list := make([]string, 0, len(conditions))
 	for _, condition := range conditions {
@@ -1690,47 +1694,9 @@ func joinWhereConditions(conditions ...string) string {
 		return strings.Join(list, "")
 	}
 	for i, condition := range list {
-		list[i] = parenthesizedWhereCondition(condition)
+		list[i] = fmt.Sprintf("(%s)", condition)
 	}
 	return strings.Join(list, " AND ")
-}
-
-func parenthesizedWhereCondition(condition string) string {
-	if isParenthesizedWhereCondition(condition) {
-		return condition
-	}
-	return fmt.Sprintf("(%s)", condition)
-}
-
-func isParenthesizedWhereCondition(condition string) bool {
-	if len(condition) < 2 || condition[0] != '(' || condition[len(condition)-1] != ')' {
-		return false
-	}
-
-	depth := 0
-	inString := false
-	for i := 0; i < len(condition); i++ {
-		switch condition[i] {
-		case '\'':
-			if inString && i+1 < len(condition) && condition[i+1] == '\'' {
-				i++
-				continue
-			}
-			inString = !inString
-		case '(':
-			if !inString {
-				depth++
-			}
-		case ')':
-			if !inString {
-				depth--
-				if depth == 0 && i != len(condition)-1 {
-					return false
-				}
-			}
-		}
-	}
-	return depth == 0 && !inString
 }
 
 func (v *Statement) String() string {

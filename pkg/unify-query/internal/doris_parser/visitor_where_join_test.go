@@ -32,25 +32,38 @@ func TestParseDorisSQLWithVisitorInjectedWhereBoundsWholeUserCondition(t *testin
 			name:  "user OR",
 			q:     "SELECT COUNT(*) AS n WHERE a = 1 OR b = 2",
 			where: injected,
-			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE (a = 1 OR b = 2) AND " + injected + " LIMIT 100",
+			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE (a = 1 OR b = 2) AND (" + injected + ") LIMIT 100",
 		},
 		{
 			name:  "user OR with MATCH_PHRASE",
 			q:     "SELECT COUNT(*) AS n WHERE log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal'",
 			where: injected,
-			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE (log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal') AND " + injected + " LIMIT 100",
+			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE (log MATCH_PHRASE 'Error' OR log MATCH_PHRASE 'Fatal') AND (" + injected + ") LIMIT 100",
 		},
 		{
 			name:  "user AND",
 			q:     "SELECT COUNT(*) AS n WHERE a = 1 AND b = 2",
 			where: injected,
-			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE (a = 1 AND b = 2) AND " + injected + " LIMIT 100",
+			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE (a = 1 AND b = 2) AND (" + injected + ") LIMIT 100",
 		},
 		{
-			name:  "user condition already grouped",
+			name:  "user condition already grouped is still wrapped",
 			q:     "SELECT COUNT(*) AS n WHERE (a = 1 OR b = 2)",
 			where: injected,
-			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE ( a = 1 OR b = 2 ) AND " + injected + " LIMIT 100",
+			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE (( a = 1 OR b = 2 )) AND (" + injected + ") LIMIT 100",
+		},
+		{
+			// 起止都是括号但不是一组，且含转义引号：用户条件仍须整体加括号。
+			name:  "escaped quote across groups",
+			q:     `SELECT COUNT(*) AS n WHERE (a = 'x\'') OR (b = 'y')`,
+			where: injected,
+			sql:   `SELECT COUNT(*) AS n FROM t.doris WHERE (( a = 'x\'' ) OR ( b = 'y' )) AND (` + injected + `) LIMIT 100`,
+		},
+		{
+			name:  "backtick identifier with parenthesis",
+			q:     "SELECT COUNT(*) AS n WHERE (`a)` = 1) OR (b = 2)",
+			where: injected,
+			sql:   "SELECT COUNT(*) AS n FROM t.doris WHERE (( `a)` = 1 ) OR ( b = 2 )) AND (" + injected + ") LIMIT 100",
 		},
 		{
 			name:  "no user condition",

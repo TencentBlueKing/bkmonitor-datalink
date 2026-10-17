@@ -95,10 +95,23 @@ func TestOpeningEventContentPreviewSelectsSeverityWithoutStoredAlertReads(t *tes
 	}
 	req.Input = Input{OpeningEvent: encoded, Severity: "critical"}
 	facts.err = &description.Error{Code: "history_evidence_missing"}
-	_, err = service.Preview(t.Context(), req)
-	var previewErr *Error
-	if !errors.As(err, &previewErr) || previewErr.Status != 422 || previewErr.Message != "content facts invalid: history_evidence_missing" || closes != 2 {
-		t.Fatalf("failure=%v closes=%d", err, closes)
+	fallback, err := service.Preview(t.Context(), req)
+	if err != nil || fallback.CandidateContent == nil || *fallback.CandidateContent != event.Content || fallback.EffectiveAlert["content"] != event.Content || closes != 2 {
+		t.Fatalf("fallback=%+v error=%v closes=%d", fallback, err, closes)
+	}
+	for _, content := range []string{"", " \t\n"} {
+		changed := event.Clone()
+		changed.Content = content
+		raw, marshalErr := json.Marshal(changed)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		req.Input = Input{OpeningEvent: raw, Severity: "critical"}
+		facts.err = errors.New("description dependency unavailable")
+		result, err := service.Preview(t.Context(), req)
+		if err != nil || result.CandidateContent == nil || *result.CandidateContent != content || result.EffectiveAlert["content"] != content {
+			t.Fatalf("source content not preserved: %+v %v", result, err)
+		}
 	}
 	for _, mutate := range []func(*domain.Event){func(e *domain.Event) { e.BKTenantID = "tenant-b" }, func(e *domain.Event) { e.EventSourceVersion = 6 }, func(e *domain.Event) { e.RelatedAlertIDs = []string{"existing"} }} {
 		changed := event.Clone()

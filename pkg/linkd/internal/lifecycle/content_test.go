@@ -160,7 +160,7 @@ func TestNonTriggeringEventsKeepAlertContent(t *testing.T) {
 }
 
 func TestContentFailureDoesNotSavePlanOrCreateAlert(t *testing.T) {
-	for _, failure := range []string{"error", "panic", "invalid content", "cancel"} {
+	for _, failure := range []string{"panic", "invalid content", "cancel"} {
 		t.Run(failure, func(t *testing.T) {
 			repo := memory.New()
 			processor := newTestProcessor(t, repo, NoopFinalHook{})
@@ -196,6 +196,31 @@ func TestContentFailureDoesNotSavePlanOrCreateAlert(t *testing.T) {
 				t.Fatalf("alert error %v", err)
 			}
 		})
+	}
+}
+
+func TestDescriptionFailureStillCreatesAlertWithOriginalContent(t *testing.T) {
+	for _, source := range []string{"source text", "", " \t\n"} {
+		for _, failure := range []error{errors.New("dependency unavailable"), &description.Error{Code: "aggregate_method_missing"}, &description.Error{Code: "algorithm_unsupported"}, &description.Error{Code: "detection_evidence_missing"}} {
+			t.Run(source+failure.Error(), func(t *testing.T) {
+				repo := memory.New()
+				processor := newTestProcessor(t, repo, NoopFinalHook{})
+				processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
+					return "", failure
+				})
+				event := testEvent("fallback", "warning")
+				event.Content = source
+				result := persistAndProcess(t, repo, processor, event)
+				alert, err := repo.GetAlert(t.Context(), event.BKTenantID, result.AlertIDs[0])
+				if err != nil || alert.Alert.Content != source {
+					t.Fatalf("content=%q error=%v", alert.Alert.Content, err)
+				}
+				stored := mustGetStoredEvent(t, repo, event)
+				if stored.Processing.State != domain.EventProcessStateAccepted || stored.Event.Content != source {
+					t.Fatal("content failure rejected or changed Event")
+				}
+			})
+		}
 	}
 }
 
@@ -237,8 +262,8 @@ func TestMissingPublicationFallsBackToOriginalContentAndFreezesPlan(t *testing.T
 	}
 }
 
-func TestContentFallbackDoesNotHideOtherFailuresOrCancellation(t *testing.T) {
-	for _, code := range []string{"publication_missing_or_ambiguous", "publication_version_mismatch", "publication_runtime_invalid", "template_invalid", "opening_identity_invalid", "content_route_identity", "configuration_identity_mismatch", "detection_evidence_missing", "process_evidence_missing"} {
+func TestContentFallbackKeepsOriginalTextAndCancellation(t *testing.T) {
+	for _, code := range []string{"publication_missing_or_ambiguous", "publication_version_mismatch", "publication_runtime_invalid", "template_invalid", "opening_identity_invalid", "content_route_identity", "configuration_identity_mismatch", "detection_evidence_missing", "process_evidence_missing", "aggregate_method_missing", "algorithm_unsupported"} {
 		t.Run(code, func(t *testing.T) {
 			processor := newTestProcessor(t, memory.New(), NoopFinalHook{})
 			processor.contentBuilder = contentBuilderFunc(func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error) {
@@ -246,8 +271,8 @@ func TestContentFallbackDoesNotHideOtherFailuresOrCancellation(t *testing.T) {
 			})
 			event := testEvent("failed", "warning")
 			event.Content = "original detection text"
-			if _, err := processor.buildNewAlertContent(t.Context(), event, domain.EventEvaluation{}, domain.Alert{}); err == nil {
-				t.Fatal("unrelated content failure hidden")
+			if content, err := processor.buildNewAlertContent(t.Context(), event, domain.EventEvaluation{}, domain.Alert{}); err != nil || content != event.Content {
+				t.Fatalf("source content not preserved: %q, %v", content, err)
 			}
 		})
 	}
@@ -257,8 +282,8 @@ func TestContentFallbackDoesNotHideOtherFailuresOrCancellation(t *testing.T) {
 	})
 	event := testEvent("missing", "warning")
 	event.Content = "  "
-	if _, err := processor.buildNewAlertContent(t.Context(), event, domain.EventEvaluation{}, domain.Alert{}); err == nil {
-		t.Fatal("empty fallback content accepted")
+	if content, err := processor.buildNewAlertContent(t.Context(), event, domain.EventEvaluation{}, domain.Alert{}); err != nil || content != event.Content {
+		t.Fatalf("blank source content not preserved: %q, %v", content, err)
 	}
 	event.Content = "source"
 	ctx, cancel := context.WithCancel(t.Context())
@@ -326,7 +351,7 @@ func TestNoDataContentFailuresFallBackToSourceAndKeepCreatedContent(t *testing.T
 	}
 }
 
-func TestNoDataContentFallbackRejectsEmptyOversizedAndCanceledSource(t *testing.T) {
+func TestNoDataContentFallbackRejectsOversizedAndCanceledSource(t *testing.T) {
 	t.Parallel()
 	for _, code := range []string{"nodata_identity_invalid", "nodata_configuration_invalid", "nodata_evidence_missing", "nodata_evidence_invalid"} {
 		t.Run(code, func(t *testing.T) {
@@ -335,7 +360,7 @@ func TestNoDataContentFallbackRejectsEmptyOversizedAndCanceledSource(t *testing.
 				return "", &description.Error{Code: code}
 			})
 			event := testEvent("empty-"+code, "warning")
-			for _, text := range []string{"", " \t\n", strings.Repeat("x", (1<<20)+1)} {
+			for _, text := range []string{strings.Repeat("x", (1<<20)+1)} {
 				event.Content = text
 				if _, err := processor.buildNewAlertContent(t.Context(), event, domain.EventEvaluation{}, domain.Alert{}); err == nil {
 					t.Fatal("invalid fallback source accepted")

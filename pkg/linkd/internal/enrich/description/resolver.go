@@ -19,7 +19,7 @@ import (
 )
 
 // Resolver 按事件身份取得已验证发布配置，再整理检测描述输入。
-// 无法从 standard Event 证明的历史/预测事实明确失败，不解析来源 content。
+// 历史算法只陈述配置条件，不补造 standard Event 未携带的比较值，不解析来源 content。
 type Resolver struct{ configurations ConfigurationReader }
 
 var _ FactsResolver = (*Resolver)(nil)
@@ -114,7 +114,15 @@ func (r *Resolver) Resolve(ctx context.Context, event domain.Event, evaluation d
 				return Facts{}, invalid("special_query_rewrite_unverified")
 			}
 		case "bk_monitor.os_restart", "bk_monitor.proc_port":
-			return Facts{}, invalid("special_query_rewrite_unverified")
+			kind := "OsRestart"
+			if query.MetricID == "bk_monitor.proc_port" {
+				kind = "ProcPort"
+			}
+			for _, algorithm := range configuration.Algorithms {
+				if algorithm.Type != kind {
+					return Facts{}, invalid("special_query_rewrite_unverified")
+				}
+			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -167,10 +175,25 @@ func (r *Resolver) Resolve(ctx context.Context, event domain.Event, evaluation d
 			algorithm.Groups = groups
 		case "PingUnreachable":
 			// 此规则仅比较当次原始值 >= 1，不需要重查历史。
-		case "SimpleRingRatio", "SimpleYearRound", "AdvancedRingRatio", "AdvancedYearRound", "RingRatioAmplitude", "TimeSeriesForecasting", "OsRestart":
-			return Facts{}, invalid("detection_evidence_missing")
+		case "SimpleRingRatio", "SimpleYearRound", "AdvancedRingRatio", "AdvancedYearRound", "RingRatioAmplitude", "YearRoundAmplitude", "YearRoundRange":
+			algorithm.Config = append(json.RawMessage(nil), compiled.Config...)
+		case "OsRestart":
+			algorithm.Config = json.RawMessage(`{}`)
 		case "ProcPort":
-			return Facts{}, invalid("process_evidence_missing")
+			algorithm.ProcessName, _ = event.Dimensions["display_name"].StringValue()
+			if algorithm.ProcessName == "" {
+				return Facts{}, invalid("process_evidence_missing")
+			}
+			ports, _ := event.Dimensions["nonlisten"].StringValue()
+			if ports != "" && ports != "null" {
+				if json.Unmarshal([]byte(ports), &algorithm.NonListeningPorts) != nil {
+					return Facts{}, invalid("process_evidence_missing")
+				}
+			}
+			algorithm.InaccurateListen, _ = event.Dimensions["not_accurate_listen"].StringValue()
+			algorithm.BindIP, _ = event.Dimensions["bind_ip"].StringValue()
+		case "TimeSeriesForecasting":
+			return Facts{}, invalid("detection_evidence_missing")
 		default:
 			return Facts{}, invalid("algorithm_unsupported")
 		}
@@ -230,7 +253,8 @@ func configurationItemName(spec models.CWStrategySpec) (string, error) {
 		return "", invalid("item_name_missing")
 	}
 	if item.AggregateMethod == "" {
-		return "", invalid("aggregate_method_missing")
+		// 衍生指标在指标定义内部聚合，策略可以不声明顶层聚合方式。
+		return spec.Name, nil
 	}
 	return item.AggregateMethod + "(" + spec.Name + ")", nil
 }

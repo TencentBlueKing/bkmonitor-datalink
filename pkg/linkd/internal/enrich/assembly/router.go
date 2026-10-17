@@ -102,7 +102,7 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 }
 
 // BuildContent 依据冻结来源配置生成新 Alert 的内容；已保存 Alert 不调用此入口。
-// 来源版本不符时必须保留事件等待正确配置，不能用当前模式处理旧 backlog。
+// 来源版本不符时返回描述诊断，由创建/预览边界保留原文，不借用当前配置生成旧事件文本。
 func (r *Router) BuildContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, opening domain.Alert) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

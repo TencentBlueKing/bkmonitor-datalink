@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package description
 
 import (
@@ -64,7 +73,6 @@ func TestResolverRejectsUnprovenFacts(t *testing.T) {
 		{"missing raw type", "observed_number_type_missing", func(e *domain.Event, _ *Configuration) { e.SourceRawData = nil }},
 		{"changed value", "observed_value_mismatch", func(e *domain.Event, _ *Configuration) { e.Values["value"] = 100 }},
 		{"wrong configuration identity", "configuration_identity_mismatch", func(_ *domain.Event, c *Configuration) { c.Identity.TenantID = "other" }},
-		{"history", "detection_evidence_missing", func(_ *domain.Event, c *Configuration) { c.Algorithms[1].Type = "SimpleRingRatio" }},
 		{"special query rewrite", "special_query_rewrite_unverified", func(_ *domain.Event, c *Configuration) { c.Queries[0].MetricID = "bk_monitor.ping-gse" }},
 		{"process", "process_evidence_missing", func(_ *domain.Event, c *Configuration) { c.Algorithms[1].Type = "ProcPort" }},
 		{"ambiguous unit", "query_unit_ambiguous", func(_ *domain.Event, c *Configuration) {

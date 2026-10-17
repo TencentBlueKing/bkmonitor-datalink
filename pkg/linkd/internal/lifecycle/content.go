@@ -11,8 +11,6 @@ package lifecycle
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
@@ -57,14 +55,9 @@ func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event
 		}
 	}()
 	content, err = p.contentBuilder.BuildContent(ctx, event.Clone(), evaluation, opening.Clone())
-	// 历史发布材料缺失或无数据文案事实不可用时，保留该 Event 的来源原文。
-	// 无数据文案内部的标记/等级冲突只影响描述；租户、来源身份、发布材料
-	// 绑定和外部依赖错误仍拒绝，不能将所有内容错误都静默变成成功。
+	// 描述转换失败只影响展示，保留来源原文，不阻断告警创建。
 	fallbackReason := enrich.SourceContentFallbackReason(err)
 	if err != nil {
-		if fallbackReason == "" || strings.TrimSpace(event.Content) == "" {
-			return "", fmt.Errorf("build alert content: %w", err)
-		}
 		content = event.Content
 	}
 	if err := ctx.Err(); err != nil {

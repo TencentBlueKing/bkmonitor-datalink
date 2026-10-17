@@ -1,5 +1,13 @@
 # Alert.content 在创建阶段生成的实施草案
 
+> 2026-10-17 内容处理更新：描述分支不适用、配置/检测事实不足或描述依赖读取失败时，创建与只读预览保留
+> Event 原始 content（包括空串和空白），不因描述生成失败拒绝 Event。取消、panic 与原有输出大小约束保留。
+> 下文历史的内容错误白名单、缺事实拒绝/暂停及非空原文要求由此规则替代；不补造历史比较值或重查当前历史。
+> 已核对 alarmd `kingeye/master@9fd58a2fd` 的默认编译器与标准输出：Threshold、SimpleRingRatio、SimpleYearRound、
+> AdvancedRingRatio、AdvancedYearRound、RingRatioAmplitude、YearRoundAmplitude、YearRoundRange、OsRestart、ProcPort，
+> 另有 Ping 来源映射与独立无数据分支。历史比较事件没有比较值和单算法命中方向，因此只描述发布时检测条件及当前值。
+> 现行边界见[标准事件](../reference/contracts/standard-event.md#算法描述与原文保留)。
+
 > 2026-10-17 持续关联更新：同级触发和 `update_current` 升级默认直接使用本次 `Event.content`，
 > 与时间字段和 `revision` 在原有一次 Alert CAS 中保存；不新增内容查询，不重跑创建构建器。
 > 空字符串原样覆盖，恢复、关闭和低等级抑制保留已有内容。新建 Alert 仍按 `content_mode` 生成初始内容。

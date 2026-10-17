@@ -1,6 +1,16 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package description
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -10,18 +20,22 @@ import (
 )
 
 const maxContentBytes = 64 << 10
+
 const maxAlgorithms = 32
+
 const maxGroups = 64
+
 const maxConditions = 64
 
 // Error 表示不能生成确定内容的错误，Code 只包含低基数规则码。
-// 错误不含原始消息、配置或检测值；调用方可据此阻断确定性失败。
+// 错误不含原始消息、配置或检测值；调用方据此记录原文保留原因。
 type Error struct{ Code string }
 
-func (e *Error) Error() string  { return "alert description: " + e.Code }
+func (e *Error) Error() string { return "alert description: " + e.Code }
+
 func invalid(code string) error { return &Error{Code: code} }
 
-// PermanentContentFailure 标识缺事实、配置无效等确定性失败，供 Scheduler 保留队首。
+// PermanentContentFailure 给内容转换边界提供缺事实、配置无效等诊断码。
 func (e *Error) PermanentContentFailure() string { return e.Code }
 
 // Condition 是阈值组内的一项条件。Threshold 采用 bk-monitor float 序列化语义。
@@ -34,6 +48,8 @@ type Condition struct {
 // Threshold 的 Groups 为外层 OR、内层 AND；专用事件字段仅由对应算法读取。
 type Algorithm struct {
 	Type string
+	// Config 是发布时的算法条件；没有历史比较值时仅陈述条件，不重算检测。
+	Config json.RawMessage
 	// DetectionMatched 仅用于需要历史检测的专用规则；nil 表示未提供命中事实。
 	DetectionMatched  *bool
 	Groups            [][]Condition
@@ -75,7 +91,9 @@ func Render(f Facts) (string, error) {
 	}
 	parts := make([]string, 0, len(f.Algorithms))
 	special := false
+	conditionsOnly := false
 	for _, algorithm := range f.Algorithms {
+		conditionsOnly = conditionsOnly || len(algorithm.Config) != 0
 		part, matched, standalone, err := renderAlgorithm(f.Value, u, algorithm)
 		if algorithm.Type == "TimeSeriesForecasting" {
 			part, matched, err = renderForecast(f.ItemName, u, algorithm)
@@ -99,7 +117,12 @@ func Render(f Facts) (string, error) {
 	if len(parts) == 0 {
 		return "", invalid("not_triggered")
 	}
-	content := strings.Join(parts, "且")
+	connector := "且"
+	// 既有阈值命中片段沿用 bk-monitor 的连接方式；配置条件不代表已命中，保留原布尔关系。
+	if conditionsOnly && f.Connector == "or" {
+		connector = "或"
+	}
+	content := strings.Join(parts, connector)
 	if !special {
 		formatted, err := u.format(f.Value)
 		if err != nil {
@@ -121,6 +144,9 @@ func renderAlgorithm(value Number, u unitDefinition, a Algorithm) (string, bool,
 	case "PingUnreachable":
 		return "Ping不可达", value.value >= 1, true, nil
 	case "OsRestart":
+		if len(a.Config) != 0 {
+			return "主机重启检测，当前运行时长" + pythonNumber(value.value, value.integer) + "秒", true, true, nil
+		}
 		// 只有已触发的专用事实可进入此模板；本包不重算其历史检测条件。
 		if a.DetectionMatched == nil {
 			return "", false, true, invalid("detection_evidence_missing")
@@ -147,7 +173,11 @@ func renderAlgorithm(value Number, u unitDefinition, a Algorithm) (string, bool,
 			return "当前进程(" + a.ProcessName + ")和监听端口(" + a.InaccurateListen + ")存在，监听的IP与CMDB中配置的(" + a.BindIP + ")不符", true, true, nil
 		}
 		return "", false, true, nil
-	case "SimpleRingRatio", "SimpleYearRound", "AdvancedRingRatio", "AdvancedYearRound", "RingRatioAmplitude":
+	case "SimpleRingRatio", "SimpleYearRound", "AdvancedRingRatio", "AdvancedYearRound", "RingRatioAmplitude", "YearRoundAmplitude", "YearRoundRange":
+		if len(a.Config) != 0 {
+			text, err := renderComparisonConditions(u, a)
+			return text, err == nil, false, err
+		}
 		text, hit, err := renderHistory(u, a)
 		return text, hit, false, err
 	case "TimeSeriesForecasting":

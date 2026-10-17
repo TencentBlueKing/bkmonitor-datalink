@@ -2,6 +2,9 @@
 
 本文汇总当前 Linkd Enrich 对鲸眼监控策略的依赖。实现依据见 [`internal/enrich/`](../../internal/enrich/)。
 
+2026-10-17：下文描述读取的配置/绑定错误不再阻断整个 Event；无法生成内容时创建与只读预览保留来源 content，
+包含空串。读取器仍不借用其他版本或租户的数据。现行边界见[算法描述与原文保留](../reference/contracts/standard-event.md#算法描述与原文保留)。
+
 ## 当前读取方式
 
 Event 在策略裁决前完成 Enrich。`labels.strategy_id`、`labels.strategy_version`、`labels.bk_biz_id` 均须为正整数。

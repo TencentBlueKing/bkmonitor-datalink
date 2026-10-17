@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
-	"strings"
 	"time"
 
 	"linkd/internal/config"
@@ -297,8 +296,8 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 			}
 		}
 		content, err := builder.BuildContent(ctx, previous, openingEvaluation, opening.Clone())
-		if err != nil && enrich.SourceContentFallbackReason(err) != "" && strings.TrimSpace(previous.Content) != "" && ctx.Err() == nil {
-			// 候选内容遵守创建阶段的同一兜底边界，避免预览失败而实际 Alert 成功。
+		if err != nil && ctx.Err() == nil {
+			// 描述不适用时与创建阶段一致，原样保留来源内容，包括空串。
 			content, err = previous.Content, nil
 		}
 		if err != nil {

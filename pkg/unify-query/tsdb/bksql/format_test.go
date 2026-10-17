@@ -460,6 +460,8 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 			userSQL string
 			size    int
 			wantSQL string
+			// wantErr: the visitor does not model this construct, so the query is rejected instead of rewritten
+			wantErr string
 		}{
 			{
 				name:    "basic_dtEventTimeStamp_limit10",
@@ -531,7 +533,7 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT t1.a FROM tbl t1 INNER JOIN tbl t2 ON t1.id = t2.parent_id WHERE t1.x > 0",
-				wantSQL: "SELECT NULL AS t1__bk_46__a FROM `132_lol_new_login_queue_login_1min` WHERE (NULL > 0) AND (" + whereTime + ") LIMIT 100",
+				wantErr: "unsupported Doris SQL: JOIN in FROM clause",
 			},
 			{
 				name:    "in_list_count_order_by",
@@ -568,6 +570,10 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 					Size:        tt.size,
 				}
 				got, err := bksql.NewQueryFactory(ctx, q).WithRangeTime(start, end).SQL()
+				if tt.wantErr != "" {
+					require.ErrorContains(t, err, tt.wantErr)
+					return
+				}
 				require.NoError(t, err)
 				require.NotEmpty(t, got)
 				assert.Equal(t, tt.wantSQL, got)

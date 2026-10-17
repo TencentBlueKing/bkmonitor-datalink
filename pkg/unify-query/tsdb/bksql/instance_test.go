@@ -1025,7 +1025,7 @@ func TestInstance_QueryRaw(t *testing.T) {
 				Measurement: "doris",
 				Field:       "dtEventTimeStamp",
 				DataLabel:   "log_index_set_1183",
-				SQL:         "SELECT (CAST 2781777858072992322 AS long) AS iid limit 1",
+				SQL:         "SELECT 2781777858072992322 AS iid limit 1",
 				Size:        5,
 			},
 			expected: `[{"__data_label":"log_index_set_1183","__index":"2_bklog_pure_v4_log_doris_for_unify_query","__result_table":"2_bklog.bklog_pure_v4_log_doris_for_unify_query","__table_uuid":"2_bklog.bklog_pure_v4_log_doris_for_unify_query","iid":2781777858072992322}]`,

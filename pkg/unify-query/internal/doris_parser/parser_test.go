@@ -476,7 +476,7 @@ where log MATCH_PHRASE 'Error' OR serverIp MATCH_PHRASE 'Fatal' GROUP BY serverI
 		{
 			name: "test-2",
 			q:    `show TABLES`,
-			err:  fmt.Errorf("parse doris sql (show TABLES) error: show TABLES"),
+			err:  fmt.Errorf("parse doris sql (show TABLES) error: doris sql syntax error: line 1:0 mismatched input 'show' expecting {'(', 'SELECT', 'VALUES', 'WITH'}"),
 		},
 		{
 			name: "test-4",
@@ -520,12 +520,12 @@ LIMIT
 		{
 			name: "test-8",
 			q:    `test error sql`,
-			err:  fmt.Errorf("parse doris sql (test error sql) error: test error sql"),
+			err:  fmt.Errorf("parse doris sql (test error sql) error: doris sql syntax error: line 1:0 mismatched input 'test' expecting {'(', 'SELECT', 'VALUES', 'WITH'}"),
 		},
 		{
 			name: "test-9",
 			q:    `select_1 * from_1 where 1=1'`,
-			err:  fmt.Errorf("parse doris sql (select_1 * from_1 where 1=1') error: select_1 * from_1 where 1 = 1 '"),
+			err:  fmt.Errorf("parse doris sql (select_1 * from_1 where 1=1') error: doris sql syntax error: line 1:0 mismatched input 'select_1' expecting {'(', 'SELECT', 'VALUES', 'WITH'}"),
 		},
 		{
 			name: "test-10",

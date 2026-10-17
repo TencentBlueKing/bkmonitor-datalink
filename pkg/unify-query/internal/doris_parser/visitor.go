@@ -2586,6 +2586,11 @@ func (v *FieldNode) String() string {
 }
 
 func (v *FieldNode) VisitChildren(ctx antlr.RuleNode) any {
+	if v.node == nil && isBooleanExpression(ctx) {
+		bn := newBoolExprNode(v.baseNode)
+		v.node = bn
+		return bn.start(ctx)
+	}
 	next := visitFieldNode(ctx, v)
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
@@ -2732,6 +2737,110 @@ func (v *UnaryNode) VisitChildren(ctx antlr.RuleNode) any {
 	return v.node.VisitChildren(ctx)
 }
 
+// isBooleanExpression reports a condition used as a value: a comparison, a predicate (IN, BETWEEN, LIKE,
+// IS NULL ...) or AND / OR / NOT. Field, function and CASE nodes must not take such an expression apart:
+// SELECT a = 1 used to render as a[1] and IF(a > 1, 1, 0) as IF(a, 1, 1, 0).
+func isBooleanExpression(ctx antlr.RuleNode) bool {
+	switch c := ctx.(type) {
+	case *gen.LogicalBinaryContext, *gen.LogicalNotContext:
+		return true
+	case *gen.PredicatedContext:
+		if c.Predicate() != nil {
+			return true
+		}
+		_, comparison := c.ValueExpression().(*gen.ComparisonContext)
+		return comparison
+	}
+	return false
+}
+
+// BoolExprNode renders a condition used as a value with the same nodes as WHERE.
+type BoolExprNode struct {
+	baseNode
+
+	cond *WhereNode
+}
+
+func (v *BoolExprNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	if v.cond != nil {
+		v.cond.WithAliasScope(aliases)
+	}
+}
+
+func (v *BoolExprNode) String() string {
+	return strings.TrimSpace(nodeToString(v.cond))
+}
+
+// start visits the condition from its own context, so the condition nodes see AND / OR themselves.
+func (v *BoolExprNode) start(ctx antlr.RuleNode) any {
+	v.cond = &WhereNode{LogicInc: &LogicNodesInc{}}
+	v.cond.WithAddIgnoreField(v.AddIgnoreField)
+	v.cond.WithEncode(v.Encode)
+	v.cond.WithAliasScope(v.aliasScope)
+	return v.cond.VisitChildren(ctx)
+}
+
+func newBoolExprNode(parent baseNode) *BoolExprNode {
+	n := &BoolExprNode{}
+	n.WithAddIgnoreField(parent.AddIgnoreField)
+	n.WithEncode(parent.Encode)
+	n.WithAliasScope(parent.aliasScope)
+	return n
+}
+
+// SequenceNode renders a construct as written: its keywords and its operand expressions in order. Used for
+// CASE <value> WHEN ... THEN ... END, which used to render as a[1]['x']['y'].
+type SequenceNode struct {
+	baseNode
+
+	items []Node
+}
+
+func (v *SequenceNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	for _, item := range v.items {
+		item.WithAliasScope(aliases)
+	}
+}
+
+func (v *SequenceNode) VisitTerminal(node antlr.TerminalNode) any {
+	v.items = append(v.items, &StringNode{Name: node.GetText()})
+	return nil
+}
+
+func (v *SequenceNode) VisitChildren(ctx antlr.RuleNode) any {
+	if _, ok := ctx.(*gen.WhenClauseContext); ok {
+		// WHEN <value> THEN <result>: keep its own keywords and operands in order
+		arm := &SequenceNode{}
+		v.items = append(v.items, arm)
+		return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, arm, ctx)
+	}
+	operand := &FieldNode{exprType: whereCtxType}
+	operand.WithAddIgnoreField(v.AddIgnoreField)
+	operand.WithEncode(v.Encode)
+	operand.WithAliasScope(v.aliasScope)
+	v.items = append(v.items, operand)
+	return operand.VisitChildren(ctx)
+}
+
+func (v *SequenceNode) String() string {
+	var b strings.Builder
+	prev := ""
+	for _, item := range v.items {
+		s := nodeToString(item)
+		if s == "" {
+			continue
+		}
+		if b.Len() > 0 && prev != "(" && s != ")" && s != "," {
+			b.WriteString(" ")
+		}
+		b.WriteString(s)
+		prev = s
+	}
+	return b.String()
+}
+
 type FunctionNode struct {
 	baseNode
 
@@ -2781,6 +2890,12 @@ func (v *FunctionNode) VisitTerminal(ctx antlr.TerminalNode) any {
 }
 
 func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
+	if isBooleanExpression(ctx) {
+		// IF(a > 1, ...), COUNT_IF(a > 1): the condition is one argument
+		bn := newBoolExprNode(v.baseNode)
+		v.Values = append(v.Values, bn)
+		return bn.start(ctx)
+	}
 	var next Node
 	next = v
 
@@ -2789,6 +2904,10 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 		sn := &SearchCaseNode{}
 		v.Values = append(v.Values, sn)
 		next = sn
+	case *gen.SimpleCaseContext:
+		sq := &SequenceNode{}
+		v.Values = append(v.Values, sq)
+		next = sq
 	case *gen.ArithmeticBinaryContext:
 		bn := &BinaryNode{}
 		v.Values = append(v.Values, bn)
@@ -2859,6 +2978,12 @@ func (v *SearchCaseNode) VisitTerminal(ctx antlr.TerminalNode) any {
 }
 
 func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
+	if isBooleanExpression(ctx) {
+		// WHEN a IN (...) / a IS NULL / NOT ... / a > 1 AND b < 2: the condition is one node
+		bn := newBoolExprNode(v.baseNode)
+		v.nodes = append(v.nodes, bn)
+		return bn.start(ctx)
+	}
 	var next Node
 	next = v
 
@@ -2871,6 +2996,11 @@ func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 		un := &UnaryNode{}
 		v.nodes = append(v.nodes, un)
 		next = un
+
+	case *gen.SimpleCaseContext:
+		sq := &SequenceNode{}
+		v.nodes = append(v.nodes, sq)
+		next = sq
 	case *gen.CastContext:
 		bn := &CastNode{}
 		v.nodes = append(v.nodes, bn)
@@ -3078,6 +3208,10 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 		}
 	case *gen.ArithmeticUnaryContext:
 		node.node = &UnaryNode{}
+		next = node.node
+
+	case *gen.SimpleCaseContext:
+		node.node = &SequenceNode{}
 		next = node.node
 	case *gen.ArithmeticBinaryContext:
 		node.node = &BinaryNode{}

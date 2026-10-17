@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"time"
 
+	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/config"
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
@@ -95,25 +96,38 @@ func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runt
 }
 
 // withAlertProcessor 为人工关闭、屏蔽检查和合并步骤共用实时读取、租户校验、Hook 与同一租约边界。
-func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, tenant, alertID string, configure func(store.Repository) []lifecycle.ProcessorOption, run func(*lifecycle.Processor) error) (runErr error) {
+func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, tenant, alertID string, configure func(store.Repository, *redisstate.Store) []lifecycle.ProcessorOption, run func(*lifecycle.Processor) error, identity ...store.StoredAlert) (runErr error) {
 
 	if cfg.Storage == nil || cfg.Lifecycle == nil || cfg.Storage.Redis == nil {
 		return &CloseError{Status: 503, Code: "unavailable", Message: "lifecycle is not configured"}
 	}
-	runtime, err := storeassembly.OpenExisting(ctx, *cfg.Storage, 4)
-	if err != nil {
-		return err
+	shared, _ := ctx.Value(controlResourcesKey{}).(*AlertProcessorResources)
+	var runtime *storeassembly.Runtime
+	var err error
+	if shared != nil {
+		runtime = shared.repository
+	} else {
+		runtime, err = storeassembly.OpenExisting(ctx, *cfg.Storage, 4)
+		if err != nil {
+			return err
+		}
+		defer storeassembly.JoinCloseError(&runErr, runtime)
 	}
-	defer storeassembly.JoinCloseError(&runErr, runtime)
 	reader := runtime.Repository.GetAlert
 	if current, ok := runtime.Repository.(store.LifecycleAlertStore); ok {
 		reader = current.GetAlertCurrent
 	}
-	stored, err := reader(ctx, tenant, alertID)
-	if err != nil {
-		return err
+	var stored store.StoredAlert
+	if len(identity) > 0 {
+		stored = identity[0]
+	} else {
+		stored, err = reader(ctx, tenant, alertID)
+		if err != nil {
+			return err
+		}
 	}
-	source, err := sources.Get(ctx, stored.Alert.EventSourceID)
+
+	source, err := readControlSource(ctx, sources, stored.Alert.EventSourceID)
 	if err != nil {
 		return err
 	}
@@ -124,26 +138,42 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	if source.Deleted {
 		version = stored.Alert.EventSourceVersion
 	}
-	release, err := sources.GetRelease(ctx, source.ID, version)
+	var release eventsource.Release
+	if shared != nil {
+		release, err = shared.sourceRelease(ctx, sources, source.ID, version)
+	} else {
+		release, err = sources.GetRelease(ctx, source.ID, version)
+	}
 	if err != nil {
 		return err
 	}
 	if release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != tenant {
 		return &CloseError{Status: 403, Code: "tenant_mismatch", Message: "event source tenant mismatch"}
 	}
-	hooks, closeHooks, err := openHooksWithSeverity(kacHooks(release.Spec.Hooks, cfg.Plugins.KACEnabled()), metrics, severity)
+	var hooks []lifecycle.NamedFinalHook
+	var closeHooks func() error
+	if shared != nil {
+		hooks, closeHooks, err = shared.acquireHooks(release, cfg, metrics, severity)
+	} else {
+		hooks, closeHooks, err = openHooksWithSeverity(kacHooks(release.Spec.Hooks, cfg.Plugins.KACEnabled()), metrics, severity)
+	}
 	if err != nil {
 		return err
 	}
 	defer func() { runErr = errors.Join(runErr, closeHooks()) }()
-	options := cfg.Storage.Redis.ClientOptions()
-	options.ContextTimeoutEnabled = true
-	options.PoolSize = 2
-	client, err := redisclient.New(options)
-	if err != nil {
-		return err
+	var client *redis.Client
+	if shared != nil {
+		client = shared.client
+	} else {
+		options := cfg.Storage.Redis.ClientOptions()
+		options.ContextTimeoutEnabled = true
+		options.PoolSize = 2
+		client, err = redisclient.New(options)
+		if err != nil {
+			return err
+		}
+		defer func() { runErr = errors.Join(runErr, client.Close()) }()
 	}
-	defer func() { runErr = errors.Join(runErr, client.Close()) }()
 	lockConfig := cfg.Lifecycle.ForSource(cfg.Dispatch.WithDefaults().Deployment, stored.Alert.EventSourceID).SchedulerConfig()
 	// 单次请求最多十秒，lease 至少三十秒；不启动额外续租 goroutine。
 	// 与 Worker 共用 tenant/source/fingerprint 锁，避免旧终态缓存覆盖新生命周期。
@@ -164,10 +194,10 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 		return err
 	}
 	observed := metrics.ObserveRepository(runtime.Repository)
-	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: configuredCleanupRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
+	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: configuredCleanupRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Index: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
 	opts = append(opts, lifecycle.WithAlertChangePublisher(changePublisher(cfg, client, metrics)))
 	if configure != nil {
-		opts = append(opts, configure(observed)...)
+		opts = append(opts, configure(observed, policyState)...)
 	}
 	processor, err := lifecycle.NewProcessor(observed, cache, lifecycle.DeterministicAlertIDGenerator{}, enrich.NoopEnricher{}, hooks, severity, lifecycle.SystemClock{}, logger, opts...)
 	if err != nil {
@@ -270,7 +300,9 @@ func (s *AlertCloser) GetAlert(ctx context.Context, tenantID, alertID string) (d
 }
 
 func withAlertLease(ctx context.Context, locker scheduler.Locker, key string, run func() error) (err error) {
+	started := time.Now()
 	lease, err := locker.Acquire(ctx, key)
+	store.ObserveBatchPhase(ctx, "member.lease_acquire", time.Since(started))
 	if err != nil {
 		return err
 	}
@@ -278,7 +310,9 @@ func withAlertLease(ctx context.Context, locker scheduler.Locker, key string, ru
 		// 即使请求取消仍归还 lease；释放失败不能伪装成确定成功。
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
+		started := time.Now()
 		err = errors.Join(err, locker.Release(releaseCtx, lease))
+		store.ObserveBatchPhase(ctx, "member.lease_release", time.Since(started))
 	}()
 	return run()
 }

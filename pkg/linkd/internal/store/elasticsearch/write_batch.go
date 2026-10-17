@@ -135,12 +135,41 @@ func (b *WriteBatchTransport) performDirect(req *http.Request) (*http.Response, 
 	}
 	b.wg.Add(1)
 	b.admission.Unlock()
-	defer b.wg.Done()
 	ctx, cancel := context.WithCancel(req.Context())
-	defer cancel()
 	stop := context.AfterFunc(b.ctx, cancel)
-	defer stop()
-	return b.next.Perform(req.Clone(ctx))
+	finish := sync.OnceFunc(func() {
+		stop()
+		cancel()
+		b.wg.Done()
+	})
+	response, err := b.next.Perform(req.Clone(ctx))
+	if err != nil || response == nil || response.Body == nil {
+		finish()
+		return response, err
+	}
+	// Perform 只收到响应头；直到 Body 读完或关闭才能取消请求，
+	// 否则满载备用路径会截断响应并关闭本可复用的 HTTP 连接。
+	response.Body = &directResponseBody{ReadCloser: response.Body, finish: finish}
+	return response, nil
+}
+
+type directResponseBody struct {
+	io.ReadCloser
+	finish func()
+}
+
+func (b *directResponseBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.finish()
+	}
+	return n, err
+}
+
+func (b *directResponseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.finish()
+	return err
 }
 
 // Perform 将允许合批的内部请求分解为操作，其他请求直接执行。

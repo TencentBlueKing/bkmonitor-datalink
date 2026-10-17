@@ -123,9 +123,6 @@ func (d Decision) Validate() error {
 		return fmt.Errorf("invalid frozen merge release")
 	}
 	for _, ids := range [][]string{d.MemberIDs, d.WaitMemberIDs} {
-		if len(ids) > 256 {
-			return policy.ErrInvalid
-		}
 		for i, id := range ids {
 			if id == "" || len(id) > domain.EntityIDMaxBytes || (i > 0 && ids[i-1] >= id) {
 				return policy.ErrInvalid
@@ -139,7 +136,7 @@ func (d Decision) Validate() error {
 		return policy.ErrInvalid
 	}
 	for _, id := range d.MemberIDs {
-		if !slices.Contains(d.WaitMemberIDs, id) {
+		if _, found := slices.BinarySearch(d.WaitMemberIDs, id); !found {
 			return policy.ErrInvalid
 		}
 	}

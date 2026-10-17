@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	driver "github.com/go-sql-driver/mysql"
@@ -35,10 +36,12 @@ import (
 
 // Store 持有策略管理专用的有界连接资源。
 type Store struct {
-	db          *sql.DB
-	transport   *es.HTTPTransport
-	namespace   string
-	indexPrefix string
+	db             *sql.DB
+	transport      *es.HTTPTransport
+	namespace      string
+	indexPrefix    string
+	mergeWorkMu    sync.Mutex
+	mergeWorkReady map[string]bool
 }
 
 // Open 初始化策略配置、合并运行、屏蔽复查及抑制清理记录集合，不清理历史或业务数据。
@@ -62,17 +65,23 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 		}
 		s.db = db
 		db.SetMaxOpenConns(8)
-		db.SetMaxIdleConns(4)
+		db.SetMaxIdleConns(8)
 		db.SetConnMaxLifetime(30 * time.Minute)
 		for _, name := range policyCollections() {
 			extra := ""
-			if hasRequestWork(name) {
+			if hasStoredWork(name) {
 				extra = ", work TINYINT NOT NULL, KEY idx_shield_request_work(namespace,work,id)"
 			}
 			_, e = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+s.table(name)+" (namespace VARBINARY(256) NOT NULL, id VARBINARY(256) NOT NULL, version BIGINT NOT NULL, payload LONGBLOB NOT NULL, PRIMARY KEY(namespace,id)"+extra+")")
 			if e != nil {
 				_ = db.Close()
 				return nil, e
+			}
+			if isMergeWork(name) {
+				if e := s.ensureMySQLMergeWork(ctx, name); e != nil {
+					_ = db.Close()
+					return nil, e
+				}
 			}
 		}
 	} else if c.Repository == config.RepositoryTypeElasticsearch && c.Elasticsearch != nil {
@@ -89,7 +98,7 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 		s.transport = t
 		for _, name := range policyCollections() {
 			properties := map[string]any{"id": map[string]any{"type": "keyword"}, "payload": map[string]any{"type": "object", "enabled": false}}
-			if hasRequestWork(name) {
+			if hasStoredWork(name) {
 				properties["work"] = map[string]any{"type": "boolean"}
 			}
 			mapping, _ := json.Marshal(map[string]any{"mappings": map[string]any{"dynamic": "strict", "properties": properties}})
@@ -112,6 +121,13 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 			if code != 200 && !exists {
 				t.Close()
 				return nil, fmt.Errorf("initialize policy index: HTTP %d", code)
+			}
+			if exists && isMergeWork(name) {
+				code, _, e = s.request(ctx, http.MethodPut, "/"+s.table(name)+"/_mapping", []byte(`{"properties":{"work":{"type":"boolean"}}}`))
+				if e != nil || code != 200 {
+					t.Close()
+					return nil, fmt.Errorf("add merge work mapping: HTTP %d: %w", code, e)
+				}
 			}
 		}
 	} else {
@@ -213,10 +229,17 @@ func (s *Store) Put(ctx context.Context, kind, id, expected string, b json.RawMe
 		}
 		work = request.State == "pending"
 	}
+	if isMergeWork(kind) {
+		var err error
+		work, err = mergeWorkValue(kind, b)
+		if err != nil {
+			return err
+		}
+	}
 	if s.db != nil {
 		var res sql.Result
 		var e error
-		if hasRequestWork(kind) {
+		if hasStoredWork(kind) {
 			if expected == "" {
 				//nolint:gosec // G202: kind 已限制为固定请求集合，业务值使用参数绑定。
 				res, e = s.db.ExecContext(ctx, "INSERT INTO "+s.table(kind)+"(namespace,id,version,payload,work) VALUES(?,?,1,?,?)", s.namespace, id, []byte(b), work)
@@ -264,7 +287,7 @@ func (s *Store) Put(ctx context.Context, kind, id, expected string, b json.RawMe
 		q.Set("if_primary_term", strconv.FormatInt(term, 10))
 	}
 	doc := map[string]any{"id": id, "payload": b}
-	if hasRequestWork(kind) {
+	if hasStoredWork(kind) {
 		doc["work"] = work
 	}
 	payload, e := json.Marshal(doc)

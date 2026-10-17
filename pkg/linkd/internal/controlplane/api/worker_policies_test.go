@@ -71,7 +71,8 @@ func TestWorkerPolicyReadsAssignedTenantAndOnlyPublishedSpec(t *testing.T) {
 		{"stopped", "/internal/policies?task=task&bk_tenant_id=tenant&type=suppression", "w", "worker", "lifecycle", "stopped", 403},
 		{"missing assignment", "/internal/policies?bk_tenant_id=tenant&type=suppression", "w", "worker", "lifecycle", "running", 403},
 		{"missing tenant", "/internal/policies?task=task&type=suppression", "w", "worker", "lifecycle", "running", 400},
-		{"large page", "/internal/policies?task=task&bk_tenant_id=tenant&type=suppression&limit=4", "w", "worker", "lifecycle", "running", 400},
+		{"batch page", "/internal/policies?task=task&bk_tenant_id=tenant&type=suppression&limit=16", "w", "worker", "lifecycle", "running", 200},
+		{"large page", "/internal/policies?task=task&bk_tenant_id=tenant&type=suppression&limit=17", "w", "worker", "lifecycle", "running", 400},
 		{"wrong token", "/internal/policies?task=task&bk_tenant_id=tenant&type=suppression", "w", "other", "lifecycle", "running", 401},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

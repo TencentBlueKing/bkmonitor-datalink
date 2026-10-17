@@ -27,7 +27,18 @@ func (p *Processor) readPolicies(ctx context.Context, event domain.Event) (*stor
 		return nil, err
 	}
 	finish := p.measureStep(phasePolicySnapshot, "read")
-	snapshot, err := p.policies.Snapshot(ctx, event, at)
+	policies := p.policies
+	// 候选与正式求值必须使用入口冻结的同一等级映射，避免 Enrich 期间配置切换漏选。
+	if scoped, ok := policies.(interface {
+		WithLevelMapper(func(string) (string, error)) PolicySnapshotter
+	}); ok {
+		var level func(string) (string, error)
+		if severity, ok := p.severity.(interface{ KACLevel(string) (string, error) }); ok {
+			level = severity.KACLevel
+		}
+		policies = scoped.WithLevelMapper(level)
+	}
+	snapshot, err := policies.Snapshot(ctx, event, at)
 	finish()
 	if err != nil {
 		return nil, err

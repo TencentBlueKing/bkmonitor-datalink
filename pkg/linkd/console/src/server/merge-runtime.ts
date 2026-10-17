@@ -110,7 +110,7 @@ export function registerMergeRuntimeRoutes(
         }
         return page;
       },
-      1 << 20,
+      32 << 20,
     );
   });
   app.get(
@@ -138,7 +138,7 @@ export function registerMergeRuntimeRoutes(
             throw new Error("scope");
           return row;
         },
-        1 << 20,
+        32 << 20,
       );
     },
   );

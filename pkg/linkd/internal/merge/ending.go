@@ -41,7 +41,10 @@ func (j *Journal) BeginEndRelation(ctx context.Context, tenant, id string, paren
 	if !parent.Alert.Status.Terminal() || parent.Alert.MergeChange != nil || parent.Alert.PolicyChange != nil {
 		return StoredRelation{}, store.ErrInvalidTransition
 	}
-	r, err := j.ensureRelation(ctx, tenant, id, parent, at, true)
+	r, err := j.GetRelation(ctx, tenant, id)
+	if errors.Is(err, policy.ErrNotFound) {
+		r, err = j.ensureRelation(ctx, tenant, id, parent, at, true)
+	}
 	if err != nil {
 		return StoredRelation{}, err
 	}
@@ -201,7 +204,7 @@ func (j *Journal) ListRelationWork(ctx context.Context, after string, limit int)
 	if len(after) > 256 || limit < 1 || limit > 16 {
 		return RelationWorkPage{}, policy.ErrInvalid
 	}
-	rows, err := j.docs.List(ctx, "merge_relations", "", after, limit)
+	rows, err := j.workDocuments(ctx, "merge_relations", after, limit)
 	if err != nil {
 		return RelationWorkPage{}, err
 	}
@@ -211,7 +214,7 @@ func (j *Journal) ListRelationWork(ctx context.Context, after string, limit int)
 	page, last := RelationWorkPage{}, after
 	for _, raw := range rows {
 		var r domain.MergeRelation
-		if len(raw) > 256<<10 || json.Unmarshal(raw, &r) != nil || r.Validate() != nil {
+		if len(raw) > 8<<20 || json.Unmarshal(raw, &r) != nil || r.Validate() != nil {
 			return RelationWorkPage{}, policy.ErrInvalid
 		}
 		key, err := decisionKey(r.TenantID, r.ID)

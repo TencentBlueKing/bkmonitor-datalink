@@ -13,7 +13,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -213,7 +215,7 @@ func TestMergeTemplateBoundsCancellationAndConcurrentReuse(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	for _, count := range []int{0, 1, 257} {
+	for _, count := range []int{0, 1} {
 		if _, err := c.Template.Render(t.Context(), make([]TemplateReader, count)); err == nil {
 			t.Fatal("member limit ignored")
 		}
@@ -230,5 +232,103 @@ func TestMergeTemplateBoundsCancellationAndConcurrentReuse(t *testing.T) {
 	c = templateFixture(t, []TemplateField{{Key: "content", Value: strings.Repeat("${cw_merged_content}", 20)}}, func(s map[string]any) { s["max_merge_field_length"] = 65536 })
 	if _, err := c.Template.Render(t.Context(), many[:2]); err == nil {
 		t.Fatal("output budget ignored")
+	}
+}
+
+type mergeTemplateReaderFunc func(context.Context, string) (Value, error)
+
+func (f mergeTemplateReaderFunc) Field(ctx context.Context, name string) (Value, error) {
+	return f(ctx, name)
+}
+
+func TestMergeTemplateLargeGroups(t *testing.T) {
+	for _, count := range []int{5000, 10000} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			compiled := templateFixture(t, []TemplateField{
+				{Key: "content", Value: "${cw_merged_content}|${cw_merged_content}"},
+				{Key: "model_id", Value: "${model_id}"},
+				{Key: "model_inst_id", Value: "${model_inst_id}"},
+			}, func(spec map[string]any) { spec["max_merge_field_length"] = 65536 })
+			members := make([]TemplateReader, count)
+			reads := map[string]int{}
+			for i := range members {
+				fields := Fields{Values: map[string]any{
+					"content":  fmt.Sprintf("member-%03d", (count-i)%100),
+					"model_id": "cmdb.host", "model_inst_id": "host-1",
+				}}
+				members[i] = mergeTemplateReaderFunc(func(ctx context.Context, name string) (Value, error) {
+					reads[name]++
+					return fields.Field(ctx, name)
+				})
+			}
+			got, err := compiled.Template.Render(t.Context(), members)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unique := make([]string, 100)
+			for i := range unique {
+				unique[i] = fmt.Sprintf("member-%03d", i)
+			}
+			merged := strings.Join(unique, "###")
+			if got["title"] != "merged "+strconv.Itoa(count) || got["content"] != merged+"|"+merged {
+				t.Fatalf("member count or sorted/deduplicated merged field lost: %#v", got)
+			}
+			extra := got["extra_data"].(map[string]any)
+			if extra["model_id"] != "cmdb.host" || extra["model_inst_id"] != "host-1" {
+				t.Fatalf("aggregate fields lost: %#v", extra)
+			}
+			for _, name := range []string{"content", "model_id", "model_inst_id"} {
+				if reads[name] != count {
+					t.Fatalf("%s read %d times, want exactly %d (including repeated variable cache)", name, reads[name], count)
+				}
+			}
+			// 末尾成员同样参与聚合字段一致语义，不能只渲染旧上限内的前缀。
+			members[count-1] = Fields{Values: map[string]any{"content": "last", "model_id": "cmdb.host", "model_inst_id": "different"}}
+			if _, err := compiled.Template.Render(t.Context(), members); err == nil {
+				t.Fatal("last member's different aggregate value ignored")
+			}
+		})
+	}
+}
+
+func TestMergeTemplateLargeGroupsKeepByteAndCancellationBudgets(t *testing.T) {
+	compiled := templateFixture(t, []TemplateField{{Key: "content", Value: "${cw_merged_content}"}}, nil)
+	for _, count := range []int{5000, 10000} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			// 即使合并去重后的输出很短，仍按读取的实际成员输入累计 32 MiB。
+			value := strings.Repeat("x", mergeTemplateReadBytes/count+1)
+			members := make([]TemplateReader, count)
+			for i := range members {
+				members[i] = Fields{Values: map[string]any{"content": value}}
+			}
+			if _, err := compiled.Template.Render(t.Context(), members); err == nil || !strings.Contains(err.Error(), "input exceeds 32 MiB") {
+				t.Fatalf("large group bypassed input byte budget: %v", err)
+			}
+			outputLimited := templateFixture(t, []TemplateField{{Key: "content", Value: strings.Repeat("${cw_merged_content}", 20)}}, func(spec map[string]any) {
+				spec["max_merge_field_length"] = 65536
+			})
+			for i := range members {
+				members[i] = Fields{Values: map[string]any{"content": "x"}}
+			}
+			members[count-1] = Fields{Values: map[string]any{"content": strings.Repeat("z", 60000)}}
+			if _, err := outputLimited.Template.Render(t.Context(), members); err == nil || !strings.Contains(err.Error(), "output field exceeds 1 MiB") {
+				t.Fatalf("large group bypassed output byte budget: %v", err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			reads := 0
+			for i := range members {
+				members[i] = mergeTemplateReaderFunc(func(ctx context.Context, name string) (Value, error) {
+					reads++
+					if reads == 129 {
+						cancel()
+					}
+					return Fields{Values: map[string]any{"content": "x"}}.Field(ctx, name)
+				})
+			}
+			if _, err := compiled.Template.Render(ctx, members); !errors.Is(err, context.Canceled) || reads != 129 {
+				t.Fatalf("large group cancellation not respected: reads=%d err=%v", reads, err)
+			}
+		})
 	}
 }

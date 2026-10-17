@@ -151,14 +151,18 @@ func Run(
 	observations := policyruntime.NewObservations(policyState, telemetryRuntime)
 	defer observations.Close()
 	policyState.SetObserver(telemetryRuntime)
-	policyResources, err := policyruntime.Open(cfg.Resources, cfg.Blueking)
-	if err != nil {
-		return err
-	}
-	defer func() { runErr = errors.Join(runErr, policyResources.Close()) }()
+	policyDependencies := policyruntime.NewWorkerDependencies(ctx, taskdispatch.Client{URL: cfg.Dispatch.WithDefaults().URL, Token: cfg.Dispatch.WorkerToken})
+	defer policyDependencies.Close()
+	policyCatalog := policy.NewCatalog(policyDependencies)
+	policyCtx, cancelPolicies := context.WithCancel(ctx)
+	policyDone := make(chan struct{})
+	go func() { defer close(policyDone); _ = policyCatalog.Run(policyCtx) }()
+	defer func() { cancelPolicies(); <-policyDone }()
 
 	severityState := taskdispatch.SeverityState(ctx, cfg.Severity)
 	return taskdispatch.ServeWithSeverity(ctx, cfg, "lifecycle", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
+		unregister := policyDependencies.Register(task, source.RelatedTenantID)
+		defer unregister()
 		stage := "enrich_datasources"
 		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
 		openCtx, cancelOpen := context.WithTimeout(taskCtx, startupTimeout)
@@ -219,9 +223,7 @@ func Run(
 			}
 		}()
 		stage = "processor"
-		policyReader := policyruntime.WorkerReader{Client: taskdispatch.Client{URL: cfg.Dispatch.WithDefaults().URL, Token: cfg.Dispatch.WorkerToken, WorkerID: task.Worker}, TaskID: task.ID}
-		policyCatalog := policy.NewCatalog(policyReader)
-		suppressor := &policyruntime.Suppressor{Releases: policyReader, Catalog: policyCatalog, Targets: policyResources.Targets, State: policyState, Aggregation: policyState,
+		suppressor := &policyruntime.Suppressor{Releases: policyDependencies, Catalog: policyCatalog, Targets: policyDependencies.Dependencies, State: policyState, Aggregation: policyState,
 			CleanupRecorder: cleanupJournal,
 			CurrentAlert: func(ctx context.Context, tenant, id string) (store.StoredAlert, error) {
 				if current, ok := observedRepository.(store.LifecycleAlertStore); ok {
@@ -242,10 +244,10 @@ func Run(
 			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
 			lifecycle.WithPhaseObserver(telemetryRuntime.LifecyclePhaseObserver()),
 			lifecycle.WithAlertChangePublisher(changePublisher(cfg, lockClient, telemetryRuntime)),
-			lifecycle.WithPolicySnapshotter(policyruntime.Snapshotter{Catalog: policyCatalog}),
+			lifecycle.WithPolicySnapshotter(policyruntime.Snapshotter{Catalog: policyCatalog, Level: func(name string) (string, error) { return severityState.SeveritySnapshot().KACLevel(name) }}),
 			lifecycle.WithNewAlertSuppressor(suppressor),
 			lifecycle.WithMergeEvaluator(&policyruntime.Merger{Loader: suppressor, State: policyState, Logger: logger, Observer: telemetryRuntime}),
-			lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: suppressor, Events: observedRepository.GetEvent, Candidates: observedRepository.(store.ActiveAlertReader), CurrentAlert: suppressor.CurrentAlert, Dependency: policyState, Hints: policyState, Relations: policyResources.Relations, Logger: logger, Observer: telemetryRuntime}),
+			lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: suppressor, Events: observedRepository.GetEvent, Candidates: observedRepository.(store.ActiveAlertReader), CurrentAlert: suppressor.CurrentAlert, Dependency: policyState, Index: policyState, Hints: policyState, Relations: policyDependencies.Dependencies, Logger: logger, Observer: telemetryRuntime}),
 			lifecycle.WithSeverityUpgradePolicy(lifecycleConfig.SeverityUpgradePolicy),
 			lifecycle.WithAlertContentBuilder(versionedEnricher),
 		)

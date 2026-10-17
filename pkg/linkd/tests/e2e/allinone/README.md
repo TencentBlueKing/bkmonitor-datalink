@@ -333,12 +333,12 @@ LINKD_E2E=1 go test -race -count=1 -timeout=45m -v \
 ```
 
 连接变量与其他用例一致，每后端二十分钟预算；父建联最多观察五分钟，关系清理最多观察十分钟。
-保持每轮最多 16 个解除步骤、扫描到末页后等待 30 秒，因此满窗口清理可能需要约八分钟；这段时间不代表
-父仍 active，父终态与剩余关系清理分别检查。测试不缩短控制面周期、不直接调用裁决、不强制刷新业务索引。
+当前成员按内存批次执行，解除完成直接收尾；30 秒关系周期只影响终态发现，不是每批清理都等待一轮。
+父终态与剩余关系清理分别检查。测试不缩短控制面周期、不直接调用裁决、不强制刷新业务索引。
 ES 测试读取使用显式 10000 条硬上限并核对完整总数、超时和分片失败，避免原有首 100 条截断误报。
 日志记录首次等待、建父、恢复及清理各段墙钟耗时；这是单窗口功能容量验证，不代表生产吞吐或延迟承诺。
 
-2026-10-05 在 ES 7.17.7 / MySQL 9.5.0 上均通过，各核对两条父 KAC Kafka action 消息：
+以下是 2026-10-05 旧单成员推进版本的历史结果，不代表当前批量实现。当时在 ES 7.17.7 / MySQL 9.5.0 上均通过，各核对两条父 KAC Kafka action 消息：
 
 | Repository | 255 成员首次等待 | 第 256 条触发至父获准处置 | 256 条恢复输入至父恢复 | 父恢复后关系完整清理 |
 | --- | --- | --- | --- | --- |
@@ -348,6 +348,30 @@ ES 测试读取使用显式 10000 条硬上限并核对完整总数、超时和�
 总用例约 1423 秒，包含构建、环境准备和两后端串行执行；计时包含默认刷新及调度等待。
 两个后端使用同一代码和既定任务预算，不据此做数据库性能排名。测试执行 `go test -race`，启动的 Linkd
 子进程沿用普通 `go build`；生产包并发检查由 `make check` 的竞态测试另行覆盖。
+
+### 5,000 / 10,000 成员与进程重建
+
+[`TestAllInOneMergeScaleE2E`](merge_scale_test.go) 使用单进程内存批次，默认 128 条、8 批并发。
+`LINKD_E2E_MERGE_BATCH_SIZE` 可调整每批成员数，`LINKD_E2E_MERGE_CONCURRENCY` 可调整并发；
+`LINKD_E2E_MERGE_PROFILE=1` 记录分阶段指标及实际成员执行区间，
+`LINKD_E2E_MERGE_EVIDENCE_DIR` 保存本轮原始指标与逐批起止。性能使用父 admission 时间，搜索可见仅作查询验收。
+
+```bash
+LINKD_E2E=1 LINKD_E2E_MERGE_PROFILE=1 go test -count=1 -timeout=40m -v \
+  ./tests/e2e/allinone -run '^TestAllInOneMergeScaleE2E$'
+```
+
+例如在相同并发下比较每批 256 个成员，增加 `LINKD_E2E_MERGE_BATCH_SIZE=256`；默认批次和生产配置不变。
+
+另用 `LINKD_E2E_MERGE_RESTART=1` 验证真实进程中断：观察到部分成员批已完成时强制终止进程，
+等待本用例控制面租约自然过期，再用同一配置启动；从持久关系重建未确认阶段并重放，最后仍核对完整成员、关系和唯一父动作。
+该故障样本包含停机等待，不用于吞吐对比；必须同时开启 profile 以记录触发中断的真实批次日志。
+
+```bash
+LINKD_E2E=1 LINKD_E2E_MERGE_PROFILE=1 LINKD_E2E_MERGE_RESTART=1 \
+  go test -count=1 -timeout=30m -v ./tests/e2e/allinone \
+  -run '^TestAllInOneMergeScaleE2E$/(elasticsearch|mysql)/5000/'
+```
 
 ## 依赖屏蔽自动流程
 

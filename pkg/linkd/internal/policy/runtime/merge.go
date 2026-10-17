@@ -25,7 +25,7 @@ import (
 type MergeState interface {
 	JoinMergeWindow(context.Context, redisstate.MergeRequest) (domain.MergeWait, error)
 	CommitMergeMember(context.Context, string, string, domain.MergeWait) (bool, error)
-	ReadMergeWindow(context.Context, string, string) (redisstate.MergeWindow, bool, error)
+	ReadMergeWindowMeta(context.Context, string, string) (redisstate.MergeWindow, bool, error)
 }
 
 // MergeObserver 接收低基数结果，不包含租户、策略或窗口身份标签。
@@ -139,7 +139,7 @@ func (m *Merger) Check(ctx context.Context, event domain.Event, evaluation domai
 			record("skipped", "merge_join_unavailable", err)
 			continue
 		}
-		window, found, err := m.State.ReadMergeWindow(call, event.BKTenantID, wait.WindowID)
+		window, found, err := m.State.ReadMergeWindowMeta(call, event.BKTenantID, wait.WindowID)
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
@@ -175,7 +175,7 @@ func (m *Merger) Confirm(ctx context.Context, event domain.Event, decision *stor
 		return policy.ErrAccess
 	}
 	for _, step := range decision.Merge.Steps {
-		if step.Outcome != "joined" || step.Wait == nil {
+		if (step.Outcome != "joined" && step.Outcome != "retained") || step.Wait == nil {
 			continue
 		}
 		ok := false

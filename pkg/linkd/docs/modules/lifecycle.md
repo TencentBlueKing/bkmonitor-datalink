@@ -4,7 +4,14 @@ Alert 业务保存后发布租户、Alert ID 和必要动作信息，普通路�
 动作资格沿用原策略裁决；解除屏蔽和解联只同步状态。发布失败记录日志和指标，业务事实仍保留。
 控制面按[动作 V3](../reference/contracts/kac-action-delivery-v3.md)执行批量投影与独立发送。
 
-每个 Lifecycle runtime 默认使用独立合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
+源恢复、关闭及系统关闭先读取业务事实，不以旧活动告警重新取得依赖主资格为前提；终态 CAS 后清理候选索引，
+清理失败的重放仍补偿当前终态。人工屏蔽使用控制面共享的完整策略目录与目标读取能力。
+已有屏蔽绑定的停用判断必须基于完整发布目录，缓存淘汰触发重载，重载失败保留绑定；定时复查的候选筛选与正式求值共用等级映射。
+合并等待扫描按 Redis 到期查询预算分块；到期成员和丢失提示保留逐项补偿，同一窗口一批只做一次正常裁决。
+成员读取/旧意图补齐及成员补偿分别使用 3 秒子上下文，超时仍报告失败；整个作业预算耗尽后，下一完整扫描轮换同窗口起始成员，避免固定前缀长期阻塞后续补偿。窗口整体裁决继续使用原 10 秒作业预算。
+Relation 已 ended 而 Decision 未完成时直接补齐裁决，不重新解联或改写结束事实。
+
+每个 Elasticsearch Lifecycle runtime 默认使用独立合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
 CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；
 调用方收到对应 item 成功后才进入下一步，不能提前输出或 ACK。已有快照的 CAS 不再前置读取；
 独立 ID+版本接口与冲突核对仍使用 realtime `_mget`。快照更新路径首次读取完整 Event，以保留丰富提交的
@@ -16,6 +23,20 @@ Bulk update，只修改 `related_alert_ids` 和 `processing`。公共 Event 查�
 聚合名额已满时直接执行原 CAS 请求；读写使用独立收集队列，达到操作数或字节上限立即发送，
 未满则在各自首项期限到达时发送。10ms 只限制主动收集，不包含 ES 执行与响应时间。
 实际批次大小还受调用方并发与写入依赖限制。完整配置见[配置指南](../guides/configuration.md)。
+
+控制面进程内的合并成员使用显式批次，不使用上述自动合批器：锁前按批读取身份、锁内按批读取成员与活动父，
+提交 Bulk 条件更新后执行各成员输出，批量写日志，再 Bulk 局部清除完成意图。完成 token 的 ES 缓存按来源使用显式 Redis pipeline；失败成员重试时即使业务已完成，也继续补齐缓存。每个块为各成员取得 fingerprint 租约，准备/输出任务使用
+全局执行名额；租约持有等待不占工作名额，因此批次大小与工作并发相互独立。
+内存批次池允许同组多个批次在本进程并行执行，成功成员直接回报，失败项留在内存待办；每批只读取本批成员与固定关系摘要。
+组协调在内存汇总直接返回的批次结果，不以最早失败成员阻塞其他批次。
+组级进度只局部提交变化字段，成员批次不争用同一个 Relation/Decision CAS；解除完成后直接收尾。
+MySQL 单项快照 CAS 使用直接条件 UPDATE；控制面多项使用短 SQL 事务批读版本与 UPDATE JOIN，日志多行 INSERT；已形成的多行日志批直接提交，不重新进入单项自动收集器。MySQL 未启用 Recent Alert Cache，完成阶段不为空缓存动作等待执行名额。
+MergeChange/PolicyChange 确认保留版本条件，只清除相应字段，不重写业务版本、时间或完整载荷。
+批次诊断使用 `linkd.merge.batch.phase_duration`：`batch.*` 是每批墙钟，`member.*` 是并行成员的独立样本，不能相加；
+`http.*` 拆分客户端请求，`es.bulk_took` 记录 ES 返回值，`sql.*` 拆分短事务。
+`linkd.merge.pool.waits` / `wait_duration` 是共享连接池累计值的 gauge，跨采样取差值，不重复相加。
+启用 debug 日志可获得每个实际成员批的起止及阶段耗时；容量测试保存这些记录，计算真实执行区间、峰值和有效批次并发，避免一秒状态轮询造成误判。
+详细故障边界与容量验收见[策略扩展方案第 12 节](../design/policy-runtime-scaling.md#12-cas-与底层批处理改造2026-10-16)。
 
 Console 的单 Event 耗时分布默认显示完整处理时间；右上角“忽略合批等待”只扣除主动合批等待，
 保留存储排队，并同时显示执行、合批等待、存储排队与完整总耗时。点击阶段可下钻子步骤。
@@ -120,8 +141,8 @@ type Locker interface {
 
 Handler 只负责编排 Mailbox、lease 和 Processor，不包含 Alert 状态机。Handler 从 Repository 读取并校验
 Mailbox 队首 Event 后把同一 `StoredEvent` 快照交给 Processor；Processor 仅在并发冲突重裁决时重新读取，
-避免正常路径重复 realtime GET。启用 Elasticsearch 快照更新能力时，首次读取完整 Event，
-丰富提交以及策略快照、计划、最终结果三次提交复用写入返回的新快照；其他后端回退到原有 CAS。
+避免正常路径重复 realtime GET。Elasticsearch 与 MySQL 快照更新首次读取完整 Event，
+丰富提交和最终结果提交复用写入返回的新快照；EventPlan 只保留在当前调用内，不持久化。
 快照不存入全局缓存，处理结束后由 Go GC 回收无引用对象。
 
 Repository 在读取边界恢复默认值、UTC 时间和计划中的空集合。Processor 和 Enrich Scope 直接使用
@@ -192,7 +213,10 @@ warning 升级为 critical 若被屏蔽，保留 warning 的放行记录，解�
 action Hook，下一条触发 Event 再判断。多父共享成员时保留其他关系，已终态成员保留历史摘要。
 全部真实成员终结才将内置父恢复为 recovered/system/merge_members_ended；已被人工关闭的父不改写原结束原因。
 建立、解除和恢复均保存稳定的 merge_change 意图，纯元数据清理不再次推进 UpdateAt。Worker 已装配合并
-入窗与确认；独立控制面的 merge-judge/merge-decisions/merge-relations 分别负责窗口、持久化步骤与终态。
+入窗与确认；独立控制面的 merge-judge/merge-decisions/merge-relations 分别负责窗口、持久化步骤与终态，
+merge-batches 在内存拆批，按空闲名额启动 goroutine，收齐直接返回的结果即推进关系和父准入。
+不跨进程分发，也不在 Redis/ES/MySQL 保存批次待办或逐批进度；重启从持久关系重建，允许幂等重放。
+反向引用使用固定身份幂等批写，无写后读回；成员 Alert 与组级关系保持原 CAS，冻结快照保留首次值。
 合并主只经过内置来源自己的 Lifecycle，不再入窗；关系未就绪时仍阻止处置。
 
 Hook 内部角色区分 `state/action`：通用 Kafka 快照与策略索引属于状态输出，现行 KAC 消息属于处置触发。

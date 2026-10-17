@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -76,6 +77,9 @@ func (p *Processor) createAlertAfterActiveLookup(
 			return store.CreateAlertResult{StoredAlert: current, Created: false}, nil
 		}
 	}
+	if err == nil {
+		err = p.observeDependencyIndex(ctx, result.Alert)
+	}
 	return result, err
 }
 
@@ -96,6 +100,9 @@ func (p *Processor) compareAndSetAlert(
 		}
 		updated, err = p.compareAndSetAlertWithoutSnapshot(ctx, current, replacement)
 	}
+	if err == nil {
+		err = p.observeDependencyIndex(ctx, updated.Alert)
+	}
 	if !errors.Is(err, store.ErrVersionConflict) {
 		return updated, err
 	}
@@ -103,6 +110,56 @@ func (p *Processor) compareAndSetAlert(
 		return store.StoredAlert{}, errors.Join(err, repairErr)
 	}
 	return store.StoredAlert{}, err
+}
+
+// withFrozenSeverity 把等级映射及其已有摘要一起固定给策略检查和主索引观察。
+func (p *Processor) withFrozenSeverity(table SeverityTable, digest string) *Processor {
+	local := *p
+	local.severity = table
+	local.configDigest = digest
+	if configured, ok := p.shielder.(interface{ WithConfigDigest(string) ShieldEvaluator }); ok {
+		local.shielder = configured.WithConfigDigest(digest)
+	}
+	if configured, ok := p.dependency.(interface {
+		WithDependencyConfigDigest(string) DependencyRegistry
+	}); ok {
+		local.dependency = configured.WithDependencyConfigDigest(digest)
+	}
+	return &local
+}
+
+func (p *Processor) observeDependencyIndex(ctx context.Context, alert domain.Alert) error {
+	// 生命周期业务使用冻结配置；已保存 Alert 的共享资格跟随当前配置，避免晚 CAS 写回退役 namespace。
+	registry := p.dependency
+	severity := p.dependencySeverity
+	if severity == nil {
+		severity = p.severity
+	}
+	if provider, ok := severity.(interface {
+		FreezeSeverity() (SeverityTable, string)
+	}); ok {
+		table, digest := provider.FreezeSeverity()
+		severity = table
+		if configured, ok := registry.(interface {
+			WithDependencyConfigDigest(string) DependencyRegistry
+		}); ok {
+			registry = configured.WithDependencyConfigDigest(digest)
+		}
+	}
+	observer, ok := registry.(interface {
+		ObserveDependencyAlert(context.Context, domain.Alert, func(string) (string, error)) error
+	})
+	if !ok {
+		return nil
+	}
+	var level func(string) (string, error)
+	if mapper, ok := severity.(interface{ KACLevel(string) (string, error) }); ok {
+		level = mapper.KACLevel
+	}
+	if err := observer.ObserveDependencyAlert(ctx, alert, level); err != nil {
+		return processingerror.RetryableError{Err: fmt.Errorf("update dependency candidate index: %w", err)}
+	}
+	return nil
 }
 
 func (p *Processor) compareAndSetAlertWithoutSnapshot(ctx context.Context, current store.StoredAlert, replacement domain.Alert) (store.StoredAlert, error) {
@@ -133,6 +190,15 @@ func (p *Processor) getAlertCurrent(
 	ctx context.Context,
 	bkTenantID, alertID string,
 ) (store.StoredAlert, error) {
+	current, err := p.readAlertCurrent(ctx, bkTenantID, alertID)
+	if err == nil {
+		err = p.observeDependencyIndex(ctx, current.Alert)
+	}
+	return current, err
+}
+
+// readAlertCurrent 只读业务事实；准备终结告警时不能先重算旧活动状态的依赖资格。
+func (p *Processor) readAlertCurrent(ctx context.Context, bkTenantID, alertID string) (store.StoredAlert, error) {
 	defer p.measureStep(phaseApply, "alert_read")()
 	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
 		return repository.GetAlertCurrent(ctx, bkTenantID, alertID)
@@ -171,7 +237,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 	command.EffectiveAt = command.EffectiveAt.Round(0).UTC()
 	operation := command.endOperation()
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
-		stored, err := p.getAlertCurrent(ctx, command.BKTenantID, command.AlertID)
+		stored, err := p.readAlertCurrent(ctx, command.BKTenantID, command.AlertID)
 		if err != nil {
 			return CloseAlertResult{}, err
 		}
@@ -189,6 +255,10 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 			if stored.Alert.Status != domain.AlertStatusClosed || stored.Alert.EndType != endType || stored.Alert.EndReason != command.Reason ||
 				stored.Alert.EndAt == nil || !stored.Alert.EndAt.Equal(command.EffectiveAt) || stored.Alert.EndOperation == nil || *stored.Alert.EndOperation != operation {
 				return CloseAlertResult{}, fmt.Errorf("%w: alert is already terminal", store.ErrInvalidTransition)
+			}
+			// 关闭 CAS 可能已成功但索引清理失败；重放只补偿当前终态。
+			if err := p.observeDependencyIndex(ctx, stored.Alert); err != nil {
+				return CloseAlertResult{}, err
 			}
 			// 首次关闭可能在 CAS 成功后写缓存失败；重试必须修复可见性窗口，
 			// 否则旧 active 缓存会持续参与新事件裁决。

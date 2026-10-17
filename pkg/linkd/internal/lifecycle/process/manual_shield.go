@@ -17,6 +17,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/lifecycle"
 	"linkd/internal/policy"
+	"linkd/internal/policy/redisstate"
 	policyruntime "linkd/internal/policy/runtime"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/store"
@@ -30,10 +31,15 @@ type ManualShieldBinder struct {
 }
 
 // NewManualShieldBinder 不启动后台工作，状态写入与普通 Lifecycle 共用 CAS 和输出补齐。
-func NewManualShieldBinder(cfg config.Config, sources closeSourceReader, policies *policy.Service, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime) *ManualShieldBinder {
+func NewManualShieldBinder(cfg config.Config, sources closeSourceReader, policies *policy.Service, resources *policyruntime.Runtime, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime) *ManualShieldBinder {
+	catalog := resources.Catalog
+	if catalog == nil {
+		catalog = policy.NewCatalog(policies)
+	}
+	loader := &policyruntime.Suppressor{Releases: policies, Catalog: catalog, Targets: resources.Dependencies, Logger: logger}
 	return &ManualShieldBinder{slots: make(chan struct{}, 4), run: func(ctx context.Context, c lifecycle.ShieldCommand) (result lifecycle.ShieldCommandResult, err error) {
-		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, c.TenantID, c.AlertID, func(store.Repository) []lifecycle.ProcessorOption {
-			return []lifecycle.ProcessorOption{lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: &policyruntime.Suppressor{Releases: policies}, Logger: logger, Observer: metrics})}
+		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, c.TenantID, c.AlertID, func(_ store.Repository, state *redisstate.Store) []lifecycle.ProcessorOption {
+			return []lifecycle.ProcessorOption{lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: loader, Index: state, Dependency: state, Hints: state, Logger: logger, Observer: metrics})}
 		}, func(p *lifecycle.Processor) error { var e error; result, e = p.BindShield(ctx, c); return e })
 		return result, err
 	}}

@@ -51,7 +51,7 @@ func (o *MergeOrigin) Validate(source string) error {
 		}
 		return nil
 	}
-	if source != BuiltinMergeEventSourceID || o.MemberCount < 2 || o.MemberCount > 256 {
+	if source != BuiltinMergeEventSourceID || o.MemberCount < 2 {
 		return fmt.Errorf("invalid merge origin scope")
 	}
 	if len(o.AlarmTags) > 128 {

@@ -250,6 +250,20 @@ func (r *observedRepository) GetAlerts(
 	return result, err
 }
 
+// GetAlertsCurrent 保留批量实时读取能力，避免观测包装退化为逐条读取或 ES search。
+func (r *observedRepository) GetAlertsCurrent(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+	startedAt := time.Now()
+	var result store.AlertBatch
+	var err error
+	if next, ok := r.next.(store.CurrentAlertBatchStore); ok {
+		result, err = next.GetAlertsCurrent(ctx, tenant, ids)
+	} else {
+		result, err = r.next.GetAlerts(ctx, tenant, ids)
+	}
+	r.record(ctx, "alert", "get_batch_current", startedAt, err)
+	return result, err
+}
+
 func (r *observedRepository) FindActiveAlert(
 	ctx context.Context,
 	key store.ActiveAlertKey,
@@ -296,6 +310,21 @@ func (r *observedRepository) CompareAndSetAlertFromSnapshot(ctx context.Context,
 var _ store.LifecycleEventSnapshotStore = (*observedRepository)(nil)
 
 var _ store.LifecycleAlertSnapshotStore = (*observedRepository)(nil)
+
+// CompleteAlertChange 独立计量局部完成写，未实现的仓储沿用原 CAS。
+func (r *observedRepository) CompleteAlertChange(ctx context.Context, current store.StoredAlert, field store.AlertChangeField) (store.StoredAlert, error) {
+	if next, ok := r.next.(store.AlertChangeCompletionStore); ok {
+		startedAt := time.Now()
+		stored, err := next.CompleteAlertChange(ctx, current, field)
+		r.record(ctx, "alert", "complete_change", startedAt, err)
+		return stored, err
+	}
+	next, err := store.CompletedAlertChange(current, field)
+	if err != nil {
+		return store.StoredAlert{}, err
+	}
+	return r.CompareAndSetAlertFromSnapshot(ctx, current, next)
+}
 
 func (r *observedRepository) FindAlertEndedByEvent(
 	ctx context.Context,

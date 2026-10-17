@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"slices"
 
 	"linkd/internal/domain"
@@ -66,6 +65,21 @@ func (p *Processor) readMergeRelation(ctx context.Context, tenant, id string) (d
 // LinkMergeMember 必须在成员 fingerprint lease 内执行；先核对持久化关系和真实父，再更新成员摘要。
 // 不取得父锁，不改变成员真实生命周期/丰富/屏蔽状态；已终态成员只返回事实供关系记录确认。
 func (p *Processor) LinkMergeMember(ctx context.Context, tenant, id, relation string) (store.StoredAlert, error) {
+	return p.linkMergeMember(ctx, tenant, id, relation, func() (domain.MergeRelation, error) {
+		return p.readMergeRelation(ctx, tenant, relation)
+	})
+}
+
+// LinkMergeMemberPrepared 复用同一窗口租约内已读取的固定关系，活动父和子仍逐项实时读取。
+// 关系在批边界完整校验，成员不能重复读取/校验整个大型关系对象。
+func (p *Processor) LinkMergeMemberPrepared(ctx context.Context, tenant, id string, relation domain.MergeRelation) (store.StoredAlert, error) {
+	if relation.TenantID != tenant || (relation.State != "preparing" && relation.State != "ready") || relation.IndexOffset != len(relation.Members)+1 {
+		return store.StoredAlert{}, store.ErrInvalidArgument
+	}
+	return p.linkMergeMember(ctx, tenant, id, relation.ID, func() (domain.MergeRelation, error) { return relation, nil })
+}
+
+func (p *Processor) linkMergeMember(ctx context.Context, tenant, id, relation string, readRelation func() (domain.MergeRelation, error)) (store.StoredAlert, error) {
 	for range maxCASAttempts {
 		current, err := p.readMergeAlert(ctx, tenant, id)
 		if err != nil {
@@ -75,40 +89,26 @@ func (p *Processor) LinkMergeMember(ctx context.Context, tenant, id, relation st
 		if err != nil {
 			return store.StoredAlert{}, err
 		}
-		r, err := p.readMergeRelation(ctx, tenant, relation)
+		r, err := readRelation()
 		if err != nil {
 			return store.StoredAlert{}, err
-		}
-		if _, ok := r.Member(id); !ok {
-			return store.StoredAlert{}, store.ErrInvalidArgument
 		}
 		parent, err := p.readMergeAlert(ctx, tenant, r.ParentAlertID)
 		if err != nil {
 			return store.StoredAlert{}, err
 		}
-		if parent.Version.IsZero() || parent.Alert.Validate() != nil || parent.Alert.BKTenantID != tenant || parent.Alert.AlertID != r.ParentAlertID || parent.Alert.Status != domain.AlertStatusActive || parent.Alert.EventSourceID != domain.BuiltinMergeEventSourceID || parent.Alert.Fingerprint != r.ParentFingerprint || parent.Alert.Merge == nil || parent.Alert.Merge.Role != "aggregate" {
-			return store.StoredAlert{}, store.ErrInvalidTransition
-		}
-		if current.Alert.Status.Terminal() {
-			return current, nil
-		}
-		if current.Alert.Merge != nil {
-			for _, w := range current.Alert.Merge.Pending {
-				if w.WindowID == r.WindowID && (w.GroupKey != r.GroupKey || !reflect.DeepEqual(w.Policy, r.Policy)) {
-					return store.StoredAlert{}, store.ErrInvalidTransition
-				}
-			}
-		}
-		nextMerge, changed, err := current.Alert.Merge.LinkRelation(r.WindowID, relation)
+		update, changed, err := p.PrepareMergeMemberChange(ctx, current, parent, r, false)
 		if err != nil {
-			return store.StoredAlert{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
+			return store.StoredAlert{}, err
 		}
 		if !changed {
-			return current, nil
+			return update.Current, nil
 		}
-		next := current.Alert.Clone()
-		next.Merge = nextMerge
-		updated, err := p.commitMergeRelationChange(ctx, current, next, "member_link", r, false)
+		updated, err := p.compareAndSetAlert(ctx, update.Current, update.Replacement)
+		if err == nil {
+			updated, err = p.finishMergeChange(ctx, updated)
+		}
+
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue
 		}
@@ -124,10 +124,7 @@ func (p *Processor) ReadyMergeParent(ctx context.Context, tenant, id, relation s
 		FreezeSeverity() (SeverityTable, string)
 	}); ok {
 		table, digest := provider.FreezeSeverity()
-		local := *p
-		local.severity = table
-		local.configDigest = digest
-		return local.ReadyMergeParent(ctx, tenant, id, relation)
+		return p.withFrozenSeverity(table, digest).ReadyMergeParent(ctx, tenant, id, relation)
 	}
 	for range maxCASAttempts {
 		current, err := p.readMergeAlert(ctx, tenant, id)
@@ -189,10 +186,14 @@ func (p *Processor) ReadyMergeParent(ctx context.Context, tenant, id, relation s
 	return store.StoredAlert{}, store.ErrVersionConflict
 }
 
-func (p *Processor) commitMergeRelationChange(ctx context.Context, current store.StoredAlert, next domain.Alert, kind string, r domain.MergeRelation, ready bool) (store.StoredAlert, error) {
+func (p *Processor) prepareMergeRelationChange(ctx context.Context, current store.StoredAlert, next domain.Alert, kind string, r domain.MergeRelation, ready bool) (domain.Alert, error) {
+	return p.prepareMergeMemberRelationChange(ctx, current, next, kind, r.MemberContext(), ready)
+}
+
+func (p *Processor) prepareMergeMemberRelationChange(ctx context.Context, current store.StoredAlert, next domain.Alert, kind string, r domain.MergeMemberContext, ready bool) (domain.Alert, error) {
 	now, err := p.now()
 	if err != nil {
-		return store.StoredAlert{}, err
+		return domain.Alert{}, err
 	}
 	next.UpdateAt = nextAlertUpdateTime(now, current.Alert.UpdateAt)
 	operation := digestStrings("merge-relation-change", kind, next.BKTenantID, next.AlertID, r.ID)
@@ -201,7 +202,15 @@ func (p *Processor) commitMergeRelationChange(ctx context.Context, current store
 		next.Admission = domain.AlertAdmission{AdmittedAt: &at, Severity: next.Severity, CauseType: AlertChangeCauseSystemOperation, CauseID: operation}
 	}
 	next.MergeChange = &domain.AlertMergeChange{Kind: kind, RelationID: r.ID, OperationID: operation, WindowID: r.WindowID, EffectiveAt: next.UpdateAt, Before: current.Alert.Merge.Clone(), After: next.Merge.Clone(), ActionReady: ready}
-	if err := freezeMergeFlow(next.MergeChange, &r); err != nil {
+	if err := freezeMergeMemberFlow(next.MergeChange, &r); err != nil {
+		return domain.Alert{}, err
+	}
+	return next, nil
+}
+
+func (p *Processor) commitMergeRelationChange(ctx context.Context, current store.StoredAlert, next domain.Alert, kind string, r domain.MergeRelation, ready bool) (store.StoredAlert, error) {
+	next, err := p.prepareMergeRelationChange(ctx, current, next, kind, r, ready)
+	if err != nil {
 		return store.StoredAlert{}, err
 	}
 	updated, err := p.compareAndSetAlert(ctx, current, next)

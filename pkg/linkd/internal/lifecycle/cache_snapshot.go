@@ -41,3 +41,17 @@ func (c snapshotCache) PutCurrent(ctx context.Context, stored store.StoredAlert)
 func (c snapshotCache) PutTerminal(ctx context.Context, stored store.StoredAlert) error {
 	return c.writer.PutTerminalFromSnapshot(ctx, stored)
 }
+
+// PutCurrentSnapshots 只用于同一来源的显式缓存批；其他缓存实现保留单项能力。
+func (c snapshotCache) PutCurrentSnapshots(ctx context.Context, current []store.StoredAlert) []error {
+	if writer, ok := c.writer.(interface {
+		PutCurrentSnapshots(context.Context, []store.StoredAlert) []error
+	}); ok {
+		return writer.PutCurrentSnapshots(ctx, current)
+	}
+	results := make([]error, len(current))
+	for i, item := range current {
+		results[i] = c.writer.PutCurrentFromSnapshot(ctx, item)
+	}
+	return results
+}

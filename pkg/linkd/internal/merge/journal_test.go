@@ -43,6 +43,24 @@ type memoryDocuments struct {
 	failKind string
 }
 
+func (d *memoryDocuments) PutReferences(ctx context.Context, rows map[string]json.RawMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.failKind == "merge_relation_refs" {
+		d.failKind = ""
+		return errors.New("reference storage unavailable")
+	}
+	for id, raw := range rows {
+		key := "merge_relation_refs/" + id
+		d.data[key] = slices.Clone(raw)
+		d.versions[key]++
+	}
+	return nil
+}
+
 func (d *memoryDocuments) Get(ctx context.Context, kind, id string) (json.RawMessage, string, error) {
 	if ctx.Err() != nil {
 		return nil, "", ctx.Err()

@@ -49,7 +49,7 @@ func (j *Journal) GetRelation(ctx context.Context, tenant, id string) (StoredRel
 		return StoredRelation{}, err
 	}
 	var r domain.MergeRelation
-	if len(raw) > 256<<10 || json.Unmarshal(raw, &r) != nil || version == "" {
+	if len(raw) > 8<<20 || json.Unmarshal(raw, &r) != nil || version == "" {
 		return StoredRelation{}, policy.ErrInvalid
 	}
 	if r.TenantID != tenant || r.ID != id {
@@ -69,7 +69,7 @@ func (j *Journal) GetMergeRelation(ctx context.Context, tenant, id string) (doma
 }
 
 // EnsureRelation 只在真实父已经记录为 linking 后创建关系意图；此时还不能开放父处置。
-// ID 复用本次操作身份，父/策略/成员集合创建后不可改写；成员记录按 AlertID 排序，最多 256 项。
+// ID 复用本次操作身份，父/策略/成员集合创建后不可改写；成员记录按 AlertID 排序，受文档字节预算约束。
 func (j *Journal) EnsureRelation(ctx context.Context, tenant, id string, parent store.StoredAlert, at time.Time) (StoredRelation, error) {
 	return j.ensureRelation(ctx, tenant, id, parent, at, false)
 }
@@ -163,6 +163,20 @@ func (j *Journal) putRelation(ctx context.Context, current StoredRelation, next 
 	if err != nil {
 		return StoredRelation{}, err
 	}
+	if partial, ok := j.docs.(progressDocuments); ok {
+		fields := map[string]any{"state": next.State, "index_offset": next.IndexOffset, "updated_at": next.UpdatedAt, "end_offset": next.EndOffset, "end_reason": next.EndReason, "end_started_at": next.EndStartedAt, "ended_at": next.EndedAt}
+		members := map[int]string{}
+		for i, member := range next.Members {
+			if member.State != current.Relation.Members[i].State {
+				members[i] = member.State
+			}
+		}
+		version, err := partial.CompareAndSetMergeProgress(ctx, "merge_relations", key, current.Version, fields, members, next.State != "ended")
+		if err != nil {
+			return StoredRelation{}, err
+		}
+		return StoredRelation{Relation: next, Version: version}, nil
+	}
 	raw, err := json.Marshal(next)
 	if err != nil {
 		return StoredRelation{}, err
@@ -180,88 +194,84 @@ func referenceScope(tenant, alert string) (string, error) {
 	return prefix(tenant) + hash("relation-alert", alert) + ":", nil
 }
 
-// IndexRelationStep 先 create-only 写一个父/成员反查引用，再推进关系内前缀，单步中断可重复执行。
-// 查询引用不是关系状态的第二份权威副本；读取必须回到 GetRelation，准备未完成也应如实展示。
+// IndexRelationStep 幂等写入一个父/成员反查引用，再推进关系内前缀。
+// 查询引用只保存固定映射；状态查询仍回到 GetRelation。
 func (j *Journal) IndexRelationStep(ctx context.Context, current StoredRelation, at time.Time) (StoredRelation, error) {
-	if err := ctx.Err(); err != nil {
-		return StoredRelation{}, err
-	}
-	r := current.Relation
-	if r.Validate() != nil || current.Version == "" || at.Before(r.UpdatedAt) {
-		return StoredRelation{}, policy.ErrInvalid
-	}
-	if r.IndexOffset == len(r.Members)+1 {
-		return current, nil
-	}
-	ref := relationReference{TenantID: r.TenantID, AlertID: r.ParentAlertID, RelationID: r.ID, Role: "parent"}
-	if r.IndexOffset > 0 {
-		ref.AlertID = r.Members[r.IndexOffset-1].AlertID
-		ref.Role = "member"
-	}
-	scope, err := referenceScope(ref.TenantID, ref.AlertID)
-	if err != nil {
-		return StoredRelation{}, err
-	}
-	raw, err := json.Marshal(ref)
-	if err != nil {
-		return StoredRelation{}, err
-	}
-	err = j.docs.Put(ctx, "merge_relation_refs", scope+ref.RelationID, "", raw)
-	if err != nil && !errors.Is(err, policy.ErrConflict) {
-		return StoredRelation{}, err
-	}
-	actual, _, err := j.docs.Get(ctx, "merge_relation_refs", scope+ref.RelationID)
-	if err != nil {
-		return StoredRelation{}, err
-	}
-	var saved relationReference
-	if json.Unmarshal(actual, &saved) != nil || saved != ref {
-		return StoredRelation{}, policy.ErrConflict
-	}
-	next := r.Clone()
-	next.IndexOffset++
-	next.UpdatedAt = at
-	return j.putRelation(ctx, current, next)
+	return j.IndexRelationBatch(ctx, current, at, 1)
 }
 
 // ConfirmRelationMember 只接受成员已保存关系或真实终态的仓储结果；意图未输出完成时不确认。
 func (j *Journal) ConfirmRelationMember(ctx context.Context, current StoredRelation, member store.StoredAlert, at time.Time) (StoredRelation, error) {
+	return j.ConfirmRelationMembers(ctx, current, []store.StoredAlert{member}, at)
+}
+
+// ConfirmRelationMembers 一次 CAS 确认本批已完成的成员，不把后序成功越过失败成员作为决策前缀。
+func (j *Journal) ConfirmRelationMembers(ctx context.Context, current StoredRelation, members []store.StoredAlert, at time.Time) (StoredRelation, error) {
 	if err := ctx.Err(); err != nil {
 		return StoredRelation{}, err
 	}
-	r, a := current.Relation, member.Alert
-	if (r.State != "preparing" && r.State != "ready") || r.Validate() != nil || current.Version == "" || member.Version.IsZero() || a.Validate() != nil || a.MergeChange != nil || a.PolicyChange != nil || r.IndexOffset != len(r.Members)+1 || at.Before(r.UpdatedAt) {
+	r := current.Relation
+	if (r.State != "preparing" && r.State != "ready") || r.Validate() != nil || current.Version == "" || r.IndexOffset != len(r.Members)+1 || at.Before(r.UpdatedAt) {
 		return StoredRelation{}, policy.ErrInvalid
 	}
-	if a.BKTenantID != r.TenantID {
-		return StoredRelation{}, policy.ErrAccess
+	confirmations := make([]relationMemberConfirmation, 0, len(members))
+	for _, member := range members {
+		confirmed, err := validateRelationMember(r, member)
+		if err != nil {
+			return StoredRelation{}, err
+		}
+		confirmations = append(confirmations, confirmed)
 	}
-	if _, ok := r.Member(a.AlertID); !ok {
-		return StoredRelation{}, policy.ErrAccess
+	return j.saveRelationMemberConfirmations(ctx, current, confirmations, at)
+}
+
+type relationMemberConfirmation struct {
+	index int
+	state string
+}
+
+func validateRelationMember(r domain.MergeRelation, member store.StoredAlert) (relationMemberConfirmation, error) {
+	a := member.Alert
+	if member.Version.IsZero() || a.Validate() != nil || a.MergeChange != nil || a.PolicyChange != nil {
+		return relationMemberConfirmation{}, policy.ErrInvalid
+	}
+	if a.BKTenantID != r.TenantID {
+		return relationMemberConfirmation{}, policy.ErrAccess
+	}
+	index, found := slices.BinarySearchFunc(r.Members, a.AlertID, func(m domain.MergeRelationMember, id string) int { return strings.Compare(m.AlertID, id) })
+	if !found {
+		return relationMemberConfirmation{}, policy.ErrAccess
 	}
 	state := "linked"
 	if a.Status.Terminal() {
 		state = "terminal"
 	} else {
 		if a.Merge == nil || a.Merge.Role != "original" || !slices.Contains(a.Merge.RelationIDs, r.ID) {
-			return StoredRelation{}, fmt.Errorf("member has not stored merge relation")
+			return relationMemberConfirmation{}, fmt.Errorf("member has not stored merge relation")
 		}
 		for _, wait := range a.Merge.Pending {
 			if wait.WindowID == r.WindowID {
-				return StoredRelation{}, fmt.Errorf("linked member still waits for same window")
+				return relationMemberConfirmation{}, fmt.Errorf("linked member still waits for same window")
 			}
 		}
 	}
-	next := r.Clone()
+	return relationMemberConfirmation{index: index, state: state}, nil
+}
+
+// 已校验的成员结果只在批内复用，避免同一完整 Alert 快照被逐项确认再次校验/写入。
+func (j *Journal) saveRelationMemberConfirmations(ctx context.Context, current StoredRelation, confirmed []relationMemberConfirmation, at time.Time) (StoredRelation, error) {
+	next := current.Relation.Clone()
+	changed := false
+	for _, member := range confirmed {
+		if next.Members[member.index].State != member.state {
+			next.Members[member.index].State = member.state
+			changed = true
+		}
+	}
+	if !changed {
+		return current, nil
+	}
 	next.UpdatedAt = at
-	for i, m := range next.Members {
-		if m.AlertID == a.AlertID {
-			if m.State == state {
-				return current, nil
-			}
-			next.Members[i].State = state
-		}
-	}
 	return j.putRelation(ctx, current, next)
 }
 

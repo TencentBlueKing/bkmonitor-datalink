@@ -19,12 +19,12 @@ import (
 
 type rowScanner interface{ Scan(dest ...any) error }
 
-func encodeEvent(event domain.Event) ([]byte, error) {
+func encodeEvent(event domain.Event) (string, error) {
 	data, err := json.Marshal(event)
 	if err != nil {
-		return nil, fmt.Errorf("marshal event: %w", err)
+		return "", fmt.Errorf("marshal event: %w", err)
 	}
-	return data, nil
+	return string(data), nil
 }
 
 func decodeEvent(data []byte) (domain.Event, error) {
@@ -39,13 +39,13 @@ func decodeEvent(data []byte) (domain.Event, error) {
 	return normalized, nil
 }
 
-func encodeProcessing(processing store.EventProcessing) ([]byte, error) {
+func encodeProcessing(processing store.EventProcessing) (string, error) {
 	// 处理结果已由 ApplyEventResult 检查；编码不再次遍历计划快照。
 	data, err := json.Marshal(processing)
 	if err != nil {
-		return nil, fmt.Errorf("marshal event processing: %w", err)
+		return "", fmt.Errorf("marshal event processing: %w", err)
 	}
-	return data, nil
+	return string(data), nil
 }
 
 func decodeProcessing(data []byte) (store.EventProcessing, error) {
@@ -56,12 +56,12 @@ func decodeProcessing(data []byte) (store.EventProcessing, error) {
 	return processing.Normalize()
 }
 
-func encodeAlert(alert domain.Alert) ([]byte, error) {
+func encodeAlert(alert domain.Alert) (string, error) {
 	data, err := json.Marshal(alert)
 	if err != nil {
-		return nil, fmt.Errorf("marshal alert: %w", err)
+		return "", fmt.Errorf("marshal alert: %w", err)
 	}
-	return data, nil
+	return string(data), nil
 }
 
 func decodeAlert(data []byte) (domain.Alert, error) {
@@ -76,12 +76,12 @@ func decodeAlert(data []byte) (domain.Alert, error) {
 	return normalized, nil
 }
 
-func encodeAlertLog(log domain.AlertLog) ([]byte, error) {
+func encodeAlertLog(log domain.AlertLog) (string, error) {
 	data, err := json.Marshal(log)
 	if err != nil {
-		return nil, fmt.Errorf("marshal alert log: %w", err)
+		return "", fmt.Errorf("marshal alert log: %w", err)
 	}
-	return data, nil
+	return string(data), nil
 }
 
 func decodeAlertLog(data []byte) (domain.AlertLog, error) {

@@ -17,6 +17,9 @@ import (
 )
 
 type instruments struct {
+	mergeBatchPhase         metric.Float64Histogram
+	mergePoolWaits          metric.Int64Gauge
+	mergePoolWaitDuration   metric.Float64Gauge
 	policyMatchDuration     metric.Float64Histogram
 	policyCheckDelay        metric.Float64Histogram
 	policySamples           metric.Int64Counter
@@ -731,6 +734,15 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 		return nil, err
 	}
 	if result.writeBatch, err = newWriteBatchInstruments(meter); err != nil {
+		return nil, err
+	}
+	if result.mergeBatchPhase, err = meter.Float64Histogram("linkd.merge.batch.phase_duration", describeMetric("合并批次分段耗时", "control_plane", "latency", "linkd.phase"), metric.WithUnit("s"), metric.WithDescription("显式合并批次的固定阶段耗时，成员并行样本不能相加为批次墙钟"), metric.WithExplicitBucketBoundaries(0.0001, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)); err != nil {
+		return nil, err
+	}
+	if result.mergePoolWaits, err = meter.Int64Gauge("linkd.merge.pool.waits", describeMetric("合并连接池累计等待次数", "control_plane", "capacity", "linkd.pool"), metric.WithUnit("{wait}"), metric.WithDescription("进程共享连接池启动以来累计等待次数，重复采样取差值")); err != nil {
+		return nil, err
+	}
+	if result.mergePoolWaitDuration, err = meter.Float64Gauge("linkd.merge.pool.wait_duration", describeMetric("合并连接池累计等待耗时", "control_plane", "latency", "linkd.pool"), metric.WithUnit("s"), metric.WithDescription("进程共享连接池启动以来累计等待时间，重复采样取差值")); err != nil {
 		return nil, err
 	}
 	return result, nil

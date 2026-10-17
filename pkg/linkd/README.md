@@ -102,6 +102,7 @@ Event/Alert 保存实际使用的 event_source_version，来源级 Stream 支持
 ```bash
 go run ./cmd/linkd config validate --config ./configs/linkd.yaml
 go run ./cmd/linkd run control-plane --config ./configs/linkd.yaml
+
 go run ./cmd/linkd run cleaner --config ./configs/linkd.yaml
 go run ./cmd/linkd run lifecycle --config ./configs/linkd.yaml
 go run ./cmd/linkd run all-in-one --config ./configs/linkd.yaml

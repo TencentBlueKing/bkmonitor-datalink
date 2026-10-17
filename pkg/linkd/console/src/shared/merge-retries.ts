@@ -49,10 +49,10 @@ export const mergeControlPoint = z
     outcome: z.enum(["succeeded", "failed"]).optional(),
     complete: z.boolean(),
     updated_at: at,
-    capture_offset: z.number().int().min(0).max(256),
-    member_offset: z.number().int().min(0).max(256),
-    index_offset: z.number().int().min(0).max(257),
-    end_offset: z.number().int().min(0).max(256),
+    capture_offset: z.number().int().min(0),
+    member_offset: z.number().int().min(0),
+    index_offset: z.number().int().min(0),
+    end_offset: z.number().int().min(0),
   })
   .superRefine((p, c) => {
     const valid =

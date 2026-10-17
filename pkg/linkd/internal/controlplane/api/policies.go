@@ -190,6 +190,7 @@ func (a *API) putPolicy(w http.ResponseWriter, r *http.Request) {
 		policyFailure(w, err)
 		return
 	}
+	a.policyPublished(request.TenantID)
 	output(w, release)
 }
 
@@ -220,6 +221,7 @@ func (a *API) deletePolicy(w http.ResponseWriter, r *http.Request) {
 		policyFailure(w, err)
 		return
 	}
+	a.policyPublished(request.TenantID)
 	output(w, release)
 }
 

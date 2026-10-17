@@ -34,7 +34,14 @@ func (r *Repository) ListShieldWork(ctx context.Context, after store.ShieldWorkC
 	if err != nil {
 		return store.ShieldWorkPage{}, err
 	}
-	filters := []any{map[string]any{"bool": map[string]any{"minimum_should_match": 1, "should": []any{map[string]any{"term": map[string]any{"shield.active": true}}, map[string]any{"exists": map[string]any{"field": "policy_change.operation_id"}}}}}}
+	// 先由存储筛选到期及待补齐输出，再分页；未来屏蔽不占本轮页预算。
+	filters := []any{map[string]any{"bool": map[string]any{"minimum_should_match": 1, "should": []any{
+		map[string]any{"exists": map[string]any{"field": "policy_change.operation_id"}},
+		map[string]any{"bool": map[string]any{"filter": []any{
+			map[string]any{"term": map[string]any{"shield.active": true}},
+			map[string]any{"range": map[string]any{"shield.next_check_at": map[string]any{"lte": at.UTC().Format(time.RFC3339Nano)}}},
+		}}},
+	}}}}
 	if after.TenantID != "" {
 		filters = append(filters, map[string]any{"bool": map[string]any{"minimum_should_match": 1, "should": []any{map[string]any{"range": map[string]any{"bk_tenant_id": map[string]any{"gt": after.TenantID}}}, map[string]any{"bool": map[string]any{"filter": []any{map[string]any{"term": map[string]any{"bk_tenant_id": after.TenantID}}, map[string]any{"range": map[string]any{"alert_id": map[string]any{"gt": after.AlertID}}}}}}}}})
 	}

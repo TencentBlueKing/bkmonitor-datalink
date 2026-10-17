@@ -59,13 +59,13 @@ func (p *PolicyContext) Clone() *PolicyContext {
 	return &result
 }
 
-// Validate 限制策略数量和身份，禁止重复引用、非法摘要或跳过状态携带不完整配置集。
+// Validate 校验身份与重复引用；内存候选数不使用旧的全租户 256 条上限。
 func (p *PolicyContext) Validate() error {
 	if p == nil {
 		return nil
 	}
-	if p.EvaluatedAt.IsZero() || len(p.Releases) > 256 {
-		return fmt.Errorf("invalid policy context time/count")
+	if p.EvaluatedAt.IsZero() {
+		return fmt.Errorf("invalid policy context time")
 	}
 	if p.ReasonCode != "" && (p.ReasonCode != "policy_load_failed" || len(p.Releases) > 0) {
 		return fmt.Errorf("invalid policy context skip reason")

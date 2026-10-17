@@ -21,6 +21,7 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/policy"
+	"linkd/internal/policy/redisstate"
 	"linkd/internal/store"
 )
 
@@ -37,20 +38,81 @@ type ShieldHintPublisher interface {
 // Shielder 区分新匹配的跳过与现有关系解除失败；后者保留关系等待后续重查。
 type Shielder struct {
 	// Hints 为终态检查提供可丢失的加速，失败不能阻止已提交的业务终态。
-	Hints        ShieldHintPublisher
-	Observer     ShieldObserver
-	Loader       *Suppressor
-	Events       func(context.Context, string, string) (store.StoredEvent, error)
-	Logger       policyLogger
-	Candidates   store.ActiveAlertReader
-	CurrentAlert func(context.Context, string, string) (store.StoredAlert, error)
-	Dependency   DependencyState
-	Relations    policy.RelationLookup
+	Hints         ShieldHintPublisher
+	Observer      ShieldObserver
+	Loader        *Suppressor
+	Events        func(context.Context, string, string) (store.StoredEvent, error)
+	Logger        policyLogger
+	Candidates    store.ActiveAlertReader
+	CurrentAlert  func(context.Context, string, string) (store.StoredAlert, error)
+	CurrentAlerts func(context.Context, string, []string) (store.AlertBatch, error)
+	Dependency    DependencyState
+	Relations     policy.RelationLookup
+	Index         DependencyCandidateIndex
+	ConfigDigest  string
+}
+
+// RetireDependencyNamespace 由控制面在等级配置变化时停用旧执行索引。
+func (s *Shielder) RetireDependencyNamespace(ctx context.Context, tenant, digest string) error {
+	index, ok := s.Index.(interface {
+		RetireDependencyNamespace(context.Context, string, string) error
+	})
+	if !ok {
+		return policy.ErrUnavailable
+	}
+	return index.RetireDependencyNamespace(ctx, tenant, digest)
+}
+
+// ActivateDependencyNamespace 仅在当前配置完成完整回填后重新开放曾停用的摘要。
+func (s *Shielder) ActivateDependencyNamespace(ctx context.Context, tenant, digest string) error {
+	index, ok := s.Index.(interface {
+		ActivateDependencyNamespace(context.Context, string, string) error
+	})
+	if !ok {
+		return policy.ErrUnavailable
+	}
+	return index.ActivateDependencyNamespace(ctx, tenant, digest)
+}
+
+// WithConfigDigest 配对冻结的等级 Mapper 与现有配置摘要；旧 Worker 只能更新自己的执行索引。
+func (s *Shielder) WithConfigDigest(digest string) lifecycle.ShieldEvaluator {
+	local := *s
+	local.ConfigDigest = digest
+	return &local
+}
+
+func (s *Shielder) WithDependencyConfigDigest(digest string) lifecycle.DependencyRegistry {
+	local := *s
+	local.ConfigDigest = digest
+	return &local
+}
+
+// withEventReads 只在本次调用复用绑定原 Event，避免复查入口及保留检查重复读取相同事实。
+// 不跨事件缓存主状态，主恢复/关闭仍在每次检查中实时读取。
+func (s *Shielder) withEventReads() *Shielder {
+	if s.Events == nil {
+		return s
+	}
+	local := *s
+	type eventKey struct{ tenant, id string }
+	events := map[eventKey]store.StoredEvent{}
+	local.Events = func(ctx context.Context, tenant, id string) (store.StoredEvent, error) {
+		key := eventKey{tenant, id}
+		if event, ok := events[key]; ok {
+			return event, nil
+		}
+		event, err := s.Events(ctx, tenant, id)
+		if err == nil {
+			events[key] = event
+		}
+		return event, err
+	}
+	return &local
 }
 
 // Check 先维护现有绑定，再按 KAC 的策略优先顺序取首个命中；不重写 Alert 普通展示字段。
 func (s *Shielder) Check(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, snapshot *store.PolicyContext, alert domain.Alert, level func(string) (string, error)) (lifecycle.ShieldEvaluation, error) {
-	return s.check(ctx, event, evaluation, snapshot, alert, level, false)
+	return s.withEventReads().check(ctx, event, evaluation, snapshot, alert, level, false)
 }
 
 func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, snapshot *store.PolicyContext, alert domain.Alert, level func(string) (string, error), timer bool) (lifecycle.ShieldEvaluation, error) {
@@ -107,7 +169,7 @@ func (s *Shielder) check(ctx context.Context, event domain.Event, evaluation dom
 			if ctx.Err() != nil {
 				return result, ctx.Err()
 			}
-			if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
+			if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) || errors.Is(err, ErrDependencyIndexNotReady) || errors.Is(err, redisstate.ErrDependencySnapshotStale) {
 				return result, err
 			}
 			if err != nil {
@@ -243,18 +305,28 @@ func (s *Shielder) keepBinding(ctx context.Context, tenant string, alert domain.
 	if snapshot.ReasonCode != "" {
 		return true, "policy_load_failed", nil
 	}
-	var latest *store.PolicyReleaseRef
-	for _, ref := range snapshot.Releases {
-		if ref.Kind == "shield" && ref.ID == b.Policy.ID {
-			r := ref
-			latest = &r
-			break
+	var current policy.FrozenPolicy
+	var err error
+	if s.Loader.Catalog != nil {
+		var found bool
+		current, found, err = s.Loader.Catalog.Latest(ctx, policy.Scope{TenantID: tenant, Kind: policy.Shield}, b.Policy.ID)
+		if err == nil && !found {
+			return false, "policy_disabled", nil
 		}
+	} else {
+		var latest *store.PolicyReleaseRef
+		for _, ref := range snapshot.Releases {
+			if ref.Kind == "shield" && ref.ID == b.Policy.ID {
+				r := ref
+				latest = &r
+				break
+			}
+		}
+		if latest == nil {
+			return false, "policy_disabled", nil
+		}
+		current, err = s.Loader.load(ctx, tenant, *latest)
 	}
-	if latest == nil {
-		return false, "policy_disabled", nil
-	}
-	current, err := s.Loader.load(ctx, tenant, *latest)
 	if errors.Is(err, policy.ErrAccess) || errors.Is(err, policy.ErrInvalid) {
 		return true, "", err
 	}
@@ -318,6 +390,7 @@ func (s *Shielder) observe(ctx context.Context, tenant, alertID, eventID string,
 
 // Recheck 为控制面复用原 Event 视图及当前配置目录，不创建 Event、占抑制窗口或设置放行记录。
 func (s *Shielder) Recheck(ctx context.Context, alert domain.Alert, at time.Time, level func(string) (string, error)) (lifecycle.ShieldEvaluation, error) {
+	s = s.withEventReads()
 	if alert.Shield.NextCheckAt != nil && s.Loader != nil && s.Loader.Observations != nil && s.Loader.Observations.metrics != nil {
 		s.Loader.Observations.metrics.ObservePolicyDelay(ctx, "shield", at.Sub(*alert.Shield.NextCheckAt))
 	}
@@ -326,7 +399,7 @@ func (s *Shielder) Recheck(ctx context.Context, alert domain.Alert, at time.Time
 		return lifecycle.ShieldEvaluation{Shield: alert.Shield.Clone()}, nil
 	}
 	if s.Loader != nil && slices.ContainsFunc(alert.Shield.Bindings, func(b domain.ShieldBinding) bool { return b.Origin == "manual" }) {
-		snapshot, err := (Snapshotter{Catalog: s.Loader.Catalog}).Snapshot(ctx, domain.Event{BKTenantID: alert.BKTenantID}, at)
+		snapshot, err := (Snapshotter{Catalog: s.Loader.Catalog, Level: level}).Snapshot(ctx, domain.Event{BKTenantID: alert.BKTenantID}, at)
 		if err != nil {
 			return lifecycle.ShieldEvaluation{}, err
 		}
@@ -344,7 +417,7 @@ func (s *Shielder) Recheck(ctx context.Context, alert domain.Alert, at time.Time
 	if source.Event.BKTenantID != alert.BKTenantID || source.Event.EventID != binding.SourceEventID {
 		return lifecycle.ShieldEvaluation{}, policy.ErrAccess
 	}
-	snapshot, err := (Snapshotter{Catalog: s.Loader.Catalog}).Snapshot(ctx, source.Event, at)
+	snapshot, err := (Snapshotter{Catalog: s.Loader.Catalog, Level: level}).Snapshot(ctx, source.Event, at)
 	if err != nil {
 		return lifecycle.ShieldEvaluation{}, err
 	}

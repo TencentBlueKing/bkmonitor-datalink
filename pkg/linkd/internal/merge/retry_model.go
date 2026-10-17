@@ -77,20 +77,20 @@ type ControlPoint struct {
 	Complete bool `json:"complete"`
 	// UpdatedAt 是真实记录更新时间，UTC。
 	UpdatedAt time.Time `json:"updated_at"`
-	// CaptureOffset 是裁决已捕获成员快照的前缀，最多 256。
+	// CaptureOffset 是裁决已捕获成员快照的前缀。
 	CaptureOffset int `json:"capture_offset"`
-	// MemberOffset 是裁决已处理等待成员的前缀，最多 256。
+	// MemberOffset 是裁决已处理等待成员的前缀。
 	MemberOffset int `json:"member_offset"`
-	// IndexOffset 是父及成员反查引用已建立的前缀，最多 257。
+	// IndexOffset 是父及成员反查引用已建立的前缀。
 	IndexOffset int `json:"index_offset"`
-	// EndOffset 是关系已解除等待成员的前缀，最多 256。
+	// EndOffset 是关系已解除等待成员的前缀。
 	EndOffset int `json:"end_offset"`
 }
 
 // Validate 确保摘要可以安全用作请求依据，不把预计身份或未知阶段展示成有效控制点。
 func (p ControlPoint) Validate() error {
 	id, e := domain.MergeDecisionID(p.TenantID, p.WindowID)
-	if !retryScope(p.TenantID, p.Kind, p.TargetID) || e != nil || id != p.TargetID || !retryHash(p.Token) || p.UpdatedAt.IsZero() || p.CaptureOffset < 0 || p.CaptureOffset > 256 || p.MemberOffset < 0 || p.MemberOffset > 256 || p.IndexOffset < 0 || p.IndexOffset > 257 || p.EndOffset < 0 || p.EndOffset > 256 {
+	if !retryScope(p.TenantID, p.Kind, p.TargetID) || e != nil || id != p.TargetID || !retryHash(p.Token) || p.UpdatedAt.IsZero() || p.CaptureOffset < 0 || p.MemberOffset < 0 || p.IndexOffset < 0 || p.EndOffset < 0 {
 		return policy.ErrInvalid
 	}
 	if p.Kind == "decisions" {

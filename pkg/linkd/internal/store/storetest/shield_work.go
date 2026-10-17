@@ -10,6 +10,7 @@
 package storetest
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -31,13 +32,19 @@ func runShieldWorkContract(t *testing.T, factory Factory) {
 		if !ok {
 			t.Fatal("repository must implement shield work")
 		}
-		now := time.Date(2026, 9, 1, 0, 1, 0, 0, time.UTC)
+		now := time.Date(2026, 9, 1, 0, 1, 0, 123456789, time.UTC)
 		create := func(tenant, id string, future bool) store.StoredAlert {
 			t.Helper()
 			a := Alert(tenant, id, "opening", id, "warning")
 			next := now
 			if future {
 				next = now.Add(time.Hour)
+				if id == "alert-b" {
+					next = now.Add(time.Nanosecond)
+				}
+			}
+			if tenant == "tenant-a" && id == "alert-a" {
+				next = now.Truncate(time.Second)
 			}
 			a.Shield = domain.AlertShield{Active: true, Bindings: []domain.ShieldBinding{ShieldBinding(a.CreateAt)}, NextCheckAt: &next}
 			a.PolicyTags = []int64{2, 8}
@@ -49,6 +56,9 @@ func runShieldWorkContract(t *testing.T, factory Factory) {
 		}
 		first := create("tenant-a", "alert-a", false)
 		create("tenant-a", "alert-b", true)
+		for i := range 32 {
+			create("tenant-a", fmt.Sprintf("future-%02d", i), true)
+		}
 		pending := create("tenant-b", "alert-a", false)
 		changed := pending.Alert.Clone()
 		changed.Shield = domain.AlertShield{}
@@ -63,12 +73,11 @@ func runShieldWorkContract(t *testing.T, factory Factory) {
 			t.Fatalf("first page %+v %v", page, err)
 		}
 		page, err = work.ListShieldWork(t.Context(), page.Next, now, 1)
-		if err != nil || len(page.Alerts) != 0 || page.Next.AlertID != "alert-b" {
-			t.Fatalf("future row blocked cursor %+v %v", page, err)
-		}
-		page, err = work.ListShieldWork(t.Context(), page.Next, now, 1)
 		if err != nil || len(page.Alerts) != 1 || page.Alerts[0].Alert.PolicyChange == nil || page.Alerts[0].Alert.BKTenantID != "tenant-b" {
 			t.Fatalf("released pending work lost %+v %v", page, err)
+		}
+		if page.Next.TenantID != "" {
+			t.Fatal("future row consumed a due page", page.Next)
 		}
 		if !reflect.DeepEqual(page.Alerts[0].Alert, saved.Alert) {
 			t.Fatal("shield metadata did not round-trip")

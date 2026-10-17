@@ -205,6 +205,37 @@ func TestTimeShieldTimerDoesNotAdmitUntilNextTrigger(t *testing.T) {
 	}
 }
 
+func TestShieldRecheckReadsEachOriginalEventOnce(t *testing.T) {
+	repo := memory.New()
+	clock := &policyTestClock{at: time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)}
+	state, action := &shieldHook{}, &shieldHook{}
+	p, s := newShieldProcessor(t, repo, clock, &shieldDirectory{releases: []policy.Release{timeShieldRelease(t)}}, state, action)
+	result := mustProcessAggregation(t, repo, p, shieldEvent("original", clock))
+	current, err := repo.GetAlert(t.Context(), "tenant", result.Event.RelatedAlertIDs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	s.Events = func(ctx context.Context, tenant, id string) (store.StoredEvent, error) {
+		reads++
+		return repo.GetEvent(ctx, tenant, id)
+	}
+	checked, err := s.Recheck(t.Context(), current.Alert, clock.at.Add(5*time.Second), nil)
+	if err != nil || !checked.Shield.Active || reads != 1 {
+		t.Fatalf("original event reads=%d shielded=%t err=%v", reads, checked.Shield.Active, err)
+	}
+	// 候选 refs 不含当前事件无法命中的规则，也不能把冻结绑定误判成策略删除。
+	original, err := repo.GetEvent(t.Context(), "tenant", result.Event.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := &store.PolicyContext{EvaluatedAt: clock.at.Add(5 * time.Second), Releases: []store.PolicyReleaseRef{}}
+	checked, err = s.Check(t.Context(), original.Event, original.Event.Evaluations[0], snapshot, current.Alert, nil)
+	if err != nil || !checked.Shield.Active {
+		t.Fatalf("candidate filtering released frozen binding: %v", err)
+	}
+}
+
 func TestPartialUnshieldHistoryKeepsRetainedBindingAndCompleteTransition(t *testing.T) {
 	repo := memory.New()
 	clock := &policyTestClock{at: time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)}

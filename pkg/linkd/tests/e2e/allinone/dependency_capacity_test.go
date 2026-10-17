@@ -115,9 +115,13 @@ func (h *policyHarness) checkDependencyCapacity() {
 	bound := h.assertDependencyBinding(first, main, "cmdb_shield")
 	overflowID := "capacity-union-overflow"
 	h.targetDocuments(edgeIndex, map[string]map[string]any{overflowID: capacityRelationEdge(tenant, "capacity-host-1024", dependencyCapacityRelation, false)})
+	faultAt := time.Now()
 	if refs, err := runtime.Relations.Lookup(h.ctx, tenant, origin, dependencyCapacityRelation, "cmdb.host"); !errors.Is(err, onemodel.ErrResultLimit) || len(refs) != 0 {
 		h.t.Fatalf("1025 union members not rejected: %d %v", len(refs), err)
 	}
+	// 正式 Worker 可使用尚未过期的完整旧关系；等 60 秒预算后才验证溢出不可求值。
+	h.assertDependencyBinding(first, main, "cmdb_shield")
+	h.waitDependencyCacheExpiry(faultAt)
 	overflow := h.send(tenant, "policy-b", "capacity-overflow", "capacity-overflow", "child", "overflow", "warning", "triggered", capacityHostLabels(0))
 	skipped := false
 	if decision := overflow.Processing.PolicyDecision; decision != nil && decision.Shield != nil {
@@ -138,6 +142,8 @@ func (h *policyHarness) checkDependencyCapacity() {
 		h.t.Fatal(err)
 	}
 	h.t.Log("relation overflow skipped new candidate and retained existing binding; restored fixture")
+	h.waitShieldDependencyHealthy(tenant, first, time.Now())
+	h.t.Log("recovered relation snapshot passed worker refresh window; producing 64 additional children")
 	// 65 个子告警覆盖四个满页和一个尾页，跨两个来源共用一个主。
 	records := make([]*kgo.Record, 0, 64)
 	for i := 1; i < 65; i++ {

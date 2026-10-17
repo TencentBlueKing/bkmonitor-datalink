@@ -12,7 +12,6 @@ package mysqlstore
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -466,77 +465,6 @@ func (r *Repository) ScanAllUnprocessedEvents(ctx context.Context, before time.T
 }
 
 func (r *Repository) CompareAndSetEventResult(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result store.EventResult) (store.StoredEvent, error) {
-	if err := contextError(ctx); err != nil {
-		return store.StoredEvent{}, err
-	}
-	if err := validateIdentity(tenantID, "event_id", eventID); err != nil {
-		return store.StoredEvent{}, err
-	}
-	expectedVersion, ok := parseVersion(expected)
-	if !ok {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	defer rollback(tx)
-	current, err := scanStoredEvent(tx.QueryRowContext(ctx, `SELECT `+storedEventColumns+` FROM linkd_events WHERE bk_tenant_id=? AND event_id=? FOR UPDATE`, tenantID, eventID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrNotFound, eventID)
-	}
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	if current.Version != expected {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
-	}
-	if current.Processing.State != domain.EventProcessStateUnprocessed {
-		return store.StoredEvent{}, fmt.Errorf("%w: event already processed", store.ErrInvalidTransition)
-	}
-	updated, processing, err := store.ApplyEventResult(current, result)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	payload, err := encodeEvent(updated)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	processingPayload, err := encodeProcessing(processing)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	newVersion := expectedVersion + 1
-	relatedAlertIDs, err := json.Marshal(updated.RelatedAlertIDs)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	execResult, err := tx.ExecContext(ctx, `UPDATE linkd_events SET payload=?,processing=?,processing_state=?,related_alert_ids=?,version=? WHERE bk_tenant_id=? AND event_id=? AND version=?`, payload, processingPayload, processing.State, relatedAlertIDs, newVersion, tenantID, eventID, expectedVersion)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	affected, err := execResult.RowsAffected()
-	if err != nil || affected != 1 {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q", store.ErrVersionConflict, eventID)
-	}
-	if err := tx.Commit(); err != nil {
-		return store.StoredEvent{}, err
-	}
-	return store.StoredEvent{Event: updated, Processing: processing, Version: versionToken(newVersion)}, nil
-}
-
-// CompareAndSetEventEnrichment 使用同一行版本提交结果；JSON payload 中的来源字段保持不变。
-func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result domain.EventEnrichment) (store.StoredEvent, error) {
-	if err := contextError(ctx); err != nil {
-		return store.StoredEvent{}, err
-	}
-	if err := validateIdentity(tenantID, "event_id", eventID); err != nil {
-		return store.StoredEvent{}, err
-	}
-	version, ok := parseVersion(expected)
-	if !ok {
-		return store.StoredEvent{}, store.ErrVersionConflict
-	}
 	current, err := r.GetEvent(ctx, tenantID, eventID)
 	if err != nil {
 		return store.StoredEvent{}, err
@@ -544,25 +472,17 @@ func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID,
 	if current.Version != expected {
 		return store.StoredEvent{}, store.ErrVersionConflict
 	}
-	updated, err := store.ApplyEventEnrichment(current, result)
+	return r.CompareAndSetLifecycleEventResultFromSnapshot(ctx, current, result)
+}
+
+// CompareAndSetEventEnrichment 保留外部接口的读取语义，内部生命周期直接使用快照入口。
+func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result domain.EventEnrichment) (store.StoredEvent, error) {
+	current, err := r.GetEvent(ctx, tenantID, eventID)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
-	payload, err := encodeEvent(updated)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	// CAS 覆盖读取与写入之间的处理推进，避免覆盖已经冻结的计划或来源快照。
-	written, err := r.db.ExecContext(ctx, `UPDATE linkd_events SET payload=?,version=version+1 WHERE bk_tenant_id=? AND event_id=? AND version=?`, payload, tenantID, eventID, version)
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	affected, err := written.RowsAffected()
-	if err != nil {
-		return store.StoredEvent{}, err
-	}
-	if affected != 1 {
+	if current.Version != expected {
 		return store.StoredEvent{}, store.ErrVersionConflict
 	}
-	return store.StoredEvent{Event: updated, Processing: current.Processing, Version: versionToken(version + 1)}, nil
+	return r.CompareAndSetEventEnrichmentFromSnapshot(ctx, current, result)
 }

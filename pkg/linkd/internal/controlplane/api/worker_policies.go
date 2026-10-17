@@ -63,10 +63,10 @@ func (a *API) workerPolicies(w http.ResponseWriter, r *http.Request) {
 	if !a.authorizeWorkerPolicies(w, r, scope) {
 		return
 	}
-	limit := 3
+	limit := policy.MaxPageSize
 	if q.Get("limit") != "" {
 		n, err := strconv.Atoi(q.Get("limit"))
-		if err != nil || n < 1 || n > 3 {
+		if err != nil || n < 1 || n > policy.MaxPageSize {
 			policyFailure(w, policy.ErrInvalid)
 			return
 		}

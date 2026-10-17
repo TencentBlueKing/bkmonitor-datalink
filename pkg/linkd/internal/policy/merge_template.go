@@ -272,8 +272,8 @@ func (t *MergeTemplate) Render(ctx context.Context, members []TemplateReader) (m
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if t == nil || len(members) < 2 || len(members) > 256 {
-		return nil, fmt.Errorf("merge template requires 2..256 unique members")
+	if t == nil || len(members) < 2 {
+		return nil, fmt.Errorf("merge template requires at least 2 unique members")
 	}
 	document := map[string]any{}
 	cache := map[string]string{}

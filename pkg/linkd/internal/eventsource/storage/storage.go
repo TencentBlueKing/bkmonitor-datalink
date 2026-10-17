@@ -56,7 +56,7 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 		}
 		s.db = db
 		db.SetMaxOpenConns(8)
-		db.SetMaxIdleConns(4)
+		db.SetMaxIdleConns(8)
 		db.SetConnMaxLifetime(30 * time.Minute)
 		for _, name := range []string{"records", "releases"} {
 			_, e = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+s.table(name)+" (namespace VARBINARY(256) NOT NULL, id VARBINARY(256) NOT NULL, version BIGINT NOT NULL, payload LONGBLOB NOT NULL, PRIMARY KEY(namespace,id))")

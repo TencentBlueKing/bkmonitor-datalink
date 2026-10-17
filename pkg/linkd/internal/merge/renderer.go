@@ -201,5 +201,5 @@ func (j *Journal) RenderAndPrepare(ctx context.Context, tenant, id string, sourc
 	if err != nil {
 		return StoredDecision{}, err
 	}
-	return j.Prepare(ctx, current, event, at)
+	return j.prepare(ctx, current, event, at)
 }

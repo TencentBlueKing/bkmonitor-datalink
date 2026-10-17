@@ -307,7 +307,14 @@ func TestExecutorCaptureRetriesSavedSnapshotAfterProgressFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.docs.failKind = "merge_decisions"
-	if err := f.engine.capture(t.Context(), current, nil, f.decision.FrozenAt); err == nil {
+	a, err := f.repo.GetAlert(t.Context(), f.decision.TenantID, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.journal.Capture(t.Context(), f.decision.TenantID, f.decision.ID, a.Alert); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.journal.advanceCaptured(t.Context(), current, 1, f.decision.FrozenAt); err == nil {
 		t.Fatal("capture progress failure hidden")
 	}
 	stored, err := f.journal.Snapshot(t.Context(), f.decision.TenantID, f.decision.ID, "a")
@@ -333,6 +340,7 @@ func TestExecutorCaptureRetriesSavedSnapshotAfterProgressFailure(t *testing.T) {
 
 func TestExecutorCaptureBudgetResumesFromPersistedPrefix(t *testing.T) {
 	f := newExecutorFixture(t)
+	f.engine.Batch = config.MergeControlConfig{MemberBatchSize: 16, Concurrency: 4}
 	d := f.decision.Clone()
 	d.MemberIDs = nil
 	d.WaitMemberIDs = nil

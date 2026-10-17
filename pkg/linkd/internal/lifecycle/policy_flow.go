@@ -11,17 +11,27 @@ package lifecycle
 
 import (
 	"encoding/json"
+
 	"linkd/internal/domain"
 )
 
 // freezeMergeFlow 在业务 CAS 前固定动作、角色和关系事实；输出重试不再读取关系或策略。
 func freezeMergeFlow(change *domain.AlertMergeChange, relation *domain.MergeRelation) error {
+	var facts *domain.MergeMemberContext
+	if relation != nil {
+		value := relation.MemberContext()
+		facts = &value
+	}
+	return freezeMergeMemberFlow(change, facts)
+}
+
+func freezeMergeMemberFlow(change *domain.AlertMergeChange, relation *domain.MergeMemberContext) error {
 	values := map[string]any{"display_version": 2, "change_kind": change.Kind, "merge_role": "member"}
 	if relation != nil {
 		values["policy"] = relation.Policy
 		values["parent_alert_id"] = relation.ParentAlertID
 		values["parent_alert_title"] = relation.ParentTitle
-		values["member_count"] = len(relation.Members)
+		values["member_count"] = relation.MemberCount
 		values["reason_code"] = relation.EndReason
 	}
 	if change.Kind == "parent_ready" || change.Kind == "parent_recover" {

@@ -26,17 +26,20 @@ type WorkerReader struct {
 	TaskID string
 }
 
-// List 返回最多三条已发布记录，控制面会移除 Pending 配置。
+// List 批量读取已发布记录，控制面会移除 Pending 配置。
 func (r WorkerReader) List(ctx context.Context, scope policy.Scope, after string, limit int) ([]policy.Record, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
-	if limit < 1 || limit > 3 || r.TaskID == "" {
+	if limit < 1 || limit > policy.MaxPageSize || r.TaskID == "" {
 		return nil, policy.ErrInvalid
 	}
 	query := url.Values{"task": {r.TaskID}, "bk_tenant_id": {scope.TenantID}, "type": {string(scope.Kind)}, "after": {after}, "limit": {strconv.Itoa(limit)}}
 	var rows []policy.Record
-	err := r.Client.Call(ctx, http.MethodGet, "/internal/policies?"+query.Encode(), nil, &rows)
+	client := r.Client
+	// 每策略最大 2 MiB，完整批次包含最多 16 条及身份元信息。
+	client.MaxResponseBytes = (policy.MaxPageSize*2 + 1) << 20
+	err := client.Call(ctx, http.MethodGet, "/internal/policies?"+query.Encode(), nil, &rows)
 	return rows, workerPolicyError(err)
 }
 

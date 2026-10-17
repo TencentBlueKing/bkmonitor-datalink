@@ -11,6 +11,7 @@ package redisstate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/policy"
 )
 
 func mergeFixture() MergeRequest {
@@ -104,6 +106,58 @@ func TestRedisMergeRequiresRealDistinctMembersAndFreezesOnce(t *testing.T) {
 	// 原操作在窗口冻结后重投，仍返回首次引用，正式 runtime 会识别已裁决并避免重新挂等待。
 	if replay := joinMerge(t, s, r); !reflect.DeepEqual(replay, first) {
 		t.Fatal("replay moved first result")
+	}
+}
+
+func TestRedisMergeMetadataAndDueSummaryAreIncremental(t *testing.T) {
+	s := redisClipStore(t)
+	r := mergeFixture()
+	r.Duration = 2 * time.Minute
+	first := joinMerge(t, s, r)
+	commitMerge(t, s, r, first)
+	meta, found, err := s.ReadMergeWindowMeta(t.Context(), r.TenantID, first.WindowID)
+	if err != nil || !found || len(meta.Members) != 0 || meta.CommittedCount != 1 || !reflect.DeepEqual(meta.CoveredGroups, []int{0}) {
+		t.Fatal("metadata loaded members or lost summary", meta, err)
+	}
+	due, err := s.ListMergeDue(t.Context(), r.TenantID, r.At.Add(time.Second), 32)
+	if err != nil || len(due) != 0 {
+		t.Fatal("incomplete new window scheduled repeatedly", due, err)
+	}
+	other := r
+	other.Member = domain.DependencyMain{AlertID: "alert-b", EventID: "event-b", EventSourceID: "source-b", Fingerprint: "fp-b", Severity: "warning"}
+	other.Groups = []int{1}
+	other.At = other.At.Add(time.Second)
+	second := joinMerge(t, s, other)
+	commitMerge(t, s, other, second)
+	commitMerge(t, s, other, second)
+	meta, _, err = s.ReadMergeWindowMeta(t.Context(), r.TenantID, first.WindowID)
+	if err != nil || meta.CommittedCount != 2 || !reflect.DeepEqual(meta.CoveredGroups, []int{0, 1}) {
+		t.Fatal("duplicate inflated summary", meta, err)
+	}
+	due, err = s.ListMergeDue(t.Context(), r.TenantID, other.At, 32)
+	if err != nil || len(due) != 1 {
+		t.Fatal("ready window not scheduled", due, err)
+	}
+	if _, frozen, err := s.FreezeMergeWindow(t.Context(), r.TenantID, first.WindowID, meta.Revision, other.At, []MergeCandidate{{AlertID: r.Member.AlertID, Groups: []int{0}}}); err != nil || frozen {
+		t.Fatal("invalid current set frozen", err)
+	}
+	due, err = s.ListMergeDue(t.Context(), r.TenantID, other.At.Add(time.Second), 32)
+	if err != nil || len(due) != 0 {
+		t.Fatal("failed readiness remained hot", due, err)
+	}
+	commitMerge(t, s, other, second)
+	due, err = s.ListMergeDue(t.Context(), r.TenantID, other.At.Add(time.Second), 32)
+	if err != nil || len(due) != 1 {
+		t.Fatal("later related event did not wake window", due, err)
+	}
+	if err := s.client.HSet(t.Context(), s.mergeWindowKey(r.TenantID, first.WindowID), "m:unread", "invalid member").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.ReadMergeWindowMeta(t.Context(), r.TenantID, first.WindowID); err != nil || !found {
+		t.Fatal("metadata read enumerated member payloads", err)
+	}
+	if _, _, err := s.ReadMergeWindow(t.Context(), r.TenantID, first.WindowID); !errors.Is(err, ErrState) {
+		t.Fatal("full read should still reject damaged member", err)
 	}
 }
 
@@ -234,7 +288,117 @@ func TestRedisMergeConcurrentMembersShareOneWindow(t *testing.T) {
 	}
 }
 
-func TestRedisMergeMemberBudgetDoesNotTruncateIntoSuccess(t *testing.T) {
+func TestRedisMergeOutOfOrderProcessingTimeKeepsWindowAndFrozenBoundary(t *testing.T) {
+	for _, cyclic := range []bool{false, true} {
+		t.Run(fmt.Sprint("cyclic=", cyclic), func(t *testing.T) {
+			s := redisClipStore(t)
+			latest := mergeFixture()
+			latest.Cyclic = cyclic
+			latest.At = latest.At.Add(time.Second)
+			first := joinMerge(t, s, latest)
+			commitMerge(t, s, latest, first)
+			earlier := latest
+			earlier.At = latest.At.Add(-500 * time.Millisecond)
+			earlier.Member.AlertID, earlier.Member.EventID = "alert-earlier", "event-earlier"
+			earlier.Groups = []int{1}
+			second := joinMerge(t, s, earlier)
+			if second.WindowID != first.WindowID || second.StartedAt != first.StartedAt || second.Deadline != first.Deadline {
+				t.Fatal("out-of-order request split or moved fixed window", first, second)
+			}
+			commitMerge(t, s, earlier, second)
+			before := readMerge(t, s, latest, first)
+			for _, member := range before.Members {
+				if member.FirstAtMillis != first.StartedAt.UnixMilli() {
+					t.Fatal("member was outside half-open window", member)
+				}
+			}
+			if repeated := joinMerge(t, s, earlier); !reflect.DeepEqual(repeated, second) {
+				t.Fatal("normalized request replay moved first result", second, repeated)
+			}
+			after := readMerge(t, s, latest, first)
+			if after.Revision != before.Revision || len(after.Members) != 2 || after.DeadlineMillis != before.DeadlineMillis {
+				t.Fatal("normalized replay changed membership or deadline", before, after)
+			}
+			at := latest.At.Add(time.Second)
+			if cyclic {
+				at = first.Deadline
+			}
+			selection := []MergeCandidate{{AlertID: latest.Member.AlertID, Groups: latest.Groups}, {AlertID: earlier.Member.AlertID, Groups: earlier.Groups}}
+			frozen, ok, err := s.FreezeMergeWindow(t.Context(), latest.TenantID, first.WindowID, after.Revision, at, selection)
+			if err != nil || !ok || frozen.Frozen.Outcome != "succeeded" {
+				t.Fatal("normalized window failed to freeze", frozen, ok, err)
+			}
+			late := earlier
+			late.Member.AlertID, late.Member.EventID = "alert-late", "event-late"
+			if _, err := s.JoinMergeWindow(t.Context(), late); !errors.Is(err, policy.ErrUnavailable) {
+				t.Fatal("older unregistered request reopened frozen window", err)
+			}
+			if current := readMerge(t, s, latest, first); current.Revision != frozen.Revision || len(current.Members) != 2 {
+				t.Fatal("frozen membership changed after old request", current)
+			}
+			if repeated := joinMerge(t, s, earlier); !reflect.DeepEqual(repeated, second) {
+				t.Fatal("frozen retry lost original normalized reference", second, repeated)
+			}
+			next := latest
+			next.Member.AlertID, next.Member.EventID = "alert-next", "event-next"
+			next.At = first.Deadline
+			if boundary := joinMerge(t, s, next); boundary.WindowID == first.WindowID || !boundary.StartedAt.Equal(first.Deadline) || !boundary.Deadline.Equal(first.Deadline.Add(latest.Duration)) {
+				t.Fatal("exact deadline no longer starts a new window", first, boundary)
+			}
+		})
+	}
+}
+
+func TestRedisMerge255ConcurrentOlderRequestsShareExistingWindow(t *testing.T) {
+	s := redisClipStore(t)
+	latest := mergeFixture()
+	latest.Cyclic = true
+	latest.At = latest.At.Add(time.Second)
+	first := joinMerge(t, s, latest)
+	commitMerge(t, s, latest, first)
+	type result struct {
+		request MergeRequest
+		wait    domain.MergeWait
+		err     error
+	}
+	start := make(chan struct{})
+	out := make(chan result, 255)
+	var wg sync.WaitGroup
+	for i := range 255 {
+		wg.Go(func() {
+			request := latest
+			request.At = latest.At.Add(-time.Duration(i+1) * time.Millisecond)
+			request.Member.AlertID, request.Member.EventID = fmt.Sprintf("alert-older-%03d", i), fmt.Sprintf("event-older-%03d", i)
+			request.Groups = []int{i % 2}
+			<-start
+			wait, err := s.JoinMergeWindow(t.Context(), request)
+			out <- result{request, wait, err}
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(out)
+	for result := range out {
+		if result.err != nil || result.wait.WindowID != first.WindowID || result.wait.StartedAt != first.StartedAt || result.wait.Deadline != first.Deadline {
+			t.Fatal("concurrent older request lost its window", result.wait, result.err)
+		}
+		commitMerge(t, s, result.request, result.wait)
+		if repeated := joinMerge(t, s, result.request); !reflect.DeepEqual(repeated, result.wait) {
+			t.Fatal("concurrent normalized replay changed first reference", result.wait, repeated)
+		}
+	}
+	window := readMerge(t, s, latest, first)
+	if len(window.Members) != 256 || window.CommittedCount != 256 || window.StartedAtMillis != first.StartedAt.UnixMilli() || window.DeadlineMillis != first.Deadline.UnixMilli() {
+		t.Fatal("concurrent reversed requests changed window boundary or lost members", len(window.Members), window.CommittedCount, window.StartedAtMillis, window.DeadlineMillis)
+	}
+	for _, member := range window.Members {
+		if !member.Committed || member.FirstAtMillis != first.StartedAt.UnixMilli() {
+			t.Fatal("concurrent member outside fixed window", member)
+		}
+	}
+}
+
+func TestRedisMergeByteBudgetDoesNotTruncateIntoSuccess(t *testing.T) {
 	s := redisClipStore(t)
 	r := mergeFixture()
 	var first domain.MergeWait
@@ -246,6 +410,17 @@ func TestRedisMergeMemberBudgetDoesNotTruncateIntoSuccess(t *testing.T) {
 		if i == 0 {
 			first = w
 		}
+	}
+	// 构造已接近总字节预算的资源计数，新的成员必须原子失败，不能截断已有集合。
+	full := readMerge(t, s, r, first)
+	full.Members = nil
+	full.MemberBytes = mergeWindowMaxBytes
+	raw, err := json.Marshal(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.client.HSet(t.Context(), s.mergeWindowKey(r.TenantID, first.WindowID), "meta", raw).Err(); err != nil {
+		t.Fatal(err)
 	}
 	overflow := r
 	overflow.Member.AlertID = "overflow"

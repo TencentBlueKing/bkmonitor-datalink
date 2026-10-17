@@ -153,6 +153,9 @@ func TestAllInOneCMDBTargetsE2E(t *testing.T) {
 					h.close("cmdb-live", failed)
 					h.expect(failed, "firing", "close")
 					lookupEmpty.Store(false)
+					// 首次读取失败后，控制面和 Worker 各按 5 秒退避恢复；成功前不提交下一业务事件。
+					retryReadyAt := time.Now().Add(12 * time.Second)
+					h.untilWithin("initial dependency lookup retry", 15*time.Second, func() bool { return !time.Now().Before(retryReadyAt) })
 				}
 				// 第一条 Event 前发布完整集合，避免把目录缓存刷新间隔误判为丢失新发布。
 				for _, kind := range []string{"explicit-service", "topology-service", "topology-host"} {
@@ -163,7 +166,12 @@ func TestAllInOneCMDBTargetsE2E(t *testing.T) {
 					ids[kind] = onlyAlert(t, h.send("cmdb-live", "policy-a", kind, kind, kind, "shared", "warning", "triggered", map[string]any{"model_id": model, "model_inst_id": instance}))
 					h.alert(ids[kind], func(a domain.Alert) bool { return a.Shield.Active && a.Admission.AdmittedAt == nil })
 				}
+				faultAt := time.Now()
 				unavailable.Store(true)
+				for _, id := range ids {
+					h.retainAfterTargetFailure(id)
+				}
+				h.waitDependencyCacheExpiry(faultAt)
 				for _, id := range ids {
 					a := h.alert(id, func(a domain.Alert) bool { return a.Shield.Active })
 					h.assertManualShieldCheck("cmdb-live", id, a.Revision, "partial")

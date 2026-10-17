@@ -32,7 +32,7 @@ func (r *Repository) ListShieldWork(ctx context.Context, after store.ShieldWorkC
 			return store.ShieldWorkPage{}, err
 		}
 		key := store.ShieldWorkCursor{TenantID: k.tenantID, AlertID: k.objectID}
-		if key.Compare(after) <= 0 || !store.HasShieldWork(e.alert) {
+		if key.Compare(after) <= 0 || !store.ShieldWorkDue(e.alert, at) {
 			continue
 		}
 		keys = append(keys, key)

@@ -11,7 +11,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"linkd/internal/onemodel"
 	"linkd/internal/policy"
 	"linkd/internal/policy/redisstate"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -42,40 +42,81 @@ type dependencyMain struct {
 // evaluationTargets 只在一次策略求值内复用完整目标/业务范围，不能跨 Event 缓存当前 CMDB 成员。
 // 候选扫描是顺序执行；该对象不共享给其他生命周期 goroutine。
 type evaluationTargets struct {
-	reader  policy.TargetReader
-	scopes  map[int64]onemodel.TargetScope
-	targets *onemodel.TargetResult
+	reader     policy.TargetReader
+	scopes     map[int64]onemodel.TargetScope
+	targets    *onemodel.TargetResult
+	scopeTimes map[int64]time.Time
+	targetsAt  time.Time
 }
 
 func (t *evaluationTargets) ResolveBusinessScope(ctx context.Context, tenant, space string, businessID int64) (onemodel.TargetScope, error) {
 	if scope, ok := t.scopes[businessID]; ok {
+		recordDependencyRead(ctx, t.scopeTimes[businessID])
 		return scope, nil
 	}
 	if t.reader == nil {
 		return onemodel.TargetScope{}, policy.ErrUnavailable
 	}
-	v, err := t.reader.ResolveBusinessScope(ctx, tenant, space, businessID)
+	call, read := TrackDependencyReads(ctx)
+	v, err := t.reader.ResolveBusinessScope(call, tenant, space, businessID)
 	if err == nil {
 		if t.scopes == nil {
 			t.scopes = make(map[int64]onemodel.TargetScope)
+			t.scopeTimes = make(map[int64]time.Time)
 		}
 		t.scopes[businessID] = v
+		t.scopeTimes[businessID] = read.Time()
+		recordDependencyRead(ctx, read.Time())
 	}
 	return v, err
 }
 
 func (t *evaluationTargets) Resolve(ctx context.Context, tenant, space string, d onemodel.TargetDescriptor) (onemodel.TargetResult, error) {
 	if t.targets != nil {
+		recordDependencyRead(ctx, t.targetsAt)
 		return *t.targets, nil
 	}
 	if t.reader == nil {
 		return onemodel.TargetResult{}, policy.ErrUnavailable
 	}
-	v, err := t.reader.Resolve(ctx, tenant, space, d)
+	call, read := TrackDependencyReads(ctx)
+	v, err := t.reader.Resolve(call, tenant, space, d)
 	if err == nil {
 		t.targets = &v
+		t.targetsAt = read.Time()
+		recordDependencyRead(ctx, read.Time())
 	}
 	return v, err
+}
+
+// PrepareTargets 保留底层固定目标快照，使同一次资格判断的业务范围与成员来自同一份源事实。
+func (t *evaluationTargets) PrepareTargets(ctx context.Context, tenant, space string, target *onemodel.TargetDescriptor) (policy.TargetReader, error) {
+	if prepared, ok := t.reader.(policy.PreparedTargetReader); ok {
+		return prepared.PrepareTargets(ctx, tenant, space, target)
+	}
+	return t, nil
+}
+
+// ContainsTarget 保留共享依赖的 O(1) 成员公共面；普通 Reader 仍完整验证解析集合。
+func (t *evaluationTargets) ContainsTarget(ctx context.Context, tenant, space string, d *onemodel.TargetDescriptor, candidate onemodel.InstanceRef) (bool, error) {
+	if prepared, ok := t.reader.(policy.TargetMembershipReader); ok {
+		return prepared.ContainsTarget(ctx, tenant, space, d, candidate)
+	}
+	result, err := t.Resolve(ctx, tenant, space, *d)
+	if err != nil {
+		return false, err
+	}
+	if result.Scope.TenantID != tenant || result.Scope.SpaceCode != space {
+		return false, policy.ErrAccess
+	}
+	found := false
+	for _, ref := range result.Instances {
+		if ref.ModelID != d.ModelID || ref.EntityUID != ref.ModelID+"|"+ref.InstanceID {
+			return false, policy.ErrTargetIdentity
+		}
+		found = found || ref == candidate
+	}
+	return found, nil
 }
 
 func (s *Shielder) dependencyMatch(ctx context.Context, f policy.FrozenPolicy, view *policy.FactView, targets policy.TargetReader, at time.Time, rely bool) (bool, error) {
@@ -89,108 +130,74 @@ func (s *Shielder) dependencyMatch(ctx context.Context, f policy.FrozenPolicy, v
 	return v.Matched, nil
 }
 
-// admittedMain 先完成有界租户扫描，再按 BeginAt 倒序/AlertID 升序选主；不使用子告警时间预过滤。
-// 搜索不是跨文档事务，候选必须实时重读；读取不完整时整条策略跳过，不能从部分结果选主。
+// admittedMain 只读取跨 Worker 共享索引的最新合资格主，不在 Event 路径扫描活动告警。
+// 子条件留在选定主之后执行；最新主不匹配子时不能退选较旧主。
 func (s *Shielder) admittedMain(ctx context.Context, f policy.FrozenPolicy, targets policy.TargetReader, at time.Time, level func(string) (string, error)) (dependencyMain, bool, error) {
-	if s.Candidates == nil || s.CurrentAlert == nil {
-		return dependencyMain{}, false, policy.ErrUnavailable
+	if s.Index == nil || s.CurrentAlert == nil {
+		return dependencyMain{}, false, processingerror.RetryableError{Err: ErrDependencyIndexNotReady}
 	}
-	var chosen dependencyMain
-	after, count, bytes := "", 0, 0
-	for {
-		page, err := s.Candidates.ListActiveAlerts(ctx, f.Release.TenantID, after, 32)
+	version := dependencyVersion(f)
+	indexRef := s.dependencyIndexRef(f)
+	for range 64 {
+		candidate, ready, err := s.Index.TopDependencyCandidate(ctx, f.Release.TenantID, indexRef)
 		if err != nil {
-			return chosen, false, err
+			return dependencyMain{}, false, err
 		}
-		if len(page.Alerts) > 32 {
-			return chosen, false, policy.ErrUnavailable
+		if !ready {
+			return dependencyMain{}, false, processingerror.RetryableError{Err: ErrDependencyIndexNotReady}
 		}
-		last := after
-		for _, stored := range page.Alerts {
-			a := stored.Alert
-			if a.BKTenantID != f.Release.TenantID {
-				return chosen, false, policy.ErrAccess
+		if candidate.AlertID == "" {
+			return dependencyMain{}, false, nil
+		}
+		current, err := s.CurrentAlert(ctx, f.Release.TenantID, candidate.AlertID)
+		if errors.Is(err, store.ErrNotFound) {
+			if err := s.Index.RemoveDependencyCandidate(ctx, f.Release.TenantID, indexRef, candidate); err != nil {
+				return dependencyMain{}, false, err
 			}
-			if a.AlertID <= last || a.Status != domain.AlertStatusActive {
-				return chosen, false, policy.ErrUnavailable
+			continue
+		}
+		if err != nil {
+			return dependencyMain{}, false, err
+		}
+		if current.Alert.BKTenantID != f.Release.TenantID || current.Alert.AlertID != candidate.AlertID {
+			return dependencyMain{}, false, policy.ErrAccess
+		}
+		// CAS 已先落库而增量观察尚未完成时，补齐整个当前候选集合；不能只写本规则并清掉其它规则成员。
+		if current.Alert.AdmittedActiveMain() && current.Alert.Revision > candidate.Revision {
+			if err := s.ObserveDependencyAlert(ctx, current.Alert, level); err != nil {
+				return dependencyMain{}, false, err
 			}
-			last = a.AlertID
-			raw, err := json.Marshal(a)
+			continue
+		}
+		update := redisstate.DependencyCandidateUpdate{TenantID: f.Release.TenantID, ConfigDigest: s.ConfigDigest, AlertID: candidate.AlertID, Revision: current.Alert.Revision, BeginAt: current.Alert.BeginAt, Clear: !current.Alert.AdmittedActiveMain()}
+		if !update.Clear {
+			view, err := policy.AlertView(current.Alert, f.Compiled.Common.FieldMappings, level, policy.RelationContext{})
 			if err != nil {
-				return chosen, false, err
+				return dependencyMain{}, false, err
 			}
-			count++
-			bytes += len(raw)
-			if count > 4096 || bytes > 32<<20 {
-				return chosen, false, policy.ErrUnavailable
-			}
-			if !a.AdmittedActiveMain() {
-				continue
-			}
-			view, err := policy.AlertView(a, f.Compiled.Common.FieldMappings, level, policy.RelationContext{})
+			call, read := TrackDependencyReads(ctx)
+			matched, err := s.dependencyMatch(call, f, view, targets, at, false)
 			if err != nil {
-				return chosen, false, err
+				return dependencyMain{}, false, err
 			}
-			possible, err := f.Compiled.Conditions[0].PossibleMatch(ctx, view)
-			if errors.Is(err, policy.ErrUnavailable) {
-				continue
+			if matched {
+				return dependencyMain{alert: current.Alert, view: view, at: current.Alert.BeginAt}, true, nil
 			}
-			if err != nil {
-				return chosen, false, err
+			observed := read.Time()
+			if observed.IsZero() {
+				observed = time.Now().UTC()
 			}
-			if !possible {
-				continue
+			// 旧 Worker 快照不能撤销较新源事实已经确认的资格，也不能退选老主。
+			if current.Alert.Revision == candidate.Revision && observed.Before(candidate.ObservedAt) {
+				return dependencyMain{}, false, processingerror.RetryableError{Err: ErrDependencyIndexNotReady}
 			}
-			verdict, err := s.Loader.evaluate(ctx, f.Release, f.Compiled, view, targets, at, false, false)
-			if err != nil {
-				return chosen, false, err
-			}
-			if !verdict.Evaluated {
-				// 单条候选的未知字段只影响其新主资格；共享目标/业务依赖失败仍禁止从部分结果选主。
-				switch verdict.Reason {
-				case "business_field_unavailable", "business_field_invalid", "instance_field_unavailable", "condition_unavailable":
-					continue
-				default:
-					return chosen, false, policy.ErrUnavailable
-				}
-			}
-			if verdict.Matched && (chosen.alert.AlertID == "" || a.BeginAt.After(chosen.at) || (a.BeginAt.Equal(chosen.at) && a.AlertID < chosen.alert.AlertID)) {
-				chosen = dependencyMain{alert: a, view: view, at: a.BeginAt}
-			}
+			update.Memberships = []redisstate.DependencyMembership{{Policy: version, ObservedAt: observed}}
 		}
-		if page.Next == "" {
-			break
+		if err := s.Index.ApplyDependencyCandidates(ctx, update); err != nil {
+			return dependencyMain{}, false, err
 		}
-		if page.Next != last || page.Next <= after {
-			return chosen, false, policy.ErrUnavailable
-		}
-		after = page.Next
 	}
-	if chosen.alert.AlertID == "" {
-		return chosen, false, nil
-	}
-	current, err := s.CurrentAlert(ctx, f.Release.TenantID, chosen.alert.AlertID)
-	if err != nil {
-		return chosen, false, err
-	}
-	if current.Alert.BKTenantID != f.Release.TenantID || current.Alert.AlertID != chosen.alert.AlertID {
-		return chosen, false, policy.ErrAccess
-	}
-	if !current.Alert.AdmittedActiveMain() {
-		return chosen, false, policy.ErrUnavailable
-	}
-	view, err := policy.AlertView(current.Alert, f.Compiled.Common.FieldMappings, level, policy.RelationContext{})
-	if err != nil {
-		return chosen, false, err
-	}
-	matched, err := s.dependencyMatch(ctx, f, view, targets, at, false)
-	if err != nil {
-		return chosen, false, err
-	}
-	if !matched {
-		return chosen, false, policy.ErrUnavailable
-	}
-	return dependencyMain{alert: current.Alert, view: view, at: current.Alert.BeginAt}, true, nil
+	return dependencyMain{}, false, processingerror.RetryableError{Err: ErrDependencyIndexNotReady}
 }
 
 func (s *Shielder) loadDependencyMain(ctx context.Context, tenant, id string, ref *domain.DependencyMain, f policy.FrozenPolicy, level func(string) (string, error)) (dependencyMain, error) {

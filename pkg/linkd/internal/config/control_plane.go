@@ -27,8 +27,9 @@ const (
 	defaultRedisStreamTrimBatchesPerCycle                       = 10
 )
 
-// ControlPlaneConfig 描述控制面独占执行的低吞吐管理任务。
+// ControlPlaneConfig 描述控制面管理任务及共享的合并执行预算。
 type ControlPlaneConfig struct {
+	Merge         *MergeControlConfig              `yaml:"merge,omitempty"`
 	ActiveIndex   *ActiveIndexConfig               `yaml:"active_index,omitempty"`
 	DynamicConfig *DynamicConfigConfig             `yaml:"dynamic_config,omitempty"`
 	Elasticsearch *ElasticsearchControlPlaneConfig `yaml:"elasticsearch,omitempty"`
@@ -87,6 +88,10 @@ func (c Config) RedisStreamSettings() *RedisStreamManagerConfig {
 // WithDefaults 返回补齐控制面管理任务默认值且不共享嵌套配置的副本。
 func (c ControlPlaneConfig) WithDefaults() ControlPlaneConfig {
 	normalized := c
+	if c.Merge != nil {
+		v := c.Merge.WithDefaults()
+		normalized.Merge = &v
+	}
 	if c.ActiveIndex != nil {
 		v := c.ActiveIndex.WithDefaults()
 		normalized.ActiveIndex = &v
@@ -150,8 +155,13 @@ func (c RedisStreamManagerConfig) WithDefaults() RedisStreamManagerConfig {
 
 // Validate 校验已声明的控制面任务。
 func (c ControlPlaneConfig) Validate() error {
-	if c.Elasticsearch == nil && c.RedisStream == nil && c.DynamicConfig == nil && c.ActiveIndex == nil {
+	if c.Elasticsearch == nil && c.RedisStream == nil && c.DynamicConfig == nil && c.ActiveIndex == nil && c.Merge == nil {
 		return fmt.Errorf("control_plane must configure at least one management task")
+	}
+	if c.Merge != nil {
+		if err := c.Merge.Validate(); err != nil {
+			return err
+		}
 	}
 	if c.ActiveIndex != nil {
 		if err := c.ActiveIndex.Validate(); err != nil {

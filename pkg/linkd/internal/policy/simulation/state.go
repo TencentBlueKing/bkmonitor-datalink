@@ -237,13 +237,29 @@ func (s *state) CommitMergeMember(ctx context.Context, _ string, alertID string,
 	}
 	for i := range w.Members {
 		if w.Members[i].Main.AlertID == alertID {
+			if w.Members[i].Committed {
+				return true, nil
+			}
 			w.Members[i].Committed = true
 			w.Revision++
+			w.CommittedCount++
+			for _, g := range w.Members[i].Groups {
+				if !slices.Contains(w.CoveredGroups, g) {
+					w.CoveredGroups = append(w.CoveredGroups, g)
+				}
+			}
+			slices.Sort(w.CoveredGroups)
 			s.windows[w.ID] = w
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func (s *state) ReadMergeWindowMeta(ctx context.Context, tenant, id string) (redisstate.MergeWindow, bool, error) {
+	w, found, err := s.ReadMergeWindow(ctx, tenant, id)
+	w.Members = nil
+	return w, found, err
 }
 
 func (s *state) ReadMergeWindow(ctx context.Context, _ string, id string) (redisstate.MergeWindow, bool, error) {

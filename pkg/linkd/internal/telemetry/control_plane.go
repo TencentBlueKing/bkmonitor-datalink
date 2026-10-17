@@ -41,6 +41,8 @@ const (
 	ControlPlaneTaskMergeDecisions ControlPlaneTask = "merge-decisions"
 	// ControlPlaneTaskMergeRelations 记录父子终态检查和关系解除。
 	ControlPlaneTaskMergeRelations ControlPlaneTask = "merge-relations"
+	// ControlPlaneTaskMergeBatches 记录本进程按空闲名额执行的成员批次。
+	ControlPlaneTaskMergeBatches ControlPlaneTask = "merge-batches"
 	// ControlPlaneTaskShieldCheck 记录独立屏蔽解除检查轮次。
 	ControlPlaneTaskShieldCheck ControlPlaneTask = "shield-check"
 	// ControlPlaneTaskPolicyPublication 记录策略待发布记录恢复轮次。

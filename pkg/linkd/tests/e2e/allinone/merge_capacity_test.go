@@ -23,7 +23,7 @@ import (
 	"linkd/internal/policy"
 )
 
-// 在生产任务预算和默认刷新周期下运行满 256 成员，度量完整推进而非只统计写入成功。
+// 在生产任务预算和默认刷新周期下运行 256 成员回归样本，度量完整推进而非只统计写入成功。
 // 仅访问测试独立资源；不缩短控制面周期、不手工推进裁决、不强制刷新业务/合并索引。
 func TestAllInOneMergeCapacityE2E(t *testing.T) {
 	if os.Getenv(e2eEnabledEnv) != "1" {
@@ -162,7 +162,8 @@ func (h *policyHarness) checkMergeCapacity() {
 	h.t.Logf("capacity 256 member recovery + parent in %s", time.Since(started).Round(time.Millisecond))
 	started = time.Now()
 	lastOffset := -1
-	h.untilWithin("capacity relation fully ended", 10*time.Minute, func() bool {
+	// 自动续批应消除每16成员等待30秒的累计延迟；给正常周期发现、页预算和测试调度留余量。
+	h.untilWithin("capacity relation fully ended", 90*time.Second, func() bool {
 		var relation domain.MergeRelation
 		h.call(http.MethodGet, "/api/v1/policy-runtime/merge/relations/"+parent.Merge.RelationIDs[0]+"?bk_tenant_id="+capacityTenant, nil, &relation)
 		if relation.EndOffset != lastOffset {

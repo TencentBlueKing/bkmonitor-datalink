@@ -207,3 +207,41 @@ func TestMergeJudgeRejectsOversizeSnapshotSetBeforeFreezing(t *testing.T) {
 		t.Fatal("oversized partial snapshots frozen", err)
 	}
 }
+
+func TestFrozenMergeJudgeReadsMembersInRealtimeBatches(t *testing.T) {
+	for _, count := range []int{100, 5000, 10000} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) { testFrozenMergeJudgeBatchCount(t, count) })
+	}
+}
+
+func testFrozenMergeJudgeBatchCount(t *testing.T, count int) {
+	t.Helper()
+	ids := []string{}
+	for i := range count {
+		ids = append(ids, fmt.Sprintf("member-%05d", i))
+	}
+	windows := &budgetMergeWindows{window: redisstate.MergeWindow{ID: strings.Repeat("a", 64), TenantID: "tenant", Frozen: &redisstate.MergeVerdict{MemberIDs: ids}}}
+	calls := 0
+	judge := &MergeJudge{Loader: &Suppressor{}, Windows: windows, CurrentAlert: func(context.Context, string, string) (store.StoredAlert, error) {
+		t.Fatal("batch judge used per-member read")
+		return store.StoredAlert{}, nil
+	}, CurrentAlerts: func(ctx context.Context, tenant string, chunk []string) (store.AlertBatch, error) {
+		calls++
+		if len(chunk) > 32 {
+			t.Fatal("unbounded batch")
+		}
+		batch := store.AlertBatch{}
+		for _, id := range chunk {
+			batch.Alerts = append(batch.Alerts, store.StoredAlert{Alert: storetest.Alert(tenant, id, "event-"+id, "fp-"+id, "warning"), Version: store.NewVersionToken("1")})
+		}
+		return batch, nil
+	}}
+	result, err := judge.Evaluate(t.Context(), "tenant", windows.window.ID, time.Now(), nil)
+	if err != nil || len(result.Members) != count || calls != (count+31)/32 {
+		t.Fatal("frozen set not read in bounded batches", calls, err)
+	}
+	judge.CurrentAlerts = func(context.Context, string, []string) (store.AlertBatch, error) { return store.AlertBatch{}, nil }
+	if _, err := judge.Evaluate(t.Context(), "tenant", windows.window.ID, time.Now(), nil); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("missing frozen member silently skipped", err)
+	}
+}

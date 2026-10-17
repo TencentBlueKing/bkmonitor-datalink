@@ -44,9 +44,12 @@ type MergeWorkStore interface {
 	ListMergeWork(context.Context, MergeWorkCursor, int) (MergeWorkPage, error)
 }
 
-// Validate 只接受完整 Alert 作用域的游标和最多 16 项的扫描预算。
+// MergeWorkBatchSize 是等待扫描的单页预算，不改变窗口工作并发。
+const MergeWorkBatchSize = 128
+
+// Validate 只接受完整 Alert 作用域的游标和有界扫描预算。
 func (c MergeWorkCursor) Validate(limit int) error {
-	if limit < 1 || limit > 16 {
+	if limit < 1 || limit > MergeWorkBatchSize {
 		return fmt.Errorf("%w: merge work budget", ErrInvalidArgument)
 	}
 	if c == (MergeWorkCursor{}) {

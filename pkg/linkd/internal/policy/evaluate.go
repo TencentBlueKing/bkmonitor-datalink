@@ -26,6 +26,19 @@ type TargetReader interface {
 	Resolve(context.Context, string, string, onemodel.TargetDescriptor) (onemodel.TargetResult, error)
 }
 
+// TargetMembershipReader 由准备好的目标集合提供常数成本成员判断。
+type TargetMembershipReader interface {
+	ContainsTarget(context.Context, string, string, *onemodel.TargetDescriptor, onemodel.InstanceRef) (bool, error)
+}
+
+// PreparedTargetReader 将业务范围与成员固定在同一份完整目标快照中。
+type PreparedTargetReader interface {
+	PrepareTargets(context.Context, string, string, *onemodel.TargetDescriptor) (TargetReader, error)
+}
+
+// ErrTargetIdentity 保持目标展开返回非法实例时的诊断原因。
+var ErrTargetIdentity = fmt.Errorf("target identity invalid: %w", ErrUnavailable)
+
 // GroupMatch 记录一个配置条件组的独立匹配，合并准入可同时命中多个组。
 type GroupMatch struct {
 	Index int `json:"index"`
@@ -114,8 +127,25 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 	if err != nil || id < 1 {
 		return skip("business_field_invalid", err)
 	}
+	if compiled.Common.Targets != nil && !rely {
+		if prepared, ok := targets.(PreparedTargetReader); ok {
+			targets, err = prepared.PrepareTargets(ctx, release.TenantID, compiled.Common.SpaceCode, compiled.Common.Targets)
+			if err != nil {
+				if errors.Is(err, ErrAccess) {
+					return result, err
+				}
+				if errors.Is(err, ErrTargetIdentity) {
+					return skip("target_identity_invalid", err)
+				}
+				return skip("target_resolution_failed", err)
+			}
+		}
+	}
 	scope, err := targets.ResolveBusinessScope(ctx, release.TenantID, compiled.Common.SpaceCode, id)
 	if err != nil {
+		if errors.Is(err, ErrAccess) {
+			return result, err
+		}
 		return skip("business_scope_unavailable", err)
 	}
 	if scope.TenantID != view.TenantID || scope.SpaceCode != compiled.Common.SpaceCode {
@@ -126,21 +156,15 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		return result, nil
 	}
 	if compiled.Common.Targets != nil && !rely {
-		resolved, err := targets.Resolve(ctx, release.TenantID, compiled.Common.SpaceCode, *compiled.Common.Targets)
+		found, err := targetContains(ctx, targets, release.TenantID, compiled.Common.SpaceCode, compiled.Common.Targets, candidate)
 		if err != nil {
+			if errors.Is(err, ErrAccess) {
+				return result, err
+			}
+			if errors.Is(err, ErrTargetIdentity) {
+				return skip("target_identity_invalid", err)
+			}
 			return skip("target_resolution_failed", err)
-		}
-		if resolved.Scope.TenantID != view.TenantID || resolved.Scope.SpaceCode != compiled.Common.SpaceCode {
-			return result, fmt.Errorf("resolved target scope mismatch")
-		}
-		found := false
-		for _, ref := range resolved.Instances {
-			if ref.ModelID != compiled.Common.ModelID || ref.EntityUID != ref.ModelID+"|"+ref.InstanceID {
-				return skip("target_identity_invalid", ErrUnavailable)
-			}
-			if ref == candidate {
-				found = true
-			}
 		}
 		if !found {
 			result.Reason = "outside_target_instances"
@@ -176,6 +200,29 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		return result, nil
 	}
 	return result, nil
+}
+
+func targetContains(ctx context.Context, targets TargetReader, tenant, space string, target *onemodel.TargetDescriptor, candidate onemodel.InstanceRef) (bool, error) {
+	if prepared, ok := targets.(TargetMembershipReader); ok {
+		return prepared.ContainsTarget(ctx, tenant, space, target, candidate)
+	}
+	resolved, err := targets.Resolve(ctx, tenant, space, *target)
+	if err != nil {
+		return false, err
+	}
+	if resolved.Scope.TenantID != tenant || resolved.Scope.SpaceCode != space {
+		return false, ErrAccess
+	}
+	found := false
+	for _, ref := range resolved.Instances {
+		if ref.ModelID != target.ModelID || ref.EntityUID != ref.ModelID+"|"+ref.InstanceID {
+			return false, ErrTargetIdentity
+		}
+		if ref == candidate {
+			found = true
+		}
+	}
+	return found, nil
 }
 
 // EvaluateGrouping 独立求分组键，使组合抑制先完成防抖，再处理本次聚合的字段无效问题。

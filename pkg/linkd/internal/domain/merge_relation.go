@@ -71,7 +71,7 @@ func (r MergeRelation) Validate() error {
 			return fmt.Errorf("invalid merge relation identity")
 		}
 	}
-	if len(r.Members) < 2 || len(r.Members) > 256 || r.IndexOffset < 0 || r.IndexOffset > len(r.Members)+1 {
+	if len(r.Members) < 2 || r.IndexOffset < 0 || r.IndexOffset > len(r.Members)+1 {
 		return fmt.Errorf("invalid merge relation member budget")
 	}
 	for i, m := range r.Members {
@@ -85,7 +85,7 @@ func (r MergeRelation) Validate() error {
 			return fmt.Errorf("ready relation contains unconfirmed member")
 		}
 	}
-	if len(r.WaitMemberIDs) < len(r.Members) || len(r.WaitMemberIDs) > 256 || r.EndOffset < 0 || r.EndOffset > len(r.WaitMemberIDs) {
+	if len(r.WaitMemberIDs) < len(r.Members) || r.EndOffset < 0 || r.EndOffset > len(r.WaitMemberIDs) {
 		return fmt.Errorf("invalid relation cleanup budget")
 	}
 	for i, id := range r.WaitMemberIDs {
@@ -93,8 +93,13 @@ func (r MergeRelation) Validate() error {
 			return fmt.Errorf("invalid relation waiting identity")
 		}
 	}
+	// 两个成员集合均已按ID排序，单次合并遍历确认包含关系。
+	waiting := 0
 	for _, m := range r.Members {
-		if !slices.Contains(r.WaitMemberIDs, m.AlertID) {
+		for waiting < len(r.WaitMemberIDs) && r.WaitMemberIDs[waiting] < m.AlertID {
+			waiting++
+		}
+		if waiting == len(r.WaitMemberIDs) || r.WaitMemberIDs[waiting] != m.AlertID {
 			return fmt.Errorf("selected member is absent from wait set")
 		}
 	}

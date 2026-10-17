@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const identity = (n: number) => z.string().min(1).max(n);
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
-const count = z.number().int().min(0).max(256);
+const count = z.number().int().min(0);
 const instant = z.string().datetime({ offset: true });
 const ref = z.object({
   id: identity(80),
@@ -65,7 +65,7 @@ export const mergeWindow = z.object({
       outcome: z.enum(["succeeded", "failed"]),
       operation_id: hash,
       at_ms: z.number().int(),
-      member_ids: z.array(identity(160)).max(256),
+      member_ids: z.array(identity(160)),
     })
     .optional(),
   members: z
@@ -77,7 +77,7 @@ export const mergeWindow = z.object({
         committed: z.boolean(),
       }),
     )
-    .max(256)
+
     .optional(),
 });
 export const mergeRelation = z.object({
@@ -85,7 +85,7 @@ export const mergeRelation = z.object({
   window_id: hash,
   parent_alert_id: identity(160),
   parent_fingerprint: identity(128),
-  wait_member_ids: z.array(identity(160)).max(256),
+  wait_member_ids: z.array(identity(160)),
   end_offset: count,
   end_reason: z.string().max(80).optional(),
   end_started_at: instant.optional(),
@@ -97,10 +97,9 @@ export const mergeRelation = z.object({
         state: z.enum(["pending", "linked", "terminal"]),
       }),
     )
-    .min(2)
-    .max(256),
+    .min(2),
   state: z.enum(["preparing", "ready", "ending", "ended"]),
-  index_offset: z.number().int().min(0).max(257),
+  index_offset: z.number().int().min(0),
   created_at: instant,
   updated_at: instant,
 });

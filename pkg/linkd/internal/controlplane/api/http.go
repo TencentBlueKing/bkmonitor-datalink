@@ -57,10 +57,16 @@ type API struct {
 	IngestPreviewer interface {
 		Preview(context.Context, ingestpreview.Request) (ingestpreview.Response, error)
 	}
-	DynamicConfig       *dynamicconfig.Manager
-	Lifecycle           config.LifecycleConfig
-	Sources             *eventsource.Service
-	Policies            *policy.Service
+	DynamicConfig      *dynamicconfig.Manager
+	Lifecycle          config.LifecycleConfig
+	Sources            *eventsource.Service
+	Policies           *policy.Service
+	PolicyDependencies PolicyDependencies
+	PolicyCatalog      *policy.Catalog
+	PolicyPreparation  interface {
+		Schedule(context.Context, string) error
+		Invalidate(string)
+	}
 	PolicyStatistics    PolicyStatisticsReader
 	PolicySimulator     *simulation.Service
 	PolicyPreviewer     *policy.Previewer
@@ -147,6 +153,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}/members/{alert}", a.mergeRuntimeSnapshot)
 	mux.HandleFunc("GET /api/v1/dynamic-config", a.dynamicStatus)
 	mux.HandleFunc("GET /internal/policies", a.workerPolicies)
+	mux.HandleFunc("GET /internal/policy-catalog", a.workerPolicyCatalog)
+	mux.HandleFunc("POST /internal/policy-dependencies", a.workerDependencies)
 	mux.HandleFunc("GET /internal/policies/{type}/{id}/releases/{version}", a.workerPolicyRelease)
 	mux.HandleFunc("GET /internal/settings/severity", a.workerSeverity)
 	mux.HandleFunc("POST /internal/heartbeat", a.beat)

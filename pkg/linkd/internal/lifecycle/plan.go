@@ -43,10 +43,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 		FreezeSeverity() (SeverityTable, string)
 	}); ok {
 		table, digest := provider.FreezeSeverity()
-		local := *p
-		local.severity = table
-		local.configDigest = digest
-		p = &local
+		p = p.withFrozenSeverity(table, digest)
 	}
 	if initial.Event.BKTenantID == "" || initial.Event.EventID == "" || initial.Version.IsZero() {
 		return ProcessResult{}, fmt.Errorf("process lifecycle event requires identity and version")
@@ -433,7 +430,7 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent, p
 		return store.StoredEvent{}, err
 	}
 	if target := plan.SystemClose; target != nil {
-		current, err := p.getAlertCurrent(ctx, target.BKTenantID, target.AlertID)
+		current, err := p.readAlertCurrent(ctx, target.BKTenantID, target.AlertID)
 		if err != nil {
 			return store.StoredEvent{}, err
 		}
@@ -543,16 +540,16 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent, p
 
 func (p *Processor) applyMutation(ctx context.Context, event domain.Event, mutation store.AlertMutation, first bool) (store.StoredAlert, error) {
 	target := mutation.Alert
-	current, err := p.getAlertCurrent(ctx, event.BKTenantID, target.AlertID)
+	current, err := p.readAlertCurrent(ctx, event.BKTenantID, target.AlertID)
 	if err == nil {
 		if domain.SameAlertBusinessSnapshot(current.Alert, target) {
-			return current, nil
+			return current, p.observeDependencyIndex(ctx, current.Alert)
 		}
 		// 源写入之后，控制任务可能继续屏蔽/合并/关闭该生命周期。revision 加上保留的源事件/创建锚点
 		// 证明该源事件已经生效；不能把输出重试当成身份冲突，也不能用旧快照覆盖较新的业务结果。
 		sameLifecycle := current.Alert.BKTenantID == target.BKTenantID && current.Alert.EventSourceID == target.EventSourceID && current.Alert.Fingerprint == target.Fingerprint && current.Alert.TriggerEventID == target.TriggerEventID
 		if sameLifecycle && (mutation.ExpectedVersion == "" || current.Alert.Revision > target.Revision) && (current.Alert.LatestEventID == event.EventID || (mutation.ExpectedVersion == "" && current.Alert.TriggerEventID == event.EventID)) {
-			return current, nil
+			return current, p.observeDependencyIndex(ctx, current.Alert)
 		}
 		if mutation.ExpectedVersion == "" {
 			p.logger.WarnContext(ctx, "create decision conflicts with persisted alert", "module", "lifecycle", "operation", "execute_create_plan",

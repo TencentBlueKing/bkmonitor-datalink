@@ -13,6 +13,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -28,6 +30,71 @@ import (
 	"linkd/internal/policy/redisstate"
 	"linkd/internal/store/storetest"
 )
+
+func TestMergeWindowViewDoesNotCapLargeMemberSets(t *testing.T) {
+	for _, count := range []int{5000, 10000} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			w := redisstate.MergeWindow{GroupCount: 2, Policy: domain.PolicyVersion{ID: "merge", Version: 1, Digest: strings.Repeat("a", 64)}}
+			for i := range count {
+				w.Members = append(w.Members, redisstate.MergeMember{Groups: []int{i % 2}, Committed: true})
+			}
+			view, err := windowView(w, true)
+			if err != nil || view.MemberCount != count || view.CommittedCount != count || len(view.Members) != count || view.GroupCounts[0]+view.GroupCounts[1] != count {
+				t.Fatal("large window view truncated members", view.MemberCount, err)
+			}
+		})
+	}
+}
+
+func TestMergeRuntimeLargeWindowReadsAcrossRealHTTP(t *testing.T) {
+	const count = 10000
+	at := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	w := redisstate.MergeWindow{ID: strings.Repeat("b", 64), TenantID: "tenant", GroupCount: 2, StartedAtMillis: at.UnixMilli(), DeadlineMillis: at.Add(time.Minute).UnixMilli(), Revision: 2, Policy: domain.PolicyVersion{ID: "merge", Version: 1, Digest: strings.Repeat("a", 64)}, Frozen: &redisstate.MergeVerdict{Outcome: "succeeded", OperationID: strings.Repeat("c", 64), AtMillis: at.Add(time.Minute).UnixMilli()}}
+	for i := range count {
+		id := fmt.Sprintf("%s-%05d", strings.Repeat("m", 100), i)
+		w.Members = append(w.Members, redisstate.MergeMember{Main: domain.DependencyMain{AlertID: id, EventID: fmt.Sprintf("event-%d", i), EventSourceID: "source", Fingerprint: fmt.Sprintf("fp-%d", i), Severity: "warning"}, Groups: []int{i % 2}, FirstAtMillis: at.UnixMilli(), Committed: true})
+		w.Frozen.MemberIDs = append(w.Frozen.MemberIDs, id)
+	}
+	a, _, _ := queryAPI(t, &queryWindows{window: w})
+	server := httptest.NewServer(a.Handler())
+	defer server.Close()
+	for _, detail := range []bool{false, true} {
+		path := "/api/v1/policy-runtime/merge/windows"
+		if detail {
+			path += "/" + w.ID
+		}
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+path+"?bk_tenant_id=tenant", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Internal-Token", testJWT(t, "admin"))
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil || response.StatusCode != http.StatusOK || len(raw) <= 1<<20 || len(raw) > 32<<20 {
+			t.Fatal("large window rejected by old HTTP response budget", detail, response.StatusCode, len(raw), err)
+		}
+		var actual mergeWindowView
+		if detail {
+			err = json.Unmarshal(raw, &actual)
+		} else {
+			var page struct {
+				Items []mergeWindowView `json:"items"`
+			}
+			err = json.Unmarshal(raw, &page)
+			if len(page.Items) != 1 {
+				t.Fatal("large summary page lost window", len(page.Items))
+			}
+			actual = page.Items[0]
+		}
+		if err != nil || actual.MemberCount != count || len(actual.Frozen.MemberIDs) != count || (detail && len(actual.Members) != count) {
+			t.Fatal("large HTTP response truncated member set", detail, actual.MemberCount, err)
+		}
+	}
+}
 
 type queryWindows struct {
 	window  redisstate.MergeWindow
@@ -78,6 +145,17 @@ func queryDecision(t *testing.T, j *merge.Journal, tenant, window string) merge.
 		t.Fatal(err)
 	}
 	return saved.Decision
+}
+
+func (d *policyDocuments) PutReferences(ctx context.Context, rows map[string]json.RawMessage) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for id, raw := range rows {
+		key := "merge_relation_refs/" + id
+		d.rows[key] = policyDocument{raw: append(json.RawMessage(nil), raw...), version: d.rows[key].version + 1}
+	}
+	return nil
 }
 
 func queryAPI(t *testing.T, w MergeWindows) (*API, *merge.Journal, *policyDocuments) {

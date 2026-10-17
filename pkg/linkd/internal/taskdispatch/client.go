@@ -30,6 +30,8 @@ type Client struct {
 	// JWTUsername 是管理调用身份，空值默认 admin。
 	JWTUsername string
 	HTTP        *http.Client
+	// MaxResponseBytes 仅用于已知大批量内部读取；零值保持通用接口的 8 MiB 上限。
+	MaxResponseBytes int64
 	// OnResponse 在调用 goroutine 同步观察响应头，不读取远端错误载荷。
 	OnResponse func(http.Header)
 }
@@ -95,7 +97,11 @@ func (c Client) Call(ctx context.Context, method, path string, in, out any) erro
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(out)
+	limit := c.MaxResponseBytes
+	if limit <= 0 {
+		limit = 8 << 20
+	}
+	return json.NewDecoder(io.LimitReader(response.Body, limit)).Decode(out)
 }
 
 // ResponseError 只保留安全的 HTTP 状态，让 Worker 区分授权失败和依赖故障。

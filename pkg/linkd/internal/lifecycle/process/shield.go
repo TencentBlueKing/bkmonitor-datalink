@@ -20,6 +20,7 @@ import (
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/scheduler"
 	"linkd/internal/policy"
+	"linkd/internal/policy/redisstate"
 	policyruntime "linkd/internal/policy/runtime"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/shieldcheck"
@@ -29,27 +30,35 @@ import (
 
 // ShieldChecker 为定时解除复用生命周期租约和状态输出，最多四个并发检查，不创建输入 Event。
 type ShieldChecker struct {
-	slots   chan struct{}
-	run     func(context.Context, string, string, int64) (lifecycle.ShieldCheckReport, error)
-	journal *shieldcheck.Journal
-	logger  *slog.Logger
+	resources *AlertProcessorResources
+	slots     chan struct{}
+	run       func(context.Context, string, string, int64) (lifecycle.ShieldCheckReport, error)
+	journal   *shieldcheck.Journal
+	logger    *slog.Logger
 }
+
+// UseResources 在启动检查任务前注入控制面共用连接。
+func (s *ShieldChecker) UseResources(resources *AlertProcessorResources) { s.resources = resources }
 
 // NewShieldChecker 将真实复查和独立诊断存储装配到同一并发预算。
 func NewShieldChecker(cfg config.Config, sources closeSourceReader, policies *policy.Service, resources *policyruntime.Runtime, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, journal *shieldcheck.Journal, observations ...*policyruntime.Observations) *ShieldChecker {
-	loader := &policyruntime.Suppressor{Releases: policies, Catalog: policy.NewCatalog(policies), Targets: resources.Targets, Logger: logger}
+	catalog := resources.Catalog
+	if catalog == nil {
+		catalog = policy.NewCatalog(policies)
+	}
+	loader := &policyruntime.Suppressor{Releases: policies, Catalog: catalog, Targets: resources.Dependencies, Logger: logger}
 	if len(observations) > 0 {
 		loader.Observations = observations[0]
 	}
 	return &ShieldChecker{slots: make(chan struct{}, 4), journal: journal, logger: logger, run: func(ctx context.Context, tenant, id string, expected int64) (lifecycle.ShieldCheckReport, error) {
 		report := lifecycle.ShieldCheckReport{Outcome: "failed"}
-		err := withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, tenant, id, func(repo store.Repository) []lifecycle.ProcessorOption {
-			return []lifecycle.ProcessorOption{lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: loader, Events: repo.GetEvent, CurrentAlert: func(ctx context.Context, tenant, id string) (store.StoredAlert, error) {
+		err := withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, tenant, id, func(repo store.Repository, policyState *redisstate.Store) []lifecycle.ProcessorOption {
+			return []lifecycle.ProcessorOption{lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: loader, Index: policyState, Events: repo.GetEvent, CurrentAlert: func(ctx context.Context, tenant, id string) (store.StoredAlert, error) {
 				if current, ok := repo.(store.LifecycleAlertStore); ok {
 					return current.GetAlertCurrent(ctx, tenant, id)
 				}
 				return repo.GetAlert(ctx, tenant, id)
-			}, Relations: resources.Relations, Logger: logger, Observer: metrics})}
+			}, Relations: resources.Dependencies, Logger: logger, Observer: metrics})}
 		}, func(p *lifecycle.Processor) error {
 			var err error
 			report, err = p.RecheckShield(ctx, tenant, id, expected)
@@ -103,7 +112,7 @@ func (s *ShieldChecker) checkFrom(ctx context.Context, tenant, id string, expect
 		return result, ctx.Err()
 	}
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)
-	report, err := s.run(call, tenant, id, expected)
+	report, err := s.run(s.resources.context(call), tenant, id, expected)
 	cancel()
 	result.Report = report
 	result.FinishedAt = time.Now().UTC()

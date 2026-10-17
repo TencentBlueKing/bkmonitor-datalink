@@ -33,6 +33,10 @@ func (b *WriteBatchTransport) phase(kind, phase string, duration time.Duration) 
 // 误报为零延迟。连接获取包含建连，首字节包含网络、服务端及本机调度，
 // 均不能直接解释为 ES 内部执行耗时。回调可能来自不同 goroutine。
 func (b *WriteBatchTransport) traceRequest(ctx context.Context, kind string) (context.Context, func()) {
+	return traceRequest(ctx, func(phase string, duration time.Duration) { b.phase(kind, phase, duration) })
+}
+
+func traceRequest(ctx context.Context, observe func(string, time.Duration)) (context.Context, func()) {
 	var mu sync.Mutex
 	var getting, connected, wrote time.Time
 	durations := make(map[string]time.Duration)
@@ -74,7 +78,7 @@ func (b *WriteBatchTransport) traceRequest(ctx context.Context, kind string) (co
 		mu.Lock()
 		defer mu.Unlock()
 		for phase, duration := range durations {
-			b.phase(kind, phase, duration)
+			observe(phase, duration)
 		}
 	}
 }

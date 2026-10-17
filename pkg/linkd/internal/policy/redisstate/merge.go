@@ -55,9 +55,17 @@ type MergeWindow struct {
 	GroupCount      int                  `json:"group_count"`
 	Cyclic          bool                 `json:"cyclic"`
 	Revision        int64                `json:"revision"`
-	Members         []MergeMember        `json:"members,omitempty"`
-	Frozen          *MergeVerdict        `json:"frozen,omitempty"`
+	CommittedCount  int                  `json:"committed_count,omitempty"`
+	// MemberBytes 是已登记成员的序列化资源字节数，避免入窗时重扫全部成员。
+	MemberBytes   int64         `json:"member_bytes,omitempty"`
+	CoveredGroups []int         `json:"covered_groups,omitempty"`
+	Members       []MergeMember `json:"members,omitempty"`
+	Frozen        *MergeVerdict `json:"frozen,omitempty"`
 }
+
+const mergeWindowMaxBytes = 32 << 20
+
+const mergeMetaMaxBytes = 8 << 20
 
 // MergeVerdict 固定本次成功成员及操作身份；后续必须持久化业务裁决，不能只靠该缓存完成父子关系。
 type MergeVerdict struct {
@@ -101,7 +109,8 @@ func mergeWindowID(r MergeRequest) string {
 func mergeMemberField(id string) string { return "m:" + digest("member", id) }
 
 // JoinMergeWindow 原子创建固定半开窗口 [start, deadline) 并按 Alert 去重；相同 Event 重试保留首次结果。
-// 每窗口最多 256 成员、租户最多 4096 待检查窗口；超限整次跳过，不截断后宣称成功。
+// 开放窗口接受并发 I/O 导致的处理时间倒序，较早请求按既有 start 登记，不移动窗口边界。
+// 窗口按32MiB总字节预算接收成员、租户最多4096待检查窗口；超限整次跳过，不截断后宣称成功。
 func (s *Store) JoinMergeWindow(ctx context.Context, r MergeRequest) (domain.MergeWait, error) {
 	if err := r.validate(); err != nil {
 		return domain.MergeWait{}, err
@@ -172,9 +181,12 @@ if id then
  if t~='none' and t~='hash' then return {'state','',''} end
  local raw=redis.call('HGET',key,'meta')
  if raw then
-  if string.len(raw)>262144 then return {'state','',''} end
+  if string.len(raw)>8388608 then return {'state','',''} end
   local ok,v=pcall(cjson.decode,raw);if not ok or type(v)~='table' or type(v.started_at_ms)~='number' or type(v.deadline_ms)~='number' or type(v.revision)~='number' then return {'state','',''} end
-  if at<v.started_at_ms then return {'late','',''} end
+  if at<v.started_at_ms then
+   if v.frozen then return {'late','',''} end
+   at=v.started_at_ms;member.first_at_ms=at
+  end
   if not v.frozen and at<v.deadline_ms then meta=v end
  end
 end
@@ -187,6 +199,12 @@ if not meta then
 else
  if meta.group_count~=proposal.group_count or meta.cyclic~=proposal.cyclic then return {'conflict','',''} end
 end
+-- 缺失计数的旧窗口只在首次继续入窗时求和一次，之后按新成员增量维护。
+if not meta.member_bytes then
+ meta.member_bytes=0
+ local entries=redis.call('HGETALL',key)
+ for i=1,#entries,2 do if entries[i]~='meta' then meta.member_bytes=meta.member_bytes+string.len(entries[i+1]) end end
+end
 local existing=redis.call('HGET',key,ARGV[4])
 if existing then
  if string.len(existing)>4096 then return {'state','',''} end
@@ -194,10 +212,12 @@ if existing then
  if v.main.alert_id~=member.main.alert_id or v.main.event_source_id~=member.main.event_source_id or v.main.fingerprint~=member.main.fingerprint then return {'conflict','',''} end
  member=v
 else
- if redis.call('HLEN',key)>=257 then return {'budget','',''} end
  meta.revision=meta.revision+1
 end
-local metaText=cjson.encode(meta);local memberText=cjson.encode(member)
+local memberText=cjson.encode(member)
+if not existing then meta.member_bytes=meta.member_bytes+string.len(memberText) end
+local metaText=cjson.encode(meta)
+if string.len(metaText)>8388608 or meta.member_bytes+string.len(metaText)>33554432 then return {'budget','',''} end
 redis.call('HSET',key,'meta',metaText,ARGV[4],memberText)
 redis.call('PEXPIRE',key,172800000)
 redis.call('SET',KEYS[1],meta.id,'PX',172800000)
@@ -218,6 +238,9 @@ func (s *Store) CommitMergeMember(ctx context.Context, tenant, alertID string, w
 	if err != nil {
 		return false, err
 	}
+	if n == -2 {
+		return false, ErrBudget
+	}
 	if n < 0 {
 		return false, ErrState
 	}
@@ -226,17 +249,49 @@ func (s *Store) CommitMergeMember(ctx context.Context, tenant, alertID string, w
 
 var commitMergeScript = redis.NewScript(`
 local t=redis.call('TYPE',KEYS[1]).ok;if t=='none' then return 0 end;if t~='hash' then return -1 end
-local raw=redis.call('HGET',KEYS[1],'meta');local m=redis.call('HGET',KEYS[1],ARGV[1]);if not raw or not m then return 0 end;if string.len(raw)>262144 or string.len(m)>4096 then return -1 end
+local raw=redis.call('HGET',KEYS[1],'meta');local m=redis.call('HGET',KEYS[1],ARGV[1]);if not raw or not m then return 0 end;if string.len(raw)>8388608 or string.len(m)>4096 then return -1 end
 local ok,v=pcall(cjson.decode,raw);local mok,member=pcall(cjson.decode,m)
 if not ok or not mok or type(v)~='table' or type(member)~='table' or type(member.main)~='table' or type(v.revision)~='number' then return -1 end
 if member.main.alert_id~=ARGV[2] or member.main.event_id~=ARGV[3] or member.main.severity~=ARGV[4] then return -1 end
-if member.committed then return 1 end;if v.frozen then return 0 end
+if member.committed then
+ if not v.frozen and not v.cyclic then redis.call('ZADD',KEYS[2],v.started_at_ms,ARGV[5]) end
+ return 1
+end;if v.frozen then return 0 end
 local dt=redis.call('TYPE',KEYS[2]).ok;if dt~='none' and dt~='zset' then return -1 end
 member.committed=true;v.revision=v.revision+1
-redis.call('HSET',KEYS[1],'meta',cjson.encode(v),ARGV[1],cjson.encode(member))
-if not v.cyclic then redis.call('ZADD',KEYS[2],v.started_at_ms,ARGV[5]) end
+v.committed_count=(v.committed_count or 0)+1
+local covered={};for _,g in ipairs(v.covered_groups or {}) do covered[g]=true end
+for _,g in ipairs(member.groups) do covered[g]=true end
+v.covered_groups={};for g=0,v.group_count-1 do if covered[g] then table.insert(v.covered_groups,g) end end
+local memberText=cjson.encode(member)
+if v.member_bytes then v.member_bytes=v.member_bytes-string.len(m)+string.len(memberText) end
+local metaText=cjson.encode(v)
+if string.len(metaText)>8388608 or (v.member_bytes or 0)+string.len(metaText)>33554432 then return -2 end
+redis.call('HSET',KEYS[1],'meta',metaText,ARGV[1],memberText)
+if not v.cyclic and v.committed_count>=2 and #v.covered_groups==v.group_count then redis.call('ZADD',KEYS[2],v.started_at_ms,ARGV[5]) end
 return 1
 `)
+
+// ReadMergeWindowMeta 只读取窗口元信息，入窗确认不拉取或排序已有成员。
+func (s *Store) ReadMergeWindowMeta(ctx context.Context, tenant, id string) (MergeWindow, bool, error) {
+	if domain.ValidateIdentityPart("tenant", tenant, 64) != nil || !mergeHash(id) {
+		return MergeWindow{}, false, policy.ErrInvalid
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	raw, err := s.client.HGet(ctx, s.mergeWindowKey(tenant, id), "meta").Bytes()
+	if errors.Is(err, redis.Nil) {
+		return MergeWindow{}, false, nil
+	}
+	if err != nil {
+		return MergeWindow{}, false, err
+	}
+	var w MergeWindow
+	if len(raw) > mergeMetaMaxBytes || json.Unmarshal(raw, &w) != nil || w.ID != id || w.TenantID != tenant || w.Policy.Validate() != nil || !mergeHash(w.GroupKey) || w.Revision < 1 {
+		return MergeWindow{}, false, ErrState
+	}
+	return w, true, nil
+}
 
 // ReadMergeWindow 原子读取完整有界快照；允许尚未确认成员，但裁决必须另行核对真实 Alert。
 func (s *Store) ReadMergeWindow(ctx context.Context, tenant, id string) (MergeWindow, bool, error) {
@@ -255,7 +310,10 @@ func (s *Store) ReadMergeWindow(ctx context.Context, tenant, id string) (MergeWi
 	if len(out) == 0 {
 		return MergeWindow{}, false, nil
 	}
-	if len(out) < 2 || out[0] != "ok" || len(out) > 258 {
+	if len(out) > 0 && out[0] == "budget" {
+		return MergeWindow{}, false, ErrBudget
+	}
+	if len(out) < 2 || out[0] != "ok" {
 		return MergeWindow{}, false, ErrState
 	}
 	var w MergeWindow
@@ -264,7 +322,7 @@ func (s *Store) ReadMergeWindow(ctx context.Context, tenant, id string) (MergeWi
 	}
 	if w.Frozen != nil {
 		f := w.Frozen
-		if !mergeHash(f.OperationID) || (f.Outcome != "succeeded" && f.Outcome != "failed") || f.AtMillis < w.StartedAtMillis || len(f.MemberIDs) > 256 || (f.Outcome == "succeeded" && len(f.MemberIDs) < 2) {
+		if !mergeHash(f.OperationID) || (f.Outcome != "succeeded" && f.Outcome != "failed") || f.AtMillis < w.StartedAtMillis || (f.Outcome == "succeeded" && len(f.MemberIDs) < 2) {
 			return MergeWindow{}, false, ErrState
 		}
 		for i, id := range f.MemberIDs {
@@ -310,10 +368,9 @@ func (s *Store) ReadMergeWindow(ctx context.Context, tenant, id string) (MergeWi
 
 var readMergeScript = redis.NewScript(`
 local t=redis.call('TYPE',KEYS[1]).ok;if t=='none' then return {} end;if t~='hash' then return {'state'} end
-if redis.call('HLEN',KEYS[1])>257 then return {'state'} end
-local meta=redis.call('HGET',KEYS[1],'meta');if not meta or string.len(meta)>262144 then return {'state'} end
-local out={'ok',meta};local entries=redis.call('HGETALL',KEYS[1])
-for i=1,#entries,2 do if entries[i]~='meta' then if string.sub(entries[i],1,2)~='m:' or string.len(entries[i+1])>4096 then return {'state'} end;table.insert(out,entries[i+1]) end end
+local meta=redis.call('HGET',KEYS[1],'meta');if not meta or string.len(meta)>8388608 then return {'state'} end
+local bytes=string.len(meta);local out={'ok',meta};local entries=redis.call('HGETALL',KEYS[1])
+for i=1,#entries,2 do if entries[i]~='meta' then if string.sub(entries[i],1,2)~='m:' or string.len(entries[i+1])>4096 then return {'state'} end;bytes=bytes+string.len(entries[i+1]);if bytes>33554432 then return {'budget'} end;table.insert(out,entries[i+1]) end end
 return out
 `)
 
@@ -326,7 +383,7 @@ type MergeCandidate struct {
 // FreezeMergeWindow 用完整快照 revision 防止选成员期间又有加入/确认；重试返回已冻结结果。
 // 非周期满足全部组且至少两个唯一 Alert 时提前成功，周期只能在精确截止点之后裁决。
 func (s *Store) FreezeMergeWindow(ctx context.Context, tenant, id string, revision int64, at time.Time, candidates []MergeCandidate) (MergeWindow, bool, error) {
-	if domain.ValidateIdentityPart("tenant", tenant, 64) != nil || !mergeHash(id) || revision < 1 || at.IsZero() || at.UnixMilli() < 0 || at.UnixMilli() > 1<<46 || len(candidates) > 256 {
+	if domain.ValidateIdentityPart("tenant", tenant, 64) != nil || !mergeHash(id) || revision < 1 || at.IsZero() || at.UnixMilli() < 0 || at.UnixMilli() > 1<<46 {
 		return MergeWindow{}, false, policy.ErrInvalid
 	}
 	seen := map[string]bool{}
@@ -362,11 +419,17 @@ func (s *Store) FreezeMergeWindow(ctx context.Context, tenant, id string, revisi
 	}
 	raw, _ := json.Marshal(selected)
 	rawFields, _ := json.Marshal(fields)
+	if len(raw) > mergeWindowMaxBytes {
+		return MergeWindow{}, false, ErrBudget
+	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	n, err := freezeMergeScript.Run(ctx, s.client, []string{s.mergeWindowKey(tenant, id)}, revision, at.UnixMilli(), string(raw), string(rawFields), operation).Int()
+	n, err := freezeMergeScript.Run(ctx, s.client, []string{s.mergeWindowKey(tenant, id), s.mergeDueKey(tenant)}, revision, at.UnixMilli(), string(raw), string(rawFields), operation).Int()
 	if err != nil {
 		return MergeWindow{}, false, err
+	}
+	if n == -2 {
+		return MergeWindow{}, false, ErrBudget
 	}
 	if n < 0 {
 		return MergeWindow{}, false, ErrState
@@ -386,7 +449,7 @@ func (s *Store) FreezeMergeWindow(ctx context.Context, tenant, id string, revisi
 
 var freezeMergeScript = redis.NewScript(`
 local t=redis.call('TYPE',KEYS[1]).ok;if t=='none' then return 0 end;if t~='hash' then return -1 end
-local raw=redis.call('HGET',KEYS[1],'meta');if not raw or string.len(raw)>262144 then return -1 end
+local raw=redis.call('HGET',KEYS[1],'meta');if not raw or string.len(raw)>8388608 then return -1 end
 local ok,v=pcall(cjson.decode,raw);if not ok or type(v)~='table' or type(v.revision)~='number' or type(v.deadline_ms)~='number' or type(v.group_count)~='number' then return -1 end
 if v.frozen then return 1 end;if v.revision~=tonumber(ARGV[1]) then return 0 end
 local at=tonumber(ARGV[2]);if at<v.started_at_ms or (v.cyclic and at<v.deadline_ms) then return 0 end
@@ -400,11 +463,21 @@ for i,c in ipairs(candidates) do
 end
 local success=#ids>=2
 for g=0,v.group_count-1 do if not groups[tostring(g)] then success=false end end
-if not success and at<v.deadline_ms then return 0 end
+if not success and at<v.deadline_ms then
+ redis.call('ZADD',KEYS[2],math.min(v.deadline_ms,at+60000),v.id)
+ return 0
+end
 v.revision=v.revision+1;v.frozen={outcome=success and 'succeeded' or 'failed',operation_id=ARGV[5],at_ms=at,member_ids=candidates[1] and ids or cjson.empty_array}
 -- Redis Lua 不同版本对空数组支持不同；无成员时省略该字段，Go 解码为 nil。
 if #ids==0 then v.frozen.member_ids=nil end
-redis.call('HSET',KEYS[1],'meta',cjson.encode(v));return 1
+if not v.member_bytes then
+ v.member_bytes=0
+ local entries=redis.call('HGETALL',KEYS[1])
+ for i=1,#entries,2 do if entries[i]~='meta' then v.member_bytes=v.member_bytes+string.len(entries[i+1]) end end
+end
+local encoded=cjson.encode(v)
+if string.len(encoded)>8388608 or v.member_bytes+string.len(encoded)>33554432 then return -2 end
+redis.call('HSET',KEYS[1],'meta',encoded);return 1
 `)
 
 // ListMergeDue 返回当前租户最多 32 个到期提示；消费者仍须核对实际窗口/成员，不信任索引即成功。
@@ -424,6 +497,27 @@ func (s *Store) ListMergeDue(ctx context.Context, tenant string, at time.Time, l
 		}
 	}
 	return ids, nil
+}
+
+// MergeDueBatchSize 是一次到期提示查询的窗口预算，扫描页在调用方按此分块。
+const MergeDueBatchSize = 16
+
+// MergeDueScores 批量读取已发现窗口的到期提示；缺失提示为零，仍进入恢复检查。
+func (s *Store) MergeDueScores(ctx context.Context, tenant string, ids []string) ([]float64, error) {
+	if domain.ValidateIdentityPart("tenant", tenant, 64) != nil || len(ids) > MergeDueBatchSize {
+		return nil, policy.ErrInvalid
+	}
+	for _, id := range ids {
+		if !mergeHash(id) {
+			return nil, policy.ErrInvalid
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return s.client.ZMScore(ctx, s.mergeDueKey(tenant), ids...).Result()
 }
 
 // FinishMergeWindow 只删除已完成冻结窗口的提示，不删除结果或更新分组指针；迟到确认不影响新窗口。
@@ -446,6 +540,6 @@ func (s *Store) FinishMergeWindow(ctx context.Context, tenant, id string) error 
 var finishMergeScript = redis.NewScript(`
 local t=redis.call('TYPE',KEYS[1]).ok;local d=redis.call('TYPE',KEYS[2]).ok
 if (t~='none' and t~='hash') or (d~='none' and d~='zset') then return -1 end
-if t=='hash' then local raw=redis.call('HGET',KEYS[1],'meta');if not raw or string.len(raw)>262144 then return -1 end;local ok,v=pcall(cjson.decode,raw);if not ok or type(v)~='table' or not v.frozen then return -1 end end
+if t=='hash' then local raw=redis.call('HGET',KEYS[1],'meta');if not raw or string.len(raw)>8388608 then return -1 end;local ok,v=pcall(cjson.decode,raw);if not ok or type(v)~='table' or not v.frozen then return -1 end end
 redis.call('ZREM',KEYS[2],ARGV[1]);return 1
 `)

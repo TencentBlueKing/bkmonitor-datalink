@@ -27,6 +27,48 @@ async function app() {
   return a;
 }
 const base = "/local-api/policy-runtime/merge";
+it("reads a complete 10000-member window larger than the old 1 MiB proxy limit", async () => {
+  const sample = runtimeWindow();
+  const count = 10000;
+  const members = Array.from({ length: count }, (_, i) => ({
+    ...sample.members![0],
+    main: {
+      ...sample.members![0].main,
+      alert_id: `member-${i.toString().padStart(5, "0")}-${"x".repeat(80)}`,
+    },
+  }));
+  const value = {
+    ...sample,
+    member_count: count,
+    committed_count: count,
+    group_counts: [count, 0],
+    members,
+    frozen: {
+      outcome: "succeeded",
+      operation_id: decisionID,
+      at_ms: Date.parse(sample.deadline),
+      member_ids: members.map((m) => m.main.alert_id),
+    },
+  };
+  expect(
+    new TextEncoder().encode(JSON.stringify(value)).length,
+  ).toBeGreaterThan(1 << 20);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json(value)),
+  );
+  const a = await app();
+  try {
+    const result = await a.inject(
+      base + `/windows/${windowID}?bk_tenant_id=${mergeTenant}`,
+    );
+    expect(result.statusCode).toBe(200);
+    expect(result.json().members).toHaveLength(count);
+    expect(result.json().frozen.member_ids).toHaveLength(count);
+  } finally {
+    await a.close();
+  }
+});
 it("forwards bounded tenant reads and preserves missing-window errors without exposing authentication", async () => {
   const fetcher = vi.fn(async (input: string) => {
     const u = new URL(input);

@@ -162,7 +162,7 @@ type mergeWindowView struct {
 }
 
 func windowView(w redisstate.MergeWindow, detail bool) (mergeWindowView, error) {
-	if w.GroupCount < 1 || w.GroupCount > 32 || len(w.Members) > 256 || w.Policy.Validate() != nil {
+	if w.GroupCount < 1 || w.GroupCount > 32 || w.Policy.Validate() != nil {
 		return mergeWindowView{}, policy.ErrUnavailable
 	}
 	v := mergeWindowView{ID: w.ID, Tenant: w.TenantID, Policy: w.Policy, GroupKey: w.GroupKey, StartedAt: time.UnixMilli(w.StartedAtMillis).UTC(), Deadline: time.UnixMilli(w.DeadlineMillis).UTC(), Cyclic: w.Cyclic, Revision: w.Revision, MemberCount: len(w.Members), GroupCounts: make([]int, w.GroupCount), Frozen: w.Frozen}
@@ -270,7 +270,7 @@ func (a *API) listMergeRuntime(w http.ResponseWriter, r *http.Request) {
 		policyFailure(w, err)
 		return
 	}
-	writePolicyRuntime(w, map[string]any{"items": items, "next": q.cursor(next), "bk_tenant_id": q.Tenant})
+	writePolicyRuntimeLimit(w, map[string]any{"items": items, "next": q.cursor(next), "bk_tenant_id": q.Tenant}, 32<<20)
 }
 
 func (a *API) getMergeRuntime(w http.ResponseWriter, r *http.Request) {
@@ -317,7 +317,7 @@ func (a *API) getMergeRuntime(w http.ResponseWriter, r *http.Request) {
 		policyFailure(w, err)
 		return
 	}
-	writePolicyRuntime(w, result)
+	writePolicyRuntimeLimit(w, result, 32<<20)
 }
 
 func (a *API) mergeRuntimeMembers(w http.ResponseWriter, r *http.Request) {

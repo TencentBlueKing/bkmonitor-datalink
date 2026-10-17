@@ -125,7 +125,10 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return err
 	}
 	defer func() { _ = policyResources.Close() }()
+	policyResources.Catalog = policy.NewCatalogWithTTL(policies, time.Minute)
 	api := &controlapi.API{Policies: policies, Tasks: registry, OneModel: oneModelQueries, Previewer: newEnrichPreview(sources, *cfg.Storage, cfg.Resources, logger), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
+	api.PolicyDependencies = policyResources.Dependencies
+	api.PolicyCatalog = policyResources.Catalog
 	// 单租户目录无需蓝鲸连接；多租户目录独立于 CMDB 资源，缺少连接时由接口明确报告不可用。
 	if !cfg.Blueking.EnableMultiTenantMode {
 		api.Tenants = blueking.SingleTenantDirectory{}
@@ -203,10 +206,19 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	closer := lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics, closeProjection)
 	api.AlertCloser = closer
 	api.KACCloser = closer
-	api.ManualShieldBinder = lifecycleprocess.NewManualShieldBinder(cfg, sources, policies, severity, logger, metrics)
+	api.ManualShieldBinder = lifecycleprocess.NewManualShieldBinder(cfg, sources, policies, policyResources, severity, logger, metrics)
 	shieldObservations := policyruntime.NewObservations(queryWindows, metrics)
 	defer shieldObservations.Close()
 	shieldChecks := lifecycleprocess.NewShieldChecker(cfg, sources, policies, policyResources, severity, logger, metrics, shieldJournal, shieldObservations)
+	var controlResources *lifecycleprocess.AlertProcessorResources
+	if cfg.Lifecycle != nil {
+		controlResources, err = lifecycleprocess.OpenAlertProcessorResources(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = controlResources.Close() }()
+		shieldChecks.UseResources(controlResources)
+	}
 	lockConfig := scheduler.DefaultConfig()
 	lockConfig.LockKeyPrefix = fmt.Sprintf("linkd:shield-requests:%x", sha256.Sum256([]byte(d.Deployment)))
 	requestLocker, err := scheduler.NewRedisLocker(queryRedis, lockConfig)
@@ -299,6 +311,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	tasks = append(tasks, taskgroup.Task{Name: "policy-publication", Run: func(ctx context.Context) error {
 		return runPolicyPublication(ctx, policies, logger, registry, metrics)
 	}})
+	tasks = append(tasks, taskgroup.Task{Name: "policy-catalog", Run: policyResources.Catalog.Run})
 	if hasKACDelivery(cfg) {
 		tasks = append(tasks, taskgroup.Task{Name: "kac-index-maintenance", Run: func(ctx context.Context) error {
 			return runKACIndexMaintenance(ctx, projectionSender, registry, metrics, logger)
@@ -324,8 +337,21 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		}})
 	}
 	if cfg.Lifecycle != nil {
+		current := queryRepository.Repository.GetAlert
+		if live, ok := queryRepository.Repository.(store.LifecycleAlertStore); ok {
+			current = live.GetAlertCurrent
+		}
+		currentBatch := queryRepository.Repository.GetAlerts
+		if live, ok := queryRepository.Repository.(store.CurrentAlertBatchStore); ok {
+			currentBatch = live.GetAlertsCurrent
+		}
+		indexer := &dependencyIndexManager{tenants: map[string]*dependencyIndexWork{}, wake: make(chan struct{}, 1), dependencies: policyResources.Dependencies, severity: severity, logger: logger,
+			shielder: &policyruntime.Shielder{Loader: &policyruntime.Suppressor{Releases: policies, Catalog: policyResources.Catalog, Targets: policyResources.Dependencies},
+				Candidates: queryRepository.Repository.(store.ActiveAlertReader), CurrentAlert: current, CurrentAlerts: currentBatch, Index: queryWindows, Dependency: queryWindows, Relations: policyResources.Dependencies, Logger: logger, Observer: metrics}}
+		api.PolicyPreparation = indexer
+		tasks = append(tasks, taskgroup.Task{Name: "dependency-candidate-index", Run: indexer.Run})
 		tasks = append(tasks, taskgroup.Task{Name: "merge", Run: func(ctx context.Context) error {
-			return runMergeTasks(ctx, cfg, sources, policies, mergeJournal, mergeRetries, policyResources, severity, logger, registry, metrics)
+			return runMergeTasks(ctx, cfg, sources, policies, mergeJournal, mergeRetries, policyResources, severity, logger, registry, metrics, controlResources)
 		}})
 		tasks = append(tasks, taskgroup.Task{Name: "suppression-requests", Run: func(ctx context.Context) error {
 			return runSuppressionRequests(ctx, suppressionJournal, suppressionRequests, logger, registry, metrics)

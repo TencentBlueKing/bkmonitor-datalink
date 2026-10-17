@@ -30,13 +30,15 @@ import (
 
 // Runtime 在一个控制面/来源任务内复用有界连接池，缺少资源按本次策略不可求值处理。
 type Runtime struct {
-	Targets   *onemodel.TargetResolver
-	Relations policy.RelationLookup
-	db        *sql.DB
-	transport *onemodelassembly.Connections
-	apigw     *blueking.Client
-	closeOnce sync.Once
-	closeErr  error
+	Targets      *onemodel.TargetResolver
+	Relations    policy.RelationLookup
+	Dependencies *Dependencies
+	Catalog      *policy.Catalog
+	db           *sql.DB
+	transport    *onemodelassembly.Connections
+	apigw        *blueking.Client
+	closeOnce    sync.Once
+	closeErr     error
 }
 
 // Open 仅校验结构并创建连接句柄，不迁移 Kingeye schema，也不探测并依赖远端启动。
@@ -112,6 +114,7 @@ func Open(resources config.ResourcesConfig, bk config.BluekingConfig) (*Runtime,
 		options = append(options, onemodel.WithLiveTargetReader(cmdb.TargetReader{Client: client, Directory: cmdbDirectory}))
 	}
 	r.Targets = onemodel.NewTargetResolver(directory, pager, topology, options...)
+	r.Dependencies = NewDependencies(context.Background(), sourceDependencyLoader(r.Targets, r.Relations))
 	return r, nil
 }
 
@@ -121,6 +124,9 @@ func (r *Runtime) Close() error {
 		return nil
 	}
 	r.closeOnce.Do(func() {
+		if r.Dependencies != nil {
+			r.Dependencies.Close()
+		}
 		if r.apigw != nil {
 			r.apigw.Close()
 		}

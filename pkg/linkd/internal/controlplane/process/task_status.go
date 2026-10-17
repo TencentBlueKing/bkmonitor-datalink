@@ -84,6 +84,10 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 		tasks[len(tasks)-1].ConfigSource = "explicit"
 	}
 	tasks = append(tasks, makeTask("policy-publication", "策略发布恢复", "投影与配置", "periodic", "分页完成已经持久化的待发布策略；每条策略通过 CAS 推进不可变发布。", true, 5, 10, "default", map[string]any{"pageSize": 16}), dynamic, makeTask("source-api", "管理 API", "服务", "service", "提供管理 token 保护的只读观测和来源管理接口。", true, 0, 0, "explicit", map[string]any{"requestTimeoutSeconds": 10}))
+	tasks = append(tasks, makeTask("policy-catalog", "策略目录准备", "投影与配置", "periodic", "共享已发布策略目录和候选索引，发布失效后准备新的完整目录。", true, 1, 0, "default", map[string]any{"refreshSeconds": 60}))
+	dependency := makeTask("dependency-candidate-index", "依赖主候选准备", "投影与配置", "periodic", "新策略和共享目标变化后，批量准备依赖屏蔽主候选。", cfg.Lifecycle != nil, 1, 0, "default", map[string]any{"concurrency": 4, "dependencyMaxAgeSeconds": 60})
+	dependency.DisabledReason = "需要 Lifecycle 配置"
+	tasks = append(tasks, dependency)
 	shield := makeTask("shield-check", "屏蔽定时解除", "投影与配置", "periodic", "分页检查持久化屏蔽及待完成状态输出；同租约下重读、解除，只同步状态。", cfg.Lifecycle != nil, 5, 45, "default", map[string]any{"pageSize": 16, "concurrency": 4, "operationTimeoutSeconds": 10})
 	shield.DisabledReason = "需要 Lifecycle 配置"
 	tasks = append(tasks, shield)
@@ -100,7 +104,8 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 	mergeRequests := makeTask("merge-requests", "合并受控请求", "投影与配置", "periodic", "校验原裁决/关系版本，复用正式窗口租约接续有界步骤；不重置业务结果。", cfg.Lifecycle != nil, 1, 90, "default", map[string]any{"pageSize": 16, "concurrency": 4, "operationTimeoutSeconds": 20, "pendingPerTenant": 1024})
 	mergeRequests.DisabledReason = "需要 Lifecycle 配置"
 	tasks = append(tasks, mergeRequests)
-	mergeRuntime := makeTask("merge", "合并任务运行时", "投影与配置", "service", "监督窗口、裁决、关系和显式请求循环，共用连接池、窗口租约及四个执行名额。", cfg.Lifecycle != nil, 0, 0, "default", map[string]any{"sharedConcurrency": 4})
+	mergeBudget := cfg.MergeControlSettings()
+	mergeRuntime := makeTask("merge", "合并任务运行时", "投影与配置", "service", "监督组级协调与进程内成员批次，共用连接池；组锁不包住成员批次。", cfg.Lifecycle != nil, 0, 0, "default", map[string]any{"sharedConcurrency": mergeBudget.Concurrency, "memberBatchSize": mergeBudget.MemberBatchSize})
 	mergeRuntime.DisabledReason = "需要 Lifecycle 配置"
 	tasks = append(tasks, mergeRuntime)
 	for _, spec := range []struct {
@@ -110,8 +115,17 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 		{"merge-judge", "合并窗口裁决", "逐窗口检查持久化等待，冻结条件或按原截止时间清理丢失窗口。", 1},
 		{"merge-decisions", "合并执行恢复", "推进成员快照、内部父 Event、关系建立及失败释放，并确认窗口提示清理。", 1},
 		{"merge-relations", "合并关系对账", "周期检查父子终态，解除已终结父的关系；活动子等待下一条 Event 才判断处置。", 30},
+		{"merge-batches", "合并成员批次", "内存拆批，按空闲名额启动 goroutine；结果直接回报，崩溃后从关系重建。", 1},
 	} {
-		task := makeTask(spec.id, spec.name, "投影与配置", "periodic", spec.description, cfg.Lifecycle != nil, spec.interval, 45, "default", map[string]any{"pageSize": 16, "sharedConcurrency": 4, "operationTimeoutSeconds": 10})
+		pageSize := 16
+		if spec.id == "merge-judge" {
+			pageSize = 128
+		}
+		task := makeTask(spec.id, spec.name, "投影与配置", "periodic", spec.description, cfg.Lifecycle != nil, spec.interval, 45, "default", map[string]any{"pageSize": pageSize, "sharedConcurrency": mergeBudget.Concurrency, "operationTimeoutSeconds": 10, "memberBatchSize": mergeBudget.MemberBatchSize})
+		if spec.id == "merge-batches" {
+			task.Kind, task.IntervalSeconds, task.DeadlineSeconds = "continuous", 0, 0
+			task.Settings = map[string]any{"concurrency": mergeBudget.Concurrency, "memberBatchSize": mergeBudget.MemberBatchSize, "retryIntervalSeconds": 1}
+		}
 		task.DisabledReason = "需要 Lifecycle 配置"
 		tasks = append(tasks, task)
 	}

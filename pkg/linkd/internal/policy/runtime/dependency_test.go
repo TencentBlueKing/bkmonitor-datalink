@@ -142,6 +142,10 @@ func dependencyFixture(t *testing.T, mode string) (*memory.Repository, *policyTe
 	shielder.Candidates = repo
 	shielder.CurrentAlert = repo.GetAlert
 	shielder.Dependency = &dependencyMemory{entries: map[string]redisstate.DependencyReservation{}}
+	shielder.Index = newMemoryDependencyIndex()
+	if err := shielder.RefreshDependencyIndex(t.Context(), "tenant", clock.at, nil); err != nil {
+		t.Fatal(err)
+	}
 	return repo, clock, shielder, state, action
 }
 
@@ -150,6 +154,11 @@ func dependencyProcessor(t *testing.T, repo *memory.Repository, clock *policyTes
 	upgrade := "update_current"
 	if len(upgrades) > 0 {
 		upgrade = upgrades[0]
+	}
+	// Fixture 可在装配前编辑发布列表；模拟真实配置刷新，而非沿用旧五秒目录。
+	s.Loader.Catalog = policy.NewCatalog(s.Loader.Releases.(policy.RecordReader))
+	if err := s.RefreshDependencyIndex(t.Context(), "tenant", clock.at, nil); err != nil {
+		t.Fatal(err)
 	}
 	// 通过正式选项创建同一 Shielder，不能在生成计划后替换策略依赖。
 	p, err := lifecycle.NewProcessor(repo, lifecycle.NoopRecentAlertCache{}, lifecycle.DeterministicAlertIDGenerator{}, enrich.NoopEnricher{}, []lifecycle.NamedFinalHook{{Name: "state", Purpose: "state", Hook: state}, {Name: "action", Purpose: "action", Hook: action}}, config.DefaultSeverityConfig(), clock, slog.New(slog.NewTextHandler(io.Discard, nil)), lifecycle.WithPolicySnapshotter(Snapshotter{Catalog: s.Loader.Catalog}), lifecycle.WithShieldEvaluator(s), lifecycle.WithSeverityUpgradePolicy(upgrade))
@@ -167,7 +176,7 @@ func dependencyEvent(id, source, title string, clock *policyTestClock) domain.Ev
 	return e
 }
 
-func admittedMainFixture(t *testing.T, repo store.Repository, clock *policyTestClock, id string) domain.Alert {
+func admittedMainFixture(t *testing.T, repo store.Repository, clock *policyTestClock, id string, shielders ...*Shielder) domain.Alert {
 	t.Helper()
 	a := storetest.Alert("tenant", id, "opening-"+id, "fp-"+id, "warning")
 	a.Title = "main"
@@ -183,15 +192,20 @@ func admittedMainFixture(t *testing.T, repo store.Repository, clock *policyTestC
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, s := range shielders {
+		if err := s.ObserveDependencyAlert(t.Context(), created.Alert, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return created.Alert
 }
 
 func TestDependencySelectsNewestBeforeChildTimeAndKeepsBinding(t *testing.T) {
 	repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
 	p := dependencyProcessor(t, repo, clock, s, state, action)
-	old := admittedMainFixture(t, repo, clock, "a-old")
+	old := admittedMainFixture(t, repo, clock, "a-old", s)
 	clock.at = clock.at.Add(time.Minute)
-	newest := admittedMainFixture(t, repo, clock, "z-new")
+	newest := admittedMainFixture(t, repo, clock, "z-new", s)
 	child := mustProcessAggregation(t, repo, p, dependencyEvent("child", "other-source", "child", clock))
 	id := child.Event.RelatedAlertIDs[0]
 	current, _ := repo.GetAlert(t.Context(), "tenant", id)
@@ -200,7 +214,7 @@ func TestDependencySelectsNewestBeforeChildTimeAndKeepsBinding(t *testing.T) {
 	}
 	binding := current.Alert.Shield.Bindings[0].BindingID
 	clock.at = clock.at.Add(time.Minute)
-	admittedMainFixture(t, repo, clock, "newer")
+	admittedMainFixture(t, repo, clock, "newer", s)
 	if changed, err := p.CheckShield(t.Context(), "tenant", id); err != nil || changed {
 		t.Fatal("timer migrated fixed parent", err)
 	}
@@ -236,7 +250,7 @@ func TestDependencyIgnoresUnevaluableCandidateWhenSelectingNewMain(t *testing.T)
 	for _, status := range []domain.EnrichStatus{domain.EnrichStatusPartial, domain.EnrichStatusFailed} {
 		t.Run(string(status), func(t *testing.T) {
 			repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
-			valid := admittedMainFixture(t, repo, clock, "a-valid")
+			valid := admittedMainFixture(t, repo, clock, "a-valid", s)
 			unknown := valid.Clone()
 			unknown.AlertID, unknown.Fingerprint = "z-unknown", "fp-unknown"
 			unknown.BeginAt = clock.at.Add(time.Minute)
@@ -276,7 +290,7 @@ func TestDependencyCandidateFieldCompatibilityDoesNotHideTargetFailure(t *testin
 	for _, failScope := range []bool{false, true} {
 		t.Run(fmt.Sprint("scope=", failScope), func(t *testing.T) {
 			repo, clock, s, _, _ := dependencyFixture(t, "custom_shield")
-			admittedMainFixture(t, repo, clock, "known")
+			admittedMainFixture(t, repo, clock, "known", s)
 			release := dependencyRelease(t, "custom_shield")
 			compiled, err := policy.Compile(policy.Shield, release.Spec)
 			if err != nil {
@@ -308,7 +322,7 @@ func TestDependencyReferenceBindsAndRechecksFrozenMain(t *testing.T) {
 	s.Loader.Catalog = policy.NewCatalog(directory)
 	s.Loader.Releases = directory
 	p := dependencyProcessor(t, repo, clock, s, state, action)
-	main := admittedMainFixture(t, repo, clock, "main")
+	main := admittedMainFixture(t, repo, clock, "main", s)
 	e := dependencyEvent("child", "child-source", "child", clock)
 	e.ExtraData["object"] = json.RawMessage(`"101"`)
 	child := mustProcessAggregation(t, repo, p, e)
@@ -345,8 +359,8 @@ func TestDependencyTimeBoundsAndStableTieBreak(t *testing.T) {
 		t.Run(offset.String(), func(t *testing.T) {
 			repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
 			p := dependencyProcessor(t, repo, clock, s, state, action)
-			admittedMainFixture(t, repo, clock, "z")
-			admittedMainFixture(t, repo, clock, "a")
+			admittedMainFixture(t, repo, clock, "z", s)
+			admittedMainFixture(t, repo, clock, "a", s)
 			e := dependencyEvent("child", "child-source", "child", clock)
 			e.OccurredAt = e.OccurredAt.Add(offset)
 			result := mustProcessAggregation(t, repo, p, e)
@@ -408,6 +422,7 @@ func TestDependencyCMDBUsesTrustedMainAndRetainsOnRelationFailure(t *testing.T) 
 func TestRedisDependencyRegisteredBlockedMainAcrossSources(t *testing.T) {
 	repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
 	s.Dependency = realSuppressionState(t)
+	s.Index = s.Dependency.(DependencyCandidateIndex)
 	// 第一条依赖策略登记主，后一条时间屏蔽阻止其放行；登记资格不等同于处置资格。
 	directory := s.Loader.Releases.(*shieldDirectory)
 	directory.releases = append(directory.releases, timeShieldRelease(t))
@@ -447,6 +462,7 @@ func TestRedisDependencyRegisteredBlockedMainAcrossSources(t *testing.T) {
 func TestRedisDependencyConcurrentLifecycleHasOneMain(t *testing.T) {
 	repo, clock, s, _, _ := dependencyFixture(t, "custom_shield")
 	s.Dependency = realSuppressionState(t)
+	s.Index = s.Dependency.(DependencyCandidateIndex)
 	processors := make([]*lifecycle.Processor, 16)
 	for i := range processors {
 		processors[i] = dependencyProcessor(t, repo, clock, s, &shieldHook{}, &shieldHook{})
@@ -504,24 +520,23 @@ func (f failedCandidates) ListActiveAlerts(ctx context.Context, tenant, after st
 	return store.ActiveAlertPage{}, f.err
 }
 
-func TestDependencyDoesNotUseRegistryAfterIncompleteMainRead(t *testing.T) {
+func TestDependencyReadyIndexDoesNotReadCandidateBackend(t *testing.T) {
 	repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
 	p := dependencyProcessor(t, repo, clock, s, state, action)
 	s.Candidates = failedCandidates{err: errors.New("partial search")}
 	first := mustProcessAggregation(t, repo, p, dependencyEvent("main", "source", "main", clock))
-	if first.Processing.PolicyDecision.Shield.Steps[0].Outcome != "skipped" {
-		t.Fatal("incomplete main search was used")
+	if first.Processing.PolicyDecision.Shield.Steps[0].Outcome != "main_reserved" {
+		t.Fatal("ready empty index did not reserve main")
 	}
 	r := s.Loader.Releases.(*shieldDirectory).releases[0]
 	v := domain.PolicyVersion{ID: r.ID, Version: r.Version, Digest: r.Compiled.Digest}
-	if _, exists, err := s.Dependency.GetDependencyMain(t.Context(), "tenant", v); err != nil || exists {
-		t.Fatal("partial read created registry candidate", err)
+	if _, exists, err := s.Dependency.GetDependencyMain(t.Context(), "tenant", v); err != nil || !exists {
+		t.Fatal("missing registered main", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	e := dependencyEvent("cancel", "source", "main", clock)
-	if _, err := processAggregation(ctx, repo, p, e); !errors.Is(err, context.Canceled) {
-		t.Fatal("cancellation was swallowed", err)
+	if _, err := processAggregation(ctx, repo, p, dependencyEvent("cancel", "source", "main", clock)); !errors.Is(err, context.Canceled) {
+		t.Fatal("cancellation swallowed", err)
 	}
 }
 
@@ -663,7 +678,7 @@ func TestDependencyTerminalHintIsBestEffortAndKeepsCancellation(t *testing.T) {
 func TestUnrelatedDependencyEventsDoNotScanActiveAlerts(t *testing.T) {
 	repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
 	// 很多存量告警或候选后端故障，都不能让无关 Event 进入租户扫描。
-	a := admittedMainFixture(t, repo, clock, "stored-main")
+	a := admittedMainFixture(t, repo, clock, "stored-main", s)
 	stored, err := repo.GetAlert(t.Context(), "tenant", a.AlertID)
 	if err != nil {
 		t.Fatal(err)
@@ -688,20 +703,18 @@ func TestUnrelatedDependencyEventsDoNotScanActiveAlerts(t *testing.T) {
 func TestUnrelatedMainCandidateDoesNotReadCMDB(t *testing.T) {
 	repo, clock, s, _, _ := dependencyFixture(t, "custom_shield")
 	a := admittedMainFixture(t, repo, clock, "unrelated")
-	stored, err := repo.GetAlert(t.Context(), "tenant", a.AlertID)
-	if err != nil {
-		t.Fatal(err)
+	a.Title = "unrelated"
+	s.Loader.Targets = unavailableDependencyTargets{failScope: true}
+	if err := s.ObserveDependencyAlert(t.Context(), a, nil); err != nil {
+		t.Fatal("unrelated candidate reached CMDB", err)
 	}
-	stored.Alert.Title = "unrelated"
-	s.Candidates = &capacityCandidates{template: stored, count: 1}
 	release := dependencyRelease(t, "custom_shield")
 	compiled, err := policy.Compile(release.Kind, release.Spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 本地条件不匹配时，连不可用的目标后端也不应访问。
-	_, found, err := s.admittedMain(t.Context(), policy.FrozenPolicy{Release: release, Compiled: compiled}, unavailableDependencyTargets{failScope: true}, clock.at, nil)
+	_, found, err := s.admittedMain(t.Context(), policy.FrozenPolicy{Release: release, Compiled: compiled}, s.Loader.Targets, clock.at, nil)
 	if err != nil || found {
-		t.Fatalf("unrelated candidate reached CMDB: found=%t err=%v", found, err)
+		t.Fatalf("unrelated candidate indexed: found=%t err=%v", found, err)
 	}
 }

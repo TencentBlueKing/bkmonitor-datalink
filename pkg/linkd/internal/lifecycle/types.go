@@ -107,27 +107,28 @@ type PolicySnapshotter interface {
 }
 
 type Processor struct {
-	contentBuilder AlertContentBuilder
-	publisher      AlertChangePublisher
-	shielder       ShieldEvaluator
-	merger         MergeEvaluator
-	mergeRelations MergeRelationReader
-	dependency     DependencyRegistry
-	suppressor     NewAlertSuppressor
-	policies       PolicySnapshotter
-	repository     store.Repository
-	recentAlerts   RecentAlertCache
-	idGenerator    AlertIDGenerator
-	enricher       EventEnricher
-	enrichObserver EnrichObserver
-	phaseObserver  PhaseObserver
-	phaseTiming    *phaseTiming
-	finalHooks     []NamedFinalHook
-	severity       SeverityTable
-	configDigest   string
-	upgradePolicy  string
-	clock          Clock
-	logger         Logger
+	contentBuilder     AlertContentBuilder
+	publisher          AlertChangePublisher
+	shielder           ShieldEvaluator
+	merger             MergeEvaluator
+	mergeRelations     MergeRelationReader
+	dependency         DependencyRegistry
+	suppressor         NewAlertSuppressor
+	policies           PolicySnapshotter
+	repository         store.Repository
+	recentAlerts       RecentAlertCache
+	idGenerator        AlertIDGenerator
+	enricher           EventEnricher
+	enrichObserver     EnrichObserver
+	phaseObserver      PhaseObserver
+	phaseTiming        *phaseTiming
+	finalHooks         []NamedFinalHook
+	severity           SeverityTable
+	dependencySeverity SeverityTable
+	configDigest       string
+	upgradePolicy      string
+	clock              Clock
+	logger             Logger
 }
 
 func NewProcessor(
@@ -159,7 +160,7 @@ func NewProcessor(
 	processor := &Processor{
 		contentBuilder: SourceContentBuilder{},
 		upgradePolicy:  "close_and_create", repository: repository, recentAlerts: snapshotWrites(recentAlerts), idGenerator: idGenerator, enricher: enricher,
-		enrichObserver: noopEnrichObserver{}, finalHooks: append([]NamedFinalHook(nil), finalHooks...), severity: severity, clock: clock, logger: logger,
+		enrichObserver: noopEnrichObserver{}, finalHooks: append([]NamedFinalHook(nil), finalHooks...), severity: severity, dependencySeverity: severity, clock: clock, logger: logger,
 	}
 	for _, option := range options {
 		if option != nil {

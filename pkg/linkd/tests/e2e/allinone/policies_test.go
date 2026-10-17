@@ -258,7 +258,7 @@ func seedPolicyMetadata(t *testing.T, ctx context.Context, db *sql.DB) {
 			t.Fatal(err)
 		}
 	}
-	for _, tenant := range []string{"clip", "other", "aggregation", "shield", "merge", "dependency-custom", "dependency-cmdb", "merge-cycle", "merge-multi", "merge-combined", "merge-capacity"} {
+	for _, tenant := range []string{"clip", "other", "aggregation", "shield", "merge", "dependency-custom", "dependency-cmdb", "merge-cycle", "merge-multi", "merge-combined", "merge-capacity", "merge-scale"} {
 		if _, err := db.ExecContext(ctx, "INSERT INTO metadata_space VALUES (?, 'bkcc', '2', false)", tenant); err != nil {
 			t.Fatal(err)
 		}
@@ -693,7 +693,8 @@ func (h *policyHarness) suppressionMembers(tenant string, v redisstate.Suppressi
 
 func (h *policyHarness) checkTimeShield() {
 	h.t.Log("enabled time shield: real OneModel target and autonomous expiry without Event")
-	h.publish("shield", policy.Shield, map[string]any{"policy": condition("shield"), "shield_type": "time_shield", "model_id": "cmdb.host", "target_descriptor": map[string]any{"schema_version": 1, "model_id": "cmdb.host", "selectors": []any{map[string]any{"type": "instances", "instances": []any{map[string]any{"model_id": "cmdb.host", "model_inst_id": "host-1", "entity_uid": "cmdb.host|host-1"}}}}}}, time.Now().Add(25*time.Second))
+	// 给首次目录/目标准备及真实 ES 可见性留出时间，仍严格验证无 Event 自动到期。
+	h.publish("shield", policy.Shield, map[string]any{"policy": condition("shield"), "shield_type": "time_shield", "model_id": "cmdb.host", "target_descriptor": map[string]any{"schema_version": 1, "model_id": "cmdb.host", "selectors": []any{map[string]any{"type": "instances", "instances": []any{map[string]any{"model_id": "cmdb.host", "model_inst_id": "host-1", "entity_uid": "cmdb.host|host-1"}}}}}}, time.Now().Add(60*time.Second))
 	id := onlyAlert(h.t, h.send("shield", "policy-a", "shield-first", "s", "shield", "host", "warning", "triggered"))
 	bound := h.alert(id, func(a domain.Alert) bool { return a.Shield.Active && a.Admission.AdmittedAt == nil })
 	h.assertManualShieldCheck("shield", id, bound.Revision, "retained")

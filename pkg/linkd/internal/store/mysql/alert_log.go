@@ -12,9 +12,11 @@ package mysqlstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"linkd/internal/domain"
 	"linkd/internal/store"
@@ -35,25 +37,72 @@ func (r *Repository) AppendAlertLog(
 	return items[0].Result, items[0].Err
 }
 
-// AppendAlertLogs 按输入顺序逐项追加不可变流水，不承诺整批事务或多行 SQL。
-func (r *Repository) AppendAlertLogs(
-	ctx context.Context,
-	logs []domain.AlertLog,
-) ([]store.AppendAlertLogItemResult, error) {
+// AppendAlertLogs 将正常新增日志写成多行 INSERT；重复或 SQL 单项错误才回退逐项确认。
+// 不使用 INSERT IGNORE，避免把载荷错误或身份冲突当作成功。
+func (r *Repository) AppendAlertLogs(ctx context.Context, logs []domain.AlertLog) ([]store.AppendAlertLogItemResult, error) {
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
 	if len(logs) == 0 || len(logs) > store.MaxBatchSize {
-		return nil, fmt.Errorf(
-			"%w: alert log batch size must be between 1 and %d",
-			store.ErrInvalidArgument,
-			store.MaxBatchSize,
-		)
+		return nil, store.ErrInvalidArgument
 	}
+	// 已形成的多行批次直接落库，不再等待自动合批器中的其他调用。
+	if r.batch != nil && len(logs) == 1 {
+		payload, err := json.Marshal(logs)
+		if err != nil {
+			return nil, err
+		}
+		result := r.batch.submit(&writeCall{ctx: ctx, logs: logs, bytes: len(payload)})
+		return result.logs, result.err
+	}
+
 	results := make([]store.AppendAlertLogItemResult, len(logs))
-	for index, log := range logs {
-		results[index].Result, results[index].Err = r.appendAlertLog(ctx, log)
+	indices := make([]int, 0, len(logs))
+	args := make([]any, 0, len(logs)*5)
+	bytes := 0
+	flush := func() {
+		if len(indices) == 0 {
+			return
+		}
+		//nolint:gosec // G202: 只拼接固定占位符，业务值全部通过绑定参数传入。
+		_, err := r.db.ExecContext(ctx, "INSERT INTO linkd_alert_logs (bk_tenant_id,log_id,alert_id,created_time_ns,payload) VALUES "+strings.TrimSuffix(strings.Repeat("(?,?,?,?,?),", len(indices)), ","), args...)
+		for _, i := range indices {
+			if err == nil {
+				results[i].Result.Created = true
+			} else {
+				// InnoDB 单条 INSERT 失败不会留下部分新行；响应丢失重试也沿稳定日志身份确认。
+				results[i].Result, results[i].Err = r.appendAlertLog(ctx, results[i].Result.Log)
+			}
+		}
+		indices, args, bytes = indices[:0], args[:0], 0
 	}
+	for i, log := range logs {
+		normalized, err := log.Normalize()
+		if err == nil {
+			err = validateIdentity(normalized.BKTenantID, "log_id", normalized.LogID)
+		}
+		if err == nil {
+			err = validateIdentityPart("alert_id", normalized.AlertID)
+		}
+		if err != nil {
+			results[i].Err = fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
+			continue
+		}
+		payload, err := encodeAlertLog(normalized)
+		if err != nil {
+			results[i].Err = err
+			continue
+		}
+		// 复用现有 ES 默认批次字节量级，避免合法单项叠成超大 SQL 包；大单项独立发送。
+		if len(indices) > 0 && bytes+len(payload) > 4<<20 {
+			flush()
+		}
+		results[i].Result.Log = normalized
+		indices = append(indices, i)
+		args = append(args, normalized.BKTenantID, normalized.LogID, normalized.AlertID, normalized.CreatedTime.UnixNano(), payload)
+		bytes += len(payload)
+	}
+	flush()
 	return results, nil
 }
 

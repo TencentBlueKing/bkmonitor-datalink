@@ -1,6 +1,7 @@
 # Linkd 总体设计
 
 > 本文按 2026-10-08 工作区代码描述进程职责与处理流程，不代表生产部署或外部系统联调结果。
+> 2026-10-16 合并成员改为单进程内存批次，详见[批处理方案](policy-runtime-scaling.md#1210-单进程内存批次与直接回报)。
 > Event Enrich、三类策略、控制面任务及可靠输出的规则与验收记录见
 > [开发方案](event-enrich-and-alarm-policies.md)；KAC 当前出口以[全局兼容插件](kac-compatibility-plugin.md)为准。
 
@@ -14,6 +15,9 @@
 核心后端由 Cleaner、Lifecycle、Control Plane 三个角色组成，可以独立部署，也可以通过
 `all-in-one` 在同一进程运行。Console 是独立服务；屏蔽复查、合并裁决、存储维护与可靠投递
 属于控制面内部任务，不需要额外部署同名常驻进程。
+
+合并成员由单主控制面在内存拆批，按空闲并发名额启动 goroutine，结果直接回报并推进下一阶段。
+批次不持久化、不跨进程分发；重启依据固定 Decision/Relation 重建并幂等重放，成员仍保留自己的锁与 CAS。
 
 图中实线表示主要数据访问或调用，虚线表示配置调度、观测查询或异步通知。
 
@@ -227,6 +231,7 @@ Elasticsearch 及 HTTP 处置通知的装配，具体范围见[全局兼容插�
 当前提供两种后端运行模式：用于测试和小规模部署的 `all-in-one`，以及可独立扩缩容的 Cleaner、
 Lifecycle、控制面（API / Leader / Manager）三进程模式。常驻进程入口对应 `linkd run cleaner`、
 `linkd run lifecycle` 和 `linkd run control-plane`；职责、故障域和当前完成度见[部署模式与进程拓扑](deployment.md)。
+两种部署模式均由控制面在本进程执行合并成员批次，通过批次大小与进程内并发预算调节吞吐。
 
 ## 详细设计入口
 

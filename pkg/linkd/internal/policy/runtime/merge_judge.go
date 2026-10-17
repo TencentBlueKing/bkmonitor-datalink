@@ -39,15 +39,68 @@ type MergeJudgment struct {
 
 // MergeJudge 重读真实成员及冻结策略，不把 Redis 的 committed 当作当前仍有效的证明。
 type MergeJudge struct {
-	Loader       *Suppressor
-	Windows      MergeWindows
-	CurrentAlert func(context.Context, string, string) (store.StoredAlert, error)
+	Loader        *Suppressor
+	Windows       MergeWindows
+	CurrentAlert  func(context.Context, string, string) (store.StoredAlert, error)
+	CurrentAlerts func(context.Context, string, []string) (store.AlertBatch, error)
+}
+
+// readMembers 使用实时批读；单读端口只服务未实现批读的内存测试替身。
+func (j *MergeJudge) readMembers(ctx context.Context, tenant string, ids []string) (map[string]store.StoredAlert, error) {
+	result := make(map[string]store.StoredAlert, len(ids))
+	bytes := 0
+	add := func(id string, a store.StoredAlert) error {
+		raw, err := json.Marshal(a.Alert)
+		if err != nil {
+			return err
+		}
+		bytes += len(raw)
+		if bytes > 32<<20 {
+			return policy.ErrUnavailable
+		}
+		result[id] = a
+		return nil
+	}
+	for start := 0; start < len(ids); start += 32 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		chunk := ids[start:min(start+32, len(ids))]
+		if j.CurrentAlerts != nil {
+			batch, err := j.CurrentAlerts(ctx, tenant, chunk)
+			if err != nil {
+				return nil, err
+			}
+			for _, a := range batch.Alerts {
+				if a.Alert.BKTenantID != tenant || !slices.Contains(chunk, a.Alert.AlertID) {
+					return nil, policy.ErrAccess
+				}
+				if err := add(a.Alert.AlertID, a); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		for _, id := range chunk {
+			a, err := j.CurrentAlert(ctx, tenant, id)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if err := add(id, a); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return result, nil
 }
 
 // Evaluate 冻结条件满足的成员集合；部分读取、租户错误及取消均不产生半个成功结果。
 // 返回快照必须先写入持久化业务裁决，再创建内部 Event；不能在调用方重试时重新渲染已保存的裁决。
 func (j *MergeJudge) Evaluate(ctx context.Context, tenant, id string, at time.Time, level func(string) (string, error)) (MergeJudgment, error) {
-	if j.Loader == nil || j.Windows == nil || j.CurrentAlert == nil || at.IsZero() {
+	if j.Loader == nil || j.Windows == nil || (j.CurrentAlert == nil && j.CurrentAlerts == nil) || at.IsZero() {
 		return MergeJudgment{}, policy.ErrInvalid
 	}
 	call, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -81,17 +134,26 @@ func (j *MergeJudge) Evaluate(ctx context.Context, tenant, id string, at time.Ti
 	targets := &evaluationTargets{reader: j.Loader.Targets}
 	selected := []redisstate.MergeCandidate{}
 	snapshots := []store.StoredAlert{}
-	snapshotBytes := 0
+	ids := make([]string, 0, len(w.Members))
 	for _, member := range w.Members {
+		if member.Committed {
+			ids = append(ids, member.Main.AlertID)
+		}
+	}
+	currentMembers, err := j.readMembers(call, tenant, ids)
+	if err != nil {
+		return MergeJudgment{}, err
+	}
+	for _, member := range w.Members {
+		if err := call.Err(); err != nil {
+			return MergeJudgment{}, err
+		}
 		if !member.Committed {
 			continue
 		}
-		current, err := j.CurrentAlert(call, tenant, member.Main.AlertID)
-		if errors.Is(err, store.ErrNotFound) {
+		current, found := currentMembers[member.Main.AlertID]
+		if !found {
 			continue
-		}
-		if err != nil {
-			return MergeJudgment{}, err
 		}
 		a := current.Alert
 		if a.BKTenantID != tenant || a.AlertID != member.Main.AlertID || a.EventSourceID != member.Main.EventSourceID || a.Fingerprint != member.Main.Fingerprint {
@@ -133,14 +195,7 @@ func (j *MergeJudge) Evaluate(ctx context.Context, tenant, id string, at time.Ti
 			}
 		}
 		selected = append(selected, redisstate.MergeCandidate{AlertID: a.AlertID, Groups: groups})
-		raw, err := json.Marshal(current.Alert)
-		if err != nil {
-			return MergeJudgment{}, err
-		}
-		snapshotBytes += len(raw)
-		if snapshotBytes > 32<<20 {
-			return MergeJudgment{}, policy.ErrUnavailable
-		}
+		// readMembers 已对完整读取集合执行一次总字节预算，选中子集无需重复序列化。
 		snapshots = append(snapshots, current)
 	}
 	frozen, ok, err := j.Windows.FreezeMergeWindow(call, tenant, id, w.Revision, at, selected)
@@ -150,7 +205,7 @@ func (j *MergeJudge) Evaluate(ctx context.Context, tenant, id string, at time.Ti
 	if !ok {
 		return MergeJudgment{Window: w}, nil
 	}
-	ids := make([]string, 0, len(snapshots))
+	ids = make([]string, 0, len(snapshots))
 	for _, s := range snapshots {
 		ids = append(ids, s.Alert.AlertID)
 	}
@@ -163,22 +218,20 @@ func (j *MergeJudge) Evaluate(ctx context.Context, tenant, id string, at time.Ti
 // 已冻结集合不会因另一轮读取变化重新求条件。持久化裁决已存在时，调用者必须优先复用其快照。
 func (j *MergeJudge) frozenSnapshots(ctx context.Context, w redisstate.MergeWindow) (MergeJudgment, error) {
 	result := MergeJudgment{Window: w, Frozen: true}
-	snapshotBytes := 0
+	members, err := j.readMembers(ctx, w.TenantID, w.Frozen.MemberIDs)
+	if err != nil {
+		return MergeJudgment{}, err
+	}
 	for _, id := range w.Frozen.MemberIDs {
-		a, err := j.CurrentAlert(ctx, w.TenantID, id)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			return MergeJudgment{}, err
+		}
+		a, found := members[id]
+		if !found {
+			return MergeJudgment{}, store.ErrNotFound
 		}
 		if a.Alert.BKTenantID != w.TenantID || a.Alert.AlertID != id {
 			return MergeJudgment{}, policy.ErrAccess
-		}
-		raw, err := json.Marshal(a.Alert)
-		if err != nil {
-			return MergeJudgment{}, err
-		}
-		snapshotBytes += len(raw)
-		if snapshotBytes > 32<<20 {
-			return MergeJudgment{}, policy.ErrUnavailable
 		}
 		result.Members = append(result.Members, a)
 	}

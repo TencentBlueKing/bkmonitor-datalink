@@ -10,6 +10,7 @@
 package storetest
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,6 +66,24 @@ func runMergeContract(t *testing.T, factory Factory) {
 			final, err := repo.CompareAndSetAlert(t.Context(), a.BKTenantID, a.AlertID, found.Version, done)
 			if err != nil || final.Alert.Status != next.Status || !final.Alert.UpdateAt.Equal(next.UpdateAt) || !reflect.DeepEqual(final.Alert.Admission, a.Admission) {
 				t.Fatal("end bookkeeping changed business state", err)
+			}
+			if completion, ok := repo.(store.AlertChangeCompletionStore); ok {
+				// 旧确认不能覆盖新存储版本；完成状态重读后只更新 token，不改变业务字段。
+				if _, err := completion.CompleteAlertChange(t.Context(), found, store.MergeChangeField); !errors.Is(err, store.ErrVersionConflict) {
+					t.Fatal("stale partial completion accepted", err)
+				}
+				actual, err := completion.CompleteAlertChange(t.Context(), final, store.MergeChangeField)
+				if err != nil || !reflect.DeepEqual(actual.Alert, final.Alert) {
+					t.Fatal("partial completion lost fields", err)
+				}
+				read := repo.GetAlert
+				if realtime, ok := repo.(store.LifecycleAlertStore); ok {
+					read = realtime.GetAlertCurrent
+				}
+				reloaded, err := read(t.Context(), a.BKTenantID, a.AlertID)
+				if err != nil || !reflect.DeepEqual(reloaded.Alert, final.Alert) || reloaded.Version != actual.Version {
+					t.Fatal("partial completion persisted differently", err)
+				}
 			}
 		})
 	}

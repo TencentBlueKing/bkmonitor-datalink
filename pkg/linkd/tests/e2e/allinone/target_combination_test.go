@@ -211,7 +211,10 @@ func (h *policyHarness) checkTargetCombinations(descriptor onemodel.TargetDescri
 		h.expect(onlyAlert(h.t, e), "firing")
 	}
 	// 最后的动态 selector 失败，不能使用前面已经命中的静态/拓扑集合。
+	faultAt := time.Now()
 	h.setDynamicConditions(tenant, `[{"field":"unknown","operator":"equal","value":1}]`)
+	h.retainAfterTargetFailure(alerts["shared"])
+	h.waitDependencyCacheExpiry(faultAt)
 	h.retainAfterTargetFailure(alerts["shared"])
 	fault := h.sendMixedTarget("mixed-dynamic-fault", "mixed-dynamic-fault", "shared", 2)
 	h.assertTargetStep(fault, "skipped", "target_resolution_failed")
@@ -224,6 +227,7 @@ func (h *policyHarness) checkTargetCombinations(descriptor onemodel.TargetDescri
 	for _, name := range []string{"shared", "static", "topology"} {
 		h.assertTargetShield(alerts[name])
 	}
+	h.waitWorkerDependencyRefresh()
 	next := h.sendMixedTarget("mixed-dynamic-next", "mixed-dynamic", "dynamic", 2)
 	h.alert(alerts["dynamic"], func(a domain.Alert) bool { return a.Admission.CauseID == next.Event.EventID })
 	h.expect(alerts["dynamic"], "firing")
@@ -239,17 +243,21 @@ func (h *policyHarness) checkTargetCombinations(descriptor onemodel.TargetDescri
 	h.assertUnshieldedWithoutAdmission(alerts["topology"])
 	h.assertTargetShield(alerts["shared"])
 	h.assertTargetShield(alerts["static"])
+	h.waitWorkerDependencyRefresh()
 	next = h.sendMixedTarget("mixed-topology-next", "mixed-topology", "topology", 2)
 	h.alert(alerts["topology"], func(a domain.Alert) bool { return a.Admission.CauseID == next.Event.EventID })
 	h.expect(alerts["topology"], "firing")
 	// 缺失显式实例仍是完整性错误，不因另一个显式实例命中而部分生效。
 	index = h.names.IndexPrefix + "-one-instances"
+	faultAt = time.Now()
 	if _, err := h.es.do(h.ctx, http.MethodDelete, "/"+index+"/_doc/"+tenant+"-static", nil, nil); err != nil {
 		h.t.Fatal(err)
 	}
 	if _, err := h.es.do(h.ctx, http.MethodPost, "/"+index+"/_refresh", nil, nil); err != nil {
 		h.t.Fatal(err)
 	}
+	h.retainAfterTargetFailure(alerts["shared"])
+	h.waitDependencyCacheExpiry(faultAt)
 	h.retainAfterTargetFailure(alerts["shared"])
 	fault = h.sendMixedTarget("mixed-static-fault", "mixed-static-fault", "shared", 2)
 	h.assertTargetStep(fault, "skipped", "target_resolution_failed")

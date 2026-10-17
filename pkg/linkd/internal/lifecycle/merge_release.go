@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"linkd/internal/domain"
 	"linkd/internal/store"
@@ -44,10 +45,7 @@ func (p *Processor) ReleaseMergeWindowWithReason(ctx context.Context, tenant, id
 		FreezeSeverity() (SeverityTable, string)
 	}); ok {
 		table, digest := provider.FreezeSeverity()
-		local := *p
-		local.severity = table
-		local.configDigest = digest
-		return local.ReleaseMergeWindowWithReason(ctx, tenant, id, window, reason)
+		return p.withFrozenSeverity(table, digest).ReleaseMergeWindowWithReason(ctx, tenant, id, window, reason)
 	}
 	for range maxCASAttempts {
 		if err := ctx.Err(); err != nil {
@@ -115,15 +113,18 @@ func (p *Processor) FinishMergeChanges(ctx context.Context, tenant, id string) (
 }
 
 // finishMergeChange 使用保存的稳定 cause 和首次快照重试输出；普通 Hook 失败语义仍由 P6 的可靠投递替换。
-func (p *Processor) finishMergeChange(ctx context.Context, current store.StoredAlert) (store.StoredAlert, error) {
+func (p *Processor) mergeChangeOutput(ctx context.Context, current store.StoredAlert) ([]domain.AlertLog, error) {
 	var err error
 	intent := current.Alert.MergeChange
 	if intent == nil {
-		return current, nil
+		return nil, nil
 	}
 	// CAS 已完成但缓存写失败时，任何后续 Event 必须先修复当前版本再继续处理。
-	if err := p.cacheMergeSnapshot(ctx, current); err != nil {
-		return store.StoredAlert{}, err
+	started := time.Now()
+	cacheErr := p.cacheMergeSnapshot(ctx, current)
+	store.ObserveBatchPhase(ctx, "member.output_cache", time.Since(started))
+	if err := cacheErr; err != nil {
+		return nil, err
 	}
 	operation, _ := json.Marshal(intent.OperationID)
 	window, _ := json.Marshal(intent.WindowID)
@@ -137,7 +138,7 @@ func (p *Processor) finishMergeChange(ctx context.Context, current store.StoredA
 	if intent.Kind == "parent_recover" {
 		kind, outcome = domain.OperationKindRecover, OutcomeAlertRecovered
 		if err := p.clearSuppression(ctx, current.Alert); err != nil {
-			return store.StoredAlert{}, err
+			return nil, err
 		}
 	}
 	relation, _ := json.Marshal(intent.RelationID)
@@ -154,17 +155,29 @@ func (p *Processor) finishMergeChange(ctx context.Context, current store.StoredA
 		logID = digestStrings(namespace, logID)
 	}
 	logs := []domain.AlertLog{{LogID: logID, BKTenantID: current.Alert.BKTenantID, AlertID: current.Alert.AlertID, OperatorKind: domain.OperatorKindSystem, OperationKind: kind, CreatedTime: intent.EffectiveAt, Params: params}}
+	started = time.Now()
 	hookLogs, err := p.runHooks(ctx, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: intent.OperationID}, current.Alert, outcome, intent.ActionReady)
+	if err != nil {
+		return nil, err
+	}
+	store.ObserveBatchPhase(ctx, "member.hooks", time.Since(started))
+	logs = append(logs, hookLogs...)
+	return logs, nil
+}
+
+func (p *Processor) finishMergeChange(ctx context.Context, current store.StoredAlert) (store.StoredAlert, error) {
+	if current.Alert.MergeChange == nil {
+		return current, nil
+	}
+	logs, err := p.mergeChangeOutput(ctx, current)
 	if err != nil {
 		return store.StoredAlert{}, err
 	}
-	logs = append(logs, hookLogs...)
+
 	if err := p.appendAlertLogs(ctx, logs); err != nil {
 		return store.StoredAlert{}, err
 	}
-	next := current.Alert.Clone()
-	next.MergeChange = nil
-	updated, err := p.compareAndSetAlert(ctx, current, next)
+	updated, err := p.completeAlertChange(ctx, current, store.MergeChangeField)
 	if err != nil {
 		return store.StoredAlert{}, err
 	}

@@ -104,7 +104,7 @@ export const simulationResponseSchema = policyScopeSchema.extend({
               started_at: z.string(),
               deadline: z.string(),
               outcome: z.enum(["succeeded", "failed"]),
-              members: z.array(z.string().max(160)).max(256),
+              members: z.array(z.string().max(160)),
             }),
           )
           .max(128),

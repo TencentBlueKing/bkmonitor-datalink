@@ -153,24 +153,33 @@ skipped 处理器不产生这种失败标记。自定义字段仅使用配置显
 
 ## Worker 读取与 Event 上下文
 
-- `GET /internal/policies`：query 为 task、bk_tenant_id、type、after、limit；每页最多 3 条，响应为 Record 数组，
+- `GET /internal/policies`：query 为 task、bk_tenant_id、type、after、limit；每页最多 16 条，响应为 Record 数组，
   保留 published/spec/compiled，移除 pending。使用独立 Worker Token 与 X-Worker-ID。
 - `GET /internal/policies/{type}/{id}/releases/{version}`：query 为 task、bk_tenant_id；返回精确历史版本。
 - 当前任务必须属于该 Worker、角色为 lifecycle 且尚未 stopped；来源绑定租户时必须一致。多租户来源
   仍逐请求显式声明租户，返回数据逐项复核。Cleaner、停止任务和跨租户读取均被拒绝。
 
-Worker 目录缓存最长 5 秒；每租户最多 256 个配置/16 MiB，整个缓存最多 32 个租户/32 MiB 原始配置，
-每轮最多扫描 1024 条含 tombstone 的记录。超限和不完整读取不返回半份配置；过期缓存加载失败不回退旧版本。
+Worker 进程共享目录，后台每 5 秒刷新；控制面共享目录每 60 秒补读，发布/删除接口立即使对应租户失效。
+每租户保留 16 MiB、整个目录保留 32 个租户/32 MiB 原始配置预算，不再以 256 个配置或 1024 条扫描记录限制策略数。
+超限和不完整读取不返回半份配置；过期缓存加载失败不回退旧版本。
+
+- `GET /internal/policy-catalog`：query 为 task、bk_tenant_id；复用同一 Worker/任务授权，返回完整已发布 Release 数组，避免 Worker 逐页请求。
+- `POST /internal/policy-dependencies`：query 为 task、bk_tenant_id；body 指定 `kind=scope|targets|relations`、租户及空间/目标/关系身份。
+  响应带源读取时间 `loaded_at` 及内容变化时间 `changed_at`；控制面按依赖去重，Worker 复用本地成员集合。正常后台提前刷新，成功快照最长使用 60 秒；
+  两层缓存不重置源时间，同内容刷新只推进 `loaded_at`。首次读取合并等待，失败不返回空集合。该接口不接受任意存储查询或外部服务凭据。
+
+逐 Event 仅冻结安全候选引用；精确旧 Release 仍供已有屏蔽绑定和合并决策使用。
+依赖主索引尚未就绪时保留 Mailbox 头并延后，不计作三次失败后的丢弃。实现与规模边界见[运行方案](../../design/policy-runtime-scaling.md)。
 读取授权失败不能作为普通配置依赖失败跳过。
 
-Lifecycle 将首次 evaluated_at 和发布引用（type/id/version/digest）保存到 `processing.policy_context`，
-然后才允许保存/执行计划。该上下文在 Plan 撤销、完成、重投后均保留。普通配置读取失败记录
-`policy_load_failed` 后继续基础生命周期；当前存在版本引用不代表已经产生策略副作用；具体执行与验收进度见[开发方案](../../design/event-enrich-and-alarm-policies.md#111-实施进度与验收记录2026-10-07)。
+Lifecycle 在当前处理调用内使用 evaluated_at 和候选发布引用（type/id/version/digest）；不再持久化逐 Event 的计划或策略上下文。
+普通配置读取失败记录 `policy_load_failed` 后继续基础生命周期；当前存在版本引用不代表已经产生策略副作用。
+屏蔽绑定、合并决策以及已保存的成员快照仍保留各自明确的持久化版本边界。
 
-防抖已在正式 Lifecycle Worker 消费冻结版本并执行；结果保存到 `processing.policy_decision.suppression`，包括活动 Alert 绕过、计数和跳过诊断。
+防抖在正式 Lifecycle Worker 消费本次选中的冻结版本并执行，生成活动 Alert 绕过、计数和跳过诊断。
 活动 Alert 的重复、更新和升级不执行防抖或关联聚合。聚合已实现候选占位、真实主创建后登记、跨来源实时复核与 owner/代次清理。
 运行结果中的 `reserved` 表示计划中的候选资格，不能单凭该字段认定登记副作用已经成功；实际登记状态由 Redis 窗口记录查询。
-屏蔽/合并准入及独立控制任务已装配，完整启用策略的真实后端组合验收仍在推进，不能仅凭配置发布认定运行结果。
+屏蔽/合并准入及独立控制任务已装配，已通过真实 ES/MySQL 启用策略与联合准入用例；具体验证范围见[运行方案](../../design/policy-runtime-scaling.md)，不能仅凭配置发布认定部署环境的运行结果。
 
 时间屏蔽已在 Lifecycle 与独立控制面 `shield-check` 中使用相同匹配器和冻结源视图。已建关系继续使用原 Release，
 普通编辑只影响新裁决，停用/删除会在检查时提前解除；解除只同步状态，不产生处置或合并。

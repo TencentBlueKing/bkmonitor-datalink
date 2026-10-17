@@ -61,7 +61,7 @@ func New(c config.StorageConfig) (*Store, error) {
 		}
 		s.db = db
 		db.SetMaxOpenConns(2)
-		db.SetMaxIdleConns(1)
+		db.SetMaxIdleConns(2)
 		db.SetConnMaxLifetime(30 * time.Minute)
 	case config.RepositoryTypeElasticsearch:
 		if c.Elasticsearch == nil {

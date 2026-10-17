@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -118,15 +119,15 @@ func openMySQLMode(ctx context.Context, cfg config.MySQLConfig, maxConnections i
 	dsn.Net = "tcp"
 	dsn.Addr = cfg.Address
 	dsn.DBName = cfg.Database
+	// 驱动转义绑定参数，避免每次临时 prepare/execute/close；JSON 参数使用文本编码。
+	dsn.InterpolateParams = true
 	dsn.ParseTime = true
 	dsn.Loc = time.UTC
 	database, err := sql.Open("mysql", dsn.FormatDSN())
 	if err != nil {
 		return nil, fmt.Errorf("open mysql repository: %w", err)
 	}
-	database.SetMaxOpenConns(maxConnections)
-	database.SetMaxIdleConns(max(maxConnections/2, 2))
-	database.SetConnMaxLifetime(databaseMaxLifetime)
+	configureMySQLPool(database, maxConnections)
 	if err := database.PingContext(ctx); err != nil {
 		_ = database.Close()
 		return nil, fmt.Errorf("connect mysql repository: %w", err)
@@ -152,6 +153,19 @@ func openMySQLMode(ctx context.Context, cfg config.MySQLConfig, maxConnections i
 			return nil
 		},
 	}, nil
+}
+
+// configureMySQLPool 保留允许的并发连接，避免请求波谷触发空闲淘汰和反复握手。
+func configureMySQLPool(database *sql.DB, maxConnections int) {
+	database.SetMaxOpenConns(maxConnections)
+	// 空闲预算小于并发预算会在每波请求结束时销毁连接，下一波重新建连。
+	// 0 沿用既有无限 open 语义，不能直接作为 idle=0（它表示完全禁用复用）。
+	idleConnections := maxConnections
+	if idleConnections == 0 {
+		idleConnections = math.MaxInt
+	}
+	database.SetMaxIdleConns(idleConnections)
+	database.SetConnMaxLifetime(databaseMaxLifetime)
 }
 
 func openElasticsearch(ctx context.Context, cfg config.ElasticsearchConfig, maxConnections int) (*Runtime, error) {

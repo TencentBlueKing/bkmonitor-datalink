@@ -30,6 +30,13 @@ Pod。Kafka、Redis、MySQL、Elasticsearch 等外部依赖不包含在 `all-in-
 Metrics 不是单独的部署角色。每个常驻进程都创建自己的 telemetry runtime；配置 Prometheus exporter
 后分别暴露 `/metrics`。因此拆分 Cleaner 或 Lifecycle 不会失去对应指标，也不依赖控制面代为采集。
 
+### 合并成员执行（2026-10-16）
+
+合并成员由主控制面单进程执行。调度器在内存拆批，有空闲名额才启动 goroutine，完成结果直接返回。
+通过 `control_plane.merge.member_batch_size` 和 `concurrency` 调节批次大小与在途数量，不另部署成员 Worker。
+不使用 Redis/ES/MySQL 保存或分发短时批次；崩溃后根据持久合并关系重建并幂等重放。
+详见[合并批处理预算](../guides/configuration.md#合并控制面批处理预算)。
+
 ## All-in-one 模式
 
 ```text

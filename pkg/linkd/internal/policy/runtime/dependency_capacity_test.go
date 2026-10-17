@@ -57,18 +57,17 @@ func (r *capacityCandidates) ListActiveAlerts(ctx context.Context, tenant, after
 	return page, nil
 }
 
-func TestDependencyMainSelectionCapacityRequiresCompleteScan(t *testing.T) {
+func TestDependencyIndexBackfillRequiresCompleteScanWithoutOldRowBudget(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		count      int
 		padding    string
 		finalError error
-		wantErr    bool
 	}{
 		{name: "4096 complete candidates", count: 4096},
-		{name: "4097 candidates reject partial choice", count: 4097, wantErr: true},
-		{name: "32 MiB exceeded before row budget", count: 256, padding: strings.Repeat("x", 256<<10), wantErr: true},
-		{name: "late page error rejects prior match", count: 32, finalError: errors.New("last page unavailable"), wantErr: true},
+		{name: "4097 complete candidates", count: 4097},
+		{name: "more than old 32 MiB budget", count: 256, padding: strings.Repeat("x", 256<<10)},
+		{name: "late page error leaves index unready", count: 32, finalError: errors.New("last page unavailable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, clock, s, _, _ := dependencyFixture(t, "custom_shield")
@@ -79,30 +78,41 @@ func TestDependencyMainSelectionCapacityRequiresCompleteScan(t *testing.T) {
 			}
 			reader := &capacityCandidates{template: stored, count: tc.count, padding: tc.padding, finalError: tc.finalError}
 			s.Candidates = reader
+			s.Index = newMemoryDependencyIndex()
 			currentReads := 0
 			s.CurrentAlert = func(_ context.Context, tenant, id string) (store.StoredAlert, error) {
 				currentReads++
-				if tenant != a.BKTenantID || id != fmt.Sprintf("candidate-%05d", tc.count-1) {
-					t.Fatalf("wrong newest identity: tenant=%s id=%s", tenant, id)
+				var i int
+				if _, err := fmt.Sscanf(id, "candidate-%05d", &i); err != nil || tenant != "tenant" {
+					t.Fatalf("wrong candidate: %s %s", tenant, id)
 				}
-				stored.Alert.AlertID = id
-				return stored, nil
+				result := stored
+				result.Alert = stored.Alert.Clone()
+				result.Alert.AlertID = id
+				result.Alert.BeginAt = result.Alert.BeginAt.Add(time.Duration(i) * time.Millisecond)
+				return result, nil
 			}
+			refreshErr := s.RefreshDependencyIndex(t.Context(), "tenant", clock.at, nil)
+			if (refreshErr != nil) != (tc.finalError != nil) {
+				t.Fatalf("refresh error=%v", refreshErr)
+			}
+			if reader.seen != tc.count {
+				t.Fatalf("background scan truncated: %d", reader.seen)
+			}
+			currentReads = 0
+			s.Candidates = failedCandidates{err: errors.New("event must not scan")}
 			release := dependencyRelease(t, "custom_shield")
 			compiled, err := policy.Compile(release.Kind, release.Spec)
 			if err != nil {
 				t.Fatal(err)
 			}
 			chosen, found, err := s.admittedMain(t.Context(), policy.FrozenPolicy{Release: release, Compiled: compiled}, s.Loader.Targets, clock.at, nil)
-			if tc.wantErr {
-				if err == nil || found || currentReads != 0 {
-					t.Fatalf("incomplete scan picked main: found=%t err=%v currentReads=%d", found, err, currentReads)
-				}
-				if tc.padding != "" && reader.seen >= tc.count {
-					t.Fatal("byte budget did not stop scan")
+			if tc.finalError != nil {
+				if !errors.Is(err, ErrDependencyIndexNotReady) || found || currentReads != 0 {
+					t.Fatalf("partial index used: found=%t reads=%d err=%v", found, currentReads, err)
 				}
 			} else if err != nil || !found || currentReads != 1 || chosen.alert.AlertID != fmt.Sprintf("candidate-%05d", tc.count-1) {
-				t.Fatalf("complete scan not selected: found=%t reads=%d err=%v", found, currentReads, err)
+				t.Fatalf("index selection: found=%t reads=%d err=%v", found, currentReads, err)
 			}
 		})
 	}

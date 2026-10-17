@@ -31,6 +31,16 @@ type Documents interface {
 	Get(context.Context, string, string) (json.RawMessage, string, error)
 	Put(context.Context, string, string, string, json.RawMessage) error
 	List(context.Context, string, string, string, int) ([]json.RawMessage, error)
+	PutReferences(context.Context, map[string]json.RawMessage) error
+}
+
+func (j *Journal) workDocuments(ctx context.Context, kind, after string, limit int) ([]json.RawMessage, error) {
+	if indexed, ok := j.docs.(interface {
+		ListMergeWork(context.Context, string, string, int) ([]json.RawMessage, error)
+	}); ok {
+		return indexed.ListMergeWork(ctx, kind, after, limit)
+	}
+	return j.docs.List(ctx, kind, "", after, limit)
 }
 
 // Journal 将已冻结窗口提升为持久化执行记录；不持有 Redis 窗口重建逻辑。
@@ -189,17 +199,7 @@ func (j *Journal) Snapshot(ctx context.Context, tenant, id, alert string) (Snaps
 	if err != nil {
 		return Snapshot{}, err
 	}
-	var value Snapshot
-	if len(raw) > 8<<20 || json.Unmarshal(raw, &value) != nil {
-		return Snapshot{}, policy.ErrInvalid
-	}
-	if value.TenantID != tenant || value.DecisionID != id || value.Alert.BKTenantID != tenant || value.Alert.AlertID != alert {
-		return Snapshot{}, policy.ErrAccess
-	}
-	if err := value.Alert.Validate(); err != nil {
-		return Snapshot{}, err
-	}
-	return value, nil
+	return decodeSnapshot(raw, tenant, id, alert)
 }
 
 // Members 完整读取固定成员集合，缺失或超过 32 MiB 均失败，不能使用部分集合渲染主事件。
@@ -208,14 +208,18 @@ func (j *Journal) Members(ctx context.Context, d Decision) ([]Snapshot, error) {
 		return nil, err
 	}
 	result := make([]Snapshot, 0, len(d.MemberIDs))
+	members, err := j.snapshots(ctx, d.TenantID, d.ID, d.MemberIDs)
+	if err != nil {
+		return nil, err
+	}
 	bytes := 0
 	for _, id := range d.MemberIDs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		s, err := j.Snapshot(ctx, d.TenantID, d.ID, id)
-		if err != nil {
-			return nil, err
+		s, found := members[id]
+		if !found {
+			return nil, policy.ErrNotFound
 		}
 		raw, err := json.Marshal(s)
 		if err != nil {
@@ -245,6 +249,14 @@ func (j *Journal) put(ctx context.Context, current StoredDecision, next Decision
 	if err != nil {
 		return StoredDecision{}, err
 	}
+	if partial, ok := j.docs.(progressDocuments); ok {
+		p := normalized.Progress
+		version, err := partial.CompareAndSetMergeProgress(ctx, "merge_decisions", key, current.Version, map[string]any{"progress": p}, nil, p.Phase != "completed" || !p.WindowFinished)
+		if err != nil {
+			return StoredDecision{}, err
+		}
+		return StoredDecision{Decision: normalized, Version: version}, nil
+	}
 	raw, err := json.Marshal(normalized)
 	if err != nil {
 		return StoredDecision{}, err
@@ -263,6 +275,11 @@ func (j *Journal) Prepare(ctx context.Context, current StoredDecision, event dom
 	if _, err := j.Members(ctx, current.Decision); err != nil {
 		return StoredDecision{}, err
 	}
+	return j.prepare(ctx, current, event, at)
+}
+
+// prepare 复用同一调用中已完整读取的快照，不在渲染后再读一遍所有成员。
+func (j *Journal) prepare(ctx context.Context, current StoredDecision, event domain.Event, at time.Time) (StoredDecision, error) {
 	next := current.Decision.Clone()
 	next.Progress.Phase = "prepared"
 	next.Progress.CaptureOffset = len(next.MemberIDs)
@@ -389,7 +406,7 @@ func (j *Journal) ListWork(ctx context.Context, after string, limit int) (WorkPa
 	if len(after) > 256 || limit < 1 || limit > 16 {
 		return WorkPage{}, policy.ErrInvalid
 	}
-	rows, err := j.docs.List(ctx, "merge_decisions", "", after, limit)
+	rows, err := j.workDocuments(ctx, "merge_decisions", after, limit)
 	if err != nil {
 		return WorkPage{}, err
 	}

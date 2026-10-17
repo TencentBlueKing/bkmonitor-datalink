@@ -56,10 +56,7 @@ func (p *Processor) RecheckShield(ctx context.Context, tenant, id string, expect
 		FreezeSeverity() (SeverityTable, string)
 	}); ok {
 		table, digest := provider.FreezeSeverity()
-		local := *p
-		local.severity = table
-		local.configDigest = digest
-		return local.RecheckShield(ctx, tenant, id, expectedRevision)
+		return p.withFrozenSeverity(table, digest).RecheckShield(ctx, tenant, id, expectedRevision)
 	}
 	if p.shielder == nil {
 		return report, fmt.Errorf("shield checker is not configured")
@@ -232,9 +229,7 @@ func (p *Processor) finishPendingChanges(ctx context.Context, current store.Stor
 	if err := p.appendAlertLogs(ctx, logs); err != nil {
 		return store.StoredAlert{}, err
 	}
-	replacement := current.Alert.Clone()
-	replacement.PolicyChange = nil
-	updated, err := p.compareAndSetAlert(ctx, current, replacement)
+	updated, err := p.completeAlertChange(ctx, current, store.PolicyChangeField)
 	if err != nil {
 		return store.StoredAlert{}, err
 	}

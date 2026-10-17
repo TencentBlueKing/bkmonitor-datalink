@@ -56,6 +56,7 @@ func (h *policyHarness) checkDependencyShield(mode, tenant string) {
 	childA := onlyAlert(h.t, h.send(tenant, "policy-b", "child-a", "child-a", "child", "host-a", "warning", "triggered"))
 	bound := h.assertDependencyBinding(childA, mainA, mode)
 	if mode == "cmdb_shield" {
+		faultAt := time.Now()
 		h.failRelations.Store(true)
 		defer h.failRelations.Store(false)
 		// 既有关系在依赖不可用时保留，复查仍被重新安排；新的候选明确记录跳过。
@@ -63,7 +64,9 @@ func (h *policyHarness) checkDependencyShield(mode, tenant string) {
 			return a.Shield.NextCheckAt != nil && a.Shield.NextCheckAt.After(*bound.Shield.NextCheckAt)
 		})
 		h.assertDependencyBinding(childA, mainA, mode)
-		h.assertManualShieldCheck(tenant, childA, bound.Revision, "partial")
+		h.waitDependencyCacheExpiry(faultAt)
+		current := h.assertDependencyBinding(childA, mainA, mode)
+		h.assertManualShieldCheck(tenant, childA, current.Revision, "partial")
 		fault := h.send(tenant, "policy-b", "relation-fault", "relation-fault", "child", "fault-host", "warning", "triggered")
 		if fault.Processing.PolicyDecision == nil || fault.Processing.PolicyDecision.Shield == nil {
 			h.t.Fatal("missing dependency failure diagnostic")
@@ -76,7 +79,11 @@ func (h *policyHarness) checkDependencyShield(mode, tenant string) {
 			h.t.Fatalf("dependency fault was not recorded as skipped: %+v", fault.Processing.PolicyDecision)
 		}
 		h.expect(onlyAlert(h.t, fault), "firing")
+		restoredAt := time.Now()
 		h.failRelations.Store(false)
+		h.waitShieldDependencyHealthy(tenant, childA, restoredAt)
+		h.t.Log("relation source recovered in control plane and worker refresh window completed")
+		h.assertDependencyBinding(childA, mainA, mode)
 	}
 	mainB := onlyAlert(h.t, h.send(tenant, "policy-a", "root-b", "root-b", "root", "root-b", "warning", "triggered", mainLabels))
 	h.alert(mainB, func(a domain.Alert) bool { return a.AdmittedActiveMain() })

@@ -199,13 +199,17 @@ func (h *policyHarness) checkDynamicTargets() {
 		h.expect(onlyAlert(h.t, e), "firing")
 	}
 	// 对真实定义注入未知字段，不能把不完整/不可求值误判为不命中并解除已有屏蔽。
+	faultAt := time.Now()
 	h.setDynamicConditions(tenant, `[{"field":"unknown","operator":"equal","value":1}]`)
+	h.retainAfterTargetFailure(id)
+	h.waitDependencyCacheExpiry(faultAt)
 	h.retainAfterTargetFailure(id)
 	fault := h.targetEvent(tenant, "dynamic-fault", "dynamic-fault", "host-203")
 	h.assertTargetStep(fault, "skipped", "target_resolution_failed")
 	h.expect(onlyAlert(h.t, fault), "firing")
 	h.setDynamicConditions(tenant, `[{"field":"rank","operator":"less","value":0}]`)
 	h.assertUnshieldedWithoutAdmission(id)
+	h.waitWorkerDependencyRefresh()
 	next := h.targetEvent(tenant, "dynamic-next", "dynamic-open", "host-204")
 	h.alert(id, func(a domain.Alert) bool { return a.Admission.CauseID == next.Event.EventID })
 	h.expect(id, "firing")
@@ -247,7 +251,10 @@ func (h *policyHarness) checkTopologyTargets() {
 	key := "target-topology-2-host-204"
 	bad := targetMembership(tenant, 2, key, "host-204")
 	bad["entity_uid"] = "cw-Host|wrong"
+	faultAt := time.Now()
 	h.targetDocuments(index, map[string]map[string]any{key: bad})
+	h.retainAfterTargetFailure(id)
+	h.waitDependencyCacheExpiry(faultAt)
 	h.retainAfterTargetFailure(id)
 	fault := h.targetEvent(tenant, "topology-fault", "topology-fault", "host-000")
 	h.assertTargetStep(fault, "skipped", "target_resolution_failed")
@@ -266,6 +273,7 @@ func (h *policyHarness) checkTopologyTargets() {
 		h.t.Fatal(err)
 	}
 	h.assertUnshieldedWithoutAdmission(id)
+	h.waitWorkerDependencyRefresh()
 	next := h.targetEvent(tenant, "topology-next", "topology-open", "host-204")
 	h.alert(id, func(a domain.Alert) bool { return a.Admission.CauseID == next.Event.EventID })
 	h.expect(id, "firing")

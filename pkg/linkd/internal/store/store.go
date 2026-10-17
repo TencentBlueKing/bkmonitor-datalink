@@ -100,6 +100,11 @@ type LifecycleAlertStore interface {
 	GetAlertCurrent(ctx context.Context, bkTenantID, alertID string) (StoredAlert, error)
 }
 
+// CurrentAlertBatchStore 批量读取实时 Alert，供跨成员策略裁决避免逐条查询。
+type CurrentAlertBatchStore interface {
+	GetAlertsCurrent(context.Context, string, []string) (AlertBatch, error)
+}
+
 // LifecycleAlertSnapshotStore 在既有快照上校验 Alert 替换并直接条件写入，不重复读取。
 // current 只能来自同一 Repository 的可信读取、成功写入或其 Recent Alert 缓存，且不得就地修改。
 // Repository 统一准备业务版本及投影要求；调用方无需再次 PrepareAlertReplacement。

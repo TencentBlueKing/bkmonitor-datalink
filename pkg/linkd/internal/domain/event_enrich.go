@@ -187,8 +187,17 @@ func (e Event) withEnrichment(result EventEnrichment, isolate bool) (Event, erro
 	if normalized.EnrichStatus == EnrichStatusPending {
 		return Event{}, fmt.Errorf("event enrich result must be complete")
 	}
-	if e.EnrichStatus != "" && e.EnrichStatus != EnrichStatusPending && !reflect.DeepEqual(e.EventEnrichment, normalized) {
-		return Event{}, fmt.Errorf("event enrich is immutable after completion")
+	if e.EnrichStatus != "" && e.EnrichStatus != EnrichStatusPending {
+		// MySQL JSON 读回会改变键序和空白；仅在完成结果重试时规范化比较，
+		// 相同结果直接保留已有快照，不在普通处理热路径重复编码。
+		current, err := e.EventEnrichment.Normalize(e.Evaluations)
+		if err != nil || !reflect.DeepEqual(current, normalized) {
+			return Event{}, fmt.Errorf("event enrich is immutable after completion")
+		}
+		if isolate {
+			e = e.Clone()
+		}
+		return e, nil
 	}
 	if isolate {
 		e = e.Clone()

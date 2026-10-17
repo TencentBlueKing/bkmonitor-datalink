@@ -169,6 +169,17 @@ func (r *Repository) performContent(
 	if len(query) != 0 {
 		requestURL += "?" + query.Encode()
 	}
+	prefix := "http.other."
+	if path == "/_bulk" {
+		prefix = "http.bulk."
+	} else if strings.HasSuffix(path, "/_mget") {
+		prefix = "http.read."
+	}
+	if observer := store.BatchObserver(ctx); observer != nil {
+		traced, finish := traceRequest(ctx, func(phase string, duration time.Duration) { observer(ctx, prefix+phase, duration) })
+		ctx = traced
+		defer finish()
+	}
 	request, err := http.NewRequestWithContext(ctx, method, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build elasticsearch request: %w", err)
@@ -185,10 +196,12 @@ func (r *Repository) performContent(
 		return fmt.Errorf("elasticsearch transport returned an empty response")
 	}
 	defer func() { _ = response.Body.Close() }()
+	started := time.Now()
 	data, err := io.ReadAll(io.LimitReader(response.Body, r.config.MaxResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("read elasticsearch response: %w", err)
 	}
+	store.ObserveBatchPhase(ctx, prefix+"body", time.Since(started))
 	if int64(len(data)) > r.config.MaxResponseBytes {
 		return fmt.Errorf("%w: exceeds %d bytes", ErrResponseTooLarge, r.config.MaxResponseBytes)
 	}
@@ -198,6 +211,8 @@ func (r *Repository) performContent(
 	if result == nil || len(bytes.TrimSpace(data)) == 0 {
 		return nil
 	}
+	started = time.Now()
+	defer func() { store.ObserveBatchPhase(ctx, prefix+"decode", time.Since(started)) }()
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	if err := decoder.Decode(result); err != nil {
 		return fmt.Errorf("decode elasticsearch response: %w", err)

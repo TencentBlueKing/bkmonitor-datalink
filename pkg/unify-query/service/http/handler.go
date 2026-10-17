@@ -286,6 +286,10 @@ func HandlerQueryRaw(c *gin.Context) {
 		resp.failed(ctx, err)
 		return
 	}
+	if err = requireExactTotalAttestation(queryTs, routeInfo); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
 
 	// 避免空切片被解析成 null 的问题
 	if listData.List == nil {
@@ -295,9 +299,53 @@ func HandlerQueryRaw(c *gin.Context) {
 		listData.ResultTableOptions = make(metadata.ResultTableOptions)
 	}
 	listData.ResultTableID = resultTableIDFromRouteInfo(routeInfo)
+	listData.TotalExact = exactTotalAttested(queryTs, routeInfo)
 
 	listData.Status = metadata.GetStatus(ctx)
 	resp.success(ctx, listData)
+}
+
+// exactTotalRequested reports whether any query of the request opted into an exact ES total.
+func exactTotalRequested(request *structured.QueryTs) bool {
+	if request == nil {
+		return false
+	}
+	for _, item := range request.QueryList {
+		if item != nil && item.ExactTotal {
+			return true
+		}
+	}
+	return false
+}
+
+// exactTotalAttested reports whether the returned total can be marked exact: one plain raw ES query that asked for it,
+// every resolved route on Elasticsearch, and nothing (merge, aggregation, SQL, scroll, collapse) that changes what the
+// total counts.
+func exactTotalAttested(request *structured.QueryTs, routes []metadata.RouteInfo) bool {
+	if request == nil || len(request.QueryList) != 1 || request.QueryList[0] == nil ||
+		!request.QueryList[0].ExactTotal || request.IsESBatch || len(routes) == 0 ||
+		request.MetricMerge != "" || request.ResponseContract != "" || len(request.OutputList) != 0 {
+		return false
+	}
+	item := request.QueryList[0]
+	if item.Collapse != nil || len(item.AggregateMethodList) != 0 || item.SQL != "" || item.Scroll != "" {
+		return false
+	}
+	for _, route := range routes {
+		if route.StorageType != metadata.ElasticsearchStorageType {
+			return false
+		}
+	}
+	return true
+}
+
+// requireExactTotalAttestation fails a request that asked for an exact total it cannot be given, instead of returning
+// an unmarked total that looks exact.
+func requireExactTotalAttestation(request *structured.QueryTs, routes []metadata.RouteInfo) error {
+	if exactTotalRequested(request) && !exactTotalAttested(request, routes) {
+		return fmt.Errorf("ES exact total request requires one non-aggregated ES raw branch")
+	}
+	return nil
 }
 
 // HandlerQueryRawWithScroll
@@ -359,6 +407,11 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 	if queryTs.IsSearchAfter {
 		err = fmt.Errorf("is_search_after is not supported by query_raw_with_scroll")
+		return
+	}
+	if exactTotalRequested(queryTs) {
+		// a scrolled total is summed page by page and across routes; it cannot be attested as exact
+		err = fmt.Errorf("exact_total is not supported by query_raw_with_scroll")
 		return
 	}
 

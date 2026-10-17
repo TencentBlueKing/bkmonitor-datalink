@@ -354,7 +354,19 @@ func decodePreparedRawResult(
 	}
 
 	if sr == nil {
+		if rawQuery.ExactTotal {
+			return size, total, option, fmt.Errorf("ES exact total unavailable: search response is missing")
+		}
 		return size, total, option, nil
+	}
+	if rawQuery.ExactTotal {
+		// relation=eq only describes the shards that answered; a timed-out or partly failed search can still be incomplete.
+		if sr.TimedOut || sr.Shards == nil || sr.Shards.Failed != 0 || len(sr.Shards.Failures) != 0 {
+			return size, total, option, fmt.Errorf("ES exact total unavailable: search timed out or shards are incomplete")
+		}
+		if sr.Hits == nil || sr.Hits.TotalHits == nil || sr.Hits.TotalHits.Relation != "eq" {
+			return size, total, option, fmt.Errorf("ES exact total unavailable: total hits relation is not eq")
+		}
 	}
 	if sr.Hits != nil {
 		for idx, d := range sr.Hits.Hits {

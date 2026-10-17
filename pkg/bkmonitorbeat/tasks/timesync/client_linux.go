@@ -44,38 +44,49 @@ func NewClient(opt *Option) *Client {
 }
 
 func (c *Client) Query() (*Stat, error) {
+	stat, _, err := c.QueryAll()
+	return stat, err
+}
+
+// QueryAll 查询本地 NTP 源，同时返回旧聚合统计和按地址明细。
+// 旧聚合统计保持原有规则不变；按地址明细用于新增指标。
+func (c *Client) QueryAll() (*Stat, []SourceResult, error) {
 	if c.opt.ChronyAddr == "" && c.opt.NtpdPath == "" {
-		return nil, errors.New("no source found")
+		return nil, nil, errors.New("no source found")
 	}
 
-	var stat *Stat
-	var err error
 	if c.opt.ChronyAddr != "" {
-		stat, err = c.queryChrony()
+		stat, details, err := c.queryChronyDetailed()
 		if err == nil {
-			return stat, nil
+			return stat, details, nil
 		}
 		// 默认配置里 chrony / ntpd 都会存在
 		logger.Warnf("failed to query chrony: %v", err)
 	}
 	if c.opt.NtpdPath != "" {
-		stat, err = c.queryNtpd()
+		stat, details, err := c.queryNtpdDetailed()
 		if err == nil {
-			return stat, nil
+			return stat, details, nil
 		}
 		logger.Warnf("failed to query ntpd: %v", err)
 	}
 
-	return nil, errors.New("no source available")
+	return nil, nil, errors.New("no source available")
 }
 
 func (c *Client) queryNtpd() (*Stat, error) {
+	stat, _, err := c.queryNtpdDetailed()
+	return stat, err
+}
+
+func (c *Client) queryNtpdDetailed() (*Stat, []SourceResult, error) {
 	b, err := os.ReadFile(c.opt.NtpdPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	stat := newStat("ntpd")
+	details := make([]SourceResult, 0)
 	scanner := bufio.NewScanner(bytes.NewBuffer(b))
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -86,26 +97,43 @@ func (c *Client) queryNtpd() (*Stat, error) {
 		if len(parts) < 3 {
 			continue
 		}
-		rsp, err := ntp.QueryWithOptions(parts[1], ntp.QueryOptions{Timeout: c.opt.Timeout})
+		address := parts[1]
+		rsp, err := queryNTP(address, ntp.QueryOptions{Timeout: c.opt.Timeout})
 		if err != nil {
 			stat.Err++
+			details = append(details, SourceResult{Address: address, Target: "ntpd", Available: false})
 			continue
 		}
 
 		delay := rsp.ClockOffset.Seconds()
+		// 旧聚合指标保持原行为：直接累加 ClockOffset，0 值跳过。
+		// 新增指标统一为目标机时间 - 时间源时间，因此取 -ClockOffset。
+		// 时间戳使用服务器应答里的发送时间。
+		details = append(details, SourceResult{
+			Address:       address,
+			Target:        "ntpd",
+			OffsetSeconds: ntpResponseOffsetSeconds(rsp),
+			Available:     true,
+			SourceTime:    rsp.Time,
+		})
 		if delay == 0 {
 			continue
 		}
 
 		stat.Add(delay)
 	}
-	return stat, nil
+	return stat, details, nil
 }
 
 func (c *Client) queryChrony() (*Stat, error) {
+	stat, _, err := c.queryChronyDetailed()
+	return stat, err
+}
+
+func (c *Client) queryChronyDetailed() (*Stat, []SourceResult, error) {
 	conn, err := newChronyConn(c.opt.ChronyAddr, c.opt.Timeout)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer conn.Close()
 
@@ -115,14 +143,17 @@ func (c *Client) queryChrony() (*Stat, error) {
 	}
 	packet, err := c.communicateChrony(conn, &client, chrony.NewSourcesPacket())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sources, ok := packet.(*chrony.ReplySources)
 	if !ok {
-		return nil, errors.Errorf("want *chrony.ReplySources type, but got %T", packet)
+		return nil, nil, errors.Errorf("want *chrony.ReplySources type, but got %T", packet)
 	}
 
 	stat := newStat("chrony")
+	details := make([]SourceResult, 0, sources.NSources)
+	// chrony 回包没有时间源自己的发送时间戳，新增明细统一使用本次采集时刻。
+	collectedAt := time.Now()
 	for i := 0; i < sources.NSources; i++ {
 		packet, err = c.communicateChrony(conn, &client, chrony.NewSourceDataPacket(int32(i)))
 		if err != nil {
@@ -137,19 +168,21 @@ func (c *Client) queryChrony() (*Stat, error) {
 			continue
 		}
 
-		// 本地时钟 忽略
-		if sourceData.LatestMeas == 0 {
-			continue
-		}
-		// 异常节点忽略
-		if sourceData.State == chrony.SourceStateUnreach {
-			stat.Err++
-			continue
+		// 旧聚合：保持合并前的判定顺序——LatestMeas 为 0 时跳过，不可达节点计 Err，其余累加。
+		if sourceData.LatestMeas != 0 {
+			if sourceData.State == chrony.SourceStateUnreach {
+				stat.Err++
+			} else {
+				stat.Add(sourceData.LatestMeas)
+			}
 		}
 
-		stat.Add(sourceData.LatestMeas)
+		// 新增明细与旧聚合的零值过滤解耦：真实的 0 偏差、未取样的不可达源都要生成数据点。
+		if detail, ok := chronySourceDetail(&sourceData.SourceData, collectedAt); ok {
+			details = append(details, detail)
+		}
 	}
-	return stat, nil
+	return stat, details, nil
 }
 
 func (c *Client) communicateChrony(conn net.Conn, client *chrony.Client, packet chrony.RequestPacket) (chrony.ResponsePacket, error) {

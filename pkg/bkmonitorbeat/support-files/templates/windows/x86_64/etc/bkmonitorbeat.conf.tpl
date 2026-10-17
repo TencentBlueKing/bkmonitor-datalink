@@ -222,6 +222,9 @@ bkmonitorbeat:
     period: 1m
     env: host
     query_timeout: 10s
+{%- if extra_vars is defined and extra_vars.bk_ntp_source is defined %}
+    bk_ntp_source: "{{ extra_vars.bk_ntp_source }}"
+{%- endif %}
     chrony_address: "[::1]:323"
 
   #### tcp_task child config #####

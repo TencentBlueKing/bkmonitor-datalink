@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/query/ts/promql",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_vm_subquery",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "promql": "(avg by (dimension_1, dimension_2, dimension_3) (avg_over_time(label_replace({__name__=~\"demo_metric_(.*)_ratio\",filter_dimension_1=~\".*demo\\\\.service.*\",filter_dimension_2=\"101\"}, \"dimension_3\", \"$1\", \"__name__\", \"demo_metric_(.*)_ratio\")[20m:]))) * 100",
+    "start": "1792226160",
+    "end": "1792226340",
+    "step": "60s",
+    "timezone": "Asia/Shanghai",
+    "look_back_delta": "",
+    "instant": false
+  }
+}

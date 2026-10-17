@@ -1,0 +1,30 @@
+id: vm_promql_histogram_multi_route_001
+storage: vm
+enabled: true
+shape_signature: promql_range/histogram_quantile_sum_irate/scalar_div/regex_matcher/reference1/route4/vm_query_range/output1
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-10-17"
+  fingerprint: sha256:79300ab834e3c367eb9442e05cf8daf0bd5dc3f6d5765850a2eac7cbc4640b32
+tags:
+  - promql_api
+  - query_range
+  - histogram_quantile
+  - aggregate
+  - range_selector
+  - binary_expression
+  - regex_matcher
+  - multi_result_table
+  - production_shape
+notes:
+  - One PromQL reference expands to four result tables and one combined VM query.
+  - Three tables use one storage name and the fourth uses another; no forced query cluster is selected.
+  - Input, route expansion and final VM expression are correlated in one successful trace.
+  - Replay baseline is ec97e499e; the deployed source revision was not recorded in the trace.
+  - Entity names are synthetic; request times, interval and expression structure are preserved.
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

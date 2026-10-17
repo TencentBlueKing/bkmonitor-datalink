@@ -91,9 +91,9 @@ var roundTripCases = []roundTripCase{
 	{"select", "SUM(IF(a = 1, 1, 0)) AS x", "", "silent:D"},
 	{"select", "COUNT_IF(a > 1) AS x", "", "silent:D"},
 	// HAVING
-	{"having", "COUNT(*) > 1", "", "silent:E"},
-	{"having", "n > 1", "", "silent:E"},
-	{"having", "NOT COUNT(*) > 1", "", "silent:E"},
+	{"having", "COUNT(*) > 1", "", ""},
+	{"having", "n > 1", "", ""},
+	{"having", "NOT COUNT(*) > 1", "", ""},
 	// CAST
 	{"select", "CAST(a AS BIGINT) AS x", "", ""},
 	{"select", "CAST(a / 1000 AS BIGINT) AS x", "", ""},

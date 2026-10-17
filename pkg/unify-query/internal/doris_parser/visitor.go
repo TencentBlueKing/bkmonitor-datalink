@@ -36,6 +36,7 @@ const (
 	WhereItem  = "WHERE"
 	OrderItem  = "ORDER BY"
 	GroupItem  = "GROUP BY"
+	HavingItem = "HAVING"
 	LimitItem  = "LIMIT"
 	OffsetItem = "OFFSET"
 
@@ -614,10 +615,11 @@ func (v *Statement) collectUnionDependencyFields(selectSQL string) unionDependen
 		addAlias(aliases, alias)
 	}
 
-	// GROUP/ORDER 可能引用 SELECT alias；这些 alias 不是内层 UNION 分支
+	// GROUP/HAVING/ORDER 可能引用 SELECT alias；这些 alias 不是内层 UNION 分支
 	// 需要投影的源字段，收集依赖时必须跳过。
 	projection := collectUnionProjectionFields(selectSQL, nil)
 	projection = append(projection, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
+	projection = append(projection, collectUnionProjectionFields(v.ItemString(HavingItem), aliases)...)
 	projection = append(projection, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
 	projection = appendMinuteBucketUnionDependencies(v.Tables, projection, v.TableFieldsMap)
 
@@ -1743,7 +1745,7 @@ func (v *Statement) String() string {
 		return renderedWhere
 	}
 
-	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
+	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, HavingItem, OrderItem, LimitItem} {
 		res := ""
 		if name == WhereItem && whereRendered {
 			res = renderedWhere
@@ -1868,6 +1870,12 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.AggClauseContext:
 		v.nodeMap[GroupItem] = &AggNode{}
 		next = v.nodeMap[GroupItem]
+	case *gen.HavingClauseContext:
+		// HAVING 此前没有实现，整个子句被丢弃，分组过滤静默失效；条件与 WHERE 用同一套节点。
+		v.nodeMap[HavingItem] = &WhereNode{
+			LogicInc: &LogicNodesInc{},
+		}
+		next = v.nodeMap[HavingItem]
 	case *gen.SortClauseContext:
 		v.nodeMap[OrderItem] = &SortNode{}
 		next = v.nodeMap[OrderItem]

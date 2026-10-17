@@ -538,7 +538,7 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 				db:      "132_lol_new_login_queue_login_1min",
 				field:   "login_rate",
 				userSQL: "SELECT city, COUNT(*) AS c FROM tbl WHERE status IN ('ok', 'fail') GROUP BY city HAVING c > 10 ORDER BY c DESC LIMIT 50",
-				wantSQL: "SELECT NULL AS city, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE NULL IN ('ok', 'fail') AND " + whereTime + " ORDER BY `c` DESC LIMIT 50",
+				wantSQL: "SELECT NULL AS city, COUNT(*) AS c FROM `132_lol_new_login_queue_login_1min` WHERE NULL IN ('ok', 'fail') AND " + whereTime + " HAVING `c` > 10 ORDER BY `c` DESC LIMIT 50",
 			},
 			{
 				name:    "subquery_preserved_outer_where",

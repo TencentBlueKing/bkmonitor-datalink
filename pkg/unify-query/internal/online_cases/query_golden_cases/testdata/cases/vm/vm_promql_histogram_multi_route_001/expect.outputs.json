@@ -1,0 +1,33 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "prefer_storage": "vm",
+      "sql": {
+        "api_params": {
+          "end": 1792226385,
+          "nocache": 0,
+          "query": "histogram_quantile(0.9, sum by (le, dimension_1, dimension_filter, dimension_3, dimension_4) (irate(a[1m] offset -14s999ms))) / 1000",
+          "start": 1792225515,
+          "step": 15
+        },
+        "api_type": "query_range",
+        "bk_biz_id": "golden_vm_histogram",
+        "cluster_name": "",
+        "influx_compatible": true,
+        "metric_filter_condition": {
+          "a": "dimension_filter=~\"demo-service-.*\", result_table_id=\"vm_rt_demo_histogram_partition_2\", __name__=\"request_duration_bucket_value\" or dimension_filter=~\"demo-service-.*\", result_table_id=\"vm_rt_demo_histogram_partition_3\", __name__=\"request_duration_bucket_value\" or dimension_filter=~\"demo-service-.*\", result_table_id=\"vm_rt_demo_histogram_partition_4\", __name__=\"request_duration_bucket_value\" or dimension_filter=~\"demo-service-.*\", result_table_id=\"vm_rt_demo_histogram_partition_1\", __name__=\"request_duration_bucket_value\""
+        },
+        "result_table_list": [
+          "vm_rt_demo_histogram_partition_1",
+          "vm_rt_demo_histogram_partition_2",
+          "vm_rt_demo_histogram_partition_3",
+          "vm_rt_demo_histogram_partition_4"
+        ],
+        "use_native_or": true
+      }
+    }
+  }
+]

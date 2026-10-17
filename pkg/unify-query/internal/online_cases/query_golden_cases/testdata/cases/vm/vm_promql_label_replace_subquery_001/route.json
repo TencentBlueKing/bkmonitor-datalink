@@ -1,0 +1,353 @@
+{
+  "space_uid": "bkcc__golden_vm_subquery",
+  "result_tables": [
+    {
+      "table_id": "demo_subquery.partition_1",
+      "filters": [
+        {
+          "route_dimension": "route_value"
+        }
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_2",
+      "filters": [
+        {
+          "route_dimension": "route_value"
+        }
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_3",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_4",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_5",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_6",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_7",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_8",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_9",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_10",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_11",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_12",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_13",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_14",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_15",
+      "filters": [
+        {}
+      ]
+    },
+    {
+      "table_id": "demo_subquery.partition_16",
+      "filters": [
+        {}
+      ]
+    }
+  ],
+  "result_table_details": {
+    "demo_subquery.partition_1": {
+      "storage_id": 910101,
+      "storage_name": "vm_cluster_subquery_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_1",
+      "table_id": "demo_subquery.partition_1",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_1",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_2": {
+      "storage_id": 910102,
+      "storage_name": "vm_cluster_subquery_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_2",
+      "table_id": "demo_subquery.partition_2",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_2",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_3": {
+      "storage_id": 910103,
+      "storage_name": "vm_cluster_subquery_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_3",
+      "table_id": "demo_subquery.partition_3",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_3",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_4": {
+      "storage_id": 910103,
+      "storage_name": "vm_cluster_subquery_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_3",
+      "table_id": "demo_subquery.partition_4",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_4",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_5": {
+      "storage_id": 910103,
+      "storage_name": "vm_cluster_subquery_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_3",
+      "table_id": "demo_subquery.partition_5",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_5",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_6": {
+      "storage_id": 910104,
+      "storage_name": "vm_cluster_subquery_4",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_4",
+      "table_id": "demo_subquery.partition_6",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_6",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_7": {
+      "storage_id": 910105,
+      "storage_name": "vm_cluster_subquery_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_5",
+      "table_id": "demo_subquery.partition_7",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_7",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_8": {
+      "storage_id": 910105,
+      "storage_name": "vm_cluster_subquery_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_5",
+      "table_id": "demo_subquery.partition_8",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_8",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_9": {
+      "storage_id": 910103,
+      "storage_name": "vm_cluster_subquery_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_3",
+      "table_id": "demo_subquery.partition_9",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_9",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_10": {
+      "storage_id": 910103,
+      "storage_name": "vm_cluster_subquery_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_3",
+      "table_id": "demo_subquery.partition_10",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_10",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_11": {
+      "storage_id": 910103,
+      "storage_name": "vm_cluster_subquery_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_3",
+      "table_id": "demo_subquery.partition_11",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_11",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_12": {
+      "storage_id": 910106,
+      "storage_name": "vm_cluster_subquery_6",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_6",
+      "table_id": "demo_subquery.partition_12",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_12",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_13": {
+      "storage_id": 910105,
+      "storage_name": "vm_cluster_subquery_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_5",
+      "table_id": "demo_subquery.partition_13",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_13",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_14": {
+      "storage_id": 910103,
+      "storage_name": "vm_cluster_subquery_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_3",
+      "table_id": "demo_subquery.partition_14",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_14",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_15": {
+      "storage_id": 910103,
+      "storage_name": "vm_cluster_subquery_3",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_3",
+      "table_id": "demo_subquery.partition_15",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_15",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_subquery.partition_16": {
+      "storage_id": 910105,
+      "storage_name": "vm_cluster_subquery_5",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_subquery_5",
+      "table_id": "demo_subquery.partition_16",
+      "measurement": "demo_metric_sample_ratio",
+      "vm_rt": "vm_rt_demo_subquery_partition_16",
+      "fields": [
+        "demo_metric_sample_ratio"
+      ],
+      "measurement_type": "bk_split_measurement"
+    }
+  },
+  "storages": {
+    "910101": {
+      "type": "victoria_metrics"
+    },
+    "910102": {
+      "type": "victoria_metrics"
+    },
+    "910103": {
+      "type": "victoria_metrics"
+    },
+    "910104": {
+      "type": "victoria_metrics"
+    },
+    "910105": {
+      "type": "victoria_metrics"
+    },
+    "910106": {
+      "type": "victoria_metrics"
+    }
+  },
+  "must_vm_table_ids": [
+    "demo_subquery.partition_1",
+    "demo_subquery.partition_2",
+    "demo_subquery.partition_3",
+    "demo_subquery.partition_4",
+    "demo_subquery.partition_5",
+    "demo_subquery.partition_6",
+    "demo_subquery.partition_7",
+    "demo_subquery.partition_8",
+    "demo_subquery.partition_9",
+    "demo_subquery.partition_10",
+    "demo_subquery.partition_11",
+    "demo_subquery.partition_12",
+    "demo_subquery.partition_13",
+    "demo_subquery.partition_14",
+    "demo_subquery.partition_15",
+    "demo_subquery.partition_16"
+  ]
+}

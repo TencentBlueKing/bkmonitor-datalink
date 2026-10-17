@@ -1,0 +1,19 @@
+{
+  "method": "POST",
+  "path": "/query/ts/promql",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_vm_matching",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "promql": "sum(demo_inflight{service!=\"demo-system-agent\",cluster=~\"cluster-10001*\",namespace!=\"\",instance=~\"^demo\\\\-node\\\\-(1001[5-9]|1002[0-2]|1003[7-9]|10040)$\"}) by (cluster, namespace,service,instance) and on(cluster, namespace, service) (increase(demo_restarts_total[2m]) > 0)",
+    "start": "1700000040",
+    "end": "1700001900",
+    "step": "60s",
+    "timezone": "Asia/Shanghai",
+    "look_back_delta": "",
+    "instant": false
+  }
+}

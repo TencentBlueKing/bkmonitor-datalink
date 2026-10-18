@@ -75,6 +75,15 @@ func TestMergeRequestPageBoundsAndCancellationPreserveUnattemptedWork(t *testing
 	if err == nil || next != page.Next || n != 16 || failed != 1 || calls.Load() != 16 || maxSeen.Load() > 4 {
 		t.Fatal(next, n, failed, err, calls.Load(), maxSeen.Load())
 	}
+	next, n, failed, err = checkMergeRequestsPage(t.Context(), mergeRequestsPageFixture{page}, mergeRequestsExecuteFixture(func(_ context.Context, r merge.RetryRequest) error {
+		if r.Command.OperationID == "0" {
+			panic("private request payload")
+		}
+		return nil
+	}), "")
+	if err == nil || next != page.Next || n != 16 || failed != 1 {
+		t.Fatal("panic interrupted later requests", next, n, failed, err)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	next, n, _, err = checkMergeRequestsPage(ctx, mergeRequestsPageFixture{page}, execute, "")

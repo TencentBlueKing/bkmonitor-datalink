@@ -55,17 +55,15 @@ import (
 
 func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, metrics *telemetry.Runtime, registry *taskstate.Registry, providers ...eventsource.Provider) error {
 	d := cfg.Dispatch.WithDefaults()
-	if err := validateDispatchConfig(cfg); err != nil {
-		return err
-	}
 	startup, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	docs, e := sourcestore.Open(startup, *cfg.Storage, d.Deployment)
+	// 1. 先装配已有集合的连接；存储初始化失败不得阻止已有调度与管理读取。
+	docs, e := sourcestore.OpenExisting(startup, *cfg.Storage, d.Deployment)
 	if e != nil {
 		return e
 	}
 	defer func() { _ = docs.Close() }()
-	policyDocs, err := policystore.Open(startup, *cfg.Storage, d.Deployment)
+	policyDocs, err := policystore.OpenExisting(startup, *cfg.Storage, d.Deployment)
 	if err != nil {
 		return err
 	}
@@ -87,17 +85,60 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return e
 	}
 	defer func() { _ = client.Close() }()
-	controller, e := taskdispatch.NewController(startup, client, sources, d.Deployment, dispatchTaskObserver{metrics.DispatchObserver(), registry, metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskScheduler)})
-	if e != nil {
-		return e
-	}
-	// 先完成调度历史检查/首次初始化，再发布内置来源；否则新部署也会被误判为协调历史丢失。
-	// 已有来源而历史确实丢失时仍由 NewController 拒绝，不能借自动来源初始化绕过停机恢复边界。
-	if cfg.Lifecycle != nil {
-		if _, err := sources.EnsureMergeSource(startup, "linkd"); err != nil {
-			return fmt.Errorf("initialize builtin merge source: %w", err)
+	controllerReady := make(chan struct{})
+	initializationObserver := metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskControlStorage)
+	// 2. 配置集合先在后台准备；新部署的首次调度读取可等待它推进，已有调度不等待 DDL。
+	initialization := taskgroup.Task{Name: "control-storage", Run: func(ctx context.Context) error {
+		registry.Begin("control-storage", "", "")
+		started := time.Now()
+		call, stop := context.WithTimeout(ctx, startupTimeout)
+		defer stop()
+		err := docs.EnsureSchema(call)
+		if err == nil {
+			err = policyDocs.EnsureSchema(call)
+		}
+		if err == nil && cfg.Lifecycle != nil {
+			// 调度历史检查通过后才发布内置来源，不能绕过历史丢失时的显式恢复要求。
+			select {
+			case <-controllerReady:
+				_, err = sources.EnsureMergeSource(call, "linkd")
+			case <-call.Done():
+				err = call.Err()
+			}
+		}
+		if err != nil {
+			if ctx.Err() == nil {
+				initializationObserver.RunFinished(ctx, time.Since(started), false)
+			}
+			return err
+		}
+		registry.Finish(ctx, "control-storage", "", "", time.Since(started), 0, 0, "")
+		initializationObserver.RunFinished(ctx, time.Since(started), true)
+		<-ctx.Done()
+		return nil
+	}}
+	initialization = registry.Wrap("control-storage", superviseTask(logger, registry, "control-storage", initialization))
+	initializationCtx, stopInitialization := context.WithCancel(ctx)
+	initializationDone := make(chan error, 1)
+	go func() {
+		initializationObserver.SetActive(initializationCtx, true)
+		defer initializationObserver.SetActive(context.WithoutCancel(initializationCtx), false)
+		initializationDone <- initialization.Run(initializationCtx)
+	}()
+	defer func() { stopInitialization(); <-initializationDone }()
+
+	// 3. 独立获取调度资格；初次部署允许后台集合准备完成后再读，不重建已有协调历史。
+	var controller *taskdispatch.Controller
+	for {
+		controller, e = taskdispatch.NewController(startup, client, sources, d.Deployment, dispatchTaskObserver{metrics.DispatchObserver(), registry, metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskScheduler), logger})
+		if e == nil {
+			break
+		}
+		if !waitForArchiveRetry(startup, time.Second) {
+			return e
 		}
 	}
+	close(controllerReady)
 	lifecycle := config.LifecycleConfig{}
 	dynamic, closeDynamic, e := openDynamicConfig(ctx, cfg, severity, logger)
 	if e != nil {
@@ -293,7 +334,9 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return e
 	}
 	defer func() { _ = listener.Close() }()
-	tasks := []taskgroup.Task{{Name: "scheduler", Run: controller.Run}, {Name: "source-api", Run: func(ctx context.Context) error {
+	tasks := []taskgroup.Task{{Name: "scheduler", Run: func(ctx context.Context) error {
+		return runControlCall(func() error { return controller.Run(ctx) })
+	}}, {Name: "source-api", Run: func(ctx context.Context) error {
 		done := make(chan error, 1)
 		go func() { done <- server.Serve(listener) }()
 		select {
@@ -308,6 +351,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 			return server.Shutdown(shutdown)
 		}
 	}}}
+
 	tasks = append(tasks, taskgroup.Task{Name: "policy-publication", Run: func(ctx context.Context) error {
 		return runPolicyPublication(ctx, policies, logger, registry, metrics)
 	}})
@@ -428,7 +472,12 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		if strings.HasPrefix(id, "source-provider-") {
 			id = "source-providers"
 		}
-		task := registry.Wrap(id, tasks[i])
+		task := tasks[i]
+		// 调度租约失效和 HTTP 监听器退出需要清理并重建 dispatch；外层仍保持进程存活。
+		if id != "scheduler" && id != "source-api" {
+			task = superviseTask(logger, registry, id, task)
+		}
+		task = registry.Wrap(id, task)
 		run := task.Run
 		tasks[i].Run = func(ctx context.Context) error {
 			// ES 与 Redis 的 active 已由既有观察器维护；其他任务在装配边界统一采集。

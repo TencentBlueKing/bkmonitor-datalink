@@ -12,6 +12,7 @@ package controlplaneprocess
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -38,7 +39,7 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 		makeTask("scheduler", "调度协调", "调度与来源", "periodic", "恢复未完成发布、探测 Kafka 元数据并分配任务；中心资格由 Redis 租约保护。", true, 1, 20, "default", map[string]any{"probeConcurrency": 4, "probeTimeoutSeconds": 5}),
 		makeTask("source-providers", "来源 Provider 同步", "调度与来源", "periodic", "拉取增量并完整应用；没有注入 Provider 时不启动。", providers > 0, 30, 30, "injected", map[string]any{"providers": providers, "maxChangesPerRound": 1000}),
 		makeTask("elasticsearch-schema-and-active-reconciler", "Schema & Active", "消息与存储维护", "periodic", "对账 Schema、模板、Active 索引和静态 alias。", esEnabled, es.SchemaAndActiveReconcileInterval().Seconds(), 0, source, map[string]any{}),
-		makeTask("elasticsearch-bucket-manager", "Bucket Manager", "消息与存储维护", "periodic", "维护当前及相邻时间桶；依赖启动阶段 Schema 对账。", esEnabled, es.BucketReconcileInterval().Seconds(), 0, source, map[string]any{}),
+		makeTask("elasticsearch-bucket-manager", "Bucket Manager", "消息与存储维护", "periodic", "维护当前及相邻时间桶；等待后台首次 Schema 对账成功。", esEnabled, es.BucketReconcileInterval().Seconds(), 0, source, map[string]any{}),
 		makeTask("elasticsearch-alert-archiver", "Alert Archiver", "消息与存储维护", "continuous", "有积压时连续归档，到达尾部或失败后等待。", esEnabled, es.ArchiveInterval().Seconds(), 0, source, map[string]any{"archiveBatchSize": es.ArchiveBatchSize, "archiveWorkerCount": es.ArchiveWorkerCount}),
 	}
 	tasks[1].DisabledReason = "未注入来源 Provider"
@@ -51,6 +52,7 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 		p := cfg.Storage.Elasticsearch.TimePartition.WithDefaults()
 		tasks[3].Settings = map[string]any{"eventBucketDays": p.EventBucketDays, "alertHistoryBucketDays": p.AlertHistoryBucketDays, "alertLogBucketDays": p.AlertLogBucketDays, "precreatePastBuckets": p.PrecreatePastBuckets, "precreateFutureBuckets": p.PrecreateFutureBuckets, "maxBucketsPerEntity": p.MaxBucketsPerEntity}
 	}
+	tasks = append(tasks, makeTask("control-storage", "控制配置存储准备", "消息与存储维护", "continuous", "后台准备来源、策略集合和内置合并来源，失败重试，不阻塞已有调度与管理 API。", true, taskRetryInterval.Seconds(), 0, "default", map[string]any{}))
 	rs := cfg.RedisStreamSettings()
 	if rs == nil {
 		v := config.RedisStreamManagerConfig{}.WithDefaults()
@@ -182,6 +184,11 @@ type dispatchTaskObserver struct {
 	taskdispatch.Observer
 	registry *taskstate.Registry
 	metric   *telemetry.ControlPlaneTaskObserver
+	logger   *slog.Logger
+}
+
+func (o dispatchTaskObserver) ReconcileFailed(ctx context.Context, err error) {
+	o.logger.ErrorContext(ctx, "scheduler reconciliation failed; retrying", "module", "controlplane", "operation", "scheduler_reconcile", "error", err)
 }
 
 func (o dispatchTaskObserver) Operation(ctx context.Context, op string, ok bool, d time.Duration) {

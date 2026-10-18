@@ -40,6 +40,19 @@ type Store struct {
 
 // Open 初始化来源的两个集合，不清理历史或业务数据。
 func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Store, error) {
+	s, err := OpenExisting(ctx, c, deployment)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.EnsureSchema(ctx); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenExisting 构造已有配置存储的连接，不执行建表或建索引；控制面在后台准备集合。
+func OpenExisting(ctx context.Context, c config.StorageConfig, deployment string) (*Store, error) {
 	hash := sha256.Sum256([]byte(deployment))
 	s := &Store{namespace: hex.EncodeToString(hash[:])}
 	c = c.WithDefaults()
@@ -58,13 +71,6 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 		db.SetMaxOpenConns(8)
 		db.SetMaxIdleConns(8)
 		db.SetConnMaxLifetime(30 * time.Minute)
-		for _, name := range []string{"records", "releases"} {
-			_, e = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+s.table(name)+" (namespace VARBINARY(256) NOT NULL, id VARBINARY(256) NOT NULL, version BIGINT NOT NULL, payload LONGBLOB NOT NULL, PRIMARY KEY(namespace,id))")
-			if e != nil {
-				_ = db.Close()
-				return nil, e
-			}
-		}
 	} else if c.Repository == config.RepositoryTypeElasticsearch && c.Elasticsearch != nil {
 		x := c.Elasticsearch
 		tc := es.HTTPTransportConfig{Addresses: x.Addresses, APIKey: x.APIKey, MaxConnectionsPerHost: 8}
@@ -77,11 +83,26 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 			return nil, e
 		}
 		s.transport = t
+	} else {
+		return nil, fmt.Errorf("source store requires configured ES/MySQL")
+	}
+	return s, nil
+}
+
+// EnsureSchema 幂等准备配置集合；失败保留连接，调用方可在后台重试。
+func (s *Store) EnsureSchema(ctx context.Context) error {
+	if s.db != nil {
+		for _, name := range []string{"records", "releases"} {
+			_, e := s.db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+s.table(name)+" (namespace VARBINARY(256) NOT NULL, id VARBINARY(256) NOT NULL, version BIGINT NOT NULL, payload LONGBLOB NOT NULL, PRIMARY KEY(namespace,id))")
+			if e != nil {
+				return e
+			}
+		}
+	} else {
 		for _, name := range []string{"records", "releases"} {
 			code, response, e := s.request(ctx, http.MethodPut, "/"+s.table(name), json.RawMessage(`{"mappings":{"dynamic":"strict","properties":{"id":{"type":"keyword"},"payload":{"type":"object","enabled":false}}}}`))
 			if e != nil {
-				t.Close()
-				return nil, e
+				return e
 			}
 			exists := false
 			if code == 400 {
@@ -95,14 +116,11 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 				}
 			}
 			if code != 200 && !exists {
-				t.Close()
-				return nil, fmt.Errorf("initialize source index: HTTP %d", code)
+				return fmt.Errorf("initialize source index: HTTP %d", code)
 			}
 		}
-	} else {
-		return nil, fmt.Errorf("source store requires configured ES/MySQL")
 	}
-	return s, nil
+	return nil
 }
 
 func (s *Store) table(kind string) string {

@@ -76,7 +76,7 @@ func checkMergeRequestsPage(ctx context.Context, work mergeRequestWork, executor
 					return
 				}
 				attempted.Add(1)
-				if err := executor.Execute(ctx, r); err != nil && !mergeflow.RetryCanDefer(err) {
+				if err := runControlCall(func() error { return executor.Execute(ctx, r) }); err != nil && !mergeflow.RetryCanDefer(err) {
 					failures.Add(1)
 				}
 			}

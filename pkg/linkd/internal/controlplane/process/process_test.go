@@ -17,11 +17,13 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"linkd/internal/config"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
+	"testing/synctest"
 )
 
 type recordingTaskObserver struct {
@@ -180,30 +182,49 @@ func TestPrepareElasticsearchDataPlanePreservesDependencyOrder(t *testing.T) {
 	}
 }
 
-func TestPeriodicTaskRecordsImmediateRunAndFailure(t *testing.T) {
-	t.Parallel()
-	observer := &recordingTaskObserver{}
-	wantErr := fmt.Errorf("reconcile failed")
-	task := newPeriodicTask(
-		slog.New(slog.NewTextHandler(testWriter{t}, nil)),
-		"test-task",
-		time.Hour,
-		observer,
-		func(context.Context) error { return wantErr },
-	)
-
-	err := task.Run(context.Background())
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("Run() error = %v, want %v", err, wantErr)
-	}
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
-	if got := fmt.Sprint(observer.active); got != "[true false]" {
-		t.Fatalf("active = %s", got)
-	}
-	if got := fmt.Sprint(observer.succeeded); got != "[false]" {
-		t.Fatalf("succeeded = %s", got)
-	}
+func TestPeriodicTaskRetriesFailureAndPanicThenResumesConfiguredInterval(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		observer := &recordingTaskObserver{}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var calls atomic.Int64
+		task := newPeriodicTask(slog.New(slog.NewTextHandler(io.Discard, nil)), "test-task", time.Hour, observer,
+			func(context.Context) error {
+				switch calls.Add(1) {
+				case 1:
+					return errors.New("ES read-only")
+				case 2:
+					panic("private payload")
+				}
+				return nil
+			})
+		done := make(chan error, 1)
+		go func() { done <- task.Run(ctx) }()
+		synctest.Wait()
+		if calls.Load() != 1 {
+			t.Fatal("missing immediate run", calls.Load())
+		}
+		time.Sleep(2 * taskRetryInterval)
+		synctest.Wait()
+		observer.mu.Lock()
+		outcomes := fmt.Sprint(observer.succeeded)
+		observer.mu.Unlock()
+		if calls.Load() != 3 || outcomes != "[false false true]" {
+			t.Fatalf("recovery calls=%d outcomes=%s", calls.Load(), outcomes)
+		}
+		time.Sleep(time.Hour - time.Second)
+		synctest.Wait()
+		if calls.Load() != 3 {
+			t.Fatal("success did not restore configured interval", calls.Load())
+		}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprint(observer.active) != "[true false]" {
+			t.Fatal(observer.active)
+		}
+	})
 }
 
 func TestAlertArchiveTaskDrainsSweepPagesWithoutIntervalDelay(t *testing.T) {

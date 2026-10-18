@@ -17,11 +17,13 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/runtimeconfig"
+	"testing/synctest"
 )
 
 const initialLevels = `[{"name":"fatal","priority":0},{"name":"warning","priority":1},{"name":"remind","priority":2}]`
@@ -288,5 +290,46 @@ func TestRunObserverReportsValidationFailureWithRetainedConfiguration(t *testing
 	}
 	if !o.started || o.status.Error != "invalid_config" || o.status.Current.Digest != digest {
 		t.Fatalf("observation lost retained config %+v", o)
+	}
+}
+
+// Watch 自身在 goroutine 中运行，父任务的 recover 无法替它隔离 panic。
+type failingWatchSource struct {
+	fakeSource
+	calls      atomic.Int64
+	panicFirst bool
+}
+
+func (s *failingWatchSource) Watch(ctx context.Context, notify func()) error {
+	if s.calls.Add(1) == 1 {
+		if s.panicFirst {
+			panic("private upstream payload")
+		}
+		return errors.New("watch disconnected")
+	}
+	notify()
+	<-ctx.Done()
+	return nil
+}
+
+func TestWatcherFailureAndPanicReconnectWithoutStoppingSync(t *testing.T) {
+	for _, panicFirst := range []bool{false, true} {
+		synctest.Test(t, func(t *testing.T) {
+			source := &failingWatchSource{fakeSource: fakeSource{raw: initialLevels}, panicFirst: panicFirst}
+			manager, state := testManager(t, source, newMemoryStore(), testSettings())
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- manager.Run(ctx) }()
+			time.Sleep(5 * time.Second)
+			synctest.Wait()
+			if source.calls.Load() != 2 || state.SeveritySnapshot().Severity.Levels[0].Name != "fatal" {
+				t.Fatal("watch did not recover or configuration was lost", source.calls.Load())
+			}
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

@@ -29,6 +29,7 @@ import (
 	"linkd/internal/policy"
 	"linkd/internal/policy/redisstate"
 	policyruntime "linkd/internal/policy/runtime"
+	"linkd/internal/processingerror"
 	"linkd/internal/redisclient"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/store"
@@ -144,7 +145,7 @@ func runMergeJobs(ctx context.Context, runner *mergeJobRunner, jobs []mergeJob) 
 							return job.run(call)
 						}
 					}
-					more, err := runner.runBatch(ctx, attempt)
+					more, err := processingerror.Guard(func() (bool, error) { return runner.runBatch(ctx, attempt) })
 					// 取全局名额或窗口租约时也可能耗尽页预算，此时仍未尝试业务步骤。
 					if !started && ctx.Err() != nil {
 						unstarted[i] = true
@@ -467,7 +468,7 @@ func runMergeTasks(ctx context.Context, cfg config.Config, sources *eventsource.
 		}},
 	}
 	for i := range tasks {
-		tasks[i] = registry.Wrap(tasks[i].Name, tasks[i])
+		tasks[i] = registry.Wrap(tasks[i].Name, superviseTask(logger, registry, tasks[i].Name, tasks[i]))
 	}
 	return taskgroup.Run(ctx, tasks)
 }

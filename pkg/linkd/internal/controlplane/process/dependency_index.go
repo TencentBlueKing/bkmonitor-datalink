@@ -251,6 +251,7 @@ func (m *dependencyIndexManager) finish(job dependencyIndexJob, err error) {
 }
 
 func (m *dependencyIndexManager) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	queue := make(chan dependencyIndexJob, 4)
@@ -262,7 +263,7 @@ func (m *dependencyIndexManager) Run(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case job := <-queue:
-					err := m.execute(ctx, job)
+					err := runControlCall(func() error { return m.execute(ctx, job) })
 					if err != nil && ctx.Err() == nil && !errors.Is(err, policyruntime.ErrDependencyIndexNotReady) && m.logger != nil {
 						m.logger.WarnContext(ctx, "dependency candidate index refresh failed", "module", "policy", "operation", "dependency_index_refresh", "bk_tenant_id", job.tenant, "error", err)
 					}
@@ -271,7 +272,7 @@ func (m *dependencyIndexManager) Run(ctx context.Context) error {
 			}
 		})
 	}
-	defer workers.Wait()
+	defer func() { cancel(); workers.Wait() }()
 	lastPolicyRefresh := m.time()
 	for {
 		select {

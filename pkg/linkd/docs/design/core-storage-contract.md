@@ -137,7 +137,9 @@ Elasticsearch 存量 Alert JSON 完全缺少 `revision`，且没有投影目标�
   时间桶默认 7 天。
 - 数据进程只通过 `require_alias=true` 写入 Bucket Manager 创建的 per-bucket write alias。
   `control-plane` 分别装配 Schema 与 Active 资源对账、时间桶维护和遗留终态 Alert 归档任务；三者共享连接，
-  前两项使用独立周期，归档使用连续批量循环，且没有各自的常驻 command。缺失目标时数据写入和归档失败，
+  前两项使用独立周期，归档使用连续批量循环，且没有各自的常驻 command。首次资源准备在后台保持依赖顺序，
+  ES 只读、不可达或对账失败仅影响相关任务，失败记录后重试，不阻止控制面 API 与调度存活；来源与策略集合
+  的初始化也不阻塞已有配置读取。缺失目标时数据写入和归档失败，
   不在调用路径自行建索引。
 - ES `_source` 直接保存完整 Event、Alert 或 AlertLog 领域字段，不使用通用 `payload` 包装。EventProcessing
   作为 Event 根字段旁的 `processing` object 保存，Lifecycle 查询使用 `processing.state`。

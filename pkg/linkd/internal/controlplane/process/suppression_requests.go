@@ -76,7 +76,7 @@ func checkSuppressionRequestsPage(ctx context.Context, work suppressionRequestWo
 					return
 				}
 				attempted.Add(1)
-				if err := executor.Execute(ctx, r); err != nil && !suppressioncheck.CanDefer(err) {
+				if err := runControlCall(func() error { return executor.Execute(ctx, r) }); err != nil && !suppressioncheck.CanDefer(err) {
 					failures.Add(1)
 				}
 			}

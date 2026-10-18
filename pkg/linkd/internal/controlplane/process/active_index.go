@@ -199,7 +199,13 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 			for id, r := range managed {
 				target, exists := targets[id]
 				data, _ := json.Marshal(target)
-				if !exists || sha256.Sum256(data) != r.digest {
+				stopped := false
+				select {
+				case <-r.done:
+					stopped = true
+				default:
+				}
+				if stopped || !exists || sha256.Sum256(data) != r.digest {
 					r.cancel()
 					<-r.done
 					delete(managed, id)
@@ -241,13 +247,19 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 				go func() {
 					defer close(done)
 					defer func() { _ = client.Close() }()
-					_ = manager.Run(taskCtx, func(ctx context.Context, d time.Duration, work, failed int, err error) {
-						code := ""
-						if err != nil {
-							code = "target_refresh_failed"
-						}
-						registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], d, work, failed, code)
+					err := runControlCall(func() error {
+						return manager.Run(taskCtx, func(ctx context.Context, d time.Duration, work, failed int, err error) {
+							code := ""
+							if err != nil {
+								code = "target_refresh_failed"
+							}
+							registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], d, work, failed, code)
+						})
 					})
+					if taskCtx.Err() == nil {
+						registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], 0, 0, 1, "target_task_stopped")
+						logger.ErrorContext(taskCtx, "active index target stopped; restarting on next scan", "module", "controlplane", "operation", "active_index_run", "target_id", id, "error", err)
+					}
 				}()
 			}
 		}

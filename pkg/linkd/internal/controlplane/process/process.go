@@ -54,6 +54,9 @@ func RunWithProviders(ctx context.Context, cfg config.Config, logger *slog.Logge
 	if err := ValidateConfig(cfg); err != nil {
 		return err
 	}
+	if err := validateDispatchConfig(cfg); err != nil {
+		return err
+	}
 
 	startupCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	runtime, err := openRuntime(startupCtx, cfg, logger, telemetryRuntime, providers...)
@@ -209,23 +212,44 @@ func openRuntime(
 			elasticsearchRuntime.Close()
 			return nil
 		})
-		if err := prepareElasticsearchDataPlane(ctx, elasticsearchRuntime.Manager); err != nil {
-			return fail(err)
-		}
+		// 1. 首次资源准备留在后台，ES 故障不能阻止管理 API 和调度启动。
+		schemaReady, bucketsReady := make(chan struct{}), make(chan struct{})
+		schemaPrepared, bucketsPrepared := false, false
 		tasks = append(tasks,
 			newPeriodicTask(
 				logger,
 				"elasticsearch-schema-and-active-reconciler",
 				settings.SchemaAndActiveReconcileInterval(),
 				taskObserver{registry, "elasticsearch-schema-and-active-reconciler", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchSchemaAndActiveReconciler)},
-				elasticsearchRuntime.Manager.ReconcileSchemaAndActive,
+				func(ctx context.Context) error {
+					if err := elasticsearchRuntime.Manager.ReconcileSchemaAndActive(ctx); err != nil {
+						return err
+					}
+					if !schemaPrepared {
+						close(schemaReady)
+						schemaPrepared = true
+					}
+					return nil
+				},
 			),
 			newPeriodicTask(
 				logger,
 				"elasticsearch-bucket-manager",
 				settings.BucketReconcileInterval(),
 				taskObserver{registry, "elasticsearch-bucket-manager", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchBucketManager)},
-				elasticsearchRuntime.Manager.ReconcileBuckets,
+				func(ctx context.Context) error {
+					// 2. 模板就绪后才创建桶，保留首次部署的 strict mapping 顺序。
+					return afterTaskReady(schemaReady, func(ctx context.Context) error {
+						if err := elasticsearchRuntime.Manager.ReconcileBuckets(ctx); err != nil {
+							return err
+						}
+						if !bucketsPrepared {
+							close(bucketsReady)
+							bucketsPrepared = true
+						}
+						return nil
+					})(ctx)
+				},
 			),
 			newAlertArchiveTask(
 				logger,
@@ -240,14 +264,18 @@ func openRuntime(
 				elasticsearchRuntime.Manager.ArchiveTerminalAlerts,
 			),
 		)
+		// 3. 归档等待初始桶准备，不把缺失目标当作可处理的归档结果。
+		archive := &tasks[len(tasks)-1]
+		archive.Run = afterTaskReady(bucketsReady, archive.Run)
 	}
 
 	for i := range tasks {
-		tasks[i] = registry.Wrap(tasks[i].Name, tasks[i])
+		tasks[i] = registry.Wrap(tasks[i].Name, superviseTask(logger, registry, tasks[i].Name, tasks[i]))
 	}
 	tasks = append(tasks, taskgroup.Task{Name: "event-source-dispatch", Run: func(taskCtx context.Context) error {
 		return runDispatch(taskCtx, cfg, logger, telemetryRuntime, registry, providers...)
 	}})
+	tasks[len(tasks)-1] = superviseTask(logger, registry, "scheduler", tasks[len(tasks)-1])
 
 	return &runtime{tasks: tasks, closeAll: closeAll}, nil
 }
@@ -274,21 +302,21 @@ func newPeriodicTask(
 			defer observer.SetActive(context.Background(), false)
 			logger.InfoContext(ctx, "control plane management task started", "task", name, "interval", interval)
 			defer logger.InfoContext(context.Background(), "control plane management task stopped", "task", name)
-			if err := runPeriodicTaskOnce(ctx, observer, runOnce); err != nil {
-				return err
-			}
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
+			for ctx.Err() == nil {
+				err := runPeriodicTaskOnce(ctx, observer, runOnce)
+				if ctx.Err() != nil {
 					return nil
-				case <-ticker.C:
-					if err := runPeriodicTaskOnce(ctx, observer, runOnce); err != nil {
-						return err
-					}
+				}
+				delay := interval
+				if err != nil {
+					delay = min(interval, taskRetryInterval)
+					logger.ErrorContext(ctx, "control plane management task iteration failed", "module", "controlplane", "operation", "reconcile", "task", name, "error", err, "retry_interval", delay)
+				}
+				if !waitForArchiveRetry(ctx, delay) {
+					return nil
 				}
 			}
+			return nil
 		},
 	}
 }
@@ -307,7 +335,7 @@ func runPeriodicTaskOnce(
 	if o, ok := observer.(interface{ RunStarted() }); ok {
 		o.RunStarted()
 	}
-	err := runOnce(ctx)
+	err := runControlCall(func() error { return runOnce(ctx) })
 	observer.RunFinished(ctx, time.Since(startedAt), err == nil)
 	return err
 }

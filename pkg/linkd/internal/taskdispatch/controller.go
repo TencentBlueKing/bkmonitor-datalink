@@ -24,6 +24,7 @@ import (
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/config"
 	"linkd/internal/eventsource"
+	"linkd/internal/processingerror"
 )
 
 const commitScript = `if redis.call('GET',KEYS[1])~=ARGV[1] then return -1 end
@@ -332,8 +333,15 @@ func (c *Controller) Run(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if e := c.tick(ctx); e != nil {
-			return e
+		err := c.tick(ctx)
+		if err != nil {
+			// 丢失中心资格必须终止旧实例；普通存储/来源错误仍继续续租，避免拖停 Worker 心跳。
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+				return err
+			}
+			if o, ok := c.observer.(interface{ ReconcileFailed(context.Context, error) }); ok {
+				o.ReconcileFailed(ctx, err)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -348,7 +356,12 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 	if o, ok := c.observer.(interface{ OperationStarted(string) }); ok {
 		o.OperationStarted("reconcile")
 	}
-	defer func() { c.observer.Operation(ctx, "reconcile", runErr == nil, time.Since(started)) }()
+	defer func() {
+		if recover() != nil {
+			runErr = processingerror.CapturePanic()
+		}
+		c.observer.Operation(ctx, "reconcile", runErr == nil, time.Since(started))
+	}()
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	n, e := c.client.Eval(call, `if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('PEXPIRE',KEYS[1],ARGV[2]) else return 0 end`, []string{c.leader}, c.token, LeaseTTL.Milliseconds()).Int()
@@ -406,8 +419,15 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 			q, stop := context.WithTimeout(ctx, 5*time.Second)
 			defer stop()
 			started := time.Now()
-			id, num, err := Probe(q, r.Spec)
-			m := UpdateMetadata(p, r.Spec, id, num, err, now)
+			type probeResult struct {
+				id  string
+				num int
+			}
+			probe, err := processingerror.Guard(func() (probeResult, error) {
+				id, num, err := Probe(q, r.Spec)
+				return probeResult{id, num}, err
+			})
+			m := UpdateMetadata(p, r.Spec, probe.id, probe.num, err, now)
 			c.observer.Operation(ctx, "kafka_probe", m.Error == "", time.Since(started))
 			results <- result{r.ID, m}
 		}(rel, previous)

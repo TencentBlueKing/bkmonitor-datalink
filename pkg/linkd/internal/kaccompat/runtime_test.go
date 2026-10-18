@@ -8,6 +8,7 @@ package kaccompat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -151,6 +152,82 @@ func TestProjectionFailureAndFullActionBufferEndMessages(t *testing.T) {
 	if len(runtime.completed) != 2 || len(runtime.actions) != 1 {
 		t.Fatal("failed item retained or buffer blocked")
 	}
+}
+
+func TestProjectionReadAndWritePanicDoesNotStopFollowingMessages(t *testing.T) {
+	for _, readPanic := range []bool{true, false} {
+		t.Run(fmt.Sprint(readPanic), func(t *testing.T) {
+			failed := true
+			runtime := NewRuntime(config.KACDeliveryConfig{}, nil, "stream", readerFunc(func(ctx context.Context, tenant string, ids []string) (store.AlertBatch, error) {
+				if failed && readPanic {
+					panic("private alert payload")
+				}
+				return testReader(ctx, tenant, ids)
+			}), writerStub{write: func(context.Context, []domain.Alert, bool) []WriteResult {
+				if failed {
+					panic("private projection payload")
+				}
+				return []WriteResult{{Index: "alarm"}}
+			}}, nil, nil, nil)
+			runtime.process(t.Context(), []queuedChange{{"1-0", domain.AlertChange{BKTenantID: "tenant", AlertID: "a"}}})
+			failed = false
+			runtime.process(t.Context(), []queuedChange{{"2-0", domain.AlertChange{BKTenantID: "tenant", AlertID: "b"}}})
+			if len(runtime.completed) != 2 {
+				t.Fatal("projection panic blocked later messages")
+			}
+		})
+	}
+}
+
+func TestActionPanicDoesNotStopFollowingActions(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	calls := 0
+	runtime := NewRuntime(config.KACDeliveryConfig{}, nil, "stream", nil, nil, senderFunc(func(context.Context, ActionRequest) error {
+		calls++
+		if calls == 1 {
+			panic("private action payload")
+		}
+		cancel()
+		return nil
+	}), nil, nil)
+	done := make(chan struct{})
+	go func() { defer close(done); runtime.runAction(ctx) }()
+	runtime.ready <- actionJob{entry: queuedChange{id: "1-0"}}
+	runtime.ready <- actionJob{entry: queuedChange{id: "2-0"}}
+	waitSignal(t, done)
+	if calls != 2 || len(runtime.completed) != 2 {
+		t.Fatal("action panic stopped worker", calls, len(runtime.completed))
+	}
+}
+
+func TestRefreshPanicDoesNotStopFollowingBatches(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	calls := 0
+	runtime := NewRuntime(config.KACDeliveryConfig{BatchSize: 1}, nil, "stream", nil, writerStub{refresh: func(context.Context, []string) error {
+		calls++
+		if calls == 1 {
+			panic("private refresh payload")
+		}
+		return nil
+	}}, nil, nil, nil)
+	done := make(chan struct{})
+	go func() { defer close(done); runtime.runRefresh(ctx) }()
+	runtime.actions <- actionJob{entry: queuedChange{id: "1-0"}}
+	select {
+	case <-runtime.completed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("failed refresh did not settle")
+	}
+	runtime.actions <- actionJob{entry: queuedChange{id: "2-0"}}
+	select {
+	case <-runtime.ready:
+	case <-time.After(3 * time.Second):
+		t.Fatal("refresh panic blocked next batch")
+	}
+	cancel()
+	waitSignal(t, done)
 }
 
 func TestSynchronousCloseUsesSameLaneAndLatestState(t *testing.T) {

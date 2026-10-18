@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/processingerror"
 	"linkd/internal/runtimeconfig"
 )
 
@@ -262,7 +263,23 @@ func (m *Manager) Run(ctx context.Context, observers ...RunObserver) error {
 	watchCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	if watcher, ok := m.source.(WatchSource); ok {
-		go func() { defer close(done); _ = watcher.Watch(watchCtx, notify) }()
+		go func() {
+			defer close(done)
+			for watchCtx.Err() == nil {
+				_, err := processingerror.Guard(func() (struct{}, error) { return struct{}{}, watcher.Watch(watchCtx, notify) })
+				if watchCtx.Err() != nil {
+					return
+				}
+				m.logger.WarnContext(watchCtx, "dynamic config watcher stopped; retrying", "module", "controlplane", "operation", "dynamic_config_watch", "error", err)
+				timer := time.NewTimer(5 * time.Second)
+				select {
+				case <-watchCtx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+		}()
 	} else {
 		close(done)
 	}

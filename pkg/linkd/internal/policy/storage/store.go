@@ -46,6 +46,19 @@ type Store struct {
 
 // Open 初始化策略配置、合并运行、屏蔽复查及抑制清理记录集合，不清理历史或业务数据。
 func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Store, error) {
+	s, err := OpenExisting(ctx, c, deployment)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.EnsureSchema(ctx); err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenExisting 构造已有配置存储的连接，不执行建表或建索引；控制面在后台准备集合。
+func OpenExisting(ctx context.Context, c config.StorageConfig, deployment string) (*Store, error) {
 	hash := sha256.Sum256([]byte(deployment))
 	s := &Store{namespace: hex.EncodeToString(hash[:])}
 	c = c.WithDefaults()
@@ -67,23 +80,6 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 		db.SetMaxOpenConns(8)
 		db.SetMaxIdleConns(8)
 		db.SetConnMaxLifetime(30 * time.Minute)
-		for _, name := range policyCollections() {
-			extra := ""
-			if hasStoredWork(name) {
-				extra = ", work TINYINT NOT NULL, KEY idx_shield_request_work(namespace,work,id)"
-			}
-			_, e = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+s.table(name)+" (namespace VARBINARY(256) NOT NULL, id VARBINARY(256) NOT NULL, version BIGINT NOT NULL, payload LONGBLOB NOT NULL, PRIMARY KEY(namespace,id)"+extra+")")
-			if e != nil {
-				_ = db.Close()
-				return nil, e
-			}
-			if isMergeWork(name) {
-				if e := s.ensureMySQLMergeWork(ctx, name); e != nil {
-					_ = db.Close()
-					return nil, e
-				}
-			}
-		}
 	} else if c.Repository == config.RepositoryTypeElasticsearch && c.Elasticsearch != nil {
 		x := c.Elasticsearch
 		tc := es.HTTPTransportConfig{Addresses: x.Addresses, APIKey: x.APIKey, MaxConnectionsPerHost: 8}
@@ -96,6 +92,31 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 			return nil, e
 		}
 		s.transport = t
+	} else {
+		return nil, fmt.Errorf("policy store requires configured ES/MySQL")
+	}
+	return s, nil
+}
+
+// EnsureSchema 幂等准备配置集合；失败保留连接，调用方可在后台重试。
+func (s *Store) EnsureSchema(ctx context.Context) error {
+	if s.db != nil {
+		for _, name := range policyCollections() {
+			extra := ""
+			if hasStoredWork(name) {
+				extra = ", work TINYINT NOT NULL, KEY idx_shield_request_work(namespace,work,id)"
+			}
+			_, e := s.db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+s.table(name)+" (namespace VARBINARY(256) NOT NULL, id VARBINARY(256) NOT NULL, version BIGINT NOT NULL, payload LONGBLOB NOT NULL, PRIMARY KEY(namespace,id)"+extra+")")
+			if e != nil {
+				return e
+			}
+			if isMergeWork(name) {
+				if e := s.ensureMySQLMergeWork(ctx, name); e != nil {
+					return e
+				}
+			}
+		}
+	} else {
 		for _, name := range policyCollections() {
 			properties := map[string]any{"id": map[string]any{"type": "keyword"}, "payload": map[string]any{"type": "object", "enabled": false}}
 			if hasStoredWork(name) {
@@ -104,8 +125,7 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 			mapping, _ := json.Marshal(map[string]any{"mappings": map[string]any{"dynamic": "strict", "properties": properties}})
 			code, response, e := s.request(ctx, http.MethodPut, "/"+s.table(name), mapping)
 			if e != nil {
-				t.Close()
-				return nil, e
+				return e
 			}
 			exists := false
 			if code == 400 {
@@ -119,21 +139,17 @@ func Open(ctx context.Context, c config.StorageConfig, deployment string) (*Stor
 				}
 			}
 			if code != 200 && !exists {
-				t.Close()
-				return nil, fmt.Errorf("initialize policy index: HTTP %d", code)
+				return fmt.Errorf("initialize policy index: HTTP %d", code)
 			}
 			if exists && isMergeWork(name) {
 				code, _, e = s.request(ctx, http.MethodPut, "/"+s.table(name)+"/_mapping", []byte(`{"properties":{"work":{"type":"boolean"}}}`))
 				if e != nil || code != 200 {
-					t.Close()
-					return nil, fmt.Errorf("add merge work mapping: HTTP %d: %w", code, e)
+					return fmt.Errorf("add merge work mapping: HTTP %d: %w", code, e)
 				}
 			}
 		}
-	} else {
-		return nil, fmt.Errorf("policy store requires configured ES/MySQL")
 	}
-	return s, nil
+	return nil
 }
 
 func (s *Store) table(kind string) string {

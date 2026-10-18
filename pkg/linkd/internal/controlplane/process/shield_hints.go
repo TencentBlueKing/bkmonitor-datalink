@@ -102,15 +102,17 @@ func (q *shieldHintQueue) finish(item shieldHintCursor, next string) {
 
 func runShieldHints(ctx context.Context, listener shieldHintListener, reader store.ShieldDependencyReader, checker shieldHintChecker, logger *slog.Logger, registry *taskstate.Registry, metrics *telemetry.Runtime) error {
 	queue := newShieldHintQueue()
-	return taskgroup.Run(ctx, []taskgroup.Task{{Name: "subscription", Run: func(ctx context.Context) error {
+	tasks := []taskgroup.Task{{Name: "subscription", Run: func(ctx context.Context) error {
 		for ctx.Err() == nil {
 			registry.Begin("shield-hints", "subscription", "事件提示订阅")
 			started := time.Now()
-			err := listener.ListenShieldHints(ctx, func(h redisstate.ShieldHint) { metrics.ObserveShieldHint(ctx, queue.add(h)) }, func(outcome string) {
-				metrics.ObserveShieldHint(ctx, outcome)
-				if outcome == "subscribed" {
-					registry.Finish(ctx, "shield-hints", "subscription", "事件提示订阅", time.Since(started), 0, 0, "")
-				}
+			err := runControlCall(func() error {
+				return listener.ListenShieldHints(ctx, func(h redisstate.ShieldHint) { metrics.ObserveShieldHint(ctx, queue.add(h)) }, func(outcome string) {
+					metrics.ObserveShieldHint(ctx, outcome)
+					if outcome == "subscribed" {
+						registry.Finish(ctx, "shield-hints", "subscription", "事件提示订阅", time.Since(started), 0, 0, "")
+					}
+				})
 			})
 			if ctx.Err() != nil {
 				return nil
@@ -164,7 +166,11 @@ func runShieldHints(ctx context.Context, listener shieldHintListener, reader sto
 			}
 		}
 		return nil
-	}}})
+	}}}
+	for i := range tasks {
+		tasks[i] = superviseTask(logger, registry, "shield-hints", tasks[i])
+	}
+	return taskgroup.Run(ctx, tasks)
 }
 
 func checkShieldHintPage(ctx context.Context, reader store.ShieldDependencyReader, checker shieldHintChecker, item shieldHintCursor) (string, int, int, error) {
@@ -205,7 +211,7 @@ func checkShieldHintPage(ctx context.Context, reader store.ShieldDependencyReade
 					failed.Add(1)
 					continue
 				}
-				if checker.CheckHint(ctx, item.hint.TenantID, id) != nil {
+				if runControlCall(func() error { return checker.CheckHint(ctx, item.hint.TenantID, id) }) != nil {
 					failed.Add(1)
 				}
 			}

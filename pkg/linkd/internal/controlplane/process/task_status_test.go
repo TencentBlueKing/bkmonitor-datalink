@@ -24,7 +24,7 @@ import (
 func TestTaskCatalogCoversResponsibilitiesAndRedacts(t *testing.T) {
 	cfg := config.Config{Storage: &config.StorageConfig{Repository: config.RepositoryTypeElasticsearch, Elasticsearch: &config.ElasticsearchConfig{}, Redis: &config.RedisConfig{Password: "private-secret"}}, Lifecycle: &config.LifecycleConfig{}}
 	s := taskCatalog(cfg, 0).Snapshot()
-	if len(s.Tasks) != 21 || len(s.Services) != 3 {
+	if len(s.Tasks) != 22 || len(s.Services) != 3 {
 		t.Fatalf("catalog %+v", s)
 	}
 	ids := map[string]bool{}

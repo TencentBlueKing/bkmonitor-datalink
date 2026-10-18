@@ -71,4 +71,13 @@ func TestShieldRoundBoundsConcurrencyAndAdvancesPastRowFailures(t *testing.T) {
 	if err != nil || count != 1 || failed != 0 || last.TenantID != "" {
 		t.Fatal("row error starved later work", err)
 	}
+	_, count, failed, err = checkShieldPage(t.Context(), repo, shieldCheckFunc(func(_ context.Context, _, id string) error {
+		if id == "alert-00" {
+			panic("private backend payload")
+		}
+		return nil
+	}), store.ShieldWorkCursor{}, at)
+	if err == nil || count != 16 || failed != 1 {
+		t.Fatalf("panic was not isolated to one row: count=%d failed=%d err=%v", count, failed, err)
+	}
 }

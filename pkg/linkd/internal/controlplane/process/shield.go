@@ -100,7 +100,7 @@ func checkShieldPage(ctx context.Context, work store.ShieldWorkStore, checker sh
 					failed.Add(1)
 					continue
 				}
-				if err := checker.CheckShield(ctx, item.Alert.BKTenantID, item.Alert.AlertID); err != nil {
+				if err := runControlCall(func() error { return checker.CheckShield(ctx, item.Alert.BKTenantID, item.Alert.AlertID) }); err != nil {
 					failed.Add(1)
 				}
 			}

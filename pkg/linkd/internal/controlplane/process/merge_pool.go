@@ -13,6 +13,7 @@ import (
 	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/lifecycle/scheduler"
 	mergeflow "linkd/internal/merge"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 	"linkd/internal/telemetry"
 )
@@ -41,8 +42,11 @@ func runMergeBatchPool(ctx context.Context, pool *mergeflow.MemberPool, concurre
 				started := time.Now()
 				registry.Begin(string(telemetry.ControlPlaneTaskMergeBatches), "", "")
 				call, stop := context.WithTimeout(ctx, 10*time.Second)
-				result, err := execute(call, batch)
+				result, err := processingerror.Guard(func() (mergeflow.MemberBatch, error) { return execute(call, batch) })
 				stop()
+				if errors.Is(err, processingerror.ErrPanic) {
+					result = batch
+				}
 				stageReady := pool.Finish(result, err, time.Now())
 				store.ObserveBatchPhase(ctx, "pool.executed", time.Since(started))
 				failed, code := 0, ""
@@ -54,7 +58,7 @@ func runMergeBatchPool(ctx context.Context, pool *mergeflow.MemberPool, concurre
 				observer.RunFinished(ctx, time.Since(started), failed == 0)
 				// 2. 收齐结果立即推进关系/父准入，不查询完成状态；阶段提交失败由原恢复循环接续。
 				if stageReady && complete != nil {
-					if err := complete(ctx, result); err != nil && ctx.Err() == nil {
+					if err := runControlCall(func() error { return complete(ctx, result) }); err != nil && ctx.Err() == nil {
 						logger.WarnContext(ctx, "advance completed merge batch failed", "error", err, "bk_tenant_id", batch.Facts.TenantID, "window_id", batch.Facts.WindowID)
 					}
 				}

@@ -81,7 +81,7 @@ func (m *Manager) ReconcileSchemaAndActive(ctx context.Context) error {
 }
 
 // ReconcileBuckets 核对已有历史桶的字段，并幂等维护当前预创建窗口内的时间桶及其 alias。
-// 模板必须先由 ReconcileSchemaAndActive 准备；控制面启动时按该顺序完成首次对账。
+// 模板必须先由 ReconcileSchemaAndActive 准备；控制面后台按该顺序完成首次对账。
 func (m *Manager) ReconcileBuckets(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("reconcile elasticsearch buckets: context must not be nil")

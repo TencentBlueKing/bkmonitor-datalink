@@ -88,7 +88,7 @@ func checkShieldRequestsPage(ctx context.Context, work shieldRequestWork, execut
 					failed.Add(1)
 					continue
 				}
-				if err := executor.Execute(ctx, request); err != nil {
+				if err := runControlCall(func() error { return executor.Execute(ctx, request) }); err != nil {
 					failed.Add(1)
 				}
 			}

@@ -49,6 +49,8 @@ MQ delivery
 - Elasticsearch 使用控制面进程内三个独立任务分别执行 Schema 与 Active 资源对账、时间桶维护和 Alert 归档：
   Event 按 received_at，AlertHistory 与 AlertLog 按 Alert 创建锚点分桶；终态 Alert 由有界 Worker 连续批量从
   Active 热索引幂等归档到 History，积压期间批次之间不等待固定周期。
+- 拆分部署的控制面存储初始化与后台任务失败会记录状态并重试，管理 API 和调度保持运行；ES 只读或不可达时，
+  相关业务读写仍明确失败。失去调度中心租约时重新取得授权，不绕过原有协调历史保护。
 - 控制面可监控 Redis Signal Stream 的长度、内存、Consumer Group、PEL 和 lag，并在超过软上限时有界
   裁剪所有 Group 都已确认的连续前缀；未读和 Pending Signal 不会为满足长度目标而删除。
 

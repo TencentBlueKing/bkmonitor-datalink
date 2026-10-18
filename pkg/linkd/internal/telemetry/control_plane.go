@@ -21,6 +21,8 @@ import (
 type ControlPlaneTask string
 
 const (
+	// ControlPlaneTaskControlStorage 在后台准备控制配置集合和内置来源。
+	ControlPlaneTaskControlStorage ControlPlaneTask = "control-storage"
 	// ControlPlaneTaskKACIndexMaintenance 维护兼容索引并观测定义冲突或依赖故障。
 	ControlPlaneTaskKACIndexMaintenance ControlPlaneTask = "kac-index-maintenance"
 	// ControlPlaneTaskKACDelivery 记录队列投影与动作发送的运行状态。

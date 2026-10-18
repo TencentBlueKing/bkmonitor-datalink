@@ -22,6 +22,7 @@ import (
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/config"
 	"linkd/internal/domain"
+	"linkd/internal/processingerror"
 	"linkd/internal/store"
 )
 
@@ -117,6 +118,8 @@ func (r *Runtime) ProjectNow(ctx context.Context, tenant, alert string) error {
 
 // Run 复用同一 Consumer 身份恢复上次未完成消息，不维护第二份任务状态。
 func (r *Runtime) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	for {
 		err := r.redis.XGroupCreateMkStream(ctx, r.stream, "kac", "0").Err()
 		if err == nil || strings.Contains(err.Error(), "BUSYGROUP") {
@@ -144,7 +147,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	workers.Go(func() { r.observeQueue(ctx) })
 	settled := make(chan struct{})
 	go func() { r.runSettlements(); close(settled) }()
-	defer func() { workers.Wait(); close(r.completed); <-settled }()
+	defer func() { cancel(); workers.Wait(); close(r.completed); <-settled }()
 	cursor := "0"
 	for ctx.Err() == nil {
 		streams, readErr := r.redis.XReadGroup(ctx, &redis.XReadGroupArgs{Group: "kac", Consumer: "control-plane", Streams: []string{r.stream, cursor}, Count: int64(r.cfg.BatchSize), Block: 100 * time.Millisecond}).Result()
@@ -257,7 +260,7 @@ func (r *Runtime) process(ctx context.Context, entries []queuedChange) {
 	alerts := []domain.Alert{}
 	outcomes := map[string]WriteResult{}
 	for tenant, ids := range groups {
-		batch, err := r.alerts.GetAlertsCurrent(ctx, tenant, ids)
+		batch, err := processingerror.Guard(func() (store.AlertBatch, error) { return r.alerts.GetAlertsCurrent(ctx, tenant, ids) })
 		if err != nil {
 			for _, id := range ids {
 				outcomes[tenant+"\x00"+id] = WriteResult{Err: err}
@@ -272,9 +275,13 @@ func (r *Runtime) process(ctx context.Context, entries []queuedChange) {
 		}
 	}
 	if len(alerts) > 0 {
-		results := r.writer.WriteBatch(ctx, alerts, false)
+		results, err := processingerror.Guard(func() ([]WriteResult, error) { return r.writer.WriteBatch(ctx, alerts, false), nil })
 		for i, alert := range alerts {
-			outcomes[alert.BKTenantID+"\x00"+alert.AlertID] = results[i]
+			if err != nil {
+				outcomes[alert.BKTenantID+"\x00"+alert.AlertID] = WriteResult{Err: err}
+			} else {
+				outcomes[alert.BKTenantID+"\x00"+alert.AlertID] = results[i]
+			}
 		}
 	}
 	for _, entry := range entries {
@@ -334,7 +341,7 @@ func (r *Runtime) runRefresh(stop context.Context) {
 			}
 		}
 		call, cancel := context.WithTimeout(context.WithoutCancel(stop), 10*time.Second)
-		err := r.writer.Refresh(call, indices)
+		_, err := processingerror.Guard(func() (struct{}, error) { return struct{}{}, r.writer.Refresh(call, indices) })
 		cancel()
 		for _, job := range jobs {
 			if err != nil {
@@ -367,7 +374,7 @@ func (r *Runtime) runAction(stop context.Context) {
 		}
 		started := time.Now()
 		call, cancel := context.WithTimeout(context.WithoutCancel(stop), 10*time.Second)
-		err := r.sender.Send(call, job.request)
+		_, err := processingerror.Guard(func() (struct{}, error) { return struct{}{}, r.sender.Send(call, job.request) })
 		r.report(call, "action", err, job.entry.change, time.Since(started), 1)
 		cancel()
 		r.ack(job.entry.id)

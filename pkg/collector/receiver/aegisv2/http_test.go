@@ -50,9 +50,9 @@ func TestExportCollect_WebVitalsPublishesOnlyTraces(t *testing.T) {
 	resp := httptest.NewRecorder()
 	svc.ExportCollect(resp, req)
 	require.Equal(t, http.StatusOK, resp.Code)
-	assert.Equal(t, []define.RecordType{define.RecordTraces}, validated)
+	assert.Equal(t, []define.RecordType{define.RecordRumTraces}, validated)
 	require.Len(t, published, 1)
-	require.Equal(t, define.RecordTraces, published[0].RecordType)
+	require.Equal(t, define.RecordRumTraces, published[0].RecordType)
 	traces := published[0].Data.(ptrace.Traces)
 	require.Equal(t, 3, traces.SpanCount()) // FCP=0, LCP=452, CLS=0.1; FID is unsupported.
 	spans := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
@@ -104,7 +104,7 @@ func TestExportCollect_Protocols(t *testing.T) {
 			assert.Equal(t, define.ContentTypeJson, resp.Header().Get(define.ContentType))
 			assert.JSONEq(t, `{}`, resp.Body.String())
 			require.Len(t, published, 1)
-			require.Equal(t, define.RecordTraces, published[0].RecordType)
+			require.Equal(t, define.RecordRumTraces, published[0].RecordType)
 			got := published[0].Data.(ptrace.Traces)
 			require.Equal(t, 1, got.SpanCount())
 			assert.Equal(t, tt.spanName, got.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Name())
@@ -159,5 +159,5 @@ func TestExportCollect_RejectsTracesBeforePublish(t *testing.T) {
 	svc.ExportCollect(resp, req)
 
 	assert.Equal(t, http.StatusTooManyRequests, resp.Code)
-	assert.Equal(t, []define.RecordType{define.RecordTraces}, validated)
+	assert.Equal(t, []define.RecordType{define.RecordRumTraces}, validated)
 }

@@ -72,7 +72,7 @@ func (s *httpService) ExportCollect(w http.ResponseWriter, req *http.Request) {
 
 	bs, err := io.ReadAll(req.Body)
 	if err != nil {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordTraces)
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordRumTraces)
 		logger.Errorf("aegisv2 failed to read request body, ip=%v, error: %s", ip, err)
 		receiver.WriteResponse(w, define.ContentTypeJson, int(define.StatusBadRequest), nil)
 		return
@@ -80,7 +80,7 @@ func (s *httpService) ExportCollect(w http.ResponseWriter, req *http.Request) {
 
 	traces, err := decodeCollect(req.Header.Get(define.ContentType), bs)
 	if err != nil {
-		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordTraces)
+		metricMonitor.IncDroppedCounter(define.RequestHttp, define.RecordRumTraces)
 		logger.Warnf("aegisv2 /collect failed to decode body, ip=%v, error: %s, preview: %s", ip, err, getPayloadPreview(bs, 80))
 		receiver.WriteResponse(w, define.ContentTypeJson, int(define.StatusBadRequest), nil)
 		return
@@ -88,21 +88,21 @@ func (s *httpService) ExportCollect(w http.ResponseWriter, req *http.Request) {
 	record := &define.Record{
 		RequestType:   define.RequestHttp,
 		RequestClient: define.RequestClient{IP: ip},
-		RecordType:    define.RecordTraces,
+		RecordType:    define.RecordRumTraces,
 		Data:          traces,
 		Token:         define.Token{Original: tokenparser.FromHttpRequest(req)},
 		Metadata:      tokenparser.FromHttpUserMetadata(req),
 	}
-	prettyprint.Pretty(define.RecordTraces, traces)
+	prettyprint.Pretty(define.RecordRumTraces, traces)
 	code, processorName, err := s.Validate(record)
 	if err != nil {
-		logger.Warnf("aegisv2 pre-check failed, rtype=%s, code=%d, ip=%v, error: %s", define.RecordTraces.S(), code, ip, err)
-		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordTraces, processorName, record.Token.Original, code)
+		logger.Warnf("aegisv2 pre-check failed, rtype=%s, code=%d, ip=%v, error: %s", define.RecordRumTraces.S(), code, ip, err)
+		metricMonitor.IncPreCheckFailedCounter(define.RequestHttp, define.RecordRumTraces, processorName, record.Token.Original, code)
 		receiver.WriteResponse(w, define.ContentTypeJson, int(code), nil)
 		return
 	}
 	s.Publish(record)
-	receiver.RecordHandleMetrics(metricMonitor, record.Token, define.RequestHttp, define.RecordTraces, len(bs), start)
+	receiver.RecordHandleMetrics(metricMonitor, record.Token, define.RequestHttp, define.RecordRumTraces, len(bs), start)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte(collectResponseEmpty))
 }
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
 	"linkd/internal/store"
 	"linkd/internal/store/memory"
 )
@@ -142,7 +143,7 @@ func TestInterruptedStepsWithoutPersistentCheckpoints(t *testing.T) {
 				}
 				if stage == "update" {
 					active, err := base.FindActiveAlert(t.Context(), store.ActiveAlertKey{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint})
-					wantContent, wantRevision := "", int64(1)
+					wantContent, wantRevision := enrich.DefaultAlertContent, int64(1)
 					if after {
 						wantContent, wantRevision = event.Content, 2
 					}

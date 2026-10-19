@@ -15,12 +15,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"slices"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -75,7 +72,7 @@ func (p *schedulerProcessor) ProcessEvent(ctx context.Context, event store.Store
 	return p.processor.ProcessEvent(ctx, event)
 }
 
-func TestContentFailureSignalResumeIntegration(t *testing.T) {
+func TestContentFailureUsesFallbackWithoutBlockingIntegration(t *testing.T) {
 	address := os.Getenv("LINKD_TEST_DISPATCH_REDIS")
 	if address == "" {
 		t.Skip("set LINKD_TEST_DISPATCH_REDIS for explicit isolated Redis integration")
@@ -185,65 +182,12 @@ func TestContentFailureSignalResumeIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var failed taskdispatch.Task
 	waitContentRecovery(t, ctx, func() bool {
 		plan()
-		snapshot, err := controller.Snapshot(ctx)
-		if err != nil {
-			t.Fatal(err)
+		stored, err := repo.GetEvent(ctx, second.BKTenantID, second.EventID)
+		if err != nil || !stored.Processing.State.Terminal() {
+			return false
 		}
-		for _, task := range snapshot.Tasks {
-			if task.Blocked && task.Phase == "stopped" {
-				failed = task
-				return true
-			}
-		}
-		return false
-	})
-	pending, err := client.XPending(ctx, stream, group).Result()
-	if err != nil || pending.Count != 1 {
-		t.Fatal("failed signal not retained in PEL", err)
-	}
-	head, err := mailboxes.Peek(ctx, mailboxID)
-	if err != nil || head != first.EventID {
-		t.Fatal("failed mailbox head advanced", err)
-	}
-	stored, err := repo.GetEvent(ctx, first.BKTenantID, first.EventID)
-	if err != nil || stored.Processing.State != domain.EventProcessStateUnprocessed {
-		t.Fatal("failed content persisted a plan", err)
-	}
-	key := store.ActiveAlertKey{BKTenantID: first.BKTenantID, EventSourceID: first.EventSourceID, Fingerprint: first.Fingerprint}
-	if _, err := repo.FindActiveAlert(ctx, key); !errors.Is(err, store.ErrNotFound) {
-		t.Fatal("failed content created an Alert")
-	}
-	// 超过原调度退避并反复对账，仍不能自动分配下一代。
-	until := time.Now().Add(6 * time.Second)
-	waitContentRecovery(t, ctx, func() bool {
-		plan()
-		if started.Load() != 1 {
-			t.Fatal("permanent content failure restarted automatically")
-		}
-		return !time.Now().Before(until)
-	})
-	facts.ready.Store(true)
-	body := `{"expected_source_version":7,"expected_epoch":` + strconv.FormatInt(failed.Epoch, 10) + `}`
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/event-sources/source/tasks/"+failed.ID+"/resume", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Internal-Token", testJWT(t, "synthetic-admin"))
-	response, err := server.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := response.Body.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != 204 {
-		t.Fatalf("resume status %d", response.StatusCode)
-	}
-	waitContentRecovery(t, ctx, func() bool {
-		plan()
 		head, err := mailboxes.Peek(ctx, mailboxID)
 		if err != nil {
 			t.Fatal(err)
@@ -254,17 +198,31 @@ func TestContentFailureSignalResumeIntegration(t *testing.T) {
 		}
 		return head == "" && pending.Count == 0
 	})
+	snapshot, err := controller.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range snapshot.Tasks {
+		if task.Blocked {
+			t.Fatalf("content failure blocked task %s", task.ID)
+		}
+	}
+	stored, err := repo.GetEvent(ctx, first.BKTenantID, first.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.ActiveAlertKey{BKTenantID: first.BKTenantID, EventSourceID: first.EventSourceID, Fingerprint: first.Fingerprint}
 	alert, err := repo.FindActiveAlert(ctx, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if alert.Alert.Content != "CPU > 5.0, 当前值10%" || alert.Alert.TriggerEventID != first.EventID || started.Load() != 2 || facts.calls.Load() != 2 {
-		t.Fatal("resumed content or task identity changed")
+	if alert.Alert.Content != first.Content || alert.Alert.TriggerEventID != first.EventID || started.Load() != 1 || facts.calls.Load() != 1 {
+		t.Fatal("content failure did not freeze source text within the original task")
 	}
 	ordered.mu.Lock()
 	order := slices.Clone(ordered.order)
 	ordered.mu.Unlock()
-	if !slices.Equal(order, []string{first.EventID, first.EventID, second.EventID}) {
+	if !slices.Equal(order, []string{first.EventID, second.EventID}) {
 		t.Fatalf("mailbox order %v", order)
 	}
 	for i, event := range []domain.Event{first, second} {
@@ -281,10 +239,12 @@ func TestContentFailureSignalResumeIntegration(t *testing.T) {
 			t.Fatalf("unexpected repeated trigger reason %q", saved.Processing.ReasonCode)
 		}
 	}
+	// 后续事实恢复可用于新告警，已经完成的 Event/Alert 不因此重算。
+	facts.ready.Store(true)
 	if _, err := processor.ProcessEvent(ctx, stored); err != nil {
 		t.Fatal(err)
 	}
-	if facts.calls.Load() != 2 {
+	if facts.calls.Load() != 1 {
 		t.Fatal("terminal replay generated content again")
 	}
 }

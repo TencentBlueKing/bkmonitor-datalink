@@ -1,12 +1,30 @@
 # Alert.content 在创建阶段生成的实施草案
 
-> 2026-10-17 内容处理更新：描述分支不适用、配置/检测事实不足或描述依赖读取失败时，创建与只读预览保留
-> Event 原始 content（包括空串和空白），不因描述生成失败拒绝 Event。取消、panic 与原有输出大小约束保留。
-> 下文历史的内容错误白名单、缺事实拒绝/暂停及非空原文要求由此规则替代；不补造历史比较值或重查当前历史。
-> 已核对 alarmd `kingeye/master@9fd58a2fd` 的默认编译器与标准输出：Threshold、SimpleRingRatio、SimpleYearRound、
-> AdvancedRingRatio、AdvancedYearRound、RingRatioAmplitude、YearRoundAmplitude、YearRoundRange、OsRestart、ProcPort，
-> 另有 Ping 来源映射与独立无数据分支。历史比较事件没有比较值和单算法命中方向，因此只描述发布时检测条件及当前值。
-> 现行边界见[标准事件](../reference/contracts/standard-event.md#算法描述与原文保留)。
+> 2026-10-17 统一降级确认：合法 Event 的任何文案生成错误、panic、空白或非法输出均不能
+> 导致事件被丢弃或阻止应创建的告警。优先逐字保留来源 content；来源为空/空白则使用
+> “告警已触发，详细内容暂不可用。”。创建与预览共用实现，分别记录 WARN 或返回降级诊断。
+> 事件身份检查与 Worker 取消控制不被吞掉，已保存 Event/Alert 不回填。
+> 下方错误白名单、缺文案即拒绝及历史暂停流程不再是当前文案处理契约；以
+> [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界) 为准。
+
+> 2026-10-17 字段接入修复：以 Kingeye `358357f8` 的
+> [alarmd 字段文档](https://code.cwoa.net/rd-fy22-canway-kingeye/kingeye/-/blob/358357f84f8828ea0e68b72d9abbd4e428b5d634/docs/references/alarmd-linkd-event-fields.md) 为输入依据。
+> ProcPort 已读取结构化进程/端口维度，OsRestart 使用 triggered 结论和当前 uptime；
+> 两者不再一律按专用查询改写拒绝。历史算法保留上游的条件模板：有完整冻结条件时
+> 只陈述条件和当前值，不补造历史比较值；缺少条件时统一降级。自定义级别缺少数字算法级别映射、进程事实缺失/非法时也保留
+> 非空来源内容并记录具体原因。创建、重投和预览由原始 JSON 示例回归覆盖；
+> 这属于本地验证，不扩大历史线上验收范围。完整边界见
+> [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
+
+> 2026-10-17 文案容错与历史来源修复：`aggregate_method_missing`、`item_name_missing`、
+> `detection_evidence_missing` 属于展示事实缺失，创建与预览允许采用来源原文并记录诊断。
+> 普通丰富与文案统一按租户、`strategy_id` 和 `strategy_revision` 精确查询
+> `alarm_strategy_revision`；事件 `strategy_version` 对应历史表 `strategy_revision`。
+> 使用同一快照的 `strategy.runtime_config.metadata/spec` 与 `strategy.items`，
+> 不再依赖会被覆盖的 SplitRecord 当前态或 `publish_status`。历史缺失按
+> `strategy_revision_missing` 保留来源文案；歧义、损坏、身份不符仍明确失败。
+> 下方以 SplitRecord 当前态代替历史的描述属于历史实现，当前契约以
+> [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界) 为准。
 
 > 2026-10-17 持续关联更新：同级触发和 `update_current` 升级默认直接使用本次 `Event.content`，
 > 与时间字段和 `revision` 在原有一次 Alert CAS 中保存；不新增内容查询，不重跑创建构建器。
@@ -26,22 +44,16 @@
 
 > 状态：本轮可用事实范围的实现与验证已完成；全类型线上验收和来源切换尚未完成。配置 Reader、FactsResolver、创建前入口、content_mode、Display 内容保留、opening Event 预览以及确定性失败暂停/恢复已接入。Threshold/Ping 已完成源码模板对照；先后两次共 32 条真实 Threshold 消息通过版本绑定、描述对照、本地 Alert 入库/重投及只读预览检查，含 target、data、日志关键字、K8s 配置上下文及明确的 APM 样本。真实 Redis 上的失败暂停、管理恢复和队列继续处理验证通过。缺少稳定检测事实或真实样本的组合按用户要求记录并跳过。KAC 固定来源名的实现偏差已修复，完整 `make check` 通过；默认 source 模式继续复制来源内容。调研日期：2026-09-30；Linkd 工作树基线 `ac1331de`，alarmd 二阶段补充核对 `origin/master@8b4c5622`（含 `8c3c859f`），Kingeye `e34c323d`，bk-monitor `51c834dc6`。未切换工作树或修改 alarmd。源码证据及现状见[调研记录](../research/2026-09-30-alert-content-generation.md)。以下历史执行记录保留当时结果，以最新验证小节判断当前状态。
 
-> 2026-10-12 已确认的历史积压处理例外：确切策略发布版本在当前发布表中已不可得时，内容 Reader 返回 `publication_missing`，Lifecycle 可使用该 Event 自带的非空原始 content，并记录 `source_fallback` WARN 诊断。不得借用最新策略生成历史文案。降级内容继续校验并冻结进 EventPlan；发布歧义、身份/模板错误、来源 Release 缺失与外部依赖故障不降级。无数据的四类文案错误按上方 2026-10-14 边界允许原文兜底，其余缺失检测事实不降级。运行契约见 [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
+> 2026-10-12 已确认的历史积压处理例外：确切策略发布版本在当前发布表中已不可得时，内容 Reader 返回 `publication_missing`，Lifecycle 可使用该 Event 自带的非空原始 content，并记录 `source_fallback` WARN 诊断。不得借用最新策略生成历史文案。降级内容继续校验并冻结进 EventPlan；发布歧义、身份/模板错误、来源 Release 缺失与外部依赖故障不降级。无数据的四类文案错误按上方 2026-10-14 边界允许原文兜底，其他事实错误按上方 2026-10-17 白名单处理。运行契约见 [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
 
 
-## 当前策略读取边界（2026-10-08）
+## 当前策略读取边界（2026-10-17）
 
-按本次确认，配置事实仅来自 `alarm_strategy_set_split_record` 的同版本发布材料。
-单条有界 SELECT 原子读取租户、拆分主键、版本、启用/发布状态和 payload；文案使用其中的
-`strategy_config`、`resolved_strategies` 与 `runtime_query_configs`，不查询当前 Set/Config、历史表或 Redis。
-租户、Set UID、模板、Config UID、default 标记、业务名册均在材料内部校验；DATA 多业务 spec 不同则拒绝。
-此后编辑上游声明或旧写旁路失败不影响已发布材料的读取；当前记录版本变化仍返回 `publication_version_mismatch`。
-覆盖缺少独立修订仍明确拒绝。普通丰富的读取边界见[策略依赖](enrich-kingeye-strategy-dependencies.md)。
-
-本次改造验证：`make check` 全部通过（格式、普通测试、vet、race、静态分析、Console、Helm 与发布脚本）；43 个受影响本地链接和锚点检查通过。未配置 `LINKD_CONTENT_TEST_MYSQL_DSN`，真实 MySQL 集成测试未执行；自包含 SQL 边界及文案创建/计划重投测试通过。未进行线上来源切换。
-
-下文 2026-09-30 的 Set/Config 读取与对比、事务和真实数据记录属于当时实现的历史证据，
-不再描述当前读取路径，也不能替代本次改造后的实际环境验证。
+策略历史材料来自 `alarm_strategy_revision`，同版本唯一记录才是触发时的策略快照。
+`strategy.runtime_config` 提供声明式 metadata/spec，`strategy.items` 提供同版执行查询与算法；
+读取校验、统一降级和运行限制统一见[任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
+SplitRecord 是可变当前态，不能提供历史保证；本轮移除以它的 `source_resource_version` 与
+`publish_status` 决定丰富有效性的路径。下方旧实现和调研记录不代表当前 Reader。
 
 ## 目标、边界与验收定义
 
@@ -187,7 +199,7 @@ Kingeye `e34c323d` 代码中有两条版本生成路径：
 2. 内容算法优先读已匹配的 StrategyConfig `spec.strategy_detect_algorithms/strategy_item`；Set 的 `inner_metric_info` 可提供单位、指标展示信息，必须选择同一个 `config_id`，并核对 Set 尚未派生/下发的新配置不会混入。
 3. 当版本证据缺失、匹配到失效配置或 Set/Config 尚未一致时，停止该来源切换并报告明确错误。不得读取废弃历史表，也不得用当前内容掩盖无法回放的触发时事实。
 
-历史阶段曾增加 StrategySetClient 和精确 ConfigID 选择模型（2026-10-08 已移除旧读取器，现由 [SplitRecord 读取](../../internal/enrich/datasources/strategy_publication.go) 取代）；租户隔离、重复模板、取消、依赖失败及当前 Set/Config 关联的只读集成验证已完成。该 Reader 本身不保证事件版本匹配，不表示内容生成已经完成。
+历史阶段曾增加 StrategySetClient 和精确 ConfigID 选择模型（2026-10-08 已移除旧读取器，随后由 SplitRecord 读取取代，2026-10-17 改为[不可变历史读取](../../internal/enrich/datasources/strategy_revision.go)）；租户隔离、重复模板、取消、依赖失败及当前 Set/Config 关联的只读集成验证已完成。该 Reader 本身不保证事件版本匹配，不表示内容生成已经完成。
 
 本次验证记录：
 
@@ -237,7 +249,7 @@ Kingeye `e34c323d` 代码中有两条版本生成路径：
 | 环比、同比、高级历史比较 | 实际比较值、周期点及多点取值；标准消息未完整保留 | 生产 Resolver 返回 detection_evidence_missing；本轮跳过，获得同版本/同事件历史事实后再验收。 |
 | 预测、振幅等依赖模型输出的算法 | 触发时预测上/下界或算法中间事实 | 本轮跳过；不重跑当前模型替代旧输出。 |
 | 无数据 | bk-monitor 区分 no_data_period（距离最后数据）与 anomaly_period（从首次异常 checkpoint）；当前 no_data_periods 和滚动窗口异常数不足以证明两者 | 返回 nodata_evidence_missing；本轮跳过，不用 window.anomalies 代替 anomaly_period。 |
-| OsRestart、ProcPort | 前次启动值或进程/端口状态、维度及专用查询事实 | 返回明确缺事实/未验证错误；本轮跳过，不从中文 content 反解。 |
+| OsRestart、ProcPort | triggered 判定、当前 uptime 或进程/端口维度及专用查询绑定 | 当前接入见上方 2026-10-17 更新；缺少/非法展示事实保留来源文案，不从中文 content 反解。 |
 | 转换前整数/浮点类型 | alarmd float64 再编码可能丢失 10.0 的词法类型 | 已保留收到的 JSON 类型；需要转换前类型才能证明一致的样本本轮跳过。 |
 | 旧策略消息对应的发布材料 | current split/Set/Config 无法证明旧版本，例如早期 395/4 样本 | 拒绝用当前版本替代；本轮跳过缺材料的旧消息，不查废弃历史表。 |
 | override 触发时配置身份 | 覆盖投影复用父记录的整数版本；现有标准消息没有覆盖摘要或独立修改代次 | 返回 publication_override_revision_missing；按缺事实跳过本轮验收。后续取得同事件冻结配置或覆盖版本身份，并验证保留期后再接入；不得用当前覆盖配置或默认配置替代。 |
@@ -345,8 +357,8 @@ Cloud 的源码补查确认 `TargetExecutor` 按对象模型进入 is_cloud 分�
 
 ## 失败、幂等与运行约束
 
-- 在 `bkmonitor_description` 模式，事实缺失、版本不符、未知算法、输出超限或模板不支持均不得复制 `event.Content` 冒充成功。返回带有限定错误码的失败，且必须发生在 `EventPlan` 持久化之前；不得先创建不可修复的错误 Alert。
-- 暂时性依赖失败使用现有 Lifecycle 消息重试与有界退避。确定性缺失不得无限重试：在 Lifecycle scheduler 对内容错误分类，复用 `consume.Block` 保留消息和 mailbox 顺序，并提供来源、事件 ID、规则/依赖错误码、恢复步骤的告警与人工处理入口；不记录完整 payload。需要在实施时验证 Block 的队列所有权和恢复操作，不能仅靠日志。
+- 所有 content_mode 共用[统一降级](../reference/contracts/task-resume.md#操作顺序与内容边界)：构建错误、panic、空白或非法输出优先使用来源原文，原文为空则使用固定文案。合法事件不因文案失败移出队列或缺少应创建的 Alert；降级不表示事实已补齐。
+- 事件身份校验与整个处理 Context 的取消在构建器外执行。取消时不冻结内容也不确认队首，按所有权控制协议保留重试。只有文案依赖返回错误而处理 Context 有效时不再做事件级重试，直接降级。存储与准入等其他错误继续按既有策略处理。
 - 一旦 `EventPlan` 已保存，重试只能执行原计划，不能重新读取策略并改写内容。计划保存前的 CAS 冲突重算必须读取同版本事实并产生相同文本。按租户隔离所有读取和缓存；结果、模板及源事实有硬上限。
 - 前置 Event Enrich 失败时，按既有规则保存失败结果；若候选仍获准新建且内容构建成功，Alert 复制该丰富状态并保存生成的核心内容。内容构建失败与普通 Enrich 失败要有不同指标和诊断。
 - 预览入口应能用未持久化 Event + Alert 展示候选内容及缺失事实，不执行核心字段写入；正式流程与预览共用 Resolver/Renderer。旧 Alert 不做后台回填。

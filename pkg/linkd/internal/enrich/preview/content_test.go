@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"linkd/internal/config"
@@ -94,23 +95,11 @@ func TestOpeningEventContentPreviewSelectsSeverityWithoutStoredAlertReads(t *tes
 		t.Fatal("invalid input reached renderer")
 	}
 	req.Input = Input{OpeningEvent: encoded, Severity: "critical"}
-	facts.err = &description.Error{Code: "history_evidence_missing"}
-	fallback, err := service.Preview(t.Context(), req)
-	if err != nil || fallback.CandidateContent == nil || *fallback.CandidateContent != event.Content || fallback.EffectiveAlert["content"] != event.Content || closes != 2 {
-		t.Fatalf("fallback=%+v error=%v closes=%d", fallback, err, closes)
-	}
-	for _, content := range []string{"", " \t\n"} {
-		changed := event.Clone()
-		changed.Content = content
-		raw, marshalErr := json.Marshal(changed)
-		if marshalErr != nil {
-			t.Fatal(marshalErr)
-		}
-		req.Input = Input{OpeningEvent: raw, Severity: "critical"}
-		facts.err = errors.New("description dependency unavailable")
+	for _, code := range []string{"history_evidence_missing", "algorithm_unsupported", "content_route_missing", "strategy_revision_corrupt", "aggregate_method_missing", "item_name_missing", "detection_evidence_missing", "strategy_revision_missing", "severity_mapping_missing", "process_evidence_missing", "process_facts_invalid"} {
+		facts.err = &description.Error{Code: code}
 		result, err := service.Preview(t.Context(), req)
-		if err != nil || result.CandidateContent == nil || *result.CandidateContent != content || result.EffectiveAlert["content"] != content {
-			t.Fatalf("source content not preserved: %+v %v", result, err)
+		if err != nil || result.CandidateContent == nil || *result.CandidateContent != event.Content || result.Original["content"] != event.Content {
+			t.Fatalf("fallback %s: result=%+v error=%v", code, result, err)
 		}
 	}
 	for _, mutate := range []func(*domain.Event){func(e *domain.Event) { e.BKTenantID = "tenant-b" }, func(e *domain.Event) { e.EventSourceVersion = 6 }, func(e *domain.Event) { e.RelatedAlertIDs = []string{"existing"} }} {
@@ -120,6 +109,76 @@ func TestOpeningEventContentPreviewSelectsSeverityWithoutStoredAlertReads(t *tes
 		req.Input = Input{OpeningEvent: raw, Severity: "critical"}
 		if _, err := service.Preview(t.Context(), req); err == nil {
 			t.Fatal("invalid event scope accepted")
+		}
+	}
+}
+
+type previewContentEngine struct {
+	Enricher
+	build func(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error)
+}
+
+func (e previewContentEngine) BuildContent(ctx context.Context, event domain.Event, v domain.EventEvaluation, opening domain.Alert) (string, error) {
+	return e.build(ctx, event, v, opening)
+}
+
+func TestOpeningContentPreviewUnifiedFallback(t *testing.T) {
+	for _, failure := range []string{"error", "panic", "empty", "oversized", "invalid utf8", "builder unavailable"} {
+		for _, source := range []string{"  original private text  ", "", " \t\n"} {
+			t.Run(failure+"/"+source, func(t *testing.T) {
+				stub := sourceStub{config.EventSource{EventSourceID: "host", RelatedTenantID: "tenant-a"}}
+				service := New(stub, nil, func(_ context.Context, s config.EventSource) (Enricher, func() error, error) {
+					router, err := assembly.NewRouter([]config.EventSource{s}, enrich.Sources{})
+					if err != nil {
+						return nil, nil, err
+					}
+					if failure == "builder unavailable" {
+						return struct{ Enricher }{router}, func() error { return nil }, nil
+					}
+					return previewContentEngine{Enricher: router, build: func(_ context.Context, event domain.Event, _ domain.EventEvaluation, _ domain.Alert) (string, error) {
+						event.Content = "mutated"
+						switch failure {
+						case "panic":
+							panic("secret panic")
+						case "empty":
+							return "  ", nil
+						case "oversized":
+							return strings.Repeat("x", (1<<20)+1), nil
+						case "invalid utf8":
+							return string([]byte{0xff}), nil
+						default:
+							return "", errors.New("secret dependency payload")
+						}
+					}}, func() error { return nil }, nil
+				})
+				event := storetest.Event("tenant-a", "e", "f", "warning")
+				event.EventSourceID = "host"
+				event.EventSourceVersion = 7
+				event.Content = source
+				raw, err := json.Marshal(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := service.Preview(t.Context(), Request{BKTenantID: "tenant-a", EventSourceID: "host", Input: Input{OpeningEvent: raw, Severity: "warning"}})
+				want, mode := source, "source_fallback"
+				if strings.TrimSpace(source) == "" {
+					want, mode = "告警已触发，详细内容暂不可用。", "default_fallback"
+				}
+				if err != nil || result.CandidateContent == nil || *result.CandidateContent != want || result.EffectiveAlert["content"] != want || result.Original["content"] != source {
+					t.Fatalf("result=%+v error=%v want=%s", result, err, want)
+				}
+				encoded, err := json.Marshal(result)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded map[string]json.RawMessage
+				if err := json.Unmarshal(encoded, &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(decoded["content_diagnostic"]), mode) || strings.Contains(string(encoded), "secret") {
+					t.Fatalf("diagnostic=%s", encoded)
+				}
+			})
 		}
 	}
 }

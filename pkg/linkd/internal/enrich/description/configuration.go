@@ -35,18 +35,17 @@ type RuntimeAlgorithm struct {
 }
 
 // Configuration 保存同一次版本绑定读取冻结的内容依赖。
-// Spec、SetConfig、Queries 和 Algorithms 均来自同一 SplitRecord 发布材料；
-// Reader 必须校验租户、拆分主键、事件版本和载荷内绑定，不能回查旧配置表。
+// Spec、Queries 和 Algorithms 均来自同一 Strategy revision 快照；
+// Reader 必须校验租户、策略 ID、事件版本和快照内绑定，不能读取 SplitRecord 当前态。
 type Configuration struct {
 	Identity   ConfigurationQuery
 	Spec       models.CWStrategySpec
-	SetConfig  models.StrategySetConfig
 	Queries    []models.StrategyQueryConfig
 	Algorithms []RuntimeAlgorithm
 }
 
 // ConfigurationReader 原子读取并校验指定版本的完整配置身份。
-// 缺失、过期或歧义返回永久内容错误；连接、超时等依赖错误保留错误链以便重试。
+// 缺失、歧义或损坏返回内容错误；连接、超时等依赖错误保留错误链。
 type ConfigurationReader interface {
 	ReadConfiguration(context.Context, ConfigurationQuery) (Configuration, error)
 }

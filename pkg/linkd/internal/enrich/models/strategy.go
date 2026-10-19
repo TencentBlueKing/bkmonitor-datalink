@@ -76,13 +76,13 @@ const (
 	CWStrategyKindCloud CWStrategyKind = "StrategyCloud"
 )
 
-// StrategyQuery 使用事件中的租户、拆分记录主键和发布版本定位策略当前态。
+// StrategyQuery 使用事件中的租户、策略 ID 和版本定位不可变历史快照。
 type StrategyQuery struct {
 	// TenantID 必须来自事件的可信租户作用域。
 	TenantID string
-	// ID 是默认或覆盖 SplitRecord 自身的主键。
+	// ID 是 alarmd 事件的 strategy_id，对应历史表 strategy_id。
 	ID int64
-	// Version 是 labels.strategy_version，不是 Config status 版本或缓存生成号。
+	// Version 是 labels.strategy_version，对应历史表 strategy_revision。
 	Version int64
 }
 
@@ -91,7 +91,7 @@ func (q StrategyQuery) Valid() bool {
 	return q.TenantID != "" && strings.TrimSpace(q.TenantID) == q.TenantID && q.ID > 0 && q.Version > 0
 }
 
-// CWStrategy 是 SplitRecord 发布材料生成的丰富视图，不对应旧配置表。
+// CWStrategy 是不可变 Strategy revision 中 runtime_config 生成的丰富视图。
 type CWStrategy struct {
 	CreatedAt                time.Time
 	CreatedBy                string
@@ -118,7 +118,7 @@ type CWStrategy struct {
 }
 
 // StrategyItemProjection 返回 Enrich 使用的声明式策略查询投影。
-// 分类、展示和指标清洗复用发布材料中的 spec.strategy_item，不回查旧配置表。
+// 分类、展示和指标清洗复用历史快照中的 spec.strategy_item，不回查旧配置表。
 func (s CWStrategy) StrategyItemProjection() (StrategyItemProjection, error) {
 	if s.BKBizID == nil || *s.BKBizID <= 0 {
 		return StrategyItemProjection{}, fmt.Errorf("kingeye strategy must contain a positive bk_biz_id")

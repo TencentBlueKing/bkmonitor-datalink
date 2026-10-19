@@ -130,15 +130,22 @@ Redis Mailbox 后，原消息才允许确认；Signal 只唤醒 Mailbox，不承
 普通指标描述及精确版本配置校验保持既有契约。生成内容只赋给新 Alert，Event.content、
 SourceRawData、ExtraData 保持不变。已创建 Alert 在后续同级触发或 `update_current` 升级时，
 将本次 Event.content 与时间、revision 一起写入，不重新查询或生成描述；恢复、关闭和低等级抑制保留已有内容。
-无数据文案不适用时，与其他算法共用下面的原文保留规则，不修正 Event 的字段或无数据判定。
+无数据描述与所有其他创建文案采用统一降级：任何生成错误、panic 或非法/空白输出，
+来源原文非空白时保留原文；为空/空白时采用“告警已触发，详细内容暂不可用。”。
+创建入口记录原因码和 `source_fallback/default_fallback`，只读预览返回同样的
+`content_diagnostic`；不记录原文或任意依赖错误文本。
+事件本身的身份/合法性检查仍在构建器外执行，整个处理 Context 取消时保留事件重试。
+内容生成以外的存储、准入和队列错误遵循原有规则。完整边界见
+[任务恢复与内容边界](task-resume.md#操作顺序与内容边界)。降级不修正 Event 字段或检测判定，
+也不表示缺失的检测事实已补齐；新 Alert.content 仍经校验并冻结到 EventPlan。
 真实输入的验证与部署边界见[无数据接入验证](../../research/samples/2026-10-14-nodata-content/README.md)。
 
 ## 算法描述与原文保留
 
 2026-10-17 确认：`bkmonitor_description` 是内容转换，不作为 Event 处理成功的前置条件。
 分支不适用、未知算法、配置/事实缺失、版本绑定不可读或描述依赖读取失败时，Lifecycle 与 opening Event
-只读预览均保留原始 `Event.content`，包括空串和空白，不将这些情况变成 `processing_failed`。
-原有事件/来源/租户入口隔离、取消、panic 与输出大小约束继续生效；不修改来源数据，不查询其他租户或最新策略来补文本。
+只读预览均优先保留非空白原始 `Event.content`；原文为空/空白时使用固定文案，不将单纯文案失败变成 `processing_failed`。
+普通文案 panic 和非法输出也遵循统一降级；事件/来源/租户入口隔离、取消与来源大小约束继续生效；不修改来源数据，不查询其他租户或最新策略来补文本。
 原文保留诊断不包含正文；已完成 Event 的重投不重新生成内容。
 
 按 alarmd `kingeye/master@9fd58a2fd` 的默认编译器与 `linkdoutput.Converter` 核对当前算法：
@@ -151,13 +158,13 @@ SourceRawData、ExtraData 保持不变。已创建 Alert 在后续同级触发�
 | RingRatioAmplitude | 前一时刻比较、threshold/ratio/shock 条件与当前值 |
 | YearRoundAmplitude / YearRoundRange | days/method/ratio/shock 条件与当前值 |
 | OsRestart | 事件中的当前运行时长；不重算历史检测 |
-| ProcPort | 当前进程值及 display_name/nonlisten/not_accurate_listen/bind_ip 维度 |
+| ProcPort | 当前进程值及有界 display_name/nonlisten/not_accurate_listen/bind_ip 维度，事实不足则降级 |
 | 无数据 | 事件自带 no_data_periods，沿用独立无数据模板 |
 
-标准事件不携带历史比较值、具体命中方向或每个算法的检测结果。历史类模板只陈述“检测条件”，
-同时配置下降/上升时保留两个条件并以“或”连接，不选择或杜撰其中一支，不反向解析来源 content。
-缺少必要配置或维度时保留原文。当前未注册的预测、智能检测等算法不在上述生成范围内。
-监控项顶层未填写 `agg_method` 时，使用指标名称；衍生指标仍由指标定义内部聚合，不猜测或补造聚合函数。
+标准事件不携带历史比较值、具体命中方向或每个算法的检测结果。沿用本轮 b6 场景边界，
+缺少历史证据时保留来源/固定文案，不杜撰比较值或从当前目录补历史名称。
+监控项聚合优先使用同快照声明的顶层/查询聚合方式；衍生指标由指标定义内部聚合，不另套前缀。
+显式提交的自定义 content 优先，允许空串；控制面传输不可用是运行时故障，保留原事件重试，不冻结降级结果。
 
 ## 实例来源与告警维度
 

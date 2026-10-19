@@ -47,15 +47,19 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if err != nil || !rules.IsAPMTable(projection.QueryConfigs[0].ResultTableID) {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
 	}
+	dimensions, err := combinedDimensions(alert)
+	if err != nil {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"}}}}, nil
+	}
 	application, applicationDiagnostics, err := resolveAPMApplication(ctx, scope, strategy, projection.QueryConfigs[0].ResultTableID, ids.BizID)
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
 	diagnostics = append(diagnostics, applicationDiagnostics...)
-	service := dimensionText(alert.Dimensions, rules.FieldServiceName)
-	instance := dimensionText(alert.Dimensions, rules.FieldAPMInstanceID)
+	service := dimensionText(dimensions, rules.FieldServiceName)
+	instance := dimensionText(dimensions, rules.FieldAPMInstanceID)
 	modelID, modelInstID := apmModelIdentity(application.ID, service, instance)
-	values := models.APMValues{APMAppID: apmIDValue(application.ID), APMAppName: application.Name, APMAppAlias: application.Alias, APMServiceName: service, APMInstanceName: instance, APMInterfaceName: dimensionText(alert.Dimensions, rules.FieldAPMSpanName), APMNetPeerName: dimensionText(alert.Dimensions, rules.FieldAPMNetPeerName), ModelID: modelID, ModelInstID: modelInstID, BKBizID: ids.BizID}
+	values := models.APMValues{APMAppID: apmIDValue(application.ID), APMAppName: application.Name, APMAppAlias: application.Alias, APMServiceName: service, APMInstanceName: instance, APMInterfaceName: dimensionText(dimensions, rules.FieldAPMSpanName), APMNetPeerName: dimensionText(dimensions, rules.FieldAPMNetPeerName), ModelID: modelID, ModelInstID: modelInstID, BKBizID: ids.BizID}
 	if application.ID != "" {
 		values.CWLabels = apmLabels(ids.BizID, application.ID)
 	}

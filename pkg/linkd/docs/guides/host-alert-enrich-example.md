@@ -348,8 +348,9 @@ strategy_id      = 123
 strategy_version = 1
 ```
 
-策略适配器按租户和 `strategy_id` 查询 `alarm_strategy_set_split_record.id`，
-要求 `source_resource_version == strategy_version` 且记录启用、active、published。
+策略适配器按租户和 `strategy_id + strategy_version` 查询 `alarm_strategy_revision`，
+其中 `strategy_version` 对应历史列 `strategy_revision`；读取唯一且完整的历史快照，
+使用 `strategy.runtime_config` 和同版 `strategy.items`，不依赖 SplitRecord 当前态或发布状态。
 配置内容来自该行 payload，旧配置表和历史表均不读取。发布业务与来源业务需通过丰富处理器的业务边界校验：
 
 ```text

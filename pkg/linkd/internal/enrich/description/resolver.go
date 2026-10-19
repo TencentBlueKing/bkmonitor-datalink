@@ -19,7 +19,7 @@ import (
 )
 
 // Resolver 按事件身份取得已验证发布配置，再整理检测描述输入。
-// 历史算法只陈述配置条件，不补造 standard Event 未携带的比较值，不解析来源 content。
+// 无法从 standard Event 证明的历史/预测事实明确失败，不解析来源 content。
 type Resolver struct{ configurations ConfigurationReader }
 
 var _ FactsResolver = (*Resolver)(nil)
@@ -93,36 +93,39 @@ func (r *Resolver) Resolve(ctx context.Context, event domain.Event, evaluation d
 	if family != "" && family != "metric_algorithm" {
 		return Facts{}, invalid("detection_evidence_missing")
 	}
-	// 发布投影器会在编译以后重写专用指标的表达式。Ping 的描述只依赖
-	// 原始丢包率，且 EventExecutor 已冻结 PingUnreachable 算法；仅接受这一
-	// 明确组合。其他专用指标不能当作普通阈值处理。
+	// 级别代码不携带算法的数字级别。未知映射只影响展示，交给来源文案
+	// 降级；不能把自定义优先级或 level_<ID> 字符串当作已验证的算法身份。
+	level := map[string]int64{"critical": 1, "warning": 2, "info": 3}[evaluation.Severity]
+	if level == 0 {
+		return Facts{}, invalid("severity_mapping_missing")
+	}
+	// 专用指标在编译后改写查询。只接受单查询、单选中算法的明确组合，
+	// 避免将专用观测值误用于普通阈值。物理指标仍允许普通阈值策略。
 	for _, query := range configuration.Queries {
+		expected := ""
 		switch query.MetricID {
 		case "bk_monitor.ping-gse":
-			level := map[string]int64{"critical": 1, "warning": 2, "info": 3}[evaluation.Severity]
-			selected := 0
-			for _, algorithm := range configuration.Algorithms {
-				if algorithm.Level != level {
-					continue
-				}
-				if algorithm.Type != "PingUnreachable" {
-					return Facts{}, invalid("special_query_rewrite_unverified")
-				}
-				selected++
+			expected = "PingUnreachable"
+		case "bk_monitor.os_restart":
+			expected = "OsRestart"
+		case "bk_monitor.proc_port":
+			expected = "ProcPort"
+		}
+		if expected == "" {
+			continue
+		}
+		selected := 0
+		for _, algorithm := range configuration.Algorithms {
+			if algorithm.Level != level {
+				continue
 			}
-			if len(configuration.Queries) != 1 || selected != 1 {
+			if algorithm.Type != expected {
 				return Facts{}, invalid("special_query_rewrite_unverified")
 			}
-		case "bk_monitor.os_restart", "bk_monitor.proc_port":
-			kind := "OsRestart"
-			if query.MetricID == "bk_monitor.proc_port" {
-				kind = "ProcPort"
-			}
-			for _, algorithm := range configuration.Algorithms {
-				if algorithm.Type != kind {
-					return Facts{}, invalid("special_query_rewrite_unverified")
-				}
-			}
+			selected++
+		}
+		if len(configuration.Queries) != 1 || selected != 1 {
+			return Facts{}, invalid("special_query_rewrite_unverified")
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -148,10 +151,6 @@ func (r *Resolver) Resolve(ctx context.Context, event domain.Event, evaluation d
 			return Facts{}, invalid("observed_unit_mismatch")
 		}
 	}
-	level := map[string]int64{"critical": 1, "warning": 2, "info": 3}[evaluation.Severity]
-	if level == 0 {
-		return Facts{}, invalid("severity_mapping_missing")
-	}
 	item := configuration.Spec.StrategyItem
 	connector := strings.ToLower(item.Connector)
 	if connector == "" {
@@ -176,24 +175,28 @@ func (r *Resolver) Resolve(ctx context.Context, event domain.Event, evaluation d
 		case "PingUnreachable":
 			// 此规则仅比较当次原始值 >= 1，不需要重查历史。
 		case "SimpleRingRatio", "SimpleYearRound", "AdvancedRingRatio", "AdvancedYearRound", "RingRatioAmplitude", "YearRoundAmplitude", "YearRoundRange":
+			// 上游条件模板只描述同版本发布条件和当前值，不补造历史比较值或命中方向。
+			// 条件也不存在时沿用 b6 的事实不足降级。
+			var conditions map[string]json.RawMessage
+			if json.Unmarshal(compiled.Config, &conditions) != nil || len(conditions) == 0 {
+				return Facts{}, invalid("detection_evidence_missing")
+			}
 			algorithm.Config = append(json.RawMessage(nil), compiled.Config...)
-		case "OsRestart":
-			algorithm.Config = json.RawMessage(`{}`)
-		case "ProcPort":
-			algorithm.ProcessName, _ = event.Dimensions["display_name"].StringValue()
-			if algorithm.ProcessName == "" {
-				return Facts{}, invalid("process_evidence_missing")
-			}
-			ports, _ := event.Dimensions["nonlisten"].StringValue()
-			if ports != "" && ports != "null" {
-				if json.Unmarshal([]byte(ports), &algorithm.NonListeningPorts) != nil {
-					return Facts{}, invalid("process_evidence_missing")
-				}
-			}
-			algorithm.InaccurateListen, _ = event.Dimensions["not_accurate_listen"].StringValue()
-			algorithm.BindIP, _ = event.Dimensions["bind_ip"].StringValue()
 		case "TimeSeriesForecasting":
 			return Facts{}, invalid("detection_evidence_missing")
+		case "OsRestart":
+			// triggered 是 alarmd 冻结的检测结论，历史点不随标准事件传递。
+			// 仅陈述当前 uptime；窗口中较旧异常触发但当前值已正常时降级。
+			if value.value <= 0 || value.value > 600 {
+				return Facts{}, invalid("detection_evidence_missing")
+			}
+			matched := true
+			algorithm.DetectionMatched = &matched
+		case "ProcPort":
+			algorithm, err = resolveProcessFacts(event, value)
+			if err != nil {
+				return Facts{}, err
+			}
 		default:
 			return Facts{}, invalid("algorithm_unsupported")
 		}
@@ -233,15 +236,23 @@ func resolveNoData(event domain.Event, evaluation domain.EventEvaluation, config
 }
 
 // 普通 Data/Target/Log/APM 继承 Kingeye BaseExecutor.build_items；PromQL
-// 在 DataExecutor 中覆盖 name，EventExecutor 使用 spec.name。对象名不参与前缀。
+// 在 DataExecutor 中覆盖 name。缺失名称仅从同版本发布的展示字段降级，
+// 不借用当前目录或解析来源 content。
 func configurationItemName(spec models.CWStrategySpec) (string, error) {
 	item := spec.StrategyItem
 	if item == nil || len(item.QueryConfigs) > 32 {
 		return "", invalid("strategy_item_invalid")
 	}
+	name := spec.Name
+	for _, candidate := range []string{spec.Name, spec.AliasName} {
+		if strings.TrimSpace(candidate) != "" {
+			name = candidate
+			break
+		}
+	}
 	// EventExecutor 根据 field_name 合成查询，声明的 query_configs 可以为空。
-	if spec.MonitorItemType == "event" && spec.Name != "" {
-		return spec.Name, nil
+	if spec.MonitorItemType == "event" && strings.TrimSpace(name) != "" {
+		return name, nil
 	}
 	if len(item.QueryConfigs) == 0 {
 		return "", invalid("strategy_item_invalid")
@@ -249,14 +260,21 @@ func configurationItemName(spec models.CWStrategySpec) (string, error) {
 	if item.QueryConfigs[0].PromQL != "" {
 		return item.QueryConfigs[0].PromQL, nil
 	}
-	if spec.Name == "" {
+	if strings.TrimSpace(name) == "" {
 		return "", invalid("item_name_missing")
 	}
-	if item.AggregateMethod == "" {
-		// 衍生指标在指标定义内部聚合，策略可以不声明顶层聚合方式。
-		return spec.Name, nil
+	// 展开型派生指标的聚合属于指标定义，不在这里猜测或再套一层聚合。
+	if spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
+		return name, nil
 	}
-	return item.AggregateMethod + "(" + spec.Name + ")", nil
+	method := item.AggregateMethod
+	if strings.TrimSpace(method) == "" {
+		method = item.QueryConfigs[0].AggregateMethod
+	}
+	if strings.TrimSpace(method) == "" {
+		return "", invalid("aggregate_method_missing")
+	}
+	return method + "(" + name + ")", nil
 }
 
 // Standard Cleaner 的数值视图使用 float64，整数/浮点词法只能从同一原始

@@ -30,8 +30,12 @@ func TestExplicitCustomContentHasPriorityOverAutomaticDescription(t *testing.T) 
 				})
 				value, _ := json.Marshal(text)
 				processors := json.RawMessage(`[{"fields":{"status":"` + status + `","patches":[{"path":"$.content","value":` + string(value) + `}]}}]`)
-				opening := domain.Alert{Enrich: domain.JSONObject{"processors": processors}}
-				content, err := processor.buildNewAlertContent(t.Context(), domain.Event{Content: "same as source"}, domain.EventEvaluation{}, opening)
+				event := testEvent("custom-content", "warning")
+				event.Content = "same as source"
+				opening := domain.Alert{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
+					EventSourceVersion: event.EventSourceVersion, TriggerEventID: event.EventID,
+					Fingerprint: event.Fingerprint, Severity: "warning", Enrich: domain.JSONObject{"processors": processors}}
+				content, err := processor.buildNewAlertContent(t.Context(), event, event.Evaluations[0], opening)
 				if err != nil {
 					t.Fatal(err)
 				}

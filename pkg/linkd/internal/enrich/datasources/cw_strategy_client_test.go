@@ -13,29 +13,32 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"strings"
-	"testing"
-
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/models"
+	"strings"
+	"testing"
 )
 
-func TestCWStrategyClientReadsPublication(t *testing.T) {
+func TestCWStrategyClientReadsHistoricalRuntimeConfig(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name              string
-		businesses        []int64
-		override, cloud   bool
-		deleted, disabled bool
-		unusedRuntime     bool
+		name            string
+		change          func(map[string]any)
+		business        int64
+		override, cloud bool
 	}{
-		{name: "default without old tables", businesses: []int64{2}},
-		{name: "data multiple businesses", businesses: []int64{2, 4}},
-		{name: "override uses child identity", businesses: []int64{2}, override: true},
-		{name: "cloud fields in publication", businesses: []int64{2}, cloud: true},
-		{name: "deleted publication remains matchable", businesses: []int64{2}, deleted: true},
-		{name: "disabled publication and config remain matchable", businesses: []int64{2}, disabled: true},
-		{name: "unused runtime DTO does not block enrichment", businesses: []int64{2}, unusedRuntime: true},
+		{name: "default", business: 2},
+		{name: "global business from snapshot", business: 5, change: func(p map[string]any) { revisionStrategy(p)["bk_biz_id"] = int64(5) }},
+		{name: "override instance", business: 2, override: true, change: func(p map[string]any) {
+			revisionLabels(p)["is_default"] = false
+			revisionLabels(p)["bk_object_inst_id"] = 101
+		}},
+		{name: "cloud", business: 2, cloud: true, change: func(p map[string]any) { revisionSpec(p)["cloud_type"] = "aws" }},
+		{name: "disabled historical snapshot remains readable", business: 2, change: func(p map[string]any) { revisionStrategy(p)["is_enabled"] = false; revisionSpec(p)["enable"] = false }},
+		{name: "deleted historical snapshot remains readable", business: 2, change: func(p map[string]any) { revisionStrategy(p)["is_deleted"] = true }},
+		{name: "unused runtime DTO", business: 2, change: func(p map[string]any) {
+			revisionItem(p)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = ""
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -47,64 +50,33 @@ func TestCWStrategyClientReadsPublication(t *testing.T) {
 					}
 					return &readerTestRows{columns: []string{"id", "bk_tenant_id", "name"}, values: [][]driver.Value{{int64(7), "tenant", "CPU template"}}}, nil
 				}
-				assertSplitQuery(t, ctx, statement, args)
-				payload := splitTestPublication(t, tc.businesses...)
-				if tc.cloud {
-					payload["resolved_strategies"].([]any)[0].(map[string]any)["spec"].(map[string]any)["cloud_type"] = "aws"
+				assertRevisionQuery(t, ctx, statement, args)
+				p := revisionTestSnapshot(t)
+				if tc.change != nil {
+					tc.change(p)
 				}
-				if tc.override {
-					splitTestLabels(payload)["is_default"] = false
-					splitTestLabels(payload)["bk_object_inst_id"] = 101
-					delete(payload, "strategy_set")
-					delete(payload, "strategy_config")
-					delete(payload, "runtime_query_configs")
-				}
-				if tc.unusedRuntime {
-					payload["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = ""
-				}
-				if tc.disabled {
-					payload["strategy_config"].(map[string]any)["enable"] = false
-					payload["resolved_strategies"].([]any)[0].(map[string]any)["spec"].(map[string]any)["enable"] = false
-				}
-				rows := splitTestRows(t, payload)
-				if tc.deleted {
-					rows.values[0][7] = "deleted"
-				}
-				if tc.disabled {
-					rows.values[0][9] = false
-				}
-				if tc.override {
-					rows.values[0][1] = int64(9)
-				}
-				return rows, nil
+				return snapshotTestRows(t, p), nil
 			})
 			client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: db})
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: splitTestVersion})
+			result, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
 			if err != nil || !found || result.Status.BKStrategyID != 1 || result.MonitorTemplateName != "CPU template" || result.Spec.Name != "CPU" || calls != 2 {
-				t.Fatalf("found=%t err=%v result=%+v calls=%d", found, err, result, calls)
+				t.Fatalf("result=%+v found=%v error=%v calls=%d", result, found, err, calls)
 			}
-			wantBusiness := tc.businesses[0]
-			if len(tc.businesses) > 1 {
-				wantBusiness = 5
-			}
-			if result.BKBizID == nil || *result.BKBizID != wantBusiness {
-				t.Fatalf("strategy business=%v want=%d", result.BKBizID, wantBusiness)
-			}
-			if *result.IsDefault == tc.override {
-				t.Fatal("default/override identity lost")
+			if result.BKBizID == nil || *result.BKBizID != tc.business || *result.IsDefault == tc.override {
+				t.Fatal("historical identity lost")
 			}
 			if tc.override && (result.BKObjectInstID == nil || *result.BKObjectInstID != "101") {
-				t.Fatal("numeric override instance identity lost")
+				t.Fatal("override instance lost")
 			}
 			if tc.cloud && result.Kind != models.CWStrategyKindCloud {
 				t.Fatal("cloud kind lost")
 			}
 			projection, err := result.StrategyItemProjection()
 			if err != nil || projection.QueryConfigs[0].MetricField != "usage" {
-				t.Fatalf("projection=%+v err=%v", projection, err)
+				t.Fatalf("projection=%+v error=%v", projection, err)
 			}
 		})
 	}
@@ -121,9 +93,9 @@ func TestCWStrategyClientMissingInvalidFailureAndCancellation(t *testing.T) {
 	}{
 		{name: "missing"},
 		{name: "dependency", failure: dependency},
-		{name: "version mismatch", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][6] = splitTestVersion + 1 }},
-		{name: "malformed publication", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][11] = "{" }},
-		{name: "oversized publication excluded by SQL", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][11] = nil }},
+		{name: "version mismatch", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][3] = revisionTestVersion + 1 }},
+		{name: "malformed publication", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][7] = []byte("{") }},
+		{name: "oversized publication excluded by SQL", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][7] = nil }},
 		{name: "duplicate rows", wantInvalid: true, change: func(r *readerTestRows) { r.values = append(r.values, r.values[0]) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -134,7 +106,7 @@ func TestCWStrategyClientMissingInvalidFailureAndCancellation(t *testing.T) {
 				if tc.change == nil {
 					return &readerTestRows{columns: []string{"id"}}, nil
 				}
-				rows := splitTestRows(t, splitTestPublication(t, 2))
+				rows := snapshotTestRows(t, revisionTestSnapshot(t))
 				tc.change(rows)
 				return rows, nil
 			})
@@ -142,7 +114,7 @@ func TestCWStrategyClientMissingInvalidFailureAndCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: splitTestVersion})
+			_, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
 			if found {
 				t.Fatal("unexpected strategy")
 			}
@@ -172,7 +144,7 @@ func TestCWStrategyClientMissingInvalidFailureAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	identity := models.StrategyQuery{TenantID: "tenant", ID: 1, Version: splitTestVersion}
+	identity := models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion}
 	if _, _, err := client.GetByStrategyID(ctx, identity); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}

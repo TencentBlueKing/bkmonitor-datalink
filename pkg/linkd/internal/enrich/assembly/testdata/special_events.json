@@ -1,0 +1,92 @@
+{
+  "metric": {
+    "bk_tenant_id": "system",
+    "event_id": "3f1c2b9a8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a",
+    "alert_id": "9b2f4c6d8e0a1b3c5d7e9f1a2b3c4d5e",
+    "title": "Strategy 1201 level 1 triggered",
+    "content": "value=93.5 at 2026-10-16T06:00:00Z; 3 of 5 points in the window were anomalous",
+    "values": {
+      "value": 93.5
+    },
+    "evaluations": [
+      {
+        "severity": "critical",
+        "action": "triggered",
+        "action_reason": ""
+      }
+    ],
+    "dimensions": {
+      "bk_host_id": 30021,
+      "bk_target_ip": "192.0.2.10",
+      "bk_target_cloud_id": 0
+    },
+    "subject": {
+      "system": "cmdb",
+      "type": "host",
+      "id": "30021"
+    },
+    "occurred_at": "2026-10-16T06:00:00Z",
+    "produced_at": "2026-10-16T06:01:00Z",
+    "labels": {
+      "strategy_id": 1201,
+      "strategy_version": 7,
+      "bk_biz_id": 2
+    },
+    "extra_data": {
+      "anomaly_begin_time": "2026-10-16T05:58:00Z",
+      "window": {
+        "size": 5,
+        "anomalies": 3,
+        "required": 3
+      },
+      "event_semantic_digest": "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00",
+      "signal_type": "metric",
+      "evaluation_family": "metric_algorithm"
+    }
+  },
+  "process": {
+    "bk_tenant_id": "system",
+    "event_id": "5c4d3e2f1a3f1c2b9a8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b",
+    "alert_id": "f9e8d7c6b5a4938271605f4e3d2c1b0a",
+    "title": "Strategy 1410 level 2 triggered",
+    "content": "value=1 at 2026-10-16T06:00:00Z; 1 of 1 points in the window were anomalous",
+    "values": {
+      "value": 1
+    },
+    "evaluations": [
+      {
+        "severity": "warning",
+        "action": "triggered",
+        "action_reason": ""
+      }
+    ],
+    "dimensions": {
+      "bk_target_ip": "192.0.2.31",
+      "bk_target_cloud_id": 0,
+      "display_name": "nginx",
+      "listen": "[80]",
+      "nonlisten": "[443]",
+      "not_accurate_listen": "[]",
+      "bind_ip": "0.0.0.0",
+      "protocol": "tcp"
+    },
+    "occurred_at": "2026-10-16T06:00:00Z",
+    "produced_at": "2026-10-16T06:01:00Z",
+    "labels": {
+      "strategy_id": 1410,
+      "strategy_version": 1,
+      "bk_biz_id": 2
+    },
+    "extra_data": {
+      "anomaly_begin_time": "2026-10-16T06:00:00Z",
+      "window": {
+        "size": 1,
+        "anomalies": 1,
+        "required": 1
+      },
+      "event_semantic_digest": "cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34",
+      "signal_type": "metric",
+      "evaluation_family": "metric_algorithm"
+    }
+  }
+}

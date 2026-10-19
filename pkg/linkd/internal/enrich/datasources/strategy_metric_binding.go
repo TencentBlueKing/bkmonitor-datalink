@@ -6,10 +6,9 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-// bindPublishedMetricReferences 只补齐声明查询缺失的目录身份，不把编译后的
-// 表达式、条件或展开成员覆盖回声明。别名和物理字段必须唯一对应；多业务
-// 投影必须给出相同身份，否则无法证明正在丰富的是同一指标。
-func bindPublishedMetricReferences(spec *models.CWStrategySpec, payload strategyPublication) error {
+// bindRevisionMetricReferences 只补齐声明查询缺失的目录身份，不把编译后的
+// 表达式、条件或展开成员覆盖回声明。别名和物理字段必须唯一对应；执行项必须唯一，否则无法证明正在丰富的是同一指标。
+func bindRevisionMetricReferences(spec *models.CWStrategySpec, runtimeItems []json.RawMessage) error {
 	if spec.StrategyItem == nil || spec.FieldTag == models.CWStrategyFieldTagDerivedMetric ||
 		spec.MonitorItemType == models.CWMonitorItemTypeLog || spec.MonitorItemType == models.CWMonitorItemTypeLogKeyword {
 		return nil
@@ -24,8 +23,8 @@ func bindPublishedMetricReferences(spec *models.CWStrategySpec, payload strategy
 	if len(missing) == 0 {
 		return nil
 	}
-	if len(queries) > 32 || len(payload.Runtime) != len(payload.Resolved) {
-		return descriptionFailure("publication_metric_binding_invalid")
+	if len(queries) > 32 || len(runtimeItems) != 1 {
+		return descriptionFailure("strategy_revision_metric_binding_invalid")
 	}
 	for _, i := range missing {
 		aliases := 0
@@ -35,11 +34,11 @@ func bindPublishedMetricReferences(spec *models.CWStrategySpec, payload strategy
 			}
 		}
 		if aliases != 1 {
-			return descriptionFailure("publication_metric_binding_invalid")
+			return descriptionFailure("strategy_revision_metric_binding_invalid")
 		}
 	}
 	references := make(map[int]int64, len(missing))
-	for business, raw := range payload.Runtime {
+	for _, raw := range runtimeItems {
 		// 只解码身份字段；运行时 index_set_id 等 DTO 与声明查询不同，
 		// 不相关字段的类型不能阻断普通 Enrich。
 		var runtime struct {
@@ -51,7 +50,7 @@ func bindPublishedMetricReferences(spec *models.CWStrategySpec, payload strategy
 			} `json:"query_configs"`
 		}
 		if json.Unmarshal(raw, &runtime) != nil || len(runtime.Error) != 0 || len(runtime.Queries) != len(queries) {
-			return descriptionFailure("publication_metric_binding_invalid")
+			return descriptionFailure("strategy_revision_metric_binding_invalid")
 		}
 		for _, i := range missing {
 			query := queries[i]
@@ -68,12 +67,12 @@ func bindPublishedMetricReferences(spec *models.CWStrategySpec, payload strategy
 				}
 				matches++
 				if field == "" || candidate.MetricField != field || candidate.MetricRefID <= 0 {
-					return descriptionFailure("publication_metric_binding_invalid")
+					return descriptionFailure("strategy_revision_metric_binding_invalid")
 				}
 				reference = candidate.MetricRefID
 			}
-			if matches != 1 || (business > 0 && references[i] != reference) {
-				return descriptionFailure("publication_metric_binding_invalid")
+			if matches != 1 {
+				return descriptionFailure("strategy_revision_metric_binding_invalid")
 			}
 			references[i] = reference
 		}

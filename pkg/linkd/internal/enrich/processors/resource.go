@@ -249,7 +249,10 @@ func processK8sResource(ctx context.Context, scope *enrich.Scope, code string, b
 }
 
 func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, query models.StrategyQueryConfig, bizID int64) (enrich.ProcessorResult, error) {
-	dimensions := scope.Facts().Dimensions
+	dimensions, err := combinedDimensions(scope.Facts())
+	if err != nil {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"}}}}, nil
+	}
 	application, diagnostics, err := resolveAPMApplication(ctx, scope, strategy, query.ResultTableID, bizID)
 	if err != nil {
 		return enrich.ProcessorResult{}, err
@@ -380,8 +383,10 @@ func additionalDimensions(extraData domain.JSONObject) (domain.DimensionMap, err
 	return additional, nil
 }
 
+// combinedDimensions 返回独立的完整维度视图；APM 可以仅携带附加维度，
+// 因此缺失 dimensions 也须能合并，且不得回写原始事件或静默覆盖重名键。
 func combinedDimensions(alert domain.Event) (domain.DimensionMap, error) {
-	combined := alert.Dimensions.Clone()
+	combined := alert.Dimensions.Normalize()
 	additional, err := additionalDimensions(alert.ExtraData)
 	if err != nil {
 		return nil, err

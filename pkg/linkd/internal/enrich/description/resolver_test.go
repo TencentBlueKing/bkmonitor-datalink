@@ -319,3 +319,41 @@ func TestResolverPingUsesOriginalLossValue(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigurationItemNameUsesPublishedDisplayFacts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, want, code string
+		change           func(*models.CWStrategySpec)
+	}{
+		{name: "item aggregate", want: "AVG(CPU)"},
+		{name: "query aggregate", want: "SUM(CPU)", change: func(s *models.CWStrategySpec) {
+			s.StrategyItem.AggregateMethod = ""
+			s.StrategyItem.QueryConfigs[0].AggregateMethod = "SUM"
+		}},
+		{name: "alias", want: "AVG(alias)", change: func(s *models.CWStrategySpec) { s.Name = " "; s.AliasName = "alias" }},
+		{name: "derived without aggregate", want: "CPU", change: func(s *models.CWStrategySpec) {
+			s.FieldTag = models.CWStrategyFieldTagDerivedMetric
+			s.StrategyItem.AggregateMethod = ""
+		}},
+		{name: "promql", want: "sum(cpu)", change: func(s *models.CWStrategySpec) { s.Name = ""; s.StrategyItem.QueryConfigs[0].PromQL = "sum(cpu)" }},
+		{name: "missing name", code: "item_name_missing", change: func(s *models.CWStrategySpec) { s.Name = "" }},
+		{name: "missing aggregate", code: "aggregate_method_missing", change: func(s *models.CWStrategySpec) { s.StrategyItem.AggregateMethod = "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, configuration := resolverFixture(t)
+			if tc.change != nil {
+				tc.change(&configuration.Spec)
+			}
+			got, err := configurationItemName(configuration.Spec)
+			if tc.code != "" {
+				var failure *Error
+				if !errors.As(err, &failure) || failure.Code != tc.code {
+					t.Fatalf("error=%v want=%s", err, tc.code)
+				}
+			} else if err != nil || got != tc.want {
+				t.Fatalf("name=%q error=%v want=%q", got, err, tc.want)
+			}
+		})
+	}
+}

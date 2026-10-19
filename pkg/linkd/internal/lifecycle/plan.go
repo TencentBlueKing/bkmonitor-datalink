@@ -418,7 +418,8 @@ func (p *Processor) planNewAlert(ctx context.Context, plan *store.EventPlan, eve
 		return domain.Alert{}, fmt.Errorf("opening event has no enrich result for selected severity")
 	}
 	alert.EnrichStatus, alert.Enrich = enriched.Status, enriched.Data.Clone()
-	// Event 丰富已冻结；只有真正创建的候选才生成核心内容，失败不冻结业务计划。
+	// Event 丰富已冻结；只有真正创建的候选才生成核心内容。文案失败降级并冻结，
+	// 事件身份非法或 Context 取消仍不能推进业务计划。
 	alert.Content, err = p.buildNewAlertContent(ctx, event, evaluation, alert)
 	if err != nil {
 		return domain.Alert{}, err

@@ -79,7 +79,7 @@ type DynamicGroupReader interface {
 	GetDynamicGroupIDs(ctx context.Context, tenantID, modelCode, instanceID string) ([]string, error)
 }
 
-// CWStrategyReader 按租户、拆分记录主键和事件版本读取策略发布材料。
+// CWStrategyReader 按租户、策略 ID 和事件版本读取不可变历史快照。
 type CWStrategyReader interface {
 	GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error)
 }
@@ -363,7 +363,7 @@ func (s *Scope) DynamicGroupIDs(ctx context.Context, modelCode, instanceID strin
 	return s.sources.DynamicGroup.GetDynamicGroupIDs(ctx, s.original.BKTenantID, modelCode, instanceID)
 }
 
-// CWStrategy 惰性读取并复用当前 Event 指定的策略发布材料。
+// CWStrategy 惰性读取并复用当前 Event 指定的策略历史快照。
 func (s *Scope) CWStrategy(ctx context.Context) (returned models.CWStrategy, found bool, err error) {
 	defer func() { s.recordDependencyError("strategy_publication", err) }()
 	s.strategyOnce.Do(func() {

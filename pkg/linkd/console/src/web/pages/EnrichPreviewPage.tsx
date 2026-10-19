@@ -6,6 +6,12 @@ import { consoleURL } from "../base-path";
 
 const previewSchema = z.object({
   candidate_content: z.string().optional(),
+  content_diagnostic: z
+    .object({
+      reason_code: z.string(),
+      content_mode: z.enum(["source_fallback", "default_fallback"]),
+    })
+    .optional(),
   event_source_version: z.number(),
   config_digest: z.string(),
   enrich_status: z.string(),
@@ -271,6 +277,15 @@ export function EnrichPreviewPage() {
             <div>
               <h3>候选告警内容</h3>
               <pre aria-label="候选告警内容">{result.candidate_content}</pre>
+              {result.content_diagnostic && (
+                <p role="status">
+                  文案生成失败，已使用
+                  {result.content_diagnostic.content_mode === "source_fallback"
+                    ? "来源原文"
+                    : "默认文案"}
+                  （{result.content_diagnostic.reason_code}）
+                </p>
+              )}
             </div>
           )}
           <p>

@@ -15,8 +15,7 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-// DescriptionConfigurationClient 只读取 SplitRecord 的同版本发布材料，不校验旧 Set/Config 表。
-// 当前态没有历史保留；版本不匹配或覆盖缺少独立修订时明确失败。
+// DescriptionConfigurationClient 只读取同一不可变 Strategy revision 的声明与执行事实。
 type DescriptionConfigurationClient struct{ db *gorm.DB }
 
 var _ description.ConfigurationReader = (*DescriptionConfigurationClient)(nil)
@@ -29,8 +28,8 @@ func NewDescriptionConfigurationClient(db *gorm.DB) (*DescriptionConfigurationCl
 	return &DescriptionConfigurationClient{db: db}, nil
 }
 
-// ReadConfiguration 用单条有界 SELECT 固定版本、身份和渲染材料；所有策略内容
-// 来自这一行，不把后来编辑的 Set/Config 混入，也不以当前版本替代触发时版本。
+// ReadConfiguration 用单条有界 SELECT 读取精确历史快照；声明 metadata/spec 与执行
+// items 必须来自同一行，不依赖 SplitRecord 的当前内容或 publish_status。
 func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, query description.ConfigurationQuery) (description.Configuration, error) {
 	if ctx == nil || !query.Valid() {
 		return description.Configuration{}, descriptionFailure("configuration_identity_invalid")
@@ -40,41 +39,28 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, strategyReadTimeout)
 	defer cancel()
-	row, found, err := readStrategyPublication(ctx, c.db, models.StrategyQuery{TenantID: query.TenantID, ID: query.StrategyID, Version: query.StrategyVersion})
+	row, found, err := readStrategyRevision(ctx, c.db, models.StrategyQuery{TenantID: query.TenantID, ID: query.StrategyID, Version: query.StrategyVersion})
 	if err != nil {
 		return description.Configuration{}, err
 	}
 	if !found {
-		return description.Configuration{}, descriptionFailure("publication_missing")
+		return description.Configuration{}, descriptionFailure("strategy_revision_missing")
 	}
-	// 文案入口保留既有严格状态要求；普通 Enrich 可匹配删除或禁用策略。
-	if row.State != "active" || !row.Enabled {
-		return description.Configuration{}, descriptionFailure("publication_not_active")
-	}
-	if row.ParentID != nil {
-		// 覆盖编辑复用父记录版本，整数标签不能证明触发时覆盖内容，不能用当前覆盖冒充。
-		return description.Configuration{}, descriptionFailure("publication_override_revision_missing")
-	}
-	payload, err := decodeStrategyPublication(row)
+	snapshot, err := decodeStrategyRevision(row)
 	if err != nil {
 		return description.Configuration{}, err
 	}
-	if len(payload.Runtime) != len(payload.Resolved) {
-		return description.Configuration{}, descriptionFailure("publication_runtime_invalid")
-	}
-	strategy, err := cwStrategyFromPublication(row, payload)
+	strategy, err := cwStrategyFromRevision(row, snapshot)
 	if err != nil {
 		return description.Configuration{}, err
 	}
-	if strategy.Spec.Enable == nil || !*strategy.Spec.Enable {
+	// 当前配置的启停不影响历史；仅检查该快照自身是否能产生本次触发。
+	if (snapshot.Strategy.Enabled != nil && !*snapshot.Strategy.Enabled) || snapshot.Strategy.Invalid || snapshot.Strategy.Deleted || (strategy.Spec.Enable != nil && !*strategy.Spec.Enable) {
 		return description.Configuration{}, descriptionFailure("configuration_disabled_or_invalid")
 	}
-	var config models.StrategySetConfig
-	if json.Unmarshal(payload.Config, &config) != nil || !sameStrategyUUID(config.ID, row.ConfigUID) {
-		return description.Configuration{}, descriptionFailure("publication_binding_invalid")
-	}
-	if !config.Enable {
-		return description.Configuration{}, descriptionFailure("configuration_disabled_or_invalid")
+	// 标准 Event 尚无可信 item 身份。多项快照不能按数组顺序选第一项。
+	if len(snapshot.Strategy.Items) != 1 {
+		return description.Configuration{}, descriptionFailure("strategy_revision_items_ambiguous")
 	}
 	var runtime struct {
 		Error json.RawMessage `json:"error"`
@@ -85,15 +71,15 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 		} `json:"query_configs"`
 		Algorithms []description.RuntimeAlgorithm `json:"algorithms"`
 	}
-	if json.Unmarshal(payload.Runtime[0], &runtime) != nil {
-		return description.Configuration{}, descriptionFailure("publication_runtime_invalid")
+	if json.Unmarshal(snapshot.Strategy.Items[0], &runtime) != nil {
+		return description.Configuration{}, descriptionFailure("strategy_revision_runtime_invalid")
 	}
 	if len(runtime.Error) > 0 || len(runtime.Queries) == 0 || len(runtime.Queries) > 32 || len(runtime.Algorithms) > 32 {
-		return description.Configuration{}, descriptionFailure("publication_runtime_invalid")
+		return description.Configuration{}, descriptionFailure("strategy_revision_runtime_invalid")
 	}
 	queries := make([]models.StrategyQueryConfig, len(runtime.Queries))
 	for i, query := range runtime.Queries {
 		queries[i] = models.StrategyQueryConfig{Unit: query.Unit, MetricID: query.MetricID}
 	}
-	return description.Configuration{Identity: query, Spec: strategy.Spec, SetConfig: config, Queries: queries, Algorithms: runtime.Algorithms}, nil
+	return description.Configuration{Identity: query, Spec: strategy.Spec, Queries: queries, Algorithms: runtime.Algorithms}, nil
 }

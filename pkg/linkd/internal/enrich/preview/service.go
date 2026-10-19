@@ -68,15 +68,17 @@ type Change struct {
 
 // Response 包含一次模拟的配置身份、步骤输出及按需合成视图。
 type Response struct {
-	CandidateContent *string                `json:"candidate_content,omitempty"`
-	EffectiveAlert   map[string]any         `json:"effective_alert,omitempty"`
-	Changes          []Change               `json:"changes,omitempty"`
-	Version          int64                  `json:"event_source_version"`
-	ConfigDigest     string                 `json:"config_digest"`
-	Original         map[string]any         `json:"original"`
-	EnrichStatus     domain.EnrichStatus    `json:"enrich_status"`
-	Enrich           domain.EventEnrichData `json:"enrich"`
-	Evaluations      []EvaluationPreview    `json:"evaluations"`
+	// ContentDiagnostic 与正式创建使用同一原因码，仅在文案降级时返回。
+	ContentDiagnostic *enrich.ContentDiagnostic `json:"content_diagnostic,omitempty"`
+	CandidateContent  *string                   `json:"candidate_content,omitempty"`
+	EffectiveAlert    map[string]any            `json:"effective_alert,omitempty"`
+	Changes           []Change                  `json:"changes,omitempty"`
+	Version           int64                     `json:"event_source_version"`
+	ConfigDigest      string                    `json:"config_digest"`
+	Original          map[string]any            `json:"original"`
+	EnrichStatus      domain.EnrichStatus       `json:"enrich_status"`
+	Enrich            domain.EventEnrichData    `json:"enrich"`
+	Evaluations       []EvaluationPreview       `json:"evaluations"`
 }
 
 // EvaluationPreview 分开返回各等级的有效结果、差异和轨迹，禁止隐式选择某个等级。
@@ -280,33 +282,23 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 		rows = append(rows, EvaluationPreview{Severity: evaluation.Severity, Action: evaluation.Action, EffectiveEvent: effective, Changes: Diff(base, effective), PreviousChanges: Diff(previousEffective, effective), Trace: trace})
 	}
 
+	var contentDiagnostic *enrich.ContentDiagnostic
 	var candidateContent *string
 	var candidateAlert map[string]any
 	var changes []Change
 	if hasOpening {
-		builder, ok := engine.(interface {
-			BuildContent(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error)
-		})
-		if !ok {
-			return Response{}, &Error{503, "content preview builder unavailable"}
-		}
+		builder, _ := engine.(enrich.ContentBuilder)
 		for _, row := range result.Data.Evaluations {
 			if row.Severity == openingEvaluation.Severity {
 				opening.EnrichStatus, opening.Enrich = row.Status, row.Data.Clone()
 			}
 		}
-		content, err := builder.BuildContent(ctx, previous, openingEvaluation, opening.Clone())
-		if err != nil && ctx.Err() == nil {
-			// 描述不适用时与创建阶段一致，原样保留来源内容，包括空串。
-			content, err = previous.Content, nil
-		}
+		result, err := enrich.BuildAlertContent(ctx, builder, previous, openingEvaluation, opening.Clone())
 		if err != nil {
-			var permanent interface{ PermanentContentFailure() string }
-			if errors.As(err, &permanent) {
-				return Response{}, &Error{422, "content facts invalid: " + permanent.PermanentContentFailure()}
-			}
 			return Response{}, readError(ctx, err)
 		}
+		content := result.Content
+		contentDiagnostic = result.Diagnostic
 		candidateContent = &content
 		base, err := domain.AlertDocument(opening)
 		if err != nil {
@@ -322,7 +314,7 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 	}
 	encoded, _ := json.Marshal(source.Redacted().Enrich)
 	digest := sha256.Sum256(encoded)
-	return Response{CandidateContent: candidateContent, EffectiveAlert: candidateAlert, Changes: changes, Version: release.Version, ConfigDigest: hex.EncodeToString(digest[:]), Original: original, EnrichStatus: result.Status, Enrich: result.Data, Evaluations: rows}, nil
+	return Response{ContentDiagnostic: contentDiagnostic, CandidateContent: candidateContent, EffectiveAlert: candidateAlert, Changes: changes, Version: release.Version, ConfigDigest: hex.EncodeToString(digest[:]), Original: original, EnrichStatus: result.Status, Enrich: result.Data, Evaluations: rows}, nil
 
 }
 

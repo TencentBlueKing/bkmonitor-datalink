@@ -32,7 +32,7 @@ func TestResolverSupportsAlarmdAlgorithms(t *testing.T) {
 		{"RingRatioAmplitude", `{"ratio":1.5,"shock":0,"threshold":10}`, "AVG(CPU) 检测条件：（当前值与前一时刻值均 >= 10.0%，两者差值的绝对值 >= 前一时刻值 × 1.5 + 0.0%）, 当前值99%"},
 		{"YearRoundAmplitude", `{"days":3,"method":"gte","ratio":1.5,"shock":2}`, "AVG(CPU) 检测条件：（当前值与前一时刻值的差值绝对值 >= 前3天内任意一天同一时刻差值的绝对值 × 1.5 + 2.0%）, 当前值99%"},
 		{"YearRoundRange", `{"days":7,"method":"lt","ratio":0.5,"shock":2}`, "AVG(CPU) 检测条件：（当前值的绝对值 < 前7天内任意一天同一时刻值的绝对值 × 0.5 + 2.0%）, 当前值99%"},
-		{"OsRestart", `{}`, "主机重启检测，当前运行时长99秒"},
+		{"OsRestart", `{}`, "当前服务器在99秒前发生系统重启事件"},
 		{"ProcPort", `{}`, "当前进程(nginx)不存在"},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {

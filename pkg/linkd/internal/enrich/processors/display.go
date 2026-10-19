@@ -66,6 +66,12 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 	if !businessMatches {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
+	alertDimensions, err := combinedDimensions(alert)
+	if err != nil {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{
+			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
+		}}}, nil
+	}
 	classification := rules.Classify(strategy, alert.Dimensions)
 	objectName := cleanDisplayObject(alert, strategy, scope.Context().Resource.Values)
 	displayDiagnostics := make([]enrich.Diagnostic, 0, 1)
@@ -88,7 +94,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		}
 		resultTableID := projection.QueryConfigs[0].ResultTableID
 		if rules.IsAPMTable(resultTableID) {
-			objectName = rules.DimensionText(alert.Dimensions, rules.FieldServiceName)
+			objectName = rules.DimensionText(alertDimensions, rules.FieldServiceName)
 		} else if strings.HasPrefix(resultTableID, "uptimecheck") {
 			result, uptimeErr := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, alert.Dimensions, ids.BizID)
 			if uptimeErr != nil {
@@ -131,12 +137,6 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		return failedDependency(rules.DependencyMetricCatalog), nil
 	}
 	additional, err := additionalDimensions(alert.ExtraData)
-	if err != nil {
-		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{
-			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
-		}}}, nil
-	}
-	alertDimensions, err := combinedDimensions(alert)
 	if err != nil {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{
 			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
@@ -427,8 +427,10 @@ func cleanDisplayObject(
 		}
 	}
 	if rules.IsAPMTable(strategy.Spec.TableID) {
-		if serviceName := rules.DimensionText(alert.Dimensions, rules.FieldServiceName); serviceName != "" {
-			return serviceName
+		if dimensions, err := combinedDimensions(alert); err == nil {
+			if serviceName := rules.DimensionText(dimensions, rules.FieldServiceName); serviceName != "" {
+				return serviceName
+			}
 		}
 	}
 	if strategy.ObjectModelCode != nil && *strategy.ObjectModelCode == rules.K8sNodeModelCode {

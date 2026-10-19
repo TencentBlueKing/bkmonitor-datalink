@@ -8,5 +8,5 @@
 // specific language governing permissions and limitations under the License.
 
 // Package datasources 为 Enrich 提供有界、按租户隔离的外部只读适配。
-// 策略仅从 Kingeye SplitRecord 发布材料读取，连接生命周期由装配层管理。
+// 策略仅从 Kingeye 不可变 Strategy revision 快照读取，连接生命周期由装配层管理。
 package datasources

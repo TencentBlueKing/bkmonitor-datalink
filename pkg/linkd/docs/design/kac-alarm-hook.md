@@ -176,10 +176,9 @@ KAC `AlarmEvent` ES 模型已声明 `bk_tenant_id`，见
 
 该示例是本方案目标 DTO，字段值来自 Linkd 示例数据，未经过真实 KAC 环境验证。
 2026-10-15 确认用 `strategy_set_split_record_id/strategy_set_split_record_version` 明确拆分记录引用，
-字段命名已在本地输出实现，未提交、未部署；KAC 查询兼容可信历史短名。
+字段命名已在本地输出实现，尚未部署；KAC 根据冻结关联构造导航。
 2026-10-16 按用户确认，ID/version 分别来自 alarmd `strategy_id/strategy_version`，
-对应不可变历史 Reader 的 `strategy_id/strategy_revision`；KAC 当前临时传告警租户和告警业务 ID，
-待公共接口移除附加参数后精简调用，不另存完整查询定义。完整边界见
+对应执行历史身份；指标查询参数继续由 Linkd 生成，KAC 不按该引用重建。完整边界见
 [KAC 投影契约](../reference/contracts/kac-alert-projection-v1.md#策略关联事实与详情导航2026-10-15)。
 
 ### 4.2 身份、动作与时间
@@ -300,7 +299,7 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 | `time_interval` | `metric.time_interval` | 标量转稳定文本，null 转空字符串 |
 | `where_condition` | `metric.where_condition` | 字符串 |
 | `anomaly_begin_time` | `metric.anomaly_begin_time` | 有值时输出；nil 时输出 JSON null，以匹配现有样例 |
-| `metric_query_params` | `metric.metric_query_params` | 新内置不生成计划，nil 使用空占位 `{}`；历史/非内置对象规范 JSON 后编码成 JSON 字符串；已经是字符串时先严格解码为 JSON object，再规范编码一次，拒绝非法 JSON 和二次编码 |
+| `metric_query_params` | `metric.metric_query_params` | 内置和外部来源均输出冻结的兼容参数；nil 使用空占位 `{}`，对象规范 JSON 后编码成 JSON 字符串；已经是字符串时先严格解码为 JSON object，再规范编码一次，拒绝非法 JSON 和二次编码 |
 | `meta_info` | `source.meta_info` → `Alert.SourceEventID` | 字符串 |
 
 `bk_service_id` 和 `Namespace` 当前 Enrich 设计没有等价值，首版固定输出空字符串，与已取证旧实现一致

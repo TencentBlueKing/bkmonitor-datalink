@@ -75,15 +75,16 @@ KAC Converter/Cleaner 直接构造旧 Alarm 字段。Linkd 将对应业务含义
 
 ### 2.4 产品派生逻辑的后续归属（2026-10-16）
 
-以下是已确认的后续边界；本地已实施策略导航、时序、PromQL、索引集/物理日志及事件查询迁移，其他通用展示转换逐项处理；APM、K8s、日志扩展字段已明确整体保留在 Linkd，不属于后续迁移范围：检索、排序/聚合、权限、策略匹配、分组、模板和后续丰富消费的规范事实须在处理前可用，当前继续由 Linkd 冻结并投影 KAC；仅用于产品导航、纯展示或取数协议适配的派生逻辑由 KAC 承接。不能按 `display` 名称、`name` 后缀或界面默认展示状态决定迁移；规范名称与文本、`cw_labels/dynamic_group_id` 及被配置引用的扩展字段不能在详情打开时才补齐。
+2026-10-19 收缩范围：保留策略导航迁移和通用展示收敛，撤回指标查询参数迁移。
+规范名称、权限标签、检索/匹配/分组/模板及后续丰富使用的字段继续由 Linkd 冻结并投影；
+APM、K8s、日志专属 Processor 和扩展字段整体保留，不在详情打开时重算。
 
-查询迁移按用户确认的不可变 `alarm_strategy_execution_revision` 设计：KAC 经 `kingeye.base.strategy.get_strategy_revision` 读取历史定义，alarmd `strategy_id/strategy_version` 分别对应 Reader 的 `strategy_id/strategy_revision`，联合唯一。Reader 使用租户、ID、执行修订三参数，管理业务来自冻结快照，不用事件业务过滤历史。根部 `items` 是执行查询，`runtime_config` 是冻结声明上下文；缺失不回退 current。Linkd 保留真实执行引用、有类型的事件维度、时间和业务，不另存完整查询定义；KAC 生成 `table/metrics/interval/group_by/where`、窗口和最终请求；这些新内置参数只存在本次调用的内存对象，不新增为 AlarmEvent 或 `field_extra_info` 中的持久化副本。历史/外部已有 `metric_query_params/metric_group_params` 保留原协议。策略关联仍复用[既有投影契约](../reference/contracts/kac-alert-projection-v1.md#策略关联事实与详情导航2026-10-15)；split 当前态不代替不可变历史材料。
-
-没有旧参数的新查询路径以三类输入为前提：同版历史定义、准确 opening/恢复事件事实和本次查询选项。告警自身已有合法非空 `metric_query_params/metric_group_params` 时直接沿原插件使用，不调用 `metric-facts` 或历史 Reader；空对象/数组及其字符串占位不算有效旧参数。已有导航上下文不会强制切换历史告警，旧参数分支也不要求补齐历史表或回填 ES。停止生成参数后的新告警须单独验证准确历史版本可读，不能用旧告警的 Reader 未命中判定其原参数取数失败。Linkd 保留事件/告警/来源/租户及等级关联、真实执行 ID/version、有类型维度、事件业务及时间锚点；多 item 场景还须能用可信事实唯一定位。读取缺口只补事件事实与关系，不存第二套策略查询定义，不从来源列表扫描或最新事件替代准确关联。检索、匹配、分组、模板及后续丰富仍使用的 Metric 输出继续保留。
-
-KAC 本地已补共用读取/组装能力，独立取数及内置来源入口调用 KMC 新公共结构化执行入口。KMC 旧扁平入口保留，新入口执行原生时序、多项算术及已承接函数；物理表日志/事件取数继续承接，普通时序的 `query_string: "*"` 不被拒绝。旧告警入口未执行无物理表的原始 PromQL 或仅索引集日志；KAC 新路径复用公共 PromQL 原语与日志执行器补齐，原文不改写，结果匹配准确事件标签。日志保留索引集路由/脱敏、冻结物理定位、毫秒及日志条件词表，归属/时间字段冲突与截断明确失败。未支持扩展、函数及混合计算仍报错；仅生成 JSON 或在详情中补参数不构成迁移完成。必须验证历史物理定位、聚合周期与展示步长、条件布尔语义与维度类型、alias/函数/表达式均被实际执行，再停止新内置参数生成。时间窗口原本已由 KAC 选择。历史告警已有导航上下文也不强制升级查询；合法旧参数和外部协议继续可用，无 ES 回填。具体改造范围和回归在 Kingeye 对接规格第 8.6 节维护，本节不表示所有扩展数据源或线上联调已验收。
-
-实施按“消费清单与真实配置核对 → 导航和关联命名 → 不可变历史读取与 KAC 查询入口 → 通用纯展示转换”推进。APM、K8s、日志场景的专属 Processor、扩展字段、名称和关联结果作为整体由 Linkd 生成并投影，不拆出一部分到 KAC 重算，也不再列为待迁移候选。KAC 保留配置管理、既有页面交互和投影消费职责。先部署兼容消费者并核验检索/权限、匹配/模板、历史/恢复/转储及通知/导出，再停止相应 Linkd 派生输出；未完成消费核验不能整体移除 Processor。本文只记录 Linkd 边界；完整字段矩阵与 KAC 各阶段检查点统一维护在 Kingeye `docs/specs/kac-linkd-integration.md` 第 8.6、8.7 节。
+Linkd Metric Processor 继续按准确执行历史和当次维度生成 `metric_query_params`，内置和外部来源沿用同一兼容输出。
+KAC 独立指标及邮件使用已保存参数调用来源插件，不新增历史重建层、结构化执行入口或 `metric-facts` 接口。
+原始维度、Event/Alert 关系及执行引用保持原契约，历史 ES、Event 和执行快照不回填；缺少参数不改用当前策略兜底。
+策略 URL 继续由 KAC 从 `strategy_context` 构造，见[既有投影契约](../reference/contracts/kac-alert-projection-v1.md#策略关联事实与详情导航2026-10-15)。
+Linkd 准确执行历史读取、文案降级、恢复事件冻结事实及场景修复保留；参数兼容与部署验收见 Kingeye
+`docs/specs/kac-linkd-integration.md` 第 8.6、8.7 节。
 
 ## 3. 运行架构
 
@@ -312,7 +313,7 @@ metric_unique_id
 aggregate_func
 time_interval
 where_condition
-metric_query_params（仅非 built_in_bk 兼容输出；新内置由 KAC 查询时生成）
+metric_query_params（内置和外部来源的冻结兼容查询参数）
 anomaly_begin_time
 ```
 
@@ -368,7 +369,7 @@ Workload 的 `workload_name`、Pod 的 `pod_name`、Container 的 `container_nam
 - 发布材料 `query_configs[].metric_ref_id` 对应目录 `metric.id`，优先用于定义点查；检测面的字符串 `metric_id` 仍只是检测标识，不转换为目录 ID。ID 未命中不回退同名或同物理字段。
 - 没有目录 ID 的发布材料按 `kind=native`、`physical_field`、`result_table_id` 或 `data_label` 反查；只查来源业务空间 `bkcc__<Event.Labels.bk_biz_id>` 和平台层 `*`。显式模型必须精确匹配，不沿用旧库跨模型 first() 回退。无 ID 的旧衍生材料按 `kind=derived + metric_name` 反查。最多读取两条，多义返回依赖失败。
 - `model_id/metric_name/display_name/description/unit/value_mapping` 映射为既有丰富元数据；`dimensions[].id/name` 映射为维度 key/name。定义全名与来源编码不用于推断指标身份，不从带点编码拆取来源。
-- 定义查询不按 `enabled/ref_status` 过滤，已触发告警仍可展示停用或失效指标的定义。时序取数继续使用已发布的检测语义；新内置由 KAC 公共历史读取和共用查询层承接，其他来源保留原参数协议。
+- 定义查询不按 `enabled/ref_status` 过滤，已触发告警仍可展示停用或失效指标的定义。时序取数继续使用已发布的检测语义；内置和外部来源均继续兼容参数及来源插件协议。
 - Scope 强制事件租户，按指标 ID 或完整反查条件复用单次丰富结果；Client 使用 5 秒超时、两条候选上限，两个 JSON 列分别限 1 MiB，并精确复核返回身份。NULL、畸形或超限 JSON 按 `metric_catalog` 依赖失败处理。
 
 日志查询没有目录 ID、物理表或衍生定义引用时，展示沿用日志配置与原始维度，不发起目录查询；显式目录引用的失败仍按依赖失败处理。其他指标不放宽完整引用要求。

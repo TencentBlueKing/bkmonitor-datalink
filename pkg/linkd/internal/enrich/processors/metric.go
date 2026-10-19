@@ -111,10 +111,8 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	values.AggregateFunc = aggregateFunc
 	values.TimeInterval = timeInterval
 	values.WhereCondition = whereCondition
-	// 新内置查询由 KAC 结合不可变策略历史和准确 Event 事实组装；其他来源保留既有协议。
-	if alert.EventSourceID != "built_in_bk" {
-		values.MetricQueryParams = buildMetricQueryParams(projection, strategy, queryDimensions, ids.BizID)
-	}
+	// 参数随当次丰富结果冻结，KAC 通过原来源插件取数，不在读取时重建历史查询。
+	values.MetricQueryParams = buildMetricQueryParams(projection, strategy, queryDimensions, ids.BizID)
 	value, encodeErr := metricResultValue(scope, values)
 	if encodeErr != nil {
 		return enrich.ProcessorResult{}, encodeErr

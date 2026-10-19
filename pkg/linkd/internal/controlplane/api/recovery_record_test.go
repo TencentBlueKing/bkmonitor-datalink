@@ -59,7 +59,7 @@ func TestRecoveryFieldsUsesFrozenEventAndCommittedPatches(t *testing.T) {
 	}
 }
 
-func TestRecoveryFieldsProjectFrozenStrategyWithoutLegacyQuery(t *testing.T) {
+func TestRecoveryFieldsProjectFrozenStrategyWithoutRegeneratingQuery(t *testing.T) {
 	for _, action := range []domain.EventAction{domain.EventActionResolved, domain.EventActionClosed} {
 		t.Run(string(action), func(t *testing.T) {
 			a, e, r := enrichRecordFixture(t)
@@ -112,31 +112,10 @@ func TestRecoveryFieldsProjectFrozenStrategyWithoutLegacyQuery(t *testing.T) {
 				t.Fatal("new recovery generated a frontend URL")
 			}
 			if _, exists := fields["metric_query_params"]; exists {
-				t.Fatal("new recovery generated legacy query parameters")
+				t.Fatal("recovery generated query parameters without frozen input")
 			}
 			if extra["object"].(map[string]any)["url"] != "https://example.test/host" {
 				t.Fatal("source field extra info lost")
-			}
-			// 同一恢复 Event 的只读事实必须与投影引用一致，才能进入 KAC 新查询路径。
-			stub := &enrichRecordStub{alert: a, event: e, release: r}
-			api := API{EnrichRecords: NewEnrichRecords(stub, stub)}
-			request := httptest.NewRequestWithContext(t.Context(), "POST", "/", strings.NewReader(`{"bk_tenant_id":"tenant-a","event_id":"event-1","severity":"fatal"}`))
-			request.SetPathValue("id", a.AlertID)
-			response := httptest.NewRecorder()
-			api.queryMetricFacts(response, request)
-			if response.Code != 200 {
-				t.Fatalf("metric facts status=%d: %s", response.Code, response.Body.String())
-			}
-			var facts struct {
-				EventID         string `json:"event_id"`
-				StrategyID      int64  `json:"strategy_id"`
-				StrategyVersion int64  `json:"strategy_version"`
-			}
-			if err := json.Unmarshal(response.Body.Bytes(), &facts); err != nil {
-				t.Fatal(err)
-			}
-			if facts.EventID != e.EventID || facts.StrategyID != want["strategy_set_split_record_id"] || facts.StrategyVersion != want["strategy_set_split_record_version"] {
-				t.Fatalf("recovery projection and metric facts differ: %+v", facts)
 			}
 			after, _ := json.Marshal(e)
 			if !bytes.Equal(before, after) {

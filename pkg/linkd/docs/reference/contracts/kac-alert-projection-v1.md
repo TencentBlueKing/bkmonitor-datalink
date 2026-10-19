@@ -54,7 +54,7 @@ rollover 后继续更新原物理索引，不能总向当前 write alias upsert�
 `field_extra_info.strategy_name.strategy_context`：
 
 **2026-10-16 本地实现：** KAC 输出已使用下表明确名称，尚未部署。
-Linkd 原始 labels 和 enrich 内部保留 `strategy_id/strategy_version`，KAC 查询兼容可信旧短名。
+Linkd 原始 labels 和 enrich 内部保留 `strategy_id/strategy_version`，该命名承接冻结执行身份，不用于 KAC 查询时重建参数。
 
 | 字段 | 类型与语义 |
 | --- | --- |
@@ -69,28 +69,12 @@ Linkd 原始 labels 和 enrich 内部保留 `strategy_id/strategy_version`，KAC
 
 `field_extra_info` 按展示字段组织，`strategy_name` 是已有“监控策略名称”字段，原本就保存 URL；
 导航迁移在同一字段下增加内部 `strategy_context`，不新增展示字段或 KAC 顶层列。
-指标查询迁移使用用户确认的不可变 `alarm_strategy_revision`，历史接入缺口由另一项修复处理；
-KAC 经 `kingeye.base.strategy.get_strategy_revision` 按上述两字段读取定义，不能以 split 当前态替代历史。
-当前四参数接口临时传告警租户和告警业务 ID，后续接口移除两项时再精简；不新增管理业务关联字段。
-当前 Reader 的附加过滤仍须验证实际命中，缺失不试查其他业务或 current。Linkd 保留真实执行引用、
-有类型的事件维度、时间及业务，不为本次迁移另存完整查询定义。KAC 适配历史查询、事件范围和产品
-取数入口，只在内存生成最终参数；历史/外部已有参数沿原协议承接，无 ES 回填。
-新 `built_in_bk` 事件的 Metric Processor 不再生成参数；非内置兼容输出、已有 enrich 历史和匹配/检索字段保留。
-KAC 先检查告警自身的旧参数：已有合法非空 `metric_query_params/metric_group_params` 时直接沿原插件取数，
-不调用 `metric-facts` 或历史 Reader，即使同时存在 `strategy_context` 也不强制切换。
-空对象/数组及其字符串占位不算有效旧参数；没有旧参数且具有可信新内置引用时才进入历史组装路径。
-历史版本可读性验收针对该新路径，不能把已有旧参数告警的 Reader 未命中视为取数回退或 ES 回填要求。
-
-该迁移成立的完整输入是同版历史定义、准确 opening/恢复事件事实与本次查询选项。Linkd 继续保留
-Alert/Event、来源、租户及等级/动作关联，执行 ID/version、有类型维度、事件业务和时间锚点；
-多个历史 item 时须能由可信事实唯一定位。KAC 缺少事实时只补有界只读响应，不要求新增顶层字段
-或复制查询定义。既有检索/权限/匹配/模板字段不随参数生成停止而删除。
-KAC 共用查询层承接组装，独立取数和内置来源入口均需接入；KMC 公共取数面还须承接结构化计划的
-实际执行，保留旧扁平协议。当前旧入口拒绝非空 expression，不直接消费 `query_configs`，不能以
-透传参数代替执行验证。历史物理定位、聚合周期、维度及过滤、函数和多项表达式都需验证后再切换；
-窗口当前已经由 KAC 选择。历史导航上下文的存在不强制切换查询，合法旧参数与外部自定义分组继续
-承接；已明确选择新路径后的读取/权限/执行错误不得用旧参数掩盖。权威改造范围和验收在 Kingeye
-`docs/specs/kac-linkd-integration.md` 第 8.6 节维护；本地各查询类型实现不表示所有扩展或线上联调已验收。
+2026-10-19 撤回指标查询参数迁移：Linkd Metric Processor 继续为新内置及外部事件生成兼容查询参数，
+随同次事件丰富结果冻结，并在新建 KAC 文档时编码为 `metric_query_params` JSON 字符串。
+KAC 独立指标及邮件继续来源插件协议；导航 `strategy_context` 不触发另一条查询分支。
+Linkd 的准确执行历史读取和文案降级保留；不新增 KAC 历史重建、结构化取数入口或事实查询接口。
+历史已有参数不清理、ES 和 Event 不回填，不修改执行历史快照。完整边界在 Kingeye
+`docs/specs/kac-linkd-integration.md` 第 8.6 节维护。
 
 `strategy_name` 和 `data_source` 继续由 Linkd 生成或透传并投影，KAC 消费已保存结果；
 两者不再属于后续展示迁移项，职责依据见 [strategy 输出](../../design/enrich.md#61-strategy)。
@@ -99,7 +83,7 @@ KAC 共用详情组装层按以上事实选择路由，读取当前 `KINGEYE_WEB
 并处理观测融合参数。Linkd 不含前端路由常量，不查询产品页面开关。
 新告警不依赖反解析 URL，恢复详情使用引用的恢复 Event 事实。
 恢复业务字段投影同样生成 `strategy_context`，只使用该恢复 Event 已冻结并生效的丰富结果；
-不借用 opening Alert 的策略版本，不重跑丰富，也不为新内置恢复事件补造旧查询参数。
+不借用 opening Alert 的策略版本、不重跑丰富；当次冻结的查询参数继续透传，缺失时不在读取入口补造。
 
 历史 Alert 丰富结果中的 `url` 继续解码、重放；来源自定义 `field_extra_info` 覆盖规则保留。
 KAC 对历史内置告警只解析已知管理/实例路由，保留 ID 并换用当前基础地址；
@@ -108,28 +92,3 @@ KAC 对历史内置告警只解析已知管理/实例路由，保留 ID 并换�
 `strategy` Processor 不读取或校验 `web_saas_module_url`，该键是否存在及其取值均不影响关联事实输出；新来源发布不再带此配置。
 
 部署先升级支持新旧两种输入的 KAC，再升级 Linkd；本契约和本地回归不代表线上已部署或完成页面验收。
-
-## 内置指标查询事件事实（2026-10-16）
-
-内部 JWT 保护的 `POST /api/v1/alerts/{id}/metric-facts` 复用已有事实 Reader 与有界并发，
-不查询策略或重跑 enrich。请求包含 `bk_tenant_id`、`severity`；缺省读取 Alert 的
-`TriggerEventID`，不读取 `LatestEventID`。可选 `event_id` 仅接受同告警已关联、同等级且
-动作是恢复/来源关闭的 Event；KAC 从已保存流转引用选择该值，不接受浏览器直接指定。
-
-返回 `bk_tenant_id/alert_id/event_id/event_source_id/severity`、`strategy_id/strategy_version`、
-`bk_biz_id`、有类型 `dimensions`、`occurred_at`，若原事件 labels 含合法 `item_id` 则一并返回。
-只接受 `built_in_bk`，准确核对租户和 Event/Alert 关系；不返回正文、原始 payload 或完整查询定义。
-请求上限2 KiB、响应上限1 MiB、执行预算5秒，与已有丰富事实读取共享两个并发名额。
-非法请求400、关联缺失404、执行引用无效422、繁忙429、依赖未配置503，响应预算/编码/取消失败502。
-现有数据保留期不自动延长；已有有效旧参数的请求在调用本接口前即选择旧路径。
-无旧参数并已进入新查询路径后，无法定位准确事件事实或历史定义则明确不可用，不改用当前策略兜底。
-
-KAC 公共历史读取仍临时传告警租户/业务，结构化计划只在本次调用内存生成；KMC 使用独立公共入口
-执行原生时序、物理表日志/事件、多项算术和已承接函数，保留日志/事件字段与维度适配。
-普通时序的 `query_string: "*"` 可承接；日志关键词与行计数按物理表协议执行。
-旧告警入口并未执行无物理表的原始 PromQL 或仅索引集日志；新入口复用公共 PromQL 原语
-及索引集查询补齐。PromQL 原文不改写，结果按准确事件标签匹配；日志统一公共执行器，
-保留毫秒/日志条件词表、冻结物理定位和索引集脱敏。作用域/时间字段冲突、截断明确失败；
-图表 PromQL 与外部自定义入口保持原协议。未支持扩展仍明确报错。
-已有合法 `metric_query_params/metric_group_params` 继续走旧插件协议（空 `{}`/`[]` 是占位符），
-不因字段键同名而进入新执行入口，不改写历史 Alert/Event、KAC ES 或 Release。

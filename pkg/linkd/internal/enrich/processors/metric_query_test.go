@@ -112,18 +112,11 @@ func TestMetricCatalogQueryLocation(t *testing.T) {
 			if got.Status != domain.EnrichStatusSucceeded || value.ResultTableID != wantTable || value.MetricName != tc.physical || value.MetricUniqueID != wantTable+"."+tc.physical {
 				t.Fatalf("metric=%#v status=%s", value, got.Status)
 			}
-			if value.MetricQueryParams != nil {
-				t.Fatalf("builtin query params must be assembled by KAC: %#v", value.MetricQueryParams)
+			if value.MetricQueryParams == nil {
+				t.Fatal("builtin compatibility query parameters are missing")
 			}
-			// 非内置兼容协议仍可按相同目录定位生成参数。
-			projection, err := reader.strategy.StrategyItemProjection()
-			if err != nil {
-				t.Fatal(err)
-			}
-			projection.QueryConfigs[0].ResultTableID = wantTable
-			projection.QueryConfigs[0].MetricField = tc.physical
 			var params metricQueryParams
-			encoded, _ := json.Marshal(buildMetricQueryParams(projection, reader.strategy, event.Dimensions, 2))
+			encoded, _ := json.Marshal(value.MetricQueryParams)
 			if err := json.Unmarshal(encoded, &params); err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +134,7 @@ func TestMetricCatalogQueryLocation(t *testing.T) {
 	}
 }
 
-func TestMetricParameterMigrationPreservesOtherFactsAndExternalProtocol(t *testing.T) {
+func TestMetricCompatibilityParametersPreserveFactsForAllSources(t *testing.T) {
 	for _, source := range []string{"built_in_bk", "external"} {
 		t.Run(source, func(t *testing.T) {
 			reader := &metricLocationReader{metadata: models.MetricMetadata{Kind: "native", TableID: "system.cpu", PhysicalField: "usage"}}
@@ -163,8 +156,8 @@ func TestMetricParameterMigrationPreservesOtherFactsAndExternalProtocol(t *testi
 			if got.Status != domain.EnrichStatusSucceeded || values.MetricUniqueID == "" {
 				t.Fatalf("lost matching facts: %#v", got)
 			}
-			if (values.MetricQueryParams == nil) != (source == "built_in_bk") {
-				t.Fatalf("wrong query ownership: %#v", values.MetricQueryParams)
+			if values.MetricQueryParams == nil {
+				t.Fatal("compatibility query parameters are missing")
 			}
 		})
 	}

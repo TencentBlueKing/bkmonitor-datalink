@@ -267,6 +267,54 @@
             },
             {
               "op": "set",
+              "path": "$[\"extra_data\"][\"metric_query_params\"]",
+              "value": {
+                "bk_biz_id": 5,
+                "expression": "A",
+                "function": {
+                  "time_compare": []
+                },
+                "functions": [],
+                "query_configs": [
+                  {
+                    "bk_biz_id": 5,
+                    "custom_event_name": "",
+                    "data_source_label": "custom",
+                    "data_type_label": "time_series",
+                    "extend_fields": {},
+                    "filter_dict": {},
+                    "functions": [],
+                    "group_by": [
+                      "bk_biz_id"
+                    ],
+                    "index_set_id": 0,
+                    "interval": 60,
+                    "metrics": [
+                      {
+                        "alias": "a",
+                        "field": "cpu_load",
+                        "method": "AVG"
+                      }
+                    ],
+                    "promql": "",
+                    "query_string": "",
+                    "table": "5_bkmonitor_time_series_1576329.__default__",
+                    "time_field": null,
+                    "where": [
+                      {
+                        "key": "bk_biz_id",
+                        "method": "eq",
+                        "value": [
+                          5
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"metric_unique_id\"]",
               "value": "5_bkmonitor_time_series_1576329.__default__.cpu_load"
             },

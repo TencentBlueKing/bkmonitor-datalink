@@ -345,6 +345,81 @@
             },
             {
               "op": "set",
+              "path": "$[\"extra_data\"][\"metric_query_params\"]",
+              "value": {
+                "bk_biz_id": 2,
+                "expression": "A",
+                "function": {
+                  "time_compare": []
+                },
+                "functions": [],
+                "query_configs": [
+                  {
+                    "bk_biz_id": 2,
+                    "custom_event_name": "",
+                    "data_source_label": "bk_monitor",
+                    "data_type_label": "time_series",
+                    "extend_fields": {},
+                    "filter_dict": {},
+                    "functions": [],
+                    "group_by": [
+                      "model_id",
+                      "model_inst_id",
+                      "bk_biz_id",
+                      "service"
+                    ],
+                    "index_set_id": 0,
+                    "interval": 60,
+                    "metrics": [
+                      {
+                        "alias": "a",
+                        "field": "requests",
+                        "method": "AVG"
+                      }
+                    ],
+                    "promql": "",
+                    "query_string": "",
+                    "table": "service.metric",
+                    "time_field": null,
+                    "where": [
+                      {
+                        "key": "bk_biz_id",
+                        "method": "eq",
+                        "value": [
+                          2
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "model_id",
+                        "method": "eq",
+                        "value": [
+                          "cw-MySQL"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "model_inst_id",
+                        "method": "eq",
+                        "value": [
+                          "svc|opaque-17"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "service",
+                        "method": "eq",
+                        "value": [
+                          "mysql"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"metric_unique_id\"]",
               "value": "service.metric.requests"
             },

@@ -48,7 +48,7 @@ Scope 为同一 Event 复用读取结果；Strategy、Resource、Display、Metri
 没有目录引用的物理查询不强制绑定目录，`metric_source=klc` 的日志索引集查询也不参与补目录身份；
 编译导致的字段或别名变化不覆盖声明值。实际目录绑定的引用缺失、负数、重复别名和字段冲突仍明确失败。
 执行 item 的数量、形状和错误状态校验仍保留；无关运行时字段不受声明查询 DTO 类型限制。
-当前指标目录可用于 Linkd 展示和丰富，不改写 KAC 从历史 item 构造的查询定义。
+当前指标目录可用于 Linkd 展示和丰富，不在 KAC 查询时改写已冻结的兼容参数。
 
 文案 Reader 从根部 `items` 读取实际查询单位、指标身份和编译算法，声明上下文来自同快照 `runtime_config`。
 多 item 无可信选择时拒绝猜测；读取过程不改写原始 Event 或既存 Alert。
@@ -59,16 +59,16 @@ Scope 为同一 Event 复用读取结果；Strategy、Resource、Display、Metri
 
 ## 与 KAC 的边界
 
-- 新 `built_in_bk` 不生成 `metric_query_params`；指标名、单位、表、维度等其他丰富字段继续保留。
-- KAC 独立指标、恢复指标和邮件共用历史查询入口，使用三参数 Reader 及根部 item。
-- 已有非空旧 `metric_query_params/metric_group_params` 优先走来源插件，不因存在新上下文或旧长整数版本强制升级。
-- `metric-facts` 默认读取 opening Event，恢复读取使用已保存并校验的准确恢复引用；不从最新 Event 或当前策略猜版本。
-- `RecoveryFields` 只投影准确恢复 Event 已冻结并生效的丰富结果，不重跑丰富。
-- 策略导航由 KAC 使用关联事实组装；APM/K8s/日志专属 Processor、字段和关联整体保留在 Linkd。
-- `strategy_name` 的名称生成与冻结、`data_source` 的透传都保留在 Linkd，不再列为待迁移展示项；2026-10-19 确认的职责边界见 [strategy 输出](enrich.md#61-strategy)。
-- 保存了参数不代表旧查询链支持对应语义；原先不支持的 PromQL/日志额外函数及混合组合不算迁移遗漏。
+- 策略 URL 由 KAC 根据冻结的 `strategy_context` 生成，Linkd 不持有域名、产品路由或页面开关。
+- 2026-10-19 撤回指标查询参数迁移：Linkd 继续生成并冻结 `metric_query_params`，KAC 沿已保存参数调用来源插件取数。
+- 不新增 `metric-facts`、KAC 历史查询重建或 KMC 结构化执行入口；当前指标目录仍只服务 Linkd 丰富与兼容参数生成，不在读取历史时覆盖冻结结果。
+- 恢复字段使用准确恢复 Event 的有效补丁，透传其已有参数和策略关联，不用 opening 或 current 替换。
+- APM/K8s/日志场景、文案降级和准确执行历史读取修复保留，历史记录不回填；`bk_cmdb_level` 本轮暂不修改。
 
 ## 验证证据与限制
+
+以下保留各阶段的历史验证记录；其中 KAC 历史查询重建与新取数入口已于 2026-10-19 撤回，
+相关旧测试数字不作为当前范围的验证结论。当前职责以上文“与 KAC 的边界”为准。
 
 本轮先将 SQL/Scan 断言及快照 fixture 改为新合同，复现旧表查询失败；只修 SQL 后再次复现根部快照被旧 wrapper 解码拒绝。
 回归覆盖原始字节完整性、根部身份、默认/覆盖、跨业务、缺失不回退、声明与执行单位独立、取消和既有文案降级/场景链路。
@@ -154,8 +154,9 @@ Console 451 个测试通过、8 个跳过，ESLint/TypeScript 及构建通过。
 管理业务、模板/配置身份、名称/数据来源及文案运行时单位、指标身份与快照一致。
 这些记录全部为默认策略、执行修订 1，不能替代覆盖策略和多修订的真实环境验收。
 
-KAC 配套保留历史分组所需的 `bk_host_id`；发布侧 `A/a` 差异和真实 Event 缺少其他分组维度仍单独记录，
-完整消费核对见 Kingeye `docs/specs/kac-linkd-integration.md` 的“真实执行历史消费修复与发布侧核对”。
+此前 KAC 迁移查询层额外保留历史分组所需的 `bk_host_id`，该查询层现已撤回；
+发布侧 `A/a` 差异和真实 Event 缺少其他分组维度的后续结论，见 Kingeye
+`docs/specs/kac-linkd-integration.md` 的“发布别名一致性修复与拓扑维度缺失定位”。
 本次不修改发布器、不回填历史，不以读取成功代替曲线、邮件或 Kafka 链路验收；修改仅留在本地。
 
 本轮自审及门禁：`make check` 的格式、全量 Go 测试、`go vet`、竞态和静态分析通过；
@@ -180,6 +181,6 @@ KAC 174 个相关回归、Ruff、文档硬检查、受影响文档 30 个本地�
 `system.cpu_summary.bk_cmdb_level` 标为 `influxdb_disabled="true"`，默认存储为 InfluxDB；
 Transfer 入库前排除此维度。当前 Alarmd 对查询缺失的声明身份维度补 JSON null，
 标准事件转换再省略 null；该中间过程由源码与两个已有回归证明，未抓取这两条事件当次 UQ 响应。
-KAC 新增缺少该必需维度仍拒绝的回归，不补猜拓扑值；本轮不改变 Transfer、Alarmd 或 Linkd。
+此前 KAC 迁移探针对缺少必要维度明确拒绝；该新查询路径现已撤回。本轮不修改该维度的声明、Transfer、Alarmd 或 Linkd 行为。
 详细证据和验收边界见 Kingeye `docs/specs/kac-linkd-integration.md`
-“发布别名一致性修复与拓扑维度缺失定位”，该节同时核对了 Transfer 拓扑注入/层级拆分及 KMC 冗余维度过滤的用途；不能因 InfluxDB 禁写就全局删除此字段。实际曲线尚未验收。
+“发布别名一致性修复与拓扑维度缺失定位”，该节说明了暂不修改该维度的范围；不能因 InfluxDB 禁写就全局删除此字段。实际曲线尚未验收。

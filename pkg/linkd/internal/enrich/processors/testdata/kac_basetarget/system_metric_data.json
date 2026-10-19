@@ -286,6 +286,178 @@
             },
             {
               "op": "set",
+              "path": "$[\"extra_data\"][\"metric_query_params\"]",
+              "value": {
+                "bk_biz_id": 5,
+                "expression": "A+B",
+                "function": {
+                  "time_compare": []
+                },
+                "functions": [],
+                "query_configs": [
+                  {
+                    "bk_biz_id": 5,
+                    "custom_event_name": "",
+                    "data_source_label": "bk_monitor",
+                    "data_type_label": "time_series",
+                    "extend_fields": {},
+                    "filter_dict": {},
+                    "functions": [],
+                    "group_by": [
+                      "bk_target_cloud_id",
+                      "device_name",
+                      "bk_target_host_id",
+                      "bk_biz_id",
+                      "hostname",
+                      "bk_target_ip"
+                    ],
+                    "index_set_id": 0,
+                    "interval": 60,
+                    "metrics": [
+                      {
+                        "alias": "A",
+                        "field": "usage",
+                        "method": "AVG"
+                      }
+                    ],
+                    "promql": "",
+                    "query_string": "",
+                    "table": "system.cpu_summary",
+                    "time_field": null,
+                    "where": [
+                      {
+                        "key": "bk_biz_id",
+                        "method": "eq",
+                        "value": [
+                          "5"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "bk_target_cloud_id",
+                        "method": "eq",
+                        "value": [
+                          0
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "bk_target_host_id",
+                        "method": "eq",
+                        "value": [
+                          "7"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "bk_target_ip",
+                        "method": "eq",
+                        "value": [
+                          "192.0.2.17"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "device_name",
+                        "method": "eq",
+                        "value": [
+                          "cpu-total"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "hostname",
+                        "method": "eq",
+                        "value": [
+                          "fixture-host-17"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "bk_biz_id": 5,
+                    "custom_event_name": "",
+                    "data_source_label": "bk_monitor",
+                    "data_type_label": "time_series",
+                    "extend_fields": {},
+                    "filter_dict": {},
+                    "functions": [],
+                    "group_by": [
+                      "bk_target_cloud_id",
+                      "device_name",
+                      "bk_target_host_id",
+                      "bk_biz_id",
+                      "hostname",
+                      "bk_target_ip"
+                    ],
+                    "index_set_id": 0,
+                    "interval": 60,
+                    "metrics": [
+                      {
+                        "alias": "B",
+                        "field": "idle",
+                        "method": "AVG"
+                      }
+                    ],
+                    "promql": "",
+                    "query_string": "",
+                    "table": "system.cpu_summary",
+                    "time_field": null,
+                    "where": [
+                      {
+                        "key": "bk_biz_id",
+                        "method": "eq",
+                        "value": [
+                          "5"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "bk_target_cloud_id",
+                        "method": "eq",
+                        "value": [
+                          0
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "bk_target_host_id",
+                        "method": "eq",
+                        "value": [
+                          "7"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "bk_target_ip",
+                        "method": "eq",
+                        "value": [
+                          "192.0.2.17"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "device_name",
+                        "method": "eq",
+                        "value": [
+                          "cpu-total"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "hostname",
+                        "method": "eq",
+                        "value": [
+                          "fixture-host-17"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"metric_unique_id\"]",
               "value": "system.cpu_summary.usage"
             },

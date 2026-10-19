@@ -252,6 +252,99 @@
             },
             {
               "op": "set",
+              "path": "$[\"extra_data\"][\"metric_query_params\"]",
+              "value": {
+                "bk_biz_id": 1,
+                "expression": "A",
+                "function": {
+                  "time_compare": []
+                },
+                "functions": [],
+                "query_configs": [
+                  {
+                    "bk_biz_id": 1,
+                    "custom_event_name": "",
+                    "data_source_label": "custom",
+                    "data_type_label": "time_series",
+                    "extend_fields": {},
+                    "filter_dict": {},
+                    "functions": [],
+                    "group_by": [
+                      "obj_model_inst_id",
+                      "task_id",
+                      "obj_model_id",
+                      "data_id",
+                      "ifIndex",
+                      "bk_biz_id"
+                    ],
+                    "index_set_id": 0,
+                    "interval": 60,
+                    "metrics": [
+                      {
+                        "alias": "a",
+                        "field": "ifAdminStatus",
+                        "method": "AVG"
+                      }
+                    ],
+                    "promql": "",
+                    "query_string": "",
+                    "table": "hardware_plugin_snmp_snmp_test.group_5",
+                    "time_field": null,
+                    "where": [
+                      {
+                        "key": "bk_biz_id",
+                        "method": "eq",
+                        "value": [
+                          1
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "data_id",
+                        "method": "eq",
+                        "value": [
+                          "1602401"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "ifIndex",
+                        "method": "eq",
+                        "value": [
+                          "19"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "obj_model_id",
+                        "method": "eq",
+                        "value": [
+                          "cw-Switch"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "obj_model_inst_id",
+                        "method": "eq",
+                        "value": [
+                          "38248"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "task_id",
+                        "method": "eq",
+                        "value": [
+                          "00115"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"metric_unique_id\"]",
               "value": "hardware_plugin_snmp_snmp_test.group_5.ifAdminStatus"
             },

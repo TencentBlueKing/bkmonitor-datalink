@@ -76,8 +76,8 @@ const (
 	CWStrategyKindCloud CWStrategyKind = "StrategyCloud"
 )
 
-// StrategyQuery 使用事件租户、SplitRecord ID 和执行修订定位不可变执行历史。
-type StrategyQuery struct {
+// StrategyRevisionQuery 使用事件租户、SplitRecord ID 和执行修订定位不可变执行历史。
+type StrategyRevisionQuery struct {
 	// TenantID 必须来自事件的可信租户作用域。
 	TenantID string
 	// ID 是 alarmd 事件的 strategy_id，对应默认或覆盖 SplitRecord 自身 ID。
@@ -87,7 +87,7 @@ type StrategyQuery struct {
 }
 
 // Valid 验证完整稳定身份；版本不允许缺省或以最新版本兜底。
-func (q StrategyQuery) Valid() bool {
+func (q StrategyRevisionQuery) Valid() bool {
 	return q.TenantID != "" && strings.TrimSpace(q.TenantID) == q.TenantID && q.ID > 0 && q.Version > 0
 }
 

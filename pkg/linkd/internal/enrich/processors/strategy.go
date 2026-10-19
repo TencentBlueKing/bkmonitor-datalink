@@ -12,7 +12,6 @@ package processors
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"linkd/internal/domain"
@@ -21,29 +20,12 @@ import (
 	"linkd/internal/enrich/rules"
 )
 
-// 旧 EventSourceRelease 仍可能携带此键；只校验，不参与新丰富结果。
-const strategyConfigWebSaaSModuleURL = "web_saas_module_url"
-
 // Strategy 丰富告警关联的策略信息。
 type Strategy struct{}
 
-// NewStrategy 校验并创建 Strategy Processor。
-func NewStrategy(config map[string]any) (Strategy, error) {
-	processor := Strategy{}
-	for key, value := range config {
-		if key != strategyConfigWebSaaSModuleURL {
-			return Strategy{}, fmt.Errorf("strategy processor config contains unknown field %q", key)
-		}
-		moduleURL, ok := value.(string)
-		if !ok {
-			return Strategy{}, fmt.Errorf("strategy processor config %s must be a string", key)
-		}
-		_, err := normalizeWebSaaSModuleURL(moduleURL)
-		if err != nil {
-			return Strategy{}, err
-		}
-	}
-	return processor, nil
+// NewStrategy 创建 Strategy Processor；当前没有配置项，传入的配置不参与校验或丰富结果。
+func NewStrategy(_ map[string]any) (Strategy, error) {
+	return Strategy{}, nil
 }
 
 // Name 返回稳定的 Processor 名称。
@@ -197,17 +179,6 @@ func strategyInstanceQuery(branch rules.BaseTargetBranch, modelCode string, dime
 		}
 	}
 	return enrich.InstanceQuery{}, false
-}
-
-func normalizeWebSaaSModuleURL(value string) (string, error) {
-	if value == "" {
-		return "", nil
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", fmt.Errorf("strategy processor config %s must be an absolute HTTP(S) URL without query or fragment", strategyConfigWebSaaSModuleURL)
-	}
-	return strings.TrimSuffix(value, "/") + "/", nil
 }
 
 func fieldText(fields map[string]any, name string) (string, bool) {

@@ -39,7 +39,7 @@ type strategyRevisionRow struct {
 // 一次有界 SELECT 原子读取历史身份和 canonical bytes。只按事件租户、策略和版本定位，
 // 不用事件业务过滤全局策略的管理业务；跨业务存在多行时明确拒绝，不能任选一行。
 // Kingeye 是 canonicalizer，摘要校验使用原始字节，不能解码再编码后计算。
-func readStrategyRevision(ctx context.Context, db *gorm.DB, query models.StrategyQuery) (strategyRevisionRow, bool, error) {
+func readStrategyRevision(ctx context.Context, db *gorm.DB, query models.StrategyRevisionQuery) (strategyRevisionRow, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return strategyRevisionRow{}, false, err
 	}

@@ -348,7 +348,7 @@ type logTestReader struct {
 	themeFound bool
 }
 
-func (r *logTestReader) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
+func (r *logTestReader) GetByStrategyID(context.Context, models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 	return r.strategy, true, nil
 }
 

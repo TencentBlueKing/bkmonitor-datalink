@@ -33,7 +33,7 @@ func TestStrategyPublishesAssociationFactsWithoutFrontendURL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			processor, err := NewStrategy(map[string]any{"web_saas_module_url": "https://old.example.test/app/"})
+			processor, err := NewStrategy(map[string]any{"web_saas_module_url": 42})
 			if err != nil {
 				t.Fatal(err)
 			}

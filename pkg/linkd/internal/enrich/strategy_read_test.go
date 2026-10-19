@@ -19,18 +19,18 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-type strategyReadFunc func(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error)
+type strategyReadFunc func(context.Context, models.StrategyRevisionQuery) (models.CWStrategy, bool, error)
 
-func (f strategyReadFunc) GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
+func (f strategyReadFunc) GetByStrategyID(ctx context.Context, query models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 	return f(ctx, query)
 }
 
 func TestStrategyReadPreservesEventIdentityAndCachesOnce(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
-	scope, err := NewScope(testAlert(), Sources{CWStrategy: strategyReadFunc(func(_ context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
+	scope, err := NewScope(testAlert(), Sources{CWStrategy: strategyReadFunc(func(_ context.Context, query models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 		calls.Add(1)
-		if query != (models.StrategyQuery{TenantID: "tenant-1", ID: 123, Version: 1}) {
+		if query != (models.StrategyRevisionQuery{TenantID: "tenant-1", ID: 123, Version: 1}) {
 			return models.CWStrategy{}, false, fmt.Errorf("unexpected strategy identity: %+v", query)
 		}
 		return models.CWStrategy{Status: models.CWStrategyStatus{BKStrategyID: query.ID}}, true, nil

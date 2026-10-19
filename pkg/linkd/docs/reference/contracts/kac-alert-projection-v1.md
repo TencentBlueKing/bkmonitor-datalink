@@ -92,6 +92,9 @@ KAC 共用查询层承接组装，独立取数和内置来源入口均需接入�
 承接；已明确选择新路径后的读取/权限/执行错误不得用旧参数掩盖。权威改造范围和验收在 Kingeye
 `docs/specs/kac-linkd-integration.md` 第 8.6 节维护；本地各查询类型实现不表示所有扩展或线上联调已验收。
 
+`strategy_name` 和 `data_source` 继续由 Linkd 生成或透传并投影，KAC 消费已保存结果；
+两者不再属于后续展示迁移项，职责依据见 [strategy 输出](../../design/enrich.md#61-strategy)。
+
 KAC 共用详情组装层按以上事实选择路由，读取当前 `KINGEYE_WEB_SAAS_MODULE_URL`，
 并处理观测融合参数。Linkd 不含前端路由常量，不查询产品页面开关。
 新告警不依赖反解析 URL，恢复详情使用引用的恢复 Event 事实。
@@ -102,7 +105,7 @@ KAC 共用详情组装层按以上事实选择路由，读取当前 `KINGEYE_WEB
 KAC 对历史内置告警只解析已知管理/实例路由，保留 ID 并换用当前基础地址；
 外部自定义链接原样承接。必要事实缺失时展示名称。详情转换不写 ES、不查询最新策略，
 既有投影更新保留 `field_extra_info` 的约定不变，因此无需批量修复历史告警。
-旧 Release 的 `web_saas_module_url` 仍可加载，但新处理不使用，新来源发布不再带此配置。
+`strategy` Processor 不读取或校验 `web_saas_module_url`，该键是否存在及其取值均不影响关联事实输出；新来源发布不再带此配置。
 
 部署先升级支持新旧两种输入的 KAC，再升级 Linkd；本契约和本地回归不代表线上已部署或完成页面验收。
 

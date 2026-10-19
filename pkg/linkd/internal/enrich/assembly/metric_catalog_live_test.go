@@ -165,7 +165,7 @@ func TestMetricCatalogLiveActiveEvents(t *testing.T) {
 		if len(diagnostics) != 0 {
 			t.Fatal("invalid source event identity")
 		}
-		_, found, readErr := sources.CWStrategy.GetByStrategyID(ctx, models.StrategyQuery{TenantID: sample.Event.BKTenantID, ID: ids.StrategyID, Version: ids.StrategyVersion})
+		_, found, readErr := sources.CWStrategy.GetByStrategyID(ctx, models.StrategyRevisionQuery{TenantID: sample.Event.BKTenantID, ID: ids.StrategyID, Version: ids.StrategyVersion})
 		if readErr != nil || !found {
 			t.Fatalf("matching publication unavailable: strategy=%d", ids.StrategyID)
 		}

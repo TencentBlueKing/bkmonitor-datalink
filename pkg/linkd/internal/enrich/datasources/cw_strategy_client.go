@@ -46,7 +46,7 @@ func NewCWStrategyClient(config CWStrategyClientConfig) (*CWStrategyClient, erro
 
 // GetByStrategyID 按同租户、策略 ID 和事件版本读取历史快照；缺失返回 found=false。
 // 策略管理业务取自唯一历史记录，不用事件业务过滤全局策略，也不回退 current/latest。
-func (c *CWStrategyClient) GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
+func (c *CWStrategyClient) GetByStrategyID(ctx context.Context, query models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 	if ctx == nil || !query.Valid() {
 		return models.CWStrategy{}, false, fmt.Errorf("strategy read requires context, tenant, strategy ID and revision")
 	}

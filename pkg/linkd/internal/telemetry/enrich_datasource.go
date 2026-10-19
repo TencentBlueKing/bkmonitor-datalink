@@ -125,7 +125,7 @@ type observedCWStrategyReader struct {
 	metrics *instruments
 }
 
-func (r *observedCWStrategyReader) GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
+func (r *observedCWStrategyReader) GetByStrategyID(ctx context.Context, query models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 	startedAt := time.Now()
 	value, found, err := r.next.GetByStrategyID(ctx, query)
 	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCWStrategy, "get_by_strategy_id", startedAt, found, err)

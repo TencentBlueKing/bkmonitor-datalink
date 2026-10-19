@@ -303,7 +303,7 @@ func TestRouterPassesProcessorConfigToStrategy(t *testing.T) {
 	t.Parallel()
 	processor, err := newProcessor(config.EnrichProcessorConfig{
 		Type:   "strategy",
-		Config: map[string]any{"web_saas_module_url": "https://example.com/kingeye/"},
+		Config: map[string]any{"web_saas_module_url": 42},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -429,7 +429,7 @@ type baseCollectCWStrategy struct{}
 
 func (baseCollectCWStrategy) GetByStrategyID(
 	ctx context.Context,
-	query models.StrategyQuery,
+	query models.StrategyRevisionQuery,
 ) (models.CWStrategy, bool, error) {
 	strategy, found, err := (&datasources.MockCWStrategyClient{}).GetByStrategyID(ctx, query)
 	if err != nil || !found {
@@ -593,7 +593,7 @@ func (panicSources) IsGlobalBusiness(context.Context, string, int64) (bool, bool
 	panic("data source called")
 }
 
-func (panicSources) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
+func (panicSources) GetByStrategyID(context.Context, models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 	panic("data source called")
 }
 

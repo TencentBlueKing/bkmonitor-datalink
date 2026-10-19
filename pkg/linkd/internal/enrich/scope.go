@@ -81,7 +81,7 @@ type DynamicGroupReader interface {
 
 // CWStrategyReader 按租户、策略 ID 和事件版本读取不可变历史快照。
 type CWStrategyReader interface {
-	GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error)
+	GetByStrategyID(ctx context.Context, query models.StrategyRevisionQuery) (models.CWStrategy, bool, error)
 }
 
 // BusinessReader 读取租户内 BKCC 业务空间的全局属性。
@@ -376,7 +376,7 @@ func (s *Scope) CWStrategy(ctx context.Context) (returned models.CWStrategy, fou
 			s.strategy.err = fmt.Errorf("strategy publication identity is invalid")
 			return
 		}
-		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByStrategyID(ctx, models.StrategyQuery{TenantID: s.original.BKTenantID, ID: ids.StrategyID, Version: ids.StrategyVersion})
+		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByStrategyID(ctx, models.StrategyRevisionQuery{TenantID: s.original.BKTenantID, ID: ids.StrategyID, Version: ids.StrategyVersion})
 	})
 	return s.strategy.value, s.strategy.found, s.strategy.err
 }

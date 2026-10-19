@@ -60,7 +60,7 @@ func TestCWStrategyClientReadsHistoricalRuntimeConfig(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+			result, found, err := client.GetByStrategyID(t.Context(), models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
 			if err != nil || !found || result.Status.BKStrategyID != 1 || result.MonitorTemplateName != "CPU template" || result.Spec.Name != "CPU" || calls != 2 {
 				t.Fatalf("result=%+v found=%v error=%v calls=%d", result, found, err, calls)
 			}
@@ -113,7 +113,7 @@ func TestCWStrategyClientMissingInvalidFailureAndCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+			_, found, err := client.GetByStrategyID(t.Context(), models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
 			if found {
 				t.Fatal("unexpected strategy")
 			}
@@ -143,7 +143,7 @@ func TestCWStrategyClientMissingInvalidFailureAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	identity := models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion}
+	identity := models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion}
 	if _, _, err := client.GetByStrategyID(ctx, identity); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}

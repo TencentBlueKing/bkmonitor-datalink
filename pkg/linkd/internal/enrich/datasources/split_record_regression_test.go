@@ -31,7 +31,7 @@ func TestCWStrategyDoesNotRequireLegacyConfigurationTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: 1}); err != nil {
+	if _, _, err := client.GetByStrategyID(t.Context(), models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: 1}); err != nil {
 		t.Fatalf("strategy reader still depends on legacy configuration: %v", err)
 	}
 }

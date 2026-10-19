@@ -171,7 +171,7 @@ func (r *processorCollectReader) FindInstance(context.Context, string, enrich.In
 
 type processorCollectStrategy struct{}
 
-func (processorCollectStrategy) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
+func (processorCollectStrategy) GetByStrategyID(context.Context, models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 	modelCode := "cw-Service"
 	bizID := int64(2)
 	return models.CWStrategy{

@@ -173,7 +173,7 @@ func TestStrategyReadsCancelInFlightSQL(t *testing.T) {
 					result <- err
 					return
 				}
-				_, _, err = client.GetByStrategyID(ctx, models.StrategyQuery{TenantID: "tenant", ID: 1, Version: 1})
+				_, _, err = client.GetByStrategyID(ctx, models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: 1})
 				result <- err
 			}()
 			<-started
@@ -273,7 +273,7 @@ func TestDescriptionConfigurationLiveIntegration(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		strategy, found, err := strategyClient.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: tenant, ID: id, Version: version})
+		strategy, found, err := strategyClient.GetByStrategyID(t.Context(), models.StrategyRevisionQuery{TenantID: tenant, ID: id, Version: version})
 		if err != nil {
 			return err
 		}

@@ -25,7 +25,7 @@ const sampleMonitorTemplateID int64 = 1
 type MockCWStrategyClient struct{}
 
 // GetByStrategyID 返回匹配租户、拆分策略 ID 和版本的固定策略。
-func (*MockCWStrategyClient) GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
+func (*MockCWStrategyClient) GetByStrategyID(ctx context.Context, query models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return models.CWStrategy{}, false, err
 	}

@@ -236,12 +236,25 @@ strategy_version
 monitor_template_id
 strategy_config_id
 strategy_name
-url
+strategy_kind
+is_default
+strategy_instance
 data_source
 ```
 
+以上为新事件的 9 个输出字段；`strategy_instance` 保存对象模型、CMDB 对象、实例和模型分类的身份。
+历史结果中的 `url` 仅继续解码、重放，新丰富不生成 URL。
+
 当前策略身份来自 `labels.strategy_id + labels.strategy_version + labels.bk_biz_id`。鲸眼策略仅从 Kingeye MySQL `alarm_strategy_execution_revision` 的不可变快照读取，按租户、`strategy_id` 与 Event `strategy_version` 对应的 `strategy_revision` 精确定位，并校验唯一性、schema、字节数、SHA-256 和快照身份；不查询 SplitRecord 当前态、旧 Set/Config 或 latest。管理业务取自唯一历史记录，事件业务关系单独校验。Linkd 输出策略关联事实，KAC 在读取时生成导航 URL。
-`strategy_name` 沿用旧 KAC 展示语义：普通策略使用 `monitor_template.name + "-" + spec.alias_name`，PromQL 策略只使用 `monitor_template.name`；没有 `monitor_template_id` 的策略才回退 `spec.name` 或声明式资源名。
+
+**2026-10-19 用户确认：`strategy_name` 和 `data_source` 都保留在 Linkd，不再继续拆分到 KAC，也不列为后续纯展示转换的迁移项。**
+
+- `strategy_name` 继续由 Linkd 生成并冻结：有模板名称时，首个查询配置含 PromQL 则使用模板名，否则有别名时使用“模板名-别名”，无别名时使用模板名；没有模板名称时回退 `spec.name`，结果仍为空则回退声明式资源名。该名称还用于策略条件读取、合并模板和 `item` 缺失时的回退，不能仅在 KAC 页面读取时生成。
+- `data_source` 继续原样取自 `strategy.Spec.DataSource`，作为数据来源标签投影到 KAC；保留该字段不表示它可作为合并字段。
+- KAC 继续根据关联事实组装产品导航链接；策略执行身份和关联事实仍由 Linkd 冻结、投影。
+
+实现见 [Strategy Processor](../../internal/enrich/processors/strategy.go)、
+[处理侧字段读取](../../internal/policy/view.go)和 [KAC 输出适配](../../internal/lifecycle/kachook/message.go)。
 
 ### 6.2 resource
 

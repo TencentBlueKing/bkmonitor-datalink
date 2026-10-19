@@ -138,17 +138,41 @@ func TestStrategyUsesOnlyTemplateNameForPromQL(t *testing.T) {
 	}
 }
 
-func TestNewStrategyValidatesConfig(t *testing.T) {
+// Strategy 没有生效的配置项；已废弃配置的存在、形状或取值都不能改变事实输出。
+func TestNewStrategyIgnoresUnusedConfig(t *testing.T) {
 	t.Parallel()
-	for _, config := range []map[string]any{
-		{"unknown": "value"},
-		{"web_saas_module_url": 1},
-		{"web_saas_module_url": "/relative"},
-		{"web_saas_module_url": "ftp://example.com"},
+	for _, tc := range []struct {
+		name   string
+		config map[string]any
+	}{
+		{name: "absent"},
+		{name: "empty", config: map[string]any{}},
+		{name: "absolute URL", config: map[string]any{"web_saas_module_url": "https://example.test/app/"}},
+		{name: "relative URL", config: map[string]any{"web_saas_module_url": "/relative"}},
+		{name: "unsupported URL scheme", config: map[string]any{"web_saas_module_url": "ftp://example.test"}},
+		{name: "malformed URL", config: map[string]any{"web_saas_module_url": "http://[invalid"}},
+		{name: "numeric value", config: map[string]any{"web_saas_module_url": 1}},
+		{name: "null value", config: map[string]any{"web_saas_module_url": nil}},
+		{name: "structured value", config: map[string]any{"web_saas_module_url": map[string]any{"invalid": true}}},
+		{name: "unused field", config: map[string]any{"unknown": "value"}},
 	} {
-		if _, err := NewStrategy(config); err == nil {
-			t.Fatalf("NewStrategy(%#v) succeeded", config)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			processor, err := NewStrategy(tc.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope, err := enrich.NewScope(strategyTestAlert(t, 2), enrich.Sources{CWStrategy: strategyProcessorReader{strategy: strategyForBusiness(2)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := processor.Process(t.Context(), scope)
+			if err != nil || result.Status != domain.EnrichStatusSucceeded || string(result.Value["strategy_name"]) != `"CPU"` || string(result.Value["strategy_id"]) != "78" || string(result.Value["strategy_version"]) != "1" {
+				t.Fatalf("result=%+v error=%v", result, err)
+			}
+			if _, exists := result.Value["url"]; exists {
+				t.Fatal("unused configuration generated a product URL")
+			}
+		})
 	}
 }
 
@@ -200,7 +224,7 @@ func strategyForBusiness(bizID int64) models.CWStrategy {
 
 type strategyProcessorReader struct{ strategy models.CWStrategy }
 
-func (r strategyProcessorReader) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
+func (r strategyProcessorReader) GetByStrategyID(context.Context, models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
 	return r.strategy, true, nil
 }
 

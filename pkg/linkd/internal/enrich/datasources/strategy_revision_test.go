@@ -60,7 +60,7 @@ func TestStrategyRevisionReadUsesImmutableIdentityAndIntegrity(t *testing.T) {
 				}
 				return rows, nil
 			})
-			result, found, err := readStrategyRevision(t.Context(), db, models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+			result, found, err := readStrategyRevision(t.Context(), db, models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
 			if calls != 1 {
 				t.Fatalf("history SQL calls=%d", calls)
 			}
@@ -85,7 +85,7 @@ func TestStrategyRevisionRejectsInvalidJSONWithMatchingDigest(t *testing.T) {
 		db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
 			return revisionTestRows(raw), nil
 		})
-		_, found, err := readStrategyRevision(t.Context(), db, models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+		_, found, err := readStrategyRevision(t.Context(), db, models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
 		var failure *description.Error
 		if found || !errors.As(err, &failure) || failure.Code != "strategy_revision_corrupt" {
 			t.Fatalf("found=%v error=%v", found, err)
@@ -130,7 +130,7 @@ func TestStrategyRevisionCorruptBytesBeforeUnsupportedSchema(t *testing.T) {
 		rows.values[0][5] = strings.Repeat("0", 64)
 		return rows, nil
 	})
-	_, found, err := readStrategyRevision(t.Context(), db, models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+	_, found, err := readStrategyRevision(t.Context(), db, models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
 	var failure *description.Error
 	if found || !errors.As(err, &failure) || failure.Code != "strategy_revision_corrupt" {
 		t.Fatalf("found=%v error=%v", found, err)
@@ -145,7 +145,7 @@ func TestStrategyRevisionUnsupportedSchemaBeforeJSONDecode(t *testing.T) {
 		rows.values[0][4] = int64(2)
 		return rows, nil
 	})
-	_, found, err := readStrategyRevision(t.Context(), db, models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+	_, found, err := readStrategyRevision(t.Context(), db, models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
 	var failure *description.Error
 	if found || !errors.As(err, &failure) || failure.Code != "strategy_revision_schema_unsupported" {
 		t.Fatalf("found=%v error=%v", found, err)

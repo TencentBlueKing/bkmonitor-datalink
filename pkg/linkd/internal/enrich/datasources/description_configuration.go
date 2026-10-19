@@ -39,7 +39,7 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, strategyReadTimeout)
 	defer cancel()
-	row, found, err := readStrategyRevision(ctx, c.db, models.StrategyQuery{TenantID: query.TenantID, ID: query.StrategyID, Version: query.StrategyVersion})
+	row, found, err := readStrategyRevision(ctx, c.db, models.StrategyRevisionQuery{TenantID: query.TenantID, ID: query.StrategyID, Version: query.StrategyVersion})
 	if err != nil {
 		return description.Configuration{}, err
 	}

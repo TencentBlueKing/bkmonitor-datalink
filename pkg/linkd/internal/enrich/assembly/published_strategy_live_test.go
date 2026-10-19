@@ -92,7 +92,7 @@ func TestPublishedStrategyLiveTitle(t *testing.T) {
 	if len(diagnostics) != 0 {
 		t.Fatalf("source identity invalid: %v", diagnostics)
 	}
-	strategy, found, err := sources.CWStrategy.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: fixture.Event.BKTenantID, ID: ids.StrategyID, Version: ids.StrategyVersion})
+	strategy, found, err := sources.CWStrategy.GetByStrategyID(t.Context(), models.StrategyRevisionQuery{TenantID: fixture.Event.BKTenantID, ID: ids.StrategyID, Version: ids.StrategyVersion})
 	if err != nil || !found {
 		t.Fatalf("published strategy found=%t error=%v", found, err)
 	}

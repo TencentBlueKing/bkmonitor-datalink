@@ -217,7 +217,11 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 		SourceRawData: sourceRawData, Labels: draft.Labels.Clone(), ExtraData: draft.ExtraData.Clone(),
 		Values: draft.Values.Clone(),
 	}
-	event.Fingerprint, err = f.fingerprintResolver.Resolve(f.source, event)
+	if draft.Fingerprint != nil {
+		event.Fingerprint = *draft.Fingerprint
+	} else {
+		event.Fingerprint, err = f.fingerprintResolver.Resolve(f.source, event)
+	}
 	if err != nil {
 		return domain.Event{}, err
 	}

@@ -396,7 +396,7 @@ func (r *Runtime) Run(ctx context.Context) (runErr error) {
 				result.entry.readyAt = time.Now()
 				result.entry.event = result.result.Event
 				result.entry.discard = result.result.DiscardErr
-				if result.result.DiscardErr != nil {
+				if result.result.DiscardErr != nil && !errors.Is(result.result.DiscardErr, ErrFiltered) {
 					r.logEntryFailure(ctx, result.entry, "normalize", "invalid_raw_event", result.result.DiscardErr)
 				}
 				result.entry.processAttempt = 0
@@ -551,6 +551,8 @@ func (r *Runtime) processOne(ctx context.Context, job processJob, results chan<-
 				outcome = consume.OutcomeRetry
 			}
 			stepOutcome = "failed"
+		} else if errors.Is(result.DiscardErr, ErrFiltered) {
+			stepOutcome = "filtered"
 		} else if result.DiscardErr != nil {
 			outcome = consume.OutcomeDiscard
 			stepOutcome = "rejected"

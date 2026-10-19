@@ -152,7 +152,8 @@ type Config struct {
 	RollbackUnmatched bool   `json:"rollback_unmatched,omitempty"`
 	Rules             []Rule `json:"rules"`
 	// FieldLabels 只用于已提交补丁的展示，键是规范化的字段路径。
-	FieldLabels map[string]string `json:"field_labels,omitempty"`
+	FieldLabels       map[string]string            `json:"field_labels,omitempty"`
+	TenantFieldLabels map[string]map[string]string `json:"tenant_field_labels,omitempty"`
 }
 
 // Program 是与某次来源发布绑定、可并发只读复用的编译结果。
@@ -200,6 +201,16 @@ func Compile(kind string, raw map[string]any) (_ *Program, err error) {
 	for path, label := range p.config.FieldLabels {
 		if domain.ValidateEnrichTarget(path) != nil || len(label) == 0 || len(label) > 256 {
 			return nil, fmt.Errorf("invalid field display metadata")
+		}
+	}
+	for tenant, labels := range p.config.TenantFieldLabels {
+		if domain.ValidateIdentityPart("bk_tenant_id", tenant, 64) != nil {
+			return nil, fmt.Errorf("invalid field label tenant")
+		}
+		for path, label := range labels {
+			if domain.ValidateEnrichTarget(path) != nil || len(label) == 0 || len(label) > 256 {
+				return nil, fmt.Errorf("invalid tenant field display metadata")
+			}
 		}
 	}
 	if p.config.RollbackUnmatched && kind != "cmdb" {

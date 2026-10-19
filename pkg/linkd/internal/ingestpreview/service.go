@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 // Package ingestpreview 在请求内执行标准化和 KAC 调试字段转换，仅持有配置读取端口。
 package ingestpreview
 
@@ -29,14 +38,12 @@ func (e *Error) Error() string { return e.Message }
 
 // Calculation 只允许标准化字段，禁止消费配置、丰富和输出资源进入请求。
 type Calculation struct {
-	Cleaner struct {
-		Type string `json:"type"`
-	} `json:"cleaner"`
-	FingerprintMode   string            `json:"fingerprint_mode"`
-	FingerprintField  string            `json:"fingerprint_field,omitempty"`
-	FingerprintFields []string          `json:"fingerprint_fields,omitempty"`
-	SeverityMapping   map[string]string `json:"severity_mapping,omitempty"`
-	DefaultSeverity   string            `json:"default_severity,omitempty"`
+	Cleaner           config.CleanerConfig `json:"cleaner"`
+	FingerprintMode   string               `json:"fingerprint_mode"`
+	FingerprintField  string               `json:"fingerprint_field,omitempty"`
+	FingerprintFields []string             `json:"fingerprint_fields,omitempty"`
+	SeverityMapping   map[string]string    `json:"severity_mapping,omitempty"`
+	DefaultSeverity   string               `json:"default_severity,omitempty"`
 }
 
 // Source 在 draft 计算配置与明确的 published 版本之间二选一。
@@ -57,6 +64,7 @@ type Sample struct {
 	ID         string          `json:"sample_id"`
 	ReceivedAt time.Time       `json:"received_at"`
 	Payload    json.RawMessage `json:"payload"`
+	IngestMode string          `json:"ingest_mode,omitempty"`
 }
 
 // Request 是同步调试输入，不受理保存、发布配置或正式处置请求。
@@ -79,21 +87,23 @@ type Diagnostic struct {
 
 // Item 按 sample 与标准等级返回调试结果，KAC 负责保存及页面封装。
 type Item struct {
-	SampleID    string             `json:"sample_id"`
-	Severity    string             `json:"severity"`
-	Action      domain.EventAction `json:"action"`
-	Passed      bool               `json:"passed"`
-	KACAlarm    map[string]any     `json:"kac_alarm"`
-	Diagnostics []Diagnostic       `json:"diagnostics"`
+	SampleID      string             `json:"sample_id"`
+	Severity      string             `json:"severity"`
+	Action        domain.EventAction `json:"action"`
+	Passed        bool               `json:"passed"`
+	KACAlarm      map[string]any     `json:"kac_alarm,omitempty"`
+	StandardEvent map[string]any     `json:"standard_event,omitempty"`
+	Diagnostics   []Diagnostic       `json:"diagnostics"`
 }
 
 // Response 不承诺正式告警已经创建；Version 只用于真实 published 配置。
 type Response struct {
-	ConfigOrigin   string `json:"config_origin"`
-	ConfigDigest   string `json:"config_digest"`
-	SeverityDigest string `json:"severity_digest"`
-	Version        int64  `json:"event_source_version,omitempty"`
-	Items          []Item `json:"items"`
+	Filtered       []string `json:"filtered_samples,omitempty"`
+	ConfigOrigin   string   `json:"config_origin"`
+	ConfigDigest   string   `json:"config_digest"`
+	SeverityDigest string   `json:"severity_digest"`
+	Version        int64    `json:"event_source_version,omitempty"`
+	Items          []Item   `json:"items"`
 }
 
 // SourceReader 只允许读取来源记录和明确版本，不提供发布或任务运行端口。
@@ -139,7 +149,7 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 			return Response{}, &Error{400, key + " is required or invalid"}
 		}
 	}
-	if request.Output != "kac_alarm" || request.KACSource.Name == "" || len(request.KACSource.Name) > 256 || len(request.Samples) < 1 || len(request.Samples) > 10 || len(request.FieldCatalog) > 128 {
+	if (request.Output != "kac_alarm" && request.Output != "standard") || request.KACSource.Name == "" || len(request.KACSource.Name) > 256 || len(request.Samples) < 1 || len(request.Samples) > 10 || len(request.FieldCatalog) > 128 {
 		return Response{}, &Error{400, "invalid preview output, source metadata or sample limits"}
 	}
 	encoded, err := json.Marshal(request)
@@ -176,13 +186,17 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 		}
 		seen[sample.ID] = true
 		digest := sha256.Sum256(sample.Payload)
-		raw := cleaner.RawEventMessage{RecordID: "preview:" + request.SessionID + ":" + sample.ID + ":" + hex.EncodeToString(digest[:]), BKTenantID: request.BKTenantID, EventSourceID: request.EventSourceID, ReceivedAt: sample.ReceivedAt, Payload: sample.Payload}
-		draft, err := (cleaner.StandardCleaner{}).Clean(ctx, raw)
+		raw := cleaner.RawEventMessage{RecordID: "preview:" + request.SessionID + ":" + sample.ID + ":" + hex.EncodeToString(digest[:]), BKTenantID: request.BKTenantID, EventSourceID: request.EventSourceID, ReceivedAt: sample.ReceivedAt, Payload: sample.Payload, Headers: map[string][]byte{"kac_ingest_mode": []byte(sample.IngestMode)}}
+		draft, err := (cleaner.StandardCleaner{Rules: source.Cleaner.Rules}).Clean(ctx, raw)
+		if errors.Is(err, cleaner.ErrFiltered) {
+			response.Filtered = append(response.Filtered, sample.ID)
+			continue
+		}
 		if err != nil {
 			return Response{}, &Error{422, fmt.Sprintf("samples[%d] invalid standard payload", index)}
 		}
 		// related_tenant_id 在正式工厂中可覆盖 payload；调试必须先拒绝错租户，不能利用覆盖掩盖输入错误。
-		if draft.BKTenantID != request.BKTenantID || draft.SourceEventID == "" || draft.SourceAlertID == "" {
+		if draft.BKTenantID != request.BKTenantID {
 			return Response{}, &Error{422, fmt.Sprintf("samples[%d] tenant or source identity mismatch", index)}
 		}
 		event, err := factory.Build(raw, draft)
@@ -201,7 +215,22 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 			if evaluation.Action != domain.EventActionTriggered {
 				diagnostics = append(diagnostics, Diagnostic{"history_not_available", []string{"begin_at", "status", "close_time"}})
 			}
-			response.Items = append(response.Items, Item{sample.ID, evaluation.Severity, evaluation.Action, true, fields, diagnostics})
+			item := Item{SampleID: sample.ID, Severity: evaluation.Severity, Action: evaluation.Action, Passed: true, Diagnostics: diagnostics}
+			if request.Output == "standard" {
+				item.StandardEvent = map[string]any{
+					"fingerprint": event.Fingerprint, "title": event.Title, "content": event.Content,
+					"bk_tenant_id": event.BKTenantID, "evaluations": []domain.EventEvaluation{evaluation},
+					"dimensions": event.Dimensions, "labels": event.Labels, "values": event.Values,
+					"subject":     map[string]string{"system": event.SubjectSystem, "type": event.SubjectType, "id": event.SubjectID, "name": event.SubjectName},
+					"occurred_at": event.OccurredAt, "produced_at": event.ProducedAt, "extra_data": event.ExtraData,
+				}
+				if event.SourceEventID != "" {
+					item.StandardEvent["event_id"] = event.SourceEventID
+				}
+			} else {
+				item.KACAlarm = fields
+			}
+			response.Items = append(response.Items, item)
 		}
 	}
 	resultJSON, err := json.Marshal(response)
@@ -219,7 +248,7 @@ func (s *Service) source(ctx context.Context, r Request, severity config.Severit
 			return source, &Error{400, "draft requires calculation without version"}
 		}
 		c := r.Source.Calculation
-		source = config.EventSource{Cleaner: config.CleanerConfig{Type: c.Cleaner.Type}, FingerprintMode: c.FingerprintMode, FingerprintField: c.FingerprintField, FingerprintFields: c.FingerprintFields, SeverityMapping: c.SeverityMapping, DefaultSeverity: c.DefaultSeverity}
+		source = config.EventSource{Cleaner: c.Cleaner, FingerprintMode: c.FingerprintMode, FingerprintField: c.FingerprintField, FingerprintFields: c.FingerprintFields, SeverityMapping: c.SeverityMapping, DefaultSeverity: c.DefaultSeverity}
 	case "published":
 		if r.Source.Calculation != nil || r.Source.Version <= 0 || s.sources == nil {
 			return source, &Error{400, "published requires an explicit version"}
@@ -235,12 +264,12 @@ func (s *Service) source(ctx context.Context, r Request, severity config.Severit
 		if err != nil {
 			return source, readError(ctx, err)
 		}
-		if release.Version != r.Source.Version || release.Deleted || release.Spec.EventSourceID != r.EventSourceID || release.Spec.RelatedTenantID != r.BKTenantID {
+		if release.Version != r.Source.Version || release.Deleted || release.Spec.EventSourceID != r.EventSourceID || (release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != r.BKTenantID) {
 			return source, &Error{400, "published source tenant mismatch"}
 		}
 		spec := release.Spec
 		// 仅复制计算字段，不让真实 Release 的丰富、消费或输出资源进入调试运行时。
-		source = config.EventSource{Version: release.Version, Cleaner: config.CleanerConfig{Type: spec.Cleaner.Type}, FingerprintMode: spec.FingerprintMode, FingerprintField: spec.FingerprintField, FingerprintFields: spec.FingerprintFields, SeverityMapping: spec.SeverityMapping, DefaultSeverity: spec.DefaultSeverity}
+		source = config.EventSource{Version: release.Version, Cleaner: spec.Cleaner, FingerprintMode: spec.FingerprintMode, FingerprintField: spec.FingerprintField, FingerprintFields: spec.FingerprintFields, SeverityMapping: spec.SeverityMapping, DefaultSeverity: spec.DefaultSeverity}
 	default:
 		return source, &Error{400, "source kind must be draft or published"}
 	}

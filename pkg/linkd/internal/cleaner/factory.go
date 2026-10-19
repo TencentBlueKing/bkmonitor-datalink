@@ -79,7 +79,7 @@ func (f *Factory) NewFlow(ctx context.Context, source config.EventSource) (Flow,
 		factory, err = NewDynamicEventFactory(source, f.runtimeSeverity)
 		if err == nil {
 			var sc SourceCleaner
-			sc, err = registeredCleaner(source.WithDefaults().Cleaner.Type)
+			sc, err = registeredCleaner(source.WithDefaults().Cleaner)
 			mapper = &Mapper{cleaner: sc, factory: factory}
 		}
 	} else {

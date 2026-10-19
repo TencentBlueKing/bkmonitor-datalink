@@ -236,6 +236,7 @@ func (c EnrichProcessorConfig) validate() error {
 
 // CleanerConfig 选择一个进程内注册的来源 Cleaner。
 type CleanerConfig struct {
+	Rules   []SourceCleaning      `yaml:"rules,omitempty" json:"rules,omitempty"`
 	Type    string                `yaml:"type" json:"type"`
 	Runtime *CleanerRuntimeConfig `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 }
@@ -319,6 +320,11 @@ func (s EventSource) clone() EventSource {
 	if s.Cleaner.Runtime != nil {
 		runtimeConfig := *s.Cleaner.Runtime
 		cloned.Cleaner.Runtime = &runtimeConfig
+	}
+	cloned.Cleaner.Rules = append([]SourceCleaning(nil), s.Cleaner.Rules...)
+	for i, rule := range s.Cleaner.Rules {
+		cloned.Cleaner.Rules[i].Assignments = append([]SourceAssignment(nil), rule.Assignments...)
+		cloned.Cleaner.Rules[i].Filter = append([]byte(nil), rule.Filter...)
 	}
 	cloned.FingerprintFields = append([]string(nil), s.FingerprintFields...)
 	cloned.Enrich = s.Enrich.clone()
@@ -407,6 +413,9 @@ func (s EventSource) validate(severity SeverityConfig) error {
 	if s.Cleaner.Type != CleanerTypeStandard {
 		return fmt.Errorf("cleaner.type is not registered: %q", s.Cleaner.Type)
 	}
+	if err := s.Cleaner.ValidateCleaning(); err != nil {
+		return err
+	}
 	if err := s.validateFingerprint(); err != nil {
 		return err
 	}
@@ -479,6 +488,9 @@ func (s EventSource) ValidateNormalization(severity SeverityConfig) error {
 	}
 	if s.Cleaner.Type != CleanerTypeStandard {
 		return fmt.Errorf("cleaner.type is not registered")
+	}
+	if err := s.Cleaner.ValidateCleaning(); err != nil {
+		return err
 	}
 	if err := s.validateFingerprint(); err != nil {
 		return err

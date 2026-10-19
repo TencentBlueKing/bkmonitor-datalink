@@ -246,7 +246,7 @@ func projectEventWindowItem(stored store.StoredEvent, evaluation domain.EventEva
 	current := original
 	fieldMeasures := map[string][]string{}
 	// 1. 展示元信息来自事件自己的发布版本，净变化为零的字段也保留历史名称。
-	rules, labels, err := eventWindowMetadata(release)
+	rules, labels, err := eventWindowMetadata(release, event.BKTenantID)
 	if err != nil {
 		item.Unavailable = true
 		item.Diagnostics = append(item.Diagnostics, eventWindowDiagnostic{Code: "enrich_history_unavailable"})
@@ -354,7 +354,7 @@ func projectEventWindowItem(stored store.StoredEvent, evaluation domain.EventEva
 	return item
 }
 
-func eventWindowMetadata(release eventsource.Release) (map[string]map[string]string, map[string]string, error) {
+func eventWindowMetadata(release eventsource.Release, tenants ...string) (map[string]map[string]string, map[string]string, error) {
 	rules := map[string]map[string]string{}
 	labels := map[string]string{}
 	for _, processor := range release.Spec.Enrich.Processors {
@@ -366,7 +366,8 @@ func eventWindowMetadata(release eventsource.Release) (map[string]map[string]str
 				ID   string `json:"id"`
 				Name string `json:"name"`
 			} `json:"rules"`
-			FieldLabels map[string]string `json:"field_labels"`
+			FieldLabels       map[string]string            `json:"field_labels"`
+			TenantFieldLabels map[string]map[string]string `json:"tenant_field_labels"`
 		}
 		encoded, err := json.Marshal(processor.Config)
 		if err != nil {
@@ -379,7 +380,11 @@ func eventWindowMetadata(release eventsource.Release) (map[string]map[string]str
 		for _, rule := range metadata.Rules {
 			rules[processor.Type][rule.ID] = rule.Name
 		}
-		for path, label := range metadata.FieldLabels {
+		fieldLabels := metadata.FieldLabels
+		if len(tenants) > 0 && metadata.TenantFieldLabels[tenants[0]] != nil {
+			fieldLabels = metadata.TenantFieldLabels[tenants[0]]
+		}
+		for path, label := range fieldLabels {
 			target, err := jsonpath.ParseTarget(path)
 			if err != nil {
 				return nil, nil, err

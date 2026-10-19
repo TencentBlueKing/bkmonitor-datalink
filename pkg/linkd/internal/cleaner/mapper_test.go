@@ -153,7 +153,7 @@ func TestMapperAllowsEmptySourceIDsAndPreservesUnknownFields(t *testing.T) {
 	}
 	delete(payload, "event_id")
 	delete(payload, "alert_id")
-	payload["fingerprint"] = "payload-must-not-win"
+	payload["fingerprint"] = "source-fingerprint"
 	payload["unknown"] = map[string]any{"nested": true}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -172,7 +172,7 @@ func TestMapperAllowsEmptySourceIDsAndPreservesUnknownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.SourceEventID != "" || event.SourceAlertID != "" || event.Fingerprint != "1" {
+	if event.SourceEventID != "" || event.SourceAlertID != "" || event.Fingerprint != "source-fingerprint" {
 		t.Fatalf("event identities=%#v", event)
 	}
 	for _, key := range []string{"fingerprint", "unknown"} {

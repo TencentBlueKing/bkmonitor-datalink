@@ -1,7 +1,7 @@
 # Linkd 标准事件（RawEvent）
 
 本文是 Linkd `standard` Cleaner 输入 RawEvent 的完整契约，同时说明 Kingeye/KAC 告警源
-插件更严格的发布前校验和旧 `AlarmEvent` 转换关系。下文 JSON 是插件投递的 **Kafka Value**；
+插件的发布前基础校验及第三方语义映射。下文 JSON 是插件投递的 **Kafka Value**；
 主机丰富链路的具体取值见[主机推送告警 Enrich 示例](../../guides/host-alert-enrich-example.md)。
 KAC 当前发布前校验见
 `src/kingeye/kac/alarm_collect/linkd/raw_event.py`，插件调用方式见
@@ -11,11 +11,11 @@ KAC 当前发布前校验见
 ## 消息与来源身份
 
 第三方拉取插件实现 `BaseClientV2.pull_raw_events()`，每次返回若干条 JSON object。KAC 在
-`BaseClientV2.start()` 中先校验整批、应用来源过滤，再逐条发送到告警源 `linkd_channel.config.topic`。
+`BaseClientV2.start()` 中先强制注入认证租户、校验整批，再逐条发送到告警源 `linkd_channel.config.topic`。
 Kafka Value 就是下面的 RawEvent；`RawEventMessage` 信封由 Linkd Kafka Adapter 构造，不由插件填写。
 
 KAC 的 `linkd_source_id` 对应 Linkd `EventSourceID`，由来源配置选择，不放进 Value。KAC 发送时
-Kafka key 使用 Value 中的 `alert_id`，header 提供当前租户的 `bk_tenant_id`，另带 `X-Secret`。
+Kafka key 使用 `bk_tenant_id:fingerprint`，header 提供当前租户的 `bk_tenant_id`，另带 `X-Secret`。
 当前 Linkd 会透传 `X-Secret`，尚未校验它。`RecordID` 来自 Kafka topic / partition / offset，
 `ReceivedAt` 来自 Kafka record timestamp；这两个值也不由插件填写。发布等待 broker ACK，
 批次中途失败时先前已确认的记录无法回滚，因此同一事件重试须保持稳定身份。
@@ -24,7 +24,7 @@ Kafka key 使用 Value 中的 `alert_id`，header 提供当前租户的 `bk_tena
 {
   "bk_tenant_id": "tenant-1",
   "event_id": "source-event-1",
-  "alert_id": "source-alert-1",
+  "fingerprint": "source-alert-1",
   "title": "CPU usage is high",
   "content": "Host 10.0.0.1 CPU usage reached 92.5%",
   "values": { "value": 92.5 },
@@ -47,12 +47,8 @@ Kafka key 使用 Value 中的 `alert_id`，header 提供当前租户的 `bk_tena
 }
 ```
 
-`event_id` 原样保存**来源事件编号**；来源若用同一编号表示触发、持续异常和恢复，可以重复使用该值。
-`alert_id` 是**同一来源告警**的稳定关联身份，后续触发、恢复、关闭保持一致。Linkd 分别存为 `Event.source_event_id` 和
-`Event.source_alert_id`；Linkd 内部 Event ID、Alert ID 和 fingerprint 另行生成。本例的
-EventSource 使用 `fingerprint_mode: field`、`fingerprint_field: source_alert_id`，所以该来源
-必须提供非空 `alert_id`。Linkd 通用 `standard` 契约容许空 `event_id` / `alert_id` 并有其他身份策略，
-但 **KAC V2 插件发布前要求二者非空**，不可照搬通用放宽条件。
+`fingerprint` 是同一告警触发、恢复和关闭的稳定关联身份。提供时必须为合法非空字符串（最多 128 bytes），直接采用并跳过 EventSource 指纹生成规则；显式 null、空值或非法类型报错。未提供时，其他 Linkd 生产者继续使用既有来源指纹规则。
+`event_id` 可选，仅保存来源事件编号。KAC V2 要求 fingerprint，不要求或补造 alert_id；标准 HTTP 接入方不填写租户，由认证后的 KAC 注入。Linkd 内部 Event/Alert ID 仍由系统生成。
 
 ## Linkd `standard` 通用输入规则
 
@@ -65,6 +61,7 @@ Event 的已知字段，只保留在完整的 `Event.source_raw_data` 快照中�
 | 字段 | Linkd 通用规则 |
 | --- | --- |
 | `bk_tenant_id` | Value 与 header 可只提供一处；两处非空时须一致，且最终租户不能为空。EventSource 的 `related_tenant_id` 非空时由该配置覆盖。 |
+| `fingerprint` | 可选直接指纹；提供时优先采用，未提供时执行来源生成规则。KAC V2 要求必填。 |
 | `event_id`、`alert_id` | 分别映射到 `Event.source_event_id`、`Event.source_alert_id`，通用 Cleaner 允许为空；EventFactory 使用稳定 `RecordID` 和 Kafka record timestamp 生成内部 Event ID；来源 ID 不承担消息唯一性。具体来源若按 `source_alert_id` 关联，仍须提供稳定且非空的 `alert_id`。 |
 | `title`、`content` | `title` 是事件标题，最多保留 2000 个 Unicode 字符，超出自动截断；`subject_name` 使用相同上限。`content` 是可选的来源内容，仍保留 1 MiB 上限；缺失 `content` 不从标题推导。 |
 | `evaluations` | 必填，1–32 项；每项 `action` 只能是 `triggered`、`resolved`、`closed`，`severity` 为来源等级标识或关闭专用标记 `__ALL__`。来源等级映射后不得重复；数组顺序不决定裁决顺序，未出现的等级不隐含恢复或关闭。 |
@@ -82,7 +79,7 @@ Event 的已知字段，只保留在完整的 `Event.source_raw_data` 快照中�
 
 ```json
 {
-  "alert_id": "source-alert-1",
+  "fingerprint": "source-alert-1",
   "evaluations": [
     { "severity": "__ALL__", "action": "closed", "action_reason": "strategy_inactive" }
   ]
@@ -96,7 +93,7 @@ Event 的已知字段，只保留在完整的 `Event.source_raw_data` 快照中�
 全级别关闭，再由最高触发级别创建新 Alert；该关闭不会被级别升级策略替代。
 
 同一事件的所有判定共享本次的 `values`、`dimensions` 和 `occurred_at`；`values` 不参与 fingerprint。
-`event_source_id`、`event_source_version`、`related_alert_ids`、`fingerprint`、`received_at`、
+`event_source_id`、`event_source_version`、`related_alert_ids`、`received_at`、
 `create_at` 和 `source_raw_data` 即使出现在 Value 中，也不能覆盖 EventFactory 的结果。
 完整 Value 保存到 `Event.source_raw_data`，不写入日志，也不在 Elasticsearch 建索引。
 
@@ -214,7 +211,7 @@ alarmd 额外取得、仅用于展示或资源丰富的字段放在 `extra_data.
 | --- | --- |
 | 顶层 | 必须是 JSON object，且整个对象可序列化为有限数值的 JSON |
 | `bk_tenant_id` | 必须是字符串，且与当前租户 ID 完全相等 |
-| `event_id`、`alert_id`、`title` | 必须是非空字符串 |
+| `fingerprint`、`title` | 必须是非空字符串 |
 | `evaluations` | 必须是 1–32 项的数组；每项是 object |
 | `evaluations[].action` | 必须为 `triggered`、`resolved` 或 `closed` |
 | `evaluations[].severity` | 必须是非空字符串，且同一数组内不得重复原始 severity |
@@ -240,8 +237,7 @@ Linkd 也会先解码为零值，再按上表处理；空时间字符串则会�
 字段类型错误仍可能导致拒绝。其中 `dimensions`、`labels`、`values` 的显式 `null` 虽可在 Linkd 侧形成空对象，
 但不满足当前 KAC 的发布前校验，KAC 插件应省略字段或发送 `{}`。
 
-KAC 代码还没有逐项校验 `subject`、时间字符串、`extra_data.additional_dimensions`、
-`action_reason` 的长度，或者来源 severity 映射后的冲突。Linkd 仍会检查 payload 为单个 UTF-8
+KAC 校验 fingerprint/title/evaluations、动作、等级、可选字段基本类型及 JSON 可序列化性；时间具体格式、extra_data.additional_dimensions、action_reason 长度和来源 severity 映射后的冲突仍由 Linkd 校验。Linkd 仍会检查 payload 为单个 UTF-8
 JSON object、重复 key、合法时间、维度及等级等约束。`values` 的 key 长度为 1–256 bytes，值须是
 有限数字；`extra_data.additional_dimensions` 与顶层 `dimensions` 不得有重复 key。
 `evaluations[].action_reason` 最多 256 bytes。生产者应在发布前按这些约束构造数据，
@@ -264,7 +260,7 @@ KAC 处理状态和丰富后的字段，**不能整体序列化为 Linkd RawEven
 | 旧 KAC `AlarmEvent` 字段                                               | Linkd 输入                                        | 转换边界                                                                                                                                      |
 |---------------------------------------------------------------------|-------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
 | `bk_tenant_id`                                                      | `bk_tenant_id`                                  | 使用当前租户；与 Kafka header 一致                                                                                                                  |
-| `event_id`                                                          | 通常作为 `alert_id` 的候选                             | 旧 KAC 用它关联同一告警的活动与终态；核对来源是否在整个生命周期保持稳定，再用于来源告警身份                                                                                          |
+| `event_id`                                                          | 通常作为 `fingerprint` 的候选                             | 旧 KAC 用它关联同一告警的活动与终态；核对来源是否在整个生命周期保持稳定，再用于来源告警身份                                                                                          |
 | `alarm_id`                                                          | 通常作为 `event_id` 的候选                             | 旧 KAC 每条告警记录的身份；必须确认每次新判定唯一、重投稳定，并按租户与来源隔离，不能把当前时间或随机新值用作重试身份                                                                             |
 | `name`、`content`                                                    | `title`、`content`                               | `title` 必须非空；来源详情保留原意                                                                                                                     |
 | `action`、`level`                                                    | `evaluations[].action`、`evaluations[].severity` | `firing → triggered`，`resolved → resolved`，`close → closed`；`heartbeat` 没有直接对应动作。旧 `remind/warning/fatal` 必须与 EventSource 的 Severity 配置匹配 |
@@ -276,17 +272,11 @@ KAC 处理状态和丰富后的字段，**不能整体序列化为 Linkd RawEven
 | `source_id`、`source_name`                                           | 来源配置与 `source` 丰富结果                             | `source_id` 是旧 KAC 告警源 ID；Linkd `EventSourceID` 取 `linkd_source_id`，不是直接复制旧 ID                                                            |
 | `status`、`close_time`、`conductor`、`notify_status` 及已丰富的 CMDB / 展示字段 | 无直接输入映射                                         | 这些是旧 KAC 的处理状态、操作时间或派生结果；Linkd 生命周期与 Enrich 自行产生对应状态和投影；close_time 由 evaluations[].action=closed 和 occurred_at 共同裁决                       |
 
-旧 REST API 的 V2 转换示例位于 `src/kingeye/kac/alarm_collect/clients_v2/rest_api_push.py`：
-它把旧 API `source_time/alarm_name/alarm_content/level/action` 转成上面的 RawEvent 字段，
-但该适配器的输入是旧 REST API 请求，**不是已持久化的 `AlarmEvent`**；其中的 MD5 身份生成
-和 `alarm_id` 回退规则不能无条件推广到其他第三方来源。正式推送 HTTP 入口当前未接入该 V2 适配器。
+REST V2 直接接收 standard，仓库第三方插件直接构造相同协议，不先创建旧 KAC 告警结构。旧字段名只用于存量配置的发布映射，不是运行时兼容消息。
 
 ## 对接状态与继续阅读
 
-KAC 新拉取型告警源已支持 `BaseClientV2` 的校验、过滤和 Kafka 发布；调试验证只校验 RawEvent，
-不写正式 topic。内置 `built_in_bk` 当前监控平台生产的消息和 header 尚不满足 Linkd `standard`
-契约，启用消费前仍需来源适配。Linkd 主机示例覆盖 Linkd 侧处理与丰富的测试场景，
-不代表所有 alarmd / 第三方生产者已经完成端到端联调。
+KAC 全部适配器、模板、上传与导入统一 V2。extra_clean_config 和来源过滤仅在 Linkd 执行，顺序为清洗后过滤；过滤是正常结果，确认消息但不创建 Event 或进入生命周期。同步 ingest/preview 复用同一 Cleaner，output=standard 返回标准字段与 filtered_samples。独立恢复由 KAC 写入可信 kac_ingest_mode=recovery header，普通 payload 不能选择该用途。alarmd 继续直接推 Kafka；本地测试不等于第三方和真实双租户联调。
 
 - [主机推送告警 Enrich 示例](../../guides/host-alert-enrich-example.md)
 - [Cleaner 模块](../../modules/cleaner.md)
@@ -300,3 +290,11 @@ KAC 保留来源接口轮询，但候选告警读取 Linkd 的 `GET /api/v1/aler
 返回原始 Alert 字段及 `extra_data`，不以丰富结果覆盖来源事实。接口使用管理 JWT；`limit` 为 1–32，
 默认 32，`after` 是绑定租户、来源和状态的分页游标。省略 `status` 查询该来源的保留历史；
 每页返回 `items` 和 `next`。查询不承诺跨页事务快照，终态仍通过正常来源消息进入 Lifecycle。
+
+## KAC V2 原生接入（2026-10-19）
+
+standard 新增可选 fingerprint；提供时直接采用并跳过来源生成规则，缺失时保留既有算法。
+KAC V2 要求该字段必填，不再要求 event_id/alert_id，租户由 KAC 认证后注入。
+Cleaner 的 rules 按 bk_tenant_id 限定 assignments（term/regexp_extract）及 filter。
+正式与 ingest/preview 共用；正常过滤返回 filtered_samples，消费确认但不创建 Event。
+独立恢复通过可信传输头 kac_ingest_mode=recovery 跳过触发规则。

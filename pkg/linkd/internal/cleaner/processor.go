@@ -43,6 +43,9 @@ func (p *MapperProcessor) Process(ctx context.Context, message consume.Message) 
 	if err == nil {
 		return ProcessResult{Event: event}, nil
 	}
+	if errors.Is(err, ErrFiltered) {
+		return ProcessResult{DiscardErr: ErrFiltered}, nil
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return ProcessResult{}, err
 	}

@@ -18,6 +18,7 @@ import (
 	"io"
 	"time"
 
+	"linkd/internal/config"
 	"linkd/internal/domain"
 )
 
@@ -36,6 +37,7 @@ type RawEventMessage struct {
 // 由 EventFactory 统一生成或保存。BKTenantID 由 Standard payload 提供，
 // EventSource.related_tenant_id 可在 EventFactory 中覆盖它。
 type EventDraft struct {
+	Fingerprint   *string
 	BKTenantID    string
 	Title         string
 	Content       string
@@ -67,6 +69,7 @@ type standardSubject struct {
 }
 
 type standardPayload struct {
+	Fingerprint *string                  `json:"fingerprint"`
 	BKTenantID  string                   `json:"bk_tenant_id"`
 	EventID     string                   `json:"event_id"`
 	AlertID     string                   `json:"alert_id"`
@@ -84,16 +87,33 @@ type standardPayload struct {
 
 // StandardCleaner 解析 Linkd 标准事件 payload，并把来源字段投影为 EventDraft。
 // 未知字段只由 EventFactory 保存在 SourceRawData 中，不进入 EventDraft。
-type StandardCleaner struct{}
+type StandardCleaner struct{ Rules []config.SourceCleaning }
 
-func (StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (EventDraft, error) {
+func (c StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (EventDraft, error) {
 	if err := ctx.Err(); err != nil {
 		return EventDraft{}, err
 	}
 	if err := validateJSONObject(message.Payload); err != nil {
 		return EventDraft{}, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(message.Payload))
+	// 显式指纹是输入合同，不能因来源过滤而吞掉非法身份。
+	var identity struct {
+		Fingerprint json.RawMessage `json:"fingerprint"`
+	}
+	if err := json.Unmarshal(message.Payload, &identity); err != nil {
+		return EventDraft{}, err
+	}
+	if len(identity.Fingerprint) > 0 {
+		var fingerprint string
+		if err := json.Unmarshal(identity.Fingerprint, &fingerprint); err != nil || len(fingerprint) == 0 || len(fingerprint) > 128 {
+			return EventDraft{}, fmt.Errorf("standard fingerprint must be a non-empty string of at most 128 bytes")
+		}
+	}
+	cleaned, err := c.applyRules(ctx, message)
+	if err != nil {
+		return EventDraft{}, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(cleaned))
 	var payload standardPayload
 	if err := decoder.Decode(&payload); err != nil {
 		return EventDraft{}, fmt.Errorf("decode standard payload: %w", err)
@@ -119,8 +139,9 @@ func (StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (Even
 		return EventDraft{}, err
 	}
 	return EventDraft{
-		BKTenantID: payload.BKTenantID,
-		Title:      payload.Title, Content: payload.Content,
+		Fingerprint: payload.Fingerprint,
+		BKTenantID:  payload.BKTenantID,
+		Title:       payload.Title, Content: payload.Content,
 		Evaluations: append([]domain.EventEvaluation(nil), payload.Evaluations...),
 		Dimensions:  payload.Dimensions.Clone(), SubjectSystem: payload.Subject.System,
 		SubjectType: payload.Subject.Type, SubjectID: payload.Subject.ID, SubjectName: payload.Subject.Name,

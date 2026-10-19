@@ -45,7 +45,17 @@ const (
 	modeDisabled  = "disabled"
 	modeLocalOnly = "local_only"
 	modeShared    = "shared"
+
+	rejectQuota        = "quota"
+	rejectExceedsBurst = "exceeds_burst"
+
+	waitGranted  = "granted"
+	waitRejected = "rejected"
+	waitTimeout  = "timeout"
 )
+
+// leaseCapacityWindow 是共享桶容量的下限，见 Config.leaseCapacity。
+const leaseCapacityWindow = time.Second
 
 var limiterModes = [...]string{modeDisabled, modeLocalOnly, modeShared}
 
@@ -64,8 +74,8 @@ var (
 )
 
 // trafficLimiterDecisionsTotal 回答「额度判断用的是共享额度还是本地降级」。
-// backend="redis" 表示判断时处于共享模式（余额来自 Redis 授予），backend="local" 表示
-// 同步已超过 defaultSyncStaleAfter 未成功，余额在本地按速率补充，reason 是最近一次同步失败的原因。
+// backend="redis" 表示判断时处于共享模式（余额来自 Redis 租约），backend="local" 表示
+// Redis 不可用或太慢，余额在本地按速率补充，reason 是最近一次失败的原因。
 // 用 Counter 而不是 Gauge：Prometheus 按间隔抓取，短于抓取间隔的降级窗口在 Gauge 上会整段丢失。
 var trafficLimiterDecisionsTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
@@ -76,12 +86,34 @@ var trafficLimiterDecisionsTotal = promauto.NewCounterVec(
 	[]string{"backend", "reason"},
 )
 
-// trafficLimiterSyncTotal 是后台同步的结果计数，失败持续增长时额度正在退化为「实例数 × 额度」。
+// trafficLimiterSyncTotal 是租约调用的结果计数，失败持续增长时额度正在由本地降级承担。
 var trafficLimiterSyncTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: define.MonitoringNamespace,
 		Name:      "traffic_limiter_sync_total",
 		Help:      "Traffic limiter quota sync with redis by result",
+	},
+	[]string{"result"},
+)
+
+// trafficLimiterRejectedTotal 按原因统计被拒的服务判断次数：quota 是额度用完，
+// exceeds_burst 是单个请求的计费字节超过 burst_bytes，后者无论等多久都不可能被放行，需要调大配置。
+var trafficLimiterRejectedTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: define.MonitoringNamespace,
+		Name:      "traffic_limiter_rejected_total",
+		Help:      "Traffic limiter rejected service decisions by reason",
+	},
+	[]string{"reason"},
+)
+
+// trafficLimiterLeaseWaitTotal 统计请求为一次补货等待的结果。timeout 持续增长说明 Redis 往返超过等待上限，
+// 突增的流量正在由本地降级承担。
+var trafficLimiterLeaseWaitTotal = promauto.NewCounterVec(
+	prometheus.CounterOpts{
+		Namespace: define.MonitoringNamespace,
+		Name:      "traffic_limiter_lease_wait_total",
+		Help:      "Traffic limiter waits for an urgent lease by result",
 	},
 	[]string{"result"},
 )
@@ -108,6 +140,13 @@ var (
 
 	syncSucceeded = trafficLimiterSyncTotal.WithLabelValues("success")
 	syncFailed    = trafficLimiterSyncTotal.WithLabelValues("failure")
+
+	rejectedQuota        = trafficLimiterRejectedTotal.WithLabelValues(rejectQuota)
+	rejectedExceedsBurst = trafficLimiterRejectedTotal.WithLabelValues(rejectExceedsBurst)
+
+	leaseWaitGranted  = trafficLimiterLeaseWaitTotal.WithLabelValues(waitGranted)
+	leaseWaitRejected = trafficLimiterLeaseWaitTotal.WithLabelValues(waitRejected)
+	leaseWaitTimeout  = trafficLimiterLeaseWaitTotal.WithLabelValues(waitTimeout)
 )
 
 // setLimiterMode 让三个 mode 中恰好一个为 1，其余为 0，便于直接用 == 1 做告警。
@@ -223,17 +262,12 @@ func (c Config) limited() bool {
 	return c.BytesPerSecond > 0
 }
 
-// overdraftBytes 是透支线：余额低于它的相反数时拒绝。取一个同步周期的额度，
-// 让冷启动和两次同步之间的请求不必等 Redis；跨实例的超额因此至多为每实例「透支线 + 一个请求」。
-func (c Config) overdraftBytes() int64 {
-	return max(int64(float64(c.BytesPerSecond)*defaultSyncInterval.Seconds()), 1)
-}
-
-// leaseCapacity 是共享桶按租约发放时的容量。一次同步至多领到一个桶的额度，
-// 若容量小于一个同步周期的额度，实际速率会被压到「容量 / 周期」，达不到 bytes_per_second。
-// 因此容量至少取 defaultSyncStaleAfter 的额度，给同步间隔的抖动留出余量；burst_bytes 更大时按它。
+// leaseCapacity 是共享桶的容量。预取让各实例手上合计保留约 defaultPrefetchWindow 的额度，
+// 容量若小于它，突增的实例从桶里取不到额度，就会出现限额之内的丢数据。
+// 因此容量至少取 leaseCapacityWindow 的额度；burst_bytes 更大时按它。
+// 任意时长 t 内全局放行量不超过「容量 + bytes_per_second × t」。
 func (c Config) leaseCapacity() int64 {
-	return max(c.BurstBytes, int64(float64(c.BytesPerSecond)*defaultSyncStaleAfter.Seconds()))
+	return max(c.BurstBytes, int64(float64(c.BytesPerSecond)*leaseCapacityWindow.Seconds()))
 }
 
 // limitIndex 回答「某个 Token 下是否存在任何启用了额度的服务」。
@@ -663,13 +697,32 @@ func (p *trafficLimiter) Process(record *define.Record) (*define.Record, error) 
 		}
 	}
 
+	if len(decision.oversized) > 0 {
+		return nil, errors.Errorf(
+			"traffic limiter rejected the request, token [%s], record_type [%s], services [%s], "+
+				"request exceeds burst_bytes for services [%s]",
+			token, record.RecordType.S(), strings.Join(decision.rejected, ","), strings.Join(decision.oversized, ","),
+		)
+	}
 	return nil, errors.Errorf(
 		"traffic limiter rejected the request, token [%s], record_type [%s], services [%s]",
 		token, record.RecordType.S(), strings.Join(decision.rejected, ","),
 	)
 }
 
-// limit 使用一份配置快照在本地余额上判断各服务的额度，不访问 Redis，也不持有 p.mu。
+// pendingAdmission 是第一遍判断中余额不够、需要等一次补货的服务。
+type pendingAdmission struct {
+	key    serviceKey
+	cost   int64
+	config Config
+}
+
+// limit 使用一份配置快照判断各服务的额度，不持有 p.mu。
+//
+// 第一遍只在本地余额上判断，绝大多数请求到此为止、不访问 Redis。共享模式下余额不够、
+// 且最近的租约是足额授予的服务（说明共享桶里还有额度，是限额之内的突增或冷启动），
+// 合并成一次紧急补货，最多等 defaultLeaseWaitBudget，补货回来后第二遍重新判断。
+// 一个请求无论涉及多少服务都只等一次，耗时不随服务数叠加。
 func (p *trafficLimiter) limit(
 	configs *confengine.TierConfig,
 	syncer *quotaSyncer,
@@ -678,14 +731,20 @@ func (p *trafficLimiter) limit(
 	sizes map[string]int,
 ) (limitDecision, error) {
 	now := p.now()
-	shared := syncer != nil && p.quota.shared(now)
-	decision := decisionRedis
-	if !shared {
-		decision = p.localDecision(syncer)
+	mode, decision := quotaLocalOnly, decisionLocalNoClient
+	if syncer != nil {
+		mode, decision = quotaFallback, syncer.failureDecision()
+		if syncer.shared(now) {
+			mode, decision = quotaShared, decisionRedis
+		}
 	}
 
-	accepted := false
-	rejected := make([]string, 0)
+	var (
+		result   limitDecision
+		refills  []serviceKey
+		pendings []pendingAdmission
+	)
+	result.rejected = make([]string, 0)
 	for service, size := range sizes {
 		config := configs.Get(token, service, "")
 		if config == nil {
@@ -694,38 +753,88 @@ func (p *trafficLimiter) limit(
 			)
 		}
 		p.activity.Touch(token, service, now)
+		key := serviceKey{token: token, service: service}
 		if size <= 0 {
-			accepted = true
+			result.accepted = true
 			continue
 		}
 
 		serviceConfig := config.(Config)
 		if !serviceConfig.limited() {
-			p.quota.Delete(token, service)
-			accepted = true
+			p.quota.Delete(key)
+			result.accepted = true
 			continue
 		}
 
 		// 额度按计费字节扣减：不同信号的单位价值不同，用权重折算后再进同一个余额。
 		// 指标仍然记录原始逻辑字节，两者的换算关系由权重配置给出。
 		cost := serviceConfig.chargedBytes(size, recordType)
-		decision.Inc()
-		if p.quota.Allow(token, service, cost, serviceConfig, now, shared) {
-			accepted = true
+		if cost > serviceConfig.BurstBytes {
+			// 单个请求超过 burst_bytes，无论等多久都不可能被放行：直接拒绝，不计入需求，也不领额度。
+			rejectedExceedsBurst.Inc()
+			result.rejected = append(result.rejected, service)
+			result.oversized = append(result.oversized, service)
 			continue
 		}
-		rejected = append(rejected, service)
+
+		decision.Inc()
+		admitted, refill := p.quota.Admit(key, cost, serviceConfig, now, mode, false)
+		if refill {
+			refills = append(refills, key)
+		}
+		switch admitted {
+		case admitAccepted:
+			result.accepted = true
+		case admitInsufficient:
+			pendings = append(pendings, pendingAdmission{key: key, cost: cost, config: serviceConfig})
+		default:
+			rejectedQuota.Inc()
+			result.rejected = append(result.rejected, service)
+		}
 	}
-	sort.Strings(rejected)
-	return limitDecision{accepted: accepted, rejected: rejected}, nil
+	if len(refills) > 0 {
+		syncer.request(refills, false)
+	}
+	if len(pendings) > 0 {
+		p.admitAfterLease(syncer, pendings, &result)
+	}
+	sort.Strings(result.rejected)
+	sort.Strings(result.oversized)
+	return result, nil
 }
 
-// localDecision 返回本地模式下的 decisions 计数：没有客户端时记 no_client，否则记最近一次同步失败的原因。
-func (p *trafficLimiter) localDecision(syncer *quotaSyncer) prometheus.Counter {
-	if syncer == nil {
-		return decisionLocalNoClient
+// admitAfterLease 为余额不够的服务等一次紧急补货，然后重新判断。
+// 补货超时或失败时按本地降级判断，保证 Redis 变慢不会让限额之内的流量被拒。
+func (p *trafficLimiter) admitAfterLease(syncer *quotaSyncer, pendings []pendingAdmission, result *limitDecision) {
+	keys := make([]serviceKey, 0, len(pendings))
+	for _, pending := range pendings {
+		p.quota.AddNeed(pending.key, pending.config, pending.cost)
+		keys = append(keys, pending.key)
 	}
-	return p.quota.failureDecision()
+	mode := quotaFallback
+	if syncer.await(keys) {
+		mode = quotaShared
+	}
+
+	now := p.now()
+	var refills []serviceKey
+	for _, pending := range pendings {
+		admitted, refill := p.quota.Admit(pending.key, pending.cost, pending.config, now, mode, true)
+		if refill {
+			refills = append(refills, pending.key)
+		}
+		if admitted == admitAccepted {
+			result.accepted = true
+			leaseWaitGranted.Inc()
+			continue
+		}
+		rejectedQuota.Inc()
+		leaseWaitRejected.Inc()
+		result.rejected = append(result.rejected, pending.key.service)
+	}
+	if len(refills) > 0 {
+		syncer.request(refills, false)
+	}
 }
 
 func observeTrafficBytes(

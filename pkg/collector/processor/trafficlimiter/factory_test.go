@@ -129,26 +129,23 @@ func TestTrafficLimiterWeightedCost(t *testing.T) {
 		}
 	}
 
-	// 本地模式从满桶开始；满桶刚好够两个原始请求，traces 权重为 2 时只够一个。
-	// 透支线为 1 字节（速率 1 字节/秒），取空之后的请求即被拒绝。
-	conf := policyMap(1, int64(size*2))
+	// 桶容量刚好够两个原始请求；traces 权重为 2 时只够一个。
+	conf := mainConfigMap(1, int64(size*2))
 	conf["weights"] = map[string]any{"traces": 2.0}
 
 	clock := newFakeClock()
-	factory, err := newLocalFactory(conf, nil, clock.Now)
+	factory, err := newTestFactory(conf, nil, clock.Now)
 	require.NoError(t, err)
 	defer factory.Clean()
 
 	_, err = factory.Process(newRecord())
 	require.NoError(t, err, "首个请求扣减 2 倍字节后刚好取空桶")
 	_, err = factory.Process(newRecord())
-	require.NoError(t, err, "余额为 0 仍在透支线内")
-	_, err = factory.Process(newRecord())
-	assert.Error(t, err, "权重放大后第三个请求就应超限，不加权时要第五个")
+	assert.Error(t, err, "权重放大后第二个请求就应超限")
 
 	// 指标记录的仍然是原始逻辑字节，不是计费字节。
 	assert.Equal(
-		t, float64(2*size),
+		t, float64(size),
 		testutil.ToFloat64(trafficLimiterBytesTotal.WithLabelValues(
 			"weighted-token", "checkout", "traces", resultAccepted,
 		)),
@@ -283,11 +280,6 @@ func TestTrafficLimiterMetrics(t *testing.T) {
 	appendTraceResource(data, "checkout", true, 128)
 	appendTraceResource(data, "payment", true, 256)
 	sizes := newServiceSizer().tracesSizes(data)
-	newRecord := func() (*define.Record, ptrace.Traces) {
-		clone := ptrace.NewTraces()
-		data.CopyTo(clone)
-		return &define.Record{Token: define.Token{Original: token}, RecordType: define.RecordTraces, Data: clone}, clone
-	}
 
 	mainBurst := int64(sumSizes(sizes) * 2)
 	customized := []processor.SubConfigProcessor{
@@ -307,14 +299,11 @@ func TestTrafficLimiterMetrics(t *testing.T) {
 	require.NoError(t, err)
 	defer factory.Clean()
 
-	// 第一次两个服务都在透支线内放行；同步后 checkout 领到「用量 + 欠账」，
-	// payment 的申请被 burst_bytes 封顶，还清不了欠账，下一次被拒。
-	record, _ := newRecord()
-	_, err = factory.Process(record)
-	require.NoError(t, err)
-	factory.syncNow()
-	record, traces := newRecord()
-	_, err = factory.Process(record)
+	_, err = factory.Process(&define.Record{
+		Token:      define.Token{Original: token},
+		RecordType: define.RecordTraces,
+		Data:       data,
+	})
 	require.NoError(t, err)
 
 	assert.Equal(
@@ -322,11 +311,11 @@ func TestTrafficLimiterMetrics(t *testing.T) {
 		testutil.ToFloat64(trafficLimiterBytesTotal.WithLabelValues(token, "payment", "traces", resultRejected)),
 	)
 	assert.Equal(
-		t, float64(2*sizes["checkout"]),
+		t, float64(sizes["checkout"]),
 		testutil.ToFloat64(trafficLimiterBytesTotal.WithLabelValues(token, "checkout", "traces", resultAccepted)),
 	)
-	require.Equal(t, 1, traces.ResourceSpans().Len())
-	service, ok := traces.ResourceSpans().At(0).Resource().Attributes().Get(serviceNameKey)
+	require.Equal(t, 1, data.ResourceSpans().Len())
+	service, ok := data.ResourceSpans().At(0).Resource().Attributes().Get(serviceNameKey)
 	require.True(t, ok)
 	assert.Equal(t, "checkout", service.AsString())
 }
@@ -365,23 +354,26 @@ func TestTrafficLimiterUnlimitedAndSharedSignals(t *testing.T) {
 		sizer := newServiceSizer()
 		traceSize := sizer.tracesSizes(traces)["checkout"]
 		metricSize := sizer.metricsSizes(metrics)["checkout"]
+		logSize := sizer.logsSizes(logs)["checkout"]
 
-		// 满桶只够 traces，metrics 在透支线内放行，logs 到来时同一服务的余额已低于透支线。
 		clock := newFakeClock()
-		factory, err := newLocalFactory(
-			policyMap(1, int64(traceSize+metricSize-1)), nil, clock.Now,
+		factory, err := newTestFactory(
+			mainConfigMap(1, int64(traceSize+metricSize+logSize-1)), nil, clock.Now,
 		)
 		require.NoError(t, err)
 		defer factory.Clean()
-		process := func(recordType define.RecordType, data any) error {
-			_, err := factory.Process(&define.Record{
-				Token: define.Token{Original: token}, RecordType: recordType, Data: data,
-			})
-			return err
-		}
-		require.NoError(t, process(define.RecordTraces, traces))
-		require.NoError(t, process(define.RecordMetrics, metrics), "metrics 透支放行")
-		assert.Error(t, process(define.RecordLogs, logs), "traces 与 metrics 已经用光同一个服务的余额")
+		_, err = factory.Process(&define.Record{
+			Token: define.Token{Original: token}, RecordType: define.RecordTraces, Data: traces,
+		})
+		require.NoError(t, err)
+		_, err = factory.Process(&define.Record{
+			Token: define.Token{Original: token}, RecordType: define.RecordMetrics, Data: metrics,
+		})
+		require.NoError(t, err)
+		_, err = factory.Process(&define.Record{
+			Token: define.Token{Original: token}, RecordType: define.RecordLogs, Data: logs,
+		})
+		assert.Error(t, err)
 	})
 }
 
@@ -394,15 +386,13 @@ func TestTrafficLimiterReload(t *testing.T) {
 	}
 
 	clock := newFakeClock()
-	conf := policyMap(1, int64(size))
-	factory, err := newLocalFactory(conf, nil, clock.Now)
+	conf := mainConfigMap(1, int64(size))
+	factory, err := newTestFactory(conf, nil, clock.Now)
 	require.NoError(t, err)
 	defer factory.Clean()
 
 	_, err = factory.Process(record)
-	require.NoError(t, err, "首个请求刚好取空满桶")
-	_, err = factory.Process(record)
-	require.NoError(t, err, "余额为 0 仍在透支线内")
+	require.NoError(t, err, "首个请求刚好取空令牌桶")
 	_, err = factory.Process(record)
 	require.Error(t, err)
 
@@ -410,14 +400,14 @@ func TestTrafficLimiterReload(t *testing.T) {
 	_, err = factory.Process(record)
 	assert.Error(t, err, "重载相同配置不能重新发放满桶")
 
-	factory.Reload(policyMap(0, 0), nil)
+	factory.Reload(mainConfigMap(0, 0), nil)
 	_, err = factory.Process(record)
 	assert.NoError(t, err, "配置放开后才允许通过")
 }
 
-// TestRequestsAndReloadNotBlockedBySync 守住「请求路径与 Reload 都不等 Redis」这条约束：
-// 同步卡在 Redis 上时，请求只在本地余额上判断，Reload 也只替换快照、不等在途同步返回。
-func TestRequestsAndReloadNotBlockedBySync(t *testing.T) {
+// TestRequestsAndReloadNotBlockedByRedis 守住「Redis 卡住不能拖住请求与 Reload」这条约束：
+// 请求为补货最多等 defaultLeaseWaitBudget，超时后按本地降级判断；Reload 只替换快照，不等在途租约返回。
+func TestRequestsAndReloadNotBlockedByRedis(t *testing.T) {
 	leaser := &fakeLeaser{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	conf := mainConfigMap(1024, 4096)
 	factory, err := newFactoryWithLeaser(
@@ -426,31 +416,31 @@ func TestRequestsAndReloadNotBlockedBySync(t *testing.T) {
 	require.NoError(t, err)
 	defer factory.Clean()
 
-	_, err = factory.limitSnapshot("token", map[string]int{"checkout": 1})
-	require.NoError(t, err)
-	synced := make(chan struct{})
+	done := make(chan limitDecision)
 	go func() {
-		defer close(synced)
-		factory.syncNow()
+		decision, _ := factory.limitSnapshot("token", map[string]int{"checkout": 1})
+		done <- decision
 	}()
 	<-leaser.entered
 
-	done := make(chan struct{})
+	reloaded := make(chan struct{})
 	go func() {
-		defer close(done)
-		_, _ = factory.limitSnapshot("token", map[string]int{"checkout": 1})
+		defer close(reloaded)
 		factory.Reload(conf, nil)
 	}()
 	select {
-	case <-done:
+	case decision := <-done:
+		assert.True(t, decision.accepted, "等待超时后按本地降级放行")
 	case <-time.After(10 * time.Second):
-		// 用 Error 而不是 Fatal，让在途同步先退出，避免失败时把 Clean 一起拖进死锁。
-		t.Error("请求或 Reload 被在途同步阻塞")
+		t.Error("请求被卡住的 Redis 阻塞")
 	}
-
+	select {
+	case <-reloaded:
+	case <-time.After(10 * time.Second):
+		// 用 Error 而不是 Fatal，让在途租约先退出，避免失败时把 Clean 一起拖进死锁。
+		t.Error("Reload 被在途租约阻塞")
+	}
 	close(leaser.release)
-	<-synced
-	<-done
 }
 
 func TestTrafficLimiterUnsupportedRecord(t *testing.T) {
@@ -462,41 +452,26 @@ func TestTrafficLimiterUnsupportedRecord(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestQuotaBucketServiceIsolation(t *testing.T) {
+func TestQuotaBucketLocalOnly(t *testing.T) {
 	clock := newFakeClock()
 	manager := newQuotaManager(clock.Now)
-	allow := func(token, service string, cost int64, config Config) bool {
-		return manager.Allow(token, service, cost, config, clock.Now(), false)
-	}
-	small := limiterConfig(2, 5) // 透支线 1
-
-	assert.True(t, allow("token", "checkout", 20, limiterConfig(2, 20)))
-	assert.True(t, allow("token", "payment", 6, small), "超过 burst 的单个请求在不欠账时放行")
-	assert.False(t, allow("token", "payment", 1, small), "欠账超过透支线后拒绝")
-	assert.True(t, allow("token", "checkout", 1, limiterConfig(2, 20)), "不同服务互不影响")
-	assert.True(t, allow("another-token", "payment", 5, small), "不同 Token 互不影响")
-}
-
-func TestQuotaBucketLocalRefillAndConfigReset(t *testing.T) {
-	clock := newFakeClock()
-	manager := newQuotaManager(clock.Now)
-	config := limiterConfig(10, 20) // 透支线 5
-	allow := func(cost int64, config Config) bool {
-		return manager.Allow("token", "checkout", cost, config, clock.Now(), false)
+	allow := func(service string, cost int64, config Config) bool {
+		result, _ := manager.Admit(testKey(service), cost, config, clock.Now(), quotaLocalOnly, false)
+		return result == admitAccepted
 	}
 
-	assert.True(t, allow(20, config), "本地模式从满桶开始")
-	assert.True(t, allow(5, config), "余额 0 仍在透支线内，扣到 -5")
-	assert.False(t, allow(1, config), "余额到达透支线")
+	config := limiterConfig(5, 10)
+	assert.True(t, allow("checkout", 10, config), "本地模式从满桶开始")
+	assert.False(t, allow("checkout", 1, config))
+	assert.True(t, allow("payment", 10, config), "不同服务互不影响")
 	clock.Advance(time.Second)
-	assert.True(t, allow(10, config), "补充 10 后余额回到 5，放行后扣到 -5")
-	assert.False(t, allow(1, config))
+	assert.True(t, allow("checkout", 5, config), "按速率补充")
+	assert.False(t, allow("checkout", 1, config))
 
 	// 额度变化表示新策略，按约定重新创建满桶。
-	enlarged := limiterConfig(10, 100)
-	assert.True(t, allow(100, enlarged))
-	assert.True(t, allow(5, enlarged))
-	assert.False(t, allow(1, enlarged))
+	enlarged := limiterConfig(5, 100)
+	assert.True(t, allow("checkout", 100, enlarged))
+	assert.False(t, allow("checkout", 1, enlarged))
 }
 
 // TestQuotaBucketRefillKeepsFraction 覆盖高频小间隔的补充：不足 1 字节的时长必须累积，
@@ -504,70 +479,171 @@ func TestQuotaBucketLocalRefillAndConfigReset(t *testing.T) {
 func TestQuotaBucketRefillKeepsFraction(t *testing.T) {
 	clock := newFakeClock()
 	manager := newQuotaManager(clock.Now)
-	config := limiterConfig(1, 2) // 透支线 1
+	config := limiterConfig(1, 2)
+	admit := func(cost int64) admitResult {
+		result, _ := manager.Admit(testKey("checkout"), cost, config, clock.Now(), quotaLocalOnly, false)
+		return result
+	}
 
-	assert.True(t, manager.Allow("token", "checkout", 3, config, clock.Now(), false))
-	assert.False(t, manager.Allow("token", "checkout", 1, config, clock.Now(), false))
+	assert.Equal(t, admitAccepted, admit(2))
+	assert.Equal(t, admitRejected, admit(1))
 	for i := 0; i < 10; i++ {
 		clock.Advance(100 * time.Millisecond)
-		manager.Allow("token", "checkout", 0, config, clock.Now(), false)
+		admit(0)
 	}
-	assert.True(t, manager.Allow("token", "checkout", 1, config, clock.Now(), false), "10 次 0.1s 应累积补充 1 字节")
+	assert.Equal(t, admitAccepted, admit(1), "10 次 0.1s 应累积补充 1 字节")
 }
 
-// TestQuotaBucketSharedStartsEmpty 覆盖共享模式：余额只来自同步授予，冷启动靠透支线放行，
-// 且共享期间的时长不会在切到本地模式后被折算成本地额度。
-func TestQuotaBucketSharedStartsEmpty(t *testing.T) {
+// TestQuotaBucketSharedOverdraft 覆盖共享模式：余额来自租约，不足时先等一次补货；
+// 被限流或补货后仍不足时在透支上限之内放行，超出上限的请求被拒且不扣余额。
+func TestQuotaBucketSharedOverdraft(t *testing.T) {
 	clock := newFakeClock()
 	manager := newQuotaManager(clock.Now)
-	config := limiterConfig(10, 100) // 透支线 5
+	config := limiterConfig(100, 1000) // 透支上限 min(100 × 0.2s, 1000) = 20
+	key := testKey("checkout")
+	admit := func(cost int64, retry bool) admitResult {
+		result, _ := manager.Admit(key, cost, config, clock.Now(), quotaShared, retry)
+		return result
+	}
 
-	assert.True(t, manager.Allow("token", "checkout", 5, config, clock.Now(), true))
-	assert.False(t, manager.Allow("token", "checkout", 1, config, clock.Now(), true), "共享模式从 0 开始")
+	assert.Equal(t, admitInsufficient, admit(10, false), "共享模式从 0 开始，先等一次租约")
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 30}}, []leaseResult{{grant: 30}})
+	assert.Equal(t, admitAccepted, admit(25, false))
+	assert.Equal(t, admitInsufficient, admit(10, false), "没被限流时先等补货，不急于透支")
+	assert.Equal(t, admitAccepted, admit(25, true), "补货后仍不足，在透支上限之内放行：余额 5 → -20")
+	assert.Equal(t, admitRejected, admit(1, true), "透支已到上限")
 
-	clock.Advance(10 * time.Second)
-	assert.False(t, manager.Allow("token", "checkout", 1, config, clock.Now(), true), "共享模式不在本地补充")
+	// 公平份额低于需求：额度确实紧张，退避一个需求更新粒度，期间不足的请求只能用透支空间。
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 50, demand: 100}},
+		[]leaseResult{{grant: 30, share: 50}})
+	assert.Equal(t, admitAccepted, admit(5, false), "欠账从授予中扣回：-20 + 30 = 10 → 5")
+	assert.Equal(t, admitRejected, admit(26, false), "被限流时只能用透支空间，超出上限的请求被拒")
+	assert.Equal(t, admitAccepted, admit(25, false), "被拒的请求不扣余额，5 → -20")
+	clock.Advance(demandResponseWindow - time.Millisecond)
+	assert.Equal(t, admitRejected, admit(1, false))
+	clock.Advance(time.Millisecond)
+	assert.Equal(t, admitInsufficient, admit(1, false), "退避结束后可以再等一次补货")
 
-	// 切到本地模式只补充切换之后的 1 秒（10 字节，余额 5）；若把共享期间的 10 秒也算上，余额会到 100。
+	// 不紧张、只是共享桶暂时被取空：只退避到桶补回缺口所需的时长（20 字节 / 100 B/s = 200ms）。
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 40, demand: 10}},
+		[]leaseResult{{grant: 20, share: 50}})
+	clock.Advance(200*time.Millisecond - time.Millisecond)
+	assert.Equal(t, admitRejected, admit(21, false), "余额 0，超出透支空间")
+	clock.Advance(time.Millisecond)
+	assert.Equal(t, admitInsufficient, admit(21, false))
+
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 30}}, []leaseResult{{grant: 30}})
+	assert.Equal(t, admitAccepted, admit(30, false), "足额授予后解除限流，欠账已从授予中扣回")
+}
+
+func TestQuotaBucketAsyncRefillWatermark(t *testing.T) {
+	clock := newFakeClock()
+	manager := newQuotaManager(clock.Now)
+	config := limiterConfig(1000, 10000)
+	key := testKey("checkout")
+
+	manager.Admit(key, 100, config, clock.Now(), quotaShared, false)
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 300}}, []leaseResult{{grant: 300}})
+	// 本周期已到达 200 字节，需求估计 400 B/s，预取目标 300，水位 75。
+	_, refill := manager.Admit(key, 100, config, clock.Now(), quotaShared, false)
+	assert.False(t, refill, "余额 200 仍高于水位")
+	// 已到达 350 字节，预取目标 525，水位 131。
+	_, refill = manager.Admit(key, 150, config, clock.Now(), quotaShared, false)
+	assert.True(t, refill, "余额 50 低于水位时触发异步补货")
+	_, refill = manager.Admit(key, 1, config, clock.Now(), quotaShared, false)
+	assert.False(t, refill, "已提交的补货返回前不重复提交")
+}
+
+func TestQuotaManagerPrepare(t *testing.T) {
+	clock := newFakeClock()
+	manager := newQuotaManager(clock.Now)
+	config := limiterConfig(10000, 100000)
+	key := testKey("checkout")
+	keys := map[serviceKey]struct{}{key: {}}
+	admit := func(cost int64) {
+		manager.Admit(key, cost, config, clock.Now(), quotaShared, false)
+	}
+
+	admit(200)
+	manager.AddNeed(key, config, 200)
+	clock.Advance(200 * time.Millisecond)
+	requests := manager.prepare(clock.Now(), false, keys, true)
+	require.Len(t, requests, 1)
+	assert.Equal(t, int64(1000), requests[0].demand, "本周期 200ms 到达 200 字节")
+	assert.Equal(t, int64(750), requests[0].want, "预取 1000 B/s × 0.75s，至少覆盖等待者")
+	assert.Equal(t, int64(200), requests[0].need)
+	manager.apply(clock.Now(), requests, []leaseResult{{grant: 750}})
+
+	clock.Advance(300 * time.Millisecond)
+	requests = manager.prepare(clock.Now(), true, nil, true)
+	require.Len(t, requests, 1)
+	assert.Equal(t, int64(400), requests[0].demand, "定时同步按整个周期结算：0.5s 到达 200 字节")
+	assert.Equal(t, int64(300-750), requests[0].want, "余额超过预取目标两倍时退还多余的部分")
+	manager.abort(requests)
+
+	admit(100)
+	assert.Empty(t, manager.prepare(clock.Now(), false, keys, false), "不健康时按需补货不领额度")
+	requests = manager.prepare(clock.Now(), true, nil, false)
+	require.Len(t, requests, 1, "不健康时定时同步仍上报需求")
+	assert.Zero(t, requests[0].want)
+
+	clock.Advance(defaultSyncInterval)
+	requests = manager.prepare(clock.Now(), true, nil, true)
+	require.Len(t, requests, 1)
+	assert.Zero(t, requests[0].demand, "没有流量的周期需求降为 0")
+	assert.Equal(t, int64(-650), requests[0].want, "需求消失后退还全部余额")
+}
+
+// TestQuotaManagerNeedSettled 覆盖等待登记的结算：余额已经被另一轮补货补够时，
+// 这一轮不需要申请，但登记的 need 也必须清掉，否则之后每次都会多预取。
+func TestQuotaManagerNeedSettled(t *testing.T) {
+	clock := newFakeClock()
+	manager := newQuotaManager(clock.Now)
+	config := limiterConfig(10000, 100000)
+	key := testKey("checkout")
+	keys := map[serviceKey]struct{}{key: {}}
+
+	manager.Admit(key, 100, config, clock.Now(), quotaShared, false)
+	manager.AddNeed(key, config, 100)
+	// 登记等待之前生成的另一轮把余额补到了预取目标 750（需求估计 1000 B/s × 0.75s）。
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 750}}, []leaseResult{{grant: 750}})
+	assert.Equal(t, int64(100), quotaBucketNeed(manager, key))
+
+	assert.Empty(t, manager.prepare(clock.Now(), false, keys, true), "余额已够，不再申请")
+	assert.Zero(t, quotaBucketNeed(manager, key), "跳过申请时也要结算等待登记")
+
+	manager.AddNeed(key, config, 100)
+	requests := manager.prepare(clock.Now(), true, nil, true)
+	require.Len(t, requests, 1)
+	assert.Equal(t, int64(100), requests[0].need, "退还多余余额的一轮同样带上等待登记")
+	manager.apply(clock.Now(), requests, []leaseResult{{grant: requests[0].want}})
+	assert.Zero(t, quotaBucketNeed(manager, key))
+}
+
+func TestQuotaBucketFallback(t *testing.T) {
+	clock := newFakeClock()
+	manager := newQuotaManager(clock.Now)
+	config := limiterConfig(100, 100)
+	admit := func(service string, cost int64, mode quotaMode) admitResult {
+		result, _ := manager.Admit(testKey(service), cost, config, clock.Now(), mode, false)
+		return result
+	}
+
+	// 没领到过额度的服务切到本地降级时从满桶开始，冷启动遇到 Redis 卡住也不丢数据。
+	assert.Equal(t, admitInsufficient, admit("cold", 50, quotaShared))
+	assert.Equal(t, admitAccepted, admit("cold", 50, quotaFallback))
+
+	// 领到过额度的服务保留余额，按 max(公平份额, L/n) 补充。
+	key := testKey("warm")
+	admit("warm", 1, quotaShared)
+	manager.apply(clock.Now(), []leaseRequest{{key: key, config: config, want: 10}}, []leaseResult{{grant: 10, peers: 4, share: 10}})
+	assert.Equal(t, admitAccepted, admit("warm", 10, quotaFallback))
+	assert.Equal(t, admitRejected, admit("warm", 1, quotaFallback))
 	clock.Advance(time.Second)
-	assert.True(t, manager.Allow("token", "checkout", 10, config, clock.Now(), false))
-	assert.False(t, manager.Allow("token", "checkout", 1, config, clock.Now(), false))
-}
+	assert.Equal(t, admitAccepted, admit("warm", 25, quotaFallback), "份额 10 < L/n = 25，按 25 补充")
+	assert.Equal(t, admitRejected, admit("warm", 1, quotaFallback))
 
-func TestQuotaManagerCollectAndApply(t *testing.T) {
-	clock := newFakeClock()
-	manager := newQuotaManager(clock.Now)
-	config := limiterConfig(10, 100) // 透支线 5
-	allow := func(service string, cost int64) bool {
-		return manager.Allow("token", service, cost, config, clock.Now(), true)
-	}
-
-	assert.True(t, allow("checkout", 3))
-	assert.True(t, allow("checkout", 4), "余额 -3 仍在透支线内")
-	assert.False(t, allow("checkout", 1), "余额 -7 已越过透支线")
-	allow("payment", 0) // 没有计费字节
-
-	requests := manager.collect()
-	require.Len(t, requests, 1, "只为有用量或欠账的服务申请")
-	assert.Equal(t, serviceKey{token: "token", service: "checkout"}, requests[0].key)
-	assert.Equal(t, int64(7+1+7), requests[0].want, "用量 + 被拒需求 + 欠账")
-
-	manager.apply(requests, []int64{15})
-	assert.True(t, allow("checkout", 5), "授予写回后余额为 8")
-	assert.Equal(t, int64(5-3), manager.collect()[0].want, "预取一个周期的用量，扣掉手上的余额")
-	assert.Empty(t, manager.collect(), "用量已清零、余额非负时不再申请")
-
-	manager.apply([]leaseRequest{{key: requests[0].key, config: limiterConfig(1, 1), want: 1}}, []int64{1000})
-	assert.True(t, allow("checkout", 8), "余额 3，放行后到 -5")
-	assert.False(t, allow("checkout", 1), "额度已变化的授予必须丢弃")
-}
-
-func TestQuotaBucketWantCappedByBurst(t *testing.T) {
-	clock := newFakeClock()
-	manager := newQuotaManager(clock.Now)
-	config := limiterConfig(10, 20)
-	manager.Allow("token", "checkout", 1000, config, clock.Now(), true)
-	assert.Equal(t, int64(20), manager.collect()[0].want, "单次申请不超过 burst_bytes")
+	assert.Equal(t, admitInsufficient, admit("warm", 1, quotaShared), "回到共享模式时清零本地补充的余额")
 }
 
 func TestQuotaBucketSweep(t *testing.T) {
@@ -576,34 +652,31 @@ func TestQuotaBucketSweep(t *testing.T) {
 	manager.idleTTL = time.Minute
 	manager.sweepInterval = time.Minute
 
-	assert.True(t, manager.Allow("token", "checkout", 1, limiterConfig(1, 10), clock.Now(), false))
+	manager.Admit(testKey("checkout"), 1, limiterConfig(1, 10), clock.Now(), quotaLocalOnly, false)
 	clock.Advance(2 * time.Minute)
-	assert.True(t, manager.Allow("other", "checkout", 1, limiterConfig(1, 10), clock.Now(), false))
-	assert.False(t, quotaBucketExists(manager, "token", "checkout"))
+	manager.Admit(serviceKey{token: "other", service: "checkout"}, 1, limiterConfig(1, 10), clock.Now(), quotaLocalOnly, false)
+	assert.False(t, quotaBucketExists(manager, testKey("checkout")))
 }
 
-func TestQuotaBucketOverflow(t *testing.T) {
+func TestServiceActivityTrackerSweep(t *testing.T) {
 	clock := newFakeClock()
-	config := limiterConfig(math.MaxInt64, math.MaxInt64)
+	var evicted []string
+	tracker := newServiceActivityTracker(clock.Now, func(token, service string) {
+		evicted = append(evicted, token+"/"+service)
+	})
+	tracker.idleTTL = time.Minute
+	tracker.sweepInterval = time.Minute
 
-	shared := newQuotaManager(clock.Now)
-	assert.True(t, shared.Allow("token", "checkout", math.MaxInt64, config, clock.Now(), true))
-	assert.False(t, shared.Allow("token", "checkout", math.MaxInt64, config, clock.Now(), true),
-		"欠账封底在下限，下限不高于透支线")
-	assert.Equal(t, int64(math.MaxInt64), shared.collect()[0].want, "饱和计算不得溢出成负数")
-
-	local := newQuotaManager(clock.Now)
-	assert.True(t, local.Allow("token", "checkout", math.MaxInt64, config, clock.Now(), false))
-	assert.True(t, local.Allow("token", "checkout", math.MaxInt64, config, clock.Now(), false))
-	clock.Advance(time.Second)
-	assert.True(t, local.Allow("token", "checkout", math.MaxInt64, config, clock.Now(), false),
-		"欠账在下限时补充不得溢出")
+	tracker.Touch("token", "checkout", clock.Now())
+	clock.Advance(2 * time.Minute)
+	tracker.Touch("other", "checkout", clock.Now())
+	assert.Equal(t, []string{"token/checkout"}, evicted)
 }
 
 func TestQuotaBucketConcurrentLimit(t *testing.T) {
 	clock := newFakeClock()
 	manager := newQuotaManager(clock.Now)
-	config := limiterConfig(2, 1000) // 透支线 1：满桶 1000，最多放行到余额 -9
+	config := limiterConfig(1, 1000)
 
 	var accepted atomic.Int64
 	var wg sync.WaitGroup
@@ -611,13 +684,14 @@ func TestQuotaBucketConcurrentLimit(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if manager.Allow("token", "checkout", 10, config, clock.Now(), false) {
+			result, _ := manager.Admit(testKey("checkout"), 10, config, clock.Now(), quotaLocalOnly, false)
+			if result == admitAccepted {
 				accepted.Add(1)
 			}
 		}()
 	}
 	wg.Wait()
-	assert.Equal(t, int64(101), accepted.Load())
+	assert.Equal(t, int64(100), accepted.Load())
 }
 
 type fakeClock struct {
@@ -671,12 +745,51 @@ func mainConfigMap(bytesPerSecond, burstBytes int64) map[string]any {
 	return config
 }
 
-// fakeLeaser 默认授予全部申请量；entered/release 非空时在 Lease 中阻塞，用来模拟卡住的 Redis。
+// memoryLeaser 是单实例的内存共享桶，按假时钟实现与 Lua 相同的 GCRA 授予与退还，
+// 用来在不依赖 Redis 的情况下验证共享模式的限流语义。
+type memoryLeaser struct {
+	mu   sync.Mutex
+	now  func() time.Time
+	tats map[serviceKey]int64
+}
+
+func (l *memoryLeaser) Lease(_ context.Context, requests []leaseRequest) ([]leaseResult, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now().UnixMicro()
+	results := make([]leaseResult, len(requests))
+	for i, request := range requests {
+		rate := float64(request.config.BytesPerSecond)
+		tat := max(l.tats[request.key], now)
+		var grant int64
+		switch {
+		case request.want < 0:
+			tat = max(now, tat-int64(float64(-request.want)*1e6/rate))
+			grant = request.want
+		case request.want > 0:
+			capacity := float64(request.config.leaseCapacity())
+			available := int64((float64(now) + math.Ceil(capacity*1e6/rate) - float64(tat)) * rate / 1e6)
+			grant = max(min(request.want, available), 0)
+			tat += int64(math.Ceil(float64(grant) * 1e6 / rate))
+		}
+		l.tats[request.key] = tat
+		results[i] = leaseResult{grant: grant, peers: 1, share: request.demand}
+	}
+	return results, nil
+}
+
+func (l *memoryLeaser) Close() error { return nil }
+
+// fakeLeaser 默认授予全部申请量，用于验证补货泵的调用行为：
+// limit 大于 0 时每次最多授予 limit；entered/release 非空时在 Lease 中阻塞，用来模拟卡住的 Redis。
 type fakeLeaser struct {
-	mu      sync.Mutex
-	err     error
-	entered chan struct{}
-	release chan struct{}
+	mu       sync.Mutex
+	err      error
+	limit    int64
+	calls    int
+	requests []leaseRequest
+	entered  chan struct{}
+	release  chan struct{}
 }
 
 func (l *fakeLeaser) setErr(err error) {
@@ -685,45 +798,58 @@ func (l *fakeLeaser) setErr(err error) {
 	l.err = err
 }
 
-func (l *fakeLeaser) Lease(_ context.Context, requests []leaseRequest) ([]int64, error) {
+func (l *fakeLeaser) setLimit(limit int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.limit = limit
+}
+
+func (l *fakeLeaser) callCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.calls
+}
+
+func (l *fakeLeaser) lastRequests() []leaseRequest {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.requests
+}
+
+func (l *fakeLeaser) Lease(_ context.Context, requests []leaseRequest) ([]leaseResult, error) {
 	if l.entered != nil {
 		l.entered <- struct{}{}
 		<-l.release
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.calls++
+	l.requests = requests
 	if l.err != nil {
 		return nil, l.err
 	}
-	grants := make([]int64, len(requests))
+	results := make([]leaseResult, len(requests))
 	for i, request := range requests {
-		grants[i] = request.want
+		grant := request.want
+		if l.limit > 0 && grant > l.limit {
+			grant = l.limit
+		}
+		results[i] = leaseResult{grant: grant, peers: 1, share: request.demand}
 	}
-	return grants, nil
+	return results, nil
 }
 
 func (l *fakeLeaser) Close() error { return nil }
 
-// newTestFactory 使用授予全部申请量的假 Redis，且不启动后台同步：共享模式下余额只在 syncNow 时补充。
+// newTestFactory 使用内存共享桶，且不启动定时同步：余额只来自紧急补货与手动的 syncNow。
+// 同一个工厂内重建客户端（Reload、Clean 后自愈）共用同一个内存桶，与共用同一个 Redis 一致。
 func newTestFactory(
 	conf map[string]any,
 	customized []processor.SubConfigProcessor,
 	now func() time.Time,
 ) (*trafficLimiter, error) {
-	return newFactoryWithLeaser(
-		conf, customized, now, func(RedisConfig) quotaLeaser { return &fakeLeaser{} }, 0,
-	)
-}
-
-// newLocalFactory 构造本地模式的限流器：redis 段非法，额度保留但不建立客户端，余额按速率在本地补充。
-// 用于直接验证满桶、补充与透支线的语义，结果与时间以外的因素无关。
-func newLocalFactory(
-	conf map[string]any,
-	customized []processor.SubConfigProcessor,
-	now func() time.Time,
-) (*trafficLimiter, error) {
-	conf["redis"] = map[string]any{"mode": redisModeStandalone}
-	return newTestFactory(conf, customized, now)
+	leaser := &memoryLeaser{now: now, tats: make(map[serviceKey]int64)}
+	return newFactoryWithLeaser(conf, customized, now, func(RedisConfig) quotaLeaser { return leaser }, 0)
 }
 
 // limitSnapshot 按请求路径的方式取快照后判断额度，供直接验证限流语义的用例使用。
@@ -732,16 +858,37 @@ func (p *trafficLimiter) limitSnapshot(token string, sizes map[string]int) (limi
 	return p.limit(view.configs, view.redis, token, define.RecordTraces, sizes)
 }
 
-// syncNow 立即执行一次后台同步，供不启动同步 goroutine 的用例手动驱动。
+// syncNow 立即执行一次定时同步，供不启动定时同步的用例手动驱动。
 func (p *trafficLimiter) syncNow() {
 	if syncer := p.snapshot().redis; syncer != nil {
-		syncer.sync()
+		syncer.syncNow()
 	}
 }
 
-func quotaBucketExists(manager *quotaManager, token, service string) bool {
-	key := serviceKey{token: token, service: service}
-	shard := &manager.shards[shardIndex(token, service)]
+// checkSurplusNow 立即扫描一次需求下降并等退还完成，供不启动后台扫描的用例手动驱动。
+func (p *trafficLimiter) checkSurplusNow() {
+	syncer := p.snapshot().redis
+	if syncer == nil || !syncer.shared(syncer.now()) {
+		return
+	}
+	if keys := p.quota.surplus(syncer.now()); len(keys) > 0 {
+		<-syncer.request(keys, true).done
+	}
+}
+
+func testKey(service string) serviceKey {
+	return serviceKey{token: "token", service: service}
+}
+
+func quotaBucketNeed(manager *quotaManager, key serviceKey) int64 {
+	shard := manager.shard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	return shard.buckets[key].need
+}
+
+func quotaBucketExists(manager *quotaManager, key serviceKey) bool {
+	shard := manager.shard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	_, ok := shard.buckets[key]

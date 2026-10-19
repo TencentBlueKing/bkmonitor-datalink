@@ -124,7 +124,7 @@ func TestStandardNoDataMarkerReachesEnrich(t *testing.T) {
 		wantBranch         rules.BaseTargetBranch
 	}{
 		{name: "standard dimension", markerInDimensions: true, wantBranch: rules.BaseTargetNoData},
-		{name: "source tag only", wantBranch: rules.BaseTargetSystemMetric},
+		{name: "source tag only", wantBranch: rules.BaseTargetMonitorSource},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()

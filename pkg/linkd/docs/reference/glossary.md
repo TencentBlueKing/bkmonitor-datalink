@@ -52,6 +52,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | k8s（丰富分组） | 丰富结果中的 K8s 专用信息，包含集群、命名空间、服务、工作负载、Pod、容器和节点上下文；集群标识保留 bcs_cluster_id 命名，资源所属业务与派生模型实例标识仍属于资源分组 |
 | 公共资源配置 | Linkd 顶层 `resources` 中的第三方连接与凭据；丰富/调试使用只读连接，可靠投递使用独立租户凭据；启动时加载，不进入 EventSource 发布快照 |
 | OneModel 实例存储 | Kingeye 当前统一实例来源；可选 Doris 通用实例/关系表；Elasticsearch 逻辑入口为 `kingeye_all_instance` alias，实例根身份为 `bk_tenant_id/model_id/model_inst_id/entity_uid`，来源原始属性位于 `attributes`，可检索动态属性位于 nested `attribute_values` |
+| 规范资源身份 | Event.Dimensions 中的 `model_id + model_inst_id`；BaseTarget 在 UptimeCheck 专用场景之外优先验证该身份与策略模型、同租户 OneModel 实例一致。显式提供任一字段后，不因身份残缺、非法或实例读取失败回退到旧实例字段或采集任务资源 |
 | strategy（丰富分组） | 丰富结果中的策略补充信息，包含 bk_strategy_id、monitor_template_id、strategy_config_id 三种独立身份，以及展示名称、跳转链接和鲸眼配置数据源；monitor_template_id 沿用旧 clean_strategy_id 的模板名称/策略名称回退行为 |
 | source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Event.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 优先保留旧清洗的同名 extra_data 值；未提供时使用来源丰富值或 Event.SourceEventID，不替代来源原始身份 |

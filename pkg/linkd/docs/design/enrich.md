@@ -453,7 +453,8 @@ BaseTarget 使用统一分类入口，当前优先级为：
 
 ```text
 UPTIME_CHECK
-→ MONITOR_SOURCE
+→ 显式规范资源身份（有无数据标记时为 NO_DATA，否则为 MONITOR_SOURCE）
+→ MONITOR_SOURCE（旧实例身份）
 → COLLECT_TASK
 → NO_DATA
 → SYSTEM_METRIC
@@ -467,13 +468,17 @@ Kingeye 原始 `event.tags` 与 Linkd 标准事件属于两个协议层。已通
 | 分支 | 条件 |
 | --- | --- |
 | UptimeCheck | 非 DATA 且策略 `object_model_code == cw-web_service` |
-| MonitorSource | `bk_inst_id` 有值，或 `obj_model_id + obj_model_inst_id` 同时有值 |
-| CollectTask | `bk_collect_config_id` 有值 |
+| MonitorSource | 显式提供 `model_id` 或 `model_inst_id` 且无 NoData 真值标记；规范身份未提供时，`bk_inst_id` 有值，或 `obj_model_id + obj_model_inst_id` 同时有值 |
+| CollectTask | 规范身份两个键均未提供，且未命中旧 MonitorSource 身份，`bk_collect_config_id` 有值 |
 | NoData | `__NO_DATA_DIMENSION__` 为真值；优先验证 `model_id + model_inst_id`，主机在规范身份均未提供时允许原生主机 ID、明确的 CMDB 主机 Subject 或带云区域的 IP 定位 |
 | SystemMetric | 策略 `object_model_code == cw-Host`，按主机 ID 或 IP + 云区域定位 |
 | Basic | 其余 BaseTarget；保留模型和来源业务并跳过实例查询 |
 
 Resource 与 Display 共享同一个场景解析结果。MonitorSource、NoData、SystemMetric、Basic 进入 `basetarget.Enrich`，CollectTask 和 UptimeCheck 分别进入 `collect.Enrich` 与 `uptime.Enrich`。新增信息只写入 Processor Value，Event 来源字段保持只读。
+
+BaseTarget 显式规范身份的优先级高于旧实例字段和采集任务：验证模型与策略模型一致，并按事件租户读取确定实例；任一字段缺失、非法、模型冲突或实例读取失败时保留诊断，不回退采集主机。未提供规范身份的旧事件仍沿用原分类顺序。策略实例导航也优先使用相同规范身份。`model_id/model_inst_id` 本身不表示无数据；只有 NoData 真值标记决定该场景分类。
+
+本地回归覆盖了策略 136 样本所具有的 `cw-MySQL|22` 与采集任务 43、44、48 同时出现的形态，验证资源身份、实例展示名称和权限标签不改绑采集主机，以及输入失败和同租户实例校验。该回归不包含线上部署、历史 Alert 回填或策略依赖故障处理。
 
 ### 9.2 覆盖矩阵
 

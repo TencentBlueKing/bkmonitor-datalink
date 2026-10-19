@@ -122,9 +122,10 @@ func resolve(
 	if err != nil {
 		return resolution{}, err
 	}
-	if branch == rules.BaseTargetNoData && result.modelCode == rules.HostModelCode {
-		_, hasModel := dimensions[rules.FieldModelID]
-		_, hasInstance := dimensions[rules.FieldModelInstID]
+	_, hasModel := dimensions[rules.FieldModelID]
+	_, hasInstance := dimensions[rules.FieldModelInstID]
+	if result.modelCode == rules.HostModelCode && (branch == rules.BaseTargetNoData ||
+		branch == rules.BaseTargetMonitorSource && (hasModel || hasInstance)) {
 		// 显式提供的规范身份不完整或非法时不得换用其他身份掩盖错误。
 		if !hasModel && !hasInstance {
 			result.query, result.queryDiagnostics, result.inputState = nativeHostQuery(dimensions, scope.Facts())
@@ -233,7 +234,7 @@ func branchQuery(
 	case rules.BaseTargetMonitorSource:
 		return monitorSourceQuery(strategyModelCode, dimensions, fallbackBizID)
 	case rules.BaseTargetNoData:
-		return noDataQuery(strategyModelCode, dimensions, fallbackBizID)
+		return modelInstanceQuery(strategyModelCode, dimensions, fallbackBizID)
 	case rules.BaseTargetSystemMetric:
 		return systemMetricQuery(strategyModelCode, dimensions)
 	case rules.BaseTargetBasic:
@@ -244,6 +245,11 @@ func branchQuery(
 }
 
 func monitorSourceQuery(modelCode string, dimensions domain.DimensionMap, bizID int64) (enrich.InstanceQuery, []enrich.Diagnostic, inputState, error) {
+	_, hasModel := dimensions[rules.FieldModelID]
+	_, hasInstance := dimensions[rules.FieldModelInstID]
+	if hasModel || hasInstance {
+		return modelInstanceQuery(modelCode, dimensions, bizID)
+	}
 	if value, exists := dimensions[rules.FieldBKInstID]; exists && rules.ScalarProvided(value) {
 		identity, valid := positiveIntegerIdentity(value)
 		if !valid {
@@ -264,7 +270,8 @@ func monitorSourceQuery(modelCode string, dimensions domain.DimensionMap, bizID 
 	return serviceInstanceQuery(modelIdentity, instanceIdentity, bizID), nil, inputValid, nil
 }
 
-func noDataQuery(modelCode string, dimensions domain.DimensionMap, bizID int64) (enrich.InstanceQuery, []enrich.Diagnostic, inputState, error) {
+// modelInstanceQuery 验证来源规范身份与策略模型一致；失败时不使用采集或旧实例身份兜底。
+func modelInstanceQuery(modelCode string, dimensions domain.DimensionMap, bizID int64) (enrich.InstanceQuery, []enrich.Diagnostic, inputState, error) {
 	modelValue, modelExists := dimensions[rules.FieldModelID]
 	instanceValue, instanceExists := dimensions[rules.FieldModelInstID]
 	missing := make([]string, 0, 2)

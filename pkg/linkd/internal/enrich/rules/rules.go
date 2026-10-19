@@ -196,6 +196,16 @@ func Classify(strategy models.CWStrategy, dimensions domain.DimensionMap) Classi
 
 // ClassifyBaseTarget 根据目标类告警的优先级选择二级分支。
 func ClassifyBaseTarget(modelCode string, dimensions domain.DimensionMap) BaseTargetBranch {
+	_, hasModel := dimensions[FieldModelID]
+	_, hasInstance := dimensions[FieldModelInstID]
+	// 显式规范身份优先于采集任务和旧实例字段；即使不完整也交给实例
+	// 校验报告错误，不能回退采集主机而改变告警对象。无数据标记只决定场景。
+	if hasModel || hasInstance {
+		if ScalarProvided(dimensions[FieldNoDataDimension]) {
+			return BaseTargetNoData
+		}
+		return BaseTargetMonitorSource
+	}
 	if ScalarProvided(dimensions[FieldBKInstID]) ||
 		ScalarProvided(dimensions[FieldObjectModelID]) && ScalarProvided(dimensions[FieldObjectModelInstID]) {
 		return BaseTargetMonitorSource

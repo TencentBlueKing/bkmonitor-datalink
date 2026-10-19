@@ -66,16 +66,17 @@ func TestClassifyBaseTarget(t *testing.T) {
 		{name: "monitor source by object model", dimensions: domain.DimensionMap{FieldObjectModelID: domain.NewStringScalar("host"), FieldObjectModelInstID: number(101)}, want: BaseTargetMonitorSource},
 		{name: "collect task", dimensions: domain.DimensionMap{FieldBKCollectConfigID: domain.NewStringScalar("collect-1")}, want: BaseTargetCollectTask},
 		{name: "no data", dimensions: domain.DimensionMap{FieldNoDataDimension: domain.NewBoolScalar(true), FieldModelID: domain.NewStringScalar("cw-Service"), FieldModelInstID: number(2)}, want: BaseTargetNoData},
-		{name: "model identity without no data marker", dimensions: domain.DimensionMap{FieldModelID: domain.NewStringScalar("cw-Service"), FieldModelInstID: number(2)}, want: BaseTargetBasic},
-		{name: "false no data marker", model: HostModelCode, dimensions: domain.DimensionMap{FieldNoDataDimension: domain.NewBoolScalar(false), FieldModelID: domain.NewStringScalar(HostModelCode)}, want: BaseTargetSystemMetric},
+		{name: "model identity without no data marker", dimensions: domain.DimensionMap{FieldModelID: domain.NewStringScalar("cw-Service"), FieldModelInstID: number(2)}, want: BaseTargetMonitorSource},
+		{name: "false no data marker", model: HostModelCode, dimensions: domain.DimensionMap{FieldNoDataDimension: domain.NewBoolScalar(false), FieldModelID: domain.NewStringScalar(HostModelCode)}, want: BaseTargetMonitorSource},
 		{name: "system metric", model: HostModelCode, want: BaseTargetSystemMetric},
 		{name: "uptime is classified by Classify", model: UptimeModelCode, want: BaseTargetBasic},
-		{name: "zero values fall through", model: HostModelCode, dimensions: domain.DimensionMap{
+		{name: "explicit empty canonical model does not fall through", model: HostModelCode, dimensions: domain.DimensionMap{
 			FieldBKInstID: number(0), FieldBKCollectConfigID: domain.NewStringScalar(""), FieldModelID: domain.NewStringScalar(""),
-		}, want: BaseTargetSystemMetric},
+		}, want: BaseTargetMonitorSource},
 		{name: "basic fallback", model: "cw-Disk", want: BaseTargetBasic},
 		{name: "priority monitor before collect", model: HostModelCode, dimensions: domain.DimensionMap{FieldBKInstID: number(101), FieldBKCollectConfigID: number(202)}, want: BaseTargetMonitorSource},
-		{name: "priority collect before no data", model: HostModelCode, dimensions: domain.DimensionMap{FieldBKCollectConfigID: number(202), FieldNoDataDimension: domain.NewBoolScalar(true), FieldModelID: domain.NewStringScalar(HostModelCode)}, want: BaseTargetCollectTask},
+		{name: "partial canonical identity cannot fall back to collect", model: HostModelCode, dimensions: domain.DimensionMap{FieldBKCollectConfigID: number(202), FieldNoDataDimension: domain.NewBoolScalar(true), FieldModelID: domain.NewStringScalar(HostModelCode)}, want: BaseTargetNoData},
+		{name: "collect before no data without canonical identity", model: HostModelCode, dimensions: domain.DimensionMap{FieldBKCollectConfigID: number(202), FieldNoDataDimension: domain.NewBoolScalar(true)}, want: BaseTargetCollectTask},
 		{name: "priority no data before system metric", model: HostModelCode, dimensions: domain.DimensionMap{FieldNoDataDimension: domain.NewBoolScalar(true), FieldModelID: domain.NewStringScalar(HostModelCode)}, want: BaseTargetNoData},
 		{name: "legacy model key is not a NoData trigger", model: HostModelCode, dimensions: domain.DimensionMap{"cw_object_model_id": number(303)}, want: BaseTargetSystemMetric},
 	}

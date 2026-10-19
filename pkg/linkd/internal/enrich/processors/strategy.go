@@ -12,6 +12,7 @@ package processors
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"linkd/internal/domain"
@@ -156,7 +157,21 @@ func strategyInstanceFacts(ctx context.Context, scope *enrich.Scope, strategy mo
 
 func strategyInstanceQuery(branch rules.BaseTargetBranch, modelCode string, dimensions domain.DimensionMap) (enrich.InstanceQuery, bool) {
 	switch branch {
-	case rules.BaseTargetMonitorSource:
+	case rules.BaseTargetMonitorSource, rules.BaseTargetNoData:
+		modelValue, hasModel := dimensions[rules.FieldModelID]
+		instanceValue, hasInstance := dimensions[rules.FieldModelInstID]
+		if hasModel || hasInstance {
+			code, validModel := modelValue.StringValue()
+			instanceID := rules.ScalarIdentity(instanceValue)
+			id, err := strconv.ParseInt(instanceID, 10, 64)
+			if !hasModel || !hasInstance || !validModel || code != modelCode || err != nil || id <= 0 || strconv.FormatInt(id, 10) != instanceID {
+				return enrich.InstanceQuery{}, false
+			}
+			return enrich.InstanceQuery{ModelCode: code, InstanceID: instanceID}, true
+		}
+		if branch == rules.BaseTargetNoData {
+			return enrich.InstanceQuery{}, false
+		}
 		if value, exists := dimensions[rules.FieldBKInstID]; exists && rules.ScalarProvided(value) {
 			return enrich.InstanceQuery{ModelCode: modelCode, InstanceID: rules.ScalarIdentity(value)}, true
 		}
@@ -164,12 +179,6 @@ func strategyInstanceQuery(branch rules.BaseTargetBranch, modelCode string, dime
 		instanceValue, instanceExists := dimensions[rules.FieldObjectModelInstID]
 		if modelExists && instanceExists && rules.ScalarProvided(modelValue) && rules.ScalarProvided(instanceValue) {
 			return enrich.InstanceQuery{ModelCode: rules.ScalarIdentity(modelValue), InstanceID: rules.ScalarIdentity(instanceValue)}, true
-		}
-	case rules.BaseTargetNoData:
-		modelValue, modelExists := dimensions[rules.FieldModelID]
-		instanceValue, instanceExists := dimensions[rules.FieldModelInstID]
-		if modelExists && instanceExists && rules.ScalarIdentity(modelValue) == modelCode && rules.ScalarProvided(instanceValue) {
-			return enrich.InstanceQuery{ModelCode: modelCode, InstanceID: rules.ScalarIdentity(instanceValue)}, true
 		}
 	case rules.BaseTargetSystemMetric:
 		for _, field := range []string{rules.FieldBKInstID, rules.FieldBKHostID, rules.FieldBKTargetHostID} {

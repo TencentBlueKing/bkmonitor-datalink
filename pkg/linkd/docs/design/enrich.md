@@ -633,7 +633,7 @@ Event.Dimensions.task_id
 
 APM 第一轮纵切已完成：
 
-- 新增 `APMApplicationReader`，按租户、业务和应用名称读取候选应用；生产实现从 Kingeye `kapm_namespace` 表精确查询未删除应用，并复用 Enrich MySQL 连接池；
+- 新增 `APMApplicationReader`，按租户、业务和应用名称读取候选应用；生产实现从 Kingeye `kapm_namespace` 表按 `namespace` 或 `normalized_name` 精确查询未删除应用，返回名称保留请求拼写，并复用 Enrich MySQL 连接池；
 - 精确匹配应用名称后投影应用 ID、别名和业务；
 - 生成 application/service/service-instance 模型身份与 `cw_labels`；
 

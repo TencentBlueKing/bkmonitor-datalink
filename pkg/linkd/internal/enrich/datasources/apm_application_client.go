@@ -19,11 +19,12 @@ var _ enrich.APMApplicationReader = (*APMApplicationClient)(nil)
 const apmApplicationTable = "kapm_namespace"
 
 type apmApplicationRow struct {
-	TenantID string `gorm:"column:bk_tenant_id"`
-	ID       int64  `gorm:"column:namespace_id"`
-	Name     string `gorm:"column:namespace"`
-	Alias    string `gorm:"column:namespace_alias"`
-	BKBizID  int64  `gorm:"column:bk_biz_id"`
+	TenantID       string `gorm:"column:bk_tenant_id"`
+	ID             int64  `gorm:"column:namespace_id"`
+	Name           string `gorm:"column:namespace"`
+	NormalizedName string `gorm:"column:normalized_name"`
+	Alias          string `gorm:"column:namespace_alias"`
+	BKBizID        int64  `gorm:"column:bk_biz_id"`
 }
 
 // APMApplicationClient 从 Kingeye APM 应用表读取租户内的应用身份。
@@ -44,7 +45,8 @@ func NewAPMApplicationClient(config APMApplicationClientConfig) (*APMApplication
 	return &APMApplicationClient{db: config.DB}, nil
 }
 
-// FindAPMApplications 按租户、业务和应用名称精确查询未删除的应用。
+// FindAPMApplications 按租户、业务精确匹配未删除应用的 namespace 或 normalized_name。
+// 返回的 Name 保留请求拼写，供下游校验告警中的应用名称；不自行推导规范化规则。
 func (c *APMApplicationClient) FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string) ([]models.APMApplication, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("find APM applications: context must not be nil")
@@ -61,8 +63,8 @@ func (c *APMApplicationClient) FindAPMApplications(ctx context.Context, tenantID
 	var rows []apmApplicationRow
 	err := c.db.WithContext(ctx).
 		Table(apmApplicationTable).
-		Select("bk_tenant_id", "namespace_id", "namespace", "namespace_alias", "bk_biz_id").
-		Where("bk_tenant_id = ? AND bk_biz_id = ? AND namespace = ? AND is_deleted = ?", tenantID, bizID, name, false).
+		Select("bk_tenant_id", "namespace_id", "namespace", "normalized_name", "namespace_alias", "bk_biz_id").
+		Where("bk_tenant_id = ? AND bk_biz_id = ? AND (namespace = ? OR normalized_name = ?) AND is_deleted = ?", tenantID, bizID, name, name, false).
 		Order("namespace_id ASC").
 		Find(&rows).Error
 	if err != nil {
@@ -70,13 +72,13 @@ func (c *APMApplicationClient) FindAPMApplications(ctx context.Context, tenantID
 	}
 	applications := make([]models.APMApplication, 0, len(rows))
 	for _, row := range rows {
-		if row.TenantID != tenantID || row.BKBizID != bizID || row.Name != name || row.ID <= 0 {
+		if row.TenantID != tenantID || row.BKBizID != bizID || (row.Name != name && row.NormalizedName != name) || row.ID <= 0 {
 			return nil, fmt.Errorf("%w: APM application identity does not match query", enrich.ErrInvalidDataSourceResponse)
 		}
 		applications = append(applications, models.APMApplication{
 			TenantID: row.TenantID,
 			ID:       row.ID,
-			Name:     row.Name,
+			Name:     name,
 			Alias:    row.Alias,
 			BKBizID:  row.BKBizID,
 		})

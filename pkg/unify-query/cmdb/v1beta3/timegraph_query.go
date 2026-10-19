@@ -91,6 +91,14 @@ type timeGraphVMQueryWithPartial func(context.Context, *structured.QueryTs, stri
 
 type timeGraphQueryReference func(context.Context, *structured.QueryTs) (metadata.QueryReference, error)
 
+// A missing physical route is distinct from an executed query returning no
+// series. Only the legacy response adapter may downgrade it to partial data.
+type relationNoPhysicalRouteError struct{ metric string }
+
+func (e *relationNoPhysicalRouteError) Error() string {
+	return fmt.Sprintf("required relation has no physical query route: %s", e.metric)
+}
+
 func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured.QueryTs) (string, *metadata.QueryParams, error) {
 	var (
 		queryRef metadata.QueryReference
@@ -113,8 +121,8 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if err != nil {
 		return "", nil, errors.WithMessage(err, "to query reference")
 	}
-	if metadata.IsExactTimeGrid(ctx) && timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
-		return "", nil, errors.Errorf("required relation has no physical query route: %s", timeGraphLoadMetricName(queryTs))
+	if (metadata.IsExactTimeGrid(ctx) || timeGraphLegacyCompatibility(ctx)) && timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
+		return "", nil, &relationNoPhysicalRouteError{metric: timeGraphLoadMetricName(queryTs)}
 	}
 	if timeGraphQueryStage(ctx) == "source-info" && queryRef.Count() == 0 {
 		metadata.SetStatus(ctx, metadata.QueryTsPartial, "source_info_no_route")
@@ -344,52 +352,59 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		return true, observed, loadErr
 	}
 
-	// 只有首跳探测覆盖所有可能观察到根的关系端点时才能用它判空。
-	// 否则有向入边虽不能从根向外遍历，却仍可能让根出现在关系结果中。
-	queriedRoots := make(map[timeGraphRelationKey]struct{})
-	if topologyGrid != nil && topologyRootProbeCoversEndpoints(sourceType, relations) {
-		rootObserved := false
-		for _, relation := range relations {
-			if len(relation.V) != 2 || relation.V[0] != sourceType {
-				continue
-			}
-			queried, observed, loadErr := loadRelation(relation, sourceInfo, true)
-			if loadErr != nil {
-				return nil, loadErr
-			}
-			if queried {
-				queriedRoots[timeGraphRelationKeyFor(relation)] = struct{}{}
-			}
-			rootObserved = rootObserved || observed
+	if path, ok := ctx.Value(timeGraphLegacyPathKey{}).(cmdb.RelationPath); topologyGrid == nil && ok {
+		relationEdgeQueryCount, err = loader.loadLegacyPath(ctx, spaceUID, path, sourceInfo, targetMatchersByType, targetIDsByTimestamp)
+		if err != nil {
+			return nil, err
 		}
-		if !rootObserved && len(tg.partialTimes) == 0 {
-			return tg, nil
-		}
-	}
-
-	for _, relation := range relations {
-		if len(relation.V) != 2 {
-			continue
-		}
-		key := timeGraphRelationKeyFor(relation)
-		if topologyGrid != nil {
-			if _, queried := queriedRoots[key]; queried {
-				// 资源类型成环时可能到达同类型的另一个实例，此关系仍需无根条件读取一次。
-				if _, safe := rootRelations[key]; safe || len(sourceInfo) == 0 {
+	} else {
+		// 只有首跳探测覆盖所有可能观察到根的关系端点时才能用它判空。
+		// 否则有向入边虽不能从根向外遍历，却仍可能让根出现在关系结果中。
+		queriedRoots := make(map[timeGraphRelationKey]struct{})
+		if topologyGrid != nil && topologyRootProbeCoversEndpoints(sourceType, relations) {
+			rootObserved := false
+			for _, relation := range relations {
+				if len(relation.V) != 2 || relation.V[0] != sourceType {
 					continue
 				}
+				queried, observed, loadErr := loadRelation(relation, sourceInfo, true)
+				if loadErr != nil {
+					return nil, loadErr
+				}
+				if queried {
+					queriedRoots[timeGraphRelationKeyFor(relation)] = struct{}{}
+				}
+				rootObserved = rootObserved || observed
+			}
+			if !rootObserved && len(tg.partialTimes) == 0 {
+				return tg, nil
 			}
 		}
-		relationSourceInfo := sourceInfo
-		isRootRelation := relation.V[0] == sourceType
-		if rootRelations != nil {
-			_, isRootRelation = rootRelations[key]
-		}
-		if !isRootRelation || topologyGrid != nil {
-			relationSourceInfo = nil
-		}
-		if _, _, loadErr := loadRelation(relation, relationSourceInfo, isRootRelation && topologyGrid == nil); loadErr != nil {
-			return nil, loadErr
+
+		for _, relation := range relations {
+			if len(relation.V) != 2 {
+				continue
+			}
+			key := timeGraphRelationKeyFor(relation)
+			if topologyGrid != nil {
+				if _, queried := queriedRoots[key]; queried {
+					// 资源类型成环时可能到达同类型的另一个实例，此关系仍需无根条件读取一次。
+					if _, safe := rootRelations[key]; safe || len(sourceInfo) == 0 {
+						continue
+					}
+				}
+			}
+			relationSourceInfo := sourceInfo
+			isRootRelation := relation.V[0] == sourceType
+			if rootRelations != nil {
+				_, isRootRelation = rootRelations[key]
+			}
+			if !isRootRelation || topologyGrid != nil {
+				relationSourceInfo = nil
+			}
+			if _, _, loadErr := loadRelation(relation, relationSourceInfo, isRootRelation && topologyGrid == nil); loadErr != nil {
+				return nil, loadErr
+			}
 		}
 	}
 
@@ -1322,6 +1337,9 @@ func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	relations := m.buildRelationsFromRelationPathsForNamespace(spaceUID, paths)
 	span.Set("relation-count", len(relations))
 	rootRelations := m.rootTimeGraphRelationKeys(spaceUID, sourceType, paths)
+	if timeGraphLegacyCompatibility(ctx) && len(paths) == 1 && len(paths[0].Steps) > 1 {
+		ctx = context.WithValue(ctx, timeGraphLegacyPathKey{}, paths[0])
+	}
 
 	tg, err := m.buildTimeGraphFromRelationsWithRootRelations(ctx, spaceUID, start, end, step, sourceType, matcher, sourceExpandInfo, rootRelations, relations, lookBackDelta)
 	if err != nil {

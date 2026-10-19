@@ -389,7 +389,30 @@ The four legacy relation endpoints expose optional `partial` and
 backend partial retain available matching data and explicit quality. Complete
 items omit both fields. Each batch item has an independent metadata status scope;
 a failed item remains an error. Required relation missing-route errors are
-unchanged.
+strict for topology queries. In the legacy relation adapter, a typed missing
+physical route makes that candidate unavailable: later candidates are still
+queried, and available results or an empty result carry
+`partial_reason=relation_no_physical_route:<metric>`. Reasons accumulate within
+one item. Other backend failures retain their existing error behavior;
+cancellation and deadlines stop immediately. A complete empty result does not
+gain a partial flag. Consumers must distinguish an incomplete empty result
+from a complete negative answer when caching or enriching data.
+
+Legacy `path_resource` is a contiguous resource sequence, including any supplied
+source or target endpoint. `[""]` selects a direct relation; other empty entries
+are invalid. Candidate paths are ordered by length and resource sequence, and
+the first nonempty candidate wins. When all successful candidates are empty,
+the response retains the last successfully evaluated candidate path. Normal
+mode reports `path_search_depth_limit` if the configured search depth truncates
+coverage; YOLO enumerates finite simple schema paths even with a path constraint.
+
+Each legacy candidate is loaded in hop order. The first relation keeps the
+source matcher; subsequent relations use batches of at most 64 complete
+endpoint identities joined by OR. Returned points must also match the preceding
+frontier at the same evaluation timestamp. An empty frontier stops further
+reads without clearing any partial quality already observed. This avoids
+unfiltered intermediate relation reads and preserves compound identities,
+direction and temporal reachability. The topology loader remains separate.
 
 ## Sustained YOLO operation (2026-10-13)
 

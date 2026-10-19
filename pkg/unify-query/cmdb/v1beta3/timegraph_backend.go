@@ -22,6 +22,13 @@ import (
 
 type timeGraphTargetInfoShowKey struct{}
 
+type timeGraphLegacyCompatibilityKey struct{}
+
+func timeGraphLegacyCompatibility(ctx context.Context) bool {
+	legacy, _ := ctx.Value(timeGraphLegacyCompatibilityKey{}).(bool)
+	return legacy
+}
+
 func withTimeGraphTargetInfoShow(ctx context.Context, show bool) context.Context {
 	return context.WithValue(ctx, timeGraphTargetInfoShowKey{}, show)
 }
@@ -130,9 +137,9 @@ func (m *Model) buildTimeGraphRequest(
 			return nil, nil, err
 		}
 	}
-	if err := adjustMaxHopsForUnconstrainedPath(ctx, req, provider); err != nil {
-		return nil, nil, err
-	}
+	// Legacy callers do not supply max_hops. Search the finite schema paths,
+	// retaining the normal-mode safety budget and making any truncation visible.
+	req.MaxHops = effectivePathSearchMaxHops()
 	// 保持现有 v1beta3 旧接口的兼容语义：先用主键字段确定源资源，再用
 	// source_expand_info 按非主键节点属性过滤已经确定的源资源。
 	req.SourceInfo = sourcePrimaryKeySubset(req, provider)
@@ -155,10 +162,19 @@ func (m *Model) buildTimeGraphRequest(
 		WithMaxHops(req.MaxHops),
 		WithSchemaProvider(provider),
 		WithNamespace(req.SchemaNamespace()),
+		WithLegacyPathConstraints(),
 	)
 	paths, err := pathFinder.FindAllPathsContext(ctx, req.SourceType, req.TargetType, req.PathResource)
 	if err != nil {
 		return nil, nil, err
+	}
+	if pathFinder.depthLimited {
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, "path_search_depth_limit")
+	}
+	// Report the actual candidate depth, not the unlimited search sentinel.
+	req.MaxHops = 0
+	for _, path := range paths {
+		req.MaxHops = max(req.MaxHops, len(path.Steps)-1)
 	}
 	return req, sortPathsForQuery(paths), nil
 }
@@ -168,6 +184,11 @@ func sortPathsForQuery(paths []resourcePath) []resourcePath {
 	sort.SliceStable(ordered, func(i, j int) bool {
 		if len(ordered[i].Steps) != len(ordered[j].Steps) {
 			return len(ordered[i].Steps) < len(ordered[j].Steps)
+		}
+		left := fmt.Sprint(resourcePathToResourceTypes(ordered[i]))
+		right := fmt.Sprint(resourcePathToResourceTypes(ordered[j]))
+		if left != right {
+			return left < right
 		}
 		return resourcePathSortKey(ordered[i]) < resourcePathSortKey(ordered[j])
 	})
@@ -183,31 +204,62 @@ func resourcePathSortKey(path resourcePath) string {
 }
 
 // 旧路径查询遇到首个有效结果即停止；其他候选路径失败不会直接中断查询。
-func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query func(resourcePath) ([]cmdb.PathResourcesResult, error)) ([]cmdb.PathResourcesResult, error) {
+func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query func(resourcePath) ([]cmdb.PathResourcesResult, error)) (results []cmdb.PathResourcesResult, lastSuccess int, err error) {
+	lastSuccess = -1
+	reasons := make(map[string]struct{})
+	collectQuality := func() {
+		if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial {
+			for _, reason := range strings.Split(status.Message, ";") {
+				if reason != "" {
+					reasons[reason] = struct{}{}
+				}
+			}
+		}
+	}
+	collectQuality()
+	defer func() {
+		if err != nil || len(reasons) == 0 {
+			return
+		}
+		ordered := make([]string, 0, len(reasons))
+		for reason := range reasons {
+			ordered = append(ordered, reason)
+		}
+		sort.Strings(ordered)
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(ordered, ";"))
+	}()
 	var failures []error
-	for _, path := range paths {
+	for index, path := range paths {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, lastSuccess, err
 		}
 		results, err := query(path)
+		collectQuality()
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
+				return nil, lastSuccess, err
+			}
+			var routeErr *relationNoPhysicalRouteError
+			if timeGraphLegacyCompatibility(ctx) && errors.As(err, &routeErr) {
+				reasons["relation_no_physical_route:"+routeErr.metric] = struct{}{}
+				lastSuccess = index
+				continue
 			}
 			failures = append(failures, err)
 			continue
 		}
+		lastSuccess = index
 		if len(results) > 0 {
-			return results, nil
+			return results, lastSuccess, nil
 		}
 	}
 	if len(failures) > 0 {
 		if len(failures) == len(paths) {
-			return nil, fmt.Errorf("all relation paths failed: %w", errors.Join(failures...))
+			return nil, lastSuccess, fmt.Errorf("all relation paths failed: %w", errors.Join(failures...))
 		}
-		return nil, fmt.Errorf("relation paths failed without an alternative hit: %w", errors.Join(failures...))
+		return nil, lastSuccess, fmt.Errorf("relation paths failed without an alternative hit: %w", errors.Join(failures...))
 	}
-	return nil, nil
+	return nil, lastSuccess, nil
 }
 
 func resourcePathsToTimeGraphPaths(paths []resourcePath) [][]cmdb.Resource {
@@ -342,10 +394,11 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 		return timeGraphLegacyResult{}, err
 	}
 	ctx = withTimeGraphTargetInfoShow(ctx, req.TargetInfoShow)
+	ctx = context.WithValue(ctx, timeGraphLegacyCompatibilityKey{}, true)
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
-	results, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
+	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
 		paths := []resourcePath{path}
 		if expandedQuerier, ok := querier.(sourceExpandRelationTimeGraphQuerier); ok {
 			return expandedQuerier.queryRelationPathResourcesWithSourceExpand(
@@ -424,8 +477,8 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	if len(selectedPath) == 0 && len(results) > 0 {
 		selectedPath = cmdb.PathResourceTypes(results[0].Path)
 	}
-	if len(selectedPath) == 0 && len(paths) > 0 {
-		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[0]))
+	if len(selectedPath) == 0 && lastSuccess >= 0 {
+		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[lastSuccess]))
 	}
 
 	result = timeGraphLegacyResult{
@@ -533,12 +586,13 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		return timeGraphRangeResult{}, err
 	}
 	ctx = withTimeGraphTargetInfoShow(ctx, req.TargetInfoShow)
+	ctx = context.WithValue(ctx, timeGraphLegacyCompatibilityKey{}, true)
 	ctx = metadata.WithExactTimeGrid(ctx)
 	ctx = metadata.WithLeftOpenTimeWindow(ctx)
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
-	results, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
+	results, lastSuccess, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
 		paths := []resourcePath{path}
 		if expandedQuerier, ok := querier.(sourceExpandRelationTimeGraphQuerier); ok {
 			return expandedQuerier.queryRelationPathResourcesRangeWithSourceExpand(
@@ -637,8 +691,8 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	if len(selectedPath) == 0 && len(results) > 0 {
 		selectedPath = cmdb.PathResourceTypes(results[0].Path)
 	}
-	if len(selectedPath) == 0 && len(paths) > 0 {
-		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[0]))
+	if len(selectedPath) == 0 && lastSuccess >= 0 {
+		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[lastSuccess]))
 	}
 
 	result = timeGraphRangeResult{

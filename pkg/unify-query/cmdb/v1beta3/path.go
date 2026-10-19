@@ -33,6 +33,8 @@ type PathFinder struct {
 	allowedCategories []RelationCategory
 	dynamicDirection  TraversalDirection
 	maxHops           int
+	legacyConstraints bool
+	depthLimited      bool
 }
 
 // PathFinderOption PathFinder 配置选项
@@ -77,6 +79,12 @@ func WithMaxHops(maxHops int) PathFinderOption {
 	}
 }
 
+// WithLegacyPathConstraints preserves the complete contiguous resource sequence
+// supplied by legacy relation callers, including either endpoint.
+func WithLegacyPathConstraints() PathFinderOption {
+	return func(pf *PathFinder) { pf.legacyConstraints = true }
+}
+
 // NewPathFinder 创建路径发现器
 // 如果不提供 schemaProvider,将使用默认的 StaticSchemaProvider
 func NewPathFinder(opts ...PathFinderOption) *PathFinder {
@@ -99,6 +107,7 @@ func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []R
 }
 
 func (pf *PathFinder) FindAllPathsContext(ctx context.Context, source, target ResourceType, pathResource []ResourceType) ([]resourcePath, error) {
+	pf.depthLimited = false
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -116,6 +125,19 @@ func (pf *PathFinder) FindAllPathsContext(ctx context.Context, source, target Re
 	}
 
 	pathConstraint, directOnly := normalizePathResource(source, target, pathResource)
+	if pf.legacyConstraints {
+		pathConstraint = pathResource
+		directOnly = len(pathResource) == 1 && pathResource[0] == ""
+		if directOnly {
+			pathConstraint = []ResourceType{source, target}
+		} else {
+			for _, resource := range pathResource {
+				if resource == "" {
+					return nil, fmt.Errorf("empty resource in path constraint %v", pathResource)
+				}
+			}
+		}
+	}
 	var results []resourcePath
 	visited := make(map[ResourceType]bool)
 	currentPath := []resourcePathStep{{ResourceType: string(source)}}
@@ -204,7 +226,18 @@ func (pf *PathFinder) dfs(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// An endpoint-anchored legacy constraint fixes the beginning of the path.
+	// Prune unrelated branches before applying the depth budget: those branches
+	// cannot make a fully covered explicit path partial.
+	if pf.legacyConstraints && len(pathResource) > 0 && string(pathResource[0]) == currentPath[0].ResourceType {
+		for i := 0; i < min(len(currentPath), len(pathResource)); i++ {
+			if currentPath[i].ResourceType != string(pathResource[i]) {
+				return nil
+			}
+		}
+	}
 	if len(currentPath)-1 > pf.maxHops {
+		pf.depthLimited = true
 		return nil
 	}
 

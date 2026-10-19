@@ -350,7 +350,7 @@ func TestPartialPathFallbackKeepsKnownQualityAndFailedPathsDoNotPublish(t *testi
 	}
 	paths := []resourcePath{{Steps: []resourcePathStep{{ResourceType: "node"}, {ResourceType: "middle", RelationType: "node_to_middle"}}}, {Steps: []resourcePathStep{{ResourceType: "node"}, {ResourceType: "middle", RelationType: "node_to_middle"}}}}
 	call := 0
-	results, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
+	results, _, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
 		call++
 		expand := cmdb.Matcher{"zone": "east"}
 		matcher := cmdb.Matcher{"node_id": "n1", "zone": "east"}

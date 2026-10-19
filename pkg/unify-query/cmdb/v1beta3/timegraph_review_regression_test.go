@@ -191,7 +191,7 @@ func TestLegacyTimeGraphFirstPathExecution(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
-			results, err := queryFirstTimeGraphPath(context.Background(), make([]resourcePath, len(test.errors)), func(resourcePath) ([]cmdb.PathResourcesResult, error) {
+			results, _, err := queryFirstTimeGraphPath(context.Background(), make([]resourcePath, len(test.errors)), func(resourcePath) ([]cmdb.PathResourcesResult, error) {
 				index := calls
 				calls++
 				if index == test.hitAt {

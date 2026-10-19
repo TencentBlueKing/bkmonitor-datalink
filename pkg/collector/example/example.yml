@@ -1038,7 +1038,7 @@ bk-collector:
   # type: pipeline 处理类型，可选项：traces/metrics/logs 以及派生项: traces.derived/metrics.derived/logs.derived
   # processors: 上述定义的处理器名称
   pipeline:
-    - name: "rum_pipeline/direct"
+    - name: "rum_pipeline/common"
       type: "rumTraces"
       processors:
         - "token_checker/aes256"

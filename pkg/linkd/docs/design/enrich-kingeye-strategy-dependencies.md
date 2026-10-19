@@ -28,6 +28,7 @@ Kingeye `02c22521ef` 在 2026-10-17 改写历史契约，最新主仓 `a8b5c23c6
 ## 当前读取方式
 
 Event 的 `strategy_id`、`strategy_version`、`bk_biz_id` 须为正整数。
+`StrategyRevisionQuery` 明确携带事件租户、SplitRecord 自身 ID 和执行修订；类型名不再使用宽泛的 `StrategyQuery`。
 共享 Reader 按 `(bk_tenant_id, strategy_id, strategy_revision)` 精确读取新执行历史表，
 单条 SELECT 最多两行、SQL 端限制快照为 4 MiB、超时为 5 秒。
 先校验原始 UTF-8 字节数和 SHA-256，再判定 schema；根部租户、ID、修订、管理业务必须与查询及表列一致。
@@ -42,8 +43,11 @@ Scope 为同一 Event 复用读取结果；Strategy、Resource、Display、Metri
 ## 冻结材料的消费
 
 `runtime_config.metadata/spec` 提供名称、分类、模板、Config UID、默认/覆盖、模型及不透明实例身份。
-普通 Enrich 保留声明查询的展示语义；缺目录引用时，仅以唯一别名和物理字段从同快照执行 item 补 `metric_ref_id`，
-不按顺序猜测，不把衍生指标替换为展开成员。无关运行时字段不受声明查询 DTO 类型限制。
+普通 Enrich 保留声明查询的展示语义。声明缺少目录引用且执行 item 有真实 `metric_ref_id` 时，
+仅以唯一别名和相同物理字段补齐；不按顺序猜测，不把衍生指标替换为展开成员。
+没有目录引用的物理查询不强制绑定目录，`metric_source=klc` 的日志索引集查询也不参与补目录身份；
+编译导致的字段或别名变化不覆盖声明值。实际目录绑定的引用缺失、负数、重复别名和字段冲突仍明确失败。
+执行 item 的数量、形状和错误状态校验仍保留；无关运行时字段不受声明查询 DTO 类型限制。
 当前指标目录可用于 Linkd 展示和丰富，不改写 KAC 从历史 item 构造的查询定义。
 
 文案 Reader 从根部 `items` 读取实际查询单位、指标身份和编译算法，声明上下文来自同快照 `runtime_config`。
@@ -61,6 +65,7 @@ Scope 为同一 Event 复用读取结果；Strategy、Resource、Display、Metri
 - `metric-facts` 默认读取 opening Event，恢复读取使用已保存并校验的准确恢复引用；不从最新 Event 或当前策略猜版本。
 - `RecoveryFields` 只投影准确恢复 Event 已冻结并生效的丰富结果，不重跑丰富。
 - 策略导航由 KAC 使用关联事实组装；APM/K8s/日志专属 Processor、字段和关联整体保留在 Linkd。
+- `strategy_name` 的名称生成与冻结、`data_source` 的透传都保留在 Linkd，不再列为待迁移展示项；2026-10-19 确认的职责边界见 [strategy 输出](enrich.md#61-strategy)。
 - 保存了参数不代表旧查询链支持对应语义；原先不支持的 PromQL/日志额外函数及混合组合不算迁移遗漏。
 
 ## 验证证据与限制
@@ -69,8 +74,9 @@ Scope 为同一 Event 复用读取结果；Strategy、Resource、Display、Metri
 回归覆盖原始字节完整性、根部身份、默认/覆盖、跨业务、缺失不回退、声明与执行单位独立、取消和既有文案降级/场景链路。
 普通测试只替换数据库边界，不读取个人配置或真实业务数据库。
 
-2026-10-19 的目标环境只读检查：旧表 `alarm_strategy_revision` 已不存在；执行历史表存在但无记录。
-配置历史已有数据不表示执行历史可读。前轮对三个实际引用的缺失行为验证通过；本轮正向 `FOUND` 及真实曲线尚未验收。
+2026-10-19 较早两轮的目标环境只读检查：旧表 `alarm_strategy_revision` 已不存在；当时执行历史表存在但无记录。
+配置历史已有数据不表示执行历史可读。前轮对三个实际引用的缺失行为验证通过；当时正向 `FOUND` 尚未验收。
+后续真实执行历史的正向读取结果见下文；真实曲线仍需独立验收。
 不得通过写入伪造快照、使用当前配置或改读配置历史制造正向结果。
 重放前基于 `b6c21fe0` 的本地验证：
 
@@ -102,3 +108,78 @@ Scope 为同一 Event 复用读取结果；Strategy、Resource、Display、Metri
 自审核对租户/执行修订定位、管理业务与事件业务分离、根部身份/摘要、缺失不回退、默认/覆盖独立引用，
 文档核对修正配置指南中一处因上游章节更新而失效的 CMDB 锚点。未发现其余阻断问题；
 原始主工作区的文档草案和未跟踪文件不纳入本轮提交。
+
+## 2026-10-19 配置清理、查询命名及内容核对
+
+`strategy` Processor 当前没有配置项，构造时不再读取、验证或规范化 `web_saas_module_url`，
+也不为旧 EventSourceRelease 保留专门分支。整个传入 `config` 不影响装配与关联事实输出；
+配置指南及 KAC 投影契约同步说明这一点。回归覆盖键缺失、正常/畸形 URL、非字符串和空值，
+并通过真实装配入口及普通/云策略事实检查确认不再生成前端 URL。
+
+Go 查询类型统一为 `StrategyRevisionQuery`，接口、Scope、数据源、遥测包装和测试同步重命名，
+不保留旧类型别名。字段 `TenantID/ID/Version` 及执行修订协议不变。
+
+当前创建链路为 `planNewAlert → buildNewAlertContent → BuildAlertContent`。
+对已经允许创建 Alert 的合法 triggered Event，普通生成错误、panic、空白、超限或非法编码的生成结果
+均返回可冻结的兜底内容，而不是以文案失败阻止 Alert 创建：
+
+- 本次 Event 的来源 `content` 可用且非空白时逐字沿用，模式为 `source_fallback`；不借用既存 Alert 的旧内容。
+- 来源为空、空白或编码不可用时使用“告警已触发，详细内容暂不可用。”，模式为 `default_fallback`。
+- 显式提交的自定义 content 优先，允许空串；已冻结 EventPlan 重投不重新生成。
+- 输入身份/判定非法、原始来源内容超限、整个 Worker Context 取消或到期仍返回错误。
+- 显式控制面传输不可用保留事件重试，不冻结文案兜底；存储等其他阶段的失败不属于文案降级。
+
+上述例外是当前已有边界。本轮只核对内容行为，不修改这些生成或重试规则。
+证据见 [`internal/enrich/content.go`](../../internal/enrich/content.go)、
+[创建与重投回归](../../internal/lifecycle/content_test.go)、
+[控制面故障回归](../../internal/lifecycle/control_plane_failure_test.go)及
+[自定义文案回归](../../internal/lifecycle/custom_content_test.go)。
+
+本轮验证：新增忽略配置用例先复现原 URL/类型校验失败，移除校验后，真实装配、关联事实、
+查询 Reader、遥测及内容创建/预览的全量 Go 测试、`go vet`、竞态和静态检查通过；
+Console 451 个测试通过、8 个跳过，ESLint/TypeScript 及构建通过。`make check` 最后因本机缺少 Helm 中断，
+不记为完整门禁通过。文档本地链接/锚点及 `git diff --check` 通过；本轮修改未提交、未推送。
+
+## 2026-10-19 真实执行历史消费修复
+
+目标环境新增 67 条执行历史后，只读检查确认全部快照字节、摘要和身份有效；
+修复前共享 Reader 能解码全部快照，但目录补绑定使策略 18、73、82、121 的策略视图和文案配置读取失败。
+18、73 的声明字段 `cpu_usage` 编译为物理字段 `usage`，执行查询没有目录引用；
+82、121 是按索引集定位的日志指标，不能因缺少目录引用而被判为目录绑定错误。
+本轮按上文边界收窄补绑定，不新增目录反查或历史兼容层，也不替换声明字段、表达式或别名。
+
+回归先复现四类非目录查询读取失败，修复后策略视图、文案配置均可读取；
+仍覆盖真实目录引用的唯一绑定、引用缺失/负数、重复别名、字段冲突、执行展开歧义和衍生身份保留。
+使用目标环境只读事务重读同一批 67 条执行历史，策略视图和文案配置均 67/67 成功，
+管理业务、模板/配置身份、名称/数据来源及文案运行时单位、指标身份与快照一致。
+这些记录全部为默认策略、执行修订 1，不能替代覆盖策略和多修订的真实环境验收。
+
+KAC 配套保留历史分组所需的 `bk_host_id`；发布侧 `A/a` 差异和真实 Event 缺少其他分组维度仍单独记录，
+完整消费核对见 Kingeye `docs/specs/kac-linkd-integration.md` 的“真实执行历史消费修复与发布侧核对”。
+本次不修改发布器、不回填历史，不以读取成功代替曲线、邮件或 Kafka 链路验收；修改仅留在本地。
+
+本轮自审及门禁：`make check` 的格式、全量 Go 测试、`go vet`、竞态和静态分析通过；
+Console 初次运行因 Node 26.7.0 实验性 WebStorage 导致 `localStorage` 不可用，
+仅为测试进程设置 `NODE_OPTIONS=--no-experimental-webstorage` 后，`make console-check` 通过
+（451 个测试通过、8 个跳过，ESLint/TypeScript/构建通过），未修改 Console 源码。
+`make helm-check` 和 `make release-check` 中的 Chart 检查因本机缺少 Helm 未通过；
+发布脚本的 7 个 Python 测试及 4 个镜像工作流测试通过，不记为完整 `make check` 通过。
+KAC 174 个相关回归、Ruff、文档硬检查、受影响文档 30 个本地链接/锚点和两仓 `git diff --check` 通过。
+自审核对目录补绑定仍原子生效、声明不被覆盖、真实缺失维度继续拒绝，未发现本轮修复的新增阻断问题。
+
+
+## 2026-10-19 发布别名修复与拓扑维度缺失定位
+
+后续 Kingeye 本地修复 Log/APM 编译器固定输出 `a` 以及空查询合成仍生成 `a` 的问题，
+保留声明别名大小写及表达式。365 个相关回归通过，同批 11 份真实声明内存重编译均为 `A/A`；
+没有调用保存或发布。已冻结的错误执行历史不改写，既有 SplitRecord 载荷需重编译并发布新执行修订，
+仅刷新 Redis 不能修复。本轮 Linkd 生产代码无改动，策略名称、数据来源、场景处理和文案降级边界不变。
+
+真实 Event 的 `source_raw_data.dimensions` 已缺少 `bk_cmdb_level`，持久化事件同样缺失，
+不是 Linkd 清洗或丰富丢失。策略 97、125 的执行分组仍要求它，但目标环境元数据将
+`system.cpu_summary.bk_cmdb_level` 标为 `influxdb_disabled="true"`，默认存储为 InfluxDB；
+Transfer 入库前排除此维度。当前 Alarmd 对查询缺失的声明身份维度补 JSON null，
+标准事件转换再省略 null；该中间过程由源码与两个已有回归证明，未抓取这两条事件当次 UQ 响应。
+KAC 新增缺少该必需维度仍拒绝的回归，不补猜拓扑值；本轮不改变 Transfer、Alarmd 或 Linkd。
+详细证据和验收边界见 Kingeye `docs/specs/kac-linkd-integration.md`
+“发布别名一致性修复与拓扑维度缺失定位”，该节同时核对了 Transfer 拓扑注入/层级拆分及 KMC 冗余维度过滤的用途；不能因 InfluxDB 禁写就全局删除此字段。实际曲线尚未验收。

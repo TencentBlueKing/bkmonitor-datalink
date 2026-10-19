@@ -1,14 +1,80 @@
 package datasources
 
 import (
+	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"linkd/internal/enrich/description"
 	"linkd/internal/enrich/models"
 )
+
+func TestCWStrategyReadersKeepNonCatalogQueries(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, source, alias string
+		reference           any
+	}{
+		{name: "physical compilation without catalog reference", alias: "a"},
+		{name: "physical compilation with zero reference", alias: "a", reference: 0},
+		{name: "log index metric with compiled alias", source: "klc", alias: "A"},
+		{name: "log index metric is not a catalog member", source: "klc", alias: "A", reference: 199},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := revisionTestSnapshot(t)
+			spec := revisionSpec(payload)
+			spec["metric_source"], spec["monitor_item_type"] = tc.source, "metric"
+			spec["field_name"], spec["table_id"] = "cpu_usage", ""
+			spec["strategy_item"] = map[string]any{"expression": tc.alias, "query_configs": []any{
+				map[string]any{"alias": tc.alias, "metric_field": "cpu_usage", "unit": "declaration-only"},
+			}}
+			query := map[string]any{"alias": "a", "metric_field": "usage", "metric_id": "bk_monitor.system.cpu.usage", "result_table_id": "system.cpu", "unit": "percent", "metric_ref_id": tc.reference}
+			if tc.source == "klc" {
+				query["index_set_id"], query["result_table_id"] = 7, ""
+			}
+			revisionItem(payload)["query_configs"] = []any{query}
+			before, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db := openReaderTestDB(t, func(ctx context.Context, statement string, args []driver.NamedValue) (driver.Rows, error) {
+				if strings.Contains(statement, "home_application_monitortemplate") {
+					return &readerTestRows{columns: []string{"id", "bk_tenant_id", "name"}, values: [][]driver.Value{{int64(7), "tenant", "CPU template"}}}, nil
+				}
+				assertRevisionQuery(t, ctx, statement, args)
+				return snapshotTestRows(t, payload), nil
+			})
+			client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: db})
+			if err != nil {
+				t.Fatal(err)
+			}
+			strategy, found, err := client.GetByStrategyID(t.Context(), models.StrategyRevisionQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+			if err != nil || !found {
+				t.Fatalf("non-catalog strategy rejected: found=%v error=%v", found, err)
+			}
+			declared := strategy.Spec.StrategyItem.QueryConfigs[0]
+			if declared.MetricRefID != 0 || declared.MetricField != "cpu_usage" || declared.Alias != tc.alias || declared.Unit != "declaration-only" || strategy.Spec.StrategyItem.Expression != tc.alias {
+				t.Fatalf("compiled query overwrote declaration: %+v", declared)
+			}
+			descriptionClient, err := NewDescriptionConfigurationClient(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			configuration, err := descriptionClient.ReadConfiguration(t.Context(), description.ConfigurationQuery{TenantID: "tenant", StrategyID: 1, StrategyVersion: revisionTestVersion, BusinessID: 524})
+			if err != nil || len(configuration.Queries) != 1 || configuration.Queries[0].Unit != "percent" || len(configuration.Algorithms) != 1 {
+				t.Fatalf("execution description unavailable: %+v error=%v", configuration, err)
+			}
+			after, err := json.Marshal(payload)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatal("reader mutated historical snapshot")
+			}
+		})
+	}
+}
 
 func TestCWStrategyBindsPublishedRuntimeMetricReferences(t *testing.T) {
 	t.Parallel()

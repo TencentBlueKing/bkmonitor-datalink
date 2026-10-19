@@ -11,6 +11,7 @@ package datasources
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
@@ -26,13 +27,13 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-const revisionTestVersion int64 = 1790758008036099
+const revisionTestVersion int64 = 7
 const revisionTestConfigUID = "d98eb9bc9c704d9a820d2c7cb8c51eab"
 
 func revisionTestSnapshot(t *testing.T) map[string]any {
 	t.Helper()
-	return map[string]any{"strategy": map[string]any{
-		"id": int64(1), "bk_biz_id": int64(2), "bk_tenant_id": "tenant", "is_enabled": true,
+	return map[string]any{
+		"id": int64(1), "bk_biz_id": int64(2), "bk_tenant_id": "tenant", "strategy_revision": revisionTestVersion,
 		"runtime_config": map[string]any{
 			"metadata": map[string]any{"uid": "00112233-4455-6677-8899-aabbccddeeff", "name": "7|config|2", "namespace": "default", "labels": map[string]any{
 				"bk_tenant_id": "tenant", "bk_biz_id": int64(2), "monitor_template_id": int64(7), "config_id": revisionTestConfigUID, "is_default": true, "object_model_code": "cw-Host",
@@ -41,10 +42,10 @@ func revisionTestSnapshot(t *testing.T) map[string]any {
 			"spec":   map[string]any{"enable": true, "name": "CPU", "config_type": "data", "strategy_item": map[string]any{"agg_method": "AVG", "query_configs": []any{map[string]any{"unit": "percent", "metric_field": "usage", "result_table_id": "system.cpu", "agg_interval": 60}}}},
 		},
 		"items": []any{map[string]any{"query_configs": []any{map[string]any{"unit": "percent", "metric_id": "bk_monitor.system.cpu.usage", "metric_field": "usage", "result_table_id": "system.cpu"}}, "algorithms": []any{map[string]any{"type": "Threshold", "level": 2, "unit_prefix": "%", "config": []any{[]any{map[string]any{"method": "gt", "threshold": 80}}}}}}},
-	}}
+	}
 }
 
-func revisionStrategy(p map[string]any) map[string]any { return p["strategy"].(map[string]any) }
+func revisionStrategy(p map[string]any) map[string]any { return p }
 func revisionRuntime(p map[string]any) map[string]any {
 	return revisionStrategy(p)["runtime_config"].(map[string]any)
 }
@@ -71,7 +72,7 @@ func snapshotTestRows(t *testing.T, p map[string]any) *readerTestRows {
 
 func assertRevisionQuery(t *testing.T, ctx context.Context, statement string, args []driver.NamedValue) {
 	t.Helper()
-	if !strings.Contains(statement, "FROM `alarm_strategy_revision`") || !strings.Contains(statement, "bk_tenant_id = ? AND strategy_id = ? AND strategy_revision = ?") || !strings.Contains(statement, "OCTET_LENGTH(snapshot_json)") || len(args) != 5 || args[0].Value != int64(maxStrategyRevisionBytes) || args[1].Value != "tenant" || args[2].Value != int64(1) || args[3].Value != revisionTestVersion || args[4].Value != int64(2) {
+	if !strings.Contains(statement, "FROM `alarm_strategy_execution_revision`") || !strings.Contains(statement, "bk_tenant_id = ? AND strategy_id = ? AND strategy_revision = ?") || !strings.Contains(statement, "strategy_bk_biz_id") || !strings.Contains(statement, "OCTET_LENGTH(snapshot_json)") || len(args) != 5 || args[0].Value != int64(maxStrategyRevisionBytes) || args[1].Value != "tenant" || args[2].Value != int64(1) || args[3].Value != revisionTestVersion || args[4].Value != int64(2) {
 		t.Fatalf("unexpected history SQL: %s", statement)
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -86,15 +87,19 @@ func TestDescriptionConfigurationReadsImmutableRevision(t *testing.T) {
 		change     func(map[string]any)
 	}{
 		{name: "exact historical version without current tables"},
+		{name: "compiled unit independent of declaration", change: func(p map[string]any) {
+			revisionSpec(p)["strategy_item"].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["unit"] = "declaration-only"
+		}},
 		{name: "global strategy ignores event business", change: func(p map[string]any) { revisionStrategy(p)["bk_biz_id"] = int64(5) }},
 		{name: "override revision is immutable", change: func(p map[string]any) {
 			revisionLabels(p)["is_default"] = false
+			revisionSpec(p)["config_type"] = "target"
 			revisionLabels(p)["bk_object_inst_id"] = 101
 		}},
 		{name: "unused runtime DTO", change: func(p map[string]any) {
 			revisionItem(p)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = ""
 		}},
-		{name: "disabled snapshot", code: "configuration_disabled_or_invalid", change: func(p map[string]any) { revisionStrategy(p)["is_enabled"] = false }},
+		{name: "snapshot revision mismatch", code: "strategy_revision_identity_mismatch", change: func(p map[string]any) { p["strategy_revision"] = revisionTestVersion + 1 }},
 		{name: "disabled spec", code: "configuration_disabled_or_invalid", change: func(p map[string]any) { revisionSpec(p)["enable"] = false }},
 		{name: "missing runtime context", code: "strategy_revision_binding_invalid", change: func(p map[string]any) { delete(revisionStrategy(p), "runtime_config") }},
 		{name: "snapshot strategy mismatch", code: "strategy_revision_identity_mismatch", change: func(p map[string]any) { revisionStrategy(p)["id"] = 9 }},
@@ -255,16 +260,32 @@ func TestDescriptionConfigurationLiveIntegration(t *testing.T) {
 			t.Error("close database failed")
 		}
 	})
-	client, err := NewDescriptionConfigurationClient(db)
+	err = db.WithContext(t.Context()).Transaction(func(tx *gorm.DB) error {
+		client, err := NewDescriptionConfigurationClient(tx)
+		if err != nil {
+			return err
+		}
+		result, err := client.ReadConfiguration(t.Context(), description.ConfigurationQuery{TenantID: tenant, StrategyID: id, StrategyVersion: version, BusinessID: 1})
+		if err != nil {
+			return err
+		}
+		strategyClient, err := NewCWStrategyClient(CWStrategyClientConfig{DB: tx})
+		if err != nil {
+			return err
+		}
+		strategy, found, err := strategyClient.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: tenant, ID: id, Version: version})
+		if err != nil {
+			return err
+		}
+		if !found || len(result.Queries) == 0 || len(result.Algorithms) == 0 || result.Spec.Name != strategy.Spec.Name {
+			t.Fatal("historical strategy/query/algorithm facts missing or inconsistent")
+		}
+		if expected := os.Getenv("LINKD_CONTENT_TEST_EXPECTED_NAME"); expected != "" && result.Spec.Name != expected {
+			t.Fatal("reader substituted a different execution revision")
+		}
+		return nil
+	}, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
-	}
-	// BusinessID 只是 Event 上下文；历史表管理业务由唯一历史记录确定。
-	result, err := client.ReadConfiguration(t.Context(), description.ConfigurationQuery{TenantID: tenant, StrategyID: id, StrategyVersion: version, BusinessID: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Queries) == 0 || len(result.Algorithms) == 0 {
-		t.Fatal("historical query/algorithm facts missing")
 	}
 }

@@ -55,11 +55,11 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 		return description.Configuration{}, err
 	}
 	// 当前配置的启停不影响历史；仅检查该快照自身是否能产生本次触发。
-	if (snapshot.Strategy.Enabled != nil && !*snapshot.Strategy.Enabled) || snapshot.Strategy.Invalid || snapshot.Strategy.Deleted || (strategy.Spec.Enable != nil && !*strategy.Spec.Enable) {
+	if strategy.Spec.Enable != nil && !*strategy.Spec.Enable {
 		return description.Configuration{}, descriptionFailure("configuration_disabled_or_invalid")
 	}
 	// 标准 Event 尚无可信 item 身份。多项快照不能按数组顺序选第一项。
-	if len(snapshot.Strategy.Items) != 1 {
+	if len(snapshot.Items) != 1 {
 		return description.Configuration{}, descriptionFailure("strategy_revision_items_ambiguous")
 	}
 	var runtime struct {
@@ -71,7 +71,7 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 		} `json:"query_configs"`
 		Algorithms []description.RuntimeAlgorithm `json:"algorithms"`
 	}
-	if json.Unmarshal(snapshot.Strategy.Items[0], &runtime) != nil {
+	if json.Unmarshal(snapshot.Items[0], &runtime) != nil {
 		return description.Configuration{}, descriptionFailure("strategy_revision_runtime_invalid")
 	}
 	if len(runtime.Error) > 0 || len(runtime.Queries) == 0 || len(runtime.Queries) > 32 || len(runtime.Algorithms) > 32 {

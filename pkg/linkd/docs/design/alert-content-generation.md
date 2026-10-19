@@ -16,11 +16,11 @@
 > 这属于本地验证，不扩大历史线上验收范围。完整边界见
 > [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
 
-> 2026-10-17 文案容错与历史来源修复：`aggregate_method_missing`、`item_name_missing`、
+> 2026-10-19 执行历史对齐，沿用既有文案容错：`aggregate_method_missing`、`item_name_missing`、
 > `detection_evidence_missing` 属于展示事实缺失，创建与预览允许采用来源原文并记录诊断。
 > 普通丰富与文案统一按租户、`strategy_id` 和 `strategy_revision` 精确查询
-> `alarm_strategy_revision`；事件 `strategy_version` 对应历史表 `strategy_revision`。
-> 使用同一快照的 `strategy.runtime_config.metadata/spec` 与 `strategy.items`，
+> `alarm_strategy_execution_revision`；事件 `strategy_version` 对应历史表 `strategy_revision`。
+> 使用同一快照的 `runtime_config.metadata/spec` 与 `items`，
 > 不再依赖会被覆盖的 SplitRecord 当前态或 `publish_status`。历史缺失按
 > `strategy_revision_missing` 保留来源文案；歧义、损坏、身份不符仍明确失败。
 > 下方以 SplitRecord 当前态代替历史的描述属于历史实现，当前契约以
@@ -47,11 +47,15 @@
 > 2026-10-12 已确认的历史积压处理例外：确切策略发布版本在当前发布表中已不可得时，内容 Reader 返回 `publication_missing`，Lifecycle 可使用该 Event 自带的非空原始 content，并记录 `source_fallback` WARN 诊断。不得借用最新策略生成历史文案。降级内容继续校验并冻结进 EventPlan；发布歧义、身份/模板错误、来源 Release 缺失与外部依赖故障不降级。无数据的四类文案错误按上方 2026-10-14 边界允许原文兜底，其他事实错误按上方 2026-10-17 白名单处理。运行契约见 [任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
 
 
-## 当前策略读取边界（2026-10-17）
+## 当前策略读取边界（2026-10-19）
 
-策略历史材料来自 `alarm_strategy_revision`，同版本唯一记录才是触发时的策略快照。
-`strategy.runtime_config` 提供声明式 metadata/spec，`strategy.items` 提供同版执行查询与算法；
+策略历史材料来自 `alarm_strategy_execution_revision`，同版本唯一记录才是触发时的策略快照。
+`runtime_config` 提供声明式 metadata/spec，`items` 提供同版执行查询与算法；
 读取校验、统一降级和运行限制统一见[任务恢复与内容边界](../reference/contracts/task-resume.md#操作顺序与内容边界)。
+2026-10-19 对齐 Kingeye 10/17 的 Reader 变更：执行快照位于根部，管理业务列为 `strategy_bk_biz_id`。
+默认与覆盖均使用自身 ID 和执行修订；`record_revision`、来源水位与缓存生成号不参与执行历史定位。
+当前 Reader 修复从 Linkd `b6c21fe0` 重放到 `cc0c7150`，保留统一文案降级和检测场景；
+自定义文案、控制面故障重试及后续触发的内容更新沿用上游规则，读取过程不改写原始 Event。
 SplitRecord 是可变当前态，不能提供历史保证；本轮移除以它的 `source_resource_version` 与
 `publish_status` 决定丰富有效性的路径。下方旧实现和调研记录不代表当前 Reader。
 

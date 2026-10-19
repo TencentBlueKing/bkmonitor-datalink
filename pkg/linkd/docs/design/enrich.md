@@ -77,7 +77,7 @@ KAC Converter/Cleaner 直接构造旧 Alarm 字段。Linkd 将对应业务含义
 
 以下是已确认的后续边界；本地已实施策略导航、时序、PromQL、索引集/物理日志及事件查询迁移，其他通用展示转换逐项处理；APM、K8s、日志扩展字段已明确整体保留在 Linkd，不属于后续迁移范围：检索、排序/聚合、权限、策略匹配、分组、模板和后续丰富消费的规范事实须在处理前可用，当前继续由 Linkd 冻结并投影 KAC；仅用于产品导航、纯展示或取数协议适配的派生逻辑由 KAC 承接。不能按 `display` 名称、`name` 后缀或界面默认展示状态决定迁移；规范名称与文本、`cw_labels/dynamic_group_id` 及被配置引用的扩展字段不能在详情打开时才补齐。
 
-查询迁移按用户确认的不可变 `alarm_strategy_revision` 设计：KAC 经 `kingeye.base.strategy.get_strategy_revision` 读取历史定义，alarmd `strategy_id/strategy_version` 分别对应 Reader 的 `strategy_id/strategy_revision`，联合唯一。当前四参数接口临时传告警租户和告警业务 ID，后续移除两项时再精简；当前附加过滤的实际命中须验证，不回退 current。Linkd 保留真实执行引用、有类型的事件维度、时间和业务，不另存完整查询定义；KAC 生成 `table/metrics/interval/group_by/where`、窗口和最终请求；这些新内置参数只存在本次调用的内存对象，不新增为 AlarmEvent 或 `field_extra_info` 中的持久化副本。历史/外部已有 `metric_query_params/metric_group_params` 保留原协议。策略关联仍复用[既有投影契约](../reference/contracts/kac-alert-projection-v1.md#策略关联事实与详情导航2026-10-15)；split 当前态不代替不可变历史材料。
+查询迁移按用户确认的不可变 `alarm_strategy_execution_revision` 设计：KAC 经 `kingeye.base.strategy.get_strategy_revision` 读取历史定义，alarmd `strategy_id/strategy_version` 分别对应 Reader 的 `strategy_id/strategy_revision`，联合唯一。Reader 使用租户、ID、执行修订三参数，管理业务来自冻结快照，不用事件业务过滤历史。根部 `items` 是执行查询，`runtime_config` 是冻结声明上下文；缺失不回退 current。Linkd 保留真实执行引用、有类型的事件维度、时间和业务，不另存完整查询定义；KAC 生成 `table/metrics/interval/group_by/where`、窗口和最终请求；这些新内置参数只存在本次调用的内存对象，不新增为 AlarmEvent 或 `field_extra_info` 中的持久化副本。历史/外部已有 `metric_query_params/metric_group_params` 保留原协议。策略关联仍复用[既有投影契约](../reference/contracts/kac-alert-projection-v1.md#策略关联事实与详情导航2026-10-15)；split 当前态不代替不可变历史材料。
 
 没有旧参数的新查询路径以三类输入为前提：同版历史定义、准确 opening/恢复事件事实和本次查询选项。告警自身已有合法非空 `metric_query_params/metric_group_params` 时直接沿原插件使用，不调用 `metric-facts` 或历史 Reader；空对象/数组及其字符串占位不算有效旧参数。已有导航上下文不会强制切换历史告警，旧参数分支也不要求补齐历史表或回填 ES。停止生成参数后的新告警须单独验证准确历史版本可读，不能用旧告警的 Reader 未命中判定其原参数取数失败。Linkd 保留事件/告警/来源/租户及等级关联、真实执行 ID/version、有类型维度、事件业务及时间锚点；多 item 场景还须能用可信事实唯一定位。读取缺口只补事件事实与关系，不存第二套策略查询定义，不从来源列表扫描或最新事件替代准确关联。检索、匹配、分组、模板及后续丰富仍使用的 Metric 输出继续保留。
 
@@ -240,7 +240,7 @@ url
 data_source
 ```
 
-当前策略身份来自 `labels.strategy_id + labels.strategy_version + labels.bk_biz_id`。鲸眼策略仅从 Kingeye MySQL `alarm_strategy_revision` 的不可变快照读取，按租户、`strategy_id` 与 Event `strategy_version` 对应的 `strategy_revision` 精确定位，并校验唯一性、schema、字节数、SHA-256 和快照身份；不查询 SplitRecord 当前态、旧 Set/Config 或 latest。管理业务取自唯一历史记录，事件业务关系单独校验。默认策略、云策略与实例策略生成不同 URL。
+当前策略身份来自 `labels.strategy_id + labels.strategy_version + labels.bk_biz_id`。鲸眼策略仅从 Kingeye MySQL `alarm_strategy_execution_revision` 的不可变快照读取，按租户、`strategy_id` 与 Event `strategy_version` 对应的 `strategy_revision` 精确定位，并校验唯一性、schema、字节数、SHA-256 和快照身份；不查询 SplitRecord 当前态、旧 Set/Config 或 latest。管理业务取自唯一历史记录，事件业务关系单独校验。Linkd 输出策略关联事实，KAC 在读取时生成导航 URL。
 `strategy_name` 沿用旧 KAC 展示语义：普通策略使用 `monitor_template.name + "-" + spec.alias_name`，PromQL 策略只使用 `monitor_template.name`；没有 `monitor_template_id` 的策略才回退 `spec.name` 或声明式资源名。
 
 ### 6.2 resource

@@ -174,7 +174,7 @@ Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。`s
 `event_sources[].enrich.processors` 是每条 Event 在策略前执行的有序丰富链。当前注册名为
 `strategy/resource/display/metric/source/log/cloud_resource/k8s/apm/test/cmdb/fields/cmdb-access`；空列表输出 `{"processors":[]}`。
 
-旧 KAC 单模型 CMDB 配置转换生成 `cmdb → fields → cmdb-access`；身份绑定、首条选择、无匹配回滚和展示连接配置见 [自定义丰富](../design/custom-enrichment.md#81-cmdb-旧行为对齐2026-10-08)。`cmdb-access` 应放在字段规则之后，按有效身份补权限标签和动态分组。
+旧 KAC 单模型 CMDB 配置转换生成 `cmdb → fields → cmdb-access`；身份绑定、首条选择、无匹配回滚和展示连接配置见 [自定义丰富](../design/custom-enrichment.md#81-cmdb-身份与在线转换2026-10-17)。`cmdb-access` 应放在字段规则之后，按有效身份补权限标签和动态分组。
 重复类型、空 type、未知处理器或缺少 Processor 所需的数据源会在来源发布时被拒绝。路由按任务
 固定的 Release 创建，来源发布后通过停止确认与重新调度生效。停用来源按调度协议停止任务，积压保留。
 

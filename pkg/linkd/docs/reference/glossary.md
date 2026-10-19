@@ -55,18 +55,19 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | strategy（丰富分组） | 丰富结果中的策略补充信息，包含 bk_strategy_id、monitor_template_id、strategy_config_id 三种独立身份，以及展示名称、跳转链接和鲸眼配置数据源；monitor_template_id 沿用旧 clean_strategy_id 的模板名称/策略名称回退行为 |
 | source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Event.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 优先保留旧清洗的同名 extra_data 值；未提供时使用来源丰富值或 Event.SourceEventID，不替代来源原始身份 |
-| metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及本次告警观测数据的查询参数；指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
+| metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及表和维度等事实；新内置告警不生成查询参数，已有旧参数及外部来源保留既有协议。指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
 | metricset（指标来源） | Kingeye 新指标目录的来源登记表；来源编码不是指标身份，指标定义与主引用存放在 metric 表 |
 | metric_id（指标目录身份） | Kingeye metric 表的租户内可读取主键；策略 query_config 使用 metric_ref_id 携带它，与检测面的字符串 metric_id 不同 |
 | 指标目录定义查询 | Enrich 按事件租户读取 metric 的名称、单位、模型、枚举和维度；优先 ID，无 ID 时按来源业务空间与平台层反查唯一的原生物理引用；不执行时序取数 |
-| 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；新发布链中前者为 SplitRecord 主键，后者为 `source_resource_version`。两个字段均参与运行时读取校验，不能用旧策略 ID 或 Config status 版本替代。 |
-| 鲸眼策略配置 | Linkd 从 Kingeye MySQL `alarm_strategy_set_split_record` 的同版本发布材料构造的只读丰富视图；分类、展示和指标查询复用 `resolved_strategies[*].spec`，不读取旧配置表。 |
+| 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；新发布链中前者为 SplitRecord 主键，后者为执行快照的 `strategy_revision`。不能用来源水位 `source_resource_version`、当前态 `record_revision` 或 Config status 版本替代。 |
+| 鲸眼策略配置 | Linkd 从 Kingeye MySQL `alarm_strategy_execution_revision` 的准确执行快照构造的只读丰富视图；分类和展示使用冻结的 `runtime_config.metadata/spec`，文案查询/算法使用同快照根部 `items`，不读取当前配置替代历史。 |
 | StrategySetSplitRecord（策略拆分发布当前态） | Kingeye 表 `alarm_strategy_set_split_record`；默认与覆盖分别使用自身主键作为运行时策略 ID，覆盖通过 `parent_id` 关联默认记录。payload 保存编译后的配置与检测材料；它是当前态，不保证历史版本保留。 |
-| StrategySet（声明式策略集合） | Kingeye 的上游声明输入；Linkd 使用其已编译到 SplitRecord 的材料，不直接查询当前 Set 表。 |
+| 策略执行快照 | Kingeye 表 `alarm_strategy_execution_revision` 保存的不可变发布详情；按租户、SplitRecord 自身 ID 和执行修订定位，根部 `items` 提供执行查询/算法，`runtime_config` 提供冻结声明上下文。不是配置历史或当前态。 |
+| StrategySet（声明式策略集合） | Kingeye 的上游声明输入；发布器从 SplitRecord 生成执行快照，Linkd 读取该不可变执行历史，不直接查询当前 Set 表。 |
 | StrategyConfig（声明式策略配置） | 旧声明式配置资源及其写入支路；Linkd 不再读取 `core_v1alpha1_strategy`，也不以该支路写入成功作为策略可读条件。 |
 | 全局业务 | `metadata_space` 中租户、`space_type_id = bkcc` 和业务 ID 对应且 `is_global = 1` 的业务空间；该业务下的策略可匹配同租户任意来源业务 |
-| 鲸眼声明式策略查询投影 | SplitRecord 的 `resolved_strategies[*].spec.strategy_item` 中的聚合、表达式和 `query_configs`；供丰富处理器在单 Event 内共享。 |
-| 指标查询参数 | 丰富结果中用于查询本次告警对应观测数据的参数；当前由鲸眼声明式策略 `spec.strategy_item.query_configs` 与 Event.Dimensions 构造，不回查蓝鲸策略当前表或历史表 |
+| 鲸眼声明式策略查询投影 | 执行快照 `runtime_config.spec.strategy_item` 中的聚合、表达式和 `query_configs`；供丰富处理器在单 Event 内共享。 |
+| 指标查询参数 | 用于查询本次告警观测数据的参数；新内置告警由 KAC 从准确 Event 的维度和执行历史根部 `items` 临时组装，不回写告警。已有非空 `metric_query_params/metric_group_params` 优先使用旧来源插件；外部来源仍按原协议处理 |
 | 维度条件文本（where_condition） | 按旧过滤和拼接规则从工作维度生成的条件文本，保存到 enrich.metric.where_condition；生成过程不修改 Event 的来源维度 |
 | 首次异常点时间（anomaly_begin_time） | 上游提供的异常点时间，从 Event.ExtraData.anomaly_begin_time 读取；仅接受字符串并原样保存到 enrich.metric.anomaly_begin_time，空字符串也保留，缺失时省略。alarmd 标准输出表示滚动 Trigger 窗口内最早异常点，不保证是整次无数据过程的首次异常点。 |
 | 来源业务 | Event.Labels.bk_biz_id 表示的业务上下文；`built_in_bk` 来源要求该标签为数字 Scalar 正整数，替代旧回调 F05–F07 的业务输入，用于对应的来源业务和查询消费位置 |

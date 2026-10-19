@@ -40,19 +40,20 @@ Content-Type: application/json
 3. 确认当前发布的来源配置符合预期，完成 Worker 停止握手后调用恢复接口。
 4. 核对新 epoch、PEL/mailbox 顺序以及最终 Alert.content。失败 Event 创建成功前一直保留；已经保存的 EventPlan 和 Alert.content 不重新生成。
 
-Lifecycle 的普通丰富与内容构建均使用当前任务加载的来源配置，积压 Event 不再读取接入时的历史 Release。内容配置 Reader 只解析历史快照 `strategy.items` 查询中实际使用的 `unit`、`metric_id`；未使用的 `index_set_id` 等扩展字段可为空字符串，不因声明模型的类型约束阻断内容构建。实际使用字段、算法、租户和版本绑定仍严格校验。
+Lifecycle 的普通丰富与内容构建均使用当前任务加载的来源配置，积压 Event 不再读取接入时的历史 Release。内容配置 Reader 只解析历史快照根部 `items` 查询中实际使用的 `unit`、`metric_id`；未使用的 `index_set_id` 等扩展字段可为空字符串，不因声明模型的类型约束阻断内容构建。实际使用字段、算法、租户和版本绑定仍严格校验。
 
 所有待处理 Event 共用当前任务运行时及 `lifecycle.concurrency` 的消费预算，不再为旧来源版本独立创建连接。原接入版本保留，实际丰富版本记入 `enrich_source_version`；租户隔离、同告警 mailbox 顺序和已提交结果复用不变。
 
-普通丰富和文案均从 `alarm_strategy_revision` 读取同一不可变快照：查询条件为
+普通丰富和文案均从 `alarm_strategy_execution_revision` 读取同一不可变快照：查询条件为
 `bk_tenant_id + strategy_id + strategy_revision`，其中历史表的 `strategy_revision`
 对应 Event `labels.strategy_version`。不按事件 `bk_biz_id` 过滤策略管理业务；全局策略的
 管理业务取自唯一历史记录，事件业务关系仍由 Processor 校验。缺失或歧义均返回明确错误，由普通丰富记录失败诊断、文案入口执行统一降级；不查询 SplitRecord、revision head、current/latest，也不读取其发布状态。
 单次读取共享 5s Context 预算，SQL 端限制快照不超过 4 MiB，最多取两行以检测歧义。
 
 Reader 核验 schema v1、原始 canonical bytes 的字节数和 SHA-256，并核对表列与
-`strategy.id/bk_biz_id`、`strategy.runtime_config` 中的租户和执行策略 ID 绑定。
-`strategy.runtime_config.metadata/spec` 提供声明式上下文，`strategy.items` 提供该版本
+快照根部 `id/bk_tenant_id/bk_biz_id/strategy_revision`，并核对 `runtime_config` 中的租户和执行策略 ID 绑定。
+数据库的管理业务列为 `strategy_bk_biz_id`，不等同于事件业务。
+`runtime_config.metadata/spec` 提供声明式上下文，`items` 提供该版本
 执行查询与算法。缺少 runtime_config 的旧快照不回查当前表补齐。标准 Event 尚无可信
 item 身份，多 item 文案快照明确拒绝，不能任选首项。普通补全的模板名称仍从租户作用域
 的展示元数据表读取，不借它反查或替换历史策略定义。

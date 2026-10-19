@@ -76,11 +76,11 @@ func (c *CWStrategyClient) GetByStrategyID(ctx context.Context, query models.Str
 	}
 	// 模板名称属于展示元数据；不借它反查或替换策略配置。
 	var template monitorTemplateRow
-	err = c.db.WithContext(ctx).Table("home_application_monitortemplate").Select("id,bk_tenant_id,name").Where("id = ? AND bk_tenant_id = ?", payload.Strategy.RuntimeConfig.Metadata.Labels.TemplateID, query.TenantID).Take(&template).Error
+	err = c.db.WithContext(ctx).Table("home_application_monitortemplate").Select("id,bk_tenant_id,name").Where("id = ? AND bk_tenant_id = ?", payload.RuntimeConfig.Metadata.Labels.TemplateID, query.TenantID).Take(&template).Error
 	if err != nil {
 		return models.CWStrategy{}, false, fmt.Errorf("query monitor template name: %w", err)
 	}
-	if template.ID != payload.Strategy.RuntimeConfig.Metadata.Labels.TemplateID || template.TenantID != query.TenantID || template.Name == "" {
+	if template.ID != payload.RuntimeConfig.Metadata.Labels.TemplateID || template.TenantID != query.TenantID || template.Name == "" {
 		return models.CWStrategy{}, false, fmt.Errorf("%w: monitor template identity mismatch", enrich.ErrInvalidDataSourceResponse)
 	}
 	strategy.MonitorTemplateName = template.Name
@@ -88,13 +88,13 @@ func (c *CWStrategyClient) GetByStrategyID(ctx context.Context, query models.Str
 }
 
 func cwStrategyFromRevision(row strategyRevisionRow, payload strategyRevisionSnapshot) (models.CWStrategy, error) {
-	entry := payload.Strategy.RuntimeConfig
+	entry := payload.RuntimeConfig
 	labels := entry.Metadata.Labels
 	var spec models.CWStrategySpec
 	if json.Unmarshal(entry.Spec, &spec) != nil || spec.StrategyItem == nil || (spec.ConfigType != "data" && spec.ConfigType != "target") {
 		return models.CWStrategy{}, descriptionFailure("configuration_disabled_or_invalid")
 	}
-	if err := bindRevisionMetricReferences(&spec, payload.Strategy.Items); err != nil {
+	if err := bindRevisionMetricReferences(&spec, payload.Items); err != nil {
 		return models.CWStrategy{}, err
 	}
 	// 覆盖记录的实例标签允许整数或字符串，数据库列的字符串形态不再参与转换。
@@ -129,7 +129,7 @@ func cwStrategyFromRevision(row strategyRevisionRow, payload strategyRevisionSna
 		Name: entry.Metadata.Name, Namespace: entry.Metadata.Namespace, Annotations: entry.Metadata.Annotations,
 		Spec: spec, Status: models.CWStrategyStatus{BKStrategyID: row.StrategyID},
 		BKTenantID: &labels.TenantID, BKBizID: &businessID, IsDefault: labels.IsDefault,
-		DefaultStrategyConfigUID: labels.DefaultConfigUID, MonitorTemplateID: &payload.Strategy.RuntimeConfig.Metadata.Labels.TemplateID,
+		DefaultStrategyConfigUID: labels.DefaultConfigUID, MonitorTemplateID: &payload.RuntimeConfig.Metadata.Labels.TemplateID,
 		ConfigID: &labels.ConfigID, ObjectModelCode: labels.ObjectModelCode, BKObjectInstID: instanceID,
 	}, nil
 }

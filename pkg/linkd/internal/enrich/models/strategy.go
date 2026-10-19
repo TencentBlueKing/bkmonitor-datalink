@@ -76,13 +76,13 @@ const (
 	CWStrategyKindCloud CWStrategyKind = "StrategyCloud"
 )
 
-// StrategyQuery 使用事件中的租户、策略 ID 和版本定位不可变历史快照。
+// StrategyQuery 使用事件租户、SplitRecord ID 和执行修订定位不可变执行历史。
 type StrategyQuery struct {
 	// TenantID 必须来自事件的可信租户作用域。
 	TenantID string
-	// ID 是 alarmd 事件的 strategy_id，对应历史表 strategy_id。
+	// ID 是 alarmd 事件的 strategy_id，对应默认或覆盖 SplitRecord 自身 ID。
 	ID int64
-	// Version 是 labels.strategy_version，对应历史表 strategy_revision。
+	// Version 是 labels.strategy_version，对应 strategy_revision，不能使用来源水位、record_revision 或缓存生成号。
 	Version int64
 }
 

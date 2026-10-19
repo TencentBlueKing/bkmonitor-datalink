@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"database/sql/driver"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -24,12 +25,12 @@ import (
 
 func revisionTestRows(raw []byte) *readerTestRows {
 	digest := sha256.Sum256(raw)
-	return &readerTestRows{columns: []string{"bk_tenant_id", "bk_biz_id", "strategy_id", "strategy_revision", "snapshot_schema_version", "snapshot_digest", "snapshot_bytes", "snapshot_json"}, values: [][]driver.Value{{"tenant", int64(2), int64(1), revisionTestVersion, int64(1), hex.EncodeToString(digest[:]), int64(len(raw)), raw}}}
+	return &readerTestRows{columns: []string{"bk_tenant_id", "strategy_bk_biz_id", "strategy_id", "strategy_revision", "snapshot_schema_version", "snapshot_digest", "snapshot_bytes", "snapshot_json"}, values: [][]driver.Value{{"tenant", int64(2), int64(1), revisionTestVersion, int64(1), hex.EncodeToString(digest[:]), int64(len(raw)), raw}}}
 }
 
 func TestStrategyRevisionReadUsesImmutableIdentityAndIntegrity(t *testing.T) {
 	t.Parallel()
-	raw := []byte(`{"strategy":{"id":1,"bk_biz_id":2,"items":[]}}`)
+	raw := []byte(`{"id":1,"bk_tenant_id":"tenant","bk_biz_id":2,"strategy_revision":7,"items":[]}`)
 	for _, tc := range []struct {
 		name, code string
 		change     func(*readerTestRows)
@@ -50,7 +51,7 @@ func TestStrategyRevisionReadUsesImmutableIdentityAndIntegrity(t *testing.T) {
 			calls := 0
 			db := openReaderTestDB(t, func(ctx context.Context, statement string, args []driver.NamedValue) (driver.Rows, error) {
 				calls++
-				if !strings.Contains(statement, "FROM `alarm_strategy_revision`") || !strings.Contains(statement, "bk_tenant_id = ? AND strategy_id = ? AND strategy_revision = ?") || !strings.Contains(statement, "OCTET_LENGTH(snapshot_json)") || strings.Contains(statement, "publish_status") || len(args) != 5 || args[1].Value != "tenant" || args[2].Value != int64(1) || args[3].Value != revisionTestVersion || args[4].Value != int64(2) {
+				if !strings.Contains(statement, "FROM `alarm_strategy_execution_revision`") || !strings.Contains(statement, "bk_tenant_id = ? AND strategy_id = ? AND strategy_revision = ?") || !strings.Contains(statement, "strategy_bk_biz_id") || !strings.Contains(statement, "OCTET_LENGTH(snapshot_json)") || strings.Contains(statement, "publish_status") || len(args) != 5 || args[1].Value != "tenant" || args[2].Value != int64(1) || args[3].Value != revisionTestVersion || args[4].Value != int64(2) {
 					t.Fatalf("unexpected history SQL: %s", statement)
 				}
 				rows := revisionTestRows(raw)
@@ -89,5 +90,64 @@ func TestStrategyRevisionRejectsInvalidJSONWithMatchingDigest(t *testing.T) {
 		if found || !errors.As(err, &failure) || failure.Code != "strategy_revision_corrupt" {
 			t.Fatalf("found=%v error=%v", found, err)
 		}
+	}
+}
+
+// 新表根部身份必须与查询列完全一致；同为 schema=1 的旧 wrapper 也不能被误接纳。
+func TestStrategyExecutionSnapshotRejectsWrongRootIdentity(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, code string
+		change     func(map[string]any) map[string]any
+	}{
+		{"missing tenant", "strategy_revision_identity_mismatch", func(p map[string]any) map[string]any { delete(p, "bk_tenant_id"); return p }},
+		{"wrong tenant", "strategy_revision_identity_mismatch", func(p map[string]any) map[string]any { p["bk_tenant_id"] = "other"; return p }},
+		{"wrong revision", "strategy_revision_identity_mismatch", func(p map[string]any) map[string]any { p["strategy_revision"] = revisionTestVersion + 1; return p }},
+		{"missing revision", "strategy_revision_identity_mismatch", func(p map[string]any) map[string]any { delete(p, "strategy_revision"); return p }},
+		{"wrong management business", "strategy_revision_identity_mismatch", func(p map[string]any) map[string]any { p["bk_biz_id"] = 9; return p }},
+		{"old strategy wrapper", "strategy_revision_identity_mismatch", func(p map[string]any) map[string]any { return map[string]any{"strategy": p} }},
+		{"boolean revision", "strategy_revision_corrupt", func(p map[string]any) map[string]any { p["strategy_revision"] = true; return p }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.change(revisionTestSnapshot(t)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = decodeStrategyRevision(strategyRevisionRow{TenantID: "tenant", BusinessID: 2, StrategyID: 1, Version: revisionTestVersion, Snapshot: raw})
+			var failure *description.Error
+			if !errors.As(err, &failure) || failure.Code != tc.code {
+				t.Fatalf("error=%v want=%s", err, tc.code)
+			}
+		})
+	}
+}
+
+func TestStrategyRevisionCorruptBytesBeforeUnsupportedSchema(t *testing.T) {
+	t.Parallel()
+	db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+		rows := revisionTestRows([]byte(`{"name":"中文执行快照"}`))
+		rows.values[0][4] = int64(2)
+		rows.values[0][5] = strings.Repeat("0", 64)
+		return rows, nil
+	})
+	_, found, err := readStrategyRevision(t.Context(), db, models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+	var failure *description.Error
+	if found || !errors.As(err, &failure) || failure.Code != "strategy_revision_corrupt" {
+		t.Fatalf("found=%v error=%v", found, err)
+	}
+}
+
+// 未支持的 schema 不按当前 JSON 结构解码；原始字节完整性仍先于 schema 校验。
+func TestStrategyRevisionUnsupportedSchemaBeforeJSONDecode(t *testing.T) {
+	t.Parallel()
+	db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+		rows := revisionTestRows([]byte("{"))
+		rows.values[0][4] = int64(2)
+		return rows, nil
+	})
+	_, found, err := readStrategyRevision(t.Context(), db, models.StrategyQuery{TenantID: "tenant", ID: 1, Version: revisionTestVersion})
+	var failure *description.Error
+	if found || !errors.As(err, &failure) || failure.Code != "strategy_revision_schema_unsupported" {
+		t.Fatalf("found=%v error=%v", found, err)
 	}
 }

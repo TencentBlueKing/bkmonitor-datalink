@@ -34,8 +34,7 @@ func TestCWStrategyClientReadsHistoricalRuntimeConfig(t *testing.T) {
 			revisionLabels(p)["bk_object_inst_id"] = 101
 		}},
 		{name: "cloud", business: 2, cloud: true, change: func(p map[string]any) { revisionSpec(p)["cloud_type"] = "aws" }},
-		{name: "disabled historical snapshot remains readable", business: 2, change: func(p map[string]any) { revisionStrategy(p)["is_enabled"] = false; revisionSpec(p)["enable"] = false }},
-		{name: "deleted historical snapshot remains readable", business: 2, change: func(p map[string]any) { revisionStrategy(p)["is_deleted"] = true }},
+		{name: "disabled historical snapshot remains readable", business: 2, change: func(p map[string]any) { revisionSpec(p)["enable"] = false }},
 		{name: "unused runtime DTO", business: 2, change: func(p map[string]any) {
 			revisionItem(p)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = ""
 		}},

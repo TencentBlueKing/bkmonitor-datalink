@@ -24,10 +24,10 @@ import (
 const maxStrategyRevisionBytes = 4 << 20
 const strategyReadTimeout = 5 * time.Second
 
-// strategyRevisionRow 只承载指定历史版本；当前 SplitRecord 的状态不参与历史有效性判断。
+// strategyRevisionRow 承载指定执行修订；当前 SplitRecord 的状态不参与历史有效性判断。
 type strategyRevisionRow struct {
 	TenantID      string `gorm:"column:bk_tenant_id"`
-	BusinessID    int64  `gorm:"column:bk_biz_id"`
+	BusinessID    int64  `gorm:"column:strategy_bk_biz_id"`
 	StrategyID    int64  `gorm:"column:strategy_id"`
 	Version       int64  `gorm:"column:strategy_revision"`
 	SchemaVersion int64  `gorm:"column:snapshot_schema_version"`
@@ -44,8 +44,8 @@ func readStrategyRevision(ctx context.Context, db *gorm.DB, query models.Strateg
 		return strategyRevisionRow{}, false, err
 	}
 	var rows []strategyRevisionRow
-	err := db.WithContext(ctx).Table("alarm_strategy_revision").
-		Select("bk_tenant_id,bk_biz_id,strategy_id,strategy_revision,snapshot_schema_version,snapshot_digest,snapshot_bytes,CASE WHEN OCTET_LENGTH(snapshot_json) <= ? THEN snapshot_json ELSE NULL END AS snapshot_json", maxStrategyRevisionBytes).
+	err := db.WithContext(ctx).Table("alarm_strategy_execution_revision").
+		Select("bk_tenant_id,strategy_bk_biz_id,strategy_id,strategy_revision,snapshot_schema_version,snapshot_digest,snapshot_bytes,CASE WHEN OCTET_LENGTH(snapshot_json) <= ? THEN snapshot_json ELSE NULL END AS snapshot_json", maxStrategyRevisionBytes).
 		Where("bk_tenant_id = ? AND strategy_id = ? AND strategy_revision = ?", query.TenantID, query.ID, query.Version).Limit(2).Find(&rows).Error
 	if err != nil {
 		return strategyRevisionRow{}, false, fmt.Errorf("read strategy revision: %w", err)
@@ -60,11 +60,16 @@ func readStrategyRevision(ctx context.Context, db *gorm.DB, query models.Strateg
 	if row.TenantID != query.TenantID || row.StrategyID != query.ID || row.Version != query.Version || row.BusinessID == 0 {
 		return strategyRevisionRow{}, false, descriptionFailure("strategy_revision_identity_mismatch")
 	}
+
+	digest := sha256.Sum256(row.Snapshot)
+	if len(row.Snapshot) == 0 || len(row.Snapshot) > maxStrategyRevisionBytes || int64(len(row.Snapshot)) != row.Bytes || hex.EncodeToString(digest[:]) != row.Digest || !utf8.Valid(row.Snapshot) {
+		return strategyRevisionRow{}, false, descriptionFailure("strategy_revision_corrupt")
+	}
 	if row.SchemaVersion != 1 {
 		return strategyRevisionRow{}, false, descriptionFailure("strategy_revision_schema_unsupported")
 	}
-	digest := sha256.Sum256(row.Snapshot)
-	if len(row.Snapshot) == 0 || len(row.Snapshot) > maxStrategyRevisionBytes || int64(len(row.Snapshot)) != row.Bytes || hex.EncodeToString(digest[:]) != row.Digest || !utf8.Valid(row.Snapshot) || !json.Valid(row.Snapshot) {
+	// 与 Kingeye Reader 一致：确认支持 schema 后才按当前 JSON 规则检查快照。
+	if !json.Valid(row.Snapshot) {
 		return strategyRevisionRow{}, false, descriptionFailure("strategy_revision_corrupt")
 	}
 	return row, true, nil
@@ -92,17 +97,14 @@ type resolvedStrategy struct {
 	Spec   json.RawMessage         `json:"spec"`
 }
 
+// 快照是 Kingeye 发布到 Redis 的根部执行详情；schema=1 不代表仍兼容旧表的 strategy wrapper。
 type strategyRevisionSnapshot struct {
-	Strategy struct {
-		ID            int64             `json:"id"`
-		BusinessID    int64             `json:"bk_biz_id"`
-		TenantID      string            `json:"bk_tenant_id"`
-		Enabled       *bool             `json:"is_enabled"`
-		Invalid       bool              `json:"is_invalid"`
-		Deleted       bool              `json:"is_deleted"`
-		RuntimeConfig resolvedStrategy  `json:"runtime_config"`
-		Items         []json.RawMessage `json:"items"`
-	} `json:"strategy"`
+	ID            int64             `json:"id"`
+	BusinessID    int64             `json:"bk_biz_id"`
+	TenantID      string            `json:"bk_tenant_id"`
+	Version       int64             `json:"strategy_revision"`
+	RuntimeConfig resolvedStrategy  `json:"runtime_config"`
+	Items         []json.RawMessage `json:"items"`
 }
 
 // 执行查询/算法与声明式上下文来自同一不可变快照，不再拼接当前 Set/Config 或 SplitRecord。
@@ -111,8 +113,8 @@ func decodeStrategyRevision(row strategyRevisionRow) (strategyRevisionSnapshot, 
 	if json.Unmarshal(row.Snapshot, &snapshot) != nil {
 		return snapshot, descriptionFailure("strategy_revision_corrupt")
 	}
-	strategy := snapshot.Strategy
-	if strategy.ID != row.StrategyID || strategy.BusinessID != row.BusinessID || (strategy.TenantID != "" && strategy.TenantID != row.TenantID) {
+	strategy := snapshot
+	if strategy.ID != row.StrategyID || strategy.BusinessID != row.BusinessID || strategy.TenantID != row.TenantID || strategy.Version != row.Version {
 		return snapshot, descriptionFailure("strategy_revision_identity_mismatch")
 	}
 	labels := strategy.RuntimeConfig.Metadata.Labels

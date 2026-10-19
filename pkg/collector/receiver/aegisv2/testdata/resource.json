@@ -1,0 +1,16 @@
+{
+	"topic": "SDK-xxxxx",
+	"scheme": "v2",
+	"bean": {
+		"version": "1.0.0",
+		"referer": "http://127.0.0.1:8080/index.html"
+	},
+	"d2": [
+		{
+			"fields": "{\"from\": \"http://127.0.0.1:8080/index.html\", \"session\": {\"id\": \"session-1\"}, \"view\": {\"id\": \"view-1\", \"view_name\": \"VideoFlow\", \"view_url\": \"http://127.0.0.1:8080/index.html\", \"loading_type\": \"initial_load\"}, \"type\": \"assets_speed\", \"level\": \"info\", \"plugin\": \"assetSpeed\"}",
+			"message": [
+				"{\"msg\": \"asset_speed\", \"url\": \"http://127.0.0.1:8080/styles.css\", \"status\": 200, \"assetType\": \"css\", \"duration\": 47.3, \"domainLookup\": 0, \"connectTime\": 0, \"tlsTime\": 139.4, \"tcpAndRequestGap\": 42.2, \"requestTime\": 1.4, \"responseTime\": 3.7, \"timestamp\": 1781593481995}"
+			]
+		}
+	]
+}

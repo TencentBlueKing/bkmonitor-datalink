@@ -1,0 +1,24 @@
+{
+  "topic": "SDK-daffdasfdasfdsafdas",
+  "bean": {
+    "uid": "user_1791892849875_5312722e",
+    "version": "1.0.0",
+    "aid": "b17745df-9347-4d9d-8658-f27677d04d9d",
+    "env": "production",
+    "platform": "macOS",
+    "netType": "4G",
+    "vp": "1456 * 538",
+    "sr": "1512 * 982",
+    "referer": "http://127.0.0.1:8081/"
+  },
+  "ext": "{}",
+  "scheme": "v2",
+  "d2": [
+    {
+      "fields": "{\"from\":\"http://127.0.0.1:8081/channels.html\",\"session\":{\"id\":\"6de67fbd608f8bb1c81484101b9269f3\"},\"view\":{\"id\":\"e6ec88756f2be63c\",\"loading_type\":\"initial_load\",\"view_name\":\"VideoFlow - 分区页\",\"view_url\":\"http://127.0.0.1:8081/channels.html\",\"referrer\":\"\"},\"type\":\"page_performance\",\"level\":\"info\",\"plugin\":\"pagePerformance\"}",
+      "message": [
+        "{\"msg\":\"page_performance\",\"dnsLookup\":0,\"tcp\":0,\"ssl\":0,\"ttfb\":16,\"contentDownload\":0,\"domParse\":602,\"resourceDownload\":530,\"firstScreenTiming\":627,\"aegisv2_goto\":\"8f54dfc7dfe59fe8\",\"timestamp\":1791949053633}"
+      ]
+    }
+  ]
+}

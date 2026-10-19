@@ -1,0 +1,38 @@
+{
+  "space_uid": "bkcc__golden_tspider_fallback",
+  "result_tables": [
+    {
+      "table_id": "golden_tspider_fallback_table"
+    }
+  ],
+  "result_table_details": {
+    "golden_tspider_fallback_table": {
+      "storage_id": 3004,
+      "storage_name": "",
+      "storage_type": "bk_sql",
+      "cluster_name": "",
+      "db": "golden_tspider_fallback_table",
+      "table_id": "golden_tspider_fallback_table",
+      "measurement": "",
+      "fields": [
+        "events_total"
+      ],
+      "data_label": "golden_tspider_fallback_table",
+      "tags_key": [
+        "service",
+        "status"
+      ],
+      "source_type": "bkdata"
+    }
+  },
+  "data_labels": {
+    "golden_tspider_fallback_table": [
+      "golden_tspider_fallback_table"
+    ]
+  },
+  "storages": {
+    "3004": {
+      "type": "bk_sql"
+    }
+  }
+}

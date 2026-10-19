@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
@@ -22,13 +23,14 @@ import (
 // Client 标准consul读写
 type Client struct {
 	KV        *api.KV
-	Agent     *api.Agent
 	Session   *api.Session
 	apiClient *api.Client
 	auth      *AuthConfig
 
-	watchPlanMap       map[string]*watch.Plan
-	watchPrefixPlanMap map[string]*watch.Plan
+	watchMu            sync.Mutex
+	closed             bool
+	watchPlanMap       map[string][]*watch.Plan
+	watchPrefixPlanMap map[string][]*watch.Plan
 
 	// 链接相关信息
 	// address IP:Port
@@ -58,8 +60,8 @@ func NewClientWithAuth(address, caFile, keyFile, certFile string, auth *AuthConf
 			keyFilePath:        keyFile,
 			certFilePath:       certFile,
 			auth:               auth,
-			watchPlanMap:       make(map[string]*watch.Plan),
-			watchPrefixPlanMap: make(map[string]*watch.Plan),
+			watchPlanMap:       make(map[string][]*watch.Plan),
+			watchPrefixPlanMap: make(map[string][]*watch.Plan),
 		}
 	)
 
@@ -114,7 +116,6 @@ var GetAPI = func(client *Client) error {
 	}
 	client.Session = apiClient.Session()
 	client.KV = apiClient.KV()
-	client.Agent = apiClient.Agent()
 	client.apiClient = apiClient
 
 	return nil
@@ -127,114 +128,13 @@ var GetPlan = func(params map[string]any, outchan chan<- any) (*watch.Plan, erro
 		return nil, err
 	}
 	plan.Handler = func(num uint64, inter any) {
-		outchan <- inter
+		// Consumers reload a full snapshot, so coalesce pending notifications.
+		select {
+		case outchan <- inter:
+		default:
+		}
 	}
 	return plan, nil
-}
-
-// ServiceRegister 注册service,name既是ID
-func (bc *Client) ServiceRegister(serviceID, serviceName string, tags []string, address string, port int) error {
-	option := new(api.AgentServiceRegistration)
-
-	option.Name = serviceName
-	option.Tags = tags
-	option.Address = address
-	option.Port = port
-
-	option.ID = serviceID
-
-	err := bc.Agent.ServiceRegister(option)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// ServiceDeregister 注册service,name既是ID
-func (bc *Client) ServiceDeregister(serviceID string) error {
-	err := bc.Agent.ServiceDeregister(serviceID)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// ServiceAwake 测试service，若不存在则创建
-func (bc *Client) ServiceAwake(serviceID, serviceName string, tags []string, address string, port int) error {
-	_, options, err := bc.Agent.AgentHealthServiceByID(serviceID)
-	if options == nil && err == nil {
-		option := new(api.AgentServiceRegistration)
-
-		option.Name = serviceName
-		option.ID = serviceID
-		option.Tags = tags
-		option.Address = address
-		option.Port = port
-
-		err := bc.Agent.ServiceRegister(option)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	return nil
-}
-
-// CheckRegister 注册check
-func (bc *Client) CheckRegister(serviceID, checkID string, ttl string) error {
-	option := new(api.AgentCheckRegistration)
-	option.Name = checkID
-	option.TTL = ttl
-	option.ServiceID = serviceID
-
-	err := bc.Agent.CheckRegister(option)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// CheckDeregister 取消注册
-func (bc *Client) CheckDeregister(checkID string) error {
-	err := bc.Agent.CheckDeregister(checkID)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// CheckFail health state修改为fail
-func (bc *Client) CheckFail(checkID, note string) error {
-	err := bc.Agent.FailTTL(checkID, note)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// CheckPass health state修改为pass
-func (bc *Client) CheckPass(checkID, note string) error {
-	err := bc.Agent.PassTTL(checkID, note)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// CheckStatus :
-func (bc *Client) CheckStatus(checkID string) (string, error) {
-	checksMap, err := bc.Agent.ChecksWithFilter("Name==" + checkID)
-	if err != nil {
-		return "", err
-	}
-	var value string
-	res, ok := checksMap[checkID]
-	if !ok {
-		return "", ErrNoCheckIDFound
-	}
-	value = res.Status
-	return value, nil
 }
 
 // formatPrefix 给prefix加分隔符
@@ -339,11 +239,16 @@ func (bc *Client) makeWatchParams(path string, separator string) (map[string]any
 
 // addPlanIntoList 将plan添加到列表中
 func (bc *Client) addPlanIntoList(plan *watch.Plan, path string, separator string) error {
+	bc.watchMu.Lock()
+	defer bc.watchMu.Unlock()
+	if bc.closed {
+		return fmt.Errorf("consul client is closed")
+	}
 	if separator == "" {
-		bc.watchPlanMap[path] = plan
+		bc.watchPlanMap[path] = append(bc.watchPlanMap[path], plan)
 		return nil
 	}
-	bc.watchPrefixPlanMap[path] = plan
+	bc.watchPrefixPlanMap[path] = append(bc.watchPrefixPlanMap[path], plan)
 	return nil
 }
 
@@ -357,10 +262,13 @@ func (bc *Client) Watch(path string, separator string) (<-chan any, error) {
 		return nil, err
 	}
 	// 若监听到消息则向外输出
-	outChan := make(chan any)
+	outChan := make(chan any, 1)
 	// consulAPI提供的监听方案
 	plan, err := GetPlan(watchParams, outChan)
 	if err != nil {
+		return nil, err
+	}
+	if err := bc.addPlanIntoList(plan, path, separator); err != nil {
 		return nil, err
 	}
 	go func() {
@@ -374,25 +282,22 @@ func (bc *Client) Watch(path string, separator string) (<-chan any, error) {
 			}
 		}
 	}()
-	// 添加到队列里进行记录
-	err = bc.addPlanIntoList(plan, path, separator)
-	if err != nil {
-		return nil, err
-	}
 	return outChan, nil
 }
 
 // stopPlan 关闭plan，并且删除列表
-func (bc *Client) stopPlan(planMap map[string]*watch.Plan, path string) {
-	if !planMap[path].IsStopped() {
-		planMap[path].Stop()
+func (bc *Client) stopPlan(planMap map[string][]*watch.Plan, path string) {
+	for _, plan := range planMap[path] {
+		plan.Stop()
 	}
 	delete(planMap, path)
 }
 
 // StopWatch 停止对指定path的监听，plantype: path|prefix
 func (bc *Client) StopWatch(path string, planType string) error {
-	var planMap map[string]*watch.Plan
+	bc.watchMu.Lock()
+	defer bc.watchMu.Unlock()
+	var planMap map[string][]*watch.Plan
 	switch planType {
 	case "path":
 		planMap = bc.watchPlanMap
@@ -413,6 +318,9 @@ func (bc *Client) StopWatch(path string, planType string) error {
 
 // Close 停止该client下的所有监听
 func (bc *Client) Close() error {
+	bc.watchMu.Lock()
+	defer bc.watchMu.Unlock()
+	bc.closed = true
 	// 关闭所有监听
 	for path := range bc.watchPlanMap {
 		bc.stopPlan(bc.watchPlanMap, path)

@@ -1,0 +1,85 @@
+{
+  "space_uid": "bkcc__golden_vm_histogram",
+  "result_tables": [
+    {
+      "table_id": "demo_histogram.partition_1"
+    },
+    {
+      "table_id": "demo_histogram.partition_2"
+    },
+    {
+      "table_id": "demo_histogram.partition_3"
+    },
+    {
+      "table_id": "demo_histogram.partition_4"
+    }
+  ],
+  "result_table_details": {
+    "demo_histogram.partition_1": {
+      "storage_id": 910001,
+      "storage_name": "vm_cluster_histogram_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_histogram_1",
+      "table_id": "demo_histogram.partition_1",
+      "measurement": "request_duration_bucket",
+      "vm_rt": "vm_rt_demo_histogram_partition_1",
+      "fields": [
+        "request_duration_bucket"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_histogram.partition_2": {
+      "storage_id": 910001,
+      "storage_name": "vm_cluster_histogram_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_histogram_1",
+      "table_id": "demo_histogram.partition_2",
+      "measurement": "request_duration_bucket",
+      "vm_rt": "vm_rt_demo_histogram_partition_2",
+      "fields": [
+        "request_duration_bucket"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_histogram.partition_3": {
+      "storage_id": 910001,
+      "storage_name": "vm_cluster_histogram_1",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_histogram_1",
+      "table_id": "demo_histogram.partition_3",
+      "measurement": "request_duration_bucket",
+      "vm_rt": "vm_rt_demo_histogram_partition_3",
+      "fields": [
+        "request_duration_bucket"
+      ],
+      "measurement_type": "bk_split_measurement"
+    },
+    "demo_histogram.partition_4": {
+      "storage_id": 910002,
+      "storage_name": "vm_cluster_histogram_2",
+      "storage_type": "victoria_metrics",
+      "cluster_name": "vm_cluster_histogram_2",
+      "table_id": "demo_histogram.partition_4",
+      "measurement": "request_duration_bucket",
+      "vm_rt": "vm_rt_demo_histogram_partition_4",
+      "fields": [
+        "request_duration_bucket"
+      ],
+      "measurement_type": "bk_split_measurement"
+    }
+  },
+  "storages": {
+    "910001": {
+      "type": "victoria_metrics"
+    },
+    "910002": {
+      "type": "victoria_metrics"
+    }
+  },
+  "must_vm_table_ids": [
+    "demo_histogram.partition_1",
+    "demo_histogram.partition_2",
+    "demo_histogram.partition_3",
+    "demo_histogram.partition_4"
+  ]
+}

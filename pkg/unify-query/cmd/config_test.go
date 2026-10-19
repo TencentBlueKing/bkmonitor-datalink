@@ -167,4 +167,20 @@ func TestResetFeatureFlagsCommand(t *testing.T) {
 	if !strings.Contains(output.String(), "snapshot deleted") || strings.Contains(output.String(), "test-secret") {
 		t.Fatalf("unexpected command output: %q", output.String())
 	}
+
+	if err := os.WriteFile(configFile, []byte(configData+"consul:\n  enabled: false\nstorage:\n  source: redis\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mr.DB(3).Set(key, "preserved snapshot")
+	output.Reset()
+	rootCmd.SetArgs([]string{"--config", configFile, "config", "reset-feature-flags"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("legacy consul.enabled=false must not prevent reset: %v", err)
+	}
+	if mr.DB(3).Exists(key) {
+		t.Fatal("reset must delete the snapshot even with legacy consul.enabled=false")
+	}
+	if _, err := subscription.ReceiveMessage(ctx); err != nil {
+		t.Fatalf("missing reset notification with legacy configuration: %v", err)
+	}
 }

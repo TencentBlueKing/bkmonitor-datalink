@@ -65,6 +65,24 @@ func excludeElasticsearchIndexPrefixMissingQueries(ctx context.Context, queryRef
 	})
 }
 
+// filterRawRoutesForExactTotal keeps the existing warn-and-skip of ES routes without an index prefix, except when an
+// exact total was requested: then a skipped route would make the attested total cover only part of the data, so the
+// request fails instead.
+func filterRawRoutesForExactTotal(ctx context.Context, queryRef metadata.QueryReference, queryTs *structured.QueryTs) (metadata.QueryReference, error) {
+	if exactTotalRequested(queryTs) {
+		missing := false
+		queryRef.Range("", func(qry *metadata.Query) {
+			if qry.IsElasticsearchIndexPrefixMissing() {
+				missing = true
+			}
+		})
+		if missing {
+			return nil, fmt.Errorf("ES exact total route is missing an index prefix")
+		}
+	}
+	return excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil), nil
+}
+
 func parseLookBackDelta(s string) (time.Duration, error) {
 	duration, err := model.ParseDuration(s)
 	if err == nil {
@@ -216,6 +234,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 		errorMessage   strings.Builder
 		successedPaths atomic.Uint32
+		skippedRoutes  atomic.Uint32
 		lock           sync.Mutex
 
 		allLabelMap  = make(map[string][]function.LabelMapValue)
@@ -228,7 +247,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	if err != nil {
 		return total, list, resultTableOptions, routeInfo, err
 	}
-	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
+	queryRef, err = filterRawRoutesForExactTotal(ctx, queryRef, queryTs)
+	if err != nil {
+		return total, list, resultTableOptions, routeInfo, err
+	}
 	// IsSearchAfter is deliberately scoped to the raw execution path. QueryTs is
 	// also used by time-series/reference endpoints, where Doris must keep its
 	// normal aggregate/series query behavior.
@@ -378,7 +400,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		receiveWg.Wait()
 		if errorMessage.Len() > 0 {
 			partialDetail := strings.TrimSpace(errorMessage.String())
-			if successedPaths.Load() > 0 {
+			if successedPaths.Load() > 0 && !exactTotalRequested(queryTs) {
 				span.Set("partial_errors", partialDetail)
 				const warnPrefix = "查询原始数据部分失败: "
 				fullMsg := warnPrefix + partialDetail
@@ -417,6 +439,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
 			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
 				if !hasRawPaginationCursor(localQry.ResultTableOption) {
+					skippedRoutes.Add(1)
 					return
 				}
 			}
@@ -493,7 +516,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 
 	if errorMessage.Len() > 0 {
 		partialDetail := strings.TrimSpace(errorMessage.String())
-		if successedPaths.Load() > 0 {
+		if successedPaths.Load() > 0 && !exactTotalRequested(queryTs) {
 			err = nil
 			span.Set("partial_errors", partialDetail)
 			const warnPrefix = "查询原始数据部分失败: "
@@ -508,6 +531,12 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 				"查询原始数据报错",
 			).Error(ctx, errors.New(partialDetail))
 		}
+	}
+
+	// A total summed over routes is exact only if every route answered: a failed route, or a finished route that
+	// search_after skipped on this page, leaves its hits out of the total.
+	if err == nil && exactTotalRequested(queryTs) && skippedRoutes.Load() > 0 {
+		err = fmt.Errorf("ES exact total unavailable: %d route(s) were not queried on this page", skippedRoutes.Load())
 	}
 
 	return total, list, resultTableOptions, routeInfo, err

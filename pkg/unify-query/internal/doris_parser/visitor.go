@@ -36,6 +36,7 @@ const (
 	WhereItem  = "WHERE"
 	OrderItem  = "ORDER BY"
 	GroupItem  = "GROUP BY"
+	HavingItem = "HAVING"
 	LimitItem  = "LIMIT"
 	OffsetItem = "OFFSET"
 
@@ -614,10 +615,11 @@ func (v *Statement) collectUnionDependencyFields(selectSQL string) unionDependen
 		addAlias(aliases, alias)
 	}
 
-	// GROUP/ORDER 可能引用 SELECT alias；这些 alias 不是内层 UNION 分支
+	// GROUP/HAVING/ORDER 可能引用 SELECT alias；这些 alias 不是内层 UNION 分支
 	// 需要投影的源字段，收集依赖时必须跳过。
 	projection := collectUnionProjectionFields(selectSQL, nil)
 	projection = append(projection, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
+	projection = append(projection, collectUnionProjectionFields(v.ItemString(HavingItem), aliases)...)
 	projection = append(projection, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
 	projection = appendMinuteBucketUnionDependencies(v.Tables, projection, v.TableFieldsMap)
 
@@ -1676,6 +1678,10 @@ func isASClauseAt(s string, idx int) bool {
 	return idx+len(" AS ") <= len(s) && strings.EqualFold(s[idx:idx+len(" AS ")], " AS ")
 }
 
+// joinWhereConditions ANDs non-empty conditions. With more than one, each is always wrapped in parentheses:
+// deciding that a condition "is already parenthesized" means scanning SQL text (quotes, escapes, identifiers),
+// and a wrong answer silently changes precedence, e.g. a user OR escaping the injected time range. A redundant
+// pair of parentheses is harmless.
 func joinWhereConditions(conditions ...string) string {
 	list := make([]string, 0, len(conditions))
 	for _, condition := range conditions {
@@ -1688,47 +1694,9 @@ func joinWhereConditions(conditions ...string) string {
 		return strings.Join(list, "")
 	}
 	for i, condition := range list {
-		list[i] = parenthesizedWhereCondition(condition)
+		list[i] = fmt.Sprintf("(%s)", condition)
 	}
 	return strings.Join(list, " AND ")
-}
-
-func parenthesizedWhereCondition(condition string) string {
-	if isParenthesizedWhereCondition(condition) {
-		return condition
-	}
-	return fmt.Sprintf("(%s)", condition)
-}
-
-func isParenthesizedWhereCondition(condition string) bool {
-	if len(condition) < 2 || condition[0] != '(' || condition[len(condition)-1] != ')' {
-		return false
-	}
-
-	depth := 0
-	inString := false
-	for i := 0; i < len(condition); i++ {
-		switch condition[i] {
-		case '\'':
-			if inString && i+1 < len(condition) && condition[i+1] == '\'' {
-				i++
-				continue
-			}
-			inString = !inString
-		case '(':
-			if !inString {
-				depth++
-			}
-		case ')':
-			if !inString {
-				depth--
-				if depth == 0 && i != len(condition)-1 {
-					return false
-				}
-			}
-		}
-	}
-	return depth == 0 && !inString
 }
 
 func (v *Statement) String() string {
@@ -1743,7 +1711,7 @@ func (v *Statement) String() string {
 		return renderedWhere
 	}
 
-	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
+	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, HavingItem, OrderItem, LimitItem} {
 		res := ""
 		if name == WhereItem && whereRendered {
 			res = renderedWhere
@@ -1791,11 +1759,9 @@ func (v *Statement) String() string {
 			}
 
 			if v.Where != "" {
-				if res == "" {
-					res = v.Where
-				} else {
-					res = fmt.Sprintf("%s AND %s", res, v.Where)
-				}
+				// 用户条件与注入条件各自加括号再合并：用户条件含 OR 时，直接用 AND 拼接会让注入的时间条件
+				// 只约束最后一个 OR 分支。
+				res = joinWhereConditions(res, v.Where)
 			}
 		case LimitItem:
 			key = ""
@@ -1868,6 +1834,12 @@ func (v *Statement) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.AggClauseContext:
 		v.nodeMap[GroupItem] = &AggNode{}
 		next = v.nodeMap[GroupItem]
+	case *gen.HavingClauseContext:
+		// HAVING 此前没有实现，整个子句被丢弃，分组过滤静默失效；条件与 WHERE 用同一套节点。
+		v.nodeMap[HavingItem] = &WhereNode{
+			LogicInc: &LogicNodesInc{},
+		}
+		next = v.nodeMap[HavingItem]
 	case *gen.SortClauseContext:
 		v.nodeMap[OrderItem] = &SortNode{}
 		next = v.nodeMap[OrderItem]
@@ -2106,6 +2078,9 @@ func (v *WhereNode) String() string {
 		switch n.(type) {
 		case *LogicNode:
 			v.LogicInc.Append(nodeToString(n))
+		case *NotNode:
+			// NOT 是其后条件的前缀，不能消耗挂起的 AND / OR。
+			list = append(list, nodeToString(n))
 		default:
 			v.LogicInc.Inc(n)
 			item := nodeToString(n)
@@ -2134,6 +2109,9 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) any {
 				Name: strings.ToUpper(n.GetOperator().GetText()),
 			},
 		})
+	case *gen.LogicalNotContext:
+		// 丢掉 NOT 会静默反转过滤条件；! 与 NOT 同义，统一输出 NOT。
+		v.add(&NotNode{})
 	case *gen.ParenthesizedExpressionContext:
 		v.add(&LeftParenNode{})
 		defer func() {
@@ -2151,6 +2129,14 @@ func (v *WhereNode) VisitChildren(ctx antlr.RuleNode) any {
 		next = on
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
+}
+
+type NotNode struct {
+	baseNode
+}
+
+func (v *NotNode) String() string {
+	return "NOT"
 }
 
 type LeftParenNode struct {
@@ -2281,6 +2267,10 @@ type OperatorNode struct {
 func (v *OperatorNode) String() string {
 	left := nodeToString(v.Left)
 	op := nodeToString(v.Op)
+	if _, ok := v.Op.(*PredicateNode); ok {
+		// BETWEEN / IN / LIKE / IS ... render their own operands in order
+		return fmt.Sprintf("%s %s", left, op)
+	}
 	right := nodeToString(v.Right)
 
 	if strings.ToUpper(op) == "IN" {
@@ -2323,13 +2313,85 @@ func (v *OperatorNode) VisitChildren(ctx antlr.RuleNode) any {
 			}
 			next = v.Left
 		} else if v.Right == nil {
-			v.Right = &ValueNode{}
+			// 右操作数与左操作数一样是表达式：此前按常量列表处理，右侧的列被整个丢掉（a = b 渲染成 a =）。
+			v.Right = &FieldNode{
+				exprType: whereCtxType,
+			}
 			next = v.Right
 		} else {
 			next = v.Right
 		}
+	case *gen.ArithmeticBinaryContext:
+		// 比较两侧的算术子式整体作为一个操作数，否则其运算符和操作数会被拆进比较运算符与右值，
+		// 如 a * 2 > 2 渲染成 a * > 2, 2。
+		if v.Left == nil {
+			v.Left = &BinaryNode{}
+			next = v.Left
+		} else if v.Right == nil {
+			v.Right = &BinaryNode{}
+			next = v.Right
+		}
+	case *gen.PredicateContext:
+		// BETWEEN x AND y、[NOT] IN (...)、LIKE p ESCAPE e、IS [NOT] NULL 等按原顺序输出关键字与操作数；
+		// 此前把关键字拼成运算符、操作数拼成逗号列表，BETWEEN 变成 BETWEEN AND 1, 5，NOT IN 丢了括号。
+		pn := &PredicateNode{}
+		v.Op = pn
+		next = pn
+	case *gen.ArithmeticUnaryContext:
+		if v.Left == nil {
+			v.Left = &UnaryNode{}
+			next = v.Left
+		} else if v.Right == nil {
+			v.Right = &UnaryNode{}
+			next = v.Right
+		}
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
+}
+
+// PredicateNode renders a predicate tail as written: its keywords, punctuation and operand expressions in order.
+type PredicateNode struct {
+	baseNode
+
+	items []Node
+}
+
+func (v *PredicateNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	for _, item := range v.items {
+		item.WithAliasScope(aliases)
+	}
+}
+
+func (v *PredicateNode) VisitTerminal(node antlr.TerminalNode) any {
+	v.items = append(v.items, &StringNode{Name: node.GetText()})
+	return nil
+}
+
+func (v *PredicateNode) VisitChildren(ctx antlr.RuleNode) any {
+	operand := &FieldNode{exprType: whereCtxType}
+	operand.WithAddIgnoreField(v.AddIgnoreField)
+	operand.WithEncode(v.Encode)
+	operand.WithAliasScope(v.aliasScope)
+	v.items = append(v.items, operand)
+	return operand.VisitChildren(ctx)
+}
+
+func (v *PredicateNode) String() string {
+	var b strings.Builder
+	prev := ""
+	for _, item := range v.items {
+		s := nodeToString(item)
+		if s == "" {
+			continue
+		}
+		if b.Len() > 0 && prev != "(" && s != ")" && s != "," {
+			b.WriteString(" ")
+		}
+		b.WriteString(s)
+		prev = s
+	}
+	return b.String()
 }
 
 type TableNode struct {
@@ -2524,6 +2586,11 @@ func (v *FieldNode) String() string {
 }
 
 func (v *FieldNode) VisitChildren(ctx antlr.RuleNode) any {
+	if v.node == nil && isBooleanExpression(ctx) {
+		bn := newBoolExprNode(v.baseNode)
+		v.node = bn
+		return bn.start(ctx)
+	}
 	next := visitFieldNode(ctx, v)
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
 }
@@ -2559,6 +2626,14 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 			v.Right = &BinaryNode{}
 			next = v.Right
 		}
+	case *gen.ArithmeticUnaryContext:
+		if v.Op == nil {
+			v.Left = &UnaryNode{}
+			next = v.Left
+		} else {
+			v.Right = &UnaryNode{}
+			next = v.Right
+		}
 	case *gen.ValueExpressionDefaultContext:
 		// 算术子式中的列（含函数参数内的 dt/3600 等）应只做物理列映射，不应套用 SELECT 列表的「列 AS 展示名」规则。
 		if v.Op == nil {
@@ -2581,6 +2656,189 @@ func (v *BinaryNode) VisitChildren(ctx antlr.RuleNode) any {
 		}
 	}
 	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, next, ctx)
+}
+
+// ParenExprNode 保留表达式中的括号分组；去掉括号会改变运算优先级，如 (a + 0) / 60000。
+// 括号内按算术子式处理，列只做物理列映射，不套用 SELECT 列表的「列 AS 展示名」规则。
+type ParenExprNode struct {
+	baseNode
+
+	node *FieldNode
+}
+
+func (v *ParenExprNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	if v.node != nil {
+		v.node.WithAliasScope(aliases)
+	}
+}
+
+func (v *ParenExprNode) String() string {
+	inner := nodeToString(v.node)
+	if inner == "" {
+		return ""
+	}
+	return fmt.Sprintf("(%s)", inner)
+}
+
+func (v *ParenExprNode) VisitChildren(ctx antlr.RuleNode) any {
+	if v.node == nil {
+		v.node = &FieldNode{exprType: whereCtxType}
+	}
+	return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, v.node, ctx)
+}
+
+// UnaryNode keeps a unary + / - (and ~). Dropping it changes the value: -a was rendered as a.
+// The operand is an arithmetic sub-expression: columns get the physical mapping without "AS".
+type UnaryNode struct {
+	baseNode
+
+	Op   string
+	node *FieldNode
+}
+
+func (v *UnaryNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	if v.node != nil {
+		v.node.WithAliasScope(aliases)
+	}
+}
+
+func (v *UnaryNode) String() string {
+	operand := nodeToString(v.node)
+	if operand == "" {
+		return ""
+	}
+	if _, grouped := v.node.node.(*ParenExprNode); grouped {
+		// -(a + b): the operand already keeps its own parentheses
+		return v.Op + operand
+	}
+	if strings.ContainsAny(operand, " (") || strings.HasPrefix(operand, "-") || strings.HasPrefix(operand, "+") {
+		// keep the operand whole: -(a + b), -(FLOOR(x)); and never emit "--", which starts a comment
+		operand = fmt.Sprintf("(%s)", operand)
+	}
+	return v.Op + operand
+}
+
+func (v *UnaryNode) VisitTerminal(node antlr.TerminalNode) any {
+	if v.Op == "" {
+		v.Op = node.GetText()
+	}
+	return nil
+}
+
+func (v *UnaryNode) VisitChildren(ctx antlr.RuleNode) any {
+	if v.node == nil {
+		v.node = &FieldNode{exprType: whereCtxType}
+	}
+	v.node.WithAddIgnoreField(v.AddIgnoreField)
+	v.node.WithEncode(v.Encode)
+	v.node.WithAliasScope(v.aliasScope)
+	return v.node.VisitChildren(ctx)
+}
+
+// isBooleanExpression reports a condition used as a value: a comparison, a predicate (IN, BETWEEN, LIKE,
+// IS NULL ...) or AND / OR / NOT. Field, function and CASE nodes must not take such an expression apart:
+// SELECT a = 1 used to render as a[1] and IF(a > 1, 1, 0) as IF(a, 1, 1, 0).
+func isBooleanExpression(ctx antlr.RuleNode) bool {
+	switch c := ctx.(type) {
+	case *gen.LogicalBinaryContext, *gen.LogicalNotContext:
+		return true
+	case *gen.PredicatedContext:
+		if c.Predicate() != nil {
+			return true
+		}
+		_, comparison := c.ValueExpression().(*gen.ComparisonContext)
+		return comparison
+	}
+	return false
+}
+
+// BoolExprNode renders a condition used as a value with the same nodes as WHERE.
+type BoolExprNode struct {
+	baseNode
+
+	cond *WhereNode
+}
+
+func (v *BoolExprNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	if v.cond != nil {
+		v.cond.WithAliasScope(aliases)
+	}
+}
+
+func (v *BoolExprNode) String() string {
+	return strings.TrimSpace(nodeToString(v.cond))
+}
+
+// start visits the condition from its own context, so the condition nodes see AND / OR themselves.
+func (v *BoolExprNode) start(ctx antlr.RuleNode) any {
+	v.cond = &WhereNode{LogicInc: &LogicNodesInc{}}
+	v.cond.WithAddIgnoreField(v.AddIgnoreField)
+	v.cond.WithEncode(v.Encode)
+	v.cond.WithAliasScope(v.aliasScope)
+	return v.cond.VisitChildren(ctx)
+}
+
+func newBoolExprNode(parent baseNode) *BoolExprNode {
+	n := &BoolExprNode{}
+	n.WithAddIgnoreField(parent.AddIgnoreField)
+	n.WithEncode(parent.Encode)
+	n.WithAliasScope(parent.aliasScope)
+	return n
+}
+
+// SequenceNode renders a construct as written: its keywords and its operand expressions in order. Used for
+// CASE <value> WHEN ... THEN ... END, which used to render as a[1]['x']['y'].
+type SequenceNode struct {
+	baseNode
+
+	items []Node
+}
+
+func (v *SequenceNode) WithAliasScope(aliases map[string]struct{}) {
+	v.aliasScope = aliases
+	for _, item := range v.items {
+		item.WithAliasScope(aliases)
+	}
+}
+
+func (v *SequenceNode) VisitTerminal(node antlr.TerminalNode) any {
+	v.items = append(v.items, &StringNode{Name: node.GetText()})
+	return nil
+}
+
+func (v *SequenceNode) VisitChildren(ctx antlr.RuleNode) any {
+	if _, ok := ctx.(*gen.WhenClauseContext); ok {
+		// WHEN <value> THEN <result>: keep its own keywords and operands in order
+		arm := &SequenceNode{}
+		v.items = append(v.items, arm)
+		return visitChildren(v.AddIgnoreField, v.Encode, v.aliasScope, arm, ctx)
+	}
+	operand := &FieldNode{exprType: whereCtxType}
+	operand.WithAddIgnoreField(v.AddIgnoreField)
+	operand.WithEncode(v.Encode)
+	operand.WithAliasScope(v.aliasScope)
+	v.items = append(v.items, operand)
+	return operand.VisitChildren(ctx)
+}
+
+func (v *SequenceNode) String() string {
+	var b strings.Builder
+	prev := ""
+	for _, item := range v.items {
+		s := nodeToString(item)
+		if s == "" {
+			continue
+		}
+		if b.Len() > 0 && prev != "(" && s != ")" && s != "," {
+			b.WriteString(" ")
+		}
+		b.WriteString(s)
+		prev = s
+	}
+	return b.String()
 }
 
 type FunctionNode struct {
@@ -2632,6 +2890,12 @@ func (v *FunctionNode) VisitTerminal(ctx antlr.TerminalNode) any {
 }
 
 func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
+	if isBooleanExpression(ctx) {
+		// IF(a > 1, ...), COUNT_IF(a > 1): the condition is one argument
+		bn := newBoolExprNode(v.baseNode)
+		v.Values = append(v.Values, bn)
+		return bn.start(ctx)
+	}
 	var next Node
 	next = v
 
@@ -2640,10 +2904,18 @@ func (v *FunctionNode) VisitChildren(ctx antlr.RuleNode) any {
 		sn := &SearchCaseNode{}
 		v.Values = append(v.Values, sn)
 		next = sn
+	case *gen.SimpleCaseContext:
+		sq := &SequenceNode{}
+		v.Values = append(v.Values, sq)
+		next = sq
 	case *gen.ArithmeticBinaryContext:
 		bn := &BinaryNode{}
 		v.Values = append(v.Values, bn)
 		next = bn
+	case *gen.ArithmeticUnaryContext:
+		un := &UnaryNode{}
+		v.Values = append(v.Values, un)
+		next = un
 	case *gen.CastContext:
 		bn := &CastNode{}
 		v.Values = append(v.Values, bn)
@@ -2706,6 +2978,12 @@ func (v *SearchCaseNode) VisitTerminal(ctx antlr.TerminalNode) any {
 }
 
 func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
+	if isBooleanExpression(ctx) {
+		// WHEN a IN (...) / a IS NULL / NOT ... / a > 1 AND b < 2: the condition is one node
+		bn := newBoolExprNode(v.baseNode)
+		v.nodes = append(v.nodes, bn)
+		return bn.start(ctx)
+	}
 	var next Node
 	next = v
 
@@ -2714,6 +2992,15 @@ func (v *SearchCaseNode) VisitChildren(ctx antlr.RuleNode) any {
 		bn := &BinaryNode{}
 		v.nodes = append(v.nodes, bn)
 		next = bn
+	case *gen.ArithmeticUnaryContext:
+		un := &UnaryNode{}
+		v.nodes = append(v.nodes, un)
+		next = un
+
+	case *gen.SimpleCaseContext:
+		sq := &SequenceNode{}
+		v.nodes = append(v.nodes, sq)
+		next = sq
 	case *gen.CastContext:
 		bn := &CastNode{}
 		v.nodes = append(v.nodes, bn)
@@ -2768,6 +3055,9 @@ func (v *CastNode) VisitChildren(ctx antlr.RuleNode) any {
 	case *gen.ArithmeticBinaryContext:
 		// CAST(FLOOR(x)*n AS T) 的内层是乘法，必须先建 BinaryNode，否则 n 会按 ConstantDefaultContext 被追加到 FLOOR 的 FunctionNode 上。
 		v.Value = &BinaryNode{}
+		next = v.Value
+	case *gen.ArithmeticUnaryContext:
+		v.Value = &UnaryNode{}
 		next = v.Value
 	case *gen.FunctionCallContext:
 		v.Value = &FunctionNode{}
@@ -2908,6 +3198,20 @@ func visitFieldNode(ctx antlr.RuleNode, node *FieldNode) Node {
 		next = node.node
 	case *gen.SearchedCaseContext:
 		node.node = &SearchCaseNode{}
+		next = node.node
+	case *gen.ParenthesizedExpressionContext:
+		// 只在子式（算术操作数、条件操作数）里保留括号；SELECT / GROUP BY / ORDER BY 项最外层的括号
+		// 不影响结果，沿用原有渲染（如 DISTINCT(a) 由 SelectNode 自行加括号）。
+		if node.exprType == whereCtxType {
+			node.node = &ParenExprNode{}
+			next = node.node
+		}
+	case *gen.ArithmeticUnaryContext:
+		node.node = &UnaryNode{}
+		next = node.node
+
+	case *gen.SimpleCaseContext:
+		node.node = &SequenceNode{}
 		next = node.node
 	case *gen.ArithmeticBinaryContext:
 		node.node = &BinaryNode{}

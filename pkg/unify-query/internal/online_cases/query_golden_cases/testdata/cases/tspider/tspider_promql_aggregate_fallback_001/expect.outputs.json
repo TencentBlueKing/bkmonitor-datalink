@@ -1,0 +1,18 @@
+[
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "sql": "SHOW CREATE TABLE `golden_tspider_fallback_table`"
+    }
+  },
+  {
+    "backend": "bkbase",
+    "method": "POST",
+    "path": "/query_sync/",
+    "body": {
+      "sql": "SELECT *, `events_total` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `golden_tspider_fallback_table` WHERE `dtEventTimeStamp` >= 1784701559999 AND `dtEventTimeStamp` < 1784703659999 AND `dtEventTime` >= '2026-07-22 14:25:59' AND `dtEventTime` <= '2026-07-22 15:01:00' AND `thedate` = '20260722' ORDER BY `_timestamp_` ASC LIMIT 2000005"
+    }
+  }
+]

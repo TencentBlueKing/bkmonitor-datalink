@@ -110,9 +110,7 @@ func (s *httpService) ExportCollect(w http.ResponseWriter, req *http.Request) {
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte(collectResponseEmpty))
 }
 
-// requestToken 优先使用 tokenparser 识别的标准 token 请求头；Aegis SDK 开启
-// addXTopicKey 时以 X-Topic-Key 上报应用标识，入口层未改写时用它回退，
-// 否则 record.Token 为空会导致应用子配置无法命中，aes256 配置下直接 401。
+// requestToken 优先使用标准 token 请求头，缺失时回退 Aegis SDK 的 X-Topic-Key。
 func requestToken(req *http.Request) string {
 	if token := tokenparser.FromHttpRequest(req); token != "" {
 		return token

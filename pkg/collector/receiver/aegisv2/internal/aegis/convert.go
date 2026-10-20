@@ -36,10 +36,9 @@ type spanConverter struct {
 	spans   ptrace.SpanSlice
 	traceID pcommon.TraceID
 	now     pcommon.Timestamp
-	// actionSpans 按非空 Action ID 关联已生成的 Span，供 Session 插件的
-	// Action 结束记录补写结束时间，同时承担同批去重。
+	// actionSpans 按 Action ID 去重，并保存待补写结束时间的 Span。
 	actionSpans map[string]ptrace.Span
-	// actionStarts 记录 Session 插件 Action 开始消息的时间戳，用于计算耗时。
+	// actionStarts 记录 Action 开始消息的时间戳。
 	actionStarts map[string]int64
 }
 

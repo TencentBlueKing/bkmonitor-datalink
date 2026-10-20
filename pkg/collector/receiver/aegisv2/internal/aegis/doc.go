@@ -90,6 +90,7 @@
 // 其余请求失败 -> error，正常 -> success。HTTP 状态错误本身不创建异常 Event。
 // JS/Promise/资源错误写 error.source/handled/message 和 code.*，异常详情写入
 // 名为 exception 的 Event（exception.type/message/stacktrace），设置 Status ERROR。
+// SDK aegis.error() 上报 level=custom_error，按 window.error 处理。
 // 不再把 exception.* 放在 Span 顶层 Attributes。
 //
 // View：首次加载的 referrer -> view.referrer；路由切换的 referrer ->

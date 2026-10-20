@@ -16,9 +16,7 @@ package aegis
 //   - view/session/ws...：阶段值
 //   - resource/error/...type/...name：分类值或固定字符串
 
-// -----------------------------------------------------------------------------
 // Span 名称（写入 Span.Name）
-// -----------------------------------------------------------------------------
 
 const (
 	spanViewStart  = "start"
@@ -27,15 +25,11 @@ const (
 	spanNetProtocolWS = "websocket"
 )
 
-// -----------------------------------------------------------------------------
 // Span Event 名称（写入 Event.Name）
-// -----------------------------------------------------------------------------
 
 const eventNameException = "exception"
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：公共与 SDK
-// -----------------------------------------------------------------------------
 
 const (
 	attrTelemetrySDKName    = "telemetry.sdk.name"
@@ -52,9 +46,7 @@ const (
 	scopeName    = "aegisv2.collect"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：URL 与服务端
-// -----------------------------------------------------------------------------
 
 const (
 	attrURLFull       = "url.full"
@@ -71,18 +63,14 @@ const (
 	urlTemplateRoot = "/"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：HTTP
-// -----------------------------------------------------------------------------
 
 const (
 	attrHTTPRequestMethod      = "http.request.method"
 	attrHTTPResponseStatusCode = "http.response.status_code"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：资源
-// -----------------------------------------------------------------------------
 
 const (
 	attrResourceProtocol        = "resource.protocol"
@@ -109,9 +97,7 @@ const (
 	resourceTypeFetch  = "fetch"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：错误与异常
-// -----------------------------------------------------------------------------
 
 const (
 	attrErrorSource         = "error.source"
@@ -124,9 +110,7 @@ const (
 	attrExceptionStacktrace = "exception.stacktrace"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：视图与会话
-// -----------------------------------------------------------------------------
 
 const (
 	attrSessionHasReplay     = "session.has_replay"
@@ -150,9 +134,7 @@ const (
 	attrViewLoadEvent        = "view.load_event"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：网络与浏览器
-// -----------------------------------------------------------------------------
 
 const (
 	attrNetworkProtocolName   = "network.protocol.name"
@@ -165,27 +147,21 @@ const (
 	attrScreenHeight          = "browser.screen.height"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：WebSocket
-// -----------------------------------------------------------------------------
 
 const (
 	attrWebsocketPhase  = "websocket.phase"
 	attrWebsocketConnID = "websocket.connection.id"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：Action 与 Custom
-// -----------------------------------------------------------------------------
 
 const (
 	attrActionType       = "action.type"
 	attrActionTargetName = "action.target.name"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：Vital
-// -----------------------------------------------------------------------------
 
 const (
 	attrVitalMetric = "vital.metric"
@@ -193,9 +169,7 @@ const (
 	attrVitalID     = "vital.id"
 )
 
-// -----------------------------------------------------------------------------
 // OTel attribute keys：Span Link
-// -----------------------------------------------------------------------------
 
 const (
 	attrLinkFormat        = "format"
@@ -203,9 +177,7 @@ const (
 	linkFormatTraceparent = "traceparent"
 )
 
-// -----------------------------------------------------------------------------
 // Outcome 值（写入 outcome.type）
-// -----------------------------------------------------------------------------
 
 const (
 	outcomeSuccess = "success"
@@ -214,9 +186,7 @@ const (
 	outcomeAbort   = "abort"
 )
 
-// -----------------------------------------------------------------------------
 // 事件类型（d2[].fields.type 与消息别名）
-// -----------------------------------------------------------------------------
 
 const (
 	eventTypeWebVitals       = "web_vitals"
@@ -234,9 +204,7 @@ const (
 	eventTypeAssetSpeed = "asset_speed"
 )
 
-// -----------------------------------------------------------------------------
 // 插件标识（d2[].fields.plugin）
-// -----------------------------------------------------------------------------
 
 const (
 	pluginSPA       = "spa"
@@ -244,9 +212,7 @@ const (
 	pluginError     = "error"
 )
 
-// -----------------------------------------------------------------------------
 // 错误来源（fields.level 与推导的 error.source）
-// -----------------------------------------------------------------------------
 
 const (
 	sourceUnhandledRejection = "unhandledrejection"
@@ -262,6 +228,8 @@ const (
 	levelUnhandledRejection = "unhandledrejection"
 	levelResourceError      = "resource_error"
 	levelAssetError         = "asset_error"
+	// levelCustomError 是 SDK aegis.error() 上报的错误等级。
+	levelCustomError = "custom_error"
 )
 
 // 决定 Resource outcome 的错误名。
@@ -277,17 +245,13 @@ const (
 	exceptionTypeDefault            = "Error"
 )
 
-// -----------------------------------------------------------------------------
 // 视图阶段与加载类型
-// -----------------------------------------------------------------------------
 
 const (
 	viewLoadingTypeInitial = "initial_load"
 )
 
-// -----------------------------------------------------------------------------
 // 会话阶段与会话来源
-// -----------------------------------------------------------------------------
 
 const (
 	sessionPhaseStart        = "start"
@@ -296,16 +260,13 @@ const (
 	sessionFromLocalGenerate = "local_generate"
 )
 
-// Session 插件 message.session_type 的事件种类。aegis-web-sdk-v2 2.5.38/2.6.12
-// 起统一上报 fields.type=session，旧版的 start/rotate/end 值视为阶段别名。
+// 会话消息种类（message.session_type）
 const (
 	sessionKindView   = "view"
 	sessionKindAction = "action"
 )
 
-// -----------------------------------------------------------------------------
 // WebSocket 阶段
-// -----------------------------------------------------------------------------
 
 const (
 	wsPhaseConnect = "connect"
@@ -314,9 +275,7 @@ const (
 	wsPhaseClose   = "close"
 )
 
-// -----------------------------------------------------------------------------
 // Action 与 Custom 命名
-// -----------------------------------------------------------------------------
 
 const (
 	actionTypeCustom  = "custom"
@@ -327,9 +286,7 @@ const (
 	customNamePrefix  = "custom."
 )
 
-// -----------------------------------------------------------------------------
 // Span Link：W3C traceparent 格式
-// -----------------------------------------------------------------------------
 
 const (
 	traceparentVersion    = "00"
@@ -338,9 +295,7 @@ const (
 	traceparentFlagsLen   = 2
 )
 
-// -----------------------------------------------------------------------------
 // HTTP 状态码与判定阈值
-// -----------------------------------------------------------------------------
 
 const (
 	statusRequestTimeout = 408
@@ -348,9 +303,7 @@ const (
 	statusErrorThreshold = 400
 )
 
-// -----------------------------------------------------------------------------
 // 网络类型（bean.netType 归一化后值）
-// -----------------------------------------------------------------------------
 
 const (
 	netWired        = "wired"

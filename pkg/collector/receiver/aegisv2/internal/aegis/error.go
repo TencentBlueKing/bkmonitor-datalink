@@ -109,7 +109,8 @@ func (e aegisEvent) exceptionType() string {
 func isErrorLevel(level string) bool {
 	switch strings.ToLower(strings.TrimSpace(level)) {
 	case levelError, levelFatal, levelCritical, levelPanic, levelException,
-		levelPromiseError, levelUnhandledRejection, levelResourceError, levelAssetError:
+		levelPromiseError, levelUnhandledRejection, levelResourceError, levelAssetError,
+		levelCustomError:
 		return true
 	default:
 		return false

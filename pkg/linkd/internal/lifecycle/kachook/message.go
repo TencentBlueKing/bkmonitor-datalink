@@ -334,6 +334,19 @@ func decodeEffectiveEnrich(labels domain.DimensionMap, extra domain.JSONObject) 
 		}
 		flat[key] = data
 	}
+	// KAC 来源可把主机实例 ID 保存为 JSON 数值；输出协议使用字符串身份。
+	// 只转换数值并保留原始精度，不改写冻结事实或覆盖 labels 的优先级。
+	if raw, found := flat["model_inst_id"]; found {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return enrichValues{}, fmt.Errorf("decode KAC model_inst_id: %w", err)
+		}
+		if number, ok := value.(json.Number); ok {
+			flat["model_inst_id"] = json.RawMessage(strconv.Quote(number.String()))
+		}
+	}
 	// 多路径 CMDB 名称保存为列表；资源 DTO 的标量仅供原有展示逻辑使用。
 	for _, field := range []string{"bk_set_name", "bk_module_name"} {
 		if raw := flat[field]; len(raw) > 0 && raw[0] == '[' {

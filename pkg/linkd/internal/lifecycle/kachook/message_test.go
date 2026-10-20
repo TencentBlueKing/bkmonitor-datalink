@@ -313,6 +313,69 @@ func TestConvertMessageRejectsUnknownSeverityAndRequiredText(t *testing.T) {
 	}
 }
 
+func TestCompatibilityPayloadNormalizesNumericModelInstanceID(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"source_numeric_host_id", `163`, "163"},
+		{"large_integer_keeps_precision", `9007199254740993`, "9007199254740993"},
+		{"numeric_zero", `0`, "0"},
+		{"opaque_string", `"00163|host"`, "00163|host"},
+		{"null", `null`, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			alert := testAlert()
+			alert.Enrich = jsonObject(`{"processors":[]}`)
+			alert.ExtraData = jsonObject(`{"model_id":"cw-Host","model_inst_id":` + tt.raw + `}`)
+			payload, err := CompatibilityPayload(alert, kacLevel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(payload, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if fields["model_inst_id"] != tt.want {
+				t.Fatalf("model_inst_id=%v, want %q", fields["model_inst_id"], tt.want)
+			}
+			if string(alert.ExtraData["model_inst_id"]) != tt.raw {
+				t.Fatal("projection changed frozen source fields")
+			}
+		})
+	}
+}
+
+func TestCompatibilityPayloadRejectsNonScalarModelInstanceID(t *testing.T) {
+	for _, raw := range []string{`true`, `[]`, `{}`} {
+		t.Run(raw, func(t *testing.T) {
+			alert := testAlert()
+			alert.Enrich = jsonObject(`{"processors":[]}`)
+			alert.ExtraData = jsonObject(`{"model_inst_id":` + raw + `}`)
+			if _, err := CompatibilityPayload(alert, kacLevel); err == nil {
+				t.Fatal("invalid model_inst_id accepted")
+			}
+		})
+	}
+}
+
+func TestCompatibilityPayloadPrefersNumericLabelModelInstanceID(t *testing.T) {
+	alert := testAlert()
+	alert.Enrich = jsonObject(`{"processors":[]}`)
+	alert.ExtraData = jsonObject(`{"model_inst_id":163}`)
+	if err := json.Unmarshal([]byte(`{"model_inst_id":164}`), &alert.Labels); err != nil {
+		t.Fatal(err)
+	}
+	message, err := CompatibilityMessage(alert, kacLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.ModelInstID != "164" {
+		t.Fatalf("model_inst_id=%q, want label identity 164", message.ModelInstID)
+	}
+}
+
 func testAlert() domain.Alert {
 	begin := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	return domain.Alert{Revision: 1,

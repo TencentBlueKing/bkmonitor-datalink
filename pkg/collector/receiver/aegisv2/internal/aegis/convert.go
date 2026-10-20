@@ -50,7 +50,7 @@ func convertTraces(payload collectPayload, records []d2Record, traceID pcommon.T
 	resourceSpans := traces.ResourceSpans().AppendEmpty()
 	buildResourceAttrs(resourceSpans.Resource().Attributes(), payload)
 	scopeSpans := resourceSpans.ScopeSpans().AppendEmpty()
-	putCollectorScope(scopeSpans.Scope(), payload.Bean.Version)
+	putCollectorScope(scopeSpans.Scope(), payload.V)
 	if traceID.IsEmpty() {
 		traceID = random.TraceID()
 	}

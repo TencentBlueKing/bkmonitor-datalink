@@ -1,5 +1,6 @@
 {
 	"topic": "SDK-xxxxx",
+	"v": "2.5.42",
 	"scheme": "v2",
 	"bean": {
 		"version": "1.0.0",

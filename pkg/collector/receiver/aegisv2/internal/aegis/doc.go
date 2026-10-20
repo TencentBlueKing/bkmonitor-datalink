@@ -56,10 +56,11 @@
 //
 // # 公共字段
 //
-// bean.version -> Resource telemetry.sdk.version（不是 service.version）；
+// envelope v -> Resource telemetry.sdk.version 和 instrumentation scope version；
+// bean.version（应用版本）-> Resource service.version；
 // bean.env -> deployment.environment.name；SDK name=aegis、language=webjs。
 // bean.platform 的已知操作系统值 -> Resource user_agent.os.name。
-// service.name 沿用 unknown_service 缺省值；缺失的应用版本、采样率和浏览器
+// service.name 沿用 unknown_service 缺省值；缺失的版本、采样率和浏览器
 // 名称不推测。session.id 不放在 Resource，防止同批不同会话串用首条 ID。
 //
 // bean.uid/aid -> user.id/device.id；fields.session.id -> session.id，

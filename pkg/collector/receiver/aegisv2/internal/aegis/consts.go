@@ -35,6 +35,7 @@ const (
 	attrTelemetrySDKName    = "telemetry.sdk.name"
 	attrTelemetrySDKLang    = "telemetry.sdk.language"
 	attrTelemetrySDKVersion = "telemetry.sdk.version"
+	attrServiceVersion      = "service.version"
 	attrDeploymentEnvName   = "deployment.environment.name"
 	attrUserAgentOSName     = "user_agent.os.name"
 )

@@ -33,9 +33,10 @@ func TestBKRUMCommonContextAndResource(t *testing.T) {
 	rs := traces.ResourceSpans().At(0)
 	assertAttrs(t, rs.Resource().Attributes(), map[string]any{
 		"service.name": rum.DefaultServiceName, "telemetry.sdk.name": "aegis", "telemetry.sdk.language": "webjs",
-		"telemetry.sdk.version": "2.1.0", "deployment.environment.name": "production", "user_agent.os.name": "macOS",
+		"telemetry.sdk.version": "2.5.42", "service.version": "2.1.0", "deployment.environment.name": "production",
+		"user_agent.os.name": "macOS",
 	})
-	assertAbsent(t, rs.Resource().Attributes(), "session.id", "referer", "version", "env", "aid", "netType", "vp", "sr", "session.sample_rate", "service.version")
+	assertAbsent(t, rs.Resource().Attributes(), "session.id", "referer", "version", "env", "aid", "netType", "vp", "sr", "session.sample_rate")
 	spans := rs.ScopeSpans().At(0).Spans()
 	require.Equal(t, 3, spans.Len())
 	for i := 0; i < spans.Len(); i++ {
@@ -54,6 +55,18 @@ func TestBKRUMCommonContextAndResource(t *testing.T) {
 	assertAttrs(t, spans.At(0).Attributes(), map[string]any{"session.id": "session-1", "view.id": "view-1", "view.referrer": "https://referrer.test/"})
 	assertAttrs(t, spans.At(2).Attributes(), map[string]any{"session.id": "session-2", "view.id": "view-2", "session.has_replay": true, "action.id": "action-1"})
 	assertAbsent(t, spans.At(2).Attributes(), "view.referrer")
+}
+
+// bean.version 是应用版本，SDK 版本来自 envelope 的 v。
+func TestBKRUMVersionSources(t *testing.T) {
+	attrs := pcommon.NewMap()
+	buildResourceAttrs(attrs, collectPayload{Bean: clientBean{Version: "1.2.3"}})
+	assertAttrs(t, attrs, map[string]any{"service.version": "1.2.3"})
+	assertAbsent(t, attrs, "telemetry.sdk.version")
+
+	attrs = pcommon.NewMap()
+	buildResourceAttrs(attrs, collectPayload{V: "2.5.42", Bean: clientBean{Version: "1.2.3"}})
+	assertAttrs(t, attrs, map[string]any{"telemetry.sdk.version": "2.5.42", "service.version": "1.2.3"})
 }
 
 func TestBKRUMNetworkNormalization(t *testing.T) {

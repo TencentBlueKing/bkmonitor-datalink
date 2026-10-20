@@ -36,7 +36,7 @@ func testPayload(t *testing.T, bean clientBean, records ...d2Record) []byte {
 		}
 		d2 = append(d2, map[string]any{"fields": string(fields), "message": messages})
 	}
-	b, err := json.Marshal(map[string]any{"topic": "SDK-test", "scheme": "v2", "bean": bean, "d2": d2})
+	b, err := json.Marshal(map[string]any{"topic": "SDK-test", "v": "2.5.42", "scheme": "v2", "bean": bean, "d2": d2})
 	require.NoError(t, err)
 	return b
 }

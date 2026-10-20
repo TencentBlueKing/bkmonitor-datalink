@@ -134,12 +134,13 @@ func TestConvertJSONPagePerformanceInitialLoad(t *testing.T) {
 	rs := traces.ResourceSpans().At(0)
 	assert.Equal(t, map[string]any{
 		"service.name": "unknown_service", "telemetry.sdk.name": "aegis", "telemetry.sdk.language": "webjs",
-		"telemetry.sdk.version": "1.0.0", "deployment.environment.name": "production", "user_agent.os.name": "macOS",
+		"telemetry.sdk.version": "2.5.42", "service.version": "1.0.0", "deployment.environment.name": "production",
+		"user_agent.os.name": "macOS",
 	}, rs.Resource().Attributes().AsRaw())
 	require.Equal(t, 1, rs.ScopeSpans().Len())
 	ss := rs.ScopeSpans().At(0)
 	assert.Equal(t, "aegisv2.collect", ss.Scope().Name())
-	assert.Equal(t, "1.0.0", ss.Scope().Version())
+	assert.Equal(t, "2.5.42", ss.Scope().Version())
 	span := ss.Spans().At(0)
 	assert.Equal(t, "browser.view", span.Name())
 	assert.Equal(t, ptrace.SpanKindInternal, span.Kind())

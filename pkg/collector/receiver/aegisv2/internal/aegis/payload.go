@@ -38,7 +38,9 @@ func decodePayload(buf []byte) (collectPayload, []d2Record, error) {
 
 // 以下类型只描述 Aegis 输入协议，不依赖 BK-RUM 的事件分类或属性命名。
 type collectPayload struct {
-	Topic  string          `json:"topic"`
+	Topic string `json:"topic"`
+	// V 是 envelope 顶层的 SDK 版本，bean.version 是应用版本。
+	V      string          `json:"v"`
 	Bean   clientBean      `json:"bean"`
 	Scheme string          `json:"scheme"`
 	D2     json.RawMessage `json:"d2"`

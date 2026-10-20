@@ -26,8 +26,11 @@ func buildResourceAttrs(attrs pcommon.Map, payload collectPayload) {
 	// 基础SDK信息
 	attrs.PutString(attrTelemetrySDKName, sdkNameAegis)
 	attrs.PutString(attrTelemetrySDKLang, sdkLangWebJS)
+	if payload.V != "" {
+		attrs.PutString(attrTelemetrySDKVersion, payload.V)
+	}
 	if payload.Bean.Version != "" {
-		attrs.PutString(attrTelemetrySDKVersion, payload.Bean.Version)
+		attrs.PutString(attrServiceVersion, payload.Bean.Version)
 	}
 	if payload.Bean.Env != "" {
 		attrs.PutString(attrDeploymentEnvName, payload.Bean.Env)

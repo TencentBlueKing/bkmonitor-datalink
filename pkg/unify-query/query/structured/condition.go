@@ -274,7 +274,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 	)
 
 	if vmRt != "" {
-		defaultLabels = append(defaultLabels, fmt.Sprintf(`result_table_id%s"%s"`, promql.EqualOperator, vmRt))
+		defaultLabels = append(defaultLabels, "result_table_id"+promql.EqualOperator+vmStringLiteral(vmRt))
 	}
 	if metric != "" {
 		operator := promql.EqualOperator
@@ -282,7 +282,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 			operator = promql.RegexpOperator
 		}
 
-		defaultLabels = append(defaultLabels, fmt.Sprintf(`%s%s"%s"`, labels.MetricName, operator, metric))
+		defaultLabels = append(defaultLabels, labels.MetricName+operator+vmStringLiteral(metric))
 	}
 
 	if len(c) == 0 {
@@ -300,10 +300,7 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 				continue
 			}
 
-			val := nf.Value[0]
-			val = strings.ReplaceAll(val, `\`, `\\`)
-			val = strings.ReplaceAll(val, `"`, `\"`)
-			lbl = append(lbl, fmt.Sprintf(`%s%s"%s"`, nf.DimensionName, nf.ToPromOperator(), val))
+			lbl = append(lbl, fmt.Sprintf("%s%s%s", nf.DimensionName, nf.ToPromOperator(), vmStringLiteral(nf.Value[0])))
 		}
 		for _, dl := range defaultLabels {
 			lbl = append(lbl, dl)
@@ -314,6 +311,13 @@ func (c AllConditions) VMString(vmRt, metric string, isRegexp bool) (metadata.Vm
 	}
 
 	return metadata.VmCondition(strings.Join(vmLabels, or)), num
+}
+
+// vmStringLiteral 把值写成 MetricsQL 的双引号字符串字面量。MetricsQL 用 strconv.Unquote
+// 解析双引号字面量，所以这里用它的逆 strconv.Quote：反斜杠、双引号之外，换行、回车、制表符
+// 等控制字符也被转义；只转义反斜杠和双引号时，含控制字符的值会让整条查询无法解析。
+func vmStringLiteral(value string) string {
+	return strconv.Quote(value)
 }
 
 // Compare 比较 AllConditions 中的条件 condition

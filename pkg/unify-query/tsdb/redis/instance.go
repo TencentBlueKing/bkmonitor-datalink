@@ -115,7 +115,8 @@ func (i *Instance) rawQuery(ctx context.Context, start, end time.Time, step time
 	if len(clusterNames) == 0 {
 		return nil, errors.Errorf("Dimension(%s) must be passed in query-condition ", ClusterMetricFieldClusterName)
 	}
-	stoCtx, _ := context.WithTimeout(ctx, i.Timeout)
+	stoCtx, cancel := context.WithTimeout(ctx, i.Timeout)
+	defer cancel()
 	startAnaylize = time.Now()
 
 	sto := MetricStorage{ctx: stoCtx, storagePrefix: i.ClusterMetricPrefix}

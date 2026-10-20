@@ -11,12 +11,14 @@ package lifecycle
 
 import (
 	"context"
+	"fmt"
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
 )
 
-// AlertContentBuilder 为尚未持久化的 Alert 生成初始 content；持续触发直接采用 Event.content。
+// AlertContentBuilder 为当前触发生成 content；默认仅创建时调用。
+// 实现可通过 RebuildContentOnTrigger(string) bool 声明指定来源持续触发时也需要渲染。
 // 实现必须无写副作用、可取消且可重试；不得修改来源 Event 或已有 Alert。
 type AlertContentBuilder interface {
 	BuildContent(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error)
@@ -34,12 +36,30 @@ func (SourceContentBuilder) BuildContent(ctx context.Context, event domain.Event
 	return event.Content, nil
 }
 
-// WithAlertContentBuilder 指定创建内容的入口；nil 由构造函数拒绝。
+// WithAlertContentBuilder 指定内容生成入口；nil 由构造函数拒绝。
 func WithAlertContentBuilder(builder AlertContentBuilder) ProcessorOption {
 	return func(p *Processor) { p.contentBuilder = builder }
 }
 
-func (p *Processor) buildNewAlertContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, opening domain.Alert) (string, error) {
+// 持续触发只替换 content，不能把渲染所用的本次身份写回首次创建锚点或丰富快照。
+// source 模式保留直接采用原文的语义，包括显式空串；描述模式复用创建时的降级和取消规则。
+func (p *Processor) buildUpdatedAlertContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, current domain.Alert) (string, error) {
+	policy, ok := p.contentBuilder.(interface{ RebuildContentOnTrigger(string) bool })
+	if !ok || !policy.RebuildContentOnTrigger(event.EventSourceID) {
+		return event.Content, nil
+	}
+	candidate := current.Clone()
+	candidate.TriggerEventID, candidate.EventSourceVersion = event.EventID, event.EventSourceVersion
+	candidate.Severity, candidate.Content = evaluation.Severity, event.Content
+	latest, ok := event.ForSeverity(evaluation.Severity)
+	if !ok {
+		return "", fmt.Errorf("trigger event has no enrich result for selected severity")
+	}
+	candidate.EnrichStatus, candidate.Enrich = latest.Status, latest.Data.Clone()
+	return p.buildAlertContent(ctx, event, evaluation, candidate)
+}
+
+func (p *Processor) buildAlertContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, opening domain.Alert) (string, error) {
 	defer p.measureStep(phasePlan, "content")()
 	result, err := enrich.BuildAlertContent(ctx, p.contentBuilder, event, evaluation, opening)
 	if err != nil {

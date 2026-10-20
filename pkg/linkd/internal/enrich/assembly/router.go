@@ -101,7 +101,13 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 	return &Router{routes: routes, chainKinds: chainKinds, contentRoutes: contentRoutes, digests: digests}, nil
 }
 
-// BuildContent 依据当前任务的来源配置生成新 Alert 的内容；已保存 Alert 不调用此入口。
+// RebuildContentOnTrigger 标明来源是否需要在持续触发时重新生成描述。
+// source 模式继续直接采用 Event.content，不改变空串语义。
+func (r *Router) RebuildContentOnTrigger(eventSourceID string) bool {
+	return r != nil && r.contentRoutes[eventSourceID].builder != nil
+}
+
+// BuildContent 依据当前任务的来源配置和本次触发的候选身份生成内容。
 func (r *Router) BuildContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, opening domain.Alert) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

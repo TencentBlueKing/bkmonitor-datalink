@@ -61,17 +61,18 @@ SplitRecord 是可变当前态，不能提供历史保证；本轮移除以它�
 
 ## 目标、边界与验收定义
 
-- 对已配置启用的 bk-monitor/KAC 来源，**新建** Alert 的 `content` 由 Linkd 在 Enrich 准备阶段按 bk-monitor 检测事件 `description` 规则生成。以同一触发事实和同一策略版本下的 bk-monitor `Event.description` 为对照；不把通知阶段添加的“新告警”“已持续”等文字计入对照。
+- 对已配置启用的 bk-monitor/KAC 来源，新建及持续触发时 Alert 的 `content` 由 Linkd 在 Enrich 准备阶段按 bk-monitor 检测事件 `description` 规则生成。以同一触发事实和同一策略版本下的 bk-monitor `Event.description` 为对照；不把通知阶段添加的“新告警”“已持续”等文字计入对照。
 - 覆盖 Linkd 当前内置 Enrich 能识别的告警场景；以实际 EventSource 和真实输入清单界定可交付的具体组合。`DATA`、`LOG_METRIC`、`LOG_KEYWORD`、BaseTarget 的六个分支、UptimeCheck、Cloud 均须列入矩阵。K8s/APM 是资源和展示上下文，须与其实际检测类型交叉验收，不能视为独立的描述算法。
-- `alarmd.TriggerEventV1` 输出保持原样。opening Event 的 `content` 和 `source_raw_data` 仍是来源事实。已创建 Alert 的 `content` 在后续同级触发或原地升级时直接采用本次 Event.content，与时间和版本一次写入；标题、维度与首次丰富快照继续保留。
-- `enrich.Result` 继续仅返回 `enrich_status/enrich`。构造**尚未持久化**的新 Alert 时按 `content_mode` 生成初始 `content`；持续更新统一使用本次来源内容，不重新执行内容查询或构建器。
+- `alarmd.TriggerEventV1` 输出保持原样。opening Event 的 `content` 和 `source_raw_data` 仍是来源事实。已创建 Alert 的 `content` 在后续同级触发或原地升级时按 content_mode 使用本次 Event 的事实生成，与时间和版本一次写入；标题、维度与首次丰富快照继续保留。
+- `enrich.Result` 继续仅返回 `enrich_status/enrich`。构造**尚未持久化**的新 Alert 时按 `content_mode` 生成初始 `content`；持续更新在 `source` 模式使用本次来源内容，在 `bkmonitor_description` 模式使用本次 Event 及其精确策略历史版本重新渲染，沿用统一降级规则。
 
 普通指标的“一致”按字节级字符串对照，包括算法组合顺序、连接词、空格、数值精度、单位、指标名和空值语义。无数据按 2026-10-14 确认的来源周期描述验收，不还原旧延时文字。对仍必须依赖已丢失的历史检测事实的组合，不能用实时查询、当前策略或解析旧中文 `content` 伪造一致性；该组合在事实补齐前不得宣称验收通过。
 
 ## 当前链路与目标链路
 
-当前与 Event 前置丰富统一后的实现先冻结 Event 丰富，再进行策略准入；只有实际新建的 Alert 才在
-`planNewAlert` 中复制 opening Event 的选中等级结果并调用内容构建器，之后保存 EventPlan。
+当前实现先冻结 Event 丰富，再进行策略准入；实际新建的 Alert 在 `planNewAlert` 中复制
+opening Event 的选中等级结果并调用内容构建器。持续触发在描述模式下使用本次 Event 的
+临时候选身份和选中等级丰富结果调用同一构建器，只保存内容，不替换已有首次丰富快照。
 丰富和内容构建统一复用当前任务加载的来源配置；积压 Event 不再按 EventSourceVersion 回读历史 Release。Event 的接入版本保持原样，丰富结果另外记录实际执行的 enrich_source_version；已保存的结果不重算。
 
 ```text
@@ -83,7 +84,7 @@ Event → 前置 Processor Chain → 持久化 Event.enrich
     → 后续策略与持久化 EventPlan → Alert CAS、日志和 Hook
 ```
 
-同级别连续触发和 `update_current` 级别升级直接使用本次 `Event.content`，不调用内容构建器，与生命周期时间和 `revision` 合并在同一次 Alert CAS 中保存；`close_and_create` 升级会创建新 Alert，应以该新 Alert 的 opening Event 和选中级别重新生成。`display.content` 的临时补丁仍属于首次丰富快照，不代表持久化核心字段。
+同级别连续触发和 `update_current` 级别升级按 `content_mode` 选择本次来源原文或重新渲染的描述，与生命周期时间和 `revision` 合并在同一次 Alert CAS 中保存；`close_and_create` 升级会创建新 Alert，应以该新 Alert 的 opening Event 和选中级别重新生成。`display.content` 的临时补丁仍属于首次丰富快照，不代表持久化核心字段。
 
 ## 实施接口与依赖位置
 

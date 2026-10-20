@@ -35,7 +35,7 @@ func TestExplicitCustomContentHasPriorityOverAutomaticDescription(t *testing.T) 
 				opening := domain.Alert{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 					EventSourceVersion: event.EventSourceVersion, TriggerEventID: event.EventID,
 					Fingerprint: event.Fingerprint, Severity: "warning", Enrich: domain.JSONObject{"processors": processors}}
-				content, err := processor.buildNewAlertContent(t.Context(), event, event.Evaluations[0], opening)
+				content, err := processor.buildAlertContent(t.Context(), event, event.Evaluations[0], opening)
 				if err != nil {
 					t.Fatal(err)
 				}

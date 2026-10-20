@@ -128,7 +128,7 @@ Alert 是一次异常的当前生命周期快照。它从 opening Event 创建�
 | 身份     | `alert_id`                                                                                     | UTC 秒、租户、来源和 opening Event 摘要组成的可解析身份 |
 | 关联     | `bk_tenant_id`、`event_source_id`、`fingerprint`                                               | active Alert 的唯一关联范围                           |
 | 继承事实 | `title`、dimensions、subject、source IDs、labels、extra_data | 从 opening Event 复制，创建后不可修改                 |
-| 初始内容 | `content` | 创建前按 EventSource 的 content_mode 复制来源内容或生成 bk-monitor description，创建后不可修改 |
+| 告警内容 | `content` | 新建及持续触发时按 EventSource 的 content_mode 复制本次来源内容或生成 bk-monitor description |
 | 当前级别 | `severity` | 初始取 opening Event 中最高触发级别，update_current 升级时可修改；历史级别见 Event/AlertLog |
 | 业务版本 | `revision` | 必填整数 1..2^53-1；新建固定 1，业务 CAS 加一，与仓储 VersionToken 分开 |
 | 投影进度 | `projection.targets[target_id]` | 最多 16 个目标，保存 source_version、required_revision、synced_revision、synced_at；尚未接入目标配置与实际投递 |
@@ -164,7 +164,7 @@ ACK 不改写时间，超过要求的 ACK 拒绝，过期来源发布引用的 A
 ### 5.2 不变量
 
 - 同一 `(bk_tenant_id, event_source_id, fingerprint)` 同时最多一个 active Alert；
-- 继承字段、初始内容和创建锚点在 CAS 更新中必须保持不变；
+- 继承字段和创建锚点在 CAS 更新中保持不变；content 随被接受的持续触发按 content_mode 更新，与时间和 revision 一次保存；
 - 业务变更的 `update_at` 必须严格大于旧快照，`revision` 必须为旧值加一；每个已绑定目标的 required_revision 同一次 CAS 推进到该版本。同一 Event 幂等重投不推进二者；
 - 完成 policy_change/merge_change、向后安排 next_check_at 或确认投影的白名单元数据 CAS 不改变业务 revision/update_at，但仓储 VersionToken 改变；
 - active Alert 不得包含 end 字段；终态 Alert 必须包含合法 end_at/end_type；

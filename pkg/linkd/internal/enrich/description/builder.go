@@ -25,7 +25,8 @@ func NewBuilder(resolver FactsResolver) (*Builder, error) {
 	return &Builder{resolver: resolver}, nil
 }
 
-// BuildContent 只为匹配 opening Event 的新 Alert 生成核心内容。
+// BuildContent 为匹配本次 Event 的候选 Alert 生成核心内容。
+// 持续触发的调用方使用临时候选身份，不能改写已保存 Alert 的首次创建锚点。
 // Resolver 错误保持原错误链，便于调用方区分依赖重试和确定性失败。
 func (b *Builder) BuildContent(ctx context.Context, event domain.Event, evaluation domain.EventEvaluation, opening domain.Alert) (string, error) {
 	if ctx == nil {

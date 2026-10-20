@@ -26,7 +26,7 @@ const DefaultAlertContent = "告警已触发，详细内容暂不可用。"
 
 const maxAlertContentBytes = 1 << 20
 
-// ContentBuilder 只生成新 Alert 的展示文案，不改变事件判定或执行外部写操作。
+// ContentBuilder 为匹配本次 Event 的候选 Alert 生成展示文案，不改变事件判定或执行外部写操作。
 type ContentBuilder interface {
 	BuildContent(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error)
 }

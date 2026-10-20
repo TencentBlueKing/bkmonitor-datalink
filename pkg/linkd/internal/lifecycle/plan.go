@@ -244,7 +244,10 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 		if p.upgradePolicy == "update_current" {
 			updated := advanceAlert(active.Alert, event, now)
 			updated.Severity = evaluation.Severity
-			updated.Content = event.Content
+			updated.Content, err = p.buildUpdatedAlertContent(ctx, event, evaluation, updated)
+			if err != nil {
+				return nil, err
+			}
 			if err := planMutation(plan, event, active.Version, updated, OutcomeAlertSeverityChanged, domain.OperationKindSeverityChange, ReasonSeverityUpgrade, map[string]string{"from_severity": active.Alert.Severity, "to_severity": updated.Severity}); err != nil {
 				return nil, err
 			}
@@ -293,8 +296,11 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 				updated := active.Alert.Clone()
 				if active.Alert.LatestEventID != event.EventID {
 					updated = advanceAlert(active.Alert, event, now)
-					// 内容随同一次时间和版本更新写入，不重跑创建时的内容查询。
-					updated.Content = event.Content
+					// 按本次触发渲染内容，与时间和版本在同一次 CAS 中保存。
+					updated.Content, err = p.buildUpdatedAlertContent(ctx, event, evaluation, updated)
+					if err != nil {
+						return nil, err
+					}
 				}
 				if err := planMutation(plan, event, active.Version, updated, OutcomeAlertUpdated, "", "", nil); err != nil {
 					return nil, err
@@ -420,7 +426,7 @@ func (p *Processor) planNewAlert(ctx context.Context, plan *store.EventPlan, eve
 	alert.EnrichStatus, alert.Enrich = enriched.Status, enriched.Data.Clone()
 	// Event 丰富已冻结；只有真正创建的候选才生成核心内容。文案失败降级并冻结，
 	// 事件身份非法或 Context 取消仍不能推进业务计划。
-	alert.Content, err = p.buildNewAlertContent(ctx, event, evaluation, alert)
+	alert.Content, err = p.buildAlertContent(ctx, event, evaluation, alert)
 	if err != nil {
 		return domain.Alert{}, err
 	}

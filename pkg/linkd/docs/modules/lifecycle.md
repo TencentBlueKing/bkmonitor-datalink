@@ -343,7 +343,7 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
    同一事件中旧级别的 resolved/closed 被升级替代，记录 suppressed/evaluation_superseded。
 2. 没有更高级别触发时，只允许与 active 同级的 resolved/closed 结束它。
 3. 当前不存在 active（包括刚刚恢复/关闭）时，最高 triggered 创建新 Alert。
-4. 当前 active 与最高 triggered 同级时推进生命周期，并直接用本次 `Event.content` 更新 `Alert.content`；更低的 triggered 被抑制。
+4. 当前 active 与最高 triggered 同级时推进生命周期，并按来源的 `content_mode` 更新 `Alert.content`；更低的 triggered 被抑制。
 5. 未出现的级别不隐含恢复；历史被抑制的低级别不会自动激活，必须由本次或后续事件明确触发。
 
 | 当前 active | 本次判定 | 结果 |
@@ -357,14 +357,16 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
 | warning | __ALL__ closed + critical triggered | 来源关闭 warning，再创建 critical，与升级策略无关 |
 
 同级持续触发的 `content`、`latest_event_id`、`last_occurred_at`、`update_at` 与 `revision`
-在原有一次 Alert CAS 中一起保存，不增加内容查询或独立写请求，不重跑创建内容构建器。
-`content` 原样采用本次 Event 的值（包括空字符串），不依赖 `content_mode`；
+在原有一次 Alert CAS 中一起保存，不增加独立写请求。
+`source` 模式原样采用本次 Event 的值（包括空字符串）；`bkmonitor_description` 模式用
+本次 Event 的判定、检测事实及精确策略历史版本重新渲染，沿用新建时的文案失败降级和取消规则。
+渲染仅使用临时候选身份和本次丰富结果，
 标题、维度、标签、创建锚点和首次丰富快照保持不变。低等级被抑制、恢复和关闭不改写内容。
 
 策略只有两个取值，默认 `close_and_create`：
 
 - `update_current`：原 Alert 保持 active 和 alert_id，在同一次 CAS 中更新 severity/content/latest_event_id/last_occurred_at/update_at/revision；
-  content 直接采用本次 Event.content，保留 begin_at/create_at/trigger_event_id、来源版本、维度和首次丰富结果。追加包含 from_severity、
+  content 与同级持续触发一样按 content_mode 生成，保留 begin_at/create_at/trigger_event_id、来源版本、维度和首次丰富结果。追加包含 from_severity、
   to_severity 的 severity_change 流水，只输出一个 active 快照。
 - `close_and_create`：旧 Alert 进入 closed/severity_upgrade，按本次 Event 创建新的高等级 Alert，复制本次 Event 的丰富结果；
   先输出旧告警 closed，再输出新告警 active。一个 Event 关联旧、新两条 Alert。

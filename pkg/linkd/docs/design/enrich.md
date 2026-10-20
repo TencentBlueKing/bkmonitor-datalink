@@ -298,7 +298,7 @@ dimension_text
 
 结构化 dimensions 保留场景生成顺序；`dimension_text` 使用副本排序和格式化。当前大部分场景的 content 直接继承 `Event.Content`。
 
-EventSource 的 `enrich.content_mode=bkmonitor_description` 已在创建准备阶段调用内容构建器，生成尚未持久化的 `Alert.content`；普通 Processor 的 Result 仍只保存 Status/Data。该模式的 Display 不生成 content 覆盖补丁，不再裁剪日志、拼接对象名或重复转换单位，避免 Event 快照覆盖后续生成的 Alert 内容。`source` 模式维持既有来源文本处理。实现、事实缺口和验收范围集中见[告警内容生成方案](alert-content-generation.md)，后续 Enrich 不覆盖已有核心字段。
+EventSource 的 `enrich.content_mode=bkmonitor_description` 在创建准备阶段及持续触发更新时调用内容构建器，用本次 Event 及其精确策略历史版本生成 `Alert.content`；普通 Processor 的 Result 仍只保存 Status/Data。该模式的 Display 不生成 content 覆盖补丁，不再裁剪日志、拼接对象名或重复转换单位，避免 Event 快照覆盖后续生成的 Alert 内容。`source` 模式维持既有来源文本处理。实现、事实缺口和验收范围集中见[告警内容生成方案](alert-content-generation.md)，后续 Enrich 不覆盖已有核心字段。
 
 ### 6.4 metric
 

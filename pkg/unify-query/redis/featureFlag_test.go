@@ -448,13 +448,20 @@ func TestSetFeatureFlags(t *testing.T) {
 		channel := ffClient.GetFeatureFlagsChannel()
 		pubsub := client.Subscribe(ctx, channel)
 		defer pubsub.Close()
+		// 等订阅确认后再发布：Subscribe 不等确认就返回，发布若先于订阅到达会丢失，
+		// 之后的 ReceiveMessage 就会一直等下去
+		_, err = pubsub.Receive(ctx)
+		assert.Nil(t, err)
 
 		// 再次发布以触发消息
 		err = ffClient.SetFeatureFlags(ctx, configData)
 		assert.Nil(t, err)
 
-		// 等待消息
-		msg, err := pubsub.ReceiveMessage(ctx)
+		// 等待消息，限时以免丢消息时整个测试挂到超时
+		receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		msg, err := pubsub.ReceiveMessage(receiveCtx)
+		assert.Nil(t, err)
 		if err == nil {
 			assert.Equal(t, string(configData), msg.Payload)
 		}

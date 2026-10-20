@@ -60,6 +60,39 @@ func TestExportCollect_WebVitalsPublishesOnlyTraces(t *testing.T) {
 		assert.Equal(t, "browser.web_vital", spans.At(i).Name())
 	}
 }
+func TestExportCollect_Token(t *testing.T) {
+	for _, tt := range []struct{ name, token, topicKey, want string }{
+		{"X-BK-TOKEN", "token-1", "", "token-1"},
+		{"X-Topic-Key fallback", "", "topic-1", "topic-1"},
+		{"X-BK-TOKEN wins over X-Topic-Key", "token-1", "topic-1", "token-1"},
+		{"no token", "", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var published []*define.Record
+			svc := httpService{
+				Publisher: receiver.Publisher{Func: func(r *define.Record) { published = append(published, r) }},
+				Validator: pipeline.Validator{Func: func(*define.Record) (define.StatusCode, string, error) {
+					return define.StatusCodeOK, "", nil
+				}},
+			}
+			req := httptest.NewRequest(http.MethodPost, routeV2Collect, bytes.NewBufferString(collectWebVitalsPayload))
+			req.Header.Set(define.ContentType, define.ContentTypeJson)
+			if tt.token != "" {
+				req.Header.Set(define.KeyToken, tt.token)
+			}
+			if tt.topicKey != "" {
+				req.Header.Set(headerTopicKey, tt.topicKey)
+			}
+			resp := httptest.NewRecorder()
+			svc.ExportCollect(resp, req)
+
+			require.Equal(t, http.StatusOK, resp.Code)
+			require.Len(t, published, 1)
+			assert.Equal(t, tt.want, published[0].Token.Original)
+		})
+	}
+}
+
 func TestExportCollect_Protocols(t *testing.T) {
 	traces := ptrace.NewTraces()
 	span := traces.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty()

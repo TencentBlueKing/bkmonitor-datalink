@@ -11,6 +11,7 @@ package aegisv2
 import (
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
@@ -34,6 +35,9 @@ const (
 
 	collectResponseEmpty = "{}"
 	emptyPreview         = "<empty>"
+
+	// headerTopicKey 是 Aegis SDK 开启 addXTopicKey 后携带应用标识的请求头。
+	headerTopicKey = "X-Topic-Key"
 )
 
 func init() {
@@ -90,7 +94,7 @@ func (s *httpService) ExportCollect(w http.ResponseWriter, req *http.Request) {
 		RequestClient: define.RequestClient{IP: ip},
 		RecordType:    define.RecordRumTraces,
 		Data:          traces,
-		Token:         define.Token{Original: tokenparser.FromHttpRequest(req)},
+		Token:         define.Token{Original: requestToken(req)},
 		Metadata:      tokenparser.FromHttpUserMetadata(req),
 	}
 	prettyprint.Pretty(define.RecordRumTraces, traces)
@@ -104,6 +108,16 @@ func (s *httpService) ExportCollect(w http.ResponseWriter, req *http.Request) {
 	s.Publish(record)
 	receiver.RecordHandleMetrics(metricMonitor, record.Token, define.RequestHttp, define.RecordRumTraces, len(bs), start)
 	receiver.WriteResponse(w, define.ContentTypeJson, http.StatusOK, []byte(collectResponseEmpty))
+}
+
+// requestToken 优先使用 tokenparser 识别的标准 token 请求头；Aegis SDK 开启
+// addXTopicKey 时以 X-Topic-Key 上报应用标识，入口层未改写时用它回退，
+// 否则 record.Token 为空会导致应用子配置无法命中，aes256 配置下直接 401。
+func requestToken(req *http.Request) string {
+	if token := tokenparser.FromHttpRequest(req); token != "" {
+		return token
+	}
+	return strings.TrimSpace(req.Header.Get(headerTopicKey))
 }
 
 func getPayloadPreview(buf []byte, maxLen int) string {

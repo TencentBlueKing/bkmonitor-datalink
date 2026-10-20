@@ -25,6 +25,8 @@
 //
 // /collect 对 envelope 和 d2 各解析一次，只校验、发布 RecordTraces。
 // 不创建 Metrics/Logs，也不将 Web Vitals 派生为直方图。
+// Token 优先从 X-BK-TOKEN 等标准请求头解析；Aegis SDK 开启 addXTopicKey 时
+// 以 X-Topic-Key 携带应用标识，仅作为回退，入口层已改写时以标准 token 为准。
 // 仅输出明确映射的 BK-RUM 字段；未映射字段丢弃，不透传 aegisv2.ext.*。
 // 协议映射与已知缺失字段详见 PROTOCOL_MAPPING.md、Aegis_v2_to_bk-rum.md
 // 和 internal/aegis 的包文档。

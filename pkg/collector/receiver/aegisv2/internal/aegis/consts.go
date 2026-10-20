@@ -296,6 +296,13 @@ const (
 	sessionFromLocalGenerate = "local_generate"
 )
 
+// Session 插件 message.session_type 的事件种类。aegis-web-sdk-v2 2.5.38/2.6.12
+// 起统一上报 fields.type=session，旧版的 start/rotate/end 值视为阶段别名。
+const (
+	sessionKindView   = "view"
+	sessionKindAction = "action"
+)
+
 // -----------------------------------------------------------------------------
 // WebSocket 阶段
 // -----------------------------------------------------------------------------

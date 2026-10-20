@@ -36,6 +36,11 @@ type spanConverter struct {
 	spans   ptrace.SpanSlice
 	traceID pcommon.TraceID
 	now     pcommon.Timestamp
+	// actionSpans 按非空 Action ID 关联已生成的 Span，供 Session 插件的
+	// Action 结束记录补写结束时间，同时承担同批去重。
+	actionSpans map[string]ptrace.Span
+	// actionStarts 记录 Session 插件 Action 开始消息的时间戳，用于计算耗时。
+	actionStarts map[string]int64
 }
 
 func convertTraces(payload collectPayload, records []d2Record, traceID pcommon.TraceID) (ptrace.Traces, error) {
@@ -50,18 +55,21 @@ func convertTraces(payload collectPayload, records []d2Record, traceID pcommon.T
 	if traceID.IsEmpty() {
 		traceID = random.TraceID()
 	}
-	c := spanConverter{payload: payload, spans: scopeSpans.Spans(), traceID: traceID, now: pcommon.NewTimestampFromTime(time.Now())}
+	c := spanConverter{
+		payload: payload, spans: scopeSpans.Spans(), traceID: traceID,
+		now:          pcommon.NewTimestampFromTime(time.Now()),
+		actionSpans:  make(map[string]ptrace.Span),
+		actionStarts: make(map[string]int64),
+	}
 
 	// 多条消息可以引用同一 Action；同批按非空 ID 去重，无 ID 的 Action 不参与去重。
-	actions := make(map[string]struct{})
 	for _, record := range records {
 		action := record.Fields.Action
 		if hasAction(action) {
 			if action.ID == "" {
 				c.appendAction(record)
-			} else if _, exists := actions[action.ID]; !exists {
-				c.appendAction(record)
-				actions[action.ID] = struct{}{}
+			} else if _, exists := c.actionSpans[action.ID]; !exists {
+				c.actionSpans[action.ID] = c.appendAction(record)
 			}
 		}
 		for _, msg := range record.Message {
@@ -95,7 +103,7 @@ func (c *spanConverter) appendMessage(e aegisEvent) {
 	case eventTypeWebsocket:
 		c.appendWebsocket(e)
 	case eventTypeSession:
-		c.appendSession(e)
+		c.appendSessionEvent(e)
 	case eventTypeError:
 		c.appendError(e)
 	default:

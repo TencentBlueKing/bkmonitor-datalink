@@ -9,6 +9,8 @@
 package aegis
 
 import (
+	"go.opentelemetry.io/collector/pdata/ptrace"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/receiver/aegisv2/internal/rum"
 )
 
@@ -17,7 +19,7 @@ func hasAction(action actionInfo) bool {
 	return action.ID != "" || action.ActionType != "" || action.ActionName != "" || action.ActionTargetName != "" || action.Timestamp != 0
 }
 
-func (c *spanConverter) appendAction(record d2Record) {
+func (c *spanConverter) appendAction(record d2Record) ptrace.Span {
 	action := record.Fields.Action
 	name := actionNameDefault
 	if action.ActionType != "" {
@@ -32,4 +34,5 @@ func (c *spanConverter) appendAction(record d2Record) {
 	if action.ActionType != actionTypeCustom {
 		attrs.PutString(attrActionTargetName, action.ActionTargetName)
 	}
+	return span
 }

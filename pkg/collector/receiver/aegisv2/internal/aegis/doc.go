@@ -37,7 +37,8 @@
 //   - api、assets_speed -> browser.resource / resource / CLIENT。
 //   - pv（含 spa）-> browser.view / view / INTERNAL，view.phase=start。
 //   - page_performance -> browser.view / view / INTERNAL，view.phase=update。
-//   - session -> browser.session / session / INTERNAL。
+//   - session -> browser.session / session / INTERNAL；Session 插件的
+//     session_type=view/action 记录分别分流到 View 与 Action 映射。
 //   - normal+error -> browser.error / error / INTERNAL。
 //   - promise_error -> browser.unhandledrejection / error / INTERNAL。
 //   - resource_error、asset_error -> browser.resource_error / error / INTERNAL。
@@ -48,9 +49,9 @@
 //   - custom_event -> custom.<name> / custom / INTERNAL。
 //   - 未识别类型 -> custom.<type>，仅保留公共上下文和显式映射字段。
 //
-// Resource 使用 timestamp + duration（ms）表达请求耗时；其他当前支持的
-// 事件均为瞬时 Span。OTLP 时间戳保持纳秒，后端再转换为 start_time、
-// end_time、elapsed_time（微秒）。app_name、bk_biz_id 沿用接收流水线处理，
+// Resource 使用 timestamp + duration（ms）表达请求耗时；Action 用 Span 起止
+// 时间表达耗时；其他当前支持的事件均为瞬时 Span。OTLP 时间戳保持纳秒，后端
+// 再转换为 start_time、end_time、elapsed_time（微秒）。app_name、bk_biz_id 沿用接收流水线处理，
 // 不复制成 Span Attribute，也不把 topic 当作 service.name。
 //
 // # 公共字段
@@ -98,8 +99,16 @@
 // 分别写 view.first_byte/dom_interactive/dom_content_loaded/dom_complete/load_event。
 // 值相对于 performance.timeOrigin，以毫秒保留，必须有限且严格大于零。
 //
-// Session：显式 session_phase/session_type=start、rotate、end 原样映射；
-// session_from=local_generate 回退 start；其他来源无法判定生命周期阶段时省略。
+// Session：aegis-web-sdk-v2 2.5.38/2.6.12 起 Session 插件统一上报
+// fields.type=session，按 message.session_type 分流。view -> browser.view，
+// is_active=true/false 分别映射 view.phase=start/end，缺失时不推断阶段；
+// action 不另生成 Span，结束记录（is_active=false）用同批开始与结束消息的
+// 时间差补写该 Action Span 的结束时间表达耗时；message.timestamp 经服务端
+// 校时，与客户端时钟的 fields.action.timestamp 不可直接相减，缺少开始消息时
+// 保持瞬时 Span。
+// session 及旧版记录仍生成 browser.session：显式 session_phase/session_type=
+// start、rotate、end 原样映射，其次 is_active=true/false 映射 start/end，
+// session_from=local_generate 回退 start；无法判定生命周期阶段时省略。
 // Action：action_target_name -> action.target.name，移除旧 action.name/target_name。
 // WebSocket：successFlag -> websocket.phase=open/error，显式 phase 支持四个阶段；
 // connectionId -> websocket.connection.id。生命周期 Span 瞬时，错误仅写 RUM Outcome。

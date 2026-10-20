@@ -21,12 +21,15 @@ var viewNavigationKeys = []struct{ key, attr string }{
 	{"loadEventEnd", attrViewLoadEvent},
 }
 
-// View：PV/SPA 表示 start，页面性能表示 update，均使用瞬时 Span。
+// View：PV/SPA 表示 start，页面性能表示 update，Session 插件记录可表示 end，
+// 均使用瞬时 Span；phase 为空表示来源无法判定阶段。
 func (c *spanConverter) appendView(e aegisEvent, phase string) {
 	span := c.newEventSpan(e, rum.View, "")
 	attrs := span.Attributes()
 	view := e.record.Fields.View
-	attrs.PutString(attrViewPhase, phase)
+	if phase != "" {
+		attrs.PutString(attrViewPhase, phase)
+	}
 	if view.LoadingType == viewLoadingTypeInitial {
 		referrer := view.Referrer
 		if referrer == "" {

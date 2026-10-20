@@ -511,8 +511,11 @@ func executeNamedOutputsWithRoutesMode(
 	defer drainPrefetch()
 	for position := range executionOrder {
 		if parallelOptional && position == 1 && ctx.Err() == nil {
-			var prefetchCtx context.Context
-			prefetchCtx, cancelPrefetch = context.WithCancel(ctx)
+			prefetchCtx, cancel := context.WithCancel(ctx)
+			// drainPrefetch cancels it first on every exit; the defer only makes
+			// that visible where the context is created. Cancelling twice is a no-op.
+			defer cancel()
+			cancelPrefetch = cancel
 			prefetched = prefetchOptionalNamedOutputs(prefetchCtx, query, executionOrder[1:], execute)
 			pendingPrefetch = len(executionOrder) - 1
 		}

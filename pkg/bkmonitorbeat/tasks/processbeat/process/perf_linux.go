@@ -14,6 +14,8 @@ package process
 import (
 	"os"
 
+	"github.com/elastic/gosigar"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
 )
 
@@ -29,6 +31,10 @@ func (p *procPerfMgr) procFSReader() *procFSReader {
 		p.reader = newProcFSReader(hostProcRoot())
 	}
 	return p.reader.(*procFSReader)
+}
+
+func (p *procPerfMgr) mem(pid int32) (gosigar.ProcMem, error) {
+	return p.procFSReader().readMem(pid, uint64(os.Getpagesize()))
 }
 
 func hostProcRoot() string {

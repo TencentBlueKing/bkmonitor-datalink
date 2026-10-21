@@ -496,8 +496,21 @@ func buildDisplayDimensions(
 		}
 	}
 
-	result := make([]models.DimensionDisplay, 0, len(query.AggregateBy)+2)
-	seen := make(map[string]struct{}, len(query.AggregateBy)+2)
+	dimensionKeys := query.AggregateBy
+	if query.IsPromQL() {
+		// PromQL 的聚合语义在表达式内，声明可以没有 agg_dimension。
+		// 仅展示实际返回的标签，不从表达式或目录补造已被聚合掉的维度；
+		// 无数据控制标记不是序列标签。排序保证 map 遍历不影响补丁和快照。
+		dimensionKeys = make([]string, 0, len(dimensions))
+		for key := range dimensions {
+			if key != rules.FieldNoDataDimension {
+				dimensionKeys = append(dimensionKeys, key)
+			}
+		}
+		sort.Strings(dimensionKeys)
+	}
+	result := make([]models.DimensionDisplay, 0, len(dimensionKeys)+2)
+	seen := make(map[string]struct{}, len(dimensionKeys)+2)
 	resource := scope.Context().Resource.Values
 	appendDimension := func(key, name string) {
 		value, exists := dimensions[key]
@@ -523,14 +536,19 @@ func buildDisplayDimensions(
 	} {
 		appendDimension(field.key, field.name)
 	}
-	for _, key := range query.AggregateBy {
+	for _, key := range dimensionKeys {
 		name, exists := nameByKey[key]
+		if query.IsPromQL() && name == "" {
+			name, exists = key, true
+		}
 		if !exists {
 			continue
 		}
 		appendDimension(key, name)
 	}
-	result = appendAdditionalDisplayDimensions(result, additional, nameByKey, resource)
+	if !query.IsPromQL() {
+		result = appendAdditionalDisplayDimensions(result, additional, nameByKey, resource)
+	}
 	return result, nil
 }
 

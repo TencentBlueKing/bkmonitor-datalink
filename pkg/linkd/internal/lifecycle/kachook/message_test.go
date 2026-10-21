@@ -376,6 +376,25 @@ func TestCompatibilityPayloadPrefersNumericLabelModelInstanceID(t *testing.T) {
 	}
 }
 
+func TestCompatibilityMessageKeepsPromQLDisplayDimensions(t *testing.T) {
+	t.Parallel()
+	alert := testAlert()
+	alert.Enrich = jsonObject(`{"processors":[{"display":{"status":"succeeded","patches":[
+		{"op":"set","path":"$[\"labels\"][\"dimension_text\"]","value":"hostname=host-1 | zone=a"},
+		{"op":"set","path":"$[\"extra_data\"][\"dimensions\"]","value":[
+			{"name":"hostname","value":"host-1","real_key":"hostname","real_value":"host-1"},
+			{"name":"zone","value":"a","real_key":"zone","real_value":"a"}
+		]}
+	]}}]}`)
+	message, err := CompatibilityMessage(alert, kacLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.DimensionInfo != "hostname=host-1 | zone=a" {
+		t.Fatalf("dimension_info=%q", message.DimensionInfo)
+	}
+}
+
 func testAlert() domain.Alert {
 	begin := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	return domain.Alert{Revision: 1,

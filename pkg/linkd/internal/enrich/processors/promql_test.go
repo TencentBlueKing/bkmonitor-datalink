@@ -327,6 +327,14 @@ func TestPromQLPublishedSnapshotEnrichChain(t *testing.T) {
 	if displayValues.Title != "CPU使用率发生了告警" || displayValues.Object != hostName || displayValues.Content != event.Content {
 		t.Fatalf("display=%#v", displayValues)
 	}
+	if len(displayValues.Dimensions) != len(event.Dimensions) || displayValues.DimensionText == "" {
+		t.Fatalf("PromQL result labels were lost: dimensions=%d want=%d text=%q", len(displayValues.Dimensions), len(event.Dimensions), displayValues.DimensionText)
+	}
+	for _, dimension := range displayValues.Dimensions {
+		if dimension.RealKey == nil || dimension.RealValue == nil || *dimension.RealValue != event.Dimensions[*dimension.RealKey] {
+			t.Fatalf("display lost original label identity: %#v", dimension)
+		}
+	}
 	// 目录按冒号段派生的表名和字段反查，不使用目录主键，也不改写发布材料。
 	if len(reader.metricQueries) == 0 {
 		t.Fatal("metric catalog was not consulted")

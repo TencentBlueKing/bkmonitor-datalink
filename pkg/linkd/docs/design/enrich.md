@@ -298,6 +298,8 @@ dimension_text
 
 结构化 dimensions 保留场景生成顺序；`dimension_text` 使用副本排序和格式化。当前大部分场景的 content 直接继承 `Event.Content`。
 
+PromQL 的展示维度取自 Event 实际返回的标签及附加维度，不依赖可能为空的 `agg_dimension`，也不补造被表达式聚合掉的标签。规范模型身份条目保持原顺序，其余结果标签按键排序；名称优先取指标元数据，未知或空名称保留原键，展示值仍使用已确认的资源名称转换。`__NO_DATA_DIMENSION__` 控制标记不作为结果标签展示。普通指标继续按声明分组维度选择展示项，PromQL 的 `metric_query_params` 继续仅携带完整表达式，不添加推测的 `group_by` 或 `where`。
+
 EventSource 的 `enrich.content_mode=bkmonitor_description` 在创建准备阶段及持续触发更新时调用内容构建器，用本次 Event 及其精确策略历史版本生成 `Alert.content`；普通 Processor 的 Result 仍只保存 Status/Data。该模式的 Display 不生成 content 覆盖补丁，不再裁剪日志、拼接对象名或重复转换单位，避免 Event 快照覆盖后续生成的 Alert 内容。`source` 模式维持既有来源文本处理。实现、事实缺口和验收范围集中见[告警内容生成方案](alert-content-generation.md)，后续 Enrich 不覆盖已有核心字段。
 
 ### 6.4 metric

@@ -175,3 +175,33 @@ func TestMetricScopeEnforcesTenantSpaceAndCachesID(t *testing.T) {
 		t.Fatalf("cached cancellation=%v", err)
 	}
 }
+
+// TestOptionalMetricMetadataCancellation 确认取消先于可选目录多义降级，且不写入降级诊断。
+func TestOptionalMetricMetadataCancellation(t *testing.T) {
+	t.Parallel()
+	for _, beforeRead := range []bool{true, false} {
+		t.Run(fmt.Sprint(beforeRead), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			reader := &cancelingOptionalMetricReader{cancel: cancel}
+			scope, err := NewScope(testAlert(), Sources{Metric: reader})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if beforeRead {
+				cancel()
+			}
+			_, found, err := scope.OptionalMetricMetadata(ctx, models.MetricQuery{TableID: "system.cpu", FieldName: "usage"})
+			if found || !errors.Is(err, context.Canceled) || len(scope.degradedDiagnostics) != 0 {
+				t.Fatalf("found=%t error=%v diagnostics=%v", found, err, scope.degradedDiagnostics)
+			}
+		})
+	}
+}
+
+type cancelingOptionalMetricReader struct{ cancel context.CancelFunc }
+
+func (r *cancelingOptionalMetricReader) FindMetric(context.Context, models.MetricQuery) (models.MetricMetadata, bool, error) {
+	r.cancel()
+	return models.MetricMetadata{}, false, ErrAmbiguousMetricLocator
+}

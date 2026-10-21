@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -103,11 +104,12 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricCatalog)
 	}
 	whereCondition := cleanWhereCondition(queryDimensions)
+	resultTableID, metricField := metricIdentity(query)
 	values.DisplayName = displayName
 	values.MetricName = metricName
 	values.Unit = unit
-	values.ResultTableID = query.ResultTableID
-	values.MetricUniqueID = query.ResultTableID + "." + query.MetricField
+	values.ResultTableID = resultTableID
+	values.MetricUniqueID = metricUniqueID(resultTableID, metricField)
 	values.AggregateFunc = aggregateFunc
 	values.TimeInterval = timeInterval
 	values.WhereCondition = whereCondition
@@ -165,6 +167,24 @@ type metricQueryCondition struct {
 	Value     any    `json:"value"`
 }
 
+// metricIdentity 返回冻结指标身份使用的结果表与字段。
+// PromQL 查询的结果表可能来自冒号段规则，不再直接使用空的发布表名。
+func metricIdentity(query models.StrategyQueryConfig) (string, string) {
+	if query.IsPromQL() {
+		return promQLMetricIdentity(query)
+	}
+	return query.ResultTableID, query.MetricField
+}
+
+// metricUniqueID 仅在结果表和字段都可确定时生成可反解的指标标识。
+// 残缺拼接会得到 ".usage" 或 "table." 这类无法反解的值。
+func metricUniqueID(table, field string) string {
+	if table == "" || field == "" {
+		return ""
+	}
+	return table + "." + field
+}
+
 func buildMetricQueryParams(
 	projection models.StrategyItemProjection,
 	strategy models.CWStrategy,
@@ -180,7 +200,13 @@ func buildMetricQueryParams(
 	// expression；只有无函数的恒等引用可以省略，不能丢弃计算或衍生语义。
 	if len(projection.QueryConfigs) == 1 && strategy.Spec.FieldTag != models.CWStrategyFieldTagDerivedMetric {
 		query := projection.QueryConfigs[0]
-		if query.Alias != "" && strings.TrimSpace(params.Expression) == query.Alias &&
+		alias := query.Alias
+		// PromQL 声明不带 alias；发布端默认使用 A。只识别该已确认的恒等引用，
+		// 不能把任意非空表达式当成别名，否则会丢失真实计算。
+		if alias == "" && query.IsPromQL() {
+			alias = "A"
+		}
+		if alias != "" && strings.TrimSpace(params.Expression) == alias &&
 			!hasFunctions(projection.Functions) && !hasFunctions(query.Functions) {
 			params.Expression = ""
 		}
@@ -189,6 +215,19 @@ func buildMetricQueryParams(
 		params.FieldTag = strategy.Spec.FieldTag
 	}
 	for _, query := range projection.QueryConfigs {
+		// PromQL 由完整表达式表达取数范围和过滤条件：where、group_by 和 metrics
+		// 必须留空，不能从事件维度或冒号段派生，否则会与表达式冲突。
+		if query.IsPromQL() {
+			params.QueryConfigs = append(params.QueryConfigs, metricQueryConfig{
+				CustomEventName: query.CustomEventName, QueryString: query.QueryString, IndexSetID: query.IndexSetID,
+				BKBizID: bizID, DataSourceLabel: query.DataSourceLabel, DataTypeLabel: query.DataTypeLabel,
+				GroupBy: []string{}, Table: query.ResultTableID, PromQL: query.PromQL,
+				Metrics: []metricQueryMetric{}, Interval: query.AggregatePeriod, Where: []metricQueryCondition{},
+				TimeField: rawJSONValue(query.TimeField, nil), ExtendFields: jsonObjectValue(query.ExtendFields),
+				FilterDict: map[string]any{}, Functions: rawJSONValue(query.Functions, []any{}),
+			})
+			continue
+		}
 		selectedDimensions := selectQueryDimensions(query, dimensions)
 		translated := translateMetricQuery(query, selectedDimensions)
 		params.QueryConfigs = append(params.QueryConfigs, metricQueryConfig{
@@ -243,8 +282,8 @@ type translatedMetricQuery struct {
 
 func translateMetricQuery(query models.StrategyQueryConfig, dimensions map[string]any) translatedMetricQuery {
 	if query.DataSourceLabel == rules.DataSourcePrometheus {
-		field, table := parsePromQLIdentity(query.PromQL)
-		return translatedMetricQuery{field: field, table: table, filterDict: map[string]any{}}
+		// PromQL 的取数条件已在表达式内，不翻译维度、也不改写表名与字段。
+		return translatedMetricQuery{field: query.MetricField, table: query.ResultTableID, filterDict: map[string]any{}}
 	}
 	translated := translatedMetricQuery{field: query.MetricField, table: query.ResultTableID, filterDict: map[string]any{}}
 	switch {
@@ -272,12 +311,168 @@ func translateMetricQuery(query models.StrategyQueryConfig, dimensions map[strin
 	return translated
 }
 
+// promQLSeriesPattern 同时识别普通指标和冒号分段指标，防止混合表达式遗漏序列。
+var promQLSeriesPattern = regexp.MustCompile(`[A-Za-z_:][A-Za-z0-9_:]*`)
+
+// parsePromQLIdentity 按 Kingeye 的冒号段规则从 PromQL 提取结果表与指标字段。
+// 表达式必须能唯一确定一个冒号分段的序列名；函数、聚合、by/on 列表、标签匹配器
+// 和时间窗口不参与命名。多序列或无法唯一确定时返回空表与空字段，避免把任意
+// PromQL 强行绑定到单个指标。返回顺序为字段、结果表，与调用方投影一致。
 func parsePromQLIdentity(promql string) (string, string) {
-	parts := strings.Split(promql, ":")
+	series, ok := promQLSeriesName(promql)
+	if !ok {
+		return "", ""
+	}
+	parts := strings.Split(series, ":")
 	if len(parts) < 3 {
 		return "", ""
 	}
 	return parts[len(parts)-1], strings.Join(parts[1:len(parts)-1], ".")
+}
+
+// promQLSeriesName 返回表达式中唯一的冒号分段序列名。
+// 字符串、标签匹配器和区间选择器先被移除，因此其中的冒号不会被误认成序列；
+// 结构不完整（未闭合的引号、圆括号、花括号或方括号）时拒绝解析，避免基于残缺
+// 输入猜测身份。
+func promQLSeriesName(expression string) (string, bool) {
+	stripped, ok := stripPromQLSeriesContext(expression)
+	if !ok {
+		return "", false
+	}
+	// 无名选择器和注释无法由这套有限识别规则证明身份，保守放弃目录推导。
+	if strings.ContainsAny(stripped, "?#") {
+		return "", false
+	}
+	result, skipUntil := "", 0
+	for _, index := range promQLSeriesPattern.FindAllStringIndex(stripped, -1) {
+		if index[0] < skipUntil {
+			continue
+		}
+		// 数值和 offset 时间单位不是序列，例如 5m、1e3。
+		if index[0] > 0 && stripped[index[0]-1] >= '0' && stripped[index[0]-1] <= '9' {
+			continue
+		}
+		name := stripped[index[0]:index[1]]
+		rest := strings.TrimLeft(stripped[index[1]:], " \t\r\n")
+		switch name {
+		case "by", "without", "on", "ignoring", "group_left", "group_right":
+			if strings.HasPrefix(rest, "(") {
+				// 这些括号只包含标签列表；函数括号中的指标则必须继续扫描。
+				end := strings.IndexByte(rest, ')')
+				if end < 0 {
+					return "", false
+				}
+				skipUntil = len(stripped) - len(rest) + end + 1
+			}
+			continue
+		case "sum", "min", "max", "avg", "group", "stddev", "stdvar", "count", "count_values", "bottomk", "topk", "quantile", "limitk", "limit_ratio":
+			words := strings.Fields(rest)
+			if len(words) != 0 && (words[0] == "by" || words[0] == "without" || strings.HasPrefix(words[0], "by(") || strings.HasPrefix(words[0], "without(")) {
+				continue
+			}
+		case "offset", "bool", "and", "or", "unless":
+			continue
+		}
+		if strings.HasPrefix(rest, "(") {
+			continue
+		}
+		if result != "" && result != name {
+			return "", false
+		}
+		result = name
+	}
+	if result == "" {
+		return "", false
+	}
+	return result, true
+}
+
+// stripPromQLSeriesContext 移除字符串字面量、标签匹配器和区间选择器，
+// 保留函数、聚合、运算符和裸标识符供后续识别。
+func stripPromQLSeriesContext(expression string) (string, bool) {
+	var stripped strings.Builder
+	stripped.Grow(len(expression))
+	braces, brackets, parens := 0, 0, 0
+	var quote byte
+	for i := 0; i < len(expression); i++ {
+		char := expression[i]
+		switch {
+		case quote != 0:
+			if char == '\\' && quote != '`' {
+				i++
+				continue
+			}
+			if char == quote {
+				quote = 0
+			}
+		case char == '"' || char == '\'' || char == '`':
+			quote = char
+			stripped.WriteByte(' ')
+		case char == '{':
+			// 只有紧邻已有指标名的匹配器才能沿用其身份；{__name__=...}
+			// 本身也是序列，不能在混合表达式中把它静默删除。
+			if braces == 0 {
+				prefix := strings.TrimRight(expression[:i], " \t\r\n")
+				words := strings.Fields(prefix)
+				if len(words) != 0 {
+					switch words[len(words)-1] {
+					case "and", "or", "unless", "bool":
+						stripped.WriteByte('?')
+					}
+				}
+				if prefix == "" || !strings.ContainsAny(prefix[len(prefix)-1:], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:") {
+					stripped.WriteByte('?')
+				}
+			}
+			braces++
+		case char == '}':
+			if braces == 0 {
+				return "", false
+			}
+			braces--
+		case char == '[':
+			brackets++
+		case char == ']':
+			if brackets == 0 {
+				return "", false
+			}
+			brackets--
+		case braces != 0 || brackets != 0:
+			// 标签匹配器和区间选择器内部不产生序列名。
+		case char == '(':
+			parens++
+			stripped.WriteByte(char)
+		case char == ')':
+			if parens == 0 {
+				return "", false
+			}
+			parens--
+			stripped.WriteByte(char)
+		default:
+			stripped.WriteByte(char)
+		}
+	}
+	if quote != 0 || braces != 0 || brackets != 0 || parens != 0 {
+		return "", false
+	}
+	return stripped.String(), true
+}
+
+// promQLMetricIdentity 返回 PromQL 查询的兼容指标身份。
+// 发布材料已带结果表或字段时沿用发布值，缺失时才按冒号段规则从表达式派生。
+func promQLMetricIdentity(query models.StrategyQueryConfig) (string, string) {
+	table, field := query.ResultTableID, query.MetricField
+	if table != "" && field != "" {
+		return table, field
+	}
+	derivedField, derivedTable := parsePromQLIdentity(query.PromQL)
+	if field == "" {
+		field = derivedField
+	}
+	if table == "" {
+		table = derivedTable
+	}
+	return table, field
 }
 
 func selectQueryDimensions(query models.StrategyQueryConfig, dimensions domain.DimensionMap) map[string]any {
@@ -508,6 +703,11 @@ func cleanMetricName(
 		// 衍生指标
 		return strategy.Spec.FieldName
 	}
+	if query.IsPromQL() {
+		// PromQL 不对应单指标：发布字段缺失时按冒号段规则派生，派生不出则留空。
+		_, field := promQLMetricIdentity(query)
+		return field
+	}
 	if len(projection.QueryConfigs) > 1 || strategy.Spec.StrategyItem == nil ||
 		hasFunctions(strategy.Spec.StrategyItem.Functions) || hasFunctions(projection.Functions) || hasFunctions(query.Functions) {
 		return ""
@@ -541,8 +741,23 @@ func cleanItem(
 	projection models.StrategyItemProjection,
 	query models.StrategyQueryConfig,
 ) (string, error) {
-	if strategy.Spec.StrategyItem != nil && len(strategy.Spec.StrategyItem.QueryConfigs) != 0 ||
-		strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
+	modelCode := ""
+	if strategy.ObjectModelCode != nil {
+		modelCode = *strategy.ObjectModelCode
+	}
+	if query.IsPromQL() {
+		// PromQL 没有单指标名称：目录能定位时才用中文名补充，否则保留发布名称，
+		// 不能因为目录缺数据而失去展示名称。
+		metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, modelCode)
+		if err != nil {
+			return "", err
+		}
+		if found && metadata.FieldCNName != "" {
+			return metadata.FieldCNName, nil
+		}
+		return strategy.Spec.Name, nil
+	}
+	if strategy.Spec.StrategyItem != nil && len(strategy.Spec.StrategyItem.QueryConfigs) != 0 || modelCode == "" {
 		// 基于数据或多指标
 		return strategy.Spec.Name, nil
 	}
@@ -554,7 +769,7 @@ func cleanItem(
 		// 系统事件
 		return projection.Name, nil
 	}
-	metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, *strategy.ObjectModelCode)
+	metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, query, modelCode)
 	if err != nil {
 		return "", err
 	}
@@ -567,19 +782,31 @@ func cleanItem(
 
 // 日志主题查询可能没有目录引用；此时展示沿用日志配置与原始维度，不能把缺少
 // 物理表当成目录故障。其他指标仍要求完整身份；日志显式引用的目录失败也不掩盖。
+// PromQL 表达式无法唯一确定单指标时同样没有目录引用，目录只作可选补充。
 func metricDefinitionMetadata(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, query models.StrategyQueryConfig, modelCode string) (models.MetricMetadata, bool, error) {
 	locator := metricDefinitionQuery(strategy, query, modelCode)
 	if rules.IsLogDisplay(rules.ClassifyDisplay(strategy)) && locator.MetricID == 0 && locator.TableID == "" && locator.FieldTag != models.CWStrategyFieldTagDerivedMetric {
 		return models.MetricMetadata{}, false, nil
 	}
+	if query.IsPromQL() && !locator.LocatorComplete() {
+		return models.MetricMetadata{}, false, nil
+	}
+	if query.IsPromQL() && locator.MetricID == 0 {
+		return scope.OptionalMetricMetadata(ctx, locator)
+	}
 	return scope.MetricMetadata(ctx, locator)
 }
 
 // 定义查询统一从发布材料提取，避免单位、文案、维度和资源分别定位到不同的指标行。
+// PromQL 声明常以冒号段表达单一序列，缺少表名或字段时按同一规则派生目录定位，
+// 派生失败只说明目录不可补充，不能据此判定丰富失败。
 func metricDefinitionQuery(strategy models.CWStrategy, query models.StrategyQueryConfig, modelCode string) models.MetricQuery {
 	result := models.MetricQuery{MetricID: query.MetricRefID, TableID: query.ResultTableID, FieldName: query.MetricField, ObjectModelCode: modelCode}
 	if result.TableID == "" {
 		result.TableID = strategy.Spec.TableID
+	}
+	if query.IsPromQL() {
+		result.TableID, result.FieldName = promQLMetricIdentity(query)
 	}
 	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
 		result.TableID = ""

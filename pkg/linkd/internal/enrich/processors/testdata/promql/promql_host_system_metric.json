@@ -1,0 +1,804 @@
+{
+  "name": "promql_host_system_metric",
+  "kac_alarm_id": "linkd-93f26184-8acd-5fdc-bf3a-c5cd11fcd4ec",
+  "monitor_template_name": "PromQL",
+  "strategy_revision": {
+    "bk_tenant_id": "system",
+    "strategy_bk_biz_id": 2,
+    "strategy_id": 145,
+    "strategy_revision": 1,
+    "snapshot_schema_version": 1,
+    "snapshot_digest": "a2f0854b4489604868ce1a9f0092c4119e4a11609113300f1535758089dead18",
+    "snapshot_bytes": 4102
+  },
+  "runtime_config": {
+    "metadata": {
+      "annotations": {},
+      "created_at": null,
+      "created_by": null,
+      "labels": {
+        "bk_biz_id": 2,
+        "bk_object_inst_id": null,
+        "bk_tenant_id": "system",
+        "config_id": "2b0bc796-9cc0-4dfb-8718-60a16b63e7fd",
+        "default_strategy_config_uid": null,
+        "is_default": true,
+        "monitor_template_id": 171,
+        "object_model_code": ""
+      },
+      "name": "171|2b0bc7969cc04dfb871860a16b63e7fd|2",
+      "namespace": "default",
+      "uid": "7ffdf9c2-2620-5c8f-b22e-319fbf3cae81",
+      "updated_at": null,
+      "updated_by": null
+    },
+    "spec": {
+      "alarm_alias": "",
+      "alias_name": "avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id=\"2\"}[60s])",
+      "child_strategy_ids": [],
+      "config_type": "data",
+      "data_source": "",
+      "derived_metric_primary_id": null,
+      "description": "avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id=\"2\"}[60s])",
+      "enable": true,
+      "field_name": "",
+      "field_tag": "",
+      "item_name": "",
+      "metric_source": "",
+      "monitor_item_type": "metric",
+      "name": "avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id=\"2\"}[60s])",
+      "parent_strategy_id": null,
+      "source_config": {},
+      "strategy_detect_algorithms": [
+        {
+          "algorithm_config": {
+            "algorithmUnit": "",
+            "config": [
+              {
+                "method": "gte",
+                "threshold": "50"
+              }
+            ],
+            "detectionType": "conventionalAlgorithm",
+            "hover": false,
+            "title": "静态阈值",
+            "type": "Threshold"
+          },
+          "algorithm_type": "Threshold",
+          "level": 2,
+          "level_status": "warning"
+        },
+        {
+          "algorithm_config": {
+            "algorithmUnit": "",
+            "config": [
+              {
+                "method": "gte",
+                "threshold": "30"
+              }
+            ],
+            "detectionType": "conventionalAlgorithm",
+            "hover": false,
+            "title": "静态阈值",
+            "type": "Threshold"
+          },
+          "algorithm_type": "Threshold",
+          "level": 3,
+          "level_status": "remind"
+        }
+      ],
+      "strategy_item": {
+        "agg_condition": [],
+        "agg_dimension": [],
+        "agg_interval": "60s",
+        "agg_method": "",
+        "alarm_level": null,
+        "connector": "and",
+        "expression": "A",
+        "functions": [],
+        "no_data_config": {
+          "agg_dimension": [],
+          "continuous": 5,
+          "is_enabled": false,
+          "level": 1
+        },
+        "query_configs": [
+          {
+            "agg_condition": [],
+            "agg_interval": 60,
+            "description": "",
+            "item_name": "",
+            "metric_field": "",
+            "metric_name": "",
+            "metric_source": "",
+            "promql": "avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id=\"2\"}[60s])",
+            "query_config_type": "prometheus",
+            "result_table_id": ""
+          }
+        ],
+        "recovery_config": {
+          "check_window": 5,
+          "disable_recovery": false
+        },
+        "trigger_config": {
+          "check_window": 5,
+          "count": 1,
+          "uptime": {
+            "active_calendars": [],
+            "cw_calendars": [],
+            "time_ranges": [
+              {
+                "end": "23:59",
+                "start": "00:00"
+              }
+            ]
+          }
+        }
+      },
+      "table_id": "",
+      "target_inst_type": null,
+      "target_scope": {},
+      "targets": []
+    },
+    "status": {
+      "bk_strategy_id": 145,
+      "delete_status": null,
+      "enable": null,
+      "message": "",
+      "strategy_config_version": 1,
+      "sync_status": "同步未开始",
+      "synced_at": null,
+      "synced_spec_hash": ""
+    }
+  },
+  "runtime_items": [
+    {
+      "algorithms": [
+        {
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "50"
+              }
+            ]
+          ],
+          "level": 2,
+          "type": "Threshold",
+          "unit_prefix": ""
+        },
+        {
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "30"
+              }
+            ]
+          ],
+          "level": 3,
+          "type": "Threshold",
+          "unit_prefix": ""
+        }
+      ],
+      "expression": "A",
+      "functions": [],
+      "id": 44789057605654,
+      "no_data_config": {
+        "agg_dimension": [],
+        "continuous": 5,
+        "is_enabled": false,
+        "level": 1
+      },
+      "query_configs": [
+        {
+          "agg_condition": [],
+          "agg_dimension": [],
+          "agg_interval": 60,
+          "agg_method": "AVG",
+          "alias": "A",
+          "data_label": "",
+          "data_source_label": "prometheus",
+          "data_type_label": "time_series",
+          "filter_dict": {},
+          "functions": [],
+          "metric_field": "",
+          "metric_id": "",
+          "promql": "avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id=\"2\"}[60s])",
+          "result_table_id": "",
+          "unit": ""
+        }
+      ],
+      "query_md5": "a0a9ae8fe469b4ba6d0b95e922ccf1b3",
+      "target": [],
+      "time_delay": 0
+    }
+  ],
+  "event": {
+    "bk_tenant_id": "system",
+    "event_id": "20261021071111.system.built_in_bk.dc24560f7f637adb",
+    "source_event_id": "75dfc9de6b3529c7692261eee9cb59d27be96b361f6894228a3bda1d90209307",
+    "title": "Strategy 145 level 3 triggered",
+    "content": "value=31.676873847668 at 2026-10-21T07:10:00Z; 1 of 5 points in the window were anomalous",
+    "dimensions": {
+      "__name__": "usage_value",
+      "bk_agent_id": "02000000000050568c94c117411601484747",
+      "bk_biz_id": "2",
+      "bk_cloud_id": "0",
+      "bk_host_id": "178",
+      "bk_supplier_id": "0",
+      "bk_target_cloud_id": "0",
+      "bk_target_host_id": "178",
+      "bk_target_ip": "10.10.28.22",
+      "db": "default",
+      "device_name": "cpu-total",
+      "hostname": "aiops-k8s-node10",
+      "ip": "10.10.28.22",
+      "result_table_id": "2_sys_cpu_summary"
+    },
+    "extra_data": {
+      "anomaly_begin_time": "2026-10-21T07:10:00Z",
+      "evaluation_family": "metric_algorithm",
+      "event_semantic_digest": "324c2b389b134363c7dd562bd00e1220b5528716983a3f25a8ff1fb0c9e77770",
+      "signal_type": "metric",
+      "window": {
+        "anomalies": 1,
+        "required": 1,
+        "size": 5
+      }
+    },
+    "labels": {
+      "bk_biz_id": 2,
+      "strategy_id": 145,
+      "strategy_version": 1
+    },
+    "subject": {
+      "system": "cmdb",
+      "type": "host",
+      "id": "178",
+      "name": ""
+    },
+    "evaluations": [
+      {
+        "severity": "info",
+        "action": "triggered"
+      }
+    ],
+    "occurred_at": "2026-10-21T07:10:00Z",
+    "produced_at": "2026-10-21T07:11:00Z",
+    "received_at": "2026-10-21T07:11:11.219Z",
+    "create_at": "2026-10-21T07:11:11.219Z"
+  },
+  "host": {
+    "model": {
+      "model_id": "cw-Host",
+      "model_code": "cw-Host",
+      "fields": {
+        "object_model_name": "主机",
+        "bk_cmdb_obj_id": "host"
+      }
+    },
+    "instance": {
+      "model_code": "cw-Host",
+      "instance_id": "178",
+      "fields": {
+        "model_id": "cw-Host",
+        "model_inst_id": "178",
+        "entity_uid": "cw-Host|178",
+        "bk_biz_ids": [
+          2
+        ],
+        "display_name": "10.10.28.22_0_v10 (halberd)"
+      },
+      "attributes": {
+        "BelongMonitorPlatform": null,
+        "a1111111": null,
+        "agentStatus": null,
+        "agent_status": "normal",
+        "agent_status_sync_time": "2026-09-28T02:10:36.728585Z",
+        "app_id": null,
+        "app_name": null,
+        "app_version": null,
+        "belong_to_monitor_cluster_name": null,
+        "biz_instance_id": null,
+        "bk_addressing": "static",
+        "bk_agent_alive": true,
+        "bk_agent_id": "02000000000050568c94c117411601484747",
+        "bk_asset_id": "",
+        "bk_bak_operator": "admin",
+        "bk_biz_id": 2,
+        "bk_biz_name": "蓝鲸2",
+        "bk_cloud_host_identifier": false,
+        "bk_cloud_host_status": null,
+        "bk_cloud_id": 0,
+        "bk_cloud_inst_id": "",
+        "bk_cloud_name": "Default Area",
+        "bk_cloud_region": "",
+        "bk_cloud_vendor": null,
+        "bk_cloud_zone": "",
+        "bk_comment": "",
+        "bk_cpu": 32,
+        "bk_cpu_architecture": "x86",
+        "bk_cpu_module": "Intel(R) Xeon(R) Platinum 8160 CPU @ 2.10GHz",
+        "bk_created_at": "2025-03-05T15:35:39.84+08:00",
+        "bk_created_by": "admin",
+        "bk_disk": 587,
+        "bk_host_id": 178,
+        "bk_host_innerip": "10.10.28.22",
+        "bk_host_innerip_v6": "",
+        "bk_host_name": "aiops-k8s-node10",
+        "bk_host_outerip": "",
+        "bk_host_outerip_v6": "",
+        "bk_isp_name": null,
+        "bk_mac": "00:50:56:8c:94:c1",
+        "bk_mem": 149805,
+        "bk_os_bit": "64-bit",
+        "bk_os_kernel_version": "6.17.8-1.el8.elrepo.x86_64",
+        "bk_os_name": "linux kylin",
+        "bk_os_type": "1",
+        "bk_os_version": "v10 (halberd)",
+        "bk_outer_mac": "",
+        "bk_province_name": null,
+        "bk_service_term": null,
+        "bk_sla": "1",
+        "bk_sn": "",
+        "bk_state": null,
+        "bk_state_name": null,
+        "bk_supplier_account": "0",
+        "bk_updated_at": "2026-07-11T10:51:20.018+08:00",
+        "bk_updated_by": "product",
+        "bool": null,
+        "ci_common_name": null,
+        "cluster": null,
+        "cluster_name": null,
+        "cmdb_source_biz_ids": [
+          2
+        ],
+        "conn_firewall_sn": null,
+        "conn_firewall_unit": null,
+        "conn_router_unit": null,
+        "cpuBrand": null,
+        "create_time": "2025-03-05T15:35:39.84+08:00",
+        "data_source": null,
+        "date": null,
+        "datetime": null,
+        "device_owner_dept": null,
+        "direct_unit_id": null,
+        "direct_unit_name": null,
+        "diskType": null,
+        "dsd": null,
+        "dssds": null,
+        "enum": null,
+        "error": false,
+        "float": null,
+        "frameWork": null,
+        "genuineos": null,
+        "host_name": null,
+        "host_type": null,
+        "import_from": "3",
+        "instance_ip": null,
+        "instance_port": null,
+        "int": null,
+        "ipmi_host": null,
+        "ipmi_password": "[REDACTED]",
+        "ipmi_port": null,
+        "ipmi_user": null,
+        "isInstallBaseline": null,
+        "isInstallPatchMan": null,
+        "is_monitor_env": null,
+        "is_need_monitor": null,
+        "last_modifier": null,
+        "last_modify_time": null,
+        "last_survey_time": null,
+        "last_time": "2026-07-11T10:51:20.018+08:00",
+        "list": null,
+        "longchar": null,
+        "mac_address": null,
+        "manager": null,
+        "memory": null,
+        "memoryModel": null,
+        "multi_enum": null,
+        "multi_enum2": null,
+        "networkArea": null,
+        "object_role": "monitoring",
+        "operationalState": null,
+        "operator": "admin",
+        "ops_bmc_ip": null,
+        "ops_bmc_port": null,
+        "ops_console_host_id": null,
+        "ops_out_band_protocol": null,
+        "ops_out_band_type": null,
+        "ops_owner_account": null,
+        "org": null,
+        "owner": "devin01",
+        "publicipv4": null,
+        "publicport": null,
+        "res_pool_id": null,
+        "run_activemq_port": null,
+        "run_activemq_unit": null,
+        "run_alisql_instance_ip": null,
+        "run_alisql_port": null,
+        "run_alisql_unit": null,
+        "run_apache_instance_ip": null,
+        "run_apache_port": null,
+        "run_app_process_instance_ip": null,
+        "run_app_process_port": null,
+        "run_app_process_unit": null,
+        "run_clickhouse_port": null,
+        "run_cloud_etcd_unit": null,
+        "run_cloud_gaussdb_cloud_ms_id": null,
+        "run_cloud_gaussdb_unit": null,
+        "run_cloud_kafka_cloud_ms_id": null,
+        "run_cloud_kafka_unit": null,
+        "run_cloud_ms_id": null,
+        "run_cloud_mysql_unit": null,
+        "run_cloud_nginx_cloud_ms_id": null,
+        "run_cloud_redis_unit": null,
+        "run_cloud_zookeeper_unit": null,
+        "run_consul_instance_ip": null,
+        "run_consul_port": null,
+        "run_dameng_port": null,
+        "run_dameng_unit": null,
+        "run_db2_port": null,
+        "run_druid_instance_ip": null,
+        "run_dubbo_instance_ip": null,
+        "run_dubbo_port": null,
+        "run_dubbo_unit": null,
+        "run_emqx_port": null,
+        "run_es_unit": null,
+        "run_flink_port": null,
+        "run_flink_unit": null,
+        "run_g100_instance_ip": null,
+        "run_g100_port": null,
+        "run_gbase_unit": null,
+        "run_hadoop_port": null,
+        "run_hadoop_unit": null,
+        "run_haproxy_instance_ip": null,
+        "run_haproxy_port": null,
+        "run_harbor_instance_ip": null,
+        "run_hbase_port": null,
+        "run_hbase_unit": null,
+        "run_hcs_process_name": null,
+        "run_hcs_process_unit": null,
+        "run_hive_unit": null,
+        "run_ibmmq_port": null,
+        "run_iis_unit": null,
+        "run_influxdb_unit": null,
+        "run_informix_instance_ip": null,
+        "run_inforsuite_instance_ip": null,
+        "run_inforsuite_port": null,
+        "run_jboss_unit": null,
+        "run_jetty_instance_ip": null,
+        "run_jvm_instance_ip": null,
+        "run_jvm_unit": null,
+        "run_kafka_instance_ip": null,
+        "run_kafka_port": null,
+        "run_kafka_unit": null,
+        "run_keepalived_instance_ip": null,
+        "run_kube_cluster_name": null,
+        "run_kube_node_ip": null,
+        "run_kube_node_unit": null,
+        "run_logstash_instance_ip": null,
+        "run_lvs_instance_ip": null,
+        "run_mariadb_instance_ip": null,
+        "run_mariadb_port": null,
+        "run_memcached_instance_ip": null,
+        "run_memcached_port": null,
+        "run_microservice_name": null,
+        "run_mongodb_port": null,
+        "run_mongodb_unit": null,
+        "run_nacos_port": null,
+        "run_nfs_unit": null,
+        "run_oceanbase_unit": null,
+        "run_on_blade_chassis_unit": null,
+        "run_on_rack_server_sn": null,
+        "run_on_rack_server_unit": null,
+        "run_on_tower_server_sn": null,
+        "run_oracle_oracle_sid": null,
+        "run_polardb_instance_ip": null,
+        "run_polardb_port": null,
+        "run_postgresql_unit": null,
+        "run_pulsar_instance_ip": null,
+        "run_rabbitmq_port": null,
+        "run_rabbitmq_unit": null,
+        "run_redis_port": null,
+        "run_rocketmq_port": null,
+        "run_sequoiadb_instance_ip": null,
+        "run_sequoiadb_unit": null,
+        "run_software_lb_instance_ip": null,
+        "run_software_lb_port": null,
+        "run_software_lb_unit": null,
+        "run_spark_instance_ip": null,
+        "run_spark_port": null,
+        "run_sqlserver_instance_ip": null,
+        "run_tdengine_instance_ip": null,
+        "run_tdsql_instance_ip": null,
+        "run_tech_activemq_cluster_namespace": null,
+        "run_tech_activemq_instance_name": null,
+        "run_tech_consul_cluster_instance_ip": null,
+        "run_tech_consul_unit": null,
+        "run_tech_hcmq_cluster_namespace": null,
+        "run_tech_kafka_cluster_name": null,
+        "run_tech_kafka_instance_name": null,
+        "run_tech_kafka_namespace": null,
+        "run_tech_rabbitmq_cluster_name": null,
+        "run_tech_rabbitmq_cluster_namespace": null,
+        "run_tech_rabbitmq_instance_name": null,
+        "run_tech_rabbitmq_namespace": null,
+        "run_tech_rabbitmq_unit": null,
+        "run_tech_redis_cluster_name": null,
+        "run_tech_redis_instance_name": null,
+        "run_tech_redis_unit": null,
+        "run_tech_zc_rds_cluster_instance_ip": null,
+        "run_tech_zookeeper_cluster_instance_ip": null,
+        "run_tech_zookeeper_cluster_name": null,
+        "run_tech_zookeeper_cluster_namespace": null,
+        "run_tech_zookeeper_cluster_unit": null,
+        "run_tech_zookeeper_namespace": null,
+        "run_tech_zookeeper_unit": null,
+        "run_tidb_instance_ip": null,
+        "run_tidb_port": null,
+        "run_tomcat_instance_ip": null,
+        "run_tomcat_unit": null,
+        "run_tongweb_port": null,
+        "run_tsf_ctsdb_port": null,
+        "run_tuxedo_instance_ip": null,
+        "run_tuxedo_port": null,
+        "run_zc_lb_port": null,
+        "run_zc_rds_port": null,
+        "run_zeromq_instance_ip": null,
+        "service_info": null,
+        "shortchar": null,
+        "shortchar2": null,
+        "sub_module": null,
+        "sub_system": null,
+        "test_bool": null,
+        "test_default": null,
+        "test_ipv6": null,
+        "unit_code": null,
+        "use_infrastructure_sys_name": null,
+        "user": null,
+        "virtual_machine_id": null,
+        "wdd": null,
+        "yd_instance_id": null
+      }
+    },
+    "topology": {
+      "bk_biz_id": 2,
+      "bk_biz_name": "蓝鲸2",
+      "bk_set_id": 3,
+      "bk_set_name": "蓝鲸",
+      "bk_module_id": 7,
+      "bk_module_name": "蓝鲸"
+    }
+  },
+  "catalog": [
+    {
+      "id": 9,
+      "bk_tenant_id": "system",
+      "space_uid": "*",
+      "model_id": "cw-Host",
+      "metric_name": "usage",
+      "display_name": "CPU使用率",
+      "kind": "native",
+      "result_table_id": "system.cpu_summary",
+      "data_label": null,
+      "physical_field": "usage",
+      "unit": "percent"
+    }
+  ],
+  "evidence": {
+    "opening_enrichment": [
+      {
+        "severity": "info",
+        "processors": {
+          "strategy": {
+            "status": "succeeded",
+            "diagnostics": []
+          },
+          "resource": {
+            "status": "failed",
+            "diagnostics": [
+              {
+                "code": "dependency_invalid",
+                "dependency": "metric_catalog"
+              }
+            ]
+          },
+          "k8s": {
+            "status": "skipped",
+            "diagnostics": []
+          },
+          "apm": {
+            "status": "skipped",
+            "diagnostics": []
+          },
+          "log": {
+            "status": "skipped",
+            "diagnostics": []
+          },
+          "display": {
+            "status": "failed",
+            "diagnostics": [
+              {
+                "code": "dependency_invalid",
+                "dependency": "metric_catalog"
+              }
+            ]
+          },
+          "metric": {
+            "status": "failed",
+            "diagnostics": [
+              {
+                "code": "dependency_invalid",
+                "dependency": "metric_catalog"
+              }
+            ]
+          },
+          "source": {
+            "status": "succeeded",
+            "diagnostics": []
+          },
+          "fields": {
+            "status": "succeeded",
+            "diagnostics": []
+          }
+        }
+      },
+      {
+        "severity": "warning",
+        "processors": {
+          "strategy": {
+            "status": "succeeded",
+            "diagnostics": []
+          },
+          "resource": {
+            "status": "failed",
+            "diagnostics": [
+              {
+                "code": "dependency_invalid",
+                "dependency": "metric_catalog"
+              }
+            ]
+          },
+          "k8s": {
+            "status": "skipped",
+            "diagnostics": []
+          },
+          "apm": {
+            "status": "skipped",
+            "diagnostics": []
+          },
+          "log": {
+            "status": "skipped",
+            "diagnostics": []
+          },
+          "display": {
+            "status": "failed",
+            "diagnostics": [
+              {
+                "code": "dependency_invalid",
+                "dependency": "metric_catalog"
+              }
+            ]
+          },
+          "metric": {
+            "status": "failed",
+            "diagnostics": [
+              {
+                "code": "dependency_invalid",
+                "dependency": "metric_catalog"
+              }
+            ]
+          },
+          "source": {
+            "status": "succeeded",
+            "diagnostics": []
+          },
+          "fields": {
+            "status": "succeeded",
+            "diagnostics": []
+          }
+        }
+      }
+    ],
+    "errors": [
+      {
+        "role": "control-plane",
+        "time": "2026-10-21T15:18:57.574671414+08:00",
+        "processor": "resource",
+        "severity": "info",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "control-plane",
+        "time": "2026-10-21T15:18:57.574899432+08:00",
+        "processor": "display",
+        "severity": "info",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "control-plane",
+        "time": "2026-10-21T15:18:57.575493766+08:00",
+        "processor": "metric",
+        "severity": "info",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "control-plane",
+        "time": "2026-10-21T15:18:57.582059719+08:00",
+        "processor": "resource",
+        "severity": "warning",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "control-plane",
+        "time": "2026-10-21T15:18:57.582461216+08:00",
+        "processor": "display",
+        "severity": "warning",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "control-plane",
+        "time": "2026-10-21T15:18:57.582781434+08:00",
+        "processor": "metric",
+        "severity": "warning",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "lifecycle",
+        "time": "2026-10-21T15:11:11.368121598+08:00",
+        "processor": "resource",
+        "severity": "info",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "lifecycle",
+        "time": "2026-10-21T15:11:11.368383513+08:00",
+        "processor": "display",
+        "severity": "info",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "lifecycle",
+        "time": "2026-10-21T15:11:11.369005365+08:00",
+        "processor": "metric",
+        "severity": "info",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "lifecycle",
+        "time": "2026-10-21T15:11:11.396814721+08:00",
+        "processor": "resource",
+        "severity": "warning",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "lifecycle",
+        "time": "2026-10-21T15:11:11.397178975+08:00",
+        "processor": "display",
+        "severity": "warning",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      },
+      {
+        "role": "lifecycle",
+        "time": "2026-10-21T15:11:11.398819395+08:00",
+        "processor": "metric",
+        "severity": "warning",
+        "status": "failed",
+        "error": "metric_catalog: find metric: tenant and metric ID or complete locator are required"
+      }
+    ]
+  }
+}

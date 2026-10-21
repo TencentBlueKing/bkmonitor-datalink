@@ -130,6 +130,9 @@ func TestMetricClientFailureAndMissing(t *testing.T) {
 			if found || (err != nil) != tc.wantErr || calls != 1 {
 				t.Fatalf("found=%v err=%v calls=%d", found, err, calls)
 			}
+			if tc.name == "ambiguous" && (!errors.Is(err, enrich.ErrAmbiguousMetricLocator) || !errors.Is(err, enrich.ErrInvalidDataSourceResponse)) {
+				t.Fatalf("ambiguity classification=%v", err)
+			}
 			if tc.modify != nil && tc.name != "scan failure" && !errors.Is(err, enrich.ErrInvalidDataSourceResponse) {
 				t.Fatalf("classification=%v", err)
 			}

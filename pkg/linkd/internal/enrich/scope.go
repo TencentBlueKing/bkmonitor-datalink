@@ -27,6 +27,10 @@ import (
 // ErrInvalidDataSourceResponse 表示外部请求成功后返回的数据违反 Reader 契约。
 var ErrInvalidDataSourceResponse = onemodel.ErrInvalidDataSourceResponse
 
+// ErrAmbiguousMetricLocator 表示无主键的指标目录定位命中多个候选，不能任选其一。
+// 它仍属于无效依赖响应；可选反查的调用方可以据此放弃目录补充。
+var ErrAmbiguousMetricLocator = fmt.Errorf("%w: metric locator is ambiguous", ErrInvalidDataSourceResponse)
+
 // InstanceAttributeType 是 SDK 的类型化属性槽。
 type InstanceAttributeType = onemodel.InstanceAttributeType
 
@@ -263,14 +267,15 @@ func (s *Scope) CloudResource(ctx context.Context, cloudID, resourceType, instan
 }
 
 type Scope struct {
-	dependencyErrors []error
-	dependencies     []string
-	original         *domain.Event
-	state            *domain.EnrichEvaluation
-	running          bool
-	evaluation       domain.EventEvaluation
-	sources          Sources
-	enrichContext    *EnrichContext
+	degradedDiagnostics []Diagnostic
+	dependencyErrors    []error
+	dependencies        []string
+	original            *domain.Event
+	state               *domain.EnrichEvaluation
+	running             bool
+	evaluation          domain.EventEvaluation
+	sources             Sources
+	enrichContext       *EnrichContext
 
 	*requestCache
 }
@@ -432,6 +437,26 @@ func (s *Scope) MetricMetadata(ctx context.Context, query models.MetricQuery) (r
 		s.metrics[query] = result
 	}
 	return result.value, result.found, result.err
+}
+
+// OptionalMetricMetadata 只在无主键的目录反查多义时放弃补充。
+// 原始错误仍由 MetricMetadata 记录，Chain 将当前 Processor 标为 partial 并保留
+// metric_catalog 诊断；基础设施错误、取消和显式主键引用仍返回错误。
+func (s *Scope) OptionalMetricMetadata(ctx context.Context, query models.MetricQuery) (models.MetricMetadata, bool, error) {
+	metadata, found, err := s.MetricMetadata(ctx, query)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return models.MetricMetadata{}, false, contextErr
+	}
+	if query.MetricID != 0 || !errors.Is(err, ErrAmbiguousMetricLocator) {
+		return metadata, found, err
+	}
+	for _, diagnostic := range s.degradedDiagnostics {
+		if diagnostic.Dependency == "metric_catalog" {
+			return models.MetricMetadata{}, false, nil
+		}
+	}
+	s.degradedDiagnostics = append(s.degradedDiagnostics, Diagnostic{Code: DiagnosticCodeDependencyInvalid, Dependency: "metric_catalog"})
+	return models.MetricMetadata{}, false, nil
 }
 
 // APMApplications 按业务和名称读取租户内 APM 应用候选项，并在单次 Enrich 内复用结果。

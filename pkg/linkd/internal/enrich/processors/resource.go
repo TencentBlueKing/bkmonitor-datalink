@@ -173,13 +173,37 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	if readErr != nil || !found || metadata.ObjectModelCode == "" {
+	if readErr != nil {
 		return failedDependency(rules.DependencyMetricCatalog), nil
 	}
-	if modelCode != "" && modelCode != metadata.ObjectModelCode {
+	catalogModel := ""
+	if found {
+		catalogModel = metadata.ObjectModelCode
+	}
+	// 普通时序必须由指标目录确认对象模型；PromQL 声明可以没有目录模型，
+	// 目录只在能可靠定位时补充。
+	if !query.IsPromQL() && (!found || catalogModel == "") {
 		return failedDependency(rules.DependencyMetricCatalog), nil
 	}
-	values := models.ResourceValues{ModelID: metadata.ObjectModelCode, BKBizID: bizID, DynamicGroupID: []string{}}
+	if modelCode == "" {
+		modelCode = catalogModel
+	}
+	if modelCode == "" && query.IsPromQL() {
+		// 目录不可用时只能用事件已确认的身份，不能根据表达式或表名猜测模型。
+		modelCode = promQLSubjectModelCode(scope.Facts())
+	}
+	if catalogModel != "" && catalogModel != modelCode {
+		return failedDependency(rules.DependencyMetricCatalog), nil
+	}
+	values := models.ResourceValues{ModelID: modelCode, BKBizID: bizID, DynamicGroupID: []string{}}
+	if modelCode == "" {
+		// PromQL 无法确定对象模型时保留业务与来源，让展示和指标继续生成，
+		// 不把目录未命中或身份缺口报告成目录故障。
+		values.CWLabels = enrich.ResourceLabels(values)
+		return resourceScenarioResult(scope, values, []enrich.Diagnostic{{
+			Code: enrich.DiagnosticCodeMissingField, Fields: []string{"dimensions." + rules.FieldModelID},
+		}}, false)
+	}
 	business, businessFound, businessErr := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: fmt.Sprint(bizID)})
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
@@ -200,7 +224,7 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		enrich.ApplyModelContext(&values, model)
 	}
 	values.CWLabels = enrich.ResourceLabels(values)
-	if values.ModelID == rules.HostModelCode && strings.HasPrefix(query.ResultTableID, rules.SystemTablePrefix) {
+	if values.ModelID == rules.HostModelCode && (strings.HasPrefix(query.ResultTableID, rules.SystemTablePrefix) || query.IsPromQL()) {
 		return processDataHostResource(ctx, scope, values, scope.Facts().Dimensions)
 	}
 	if _, knownK8s := k8sIdentityFields[values.ModelID]; knownK8s {
@@ -275,6 +299,16 @@ func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy model
 	}
 	values.CWLabels = apmLabels(bizID, application.ID)
 	return resourceScenarioResult(scope, values, diagnostics, true)
+}
+
+// promQLSubjectModelCode 从事件里已确认的 CMDB 主机 Subject 推导对象模型。
+// PromQL 声明没有对象模型时，这是唯一可不依赖指标目录得到的资源模型；
+// 其他 Subject 类型留给后续单独确认的定位规则。
+func promQLSubjectModelCode(event domain.Event) string {
+	if event.SubjectSystem == "cmdb" && event.SubjectType == "host" && event.SubjectID != "" {
+		return rules.HostModelCode
+	}
+	return ""
 }
 
 func dataObjectModelCode(strategy models.CWStrategy, dimensions domain.DimensionMap) string {

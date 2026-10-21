@@ -141,13 +141,27 @@ func TestDATAFunctionMetricPreservesFunctionsAndDisablesEnumMapping(t *testing.T
 	}
 }
 
-func TestDATAPrometheusProjectionUsesPromQLIdentity(t *testing.T) {
+// PromQL 查询参数只冻结完整表达式：Kingeye 的 Prometheus 分支不会从维度、
+// 表名或冒号段派生 where、group_by 和 metrics，避免与表达式内的过滤自相矛盾。
+func TestDATAPrometheusProjectionKeepsExpressionOnly(t *testing.T) {
 	t.Parallel()
-	query := models.StrategyQueryConfig{DataSourceLabel: rules.DataSourcePrometheus, DataTypeLabel: "time_series", PromQL: "bkmonitor:node:system_cpu_usage", ResultTableID: "ignored", MetricField: "ignored", AggregateMethod: "avg"}
-	params := buildMetricQueryParams(models.StrategyItemProjection{BKBizID: 2, QueryConfigs: []models.StrategyQueryConfig{query}}, models.CWStrategy{}, domain.DimensionMap{}, 2)
-	got := params.QueryConfigs[0]
-	if got.Table != "node" || got.Metrics[0].Field != "system_cpu_usage" || got.PromQL != query.PromQL {
-		t.Fatalf("query=%#v", got)
+	for _, tc := range []struct {
+		name, table, field string
+	}{
+		{name: "published location kept", table: "ignored", field: "ignored"},
+		{name: "empty published location"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query := models.StrategyQueryConfig{DataSourceLabel: rules.DataSourcePrometheus, DataTypeLabel: "time_series", PromQL: "avg_over_time(bkmonitor:node:system_cpu_usage{a=\"b\"}[60s])", ResultTableID: tc.table, MetricField: tc.field, AggregateMethod: "avg"}
+			params := buildMetricQueryParams(models.StrategyItemProjection{BKBizID: 2, QueryConfigs: []models.StrategyQueryConfig{query}}, models.CWStrategy{}, domain.DimensionMap{}, 2)
+			got := params.QueryConfigs[0]
+			if got.Table != tc.table || got.DataSourceLabel != rules.DataSourcePrometheus || got.PromQL != query.PromQL {
+				t.Fatalf("query=%#v", got)
+			}
+			if len(got.Metrics) != 0 || len(got.Where) != 0 || len(got.GroupBy) != 0 {
+				t.Fatalf("promql must not derive metric binding: %#v", got)
+			}
+		})
 	}
 }
 

@@ -47,7 +47,18 @@ type StrategyQueryConfig struct {
 	ResultTableID   string            `json:"result_table_id"`
 	DataSourceLabel string            `json:"data_source_label"`
 	DataTypeLabel   string            `json:"data_type_label"`
+	// QueryConfigType 是鲸眼 query_config 的查询类型标识，prometheus 表示 PromQL。
+	// 声明式快照可能省略 data_source_label，只能靠它识别 Prometheus 查询。
+	QueryConfigType string            `json:"query_config_type"`
 	Raw             domain.JSONObject `json:"-"`
+}
+
+// IsPromQL 判断查询是否由 PromQL 表达式驱动。
+// 除显式 query_config_type=prometheus 外，声明了非空 promql 的查询同样按 PromQL
+// 处理：这类查询没有单指标的目录主引用，不能按普通时序查询翻译。
+func (q StrategyQueryConfig) IsPromQL() bool {
+	return strings.EqualFold(strings.TrimSpace(q.QueryConfigType), CWQueryConfigTypePrometheus) ||
+		strings.TrimSpace(q.PromQL) != ""
 }
 
 // UnmarshalJSON 同时保留完整 query_config，并填充当前丰富流程需要的类型化字段。
@@ -198,6 +209,8 @@ func marshalStrategyConditions(values []domain.JSONObject) json.RawMessage {
 
 func inferDataSourceLabel(strategy CWStrategy, query StrategyQueryConfig) string {
 	switch {
+	case query.IsPromQL():
+		return CWDataSourcePrometheus
 	case strategy.Spec.MetricSource == CWMetricSourceKLC:
 		return "bk_log_search"
 	case query.MetricSource == "kapm" || query.MetricSource == "krum":
@@ -248,6 +261,10 @@ const (
 	CWStrategyConfigTypeData = "data"
 	// CWMetricSourceKLC 表示日志平台指标来源。
 	CWMetricSourceKLC = "klc"
+	// CWQueryConfigTypePrometheus 表示 query_config 由 PromQL 表达式驱动。
+	CWQueryConfigTypePrometheus = "prometheus"
+	// CWDataSourcePrometheus 是对应的查询翻译来源标识。
+	CWDataSourcePrometheus = "prometheus"
 )
 
 // CWStrategySpec 对齐 Kingeye BaseStrategySpec，并保留 CloudStrategySpec 的扩展字段。

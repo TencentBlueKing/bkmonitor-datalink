@@ -68,7 +68,7 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 	if err := ctx.Err(); err != nil {
 		return models.MetricMetadata{}, false, err
 	}
-	if query.TenantID == "" || query.MetricID < 0 || (query.MetricID == 0 && (query.FieldName == "" || (query.TableID == "" && query.FieldTag != models.CWStrategyFieldTagDerivedMetric))) {
+	if query.TenantID == "" || query.MetricID < 0 || !query.LocatorComplete() {
 		return models.MetricMetadata{}, false, fmt.Errorf("find metric: tenant and metric ID or complete locator are required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -99,7 +99,7 @@ func (c *MetricClient) FindMetric(ctx context.Context, query models.MetricQuery)
 		return models.MetricMetadata{}, false, nil
 	}
 	if len(rows) != 1 {
-		return models.MetricMetadata{}, false, fmt.Errorf("%w: metric locator is ambiguous", enrich.ErrInvalidDataSourceResponse)
+		return models.MetricMetadata{}, false, enrich.ErrAmbiguousMetricLocator
 	}
 	row := rows[0]
 	// 身份精确复核不依赖数据库排序规则；ID 点查不得串租户或被物理位置改写。

@@ -113,11 +113,18 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)
 		}
 		startedAt := time.Now()
+		scope.degradedDiagnostics = nil
 		scope.dependencyErrors = nil
 		scope.dependencies = nil
 		scope.running = true
 		result, outcome, failure := runProcessor(ctx, processor, scope)
 		scope.running = false
+		if len(scope.degradedDiagnostics) != 0 {
+			result.Diagnostics = append(result.Diagnostics, scope.degradedDiagnostics...)
+			if result.Status == domain.EnrichStatusSucceeded {
+				result.Status = domain.EnrichStatusPartial
+			}
+		}
 		result, valid := normalizeProcessorResult(result)
 		assignments := result.RuntimePatches
 		if valid && assignments == nil {

@@ -16,8 +16,14 @@ func TestMetricQueryIdentityExpression(t *testing.T) {
 	for _, tc := range []struct {
 		name, expression, alias, want string
 		functions, queryFunctions     json.RawMessage
-		multi, derived                bool
+		multi, derived, promql        bool
 	}{
+		{name: "promql default alias", expression: "A", promql: true},
+		{name: "promql unknown alias", expression: "B", promql: true, want: "B"},
+		{name: "promql calculation", expression: "A*100", promql: true, want: "A*100"},
+		{name: "promql multiple", expression: "A", promql: true, multi: true, want: "A"},
+		{name: "promql query function", expression: "A", promql: true, queryFunctions: json.RawMessage(`[{"id":"rate"}]`), want: "A"},
+		{name: "promql derived", expression: "A", promql: true, derived: true, want: "A"},
 		{name: "single alias", expression: "a", alias: "a"},
 		{name: "uppercase alias", expression: "A", alias: "A"},
 		{name: "whitespace", expression: " a ", alias: "a"},
@@ -32,6 +38,10 @@ func TestMetricQueryIdentityExpression(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			queries := []models.StrategyQueryConfig{{Alias: tc.alias, MetricField: "usage", ResultTableID: "system.cpu_detail", Functions: tc.queryFunctions}}
+			if tc.promql {
+				queries[0].QueryConfigType = "prometheus"
+				queries[0].PromQL = "up"
+			}
 			if tc.multi {
 				queries = append(queries, models.StrategyQueryConfig{Alias: "b"})
 			}

@@ -171,6 +171,19 @@ type MetricQuery struct {
 	FieldTag CWStrategyFieldTag
 }
 
+// LocatorComplete 判断是否具备目录反查所需的完整定位信息。
+// 只有指标 ID，或字段配结果表／衍生定义名时才可反查；缺少任一要件时
+// 读取方必须先拒绝，避免用残缺参数发出无法解释身份的查询。
+func (q MetricQuery) LocatorComplete() bool {
+	if q.MetricID > 0 {
+		return true
+	}
+	if q.FieldName == "" {
+		return false
+	}
+	return q.TableID != "" || q.FieldTag == CWStrategyFieldTagDerivedMetric
+}
+
 // MetricMetadata 是指标丰富和展示所需的元数据。
 type MetricMetadata struct {
 	ObjectModelCode string

@@ -607,7 +607,11 @@ Event.Dimensions.task_id
 - 当前值、阈值、算法等级和单位生成展示内容已支持静态阈值场景：算法级别的 `algorithmUnit` 优先，`NONE` 清空单位，指标目录 `bytes/percent/percentunit` 使用 KAC 映射；枚举映射继续按精确数值处理；
 - 环比、同比和无数据内容已按 Kingeye 的算法分支建立确定性转换：环比/同比只处理可定位的数值片段，无数据文案保留原文；
 - custom event、alert、FTA 的 Metric 查询投影已覆盖字段、结果表和事件过滤器翻译；
-- PromQL 查询保留原始 PromQL，并按 Kingeye 的冒号段规则提取结果表与指标字段；
+- PromQL 查询保留完整表达式：`metric_query_params` 只携带 `promql`，`where`、`group_by` 和 `metrics` 留空；单条无函数、非衍生 PromQL 声明缺少别名时，仅把默认别名 `A` 的恒等 `expression` 省略，真实计算仍保留；事件级结果表与字段按 Kingeye 冒号段规则从表达式内唯一的序列名派生，混合普通名称序列或无名选择器时不派生单指标身份；
+- PromQL 的 Resource、Display、Metric 不再要求单指标目录主引用：声明缺 `data_source_label` 时由 `query_config_type=prometheus` 识别来源，目录仅在派生身份能唯一命中时补充单位、中文名、维度和对象模型，派生不出或目录缺数据都不再使 Processor 失败；无显式 `metric_ref_id` 的可选反查多义时保留声明名称和可信资源身份，标记相关 Processor 为 `partial`，保留 `metric_catalog` 诊断与原始错误日志。显式引用失败、身份不匹配、数据库故障和取消不会按目录未命中降级；
+- PromQL 无对象模型时 Resource 只接受事件已确认的身份（规范 `model_id` 或 CMDB 主机 Subject），主机仍按目标主机 ID、IP+云区域定位 OneModel；身份完全缺失时保留业务并返回 Resource partial，不回退采集任务或猜测模型；
+- `promql_host_system_metric` fixture 记录 `linkd-93f26184-8acd-5fdc-bf3a-c5cd11fcd4ec` 的真实发布快照：`171/PromQL` 模板下 `avg_over_time(bkmonitor:system:cpu_summary:usage{bk_biz_id="2"}[60s])` 既无 `metric_ref_id` 也无表名和字段，整条五 Processor 链路成功生成主机资源、`CPU使用率` 标题与 `percent` 单位；
+- PromQL 表达式解析覆盖函数、标签匹配器、时间窗口、`by` 列表、`offset`、标签值内冒号、多序列和结构残缺输入。
 - 函数指标保留策略级和 query 级 `functions`，Metric name 为空，并关闭函数场景的枚举映射；
 - 派生失败矩阵覆盖策略未命中／错误、指标目录未命中／错误、模型未命中、实例依赖错误、非法 canonical 身份、混合 Processor 最终 partial 和 Context 取消；
 - 普通时序、多指标、衍生指标、custom event、alert、FTA、日志查询等 fixture。
@@ -911,9 +915,10 @@ NoData 迁移已完成：
 11. 多指标输出保留全部 query configs、别名、表达式和各自查询条件；Metric name 为空，Metric unique ID 沿用首个 query 的物理字段。
 12. DATA 静态阈值展示优先使用告警等级对应算法的 `algorithmUnit`；`NONE` 表示清除单位；算法未覆盖时使用指标目录单位映射。阈值和当前值支持数值单位追加。
 13. 环比／同比内容按 Kingeye 分支识别可定位数值并进行枚举映射，无数据周期文案保留来源文本；custom event、alert、FTA 查询类型使用对应字段和结果表翻译。
-14. PromQL 查询保留原始表达式，并按 `segment:...:metric` 约定投影结果表与指标字段；真实 PromQL 形态仍待样例补充。
-15. 函数指标保留策略级和 query 级函数配置；Metric name 为空，函数和多指标场景关闭枚举映射，函数计算结果由上游查询链提供。
-16. DATA 派生失败矩阵覆盖策略、指标目录、模型、实例、身份校验和 Context 取消；单个 Resource failed 与其他 Processor 成功时最终状态为 partial，Event 输入保持不变。
+14. PromQL 查询保留原始表达式，`metric_query_params` 的 `where`、`group_by` 和 `metrics` 留空；事件级结果表与字段按 `segment:...:metric` 约定从表达式内唯一序列名派生。多序列、只出现在标签匹配器中的指标名和结构残缺表达式不产生单指标身份。
+15. PromQL 目录依赖是可选补充：派生身份能唯一命中目录时补齐单位、中文名、维度和对象模型，未命中或无法派生时 Resource、Display、Metric 继续输出已确认内容；主机资源模型按 CMDB 主机 Subject 独立解析，不依赖目录。
+16. 函数指标保留策略级和 query 级函数配置；Metric name 为空，函数和多指标场景关闭枚举映射，函数计算结果由上游查询链提供。
+17. DATA 派生失败矩阵覆盖策略、指标目录、模型、实例、身份校验和 Context 取消；单个 Resource failed 与其他 Processor 成功时最终状态为 partial，Event 输入保持不变。
 
 下一阶段：**在无真实场景数据的约束下，先补齐日志、Cloud、K8s、APM 的派生 fixture、跨场景失败矩阵和生产装配边界；真实外部 Reader 按契约确认结果接入。**
 

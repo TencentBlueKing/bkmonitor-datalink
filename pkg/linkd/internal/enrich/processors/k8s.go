@@ -82,14 +82,14 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped}, nil
 	}
 	if missing := k8sMissingIdentityFields(modelCode, alert.Dimensions); len(missing) != 0 {
-		return k8sValuesDiagnostic(values, domain.EnrichStatusFailed, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: missing})
+		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusFailed, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: missing})
 	}
 	instance, found, err := scope.K8sInstance(ctx, modelCode, alert.Dimensions)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return enrich.ProcessorResult{}, ctxErr
 	}
 	if err != nil || !found || instance.TenantID != alert.BKTenantID || instance.ModelCode != modelCode || instance.InstanceID == "" {
-		return k8sValuesDiagnostic(values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
+		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
 	}
 	values.ModelID, values.ModelInstID = instance.ModelCode, instance.InstanceID
 	values.ClusterName = firstInstanceText(instance, "cluster_name", "name", "display_name")
@@ -99,12 +99,41 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	return k8sValuesResult(scope.Context().K8s.Values)
 }
 
-func k8sValuesDiagnostic(values models.K8sValues, status domain.EnrichStatus, diagnostic enrich.Diagnostic) (enrich.ProcessorResult, error) {
+func k8sValuesDiagnostic(scope *enrich.Scope, values models.K8sValues, status domain.EnrichStatus, diagnostic enrich.Diagnostic) (enrich.ProcessorResult, error) {
 	result, err := k8sValuesResult(values)
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
 	result.Status, result.Diagnostics = status, []enrich.Diagnostic{diagnostic}
+	state, err := scope.EvaluationState()
+	if err != nil {
+		return enrich.ProcessorResult{}, err
+	}
+	document := state.Document()
+	readIdentity := func(field string) string {
+		for _, root := range []string{"labels", "extra_data", "dimensions"} {
+			fields, _ := document[root].(map[string]any)
+			if value, exists := fields[field]; exists {
+				text, _ := value.(string)
+				return text
+			}
+		}
+		return ""
+	}
+	model, instance := readIdentity(rules.FieldModelID), readIdentity(rules.FieldModelInstID)
+	if (model != "" && instance != "") || (model == "" && instance == "") {
+		return result, nil
+	}
+	// K8s 的模型必须与实例成对输出。只清理当前有效视图中的残缺身份，
+	// 查询失败不能抹掉前序步骤已确定的完整身份，也不能修改原始 dimensions。
+	// 显式空 labels 遮蔽 extra_data 中的旧值；partial 保证清理补丁不会被 failed 回滚。
+	if status == domain.EnrichStatusFailed {
+		// 维度缺失时原本不发布上下文；这里只发布身份清理，避免空展示值覆盖前序结果。
+		result.Value = domain.JSONObject{}
+	}
+	result.Value[rules.FieldModelID] = json.RawMessage(`""`)
+	result.Value[rules.FieldModelInstID] = json.RawMessage(`""`)
+	result.Status = domain.EnrichStatusPartial
 	return result, nil
 }
 
@@ -117,8 +146,8 @@ func k8sValuesResult(values models.K8sValues) (enrich.ProcessorResult, error) {
 	if err := json.Unmarshal(encoded, &value); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	// 只有通过租户、模型和实例校验的新身份才具有覆盖语义。
-	// 维度缺失或查询失败的零值不能清空 Resource/规则步骤已确定的身份。
+	// 查询成功才发布新的身份；失败分支由 k8sValuesDiagnostic 区分
+	// 已有完整身份和需要清理的残缺身份，不能用缺省零值无条件覆盖。
 	if values.ModelID == "" || values.ModelInstID == "" {
 		delete(value, rules.FieldModelID)
 		delete(value, rules.FieldModelInstID)

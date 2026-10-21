@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package qcloudmonitor
+package syncer
 
 import (
 	"context"
@@ -29,17 +29,17 @@ type Syncer interface {
 	Sync(ctx context.Context, namespace, name string) error
 }
 
-type syncEventHandler struct {
+type SyncEventHandler struct {
 	syncer     Syncer
 	reconcileQ workqueue.TypedRateLimitingInterface[string]
 
 	g errgroup.Group
 }
 
-var _ = cache.ResourceEventHandler(&syncEventHandler{})
+var _ = cache.ResourceEventHandler(&SyncEventHandler{})
 
-func newSyncEventHandler(syncer Syncer) *syncEventHandler {
-	return &syncEventHandler{
+func NewSyncEventHandler(syncer Syncer) *SyncEventHandler {
+	return &SyncEventHandler{
 		syncer: syncer,
 		reconcileQ: workqueue.NewTypedRateLimitingQueueWithConfig[string](
 			workqueue.NewTypedMaxOfRateLimiter(
@@ -53,7 +53,7 @@ func newSyncEventHandler(syncer Syncer) *syncEventHandler {
 	}
 }
 
-func (r *syncEventHandler) objectKey(obj any) (string, bool) {
+func (r *SyncEventHandler) objectKey(obj any) (string, bool) {
 	k, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		return "", false
@@ -66,11 +66,11 @@ func (r *syncEventHandler) objectKey(obj any) (string, bool) {
 	return k, true
 }
 
-func (r *syncEventHandler) deletionInProgress(o metav1.Object) bool {
+func (r *SyncEventHandler) deletionInProgress(o metav1.Object) bool {
 	return o.GetDeletionTimestamp() != nil
 }
 
-func (r *syncEventHandler) hasObjectChanged(old, cur metav1.Object) bool {
+func (r *SyncEventHandler) hasObjectChanged(old, cur metav1.Object) bool {
 	if old.GetGeneration() != cur.GetGeneration() {
 		return true
 	}
@@ -86,7 +86,7 @@ func (r *syncEventHandler) hasObjectChanged(old, cur metav1.Object) bool {
 	return false
 }
 
-func (r *syncEventHandler) OnAdd(obj any, _ bool) {
+func (r *SyncEventHandler) OnAdd(obj any, _ bool) {
 	key, ok := r.objectKey(obj)
 	if !ok {
 		return
@@ -101,7 +101,7 @@ func (r *syncEventHandler) OnAdd(obj any, _ bool) {
 	r.reconcileQ.Add(key)
 }
 
-func (r *syncEventHandler) OnUpdate(old, cur any) {
+func (r *SyncEventHandler) OnUpdate(old, cur any) {
 	key, ok := r.objectKey(cur)
 	if !ok {
 		return
@@ -129,7 +129,7 @@ func (r *syncEventHandler) OnUpdate(old, cur any) {
 	r.reconcileQ.Add(key)
 }
 
-func (r *syncEventHandler) OnDelete(obj any) {
+func (r *SyncEventHandler) OnDelete(obj any) {
 	key, ok := r.objectKey(obj)
 	if !ok {
 		return
@@ -144,7 +144,7 @@ func (r *syncEventHandler) OnDelete(obj any) {
 	r.reconcileQ.Add(key)
 }
 
-func (r *syncEventHandler) Run(ctx context.Context) {
+func (r *SyncEventHandler) Run(ctx context.Context) {
 	r.g.Go(func() error {
 		for r.processNextReconcileItem(ctx) {
 		}
@@ -152,12 +152,12 @@ func (r *syncEventHandler) Run(ctx context.Context) {
 	})
 }
 
-func (r *syncEventHandler) Stop() {
+func (r *SyncEventHandler) Stop() {
 	r.reconcileQ.ShutDown()
 	_ = r.g.Wait()
 }
 
-func (r *syncEventHandler) processNextReconcileItem(ctx context.Context) bool {
+func (r *SyncEventHandler) processNextReconcileItem(ctx context.Context) bool {
 	key, quit := r.reconcileQ.Get()
 	if quit {
 		return false
@@ -171,7 +171,6 @@ func (r *syncEventHandler) processNextReconcileItem(ctx context.Context) bool {
 		return true
 	}
 
-	defaultMetricMonitor.IncReconcileQCloudMonitorFailedCounter(key)
 	logger.Errorf("failed to reconcile object, key=%s: %v", key, err)
 	r.reconcileQ.AddRateLimited(key)
 	return true

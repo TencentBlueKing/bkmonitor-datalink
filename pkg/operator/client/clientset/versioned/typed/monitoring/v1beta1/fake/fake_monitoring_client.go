@@ -25,6 +25,10 @@ func (c *FakeMonitoringV1beta1) DataIDs(namespace string) v1beta1.DataIDInterfac
 	return newFakeDataIDs(c, namespace)
 }
 
+func (c *FakeMonitoringV1beta1) ProcessMonitors(namespace string) v1beta1.ProcessMonitorInterface {
+	return newFakeProcessMonitors(c, namespace)
+}
+
 func (c *FakeMonitoringV1beta1) QCloudMonitors(namespace string) v1beta1.QCloudMonitorInterface {
 	return newFakeQCloudMonitors(c, namespace)
 }

@@ -134,7 +134,15 @@ func handleESError(ctx context.Context, url string, err error, res *elastic.Sear
 		}
 	}
 
-	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, errors.New(msgBuilder.String()))
+	// 文本照旧；ES 自己的错误（含其状态码）和传输错误作为原因保留，供失败响应按类型分类。
+	var causes []error
+	if err != nil && !isTypedNilError(err) {
+		causes = append(causes, err)
+	}
+	if esErr != nil {
+		causes = append(causes, &metadata.BackendStatusError{Status: esErr.Status})
+	}
+	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, metadata.ErrorWithCauses(msgBuilder.String(), causes...))
 }
 
 func isTypedNilError(err error) bool {

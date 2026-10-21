@@ -661,6 +661,7 @@ APM 第一轮纵切已完成：
 - 应用未命中、非精确匹配、租户或业务不匹配返回 partial；旧 `dimensions.apm_app_id` 仅保留为兼容回退；
 - `service_name` 统一从 `dimensions` 与 `extra_data.additional_dimensions` 的合并视图读取，供 Resource、Display、APM 共同使用；重名或非法附加维度产生 `invalid_field`，不静默选择一份。原始 Event 的两组维度保持不变；
 - Resource Processor 与 APM Processor 共用应用解析和请求内缓存，按 `app_id + service_name + bk_instance_id` 生成 application/service/service-instance 资源身份，并补齐业务/应用标签；即使 EventSource 尚未配置 `apm` Processor，现有 `resource` Processor 也能生成 APM 对象身份；
+- APM Resource 按已确认的模型代码读取同租户模型注册表中的名称，补齐 `model_name`；模型未命中、身份不匹配、名称缺失或读取失败时保留 APM 资源身份并标记部分成功，取消继续向调用方传播；
 - 已覆盖 ApplicationReader 未命中、非精确匹配、租户不匹配、Reader 错误、缺少应用 ID、重复精确匹配和完整 Processor 链测试；
 - 已用 alarmd 真实 APM 字段布局补充回归测试，覆盖 `additional_dimensions.app_name`、`service_name`、`bk_instance_id` 和 `net_peer_name`；
 - 已补完整 Processor 链测试、application/service/service-instance 三种身份 payload、应用非精确匹配、租户不匹配、Reader 错误和重复精确匹配矩阵；重复匹配当前沿用 Reader 返回顺序的第一条精确结果。

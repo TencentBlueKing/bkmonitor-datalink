@@ -33,7 +33,7 @@ func TestAPMServiceFromAdditionalDimensions(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader, Metric: reader})
+				chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Metric: reader})
 				if err != nil {
 					t.Fatal(err)
 				}

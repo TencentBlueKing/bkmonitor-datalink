@@ -294,6 +294,18 @@ func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy model
 	if application.ID == "" {
 		return resourceScenarioResult(scope, values, diagnostics, true)
 	}
+	// APM 身份由应用维度确定，展示名称仍读取同租户的模型注册表，不能因跳过
+	// 普通 DATA 资源分支而遗漏；模型元数据失败时保留已确认身份并标记部分成功。
+	model, modelFound, modelErr := scope.ModelByCode(ctx, modelID)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return enrich.ProcessorResult{}, ctxErr
+	}
+	modelName, hasModelName := rules.FirstStringField(model.Fields, rules.FieldObjectModelName)
+	if modelErr != nil || !modelFound || model.TenantID != scope.Facts().BKTenantID || model.ModelCode != modelID || model.ModelID == "" || !hasModelName {
+		diagnostics = appendResourceDependency(diagnostics, rules.DependencyOneModel)
+	} else {
+		values.ModelName = modelName
+	}
 	business, found, readErr := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: fmt.Sprint(bizID)})
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return enrich.ProcessorResult{}, ctxErr

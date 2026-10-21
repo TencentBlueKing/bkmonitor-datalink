@@ -145,7 +145,7 @@ func TestAPMResourceProjectionFromDimensions(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{"apm_app_id": domain.NewStringScalar("17"), rules.FieldServiceName: domain.NewStringScalar("checkout"), rules.FieldAPMInstanceID: domain.NewStringScalar("instance-a")})
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, APM{}}, enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestAPMRealAlarmResolvesApplicationFromAdditionalDimensions(t *testing.T) {
 	}
 	chain, err := enrich.NewChain(
 		[]enrich.Processor{Strategy{}, Resource{}, Display{}, APM{}},
-		enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader, Metric: reader},
+		enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Metric: reader},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -226,10 +226,10 @@ func TestAPMRealAlarmResolvesApplicationFromAdditionalDimensions(t *testing.T) {
 
 func TestAPMCompletePayloadCoversAllIdentityLevels(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ name, service, instance, model, id string }{
-		{name: "application", model: rules.APMApplicationModelCode, id: "17"},
-		{name: "service", service: "checkout", model: rules.APMServiceModelCode, id: "17|checkout"},
-		{name: "service instance", service: "checkout", instance: "instance-a", model: rules.APMServiceInstanceModelCode, id: "17|checkout|instance-a"},
+	for _, tc := range []struct{ name, service, instance, model, id, modelName string }{
+		{name: "application", model: rules.APMApplicationModelCode, id: "17", modelName: "应用"},
+		{name: "service", service: "checkout", model: rules.APMServiceModelCode, id: "17|checkout", modelName: "服务"},
+		{name: "service instance", service: "checkout", instance: "instance-a", model: rules.APMServiceInstanceModelCode, id: "17|checkout|instance-a", modelName: "服务实例"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := apmTestReader{}
@@ -258,6 +258,9 @@ func TestAPMCompletePayloadCoversAllIdentityLevels(t *testing.T) {
 			resource := payload.Processors[1][rules.ResourceProcessor]
 			if string(resource.Value["model_id"]) != `"`+tc.model+`"` || string(resource.Value["model_inst_id"]) != `"`+tc.id+`"` {
 				t.Fatalf("resource=%#v", resource)
+			}
+			if resource.Status != domain.EnrichStatusSucceeded || string(resource.Value["model_name"]) != `"`+tc.modelName+`"` {
+				t.Fatalf("resource model name=%s, status=%s", resource.Value["model_name"], resource.Status)
 			}
 		})
 	}
@@ -321,8 +324,10 @@ func (r apmTestReader) FindMetric(context.Context, models.MetricQuery) (models.M
 	return models.MetricMetadata{FieldName: "duration", FieldCNName: "请求量"}, true, nil
 }
 
-func (r apmTestReader) GetModelByCode(context.Context, string, string) (enrich.Model, bool, error) {
-	return enrich.Model{}, false, nil
+func (r apmTestReader) GetModelByCode(_ context.Context, tenant, code string) (enrich.Model, bool, error) {
+	names := map[string]string{"cw-application": "应用", "cw-service": "服务", "cw-service_instance": "服务实例"}
+	name, found := names[code]
+	return enrich.Model{TenantID: tenant, ModelID: "4", ModelCode: code, Fields: map[string]any{"object_model_name": name}}, found, nil
 }
 
 func (r apmTestReader) FindInstance(context.Context, string, enrich.InstanceQuery) (enrich.Instance, bool, error) {

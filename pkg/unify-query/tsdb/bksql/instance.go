@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
@@ -134,7 +133,7 @@ func (i *Instance) sqlQuery(ctx context.Context, req QuerySyncRequest) (*QuerySy
 			metadata.MsgQueryBKSQL,
 			"查询异常 %s",
 			res.Message,
-		).Error(ctx, errors.New(res.Errors.Error))
+		).Error(ctx, metadata.ErrorWithCauses(res.Errors.Error, res.Err))
 	}
 
 	span.Set("query-timeout", i.timeout.String())
@@ -466,7 +465,7 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 
 	data, err := i.sqlQuery(ctx, newQuerySyncRequest(sql, query))
 	if err != nil {
-		err = fmt.Errorf("sql [%s] query err: %s", sql, err.Error())
+		err = fmt.Errorf("sql [%s] query err: %w", sql, err)
 		return size, total, option, err
 	}
 

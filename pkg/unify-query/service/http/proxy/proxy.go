@@ -44,7 +44,7 @@ type apiGwResponse struct {
 }
 
 func (a *apiGwResponse) failed(msg error) {
-	a.c.JSON(http.StatusBadRequest, &apiGwResponse{
+	a.c.JSON(metadata.FailureStatus(msg), &apiGwResponse{
 		Result:  false,
 		Data:    nil,
 		Message: msg.Error(),

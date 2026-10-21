@@ -59,8 +59,15 @@ func TestStrategyItemProjectionRequiresCompleteKingeyeStrategy(t *testing.T) {
 
 	withoutBiz := valid
 	withoutBiz.BKBizID = nil
-	if _, err := withoutBiz.StrategyItemProjection(); err == nil {
-		t.Fatal("strategy without bk_biz_id was accepted")
+	if got, err := withoutBiz.StrategyItemProjection(); err != nil || got.BKBizID != 0 || got.QueryConfigs[0].MetricField != "usage" {
+		t.Fatalf("missing business projection=%+v error=%v", got, err)
+	}
+	for _, bizID := range []int64{-255, 0} {
+		strategy := valid
+		strategy.BKBizID = &bizID
+		if got, err := strategy.StrategyItemProjection(); err != nil || got.BKBizID != bizID {
+			t.Fatalf("business %d projection=%+v error=%v", bizID, got, err)
+		}
 	}
 	withoutQuery := valid
 	withoutQuery.Spec.StrategyItem = &CWStrategyItem{}

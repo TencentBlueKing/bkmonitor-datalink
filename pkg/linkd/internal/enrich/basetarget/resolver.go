@@ -159,6 +159,10 @@ func resolve(
 	if result.inputState == inputValid && result.query.ModelCode != "" {
 		result.modelCode = result.query.ModelCode
 	}
+	if result.inputState == inputValid && rules.IsServiceInstanceModel(result.query.ModelCode) && fallbackBizID <= 0 {
+		_, result.queryDiagnostics = enrich.ValidateBusinessID(scope.Facts())
+		result.inputState = inputInvalid
+	}
 	result.instanceID = result.query.InstanceID
 	// 模型上下文独立于实例定位，缺少或拒绝实例身份也不能抹掉已确认的模型信息。
 	result.model, result.modelFound, result.modelErr = scope.ModelByCode(ctx, result.modelCode)

@@ -28,6 +28,11 @@ func TestCWStrategyClientReadsHistoricalRuntimeConfig(t *testing.T) {
 		override, cloud bool
 	}{
 		{name: "default", business: 2},
+		{name: "non-BKCC historical space", business: -255, change: func(p map[string]any) {
+			revisionStrategy(p)["bk_biz_id"] = int64(-255)
+			revisionStrategy(p)["space_uid"] = "bkci__blueking"
+			revisionLabels(p)["bk_biz_id"] = int64(-255)
+		}},
 		{name: "global business from snapshot", business: 5, change: func(p map[string]any) { revisionStrategy(p)["bk_biz_id"] = int64(5) }},
 		{name: "override instance", business: 2, override: true, change: func(p map[string]any) {
 			revisionLabels(p)["is_default"] = false
@@ -66,6 +71,9 @@ func TestCWStrategyClientReadsHistoricalRuntimeConfig(t *testing.T) {
 			}
 			if result.BKBizID == nil || *result.BKBizID != tc.business || *result.IsDefault == tc.override {
 				t.Fatal("historical identity lost")
+			}
+			if tc.business < 0 && result.SpaceUID != "bkci__blueking" {
+				t.Fatal("historical source space lost")
 			}
 			if tc.override && (result.BKObjectInstID == nil || *result.BKObjectInstID != "101") {
 				t.Fatal("override instance lost")

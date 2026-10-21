@@ -41,7 +41,8 @@ func (Display) Match(context.Context, *enrich.Scope) (bool, error) { return true
 // Process 生成告警展示字段。
 func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	alert := scope.Facts()
-	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
+	_, diagnostics := enrich.ValidateStrategyIdentity(alert)
+	bizID := enrich.OptionalBusinessID(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
@@ -56,16 +57,6 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 	if err != nil {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
-	businessMatches, err := strategyBusinessMatches(ctx, scope, projection.BKBizID, ids.BizID)
-	if contextErr := ctx.Err(); contextErr != nil {
-		return enrich.ProcessorResult{}, contextErr
-	}
-	if err != nil {
-		return failedDependency(rules.DependencyBusiness), nil
-	}
-	if !businessMatches {
-		return failedDependency(rules.DependencyKingeyeStrategy), nil
-	}
 	alertDimensions, err := combinedDimensions(alert)
 	if err != nil {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{
@@ -77,7 +68,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 	displayDiagnostics := make([]enrich.Diagnostic, 0, 1)
 	var uptimeResult *uptimeenrich.Result
 	if classification.BaseTarget == rules.BaseTargetUptimeCheck {
-		result, uptimeErr := uptimeenrich.Enrich(ctx, scope, *strategy.ObjectModelCode, alert.Dimensions, ids.BizID)
+		result, uptimeErr := uptimeenrich.Enrich(ctx, scope, *strategy.ObjectModelCode, alert.Dimensions, bizID)
 		if uptimeErr != nil {
 			return enrich.ProcessorResult{}, uptimeErr
 		}
@@ -96,7 +87,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		if rules.IsAPMTable(resultTableID) {
 			objectName = rules.DimensionText(alertDimensions, rules.FieldServiceName)
 		} else if strings.HasPrefix(resultTableID, "uptimecheck") {
-			result, uptimeErr := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, alert.Dimensions, ids.BizID)
+			result, uptimeErr := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, alert.Dimensions, bizID)
 			if uptimeErr != nil {
 				return enrich.ProcessorResult{}, uptimeErr
 			}
@@ -105,7 +96,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 			displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
 		}
 	} else if classification.BaseTarget == rules.BaseTargetCollectTask {
-		result, collectErr := collect.Enrich(ctx, scope, alert.Dimensions, ids.BizID, alert.SubjectName)
+		result, collectErr := collect.Enrich(ctx, scope, alert.Dimensions, bizID, alert.SubjectName)
 		if collectErr != nil {
 			return enrich.ProcessorResult{}, collectErr
 		}
@@ -113,7 +104,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 			objectName = result.Object
 		}
 	} else if classification.Main != rules.MainData && classification.BaseTarget != rules.BaseTargetUptimeCheck {
-		result, targetErr := basetarget.Enrich(ctx, scope, classification, strategy, alert.Dimensions, ids.BizID, alert.SubjectName)
+		result, targetErr := basetarget.Enrich(ctx, scope, classification, strategy, alert.Dimensions, bizID, alert.SubjectName)
 		if targetErr != nil {
 			return enrich.ProcessorResult{}, targetErr
 		}
@@ -214,12 +205,12 @@ func dataResourceDisplay(ctx context.Context, scope *enrich.Scope, strategy mode
 	if values.ModelID == rules.HostModelCode {
 		code := rules.HostModelCode
 		strategy.ObjectModelCode = &code
-		ids, _ := enrich.ValidateRequiredIDs(event)
+		bizID := enrich.OptionalBusinessID(event)
 		branch := rules.BaseTargetSystemMetric
 		if rules.ScalarProvided(event.Dimensions[rules.FieldNoDataDimension]) {
 			branch = rules.BaseTargetNoData
 		}
-		result, err := basetarget.Enrich(ctx, scope, rules.Classification{Main: rules.MainData, BaseTarget: branch}, strategy, event.Dimensions, ids.BizID, event.SubjectName)
+		result, err := basetarget.Enrich(ctx, scope, rules.Classification{Main: rules.MainData, BaseTarget: branch}, strategy, event.Dimensions, bizID, event.SubjectName)
 		if err != nil {
 			return "", err
 		}

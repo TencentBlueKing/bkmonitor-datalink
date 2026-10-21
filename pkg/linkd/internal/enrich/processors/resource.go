@@ -95,7 +95,8 @@ func appendResourceDependency(diagnostics []enrich.Diagnostic, dependency string
 
 func processResource(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	alert := scope.Facts()
-	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
+	_, diagnostics := enrich.ValidateStrategyIdentity(alert)
+	bizID := enrich.OptionalBusinessID(alert)
 	if len(diagnostics) != 0 {
 		value, err := resourceContextValue(scope, models.ResourceValues{})
 		if err != nil {
@@ -113,10 +114,10 @@ func processResource(ctx context.Context, scope *enrich.Scope) (enrich.Processor
 	}
 	classification := rules.Classify(strategy, dimensions)
 	if rules.IsLogDisplay(classification.Main) {
-		return resourceScenarioResult(scope, models.ResourceValues{BKBizID: ids.BizID, DynamicGroupID: []string{}, CWLabels: []string{}}, nil, false)
+		return resourceScenarioResult(scope, models.ResourceValues{BKBizID: bizID, DynamicGroupID: []string{}, CWLabels: []string{}}, nil, false)
 	}
 	if classification.Main == rules.MainData {
-		return processDataResource(ctx, scope, strategy, ids.BizID)
+		return processDataResource(ctx, scope, strategy, bizID)
 	}
 	if strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
@@ -126,24 +127,24 @@ func processResource(ctx context.Context, scope *enrich.Scope) (enrich.Processor
 		_, hasModel := dimensions[rules.FieldModelID]
 		_, hasInstance := dimensions[rules.FieldModelInstID]
 		if knownK8s && !hasModel && !hasInstance {
-			return processK8sResource(ctx, scope, *strategy.ObjectModelCode, ids.BizID)
+			return processK8sResource(ctx, scope, *strategy.ObjectModelCode, bizID)
 		}
 	}
 	if classification.BaseTarget == rules.BaseTargetUptimeCheck {
-		result, err := uptimeenrich.Enrich(ctx, scope, *strategy.ObjectModelCode, dimensions, ids.BizID)
+		result, err := uptimeenrich.Enrich(ctx, scope, *strategy.ObjectModelCode, dimensions, bizID)
 		if err != nil {
 			return enrich.ProcessorResult{}, err
 		}
 		return resourceScenarioResult(scope, result.Resource, result.ResourceDiagnostics, false)
 	}
 	if classification.BaseTarget == rules.BaseTargetCollectTask {
-		result, err := collect.Enrich(ctx, scope, dimensions, ids.BizID, alert.SubjectName)
+		result, err := collect.Enrich(ctx, scope, dimensions, bizID, alert.SubjectName)
 		if err != nil {
 			return enrich.ProcessorResult{}, err
 		}
 		return resourceScenarioResult(scope, result.Resource, result.ResourceDiagnostics, false)
 	}
-	result, err := basetarget.Enrich(ctx, scope, classification, strategy, dimensions, ids.BizID, alert.SubjectName)
+	result, err := basetarget.Enrich(ctx, scope, classification, strategy, dimensions, bizID, alert.SubjectName)
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
@@ -204,7 +205,12 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 			Code: enrich.DiagnosticCodeMissingField, Fields: []string{"dimensions." + rules.FieldModelID},
 		}}, false)
 	}
-	business, businessFound, businessErr := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: fmt.Sprint(bizID)})
+	var business enrich.Instance
+	var businessFound bool
+	var businessErr error
+	if bizID > 0 {
+		business, businessFound, businessErr = scope.Instance(ctx, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: fmt.Sprint(bizID)})
+	}
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}

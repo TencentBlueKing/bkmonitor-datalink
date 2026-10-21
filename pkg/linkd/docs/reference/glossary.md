@@ -59,7 +59,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及表和维度等事实；内置及外部来源继续生成兼容查询参数并随丰富结果冻结。指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
 | metricset（指标来源） | Kingeye 新指标目录的来源登记表；来源编码不是指标身份，指标定义与主引用存放在 metric 表 |
 | metric_id（指标目录身份） | Kingeye metric 表的租户内可读取主键；策略 query_config 使用 metric_ref_id 携带它，与检测面的字符串 metric_id 不同 |
-| 指标目录定义查询 | Enrich 按事件租户读取 metric 的名称、单位、模型、枚举和维度；优先 ID，无 ID 时按来源业务空间与平台层反查唯一的原生物理引用；不执行时序取数 |
+| 指标目录定义查询 | Enrich 按事件租户读取 metric 的名称、单位、模型、枚举和维度；优先 ID，无 ID 时按可信来源空间与平台层反查唯一的原生物理引用或衍生定义名；不执行时序取数 |
 | 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；新发布链中前者为 SplitRecord 主键，后者为执行快照的 `strategy_revision`。不能用来源水位 `source_resource_version`、当前态 `record_revision` 或 Config status 版本替代。 |
 | 鲸眼策略配置 | Linkd 从 Kingeye MySQL `alarm_strategy_execution_revision` 的准确执行快照构造的只读丰富视图；分类和展示使用冻结的 `runtime_config.metadata/spec`，文案查询/算法使用同快照根部 `items`，不读取当前配置替代历史。 |
 | StrategySetSplitRecord（策略拆分发布当前态） | Kingeye 表 `alarm_strategy_set_split_record`；默认与覆盖分别使用自身主键作为运行时策略 ID，覆盖通过 `parent_id` 关联默认记录。payload 保存编译后的配置与检测材料；它是当前态，不保证历史版本保留。 |
@@ -71,7 +71,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | 指标查询参数 | 用于查询本次告警观测数据的参数；Linkd Metric Processor 生成并冻结为兼容输出，KAC AlarmEvent 保存 JSON 字符串并继续来源插件取数；KAC 不新增历史重建或事实读取接口 |
 | 维度条件文本（where_condition） | 按旧过滤和拼接规则从工作维度生成的条件文本，保存到 enrich.metric.where_condition；生成过程不修改 Event 的来源维度 |
 | 首次异常点时间（anomaly_begin_time） | 上游提供的异常点时间，从 Event.ExtraData.anomaly_begin_time 读取；仅接受字符串并原样保存到 enrich.metric.anomaly_begin_time，空字符串也保留，缺失时省略。alarmd 标准输出表示滚动 Trigger 窗口内最早异常点，不保证是整次无数据过程的首次异常点。 |
-| 来源业务 | Event.Labels.bk_biz_id 表示的业务上下文；`built_in_bk` 来源要求该标签为数字 Scalar 正整数，替代旧回调 F05–F07 的业务输入，用于对应的来源业务和查询消费位置 |
+| 来源业务 | Event.Labels.bk_biz_id 携带的来源空间上下文，正值为 CMDB 业务，非 BKCC 空间可为负值；不作为策略、K8s 资源、展示或目录 ID 点查的统一前置条件。仅实际以 CMDB 业务定位的查询分支要求正整数 |
 | 业务观测维度 | Event.Dimensions.bk_biz_id 表示的指标观测值，仅在指标需要该维度时参与查询过滤或分组，不替代来源业务 |
 | 资源所属业务 | 从拨测任务、CMDB 等依赖取得的资源业务归属，供资源展示和拓扑逻辑使用并保存到 enrich.resource，不覆盖来源业务标签 |
 | CMDB 模型实例 ID（bk_inst_id） | 指定 CMDB 对象模型下的实例标识；本次丰富的来源输入位于 Event.Dimensions.bk_inst_id，必须结合模型解释，不是跨模型通用身份 |

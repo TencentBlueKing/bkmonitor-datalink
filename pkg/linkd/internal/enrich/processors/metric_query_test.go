@@ -82,7 +82,7 @@ func TestMetricCatalogQueryLocation(t *testing.T) {
 		{name: "missing catalog", missing: true, failed: true},
 		{name: "empty physical table", physical: "usage", kind: "native", failed: true},
 		{name: "empty physical field", table: "system.cpu_detail", kind: "native", failed: true},
-		{name: "derived row is not a native location", table: "system.cpu_detail", physical: "usage", kind: "derived", failed: true},
+		{name: "unknown catalog kind", table: "system.cpu_detail", physical: "usage", kind: "unknown", failed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := &metricLocationReader{missing: tc.missing}

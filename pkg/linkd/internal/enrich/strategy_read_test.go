@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"linkd/internal/domain"
 	"linkd/internal/enrich/models"
 )
 
@@ -50,5 +51,67 @@ func TestStrategyReadPreservesEventIdentityAndCachesOnce(t *testing.T) {
 	readers.Wait()
 	if calls.Load() != 1 {
 		t.Fatalf("strategy read %d times", calls.Load())
+	}
+}
+
+// TestStrategyReadDoesNotRequireBusiness 保留租户、ID、版本查询，不读取事件的业务标签。
+func TestStrategyReadDoesNotRequireBusiness(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		value   domain.Scalar
+		missing bool
+	}{
+		{name: "missing", missing: true},
+		{name: "non-BKCC space", value: domain.NewStringScalar("-255")},
+		{name: "invalid business type", value: domain.NewStringScalar("not-a-business")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := testAlert()
+			if tc.missing {
+				delete(event.Labels, labelBizID)
+			} else {
+				event.Labels[labelBizID] = tc.value
+			}
+			calls := 0
+			scope, err := NewScope(event, Sources{CWStrategy: strategyReadFunc(func(_ context.Context, q models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
+				calls++
+				if q != (models.StrategyRevisionQuery{TenantID: event.BKTenantID, ID: 123, Version: 1}) {
+					t.Fatalf("identity=%+v", q)
+				}
+				return models.CWStrategy{}, true, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if _, found, err := scope.CWStrategy(t.Context()); err != nil || !found {
+					t.Fatalf("found=%t error=%v", found, err)
+				}
+			}
+			if calls != 1 {
+				t.Fatalf("reader calls=%d", calls)
+			}
+		})
+	}
+}
+
+func TestStrategyReadRejectsInvalidIdentityWithoutQuery(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{labelStrategyID, labelStrategyVersion} {
+		t.Run(field, func(t *testing.T) {
+			event := testAlert()
+			delete(event.Labels, field)
+			scope, err := NewScope(event, Sources{CWStrategy: strategyReadFunc(func(context.Context, models.StrategyRevisionQuery) (models.CWStrategy, bool, error) {
+				t.Fatal("invalid identity reached reader")
+				return models.CWStrategy{}, false, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found, err := scope.CWStrategy(t.Context()); found || err == nil {
+				t.Fatalf("found=%t error=%v", found, err)
+			}
+		})
 	}
 }

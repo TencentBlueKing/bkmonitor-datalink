@@ -32,7 +32,7 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		return enrich.ProcessorResult{}, err
 	}
 	alert := scope.Facts()
-	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
+	_, diagnostics := enrich.ValidateStrategyIdentity(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
@@ -47,11 +47,15 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if err != nil || !rules.IsAPMTable(projection.QueryConfigs[0].ResultTableID) {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
 	}
+	bizID, diagnostics := enrich.ValidateBusinessID(alert)
+	if len(diagnostics) != 0 {
+		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
+	}
 	dimensions, err := combinedDimensions(alert)
 	if err != nil {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"}}}}, nil
 	}
-	application, applicationDiagnostics, err := resolveAPMApplication(ctx, scope, strategy, projection.QueryConfigs[0].ResultTableID, ids.BizID)
+	application, applicationDiagnostics, err := resolveAPMApplication(ctx, scope, strategy, projection.QueryConfigs[0].ResultTableID, bizID)
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
@@ -59,9 +63,9 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	service := dimensionText(dimensions, rules.FieldServiceName)
 	instance := dimensionText(dimensions, rules.FieldAPMInstanceID)
 	modelID, modelInstID := apmModelIdentity(application.ID, service, instance)
-	values := models.APMValues{APMAppID: apmIDValue(application.ID), APMAppName: application.Name, APMAppAlias: application.Alias, APMServiceName: service, APMInstanceName: instance, APMInterfaceName: dimensionText(dimensions, rules.FieldAPMSpanName), APMNetPeerName: dimensionText(dimensions, rules.FieldAPMNetPeerName), ModelID: modelID, ModelInstID: modelInstID, BKBizID: ids.BizID}
+	values := models.APMValues{APMAppID: apmIDValue(application.ID), APMAppName: application.Name, APMAppAlias: application.Alias, APMServiceName: service, APMInstanceName: instance, APMInterfaceName: dimensionText(dimensions, rules.FieldAPMSpanName), APMNetPeerName: dimensionText(dimensions, rules.FieldAPMNetPeerName), ModelID: modelID, ModelInstID: modelInstID, BKBizID: bizID}
 	if application.ID != "" {
-		values.CWLabels = apmLabels(ids.BizID, application.ID)
+		values.CWLabels = apmLabels(bizID, application.ID)
 	}
 	scope.Context().APM.Set(values)
 	value, encodeErr := scope.Context().APM.JSONObject()
@@ -105,6 +109,11 @@ func resolveAPMApplication(ctx context.Context, scope *enrich.Scope, strategy mo
 			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"extra_data.additional_dimensions.app_name"}})
 		}
 		return projection, diagnostics, nil
+	}
+	// APM 应用名称只在真实业务内唯一；无业务时不能退化为跨业务查询。
+	if bizID <= 0 {
+		_, businessDiagnostics := enrich.ValidateBusinessID(alert)
+		return projection, append(diagnostics, businessDiagnostics...), nil
 	}
 	apps, readErr := scope.APMApplications(ctx, bizID, projection.Name)
 	if err := ctx.Err(); err != nil {

@@ -19,10 +19,10 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-func TestGlobalStrategyBusinessMatchesAllBusinessCheckingProcessors(t *testing.T) {
+func TestStrategyAssociationDoesNotQueryGlobalBusiness(t *testing.T) {
 	t.Parallel()
 	strategy := strategyForProcessorBusiness(524)
-	processors := []enrich.Processor{Strategy{}, Display{}, Metric{}}
+	processors := []enrich.Processor{Display{}, Metric{}}
 	for _, processor := range processors {
 		t.Run(processor.Name(), func(t *testing.T) {
 			business := &strategyBusinessReader{isGlobal: true, found: true}
@@ -38,7 +38,7 @@ func TestGlobalStrategyBusinessMatchesAllBusinessCheckingProcessors(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.Status != domain.EnrichStatusSucceeded || business.calls != 1 {
+			if result.Status != domain.EnrichStatusSucceeded || business.calls != 0 {
 				t.Fatalf("status=%q business calls=%d diagnostics=%#v", result.Status, business.calls, result.Diagnostics)
 			}
 		})

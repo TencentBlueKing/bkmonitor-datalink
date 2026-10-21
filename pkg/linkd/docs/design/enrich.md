@@ -246,7 +246,7 @@ data_source
 以上为新事件的 9 个输出字段；`strategy_instance` 保存对象模型、CMDB 对象、实例和模型分类的身份。
 历史结果中的 `url` 仅继续解码、重放，新丰富不生成 URL。
 
-当前策略身份来自 `labels.strategy_id + labels.strategy_version + labels.bk_biz_id`。鲸眼策略仅从 Kingeye MySQL `alarm_strategy_execution_revision` 的不可变快照读取，按租户、`strategy_id` 与 Event `strategy_version` 对应的 `strategy_revision` 精确定位，并校验唯一性、schema、字节数、SHA-256 和快照身份；不查询 SplitRecord 当前态、旧 Set/Config 或 latest。管理业务取自唯一历史记录，事件业务关系单独校验。Linkd 输出策略关联事实，KAC 在读取时生成导航 URL。
+当前策略查询身份仅由事件的 `bk_tenant_id + labels.strategy_id + labels.strategy_version` 构成，查询和 Strategy 关联信息生成不要求 `labels.bk_biz_id`。鲸眼策略仅从 Kingeye MySQL `alarm_strategy_execution_revision` 的不可变快照读取，按租户、`strategy_id` 与 Event `strategy_version` 对应的 `strategy_revision` 精确定位，并校验唯一性、schema、字节数、SHA-256 和快照身份；不查询 SplitRecord 当前态、旧 Set/Config 或 latest。管理业务取自唯一历史记录；查询投影保留快照中的业务值（包括非 BKCC 空间对应的负值），缺失时透传为 0，不作为查询投影前置条件。Resource、Display、Metric 不再统一要求来源业务，也不要求策略管理业务与资源业务相等；K8s 和 canonical 实例按租户及自身身份定位。只有 APM 应用、服务实例等实际使用业务作查询条件的分支校验正整数业务；业务名称补充没有有效业务时跳过查询。APM、Log 先判断场景，不适用时跳过。Linkd 输出策略关联事实，KAC 在读取时生成导航 URL。
 
 **2026-10-19 用户确认：`strategy_name` 和 `data_source` 都保留在 Linkd，不再继续拆分到 KAC，也不列为后续纯展示转换的迁移项。**
 
@@ -367,10 +367,13 @@ Workload 的 `workload_name`、Pod 的 `pod_name`、Container 的 `container_nam
 2026-10-09 按 Kingeye 当前源码接入 metricset 指标目录。Kingeye `base/domains/metric/models.py` 中，`metricset` 仅登记来源，`metric` 持有定义和主引用；Python 消费方经 `kingeye.base.metric.get_metric/list_metrics_by_ids` 按租户和主键读取。Linkd 的 `MetricClient` 在既有只读 MySQL 连接上读取同一张 `metric` 表，不回退旧 `home_application_monitormetriclibrary`。
 
 - 发布材料 `query_configs[].metric_ref_id` 对应目录 `metric.id`，优先用于定义点查；检测面的字符串 `metric_id` 仍只是检测标识，不转换为目录 ID。ID 未命中不回退同名或同物理字段。
-- 没有目录 ID 的发布材料按 `kind=native`、`physical_field`、`result_table_id` 或 `data_label` 反查；只查来源业务空间 `bkcc__<Event.Labels.bk_biz_id>` 和平台层 `*`。显式模型必须精确匹配，不沿用旧库跨模型 first() 回退。无 ID 的旧衍生材料按 `kind=derived + metric_name` 反查。最多读取两条，多义返回依赖失败。
+- 没有目录 ID 的发布材料按 `kind=native`、`physical_field`、`result_table_id` 或 `data_label` 反查；有可用 CMDB 业务时按 `bkcc__<业务 ID>` 限定；否则使用同一不可变策略快照的 `space_uid`（支持非 BKCC 空间），同时可见平台层 `*`。没有可信空间时拒绝反查，不拼接 `bkcc__-255` 或退化为全租户查询。显式模型必须精确匹配，不沿用旧库跨模型 first() 回退。无 ID 的旧衍生材料按 `kind=derived + metric_name` 反查。最多读取两条，多义返回依赖失败。
 - `model_id/metric_name/display_name/description/unit/value_mapping` 映射为既有丰富元数据；`dimensions[].id/name` 映射为维度 key/name。定义全名与来源编码不用于推断指标身份，不从带点编码拆取来源。
 - 定义查询不按 `enabled/ref_status` 过滤，已触发告警仍可展示停用或失效指标的定义。时序取数继续使用已发布的检测语义；内置和外部来源均继续兼容参数及来源插件协议。
+- 显式目录 ID 不要求来源业务。目录 `kind=derived` 使用定义名和单位，不要求物理表或字段，也不拼造 `metric_unique_id`。声明未携带 `field_tag` 时，同一历史执行快照中一致绑定的 `metric_snapshot.parent_metric_id + derived.metric_id` 可证明父指标的衍生类型，用于描述生成；不能把展开成员的 ID、表达式或过滤条件覆盖回声明。单 catalog 查询的无函数恒等别名可省略外层表达式，实际计算与函数仍保留。
 - Scope 强制事件租户，按指标 ID 或完整反查条件复用单次丰富结果；Client 使用 5 秒超时、两条候选上限，两个 JSON 列分别限 1 MiB，并精确复核返回身份。NULL、畸形或超限 JSON 按 `metric_catalog` 依赖失败处理。
+
+2026-10-21 使用策略 147 的 v1/v2 真实事件验证完整九 Processor 链与描述生成：名称、策略、指标及描述 13/13 成功；5 条整个 Enrich 成功，8 条因 OneModel 容器实例未命中保留 Resource/K8s partial。见 [策略 147 只读验证](../research/2026-10-21-strategy147-enrich-validation.md)，不代表部署或线上告警修复。
 
 日志查询没有目录 ID、物理表或衍生定义引用时，展示沿用日志配置与原始维度，不发起目录查询；显式目录引用的失败仍按依赖失败处理。其他指标不放宽完整引用要求。
 
@@ -911,7 +914,7 @@ NoData 迁移已完成：
 7. `hardware_` 与多模型结果表统一要求 canonical `model_id + model_inst_id`，指标目录按模型精确投影，OneModel 按实例原值查询；
 8. 旧 `object_model_id + obj_model_inst_id`、`cw_object_model_id + cw_object_model_inst_id` 只保留为待迁移输入诊断字段，不恢复 Meta API 或数值主键推断；
 9. 指标目录读取 `value_mapping`，DATA 单指标无函数时对告警内容中的匹配数值追加枚举名称；多指标、函数、衍生指标和无法精确匹配的内容保持原值。
-10. 衍生指标按 `field_tag=derived_metric`、策略 `field_name` 和无结果表约束读取元数据；Metric 输出保留表达式和 `field_tag`。
+10. 衍生指标优先按租户和目录 ID 读取定义；没有 ID 的旧声明按 `field_tag=derived_metric` 与定义名反查。Metric 保留衍生类型及实际表达式，catalog 单别名的无函数恒等引用省略外层表达式，不要求衍生定义具有物理表。
 11. 多指标输出保留全部 query configs、别名、表达式和各自查询条件；Metric name 为空，Metric unique ID 沿用首个 query 的物理字段。
 12. DATA 静态阈值展示优先使用告警等级对应算法的 `algorithmUnit`；`NONE` 表示清除单位；算法未覆盖时使用指标目录单位映射。阈值和当前值支持数值单位追加。
 13. 环比／同比内容按 Kingeye 分支识别可定位数值并进行枚举映射，无数据周期文案保留来源文本；custom event、alert、FTA 查询类型使用对应字段和结果表翻译。

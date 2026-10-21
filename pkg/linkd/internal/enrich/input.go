@@ -11,8 +11,10 @@ package enrich
 
 import (
 	"math"
+	"strings"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich/models"
 )
 
 const (
@@ -28,18 +30,54 @@ type RequiredIDs struct {
 	BizID           int64
 }
 
-// ValidateRequiredIDs 在外部查询前校验 BASE_COLLECT 必需的三个正整数标签。
-func ValidateRequiredIDs(alert domain.Event) (RequiredIDs, []Diagnostic) {
-	fields := []struct {
-		name string
-		dest *int64
-	}{
-		{name: labelStrategyID},
-		{name: labelStrategyVersion},
-		{name: labelBizID},
+// ValidateStrategyIdentity 只校验策略查询所需的租户、策略 ID 和执行修订。
+// bk_biz_id 不参与历史策略定位；来源空间和资源业务由各自消费者另行校验。
+func ValidateStrategyIdentity(alert domain.Event) (models.StrategyRevisionQuery, []Diagnostic) {
+	identity := models.StrategyRevisionQuery{TenantID: alert.BKTenantID}
+	diagnostics := validateIDFields(alert, []requiredIDField{
+		{name: labelStrategyID, dest: &identity.ID},
+		{name: labelStrategyVersion, dest: &identity.Version},
+	})
+	if identity.TenantID == "" {
+		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticCodeMissingField, Fields: []string{"bk_tenant_id"}})
+	} else if strings.TrimSpace(identity.TenantID) != identity.TenantID {
+		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticCodeInvalidField, Fields: []string{"bk_tenant_id"}})
 	}
+	return identity, diagnostics
+}
+
+// ValidateRequiredIDs 为需要来源业务的丰富步骤校验三个正整数标签。
+// 策略查询和策略关联应使用 ValidateStrategyIdentity，不以业务身份作为前提。
+func ValidateRequiredIDs(alert domain.Event) (RequiredIDs, []Diagnostic) {
 	ids := RequiredIDs{}
-	fields[0].dest, fields[1].dest, fields[2].dest = &ids.StrategyID, &ids.StrategyVersion, &ids.BizID
+	diagnostics := validateIDFields(alert, []requiredIDField{
+		{name: labelStrategyID, dest: &ids.StrategyID},
+		{name: labelStrategyVersion, dest: &ids.StrategyVersion},
+		{name: labelBizID, dest: &ids.BizID},
+	})
+	return ids, diagnostics
+}
+
+// ValidateBusinessID 仅供真实查询以 CMDB 业务作为定位条件的分支使用。
+func ValidateBusinessID(event domain.Event) (int64, []Diagnostic) {
+	var id int64
+	diagnostics := validateIDFields(event, []requiredIDField{{name: labelBizID, dest: &id}})
+	return id, diagnostics
+}
+
+// OptionalBusinessID 返回可用的 CMDB 业务；负数空间、缺失或非法值不作为资源业务兜底。
+// 不依赖业务的查询不得因此失败；真正需要业务的分支应调用 ValidateBusinessID。
+func OptionalBusinessID(event domain.Event) int64 {
+	id, _ := ValidateBusinessID(event)
+	return id
+}
+
+type requiredIDField struct {
+	name string
+	dest *int64
+}
+
+func validateIDFields(alert domain.Event, fields []requiredIDField) []Diagnostic {
 	missing := make([]string, 0, len(fields))
 	invalid := make([]string, 0, len(fields))
 	for _, field := range fields {
@@ -62,5 +100,5 @@ func ValidateRequiredIDs(alert domain.Event) (RequiredIDs, []Diagnostic) {
 	if len(invalid) != 0 {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticCodeInvalidField, Fields: invalid})
 	}
-	return ids, diagnostics
+	return diagnostics
 }

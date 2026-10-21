@@ -38,7 +38,7 @@ func (Strategy) Match(context.Context, *enrich.Scope) (bool, error) { return tru
 // Process 查询策略依赖并生成策略信息。
 func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	alert := scope.Facts()
-	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
+	identity, diagnostics := enrich.ValidateStrategyIdentity(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
@@ -47,7 +47,7 @@ func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 		return enrich.ProcessorResult{}, err
 	}
 	diagnostics = strategyDependencyDiagnostics(strategyFound, strategyErr)
-	values := models.StrategyValues{StrategyID: ids.StrategyID, StrategyVersion: ids.StrategyVersion}
+	values := models.StrategyValues{StrategyID: identity.ID, StrategyVersion: identity.Version}
 	if strategyFound && strategyErr == nil {
 		if strategy.MonitorTemplateID != nil {
 			values.MonitorTemplateID = *strategy.MonitorTemplateID
@@ -78,24 +78,10 @@ func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	businessMatches := true
-	if strategyFound && strategyErr == nil && strategy.BKBizID != nil {
-		businessMatches, err = strategyBusinessMatches(ctx, scope, *strategy.BKBizID, ids.BizID)
-		if contextErr := ctx.Err(); contextErr != nil {
-			return enrich.ProcessorResult{}, contextErr
-		}
-		if err != nil {
-			diagnostics = append(diagnostics, enrich.Diagnostic{
-				Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyBusiness,
-			})
-		}
-	}
+	// 策略关联由固定执行身份确定；不让来源空间与资源业务的匹配阻断关联事实。
 	status := domain.EnrichStatusSucceeded
-	if len(diagnostics) != 0 || !businessMatches {
+	if len(diagnostics) != 0 {
 		status = domain.EnrichStatusPartial
-		if !businessMatches {
-			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyKingeyeStrategy, Fields: []string{"labels.bk_biz_id"}})
-		}
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics}, nil
 }

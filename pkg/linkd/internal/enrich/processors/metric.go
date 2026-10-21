@@ -51,7 +51,7 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 		}
 	}
 
-	ids, idDiagnostics := enrich.ValidateRequiredIDs(alert)
+	_, idDiagnostics := enrich.ValidateStrategyIdentity(alert)
 	if len(idDiagnostics) != 0 {
 		value, err := metricResultValue(scope, values)
 		if err != nil {
@@ -73,17 +73,7 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	if err != nil {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyKingeyeStrategy)
 	}
-	businessMatches, err := strategyBusinessMatches(ctx, scope, projection.BKBizID, ids.BizID)
-	if contextErr := ctx.Err(); contextErr != nil {
-		return enrich.ProcessorResult{}, contextErr
-	}
-	if err != nil {
-		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyBusiness)
-	}
-	if !businessMatches {
-		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyKingeyeStrategy)
-	}
-	projection, err = resolveMetricQueryLocations(ctx, scope, strategy, projection)
+	strategy, projection, err = resolveMetricQueryLocations(ctx, scope, strategy, projection)
 	if ctx.Err() != nil {
 		return enrich.ProcessorResult{}, ctx.Err()
 	}
@@ -114,12 +104,20 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	values.TimeInterval = timeInterval
 	values.WhereCondition = whereCondition
 	// 参数随当次丰富结果冻结，KAC 通过原来源插件取数，不在读取时重建历史查询。
-	values.MetricQueryParams = buildMetricQueryParams(projection, strategy, queryDimensions, ids.BizID)
+	values.MetricQueryParams = buildMetricQueryParams(projection, strategy, queryDimensions, metricResourceBusiness(scope))
 	value, encodeErr := metricResultValue(scope, values)
 	if encodeErr != nil {
 		return enrich.ProcessorResult{}, encodeErr
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics}, nil
+}
+
+// 取数附带资源已确认的业务；来源空间不能充当资源业务。
+func metricResourceBusiness(scope *enrich.Scope) int64 {
+	if id := bizIDFromResource(scope.Context().Resource.Values); id > 0 {
+		return id
+	}
+	return enrich.OptionalBusinessID(scope.Facts())
 }
 
 type metricQueryParams struct {
@@ -245,9 +243,16 @@ func buildMetricQueryParams(
 
 // 指标目录策略只冻结目录身份，resolved 策略中的物理表可以为空或过期。
 // 显式目录引用必须按租户精确读取主引用；不修改发布材料，也不猜测表名。
-func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, projection models.StrategyItemProjection) (models.StrategyItemProjection, error) {
+func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, projection models.StrategyItemProjection) (models.CWStrategy, models.StrategyItemProjection, error) {
+	// 显式目录引用仍须校验当前目录类型；旧式衍生声明没有引用时沿用原路径。
 	if strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
-		return projection, nil
+		referenced := false
+		for _, query := range projection.QueryConfigs {
+			referenced = referenced || query.MetricRefID > 0
+		}
+		if !referenced {
+			return strategy, projection, nil
+		}
 	}
 	modelCode := ""
 	if strategy.ObjectModelCode != nil {
@@ -260,10 +265,27 @@ func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strat
 		}
 		metadata, found, err := metricDefinitionMetadata(ctx, scope, strategy, *query, modelCode)
 		if err != nil {
-			return projection, err
+			return strategy, projection, err
+		}
+		if strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric && metadata.Kind != "derived" {
+			return strategy, projection, fmt.Errorf("%w: derived metric catalog kind mismatch", enrich.ErrInvalidDataSourceResponse)
+		}
+		if found && metadata.Kind == "derived" && metadata.FieldName != "" {
+			// 衍生目录定义没有物理表/字段。只在当前副本标记定义语义，不改写历史材料，
+			// 也不把检测面展开后的成员引用误当成父指标的物理位置。
+			query.MetricField, query.ResultTableID = metadata.FieldName, ""
+			if len(projection.QueryConfigs) == 1 {
+				strategy.Spec.FieldTag, strategy.Spec.FieldName = models.CWStrategyFieldTagDerivedMetric, metadata.FieldName
+				// catalog 的单别名只是引用已定义的衍生指标；实际表达式仍由目录定义负责。
+				// 计算和函数必须保留，不能把未知表达式悄悄变成直接取数。
+				if query.QueryConfigType == "catalog" && query.Alias != "" && strings.TrimSpace(projection.Expression) == query.Alias && !hasFunctions(projection.Functions) && !hasFunctions(query.Functions) {
+					projection.Expression = ""
+				}
+			}
+			continue
 		}
 		if !found || metadata.Kind != "native" || metadata.PhysicalField == "" || (metadata.TableID == "" && metadata.DataLabel == "") {
-			return projection, fmt.Errorf("%w: native metric catalog location is incomplete", enrich.ErrInvalidDataSourceResponse)
+			return strategy, projection, fmt.Errorf("%w: native metric catalog location is incomplete", enrich.ErrInvalidDataSourceResponse)
 		}
 		query.ResultTableID = metadata.TableID
 		if query.ResultTableID == "" {
@@ -271,7 +293,7 @@ func resolveMetricQueryLocations(ctx context.Context, scope *enrich.Scope, strat
 		}
 		query.MetricField = metadata.PhysicalField
 	}
-	return projection, nil
+	return strategy, projection, nil
 }
 
 type translatedMetricQuery struct {

@@ -15,6 +15,7 @@ package basetarget
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -473,4 +474,26 @@ func dependency(diagnostics []enrich.Diagnostic) string {
 		}
 	}
 	return ""
+}
+
+func TestServiceInstanceWithoutBusinessNeverQueriesUnscoped(t *testing.T) {
+	for _, biz := range []int64{0, -255} {
+		t.Run(fmt.Sprint(biz), func(t *testing.T) {
+			code := rules.ServiceInstanceModelCode
+			event := baseTargetAlert(t, domain.DimensionMap{rules.FieldBKInstID: domain.NewStringScalar("2")})
+			delete(event.Labels, "bk_biz_id")
+			reader := &baseTargetReader{}
+			scope, err := enrich.NewScope(event, enrich.Sources{OneModel: reader, Model: reader})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := Enrich(t.Context(), scope, rules.Classification{BaseTarget: rules.BaseTargetMonitorSource}, models.CWStrategy{ObjectModelCode: &code}, event.Dimensions, biz, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reader.instanceCalls != 0 || len(result.ResourceDiagnostics) == 0 {
+				t.Fatalf("query=%+v result=%+v", reader.lastQuery, result)
+			}
+		})
+	}
 }

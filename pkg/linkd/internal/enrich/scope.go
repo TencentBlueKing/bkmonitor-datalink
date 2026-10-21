@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"linkd/internal/domain"
@@ -376,12 +377,12 @@ func (s *Scope) CWStrategy(ctx context.Context) (returned models.CWStrategy, fou
 			s.strategy.err = fmt.Errorf("strategy config reader is unavailable")
 			return
 		}
-		ids, diagnostics := ValidateRequiredIDs(*s.original)
+		identity, diagnostics := ValidateStrategyIdentity(*s.original)
 		if len(diagnostics) != 0 {
 			s.strategy.err = fmt.Errorf("strategy publication identity is invalid")
 			return
 		}
-		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByStrategyID(ctx, models.StrategyRevisionQuery{TenantID: s.original.BKTenantID, ID: ids.StrategyID, Version: ids.StrategyVersion})
+		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByStrategyID(ctx, identity)
 	})
 	return s.strategy.value, s.strategy.found, s.strategy.err
 }
@@ -418,11 +419,19 @@ func (s *Scope) MetricMetadata(ctx context.Context, query models.MetricQuery) (r
 		if s.state != nil {
 			facts.Labels = s.state.Labels()
 		}
-		ids, diagnostics := ValidateRequiredIDs(facts)
-		if len(diagnostics) != 0 {
-			return models.MetricMetadata{}, false, fmt.Errorf("metric lookup requires valid source business")
+		query.SpaceUID = ""
+		if bizID := OptionalBusinessID(facts); bizID > 0 {
+			query.SpaceUID = fmt.Sprintf("bkcc__%d", bizID)
+		} else {
+			strategy, found, readErr := s.CWStrategy(ctx)
+			if readErr != nil {
+				return models.MetricMetadata{}, false, fmt.Errorf("metric lookup space: %w", readErr)
+			}
+			if !found || strategy.SpaceUID == "" || strings.TrimSpace(strategy.SpaceUID) != strategy.SpaceUID {
+				return models.MetricMetadata{}, false, fmt.Errorf("metric reverse lookup requires a source space")
+			}
+			query.SpaceUID = strategy.SpaceUID
 		}
-		query.SpaceUID = fmt.Sprintf("bkcc__%d", ids.BizID)
 	}
 	if result, exists := s.metrics[query]; exists {
 		return result.value, result.found, result.err

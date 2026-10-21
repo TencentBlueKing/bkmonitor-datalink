@@ -101,6 +101,7 @@ type resolvedStrategy struct {
 type strategyRevisionSnapshot struct {
 	ID            int64             `json:"id"`
 	BusinessID    int64             `json:"bk_biz_id"`
+	SpaceUID      string            `json:"space_uid"`
 	TenantID      string            `json:"bk_tenant_id"`
 	Version       int64             `json:"strategy_revision"`
 	RuntimeConfig resolvedStrategy  `json:"runtime_config"`

@@ -97,6 +97,9 @@ func cwStrategyFromRevision(row strategyRevisionRow, payload strategyRevisionSna
 	if err := bindRevisionMetricReferences(&spec, payload.Items); err != nil {
 		return models.CWStrategy{}, err
 	}
+	if err := bindRevisionDerivedKind(&spec, payload.Items); err != nil {
+		return models.CWStrategy{}, err
+	}
 	// 覆盖记录的实例标签允许整数或字符串，数据库列的字符串形态不再参与转换。
 	var instanceID *string
 	if raw := labels.ObjectInstanceID; len(raw) != 0 && string(raw) != "null" {
@@ -128,7 +131,7 @@ func cwStrategyFromRevision(row strategyRevisionRow, payload strategyRevisionSna
 		Active: true, Kind: kind, APIVersion: "v1alpha1", UID: entry.Metadata.UID,
 		Name: entry.Metadata.Name, Namespace: entry.Metadata.Namespace, Annotations: entry.Metadata.Annotations,
 		Spec: spec, Status: models.CWStrategyStatus{BKStrategyID: row.StrategyID},
-		BKTenantID: &labels.TenantID, BKBizID: &businessID, IsDefault: labels.IsDefault,
+		BKTenantID: &labels.TenantID, BKBizID: &businessID, SpaceUID: payload.SpaceUID, IsDefault: labels.IsDefault,
 		DefaultStrategyConfigUID: labels.DefaultConfigUID, MonitorTemplateID: &payload.RuntimeConfig.Metadata.Labels.TemplateID,
 		ConfigID: &labels.ConfigID, ObjectModelCode: labels.ObjectModelCode, BKObjectInstID: instanceID,
 	}, nil

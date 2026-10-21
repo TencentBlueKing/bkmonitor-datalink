@@ -37,7 +37,7 @@ func (Log) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		return enrich.ProcessorResult{}, err
 	}
 	alert := scope.Facts()
-	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
+	_, diagnostics := enrich.ValidateStrategyIdentity(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
@@ -59,7 +59,7 @@ func (Log) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	}
 	themeID, themeName, themeDiagnostics := resolveLogTheme(ctx, scope, strategy.Spec.SourceConfig)
 	diagnostics = append(diagnostics, themeDiagnostics...)
-	values := models.LogValues{LogThemeID: logThemeValue(themeID), LogThemeName: themeName, LogQueryString: query, LogRelateInfo: relatedInfo, CWLabels: logLabels(ids.BizID, themeID)}
+	values := models.LogValues{LogThemeID: logThemeValue(themeID), LogThemeName: themeName, LogQueryString: query, LogRelateInfo: relatedInfo, CWLabels: logLabels(enrich.OptionalBusinessID(alert), themeID)}
 	if classification == rules.DisplayLogKeyword && query == "" {
 		values.LogQueryString = rules.LogMetricFallback
 	}
@@ -151,7 +151,10 @@ func logRelatedInfo(extra domain.JSONObject) (string, bool) {
 }
 
 func logLabels(bizID int64, themeID string) []string {
-	labels := []string{"bk_biz_id", fmt.Sprintf("bk_biz_id|%d", bizID)}
+	labels := []string{}
+	if bizID > 0 {
+		labels = append(labels, "bk_biz_id", fmt.Sprintf("bk_biz_id|%d", bizID))
+	}
 	if themeID != "" {
 		labels = append(labels, "log", "log|"+themeID)
 	}

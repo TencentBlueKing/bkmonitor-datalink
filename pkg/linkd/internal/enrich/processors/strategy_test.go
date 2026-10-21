@@ -20,72 +20,40 @@ import (
 	"linkd/internal/enrich/models"
 )
 
-func TestStrategyBusinessMatches(t *testing.T) {
+func TestStrategyAssociationDoesNotRequireBusinessMatch(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name              string
-		strategyBizID     int64
-		alertBizID        int64
-		isGlobal          bool
-		businessFound     bool
-		businessErr       error
-		wantMatch         bool
-		wantError         bool
-		wantBusinessCalls int
+	for _, tc := range []struct {
+		name                      string
+		strategyBizID, alertBizID int64
+		missing                   bool
 	}{
-		{name: "same business", strategyBizID: 23, alertBizID: 23, wantMatch: true},
-		{name: "global business", strategyBizID: 524, alertBizID: 23, isGlobal: true, businessFound: true, wantMatch: true, wantBusinessCalls: 1},
-		{name: "different regular business", strategyBizID: 24, alertBizID: 23, businessFound: true, wantBusinessCalls: 1},
-		{name: "business missing", strategyBizID: 24, alertBizID: 23, wantError: true, wantBusinessCalls: 1},
-		{name: "business query failed", strategyBizID: 24, alertBizID: 23, businessErr: errors.New("failed"), wantError: true, wantBusinessCalls: 1},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			business := &strategyBusinessReader{isGlobal: test.isGlobal, found: test.businessFound, err: test.businessErr}
-			scope, err := enrich.NewScope(strategyTestAlert(t, test.alertBizID), enrich.Sources{Business: business})
+		{name: "same business", strategyBizID: 23, alertBizID: 23},
+		{name: "different business", strategyBizID: 24, alertBizID: 23},
+		{name: "non-BKCC space", strategyBizID: -255, alertBizID: -255},
+		{name: "resource business differs from strategy space", strategyBizID: -255, alertBizID: 2},
+		{name: "zero business", alertBizID: 0},
+		{name: "missing business", missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := strategyTestAlert(t, tc.alertBizID)
+			if tc.missing {
+				delete(event.Labels, "bk_biz_id")
+			}
+			strategy := strategyForBusiness(tc.strategyBizID)
+			if tc.missing {
+				strategy.BKBizID = nil
+			}
+			business := &strategyBusinessReader{err: errors.New("must not query business for strategy association")}
+			scope, err := enrich.NewScope(event, enrich.Sources{CWStrategy: strategyProcessorReader{strategy: strategy}, Business: business})
 			if err != nil {
 				t.Fatal(err)
 			}
-			matched, err := strategyBusinessMatches(context.Background(), scope, test.strategyBizID, test.alertBizID)
-			if matched != test.wantMatch || (err != nil) != test.wantError || business.calls != test.wantBusinessCalls {
-				t.Fatalf("matched=%t error=%v business calls=%d", matched, err, business.calls)
-			}
-		})
-	}
-}
-
-func TestStrategyBusinessMatch(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name              string
-		strategyBizID     int64
-		alertBizID        int64
-		isGlobal          bool
-		businessFound     bool
-		wantStatus        domain.EnrichStatus
-		wantBusinessCalls int
-	}{
-		{name: "same business", strategyBizID: 23, alertBizID: 23, wantStatus: domain.EnrichStatusSucceeded},
-		{name: "global business", strategyBizID: 524, alertBizID: 23, isGlobal: true, businessFound: true, wantStatus: domain.EnrichStatusSucceeded, wantBusinessCalls: 1},
-		{name: "different regular business", strategyBizID: 24, alertBizID: 23, businessFound: true, wantStatus: domain.EnrichStatusPartial, wantBusinessCalls: 1},
-		{name: "business missing", strategyBizID: 24, alertBizID: 23, wantStatus: domain.EnrichStatusPartial, wantBusinessCalls: 1},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			business := &strategyBusinessReader{isGlobal: test.isGlobal, found: test.businessFound}
-			scope, err := enrich.NewScope(strategyTestAlert(t, test.alertBizID), enrich.Sources{
-				CWStrategy: strategyProcessorReader{strategy: strategyForBusiness(test.strategyBizID)},
-				Business:   business,
-			})
+			result, err := (Strategy{}).Process(t.Context(), scope)
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := (Strategy{}).Process(context.Background(), scope)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if result.Status != test.wantStatus || business.calls != test.wantBusinessCalls {
-				t.Fatalf("status=%q business calls=%d diagnostics=%#v", result.Status, business.calls, result.Diagnostics)
+			if result.Status != domain.EnrichStatusSucceeded || business.calls != 0 || string(result.Value["strategy_id"]) != "78" || string(result.Value["strategy_version"]) != "1" || string(result.Value["strategy_name"]) != `"CPU"` {
+				t.Fatalf("result=%+v business calls=%d", result, business.calls)
 			}
 		})
 	}

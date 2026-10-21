@@ -126,14 +126,14 @@ type CWStrategy struct {
 	ConfigID                 *string
 	ObjectModelCode          *string
 	BKObjectInstID           *string
+	// SpaceUID 是不可变发布快照中的查询空间，仅用于无目录 ID 时消歧。
+	SpaceUID string
 }
 
 // StrategyItemProjection 返回 Enrich 使用的声明式策略查询投影。
 // 分类、展示和指标清洗复用历史快照中的 spec.strategy_item，不回查旧配置表。
+// 管理业务仅作为快照事实透传，缺失时为 0；消费方按用途另行校验业务作用域。
 func (s CWStrategy) StrategyItemProjection() (StrategyItemProjection, error) {
-	if s.BKBizID == nil || *s.BKBizID <= 0 {
-		return StrategyItemProjection{}, fmt.Errorf("kingeye strategy must contain a positive bk_biz_id")
-	}
 	if s.Spec.StrategyItem == nil || len(s.Spec.StrategyItem.QueryConfigs) == 0 {
 		return StrategyItemProjection{}, fmt.Errorf("kingeye strategy must contain strategy_item.query_configs")
 	}
@@ -169,13 +169,17 @@ func (s CWStrategy) StrategyItemProjection() (StrategyItemProjection, error) {
 			query.DataTypeLabel = inferDataTypeLabel(s)
 		}
 	}
+	bizID := int64(0)
+	if s.BKBizID != nil {
+		bizID = *s.BKBizID
+	}
 	item := s.Spec.StrategyItem
 	name := s.Spec.ItemName
 	if name == "" {
 		name = s.Spec.Name
 	}
 	return StrategyItemProjection{
-		BKBizID: *s.BKBizID, Name: name, Expression: item.Expression,
+		BKBizID: bizID, Name: name, Expression: item.Expression,
 		Functions:    append(json.RawMessage(nil), item.Functions...),
 		QueryConfigs: queries,
 	}, nil

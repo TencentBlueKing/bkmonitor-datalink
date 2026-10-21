@@ -74,6 +74,8 @@ type Backend struct {
 	ETLConfig string
 }
 
+func (b *Backend) SetETLRecordFields(f *define.ETLRecordFields) {}
+
 // NewProducer :创建producer　被单独提了出来，同样是为了测试
 var NewProducer = func(cluster []string, conf *sarama.Config) (Producer, error) {
 	return sarama.NewAsyncProducer(cluster, conf)

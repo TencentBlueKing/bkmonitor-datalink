@@ -485,7 +485,7 @@ func TestDataDerivedAndMultiMetricQuerySemantics(t *testing.T) {
 		wantTag    models.CWStrategyFieldTag
 	}{
 		{name: "derived", reader: dataSliceReader{model: "cw-MySQL", derived: true}, wantName: "derived_usage", wantUnique: "system.cpu.derived_usage", wantField: "derived_usage", wantTag: models.CWStrategyFieldTagDerivedMetric},
-		{name: "multi", reader: dataSliceReader{model: "cw-MySQL", multi: true}, wantName: "", wantUnique: "system.cpu.requests", wantField: "requests"},
+		{name: "multi", reader: dataSliceReader{model: "cw-MySQL", multi: true}, wantName: "requests", wantUnique: "system.cpu.requests", wantField: "requests"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := tc.reader
@@ -520,6 +520,11 @@ func TestDataDerivedAndMultiMetricQuerySemantics(t *testing.T) {
 			}
 			if len(queries) != wantQueries {
 				t.Fatalf("queries=%#v", queries)
+			}
+			if tc.reader.multi {
+				if params["expression"] != "A / B" || queries[0].(map[string]any)["metrics"].([]any)[0].(map[string]any)["field"] != "requests" || queries[1].(map[string]any)["metrics"].([]any)[0].(map[string]any)["field"] != "errors" {
+					t.Fatalf("multi-query expression or members changed: %#v", params)
+				}
 			}
 			if tc.wantTag != "" && params["field_tag"] != string(tc.wantTag) {
 				t.Fatalf("params=%#v", params)

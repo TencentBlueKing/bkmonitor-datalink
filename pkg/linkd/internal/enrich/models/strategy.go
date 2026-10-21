@@ -49,8 +49,10 @@ type StrategyQueryConfig struct {
 	DataTypeLabel   string            `json:"data_type_label"`
 	// QueryConfigType 是鲸眼 query_config 的查询类型标识，prometheus 表示 PromQL。
 	// 声明式快照可能省略 data_source_label，只能靠它识别 Prometheus 查询。
-	QueryConfigType string            `json:"query_config_type"`
-	Raw             domain.JSONObject `json:"-"`
+	QueryConfigType string `json:"query_config_type"`
+	// DatasetCode 是 dataset 声明的语义数据集身份，只能与同一发布快照绑定。
+	DatasetCode string            `json:"dataset_code"`
+	Raw         domain.JSONObject `json:"-"`
 }
 
 // IsPromQL 判断查询是否由 PromQL 表达式驱动。

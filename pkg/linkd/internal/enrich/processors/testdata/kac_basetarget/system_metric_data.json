@@ -26,7 +26,7 @@
     },
     "metric": {
       "aggregate_func": "AVG",
-      "metric_name": "",
+      "metric_name": "usage",
       "result_table_id": "system.cpu_summary",
       "time_interval": 60,
       "unit": "percent"
@@ -282,7 +282,7 @@
             {
               "op": "set",
               "path": "$[\"labels\"][\"metric_name\"]",
-              "value": ""
+              "value": "usage"
             },
             {
               "op": "set",

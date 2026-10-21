@@ -16,6 +16,8 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-10-21-multi-query-legacy-compatibility.md](2026-10-21-multi-query-legacy-compatibility.md) | 单个监控项多 query 的首查询兼容字段、旧 KAC 对照及策略 45/46 只读重放 |
+| [2026-10-21-dataset-enrich-validation.md](2026-10-21-dataset-enrich-validation.md) | 历史 dataset 语义字段到物理查询的绑定、当前策略清单及策略 18/73 完整链只读重放 |
 | [2026-10-21-strategy147-enrich-validation.md](2026-10-21-strategy147-enrich-validation.md) | 非 BKCC 来源空间、derived 父指标和策略 147 的 13 条真实告警完整丰富链只读重放 |
 | [2026-10-17-test-kac-linkd-validation.md](2026-10-17-test-kac-linkd-validation.md) | test 环境 KAC→Linkd 全流程、边界、Hook 性能与修复后的真实验证记录 |
 | [2026-10-17-redis-capacity-assessment.md](2026-10-17-redis-capacity-assessment.md) | Event 请求/命令计数、策略与控制面规模关系、Redis 数据族/TTL、test 内存采样及容量估算公式 |

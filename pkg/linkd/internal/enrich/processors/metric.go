@@ -730,11 +730,18 @@ func cleanMetricName(
 		_, field := promQLMetricIdentity(query)
 		return field
 	}
-	if len(projection.QueryConfigs) > 1 || strategy.Spec.StrategyItem == nil ||
-		hasFunctions(strategy.Spec.StrategyItem.Functions) || hasFunctions(projection.Functions) || hasFunctions(query.Functions) {
+	if strategy.Spec.StrategyItem == nil ||
+		hasFunctions(strategy.Spec.StrategyItem.Functions) || hasFunctions(projection.Functions) {
 		return ""
 	}
-	// 普通单指标
+	for _, member := range projection.QueryConfigs {
+		if hasFunctions(member.Functions) {
+			return ""
+		}
+	}
+	// Projection 对应单个监控项；多条 query 是该项表达式的输入。
+	// 沿用旧 KAC 的首查询字段作为兼容指标名，完整取数语义由
+	// metric_query_params 中的全部 query、别名和表达式表达。
 	return query.MetricField
 }
 

@@ -371,13 +371,14 @@ Workload 的 `workload_name`、Pod 的 `pod_name`、Container 的 `container_nam
 - `model_id/metric_name/display_name/description/unit/value_mapping` 映射为既有丰富元数据；`dimensions[].id/name` 映射为维度 key/name。定义全名与来源编码不用于推断指标身份，不从带点编码拆取来源。
 - 定义查询不按 `enabled/ref_status` 过滤，已触发告警仍可展示停用或失效指标的定义。时序取数继续使用已发布的检测语义；内置和外部来源均继续兼容参数及来源插件协议。
 - 显式目录 ID 不要求来源业务。目录 `kind=derived` 使用定义名和单位，不要求物理表或字段，也不拼造 `metric_unique_id`。声明未携带 `field_tag` 时，同一历史执行快照中一致绑定的 `metric_snapshot.parent_metric_id + derived.metric_id` 可证明父指标的衍生类型，用于描述生成；不能把展开成员的 ID、表达式或过滤条件覆盖回声明。单 catalog 查询的无函数恒等别名可省略外层表达式，实际计算与函数仍保留。
+- 历史 `query_config_type=dataset` 声明按同一不可变执行快照中的唯一别名、`dataset_code` 和 `dataset_semantic.metric_field` 绑定物理表/字段，再按既有租户、空间和模型条件反查指标目录，不猜目录 ID，也不查询当前数据集配置。当前只支持 `bk_monitor/time_series` 且维度、条件无需改名的直接映射；声明、语义绑定与执行查询的维度及条件必须一致，执行查询不能额外携带 `filter_dict`、未绑定或无效来源。缺少、歧义或无法证明等价的绑定返回 `strategy_revision_dataset_binding_invalid`。只改写读取视图中的物理定位与来源类型，保留原声明、表达式、函数、过滤条件及原始快照。
 - Scope 强制事件租户，按指标 ID 或完整反查条件复用单次丰富结果；Client 使用 5 秒超时、两条候选上限，两个 JSON 列分别限 1 MiB，并精确复核返回身份。NULL、畸形或超限 JSON 按 `metric_catalog` 依赖失败处理。
 
 2026-10-21 使用策略 147 的 v1/v2 真实事件验证完整九 Processor 链与描述生成：名称、策略、指标及描述 13/13 成功；5 条整个 Enrich 成功，8 条因 OneModel 容器实例未命中保留 Resource/K8s partial。见 [策略 147 只读验证](../research/2026-10-21-strategy147-enrich-validation.md)，不代表部署或线上告警修复。
 
 日志查询没有目录 ID、物理表或衍生定义引用时，展示沿用日志配置与原始维度，不发起目录查询；显式目录引用的失败仍按依赖失败处理。其他指标不放宽完整引用要求。
 
-本次验证覆盖数据库驱动边界的真实 GORM SQL/Scan，并在 test-bkee5 对 22 条活跃告警的最新事件只读重放 Strategy/Resource/Display/Metric：16 条全部成功，4 条缺少主机身份使 Resource 部分成功，2 条数据集策略缺少目录 ID/物理表导致 Display/Metric 失败。命中的 16 次定义读取（含真实 `metric_ref_id=2162`）与独立 SQL 快照一致。详细证据和边界见 [真实环境验证](../research/2026-10-09-metric-catalog-live-validation.md)。无 ID 且同物理引用有多个候选的材料仍需要上游补齐 `metric_ref_id`，不自动挑选一行；本次不代表服务部署或完整生命周期验证。
+2026-10-09 的验证覆盖数据库驱动边界的真实 GORM SQL/Scan，并在 test-bkee5 对 22 条活跃告警的最新事件只读重放 Strategy/Resource/Display/Metric：16 条全部成功，4 条缺少主机身份使 Resource 部分成功，2 条数据集策略缺少目录 ID/物理表导致 Display/Metric 失败。命中的 16 次定义读取（含真实 `metric_ref_id=2162`）与独立 SQL 快照一致。详细证据和边界见 [真实环境验证](../research/2026-10-09-metric-catalog-live-validation.md)。2026-10-21 补齐历史 dataset 绑定后，策略 18/v1、73/v1 的最新真实事件在本地完整九 Processor 链中均成功，描述也成功生成，见 [dataset 只读验证](../research/2026-10-21-dataset-enrich-validation.md)。无 ID 且同物理引用有多个候选的材料仍需要上游补齐 `metric_ref_id`，不自动挑选一行；这些验证不代表服务部署或完整生命周期验证。
 
 ### 7.2 接口存在，生产能力待补
 
@@ -915,7 +916,7 @@ NoData 迁移已完成：
 8. 旧 `object_model_id + obj_model_inst_id`、`cw_object_model_id + cw_object_model_inst_id` 只保留为待迁移输入诊断字段，不恢复 Meta API 或数值主键推断；
 9. 指标目录读取 `value_mapping`，DATA 单指标无函数时对告警内容中的匹配数值追加枚举名称；多指标、函数、衍生指标和无法精确匹配的内容保持原值。
 10. 衍生指标优先按租户和目录 ID 读取定义；没有 ID 的旧声明按 `field_tag=derived_metric` 与定义名反查。Metric 保留衍生类型及实际表达式，catalog 单别名的无函数恒等引用省略外层表达式，不要求衍生定义具有物理表。
-11. 多指标输出保留全部 query configs、别名、表达式和各自查询条件；Metric name 为空，Metric unique ID 沿用首个 query 的物理字段。
+11. 单个监控项包含多条 query 时，输出保留全部 query configs、别名、表达式和各自查询条件；无函数的普通查询沿用旧 KAC 的首查询字段作为兼容 Metric name，Metric unique ID 仍使用首查询的物理位置。该兼容字段不表示组合结果具有首成员的指标身份或单位；函数场景继续保留空 Metric name，组合取数以完整 `metric_query_params` 为准。见 [多查询兼容验证](../research/2026-10-21-multi-query-legacy-compatibility.md)。
 12. DATA 静态阈值展示优先使用告警等级对应算法的 `algorithmUnit`；`NONE` 表示清除单位；算法未覆盖时使用指标目录单位映射。阈值和当前值支持数值单位追加。
 13. 环比／同比内容按 Kingeye 分支识别可定位数值并进行枚举映射，无数据周期文案保留来源文本；custom event、alert、FTA 查询类型使用对应字段和结果表翻译。
 14. PromQL 查询保留原始表达式，`metric_query_params` 的 `where`、`group_by` 和 `metrics` 留空；事件级结果表与字段按 `segment:...:metric` 约定从表达式内唯一序列名派生。多序列、只出现在标签匹配器中的指标名和结构残缺表达式不产生单指标身份。

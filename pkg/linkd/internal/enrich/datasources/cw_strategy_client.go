@@ -94,6 +94,9 @@ func cwStrategyFromRevision(row strategyRevisionRow, payload strategyRevisionSna
 	if json.Unmarshal(entry.Spec, &spec) != nil || spec.StrategyItem == nil || (spec.ConfigType != "data" && spec.ConfigType != "target") {
 		return models.CWStrategy{}, descriptionFailure("configuration_disabled_or_invalid")
 	}
+	if err := bindRevisionDatasetLocations(&spec, payload.Items); err != nil {
+		return models.CWStrategy{}, err
+	}
 	if err := bindRevisionMetricReferences(&spec, payload.Items); err != nil {
 		return models.CWStrategy{}, err
 	}

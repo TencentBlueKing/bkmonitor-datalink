@@ -286,7 +286,8 @@ func (c *Client) fields(ctx context.Context, a domain.Alert, create bool) (map[s
 		switch a.EndType {
 		case domain.AlertEndTypeUser:
 			mode = "closed"
-		case domain.AlertEndTypeSource:
+		case domain.AlertEndTypeSource, domain.AlertEndTypeSeverityUpgrade:
+			// 来源等级升级会结束旧告警，同样属于告警源关闭，不能归入系统超时关闭。
 			mode = "source_closed"
 		}
 		// 操作者类别不足以区分自动关闭、自愈和工单，展示状态沿用已冻结的关闭来源。

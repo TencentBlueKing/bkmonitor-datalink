@@ -38,7 +38,7 @@ rollover 后继续更新原物理索引，不能总向当前 write alias upsert�
 ## 主动关闭
 
 主动关闭保存 Linkd 终态后，使用同一个写入器与通道优先取得执行机会，等待正在执行的普通批次结束，先于尚未开始的普通批次执行。
-关闭状态按 Alert 冻结的 `EndOperation.Source` 区分：`auto_policy` 为 `auto_closed`、`self_heal` 为 `autoexecute_closed`、`work_order` 为 `autoorder_closed`。手动关闭仍为 `closed`，系统关闭仍为 `system_closed`；无主动关闭命令的来源关闭保持 `source_closed`，恢复保持 `restored`。此映射同时用于新建及后续更新。
+关闭状态按 Alert 冻结的 `EndOperation.Source` 区分：`auto_policy` 为 `auto_closed`、`self_heal` 为 `autoexecute_closed`、`work_order` 为 `autoorder_closed`。手动关闭仍为 `closed`，系统关闭仍为 `system_closed`；无主动关闭命令的来源关闭，以及来源等级升级结束旧告警（`EndType=severity_upgrade`），均为 `source_closed`，恢复保持 `restored`。此映射同时用于新建及后续更新；流转日志保留等级升级的具体原因。
 在通道内重新读取最新事实，直接 Bulk `refresh=true`，成功后返回；后续普通批次同样重新读取，避免旧队列消息写回旧状态。
 写入失败返回 502，保留 Linkd 关闭事实，原命令重试重新执行同步写入。没有独立确认记录或回读水位。
 

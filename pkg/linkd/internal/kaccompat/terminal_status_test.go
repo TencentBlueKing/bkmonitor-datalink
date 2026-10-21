@@ -29,6 +29,7 @@ func TestTerminalProjectionPreservesCloseSource(t *testing.T) {
 		{"legacy user", domain.AlertStatusClosed, domain.AlertEndTypeUser, "", "closed"},
 		{"legacy system", domain.AlertStatusClosed, domain.AlertEndTypeSystem, "", "system_closed"},
 		{"source event", domain.AlertStatusClosed, domain.AlertEndTypeSource, "", "source_closed"},
+		{"source severity upgrade", domain.AlertStatusClosed, domain.AlertEndTypeSeverityUpgrade, "", "source_closed"},
 		{"recovery", domain.AlertStatusRecovered, domain.AlertEndTypeSource, "", "restored"},
 	}
 	for _, tc := range cases {

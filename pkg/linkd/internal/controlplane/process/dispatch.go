@@ -26,6 +26,8 @@ import (
 	controlapi "linkd/internal/controlplane/api"
 	streams "linkd/internal/controlplane/redisstream"
 	"linkd/internal/controlplane/taskstate"
+	"linkd/internal/eventgen"
+	eventgenstore "linkd/internal/eventgen/storage"
 	"linkd/internal/eventsource"
 	sourcestore "linkd/internal/eventsource/storage"
 	"linkd/internal/ingestpreview"
@@ -63,6 +65,14 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return e
 	}
 	defer func() { _ = docs.Close() }()
+	var generatorDocs *eventgenstore.Store
+	if d.EventgenEnabled {
+		generatorDocs, e = eventgenstore.OpenExisting(startup, *cfg.Storage, d.Deployment)
+		if e != nil {
+			return e
+		}
+		defer func() { _ = generatorDocs.Close() }()
+	}
 	policyDocs, err := policystore.OpenExisting(startup, *cfg.Storage, d.Deployment)
 	if err != nil {
 		return err
@@ -168,6 +178,10 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	defer func() { _ = policyResources.Close() }()
 	policyResources.Catalog = policy.NewCatalogWithTTL(policies, time.Minute)
 	api := &controlapi.API{Policies: policies, Tasks: registry, OneModel: oneModelQueries, Previewer: newEnrichPreview(sources, *cfg.Storage, cfg.Resources, logger), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
+	if generatorDocs != nil {
+		api.Eventgen = eventgen.NewService(generatorDocs, sources)
+		api.EventgenSeverity = func() config.SeverityConfig { return severity.SeveritySnapshot().Severity }
+	}
 	api.PolicyDependencies = policyResources.Dependencies
 	api.PolicyCatalog = policyResources.Catalog
 	// 单租户目录无需蓝鲸连接；多租户目录独立于 CMDB 资源，缺少连接时由接口明确报告不可用。
@@ -352,6 +366,18 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		}
 	}}}
 
+	if generatorDocs != nil {
+		// 测试工具的集合准备独立重试，不阻塞正常来源初始化、调度和 API。
+		tasks = append(tasks, taskgroup.Task{Name: "eventgen-storage", Run: func(ctx context.Context) error {
+			call, stop := context.WithTimeout(ctx, startupTimeout)
+			defer stop()
+			if err := generatorDocs.EnsureSchema(call); err != nil {
+				return err
+			}
+			<-ctx.Done()
+			return nil
+		}})
+	}
 	tasks = append(tasks, taskgroup.Task{Name: "policy-publication", Run: func(ctx context.Context) error {
 		return runPolicyPublication(ctx, policies, logger, registry, metrics)
 	}})

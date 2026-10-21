@@ -12,95 +12,42 @@ package eventgen
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-type fakeKafkaSyncClient struct {
-	calls  [][]*kgo.Record
-	failAt int
-	seen   int
-	closed bool
+type outOfOrderKafka struct {
+	failure error
+	records []*kgo.Record
 }
 
-func (c *fakeKafkaSyncClient) ProduceSync(_ context.Context, records ...*kgo.Record) kgo.ProduceResults {
-	cloned := make([]*kgo.Record, len(records))
-	results := make(kgo.ProduceResults, len(records))
-	for index, record := range records {
-		copyRecord := *record
-		copyRecord.Key = append([]byte(nil), record.Key...)
-		copyRecord.Value = append([]byte(nil), record.Value...)
-		copyRecord.Headers = append([]kgo.RecordHeader(nil), record.Headers...)
-		cloned[index] = &copyRecord
-		results[index].Record = record
-		c.seen++
-		if c.failAt != 0 && c.seen == c.failAt {
-			results[index].Err = errors.New("produce failed")
+func (c *outOfOrderKafka) ProduceSync(_ context.Context, r ...*kgo.Record) kgo.ProduceResults {
+	c.records = r
+	return kgo.ProduceResults{{Record: r[2]}, {Record: r[0], Err: c.failure}, {Record: r[1]}}
+}
+
+func (*outOfOrderKafka) Close() {}
+
+func TestKafkaPartialResultsFollowRecordIdentity(t *testing.T) {
+	failure := errors.New("injected failure")
+	client := &outOfOrderKafka{failure: failure}
+	publisher := &KafkaPublisher{targets: map[string]kafkaTarget{"source": {client: client, topic: "topic"}}}
+	records := []Record{{SourceID: "source", Body: []byte(`{"i":0}`), Timestamp: startTime(), Headers: map[string]string{"message_id": "first", "custom": "test"}}, {SourceID: "source", Body: []byte(`{"i":1}`)}, {SourceID: "source", Body: []byte(`{"i":2}`)}}
+	result := publisher.Publish(t.Context(), records)
+	if !errors.Is(result[0], failure) || result[1] != nil || result[2] != nil {
+		t.Fatalf("misattributed acknowledgments: %v", result)
+	}
+	if !client.records[0].Timestamp.Equal(startTime()) {
+		t.Fatal("historical timestamp changed")
+	}
+	found := false
+	for _, h := range client.records[0].Headers {
+		if h.Key == "custom" && string(h.Value) == "test" {
+			found = true
 		}
 	}
-	c.calls = append(c.calls, cloned)
-	return results
-}
-
-func (c *fakeKafkaSyncClient) Close() { c.closed = true }
-
-func TestKafkaPublisherMapsAndChunksRecords(t *testing.T) {
-	t.Parallel()
-	client := &fakeKafkaSyncClient{}
-	publisher := newKafkaPublisher(client, "events-topic")
-	records := make([]Record, kafkaPublishChunkSize+1)
-	for index := range records {
-		records[index] = Record{
-			Key: []byte("fingerprint"), Body: []byte(`{"evaluations":[{"action":"triggered"}]}`),
-			Headers: map[string]string{
-				"message_id": "event-id", "bk_tenant_id": "tenant-a", "order_key": "tenant/source/fingerprint",
-			},
-			Timestamp: time.Date(2026, 9, 2, 0, 0, index%60, 0, time.UTC),
-		}
+	if !found {
+		t.Fatal("custom header lost")
 	}
-	if err := publisher.Publish(context.Background(), records); err != nil {
-		t.Fatal(err)
-	}
-	if len(client.calls) != 2 || len(client.calls[0]) != kafkaPublishChunkSize || len(client.calls[1]) != 1 {
-		t.Fatalf("Kafka call sizes = %v", kafkaCallSizes(client.calls))
-	}
-	first := client.calls[0][0]
-	if first.Topic != "events-topic" || string(first.Key) != "fingerprint" || len(first.Headers) != 3 {
-		t.Fatalf("mapped Kafka record = %#v", first)
-	}
-	wantHeaders := map[string]string{
-		"message_id": "event-id", "bk_tenant_id": "tenant-a", "order_key": "tenant/source/fingerprint",
-	}
-	for _, header := range first.Headers {
-		if string(header.Value) != wantHeaders[header.Key] {
-			t.Fatalf("Kafka header %q = %q", header.Key, header.Value)
-		}
-	}
-	publisher.Close()
-	if !client.closed {
-		t.Fatal("Kafka client was not closed")
-	}
-}
-
-func TestKafkaPublisherReportsPartialFailure(t *testing.T) {
-	t.Parallel()
-	client := &fakeKafkaSyncClient{failAt: 2}
-	publisher := newKafkaPublisher(client, "events-topic")
-	record := Record{Headers: map[string]string{}}
-	err := publisher.Publish(context.Background(), []Record{record, record, record})
-	if err == nil || !strings.Contains(err.Error(), "succeeded=2 failed=1 total=3") ||
-		!strings.Contains(err.Error(), "produce failed") {
-		t.Fatalf("Publish() error = %v", err)
-	}
-}
-
-func kafkaCallSizes(calls [][]*kgo.Record) []int {
-	result := make([]int, len(calls))
-	for index, call := range calls {
-		result[index] = len(call)
-	}
-	return result
 }

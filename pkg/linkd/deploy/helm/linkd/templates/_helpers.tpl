@@ -83,6 +83,7 @@ linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
 {{/* Chart 固定部署 Lifecycle；缺省时保留空对象，让配置加载器填充运行默认值。 */}}
 {{- if not (hasKey $config "lifecycle") }}{{ $_ := set $config "lifecycle" dict }}{{ end -}}
 {{- $dispatch := $config.dispatch | default dict -}}
+{{- if $root.Values.eventgen.enabled }}{{ $_ := set $dispatch "eventgen_enabled" true }}{{ end -}}
 {{- $_ := set $dispatch "deployment" (include "linkd.deployment" $root) -}}
 {{- $_ := set $dispatch "listen" "0.0.0.0:8090" -}}
 {{- $_ := set $dispatch "url" (printf "http://%s-control-plane:%v" (include "linkd.fullname" $root) $root.Values.service.port) -}}

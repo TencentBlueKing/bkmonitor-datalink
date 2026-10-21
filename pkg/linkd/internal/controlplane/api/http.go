@@ -27,6 +27,7 @@ import (
 	"linkd/internal/dynamicconfig"
 	"linkd/internal/enrich/custom"
 	"linkd/internal/enrich/preview"
+	"linkd/internal/eventgen"
 	"linkd/internal/eventsource"
 	"linkd/internal/ingestpreview"
 	"linkd/internal/internaltoken"
@@ -38,6 +39,10 @@ import (
 
 // API 提供 JWT 管理接口和使用独立 Worker Token 的调度协议。
 type API struct {
+	// Eventgen 管理租户测试任务与独立生成进程。
+	Eventgen *eventgen.Service
+	// EventgenSeverity 返回显式样本预览使用的当前等级配置。
+	EventgenSeverity func() config.SeverityConfig
 	// ModuleInfo 提供当前进程白名单连接发现，仅管理 JWT 可请求敏感快照。
 	ModuleInfo *ModuleInfo
 	// Tenants 提供当前部署模式的租户目录，仅向管理 JWT 暴露。
@@ -88,6 +93,7 @@ type API struct {
 func (a *API) Handler() http.Handler {
 	verifier, verifierErr := internaltoken.New(a.Config.JWT.SecretKey, nil)
 	mux := http.NewServeMux()
+	a.eventgenRoutes(mux)
 	const kacCloseRoute = "POST /api/v1/integrations/kac/alerts/{id}/close"
 	const kacGetRoute = "GET /api/v1/integrations/kac/alerts/{id}"
 	mux.HandleFunc("GET /api/v1/tenants", a.listTenants)

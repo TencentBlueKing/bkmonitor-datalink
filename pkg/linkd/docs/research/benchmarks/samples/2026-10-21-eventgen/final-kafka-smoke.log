@@ -1,0 +1,18 @@
+=== RUN   TestKafkaPublisherIntegration
+--- PASS: TestKafkaPublisherIntegration (0.39s)
+=== RUN   TestKafkaLoad
+=== RUN   TestKafkaLoad/1000
+    kafka_integration_test.go:167: progress target=1000 sent=9500 received=9500 failed=0 active=500 queued=500 heap=3121888 error=
+    kafka_integration_test.go:153: target=1000 duration=10.007s sent=10000 received=10000 failed=0 eps=1000.000 peak_heap_bytes=3121888 cpu_seconds=4.559 queued=0 lag_max_seconds=0.038378
+=== RUN   TestKafkaLoad/5000
+    kafka_integration_test.go:167: progress target=5000 sent=47498 received=47498 failed=0 active=2500 queued=0 heap=4889720 error=
+    kafka_integration_test.go:153: target=5000 duration=10.016s sent=49998 received=49998 failed=0 eps=4999.800 peak_heap_bytes=4889720 cpu_seconds=4.633 queued=0 lag_max_seconds=0.014826
+=== RUN   TestKafkaLoad/10000
+    kafka_integration_test.go:167: progress target=10000 sent=94982 received=94982 failed=0 active=5005 queued=10 heap=10559528 error=
+    kafka_integration_test.go:153: target=10000 duration=10.038s sent=99992 received=99992 failed=0 eps=9999.200 peak_heap_bytes=10559528 cpu_seconds=5.111 queued=0 lag_max_seconds=0.022971
+--- PASS: TestKafkaLoad (31.02s)
+    --- PASS: TestKafkaLoad/1000 (10.37s)
+    --- PASS: TestKafkaLoad/5000 (10.29s)
+    --- PASS: TestKafkaLoad/10000 (10.36s)
+PASS
+ok  	linkd/internal/eventgen	31.844s

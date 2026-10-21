@@ -63,7 +63,7 @@ Linkd 核心处理和 KAC 兼容插件已有本地验收；KAC 策略同步、�
 
 ```text
 cmd/linkd/            Linkd 服务进程入口
-cmd/linkd-eventgen/   Standard Event 模拟器入口
+cmd/linkd-eventgen/   测试环境可选的配置驱动事件生成器入口
 configs/     示例配置
 console/     运行观测与来源管理控制台
 internal/    领域、Cleaner、生命周期、存储和运行时实现
@@ -108,7 +108,7 @@ go run ./cmd/linkd run control-plane --config ./configs/linkd.yaml
 go run ./cmd/linkd run cleaner --config ./configs/linkd.yaml
 go run ./cmd/linkd run lifecycle --config ./configs/linkd.yaml
 go run ./cmd/linkd run all-in-one --config ./configs/linkd.yaml
-go run ./cmd/linkd-eventgen --config ./configs/linkd.yaml --event-source-id demo-source --tenant-id tenant-a
+go run ./cmd/linkd-eventgen preview --config ./configs/eventgen/hosts.json --count 10
 make check
 ```
 

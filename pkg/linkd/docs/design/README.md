@@ -33,3 +33,5 @@
 EventSource、Cleaner 和 Lifecycle 放在[功能模块](../modules/README.md)，稳定术语与外部协议放在[参考资料](../reference/README.md)，
 使用和部署步骤放在[指南](../guides/README.md)。历史调研和审查快照不能覆盖 `define.md`、代码和测试
 表达的现行契约。
+
+- [配置驱动事件生成器](eventgen.md)：数据表、模板、生命周期与动态运行控制。

@@ -1,0 +1,85 @@
+{
+  "state": "completed",
+  "revision": 3,
+  "requested_revision": 3,
+  "generated": 8,
+  "sent": 8,
+  "failed": 0,
+  "created": 2,
+  "active": 0,
+  "queued": 0,
+  "queue_bytes": 0,
+  "cleanup_pending": 0,
+  "cleanup_sent": 2,
+  "eps": 0.42060763361704867,
+  "target_new_eps": 0.04,
+  "lag_seconds": 0.001342972,
+  "started_at": "2026-10-21T07:57:48.454196429Z",
+  "updated_at": "2026-10-21T15:58:07.474538215+08:00",
+  "samples": [
+    {
+      "event_id": "6d64a98b-b417-4f68-a416-3a138f45c228:host_cpu:1:1",
+      "fingerprint": "eventgen-20261021-6d64a98b-b417-4f68-a416-3a138f45c228-host_cpu-1",
+      "event_source_id": "test",
+      "scenario_id": "host_cpu",
+      "cleanup": false,
+      "sent": true
+    },
+    {
+      "event_id": "6d64a98b-b417-4f68-a416-3a138f45c228:host_cpu:1:2",
+      "fingerprint": "eventgen-20261021-6d64a98b-b417-4f68-a416-3a138f45c228-host_cpu-1",
+      "event_source_id": "test",
+      "scenario_id": "host_cpu",
+      "cleanup": false,
+      "sent": true
+    },
+    {
+      "event_id": "6d64a98b-b417-4f68-a416-3a138f45c228:host_cpu:1:3",
+      "fingerprint": "eventgen-20261021-6d64a98b-b417-4f68-a416-3a138f45c228-host_cpu-1",
+      "event_source_id": "test",
+      "scenario_id": "host_cpu",
+      "cleanup": false,
+      "sent": true
+    },
+    {
+      "event_id": "6d64a98b-b417-4f68-a416-3a138f45c228:host_cpu:1:4",
+      "fingerprint": "eventgen-20261021-6d64a98b-b417-4f68-a416-3a138f45c228-host_cpu-1",
+      "event_source_id": "test",
+      "scenario_id": "host_cpu",
+      "cleanup": false,
+      "sent": true
+    },
+    {
+      "event_id": "6d64a98b-b417-4f68-a416-3a138f45c228:host_cpu:1:5",
+      "fingerprint": "eventgen-20261021-6d64a98b-b417-4f68-a416-3a138f45c228-host_cpu-1",
+      "event_source_id": "test",
+      "scenario_id": "host_cpu",
+      "cleanup": true,
+      "sent": true
+    },
+    {
+      "event_id": "6d64a98b-b417-4f68-a416-3a138f45c228:host_cpu:2:1",
+      "fingerprint": "eventgen-20261021-6d64a98b-b417-4f68-a416-3a138f45c228-host_cpu-2",
+      "event_source_id": "test",
+      "scenario_id": "host_cpu",
+      "cleanup": false,
+      "sent": true
+    },
+    {
+      "event_id": "6d64a98b-b417-4f68-a416-3a138f45c228:host_cpu:2:2",
+      "fingerprint": "eventgen-20261021-6d64a98b-b417-4f68-a416-3a138f45c228-host_cpu-2",
+      "event_source_id": "test",
+      "scenario_id": "host_cpu",
+      "cleanup": false,
+      "sent": true
+    },
+    {
+      "event_id": "6d64a98b-b417-4f68-a416-3a138f45c228:host_cpu:2:3",
+      "fingerprint": "eventgen-20261021-6d64a98b-b417-4f68-a416-3a138f45c228-host_cpu-2",
+      "event_source_id": "test",
+      "scenario_id": "host_cpu",
+      "cleanup": true,
+      "sent": true
+    }
+  ]
+}

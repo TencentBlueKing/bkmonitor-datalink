@@ -29,13 +29,24 @@ func migrationTestConfig() config.Config {
 	cfg.Storage = &storage
 	cfg.Dispatch.JWT.SecretKey = "test-jwt-key"
 	cfg.Dispatch.WorkerToken = "test-worker-token"
+	cfg.Dispatch.EventgenEnabled = true
 	return cfg
+}
+
+func TestMigrationWithoutEventgen(t *testing.T) {
+	cfg := migrationTestConfig()
+	cfg.Dispatch.EventgenEnabled = false
+	step := func(context.Context, config.Config) error { return nil }
+	eventgenStep := func(context.Context, config.Config) error { t.Fatal("disabled eventgen accessed storage"); return nil }
+	if err := runMigration(t.Context(), cfg, migrationSteps{eventgenStep, step, step, step, step}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestMigrationStages(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("test dependency failure")
-	for _, failedAt := range []string{"", "redis", "repository", "sources", "policies"} {
+	for _, failedAt := range []string{"", "redis", "repository", "sources", "policies", "eventgen"} {
 		t.Run("failure_"+failedAt, func(t *testing.T) {
 			var calls []string
 			makeStep := func(name string) func(context.Context, config.Config) error {
@@ -50,9 +61,9 @@ func TestMigrationStages(t *testing.T) {
 					return nil
 				}
 			}
-			steps := migrationSteps{makeStep("redis"), makeStep("repository"), makeStep("sources"), makeStep("policies")}
+			steps := migrationSteps{makeStep("eventgen"), makeStep("redis"), makeStep("repository"), makeStep("sources"), makeStep("policies")}
 			err := runMigration(t.Context(), migrationTestConfig(), steps)
-			expected := []string{"redis", "repository", "sources", "policies"}
+			expected := []string{"redis", "repository", "sources", "policies", "eventgen"}
 			if failedAt != "" {
 				for i, name := range expected {
 					if name == failedAt {
@@ -74,7 +85,7 @@ func TestMigrationStages(t *testing.T) {
 				if err := runMigration(t.Context(), migrationTestConfig(), steps); err != nil {
 					t.Fatal(err)
 				}
-				if len(calls) != 8 {
+				if len(calls) != 10 {
 					t.Fatal("second initialization not executed")
 				}
 			}
@@ -102,7 +113,7 @@ func TestMigrationChecksConfigurationBeforeIO(t *testing.T) {
 			tc.change(&cfg)
 			invoked := false
 			step := func(context.Context, config.Config) error { invoked = true; return nil }
-			err := runMigration(t.Context(), cfg, migrationSteps{step, step, step, step})
+			err := runMigration(t.Context(), cfg, migrationSteps{step, step, step, step, step})
 			if err == nil || invoked {
 				t.Fatalf("error=%v, invoked=%v", err, invoked)
 			}
@@ -119,7 +130,7 @@ func TestMigrationCancellation(t *testing.T) {
 	calls := 0
 	first := func(context.Context, config.Config) error { calls++; cancel(); return nil }
 	later := func(context.Context, config.Config) error { calls++; return nil }
-	err := runMigration(ctx, migrationTestConfig(), migrationSteps{first, later, later, later})
+	err := runMigration(ctx, migrationTestConfig(), migrationSteps{later, first, later, later, later})
 	if !errors.Is(err, context.Canceled) || calls != 1 {
 		t.Fatalf("error=%v calls=%d", err, calls)
 	}

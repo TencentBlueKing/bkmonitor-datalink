@@ -7,11 +7,12 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-// Command linkd-eventgen 按周期生成 standard 告警事件并写入指定 EventSource。
+// Command linkd-eventgen 通过配置生成事件，支持本地运行和 Admin 托管模式。
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -19,231 +20,180 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	linkdconfig "linkd/internal/config"
+	"go.yaml.in/yaml/v3"
+	"linkd/internal/config"
 	"linkd/internal/eventgen"
-	"linkd/internal/kafkaclient"
 	"linkd/internal/logging"
 )
 
-const defaultConfigPath = "./configs/linkd.yaml"
-
-// 镜像构建通过 ldflags 注入独立版本和对应源码提交。
 var (
 	version   = "dev"
 	gitCommit = "unknown"
 )
 
-type managedPublisher interface {
-	eventgen.Publisher
-	Close()
-}
-
-type dependencies struct {
-	loadConfig   func(path string) (linkdconfig.Config, error)
-	newPublisher func(source linkdconfig.EventSource) (managedPublisher, error)
-	newRunID     func() (string, error)
-	resolveSeed  func(seed uint64) (uint64, error)
-}
-
-type commandOptions struct {
-	configPath         string
-	kafkaBrokers       []string
-	kafkaTopic         string
-	eventSourceID      string
-	tenantID           string
-	newAlertsPerMinute int
-	cycleDuration      time.Duration
-	meanLifetimeCycles int
-	duplicatePercent   int
-	scenarios          string
-	seed               uint64
-	maxActiveAlerts    int
-	cycles             int
-}
-
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	command := newRootCommand(version, gitCommit, defaultDependencies())
-	if err := command.ExecuteContext(ctx); err != nil {
-		_, _ = fmt.Fprintln(command.ErrOrStderr(), err)
+	if err := root().ExecuteContext(ctx); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func defaultDependencies() dependencies {
-	return dependencies{
-		loadConfig: func(path string) (linkdconfig.Config, error) {
-			return linkdconfig.Load(path, linkdconfig.Overrides{})
-		},
-		newPublisher: func(source linkdconfig.EventSource) (managedPublisher, error) {
-			return eventgen.NewKafkaPublisher(source)
-		},
-		newRunID:    eventgen.NewRunID,
-		resolveSeed: eventgen.ResolveSeed,
+func load(path string) (eventgen.Config, error) {
+	//nolint:gosec // G304: 路径来自本地操作者明确指定的配置文件，不接受远端请求。
+	b, e := os.ReadFile(path)
+	if e != nil {
+		return eventgen.Config{}, e
 	}
+	var c eventgen.Config
+	e = yaml.Unmarshal(b, &c)
+	return c, e
 }
 
-func newRootCommand(buildVersion, commit string, deps dependencies) *cobra.Command {
-	if buildVersion == "" {
-		buildVersion = "dev"
-	}
-	if commit == "" {
-		commit = "unknown"
-	}
-	options := commandOptions{}
-	command := &cobra.Command{
-		Use:           "linkd-eventgen",
-		Short:         "向 Linkd EventSource 持续推送 standard 模拟告警",
-		Args:          cobra.NoArgs,
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return run(cmd.Context(), cmd, options, deps)
-		},
-	}
-	flags := command.Flags()
-	flags.StringVar(&options.configPath, "config", defaultConfigPath, "Linkd YAML 配置文件路径")
-	flags.StringSliceVar(&options.kafkaBrokers, "kafka-brokers", nil, "直接推送的 Kafka brokers，逗号分隔；与 --kafka-topic 配套使用")
-	flags.StringVar(&options.kafkaTopic, "kafka-topic", "", "直接推送的 Kafka topic；直连模式不读取配置文件")
-	flags.StringVar(&options.eventSourceID, "event-source-id", "", "必填的 EventSource event_source_id")
-	flags.StringVar(&options.tenantID, "tenant-id", "", "消息租户；来源未固定 related_tenant_id 时必填")
-	flags.IntVar(
-		&options.newAlertsPerMinute,
-		"new-alerts-per-minute",
-		eventgen.DefaultNewAlertsPerMinute,
-		"每分钟新生成的告警数量",
-	)
-	flags.IntVar(&options.duplicatePercent, "duplicate-percent", 0, "随机追加完全相同 Event delivery 的百分比")
-	flags.DurationVar(&options.cycleDuration, "cycle-duration", eventgen.DefaultCycleDuration, "调度周期")
-	flags.IntVar(
-		&options.meanLifetimeCycles,
-		"mean-lifetime-cycles",
-		eventgen.DefaultMeanLifetimeCycles,
-		"告警平均存活周期数",
-	)
-	flags.StringVar(&options.scenarios, "scenarios", eventgen.SupportedScenariosCSV(), "逗号分隔的告警场景")
-	flags.Uint64Var(&options.seed, "seed", 0, "随机种子；0 表示自动生成")
-	flags.IntVar(
-		&options.maxActiveAlerts,
-		"max-active-alerts",
-		eventgen.DefaultMaxActiveAlerts,
-		"进程内活动告警硬上限",
-	)
-	flags.IntVar(&options.cycles, "cycles", 0, "运行周期数；0 表示持续运行")
-	command.AddCommand(&cobra.Command{
-		Use:   "version",
-		Short: "显示模拟器版本和 Git commit",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			// 版本查询不加载配置、不创建 producer，也不向 Kafka 发送消息。
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "version: %s\ngit_commit: %s\n", buildVersion, commit)
-			return err
-		},
-	})
-	return command
-}
-
-func run(ctx context.Context, command *cobra.Command, options commandOptions, deps dependencies) error {
-	if deps.newPublisher == nil || deps.newRunID == nil || deps.resolveSeed == nil {
-		return fmt.Errorf("event generator dependencies are incomplete")
-	}
-	cfg, err := generatorConfig(command, options, deps)
-	if err != nil {
-		return err
-	}
-	source, tenantID, err := eventgen.ResolveSource(cfg, options.eventSourceID, options.tenantID)
-	if err != nil {
-		return err
-	}
-	scenarios, err := eventgen.ParseScenarios(options.scenarios)
-	if err != nil {
-		return err
-	}
-	seed, err := deps.resolveSeed(options.seed)
-	if err != nil {
-		return err
-	}
-	runID, err := deps.newRunID()
-	if err != nil {
-		return err
-	}
-	logger, err := logging.New(cfg.Logging, command.ErrOrStderr())
-	if err != nil {
-		return fmt.Errorf("create event generator logger: %w", err)
-	}
-	publisher, err := deps.newPublisher(source)
-	if err != nil {
-		return err
-	}
-	defer publisher.Close()
-
-	engine, err := eventgen.New(eventgen.Config{
-		RunID: runID, TenantID: tenantID,
-		NewAlertsPerMinute: options.newAlertsPerMinute,
-		CycleDuration:      options.cycleDuration,
-		MeanLifetimeCycles: options.meanLifetimeCycles,
-		DuplicatePercent:   options.duplicatePercent,
-		Scenarios:          scenarios,
-		Seed:               seed,
-		MaxActiveAlerts:    options.maxActiveAlerts,
-		Cycles:             options.cycles,
-	}, source, cfg.Severity, publisher, logger)
-	if err != nil {
-		return err
-	}
-	logger.InfoContext(ctx, "event generator started",
-		"run_id", runID,
-		"seed", seed,
-		"event_source_id", source.EventSourceID,
-		"tenant_id", tenantID,
-		"topic", source.Storage.Kafka.Topic,
-		"new_alerts_per_minute", options.newAlertsPerMinute,
-		"cycle_duration", options.cycleDuration,
-		"mean_lifetime_cycles", options.meanLifetimeCycles,
-		"duplicate_percent", options.duplicatePercent,
-		"max_active_alerts", options.maxActiveAlerts,
-		"cycles", options.cycles,
-	)
-	if err := engine.Run(ctx); err != nil {
-		return err
-	}
-	logger.InfoContext(ctx, "event generator stopped", "run_id", runID)
-	return nil
-}
-
-func generatorConfig(command *cobra.Command, options commandOptions, deps dependencies) (linkdconfig.Config, error) {
-	direct := command.Flags().Changed("kafka-brokers") || command.Flags().Changed("kafka-topic")
-	if !direct {
-		if deps.loadConfig == nil {
-			return linkdconfig.Config{}, fmt.Errorf("event generator config loader is required")
+func root() *cobra.Command {
+	root := &cobra.Command{Use: "linkd-eventgen", Short: "配置驱动的 Linkd 事件生成器", SilenceUsage: true}
+	root.AddCommand(&cobra.Command{Use: "version", RunE: func(c *cobra.Command, _ []string) error {
+		_, e := fmt.Fprintf(c.OutOrStdout(), "version: %s\ngit_commit: %s\n", version, gitCommit)
+		return e
+	}})
+	for _, mode := range []string{"validate", "preview", "run"} {
+		var path, sources string
+		var count int
+		cmd := &cobra.Command{Use: mode, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+			c, e := load(path)
+			if e != nil {
+				return e
+			}
+			if _, e = eventgen.Compile(c); e != nil {
+				return e
+			}
+			switch mode {
+			case "validate":
+				_, e = fmt.Fprintln(cmd.OutOrStdout(), "配置有效")
+				return e
+			case "preview":
+				records, e := eventgen.Preview(c, c.StartAt, count)
+				if e != nil {
+					return e
+				}
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(records)
+			default:
+				return localRun(cmd.Context(), path, sources, c)
+			}
+		}}
+		cmd.Flags().StringVar(&path, "config", "", "eventgen YAML/JSON 配置")
+		_ = cmd.MarkFlagRequired("config")
+		if mode == "preview" {
+			cmd.Flags().IntVar(&count, "count", 10, "预览事件数量，最多 100")
 		}
-		return deps.loadConfig(options.configPath)
+		if mode == "run" {
+			cmd.Flags().StringVar(&sources, "sources", "", "包含 EventSource 的 Linkd 配置")
+			_ = cmd.MarkFlagRequired("sources")
+		}
+		root.AddCommand(cmd)
 	}
-	if command.Flags().Changed("config") {
-		return linkdconfig.Config{}, fmt.Errorf("--config cannot be combined with direct Kafka options")
-	}
-	if len(options.kafkaBrokers) == 0 || len(options.kafkaBrokers) > 32 || options.kafkaTopic == "" {
-		return linkdconfig.Config{}, fmt.Errorf("direct Kafka mode requires 1 to 32 --kafka-brokers and --kafka-topic")
-	}
-	brokers, err := kafkaclient.NormalizeBrokers(options.kafkaBrokers)
-	if err != nil {
-		return linkdconfig.Config{}, fmt.Errorf("direct Kafka brokers: %w", err)
-	}
-	cfg := linkdconfig.Default()
-	// 直连只创建模拟器自身的 standard 来源，不读取或修改控制面配置。
-	// ConsumerGroup 仅满足来源结构校验；producer 不会加入任何消费组。
-	cfg.EventSources = []linkdconfig.EventSource{{
-		EventSourceID: options.eventSourceID, Enabled: true,
-		Cleaner:         linkdconfig.CleanerConfig{Type: linkdconfig.CleanerTypeStandard},
-		FingerprintMode: linkdconfig.FingerprintModeField, FingerprintField: "source_alert_id",
-		Storage: linkdconfig.EventSourceStorageConfig{
-			Type:  linkdconfig.StorageTypeKafka,
-			Kafka: linkdconfig.KafkaStorageConfig{Brokers: brokers, Topic: options.kafkaTopic, ConsumerGroup: "linkd-eventgen"},
-		},
+	var o eventgen.ManagedOptions
+	managed := &cobra.Command{Use: "serve", Short: "连接控制面，等待显式启动任务", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if o.Token == "" {
+			o.Token = os.Getenv("LINKD_EVENTGEN_WORKER_TOKEN")
+		}
+		logger, err := logging.New(logging.DefaultConfig(), cmd.ErrOrStderr())
+		if err != nil {
+			return err
+		}
+		o.Logger = logger
+		return eventgen.RunManaged(cmd.Context(), o)
 	}}
-	if err := linkdconfig.ValidateEventSources(cfg.EventSources, cfg.Severity); err != nil {
-		return linkdconfig.Config{}, fmt.Errorf("direct Kafka source: %w", err)
+	managed.Flags().StringVar(&o.URL, "control-plane", "", "Linkd 控制面地址")
+	managed.Flags().DurationVar(&o.PollInterval, "poll-interval", 3*time.Second, "配置与指令拉取周期")
+	_ = managed.MarkFlagRequired("control-plane")
+	root.AddCommand(managed)
+	return root
+}
+
+func localSources(path string, c eventgen.Config) (map[string]config.EventSource, error) {
+	cfg, e := config.Load(path, config.Overrides{})
+	if e != nil {
+		return nil, e
 	}
-	return cfg, nil
+	result := map[string]config.EventSource{}
+	for _, s := range c.Scenarios {
+		for _, source := range cfg.EventSources {
+			if source.EventSourceID == s.SourceID {
+				source = source.WithDefaults()
+				if !source.Enabled || source.RelatedTenantID != "" && source.RelatedTenantID != c.TenantID {
+					return nil, fmt.Errorf("source unavailable for tenant")
+				}
+				result[s.SourceID] = source
+			}
+		}
+		if _, ok := result[s.SourceID]; !ok {
+			return nil, fmt.Errorf("source %s not found", s.SourceID)
+		}
+	}
+	return result, nil
+}
+
+func localRun(ctx context.Context, path, sourcePath string, c eventgen.Config) error {
+	sources, e := localSources(sourcePath, c)
+	if e != nil {
+		return e
+	}
+	publisher, e := eventgen.NewKafkaPublisher(sources, c.Limits)
+	if e != nil {
+		return e
+	}
+	start := time.Now().UTC()
+	if c.StartAt.After(start) {
+		start = c.StartAt
+	}
+	logger, e := logging.New(logging.DefaultConfig(), os.Stderr)
+	if e != nil {
+		publisher.Close()
+		return e
+	}
+	engine, e := eventgen.New(c, eventgen.NewRunID(), 1, start, publisher, logger)
+	if e != nil {
+		publisher.Close()
+		return e
+	}
+	done := make(chan error, 1)
+	go func() { done <- engine.Run(ctx) }()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	info, e := os.Stat(path)
+	if e != nil {
+		return e
+	}
+	changed := info.ModTime()
+	revision := int64(1)
+	for {
+		select {
+		case err := <-done:
+			_ = json.NewEncoder(os.Stdout).Encode(engine.Snapshot())
+			return err
+		case <-ticker.C:
+			next, e := os.Stat(path)
+			if e != nil || !next.ModTime().After(changed) {
+				continue
+			}
+			candidate, e := load(path)
+			if e == nil {
+				var sources map[string]config.EventSource
+				sources, e = localSources(sourcePath, candidate)
+				if e == nil {
+					e = engine.ApplySources(candidate, revision+1, sources)
+				}
+			}
+			if e != nil {
+				_, _ = fmt.Fprintln(os.Stderr, "eventgen: configuration reload failed")
+				continue
+			}
+			revision++
+			changed = next.ModTime()
+		}
+	}
 }

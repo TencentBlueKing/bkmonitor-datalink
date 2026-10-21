@@ -282,6 +282,7 @@ func (a *API) moduleCapabilities() map[string]moduleCapability {
 		id, endpoint string
 		enabled      bool
 	}{
+		{"eventgen", "/api/v1/eventgen/tasks", a.Eventgen != nil},
 		{"event_sources", "/api/v1/event-sources", a.Sources != nil},
 		{"tenants", "/api/v1/tenants", a.Tenants != nil},
 		{"policies", "/api/v1/policies", a.Policies != nil},

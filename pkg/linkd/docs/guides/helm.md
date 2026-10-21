@@ -242,74 +242,22 @@ Console 可配置自己的 configuration / existingSecret、资源、调度参�
 
 ## 可选 Event Generator
 
-Chart `0.1.2` 增加 `eventgen`，默认 `enabled: false`，镜像独立使用 `linkd-eventgen:0.1.1`。
-启用后，每个 `instances` 项独立运行，最多 32 项；名称最长 20 字符，只支持小写字母、数字、连字符。
-
-可以直接在实例中配置 Kafka，不需要 Secret 或 `linkd.yaml`：
+配置驱动的 eventgen 使用独立版本 `0.2.0`，是测试环境可选工具，默认关闭，不作为 Linkd 启动或健康依赖。启用后以单副本 Recreate Deployment 运行，等待 Admin 的 Linkd / 事件生成器显式启动任务：
 
 ```yaml
 eventgen:
   enabled: true
-  instances:
-    demo:
-      eventSourceId: demo-source
-      tenantId: tenant-a
-      kafka:
-        brokers: [kafka.example.com:9092]
-        topic: linkd-demo
-      newAlertsPerMinute: 60
-      cycleDuration: 1s
-      duplicatePercent: 0
-      cycles: 0
+  pollInterval: 3s
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "4", memory: 2Gi}
 ```
 
-直连模式使用 plaintext Kafka，租户必填，固定使用 `source_alert_id` fingerprint。实例的 `kafka` 会覆盖共用 Secret 的默认选择，
-但同一实例不能显式同时指定 `kafka` 和 `existingSecret`。完整示例见 [Kafka 直连](../../deploy/helm/linkd/examples/eventgen-direct.yaml)。
+进程连接当前 Chart 控制面，并从既有认证配置取得 Worker Token。任务配置和运行摘要由控制面保存，Kafka 凭据来自正式发布的 EventSource。启动、Helm 升级或进程重启均不自动发流量；旧运行会标记中断，必须显式开启新运行。
 
-也可以从独立 Secret 中读取包含 `event_sources` 的 Linkd YAML，支持 TLS/SASL 等配置；不能复用 Chart 为 worker 生成的配置，因为其中的静态来源会被清空。
-根据 [来源配置示例](../../deploy/helm/linkd/examples/eventgen-config.yaml) 调整 Kafka 地址、topic 和认证，再创建 Secret：
+数据表、模板、速率、阶段和运行上限在 Admin 管理；结构修改先收尾再切换，速率直接热更新。退出收尾窗口为 60 秒。`eventgen.image` 支持独立 registry、repository、tag、digest 和 pullSecrets，`global.imageRegistry` 优先。
 
-```bash
-kubectl -n linkd create secret generic linkd-eventgen-config \
-  --from-file=linkd.yaml=/absolute/path/eventgen-config.yaml
-```
-
-将下面配置与原有 values 合并：
-
-```yaml
-eventgen:
-  enabled: true
-  existingSecret: linkd-eventgen-config
-  defaults:
-    cycleDuration: 30s
-    maxActiveAlerts: 10000
-  instances:
-    infra:
-      eventSourceId: demo-infra
-      tenantId: tenant-a
-      newAlertsPerMinute: 20
-      duplicatePercent: 20
-    service:
-      eventSourceId: demo-service
-      tenantId: tenant-b
-      newAlertsPerMinute: 60
-      cycleDuration: 15s
-      cycles: 10
-```
-
-`defaults` 中的速率、周期、平均寿命、重复比例、场景、随机种子、活动池上限、周期数、资源和调度参数可逐实例覆盖。
-`cycleDuration` 使用整数加 `ms`、`s` 或 `m`，范围为 `10ms..10m`；其他参数约束见 [模拟器参数](event-generator.md#2-参数)。
-每个实例还可覆盖 `existingSecret` / `secretKey`，或设置 `enabled: false` 单独关闭。
-配置文件模式的 `tenantId` 仅在来源已固定 `related_tenant_id` 时可省略；直连模式不可省略。
-
-`cycles: 0` 使用单副本、Recreate 策略的 Deployment，按给定速率持续推送；正数使用带 revision 后缀的 Job，
-正常完成后停止，失败不自动重试，默认完成 24 小时后清理。每次 Helm 升级会创建新一轮有限任务。
-配置 Secret 变更不会自动重启持续实例，需对相应 Deployment 执行 `rollout restart`。
-
-文件模式只挂载模拟器配置，直连模式不挂载配置文件；两者都不接收控制面 API token，也不创建 Service 或 ServiceMonitor。
-`eventgen.image` 可独立覆盖 `registry`、`repository`、`tag`、`digest` 和 `pullSecrets`；`global.imageRegistry` 仍具有最高优先级。
-来源配置须与控制面实际登记的来源保持一致，Chart 不自动注册或启用 EventSource。
-完整叠加配置见 [多实例示例](../../deploy/helm/linkd/examples/eventgen.yaml)。
+旧 `instances`、直连参数和有限周期 Job 配置已移除。参见[托管进程示例](../../deploy/helm/linkd/examples/eventgen.yaml)和[事件生成器说明](event-generator.md)。
 
 ## ServiceMonitor 指标采集
 

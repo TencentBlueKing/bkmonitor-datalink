@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	eventgenstore "linkd/internal/eventgen/storage"
 	sourcestore "linkd/internal/eventsource/storage"
 	policystore "linkd/internal/policy/storage"
 	"linkd/internal/redisclient"
@@ -38,10 +39,12 @@ func Migrate(ctx context.Context, cfg config.Config) error {
 		prepareRepository: prepareMigrationRepository,
 		prepareSources:    prepareMigrationSources,
 		preparePolicies:   prepareMigrationPolicies,
+		prepareEventgen:   prepareMigrationEventgen,
 	})
 }
 
 type migrationSteps struct {
+	prepareEventgen   func(context.Context, config.Config) error
 	checkRedis        func(context.Context, config.Config) error
 	prepareRepository func(context.Context, config.Config) error
 	prepareSources    func(context.Context, config.Config) error
@@ -71,7 +74,11 @@ func runMigration(ctx context.Context, cfg config.Config, steps migrationSteps) 
 		{"prepare source collections", steps.prepareSources},
 		{"prepare policy collections", steps.preparePolicies},
 		{"prepare dynamic config snapshots", prepareDynamicConfigSnapshots},
+		{"prepare eventgen collections", steps.prepareEventgen},
 	} {
+		if step.name == "prepare eventgen collections" && !cfg.Dispatch.EventgenEnabled {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("migrate %s: %w", step.name, err)
 		}
@@ -136,4 +143,12 @@ func prepareMigrationPolicies(ctx context.Context, cfg config.Config) error {
 		return err
 	}
 	return docs.Close()
+}
+
+func prepareMigrationEventgen(ctx context.Context, c config.Config) error {
+	store, e := eventgenstore.Open(ctx, *c.Storage, c.Dispatch.WithDefaults().Deployment)
+	if e != nil {
+		return e
+	}
+	return store.Close()
 }

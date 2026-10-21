@@ -18,9 +18,11 @@ import (
 
 // DispatchConfig 定义静态中心连接和控制协议预算；业务配置不从启动 YAML 导入。
 type DispatchConfig struct {
-	Deployment string `yaml:"deployment" json:"deployment"`
-	Listen     string `yaml:"listen" json:"listen"`
-	URL        string `yaml:"url" json:"url"`
+	// EventgenEnabled 仅在测试部署显式启用生成器管理；默认不打开其存储或后台任务。
+	EventgenEnabled bool   `yaml:"eventgen_enabled" json:"eventgen_enabled"`
+	Deployment      string `yaml:"deployment" json:"deployment"`
+	Listen          string `yaml:"listen" json:"listen"`
+	URL             string `yaml:"url" json:"url"`
 	// JWT 配置内部调用签名；密钥仅由管理调用方和控制面持有。
 	JWT         JWTConfig `yaml:"jwt" json:"jwt"`
 	WorkerToken string    `yaml:"worker_token" json:"-"`

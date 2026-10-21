@@ -1,0 +1,299 @@
+[
+  {
+    "scenario": 0,
+    "events": [
+      {
+        "id": "20261021075503.system.test.b110114884d6420a",
+        "evaluations": [
+          {
+            "severity": "warning",
+            "action": "resolved",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_recovered",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075502.system.test.716bb4ffc3952549",
+        "evaluations": [
+          {
+            "severity": "critical",
+            "action": "resolved",
+            "action_reason": ""
+          },
+          {
+            "severity": "warning",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_created",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075500.system.test.27d2b91e91765392",
+        "evaluations": [
+          {
+            "severity": "critical",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "suppressed",
+        "outcome": "alert_suppressed",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075457.system.test.cb6763ed8d8fd988",
+        "evaluations": [
+          {
+            "severity": "critical",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "suppressed",
+        "outcome": "alert_suppressed",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075454.system.test.9610ca29ed80fb93",
+        "evaluations": [
+          {
+            "severity": "critical",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_rotated",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075449.system.test.743ac84f0873319e",
+        "evaluations": [
+          {
+            "severity": "warning",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "suppressed",
+        "outcome": "alert_suppressed",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075444.system.test.c2aabe49e2926f07",
+        "evaluations": [
+          {
+            "severity": "warning",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_created",
+        "environment_patch": true
+      }
+    ],
+    "alerts": [
+      {
+        "id": "20261021075502.system.test.63b6657afe506691",
+        "severity": "warning",
+        "status": "recovered",
+        "enrich_status": "succeeded"
+      },
+      {
+        "id": "20261021075454.system.test.85214297b344d0f2",
+        "severity": "critical",
+        "status": "recovered",
+        "enrich_status": "succeeded"
+      },
+      {
+        "id": "20261021075444.system.test.56be369df941eca2",
+        "severity": "warning",
+        "status": "closed",
+        "enrich_status": "succeeded"
+      }
+    ]
+  },
+  {
+    "scenario": 1,
+    "events": [
+      {
+        "id": "20261021075452.system.test.faf3c0491f5d961d",
+        "evaluations": [
+          {
+            "severity": "__ALL__",
+            "action": "closed",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_closed",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075446.system.test.30e87e1182f63b20",
+        "evaluations": [
+          {
+            "severity": "warning",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_created",
+        "environment_patch": true
+      }
+    ],
+    "alerts": [
+      {
+        "id": "20261021075446.system.test.4f6d35850300ad3a",
+        "severity": "warning",
+        "status": "closed",
+        "enrich_status": "succeeded"
+      }
+    ]
+  },
+  {
+    "scenario": 2,
+    "events": [
+      {
+        "id": "20261021075513.system.test.2639d952f9ec486e",
+        "evaluations": [
+          {
+            "severity": "warning",
+            "action": "resolved",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_recovered",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075512.system.test.a31e65df3a2e8911",
+        "evaluations": [
+          {
+            "severity": "critical",
+            "action": "resolved",
+            "action_reason": ""
+          },
+          {
+            "severity": "warning",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_created",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075510.system.test.b942eccc14ac413a",
+        "evaluations": [
+          {
+            "severity": "critical",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "suppressed",
+        "outcome": "alert_suppressed",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075507.system.test.5267db4878e33040",
+        "evaluations": [
+          {
+            "severity": "critical",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "suppressed",
+        "outcome": "alert_suppressed",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075504.system.test.02e2dac5477186f4",
+        "evaluations": [
+          {
+            "severity": "critical",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_rotated",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075459.system.test.1b59ddacbd411414",
+        "evaluations": [
+          {
+            "severity": "warning",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "suppressed",
+        "outcome": "alert_suppressed",
+        "environment_patch": true
+      },
+      {
+        "id": "20261021075454.system.test.7edf7987a5deb4b3",
+        "evaluations": [
+          {
+            "severity": "warning",
+            "action": "triggered",
+            "action_reason": ""
+          }
+        ],
+        "enrich_status": "succeeded",
+        "state": "accepted",
+        "outcome": "alert_created",
+        "environment_patch": true
+      }
+    ],
+    "alerts": [
+      {
+        "id": "20261021075512.system.test.0b2cf948a666dcf7",
+        "severity": "warning",
+        "status": "recovered",
+        "enrich_status": "succeeded"
+      },
+      {
+        "id": "20261021075504.system.test.3f0e34edea4b45fd",
+        "severity": "critical",
+        "status": "recovered",
+        "enrich_status": "succeeded"
+      },
+      {
+        "id": "20261021075454.system.test.d04b26953e9e6a95",
+        "severity": "warning",
+        "status": "closed",
+        "enrich_status": "succeeded"
+      }
+    ]
+  }
+]

@@ -53,9 +53,10 @@ test("default three roles, stable selectors and valid runtime configs", () => {
   }
   validateConfigs(docs);
 });
-test("eventgen stays disabled by default and when instances are preconfigured", () => {
-  const docs = render({...base, eventgen: {instances: {demo: {eventSourceId: "demo-source"}}}});
+test("eventgen stays disabled by default", () => {
+  const docs = render();
   assert.equal(docs.filter(d => d.metadata.labels?.["app.kubernetes.io/component"] === "eventgen").length, 0);
+  assert.equal(parse(configFor(docs, byComponent(docs, "control-plane"))).dispatch.eventgen_enabled, undefined);
 });
 test("Console KAC links are tenant-scoped configuration, emitted only to Console", () => {
   const links = {"tenant-a": {shield: "https://kac.example/#/kac/editAlarmShield?id={policy_id}"}};
@@ -75,102 +76,24 @@ test("Console KAC links are tenant-scoped configuration, emitted only to Console
   assert.notEqual(conflict.status, 0);
   assert.match(conflict.stderr, /LINKD_CONSOLE_KAC_POLICY_LINKS/);
 });
-test("direct Kafka eventgen passes addresses and topic without mounting a config Secret", () => {
-  const docs = render({...base, eventgen: {enabled: true, existingSecret: "only-for-file-mode", instances: {
-    direct: {eventSourceId: "test", tenantId: "system", kafka: {brokers: ["kafka.example.com:9092", "kafka2.example.com:9092"], topic: "test_linkd"}, newAlertsPerMinute: 60, cycleDuration: "1s"},
-  }}});
-  const pod = byComponent(docs, "eventgen").spec.template.spec;
+test("managed eventgen waits for Admin and uses Worker Token with one process", () => {
+  const docs = render({...base,eventgen:{enabled:true,pollInterval:"5s"},auth:{existingSecret:"linkd-auth"}});
+  const deployment = byComponent(docs,"eventgen");
+  assert.equal(parse(configFor(docs, byComponent(docs, "control-plane"))).dispatch.eventgen_enabled, true);
+  assert.equal(deployment.spec.replicas,1);
+  assert.equal(deployment.spec.strategy.type,"Recreate");
+  const pod = deployment.spec.template.spec;
+  assert.equal(pod.automountServiceAccountToken,false);
+  assert.equal(pod.terminationGracePeriodSeconds,60);
   const container = pod.containers[0];
-  const args = Object.fromEntries(Array.from({length: container.args.length / 2}, (_, i) => [container.args[i * 2], container.args[i * 2 + 1]]));
-  assert.equal(args["--kafka-brokers"], "kafka.example.com:9092,kafka2.example.com:9092");
-  assert.equal(args["--kafka-topic"], "test_linkd");
-  assert.equal(args["--tenant-id"], "system");
-  assert.equal(args["--new-alerts-per-minute"], "60");
-  assert.equal(args["--cycle-duration"], "1s");
-  assert.equal(args["--config"], undefined);
-  assert.equal(container.volumeMounts, undefined);
-  assert.equal(pod.volumes, undefined);
+  assert.deepEqual(container.args,["serve","--control-plane","http://test-linkd-control-plane:8090","--poll-interval","5s"]);
+  assert.equal(container.env[0].name,"LINKD_EVENTGEN_WORKER_TOKEN");
+  assert.equal(container.env[0].valueFrom.secretKeyRef.name,"linkd-auth");
+  assert.equal(container.image,"ghcr.io/tencentblueking/bkmonitor-datalink/linkd-eventgen:0.2.0");
 });
-test("direct Kafka eventgen rejects incomplete or conflicting connection options", () => {
-  const instance = {eventSourceId: "test", tenantId: "system", kafka: {brokers: ["kafka:9092"], topic: "test_linkd"}};
-  for (const invalid of [
-    {...instance, tenantId: ""}, {...instance, existingSecret: "conflict"},
-    {...instance, kafka: {brokers: []}}, {...instance, kafka: {topic: "test"}},
-    {...instance, kafka: {brokers: ["kafka:9092"], topic: ".."}},
-  ]) {
-    const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, eventgen: {enabled: true, instances: {demo: invalid}}}), encoding: "utf8"});
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /eventgen/);
-  }
-});
-test("eventgen instances use independent selectors, parameters and Secret keys", () => {
-  const docs = render({...base, eventgen: {enabled: true, existingSecret: "common-sources", defaults: {newAlertsPerMinute: 30}, instances: {
-    first: {eventSourceId: "source-a", tenantId: "tenant-a", duplicatePercent: 0},
-    second: {eventSourceId: "source-b", tenantId: "tenant-b", newAlertsPerMinute: 1000000, seed: 9007199254740991, existingSecret: "other-sources", secretKey: "sources.yaml", nodeSelector: {"kubernetes.io/arch": "arm64"}},
-    paused: {eventSourceId: "source-c", enabled: false},
-  }}});
-  const generators = deployments(docs).filter(d => d.metadata.labels["app.kubernetes.io/component"] === "eventgen");
-  assert.equal(generators.length, 2);
-  for (const generator of generators) {
-    const instance = generator.metadata.labels["linkd/eventgen-instance"];
-    const pod = generator.spec.template.spec;
-    const container = pod.containers[0];
-    const args = Object.fromEntries(Array.from({length: container.args.length / 2}, (_, i) => [container.args[i * 2], container.args[i * 2 + 1]]));
-    assert.equal(container.image, "ghcr.io/tencentblueking/bkmonitor-datalink/linkd-eventgen:0.1.2");
-    assert.equal(generator.spec.replicas, 1);
-    assert.equal(generator.spec.strategy.type, "Recreate");
-    assert.equal(generator.spec.selector.matchLabels["linkd/eventgen-instance"], instance);
-    assert.equal(generators.filter(d => Object.entries(generator.spec.selector.matchLabels).every(([k,v]) => d.spec.template.metadata.labels[k] === v)).length, 1);
-    assert.equal(pod.automountServiceAccountToken, false);
-    assert.equal(container.env, undefined);
-    assert.equal(container.ports, undefined);
-    assert.equal(args["--config"], "/data/linkd/configs/linkd.yaml");
-    assert.equal(args["--cycles"], "0");
-    if (instance === "first") {
-      assert.equal(args["--event-source-id"], "source-a");
-      assert.equal(args["--tenant-id"], "tenant-a");
-      assert.equal(args["--new-alerts-per-minute"], "30");
-      assert.equal(args["--duplicate-percent"], "0");
-      assert.equal(pod.volumes[0].secret.secretName, "common-sources");
-    } else {
-      assert.equal(args["--event-source-id"], "source-b");
-      assert.equal(args["--tenant-id"], "tenant-b");
-      assert.equal(args["--new-alerts-per-minute"], "1000000");
-      assert.equal(args["--seed"], "9007199254740991");
-      assert.equal(pod.volumes[0].secret.secretName, "other-sources");
-      assert.equal(pod.volumes[0].secret.items[0].key, "sources.yaml");
-      assert.equal(pod.nodeSelector["kubernetes.io/arch"], "arm64");
-    }
-  }
-  assert.equal(docs.filter(d => d.kind === "Service").length, render().filter(d => d.kind === "Service").length);
-});
-test("finite eventgen runs use Jobs without automatic retries and support image overrides", () => {
-  const docs = render({...base, eventgen: {enabled: true, image: {registry: "registry.example.com", repository: "demo/eventgen", tag: "0.2.0", pullSecrets: ["registry-auth"]}, existingSecret: "eventgen-config", instances: {
-    ["a".repeat(20)]: {eventSourceId: "demo", cycles: 2, scenarios: "cpu_high", cycleDuration: "10ms"},
-  }}}, "a".repeat(53));
-  const job = docs.find(d => d.kind === "Job" && d.metadata.labels["app.kubernetes.io/component"] === "eventgen");
-  assert.ok(job.metadata.name.length <= 63);
-  assert.equal(job.spec.backoffLimit, 0);
-  assert.equal(job.spec.template.spec.restartPolicy, "Never");
-  assert.equal(job.spec.completions, 1);
-  assert.equal(job.spec.parallelism, 1);
-  assert.equal(job.spec.ttlSecondsAfterFinished, 86400);
-  assert.equal(job.spec.template.spec.containers[0].image, "registry.example.com/demo/eventgen:0.2.0");
-  assert.deepEqual(job.spec.template.spec.imagePullSecrets, [{name: "registry-auth"}]);
-});
-test("invalid eventgen instances fail before installation", () => {
-  const valid = {enabled: true, existingSecret: "sources", instances: {demo: {eventSourceId: "source-a"}}};
-  const invalid = [
-    {...valid, instances: {}}, {...valid, existingSecret: ""},
-    {...valid, instances: {"bad_name": {eventSourceId: "source-a"}}},
-    {...valid, instances: {demo: {}}},
-    ...[{cycles: -1}, {duplicatePercent: 101}, {newAlertsPerMinute: 0}, {maxActiveAlerts: 1000001}, {cycleDuration: "1ms"}, {cycleDuration: "601s"}, {cycleDuration: "11m"}, {replicas: 2}].map(extra => ({...valid, instances: {demo: {eventSourceId: "source-a", ...extra}}})),
-  ];
-  for (const eventgen of invalid) {
-    const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, eventgen}), encoding: "utf8"});
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /eventgen/);
-  }
+test("legacy generation parameters are rejected", () => {
+  const result=spawnSync("helm",["template","test",chart,"-f","-"],{input:stringify({...base,eventgen:{enabled:true,instances:{old:{eventSourceId:"source"}}}}),encoding:"utf8"});
+  assert.notEqual(result.status,0);
 });
 test("packaged eventgen source example passes Linkd config validation", () => {
   execFileSync(binary, ["config", "validate", "--config", join(chart, "examples/eventgen-config.yaml")], {stdio: "pipe"});

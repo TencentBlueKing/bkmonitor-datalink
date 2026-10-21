@@ -11,10 +11,12 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 
 	"github.com/gin-gonic/gin"
+	promPromql "github.com/prometheus/prometheus/promql"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -35,10 +37,21 @@ func (r *response) failed(ctx context.Context, err error) {
 		return
 	}
 
-	r.c.JSON(http.StatusBadRequest, ErrResponse{
+	r.c.JSON(failedStatus(err), ErrResponse{
 		TraceID: trace.TraceIDFromContext(ctx),
 		Err:     err.Error(),
 	})
+}
+
+// failedStatus 是查询失败时回给调用方的状态码。存储或查询引擎在截止时间内没有应答是服务端超时，
+// 回 504，调用方据此区分"请求本身有问题"（400）与"后端没来得及答"，可以重试或换时间范围；
+// 调用方主动取消（context.Canceled）不是超时，仍回 400。
+func failedStatus(err error) int {
+	var engineTimeout promPromql.ErrQueryTimeout
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &engineTimeout) {
+		return http.StatusGatewayTimeout
+	}
+	return http.StatusBadRequest
 }
 
 func (r *response) success(ctx context.Context, data any) {

@@ -230,7 +230,7 @@ func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *el
 				metadata.MsgQueryES,
 				"索引查询异常: %+v",
 				aliases,
-			).Error(ctx, err)
+			).Error(ctx, withBackendStatus(err))
 		}
 
 		for index, r := range res {
@@ -1120,7 +1120,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	searchResult, err := cli.Search().Index(aliases...).SearchSource(source).Do(ctx)
 	if err != nil {
-		return nil, err
+		return nil, withBackendStatus(err)
 	}
 
 	if searchResult.Aggregations == nil {

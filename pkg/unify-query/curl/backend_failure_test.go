@@ -30,6 +30,7 @@ func TestABackendFailureCarriesItsStatus(t *testing.T) {
 		http.StatusInternalServerError: http.StatusBadGateway,
 		http.StatusUnauthorized:        http.StatusBadGateway,
 		http.StatusForbidden:           http.StatusBadGateway,
+		http.StatusTooManyRequests:     http.StatusBadGateway,
 		http.StatusBadRequest:          http.StatusBadRequest,
 		http.StatusNotFound:            http.StatusBadRequest,
 	} {

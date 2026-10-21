@@ -14,6 +14,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	promPromql "github.com/prometheus/prometheus/promql"
@@ -55,7 +56,7 @@ func (e *BackendStatusError) Error() string {
 // FailureStatus 是查询失败时回给调用方的 HTTP 状态码，所有失败响应共用，只按错误链里的类型判断，不匹配文本：
 //   - 504：存储或查询引擎在截止时间内没有应答（context.DeadlineExceeded、查询引擎的 ErrQueryTimeout）；
 //   - 502：后端本身失败，与请求无关、调用方也改不了：非超时的网络或传输错误（连接被拒、重置、DNS 等，
-//     包括本服务自己的 Redis、Consul 等依赖），后端答复 5xx，或后端答复 401/403（本服务访问后端的凭据或配置）；
+//     包括本服务自己的 Redis、Consul 等依赖），后端答复 5xx、429（后端自身的负载），或 401/403（本服务访问后端的凭据或配置）；
 //   - 400：其余一切，包括请求校验与解析错误、后端答复的其他 4xx、调用方主动取消（context.Canceled），
 //     以及只在应答正文里说明失败、没有类型化原因的情况。
 func FailureStatus(err error) int {
@@ -76,7 +77,8 @@ func backendFailed(err error) bool {
 	}
 	var status *BackendStatusError
 	if errors.As(err, &status) && status != nil {
-		if status.Status >= http.StatusInternalServerError || status.Status == http.StatusUnauthorized || status.Status == http.StatusForbidden {
+		if status.Status >= http.StatusInternalServerError || status.Status == http.StatusUnauthorized ||
+			status.Status == http.StatusForbidden || status.Status == http.StatusTooManyRequests {
 			return true
 		}
 	}
@@ -96,8 +98,11 @@ func backendFailed(err error) bool {
 	return false
 }
 
-// transportFailed 是这一层错误本身是非超时的网络错误；调用方取消的请求不算。
+// transportFailed 是这一层错误本身是非超时的网络错误；调用方取消的请求、地址解析失败（*url.Error 的 parse）不算。
 func transportFailed(err error) bool {
+	if requestErr, ok := err.(*url.Error); ok && requestErr.Op == "parse" {
+		return false
+	}
 	transport, ok := err.(net.Error)
 	return ok && !transport.Timeout() && !errors.Is(err, context.Canceled)
 }

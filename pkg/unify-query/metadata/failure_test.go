@@ -59,6 +59,9 @@ func TestFailureStatus(t *testing.T) {
 			err: ErrorWithCauses("http code error", &BackendStatusError{Status: 401}), want: http.StatusBadGateway},
 		"a backend refusing this service's access (403)": {
 			err: ErrorWithCauses("http code error", &BackendStatusError{Status: 403}), want: http.StatusBadGateway},
+		"a backend under its own load (429)": {
+			err: ErrorWithCauses("http code error", &BackendStatusError{Status: 429}), want: http.StatusBadGateway},
+		"an address that does not parse":  {err: &url.Error{Op: "parse", URL: "::", Err: errors.New("missing protocol scheme")}, want: http.StatusBadRequest},
 		"a backend answering 400":         {err: ErrorWithCauses("http code error", &BackendStatusError{Status: 400}), want: http.StatusBadRequest},
 		"a backend answering 404":         {err: ErrorWithCauses("http code error", &BackendStatusError{Status: 404}), want: http.StatusBadRequest},
 		"a cancelled request on the wire": {err: &url.Error{Op: "Post", URL: "http://backend.example.test/", Err: context.Canceled}, want: http.StatusBadRequest},

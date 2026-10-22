@@ -12,15 +12,19 @@ package cmdbcache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 
+	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	gomonkey "github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	cfg "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
 
@@ -70,5 +74,56 @@ func TestGetServiceInstancesPagesWithUniqueSort(t *testing.T) {
 	assert.Len(t, sorts, 2)
 	for _, sort := range sorts {
 		assert.Equal(t, "-id", sort)
+	}
+}
+
+func TestCmdbPagedRequestsUseUniqueSort(t *testing.T) {
+	var sort any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Page map[string]any `json:"page"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		sort = body.Page["sort"]
+		_ = json.NewEncoder(w).Encode(map[string]any{"result": true, "data": map[string]any{"count": 0, "info": []any{}}})
+	}))
+	defer server.Close()
+
+	bkTenantId := "cmdb-page-sort-test"
+	oldUrl := cfg.BkApiCmdbApiGatewayUrl
+	cfg.BkApiCmdbApiGatewayUrl = server.URL
+	errStop := errors.New("stop after first page")
+	patches := gomonkey.ApplyFunc(tenant.GetTenantAdminUser, func(string) (string, error) { return "admin", nil })
+	patches.ApplyFunc(api.GetCmdbApi, func(tenantId string) (*cmdb.Client, error) { return getCmdbApi(tenantId), nil })
+	patches.ApplyFunc(api.BatchApiRequest, func(_ int, _ func(any) (int, error), getReqFunc func(int) define.Operation, _ int) ([]any, error) {
+		var resp any
+		_, _ = getReqFunc(1).SetResult(&resp).Request()
+		return nil, errStop
+	})
+	defer func() {
+		patches.Reset()
+		cfg.BkApiCmdbApiGatewayUrl = oldUrl
+		cmdbApiClientMutex.Lock()
+		delete(cmdbApiClients, bkTenantId)
+		cmdbApiClientMutex.Unlock()
+	}()
+
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		call func() error
+		sort string
+	}{
+		{"module", func() error { _, err := getModuleListByBizID(ctx, bkTenantId, 2); return err }, "bk_module_id"},
+		{"set", func() error { _, err := getSetListByBizID(ctx, bkTenantId, 2); return err }, "bk_set_id"},
+		{"business", func() error { _, err := getBusinessList(ctx, bkTenantId); return err }, "bk_biz_id"},
+		{"dynamic group list", func() error { _, err := getDynamicGroupList(ctx, bkTenantId, 2); return err }, "id"},
+		{"dynamic group host", func() error { _, err := getDynamicGroupRelatedIds(ctx, bkTenantId, 2, "g", "host"); return err }, "bk_host_id"},
+		{"dynamic group set", func() error { _, err := getDynamicGroupRelatedIds(ctx, bkTenantId, 2, "g", "set"); return err }, "bk_set_id"},
+	}
+	for _, c := range cases {
+		sort = nil
+		assert.ErrorIs(t, c.call(), errStop, c.name)
+		assert.Equal(t, c.sort, sort, c.name)
 	}
 }

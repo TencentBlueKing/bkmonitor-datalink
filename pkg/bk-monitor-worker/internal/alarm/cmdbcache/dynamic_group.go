@@ -93,7 +93,7 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ExecuteDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "id": dynamicGroupID}).SetBody(map[string]any{"bk_biz_id": bizID, "id": dynamicGroupID, "fields": []string{field}, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.ExecuteDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "id": dynamicGroupID}).SetBody(map[string]any{"bk_biz_id": bizID, "id": dynamicGroupID, "fields": []string{field}, "page": map[string]any{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize, "sort": field}})
 		},
 		10,
 	)
@@ -143,7 +143,7 @@ func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.SearchDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchDynamicGroup().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID)}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]any{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize, "sort": "id"}})
 		},
 		10,
 	)

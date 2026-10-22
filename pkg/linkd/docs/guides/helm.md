@@ -447,6 +447,13 @@ Helm 测试检查渲染、配置加载、组隔离和错误参数，不连接真
 `blueking.enable_multi_tenant_mode`，即使值与公共值相同也会报错。外部 Secret 内容由部署方保持一致，
 修改模式或应用凭据后重启控制面和 Lifecycle；缓存不跨重启保留。
 
+## alarmd 无数据关闭联动
+
+按[配置指南](configuration.md#alarmd-无数据关闭联动)，将可选配置放在
+`configuration.resources.alarmd`，或仅放入 `controlPlane.configuration.resources.alarmd`。
+使用已有配置 Secret 时修改控制面对应配置并重启；不需要修改 EventSource 发布或增加凭据。
+未配置调用地址时保持原关闭流程。先确认 alarmd control 的内部接口版本及连通性，再启用 Linkd 配置。
+
 ## KAC 全局兼容插件
 
 将[KAC 插件配置](configuration.md#kac-全局插件配置)统一放在 `configuration.plugins.kac`。

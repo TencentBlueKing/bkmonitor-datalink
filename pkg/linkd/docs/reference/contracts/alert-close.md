@@ -62,6 +62,32 @@ Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也
 
 KAC 收到 close 动作后只执行后续处置，不再次据此生成关闭命令，避免终结操作回流。
 
+## alarmd 无数据关闭联动
+
+配置 `resources.alarmd.no_data_close_endpoint` 后，主动关闭先通知 alarmd 停止当前无数据过程的追踪；
+地址未配置或为空时完全跳过联动，沿用原关闭行为。仅同时满足以下条件的原始 Alert 参与：
+
+- `event_source_id` 精确等于配置的 alarmd 渠道 ID（缺省 `built_in_bk`）；
+- `dimensions.__NO_DATA_DIMENSION__` 按既有真值规则有效；
+- `extra_data.evaluation_family` 等于 `no_data`。
+
+人工、自动关闭策略、工单、自愈及系统超时关闭参与；来源恢复、来源关闭、等级切换和策略变更不参与。
+其他渠道即使携带相同标记也不调用，不按标题、内容或丰富后的展示字段推断。
+
+在现有 fingerprint lease 内、终态及操作身份判断之后、关闭 CAS 之前，向配置地址发送一次 POST。
+请求为 `{bk_tenant_id, strategy_id, source_alert_id}`，分别来自原始 Alert 的 `bk_tenant_id`、
+`labels.strategy_id`、`source_alert_id`；不使用 KAC 监控模板 ID 或 Linkd Alert ID。
+该接口为 alarmd control 角色的 `/internal/v1/no-data-closures`，仅在 `http.internal_listen` 上提供，
+无需 Token。请求服从关闭总预算，单次默认 2000 毫秒，不额外重试。
+
+必要身份缺失或策略 ID 无效返回 400；网络、超时或非 200 响应返回 502，当前 Alert 不推进关闭，
+KAC 继续复用原命令重试。一次关闭尝试中的 CAS 重试不重复通知。同一命令已保存终态时只补齐输出，
+不再通知 alarmd。alarmd 已记录但 Linkd 尚未保存关闭时，原命令重试可能再次通知；这是非原子调用，
+alarmd 按接收时间记录关闭，不提供恰好一次保证。
+
+这里不物理删除历史记录，也不拦截已进入 Kafka 的积压事件。数据恢复后再次缺失仍可重新告警。
+配置和发布要求见[配置指南](../../guides/configuration.md#alarmd-无数据关闭联动)。
+
 ## KAC 集成入口
 
 KAC 使用 `BKAPP_KAC_LINKD_API_URL` 调用 `POST /api/v1/integrations/kac/alerts/{alert_id}/close`。

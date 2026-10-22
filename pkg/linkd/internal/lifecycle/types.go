@@ -107,6 +107,7 @@ type PolicySnapshotter interface {
 }
 
 type Processor struct {
+	closePreparation   func(context.Context, domain.Alert, domain.AlertEndOperation) error
 	contentBuilder     AlertContentBuilder
 	publisher          AlertChangePublisher
 	shielder           ShieldEvaluator
@@ -233,6 +234,12 @@ func (c CloseAlertCommand) Validate() error {
 type CloseAlertResult struct {
 	Alert         domain.Alert
 	AlreadyClosed bool
+}
+
+// WithClosePreparation 注入主动关闭前置调用；只在活动告警的终态判断后、关闭 CAS 前执行。
+// 失败不推进关闭；一次 CloseAlert 中至多执行一次。调用方须持有同 fingerprint lease。
+func WithClosePreparation(prepare func(context.Context, domain.Alert, domain.AlertEndOperation) error) ProcessorOption {
+	return func(p *Processor) { p.closePreparation = prepare }
 }
 
 // WithSeverityUpgradePolicy 配置进程级升级行为。空值使用关闭后新建，非法值由 NewProcessor 拒绝。

@@ -236,6 +236,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 	}
 	command.EffectiveAt = command.EffectiveAt.Round(0).UTC()
 	operation := command.endOperation()
+	prepared := false
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
 		stored, err := p.readAlertCurrent(ctx, command.BKTenantID, command.AlertID)
 		if err != nil {
@@ -289,6 +290,14 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 				return CloseAlertResult{}, err
 			}
 			return CloseAlertResult{Alert: stored.Alert.Clone(), AlreadyClosed: true}, nil
+		}
+		// 外部确认必须先于关闭事实；CAS 冲突只重读本地状态，不再次刷新外部关闭时间。
+		// 已落库的原命令在上方终态分支补输出，不重新执行前置调用。
+		if !prepared && p.closePreparation != nil {
+			if err := p.closePreparation(ctx, stored.Alert.Clone(), operation); err != nil {
+				return CloseAlertResult{}, fmt.Errorf("prepare alert close: %w", err)
+			}
+			prepared = true
 		}
 		replacement := stored.Alert.Clone()
 		replacement.Status = domain.AlertStatusClosed

@@ -240,6 +240,26 @@ OneModel 默认使用 Elasticsearch，实例读取 `kingeye_all_instance`，关�
 旧 `event_sources[].enrich.datasources` 输入已移除；历史 Release 不改写，读取后也不再使用其内嵌连接。
 配置展示隐藏 MySQL、Doris、Redis、Elasticsearch API Key、Basic Auth 密码、蓝鲸应用密钥和 KAC JWT 签名密钥；新发布的 Record/Release 不包含公共资源。
 
+### alarmd 无数据关闭联动
+
+```yaml
+resources:
+  alarmd:
+    event_source_id: built_in_bk
+    no_data_close_endpoint: http://alarmd-control:8081/internal/v1/no-data-closures
+    timeout_milliseconds: 2000
+```
+
+地址是包含 control 角色的内部 Service 完整路径，无需 Token；示例 Service 名须替换为实际值。
+拆分角色部署不能使用仅提供 channel 的公共 Service。`event_source_id` 缺省为 `built_in_bk`，
+部署时显式绑定实际 alarmd 渠道 ID；超时缺省 2000 毫秒，配置范围 1–10000 毫秒，仍受关闭总时限约束。
+未配置 `alarmd` 或地址为空时不启用联动；只有绑定渠道的明确无数据告警才调用，其他关闭保持原行为。
+
+先部署包含该接口的 alarmd 版本，再配置并升级 Linkd 控制面。2026-10-22 核对的 alarmd 开发分支
+`181d92d6d` 包含接口，主分支 `38033da86` 尚未包含；镜像是否包含须按实际发布版本确认。
+联动失败时不推进 Linkd 关闭；停止的是当前无数据过程的追踪，数据恢复后再次缺失仍可告警。
+此接口不能撤回已进入 Kafka 的事件。完整行为见[关闭接口](../reference/contracts/alert-close.md#alarmd-无数据关闭联动)。
+
 ### OneModel Doris 读取
 
 按 KAC `base/infras/instance_storage/doris.py` 与 `doris_schema.py` 的现行表结构读取，仅增加后端适配：

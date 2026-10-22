@@ -38,9 +38,13 @@ type CloseError struct {
 	Status  int
 	Code    string
 	Message string
+	cause   error
 }
 
 func (e *CloseError) Error() string { return e.Message }
+
+// Unwrap 保留内部依赖错误链；HTTP 入口只返回安全的 Message。
+func (e *CloseError) Unwrap() error { return e.cause }
 
 type closeSourceReader interface {
 	Get(context.Context, string) (eventsource.Record, error)
@@ -65,8 +69,12 @@ type AlertCloser struct {
 // NewAlertCloser 创建控制面专用的有界关闭入口，不启动消费者或修改存储 schema。
 func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, projection AlertProjectionSynchronizer) *AlertCloser {
 	closer := &AlertCloser{slots: make(chan struct{}, 4), projection: projection, logger: logger}
+	prepare := newAlarmdClosePreparation(cfg.Resources.Alarmd, logger)
+	configure := func(store.Repository, *redisstate.Store) []lifecycle.ProcessorOption {
+		return []lifecycle.ProcessorOption{lifecycle.WithClosePreparation(prepare)}
+	}
 	closer.run = func(ctx context.Context, command lifecycle.CloseAlertCommand) (result lifecycle.CloseAlertResult, err error) {
-		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, command.BKTenantID, command.AlertID, nil, func(p *lifecycle.Processor) error {
+		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, command.BKTenantID, command.AlertID, configure, func(p *lifecycle.Processor) error {
 			var err error
 			result, err = p.CloseAlert(ctx, command)
 			return err

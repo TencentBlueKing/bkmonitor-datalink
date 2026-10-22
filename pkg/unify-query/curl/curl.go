@@ -145,11 +145,13 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return size, metadata.NewMessage(
+		// 文本照旧，后端的状态码作为类型化原因保留，供失败响应按状态分类。
+		statusErr := metadata.NewMessage(
 			metadata.MsgHttpCurl,
 			"http code error: %s in %s",
 			resp.Status, safeURL,
 		).Error(ctx, err)
+		return size, metadata.ErrorWithCauses(statusErr.Error(), &metadata.BackendStatusError{Status: resp.StatusCode})
 	}
 
 	if c.decoder != nil {

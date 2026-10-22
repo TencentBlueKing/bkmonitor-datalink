@@ -27,8 +27,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
-
-	uqmetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type receivedTrace struct {
@@ -118,6 +116,7 @@ func TestOTelCredentialProtocols(t *testing.T) {
 				})
 				t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "authorization=env-secret")
 				t.Setenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "authorization=traces-env-secret")
+				t.Setenv("UQ_POD_UID", "9bc96f1a-c77d-4a31-86dd-a1f5db176365")
 				viper.Set("kms.enabled", enabled)
 				viper.Set("trace.otlp.headers", map[string]string{"authorization": "kms-header-secret"})
 				otlpToken, ServiceName = "trace-token-secret", "test-uq"
@@ -142,12 +141,6 @@ func TestOTelCredentialProtocols(t *testing.T) {
 						want = "kms-header-secret"
 					}
 					require.Equal(t, want, result.Header)
-					hostname, ip := uqmetadata.GetLocalHost()
-					instanceHost := ip
-					if instanceHost == "" {
-						instanceHost = hostname
-					}
-					require.NotEmpty(t, instanceHost)
 					var token, instanceID string
 					for _, attr := range result.Request.ResourceSpans[0].Resource.Attributes {
 						switch attr.Key {
@@ -158,7 +151,7 @@ func TestOTelCredentialProtocols(t *testing.T) {
 						}
 					}
 					require.Equal(t, "trace-token-secret", token, "existing legitimate telemetry authentication must remain")
-					require.Equal(t, "test-uq@"+instanceHost, instanceID)
+					require.Equal(t, "k8s_9bc96f1a-c77d-4a31-86dd-a1f5db176365", instanceID)
 				case <-ctx.Done():
 					t.Fatal("exporter did not send the authenticated request")
 				}

@@ -116,15 +116,10 @@ func (s *Service) Start(ctx context.Context) {
 	// 这里的wg不是用于goroutine运行判断，需要注意
 	s.wg.Add(1)
 
-	sampler, err := newSampler(Sampler)
+	s.tracerProvider, err = newTracerProvider(exporter, s.newResource())
 	if err != nil {
 		panic(err)
 	}
-	s.tracerProvider = sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sampler),
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(s.newResource()),
-	)
 	otel.SetTracerProvider(s.tracerProvider)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
@@ -168,4 +163,17 @@ func newSampler(name string) (sdktrace.Sampler, error) {
 	default:
 		return nil, fmt.Errorf("unknown trace sampler %q: want %s or %s", name, SamplerAlways, SamplerParentBased)
 	}
+}
+
+// newTracerProvider 按当前配置（trace.sampler）构造 provider，Start 与用例走同一处。
+func newTracerProvider(exporter sdktrace.SpanExporter, res *resource.Resource) (*sdktrace.TracerProvider, error) {
+	sampler, err := newSampler(Sampler)
+	if err != nil {
+		return nil, err
+	}
+	return sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sampler),
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+	), nil
 }

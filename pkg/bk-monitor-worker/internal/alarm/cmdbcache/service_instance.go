@@ -99,7 +99,8 @@ func getServiceInstances(ctx context.Context, bkTenantId string, bkBizId int) ([
 			return res.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.ListServiceInstanceDetail().SetContext(ctx).SetBody(map[string]any{"page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}, "bk_biz_id": bkBizId})
+			// CMDB 缺省按可重复的 create_time 排序，跨页会漏拉实例，随后 CleanGlobal 会把漏拉的实例当作已删除清掉
+			return cmdbApi.ListServiceInstanceDetail().SetContext(ctx).SetBody(map[string]any{"page": map[string]any{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize, "sort": "-id"}, "bk_biz_id": bkBizId})
 		},
 		10,
 	)

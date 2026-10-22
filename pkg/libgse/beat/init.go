@@ -52,7 +52,23 @@ var (
 	mutex        sync.Mutex
 	rawconfig    *Config
 	beatSettings instance.Settings
+
+	// resourceMutex protects the ownership flags below. freeResource may be
+	// called both by the framework shutdown path and by Stop, so releasing the
+	// same PID lock or storage twice must be excluded rather than tolerated.
+	resourceMutex sync.Mutex
+	pidLocked     bool
+	storageInited bool
+
+	// closeStorage is a test seam so cleanup tests can count Close calls;
+	// production always uses the package level storage Close.
+	closeStorage = bkstorage.Close
 )
+
+// ErrNotRunning is returned by Stop when the beat was not running. Stop still
+// attempts cleanup in that case, so callers may use it as an idempotent process
+// cleanup entry.
+var ErrNotRunning = errors.New("no beat running")
 
 func baseInit(beatName string, version string) (*Config, error) {
 	rawconfig = nil
@@ -115,7 +131,12 @@ func baseInit(beatName string, version string) (*Config, error) {
 		os.Exit(0)
 	}
 
-	if !*testMode {
+	if *testMode {
+		// -T 只做启动/采样诊断：使用进程内空存储，既不锁正式 PID，
+		// 也不读取、创建或迁移正式进度库。
+		bkstorage.InitMemory()
+		markStorageInited()
+	} else {
 		// 非 gsecheck 时需要锁定 pid
 		if !*gseCheck {
 			err = pidfile.TryLock(pidFilePath)
@@ -123,6 +144,7 @@ func baseInit(beatName string, version string) (*Config, error) {
 				commonBKBeat.BeaterState = BeaterFailToOpen
 				return nil, err
 			}
+			markPIDLocked()
 		}
 
 		// Init bkstorage
@@ -135,8 +157,10 @@ func baseInit(beatName string, version string) (*Config, error) {
 		err = bkstorage.Init(dbFilePath, nil)
 		if err != nil {
 			commonBKBeat.BeaterState = BeaterFailToOpen
+			freeResource()
 			return nil, fmt.Errorf("initializing storage %s error: %v", dbFilePath, err)
 		}
+		markStorageInited()
 	}
 
 	errorMessageChan = make(chan error)
@@ -173,7 +197,8 @@ func baseInit(beatName string, version string) (*Config, error) {
 		if err := reloader.Run(pidFilePath); err != nil {
 			logp.L.Errorf(err.Error())
 			commonBKBeat.BeaterState = BeaterFailToOpen
-			commonBKBeat.Stop()
+			stopReloader()
+			freeResource()
 			return nil, err
 		}
 	}
@@ -248,9 +273,48 @@ func InitWithPublishConfig(beatName string, version string, pubConfig PublishCon
 	return config, err
 }
 
+func markPIDLocked() {
+	resourceMutex.Lock()
+	pidLocked = true
+	resourceMutex.Unlock()
+}
+
+func markStorageInited() {
+	resourceMutex.Lock()
+	storageInited = true
+	resourceMutex.Unlock()
+}
+
+// freeResource releases the PID lock and the storage acquired by this process.
+// It is idempotent, so the framework shutdown path, Stop and error paths may all
+// call it without closing the same resource twice.
 func freeResource() {
-	pidfile.UnLock()
-	bkstorage.Close()
+	resourceMutex.Lock()
+	unlockPID := pidLocked
+	shouldCloseStorage := storageInited
+	pidLocked = false
+	storageInited = false
+	resourceMutex.Unlock()
+
+	if unlockPID {
+		pidfile.UnLock()
+	}
+	if shouldCloseStorage && closeStorage != nil {
+		closeStorage()
+	}
+}
+
+// stopReloader stops and clears the reloader. -T does not create a reloader, so
+// Stop must not assume it exists.
+func stopReloader() {
+	resourceMutex.Lock()
+	r := reloader
+	reloader = nil
+	resourceMutex.Unlock()
+
+	if r != nil {
+		r.Stop()
+	}
 }
 
 // GetConfig fetch the config instance of user's beat
@@ -297,18 +361,32 @@ func SendEvent(event Event) bool {
 	return true
 }
 
-// Stop stops the beat
+// Stop stops the beat and releases resources acquired by this process.
+//
+// Cleanup runs even when the beat never reached the running state, so Stop can
+// be used as an idempotent process cleanup entry. In that case it returns
+// ErrNotRunning, but resources acquired during a partial initialization are
+// still released.
 func Stop() error {
 	mutex.Lock()
-	if beatNotRunning() {
-		mutex.Unlock()
-		return errors.New("no beat running")
-	}
+	running := !beatNotRunning()
+
+	// Cleanup is safe and meaningful even when the beat never reached the
+	// running state (partial initialization), so it runs unconditionally.
+	// commonBKBeat.Stop itself only releases the publisher client when the
+	// beat is actually running, and freeResource only releases resources that
+	// this process acquired.
 	commonBKBeat.Stop()
-	reloader.Stop()
+	stopReloader()
 	freeResource()
-	logp.SetLogger(nil)
-	commonBKBeat.BeaterState = BeaterStoped
+	if running {
+		logp.SetLogger(nil)
+		commonBKBeat.BeaterState = BeaterStoped
+	}
 	mutex.Unlock()
+
+	if !running {
+		return ErrNotRunning
+	}
 	return nil
 }

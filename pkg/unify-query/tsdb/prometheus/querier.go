@@ -14,7 +14,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -136,6 +135,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		recvDone = make(chan struct{})
 
 		errorMessage strings.Builder
+		routeErrors  []error
 		lock         sync.Mutex
 
 		wg  sync.WaitGroup
@@ -180,6 +180,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 		}
 		lock.Lock()
 		errorMessage.WriteString(fmt.Sprintf("query error: %s ", queryErr.Error()))
+		routeErrors = append(routeErrors, queryErr)
 		lock.Unlock()
 	}
 
@@ -274,7 +275,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			return storage.ErrSeriesSet(metadata.NewMessage(
 				metadata.MsgQueryTs,
 				"查询异常",
-			).Error(ctx, errors.New(partialDetail)))
+			).Error(ctx, metadata.ErrorWithCauses(partialDetail, routeErrors...)))
 		}
 	}
 

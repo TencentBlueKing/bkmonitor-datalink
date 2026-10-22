@@ -42,7 +42,7 @@ func (r *response) failed(ctx context.Context, err error) {
 		return
 	}
 
-	r.c.JSON(http.StatusBadRequest, ErrResponse{
+	r.c.JSON(metadata.FailureStatus(err), ErrResponse{
 		Err: err.Error(),
 	})
 }

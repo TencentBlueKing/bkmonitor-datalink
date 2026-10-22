@@ -30,9 +30,15 @@ func HandleClientError(ctx context.Context, id, address string, err error) error
 		err = &url.Error{Op: requestErr.Op, URL: credential.RedactURL(requestErr.URL), Err: requestErr.Err}
 	}
 
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return metadata.NewMessage(id,
 			"查询 %s 超时",
+			address,
+		).Error(ctx, err)
+	}
+	if errors.Is(err, context.Canceled) {
+		return metadata.NewMessage(id,
+			"查询 %s 被取消",
 			address,
 		).Error(ctx, err)
 	}

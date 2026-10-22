@@ -50,9 +50,9 @@ func Test_handleESError(t *testing.T) {
 		},
 
 		{
-			name:           "should return timeout error message for context deadline exceeded",
+			name:           "should return canceled error message for context canceled",
 			err:            context.Canceled,
-			expectedErrMsg: "查询  超时: context canceled",
+			expectedErrMsg: "查询  被取消: context canceled",
 		},
 		{
 			name:           "should handle nil esErr.Details gracefully",

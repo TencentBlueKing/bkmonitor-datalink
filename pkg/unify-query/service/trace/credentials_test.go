@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package trace
 
 import (
@@ -18,6 +27,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
+
+	uqmetadata "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 type receivedTrace struct {
@@ -131,13 +142,23 @@ func TestOTelCredentialProtocols(t *testing.T) {
 						want = "kms-header-secret"
 					}
 					require.Equal(t, want, result.Header)
-					var token string
+					hostname, ip := uqmetadata.GetLocalHost()
+					instanceHost := ip
+					if instanceHost == "" {
+						instanceHost = hostname
+					}
+					require.NotEmpty(t, instanceHost)
+					var token, instanceID string
 					for _, attr := range result.Request.ResourceSpans[0].Resource.Attributes {
-						if attr.Key == "bk.data.token" {
+						switch attr.Key {
+						case "bk.data.token":
 							token = attr.Value.GetStringValue()
+						case "service.instance.id":
+							instanceID = attr.Value.GetStringValue()
 						}
 					}
 					require.Equal(t, "trace-token-secret", token, "existing legitimate telemetry authentication must remain")
+					require.Equal(t, "test-uq@"+instanceHost, instanceID)
 				case <-ctx.Done():
 					t.Fatal("exporter did not send the authenticated request")
 				}

@@ -1,6 +1,6 @@
 # KAC 告警兼容投影
 
-状态：2026-10-14 对应当前实现。文件名中的 v1 保留稳定 alarm_id 的身份域；当前写入不再使用持久投影任务、快照、摘要或水位。
+状态：2026-10-22 对应当前实现。文件名中的 v1 保留稳定 alarm_id 的身份域；当前写入不再使用持久投影任务、快照、摘要或水位。
 
 ## 身份与消息
 
@@ -26,6 +26,7 @@ rollover 后继续更新原物理索引，不能总向当前 write alias upsert�
 | 字段 | 行为 |
 | --- | --- |
 | 身份、来源、丰富数据、storage_time 和处置默认值 | 新建时转换，后续普通同步不重置 |
+| fingerprint | 写入器直接取 Alert.Fingerprint，新建与后续同步均写入，不依赖自定义字段目录 |
 | content、level、action、source_alarm_status、close_reason、close_time | 从最新 Alert 更新；content 包含持续触发更新及显式空串 |
 | associate_alarm_id、associate_count | 同步当前合并关系及解联 |
 | status | 屏蔽、合并及终态按业务转换；普通 active 保留 KAC 处置状态 |
@@ -34,6 +35,9 @@ rollover 后继续更新原物理索引，不能总向当前 write alias upsert�
 | conductor、工单、通知、自愈和 field_extra_info | 更新保留 KAC 已写入内容 |
 
 不创建同步元数据索引，不回读版本、校验内容摘要或记录 Receipt。
+
+指纹在既有索引及模板中声明为 `keyword`，用于 KAC 原样展示和精确搜索。
+旧文档随下一次正常投影补齐指纹；没有后续同步的历史文档保持原样，不新增回填任务。
 
 ## 主动关闭
 

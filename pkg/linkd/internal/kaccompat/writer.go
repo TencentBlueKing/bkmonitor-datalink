@@ -141,7 +141,7 @@ func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh 
 		tags := fields["tag_info"]
 		delete(fields, "tag_info")
 		patch := map[string]any{}
-		for _, field := range []string{"content", "level", "action", "source_alarm_status", "close_reason", "close_time", "associate_alarm_id", "associate_count"} {
+		for _, field := range []string{"fingerprint", "content", "level", "action", "source_alarm_status", "close_reason", "close_time", "associate_alarm_id", "associate_count"} {
 			patch[field] = fields[field]
 		}
 		params := map[string]any{"fields": patch, "mode": mode, "tags": tags}
@@ -218,6 +218,7 @@ func (c *Client) fields(ctx context.Context, a domain.Alert, create bool) (map[s
 		return nil, "", err
 	}
 	fields["level"] = level
+	fields["fingerprint"] = a.Fingerprint
 	// 持续触发已经更新 Alert.Content；兼容文档必须同步最新正文，包括显式清空。
 	// 其他展示/丰富字段仍保留创建快照，不重置 KAC 的处置、通知或工单信息。
 	fields["content"] = a.Content

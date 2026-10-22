@@ -23,6 +23,9 @@
     "alarm_id": {
       "type": "keyword"
     },
+    "fingerprint": {
+      "type": "keyword"
+    },
     "source_id": {
       "type": "keyword"
     },

@@ -64,8 +64,14 @@ func (c *Client) Maintain(ctx context.Context) error {
 			properties = map[string]any{}
 			mappings["properties"] = properties
 		}
-		if properties["linkd_disposal_status"] == nil {
-			properties["linkd_disposal_status"] = map[string]any{"type": "keyword"}
+		changed := false
+		for _, field := range []string{"linkd_disposal_status", "fingerprint"} {
+			if properties[field] == nil {
+				properties[field] = map[string]any{"type": "keyword"}
+				changed = true
+			}
+		}
+		if changed {
 			if err = c.request(call, http.MethodPut, "/_template/"+url.PathEscape(alias), nil, template, nil); err != nil {
 				return err
 			}

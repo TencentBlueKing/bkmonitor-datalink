@@ -289,7 +289,7 @@ func TestDATAHostIdentityAndFailure(t *testing.T) {
 			instance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.HostModelCode, InstanceID: "101", Attributes: map[string]any{rules.FieldBKHostID: int64(101), rules.FieldBKBizID: int64(2)}},
 			wantID:   "101", wantStatus: domain.EnrichStatusSucceeded, wantQuery: enrich.InstanceQuery{ModelCode: rules.HostModelCode, InstanceID: "101"}},
 		{name: "address", dimensions: domain.DimensionMap{rules.FieldBKTargetIP: domain.NewStringScalar("192.0.2.11"), rules.FieldBKTargetCloudID: dataNumber(t, 0)}, model: rules.HostModelCode, found: true,
-			instance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.HostModelCode, InstanceID: "101", Attributes: map[string]any{rules.FieldBKHostID: int64(101), rules.FieldBKBizID: int64(2)}},
+			instance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.HostModelCode, InstanceID: "101", Attributes: map[string]any{rules.FieldBKHostID: int64(101), "bk_host_name": "host-101", rules.FieldBKBizID: int64(2)}},
 			wantID:   "101", wantStatus: domain.EnrichStatusSucceeded, wantQuery: enrich.InstanceQuery{ModelCode: rules.HostModelCode, AttributeFilters: []enrich.InstanceAttributeFilter{
 				{Field: rules.FieldBKHostInnerIP, Type: enrich.InstanceAttributeKeyword, Value: "192.0.2.11"},
 				{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: int64(0)},

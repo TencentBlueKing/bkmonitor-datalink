@@ -197,7 +197,7 @@ func (r *promQLSnapshotReader) FindInstance(_ context.Context, tenantID string, 
 		return enrich.Instance{TenantID: tenantID, ModelCode: "cw-biz", InstanceID: fmt.Sprint(query.InstanceID), Attributes: map[string]any{rules.FieldBKBizName: "蓝鲸2"}}, true, nil
 	case rules.HostModelCode:
 		instance := r.fixture.Host.Instance
-		if query.InstanceID != instance.InstanceID {
+		if query.InstanceID != instance.InstanceID && !hostFixtureMatchesAddress(query, instance.Attributes) {
 			return enrich.Instance{}, false, nil
 		}
 		return enrich.Instance{TenantID: tenantID, ModelCode: instance.ModelCode, InstanceID: instance.InstanceID, Fields: instance.Fields, Attributes: instance.Attributes}, true, nil

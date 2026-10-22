@@ -75,7 +75,8 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | 业务观测维度 | Event.Dimensions.bk_biz_id 表示的指标观测值，仅在指标需要该维度时参与查询过滤或分组，不替代来源业务 |
 | 资源所属业务 | 从拨测任务、CMDB 等依赖取得的资源业务归属，供资源展示和拓扑逻辑使用并保存到 enrich.resource，不覆盖来源业务标签 |
 | CMDB 模型实例 ID（bk_inst_id） | 指定 CMDB 对象模型下的实例标识；本次丰富的来源输入位于 Event.Dimensions.bk_inst_id，必须结合模型解释，不是跨模型通用身份 |
-| 主机 ID（bk_host_id） | 主机对象模型 HOST_OBJECT_MODEL_CODE 的实例标识；本次丰富从 Event.Dimensions.bk_host_id 读取，保留主机模型的专用语义 |
+| 主机 ID（bk_host_id） | 主机模型 `cw-Host` 的实例标识。来源可以在 Event.Dimensions 提供；Resource 对含主机 IP 和云区域的事件还会按同租户唯一主机查询补入 `labels.bk_host_id` 丰富补丁，独立于 MySQL 等原告警对象的 `model_inst_id` |
+| 主机名（bk_host_name） | 同租户唯一主机的真实 `bk_host_name` 属性，Resource 保存为 `labels.bk_host_name` 丰富补丁；不以主机展示名或 IP 替代，不改变原告警对象的 `subject_name` |
 | 目标主机 ID（bk_target_host_id） | 来源提供的目标主机标识，位于 Event.Dimensions.bk_target_host_id；可能对应远程采集下发的主机，不能预先等同于告警对象的 bk_inst_id 或 bk_host_id；具体来源语义仍按场景取证 |
 | resource（丰富分组） | 丰富结果中的资源上下文，分别保留 CMDB 与 Meta 的模型实例信息，包含业务、CMDB 业务集群、模块和云区域的标识与名称，以及动态分组和派生范围标签，不改写 Event/Alert 的核心主体或标签 |
 | cw_labels       | 旧告警规则生成的业务或资源范围字符串标签列表；迁移后作为资源丰富信息保存，不等同于 Event/Alert.labels 或授权结果 |

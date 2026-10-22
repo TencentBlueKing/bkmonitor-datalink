@@ -297,7 +297,7 @@ type processorBaseTargetReader struct {
 func processorHostReader() *processorBaseTargetReader {
 	return &processorBaseTargetReader{
 		model: processorModel("tenant-a", rules.HostModelCode, "主机", "host"), modelFound: true,
-		instance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.HostModelCode, InstanceID: "101", Fields: map[string]any{"bk_biz_ids": []int64{2}}, Attributes: map[string]any{rules.FieldBKHostID: int64(101), rules.FieldBKInstDisplayName: "主机 101"}}, instanceFound: true,
+		instance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.HostModelCode, InstanceID: "101", Fields: map[string]any{"bk_biz_ids": []int64{2}}, Attributes: map[string]any{rules.FieldBKHostID: int64(101), "bk_host_name": "host-101", rules.FieldBKInstDisplayName: "主机 101"}}, instanceFound: true,
 		topology: models.ResourceTopology{BKBizID: 2, BKBizName: "业务", BKSetID: 3, BKSetName: "集群"}, topologyFound: true,
 	}
 }

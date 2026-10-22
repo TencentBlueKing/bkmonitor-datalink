@@ -296,6 +296,9 @@ func (r *kacFixtureReader) GetCollectConfig(_ context.Context, tenantID, taskID 
 }
 
 func (r *kacFixtureReader) FindInstance(_ context.Context, tenantID string, query enrich.InstanceQuery) (enrich.Instance, bool, error) {
+	if host := r.fixture.RelatedHost; host != nil && tenantID == "tenant-a" && hostFixtureMatchesAddress(query, host.Attributes) {
+		return enrich.Instance{TenantID: tenantID, ModelCode: host.ModelCode, InstanceID: host.InstanceID, Fields: host.Fields, Attributes: host.Attributes}, true, nil
+	}
 	if r.fixture.Branch == "data" && query.ModelCode == "cw-biz" {
 		v := r.fixture.Business
 		if v != nil {
@@ -317,10 +320,11 @@ func (r *kacFixtureReader) FindInstance(_ context.Context, tenantID string, quer
 		}
 		return enrich.Instance{TenantID: tenantID, ModelCode: fixture.ModelCode, InstanceID: fixture.InstanceID, Fields: fixture.Fields, Attributes: fixture.Attributes}, true, nil
 	}
-	if tenantID != "tenant-a" || query.ModelCode != r.fixture.Instance.ModelCode || query.InstanceID != r.fixture.Instance.InstanceID {
+	if tenantID != "tenant-a" || query.ModelCode != r.fixture.Instance.ModelCode ||
+		query.InstanceID != r.fixture.Instance.InstanceID && !hostFixtureMatchesAddress(query, r.fixture.Instance.Attributes) {
 		return enrich.Instance{}, false, fmt.Errorf("unexpected instance query tenant=%s query=%#v", tenantID, query)
 	}
-	return enrich.Instance{TenantID: tenantID, ModelCode: query.ModelCode, InstanceID: query.InstanceID, Fields: r.fixture.Instance.Fields, Attributes: r.fixture.Instance.Attributes}, true, nil
+	return enrich.Instance{TenantID: tenantID, ModelCode: query.ModelCode, InstanceID: r.fixture.Instance.InstanceID, Fields: r.fixture.Instance.Fields, Attributes: r.fixture.Instance.Attributes}, true, nil
 }
 
 func (r *kacFixtureReader) FindRelatedHost(_ context.Context, tenantID, modelCode, instanceID, _ string) (enrich.Instance, bool, error) {

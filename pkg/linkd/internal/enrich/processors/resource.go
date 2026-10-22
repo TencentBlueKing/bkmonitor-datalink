@@ -41,6 +41,22 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 		return result, err
 	}
 	values := scope.Context().Resource.Values
+	// 主资源失败时保留原错误与独立业务补偿；不能用主机查询掩盖失败，
+	// 也不能发布缺省空对象字段覆盖来源身份。
+	if result.Status != domain.EnrichStatusFailed {
+		hostDiagnostics, hostErr := resourceHostContext(ctx, scope, &values)
+		if hostErr != nil {
+			return enrich.ProcessorResult{}, hostErr
+		}
+		result.Diagnostics = append(result.Diagnostics, hostDiagnostics...)
+		if len(hostDiagnostics) != 0 && result.Status == domain.EnrichStatusSucceeded {
+			result.Status = domain.EnrichStatusPartial
+		}
+		result.Value, err = resourceContextValue(scope, values)
+		if err != nil {
+			return enrich.ProcessorResult{}, err
+		}
+	}
 	// 旧 KAC 的业务名称映射独立于实例读取。保留已确认业务 ID，
 	// 只在名称缺失时按同租户 cw-biz 身份补偿，不用策略的全局业务覆盖资源业务。
 	if id := bizIDFromResource(values); values.ModelID != "" && values.BKBizName == "" && id > 0 {
@@ -230,7 +246,9 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		enrich.ApplyModelContext(&values, model)
 	}
 	values.CWLabels = enrich.ResourceLabels(values)
-	if values.ModelID == rules.HostModelCode && (strings.HasPrefix(query.ResultTableID, rules.SystemTablePrefix) || query.IsPromQL()) {
+	// 目录查询可以只保存 metric_ref_id 而没有物理表名；主机身份已由目录
+	// 确认后统一解析实例，不能再用声明表名筛掉合法的主机事件。
+	if values.ModelID == rules.HostModelCode {
 		return processDataHostResource(ctx, scope, values, scope.Facts().Dimensions)
 	}
 	if _, knownK8s := k8sIdentityFields[values.ModelID]; knownK8s {
@@ -384,9 +402,16 @@ func processDataModelInstance(ctx context.Context, scope *enrich.Scope, values m
 // 指标目录已确认模型为主机，不能因 DATA 分类而跳过相同资源的降级边界。
 func processDataHostResource(ctx context.Context, scope *enrich.Scope, values models.ResourceValues, dimensions domain.DimensionMap) (enrich.ProcessorResult, error) {
 	code := rules.HostModelCode
+	if _, provided, valid := dataInstanceIdentity(dimensions, code); provided && !valid {
+		return resourceScenarioResult(scope, values, []enrich.Diagnostic{{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"dimensions.model_id", "dimensions.model_inst_id"}}}, true)
+	}
 	branch := rules.BaseTargetSystemMetric
 	if rules.ScalarProvided(dimensions[rules.FieldNoDataDimension]) {
 		branch = rules.BaseTargetNoData
+	} else if _, hasModel := dimensions[rules.FieldModelID]; hasModel {
+		branch = rules.BaseTargetMonitorSource
+	} else if _, hasInstance := dimensions[rules.FieldModelInstID]; hasInstance {
+		branch = rules.BaseTargetMonitorSource
 	}
 	result, err := basetarget.Enrich(ctx, scope, rules.Classification{Main: rules.MainData, BaseTarget: branch}, models.CWStrategy{ObjectModelCode: &code}, dimensions, bizIDFromResource(values), scope.Facts().SubjectName)
 	if err != nil {

@@ -264,6 +264,8 @@ data_source
 ```text
 bk_obj_id
 bk_inst_id
+bk_host_id
+bk_host_name
 model_id
 model_inst_id
 model_name
@@ -283,6 +285,14 @@ cw_labels
 `dynamic_group_id` 的代码类型为 `[]string`。配置 `resources.dynamic_group` 后，Resource 按租户、
 `model_id` 和 `model_inst_id` 读取当前 Kingeye 写入端的 Redis 投影，将整数 ID 转为十进制字符串；
 未配置或未命中时为空数组。旧迁移设计曾记录 `[]int64`，目前以已实现的输出类型为准。
+
+Resource 对同时含主机 IP 和云区域的 Event 独立补充 `bk_host_id`、`bk_host_name`，接受
+`bk_target_ip` / `bk_target_cloud_id` 与 `ip` / `bk_cloud_id`，云区域 `0` 有效。查询必须命中
+同租户唯一 `cw-Host`；主机名只取真实 `bk_host_name` 属性。主机未命中、响应无效、别名或
+显式身份冲突以及主机名缺失均保留诊断，已有资源结果降为 `partial`，不以展示名代替主机名。
+这两个字段不改变 MySQL 等原对象的模型、实例、业务或展示字段。主机告警自身还应解析实例绑定；
+DATA 的模型由目录确认后统一进入主机解析，不再以声明中的物理表名为前提，目录引用可不带表名。
+上述内容是新丰富结果的生成规则，不回填历史 Event 或 Alert。
 
 ### 6.3 display
 

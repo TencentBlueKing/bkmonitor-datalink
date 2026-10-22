@@ -89,6 +89,9 @@
       "bk_host_id": 2
     },
     "attributes": {
+      "bk_host_id": 2,
+      "bk_host_name": "fixture-host-12",
+      "bk_host_innerip": "192.0.2.12",
       "bk_cloud_id": 0,
       "bk_cloud_name": "default area"
     }
@@ -237,6 +240,16 @@
               "op": "set",
               "path": "$[\"labels\"][\"bk_cloud_name\"]",
               "value": "default area"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_host_id\"]",
+              "value": 2
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_host_name\"]",
+              "value": "fixture-host-12"
             },
             {
               "op": "set",

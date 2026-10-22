@@ -131,6 +131,16 @@
             },
             {
               "op": "set",
+              "path": "$[\"labels\"][\"bk_host_id\"]",
+              "value": 23
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_host_name\"]",
+              "value": "fixture-host-33"
+            },
+            {
+              "op": "set",
               "path": "$[\"labels\"][\"bk_inst_id\"]",
               "value": 23
             },

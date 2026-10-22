@@ -12,6 +12,7 @@ package trace
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,46 @@ type Service struct {
 	wg         sync.WaitGroup
 	ctx        context.Context
 	cancelFunc context.CancelFunc
+}
+
+type instanceIdentity struct {
+	podUID, containerID, hostname, ip string
+	inKubernetes, inDocker            bool
+}
+
+func (identity instanceIdentity) value(serviceName string) string {
+	if podUID := strings.TrimSpace(identity.podUID); podUID != "" {
+		return "k8s_" + podUID
+	}
+	containerID := strings.TrimSpace(identity.containerID)
+	if !identity.inKubernetes && (identity.inDocker || isDockerContainerID(containerID)) {
+		if isDockerContainerID(containerID) {
+			return "docker_" + containerID
+		}
+		if isDockerContainerID(identity.hostname) {
+			return "docker_" + identity.hostname
+		}
+		return ""
+	}
+	if identity.ip != "" {
+		return serviceName + "@" + identity.ip
+	}
+	if identity.hostname != "" {
+		return serviceName + "@" + identity.hostname
+	}
+	return ""
+}
+
+func isDockerContainerID(value string) bool {
+	if len(value) < 12 || len(value) > 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // Type
@@ -84,12 +125,20 @@ func (s *Service) newResource() *resource.Resource {
 		attribute.Key("bk.data.token").String(otlpToken),
 	}
 	hostname, ip := metadata.GetLocalHost()
-	instanceHost := ip
-	if instanceHost == "" {
-		instanceHost = hostname
+	_, dockerErr := os.Stat("/.dockerenv")
+	identity := instanceIdentity{
+		// UQ_POD_UID 由 Kubernetes Downward API 注入；自定义 Docker hostname 时需显式提供 UQ_CONTAINER_ID。
+		podUID:       os.Getenv("UQ_POD_UID"),
+		containerID:  os.Getenv("UQ_CONTAINER_ID"),
+		hostname:     hostname,
+		ip:           ip,
+		inKubernetes: os.Getenv("KUBERNETES_SERVICE_HOST") != "",
+		inDocker:     dockerErr == nil,
 	}
-	if instanceHost != "" {
-		attributes = append(attributes, attribute.String("service.instance.id", ServiceName+"@"+instanceHost))
+	if instanceID := identity.value(ServiceName); instanceID != "" {
+		attributes = append(attributes, attribute.String("service.instance.id", instanceID))
+	} else if identity.inDocker && !identity.inKubernetes {
+		log.Errorf(context.TODO(), "Docker container ID unavailable; set UQ_CONTAINER_ID when hostname is customized")
 	}
 	return resource.NewWithAttributes(semconv.SchemaURL, attributes...)
 }

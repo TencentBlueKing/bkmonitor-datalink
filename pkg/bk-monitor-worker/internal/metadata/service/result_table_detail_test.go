@@ -40,7 +40,12 @@ func setupResultTableDetailMySQL(t *testing.T) *gorm.DB {
 	db.DB().SetMaxIdleConns(1)
 	db.LogMode(false)
 	statements := []string{
-		`CREATE TEMPORARY TABLE metadata_resulttable (table_id VARCHAR(128), default_storage VARCHAR(32), data_label VARCHAR(128), labels BLOB, bk_tenant_id VARCHAR(256), is_deleted BOOLEAN, is_enable BOOLEAN)`,
+		`CREATE TEMPORARY TABLE metadata_resulttable (table_id VARCHAR(128), default_storage VARCHAR(32), data_label VARCHAR(128), labels BLOB, bk_tenant_id VARCHAR(256), schema_type VARCHAR(64), is_deleted BOOLEAN, is_enable BOOLEAN)`,
+		`CREATE TEMPORARY TABLE metadata_datasource (bk_data_id BIGINT, bk_tenant_id VARCHAR(256), etl_config VARCHAR(128))`,
+		`CREATE TEMPORARY TABLE apm_metricdatasource (bk_data_id BIGINT, bk_biz_id INTEGER, app_name VARCHAR(255), result_table_id VARCHAR(128), shared_datasource_id BIGINT NULL)`,
+		`CREATE TEMPORARY TABLE apm_apmapplication (bk_tenant_id VARCHAR(256), bk_biz_id INTEGER, app_name VARCHAR(255), is_deleted BOOLEAN DEFAULT FALSE, is_enabled BOOLEAN DEFAULT TRUE)`,
+		`CREATE TEMPORARY TABLE metadata_resulttablefield (table_id VARCHAR(128), field_name VARCHAR(128), tag VARCHAR(32), bk_tenant_id VARCHAR(256))`,
+		`CREATE TEMPORARY TABLE metadata_timeseriesgroup (table_id VARCHAR(128), time_series_group_id BIGINT, bk_data_id BIGINT, bk_tenant_id VARCHAR(256))`,
 		`CREATE TEMPORARY TABLE metadata_resulttableoption (table_id VARCHAR(128), bk_tenant_id VARCHAR(256), name VARCHAR(128), value TEXT, value_type VARCHAR(32))`,
 		`CREATE TEMPORARY TABLE metadata_datasourceresulttable (table_id VARCHAR(128), bk_data_id BIGINT, bk_tenant_id VARCHAR(256))`,
 		`CREATE TEMPORARY TABLE metadata_datasourceoption (bk_data_id BIGINT, bk_tenant_id VARCHAR(256), name VARCHAR(128), value TEXT)`,

@@ -11,11 +11,11 @@ package trace
 
 import (
 	"context"
-	"github.com/spf13/viper"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -27,6 +27,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // Service
@@ -77,11 +78,19 @@ func (s *Service) newGrpcClient() otlptrace.Client {
 
 // newResource
 func (s *Service) newResource() *resource.Resource {
-	return resource.NewWithAttributes(
-		semconv.SchemaURL,
+	attributes := []attribute.KeyValue{
 		semconv.ServiceNameKey.String(ServiceName),
 		attribute.Key("bk.data.token").String(otlpToken),
-	)
+	}
+	hostname, ip := metadata.GetLocalHost()
+	instanceHost := ip
+	if instanceHost == "" {
+		instanceHost = hostname
+	}
+	if instanceHost != "" {
+		attributes = append(attributes, attribute.String("service.instance.id", ServiceName+"@"+instanceHost))
+	}
+	return resource.NewWithAttributes(semconv.SchemaURL, attributes...)
 }
 
 // Start

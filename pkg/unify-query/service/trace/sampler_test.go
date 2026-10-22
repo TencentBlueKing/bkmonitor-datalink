@@ -7,7 +7,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/spf13/viper"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
@@ -47,5 +50,39 @@ func TestTheSamplerFollowsTheConfiguredMode(t *testing.T) {
 	}
 	if _, err := newSampler("sometimes"); err == nil {
 		t.Fatal("an unknown sampler was accepted")
+	}
+}
+
+// trace.sampler 从配置读入后，Start 构造的 provider 照它采样：写 parent_based 时上游 00 的请求不记录；
+// 不写时与之前一样全部记录。
+func TestTheConfiguredSamplerReachesTheProvider(t *testing.T) {
+	previous := viper.Get(SamplerConfigPath)
+	t.Cleanup(func() {
+		viper.Set(SamplerConfigPath, previous)
+		InitConfig()
+	})
+	traceID, _ := oteltrace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	spanID, _ := oteltrace.SpanIDFromHex("00f067aa0ba902b7")
+	unsampled := oteltrace.ContextWithRemoteSpanContext(context.Background(), oteltrace.NewSpanContext(oteltrace.SpanContextConfig{
+		TraceID: traceID, SpanID: spanID, Remote: true}))
+	for _, testCase := range []struct {
+		configured any
+		recording  bool
+	}{
+		{configured: SamplerParentBased, recording: false},
+		{configured: nil, recording: true},
+	} {
+		viper.Set(SamplerConfigPath, testCase.configured)
+		InitConfig()
+		provider, err := newTracerProvider(tracetest.NewInMemoryExporter(), resource.Empty())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, span := provider.Tracer("t").Start(unsampled, "request")
+		if span.IsRecording() != testCase.recording {
+			t.Errorf("trace.sampler %v: an unsampled upstream's request recording %v, want %v", testCase.configured, span.IsRecording(), testCase.recording)
+		}
+		span.End()
+		_ = provider.Shutdown(context.Background())
 	}
 }

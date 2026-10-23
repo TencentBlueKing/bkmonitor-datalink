@@ -17,19 +17,23 @@ import (
 	"unicode/utf8"
 )
 
+// ScopeType 标识元信息的业务范围类型，允许自定义非空值。
 type ScopeType string
 
+// 预定义范围类型由协议适配器选择。
 const (
 	ScopeAPM     ScopeType = "APM"
 	ScopePlugin  ScopeType = "PLUGIN"
 	ScopeDefault ScopeType = "DEFAULT"
 )
 
+// Scope 由使用方提供稳定名称，用于隔离服务或采集分组。
 type Scope struct {
 	Type ScopeType
 	Name string
 }
 
+// Key 唯一标识鉴权 DataID 和业务范围内的实际输出指标。
 type Key struct {
 	DataID    int32
 	ScopeType ScopeType
@@ -37,10 +41,12 @@ type Key struct {
 	Metric    string
 }
 
+// NewKey 使用最终 DataID、范围和输出指标名构造主键。
 func NewKey(dataID int32, scope Scope, metric string) Key {
 	return Key{DataID: dataID, ScopeType: scope.Type, Scope: scope.Name, Metric: metric}
 }
 
+// 可选字段的存在标记用于区分未知与明确的空值。
 const (
 	PresentUnit uint8 = 1 << iota
 	PresentDescription
@@ -48,6 +54,7 @@ const (
 	PresentUsage
 )
 
+// Value 保存指标原名及语义，Present 指示可选字段是否已知。
 type Value struct {
 	Name, Unit, Description string
 	Type, OriginalType      string
@@ -56,11 +63,13 @@ type Value struct {
 	Present                 uint8
 }
 
+// Entry 将唯一主键与该指标的完整元信息组合为发送条目。
 type Entry struct {
 	Key   Key
 	Value Value
 }
 
+// Observer 接受完整最新值，返回 false 表示本次元信息被拒绝。
 type Observer interface {
 	Observe(Key, Value) bool
 }
@@ -133,6 +142,7 @@ type wireEntry struct {
 	Usage        *string   `json:"__usage"`
 }
 
+// MarshalJSON 将未知可选字段编码为 null。
 func (e Entry) MarshalJSON() ([]byte, error) {
 	k, v := e.Key, e.Value
 	var interval *int64

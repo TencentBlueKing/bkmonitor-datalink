@@ -18,6 +18,7 @@ import (
 // ExportFunc 返回 nil 表示整批成功。实现必须响应 ctx；保留 body 时须自行复制。
 type ExportFunc func(ctx context.Context, body []byte) error
 
+// Exporter 串行发送待发快照，确认后登记 Bloom，失败时恢复未确认项。
 type Exporter struct {
 	store       *Store
 	export      ExportFunc
@@ -34,6 +35,7 @@ type Exporter struct {
 	lastStart   time.Time
 }
 
+// NewExporter 校验配置并创建实例，调用 Start 后才启动后台发送。
 func NewExporter(config Config, export ExportFunc) (*Exporter, error) {
 	if err := config.validate(); err != nil {
 		return nil, err
@@ -45,8 +47,10 @@ func NewExporter(config Config, export ExportFunc) (*Exporter, error) {
 	return &Exporter{store: newStore(config), config: config, export: export, ctx: ctx, cancel: cancel}, nil
 }
 
+// Store 返回可并发观察元信息的存储实例。
 func (e *Exporter) Store() *Store { return e.store }
 
+// Start 幂等启动后台发送，关闭后的实例不可重启。
 func (e *Exporter) Start() error {
 	e.lifecycleMu.Lock()
 	defer e.lifecycleMu.Unlock()
@@ -186,6 +190,7 @@ func (e *Exporter) flush(parent context.Context, final bool) error {
 	return send()
 }
 
+// Stop 拒收新值、取消后台发送，并以独立期限发送最后一轮。
 func (e *Exporter) Stop() error {
 	e.stopOnce.Do(func() {
 		e.lifecycleMu.Lock()

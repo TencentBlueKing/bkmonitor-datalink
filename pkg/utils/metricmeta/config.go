@@ -15,11 +15,13 @@ import (
 	"time"
 )
 
+// ErrClosed 与 ErrUnconfigured 分别表示实例已关闭和缺少发送回调。
 var (
 	ErrClosed       = errors.New("metricmeta: closed")
 	ErrUnconfigured = errors.New("metricmeta: export callback required")
 )
 
+// Config 配置轮转、防抖和出口上限，使用 DefaultConfig 初始化。
 type Config struct {
 	FlushInterval       time.Duration `config:"flush_interval"`
 	FullReportInterval  time.Duration `config:"full_report_interval"`
@@ -40,11 +42,13 @@ type Config struct {
 	BlockedDataIDs      []int32       `config:"blocked_dataids"`
 }
 
+// DataIDLimit 覆盖单个 DataID 的窗口更新配额，零表示禁用。
 type DataIDLimit struct {
 	DataID int32 `config:"dataid"`
 	Limit  int   `config:"max_updates"`
 }
 
+// DefaultConfig 返回两小时去重窗口和有界发送的默认配置。
 func DefaultConfig() Config {
 	return Config{
 		FlushInterval: time.Minute, FullReportInterval: 2 * time.Hour,

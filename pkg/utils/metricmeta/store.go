@@ -38,6 +38,7 @@ type Stats struct {
 	FlushBuckets                            map[float64]uint64
 }
 
+// Store 以有界待发集合和双 Bloom 实现并发观察、去重及防抖。
 type Store struct {
 	mu            sync.Mutex
 	config        Config
@@ -123,6 +124,7 @@ func (s *Store) allowUpdate(dataID int32, now time.Time) string {
 	return ""
 }
 
+// Observe 合并主键的最新值，拒绝原因可从 Stats 的 Dropped 查询。
 func (s *Store) Observe(key Key, value Value) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -261,6 +263,7 @@ func (s *Store) restore(items map[Key]pendingEntry) {
 	}
 }
 
+// Stats 返回不共享内部 map 的统计快照。
 func (s *Store) Stats() Stats {
 	s.mu.Lock()
 	defer s.mu.Unlock()

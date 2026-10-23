@@ -59,7 +59,7 @@ func PublishEvents(events ...define.Event) {
 var SentFunc = beat.Send
 
 func New(conf *confengine.Config) (*Exporter, error) {
-	c := &Config{MetricMetadata: MetricMetadataConfig{Config: metricmeta.DefaultConfig(), InfoRetention: 2 * time.Minute}}
+	c := &Config{MetricMetadata: MetricMetadataConfig{Enabled: true, Config: metricmeta.DefaultConfig(), InfoRetention: 2 * time.Minute}}
 	if err := conf.UnpackChild(define.ConfigFieldExporter, c); err != nil {
 		return nil, err
 	}

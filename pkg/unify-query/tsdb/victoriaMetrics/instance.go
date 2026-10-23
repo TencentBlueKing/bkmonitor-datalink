@@ -159,7 +159,8 @@ func (i *Instance) QuerySeriesSet(ctx context.Context, query *metadata.Query, st
 // while StorageName (cluster name) is the comparison subject; TableID is carried as context.
 // responseVMClusterList contains the storage cluster names returned by the VM API.
 // missing: cluster names present in request but absent from response, with associated RTs and TableIDs.
-func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseVMClusterList []string) {
+// The return value is true only for proven mismatch, never for unknown coverage.
+func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadata.RtDetail, responseVMClusterList []string) bool {
 	// Marshal request detail map as JSON for trace consumption.
 	requestJSON := ""
 	if len(requestRtDetail) > 0 {
@@ -178,9 +179,12 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 		VmRtList    []string
 		TableIDList []string
 	}
+	unknownStorage := false
 	reqClusterToInfo := make(map[string]*clusterRtInfo)
 	for vmRt, detail := range requestRtDetail {
-		if detail.StorageName != "" {
+		if detail.StorageName == "" {
+			unknownStorage = true
+		} else {
 			info, ok := reqClusterToInfo[detail.StorageName]
 			if !ok {
 				info = &clusterRtInfo{}
@@ -193,15 +197,15 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 		}
 	}
 
-	if len(reqClusterToInfo) == 0 {
+	if len(requestRtDetail) == 0 {
 		span.Set("query-storage-status", "match")
-		return
+		return false
 	}
 
 	if responseVMClusterList == nil {
 		span.Set("query-storage-status", "unknown")
 		span.Set("query-storage-reason", "empty_storage_cluster_list")
-		return
+		return false
 	}
 
 	respSet := make(map[string]struct{}, len(responseVMClusterList))
@@ -237,9 +241,27 @@ func spanSetStorageListDiff(span *trace.Span, requestRtDetail map[string]metadat
 		} else {
 			span.Set("query-storage-missing", string(b))
 		}
+	} else if unknownStorage {
+		span.Set("query-storage-status", "unknown")
+		span.Set("query-storage-reason", "unknown_request_storage")
 	} else {
 		span.Set("query-storage-status", "match")
 	}
+	return len(missing) > 0
+}
+
+// A successful response may omit a requested storage even when the backend's
+// isPartial flag is false. Keep its data, but do not present it as complete.
+func markStorageCoveragePartial(ctx context.Context) {
+	const reason = "vm_storage_coverage_mismatch"
+	message := reason
+	if status := metadata.GetStatus(ctx); status != nil && status.Message != "" {
+		if strings.Contains(status.Message, reason) {
+			return
+		}
+		message = status.Message + "; " + reason
+	}
+	metadata.SetStatus(ctx, metadata.QueryTsPartial, message)
 }
 
 func spanSetVmQueryClusterIfPresent(span *trace.Span, prefix string, v *metadata.VmQueryCluster) {
@@ -699,7 +721,11 @@ func (i *Instance) DirectQueryRange(
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
 		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+	mismatch := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+	if err == nil && mismatch {
+		isPartial = true
+		markStorageCoveragePartial(ctx)
+	}
 
 	return result, isPartial, err
 }
@@ -778,7 +804,11 @@ func (i *Instance) DirectQueryWithPartial(
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
 		responseVMClusterList = vmResp.Data.VmQueryCluster.StorageClusterList
 	}
-	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+	mismatch := spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
+	if err == nil && mismatch {
+		isPartial = true
+		markStorageCoveragePartial(ctx)
+	}
 
 	return result, isPartial, err
 }

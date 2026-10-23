@@ -222,3 +222,22 @@ func TestMatrixReuseExceptionalTopologyParity(t *testing.T) {
 		})
 	}
 }
+
+func TestMatrixReusePreservesStorageCoverageMetadata(t *testing.T) {
+	ctx := withTimeGraphQueryStage(initTimeGraphQueryTestEnvironment(), "relation-edge")
+	params := metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+	loader := &timeGraphMatrixLoader{topology: true}
+	calls := 0
+	fetch := func() (pl.Matrix, bool, error) {
+		calls++
+		metadata.SetStatus(ctx, metadata.QueryTsPartial, "vm_storage_coverage_mismatch")
+		return nil, false, nil
+	}
+	for i := 0; i < 2; i++ {
+		_, partial, err := loader.loadPrepared(ctx, &structured.QueryTs{}, "a", params, fetch)
+		require.NoError(t, err)
+		require.True(t, partial)
+	}
+	require.Equal(t, 1, calls)
+	require.Equal(t, "vm_storage_coverage_mismatch", metadata.GetStatus(ctx).Message)
+}

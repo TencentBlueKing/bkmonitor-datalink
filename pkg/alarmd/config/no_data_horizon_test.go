@@ -130,12 +130,13 @@ func TestTheValuesHorizonIsADecimalBareOrQuotedAndATypoIsRefused(t *testing.T) {
 		want    int64
 		absent  bool
 		refused string
+		ignored string
 	}{
 		"bare":              {leaf: "tracking_horizon_seconds: 900", want: 900},
 		"quoted":            {leaf: `tracking_horizon_seconds: "900"`, want: 900},
 		"the smallest":      {leaf: "tracking_horizon_seconds: 1", want: 1},
 		"empty":             {leaf: "tracking_horizon_seconds:", absent: true},
-		"a misspelled key":  {leaf: "tracking_horizon_secs: 900", refused: "tracking_horizon_secs"},
+		"a misspelled key":  {leaf: "tracking_horizon_secs: 900", absent: true, ignored: "tracking_horizon_secs"},
 		"a quoted fraction": {leaf: `tracking_horizon_seconds: "1.5"`, refused: "tracking_horizon_seconds"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -149,6 +150,9 @@ func TestTheValuesHorizonIsADecimalBareOrQuotedAndATypoIsRefused(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("LoadWithRoles(, nil) error = %v", err)
+			}
+			if test.ignored != "" {
+				requireIgnored(t, loaded.UnknownKeys, test.ignored)
 			}
 			got := loaded.PhaseTwo.NoData.TrackingHorizonSeconds
 			if test.absent != (got == nil) || (got != nil && *got != test.want) {

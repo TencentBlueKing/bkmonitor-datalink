@@ -39,17 +39,17 @@ type redisPoolCollector struct {
 func newRedisPoolCollector() *redisPoolCollector {
 	return &redisPoolCollector{
 		size: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "redis_pool_size"),
+			prometheus.BuildFQName("", metricSubsystem, "redis_pool_size"),
 			"Configured Redis connection pool size by client.",
 			[]string{"client"}, nil,
 		),
 		connections: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "redis_pool_connections"),
+			prometheus.BuildFQName("", metricSubsystem, "redis_pool_connections"),
 			"Redis connection pool occupancy by client and connection state.",
 			[]string{"client", "state"}, nil,
 		),
 		waits: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "redis_pool_waits_total"),
+			prometheus.BuildFQName("", metricSubsystem, "redis_pool_waits_total"),
 			"Redis connection pool acquisitions by client and outcome.",
 			[]string{"client", "result"}, nil,
 		),

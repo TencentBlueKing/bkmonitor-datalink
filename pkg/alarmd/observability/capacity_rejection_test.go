@@ -106,7 +106,6 @@ func TestTheCompletionRowCarriesBudgetUsageOnASuccess(t *testing.T) {
 	var output bytes.Buffer
 	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
-		Direction: DirectionInternal,
 		SlotBudgetUsage: &SlotBudgetUsageFacts{
 			StateMutations: 19539, RetainedBytes: 68681728,
 			StateMutationsLimit: 524288, RetainedBytesLimit: 1073741824,
@@ -146,7 +145,6 @@ func TestTheCompletionRowSaysWhichPhaseHeldTheRetainedBytes(t *testing.T) {
 	var output bytes.Buffer
 	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
-		Direction: DirectionInternal,
 		SlotBudgetUsage: &SlotBudgetUsageFacts{
 			RetainedBytes: 68681728, RetainedInputBytes: 1638400,
 			RetainedGapBytes: 32768, RetainedOutputBytes: 67010560,
@@ -174,7 +172,7 @@ func TestTheCompletionRowSaysWhichPhaseHeldTheRetainedBytes(t *testing.T) {
 	// whose zeros are absent has no denominator to be occasional against.
 	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
-		Direction: DirectionInternal, SlotBudgetUsage: &SlotBudgetUsageFacts{RetainedBytes: 4096, RetainedInputBytes: 4096},
+		SlotBudgetUsage: &SlotBudgetUsageFacts{RetainedBytes: 4096, RetainedInputBytes: 4096},
 	})
 	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
 	var quiet map[string]any
@@ -202,7 +200,7 @@ func TestTheCompletionRowSaysWhichGapApplyRefused(t *testing.T) {
 	var output bytes.Buffer
 	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultFailed,
-		Direction: DirectionInternal, ReasonCode: "GAP_APPLY_CONFLICT", GapApplySite: "after_state",
+		ReasonCode: "GAP_APPLY_CONFLICT", GapApplySite: "after_state",
 	})
 	var row map[string]any
 	if err := json.Unmarshal(output.Bytes(), &row); err != nil {
@@ -216,7 +214,6 @@ func TestTheCompletionRowSaysWhichGapApplyRefused(t *testing.T) {
 	output.Reset()
 	renderTo(&output, Observation{
 		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultSuccess,
-		Direction: DirectionInternal,
 	})
 	var healthy map[string]any
 	if err := json.Unmarshal(output.Bytes(), &healthy); err != nil {

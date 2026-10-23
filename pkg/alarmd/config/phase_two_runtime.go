@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -131,6 +132,22 @@ type PhaseTwoSchedulerConfig struct {
 	MaxReplayAge           Duration `yaml:"-"`
 	RetryMinDelay          Duration `yaml:"-"`
 	RetryMaxDelay          Duration `yaml:"-"`
+	// TakeoverDivertFloor is the query budget a round must have left to start
+	// as a normal round when the group has no reading of its own query's
+	// duration - any group whose reads this process has not timed yet - and
+	// its read-hold record keeps none from its previous owner either: a group
+	// just taken over is judged by the previous owner's reading first. A
+	// group that never completes a first read in time never gets a reading,
+	// and stays on the fallback, as does a group whose record keeps no reading
+	// (a group never measured keeps no record). Below it the round goes to replay at
+	// once (scheduler.RecoveryLimits.TakeoverDivertFloor): one taken over late
+	// in its period, or one whose readiness landed at the edge of its deadline
+	// (execution.StartsTooLate). The default is
+	// lookback.RecheckTimeout: the least time the lookback gives a read of a
+	// group's query when it has no reading of that query either, so both
+	// paths assume the same of a query they have not timed. Positive, and
+	// below MaxReplayAge.
+	TakeoverDivertFloor Duration `yaml:"-"`
 }
 
 func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits {
@@ -140,6 +157,7 @@ func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits 
 		MaxQueuedItemsPerQG: config.MaxQueuedItemsPerQG,
 		MaxReplaySlots:      config.MaxReplaySlots, MaxReplayAge: config.MaxReplayAge.Duration(),
 		RetryMinDelay: config.RetryMinDelay.Duration(), RetryMaxDelay: config.RetryMaxDelay.Duration(),
+		TakeoverDivertFloor: config.TakeoverDivertFloor.Duration(),
 	}
 }
 
@@ -147,15 +165,6 @@ type PhaseTwoAccessConfig struct {
 	UQEndpoint string `yaml:"uq_endpoint"`
 	// QuerySource defaults to DefaultQuerySource.
 	QuerySource string `yaml:"query_source"`
-	// SelfMetricsSpaceUID is where this deployment's own metrics can be read
-	// back from. alarmd cannot derive it: which space its scraped metrics land
-	// in is decided outside the process, by whoever wired the collection.
-	//
-	// It is optional and buys exactly one thing -- the trend curves on the
-	// object page. Leaving it empty costs the curves and nothing else, so a new
-	// environment still gets the judgment and the object list with no
-	// configuration at all.
-	SelfMetricsSpaceUID string `yaml:"self_metrics_space_uid"`
 	// MonitorWebBaseURL is where this environment's monitor SaaS is served, and
 	// it turns the object page's strategy references into links.
 	//
@@ -224,6 +233,7 @@ type PhaseTwoRuntimeConfig struct {
 	Coordinator      PhaseTwoCoordinatorConfig      `yaml:"-"`
 	PlatformSettings PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
 	NoData           PhaseTwoNoDataConfig           `yaml:"no_data"`
+	Tracing          PhaseTwoTracingConfig          `yaml:"tracing"`
 }
 
 // PhaseTwoNoDataConfig is the deployment's say over how long one absent group
@@ -254,6 +264,15 @@ type PhaseTwoNoDataConfig struct {
 	// indefinitely"; it is withdrawn in favour of the contract, which gives
 	// every group a finite horizon by default.
 	TrackingHorizonSeconds *int64 `yaml:"tracking_horizon_seconds,omitempty"`
+	// MaxGroups is the deployment's bound on how many groups one Plan's no-data
+	// memory may hold; an item's own no_data_config.max_groups overrides it.
+	// Absent is contract.DefaultMaxNoDataGroups; up to
+	// contract.MaxNoDataGroupsCeiling may be stated, and above the default
+	// startup logs the one-off Redis cost the operator has chosen
+	// (contract.NoDataGroupFirstWriteCost). Over the bound a Plan's memory
+	// write is refused, named and counted, and that strategy detects no
+	// no-data until its groups fall back under it.
+	MaxGroups *int `yaml:"max_groups,omitempty"`
 }
 
 func (c PhaseTwoNoDataConfig) validate() error {
@@ -272,6 +291,10 @@ func (c PhaseTwoNoDataConfig) validate() error {
 		return fmt.Errorf("phase_two.no_data.tracking_horizon_seconds %d must be a positive number of "+
 			"seconds; omit the key to inherit the platform's horizon (the published dynamic value, else one day)",
 			*c.TrackingHorizonSeconds)
+	}
+	if c.MaxGroups != nil && (*c.MaxGroups < 1 || *c.MaxGroups > contract.MaxNoDataGroupsCeiling) {
+		return fmt.Errorf("phase_two.no_data.max_groups %d must be a positive number of groups up to %d; omit the key "+
+			"to take the default", *c.MaxGroups, contract.MaxNoDataGroupsCeiling)
 	}
 	if c.TrackingHorizonSeconds != nil && *c.TrackingHorizonSeconds > contract.MaxNoDataTrackingHorizonSeconds {
 		return fmt.Errorf("phase_two.no_data.tracking_horizon_seconds %d is past the largest horizon a lifetime "+
@@ -335,6 +358,7 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			TickInterval:        Duration(time.Second),
 			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
+			TakeoverDivertFloor: Duration(lookback.RecheckTimeout),
 		},
 		Access: PhaseTwoAccessConfig{
 			// The query source is the product's name on every unify-query
@@ -387,6 +411,9 @@ func (c PhaseTwoRuntimeConfig) validateRoles(selected roles.Set) error {
 	if err := c.NoData.validate(); err != nil {
 		return err
 	}
+	if err := c.Tracing.validate(); err != nil {
+		return err
+	}
 	for name, list := range map[string]*[]string{
 		"host_disable_monitor_states": c.PlatformSettings.HostDisableMonitorStates,
 		"bkdata_cmdb_level_tables":    c.PlatformSettings.BKDataCMDBLevelTables,
@@ -411,17 +438,25 @@ func (c PhaseTwoRuntimeConfig) validateRoles(selected roles.Set) error {
 	if c.Scheduler.ActiveExecutionLimit <= 0 || c.Scheduler.TickInterval.Duration() <= 0 || c.Scheduler.RecoveryLimits().Validate() != nil {
 		return errors.New("phase_two scheduler cadence and recovery limits are invalid")
 	}
+	// The limits accept zero, which turns the diversion off for a scheduler
+	// built without it; a configured process always has a floor.
+	if c.Scheduler.TakeoverDivertFloor.Duration() <= 0 {
+		return errors.New("phase_two scheduler takeover_divert_floor must be positive and below the replay age")
+	}
 	// The compiler freezes completion offsets using this reserve, so Control
 	// needs it even though only Worker performs the downstream UQ request.
 	if c.Access.DownstreamExecutionReserve.Duration() <= 0 {
 		return errors.New("phase_two access downstream_execution_reserve must be positive")
 	}
+	// A control process reads trends through the UQ endpoint when one is
+	// set; its coordinates are checked here rather than failing the start.
+	if selected.Has(roles.Control) && !selected.Has(roles.Worker) && c.Access.UQEndpoint != "" && !c.Access.uqCoordinatesValid() {
+		return errors.New("phase_two access UQ coordinates are invalid: a control process reads trends through uq_endpoint with query_source")
+	}
 	if !selected.Has(roles.Worker) {
 		return nil
 	}
-	endpoint, err := url.Parse(c.Access.UQEndpoint)
-	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" ||
-		!canonicalText(c.Access.UQEndpoint) || !canonicalText(c.Access.QuerySource) ||
+	if !c.Access.uqCoordinatesValid() ||
 		c.Access.MinReadyDelay.Duration() <= 0 || c.Access.DownstreamExecutionReserve.Duration() <= 0 {
 		return errors.New("phase_two access UQ coordinates and min_ready_delay are invalid")
 	}
@@ -492,4 +527,12 @@ func canonicalTextList(values []string) bool {
 		}
 	}
 	return true
+}
+
+// uqCoordinatesValid is whether the UQ endpoint is an absolute http(s) URL
+// and it and the query source are canonical text.
+func (a PhaseTwoAccessConfig) uqCoordinatesValid() bool {
+	endpoint, err := url.Parse(a.UQEndpoint)
+	return err == nil && (endpoint.Scheme == "http" || endpoint.Scheme == "https") && endpoint.Host != "" &&
+		canonicalText(a.UQEndpoint) && canonicalText(a.QuerySource)
 }

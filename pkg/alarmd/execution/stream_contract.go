@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 )
 
@@ -13,6 +14,14 @@ type PlannedPhysicalQueryRef struct {
 }
 
 type InternalExecutionHeader struct {
+	// DecisionTime is the wall clock, in Unix seconds, that the header's
+	// EffectiveTimeFacts were judged at: the moment the worker decides the
+	// Levels' Trigger and Recovery. The effective time gates emission at the
+	// decision, as the platform's own detector and close do, so a Slot
+	// evaluated just before a window ends but decided after it does not
+	// fire an alert the window's close would retire at once. History stays
+	// keyed by the Slot's evaluation time. Set when the facts are bound.
+	DecisionTime            int64
 	ExecutionID             string
 	Contract                FrozenExecutionContractRef
 	DuePlans                []DuePlan
@@ -73,6 +82,12 @@ type SeriesExecutionBatch struct {
 	Dataset       *Dataset
 	Inputs        []NamedInputBinding
 	Delivery      SeriesDelivery
+	// HostOverlays is, for each Plan the series was admitted to whose host
+	// CMDB placed by id with another address, the dimensions the platform's
+	// fuller writes in its place (admission.Facts.HostOverlay). Nil for
+	// every other series. It changes what the alert identity reads, never
+	// the series' own identity.
+	HostOverlays map[PlanIdentity]map[string]json.RawMessage
 }
 
 func (batch SeriesExecutionBatch) Validate(header InternalExecutionHeader) error {
@@ -146,6 +161,16 @@ type ProviderCompletion struct {
 	// EMPTY, as it would had none been returned; these say it was not.
 	Withheld              uint64
 	WithheldOutsideTarget uint64
+	// WithheldKeyMissing is how many of the withheld series every Plan
+	// refused because its key could not be built (target_key_missing), and
+	// IdentitySamples a few of them, their identity fields by name and
+	// value: data that arrived and that the target's identity cannot read.
+	WithheldKeyMissing uint64           `json:",omitempty"`
+	IdentitySamples    []IdentitySample `json:",omitempty"`
+	// NamedOutputs is, for a query that asked for named outputs, every
+	// output aligned to each record it delivered, by RecordID; nil for every
+	// other query. It rides beside the records, never in them.
+	NamedOutputs *NamedOutputRecords `json:",omitempty"`
 }
 
 type ProviderSeriesSink interface {
@@ -248,6 +273,12 @@ type PhysicalQueryCompletion struct {
 	// EMPTY, as it would had none been returned; these say it was not.
 	Withheld              uint64
 	WithheldOutsideTarget uint64
+	// WithheldKeyMissing is how many of the withheld series every Plan
+	// refused because its key could not be built (target_key_missing), and
+	// IdentitySamples a few of them, their identity fields by name and
+	// value: data that arrived and that the target's identity cannot read.
+	WithheldKeyMissing uint64           `json:",omitempty"`
+	IdentitySamples    []IdentitySample `json:",omitempty"`
 	// Range is how long a range the query asked the provider for and how
 	// long a range it accepts, and whether it serves a primary requirement:
 	// the request's facts, from the spec that was sent. Nil from a source
@@ -256,6 +287,9 @@ type PhysicalQueryCompletion struct {
 	// Clock is what the query had of its time from the moment it was sent
 	// and what it used. Nil from a source that does not measure it.
 	Clock *PhysicalQueryClock `json:",omitempty"`
+	// NamedOutputs is the provider completion's (ProviderCompletion), nil
+	// for a query that asked for none.
+	NamedOutputs *NamedOutputRecords `json:",omitempty"`
 }
 
 // PhysicalQueryRange is a physical query's asked and accepted range lengths

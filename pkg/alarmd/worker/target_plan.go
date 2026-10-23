@@ -7,6 +7,7 @@ package worker
 
 import (
 	"context"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -255,19 +256,30 @@ func (stream *streamedExecution) observeTargetResolution(ctx context.Context, du
 		Selectors:       make([]observability.TargetSelectorFacts, 0, len(resolution.Selectors)),
 	}
 	for _, selector := range resolution.Selectors {
+		var named []string
+		for _, member := range selector.DroppedMembers {
+			named = append(named, member.ID+":"+member.Reason)
+		}
 		facts.Selectors = append(facts.Selectors, observability.TargetSelectorFacts{
 			Kind: selector.Kind, ID: selector.ID, State: string(selector.State), Reason: selector.Reason,
 			Kept: selector.Kept, Dropped: selector.Dropped, NodeMissing: selector.NodeMissing, NodeForeign: selector.NodeForeign,
+			DroppedMembers: named,
 		})
 	}
-	result := observability.Result(observability.ResultSuccess)
-	if resolution.State != targetplan.ResolutionComplete {
-		result = observability.ResultDegraded
+	// A resolution short of complete says which, by name: the selectors
+	// beside it carry why and how many (members_dropped, kept and dropped).
+	result, reason := observability.Result(observability.ResultSuccess), observability.ReasonNone
+	switch resolution.State {
+	case targetplan.ResolutionComplete:
+	case targetplan.ResolutionIncomplete:
+		result, reason = observability.ResultDegraded, observability.ReasonCode(contract.ReasonTargetResolutionIncomplete)
+	default:
+		result, reason = observability.ResultDegraded, observability.ReasonCode(contract.ReasonTargetResolutionUnavailable)
 	}
 	stream.coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentAccess, Stage: observability.StageTargetResolved,
-		Operation: observability.Operation(stream.request.Operation), Direction: observability.DirectionInternal,
-		Result: result, TargetResolution: facts,
+		Operation: observability.Operation(stream.request.Operation),
+		Result:    result, ReasonCode: reason, TargetResolution: facts,
 	})
 }
 

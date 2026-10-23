@@ -62,6 +62,10 @@ type ViewStreamFacts struct {
 	// (draining, or a Segment without an object), or one whose lease is
 	// missing or does not agree with its entry.
 	NotSwitched []ViewStreamLagging `json:"not_switched"`
+	// Departed is every Worker that left before installing the current
+	// version -- out of the Leader round's ready set with no stream --
+	// sorted. It is not in Expected and not lagging.
+	Departed []ViewStreamLagging `json:"departed"`
 	// Objects is what the Workers that installed the current version said
 	// about their objects, the Leader's account of it: how many probed and
 	// reported, how many could not, the missing objects summed over those
@@ -154,7 +158,7 @@ func ViewStreamLine(facts *ViewStreamFacts) string {
 	}
 	line := fmt.Sprintf("视图已装载 %d/%d，版本 %d", facts.Installed, facts.Expected, facts.Revision) + viewStreamObjectsWords(facts.Objects)
 	if len(facts.Lagging) == 0 {
-		return line
+		return line + viewStreamDepartedWords(facts.Departed)
 	}
 	named := make([]string, 0, viewStreamLineLagging)
 	for index, lagging := range facts.Lagging {
@@ -174,7 +178,27 @@ func ViewStreamLine(facts *ViewStreamFacts) string {
 	if rest := len(facts.Lagging) - len(named); rest > 0 {
 		line += fmt.Sprintf(" 等 %d 个", len(facts.Lagging))
 	}
-	return line
+	return line + viewStreamDepartedWords(facts.Departed)
+}
+
+// viewStreamDepartedWords names the first two Workers that left and counts
+// them all when there are more.
+func viewStreamDepartedWords(departed []ViewStreamLagging) string {
+	if len(departed) == 0 {
+		return ""
+	}
+	named := make([]string, 0, viewStreamLineLagging)
+	for index, gone := range departed {
+		if index == viewStreamLineLagging {
+			break
+		}
+		named = append(named, gone.WorkerID)
+	}
+	words := "；已离开：" + strings.Join(named, "、")
+	if len(departed) > len(named) {
+		words += fmt.Sprintf(" 等 %d 个", len(departed))
+	}
+	return words
 }
 
 // viewStreamObjectsWords is the objects clause of the first-screen line:

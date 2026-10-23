@@ -24,7 +24,7 @@ func absenceDecided(ctx context.Context, tracker *Tracker, strategy string, slot
 	facts.Outcome = "EVALUATED"
 	tracker.Observe(ctx, observability.Observation{
 		Component: observability.ComponentEvaluation, Stage: observability.StageNoDataDecided,
-		Direction: observability.DirectionInternal, Result: observability.ResultSuccess,
+		Result:        observability.ResultSuccess,
 		Trace:         observability.TraceFields{StrategyID: strategy, BusinessID: "2", EvaluationTime: slot},
 		NoDataAbsence: &facts,
 	})
@@ -345,7 +345,7 @@ func TestTheRowCarriesEachPlansWireFormatFromItsEvaluationLine(t *testing.T) {
 	evaluated := func(strategy, format string) {
 		tracker.Observe(ctx, observability.Observation{
 			Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
-			Result: observability.ResultSuccess, Direction: observability.DirectionInternal,
+			Result:           observability.ResultSuccess,
 			Trace:            observability.TraceFields{StrategyID: strategy, BusinessID: "2", EvaluationTime: 600},
 			OutputWireFormat: format,
 		})
@@ -379,7 +379,7 @@ func TestTheRowCarriesEachPlansWireFormatFromItsEvaluationLine(t *testing.T) {
 func written(ctx context.Context, tracker *Tracker, strategy string, facts observability.NoDataEmissionFacts) {
 	tracker.Observe(ctx, observability.Observation{
 		Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
-		Direction: observability.DirectionInternal, Result: observability.ResultSuccess,
+		Result:         observability.ResultSuccess,
 		Trace:          observability.TraceFields{StrategyID: strategy, BusinessID: "2"},
 		NoDataEmission: &facts,
 	})

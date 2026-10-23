@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func heldQuery(f *fixture) Query {
@@ -207,7 +208,10 @@ func TestAStaleCandidateCannotSupplyEvidenceForANewBaseHold(t *testing.T) {
 	}
 }
 
-func TestAnEarlierReadDoesNotStartBeforeReadinessWithoutTheHold(t *testing.T) {
+// A trial of no hold - half the hold under a step - has the readiness without the hold as its own candidate point,
+// so it starts the group's reread bound before that point, never at it: held to it, it had no time to read. It
+// still reads nothing before its own start.
+func TestATrialOfNoHoldStartsTheRereadBoundBeforeTheReadinessWithoutTheHold(t *testing.T) {
 	f := newFixture(t)
 	f.engine.options.OnEarlierRead = func(EarlierReadEvidence) {}
 	q := heldQuery(f)
@@ -215,18 +219,29 @@ func TestAnEarlierReadDoesNotStartBeforeReadinessWithoutTheHold(t *testing.T) {
 	q.ReadyAt = f.clock.now().Add(68 * time.Second)
 	f.engine.Prepare(q)
 	trial := f.group("qg").prepared
-	// Half of 8 s is less than a step: the trial tries no hold at all, at
-	// the readiness without h and no earlier.
 	baseline := q.ReadyAt.Add(-8 * time.Second)
-	if trial.candidateHold != 0 || !trial.at.Equal(baseline) || !trial.readyAt.Equal(baseline) {
-		t.Fatalf("short hold trial %+v does not try zero at the no-h readiness %v", trial, baseline)
+	if trial.candidateHold != 0 || !trial.readyAt.Equal(baseline) || !trial.at.Equal(baseline.Add(-RecheckTimeout)) {
+		t.Fatalf("short hold trial %+v, want no hold tried at %v from %v", trial, baseline, baseline.Add(-RecheckTimeout))
 	}
-	f.clock.set(baseline.Add(-time.Millisecond))
+	f.clock.set(trial.at.Add(-time.Millisecond))
 	f.engine.StepEarly(context.Background())
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.specs) != 0 {
-		t.Fatal("trial read started before readiness without h")
+		t.Fatal("trial read started before its own start")
+	}
+}
+
+// A trial of a lower hold still starts no earlier than the readiness without the hold.
+func TestATrialOfALowerHoldStartsNoEarlierThanTheReadinessWithoutTheHold(t *testing.T) {
+	f := newFixture(t)
+	f.engine.options.OnEarlierRead = func(EarlierReadEvidence) {}
+	q := heldQuery(f) // a two-minute hold on a one-minute step: the trial tries one minute
+	f.engine.Prepare(q)
+	trial := f.group("qg").prepared
+	baseline := q.ReadyAt.Add(-2 * time.Minute)
+	if trial.candidateHold != time.Minute || trial.at.Before(baseline) {
+		t.Fatalf("lower hold trial %+v starts before the readiness without the hold %v", trial, baseline)
 	}
 }
 
@@ -276,7 +291,7 @@ func TestWholeWindowArrivalPublishesTheFirstConfirmedAgeBeforeTheDeepProbe(t *te
 		if item.Contract != q.Contract || item.ArrivalAge != 210*time.Second || item.Rung != RungNames[0] || !reflect.DeepEqual(item.Buckets, []int64{slot - 60}) {
 			t.Fatalf("whole-window evidence %+v", item)
 		}
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("confirmed arrival waited for the deep probe")
 	}
 	if f.group("qg").probe == nil {
@@ -316,7 +331,7 @@ func TestPartialRevisionAndVanishingValuesDoNotRaiseTheReadHold(t *testing.T) {
 				if got != reason || f.engine.Stats().Sources[sourceLog].ReadHoldIgnored[reason] != 1 {
 					t.Fatalf("ignored=%s want %s", got, reason)
 				}
-			case <-time.After(time.Second):
+			case <-testwait.Expired(t):
 				t.Fatal("ignored evidence was not counted separately")
 			}
 		})
@@ -370,5 +385,34 @@ func TestADecreaseThatOvertakesTheFirstReadIsNamedOvertaken(t *testing.T) {
 	read.Complete(execution.ProviderCompletion{Completeness: execution.CompletenessFull}, nil)
 	if f.early()[EarlyOvertaken] != 1 || f.early()[EarlyAnchorPassed] != 0 {
 		t.Fatalf("hold decrease while first read ran: %+v", f.early())
+	}
+}
+
+// The trial starts as long before the candidate readiness point as a read of the group's query takes: RecheckTimeout
+// for a group whose reads are quick, and the longest of its last whole first reads for one whose reads are slower,
+// so the slow group's trial can still finish in time.
+func TestTheEarlierReadStartsAsEarlyAsTheGroupsReadsTake(t *testing.T) {
+	f := newFixture(t)
+	f.engine.options.OnEarlierRead = func(EarlierReadEvidence) {}
+	q := heldQuery(f)
+	f.engine.Prepare(q)
+	state := f.group("qg")
+	if trial := state.prepared; trial == nil || !trial.at.Equal(trial.readyAt.Add(-RecheckTimeout)) {
+		t.Fatalf("quick group: trial %+v, want it to start RecheckTimeout before its readiness", trial)
+	}
+
+	slow := newFixture(t)
+	slow.engine.options.OnEarlierRead = func(EarlierReadEvidence) {}
+	q = heldQuery(slow)
+	slow.engine.mu.Lock()
+	slowState := slow.engine.groupLocked(q, slow.clock.now())
+	slowState.firstReads.add(8 * time.Second)
+	slow.engine.mu.Unlock()
+	slow.engine.Prepare(q)
+	if trial := slowState.prepared; trial == nil || !trial.at.Equal(trial.readyAt.Add(-8*time.Second)) {
+		t.Fatalf("slow group: trial %+v, want it to start 8 s before its readiness", trial)
+	}
+	if got := slow.engine.rereadTimeout("qg"); got != 8*time.Second {
+		t.Fatalf("the trial's read budget is the same bound: %v", got)
 	}
 }

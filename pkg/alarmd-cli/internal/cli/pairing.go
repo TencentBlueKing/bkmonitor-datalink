@@ -500,6 +500,7 @@ func (a *App) listen(o options) int {
 	l.mu.Lock()
 	result := l.result
 	l.mu.Unlock()
+	a.versionCheck(p)
 	return a.print(map[string]any{"status": "ok", "summary": "Logged in from the authorization page. Run discover with explicit --env.", "session": result})
 }
 

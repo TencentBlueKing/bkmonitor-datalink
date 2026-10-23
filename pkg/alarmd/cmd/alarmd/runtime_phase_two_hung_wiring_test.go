@@ -15,6 +15,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -82,8 +83,8 @@ func startLateTakeoverReplay(t *testing.T) *lateReplay {
 	go func() { ran <- runScheduledOnceSettled(context.Background(), fixture.bundle) }()
 	select {
 	case <-entered:
-	case <-time.After(lifecycleWatchdog):
-		t.Fatalf("worker 1 sent no query for the taken-over Slot within %s", lifecycleWatchdog)
+	case <-testwait.Expired(t):
+		t.Fatal("worker 1 sent no query for the taken-over Slot before the test's deadline")
 	}
 	return &lateReplay{fixture: fixture, evaluation: evaluation, frozenDeadline: frozenDeadline, arrival: arrival,
 		release: release, ran: ran}
@@ -151,6 +152,19 @@ func (fixture *lifecycleFixture) hungFacts() []observability.ExecutionHungFacts 
 	return facts
 }
 
+// hungObservations are the execution_hung observations the fixture saw.
+func (fixture *lifecycleFixture) hungObservations() []observability.Observation {
+	fixture.observationsMu.Lock()
+	defer fixture.observationsMu.Unlock()
+	var hung []observability.Observation
+	for _, observation := range fixture.observations {
+		if observation.ExecutionHung != nil {
+			hung = append(hung, observation)
+		}
+	}
+	return hung
+}
+
 // replayedAfterTakeover says whether the Slot at evaluation was classified a
 // replay of a Slot due before the takeover.
 func (fixture *lifecycleFixture) replayedAfterTakeover(evaluation int64) bool {
@@ -173,8 +187,8 @@ func waitScheduled(t *testing.T, ran <-chan error) {
 		if err != nil {
 			t.Fatalf("the dispatcher pass returned %v", err)
 		}
-	case <-time.After(lifecycleWatchdog):
-		t.Fatalf("the dispatcher pass did not return within %s", lifecycleWatchdog)
+	case <-testwait.Expired(t):
+		t.Fatal("the dispatcher pass did not return before the test's deadline")
 	}
 }
 
@@ -245,7 +259,7 @@ func TestATakeoverReplayHungPastItsOwnDeadlineIsDeclined(t *testing.T) {
 		t.Fatal("a replay hung a minute past its own deadline is still a current runner")
 	}
 	var declined []observability.ExecutionHungFacts
-	for deadline := time.Now().Add(lifecycleWatchdog); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+	for deadline := testwait.Deadline(t); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		declined = declined[:0]
 		for _, facts := range fixture.hungFacts() {
 			if facts.Outcome == observability.ExecutionHungDeclined {
@@ -258,6 +272,16 @@ func TestATakeoverReplayHungPastItsOwnDeadlineIsDeclined(t *testing.T) {
 	}
 	if len(declined) != 1 {
 		t.Fatalf("declined hung executions %+v, want the one replay", declined)
+	}
+	// The decline names itself, where it read reason_not_reported.
+	for _, observation := range fixture.hungObservations() {
+		if observation.ExecutionHung.Outcome != observability.ExecutionHungDeclined {
+			continue
+		}
+		if normalized := observability.NormalizeObservation(observation); normalized.Result != observability.ResultFailed ||
+			normalized.ReasonCode != observability.ReasonExecutionHung {
+			t.Fatalf("the decline reads %s %s, want failed EXECUTION_HUNG", normalized.Result, normalized.ReasonCode)
+		}
 	}
 	if declined[0].DeadlineUnixMilli != ownDeadline.UnixMilli() || declined[0].Stage != execution.SlotStageQuery {
 		t.Fatalf("the decline names deadline %d in stage %q, want the replay's own deadline %d (its arrival %d plus "+
@@ -322,8 +346,8 @@ func TestAnExecutionInsideItsCommitIsNotDeclinedAndItsStateLands(t *testing.T) {
 	go func() { ran <- runScheduledOnceSettled(context.Background(), fixture.bundle) }()
 	select {
 	case <-entered:
-	case <-time.After(lifecycleWatchdog):
-		t.Fatalf("round 1 wrote no output within %s", lifecycleWatchdog)
+	case <-testwait.Expired(t):
+		t.Fatal("round 1 wrote no output before the test's deadline")
 	}
 	evaluation, frozenDeadline, found := fixture.unfinishedSlot()
 	if !found || evaluation != fixture.evaluationAt(1) {
@@ -418,7 +442,7 @@ sweep:
 				t.Fatalf("worker 1's pass: %v", err)
 			}
 			break sweep
-		case <-time.After(time.Millisecond):
+		case <-time.After(time.Millisecond): // fixed-wait: the sweep interval of a loop that ends on the pass returning, not a bound
 			fixture.bundle.declineHungExecutions(now)
 			sweeps++
 		}
@@ -524,7 +548,7 @@ func (fixture *lifecycleFixture) addSecondStrategy() {
 			t.Fatal(err)
 		}
 	}
-	for deadline := time.Now().Add(lifecycleWatchdog); ; time.Sleep(20 * time.Millisecond) {
+	for deadline := testwait.Deadline(fixture.t); ; time.Sleep(20 * time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		if err := fixture.bundle.refreshAndReconcile(ctx, true); err != nil {
 			t.Fatalf("refresh after the second strategy: %v", err)
 		}
@@ -539,7 +563,7 @@ func (fixture *lifecycleFixture) addSecondStrategy() {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the bundle owns %v %s after the second strategy, want two Query Groups", groups, lifecycleWatchdog)
+			t.Fatalf("the bundle owns %v at the test's deadline after the second strategy, want two Query Groups", groups)
 		}
 	}
 }

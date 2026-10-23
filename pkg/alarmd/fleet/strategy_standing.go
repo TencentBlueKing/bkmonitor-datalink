@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -617,12 +618,48 @@ func includeWordsOf(raw string) (words map[string]bool, unknown string) {
 	return words, unknown
 }
 
+// forwardedDeadlineHeader carries, on a request a follower handed to the
+// Leader, how many milliseconds the Leader has to answer it in: what the
+// reader allowed, less the hop back. HTTP carries no deadline of its own, so
+// without it the Leader would answer by none and the reader's wait would
+// end first.
+const forwardedDeadlineHeader = "X-Alarmd-Forwarded-Deadline-Ms"
+
+// ForwardedDeadlineHeader is the header a follower's hop names the Leader's
+// time to answer in.
+func ForwardedDeadlineHeader() string { return forwardedDeadlineHeader }
+
+// WithForwardedDeadline gives a request a follower handed to the Leader the
+// deadline its hop carries (forwardedDeadlineHeader). A request that carries
+// none, or one not handed on, keeps its own context.
+func WithForwardedDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get(forwardedHeader) != "" {
+			if millis, err := strconv.ParseInt(request.Header.Get(forwardedDeadlineHeader), 10, 64); err == nil && millis > 0 {
+				ctx, cancel := context.WithTimeout(request.Context(), time.Duration(millis)*time.Millisecond)
+				defer cancel()
+				request = request.WithContext(ctx)
+			}
+		}
+		next.ServeHTTP(response, request)
+	})
+}
+
 // forwardedHeader marks a request a follower handed to the Leader, so it
 // is answered or refused there and never handed on again.
 const forwardedHeader = "X-Alarmd-Forwarded"
 
 // ForwardedHeader is the header's name, for the runtime's forwarder.
 func ForwardedHeader() string { return forwardedHeader }
+
+// forwardTokenHeader carries the Leader's internal token on a hop: what a
+// restricted listener, which refuses these routes to the public, admits a
+// peer by.
+const forwardTokenHeader = "X-Alarmd-Forward-Token"
+
+// ForwardTokenHeader is that header's name, for the forwarder and the
+// listener that admits it.
+func ForwardTokenHeader() string { return forwardTokenHeader }
 
 // serveStrategyList is GET /api/strategies[?state=&action=&limit=]: one
 // line per strategy over the fleet's view, most severe first, with the

@@ -173,13 +173,17 @@ type RuntimeCapacityFacts struct {
 	ReplayAgeNS               int64  `json:"replay_age_ns"`
 	RetryMinNS                int64  `json:"retry_min_ns"`
 	RetryMaxNS                int64  `json:"retry_max_ns"`
-	SequencerReservations     int    `json:"sequencer_reservations"`
-	Series                    uint64 `json:"series"`
-	RetainedBytes             uint64 `json:"retained_bytes"`
-	StateMutations            uint64 `json:"state_mutations"`
-	Events                    uint64 `json:"events"`
-	GapMutations              uint64 `json:"gap_mutations"`
-	GapFacts                  uint64 `json:"gap_facts"`
+	// TakeoverDivertNS is the least budget a round taken over before its
+	// deadline needs to run as normal when its group has no reading of its
+	// own query (scheduler.RecoveryLimits.TakeoverDivertFloor).
+	TakeoverDivertNS      int64  `json:"takeover_divert_ns"`
+	SequencerReservations int    `json:"sequencer_reservations"`
+	Series                uint64 `json:"series"`
+	RetainedBytes         uint64 `json:"retained_bytes"`
+	StateMutations        uint64 `json:"state_mutations"`
+	Events                uint64 `json:"events"`
+	GapMutations          uint64 `json:"gap_mutations"`
+	GapFacts              uint64 `json:"gap_facts"`
 	// SlotStateMutations and SlotGapMutations are the derived per-Slot caps:
 	// the smaller of the process budget and what StateApplyChunks Store calls
 	// of StoreMaxItems can carry. A Slot above its cap completes UNAVAILABLE.

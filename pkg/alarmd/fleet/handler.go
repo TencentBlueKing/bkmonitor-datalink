@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -257,6 +258,9 @@ type HealthResponse struct {
 	// values file on a machine the reader could not reach. Per strategy, the
 	// frozen format is on the directory route's effective_output.
 	OutputProtocols []OutputProtocolGroup `json:"output_protocols"`
+	// Tracings is which span export each counted replica runs, grouped the
+	// same way: on with the collector's host, or off and why.
+	Tracings []TracingGroup `json:"tracings"`
 	// Retentions is which retention lengths each counted replica runs with,
 	// and their inputs, grouped the same way: what runtime.get answers on
 	// the CLI channel, for a deployment read only through its pages.
@@ -459,6 +463,20 @@ type Summary struct {
 	// cause to carry a reason of either the coverage class or the retryable
 	// class, and those need opposite responses.
 	ByCauseReason Distribution `json:"by_cause_reason"`
+	// ByCauseReasonPhysical, ByCauseReasonCarried, ByCauseReasonDerived and
+	// ByCauseReasonUnknown split ByCauseReason by whose the reason is
+	// (Anomaly.CauseOrigin): physical for what the round met itself, carried
+	// for a stored guard's reason repeated on it (with or without a recorded
+	// origin), derived for alarmd's own word a round is filed under
+	// (GAP_GUARD_WARMING, SNAPSHOT_CORRUPT, RESOURCE_SHARE_EXCEEDED), unknown for a row that never
+	// learned it - restored from a summary, or from a replica on an older
+	// build. Unknown is never counted as physical, so QUERY_TIMEOUT under
+	// physical is this deployment's own timeouts alone. The four add up to
+	// ByCauseReason.
+	ByCauseReasonPhysical Distribution `json:"by_cause_reason_physical"`
+	ByCauseReasonCarried  Distribution `json:"by_cause_reason_carried"`
+	ByCauseReasonDerived  Distribution `json:"by_cause_reason_derived"`
+	ByCauseReasonUnknown  Distribution `json:"by_cause_reason_unknown"`
 	// ByBusiness is the unit someone can act on. The rows are objects, which are
 	// alarmd's own identities: an operator cannot look one up, cannot mention one
 	// to the person who configured the strategy, and cannot tell from a list of
@@ -525,6 +543,12 @@ type Summary struct {
 	// likely cause of all of them, which is an unmeasured guess pointed at a
 	// population that contains both.
 	WindowSeriesChurn int `json:"window_series_churn"`
+	// SparserThanWindow is how many objects in the list are series that
+	// report less often than their window has positions
+	// (HistoryCoverage.SparserThanWindow). Never part of WindowNeverFills:
+	// their windows do not fill, but their recovery is decided, so "an alert
+	// can be raised and cannot clear itself" is not true of them.
+	SparserThanWindow int `json:"sparser_than_window"`
 }
 
 // momentOrNil drops a zero time rather than sending it.
@@ -594,7 +618,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	failures := map[string]int{}
 	codes := map[string]int{}
 	details := map[string]int{}
-	causeReasons := map[string]int{}
+	causeReasons := newCauseReasonCounts()
 	businesses := map[string]int{}
 	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
@@ -602,6 +626,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	ours, external, unattributed, oursUnclassified := 0, 0, 0, 0
 	neverFills := 0
 	seriesChurn := 0
+	sparserThanWindow := 0
 	onset := Onset{}
 	for _, anomaly := range anomalies {
 		if anomaly.Stalled {
@@ -647,7 +672,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			// HISTORY_GAPPED: data that arrived and then had holes, told back
 			// to the reader as "this series does not live long enough to fill
 			// its window", which is a different thing and sends them nowhere.
-			if windowNeverFillsReason(anomaly.CauseReason) && anomaly.Coverage.Persistent() {
+			if windowNeverFillsReason(anomaly.CauseReason) && anomaly.Coverage.Persistent() && !anomaly.Coverage.SparserThanWindow() {
 				neverFills++
 				// A subset of a subset, and the only one of these with a named
 				// owner. Persistent() says the shortfall will not resolve; it is
@@ -674,6 +699,9 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			// deployment's own -- under a heading saying they are not.
 			unattributed++
 		}
+		if anomaly.Finding.Check == CheckSeriesSparserThanWindow {
+			sparserThanWindow++
+		}
 		kinds[anomaly.Kind]++
 		if anomaly.ReasonCode != "" {
 			reasons[anomaly.ReasonCode]++
@@ -687,9 +715,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		if anomaly.Failure != nil && anomaly.Failure.Detail != "" {
 			details[anomaly.Failure.Detail]++
 		}
-		if anomaly.CauseReason != "" {
-			causeReasons[anomaly.CauseReason]++
-		}
+		causeReasons.add(anomaly)
 		replicas[anomaly.Replica]++
 		// Counted per object, not per reference: one object naming the same
 		// business twice must not make that business look twice as affected.
@@ -709,12 +735,14 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	}
 	return Summary{
 		ByKind: rank(kinds), ByReason: rank(reasons),
-		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details), ByCauseReason: rank(causeReasons),
+		ByFailure: rank(failures), ByFailureCode: rank(codes), ByFailureDetail: rank(details), ByCauseReason: rank(causeReasons.All),
+		ByCauseReasonPhysical: rank(causeReasons.Physical), ByCauseReasonCarried: rank(causeReasons.Carried),
+		ByCauseReasonDerived: rank(causeReasons.Derived), ByCauseReasonUnknown: rank(causeReasons.Unknown),
 		ByBusiness: rank(businesses), Strategies: len(strategies),
 		ByReplica: rank(replicas), Stalled: stalled, Onset: onset,
 		Ours: ours, External: external, Unattributed: unattributed,
 		OursUnclassified: oursUnclassified, WindowNeverFills: neverFills,
-		WindowSeriesChurn: seriesChurn,
+		WindowSeriesChurn: seriesChurn, SparserThanWindow: sparserThanWindow,
 	}
 }
 
@@ -937,7 +965,7 @@ func NewHandler(
 	windows *WindowStore,
 	now func() time.Time,
 	stallAfter time.Duration,
-	series RangeProvider,
+	series *Trends,
 	diagnostics *DiagnosticStore,
 	strategyLinkBase string,
 ) (http.Handler, error) {
@@ -954,6 +982,9 @@ func NewHandler(
 	mux.HandleFunc("/api/objects/", func(response http.ResponseWriter, request *http.Request) {
 		objectDetail(response, request, service, now, stallAfter, diagnostics)
 	})
+	mux.HandleFunc("/api/outages", func(response http.ResponseWriter, request *http.Request) {
+		storeOutages(response, request, service, now, stallAfter)
+	})
 	if windows != nil {
 		mux.HandleFunc("/api/windows", func(response http.ResponseWriter, request *http.Request) {
 			observationWindows(response, request, windows, now)
@@ -964,6 +995,27 @@ func NewHandler(
 			seriesRange(response, request, series, now)
 		})
 	}
+	// The overview is one computation per OverviewMaxAge whoever asks; it
+	// runs on its own context, since the callers it answers share it.
+	flows := newOverviewFlows()
+	overviews := newOverviewCache(now, func() Overview {
+		ctx, cancel := context.WithTimeout(context.Background(), overviewComputeTimeout)
+		defer cancel()
+		view, part := service.Summarized(ctx, stallAfter)
+		at := now()
+		running, known := RunningStrategiesOf(&view, part)
+		health := healthOf(&view, part, at)
+		overview := overviewOf(health, running, known, at)
+		overview.CauseReasons = overviewCauseReasonsOf(part)
+		overview.StoreOutages = StoreOutagesOverview(&view, part, at, stallAfter)
+		// The cache computes one at a time, so the readings it keeps are
+		// touched by one computation at once.
+		flows.apply(&overview, health, at)
+		return overview
+	})
+	mux.HandleFunc("/api/overview", func(response http.ResponseWriter, request *http.Request) {
+		writeJSON(response, http.StatusOK, overviews.get())
+	})
 	mux.HandleFunc("/api/health", func(response http.ResponseWriter, request *http.Request) {
 		// From the replicas' summaries: what the rows give is the parts they
 		// add up to, and a snapshot is read only for a replica that published
@@ -1012,6 +1064,7 @@ func healthOf(view *View, part ReplicaPart, at time.Time) HealthResponse {
 		Coverage: view.Coverage, Handover: handoverOf(view.Coverage), PerReplica: view.PerReplica,
 		PublishedVersion: view.PublishedVersion, Workers: view.Workers, Builds: view.Builds,
 		OutputProtocols: outputProtocolList(view.OutputProtocols),
+		Tracings:        tracingList(view.Tracings),
 		Retentions:      retentionList(view.Retentions),
 		OutputPath:      OutputPathOf(view),
 		Degradations:    degradationList(view.Degradations),
@@ -1594,7 +1647,7 @@ func writeJSON(response http.ResponseWriter, status int, body any) {
 func seriesRange(
 	response http.ResponseWriter,
 	request *http.Request,
-	provider RangeProvider,
+	trends *Trends,
 	now func() time.Time,
 ) {
 	// The window is chosen from a fixed list rather than sent as a duration: a
@@ -1606,21 +1659,7 @@ func seriesRange(
 			map[string]string{"error": "unknown window " + requested})
 		return
 	}
-	at := now()
-	writeJSON(response, http.StatusOK, seriesResponse{
-		Window: window.Key, WindowChoice: seriesWindowKeys(),
-		StartUnixMs: at.Add(-window.Duration).UnixMilli(), EndUnixMs: at.UnixMilli(),
-		StepSeconds: int(window.Step / time.Second),
-		Series:      collectSeries(request.Context(), provider, window, at),
-	})
-}
-
-func seriesWindowKeys() []string {
-	keys := make([]string, 0, len(seriesWindows))
-	for _, window := range seriesWindows {
-		keys = append(keys, window.Key)
-	}
-	return keys
+	writeJSON(response, http.StatusOK, trends.read(request.Context(), window, now()))
 }
 
 // objectRecords reads what a window recorded, when the caller asked for it.

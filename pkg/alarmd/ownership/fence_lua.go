@@ -11,15 +11,17 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 // ContentSwitchMargin is how long after the current lease deadline a pending
-// content scope takes effect. It covers the last batch a worker may have
-// admitted before it read the pending change, and the clock spread between
-// the leader that wrote it, the worker that reads it and the Redis that
-// compares it. It is a system constant, not a setting: nothing an operator
-// knows would make a better number than the batch bound the worker enforces.
-const ContentSwitchMargin = 5 * time.Second
+// content scope takes effect. It covers the clock spread between the leader
+// that wrote it, the worker that reads it and the Redis that compares it -
+// the one bound alarmd assumes between its clocks, execution.MaxClockSkew -
+// within which the last batch a worker admitted before it read the change
+// also lands. It is a system constant, not a setting.
+const ContentSwitchMargin = execution.MaxClockSkew
 
 // FenceLua is the one Lua definition of the owner fence, prepended to every
 // script that decides whether a writer may act. Six scripts used to carry

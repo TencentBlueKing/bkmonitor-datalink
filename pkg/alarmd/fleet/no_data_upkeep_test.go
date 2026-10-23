@@ -29,7 +29,7 @@ func memoryRenewed(ctx context.Context, tracker *Tracker, strategy string, renew
 	}
 	tracker.Observe(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageNoDataMemoryRenewed,
-		Direction: observability.DirectionInternal, Result: result, ReasonCode: code,
+		Result: result, ReasonCode: code,
 		Trace:               observability.TraceFields{StrategyID: strategy, BusinessID: "2"},
 		NoDataMemoryRenewal: &observability.NoDataMemoryRenewalFacts{Renewed: renewed, TTLSeconds: ttl},
 	})
@@ -40,7 +40,7 @@ func memoryRenewed(ctx context.Context, tracker *Tracker, strategy string, renew
 func memoryRead(ctx context.Context, tracker *Tracker, strategy, representation string) {
 	tracker.Observe(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageNoDataMemoryRead,
-		Direction: observability.DirectionInternal, Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone,
+		Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone,
 		Trace:            observability.TraceFields{StrategyID: strategy, BusinessID: "2"},
 		NoDataMemoryRead: &observability.NoDataMemoryReadFacts{Representation: representation},
 	})

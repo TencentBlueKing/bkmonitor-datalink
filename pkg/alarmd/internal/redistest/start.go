@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -18,17 +19,9 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
-)
 
-// ReadyWithin is how long a started server may take to answer.
-//
-// Generous on purpose. Under `go test ./...` dozens of packages start their
-// own server at once, and a window that is ample on an idle machine is not on
-// a loaded one: a few seconds turned a whole-tree pass into a function of
-// load rather than of the code. A healthy server answers in milliseconds, so
-// the budget costs the normal path nothing; it only matters when the server
-// cannot start, and that is read from the server's own output.
-const ReadyWithin = 30 * time.Second
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
+)
 
 // startAttempts is how many free ports Start tries. A port is found free and
 // released before the server binds it, so another test can take it in
@@ -50,18 +43,21 @@ type Instance struct {
 	command *exec.Cmd
 	exited  chan struct{}
 	output  *lockedOutput
+	// recorded is the server's file in the orphan registry, removed when
+	// it stops (orphans.go).
+	recorded string
 }
 
 // Start starts a redis-server for the test on a free local port and returns
-// once it answers, which is within ReadyWithin or the test fails with the
-// server's output. extra is appended to the arguments every server here
+// once it answers, which is by the test's deadline (testwait.Deadline) or the
+// test fails with the server's output. extra is appended to the arguments every server here
 // takes: no snapshot, no append-only file, its own directory, warnings only.
 //
 // Which redis-server, and whether a missing one skips or fails, is Server's.
 //
 // The readiness check asks without credentials, so a server started with
 // --requirepass or an ACL never reads as ready here and the test waits out
-// ReadyWithin. Start it open and set the password with CONFIG SET once it
+// its deadline. Start it open and set the password with CONFIG SET once it
 // answers, as the startup-wait test does.
 func Start(tb testing.TB, extra ...string) *Instance {
 	tb.Helper()
@@ -69,6 +65,7 @@ func Start(tb testing.TB, extra ...string) *Instance {
 	if executable == "" {
 		return nil
 	}
+	reapOrphansOnce(tb)
 	var reasons []string
 	for attempt := 0; attempt < startAttempts; attempt++ {
 		address, err := freeAddress()
@@ -109,6 +106,7 @@ func TryStartAt(tb testing.TB, address string, extra ...string) (*Instance, stri
 	if executable == "" {
 		return nil, "no redis-server"
 	}
+	reapOrphansOnce(tb)
 	instance := newInstance(tb, executable, address, extra)
 	if reason := instance.start(); reason != "" {
 		return nil, reason
@@ -189,6 +187,7 @@ func (instance *Instance) start() string {
 	arguments := append([]string{"--bind", host, "--port", port, "--save", "", "--appendonly", "no",
 		"--dir", instance.dir, "--daemonize", "no", "--loglevel", "warning"}, instance.extra...)
 	command := exec.Command(instance.executable, arguments...)
+	lifeline(command)
 	output := &lockedOutput{}
 	command.Stdout, command.Stderr = output, output
 	if err := command.Start(); err != nil {
@@ -199,20 +198,25 @@ func (instance *Instance) start() string {
 		_ = command.Wait()
 		close(exited)
 	}()
+	recorded := register(instance.tb, registration{Owner: os.Getpid(), Server: command.Process.Pid, Addr: instance.Addr, Dir: resolved})
 	instance.mu.Lock()
-	instance.command, instance.exited, instance.output = command, exited, output
+	instance.command, instance.exited, instance.output, instance.recorded = command, exited, output, recorded
 	instance.mu.Unlock()
 
 	probe := redis.NewClient(&redis.Options{Addr: instance.Addr, MaxRetries: -1,
 		DialTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second})
 	defer probe.Close()
-	for deadline := time.Now().Add(ReadyWithin); time.Now().Before(deadline); {
+	// Until the test's deadline, not a window of its own: under `go test ./...`
+	// dozens of packages start their own server at once, and any window ample
+	// on an idle machine is not on a loaded one. A healthy server answers in
+	// milliseconds, and one that cannot start says so in its own output.
+	for deadline := testwait.Deadline(instance.tb); time.Now().Before(deadline); {
 		select {
 		case <-exited:
 			return fmt.Sprintf("redis-server on %s exited before it answered: %s", instance.Addr, output.String())
 		default:
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second) // fixed-wait: one probe's bound; the loop asks again until the test's deadline
 		err := probe.Ping(ctx).Err()
 		if err == nil {
 			serving, dirErr := probe.ConfigGet(ctx, "dir").Result()
@@ -224,10 +228,10 @@ func (instance *Instance) start() string {
 			return fmt.Sprintf("%s is served from %v, not this instance's %q", instance.Addr, serving, resolved)
 		}
 		cancel()
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	instance.Stop()
-	return fmt.Sprintf("redis-server on %s did not answer within %s: %s", instance.Addr, ReadyWithin, output.String())
+	return fmt.Sprintf("redis-server on %s did not answer by the test's deadline: %s", instance.Addr, output.String())
 }
 
 func (instance *Instance) stopLocked() {
@@ -241,6 +245,10 @@ func (instance *Instance) stopLocked() {
 		<-instance.exited
 	}
 	instance.command = nil
+	if instance.recorded != "" {
+		_ = os.Remove(instance.recorded)
+		instance.recorded = ""
+	}
 }
 
 func freeAddress() (string, error) {

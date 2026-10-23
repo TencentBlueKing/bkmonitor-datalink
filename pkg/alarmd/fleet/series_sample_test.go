@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/go-redis/redis/v8"
 )
@@ -143,7 +144,7 @@ func TestSeriesSampleSlowStoreDoesNotBackpressureReservation(t *testing.T) {
 		r.Commit()
 		select {
 		case <-client.started:
-		case <-time.After(time.Second):
+		case <-testwait.Expired(t):
 			t.Fatal("shared writer did not drain")
 		}
 		c.Slot++
@@ -158,7 +159,7 @@ func TestSeriesSampleSlowStoreDoesNotBackpressureReservation(t *testing.T) {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(time.Second):
+		case <-testwait.Expired(t):
 			t.Fatal("writer ignored cancellation")
 		}
 		if store.Health().SampleFailed != 1 {

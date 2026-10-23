@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
@@ -115,7 +116,7 @@ func TestMetricsRemainAvailableBeforeReady(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("metrics status = %d, want %d", response.Code, http.StatusOK)
 	}
-	if !strings.Contains(response.Body.String(), "bkmonitor_alarmd_build_info") {
+	if !strings.Contains(response.Body.String(), "alarmd_build_info") {
 		t.Fatalf("metrics response does not contain build info:\n%s", response.Body.String())
 	}
 }
@@ -152,7 +153,7 @@ func TestRunStopsWhenContextIsCanceled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run() after cancellation = %v, want nil", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("Run() did not stop after context cancellation")
 	}
 	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
@@ -197,7 +198,7 @@ func TestRunForceClosesConnectionsAfterShutdownTimeout(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("blocking request did not reach handler")
 	}
 	cancel()
@@ -207,7 +208,7 @@ func TestRunForceClosesConnectionsAfterShutdownTimeout(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "shutdown HTTP") {
 			t.Fatalf("Run() after shutdown timeout = %v, want shutdown error", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("Run() did not return after forced close")
 	}
 
@@ -216,7 +217,7 @@ func TestRunForceClosesConnectionsAfterShutdownTimeout(t *testing.T) {
 		if err == nil {
 			t.Fatal("request unexpectedly completed without forced connection close")
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("active connection was not force closed")
 	}
 }
@@ -224,20 +225,7 @@ func TestRunForceClosesConnectionsAfterShutdownTimeout(t *testing.T) {
 func waitUntilReady(t *testing.T, server *Server) {
 	t.Helper()
 
-	deadline := time.NewTimer(2 * time.Second)
-	defer deadline.Stop()
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if server.ready.Load() {
-				return
-			}
-		case <-deadline.C:
-			t.Fatal("server did not become ready")
-		}
-	}
+	testwait.Until(t, "the server becoming ready", server.ready.Load)
 }
 
 func assertStatus(t *testing.T, handler http.Handler, path string, want int) {

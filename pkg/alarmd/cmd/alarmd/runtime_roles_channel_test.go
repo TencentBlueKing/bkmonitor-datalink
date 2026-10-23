@@ -21,6 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/cliauth"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -322,7 +323,7 @@ func TestSplitChannelReadsAuthlessWorkerThroughRegisteredGRPC(t *testing.T) {
 	cfg := roleChannelAuthConfig(address)
 	// The existing browser grant helper uses this deployment origin.
 	cfg.CLI.PublicBaseURL = "https://ob.example/alarmd/"
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithCancel(testwait.Context(t))
 	defer cancel()
 	store, err := ownership.NewRedisStoreWithClient(client, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "ownership"))
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,10 +51,19 @@ type productionReadHolds struct {
 	// sources indexes the owned groups by the data they read
 	// (productionReadHoldGroup.querySource), so a new group's seed walks its
 	// peers and not every owned group.
-	sources     map[string]map[execution.QueryGroupIdentity]struct{}
+	sources map[string]map[execution.QueryGroupIdentity]struct{}
+	// limitCuts is the hold each group was last logged cut to by a limit
+	// configured under it, so a cut is logged once per group. Its own lock:
+	// a cut is told with the controller's group lock held.
+	limitCutsMu sync.Mutex
+	limitCuts   map[execution.QueryGroupIdentity]time.Duration
 	nextRenew   time.Time
 	transitions atomic.Uint64
-	overtaken   atomic.Uint64
+	// queryDuration is the lookback's reading of each group's query
+	// duration, for the controller to keep in its record; nil until the
+	// lookback is built, and in a process without one.
+	queryDuration atomic.Pointer[func(execution.QueryGroupIdentity) (time.Duration, bool)]
+	overtaken     atomic.Uint64
 	// links counts the predecessor links a prepare skipped, by why
 	// (self_link, invalid_link, expired); retireCloseFailed the retired
 	// groups whose closing failed and that retired all the same.
@@ -67,6 +77,10 @@ type productionReadHolds struct {
 	// by what failed (readhold.DegradedReasons).
 	degradedMu sync.Mutex
 	degraded   map[string]uint64
+	// readAtLimit counts the rounds read at their group's hold limit, by
+	// the source the group reads (roundReadAtLimit).
+	readAtLimitMu sync.Mutex
+	readAtLimit   map[string]uint64
 }
 
 type productionReadHoldGroup struct {
@@ -80,7 +94,11 @@ type productionReadHoldGroup struct {
 	// groups that share it are the peers a new group's first hold is seeded
 	// from.
 	querySource string
-	queryDelay  time.Duration
+	// semantics is the data source the query reads, as the lookback and the
+	// catalog label it (controlplane.SourceSemanticsLabel), so a group the
+	// lookback has not sampled is still counted under its source.
+	semantics  string
+	queryDelay time.Duration
 	// queryStep is the query's data step, the one the lookback aligns its
 	// suggestion to, and settlingWait the newest prepared Segment's spec's,
 	// cached with the delay for the time_delay a measured hold suggests
@@ -113,8 +131,36 @@ func newProductionReadHolds(cfg config.Config, control readhold.Control, reposit
 	var err error
 	holds.controller, err = readhold.NewController(readhold.Options{Control: control,
 		Prefix: productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "schedule"), MaxHold: cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
-		Now: now, Owner: holds.owner})
+		Now: now, Owner: holds.owner, OnLimitCut: holds.limitCut})
 	return holds, err
+}
+
+// limitCut logs, once per group and cut, a Slot the limit froze more Slots
+// below the one before it than a replay covers: an operator who lowered the
+// limit sees which group pays for it and about how many Slots it skips.
+func (holds *productionReadHolds) limitCut(cut readhold.LimitCut) {
+	maxReplay := int64(holds.cfg.PhaseTwo.Scheduler.MaxReplaySlots)
+	if holds.logger == nil || cut.Period <= 0 {
+		return
+	}
+	steps := int64((cut.From - cut.To) / cut.Period)
+	if steps <= maxReplay {
+		return
+	}
+	holds.limitCutsMu.Lock()
+	if holds.limitCuts == nil {
+		holds.limitCuts = make(map[execution.QueryGroupIdentity]time.Duration)
+	}
+	logged, ok := holds.limitCuts[cut.QueryGroup]
+	holds.limitCuts[cut.QueryGroup] = cut.To
+	holds.limitCutsMu.Unlock()
+	if ok && logged == cut.To {
+		return
+	}
+	holds.logger.Warn("read_hold", "limit_cut", 0, 0, slog.String("query_group", string(cut.QueryGroup)),
+		slog.Int64("slot", int64(cut.Slot)), slog.Int64("from_hold_ms", cut.From.Milliseconds()), slog.Int64("to_hold_ms", cut.To.Milliseconds()),
+		slog.Int64("period_s", int64(cut.Period/time.Second)), slog.Int64("max_replay_slots", maxReplay),
+		slog.Int64("expected_skipped_slots", steps-maxReplay))
 }
 
 func (holds *productionReadHolds) owner(qg execution.QueryGroupIdentity) (readhold.Owner, error) {
@@ -130,6 +176,28 @@ func (holds *productionReadHolds) owner(qg execution.QueryGroupIdentity) (readho
 		return readhold.Owner{}, ownership.ErrStaleFence
 	}
 	return readhold.Owner{Fence: lease.Fence, ContentScope: lease.ContentScope}, nil
+}
+
+// readHoldInheritedQueryLatency is the previous owner's reading of each Query
+// Group's query duration, as its read-hold record keeps it, for the slot
+// source to judge a group it has no reading of its own for; none without
+// read holds. The controller is looked up when asked, so a source built
+// before it has one, and has no reading until it does. It takes the group's
+// controller lock and nothing else: the source asks it under none of its own.
+func readHoldInheritedQueryLatency(holds *productionReadHolds) scheduler.QueryLatency {
+	if holds == nil {
+		return nil
+	}
+	return holds.inheritedQueryDuration
+}
+
+// inheritedQueryDuration is the group's record's query duration
+// (readhold.Controller.InheritedQueryDuration); none without a controller.
+func (holds *productionReadHolds) inheritedQueryDuration(qg execution.QueryGroupIdentity) (time.Duration, bool) {
+	if holds == nil || holds.controller == nil {
+		return 0, false
+	}
+	return holds.controller.InheritedQueryDuration(qg)
 }
 
 func (holds *productionReadHolds) bind(qg execution.QueryGroupIdentity, session *ownership.Session) {
@@ -285,6 +353,7 @@ func (holds *productionReadHolds) queryBasis(ctx context.Context, schedule execu
 		source := readHoldSource(object.QueryPlan, route)
 		holds.indexSourceLocked(qg, source)
 		owned.querySource = source
+		owned.semantics = controlplane.SourceSemanticsLabel(object.QueryPlan.SourceSemantics)
 		owned.queryRoute, owned.queryDelay, owned.queryStep = route, delay, step
 		owned.queryUnaligned = object.QueryPlan.NotTimeAlign
 	}
@@ -698,6 +767,38 @@ func (holds *productionReadHolds) degradedHold(schedule execution.FrozenQueryGro
 	return min(holds.controller.ReadHoldAt(schedule.Segment.QueryGroup, at), limit)
 }
 
+// roundReadAtLimit says the round of the Slot ref names was read at its
+// group's hold limit while the group's data lands past it - frozen with a
+// hold at the limit its record keeps, the record held there with its data
+// still read early within its quiet bar (readhold.Record.AtLimitHeld) - and
+// counts it under the source the group reads: one of lookback.Sources,
+// other for a group whose source is not known yet. The record is the
+// group's now, not as the Slot was frozen: the first round after a raise
+// is read at the limit on the arrival that raised it, and a group quiet
+// past its bar is being tried lower, not read at the limit.
+func (holds *productionReadHolds) roundReadAtLimit(ref execution.FrozenExecutionContractRef) bool {
+	record, known := holds.controller.Reading(ref.Slot.QueryGroup)
+	if !known || ref.ReadHoldMillis < record.LimitMillis || !record.AtLimitHeld(ref.Slot.QueryGroup, holds.now().UnixMilli()) {
+		return false
+	}
+	holds.mu.Lock()
+	source := ""
+	if group := holds.groups[ref.Slot.QueryGroup]; group != nil {
+		source = group.semantics
+	}
+	holds.mu.Unlock()
+	if !slices.Contains(lookback.Sources, source) {
+		source = lookback.SourceOther
+	}
+	holds.readAtLimitMu.Lock()
+	if holds.readAtLimit == nil {
+		holds.readAtLimit = make(map[string]uint64, len(lookback.Sources))
+	}
+	holds.readAtLimit[source]++
+	holds.readAtLimitMu.Unlock()
+	return true
+}
+
 // countDegraded counts one degraded Slot under its reason, and says so in
 // the log once per group, Segment and reason: a group whose hold stays
 // degraded writes a line when it starts, not one per Slot.
@@ -722,6 +823,13 @@ func (holds *productionReadHolds) countDegraded(segment execution.ScheduleSegmen
 }
 
 func (holds *productionReadHolds) slotReadHold(ctx context.Context, schedule execution.FrozenQueryGroupSchedule, at execution.EvaluationTime, fence execution.OwnerFence) (time.Duration, error) {
+	// Read before the controller is: the lookback asks the controller under
+	// its own lock, so it is never asked under the controller's.
+	if measure := holds.queryDuration.Load(); measure != nil {
+		if measured, ok := (*measure)(schedule.Segment.QueryGroup); ok {
+			holds.controller.MeasureQueryDuration(schedule.Segment.QueryGroup, measured)
+		}
+	}
 	hold, err := holds.controller.SlotReadHold(ctx, schedule, at, fence)
 	holds.mu.Lock()
 	currentGroup := holds.groups[schedule.Segment.QueryGroup]
@@ -769,9 +877,12 @@ func (holds *productionReadHolds) report(reason string, qg execution.QueryGroupI
 	}
 }
 
+// observation reads the Slot's schedule and applies one finding: about three
+// Redis calls, each bounded by the client's own timeouts, with no deadline
+// over them; one borrowed from the directory's used to drop the sample when
+// the three together ran past it.
 func (holds *productionReadHolds) observation(contractRef execution.FrozenExecutionContractRef, apply func(context.Context) error) {
-	ctx, cancel := context.WithTimeout(context.Background(), directoryReadTimeout)
-	defer cancel()
+	ctx := context.Background()
 	owner, err := holds.owner(contractRef.Slot.QueryGroup)
 	if err == nil {
 		var schedule execution.FrozenQueryGroupSchedule
@@ -793,10 +904,12 @@ func (holds *productionReadHolds) observation(contractRef execution.FrozenExecut
 
 func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 	options.CurrentReadHold, options.ReadHoldAt = holds.controller.ReadHold, holds.controller.ReadHoldAt
+	options.CurrentCandidate = holds.controller.EarlierCandidate
+	options.EarlierRefused = holds.controller.EarlierRefused
 	options.OnWholeWindowReadEarly = func(e lookback.ReadHoldEvidence) {
 		holds.observation(e.Contract, func(ctx context.Context) error {
 			return holds.controller.Observe(ctx, readhold.Evidence{Contract: e.Contract, ArrivalAge: e.ArrivalAge,
-				Rung: e.Rung, Buckets: e.Buckets})
+				Rung: e.Rung, Buckets: e.Buckets, Probation: e.Probation})
 		})
 	}
 	options.OnEarlierRead = func(e lookback.EarlierReadEvidence) {
@@ -804,6 +917,116 @@ func (holds *productionReadHolds) bindLookback(options *lookback.Options) {
 			return holds.controller.EarlierRead(ctx,
 				readhold.EarlierEvidence{Contract: e.Contract, CandidateHold: e.CandidateHold, Observed: e.Observed, Equal: e.Equal})
 		})
+	}
+	// One line per trial end, so a deployment whose lookback route is not
+	// public can still read, group by group, whether its trials complete and
+	// what overtakes those that do not. A group has at most one trial per
+	// rest, so the lines are as many as the trials.
+	// The probation after a lowering is resumed by the process that takes
+	// the group over, from the lowering its record names.
+	options.LastLowering = holds.controller.LastLowering
+	// A group whose search has run out has its floor probed once it has
+	// stood long enough; a probe that passes lowers the hold, a probation
+	// after it as after every lowering, one that fails relearns the floor. One line per
+	// probe end, a probe being two hours of rounds at least.
+	options.FloorProbe, options.LoweringVerified = holds.controller.FloorProbe, holds.controller.LoweringVerified
+	// A probe goes on, after a rollout or a takeover, from the clean rounds its
+	// record kept, written every lookback.FloorProbeProgressEvery of them; a
+	// write that loses its compare is dropped, the move that won it taken.
+	options.FloorProbeResume = holds.controller.FloorProbeResume
+	options.OnFloorProbeProgress = func(e lookback.FloorProbeProgress) {
+		holds.observation(e.Contract, func(ctx context.Context) error {
+			return holds.controller.FloorProbeProgress(ctx, readhold.FloorProbeProgressEvidence{Contract: e.Contract, Floor: e.Floor,
+				Kind: e.Kind, Hold: e.Hold, Clean: e.Clean, Started: e.Started, Period: e.Period})
+		})
+	}
+	// One line per round found read early, not sampled: what it was read at
+	// and after which lowering, how its data came, and what it decided - kept
+	// for a group in probation (lookbackDecisionTap) - or why that is not
+	// known. Its strategies are the decided Plans', or the Query Group's from
+	// its frozen schedule when the decision is not known.
+	options.OnWindowReadEarly = func(e lookback.WindowReadEarly) {
+		if holds.logger == nil {
+			return
+		}
+		holds.logger.Info("lookback", "window_read_early", 0, 0, holds.readEarlyAttrs(e)...)
+	}
+	// One line per probe start: resumed_from is the clean rounds it went on
+	// from, kept by the process that ran it before, 0 for a fresh one.
+	options.OnFloorProbeStart = func(e lookback.FloorProbeStart) {
+		if holds.logger == nil {
+			return
+		}
+		holds.logger.Info("lookback", "floor_probe_started", 0, 0, slog.String("query_group", string(e.Contract.Slot.QueryGroup)),
+			slog.Int64("slot", int64(e.Contract.Slot.EvaluationTime)), slog.String("source", e.Source), slog.String("kind", e.Kind),
+			slog.Int64("probe_ms", e.Floor.Milliseconds()), slog.Int64("read_hold_ms", e.Hold.Milliseconds()),
+			slog.Int("rounds_required", e.Rounds), slog.Int64("started_slot", int64(e.Started)), slog.Int("resumed_from", e.ResumedFrom))
+	}
+	options.OnFloorProbe = func(e lookback.FloorProbeEnd) {
+		if holds.logger != nil {
+			// kind is what the probe read: verify, the candidate the trials chose
+			// before the hold moves; midpoint; floor. probe_ms is the hold the
+			// probe's rounds were read at; floor_ms the
+			// group's floor as the controller has it when the line is written
+			// (-1 while none): the two are one while the probe reads the floor
+			// itself, apart while it reads a midpoint above it. rounds_required
+			// is the clean rounds it needed: ProbationRounds, or near a floor a
+			// probe failed at eight hours of its rounds if more - 480 at a
+			// minute's period. A failed probe says how its last
+			// round's formal read differed, in buckets by change class.
+			floor := int64(-1)
+			if record, loaded := holds.controller.Reading(e.Contract.Slot.QueryGroup); loaded && record.EarlierFloorMillis != nil {
+				floor = *record.EarlierFloorMillis
+			}
+			attrs := []slog.Attr{slog.String("query_group", string(e.Contract.Slot.QueryGroup)),
+				slog.Int64("slot", int64(e.Contract.Slot.EvaluationTime)), slog.String("source", e.Source), slog.String("event", e.Event),
+				slog.String("kind", e.Kind), slog.Int64("probe_ms", e.Floor.Milliseconds()), slog.Int64("floor_ms", floor), slog.Int64("read_hold_ms", e.Hold.Milliseconds()),
+				slog.Int("clean_rounds", e.Clean), slog.Int("rounds_required", e.Rounds), slog.Int64("started_slot", int64(e.Started)),
+				slog.Int("resumed_from", e.ResumedFrom)}
+			if e.Event == lookback.FloorProbeFailed {
+				for _, change := range lookback.Changes {
+					attrs = append(attrs, slog.Int(change, e.Changes[change]))
+				}
+			}
+			holds.logger.Info("lookback", "floor_probe_ended", 0, 0, attrs...)
+		}
+		if e.Event != lookback.FloorProbePassed && e.Event != lookback.FloorProbeFailed {
+			return
+		}
+		holds.observation(e.Contract, func(ctx context.Context) error {
+			return holds.controller.FloorProbeResult(ctx, readhold.FloorProbeEvidence{Contract: e.Contract, Floor: e.Floor,
+				Kind: e.Kind, Hold: e.Hold, Passed: e.Event == lookback.FloorProbePassed})
+		})
+	}
+	options.OnEarlierTrialEnd = func(e lookback.EarlierTrialEnd) {
+		if holds.logger == nil {
+			return
+		}
+		// The search below the hold as the controller has it when the line is
+		// written: its floor (-1 while none) and different trials in a row,
+		// and the hold a moved one is moving to (-1 while none is pending).
+		floor, differents, pending := int64(-1), 0, int64(-1)
+		if record, loaded := holds.controller.Reading(e.Contract.Slot.QueryGroup); loaded {
+			if record.EarlierFloorMillis != nil {
+				floor = *record.EarlierFloorMillis
+			}
+			differents = record.EarlierDifferents
+			if record.PendingHoldMillis != nil {
+				pending = *record.PendingHoldMillis
+			}
+		}
+		attrs := []slog.Attr{slog.String("query_group", string(e.Contract.Slot.QueryGroup)),
+			slog.Int64("slot", int64(e.Contract.Slot.EvaluationTime)), slog.String("source", e.Source), slog.String("outcome", e.Outcome),
+			slog.String("overtaken_by", e.OvertakenBy), slog.Int64("candidate_hold_ms", e.CandidateHold.Milliseconds()),
+			slog.Int64("read_hold_ms", e.Contract.ReadHoldMillis), slog.Int("ahead_slots", e.AheadSlots),
+			slog.Int64("floor_ms", floor), slog.Int("floor_differents", differents)}
+		if e.OvertakenBy == lookback.OvertakenHoldMoved {
+			// A descent a step per Slot reads as reserved at the lower hold,
+			// frozen a step below the Slot before, pending the lower hold.
+			attrs = append(attrs, slog.Int64("reserved_hold_ms", e.ReservedHold.Milliseconds()),
+				slog.Int64("frozen_hold_ms", e.FrozenHold.Milliseconds()), slog.Int64("pending_hold_ms", pending))
+		}
+		holds.logger.Info("lookback", "earlier_trial", 0, 0, attrs...)
 	}
 	options.OnReadHoldIgnored = func(e lookback.ReadHoldEvidence, reason string) {
 		inspection := holds.controller.Inspect(e.Contract.Slot.QueryGroup)
@@ -841,4 +1064,58 @@ func (holds *productionReadHolds) observeOvertaken(ref execution.FrozenExecution
 		(record.Closed || record.SegmentStart > ref.ScheduleSegmentStart) {
 		holds.overtaken.Add(1)
 	}
+}
+
+// readEarlyAttrs is a round found read early's line.
+func (holds *productionReadHolds) readEarlyAttrs(e lookback.WindowReadEarly) []slog.Attr {
+	// The hold the group's lowering came from, as the controller has it when
+	// the line is written - before the finding it carries raises the hold -
+	// and -1 while the group is not lowered.
+	loweredFrom := int64(-1)
+	if record, loaded := holds.controller.Reading(e.Contract.Slot.QueryGroup); loaded && record.Lowered {
+		loweredFrom = record.LoweredFromMillis
+	}
+	attrs := []slog.Attr{slog.String("query_group", string(e.Contract.Slot.QueryGroup)),
+		slog.Int64("slot", int64(e.Contract.Slot.EvaluationTime)), slog.String("source", e.Source), slog.String("path", e.Path),
+		slog.Int64("read_hold_ms", e.Hold.Milliseconds()), slog.Int64("lowered_from_ms", loweredFrom),
+		slog.String("rung", e.Rung), slog.Int64("completion_age_ms", e.CompletionAge.Milliseconds())}
+	for _, change := range lookback.Changes {
+		attrs = append(attrs, slog.Int(change, e.Changes[change]))
+	}
+	strategies, count, from := []string(nil), 0, "decision"
+	if decision := e.Decision; decision != nil {
+		attrs = append(attrs, slog.String("decision_summary", "kept"), slog.Bool("completed", decision.Completed),
+			slog.Uint64("events", decision.Events), slog.Uint64("state_mutations", decision.StateMutations))
+		for _, kind := range observability.LevelOutcomeKinds {
+			attrs = append(attrs, slog.Uint64("levels_"+strings.ToLower(kind), decision.Levels[kind]))
+		}
+		strategies, count = decision.Strategies, decision.StrategyCount
+	} else {
+		attrs = append(attrs, slog.String("decision_summary", "unavailable"), slog.String("decision_missing", e.DecisionMissing))
+		strategies, count, from = holds.scheduledStrategies(e.Contract.Slot.QueryGroup, e.Contract.Slot.EvaluationTime)
+	}
+	return append(attrs, slog.String("strategies", strings.Join(strategies, ",")), slog.Int("strategy_count", count),
+		slog.String("strategies_from", from))
+}
+
+// scheduledStrategies is the first four strategies of the Query Group's frozen schedule at slot and how many it has,
+// "schedule"; or none, "unavailable", when the schedule cannot be read.
+func (holds *productionReadHolds) scheduledStrategies(qg execution.QueryGroupIdentity, slot execution.EvaluationTime) ([]string, int, string) {
+	if holds.catalog == nil {
+		return nil, 0, "unavailable"
+	}
+	schedule, err := holds.catalog.ReadFrozenSchedule(context.Background(), qg, slot)
+	if err != nil {
+		return nil, 0, "unavailable"
+	}
+	seen := map[string]bool{}
+	var strategies []string
+	for _, plan := range schedule.Plans {
+		if id := plan.Identity.StrategyID; id != "" && !seen[id] {
+			seen[id] = true
+			strategies = append(strategies, id)
+		}
+	}
+	sort.Strings(strategies)
+	return strategies[:min(len(strategies), 4)], len(strategies), "schedule"
 }

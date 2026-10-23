@@ -82,9 +82,10 @@ func TestAFailedSlotDoesNotClearTheReading(t *testing.T) {
 	}
 }
 
-// Past the share the object is refused every round and is on the refusal's
-// line; a warning that it is near the share would say less, and say it twice.
-func TestTheShareRefusalTakesTheObjectOffThisLine(t *testing.T) {
+// A refused attempt at the share keeps the object on this line at the
+// reading it had: the round the share refuses is the round the line is for,
+// and an object refused on every round would otherwise never be on it.
+func TestAShareRefusedAttemptKeepsTheObjectOnThisLine(t *testing.T) {
 	at := &clock{at: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)}
 	tracker := newTracker(t, at)
 	tracker.Observe(context.Background(), slotCompleted("qg", shareShare*99/100, shareShare, at.at))
@@ -92,15 +93,15 @@ func TestTheShareRefusalTakesTheObjectOffThisLine(t *testing.T) {
 	refused.Err, refused.Result = errors.New("share exceeded"), observability.ResultTerminal
 	refused.ReasonCode = observability.ReasonCode(contract.ReasonQGBudgetShareExceeded)
 	tracker.Observe(context.Background(), refused)
-	if _, listed := shareRows(tracker)["qg"]; listed {
-		t.Fatal("an object refused at its share is still listed as approaching it")
+	row, listed := shareRows(tracker)["qg"]
+	if !listed || row.RetainedShare.RetainedBytes != shareShare*99/100 {
+		t.Fatalf("listed %t row %+v: a refused attempt took the object off the line or replaced its reading", listed, row.RetainedShare)
 	}
 }
 
-// A refusal at the share takes the object off this line for that round and
-// keeps its Since: refusals come and go, and restarting Since at each one
-// would hide an object growing into its share behind a clock that never
-// runs long.
+// A refusal at the share keeps the object on this line and keeps its Since:
+// refusals come and go, and restarting Since at each one would hide an
+// object growing into its share behind a clock that never runs long.
 func TestARefusalBetweenCompletionsKeepsSince(t *testing.T) {
 	at := &clock{at: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)}
 	tracker := newTracker(t, at)
@@ -111,8 +112,8 @@ func TestARefusalBetweenCompletionsKeepsSince(t *testing.T) {
 	refused.Err, refused.Result = errors.New("share exceeded"), observability.ResultTerminal
 	refused.ReasonCode = observability.ReasonCode(contract.ReasonQGBudgetShareExceeded)
 	tracker.Observe(context.Background(), refused)
-	if _, listed := shareRows(tracker)["qg"]; listed {
-		t.Fatal("the refused round is listed here as well as on the refusal's line")
+	if row, listed := shareRows(tracker)["qg"]; !listed || !row.Since.Equal(first) {
+		t.Fatalf("listed %v since %v on the refused round, want listed since %v", listed, row.Since, first)
 	}
 	at.at = at.at.Add(time.Minute)
 	tracker.Observe(context.Background(), slotCompleted("qg", shareShare*98/100, shareShare, at.at))
@@ -246,5 +247,135 @@ func TestTheHealthResponseNamesTheObjectsNearTheirShare(t *testing.T) {
 	}
 	if strategies, _ := first["strategies"].([]any); len(strategies) != 1 {
 		t.Fatalf("first entry strategies = %v, want the strategy to act on", first["strategies"])
+	}
+}
+
+// shareGivenUp is one Slot given up because the share refused it, as the
+// scheduler's slot_skipped line carries the refusal's bytes.
+func shareGivenUp(queryGroup string, ownUsed, requested, share uint64, slot time.Time) observability.Observation {
+	return observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageSlotSkipped,
+		Result: observability.ResultDegraded, ReasonCode: "GAP_SKIPPED",
+		Trace: observability.TraceFields{QueryGroupKey: queryGroup, StrategyID: "4101", BusinessID: "2",
+			EvaluationTime: slot.Unix()},
+		SlotSkipped: &observability.SlotSkippedFacts{Path: observability.SlotSkippedQueryFree,
+			FirstSlot: slot.Unix(), LastSlot: slot.Unix(), SlotCount: 1, Reason: "GAP_SKIPPED",
+			Cause: observability.CompletionCauseResourceShareExceeded,
+			Share: &observability.SlotSkipShareFacts{Phase: "normal_output", OwnUsedBytes: ownUsed,
+				RequestedBytes: requested, LimitBytes: share, Refusals: 2}},
+	}
+}
+
+// shareRefusedAttempt is one attempt of a Slot the share refused, which the
+// Slot retries before it is given up.
+func shareRefusedAttempt(queryGroup string, slot time.Time) observability.Observation {
+	return observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
+		Result: observability.ResultFailed, ReasonCode: contract.ReasonQGBudgetShareExceeded, Err: errors.New("refused"),
+		Trace: observability.TraceFields{QueryGroupKey: queryGroup, StrategyID: "4101", BusinessID: "2",
+			EvaluationTime: slot.Unix()},
+	}
+}
+
+// An object refused at its share on every Slot completes none, and it is the
+// object the row exists for: it is listed from its first Slot given up, with
+// the refusal's bytes against the share and marked refused, and it stays
+// listed through the refused attempts of every Slot after - not dropped on
+// each attempt and back on each give-up.
+func TestAnObjectThatNeverCompletesStaysOnTheRowAtTheRefusalsBytes(t *testing.T) {
+	at := &clock{at: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)}
+	tracker := newTracker(t, at)
+	const group = "qg-never"
+	first := at.at
+	tracker.Observe(context.Background(), shareRefusedAttempt(group, first))
+	if _, listed := shareRows(tracker)[group]; listed {
+		t.Fatal("listed before any reading: a refused attempt carries no bytes")
+	}
+	tracker.Observe(context.Background(), shareGivenUp(group, shareShare-1000, 5000, shareShare, first))
+	for minute := 1; minute <= 3; minute++ {
+		at.at = first.Add(time.Duration(minute) * time.Minute)
+		tracker.Observe(context.Background(), shareRefusedAttempt(group, at.at))
+		row, listed := shareRows(tracker)[group]
+		if !listed {
+			t.Fatalf("minute %d: an object refused on every Slot dropped off the row on a refused attempt", minute)
+		}
+		if row.Since != first {
+			t.Fatalf("minute %d: since %s, want the first Slot given up %s", minute, row.Since, first)
+		}
+		tracker.Observe(context.Background(), shareGivenUp(group, shareShare-1000, 5000, shareShare, at.at))
+	}
+	row, listed := shareRows(tracker)[group]
+	if !listed {
+		t.Fatal("an object refused on every Slot is not on the row")
+	}
+	facts := row.RetainedShare
+	if facts == nil || !facts.Refused || facts.RetainedBytes != shareShare+4000 || facts.ShareBytes != shareShare ||
+		facts.PercentOfShare != 100 || facts.Slot != at.at.Unix() || row.Since != first {
+		t.Fatalf("row facts %+v since %s, want refused at %d of %d for Slot %d since %s",
+			facts, row.Since, shareShare+4000, shareShare, at.at.Unix(), first)
+	}
+}
+
+// An object that grew into its share and was then refused reads as near the
+// wall since its first completed Slot at the threshold, not since the
+// refusal; and one that completes again under the threshold leaves the row.
+func TestARefusalKeepsTheSinceTheObjectReachedTheThresholdAt(t *testing.T) {
+	at := &clock{at: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)}
+	tracker := newTracker(t, at)
+	const group = "qg-grew"
+	near := shareShare * 98 / 100
+	start := at.at
+	tracker.Observe(context.Background(), slotCompleted(group, near, shareShare, start))
+	at.at = start.Add(5 * time.Minute)
+	tracker.Observe(context.Background(), shareGivenUp(group, near, shareShare/10, shareShare, at.at))
+	row, listed := shareRows(tracker)[group]
+	if !listed || !row.RetainedShare.Refused || row.Since != start {
+		t.Fatalf("listed %t row %+v since %s, want refused since the first Slot at the threshold %s", listed, row.RetainedShare, row.Since, start)
+	}
+	at.at = start.Add(10 * time.Minute)
+	tracker.Observe(context.Background(), slotCompleted(group, shareShare/2, shareShare, at.at))
+	if _, listed := shareRows(tracker)[group]; listed {
+		t.Fatal("an object whose Slot completed at half its share is still on the row")
+	}
+}
+
+// A round that completes any way other than a Slot given up for the share
+// ends the refused reading, even when it carried no bytes to replace it: the
+// object leaves the line rather than reading refused until a completion
+// with usage comes.
+func TestARoundCompletedWithoutUsageEndsTheRefusedReading(t *testing.T) {
+	at := &clock{at: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)}
+	tracker := newTracker(t, at)
+	const group = "qg-unrefused"
+	tracker.Observe(context.Background(), shareGivenUp(group, shareShare, 5000, shareShare, at.at))
+	if row, listed := shareRows(tracker)[group]; !listed || !row.RetainedShare.Refused {
+		t.Fatalf("fixture: listed %t row %+v, want the refused reading", listed, row.RetainedShare)
+	}
+	at.at = at.at.Add(time.Minute)
+	tracker.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
+		ProgressCompletionKind: "GAP_SKIPPED", ProgressCompletionCause: "EXPIRED_REPLAY", ProgressCompletionReason: "GAP_SKIPPED",
+		Trace: observability.TraceFields{QueryGroupKey: group, StrategyID: "4101", BusinessID: "2", EvaluationTime: at.at.Unix()},
+	})
+	if row, listed := shareRows(tracker)[group]; listed {
+		t.Fatalf("a round completed for another cause left the refused reading on the line: %+v", row.RetainedShare)
+	}
+}
+
+// A Slot given up for the share itself keeps the reading: its own progress
+// line is not a round that ends the refusal.
+func TestAShareGiveUpsOwnCompletionKeepsTheRefusedReading(t *testing.T) {
+	at := &clock{at: time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)}
+	tracker := newTracker(t, at)
+	const group = "qg-still-refused"
+	tracker.Observe(context.Background(), shareGivenUp(group, shareShare, 5000, shareShare, at.at))
+	tracker.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
+		ProgressCompletionKind: "GAP_SKIPPED", ProgressCompletionCause: observability.CompletionCauseResourceShareExceeded,
+		ProgressCompletionReason: "GAP_SKIPPED",
+		Trace:                    observability.TraceFields{QueryGroupKey: group, StrategyID: "4101", BusinessID: "2", EvaluationTime: at.at.Unix()},
+	})
+	if row, listed := shareRows(tracker)[group]; !listed || !row.RetainedShare.Refused {
+		t.Fatalf("listed %t row %+v: the give-up's own completion ended the refused reading", listed, row.RetainedShare)
 	}
 }

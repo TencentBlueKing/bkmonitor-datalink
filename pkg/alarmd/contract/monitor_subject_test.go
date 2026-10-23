@@ -78,13 +78,19 @@ func TestTheSubjectChainPlacesEachObjectTheWayThePlatformDoes(t *testing.T) {
 			facts:      &MonitorSubjectFacts{Labels: []string{"team", "APM-APP(shop)", "APM-SERVICE(cart)"}},
 			wantType:   MonitorSubjectAPMService, wantID: "shop:cart",
 		},
-		"an APM app read out of the result table when only the service is labelled": {
+		// Python reads the app out of the result table; its name is the app's
+		// normalised form and cannot be read back, so alarmd does not.
+		"no APM app from the result table when only the service is labelled": {
 			dimensions: map[string]string{"bk_instance_id": `"i-1"`},
 			identity:   []string{"bk_instance_id"},
 			facts: &MonitorSubjectFacts{
-				Labels: []string{"APM-SERVICE(cart)"}, ResultTableID: "2_bkapm_metric_shop.__default__",
+				Labels: []string{"APM-SERVICE(cart)"}, ResultTableID: "2_bkapm_metric_cross_bank_trade.__default__",
 			},
-			wantType: MonitorSubjectAPMService, wantID: "shop:cart",
+		},
+		"no APM app from the result table when the record carries only the service": {
+			dimensions: map[string]string{"service_name": `"transfer"`},
+			identity:   []string{"service_name"},
+			facts:      &MonitorSubjectFacts{ResultTableID: "2_bkapm_metric_cross_bank_trade.__default__"},
 		},
 		"a record with no object at all": {
 			dimensions: map[string]string{"device": `"sda"`},

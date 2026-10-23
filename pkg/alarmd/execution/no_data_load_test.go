@@ -179,10 +179,14 @@ func nonZeroFor(t *testing.T, fieldType reflect.Type) reflect.Value {
 		return reflect.ValueOf(noDataApplyVersion())
 	case reflect.TypeOf([]NoDataGroupMemory(nil)):
 		return reflect.ValueOf([]NoDataGroupMemory{{GroupKey: "a", LastSeen: 90}})
+	case reflect.TypeOf(map[string]int64(nil)):
+		return reflect.ValueOf(map[string]int64{"0123456789abcdef0123456789abcdef": 90})
 	}
 	switch fieldType.Kind() {
 	case reflect.String:
 		return reflect.ValueOf("something").Convert(fieldType)
+	case reflect.Bool:
+		return reflect.ValueOf(true).Convert(fieldType)
 	case reflect.Uint, reflect.Uint32, reflect.Uint64:
 		return reflect.ValueOf(uint64(4)).Convert(fieldType)
 	case reflect.Int, reflect.Int32, reflect.Int64:

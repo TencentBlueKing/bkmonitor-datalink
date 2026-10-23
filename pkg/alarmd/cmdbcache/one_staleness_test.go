@@ -36,7 +36,7 @@ type markerClient struct {
 }
 
 func (client *markerClient) Get(_ context.Context, key string) *redis.StringCmd {
-	client.scans = append(client.scans, "GET "+key)
+	client.noteScan("GET " + key)
 	if err, failing := client.failing[key]; failing {
 		return redis.NewStringResult("", err)
 	}
@@ -99,7 +99,7 @@ func TestTheIndexReadsTheWritersPublishTimeBeforeTheHashes(t *testing.T) {
 		t.Fatalf("published %v, attempted %v", index.PublishedAt(), index.SourceRefreshedAt())
 	}
 	position := func(read string) int {
-		for at, done := range client.scans {
+		for at, done := range client.scanned() {
 			if done == read {
 				return at
 			}
@@ -107,7 +107,7 @@ func TestTheIndexReadsTheWritersPublishTimeBeforeTheHashes(t *testing.T) {
 		return -1
 	}
 	if get, scan := position("GET "+published), position("bk_monitorv3.ce.cache.cmdb.host"); get < 0 || scan < 0 || get > scan {
-		t.Fatalf("reads in order %v: the publish time must come before the host hash", client.scans)
+		t.Fatalf("reads in order %v: the publish time must come before the host hash", client.scanned())
 	}
 	for _, value := range []string{"", "not-a-time", "-5", "0"} {
 		if got := parseEpochSeconds(value); !got.IsZero() {

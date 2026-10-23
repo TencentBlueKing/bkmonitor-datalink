@@ -105,7 +105,7 @@ func TestAnEarlyReadSupplementsBeforeTheNextSlotReads(t *testing.T) {
 	// One early read due at that second, one free permit: it starts a read's
 	// time before its latest start.
 	start := next.Add(-took).Add(-took)
-	if wake := f.engine.nextEarlyWake(); !wake.Equal(start) {
+	if wake := f.engine.NextEarlyWake(); !wake.Equal(start) {
 		t.Fatalf("the loop is next needed at %v, want the early read's start %v", wake, start)
 	}
 	f.clock.set(start.Add(-time.Millisecond))
@@ -204,6 +204,7 @@ func TestARefusedEarlySupplementIsNotNothingLateWhenTheRungFindsNone(t *testing.
 		{DirectedFlightBusy, EarlyFlightBusy, DirectedFlightBusy},
 		{DirectedContractExpired, EarlyContractExpired, DirectedContractExpired},
 		{SupplementOvertaken, EarlyOvertaken, DirectedContractExpired},
+		{DirectedKeptReadAbsent, EarlyKeptReadAbsent, DirectedKeptReadAbsent},
 		{"other", EarlyFailed, DirectedFailed},
 	} {
 		t.Run(c.refused, func(t *testing.T) {
@@ -307,7 +308,7 @@ func TestAnEarlyReadThatDidNotStartIsSettledByWhy(t *testing.T) {
 		f.clock.set(start)
 		f.engine.Step(context.Background())
 		// Refused, it tries again a read's time on, not before.
-		if wake := f.engine.nextEarlyWake(); !wake.Equal(start.Add(time.Second)) {
+		if wake := f.engine.NextEarlyWake(); !wake.Equal(start.Add(time.Second)) {
 			t.Fatalf("the refused read tries again at %v, want %v", wake, start.Add(time.Second))
 		}
 		f.clock.set(readAt.Add(time.Minute - time.Second + time.Millisecond))

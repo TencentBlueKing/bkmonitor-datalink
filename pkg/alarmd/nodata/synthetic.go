@@ -52,6 +52,10 @@ type SyntheticSeries struct {
 	// handover - and so lose it. A close the consumer holds no alert for is
 	// an orphan there and changes nothing.
 	Closing bool
+	// FirstAbsent is when an absent group's absence began, zero for a present
+	// one. It is what decides whether a manual close recorded during this
+	// round covers the event the round is about to send (decision-024).
+	FirstAbsent int64
 }
 
 // IdentityFields returns what the event carries and what its identity is hashed
@@ -147,6 +151,7 @@ func SyntheticSeriesFor(input SyntheticInput) ([]SyntheticSeries, error) {
 		if input.Result.Verdicts[key] == VerdictAnomaly {
 			entry.Value = AbsentValue
 			entry.Periods = absentPeriods(input.Memory[key], input.EvaluationTime, input.PeriodSeconds)
+			entry.FirstAbsent = input.Memory[key].FirstAbsent
 		}
 		series = append(series, entry)
 	}

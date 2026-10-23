@@ -124,3 +124,25 @@ func TestTheStrategyLookupAnswersGlobalFromTheRoundsRecords(t *testing.T) {
 		t.Fatal("an index without global records marked a strategy global")
 	}
 }
+
+// The capability refusals are the strategies the publication refused as
+// UNSUPPORTED_PHASE2_CAPABILITY and runs no Plan of: not one whose refusal
+// resolves on its own (SOURCE_INCOMPLETE), not one refused in part that
+// still runs a Plan, and nothing at all from a process with no publication.
+func TestCapabilityRefusedIsTheUnsupportedStrategiesThatRunNoPlan(t *testing.T) {
+	reconciler := &SourceReconciler{}
+	if got := reconciler.CapabilityRefused(); got != nil {
+		t.Fatalf("no publication refused %v, want nil", got)
+	}
+	groups := []QueryGroup{{Identity: "qg", Plans: []FrozenPlan{{Identity: execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "8"}}}}}
+	dispositions := []ObjectDisposition{
+		{SourceID: "7", Scope: "PLAN", Disposition: DispositionUnsupported, Reason: "QUERY_SOURCE_RETIRED"},
+		{SourceID: "8", Scope: "PLAN", Disposition: DispositionUnsupported, Reason: "UNSUPPORTED_MULTI_ITEM_STRATEGY"},
+		{SourceID: "9", Scope: "PLAN", Disposition: DispositionSourceIncomplete, Reason: "SOURCE_INCOMPLETE"},
+	}
+	reconciler.strategies.replace(buildStrategyIndex(SnapshotPublicationRef{SnapshotRevision: "rev"}, groups, dispositions))
+	got := reconciler.CapabilityRefused()
+	if len(got) != 1 || got["7"] != "QUERY_SOURCE_RETIRED" {
+		t.Fatalf("CapabilityRefused = %v, want only 7 with its reason", got)
+	}
+}

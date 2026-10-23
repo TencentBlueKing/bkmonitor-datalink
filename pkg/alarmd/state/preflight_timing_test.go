@@ -27,7 +27,7 @@ type slowBackend struct {
 
 func (backend *slowBackend) MGet(ctx context.Context, keys []string) ([][]byte, error) {
 	backend.calls++
-	time.Sleep(backend.delay)
+	time.Sleep(backend.delay) // fixed-wait: the stub store's round trip, which the case sets and then finds in the fetch time
 	return backend.pipelineMemoryBackend.MGet(ctx, keys)
 }
 

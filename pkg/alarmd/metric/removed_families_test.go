@@ -33,7 +33,9 @@ var removedFamilies = []string{
 	"lookback_samples_total", "lookback_completion_total", "lookback_completion_max_seconds", "lookback_probes_total",
 	"lookback_empty_first_reads_total", "lookback_empty_first_read_completion_total", "lookback_groups",
 	"lookback_rest_seconds", "lookback_yield_releases_total", "lookback_yield_release_seconds_total",
-	"lookback_yield_release_max_seconds", "lookback_earlier_reads_total",
+	"lookback_yield_release_max_seconds",
+	// lookback_earlier_reads_total is back with a reader: the read-hold
+	// acceptance, on deployments whose lookback route is not public.
 	"active_qg_set_encode_duration_seconds", "run_one_attempted_total", "schedule_cutover_last_duration_seconds",
 	"schedule_cutover_payload_size_bytes", "state_write_change_reason_total",
 	"platform_setting_enabled", "platform_setting_entries", "platform_setting_source",
@@ -158,6 +160,11 @@ var removedLabelValues = []struct {
 	// waived.
 	{"absent_strategy_round_total", "disposition", "snapshot_shrunk", false},
 	{"absent_strategy_difference", "side", "writer_holds_last_good", false},
+	// A level written to end its alert closed, or to end it when no data
+	// arrives through the recovery window, was noted as not run and published
+	// at zero regardless. Both now run, and nothing is noted.
+	{"catalog_withheld_objects", "reason", "RECOVERY_CLOSE_UNSUPPORTED", false},
+	{"catalog_withheld_objects", "reason", "RECOVERY_NODATA_UNSUPPORTED", false},
 }
 
 // A removed label value is emitted by no family, whatever its source
@@ -270,7 +277,7 @@ func TestARemovedLabelValueIsNotEmitted(t *testing.T) {
 		}
 	}
 	for _, removed := range removedLabelValues {
-		name := "bkmonitor_alarmd_" + removed.family
+		name := "alarmd_" + removed.family
 		if len(emittedOf(emitted, name)) == 0 {
 			t.Fatalf("%s emitted nothing: the guard is not reading it", name)
 		}
@@ -346,8 +353,8 @@ func TestARemovedFamilyIsNotRegistered(t *testing.T) {
 		}
 	}
 	for _, name := range removedFamilies {
-		if registered["bkmonitor_alarmd_"+name] {
-			t.Errorf("%s is registered again", "bkmonitor_alarmd_"+name)
+		if registered["alarmd_"+name] {
+			t.Errorf("%s is registered again", "alarmd_"+name)
 		}
 	}
 }
@@ -415,10 +422,10 @@ func removedFamilyPattern(removed []string, labels map[string]bool) *regexp.Rege
 	}
 	var names []string
 	if len(bare) > 0 {
-		names = append(names, `(?:bkmonitor_alarmd_)?(`+strings.Join(bare, "|")+`)`)
+		names = append(names, `(?:alarmd_)?(`+strings.Join(bare, "|")+`)`)
 	}
 	if len(prefixed) > 0 {
-		names = append(names, `bkmonitor_alarmd_(`+strings.Join(prefixed, "|")+`)`)
+		names = append(names, `alarmd_(`+strings.Join(prefixed, "|")+`)`)
 	}
 	return regexp.MustCompile(`(?:^|[^A-Za-z0-9_])(?:` + strings.Join(names, "|") + `)(?:_bucket|_sum|_count)?(?:[^A-Za-z0-9_]|$)`)
 }
@@ -426,15 +433,46 @@ func removedFamilyPattern(removed []string, labels map[string]bool) *regexp.Rege
 func TestARemovedNameIsFoundBareUnlessItIsALabel(t *testing.T) {
 	pattern := removedFamilyPattern([]string{"gone_total", "kind"}, map[string]bool{"kind": true})
 	for text, found := range map[string]bool{
-		"rate(gone_total[5m])":                  true,
-		"bkmonitor_alarmd_gone_total_bucket":    true,
-		"sum by (kind) (bkmonitor_alarmd_kind)": true,
-		`[]string{"kind"}`:                      false,
-		"still_gone_total":                      false,
-		"gone_totals":                           false,
+		"rate(gone_total[5m])":        true,
+		"alarmd_gone_total_bucket":    true,
+		"sum by (kind) (alarmd_kind)": true,
+		`[]string{"kind"}`:            false,
+		"still_gone_total":            false,
+		"gone_totals":                 false,
 	} {
 		if got := pattern.MatchString(text); got != found {
 			t.Errorf("%q: found %v, want %v", text, got, found)
+		}
+	}
+}
+
+// The families lost the bkmonitor_ namespace in one switch, so any name
+// still carrying it is wrong whether or not its family was removed: a reader
+// asking for it reads nothing and takes it for zero. A word that merely ends
+// in it (a topic such as 0bkmonitor_...) is not a metric name.
+func TestNoSourceNamesAFamilyWithTheOldNamespace(t *testing.T) {
+	pattern := regexp.MustCompile(`(?:^|[^0-9A-Za-z])` + "bkmonitor" + `_alarmd_[a-z0-9_]*`)
+	for _, root := range []string{"..", filepath.Join("..", "..", "alarmd-cli")} {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return err
+			}
+			switch filepath.Ext(path) {
+			case ".go", ".html", ".js", ".md", ".yaml", ".json":
+			default:
+				return nil
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if match := pattern.Find(body); match != nil {
+				t.Errorf("%s names %s, a family under the old namespace", path, strings.TrimLeft(string(match), "\"'`([{ |^:\t\n"))
+			}
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
 		}
 	}
 }

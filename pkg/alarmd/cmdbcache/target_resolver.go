@@ -7,6 +7,7 @@ package cmdbcache
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -58,6 +59,7 @@ func (resolver *TargetResolver) ResolveFor(ctx context.Context, tenant string, p
 	}
 	if resolver != nil && resolver.stores != nil {
 		bound := *resolver
+		PrimeTenant(ctx, resolver.stores, tenant)
 		bound.hosts = resolver.stores.For(tenant)
 		resolver = &bound
 	}
@@ -322,10 +324,12 @@ func (resolver *TargetResolver) resolveGroup(ctx context.Context, plan *contract
 		for host := range members {
 			hosts = append(hosts, host)
 		}
-		placed, unplaced, ambiguous := placeAddresses(index, plan, hosts)
-		return addressSelector(result, placed, snapshot.Dropped+dropped, unplaced, ambiguous)
+		sort.Strings(hosts)
+		placed, unplaced, ambiguous, named := placeAddresses(index, plan, hosts, snapshot.NamedDrops(plan))
+		return addressSelector(result, placed, snapshot.Dropped+dropped, unplaced, ambiguous, named)
 	}
 	result.Members, result.Kept, result.Dropped = members, len(members), snapshot.Dropped+dropped
+	result.DroppedMembers = snapshot.NamedDrops(plan)
 	switch {
 	case result.Dropped > 0:
 		// Members were refused, whether or not any were kept: a group whose
@@ -344,14 +348,14 @@ func (resolver *TargetResolver) resolveGroup(ctx context.Context, plan *contract
 // read by host identity to host ids through the host cache.
 //
 // A member the cache knows as a host is that host's id. A member it does
-// not know is dropped and counted, as a group member that fails validation
-// is. When it knows none of them, it depends on the model. If the cache
-// lists hosts under it, the members are hosts that are gone: Incomplete,
-// members_dropped, as a group whose every member was refused - not an empty
-// target either. If it lists none - a non-host model the writer named no
-// model_match for, or a writer that does not put the canonical identity on
-// its host records - the selector is Unavailable by name: these members
-// cannot be placed against the data at all.
+// not know is dropped, counted and named host_unindexed, as a group member
+// that fails validation is. When it knows none of them, it depends on the
+// model. If the cache lists hosts under it, the members are hosts that are
+// gone: Incomplete, members_dropped, as a group whose every member was
+// refused - not an empty target either. If it lists none - a non-host model
+// the writer named no model_match for, or a writer that does not put the
+// canonical identity on its host records - the selector is Unavailable by
+// name: these members cannot be placed against the data at all.
 func (resolver *TargetResolver) resolveStaticMembers(plan *contract.TargetPlanV1, index *Index, unusable string) targetplan.SelectorResult {
 	result := targetplan.SelectorResult{Kind: targetplan.SelectorKindStatic, ID: plan.ModelID, Reason: targetplan.ReasonNone}
 	if resolver == nil || resolver.hosts == nil {
@@ -364,9 +368,12 @@ func (resolver *TargetResolver) resolveStaticMembers(plan *contract.TargetPlanV1
 	}
 	members := make(map[string]struct{}, len(plan.StaticMembers))
 	for _, member := range plan.StaticMembers {
+		// The index lists a host by (model, instance) only when it has a host
+		// id, so a member it finds has one.
 		host, found := index.LookupModelInstance(member.ModelID, member.ModelInstID)
-		if !found || host.HostID == "" {
+		if !found {
 			result.Dropped++
+			result.DroppedMembers = targetplan.NameDropped(result.DroppedMembers, member.ModelInstID, targetplan.DroppedHostUnindexed)
 			continue
 		}
 		members[plan.Identity.HostKey(host.HostID)] = struct{}{}
@@ -399,8 +406,8 @@ func (resolver *TargetResolver) resolveStaticHosts(plan *contract.TargetPlanV1, 
 		result.State, result.Reason = targetplan.SelectorUnavailable, selectorReason(unusable)
 		return result
 	}
-	placed, unplaced, ambiguous := placeAddresses(index, plan, plan.StaticHosts)
-	return addressSelector(result, placed, 0, unplaced, ambiguous)
+	placed, unplaced, ambiguous, named := placeAddresses(index, plan, plan.StaticHosts, nil)
+	return addressSelector(result, placed, 0, unplaced, ambiguous, named)
 }
 
 // selectorReason names, on a selector, why the host index it would read may
@@ -418,22 +425,28 @@ func selectorReason(unusable string) string {
 // another tenant's, is unplaced. A host at an address another host of the
 // tenant shares is ambiguous: the address names neither, and the host is
 // left out rather than matched against both.
-func placeAddresses(index *Index, plan *contract.TargetPlanV1, hosts []string) (map[string]struct{}, int, int) {
+func placeAddresses(index *Index, plan *contract.TargetPlanV1, hosts []string, named []targetplan.DroppedMember) (map[string]struct{}, int, int, []targetplan.DroppedMember) {
 	placed := make(map[string]struct{}, len(hosts))
 	unplaced, ambiguous := 0, 0
 	for _, host := range hosts {
 		tenant, key, found := index.HostAddress(host)
 		if !found || tenant != plan.TenantID {
 			unplaced++
+			reason := targetplan.DroppedHostUnindexed
+			if found {
+				reason = targetplan.DroppedHostOtherTenant
+			}
+			named = targetplan.NameDropped(named, host, reason)
 			continue
 		}
 		if _, sharing := index.AddressHost(tenant, key); sharing > 1 {
 			ambiguous++
+			named = targetplan.NameDropped(named, host, targetplan.DroppedAddressShared)
 			continue
 		}
 		placed[key] = struct{}{}
 	}
-	return placed, unplaced, ambiguous
+	return placed, unplaced, ambiguous, named
 }
 
 // addressSelector finishes an ip_cloud selector from what it placed. A
@@ -441,8 +454,8 @@ func placeAddresses(index *Index, plan *contract.TargetPlanV1, hosts []string) (
 // ambiguous when every one shares its address, unresolved otherwise - and
 // not an empty target; one that dropped some is Incomplete, naming the
 // ambiguity when there was one.
-func addressSelector(result targetplan.SelectorResult, placed map[string]struct{}, dropped, unplaced, ambiguous int) targetplan.SelectorResult {
-	result.Dropped, result.Kept = dropped+unplaced+ambiguous, len(placed)
+func addressSelector(result targetplan.SelectorResult, placed map[string]struct{}, dropped, unplaced, ambiguous int, named []targetplan.DroppedMember) targetplan.SelectorResult {
+	result.Dropped, result.Kept, result.DroppedMembers = dropped+unplaced+ambiguous, len(placed), named
 	switch {
 	case len(placed) == 0 && unplaced == 0 && ambiguous > 0:
 		result.State, result.Reason = targetplan.SelectorUnavailable, targetplan.ReasonAddressAmbiguous
@@ -515,15 +528,17 @@ func (resolver *TargetResolver) resolveTopology(plan *contract.TargetPlanV1, nod
 	if plan.Rule == contract.TargetPlanRuleIPCloud {
 		hosts := make([]string, 0, len(answer.Hosts))
 		dropped := 0
+		var named []targetplan.DroppedMember
 		for _, host := range answer.Hosts {
 			if host.HostID == "" {
 				dropped++
+				named = targetplan.NameDropped(named, host.ModelInstID, targetplan.DroppedNoHostID)
 				continue
 			}
 			hosts = append(hosts, host.HostID)
 		}
-		placed, unplaced, ambiguous := placeAddresses(index, plan, hosts)
-		return addressSelector(result, placed, dropped, unplaced, ambiguous)
+		placed, unplaced, ambiguous, named := placeAddresses(index, plan, hosts, named)
+		return addressSelector(result, placed, dropped, unplaced, ambiguous, named)
 	}
 	members := make(map[string]struct{}, len(answer.Hosts))
 	for _, host := range answer.Hosts {
@@ -531,6 +546,7 @@ func (resolver *TargetResolver) resolveTopology(plan *contract.TargetPlanV1, nod
 		case contract.TargetPlanRuleHostID:
 			if host.HostID == "" {
 				result.Dropped++
+				result.DroppedMembers = targetplan.NameDropped(result.DroppedMembers, host.ModelInstID, targetplan.DroppedNoHostID)
 				continue
 			}
 			members[contract.TargetPlanMemberKey(host.HostID)] = struct{}{}
@@ -540,6 +556,7 @@ func (resolver *TargetResolver) resolveTopology(plan *contract.TargetPlanV1, nod
 				// record, or it is another model's: the host cannot be named
 				// under this rule.
 				result.Dropped++
+				result.DroppedMembers = targetplan.NameDropped(result.DroppedMembers, host.ModelInstID, targetplan.DroppedModelMismatch)
 				continue
 			}
 			if plan.Identity.HostIdentity {
@@ -547,6 +564,7 @@ func (resolver *TargetResolver) resolveTopology(plan *contract.TargetPlanV1, nod
 				// is what the record's host identity carries.
 				if host.HostID == "" {
 					result.Dropped++
+					result.DroppedMembers = targetplan.NameDropped(result.DroppedMembers, host.ModelInstID, targetplan.DroppedNoHostID)
 					continue
 				}
 				members[plan.Identity.HostKey(host.HostID)] = struct{}{}

@@ -35,9 +35,9 @@ func TestTheConsoleFailuresAreCountedUnderEveryBoundClass(t *testing.T) {
 				labels[pair.GetName()] = pair.GetValue()
 			}
 			switch family.GetName() {
-			case "bkmonitor_alarmd_linkd_console_failures_total":
+			case "alarmd_linkd_console_failures_total":
 				cells[labels["op"]+"/"+labels["class"]] = series.GetCounter().GetValue()
-			case "bkmonitor_alarmd_linkd_console_calls_total":
+			case "alarmd_linkd_console_calls_total":
 				if labels["result"] == "failed" {
 					failed[labels["op"]] = series.GetCounter().GetValue()
 				}

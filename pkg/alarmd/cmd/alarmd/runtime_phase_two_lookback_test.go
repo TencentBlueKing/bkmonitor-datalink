@@ -21,9 +21,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 )
 
 func noRecheck(context.Context, execution.PhysicalQuerySpec, execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
@@ -105,14 +107,14 @@ func TestTheLookbackPermitYieldsToAWaitingFormalQuery(t *testing.T) {
 	}()
 	select {
 	case <-yield:
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("a formal query waits and the lookback permit was not asked to yield")
 	}
 	release()
 	select {
 	case granted := <-waiting:
 		granted.Release()
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the permit the lookback gave back did not reach the waiting query")
 	}
 }
@@ -255,12 +257,18 @@ func lookbackReadEarlyReachesTheSnapshot(t *testing.T, partial bool) {
 		completed := func() uint64 {
 			return engine.Stats().Sources[controlplane.SupportedSourceSemantics[0]].Samples[lookback.OutcomeCompleted]
 		}
+		// A step starts its rung's reads on their own goroutines, marking them
+		// running under the engine's lock before it returns; the next rung's
+		// moment is set only once none is in flight, so a slow host cannot
+		// move the clock under a read still running.
+		idle := func() bool {
+			busy, _ := engine.Busy(queryGroup)
+			return busy.ReadsInFlight == 0
+		}
 		for rung := range lookback.RungSteps {
 			set(readAt.Add(time.Duration(lookback.RungSteps[rung] * float64(time.Minute))))
 			engine.Step(context.Background())
-			for settle := time.Now().Add(200 * time.Millisecond); time.Now().Before(settle) && completed() <= uint64(sample); {
-				time.Sleep(time.Millisecond)
-			}
+			testwait.Until(t, fmt.Sprintf("sample %d's reads at rung %d finishing", sample, rung), idle)
 			if completed() > uint64(sample) {
 				break
 			}
@@ -302,4 +310,33 @@ func lookbackPoint(end int64, value string) *execution.Dataset {
 	return execution.NewDataset([]contract.CanonicalRecordV2{{RecordID: "h1", SourceTime: end - 60,
 		DimensionIdentity: contract.DimensionIdentityV2{Digest: "digest-h1"},
 		Values:            map[string]json.RawMessage{"value": json.RawMessage(value)}}})
+}
+
+// The plan sets the view stream hands the Worker reach its lookback engine
+// whole, each replacing the last, and a Worker without an engine takes none.
+func TestTheViewStreamsPlanSetsReachTheLookbackEngine(t *testing.T) {
+	if lookbackPlansInto(nil) != nil {
+		t.Fatal("a Worker without a lookback engine takes plan sets")
+	}
+	now := time.Unix(1_700_000_060, 0)
+	engine, err := lookback.New(lookback.Options{Now: func() time.Time { return now },
+		Recheck: func(context.Context, execution.PhysicalQuerySpec, execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+			return execution.ProviderCompletion{}, nil
+		},
+		Permit: func() (func(), <-chan struct{}, string) { return func() {}, nil, "" },
+		Owns:   func(execution.QueryGroupIdentity) bool { return true }, Owned: func() int { return 1 }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := lookbackPlansInto(engine)
+	handler([]viewstream.LookbackPlan{{QueryGroup: "qg-late", Class: viewstream.LookbackPlanSeriesLate, Rung: 2,
+		ExpiresAt: now.Add(time.Hour)}})
+	engine.Begin(sampledQuery("qg-late"))
+	if got := engine.Stats().Plans[lookback.PlanSeeded]; got != 1 {
+		t.Fatalf("seeded plans after the set = %d, want 1", got)
+	}
+	handler(nil)
+	if got := engine.Stats().Plans[lookback.PlanExpired]; got != 1 {
+		t.Fatalf("expired plans after an empty set = %d, want 1: the empty set withdrew the entry", got)
+	}
 }

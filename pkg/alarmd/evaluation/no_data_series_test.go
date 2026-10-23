@@ -310,6 +310,7 @@ func noDataRequestFixtureOnGroup(
 			EffectiveTimeFacts:      []execution.BoundEffectiveTimeFact{{Consumer: consumer, SeriesIdentity: series, Fact: facts[0]}},
 			RequiredPhysicalQueries: []execution.PlannedPhysicalQueryRef{{Digest: "physical", QueryRevision: "query"}},
 			DeadlineUnixMilli:       200000,
+			DecisionTime:            sourceTime,
 		},
 		Inputs: []execution.SeriesEvaluationInputRequest{{
 			Contract: contractRef, Consumer: consumer, SeriesIdentity: series,
@@ -336,20 +337,20 @@ func recordIDFor(sourceTime int64) string {
 	return id[:60] + fmt.Sprintf("%04d", sourceTime%10000)
 }
 
-// A point that lands between the positions its history is kept on reads as a
-// window that is still filling, and nothing says otherwise.
+// A point that lands between the positions its history is kept on reads as an
+// ordinary short window, and nothing says otherwise.
 //
 // This is the reason the worker refuses an unaligned Slot before building any
 // point, and the reason that refusal cannot be left to something downstream.
 // The history summary does check alignment - and passes, because it measures
 // the window from the point's own time, so an unaligned point is aligned with
-// itself. What comes back is DECIDED_DEGRADED with HISTORY_WARMING: the same
-// answer a genuinely warming window gives, every round, forever.
+// itself. What comes back is a recovery read off a settled hole: the answer a
+// genuinely short window gives, every round, forever.
 //
 // The test states the silence rather than the guard, because the guard lives in
 // another package and a comment there asserting this would be a claim with
 // nothing behind it.
-func TestAnOffGridPointIsIndistinguishableFromAWarmingWindow(t *testing.T) {
+func TestAnOffGridPointReadsAsAnOrdinaryShortWindow(t *testing.T) {
 	plan := noDataCompiled(t, 3)
 	evaluator := newEvaluator(t)
 	ctx := context.Background()
@@ -371,9 +372,14 @@ func TestAnOffGridPointIsIndistinguishableFromAWarmingWindow(t *testing.T) {
 	if len(result.Plans) != 1 || len(result.Plans[0].LevelOutcomes) != 1 {
 		t.Fatalf("result = %+v, want one level outcome", result.Plans)
 	}
+	// Nothing in the outcome names the misalignment. The aligned round's
+	// absent point and this one share a window short of the third; its hole
+	// is settled and the series known, so it is a minute with no anomaly and
+	// the window reads RECOVERY - an answer a real short window gives every
+	// round, and nothing in it says the point was off the grid.
 	outcome := result.Plans[0].LevelOutcomes[0]
-	if outcome.ReasonCode != execution.ReasonCode(contract.ReasonHistoryWarming) {
-		t.Fatalf("an off-grid round reported %q; this test exists to record that it reports warming, "+
-			"and if that changed the worker's guard should be reconsidered", outcome.ReasonCode)
+	if outcome.Outcome != execution.LevelOutcomeRecovery || outcome.ReasonCode != execution.ReasonCode("none") {
+		t.Fatalf("an off-grid round reported %s / %q, want RECOVERY / none; this test exists to record that it reads as "+
+			"an ordinary short window, and if that changed the worker's guard should be reconsidered", outcome.Outcome, outcome.ReasonCode)
 	}
 }

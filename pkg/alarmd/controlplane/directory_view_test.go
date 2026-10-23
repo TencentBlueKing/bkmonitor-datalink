@@ -70,7 +70,7 @@ func (f *viewFixture) newReconciler(t *testing.T) *controlplane.SourceReconciler
 
 func (f *viewFixture) newView(t *testing.T, reconciler *controlplane.SourceReconciler, repository *controlplane.RedisCatalogRepository) *controlplane.DirectoryView {
 	t.Helper()
-	view, err := controlplane.NewDirectoryView(reconciler, repository, time.Second)
+	view, err := controlplane.NewDirectoryView(reconciler, repository)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,9 +409,11 @@ func TestADirectoryPageReadsNoManifestAndLeavesTheMemoAsItWas(t *testing.T) {
 	}
 }
 
-// A page whose time runs out between rows stops and says so: the rows it
-// had are an incomplete answer named DEADLINE, not a complete short one, and
-// the read the time ran out on is named beside it.
+// A page whose reader goes, or whose time runs out on a row's read, stops
+// and says so: the rows it had, whole, as a partial answer named DEADLINE.
+// The read the time ran out on is not a failed read -- that row is simply
+// not answered -- and the catalog's own completeness stands, so the next
+// page goes on from the first row this one did not reach.
 func TestADirectoryPagePastItsTimeSaysDeadline(t *testing.T) {
 	f := newViewFixture(t, objectCatalogTwoGroups(t, 80))
 	latestCatalog := catalogWithSchedule(t, objectCatalogTwoGroups(t, 90), 60, 0)
@@ -423,9 +425,102 @@ func TestADirectoryPagePastItsTimeSaysDeadline(t *testing.T) {
 	// after the activation has been read.
 	f.h.client.AddHook(&objectReadCancel{prefix: f.h.prefix + ":qgobj:", cancel: cancel})
 	s := f.view.Page(ctx, f.at, "", "", "", 0, 100)
-	if s.Complete || s.Reason != "DEADLINE" || s.Revision == "" || s.FailedRead != "group_object" || len(s.Rows) == 0 || len(s.Rows) == 4 {
-		t.Fatalf("page = complete %v reason %q revision %q failed %q rows %d, want incomplete, DEADLINE, the object read named, rows short",
-			s.Complete, s.Reason, s.Revision, s.FailedRead, len(s.Rows))
+	if !s.Partial || !s.Complete || s.Reason != "DEADLINE" || s.Revision == "" || s.FailedRead != "" || len(s.Rows) == 4 {
+		t.Fatalf("page = partial %v complete %v reason %q revision %q failed %q rows %d, want partial, complete, DEADLINE, no failed read, rows short",
+			s.Partial, s.Complete, s.Reason, s.Revision, s.FailedRead, len(s.Rows))
+	}
+}
+
+// slowObjectReads makes every read of a key with prefix take delay, the way
+// a cold object cache after a leader change reads one object after another.
+type slowObjectReads struct {
+	prefix string
+	delay  time.Duration
+}
+
+func (h slowObjectReads) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	for _, arg := range cmd.Args()[1:] {
+		if key, ok := arg.(string); ok && strings.HasPrefix(key, h.prefix) {
+			time.Sleep(h.delay) // fixed-wait: the slow read's delay, which the case sets
+		}
+	}
+	return ctx, nil
+}
+
+func (slowObjectReads) AfterProcess(context.Context, redis.Cmder) error { return nil }
+
+func (h slowObjectReads) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (context.Context, error) {
+	for _, cmd := range cmds {
+		_, _ = h.BeforeProcess(ctx, cmd)
+	}
+	return ctx, nil
+}
+
+func (slowObjectReads) AfterProcessPipeline(context.Context, []redis.Cmder) error { return nil }
+
+// A page takes the reader's time, not one of its own: object reads that
+// together take longer than the two seconds a page used to have, each well
+// inside the Redis client's timeout, answer whole for a reader that waits
+// thirty seconds.
+func TestADirectoryPageTakesTheReadersTime(t *testing.T) {
+	f := newViewFixture(t, objectCatalogTwoGroups(t, 80))
+	latestCatalog := catalogWithSchedule(t, objectCatalogTwoGroups(t, 90), 60, 0)
+	latest := f.h.publish(t, latestCatalog)
+	f.reconciler.RememberPublicationForTest(latest.Publication, latestCatalog)
+	f.h.client.AddHook(slowObjectReads{prefix: f.h.prefix + ":qgobj:", delay: 1100 * time.Millisecond})
+	ctx, cancel := context.WithTimeout(f.h.ctx, 30*time.Second) // fixed-wait: the reader's time the page takes its own from, far past the slow reads
+	defer cancel()
+	started := time.Now()
+	s := f.view.Page(ctx, f.at, "", "", "", 0, 100)
+	if took := time.Since(started); took < 2200*time.Millisecond {
+		t.Fatalf("the page took %s: the slow object reads the test is about did not happen", took)
+	}
+	if s.Partial || !s.Complete || s.Reason != "" || len(s.Rows) != 4 {
+		t.Fatalf("page = partial %v complete %v reason %q rows %d, want all four rows whole", s.Partial, s.Complete, s.Reason, len(s.Rows))
+	}
+}
+
+// A page that cannot finish in the reader's time stops a margin short of it
+// with a cursor at the first row it did not reach, and that cursor walks on
+// over the same revision.
+func TestAPartialDirectoryPageGoesOnFromItsCursor(t *testing.T) {
+	f := newViewFixture(t, objectCatalogTwoGroups(t, 80))
+	latestCatalog := catalogWithSchedule(t, objectCatalogTwoGroups(t, 90), 60, 0)
+	latest := f.h.publish(t, latestCatalog)
+	f.reconciler.RememberPublicationForTest(latest.Publication, latestCatalog)
+	f.h.client.AddHook(slowObjectReads{prefix: f.h.prefix + ":qgobj:", delay: 700 * time.Millisecond})
+	api := fleet.WithStrategyDirectory(http.NotFoundHandler(), f.view, nil, nil, "", func() time.Time { return f.at })
+	get := func(within time.Duration, query string) (controlplane.StrategyDirectorySnapshot, string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(f.h.ctx, within) // fixed-wait: the reader's time the case sets, which the page stops a margin short of
+		defer cancel()
+		w := httptest.NewRecorder()
+		api.ServeHTTP(w, httptest.NewRequest("GET", "/api/objects?scope=strategies"+query, nil).WithContext(ctx))
+		var body struct {
+			controlplane.StrategyDirectorySnapshot
+			NextCursor string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != 200 {
+			t.Fatalf("%s: %d %s (%v)", query, w.Code, w.Body.String(), err)
+		}
+		return body.StrategyDirectorySnapshot, body.NextCursor
+	}
+	// Time for one slow object read past the margin, not two.
+	first, cursor := get(controlplane.DirectoryAnswerMargin+500*time.Millisecond, "&limit=10")
+	if !first.Partial || len(first.Rows) == 0 || len(first.Rows) == 4 || cursor == "" {
+		t.Fatalf("first page = partial %v rows %d cursor %q, want some rows, partial, and a cursor", first.Partial, len(first.Rows), cursor)
+	}
+	second, last := get(30*time.Second, "&limit=10&cursor="+cursor)
+	if second.Partial || len(first.Rows)+len(second.Rows) != 4 || last != "" {
+		t.Fatalf("second page = partial %v rows %d after %d, cursor %q, want the rest whole and no cursor", second.Partial, len(second.Rows), len(first.Rows), last)
+	}
+	seen := map[string]bool{}
+	for _, row := range append(first.Rows, second.Rows...) {
+		key := row.Identity.StrategyID + "/" + string(row.Publication.SnapshotRevision)
+		if seen[key] {
+			t.Fatalf("row %s answered on both pages", key)
+		}
+		seen[key] = true
 	}
 }
 

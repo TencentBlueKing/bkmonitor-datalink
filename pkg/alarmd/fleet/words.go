@@ -32,10 +32,13 @@ import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 type StateWord string
 
 const (
-	StateDetecting            StateWord = "DETECTING"
-	StateResultUntrusted      StateWord = "RESULT_UNTRUSTED"
-	StateNotDetecting         StateWord = "NOT_DETECTING"
-	StateDataAbsent           StateWord = "DATA_ABSENT"
+	StateDetecting       StateWord = "DETECTING"
+	StateResultUntrusted StateWord = "RESULT_UNTRUSTED"
+	StateNotDetecting    StateWord = "NOT_DETECTING"
+	StateDataAbsent      StateWord = "DATA_ABSENT"
+	// StateIdentityMismatch: the data arrived and its identity labels do not
+	// build what the strategy's target reads.
+	StateIdentityMismatch     StateWord = "IDENTITY_MISMATCH"
 	StateStrategyInvalid      StateWord = "STRATEGY_INVALID"
 	StateDependencyUnanswered StateWord = "DEPENDENCY_UNANSWERED"
 	StateDefect               StateWord = "DEFECT"
@@ -43,16 +46,19 @@ const (
 )
 
 // StateWords is the closed list, in the order the page lists them.
-var StateWords = []StateWord{StateDetecting, StateResultUntrusted, StateNotDetecting, StateDataAbsent,
+var StateWords = []StateWord{StateDetecting, StateResultUntrusted, StateNotDetecting, StateDataAbsent, StateIdentityMismatch,
 	StateStrategyInvalid, StateDependencyUnanswered, StateDefect, StateRecovered}
 
 // ActionWord is who does what about it.
 type ActionWord string
 
 const (
-	ActionServiceFix      ActionWord = "SERVICE_FIX"
-	ActionStrategyEdit    ActionWord = "STRATEGY_EDIT"
-	ActionDataCheck       ActionWord = "DATA_CHECK"
+	ActionServiceFix   ActionWord = "SERVICE_FIX"
+	ActionStrategyEdit ActionWord = "STRATEGY_EDIT"
+	ActionDataCheck    ActionWord = "DATA_CHECK"
+	// ActionIdentityAlign: the strategy's identity fields or the collection's
+	// labels are aligned -- either side can, and the row says which differs.
+	ActionIdentityAlign   ActionWord = "IDENTITY_ALIGN"
 	ActionCacheWriterFill ActionWord = "CACHE_WRITER_FILL"
 	ActionWatch           ActionWord = "WATCH"
 	ActionNone            ActionWord = "NONE"
@@ -61,7 +67,7 @@ const (
 // ActionWords is the closed list, in the order the page's columns run:
 // this service first, then the two owners a reader hands work to, then the
 // cache writer, then what needs no hand.
-var ActionWords = []ActionWord{ActionServiceFix, ActionStrategyEdit, ActionDataCheck, ActionCacheWriterFill, ActionWatch, ActionNone}
+var ActionWords = []ActionWord{ActionServiceFix, ActionStrategyEdit, ActionDataCheck, ActionIdentityAlign, ActionCacheWriterFill, ActionWatch, ActionNone}
 
 // WatchReason is why a WATCH standing is a wait and not a hand-off: each is
 // decided by a rule on the row, never by the check alone. WINDOW_FILLING:
@@ -119,6 +125,10 @@ type Words struct {
 	// decides none of its own.
 	StateOrder  []StateWord  `json:"state_order"`
 	ActionOrder []ActionWord `json:"action_order"`
+	// Urgency renders whether acting is needed, optional or not asked, and
+	// UrgencyOrder is the page's order of the facet.
+	Urgency      map[Urgency]string `json:"urgency"`
+	UrgencyOrder []Urgency          `json:"urgency_order"`
 }
 
 // ProductWords is the one rendering of the vocabulary.
@@ -161,15 +171,20 @@ func ProductWords() Words {
 			string(observability.CoverageRejectWindowGuardReasonFree):  "写了守卫原因却没被守卫",
 		},
 		StateOrder: append([]StateWord(nil), StateWords...), ActionOrder: append([]ActionWord(nil), ActionWords...),
+		Urgency: map[Urgency]string{
+			UrgencyActionNeeded: "需要处理", UrgencyOptional: "可选优化", UrgencyNone: "无需处理", UrgencyUnknown: "状态未知",
+		},
+		UrgencyOrder: append([]Urgency(nil), Urgencies...),
 		State: map[StateWord]string{
 			StateDetecting: "在检测", StateResultUntrusted: "检测结果不能采信", StateNotDetecting: "没在检测",
-			StateDataAbsent: "数据没到", StateStrategyInvalid: "策略定义有问题", StateDependencyUnanswered: "依赖没应答",
+			StateDataAbsent: "数据没到", StateIdentityMismatch: "数据身份对不上", StateStrategyInvalid: "策略定义有问题", StateDependencyUnanswered: "依赖没应答",
 			StateDefect: "程序缺陷", StateRecovered: "已恢复",
 			// The one word a diagnosis adds: no standing could be read.
 			DiagnosisUnknown: "状态未知",
 		},
 		Action: map[ActionWord]string{
 			ActionServiceFix: "本服务处理", ActionStrategyEdit: "策略负责人改", ActionDataCheck: "数据负责人查",
+			ActionIdentityAlign:   "策略或采集方对齐身份标签",
 			ActionCacheWriterFill: "缓存写入方补", ActionWatch: "等着看", ActionNone: "不用处理",
 		},
 		Watch: map[WatchReason]string{
@@ -226,13 +241,23 @@ var checkWords = map[Check]wordPair{
 	CheckEmptyEveryRound:        {StateDataAbsent, ActionStrategyEdit},
 	// Not "data absent": the data arrived, outside the target.
 	CheckEmptyAfterTarget: {StateNotDetecting, ActionStrategyEdit},
+	// Not "data absent" either: the data arrived and names its instance in
+	// labels the target does not read.
+	CheckIdentityUnmatched: {StateIdentityMismatch, ActionIdentityAlign},
 	// Detecting: an event count with no event to judge.
 	CheckQuiet: {StateDetecting, ActionNone},
+	// Detecting: a log count with nothing in the answer, which may be a
+	// group at rest or data gone missing; the row says the answer cannot
+	// tell them apart.
+	CheckLogCountEmpty: {StateDetecting, ActionNone},
 	// Detecting what came back; the grouping is the strategy's to narrow.
-	CheckAnswerTruncated:    {StateDetecting, ActionStrategyEdit},
-	CheckSeriesChurning:     {StateResultUntrusted, ActionStrategyEdit},
-	CheckPlanUnevaluable:    {StateStrategyInvalid, ActionStrategyEdit},
-	CheckQueryTargetMissing: {StateStrategyInvalid, ActionStrategyEdit},
+	CheckAnswerTruncated: {StateDetecting, ActionStrategyEdit},
+	CheckSeriesChurning:  {StateResultUntrusted, ActionStrategyEdit},
+	// Detecting, and recovering where Python would; the owner acts only if
+	// whole windows are wanted.
+	CheckSeriesSparserThanWindow: {StateDetecting, ActionNone},
+	CheckPlanUnevaluable:         {StateStrategyInvalid, ActionStrategyEdit},
+	CheckQueryTargetMissing:      {StateStrategyInvalid, ActionStrategyEdit},
 	// Detecting: every round completes. The strategy's to act on before the
 	// share refuses it whole.
 	CheckRetainedShareApproaching: {StateDetecting, ActionStrategyEdit},

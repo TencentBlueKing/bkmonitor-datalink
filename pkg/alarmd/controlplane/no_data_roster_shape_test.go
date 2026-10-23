@@ -272,6 +272,17 @@ func TestATargetPlanHasARosterOnlyUnderExactlyItsKeyDimensions(t *testing.T) {
 		query["target_identity"] = map[string]any{"type": "object_model_inst",
 			"object_model_field": "object_model_code", "object_model_inst_field": "object_inst_id"}
 	}
+	// The canonical OneModel identity: the gate on model_id (the model code)
+	// and the instance in model_inst_id, named by the query's target identity.
+	canonical := map[string]any{"schema_version": 1, "model_id": "cw-MySQL", "target_rule": "model_inst_id",
+		"failure_policy": "no_match", "dynamic_groups": []any{}, "dynamic_topologies": []any{},
+		"model_match":    map[string]any{"model_id": "cw-MySQL"},
+		"static_targets": []any{map[string]any{"model_id": "cw-MySQL", "model_inst_id": "22"}}}
+	canonicalIdentity := func(item map[string]any) {
+		query := item["query_configs"].([]any)[0].(map[string]any)
+		query["target_identity"] = map[string]any{"type": "object_model_inst",
+			"object_model_field": "model_id", "object_model_inst_field": "model_inst_id"}
+	}
 	byHost := map[string]any{"schema_version": 1, "model_id": "cw-Host", "target_rule": "model_inst_id",
 		"failure_policy": "no_match", "dynamic_groups": []any{}, "dynamic_topologies": []any{},
 		"static_targets": []any{map[string]any{"model_id": "cw-Host", "model_inst_id": "101"}}}
@@ -312,6 +323,13 @@ func TestATargetPlanHasARosterOnlyUnderExactlyItsKeyDimensions(t *testing.T) {
 				"subset":   {"object_inst_id"},
 				"superset": {"object_model_code", "object_inst_id", "device_name"},
 				"empty":    {},
+			}},
+		"model_inst_id by the canonical identity": {plan: canonical, query: canonicalIdentity, exact: []string{"model_inst_id", "model_id"},
+			refused: map[string][]string{
+				"the legacy pair":   {"cw_object_model_id", "cw_object_model_inst_id"},
+				"legacy model gate": {"cw_object_model_id", "model_inst_id"},
+				"subset":            {"model_inst_id"},
+				"empty":             {},
 			}},
 		// Read by host identity the key is the host id, and so is the roster
 		// group (decision-017 section 2.3 (c); global-business strategy

@@ -147,8 +147,8 @@ func TestSoakTheSchedulerShapeStaggerAndHoldTogether(t *testing.T) {
 	var samples []sample
 	started := time.Now()
 	stepped, unstepped := false, false
-	for time.Since(started) < runFor {
-		time.Sleep(500 * time.Millisecond)
+	for time.Since(started) < runFor { // fixed-wait: the soak runs for its set duration
+		time.Sleep(500 * time.Millisecond) // fixed-wait: the soak sampling cadence
 		switch {
 		case !stepped && time.Since(started) >= stepUpAt:
 			stepped = true
@@ -204,7 +204,7 @@ func TestSoakTheSchedulerShapeStaggerAndHoldTogether(t *testing.T) {
 	if pooled != 0 {
 		t.Fatalf("%d Query Groups entered the query cooldown pool", pooled)
 	}
-	if timeouts := soakCounter(t, recorder, "bkmonitor_alarmd_worker_query_admission_total", "result", "timeout"); timeouts != 0 {
+	if timeouts := soakCounter(t, recorder, "alarmd_worker_query_admission_total", "result", "timeout"); timeouts != 0 {
 		t.Fatalf("%v queries timed out waiting for a permit", timeouts)
 	}
 	// The step was served: the groups added at its start were read while
@@ -312,7 +312,7 @@ func (backend *soakBackend) roundTrip(request *http.Request) (*http.Response, er
 	}
 	backend.mu.Unlock()
 	select {
-	case <-time.After(latency):
+	case <-time.After(latency): // fixed-wait: the simulated backend latency under test
 	case <-request.Context().Done():
 		return nil, request.Context().Err()
 	}

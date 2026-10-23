@@ -83,6 +83,17 @@ type heapSiteSample struct {
 	taken     time.Time
 }
 
+// cachedLive is the live heap of the last sample, without taking one: the
+// flow's copy reads it every publish and must never force a collection.
+func (c *heapSiteCollector) cachedLive() (uint64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.last == nil || !c.last.liveKnown {
+		return 0, false
+	}
+	return uint64(c.last.live), true
+}
+
 type heapSiteCollector struct {
 	mu      sync.Mutex
 	now     func() time.Time
@@ -99,7 +110,7 @@ type heapSiteCollector struct {
 
 func newHeapSiteCollector(now func() time.Time) *heapSiteCollector {
 	descriptor := func(name, help string, labels []string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	return &heapSiteCollector{
 		now:     now,

@@ -27,7 +27,7 @@ type activationRebuildCollector struct {
 }
 
 func newActivationRebuildCollector() *activationRebuildCollector {
-	return &activationRebuildCollector{rebuilds: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "activation_rebuild_total"),
+	return &activationRebuildCollector{rebuilds: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "activation_rebuild_total"),
 		"Activation bodies the Control Leader rebuilt under a header present without its body, by outcome. "+
 			"rebuilt: written back byte for byte from the copy last read under the same header. "+
 			"rebuilt_draining_unknown: rebuilt from the open Segments without that copy; the Plans are exact, "+

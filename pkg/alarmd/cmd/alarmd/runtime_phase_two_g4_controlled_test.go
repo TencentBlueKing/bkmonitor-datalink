@@ -511,7 +511,7 @@ func controlledG4Base(t *testing.T) int64 {
 	t.Helper()
 	wall := time.Now()
 	if remaining := time.Until(wall.Truncate(time.Minute).Add(time.Minute)); remaining < 10*time.Second {
-		time.Sleep(remaining + 10*time.Millisecond)
+		time.Sleep(remaining + 10*time.Millisecond) // fixed-wait: aligns the case to a wall-clock minute boundary, the behaviour the case is built on
 		wall = time.Now()
 	}
 	base := wall.Unix()

@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 )
 
 // LinkdConsoleReading is what the collector reports about the alert link's
@@ -31,7 +33,10 @@ type LinkdConsoleCalls struct {
 // those families being missing. The state here is present on every replica
 // whatever the configuration.
 type linkdConsoleCollector struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// offRole is a process none of whose roles reads the Console: it says so
+	// (RoleNotApplicable) instead of emitting nothing.
+	offRole  bool
 	states   []string
 	ops      []string
 	classes  []string
@@ -43,20 +48,21 @@ type linkdConsoleCollector struct {
 
 func newLinkdConsoleCollector() *linkdConsoleCollector {
 	return &linkdConsoleCollector{
-		state: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "linkd_console_state"),
+		state: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "linkd_console_state"),
 			"The alert link's Console as this replica last saw it, one cell per state and 1 on the current one: "+
 				"not_configured (the deployment names no Console, so neither the open alert set's calibration nor "+
 				"the close of disabled or deleted strategies' alerts runs; by design on a deployment whose events "+
 				"all go the Python-compatible way), not_called, unreadable (the latest call of some operation "+
 				"failed), link_unhealthy (the Console answered and the link says its own set maintenance is "+
-				"failing, never succeeded or is behind; the close refuses every round) and reachable.",
+				"failing, never succeeded or is behind; the close refuses every round), reachable, and off_role, a cell on every "+
+				"process: 1 on one with neither the control nor the worker role (the rest 0), else 0.",
 			[]string{"state"}, nil),
-		calls: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "linkd_console_calls_total"),
+		calls: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "linkd_console_calls_total"),
 			"Calls this replica made to the alert link's Console, by operation (roster, reconcile, alert_record) "+
 				"and result (ok, failed). Only the control leader walks the roster. An alert_record answered with "+
 				"'no such alert' is ok. Every cell exists once the source is bound, so a zero is a reading.",
 			[]string{"op", "result"}, nil),
-		failures: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "linkd_console_failures_total"),
+		failures: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "linkd_console_failures_total"),
 			"Failed calls to the alert link's Console, by operation and class: the transport's word for a request "+
 				"that got no answer (cancelled - the caller let go, timeout, connection_refused, connection_reset, dns, "+
 				"tls, eof, other - the same words a query provider's route detail uses), status (an answer other than "+
@@ -91,9 +97,17 @@ func (c *linkdConsoleCollector) Describe(ch chan<- *prometheus.Desc) {
 
 func (c *linkdConsoleCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.Lock()
-	states, ops, classes, source := c.states, c.ops, c.classes, c.source
+	states, ops, classes, source, offRole := c.states, c.ops, c.classes, c.source, c.offRole
 	c.mu.Unlock()
+	// Every process exposes the same cells, off_role among them: 1 on a
+	// process whose roles read no Console, 0 on one that reads it.
 	if source == nil {
+		if offRole {
+			for _, state := range fleet.LinkdConsoleStates {
+				ch <- prometheus.MustNewConstMetric(c.state, prometheus.GaugeValue, 0, state)
+			}
+			ch <- prometheus.MustNewConstMetric(c.state, prometheus.GaugeValue, 1, RoleNotApplicable)
+		}
 		return
 	}
 	reading := source()
@@ -104,6 +118,7 @@ func (c *linkdConsoleCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		ch <- prometheus.MustNewConstMetric(c.state, prometheus.GaugeValue, value, state)
 	}
+	ch <- prometheus.MustNewConstMetric(c.state, prometheus.GaugeValue, 0, RoleNotApplicable)
 	for _, op := range ops {
 		calls := reading.Calls[op]
 		ch <- prometheus.MustNewConstMetric(c.calls, prometheus.CounterValue, float64(calls.Calls-calls.Failures), op, "ok")

@@ -76,7 +76,7 @@ func TestChannelRoutesWorkerEvidenceWithoutControlLeader(t *testing.T) {
 func TestChannelAndAuthlessWorkerUseOperationContractAcrossCatalogs(t *testing.T) {
 	nodes, _ := roleFixture(t)
 	worker := nodes["worker"]
-	op := obchannel.Operation{ID: "runtime.get", Summary: "Read process", EvidenceScope: "process", Targetable: true,
+	op := obchannel.Operation{ID: "runtime.get", Summary: "Read process", EvidenceScope: "process", Targetable: true, ExecutionTimeout: 20 * time.Second,
 		Run: func(context.Context, obchannel.Params) obchannel.Outcome {
 			worker.runs.Add(1)
 			return obchannel.Outcome{Complete: true}

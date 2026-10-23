@@ -94,6 +94,10 @@ func TestEachLineTakesTheLevelItsResultAndReasonGive(t *testing.T) {
 			ReasonCode: "SKIPPED_HOSTS_UNRESOLVED"}, "WARN"},
 		{"a failure", Observation{Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultFailed,
 			ReasonCode: "QUERY_PERMIT_DEADLINE", Err: errors.New("deadline")}, "ERROR"},
+		{"the same failure, which the Slot retries", Observation{Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultRetrying,
+			ReasonCode: "QUERY_PERMIT_DEADLINE", Err: errors.New("deadline"), RetryingAfterFailure: true}, "WARN"},
+		{"a retried failure whose reason alone reads INFO", Observation{Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultRetrying,
+			ReasonCode: ReasonCode(contract.ReasonQueryTargetMissing), Err: errors.New("target missing"), RetryingAfterFailure: true}, "WARN"},
 		{"a timeout", Observation{Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultTimeout,
 			ReasonCode: ReasonCode(contract.ReasonQueryTimeout)}, "ERROR"},
 		{"a skip something held", Observation{Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultDegraded,
@@ -311,5 +315,89 @@ func TestEveryNoDataStallIsWrittenAtWarn(t *testing.T) {
 		if got := ReasonLogLevel(reason); got != slog.LevelWarn {
 			t.Errorf("a stall on %s is written at %s, want WARN", reason, got)
 		}
+	}
+}
+
+// A Worker that found its Leader and could not reach it writes its failure
+// at WARN, as it did as reason_not_reported before the words existed; a
+// stream this side closed, and the Leader's own end of a session
+// (SEND_FAILED), are a session's ordinary end, at INFO.
+func TestAWorkerThatCannotReachItsLeaderIsWrittenAtWarn(t *testing.T) {
+	for reason, want := range map[ReasonCode]slog.Level{
+		"LEADER_UNAVAILABLE": slog.LevelWarn, "CONNECT_FAILED": slog.LevelWarn,
+		"DIAL_FAILED": slog.LevelWarn, "HELLO_SEND_FAILED": slog.LevelWarn,
+		"SEND_FAILED": slog.LevelInfo, "STREAM_CLOSED": slog.LevelInfo,
+	} {
+		observation := NormalizeObservation(Observation{Component: ComponentOwnership, Stage: StageViewSession,
+			Result: ResultDegraded, ReasonCode: reason, Err: errors.New("stream")})
+		if got := observationLevel(observation); got != want {
+			t.Errorf("view_session %s: level %s, want %s", reason, got, want)
+		}
+	}
+}
+
+// A Runner round's return line and a permit wait's line feed their counters
+// and are not written, whatever reason they carry: naming their reasons
+// moves no line's level.
+func TestTheRoundReturnAndPermitWaitLinesAreNotWritten(t *testing.T) {
+	limiter, err := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 100, MaxScopes: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewScopedBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	logging := NewLoggingObserver(New("alarmd", &output), policy)
+	for _, observation := range []Observation{
+		{Component: ComponentScheduler, Stage: StageRunnerReturned, Result: ResultTerminal, RunOutcome: "source_error", ReasonCode: "source_error"},
+		{Component: ComponentScheduler, Stage: StageRunnerReturned, Result: ResultTerminal, RunOutcome: "panic", ReasonCode: "panic"},
+		{Component: ComponentScheduler, Stage: StageQueryPermitWait, Result: ResultFailed, ReasonCode: "QUERY_PERMIT_QUEUE_FULL"},
+	} {
+		logging.Observe(context.Background(), observation)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("written: %s", output.String())
+	}
+}
+
+// A refused skip of a pruned cursor is written at WARN, as it was as
+// reason_not_reported: the cursor stays where nothing can read it. A fence
+// moved under the skip is an ownership refusal, written at INFO like every
+// other one met during a handover; a store error the store did not classify
+// is a failure, at ERROR.
+func TestARefusedCursorSkipTakesTheLevelItsReasonGives(t *testing.T) {
+	for _, testCase := range []struct {
+		result Result
+		reason ReasonCode
+		want   slog.Level
+	}{
+		{ResultRetrying, CursorRefusalCASConflict, slog.LevelWarn},
+		{ResultRetrying, CursorRefusalRangeInFlight, slog.LevelWarn},
+		{ResultRetrying, CursorRefusalCursorMoved, slog.LevelWarn},
+		{ResultRetrying, CursorRefusalProgressMissing, slog.LevelWarn},
+		{ResultRetrying, ReasonCode(contract.ReasonRedisUnavailable), slog.LevelWarn},
+		{ResultRetrying, ReasonCode(contract.ReasonOwnershipStaleFence), slog.LevelInfo},
+		{ResultFailed, ReasonInternalUnknown, slog.LevelError},
+	} {
+		observation := NormalizeObservation(Observation{Component: ComponentScheduler, Stage: StageScheduleCursorAdvanced,
+			Result: testCase.result, ReasonCode: testCase.reason, CursorAdvance: &CursorAdvanceFacts{}})
+		if observation.ReasonCode != testCase.reason {
+			t.Errorf("%s normalised to %s", testCase.reason, observation.ReasonCode)
+		}
+		if got := observationLevel(observation); got != testCase.want {
+			t.Errorf("schedule_cursor_advanced %s %s: level %s, want %s", testCase.result, testCase.reason, got, testCase.want)
+		}
+	}
+}
+
+// An execution declined as hung is a failure of this deployment's own, at
+// ERROR as it was; its return after the decline is not written as one.
+func TestAHungExecutionIsWrittenAtError(t *testing.T) {
+	declined := NormalizeObservation(Observation{Component: ComponentScheduler, Stage: StageExecutionHung,
+		Result: ResultFailed, ReasonCode: ReasonExecutionHung, ExecutionHung: &ExecutionHungFacts{Outcome: ExecutionHungDeclined}})
+	if declined.ReasonCode != ReasonExecutionHung || observationLevel(declined) != slog.LevelError {
+		t.Fatalf("declined: reason %s level %s, want EXECUTION_HUNG at ERROR", declined.ReasonCode, observationLevel(declined))
 	}
 }

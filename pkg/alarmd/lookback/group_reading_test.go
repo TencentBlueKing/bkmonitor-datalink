@@ -12,10 +12,12 @@ package lookback
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func groupSample(f *fixture, name string, hold time.Duration, first func(int64) []*execution.Dataset, later func(int64) []*execution.Dataset) {
@@ -206,7 +208,7 @@ func TestGroupReadingOwnershipCanReenterStatsAndForget(t *testing.T) {
 		if found || !called {
 			t.Fatal("an owner-lost group supplied a reading")
 		}
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("GroupReading held the engine lock across its ownership callback")
 	}
 }
@@ -235,5 +237,34 @@ func TestASamplesHoldIsCountedInWholeSecondsRoundedUp(t *testing.T) {
 		if got := holdSeconds(millis); got != want {
 			t.Errorf("holdSeconds(%d) = %d, want %d", millis, got, want)
 		}
+	}
+}
+
+// A sample found read early is a line of its own too, one each, not sampled - a group's second as well as its
+// first; a group not in probation keeps no decision, and its line says so. A sample found complete is no line.
+func TestASampleReadEarlyIsALineOfItsOwn(t *testing.T) {
+	f := newFixture(t)
+	var lines []WindowReadEarly
+	var mu sync.Mutex
+	f.engine.options.OnWindowReadEarly = func(line WindowReadEarly) {
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+	}
+	value := func(text string) func(int64) []*execution.Dataset {
+		return func(slot int64) []*execution.Dataset { return []*execution.Dataset{point(slot, text)} }
+	}
+	groupSample(f, "qg", 0, value("1"), value("2"))
+	groupSample(f, "qg-b", 0, value("3"), value("3"))
+	groupSample(f, "qg", time.Minute, value("4"), value("5"))
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) != 2 || lines[1].Contract.Slot.QueryGroup != "qg" || lines[1].Hold != time.Minute {
+		t.Fatalf("lines %+v, want each of qg's two samples read early", lines)
+	}
+	if lines[0].Contract.Slot.QueryGroup != "qg" || lines[0].Path != ReadEarlyPathSample ||
+		lines[0].Decision != nil || lines[0].DecisionMissing != DecisionNotInProbation ||
+		lines[0].Changes[ChangeValuesChanged] != 1 {
+		t.Fatalf("lines %+v, want qg's sample, not in probation, its value changed", lines)
 	}
 }

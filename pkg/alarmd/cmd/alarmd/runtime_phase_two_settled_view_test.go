@@ -15,12 +15,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
@@ -127,7 +129,12 @@ func settleExecutableView(ctx context.Context, bundle *phaseTwoWorkerBundle, wai
 	}
 	serveControlStreamForTest(bundle)
 	deadline := time.Now().Add(wait)
-	for {
+	// Best effort by design: a case whose control process is gone or flapping
+	// has a view that cannot settle, and its passes run on unsettled after
+	// this bound (measured: three election cases reach it, twice each, and
+	// pass). A case that needs the settled view waits for it with
+	// requireSettledView, to the test's deadline.
+	for { // fixed-wait: how long a pass tries to settle before it runs unsettled, as the cases without a steady leader must
 		renewLapsedRegistrationForTest(ctx, bundle, ownership)
 		if viewSettled(ctx, bundle, ownership) {
 			return true
@@ -135,8 +142,28 @@ func settleExecutableView(ctx context.Context, bundle *phaseTwoWorkerBundle, wai
 		if time.Now().After(deadline) {
 			return false
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a best-effort settle; requireSettledView waits on the condition
 	}
+}
+
+// requireSettledView waits, until the test's deadline, for every Query Group
+// of the bundle to be executable from the view with its lease at the
+// record's timeline revision (viewSettled), and fails t if that never comes.
+// A case asserting what a settled round reads needs the settled state, not
+// settleExecutableView's bounded best effort: past that bound the round runs
+// on a lease behind the record, and its stale hint is answered through the
+// activation header.
+func requireSettledView(t *testing.T, ctx context.Context, bundle *phaseTwoWorkerBundle) {
+	t.Helper()
+	production, ok := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	if bundle.dependencies.ViewClient == nil || !ok {
+		return
+	}
+	serveControlStreamForTest(bundle)
+	testwait.Until(t, "the view settling with every lease at its record's timeline revision", func() bool {
+		renewLapsedRegistrationForTest(ctx, bundle, production)
+		return viewSettled(ctx, bundle, production)
+	})
 }
 
 // renewLapsedRegistrationForTest re-registers the Worker when its own

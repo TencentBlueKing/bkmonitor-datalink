@@ -60,7 +60,10 @@ type poolBackend struct {
 	// cut, when set, is the backend's own limit: a query that would take
 	// that long or longer is answered unavailable when it is reached, as a
 	// query service answers when its storage client gives up.
-	cut      atomic.Int64 // milliseconds
+	cut atomic.Int64 // milliseconds
+	// missing, when set, answers every query in its latency with the query
+	// service's refusal of a table that does not route in the space.
+	missing  atomic.Bool
 	mu       sync.Mutex
 	requests []poolRequest
 }
@@ -99,6 +102,15 @@ func (backend *poolBackend) roundTrip(request *http.Request) (*http.Response, er
 		backend.clock.Store(now + cut)
 		return &http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(bytes.NewBufferString(`{"error":"context deadline exceeded"}`)), Request: request}, nil
+	}
+	if backend.missing.Load() && latency < remaining {
+		backend.mu.Lock()
+		backend.requests = append(backend.requests, poolRequest{remaining: time.Duration(remaining) * time.Millisecond})
+		backend.mu.Unlock()
+		backend.clock.Store(now + latency)
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}},
+			Body:    io.NopCloser(bytes.NewBufferString(`{"series":[],"status":{"code":"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},"is_partial":false}`)),
+			Request: request}, nil
 	}
 	answered := latency < remaining
 	backend.mu.Lock()
@@ -632,7 +644,7 @@ func TestTheProductionBundleCountsDownstreamDistressByContention(t *testing.T) {
 	}
 	counts := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_query_downstream_distress_total" {
+		if family.GetName() != "alarmd_query_downstream_distress_total" {
 			continue
 		}
 		for _, series := range family.GetMetric() {
@@ -681,7 +693,7 @@ func TestTheProductionBundleCountsHowEachGroupWasSeeded(t *testing.T) {
 	}
 	seeds := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_read_hold_seeds_total" {
+		if family.GetName() != "alarmd_read_hold_seeds_total" {
 			continue
 		}
 		for _, series := range family.GetMetric() {

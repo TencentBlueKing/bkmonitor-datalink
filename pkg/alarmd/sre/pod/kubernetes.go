@@ -12,21 +12,31 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	typedcore "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/remotecommand"
 	utilexec "k8s.io/client-go/util/exec"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kubeclient"
 )
 
 type KubernetesClient struct {
 	core   typedcore.CoreV1Interface
 	owners dynamic.Interface
+	// mapper resolves a kind to its resource from the cluster's discovery,
+	// cached; a kind it does not know resets the cache once, for a CRD
+	// installed since.
+	mapper *restmapper.DeferredDiscoveryRESTMapper
 }
 
 // serviceAccountNamespace is where the kubelet writes the Pod's own namespace.
@@ -43,7 +53,7 @@ func NewInCluster(options Options) (*Provider, error) {
 			options.DefaultNamespace = strings.TrimSpace(string(own))
 		}
 	}
-	config, err := rest.InClusterConfig()
+	config, err := kubeclient.InCluster()
 	if err != nil {
 		return nil, &Error{Code: "service_account_not_mounted", Message: "in-cluster configuration is unavailable"}
 	}
@@ -60,6 +70,8 @@ func NewInCluster(options Options) (*Provider, error) {
 	options.Secrets = client
 	options.ConfigMaps = client
 	options.Resources = client
+	options.DryRun = client
+	options.Writer = client
 	options.Executor = executor
 	return New(options)
 }
@@ -69,11 +81,12 @@ func NewInCluster(options Options) (*Provider, error) {
 func NewKubernetesClient(config *rest.Config) (*KubernetesClient, error) {
 	if config == nil {
 		var err error
-		config, err = rest.InClusterConfig()
+		config, err = kubeclient.InCluster()
 		if err != nil {
 			return nil, &Error{Code: "service_account_not_mounted", Message: "in-cluster configuration is unavailable"}
 		}
 	}
+	config = kubeclient.WithRate(config)
 	core, err := typedcore.NewForConfig(rest.CopyConfig(config))
 	if err != nil {
 		return nil, apiError(err)
@@ -82,7 +95,12 @@ func NewKubernetesClient(config *rest.Config) (*KubernetesClient, error) {
 	if err != nil {
 		return nil, apiError(err)
 	}
-	return &KubernetesClient{core: core, owners: owners}, nil
+	discovered, err := discovery.NewDiscoveryClientForConfig(rest.CopyConfig(config))
+	if err != nil {
+		return nil, apiError(err)
+	}
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(discovered))
+	return &KubernetesClient{core: core, owners: owners, mapper: mapper}, nil
 }
 func (c *KubernetesClient) ListPods(ctx context.Context, namespace string, options metav1.ListOptions) (*corev1.PodList, error) {
 	return c.core.Pods(namespace).List(ctx, options)
@@ -190,12 +208,12 @@ type KubernetesExecutor struct {
 func NewKubernetesExecutor(config *rest.Config) (*KubernetesExecutor, error) {
 	if config == nil {
 		var err error
-		config, err = rest.InClusterConfig()
+		config, err = kubeclient.InCluster()
 		if err != nil {
 			return nil, &Error{Code: "service_account_not_mounted", Message: "in-cluster configuration is unavailable"}
 		}
 	}
-	copyConfig := rest.CopyConfig(config)
+	copyConfig := kubeclient.WithRate(config)
 	core, err := typedcore.NewForConfig(copyConfig)
 	if err != nil {
 		return nil, apiError(err)
@@ -249,4 +267,48 @@ func startRefused(err error, program string) bool {
 		}
 	}
 	return false
+}
+
+// Mapping resolves apiVersion and kind to the resource the cluster serves
+// them under and whether it is namespaced.
+func (c *KubernetesClient) Mapping(apiVersion, kind string) (schema.GroupVersionResource, bool, error) {
+	version, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return schema.GroupVersionResource{}, false, err
+	}
+	gk := schema.GroupKind{Group: version.Group, Kind: kind}
+	mapping, err := c.mapper.RESTMapping(gk, version.Version)
+	if meta.IsNoMatchError(err) {
+		c.mapper.Reset()
+		mapping, err = c.mapper.RESTMapping(gk, version.Version)
+	}
+	if err != nil {
+		return schema.GroupVersionResource{}, false, err
+	}
+	return mapping.Resource, mapping.Scope.Name() == meta.RESTScopeNameNamespace, nil
+}
+
+// ApplyDryRun is the dry run's one write: a server-side apply that the
+// apiserver runs through admission and does not persist. dryRunPatchOptions
+// is fixed here; no caller reaches it.
+func (c *KubernetesClient) ApplyDryRun(ctx context.Context, resource schema.GroupVersionResource, namespace, name string, data []byte) (*unstructured.Unstructured, error) {
+	return c.owners.Resource(resource).Namespace(namespace).Patch(ctx, name, types.ApplyPatchType, data, dryRunPatchOptions())
+}
+
+// Apply is k8s.apply's write: a server-side apply under the channel's field
+// manager, persisted; writePatchOptions is fixed here.
+func (c *KubernetesClient) Apply(ctx context.Context, resource schema.GroupVersionResource, namespace, name string, data []byte, force bool) (*unstructured.Unstructured, error) {
+	return c.owners.Resource(resource).Namespace(namespace).Patch(ctx, name, types.ApplyPatchType, data, writePatchOptions(force))
+}
+
+// JSONPatch sends an RFC 6902 patch as alarmd-sre; the apiserver applies it
+// whole or not at all.
+func (c *KubernetesClient) JSONPatch(ctx context.Context, resource schema.GroupVersionResource, namespace, name string, patch []byte) (*unstructured.Unstructured, error) {
+	return c.owners.Resource(resource).Namespace(namespace).Patch(ctx, name, types.JSONPatchType, patch, metav1.PatchOptions{FieldManager: applyFieldManager})
+}
+
+// Delete is k8s.delete's write: only the object the uid names, dependents in
+// the background; deleteOptions is fixed here.
+func (c *KubernetesClient) Delete(ctx context.Context, resource schema.GroupVersionResource, namespace, name string, uid types.UID, resourceVersion string) error {
+	return c.owners.Resource(resource).Namespace(namespace).Delete(ctx, name, deleteOptions(uid, resourceVersion))
 }

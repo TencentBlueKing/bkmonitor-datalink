@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -869,10 +870,7 @@ func testProductionFullTargetFlow(t *testing.T, diagnostic, split bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateStore, err := state.NewExecutionStore(state.ExecutionStoreOptions{
-		Prefix: cfg.Redis.StatePrefix, Router: router, MaxValueBytes: cfg.Limits.Codec.MaxEncodedBytes,
-		MaxItemsPerCall: cfg.Limits.Store.MaxKeysPerBatch, MinTTL: cfg.Redis.MinTTL.Duration(), MaxTTL: cfg.Redis.MaxTTL.Duration(), RestartMargin: cfg.Redis.RestartMargin.Duration(),
-	})
+	stateStore, err := state.NewExecutionStore(executionStoreOptions(cfg, router))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1494,7 +1492,7 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 	case <-firstEntered:
 	case err := <-tickDone:
 		t.Fatalf("production tick returned before first UQ: %v", err)
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("first owned Query Group did not enter UQ")
 	}
 	select {
@@ -1503,7 +1501,7 @@ func TestProductionPhaseTwoBundleSharesOneProcessRecoveryPermitBudgetAcrossOwned
 		// Query enters UQ; R is enforced at this shared inner boundary.
 	case <-secondEntered:
 		t.Fatal("owned Query Groups used copied recovery permit budgets or bypassed recovery-aware SlotSource")
-	case <-time.After(signalWaitBound):
+	case <-testwait.Expired(t):
 		t.Fatal("replay sibling did not reach the shared query-permit queue")
 	}
 	release()
@@ -2351,6 +2349,10 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 		if len(before) > 0 {
 			lastID = before[0].ID
 		}
+		// The round is asserted as a settled one: its lease at the record's
+		// timeline revision, so every read carries a hint the timeline bears.
+		requireSettledView(t, ctx, bundle)
+		hintedBefore := repository.ControlReadCacheStats().HintedTimeline
 		var result execution.SlotExecutionResult
 		var attempted bool
 		if strategyID == "1002" {
@@ -2395,9 +2397,25 @@ func TestProductionRunOneReadsControlBodiesOncePerRevisionAndVersion(t *testing.
 		// the same round probed it at least twice; that number is what
 		// batch 4 was built to take away, so it is asserted gone rather than
 		// merely allowed to fall.
+		// A stale hint is answered through the header by design (one probe,
+		// never a wrong Segment); on a settled round there is none, so a
+		// probe is named by where it came from: a hint the timeline did not
+		// bear (refreshes), or a command of another goroutine in the window.
+		hintedAfter := repository.ControlReadCacheStats().HintedTimeline
+		if hintedAfter.Refreshes != hintedBefore.Refreshes {
+			t.Fatalf("RunOne(%s) carried %d hints the timeline did not bear after the view settled", strategyID,
+				hintedAfter.Refreshes-hintedBefore.Refreshes)
+		}
 		if activationBodyReads != 0 || headerProbes != 0 {
+			var window []string
+			for _, entry := range entries {
+				if entry.ID > lastID {
+					window = append(window, fmt.Sprint(entry.Args))
+				}
+			}
 			t.Fatalf("RunOne(%s) activation body reads=%d header probes=%d, want 0 body reads and 0 probes: a Query Group "+
-				"executed from the view reads no activation header", strategyID, activationBodyReads, headerProbes)
+				"executed from the view reads no activation header; no stale hint, so the commands in the window name the reader: %v",
+				strategyID, activationBodyReads, headerProbes, window)
 		}
 		if timelineBodyReads > 1 {
 			t.Fatalf("RunOne(%s) timeline body reads=%d, want at most the first touch of this Query Group", strategyID, timelineBodyReads)

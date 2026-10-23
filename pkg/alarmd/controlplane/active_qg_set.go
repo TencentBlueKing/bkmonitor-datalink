@@ -86,7 +86,7 @@ func (repository *RedisCatalogRepository) persistAndVerifyActiveQGSet(ctx contex
 	writeResult := "failure"
 	defer func() {
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
-			Result: observability.Result(writeResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "write", Result: writeResult, Duration: time.Since(redisStarted)}})
+			Result: factsTextResult(writeResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "write", Result: writeResult, Duration: time.Since(redisStarted)}})
 	}()
 	key := repository.activeQGSetKey(ref.Digest)
 	stored, err := repository.client.StrLen(ctx, key).Result()
@@ -140,7 +140,7 @@ func (repository *RedisCatalogRepository) LoadActiveQueryGroupSet(ctx context.Co
 	result := "failure"
 	defer func() {
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
-			Result: observability.Result(result), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "read", Result: result, Duration: time.Since(started)}})
+			Result: factsTextResult(result), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "read", Result: result, Duration: time.Since(started)}})
 	}()
 	if err := ref.validate(); err != nil {
 		return nil, &ActiveQueryGroupSetConflictError{Err: err}
@@ -187,6 +187,17 @@ func (repository *RedisCatalogRepository) LoadActiveQueryGroupSet(ctx context.Co
 
 func observationResult(err error) observability.Result {
 	if err == nil {
+		return observability.ResultSuccess
+	}
+	return observability.ResultFailed
+}
+
+// factsTextResult is the line's result for a word of the control plane's
+// facts. The facts keep "success" and "failure", their metrics' own labels;
+// the line's result is the observation vocabulary's, where "failure" is not a
+// word and read as _other.
+func factsTextResult(text string) observability.Result {
+	if text == "success" {
 		return observability.ResultSuccess
 	}
 	return observability.ResultFailed

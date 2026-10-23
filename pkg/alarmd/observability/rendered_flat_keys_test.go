@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -176,5 +177,88 @@ func TestHeldByNothingIsWrittenAsAWord(t *testing.T) {
 		if _, present := event[key]; present {
 			t.Fatalf("line carries %q beside the word for nothing: %#v", key, event)
 		}
+	}
+}
+
+// A lost round's completion line carries its divert decision and its binding
+// query budget as flat keys, readable by anything filtering the line.
+func TestALostRoundCompletionCarriesItsDecisionAndBudgetAsFlatKeys(t *testing.T) {
+	event := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultDegraded, ReasonCode: "QUERY_TIMEOUT",
+		DivertDecision: &DivertDecisionFacts{ClassifiedAtUnixMilli: 11, FrozenDeadlineUnixMilli: 12, LiveDeadlineUnixMilli: 13,
+			BoundMillis: 14, BoundSource: DivertBoundQueryDuration, RemainingMillis: 15},
+		QueryBudget: &QueryBudgetFacts{ConsumerDeadlineUnixMilli: 21, FrozenReserveMillis: 22, LiveReserveMillis: 23,
+			ReadyAtUnixMilli: 24, FrozenQueryDeadlineUnixMilli: 25, LiveQueryDeadlineUnixMilli: 26},
+	})
+	for key, want := range map[string]any{
+		"divert_classified_at_ms": float64(11), "divert_frozen_deadline_ms": float64(12), "divert_live_deadline_ms": float64(13),
+		"divert_bound_ms": float64(14), "divert_bound_source": DivertBoundQueryDuration, "divert_remaining_ms": float64(15),
+		"budget_consumer_deadline_ms": float64(21), "budget_frozen_reserve_ms": float64(22), "budget_live_reserve_ms": float64(23),
+		"budget_ready_at_ms": float64(24), "budget_frozen_query_deadline_ms": float64(25), "budget_live_query_deadline_ms": float64(26),
+	} {
+		if event[key] != want {
+			t.Fatalf("line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
+		}
+	}
+}
+
+// A failed query's line says, as flat keys, which deadline was on its request
+// and which ran out, its transport detail, the error chain and its types, how
+// far the answer got, and the physical query's own plan: whose input it was
+// and the deadlines it was planned under. Its round's line carries the same
+// for the query that failed, with when the read was sent and the deadline it
+// ran under.
+func TestAFailedQuerysLineSaysWhichDeadlineAndWhichQuery(t *testing.T) {
+	request := &QueryRequestFacts{DeadlineUnixMilli: 31, DeadlineLeftAtDoMs: 32, DeadlineSource: "attempt", Expired: "none",
+		ErrorChain: "Post <url>: read tcp: i/o timeout", ErrorTypes: []string{"*url.Error", "*net.OpError"},
+		TraceID: "4bf92f3577b34da6a3ce929d0e0e4736"}
+	planned := &QueryPlannedFacts{Role: "ALGORITHM_DEPENDENCY", Dataset: "history_86400", DeadlineUnixMilli: 41, FrozenDeadlineUnixMilli: 42,
+		CompletionDeadlineUnixMilli: 43, FellBack: true}
+	event := renderObservation(t, Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded, ReasonCode: "QUERY_TIMEOUT",
+		QueryFailure: &QueryFailureFacts{Stage: QueryFailureStageProvider, Category: QueryFailureCategoryProviderTransport, Code: "QUERY_TIMEOUT",
+			Detail: "transport=timeout", Request: request, Planned: planned, Volume: &QueryVolume{BytesRead: 51, SeriesDelivered: 52}},
+	})
+	for key, want := range map[string]any{
+		"transport_detail": "transport=timeout", "request_deadline_ms": float64(31), "deadline_left_at_do_ms": float64(32),
+		"deadline_source": "attempt", "expired": "none", "error_chain": "Post <url>: read tcp: i/o timeout",
+		"error_types": "*url.Error > *net.OpError", "query_role": "ALGORITHM_DEPENDENCY", "query_dataset": "history_86400",
+		"planned_deadline_ms": float64(41), "frozen_planned_deadline_ms": float64(42), "completion_deadline_ms": float64(43),
+		"fell_back": true, "failure_bytes_read": float64(51), "failure_series_delivered": float64(52),
+		"failure_provider_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+	} {
+		if event[key] != want {
+			t.Fatalf("query line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
+		}
+	}
+	slot := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageSlotCompleted, Result: ResultDegraded, ReasonCode: "QUERY_TIMEOUT",
+		QueryBudget: &QueryBudgetFacts{QueryDeadlineUnixMilli: 61, RecoveryBudgetMillis: 62, QueryStartedAtUnixMilli: 63,
+			FailedRequest: request, FailedPlanned: planned},
+	})
+	for key, want := range map[string]any{
+		"budget_query_deadline_ms": float64(61), "budget_recovery_budget_ms": float64(62), "budget_query_started_at_ms": float64(63),
+		"request_deadline_ms": float64(31), "error_types": "*url.Error > *net.OpError", "planned_deadline_ms": float64(41), "query_role": "ALGORITHM_DEPENDENCY",
+		"failure_provider_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+	} {
+		if slot[key] != want {
+			t.Fatalf("slot line[%q] = %#v, want %#v; line=%#v", key, slot[key], want, slot)
+		}
+	}
+}
+
+// A refusal that names the provider's own trace id writes that one, once:
+// the request's trace id does not write the key a second time.
+func TestARejectionsTraceIDIsWrittenOnce(t *testing.T) {
+	var output bytes.Buffer
+	renderTo(&output, Observation{
+		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded, ReasonCode: "QUERY_REJECTED",
+		QueryFailure: &QueryFailureFacts{Stage: QueryFailureStageProvider, Category: QueryFailureCategoryProviderTransport, Code: "QUERY_REJECTED",
+			Detail: "http_status=400", Rejection: &QueryRejection{Class: "QUERY_REJECTED", TraceID: "0af7651916cd43dd8448eb211c80319c"},
+			Request: &QueryRequestFacts{DeadlineSource: "attempt", Expired: "none", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736"}},
+	})
+	if got := strings.Count(output.String(), `"failure_provider_trace_id"`); got != 1 ||
+		!strings.Contains(output.String(), `"failure_provider_trace_id":"0af7651916cd43dd8448eb211c80319c"`) {
+		t.Fatalf("written %d times, want the provider's own once: %s", got, output.String())
 	}
 }

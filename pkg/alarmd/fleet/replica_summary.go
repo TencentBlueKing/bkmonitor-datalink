@@ -72,7 +72,7 @@ func summaryFromSnapshot(snapshot Snapshot, stallAfter time.Duration) ReplicaSum
 // per entry of (snapshotRowFields).
 func headOf(snapshot Snapshot) Snapshot {
 	head := snapshot
-	head.OwnedObjects = nil
+	head.OwnedObjects, head.LookbackLate = nil, nil
 	head.Anomalies, head.Demoted, head.Undecidable, head.ByDesign = nil, nil, nil, nil
 	head.PrunedSkips, head.GapSkips = nil, nil
 	head.NoData, head.NoDataMemory, head.RetainedShare, head.ReadEarly, head.ReadHeld, head.LateSeries = nil, nil, nil, nil, nil, nil

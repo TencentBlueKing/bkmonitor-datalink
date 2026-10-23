@@ -29,13 +29,13 @@ type activationHeaderCollector struct {
 
 func newActivationHeaderCollector() *activationHeaderCollector {
 	return &activationHeaderCollector{
-		rebuilds: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "activation_header_rebuild_total"),
+		rebuilds: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "activation_header_rebuild_total"),
 			"Activation headers the Control Leader found missing with the body present and tried to write back, by outcome. "+
 				"rebuilt: written back as the body describes it. conflict: a header appeared or the body changed first; "+
 				"nothing written, the next round reads again. body_unparsable, body_pending: refused by name, nothing written; "+
 				"until the header is back no strategy change is activated and nothing the activation names is renewed.",
 			[]string{"outcome"}, nil),
-		conflicts: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "activation_renewal_conflict_total"),
+		conflicts: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "activation_renewal_conflict_total"),
 			"Renewals of the current activation's objects that wrote nothing, by why. header_moved: another cutover's header, "+
 				"the next round renews what it names. header_missing: no header at all, which no round settles by itself; "+
 				"the leader writes it back (activation_header_rebuild_total).",

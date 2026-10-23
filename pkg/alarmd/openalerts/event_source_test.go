@@ -4,7 +4,6 @@
 package openalerts
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -19,7 +18,7 @@ import (
 func TestTheEventSourceKeyingIsReadAndKept(t *testing.T) {
 	fail := false
 	reader := rosterServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/local-api/event-sources/"+testBinding().EventSourceID {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/modules/linkd/event-sources/"+testBinding().EventSourceID {
 			t.Errorf("request %s %s", r.Method, r.URL.Path)
 		}
 		if fail {
@@ -30,7 +29,7 @@ func TestTheEventSourceKeyingIsReadAndKept(t *testing.T) {
 			"pending": map[string]any{"version": 7},
 			"spec":    map[string]any{"fingerprint_mode": "fields", "fingerprint_fields": []string{"strategy_id", "dimensions"}}})
 	})
-	keying, err := reader.EventSource(context.Background())
+	keying, err := reader.EventSource(consoleCtx())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +44,7 @@ func TestTheEventSourceKeyingIsReadAndKept(t *testing.T) {
 		t.Fatalf("record = %+v", record)
 	}
 	fail = true
-	if _, err := reader.EventSource(context.Background()); err == nil {
+	if _, err := reader.EventSource(consoleCtx()); err == nil {
 		t.Fatal("a failed read reported success")
 	}
 	record = reader.Record()
@@ -84,7 +83,7 @@ func TestWhetherTheLinkKeysOurAlertsByAlertID(t *testing.T) {
 			reader := rosterServer(t, func(w http.ResponseWriter, r *http.Request) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "revision": 3, "published": tc.published, "spec": tc.spec})
 			})
-			keying, err := reader.EventSource(context.Background())
+			keying, err := reader.EventSource(consoleCtx())
 			if tc.err != nil {
 				if !errors.Is(err, tc.err) {
 					t.Fatalf("err = %v, want %v", err, tc.err)

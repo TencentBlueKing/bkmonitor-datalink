@@ -27,7 +27,7 @@ import (
 func failureReasonCounts(t *testing.T, r *Recorder) map[string]float64 {
 	t.Helper()
 	counts := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_redis_failure_reason_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_redis_failure_reason_total") {
 		labels := map[string]string{}
 		for _, label := range m.GetLabel() {
 			labels[label.GetName()] = label.GetValue()

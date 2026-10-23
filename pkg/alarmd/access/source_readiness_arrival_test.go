@@ -112,7 +112,7 @@ func TestRecoveryArrivalsAreNotRecorded(t *testing.T) {
 	contractRef, frozen, evaluationTime := readinessAtTheFloor(t)
 	source, arrivals := collectArrivals(t, frozen)
 	source.now = func() time.Time { return evaluationTime.Add(45 * time.Second) }
-	prepared, err := prepare(contractRef, frozen, 30*time.Second, true)
+	prepared, err := prepare(contractRef, frozen, 30*time.Second, true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

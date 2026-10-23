@@ -70,9 +70,16 @@ type indexState struct {
 	// one long scan of the link's Redis never runs beside another.
 	largeRead atomic.Bool
 	refreshMu sync.Mutex
+	// calibrateMu holds the calibration round, which runs apart from the
+	// refresh round: a slow Console holds a calibration to its own deadline
+	// and must not hold up the index reads the gate's sets are kept by.
+	calibrateMu sync.Mutex
 	// wake is coalesced: only ownership/ACK starts work promptly. Notices are
 	// deliberately batched on the maintenance cadence, not one request each.
-	wake           chan struct{}
+	wake chan struct{}
+	// consoleWake is wake for the Console round: a wake asks for the
+	// calibrations it requested (a move, a notice) as promptly as the reads.
+	consoleWake    chan struct{}
 	ready          bool
 	everReady      bool
 	members, bytes int
@@ -227,7 +234,7 @@ func NewIndex(options IndexOptions) (*Cache, error) {
 		added:     map[member]stamped{},
 		refreshes: map[string]uint64{}, noticesRefused: map[NoticeRefusal]uint64{}, unavailable: map[UnavailableReason]uint64{}, lookups: map[Answer]uint64{}, ownLookups: map[Answer]uint64{},
 		gateSince: options.Now(),
-		index:     &indexState{options: options, entries: map[StrategyKey]*indexEntry{}, wake: make(chan struct{}, 1), opened: map[member]ownRecord{}},
+		index:     &indexState{options: options, entries: map[StrategyKey]*indexEntry{}, wake: make(chan struct{}, 1), consoleWake: make(chan struct{}, 1), opened: map[member]ownRecord{}},
 	}
 	return cache, nil
 }
@@ -447,6 +454,10 @@ func (cache *Cache) wakeIndex() {
 	case cache.index.wake <- struct{}{}:
 	default:
 	}
+	select {
+	case cache.index.consoleWake <- struct{}{}:
+	default:
+	}
 }
 
 func (cache *Cache) indexReady(ready bool) {
@@ -516,6 +527,28 @@ func (cache *Cache) Run(ctx context.Context) error {
 		}
 	}()
 	defer func() { cancel(); <-done }()
+	// The Console round runs in its own loop on the same cadence: its calls
+	// take their own deadlines, and the index reads must not wait on them.
+	calibrated := make(chan struct{})
+	go func() {
+		defer close(calibrated)
+		// At once, as the single round used to: the facts and the first
+		// calibrations do not wait a whole interval after a start.
+		cache.consoleRound(ctx)
+		ticker := time.NewTicker(cache.index.options.RefreshInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cache.consoleRound(ctx)
+			case <-cache.index.consoleWake:
+				cache.consoleRound(ctx)
+			}
+		}
+	}()
+	defer func() { cancel(); <-calibrated }()
 	ticker := time.NewTicker(cache.index.options.RefreshInterval)
 	defer ticker.Stop()
 	for {
@@ -523,9 +556,9 @@ func (cache *Cache) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			cache.Refresh(ctx)
+			cache.refreshIndex(ctx)
 		case <-cache.index.wake:
-			cache.Refresh(ctx)
+			cache.refreshIndex(ctx)
 		}
 	}
 }
@@ -546,17 +579,18 @@ const (
 
 // calibrationPlan is how many strategies each round calibrates. Needed is
 // what covers every tracked strategy within ReconcileInterval, with the
-// margin; capacity is what the Console answers inside a round's half of the
-// cycle, read from the latest calls' p90 - the round slows when the Console
-// does, and does not press it harder to catch up. ReconcileBatch is the floor,
-// and the capacity before any call has been timed. Calls stay serial.
+// margin; capacity is what the Console answers before the next round is due
+// (RefreshInterval, the calibration round's own cadence), read from the
+// latest calls' p90 - the round slows when the Console does, and does not
+// press it harder to catch up. ReconcileBatch is the floor, and the capacity
+// before any call has been timed. Calls stay serial.
 // Called with the lock held.
 func (state *indexState) calibrationPlan(tracked int) (needed, capacity int) {
 	floor := max(1, state.options.ReconcileBatch)
 	needed = max(floor, int(math.Ceil(float64(tracked)*calibrationMargin/float64(state.calibrationRounds()))))
 	capacity = floor
 	if p90 := state.calibrationP90(); p90 > 0 {
-		capacity = max(floor, int((state.options.CycleTimeout/2)/p90))
+		capacity = max(floor, int(state.options.RefreshInterval/p90))
 	}
 	return needed, capacity
 }
@@ -648,13 +682,6 @@ func (cache *Cache) refreshIndex(ctx context.Context) {
 		return
 	}
 	defer state.refreshMu.Unlock()
-	// The Console's facts first, whether or not any strategy is tracked or
-	// due for calibration; the facts bound their own reads.
-	if facts := state.options.Facts; facts != nil {
-		factsCtx, cancel := context.WithTimeout(ctx, state.options.CycleTimeout/2)
-		facts.Refresh(factsCtx)
-		cancel()
-	}
 	cache.mu.Lock()
 	cache.noteConfirmation()
 	// The sets are read only where the Console named them and once their
@@ -662,36 +689,103 @@ func (cache *Cache) refreshIndex(ctx context.Context) {
 	// it is how the Console confirms the location, or names another.
 	reads := state.everReady && cache.configured() && cache.unconfirmed() != UnavailableLocationUnconfirmed
 	cache.mu.Unlock()
-	// Reserve half the cycle for each dependency; slow Redis cannot starve
-	// reconciliation (or vice versa). Calls are serial, never four per worker.
-	for _, calibration := range []bool{false, true} {
-		if calibration && state.options.Reconciler == nil || !calibration && !reads {
-			continue
-		}
+	// The index reads share half the cycle. Calibration is not in this round:
+	// it runs in its own (calibrate), so a slow Console never delays a read.
+	if reads {
 		callCtx, cancel := context.WithTimeout(ctx, state.options.CycleTimeout/2)
-		for _, job := range cache.jobs(calibration) {
+		for _, job := range cache.jobs(false) {
 			if callCtx.Err() != nil {
 				break
 			}
-			started := cache.now()
-			if calibration {
-				result, err := state.options.Reconciler.Reconcile(callCtx, job.key)
-				cache.applyCalibration(job, started, result, err)
-			} else {
-				members, err := state.options.Source.ReadSet(callCtx, job.key)
-				var large *LargeSetError
-				if errors.As(err, &large) {
-					cache.readLarge(ctx, job, large.Budget)
-					continue
-				}
-				cache.applyIndex(job, members, err)
+			members, err := state.options.Source.ReadSet(callCtx, job.key)
+			var large *LargeSetError
+			if errors.As(err, &large) {
+				cache.readLarge(ctx, job, large.Budget)
+				continue
 			}
+			cache.applyIndex(job, members, err)
 		}
 		cancel()
 	}
 	cache.mu.Lock()
 	cache.noteConfirmation()
 	cache.expireRecovered(cache.now())
+	cache.mu.Unlock()
+}
+
+// The Console round is everything this copy asks the Console: its facts --
+// where the link writes the sets and how it keys our alerts -- and the
+// calibrations due. It runs apart from the index round, which reads Redis
+// only, so a slow Console never delays a read; a Console round still running
+// when the next is due makes that one skip and count, never stack behind it.
+func (cache *Cache) consoleRound(ctx context.Context) {
+	state := cache.index
+	if !state.calibrateMu.TryLock() {
+		cache.mu.Lock()
+		cache.roundsSkipped++
+		cache.mu.Unlock()
+		return
+	}
+	defer state.calibrateMu.Unlock()
+	cache.refreshFacts(ctx)
+	cache.calibrations(ctx)
+}
+
+// calibrate is the calibrations of one round alone, for a caller that has
+// already refreshed the facts (Refresh); skipped and counted like a round.
+func (cache *Cache) calibrate(ctx context.Context) {
+	state := cache.index
+	if !state.calibrateMu.TryLock() {
+		cache.mu.Lock()
+		cache.roundsSkipped++
+		cache.mu.Unlock()
+		return
+	}
+	defer state.calibrateMu.Unlock()
+	cache.calibrations(ctx)
+}
+
+// consoleCoverage is the deadline of the work every Console call of this copy
+// serves: keeping each tracked set calibrated within the calibration
+// interval. A call is bounded by it as a whole, and each of its requests by
+// the client's Latency().Deadline of it -- four times the Console's observed
+// p90, never more than the interval, past which waiting gains nothing.
+func (state *indexState) consoleCoverage(ctx context.Context) (context.Context, context.CancelFunc) {
+	coverage := state.options.ReconcileInterval
+	bounded, cancel := context.WithTimeout(ctx, coverage)
+	return WithRequestCoverage(bounded, coverage), cancel
+}
+
+// refreshFacts asks the Console for its facts, whether or not any strategy is
+// tracked or due for calibration.
+func (cache *Cache) refreshFacts(ctx context.Context) {
+	facts := cache.index.options.Facts
+	if facts == nil {
+		return
+	}
+	callCtx, cancel := cache.index.consoleCoverage(ctx)
+	defer cancel()
+	facts.Refresh(callCtx)
+}
+
+// calibrations calibrates the strategies due, one Console call at a time.
+func (cache *Cache) calibrations(ctx context.Context) {
+	state := cache.index
+	if state.options.Reconciler == nil {
+		return
+	}
+	for _, job := range cache.jobs(true) {
+		if ctx.Err() != nil {
+			break
+		}
+		started := cache.now()
+		callCtx, cancel := state.consoleCoverage(ctx)
+		result, err := state.options.Reconciler.Reconcile(callCtx, job.key)
+		cancel()
+		cache.applyCalibration(job, started, result, err)
+	}
+	cache.mu.Lock()
+	cache.noteConfirmation()
 	cache.mu.Unlock()
 }
 
@@ -1205,6 +1299,7 @@ func (cache *Cache) indexStats() Stats {
 	}
 	stats.MemberBytes = cache.index.bytes
 	stats.SubscriptionReady = cache.index.ready
+	stats.RoundsSkipped = cache.roundsSkipped
 	for k, v := range cache.refreshes {
 		stats.Refreshes[k] = v
 	}

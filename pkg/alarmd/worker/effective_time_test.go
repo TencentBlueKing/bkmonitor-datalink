@@ -28,7 +28,7 @@ import (
 func TestPrepareEffectiveTimeFactsGivesEveryConsumerTheFactOfItsRequirement(t *testing.T) {
 	header, plans := effectiveTimeHeaderForTest(t)
 
-	prepared, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
+	prepared, err := PrepareEffectiveTimeFacts(context.Background(), header, nil, int64(header.Contract.Slot.EvaluationTime))
 	if err != nil {
 		t.Fatalf("PrepareEffectiveTimeFacts() error = %v", err)
 	}
@@ -154,7 +154,7 @@ func TestPrepareEffectiveTimeFactsFreezesUnresolvedLegacySchedule(t *testing.T) 
 		}},
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
+		facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil, int64(header.Contract.Slot.EvaluationTime))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,7 +274,7 @@ func TestEffectiveRuleBudgetIsolatesNeighborPlan(t *testing.T) {
 		plan.EffectiveTimeSnapshot = json.RawMessage(`{"schema_version":1,"status":"READY","business_timezone":"UTC","calendars":[{"id":7,"bk_tenant_id":"tenant","status":"PRESENT","items":[{"id":1,"time_kind":"UNIX_SECONDS","start_time":0,"end_time":864000000,"time_zone":"UTC","parent_id":null,"repeat":{"freq":"day","interval":100000}}]}]}`)
 	})
 	header := execution.InternalExecutionHeader{Contract: execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{EvaluationTime: 1788000000}}, DuePlans: []execution.DuePlan{{Identity: bad, CompiledPlan: compiled}, {Identity: good, CompiledPlan: compileEffectiveTimePlanForTest(t, good, []uint32{1}, false)}}}
-	facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
+	facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil, int64(header.Contract.Slot.EvaluationTime))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestPrepareEffectiveTimeFactsPreservesDifferentLevelRequirements(t *testing
 	})
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC).Unix()
 	header := execution.InternalExecutionHeader{Contract: execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{EvaluationTime: execution.EvaluationTime(at)}}, DuePlans: []execution.DuePlan{{Identity: identity, CompiledPlan: compiled}}}
-	facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
+	facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil, int64(header.Contract.Slot.EvaluationTime))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestEffectiveTimeAllRejectedAndNoDataOnlyStayLocal(t *testing.T) {
 			t.Fatalf("no-data=%v: %s %v", withNoData, fact.Status(), err)
 		}
 		header := execution.InternalExecutionHeader{Contract: execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{EvaluationTime: 1788000000}}, DuePlans: []execution.DuePlan{{Identity: bad, CompiledPlan: compiled}, {Identity: good, CompiledPlan: compileEffectiveTimePlanForTest(t, good, []uint32{1}, false)}}}
-		facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
+		facts, err := PrepareEffectiveTimeFacts(context.Background(), header, nil, int64(header.Contract.Slot.EvaluationTime))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -348,7 +348,7 @@ func mustPrepareAlwaysEffectiveTimeFacts(
 	header execution.InternalExecutionHeader,
 ) map[execution.ConsumerRef]strategy.EffectiveTimeFact {
 	t.Helper()
-	prepared, err := PrepareEffectiveTimeFacts(context.Background(), header, nil)
+	prepared, err := PrepareEffectiveTimeFacts(context.Background(), header, nil, int64(header.Contract.Slot.EvaluationTime))
 	if err != nil {
 		t.Fatalf("PrepareEffectiveTimeFacts() error = %v", err)
 	}

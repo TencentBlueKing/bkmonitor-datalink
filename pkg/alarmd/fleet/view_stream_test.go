@@ -17,8 +17,8 @@ import (
 // The sentence reads installed over expected and the revision, names the
 // first two lagging Workers with why -- not connected, or the failure word
 // the Worker last reported, or that it has not answered -- and counts the
-// rest; a replica that does not lead says only that, and a Leader with no
-// receivers yet says that.
+// rest, then the Workers that left before installing; a replica that does
+// not lead says only that, and a Leader with no receivers yet says that.
 func TestTheViewStreamLineNamesTheLaggingWorkersAndWhy(t *testing.T) {
 	for name, test := range map[string]struct {
 		facts *ViewStreamFacts
@@ -58,6 +58,15 @@ func TestTheViewStreamLineNamesTheLaggingWorkersAndWhy(t *testing.T) {
 			Objects: ViewStreamObjects{Probed: 1, Unprobed: 3, Missing: 2, UnprobedWorkers: []string{"w01", "w02", "w03"}},
 			Lagging: []ViewStreamLagging{{WorkerID: "w05", Connected: true}}},
 			"视图已装载 4/5，版本 8；缺对象 2（1 个副本探到）；3 个副本未探到对象（w01、w02）；落后：w05（未回执）"},
+		// A Worker that left before installing is out of the count and
+		// named as gone, after the lagging ones.
+		"a worker that left": {&ViewStreamFacts{Leading: true, Revision: 2, Expected: 1, Installed: 1,
+			Departed: []ViewStreamLagging{{WorkerID: "w-old"}}},
+			"视图已装载 1/1，版本 2；已离开：w-old"},
+		"lagging and three that left": {&ViewStreamFacts{Leading: true, Revision: 9, Expected: 4, Installed: 3,
+			Lagging:  []ViewStreamLagging{{WorkerID: "w04", Connected: true}},
+			Departed: []ViewStreamLagging{{WorkerID: "w07"}, {WorkerID: "w08"}, {WorkerID: "w09"}}},
+			"视图已装载 3/4，版本 9；落后：w04（未回执）；已离开：w07、w08 等 3 个"},
 	} {
 		if got := ViewStreamLine(test.facts); got != test.want {
 			t.Fatalf("%s: line = %q, want %q", name, got, test.want)

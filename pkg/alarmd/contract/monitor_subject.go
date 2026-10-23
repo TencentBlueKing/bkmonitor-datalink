@@ -23,7 +23,9 @@ type MonitorSubjectFacts struct {
 	// Labels are the strategy's own labels, in their stated order.
 	Labels []string `json:"labels,omitempty"`
 	// ResultTableID is items[0].query_configs[0].result_table_id - the only one
-	// Python inspects, so the only one that is frozen.
+	// Python inspects, so the only one that is frozen. The APM projection no
+	// longer reads it (projectAPMSubject); published plans carry it and it
+	// stays in the record so they keep decoding.
 	ResultTableID string `json:"result_table_id,omitempty"`
 }
 
@@ -77,7 +79,6 @@ func MonitorSubjectTypes() []string {
 var (
 	monitorAPMAppLabel     = regexp.MustCompile(`^APM-APP\((.*?)\)`)
 	monitorAPMServiceLabel = regexp.MustCompile(`^APM-SERVICE\((.*?)\)`)
-	monitorAPMResultTable  = regexp.MustCompile(`^(?:space_)?\d+_bkapm_(?:metric|trace)_([a-zA-Z0-9_-]+)\.__default__$`)
 )
 
 // ProjectMonitorSubject returns the object the record is about, and the
@@ -107,7 +108,7 @@ func ProjectMonitorSubject(
 	if subject, matched := projectK8sSubject(data); matched {
 		return subject, data, nil
 	}
-	if subject, matched := projectAPMSubject(data, facts); matched {
+	if subject, matched := projectAPMSubject(data, dimensions, facts); matched {
 		return subject, data, nil
 	}
 	return MonitorSubject{}, data, nil
@@ -157,11 +158,29 @@ func projectK8sSubject(data map[string]json.RawMessage) (MonitorSubject, bool) {
 	return MonitorSubject{}, true
 }
 
-// projectAPMSubject mirrors ApmAlertHelper.get_target and get_apm_target: the
-// dimensions first, then the strategy's labels, then its result table - and the
-// object exists only when both halves of the name were found.
-func projectAPMSubject(data map[string]json.RawMessage, facts *MonitorSubjectFacts) (MonitorSubject, bool) {
+// projectAPMSubject follows ApmAlertHelper.get_target and get_apm_target: the
+// dimensions first, then the strategy's labels, and the object exists only when
+// both halves of the name were found.
+//
+// Python also takes the application from the result table's name
+// (<biz>_bkapm_metric_<app>.__default__). That name is the application's
+// normalised form -- hyphens and dots turned into underscores, lowercased --
+// so it cannot be turned back into the application: cross-bank-trade reads as
+// cross_bank_trade, which names no application, and the downstream APM
+// enrichment then finds nothing and never falls back to the strategy's own
+// data source, because a value was supplied. A record whose dimensions and
+// labels do not name the application gets no APM object and no app_name, and
+// is projected as any other record.
+//
+// The application a record carries beside its identity dimensions counts as
+// its dimension: the APM query asks the provider for it (access/uq
+// carriesAPMApp) without making it part of the series' identity, so it is in
+// dimensions and not in data, and reported as supplementary like a label's.
+func projectAPMSubject(data, dimensions map[string]json.RawMessage, facts *MonitorSubjectFacts) (MonitorSubject, bool) {
 	app := monitorFirstText(data, monitorAPMAppNameDimension)
+	if app == "" {
+		app = monitorFirstText(dimensions, monitorAPMAppNameDimension)
+	}
 	service := monitorFirstText(data, monitorAPMServiceNameDimensio)
 	if app == "" || service == "" {
 		if facts == nil {
@@ -172,11 +191,6 @@ func projectAPMSubject(data map[string]json.RawMessage, facts *MonitorSubjectFac
 		}
 		if service == "" {
 			service = monitorLabelValue(monitorAPMServiceLabel, facts.Labels)
-		}
-		if app == "" {
-			if match := monitorAPMResultTable.FindStringSubmatch(facts.ResultTableID); len(match) == 2 {
-				app = match[1]
-			}
 		}
 	}
 	if app == "" || service == "" {

@@ -251,11 +251,17 @@ func sourceFactsOf(result phaseTwoControlRefreshResult, at time.Time) *fleet.Sou
 		objects[string(disposition)] = count
 	}
 	withheld := make([]fleet.WithheldObject, 0, len(composition.WithheldObjects))
+	capability := make([]fleet.CapabilityRecord, 0, len(composition.WithheldObjects))
 	for _, object := range composition.WithheldObjects {
 		withheld = append(withheld, fleet.WithheldObject{StrategyID: object.SourceID, Scope: object.Scope,
 			LevelID: object.LevelID, Disposition: string(object.Disposition), Reason: object.Reason, FieldPath: object.FieldPath})
+		capability = append(capability, fleet.CapabilityRecord{StrategyID: object.SourceID, Disposition: string(object.Disposition),
+			Reason: object.Reason, Scope: object.Scope})
 	}
 	facts := fleet.NewSourceFacts(at, objects, withheld)
+	// Distinct strategies, not records: a strategy has one record per level
+	// or Plan, and Listed counts records.
+	facts.Capability = fleet.CountCapability(capability, len(composition.ListedStrategies))
 	facts.Plans, facts.RevisionedPlans, facts.PlansKnown = composition.PlansTotal, composition.RevisionedPlans, true
 	facts.StandardPlans = composition.PlansByWireFormat[contract.WireFormatStandardRawEvent]
 	facts.ChangeSignalPresent = result.ChangeSignalPresent

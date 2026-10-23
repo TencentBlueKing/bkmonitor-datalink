@@ -53,7 +53,7 @@ func TestCapacityProfileLegalGap(t *testing.T) {
 			select {
 			case <-stop:
 				return
-			case <-time.After(time.Millisecond):
+			case <-time.After(time.Millisecond): // fixed-wait: the heap sampler's period; it samples until stopped and waits for nothing
 				var m runtime.MemStats
 				runtime.ReadMemStats(&m)
 				for old := peak.Load(); m.HeapAlloc > old; old = peak.Load() {

@@ -26,12 +26,12 @@ func TestCapacityAddsUpOccupancyButNotCeilings(t *testing.T) {
 	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 	view := Aggregate(Expectation{QueryGroups: 20, Known: true}, []Snapshot{
 		capacitySnapshot("pod-a", at, &Capacity{
-			PermitsHeld: 7, PermitBudget: 32, PermitSeconds: 800, Waiting: 1,
+			PermitsHeld: 7, PermitBudget: 32, PermitsPeak: 12, PermitSeconds: 800, Waiting: 1,
 			MemoryUsed: 500, MemoryLimit: 8 << 30, MemorySource: "pod_limit", CPUCores: 8,
 			Budgets: map[string]uint64{"state_mutations": 65536},
 		}),
 		capacitySnapshot("pod-b", at, &Capacity{
-			PermitsHeld: 9, PermitBudget: 32, PermitSeconds: 900, Waiting: 2,
+			PermitsHeld: 9, PermitBudget: 32, PermitsPeak: 20, PermitSeconds: 900, Waiting: 2,
 			MemoryUsed: 600, MemoryLimit: 8 << 30, MemorySource: "pod_limit", CPUCores: 8,
 			Budgets: map[string]uint64{"state_mutations": 65536},
 		}),
@@ -40,7 +40,11 @@ func TestCapacityAddsUpOccupancyButNotCeilings(t *testing.T) {
 	if view.Capacity == nil {
 		t.Fatal("capacity was not reported")
 	}
-	if view.Capacity.PermitsHeld != 16 || view.Capacity.PermitSeconds != 1700 || view.Capacity.Waiting != 3 {
+	// The peaks add up too: each replica's may fall in a different second, so
+	// the sum bounds what the deployment held at once from above, and it is
+	// read against the summed budget.
+	if view.Capacity.PermitsHeld != 16 || view.Capacity.PermitsPeak != 32 || view.Capacity.PermitBudgetTotal != 64 ||
+		view.Capacity.PermitSeconds != 1700 || view.Capacity.Waiting != 3 {
 		t.Fatalf("occupancy did not add up: %+v", view.Capacity)
 	}
 	if view.Capacity.PermitBudget != 32 || view.Capacity.CPUCores != 8 {

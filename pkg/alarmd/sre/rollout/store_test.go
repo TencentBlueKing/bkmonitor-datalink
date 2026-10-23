@@ -73,7 +73,7 @@ func TestAnUnrenewedLeaseRunsOut(t *testing.T) {
 	if _, ok, _ := store.Take(ctx, "r1", "pod-b/1"); ok {
 		t.Fatal("taken before the lease ran out")
 	}
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(400 * time.Millisecond) // fixed-wait: past the 200 ms lease on the Redis server's clock, which the fixture cannot move; waiting until it lapses would pass a longer lease too
 	if entry, _ := store.Get(ctx, "r1"); !entry.LeaseExpired() {
 		t.Fatalf("lease %v not expired at %v", entry.LeaseUntil, entry.Now)
 	}
@@ -93,7 +93,7 @@ func TestAFinalReceiptLeavesTheActiveListAndTheLatestIsReadableByName(t *testing
 		if err := store.Create(ctx, testRecord(id), "pod-a/1"); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // fixed-wait: puts the second receipt on a later millisecond of the Redis clock, which orders the index; on the same millisecond the tie goes by id
 	}
 	if active, _ := store.Active(ctx); len(active) != 2 {
 		t.Fatalf("active %v, want both", active)

@@ -446,9 +446,26 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 		// read by access, and carries none (nodata.py:253-261).
 		data["access_time"] = now
 	}
+	originAlarm := map[string]any{"trigger_time": now, "data": data, "trigger": map[string]any{"level": level, "anomaly_ids": anomalyIDs}, "anomaly": map[string]any{level: map[string]any{"anomaly_id": anomalyID(event.RecordRef.SourceTime), "anomaly_message": description}}, "dimension_translation": map[string]any{}, "strategy_snapshot_key": frozen.snapshot, "alarmd_event_id": event.EventID}
+	if len(event.DetectionSnapshot) > 0 {
+		// A strategy with named outputs: its outputs where the platform puts
+		// them, on the record's data (records.py, ref_values), and the whole
+		// snapshot beside the origin alarm. Every other event's payload is
+		// what it was.
+		var snapshot struct {
+			RefValues json.RawMessage `json:"ref_values"`
+		}
+		if err := json.Unmarshal(event.DetectionSnapshot, &snapshot); err != nil {
+			return Event{}, fmt.Errorf("alarmd legacyoutput: decode detection snapshot: %w", err)
+		}
+		if len(snapshot.RefValues) > 0 {
+			data["ref_values"] = snapshot.RefValues
+		}
+		originAlarm["detection_snapshot"] = event.DetectionSnapshot
+	}
 	payload := map[string]any{
 		"event_id": anomalyID(event.RecordRef.SourceTime), "plugin_id": pluginID, "strategy_id": s.ID, "alert_name": name, "description": description, "severity": event.PrimaryLevelID, "tags": tags, "target_type": projection.Type, "target": projection.Target, "status": status, "metric": frozen.metrics, "category": s.Scenario, "data_type": s.Items[0].Queries[0].DataType, "dedupe_keys": dedupeKeys, "time": event.RecordRef.SourceTime, "anomaly_time": anomalyTime, "bk_ingest_time": now, "bk_clean_time": now, "bk_biz_id": s.BusinessID, "bk_tenant_id": event.TenantID,
-		"extra_info": map[string]any{"additional_dimensions": additional, "origin_alarm": map[string]any{"trigger_time": now, "data": data, "trigger": map[string]any{"level": level, "anomaly_ids": anomalyIDs}, "anomaly": map[string]any{level: map[string]any{"anomaly_id": anomalyID(event.RecordRef.SourceTime), "anomaly_message": description}}, "dimension_translation": map[string]any{}, "strategy_snapshot_key": frozen.snapshot, "alarmd_event_id": event.EventID}},
+		"extra_info": map[string]any{"additional_dimensions": additional, "origin_alarm": originAlarm},
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {

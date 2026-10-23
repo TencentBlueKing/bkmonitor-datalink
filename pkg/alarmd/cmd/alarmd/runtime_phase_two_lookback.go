@@ -22,9 +22,11 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 )
 
 // lookbackTick is how often due rechecks are looked for: inside the window
@@ -143,6 +145,10 @@ func lookbackSupplement(
 				return lookback.SupplementOutcome{Refused: lookback.DirectedContractExpired, Held: held}
 			case errors.Is(err, scheduler.ErrSupplementOvertaken):
 				return lookback.SupplementOutcome{Refused: lookback.SupplementOvertaken, Held: held}
+			case errors.Is(err, execution.ErrSupplementKeptReadAbsent):
+				// Named, and on the supplement's own completion line at WARN:
+				// not a failure this line has to explain.
+				return lookback.SupplementOutcome{Refused: lookback.DirectedKeptReadAbsent, Held: held}
 			default:
 				if logger != nil {
 					logger.Warn("lookback", "supplement_failed", 0, 0, slog.String("query_group", string(job.QueryGroup)),
@@ -200,6 +206,10 @@ func buildLookback(
 	engine, err := lookback.New(options)
 	if err != nil {
 		return nil, lookbackStanding{}, err
+	}
+	if len(holds) > 0 && holds[0] != nil {
+		measure := engine.QueryDuration
+		holds[0].queryDuration.Store(&measure)
 	}
 	return engine, lookbackStanding{Running: true}, nil
 }
@@ -392,4 +402,157 @@ func lateSeriesFacts(pastRound []lookback.LatePastRoundReading, residual []lookb
 		missed[string(reading.QueryGroup)] = row
 	}
 	return past, missed
+}
+
+// lookbackPlansInto hands every plan set the control plane sends to the
+// lookback engine, which replaces its last one with it; nil when there is no
+// engine.
+func lookbackPlansInto(engine *lookback.Engine) viewstream.LookbackPlansHandler {
+	if engine == nil {
+		return nil
+	}
+	return func(plans []viewstream.LookbackPlan) {
+		converted := make([]lookback.Plan, 0, len(plans))
+		for _, plan := range plans {
+			converted = append(converted, lookback.Plan{QueryGroup: plan.QueryGroup, Rung: plan.Rung, ExpiresAt: plan.ExpiresAt})
+		}
+		engine.ApplyPlans(converted)
+	}
+}
+
+// lookbackLateRungs is the Query Groups the lookback reads directed on its
+// own evidence, by the rung their late series were seen at, keyed as the
+// fleet keys objects; nil when there is no engine.
+func lookbackLateRungs(engine *lookback.Engine) func() map[string]int {
+	if engine == nil {
+		return nil
+	}
+	return func() map[string]int {
+		rungs := engine.SeriesLateRungs()
+		late := make(map[string]int, len(rungs))
+		for queryGroup, rung := range rungs {
+			late[string(queryGroup)] = rung
+		}
+		return late
+	}
+}
+
+// lookbackQueryLatency is the lookback's reading of each Query Group's query
+// duration, as the slot source asks it; none without a lookback. It is what
+// the query takes, not the reread bound: that is RecheckTimeout at least, and
+// a round that still has time for its quick query would be sent to replay.
+func lookbackQueryLatency(engine *lookback.Engine) scheduler.QueryLatency {
+	if engine == nil {
+		return nil
+	}
+	return queryLatencyOf(engine)
+}
+
+// lookbackBusy is what the lookback has of a Query Group in flight or
+// reserved, read when a Slot of it is finalised as skipped; none without a
+// lookback.
+func lookbackBusy(engine *lookback.Engine) scheduler.LookbackBusy {
+	if engine == nil {
+		return nil
+	}
+	return lookbackBusyOf(engine)
+}
+
+// lookbackBusyReading is the lookback's read of what it holds of a group.
+type lookbackBusyReading interface {
+	Busy(execution.QueryGroupIdentity) (lookback.Busy, bool)
+}
+
+func lookbackBusyOf(engine lookbackBusyReading) scheduler.LookbackBusy {
+	return func(queryGroup execution.QueryGroupIdentity) (observability.LookbackBusyFacts, bool) {
+		busy, known := engine.Busy(queryGroup)
+		return observability.LookbackBusyFacts{
+			Capturing: busy.Capturing, SamplePending: busy.SamplePending, ProbePending: busy.ProbePending,
+			ProbationRereads: busy.ProbationRereads, DirectedPending: busy.DirectedPending,
+			ReadsInFlight: busy.ReadsInFlight, TrialPrepared: busy.TrialPrepared,
+		}, known
+	}
+}
+
+// lookbackReadings is what the lookback reads of a Query Group's queries:
+// how long its whole first reads took, and how long a read again is given.
+type lookbackReadings interface {
+	QueryDuration(execution.QueryGroupIdentity) (time.Duration, bool)
+	RereadBound(execution.QueryGroupIdentity) (time.Duration, bool)
+}
+
+// queryLatencyOf is the reading the slot source judges a round's time by:
+// the query duration, never the reread bound.
+func queryLatencyOf(readings lookbackReadings) scheduler.QueryLatency {
+	return readings.QueryDuration
+}
+
+// newRuntimeLiveReserve is the runtime's one measured post-query tail: its
+// shaper publishes it, its access source cuts each read at it, through
+// flights its slot sources judge a round short of time by it, and recorder
+// exports it.
+func newRuntimeLiveReserve(flights *scheduler.FlightCoordinator, recorder *metric.Recorder) *execution.LiveReserve {
+	live := &execution.LiveReserve{}
+	flights.SetLiveReserve(live)
+	recorder.SetLiveReserveSource(live.Reserve)
+	return live
+}
+
+// slotSourceLiveReserve is the measured post-query tail a slot source judges
+// a round short of time by: the one access cuts the round's read at.
+func slotSourceLiveReserve(flights *scheduler.FlightCoordinator) *execution.LiveReserve {
+	return flights.LiveReserve()
+}
+
+// lookbackDecisionTap hands the lookback what each round decided, as the worker reports it on its own observations -
+// a round's completion with its events and state mutations, each Plan's evaluation with its strategy and its Levels'
+// outcomes - so a round the lookback later finds read early is written with its decision
+// (lookback.Engine.NoteSlotDecision). The lookback keeps it only for a group in probation. The observer chain is built
+// before the lookback; the engine is set once it is, and a round before that hands nothing on.
+type lookbackDecisionTap struct {
+	engine atomic.Pointer[lookback.Engine]
+}
+
+func (tap *lookbackDecisionTap) Observe(ctx context.Context, observation observability.Observation) {
+	engine := tap.engine.Load()
+	if engine == nil {
+		return
+	}
+	// The worker puts the Slot's identity on the context, a Plan's evaluation
+	// line only its own strategy and series.
+	trace, slot := observation.Trace, observability.TraceFieldsFromContext(ctx)
+	if trace.QueryGroupKey == "" {
+		trace.QueryGroupKey = slot.QueryGroupKey
+	}
+	if trace.EvaluationTime <= 0 {
+		trace.EvaluationTime = slot.EvaluationTime
+	}
+	if trace.StrategyID == "" {
+		trace.StrategyID = slot.StrategyID
+	}
+	// Nearly every series is of a group not in probation, whose decision is
+	// not kept: turned away before the report is built, without the
+	// engine's lock.
+	if trace.QueryGroupKey == "" || trace.EvaluationTime <= 0 ||
+		!engine.KeepsDecisions(execution.QueryGroupIdentity(trace.QueryGroupKey)) {
+		return
+	}
+	report := lookback.SlotDecisionReport{QueryGroup: execution.QueryGroupIdentity(trace.QueryGroupKey),
+		Slot: execution.EvaluationTime(trace.EvaluationTime)}
+	switch {
+	case observation.Stage == observability.StageSlotCompleted:
+		report.Completed = true
+		if usage := observation.SlotBudgetUsage; usage != nil {
+			report.Events, report.StateMutations = usage.Events, usage.StateMutations
+		}
+	case observation.Component == observability.ComponentEvaluation && observation.Stage == observability.StageEvaluationCompleted:
+		report.Strategy = trace.StrategyID
+		report.Levels = map[string]uint64{}
+		for _, level := range observation.LevelOutcomes {
+			report.Levels[level.Outcome] += level.Count
+		}
+	default:
+		return
+	}
+	engine.NoteSlotDecision(report)
 }

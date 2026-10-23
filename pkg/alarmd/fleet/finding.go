@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"sort"
 	"strings"
 
 	// Aliased: a test helper in this package is named execution.
@@ -67,10 +68,14 @@ const (
 	// build that has the capability does. Not an action item: waiting for
 	// the build is the whole of what anyone can do.
 	OwnerCapability Owner = "CAPABILITY"
+	// OwnerStrategyOrCollection: the strategy's identity fields (its target)
+	// or the labels the collection writes -- the two disagree, and the
+	// row's identity evidence shows which side to align.
+	OwnerStrategyOrCollection Owner = "STRATEGY_OR_COLLECTION"
 )
 
 // Owners lists every owner, for the page's completeness check.
-var Owners = []Owner{OwnerAlarmd, OwnerData, OwnerStrategy, OwnerNobody, OwnerUndetermined, OwnerPlatform, OwnerCapability}
+var Owners = []Owner{OwnerAlarmd, OwnerData, OwnerStrategy, OwnerNobody, OwnerUndetermined, OwnerPlatform, OwnerCapability, OwnerStrategyOrCollection}
 
 // Finding is what the page renders for one object.
 type Finding struct {
@@ -111,6 +116,17 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 	// got to the window line -- its own reason, a guard it is held under, or
 	// a code. The shape of it is a host that misses whole minutes, and it sat
 	// on this deployment's undetermined list.
+	// A window line whose series reports less often than its window has
+	// positions is that cadence, whichever window line the counts reached:
+	// a window that never fills because the series is sparser than it, not
+	// one that cannot be decided. Read before SERIES_SPARSE, whose evidence
+	// such a series also carries - every minute between its points is one
+	// the query answered without it - and which would send the data owner
+	// to look for points the series never sends.
+	if (check == CheckWindowUndecided || check == CheckSeriesDataMissing) && windowLineReason(anomaly.CauseReason) &&
+		anomaly.Coverage.SparserThanWindow() {
+		return CheckSeriesSparserThanWindow, true, false
+	}
 	if (check == CheckWindowUndecided || check == CheckSeriesDataMissing) && sparseEvidence(anomaly.Coverage) {
 		return CheckSeriesSparse, true, false
 	}
@@ -149,6 +165,8 @@ func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool,
 		return CheckSlotsOverdue, true, false
 	case anomaly.Kind == KindNoData:
 		return CheckNoDataPersistent, true, false
+	case anomaly.Kind == KindIdentityUnmatched:
+		return CheckIdentityUnmatched, true, false
 	case anomaly.Kind == KindEmptyEveryRound && anomaly.EmptyEveryRound != nil &&
 		anomaly.EmptyEveryRound.Cause == EmptyEveryRoundCauseOutsideTarget:
 		return CheckEmptyAfterTarget, true, false
@@ -156,6 +174,8 @@ func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool,
 		return CheckEmptyEveryRound, true, false
 	case anomaly.Kind == KindQuiet:
 		return CheckQuiet, true, false
+	case anomaly.Kind == KindLogCountEmpty:
+		return CheckLogCountEmpty, true, false
 	case anomaly.Kind == KindAnswerTruncated:
 		return CheckAnswerTruncated, true, false
 	case anomaly.Kind == KindNoDataMemoryRefused:
@@ -163,6 +183,13 @@ func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool,
 	case anomaly.Kind == KindRetainedShareApproaching:
 		return CheckRetainedShareApproaching, true, false
 	case anomaly.Kind == KindReadBeforeComplete:
+		return CheckReadBeforeComplete, true, false
+	case anomaly.Kind == KindReadHeld && anomaly.ReadHold != nil && anomaly.ReadHold.AtLimit:
+		// Held at the limit, its data landing past it: the rounds are read
+		// before the data is all there, which is what READ_BEFORE_COMPLETE
+		// says - detecting, its results not to be taken as they stand, the
+		// time_delay the strategy owner's to move - and not READ_HELD, whose
+		// rounds read the data whole.
 		return CheckReadBeforeComplete, true, false
 	case anomaly.Kind == KindReadHeld:
 		return CheckReadHeld, true, false
@@ -250,10 +277,11 @@ func checkOnCounts(anomaly Anomaly, schedule Schedule) (check Check, under bool,
 func codeVerdict(anomaly Anomaly) (check Check, decided bool) {
 	// A round that failed on a query whose deadline ran out while this
 	// deployment was still delivering the answer is this deployment's,
-	// whichever word the round ended with. The failure's code is OTHER,
-	// which decides nothing, and the round's own word would file it as an
-	// unnamed failure at no step or, from a source error, as a dependency
-	// down - when the detail says where the time went.
+	// whichever word the round ended with. The failure's code says so
+	// (QUERY_DELIVERY_TIMEOUT), and so does its detail, which a replica of
+	// an earlier build still writes with code OTHER; the round's own word
+	// would file it as an unnamed failure at no step or, from a source
+	// error, as a dependency down.
 	if deliveryTimedOutThisRound(anomaly) {
 		return CheckDefect, true
 	}
@@ -412,6 +440,10 @@ func refusalCheck(failure *FailureRef) Check {
 	return CheckQueryRefused
 }
 
+// refusalNamesMissingTarget is a substring rule over the provider's status
+// code. It stays until the provider offers a closed error code to read
+// instead: the state it names is a large, useful one, owned by the strategy
+// on the backend's own word that the table or field is not there.
 func refusalNamesMissingTarget(failure *FailureRef) bool {
 	if failure == nil {
 		return false
@@ -444,6 +476,12 @@ func queryRejected(failure *FailureRef) bool {
 	return strings.HasPrefix(failure.Detail, routedetail.RouteDetailKindResponse+"="+routedetail.ResponseFailureStatusPrefix) ||
 		failure.HTTPStatus >= 400 && failure.HTTPStatus <= 499 ||
 		failure.HTTPStatus == 0 && strings.HasPrefix(failure.Detail, routedetail.RouteDetailKindHTTPStatus+"=4")
+}
+
+// windowLineReason is a reason that says the window is short: the two the
+// summary gives and the guard's.
+func windowLineReason(reason string) bool {
+	return reason == "HISTORY_WARMING" || reason == "HISTORY_GAPPED" || reason == string(routedetail.CauseGapGuardWarming)
 }
 
 // sparseEvidence says every short window of the object is short only by
@@ -573,12 +611,57 @@ func windowCheck(reason string, coverage *HistoryCoverage) (check Check, under b
 
 // verdict is what a code decides on its own: the check an object carrying it
 // is under, or that the code is a normal value and the object is under none.
+// A DEPENDENCY_DOWN code also says whether it is this deployment's own
+// Redis-backed stores not answering - State, gaps, progress, the control
+// store's timeline, snapshots and activations - or another dependency
+// (Kafka, the output client, the CMDB caches, the view, the control plane's
+// sets). Every one says which (dependencyStore); the store's are the codes a
+// span of Slots given up is attributed to a store outage by (StoreOutageCodes).
 type verdict struct {
 	check  Check
 	normal bool
+	store  dependencyStore
 }
 
+// dependencyStore is a DEPENDENCY_DOWN code's answer to "is it this
+// deployment's own store": undecided on every other code.
+type dependencyStore uint8
+
+const (
+	storeUndecided dependencyStore = iota
+	storeOwn
+	storeOther
+)
+
 func lands(check Check) verdict { return verdict{check: check} }
+
+// storeDown is a DEPENDENCY_DOWN code that is this deployment's Redis-backed
+// stores not answering, or not keeping what they were given.
+func storeDown() verdict { return verdict{check: CheckDependencyDown, store: storeOwn} }
+
+// otherDown is a DEPENDENCY_DOWN code of any other dependency.
+func otherDown() verdict { return verdict{check: CheckDependencyDown, store: storeOther} }
+
+// StoreOutageCodes is every reason code that is this deployment's own
+// Redis-backed stores not answering, sorted: the closed set a skipped span is
+// attributed to a store outage by. It is read from codeChecks, the one place
+// a code's line is decided.
+func StoreOutageCodes() []string {
+	codes := make([]string, 0, 16)
+	for code, decided := range codeChecks {
+		if decided.store == storeOwn {
+			codes = append(codes, code)
+		}
+	}
+	sort.Strings(codes)
+	return codes
+}
+
+// storeOutageCode says a reason code is one of StoreOutageCodes.
+func storeOutageCode(code string) bool {
+	decided, known := codeChecks[code]
+	return known && decided.store == storeOwn
+}
 
 var isNormal = verdict{normal: true}
 
@@ -610,7 +693,7 @@ var codeChecks = map[string]verdict{
 
 	// This deployment's own stores and infrastructure did not answer. Retrying
 	// may help, and nobody outside can help.
-	"REDIS_UNAVAILABLE": lands(CheckDependencyDown),
+	"REDIS_UNAVAILABLE": storeDown(),
 	// Not DEPENDENCY_DOWN: this deployment asked for more than it left time to
 	// receive, and the fix is the size of the read rather than the health of
 	// the store. Landing it with the dependencies is what made 163 of these in
@@ -620,18 +703,38 @@ var codeChecks = map[string]verdict{
 	// Not a defect and not a dependency: this strategy asks for more of one
 	// replica than any single object may hold, and the answer is to shard it.
 	"QG_BUDGET_SHARE_EXCEEDED": lands(CheckPlanUnevaluable),
-	"KAFKA_UNAVAILABLE":        lands(CheckDependencyDown),
-	"STATE_WRITE_RETRYABLE":    lands(CheckDependencyDown),
-	"OUTPUT_ACK_UNKNOWN":       lands(CheckDependencyDown),
-	"SNAPSHOT_UNAVAILABLE":     lands(CheckDependencyDown),
-	"SNAPSHOT_RETRY_PENDING":   lands(CheckDependencyDown),
-	"ACTIVATION_READ_FAILED":   lands(CheckDependencyDown),
+	// A supplement whose kept read did not hold the Slot's planned query.
+	// Supplements never reach the tracker, so this records the decision:
+	// a defect until why the planned digest differed from the kept one is
+	// traced.
+	"SUPPLEMENT_KEPT_READ_ABSENT": lands(CheckDefect),
+	// The same refusal, after the Runner gave the Slot up for it without
+	// another read: a completion cause filed as the round's reason
+	// (FiledCauses). The strategy's line, not abandoned detection - waiting
+	// or adding replicas does not make one object's Slot fit its share.
+	"RESOURCE_SHARE_EXCEEDED": lands(CheckPlanUnevaluable),
+	"KAFKA_UNAVAILABLE":       otherDown(),
+	"STATE_WRITE_RETRYABLE":   storeDown(),
+	"OUTPUT_ACK_UNKNOWN":      otherDown(),
+	// This deployment's own Snapshot store not answering until the Slot's
+	// recovery bound. The word is shared with a corrupt Snapshot and an
+	// expired replay; the outage record takes it only from the completion
+	// naming SNAPSHOT_UNAVAILABLE_PAST_BOUND (storeFailureOf).
+	"SNAPSHOT_UNAVAILABLE": storeDown(),
+	// A target read from the CMDB caches: in part is the caches as they
+	// stand - members dropped, nodes missing - and the round runs on what
+	// resolved; not at all is the caches unreadable. Target lines reach no
+	// round row, so these record the decision.
+	"TARGET_RESOLUTION_INCOMPLETE":  isNormal,
+	"TARGET_RESOLUTION_UNAVAILABLE": otherDown(),
+	"SNAPSHOT_RETRY_PENDING":        storeDown(),
+	"ACTIVATION_READ_FAILED":        storeDown(),
 	// The store answered and the activation record was not in it. That is the
 	// infrastructure losing state rather than refusing a read, but it lands
 	// here for the same reason the rest do: nobody outside this deployment can
 	// help, and the question it sends the reader to is whether this
 	// deployment's store is keeping what it is given.
-	"ACTIVATION_MISSING": lands(CheckDependencyDown),
+	"ACTIVATION_MISSING": storeDown(),
 
 	// This deployment refused its own output before a broker was asked: the
 	// converter would not write the decision, or the Kafka client would not
@@ -645,7 +748,7 @@ var codeChecks = map[string]verdict{
 	// about to end: one round of it is the mechanism working at a handover
 	// or a renewal hiccup; rounds of it mean the lease is not being renewed,
 	// which is the store or the leader, not the content.
-	"OUTPUT_LEASE_EXPIRING": lands(CheckDependencyDown),
+	"OUTPUT_LEASE_EXPIRING": otherDown(),
 
 	// What this deployment persisted cannot be read back as written. Retrying
 	// reads the same bytes.
@@ -712,7 +815,7 @@ var codeChecks = map[string]verdict{
 	"GAP_APPLY_STALE_VERSION": lands(CheckDefect),
 	// The write did not land at all. That is the store not answering, which is
 	// the dependency's line, beside STATE_WRITE_RETRYABLE above.
-	"GAP_WRITE_RETRYABLE": lands(CheckDependencyDown),
+	"GAP_WRITE_RETRYABLE": storeDown(),
 	// The ownership store refused this deployment's own worker: its fence
 	// went stale, the assignment names another worker, another owner holds
 	// the lease, or the content scope moved under a fenced write. Each is a
@@ -750,18 +853,17 @@ var codeChecks = map[string]verdict{
 	// found twelve objects whose strategies had been retired days earlier and
 	// were still being retried every thirty seconds: the disposition was known
 	// inside the system and never reached the runner.
-	"BLOCKED_EXACT_SET_UNAVAILABLE": lands(CheckDependencyDown),
-	// A timeline this build cannot decode is a defect - corrupt bytes, or a
-	// release whose content the previous build cannot read - not a dependency
-	// that is down.
+	"BLOCKED_EXACT_SET_UNAVAILABLE": otherDown(),
+	// A timeline that does not decode is a defect - corrupt bytes - not a
+	// dependency that is down.
 	"SCHEDULE_UNREADABLE": lands(CheckDefect),
 	// A timeline whose key the store lost: the store did not have what the
 	// round needed, as the span the reopen records is filed under it.
-	"SCHEDULE_MISSING":        lands(CheckDependencyDown),
-	"SLOT_SOURCE_RETRY":       lands(CheckDependencyDown),
-	"VIEW_NOT_EXECUTABLE":     lands(CheckDependencyDown),
-	"PROGRESS_BEGIN_FAILED":   lands(CheckDependencyDown),
-	"PROGRESS_BEGIN_REJECTED": lands(CheckDependencyDown),
+	"SCHEDULE_MISSING":        storeDown(),
+	"SLOT_SOURCE_RETRY":       storeDown(),
+	"VIEW_NOT_EXECUTABLE":     otherDown(),
+	"PROGRESS_BEGIN_FAILED":   storeDown(),
+	"PROGRESS_BEGIN_REJECTED": otherDown(),
 
 	// Budgets this deployment allocates itself, at run time: work it gave up on
 	// because of its own limits. The next step is capacity, the same as for a
@@ -803,9 +905,16 @@ var codeChecks = map[string]verdict{
 	// window (guardHeld) - not whether the backend answers, which it did.
 	"GAP_GUARD_WARMING": lands(CheckWindowUndecided),
 
+	// The backend answered and the deadline passed while this deployment was
+	// decoding and delivering it: this deployment's, as the delivery detail
+	// already files a round that failed on one (deliveryTimedOutThisRound).
+	"QUERY_DELIVERY_TIMEOUT": lands(CheckDefect),
 	// The backend was asked and did not answer usefully.
 	"QUERY_TIMEOUT":     lands(CheckBackendNotAnswering),
 	"QUERY_UNAVAILABLE": lands(CheckBackendNotAnswering),
+	// The backend answered and refused the query as written: the strategy's
+	// query is what to look at, not whether the backend is up.
+	"QUERY_REJECTED": lands(CheckQueryRefused),
 	// The backend answered and the table or field the strategy names does
 	// not route in its space: the strategy's, the same line the refusal's
 	// detail files it under.
@@ -814,7 +923,12 @@ var codeChecks = map[string]verdict{
 	// storage buckets on the aggregation grid: the definition cannot be
 	// evaluated as written here, and its owner removes the detect_interval.
 	"DETECT_INTERVAL_STORAGE_NOT_SLIDING": lands(CheckPlanUnevaluable),
-	"QUERY_PARTIAL":                       lands(CheckBackendNotAnswering),
+	// A query with named outputs one of whose outputs answers two points at
+	// one time and labels, __name__ aside: the definition cannot be
+	// evaluated as written, and its owner aggregates each output to the
+	// labels detection reads.
+	"QUERY_NAMED_OUTPUT_DUPLICATE_KEY": lands(CheckPlanUnevaluable),
+	"QUERY_PARTIAL":                    lands(CheckBackendNotAnswering),
 	// The backend answered and the dependency holds no rows: the data the
 	// algorithm compares against is missing, the same reading a series with
 	// no history point gets.
@@ -932,7 +1046,7 @@ func init() {
 			codeChecks[outcome] = lands(CheckDefect)
 			continue
 		}
-		codeChecks[outcome] = lands(CheckDependencyDown)
+		codeChecks[outcome] = otherDown()
 	}
 	// The result contract refused what this deployment produced. An invariant
 	// this deployment violated is its own, and it repeats until fixed.

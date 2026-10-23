@@ -34,12 +34,12 @@ func (r *Recorder) BindDecodedObjects(source DecodedObjectSource) error {
 		return errors.New("metric: decoded object source is required")
 	}
 	return r.registry.Register(&decodedObjectCollector{source: source,
-		ratio: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "object_cache_decoded_ratio"),
+		ratio: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "object_cache_decoded_ratio"),
 			"The catalog object cache's objects sized by their structure against the stored bytes it counts them by, "+
 				"one in 64 stored, last and max since the cache was configured. A lower bound on the retained ratio the "+
 				"cache's unused budget is charged at (3/2, measured on 1 to 80 Plans a Query Group): a max near or past "+
 				"it is production objects outgrowing the shapes the charge was measured on.", []string{"stat"}, nil),
-		samples: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "object_cache_decoded_samples_total"),
+		samples: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "object_cache_decoded_samples_total"),
 			"Objects the reading above has sized.", nil, nil),
 	})
 }

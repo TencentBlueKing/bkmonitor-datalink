@@ -292,17 +292,15 @@ type FailureRef struct {
 	// is not the broker failing to answer, and on a live deployment the two
 	// read identically for an afternoon; they were then told apart by the
 	// error's words, which a Redis's EOF could pass as Kafka's. Empty on
-	// other stages and on rows from a publisher that predates it.
-	//
-	// Retire when: the upstream snapshot after the one that adds Kind and At
-	// is merged, every publisher an upgrade meets sets both, and the readings
-	// of a row from a publisher that predates them can go.
+	// other stages, and on an output failure whose error stated none (read
+	// as unknown).
 	Kind string `json:"kind,omitempty"`
 	// At is when this failure was observed. The reference is kept until a
 	// healthy completion, so on a row whose latest round ended some other
 	// way it describes an earlier round; the reading that names the current
-	// round's evidence uses this to tell the two apart. Absent on rows from
-	// a publisher that predates it.
+	// round's evidence uses this to tell the two apart. Absent on a
+	// reference rebuilt from the pool record (FailureFromPoolRecord), which
+	// keeps no time.
 	At *time.Time `json:"at,omitempty"`
 	// Slot is the Slot the failure was observed on, and the first thing the
 	// reading compares with the row's RoundSlot: a failure on the latest
@@ -316,6 +314,21 @@ type FailureRef struct {
 	// failure got no HTTP answer. Detail spells it for a person; this is
 	// the number readings decide on.
 	HTTPStatus int `json:"http_status,omitempty"`
+	// Rejection names what the provider said when it refused the query: its
+	// class and its own trace id, to find the request by on its side. The
+	// words of its answer are not here: this row reaches every reader of the
+	// strategy route, and a provider's answer can echo label and dimension
+	// values. They stay on the replica that tracks the group (KeptRejection),
+	// for a session-gated reader. Absent where the failure got no
+	// non-success answer.
+	Rejection *RejectionRef `json:"rejection,omitempty"`
+}
+
+// RejectionRef is a provider's refusal as a row carries it: bounded words
+// only.
+type RejectionRef struct {
+	Class   string `json:"class"`
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 // NoDataMemoryRefusal is what the store said when it would not take a Plan's
@@ -1044,6 +1057,72 @@ type CauseScope struct {
 	Query      string  `json:"query,omitempty"`
 }
 
+// CauseOrigin is whose a row's cause reason is. Origin is physical (the
+// round met it itself), carried (a stored guard's, repeated on this round)
+// or unknown (CauseOriginUnknown); Slot and Cause are where a carried guard
+// came from, absent when it was stamped by a build that did not record it.
+type CauseOrigin struct {
+	Origin string `json:"origin"`
+	Slot   int64  `json:"slot,omitempty"`
+	Cause  string `json:"cause,omitempty"`
+}
+
+// CauseOriginUnknown is the origin of a reason this process holds without
+// knowing whose it is: restored from a summary that never recorded it, or
+// published by a replica whose build did not. Never read as physical.
+const CauseOriginUnknown = "unknown"
+
+// CauseOriginDerived is the origin of a reason that is alarmd's own
+// judgement rather than anything a round met or carried: a cause word a
+// round is filed under, a check word, an UNKNOWN verdict's reason.
+const CauseOriginDerived = "derived"
+
+// unknownCauseOrigin is the origin a reason held without one carries.
+func unknownCauseOrigin() *CauseOrigin {
+	return &CauseOrigin{Origin: CauseOriginUnknown}
+}
+
+// heldCauseOrigin is the origin of a reason held without one - restored, or
+// from a replica on an older build: derived for a cause word a round is
+// filed under (FiledCauses), which is alarmd's own on every build, and
+// unknown for any other reason, which could have been either.
+func heldCauseOrigin(reason string) *CauseOrigin {
+	if slices.Contains(FiledCauses, reason) {
+		return &CauseOrigin{Origin: CauseOriginDerived}
+	}
+	return unknownCauseOrigin()
+}
+
+// settleCauseOrigin gives a row that has a reason and no origin the one a
+// held reason has, so an absent origin means only an absent reason.
+func settleCauseOrigin(anomaly *Anomaly) {
+	if anomaly.CauseReason != "" && anomaly.CauseOrigin == nil {
+		anomaly.CauseOrigin = heldCauseOrigin(anomaly.CauseReason)
+	}
+}
+
+// causeOriginOf is a round's cause origin as a row carries it; nil for a
+// round that named no reason.
+//
+// A round filed under its cause word (roundFiledUnder: GAP_GUARD_WARMING,
+// SNAPSHOT_CORRUPT) has alarmd's own classification for a reason: derived,
+// and so is a reason the catalogue says alarmd judged (an out-of-hours
+// EFFECTIVE_TIME_INACTIVE), unless a stored guard carried it here. A carried
+// guard behind it still names where it came from.
+func causeOriginOf(reason string, filedUnderCause bool, carried *observability.CarriedReasonFacts) *CauseOrigin {
+	if reason == "" {
+		return nil
+	}
+	origin := &CauseOrigin{Origin: observability.ReasonOriginOf(observability.ReasonCode(reason), carried != nil)}
+	if filedUnderCause {
+		origin.Origin = CauseOriginDerived
+	}
+	if carried != nil && carried.Known() {
+		origin.Slot, origin.Cause = carried.OriginSlot, string(carried.OriginCause)
+	}
+	return origin
+}
+
 // causeScopeOf is a round's cause scope as a row carries it.
 func causeScopeOf(facts *observability.CompletionScopeFacts) *CauseScope {
 	if facts == nil {
@@ -1350,6 +1429,48 @@ func (coverage *HistoryCoverage) Churning() bool {
 		coverage.FreshRounds > coverage.WorstRequired
 }
 
+// SparserThanWindow reports a long-lived series that reports less often than
+// its window has positions. Points every five minutes under a one minute step
+// read like this, and no window of such a series is ever whole.
+//
+// Read on the evidence that tells a cadence from data that went missing,
+// not on the counts alone: every short window's holes are minutes the query
+// answered whole without the series (sparseEvidence), and every named short
+// window - and the worst one - holds a point in at most half its positions.
+// On top of Persistent, like Churning and exclusive with it: none of the
+// short windows belongs to a new series, and none holds an unusable record.
+// A long-lived series missing a few minutes keeps more than half its window
+// and stays SERIES_SPARSE's or SERIES_DATA_MISSING's.
+//
+// That is a cadence, not a fault. The recovery walk counts a settled hole as a
+// minute with no anomaly, as Python's recovery check does, so an alert on such
+// a series closes when Python's would; what never comes is NORMAL, which needs
+// a whole window. The strategy's window and step set it against how often the
+// series reports.
+func (coverage *HistoryCoverage) SparserThanWindow() bool {
+	if !coverage.Persistent() || coverage.ShortFresh != 0 || coverage.Unusable != 0 ||
+		coverage.WorstValid == 0 || coverage.WorstValid*2 > coverage.WorstRequired || !sparseEvidence(coverage) {
+		return false
+	}
+	for _, window := range coverage.Windows {
+		if window.Valid == 0 || window.Valid*2 > window.Required {
+			return false
+		}
+	}
+	return true
+}
+
+// PointEverySteps is how often a series SparserThanWindow reports, in the
+// window's own steps: the worst window's positions over its points, rounded
+// to the nearest step. Zero for any other coverage. With a one minute step it
+// is the minutes between points.
+func (coverage *HistoryCoverage) PointEverySteps() uint32 {
+	if !coverage.SparserThanWindow() {
+		return 0
+	}
+	return (coverage.WorstRequired + coverage.WorstValid/2) / coverage.WorstValid
+}
+
 // Starved reports a window that has held no points at all for longer than
 // filling it could take.
 //
@@ -1450,6 +1571,17 @@ type Anomaly struct {
 	// and the Level for a Level's outcome or the physical query for the
 	// primary input. Nil when the cause named no place.
 	CauseScope *CauseScope `json:"cause_scope,omitempty"`
+	// CauseOrigin is whose CauseReason is: physical (the round's own),
+	// carried (a stored guard's carried onto it; Slot and Cause when the
+	// guard recorded them), derived (alarmd's own word: a round filed under
+	// its cause, GAP_GUARD_WARMING, SNAPSHOT_CORRUPT or RESOURCE_SHARE_EXCEEDED), or unknown (a row
+	// restored from a summary, or published by a build before this field,
+	// that never learned it). A
+	// LEVEL_OUTCOME_UNKNOWN round still counts as something wrong - the
+	// series really was not evaluated - but its QUERY_TIMEOUT may be one an
+	// earlier round raised, and the row says so. Present whenever
+	// CauseReason is; absent means only that the row has no reason.
+	CauseOrigin *CauseOrigin `json:"cause_origin,omitempty"`
 	// HeldBy is what held the latest round's Slot, on a row whose latest
 	// round gave the Slot up (GAP_SKIPPED): the completion's own word, the
 	// vocabulary of run_one_return_total{outcome} plus the readiness
@@ -1625,6 +1757,9 @@ type Anomaly struct {
 	// completed Slot's retained bytes against the one-object share it was
 	// admitted under.
 	RetainedShare *RetainedShareFacts `json:"retained_share,omitempty"`
+	// ShareRefusal is on a row whose latest round was a Slot finalized as
+	// RESOURCE_SHARE_EXCEEDED: the refusal's own bytes against the share.
+	ShareRefusal *ShareRefusalFacts `json:"share_refusal,omitempty"`
 	// ReadEarly is on rows of KindReadBeforeComplete: the time_delay the
 	// object's query runs under, the one that would have read its samples
 	// complete, and the samples.
@@ -1670,6 +1805,9 @@ type Anomaly struct {
 	// EmptyEveryRound is on rows of KindEmptyEveryRound: the run of empty
 	// completions, whole, with what the row can say about why.
 	EmptyEveryRound *EmptyEveryRoundFacts `json:"empty_every_round,omitempty"`
+	// IdentityUnmatched is on rows of KindIdentityUnmatched: the rounds, the
+	// withheld series by reason, and a few series' identity fields.
+	IdentityUnmatched *IdentityUnmatchedFacts `json:"identity_unmatched,omitempty"`
 	// ConfigChanged says the object's snapshot, query or schedule revision
 	// differs between its last two completed rounds: the configuration it
 	// runs under actually changed. It is the one fact that tells a
@@ -1736,7 +1874,13 @@ type Snapshot struct {
 	// for the count: the list is bounded like the anomaly list, so a replica
 	// holding more than the budget publishes a short list beside a full count
 	// rather than a smaller count.
-	OwnedObjects []string                 `json:"owned_objects,omitempty"`
+	OwnedObjects []string `json:"owned_objects,omitempty"`
+	// LookbackLate is the Query Groups this replica's lookback reads directed
+	// on its own evidence, by the rung their late series were last seen at.
+	// It is not part of the snapshot's body: the store writes it to a key of
+	// its own beside it, for the control plane's lookback planning to read
+	// without loading every snapshot (RedisStore.LoadLookbackLate).
+	LookbackLate map[string]int           `json:"-"`
 	ReadHolds    map[string]ReadHoldFacts `json:"read_holds,omitempty"`
 	// ReadHoldsCut says ReadHolds was cut to its budget, so a group it does
 	// not list may hold one (ReadHoldFacts).
@@ -1880,6 +2024,9 @@ type Snapshot struct {
 	// replica that does not report it, which is why the aggregate counts the
 	// replicas it actually heard from rather than assuming every one answered.
 	Capacity *Capacity `json:"capacity,omitempty"`
+	// Flow is the replica's counters for the overview's stages (FlowFacts):
+	// fixed size, so the summary carries it. Absent on a build before it.
+	Flow *FlowFacts `json:"flow,omitempty"`
 	// Overdue counts the objects this replica should have picked up and has not.
 	// Absent means the replica has nothing holding wake times, which is a
 	// different answer from "nothing is overdue" and must not be shown as one.
@@ -1888,6 +2035,12 @@ type Snapshot struct {
 	// how its rounds have been finishing. Absent for the same reason Overdue
 	// can be: no due index, no census.
 	Schedule *ScheduleCensus `json:"schedule,omitempty"`
+	// Due names the objects Schedule counts as late, overdue and never
+	// evaluated (DueClasses). Absent with Schedule: no due index, no names.
+	Due *DueClasses `json:"due,omitempty"`
+	// OpenAlerts counts open alerts per strategy this replica's copy of the
+	// consumer's set tracks (OpenAlertCounts). Absent without a copy.
+	OpenAlerts *OpenAlertCounts `json:"open_alerts,omitempty"`
 	// Suppression is present only on a build whose dispatcher actually holds
 	// objects back. Absent, the overdue count above is structurally zero and
 	// must not be read as "nothing is overdue".
@@ -1995,6 +2148,10 @@ type Snapshot struct {
 	// read it from its configuration. Absent on a build before this fact
 	// existed, which the aggregate keeps apart from any choice.
 	OutputProtocol *OutputProtocolFacts `json:"output_protocol,omitempty"`
+	// Tracing is the span export this process runs with, as it built it: on
+	// with the collector's host and sampling, or off and why. Absent on a
+	// build before this fact existed.
+	Tracing *TracingFacts `json:"tracing,omitempty"`
 	// Retention is the retention lengths this process runs with and their
 	// inputs, the same facts as the runtime profile's retention section. On
 	// the snapshot because a deployment read only through its pages had no
@@ -2007,6 +2164,11 @@ type Snapshot struct {
 	// object is named only here, because a label per object is not a metric
 	// anyone can bound. Absent on a build before this fact existed.
 	RoundMemory *RoundMemorySummary `json:"round_memory,omitempty"`
+	// RetainedHolders is what held this replica's retained pool as it
+	// published, Slot by Slot. The usage is a metric too; the Slots holding
+	// it are named only here, for the same reason. Absent on a build before
+	// this fact existed.
+	RetainedHolders *RetainedHolderFacts `json:"retained_holders,omitempty"`
 }
 
 // OutputProtocolFacts is one process's output protocol choice: the word in
@@ -2504,10 +2666,14 @@ type OpenAlertSetFacts struct {
 	// CalibrationShort is the strategies an interval at that capacity cannot
 	// reach, whose sets go unjudged and unclosed. CalibrationOverAge names the
 	// strategies past the calibration age, oldest first and bounded.
-	CalibrationNeeded   int                     `json:"calibration_needed,omitempty"`
-	CalibrationCapacity int                     `json:"calibration_capacity,omitempty"`
-	CalibrationShort    int                     `json:"calibration_short,omitempty"`
-	CalibrationOverAge  []CalibrationOverAgeRow `json:"calibration_over_age,omitempty"`
+	CalibrationNeeded   int `json:"calibration_needed,omitempty"`
+	CalibrationCapacity int `json:"calibration_capacity,omitempty"`
+	CalibrationShort    int `json:"calibration_short,omitempty"`
+	// RoundsSkipped is the copy's maintenance rounds not run because the
+	// previous one was still running (a slow Console holding a calibration
+	// to its own deadline); skipped, never stacked.
+	RoundsSkipped      uint64                  `json:"rounds_skipped,omitempty"`
+	CalibrationOverAge []CalibrationOverAgeRow `json:"calibration_over_age,omitempty"`
 	// TooLarge names the strategies whose open-alert sets were refused for
 	// their size, largest first and bounded: members, bytes and the budget.
 	// Their sets go unread, and so unjudged and unclosed.
@@ -2845,6 +3011,8 @@ type ReplicaView struct {
 	// Capacity is this replica's own occupancy. Present only where the replica
 	// reports it; absent is different from zero and stays absent.
 	Capacity *Capacity `json:"capacity,omitempty"`
+	// Flow is this replica's stage counters as it published them.
+	Flow *FlowFacts `json:"flow,omitempty"`
 	// AckedVersion is the Activation record revision this replica reported
 	// executing by, absent when it reported none. Lag is the difference
 	// between it and the deployment's PublishedVersion, two persisted
@@ -2873,10 +3041,18 @@ type ReplicaView struct {
 	// it. Absent when it published none (an older build), which the page says
 	// rather than filling in.
 	OutputProtocol *OutputProtocolFacts `json:"output_protocol,omitempty"`
+	// Tracing is the span export this replica runs, as it published it.
+	// Absent when it published none (an older build).
+	Tracing *TracingFacts `json:"tracing,omitempty"`
 	// RoundMemory is this replica's, as it published it: the rounds and
 	// bytes its tracker keeps and the object keeping the most. Absent when it
 	// published none (an older build).
 	RoundMemory *RoundMemorySummary `json:"round_memory,omitempty"`
+	// RetainedHolders is this replica's, as it published it: the Slots
+	// holding the most of its retained pool, the one holding the longest,
+	// and the pool's figure beside theirs. Absent when it published none (an
+	// older build).
+	RetainedHolders *RetainedHolderFacts `json:"retained_holders,omitempty"`
 }
 
 // copyRoundMemory copies a published round memory summary, the largest
@@ -2989,6 +3165,13 @@ type View struct {
 	// time in the last hour and the last six. It is the sentence "is the
 	// deployment keeping up", and it is absent when no replica has an index.
 	Schedule *ScheduleCensus `json:"schedule,omitempty"`
+	// Due is the replicas' named due classes merged, for the strategy board
+	// (DueView). Kept in memory only, never in the health answer: the lists
+	// are the size of what is wrong and the health answer is read on every page.
+	Due *DueView `json:"-"`
+	// OpenAlerts is the replicas' open-alert counts for the strategy board
+	// (OpenView), in memory only like Due.
+	OpenAlerts *OpenView `json:"-"`
 	// Suppression says whether anything in this deployment can be parked at
 	// all. See DispatchSuppression: its absence, not its value, is the answer.
 	Dispatch *DispatchSuppression `json:"dispatch,omitempty"`
@@ -3146,6 +3329,9 @@ type View struct {
 	// group with an empty word. What a given strategy publishes as is not
 	// here -- it is frozen per Plan and read from the directory.
 	OutputProtocols []OutputProtocolGroup `json:"output_protocols"`
+	// Tracings is the distinct span exports the counted replicas run, grouped
+	// like Builds; a replica that published none is its own group.
+	Tracings []TracingGroup `json:"tracings"`
 	// Retentions is the distinct retention facts the counted replicas run
 	// with, grouped like Builds: one entry is a deployment that agrees with
 	// itself, more is a rollout or a values file that changed under some of
@@ -3470,7 +3656,7 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			// an older build will not. Zero has to read as "not reported" rather
 			// than "started just now", so the page checks before using it.
 			UptimeSeconds: uptimeSeconds(snapshot.StartedAt, now), StartedAt: snapshot.StartedAt,
-			Truncated: truncated, Capacity: snapshot.Capacity,
+			Truncated: truncated, Capacity: snapshot.Capacity, Flow: snapshot.Flow,
 			Build: snapshot.Build,
 		}
 		// This replica's own record of its dependencies, copied so a later
@@ -3497,10 +3683,13 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			facts := *snapshot.OutputProtocol
 			perReplica.OutputProtocol = &facts
 		}
+		perReplica.Tracing = CopyTracingFacts(snapshot.Tracing)
 		// And what its tracker keeps, copied so a later read cannot alias
 		// the snapshot's.
 		perReplica.RoundMemory = copyRoundMemory(snapshot.RoundMemory)
+		perReplica.RetainedHolders = CopyRetainedHolderFacts(snapshot.RetainedHolders)
 		view.OutputProtocols = addToOutputProtocolGroup(view.OutputProtocols, snapshot.OutputProtocol, replica)
+		view.Tracings = addToTracingGroup(view.Tracings, snapshot.Tracing, replica)
 		view.Retentions = addToRetentionGroup(view.Retentions, snapshot.Retention, replica)
 		view.Builds = addToBuildGroup(view.Builds, snapshot.Build, replica)
 		view.Workers.Ready++
@@ -3574,6 +3763,8 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	// picked up describes a moment that has passed.
 	aggregateOverdue(&view, counted)
 	aggregateSchedule(&view, counted)
+	aggregateDue(&view, counted)
+	aggregateOpenAlerts(&view, counted)
 	aggregateDispatchSuppression(&view, counted)
 	aggregateAddressDiffers(&view, counted)
 	aggregateTrackerDropped(&view, counted)
@@ -3699,6 +3890,7 @@ func aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	Settle(&view)
 	sortBuildGroups(view.Builds)
 	sortOutputProtocolGroups(view.OutputProtocols)
+	sortTracingGroups(view.Tracings)
 	sortRetentionGroups(view.Retentions)
 	return view
 }
@@ -3713,13 +3905,13 @@ func settleControlFacts(view *View, read controlRead, embeddedLeaderFacts bool) 
 	case read.current != nil:
 		mergeControlFacts(view, *read.current)
 		return &ControlFactsStanding{Source: ControlFactsFromRecord, Replica: read.current.Replica,
-			LeaderClass: read.current.CandidacyClass}
+			LeaderClass: read.current.CandidacyClass, Handback: read.current.Handback}
 	case embeddedLeaderFacts:
 		return &ControlFactsStanding{Source: ControlFactsFromEmbedded, Unavailable: read.unavailable()}
 	case read.previous != nil:
 		mergeControlFacts(view, *read.previous)
 		return &ControlFactsStanding{Source: ControlFactsFromPreviousTerm, Replica: read.previous.Replica,
-			Unavailable: read.unavailable(), LeaderClass: read.previous.CandidacyClass}
+			Unavailable: read.unavailable(), LeaderClass: read.previous.CandidacyClass, Handback: read.previous.Handback}
 	}
 	if read.err != nil {
 		view.Gaps = append(view.Gaps, Gap{Kind: GapControlFactsUnavailable, Detail: gapDetail(read.err)})
@@ -4238,6 +4430,22 @@ type SkippedSpan struct {
 	// RewrittenAt is when the Control Leader rewrote the timeline whose loss
 	// this span is (a SCHEDULE_REPAIRED record); nil on every other span.
 	RewrittenAt *time.Time `json:"rewritten_at,omitempty"`
+	// FirstAt is when the span's first Slot was given up; zero on a record
+	// from a build before the field.
+	FirstAt time.Time `json:"first_at,omitempty"`
+	// DependencyReason is the last of this deployment's own store failures
+	// (StoreOutageCodes) the same object's rounds reported, failed or
+	// retrying, from SkipDependencyWindow before FirstAt up to the span's
+	// last skip, and DependencyAt when it was reported: the store outage the
+	// span's Slots were given up in. The Slots given up in an outage are
+	// usually not the ones that failed - the Slot at the head retries and
+	// the ones behind it fall past the replay bound - which is why Reason,
+	// the Slot's own last query failure, does not carry it; the two stand
+	// side by side. Empty when no such failure was seen in that window, on
+	// a record from a build before the field, and for a failure seen before
+	// this replica's process started: the failure is kept in memory only.
+	DependencyReason string     `json:"dependency_reason,omitempty"`
+	DependencyAt     *time.Time `json:"dependency_at,omitempty"`
 }
 
 // ExecutionEvidence is one completion's reading of an earlier attempt, as

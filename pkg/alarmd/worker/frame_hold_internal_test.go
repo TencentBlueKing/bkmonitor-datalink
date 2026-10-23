@@ -29,6 +29,8 @@ type frameRecordingState struct {
 	framesAtWrite   []int
 	reservedAtWrite []uint64
 	writeErr        error
+	// atWrite, when set, reads whatever else a test wants at each write.
+	atWrite func()
 }
 
 func (state *frameRecordingState) AdmitRuntime(ctx context.Context, request execution.StateApplyRequest) (execution.StateAdmissionResult, error) {
@@ -54,6 +56,9 @@ func (state *frameRecordingState) ApplyRuntime(ctx context.Context, request exec
 	}
 	state.framesAtWrite = append(state.framesAtWrite, frames)
 	state.reservedAtWrite = append(state.reservedAtWrite, RetainedReserved(state.coordinator))
+	if state.atWrite != nil {
+		state.atWrite()
+	}
 	if state.writeErr != nil {
 		return execution.StateApplyResult{}, state.writeErr
 	}

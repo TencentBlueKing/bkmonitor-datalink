@@ -103,7 +103,7 @@ func TestTheCounterTakesEveryCompletionCause(t *testing.T) {
 	causes := []execution.CompletionCause{execution.CauseDataNotReady, execution.CausePlanUnavailable, execution.CausePrimaryInputUnavailable,
 		execution.CauseLevelOutcomeUnknown, execution.CauseGapGuardWarming, execution.CausePrimaryInputPartial, execution.CauseConfigDrift,
 		execution.CausePlanReactivated, execution.CausePlanNotActive, execution.CauseExpiredReplay, execution.CauseSnapshotCorrupt,
-		execution.CauseSnapshotUnavailablePastBound, execution.CauseResolveFailedPastBound}
+		execution.CauseSnapshotUnavailablePastBound, execution.CauseResolveFailedPastBound, execution.CauseResourceShareExceeded}
 	if len(causes) != len(observability.ProgressCompletionCauses) {
 		t.Fatalf("%d causes, the counter takes %d", len(causes), len(observability.ProgressCompletionCauses))
 	}

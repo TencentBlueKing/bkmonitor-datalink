@@ -101,6 +101,10 @@ type SelectorResult struct {
 	Members map[string]struct{}
 	// Dropped and Kept count the members validation refused and accepted.
 	Dropped, Kept int
+	// DroppedMembers names the first MaxNamedDroppedMembers of the dropped
+	// members and why, so an Incomplete selector says which members to look
+	// at, not only how many.
+	DroppedMembers []DroppedMember
 	// StaleAge is non-zero when the answer came from a snapshot kept past a
 	// failed refresh: the reader is eating old grain and is told so.
 	StaleAge time.Duration
@@ -111,6 +115,75 @@ type SelectorResult struct {
 	// under another business than the reference names: a reference written
 	// against the wrong business, reported beside the empty answer.
 	NodeForeign bool
+}
+
+// MaxNamedDroppedMembers bounds how many dropped members a selector names:
+// enough to find the cause, never a member list.
+const MaxNamedDroppedMembers = 8
+
+// DroppedMember is one member a selector dropped: its id as the source wrote
+// it (an instance id, or a host id once the member is a host) and a word of
+// DroppedMemberReasons.
+type DroppedMember struct {
+	ID, Reason string
+}
+
+// The reasons a member is dropped, by where.
+const (
+	// Read from the group document: a member naming another model or no
+	// instance, one the group's summary does not list, and one the summary
+	// lists that no member carries.
+	DroppedMemberInvalid  = "member_invalid"
+	DroppedMemberUnlisted = "member_unlisted"
+	DroppedMemberLost     = "member_lost"
+	// Under the plan: a member of another model than the plan's, and one
+	// with no host id where the plan holds members by host.
+	DroppedModelMismatch = "model_mismatch"
+	DroppedNoHostID      = "no_host_id"
+	// Placing a host at its address: not in the host cache, in another
+	// tenant than the plan's, or sharing its address with another host.
+	DroppedHostUnindexed   = "host_unindexed"
+	DroppedHostOtherTenant = "host_other_tenant"
+	DroppedAddressShared   = "address_shared"
+)
+
+// DroppedMemberReasons is the closed list.
+var DroppedMemberReasons = []string{DroppedMemberInvalid, DroppedMemberUnlisted, DroppedMemberLost, DroppedModelMismatch,
+	DroppedNoHostID, DroppedHostUnindexed, DroppedHostOtherTenant, DroppedAddressShared}
+
+// MaxDroppedMemberIDBytes bounds one named id: an instance or host id is a
+// number, so anything longer is a writer's mistake and its head is enough.
+const MaxDroppedMemberIDBytes = 64
+
+// NameDropped adds a dropped member to named while fewer than
+// MaxNamedDroppedMembers are there. The id is the source's text, so it is
+// cut to MaxDroppedMemberIDBytes and every byte outside [A-Za-z0-9._-]
+// becomes "_": the line writes members as "<id>:<reason>" joined by commas,
+// and an id carrying ",", ":", a space or "=" would split one name into two
+// or end the field. An empty id is "-".
+func NameDropped(named []DroppedMember, id, reason string) []DroppedMember {
+	if len(named) >= MaxNamedDroppedMembers {
+		return named
+	}
+	return append(named, DroppedMember{ID: droppedMemberID(id), Reason: reason})
+}
+
+func droppedMemberID(id string) string {
+	if id == "" {
+		return "-"
+	}
+	if len(id) > MaxDroppedMemberIDBytes {
+		id = id[:MaxDroppedMemberIDBytes]
+	}
+	clean := []byte(id)
+	for i, b := range clean {
+		switch {
+		case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9', b == '.', b == '_', b == '-':
+		default:
+			clean[i] = '_'
+		}
+	}
+	return string(clean)
 }
 
 // ResolutionState is the whole target plan's state, composed from its

@@ -260,3 +260,25 @@ func TestARequeryTakesItsSlotsFrozenBudget(t *testing.T) {
 		}
 	}
 }
+
+// slot.query advertises the bounds it enforces - the Slot's frozen budget up
+// to the execution ceiling, the production decode limits - not slot.get's
+// catalog-read timeout and preview caps.
+func TestSlotQueryAdvertisesTheBoundsItEnforces(t *testing.T) {
+	limitsOf := map[string]map[string]any{}
+	for _, op := range SlotOperations(SlotOptions{}) {
+		limitsOf[op.ID], _ = op.Limits.(map[string]any)
+	}
+	query, get := limitsOf["slot.query"], limitsOf["slot.get"]
+	decode := uq.DiagnosticLimits()
+	want := map[string]any{"timeout_ms": (MaxExecutionTimeout - requeryMargin).Milliseconds(), "uq_body_bytes": decode.MaxBodyBytes,
+		"uq_series_bytes": decode.MaxSeriesBytes, "uq_series": decode.MaxSeries, "uq_records": decode.MaxRecords}
+	for key, value := range want {
+		if query[key] != value {
+			t.Errorf("slot.query %s = %v, want %v", key, query[key], value)
+		}
+	}
+	if get["timeout_ms"] != RequestTimeout.Milliseconds() {
+		t.Errorf("slot.get timeout_ms = %v, want its catalog-read bound %v", get["timeout_ms"], RequestTimeout.Milliseconds())
+	}
+}

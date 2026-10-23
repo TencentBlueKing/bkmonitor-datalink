@@ -58,6 +58,10 @@ type SlotInput struct {
 	// the fact lives in the memory, and this seam is where the two meet.
 	TrackingHorizonSeconds int64
 	TrackingExhaustedAt    int64
+	// ManualCloses are the absences a user closed by hand (decision-024),
+	// applied to Memory before anything is derived from it. Nil when the
+	// strategy has none.
+	ManualCloses *ManualCloses
 }
 
 // SlotOutcome says what happened to one no-data Plan in one Slot. Every Plan
@@ -263,13 +267,16 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 		return AbsenceResult{}, OutcomeSkippedAnswerTruncated, nil
 	}
 	tally := ProjectSeries(input.Series, config.AggDimension)
+	// Before the roster: a history roster is derived from the memory, and a
+	// closed group has to be gone from it by then.
+	memory, manualClosed := applyManualCloses(input.Memory, input.ManualCloses, input.EvaluationTime)
 	roster, err := BuildRoster(RosterRequest{
 		AggDimension:  config.AggDimension,
 		Scope:         input.Plan.TargetScope,
 		Plan:          input.Plan.TargetPlan,
 		TargetMembers: members,
 		KnownHosts:    input.KnownHosts,
-		Memory:        input.Memory,
+		Memory:        memory,
 	})
 	if err != nil {
 		return AbsenceResult{}, OutcomeNone, err
@@ -278,16 +285,19 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 	if input.Completeness != execution.CompletenessFull {
 		outcome = OutcomeSkippedQueryNotFull
 	}
-	return Evaluate(AbsenceInput{
+	result := Evaluate(AbsenceInput{
 		EvaluationTime:         input.EvaluationTime,
 		PeriodSeconds:          input.PeriodSeconds,
 		Completeness:           input.Completeness,
 		Present:                tally.Groups,
 		Dropped:                tally.Dropped,
 		Roster:                 roster,
-		Memory:                 input.Memory,
+		Memory:                 memory,
 		OutOfBusiness:          input.OutOfBusiness,
 		TrackingHorizonSeconds: input.TrackingHorizonSeconds,
 		TrackingExhaustedAt:    input.TrackingExhaustedAt,
-	}), outcome, nil
+		RecoveryDisabled:       config.RecoveryDisabled,
+	})
+	result.Facts.ManualClosed = manualClosed
+	return result, outcome, nil
 }

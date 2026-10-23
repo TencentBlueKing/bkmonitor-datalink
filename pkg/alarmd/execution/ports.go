@@ -109,6 +109,12 @@ type PlanNoDataStore interface {
 	ApplyNoData(context.Context, NoDataApplyRequest) (NoDataApplyResult, error)
 }
 
+// NoDataManualCloseReader reads, for some fingerprints, the time a user's
+// manual close of each was recorded (decision-024); absent when none was.
+type NoDataManualCloseReader interface {
+	ReadNoDataManualCloses(ctx context.Context, tenantID, strategyID string, fingerprints []string) (map[string]int64, error)
+}
+
 type EventSink interface {
 	// WriteBatch returns nil only after the whole batch has received its
 	// broker ACK. A non-nil error means that ACK is unknown; callers must not

@@ -21,7 +21,7 @@ import (
 // each waiting execution is one observation of its retained input bytes, and
 // an execution that did not wait is none.
 func TestInPlaceHeldInputBytesIsADistributionOfWaitingExecutions(t *testing.T) {
-	const name = "bkmonitor_alarmd_access_inplace_held_input_bytes"
+	const name = "alarmd_access_inplace_held_input_bytes"
 	recorder := NewRecorder(BuildInfo{})
 	ctx := context.Background()
 	for _, held := range []uint64{3_000, 2_000_000, 0} {

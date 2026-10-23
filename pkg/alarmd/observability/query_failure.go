@@ -1,5 +1,7 @@
 package observability
 
+import "strings"
+
 // QueryFailureFacts is log-only: no raw error, query, URL or dimension values.
 // Stage names the actual Coordinator boundary, not an inferred root cause.
 // Code is a stable machine code drawn from a bounded grammar (UQ status codes,
@@ -15,6 +17,158 @@ type QueryFailureFacts struct {
 	// Timing is a failed provider query read against its budget; nil where
 	// the attempt did not measure it. See QueryTiming.
 	Timing *QueryTiming
+	// Rejection is what the provider said when it refused the query; nil
+	// where the failure got no non-success answer. Its class and trace id
+	// are log fields; its excerpt is kept with the Query Group's last
+	// failure for an operator to read and is never written to a log line.
+	Rejection *QueryRejection
+	// Volume is how much of the answer had been read and handed on when the
+	// query failed; nil where the failure came before any answer.
+	Volume *QueryVolume
+	// Request is which deadline governed the failed request and which had
+	// expired (execution.RequestFacts); Planned is the physical query's own
+	// plan (execution.PlannedQueryFacts). Nil where not known.
+	Request *QueryRequestFacts
+	Planned *QueryPlannedFacts
+}
+
+// QueryRequestFacts is execution.RequestFacts as a line renders it.
+type QueryRequestFacts struct {
+	DeadlineUnixMilli  int64
+	DeadlineLeftAtDoMs int64
+	DeadlineSource     string
+	Expired            string
+	ErrorChain         string
+	ErrorTypes         []string
+	// TraceID is the trace id the request was sent with (32 lower-case hex);
+	// it renders as failure_provider_trace_id.
+	TraceID string
+	// AnswerStatus is the HTTP status the provider answered with, 200
+	// included (provider_http_status); AnsweredUnixMilli when its headers
+	// arrived (answered_at_ms) and CompletedUnixMilli when the attempt ended
+	// (completed_at_ms). Zero where not known. The line's own time is when
+	// it was written, after its round's work, and is neither.
+	AnswerStatus       int
+	AnsweredUnixMilli  int64
+	CompletedUnixMilli int64
+	// TimeoutSource is which branch filed a timeout, one of
+	// QueryTimeoutSources (timeout_source); empty otherwise.
+	TimeoutSource string
+	// Excerpt is the provider's own message from an answer's body,
+	// sanitized and at most MaxRejectionExcerptBytes. It is never written to
+	// a log line or a row: like a refusal's excerpt, it is kept on the
+	// replica with the Query Group's last refusal.
+	Excerpt string
+}
+
+// Which branch filed a query's timeout. A timeout met while its request's
+// own deadline was still ahead and one met at the deadline are different
+// failures; the reason code alone is the same word for both.
+const (
+	// QueryTimeoutSourceDeadlinePassed: the request's deadline had passed
+	// when the request or a read of its body failed.
+	QueryTimeoutSourceDeadlinePassed = "deadline_passed"
+	// QueryTimeoutSourceTransportClass: the request got no answer and the
+	// transport's error reads as a timeout with its deadline still ahead.
+	QueryTimeoutSourceTransportClass = "transport_class_timeout"
+	// QueryTimeoutSourceBodyReadClass: the answer began and a read of its
+	// body failed with an error that reads as a timeout, its deadline still
+	// ahead (execution.ClassifyTransportFailure).
+	QueryTimeoutSourceBodyReadClass = "body_read_class_timeout"
+	// QueryTimeoutSourceDelivery: the deadline passed while alarmd was
+	// decoding or delivering what had arrived (QUERY_DELIVERY_TIMEOUT).
+	QueryTimeoutSourceDelivery = "delivery_deadline"
+	// QueryTimeoutSourceRoundDeadline: the round ended the query at its own
+	// deadline with a bare cancellation or expiry the provider did not name.
+	QueryTimeoutSourceRoundDeadline = "round_deadline"
+	// QueryTimeoutSourceProviderStatus: the provider answered with a status
+	// that says it ran out of time (504, 408), its own backend's deadline
+	// rather than this request's.
+	QueryTimeoutSourceProviderStatus = "provider_status"
+)
+
+// QueryTimeoutSources is the closed list a rendered timeout_source comes from.
+var QueryTimeoutSources = []string{QueryTimeoutSourceDeadlinePassed, QueryTimeoutSourceTransportClass,
+	QueryTimeoutSourceBodyReadClass, QueryTimeoutSourceDelivery, QueryTimeoutSourceRoundDeadline,
+	QueryTimeoutSourceProviderStatus}
+
+func validQueryTimeoutSource(source string) bool {
+	for _, known := range QueryTimeoutSources {
+		if source == known {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeQueryRequest keeps a request's facts within their grammar: an
+// unknown timeout source, a status outside 100 to 599 and an excerpt past
+// its bound are dropped.
+func normalizeQueryRequest(input *QueryRequestFacts) *QueryRequestFacts {
+	if input == nil {
+		return nil
+	}
+	r := *input
+	if !validQueryTimeoutSource(r.TimeoutSource) {
+		r.TimeoutSource = ""
+	}
+	if r.AnswerStatus < 100 || r.AnswerStatus > 599 {
+		r.AnswerStatus = 0
+	}
+	if len(r.Excerpt) > MaxRejectionExcerptBytes {
+		r.Excerpt = ""
+	}
+	return &r
+}
+
+// QueryPlannedFacts is execution.PlannedQueryFacts as a line renders it.
+type QueryPlannedFacts struct {
+	Role                        string
+	Dataset                     string
+	DeadlineUnixMilli           int64
+	FrozenDeadlineUnixMilli     int64
+	CompletionDeadlineUnixMilli int64
+	FellBack                    bool
+}
+
+// QueryVolume is how far a failed query's answer got: the bytes of the
+// answer read, and the series handed to the round's sink. A query whose
+// deadline passed while alarmd was still decoding what had arrived says by
+// these how much it had to decode.
+type QueryVolume struct {
+	BytesRead       uint64
+	SeriesDelivered uint64
+}
+
+// QueryRejection is a provider's non-success answer as alarmd keeps it: a
+// bounded class (QUERY_FAILURE code grammar), the provider's trace id (32
+// lower-case hex), and the sanitized start of its body, at most
+// MaxRejectionExcerptBytes.
+type QueryRejection struct {
+	Class   string `json:"class"`
+	TraceID string `json:"trace_id,omitempty"`
+	Excerpt string `json:"excerpt,omitempty"`
+}
+
+// MaxRejectionExcerptBytes bounds a kept excerpt; the provider client
+// already cuts it shorter (with its "..." marker).
+const MaxRejectionExcerptBytes = 400
+
+func normalizeQueryRejection(input *QueryRejection) *QueryRejection {
+	if input == nil {
+		return nil
+	}
+	r := *input
+	if !ValidQueryFailureCode(r.Class) {
+		r.Class = QueryFailureCodeOther
+	}
+	if len(r.TraceID) != 32 || strings.Trim(r.TraceID, "0123456789abcdef") != "" {
+		r.TraceID = ""
+	}
+	if len(r.Excerpt) > MaxRejectionExcerptBytes {
+		r.Excerpt = ""
+	}
+	return &r
 }
 
 // QueryTiming splits a Slot query's budget - from its Slot's evaluation
@@ -61,6 +215,13 @@ const (
 	// the result contract rejected.
 	QueryFailureCategoryEvaluation = "evaluation"
 	QueryFailureCategoryOther      = "other"
+	// QueryFailureCategoryDelivery names a query whose deadline passed while
+	// alarmd was decoding or delivering an answer that had begun to arrive:
+	// the time ran out on alarmd's side, not the backend's, so it is neither
+	// the provider's transport nor a defect without a name.
+	QueryFailureCategoryDelivery = "delivery"
+	// QueryFailureCodeDeliveryTimeout is the delivery category's one code.
+	QueryFailureCodeDeliveryTimeout = "QUERY_DELIVERY_TIMEOUT"
 	// QueryFailureCategoryOutput is a failure writing the round's events.
 	QueryFailureCategoryOutput = "output"
 
@@ -82,7 +243,7 @@ var (
 		QueryFailureCategorySourceBackend, QueryFailureCategorySeriesIdentity, QueryFailureCategoryBudget,
 		QueryFailureCategoryCompletionContract, QueryFailureCategoryNamedInput, QueryFailureCategoryProviderTransport,
 		QueryFailureCategoryAdmission, QueryFailureCategoryEvaluation, QueryFailureCategoryOther,
-		QueryFailureCategoryOutput,
+		QueryFailureCategoryOutput, QueryFailureCategoryDelivery,
 	}
 )
 
@@ -178,7 +339,7 @@ func normalizeQueryFailure(component Component, stage Stage, input *QueryFailure
 	case QueryFailureCategoryBudget, QueryFailureCategorySourceBackend, QueryFailureCategorySeriesIdentity,
 		QueryFailureCategoryCompletionContract,
 		QueryFailureCategoryNamedInput, QueryFailureCategoryProviderTransport, QueryFailureCategoryAdmission,
-		QueryFailureCategoryEvaluation:
+		QueryFailureCategoryEvaluation, QueryFailureCategoryDelivery:
 		f.Code = NormalizeQueryFailureCode(f.Code)
 	default:
 		f.Category = QueryFailureCategoryOther
@@ -190,5 +351,7 @@ func normalizeQueryFailure(component Component, stage Stage, input *QueryFailure
 	if f.HTTPStatus < 100 || f.HTTPStatus > 599 {
 		f.HTTPStatus = 0
 	}
+	f.Rejection = normalizeQueryRejection(f.Rejection)
+	f.Request = normalizeQueryRequest(f.Request)
 	return &f
 }

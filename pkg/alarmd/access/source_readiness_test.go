@@ -98,7 +98,7 @@ func TestReadinessIsTheSameInstantForEveryOperation(t *testing.T) {
 				frozen.Requirements[0].Consumers[0].ConsumerDeadlineUnixMilli = frozen.DuePlans[0].CompletionDeadlineUnixMilli
 				contractRef = bindFrozenDueDigest(t, contractRef, frozen)
 
-				prepared, err := prepare(contractRef, frozen, 30*time.Second, recovery)
+				prepared, err := prepare(contractRef, frozen, 30*time.Second, recovery, nil)
 				if err != nil {
 					t.Fatalf("prepare(recovery=%t) error=%v", recovery, err)
 				}
@@ -290,16 +290,16 @@ func TestSharedPendingReadinessDoesNotDelayEarlierQueryForLaterSibling(t *testin
 		{Requirements: []execution.DataRequirement{{RequirementID: "first"}}, ReadyAtUnixMilli: now.Add(10 * time.Second).UnixMilli()},
 		{Requirements: []execution.DataRequirement{{RequirementID: "second"}}, ReadyAtUnixMilli: now.Add(30 * time.Second).UnixMilli()},
 	}
-	if got := sharedPendingReadiness(queries, now); !got.IsZero() {
-		t.Fatalf("sharedPendingReadiness()=%s, want no Slot-wide deferral across distinct consumer readiness", got)
+	if got, _ := sharedPendingReadinessOf(queries, now); !got.IsZero() {
+		t.Fatalf("sharedPendingReadinessOf()=%s, want no Slot-wide deferral across distinct consumer readiness", got)
 	}
 	queries[0].ReadyAtUnixMilli = queries[1].ReadyAtUnixMilli
-	if got := sharedPendingReadiness(queries, now); !got.Equal(now.Add(30 * time.Second)) {
-		t.Fatalf("sharedPendingReadiness()=%s, want common boundary %s", got, now.Add(30*time.Second))
+	if got, _ := sharedPendingReadinessOf(queries, now); !got.Equal(now.Add(30 * time.Second)) {
+		t.Fatalf("sharedPendingReadinessOf()=%s, want common boundary %s", got, now.Add(30*time.Second))
 	}
 	queries[0].ReadyAtUnixMilli = now.UnixMilli()
-	if got := sharedPendingReadiness(queries, now); !got.IsZero() {
-		t.Fatalf("sharedPendingReadiness()=%s, want ready sibling to preserve existing execution order", got)
+	if got, _ := sharedPendingReadinessOf(queries, now); !got.IsZero() {
+		t.Fatalf("sharedPendingReadinessOf()=%s, want ready sibling to preserve existing execution order", got)
 	}
 }
 

@@ -75,8 +75,8 @@ func TestACompletedSlotCarriesTheShareItWasAdmittedUnder(t *testing.T) {
 		t.Fatalf("share = %d against a pool of %d: a completion has to carry a share, and a share is part of the "+
 			"pool, not all of it", usage.RetainedShareBytes, usage.RetainedBytesLimit)
 	}
-	if usage.RetainedShareBytes != usage.RetainedBytesLimit/2 {
-		t.Fatalf("share = %d, want half the pool (%d), the share the coordinator refuses by",
-			usage.RetainedShareBytes, usage.RetainedBytesLimit/2)
+	if usage.RetainedShareBytes != usage.RetainedBytesLimit/4*3 {
+		t.Fatalf("share = %d, want three quarters of the pool (%d), the share the coordinator refuses by",
+			usage.RetainedShareBytes, usage.RetainedBytesLimit/4*3)
 	}
 }

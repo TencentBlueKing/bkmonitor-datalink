@@ -132,3 +132,29 @@ func TestMaintenanceGetReadsTheLoopOnceItIsBound(t *testing.T) {
 		t.Fatalf("bound: complete %v %s", after.Complete, encoded)
 	}
 }
+
+// A run whose failure changes reads as both: the first text with the run's
+// first time, the latest with the time it began, so neither time is read as
+// the other text's.
+func TestAMaintenanceRunWhoseErrorChangesKeepsBothTexts(t *testing.T) {
+	f := newMaintenanceTestFixture(t, maintenanceReadySnapshot, maintenanceTime(8, 0), nil)
+	from := f.now().Add(time.Second)
+	for tick := 0; tick < 5; tick++ {
+		f.advance(time.Second)
+		f.m.observe(context.Background(), "qg-console", closeOutcomeSourceUnknown, errors.New("context deadline exceeded"), 0)
+	}
+	changed := f.now().Add(time.Second)
+	for tick := 0; tick < 3; tick++ {
+		f.advance(time.Second)
+		f.m.observe(context.Background(), "qg-console", closeOutcomeSourceUnknown, errors.New("console answered 502"), 0)
+	}
+	kept := f.m.Reading().Recent[closeOutcomeSourceUnknown]
+	if len(kept) != 1 {
+		t.Fatalf("kept %+v, want the run once", kept)
+	}
+	entry := kept[0]
+	if entry.FirstError != "context deadline exceeded" || !entry.FirstAt.Equal(from) ||
+		entry.Error != "console answered 502" || !entry.ErrorSince.Equal(changed) || entry.Count != 8 || !entry.LastAt.Equal(changed.Add(2*time.Second)) {
+		t.Fatalf("run kept %+v, want the timeouts from %s and the 502 since %s", entry, from, changed)
+	}
+}

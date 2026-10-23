@@ -175,7 +175,7 @@ func (coordinator *SlotExecutionCoordinator) recordExecutionEvidence(
 	coordinator.emitObservation(writeCtx, observability.Observation{
 		Component: observability.ComponentProgress, Stage: observability.StageExecutionEvidenceWritten,
 		Operation: observability.Operation(request.Operation),
-		Direction: observability.DirectionInternal, Result: result, ReasonCode: reason,
+		Result:    result, ReasonCode: reason,
 		ExecutionEvidence: &observability.ExecutionEvidenceFacts{
 			Kind:         string(execution.EvidenceStateApplied),
 			PlansApplied: len(applied), PlansTotal: len(request.DuePlanTargets.Plans),

@@ -17,6 +17,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func failedAttempt(t *testing.T, completion execution.ProviderCompletion, err error) execution.RouteAttemptFact {
@@ -147,7 +148,7 @@ func TestAFailedSlotQuerySplitsItsBudgetAtItsStart(t *testing.T) {
 	}
 
 	refused := fixtureClient(t, http.StatusServiceUnavailable, "", DefaultLimits())
-	caller, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	caller, cancel := context.WithTimeout(context.Background(), 20*time.Second) // fixed-wait: a call bound shorter than the attempt deadline the case times against
 	defer cancel()
 	attempt.BudgetStartUnixMilli = time.Now().Add(-time.Second).UnixMilli()
 	attempt.ReadyAtUnixMilli = attempt.BudgetStartUnixMilli
@@ -168,7 +169,7 @@ func TestAFailedSlotQuerySplitsItsBudgetAtItsStart(t *testing.T) {
 
 	// A diagnostic or recheck read runs under a deadline of its own, and
 	// with no Slot there is no budget to time it against.
-	bounded, cancelBounded := context.WithTimeout(context.Background(), time.Minute)
+	bounded, cancelBounded := context.WithCancel(testwait.Context(t))
 	defer cancelBounded()
 	completion, err = refused.execute(bounded, bounded, queryIdentity{Spec: attempt.Spec, AttemptNo: 1}, &collectingSink{}, nil)
 	if fact := failedAttempt(t, completion, err); fact.Timing != nil {

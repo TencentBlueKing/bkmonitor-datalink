@@ -50,3 +50,24 @@ func TestTheShareApproachCounterCountsCompletedSlotsFromTheThreshold(t *testing.
 			"one at the share, and none of the failed, share-less or other-stage rows", got)
 	}
 }
+
+// A Slot given up because the share refused it is past the threshold and is
+// counted, once per Slot given up; a Slot skipped for anything else is not.
+// Without this an object refused on every Slot, which completes none, left
+// the counter at zero.
+func TestTheShareApproachCounterCountsSlotsGivenUpAtTheShare(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	counter := recorder.phaseTwo.retainedShareApproaching
+	share := &observability.SlotSkipShareFacts{Phase: "normal_output", OwnUsedBytes: 530 << 20, LimitBytes: 512 << 20, Refusals: 2}
+	for _, facts := range []observability.SlotSkippedFacts{
+		{Path: observability.SlotSkippedQueryFree, Reason: "GAP_SKIPPED", Cause: observability.CompletionCauseResourceShareExceeded, SlotCount: 1, Share: share},
+		{Path: observability.SlotSkippedQueryFree, Reason: "GAP_SKIPPED", Cause: observability.CompletionCauseResourceShareExceeded, SlotCount: 1, Share: share},
+		{Path: observability.SlotSkippedQueryFree, Reason: "GAP_SKIPPED", Cause: "EXPIRED_REPLAY", SlotCount: 1},
+	} {
+		observability.ObserveSlotSkipped(context.Background(), recorder, observability.TraceFields{QueryGroupKey: "qg-101"},
+			observability.OperationWrite, facts)
+	}
+	if got := testutil.ToFloat64(counter); got != 2 {
+		t.Fatalf("state_retained_share_approaching_slots_total = %v, want 2: the two Slots given up at the share", got)
+	}
+}

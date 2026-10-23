@@ -66,6 +66,14 @@ type StageMarker struct {
 	stage    atomic.Value
 	deadline atomic.Int64
 	commit   atomic.Uint64
+	// queryReturned is when the execution's query returned (UnixNano), zero
+	// until it does: what follows it is the post-query tail the downstream
+	// execution reserve has to cover.
+	queryReturned atomic.Int64
+	// completionDeadline is the earliest completion deadline of the
+	// consumers the execution's queries serve (UnixMilli), zero until access
+	// sets one: a Slot returning after it overran into a retry.
+	completionDeadline atomic.Int64
 }
 
 // Begin starts a new execution in stage with no deadline yet, open to commit.
@@ -74,6 +82,8 @@ func (marker *StageMarker) Begin(stage string) {
 		return
 	}
 	marker.deadline.Store(0)
+	marker.queryReturned.Store(0)
+	marker.completionDeadline.Store(0)
 	marker.stage.Store(stage)
 	for {
 		word := marker.commit.Load()
@@ -127,6 +137,55 @@ func (marker *StageMarker) Deadline() time.Time {
 }
 
 // Stage is the stage last entered, empty when none is in flight.
+// QueryReturned records when the execution's query returned.
+func (marker *StageMarker) QueryReturned(at time.Time) {
+	if marker != nil {
+		marker.queryReturned.Store(at.UnixNano())
+	}
+}
+
+// LowerCompletionDeadline lowers the execution's completion deadline to
+// deadline: the earliest of its consumers' is the one it can overrun.
+func (marker *StageMarker) LowerCompletionDeadline(deadline time.Time) {
+	if marker == nil || deadline.IsZero() {
+		return
+	}
+	value := deadline.UnixMilli()
+	for {
+		current := marker.completionDeadline.Load()
+		if current != 0 && current <= value {
+			return
+		}
+		if marker.completionDeadline.CompareAndSwap(current, value) {
+			return
+		}
+	}
+}
+
+// CompletionDeadline is the execution's completion deadline; zero when
+// access set none.
+func (marker *StageMarker) CompletionDeadline() time.Time {
+	if marker == nil {
+		return time.Time{}
+	}
+	if millis := marker.completionDeadline.Load(); millis > 0 {
+		return time.UnixMilli(millis)
+	}
+	return time.Time{}
+}
+
+// QueryReturnedAt is when the execution's query returned; zero when it has
+// not, or when the execution ran no query.
+func (marker *StageMarker) QueryReturnedAt() time.Time {
+	if marker == nil {
+		return time.Time{}
+	}
+	if nanos := marker.queryReturned.Load(); nanos > 0 {
+		return time.Unix(0, nanos)
+	}
+	return time.Time{}
+}
+
 func (marker *StageMarker) Stage() string {
 	if marker == nil {
 		return ""
@@ -202,6 +261,39 @@ func stageMarkerOf(ctx context.Context) *StageMarker {
 // context without a marker records nothing.
 func MarkStage(ctx context.Context, stage string) {
 	stageMarkerOf(ctx).Enter(stage)
+}
+
+// MarkQueryReturned records on the execution running under ctx that its
+// query returned at at.
+func MarkQueryReturned(ctx context.Context, at time.Time) {
+	stageMarkerOf(ctx).QueryReturned(at)
+}
+
+// MarkCompletionDeadline lowers the completion deadline of the execution
+// running under ctx to deadline (StageMarker.LowerCompletionDeadline).
+func MarkCompletionDeadline(ctx context.Context, deadline time.Time) {
+	stageMarkerOf(ctx).LowerCompletionDeadline(deadline)
+}
+
+// backendFailingKey marks an execution whose Query Group's queries failed
+// recently (WithBackendFailing).
+type backendFailingKey struct{}
+
+// WithBackendFailing marks the execution running under ctx as one whose
+// Query Group's recent queries failed - the degraded pool's failures, in it
+// or on the way: work that only adds reads, such as an earlier-read trial,
+// is left out while its backend is not answering in time.
+func WithBackendFailing(ctx context.Context, failing bool) context.Context {
+	if !failing {
+		return ctx
+	}
+	return context.WithValue(ctx, backendFailingKey{}, true)
+}
+
+// BackendFailing reports what WithBackendFailing said; false when nothing did.
+func BackendFailing(ctx context.Context) bool {
+	failing, _ := ctx.Value(backendFailingKey{}).(bool)
+	return failing
 }
 
 // ExtendDeadline raises the deadline of the execution running under ctx to

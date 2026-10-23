@@ -56,16 +56,37 @@ import (
 type DirectoryView struct {
 	reconciler *SourceReconciler
 	repository *RedisCatalogRepository
-	timeout    time.Duration
 }
 
-// NewDirectoryView builds the view over one process's control plane. The
-// timeout bounds one request: its reads and the rows it builds.
-func NewDirectoryView(reconciler *SourceReconciler, repository *RedisCatalogRepository, timeout time.Duration) (*DirectoryView, error) {
-	if reconciler == nil || repository == nil || timeout <= 0 {
-		return nil, errors.New("alarmd controlplane: a directory view needs the reconciler, the repository and a timeout")
+// DirectoryAnswerMargin is how long before the reader's deadline a page
+// stops adding rows: the time to write the page back, over a follower's hop
+// to the Leader included -- one transit on the cluster network and the
+// encoding of at most a page of rows.
+const DirectoryAnswerMargin = time.Second
+
+// NewDirectoryView builds the view over one process's control plane. A
+// request has no deadline of its own: each read is bounded by the Redis
+// client's timeouts, and a page by the reader's deadline (a CLI operation's,
+// or the one a follower's hop carries), which it stops short of by
+// DirectoryAnswerMargin and answers partial with where to go on from. A
+// fixed two seconds used to cut a page of up to about two hundred object
+// reads, one after another on a cold cache after a leader change, while the
+// reader waited thirty.
+func NewDirectoryView(reconciler *SourceReconciler, repository *RedisCatalogRepository) (*DirectoryView, error) {
+	if reconciler == nil || repository == nil {
+		return nil, errors.New("alarmd controlplane: a directory view needs the reconciler and the repository")
 	}
-	return &DirectoryView{reconciler: reconciler, repository: repository, timeout: timeout}, nil
+	return &DirectoryView{reconciler: reconciler, repository: repository}, nil
+}
+
+// pastAnswerTime is whether a page has to stop adding rows to answer within
+// the reader's deadline, or the reader has gone.
+func pastAnswerTime(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	deadline, ok := ctx.Deadline()
+	return ok && time.Until(deadline) < DirectoryAnswerMargin
 }
 
 // Available says this process holds a publication of its own to answer
@@ -284,7 +305,10 @@ func (held heldPublication) find(key execution.PlanKey) (heldPlan, bool) {
 
 // finish builds a returned row: the published group's digest, a held
 // group's revisions from its object.
-func (view *DirectoryView) finish(ctx context.Context, a *directoryAnswer, s *StrategyDirectorySnapshot, draft rowDraft) StrategyDirectoryRow {
+// finish builds a row's object-held revisions. It reports false, and
+// records nothing, when the reader's time ran out on the read: that row is
+// not answered at all, rather than answered as a failed read.
+func (view *DirectoryView) finish(ctx context.Context, a *directoryAnswer, s *StrategyDirectorySnapshot, draft rowDraft) (StrategyDirectoryRow, bool) {
 	row := draft.row
 	if draft.group != nil {
 		if digest, err := DeriveQueryGroupObjectDigest(*draft.group); err == nil {
@@ -293,16 +317,19 @@ func (view *DirectoryView) finish(ctx context.Context, a *directoryAnswer, s *St
 	}
 	if draft.object != "" {
 		object, err := view.object(ctx, a, draft.object)
-		if err != nil {
+		switch {
+		case err != nil && ctx.Err() != nil:
+			return row, false
+		case err != nil:
 			// The row is named; the revisions only its object holds are left
 			// empty rather than guessed, and the answer says so.
 			failed := row.Publication
 			view.fail(s, "group_object", view.repository.queryGroupObjectKey(draft.object), &failed, err)
-		} else {
+		default:
 			row.QueryRevision, row.ScheduleRevision = object.QueryPlan.QueryRevision, object.ScheduleRevision
 		}
 	}
-	return row
+	return row, true
 }
 
 func shardOf(row StrategyDirectoryRow) int {
@@ -380,10 +407,11 @@ func (a *directoryAnswer) identities(strategy string) []execution.PlanIdentity {
 // page cost a walk of the indexes and nothing else; the page's own rows
 // derive their digests and read their objects. The source dispositions of the
 // strategy asked for come with it; they carry no tenant and are not joined to
-// a Plan. A page that runs past the request's time says so and stops.
+// a Plan. A page that would run past the reader's deadline stops between
+// rows and says so: Partial, Reason DEADLINE, the rows it has, Complete left
+// as the catalog's own word, so the reader goes on from the next row.
 func (view *DirectoryView) Page(ctx context.Context, at time.Time, tenant, business, strategy string, offset, limit int) StrategyDirectorySnapshot {
-	ctx, cancel := context.WithTimeout(redisfailure.WithCaller(ctx, redisfailure.CallerDirectoryRead), view.timeout)
-	defer cancel()
+	ctx = redisfailure.WithCaller(ctx, redisfailure.CallerDirectoryRead)
 	a, err := view.answer(ctx, at)
 	if err != nil {
 		return StrategyDirectorySnapshot{ObservedAt: at, Reason: "LEADER_CATALOG_NOT_READY", Rows: []StrategyDirectoryRow{}}
@@ -400,11 +428,11 @@ func (view *DirectoryView) Page(ctx context.Context, at time.Time, tenant, busin
 		}
 	}
 	s.SourceTruncated = s.SourceMatchedTotal > len(s.Unattributed)
+	cut := func() StrategyDirectorySnapshot {
+		s.Partial, s.Reason = true, "DEADLINE"
+		return s
+	}
 	for _, identity := range a.identities(strategy) {
-		if ctx.Err() != nil {
-			s.Complete, s.Reason = false, "DEADLINE"
-			return s
-		}
 		if tenant != "" && identity.TenantID != tenant || business != "" && identity.BusinessID != business {
 			continue
 		}
@@ -416,7 +444,14 @@ func (view *DirectoryView) Page(ctx context.Context, at time.Time, tenant, busin
 			if len(s.Rows) >= limit {
 				return s
 			}
-			s.Rows = append(s.Rows, view.finish(ctx, a, &s, draft))
+			if pastAnswerTime(ctx) {
+				return cut()
+			}
+			row, answered := view.finish(ctx, a, &s, draft)
+			if !answered {
+				return cut()
+			}
+			s.Rows = append(s.Rows, row)
 		}
 	}
 	return s
@@ -430,8 +465,7 @@ func (view *DirectoryView) Page(ctx context.Context, at time.Time, tenant, busin
 // given, holds the answer to the revision a page was read at.
 func (view *DirectoryView) ResolveCurrent(ctx context.Context, at time.Time, tenant, business, strategy, group string,
 	expectedRevision ...string) (StrategyDirectoryRow, error) {
-	ctx, cancel := context.WithTimeout(redisfailure.WithCaller(ctx, redisfailure.CallerDirectoryRead), view.timeout)
-	defer cancel()
+	ctx = redisfailure.WithCaller(ctx, redisfailure.CallerDirectoryRead)
 	a, err := view.answer(ctx, at)
 	if err != nil {
 		return StrategyDirectoryRow{}, err
@@ -467,7 +501,11 @@ func (view *DirectoryView) ResolveCurrent(ctx context.Context, at time.Time, ten
 	if selected == nil {
 		return StrategyDirectoryRow{}, ErrSnapshotUnavailable
 	}
-	return view.finish(ctx, a, &a.snapshot, *selected), nil
+	row, answered := view.finish(ctx, a, &a.snapshot, *selected)
+	if !answered {
+		return StrategyDirectoryRow{}, ctx.Err()
+	}
+	return row, nil
 }
 
 // EffectivePlan is the Plan a row names, read from its Query Group object:
@@ -475,8 +513,7 @@ func (view *DirectoryView) ResolveCurrent(ctx context.Context, at time.Time, ten
 // the row's Query Group and carry the Plan under the revisions the row's
 // activation selected.
 func (view *DirectoryView) EffectivePlan(ctx context.Context, row StrategyDirectoryRow) (QueryGroupPlanObject, error) {
-	ctx, cancel := context.WithTimeout(redisfailure.WithCaller(ctx, redisfailure.CallerDirectoryRead), view.timeout)
-	defer cancel()
+	ctx = redisfailure.WithCaller(ctx, redisfailure.CallerDirectoryRead)
 	object, err := view.repository.LoadQueryGroupObject(ctx, row.ObjectDigest)
 	if err != nil {
 		return QueryGroupPlanObject{}, err
@@ -506,8 +543,7 @@ func (view *DirectoryView) EffectiveOutput(ctx context.Context, row StrategyDire
 	if row.OutputContext == "" {
 		return OutputFormatFacts{Reason: OutputContextRefNotRetained}
 	}
-	ctx, cancel := context.WithTimeout(redisfailure.WithCaller(ctx, redisfailure.CallerDirectoryRead), view.timeout)
-	defer cancel()
+	ctx = redisfailure.WithCaller(ctx, redisfailure.CallerDirectoryRead)
 	contexts, err := view.repository.loadOutputContexts(ctx, []execution.OutputContextRef{{Plan: row.Identity, Digest: row.OutputContext}})
 	switch {
 	case errors.Is(err, ErrCatalogObjectUnavailable):

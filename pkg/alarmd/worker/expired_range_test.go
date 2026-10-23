@@ -78,14 +78,33 @@ func workerRangeRequest(t *testing.T) execution.SlotExecutionRequest {
 }
 
 func TestExpiredRangeTailGuardCommitConflictRestartsSameProof(t *testing.T) {
-	testRangeTailGuardCommitConflict(t, false)
+	testRangeTailGuardCommitConflict(t, false, false)
 }
 
 func TestExpiredRangeV2DistanceGuardCommitConflictRestartsSameProof(t *testing.T) {
-	testRangeTailGuardCommitConflict(t, true)
+	testRangeTailGuardCommitConflict(t, true, false)
 }
 
-func testRangeTailGuardCommitConflict(t *testing.T, distance bool) {
+// A range another attempt committed between this one's begin and its commit
+// is finalised already: the result says completed and names no query-free
+// cause, so the range's slot_skipped line is written once, by the attempt
+// that wrote it down.
+func TestARangeAnotherAttemptCommittedFirstNamesNoQueryFreeCause(t *testing.T) {
+	testRangeTailGuardCommitConflict(t, false, true)
+}
+
+// committedFirstRanges is a store where another attempt's commit of the same
+// range lands just before this one's.
+type committedFirstRanges struct{ *progress.Store }
+
+func (store committedFirstRanges) CommitRange(ctx context.Context, request execution.ExpiredRangeRequest) (execution.ExpiredRangeResult, error) {
+	if _, err := store.Store.CommitRange(ctx, request); err != nil {
+		return execution.ExpiredRangeResult{}, err
+	}
+	return store.Store.CommitRange(ctx, request)
+}
+
+func testRangeTailGuardCommitConflict(t *testing.T, distance, committedFirst bool) {
 	ctx := context.Background()
 	request := workerRangeRequest(t)
 	if distance {
@@ -112,6 +131,9 @@ func testRangeTailGuardCommitConflict(t *testing.T, distance bool) {
 		return s
 	}
 	store := newStore()
+	// restarting is set for the attempt after the conflict, the one another
+	// attempt races to the commit when committedFirst.
+	restarting := false
 	// Seed an actual committed predecessor, not a synthetic pending object.
 	prior := request.ExpiredRange.First.Contract
 	prior.Slot.EvaluationTime -= 60
@@ -123,7 +145,11 @@ func testRangeTailGuardCommitConflict(t *testing.T, distance bool) {
 	initialRaw := append([]byte(nil), control.raw...)
 	newCoordinator := func(s *progress.Store) *worker.SlotExecutionCoordinator {
 		ports := fixture.ports
-		c, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports, Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports, NoData: worker.SharedNoDataStore, Hosts: worker.SharedHostBusiness, Events: ports, State: ports, Progress: s, Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {})}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
+		var progressPort execution.ProgressStore = s
+		if committedFirst && restarting {
+			progressPort = committedFirstRanges{Store: s}
+		}
+		c, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports, Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports, NoData: worker.SharedNoDataStore, Hosts: worker.SharedHostBusiness, Events: ports, State: ports, Progress: progressPort, Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {})}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,12 +168,26 @@ func testRangeTailGuardCommitConflict(t *testing.T, distance bool) {
 		t.Fatalf("pending=%+v err=%v", load, err)
 	}
 	now = now.Add(time.Hour) // Recovery must keep the original reason, not reclassify by new time.
+	restarting = true
 	result, err = newCoordinator(newStore()).Execute(ctx, request)
 	if err != nil || !result.Completed {
 		t.Fatalf("restart result=%+v err=%v", result, err)
 	}
 	if result.CompletionKind != request.ExpiredRange.CompletionKind() || result.ReasonCode != request.ExpiredRange.CompletionReason() {
 		t.Fatalf("changed cause: %+v", result)
+	}
+	// The commit that wrote the range down says so, once: run again, the
+	// range is already committed and the result carries no cause.
+	wantCause := execution.CauseExpiredReplay
+	if committedFirst {
+		wantCause = ""
+	}
+	if result.QueryFreeCause != wantCause {
+		t.Fatalf("range commit query-free cause = %q, want %q", result.QueryFreeCause, wantCause)
+	}
+	again, err := newCoordinator(newStore()).Execute(ctx, request)
+	if err != nil || !again.Completed || again.QueryFreeCause != "" {
+		t.Fatalf("already committed range result=%+v err=%v, want completed with no query-free cause", again, err)
 	}
 	load, err = store.LoadProgress(ctx, execution.ProgressIdentity{QueryGroup: prior.Slot.QueryGroup})
 	if err != nil || load.Progress.NextSlot != request.ExpiredRange.Next || load.Progress.UnfinishedRange != nil || load.Progress.CurrentOrRecentGap.Count != 3 || load.Progress.LastFullSlot != prior.Slot.EvaluationTime {

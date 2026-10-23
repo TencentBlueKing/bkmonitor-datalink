@@ -131,7 +131,7 @@ func (hook *objectGetCountingHook) BeforeProcess(ctx context.Context, cmd redis.
 	if strings.ToLower(cmd.Name()) == "get" && len(cmd.Args()) > 1 {
 		if key, ok := cmd.Args()[1].(string); ok && (strings.Contains(key, ":qgobj:") || strings.Contains(key, ":outctx:")) {
 			hook.gets.Add(1)
-			time.Sleep(hook.delay)
+			time.Sleep(hook.delay) // fixed-wait: the hook's read delay, which the case sets
 		}
 	}
 	return ctx, nil

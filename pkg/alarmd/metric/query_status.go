@@ -22,8 +22,8 @@ type queryStatusMetrics struct {
 func newQueryStatusMetrics() queryStatusMetrics {
 	return queryStatusMetrics{
 		responses: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem,
-			Name: "access_response_status_total",
+			Subsystem: metricSubsystem,
+			Name:      "access_response_status_total",
 			Help: "UQ responses carrying a top-level status code, by that code and what this " +
 				"deployment did with the response. An allowed outcome means the series travelled " +
 				"with the code and was kept, which happens when an expression computes an answer " +

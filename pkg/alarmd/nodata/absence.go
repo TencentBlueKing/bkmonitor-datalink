@@ -88,6 +88,14 @@ type AbsenceInput struct {
 	// empty history roster reads as "this item has no groups", and the next
 	// round rebuilds the whole-item absence the horizon just stopped.
 	TrackingExhaustedAt int64
+	// RecoveryDisabled is the item's owner turning automatic recovery off
+	// (contract.NoDataConfigV1.RecoveryDisabled): a group whose data comes
+	// back is remembered as present and gets no verdict, so the NORMAL that
+	// would end its no-data alert is never produced. The closes that are no
+	// recovery keep their NORMAL - a group the roster stopped expecting
+	// (closeDroppedAbsences), one in another business (A6) - as the control
+	// plane's closes do elsewhere.
+	RecoveryDisabled bool
 }
 
 // trackingExpired says whether an absence that began at firstAbsent has run
@@ -136,6 +144,10 @@ type AbsenceFacts struct {
 	// Suppressed counts the groups this round met already stopped, which is
 	// the standing size of what the horizon is holding down.
 	Suppressed uint64
+	// ManualClosed counts the absences this round stopped because a user
+	// closed their alert by hand (decision-024), deleted or marked as the
+	// horizon would. A marked one is in Suppressed from the next round on.
+	ManualClosed uint64
 	// AbsentAges is the absences still tracked and reported this round, by
 	// how long each has been open: since this round only, under an hour,
 	// under a day, a day or more. Counted where Absent is, from the same
@@ -390,7 +402,7 @@ func evaluateAbsence(input AbsenceInput) AbsenceResult {
 		}
 		// A4 and A7. Present groups were judged above, together with the ones
 		// the roster does not expect.
-		if _, judged := result.Verdicts[key]; judged {
+		if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) {
 			continue
 		}
 		entry := result.Memory[key]
@@ -399,6 +411,19 @@ func evaluateAbsence(input AbsenceInput) AbsenceResult {
 			// synthetic anomaly, and the entry is left exactly as it is: a
 			// horizon raised after the fact must not restart what a lower one
 			// stopped, and the only thing that restarts it is data arriving.
+			//
+			// Except that a history roster still forgets it at the horizon. The
+			// horizon never marks a history group - it forgets it - so a marked
+			// one is a manual close (decision-024), and the typical close is of a
+			// group whose data never returns. Kept, it would sit in a memory the
+			// running Plan renews every round; forgotten at the horizon it
+			// leaves exactly as an unmarked absence would, with nothing said.
+			if input.Roster.Source == RosterHistory &&
+				trackingExpired(entry.FirstAbsent, input.EvaluationTime, input.TrackingHorizonSeconds) {
+				result.Facts.Expired++
+				delete(result.Memory, key)
+				continue
+			}
 			result.Facts.Suppressed++
 			continue
 		}
@@ -502,7 +527,7 @@ func closeDroppedAbsences(result *AbsenceResult, input AbsenceInput, wholeItemDe
 		if _, expected := input.Roster.Groups[key]; expected {
 			continue
 		}
-		if _, judged := result.Verdicts[key]; judged {
+		if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) {
 			continue
 		}
 		if entry.SuppressedAt != 0 {
@@ -564,13 +589,33 @@ func judgePresent(result *AbsenceResult, input AbsenceInput) {
 		if key == whole {
 			continue
 		}
-		result.Verdicts[key] = VerdictNormal
+		if !input.RecoveryDisabled {
+			result.Verdicts[key] = VerdictNormal
+		}
 		result.Memory[key] = GroupMemory{LastSeen: input.EvaluationTime}
 	}
 	if len(input.Present) > 0 {
-		result.Verdicts[whole] = VerdictNormal
+		if !input.RecoveryDisabled {
+			result.Verdicts[whole] = VerdictNormal
+		}
 		delete(result.Memory, whole)
 	}
+}
+
+// heldPresent is a group judgePresent found present and left without its
+// verdict because recovery is disabled: present all the same, so neither
+// absent nor dropped. With recovery enabled every such group carries its
+// NORMAL, and this is false.
+func heldPresent(input AbsenceInput, key string) bool {
+	if !input.RecoveryDisabled {
+		return false
+	}
+	if key == WholeItemGroup().Key() {
+		return len(input.Present) > 0
+	}
+	_, present := input.Present[key]
+	_, foreign := input.OutOfBusiness[key]
+	return present && !foreign
 }
 
 func copyGroupMemory(memory map[string]GroupMemory) map[string]GroupMemory {

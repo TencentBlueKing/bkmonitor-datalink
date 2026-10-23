@@ -41,7 +41,7 @@ type targetGroupCollector struct {
 }
 
 func newTargetGroupCollector() *targetGroupCollector {
-	name := func(suffix string) string { return prometheus.BuildFQName(metricNamespace, metricSubsystem, suffix) }
+	name := func(suffix string) string { return prometheus.BuildFQName("", metricSubsystem, suffix) }
 	return &targetGroupCollector{
 		groups: prometheus.NewDesc(name("target_group_groups"),
 			"Dynamic groups the target group store holds, by state: referenced by a Plan; loaded, a usable snapshot "+

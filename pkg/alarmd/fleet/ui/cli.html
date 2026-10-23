@@ -15,7 +15,7 @@ details{margin:8px 0}summary{cursor:pointer;color:#1769c2;font-size:14px}details
 </head>
 <body><main>
 <h1 id="permission-title">授权 alarmd CLI 运维此环境</h1>
-<p id="permission-lead" class="lead muted">让本机的 alarmd-cli 读取本部署的运维证据（策略配置、运行证据和受限的 Redis 数据），并在集群里执行 Pod 命令、删除 Pod、重启和扩缩容工作负载；每次执行和管理操作都留审计记录。只需配对一次，之后 CLI 自动续期。</p>
+<p id="permission-lead" class="lead muted">让本机的 alarmd-cli 读取本部署的运维证据（策略配置、运行证据和受限的 Redis 数据），并在集群里执行 Pod 命令和节点命令（可读取宿主文件、以宿主用户执行发布与管理）、删除 Pod、重启和扩缩容工作负载；每次执行和管理操作都留审计记录。只需配对一次，之后 CLI 自动续期。</p>
 <ol class="steps">
 <li id="step-command" class="current">
 <h2>在本机终端运行命令</h2>
@@ -75,7 +75,7 @@ const api = path => new URL('api/cli/auth/' + path, base);
 document.getElementById('back').href = base.href;
 const $ = id => document.getElementById(id);
 // One operations session: evidence reads, Pod execution and management.
-const scopeLabel = '部署级运维：取证读取、Pod 命令执行与工作负载管理（每次执行与管理留审计记录）';
+const scopeLabel = '部署级运维：取证读取、Pod 与节点命令执行（含宿主管理）及工作负载管理（每次执行与管理留审计记录）';
 const issue = $('issue');
 const authorize = $('authorize');
 const revoke = $('revoke');

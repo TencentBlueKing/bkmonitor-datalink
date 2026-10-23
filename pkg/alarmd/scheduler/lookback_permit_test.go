@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func lookbackFlights(t *testing.T, clock *mutableClock) *FlightCoordinator {
@@ -104,12 +105,12 @@ func TestTheLookbackNeverOvertakesAWaitingQuery(t *testing.T) {
 		}
 		granted <- permit
 	}()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for flights.QueryPermitOccupancy().Waiting["normal"] == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("the formal query never queued")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if permit, reason := flights.TryAcquireLookbackPermit(); permit != nil || reason != LookbackRefusedWaiting {
 		t.Fatalf("with a formal query waiting the lookback = %v %q, want refused", permit, reason)
@@ -118,7 +119,7 @@ func TestTheLookbackNeverOvertakesAWaitingQuery(t *testing.T) {
 	select {
 	case permit := <-granted:
 		permit.Release()
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("releasing the lookback permit did not hand it to the waiting query")
 	}
 	for _, held := range normal {
@@ -200,31 +201,150 @@ func TestAWaitingFormalQueryMakesTheLookbackYield(t *testing.T) {
 	first := wait("qg-first")
 	select {
 	case <-lookback.Yield():
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("a formal query waits and the lookback was not asked to yield")
 	}
 	second := wait("qg-second")
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for flights.QueryPermitOccupancy().Waiting["normal"] != 2 {
 		if time.Now().After(deadline) {
 			t.Fatal("the second formal query never queued")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	lookback.Release()
 	select {
 	case permit := <-first:
 		permit.Release()
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the permit the lookback gave back did not reach the waiting query")
 	}
 	select {
 	case permit := <-second:
 		permit.Release()
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the second waiter was not granted")
 	}
 	for _, held := range normal {
 		held.Release()
+	}
+}
+
+// With the permits at the memory's share the lookback can hold the whole
+// pool while nothing else runs - 32 process permits, 10 recovery, what a
+// 1 GiB container derives - and one formal query that has to wait asks every
+// lookback permit to yield, not just one; the first given back is the
+// query's.
+func TestEveryLookbackYieldsToOneWaitingQueryAtTheMemoryShare(t *testing.T) {
+	clock := newMutableClock(time.Unix(300, 0))
+	limits := testRecoveryLimits()
+	limits.ProcessQueryPermits, limits.RecoveryQueryPermits, limits.ReadyQueueCapacity = 32, 10, 64
+	flights, err := NewFlightCoordinatorWithRecovery(limits, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookbacks := make([]*LookbackPermit, 0, 32)
+	for range 32 {
+		permit, refused := flights.TryAcquireLookbackPermit()
+		if permit == nil {
+			t.Fatalf("an idle pool of 32 refused lookback permit %d: %q", len(lookbacks)+1, refused)
+		}
+		lookbacks = append(lookbacks, permit)
+	}
+	if permit, refused := flights.TryAcquireLookbackPermit(); permit != nil || refused != LookbackRefusedFull {
+		t.Fatalf("a 33rd lookback permit: %v %q, want refused as full", permit, refused)
+	}
+	granted := make(chan *QueryPermit, 1)
+	go func() {
+		permit, err := flights.AcquireQueryPermit(context.Background(),
+			execution.SlotIdentity{QueryGroup: "qg-formal", EvaluationTime: 60},
+			execution.OperationNormal, clock.Now().Add(time.Minute))
+		if err != nil {
+			t.Error(err)
+		}
+		granted <- permit
+	}()
+	for index, lookback := range lookbacks {
+		select {
+		case <-lookback.Yield():
+		case <-testwait.Expired(t):
+			t.Fatalf("a formal query waits and lookback permit %d of 32 was not asked to yield", index+1)
+		}
+	}
+	lookbacks[17].Release()
+	select {
+	case permit := <-granted:
+		permit.Release()
+	case <-testwait.Expired(t):
+		t.Fatal("the permit a lookback gave back did not reach the waiting query")
+	}
+	for _, lookback := range lookbacks {
+		lookback.Release()
+	}
+	if occupancy := flights.QueryPermitOccupancy(); occupancy.LookbackInflight != 0 || occupancy.Budget != 32 {
+		t.Fatalf("after every release %d lookback permits held of %d", occupancy.LookbackInflight, occupancy.Budget)
+	}
+}
+
+// The occupancy's peak is the most permits held at once in the last minute,
+// the lookback's included: it stays at the burst after the permits go back,
+// a permit held from before the minute still counts, and a minute after the
+// burst it is what is held then.
+func TestThePermitPeakIsTheMostHeldInTheLastMinute(t *testing.T) {
+	clock := newMutableClock(time.Unix(300, 0))
+	flights := lookbackFlights(t, clock)
+	normal := holdNormal(t, flights, clock, 5)
+	if got := flights.QueryPermitOccupancy().PeakHeld; got != 5 {
+		t.Fatalf("five formal permits held, peak %d, want 5", got)
+	}
+	normal[4].Release()
+	if got := flights.QueryPermitOccupancy().PeakHeld; got != 5 {
+		t.Fatalf("one of five formal permits given back, peak %d, want the five", got)
+	}
+	normal[4] = holdNormal(t, flights, clock, 1)[0]
+	lookback, _ := flights.TryAcquireLookbackPermit()
+	if lookback == nil {
+		t.Fatal("an idle pool refused the lookback")
+	}
+	if got := flights.QueryPermitOccupancy().PeakHeld; got != 6 {
+		t.Fatalf("five formal permits and a lookback held, peak %d, want 6", got)
+	}
+	for _, permit := range normal[1:] {
+		permit.Release()
+	}
+	lookback.Release()
+	clock.Advance(30 * time.Second)
+	if got := flights.QueryPermitOccupancy().PeakHeld; got != 6 {
+		t.Fatalf("30 s after the burst the peak is %d, want the burst's 6", got)
+	}
+	clock.Advance(31 * time.Second)
+	if got := flights.QueryPermitOccupancy().PeakHeld; got != 1 {
+		t.Fatalf("a minute after the burst, one permit still held from before it: peak %d, want 1", got)
+	}
+	normal[0].Release()
+	if got := flights.QueryPermitOccupancy().PeakHeld; got != 0 {
+		t.Fatalf("nothing held and nothing granted in the minute: peak %d, want 0", got)
+	}
+}
+
+// The window is the minute before the read, the read's own second included:
+// a value 59 s old counts, one 60 s old does not. A second ahead of the read
+// - a wall clock stepped back after it was observed - is not counted, or it
+// would hold the peak until real time caught up with it.
+func TestSecondMaxKeepsExactlyTheLastMinute(t *testing.T) {
+	var peak SecondMax
+	at := time.Unix(1_000_000, 0)
+	peak.Observe(at, 7)
+	if got := peak.Max(at); got != 7 {
+		t.Fatalf("read in the observed second: %d, want 7", got)
+	}
+	if got := peak.Max(at.Add(59 * time.Second)); got != 7 {
+		t.Fatalf("59 s later: %d, want 7", got)
+	}
+	if got := peak.Max(at.Add(60 * time.Second)); got != 0 {
+		t.Fatalf("60 s later: %d, want 0", got)
+	}
+	if got := peak.Max(at.Add(-time.Second)); got != 0 {
+		t.Fatalf("read a second before the observation (clock stepped back): %d, want 0", got)
 	}
 }

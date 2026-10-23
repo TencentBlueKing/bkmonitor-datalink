@@ -33,12 +33,10 @@ import (
 // the self-check of that decision.
 
 // contentCutoverClockAllowance is the clock difference between the Control
-// Leader and a Worker that an output context revision tolerates. It is a
-// placed value, not a measured one: nodes of one cluster under NTP usually
-// differ by well under a second. Measure the actual bound from the leader's
-// activation boundary against the Workers' freeze timestamps and tighten it;
-// every second here delays a rendering-only edit by a second.
-const contentCutoverClockAllowance = 18 * time.Second
+// Leader and a Worker that an output context revision tolerates: the one
+// bound alarmd assumes between its clocks (execution.MaxClockSkew). Every
+// second here delays a rendering-only edit by a second.
+const contentCutoverClockAllowance = execution.MaxClockSkew
 
 // contentCutoverDefaultWriteBound is what a Redis client without options
 // reports: go-redis v8 defaults of a 3 s write timeout and 3 retries.

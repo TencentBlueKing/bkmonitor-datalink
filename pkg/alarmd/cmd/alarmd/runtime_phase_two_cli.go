@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -28,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obevidence"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
@@ -43,6 +45,10 @@ type cliRuntimeFacts struct {
 }
 
 type cliControlBinding struct {
+	// Rejections is this replica's tracker's latest refusal per Query Group,
+	// with the words of the provider's answer, which strategy.get serves and
+	// no route does; nil serves none.
+	Rejections  func(queryGroup string) (fleet.KeptRejection, bool)
 	Incarnation string
 	StreamToken string
 	Server      *viewstream.Server
@@ -59,6 +65,10 @@ type cliControlBinding struct {
 	// RedisDialRetries, when set, hears each second dial of the CLI's own
 	// Redis clients -- evidence, auth -- by why the first dial failed.
 	RedisDialRetries func(client, reason string)
+	// AuthEvents and RosterApplied, when set, hear the CLI authorization's
+	// counted events and each roster it applies.
+	AuthEvents    func(event string, n uint64)
+	RosterApplied func(at time.Time)
 	// Lookback is this process's late-data lookback, nil when it does not
 	// run one, and LookbackStanding why; read by lookback.get.
 	Lookback         *lookback.Engine
@@ -67,6 +77,16 @@ type cliControlBinding struct {
 	// Maintenance is the effective-time maintenance, bound once the loop is
 	// built; read by maintenance.get.
 	Maintenance *maintenanceSource
+	// LinkdConsole is the process's linkd Console client, read by
+	// linkd.alerts; nil without a Console.
+	LinkdConsole *openalerts.HTTPReconciler
+}
+
+// cliAuthEvents counts the CLI authorization's events, every cell created
+// up front.
+func cliAuthEvents(recorder *metric.Recorder) func(event string, n uint64) {
+	recorder.PresetCLIAuth(cliauth.Counts)
+	return recorder.RecordCLIAuth
 }
 
 // cliRedisFailures counts an unanswered call of a CLI client by its reason,
@@ -80,18 +100,21 @@ func cliRedisFailures(recorder *metric.Recorder, observer observability.Observer
 		}
 		observeRuntime(context.Background(), observer, observability.Observation{
 			Component: observability.ComponentRuntime, Stage: observability.StageAuthStore,
-			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			Result:     observability.ResultFailed,
 			ReasonCode: observability.ReasonContractRetryable, Err: fmt.Errorf("authorization store %s: %s", reason, detail),
 		})
 	}
 }
 
-// cliRedisOptions are one CLI Redis client's options: a small pool that
-// connects on first use, whose dials are tried a second time when the first
-// fails (withDialRetry), counted under the client's name.
+// cliRedisOptions are one CLI Redis client's options: a pool that connects
+// on first use, whose dials are tried a second time when the first fails
+// (withDialRetry), counted under the client's name. Its reads are an
+// operator's, a handful next to the business pool, so sixteen connections
+// and five seconds' wait for one mean they never queue noticeably.
 func cliRedisOptions(connection config.RedisConnectionConfig, name string, retries func(client, reason string)) *redis.UniversalOptions {
 	options := observationRedisOptions(connection)
-	options.PoolSize = 2
+	options.PoolSize = 16
+	options.PoolTimeout = 5 * time.Second
 	options.MinIdleConns = 0
 	withDialRetry(options, goRedisDial(options), func(reason string) {
 		if retries != nil {
@@ -145,7 +168,7 @@ func buildPhaseTwoCLI(cfg config.Config, native http.Handler, catalog *controlpl
 	runtime, err := openProductionRoleChannel(cfg, ChannelBinding{Native: native, Catalog: catalog, Progress: progressStore,
 		Settings: settings, Facts: facts, Control: control})
 	if err != nil {
-		return composeCLI(native, nil, nil), func() error { return nil }, false
+		return composeCLI(native, nil, nil, nil), func() error { return nil }, false
 	}
 	return runtime.Handler, runtime.Close, runtime.Restricted
 }
@@ -269,8 +292,18 @@ func (standing publicSurfaceStanding) warn(logger *observability.Logger) {
 // named. The CLI routes -- the page's, issuing, exchange, pairing, renewal --
 // are composed in front of it and stay public, so a caller whose every
 // credential has expired can still get a new one.
-func publicAPI(native, windows http.Handler) http.Handler {
+//
+// A replica's hop to this Leader (leaderForwarderWithin) reaches the same
+// listener. peer admits it: a request marked as forwarded that presents
+// this process's internal token is served by native as the Leader would
+// answer it; one without the token, or with another, is the public's and
+// refused like any other.
+func publicAPI(native, windows http.Handler, peer func(*http.Request) bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if peer != nil && peer(r) {
+			native.ServeHTTP(w, r)
+			return
+		}
 		switch r.URL.Path {
 		case "/api/health":
 			publicHealth(w, r, native)
@@ -319,7 +352,24 @@ func (c *capturedResponse) WriteHeader(code int) {
 	}
 }
 
-func composeCLI(native, channel, auth http.Handler) http.Handler {
+// frontSurface is what the admin server in front of the deployment calls,
+// with the administrator key: named grants and the roster, and the reads of
+// obchannel.FrontReads.
+func frontSurface(channel *obchannel.Channel, manager *cliauth.Manager) http.Handler {
+	read, grants := channel.FrontReadHandler(manager.AuthorizeAdmin), manager.FrontHandler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == cliauth.FrontReadPath {
+			read.ServeHTTP(w, r)
+			return
+		}
+		grants.ServeHTTP(w, r)
+	})
+}
+
+// composeCLI puts the CLI's routes and the front surface in front of the
+// API. The front surface is matched on the request's own path, outside
+// /api/cli/, so a forwarder that passes /api/cli/* through never reaches it.
+func composeCLI(native, channel, auth, front http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var handler http.Handler
 		switch {
@@ -327,6 +377,8 @@ func composeCLI(native, channel, auth http.Handler) http.Handler {
 			handler = channel
 		case slices.Contains(cliauth.Paths, r.URL.Path):
 			handler = auth
+		case strings.HasPrefix(r.URL.Path, "/api/front/"):
+			handler = front
 		default:
 			native.ServeHTTP(w, r)
 			return
@@ -340,4 +392,16 @@ func composeCLI(native, channel, auth http.Handler) http.Handler {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "error", "error": map[string]string{"code": "cli_not_configured", "message": "CLI configuration is invalid or unavailable; check environment identity, HTTP(S) public URL and administrator key configuration."}})
 	})
+}
+
+// forwardedPeer admits a hop from another replica: marked as forwarded and
+// carrying token(), this process's internal token, compared in constant
+// time. An empty token admits nothing.
+func forwardedPeer(token func() string) func(*http.Request) bool {
+	return func(r *http.Request) bool {
+		own := token()
+		presented := r.Header.Get(fleet.ForwardTokenHeader())
+		return own != "" && r.Header.Get(fleet.ForwardedHeader()) != "" &&
+			subtle.ConstantTimeCompare([]byte(own), []byte(presented)) == 1
+	}
 }

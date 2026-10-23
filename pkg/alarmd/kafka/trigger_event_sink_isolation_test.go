@@ -96,6 +96,9 @@ func partialOf(t *testing.T, err error) *OutputPartiallyRejectedError {
 	if partial.OutputRejectionReason() != contract.ReasonOutputConversionRejected {
 		t.Fatalf("reason = %q, want %q", partial.OutputRejectionReason(), contract.ReasonOutputConversionRejected)
 	}
+	if kind := observability.OutputFailureKindOf(err); kind != observability.OutputFailureClientRejected {
+		t.Fatalf("partial refusal: kind %q, want %q", kind, observability.OutputFailureClientRejected)
+	}
 	return partial
 }
 

@@ -36,7 +36,7 @@ func TestPhaseTwoRuntimeObserverKeepsOneLinePerReasonAndQueryGroup(t *testing.T)
 	failed := func(queryGroup string) observability.Observation {
 		return observability.Observation{
 			Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
-			Result: observability.Result(observability.ResultFailed), Direction: observability.DirectionInternal,
+			Result:     observability.Result(observability.ResultFailed),
 			ReasonCode: observability.ReasonInternalUnknown, Err: errors.New("alarmd worker: duplicate completion binding"),
 			QueryFailure: &observability.QueryFailureFacts{Stage: "stream_complete", Category: "completion_contract", Code: "DUPLICATE_COMPLETION_BINDING"},
 		}
@@ -115,7 +115,7 @@ func TestPhaseTwoRuntimeObserverReportsItsLinesByStage(t *testing.T) {
 	}
 	counts := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_log_lines_total" {
+		if family.GetName() != "alarmd_log_lines_total" {
 			continue
 		}
 		for _, sample := range family.GetMetric() {

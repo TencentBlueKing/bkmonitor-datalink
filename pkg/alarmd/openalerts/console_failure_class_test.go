@@ -46,7 +46,7 @@ type consoleFailure struct{ op, class string }
 
 func classReader(t *testing.T, baseURL string, client *http.Client, failed func(op, class string, failures uint64)) *HTTPReconciler {
 	t.Helper()
-	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: baseURL, Client: client, Username: "user", Password: "secret",
+	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: baseURL + testLinkdAPIRoot, Client: client, Username: "user", Password: "secret",
 		Index: testIndex(), MaxResponseBytes: 1 << 20, OnFailure: failed})
 	if err != nil {
 		t.Fatal(err)
@@ -71,35 +71,35 @@ func TestAConsoleFailureNamesItsCause(t *testing.T) {
 			server := httptest.NewServer(http.NotFoundHandler())
 			address := server.URL
 			server.Close()
-			return classReader(t, address, &http.Client{}, nil), context.Background(), address
+			return classReader(t, address, &http.Client{}, nil), consoleCtx(), address
 		}},
 		{"timeout", execution.TransportFailureTimeout, func(t *testing.T) (*HTTPReconciler, context.Context, string) {
 			server := httptest.NewServer(block)
 			t.Cleanup(server.Close)
-			return classReader(t, server.URL, &http.Client{Timeout: 100 * time.Millisecond}, nil), context.Background(), server.URL
+			return classReader(t, server.URL, &http.Client{Timeout: 100 * time.Millisecond}, nil), consoleCtx(), server.URL
 		}},
 		{"tls", execution.TransportFailureTLS, func(t *testing.T) (*HTTPReconciler, context.Context, string) {
 			server := httptest.NewTLSServer(http.NotFoundHandler())
 			t.Cleanup(server.Close)
-			return classReader(t, server.URL, &http.Client{}, nil), context.Background(), server.URL
+			return classReader(t, server.URL, &http.Client{}, nil), consoleCtx(), server.URL
 		}},
 		{"cancelled", execution.TransportFailureCancelled, func(t *testing.T) (*HTTPReconciler, context.Context, string) {
 			server := httptest.NewServer(block)
 			t.Cleanup(server.Close)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
-			time.AfterFunc(100*time.Millisecond, cancel)
+			ctx, cancel := context.WithTimeout(consoleCtx(), time.Hour) // fixed-wait: a deadline far past the case, so the call ends by the cancel below and not by it
+			time.AfterFunc(100*time.Millisecond, cancel)                // fixed-wait: when the caller lets go; before the call or during it, the error is context.Canceled and named cancelled alike
 			t.Cleanup(cancel)
 			return classReader(t, server.URL, server.Client(), nil), ctx, server.URL
 		}},
 		{"status", ConsoleFailureStatus, func(t *testing.T) (*HTTPReconciler, context.Context, string) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusBadGateway) }))
 			t.Cleanup(server.Close)
-			return classReader(t, server.URL, server.Client(), nil), context.Background(), server.URL
+			return classReader(t, server.URL, server.Client(), nil), consoleCtx(), server.URL
 		}},
 		{"incomplete", ConsoleFailureIncomplete, func(t *testing.T) (*HTTPReconciler, context.Context, string) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("{not json")) }))
 			t.Cleanup(server.Close)
-			return classReader(t, server.URL, server.Client(), nil), context.Background(), server.URL
+			return classReader(t, server.URL, server.Client(), nil), consoleCtx(), server.URL
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -122,7 +122,7 @@ func TestAConsoleFailureNamesItsCause(t *testing.T) {
 // A failure no word fits is named other, never left blank.
 func TestAConsoleFailureNoWordFitsIsOther(t *testing.T) {
 	reader := classReader(t, "http://192.0.2.10", &http.Client{Transport: &failingTransport{err: errors.New("boom")}}, nil)
-	if _, err := reader.Reconcile(context.Background(), keyA); err == nil {
+	if _, err := reader.Reconcile(consoleCtx(), keyA); err == nil {
 		t.Fatal("the call succeeded")
 	}
 	if call := reader.Record().Calls[ConsoleOpReconcile]; call.LastFailureClass != execution.TransportFailureOther {
@@ -157,7 +157,7 @@ func TestTheConsoleAndTheRouteDetailNameOneErrorAlike(t *testing.T) {
 		err := c.err
 		transport := &failingTransport{err: err}
 		reader := classReader(t, "http://192.0.2.10", &http.Client{Transport: transport}, nil)
-		_, _ = reader.Reconcile(context.Background(), keyA)
+		_, _ = reader.Reconcile(consoleCtx(), keyA)
 		console := reader.Record().Calls[ConsoleOpReconcile].LastFailureClass
 		if console != c.want {
 			t.Fatalf("%v: the Console reads %q, want %q", err, console, c.want)
@@ -181,7 +181,7 @@ func TestTheConsoleAndTheRouteDetailNameOneErrorAlike(t *testing.T) {
 func TestAConsoleFailureIsToldWhenItStartsAndWhenItsCauseChanges(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/local-api/strategy-index/targets":
+		case "/api/modules/linkd/strategy-index/targets":
 			_ = json.NewEncoder(w).Encode([]TargetBinding{testBinding()})
 		default:
 			_ = json.NewEncoder(w).Encode(reconciliationJSON())
@@ -201,7 +201,7 @@ func TestAConsoleFailureIsToldWhenItStartsAndWhenItsCauseChanges(t *testing.T) {
 	reset := &net.OpError{Op: "read", Net: "tcp", Err: &os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET}}
 	for _, err := range []error{refused, refused, refused, reset, reset, nil, refused} {
 		transport.err = err
-		_, _ = reader.Reconcile(context.Background(), keyA)
+		_, _ = reader.Reconcile(consoleCtx(), keyA)
 	}
 	want := []consoleFailure{{ConsoleOpReconcile, execution.TransportFailureConnectionRefused},
 		{ConsoleOpReconcile, execution.TransportFailureConnectionReset}, {ConsoleOpReconcile, execution.TransportFailureConnectionRefused}}
@@ -224,9 +224,9 @@ func TestAConsoleFailureIsToldWhenItStartsAndWhenItsCauseChanges(t *testing.T) {
 func TestARecordHandedOutKeepsItsCountsByClass(t *testing.T) {
 	refused := &net.OpError{Op: "dial", Net: "tcp", Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED}}
 	reader := classReader(t, "http://192.0.2.10", &http.Client{Transport: &failingTransport{err: refused}}, nil)
-	_, _ = reader.Reconcile(context.Background(), keyA)
+	_, _ = reader.Reconcile(consoleCtx(), keyA)
 	before := reader.Record().Calls[ConsoleOpReconcile]
-	_, _ = reader.Reconcile(context.Background(), keyA)
+	_, _ = reader.Reconcile(consoleCtx(), keyA)
 	if before.FailuresByClass[execution.TransportFailureConnectionRefused] != 1 {
 		t.Fatalf("a record handed out before the second failure now reads %v", before.FailuresByClass)
 	}

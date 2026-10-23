@@ -14,6 +14,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/tracing"
 )
 
 const (
@@ -103,6 +105,9 @@ type Client struct {
 	querySource string
 	limits      Limits
 	now         func() time.Time
+	// observeAPM hears each response read with the APM application carried
+	// (WithAPMObserver); nil hears nothing.
+	observeAPM func(APMCarriedResponse)
 }
 
 // markReplayable lets the transport send a query again, once, when the
@@ -165,11 +170,13 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	return client.execute(callerCtx, ctx, queryIdentity{Spec: attempt.Spec, AttemptNo: attempt.AttemptNo,
 		// Ordinary Slot reads negotiate the shared format by default. The
 		// same response may still be legacy JSON; other entry points do not
-		// negotiate, nor do PromQL and polling Execute queries.
-		SharedSchema: attempt.Spec.PlanFacts.PromQL == nil &&
+		// negotiate, nor do PromQL and polling Execute queries, nor a query
+		// asking for named outputs, whose answer has its own JSON shape.
+		SharedSchema: attempt.Spec.PlanFacts.PromQL == nil && attempt.Spec.PlanFacts.NamedOutputs == nil &&
 			attempt.Spec.PlanFacts.Normalization.Version != "uq-polling-normalization-v1",
 		Budget: queryBudget{StartUnixMilli: attempt.BudgetStartUnixMilli, ReadyAtUnixMilli: attempt.ReadyAtUnixMilli,
-			DeadlineUnixMilli: attempt.DeadlineUnixMilli}}, sink, nil)
+			DeadlineUnixMilli: attempt.DeadlineUnixMilli},
+		Strategies: attempt.Strategies, NamedOutputs: namedOutputReserver(attempt.Spec, sink)}, sink, nil)
 }
 
 // queryIdentity carries provider-local accounting only. Diagnostic reads do
@@ -181,6 +188,14 @@ type queryIdentity struct {
 	// Budget is the Slot query's, which a failure is timed against; zero
 	// for a read that is not a Slot's, which then reports no timing.
 	Budget queryBudget
+	// NoAppCarry asks the provider without the APM application a query
+	// would otherwise carry (carriesAPMApp).
+	NoAppCarry bool
+	// Strategies are the strategy ids the query serves (headerStrategy).
+	Strategies []string
+	// NamedOutputs reserves what aligning the named outputs holds
+	// (namedOutputReserver); nil reserves nothing.
+	NamedOutputs execution.RetainedBytesReserver
 }
 
 // queryBudget is a Slot query's budget as its attempt carries it: where it
@@ -214,7 +229,13 @@ func bodySpace(facts execution.QueryPlanFacts) string {
 }
 
 func buildWireRequest(spec execution.PhysicalQuerySpec) (string, []byte, error) {
-	body, err := buildRequest(spec)
+	return buildWireRequestCarrying(spec, carriesAPMApp(spec))
+}
+
+// buildWireRequestCarrying is buildWireRequest with the APM application
+// carried or not (carriesAPMApp), for the read that has to go without it.
+func buildWireRequestCarrying(spec execution.PhysicalQuerySpec, carryApp bool) (string, []byte, error) {
+	body, err := buildRequestCarrying(spec, carryApp)
 	if err != nil {
 		return "", nil, err
 	}
@@ -231,7 +252,15 @@ func buildWireRequest(spec execution.PhysicalQuerySpec) (string, []byte, error) 
 		// promql strategy over them read as "no data" on every round, and the
 		// backend (which pops bk_biz_ids out of the body before sending) saw
 		// the data the whole time.
-		payload = map[string]any{"promql": query.Expression, "match": query.Match, "start": body.StartTime, "end": body.EndTime, "step": body.Step, "timezone": body.Timezone}
+		promQL := map[string]any{"promql": query.Expression, "match": query.Match, "start": body.StartTime, "end": body.EndTime, "step": body.Step, "timezone": body.Timezone}
+		// The PromQL path takes the same three fields; the top-level promql
+		// stays the legacy output, which a provider that ignores them still
+		// answers alone.
+		if body.ResponseContract != "" {
+			promQL["response_contract"], promQL["legacy_output_ref"], promQL["output_list"] =
+				body.ResponseContract, body.LegacyOutputRef, body.OutputList
+		}
+		payload = promQL
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -241,7 +270,14 @@ func buildWireRequest(spec execution.PhysicalQuerySpec) (string, []byte, error) 
 }
 
 func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdentity, sink execution.ProviderSeriesSink, scanned *DiagnosticScan) (execution.ProviderCompletion, error) {
-	path, encoded, err := buildWireRequest(attempt.Spec)
+	if scanned != nil || attempt.NoAppCarry || !carriesAPMApp(attempt.Spec) {
+		return client.executeRequest(callerCtx, ctx, attempt, sink, scanned)
+	}
+	return client.executeCarryingAPMApp(callerCtx, ctx, attempt, sink)
+}
+
+func (client *Client) executeRequest(callerCtx, ctx context.Context, attempt queryIdentity, sink execution.ProviderSeriesSink, scanned *DiagnosticScan) (spanResult execution.ProviderCompletion, spanErr error) {
+	path, encoded, err := buildWireRequestCarrying(attempt.Spec, carriesAPMApp(attempt.Spec) && !attempt.NoAppCarry)
 	if err != nil {
 		return execution.ProviderCompletion{}, err
 	}
@@ -257,8 +293,22 @@ func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdent
 	for name, value := range scopeHeaders(attempt.Spec.PlanFacts) {
 		request.Header.Set(name, value)
 	}
+	// The attempt's span, under its Slot's when the Slot is sampled; the
+	// traceparent is that span's context, or a fresh unsampled trace.
+	querySpan, traceParent, traceID := tracing.StartQuery(ctx, "uq", len(attempt.Strategies), attempt.AttemptNo)
+	defer func() { querySpan.End(queryOutcome(spanResult, spanErr)) }()
+	request.Header.Set(headerTraceParent, traceParent)
+	if strategies := strategyHeader(attempt.Strategies); strategies != "" {
+		request.Header.Set(headerStrategy, strategies)
+	}
 	markReplayable(request)
 	started := client.now()
+	deadline, left := requestDeadline(ctx, time.Now())
+	// The trace id is known at the send, so every failure from here names
+	// it, whether or not an answer came back.
+	failedRequest := func(err error) *execution.RequestFacts {
+		return requestFacts(callerCtx, ctx, err, deadline, left, traceID)
+	}
 	response, err := client.httpClient.Do(request)
 	if err != nil {
 		if callerCtx.Err() != nil {
@@ -271,25 +321,53 @@ func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdent
 		completion := client.unavailableCompletion(attempt, reason, execution.TransportRouteDetail(execution.ClassifyTransportFailure(err)))
 		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
 		completion.RouteFacts.Attempts[0].Timing = attemptTiming(attempt.Budget, started, client.now(), 0)
+		// Which deadline was on the request, which ran out, and what failed:
+		// a deadline error from the transport names none of them.
+		request := failedRequest(err)
+		request.CompletedUnixMilli = client.now().UnixMilli()
+		if reason == execution.ReasonCode(contract.ReasonQueryTimeout) {
+			request.TimeoutSource = observability.QueryTimeoutSourceTransportClass
+			if ctx.Err() != nil {
+				request.TimeoutSource = observability.QueryTimeoutSourceDeadlinePassed
+			}
+		}
+		completion.RouteFacts.Attempts[0].Request = request
 		return completion, nil
 	}
 	answered := client.now()
 	defer response.Body.Close()
+	// Every request from here got an answer: its facts say what status it
+	// was, when it came and when the attempt ended, whatever became of it.
+	answeredRequest := func(err error) *execution.RequestFacts {
+		request := failedRequest(err)
+		request.AnswerStatus, request.AnsweredUnixMilli = response.StatusCode, answered.UnixMilli()
+		request.CompletedUnixMilli = client.now().UnixMilli()
+		return request
+	}
 	if response.StatusCode != http.StatusOK {
-		// The body is drained and discarded on purpose: UQ error bodies can echo
-		// the request (table ids, conditions, dimension values) and must not be
-		// parsed for business state or copied into logs. The status code alone
-		// is the bounded diagnostic detail. A diagnostic read -- an operator
-		// asking why the provider refused this query -- keeps the body's start,
-		// sanitized, for its own answer alone.
+		// UQ error bodies can echo the request (table ids, conditions,
+		// dimension values), so the body is never parsed for business state
+		// nor copied into a log. What is kept is the rejection: a bounded
+		// class, the provider's trace id, and the body's start sanitized
+		// (providerErrorExcerpt), with the Query Group's last failure for an
+		// operator to read. A client error other than 408 and 429 is the
+		// provider refusing the query as written (QUERY_REJECTED); 504 and
+		// 408 are the provider running out of time (QUERY_TIMEOUT); anything
+		// else is the provider not answering (QUERY_UNAVAILABLE).
+		body, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyRead))
+		rejection := providerRejection(response.StatusCode, body, traceID)
 		if scanned != nil {
-			body, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyRead))
-			scanned.Bytes, scanned.errorExcerpt = uint64(len(body)), providerErrorExcerpt(body)
-		} else {
-			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, errorBodyRead))
+			scanned.Bytes, scanned.errorExcerpt = uint64(len(body)), rejection.Excerpt
 		}
-		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable), execution.HTTPStatusRouteDetail(response.StatusCode))
+		reason := statusReason(response.StatusCode)
+		completion := client.unavailableCompletion(attempt, reason, execution.HTTPStatusRouteDetail(response.StatusCode))
 		completion.RouteFacts.Attempts[0].HTTPStatus = response.StatusCode
+		completion.RouteFacts.Attempts[0].Rejection = rejection
+		request := answeredRequest(nil)
+		if reason == execution.ReasonCode(contract.ReasonQueryTimeout) {
+			request.TimeoutSource = observability.QueryTimeoutSourceProviderStatus
+		}
+		completion.RouteFacts.Attempts[0].Request = request
 		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
 		completion.RouteFacts.Attempts[0].Timing = attemptTiming(attempt.Budget, started, client.now(), 0)
 		return completion, nil
@@ -297,21 +375,34 @@ func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdent
 	counted := &countingReader{reader: response.Body, now: client.now}
 	shared, err := selectSharedDecoder(response.Header.Get("Content-Type"), attempt.SharedSchema)
 	if err != nil {
-		return execution.ProviderCompletion{}, err
+		return execution.ProviderCompletion{}, &requestFailureError{err: err, request: answeredRequest(err)}
 	}
 	bounded := &boundedReader{reader: counted, maximum: client.limits.MaxBodyBytes}
+	delivered := &countingSink{sink: sink}
 	var completion execution.ProviderCompletion
 	if shared {
-		completion, err = client.decodeShared(ctx, bounded, attempt, sink)
+		completion, err = client.decodeShared(ctx, bounded, attempt, delivered)
 	} else {
-		completion, err = client.decodeQuery(ctx, bounded, attempt, sink, scanned)
+		completion, err = client.decodeQuery(ctx, bounded, attempt, delivered, scanned)
 	}
 	if scanned != nil {
 		scanned.Bytes = counted.bytes
 		scanned.Complete = err == nil
 	}
 	if err != nil {
-		return execution.ProviderCompletion{}, client.bodyFailure(callerCtx, ctx, attempt, err, counted, started, answered)
+		failure := client.bodyFailure(callerCtx, ctx, attempt, err, counted, delivered.series, started, answered)
+		var named *bodyFailureError
+		if errors.As(failure, &named) {
+			named.request = answeredRequest(err)
+			// Which branch filed it: a timeout before the deadline is told
+			// apart from one at it by this, not by the reason. It ended
+			// when bodyFailure timed it, the instant its timing ends at.
+			named.request.TimeoutSource = named.timeoutSource
+			named.request.CompletedUnixMilli = named.failedAt.UnixMilli()
+		} else {
+			failure = &requestFailureError{err: failure, request: answeredRequest(err)}
+		}
+		return execution.ProviderCompletion{}, failure
 	}
 	completion.Stats.Bytes = counted.bytes
 	completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
@@ -320,6 +411,26 @@ func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdent
 		completion.Stats.ResponseCodec = "shared_json_v1"
 	}
 	completion.Stats.SharedSchemaRequested = attempt.SharedSchema
+	// Every attempt the provider answered names the request it answered: one
+	// whose status said it failed (the decoder's unavailable completion), and
+	// one that succeeded partial or empty, which a degraded round reads. The
+	// decoder leaves only the provider's message on it.
+	// A full answer with data that failed nothing and said nothing carries
+	// none: nothing reads it, and a success line names no request.
+	degraded := completion.Completeness != execution.CompletenessFull || completion.DataState != execution.DataStateData
+	for index := range completion.RouteFacts.Attempts {
+		answeredAttempt := &completion.RouteFacts.Attempts[index]
+		excerpt := ""
+		if decoded := answeredAttempt.Request; decoded != nil {
+			excerpt = decoded.Excerpt
+		}
+		if !degraded && excerpt == "" && answeredAttempt.Result != execution.RouteAttemptFailed && answeredAttempt.ReasonCode == "" {
+			continue
+		}
+		request := answeredRequest(nil)
+		request.Excerpt = excerpt
+		answeredAttempt.Request = request
+	}
 	return completion, nil
 }
 
@@ -341,7 +452,7 @@ func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdent
 // completion cannot describe a body that stopped partway. A failure that
 // names itself - a response budget, a sink's own - keeps its name, and a
 // caller that gave up keeps its error, as it does before the answer.
-func (client *Client) bodyFailure(callerCtx, ctx context.Context, attempt queryIdentity, err error, body *countingReader, started, answered time.Time) error {
+func (client *Client) bodyFailure(callerCtx, ctx context.Context, attempt queryIdentity, err error, body *countingReader, series uint64, started, answered time.Time) error {
 	var declared interface{ QueryFailure() (string, string) }
 	if callerCtx.Err() != nil || errors.As(err, &declared) {
 		return err
@@ -350,21 +461,27 @@ func (client *Client) bodyFailure(callerCtx, ctx context.Context, attempt queryI
 	passed := func(at time.Time) bool { return bounded && !at.Before(deadline) }
 	broken := body.failed != nil && errors.Is(err, body.failed)
 	category, code := "provider_transport", contract.ReasonQueryTimeout
-	var detail string
+	var detail, source string
 	switch {
 	case broken && passed(body.failedAt):
-		detail = execution.BodyRouteDetail(execution.TransportFailureTimeout)
+		detail, source = execution.BodyRouteDetail(execution.TransportFailureTimeout), observability.QueryTimeoutSourceDeadlinePassed
 		if passed(body.failedBegan) {
-			category, code, detail = "other", "OTHER", execution.DeliveryTimeoutRouteDetail
+			category, code, detail = observability.QueryFailureCategoryDelivery, observability.QueryFailureCodeDeliveryTimeout, execution.DeliveryTimeoutRouteDetail
+			source = observability.QueryTimeoutSourceDelivery
 		}
 	case broken:
+		// The deadline is still ahead: a timeout here is the read's own
+		// error reading as one (ClassifyTransportFailure), not the deadline.
 		class := execution.ClassifyTransportFailure(body.failed)
 		if class != execution.TransportFailureTimeout {
 			code = contract.ReasonQueryUnavailable
+		} else {
+			source = observability.QueryTimeoutSourceBodyReadClass
 		}
 		detail = execution.BodyRouteDetail(class)
 	case errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded):
-		category, code, detail = "other", "OTHER", execution.DeliveryTimeoutRouteDetail
+		category, code, detail = observability.QueryFailureCategoryDelivery, observability.QueryFailureCodeDeliveryTimeout, execution.DeliveryTimeoutRouteDetail
+		source = observability.QueryTimeoutSourceDelivery
 	default:
 		return err
 	}
@@ -372,8 +489,9 @@ func (client *Client) bodyFailure(callerCtx, ctx context.Context, attempt queryI
 	// What was not spent waiting - for the answer to begin, or inside a read
 	// of its body - was alarmd's own decoding and delivery.
 	local := failed.Sub(answered) - body.waited
-	return &bodyFailureError{err: err, category: category, code: code, detail: detail,
-		timing: attemptTiming(attempt.Budget, started, failed, local)}
+	return &bodyFailureError{err: err, category: category, code: code, detail: detail, timeoutSource: source, failedAt: failed,
+		timing: attemptTiming(attempt.Budget, started, failed, local),
+		volume: &observability.QueryVolume{BytesRead: body.bytes, SeriesDelivered: series}}
 }
 
 // attemptTiming splits a failed Slot query's budget where its window could
@@ -415,6 +533,21 @@ func (client *Client) unavailableCompletion(attempt queryIdentity, reason execut
 
 func providerResultRef(attempt queryIdentity) execution.ProviderResultRef {
 	return execution.ProviderResultRef(string(attempt.Spec.Digest) + ":" + strconv.FormatUint(uint64(attempt.AttemptNo), 10))
+}
+
+// countingSink counts the series a query's answer handed on before it ended,
+// so a query that failed partway says how much it had delivered.
+type countingSink struct {
+	sink   execution.ProviderSeriesSink
+	series uint64
+}
+
+func (counting *countingSink) ConsumeProviderSeries(ctx context.Context, batch execution.ProviderSeriesBatch) error {
+	err := counting.sink.ConsumeProviderSeries(ctx, batch)
+	if err == nil {
+		counting.series += batch.Delivery.Series
+	}
+	return err
 }
 
 type countingReader struct {
@@ -467,12 +600,15 @@ func (reader *countingReader) Read(buffer []byte) (int, error) {
 	return count, err
 }
 
-func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
+func buildRequestCarrying(spec execution.PhysicalQuerySpec, carryApp bool) (request, error) {
 	if err := spec.Validate(); err != nil {
 		return request{}, err
 	}
 	queries := make([]queryClause, 0, len(spec.PlanFacts.QueryList))
 	for _, source := range spec.PlanFacts.QueryList {
+		if carryApp {
+			source = withAPMApp(source)
+		}
 		functions, err := mapFunctions(source.Functions)
 		if err != nil {
 			return request{}, err
@@ -499,11 +635,21 @@ func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
 			KeepColumns: append([]string(nil), source.KeepColumns...), QueryString: source.QueryString,
 		})
 	}
-	return request{TSDBMap: spec.PlanFacts.TSDBMap, QueryList: queries, MetricMerge: spec.PlanFacts.MetricMerge,
+	body := request{TSDBMap: spec.PlanFacts.TSDBMap, QueryList: queries, MetricMerge: spec.PlanFacts.MetricMerge,
 		StartTime: strconv.FormatInt(spec.ProviderRange.Start, 10), EndTime: strconv.FormatInt(spec.ProviderRange.End, 10),
 		Step: durationString(spec.PlanFacts.StepMillis), SpaceUID: bodySpace(spec.PlanFacts),
 		DownSampleRange: string(spec.PlanFacts.DownSampleRange), Timezone: spec.PlanFacts.Timezone,
-		NotTimeAlign: spec.PlanFacts.NotTimeAlign}, nil
+		NotTimeAlign: spec.PlanFacts.NotTimeAlign}
+	if outputs := spec.PlanFacts.NamedOutputs; outputs != nil {
+		// metric_merge stays: the provider requires it, and compares the
+		// legacy output's expression to it.
+		body.ResponseContract, body.LegacyOutputRef = execution.NamedOutputsContract, outputs.LegacyRef
+		body.OutputList = make([]outputListEntry, 0, len(outputs.Outputs))
+		for _, output := range outputs.Outputs {
+			body.OutputList = append(body.OutputList, outputListEntry{ReferenceName: output.Ref, Expression: output.Expression})
+		}
+	}
+	return body, nil
 }
 
 func mapConditions(source execution.QueryConditions) (conditions, error) {
@@ -621,12 +767,17 @@ func durationString(milliseconds int64) string {
 }
 
 func (client *Client) decode(ctx context.Context, reader io.Reader, attempt execution.QueryAttempt, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
-	return client.decodeQuery(ctx, reader, queryIdentity{Spec: attempt.Spec, AttemptNo: attempt.AttemptNo}, sink, nil)
+	return client.decodeQuery(ctx, reader, queryIdentity{Spec: attempt.Spec, AttemptNo: attempt.AttemptNo,
+		NamedOutputs: namedOutputReserver(attempt.Spec, sink)}, sink, nil)
 }
 
 func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt queryIdentity, sink execution.ProviderSeriesSink, scanned *DiagnosticScan) (completion execution.ProviderCompletion, err error) {
 	session := client.newSeriesDecoder(attempt, sink, scanned)
+	// Last, once the completion is what it will be: the alignment keeps
+	// reserved only the table the completion carries.
+	defer func() { session.named.settle(completion, err) }()
 	defer session.limitCompletion(&completion, &err)
+	defer session.settle(ctx, &err)
 	decoder := json.NewDecoder(reader)
 	decoder.UseNumber()
 	opening, err := decoder.Token()
@@ -694,6 +845,24 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 			if err := decoder.Decode(&resultTableIDs); err != nil {
 				return completion, err
 			}
+		case "contract_version", "outputs":
+			if session.named == nil {
+				// Only a query that asked for named outputs reads them.
+				var ignored json.RawMessage
+				if err := decoder.Decode(&ignored); err != nil {
+					return completion, err
+				}
+				continue
+			}
+			if key == "outputs" {
+				if err := session.acceptOutputs(ctx, decoder); err != nil {
+					return completion, err
+				}
+				continue
+			}
+			if err := decoder.Decode(&session.named.contract); err != nil {
+				return completion, fmt.Errorf("alarmd access uq: decode contract version: %w", err)
+			}
 		default:
 			var ignored json.RawMessage
 			if err := decoder.Decode(&ignored); err != nil {
@@ -710,7 +879,10 @@ func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt
 		}
 		return completion, fmt.Errorf("alarmd access uq: unexpected trailing token %v", token)
 	}
-	return session.finish(status, isPartial, resultTableIDs)
+	if session.named != nil {
+		return session.finishNamed(ctx, status, isPartial, resultTableIDs)
+	}
+	return session.finish(ctx, status, isPartial, resultTableIDs)
 }
 
 // usableDespiteStatus reports whether a response carrying code should still be

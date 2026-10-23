@@ -17,6 +17,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 type warmingPeakFixture struct {
@@ -157,7 +159,7 @@ func TestWarmingPeakEmitsOutsideItsLock(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the hour's line deadlocked")
 	}
 	if len(fixture.lines) != 1 {
@@ -217,6 +219,30 @@ func TestWarmingPeakCountsAGroupOnceWhateverStrategyTheTraceNames(t *testing.T) 
 	groups := fixture.lines[0].WarmingPeak.PeakGroups
 	if len(groups) != 1 || groups[0] != (WarmingGroup{QueryGroup: "qg-two-plans", Writes: 60}) {
 		t.Fatalf("groups = %+v, want the one group with all 60 writes", groups)
+	}
+}
+
+// The hour's line is about the hour: it carries none of the trace of the
+// apply that happened to close it, whose Query Group and revisions a reader
+// would take for the hour's subject.
+func TestWarmingPeakLineCarriesNoTraceOfTheApplyThatClosedIt(t *testing.T) {
+	var output bytes.Buffer
+	hour := time.Date(2026, 10, 13, 3, 0, 0, 0, time.UTC)
+	fixture := newWarmingPeakFixture(hour)
+	fixture.peak.SetEmit(withheldObserver(t, &output))
+	fixture.apply(hour.Add(time.Second), "qg-warming", "11", 30, 0)
+	fixture.apply(hour.Add(time.Hour+time.Second), "qg-closer", "12", 0, 1)
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("%v; log=%q", err, output.String())
+	}
+	if event["stage"] != StageWarmingPeak {
+		t.Fatalf("line = %#v, want the hour's warming line", event)
+	}
+	for _, field := range []string{"query_group_key", "strategy_id"} {
+		if _, carried := event[field]; carried {
+			t.Fatalf("the hour's line carries %s=%v from the apply that closed it: %s", field, event[field], output.String())
+		}
 	}
 }
 

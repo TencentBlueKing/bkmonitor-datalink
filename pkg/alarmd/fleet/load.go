@@ -104,8 +104,11 @@ type LoadLoss struct {
 	// AfterCooldown is the recent records a cooldown held on an object that
 	// has since left the pool: with the restart's, a loss that names its
 	// mechanism and asks no capacity question. In progress all the same.
-	AfterCooldown       int `json:"after_cooldown"`
-	WhileDemotedRecent  int `json:"while_demoted_recent"`
+	AfterCooldown      int `json:"after_cooldown"`
+	WhileDemotedRecent int `json:"while_demoted_recent"`
+	// WindowSeconds is the floor of the recent window: each record is recent
+	// for three of its object's periods, and for at least this long
+	// (RecentWindow).
 	WindowSeconds       int `json:"window_seconds"`
 	RestartGraceSeconds int `json:"restart_grace_seconds"`
 }

@@ -52,7 +52,7 @@ func TestAJobsCloneOfASharedClientNamesItsCallerOnTheSamePool(t *testing.T) {
 	}
 	counts := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_redis_caller_operation_total" {
+		if family.GetName() != "alarmd_redis_caller_operation_total" {
 			continue
 		}
 		for _, series := range family.GetMetric() {
@@ -92,9 +92,9 @@ func callerCounts(t *testing.T, recorder *metric.Recorder) (map[string]float64, 
 				labels[label.GetName()] = label.GetValue()
 			}
 			switch family.GetName() {
-			case "bkmonitor_alarmd_redis_caller_operation_total":
+			case "alarmd_redis_caller_operation_total":
 				operations[labels["client"]+"/"+labels["caller"]] += series.GetCounter().GetValue()
-			case "bkmonitor_alarmd_redis_caller_failure_reason_total":
+			case "alarmd_redis_caller_failure_reason_total":
 				failures[labels["client"]+"/"+labels["caller"]+"/"+labels["reason"]] += series.GetCounter().GetValue()
 			}
 		}
@@ -145,7 +145,7 @@ func TestAJobsFailedCallIsCountedWithItsReason(t *testing.T) {
 	base.AddHook(recorder.RedisHook("runtime"))
 	t.Cleanup(func() { _ = base.Close() })
 	stateStore := redisForCaller(base, redisfailure.CallerRuntimeState)
-	spent, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	spent, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second)) // fixed-wait: a deadline already past is the input under test
 	defer cancel()
 	if err := stateStore.Get(spent, "a").Err(); err == nil {
 		t.Fatal("a call on a spent deadline succeeded")

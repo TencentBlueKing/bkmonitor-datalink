@@ -93,7 +93,7 @@ func rangeStrategies(targets execution.FrozenDuePlanTargets) []observability.Exp
 	return strategies
 }
 
-func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Context, request execution.SlotExecutionRequest, completion execution.SlotCompletion) (execution.SlotExecutionResult, error) {
+func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Context, request execution.SlotExecutionRequest, completion execution.SlotCompletion, attribution execution.CompletionAttribution) (execution.SlotExecutionResult, error) {
 	if completion.Kind != request.ExpiredRange.CompletionKind() || completion.ReasonCode != request.ExpiredRange.CompletionReason() || completion.Contract != request.Contract {
 		return execution.SlotExecutionResult{}, errors.New("alarmd worker: range completion differs from proof")
 	}
@@ -108,15 +108,30 @@ func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Cont
 	if result.Status != execution.ProgressCommitted {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: range %w", progressNotCommitted(result.Status))
 	}
+	completed := expiredRangeCompletedFor(request)
 	if !result.AlreadyCommitted {
 		if count, ok := ctx.Value(rangeCommittedCountKey{}).(*uint32); ok {
 			*count = request.ExpiredRange.Count
 		}
+		completed.QueryFreeCause = queryFreeCause(attribution.Cause)
+		completed.CompletionCause = attribution.SlotCause()
 	}
-	return expiredRangeCompletedFor(request), nil
+	return completed, nil
 }
 
 func expiredRangeCompletedFor(request execution.SlotExecutionRequest) execution.SlotExecutionResult {
 	return execution.SlotExecutionResult{Completed: true, CompletionKind: request.ExpiredRange.CompletionKind(),
 		Result: observability.ResultDegraded, ReasonCode: request.ExpiredRange.CompletionReason()}
+}
+
+// queryFreeCause is the cause a committed query-free finalization names for
+// its slot_skipped line. The line is written when it names one and the
+// completion counter counts the kind, so a finalization without a cause still
+// names one -- NONE, the cause word the progress observation uses for it --
+// and is never counted without its line.
+func queryFreeCause(cause execution.CompletionCause) execution.CompletionCause {
+	if cause == "" {
+		return execution.CompletionCause(observability.ProgressCompletionCauseNone)
+	}
+	return cause
 }

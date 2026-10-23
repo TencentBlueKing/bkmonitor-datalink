@@ -33,8 +33,14 @@ func TestAnItemIsRefusedUnderTheNameOfWhatIsWrongWithIt(t *testing.T) {
 		disposition                     controlplane.Disposition
 		reason, field                   string
 	}{
+		// The GSE system event source the platform retired for custom
+		// events: named retired, so it reads as the strategy to rewrite and
+		// not as a source a build will bring.
 		{name: "an event source, with no query_md5 as the writer publishes it", md5: ``, expression: `a`,
 			configs: `[{"data_source_label":"bk_monitor","data_type_label":"event","agg_interval":60}]`, algos: algorithms,
+			disposition: controlplane.DispositionUnsupported, reason: "QUERY_SOURCE_RETIRED", field: "items[0].query_configs[0]"},
+		{name: "a source not yet carried over", md5: ``, expression: `a`,
+			configs: `[{"data_source_label":"bk_apm","data_type_label":"log","agg_interval":60}]`, algos: algorithms,
 			disposition: controlplane.DispositionUnsupported, reason: "QUERY_SOURCE_NOT_MIGRATED", field: "items[0].query_configs[0]"},
 		{name: "an FTA source", md5: ``, expression: `a`,
 			configs: `[{"data_source_label":"bk_fta","data_type_label":"event","agg_interval":60}]`, algos: algorithms,

@@ -69,12 +69,16 @@ func targetScopeCloseFor(cfg config.Config, now func() time.Time) (*scopeclose.C
 // producer, its counts to the metric and its loop to the bundle. Nothing is
 // wired for a nil close.
 func bindTargetScopeClose(bundle *phaseTwoWorkerBundle, closer *scopeclose.Closer, cache *openalerts.Cache,
-	writer scopeclose.Writer, recorder *metric.Recorder) {
+	writer scopeclose.Writer, businesses *openalerts.AlertBusinesses, recorder *metric.Recorder) {
 	if closer == nil {
 		return
 	}
 	closer.Bind(scopeclose.CacheSet(cache), writer)
+	if businesses != nil {
+		closer.BindAlertBusiness(businesses.Of)
+	}
 	recorder.SetTargetScopeCloseSource(closer.Stats)
+	bundle.targetScopeClose = closer
 	bundle.dependencies.RunTargetScopeClose = targetScopeCloseLoop{bundle: bundle, closer: closer}.run
 }
 
@@ -89,8 +93,8 @@ func (sink scopeDropSink) Screen(plan execution.PlanIdentity) string {
 
 func (sink scopeDropSink) Observe(drop access.ScopeDrop) {
 	sink.closer.Observe(scopeclose.Drop{TenantID: drop.Plan.TenantID, BusinessID: drop.Plan.BusinessID,
-		StrategyID: drop.Plan.StrategyID, Fingerprint: drop.Fingerprint, StrategyRevision: drop.StrategyRevision,
-		Round: drop.Round, IntervalSeconds: drop.IntervalSeconds, ReadOffset: drop.ReadOffset})
+		StrategyID: drop.Plan.StrategyID, Fingerprint: drop.Fingerprint, StrategyRevision: drop.StrategyRevision, GlobalBusiness: drop.GlobalBusiness,
+		Round: drop.Round, IntervalSeconds: drop.IntervalSeconds, ReadOffset: drop.ReadOffset, CloseReason: drop.CloseReason})
 }
 
 func (sink scopeDropSink) Count(reporter access.ScopeDropReporter, word string, n int) {

@@ -50,7 +50,7 @@ func TestTheLastAndFirstCutoverAreReadExactly(t *testing.T) {
 	}
 	// The 12 second cutover sits between the 10 and 20 second buckets.
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_schedule_cutover_duration_seconds" {
+		if family.GetName() != "alarmd_schedule_cutover_duration_seconds" {
 			continue
 		}
 		for _, metric := range family.GetMetric() {

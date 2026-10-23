@@ -160,14 +160,14 @@ func TestAnAbsenceAlreadyStoppedIsReportedAsSuppressedNotExpired(t *testing.T) {
 		return "bk_target_cloud_id=0,bk_target_ip=" + ip + "," + contract.NoDataDimensionTag + "=true"
 	}
 	// A history roster forgets an expired group, so a stopped absence a round
-	// can meet again is the mark a target roster leaves; the fixture store
-	// declares HISTORY, under which a still-remembered SuppressedAt on a
-	// group is met in the roster loop and counted as suppressed.
+	// can meet again under HISTORY is a manual close (decision-024) still
+	// inside the horizon: met in the roster loop and counted as suppressed.
+	// Past the horizon the roster forgets it like any other absence.
 	groups := []execution.NoDataGroupMemory{
-		{GroupKey: key("192.0.2.1"), LastSeen: evaluation - horizon*4, FirstAbsent: evaluation - horizon*3,
-			SuppressedAt: evaluation - horizon*2},
-		{GroupKey: key("192.0.2.2"), LastSeen: evaluation - horizon*4, FirstAbsent: evaluation - horizon*3,
-			SuppressedAt: evaluation - horizon*2},
+		{GroupKey: key("192.0.2.1"), LastSeen: evaluation - horizon*4, FirstAbsent: evaluation - horizon/2,
+			SuppressedAt: evaluation - horizon/4},
+		{GroupKey: key("192.0.2.2"), LastSeen: evaluation - horizon*4, FirstAbsent: evaluation - horizon/2,
+			SuppressedAt: evaluation - horizon/4},
 		{GroupKey: key("192.0.2.3"), LastSeen: evaluation - horizon*4, FirstAbsent: evaluation - horizon/2},
 	}
 	round, lines, _ := absenceLinesOf(t, horizon, groups, evaluation-horizon*4)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
@@ -128,9 +129,9 @@ func TestAnExecutionHungPastItsOwnDeadlineIsDeclinedUntilItReturns(t *testing.T)
 	hung.stillHeld(t, "inside the grace")
 	// Past it: declined.
 	hung.bundle.declineHungExecutions(deadline.Add(executionPastDeadlineGrace + time.Second))
-	bound := time.Now().Add(signalWaitBound)
+	bound := testwait.Deadline(t)
 	for hung.runner.released.Load() == 0 && time.Now().Before(bound) {
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if released := hung.runner.released.Load(); released != 1 {
 		t.Fatalf("release calls = %d, want the lease released once without waiting on the hung Slot", released)
@@ -139,7 +140,7 @@ func TestAnExecutionHungPastItsOwnDeadlineIsDeclinedUntilItReturns(t *testing.T)
 		t.Fatal("the declined Query Group is still a current runner")
 	}
 	for time.Now().Before(bound) && len(lastDeclined(hung.owner)) == 0 {
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if declined := lastDeclined(hung.owner); len(declined) != 1 || declined[0] != (ownership.DeclinedQueryGroup{
 		QueryGroup: string(hung.queryGroup), Stage: execution.SlotStageQuery,

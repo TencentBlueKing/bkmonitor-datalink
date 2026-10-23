@@ -298,6 +298,33 @@ func (reconciler *SourceReconciler) publishedIndex() *strategyIndex {
 	return reconciler.strategies.index
 }
 
+// CapabilityRefused is, by strategy id, every strategy the publication this
+// process last made refused for a capability this build lacks
+// (DispositionUnsupported) and runs no Plan of, with that refusal's reason.
+// Only that disposition: one that resolves on its own - a source object not
+// yet whole (SOURCE_INCOMPLETE), a stale configuration - is not a strategy
+// alarmd stopped detecting. Nil when this process holds no publication of
+// its own, which is not a publication that refused nothing.
+func (reconciler *SourceReconciler) CapabilityRefused() map[string]string {
+	index := reconciler.publishedIndex()
+	if index == nil {
+		return nil
+	}
+	refused := make(map[string]string)
+	for sourceID, dispositions := range index.dispositions {
+		if len(index.plans[sourceID]) > 0 {
+			continue
+		}
+		for _, disposition := range dispositions {
+			if disposition.Disposition == DispositionUnsupported {
+				refused[sourceID] = disposition.Reason
+				break
+			}
+		}
+	}
+	return refused
+}
+
 // StepDown forgets the index: called on every tick this process runs as a
 // follower, so a Leader that lost its lease stops answering from the
 // publication it made in its term. Without it a former Leader kept
@@ -325,7 +352,8 @@ func (reconciler *SourceReconciler) StepDown() {
 // ForgetTerm is StepDown plus everything else this process kept only to
 // lead: the last observation of the source and the documents it holds, the
 // reusable round's Catalog, the last-good publication, and the compiled
-// candidates. A follower never refreshes, so without it a former Leader
+// candidates; and, once after a term, the compile cache and the decoded
+// catalog objects it shares with the Worker path. A follower never refreshes, so without it a former Leader
 // carried all of that for as long as it stayed a follower -- the Leader's
 // whole working set, on a replica that no longer uses any of it.
 //
@@ -350,4 +378,16 @@ func (reconciler *SourceReconciler) ForgetTerm() {
 	reconciler.memory.Store(nil)
 	reconciler.lastGood = nil
 	reconciler.candidates.forget()
+	// The two caches the control rounds share with the Worker path hold
+	// what the term filled for every Query Group, beyond the Worker's own.
+	// Dropped once, on the first follower tick after a term: this runs on
+	// every one, and a Worker that never led refills them only for itself.
+	if !reconciler.refreshed {
+		return
+	}
+	reconciler.refreshed = false
+	if forgetting, ok := reconciler.compiler.(interface{ ForgetCached() }); ok {
+		forgetting.ForgetCached()
+	}
+	reconciler.repository.ForgetCachedObjects()
 }

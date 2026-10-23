@@ -25,6 +25,7 @@ type controlFactsMetrics struct {
 	applied     *prometheus.CounterVec
 	invalid     *prometheus.CounterVec
 	transitions *prometheus.CounterVec
+	resets      *prometheus.CounterVec
 }
 
 // controlFactNames is the closed set of control-plane facts a replica reads
@@ -75,16 +76,32 @@ var controlLeaderTransitions = [][2]string{
 	{"preferred", "acquire_free"}, {"fallback", "fallback_takeover"}, {"preferred", "handback"}, {"none", "release"},
 }
 
+// ControlHandbackWatchResetReasons are why a fallback Leader's handback watch
+// started over, so the handback it was counting towards comes a window
+// later:
+//
+//	list_failed  the round could not read the preferred candidates, and a
+//	             watch never decides on a reading it did not make.
+//	gap          more than two reconcile rounds passed without a reading
+//	             while a candidate's window was being counted.
+var ControlHandbackWatchResetReasons = []string{ControlHandbackWatchResetListFailed, ControlHandbackWatchResetGap}
+
+// The handback watch reset reasons, by name for the callers.
+const (
+	ControlHandbackWatchResetListFailed = "list_failed"
+	ControlHandbackWatchResetGap        = "gap"
+)
+
 func newControlFactsMetrics() controlFactsMetrics {
 	metrics := controlFactsMetrics{
 		read: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_facts_read_total",
+			Subsystem: metricSubsystem, Name: "control_facts_read_total",
 			Help: "Control-plane facts this replica read successfully, by fact. It exists to be read " +
 				"beside control_facts_unavailable_total: that one is zero on a healthy deployment, and " +
 				"a zero there means nothing only while this one is growing.",
 		}, []string{"fact"}),
 		unavailable: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_facts_unavailable_total",
+			Subsystem: metricSubsystem, Name: "control_facts_unavailable_total",
 			Help: "Control-plane reads that came back without the fact, by fact and by which answer the " +
 				"store gave. reason=missing is the record not being there, which somebody has to write " +
 				"back; reason=read_failed is the store not answering, which retrying fixes. Neither ends " +
@@ -93,7 +110,7 @@ func newControlFactsMetrics() controlFactsMetrics {
 				"is a replica that never joined.",
 		}, []string{"fact", "reason"}),
 		rebuilt: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_facts_rebuilt_total",
+			Subsystem: metricSubsystem, Name: "control_facts_rebuilt_total",
 			Help: "Control-plane facts the Control Leader wrote back because the store had none, by fact. " +
 				"fact=activation is the activation established again from the published Catalog after " +
 				"the record was found missing; one increment per lost record is what a recovered store " +
@@ -101,20 +118,20 @@ func newControlFactsMetrics() controlFactsMetrics {
 				"rising is a Leader that cannot rebuild it.",
 		}, []string{"fact"}),
 		applied: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_health_facts_total",
+			Subsystem: metricSubsystem, Name: "control_health_facts_total",
 			Help: "Control refresh results this replica applied, by the health fact each carried. " +
 				"status=invalid is a defect in this program rather than a deployment condition: the " +
 				"refresh returned something the replica cannot act on, and it keeps the previous fact " +
 				"and carries on instead of exiting.",
 		}, []string{"status"}),
 		invalid: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_health_invalid_total",
+			Subsystem: metricSubsystem, Name: "control_health_invalid_total",
 			Help: "Invalid control health facts by the field that was wrong. Read beside " +
 				"control_health_facts_total, which grows on every round; this one is zero on a correct " +
 				"program, and naming the field is what makes it actionable rather than a thing to watch.",
 		}, []string{"field"}),
 		transitions: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_leader_transitions_total",
+			Subsystem: metricSubsystem, Name: "control_leader_transitions_total",
 			Help: "Control Leader lease moves this process made, by the class the lease moved to (preferred, " +
 				"fallback, or none for a release nobody was named to take) and why: acquire_free (a preferred " +
 				"candidate took a free lease), fallback_takeover (a Worker without the control role took it because " +
@@ -124,9 +141,21 @@ func newControlFactsMetrics() controlFactsMetrics {
 				"whose control process has not come back; handback rising faster than fallback_takeover cannot " +
 				"happen, and the two rising together every few minutes is a control process that keeps dying.",
 		}, []string{"to_class", "reason"}),
+		resets: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Subsystem: metricSubsystem, Name: "control_handback_watch_resets_total",
+			Help: "Times a fallback Leader's handback watch started over, by why: list_failed (the round could " +
+				"not read the preferred candidates) or gap (more than two reconcile rounds went without a " +
+				"reading while a candidate's window was being counted). Each one puts the handback a whole " +
+				"candidacy window later; the fallback keeps leading meanwhile, so this is the answer to \"why " +
+				"has the lease not been given back\" beside control_leader_transitions_total{reason=\"handback\"}, " +
+				"and the line control_handback_watch beside it carries the error or the gap.",
+		}, []string{"reason"}),
 	}
 	for _, transition := range controlLeaderTransitions {
 		metrics.transitions.WithLabelValues(transition[0], transition[1])
+	}
+	for _, reason := range ControlHandbackWatchResetReasons {
+		metrics.resets.WithLabelValues(reason)
 	}
 	for _, fact := range controlFactNames {
 		metrics.read.WithLabelValues(fact)
@@ -145,7 +174,7 @@ func newControlFactsMetrics() controlFactsMetrics {
 }
 
 func (m controlFactsMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.read, m.unavailable, m.rebuilt, m.applied, m.invalid, m.transitions}
+	return []prometheus.Collector{m.read, m.unavailable, m.rebuilt, m.applied, m.invalid, m.transitions, m.resets}
 }
 
 // RecordControlFactRebuilt counts one control-plane fact the Control Leader
@@ -206,6 +235,15 @@ func (r *Recorder) RecordControlLeaderTransition(toClass, reason string) {
 			return
 		}
 	}
+}
+
+// RecordControlHandbackWatchReset counts one start-over of this process's
+// handback watch.
+func (r *Recorder) RecordControlHandbackWatchReset(reason string) {
+	if r == nil || !knownLabel(ControlHandbackWatchResetReasons, reason) {
+		return
+	}
+	r.phaseTwo.controlFacts.resets.WithLabelValues(reason).Inc()
 }
 
 func knownLabel(known []string, value string) bool {

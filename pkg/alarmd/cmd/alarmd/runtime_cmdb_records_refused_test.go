@@ -26,7 +26,7 @@ func refusedRecordCells(t *testing.T, recorder *metric.Recorder) map[string]floa
 	}
 	cells := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_cmdb_index_records_refused" {
+		if family.GetName() != "alarmd_cmdb_index_records_refused" {
 			continue
 		}
 		for _, sample := range family.GetMetric() {

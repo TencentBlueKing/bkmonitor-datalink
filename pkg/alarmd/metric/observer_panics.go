@@ -24,7 +24,7 @@ type observerPanicsCollector struct {
 }
 
 func newObserverPanicsCollector() *observerPanicsCollector {
-	return &observerPanicsCollector{panics: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "observer_panics_total"),
+	return &observerPanicsCollector{panics: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "observer_panics_total"),
 		"Panics an observer raised and the fan-out recovered, by observer; every other observer still received the "+
 			"observation. entry is a panic before any member. Any count is a defect. Reader: the release "+
 			"acceptance, at +5 and +15 minutes after each deploy (its observer_panics column).",

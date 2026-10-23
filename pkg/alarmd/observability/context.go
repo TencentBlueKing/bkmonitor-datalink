@@ -5,7 +5,11 @@
 
 package observability
 
-import "context"
+import (
+	"context"
+	"sync"
+	"time"
+)
 
 type traceFieldsContextKey struct{}
 
@@ -49,6 +53,139 @@ func HeldByFromContext(ctx context.Context) *HeldByFacts {
 		return &HeldByFacts{Decision: HeldByNothing}
 	}
 	return &facts
+}
+
+type divertDecisionContextKey struct{}
+
+// ContextWithDivertDecision carries the decision that let a Slot run as a
+// normal round: the scheduler's Runner sets it before the executor is
+// called, and the executor's completion line names it when the round ends
+// timed out. Through the context for the reason HeldBy is.
+func ContextWithDivertDecision(ctx context.Context, facts DivertDecisionFacts) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, divertDecisionContextKey{}, facts)
+}
+
+// DivertDecisionFromContext is the decision that let this Slot run as a
+// normal round, or nil when the Slot was not judged (a replay, a probe, or
+// a source without recovery limits).
+func DivertDecisionFromContext(ctx context.Context) *DivertDecisionFacts {
+	if ctx == nil {
+		return nil
+	}
+	facts, ok := ctx.Value(divertDecisionContextKey{}).(DivertDecisionFacts)
+	if !ok {
+		return nil
+	}
+	return &facts
+}
+
+// DivertDecisionWithBudget is the decision on ctx as a lost round's line
+// gives it: a round not judged by the divert (bound source none) has its
+// remaining time measured against the deadline its read ran under, from the
+// round's budget; any other decision is as it was judged.
+func DivertDecisionWithBudget(ctx context.Context, budget *BudgetCapture) *DivertDecisionFacts {
+	decision := DivertDecisionFromContext(ctx)
+	if decision != nil && decision.BoundSource == DivertBoundNone {
+		if facts := budget.Facts(); facts != nil && facts.QueryDeadlineUnixMilli > 0 {
+			decision.RemainingMillis = facts.QueryDeadlineUnixMilli - decision.ClassifiedAtUnixMilli
+		}
+	}
+	return decision
+}
+
+type budgetCaptureContextKey struct{}
+
+// BudgetCapture keeps the query budget of the round's binding consumer, as
+// access resolved it, for the round's completion line. The executor puts one
+// on the context of each attempt; access records into it; the completion
+// line of a round that ends degraded renders it, so a lost round carries its
+// own budget without a line on every round that succeeds.
+type BudgetCapture struct {
+	mu        sync.Mutex
+	facts     *QueryBudgetFacts
+	startedAt int64
+	// failedRequest and failedPlanned are RecordFailedQuery's.
+	failedRequest *QueryRequestFacts
+	failedPlanned *QueryPlannedFacts
+}
+
+// Record keeps facts when they bind the round tighter than what is kept: the
+// earliest query deadline the read is cut at.
+func (capture *BudgetCapture) Record(facts QueryBudgetFacts) {
+	if capture == nil {
+		return
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.facts == nil || facts.QueryDeadlineUnixMilli < capture.facts.QueryDeadlineUnixMilli {
+		facts.QueryStartedAtUnixMilli = max(facts.QueryStartedAtUnixMilli, capture.startedAt)
+		capture.facts = &facts
+	}
+}
+
+// RecordFailedQuery keeps the round's first failed physical query's request
+// facts and plan.
+func (capture *BudgetCapture) RecordFailedQuery(request *QueryRequestFacts, planned *QueryPlannedFacts) {
+	if capture == nil || (request == nil && planned == nil) {
+		return
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.failedRequest != nil || capture.failedPlanned != nil {
+		return
+	}
+	capture.failedRequest, capture.failedPlanned = request, planned
+}
+
+// MarkStarted keeps when a query of the round was sent, the latest of them.
+func (capture *BudgetCapture) MarkStarted(at time.Time) {
+	if capture == nil {
+		return
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if at.UnixMilli() > capture.startedAt {
+		capture.startedAt = at.UnixMilli()
+	}
+	if capture.facts != nil {
+		capture.facts.QueryStartedAtUnixMilli = capture.startedAt
+	}
+}
+
+// Facts is the binding consumer's budget recorded so far, or nil.
+func (capture *BudgetCapture) Facts() *QueryBudgetFacts {
+	if capture == nil {
+		return nil
+	}
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	if capture.facts == nil {
+		return nil
+	}
+	facts := *capture.facts
+	facts.FailedRequest, facts.FailedPlanned = capture.failedRequest, capture.failedPlanned
+	return &facts
+}
+
+// ContextWithBudgetCapture carries a fresh BudgetCapture for one attempt.
+func ContextWithBudgetCapture(ctx context.Context) (context.Context, *BudgetCapture) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	capture := &BudgetCapture{}
+	return context.WithValue(ctx, budgetCaptureContextKey{}, capture), capture
+}
+
+// BudgetCaptureFromContext is the attempt's BudgetCapture, or nil.
+func BudgetCaptureFromContext(ctx context.Context) *BudgetCapture {
+	if ctx == nil {
+		return nil
+	}
+	capture, _ := ctx.Value(budgetCaptureContextKey{}).(*BudgetCapture)
+	return capture
 }
 
 func ContextWithTraceFields(ctx context.Context, fields TraceFields) context.Context {

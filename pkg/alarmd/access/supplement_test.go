@@ -11,6 +11,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -24,6 +25,12 @@ type providerKeptRead struct {
 	slot     execution.SlotIdentity
 	replays  int
 	mutate   func(*execution.ProviderCompletion)
+	// keepsNone is a read of some other query than the Slot's.
+	keepsNone bool
+}
+
+func (read *providerKeptRead) Keeps(execution.PhysicalQueryDigest) bool {
+	return !read.keepsNone
 }
 
 func (read *providerKeptRead) Replay(ctx context.Context, spec execution.PhysicalQuerySpec, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
@@ -91,6 +98,29 @@ func TestASupplementReplaysItsKeptReadWithoutWaitingOrQuerying(t *testing.T) {
 	}
 	if len(permits.attempts) != 0 || len(provider.attempts) != 0 {
 		t.Fatalf("a supplement took permits %+v or queried %+v", permits.attempts, provider.attempts)
+	}
+}
+
+// A kept read that does not hold the Slot's query is found before anything
+// is handed to the worker or replayed: the supplement begins nothing and
+// says so by name, not as a query that failed halfway.
+func TestASupplementWhoseKeptReadLacksTheSlotsQueryBeginsNothing(t *testing.T) {
+	contractRef, frozen := frozenExecution(t)
+	source, permits, provider := supplementSource(t, frozen, Config{})
+	kept := &providerKeptRead{provider: &hostStreamingProvider{hosts: []string{"192.0.2.10"}}, slot: contractRef.Slot, keepsNone: true}
+	consumer := &recordingConsumer{}
+	_, err := source.Execute(WithKeptRead(context.Background(), kept), execution.QueryExecutionRequest{
+		Contract: contractRef, Operation: execution.OperationSupplement, AttemptNo: 1,
+	}, consumer)
+	if !errors.Is(err, execution.ErrSupplementKeptReadAbsent) {
+		t.Fatalf("err = %v, want ErrSupplementKeptReadAbsent", err)
+	}
+	if consumer.begin != 0 || len(consumer.batches) != 0 || kept.replays != 0 {
+		t.Fatalf("begin %d batches %d replays %d: the supplement started before finding the query absent",
+			consumer.begin, len(consumer.batches), kept.replays)
+	}
+	if len(permits.attempts) != 0 || len(provider.attempts) != 0 {
+		t.Fatalf("took permits %+v or queried %+v", permits.attempts, provider.attempts)
 	}
 }
 

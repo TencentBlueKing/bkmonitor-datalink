@@ -185,6 +185,11 @@ type AbsentCandidateRow struct {
 	// AbsentSince is when the loop first found the candidate missing; empty
 	// for a candidate the memory did not hold and for an unreadable row.
 	AbsentSince string `json:"absent_since,omitempty"`
+	// RefusedFor is the capability the strategy's publication refused it
+	// for: the source lists it, alarmd no longer detects it, and its close
+	// says so (strategy_unsupported). Empty for a strategy absent from the
+	// source.
+	RefusedFor string `json:"refused_for,omitempty"`
 	// Execution is the latest close of the strategy in this term; absent
 	// for one never decided to close.
 	Execution *AbsentExecutionFacts `json:"execution,omitempty"`
@@ -301,8 +306,12 @@ func WithAbsentCandidates(next http.Handler, source func() AbsentCandidateSource
 				if forwarded {
 					return
 				}
-				writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "LEADER_UNAVAILABLE", "reason": reason})
-				return
+				// No reason: the Leader is this replica, not yet leading
+				// its own round; it says so below.
+				if reason != "" {
+					writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "LEADER_UNAVAILABLE", "reason": reason})
+					return
+				}
 			}
 			writeJSON(response, http.StatusServiceUnavailable, map[string]string{"error": "NOT_LEADER", "replica": replica})
 			return

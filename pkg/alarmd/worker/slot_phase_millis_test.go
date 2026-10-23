@@ -40,7 +40,7 @@ func (consumer slowConsumer) Begin(ctx context.Context, header execution.Interna
 	if err := consumer.QueryExecutionConsumer.Begin(ctx, header); err != nil {
 		return err
 	}
-	time.Sleep(consumer.wait)
+	time.Sleep(consumer.wait) // fixed-wait: the stub query's wait before its first record, which the case sets
 	return nil
 }
 
@@ -52,12 +52,12 @@ func (ports *slowPorts) Execute(ctx context.Context, request execution.QueryExec
 }
 
 func (ports *slowPorts) LoadRuntime(ctx context.Context, request execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
-	time.Sleep(ports.preflight)
+	time.Sleep(ports.preflight) // fixed-wait: the stub preflight's delay, which the case sets
 	return ports.recordingPorts.LoadRuntime(ctx, request)
 }
 
 func (ports *slowPorts) Evaluate(ctx context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
-	time.Sleep(ports.evaluate)
+	time.Sleep(ports.evaluate) // fixed-wait: the stub evaluation's delay, which the case sets
 	return ports.recordingPorts.Evaluate(ctx, request)
 }
 

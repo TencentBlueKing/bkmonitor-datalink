@@ -30,6 +30,14 @@
 // before is not judged: a strategy leaves the list when it is gone, and a
 // writer that drops strategies on error is the writer's to fix.
 //
+// A strategy the cache lists and alarmd's publication refused stands with
+// the absent ones when the refusal is for a capability this build lacks and
+// no configuration change brings back (fleet.ClosesAsUnsupported): alarmd
+// will not run it, so its unrecovered alerts have nothing to recover them
+// either, and its close says it is no longer detected rather than gone
+// (Round.Refused). A refusal a configuration change or a later read can
+// undo is not a candidate: the strategy comes back on its own.
+//
 // The roster can only err by missing a strategy or listing one twice, which
 // costs a close and never makes one; and a close the link receives for an
 // alert that is no longer active is a no-op on its side. The link's own
@@ -57,6 +65,10 @@ type Key struct {
 type Identity struct {
 	BusinessID int64
 	Revision   int64
+	// GlobalBusiness is a strategy whose alerts are each filed under the
+	// business they are about: BusinessID is the strategy's own, and each
+	// close carries its alert's business instead.
+	GlobalBusiness bool
 }
 
 // Absence is this loop's own memory of a candidate: when it first found the
@@ -88,6 +100,13 @@ type Round struct {
 	// one failed if it did.
 	LinkLastSuccess time.Time
 	LinkError       string
+	// Refused is, by strategy id, every strategy the source lists that alarmd
+	// does not run because its publication refused it for a capability this
+	// build lacks, with that refusal's reason. Its unrecovered alerts have
+	// nothing left to judge them either, so it is a candidate as an absent
+	// strategy is, under the same grace and the same two observations, and
+	// its close says it is no longer detected rather than gone.
+	Refused map[string]string
 	// SnapshotStrategies is every strategy the source says exists right now.
 	// SnapshotUsable says it was observed rather than assumed, and
 	// SnapshotObservation identifies which observation it is.
@@ -122,6 +141,9 @@ type Decision struct {
 	Key         Key
 	Outcome     string
 	AbsentSince time.Time
+	// Refused is the capability the strategy was refused for, empty for a
+	// strategy absent from the snapshot.
+	Refused string
 }
 
 // Absent is one strategy the round decided to close.
@@ -132,6 +154,10 @@ type Absent struct {
 	Identity Identity
 	// AbsentSince is when this loop first found the strategy missing.
 	AbsentSince time.Time
+	// Refused is the capability the strategy was refused for (Round.Refused):
+	// its close says alarmd no longer detects it. Empty for a strategy absent
+	// from the snapshot.
+	Refused string
 }
 
 // The refusals of a whole round. Each names the fact that was not good
@@ -204,6 +230,10 @@ const (
 	// OutcomeRevisionUnknown: the business is known and the snapshot
 	// revision is not. The close contract requires one. Per strategy.
 	OutcomeRevisionUnknown = "revision_unknown"
+	// OutcomeBusinessUnknown: the strategy files each alert under the
+	// business it is about, and this alert's record could not be read or
+	// names none. That alert is not closed this round. Per alert.
+	OutcomeBusinessUnknown = "business_unknown"
 	// OutcomeEvidenceUnavailable: the strategy's alerts could not be read
 	// from the link, so there is nothing to address a close to. Per
 	// strategy.
@@ -236,7 +266,7 @@ const (
 
 // Outcomes is the closed list, for the metric that reports every cell.
 var Outcomes = []string{OutcomeCloseDecided, OutcomeWithinGrace, OutcomeUnconfirmed,
-	OutcomeDeferred, OutcomeIndexUnreadable, OutcomeIdentityUnknown, OutcomeRevisionUnknown,
+	OutcomeDeferred, OutcomeIndexUnreadable, OutcomeIdentityUnknown, OutcomeRevisionUnknown, OutcomeBusinessUnknown,
 	OutcomeEvidenceUnavailable, OutcomeCloseSent, OutcomeSendFailed,
 	OutcomeNotLeader, OutcomeMemoryFull, OutcomeProducerForeign, OutcomeProducerUnknown}
 
@@ -322,7 +352,8 @@ func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	existing := strategyIDs(round.SnapshotStrategies)
 	candidates := make([]Key, 0)
 	for key := range round.Roster {
-		if _, present := existing[key.StrategyID]; present {
+		_, present := existing[key.StrategyID]
+		if _, refused := round.Refused[key.StrategyID]; present && !refused {
 			continue
 		}
 		candidates = append(candidates, key)
@@ -349,12 +380,21 @@ func Compute(round Round, bounds Bounds) Result {
 		return Result{Counts: counts, Refusal: refusal}
 	}
 	result := Result{Counts: counts, Refusal: RefusalNone, Decisions: make([]Decision, len(candidates))}
+	var listed map[string]struct{}
+	if len(round.Refused) > 0 {
+		listed = strategyIDs(round.SnapshotStrategies)
+	}
 	start := rotation(candidates, round.After)
 	for step := range candidates {
 		at := (start + step) % len(candidates)
 		key := candidates[at]
 		absence, tracked := round.FirstAbsent[key]
 		decision := Decision{Key: key}
+		if _, present := listed[key.StrategyID]; present {
+			// A refused strategy the snapshot no longer lists is gone, and
+			// closes as gone.
+			decision.Refused = round.Refused[key.StrategyID]
+		}
 		if tracked {
 			decision.AbsentSince = absence.Since
 		}
@@ -370,7 +410,8 @@ func Compute(round Round, bounds Bounds) Result {
 			result.Counts.Deferred++
 		default:
 			decision.Outcome = OutcomeCloseDecided
-			result.Close = append(result.Close, Absent{Key: key, Identity: round.Identities[key], AbsentSince: absence.Since})
+			result.Close = append(result.Close, Absent{Key: key, Identity: round.Identities[key], AbsentSince: absence.Since,
+				Refused: decision.Refused})
 			result.Counts.CloseDecided++
 		}
 		result.Decisions[at] = decision

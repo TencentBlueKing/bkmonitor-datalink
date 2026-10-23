@@ -75,7 +75,34 @@ message LeaderMessage {
     Heartbeat heartbeat = 3;
     ObjectResult object_result = 4;
     Refusal refusal = 5;
+    LookbackPlans lookback_plans = 6;
   }
+}
+
+// LookbackPlans is the whole set of lookback plan entries the Leader holds
+// for this Worker, sent when the stream opens and again whenever the set
+// changes. It is not part of the view: it has no version, the view digest
+// does not cover it, and no receipt answers it, so a change of plan never
+// mints a view version or touches the view gate. A Worker that does not know
+// this message ignores it, and one that loses the stream keeps each entry
+// only until its expires_at_ms; an entry absent or expired means the
+// Worker's own default, which is what it did before plans existed.
+message LookbackPlans {
+  uint64 control_epoch = 1;
+  repeated LookbackPlanEntry entries = 2;
+}
+
+// LookbackPlanEntry is one Query Group the control plane has seen read late
+// series for: class names what was seen, series_late the only one so far,
+// and rung the recheck rung its late series were last seen at. A Worker with
+// no evidence of its own about the Query Group starts its directed rechecks
+// at that rung; one with its own evidence keeps it.
+message LookbackPlanEntry {
+  string query_group = 1;
+  string class = 2;
+  uint32 rung = 3;
+  uint32 priority = 4;
+  int64 expires_at_ms = 5;
 }
 
 // Hello opens the stream. The Leader admits the Worker when worker_id names

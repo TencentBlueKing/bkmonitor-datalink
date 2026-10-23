@@ -245,6 +245,10 @@ type SourceReconciler struct {
 	// steppedDown says one happened since the last round, which drops it.
 	reusable    *reusableRound
 	steppedDown atomic.Bool
+	// refreshed says a round ran since the last ForgetTerm, which then drops
+	// the shared caches the term filled once, not on every follower tick.
+	// Round-owned, like reusable.
+	refreshed bool
 	// lastGood is the content of the latest publication this process knows,
 	// kept in memory from the catalog it published or assembled once from
 	// the object catalog after a restart; the whole snapshot body is no
@@ -402,6 +406,7 @@ func (reconciler *SourceReconciler) Refresh(
 		source == nil || planner == nil {
 		return SourceRefreshResult{}, errors.New("alarmd controlplane: incomplete source refresh request")
 	}
+	reconciler.refreshed = true
 	if reconciler.steppedDown.Swap(false) {
 		reconciler.reusable = nil
 	}

@@ -33,7 +33,7 @@ type retainedReservationCollector struct {
 func newRetainedReservationCollector(source RetainedReservationSource) *retainedReservationCollector {
 	return &retainedReservationCollector{
 		source: source,
-		reserved: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "capacity_reserved"),
+		reserved: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "capacity_reserved"),
 			"What the shared pool has handed out at the moment of the scrape, labelled the way "+
 				"capacity_budget labels its ceiling, so capacity_reserved / capacity_budget is the pool's "+
 				"usage. Only retained_bytes is reported. An instant, not an average: a scrape between two "+

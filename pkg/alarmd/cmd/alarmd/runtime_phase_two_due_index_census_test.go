@@ -193,6 +193,15 @@ func TestFleetPublisherCarriesTheCensusAndWakeFacts(t *testing.T) {
 	if snapshot.Schedule.Overdue != 1 || snapshot.Schedule.Never != 2 {
 		t.Errorf("census = %+v, want one overdue (a, 100 s past a 60 s period) and two never (b, c)", *snapshot.Schedule)
 	}
+	// The same census names its objects: the overdue one and the two never
+	// evaluated, from the one pass, so the lists match the counts above.
+	if snapshot.Due == nil {
+		t.Fatal("the snapshot carried a census but no named due classes")
+	}
+	if !reflect.DeepEqual(snapshot.Due.Overdue, []string{"query-group-a"}) || len(snapshot.Due.Late) != 0 ||
+		!reflect.DeepEqual(snapshot.Due.Never, []string{"query-group-b", "query-group-c"}) {
+		t.Errorf("due classes = %+v, want overdue a and never b, c", *snapshot.Due)
+	}
 	wakes := map[string]*fleet.WakeFacts{}
 	for _, anomaly := range snapshot.Anomalies {
 		wakes[anomaly.QueryGroup] = anomaly.Wake
@@ -210,6 +219,9 @@ func TestFleetPublisherCarriesTheCensusAndWakeFacts(t *testing.T) {
 	plain := bare.snapshot(context.Background())
 	if plain.Schedule != nil {
 		t.Error("a publisher with no schedule source published a census")
+	}
+	if plain.Due != nil {
+		t.Error("a publisher with no schedule source published due classes")
 	}
 	for _, anomaly := range plain.Anomalies {
 		if anomaly.Wake != nil {
@@ -583,5 +595,57 @@ func TestTheDueIndexBoundDecidesWhetherAnObjectIsAwaitingItsFirstRound(t *testin
 	}
 	if wake := index.WakeOf("cancelled"); !wake.Known || wake.DueAt.After(clock.at) {
 		t.Fatalf("fixture: a cancelled round's wake %+v should be clamped to now", wake)
+	}
+}
+
+// The census each publish takes is the series the trends chart late objects
+// from: alarmd_schedule_objects carries the snapshot's own late and overdue
+// counts, read back from /metrics, so the chart and the board's count are one
+// census.
+func TestFleetPublisherPublishesTheCensusAsTheLateObjectsSeries(t *testing.T) {
+	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	dispatcher := dueIndexDispatcher(clock, recorder, 8, 8,
+		map[execution.QueryGroupIdentity]walkRunner{"query-group-a": {}, "query-group-b": {}, "query-group-c": {}, "query-group-d": {}})
+	index := dispatcher.dueIndex
+	// a is 100 s past a 60 s period: overdue. b and c are 30 s past a 60 s
+	// period: late. d has no entry: never, which is neither. Two and one, so
+	// the classes cannot pass for each other.
+	index.Record("query-group-a", dispatcher.bundle.runners["query-group-a"], index.versionEpoch,
+		scheduler.RunnerDueBound{NotDueUntilUnix: 19_900, IntervalSeconds: 60}, time.Unix(19_850, 0))
+	index.Record("query-group-b", dispatcher.bundle.runners["query-group-b"], index.versionEpoch,
+		scheduler.RunnerDueBound{NotDueUntilUnix: 19_970, IntervalSeconds: 60}, time.Unix(19_920, 0))
+	index.Record("query-group-c", dispatcher.bundle.runners["query-group-c"], index.versionEpoch,
+		scheduler.RunnerDueBound{NotDueUntilUnix: 19_970, IntervalSeconds: 60}, time.Unix(19_920, 0))
+	publisher := fleetPublisher{
+		tracker: fleet.NewTracker(nil, "replica-1", clock.now), replica: "replica-1", now: clock.now,
+		owned: func() []execution.QueryGroupIdentity {
+			return []execution.QueryGroupIdentity{"query-group-a", "query-group-b", "query-group-c", "query-group-d"}
+		},
+		schedule: index, scheduleObjects: recorder.SetScheduleObjects,
+	}
+	snapshot := publisher.snapshot(context.Background())
+	if snapshot.Schedule == nil || snapshot.Schedule.Late != 2 || snapshot.Schedule.Overdue != 1 {
+		t.Fatalf("census = %+v, want two late and one overdue", snapshot.Schedule)
+	}
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "alarmd_schedule_objects" {
+			continue
+		}
+		for _, sample := range family.GetMetric() {
+			for _, label := range sample.GetLabel() {
+				if label.GetName() == "class" {
+					got[label.GetValue()] = sample.GetGauge().GetValue()
+				}
+			}
+		}
+	}
+	if fmt.Sprint(got) != fmt.Sprint(map[string]float64{"late": 2, "overdue": 1}) {
+		t.Fatalf("alarmd_schedule_objects = %v, want the census's late 2 and overdue 1", got)
 	}
 }

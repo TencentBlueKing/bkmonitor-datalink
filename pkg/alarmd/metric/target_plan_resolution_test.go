@@ -67,7 +67,7 @@ func TestTheSelectorCellsAnOperatorActsOnArePublishedAtZeroAsOneSet(t *testing.T
 	}
 
 	states := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_target_plan_resolution_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_target_plan_resolution_total") {
 		states[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
 	if !reflect.DeepEqual(states, map[string]float64{"Complete": 0, "Incomplete": 0, "Unavailable": 0}) {
@@ -111,13 +111,13 @@ func TestAResolutionCountsThePlanOnceAndEachSelectorOnce(t *testing.T) {
 		}
 	}
 	states := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_target_plan_resolution_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_target_plan_resolution_total") {
 		states[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
 	if states["Unavailable"] != 1 || states["Complete"] != 0 || states["Incomplete"] != 0 {
 		t.Fatalf("resolution states after one Unavailable resolution = %v", states)
 	}
-	if absent := gatherFamily(t, r, "bkmonitor_alarmd_target_excluded_absent_members_total")[0].GetCounter().GetValue(); absent != 3 {
+	if absent := gatherFamily(t, r, "alarmd_target_excluded_absent_members_total")[0].GetCounter().GetValue(); absent != 3 {
 		t.Fatalf("absent members = %v, want 3 members rather than one selector", absent)
 	}
 }
@@ -141,7 +141,7 @@ func TestATargetScopesGroupsCountAsSelectorsAndNotAsATargetPlan(t *testing.T) {
 	if got["dynamic_group|OK|none"] != 1 || got["dynamic_group|Unavailable|key_missing"] != 1 {
 		t.Fatalf("a target scope's groups as selectors = %v", got)
 	}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_target_plan_resolution_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_target_plan_resolution_total") {
 		if value := m.GetCounter().GetValue(); value != 0 {
 			t.Fatalf("target plan resolutions %s = %v after a target scope's groups, want 0", m.Label[0].GetValue(), value)
 		}
@@ -153,7 +153,7 @@ func TestATargetScopesGroupsCountAsSelectorsAndNotAsATargetPlan(t *testing.T) {
 func selectorCells(t *testing.T, r *Recorder) map[string]float64 {
 	t.Helper()
 	cells := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_target_selector_resolutions_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_target_selector_resolutions_total") {
 		labels := map[string]string{}
 		for _, pair := range m.Label {
 			labels[pair.GetName()] = pair.GetValue()

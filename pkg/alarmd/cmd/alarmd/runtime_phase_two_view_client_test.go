@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -222,14 +223,14 @@ func runOneAttempt(t *testing.T, fixture *cutoverStallFixture, runner phaseTwoQu
 
 func waitFor(t *testing.T, what string, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if condition() {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
-	t.Fatalf("%s did not happen within ten seconds", what)
+	t.Fatalf("%s did not happen before the test's deadline", what)
 }
 
 // trackedListener remembers every connection it accepted so a test can

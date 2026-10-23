@@ -28,6 +28,10 @@ type Capacity struct {
 	// level read at an arbitrary moment says nothing about the interval.
 	PermitsHeld  int `json:"permits_held"`
 	PermitBudget int `json:"permit_budget"`
+	// PermitsPeak is the most permits held at once in the last minute: how
+	// close the work came to PermitBudget, which neither the instant nor the
+	// mean can say.
+	PermitsPeak int `json:"permits_peak"`
 	// PermitSeconds is cumulative permit-hold time. Two reads of it divided by
 	// the wall time between them give the mean number of permits occupied, which
 	// is the number the budget is meant to be compared against.
@@ -106,15 +110,17 @@ type Capacity struct {
 	// Pulled is how much this replica actually read. Absent on a replica that
 	// does not report it.
 	Pulled *SeriesPull `json:"pulled,omitempty"`
-	// Shape is the scheduler shape this replica derived from its own work and
-	// what it derived it from. Absent before the first derivation.
+	// Shape is the scheduler shape this replica runs under and the work it
+	// measured beside it. Absent before the first derivation.
 	Shape *SchedulerShape `json:"scheduler_shape,omitempty"`
 }
 
-// SchedulerShape is one replica's query budget, execution slots and queues
-// as it last derived them from the work it owns (config.DeriveSchedulerShape),
-// beside the inputs: the peaks it measured, the hold and execution length it
-// sized them by, and the ceiling its memory set.
+// SchedulerShape is one replica's query budget, execution slots and queues as
+// it last derived them (config.DeriveSchedulerShape) - the permits and slots
+// from the ceiling its memory set, the queues from the work it owns - beside
+// the work it measured: the peaks, the hold and the execution length. The
+// measurements size nothing but the queues; they are here so a reader sees
+// how far the work is from the bounds.
 type SchedulerShape struct {
 	Replica                string    `json:"replica,omitempty"`
 	DerivedAt              time.Time `json:"derived_at"`
@@ -131,6 +137,21 @@ type SchedulerShape struct {
 	HoldMillis             int64     `json:"hold_ms"`
 	ExecutionMillis        int64     `json:"execution_ms"`
 	OwnedQueryGroups       int       `json:"owned_query_groups"`
+	// PostQueryTailMillis is the measured post-query tail the replica's query
+	// deadlines are sized from (its live reserve); zero before any.
+	PostQueryTailMillis int64 `json:"post_query_tail_ms"`
+	// LiveReserveFallbacks counts queries that ran under the frozen reserve
+	// because the live one left them no time; TightQueryGroups and
+	// TightStrategies are the groups that did so in the last hour, and their
+	// strategies. A warning, not a refusal: they keep running.
+	LiveReserveFallbacks uint64 `json:"live_reserve_fallbacks"`
+	// LiveReserveOverruns counts Slots that returned after their completion
+	// deadline: the other direction of the percentile's trade, up to one in
+	// a hundred long-query Slots retrying where the fixed reserve absorbed
+	// them.
+	LiveReserveOverruns uint64        `json:"live_reserve_overruns"`
+	TightQueryGroups    []string      `json:"tight_query_groups,omitempty"`
+	TightStrategies     []StrategyRef `json:"tight_strategies,omitempty"`
 }
 
 // MarshalJSON keeps a measured zero on the wire. throttled_seconds and
@@ -244,9 +265,14 @@ func (rotation *Rotation) fold(other Rotation) {
 // replica's limit and reported a deployment at a quarter of its memory as
 // nearly full. MemoryUsedShareMax is that ratio done per replica.
 type CapacityView struct {
-	Replicas      int     `json:"replicas"`
-	PermitsHeld   int     `json:"permits_held_total"`
-	PermitBudget  int     `json:"permit_budget_per_replica"`
+	Replicas     int `json:"replicas"`
+	PermitsHeld  int `json:"permits_held_total"`
+	PermitBudget int `json:"permit_budget_per_replica"`
+	// PermitsPeak is the replicas' last-minute peaks added up. Each replica's
+	// peak may fall in a different second, so the sum is at most what the
+	// deployment held at once, never less; it is read against
+	// permit_budget_total.
+	PermitsPeak   int     `json:"permits_peak_total"`
 	PermitSeconds float64 `json:"permit_seconds"`
 	Waiting       int     `json:"waiting_total"`
 	QueueBudget   int     `json:"queue_budget_per_replica"`
@@ -324,6 +350,7 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 		}
 		capacity.Replicas++
 		capacity.PermitsHeld += facts.PermitsHeld
+		capacity.PermitsPeak += facts.PermitsPeak
 		capacity.PermitSeconds += facts.PermitSeconds
 		capacity.Waiting += facts.Waiting
 		capacity.PermitAcquires += facts.PermitAcquires
@@ -349,9 +376,10 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 				disagreed[name] = struct{}{}
 			}
 		}
-		// The permit and queue budgets are derived per replica from its own
-		// work, so replicas differ by design: summed, and the largest kept
-		// under the per-replica names for the readers that still use them.
+		// The permit budget is each replica's share of its own memory and the
+		// queue budget follows the work it owns, so replicas can differ:
+		// summed, and the largest kept under the per-replica names for the
+		// readers that still use them.
 		capacity.PermitBudgetTotal += facts.PermitBudget
 		capacity.QueueBudgetTotal += facts.QueueBudget
 		capacity.PermitBudget, capacity.QueueBudget = max(capacity.PermitBudget, facts.PermitBudget), max(capacity.QueueBudget, facts.QueueBudget)

@@ -20,7 +20,7 @@ import (
 
 func retryTestRequest() RangeRequest {
 	return RangeRequest{
-		PromQL: `max(bkmonitor_alarmd_fleet_objects{state="expected"})`,
+		PromQL: `max(alarmd_fleet_objects{state="expected"})`,
 		Start:  time.Unix(1789000000, 0), End: time.Unix(1789003600, 0),
 		Step: time.Minute, SpaceUID: "bkcc__2",
 	}

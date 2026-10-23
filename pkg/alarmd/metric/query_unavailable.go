@@ -22,8 +22,8 @@ type queryUnavailableMetrics struct {
 func newQueryUnavailableMetrics() queryUnavailableMetrics {
 	m := queryUnavailableMetrics{
 		attributions: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem,
-			Name: "query_unavailable_attribution_total",
+			Subsystem: metricSubsystem,
+			Name:      "query_unavailable_attribution_total",
 			Help: "Physical queries that completed UNAVAILABLE, by where their reason code came from: " +
 				"attempt (an attempt named the reason; the code means what it says), no_attempt_reason " +
 				"(attempts were made and none was classified; the code is a fallback guess about a " +

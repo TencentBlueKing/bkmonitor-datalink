@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -83,7 +84,7 @@ func TestDispatcherFanoutComesFromTheDerivedLimit(t *testing.T) {
 
 	select {
 	case <-observed:
-	case <-time.After(10 * time.Second):
+	case <-testwait.Expired(t):
 		mu.Lock()
 		reached := active
 		mu.Unlock()
@@ -94,7 +95,7 @@ func TestDispatcherFanoutComesFromTheDerivedLimit(t *testing.T) {
 	// Every slot is occupied and every remaining Query Group is queued behind
 	// one. Give the dispatcher room to overshoot if it is going to, then read
 	// the peak once the run has drained.
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // fixed-wait: the dispatcher must not overshoot its slots; 100 ms is many dispatch rounds of in-memory runners
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatalf("runScheduledOnce() error = %v", err)

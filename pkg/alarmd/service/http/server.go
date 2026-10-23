@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/clirelease"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet/ui"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -47,6 +48,7 @@ import (
 type Server struct {
 	handler            http.Handler
 	apiHandler         atomic.Pointer[http.Handler]
+	internalAPI        atomic.Pointer[http.Handler]
 	grpcHandler        atomic.Pointer[http.Handler]
 	diagnosticsHandler http.Handler
 	diagnosticsAddress string
@@ -63,6 +65,9 @@ type Server struct {
 	// adminKeySecret is what the login page says about where the
 	// administrator key is kept: names only.
 	adminKeySecret ui.AdminKeySecret
+	// cliRelease is the alarmd-cli release this binary carries; nil serves
+	// the routes as unavailable.
+	cliRelease *clirelease.Release
 }
 
 // Stall is one reason the process is not making progress: a named loop that
@@ -121,6 +126,12 @@ func WithAdminKeySecret(secret ui.AdminKeySecret) Option {
 	return func(server *Server) { server.adminKeySecret = secret }
 }
 
+// WithCLIRelease serves the alarmd-cli release this binary carries on the
+// public /api/cli/ distribution routes.
+func WithCLIRelease(release *clirelease.Release) Option {
+	return func(server *Server) { server.cliRelease = release }
+}
+
 // SetPublicSurfaceRestricted settles whether the query surface is restricted.
 // The runtime calls it once the CLI is built: restricted only when a CLI
 // session can actually be had, since restricting without one leaves no way in.
@@ -135,6 +146,14 @@ func (s *Server) SetPublicSurfaceRestricted(restricted bool) {
 // be indistinguishable from a deployment that has no API at all.
 func (s *Server) SetAPI(handler http.Handler) {
 	s.apiHandler.Store(&handler)
+}
+
+// SetInternalAPI installs what the cluster-only listener serves under
+// /internal/: calls between modules of one cluster, which carry no credential
+// and so are never on the query surface. Until it is called they answer 503,
+// as the API does.
+func (s *Server) SetInternalAPI(handler http.Handler) {
+	s.internalAPI.Store(&handler)
 }
 
 // SetGRPC installs the gRPC surface -- decision-016's control stream -- on
@@ -240,6 +259,14 @@ func newServer(recorder *metric.Recorder, options ...Option) *Server {
 	internal.HandleFunc("/healthz", server.health)
 	internal.HandleFunc("/readyz", server.readiness)
 	internal.Handle("/metrics", metrics)
+	internal.HandleFunc("/internal/", func(response http.ResponseWriter, request *http.Request) {
+		handler := server.internalAPI.Load()
+		if handler == nil || *handler == nil {
+			http.Error(response, "internal API not ready", http.StatusServiceUnavailable)
+			return
+		}
+		(*handler).ServeHTTP(response, request)
+	})
 	server.internalHandler = internal
 
 	mux := http.NewServeMux()
@@ -262,6 +289,11 @@ func newServer(recorder *metric.Recorder, options ...Option) *Server {
 		metrics.ServeHTTP(response, request)
 	})
 	mux.HandleFunc("/api/", server.serveAPI)
+	// The CLI distribution routes are more specific than /api/, so they never
+	// reach the runtime's API handler: a new operator can fetch the CLI from
+	// a deployment whose runtime is not open yet or whose surface is
+	// restricted, which is when the CLI is needed most.
+	server.cliRelease.Register(mux)
 	// The page is static and carries no runtime dependency, so it is mounted
 	// unconditionally: when the runtime is not open yet the page still loads and
 	// says which channel cannot answer, which is the degradation it was designed

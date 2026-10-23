@@ -193,7 +193,7 @@ func TestThePageOffersTheOneOperationsSession(t *testing.T) {
 		if err := json.Unmarshal(raw[name], &got); err != nil {
 			t.Fatal(err)
 		}
-		if got.Error || len(got.Posts) != 1 || got.Posts[0]["scope"] != nil || strings.Contains(got.Command, "--scope") || !strings.Contains(got.Label, "Pod 命令执行") {
+		if got.Error || len(got.Posts) != 1 || got.Posts[0]["scope"] != nil || strings.Contains(got.Command, "--scope") || !strings.Contains(got.Label, "Pod 与节点命令执行（含宿主管理）") {
 			t.Fatalf("%s: %+v, want the one session", name, got)
 		}
 	}

@@ -47,11 +47,14 @@ type controlSourceCollector struct {
 	now    func() time.Time
 	mode   *prometheus.Desc
 	age    *prometheus.Desc
+	// offRole is a process none of whose roles refreshes the control source:
+	// it says so (RoleNotApplicable) instead of emitting nothing.
+	offRole bool
 }
 
 func newControlSourceCollector() *controlSourceCollector {
 	descriptor := func(name, help string, labels ...string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	return &controlSourceCollector{
 		now: time.Now,
@@ -62,6 +65,7 @@ func newControlSourceCollector() *controlSourceCollector {
 				"follower (another process holds the leader lease; this one reads what it publishes), "+
 				"unacquired (the lease could not be acquired and it is not known whether anyone holds it -- "+
 				"a store error, or no attempt yet). No replica reporting leader means nobody is refreshing. "+
+				"The off_role pair is a cell on every process: 1 on one with neither the control nor the worker role (the rest 0), else 0. "+
 				"mode: healthy (the last round succeeded), degraded_last_good (the last round failed and the "+
 				"process serves the last good catalog, which some process once refreshed successfully), "+
 				"never_succeeded (the last round failed and no round is known to have ever succeeded under "+
@@ -85,24 +89,21 @@ func (c *controlSourceCollector) Describe(ch chan<- *prometheus.Desc) {
 
 func (c *controlSourceCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.Lock()
-	source, now := c.source, c.now
+	source, now, offRole := c.source, c.now, c.offRole
 	c.mu.Unlock()
+	// Every process exposes the same cells, the off_role pair among them: 1
+	// on a process whose roles refresh no control source, 0 on one that does.
 	if source == nil {
+		if offRole {
+			c.collectModes(ch, ControlSourceStats{}, 1)
+		}
 		return
 	}
 	stats := source()
 	if !stats.Known {
 		return
 	}
-	for _, role := range observability.ControlSourceRoles {
-		for _, mode := range observability.ControlSourceModes {
-			value := 0.0
-			if stats.Role == role && stats.Mode == mode {
-				value = 1
-			}
-			ch <- prometheus.MustNewConstMetric(c.mode, prometheus.GaugeValue, value, string(role), string(mode))
-		}
-	}
+	c.collectModes(ch, stats, 0)
 	if !stats.LastSuccessAt.IsZero() {
 		age := now().Sub(stats.LastSuccessAt).Seconds()
 		if age < 0 {
@@ -110,6 +111,21 @@ func (c *controlSourceCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		ch <- prometheus.MustNewConstMetric(c.age, prometheus.GaugeValue, age)
 	}
+}
+
+// collectModes emits the role and mode grid with the current pair at 1, and
+// the off_role pair at offRole.
+func (c *controlSourceCollector) collectModes(ch chan<- prometheus.Metric, stats ControlSourceStats, offRole float64) {
+	for _, role := range observability.ControlSourceRoles {
+		for _, mode := range observability.ControlSourceModes {
+			value := 0.0
+			if stats.Known && stats.Role == role && stats.Mode == mode {
+				value = 1
+			}
+			ch <- prometheus.MustNewConstMetric(c.mode, prometheus.GaugeValue, value, string(role), string(mode))
+		}
+	}
+	ch <- prometheus.MustNewConstMetric(c.mode, prometheus.GaugeValue, offRole, RoleNotApplicable, RoleNotApplicable)
 }
 
 // SetControlSourceSource binds the process's control source state to the

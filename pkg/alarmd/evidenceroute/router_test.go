@@ -91,6 +91,8 @@ type fixtureNode struct {
 	runs     atomic.Int32
 	server   *grpc.Server
 	rpcCalls atomic.Int32
+	// given is how long the last run of runtime.get had before its deadline.
+	given atomic.Int64
 }
 
 func fixture(t *testing.T) (map[string]*fixtureNode, *fixtureStore) {
@@ -99,15 +101,28 @@ func fixture(t *testing.T) (map[string]*fixtureNode, *fixtureStore) {
 	nodes := map[string]*fixtureNode{}
 	for _, id := range []string{"entry", "leader", "worker"} {
 		node := &fixtureNode{auth: &fixtureAuth{}}
-		op := obchannel.Operation{ID: "runtime.get", Summary: "Read process", EvidenceScope: "process", Targetable: true, Run: func(ctx context.Context, p obchannel.Params) obchannel.Outcome {
+		op := obchannel.Operation{ID: "runtime.get", Summary: "Read process", EvidenceScope: "process", Targetable: true, ExecutionTimeout: 20 * time.Second, Run: func(ctx context.Context, p obchannel.Params) obchannel.Outcome {
 			node.runs.Add(1)
+			if deadline, ok := ctx.Deadline(); ok {
+				node.given.Store(int64(time.Until(deadline)))
+			}
 			return obchannel.Outcome{Complete: true, Value: map[string]string{"process": id}, Next: []obchannel.Call{{Operation: "runtime.get", Params: obchannel.Params{}}}}
 		}}
 		shared := obchannel.Operation{ID: "shared.get", Summary: "Read shared", EvidenceScope: "deployment", Run: func(context.Context, obchannel.Params) obchannel.Outcome {
 			node.runs.Add(1)
 			return obchannel.Outcome{Complete: true}
 		}}
-		channel, err := obchannel.New(obchannel.Options{Auth: node.auth, EnvironmentID: "fixture", Replica: id, Incarnation: id + "-boot", Build: id + "-build", Operations: []obchannel.Operation{op, shared}, Route: func(ctx context.Context, call obchannel.Invocation) obchannel.Response {
+		// partial.get reads one part, then waits on a part that outlasts the
+		// operation, and answers with the part it read when its time ends.
+		partial := obchannel.Operation{ID: "partial.get", Summary: "Read in parts", EvidenceScope: "process", Targetable: true, PartialOnTimeout: true, ExecutionTimeout: 1500 * time.Millisecond, Run: func(ctx context.Context, p obchannel.Params) obchannel.Outcome {
+			node.runs.Add(1)
+			<-ctx.Done()
+			return obchannel.Outcome{Complete: true, Value: map[string]string{"read": id}}
+		}}
+		// partial.long is the same read with more time than its caller has.
+		partialLong := partial
+		partialLong.ID, partialLong.ExecutionTimeout = "partial.long", 20*time.Second
+		channel, err := obchannel.New(obchannel.Options{Auth: node.auth, EnvironmentID: "fixture", Replica: id, Incarnation: id + "-boot", Build: id + "-build", Operations: []obchannel.Operation{op, shared, partial, partialLong}, Route: func(ctx context.Context, call obchannel.Invocation) obchannel.Response {
 			return node.router.Invoke(ctx, call)
 		}})
 		if err != nil {
@@ -295,7 +310,7 @@ func TestLegacyControlServiceAndUnreachableTarget(t *testing.T) {
 		t.Fatalf("legacy server not explicit: %+v", result)
 	}
 	old.Stop()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) // fixed-wait: the caller's deadline the case runs out
 	defer cancel()
 	result = nodes["entry"].router.Invoke(ctx, obchannel.Invocation{EnvironmentID: "fixture", Version: obchannel.Version, Revision: nodes["entry"].channel.CatalogRevision(), Operation: "runtime.get", RequestID: "unreachable-fixture", Params: obchannel.Params{}, Target: obchannel.Target{Replica: "worker"}})
 	if result.Error == nil || result.Error.Code != "target_timeout" || nodes["worker"].runs.Load() != 0 {
@@ -306,7 +321,7 @@ func TestLegacyControlServiceAndUnreachableTarget(t *testing.T) {
 func TestControlLeaderKeepsItsLeaseWhenTheLeaderCannotBeReached(t *testing.T) {
 	nodes, _ := fixture(t)
 	nodes["leader"].server.Stop()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) // fixed-wait: the caller's deadline the case runs out
 	defer cancel()
 	result := nodes["entry"].router.Invoke(ctx, obchannel.Invocation{EnvironmentID: "fixture", Version: obchannel.Version, Revision: nodes["entry"].channel.CatalogRevision(), Operation: "runtime.get", RequestID: "leader-down-fixture", Params: obchannel.Params{}, Target: obchannel.Target{ControlLeader: true}})
 	if result.Error == nil || result.Meta.ControlLeader == nil || result.Meta.ControlLeader.OwnerID != "leader" || result.Meta.ControlLeader.OwnerEpoch != 7 {
@@ -368,5 +383,55 @@ func TestControlLeaderTargetAnswersFromTheLeaseItWasRoutedBy(t *testing.T) {
 	result = invoke(t, nodes["entry"], "runtime.get", obchannel.Params{"control_leader": true})
 	if result.Error == nil || result.Error.Code != "control_unavailable" || nodes["entry"].runs.Load() != 0 {
 		t.Fatalf("no Leader fell back to the ingress: %+v", result)
+	}
+}
+
+// A read routed entry -> Leader -> Worker keeps its operation's own time at
+// every hop: the Worker runs a 20-second operation with nearly all of it,
+// where each hop used to set 3 s again.
+func TestARoutedReadKeepsItsOperationsTimeAcrossHops(t *testing.T) {
+	nodes, _ := fixture(t)
+	result := invoke(t, nodes["entry"], "runtime.get", obchannel.Params{"replica": "worker"})
+	if result.Status != "ok" || strings.Join(result.Meta.Via, ",") != "entry,leader" {
+		t.Fatalf("route %+v", result)
+	}
+	if given := time.Duration(nodes["worker"].given.Load()); given < 15*time.Second {
+		t.Fatalf("the worker ran a 20 s operation with %v, want nearly all of it", given)
+	}
+}
+
+// A routed read that answers what it has when its time runs out still
+// reaches the entry: each hop hands on its time less HopReturnMargin, so the
+// target answers while every hop before it is still waiting, and the entry
+// waits RouteAllowance past the operation's time for it.
+func TestARoutedPartialAnswerReachesTheEntry(t *testing.T) {
+	nodes, _ := fixture(t)
+	started := time.Now()
+	result := invoke(t, nodes["entry"], "partial.get", obchannel.Params{"replica": "worker"})
+	took := time.Since(started)
+	if result.Status != "partial" || result.Error != nil || result.Meta.AnsweredBy != "worker" || strings.Join(result.Meta.Via, ",") != "entry,leader" {
+		t.Fatalf("the partial answer was lost on the way back after %v: %+v", took, result)
+	}
+	if result.Evidence.Complete || len(result.Evidence.Limitations) == 0 {
+		t.Fatalf("a cut read reads whole: %+v", result)
+	}
+	if took > 1500*time.Millisecond+obchannel.RouteAllowance {
+		t.Fatalf("the entry waited %v, past the operation's time and the route's allowance", took)
+	}
+}
+
+// When the caller has less time than the operation -- a page's read, a hop
+// already short -- each hop still works to its caller's deadline less
+// HopReturnMargin, so the target's answer arrives while the caller waits.
+func TestARoutedPartialAnswerArrivesInsideAShorterCallersTime(t *testing.T) {
+	nodes, _ := fixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond) // fixed-wait: the caller's time, shorter than the operation's, which the case is about
+	defer cancel()
+	result := nodes["entry"].router.Invoke(ctx, obchannel.Invocation{EnvironmentID: "fixture", Version: obchannel.Version, Revision: nodes["entry"].channel.CatalogRevision(), Operation: "partial.long", RequestID: "short-caller-fixture", Params: obchannel.Params{}, Target: obchannel.Target{Replica: "worker"}})
+	if result.Status != "partial" || result.Error != nil || result.Meta.AnsweredBy != "worker" {
+		t.Fatalf("the partial answer did not arrive inside the caller's time: %+v", result)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the answer came when the caller had stopped waiting")
 	}
 }

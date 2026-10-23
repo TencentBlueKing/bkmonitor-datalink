@@ -51,13 +51,44 @@ const queryCooldownRunTimesKept = 8
 // Query Group whose failures have shown such a cut leaves on an answer that
 // clears the cut by the spread of its own run times, and the probe says
 // which comparison held (observability.QueryCooldownExitRules).
+//
+// That margin is evidence about the next round, not the next hour. Three
+// production Query Groups whose queries run 17 to 30 s against a 30 s cut
+// left on answers that cleared it by their spread - 22.7 s with 7.0 s, 16.8 s
+// with 11.9 s - answered some sixty rounds, met three cuts in a row and went
+// back in, about once an hour each. So a Query Group that went back in after
+// an answer let it out (reenteredAfterAnAnswer) has shown that an answer
+// clear of its cut is not evidence for it, and leaves only on evidence: an
+// answer past the ceiling, the ceiling gone, or queryCooldownRunTimesKept
+// answers in a row. Its window is QueryCooldownReentryWindow, the one its
+// Reentries already counts against, not a new one.
+//
+// What that bounds, from a model of the pool as it runs: a minute Query
+// Group whose runs take X, the backend cutting every run with X at or past
+// 30 s; three cuts in a row put it in, probes one to two minutes apart and
+// the cooldown doubling to five minutes; 133 shapes of X (uniform, normal,
+// and half quick and half slow) at 600 hours each. Worst re-entries an hour:
+//
+//	exit rule                                        worst   at
+//	answer clear of the cut by the last 8 runs'      1.52    X in [29.8, 30.2) s
+//	  spread (before)
+//	the same, spread over the whole last time out    1.21    half ~1 s, half 25-40 s
+//	a re-entry leaves only on evidence (this)        0.29    X ~ N(28 s, 3 s)
+//
+// The spread rules fail where X sits close around the cut - every answer
+// clears it by less than any spread, and the next hour still holds three cuts
+// in a row - and where the cut rate is high, when the time out is about
+// fourteen rounds and its spread hardly wider than eight runs'. The bound the
+// answers in a row give is worked out at queryCooldownRunTimesKept. A first
+// entry still leaves on an answer clear of the cut by its spread.
 
 // noteRunFacts keeps what a normal execution showed about how long the Query
-// Group's query takes and where its backend cuts it. Facts about another
-// query revision are not this query's, and are dropped first.
-func (runner *Runner) noteRunFacts(slot FrozenSlot, operation execution.Operation, result execution.SlotExecutionResult) {
+// Group's query takes and where its backend cuts it, and reports a failure
+// that was such a cut. Facts about another query revision are not this
+// query's, and are dropped first.
+func (runner *Runner) noteRunFacts(slot FrozenSlot, operation execution.Operation, result execution.SlotExecutionResult) (cut bool) {
 	if operation != execution.OperationNormal || result.PrimaryQueryClock == nil {
-		return
+		return false
 	}
 	memory := &runner.cooldownMemory
 	if revision := slot.Contract.QueryRevision; revision != memory.runRevision {
@@ -78,14 +109,19 @@ func (runner *Runner) noteRunFacts(slot FrozenSlot, operation execution.Operatio
 		// The backend's own refusal, not alarmd's deadline, and slower than
 		// any answer: where the backend stopped waiting. A failure that came
 		// back quicker than an answer is an error, not a cut.
-		if result.QueryUnavailableReason != execution.ReasonCode(contract.ReasonQueryUnavailable) ||
+		// A refusal counts as the cut the same way: a storage that gives up on
+		// a query too large for it answers with a client error.
+		if (result.QueryUnavailableReason != execution.ReasonCode(contract.ReasonQueryUnavailable) &&
+			result.QueryUnavailableReason != execution.ReasonCode(contract.ReasonQueryRejected)) ||
 			len(memory.runTimes) == 0 || elapsed <= longestRun(memory.runTimes) {
-			return
+			return false
 		}
 		if memory.ceiling == 0 || elapsed < memory.ceiling {
 			memory.ceiling = elapsed
 		}
+		return true
 	}
+	return false
 }
 
 // queryCooldownLetsOut decides an answered deciding probe against the
@@ -95,26 +131,31 @@ func (runner *Runner) noteRunFacts(slot FrozenSlot, operation execution.Operatio
 func (runner *Runner) queryCooldownLetsOut(ctx context.Context, probe *observability.QueryCooldownProbe, intervalSeconds int64) bool {
 	memory := &runner.cooldownMemory
 	spread := runSpread(memory.runTimes)
+	measured := probe != nil && probe.Measured
+	reentered := runner.reenteredAfterAnAnswer()
 	rule := observability.QueryCooldownRuleNearCeiling
 	switch {
 	case memory.ceiling == 0:
 		rule = observability.QueryCooldownRuleNoCeiling
-	case probe == nil || !probe.Measured:
-		rule = observability.QueryCooldownRuleUnmeasured
-	case probe.ElapsedMillis > memory.ceiling:
+	case measured && probe.ElapsedMillis > memory.ceiling:
 		rule = observability.QueryCooldownRuleAboveCeiling
-	case probe.ElapsedMillis+spread < memory.ceiling:
+	case !measured && !reentered:
+		rule = observability.QueryCooldownRuleUnmeasured
+	case measured && !reentered && probe.ElapsedMillis+spread < memory.ceiling:
 		rule = observability.QueryCooldownRuleUnderCeiling
 	case memory.answeredInRow+1 >= queryCooldownRunTimesKept:
 		rule = observability.QueryCooldownRuleAnsweredInRow
+	case reentered && (!measured || probe.ElapsedMillis+spread < memory.ceiling):
+		rule = observability.QueryCooldownRuleHeldAfterReentry
 	}
 	if probe != nil {
 		probe.Rule, probe.CeilingMillis, probe.RunSpreadMillis = rule, memory.ceiling, spread
 		runner.noteProbe(*probe)
 	}
+	held := rule == observability.QueryCooldownRuleNearCeiling || rule == observability.QueryCooldownRuleHeldAfterReentry
 	// A missing or extreme interval is no basis for a cooldown to hold it
 	// in; it leaves as an answer always let it.
-	if rule != observability.QueryCooldownRuleNearCeiling || intervalSeconds <= 0 ||
+	if !held || intervalSeconds <= 0 ||
 		intervalSeconds > int64((24*time.Hour)/time.Second) {
 		memory.answeredInRow = 0
 		return true
@@ -125,6 +166,19 @@ func (runner *Runner) queryCooldownLetsOut(ctx context.Context, probe *observabi
 	runner.emitQueryCooldown(ctx, QueryCooldownExtended)
 	runner.saveQueryCooldown(ctx)
 	return false
+}
+
+// reenteredAfterAnAnswer reports whether the Query Group is in the pool
+// again, on failures that showed its backend's cut, within
+// QueryCooldownReentryWindow of an answer letting it out. A re-entry on
+// failures that were no cut - the query service down for every Query Group,
+// failing fast - says nothing about how close its answers run to the cut,
+// and is decided as a first entry is. The entry, its cuts and the last exit
+// are all on its record, so a restart or the next owner decides the same way.
+func (runner *Runner) reenteredAfterAnAnswer() bool {
+	memory := &runner.cooldownMemory
+	return runner.queryCooldown.cuts > 0 && memory.exitReason == QueryCooldownRecovered &&
+		memory.enteredAt.Sub(memory.exitedAt) < QueryCooldownReentryWindow
 }
 
 // noteProbe keeps a deciding probe among the latest ones, for a reader.

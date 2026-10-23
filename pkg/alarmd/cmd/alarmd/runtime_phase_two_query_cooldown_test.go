@@ -17,7 +17,7 @@ func TestQueryCooldownIndexInvalidatesWithoutClearingRetry(t *testing.T) {
 	index.Record("query", query, 0, scheduler.RunnerDueBound{QueryCooldown: true, NotDueUntilUnix: 200}, at)
 	index.Record("retry", retry, 0, scheduler.RunnerDueBound{Deferred: true, NotDueUntilUnix: 200}, at)
 	index.RecordSkip(recorder, false, "query")
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_skipped_total", map[string]string{"reason": "query_cooldown"}); got != 1 {
+	if got := counterValue(t, recorder, "alarmd_dispatch_skipped_total", map[string]string{"reason": "query_cooldown"}); got != 1 {
 		t.Fatal(got)
 	}
 	index.mu.Lock()

@@ -13,10 +13,13 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // What these tests guard against: a transaction whose MULTI is refused with
@@ -66,9 +69,9 @@ func readCommand(rd *bufio.Reader) (string, []string, error) {
 }
 
 // loadingServer serves one connection the way the note above says, and
-// returns its address and a channel that has its error, if any, once the
-// client is gone.
-func loadingServer(t *testing.T) (string, <-chan error) {
+// returns its address, a channel that has its error, if any, once the
+// client is gone, and how many commands it has answered.
+func loadingServer(t *testing.T) (string, <-chan error, *atomic.Int32) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -76,6 +79,7 @@ func loadingServer(t *testing.T) (string, <-chan error) {
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 	served := make(chan error, 1)
+	answered := &atomic.Int32{}
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -84,7 +88,7 @@ func loadingServer(t *testing.T) (string, <-chan error) {
 		}
 		defer conn.Close()
 		rd := bufio.NewReader(conn)
-		write := func(s string) { _, _ = conn.Write([]byte(s)) }
+		write := func(s string) { _, _ = conn.Write([]byte(s)); answered.Add(1) }
 		const loading = "-LOADING Redis is loading the dataset in memory\r\n"
 		for {
 			name, args, err := readCommand(rd)
@@ -99,7 +103,7 @@ func loadingServer(t *testing.T) (string, <-chan error) {
 				write(loading)
 			case name == "SET", name == "GET" && args[0] == "late":
 				// Loading ends meanwhile: this runs on its own.
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond) // fixed-wait: the fake server's late answer, the delay the note above describes
 				if name == "SET" {
 					write("+OK\r\n")
 				} else {
@@ -115,14 +119,15 @@ func loadingServer(t *testing.T) (string, <-chan error) {
 			}
 		}
 	}()
-	return listener.Addr().String(), served
+	return listener.Addr().String(), served, answered
 }
 
-// nextGet is what a GET on the same connection reads once the refused
-// call's replies, if it left any, have reached the socket.
-func nextGet(t *testing.T, client *redis.Client) (string, error) {
+// nextGet is what a GET on the same connection reads once the server has
+// answered every one of the refused call's commands, so that a reply the
+// call left unread is on the connection before the GET's own.
+func nextGet(t *testing.T, client *redis.Client, answered *atomic.Int32, commands int32) (string, error) {
 	t.Helper()
-	time.Sleep(300 * time.Millisecond)
+	testwait.Until(t, "the server answering every command of the call", func() bool { return answered.Load() >= commands })
 	return client.Get(context.Background(), "k").Result()
 }
 
@@ -138,7 +143,7 @@ func oneConnection(t *testing.T, address string) *redis.Client {
 // go-redis upgrade makes this fail, the client reads the rest of a refused
 // transaction now, and the reason for this package should be re-read.
 func TestARefusedMultiLeavesItsRepliesForTheNextCommand(t *testing.T) {
-	address, served := loadingServer(t)
+	address, served, answered := loadingServer(t)
 	client := oneConnection(t, address)
 	ctx := context.Background()
 	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
@@ -148,7 +153,7 @@ func TestARefusedMultiLeavesItsRepliesForTheNextCommand(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "LOADING") {
 		t.Fatalf("transaction err = %v, want the LOADING refusal", err)
 	}
-	if got, err := nextGet(t, client); err == nil && got == "fresh" {
+	if got, err := nextGet(t, client, answered, 3); err == nil && got == "fresh" { // MULTI, SET, EXEC
 		t.Fatal("the GET after a refused MULTI read its own reply: the stale-reply hazard is gone from this go-redis")
 	}
 	_ = client.Close()
@@ -161,14 +166,14 @@ func TestARefusedMultiLeavesItsRepliesForTheNextCommand(t *testing.T) {
 // the connection: it is one command with one reply, so the next command
 // reads its own.
 func TestARefusedScriptWriteLeavesNothingForTheNextCommand(t *testing.T) {
-	address, served := loadingServer(t)
+	address, served, answered := loadingServer(t)
 	client := oneConnection(t, address)
 	write := New(`redis.call('SET', KEYS[1], ARGV[1]) redis.call('SET', KEYS[2], ARGV[1]) return 1`)
 	err := write.Run(context.Background(), client, []string{"k", "k2"}, "v")
 	if err == nil || !strings.HasPrefix(err.Error(), "LOADING") {
 		t.Fatalf("script err = %v, want the LOADING refusal and no EVAL after it", err)
 	}
-	if got, err := nextGet(t, client); err != nil || got != "fresh" {
+	if got, err := nextGet(t, client, answered, 1); err != nil || got != "fresh" { // EVALSHA
 		t.Fatalf("GET after the refused script = %q, %v; want \"fresh\": it read a reply of the script", got, err)
 	}
 	_ = client.Close()
@@ -181,7 +186,7 @@ func TestARefusedScriptWriteLeavesNothingForTheNextCommand(t *testing.T) {
 // command is refused still reads every reply, the late one included
 // (redis.go:452-461), so the next command reads its own.
 func TestARefusedCommandInAPipelineLeavesNothingForTheNextCommand(t *testing.T) {
-	address, served := loadingServer(t)
+	address, served, answered := loadingServer(t)
 	client := oneConnection(t, address)
 	ctx := context.Background()
 	var refused, late *redis.StringCmd
@@ -196,7 +201,7 @@ func TestARefusedCommandInAPipelineLeavesNothingForTheNextCommand(t *testing.T) 
 	if got, err := late.Result(); err != nil || got != "late" {
 		t.Fatalf("second command = %q, %v; want its own late reply", got, err)
 	}
-	if got, err := nextGet(t, client); err != nil || got != "fresh" {
+	if got, err := nextGet(t, client, answered, 2); err != nil || got != "fresh" { // GET refused, GET late
 		t.Fatalf("GET after the pipeline = %q, %v; want \"fresh\": it read a reply of the pipeline", got, err)
 	}
 	_ = client.Close()

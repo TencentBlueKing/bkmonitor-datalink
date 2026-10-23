@@ -170,26 +170,29 @@ func cloneStringsPreservingNil(values []string) []string {
 }
 
 type legacyQueryConfig struct {
-	AlertName       string            `json:"alert_name"`
-	IndexSetID      json.RawMessage   `json:"index_set_id"`
-	PromQL          string            `json:"promql"`
-	CustomEventName string            `json:"custom_event_name"`
-	DataSourceLabel string            `json:"data_source_label"`
-	DataTypeLabel   string            `json:"data_type_label"`
-	MetricID        string            `json:"metric_id"`
-	MetricField     string            `json:"metric_field"`
-	Alias           string            `json:"alias"`
-	Values          []string          `json:"values"`
-	AggDimensions   []string          `json:"agg_dimension"`
-	AggMethod       string            `json:"agg_method"`
-	AggConditions   []legacyCondition `json:"agg_condition"`
-	AggInterval     int64             `json:"agg_interval"`
-	ResultTableID   string            `json:"result_table_id"`
-	TimeField       string            `json:"time_field"`
-	QueryString     string            `json:"query_string"`
-	Functions       []legacyFunction  `json:"functions"`
-	DataLabel       string            `json:"data_label"`
-	FilterDict      json.RawMessage   `json:"filter_dict"`
+	AlertName       string          `json:"alert_name"`
+	IndexSetID      json.RawMessage `json:"index_set_id"`
+	PromQL          string          `json:"promql"`
+	CustomEventName string          `json:"custom_event_name"`
+	DataSourceLabel string          `json:"data_source_label"`
+	DataTypeLabel   string          `json:"data_type_label"`
+	MetricID        string          `json:"metric_id"`
+	MetricField     string          `json:"metric_field"`
+	Alias           string          `json:"alias"`
+	// ExpressionMode is "promql" on each query of a multi-PromQL expression
+	// (multiPromQLExpression), absent on every other query.
+	ExpressionMode string            `json:"expression_mode"`
+	Values         []string          `json:"values"`
+	AggDimensions  []string          `json:"agg_dimension"`
+	AggMethod      string            `json:"agg_method"`
+	AggConditions  []legacyCondition `json:"agg_condition"`
+	AggInterval    int64             `json:"agg_interval"`
+	ResultTableID  string            `json:"result_table_id"`
+	TimeField      string            `json:"time_field"`
+	QueryString    string            `json:"query_string"`
+	Functions      []legacyFunction  `json:"functions"`
+	DataLabel      string            `json:"data_label"`
+	FilterDict     json.RawMessage   `json:"filter_dict"`
 }
 
 type legacyCondition struct {
@@ -216,6 +219,25 @@ type legacyMetric struct {
 }
 
 func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Context, source PrimaryQuerySource) (execution.QueryPlanFacts, error) {
+	var configs []legacyQueryConfig
+	facts, err := compiler.compilePrimaryQueryConfigs(source, &configs)
+	if err != nil {
+		return execution.QueryPlanFacts{}, err
+	}
+	outputs, err := namedOutputsOf(source.QueryOutputConfig, configs, facts)
+	if err != nil {
+		return execution.QueryPlanFacts{}, err
+	}
+	if outputs == nil {
+		return facts, nil
+	}
+	facts.NamedOutputs, facts.QueryRevision = outputs, ""
+	return execution.BuildQueryPlanFacts(facts)
+}
+
+// compilePrimaryQueryConfigs is the item's query without its named outputs;
+// decoded is set to the query configs it read.
+func (compiler *LegacyPrimaryQueryCompiler) compilePrimaryQueryConfigs(source PrimaryQuerySource, decoded *[]legacyQueryConfig) (execution.QueryPlanFacts, error) {
 	if compiler == nil || compiler.providerRoute == "" || compiler.timezone == "" {
 		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_COMPILER_UNINITIALIZED", nil)
 	}
@@ -240,9 +262,13 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		// below participate in the effective UQ request.
 		configs = append(configs, config)
 	}
+	*decoded = configs
 
 	if len(configs) == 1 && configs[0].DataSourceLabel == "prometheus" {
 		return compiler.compilePromQL(source, configs[0])
+	}
+	if multiPromQLExpression(configs) {
+		return compiler.compileMultiPromQL(source, configs)
 	}
 	queryList := make([]execution.QueryClause, 0, len(configs))
 	aliases := map[string]string{}
@@ -251,6 +277,18 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 	stepSeconds := int64(0)
 	for _, config := range configs {
 		if config.DataSourceLabel == "prometheus" {
+			if allPrometheus(configs) {
+				// Several PromQL queries without expression_mode: the retired
+				// form, read by the platform as independent queries whose
+				// records are concatenated and whose expression never runs.
+				// Not migrated and not converted - as an expression the
+				// ignored expression would start running, and as one "or"
+				// query a series of both would lose one side.
+				return execution.QueryPlanFacts{}, queryUnsupported("QUERY_PROMQL_FORM_RETIRED", errors.New(
+					"several PromQL queries without expression_mode are a retired form; rewrite as one PromQL combining the "+
+						"series under one rule, as an expression_mode multi-PromQL expression for a computation across "+
+						"queries, or as separate strategies for independent alerting and recovery"))
+			}
 			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_MIXED_PROMQL_NOT_MIGRATED", nil)
 		}
 		if config.DataSourceLabel == "bk_data" && len(strings.TrimSpace(source.Expression)) <= 1 {
@@ -518,6 +556,22 @@ func mergeRuntimeFilterConditions(filter LegacyRuntimeFilterFact, source []legac
 	if err != nil {
 		return nil, err
 	}
+	return andIntoEveryGroup(source, true, legacyCondition{Key: filter.FieldName, Method: "neq", Value: value}), nil
+}
+
+// andIntoEveryGroup is a strategy's agg_condition with conditions of the
+// platform's own put into every group of it, as _filter_dict_to_conditions
+// puts its filters: the condition list is read as OR groups split on "or",
+// and each group becomes the filters ANDed before the group's own
+// conditions. Appending them once at the end joined them to the last group
+// only, so every OR group but the last went unfiltered. Every condition
+// alarmd adds to a strategy's own goes through here.
+//
+// before places the filters ahead of each group's conditions, after behind
+// them. The order changes no result; it is kept per caller as it was, so a
+// strategy of one group - every strategy the old placement was right for -
+// keeps its query revision and Query Group byte for byte.
+func andIntoEveryGroup(source []legacyCondition, before bool, filters ...legacyCondition) []legacyCondition {
 	groups := make([][]legacyCondition, 0, 1)
 	current := make([]legacyCondition, 0, len(source))
 	for _, condition := range source {
@@ -531,16 +585,23 @@ func mergeRuntimeFilterConditions(filter LegacyRuntimeFilterFact, source []legac
 	if len(current) > 0 || len(groups) == 0 {
 		groups = append(groups, current)
 	}
-	result := make([]legacyCondition, 0, len(source)+len(groups))
+	result := make([]legacyCondition, 0, len(source)+len(groups)*len(filters))
 	for index, group := range groups {
-		connector := "and"
-		if index > 0 {
-			connector = "or"
+		joined := make([]legacyCondition, 0, len(group)+len(filters))
+		if before {
+			joined = append(append(joined, filters...), group...)
+		} else {
+			joined = append(append(joined, group...), filters...)
 		}
-		result = append(result, legacyCondition{Connector: connector, Key: filter.FieldName, Method: "neq", Value: value})
-		result = append(result, group...)
+		for position := range joined {
+			joined[position].Connector = "and"
+		}
+		if index > 0 && len(joined) > 0 {
+			joined[0].Connector = "or"
+		}
+		result = append(result, joined...)
 	}
-	return result, nil
+	return result
 }
 
 func (compiler *LegacyPrimaryQueryCompiler) runtimeFilter(config legacyQueryConfig) (LegacyRuntimeFilterFact, bool, error) {
@@ -1041,6 +1102,14 @@ func configSourceUnsupported(config legacyQueryConfig) error {
 	if config.DataSourceLabel == "bk_fta" {
 		return queryUnsupported("QUERY_FTA_UNSUPPORTED", nil)
 	}
+	if config.DataSourceLabel == "bk_monitor" && config.DataTypeLabel == "event" {
+		// GSE system events (system.event): the platform has retired this
+		// source for the custom event chain its migration rewrites such
+		// strategies into (AgentLost, DiskReadonly, DiskFull, CoreFile, OOM
+		// as custom/event), which compiles here.
+		return queryUnsupported("QUERY_SOURCE_RETIRED", errors.New(
+			"the GSE system event source is retired; the strategy is detected once rewritten as a custom event strategy"))
+	}
 	if !pollingSourceSupported(config) {
 		return queryUnsupported("QUERY_SOURCE_NOT_MIGRATED", nil)
 	}
@@ -1095,4 +1164,14 @@ func querySources(facts execution.QueryPlanFacts) []string {
 		return append([]string(nil), facts.SourceSemantics...)
 	}
 	return []string{omittedSourceSemantics}
+}
+
+// allPrometheus says every query of an item is a PromQL query.
+func allPrometheus(configs []legacyQueryConfig) bool {
+	for _, config := range configs {
+		if config.DataSourceLabel != "prometheus" {
+			return false
+		}
+	}
+	return true
 }

@@ -23,7 +23,7 @@ type canonicalEncodingCollector struct {
 
 func newCanonicalEncodingCollector() *canonicalEncodingCollector {
 	name := func(suffix string) string {
-		return prometheus.BuildFQName(metricNamespace, metricSubsystem, "canonical_encoding_"+suffix)
+		return prometheus.BuildFQName("", metricSubsystem, "canonical_encoding_"+suffix)
 	}
 	return &canonicalEncodingCollector{
 		calls: prometheus.NewDesc(name("calls_total"),

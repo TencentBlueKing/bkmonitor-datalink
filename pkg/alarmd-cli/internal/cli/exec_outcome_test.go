@@ -195,7 +195,7 @@ func TestDescribeDeadlineIncludesAdmissionAndTransport(t *testing.T) {
 }
 
 func TestInvalidAdmissionAndMarginAreRejectedBeforeInvoke(t *testing.T) {
-	for _, limits := range []map[string]any{{"admission_timeout_ms": 0}, {"admission_timeout_ms": 10001}, {"admission_timeout_ms": "3000"}, {"transport_margin_ms": -1}, {"transport_margin_ms": 30001}, {"transport_margin_ms": []any{5000}}} {
+	for _, limits := range []map[string]any{{"admission_timeout_ms": 0}, {"admission_timeout_ms": "3000"}, {"transport_margin_ms": -1}, {"transport_margin_ms": []any{5000}}} {
 		p := fixtureProfile("http://fixture.test")
 		store := Store{t.TempDir()}
 		_ = store.save(p, false)
@@ -265,5 +265,65 @@ func TestAnUnknownRemoteStateIsShownRaw(t *testing.T) {
 	code, out, _, _ := run(t, store, client, "", "invoke", "pod.exec", "--env", p.EnvironmentID)
 	if code != 0 || calls != 2 || stringField(objectField(out, "result"), "remote_state") != "remote_some_future_state" {
 		t.Fatalf("exit %d after %d calls: %+v", code, calls, out)
+	}
+}
+
+// A malformed execution timeout is refused before the invoke, as the
+// request budgets are: a larger one is a newer server, a zero, negative or
+// non-number one is no server's.
+func TestAMalformedExecutionTimeoutIsRejectedBeforeInvoke(t *testing.T) {
+	for _, timeout := range []any{0, -5, "35000"} {
+		p := fixtureProfile("http://fixture.test")
+		store := Store{t.TempDir()}
+		_ = store.save(p, false)
+		calls := 0
+		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return jsonHTTP(envelope(p, "ok", map[string]any{"execution_timeout_ms": timeout}), 200), nil
+		})}
+		code, out, _, _ := run(t, store, client, "", "invoke", "fixture.read", "--env", p.EnvironmentID)
+		if code != 1 || calls != 1 || stringField(objectField(out, "error"), "code") != "protocol_error" {
+			t.Fatalf("malformed timeout %v was invoked: out=%+v calls=%d", timeout, out, calls)
+		}
+	}
+}
+
+// A server newer than the CLI may advertise larger limits than the CLI
+// knows. The CLI uses them rather than refusing the operation: it waits as
+// long as the server says the operation runs, and sends at most the smaller
+// of its own request bound and the server's. Only a malformed value is
+// refused.
+func TestAnOlderCLIAcceptsTheLargerLimitsOfANewerServer(t *testing.T) {
+	p := fixtureProfile("http://fixture.test")
+	p.Scope = sessionScope
+	store := Store{t.TempDir()}
+	_ = store.save(p, false)
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return jsonHTTP(envelope(p, "ok", map[string]any{"effect": "read", "execution_timeout_ms": 600000,
+				"request_limits":    map[string]any{"admission_timeout_ms": 60000, "transport_margin_ms": 60000},
+				"request_max_bytes": int64(maxInputBytes) * 4}), 200), nil
+		}
+		deadline, ok := r.Context().Deadline()
+		if remaining := time.Until(deadline); !ok || remaining <= 719*time.Second || remaining > 720*time.Second {
+			t.Fatalf("deadline %v %s, want the server's 600 s + 60 s + 60 s", ok, remaining)
+		}
+		return jsonHTTP(envelope(p, "ok", map[string]any{"value": 1}), 200), nil
+	})}
+	if code, out, _, _ := run(t, store, client, "", "invoke", "fixture.read", "--env", p.EnvironmentID, "--input", `{"a":1}`); code != 0 || calls != 2 {
+		t.Fatalf("an operation with larger server limits was refused: exit %d calls %d %+v", code, calls, out)
+	}
+}
+
+// The request bound is the smaller of the two: a server allowing more than
+// the CLI's own bound still gets no request larger than the CLI's.
+func TestRequestBoundIsTheSmallerOfCLIAndServer(t *testing.T) {
+	if got := requestBound(int64(maxInputBytes) * 4); got != maxInputBytes {
+		t.Fatalf("bound %d, want the CLI's %d", got, maxInputBytes)
+	}
+	if got := requestBound(1024); got != 1024 {
+		t.Fatalf("bound %d, want the server's 1024", got)
 	}
 }

@@ -38,7 +38,7 @@ func TestLoggingObserverWritesStateVersionConflictAttributes(t *testing.T) {
 	}
 	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
 		Component: ComponentState, Stage: StageStateApplied, Result: ResultFailed, Operation: OperationNormal,
-		Direction: DirectionInternal, ReasonCode: "STATE_VERSION_CONFLICT", Err: errors.New("state apply did not complete: STATE_VERSION_CONFLICT (missing: expected revision 7, stored revision 0)"),
+		ReasonCode: "STATE_VERSION_CONFLICT", Err: errors.New("state apply did not complete: STATE_VERSION_CONFLICT (missing: expected revision 7, stored revision 0)"),
 		StateVersionConflict: &facts,
 	})
 

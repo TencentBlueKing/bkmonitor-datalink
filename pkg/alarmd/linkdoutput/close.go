@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 )
 
 const ActionClosed = "closed"
@@ -37,6 +38,22 @@ const CloseReasonAbsent = "strategy_absent"
 // in it.
 const CloseReasonTargetOutOfScope = "target_out_of_scope"
 
+// CloseReasonSupersededIdentity is the close for an alert a series opened
+// under the fingerprint of its record's own address, before its alert
+// identity read CMDB's address for a host CMDB places by id or agent: the
+// series goes on under its new alert, and nothing evaluates the old one.
+const CloseReasonSupersededIdentity = "superseded_identity"
+
+// CloseReasonUnsupported is the close for an alert of a strategy that still
+// exists and that alarmd does not detect: its publication refused it for a
+// capability alarmd does not support, by design or not yet in this build. It says "nobody judges this any more", not
+// "this is normal" - closed, never resolved - and the capability goes in the
+// content (CloseRequest.Detail).
+const CloseReasonUnsupported = "strategy_unsupported"
+
+// closeDetailLimit bounds the detail a close's content repeats.
+const closeDetailLimit = 128
+
 // CloseRequest carries an active alert's identity. A SET member alone is
 // insufficient. It carries no severity: a close decided for a strategy closes
 // the alert at whatever level it is, which the message says with
@@ -51,6 +68,11 @@ type CloseRequest struct {
 	StrategyID, StrategyRevision, BusinessID int64
 	OccurredAt                               time.Time
 	Reason                                   string
+	// Detail is what the content names beside the reason - for
+	// CloseReasonUnsupported, the capability - bounded by closeDetailLimit.
+	// It is not part of the event id: the same alert closed for the same
+	// reason is one event whatever the detail reads.
+	Detail string
 }
 
 // closeText is what each reason puts on the event, and the salt its event id
@@ -64,6 +86,10 @@ var closeText = map[string]struct{ salt, title, content string }{
 		"Close requested because the strategy was disabled or deleted and nothing evaluates this alert any more; this does not indicate metric recovery."},
 	CloseReasonTargetOutOfScope: {"alarmd-target-out-of-scope-close-v1", "Target is no longer in the strategy's scope",
 		"Close requested because the target this alert is about left the strategy's monitoring scope and nothing evaluates this alert any more; this does not indicate metric recovery."},
+	CloseReasonSupersededIdentity: {"alarmd-superseded-identity-close-v1", "The alert's series is now identified under a new fingerprint",
+		"Close requested because alarmd now identifies this series under a new identity and nothing evaluates this alert any more; this does not indicate metric recovery."},
+	CloseReasonUnsupported: {"alarmd-unsupported-strategy-close-v1", "Strategy is no longer detected by alarmd",
+		"Close requested because alarmd does not detect this strategy - it uses a capability alarmd does not support - and nothing evaluates this alert any more; this does not indicate metric recovery."},
 }
 
 func ConvertClose(request CloseRequest) (Event, error) {
@@ -91,8 +117,20 @@ func ConvertClose(request CloseRequest) (Event, error) {
 		request.StrategyRevision, request.AlertInstanceID, request.Fingerprint, SeverityAllLevels, request.OccurredAt.Unix()})
 	digest := sha256.Sum256(idInput)
 	id := hex.EncodeToString(digest[:])
+	content := text.content
+	if detail := request.Detail; detail != "" {
+		if len(detail) > closeDetailLimit {
+			// Cut on a rune boundary: a split rune would be encoded as U+FFFD.
+			cut := closeDetailLimit
+			for cut > 0 && !utf8.RuneStart(detail[cut]) {
+				cut--
+			}
+			detail = detail[:cut]
+		}
+		content += " Capability: " + detail + "."
+	}
 	wire := wireEvent{TenantID: request.TenantID, EventID: id, AlertID: request.Fingerprint,
-		Title: text.title, Content: text.content,
+		Title: text.title, Content: content,
 		Evaluations: evaluations,
 		Dimensions:  map[string]json.RawMessage{}, OccurredAt: wireTime(request.OccurredAt.Unix()), ProducedAt: wireTime(request.OccurredAt.Unix()),
 		Labels:    wireLabels{StrategyID: request.StrategyID, StrategyVersion: request.StrategyRevision, BusinessID: request.BusinessID},

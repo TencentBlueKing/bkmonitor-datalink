@@ -20,14 +20,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 const (
-	MaxBodyBytes     = 48 << 10
-	MaxResponseBytes = 1 << 20
-	MaxTimeout       = 30 * time.Second
-	MaxWindow        = 24 * time.Hour
+	MaxBodyBytes = 1 << 20
+	MaxTimeout   = 60 * time.Second
+	MaxWindow    = 30 * 24 * time.Hour
+	// DefaultResponseBytes is a native response's bound until the channel
+	// sets its own (SetResponseBytes).
+	DefaultResponseBytes = 64 << 20
 )
 
 // Endpoint describes the real native wire contract, including its time unit.
@@ -86,8 +89,11 @@ type Provider struct {
 	egresses    map[string]Egress
 	client      *http.Client
 	transport   *http.Transport
-	slots       chan struct{}
 	querySource string
+	// responseBytes bounds one native response; queries run side by side
+	// with no count of their own: the channel's few readers are nothing next
+	// to the business queries UQ serves.
+	responseBytes atomic.Int64
 }
 
 func Validate(egresses []Egress) error {
@@ -113,7 +119,8 @@ func Validate(egresses []Egress) error {
 		}
 		paths := map[string]bool{}
 		for _, endpoint := range e.Endpoints {
-			if !nativePath(endpoint.Path) || paths[endpoint.Path] || endpoint.StartField != "start_time" || endpoint.EndField != "end_time" || (endpoint.TimeUnit != "s" && endpoint.TimeUnit != "ms") {
+			start, end, ok := nativeContract(endpoint.Path)
+			if !ok || paths[endpoint.Path] || endpoint.StartField != start || endpoint.EndField != end || (endpoint.TimeUnit != "s" && endpoint.TimeUnit != "ms") {
 				return fmt.Errorf("sre.uq.egresses.%s.endpoints: invalid path or time contract", e.Name)
 			}
 			paths[endpoint.Path] = true
@@ -134,7 +141,8 @@ func NewWithQuerySource(egresses []Egress, client *http.Client, querySource stri
 	if !text(querySource) {
 		return nil, errors.New("sre.uq: a nonempty query source without control characters is required")
 	}
-	p := &Provider{egresses: map[string]Egress{}, slots: make(chan struct{}, 1), querySource: querySource}
+	p := &Provider{egresses: map[string]Egress{}, querySource: querySource}
+	p.responseBytes.Store(DefaultResponseBytes)
 	for _, e := range egresses {
 		e.Tenants = append([]string(nil), e.Tenants...)
 		e.Spaces = append([]string(nil), e.Spaces...)
@@ -143,7 +151,7 @@ func NewWithQuerySource(egresses []Egress, client *http.Client, querySource stri
 		p.egresses[e.Name] = e
 	}
 	if client == nil {
-		p.transport = &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxConnsPerHost: 1, MaxIdleConns: 2, MaxIdleConnsPerHost: 1, IdleConnTimeout: 30 * time.Second, TLSHandshakeTimeout: 3 * time.Second, ResponseHeaderTimeout: MaxTimeout, DisableCompression: true}
+		p.transport = &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext, MaxIdleConns: 8, MaxIdleConnsPerHost: 8, IdleConnTimeout: 30 * time.Second, TLSHandshakeTimeout: 3 * time.Second, ResponseHeaderTimeout: MaxTimeout, DisableCompression: true}
 		client = &http.Client{Transport: p.transport}
 	}
 	copyClient := *client
@@ -151,6 +159,12 @@ func NewWithQuerySource(egresses []Egress, client *http.Client, querySource stri
 	p.client = &copyClient
 	return p, nil
 }
+
+// SetResponseBytes sets the bound on one native response.
+func (p *Provider) SetResponseBytes(n int) { p.responseBytes.Store(int64(n)) }
+
+// ResponseBytes is the bound on one native response.
+func (p *Provider) ResponseBytes() int { return int(p.responseBytes.Load()) }
 
 func (p *Provider) Close() {
 	if p.transport != nil {
@@ -213,7 +227,7 @@ func (p *Provider) query(ctx context.Context, request Request, trace bool) (rece
 	if request.Body == nil {
 		return receipt, fail("invalid_input", "A native query object is required.")
 	}
-	if err := validateScopeBody(request.Body, request.Tenant, request.Space); err != nil {
+	if err := validateScopeBody(request.Body, request.Tenant, request.Space, promQLPath(endpoint.Path)); err != nil {
 		return receipt, err
 	}
 	start, err := timestamp(request.Body[endpoint.StartField], endpoint.TimeUnit)
@@ -225,7 +239,7 @@ func (p *Provider) query(ctx context.Context, request Request, trace bool) (rece
 		return receipt, fail("invalid_input", "Native end timestamp does not match the endpoint time contract.")
 	}
 	if end.Before(start) || end.Sub(start) > MaxWindow {
-		return receipt, fail("uq_window_exceeded", "Native query time range must be ordered and at most 24 hours.")
+		return receipt, fail("uq_window_exceeded", "Native query time range must be ordered and at most 30 days.")
 	}
 	body, err := json.Marshal(request.Body)
 	if err != nil || len(body) > MaxBodyBytes {
@@ -237,12 +251,6 @@ func (p *Provider) query(ctx context.Context, request Request, trace bool) (rece
 	u.Path = strings.TrimRight(u.Path, "/") + endpoint.Path
 	u.RawPath = ""
 	receipt.ActualURL = u.String()
-	select {
-	case p.slots <- struct{}{}:
-		defer func() { <-p.slots }()
-	default:
-		return receipt, fail("uq_busy", "The independent UQ diagnostic query budget is busy.")
-	}
 	timeout := MaxTimeout
 	if request.TimeoutMS > 0 {
 		timeout = time.Duration(request.TimeoutMS) * time.Millisecond
@@ -269,9 +277,10 @@ func (p *Provider) query(ctx context.Context, request Request, trace bool) (rece
 	}
 	defer response.Body.Close()
 	receipt.HTTPStatus = response.StatusCode
-	data, err := io.ReadAll(io.LimitReader(response.Body, MaxResponseBytes+1))
+	limit := p.ResponseBytes()
+	data, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
 	receipt.ResponseBytes = len(data)
-	if len(data) > MaxResponseBytes {
+	if len(data) > limit {
 		receipt.Limitations = append(receipt.Limitations, "response_byte_budget_exceeded; native JSON was not retained")
 		return receipt, fail("uq_response_bytes_exceeded", "Native response exceeds its byte budget; narrow the query or use explicit native pagination.")
 	}
@@ -287,7 +296,9 @@ func (p *Provider) query(ctx context.Context, request Request, trace bool) (rece
 	if !json.Valid(data) {
 		return receipt, fail("uq_response_invalid", "Native response is not a JSON value.")
 	}
-	receipt.Native = append(json.RawMessage(nil), data...)
+	// data is this call's own read, never reused, so the receipt keeps it
+	// rather than a second copy of up to a whole response.
+	receipt.Native = data
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(data, &envelope); err != nil || envelope == nil {
 		receipt.Native = nil
@@ -393,15 +404,21 @@ func allowed(values []string, value string) bool {
 	}
 	return false
 }
-func nativePath(path string) bool {
-	// These handlers use the audited QueryTs scope and route resolver. A new
-	// endpoint (notably typed Trace or PromQL) needs its own wire contract.
+
+// nativeContract names the time fields of each supported native endpoint.
+// These handlers all resolve through the audited QueryTs scope and route
+// resolver: PromQL is converted to a QueryTs before it runs. A new endpoint
+// (notably typed Trace) needs its own wire contract.
+func nativeContract(path string) (start, end string, ok bool) {
 	switch path {
 	case "/query/ts", "/query/ts/", "/query/ts/raw", "/query/ts/raw/", "/query/ts/raw_with_scroll", "/query/ts/raw_with_scroll/":
-		return true
+		return "start_time", "end_time", true
+	case "/query/ts/promql", "/query/ts/promql/":
+		return "start", "end", true
 	}
-	return false
+	return "", "", false
 }
+func promQLPath(path string) bool { return strings.TrimSuffix(path, "/") == "/query/ts/promql" }
 func timestamp(value any, unit string) (time.Time, error) {
 	s, ok := value.(string)
 	digits := 10
@@ -426,10 +443,18 @@ func timestamp(value any, unit string) (time.Time, error) {
 	return time.Unix(n, 0), nil
 }
 
-func validateScopeBody(body map[string]any, tenant, space string) error {
-	var queries []any
+func validateScopeBody(body map[string]any, tenant, space string, promQL bool) error {
+	// The downstream Go decoder matches field names case-insensitively, with
+	// Unicode simple folding: U+017F folds to 's' and the Kelvin sign to 'k'.
+	// Every UQ field name is ASCII, so a non-ASCII key at any depth is refused
+	// and strings.ToLower below then matches exactly what the decoder matches.
+	if nonASCIIKey(body) {
+		return fail("invalid_input", "Native field names must be ASCII.")
+	}
+	var queries, outputs []any
+	var expr any
+	exprs, lists := 0, 0
 	for key, value := range body {
-		// The downstream Go decoder accepts case-insensitive JSON field names.
 		switch strings.ToLower(key) {
 		case "bk_tenant_id", "tenant_id", "tenant":
 			if value != tenant {
@@ -448,11 +473,45 @@ func validateScopeBody(body map[string]any, tenant, space string) error {
 			// syntactically empty override is not part of the public contract.
 			return fail("uq_scope_denied", "Direct physical storage overrides are not available through this operation.")
 		case "query_list":
-			if queries != nil {
+			if lists++; lists > 1 {
 				return fail("invalid_input", "Duplicate native query-list aliases are not accepted.")
 			}
 			queries, _ = value.([]any)
+		case "output_list":
+			// UQ runs each named output's expression as its own PromQL.
+			list, ok := value.([]any)
+			if !ok && value != nil {
+				return fail("invalid_input", "Native output_list must be a list.")
+			}
+			outputs = append(outputs, list...)
+		case "promql":
+			expr, exprs = value, exprs+1
 		}
+	}
+	for _, value := range outputs {
+		output, ok := value.(map[string]any)
+		if !ok {
+			return fail("invalid_input", "Native output_list entries must be objects.")
+		}
+		for key, value := range output {
+			if strings.ToLower(key) != "expression" {
+				continue
+			}
+			q, ok := value.(string)
+			if !ok && value != nil {
+				return fail("invalid_input", "A named output expression must be a string.")
+			}
+			if err := promQLRoute(q); err != nil {
+				return err
+			}
+		}
+	}
+	if promQL {
+		q, _ := expr.(string)
+		if exprs != 1 || strings.TrimSpace(q) == "" {
+			return fail("invalid_input", "A PromQL query needs exactly one nonempty promql field.")
+		}
+		return promQLRoute(q)
 	}
 	if len(queries) == 0 {
 		return fail("uq_contract_unsupported", "This operation supports structured QueryTs metric/log queries with a nonempty query_list; typed Trace requires its trusted service contract.")
@@ -476,4 +535,53 @@ func validateScopeBody(body map[string]any, tenant, space string) error {
 		}
 	}
 	return nil
+}
+
+// promQLRoute keeps PromQL inside the QueryTs scope. UQ routes a metric by
+// the first colon segment of its name, so "bkdata:" anywhere a name starts
+// would reach BKData, which the structured path refuses by data_source. The
+// check is lexical and so errs toward refusal: a string escape that could
+// spell such a name is refused with it.
+func promQLRoute(q string) error {
+	lower := strings.ToLower(q)
+	for i := 0; i < len(lower); i++ {
+		if lower[i] == '\\' && i+1 < len(lower) {
+			if c := lower[i+1]; c == 'x' || c == 'u' || (c >= '0' && c <= '7') {
+				return fail("uq_scope_denied", "PromQL string escapes that can spell a metric route are not accepted.")
+			}
+			i++
+			continue
+		}
+		if strings.HasPrefix(lower[i:], "bkdata:") && (i == 0 || !nameByte(lower[i-1])) {
+			return fail("uq_scope_denied", "BKData queries require a separate trusted routing contract.")
+		}
+	}
+	return nil
+}
+func nameByte(c byte) bool {
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+}
+
+// nonASCIIKey reports an object key, at any depth, that is not ASCII.
+func nonASCIIKey(value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, item := range v {
+			for i := 0; i < len(key); i++ {
+				if key[i] >= 0x80 {
+					return true
+				}
+			}
+			if nonASCIIKey(item) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if nonASCIIKey(item) {
+				return true
+			}
+		}
+	}
+	return false
 }

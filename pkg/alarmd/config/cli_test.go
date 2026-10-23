@@ -124,8 +124,13 @@ func TestLoadingReadsTheAdminKeySecretAndTheFileCannotStateIt(t *testing.T) {
 	if strings.Contains(string(raw), "alarmd-cli-admin") || strings.Contains(string(raw), key) {
 		t.Fatalf("CLI configuration evidence carries the Secret or the key: %s", raw)
 	}
-	if _, err := LoadWithRoles(writeConfig(t, validGoAccessRuntimeConfigYAML("cli-worker")+
-		"cli:\n  admin_key_secret:\n    name: from-file\n"), nil); err == nil {
-		t.Fatal("a configuration file stated the Secret's names")
+	stated, err := LoadWithRoles(writeConfig(t, validGoAccessRuntimeConfigYAML("cli-worker")+
+		"cli:\n  admin_key_secret:\n    name: from-file\n"), nil)
+	if err != nil {
+		t.Fatalf("a file stating the Secret's names refused the load: %v", err)
 	}
+	if stated.CLI.AdminKeySecret.Name != "alarmd-cli-admin" {
+		t.Fatalf("a configuration file stated the Secret's names: %+v", stated.CLI.AdminKeySecret)
+	}
+	requireIgnored(t, stated.UnknownKeys, "admin_key_secret")
 }

@@ -41,7 +41,7 @@ func TestEveryCapabilityReasonHasWordsAndEveryWordIsAReason(t *testing.T) {
 		// The normalized disposition's reasons are named constants beside
 		// the disposition; the words table carries them because the group
 		// under CONFIG_NOTED shows the reason's words the same way.
-		"../controlplane": regexp.MustCompile(`DispositionUnsupported,?[^\n]*\n?[^\n]*Reason: "([A-Z_]+)"|queryUnsupported\("([A-Z_]+)"|return "(UNSUPPORTED_[A-Z_]+)"|Reason(?:EffectiveTimeRangeInvalid|PriorityIgnored|LevelTriggerBorrowed|AggIntervalDefaulted|NoDataTriggerBeyondHorizon|RecoveryConfigDefaulted|DetectInterval[A-Za-z]+) += "([A-Z_]+)"`),
+		"../controlplane": regexp.MustCompile(`DispositionUnsupported,?[^\n]*\n?[^\n]*Reason: "([A-Z_]+)"|queryUnsupported\("([A-Z_]+)"|return "(UNSUPPORTED_[A-Z_]+)"|Reason(?:EffectiveTimeRangeInvalid|PriorityIgnored|LevelTriggerBorrowed|AggIntervalDefaulted|NoDataTriggerBeyondHorizon|NoDataGroupBoundAboveDefault|RecoveryConfigDefaulted|RecoveryStatusSetterDefaulted|RecoveryDisabledByConfig|DetectInterval[A-Za-z]+) += "([A-Z_]+)"`),
 		"../targetplan":   regexp.MustCompile(`Reason[A-Za-z]* += "([A-Z_]+)"`),
 		"../contract":     regexp.MustCompile(`Reason(?:SnapshotRetentionInsufficient|CompletionOffsetBelowReserve) += "([A-Z_]+)"`),
 	}
@@ -325,7 +325,9 @@ func TestTheDeclaredCapabilitiesAreNamedReasonsAndOnlyThose(t *testing.T) {
 	owners := map[string]Owner{"capability": OwnerCapability, "alarmd": OwnerAlarmd, "strategy": OwnerStrategy}
 	for reason, want := range map[string]string{
 		"ALGORITHM_NOT_MIGRATED": "capability", "QUERY_SOURCE_NOT_MIGRATED": "capability",
-		"QUERY_FTA_UNSUPPORTED":        "strategy",
+		"QUERY_FTA_UNSUPPORTED": "strategy",
+		// Retired forms: the strategy owner rewrites the strategy.
+		"QUERY_SOURCE_RETIRED": "strategy", "QUERY_PROMQL_FORM_RETIRED": "strategy",
 		"EVALUATION_STEP_INCONSISTENT": "alarmd", "SNAPSHOT_RETENTION_INSUFFICIENT": "alarmd", "SOMETHING_NEW": "alarmd",
 	} {
 		if got := withheldAttribution("UNSUPPORTED_PHASE2_CAPABILITY", reason); got != want {

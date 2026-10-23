@@ -13,7 +13,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-const frozenStateRenewalMetric = "bkmonitor_alarmd_worker_frozen_state_renewals_total"
+const frozenStateRenewalMetric = "alarmd_worker_frozen_state_renewals_total"
 
 func gatherFrozenStateRenewals(t *testing.T, observations ...observability.Observation) map[string]float64 {
 	t.Helper()
@@ -74,8 +74,8 @@ func TestASlotsFrozenRenewalOutcomesReachTheScrapeAsCounts(t *testing.T) {
 	facts.Record(2, 0, 0, 5)
 	gathered := gatherFrozenStateRenewals(t, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageFrozenStateRenewed,
-		Operation: observability.Operation(execution.OperationNormal), Direction: observability.DirectionInternal,
-		Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone,
+		Operation: observability.Operation(execution.OperationNormal),
+		Result:    observability.ResultSuccess, ReasonCode: observability.ReasonNone,
 		FrozenStateRenewal: &facts,
 	})
 	for label, want := range map[string]float64{"renewed": 5, "fresh": 40, "missing": 1, "failed": 5} {
@@ -103,8 +103,8 @@ func TestTheSeriesCensusReachesTheScrapeBesideTheOutcomes(t *testing.T) {
 	facts.RecordCensus(900, 150, 148)
 	gathered := gatherFrozenStateCensus(t, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageFrozenStateRenewed,
-		Operation: observability.Operation(execution.OperationNormal), Direction: observability.DirectionInternal,
-		Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone,
+		Operation: observability.Operation(execution.OperationNormal),
+		Result:    observability.ResultSuccess, ReasonCode: observability.ReasonNone,
 		FrozenStateRenewal: &facts,
 	})
 	for stage, want := range map[string]float64{"due": 900, "read": 150, "written": 148} {
@@ -132,7 +132,7 @@ func gatherFrozenStateCensus(t *testing.T, observations ...observability.Observa
 	}
 	gathered := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_worker_frozen_state_census_total" {
+		if family.GetName() != "alarmd_worker_frozen_state_census_total" {
 			continue
 		}
 		for _, series := range family.Metric {

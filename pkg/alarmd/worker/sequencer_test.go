@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
 
@@ -116,7 +117,7 @@ func TestKeyedSideEffectSequencerUsesOneProcessCapacity(t *testing.T) {
 	waitSignal(t, firstEntered)
 	waitSignal(t, secondEntered)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) // fixed-wait: the short deadline the case expects to expire while process capacity is full
 	defer cancel()
 	thirdEntered := make(chan struct{})
 	err := sequencer.Sequence(ctx, sequencingScope(100, []execution.StateKeyIdentity{stateKey("3", "c")}, nil), func(context.Context) error {
@@ -149,7 +150,7 @@ func TestKeyedSideEffectSequencerCountsWaitingReservationsAgainstProcessCapacity
 	})
 	assertNoSignal(t, secondEntered)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) // fixed-wait: the short deadline the case expects to expire while process capacity is full
 	defer cancel()
 	thirdEntered := make(chan struct{})
 	err := sequencer.Sequence(ctx, sequencingScope(100, []execution.StateKeyIdentity{stateKey("2", "b")}, nil), func(context.Context) error {
@@ -305,7 +306,7 @@ func waitSignal(t *testing.T, signal <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-signal:
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("timed out waiting for sequence entry")
 	}
 }
@@ -315,7 +316,7 @@ func assertNoSignal(t *testing.T, signal <-chan struct{}) {
 	select {
 	case <-signal:
 		t.Fatal("sequence entered before conflicting keys were released")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): // fixed-wait: a window in which the sequence must not enter; an absence sends no signal to wait on
 	}
 }
 
@@ -340,7 +341,7 @@ func waitError(t *testing.T, done <-chan error) error {
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("timed out waiting for sequence completion")
 		return nil
 	}

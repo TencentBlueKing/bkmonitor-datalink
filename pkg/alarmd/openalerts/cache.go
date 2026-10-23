@@ -154,7 +154,10 @@ type Stats struct {
 	// CalibrationMaxAge, oldest first and bounded, with how long since their
 	// last calibration.
 	CalibrationNeeded, CalibrationCapacity, CalibrationShort int
-	CalibrationOverAge                                       []CalibrationAge
+	// RoundsSkipped is how many rounds were not run because the previous one
+	// was still running: a slow Console shows here, not as stacked rounds.
+	RoundsSkipped      uint64
+	CalibrationOverAge []CalibrationAge
 	// TooLarge names the strategies whose sets were last refused for their
 	// size, largest first and bounded: members, bytes and the budget.
 	TooLarge          []TooLargeSet
@@ -223,9 +226,12 @@ type Cache struct {
 	// index.opened. See departures.go.
 	sentDepartures, openDepartures map[string]uint64
 	refreshes                      map[string]uint64
-	noticesRefused                 map[NoticeRefusal]uint64
-	unavailable                    map[UnavailableReason]uint64
-	lookups                        map[Answer]uint64
+	// roundsSkipped counts the rounds not run because the previous one was
+	// still running.
+	roundsSkipped  uint64
+	noticesRefused map[NoticeRefusal]uint64
+	unavailable    map[UnavailableReason]uint64
+	lookups        map[Answer]uint64
 	// lastAnswer, ownLookups, ownHeld and the two samples are the gate's
 	// lookups as recordGate keeps them.
 	lastAnswer    Answer
@@ -341,13 +347,16 @@ func (cache *Cache) boundLocal() {
 	}
 }
 
-// Refresh runs one round of index reads, and of calibrations when a
-// reconciler is bound, for the tracked strategies; see refreshIndex.
+// Refresh runs one of each round in order: the Console's facts, the index
+// reads, and the calibrations due when a reconciler is bound. Run runs the
+// index round and the Console round (consoleRound) apart.
 func (cache *Cache) Refresh(ctx context.Context) {
 	if cache == nil {
 		return
 	}
+	cache.refreshFacts(ctx)
 	cache.refreshIndex(ctx)
+	cache.calibrate(ctx)
 }
 
 // Stats reads the copy's state and cumulative counts.

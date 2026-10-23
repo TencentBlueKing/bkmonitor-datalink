@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func TestSessionRenewsAndRejectsWorkAfterLeaseLoss(t *testing.T) {
@@ -57,7 +58,7 @@ func TestSessionMaintainRunsRenewalIndependentlyAndStopsOnFailure(t *testing.T) 
 	if err != nil {
 		t.Fatalf("OpenSession() error = %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithCancel(testwait.Context(t))
 	defer cancel()
 	if err := session.Maintain(ctx, time.Millisecond, time.Minute); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("Maintain() error = %v, want ErrStaleFence", err)

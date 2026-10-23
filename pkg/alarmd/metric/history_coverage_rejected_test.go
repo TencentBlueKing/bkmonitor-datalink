@@ -23,7 +23,7 @@ import (
 // sees the observation after normalize, which is where the rule is decided.
 func TestARefusedCoverageIsCountedUnderItsRule(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	const family = "bkmonitor_alarmd_history_coverage_rejected_total"
+	const family = "alarmd_history_coverage_rejected_total"
 	if before := gatherFamily(t, r, family); len(before) != len(observability.CoverageRejectionRules) {
 		t.Fatalf("%d series before any round, want every rule (%d) so a zero is a reading", len(before), len(observability.CoverageRejectionRules))
 	}

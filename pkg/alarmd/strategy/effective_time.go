@@ -33,6 +33,10 @@ const (
 
 var ErrEffectiveTimeUnknown = errors.New("effective time fact unknown")
 
+// TimeRange is a window of minutes of the day, start and end inclusive: it
+// works at minute precision, and its end minute is inclusive through second
+// 59, so 09:00-17:59 ends at 18:00:00. A range whose start is after its end
+// crosses midnight.
 type TimeRange struct {
 	startMinute uint16
 	endMinute   uint16

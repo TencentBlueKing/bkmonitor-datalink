@@ -84,6 +84,7 @@ func (coordinator *FlightCoordinator) TryAcquireLookbackPermit() (*LookbackPermi
 		return nil, LookbackRefusedFull
 	}
 	coordinator.queryInflight++
+	coordinator.heldPeak.Observe(coordinator.now(), coordinator.queryInflight)
 	coordinator.lookbackInflight++
 	coordinator.permitSequence++
 	permit := &LookbackPermit{coordinator: coordinator, id: coordinator.permitSequence, yield: make(chan struct{})}

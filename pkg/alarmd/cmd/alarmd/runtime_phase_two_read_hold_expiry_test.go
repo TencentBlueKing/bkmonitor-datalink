@@ -53,10 +53,12 @@ func runtimeExpiredZeroBridge(t *testing.T) (*productionReadHolds, *cutoverStall
 	if err != nil || len(loaded) != 1 || !loaded[0].Missing {
 		t.Fatalf("B wrote a zero record: %+v %v", loaded, err)
 	}
-	// Expire the exact local test keys, then jump the fixture clock by the
-	// record lifetime. These are isolated fixture Redis keys, never runtime.
+	// Remove the exact local test keys, as their expiry would, then jump the
+	// fixture clock by the record lifetime. These are isolated fixture Redis
+	// keys, never runtime. Deleted rather than expired: a key set to expire
+	// in a millisecond is still there for a read within it.
 	bkey := productionPhaseTwoPrefix(f.cfg.Redis.StatePrefix, "ownership") + ":{" + ownership.ControlHashTag(next) + "}:" + productionPhaseTwoPrefix(f.cfg.Redis.StatePrefix, "schedule") + ":" + readhold.Namespace
-	if err := f.redisClient.PExpire(ctx, bkey, time.Millisecond).Err(); err != nil {
+	if err := f.redisClient.Del(ctx, bkey).Err(); err != nil {
 		t.Fatal(err)
 	}
 	keys, err := f.redisClient.Keys(ctx, "*"+string(oldSchedule.Segment.Publication.SnapshotRevision)+"*").Result()
@@ -73,7 +75,6 @@ func runtimeExpiredZeroBridge(t *testing.T) (*productionReadHolds, *cutoverStall
 			t.Fatal(err)
 		}
 	}
-	time.Sleep(5 * time.Millisecond)
 	f.clock.Store(f.now().Add(readhold.RecordTTL + time.Hour).UnixMilli())
 	slot := execution.EvaluationTime(f.now().Unix() - f.now().Unix()%60)
 	last := *p.LastCompletion

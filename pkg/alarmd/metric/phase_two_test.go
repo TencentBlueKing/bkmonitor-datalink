@@ -144,7 +144,7 @@ func TestPhaseTwoSourceObservationMetricRecordsOnlyFixedEpisodeTransitions(t *te
 			t.Fatalf("legacy source %s transitions = %v, want 1", result, got)
 		}
 	}
-	if got, err := testutil.GatherAndCount(recorder.Gatherer(), "bkmonitor_alarmd_observation_total"); err != nil || got != 0 {
+	if got, err := testutil.GatherAndCount(recorder.Gatherer(), "alarmd_observation_total"); err != nil || got != 0 {
 		t.Fatalf("phase-two source transition leaked into generic observation metric: families=%d error=%v", got, err)
 	}
 }
@@ -315,7 +315,7 @@ func TestCapacityMetricRequiresExplicitBoundedBudget(t *testing.T) {
 		Component: observability.ComponentResource, Stage: observability.StageResourceHard,
 		Result: observability.ResultPaused, ReasonCode: observability.ReasonContractDeterministic,
 	})
-	if got, err := testutil.GatherAndCount(recorder.Gatherer(), "bkmonitor_alarmd_capacity_transition_total"); err != nil || got != 0 {
+	if got, err := testutil.GatherAndCount(recorder.Gatherer(), "alarmd_capacity_transition_total"); err != nil || got != 0 {
 		t.Fatalf("capacity metric families without budget = %v, error = %v", got, err)
 	}
 	recorder.Observe(context.Background(), observability.Observation{
@@ -631,21 +631,33 @@ func TestLevelOutcomesAreCountedByKindAndCoverageReason(t *testing.T) {
 		Operation: observability.OperationLoad, ReasonCode: observability.ReasonCode(contract.ReasonEffectiveTimeInactive),
 		LevelOutcomes: []observability.LevelOutcomeFact{
 			{Outcome: "UNKNOWN", Reason: contract.ReasonEffectiveTimeInactive, Count: 2},
+			// The same reason a stored guard repeated: its own cell.
+			{Outcome: "UNKNOWN", Reason: contract.ReasonEffectiveTimeInactive, Carried: true, Count: 5},
 			{Outcome: "TERMINAL", Reason: contract.ReasonStateCorrupt, Count: 1},
-			{Outcome: "ABNORMAL", Count: 3},
+			// Only UNKNOWN is ever carried; a flag on another kind is dropped.
+			{Outcome: "ABNORMAL", Carried: true, Count: 3},
 		},
 	})
-	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("UNKNOWN", contract.ReasonEffectiveTimeInactive)); got != 2 {
-		t.Fatalf("UNKNOWN/EFFECTIVE_TIME_INACTIVE = %v, want 2", got)
+	physical, carried, derived := observability.ReasonOriginPhysical, observability.ReasonOriginCarried, observability.ReasonOriginDerived
+	// Out of hours is alarmd's own judgement from the strategy's
+	// configuration, not something the round met: derived, never physical.
+	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("UNKNOWN", contract.ReasonEffectiveTimeInactive, physical)); got != 0 {
+		t.Fatalf("UNKNOWN/EFFECTIVE_TIME_INACTIVE/physical = %v, want 0", got)
 	}
-	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("TERMINAL", observability.LevelOutcomeReasonOther)); got != 1 {
+	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("UNKNOWN", contract.ReasonEffectiveTimeInactive, derived)); got != 2 {
+		t.Fatalf("UNKNOWN/EFFECTIVE_TIME_INACTIVE/derived = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("UNKNOWN", contract.ReasonEffectiveTimeInactive, carried)); got != 5 {
+		t.Fatalf("UNKNOWN/EFFECTIVE_TIME_INACTIVE/carried = %v, want 5", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("TERMINAL", observability.LevelOutcomeReasonOther, physical)); got != 1 {
 		t.Fatalf("TERMINAL/other = %v, want the deterministic reason folded to other", got)
 	}
-	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("ABNORMAL", "")); got != 3 {
+	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("ABNORMAL", "", physical)); got != 3 {
 		t.Fatalf("ABNORMAL = %v, want 3", got)
 	}
 	for _, line := range strings.Split(scrape(t, recorder), "\n") {
-		if strings.HasPrefix(line, "bkmonitor_alarmd_level_outcome_total{") && strings.Contains(line, contract.ReasonStateCorrupt) {
+		if strings.HasPrefix(line, "alarmd_level_outcome_total{") && strings.Contains(line, contract.ReasonStateCorrupt) {
 			t.Fatalf("a deterministic reason leaked into the level outcome labels: %s", line)
 		}
 	}
@@ -666,7 +678,7 @@ func TestSteppingDownAsLeaderTakesTheLeaderReadingsOffTheScrape(t *testing.T) {
 			ShardAware: &observability.ShardAwareFacts{Ready: 3, Unaware: []string{"worker-2"}}},
 	})
 	recorder.phaseTwo.undrainedDrainingQueryGroups.Set(2)
-	leaderReadings := []string{"bkmonitor_alarmd_rebalance_planned_moves", "bkmonitor_alarmd_rebalance_gap", "bkmonitor_alarmd_shard_unaware_ready_replicas"}
+	leaderReadings := []string{"alarmd_rebalance_planned_moves", "alarmd_rebalance_gap", "alarmd_shard_unaware_ready_replicas"}
 	scraped := scrape(t, recorder)
 	for _, reading := range leaderReadings {
 		if !strings.Contains(scraped, reading+" ") {
@@ -680,7 +692,7 @@ func TestSteppingDownAsLeaderTakesTheLeaderReadingsOffTheScrape(t *testing.T) {
 			t.Fatalf("%s survived the step-down; a stale leader reading wins a max across replicas:\n%s", reading, scraped)
 		}
 	}
-	if !strings.Contains(scraped, "bkmonitor_alarmd_undrained_draining_query_groups ") {
+	if !strings.Contains(scraped, "alarmd_undrained_draining_query_groups ") {
 		t.Fatalf("a per-replica reading was taken off with the leader's:\n%s", scraped)
 	}
 	// Leading again publishes them again.
@@ -688,7 +700,7 @@ func TestSteppingDownAsLeaderTakesTheLeaderReadingsOffTheScrape(t *testing.T) {
 		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned, Result: observability.ResultSuccess,
 		Operation: observability.OperationLoad, Rebalance: &observability.RebalanceFacts{PlannedMoves: 1},
 	})
-	if scraped = scrape(t, recorder); !strings.Contains(scraped, "bkmonitor_alarmd_rebalance_planned_moves ") {
+	if scraped = scrape(t, recorder); !strings.Contains(scraped, "alarmd_rebalance_planned_moves ") {
 		t.Fatalf("a replica that leads again does not publish its readings:\n%s", scraped)
 	}
 }
@@ -698,7 +710,7 @@ func TestSourceRefreshBuildsAreCountedFromZero(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
 	counts := func() map[string]float64 {
 		result := map[string]float64{}
-		for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_source_refresh_build_total") {
+		for _, m := range gatherFamily(t, r, "alarmd_source_refresh_build_total") {
 			result[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 		}
 		return result

@@ -29,6 +29,11 @@ type streamedExecution struct {
 	prepared      preparedNamedInputIndex
 	streamed      map[streamedInputKey]execution.NamedInputBinding
 	planSeries    map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{}
+	// hostOverlays holds, by Plan and series, the dimensions the platform's
+	// fuller writes for a host CMDB placed by id with another address
+	// (SeriesExecutionBatch.HostOverlays). Nil until a series carries one,
+	// which most Slots never do.
+	hostOverlays map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]map[string]json.RawMessage
 	// planSeriesCounts is len(planSeries[plan]) once per Plan, for the
 	// evaluation lines: the number is constant for a Plan within a Slot and
 	// the lines are one per series, so it is counted on the first line and
@@ -76,10 +81,15 @@ type streamedExecution struct {
 	noDataPlansSeen      int
 	noDataStateMutations uint64
 	noDataMutations      []execution.PlanNoDataMutation
-	effective            map[execution.ConsumerRef]strategy.EffectiveTimeFact
-	evaluated            execution.EvaluationResult
-	delivered            []execution.SeriesDelivery
-	series               uint64
+	// noDataAbsenceStarts carries each Plan's absent series to the output's
+	// manual-close check (decision-024).
+	noDataAbsenceStarts noDataAbsenceStarts
+	// noDataEnds is each Plan's no-data end index as this Slot read it.
+	noDataEnds map[execution.PlanIdentity]execution.NoDataEndLoaded
+	effective  map[execution.ConsumerRef]strategy.EffectiveTimeFact
+	evaluated  execution.EvaluationResult
+	delivered  []execution.SeriesDelivery
+	series     uint64
 	// retainedByPhase is this execution's retained bytes split by what they
 	// were retained for. The total is the sum rather than a counter of its
 	// own: a sixth budget's worth of memory arriving with no phase attached
@@ -91,6 +101,16 @@ type streamedExecution struct {
 	// reader on another goroutine: access reads it across an in-place
 	// readiness wait while the series path keeps adding.
 	retainedInputNow atomic.Uint64
+	// retainedNow is retainedByPhase again for a reader on another goroutine
+	// (RetainedHolders), and heldSince when this execution first retained;
+	// holding says it has joined the coordinator's holder registry. holding
+	// is set once and never cleared, release included: a stream registers
+	// once, so heldSince is written once, before any reader can reach it.
+	// A stream retaining after its release would show as a reservation no
+	// hold names, not rewrite heldSince under a reader.
+	retainedNow [retainPhaseCount]atomic.Uint64
+	heldSince   time.Time
+	holding     bool
 	// spentByPhase is this execution's wall clock split the same way, in
 	// nanoseconds, summed over every call of each phase.
 	spentByPhase [slotPhaseCount]uint64
@@ -101,6 +121,15 @@ type streamedExecution struct {
 	effects  effectCounts
 	gapFacts uint64
 	began    bool
+	// namedOutputs is the tables of named outputs the Slot's queries aligned,
+	// by physical query, kept from the completion for the detection
+	// snapshots of their Plans' events. Nil for a Slot whose queries asked
+	// for none.
+	namedOutputs map[execution.PhysicalQueryDigest]*execution.NamedOutputRecords
+	// namedReserved is what this execution's queries reserved for their
+	// named outputs (ReserveRetainedBytes) and still hold: part of the input
+	// phase, settled to the aligned tables at the completion.
+	namedReserved uint64
 	// supplement is set on a supplement execution and nil on every Slot.
 	// See supplement.go.
 	supplement *supplementRun
@@ -199,8 +228,13 @@ const (
 // panics here rather than being dropped into the total unattributed.
 func (stream *streamedExecution) retainBytes(phase retainPhase, retained uint64) {
 	stream.retainedByPhase[phase] += retained
+	stream.retainedNow[phase].Add(retained)
 	if phase == retainPhaseInput {
 		stream.retainedInputNow.Add(retained)
+	}
+	if retained > 0 && !stream.holding {
+		stream.holding, stream.heldSince = true, time.Now()
+		stream.coordinator.holders.add(stream)
 	}
 }
 
@@ -208,6 +242,63 @@ func (stream *streamedExecution) retainBytes(phase retainPhase, retained uint64)
 // safe to read from any goroutine (execution.RetainedInputReporter).
 func (stream *streamedExecution) RetainedInputBytesNow() uint64 {
 	return stream.retainedInputNow.Load()
+}
+
+// ReserveRetainedBytes reserves bytes a query of this execution holds
+// beside its series - a named-outputs alignment as its answer is read -
+// against the same budget its series are reserved against, judged the same
+// way: the share one Query Group's Slot may hold, by this execution's own
+// total, then the pool (reserveRetainedInput). It refuses at once, as a
+// series is refused, and never waits (execution.RetainedBytesReserver). The
+// access source calls it under the lock series are delivered under.
+func (stream *streamedExecution) ReserveRetainedBytes(ctx context.Context, bytes uint64) error {
+	if err := stream.reserveRetainedInput(ctx, bytes); err != nil {
+		return err
+	}
+	stream.namedReserved += bytes
+	return nil
+}
+
+// ReleaseRetainedBytes gives back bytes ReserveRetainedBytes reserved, no
+// more than it holds.
+func (stream *streamedExecution) ReleaseRetainedBytes(bytes uint64) {
+	bytes = min(bytes, stream.namedReserved)
+	stream.namedReserved -= bytes
+	stream.unretainInput(bytes)
+}
+
+// reserveRetainedInput reserves input bytes beside the series: the share
+// first, against this execution's own total, then the pool through the
+// reservation a series takes; refused the way either refuses, observed as
+// a capacity rejection.
+func (stream *streamedExecution) reserveRetainedInput(ctx context.Context, bytes uint64) error {
+	if bytes == 0 {
+		return nil
+	}
+	phase := stream.reservationPhase("normal_input")
+	if share := stream.coordinator.qgShareBytes(); share > 0 && stream.retainedTotal()+bytes > share {
+		err := shareRejection(phase, stream.retainedTotal(), bytes, share, stream.ownBudgetUsage(stream.coordinator.budget))
+		stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, observability.CapacityBudgetRetainedBytes, err)
+		return err
+	}
+	if err := stream.reserveProvisionalAt(ctx, 0, bytes, phase); err != nil {
+		return err
+	}
+	stream.retainBytes(retainPhaseInput, bytes)
+	return nil
+}
+
+// unretainInput gives back input bytes this execution reserved, to the
+// pool and from its own total.
+func (stream *streamedExecution) unretainInput(bytes uint64) {
+	if bytes == 0 {
+		return
+	}
+	bytes = min(bytes, stream.retainedByPhase[retainPhaseInput])
+	stream.retainedByPhase[retainPhaseInput] -= bytes
+	stream.retainedInputNow.Add(^(bytes - 1))
+	stream.retainedNow[retainPhaseInput].Add(^(bytes - 1))
+	stream.coordinator.releaseProvisional(0, bytes)
 }
 
 // retainedTotal is what this execution holds across all phases.
@@ -273,7 +364,7 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 	stream.streamed = make(map[streamedInputKey]execution.NamedInputBinding)
 	stream.planSeries = make(map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{})
 	stream.completionOnly = make(map[execution.PlanIdentity][]execution.NamedInputBinding)
-	effective, err := PrepareEffectiveTimeFacts(ctx, header, stream.coordinator.ports.EffectiveTime)
+	effective, err := PrepareEffectiveTimeFacts(ctx, header, stream.coordinator.ports.EffectiveTime, stream.coordinator.now().Unix())
 	if err != nil {
 		return fmt.Errorf("alarmd worker: prepare EffectiveTime facts: %w", err)
 	}
@@ -298,6 +389,9 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 	if err != nil {
 		return fmt.Errorf("alarmd worker: measure provisional retention: %w", err)
 	}
+	// An overlay is kept until the series is evaluated, and charged as it is
+	// kept; a series without one is charged nothing more.
+	retained += hostOverlaysRetainedBytes(batch.HostOverlays)
 	if err := stream.reserveProvisional(ctx, batch.Delivery.Series, retained); err != nil {
 		return err
 	}
@@ -331,6 +425,15 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 		}
 		stream.streamed[key] = binding
 		if binding.Role == execution.InputRolePrimary {
+			if overlay := batch.HostOverlays[binding.Consumer.Plan]; overlay != nil {
+				if stream.hostOverlays == nil {
+					stream.hostOverlays = make(map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]map[string]json.RawMessage)
+				}
+				if stream.hostOverlays[binding.Consumer.Plan] == nil {
+					stream.hostOverlays[binding.Consumer.Plan] = make(map[execution.SeriesIdentityDigest]map[string]json.RawMessage)
+				}
+				stream.hostOverlays[binding.Consumer.Plan][series] = overlay
+			}
 			seriesByPlan := stream.planSeries[binding.Consumer.Plan]
 			if seriesByPlan == nil {
 				seriesByPlan = make(map[execution.SeriesIdentityDigest]struct{})
@@ -390,37 +493,88 @@ func (stream *streamedExecution) releaseProvisional() {
 	stream.coordinator.releaseEffects(stream.effects)
 	stream.effects = effectCounts{}
 	stream.coordinator.releaseProvisional(stream.series, stream.retainedTotal())
-	stream.series, stream.retainedByPhase = 0, [retainPhaseCount]uint64{}
+	stream.namedOutputs = nil
+	stream.series, stream.retainedByPhase, stream.namedReserved = 0, [retainPhaseCount]uint64{}, 0
 	stream.retainedInputNow.Store(0)
+	for phase := range stream.retainedNow {
+		stream.retainedNow[phase].Store(0)
+	}
+	if stream.holding {
+		stream.coordinator.holders.remove(stream)
+	}
+}
+
+// retainNamedOutputs settles what the Slot holds for the named outputs its
+// queries aligned: the tables (namedOutputRecordsRetainedBytes), kept from
+// the completion until the Slot ends and released with it. Their queries
+// reserved them as the answers were read (ReserveRetainedBytes) and left
+// the tables' own reserved, so the reservation is turned into the charge
+// rather than taken again: what was reserved beyond the tables - a query
+// whose answer was not used - is given back, and only what no query
+// reserved is reserved now, judged as every input is. Nothing for a Slot
+// whose queries asked for none.
+func (stream *streamedExecution) retainNamedOutputs(ctx context.Context, completion execution.QueryExecutionCompletion) error {
+	tables := namedOutputRecordsRetainedBytes(completion)
+	reserved := stream.namedReserved
+	switch {
+	case reserved > tables:
+		stream.ReleaseRetainedBytes(reserved - tables)
+	case reserved < tables:
+		if err := stream.ReserveRetainedBytes(ctx, tables-reserved); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// primaryNamedOutputs is the table of named outputs the series' primary
+// query aligned, which its events' detection snapshots read; nil when that
+// query asked for none.
+func (stream *streamedExecution) primaryNamedOutputs(inputs []execution.SeriesEvaluationInputRequest) *execution.NamedOutputRecords {
+	if stream.namedOutputs == nil {
+		return nil
+	}
+	for _, input := range inputs {
+		for _, binding := range input.Inputs {
+			if binding.Role == execution.InputRolePrimary {
+				if table := stream.namedOutputs[binding.Provenance.PhysicalQuery]; table != nil {
+					return table
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// namedOutputRecordsRetainedBytes is what the named-output tables of a
+// completion's queries hold (execution.NamedOutputRecords.RetainedBytes).
+// Zero for a completion of queries that asked for none.
+func namedOutputRecordsRetainedBytes(completion execution.QueryExecutionCompletion) uint64 {
+	var total uint64
+	for _, query := range completion.PhysicalQueries {
+		total += query.NamedOutputs.RetainedBytes()
+	}
+	return total
+}
+
+// hostOverlaysRetainedBytes is what a batch's host overlays hold: their keys
+// and values, and a map header for each. Zero for a batch without one.
+func hostOverlaysRetainedBytes(overlays map[execution.PlanIdentity]map[string]json.RawMessage) uint64 {
+	var total uint64
+	for plan, overlay := range overlays {
+		total += 48 + uint64(len(plan.TenantID)+len(plan.BusinessID)+len(plan.StrategyID))
+		for key, value := range overlay {
+			total += 48 + uint64(len(key)+len(value))
+		}
+	}
+	return total
 }
 
 func streamedRetainedSize(bindings []execution.NamedInputBinding, delivery execution.SeriesDelivery) (uint64, error) {
-	compact := make([]execution.NamedInputBinding, len(bindings))
-	copy(compact, bindings)
-	for index := range compact {
-		compact[index].Dataset = nil
-		compact[index].View = nil
-	}
-	// Only the length is wanted, so the encoding is counted rather than kept:
-	// Marshal copies out a document that was read once for its length. The
-	// encoder escapes as Marshal does and ends with a newline Marshal does not
-	// write, which is taken off so the size is the one Marshal gave.
-	var counted encodedLength
-	if err := json.NewEncoder(&counted).Encode(struct {
-		Bindings []execution.NamedInputBinding
-		Delivery execution.SeriesDelivery
-	}{Bindings: compact, Delivery: delivery}); err != nil {
-		return 0, err
-	}
-	return uint64(counted) - 1 + delivery.Bytes, nil
-}
-
-// encodedLength is a writer that keeps only how many bytes it was given.
-type encodedLength uint64
-
-func (length *encodedLength) Write(p []byte) (int, error) {
-	*length += encodedLength(len(p))
-	return len(p), nil
+	// The length the bindings without their datasets and the delivery encode
+	// to, counted field by field (retained_size.go): encoding them only to
+	// measure them was a twentieth of reading a large answer.
+	return uint64(retainedDocumentLength(bindings, delivery)) + delivery.Bytes, nil
 }
 
 func prepareNamedInputIndex(header execution.InternalExecutionHeader) (preparedNamedInputIndex, error) {
@@ -629,8 +783,10 @@ func mergeProvisional(target *execution.EvaluationResult, next execution.Evaluat
 func appendProvisional(target *execution.EvaluationResult, next execution.EvaluationResult) error {
 	if target.Contract == (execution.FrozenExecutionContractRef{}) {
 		target.Contract, target.Result, target.ReasonCode = next.Contract, next.Result, next.ReasonCode
+		target.ReasonCarried, target.ReasonOrigin = next.ReasonCarried, next.ReasonOrigin
 	} else if resultRank(next.Result) > resultRank(target.Result) {
 		target.Result, target.ReasonCode = next.Result, next.ReasonCode
+		target.ReasonCarried, target.ReasonOrigin = next.ReasonCarried, next.ReasonOrigin
 	}
 	for _, nextPlan := range next.Plans {
 		index := -1
@@ -650,6 +806,9 @@ func appendProvisional(target *execution.EvaluationResult, next execution.Evalua
 		}
 		plan.LevelOutcomes = append(plan.LevelOutcomes, nextPlan.LevelOutcomes...)
 		plan.StateResults = append(plan.StateResults, nextPlan.StateResults...)
+		// Read after the merge, by the commit that keeps the no-data end
+		// index: every series' updates, not the first one's.
+		plan.NoDataEnds = append(plan.NoDataEnds, nextPlan.NoDataEnds...)
 		// Counts, so they accumulate across the series of one Slot rather than
 		// being replaced by the last one merged. A Slot's window coverage is
 		// the whole Slot's, and reporting only the final series would make a
@@ -678,6 +837,27 @@ type provisionalBudgetExceededError struct {
 
 func (err *provisionalBudgetExceededError) Error() string {
 	return "alarmd worker: provisional " + string(err.budget) + " budget exceeded"
+}
+
+// DeterministicShareRefusal marks a share refusal the scheduler may stop
+// retrying (execution.DeterministicShareRefusal): the share flag with no
+// shared usage behind it, so it is the Slot's own total that is over the
+// share (acquireEffects measures it against the Slot's own total, never what
+// is left of the pool), and the same window re-read is refused the same way.
+// A pool rejection - shared usage above zero, the share flag unset - is not
+// marked: other Slots release their part and a retry may fit.
+//
+// SharedUsed != 0 is redundant today - shareRejection never sets it - and
+// stays on purpose: the marker's claim is "no other Query Group is part of
+// why", and if the share is ever measured against what others hold, a
+// refusal that reports their usage must fall back to the pool's retry rather
+// than give up Slots a later round could fit.
+func (err *provisionalBudgetExceededError) DeterministicShareRefusal() (execution.ShareRefusal, bool) {
+	if err == nil || !err.share || err.facts == nil || err.facts.SharedUsed != 0 || err.facts.OwnUsed == nil {
+		return execution.ShareRefusal{}, false
+	}
+	return execution.ShareRefusal{Phase: err.facts.Phase, OwnUsedBytes: *err.facts.OwnUsed,
+		RequestedBytes: err.facts.Requested, LimitBytes: err.facts.Limit}, true
 }
 
 func resultRank(result observability.Result) int {
@@ -723,6 +903,17 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	stream.spend(slotPhaseInput, stream.beganAt)
 	if err := completion.Validate(stream.header, stream.delivered); err != nil {
 		return wrapCompletionContractError(codeCompletionInvalid, err)
+	}
+	if err := stream.retainNamedOutputs(ctx, completion); err != nil {
+		return err
+	}
+	for _, query := range completion.PhysicalQueries {
+		if query.NamedOutputs != nil {
+			if stream.namedOutputs == nil {
+				stream.namedOutputs = make(map[execution.PhysicalQueryDigest]*execution.NamedOutputRecords)
+			}
+			stream.namedOutputs[query.PhysicalQuery] = query.NamedOutputs
+		}
 	}
 	physical := make(map[execution.PhysicalQueryDigest]classifiedPhysicalCompletion, len(completion.PhysicalQueries))
 	for _, item := range completion.PhysicalQueries {
@@ -837,6 +1028,9 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 		return err
 	}
 	if err := stream.loadNoDataMemory(ctx); err != nil {
+		return err
+	}
+	if err := stream.loadNoDataEnds(ctx); err != nil {
 		return err
 	}
 	if err := stream.evaluateSeries(ctx, completion, preparedSeriesEvaluations); err != nil {
@@ -1101,7 +1295,7 @@ func (stream *streamedExecution) observeNoDataRenewals(ctx context.Context) {
 		stream.coordinator.emitObservation(ctx, observability.Observation{
 			Component: observability.ComponentState, Stage: observability.StageNoDataMemoryRenewed,
 			Operation: observability.Operation(stream.request.Operation),
-			Direction: observability.DirectionInternal, Result: result, ReasonCode: reason,
+			Result:    result, ReasonCode: reason,
 			Trace: observability.TraceFields{
 				StrategyID: renewal.Identity.Plan.StrategyID, BusinessID: renewal.Identity.Plan.BusinessID,
 			},
@@ -1131,13 +1325,15 @@ func (stream *streamedExecution) observeNoDataRepresentations(ctx context.Contex
 		representation := snapshot.Representation
 		stream.coordinator.emitObservation(ctx, observability.Observation{
 			Component: observability.ComponentState, Stage: observability.StageNoDataMemoryRead,
-			Operation: observability.Operation(stream.request.Operation),
-			Direction: observability.DirectionInternal, Result: observability.ResultSuccess,
+			Operation:  observability.Operation(stream.request.Operation),
+			Result:     observability.ResultSuccess,
 			ReasonCode: observability.ReasonNone,
 			Trace: observability.TraceFields{
 				StrategyID: snapshot.Identity.Plan.StrategyID, BusinessID: snapshot.Identity.Plan.BusinessID,
 			},
-			NoDataMemoryRead: &observability.NoDataMemoryReadFacts{Representation: string(representation)},
+			NoDataMemoryRead: &observability.NoDataMemoryReadFacts{
+				Representation: string(representation), ManualClosesUnread: snapshot.ManualClosesUnread,
+			},
 		})
 	}
 }
@@ -1636,11 +1832,24 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	}
 	stateItems := []execution.StatePreflightItem{entry.item}
 	loaded := execution.StatePreflightResult{Items: []execution.RuntimeStateView{view}}
+	// The effective time is judged at the decision: the facts prepared when
+	// the Slot began are judged again only if a window boundary has passed
+	// since, which is when they stop holding.
+	decision := stream.coordinator.now().Unix()
+	if !effectiveFactsHoldAt(stream.effective, decision) {
+		effective, err := PrepareEffectiveTimeFacts(ctx, stream.header, stream.coordinator.ports.EffectiveTime, decision)
+		if err != nil {
+			return fmt.Errorf("alarmd worker: prepare EffectiveTime facts at the decision: %w", err)
+		}
+		stream.effective = effective
+	}
 	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective, entry.kind())
 	if err != nil {
 		return fmt.Errorf("alarmd worker: bind series EffectiveTime facts: %w", err)
 	}
-	request := execution.EvaluationRequest{Header: evaluationHeader, Inputs: inputs, State: loaded, Gaps: stream.gaps}
+	evaluationHeader.DecisionTime = decision
+	request := execution.EvaluationRequest{Header: evaluationHeader, Inputs: inputs, State: loaded, Gaps: stream.gaps,
+		HostOverlay: stream.hostOverlays[due.Identity][series], NamedOutputs: stream.primaryNamedOutputs(inputs)}
 	// Told before the evaluation, so the strategy is in the copy's next read
 	// even if no record of this round asks about it. The constructor requires
 	// the port; the guard is for tests that build the struct.
@@ -1727,14 +1936,18 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 	observation := observability.Observation{
 		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
-		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
-		Duration: time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
+		ReasonCode: evaluated.ReasonCode,
+		Duration:   time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
 		DurationKnown: true, EvaluationOwner: costEvaluationOwner(due.Identity), EvaluationRecordsKnown: true,
 		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID, DimensionIdentityDigest: string(series)},
 		AlgorithmEvaluations: evaluations, AlgorithmInputs: namedInputs,
 		RecoveryGates: recoveryGateFacts(due, evaluated), OpenAlertGates: openAlertGateFacts(due, evaluated),
+		RecoveryWithheld: recoveryWithheldFacts(due, evaluated),
 		LevelOutcomes:    levelOutcomeFacts(due, evaluated),
 		OutputWireFormat: planWireFormat(due), PlanSeriesMatched: stream.planSeriesMatched(due),
+		// The series' reason was a stored guard's, and where it came from.
+		CarriedReason: execution.CarriedReasonFacts(evaluated.ReasonCarried && evaluated.Result != observability.ResultSuccess,
+			evaluated.ReasonOrigin),
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)
 }
@@ -1779,8 +1992,8 @@ func costEvaluationOwner(identity execution.PlanIdentity) observability.CostPlan
 func (stream *streamedExecution) observeEvaluationFailure(ctx context.Context, started time.Time, due execution.DuePlan, err error) {
 	stream.coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
-		Operation: observability.Operation(stream.request.Operation), Direction: observability.DirectionInternal,
-		Duration: time.Since(started), DurationKnown: true, Err: err,
+		Operation: observability.Operation(stream.request.Operation),
+		Duration:  time.Since(started), DurationKnown: true, Err: err,
 		EvaluationOwner: costEvaluationOwner(due.Identity),
 	})
 }
@@ -1796,24 +2009,34 @@ func levelOutcomeFacts(due execution.DuePlan, evaluated execution.EvaluationResu
 	if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
 		return nil
 	}
-	type cell struct{ outcome, reason string }
+	type cell struct {
+		outcome, reason string
+		carried         bool
+	}
 	counts := make(map[cell]uint64)
 	for _, outcome := range evaluated.Plans[0].LevelOutcomes {
 		key := cell{outcome: string(outcome.Outcome)}
 		if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
 			key.reason = string(outcome.ReasonCode)
 		}
+		// A stored guard's reason repeated on this round is its own cell:
+		// QUERY_TIMEOUT carried from the round that timed out is not this
+		// round timing out.
+		key.carried = outcome.Outcome == execution.LevelOutcomeUnknown && outcome.ReasonCarried
 		counts[key]++
 	}
 	facts := make([]observability.LevelOutcomeFact, 0, len(counts))
 	for key, count := range counts {
-		facts = append(facts, observability.LevelOutcomeFact{Outcome: key.outcome, Reason: key.reason, Count: count})
+		facts = append(facts, observability.LevelOutcomeFact{Outcome: key.outcome, Reason: key.reason, Carried: key.carried, Count: count})
 	}
 	sort.Slice(facts, func(i, j int) bool {
 		if facts[i].Outcome != facts[j].Outcome {
 			return facts[i].Outcome < facts[j].Outcome
 		}
-		return facts[i].Reason < facts[j].Reason
+		if facts[i].Reason != facts[j].Reason {
+			return facts[i].Reason < facts[j].Reason
+		}
+		return !facts[i].Carried && facts[j].Carried
 	})
 	return facts
 }
@@ -1834,6 +2057,28 @@ func openAlertGateFacts(due execution.DuePlan, evaluated execution.EvaluationRes
 	} {
 		if fact.Records > 0 {
 			facts = append(facts, fact)
+		}
+	}
+	return facts
+}
+
+// recoveryWithheldFacts carries the Plan's Level outcomes whose recovery was
+// withheld (LevelOutcome.RecoveryWithheld), for the Plan the observation is
+// about; none when nothing was withheld.
+func recoveryWithheldFacts(due execution.DuePlan, evaluated execution.EvaluationResult) []observability.RecoveryWithheldFact {
+	if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
+		return nil
+	}
+	counts := map[execution.RecoveryWithheldCode]uint64{}
+	for _, outcome := range evaluated.Plans[0].LevelOutcomes {
+		if outcome.RecoveryWithheld != execution.RecoveryWithheldNone {
+			counts[outcome.RecoveryWithheld]++
+		}
+	}
+	var facts []observability.RecoveryWithheldFact
+	for _, code := range execution.RecoveryWithheldCodes {
+		if counts[code] > 0 {
+			facts = append(facts, observability.RecoveryWithheldFact{Reason: observability.RecoveryWithheldReason(code.Reason()), Levels: counts[code]})
 		}
 	}
 	return facts
@@ -1875,8 +2120,8 @@ func (stream *streamedExecution) observeCompletionOnlyPlan(
 	observation := observability.Observation{
 		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
-		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
-		Duration: time.Since(started), DurationKnown: true,
+		ReasonCode: evaluated.ReasonCode,
+		Duration:   time.Since(started), DurationKnown: true,
 		EvaluationOwner: costEvaluationOwner(due.Identity), EvaluationRecordsKnown: true,
 		Trace:             observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID},
 		AlgorithmInputs:   stream.completionOnlyAlgorithmInputFacts(due),
@@ -1921,7 +2166,8 @@ func (stream *streamedExecution) algorithmObservationFacts(
 			evaluations = append(evaluations, observability.AlgorithmEvaluationFact{
 				SourceAlgorithmFamily: algorithm.family, DetectorKind: algorithm.detector,
 				Result: algorithmEvaluationResult(outcome.Outcome), ReasonCode: outcome.ReasonCode,
-				Provenance: observability.AlgorithmProvenance{LevelID: outcome.LevelID, SourceTime: outcome.Record.SourceTime},
+				ReasonCarried: outcome.Outcome == execution.LevelOutcomeUnknown && outcome.ReasonCarried,
+				Provenance:    observability.AlgorithmProvenance{LevelID: outcome.LevelID, SourceTime: outcome.Record.SourceTime},
 			})
 			input, found := inputsByLevel[outcome.LevelID]
 			if !found {
@@ -2373,16 +2619,7 @@ func (stream *streamedExecution) gapMutationForReasons(
 }
 
 func requiredFullSlots(plan *strategy.CompiledPlan) uint32 {
-	if plan == nil {
-		return 0
-	}
-	var required uint32
-	for _, level := range plan.Levels().All() {
-		if points := level.RequiredDetectHistoryPoints(); points > required {
-			required = points
-		}
-	}
-	return required
+	return plan.RequiredFullSlots()
 }
 
 // physicalFailureReason picks the code an unavailable physical completion

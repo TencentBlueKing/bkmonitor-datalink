@@ -59,7 +59,12 @@ func trimSummary(summary readSummary, from int64) readSummary {
 // record ids, over the tail of each of its ranges, under its own digest. A
 // start inside no range, or a spec whose digest cannot be derived again,
 // reads the whole window as before.
+//
+// A query with named outputs reads its legacy output alone
+// (legacyOutputRead): its tail is compared with the series the first read
+// delivered, which are the legacy output's.
 func tailSpec(spec execution.PhysicalQuerySpec, start int64) execution.PhysicalQuerySpec {
+	spec = legacyOutputRead(spec)
 	if start <= spec.LogicalWindow.Start || start >= spec.LogicalWindow.End {
 		return spec
 	}
@@ -73,6 +78,22 @@ func tailSpec(spec execution.PhysicalQuerySpec, start int64) execution.PhysicalQ
 	}
 	tail.Digest = digest
 	return tail
+}
+
+// legacyOutputRead is the query a lookback read of spec sends: for a query
+// with named outputs, its legacy output alone. A read compares only the
+// series detection reads, which are the legacy output's, and the provider
+// would compute every other output for nobody. Its digest is its own, and
+// it is compared with no other: nothing of a lookback read is matched to a
+// Slot's planned query but the directed read a supplement replays, and a
+// Slot with named outputs has none (UnobservedNamedOutputs). The spec as it
+// was when its digest cannot be derived again.
+func legacyOutputRead(spec execution.PhysicalQuerySpec) execution.PhysicalQuerySpec {
+	legacy, err := spec.LegacyOutputOnly()
+	if err != nil {
+		return spec
+	}
+	return legacy
 }
 
 // queryLookback is how far before a bucket a query reads to compute it: the

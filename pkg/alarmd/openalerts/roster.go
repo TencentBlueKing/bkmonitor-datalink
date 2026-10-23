@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -180,9 +179,8 @@ func (reader *HTTPReconciler) alertRecord(ctx context.Context, tenantID, alertID
 			Labels        map[string]json.RawMessage `json:"labels"`
 		} `json:"payload"`
 	}
-	err := reader.getPath(ctx, "/local-api/alerts/"+url.PathEscape(alertID), url.Values{"bk_tenant_id": {tenantID}}, &response)
-	var status statusError
-	if errors.As(err, &status) && int(status) == http.StatusNotFound {
+	err := reader.getPath(ctx, "/alerts/"+url.PathEscape(alertID), url.Values{"bk_tenant_id": {tenantID}}, &response)
+	if errors.Is(err, errObjectMissing) {
 		return AlertRecord{}, ErrAlertNotFound
 	}
 	if err != nil {

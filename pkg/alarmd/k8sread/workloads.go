@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,7 +27,7 @@ import (
 const (
 	// MaxNamespaces bounds the namespaces one read covers: its own, the ones
 	// its dependencies' addresses name, and the ones the deployment lists.
-	MaxNamespaces = 8
+	MaxNamespaces = 64
 	// MaxNamespacePods and MaxNamespaceReplicaSets are the page each list asks
 	// for. A pod or ReplicaSet object is a few kilobytes, so a page stays well
 	// inside the response bound before it is decoded.
@@ -391,10 +392,20 @@ func (r *Reader) Workloads(ctx context.Context, dependencies []Dependency, confi
 		add(namespace, NamespaceOrigin{Kind: OriginConfigured})
 	}
 	window := now.Add(-time.Duration(windowHours) * time.Hour)
+	// The namespaces are read side by side: one after another, up to 64
+	// namespaces' list calls shared one operation's time, and a slow one
+	// left the rest unread. Each section names its own failure.
+	var wait sync.WaitGroup
 	for _, namespace := range order {
-		section := sections[namespace]
-		r.readNamespace(ctx, section, window)
-		result.Namespaces = append(result.Namespaces, *section)
+		wait.Add(1)
+		go func(section *NamespaceWorkloads) {
+			defer wait.Done()
+			r.readNamespace(ctx, section, window)
+		}(sections[namespace])
+	}
+	wait.Wait()
+	for _, namespace := range order {
+		result.Namespaces = append(result.Namespaces, *sections[namespace])
 	}
 	return result, nil
 }

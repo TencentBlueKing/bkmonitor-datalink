@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -81,7 +82,7 @@ func TestBuiltInPythonOutputWithoutServiceRedisIsRejected(t *testing.T) {
 func TestBuiltInPythonOutputUnreachableServiceRedisHoldsStartup(t *testing.T) {
 	sourceAddress, sourceClient := startPhaseTwoRedis(t)
 	runtimeAddress, _ := startPhaseTwoRedis(t)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
 	if err != nil {
@@ -120,9 +121,22 @@ func TestBuiltInPythonOutputUnreachableServiceRedisHoldsStartup(t *testing.T) {
 		t.Fatalf("the configuration itself must stay valid: %v", err)
 	}
 
+	// The process stops once startup has waited on the service Redis twice.
+	// The waiter writes each wait's line right before it pauses, so the stop
+	// lands in the second pause, however fast the host is.
+	waited := &lineSignal{markers: []string{"dependency_waiting", "redis_legacy_output"}, count: 2, seen: make(chan struct{})}
+	expired := testwait.Expired(t)
+	go func() {
+		select {
+		case <-waited.seen:
+		case <-expired:
+		case <-ctx.Done():
+		}
+		cancel()
+	}()
 	recorder := metric.NewRecorder(metric.BuildInfo{})
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
-		ctx, cfg, recorder, observability.Discard(observability.ComponentRuntime),
+		ctx, cfg, recorder, observability.New(observability.ComponentRuntime, waited),
 		newPhaseTwoApplicationHealth(),
 		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)
@@ -138,10 +152,10 @@ func TestBuiltInPythonOutputUnreachableServiceRedisHoldsStartup(t *testing.T) {
 		t.Cleanup(func() { _ = bundle.Shutdown(context.Background()) })
 		t.Fatal("a bundle was assembled without its compatibility service Redis")
 	}
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "redis_legacy_output") {
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "redis_legacy_output") {
 		t.Fatalf("err = %v, want startup held on the service Redis until the process stopped", err)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_startup_dependency_wait_total",
+	if got := counterValue(t, recorder, "alarmd_startup_dependency_wait_total",
 		map[string]string{"dependency": "redis_legacy_output"}); got < 2 {
 		t.Fatalf("startup_dependency_wait_total{redis_legacy_output} = %v, want the wait counted", got)
 	}

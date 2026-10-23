@@ -27,8 +27,7 @@ import (
 func guardProgress(ctx context.Context, tracker *Tracker, strategy, scope, status, reason string, required, observed uint32) {
 	tracker.Observe(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageGapGuardProgress, Result: observability.ResultSuccess,
-		Direction: observability.DirectionInternal,
-		Trace:     observability.TraceFields{StrategyID: strategy, BusinessID: "2"},
+		Trace: observability.TraceFields{StrategyID: strategy, BusinessID: "2"},
 		GapProgress: &observability.GapProgressFacts{Scope: scope, Status: status, Reason: reason, Required: required, Observed: observed,
 			Progress: contract.GapScopeProgress(observed, required)},
 	})

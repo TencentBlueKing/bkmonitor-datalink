@@ -15,6 +15,7 @@
 package admission
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"strconv"
@@ -120,6 +121,29 @@ type Facts struct {
 	// is decided whether alert identity follows CMDB's address as Python's
 	// does. Zero for a record not placed that way.
 	ReportedAddress ReportedAddress
+	// HostOverlay is what Python's fuller writes into the record's
+	// dimensions on the branch CMDB placed its host by bk_host_id or
+	// bk_agent_id: the host's bk_target_ip, its bk_target_cloud_id ("0" for
+	// none) and, where the record has no bk_host_id key, its bk_host_id as a
+	// string. The alert's target and fingerprint are read
+	// from the dimensions as written. Nil unless the address or the cloud
+	// differs from the record's own - the record then already reads as the
+	// fuller would leave it - so a record placed the ordinary way carries
+	// nothing.
+	HostOverlay map[string]json.RawMessage
+	// HostIdentityUnavailable says the record names its host by a true
+	// bk_host_id or bk_agent_id and no CMDB index that ever held hosts can
+	// say where it is: its alert identity cannot be read, and it must not be
+	// emitted under its raw address in the meantime.
+	HostIdentityUnavailable bool
+	// HostOverlaySource names where HostOverlay was read when it was not the
+	// index in force that the filters decide on (HostOverlayFromStaleIndex,
+	// HostOverlayFromLastPopulatedIndex); empty otherwise.
+	HostOverlaySource string
+	// IdentityHostFound says the record's host was found by its id or agent
+	// in the identity index: Python's fuller returns there, so the service
+	// instance branch does not overlay it.
+	IdentityHostFound bool
 	// PlacedByHostID records that CMDB placed the record's host by its
 	// bk_host_id or bk_agent_id: the branch Python's fuller overwrites
 	// bk_target_ip on, whatever the record's own address. The count the
@@ -152,7 +176,24 @@ type Facts struct {
 // The indexes enrichment consults, as the reasons a filter reports when one
 // of them could not be.
 const (
-	FactsUnavailableHostIndex            = "host_facts_unavailable"
+	FactsUnavailableHostIndex = "host_facts_unavailable"
+	// HostOverlayFromStaleIndex is an identity overlay read from the index in
+	// force while it is past its staleness bound; HostOverlayFromLastPopulatedIndex
+	// one read from the last index that held the host, the one in force being
+	// empty, or its agent hash unreadable, or its load having refused the host.
+	HostOverlayFromStaleIndex         = "stale_index"
+	HostOverlayFromLastPopulatedIndex = "last_populated_index"
+	// HostIdentityHeld names a series held because no index can give its
+	// alert identity (HostIdentityUnavailable).
+	HostIdentityHeld = "held_no_index"
+	// HostIdentityInstanceWithoutAddress names an instance-placed series
+	// whose instance carries no address - its host was not in the host cache
+	// when the instance was built - so it keeps its own.
+	HostIdentityInstanceWithoutAddress = "instance_without_address"
+	// HostIdentityRawNoIndex names a host-placed series emitted under its
+	// own address because no index ever held hosts once the store's first
+	// load returned: nothing can give its identity, as for Python.
+	HostIdentityRawNoIndex               = "raw_no_index"
 	FactsUnavailableServiceInstanceIndex = "service_instance_facts_unavailable"
 )
 
@@ -316,6 +357,28 @@ func NewChain(fullers []Fuller, filters []Filter) *Chain {
 // Enrich derives the facts of one series once.
 func (chain *Chain) Enrich(dimensions map[string]json.RawMessage) Facts {
 	return chain.EnrichFor("", dimensions)
+}
+
+// Primer is a fuller whose source has a tenant's facts to read before it can
+// answer for that tenant: the CMDB host index of a tenant first referenced.
+type Primer interface {
+	PrimeFor(ctx context.Context, tenant string)
+}
+
+// PrimeFor waits, within ctx, for every fuller to have the tenant's facts to
+// fill from. A caller on a Slot's path calls it with its own deadline before
+// enriching that tenant's records, so the first Slot to read a tenant decides
+// on its facts and still never waits past its deadline for them; Fill itself
+// never waits.
+func (chain *Chain) PrimeFor(ctx context.Context, tenant string) {
+	if chain == nil {
+		return
+	}
+	for _, fuller := range chain.fullers {
+		if primer, ok := fuller.(Primer); ok {
+			primer.PrimeFor(ctx, tenant)
+		}
+	}
 }
 
 // EnrichFor is Enrich for a record read for a tenant's Plan: the fullers

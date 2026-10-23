@@ -20,8 +20,12 @@ type CacheStats struct {
 	Misses       uint64
 	NegativeHits uint64
 	Evictions    uint64
-	Entries      int
-	Bytes        int
+	// Clears counts the whole-cache drops a term ending makes (ForgetCached).
+	Clears     uint64
+	Entries    int
+	Bytes      int
+	MaxEntries int
+	MaxBytes   int
 }
 
 type compileCacheEntry struct {
@@ -108,11 +112,26 @@ func (c *compileCache) remove(element *list.Element, eviction bool) {
 	}
 }
 
+// clear drops every entry, in place and under the cache's own lock, so the
+// budget stays the one it was built with and a Compile running across it
+// either finds an entry from before or compiles and puts its result after.
+// What it held is a memo of compiled results, never a fact: a miss compiles.
+// The outcome counters are kept.
+func (c *compileCache) clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]*list.Element)
+	c.lru.Init()
+	c.bytes = 0
+	c.stats.Clears++
+}
+
 func (c *compileCache) snapshot() CacheStats {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	stats := c.stats
 	stats.Entries = len(c.entries)
 	stats.Bytes = c.bytes
+	stats.MaxEntries, stats.MaxBytes = c.maxEntries, c.maxBytes
 	return stats
 }

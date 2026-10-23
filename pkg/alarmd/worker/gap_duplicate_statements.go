@@ -57,8 +57,8 @@ func (coordinator *SlotExecutionCoordinator) observeDuplicatedGapStatements(
 	// silence it replaces.
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageGapGuardCommitted,
-		Operation: observability.Operation(request.Operation),
-		Direction: observability.DirectionInternal, Result: observability.ResultDegraded,
+		Operation:  observability.Operation(request.Operation),
+		Result:     observability.ResultDegraded,
 		ReasonCode: observability.ReasonCode(contract.ReasonGapGuardDuplicatedAcrossBatches),
 		Trace: observability.TraceFields{
 			StrategyID: planResult.Plan.StrategyID,

@@ -13,11 +13,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
 	"sort"
-	"strings"
 	"time"
 
-	accessuq "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access/uq"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -26,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
 
 // controlPlaneExpectation reads the authoritative object set from the control
@@ -187,6 +187,9 @@ type fleetPublisher struct {
 	// use, so the page can answer "how close are we" from the same read that
 	// produced the verdict instead of waiting on collection.
 	capacity func() *fleet.Capacity
+	// flow is this replica's stage counters for the overview, read from the
+	// metrics at each publish; nil publishes none.
+	flow func() *fleet.FlowFacts
 	// readEarly is the late-data lookback's report of the owned objects read
 	// before their data was complete, by object. Nil on a process that runs
 	// no lookback, and the snapshot then carries no such line.
@@ -197,6 +200,9 @@ type fleetPublisher struct {
 	// hold is then unknown. onOverdue hears an episode begin (began) and end.
 	holdOf    func(string) (int64, bool)
 	onOverdue func(episode fleet.OverdueEpisode, began bool)
+	// onRestoreUnread hears an object whose record the restore read did not
+	// get, by why (restoreUnreadReason).
+	onRestoreUnread func(reason string)
 	// overdueOpen is the episodes begun and not ended, by object;
 	// overdueEpisodes the latest ended ones, at most fleet.MaxOverdueEpisodes,
 	// which the next snapshot carries. Only publishOnce touches them.
@@ -208,6 +214,9 @@ type fleetPublisher struct {
 	// lateSeries is what the lookback's supplements could not recover, by
 	// kind; nil without a lookback.
 	lateSeries func() (map[string]fleet.LatePastRoundFacts, map[string]fleet.LateSeriesMissedFacts)
+	// lookbackLate is the Query Groups the lookback reads directed on its
+	// own evidence, by rung: what the control plane plans from.
+	lookbackLate func() map[string]int
 	// applied is the Activation record revision this replica executes by,
 	// published on every snapshot so the page can compare it with what the
 	// control plane published.
@@ -221,6 +230,9 @@ type fleetPublisher struct {
 	// cycle and how the rounds have been finishing. Nil with overdue, and the
 	// snapshot then carries no census and no wake facts on its rows.
 	schedule fleet.ScheduleSource
+	// scheduleObjects hears the census's late and overdue counts at each
+	// publish, the series the trends read late objects from; nil hears none.
+	scheduleObjects func(late, overdue int)
 	// strategies names the strategies behind a Query Group, so an overdue
 	// object arrives in the list identified the way every other anomaly is. A
 	// row nobody can trace back to a strategy is a row nobody can act on.
@@ -248,6 +260,11 @@ type fleetPublisher struct {
 	// carries no facts, which the aggregate keeps apart from a copy that is
 	// fine.
 	openAlerts func() *fleet.OpenAlertSetFacts
+	// openAlertCounts is the copy's open alerts per tracked strategy, for the
+	// strategy board, given the strategies of the owned objects (nil when
+	// they cannot be named) so an untracked one is said unknown; nil without
+	// a copy.
+	openAlertCounts func(owned []string) *fleet.OpenAlertCounts
 	// controlSource reports the state of this replica's control source
 	// refresh. Nil on a bundle that has none, and the snapshot then carries
 	// no facts.
@@ -306,6 +323,13 @@ type fleetPublisher struct {
 	// inputs, read once at assembly for the same reason. Nil on a publisher
 	// built by hand, and the snapshot then carries none.
 	retention *observability.RuntimeRetentionFacts
+	// tracing is the span export this process built at assembly, on or off
+	// and why. Nil on a publisher built by hand, and the snapshot then
+	// carries none.
+	tracing *fleet.TracingFacts
+	// retainedHolders reads what holds this replica's retained pool at the
+	// moment of publishing. Nil on a publisher built by hand.
+	retainedHolders func() *fleet.RetainedHolderFacts
 }
 
 // fleetOverdueWakeCeiling bounds how many parked objects one publish carries.
@@ -397,6 +421,9 @@ func (publisher *fleetPublisher) restoreOwned(ctx context.Context, owned []execu
 			}
 			publisher.tracker.Restore(string(queryGroup), state, at, publisher.staleAfter)
 		case errors.As(errs[index], &unread):
+			if publisher.onRestoreUnread != nil {
+				publisher.onRestoreUnread(restoreUnreadReason(unread))
+			}
 		default:
 			publisher.restoreAttempts[queryGroup]++
 		}
@@ -589,6 +616,53 @@ func fleetRetentionFacts(cfg config.Config) *observability.RuntimeRetentionFacts
 	return &facts
 }
 
+// fleetTracingFacts is the span export this process built, as the fleet
+// publishes it: on with the collector's host and the sampling it runs, when
+// the exporter was built, or off because no collector was given. Neither the
+// endpoint's path nor the token is in it.
+func fleetTracingFacts(cfg config.Config, built bool) *fleet.TracingFacts {
+	if !built {
+		return &fleet.TracingFacts{State: fleet.TracingOffNotConfigured, Reason: fleet.TracingReasonNotConfigured}
+	}
+	host := ""
+	if parsed, err := url.Parse(cfg.PhaseTwo.Tracing.OTLPEndpoint); err == nil {
+		host = parsed.Host
+	}
+	ratio, rate := cfg.TraceSampleRatio(), cfg.TraceMaxTracesPerSecond()
+	return &fleet.TracingFacts{State: fleet.TracingOn, EndpointHost: host, SampleRatio: &ratio, MaxTracesPerSecond: &rate}
+}
+
+// retainedHolderFacts reads what holds coordinator's retained pool, for the
+// fleet snapshot: the largest RetainedHoldersListed Slots and the oldest.
+func retainedHolderFacts(coordinator *worker.SlotExecutionCoordinator, strategies func(string) []fleet.StrategyRef) func() *fleet.RetainedHolderFacts {
+	return func() *fleet.RetainedHolderFacts {
+		return retainedHolderFactsOf(worker.RetainedHolders(coordinator, fleet.RetainedHoldersListed), strategies)
+	}
+}
+
+// retainedHolderFactsOf is a reading of the retained pool as the snapshot
+// carries it, each Slot named by the strategies this replica has seen its
+// object evaluate.
+func retainedHolderFactsOf(reading worker.RetainedHolderReading, strategies func(string) []fleet.StrategyRef) *fleet.RetainedHolderFacts {
+	name := func(holder worker.RetainedHolder) fleet.RetainedHolderRef {
+		queryGroup := string(holder.Slot.QueryGroup)
+		return fleet.NameRetainedHolder(fleet.RetainedHolderRef{
+			QueryGroup: queryGroup, EvaluationTime: int64(holder.Slot.EvaluationTime), Operation: string(holder.Operation),
+			Since: holder.Since, Bytes: holder.Bytes, ByKind: holder.ByKind,
+		}, strategies(queryGroup))
+	}
+	facts := &fleet.RetainedHolderFacts{Holders: make([]fleet.RetainedHolderRef, 0, len(reading.Holders)),
+		Total: reading.Total, AttributedBytes: reading.Attributed, HeldBytes: reading.Held}
+	for _, holder := range reading.Holders {
+		facts.Holders = append(facts.Holders, name(holder))
+	}
+	if reading.Oldest != nil {
+		oldest := name(*reading.Oldest)
+		facts.Oldest = &oldest
+	}
+	return facts
+}
+
 // fleetOutputProtocolFacts is the choice this process runs with: the word the
 // reconciler was configured with -- the same call, so the fleet cannot
 // publish one word while the Plans are built under another -- and whether the
@@ -695,6 +769,16 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.openAlerts != nil {
 		snapshot.OpenAlertSet = publisher.openAlerts()
 	}
+	if publisher.openAlertCounts != nil {
+		var ownedStrategies []string
+		if publisher.strategies != nil {
+			ownedStrategies = []string{}
+			for _, ref := range evaluatingStrategies(owned, publisher.strategies) {
+				ownedStrategies = append(ownedStrategies, ref.StrategyID)
+			}
+		}
+		snapshot.OpenAlerts = publisher.openAlertCounts(ownedStrategies)
+	}
 	if publisher.controlSource != nil {
 		snapshot.ControlSource = publisher.controlSource()
 	}
@@ -743,6 +827,10 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.retention != nil {
 		facts := *publisher.retention
 		snapshot.Retention = &facts
+	}
+	snapshot.Tracing = fleet.CopyTracingFacts(publisher.tracing)
+	if publisher.retainedHolders != nil {
+		snapshot.RetainedHolders = publisher.retainedHolders()
 	}
 	// What the tracker keeps to read holes by, and the object keeping the
 	// most: the metrics carry the counts, only the snapshot can name it.
@@ -816,6 +904,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.lateSeries != nil {
 		snapshot.LateSeries = publisher.tracker.LateSeries(publisher.lateSeries())
 	}
+	if publisher.lookbackLate != nil {
+		snapshot.LookbackLate = publisher.lookbackLate()
+	}
 	// And the problems whose objects recovered within the hour: the evidence
 	// the RECOVERED reading is made of, which nothing on the current lines
 	// carries once the objects have left them.
@@ -830,8 +921,27 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// them. From the same index and the same instant as the overdue facts, so
 	// the row and the sentence above it cannot read two clocks.
 	if publisher.schedule != nil {
-		census := publisher.schedule.Census(at, len(owned))
+		// The named late, overdue and never objects come from the census's own
+		// pass when the source can name them, so the lists and the counts are
+		// one instant (fleet.DueClasses); a source that cannot leaves Due absent.
+		var census fleet.ScheduleCensus
+		if named, ok := publisher.schedule.(fleet.DueClassSource); ok {
+			var classes fleet.DueClasses
+			// Empty rather than nil when nothing is owned: "name nothing" is
+			// still a named answer, not a census without names.
+			ids := ownedObjectIDs(owned)
+			if ids == nil {
+				ids = []string{}
+			}
+			census, classes = named.CensusWithDueClasses(at, ids)
+			snapshot.Due = &classes
+		} else {
+			census = publisher.schedule.Census(at, len(owned))
+		}
 		snapshot.Schedule = &census
+		if publisher.scheduleObjects != nil {
+			publisher.scheduleObjects(census.Late, census.Overdue)
+		}
 		for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Demoted, snapshot.Undecidable, snapshot.ByDesign, snapshot.NoData, snapshot.NoDataMemory, snapshot.RetainedShare, snapshot.ReadEarly, snapshot.ReadHeld} {
 			for index := range column {
 				wake := publisher.schedule.WakeOf(column[index].QueryGroup)
@@ -862,6 +972,15 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	}
 	if publisher.capacity != nil {
 		snapshot.Capacity = publisher.capacity()
+		if snapshot.Capacity == nil {
+		} else if shape := snapshot.Capacity.Shape; shape != nil && len(shape.TightQueryGroups) > 0 && publisher.strategies != nil {
+			for _, group := range shape.TightQueryGroups {
+				shape.TightStrategies = append(shape.TightStrategies, publisher.strategies(group)...)
+			}
+		}
+	}
+	if publisher.flow != nil {
+		snapshot.Flow = publisher.flow()
 	}
 	if publisher.applied != nil {
 		snapshot.AppliedActivationRecordRevision = publisher.applied()
@@ -1172,49 +1291,4 @@ func (index *countIndex) counts() []metric.FleetCount {
 		counts = append(counts, *index.byValue[value])
 	}
 	return counts
-}
-
-// selfMetricsRangeProvider adapts the query client the evaluation path already
-// uses to the narrow shape the page needs.
-//
-// The scope is the one thing alarmd cannot work out for itself: which space its
-// scraped metrics land in is decided outside the process. Without it the
-// provider answers HTTP 200 with an empty series and SPACE_IS_NOT_EXISTS, so an
-// unset scope has to refuse locally rather than travel and come back looking
-// like a quiet system.
-type selfMetricsRangeProvider struct {
-	client   *accessuq.Client
-	spaceUID string
-}
-
-func (provider selfMetricsRangeProvider) Range(
-	ctx context.Context,
-	promQL string,
-	start, end time.Time,
-	step time.Duration,
-) (fleet.SeriesRange, error) {
-	result, err := provider.client.Range(ctx, accessuq.RangeRequest{
-		PromQL: promQL, SpaceUID: provider.spaceUID,
-		Start: start, End: end, Step: step,
-	})
-	if err != nil {
-		return fleet.SeriesRange{}, err
-	}
-	points := make([]fleet.SeriesPoint, 0, len(result.Points))
-	for _, point := range result.Points {
-		points = append(points, fleet.SeriesPoint{AtUnixMilli: point.AtUnixMilli, Value: point.Value})
-	}
-	return fleet.SeriesRange{
-		Points: points, Code: result.Code, Message: result.Message, Partial: result.Partial,
-	}, nil
-}
-
-// fleetRangeProvider returns nil when no scope is configured, which leaves the
-// series route unmounted. A missing route is an honest answer; a mounted route
-// that always returns nothing is not.
-func fleetRangeProvider(client *accessuq.Client, spaceUID string) fleet.RangeProvider {
-	if client == nil || strings.TrimSpace(spaceUID) == "" {
-		return nil
-	}
-	return selfMetricsRangeProvider{client: client, spaceUID: strings.TrimSpace(spaceUID)}
 }

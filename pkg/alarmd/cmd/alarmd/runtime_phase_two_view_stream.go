@@ -230,6 +230,7 @@ func (runtime *productionPhaseTwoOwnership) viewLead(controlEpoch uint64) {
 		return
 	}
 	_ = runtime.dependencies.ViewStream.Lead(controlEpoch)
+	runtime.lookbackPlanner.newTerm()
 }
 
 func (runtime *productionPhaseTwoOwnership) viewStepDown() {
@@ -249,6 +250,8 @@ func (runtime *productionPhaseTwoOwnership) publishView(
 	authority ownership.PublicationAuthority,
 	records map[execution.QueryGroupIdentity]ownership.AssignmentRecord,
 	owners map[execution.QueryGroupIdentity]string,
+	ready []ownership.WorkerRegistration,
+	readyKnown bool,
 ) {
 	stream, source := runtime.dependencies.ViewStream, runtime.dependencies.ViewSource
 	if stream == nil || source == nil {
@@ -279,6 +282,10 @@ func (runtime *productionPhaseTwoOwnership) publishView(
 			ActivationRecordRevision: state.RecordRevision},
 		Content:     make(map[execution.QueryGroupIdentity]viewstream.Content, len(running)),
 		Assignments: make(map[execution.QueryGroupIdentity]viewstream.Assignment, len(records)),
+		ReadyKnown:  readyKnown,
+	}
+	for _, worker := range ready {
+		desired.Ready = append(desired.Ready, worker.WorkerID)
 	}
 	for identity, entry := range running {
 		content := viewstream.Content{ObjectDigest: entry.Digest, OutputContexts: make([]viewstream.OutputContextRef, 0, len(entry.Refs))}
@@ -350,6 +357,33 @@ func (runtime *productionPhaseTwoOwnership) publishView(
 	}
 	if _, err := stream.Publish(ctx, desired); err != nil {
 		report(err)
+		return
+	}
+	runtime.planLookback(ctx, stream, desired)
+}
+
+// planLookback hands the stream the round's lookback plan sets, after the
+// view: a fallback Leader's nil sends nothing. A store that did not answer
+// leaves the sets the stream holds - each Worker keeps what it was sent -
+// and is reported under the stream's stage.
+func (runtime *productionPhaseTwoOwnership) planLookback(ctx context.Context, stream *viewstream.Server, desired viewstream.Desired) {
+	if runtime.lookbackPlanner == nil {
+		return
+	}
+	owners := make(map[execution.QueryGroupIdentity]string, len(desired.Assignments))
+	for queryGroup, assignment := range desired.Assignments {
+		owners[queryGroup] = assignment.DesiredWorkerID
+	}
+	byWorker, err := runtime.lookbackPlanner.plan(ctx, owners, desired.Workers())
+	if err == nil {
+		err = stream.SetLookbackPlans(byWorker)
+	}
+	if err != nil {
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageViewPublished,
+			Result: observability.ResultDegraded, ReasonCode: observability.ReasonInternalUnknown, Err: err,
+			ViewStream: &observability.ViewStreamFacts{Event: "lookback_plan_failed", Reason: err.Error()},
+		})
 	}
 }
 
@@ -403,7 +437,8 @@ func (discovery viewStreamDiscovery) Leader(ctx context.Context) (viewstream.Lea
 			if instance.Endpoint == "" {
 				return viewstream.LeaderEndpoint{}, viewstream.MissLeaderNoEndpoint, nil
 			}
-			return viewstream.LeaderEndpoint{WorkerID: leader.OwnerID, ControlEpoch: leader.OwnerEpoch, Endpoint: instance.Endpoint}, "", nil
+			return viewstream.LeaderEndpoint{WorkerID: leader.OwnerID, ControlEpoch: leader.OwnerEpoch, Endpoint: instance.Endpoint,
+				InternalToken: instance.InternalToken}, "", nil
 		}
 	}
 	registration, found, err := discovery.store.ReadWorker(ctx, leader.OwnerID)
@@ -416,7 +451,8 @@ func (discovery viewStreamDiscovery) Leader(ctx context.Context) (viewstream.Lea
 	if registration.Endpoint == "" {
 		return viewstream.LeaderEndpoint{}, viewstream.MissLeaderNoEndpoint, nil
 	}
-	return viewstream.LeaderEndpoint{WorkerID: leader.OwnerID, ControlEpoch: leader.OwnerEpoch, Endpoint: registration.Endpoint}, "", nil
+	return viewstream.LeaderEndpoint{WorkerID: leader.OwnerID, ControlEpoch: leader.OwnerEpoch, Endpoint: registration.Endpoint,
+		InternalToken: registration.StreamToken}, "", nil
 }
 
 // newViewStreamIncarnation names this process for the stream: the id the
@@ -518,5 +554,5 @@ func (runtime *productionPhaseTwoOwnership) PublishStoredView(ctx context.Contex
 	if len(records) == 0 {
 		return
 	}
-	runtime.publishView(ctx, authority, records, nil)
+	runtime.publishView(ctx, authority, records, nil, nil, false)
 }

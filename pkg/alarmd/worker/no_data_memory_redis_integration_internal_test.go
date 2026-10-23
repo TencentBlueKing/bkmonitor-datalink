@@ -212,7 +212,7 @@ func TestAMemoryOverTheGroupBoundIsReportedWithoutFailingTheSlotOnARealServer(t 
 			}
 			want := observability.NoDataMemoryRefusalFacts{
 				Reason: contract.ReasonStateBudgetExceeded, Record: string(execution.NoDataRecordGroups),
-				Groups: limit + 1, Limit: limit,
+				Groups: limit + 1, Limit: limit, LimitSource: execution.NoDataLimitPlatform,
 			}
 			if refusals[0].NoDataMemoryRefusal == nil || *refusals[0].NoDataMemoryRefusal != want {
 				t.Fatalf("refusal facts = %+v, want %+v", refusals[0].NoDataMemoryRefusal, want)

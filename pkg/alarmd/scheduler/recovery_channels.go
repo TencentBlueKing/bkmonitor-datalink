@@ -30,15 +30,16 @@ type recoveryChannelWaiter struct {
 	grant     chan *RecoveryChannels
 }
 
-func (coordinator *FlightCoordinator) AcquireQueryPermit(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time) (*QueryPermit, error) {
+func (coordinator *FlightCoordinator) AcquireQueryPermit(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time) (_ *QueryPermit, err error) {
 	started := time.Now()
 	defer func() {
 		if coordinator == nil || coordinator.observer == nil {
 			return
 		}
 		defer func() { _ = recover() }()
+		result, reason := permitWaitOutcome(err)
 		coordinator.observer.Observe(ctx, observability.Observation{
-			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: observability.ResultTerminal,
+			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: result, ReasonCode: reason,
 			Duration: time.Since(started), PermitWait: &observability.PermitWaitFacts{Recovery: operation != execution.OperationNormal},
 		})
 	}()
@@ -59,15 +60,16 @@ func (coordinator *FlightCoordinator) AcquireQueryPermit(ctx context.Context, sl
 	return permit, nil
 }
 
-func (coordinator *FlightCoordinator) AcquireRecoveryChannels(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time, maximum int, beforeWait ...func()) (*RecoveryChannels, error) {
+func (coordinator *FlightCoordinator) AcquireRecoveryChannels(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time, maximum int, beforeWait ...func()) (_ *RecoveryChannels, err error) {
 	started := time.Now()
 	defer func() {
 		if coordinator == nil || coordinator.observer == nil {
 			return
 		}
 		defer func() { _ = recover() }()
+		result, reason := permitWaitOutcome(err)
 		coordinator.observer.Observe(ctx, observability.Observation{
-			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: observability.ResultTerminal,
+			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: result, ReasonCode: reason,
 			Duration: time.Since(started), PermitWait: &observability.PermitWaitFacts{Recovery: true},
 		})
 	}()
@@ -201,7 +203,7 @@ func (coordinator *FlightCoordinator) dispatchRecoveryChannelsLocked() {
 	}
 }
 
-func (channels *RecoveryChannels) AcquireQueryPermit(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time) (*QueryPermit, error) {
+func (channels *RecoveryChannels) AcquireQueryPermit(ctx context.Context, slot execution.SlotIdentity, operation execution.Operation, deadline time.Time) (_ *QueryPermit, err error) {
 	if channels == nil {
 		return nil, errors.New("alarmd scheduler: nil recovery channels")
 	}
@@ -212,8 +214,9 @@ func (channels *RecoveryChannels) AcquireQueryPermit(ctx context.Context, slot e
 			return
 		}
 		defer func() { _ = recover() }()
+		result, reason := permitWaitOutcome(err)
 		coordinator.observer.Observe(ctx, observability.Observation{
-			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: observability.ResultTerminal,
+			Component: observability.ComponentScheduler, Stage: observability.StageQueryPermitWait, Result: result, ReasonCode: reason,
 			Duration: time.Since(started), PermitWait: &observability.PermitWaitFacts{Recovery: operation != execution.OperationNormal},
 		})
 	}()
@@ -255,4 +258,26 @@ func (channels *RecoveryChannels) Release() {
 		c.mu.Unlock()
 		c.observeQueryPermit(context.Background(), channels.operation, observability.ResultSuccess, false, snapshot)
 	})
+}
+
+// permitWaitOutcome is a permit wait's result and reason, from how the wait
+// ended: granted, or the word the query_admission line names a permit not
+// granted by - a full queue, recovery permits off, the deadline, the wait
+// cancelled. The wait line feeds the wait histogram and is not written; it
+// said terminal with no reason whatever happened.
+func permitWaitOutcome(err error) (observability.Result, observability.ReasonCode) {
+	switch {
+	case err == nil:
+		return observability.ResultSuccess, observability.ReasonNone
+	case errors.Is(err, ErrQueryPermitQueueFull):
+		return observability.ResultFailed, permitQueueFull
+	case errors.Is(err, ErrRecoveryPermitsOff):
+		return observability.ResultFailed, permitRecoveryOff
+	case errors.Is(err, context.DeadlineExceeded):
+		return observability.Result(observability.ResultTimeout), permitDeadline
+	case errors.Is(err, context.Canceled):
+		return observability.ResultPaused, permitCancelled
+	default:
+		return observability.ResultFailed, observability.ReasonInternalUnknown
+	}
 }

@@ -22,7 +22,7 @@ func TestCalibrationCoverageSaysWhatTheConsolePaceCannotReach(t *testing.T) {
 		}
 		cells := map[string]float64{}
 		for _, family := range families {
-			if family.GetName() != "bkmonitor_alarmd_linkd_calibration_coverage" {
+			if family.GetName() != "alarmd_linkd_calibration_coverage" {
 				continue
 			}
 			for _, series := range family.Metric {

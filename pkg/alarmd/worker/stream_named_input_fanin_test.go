@@ -287,6 +287,7 @@ func workerG4CoordinatorWith(
 	t *testing.T,
 	observer observability.Observer,
 	evidence *memoryEvidenceStore,
+	shapes ...func(*worker.Ports),
 ) (*recordingPorts, *recordingEvaluator, *worker.SlotExecutionCoordinator) {
 	t.Helper()
 	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry())
@@ -310,6 +311,9 @@ func workerG4CoordinatorWith(
 	}
 	if evidence != nil {
 		workerPorts.ExecutionEvidence = evidence
+	}
+	for _, shape := range shapes {
+		shape(&workerPorts)
 	}
 	coordinator, err := worker.NewSlotExecutionCoordinator(workerPorts, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20,
 		MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
@@ -356,9 +360,9 @@ func workerSlotRequest(contractRef execution.FrozenExecutionContractRef) executi
 	}
 }
 
-func workerG4StreamFixture(t *testing.T, kind string) (execution.InternalExecutionHeader, []execution.SeriesExecutionBatch) {
+func workerG4StreamFixture(t *testing.T, kind string, shapes ...func(*contract.EvaluationPlanV2)) (execution.InternalExecutionHeader, []execution.SeriesExecutionBatch) {
 	t.Helper()
-	compiled, requirements := workerG4CompiledPlan(t, kind)
+	compiled, requirements := workerG4CompiledPlan(t, kind, shapes...)
 	identity := planIdentity()
 	due := execution.DuePlan{
 		Identity: identity, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
@@ -419,7 +423,7 @@ func workerG4StreamFixture(t *testing.T, kind string) (execution.InternalExecuti
 	return header, batches
 }
 
-func workerG4CompiledPlan(t *testing.T, kind string) (*strategy.CompiledPlan, []execution.DataRequirement) {
+func workerG4CompiledPlan(t *testing.T, kind string, shapes ...func(*contract.EvaluationPlanV2)) (*strategy.CompiledPlan, []execution.DataRequirement) {
 	t.Helper()
 	projection := strategy.AlgorithmInputProjection{
 		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, IdentityFields: []string{"host"},
@@ -488,6 +492,9 @@ func workerG4CompiledPlan(t *testing.T, kind string) (*strategy.CompiledPlan, []
 				RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1,
 					Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
 			}}}}
+	for _, shape := range shapes {
+		shape(&plan)
+	}
 	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{Plan: plan,
 		DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("1", 64),
 			NormalizationDigest: strings.Repeat("2", 64), IdentityFields: append([]string(nil), projection.IdentityFields...),
@@ -501,6 +508,9 @@ func workerG4CompiledPlan(t *testing.T, kind string) (*strategy.CompiledPlan, []
 	compiled, ok := result.Plan()
 	if !ok {
 		t.Fatalf("compile %s terminal=%+v levels=%+v", kind, result.PlanTerminal(), result.LevelTerminals())
+	}
+	if compiled.Levels().Len() == 0 {
+		t.Fatalf("compile %s levels=%+v", kind, result.LevelTerminals())
 	}
 	algorithmRequirements := compiled.Levels().At(0).Algorithms().At(0).InputRequirements()
 	executionRequirements := make([]execution.DataRequirement, 0, len(algorithmRequirements))

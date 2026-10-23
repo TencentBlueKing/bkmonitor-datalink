@@ -211,7 +211,7 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 		RedisPoolSize: cfg.Redis.PoolSize,
 		ReadyQueue:    s.ReadyQueueCapacity, RecoveryQueue: s.RecoveryQueueCapacity, QueuedPerQG: s.MaxQueuedItemsPerQG,
 		TickNS: int64(s.TickInterval), ReplaySlots: s.MaxReplaySlots, ReplayAgeNS: int64(s.MaxReplayAge),
-		RetryMinNS: int64(s.RetryMinDelay), RetryMaxNS: int64(s.RetryMaxDelay),
+		RetryMinNS: int64(s.RetryMinDelay), RetryMaxNS: int64(s.RetryMaxDelay), TakeoverDivertNS: int64(s.TakeoverDivertFloor),
 		SequencerReservations: c.MaxSequencerReservations, Series: c.MaxSeries, RetainedBytes: c.MaxRetainedBytes,
 		StateMutations: c.MaxStateMutations, Events: c.MaxEvents, GapMutations: c.MaxGapMutations, GapFacts: c.MaxGapMutations,
 		SlotStateMutations: execution.SlotMutationCap(uint64(cfg.Limits.Store.MaxKeysPerBatch), c.MaxStateMutations),

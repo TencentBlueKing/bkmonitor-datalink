@@ -2,6 +2,7 @@ package obevidence
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
@@ -32,7 +34,23 @@ func TestAReadOnAConnectionCutWhileIdleSaysWhy(t *testing.T) {
 	if got, _ := readOne(ctx, "fixture", read, "absent"); got.Status != "missing" || got.Reason != "" {
 		t.Fatalf("first read %+v", got)
 	}
-	time.Sleep(2500 * time.Millisecond)
+	// The pool holds one connection, the one the read used; its id is how
+	// the server's client list names it.
+	id, err := client.ClientID(ctx).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The server's cron cuts it once idle past a second. It drops the client
+	// from its list and closes the socket in one step, so a list without it
+	// means the close has been made; whether the read below then meets the
+	// close or the reset its write draws, both are connection_closed.
+	observer := redis.NewClient(&redis.Options{Addr: address})
+	t.Cleanup(func() { _ = observer.Close() })
+	listed := "id=" + strconv.FormatInt(id, 10) + " "
+	testwait.Until(t, "the server cutting the idle pooled connection", func() bool {
+		list, err := observer.ClientList(ctx).Result()
+		return err == nil && !strings.Contains("\n"+list, "\n"+listed)
+	})
 	got, _ := readOne(ctx, "fixture", read, "absent")
 	if got.Status != "dependency_unavailable" || got.Reason != redisfailure.ConnectionClosed || got.ReasonText == "" {
 		t.Fatalf("read after the idle cut: status %s reason %q text %q", got.Status, got.Reason, got.ReasonText)

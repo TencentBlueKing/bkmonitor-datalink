@@ -25,7 +25,7 @@ func TestSlotTimingBoundedStagesAndNestedDurations(t *testing.T) {
 	}
 	found := false
 	for _, f := range families {
-		if f.GetName() != "bkmonitor_alarmd_slot_operation_duration_seconds" {
+		if f.GetName() != "alarmd_slot_operation_duration_seconds" {
 			continue
 		}
 		found = true

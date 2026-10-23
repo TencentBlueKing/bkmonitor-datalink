@@ -214,6 +214,18 @@ func endpointFactsSource(
 				}
 			}
 			switch entry.Role {
+			case fleet.EndpointQueryBackend:
+				// Every physical query's outcome, as the pull classifies it.
+				if health, known := recorder.QueryBackendHealth(); known && entry.Configured {
+					if !health.LastSuccessAt.IsZero() {
+						age := at.Sub(health.LastSuccessAt).Seconds()
+						entry.LastSuccessAgeSeconds = &age
+					}
+					if !health.LastFailureAt.IsZero() {
+						age := at.Sub(health.LastFailureAt).Seconds()
+						entry.LastFailureAgeSeconds, entry.LastFailure = &age, health.LastFailure
+					}
+				}
 			case fleet.EndpointStrategyCache:
 				if facts := source(); facts != nil {
 					writer := &fleet.WriterEvidence{Present: facts.Listed > 0, Count: facts.Listed}

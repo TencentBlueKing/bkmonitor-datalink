@@ -5,17 +5,19 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
 	"time"
 
 	"github.com/go-redis/redis/v8"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kubeclient"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sre/node"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sre/pod"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sre/redact"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sre/rollout"
@@ -33,7 +35,8 @@ import (
 func channelSREOperations(cfg config.Config, binding ChannelBinding, client redis.UniversalClient) ([]obchannel.Operation, func(), error) {
 	secrets := sreDeploymentSecrets(cfg)
 	podReason := ""
-	pods, err := pod.NewInCluster(pod.Options{ModuleLabel: cfg.SRE.ModuleLabel, LiteralSecrets: secrets})
+	pods, err := pod.NewInCluster(pod.Options{ModuleLabel: cfg.SRE.ModuleLabel, LiteralSecrets: secrets, MaxOutputBytes: int64(obchannel.MaxResponseBytes()),
+		FingerprintKeySource: func() []byte { return sreFingerprintKey(client, sreKeyPrefix(cfg, binding)+"fingerprint-key") }})
 	if err != nil {
 		podReason = "pod_provider_unavailable: " + err.Error()
 		pods = nil
@@ -46,6 +49,7 @@ func channelSREOperations(cfg config.Config, binding ChannelBinding, client redi
 	if err != nil {
 		return nil, nil, err
 	}
+	queries.SetResponseBytes(obchannel.MaxResponseBytes())
 	// Every action's receipt goes to the deployment's shared list beside its
 	// audit line, so sre.receipts on any replica reads them all.
 	var receipts *obchannel.SREReceipts
@@ -56,9 +60,36 @@ func channelSREOperations(cfg config.Config, binding ChannelBinding, client redi
 	}
 	binding.SREAudit = auditWithReceipts(binding.SREAudit, receipts)
 	rollouts, rolloutReason, stopRollouts := channelRollouts(cfg, binding, client)
-	ops := obchannel.SREOperations(obchannel.SREOptions{Pods: pods, Queries: queries, Scrubber: redact.New(secrets...), PodReason: podReason,
+	nodes, nodeReason, stopNodes := channelNodes(cfg, binding, client)
+	ops := obchannel.SREOperations(obchannel.SREOptions{Nodes: nodes, NodeReason: nodeReason, Pods: pods, Queries: queries, Scrubber: redact.New(secrets...), PodReason: podReason,
 		Rollouts: rollouts, RolloutReason: rolloutReason, Audit: binding.SREAudit, Receipts: receipts, ReceiptsReason: receiptsReason})
-	return ops, func() { stopRollouts(); queries.Close() }, nil
+	return ops, func() { stopNodes(); stopRollouts(); queries.Close() }, nil
+}
+
+// sreFingerprintKey is the deployment's fingerprint key: made once, by the
+// first process to ask, and read by every other, so a value fingerprints the
+// same on every replica and across restarts. It lives in the runtime store
+// under the channel's prefix and never leaves it but as fingerprints. Nil
+// when the store does not answer: the provider then makes a key of its own
+// and its receipts say the fingerprints compare within that process only.
+func sreFingerprintKey(client redis.UniversalClient, key string) []byte {
+	if client == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	candidate := make([]byte, 32)
+	if _, err := rand.Read(candidate); err != nil {
+		return nil
+	}
+	if err := client.SetNX(ctx, key, candidate, 0).Err(); err != nil {
+		return nil
+	}
+	stored, err := client.Get(ctx, key).Bytes()
+	if err != nil || len(stored) < 32 {
+		return nil
+	}
+	return stored
 }
 
 // auditWithReceipts hears each action as audit does and records its
@@ -82,7 +113,7 @@ func sreKeyPrefix(cfg config.Config, binding ChannelBinding) string {
 // another process left and watches those this one starts. Out of a cluster
 // there is none, and the reason says why.
 func channelRollouts(cfg config.Config, binding ChannelBinding, client redis.UniversalClient) (*rollout.Driver, string, func()) {
-	restConfig, err := rest.InClusterConfig()
+	restConfig, err := kubeclient.InCluster()
 	if err != nil {
 		return nil, "rollout_unavailable: in-cluster configuration is unavailable", func() {}
 	}
@@ -100,7 +131,8 @@ func channelRollouts(cfg config.Config, binding ChannelBinding, client redis.Uni
 			if audit != nil {
 				audit(obchannel.SREAction{Op: obchannel.OpRevert, Namespace: record.Namespace, Kind: "Deployment", Name: record.Name, UID: record.UID,
 					Detail: "receipt " + record.ID + " container " + record.Container + ": " + record.Image + " -> " + record.Previous,
-					Result: obchannel.SREResultDone, SessionID: record.SessionID, RequestID: record.RequestID})
+					Result: obchannel.SREResultDone, SessionID: record.SessionID, RequestID: record.RequestID,
+					Operator: record.Operator, IssuedVia: record.IssuedVia})
 			}
 		},
 	})
@@ -141,7 +173,11 @@ func sreAuditSink(logger *observability.Logger, recorder *metric.Recorder) func(
 		recorder.RecordSREAction(action.Op, action.Result)
 		attrs := []slog.Attr{slog.String("op", action.Op), slog.String("namespace", action.Namespace), slog.String("kind", action.Kind),
 			slog.String("name", action.Name), slog.String("uid", action.UID), slog.String("detail", action.Detail), slog.String("code", action.Code),
-			slog.String("session_id", action.SessionID), slog.String("request_id", action.RequestID)}
+			slog.String("session_id", action.SessionID), slog.String("request_id", action.RequestID), slog.String("execution_id", action.ExecutionID),
+			slog.String("operator", action.Operator), slog.String("issued_via", action.IssuedVia), slog.String("entry", action.Entry)}
+		if action.Argv != "" {
+			attrs = append(attrs, slog.String("argv", action.Argv))
+		}
 		duration := time.Duration(action.DurationMS) * time.Millisecond
 		if action.Result == obchannel.SREResultDone {
 			logger.Info("sre_action", action.Result, 0, duration, attrs...)
@@ -160,7 +196,8 @@ func sreRolloutSink(logger *observability.Logger, recorder *metric.Recorder) fun
 		duration := time.Duration(record.EndedAt-record.StartedAt) * time.Millisecond
 		attrs := []slog.Attr{slog.String("receipt_id", record.ID), slog.String("namespace", record.Namespace), slog.String("name", record.Name),
 			slog.String("container", record.Container), slog.String("previous_image", record.Previous), slog.String("image", record.Image),
-			slog.String("detail", record.Detail), slog.String("session_id", record.SessionID)}
+			slog.String("detail", record.Detail), slog.String("session_id", record.SessionID),
+			slog.String("operator", record.Operator), slog.String("issued_via", record.IssuedVia)}
 		if record.State == rollout.StateComplete || record.State == rollout.StateUnchanged {
 			logger.Info("sre_rollout", record.State, 0, duration, attrs...)
 			return
@@ -186,4 +223,41 @@ func sreDeploymentSecrets(cfg config.Config) []string {
 		values = append(values, cache.Connection.Password, cache.Connection.SentinelPassword)
 	}
 	return values
+}
+
+// channelNodes controls disposable runners through shared execution records.
+// Stopping the observer does not cancel commands already supervised on nodes.
+func channelNodes(cfg config.Config, binding ChannelBinding, client redis.UniversalClient) (obchannel.NodeExecutions, string, func()) {
+	if client == nil {
+		return nil, "node_provider_unavailable: shared runtime store is required", func() {}
+	}
+	provider, err := node.NewInCluster(node.Options{
+		Final: func(record node.Record) {
+			if binding.SREAudit == nil {
+				return
+			}
+			result := obchannel.SREResultDone
+			if record.State == "unknown" {
+				result = obchannel.SREResultUnknown
+			} else if record.State != "succeeded" {
+				result = obchannel.SREResultFailed
+			}
+			binding.SREAudit(obchannel.SREAction{Op: obchannel.OpNodeEnded, ExecutionID: record.ExecutionID, Namespace: record.Namespace, Kind: "Node", Name: record.Node.Name, UID: record.Node.UID, Result: result, Detail: record.State, At: time.Now().UTC(), DurationMS: time.Since(record.CreatedAt).Milliseconds(), SessionID: record.Caller.SessionID, RequestID: record.Caller.RequestID, Operator: record.Caller.Operator, IssuedVia: record.Caller.IssuedVia, Exec: &obchannel.SREExec{ExitCode: record.ExitCode}})
+		},
+		Redis: client, KeyPrefix: sreKeyPrefix(cfg, binding), DeploymentID: binding.EnvironmentID,
+		FingerprintKeySource: func() []byte { return sreFingerprintKey(client, sreKeyPrefix(cfg, binding)+"fingerprint-key") },
+	})
+	if err != nil {
+		return nil, "node_provider_unavailable: " + err.Error(), func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); provider.Run(ctx) }()
+	return provider, "", func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+	}
 }

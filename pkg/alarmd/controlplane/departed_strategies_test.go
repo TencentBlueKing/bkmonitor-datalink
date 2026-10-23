@@ -110,3 +110,18 @@ func TestAStrategyWithAnUnparsableBusinessIsStillRemembered(t *testing.T) {
 		t.Fatalf("the departure was dropped instead of recorded with what parsed: %+v", departed)
 	}
 }
+
+// A global business strategy's alerts are each filed under the business
+// they are about; the memory keeps that the strategy was one, which no
+// other place knows once it is gone.
+func TestADepartureRemembersWhetherTheStrategyWasAGlobalBusinessOne(t *testing.T) {
+	memory := newDepartedMemory()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	global := planOf("system", "9", "10", 7)
+	global.Plan.GlobalBusiness = true
+	memory.record(groupsOf(global, planOf("system", "2", "11", 9)), nil, at)
+	departed := memory.departed()
+	if len(departed) != 2 || !departed[0].GlobalBusiness || departed[1].GlobalBusiness {
+		t.Fatalf("departures %+v, want strategy 10 global and 11 not", departed)
+	}
+}

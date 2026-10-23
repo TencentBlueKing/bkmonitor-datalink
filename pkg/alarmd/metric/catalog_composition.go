@@ -47,7 +47,7 @@ type catalogCompositionCollector struct {
 
 func newCatalogCompositionCollector() *catalogCompositionCollector {
 	descriptor := func(name, help string, labels ...string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	const partition = "Every Query Group falls under exactly one source_semantics, so this family adds up to " +
 		"the Catalog's total. A Query Group whose query reads more than one data source is counted once, " +

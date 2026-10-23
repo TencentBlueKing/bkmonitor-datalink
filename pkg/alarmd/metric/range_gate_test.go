@@ -27,7 +27,7 @@ func TestRangeGateOutcomesAreSeriesFromStartupAndCountByWord(t *testing.T) {
 	// for a series creates it, so a check through WithLabelValues would find
 	// the zeros it made itself.
 	seriesBeforeAnyRound := map[string]bool{}
-	before := gatherFamily(t, r, "bkmonitor_alarmd_range_gate_total")
+	before := gatherFamily(t, r, "alarmd_range_gate_total")
 	if before == nil {
 		t.Fatal("range_gate_total missing from the registry before any round")
 	}
@@ -60,7 +60,7 @@ func TestRangeGateOutcomesAreSeriesFromStartupAndCountByWord(t *testing.T) {
 	if got := testutil.ToFloat64(r.phaseTwo.rangeGateDecisions.WithLabelValues(observability.RangeGateUnexplained)); got != 1 {
 		t.Fatalf("unexplained=%v, want the one word outside the list", got)
 	}
-	series := gatherFamily(t, r, "bkmonitor_alarmd_range_gate_total")
+	series := gatherFamily(t, r, "alarmd_range_gate_total")
 	if len(series) != len(observability.RangeGateOutcomes) {
 		t.Fatalf("series=%d, want one per outcome (%d): %v", len(series), len(observability.RangeGateOutcomes), series)
 	}

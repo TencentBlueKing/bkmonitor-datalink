@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -64,7 +65,7 @@ func TestExpiredRangeV2DistanceSharesF2WithHealthyFull(t *testing.T) {
 }
 
 func testExpiredRangeSharesF2WithHealthyFull(t *testing.T, distance bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithCancel(testwait.Context(t))
 	defer cancel()
 	rangeEntered, queryEntered := make(chan struct{}), make(chan struct{})
 	var rangeOnce, queryOnce sync.Once
@@ -196,7 +197,7 @@ func testExpiredRangeSharesF2WithHealthyFull(t *testing.T, distance bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := state.NewExecutionStore(state.ExecutionStoreOptions{Prefix: f.cfg.Redis.StatePrefix, Router: router, MaxValueBytes: f.cfg.Limits.Codec.MaxEncodedBytes, MaxItemsPerCall: f.cfg.Limits.Store.MaxKeysPerBatch, MinTTL: f.cfg.Redis.MinTTL.Duration(), MaxTTL: f.cfg.Redis.MaxTTL.Duration(), RestartMargin: f.cfg.Redis.RestartMargin.Duration()})
+	store, err := state.NewExecutionStore(executionStoreOptions(f.cfg, router))
 	if err != nil {
 		t.Fatal(err)
 	}

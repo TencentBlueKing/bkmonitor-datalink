@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
@@ -162,7 +163,7 @@ func (ws *workerStream) send(message *pb.WorkerMessage) {
 	}
 }
 
-// recv returns the next message within a second.
+// recv returns the next message, waiting until the test's own deadline.
 func (ws *workerStream) recv() *pb.LeaderMessage {
 	ws.t.Helper()
 	type got struct {
@@ -180,8 +181,8 @@ func (ws *workerStream) recv() *pb.LeaderMessage {
 			ws.t.Fatalf("recv: %v", result.err)
 		}
 		return result.message
-	case <-time.After(2 * time.Second):
-		ws.t.Fatal("no message within two seconds")
+	case <-testwait.Expired(ws.t):
+		ws.t.Fatal("no message before the test's deadline")
 		return nil
 	}
 }
@@ -241,14 +242,17 @@ func (ws *workerStream) probedReceipt(incarnation string, version *pb.Version, m
 
 func eventually(t *testing.T, what string, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	deadline := testwait.Expired(t)
+	for {
 		if condition() {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		select {
+		case <-deadline:
+			t.Fatalf("%s did not happen before the test's deadline", what)
+		case <-time.After(5 * time.Millisecond): // fixed-wait: the poll interval of a condition wait bounded by the test deadline
+		}
 	}
-	t.Fatalf("%s did not happen within two seconds", what)
 }
 
 // A Worker that says Hello gets the current snapshot; a publication that
@@ -309,6 +313,9 @@ func TestTheServerBringsEachWorkerToTheCurrentRevisionBySnapshotOrOneStep(t *tes
 	if snap3.Version.Revision != 2 || len(snap3.Entries) != 1 {
 		t.Fatalf("w3 snapshot = %+v, want revision 2 whole", snap3)
 	}
+	// The server counts a snapshot once its last chunk is sent, which a
+	// worker can have received first.
+	eventually(t, "the server counting the snapshot it sent", func() bool { return harness.server.Stats().SnapshotChunksSent == 4 })
 	stats = harness.server.Stats()
 	if stats.Revision != 2 || stats.Counts != (viewstream.Counts{Expected: 3, Sent: 3}) || stats.DeltasSent != 1 || stats.EmptyDeltasSent != 1 || stats.SnapshotChunksSent != 4 {
 		t.Fatalf("stats after second publish = %+v", stats)
@@ -349,7 +356,14 @@ func TestTheServerBringsEachWorkerToTheCurrentRevisionBySnapshotOrOneStep(t *tes
 	w3.receipt("i3", snap3.Version, true)
 	eventually(t, "installed by all is reported once", func() bool { return harness.observer.count("installed_by_all", "") == 1 })
 	w3.receipt("i3", snap3.Version, true)
-	time.Sleep(20 * time.Millisecond)
+	// The server reads one stream's messages in order and records a receipt,
+	// reporting installed_by_all from that same read, before it reads the
+	// next: a heartbeat answered after the repeated receipt means the receipt
+	// has been recorded and anything it would report has been reported.
+	w3.send(&pb.WorkerMessage{Body: &pb.WorkerMessage_Heartbeat{Heartbeat: &pb.Heartbeat{SentAtMs: 1}}})
+	if beat := w3.recv().GetHeartbeat(); beat == nil {
+		t.Fatal("w3's heartbeat after the repeated receipt was not answered")
+	}
 	if harness.observer.count("installed_by_all", "") != 1 {
 		t.Fatalf("installed_by_all reported %d times, want once", harness.observer.count("installed_by_all", ""))
 	}

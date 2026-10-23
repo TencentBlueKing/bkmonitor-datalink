@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -34,7 +35,9 @@ func deferredSlot(stage Stage, queryGroup string) Observation {
 // both would hand that reader zero lines in the hours the other stage's line
 // came first, which is what a dead emitter also gives. The policy's own
 // window (a minute, one line) does not apply to the pacing word: under it the
-// same Query Group would have written sixty lines an hour per stage.
+// same Query Group would have written sixty lines an hour per stage. A
+// bucket's hours are set at a point of its own (sampleWindowStart), so its
+// first line comes at once and the next at the turn of its own hour.
 func TestARoutinePacingReasonKeepsOneLineAnHourPerQueryGroupAndStage(t *testing.T) {
 	t.Parallel()
 
@@ -44,34 +47,43 @@ func TestARoutinePacingReasonKeepsOneLineAnHourPerQueryGroupAndStage(t *testing.
 		t.Fatal(err)
 	}
 	first := limiter.Admit(deferredSlot(StageQueryCompleted, "qg-a"))
-	if !first.Allowed || !first.Sampled || first.Suppressed != 0 {
-		t.Fatalf("first deferral of the hour=%+v, want admitted as the sample with nothing merged", first)
+	if !first.Allowed || !first.Sampled || first.Suppressed != 0 || first.SampleWindowStart.After(now) || now.Sub(first.SampleWindowStart) >= time.Hour {
+		t.Fatalf("first deferral of the hour=%+v, want admitted as the sample with nothing merged, in the hour its window holds", first)
 	}
 	// The other stage of the same round has its own hour, and its own sample.
 	if got := limiter.Admit(deferredSlot(StageSlotCompleted, "qg-a")); !got.Allowed || !got.Sampled || got.Suppressed != 0 {
 		t.Fatalf("first completion deferral of the hour=%+v, want its own sample", got)
 	}
-	// Fifty-nine more rounds inside the hour, two stages each: none admitted.
-	for round := 1; round < 60; round++ {
+	// Two hours of rounds, a minute apart: each stage is admitted once a
+	// window, at the first round of each of its own windows, carrying the
+	// rounds of its own stage merged since its line before.
+	last := map[Stage]time.Time{StageQueryCompleted: now, StageSlotCompleted: now}
+	windows := map[Stage]time.Time{StageQueryCompleted: first.SampleWindowStart}
+	admitted := map[Stage]int{}
+	for round := 1; round <= 120; round++ {
 		now = now.Add(time.Minute)
 		for _, stage := range []Stage{StageQueryCompleted, StageSlotCompleted} {
-			if got := limiter.Admit(deferredSlot(stage, "qg-a")); got.Allowed {
-				t.Fatalf("round %d %s admitted under the pacing sample: %+v", round, stage, got)
+			got := limiter.Admit(deferredSlot(stage, "qg-a"))
+			if !got.Allowed {
+				continue
 			}
+			admitted[stage]++
+			if window, known := windows[stage]; known && got.SampleWindowStart.Sub(window) != time.Hour {
+				t.Fatalf("round %d %s admitted in a window %v after the last, want the next hour of its own", round, stage, got.SampleWindowStart.Sub(window))
+			}
+			if now.Sub(got.SampleWindowStart) >= time.Minute {
+				t.Fatalf("round %d %s admitted %v into its window, want its first round", round, stage, now.Sub(got.SampleWindowStart))
+			}
+			if want := uint64(now.Sub(last[stage])/time.Minute) - 1; !got.Sampled || got.Suppressed != want {
+				t.Fatalf("round %d %s sample=%+v, want %d lines of its own stage merged", round, stage, got, want)
+			}
+			windows[stage], last[stage] = got.SampleWindowStart, now
 		}
 	}
-	// The hour turns on the sixtieth round; each stage's first line is its
-	// sample and carries the 59 rounds of its own stage merged since.
-	now = now.Add(time.Minute)
-	second := limiter.Admit(deferredSlot(StageSlotCompleted, "qg-a"))
-	if !second.Allowed || !second.Sampled || second.Suppressed != 59 {
-		t.Fatalf("completion sample after an hour=%+v, want admitted with the 59 completion lines merged", second)
-	}
-	if got := limiter.Admit(deferredSlot(StageQueryCompleted, "qg-a")); !got.Allowed || !got.Sampled || got.Suppressed != 59 {
-		t.Fatalf("query sample after an hour=%+v, want admitted with the 59 query lines merged, not the completion's", got)
-	}
-	if got := limiter.Admit(deferredSlot(StageQueryCompleted, "qg-a")); got.Allowed {
-		t.Fatalf("second query line of the new hour admitted: %+v", got)
+	for _, stage := range []Stage{StageQueryCompleted, StageSlotCompleted} {
+		if admitted[stage] != 2 {
+			t.Fatalf("%s admitted %d times over two hours after its first line, want once an hour", stage, admitted[stage])
+		}
 	}
 	// Another Query Group has its own hour, and another reason on the same
 	// Query Group keeps the policy's window: a minute later it is admitted
@@ -171,5 +183,69 @@ func TestEveryNormalizedReasonHasALimiterBucket(t *testing.T) {
 	}
 	if got := NormalizeReason("NOT_A_REASON", ResultDegraded); got != ReasonOther {
 		t.Fatalf("an unlisted word normalizes to %q, want %q", got, ReasonOther)
+	}
+}
+
+// Query Groups whose first deferral comes in one minute - every group a
+// process starts with or takes over - write their next sampled line spread
+// over the hour, each at the turn of its own: not all of them together an
+// hour on, which reads as a burst of what the lines stand for when there is
+// none.
+func TestSamplesBegunInOneMinuteComeSpreadOverTheHour(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_000, 0)
+	limiter, err := newScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Minute, MaxEvents: 1, MaxScopes: 1024}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	const groups = 240
+	for index := 0; index < groups; index++ {
+		if got := limiter.Admit(deferredSlot(StageQueryCompleted, fmt.Sprintf("qg-%d", index))); !got.Allowed {
+			t.Fatalf("group %d's first deferral not admitted", index)
+		}
+	}
+	perMinute := map[int]int{}
+	for minute := 1; minute <= 60; minute++ {
+		now = now.Add(time.Minute)
+		for index := 0; index < groups; index++ {
+			if got := limiter.Admit(deferredSlot(StageQueryCompleted, fmt.Sprintf("qg-%d", index))); got.Allowed {
+				perMinute[minute]++
+			}
+		}
+	}
+	total, busiest := 0, 0
+	for _, count := range perMinute {
+		total, busiest = total+count, max(busiest, count)
+	}
+	if total != groups {
+		t.Fatalf("%d second lines in the hour, want one per group", total)
+	}
+	// 240 lines over 60 minutes average 4 a minute; one minute taking a
+	// sixth of them would be the burst again.
+	if len(perMinute) < 40 || busiest > groups/6 {
+		t.Fatalf("second lines in %d of 60 minutes, at most %d in one, want them spread over the hour: %v", len(perMinute), busiest, perMinute)
+	}
+}
+
+// A sampled line names when the window it opened began, so a reader counts
+// the lines merged into it from there.
+func TestASampledLineNamesItsWindowStart(t *testing.T) {
+	var out bytes.Buffer
+	logger := New("alarmd", &out)
+	now := time.Unix(1_000, 0)
+	limiter, err := newScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Minute, MaxEvents: 1, MaxScopes: 16}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := deferredSlot(StageQueryCompleted, "qg-a")
+	admission := limiter.Admit(observation)
+	logger.logObservation(context.Background(), observation, admission)
+	var line map[string]any
+	if err := json.Unmarshal(out.Bytes(), &line); err != nil {
+		t.Fatalf("line %q: %v", out.String(), err)
+	}
+	if got, ok := line["sampling_window_start_ms"].(float64); !ok || int64(got) != admission.SampleWindowStart.UnixMilli() {
+		t.Fatalf("line %q, want sampling_window_start_ms %d", out.String(), admission.SampleWindowStart.UnixMilli())
 	}
 }

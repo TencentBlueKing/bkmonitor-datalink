@@ -58,11 +58,14 @@ const (
 // supervisor keeps its own timer.
 func (p *Provider) Exec(ctx context.Context, request ExecRequest) (ExecReceipt, error) {
 	result := ExecReceipt{Target: request.Target, StartedAt: p.options.Now().UTC(), RemoteState: RemoteNotStarted, EvidenceScope: "not_executed", RedactionContract: RedactionContract}
-	id, err := randomID()
-	if err != nil {
-		return result, err
+	result.RequestID = request.RequestID
+	if result.RequestID == "" {
+		id, err := randomID()
+		if err != nil {
+			return result, err
+		}
+		result.RequestID = id
 	}
-	result.RequestID = id
 	finish := func() { result.FinishedAt = p.options.Now().UTC() }
 	release, err := p.acquire(ctx)
 	if err != nil {

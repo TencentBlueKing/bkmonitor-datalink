@@ -82,8 +82,8 @@ func TestHTTPChannelStillRequiresAuthAndSharesExecutor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if channel.EvidenceExecutor != executor || channel.slots != executor.slots {
-		t.Fatal("HTTP and RPC use different execution budgets")
+	if channel.EvidenceExecutor != executor {
+		t.Fatal("HTTP and RPC use different executors")
 	}
 }
 

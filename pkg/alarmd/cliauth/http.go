@@ -11,7 +11,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strings"
@@ -41,16 +43,6 @@ func (m *Manager) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	select {
-	case m.httpSlots <- struct{}{}:
-		defer func() { <-m.httpSlots }()
-	default:
-		// Do not let net/http wait for an unaccepted request body while
-		// writing the busy response. No Redis or handler slot is needed.
-		defer boundBodyRead(w, r, 0)()
-		writeError(w, failure("auth_busy", "Too many concurrent authorization requests.", 429))
-		return
-	}
 	// The same listener also serves long-lived h2c/gRPC streams. Limit only
 	// this auth request, including body draining after an early rejection.
 	defer boundBodyRead(w, r, 3*time.Second)()
@@ -177,19 +169,15 @@ func (m *Manager) handleGrants(w http.ResponseWriter, r *http.Request) error {
 	if (input.CodeChallenge != "" || input.CodeChallengeMethod != "") && (input.CodeChallengeMethod != "S256" || !validSecret(input.CodeChallenge)) {
 		return failure("invalid_code_challenge", "A code challenge must be an S256 challenge of 43 URL-safe characters.", 400)
 	}
-	if !m.allow(&m.grantWindow, 6) {
+	if !m.allow(&m.grantWindow, AuthEventsPerMinute) {
 		return failure("auth_rate_limited", "The grant issuance limit was reached; try again in the next minute.", 429)
 	}
 	secret, err := randomSecret()
 	if err != nil {
 		return err
 	}
-	record, _ := json.Marshal(storedRecord{EnvironmentID: m.environmentID, Scope: input.Scope, CodeChallenge: input.CodeChallenge})
-	result, err := m.run(r.Context(), issueScript, []string{m.prefix + "grant:" + digest(secret), m.epochKey()}, string(record), GrantLifetime.Milliseconds())
-	if err != nil {
-		return err
-	}
-	issued, _, err := m.resultRecord(result)
+	record, _ := json.Marshal(storedRecord{EnvironmentID: m.environmentID, Scope: input.Scope, CodeChallenge: input.CodeChallenge, IssuedVia: IssuedViaAdminKey})
+	issued, err := m.issue(r.Context(), secret, record)
 	if err != nil {
 		return err
 	}
@@ -211,9 +199,14 @@ func (m *Manager) handleGrants(w http.ResponseWriter, r *http.Request) error {
 // and, when the environment holds a pairing for it, the next renewal
 // credential. Pairing names why there is none.
 type loginResponse struct {
-	EnvironmentID      string    `json:"environment_id"`
-	EnvironmentName    string    `json:"environment_name"`
-	PublicBaseURL      string    `json:"public_base_url"`
+	EnvironmentID   string `json:"environment_id"`
+	EnvironmentName string `json:"environment_name"`
+	PublicBaseURL   string `json:"public_base_url"`
+	// FallbackBaseURLs is this deployment's own address, for a session
+	// issued through the admin: where the CLI goes when the admin cannot get
+	// a request to alarmd. Absent for a session issued here, whose entry is
+	// that address already.
+	FallbackBaseURLs   []string  `json:"fallback_base_urls,omitempty"`
 	AccessToken        string    `json:"access_token"`
 	SessionID          string    `json:"session_id"`
 	ExpiresAt          time.Time `json:"expires_at"`
@@ -227,10 +220,41 @@ type loginResponse struct {
 	BoundToChallenge bool `json:"bound_to_challenge"`
 }
 
+// fallbackFor is the fallback entry of a session issued at entry: this
+// deployment's own address when the session came through the admin (entry
+// set and not it) and that address is on the admin entry's origin - the same
+// scheme, host and port, another path - and none otherwise.
+//
+// The fallback is for the admin being down, not for the network: on one
+// origin, whatever keeps the admin's address from answering at the network
+// level keeps this one from answering too, and nothing on another origin is
+// offered (the user's ruling of 2026-10-19: the fallback shares the admin's
+// domain; an infrastructure failure needs no fallback).
+func (m *Manager) fallbackFor(entry string) []string {
+	if entry == "" || entry == m.publicBaseURL || m.publicBaseURL == "" {
+		return nil
+	}
+	if _, origin, err := canonicalBaseURL(entry); err != nil || origin != m.origin {
+		m.crossOrigin.Do(func() {
+			slog.Warn("alarmd cli: no fallback entry declared: the deployment's public address is not on the admin entry's origin",
+				slog.String("public_origin", m.origin))
+		})
+		return nil
+	}
+	return []string{m.publicBaseURL}
+}
+
 func (m *Manager) login(record storedRecord, token, refresh string) loginResponse {
-	response := loginResponse{EnvironmentID: m.environmentID, EnvironmentName: m.environmentName, PublicBaseURL: m.publicBaseURL,
+	baseURL := m.publicBaseURL
+	if record.PublicBaseURL != "" {
+		// Issued through the front surface: the CLI reaches the deployment
+		// through the admin, and keeps doing so after every renewal.
+		baseURL = record.PublicBaseURL
+	}
+	response := loginResponse{EnvironmentID: m.environmentID, EnvironmentName: m.environmentName, PublicBaseURL: baseURL,
 		AccessToken: token, SessionID: record.SessionID, ExpiresAt: time.UnixMilli(record.ExpiresAtMS).UTC(), Scope: record.Scope,
 		Pairing: "paired"}
+	response.FallbackBaseURLs = m.fallbackFor(record.PublicBaseURL)
 	if refresh == "" {
 		response.Pairing = "pairing_limit_reached"
 		return response
@@ -244,7 +268,7 @@ func (m *Manager) handleExchange(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPost {
 		return methodNotAllowed(w, "POST")
 	}
-	if !m.allow(&m.exchangeWindow, 60) {
+	if !m.allow(&m.exchangeWindow, AuthEventsPerMinute) {
 		return failure("auth_rate_limited", "The grant exchange limit was reached; try again in the next minute.", 429)
 	}
 	var input struct {
@@ -279,7 +303,7 @@ func (m *Manager) handleExchange(w http.ResponseWriter, r *http.Request) error {
 	token, id, refresh, pairingID := secrets[0], secrets[1], secrets[2], secrets[3]
 	result, err := m.run(r.Context(), exchangeScript,
 		[]string{m.prefix + "grant:" + digest(input.GrantSecret), m.prefix + "session:" + digest(token),
-			pairingKey(m.prefix, refresh), m.pairingsKey(), m.epochKey()},
+			pairingKey(m.prefix, refresh), m.pairingsKey(), m.epochKey(), m.revokedKey(), m.namedKey()},
 		m.environmentID, id, ScopeReadonly, SessionLifetime.Milliseconds(),
 		pairingID, PairingIdleLifetime.Milliseconds(), MaxPairings, m.adminBinding(), challenge)
 	if err != nil {
@@ -324,7 +348,7 @@ func (m *Manager) handleRefresh(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPost {
 		return methodNotAllowed(w, "POST")
 	}
-	if !m.allow(&m.refreshWindow, 60) {
+	if !m.allow(&m.refreshWindow, AuthEventsPerMinute) {
 		return failure("auth_rate_limited", "The renewal limit was reached; try again in the next minute.", 429)
 	}
 	var input struct {
@@ -342,7 +366,8 @@ func (m *Manager) handleRefresh(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	record := storedRecord{SessionID: renewal.Session.ID, ExpiresAtMS: renewal.Session.ExpiresAt.UnixMilli(), PairingID: renewal.PairingID, Scope: renewal.Session.Scope}
+	record := storedRecord{SessionID: renewal.Session.ID, ExpiresAtMS: renewal.Session.ExpiresAt.UnixMilli(), PairingID: renewal.PairingID, Scope: renewal.Session.Scope,
+		PublicBaseURL: renewal.Session.publicBaseURL}
 	return writeJSON(w, m.login(record, renewal.AccessToken, renewal.RefreshToken))
 }
 
@@ -456,12 +481,17 @@ func requestBearer(r *http.Request) (string, error) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dest interface{}) error {
+	return decodeJSONWithin(w, r, dest, maxBodyBytes)
+}
+
+// decodeJSONWithin is decodeJSON for a body of at most limit bytes.
+func decodeJSONWithin(w http.ResponseWriter, r *http.Request, dest interface{}, limit int64) error {
 	contentType, single := singleHeader(r, "Content-Type")
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if !single || err != nil || mediaType != "application/json" {
 		return failure("invalid_content_type", "Content-Type must be application/json.", 415)
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	err = decoder.Decode(dest)
@@ -477,7 +507,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dest interface{}) error 
 	if err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			return failure("request_too_large", "Authorization request body exceeds 64 KiB.", 413)
+			return failure("request_too_large", fmt.Sprintf("Authorization request body exceeds %d KiB.", limit>>10), 413)
 		}
 		return failure("invalid_request", "The authorization request must match the JSON input schema.", 400)
 	}

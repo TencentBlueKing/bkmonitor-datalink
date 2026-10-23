@@ -29,6 +29,12 @@ func TestOutputContextRevisionFloorFollowsTheClientWriteBound(t *testing.T) {
 		{name: "more retries", options: &redis.Options{WriteTimeout: 2 * time.Second, MaxRetries: 5}, want: 2*time.Second*6 + contentCutoverClockAllowance},
 		{name: "retries disabled", options: &redis.Options{WriteTimeout: 2 * time.Second, MaxRetries: -1}, want: 2*time.Second + contentCutoverClockAllowance},
 	}
+	// The allowance is the one clock bound alarmd assumes: with the go-redis
+	// defaults the floor is 12 s of writes and 5 s of clocks, not a second
+	// constant of its own.
+	if got := (&RedisCatalogRepository{client: redis.NewClient(&redis.Options{})}).outputContextRevisionFloor(); got != 17*time.Second {
+		t.Fatalf("default floor = %s, want 17s: 12s of write bound and execution.MaxClockSkew", got)
+	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			repository := &RedisCatalogRepository{client: redis.NewClient(testCase.options)}
@@ -39,8 +45,8 @@ func TestOutputContextRevisionFloorFollowsTheClientWriteBound(t *testing.T) {
 	}
 	repository := &RedisCatalogRepository{client: redis.NewClient(&redis.Options{})}
 	segment := execution.ScheduleSegmentFact{Start: 1000}
-	if since := repository.outputContextRevisionSince(segment, 1050); since != 1080 {
-		t.Fatalf("a revision is placed the floor past the boundary: since=%d want 1080", since)
+	if since := repository.outputContextRevisionSince(segment, 1050); since != 1067 {
+		t.Fatalf("a revision is placed the floor past the boundary: since=%d want 1067", since)
 	}
 	segment.OutputContextRevisions = []execution.OutputContextRevision{{Since: 1100}}
 	if since := repository.outputContextRevisionSince(segment, 1050); since != 1101 {

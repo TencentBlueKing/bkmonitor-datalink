@@ -17,6 +17,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func TestRedisStorePublishesAssignmentOnlyWithLiveControlLeader(t *testing.T) {
@@ -131,7 +132,7 @@ func TestRedisStoreWorkerRegistryExpiresPhysicalEntries(t *testing.T) {
 	if err != nil || len(ready) != 1 {
 		t.Fatalf("ListReadyWorkers(immediate) = (%+v, %v)", ready, err)
 	}
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(250 * time.Millisecond) // fixed-wait: past the registration's 150 ms life, after which every trace of it must be gone; waiting until it goes would pass a longer life too
 	ready, _, err = store.ListReadyWorkers(context.Background(), time.Now())
 	if err != nil || len(ready) != 0 {
 		t.Fatalf("ListReadyWorkers(expired) = (%+v, %v)", ready, err)
@@ -415,13 +416,13 @@ func newIntegrationStore(t *testing.T) *RedisStore {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	// The server answered before Start returned; what is left is the store's
-	// own connection, under the same bound.
-	deadline := time.Now().Add(redistest.ReadyWithin)
+	// own connection, bounded by the test's deadline.
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if err := store.Ping(context.Background()); err == nil {
 			return store
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatal("redis-server did not become ready")
 	return nil

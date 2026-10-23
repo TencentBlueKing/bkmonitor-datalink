@@ -42,14 +42,7 @@ import (
 // Slots lost with the old timeline instead of jumping past them silently. A
 // cutover that meets such bytes rewrites them the same way rather than
 // holding the Query Group back. The Leader decodes for itself and rewrites
-// only what it cannot read either: a Worker of an older build that cannot
-// read a newer timeline names it, and the Leader finds it decodes.
-//
-// Retire when: the upstream snapshot after the one that adds the repair is
-// merged, the older-build case above is gone: every Worker an upgrade then
-// meets reads the timelines this build writes. The repair itself and
-// decodes_again stay, for corrupt bytes and for a name that outlives its
-// rewrite.
+// only what it cannot read either: a name can outlive its rewrite.
 
 // TimelineRepairOutcome is what became of one Query Group named as having an
 // unreadable timeline.
@@ -61,7 +54,7 @@ const (
 	TimelineRepairRewritten TimelineRepairOutcome = "rewritten"
 	// TimelineRepairDecodesAgain: read again by the Leader, it decoded; it is
 	// left alone. A Worker's name outlives the rewrite until its next Slot
-	// runs, and a Worker of another build may name a timeline this build reads.
+	// runs.
 	TimelineRepairDecodesAgain TimelineRepairOutcome = "decodes_again"
 	// TimelineRepairConflict: the rewrite lost its compare-and-set - the
 	// timeline or the activation moved since it was read. Nothing is written;

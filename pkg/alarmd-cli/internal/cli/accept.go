@@ -72,14 +72,14 @@ const (
 
 // Metric families the acceptance reads, as the registry names them.
 const (
-	metricSourceRefresh   = "bkmonitor_alarmd_source_refresh_total"
-	metricScopeClose      = "bkmonitor_alarmd_target_scope_close_total"
-	metricLoopTurn        = "bkmonitor_alarmd_loop_turn_duration_seconds"
-	metricRecoveryBeside  = "bkmonitor_alarmd_trigger_recovery_beside_level_total"
-	metricRecoveryHeld    = "bkmonitor_alarmd_trigger_recovery_held_total"
-	metricEventsByKind    = "bkmonitor_alarmd_output_events_by_kind_total"
-	metricEventsRejected  = "bkmonitor_alarmd_output_events_rejected_total"
-	metricRejectedOverrun = "bkmonitor_alarmd_output_events_rejected_strategies_overflow_total"
+	metricSourceRefresh   = "alarmd_source_refresh_total"
+	metricScopeClose      = "alarmd_target_scope_close_total"
+	metricLoopTurn        = "alarmd_loop_turn_duration_seconds"
+	metricRecoveryBeside  = "alarmd_trigger_recovery_beside_level_total"
+	metricRecoveryHeld    = "alarmd_trigger_recovery_held_total"
+	metricEventsByKind    = "alarmd_output_events_by_kind_total"
+	metricEventsRejected  = "alarmd_output_events_rejected_total"
+	metricRejectedOverrun = "alarmd_output_events_rejected_strategies_overflow_total"
 )
 
 type acceptItem struct {

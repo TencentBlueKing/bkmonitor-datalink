@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
 )
@@ -100,6 +101,10 @@ func TestReadEvidenceValidatesWireBytesAndLeavesAuthorizationToHandler(t *testin
 	if _, err := h.server.ReadEvidence(context.Background(), nil); status.Code(err) != codes.InvalidArgument {
 		t.Fatal("nil request accepted")
 	}
+	// A smaller bound for the fixture; the real one follows the channel's
+	// response bound.
+	defer func(previous int) { viewstream.EvidenceResponseBytes = previous }(viewstream.EvidenceResponseBytes)
+	viewstream.EvidenceResponseBytes = 2 << 20
 	response := &pb.EvidenceResult{ResponseJson: make([]byte, viewstream.EvidenceResponseBytes-4)}
 	if proto.Size(response) != viewstream.EvidenceResponseBytes {
 		t.Fatal("invalid response boundary fixture")
@@ -119,25 +124,29 @@ func TestReadEvidenceValidatesWireBytesAndLeavesAuthorizationToHandler(t *testin
 	}
 }
 
-func TestReadEvidenceSlotsSurviveCancellationWithoutBlockingControl(t *testing.T) {
+// Evidence reads between replicas are an operator's, a handful next to the
+// business work, and have no count of their own: with eight handlers stalled
+// (ignoring cancellation), a ninth request still reaches its handler.
+func TestReadEvidenceHasNoCountOfItsOwn(t *testing.T) {
 	h := startServer(t)
 	client := evidenceClient(t, h)
-	entered := make(chan struct{}, viewstream.EvidenceConcurrency)
+	const stalled = 8
+	entered := make(chan struct{}, stalled+1)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	h.server.SetEvidenceHandler(func(context.Context, *pb.EvidenceRequest) (*pb.EvidenceResult, error) {
 		entered <- struct{}{}
-		<-release // Deliberately ignores cancellation to test the hard task bound.
+		<-release // Deliberately ignores cancellation.
 		return &pb.EvidenceResult{}, nil
 	})
-	for i := 0; i < viewstream.EvidenceConcurrency; i++ {
+	for i := 0; i < stalled; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { _, err := client.ReadEvidence(ctx, &pb.EvidenceRequest{}); done <- err }()
 		select {
 		case <-entered:
-		case <-time.After(time.Second):
-			t.Fatal("handler did not start")
+		case <-testwait.Expired(t):
+			t.Fatalf("handler %d did not start", i+1)
 		}
 		cancel()
 		select {
@@ -145,13 +154,22 @@ func TestReadEvidenceSlotsSurviveCancellationWithoutBlockingControl(t *testing.T
 			if status.Code(err) != codes.Canceled {
 				t.Fatalf("cancel code=%s", status.Code(err))
 			}
-		case <-time.After(time.Second):
+		case <-testwait.Expired(t):
 			t.Fatal("canceled RPC did not return")
 		}
 	}
-	if _, err := client.ReadEvidence(context.Background(), &pb.EvidenceRequest{}); status.Code(err) != codes.ResourceExhausted {
-		t.Fatal("cancellation released an executing handler's slot")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := client.ReadEvidence(ctx, &pb.EvidenceRequest{}); done <- err }()
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatalf("the ninth request was answered %s without reaching its handler", status.Code(err))
+	case <-testwait.Expired(t):
+		t.Fatal("the ninth request did not reach its handler")
 	}
+	cancel()
+	<-done
 	// A separate RPC on the very same connection must not occupy Connect's
 	// locks or message queues, even with every evidence handler stalled.
 	w := evidenceControlWorker(t, h, client)
@@ -180,7 +198,7 @@ func TestReadEvidenceHonorsCallerAndServerDeadlines(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) // fixed-wait: the caller deadline the case expects to expire and finds inherited by the handler
 	defer cancel()
 	if _, err := client.ReadEvidence(ctx, &pb.EvidenceRequest{}); status.Code(err) != codes.DeadlineExceeded {
 		t.Fatal("caller deadline was not respected")
@@ -198,4 +216,13 @@ func TestReadEvidenceHonorsCallerAndServerDeadlines(t *testing.T) {
 	if remaining := <-deadlines; remaining <= 0 || remaining > viewstream.EvidenceTimeout {
 		t.Fatal("handler did not inherit the server deadline")
 	}
+	// A caller with longer than EvidenceTimeout left keeps it: the hop does
+	// not cut an operation that was given more.
+	long, cancelLong := context.WithTimeout(context.Background(), 10*time.Second) // fixed-wait: a caller deadline longer than EvidenceTimeout, which the case finds the handler keeps
+	defer cancelLong()
+	go func() { _, _ = client.ReadEvidence(long, &pb.EvidenceRequest{}) }()
+	if remaining := <-deadlines; remaining <= viewstream.EvidenceTimeout {
+		t.Fatalf("handler got %v of a 10 s caller, want the caller's deadline", remaining)
+	}
+	cancelLong()
 }

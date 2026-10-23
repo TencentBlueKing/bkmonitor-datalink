@@ -33,7 +33,7 @@ import (
 // route's whole answer, the deployment view around the rows included, before
 // the view is dropped; a page that does not fit is refused by name and the
 // answer offers the same page at half the rows.
-const MaxObjectListLimit = 200
+const MaxObjectListLimit = 2000
 
 // objectListKept are the route's keys a page keeps besides its rows: the
 // echo of what was asked, the page, and the counts the rows belong to.

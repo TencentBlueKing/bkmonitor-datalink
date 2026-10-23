@@ -94,24 +94,21 @@ type diagnosisRun struct {
 }
 
 func (a *App) diagnosisPages(p Profile, revision string) (diagnosisRun, Profile, error) {
-	run := diagnosisRun{byVerdict: map[string]int{}, holds: true}
-	cursor := ""
-	for run.pages < diagnosisMaxPages {
+	fetch := func(cursor string) (map[string]any, int, error) {
 		params := map[string]any{}
 		if cursor != "" {
 			params["cursor"] = cursor
 		}
-		fmt.Fprintf(a.Err, "Reading page %d...\n", run.pages+1)
 		m, status, err := a.channelRequest("invoke", diagnoseOperation, params, revision, p)
 		if err != nil {
-			return run, p, err
+			return m, status, err
 		}
 		if status == http.StatusUnauthorized && p.RefreshToken != "" {
 			if renewed, renewErr := a.ensureSession(p.EnvironmentID, true); renewErr == nil {
 				p = renewed
 				m, status, err = a.channelRequest("invoke", diagnoseOperation, params, revision, p)
 				if err != nil {
-					return run, p, err
+					return m, status, err
 				}
 			}
 		}
@@ -119,12 +116,30 @@ func (a *App) diagnosisPages(p Profile, revision string) (diagnosisRun, Profile,
 			fmt.Fprintf(a.Err, "The Leader did not answer the forwarded page; asking again (%d/%d)...\n", retry, diagnosisLeaderRetries)
 			time.Sleep(diagnosisRetryWait)
 			if m, status, err = a.channelRequest("invoke", diagnoseOperation, params, revision, p); err != nil {
-				return run, p, err
+				return m, status, err
 			}
+		}
+		return m, status, nil
+	}
+	run, err := a.diagnosisPagesFrom(fetch)
+	return run, p, err
+}
+
+// diagnosisPagesFrom reads the pages fetch answers, from the first, and
+// checks the coverage they prove: the live channel's pages, or a
+// snapshot's.
+func (a *App) diagnosisPagesFrom(fetch func(cursor string) (map[string]any, int, error)) (diagnosisRun, error) {
+	run := diagnosisRun{byVerdict: map[string]int{}, holds: true}
+	cursor := ""
+	for run.pages < diagnosisMaxPages {
+		fmt.Fprintf(a.Err, "Reading page %d...\n", run.pages+1)
+		m, status, err := fetch(cursor)
+		if err != nil {
+			return run, err
 		}
 		if status < 200 || status >= 300 || stringField(m, "status") == "error" {
 			run.failed, run.failedStatus = m, status
-			return run, p, nil
+			return run, nil
 		}
 		result := objectField(m, "result")
 		run.pages++
@@ -134,12 +149,12 @@ func (a *App) diagnosisPages(p Profile, revision string) (diagnosisRun, Profile,
 			if stringField(universe, "status") != "ok" {
 				run.holds = false
 				run.problems = append(run.problems, "universe unreadable: "+stringField(universe, "reason"))
-				return run, p, nil
+				return run, nil
 			}
 		}
 		if result["universe_changed"] != nil {
 			run.changed = true
-			return run, p, nil
+			return run, nil
 		}
 		page := objectField(result, "page")
 		expected, written := number(page["ids_expected"]), number(page["rows"])
@@ -156,12 +171,12 @@ func (a *App) diagnosisPages(p Profile, revision string) (diagnosisRun, Profile,
 		run.rows = append(run.rows, rows...)
 		cursor = stringField(result, "next_cursor")
 		if cursor == "" {
-			return run, p, nil
+			return run, nil
 		}
 	}
 	run.holds = false
 	run.problems = append(run.problems, "stopped after the page bound")
-	return run, p, nil
+	return run, nil
 }
 
 // result is the run's one record: the first page's universe and deployment,

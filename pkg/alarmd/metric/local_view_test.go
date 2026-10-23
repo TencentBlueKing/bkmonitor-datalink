@@ -41,19 +41,19 @@ func TestTheLocalViewIsPublishedByKindWithItsQueryGroupCount(t *testing.T) {
 	gathered := gatherLocalView(t, func() LocalViewCounts {
 		return LocalViewCounts{QueryGroups: 601, ObjectBytes: 3_100_000, OutputContextBytes: 3_300_000}
 	})
-	bytes := gathered["bkmonitor_alarmd_local_view_object_bytes"]
+	bytes := gathered["alarmd_local_view_object_bytes"]
 	if bytes["query_group"] != 3_100_000 || bytes["output_context"] != 3_300_000 || len(bytes) != 2 {
 		t.Fatalf("local_view_object_bytes = %v, want query_group 3100000 and output_context 3300000", bytes)
 	}
-	if got := gathered["bkmonitor_alarmd_local_view_query_groups"][""]; got != 601 {
+	if got := gathered["alarmd_local_view_query_groups"][""]; got != 601 {
 		t.Fatalf("local_view_query_groups = %v, want 601", got)
 	}
 	// An idle Worker is a Worker with an empty view, and says so.
 	idle := gatherLocalView(t, func() LocalViewCounts { return LocalViewCounts{} })
-	if idle["bkmonitor_alarmd_local_view_object_bytes"]["query_group"] != 0 || idle["bkmonitor_alarmd_local_view_query_groups"][""] != 0 ||
-		len(idle["bkmonitor_alarmd_local_view_object_bytes"]) != 2 {
+	if idle["alarmd_local_view_object_bytes"]["query_group"] != 0 || idle["alarmd_local_view_query_groups"][""] != 0 ||
+		len(idle["alarmd_local_view_object_bytes"]) != 2 {
 		t.Fatalf("an idle Worker published %v / %v, want zeros on every series",
-			idle["bkmonitor_alarmd_local_view_object_bytes"], idle["bkmonitor_alarmd_local_view_query_groups"])
+			idle["alarmd_local_view_object_bytes"], idle["alarmd_local_view_query_groups"])
 	}
 }
 
@@ -61,7 +61,7 @@ func TestTheLocalViewIsPublishedByKindWithItsQueryGroupCount(t *testing.T) {
 // zero here would read as a Worker that owns nothing.
 func TestAProcessWithoutAWorkerRolePublishesNoLocalView(t *testing.T) {
 	gathered := gatherLocalView(t, nil)
-	for _, name := range []string{"bkmonitor_alarmd_local_view_object_bytes", "bkmonitor_alarmd_local_view_query_groups"} {
+	for _, name := range []string{"alarmd_local_view_object_bytes", "alarmd_local_view_query_groups"} {
 		if series, ok := gathered[name]; ok {
 			t.Errorf("%s published %v without a Worker role", name, series)
 		}

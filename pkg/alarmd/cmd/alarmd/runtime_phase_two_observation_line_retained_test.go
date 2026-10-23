@@ -52,7 +52,7 @@ func TestTheProductionLineReservesTheRetainedPoolByItsMeasuredPeak(t *testing.T)
 			t.Fatal(err)
 		}
 		for _, family := range families {
-			if family.GetName() != "bkmonitor_alarmd_observation_memory_budget_size_bytes" {
+			if family.GetName() != "alarmd_observation_memory_budget_size_bytes" {
 				continue
 			}
 			for _, m := range family.GetMetric() {

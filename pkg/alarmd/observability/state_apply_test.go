@@ -41,7 +41,7 @@ func TestLoggingObserverWritesStateApplyChunkAttributes(t *testing.T) {
 	var output bytes.Buffer
 	renderTo(&output, Observation{
 		Component: ComponentState, Stage: StageStateApplied, Result: ResultSuccess, Operation: OperationNormal,
-		Direction: DirectionInternal, Counts: Counts{Keys: 8192, StateBytes: 1024},
+		Counts:          Counts{Keys: 8192, StateBytes: 1024},
 		StateApplyChunk: &StateApplyChunkFacts{Index: 3, Count: 9, AppliedKeys: 32768, AppliedBytes: 4096, ElapsedMillis: 250},
 	})
 
@@ -72,7 +72,7 @@ func TestTheAdmissionLineCarriesTheRefusalRulesAndSentence(t *testing.T) {
 		var output bytes.Buffer
 		renderTo(&output, Observation{
 			Component: ComponentState, Stage: StageStateAdmission, Result: result, Operation: OperationNormal,
-			Direction: DirectionInternal, ReasonCode: ReasonCode("STATE_BUDGET_EXCEEDED"), StateApplyChunk: facts,
+			ReasonCode: ReasonCode("STATE_BUDGET_EXCEEDED"), StateApplyChunk: facts,
 		})
 		var event map[string]any
 		if err := json.Unmarshal(output.Bytes(), &event); err != nil {

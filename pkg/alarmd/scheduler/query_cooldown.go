@@ -52,6 +52,10 @@ type queryCooldownState struct {
 	// after N timeouts". Both clear with the failures.
 	timeouts       uint32
 	firstTimeoutAt time.Time
+	// cuts is how many of the failures were the backend's own cut
+	// (noteRunFacts): what makes a re-entry one the cut caused
+	// (reenteredAfterAnAnswer). It clears with the failures.
+	cuts uint32
 	// excusedUntil is the cooldown end (until) whose deciding round last had
 	// its timeout excused for the Runner's own lateness, so each cooldown's
 	// end excuses one round at most (queryCooldownExcusesItsOwnDelay).
@@ -109,6 +113,10 @@ type QueryCooldownRecord struct {
 	// as none, which is what it had.
 	Timeouts       uint32    `json:"timeouts,omitempty"`
 	FirstTimeoutAt time.Time `json:"first_timeout_at"`
+	// Cuts is the failures that were the backend's own cut. A record written
+	// before it existed reads as none, and its Query Group is decided as a
+	// first entry is.
+	Cuts uint32 `json:"cuts,omitempty"`
 	// LastProbe is the latest execution the pool let run: what its answer
 	// was, what budget it had and how long it took. A record written before
 	// it existed has none.
@@ -194,7 +202,7 @@ func (runner *Runner) restoreQueryCooldown(ctx context.Context, fence execution.
 	runner.queryCooldown = queryCooldownState{failures: record.Failures, queryRevision: record.QueryRevision,
 		scheduleRevision: record.ScheduleRevision, segmentStart: record.SegmentStart,
 		until: record.Until, lastQueryAt: record.LastQueryAt, reason: record.Reason,
-		timeouts: record.Timeouts, firstTimeoutAt: record.FirstTimeoutAt}
+		timeouts: record.Timeouts, firstTimeoutAt: record.FirstTimeoutAt, cuts: record.Cuts}
 	memory.enteredAt, memory.source = record.EnteredAt, QueryCooldownRestored
 	runner.emitQueryCooldown(ctx, QueryCooldownRestored)
 }
@@ -212,7 +220,7 @@ func (runner *Runner) saveQueryCooldown(ctx context.Context) {
 		EnteredAt: memory.enteredAt, Until: state.until, LastQueryAt: state.lastQueryAt, Failures: state.failures,
 		QueryRevision: state.queryRevision, ScheduleRevision: state.scheduleRevision, SegmentStart: state.segmentStart,
 		ExitedAt: memory.exitedAt, ExitReason: memory.exitReason, Reentries: memory.reentries, Reason: state.reason,
-		Timeouts: state.timeouts, FirstTimeoutAt: state.firstTimeoutAt, LastProbe: memory.lastProbe,
+		Timeouts: state.timeouts, FirstTimeoutAt: state.firstTimeoutAt, Cuts: state.cuts, LastProbe: memory.lastProbe,
 		RunQueryRevision: memory.runRevision, RunTimesMillis: append([]int64(nil), memory.runTimes...),
 		CeilingMillis: memory.ceiling, Probes: append([]observability.QueryCooldownProbe(nil), memory.probes...),
 		AnsweredInRow: memory.answeredInRow,
@@ -286,7 +294,7 @@ func (runner *Runner) deferUnavailableQuery(ctx context.Context, slot FrozenSlot
 	}
 	if state.until.IsZero() || !runner.now().Before(state.until) ||
 		slot.ExpiredRange != nil || slot.Recovery.Disposition == ReplayExpired ||
-		runner.attempt != nil {
+		runner.attempt != nil || runner.shareExceeded(slot) {
 		return false
 	}
 	// Unknown deadlines fail open to execution; never invent a maintenance bound.
@@ -305,10 +313,11 @@ func (runner *Runner) deferUnavailableQuery(ctx context.Context, slot FrozenSlot
 	return true
 }
 
-// queryCooldownDecidedBy reports whether an execution of operation, starting
-// now while the Query Group is in the pool, decides whether it stays: only a
-// normal one does. A normal execution runs at its Slot's own second, under its
-// frozen deadline, and queues for its permit with every other Query Group due
+// queryCooldownDecidedBy reports whether an execution of operation, run while
+// the Query Group is in the pool, may decide whether it stays: a normal one
+// always may, any other only for the reasons below (queryCooldownDecision
+// then asks whether what it got is evidence). A normal execution runs at its
+// Slot's own second, under its frozen deadline, and queues for its permit with every other Query Group due
 // then, so an answer to it is one the Query Group's normal rounds get. The
 // first execution after the cooldown runs out is usually the held Slot's
 // replay instead: it starts when the cooldown ends, away from the burst its
@@ -316,8 +325,76 @@ func (runner *Runner) deferUnavailableQuery(ctx context.Context, slot FrozenSlot
 // to time out on the next normal round, with 13 s left, and come back. The
 // replay still runs, for its Slot's data, under a replay's budget; its answer
 // neither takes the Query Group out nor keeps it in.
+//
+// Except where the pool holds the Query Group for a reason no time range
+// changes (queryCooldownTimeIndependent): the backend refusing the table the
+// query names says the same of a replay as of an on-time round, whatever the
+// budget. There whatever runs first decides - at the cooldown's end, the
+// first held Slot's replay. Refused again, the
+// cooldown is extended and the Slots still held stay held, given up for
+// distance and age as the pool always gave them up, instead of each sending
+// a query that could only be refused: on one production deployment those
+// replays were about 230 queries a minute, 6% of all it sent. Answered, the
+// Query Group leaves and the held Slots after it replay as they always did.
+// With no held Slot at the cooldown's end the normal round decides, as it
+// does for every other reason.
 func (runner *Runner) queryCooldownDecidedBy(operation execution.Operation) bool {
-	return !runner.queryCooldown.until.IsZero() && operation == execution.OperationNormal
+	state := runner.queryCooldown
+	if state.until.IsZero() {
+		return false
+	}
+	return operation == execution.OperationNormal || queryCooldownTimeIndependent(state.reason)
+}
+
+// queryCooldownDecision is whether an execution of operation that came back
+// with result decides the pool, and the result the pool reads it as. One the
+// pool's reason does not let it decide on decides nothing, before anything
+// the pool keeps for its normal round is spent on it: the one excuse a
+// cooldown's end gives a timeout the Runner made late itself, and the reading
+// of a late timeout as the backend's.
+func (runner *Runner) queryCooldownDecision(operation execution.Operation, result execution.SlotExecutionResult,
+	busyUntil time.Time) (bool, execution.SlotExecutionResult) {
+	if !runner.queryCooldownDecidedBy(operation) || !queryCooldownTimeIndependentEvidence(operation, result) ||
+		runner.queryCooldownExcusesItsOwnDelay(result, busyUntil) {
+		return false, result
+	}
+	if runner.queryCooldownCountsALateTimeout(result) {
+		result.QueryAvailability = execution.QueryAvailabilityUnavailable
+		result.QueryUnavailableReason = execution.ReasonCode(contract.ReasonQueryTimeout)
+	}
+	return true, result
+}
+
+// queryCooldownTimeIndependentEvidence reports whether an execution that
+// decides only because its pool's reason takes no time range showed something
+// that reason lets it decide on: an answer, or the same kind of refusal. A
+// timeout, an unavailable backend or a result that proved nothing depend on
+// the time and the budget the execution had - a replay's is not a normal
+// round's - and say nothing about whether the table routes; the execution
+// then decides nothing, spends nothing the pool keeps for its normal round,
+// and the next normal round decides. A normal round always decides on what
+// it got.
+func queryCooldownTimeIndependentEvidence(operation execution.Operation, result execution.SlotExecutionResult) bool {
+	if operation == execution.OperationNormal {
+		return true
+	}
+	switch result.QueryAvailability {
+	case execution.QueryAvailabilityAvailable:
+		return true
+	case execution.QueryAvailabilityUnavailable:
+		return queryCooldownTimeIndependent(result.QueryUnavailableReason)
+	}
+	return false
+}
+
+// queryCooldownTimeIndependent reports a pool reason that no time range
+// changes: the query's routing refused in its space, or its storage not
+// reading the windows its detection asks for. Both stay until somebody
+// changes the strategy or the space (contract.ReasonQueryTargetMissing,
+// contract.ReasonDetectIntervalStorageNotSliding).
+func queryCooldownTimeIndependent(reason execution.ReasonCode) bool {
+	return reason == execution.ReasonCode(contract.ReasonQueryTargetMissing) ||
+		reason == execution.ReasonCode(contract.ReasonDetectIntervalStorageNotSliding)
 }
 
 // queryCooldownExcusesItsOwnDelay reports whether a deciding round's timeout
@@ -377,7 +454,10 @@ func startedLateBehindItself(result execution.SlotExecutionResult, busyUntil tim
 
 func (runner *Runner) recordQueryAvailability(ctx context.Context, slot FrozenSlot, operation execution.Operation,
 	result execution.SlotExecutionResult, intervalSeconds int64, decides bool) {
-	if !result.Completed || slot.ExpiredRange != nil || slot.Recovery.Disposition == ReplayExpired {
+	if !result.Completed || slot.ExpiredRange != nil || slot.Recovery.Disposition == ReplayExpired ||
+		result.QueryFreeCause == execution.CauseResourceShareExceeded {
+		// A Slot finalized for its share sent no query: nothing about the
+		// backend to learn from it.
 		return
 	}
 	state := &runner.queryCooldown
@@ -417,7 +497,7 @@ func (runner *Runner) recordQueryAvailability(ctx context.Context, slot FrozenSl
 		}
 		return
 	}
-	runner.noteRunFacts(slot, operation, result)
+	cut := runner.noteRunFacts(slot, operation, result)
 	if result.QueryAvailability != execution.QueryAvailabilityUnavailable || state.lastSlot == slot.Contract.Slot {
 		return
 	}
@@ -437,6 +517,9 @@ func (runner *Runner) recordQueryAvailability(ctx context.Context, slot FrozenSl
 		if state.timeouts < 32 {
 			state.timeouts++
 		}
+	}
+	if cut && state.cuts < 32 {
+		state.cuts++
 	}
 	// A missing or extreme interval is not permission to guess a cooldown.
 	if state.failures < unavailableThreshold || intervalSeconds <= 0 ||
@@ -492,10 +575,10 @@ func (runner *Runner) emitQueryCooldown(ctx context.Context, event string) {
 	result, reason := queryCooldownOutcome(event, state.reason)
 	runner.flights.observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageQueryCooldown,
-		Result: result, ReasonCode: reason, Direction: observability.DirectionInternal,
+		Result: result, ReasonCode: reason,
 		Trace: observability.TraceFields{QueryGroupKey: string(runner.queryGroup)},
 		QueryCooldown: &observability.QueryCooldownFacts{Event: event, Until: state.until,
-			LastQueryAt: state.lastQueryAt, Failures: state.failures, Timeouts: state.timeouts, FirstTimeoutAt: state.firstTimeoutAt,
+			LastQueryAt: state.lastQueryAt, Failures: state.failures, Timeouts: state.timeouts, FirstTimeoutAt: state.firstTimeoutAt, Cuts: state.cuts,
 			EnteredAt: memory.enteredAt, Source: memory.source,
 			LastExitAt: memory.exitedAt, LastExitReason: memory.exitReason, Reentries: memory.reentries,
 			LastProbe: memory.lastProbe, CeilingMillis: memory.ceiling, RunSpreadMillis: runSpread(memory.runTimes),

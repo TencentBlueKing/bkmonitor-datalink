@@ -34,10 +34,11 @@ func TestARoundCalibratesWhatTheIntervalNeeds(t *testing.T) {
 	}
 }
 
-// The Console bounds a round: at a p90 of one second, a round's 2.5 s holds
-// two calls, so 4000 tracked strategies, which need three a round, get two,
-// and the 400 a whole interval at two cannot reach are named as short.
-// Before any call is timed the round keeps its floor.
+// The Console bounds a round: at a p90 of one second, a one-second round
+// holds one call before the next is due, so 4000 tracked strategies, which
+// need three a round, get one, and the 2200 a whole interval at one cannot
+// reach are named as short. Before any call is timed the round keeps its
+// floor.
 func TestTheConsoleBoundsARoundAndTheShortfallIsSaid(t *testing.T) {
 	state := calibrationState(4000)
 	if needed, capacity := state.calibrationPlan(4000); needed != 3 || capacity != 1 {
@@ -47,18 +48,18 @@ func TestTheConsoleBoundsARoundAndTheShortfallIsSaid(t *testing.T) {
 		state.noteCalibration(time.Second)
 	}
 	needed, capacity := state.calibrationPlan(4000)
-	if needed != 3 || capacity != 2 {
-		t.Fatalf("needed %d capacity %d, want 3 and 2", needed, capacity)
+	if needed != 3 || capacity != 1 {
+		t.Fatalf("needed %d capacity %d, want 3 and 1", needed, capacity)
 	}
-	if short := max(0, 4000-capacity*state.calibrationRounds()); short != 400 {
-		t.Fatalf("short %d, want 400", short)
+	if short := max(0, 4000-capacity*state.calibrationRounds()); short != 2200 {
+		t.Fatalf("short %d, want 2200", short)
 	}
 	// A faster Console lifts the bound: 64 calls of 100 ms replace them.
 	for index := 0; index < calibrationSamples; index++ {
 		state.noteCalibration(100 * time.Millisecond)
 	}
-	if _, capacity := state.calibrationPlan(4000); capacity != 25 {
-		t.Fatalf("capacity %d at 100 ms, want 25", capacity)
+	if _, capacity := state.calibrationPlan(4000); capacity != 10 {
+		t.Fatalf("capacity %d at 100 ms, want 10", capacity)
 	}
 }
 
@@ -78,7 +79,7 @@ func TestStatsNameTheStrategiesPastTheirCalibrationAge(t *testing.T) {
 	if err := cache.SetTracked([]StrategyKey{old}); err != nil {
 		t.Fatal(err)
 	}
-	cache.Refresh(context.Background())
+	cache.Refresh(consoleCtx())
 	c.at = c.at.Add(4 * time.Hour)
 	if err := cache.SetTracked([]StrategyKey{old, fresh}); err != nil {
 		t.Fatal(err)
@@ -86,7 +87,7 @@ func TestStatsNameTheStrategiesPastTheirCalibrationAge(t *testing.T) {
 	cache.mu.Lock()
 	cache.index.entries[old].lastReconcileAttempt = c.at
 	cache.mu.Unlock()
-	cache.Refresh(context.Background())
+	cache.Refresh(consoleCtx())
 	stats := cache.Stats()
 	if stats.CalibrationNeeded < 1 || stats.CalibrationCapacity < 1 || len(stats.CalibrationOverAge) != 1 ||
 		stats.CalibrationOverAge[0].Strategy != old || stats.CalibrationOverAge[0].Age != 4*time.Hour {
@@ -95,11 +96,12 @@ func TestStatsNameTheStrategiesPastTheirCalibrationAge(t *testing.T) {
 }
 
 // A calibration call is timed as it runs: one that takes a second of the
-// copy's clock, in a 10 s cycle, sets the round's capacity to five calls.
+// copy's clock, with rounds five seconds apart, sets the round's capacity to
+// five calls.
 func TestACalibrationIsTimedAsItRuns(t *testing.T) {
 	c := &clock{at: time.Unix(1700000000, 0)}
 	options := indexOptions(c)
-	options.CycleTimeout, options.ReconcileBatch = 10*time.Second, 1
+	options.RefreshInterval, options.ReconcileBatch = 5*time.Second, 1
 	options.Reconciler = reconcilerFunc(func(context.Context, StrategyKey) (Reconciliation, error) {
 		c.at = c.at.Add(time.Second)
 		return Reconciliation{}, nil
@@ -108,7 +110,7 @@ func TestACalibrationIsTimedAsItRuns(t *testing.T) {
 	if err := cache.SetTracked([]StrategyKey{keyA}); err != nil {
 		t.Fatal(err)
 	}
-	cache.Refresh(context.Background())
+	cache.Refresh(consoleCtx())
 	if capacity := cache.Stats().CalibrationCapacity; capacity != 5 {
 		t.Fatalf("capacity %d after a one-second call, want 5", capacity)
 	}
@@ -136,13 +138,13 @@ func TestARoundCalibratesThePlannedNumber(t *testing.T) {
 	if err := cache.SetTracked(keys); err != nil {
 		t.Fatal(err)
 	}
-	cache.Refresh(context.Background())
+	cache.Refresh(consoleCtx())
 	if calls != 1 {
 		t.Fatalf("first round calibrated %d, want the floor 1", calls)
 	}
 	c.at = c.at.Add(2 * time.Second)
 	calls = 0
-	cache.Refresh(context.Background())
+	cache.Refresh(consoleCtx())
 	if calls != 5 {
 		t.Fatalf("second round calibrated %d, want 5", calls)
 	}
@@ -160,18 +162,18 @@ func TestAConsoleCallCutByItsDeadlineIsTimed(t *testing.T) {
 		call  func(t *testing.T, url string) error
 	}{
 		{"client timeout", true, func(t *testing.T, url string) error {
-			_, err := classReader(t, url, &http.Client{Timeout: 100 * time.Millisecond}, nil).Reconcile(context.Background(), keyA)
+			_, err := classReader(t, url, &http.Client{Timeout: 100 * time.Millisecond}, nil).Reconcile(consoleCtx(), keyA)
 			return err
 		}},
 		{"round deadline", true, func(t *testing.T, url string) error {
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(consoleCtx(), 100*time.Millisecond) // fixed-wait: the round's deadline the case runs out
 			defer cancel()
 			_, err := classReader(t, url, &http.Client{}, nil).Reconcile(ctx, keyA)
 			return err
 		}},
 		{"cancelled", false, func(t *testing.T, url string) error {
-			ctx, cancel := context.WithCancel(context.Background())
-			time.AfterFunc(100*time.Millisecond, cancel)
+			ctx, cancel := context.WithCancel(consoleCtx())
+			time.AfterFunc(100*time.Millisecond, cancel) // fixed-wait: when the caller lets go; before the call or during it, the error is context.Canceled and untimed alike
 			_, err := classReader(t, url, &http.Client{}, nil).Reconcile(ctx, keyA)
 			return err
 		}},

@@ -101,7 +101,6 @@ func (stream *streamedExecution) observeNoDataLocalFailure(
 		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
 		Result: observability.ResultDegraded, Operation: observability.Operation(stream.request.Operation),
 		Duration: time.Since(started), DurationKnown: true,
-		Direction:       observability.DirectionInternal,
 		ReasonCode:      observability.ReasonCode(outcome),
 		EvaluationOwner: costEvaluationOwner(due.Identity),
 		Trace: observability.TraceFields{

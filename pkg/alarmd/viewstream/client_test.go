@@ -10,16 +10,20 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
@@ -188,7 +192,7 @@ func startClientWithClock(t *testing.T, discovery *scriptedDiscovery, probe view
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(5 * time.Millisecond):
+			case <-time.After(5 * time.Millisecond): // fixed-wait: the stub Sleep's real pause in place of the client's backoff, which the case sets so the loop cannot spin
 				return nil
 			}
 		}})
@@ -691,9 +695,9 @@ func TestTheWorkerReprobesTheInstalledViewOnTheHeartbeat(t *testing.T) {
 	leader.mu.Unlock()
 	select {
 	case <-entered:
-	case <-time.After(5 * time.Second):
+	case <-testwait.Expired(t):
 		close(hold)
-		t.Fatal("no heartbeat re-probed revision 1 within five seconds")
+		t.Fatal("no heartbeat re-probed revision 1 before the test's deadline")
 	}
 	eventually(t, "revision 2 is installed while the re-probe of 1 is held", func() bool {
 		view, ok := client.Installed()
@@ -759,7 +763,8 @@ func TestTheReconnectWaitIsJitteredUnderAnExponentialCeiling(t *testing.T) {
 // is where the two lists are held together.
 func TestEveryStreamReasonWordIsInTheVocabularyAndOnTheLine(t *testing.T) {
 	for _, word := range []string{
-		"NO_LEADER", "DISCOVERY_FAILED", "STREAM_CLOSED", "RECV_FAILED", viewstream.DisconnectLeaderSilent,
+		"NO_LEADER", "DISCOVERY_FAILED", "STREAM_CLOSED", "RECV_FAILED", "SEND_FAILED", viewstream.DisconnectLeaderSilent,
+		"LEADER_UNAVAILABLE", "DIAL_FAILED", "CONNECT_FAILED", "HELLO_SEND_FAILED",
 		viewstream.FailureDeltaBaseMismatch, viewstream.FailureDeltaDigest, viewstream.FailureSnapshotInvalid,
 		viewstream.FailureSnapshotIncomplete, viewstream.FailureWrongWorker,
 		viewstream.RefusalNotLeader, viewstream.RefusalUnknownWorker, viewstream.RefusalBadToken, viewstream.RefusalProtocolVersion,
@@ -833,7 +838,7 @@ func TestTheHeartbeatCarriesTheWorkersCostsToTheLeadersSink(t *testing.T) {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case <-time.After(5 * time.Millisecond):
+				case <-time.After(5 * time.Millisecond): // fixed-wait: the stub Sleep's real pause in place of the client's backoff, which the case sets so the loop cannot spin
 					return nil
 				}
 			}})
@@ -919,7 +924,7 @@ func TestTheReceiptCountsTheQueryGroupsExecutedFromTheViewAndClaimsSwitchedOnlyF
 		viewstream.ClientOptions{Dial: dialer.dial, Tick: 20 * time.Millisecond, Switched: switched,
 			Now: func() time.Time { return time.UnixMilli(clock.Load()) },
 			Sleep: func(ctx context.Context, wait time.Duration) error {
-				time.Sleep(5 * time.Millisecond)
+				time.Sleep(5 * time.Millisecond) // fixed-wait: the stub Sleep's real pause in place of the client's backoff, which the case sets so the loop cannot spin
 				return ctx.Err()
 			}})
 	if err != nil {
@@ -977,4 +982,129 @@ func TestTheReceiptCountsTheQueryGroupsExecutedFromTheViewAndClaimsSwitchedOnlyF
 		return stats.Revision == 3 && stats.Counts.Installed == 1 && stats.Counts.Switched == 0 &&
 			len(stats.NotSwitched) == 1 && stats.NotSwitched[0].SwitchedQueryGroups == 0
 	})
+}
+
+// A Leader found and not reachable - its address refusing the connection -
+// is connect_failed with a reason the vocabulary names, LEADER_UNAVAILABLE,
+// as the line's reason_code and the facts' reason; the address it dialled is
+// the facts' endpoint and appears in no reason. It read reason_not_reported
+// with the address as its reason.
+func TestALeaderThatRefusesTheConnectionIsNamedAndItsAddressKeptApart(t *testing.T) {
+	const address = "192.0.2.10:9000"
+	refusing := func(_ context.Context, endpoint string) (pb.ControlServiceClient, func() error, error) {
+		conn, err := grpc.NewClient("passthrough:///"+endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+				return nil, errors.New("dial tcp " + address + ": connect: connection refused")
+			}))
+		if err != nil {
+			return nil, nil, err
+		}
+		return pb.NewControlServiceClient(conn), conn.Close, nil
+	}
+	discovery := &scriptedDiscovery{found: true, leader: viewstream.LeaderEndpoint{WorkerID: "leader", ControlEpoch: 1, Endpoint: address}}
+	observer := &sessionObserver{}
+	client, err := viewstream.NewClient(viewstream.ClientIdentity{WorkerID: "w1", Incarnation: "i1", StreamToken: "t1"}, discovery, nil, observer,
+		viewstream.ClientOptions{Dial: refusing, Sleep: func(ctx context.Context, _ time.Duration) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Millisecond): // fixed-wait: the stub Sleep's real pause in place of the client's backoff, which the case sets so the loop cannot spin
+				return nil
+			}
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = client.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	eventually(t, "a refused connection is observed", func() bool { return observer.count("connect_failed", "") >= 1 })
+	if codes := observer.codes("connect_failed"); codes["LEADER_UNAVAILABLE"] == 0 || len(codes) != 1 {
+		t.Fatalf("connect_failed observed with reason codes %v, want LEADER_UNAVAILABLE alone", codes)
+	}
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	for _, fact := range observer.events {
+		if strings.Contains(fact.Reason, address) {
+			t.Fatalf("%s carries the address in its reason %q", fact.Event, fact.Reason)
+		}
+		if fact.Event == "connect_failed" && (fact.Reason != "LEADER_UNAVAILABLE" || fact.Endpoint != address) {
+			t.Fatalf("connect_failed facts %+v, want reason LEADER_UNAVAILABLE and endpoint %s", fact, address)
+		}
+	}
+}
+
+// A stream that did not open because this side's own context ended - the
+// Worker stopping - is STREAM_CLOSED, this side closing it; the same Canceled
+// status from the Leader's side, with the context still live, is a failure,
+// CONNECT_FAILED. Decided on the context, not the code.
+func TestAStreamThisSideClosedIsNotAConnectFailure(t *testing.T) {
+	live := context.Background()
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, testCase := range []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want string
+	}{
+		{"our context cancelled", ended, status.Error(codes.Canceled, "context canceled"), "STREAM_CLOSED"},
+		{"our context cancelled, deadline status", ended, status.Error(codes.DeadlineExceeded, "context deadline exceeded"), "STREAM_CLOSED"},
+		{"the Leader cancelled, our context live", live, status.Error(codes.Canceled, "cancelled by peer"), "CONNECT_FAILED"},
+		{"the address refused", live, status.Error(codes.Unavailable, "connection refused"), "LEADER_UNAVAILABLE"},
+	} {
+		if got := viewstream.ConnectFailureReasonForTest(testCase.ctx, testCase.err); got != testCase.want {
+			t.Errorf("%s: %s, want %s", testCase.name, got, testCase.want)
+		}
+	}
+}
+
+// helloRefusingService opens a stream whose every send fails, as a stream to
+// a Leader that went away between the connect and the Hello does.
+type helloRefusingService struct{ pb.ControlServiceClient }
+
+func (helloRefusingService) Connect(context.Context, ...grpc.CallOption) (pb.ControlService_ConnectClient, error) {
+	return helloRefusingStream{}, nil
+}
+
+type helloRefusingStream struct {
+	pb.ControlService_ConnectClient
+}
+
+func (helloRefusingStream) Send(*pb.WorkerMessage) error {
+	return errors.New("stream broken before the Hello")
+}
+
+// A Worker whose Hello could not be sent to the Leader it reached writes
+// hello_failed with HELLO_SEND_FAILED as the line's reason_code - its own
+// word, not the Leader's SEND_FAILED, and not reason_not_reported, which
+// would be written at the same WARN and hide the word's loss.
+func TestAHelloNotSentNamesItselfOnTheLine(t *testing.T) {
+	const address = "192.0.2.11:9000"
+	discovery := &scriptedDiscovery{found: true, leader: viewstream.LeaderEndpoint{WorkerID: "leader", ControlEpoch: 1, Endpoint: address}}
+	observer := &sessionObserver{}
+	dial := func(context.Context, string) (pb.ControlServiceClient, func() error, error) {
+		return helloRefusingService{}, func() error { return nil }, nil
+	}
+	client, err := viewstream.NewClient(viewstream.ClientIdentity{WorkerID: "w1", Incarnation: "i1", StreamToken: "t1"}, discovery, nil, observer,
+		viewstream.ClientOptions{Dial: dial, Sleep: func(ctx context.Context, _ time.Duration) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Millisecond): // fixed-wait: the stub Sleep's real pause in place of the client's backoff, which the case sets so the loop cannot spin
+				return nil
+			}
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = client.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	eventually(t, "a Hello not sent is observed", func() bool { return observer.count("hello_failed", "") >= 1 })
+	if codes := observer.codes("hello_failed"); codes["HELLO_SEND_FAILED"] == 0 || len(codes) != 1 {
+		t.Fatalf("hello_failed observed with reason codes %v, want HELLO_SEND_FAILED alone", codes)
+	}
 }

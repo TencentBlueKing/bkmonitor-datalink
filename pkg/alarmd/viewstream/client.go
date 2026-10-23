@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -60,11 +62,15 @@ const (
 
 // LeaderEndpoint is where the Leader's stream is served, as discovery
 // found it: the Leader's worker id, its term, and the endpoint its
-// registration advertises.
+// registration advertises. InternalToken is the token that registration
+// carries, the one a peer presents to the Leader's internal routes (the
+// evidence RPC, a hop to its listener); empty for a registration that has
+// none.
 type LeaderEndpoint struct {
-	WorkerID     string
-	ControlEpoch uint64
-	Endpoint     string
+	WorkerID      string
+	ControlEpoch  uint64
+	Endpoint      string
+	InternalToken string
 }
 
 // Discovery answers who leads and where. False with no error is "no
@@ -132,6 +138,8 @@ type ClientStats struct {
 	Connections        uint64
 	// DiscoveryMisses is by reason, one of DiscoveryMissReasons.
 	DiscoveryMisses map[string]uint64
+	// LookbackPlanSets is how many lookback plan sets the Leader sent.
+	LookbackPlanSets uint64
 }
 
 // ClientOptions are the client's seams: the dialer a test replaces to reach
@@ -150,6 +158,8 @@ type ClientOptions struct {
 	// view's Query Groups this Worker executes from it; nil reports zero and
 	// never claims switched.
 	Switched SwitchedSource
+	// LookbackPlans takes every plan set the Leader sends; nil drops them.
+	LookbackPlans LookbackPlansHandler
 }
 
 // SwitchedSource is what a receipt asks for the count of Query Groups the
@@ -181,6 +191,7 @@ type Client struct {
 	random    *rand.Rand
 	costs     CostSource
 	switched  SwitchedSource
+	plans     LookbackPlansHandler
 
 	installed atomic.Pointer[View]
 	mu        sync.Mutex
@@ -199,9 +210,9 @@ func NewClient(identity ClientIdentity, discovery Discovery, probe ObjectProbe, 
 	}
 	client := &Client{identity: identity, discovery: discovery, probe: probe, observer: observer,
 		dial: options.Dial, now: options.Now, sleep: options.Sleep, tick: options.Tick, costs: options.Costs,
-		switched: options.Switched,
-		random:   rand.New(rand.NewSource(time.Now().UnixNano())),
-		stats:    ClientStats{Installs: map[string]uint64{}, InstallFailures: map[string]uint64{}, Refusals: map[string]uint64{}}}
+		switched: options.Switched, plans: options.LookbackPlans,
+		random: rand.New(rand.NewSource(time.Now().UnixNano())),
+		stats:  ClientStats{Installs: map[string]uint64{}, InstallFailures: map[string]uint64{}, Refusals: map[string]uint64{}}}
 	if client.dial == nil {
 		client.dial = dialLeader
 	}
@@ -396,7 +407,7 @@ func (client *Client) serveOnce(ctx context.Context) (connected bool, err error)
 	}
 	service, closeConn, err := client.dial(ctx, leader.Endpoint)
 	if err != nil {
-		client.observe(ctx, "dial_failed", leader.Endpoint, err)
+		client.observeAt(ctx, "dial_failed", "DIAL_FAILED", leader.Endpoint, err)
 		return false, err
 	}
 	defer func() { _ = closeConn() }()
@@ -404,7 +415,7 @@ func (client *Client) serveOnce(ctx context.Context) (connected bool, err error)
 	defer cancel()
 	stream, err := service.Connect(streamCtx)
 	if err != nil {
-		client.observe(ctx, "connect_failed", leader.Endpoint, err)
+		client.observeAt(ctx, "connect_failed", connectFailureReason(streamCtx, err), leader.Endpoint, err)
 		return false, err
 	}
 	installed, _ := client.Installed()
@@ -414,7 +425,7 @@ func (client *Client) serveOnce(ctx context.Context) (connected bool, err error)
 		hello.Installed = versionToWire(installed.Version)
 	}
 	if err := stream.Send(&pb.WorkerMessage{Body: &pb.WorkerMessage_Hello{Hello: hello}}); err != nil {
-		client.observe(ctx, "hello_failed", leader.Endpoint, err)
+		client.observeAt(ctx, "hello_failed", "HELLO_SEND_FAILED", leader.Endpoint, err)
 		return false, err
 	}
 	client.mu.Lock()
@@ -428,7 +439,7 @@ func (client *Client) serveOnce(ctx context.Context) (connected bool, err error)
 		client.stats.Connected = false
 		client.mu.Unlock()
 	}()
-	client.observe(ctx, "connected", leader.Endpoint, nil)
+	client.observeAt(ctx, "connected", "", leader.Endpoint, nil)
 	reason, err := client.session(streamCtx, stream, cancel)
 	client.observe(ctx, "disconnected", reason, err)
 	return true, err
@@ -515,6 +526,13 @@ func (client *Client) session(ctx context.Context, stream pb.ControlService_Conn
 			client.installSnapshot(ctx, chunks, send)
 		case *pb.LeaderMessage_Delta:
 			client.installDelta(ctx, body.Delta, send)
+		case *pb.LeaderMessage_LookbackPlans:
+			client.mu.Lock()
+			client.stats.LookbackPlanSets++
+			client.mu.Unlock()
+			if client.plans != nil {
+				client.plans(lookbackPlansFromWire(body.LookbackPlans))
+			}
 		case *pb.LeaderMessage_Heartbeat, *pb.LeaderMessage_ObjectResult:
 			// Nothing to do with either here.
 		}
@@ -709,18 +727,42 @@ func (client *Client) switchedIn(view View) int {
 }
 
 func (client *Client) observe(ctx context.Context, event, reason string, err error) {
+	client.observeAt(ctx, event, reason, "", err)
+}
+
+// connectFailureReason is the word for a stream to a found Leader that did
+// not open. When the stream's own context ended first - the Worker stopping,
+// the session given up - it is STREAM_CLOSED, this side closing it, not a
+// failure; that is decided on the context, not on the status, since a
+// cancel from the Leader's side arrives as the same Canceled code while this
+// context is still live, and that is a failure. Otherwise LEADER_UNAVAILABLE
+// when the transport could not reach the address (refused, unreachable,
+// reset), CONNECT_FAILED for any other cause.
+func connectFailureReason(streamCtx context.Context, err error) string {
+	if streamCtx.Err() != nil {
+		return "STREAM_CLOSED"
+	}
+	if status.Code(err) == codes.Unavailable {
+		return "LEADER_UNAVAILABLE"
+	}
+	return "CONNECT_FAILED"
+}
+
+// observeAt is observe for an event about reaching the Leader at endpoint,
+// which the line carries apart from the reason.
+func (client *Client) observeAt(ctx context.Context, event, reason, endpoint string, err error) {
 	result := observability.Result(observability.ResultSuccess)
 	if err != nil || event == "discovery_missed" || event == "install_refused" {
 		result = observability.ResultDegraded
 	}
 	installed, _ := client.Installed()
 	// The reason is the line's reason_code when it is one of the stream's
-	// words; an endpoint or a detail stays in the facts.
+	// words; a detail stays in the facts, and an endpoint in its own field.
 	client.observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageViewSession, Result: result, Err: err,
 		ReasonCode: observability.ViewStreamReasonCode(reason),
 		ViewStream: &observability.ViewStreamFacts{Event: event, WorkerID: client.identity.WorkerID, Incarnation: client.identity.Incarnation,
-			ControlEpoch: installed.Version.ControlEpoch, Revision: installed.Version.Revision, Reason: reason},
+			ControlEpoch: installed.Version.ControlEpoch, Revision: installed.Version.Revision, Reason: reason, Endpoint: endpoint},
 	})
 }
 

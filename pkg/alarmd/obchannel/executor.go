@@ -20,8 +20,6 @@ import (
 // deliberately absent: the internal RPC authenticates the registered caller.
 type ExecutorOptions struct {
 	EnvironmentID, Replica, Build, Incarnation string
-	Concurrency                                int
-	SREConcurrency, ExecConcurrency            int
 	Operations                                 []Operation
 	Now                                        func() time.Time
 	Roles                                      roles.Set
@@ -35,9 +33,6 @@ type EvidenceExecutor struct {
 	ordered   []string
 	revision  string
 	contracts map[string]string
-	slots     chan struct{}
-	sreSlots  chan struct{}
-	execSlots chan struct{}
 }
 
 func NewEvidenceExecutor(options ExecutorOptions) (*EvidenceExecutor, error) {
@@ -47,22 +42,7 @@ func NewEvidenceExecutor(options ExecutorOptions) (*EvidenceExecutor, error) {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	if options.Concurrency <= 0 {
-		options.Concurrency = 1
-	}
-	if options.Concurrency > 4 {
-		options.Concurrency = 4
-	}
-	if options.SREConcurrency <= 0 {
-		options.SREConcurrency = 1
-	}
-	if options.ExecConcurrency <= 0 {
-		options.ExecConcurrency = 1
-	}
-	if options.SREConcurrency > 4 || options.ExecConcurrency > 4 {
-		return nil, errors.New("SRE and exec concurrency must be at most four per process")
-	}
-	e := &EvidenceExecutor{options: options, ops: make(map[string]Operation), contracts: make(map[string]string), slots: make(chan struct{}, options.Concurrency), sreSlots: make(chan struct{}, options.SREConcurrency), execSlots: make(chan struct{}, options.ExecConcurrency)}
+	e := &EvidenceExecutor{options: options, ops: make(map[string]Operation), contracts: make(map[string]string)}
 	for _, op := range options.Operations {
 		if op.ID == "" || op.Run == nil || op.Summary == "" {
 			return nil, errors.New("invalid OB operation registration")
@@ -163,21 +143,10 @@ func NewEvidenceExecutor(options ExecutorOptions) (*EvidenceExecutor, error) {
 	return e, err
 }
 
-func (e *EvidenceExecutor) executionSlots(op Operation) chan struct{} {
-	if op.ExecutionPool == "exec" {
-		return e.execSlots
-	}
-	if op.ExecutionPool == "sre" {
-		return e.sreSlots
-	}
-	return e.slots
-}
-
 func (e *EvidenceExecutor) requestLimits(op Operation) map[string]any {
-	return map[string]any{"request_max_bytes": op.RequestMaxBytes, "response_max_bytes": MaxResponseBytes,
+	return map[string]any{"request_max_bytes": op.RequestMaxBytes, "response_max_bytes": MaxResponseBytes(),
 		"execution_timeout_ms": op.ExecutionTimeout.Milliseconds(), "transport_margin_ms": TransportMargin.Milliseconds(),
-		"admission_timeout_ms": RequestTimeout.Milliseconds(), "concurrency": cap(e.executionSlots(op)),
-		"execution_pool": op.ExecutionPool, "budget_scope": "process", "http_request_slots": 4,
+		"execution_pool": op.ExecutionPool, "concurrency": "unbounded",
 		"invokes_per_session_per_minute": InvokesPerSessionPerMinute}
 }
 

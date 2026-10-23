@@ -115,14 +115,15 @@ type DiagnosticError struct {
 
 func (e *DiagnosticError) Error() string { return "alarmd diagnostic query: " + e.Code }
 
+// DiagnosticClient re-runs a Slot's query for an operator. Re-queries run
+// side by side with no count of their own: they are a handful next to the
+// business queries UQ serves.
 type DiagnosticClient struct {
 	client *Client
-	slot   chan struct{}
 }
 
 // NewDiagnosticClient accepts a trusted deployment endpoint and HTTP transport,
-// never request-supplied URLs or headers. The caller should provide a dedicated
-// small transport pool. Redirects are disabled and no query retry is performed.
+// never request-supplied URLs or headers. Redirects are disabled and no query retry is performed.
 func NewDiagnosticClient(endpoint, querySource string, httpClient *http.Client) (*DiagnosticClient, error) {
 	return newDiagnosticClient(endpoint, querySource, httpClient, DiagnosticLimits())
 }
@@ -138,7 +139,7 @@ func newDiagnosticClient(endpoint, querySource string, httpClient *http.Client, 
 	if err != nil {
 		return nil, &DiagnosticError{Code: "diagnostic_config_invalid"}
 	}
-	return &DiagnosticClient{client: client, slot: make(chan struct{}, 1)}, nil
+	return &DiagnosticClient{client: client}, nil
 }
 
 func (client *DiagnosticClient) Preview(spec execution.PhysicalQuerySpec) (DiagnosticPreview, error) {
@@ -198,12 +199,6 @@ func (client *DiagnosticClient) Query(ctx context.Context, spec execution.Physic
 	}
 	if err := ctx.Err(); err != nil {
 		return result, diagnosticError(err)
-	}
-	select {
-	case client.slot <- struct{}{}:
-		defer func() { <-client.slot }()
-	default:
-		return result, &DiagnosticError{Code: "diagnostic_busy"}
 	}
 	sink := &diagnosticSink{selection: selection, result: &result, valueField: spec.PlanFacts.Normalization.CanonicalValueField}
 	// Only provider-local identity is needed for decoding. This is not a

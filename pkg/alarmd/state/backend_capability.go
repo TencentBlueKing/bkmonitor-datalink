@@ -39,15 +39,16 @@ const (
 	CapabilityLifetime      BackendCapability = "lifetime_renewal"
 	CapabilityNoDataHash    BackendCapability = "no_data_hash"
 	CapabilitySlotApplied   BackendCapability = "slot_applied_mark"
+	CapabilityNoDataEnd     BackendCapability = "no_data_end_index"
 )
 
 // executionStoreCapabilities is what the execution store needs of every
 // target: the sequential write path, the generation and runtime-state
-// renewals, and the no-data memory. The fenced batch is not in the list: the
+// renewals, the no-data memory and the no-data end index. The fenced batch is not in the list: the
 // sequential path is its documented fallback, so a backend without it works,
 // only slower.
 var executionStoreCapabilities = []BackendCapability{
-	CapabilityCompareAndSet, CapabilityLifetime, CapabilityNoDataHash,
+	CapabilityCompareAndSet, CapabilityLifetime, CapabilityNoDataHash, CapabilityNoDataEnd,
 }
 
 // slotAppliedMarkCapabilities is what the slot-applied mark store needs.
@@ -72,6 +73,9 @@ func backendHas(backend Backend, capability BackendCapability) bool {
 		return ok
 	case CapabilitySlotApplied:
 		_, ok := backend.(SlotAppliedBackend)
+		return ok
+	case CapabilityNoDataEnd:
+		_, ok := backend.(NoDataEndBackend)
 		return ok
 	}
 	return false

@@ -13,19 +13,70 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
+// CloneLevelResultsV1 copies level results so that the copy shares nothing
+// with them: a LevelResultV1 holds its Detect evidence by pointer, and the
+// evidence holds its normalized value and ordinals by reference, so a plain
+// copy of the slice is one set of evidence under two names, and writing one
+// rewrites the other.
+func CloneLevelResultsV1(results []LevelResultV1) []LevelResultV1 {
+	if results == nil {
+		return nil
+	}
+	cloned := make([]LevelResultV1, len(results))
+	for index, result := range results {
+		if result.DetectEvidence != nil {
+			evidence := *result.DetectEvidence
+			if evidence.NormalizedValue != nil {
+				evidence.NormalizedValue = append(json.RawMessage{}, evidence.NormalizedValue...)
+			}
+			evidence.MatchedAlgorithmOrdinal = cloneUint32(evidence.MatchedAlgorithmOrdinal)
+			evidence.MatchedGroupOrdinal = cloneUint32(evidence.MatchedGroupOrdinal)
+			result.DetectEvidence = &evidence
+		}
+		cloned[index] = result
+	}
+	return cloned
+}
+
+func cloneRawValues(values map[string]json.RawMessage) map[string]json.RawMessage {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]json.RawMessage, len(values))
+	for key, value := range values {
+		if value != nil {
+			value = append(json.RawMessage{}, value...)
+		}
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneUint32(value *uint32) *uint32 {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+// BuildTriggerEventV1 builds the event from its input; the event shares
+// nothing with the input it was built from: its level results, record
+// dimensions and observed values are copies (CloneLevelResultsV1).
 func BuildTriggerEventV1(input TriggerEventBuildInputV1) (*TriggerEventV1, error) {
 	if input.MaxEvidenceBytes <= 0 {
 		return nil, invalid("trigger_event.max_evidence_bytes", "must be positive")
 	}
-	results := append([]LevelResultV1(nil), input.LevelResults...)
+	results := CloneLevelResultsV1(input.LevelResults)
 	sort.Slice(results, func(left, right int) bool { return results[left].LevelID < results[right].LevelID })
-	if err := validateSuccessfulLevelResultsV1(results); err != nil {
+	if err := validateSuccessfulLevelResultsV1(results, input.RecordRef.Absent); err != nil {
 		return nil, err
 	}
 	evidence, err := CanonicalJSONV2(results)
@@ -55,11 +106,15 @@ func BuildTriggerEventV1(input TriggerEventBuildInputV1) (*TriggerEventV1, error
 	if err != nil {
 		return nil, err
 	}
+	// The record's dimensions and the observed values are maps of raw
+	// values, copied for the reason the level results are.
+	recordRef, observed := input.RecordRef, input.Observed
+	recordRef.Dimensions, observed.Values = cloneRawValues(recordRef.Dimensions), cloneRawValues(observed.Values)
 	event := &TriggerEventV1{
 		Schema: Schema{Name: TriggerEventSchemaV1, Major: 1, Minor: 0}, RequiredFeatures: []string{},
 		EventID: eventID, EventSemanticDigest: semanticDigest, EventKind: input.EventKind, PrimaryLevelID: primary,
-		TenantID: input.TenantID, BusinessID: input.BusinessID, PlanRef: input.PlanRef, RecordRef: input.RecordRef,
-		Observed: input.Observed, LevelResults: results, EvaluationTime: input.EvaluationTime,
+		TenantID: input.TenantID, BusinessID: input.BusinessID, PlanRef: input.PlanRef, RecordRef: recordRef,
+		Observed: observed, LevelResults: results, EvaluationTime: input.EvaluationTime,
 		DetectPlanFingerprint: input.DetectPlanFingerprint, TriggerStateFingerprint: input.TriggerStateFingerprint,
 		Trace:     TriggerEventTraceV1{ExecutionID: input.ExecutionID},
 		DedupeMD5: input.DedupeMD5,
@@ -174,7 +229,7 @@ func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if event.AttributedBusinessID != "" && (!canonicalSignedDecimalPattern.MatchString(event.AttributedBusinessID) || event.AttributedBusinessID == "0") {
 		return invalid("trigger_event.attributed_business_id", "must be a canonical non-zero decimal when present")
 	}
-	if err := validateSuccessfulLevelResultsV1(event.LevelResults); err != nil {
+	if err := validateSuccessfulLevelResultsV1(event.LevelResults, event.RecordRef.Absent); err != nil {
 		return err
 	}
 	for _, result := range event.LevelResults {
@@ -277,7 +332,7 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 		optional []string
 	}{
 		{"plan_ref", object["plan_ref"], []string{"strategy_id", "strategy_revision", "state_compatibility_hash"}, nil},
-		{"record_ref", object["record_ref"], []string{"record_id", "source_time", "dimension_identity_digest", "dimensions"}, nil},
+		{"record_ref", object["record_ref"], []string{"record_id", "source_time", "dimension_identity_digest", "dimensions"}, []string{"absent"}},
 		{"observed", object["observed"], []string{"values", "unit"}, nil},
 		{"trace", object["trace"], []string{"execution_id"}, nil},
 	}
@@ -292,7 +347,7 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 	}
 	for index, rawResult := range rawResults {
 		path := "trigger_event.level_results[" + strconv.Itoa(index) + "]"
-		resultObject, err := validateJSONObjectFields(rawResult, path, []string{"level_id", "priority", "result", "decision_window", "detect_evidence", "level_trigger_fingerprint"}, []string{"level_code"}, false)
+		resultObject, err := validateJSONObjectFields(rawResult, path, []string{"level_id", "priority", "result", "decision_window", "level_trigger_fingerprint"}, []string{"level_code", "detect_evidence"}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -306,13 +361,19 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 		if _, err := validateJSONObjectFields(window["trigger"], path+".decision_window.trigger", []string{"window_start", "window_end", "window_size", "required_anomalies", "observed_anomalies"}, []string{"anomaly_begin_time"}, false); err != nil {
 			return nil, err
 		}
-		if _, err := validateJSONObjectFields(window["recovery"], path+".decision_window.recovery", []string{"enabled", "required_consecutive_windows", "observed_consecutive_misses", "oldest_window_start"}, nil, false); err != nil {
+		if _, err := validateJSONObjectFields(window["recovery"], path+".decision_window.recovery", []string{"enabled", "required_consecutive_windows", "observed_consecutive_misses", "oldest_window_start"}, []string{"skipped_windows", "withheld", "end", "ended_by"}, false); err != nil {
 			return nil, err
 		}
 		if _, err := validateJSONObjectFields(window["window_evidence"], path+".decision_window.window_evidence", []string{"anomaly_timestamps_digest", "late_accepted"}, nil, false); err != nil {
 			return nil, err
 		}
-		detect, err := validateJSONObjectFields(resultObject["detect_evidence"], path+".detect_evidence", []string{"detection_result", "predicate_digest", "normalized_value", "effective_time_status"}, []string{"matched_algorithm_ordinal", "matched_group_ordinal", "result_reason"}, false)
+		rawDetect, hasDetect := resultObject["detect_evidence"]
+		if !hasDetect {
+			// Whether it may be left out is the semantic validation's: only
+			// on an event about an absent series.
+			continue
+		}
+		detect, err := validateJSONObjectFields(rawDetect, path+".detect_evidence", []string{"detection_result", "predicate_digest", "normalized_value", "effective_time_status"}, []string{"matched_algorithm_ordinal", "matched_group_ordinal", "result_reason"}, false)
 		if err != nil {
 			return nil, err
 		}
@@ -332,7 +393,11 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 	return &event, nil
 }
 
-func validateSuccessfulLevelResultsV1(results []LevelResultV1) error {
+// validateSuccessfulLevelResultsV1 checks an event's level results. absent
+// is the event's record being an absent series (TriggerRecordRefV1.Absent):
+// then every level is a RECOVERY no data ended, with no detect evidence, and
+// on every other event every level carries it.
+func validateSuccessfulLevelResultsV1(results []LevelResultV1, absent bool) error {
 	if len(results) == 0 {
 		return invalid("trigger_event.level_results", "must contain at least one successful active Level result")
 	}
@@ -366,7 +431,21 @@ func validateSuccessfulLevelResultsV1(results []LevelResultV1) error {
 		if window.Recovery.Enabled && window.Recovery.RequiredConsecutiveWindows == 0 {
 			return invalid("trigger_event.level_results.decision_window.recovery", "enabled recovery requires a positive window count")
 		}
-		detect := result.DetectEvidence
+		if absent {
+			if result.DetectEvidence != nil || result.Result != LevelResultRecovery || window.Recovery.EndedBy != RecoveryEndedByNoData ||
+				window.Trigger.ObservedAnomalies >= window.Trigger.RequiredAnomalies || window.Recovery.Withheld != "" {
+				return invalid("trigger_event.level_results", "an absent series' event carries only RECOVERY no data ended, with no detect evidence")
+			}
+			if end := window.Recovery.End; end != "" && end != RecoveryEndClose {
+				return invalid("trigger_event.level_results.decision_window.recovery.end", "names no closed ending")
+			}
+			previous = result.LevelID
+			continue
+		}
+		if result.DetectEvidence == nil {
+			return invalid("trigger_event.level_results.detect_evidence", "is required on a level result about a record")
+		}
+		detect := *result.DetectEvidence
 		if (detect.DetectionResult != "ANOMALOUS" && detect.DetectionResult != "NORMAL") ||
 			!sha256Pattern.MatchString(detect.PredicateDigest) || len(detect.NormalizedValue) == 0 ||
 			detect.EffectiveTimeStatus != "ACTIVE" {
@@ -381,10 +460,22 @@ func validateSuccessfulLevelResultsV1(results []LevelResultV1) error {
 		if triggerSatisfied && recoverySatisfied {
 			return invalid("trigger_event.level_results.decision_window", "trigger and recovery cannot both be satisfied")
 		}
+		if withheld := window.Recovery.Withheld; withheld != "" && (!recoverySatisfied || !slices.Contains(RecoveryWithheldReasons, withheld)) {
+			return invalid("trigger_event.level_results.decision_window.recovery.withheld", "names no closed reason, or a recovery the windows did not meet")
+		}
+		if end := window.Recovery.End; end != "" && (end != RecoveryEndClose || result.Result != LevelResultRecovery) {
+			return invalid("trigger_event.level_results.decision_window.recovery.end", "names no closed ending, or is not on a RECOVERY")
+		}
+		endedByNoData := window.Recovery.EndedBy == RecoveryEndedByNoData
+		// A satisfied trigger beside it is refused below, by the result it
+		// expects: ABNORMAL or NORMAL, never this RECOVERY.
+		if endedBy := window.Recovery.EndedBy; endedBy != "" && (!endedByNoData || window.Recovery.Withheld != "") {
+			return invalid("trigger_event.level_results.decision_window.recovery.ended_by", "names no closed cause, or a recovery also withheld")
+		}
 		expectedResult := LevelResultNormal
 		if detect.DetectionResult == "ANOMALOUS" && triggerSatisfied {
 			expectedResult = LevelResultAbnormal
-		} else if !triggerSatisfied && recoverySatisfied {
+		} else if !triggerSatisfied && (recoverySatisfied && window.Recovery.Withheld == "" || endedByNoData) {
 			expectedResult = LevelResultRecovery
 		}
 		if result.Result != expectedResult {
@@ -414,7 +505,7 @@ func validateSuccessfulLevelResultsV1(results []LevelResultV1) error {
 		if window.HistoryCompleteness != "FULL" {
 			switch {
 			case result.Result == LevelResultAbnormal:
-			case result.Result == LevelResultRecovery && recoverySatisfied:
+			case result.Result == LevelResultRecovery && (recoverySatisfied || endedByNoData):
 			default:
 				return invalid("trigger_event.level_results.result",
 					"WARMING and GAPPED history permit only ABNORMAL and evidenced RECOVERY")

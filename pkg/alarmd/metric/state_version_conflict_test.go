@@ -16,7 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-const stateVersionConflictMetric = "bkmonitor_alarmd_state_version_conflict_total"
+const stateVersionConflictMetric = "alarmd_state_version_conflict_total"
 
 func gatherStateVersionConflict(t *testing.T, observations ...observability.Observation) map[string]float64 {
 	t.Helper()

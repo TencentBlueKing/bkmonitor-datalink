@@ -144,6 +144,13 @@ type TriggerPlan struct {
 type RecoveryPlan struct {
 	Enabled            bool
 	ConsecutiveWindows uint32
+	// End is contract.RecoveryEndClose for a Level whose recovery ends the
+	// alert closed, empty for one that ends it resolved.
+	End string
+	// MissingData is contract.RecoveryMissingDataEvaluateAsZero for a Level
+	// whose alert also ends when no real point arrives through the recovery
+	// span, empty for one that ends only as its windows say.
+	MissingData string
 }
 
 type StateRequirement struct {
@@ -649,6 +656,28 @@ func (p *CompiledPlan) NoDataLevel() *CompiledLevel {
 //
 // Nil when the Plan detects no no-data, which is the caller asking for a view
 // of something that is not there.
+// RequiredFullSlots is how many whole Slots a gap marker of this Plan waits
+// for before it clears: the most history points any of its Levels reads,
+// the no-data Level included. The marker is the Plan's, and a round not read
+// whole leaves a hole in the no-data series' history as well as the real
+// ones'; a marker sized on the declared Levels alone clears while the no-data
+// Level's window still holds the unread round, which its recovery walk would
+// then read as a quiet minute. Positions and Slots are the same unit: the
+// trigger's step must equal the evaluation interval, which is the cadence.
+func (p *CompiledPlan) RequiredFullSlots() uint32 {
+	if p == nil {
+		return 0
+	}
+	var required uint32
+	for _, level := range p.levels {
+		required = max(required, level.RequiredDetectHistoryPoints())
+	}
+	if p.noDataLevel != nil {
+		required = max(required, p.noDataLevel.RequiredDetectHistoryPoints())
+	}
+	return required
+}
+
 func (p *CompiledPlan) NoDataView() *CompiledPlan {
 	if p == nil || p.noDataLevel == nil {
 		return nil
@@ -666,6 +695,18 @@ func (p *CompiledPlan) NoDataView() *CompiledPlan {
 		view.outputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: true}
 	}
 	return &view
+}
+
+// NoDataOutputIdentity is the alert identity a no-data event of this Plan is
+// fingerprinted with: the no-data view's, which reads every dimension the
+// record carries - the group's no-data agg_dimension and the tag - not the
+// Plan's DimensionFields. Hashing a no-data group with OutputIdentity drops
+// any no-data field outside the item's dimensions, and two groups differing
+// only there share one fingerprint. Anything that recomputes a no-data
+// event's fingerprint asks here, so it hashes as the trigger does. Nil when
+// the Plan detects no no-data.
+func (p *CompiledPlan) NoDataOutputIdentity() *contract.MonitorOutputIdentity {
+	return p.NoDataView().OutputIdentity()
 }
 
 // TargetScope is the strategy's monitoring target, frozen with the Plan. Nil
@@ -932,6 +973,8 @@ type uptimeTimeRangeV1 struct {
 type recoveryPlanConfigV1 struct {
 	Enabled            *bool  `json:"enabled"`
 	ConsecutiveWindows uint32 `json:"consecutive_windows"`
+	End                string `json:"end,omitempty"`
+	MissingData        string `json:"missing_data,omitempty"`
 }
 
 type detectorSemantic struct {

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -205,18 +206,34 @@ func TestLoweringNeedsQuietAndThreeObservedEarlierReads(t *testing.T) {
 		t.Fatal("fewer than three fresh matches lowered the hold")
 	}
 	earlier(600, true, true)
-	if c.ReadHold("qg") != 75*time.Second {
-		t.Fatal("three matches after quiet did not halve the hold")
+	// Three matches after quiet choose the half; the hold moves once a probe
+	// has read it round by round.
+	if record, _ := c.Reading("qg"); c.ReadHold("qg") != 150*time.Second || record.VerifyCandidateMillis == nil ||
+		*record.VerifyCandidateMillis != 75_000 {
+		t.Fatalf("three matches after quiet: hold %v, candidate %v; want the hold unmoved and 75 s to verify",
+			c.ReadHold("qg"), record.VerifyCandidateMillis)
+	}
+	if _, tries := c.EarlierCandidate("qg"); tries {
+		t.Fatal("a trial runs while the candidate is verified")
+	}
+	verifyEnd(t, c, "qg", 660, true)
+	if record, _ := c.Reading("qg"); c.ReadHold("qg") != 75*time.Second || record.VerifyCandidateMillis != nil || !record.LoweredVerified {
+		t.Fatalf("after the probe passed: hold %v, candidate %v, verified %v; want halved, verified, the candidate cleared",
+			c.ReadHold("qg"), record.VerifyCandidateMillis, record.LoweredVerified)
 	}
 	observeEarly(t, c, "qg", 180*time.Second, 75_000)
 	reading, _ := c.Reading("qg")
 	if c.ReadHold("qg") != 150*time.Second || reading.RaisedAfterLowering != 1 {
 		t.Fatalf("raise after lowering was not counted: %+v", reading)
 	}
+	// The lowered hold is the search's floor, dated when the raise learned it.
+	if reading.EarlierFloorMillis == nil || *reading.EarlierFloorMillis != 75_000 || reading.EarlierFloorAtMillis != now.UnixMilli() {
+		t.Fatalf("raise after lowering: floor %v learned at %d, want 75 s at %d", reading.EarlierFloorMillis, reading.EarlierFloorAtMillis, now.UnixMilli())
+	}
 	*now = now.Add(2 * time.Hour)
 	observeEarly(t, c, "qg", 180*time.Second, 150_000)
 	reading, _ = c.Reading("qg")
-	if reading.MaxEarlyIntervalMillis != 2*time.Hour.Milliseconds() {
+	if reading.MaxEarlyIntervalMillis != 2*time.Hour.Milliseconds() || quietBar("qg", reading, now.UnixMilli()) != 2*time.Hour.Milliseconds() {
 		t.Fatalf("event interval %+v", reading)
 	}
 	*now = now.Add(time.Hour)
@@ -957,8 +974,8 @@ func TestALoweringBelowOneStepGoesToZero(t *testing.T) {
 	for index := range 3 {
 		earlier(execution.EvaluationTime(360+index*60), 0)
 	}
-	if c.ReadHold("qg") != 0 {
-		t.Fatalf("lowering below one step kept %s", c.ReadHold("qg"))
+	if got := verifyEnd(t, c, "qg", 540, true); got != 0 || c.ReadHold("qg") != 0 {
+		t.Fatalf("lowering below one step verified %s and kept %s, want zero", got, c.ReadHold("qg"))
 	}
 }
 
@@ -994,6 +1011,7 @@ func TestALoweredHoldStaysLoweredAfterRestore(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	verifyEnd(t, c, "qg", 360, true)
 	if c.ReadHold("qg") != 75*time.Second {
 		t.Fatalf("not lowered: %s", c.ReadHold("qg"))
 	}
@@ -1178,3 +1196,111 @@ func TestTheHoldReadersStateIsPendingFirstAndUnknownWhenUnread(t *testing.T) {
 		}
 	}
 }
+
+// A probation's finding undoes the lowering it watches whatever the round's
+// arrival age: a reread that saw the change before the lowered hold - a
+// series that went, or a change seen early - still puts the hold back where it
+// came from, makes the lowered hold the floor, and starts the quiet over, so
+// no trial lowers it again until the group is quiet for its bar. The same
+// age from a sample raises nothing, and starts the quiet over; noise - a
+// series that went, from a sample - starts it over too.
+func TestAProbationFindingPutsTheHoldBackWhereItCameFrom(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		evidence func(execution.FrozenExecutionContractRef) Evidence
+		hold     int64
+		floor    *int64
+	}{
+		{"probation", func(ref execution.FrozenExecutionContractRef) Evidence {
+			return Evidence{Contract: ref, ArrivalAge: 10 * time.Second, Rung: "x1.5", Probation: true}
+		}, 214_329, ptr(int64(107_164))},
+		{"sample", func(ref execution.FrozenExecutionContractRef) Evidence {
+			return Evidence{Contract: ref, ArrivalAge: 10 * time.Second, Rung: "x1.5"}
+		}, 107_164, nil},
+		{"noise", func(ref execution.FrozenExecutionContractRef) Evidence {
+			return Evidence{Contract: ref, Noise: true}
+		}, 107_164, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctl, store, now := controllerFixture(t)
+			store.values["qg"] = []byte(fmt.Sprintf(`{"hold_ms":107164,"since_slot":60,"lowered":true,"lowered_from_ms":214329,`+
+				`"quiet_since_ms":%d,"earlier_matches":2}`, now.Add(-3*time.Hour).UnixMilli()))
+			prepare(t, ctl, groupSpec("qg", 0))
+			if err := ctl.Observe(context.Background(), c.evidence(holdContract("qg", 120, 107_164))); err != nil {
+				t.Fatal(err)
+			}
+			record, _ := ctl.Reading("qg")
+			floor, want := int64(-1), int64(-1)
+			if record.EarlierFloorMillis != nil {
+				floor = *record.EarlierFloorMillis
+			}
+			if c.floor != nil {
+				want = *c.floor
+			}
+			if got := ctl.ReadHold("qg").Milliseconds(); got != c.hold || floor != want {
+				t.Fatalf("hold %d ms, floor %d ms; want %d ms, floor %d ms (-1: none)", got, floor, c.hold, want)
+			}
+			if record.QuietSinceMillis != now.UnixMilli() || record.EarlierMatches != 0 {
+				t.Fatalf("quiet since %d, %d matches; want the quiet started over now (%d), no matches", record.QuietSinceMillis,
+					record.EarlierMatches, now.UnixMilli())
+			}
+		})
+	}
+}
+
+// A round read early after a verified lowering - by probation or by a sample - shows the probe that verified it
+// passed by chance: the lowered hold is a floor a probe failed at, so the next probe near it reads its eight hours.
+// After a trial's lowering the floor is an ordinary one.
+func TestAReadEarlyAfterAVerifiedLoweringIsAFloorAProbeFailedAt(t *testing.T) {
+	for _, verified := range []bool{false, true} {
+		for _, probation := range []bool{false, true} {
+			name := map[bool]string{false: "trial", true: "verified"}[verified] + "/" +
+				map[bool]string{false: "sample", true: "probation"}[probation]
+			t.Run(name, func(t *testing.T) {
+				ctl, store, now := controllerFixture(t)
+				store.values["qg"] = []byte(fmt.Sprintf(`{"hold_ms":107164,"since_slot":60,"lowered":true,`+
+					`"lowered_verified":%t,"lowered_from_ms":214329}`, verified))
+				prepare(t, ctl, groupSpec("qg", 0))
+				evidence := Evidence{Contract: holdContract("qg", 120, 107_164), ArrivalAge: 150 * time.Second, Rung: "x1.5",
+					Probation: probation}
+				if err := ctl.Observe(context.Background(), evidence); err != nil {
+					t.Fatal(err)
+				}
+				record, _ := ctl.Reading("qg")
+				if record.EarlierFloorMillis == nil || *record.EarlierFloorMillis != 107_164 ||
+					record.EarlierFloorAtMillis != now.UnixMilli() {
+					t.Fatalf("floor %v since %d, want the lowered hold 107164 ms dated now (%d)", record.EarlierFloorMillis,
+						record.EarlierFloorAtMillis, now.UnixMilli())
+				}
+				if record.EarlierFloorProbed != verified || record.LoweredVerified || record.Lowered {
+					t.Fatalf("probed %v, lowered %v verified %v; want probed %v and the lowering gone", record.EarlierFloorProbed,
+						record.Lowered, record.LoweredVerified, verified)
+				}
+			})
+		}
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// verifyEnd ends the shadow probe of the candidate the group's trials chose,
+// passed or not, at slot - every lowering comes through one (FloorProbe,
+// kind verify) - and returns the candidate.
+func verifyEnd(t *testing.T, c *Controller, qg execution.QueryGroupIdentity, slot execution.EvaluationTime, passed bool) time.Duration {
+	t.Helper()
+	candidate, kind, _, probing := c.FloorProbe(qg)
+	if !probing || kind != FloorProbeKindVerify {
+		t.Fatalf("no candidate to verify: %v, kind %q, probing %v", candidate, kind, probing)
+	}
+	record, _ := c.Reading(qg)
+	hold := current(record)
+	if err := c.FloorProbeResult(context.Background(), FloorProbeEvidence{Contract: holdContract(qg, slot, hold), Floor: candidate,
+		Kind: kind, Hold: time.Duration(hold) * time.Millisecond, Passed: passed}); err != nil {
+		t.Fatal(err)
+	}
+	return candidate
+}
+
+// verifyRounds is the rounds a probe of the trials' candidate reads clean
+// before it passes, lookback.ProbationRounds.
+const verifyRounds = 120

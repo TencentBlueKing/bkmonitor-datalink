@@ -43,7 +43,7 @@ func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 
 func TestProgressContractsDoNotFreezeNextSlotAfterCompletion(t *testing.T) {
 	if got, want := fieldNames(reflect.TypeOf(execution.SlotExecutionRequest{})),
-		[]string{"ShortPeriodCohort", "Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "ReplayExpired", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot", "ExpiredRange", "ContentScope", "Supplement"}; !reflect.DeepEqual(got, want) {
+		[]string{"ShortPeriodCohort", "Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "ReplayExpired", "ShareExceeded", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot", "ExpiredRange", "ContentScope", "Supplement"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("SlotExecutionRequest fields = %v, want %v", got, want)
 	}
 	if got, want := fieldNames(reflect.TypeOf(execution.ProgressCommitRequest{})),

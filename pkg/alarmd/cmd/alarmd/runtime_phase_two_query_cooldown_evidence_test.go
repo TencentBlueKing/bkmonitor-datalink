@@ -188,7 +188,7 @@ func TestCLIRedisFailuresAreCountedAndTheAuthStoresTextLogged(t *testing.T) {
 	report("auth", "sentinel_unreachable", "redis: all sentinels specified in configuration are unreachable")
 	report("evidence", "timeout", "")
 	for client, reason := range map[string]string{"auth": "sentinel_unreachable", "evidence": "timeout"} {
-		if got := counterValue(t, recorder, "bkmonitor_alarmd_diagnostic_redis_failures_total", map[string]string{"client": client, "reason": reason}); got != 1 {
+		if got := counterValue(t, recorder, "alarmd_diagnostic_redis_failures_total", map[string]string{"client": client, "reason": reason}); got != 1 {
 			t.Fatalf("%s/%s counted %v", client, reason, got)
 		}
 	}

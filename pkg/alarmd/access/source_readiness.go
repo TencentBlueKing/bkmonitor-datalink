@@ -20,7 +20,7 @@ import (
 // sharedReadinessBoundary reports the one moment this execution's queries agree
 // their data is readable.
 //
-// It is deliberately separate from sharedPendingReadiness, which decides
+// It is deliberately separate from sharedPendingReadinessOf, which decides
 // whether to defer and therefore only answers about boundaries still in the
 // future. This one answers about the boundary itself, past or future, and
 // changes no decision.
@@ -79,7 +79,7 @@ func (source *Source) observeSlotReadiness(
 	source.config.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentAccess, Stage: observability.StageSlotReadinessArrival,
 		Result: observability.ResultSuccess, Operation: observability.Operation(request.Operation),
-		Direction: observability.DirectionInternal, SlotReadiness: &facts,
+		SlotReadiness: &facts,
 		Trace: observability.TraceFields{
 			QueryGroupKey:    string(request.Contract.Slot.QueryGroup),
 			EvaluationTime:   int64(request.Contract.Slot.EvaluationTime),

@@ -58,8 +58,8 @@ func TestTheWalkPublishesBothItsPopulationsApart(t *testing.T) {
 		Offered: 100000, Queued: 90000, DeferredQueueFull: 12, DeferredNotBetter: 500,
 	})
 	for name, want := range map[string]map[string]float64{
-		"bkmonitor_alarmd_dispatch_rotation_total": {"completed": 2069, "truncated": 4},
-		"bkmonitor_alarmd_dispatch_walk_total": {
+		"alarmd_dispatch_rotation_total": {"completed": 2069, "truncated": 4},
+		"alarmd_dispatch_walk_total": {
 			"offered": 100000, "queued": 90000,
 			"deferred_queue_full": 12, "deferred_not_better": 500,
 		},
@@ -129,7 +129,7 @@ func TestEveryDispatchRotationFieldIsPublished(t *testing.T) {
 func TestAReplicaThatHasNotWalkedPublishesNoRotationCounts(t *testing.T) {
 	gathered := gatherRotation(t, nil)
 	for _, name := range []string{
-		"bkmonitor_alarmd_dispatch_rotation_total", "bkmonitor_alarmd_dispatch_walk_total",
+		"alarmd_dispatch_rotation_total", "alarmd_dispatch_walk_total",
 	} {
 		if series, ok := gathered[name]; ok {
 			t.Errorf("%s published %v before any walk ran; zeros here read as a walk that covered "+

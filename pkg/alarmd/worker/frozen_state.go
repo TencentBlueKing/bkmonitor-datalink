@@ -180,7 +180,7 @@ func (coordinator *SlotExecutionCoordinator) observeFrozenStateRenewal(
 	recorded := facts
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageFrozenStateRenewed,
-		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
-		Result: result, ReasonCode: reason, FrozenStateRenewal: &recorded,
+		Operation: observability.Operation(operation),
+		Result:    result, ReasonCode: reason, FrozenStateRenewal: &recorded,
 	})
 }

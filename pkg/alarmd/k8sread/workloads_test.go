@@ -12,6 +12,7 @@ package k8sread
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -34,9 +35,12 @@ type namespaceAPI struct {
 	deny        map[string]bool
 	continued   map[string]bool
 	lists       map[string]int
+	// delay is how long each request takes before it is answered.
+	delay time.Duration
 }
 
 func (a *namespaceAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	time.Sleep(a.delay) // fixed-wait: the API's answer delay, which the case sets
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if r.Method != http.MethodGet {
@@ -322,7 +326,7 @@ func TestWorkloadsSaysWhereItWasCut(t *testing.T) {
 	reader := newNamespaceReader(t, api, readAt, "ns")
 	var listed []string
 	for i := 0; i < MaxNamespaces+2; i++ {
-		listed = append(listed, "listed-"+string(rune('a'+i)))
+		listed = append(listed, fmt.Sprintf("listed-%d", i))
 	}
 	// A namespace past the bound named twice is named once.
 	listed = append(listed, listed[len(listed)-1])
@@ -416,5 +420,33 @@ func TestWorkloadsInReadsTheOneNamespaceARequestNames(t *testing.T) {
 	}
 	if _, err := reader.WorkloadsIn(context.Background(), "Kube_System", 0); err == nil {
 		t.Fatal("a name that is not a namespace name was read")
+	}
+}
+
+// The namespaces are read side by side: six namespaces of two list calls of
+// 150 ms each answer within a second, where one after another they would
+// take nearly two.
+func TestWorkloadsReadsTheNamespacesSideBySide(t *testing.T) {
+	names := []string{"ns", "n1", "n2", "n3", "n4", "n5"}
+	api := &namespaceAPI{pods: map[string][]any{}, replicaSets: map[string][]any{}, delay: 150 * time.Millisecond}
+	for _, name := range names {
+		api.pods[name], api.replicaSets[name] = []any{}, []any{}
+	}
+	reader := newNamespaceReader(t, api, readAt, "ns")
+	started := time.Now()
+	result, err := reader.Workloads(context.Background(), nil, names[1:], 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(started); took > time.Second {
+		t.Fatalf("six namespaces took %v: read one after another", took)
+	}
+	if len(result.Namespaces) != len(names) {
+		t.Fatalf("%d namespaces, want %d", len(result.Namespaces), len(names))
+	}
+	for index, section := range result.Namespaces {
+		if section.Namespace != names[index] || len(section.Failures) != 0 {
+			t.Fatalf("section %d %+v, want %s read, in order", index, section, names[index])
+		}
 	}
 }

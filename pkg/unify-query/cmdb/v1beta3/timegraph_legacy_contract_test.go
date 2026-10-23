@@ -25,6 +25,7 @@ func TestLegacyTimeGraphRangeBucketContract(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		lookback string
+		step     string
 		sampleMS int64
 		wantMS   int64
 	}{
@@ -35,19 +36,28 @@ func TestLegacyTimeGraphRangeBucketContract(t *testing.T) {
 		{name: "left boundary excluded", lookback: "10m", sampleMS: startMS - 60000},
 		{name: "first millisecond included", sampleMS: startMS - 60000 + 1, wantMS: startMS},
 		{name: "right boundary included", sampleMS: startMS, wantMS: startMS},
+		{name: "fractional window retains older sample", step: "1500ms", sampleMS: startMS - 1250, wantMS: startMS},
+		{name: "fractional left boundary excluded", step: "1500ms", sampleMS: startMS - 1500},
+		{name: "fractional first millisecond included", step: "1500ms", sampleMS: startMS - 1499, wantMS: startMS},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
 			provider := sharedTopologyQueryProvider().(contractSchemaProvider)
 			provider.schemas = provider.schemas[:1]
 			model := legacyRegressionModel(provider)
+			step, start, end := "1m", strconv.FormatInt(startMS/1000, 10), strconv.FormatInt(startMS/1000+120, 10)
+			wireStep := time.Minute
+			if tc.step != "" {
+				step, start, end = tc.step, strconv.FormatInt(startMS+123, 10), strconv.FormatInt(startMS+3987, 10)
+				wireStep = time.Second
+			}
 			engine := pl.NewEngine(pl.EngineOpts{Timeout: 10 * time.Second, MaxSamples: 10000})
 			model.timeGraphVMQuery = func(qctx context.Context, q *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
 				require.False(t, instant)
 				require.True(t, metadata.IsExactTimeGrid(qctx))
 				require.True(t, q.NotTimeAlign)
 				require.Equal(t, startMS, start.UnixMilli())
-				require.Equal(t, time.Minute, step)
+				require.Equal(t, wireStep, step)
 				queryable := storage.QueryableFunc(func(context.Context, int64, int64) (storage.Querier, error) {
 					return &storage.MockQuerier{SelectMockFunction: func(bool, *storage.SelectHints, ...*labels.Matcher) storage.SeriesSet {
 						series := &prompb.TimeSeries{
@@ -61,7 +71,7 @@ func TestLegacyTimeGraphRangeBucketContract(t *testing.T) {
 				matrix, _, err := backend.DirectQueryRange(qctx, expr, start, end, step)
 				return matrix, err
 			}
-			_, _, _, _, result, err := model.QueryResourceMatcherRange(ctx, tc.lookback, "space", "1m", strconv.FormatInt(startMS/1000, 10), strconv.FormatInt(startMS/1000+120, 10), "middle", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil)
+			_, _, _, _, result, err := model.QueryResourceMatcherRange(ctx, tc.lookback, "space", step, start, end, "middle", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil)
 			require.NoError(t, err)
 			if tc.wantMS == 0 {
 				require.Empty(t, result)
@@ -244,7 +254,7 @@ func TestTimeGraphRejectsUnsupportedPrecisionBeforeQuery(t *testing.T) {
 	t.Cleanup(func() { yoloMode = oldYolo })
 	for _, yolo := range []bool{false, true} {
 		yoloMode = yolo
-		for _, api := range []string{"legacy", "paths", "relation_paths"} {
+		for _, api := range []string{"paths", "relation_paths"} {
 			for _, tc := range []struct {
 				name, start, end, step string
 				instant                bool
@@ -264,12 +274,6 @@ func TestTimeGraphRejectsUnsupportedPrecisionBeforeQuery(t *testing.T) {
 					matcher := cmdb.Matcher{"source_id": "a"}
 					var err error
 					switch api {
-					case "legacy":
-						if tc.instant {
-							_, _, _, _, _, err = model.QueryResourceMatcher(ctx, "1m", "space", tc.start, "target", "source", matcher, nil, false, nil)
-						} else {
-							_, _, _, _, _, err = model.QueryResourceMatcherRange(ctx, "1m", "space", tc.step, tc.start, tc.end, "target", "source", matcher, nil, false, nil)
-						}
 					case "paths":
 						if tc.instant {
 							_, err = model.QueryPathResources(ctx, "1m", "space", tc.start, "source", []cmdb.Resource{"target"}, nil, matcher)

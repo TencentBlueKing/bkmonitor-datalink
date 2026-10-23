@@ -14,7 +14,10 @@ import (
 	"strings"
 	"time"
 
+	prommodel "github.com/prometheus/common/model"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -303,14 +306,14 @@ func resourcePathToResourceTypes(path resourcePath) []ResourceType {
 }
 
 func timeGraphQueryTimestamp(ts string) (string, error) {
-	timestampMs, err := parseTimestamp(ts)
+	// The legacy VM gateway serializes time.Time with Unix(), including inputs
+	// supplied in milliseconds, microseconds or nanoseconds. Match that wire
+	// precision here, without relaxing the public topology/path contracts.
+	_, _, timestamp, err := function.QueryTimestamp(ts, ts)
 	if err != nil {
 		return "", err
 	}
-	if ts != "" && timestampMs%1000 != 0 {
-		return "", fmt.Errorf("TimeGraph timestamp must have whole-second precision")
-	}
-	return strconv.FormatInt(timestampMs/1000, 10), nil
+	return strconv.FormatInt(timestamp.Unix(), 10), nil
 }
 
 func timeGraphTargetMatcher(
@@ -539,21 +542,28 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}
-	startMs, err := parseTimestamp(startTimestamp)
+	_, startTime, endTime, err := function.QueryTimestamp(startTimestamp, endTimestamp)
 	if err != nil {
-		return timeGraphRangeResult{}, fmt.Errorf("parse TimeGraph start timestamp: %w", err)
+		return timeGraphRangeResult{}, fmt.Errorf("parse TimeGraph timestamps: %w", err)
 	}
-	endMs, err := parseTimestamp(endTimestamp)
-	if err != nil {
-		return timeGraphRangeResult{}, fmt.Errorf("parse TimeGraph end timestamp: %w", err)
+	window := time.Minute
+	if step != "" {
+		duration, parseErr := prommodel.ParseDuration(step)
+		if parseErr != nil {
+			return timeGraphRangeResult{}, fmt.Errorf("parse step: %w", parseErr)
+		}
+		window = time.Duration(duration)
 	}
-	stepDuration, err := parseStepDuration(step)
-	if err != nil {
+	// The old VM wire format truncates timestamps and the sampling interval to
+	// seconds, but leaves count_over_time's window unchanged (e.g. 1500ms).
+	// Use that same grid for validation and output buckets, including the first
+	// bucket before an input's millisecond remainder.
+	startTime, endTime = time.Unix(startTime.Unix(), 0), time.Unix(endTime.Unix(), 0)
+	stepDuration := window.Truncate(time.Second)
+	if err := validateTimeGraphPrecision(startTime, endTime, stepDuration); err != nil {
 		return timeGraphRangeResult{}, err
 	}
-	if err := validateTimeGraphPrecision(time.UnixMilli(startMs), time.UnixMilli(endMs), stepDuration); err != nil {
-		return timeGraphRangeResult{}, err
-	}
+	startMs, endMs := startTime.UnixMilli(), endTime.UnixMilli()
 	stepMs := stepDuration.Milliseconds()
 	// 使用解析后的步长继续调用 TimeGraph；不能把调用方传入的空字符串再次
 	// 传到底层，否则底层会重新解析空 duration 并报错。
@@ -567,20 +577,13 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 			return timeGraphRangeResult{}, fmt.Errorf("look back delta must be positive")
 		}
 	}
-	// 旧版 lookback 限制原始数据读取范围，而非每个采样桶的存活判断。
-	// VM 直接评估每个桶，因此其窗口必须等于采样步长。
-	lookBackDelta = normalizedStep
+	// Preserve the original aggregation window independently of the wire step.
+	lookBackDelta = window.String()
 	if _, err := validateRangeBuckets(startMs, endMs, stepMs); err != nil {
 		return timeGraphRangeResult{}, err
 	}
-	start, err := timeGraphQueryTimestamp(startTimestamp)
-	if err != nil {
-		return timeGraphRangeResult{}, err
-	}
-	end, err := timeGraphQueryTimestamp(endTimestamp)
-	if err != nil {
-		return timeGraphRangeResult{}, err
-	}
+	start := strconv.FormatInt(startTime.Unix(), 10)
+	end := strconv.FormatInt(endTime.Unix(), 10)
 	querier, err := m.getTimeGraphQuerier(ctx, spaceUID)
 	if err != nil {
 		return timeGraphRangeResult{}, err

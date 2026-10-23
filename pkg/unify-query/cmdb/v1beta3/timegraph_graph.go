@@ -19,6 +19,7 @@ import (
 
 	"github.com/dominikbraun/graph"
 	"github.com/pkg/errors"
+	prommodel "github.com/prometheus/common/model"
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -646,7 +647,7 @@ func (q *TimeGraph) MakeQueryTsWithWindow(ctx context.Context, spaceUID string, 
 		FieldName: metric,
 		TimeAggregation: structured.TimeAggregation{
 			Function: structured.CountOT,
-			Window:   structured.Window(window.String()),
+			Window:   timeGraphQueryWindow(window),
 		},
 		AggregateMethodList: structured.AggregateMethodList{
 			{
@@ -669,6 +670,15 @@ func (q *TimeGraph) MakeQueryTsWithWindow(ctx context.Context, spaceUID string, 
 		End:         cast.ToString(end.Unix()),
 		Step:        step.String(),
 	}, nil
+}
+
+// timeGraphQueryWindow preserves existing whole-second formatting while making
+// fractional windows parseable by Prometheus (1s500ms instead of 1.5s).
+func timeGraphQueryWindow(window time.Duration) structured.Window {
+	if window%time.Second == 0 {
+		return structured.Window(window.String())
+	}
+	return structured.Window(prommodel.Duration(window).String())
 }
 
 func (q *TimeGraph) relationQueryFields(info cmdb.Matcher, source, target cmdb.Resource, sourcePrefix, targetPrefix string, dynamic bool) ([]string, map[string]string) {
@@ -799,7 +809,7 @@ func (q *TimeGraph) makeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 		FieldName: fmt.Sprintf("%s_info_relation", resource),
 		TimeAggregation: structured.TimeAggregation{
 			Function: structured.CountOT,
-			Window:   structured.Window(window.String()),
+			Window:   timeGraphQueryWindow(window),
 		},
 		AggregateMethodList: structured.AggregateMethodList{{
 			Method:     structured.COUNT,

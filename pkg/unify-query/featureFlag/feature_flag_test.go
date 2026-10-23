@@ -20,6 +20,27 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
+func TestValidateFeatureFlagSnapshot(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		data    string
+		wantErr bool
+	}{
+		{name: "empty snapshot", data: `{}`},
+		{name: "legacy format", data: `{"test-flag":{"rule":"key eq \"test-user\"","percentage":100,"true":true,"false":false,"default":false}}`},
+		{name: "current format", data: `{"test-flag":{"variations":{"enabled":true},"defaultRule":{"variation":"enabled"}}}`},
+		{name: "disabled flag", data: `{"test-flag":{"disable":true,"variations":{"enabled":true},"defaultRule":{"variation":"enabled"}}}`},
+		{name: "missing default rule", data: `{"test-flag":{"variations":{"enabled":true}}}`, wantErr: true},
+		{name: "targeting without query", data: `{"test-flag":{"variations":{"enabled":true},"defaultRule":{"variation":"enabled"},"targeting":[{"variation":"enabled"}]}}`, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateFeatureFlagSnapshot([]byte(test.data)); (err != nil) != test.wantErr {
+				t.Fatalf("expected error=%v, got %v", test.wantErr, err)
+			}
+		})
+	}
+}
+
 func TestGetBkDataTableIDCheck(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	metadata.InitMetadata()

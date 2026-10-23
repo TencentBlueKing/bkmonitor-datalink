@@ -27,6 +27,10 @@ var ErrCostProjectionBudget = errors.New("cost projection resource budget exhaus
 // These allowances come from the observation resource allocation. ReadBytes is
 // the entire refresh's wire allowance, not an allowance multiplied by replicas.
 // Use a diagnostics client: this store must not borrow the execution pool.
+// CostProjectionLimits bounds one replica's projection and one refresh's
+// read of the others'. ReadBytes and ReadCommands zero size a refresh by the
+// replicas it is given: one read of at most PublishBytes each, admitted as a
+// whole by the store's memory line (AdmitReads) before the first.
 type CostProjectionLimits struct {
 	PublishBytes int
 	ReadBytes    int
@@ -42,6 +46,8 @@ type CostProjectionStore struct {
 	limits CostProjectionLimits
 	readMu sync.Mutex
 	next   int
+	// admit is asked for a refresh's read before it reads (AdmitReads).
+	admit func(bytes uint64) bool
 }
 
 type CostProjectionPublish struct {
@@ -85,7 +91,7 @@ type costProjectionWire struct {
 }
 
 func NewCostProjectionStore(client redis.Cmdable, prefix string, limits CostProjectionLimits) (*CostProjectionStore, error) {
-	if client == nil || prefix == "" || limits.PublishBytes <= 0 || limits.ReadBytes <= 0 || limits.ReadCommands <= 0 || limits.Timeout <= 0 || limits.FreshFor <= 0 || limits.TTL <= limits.FreshFor {
+	if client == nil || prefix == "" || limits.PublishBytes <= 0 || limits.ReadBytes < 0 || limits.ReadCommands < 0 || limits.Timeout <= 0 || limits.FreshFor <= 0 || limits.TTL <= limits.FreshFor {
 		return nil, errors.New("cost projection requires a diagnostics client and finite resource/freshness allowances")
 	}
 	// Even a rejected payload must fit a small unavailable marker so the old
@@ -95,6 +101,14 @@ func NewCostProjectionStore(client redis.Cmdable, prefix string, limits CostProj
 		return nil, ErrCostProjectionBudget
 	}
 	return &CostProjectionStore{client: client, prefix: prefix, limits: limits}, nil
+}
+
+// AdmitReads has every refresh ask admit for the bytes it may read before
+// it reads: refused, the refresh reads nothing and defers every replica.
+func (s *CostProjectionStore) AdmitReads(admit func(bytes uint64) bool) {
+	if s != nil {
+		s.admit = admit
+	}
 }
 
 func costReplicaHash(replica string) string {
@@ -159,10 +173,22 @@ func (s *CostProjectionStore) Load(ctx context.Context, replicas []string, regis
 		view.Complete = registryComplete
 		return view
 	}
+	readBytes, readCommands := s.limits.ReadBytes, s.limits.ReadCommands
+	if readBytes == 0 {
+		readBytes = len(replicas) * (s.limits.PublishBytes + 1)
+	}
+	if readCommands == 0 {
+		readCommands = len(replicas)
+	}
+	if s.admit != nil && !s.admit(uint64(readBytes)) {
+		view.Deferred = len(replicas)
+		view.Gaps = append(view.Gaps, CostProjectionGap{Reason: "MEMORY_REFUSED", Count: len(replicas)})
+		return view
+	}
 	start := s.next % len(replicas)
 	for step := 0; step < len(replicas); step++ {
-		remaining := s.limits.ReadBytes - view.ReadBytes
-		if remaining <= 0 || view.ReadCommands >= s.limits.ReadCommands || ctx.Err() != nil {
+		remaining := readBytes - view.ReadBytes
+		if remaining <= 0 || view.ReadCommands >= readCommands || ctx.Err() != nil {
 			break
 		}
 		index := (start + step) % len(replicas)

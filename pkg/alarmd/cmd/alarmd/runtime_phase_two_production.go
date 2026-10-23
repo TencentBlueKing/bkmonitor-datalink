@@ -24,8 +24,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
 
 type productionFrozenCatalog interface {
@@ -121,7 +123,7 @@ func (source *productionFrozenExecution) ResolveFinalization(
 		return execution.QueryFreeFinalization{
 			Contract: request.Contract, Mode: execution.FinalizationGapSkipped,
 			ReasonCode: execution.ReasonCode(contract.ReasonGapSkipped),
-			Targets:    request.DuePlanTargets.Clone(),
+			Targets:    request.DuePlanTargets.Clone(), Cause: execution.CauseExpiredReplay,
 		}, nil
 	}
 	// The Coordinator has already persisted this validated request as the unfinished
@@ -130,7 +132,7 @@ func (source *productionFrozenExecution) ResolveFinalization(
 		return execution.QueryFreeFinalization{
 			Contract: request.Contract, Mode: execution.FinalizationSnapshotUnavailable,
 			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
-			Targets:    request.DuePlanTargets.Clone(),
+			Targets:    request.DuePlanTargets.Clone(), Cause: execution.CauseExpiredReplay,
 		}, nil
 	}
 	fact, _, err := source.resolveFrozenFact(ctx, request.Contract)
@@ -145,7 +147,7 @@ func (source *productionFrozenExecution) ResolveFinalization(
 			return execution.QueryFreeFinalization{
 				Contract: request.Contract, Mode: execution.FinalizationSnapshotUnavailable,
 				ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
-				Targets:    request.DuePlanTargets.Clone(),
+				Targets:    request.DuePlanTargets.Clone(), Cause: execution.CauseSnapshotUnavailablePastBound,
 			}, nil
 		}
 		var corrupt *controlplane.PersistedSnapshotCorruptError
@@ -153,14 +155,14 @@ func (source *productionFrozenExecution) ResolveFinalization(
 			return execution.QueryFreeFinalization{
 				Contract: request.Contract, Mode: execution.FinalizationSnapshotUnavailable,
 				ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
-				Targets:    request.DuePlanTargets.Clone(),
+				Targets:    request.DuePlanTargets.Clone(), Cause: execution.CauseSnapshotCorrupt,
 			}, nil
 		}
 		if source.now().UnixMilli() >= request.RecoveryUntilUnixMilli {
 			return execution.QueryFreeFinalization{
 				Contract: request.Contract, Mode: execution.FinalizationSnapshotUnavailable,
 				ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
-				Targets:    request.DuePlanTargets.Clone(),
+				Targets:    request.DuePlanTargets.Clone(), Cause: execution.CauseResolveFailedPastBound,
 			}, nil
 		}
 		return execution.QueryFreeFinalization{
@@ -181,6 +183,7 @@ func (source *productionFrozenExecution) ResolveFinalization(
 			Mode:       execution.FinalizationSnapshotUnavailable,
 			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
 			Targets:    request.DuePlanTargets.Clone(),
+			Cause:      execution.CauseExpiredReplay,
 		}, nil
 	}
 	if request.Operation == execution.OperationNormal {
@@ -254,7 +257,8 @@ func (source *productionFrozenExecution) resolveFrozenFact(
 	request := execution.FreezeSlotContractRequest{
 		QueryGroup: segment.QueryGroup, ScheduleRevision: segment.ScheduleRevision,
 		ScheduleSegmentStart: segment.Start, EvaluationTime: contractRef.Slot.EvaluationTime,
-		DuePlans: schedule.DuePlanRefs(contractRef.Slot.EvaluationTime),
+		DuePlans:       schedule.DuePlanRefs(contractRef.Slot.EvaluationTime),
+		ReadHoldMillis: contractRef.ReadHoldMillis,
 	}
 	fact, err := source.catalog.FreezeSlotContract(ctx, request)
 	if err != nil {
@@ -293,10 +297,12 @@ type productionSourceReconciler interface {
 		controlplane.StrategySource,
 		controlplane.PrimaryQueryCompiler,
 	) (controlplane.SourceRefreshResult, error)
-	// StepDown forgets the catalog memory a Leader answers strategy
-	// lookups from. Called on every follower tick, so a process that lost
-	// the lease stops answering from its old term.
-	StepDown()
+	// ForgetTerm forgets the catalog memory a Leader answers strategy
+	// lookups from and releases everything else it kept only to lead.
+	// Called on every follower tick, on the goroutine that runs Refresh, so
+	// a process that lost the lease stops answering from its old term and
+	// stops carrying the Leader's working set.
+	ForgetTerm()
 }
 
 type productionInitialScheduleActivator interface {
@@ -311,6 +317,9 @@ type productionCatalogRepository interface {
 	ControlVersionTag(context.Context) (string, bool, error)
 	LoadActiveQueryGroupSet(context.Context, controlplane.ActiveQueryGroupSetRef) ([]execution.QueryGroupIdentity, error)
 	RenewCurrentActivationObjects(context.Context) error
+	// RebuildActivationHeader writes back an activation header found missing
+	// with its body present; see renewCurrentObjects.
+	RebuildActivationHeader(context.Context) (controlplane.ActivationHeaderRebuildOutcome, error)
 	LoadPublishedContent(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedContent, error)
 	// MarkSourceRefreshSuccess and LoadSourceRefreshSuccess keep the time of
 	// the last refresh round that succeeded as a persisted fact, so that its
@@ -327,6 +336,7 @@ type productionScheduleProjection interface {
 }
 
 type productionPhaseTwoControlDependencies struct {
+	Roles      roles.Set
 	Source     controlplane.StrategySource
 	Planner    controlplane.PrimaryQueryCompiler
 	Reconciler productionSourceReconciler
@@ -340,10 +350,8 @@ type productionPhaseTwoControlDependencies struct {
 	// caller applies: a round that finds the activation missing and then
 	// rebuilds it returns a healthy result, so a count taken from the result
 	// would be absent in exactly the case worth seeing. Nil records nothing.
-	Recorder        *metric.Recorder
-	RefreshInterval time.Duration
-	Wait            func(context.Context, time.Duration) error
-	Close           func() error
+	Recorder *metric.Recorder
+	Close    func() error
 	// Now and MaxReplayAge bound how long an undrained draining Query Group
 	// stays in the active set. Past the termination window derived from
 	// MaxReplayAge nothing can execute its retired Slots, so it is retired
@@ -351,6 +359,11 @@ type productionPhaseTwoControlDependencies struct {
 	// Nil Now means the wall clock; zero MaxReplayAge never retires by age.
 	Now          func() time.Time
 	MaxReplayAge time.Duration
+
+	// ControlCandidate is a process without the control role that stands as
+	// a fallback Control Leader candidate: its rounds refresh and publish
+	// when it holds the lease, exactly as a control process's do.
+	ControlCandidate bool
 }
 
 type productionPhaseTwoControl struct {
@@ -370,11 +383,18 @@ func (runtime *productionPhaseTwoControl) recordControlFactUnavailable(fact, rea
 func newProductionPhaseTwoControl(
 	dependencies productionPhaseTwoControlDependencies,
 ) (*productionPhaseTwoControl, error) {
-	if dependencies.Source == nil || dependencies.Planner == nil || dependencies.Reconciler == nil ||
-		dependencies.Activator == nil || dependencies.Repository == nil || dependencies.Schedules == nil ||
-		dependencies.Progress == nil || dependencies.RefreshInterval <= 0 ||
-		dependencies.Wait == nil || dependencies.MaxReplayAge < 0 {
+	selected, err := roles.Resolve(dependencies.Roles)
+	if err != nil {
+		return nil, err
+	}
+	dependencies.Roles = selected
+	if dependencies.Repository == nil || dependencies.Schedules == nil ||
+		dependencies.Progress == nil || dependencies.MaxReplayAge < 0 {
 		return nil, errors.New("phase-two production Control dependencies are incomplete")
+	}
+	if (selected.Has(roles.Control) || dependencies.ControlCandidate) && (dependencies.Source == nil || dependencies.Planner == nil ||
+		dependencies.Reconciler == nil || dependencies.Activator == nil) {
+		return nil, errors.New("phase-two production Control publication dependencies are incomplete")
 	}
 	if dependencies.Observer == nil {
 		dependencies.Observer = observability.NopObserver{}
@@ -385,21 +405,13 @@ func newProductionPhaseTwoControl(
 	return &productionPhaseTwoControl{dependencies: dependencies}, nil
 }
 
+// InitialRefresh is the first round of a Control Leader. It is an ordinary
+// round: a round that reads its source publishes and activates what it read,
+// so the first one has nothing to wait for.
 func (runtime *productionPhaseTwoControl) InitialRefresh(
 	ctx context.Context,
 ) (phaseTwoControlRefreshResult, error) {
-	if runtime == nil {
-		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
-	}
-	for {
-		result, pending, err := runtime.refresh(ctx)
-		if err != nil || !pending {
-			return completeControlResult(result, err)
-		}
-		if err := runtime.dependencies.Wait(ctx, runtime.dependencies.RefreshInterval); err != nil {
-			return phaseTwoControlRefreshResult{}, err
-		}
-	}
+	return runtime.Refresh(ctx)
 }
 
 func (runtime *productionPhaseTwoControl) Refresh(
@@ -408,8 +420,11 @@ func (runtime *productionPhaseTwoControl) Refresh(
 	if runtime == nil {
 		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
 	}
-	result, _, err := runtime.refresh(ctx)
-	return completeControlResult(result, err)
+	selected, _ := roles.Resolve(runtime.dependencies.Roles)
+	if !selected.Has(roles.Control) && !runtime.dependencies.ControlCandidate {
+		return phaseTwoControlRefreshResult{}, errors.New("control_role_required: strategy refresh requires control role")
+	}
+	return completeControlResult(runtime.refresh(ctx))
 }
 
 // completeControlResult refuses the one shape this runtime must never hand
@@ -443,8 +458,10 @@ func (runtime *productionPhaseTwoControl) LoadActive(
 		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
 	}
 	// This tick runs as a follower: whatever this process published in an
-	// earlier term is not its to answer from any more.
-	runtime.dependencies.Reconciler.StepDown()
+	// earlier term is not its to answer from any more, nor its to hold.
+	if runtime.dependencies.Reconciler != nil {
+		runtime.dependencies.Reconciler.ForgetTerm()
+	}
 	state, err := runtime.dependencies.Repository.LoadActivationHead(ctx)
 	if err != nil {
 		reason := "read_failed"
@@ -488,15 +505,11 @@ func (runtime *productionPhaseTwoControl) Close() error {
 
 func (runtime *productionPhaseTwoControl) refresh(
 	ctx context.Context,
-) (refreshResult phaseTwoControlRefreshResult, pending bool, refreshErr error) {
-	renewed := false
+) (refreshResult phaseTwoControlRefreshResult, refreshErr error) {
 	defer func() {
-		if renewed {
-			return
-		}
 		// Renewal is guarded by the Activation CAS and must not replace the
-		// Source/activation result or stop pending confirmation from converging.
-		runtime.observeCurrentObjectRenewal(ctx, runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx))
+		// Source/activation result.
+		runtime.observeCurrentObjectRenewal(ctx, runtime.renewCurrentObjects(ctx))
 	}()
 	result, err := runtime.dependencies.Reconciler.Refresh(
 		ctx, runtime.dependencies.Source, runtime.dependencies.Planner,
@@ -521,10 +534,10 @@ func (runtime *productionPhaseTwoControl) refresh(
 			},
 		})
 		result, _, fallbackErr := runtime.keepLastGood(ctx, sourceKind, err)
-		return result, false, fallbackErr
+		return result, fallbackErr
 	}
 	if !knownSourceRefreshStatus(result.Status) {
-		return phaseTwoControlRefreshResult{}, false, errors.New("phase-two source refresh returned an invalid status")
+		return phaseTwoControlRefreshResult{}, errors.New("phase-two source refresh returned an invalid status")
 	}
 	// A round that returned, under any status, is a success of the source
 	// refresh, and its time is persisted: the age of the last success is
@@ -564,7 +577,6 @@ func (runtime *productionPhaseTwoControl) refresh(
 		// that far leaves them nil rather than empty, and nothing is delivered.
 		refreshResult.Composition = publishedComposition(refreshErr, composition, refreshResult.Status)
 		refreshResult.ChangeSignalPresent, refreshResult.ChangeSignalAgeSeconds = changeSignalPresent, changeSignalAge
-		refreshResult.SourceRefreshStatus = result.Status
 	}()
 	// Which strategies are behind the counts, once per change. Written here
 	// rather than at each return for the same reason the composition is: the
@@ -583,118 +595,8 @@ func (runtime *productionPhaseTwoControl) refresh(
 			},
 		})
 	}()
-	if result.Status == controlplane.SourceRefreshPendingConfirmation {
-		state, err := runtime.dependencies.Repository.LoadActivationHead(ctx)
-		activationMissing := false
-		if errors.Is(err, controlplane.ErrActivationUnavailable) {
-			// The activation record is gone. The store answered; there is
-			// nothing there -- a Redis reload that came back without the key,
-			// which is what happened on 2026-09-16.
-			//
-			// Falling through with the zero state is what repairs it: the
-			// branch below finds the publication this round named and no
-			// activation on it, and activating is idempotent -- it is the same
-			// call that establishes the first activation of a fresh
-			// deployment. The Control Leader is the only process that can do
-			// this, so returning early here left the one replica able to write
-			// the record deciding not to, once a round, for as long as it went
-			// on.
-			//
-			// Returning early also returned the zero result with a nil error,
-			// which the caller read as a health fact it could not act on and
-			// answered by ending the process. Whatever this round can say, it
-			// says as a complete fact below.
-			runtime.recordControlFactUnavailable("activation", "missing")
-			activationMissing = true
-			if result.Latest == (controlplane.SnapshotPublicationRef{}) {
-				// Nothing has been published yet, so there is nothing to
-				// activate. This is a fresh deployment whose candidate still
-				// needs its second observation, and it is the case pending
-				// exists for: InitialRefresh waits, and a running process
-				// keeps the facts it already has.
-				return phaseTwoControlRefreshResult{
-					Status: phaseTwoControlDegradedLastGood, QueryGroupsRetained: true,
-					SourceKind: observability.SourceKindCompiledSnapshot,
-					ReasonCode: observability.ReasonCode(contract.ReasonActivationMissing), Cause: err,
-				}, true, nil
-			}
-		} else if err != nil {
-			runtime.recordControlFactUnavailable("activation", "read_failed")
-			return phaseTwoControlRefreshResult{}, false, err
-		} else {
-			runtime.recordControlFactRead("activation")
-		}
-		// A publication an earlier round published and never activated (the
-		// process stopped between the two) is still the one the fleet should
-		// execute, and this round's candidate does not change that: the
-		// candidate needs its own confirmation, and a source that changes on
-		// every round never gives one. Returning here left the activation on
-		// the previous publication for as long as that went on, past the point
-		// where its payload expired, with nothing that could move it - only
-		// InitialRefresh loops on pending. The activation is caught up now,
-		// with the same failure handling as a round that published.
-		if result.Latest != (controlplane.SnapshotPublicationRef{}) && result.Latest != state.Current {
-			activated, activationResult, ok := runtime.activate(ctx, result.Latest)
-			if !ok {
-				return activationResult.result, false, activationResult.err
-			}
-			queryGroups, err := runtime.loadActiveQueryGroups(ctx, activated)
-			if err != nil {
-				return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
-			}
-			sourceRefresh.ActivatedRevision = string(activated.Current.SnapshotRevision)
-			sourceRefresh.ActivatedEpoch = activated.Current.PublicationEpoch
-			sourceRefresh.ActivationCaughtUp = true
-			var previousErr error
-			if activationMissing {
-				// There was no previous activation to difference against: the
-				// counts say every Query Group was added, and the round is
-				// named as a rebuild in the log and in its own counter, so a
-				// store that lost the record is told from a lagging one.
-				previousErr = controlplane.ErrActivationUnavailable
-				sourceRefresh.ActivationRebuilt = true
-				runtime.dependencies.Recorder.RecordControlFactRebuilt("activation")
-			}
-			runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, state, previousErr, activated, sourceRefreshCurrentCount(activated, queryGroups))
-			return phaseTwoControlRefreshResult{
-				QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
-				Activation: &phaseTwoActivationOutcome{Published: result.Latest, Applied: activated.Current},
-			}, false, nil
-		}
-		queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
-		if err != nil {
-			return phaseTwoControlRefreshResult{}, false, err
-		}
-		// This round published nothing, so it has no publication to name. What it
-		// does know is which publication the fleet is executing, and that goes
-		// under its own name: filling snapshot_revision here made a lagging
-		// activation indistinguishable from a stalled publication in the log.
-		sourceRefresh.ActivatedRevision = string(state.Current.SnapshotRevision)
-		sourceRefresh.ActivatedEpoch = state.Current.PublicationEpoch
-		// The size is reported; the change is not. Differencing the activation
-		// state against itself -- which is all this round has -- can only yield
-		// added=0, retired=0 and old==new, which reads as a measured finding and
-		// is arithmetic.
-		if currentCount := sourceRefreshCurrentCount(state, queryGroups); currentCount != nil {
-			sourceRefresh.ActiveQueryGroups = *currentCount
-			sourceRefresh.ActiveQueryGroupsKnown = true
-		}
-		renewErr := runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx)
-		renewed = true
-		runtime.observeCurrentObjectRenewal(ctx, renewErr)
-		if renewErr != nil {
-			return phaseTwoControlRefreshResult{
-				QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood,
-				SourceKind: observability.SourceKindCompiledSnapshot,
-				ReasonCode: observability.ReasonCode(contract.ReasonRedisUnavailable), Cause: renewErr,
-			}, false, nil
-		}
-		return phaseTwoControlRefreshResult{
-			QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
-		}, false, nil
-	}
 	if result.Publication.SnapshotRevision == "" || result.Publication.PublicationEpoch == 0 {
-		return phaseTwoControlRefreshResult{}, false, errors.New("phase-two source refresh returned an incomplete publication")
+		return phaseTwoControlRefreshResult{}, errors.New("phase-two source refresh returned an incomplete publication")
 	}
 	if result.Status == controlplane.SourceRefreshPublicationConflict {
 		runtime.dependencies.Observer.Observe(ctx, observability.Observation{
@@ -702,21 +604,37 @@ func (runtime *productionPhaseTwoControl) refresh(
 			Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractRetryable,
 		})
 	}
-	previous := controlplane.ActivationState{}
-	previousErr := controlplane.ErrActivationUnavailable
-	if result.Status != controlplane.SourceRefreshUnchanged {
-		previous, previousErr = runtime.dependencies.Repository.LoadActivationHead(ctx)
+	// The activation before this round brings it to the publication: what the
+	// counts are differenced against, and whether the store still had one.
+	// One small read of the head, served from the control cache when the
+	// header has not moved.
+	previous, previousErr := runtime.dependencies.Repository.LoadActivationHead(ctx)
+	activationMissing := errors.Is(previousErr, controlplane.ErrActivationUnavailable)
+	switch {
+	case activationMissing:
+		runtime.recordControlFactUnavailable("activation", "missing")
+	case previousErr != nil:
+		runtime.recordControlFactUnavailable("activation", "read_failed")
+	default:
+		runtime.recordControlFactRead("activation")
 	}
 	state, activationResult, ok := runtime.activate(ctx, result.Publication)
 	if !ok {
-		return activationResult.result, false, activationResult.err
+		return activationResult.result, activationResult.err
 	}
-	if result.Status == controlplane.SourceRefreshUnchanged {
-		previous, previousErr = state, nil
+	// No activation beside a publication that was already latest when the
+	// round began is a store that lost the record - a Redis reload that came
+	// back without the key, as on 2026-09-16 - and activating is what wrote it
+	// back: the same idempotent call that makes a fresh deployment's first
+	// activation. A fresh deployment has no earlier publication, and its first
+	// activation is not a rebuild.
+	if activationMissing && result.Latest != (controlplane.SnapshotPublicationRef{}) {
+		sourceRefresh.ActivationRebuilt = true
+		runtime.dependencies.Recorder.RecordControlFactRebuilt("activation")
 	}
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 	if err != nil {
-		return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, false, err
+		return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, err
 	}
 	currentCount := sourceRefreshCurrentCount(state, queryGroups)
 	runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, previous, previousErr, state, currentCount)
@@ -725,7 +643,7 @@ func (runtime *productionPhaseTwoControl) refresh(
 		// A round that found the source unchanged still brought the activation
 		// to it (Ensure is idempotent), so it is a success of the same kind.
 		Activation: &phaseTwoActivationOutcome{Published: result.Publication, Applied: state.Current},
-	}, false, nil
+	}, nil
 }
 
 type phaseTwoActivationFallback struct {
@@ -860,8 +778,8 @@ func (runtime *productionPhaseTwoControl) enrichSourceRefreshCounts(
 
 func knownSourceRefreshStatus(status controlplane.SourceRefreshStatus) bool {
 	switch status {
-	case controlplane.SourceRefreshPendingConfirmation, controlplane.SourceRefreshPublished,
-		controlplane.SourceRefreshUnchanged, controlplane.SourceRefreshPublicationConflict:
+	case controlplane.SourceRefreshPublished, controlplane.SourceRefreshUnchanged,
+		controlplane.SourceRefreshPublicationConflict:
 		return true
 	default:
 		return false
@@ -879,8 +797,10 @@ func sourceRefreshIdentity(
 		ReadMode:            observability.SourceReadMode(result.ReadMode),
 		ReadReason:          observability.SourceReadReason(result.ReadReason),
 		StrategiesRead:      result.StrategiesRead,
+		Build:               observability.SourceRefreshBuild(result.Build),
 		ChangeSignalPresent: result.ChangeSignalPresent, ChangeSignalAgeSeconds: result.ChangeSignalAgeSeconds,
-		RetainedStaleRevisions: result.RetainedStaleRevisions,
+		RetainedStaleRevisions:  result.RetainedStaleRevisions,
+		LastGoodIdentityChanged: result.LastGoodIdentityChanged,
 	}
 }
 
@@ -909,10 +829,57 @@ func sourceRefreshCurrentCount(
 	return nil
 }
 
+// renewCurrentObjects renews what the current activation names. A renewal
+// that finds the activation header missing - the body there, the header not -
+// has the header written back from the body and is tried once more: every
+// guarded write compares against the header, so until it is back nothing the
+// activation names is renewed, on any round, and the fleet stops executing
+// when those objects expire. A header another cutover moved is a conflict
+// and is left to the next round, as before.
+func (runtime *productionPhaseTwoControl) renewCurrentObjects(ctx context.Context) error {
+	err := runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx)
+	if !errors.Is(err, controlplane.ErrActivationHeaderMissing) {
+		return err
+	}
+	outcome, rebuildErr := runtime.dependencies.Repository.RebuildActivationHeader(ctx)
+	if rebuildErr != nil {
+		return fmt.Errorf("%w; writing it back: %v", err, rebuildErr)
+	}
+	switch outcome {
+	case controlplane.ActivationHeaderRebuilt, controlplane.ActivationHeaderRebuildNotNeeded,
+		controlplane.ActivationHeaderRebuildConflict:
+		// A conflict is another writer's header, or a new body, landing
+		// between the read and the write: there is something to renew
+		// against now, and the renewal answers for whatever it is - a header
+		// that moved is a conflict it does not report, one still missing is
+		// reported as missing. Returning the missing header here reported
+		// the round degraded for a header that was already back.
+		return runtime.dependencies.Repository.RenewCurrentActivationObjects(ctx)
+	default:
+		return fmt.Errorf("%w; writing it back: %s", err, outcome)
+	}
+}
+
+// renewalReason names a failed renewal: a missing activation header by
+// itself, anything else as the Redis failure it was.
+func renewalReason(err error) observability.ReasonCode {
+	if errors.Is(err, controlplane.ErrActivationHeaderMissing) {
+		return observability.ReasonCode(contract.ReasonActivationMissing)
+	}
+	return observability.ReasonCode(contract.ReasonRedisUnavailable)
+}
+
+// observeCurrentObjectRenewal reports a renewal that failed. A conflict -
+// another cutover's header - and an activation that is not there yet are the
+// next round's to settle and are not reported. A missing header is: it is
+// not another writer's and settles on no round by itself, and returning
+// quietly on it is how the fleet ran a day without renewing anything.
 func (runtime *productionPhaseTwoControl) observeCurrentObjectRenewal(ctx context.Context, err error) {
-	if errors.Is(err, controlplane.ErrActivationConflict) || errors.Is(err, controlplane.ErrActivationUnavailable) {
+	if !errors.Is(err, controlplane.ErrActivationHeaderMissing) &&
+		(errors.Is(err, controlplane.ErrActivationConflict) || errors.Is(err, controlplane.ErrActivationUnavailable)) {
 		return
 	}
+	reason := renewalReason(err)
 	runtime.renewMu.Lock()
 	degraded := runtime.renewDegraded
 	if err != nil {
@@ -924,7 +891,7 @@ func (runtime *productionPhaseTwoControl) observeCurrentObjectRenewal(ctx contex
 	if err != nil && !degraded {
 		runtime.dependencies.Observer.Observe(ctx, observability.Observation{
 			Component: observability.ComponentControlPlane, Stage: observability.StageActiveQGSet,
-			Result: observability.ResultDegraded, ReasonCode: observability.ReasonCode(contract.ReasonRedisUnavailable),
+			Result: observability.ResultDegraded, ReasonCode: reason,
 			SourceKind: observability.SourceKindCompiledSnapshot, Err: err,
 		})
 	} else if err == nil && degraded {
@@ -1139,26 +1106,7 @@ func (runtime *productionPhaseTwoControl) loadCurrentActiveQueryGroups(
 	ctx context.Context,
 	state controlplane.ActivationState,
 ) ([]execution.QueryGroupIdentity, error) {
-	var queryGroups []execution.QueryGroupIdentity
-	var err error
-	if state.ActiveQGSetRef.Digest != "" {
-		queryGroups, err = runtime.dependencies.Repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
-	} else {
-		// Followers never migrate legacy Activation state. They may read its
-		// current immutable Snapshot while the Control Leader performs the
-		// one-time v1-to-v2 upgrade.
-		var content controlplane.PublishedContent
-		content, err = runtime.dependencies.Repository.LoadPublishedContent(ctx, state.Current)
-		if err == nil {
-			queryGroups = make([]execution.QueryGroupIdentity, 0, len(content.Groups))
-			for identity := range content.Groups {
-				if identity == "" {
-					return nil, errors.New("phase-two active Snapshot contains an empty Query Group")
-				}
-				queryGroups = append(queryGroups, identity)
-			}
-		}
-	}
+	queryGroups, err := runtime.dependencies.Repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
 	if err != nil {
 		return nil, err
 	}
@@ -1288,6 +1236,7 @@ type productionPhaseTwoSlotCatalog interface {
 	ReadScheduleRetirement(context.Context, execution.QueryGroupIdentity) (execution.EvaluationTime, bool, error)
 	NextSlotAfter(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.EvaluationTime, error)
 	FreezeSlotContract(context.Context, execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error)
+	ReadSegmentRepair(context.Context, execution.QueryGroupIdentity, execution.EvaluationTime) (execution.SegmentRepair, bool, error)
 }
 
 type productionPhaseTwoProgressReader interface {
@@ -1295,11 +1244,19 @@ type productionPhaseTwoProgressReader interface {
 }
 
 type productionPhaseTwoOwnershipDependencies struct {
-	ExpiredRangeEnabled bool
+	// Roles is omitted by legacy callers for the shared process. A Control
+	// process has no local executor or flight coordinator.
+	Roles roles.Set
+	// ControlCandidate is a Worker without the control role that stands as
+	// a fallback Control Leader candidate: it takes the lease and publishes
+	// Assignments under it like a control process, and needs the same
+	// coordination dependencies.
+	ControlCandidate bool
 	// QueryCooldowns keeps each owned Query Group's place in the query
 	// cooldown pool across restarts and owners. Nil keeps it in the Runner
 	// alone, which is what every runtime did before.
 	QueryCooldowns   scheduler.QueryCooldownStore
+	ReadHolds        *productionReadHolds
 	Store            productionPhaseTwoOwnershipStore
 	WorkerID         string
 	Catalog          productionPhaseTwoSlotCatalog
@@ -1351,11 +1308,12 @@ type productionPhaseTwoOwnershipDependencies struct {
 	// (decision-020 section 5.7). Nil is a runtime that judges nothing and
 	// reports every ready Worker as not judged.
 	Costs *scheduler.CostLedger
-	// SplitCensus reads what the split dry run needs about an object over its
-	// share: the Plans it carries and the census each has (decision-020
-	// section 4.7.4). Nil is a runtime that works out no splits, which is
-	// every round of a deployment that has not turned the reading on.
-	SplitCensus splitCensusSource
+	// TimelineRepairs is where the round leaves the Query Groups the ready
+	// Workers name as having an unreadable Schedule timeline, for the
+	// activation reconciler to read again (controlplane.TimelineRepairSource).
+	// Nil is a runtime that collects nothing; a timeline is then rewritten
+	// only when a cutover reads it.
+	TimelineRepairs *controlplane.TimelineRepairRequests
 }
 
 type productionPhaseTwoOwnership struct {
@@ -1363,9 +1321,14 @@ type productionPhaseTwoOwnership struct {
 	reconciler   *scheduler.Reconciler
 	flights      *scheduler.FlightCoordinator
 	// viewGate decides, per Slot read, whether a Query Group is executed
-	// from the installed view (decision-016 batch 4); nil is the shadow
-	// step, every read the control plane's way.
+	// from the installed view (decision-016 batch 4); nil reads every
+	// Query Group the control plane's way.
 	viewGate *viewExecutionGate
+	// takeovers is when this process took each Query Group over, shared by
+	// every Slot source it opens: a Query Group reopened here keeps the
+	// moment, so only Slots due before a real takeover are replayed past the
+	// distance rule (scheduler.TakeoverClock).
+	takeovers *scheduler.TakeoverClock
 
 	mu        sync.Mutex
 	authority ownership.PublicationAuthority
@@ -1431,25 +1394,39 @@ func (runtime *productionPhaseTwoOwnership) rebalanceStabilisation() time.Durati
 func newProductionPhaseTwoOwnership(
 	dependencies productionPhaseTwoOwnershipDependencies,
 ) (*productionPhaseTwoOwnership, error) {
+	selected, err := roles.Resolve(dependencies.Roles)
+	if err != nil {
+		return nil, err
+	}
+	dependencies.Roles = selected
 	if dependencies.Store == nil || dependencies.WorkerID == "" || dependencies.Catalog == nil ||
-		dependencies.Progress == nil || dependencies.Executor == nil || dependencies.Now == nil ||
-		dependencies.ControlLeaderTTL <= 0 || dependencies.Observer == nil || dependencies.Reconcile == nil ||
-		dependencies.Flights == nil || dependencies.RecoveryLimits.Validate() != nil {
+		dependencies.Progress == nil || dependencies.Now == nil || dependencies.Observer == nil {
 		return nil, errors.New("phase-two production ownership dependencies are incomplete")
 	}
-	if dependencies.PostRecoveryTerminalDelay <= 0 || dependencies.QueryDeadlineReserve <= 0 ||
-		dependencies.SnapshotRetention <= 0 || dependencies.PublicationDelayAllowance <= 0 ||
-		dependencies.SettlingWait <= 0 {
-		return nil, errors.New("phase-two post-recovery terminal delay is required")
+	if selected.Has(roles.Worker) {
+		if dependencies.Executor == nil || dependencies.Flights == nil || dependencies.RecoveryLimits.Validate() != nil {
+			return nil, errors.New("phase-two production Worker execution dependencies are incomplete")
+		}
+		if dependencies.PostRecoveryTerminalDelay <= 0 || dependencies.QueryDeadlineReserve <= 0 ||
+			dependencies.SnapshotRetention <= 0 || dependencies.PublicationDelayAllowance <= 0 ||
+			dependencies.SettlingWait <= 0 {
+			return nil, errors.New("phase-two post-recovery terminal delay is required")
+		}
 	}
-	if dependencies.LeaseTTL <= 0 || dependencies.ReconcileInterval <= 0 {
-		return nil, errors.New("phase-two rebalance stabilisation inputs are required")
-	}
-	if dependencies.ContentScopes == nil {
-		return nil, errors.New("phase-two content scope reader is required")
+	if selected.Has(roles.Control) || dependencies.ControlCandidate {
+		if dependencies.ControlLeaderTTL <= 0 || dependencies.Reconcile == nil {
+			return nil, errors.New("phase-two production Control coordination dependencies are incomplete")
+		}
+		if dependencies.LeaseTTL <= 0 || dependencies.ReconcileInterval <= 0 {
+			return nil, errors.New("phase-two rebalance stabilisation inputs are required")
+		}
+		if dependencies.ContentScopes == nil {
+			return nil, errors.New("phase-two content scope reader is required")
+		}
 	}
 	return &productionPhaseTwoOwnership{
 		dependencies: dependencies, reconciler: dependencies.Reconcile, flights: dependencies.Flights,
+		takeovers: scheduler.NewTakeoverClock(),
 	}, nil
 }
 
@@ -1459,6 +1436,9 @@ func (runtime *productionPhaseTwoOwnership) RegisterWorker(
 ) error {
 	if runtime == nil {
 		return errors.New("phase-two production ownership is not initialized")
+	}
+	if !runtime.hasRole(roles.Worker) {
+		return errors.New("worker_role_required: worker registration requires worker role")
 	}
 	if registration.WorkerID != runtime.dependencies.WorkerID {
 		return errors.New("phase-two worker registration identity mismatch")
@@ -1474,11 +1454,46 @@ func (runtime *productionPhaseTwoOwnership) TryAcquireControlLeader(
 	if runtime == nil || at.IsZero() || ttl != runtime.dependencies.ControlLeaderTTL {
 		return false, errors.New("phase-two production Control Leader acquisition is invalid")
 	}
+	if !runtime.controlCapable() {
+		return false, errors.New("phase-two Control Leader acquisition requires control role")
+	}
 	_, err := runtime.ensureControlAuthority(ctx, at)
 	if errors.Is(err, ownership.ErrLeaseBusy) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// collectUnreadableTimelines hands the activation reconciler the Query
+// Groups the ready Workers name as having an unreadable timeline, among the
+// ones the round runs. It is the registrations the round has just read, so
+// it costs no read of its own; the names are replaced whole each round, and
+// a Query Group no Worker names any more is no longer looked at.
+func (runtime *productionPhaseTwoOwnership) collectUnreadableTimelines(
+	workers []ownership.WorkerRegistration,
+	active []execution.QueryGroupIdentity,
+) {
+	if runtime.dependencies.TimelineRepairs == nil {
+		return
+	}
+	running := make(map[execution.QueryGroupIdentity]struct{}, len(active))
+	for _, queryGroup := range active {
+		running[queryGroup] = struct{}{}
+	}
+	named := make(map[execution.QueryGroupIdentity]struct{})
+	for _, worker := range workers {
+		for _, name := range worker.UnreadableTimelines {
+			queryGroup := execution.QueryGroupIdentity(name)
+			if _, runs := running[queryGroup]; runs {
+				named[queryGroup] = struct{}{}
+			}
+		}
+	}
+	list := make([]execution.QueryGroupIdentity, 0, len(named))
+	for queryGroup := range named {
+		list = append(list, queryGroup)
+	}
+	runtime.dependencies.TimelineRepairs.Replace(list)
 }
 
 // contentScopesFor is the round's content policy. Declaring needs the
@@ -1515,6 +1530,9 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	if runtime == nil || at.IsZero() {
 		return newPhaseTwoInvariantError("phase-two production Assignment reconcile is invalid")
 	}
+	if !runtime.controlCapable() {
+		return errors.New("phase-two Assignment publication requires control role")
+	}
 	round := newLeaderRoundTimer(at)
 	authority, err := runtime.ensureControlAuthority(ctx, at)
 	if err != nil {
@@ -1537,6 +1555,7 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 		return err
 	}
 	round.done(fleet.LeaderRoundStageReadyWorkers)
+	runtime.collectUnreadableTimelines(workers, ordered)
 	// The content contract's gate, decided once per round on the same ready
 	// set the placements use: every ready worker declares it, and the round
 	// brings each record to the content its Query Group is published with;
@@ -1553,8 +1572,9 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	// decisions over it. Reading them one at a time cost the round a Redis
 	// round trip per Query Group, all of it waiting, all of it before any
 	// decision could be taken.
-	records, assignmentReads, err := runtime.reconciler.ReconcileRoundWithScopes(ctx, authority, ordered, workers, at, scopes)
-	runtime.observeControlReads(ctx, assignmentReads, registryReads, len(ordered))
+	settlement, err := runtime.reconciler.ReconcileRoundSettling(ctx, authority, ordered, workers, at, scopes)
+	records := settlement.Records
+	runtime.observeControlReads(ctx, settlement.Stats, registryReads, len(ordered))
 	if err != nil {
 		if errors.Is(err, ownership.ErrStaleFence) {
 			runtime.clearControlAuthority(authority)
@@ -1601,25 +1621,24 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 		owners[move.QueryGroup] = move.To
 	}
 	if err != nil {
-		runtime.observeRebalance(ctx, scheduler.RebalancePlan{Owned: map[string]int{}}, rebalanceOutcome{}, bytePlan, byteOutcome, shardGate, at)
+		runtime.observeRebalance(ctx, scheduler.RebalancePlan{Owned: map[string]int{}}, rebalanceOutcome{}, bytePlan, byteOutcome, shardGate, settlement, at)
 		return err
 	}
 	round.done(fleet.LeaderRoundStageByteMoves)
-	plan := runtime.reconciler.PlanRebalanceWithBytes(owners, workers, readings, at)
+	// One handover batch a round: what the round's own re-placements of
+	// live, ineligible holders spent of it is not the count correction's
+	// to spend again (design 02 §6.2).
+	within := max(scheduler.HandoverBatch(len(ordered))-settlement.Replaced, 0)
+	plan := runtime.reconciler.PlanRebalanceWithin(owners, workers, readings, at, within)
 	outcome, err := runtime.publishMoves(ctx, authority, plan.Moves, records, stable, remaining, at)
 	for _, move := range outcome.applied {
 		owners[move.QueryGroup] = move.To
 	}
-	runtime.observeRebalance(ctx, plan, outcome, bytePlan, byteOutcome, shardGate, at)
+	runtime.observeRebalance(ctx, plan, outcome, bytePlan, byteOutcome, shardGate, settlement, at)
 	if err != nil {
 		return err
 	}
 	round.done(fleet.LeaderRoundStageRebalanceMoves)
-	// What a split would be for whatever is still over its share once this
-	// round's moves are in. Reported and not acted on; it reads Plans and
-	// censuses for the few objects the trigger names and writes nothing.
-	runtime.dryRunSplits(ctx, owners, workers, readings, at)
-	round.done(fleet.LeaderRoundStageSplitDryRun)
 	// The ledger keeps what the round's final owners agree with; a Query
 	// Group that moved has no reading until its new holder reports it.
 	runtime.dependencies.Costs.Retain(owners)
@@ -1943,6 +1962,7 @@ func (runtime *productionPhaseTwoOwnership) observeRebalance(
 	bytePlan scheduler.BytePlan,
 	byteOutcome rebalanceOutcome,
 	shardGate ownership.ShardSplitGate,
+	settlement scheduler.RoundSettlement,
 	at time.Time,
 ) {
 	facts := &observability.RebalanceFacts{
@@ -1950,6 +1970,8 @@ func (runtime *productionPhaseTwoOwnership) observeRebalance(
 		MostOwned: plan.MostOwned, LeastOwned: plan.LeastOwned, Batch: plan.Batch, PlannedMoves: len(plan.Moves),
 		PublishedMoves: len(outcome.applied), Conflicts: outcome.conflicts,
 		Paused: outcome.paused, PausedForSeconds: outcome.pausedFor.Seconds(),
+		Replaced: settlement.Replaced, Deferred: settlement.Deferred, Unplaceable: settlement.Unplaceable,
+		DeclinedEverywhere: settlement.DeclinedEverywhere, DeclinedEverywhereSample: declinedEverywhereSamples(settlement),
 		Bytes:      byteConstraintFacts(bytePlan, byteOutcome),
 		ShardAware: &observability.ShardAwareFacts{Ready: shardGate.Ready, Unaware: shardGate.Unaware},
 	}
@@ -1975,9 +1997,11 @@ func (runtime *productionPhaseTwoOwnership) observeRebalance(
 	published := &fleet.RebalanceFacts{
 		PlannedAt: at, ReadyWorkers: plan.ReadyWorkers, Assigned: plan.Assigned, Target: plan.Target,
 		MostOwned: plan.MostOwned, LeastOwned: plan.LeastOwned, Batch: plan.Batch, PlannedMoves: len(plan.Moves),
-		StopSpreadPercent: scheduler.RebalanceStopSpreadPercent, Shadow: false,
-		PublishedMoves: len(outcome.applied), Conflicts: outcome.conflicts,
+		StopSpreadPercent: scheduler.RebalanceStopSpreadPercent,
+		PublishedMoves:    len(outcome.applied), Conflicts: outcome.conflicts,
 		Paused: outcome.paused, PausedForSeconds: outcome.pausedFor.Seconds(),
+		Replaced: settlement.Replaced, Deferred: settlement.Deferred, Unplaceable: settlement.Unplaceable,
+		DeclinedEverywhere: settlement.DeclinedEverywhere, DeclinedEverywhereSample: declinedEverywhereSamples(settlement),
 	}
 	if len(plan.Moves) > 0 {
 		// The pair the round chose, from the round's own first move rather
@@ -1995,7 +2019,7 @@ func (runtime *productionPhaseTwoOwnership) observeRebalance(
 // line: what was judged, what was not, who was over, what moved.
 func byteConstraintFacts(plan scheduler.BytePlan, outcome rebalanceOutcome) *observability.ByteConstraintFacts {
 	facts := &observability.ByteConstraintFacts{
-		SharePercent: scheduler.ByteConstraintPercent, Judged: plan.Judged, PoolUnknown: plan.PoolUnknown, Unread: plan.Unread, Unsettled: plan.Unsettled,
+		SharePercent: scheduler.ByteConstraintPercent, Judged: plan.Judged, PoolUnknown: plan.PoolUnknown, Unread: plan.Unread, Unsettled: plan.Unsettled, UnreadEstimate: plan.UnreadEstimate,
 		Overloaded: plan.Overloaded, Unplaceable: plan.Unplaceable, PlannedMoves: len(plan.Moves),
 		PublishedMoves: len(outcome.applied), Conflicts: outcome.conflicts, Paused: outcome.paused,
 	}
@@ -2008,7 +2032,7 @@ func byteConstraintFacts(plan scheduler.BytePlan, outcome rebalanceOutcome) *obs
 // fleetByteConstraintFacts is the same round for the fleet snapshot.
 func fleetByteConstraintFacts(plan scheduler.BytePlan, outcome rebalanceOutcome) *fleet.ByteConstraintFacts {
 	facts := &fleet.ByteConstraintFacts{
-		SharePercent: scheduler.ByteConstraintPercent, Judged: plan.Judged, PoolUnknown: plan.PoolUnknown, Unread: plan.Unread, Unsettled: plan.Unsettled,
+		SharePercent: scheduler.ByteConstraintPercent, Judged: plan.Judged, PoolUnknown: plan.PoolUnknown, Unread: plan.Unread, Unsettled: plan.Unsettled, UnreadEstimate: plan.UnreadEstimate,
 		Overloaded: plan.Overloaded, Unplaceable: plan.Unplaceable, PlannedMoves: len(plan.Moves),
 		PublishedMoves: len(outcome.applied), Conflicts: outcome.conflicts, Paused: outcome.paused,
 	}
@@ -2018,7 +2042,14 @@ func fleetByteConstraintFacts(plan scheduler.BytePlan, outcome rebalanceOutcome)
 	}
 	sort.Strings(workerIDs)
 	for _, workerID := range workerIDs {
-		facts.Sums = append(facts.Sums, fleet.ByteSumSample{WorkerID: workerID, PeakSumBytes: plan.Sum[workerID]})
+		sample := fleet.ByteSumSample{WorkerID: workerID, PeakSumBytes: plan.Sum[workerID], Unread: plan.UnreadBy[workerID]}
+		for _, queryGroup := range plan.UnreadSample[workerID] {
+			sample.UnreadSample = append(sample.UnreadSample, string(queryGroup))
+		}
+		facts.Sums = append(facts.Sums, sample)
+	}
+	if peaks := plan.ReadPeaks; peaks.Count > 0 {
+		facts.ReadPeaks = &fleet.BytePeakDistribution{Count: peaks.Count, P50: peaks.P50, P90: peaks.P90, P99: peaks.P99, Max: peaks.Max}
 	}
 	for _, move := range plan.Moves {
 		facts.Moves = append(facts.Moves, fleet.ByteMoveSample{QueryGroup: string(move.QueryGroup), From: move.From, To: move.To, Bytes: move.Bytes})
@@ -2312,7 +2343,15 @@ func (runtime *productionPhaseTwoOwnership) readAllAssignments(
 func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
 	ctx context.Context,
 	queryGroups []execution.QueryGroupIdentity,
-) ([]execution.QueryGroupIdentity, error) {
+) (assigned []execution.QueryGroupIdentity, resultErr error) {
+	defer func() {
+		// The groups held here whose hold a failed read or a write conflict
+		// left unloaded; a new group is read by the round that opens it.
+		if resultErr == nil && runtime != nil && runtime.dependencies.ReadHolds != nil {
+			holds := runtime.dependencies.ReadHolds
+			holds.report("restore_failed", "", holds.restore(ctx, assigned))
+		}
+	}()
 	if runtime == nil {
 		return nil, errors.New("phase-two production Assignment reader is not initialized")
 	}
@@ -2407,7 +2446,7 @@ func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
 		}
 	}
 	reader.owned = next
-	assigned := make([]execution.QueryGroupIdentity, 0, len(next))
+	assigned = make([]execution.QueryGroupIdentity, 0, len(next))
 	for queryGroup := range next {
 		assigned = append(assigned, queryGroup)
 	}
@@ -2442,6 +2481,8 @@ func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 		if authority.Fence.QueryGroup == "" {
 			return ownership.ErrStaleFence
 		}
+		// Every line of this renewal names the lease it is about.
+		leaseCtx := observability.ContextWithTraceFields(ctx, leaseTrace(authority.Fence))
 		var renewed ownership.PublicationAuthority
 		err := renewPhaseTwoWithinInterval(ctx, interval, func(attemptCtx context.Context) error {
 			var renewErr error
@@ -2450,7 +2491,7 @@ func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 			)
 			return renewErr
 		}, func(err error) {
-			observeProductionRenewalFailure(ctx, runtime.dependencies.Observer, observability.StageLeaseRenewed, err)
+			observeProductionRenewalFailure(leaseCtx, runtime.dependencies.Observer, observability.StageLeaseRenewed, err)
 		}, func() bool {
 			return authority.Deadline.After(runtime.dependencies.Now())
 		})
@@ -2465,7 +2506,7 @@ func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 			}
 			continue
 		}
-		observeProductionOwnership(ctx, runtime.dependencies.Observer, observability.StageLeaseRenewed, nil)
+		observeProductionOwnership(leaseCtx, runtime.dependencies.Observer, observability.StageLeaseRenewed, nil)
 		runtime.mu.Lock()
 		if runtime.authority.Fence == authority.Fence {
 			runtime.authority = renewed
@@ -2489,6 +2530,13 @@ func (runtime *productionPhaseTwoOwnership) clearControlAuthority(authority owne
 	}
 }
 
+func (runtime *productionPhaseTwoOwnership) LoadOpened(ctx context.Context, queryGroups []execution.QueryGroupIdentity) {
+	if runtime.dependencies.ReadHolds == nil {
+		return
+	}
+	runtime.dependencies.ReadHolds.load(ctx, queryGroups)
+}
+
 func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 	ctx context.Context,
 	queryGroup execution.QueryGroupIdentity,
@@ -2498,6 +2546,9 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 	if runtime == nil {
 		return nil, errors.New("phase-two production ownership is not initialized")
 	}
+	if !runtime.hasRole(roles.Worker) {
+		return nil, errors.New("phase-two Query Group execution requires worker role")
+	}
 	session, err := ownership.OpenSession(ctx, runtime.dependencies.Store, queryGroup, runtime.dependencies.WorkerID, at, ttl)
 	if err != nil {
 		return nil, err
@@ -2505,6 +2556,10 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 	var catalog productionPhaseTwoSlotCatalog = runtime.dependencies.Catalog
 	var executor scheduler.Executor = runtime.dependencies.Executor
 	release := func() {}
+	if holds := runtime.dependencies.ReadHolds; holds != nil {
+		holds.bind(queryGroup, session)
+		release = func() { holds.forget(queryGroup, session) }
+	}
 	if runtime.viewGate != nil {
 		// The early renewal the gate makes when the view is ahead of the
 		// lease: the same renewal the session's maintenance makes on its
@@ -2514,9 +2569,14 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		// Inside the observed executor, so a refusal at execution is a
 		// slot_completed line with the gate's word like any other outcome.
 		executor = &viewGatedExecutor{next: executor, gate: runtime.viewGate, queryGroup: queryGroup, session: session, renew: renew}
-		release = func() { runtime.viewGate.forget(queryGroup) }
+		previousRelease := release
+		release = func() { previousRelease(); runtime.viewGate.forget(queryGroup, session) }
 	}
-	executor = &observedProductionSlotExecutor{next: executor, observer: runtime.dependencies.Observer}
+	executor = &observedProductionSlotExecutor{next: executor, observer: runtime.dependencies.Observer, readHolds: runtime.dependencies.ReadHolds}
+	var readHolds scheduler.ReadHolds
+	if runtime.dependencies.ReadHolds != nil {
+		readHolds = runtime.dependencies.ReadHolds
+	}
 	source, err := scheduler.NewProductionSlotSource(
 		queryGroup, runtime.dependencies.WorkerID, session,
 		catalog, runtime.dependencies.Progress, runtime.dependencies.Now,
@@ -2525,10 +2585,12 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		scheduler.WithQueryDeadlineReserve(runtime.dependencies.QueryDeadlineReserve),
 		scheduler.WithSettlingWait(runtime.dependencies.SettlingWait),
 		scheduler.WithSnapshotRetention(runtime.dependencies.SnapshotRetention, runtime.dependencies.PublicationDelayAllowance),
-		scheduler.WithExpiredRangeCreation(runtime.dependencies.ExpiredRangeEnabled),
 		scheduler.WithObserver(runtime.dependencies.Observer),
+		scheduler.WithTakeoverClock(runtime.takeovers),
+		scheduler.WithReadHolds(readHolds),
 	)
 	if err != nil {
+		release()
 		_ = session.Release(ctx)
 		return nil, err
 	}
@@ -2537,6 +2599,7 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		queryGroup, session, observedSource, executor, runtime.flights, runtime.dependencies.Now,
 	)
 	if err != nil {
+		release()
 		_ = session.Release(ctx)
 		return nil, err
 	}
@@ -2562,6 +2625,56 @@ func (runtime *productionPhaseTwoOwnership) Close() error {
 		return nil
 	}
 	return runtime.dependencies.Store.Close()
+}
+
+func (runtime *productionPhaseTwoOwnership) hasRole(role roles.Role) bool {
+	selected, _ := roles.Resolve(runtime.dependencies.Roles)
+	return selected.Has(role)
+}
+
+// controlCapable says this process may hold the Control Leader lease: it
+// has the control role, or it is a fallback candidate.
+func (runtime *productionPhaseTwoOwnership) controlCapable() bool {
+	return runtime.hasRole(roles.Control) || runtime.dependencies.ControlCandidate
+}
+
+// productionControlCandidateStore is what contending for the lease by class
+// reads beyond acquiring it: whether a live lease is held, judged on the
+// store's clock, and which preferred candidates are registered.
+type productionControlCandidateStore interface {
+	ReadActiveControlLeader(context.Context) (ownership.QueryGroupOwner, bool, error)
+	ListPreferredControlCandidates(context.Context, time.Time) ([]ownership.InstanceRegistration, error)
+	ListFallbackControlCandidates(context.Context, time.Time) ([]ownership.InstanceRegistration, error)
+}
+
+// ReadActiveControlLeader passes the store's live lease read through. A
+// store that cannot answer it says so as an error, never as "nobody leads".
+func (runtime *productionPhaseTwoOwnership) ReadActiveControlLeader(ctx context.Context) (ownership.QueryGroupOwner, bool, error) {
+	store, ok := runtime.dependencies.Store.(productionControlCandidateStore)
+	if !ok {
+		return ownership.QueryGroupOwner{}, false, errors.New("phase-two ownership store cannot read the control lease")
+	}
+	return store.ReadActiveControlLeader(ctx)
+}
+
+// ListPreferredControlCandidates passes the store's candidate listing
+// through, under the same rule.
+func (runtime *productionPhaseTwoOwnership) ListPreferredControlCandidates(ctx context.Context, at time.Time) ([]ownership.InstanceRegistration, error) {
+	store, ok := runtime.dependencies.Store.(productionControlCandidateStore)
+	if !ok {
+		return nil, errors.New("phase-two ownership store cannot list control candidates")
+	}
+	return store.ListPreferredControlCandidates(ctx, at)
+}
+
+// ListFallbackControlCandidates passes the store's fallback listing through,
+// under the same rule.
+func (runtime *productionPhaseTwoOwnership) ListFallbackControlCandidates(ctx context.Context, at time.Time) ([]ownership.InstanceRegistration, error) {
+	store, ok := runtime.dependencies.Store.(productionControlCandidateStore)
+	if !ok {
+		return nil, errors.New("phase-two ownership store cannot list control candidates")
+	}
+	return store.ListFallbackControlCandidates(ctx, at)
 }
 
 func (runtime *productionPhaseTwoOwnership) ensureControlAuthority(
@@ -2603,9 +2716,25 @@ type observedProductionSlotSource struct {
 	observer observability.Observer
 }
 
-func (source observedProductionSlotSource) RangeCreationEnabled() bool {
-	next, ok := source.next.(interface{ RangeCreationEnabled() bool })
-	return ok && next.RangeCreationEnabled()
+// FreezeSupplement is the wrapped source's, for a supplement of a completed
+// Slot.
+func (source observedProductionSlotSource) FreezeSupplement(ctx context.Context, at execution.EvaluationTime, readHoldMillis int64) (scheduler.FrozenSlot, error) {
+	next, ok := source.next.(scheduler.SupplementSlotSource)
+	if !ok {
+		return scheduler.FrozenSlot{}, scheduler.ErrSupplementUnsupported
+	}
+	return next.FreezeSupplement(ctx, at, readHoldMillis)
+}
+
+// Supplement runs a supplement of one of this Query Group's completed Slots
+// on its Runner; see scheduler.Runner.Supplement.
+func (runtime *productionPhaseTwoQueryGroup) Supplement(
+	ctx context.Context,
+	at execution.EvaluationTime,
+	readHoldMillis int64,
+	scope execution.SupplementScope,
+) (execution.SupplementFacts, error) {
+	return runtime.runner.Supplement(ctx, at, readHoldMillis, scope)
 }
 
 func (source observedProductionSlotSource) Next(
@@ -2630,11 +2759,14 @@ func (source observedProductionSlotSource) Next(
 		observeRuntime(ctx, source.observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
 			Result: observability.Result(observability.ResultRetrying), ReasonCode: observability.ReasonCode(contract.ReasonViewNotExecutable),
-			Direction: observability.DirectionInternal,
-			Trace:     observability.TraceFields{QueryGroupKey: string(queryGroup)}, Err: notExecutable,
+			Direction: observability.DirectionInternal, AwaitingView: notExecutable.AwaitingView,
+			Trace: observability.TraceFields{QueryGroupKey: string(queryGroup)}, Err: notExecutable,
 		})
 	} else if errors.As(err, &retry) || errors.As(err, &blocked) {
-		reason := observability.ReasonCode(contract.ReasonBlockedExactSetUnavailable)
+		var reason observability.ReasonCode
+		if blocked != nil {
+			reason = observability.ReasonCode(blocked.ReasonCode())
+		}
 		var cause error
 		if retry != nil {
 			reason = observability.ReasonCode(contract.ReasonSlotSourceRetry)
@@ -2659,8 +2791,9 @@ func (source observedProductionSlotSource) Next(
 }
 
 type observedProductionSlotExecutor struct {
-	next     scheduler.Executor
-	observer observability.Observer
+	next      scheduler.Executor
+	observer  observability.Observer
+	readHolds *productionReadHolds
 }
 
 func (executor observedProductionSlotExecutor) Execute(
@@ -2668,16 +2801,27 @@ func (executor observedProductionSlotExecutor) Execute(
 	request execution.SlotExecutionRequest,
 ) (execution.SlotExecutionResult, error) {
 	trace := frozenSlotTrace(request.Contract, request.OwnerFence)
+	// The operation rides on the start as it does on the completion, so a
+	// reader that leaves supplements out can leave out both ends.
 	observeRuntime(ctx, executor.observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageSlotStarted,
-		Result: observability.ResultStarted, Direction: observability.DirectionInternal, Trace: trace,
+		Operation: observability.Operation(request.Operation),
+		Result:    observability.ResultStarted, Direction: observability.DirectionInternal, Trace: trace,
 	})
 	started := time.Now()
 	result, err := executor.next.Execute(ctx, request)
+	if executor.readHolds != nil {
+		if reason, known := worker.StateConflictReason(err); known && reason == execution.ReasonCode(contract.ReasonStateStaleVersion) {
+			executor.readHolds.observeOvertaken(request.Contract)
+		}
+	}
 	var shortCompletion *observability.ShortPeriodCompletionFacts
 	if err == nil && result.Completed && result.CompletionKind != "" && observability.IsShortPeriodCohort(request.ShortPeriodCohort) {
+		// Lag from when the Slot was to be read: its evaluation time, read
+		// hold later. A read hold is not lag; it is the wait the Slot chose.
+		due := time.Unix(int64(request.Contract.Slot.EvaluationTime), 0).Add(time.Duration(request.Contract.ReadHoldMillis) * time.Millisecond)
 		shortCompletion = &observability.ShortPeriodCompletionFacts{Cohort: request.ShortPeriodCohort, CompletionKind: string(result.CompletionKind),
-			LagSeconds: time.Since(time.Unix(int64(request.Contract.Slot.EvaluationTime), 0)).Seconds(), AttemptNo: request.AttemptNo}
+			LagSeconds: time.Since(due).Seconds(), AttemptNo: request.AttemptNo}
 	}
 	// What held the round before this one, on the completions where that is
 	// the question. Any cohort: it used to ride inside the short-period
@@ -2730,6 +2874,11 @@ func (executor observedProductionSlotExecutor) Execute(
 		} else {
 			observedResult = observability.ResultFailed
 			reason, gapApplySite = slotFailureReason(err)
+			// A Slot stopped by its own context's cancellation -- the process
+			// stopping or its Query Group leaving -- names that.
+			if reason == observability.ReasonInternalUnknown && observability.CancelledFromAbove(ctx, err) {
+				reason = observability.ReasonSlotCancelled
+			}
 		}
 	} else if observedResult == "" {
 		observedResult = observability.ResultSuccess
@@ -2737,7 +2886,8 @@ func (executor observedProductionSlotExecutor) Execute(
 	observeRuntime(ctx, executor.observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
 		Operation: observability.Operation(request.Operation), ShortPeriodCompletion: shortCompletion,
-		HeldBy: heldBy, GapApplySite: gapApplySite,
+		AwaitingView: notExecutable != nil && notExecutable.AwaitingView,
+		HeldBy:       heldBy, GapApplySite: gapApplySite,
 		// The completion the Slot reached, beside the reason it reports. They
 		// are separate fields and disagree in the case this line is hardest to
 		// read: a Slot whose Level outcomes are UNKNOWN completes
@@ -2750,6 +2900,8 @@ func (executor observedProductionSlotExecutor) Execute(
 		Duration: time.Since(started), Trace: trace, Err: observedErr,
 		SlotBudgetUsage: slotBudgetUsageFacts(result.Usage),
 		SlotTiming:      slotTimingFacts(result.Timing),
+		InPlaceWait:     inPlaceWaitFacts(result.InPlaceWait),
+		FollowingSlot:   int64(execution.FollowingSlotOf(ctx)),
 	})
 	observability.EmitTargetFlow(ctx, "execution_outcome", trace, observability.TargetFlowFacts{ExecutionOutcomeKnown: true, Attempted: true, Completed: result.Completed, Completion: string(result.CompletionKind)})
 	return result, err
@@ -2794,6 +2946,24 @@ func (runtime *productionPhaseTwoQueryGroup) DueBound() scheduler.RunnerDueBound
 	return runtime.runner.DueBound()
 }
 
+// DeclineHung is the Runner's: it judges the execution in flight by the
+// execution's own deadline.
+func (runtime *productionPhaseTwoQueryGroup) DeclineHung(now time.Time, grace time.Duration) (string, time.Time, bool) {
+	if runtime == nil || runtime.runner == nil {
+		return "", time.Time{}, false
+	}
+	return runtime.runner.DeclineHung(now, grace)
+}
+
+// ExecutionDeadline is the Runner's: the deadline its execution in flight
+// runs under.
+func (runtime *productionPhaseTwoQueryGroup) ExecutionDeadline() time.Time {
+	if runtime == nil || runtime.runner == nil {
+		return time.Time{}
+	}
+	return runtime.runner.ExecutionDeadline()
+}
+
 func (runtime *productionPhaseTwoQueryGroup) NextDeadline() time.Time {
 	if runtime == nil || runtime.runner == nil {
 		return time.Time{}
@@ -2824,22 +2994,29 @@ func (runtime *productionPhaseTwoQueryGroup) MaintainLease(
 			return ctx.Err()
 		case <-ticker.C:
 		}
+		// Every line of this renewal names the Query Group, and the fence it
+		// renews when the session holds one.
+		trace := observability.TraceFields{QueryGroupKey: string(runtime.queryGroup)}
+		if lease, held := runtime.session.Current(); held {
+			trace = leaseTrace(lease.Fence)
+		}
+		leaseCtx := observability.ContextWithTraceFields(ctx, trace)
 		err := renewPhaseTwoWithinInterval(ctx, interval, func(attemptCtx context.Context) error {
 			return runtime.session.Renew(attemptCtx, runtime.clock(), ttl)
 		}, func(err error) {
-			observeProductionRenewalFailure(ctx, runtime.observer, observability.StageLeaseRenewed, err)
+			observeProductionRenewalFailure(leaseCtx, runtime.observer, observability.StageLeaseRenewed, err)
 		}, func() bool {
 			return runtime.session.Deadline().After(runtime.clock())
 		})
 		if err == nil {
-			observeProductionOwnership(ctx, runtime.observer, observability.StageLeaseRenewed, nil)
+			observeProductionOwnership(leaseCtx, runtime.observer, observability.StageLeaseRenewed, nil)
 			continue
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if isPhaseTwoInvariantError(err) || ownership.IsLeaseDecision(err) {
-			observeProductionOwnership(ctx, runtime.observer, observability.StageLeaseRenewed, err)
+			observeProductionOwnership(leaseCtx, runtime.observer, observability.StageLeaseRenewed, err)
 			return err
 		}
 		if !runtime.session.Deadline().After(runtime.clock()) {
@@ -2865,6 +3042,12 @@ func (runtime *productionPhaseTwoQueryGroup) Release(ctx context.Context) error 
 // observeProductionRenewalFailure reports one failed renewal attempt that is
 // going to be retried. It carries the shared retryable dependency reason so
 // the bounded log policy folds repeats into one limited bucket.
+// leaseTrace is the coordinates a lease line is named by: the Query Group,
+// or the control leader's key, and the owner and epoch holding it.
+func leaseTrace(fence execution.OwnerFence) observability.TraceFields {
+	return observability.TraceFields{QueryGroupKey: string(fence.QueryGroup), OwnerID: fence.OwnerID, OwnerEpoch: fence.OwnerEpoch}
+}
+
 func observeProductionRenewalFailure(
 	ctx context.Context,
 	observer observability.Observer,
@@ -2874,6 +3057,7 @@ func observeProductionRenewalFailure(
 	observeRuntime(ctx, observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: stage, Result: observability.ResultFailed,
 		Direction: observability.DirectionInternal, ReasonCode: phaseTwoControlDependencyReason, Err: err,
+		Trace: observability.TraceFieldsFromContext(ctx),
 	})
 }
 
@@ -2893,6 +3077,7 @@ func observeProductionOwnership(
 	observeRuntime(ctx, observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: stage, Result: result,
 		Direction: observability.DirectionInternal, ReasonCode: ownershipObservationReason(err), Err: err,
+		Trace: observability.TraceFieldsFromContext(ctx),
 	})
 }
 
@@ -2934,32 +3119,17 @@ func (channels productionRecoveryChannels) AcquireQueryPermit(ctx context.Contex
 	return channels.channels.AcquireQueryPermit(ctx, slot, operation, deadline)
 }
 
-// Phase-two diagnostic log budget: per (reason or stage, Query Group) bucket,
-// with at most phaseTwoDiagnosticLogMaxScopes live scope buckets. Suppressed
-// lines are counted and reported on the next admitted line of the same bucket.
-//
-// Opened up for the development phase. At one line per minute per bucket and
-// 4096 scopes against 2075 objects, a live read dropped 78 lines for every line
-// it kept -- 186,966 evicted in 19 seconds on one replica at its worst. The
-// eviction count rides on the emitted lines, so the only way to learn how much
-// was lost is to read the log, which is the thing being lost.
-//
-// That is the wrong trade while the system is still being built: what these
-// logs are for right now is finding out what alarmd actually does, and a
-// budget tuned for a steady production stream answers that question with a
-// sample whose bias is the very repetition being investigated.
-//
-// MaxScopes covers the fleet with room for several concurrent reasons per
-// object, so scope eviction -- the part that loses lines without any per-bucket
-// summary -- stops being the binding constraint.
-//
-// Exit condition: this goes back to a production budget when the system is
-// stable enough that the repeated lines are noise rather than the subject.
-// Until then a dropped line costs more than a written one.
+// The log budget for failures: one line per (reason, stage, Query Group) per
+// minute, with what was merged into it on the next line; every other result
+// that is not a success keeps one an hour (observability.RoutineLogSample),
+// and a workflow stage's routine success is counted and not written.
+// MaxScopes bounds the live buckets: an hourly bucket lives an hour, so this
+// is the distinct (reason, stage, Query Group) seen in one, about 1,500 a
+// replica on the development deployment, with room for the largest.
 const (
-	phaseTwoDiagnosticLogWindow    = time.Minute
-	phaseTwoDiagnosticLogMaxEvents = 600
-	phaseTwoDiagnosticLogMaxScopes = 65536
+	phaseTwoLogFailureWindow    = time.Minute
+	phaseTwoLogFailureMaxEvents = 1
+	phaseTwoLogMaxScopes        = 65536
 )
 
 // newPhaseTwoRuntimeObserver mirrors newPhaseOneRuntimeObserver but uses the
@@ -2970,7 +3140,7 @@ func newPhaseTwoRuntimeObserver(recorder *metric.Recorder, logger *observability
 		return nil, errors.New("alarmd runtime: recorder and logger are required")
 	}
 	limiter, err := observability.NewScopedLogLimiter(observability.ScopedLogLimiterConfig{
-		Window: phaseTwoDiagnosticLogWindow, MaxEvents: phaseTwoDiagnosticLogMaxEvents, MaxScopes: phaseTwoDiagnosticLogMaxScopes,
+		Window: phaseTwoLogFailureWindow, MaxEvents: phaseTwoLogFailureMaxEvents, MaxScopes: phaseTwoLogMaxScopes,
 	})
 	if err != nil {
 		return nil, err
@@ -2979,7 +3149,10 @@ func newPhaseTwoRuntimeObserver(recorder *metric.Recorder, logger *observability
 	if err != nil {
 		return nil, err
 	}
-	return observability.Multi(recorder, observability.NewLoggingObserver(logger, policy)), nil
+	logging := observability.NewLoggingObserver(logger, policy)
+	recorder.SetLogLineSource(logging.LineCounts)
+	return observability.Multi(observability.Named(observability.ObserverRecorder, recorder),
+		observability.Named(observability.ObserverLogging, logging)), nil
 }
 
 // publishedComposition is what a round hands the catalog gauges.
@@ -3030,19 +3203,56 @@ func slotTimingFacts(timing execution.SlotTiming) *observability.SlotTimingFacts
 // Not holding the lease, or finding it no longer this process's, is not an
 // error: there is nothing to give up.
 func (runtime *productionPhaseTwoOwnership) ReleaseControlLeader(ctx context.Context) error {
+	_, err := runtime.ReleaseHeldControlLeader(ctx)
+	return err
+}
+
+// ReleaseHeldControlLeader is ReleaseControlLeader that also says whether
+// this call is what gave the lease up, which is what a count of lease moves
+// has to be taken from: a process that had already lost it moved nothing.
+func (runtime *productionPhaseTwoOwnership) ReleaseHeldControlLeader(ctx context.Context) (bool, error) {
 	if runtime == nil || runtime.dependencies.Store == nil {
-		return nil
+		return false, nil
 	}
 	runtime.mu.Lock()
 	authority := runtime.authority
 	runtime.mu.Unlock()
 	if authority.Fence.QueryGroup == "" {
-		return nil
+		return false, nil
 	}
 	err := runtime.dependencies.Store.Release(ctx, authority.Fence)
 	runtime.clearControlAuthority(authority)
 	if errors.Is(err, ownership.ErrStaleFence) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// declinedEverywhereSamples is the round's declined-everywhere sample in the
+// shape the round's line and the fleet snapshot carry: each decliner as
+// worker:stage.
+func declinedEverywhereSamples(settlement scheduler.RoundSettlement) []observability.DeclinedEverywhereSample {
+	if len(settlement.DeclinedEverywhereSample) == 0 {
 		return nil
 	}
-	return err
+	samples := make([]observability.DeclinedEverywhereSample, 0, len(settlement.DeclinedEverywhereSample))
+	for _, declined := range settlement.DeclinedEverywhereSample {
+		sample := observability.DeclinedEverywhereSample{QueryGroup: declined.QueryGroup, Hops: declined.Hops}
+		for _, stage := range declined.Stages {
+			sample.Stages = append(sample.Stages, stage.Worker+":"+stage.Stage)
+		}
+		samples = append(samples, sample)
+	}
+	return samples
+}
+
+// inPlaceWaitFacts is the Slot's in-place readiness wait for its line; nil
+// when it did not wait.
+func inPlaceWaitFacts(wait *execution.InPlaceWaitFacts) *observability.InPlaceWaitFacts {
+	if wait == nil {
+		return nil
+	}
+	return &observability.InPlaceWaitFacts{Waits: wait.Waits, TotalMillis: wait.TotalMillis, LongestMillis: wait.LongestMillis,
+		SentBeforeFirstWait: wait.SentBeforeFirstWait, BeforeAnySentMillis: wait.BeforeAnySentMillis,
+		HeldInputBytes: wait.HeldInputBytes, HeldPreparedBytes: wait.HeldPreparedBytes}
 }

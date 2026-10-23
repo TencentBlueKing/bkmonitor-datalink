@@ -43,7 +43,9 @@ func internalInvocation(c *Channel) Invocation {
 func TestTargetSchemaAndDomainValidationStayConsistent(t *testing.T) {
 	ops := append(NativeOperations(http.NotFoundHandler()), StoreOperations(obevidence.New(obevidence.Options{}))...)
 	c := testChannel(t, &testAuth{}, ops...)
-	for _, id := range []string{"sample.get", "observation.get", "strategy.config", "store.inspect"} {
+	// object.get is targetable by the lease holder: a healthy object's row
+	// lives only on the replica tracking it.
+	for _, id := range []string{"sample.get", "observation.get", "strategy.config", "store.inspect", "object.get"} {
 		op := c.ops[id]
 		if !op.Targetable {
 			t.Errorf("%s is not targetable", id)
@@ -65,7 +67,7 @@ func TestTargetSchemaAndDomainValidationStayConsistent(t *testing.T) {
 			t.Fatal("describe omitted target exclusion/dependency rules")
 		}
 	}
-	for _, id := range []string{"fleet.get", "strategy.get", "object.get"} {
+	for _, id := range []string{"fleet.get", "strategy.get"} {
 		op := c.ops[id]
 		if op.Targetable || op.EvidenceScope != "deployment" {
 			t.Errorf("%s should remain deployment scope", id)

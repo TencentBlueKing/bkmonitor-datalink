@@ -297,7 +297,10 @@ func TestAValidTargetPlanIsFrozenAndTheLegacyTargetIsNotRead(t *testing.T) {
 // list the old decoder cannot read is a document nobody can show the
 // target of. Both are refused by name - not compiled as a strategy with no
 // target, not kept on the last good Plan of the old target, which is what a
-// whole-document decode failure used to do.
+// whole-document decode failure used to do. A legacy target this side has
+// no reading for, such as a template the writer did not expand, is refused
+// with the field it names in the detail, the one thing the writer needs to
+// find it.
 func TestASelectionOrUnreadableTargetWithoutATargetPlanIsRefusedByName(t *testing.T) {
 	payload, err := os.ReadFile("testdata/two_threshold_strategies.json")
 	if err != nil {
@@ -326,9 +329,13 @@ func TestASelectionOrUnreadableTargetWithoutATargetPlanIsRefusedByName(t *testin
 	if err := json.Unmarshal(document["items"], &items); err != nil {
 		t.Fatal(err)
 	}
+	details := map[string]string{
+		`[[{"field":"host_set_template","method":"eq","value":[{"bk_obj_id":"set","bk_inst_id":1}]}]]`: `TARGET_SCOPE_UNSUPPORTED: target field "host_set_template"`,
+	}
 	for legacy, reason := range map[string]string{
 		`{"schema_version":1,"model_id":"cw-Host","selectors":[{"type":"instances","instances":[{"model_id":"cw-Host","model_inst_id":"101","entity_uid":"cw-Host|101"}]}]}`: "TARGET_PLAN_MISSING",
 		`[[{"field":5}]]`: "UNSUPPORTED_TARGET_SCOPE",
+		`[[{"field":"host_set_template","method":"eq","value":[{"bk_obj_id":"set","bk_inst_id":1}]}]]`: "UNSUPPORTED_TARGET_SCOPE",
 	} {
 		items[0]["target"] = json.RawMessage(legacy)
 		document["items"], _ = json.Marshal(items)
@@ -348,7 +355,8 @@ func TestASelectionOrUnreadableTargetWithoutATargetPlanIsRefusedByName(t *testin
 		found := false
 		for _, disposition := range catalog.Dispositions {
 			if disposition.SourceID == "1002" && disposition.Disposition == controlplane.DispositionUnsupported &&
-				disposition.Reason == reason && disposition.FieldPath == "items[0].target" {
+				disposition.Reason == reason && disposition.FieldPath == "items[0].target" &&
+				(details[legacy] == "" || disposition.Detail == details[legacy]) {
 				found = true
 			}
 		}

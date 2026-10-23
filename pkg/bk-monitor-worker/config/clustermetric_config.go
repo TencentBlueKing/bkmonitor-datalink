@@ -46,6 +46,7 @@ type RabbitMQClusterMetricInstance struct {
 	AMQPPort              int      `mapstructure:"amqpPort"`
 	Username              string   `mapstructure:"username"`
 	Password              string   `mapstructure:"password"`
+	CredentialsRef        string   `mapstructure:"credentialsRef"`
 	Vhosts                []string `mapstructure:"vhosts"`
 	QueueIncludes         []string `mapstructure:"queueIncludes"`
 	QueueExcludes         []string `mapstructure:"queueExcludes"`

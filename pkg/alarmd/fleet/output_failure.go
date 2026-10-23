@@ -10,118 +10,79 @@
 package fleet
 
 import (
-	"strings"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // Reading a failure to write the round's events.
 //
-// The sink reports two different things under one code: a broker that did
-// not answer, and its own client refusing to send -- a configuration the
-// client checks before any byte leaves, a converter that cannot build the
-// message. The first is the dependency's; the second is this deployment's,
-// and no amount of waiting for the broker fixes it. Six objects on a live
+// The sink reports several different things under one code: a broker that
+// did not answer, a broker that answered no, a sink that never asked one,
+// the snapshot store the compatible protocol writes - and, under codes of
+// their own, its own client refusing to send. Six objects on a live
 // deployment failed every round for an afternoon under "the broker is
 // unavailable" while the client was refusing to produce headers to a broker
 // version it had been told was too old. The words that told the two apart
-// were on the failing observation and reached no row; these are the words.
-
-// The kinds an output failure is read as, as the row's dependency evidence
-// spells them. Closed: a reader shows these words and no others.
-const (
-	// OutputFailureBrokerError: the broker did not answer, or answered with
-	// its own error. The dependency's.
-	OutputFailureBrokerError = "broker_error"
-	// OutputFailureClientRejected: this deployment's client refused to send
-	// -- its configuration, its converter, its validation. Ours; retrying
-	// meets the same refusal.
-	OutputFailureClientRejected = "client_rejected"
-	// OutputFailureUnknown: words this reader has no signature for. Stays on
-	// this deployment's side of the page rather than being handed to the
-	// broker.
-	OutputFailureUnknown = "unknown"
-)
-
-// OutputFailureKinds is every word OutputFailureKind can return.
-var OutputFailureKinds = []string{OutputFailureBrokerError, OutputFailureClientRejected, OutputFailureUnknown}
+// were on the failing observation and reached no row; they were then read
+// back out of the error's text, which a Redis's EOF could pass as Kafka's.
+// Now the sink's error says its kind by its type (observability's
+// OutputFailureKinds), the row carries it, and this reads it.
 
 // DependencyEvidences is every word Blocked.DependencyEvidence can carry: the
-// two that say how a dependency was named, and the three that read an output
-// failure.
-var DependencyEvidences = []string{dependencyByCode, dependencyByText, OutputFailureBrokerError, OutputFailureClientRejected, OutputFailureUnknown}
+// two that say how a dependency was named, and the kinds an output failure
+// is read as.
+var DependencyEvidences = append([]string{dependencyByCode, dependencyByText}, observability.OutputFailureKinds...)
 
-// outputClientSignatures are fragments of the errors this deployment's own
-// Kafka client and converters write when they refuse to send. Each is taken
-// from the emitter that writes it: the client's configuration error
-// ("kafka: invalid configuration (...)", which is what "Producing headers
-// requires Kafka at least v0.11" arrives wrapped in), the converters' own
-// prefixes, and the sink's own validation words.
-var outputClientSignatures = []string{
-	"kafka: invalid configuration",
-	"alarmd linkdoutput:",
-	"legacy conversion",
-	"legacy event has no frozen compatibility context",
-	"unsupported output format",
-	"kafka trigger event sink: validate event",
-	"kafka trigger event sink: encode event",
-}
-
-// outputBrokerSignatures are fragments of what the client writes when the
-// broker, or the way to it, is the problem: the broker's own errors are
-// prefixed "kafka server:", the client's out-of-brokers and delivery words,
-// and the transport's.
-var outputBrokerSignatures = []string{
-	"kafka server:",
-	"client has run out of available brokers",
-	"Failed to produce message",
-	"Failed to deliver",
-	"dial tcp",
-	"i/o timeout",
-	"connection refused",
-	"connection reset",
-	"broken pipe",
-	"request timed out",
-	"EOF",
-}
-
-// OutputFailureKind reads the words of an output failure. The client's
-// refusals are checked first: a refused batch is reported as a delivery
-// failure wrapping the refusal, so both signatures are present and the
-// inner one is the cause.
-func OutputFailureKind(text string) string {
-	if text == "" {
-		return OutputFailureUnknown
-	}
-	for _, signature := range outputClientSignatures {
-		if strings.Contains(text, signature) {
-			return OutputFailureClientRejected
+func validOutputFailureKind(kind string) bool {
+	for _, known := range observability.OutputFailureKinds {
+		if kind == known {
+			return true
 		}
 	}
-	for _, signature := range outputBrokerSignatures {
-		if strings.Contains(text, signature) {
-			return OutputFailureBrokerError
-		}
-	}
-	return OutputFailureUnknown
+	return false
 }
 
-// outputRejectionCodes are the sink's own words for refusing to write: a
-// converter that could not build the message, a client that would not send
-// it. A failure under one of them is the client's whatever its sentence
-// says -- the sink decided that, and the sentence is for the reader.
+// outputFailureReading is where each kind of output failure is filed: the
+// dependency it is the failure of, and the class. A kind not in the table -
+// unknown, a failure from outside the sink - stays unlocated, on this
+// deployment's side of the page rather than handed to the broker.
+var outputFailureReading = map[string]struct {
+	dependency Dependency
+	class      Class
+}{
+	observability.OutputFailureAckUnknown:     {DependencyKafka, ClassUnavailable},
+	observability.OutputFailureBrokerRefused:  {DependencyKafka, ClassUnavailable},
+	observability.OutputFailureSinkNotOpen:    {DependencyKafka, ClassUnavailable},
+	observability.OutputFailureSnapshotStore:  {DependencyRedis, ClassUnavailable},
+	observability.OutputFailureClientRejected: {DependencyNone, ClassContract},
+}
+
+// outputNamedCodes are the codes the sink names a failure by when the code
+// alone says what it was: the converter that could not build the message,
+// the client that would not send it, the lease too short to start a batch.
+// Each has its reading in the code table; the kind only adds which one.
+var outputNamedCodes = map[string]bool{contract.ReasonOutputConversionRejected: true, contract.ReasonOutputClientRejected: true,
+	contract.ReasonOutputLeaseExpiring: true}
+
+// outputRejectionCodes are the sink's two refusal words: a failure under one
+// of them is a client refusal by its code alone, which is how a row from a
+// publisher that carried no kind is still read.
 var outputRejectionCodes = map[string]bool{contract.ReasonOutputConversionRejected: true, contract.ReasonOutputClientRejected: true}
 
 // outputFailureOf is the row's output failure when its failure is one and
-// is this round's evidence to read: the reference and its kind. The sink's
-// own reason word decides the kind when it gave one; the words decide when
-// it did not.
+// is this round's evidence to read: the reference and its kind - from the
+// row, else client_rejected under a refusal code, else unknown.
 func outputFailureOf(anomaly Anomaly) (*FailureRef, string, bool) {
 	if anomaly.Failure == nil || anomaly.Failure.Stage != "output" {
 		return nil, "", false
 	}
-	if outputRejectionCodes[anomaly.Failure.Code] {
-		return anomaly.Failure, OutputFailureClientRejected, true
+	kind := anomaly.Failure.Kind
+	switch {
+	case validOutputFailureKind(kind):
+	case outputRejectionCodes[anomaly.Failure.Code]:
+		kind = observability.OutputFailureClientRejected
+	default:
+		kind = observability.OutputFailureUnknown
 	}
-	return anomaly.Failure, OutputFailureKind(anomaly.Failure.Text), true
+	return anomaly.Failure, kind, true
 }

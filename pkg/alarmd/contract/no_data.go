@@ -12,6 +12,8 @@ package contract
 import (
 	"errors"
 	"fmt"
+	"math"
+	"time"
 )
 
 // NoDataDimensionTag is the dimension Python adds to every no-data group so a
@@ -20,6 +22,15 @@ import (
 // this package states the name, and the identity the value takes is settled
 // where the identity is built, not here.
 const NoDataDimensionTag = "__NO_DATA_DIMENSION__"
+
+// MaxNoDataTrackingHorizonSeconds is the largest tracking horizon alarmd can
+// hold. The horizon becomes a runtime-state lifetime as a time.Duration, and a
+// horizon one second longer does not fit in one: it wraps, and a strategy
+// asking for a horizon of centuries would get a lifetime of whatever the wrap
+// left. Every reader of the setting - an item's own, the deployment's values,
+// the dynamic layer - and a frozen Plan's validation refuse a larger one by
+// name rather than let it wrap (retention proposal, section 6).
+const MaxNoDataTrackingHorizonSeconds = math.MaxInt64 / int64(time.Second)
 
 // NoDataPeriodFactField carries, on a synthetic no-data point, how many periods
 // the group has been without data. The output layer states it in the alert
@@ -145,6 +156,10 @@ func (config *NoDataConfigV1) Validate() error {
 	// direction that looks healthy.
 	if config.TrackingHorizonSeconds < 0 {
 		return fmt.Errorf("no_data_config tracking horizon %d must not be negative", config.TrackingHorizonSeconds)
+	}
+	if config.TrackingHorizonSeconds > MaxNoDataTrackingHorizonSeconds {
+		return fmt.Errorf("no_data_config tracking horizon %d is past the largest one a lifetime can hold, %d",
+			config.TrackingHorizonSeconds, MaxNoDataTrackingHorizonSeconds)
 	}
 	// The source is a closed word beside a positive horizon. An empty source
 	// beside a positive horizon is accepted: that is a Plan compiled before

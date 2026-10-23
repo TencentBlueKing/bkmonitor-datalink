@@ -56,8 +56,11 @@ func TestASyntheticNoDataPointConvertsIntoTheBackendsObject(t *testing.T) {
 		}},
 		LegacyOutput: &contract.LegacyEventContext{
 			Configuration: contract.FreezeLegacyOutput(&contract.LegacyOutputContext{
-				Strategy:        json.RawMessage(noDataStrategyDocument),
-				DimensionFields: []string{"bk_target_ip"},
+				Strategy: json.RawMessage(noDataStrategyDocument),
+				// The item's identity fields, wider than the no-data group:
+				// the item aggregates by ip and cloud, no-data by ip alone.
+				// The no-data identity takes none of the item's fields.
+				DimensionFields: []string{"bk_target_cloud_id", "bk_target_ip"},
 				ItemID:          "11",
 			}),
 			AnomalyTimestamps: []int64{checkTime},
@@ -80,11 +83,11 @@ func TestASyntheticNoDataPointConvertsIntoTheBackendsObject(t *testing.T) {
 	data := payload["extra_info"].(map[string]any)["origin_alarm"].(map[string]any)["data"].(map[string]any)
 
 	// The identity the backend writes: count_md5 over the group's dimensions
-	// with the tag, not over the item's identity fields.
-	wantMD5, err := contract.PythonObjectMD5(dimensions)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// with the tag (nodata.py:106-107, the record id at :255), not over the
+	// item's identity fields. Computed with the backend's own count_md5
+	// (common_utils.py:452-479) for {"bk_target_ip": "127.0.0.1",
+	// "__NO_DATA_DIMENSION__": True}, not with this module's hash.
+	const wantMD5 = "86be9c9246bd1ee42085200b95f54e82"
 	if got := data["record_id"]; got != wantMD5+"."+strconv.FormatInt(checkTime, 10) {
 		t.Fatalf("record_id = %v, want the group-with-tag identity %s at the checked period. An identity "+
 			"hashed without the tag matches nothing the backend ever wrote, so the alert looks new every "+
@@ -104,6 +107,12 @@ func TestASyntheticNoDataPointConvertsIntoTheBackendsObject(t *testing.T) {
 	wantValues := map[string]any{"timestamp": float64(checkTime), "loads": nil}
 	if !reflect.DeepEqual(data["values"], wantValues) {
 		t.Fatalf("values = %#v, want %#v", data["values"], wantValues)
+	}
+	// No processing time: the backend builds this record itself, it never
+	// went through access (nodata.py:253-261), and the alert builder reads
+	// the checked period in its place (event.py:394-396).
+	if accessTime, present := data["access_time"]; present {
+		t.Fatalf("access_time = %v, want none: the backend's no-data record has none", accessTime)
 	}
 
 	// The tag is in the dimensions and in the field list, which is what the
@@ -144,7 +153,7 @@ func TestANoDataPointWithoutItsCountStillConverts(t *testing.T) {
 		Observed:       contract.TriggerObservedV1{Values: map[string]json.RawMessage{"no_data": json.RawMessage("1")}},
 		LegacyOutput: &contract.LegacyEventContext{
 			Configuration: contract.FreezeLegacyOutput(&contract.LegacyOutputContext{
-				Strategy: json.RawMessage(noDataStrategyDocument), DimensionFields: []string{}, ItemID: "11",
+				Strategy: json.RawMessage(noDataStrategyDocument), DimensionFields: []string{"bk_target_cloud_id", "bk_target_ip"}, ItemID: "11",
 			}),
 			AnomalyTimestamps: []int64{checkTime},
 		},
@@ -165,13 +174,15 @@ func TestANoDataPointWithoutItsCountStillConverts(t *testing.T) {
 	}
 
 	// The whole-item group's identity is the tag alone, which is the object
-	// the backend writes when an item has no data at all.
-	wantMD5, err := contract.PythonObjectMD5(dimensions)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// the backend writes when an item has no data at all (nodata.py:83-84),
+	// whatever the item's identity fields: count_md5({"__NO_DATA_DIMENSION__":
+	// True}) with the backend's own count_md5.
+	const wantMD5 = "3e06a0b6d0560271cafee9f08a6da2d7"
 	data := payload["extra_info"].(map[string]any)["origin_alarm"].(map[string]any)["data"].(map[string]any)
 	if got := data["record_id"]; got != wantMD5+"."+strconv.FormatInt(checkTime, 10) {
 		t.Fatalf("record_id = %v, want the whole-item identity %s", got, wantMD5)
+	}
+	if fields, _ := data["dimension_fields"].([]any); !reflect.DeepEqual(fields, []any{contract.NoDataDimensionTag}) {
+		t.Fatalf("dimension_fields = %#v, want the tag alone (nodata.py:259 sorts the group's keys)", fields)
 	}
 }

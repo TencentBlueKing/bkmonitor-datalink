@@ -21,6 +21,36 @@ package observability
 // label set that another package could widen would not be a bound.
 type QueryUnavailableFacts struct {
 	Attribution string
+	// HTTPClass is the last failed attempt's HTTP answer: 4xx, a backend
+	// that refused the query; 5xx, one that failed; other, a status of
+	// neither kind; none, no HTTP answer at all (a transport failure, a
+	// timeout, a query never sent).
+	HTTPClass string
+}
+
+const (
+	QueryHTTPClass4xx   = "4xx"
+	QueryHTTPClass5xx   = "5xx"
+	QueryHTTPClassOther = "other"
+	QueryHTTPClassNone  = "none"
+)
+
+// QueryHTTPClasses is the closed set of HTTPClass values.
+var QueryHTTPClasses = []string{QueryHTTPClass4xx, QueryHTTPClass5xx, QueryHTTPClassOther, QueryHTTPClassNone}
+
+// QueryHTTPClassOf is the class of an attempt's HTTP status, zero being no
+// answer.
+func QueryHTTPClassOf(status int) string {
+	switch {
+	case status == 0:
+		return QueryHTTPClassNone
+	case status >= 400 && status <= 499:
+		return QueryHTTPClass4xx
+	case status >= 500 && status <= 599:
+		return QueryHTTPClass5xx
+	default:
+		return QueryHTTPClassOther
+	}
 }
 
 const (
@@ -64,6 +94,11 @@ func normalizeQueryUnavailable(component Component, stage Stage, input []QueryUn
 	for _, facts := range input {
 		if !validQueryUnavailableAttribution(facts.Attribution) {
 			facts.Attribution = QueryUnavailableOther
+		}
+		switch facts.HTTPClass {
+		case QueryHTTPClass4xx, QueryHTTPClass5xx, QueryHTTPClassOther, QueryHTTPClassNone:
+		default:
+			facts.HTTPClass = QueryHTTPClassOther
 		}
 		normalized = append(normalized, facts)
 	}

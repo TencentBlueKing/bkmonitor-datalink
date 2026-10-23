@@ -30,7 +30,7 @@ func TestCLIDisabledLeavesNativeAPIUnchanged(t *testing.T) {
 
 func TestCLIInvalidConfigurationOnlyDisablesCLIRoutes(t *testing.T) {
 	cfg := config.Default()
-	cfg.CLI.Enabled = true
+	cfg.CLI.AdminKey = strings.Repeat("k", 40)
 	native := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(218) })
 	h, closeCLI, _ := buildPhaseTwoCLI(cfg, native, nil, nil, nil, func() *observability.RuntimeConfigFacts { return nil }, cliControlBinding{Incarnation: "test-process"})
 	defer closeCLI()
@@ -49,7 +49,7 @@ func TestCLIInvalidConfigurationOnlyDisablesCLIRoutes(t *testing.T) {
 
 func TestCLIConstructionNeedsNoRedisAvailabilityAndNoAnonymousGrant(t *testing.T) {
 	cfg := config.Default()
-	cfg.CLI = config.CLIConfig{Enabled: true, EnvironmentID: "test", EnvironmentName: "Test", PublicBaseURL: "https://ob.example/alarmd/", AdminKey: strings.Repeat("x", 32)}
+	cfg.CLI = config.CLIConfig{EnvironmentID: "test", EnvironmentName: "Test", PublicBaseURL: "https://ob.example/alarmd/", AdminKey: strings.Repeat("x", 32)}
 	h, closeCLI, _ := buildPhaseTwoCLI(cfg, http.NotFoundHandler(), nil, nil, nil, func() *observability.RuntimeConfigFacts { return nil }, cliControlBinding{Incarnation: "test-process"})
 	defer closeCLI()
 	w := httptest.NewRecorder()
@@ -83,10 +83,13 @@ func TestCLIRuntimeFactsUseAppliedProfileAndObservationOnly(t *testing.T) {
 	}
 }
 
-func TestCLIControlRPCIsBoundOnlyWhenCLIConfigured(t *testing.T) {
+func TestCLIControlRPCIsBoundIndependentlyOfHTTPAuth(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		cfg := config.Default()
-		cfg.CLI = config.CLIConfig{Enabled: enabled, EnvironmentID: "test", EnvironmentName: "Test", PublicBaseURL: "http://ob.example/alarmd/", AdminKey: strings.Repeat("x", 32)}
+		cfg.CLI = config.CLIConfig{EnvironmentID: "test", EnvironmentName: "Test", PublicBaseURL: "http://ob.example/alarmd/"}
+		if enabled {
+			cfg.CLI.AdminKey = strings.Repeat("x", 32)
+		}
 		cfg.PhaseTwo.Worker.ID = "test-worker"
 		server, err := viewstream.NewServer(viewStreamAdmission{}, observability.NopObserver{}, viewstream.ServerOptions{})
 		if err != nil {
@@ -97,10 +100,7 @@ func TestCLIControlRPCIsBoundOnlyWhenCLIConfigured(t *testing.T) {
 		// Constructing this surface and binding its handler need no live Redis.
 		_, err = server.ReadEvidence(context.Background(), &pb.EvidenceRequest{EnvironmentId: "wrong"})
 		closeCLI()
-		want := codes.Unimplemented
-		if enabled {
-			want = codes.FailedPrecondition
-		}
+		want := codes.FailedPrecondition
 		if status.Code(err) != want {
 			t.Fatalf("enabled=%v: %v", enabled, err)
 		}

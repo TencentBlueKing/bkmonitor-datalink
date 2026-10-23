@@ -12,7 +12,6 @@ package nodata
 import (
 	"encoding/json"
 	"sort"
-	"strconv"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -45,6 +44,14 @@ type SyntheticSeries struct {
 	// anomaly carries the same, and its record_id and anomaly_id are built
 	// from it.
 	SourceTime int64
+	// Closing says this is the one NORMAL that closes an absence on a group
+	// the roster has stopped expecting (AbsenceResult.Closing). The round
+	// forgets the group, so this close is the last word about it: the caller
+	// sends it past the open-alert gate, which would hold it while its copy
+	// of the consumer's set cannot vouch for the alert - after a restart or a
+	// handover - and so lose it. A close the consumer holds no alert for is
+	// an orphan there and changes nothing.
+	Closing bool
 }
 
 // IdentityFields returns what the event carries and what its identity is hashed
@@ -66,13 +73,8 @@ type SyntheticSeries struct {
 func (series SyntheticSeries) IdentityFields() map[string]json.RawMessage {
 	fields := make(map[string]json.RawMessage, len(series.Group.dimensions)+1)
 	for _, dimension := range series.Group.dimensions {
-		encoded, err := json.Marshal(dimension.Value)
-		if err != nil {
-			// A Go string always marshals, so this cannot happen; encoding the
-			// value by hand rather than skipping it keeps a field that somehow
-			// failed from silently leaving the identity.
-			encoded = json.RawMessage(strconv.Quote(dimension.Value))
-		}
+		// A Go string always marshals, so the error is never set.
+		encoded, _ := json.Marshal(dimension.Value)
 		fields[dimension.Name] = encoded
 	}
 	fields[contract.NoDataDimensionTag] = json.RawMessage("true")
@@ -101,7 +103,10 @@ type SyntheticInput struct {
 // recovery while a point valued one would advance it as an absence. Producing
 // nothing leaves the window where it was, which is the only reading that says
 // "this round has no evidence".
-func SyntheticSeriesFor(input SyntheticInput) []SyntheticSeries {
+//
+// A verdict whose group cannot be named is an error, and the round with it:
+// see below.
+func SyntheticSeriesFor(input SyntheticInput) ([]SyntheticSeries, error) {
 	keys := make([]string, 0, len(input.Result.Verdicts))
 	for key, verdict := range input.Result.Verdicts {
 		if verdict == VerdictUnavailable {
@@ -125,22 +130,27 @@ func SyntheticSeriesFor(input SyntheticInput) []SyntheticSeries {
 			// This has to be right rather than approximately right. The point
 			// carries the group's identity all the way to the event, so a
 			// closing recovery built from the wrong group would end some other
-			// alert and leave the one it was for standing, which is worse than
-			// the verdict never having been made.
+			// alert and leave the one it was for standing.
+			//
+			// A key that does not parse fails the round rather than dropping
+			// the verdict. Dropped, the round would still delete the group it
+			// was closing, and the alert would stay open with nothing left to
+			// close it; failed, the round writes nothing, the memory keeps the
+			// group, and the Plan reports the round by name.
 			parsed, ok := ParseGroupKey(key)
 			if !ok {
-				continue
+				return nil, unparseableGroupKey(key)
 			}
 			group = parsed
 		}
-		entry := SyntheticSeries{Group: group, SourceTime: sourceTime, Value: PresentValue}
+		entry := SyntheticSeries{Group: group, SourceTime: sourceTime, Value: PresentValue, Closing: input.Result.Closing[key]}
 		if input.Result.Verdicts[key] == VerdictAnomaly {
 			entry.Value = AbsentValue
 			entry.Periods = absentPeriods(input.Memory[key], input.EvaluationTime, input.PeriodSeconds)
 		}
 		series = append(series, entry)
 	}
-	return series
+	return series, nil
 }
 
 // absentPeriods is how many periods the event says this group has been without

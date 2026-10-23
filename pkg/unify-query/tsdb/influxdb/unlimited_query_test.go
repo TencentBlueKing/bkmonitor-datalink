@@ -157,11 +157,11 @@ func TestUnlimitedInfluxRealRawStream(t *testing.T) {
 		}
 	}
 	mini := miniredis.RunT(t)
-	require.NoError(t, redis.SetInstance(ctx, "unlimited-fixture", &goRedis.UniversalOptions{Addrs: []string{mini.Addr()}}))
+	require.NoError(t, redis.SetInstance(ctx, "", "unlimited-fixture", &goRedis.UniversalOptions{Addrs: []string{mini.Addr()}}))
 	t.Cleanup(func() {
 		redis.Close()
 		if previousOptions != nil {
-			require.NoError(t, redis.SetInstance(context.Background(), previousName, previousOptions))
+			require.NoError(t, redis.SetInstance(context.Background(), "", previousName, previousOptions))
 		}
 	})
 	router := influxrouter.GetInfluxDBRouter()

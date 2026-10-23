@@ -27,8 +27,26 @@ import (
 )
 
 const channelVersion = "alarmd-ob/v1"
+
+// sessionScope is the one scope a server grants: the deployment's operations
+// session, execution and management included. The identifier is historical.
 const sessionScope = "deployment_ops_readonly"
+
 const maxResponse = 8 << 20
+
+// requestNotSent marks failures that happen before the channel can receive
+// an invocation. All other transport or response failures leave exec unknown.
+type requestNotSent struct{ error }
+
+func notSent(message string) error { return &requestNotSent{errors.New(message)} }
+
+// validScope and allowsScope know the one scope. No server a CLI talks to
+// ever issued another: the execution scope an earlier build defined was
+// gone before any deployment ran it.
+func validScope(scope string) bool { return scope == sessionScope }
+func allowsScope(granted, required string) bool {
+	return validScope(granted) && required == sessionScope
+}
 
 func baseURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
@@ -115,22 +133,27 @@ func (a *App) environmentClient(p Profile) (client http.Client, u *url.URL, rele
 }
 
 func (a *App) request(p Profile, method, endpoint string, body any) (map[string]any, int, error) {
+	return a.requestTimeout(p, method, endpoint, body, 30*time.Second)
+}
+
+func (a *App) requestTimeout(p Profile, method, endpoint string, body any, timeout time.Duration) (map[string]any, int, error) {
 	client, u, release, err := a.environmentClient(p)
 	defer release()
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, &requestNotSent{err}
 	}
+	client.Timeout = timeout
 	u.Path += endpoint
 	var payload []byte
 	if body != nil {
 		payload, err = json.Marshal(body)
 		if err != nil {
-			return nil, 0, errors.New("cannot encode request")
+			return nil, 0, notSent("cannot encode request")
 		}
 	}
 	req, err := http.NewRequest(method, u.String(), bytes.NewReader(payload))
 	if err != nil {
-		return nil, 0, errors.New("cannot construct request")
+		return nil, 0, notSent("cannot construct request")
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
@@ -149,15 +172,15 @@ func (a *App) request(p Profile, method, endpoint string, body any) (map[string]
 		var timeout net.Error
 		switch {
 		case errors.As(err, &dns):
-			return nil, 0, errors.New("DNS resolution failed; check the deployment hostname and DNS access")
+			return nil, 0, notSent("DNS resolution failed; check the deployment hostname and DNS access")
 		case errors.Is(err, syscall.ECONNREFUSED):
-			return nil, 0, errors.New("connection refused; check the deployment address, port and listener")
+			return nil, 0, notSent("connection refused; check the deployment address, port and listener")
 		case errors.As(err, &hostname):
-			return nil, 0, errors.New("TLS certificate hostname mismatch; check the entry URL or log in with --insecure-tls for this environment")
+			return nil, 0, notSent("TLS certificate hostname mismatch; check the entry URL or log in with --insecure-tls for this environment")
 		case errors.As(err, &authority):
-			return nil, 0, errors.New("TLS certificate is not trusted; log in with --ca-cert or --insecure-tls for this environment")
+			return nil, 0, notSent("TLS certificate is not trusted; log in with --ca-cert or --insecure-tls for this environment")
 		case errors.As(err, &certificate):
-			return nil, 0, errors.New("TLS certificate is invalid; check its validity or log in with --insecure-tls for this environment")
+			return nil, 0, notSent("TLS certificate is invalid; check its validity or log in with --insecure-tls for this environment")
 		case errors.As(err, &timeout) && timeout.Timeout():
 			return nil, 0, errors.New("request timed out; check the deployment network and service availability")
 		}
@@ -256,8 +279,12 @@ func validateExchange(m map[string]any, p Profile) (Profile, error) {
 	out.AccessToken = stringField(m, "access_token")
 	u, err := normalizedURL(out.PublicBaseURL)
 	expected, _ := normalizedURL(p.PublicBaseURL)
-	if err != nil || u != expected || out.EnvironmentID != p.EnvironmentID || out.EnvironmentName == "" || out.SessionID == "" || out.Scope != sessionScope {
-		return Profile{}, errors.New("session environment, entry URL or readonly scope does not match")
+	expectedScope := p.Scope
+	if expectedScope == "" {
+		expectedScope = sessionScope
+	}
+	if err != nil || u != expected || out.EnvironmentID != p.EnvironmentID || out.EnvironmentName == "" || out.SessionID == "" || !validScope(out.Scope) || out.Scope != expectedScope {
+		return Profile{}, errors.New("session environment, entry URL or requested scope does not match")
 	}
 	if _, err := time.Parse(time.RFC3339, out.ExpiresAt); err != nil {
 		return Profile{}, errors.New("server returned an invalid session expiry")
@@ -272,8 +299,8 @@ func validateExchange(m map[string]any, p Profile) (Profile, error) {
 }
 
 func validateStatus(m map[string]any, p Profile) (string, error) {
-	if stringField(m, "environment_id") != p.EnvironmentID || stringField(m, "scope") != sessionScope || stringField(m, "session_id") != p.SessionID {
-		return "", errors.New("session status environment, readonly scope or session ID does not match")
+	if stringField(m, "environment_id") != p.EnvironmentID || stringField(m, "scope") != p.Scope || !validScope(p.Scope) || stringField(m, "session_id") != p.SessionID {
+		return "", errors.New("session status environment, scope or session ID does not match")
 	}
 	expiry := stringField(m, "expires_at")
 	if _, err := time.Parse(time.RFC3339, expiry); err != nil {

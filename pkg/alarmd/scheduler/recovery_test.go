@@ -403,12 +403,166 @@ func TestQueryPermitObserverUsesOnlyFixedQueueOperationAndAdmissionFacts(t *test
 		}
 		if observation.Operation == observability.OperationReplay && facts.QueueKind == observability.QueryQueueRecovery {
 			queued = queued || observation.Result == observability.ResultStarted && facts.RecoveryWaiting == 1
-			canceled = canceled || observation.Result == observability.ResultPaused && facts.RecoveryWaiting == 0
+			canceled = canceled || observation.Result == observability.ResultPaused && facts.RecoveryWaiting == 0 &&
+				observation.ReasonCode == "QUERY_PERMIT_CANCELLED"
 		}
 		drained = drained || !facts.Admission && facts.NormalInflight == 0 && facts.RecoveryInflight == 0
 	}
 	if !queued || !canceled || !drained {
 		t.Fatalf("permit observations queued=%t canceled=%t drained=%t: %+v", queued, canceled, drained, observations)
+	}
+}
+
+// A permit not granted names why: the wait ran out at the query's
+// deadline, or recovery permits are off. Each is a word the observation
+// catalogue keeps.
+func TestAPermitNotGrantedNamesWhy(t *testing.T) {
+	clock := newMutableClock(time.Unix(200, 0))
+	var observations []observability.Observation
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		observations = append(observations, observation)
+	})
+	limits := testRecoveryLimits()
+	limits.RecoveryQueryPermits = 0
+	flights, err := NewFlightCoordinatorWithRecovery(limits, clock.Now, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = flights.AcquireQueryPermit(context.Background(),
+		execution.SlotIdentity{QueryGroup: "late", EvaluationTime: 60}, execution.OperationNormal, clock.Now())
+	_, _ = flights.AcquireQueryPermit(context.Background(),
+		execution.SlotIdentity{QueryGroup: "replay", EvaluationTime: 60}, execution.OperationReplay, clock.Now().Add(time.Minute))
+	// The wait itself is timed on its own stage, which carries no reason and
+	// feeds only the wait histogram; the refusal is the admission's.
+	var refused []observability.Observation
+	for _, observation := range observations {
+		if observation.Stage == observability.StageQueryAdmission {
+			refused = append(refused, observation)
+		}
+	}
+	want := []observability.ReasonCode{"QUERY_PERMIT_DEADLINE", "QUERY_PERMIT_RECOVERY_OFF"}
+	if len(refused) != len(want) {
+		t.Fatalf("admission observations = %+v, want one for each permit not granted", refused)
+	}
+	for index, observation := range refused {
+		if observation.ReasonCode != want[index] ||
+			observability.NormalizeReason(observation.ReasonCode, observation.Result) != want[index] {
+			t.Fatalf("observation %d reason = %q, want %q, a catalogued word", index, observation.ReasonCode, want[index])
+		}
+	}
+}
+
+// A recovery query refused its channel never reaches the physical permit, so
+// the channel's refusal is the only line that says why; it names the word
+// the process path does, and is not counted as a physical permit outcome.
+func TestAChannelNotGrantedNamesWhy(t *testing.T) {
+	var mu sync.Mutex
+	var refused []observability.Observation
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		if observation.Stage != observability.StageQueryAdmission || observation.ReasonCode == observability.ReasonNone {
+			return
+		}
+		mu.Lock()
+		refused = append(refused, observation)
+		mu.Unlock()
+	})
+	limits := testRecoveryLimits()
+	limits.RecoveryQueryPermits = 1
+	limits.MaxQueuedItemsPerQG = 1
+	flights, err := NewFlightCoordinatorWithRecovery(limits, time.Now, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	deadline := time.Now().Add(time.Minute)
+	holder, err := flights.AcquireRecoveryChannels(ctx, execution.SlotIdentity{QueryGroup: "holder", EvaluationTime: 60}, execution.OperationReplay, deadline, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, waitErr := flights.AcquireRecoveryChannels(waiting, execution.SlotIdentity{QueryGroup: "hot", EvaluationTime: 60}, execution.OperationReplay, deadline, 1)
+		done <- waitErr
+	}()
+	waitForPermitQueue(t, flights, 0, 1)
+	if _, err := flights.AcquireRecoveryChannels(ctx, execution.SlotIdentity{QueryGroup: "hot", EvaluationTime: 120}, execution.OperationReplay, deadline, 1); !errors.Is(err, ErrQueryPermitQueueFull) {
+		t.Fatalf("second waiter of one Query Group = %v, want the queue full", err)
+	}
+	if _, err := flights.AcquireRecoveryChannels(ctx, execution.SlotIdentity{QueryGroup: "late", EvaluationTime: 60}, execution.OperationRetry, time.Now().Add(-time.Second), 1); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a channel asked for past its deadline = %v", err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter = %v", err)
+	}
+	holder.Release()
+	mu.Lock()
+	defer mu.Unlock()
+	want := []observability.ReasonCode{"QUERY_PERMIT_QUEUE_FULL", "QUERY_PERMIT_DEADLINE", "QUERY_PERMIT_CANCELLED"}
+	if len(refused) != len(want) {
+		t.Fatalf("refusals = %+v, want one for each channel not granted", refused)
+	}
+	for index, observation := range refused {
+		if observation.ReasonCode != want[index] || observation.QueryPermit == nil || observation.QueryPermit.Admission {
+			t.Fatalf("refusal %d = %q admission=%v, want %q and not a physical permit outcome",
+				index, observation.ReasonCode, observation.QueryPermit != nil && observation.QueryPermit.Admission, want[index])
+		}
+	}
+}
+
+// A physical permit refused for a full queue, or given up while waiting,
+// names why and is counted as a physical permit outcome.
+func TestAPhysicalPermitNotGrantedNamesWhy(t *testing.T) {
+	var mu sync.Mutex
+	var refused []observability.Observation
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		if observation.Stage != observability.StageQueryAdmission || observation.ReasonCode == observability.ReasonNone {
+			return
+		}
+		mu.Lock()
+		refused = append(refused, observation)
+		mu.Unlock()
+	})
+	limits := testRecoveryLimits()
+	limits.ProcessQueryPermits = 1
+	limits.RecoveryQueryPermits = 0
+	limits.MaxQueuedItemsPerQG = 1
+	flights, err := NewFlightCoordinatorWithRecovery(limits, time.Now, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	deadline := time.Now().Add(time.Minute)
+	holder, err := flights.AcquireQueryPermit(ctx, execution.SlotIdentity{QueryGroup: "holder", EvaluationTime: 60}, execution.OperationNormal, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, waitErr := flights.AcquireQueryPermit(waiting, execution.SlotIdentity{QueryGroup: "hot", EvaluationTime: 60}, execution.OperationNormal, deadline)
+		done <- waitErr
+	}()
+	waitForPermitQueue(t, flights, 1, 0)
+	if _, err := flights.AcquireQueryPermit(ctx, execution.SlotIdentity{QueryGroup: "hot", EvaluationTime: 120}, execution.OperationNormal, deadline); !errors.Is(err, ErrQueryPermitQueueFull) {
+		t.Fatalf("second waiter of one Query Group = %v, want the queue full", err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter = %v", err)
+	}
+	holder.Release()
+	mu.Lock()
+	defer mu.Unlock()
+	want := []observability.ReasonCode{"QUERY_PERMIT_QUEUE_FULL", "QUERY_PERMIT_CANCELLED"}
+	if len(refused) != len(want) {
+		t.Fatalf("refusals = %+v, want one for each permit not granted", refused)
+	}
+	for index, observation := range refused {
+		if observation.ReasonCode != want[index] || observation.QueryPermit == nil || !observation.QueryPermit.Admission {
+			t.Fatalf("refusal %d = %q, want %q counted as a physical permit outcome", index, observation.ReasonCode, want[index])
+		}
 	}
 }
 

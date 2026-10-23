@@ -1,5 +1,24 @@
 # alarmd-cli
 
+登录得到本部署的运维会话（标识沿用 `deployment_ops_readonly`）：取证读取、Pod 命令执行与
+工作负载管理都在这一个会话里，不再另行申请执行权限。服务端不再接受早先单独申请的执行会话，
+带 `exec-v1.` 前缀的续期凭据按 `renewal_expired_or_revoked` 拒绝，重新登录即可。每次执行和
+管理操作都在服务端留一条审计记录（`sre_action` 日志与 `sre_actions_total` 计数）。
+
+CLI 与服务端一起升级：较早的 CLI 用固定 30 秒请求期限，短于 `pod.exec`（45 秒）和
+`slot.query`（最长 2 分钟）的执行期限，这些调用会在服务端完成前被本地切断。
+
+`invoke` 可用 `--params-file path.json` 传入嵌套 JSON 参数；`--params-file -`
+从 stdin 读取。`--stdin-file script.txt` 与 `--script-file script.txt` 等价，只把
+文件内容填入 describe 登记的 `parameter_source: stdin` 字符串参数，CLI 不执行本地
+shell。二者也支持 `-`，且不能与参数 JSON 同时消费 stdin。`--input JSON|@file`
+保持兼容，与 `--params-file` 互斥。
+
+调用前读取 describe 的权限、请求字节上限和 `execution_timeout_ms`，请求期限为
+操作期限加 `request_limits` 声明的 admission 与传输余量；未声明余量时用 5 秒，旧服务端未声明期限时保留 30 秒。每次执行只发送一次
+invoke，执行请求遇到超时、断连或损坏回执时返回 `remote_state_unknown`，并保存带请求摘要和目标的脱敏结果文件；用户先检查已有执行事实再明确重试。结果沿用
+脱敏、原子写入的私有 `meta.result_file`，保留服务端返回的目标和远端执行状态。
+
 面向运维取证的独立 Go 客户端。服务端负责操作目录、输入合同、预算和证据判定；客户端只处理环境登录、通道调用、凭据与输出。没有内置业务 operation，也不访问 K8s、Redis 或任意内部 URL。
 
 ## 安装
@@ -68,7 +87,7 @@ alarmd-cli invoke <operation> --env <environment_id> --input @input.json
 
 调用节奏：
 
-- 一次只发一个调用，不要并发。服务端每个进程同一时刻只执行一个取证读取，忙时返回 `request_budget_exceeded`；每个会话每分钟最多 30 次 invoke，超出返回 `rate_limited`。遇到这两种，稍后重试同一个调用。
+- 一次只发一个调用。服务端的既有取证、SRE 读取和执行使用各自的进程内预算，具体范围以 describe 的 `execution_pool` 与 limits 为准；忙时返回 `request_budget_exceeded`，会话限额返回 `rate_limited`。先核对回执确认请求未执行，再决定重试。
 - `catalog_changed`：操作目录在 describe 与 invoke 之间变了，这次调用没有执行。重新 describe 该操作，按新的 schema 核对参数后再 invoke。
 
 ### 3. 读结果
@@ -91,6 +110,19 @@ stdout 是一个 JSON 对象（`--help` 除外），进度和提示写在 stderr
 
 `diagnose` 和 `accept` 是 CLI 内置的组合命令，直接运行；其余都通过 `invoke <operation>` 调用。下面每条写成"问题 → 调用 → 看哪些字段"。
 
+**Pod / 原生 UQ 取证与运维**
+
+1. `describe pod.targets` 后在一个命名空间里按标签选择器发现目标（`namespace` 不填时是 alarmd 所在的命名空间；不支持跨命名空间列举），继续用 `pod.get` 的真实 UID、containerID 和 imageID；日志、执行和删除必须使用完整身份。`k8s.workloads` 也可以用 `namespace` 指定任意一个命名空间。
+2. `pod.logs` 有界读取并复核前后身份。`pod.exec` 的参数文件提供 `target`、`argv`、`timeout_ms`、`output_bytes`；脚本经 `--script-file` 填入 stdin。例如 argv 可为目标实际存在的 `/bin/sh -s`。有 `/bin/sh` 的容器由它让命令单独占一个进程组运行（镜像有 `setsid` 就用它，没有就用 shell 的作业控制；dash、busybox ash 在没有终端时会关掉作业控制），并在期限（向上取整到整秒）到时终止整个进程组，回执 `supervision` 为 `sh_group`；两者都不可用时为 `sh_pid`，只能终止命令本身，它派生的进程可能残留，而且残留的进程拿着输出时连接要等本地期限切断；期限与命令自己结束同时发生时按退出码判，143/137 为超时，其他为完成并带 `deadline_raced`。没有 `/bin/sh`（或没有 `sleep`）的容器直接执行 argv，回执 `remote_state` 为 `remote_unsupervised`、`unsupervised_reason` 为 `no_shell`/`no_sleep`：期限内结束带退出码，到期只能切断连接（`stream_cut`），命令在目标里可能还在运行。监督进程自己没起来时回执带 `bootstrap_exit_code` 和 `bootstrap_class`（只给类别，不给原文）。本 CLI 不认识的 `remote_state`（更新的服务端才有的状态）按服务端原样显示，不当作无效回执；升级 CLI 后才按名字解释。
+   管理操作：`pod.delete`（按发现时的 UID 删除，Pod 已被替换时不删）、`workload.restart`（与 kubectl rollout restart 相同）、`workload.scale`（回执写明原副本数），都按发现时的 UID 写入，目标已被替换时返回 `pod_target_changed`。
+   换镜像：`workload.set_image`（参数 `namespace`、`name`、Deployment 的 `uid`、`container`、`image`）立即返回 `receipt_id` 和原镜像，之后由 alarmd 盯滚动：新镜像起不来就自动换回原镜像；镜像被别人改了就不动（`superseded`）。改的是 alarmd 自己的 Deployment 也可以：被替换的进程交出回执，由其他进程接着盯。用 `workload.rollout`（`receipt_id`，或 `namespace`+`name` 取最近一张）读当前镜像、原镜像、滚动进度和结束状态；回执保留 7 天。能改哪些 Deployment 由通道的集群级 ServiceAccount 角色决定（与 `workload.restart` 同一个 patch 权限）；apiserver 拒绝时返回 `rollout_forbidden`。
+3. 执行回执中的 `remote_completed`、`exit_code`、输出截断与前后身份各自解释；操作成功不代表脚本成功。连接异常时 `remote_state_unknown` 表示远端事实待核对，禁止自动重试；启动阶段超时（未收到监督进程的启动回执）同样返回 `remote_state_unknown`，命令仍可能在远端运行，最长到它自己的超时；执行完成但事后身份读取失败仍是部分证据。
+4. `uq.egresses` 返回原生出口：部署没有登记时，是一个继承当前 UQ 地址、tenant/space 按请求校验的默认出口。`uq.query` 必须使用登记端点、允许的 tenant/space 和从实际页面取证得到的 QueryTs JSON。首版支持结构化 metric/log QueryTs；拒绝直接 SQL、物理存储覆盖和 BKData 旁路，不接受调用方 URL 或身份头。
+5. UQ 回执保留 actual_url、tenant/space、原始请求摘要与 HTTP/业务状态。metric 保留脱敏 native JSON 与游标；log/原始行在主题脱敏前只保留状态、数量和摘要，省略正文/携值游标并标记部分证据，内容取页面业务脱敏后的投影。时间戳使用登记单位的 10 位秒或 13 位毫秒字符串，查询窗最多 24 小时。请求摘要用于核对这次请求，跨语言摘要须先核对序列化方式。
+6. 普通 Trace 先从 `uq.egresses` 选择登记的 `trace_targets`，再 `describe uq.trace`，以 egress、target、body 调用。原生请求使用 `bkapm`、实际登记 table_id、`time_field: start_time`、秒字符串窗口、显式 limit（1–1000）和非负 from；共享表保留业务/应用的单值 eq AND 条件。返回脱敏原始 Span，时间与耗时保持微秒；`trace_page` 描述固定窗口、投影、returned/total/more，后续页显式读取。该操作沿用当前 UQ 直连，出口 URL 省略时继承 runtime UQ 地址，查询来源沿用当前 query_source。
+
+页面业务装配与授权证据由页面所在系统的诊断入口提供；部署级查询授权不代表受影响页面用户的权限。
+
 **某条策略为什么没告警**
 
 1. `alarmd-cli diagnose --env <environment_id>`：逐页读 `diagnose.environment` 并核对覆盖（退出码 3 表示覆盖不成立）。在 `result.strategies` 里找 `strategy_id` 为 `<strategy_id>` 的行，看 `verdict`、`action`、`reason` 和 `dispositions`（每条的 `scope`、`disposition`、`reason`、`field_path`、`detail`）。
@@ -107,7 +139,7 @@ stdout 是一个 JSON 对象（`--help` 除外），进度和提示写在 stderr
 
 **策略配置为什么被拒或被改写**
 
-1. `invoke strategy.get`，输入 `{"strategy_id":"<strategy_id>"}`：看 `dispositions` 里每条的 `disposition`（例如 `CONFIG_REJECTED`、`UNSUPPORTED_PHASE2_CAPABILITY`、`CONFIG_NORMALIZED`）、`reason`、`field_path` 和 `detail`。
+1. `invoke strategy.get`，输入 `{"strategy_id":"<strategy_id>"}`：看 `dispositions` 里每条的 `disposition`（例如 `CONFIG_REJECTED`、`UNSUPPORTED_PHASE2_CAPABILITY`、`CONFIG_NOTED`）、`reason`、`field_path` 和 `detail`。
 2. `invoke strategy.config`，输入 `{"view":"source","strategy_id":"<strategy_id>"}`：读当前策略缓存里的配置（`value`；凭据类字段已省略，省略了什么记在 `omitted`），按 `field_path` 对照被拒的字段。要读已发布的不可变对象时用 `view=published`：必填 `strategy_id`、`query_group`、`object_digest`，可选 `business`、`tenant`，都取自 strategy.get 的 `plans[]`；strategy.get 的 `next_call` 里 `view=published` 的那一项已经带齐，直接用它的 `params`。
 
 **数据是否迟到、首读是否读早**
@@ -117,7 +149,7 @@ stdout 是一个 JSON 对象（`--help` 除外），进度和提示写在 stderr
 
 ### 5. 安全边界
 
-- 所有操作都是只读取证，不修改部署或策略。
+- 以 describe 的 `effect` 为准：`exec` 是执行或管理操作，会改变集群里的对象，每次调用都留审计记录；不要自动重试。
 - 不要把凭据写进命令参数、对话、日志或证据。CLI 的输出不含凭据。
 - 配置目录（默认是用户配置目录下的 `alarmd-cli/`，可由 `ALARMD_CLI_CONFIG_DIR` 指定）里的 `profiles.json` 含会话和续期凭据，不要读取、复制或外传。
 - `results/` 下的结果文件是脱敏后的响应，但仍含策略、运行对象、查询条件等部署内部信息。只引用需要的片段，不要整目录外传或提交到公开仓库。
@@ -185,7 +217,7 @@ HTTPS 默认使用系统信任库。私有 CA 可通过 `auth login --ca-cert /a
 
 凭据位于平台用户配置目录下的 `alarmd-cli/profiles.json`；`ALARMD_CLI_CONFIG_DIR` 可指定独立目录。目录权限 0700、凭据/锁/结果文件 0600。响应在 `results/` 下保留，客户端不自动删除证据。勿把凭据配置目录上传到工单或公开仓库。
 
-固定边界：网络期限 30 秒；服务端响应最大 8 MiB，超限拒绝解码；参数 JSON 最大 1 MiB；授权码最大 64 KiB。没有不经服务端校验的任意 endpoint、operation 枚举或业务诊断逻辑。此版本不承诺 Windows。
+固定边界：invoke 网络期限取 describe 的操作期限、admission 期限和传输余量之和，旧服务端为 30 秒；服务端响应最大 8 MiB，超限拒绝解码；输入文件最大 1 MiB，并落实 describe 的请求和 stdin 上限；授权码最大 64 KiB。没有不经服务端校验的任意 endpoint、operation 枚举或业务诊断逻辑。此版本不承诺 Windows。
 
 ## 构建与验证
 

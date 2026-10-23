@@ -1,0 +1,29 @@
+{
+ "source": "Business records as the CMDB cache worker's business refresh builds them (pkg/bk-monitor-worker/internal/alarm/cmdbcache/business.go RefreshGlobal: a CMDB business as the search returns it with the tenant stamped, and a space business built field by field). Calendar values as alarm_backends CalendarCacheManager.refresh writes them: json.dumps of ItemDetailResource's day groups ({today, list}), each stamped with the calendar's tenant.",
+ "confidence": "constructed from the writers' source; no deployed value was read",
+ "businesses": [
+  {"case": "CMDB business, tenant stamped", "field": "2",
+   "value": "{\"bk_biz_developer\":\"\",\"bk_biz_id\":2,\"bk_biz_maintainer\":\"admin\",\"bk_biz_name\":\"blueking\",\"bk_biz_productor\":\"admin\",\"bk_biz_tester\":\"\",\"bk_supplier_account\":\"0\",\"bk_tenant_id\":\"system\",\"create_time\":\"2024-01-01T00:00:00.000+08:00\",\"default\":0,\"language\":\"1\",\"last_time\":\"2024-01-01T00:00:00.000+08:00\",\"life_cycle\":\"2\",\"operator\":\"\",\"time_zone\":\"Asia/Shanghai\"}"},
+  {"case": "space business", "field": "-3",
+   "value": "{\"bk_biz_developer\":[],\"bk_biz_id\":-3,\"bk_biz_maintainer\":[],\"bk_biz_name\":\"[demo]space\",\"bk_biz_productor\":[],\"bk_biz_tester\":[],\"bk_tenant_id\":\"system\",\"language\":\"1\",\"life_cycle\":\"2\",\"operator\":[],\"time_zone\":\"Asia/Shanghai\"}"},
+  {"case": "space business in another zone", "field": "-4",
+   "value": "{\"bk_biz_developer\":[],\"bk_biz_id\":-4,\"bk_biz_maintainer\":[],\"bk_biz_name\":\"[ny]space\",\"bk_biz_productor\":[],\"bk_biz_tester\":[],\"bk_tenant_id\":\"system\",\"language\":\"1\",\"life_cycle\":\"2\",\"operator\":[],\"time_zone\":\"America/New_York\"}"},
+  {"case": "CMDB business of another tenant", "field": "5",
+   "value": "{\"bk_biz_developer\":\"\",\"bk_biz_id\":5,\"bk_biz_maintainer\":\"ops\",\"bk_biz_name\":\"tenant business\",\"bk_biz_productor\":\"\",\"bk_biz_tester\":\"\",\"bk_supplier_account\":\"0\",\"bk_tenant_id\":\"tenant-a\",\"default\":0,\"language\":\"1\",\"life_cycle\":\"2\",\"operator\":\"\",\"time_zone\":\"UTC\"}"},
+  {"case": "record written before tenants", "field": "6",
+   "value": "{\"bk_biz_id\":6,\"bk_biz_name\":\"old business\",\"bk_biz_maintainer\":\"admin\",\"language\":\"1\",\"life_cycle\":\"2\",\"time_zone\":\"Asia/Tokyo\"}"}
+ ],
+ "calendars": [
+  {"case": "no occurrence covers the moment", "id": 11, "value": "[]"},
+  {"case": "one one-off occurrence", "id": 12,
+   "value": "[{\"today\": 1790553600, \"list\": [{\"id\": 5, \"name\": \"holiday\", \"calendar_id\": 12, \"calendar_name\": \"holidays\", \"start_time\": 1790553600, \"end_time\": 1790639999, \"update_user\": \"admin\", \"update_time\": 1790467200, \"create_user\": \"admin\", \"create_time\": 1790467200, \"repeat\": {}, \"parent_id\": null, \"is_first\": true, \"color\": \"#540ac0\", \"status\": true}], \"bk_tenant_id\": \"system\"}]"},
+  {"case": "a weekly and a one-off occurrence", "id": 13,
+   "value": "[{\"today\": 1790553600, \"list\": [{\"id\": 6, \"name\": \"weekly change\", \"calendar_id\": 13, \"calendar_name\": \"changes\", \"start_time\": 1788220800, \"end_time\": 1788224400, \"update_user\": \"admin\", \"update_time\": 1788134400, \"create_user\": \"admin\", \"create_time\": 1788134400, \"repeat\": {\"freq\": \"week\", \"interval\": 1, \"until\": null, \"every\": [1], \"exclude_date\": []}, \"parent_id\": null, \"is_first\": false, \"color\": \"#2d8cf0\", \"status\": false}, {\"id\": 7, \"name\": \"drill\", \"calendar_id\": 13, \"calendar_name\": \"changes\", \"start_time\": 1790557200, \"end_time\": 1790560800, \"update_user\": \"admin\", \"update_time\": 1790467200, \"create_user\": \"admin\", \"create_time\": 1790467200, \"repeat\": {}, \"parent_id\": null, \"is_first\": true, \"color\": \"#2d8cf0\", \"status\": true}], \"bk_tenant_id\": \"system\"}]"},
+  {"case": "value written before tenants", "id": 14,
+   "value": "[{\"today\": 1790553600, \"list\": [{\"id\": 8, \"name\": \"legacy\", \"calendar_id\": 14, \"start_time\": 1790553600, \"end_time\": 1790639999, \"repeat\": {}, \"parent_id\": null}]}]"},
+  {"case": "another tenant's day only", "id": 15,
+   "value": "[{\"today\": 1790553600, \"list\": [{\"id\": 9, \"name\": \"theirs\", \"calendar_id\": 15, \"start_time\": 1790553600, \"end_time\": 1790639999, \"repeat\": {}, \"parent_id\": null}], \"bk_tenant_id\": \"tenant-a\"}]"},
+  {"case": "a day with an empty list", "id": 16,
+   "value": "[{\"today\": 1790553600, \"list\": [], \"bk_tenant_id\": \"system\"}]"}
+ ]
+}

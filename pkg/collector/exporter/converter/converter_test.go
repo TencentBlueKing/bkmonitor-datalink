@@ -12,7 +12,11 @@ package converter
 import (
 	"testing"
 
+	"github.com/elastic/beats/libbeat/common"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 )
@@ -51,4 +55,51 @@ func TestCommonConverter(t *testing.T) {
 			Data: []string{"hello", "world"},
 		},
 	}, func(events ...define.Event) {})
+}
+
+func TestCommonConverterRumTraces(t *testing.T) {
+	conv := NewCommonConverter(&Config{})
+	t.Cleanup(conv.Clean)
+
+	traces := ptrace.NewTraces()
+	resource := traces.ResourceSpans().AppendEmpty()
+	resource.Resource().Attributes().PutString("service.name", "rum-browser")
+	spans := resource.ScopeSpans().AppendEmpty().Spans()
+	for _, name := range []string{"page.load", "resource.load"} {
+		span := spans.AppendEmpty()
+		span.SetName(name)
+		span.SetTraceID(pcommon.TraceID{1, 2, 3})
+		span.SetSpanID(pcommon.SpanID{byte(spans.Len())})
+		span.Attributes().PutString("url.path", "/home")
+	}
+	record := &define.Record{
+		RecordType:    define.RecordRumTraces,
+		RequestType:   define.RequestHttp,
+		RequestClient: define.RequestClient{IP: "192.0.2.1"},
+		Token: define.Token{
+			Original:     "rum-token",
+			BizId:        2,
+			AppName:      "rum-app",
+			TracesDataId: 1001,
+		},
+		Data: traces,
+	}
+
+	var events []define.Event
+	conv.Convert(record, func(batch ...define.Event) { events = append(events, batch...) })
+	require.Len(t, events, 2)
+	for i, event := range events {
+		assert.Equal(t, define.RecordTraces, event.RecordType())
+		assert.Equal(t, int32(1001), event.DataId())
+		assert.Equal(t, record.Token, event.Token())
+		data := event.Data()
+		assert.Equal(t, spans.At(i).Name(), data["span_name"])
+		assert.Equal(t, spans.At(i).TraceID().HexString(), data["trace_id"])
+		assert.Equal(t, spans.At(i).SpanID().HexString(), data["span_id"])
+		assert.Equal(t, map[string]any{"url.path": "/home"}, data["attributes"])
+		assert.Equal(t, common.MapStr{"service.name": "rum-browser"}, data["resource"])
+		assert.Equal(t, "192.0.2.1", data["client_ip"])
+		assert.Equal(t, int32(2), data["bk_biz_id"])
+		assert.Equal(t, "rum-app", data["app_name"])
+	}
 }

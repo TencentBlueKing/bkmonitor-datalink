@@ -6,7 +6,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -29,7 +28,7 @@ import (
 // missing line in production is a question about which process swept and
 // not about whether the sweep can be seen.
 func TestTheProductionBundleLogsTheSweepItRan(t *testing.T) {
-	var output bytes.Buffer
+	var output lockedLogBuffer
 	logger := observability.New(observability.ComponentRuntime, &output)
 	var strayKey string
 	fixture := startCutoverFixtureWith(t, nil, logger, func(ctx context.Context, client *redis.Client, cfg config.Config) {

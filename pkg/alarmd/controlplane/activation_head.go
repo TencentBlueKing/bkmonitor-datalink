@@ -30,70 +30,20 @@ import (
 // than what changed (N15, review C1/C2).
 //
 // A later build stops writing that copy: its body is a head (schema v3, no
-// Plans), and a publication cut over in pieces leaves a CutoverProgress on it.
-// This build writes the head. It also reads a body with its Plans, which the
-// build before it wrote and a rollback to it writes again:
+// Plans). This build writes the head. It also reads a body with its Plans,
+// which the build before it wrote and a rollback to it writes again:
 //
 //   - every reader that wants the head reads it through LoadActivationHead
 //     and never touches the records;
 //   - the Control Leader, which does need the records, gets them back from
-//     the open Segments when the body has none (LoadActivation);
-//   - a body carrying progress is finished in one piece on the first tick
-//     (see ScheduleActivationReconciler.Ensure), the previous content taken
-//     from what each open Segment names rather than from the manifest, which
-//     the Query Groups past the cursor are not running yet.
+//     the open Segments when the body has none (LoadActivation).
 const activationHeadSchemaVersion = "alarmd-control-activation-v3"
-
-// CutoverProgress is how far a publication cutover committed in pieces got.
-type CutoverProgress struct {
-	From            SnapshotPublicationRef `json:"from"`
-	Cursor          CutoverCursor          `json:"cursor"`
-	ChangesetDigest string                 `json:"changeset_digest"`
-	ChangesetCount  int                    `json:"changeset_count"`
-	Remaining       int                    `json:"remaining"`
-}
-
-// CutoverCursor is the last Query Group committed, in the order the pieces
-// commit in: by class, then by identity.
-type CutoverCursor struct {
-	Class      string                       `json:"class"`
-	QueryGroup execution.QueryGroupIdentity `json:"query_group"`
-}
-
-const (
-	CutoverClassRetired = "retired"
-	CutoverClassAdded   = "added"
-	CutoverClassChanged = "changed"
-)
-
-func (progress *CutoverProgress) validate(current SnapshotPublicationRef) error {
-	if progress == nil {
-		return nil
-	}
-	switch progress.Cursor.Class {
-	case CutoverClassRetired, CutoverClassAdded, CutoverClassChanged:
-	default:
-		return errors.New("alarmd controlplane: cutover progress names an unknown class")
-	}
-	// From is empty only for a first activation cut in pieces: the Query
-	// Groups past the cursor ran nothing before it.
-	if progress.From != (SnapshotPublicationRef{}) {
-		if progress.From.validate() != nil || progress.From.PublicationEpoch >= current.PublicationEpoch {
-			return errors.New("alarmd controlplane: cutover progress must come from an earlier publication")
-		}
-	}
-	if progress.Cursor.QueryGroup == "" || progress.ChangesetDigest == "" || progress.ChangesetCount <= 0 ||
-		progress.Remaining < 0 || progress.Remaining >= progress.ChangesetCount {
-		return errors.New("alarmd controlplane: incomplete cutover progress")
-	}
-	return nil
-}
 
 // LoadActivationHead is the activation without its Plan records: the
 // publication it runs, its revision, the Draining projection, the active set
-// reference, the held-back accounting and any cutover progress. Every reader
-// but the Control Leader's own activation and cutover wants no more than
-// this, and a head is what a later build's body is.
+// reference and the held-back accounting. Every reader but the Control
+// Leader's own activation and cutover wants no more than this, and a head is
+// what a later build's body is.
 func (repository *RedisCatalogRepository) LoadActivationHead(ctx context.Context) (ActivationState, error) {
 	entry, err := repository.loadParsedActivation(ctx)
 	if err != nil {
@@ -103,10 +53,6 @@ func (repository *RedisCatalogRepository) LoadActivationHead(ctx context.Context
 	if state.Pending != nil {
 		pending := *state.Pending
 		state.Pending = &pending
-	}
-	if state.CutoverProgress != nil {
-		progress := *state.CutoverProgress
-		state.CutoverProgress = &progress
 	}
 	state.Plans = nil
 	state.Draining = slices.Clone(state.Draining)
@@ -119,37 +65,52 @@ func (repository *RedisCatalogRepository) LoadActivationHead(ctx context.Context
 // batch is a few MB at most.
 const openSegmentReadBatch = 256
 
-// readOpenSegments reads the open Segment of each Query Group. A Query Group
-// with no timeline, or none open (retired, closed), is left out: it runs
-// nothing, which is exactly what the answer is about.
+// readOpenSegments reads the open Segment of each Query Group and hands it
+// to visit as its timeline is decoded, one at a time. Each caller keeps what
+// it uses of a Segment - its Plan records, or only the content it names -
+// and the rest goes with the decoded timeline, which only the timeline cache
+// keeps, within its bound: a read of the whole active set holds at once what
+// its caller keeps, not every Segment. A Query Group with no timeline, or
+// none open (retired, closed), is not visited: it runs nothing, which is
+// exactly what the answer is about.
 //
-// A timeline that does not decode is not left out. Taken for absent, a Query
-// Group of the current publication would pass for one to add, and the
-// cutover script, which adds only where no timeline is, would refuse the
-// write on every tick; and its records would vanish from the body written
-// next. It is refused by name instead: a Worker cannot run it either, and
-// deleting the key lets the next cutover open it again.
+// A timeline that does not decode is never taken for absent. Taken for
+// absent, a Query Group of the current publication would pass for one to
+// add, and the cutover script, which adds only where no timeline is, would
+// refuse the write on every tick. Without undecodable the read is refused by
+// name; with it, the Query Group and its bytes are handed there and the read
+// goes on with the rest - the caller names it as unread, never as absent.
+// Only a decode failure goes there: a read that fails, or a reply that is an
+// error, fails the read whichever is given, because it says nothing about
+// the timeline.
 func (repository *RedisCatalogRepository) readOpenSegments(
 	ctx context.Context, identities []execution.QueryGroupIdentity, version controlVersion,
-) (map[execution.QueryGroupIdentity]persistedScheduleSegment, error) {
+	visit func(execution.QueryGroupIdentity, persistedScheduleSegment) error,
+	skip func(execution.QueryGroupIdentity, SkippedTimelineReason),
+) error {
 	// Read live, not from the timeline cache: the cache is keyed by the
 	// activation header, and a timeline can be rewritten under an unchanged
-	// header (the repair subcommand does). What this answers decides what
+	// header (a write outside the cutover does). What this answers decides what
 	// the next activation writes, so it is not answered from a copy that may
-	// predate such a write. It is rare - a head this process did not write,
-	// or a cutover in progress - and what it reads refreshes the cache.
+	// predate such a write. It is rare - a head this process did not write -
+	// and what it reads refreshes the cache.
 	repository.adoptControlVersion(ctx, version)
 	counters := &repository.controlReads.timeline
-	result := make(map[execution.QueryGroupIdentity]persistedScheduleSegment, len(identities))
-	accept := func(identity execution.QueryGroupIdentity, timeline persistedScheduleTimeline) {
+	accept := func(identity execution.QueryGroupIdentity, timeline persistedScheduleTimeline) error {
 		if timeline.RetiredAt != nil || len(timeline.Segments) == 0 {
-			return
+			return nil
 		}
 		if open := timeline.Segments[len(timeline.Segments)-1]; open.Schedule.Segment.End == nil {
-			result[identity] = open
+			return visit(identity, open)
 		}
+		return nil
 	}
 	missing := identities
+	var reading *cacheReading
+	if version.known {
+		reading = repository.controlCache.announceTimelines(len(missing))
+		defer reading.settle()
+	}
 	for start := 0; start < len(missing); start += openSegmentReadBatch {
 		batch := missing[start:min(start+openSegmentReadBatch, len(missing))]
 		replies := make([]*redis.StringCmd, len(batch))
@@ -159,87 +120,58 @@ func (repository *RedisCatalogRepository) readOpenSegments(
 			}
 			return nil
 		}); err != nil && !errors.Is(err, redis.Nil) {
-			return nil, activationDependencyIO(err)
+			return activationDependencyIO(err)
 		}
 		for index, identity := range batch {
 			payload, err := replies[index].Bytes()
 			if errors.Is(err, redis.Nil) {
+				// The key is not there at all. With skip it is named: an active
+				// Query Group without a timeline runs nothing, and its Plans
+				// have no record here, which the caller must read as unread
+				// rather than gone.
+				if skip != nil {
+					skip(identity, SkippedTimelineAbsent)
+				}
 				continue
 			}
 			if err != nil {
-				return nil, activationDependencyIO(err)
+				return activationDependencyIO(err)
 			}
 			timeline, err := decodeScheduleTimeline(identity, payload)
+			if err != nil && skip != nil {
+				skip(identity, skippedTimelineReason(payload))
+				continue
+			}
 			if err != nil {
-				return nil, &DeterministicScheduleError{Err: fmt.Errorf(
-					"the timeline of Query Group %s does not decode (%w); a cutover in progress cannot tell what it runs "+
+				return &DeterministicScheduleError{Err: fmt.Errorf(
+					"the timeline of Query Group %s does not decode (%w); the activation cannot tell what it runs "+
 						"until the key is repaired or deleted, after which it is opened again", identity, err)}
 			}
 			counters.misses.Add(1)
 			if version.known {
-				repository.controlCache.storeTimeline(version.header, identity, timeline, len(payload))
+				repository.controlCache.storeTimeline(reading, version.header, identity, timeline, len(payload))
 			}
-			accept(identity, timeline)
+			if err := accept(identity, timeline); err != nil {
+				return err
+			}
 		}
 	}
-	return result, nil
+	return nil
 }
 
-// openSegmentRefs is the output context refs in force on a Segment: the
-// last revision's when it has any, else the ones it opened with.
-func openSegmentRefs(segment persistedScheduleSegment) []execution.OutputContextRef {
-	refs := segment.Schedule.Segment.OutputContextRefs
-	if count := len(segment.Schedule.Segment.OutputContextRevisions); count > 0 {
-		refs = segment.Schedule.Segment.OutputContextRevisions[count-1].Refs
-	}
-	return refs
-}
-
-// activeOpenSegments reads the open Segments of the Query Groups the
-// activation may be running. That is its active set; and while a cutover is
-// in progress, every Query Group of the current publication as well. A later
-// build writes the active set once, after the last piece of a class, so a
-// Query Group added by an earlier piece of that class has its timeline and
-// is not in the set yet: taken from the set alone it would pass for one to
-// add, and the cutover script refuses to add over a timeline that is there.
-// A draining Query Group has retired its timeline and has no open Segment,
-// so it is not asked about.
-func (repository *RedisCatalogRepository) activeOpenSegments(
-	ctx context.Context, state ActivationState,
-) (map[execution.QueryGroupIdentity]persistedScheduleSegment, error) {
-	version, err := repository.readControlVersion(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return repository.activeOpenSegmentsAt(ctx, state, version)
-}
-
-// activeOpenSegmentsAt is activeOpenSegments under a header the caller
-// already read.
+// activeOpenSegmentsAt reads the open Segments of the activation's active
+// set, under a header the caller already read. A draining Query Group has
+// retired its timeline and has no open Segment, so it is not asked about.
 func (repository *RedisCatalogRepository) activeOpenSegmentsAt(
 	ctx context.Context, state ActivationState, version controlVersion,
-) (map[execution.QueryGroupIdentity]persistedScheduleSegment, error) {
+	visit func(execution.QueryGroupIdentity, persistedScheduleSegment) error,
+	skip func(execution.QueryGroupIdentity, SkippedTimelineReason),
+) error {
 	identities, err := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if state.CutoverProgress != nil {
-		manifest, err := repository.LoadCatalogManifest(ctx, state.Current.SnapshotRevision)
-		if err != nil {
-			return nil, err
-		}
-		seen := make(map[execution.QueryGroupIdentity]struct{}, len(identities)+len(manifest.QueryGroups))
-		for _, identity := range identities {
-			seen[identity] = struct{}{}
-		}
-		for _, entry := range manifest.QueryGroups {
-			if _, listed := seen[entry.QueryGroup]; !listed && entry.QueryGroup != "" {
-				seen[entry.QueryGroup] = struct{}{}
-				identities = append(identities, entry.QueryGroup)
-			}
-		}
-	}
-	return repository.readOpenSegments(ctx, identities, version)
+	return repository.readOpenSegments(ctx, identities, version, visit, skip)
 }
 
 // materializeActivationPlans gives a head body back its Plan records, from
@@ -247,92 +179,48 @@ func (repository *RedisCatalogRepository) activeOpenSegmentsAt(
 // one this build's Control Leader works with, so it is labelled with the
 // schema this build writes: the next write persists it with its records.
 //
-// A Query Group whose open Segment cannot be read contributes no records.
-// Held back and without an open Segment, it ran nothing before either; held
-// back with one, its records are on that Segment.
+// A Query Group whose timeline has no open Segment contributes no records:
+// held back without one, it ran nothing before either; held back with one,
+// its records are on that Segment.
+//
+// A Query Group whose timeline does not decode, or whose key is not there at
+// all, contributes none either, and is named in the state's SkippedTimelines
+// and counted, so that one bad or missing key leaves the activation loadable
+// for every other Query Group and the Leader can see which one to rebuild
+// (Ensure). A missing key used to pass unnamed: the Query Group ran nothing,
+// and the first cutover found its Plans with no record and failed whole. A
+// read that fails is neither, and fails this as before.
 func (repository *RedisCatalogRepository) materializeActivationPlans(
 	ctx context.Context, state ActivationState, version controlVersion,
 ) (ActivationState, error) {
-	segments, err := repository.activeOpenSegmentsAt(ctx, state, version)
-	if err != nil {
-		return ActivationState{}, err
-	}
-	plans := make([]PlanActivationRecord, 0, len(segments))
+	var plans []PlanActivationRecord
+	var skipped []SkippedTimeline
 	seen := make(map[execution.PlanKey]struct{})
-	for _, segment := range segments {
+	skip := func(identity execution.QueryGroupIdentity, reason SkippedTimelineReason) {
+		skipped = append(skipped, SkippedTimeline{QueryGroup: identity, Reason: reason})
+	}
+	if err := repository.activeOpenSegmentsAt(ctx, state, version, func(_ execution.QueryGroupIdentity, segment persistedScheduleSegment) error {
 		for _, record := range segment.Plans {
 			if _, duplicate := seen[record.Fact.Key()]; duplicate {
-				return ActivationState{}, &PersistedActivationCorruptError{
+				return &PersistedActivationCorruptError{
 					Err: fmt.Errorf("Plan %v is open in two Query Groups", record.Fact.Key())}
 			}
 			seen[record.Fact.Key()] = struct{}{}
 			plans = append(plans, record)
 		}
+		return nil
+	}, skip); err != nil {
+		return ActivationState{}, err
 	}
 	sort.Slice(plans, func(i, j int) bool { return lessPlanIdentity(plans[i].Fact.Plan, plans[j].Fact.Plan) })
 	state.SchemaVersion = activationSchemaVersion
 	state.Plans = plans
+	state.SkippedTimelines = skipped
+	repository.skippedTimelines.note(skipped)
 	if err := validateActivationState(state); err != nil {
 		return ActivationState{}, &PersistedActivationCorruptError{Err: err}
 	}
 	return state, nil
-}
-
-// activatedContentFromOpenSegments is the content the activation runs when
-// the manifest of its current publication does not say: while a cutover is
-// in progress the Query Groups past the cursor still run the content they
-// ran before it. Each open Segment names its own content, so the answer is
-// read off them - the Query Groups that have one, with the digest and the
-// output contexts it names.
-func (repository *RedisCatalogRepository) activatedContentFromOpenSegments(
-	ctx context.Context, activation ActivationState,
-) (activatedContent, error) {
-	segments, err := repository.activeOpenSegments(ctx, activation)
-	if err != nil {
-		return activatedContent{}, err
-	}
-	content := activatedContent{
-		groups:   make(map[execution.QueryGroupIdentity]QueryGroup, len(segments)),
-		digests:  make(map[execution.QueryGroupIdentity]execution.ObjectDigest, len(segments)),
-		contexts: make(map[execution.PlanIdentity]execution.OutputContextDigest),
-		complete: true, source: "open_segments",
-	}
-	for identity, segment := range segments {
-		content.groups[identity] = QueryGroup{Identity: identity}
-		content.digests[identity] = segment.Schedule.Segment.ObjectDigest
-		for _, ref := range openSegmentRefs(segment) {
-			content.contexts[ref.Plan] = ref.Digest
-		}
-	}
-	return content, nil
-}
-
-// ApplyCutoverProgress is the content the Query Groups run while a cutover
-// is in progress: what each open Segment names, for the Query Groups of the
-// active set that have one. The view, the content scopes and the split
-// census read this instead of the manifest then, since the manifest names
-// content the Query Groups past the cursor are not running yet. Without
-// progress it returns content as given.
-func (repository *RedisCatalogRepository) ApplyCutoverProgress(
-	ctx context.Context, state ActivationState, content map[execution.QueryGroupIdentity]ContentEntry,
-) (map[execution.QueryGroupIdentity]ContentEntry, error) {
-	if state.CutoverProgress == nil {
-		return content, nil
-	}
-	segments, err := repository.activeOpenSegments(ctx, state)
-	if err != nil {
-		return nil, err
-	}
-	running := make(map[execution.QueryGroupIdentity]ContentEntry, len(segments))
-	for identity, segment := range segments {
-		plans := make([]execution.PlanKey, 0, len(segment.Plans))
-		for _, record := range segment.Plans {
-			plans = append(plans, record.Fact.Key())
-		}
-		running[identity] = ContentEntry{Digest: segment.Schedule.Segment.ObjectDigest, Plans: plans,
-			Refs: append([]execution.OutputContextRef(nil), openSegmentRefs(segment)...)}
-	}
-	return running, nil
 }
 
 // encodeActivationHead is the body this build writes: the activation
@@ -371,7 +259,3 @@ func (written *writtenActivation) lookup(payload string) (ActivationState, bool)
 	}
 	return (&parsedActivation{state: *written.state}).cloneState(), true
 }
-
-// ErrCutoverInProgress refuses an operation that would act on the current
-// publication's manifest while Query Groups are still running the one before.
-var ErrCutoverInProgress = errors.New("alarmd controlplane: CUTOVER_IN_PROGRESS: a publication cutover has not finished")

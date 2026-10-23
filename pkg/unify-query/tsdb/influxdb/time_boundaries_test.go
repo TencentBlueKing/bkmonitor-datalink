@@ -70,7 +70,7 @@ func TestInfluxSeriesTimeBoundaries(t *testing.T) {
 			go func() { _ = server.Serve(listener) }()
 			t.Cleanup(server.Stop)
 			redisServer := miniredis.RunT(t)
-			require.NoError(t, uqredis.SetInstance(context.Background(), "time-boundaries", &goredis.UniversalOptions{Addrs: []string{redisServer.Addr()}}))
+			require.NoError(t, uqredis.SetInstance(context.Background(), "", "time-boundaries", &goredis.UniversalOptions{Addrs: []string{redisServer.Addr()}}))
 			router := influxrouter.GetInfluxDBRouter()
 			require.NoError(t, router.ReloadRouter(context.Background(), "time-boundaries", []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}))
 			t.Cleanup(func() { require.NoError(t, router.Stop()) })

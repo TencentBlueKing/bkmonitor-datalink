@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -129,8 +130,9 @@ func activationCachePayloadAt(t *testing.T, draining int, revision uint64) strin
 	t.Helper()
 	p := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "1"}
 	current := SnapshotPublicationRef{SnapshotRevision: "current", PublicationEpoch: 1}
-	s := ActivationState{SchemaVersion: legacyActivationSchemaVersion, RecordRevision: revision, Current: current,
-		Pending: &SnapshotPublicationRef{SnapshotRevision: "pending", PublicationEpoch: 2},
+	s := ActivationState{SchemaVersion: activationSchemaVersion, RecordRevision: revision, Current: current,
+		ActiveQGSetRef: ActiveQueryGroupSetRef{SchemaVersion: activeQueryGroupSetSchemaVersion, Digest: strings.Repeat("d", 64)},
+		Pending:        &SnapshotPublicationRef{SnapshotRevision: "pending", PublicationEpoch: 2},
 		Plans: []PlanActivationRecord{{Publication: current, Fact: execution.PlanActivationFact{Plan: p, Selection: execution.ActivationCurrent,
 			Selected: execution.ActivatedPlan{Identity: p, StateGeneration: "state", StateApplyEpoch: 1, ScheduleRevision: "schedule", RequiredFullSlots: 1}}}}}
 	for i := 0; i < draining; i++ {
@@ -192,7 +194,7 @@ func TestActivationVersionCacheReadsBodyOncePerHeader(t *testing.T) {
 	if got := c.getCount(r.activationKey()); got != 1 {
 		t.Fatalf("warm reads fetched activation body: total=%d, want 1", got)
 	}
-	if allocs > 40 {
+	if !racedetector.Enabled && allocs > 40 {
 		t.Fatalf("warm read allocations=%.0f, want <=40 without repeated payload parsing or body transfer", allocs)
 	}
 	stats := r.ControlReadCacheStats().Activation

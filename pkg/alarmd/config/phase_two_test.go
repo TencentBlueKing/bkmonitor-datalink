@@ -19,16 +19,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
-func TestDefaultPhaseTwoInputUsesGoAccessWithoutPhaseOneCoordinates(t *testing.T) {
-	cfg := DefaultPhaseTwoInput()
-	if cfg.Mode != InputModeGoAccess {
-		t.Fatalf("default phase-two input = %+v", cfg)
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-}
-
 func TestDefaultPhaseTwoRegistrationSurvivesShortStoreOutage(t *testing.T) {
 	worker := Default().PhaseTwo.Worker
 	if worker.RegistrationTTL.Duration() != 60*time.Second || worker.RegistrationRenewInterval.Duration() != 10*time.Second {
@@ -85,21 +75,12 @@ func TestDefaultPhaseTwoRuntimeHasBoundedLifecycleBudgets(t *testing.T) {
 // completePhaseTwoProductionConfig fills in the coordinates only a deployment
 // knows, leaving everything the process decides at its derived value.
 func completePhaseTwoProductionConfig(cfg Config) Config {
-	accessBKData := false
 	cfg.PhaseTwo.Worker.ID = "alarmd-worker-0"
 	cfg.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
 	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
 	cfg.PhaseTwo.Access.QuerySource = "alarmd"
 	cfg.PhaseTwo.Control.ProviderRoute = "unify-query-primary"
 	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = &accessBKData
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = []string{}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter = PhaseTwoRuntimeFilterConfig{
-		FieldName: "device_type", Values: []string{},
-	}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemNetworkFilter = PhaseTwoRuntimeFilterConfig{
-		FieldName: "device_name", Values: []string{},
-	}
 	return cfg
 }
 
@@ -181,9 +162,6 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 		"provider retained overflow": func(cfg *Config) {
 			cfg.PhaseTwo.Coordinator.MaxRetainedBytes = ^uint64(0)
 		},
-		"provider record overflow": func(cfg *Config) {
-			cfg.PhaseTwo.Coordinator.MaxSeries = ^uint64(0)
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := valid
@@ -197,9 +175,9 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 
 func TestLoadPhaseTwoWorkerIdentityUsesDeploymentEnvironmentBeforeYAML(t *testing.T) {
 	t.Setenv(PhaseTwoWorkerIDEnvironment, "alarmd-phase-two-7d9f8")
-	cfg, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker")))
+	cfg, err := LoadWithRoles(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker")), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	if cfg.PhaseTwo.Worker.ID != "alarmd-phase-two-7d9f8" {
 		t.Fatalf("worker ID = %q, want deployment identity", cfg.PhaseTwo.Worker.ID)
@@ -221,7 +199,7 @@ func TestLoadRefusesWrittenCapacityBudgets(t *testing.T) {
 		"tick interval":   "  scheduler:\n    tick_interval: 1s\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("worker")+written)); err == nil {
+			if _, err := LoadWithRoles(writeConfig(t, validGoAccessRuntimeConfigYAML("worker")+written), nil); err == nil {
 				t.Fatal("a written capacity budget must be refused, not obeyed")
 			}
 		})
@@ -272,9 +250,9 @@ func TestLoadPhaseTwoWorkerIdentityFallsBackToYAML(t *testing.T) {
 		}
 		_ = os.Unsetenv(PhaseTwoWorkerIDEnvironment)
 	})
-	cfg, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker")))
+	cfg, err := LoadWithRoles(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker")), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	if cfg.PhaseTwo.Worker.ID != "yaml-worker" {
 		t.Fatalf("worker ID = %q, want YAML fallback", cfg.PhaseTwo.Worker.ID)
@@ -283,22 +261,19 @@ func TestLoadPhaseTwoWorkerIdentityFallsBackToYAML(t *testing.T) {
 
 func TestLoadPhaseTwoWorkerIdentityRejectsNonCanonicalDeploymentEnvironment(t *testing.T) {
 	t.Setenv(PhaseTwoWorkerIDEnvironment, " alarmd-phase-two-0 ")
-	if _, err := Load(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker"))); err == nil ||
+	if _, err := LoadWithRoles(writeConfig(t, validGoAccessRuntimeConfigYAML("yaml-worker")), nil); err == nil ||
 		!strings.Contains(err.Error(), "worker identity") {
-		t.Fatalf("Load() error = %v, want deployment identity rejection", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v, want deployment identity rejection", err)
 	}
 }
 
 func validGoAccessRuntimeConfigYAML(workerID string) string {
-	return fmt.Sprintf(`input:
-  mode: go_access
-http:
+	return fmt.Sprintf(`http:
   listen: 127.0.0.1:8080
 kafka:
   brokers: [127.0.0.1:9092]
   trigger_event:
     topic: alarmd-trigger-event
-  allowed_output_topics: [alarmd-trigger-event, alarmd_0bkmonitor_backend_event]
   legacy_adapter:
     topic: alarmd_0bkmonitor_backend_event
     snapshot_prefix: alarmd-test
@@ -314,46 +289,46 @@ phase_two:
   control:
     strategy_cache_prefix: alarm-config
     timezone: Asia/Shanghai
-    legacy_query_runtime:
-      access_bk_data: false
-      bkdata_cmdb_level_tables: []
-      system_disk_filter:
-        field_name: device_type
-        values: []
   access:
     uq_endpoint: http://unify-query.service
     query_source: alarmd
 `, workerID)
 }
 
-func TestRestartMarginCoversTheReplayWindow(t *testing.T) {
+// The state key lifetimes are the program's: the restart margin is the
+// replay window, the floor is that margin, the ceiling is StateMaxTTL, and
+// none of them is a values key any more -- a file that still sets one is
+// refused by the strict decoder, by the key's name.
+func TestStateKeyLifetimesAreDerivedAndNotValuesKeys(t *testing.T) {
 	cfg := completePhaseTwoProductionConfig(validGoAccessConfigObject())
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("the default configuration does not validate: %v", err)
 	}
-	if cfg.Redis.RestartMargin.Duration() < cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration() {
-		t.Fatalf("default restart_margin %s does not cover max_replay_age %s",
-			cfg.Redis.RestartMargin.Duration(), cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration())
+	if cfg.Redis.RestartMargin != cfg.PhaseTwo.Scheduler.MaxReplayAge || cfg.Redis.MinTTL != cfg.Redis.RestartMargin ||
+		cfg.Redis.MaxTTL.Duration() != StateMaxTTL {
+		t.Fatalf("lifetimes = margin %s, floor %s, ceiling %s; want the replay window %s twice and %s",
+			cfg.Redis.RestartMargin.Duration(), cfg.Redis.MinTTL.Duration(), cfg.Redis.MaxTTL.Duration(),
+			cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(), StateMaxTTL)
 	}
-	narrowed := completePhaseTwoProductionConfig(validGoAccessConfigObject())
-	narrowed.Redis.RestartMargin = Duration(narrowed.PhaseTwo.Scheduler.MaxReplayAge.Duration() - time.Second)
-	err := narrowed.Validate()
-	if err == nil || !strings.Contains(err.Error(), "restart_margin") {
-		t.Fatalf("a restart margin narrower than the replay window was accepted: %v", err)
-	}
-	// The message is read by whoever is holding a deployment that will not
-	// start. It has to carry both durations, because neither is visible from
-	// the values file alone, and it has to say which half is fixed: without
-	// that the obvious move is to edit max_replay_age, which a values file
-	// cannot set.
-	for _, want := range []string{
-		narrowed.Redis.RestartMargin.Duration().String(),
-		narrowed.PhaseTwo.Scheduler.MaxReplayAge.Duration().String(),
-		"fixed replay window",
-		"cannot set",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the rejection does not tell the operator %q: %v", want, err)
+	for _, key := range []string{"restart_margin", "min_ttl", "max_ttl"} {
+		if _, err := LoadWithRoles(writeConfig(t, "redis:\n  "+key+": 10m\n"), nil); err == nil || !strings.Contains(err.Error(), key) {
+			t.Fatalf("redis.%s in a values file: error = %v, want it refused by name", key, err)
 		}
+	}
+}
+
+// The output's largest message is the program's: a values file that still
+// sets it is refused by the strict decoder, naming the key, and the default
+// still admits the largest trigger evidence.
+func TestTheOutputMessageBoundIsNotAValuesKey(t *testing.T) {
+	cfg := completePhaseTwoProductionConfig(validGoAccessConfigObject())
+	if cfg.Kafka.TriggerEvent.MaxMessageBytes != defaultOutputMaxMessageBytes ||
+		cfg.Kafka.TriggerEvent.MaxMessageBytes < cfg.Limits.Trigger.MaxEvidenceBytesPerEvent {
+		t.Fatalf("output bound = %d, want %d and at least the evidence bound %d",
+			cfg.Kafka.TriggerEvent.MaxMessageBytes, defaultOutputMaxMessageBytes, cfg.Limits.Trigger.MaxEvidenceBytesPerEvent)
+	}
+	if _, err := LoadWithRoles(writeConfig(t, "kafka:\n  trigger_event:\n    max_message_bytes: 1048576\n"), nil); err == nil ||
+		!strings.Contains(err.Error(), "max_message_bytes") {
+		t.Fatalf("kafka.trigger_event.max_message_bytes in a values file: error = %v, want it refused by name", err)
 	}
 }

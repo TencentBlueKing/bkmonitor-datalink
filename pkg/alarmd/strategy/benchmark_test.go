@@ -19,7 +19,7 @@ func BenchmarkCompiledPlanReadOnlyViews(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		readOnlyLevelsSink = compiled.Levels()
+		readOnlyLevelsSink = compiled.Levels().Copy()
 		readOnlyDetectorsSink = readOnlyLevelsSink[0].Detectors()
 		readOnlyPredicateSink = readOnlyDetectorsSink[0].Predicate()
 	}

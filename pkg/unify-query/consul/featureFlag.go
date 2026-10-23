@@ -32,3 +32,38 @@ func GetFeatureFlagsPath() string {
 func GetFeatureFlags() ([]byte, error) {
 	return GetKVData(GetFeatureFlagsPath())
 }
+
+// GetFeatureFlagsContext 获取特性开关配置，并允许取消阻塞中的 Consul 请求。
+func GetFeatureFlagsContext(ctx context.Context) ([]byte, error) {
+	return GetKVDataContext(ctx, GetFeatureFlagsPath())
+}
+
+// FeatureFlagProvider 适配器，实现 service/featureFlag.FeatureFlagProvider 接口
+type FeatureFlagProvider struct{}
+
+// NewFeatureFlagProvider 创建 Consul 特性开关提供者
+func NewFeatureFlagProvider() *FeatureFlagProvider {
+	return &FeatureFlagProvider{}
+}
+
+// GetFeatureFlags 获取特性开关配置
+func (p *FeatureFlagProvider) GetFeatureFlags(ctx context.Context) ([]byte, error) {
+	data, err := GetFeatureFlagsContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return []byte("{}"), nil
+	}
+	return data, nil
+}
+
+// WatchFeatureFlags 监听特性开关变更
+func (p *FeatureFlagProvider) WatchFeatureFlags(ctx context.Context) (<-chan any, error) {
+	return WatchFeatureFlags(ctx)
+}
+
+// GetFeatureFlagsPath 获取特性开关的存储路径
+func (p *FeatureFlagProvider) GetFeatureFlagsPath() string {
+	return GetFeatureFlagsPath()
+}

@@ -112,7 +112,7 @@ func TestObjectsEmptyEveryRoundAreListedAfterAnHourNotAfterARoundCount(t *testin
 	// Returned records once, then empty for two hours: the data side's line
 	// only. The two kinds are told apart by whether records were ever seen,
 	// and the hour does not move an object from one to the other.
-	tracker.Observe(context.Background(), dataAt("qg-stopped", "8930", at.at))
+	tracker.Observe(context.Background(), dataAt("qg-stopped", "854", at.at))
 	emptyRounds(tracker, at, "qg-stopped", period, 2*time.Hour)
 	rows := tracker.NoData()
 	if _, listed := rowsOfKind(rows, KindEmptyEveryRound)["qg-stopped"]; listed {
@@ -129,7 +129,7 @@ func TestObjectsEmptyEveryRoundAreListedAfterAnHourNotAfterARoundCount(t *testin
 	// gate, "never saw data" is its predicate, and the second is what keeps
 	// a slow object that did see data off it.
 	slow := 35 * time.Minute // two empty rounds, seventy minutes: past the hour, below the round count
-	tracker.Observe(context.Background(), dataAt("qg-slow-seen", "8931", at.at))
+	tracker.Observe(context.Background(), dataAt("qg-slow-seen", "855", at.at))
 	if few := emptyRounds(tracker, at, "qg-slow-seen", slow, 61*time.Minute); few >= DefaultDegradedRounds {
 		t.Fatalf("slow object completed %d empty rounds, want fewer than the data side's %d so only the predicate decides", few, DefaultDegradedRounds)
 	}

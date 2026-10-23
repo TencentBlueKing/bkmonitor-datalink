@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 // A pairing is the durable half of an authorization: the administrator key
@@ -106,11 +108,11 @@ func (m *Manager) ActivePairings(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	if len(result) != 2 {
-		return 0, storeUnavailable()
+		return 0, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
 	}
 	count, ok := result[1].(int64)
 	if !ok {
-		return 0, storeUnavailable()
+		return 0, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
 	}
 	return count, nil
 }
@@ -166,7 +168,7 @@ func (m *Manager) Refresh(ctx context.Context, refreshToken string) (Renewal, er
 		m.count(CountRenewalKeyRotated)
 		return Renewal{}, failure("renewal_admin_key_rotated", "The deployment's administrator key changed since this CLI was paired; authorize again from the authorization page.", 401)
 	}
-	record, _, err := resultRecord(result)
+	record, _, err := m.resultRecord(result)
 	if ErrorCode(err) == "auth_expired_or_revoked" {
 		m.count(CountRenewalExpired)
 		return Renewal{}, renewalFailure()
@@ -206,7 +208,7 @@ func (m *Manager) Upgrade(ctx context.Context, bearer string) (string, string, e
 		m.count(CountPairingsRefused)
 		return "", "", pairingsFull()
 	}
-	if _, _, err := resultRecord(result); err != nil {
+	if _, _, err := m.resultRecord(result); err != nil {
 		return "", "", err
 	}
 	m.count(CountPairingsIssued)
@@ -242,7 +244,7 @@ func (m *Manager) RevokeAll(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	if len(result) != 3 {
-		return 0, storeUnavailable()
+		return 0, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
 	}
 	pairings, _ := result[2].(int64)
 	m.count(CountRevokedAll)

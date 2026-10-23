@@ -169,6 +169,11 @@ func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if event.RecordRef.Dimensions == nil || event.Observed.Values == nil {
 		return invalid("trigger_event", "dimensions and observed values must be objects")
 	}
+	// The same spelling as business_id: the attribution falls back to the
+	// Plan's own business, so whatever business_id admits this admits.
+	if event.AttributedBusinessID != "" && (!canonicalSignedDecimalPattern.MatchString(event.AttributedBusinessID) || event.AttributedBusinessID == "0") {
+		return invalid("trigger_event.attributed_business_id", "must be a canonical non-zero decimal when present")
+	}
 	if err := validateSuccessfulLevelResultsV1(event.LevelResults); err != nil {
 		return err
 	}
@@ -247,9 +252,15 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 	if header.Schema.Minor == 2 {
 		required = append(required, "dedupe_md5")
 	}
-	object, err := validateOutputHeaderV1(payload, "trigger_event", TriggerEventSchemaV1, required)
+	// attributed_business_id is optional in every minor: a global business
+	// Plan's events carry it and no other Plan's do, and a reader must take
+	// both. Present, it is never null.
+	object, err := validateOutputHeaderV1(payload, "trigger_event", TriggerEventSchemaV1, required, "attributed_business_id")
 	if err != nil {
 		return nil, err
+	}
+	if raw, present := object["attributed_business_id"]; present && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, invalid("trigger_event.attributed_business_id", "must be omitted instead of null")
 	}
 	if header.Schema.Minor >= 1 {
 		if _, err := validateJSONObjectFields(object["strategy_ref"], "trigger_event.strategy_ref", []string{"bk_tenant_id", "strategy_bk_biz_id", "strategy_id", "strategy_revision"}, nil, false); err != nil {
@@ -447,147 +458,8 @@ func aggregateTriggerEventV1(results []LevelResultV1) (string, uint32, error) {
 	return kind, primary, nil
 }
 
-func BuildExecutionSummaryV1(summary ExecutionSummaryV1) (*ExecutionSummaryV1, error) {
-	summary.Schema = Schema{Name: ExecutionSummarySchemaV1, Major: 1, Minor: 0}
-	summary.RequiredFeatures = []string{}
-	if summary.ReasonCounts == nil {
-		summary.ReasonCounts = []ReasonCountV1{}
-	}
-	sort.Slice(summary.ReasonCounts, func(left, right int) bool {
-		return summary.ReasonCounts[left].ReasonCode < summary.ReasonCounts[right].ReasonCode
-	})
-	window, err := CanonicalJSONV2(summary.SourceWindow)
-	if err != nil {
-		return nil, err
-	}
-	summaryID, err := deriveLengthPrefixedSHA256(
-		"execution_summary.summary_id", "execution-summary-id-v1", []byte(summary.ExecutionID), []byte(summary.PlanSetDigest), window,
-	)
-	if err != nil {
-		return nil, err
-	}
-	summary.SummaryID = summaryID
-	if err := ValidateExecutionSummaryV1(&summary); err != nil {
-		return nil, err
-	}
-	return &summary, nil
-}
-
-func ValidateExecutionSummaryV1(summary *ExecutionSummaryV1) error {
-	if summary == nil || summary.Schema.Name != ExecutionSummarySchemaV1 || summary.Schema.Major != 1 || summary.Schema.Minor != 0 ||
-		summary.RequiredFeatures == nil || len(summary.RequiredFeatures) != 0 || !isOpaqueASCII(summary.ExecutionID) ||
-		summary.TenantID == "" || !utf8.ValidString(summary.TenantID) || summary.QueryGroupKey == "" || !utf8.ValidString(summary.QueryGroupKey) ||
-		!sha256Pattern.MatchString(summary.PlanSetDigest) ||
-		summary.SourceWindow.FromTime < 0 || summary.SourceWindow.UntilTime < summary.SourceWindow.FromTime ||
-		summary.ReasonCounts == nil || !sortedReasonCountsV2(summary.ReasonCounts, ReasonDomainSummary) {
-		return invalid("execution_summary", "contains invalid header, identity, window or reasons")
-	}
-	window, err := CanonicalJSONV2(summary.SourceWindow)
-	if err != nil {
-		return err
-	}
-	expected, err := deriveLengthPrefixedSHA256("execution_summary.summary_id", "execution-summary-id-v1", []byte(summary.ExecutionID), []byte(summary.PlanSetDigest), window)
-	if err != nil || expected != summary.SummaryID {
-		return invalid("execution_summary.summary_id", "does not match stable identity")
-	}
-	if !countSetBalancedV1(summary.Source, summary.Published, summary.Dropped) {
-		return invalid("execution_summary", "source must equal published plus dropped for messages, records and bytes")
-	}
-	hasDropped := summary.Dropped.Messages != 0 || summary.Dropped.Records != 0 || summary.Dropped.Bytes != 0
-	if hasDropped != (len(summary.ReasonCounts) != 0) {
-		return invalid("execution_summary.reason_counts", "must be non-empty exactly when data was dropped")
-	}
-	return nil
-}
-
-func EncodeExecutionSummaryV1(summary *ExecutionSummaryV1) ([]byte, error) {
-	if err := ValidateExecutionSummaryV1(summary); err != nil {
-		return nil, err
-	}
-	return CanonicalJSONV2(summary)
-}
-
-func sortedReasonCountsV2(values []ReasonCountV1, domain ReasonDomainsV2) bool {
-	previous := ""
-	for index, value := range values {
-		if !ReasonAllowedForV2(value.ReasonCode, domain) || value.Count == 0 || (index > 0 && value.ReasonCode <= previous) {
-			return false
-		}
-		previous = value.ReasonCode
-	}
-	return true
-}
-
-func hasValidationTerminalReasonV1(values []ReasonCountV1) bool {
-	for _, value := range values {
-		definition, ok := LookupReasonV2(value.ReasonCode)
-		if ok && value.Count != 0 && definition.Domains.Has(ReasonDomainValidationIssue) {
-			return true
-		}
-	}
-	return false
-}
-
-func sumCountsV1(values ...uint64) (uint64, bool) {
-	var total uint64
-	for _, value := range values {
-		if !addCountV1(&total, value) {
-			return 0, false
-		}
-	}
-	return total, true
-}
-
-func addCountV1(total *uint64, value uint64) bool {
-	if ^uint64(0)-*total < value {
-		return false
-	}
-	*total += value
-	return true
-}
-
-func countSetBalancedV1(source, published, dropped CountSetV1) bool {
-	return countBalancedV1(source.Messages, published.Messages, dropped.Messages) &&
-		countBalancedV1(source.Records, published.Records, dropped.Records) &&
-		countBalancedV1(source.Bytes, published.Bytes, dropped.Bytes)
-}
-
-func countBalancedV1(source, published, dropped uint64) bool {
-	return published <= source && source-published == dropped
-}
-
-func DecodeExecutionSummaryV1(payload []byte) (*ExecutionSummaryV1, error) {
-	required := []string{
-		"schema", "required_features", "summary_id", "execution_id", "tenant_id", "query_group_key", "source_window",
-		"plan_set_digest", "source", "published", "dropped", "reason_counts",
-	}
-	object, err := validateOutputHeaderV1(payload, "execution_summary", ExecutionSummarySchemaV1, required)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := validateJSONObjectFields(object["source_window"], "execution_summary.source_window", []string{"from_time", "until_time"}, nil, false); err != nil {
-		return nil, err
-	}
-	for _, field := range []string{"source", "published", "dropped"} {
-		if _, err := validateJSONObjectFields(object[field], "execution_summary."+field, []string{"messages", "records", "bytes"}, nil, false); err != nil {
-			return nil, err
-		}
-	}
-	if err := validateRawObjectArrayV1(object["reason_counts"], "execution_summary.reason_counts", []string{"reason_code", "count"}); err != nil {
-		return nil, err
-	}
-	var summary ExecutionSummaryV1
-	if err := decodeJSONObject(payload, &summary); err != nil {
-		return nil, err
-	}
-	if err := ValidateExecutionSummaryV1(&summary); err != nil {
-		return nil, err
-	}
-	return &summary, nil
-}
-
-func validateOutputHeaderV1(payload []byte, field, schemaName string, required []string) (map[string]json.RawMessage, error) {
-	object, err := validateJSONObjectFields(payload, field, required, nil, false)
+func validateOutputHeaderV1(payload []byte, field, schemaName string, required []string, optional ...string) (map[string]json.RawMessage, error) {
+	object, err := validateJSONObjectFields(payload, field, required, optional, false)
 	if err != nil {
 		return nil, err
 	}
@@ -598,17 +470,4 @@ func validateOutputHeaderV1(payload []byte, field, schemaName string, required [
 		return nil, err
 	}
 	return object, nil
-}
-
-func validateRawObjectArrayV1(raw json.RawMessage, field string, required []string) error {
-	var values []json.RawMessage
-	if err := decodeJSONObject(raw, &values); err != nil || values == nil {
-		return invalid(field, "must be an array")
-	}
-	for index, value := range values {
-		if _, err := validateJSONObjectFields(value, field+"["+strconv.Itoa(index)+"]", required, nil, false); err != nil {
-			return err
-		}
-	}
-	return nil
 }

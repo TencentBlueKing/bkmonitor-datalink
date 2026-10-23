@@ -30,16 +30,27 @@ type AssignmentSweep struct {
 }
 
 // reclaimAssignmentScript deletes one retired Query Group's Assignment
-// record and ownership hash under the leader fence, and only while nobody
-// holds a live lease on it: a worker that still runs the Query Group off an
-// assigned set it read before the retirement keeps its record until its
-// lease lapses, and the next sweep takes it. The record is re-read inside
-// the script and left alone if it no longer names the Query Group the sweep
-// read it under. Expiry is judged on Redis's clock, like every fence.
+// record and empties its ownership hash under the leader fence, and only
+// while nobody holds a live lease on it: a worker that still runs the Query
+// Group off an assigned set it read before the retirement keeps its record
+// until its lease lapses, and the next sweep takes it. The record is re-read
+// inside the script and left alone if it no longer names the Query Group the
+// sweep read it under. Expiry is judged on Redis's clock, like every fence.
+//
+// The owner epoch is not reclaimed with the rest (02 section 6.3 rule 7). A
+// Query Group's identity is a digest of its query facts, so a retired one
+// comes back when its strategy is enabled again or an edit is reverted, and
+// the records its earlier owners wrote are ordered by their epochs: deleted
+// here, the epoch would start over at 1 below them. The ownership hash keeps
+// that one field, under the expiry ARGV[5], and nothing else -- no owner,
+// token, deadline or disposition -- so every fence refuses it and Acquire
+// reads it as free and counts on from it. A hash that never had an epoch
+// is simply deleted.
 //
 // KEYS[1] leader ownership hash, KEYS[2] the Assignment record, KEYS[3] the
 // Query Group's ownership hash. ARGV[1..3] the leader fence, ARGV[4] the
-// Query Group the record was read under.
+// Query Group the record was read under, ARGV[5] how long the epoch is kept,
+// in milliseconds.
 var reclaimAssignmentScript = redis.NewScript(FenceLua + `
 if fence_refusal('', KEYS[1], '0', ARGV[1], ARGV[2], ARGV[3], '', redis_now_ms()) then return 'STALE' end
 local named = redis.call('HGET', KEYS[2], 'query_group')
@@ -48,9 +59,27 @@ if named ~= ARGV[4] then return 'CHANGED' end
 local holder = redis.call('HGET', KEYS[3], 'owner_id')
 local deadline = tonumber(redis.call('HGET', KEYS[3], 'deadline_ms') or '0')
 if holder and holder ~= '' and deadline > redis_now_ms() then return 'HELD' end
+local epoch = redis.call('HGET', KEYS[3], 'owner_epoch')
 redis.call('DEL', KEYS[2], KEYS[3])
+if epoch then
+  redis.call('HSET', KEYS[3], 'owner_epoch', epoch)
+  redis.call('PEXPIRE', KEYS[3], ARGV[5])
+end
 return 'RECLAIMED'
 `)
+
+// ConfigureEpochRetention sets how long a reclaimed Query Group's owner
+// epoch outlives the sweep that reclaimed it. It must cover the Query
+// Group's retirement recovery period and every record ordered by its owner
+// epoch, which only the process wiring the store knows; a store not told
+// refuses to sweep rather than delete or keep the epoch on a guess.
+func (store *RedisStore) ConfigureEpochRetention(retention time.Duration) error {
+	if store == nil || retention < time.Millisecond {
+		return errors.New("alarmd ownership: invalid owner epoch retention")
+	}
+	store.epochRetention = retention
+	return nil
+}
 
 // assignmentSweepScan bounds one SCAN page and one pipelined read.
 const assignmentSweepScan = 500
@@ -61,7 +90,9 @@ const assignmentSweepScan = 500
 // ownership hashes carry no expiry, so a Query Group that leaves the active
 // set leaves both behind for good: six such records, all naming workers of
 // long-retired replicas, were found on a deployment, and a coverage reading
-// over the records never reaches its whole because of them.
+// over the records never reaches its whole because of them. The record is
+// deleted; of the ownership hash only the owner epoch is left, for the
+// retention ConfigureEpochRetention set, after which it expires too.
 //
 // The sweep is the leader's, under its fence, and it decides nothing about
 // live work: a record whose Query Group is still in keep is not touched
@@ -81,6 +112,9 @@ func (store *RedisStore) SweepAssignments(
 	}
 	if authority.Fence.QueryGroup != ControlLeaderIdentity || validateFence(authority.Fence) != nil {
 		return sweep, errors.New("alarmd ownership: assignment sweep needs the control leader authority")
+	}
+	if store.epochRetention <= 0 {
+		return sweep, errors.New("alarmd ownership: assignment sweep needs the owner epoch retention")
 	}
 	started := time.Now()
 	defer func() { sweep.Duration = time.Since(started) }()
@@ -125,7 +159,8 @@ func (store *RedisStore) SweepAssignments(
 				}
 				sweep.Retired++
 				result, err := reclaimAssignmentScript.Run(ctx, store.client, []string{leaderKey, key, store.ownershipKey(queryGroup)},
-					authority.Fence.OwnerID, authority.Fence.OwnerEpoch, authority.Fence.LeaseToken, named).Text()
+					authority.Fence.OwnerID, authority.Fence.OwnerEpoch, authority.Fence.LeaseToken, named,
+					store.epochRetention.Milliseconds()).Text()
 				if err != nil {
 					return sweep, fmt.Errorf("alarmd ownership: assignment sweep reclaim %s: %w", queryGroup, err)
 				}

@@ -68,6 +68,12 @@ func (f *Forwarder) Start(wg *sync.WaitGroup) {
 
 // Exec check ready
 func (f *Forwarder) Exec() {
+	count, err := f.broker.RecoverExpired(time.Now(), f.queues...)
+	if err != nil {
+		logger.Errorf("Failed to recover tasks with expired leases: %v", err)
+	} else if count > 0 {
+		logger.Infof("Recovered %d tasks with expired leases", count)
+	}
 	if err := f.broker.ForwardIfReady(f.queues...); err != nil {
 		logger.Errorf("Failed to forward scheduled tasks: %v", err)
 	}

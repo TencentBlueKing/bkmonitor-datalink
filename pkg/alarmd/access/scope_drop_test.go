@@ -14,6 +14,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 )
@@ -78,7 +79,23 @@ func deliverSeries(t *testing.T, adapter *seriesAdapter, dimensions map[string]j
 }
 
 func targetChain() *admission.Chain {
-	return admission.NewChain([]admission.Fuller{admission.IdentityFuller{}}, []admission.Filter{admission.TargetScopeFilter{}, admission.TargetPlanFilter{}})
+	return admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, knownHostFuller{}},
+		[]admission.Filter{admission.TargetScopeFilter{}, admission.TargetPlanFilter{}})
+}
+
+// knownHostFuller stands for a host cache that knows every host a record names
+// by id, as the CMDB fuller records it: a rejection of such a host is decided
+// on facts that were there. A host the cache did not know is never a verdict
+// (decision-024), so the fixtures that mean "a host outside the target" say
+// the cache knows it.
+type knownHostFuller struct{}
+
+func (knownHostFuller) Name() string { return "known_hosts" }
+
+func (knownHostFuller) Fill(_ map[string]json.RawMessage, facts *admission.Facts) {
+	if facts.HostNaming.IDKey != "" {
+		facts.HostResolved = true
+	}
 }
 
 func hostDims(id string) map[string]json.RawMessage {
@@ -95,7 +112,7 @@ func TestADefinitiveRejectionCarriesTheEvaluatorsFingerprint(t *testing.T) {
 	adapter, plan := scopeDropAdapter(t, targetChain(), hostPlanContext(true), sink, scopeOutput)
 	deliverSeries(t, adapter, hostDims("101"))
 	deliverSeries(t, adapter, hostDims("102"))
-	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: "group", EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
+	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
 
 	want, err := contract.MonitorDedupeMD5("42", plan.BusinessID, hostDims("102"),
 		contract.MonitorOutputIdentity{DimensionFields: []string{"bk_host_id", "device"}})
@@ -142,7 +159,7 @@ func TestRejectionsTheCloseCannotUseAreCountedInBulk(t *testing.T) {
 		if len(sink.counts) != 0 {
 			t.Fatalf("%s: counted before the query ended: %v", c.name, sink.counts)
 		}
-		flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: "group", EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
+		flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
 		if len(sink.observed) != 0 || sink.counts[c.word] != 3 || len(sink.counts) != 1 || sink.screens != c.screens {
 			t.Errorf("%s: observed %d counts %v screens %d, want 3 under %q and %d screens", c.name, len(sink.observed), sink.counts, sink.screens, c.word, c.screens)
 		}
@@ -152,16 +169,13 @@ func TestRejectionsTheCloseCannotUseAreCountedInBulk(t *testing.T) {
 // A host turned away by the host status filter is still inside its target;
 // the close does not hear about it at all.
 func TestAHostStatusRejectionIsNotReported(t *testing.T) {
-	filter, installed := admission.NewHostStatusFilter([]string{"spare"})
-	if !installed {
-		t.Fatal("host status filter not installed")
-	}
+	filter := admission.NewHostStatusFilter([]string{"spare"})
 	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, stateFuller{state: "spare"}},
 		[]admission.Filter{filter, admission.TargetScopeFilter{}})
 	sink := &recordingSink{}
 	adapter, _ := scopeDropAdapter(t, chain, admission.PlanContext{TargetScope: hostScope("7")}, sink, scopeOutput)
 	deliverSeries(t, adapter, map[string]json.RawMessage{"bk_host_id": json.RawMessage(`"7"`)})
-	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: "group", EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
+	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
 	if len(sink.observed) != 0 || len(sink.counts) != 0 || sink.screens != 0 {
 		t.Fatalf("sink = %+v, want the host status rejection unreported", sink)
 	}
@@ -186,9 +200,10 @@ func TestPlanOutputsFollowTheFrozenPlan(t *testing.T) {
 	compiled := compilePlanWithTargetPlan(t, "2002", nil)
 	consumer := execution.DataRequirementConsumer{Consumer: execution.ConsumerRef{Plan: identity}}
 	one := []PlannedQuery{{Requirements: []execution.DataRequirement{{RequirementID: "a", Consumers: []execution.DataRequirementConsumer{consumer}}}}}
-	outputs := buildPlanOutputs([]execution.DuePlan{{Identity: identity, CompiledPlan: compiled}}, one)
+	outputs := buildPlanOutputs([]execution.DuePlan{{Identity: identity, CompiledPlan: compiled, ScheduleSpec: execution.ScheduleSpec{EvaluationIntervalSeconds: 1200}}}, one)
 	output, found := outputs[identity]
-	if !found || output.multiInput || output.strategyID != compiled.StrategyRef().StrategyID || output.revision != int64(compiled.StrategyRef().SnapshotRevision) {
+	if !found || output.multiInput || output.strategyID != compiled.StrategyRef().StrategyID || output.revision != int64(compiled.StrategyRef().SnapshotRevision) ||
+		output.intervalSeconds != 1200 {
 		t.Fatalf("output = %+v", output)
 	}
 	if compiled.StrategyRef().SnapshotRevision == 0 && output.fingerprint("2", map[string]json.RawMessage{"host": json.RawMessage(`"a"`)}) != "" {
@@ -214,13 +229,13 @@ func TestTheZeroMemberPathDoesNoPerRecordWork(t *testing.T) {
 		adapter.reportScopeDrop(identity, plan, &facts, "target_scope", contract.TargetScopeReasonOutOfScope)
 	}
 	reject()
-	if allocs := testing.AllocsPerRun(1000, reject); allocs != 0 {
+	if allocs := testing.AllocsPerRun(1000, reject); !racedetector.Enabled && allocs != 0 {
 		t.Fatalf("zero-member path allocates %.1f per record, want 0", allocs)
 	}
 	if sink.screens != 1 || len(sink.observed) != 0 {
 		t.Fatalf("screens %d observed %d, want one screen and no observation", sink.screens, len(sink.observed))
 	}
-	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: "group", EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
+	flushScopeDrops(adapter.scopeSink, []*seriesAdapter{adapter}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: execution.EvaluationTime(adapter.round)}, adapter.outputs)
 	if sink.counts["not_member"] != 1002 {
 		t.Fatalf("counts = %v, want all 1002 rejections in one bulk count", sink.counts)
 	}
@@ -335,11 +350,11 @@ func TestAnAttemptHandsOverOneSumPerPlanAndWord(t *testing.T) {
 	first.tallyScopeDrop(plan, ScopeDropCacheUnavailable)
 	second.tallyScopeDrop(plan, ScopeDropCacheUnavailable)
 	sink := &recordingSink{}
-	flushScopeDrops(sink, []*seriesAdapter{first, nil, second}, execution.SlotIdentity{QueryGroup: "group", EvaluationTime: 1700000000}, nil)
+	flushScopeDrops(sink, []*seriesAdapter{first, nil, second}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: 1700000000}, nil)
 	if sink.counts[ScopeDropCacheUnavailable] != 3 || len(sink.counts) != 1 {
 		t.Fatalf("counts = %v, want one sum of 3", sink.counts)
 	}
-	flushScopeDrops(sink, []*seriesAdapter{first, second}, execution.SlotIdentity{QueryGroup: "group", EvaluationTime: 1700000000}, nil)
+	flushScopeDrops(sink, []*seriesAdapter{first, second}, execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: 1700000000}, nil)
 	if sink.counts[ScopeDropCacheUnavailable] != 3 {
 		t.Fatalf("a second flush handed the same tallies over again: %v", sink.counts)
 	}
@@ -385,7 +400,7 @@ func TestTwoQueriesOfOnePlanAreSummedAndRetriesAreNot(t *testing.T) {
 // The reporter instance tells apart the Query Group, the business and the
 // shard, and nothing else: the round and the strategy travel beside it.
 func TestTheReporterInstanceNamesQueryGroupBusinessAndShard(t *testing.T) {
-	base := ScopeDropReporter{Slot: execution.SlotIdentity{QueryGroup: "group", EvaluationTime: 1700000000},
+	base := ScopeDropReporter{Slot: execution.SlotIdentity{QueryGroup: unphasedQueryGroup, EvaluationTime: 1700000000},
 		Plan: execution.PlanIdentity{TenantID: "t", BusinessID: "2", StrategyID: "42"}}
 	retry := base
 	retry.Slot.EvaluationTime = 1700000060
@@ -415,5 +430,20 @@ func TestWithoutASinkTheAdmissionStepKeepsNothing(t *testing.T) {
 	}
 	if adapter.scopeScreens != nil || adapter.scopeTallies != nil {
 		t.Fatalf("screens %v tallies %v, want none without a sink", adapter.scopeScreens, adapter.scopeTallies)
+	}
+}
+
+// A drop carries when its strategy's next observation can come: the Plan's
+// period, and how long after its round the Slot was frozen to read - the
+// close waits that long for the second, not a fixed half hour.
+func TestADropCarriesThePeriodAndTheReadOffset(t *testing.T) {
+	sink := &recordingSink{}
+	output := scopeOutput
+	output.intervalSeconds = 1200
+	adapter, _ := scopeDropAdapter(t, targetChain(), hostPlanContext(true), sink, output)
+	adapter.query.ReadyAtUnixMilli = (adapter.round + 8*60) * 1000
+	deliverSeries(t, adapter, hostDims("102"))
+	if len(sink.observed) != 1 || sink.observed[0].IntervalSeconds != 1200 || sink.observed[0].ReadOffset != 8*time.Minute {
+		t.Fatalf("observed %+v, want the 20 min period and an 8 min read offset", sink.observed)
 	}
 }

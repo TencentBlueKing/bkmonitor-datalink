@@ -66,6 +66,14 @@ type RestoredState struct {
 	// the tracker reads the first. Neither zero is a timestamp.
 	LastDataSlot  time.Time
 	EmptyRunSince time.Time
+	// ContentScopeNow is the content the object's owner runs now, from its
+	// lease - not from the record. What the record's last empty round said
+	// about its emptiness is the Plan's and the round's word, and it is
+	// restored only under the same content: a target or a trigger edited
+	// since moves the content and leaves the row to the first round, as a
+	// release that changes how Plans compile does for every object. Empty
+	// when the lease names none, which matches nothing.
+	ContentScopeNow string
 }
 
 // RestoredRound is the persisted summary of the last committed round.
@@ -79,6 +87,7 @@ type RestoredTargetResolution struct {
 	NodesMissing    []string                  `json:"nodes_missing,omitempty"`
 	NodesForeign    []string                  `json:"nodes_foreign,omitempty"`
 	StaleAgeSeconds int64                     `json:"stale_age_seconds,omitempty"`
+	ExcludedAbsent  int                       `json:"excluded_absent,omitempty"`
 }
 
 // RestoredSelectorFailure names one selector that did not answer whole.
@@ -111,6 +120,18 @@ type RestoredRound struct {
 	SnapshotRevision string `json:"snapshot_revision,omitempty"`
 	QueryRevision    string `json:"query_revision,omitempty"`
 	ScheduleRevision string `json:"schedule_revision,omitempty"`
+	// Empty is what the round said about its empty answer, as the summary
+	// recorded it; nil when it said nothing.
+	Empty *RestoredEmptyRound `json:"empty,omitempty"`
+}
+
+// RestoredEmptyRound is an empty round's word about its emptiness: an event
+// count of groups at rest, or every series outside the monitoring target,
+// and the content the round ran under.
+type RestoredEmptyRound struct {
+	Quiet           bool   `json:"quiet,omitempty"`
+	EmptiedByTarget bool   `json:"emptied_by_target,omitempty"`
+	ContentScope    string `json:"content_scope,omitempty"`
 }
 
 // Restore seeds one object from what survived the restart. It reports whether
@@ -141,6 +162,12 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 	defer tracker.mu.Unlock()
 	state := tracker.groups[queryGroup]
 	if state != nil && state.determined {
+		// Everything but one fact: how long the object had been empty before
+		// this process started is what no round of its own can have watched,
+		// and which comes first -- this read or the object's first round --
+		// is a race every release reruns.
+		state.recordRead = true
+		tracker.noteRecordedRun(state, restored)
 		return false
 	}
 	if state == nil {
@@ -150,6 +177,7 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 		state = &queryGroupState{strategies: map[StrategyRef]struct{}{}}
 	}
 	state.determined = true
+	state.recordRead = true
 	state.lastCompleted = restored.LastCompletion
 	// A committed round that completed with records is records seen, as far
 	// as this process can vouch for anything it did not watch: it is what
@@ -188,6 +216,14 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 		state.emptySlotFrom = SinceRestoredEmptyRun
 		if round := restored.LastRound; round != nil && round.Kind == "FULL_EMPTY_COMPLETED" && !round.Slot.IsZero() {
 			state.lastEmptySlot = round.Slot.Unix()
+		}
+		// What the last empty round said about its emptiness is the row's
+		// line - quiet, or outside the target - and without it a daily event
+		// count at rest read as empty every round until its first round here.
+		// Only under the content the owner runs now (ContentScopeNow).
+		if round := restored.LastRound; round != nil && round.Empty != nil &&
+			round.Empty.ContentScope != "" && round.Empty.ContentScope == restored.ContentScopeNow {
+			state.quiet, state.emptiedByTarget = round.Empty.Quiet, round.Empty.EmptiedByTarget
 		}
 	}
 	if round := restored.LastRound; round != nil && healthyCompletion(restored.LastCompletion) && !round.CompletedAt.IsZero() {

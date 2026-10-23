@@ -16,6 +16,75 @@
 
 ## 🚀 快速开始
 
+### 仅使用 Redis 部署
+
+```yaml
+storage:
+  source: redis
+redis:
+  host: 127.0.0.1
+  port: 6379
+  kv_base_path: bkmonitorv3:unify-query
+```
+
+Storage、空间及表路由由配置发布端写入 Redis，Redis 连接、认证和数据库按实际部署配置。Storage 只读取 Redis，不回退 Consul。容器调用方通过 K8s Service 访问 UQ，不使用 Consul 服务注册和 TTL 续约。配套 Helm Chart 根据每个普通或灰度集群的有效 `storage.source` 决定启动检查；Redis 模式无需等待 Consul。
+
+未指定 Storage 来源时保留旧 Consul Storage 加载和监听。`consul.enabled` 已不再控制行为；遗留字段会被忽略。Redis 模式显式配置空 `redis.kv_base_path` 会在启动或重载前被拒绝，重载失败保留上一份配置。
+
+### 设置 Feature Flag
+
+Feature Flag 与 Storage 来源独立：优先读取 Redis，只有 Key 不存在时读取 Consul，校验成功后自动回填 Redis，无需手工迁移。回填采用 `SET NX`，不设 TTL，已有或并发写入的 Redis 配置优先；回填失败会继续使用本次有效的 Consul 快照，并在后续调和时重试。回填后以 Redis 为准，后续 Consul 修改不再同步。Redis 读取失败或已有快照非法时保留最后有效配置，不重新读取 Consul。变更通过 Redis Pub/Sub 通知，通知丢失时由每分钟全量调和恢复。
+
+Consul 回退请求有有限超时。回退失败不会向 Redis 写入空快照；已有实例保留有效规则，全新实例使用内存默认值并继续重试，因此仅提供 Redis 也可启动和查询。默认值为 `must-vm-query=true`、`range-vm-query=0`、`is-k8s=false` 和 `bk-data-table-id-auth=false`。Consul 成功确认没有规则时可以回填 `{}`；这与网络失败不同。手工写入的有效 `{}` 同样以 Redis 为准。
+
+若需要首次迁移或 reset 重新迁移，保留可用的 `consul.consul_address`。旧配置若已删除该地址，需从部署配置恢复真实地址；只升级镜像无法推断原 Consul 端点。新 Chart 保留回退地址，同时跳过 Redis 模式的 Consul 启动等待。
+
+使用运行服务相同的配置文件，将完整的 go-feature-flag JSON 快照写入 Redis：
+
+```bash
+unify-query --config /path/to/unify-query.yaml config set-feature-flags --file flags.json
+```
+
+命令复用 `redis` 的连接、认证、数据库和 `kv_base_path` 配置，支持单机和哨兵模式；先校验文件，再写入 `<redis.kv_base_path>:data:feature_flag`，并发布变更通知。写入替换整份配置，不设过期时间；`{}` 可清空开关配置。文件必须是 JSON，仓库中的 `featureFlag.yaml` 仅为格式示例。命令不会输出配置内容或凭据，校验、配置读取或写入失败时返回非零退出码。
+
+### 查询与单项管理 Feature Flag
+
+查询只读取 Redis，不触发 Consul 迁移；标准输出为 JSON，配置加载提示和日志写入标准错误，可直接导出整份快照或单个开关定义：
+
+```bash
+unify-query --config /path/to/unify-query.yaml config get-feature-flags > flags.json
+unify-query --config /path/to/unify-query.yaml config get-feature-flags --name new-query > flag.json
+```
+
+`flags.json` 是供 `set-feature-flags` 使用的整份快照；单项新增、更新使用的 `flag.json` 只包含该开关的完整定义，不带外层开关名称，例如：
+
+```json
+{
+  "variations": {"enabled": true, "disabled": false},
+  "defaultRule": {"variation": "disabled"}
+}
+```
+
+```bash
+unify-query --config /path/to/unify-query.yaml config add-feature-flag --name new-query --file flag.json
+unify-query --config /path/to/unify-query.yaml config update-feature-flag --name new-query --file flag.json
+unify-query --config /path/to/unify-query.yaml config delete-feature-flag --name new-query
+```
+
+单项操作要求 Redis 已有快照；缺失时先等待在线 UQ 从 Consul 成功迁移，或使用整份 `set-feature-flags` 明确初始化，避免单项新增抢占迁移并遗漏 Consul 中的其他开关。新增要求名称尚不存在；更新和删除要求名称已存在。更新替换该开关的完整定义，所有单项操作均保留其他开关，使用 SDK 校验更新后的完整快照，不设过期时间，并发布通知供在线 UQ 刷新。删除最后一个开关时写入 `{}`，保留 Redis Key，避免重新从 Consul 回填。Redis 快照或查询名称不存在时，查询命令返回错误。
+
+单项写入通过 `WATCH` 事务检查并发修改；发生冲突时返回错误并提示重试，不自动覆盖其他写入。
+
+### 重新从 Consul 迁移 Feature Flag
+
+需要清空现有开关时使用 `set-feature-flags` 写入 `{}`。重新迁移前先准备好 Consul 中的配置及连接地址，再在 UQ 容器内使用运行服务相同的配置文件执行，无需安装 `redis-cli`：
+
+```bash
+unify-query --config /path/to/unify-query.yaml config reset-feature-flags
+```
+
+命令仅删除 `<redis.kv_base_path>:data:feature_flag` 并发布刷新通知。在线 UQ 收到通知后重新读取 Consul，校验后通过 `SET NX` 回填 Redis，仍不设过期时间；通知丢失时由每分钟调和重试。命令成功表示 Redis 快照已删除，不表示回填已完成；没有在线实例时会在下次启动迁移。不要用 `set-feature-flags --file` 写入 `{}` 代替重置，已有空快照不会触发 Consul 回填。
+
 ## 快速部署
 
 在docker desktop上安装consul，redis，influxdb

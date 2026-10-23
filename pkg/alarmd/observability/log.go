@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -55,21 +56,14 @@ type Logger struct {
 	writer    *serializedLogWriter
 }
 
-// BoundedLogPolicy always records one-time lifecycle transitions. Routine
-// success is omitted. Repeated transitions, recovery and exceptional results
-// use a concrete limiter: phase one buckets by reason or reason-empty stage,
-// phase two additionally buckets by Query Group scope and reports suppressed
-// counts. M8 does not hard-code a sampling rate or time window before G3
-// calibration.
+// BoundedLogPolicy always records one-time lifecycle transitions. A routine
+// stage's success, and a Control Leader round that changed nothing, is
+// counted and not written: its facts are in the stage's metrics, and one
+// line per Slot of every Query Group was nearly the whole log. Every other
+// result goes through the scoped limiter, by reason, stage and Query Group,
+// with suppressed counts on the next admitted line.
 type BoundedLogPolicy struct {
 	repeated RepeatedLogLimiter
-}
-
-func NewBoundedLogPolicy(limiter *WindowLogLimiter) (*BoundedLogPolicy, error) {
-	if limiter == nil {
-		return nil, errors.New("observability: bounded log policy requires a window limiter")
-	}
-	return &BoundedLogPolicy{repeated: limiter}, nil
 }
 
 // NewScopedBoundedLogPolicy builds the phase-two policy that limits repeated
@@ -85,25 +79,116 @@ func (p *BoundedLogPolicy) ShouldLog(observation Observation) bool {
 	return p.Admit(observation).Allowed
 }
 
-// Admit decides whether the observation is logged and how many earlier lines
-// of the same bucket were merged into it.
+// Admit decides whether the observation is logged, held back, or counted
+// and not written, and how many earlier lines of the same bucket were merged
+// into a logged one.
 func (p *BoundedLogPolicy) Admit(observation Observation) LogAdmission {
+	if routineResult(observation.Result) {
+		switch {
+		case roundStages[observation.Stage] && roundChanged(observation):
+			return LogAdmission{Allowed: true, Candidate: true}
+		case roundStages[observation.Stage], routineStages[observation.Stage]:
+			return LogAdmission{Candidate: true, Unwritten: true}
+		}
+	}
 	if mandatoryLogStage(observation.Stage) {
-		return LogAdmission{Allowed: true}
+		return LogAdmission{Allowed: true, Candidate: true}
 	}
 	if !repeatedLogObservation(observation) || p == nil || p.repeated == nil {
 		return LogAdmission{}
 	}
-	return p.repeated.Admit(observation)
+	admission := p.repeated.Admit(observation)
+	admission.Candidate = true
+	return admission
 }
 
 type LoggingObserver struct {
 	logger *Logger
 	policy *BoundedLogPolicy
+	// written, limited and unwritten count, by stage, the lines this
+	// observer wrote, the ones its limiter held back and the routine ones it
+	// counted without writing, at the place logStageIndex gives the stage.
+	written   []atomic.Uint64
+	limited   []atomic.Uint64
+	unwritten []atomic.Uint64
 }
 
 func NewLoggingObserver(logger *Logger, policy *BoundedLogPolicy) *LoggingObserver {
-	return &LoggingObserver{logger: logger, policy: policy}
+	return &LoggingObserver{logger: logger, policy: policy, written: make([]atomic.Uint64, len(logStages)),
+		limited: make([]atomic.Uint64, len(logStages)), unwritten: make([]atomic.Uint64, len(logStages))}
+}
+
+// logStages is every stage a line is counted under: the closed list, which
+// holds StageOther for a stage outside it, and logStageIndex each one's
+// place.
+var logStages = func() []Stage {
+	stages := AllStages()
+	for _, stage := range stages {
+		if stage == StageOther {
+			return stages
+		}
+	}
+	return append(stages, StageOther)
+}()
+
+var logStageIndex = func() map[Stage]int {
+	index := make(map[Stage]int, len(logStages))
+	for place, stage := range logStages {
+		if _, seen := index[stage]; !seen {
+			index[stage] = place
+		}
+	}
+	return index
+}()
+
+// LogLineCounts is how many lines the observer wrote, how many its limiter
+// held back and how many routine lines it counted without writing, by stage,
+// every stage present: which stage fills the log is then a reading of this
+// process and not a sample of the log, which on a busy Pod holds minutes. A
+// stage outside the closed list counts under StageOther. Unwritten holds the
+// routine and Control Leader round stages only, the ones whose success is
+// counted and not written; no other stage has an unwritten line to count.
+type LogLineCounts struct {
+	Written   map[Stage]uint64
+	Limited   map[Stage]uint64
+	Unwritten map[Stage]uint64
+}
+
+// LineCounts reads the counts now.
+func (l *LoggingObserver) LineCounts() LogLineCounts {
+	counts := LogLineCounts{Written: make(map[Stage]uint64, len(logStageIndex)), Limited: make(map[Stage]uint64, len(logStageIndex)),
+		Unwritten: make(map[Stage]uint64, len(routineStages)+len(roundStages))}
+	// By the index, the one place countLine adds to for each stage.
+	for stage, place := range logStageIndex {
+		var written, limited, unwritten uint64
+		if l != nil && place < len(l.written) {
+			written, limited, unwritten = l.written[place].Load(), l.limited[place].Load(), l.unwritten[place].Load()
+		}
+		counts.Written[stage], counts.Limited[stage] = written, limited
+		if unwrittenStage(stage) {
+			counts.Unwritten[stage] = unwritten
+		}
+	}
+	return counts
+}
+
+// countLine adds one line of the stage to the count the admission says: a
+// routine line counted and not written, a line written, or one held back.
+func (l *LoggingObserver) countLine(stage Stage, admission LogAdmission) {
+	place, known := logStageIndex[stage]
+	if !known {
+		place = logStageIndex[StageOther]
+	}
+	counts := l.limited
+	switch {
+	case admission.Unwritten:
+		counts = l.unwritten
+	case admission.Allowed:
+		counts = l.written
+	}
+	if place < len(counts) {
+		counts[place].Add(1)
+	}
 }
 
 func New(component string, writer io.Writer) *Logger {
@@ -169,6 +254,12 @@ func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) 
 	// the Query Group the Coordinator attached to ctx.
 	observation.Trace = mergeTraceFields(observation.Trace, TraceFieldsFromContext(ctx))
 	admission := l.policy.Admit(observation)
+	// Counted only where the policy decides a line: written, held back, or
+	// a routine stage's success counted and not written. A success outside
+	// the workflow stages is not a line at all.
+	if admission.Candidate {
+		l.countLine(observation.Stage, admission)
+	}
 	if !admission.Allowed {
 		return
 	}
@@ -203,6 +294,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if f := observation.QueryCooldown; f != nil {
 		attributes = append(attributes, slog.Any("query_cooldown", f))
 	}
+	// Which outcome, how old the Slot was and how long after the takeover:
+	// a Slot given up on for its age is named by its Query Group and minute
+	// only with these beside them.
+	if f := observation.ReplayTakeover; f != nil {
+		attributes = append(attributes, slog.Any("replay_takeover", f))
+	}
 	if f := observation.QueryTiming; f != nil {
 		attributes = append(attributes, slog.Any("query_timing", f))
 	}
@@ -211,6 +308,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	}
 	if r := observation.OutputRejection; r != nil {
 		attributes = append(attributes, slog.Any("output_rejection", r))
+	}
+	if kind := observation.OutputFailureKind; kind != "" {
+		attributes = append(attributes, slog.String("output_failure_kind", kind))
 	}
 	if w := observation.OutputWrite; w != nil {
 		// Both numbers, zero included: a success that handed the broker
@@ -347,6 +447,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		if len(f.RefusalRules) > 0 {
 			attributes = append(attributes, slog.String("state_refusal_rules", strings.Join(f.RefusalRules, ",")))
 		}
+		if f.RefusalText != "" {
+			attributes = append(attributes, slog.String("state_refusal_text", f.RefusalText))
+		}
 		if f.LegacyRecordIDs > 0 {
 			attributes = append(attributes, slog.Int("state_legacy_record_ids", f.LegacyRecordIDs))
 		}
@@ -367,6 +470,27 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	}
 	if f := observation.SlotBudgetUsage; f != nil {
 		attributes = append(attributes, slog.Any("slot_budget_usage", f))
+	}
+	if f := observation.WarmingPeak; f != nil {
+		attributes = append(attributes,
+			slog.Time("warming_hour_start", f.HourStart),
+			slog.Int64("warming_writes", f.Writes),
+			slog.Int("warming_minutes", f.MinutesWithWrites),
+			slog.Int64("warming_median_minute_writes", f.MedianMinuteWrites),
+			slog.Time("warming_peak_minute", f.PeakMinute),
+			slog.Int64("warming_peak_minute_writes", f.PeakMinuteWrites),
+			slog.Any("warming_peak_groups", f.PeakGroups))
+	}
+	// Flat, so a log query can filter and group on them.
+	if f := observation.InPlaceWait; f != nil {
+		attributes = append(attributes,
+			slog.Uint64("inplace_waits", uint64(f.Waits)),
+			slog.Int64("inplace_wait_ms", f.TotalMillis),
+			slog.Int64("inplace_longest_ms", f.LongestMillis),
+			slog.Uint64("inplace_sent_before", uint64(f.SentBeforeFirstWait)),
+			slog.Int64("inplace_wait_before_any_sent_ms", f.BeforeAnySentMillis),
+			slog.Uint64("inplace_held_input_bytes", f.HeldInputBytes),
+			slog.Uint64("inplace_held_prepared_bytes_estimate", f.HeldPreparedBytes))
 	}
 	// Flat keys rather than an object, under its own condition: the two
 	// answer different questions and a row can carry either without the
@@ -394,13 +518,30 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		attributes = append(attributes, slog.String("source_kind", string(observation.SourceKind)))
 	}
 	attributes = appendObservationCounts(attributes, observation.Counts)
-	attributes = appendEnvelopePassCounts(attributes, observation)
+	attributes = appendStatePreflightTiming(attributes, observation)
 	attributes = appendTraceFields(attributes, observation.Trace)
+	if len(observation.QueryCodec) > 0 {
+		attributes = append(attributes, slog.Any("query_codecs", observation.QueryCodec))
+	}
 	if f := observation.QueryFailure; f != nil {
 		attributes = append(attributes, slog.String("failure_stage", f.Stage), slog.String("failure_category", f.Category), slog.String("failure_code", f.Code))
 		if f.Detail != "" {
 			attributes = append(attributes, slog.String("failure_detail", f.Detail))
 		}
+		if f.HTTPStatus != 0 {
+			attributes = append(attributes, slog.Int("failure_http_status", f.HTTPStatus))
+		}
+		if timing := f.Timing; timing != nil {
+			attributes = append(attributes, slog.Int64("failure_settle_ms", timing.SettleMillis), slog.Int64("failure_start_late_ms", timing.StartLateMillis),
+				slog.Int64("failure_budget_ms", timing.BudgetMillis), slog.Int64("failure_elapsed_ms", timing.ElapsedMillis),
+				slog.Int64("failure_local_ms", timing.LocalMillis))
+		}
+	}
+	// The answer the query service may have cut: the source and the
+	// dimension whose level held its bucket cap, for each such query.
+	for _, cut := range observation.QueryTruncation {
+		attributes = append(attributes, slog.String("answer_truncation", "terms_cut_suspected"),
+			slog.String("truncation_source", cut.Source), slog.String("truncation_dimension", cut.Dimension))
 	}
 	if observation.RuntimeConfig != nil {
 		attributes = append(attributes, slog.Any("runtime_config", observation.RuntimeConfig))
@@ -468,6 +609,23 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			)
 		}
 	}
+	if facts := observation.RangeDistance; facts != nil {
+		// The numbers that sized a range given up on for distance: how far
+		// behind the head and past its own deadline, which of the two bounds
+		// held, how wide it was built and from which Slot. They were on the
+		// facts and on no line, so the line said the range was skipped and
+		// nothing a reader could check that by.
+		attributes = append(attributes,
+			slog.String("range_bound_by", facts.BoundBy),
+			slog.Int64("range_head_steps", facts.HeadSteps),
+			slog.Int64("range_deadline_steps", facts.DeadlineSteps),
+			slog.Int64("range_steps", facts.Steps),
+			slog.Uint64("range_slot_count", uint64(facts.SlotCount)),
+			slog.Int64("range_first_evaluation_time", facts.FirstEvaluationTime),
+			slog.Int64("range_interval_seconds", facts.IntervalSeconds),
+			slog.Uint64("range_max_replay_slots", uint64(facts.MaxReplaySlots)),
+		)
+	}
 	if facts := observation.ReplayExpiry; facts != nil {
 		// The reason on every expiry, and the two compared instants on the one
 		// that reports a defect. A Slot that says only that it was skipped
@@ -487,6 +645,7 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	}
 	attributes = appendHeldByAttributes(attributes, observation.HeldBy)
 	attributes = appendSlotCompletionKind(attributes, observation.SlotCompletionKind)
+	attributes = appendCompletionCause(attributes, observation)
 	if facts := observation.SegmentContent; facts != nil {
 		attributes = append(attributes, slog.String("segment_content", facts.State))
 	}
@@ -528,6 +687,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.String("target_resolution", facts.State),
 			slog.Int("target_selectors", len(facts.Selectors)),
 		)
+		if facts.ScopeGroups {
+			attributes = append(attributes, slog.Bool("target_scope_groups", true))
+		}
 		if facts.StaleAgeSeconds > 0 {
 			attributes = append(attributes, slog.Int64("resolved_from_stale_snapshot_age_seconds", facts.StaleAgeSeconds))
 		}
@@ -653,6 +815,10 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int("rebalance_planned_moves", facts.PlannedMoves),
 			slog.Int("rebalance_published_moves", facts.PublishedMoves),
 			slog.Int("rebalance_conflicts", facts.Conflicts),
+			slog.Int("rebalance_replaced", facts.Replaced),
+			slog.Int("rebalance_replacements_deferred", facts.Deferred),
+			slog.Int("rebalance_unplaceable", facts.Unplaceable),
+			slog.Int("rebalance_declined_everywhere", facts.DeclinedEverywhere),
 			slog.Bool("rebalance_paused", facts.Paused),
 			slog.Float64("rebalance_paused_for_seconds", facts.PausedForSeconds),
 			slog.Bool("rebalance_owned_truncated", facts.Truncated),
@@ -673,6 +839,7 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 				slog.Int("byte_constraint_unread", bytes.Unread),
 				slog.Int("byte_constraint_pool_unknown", len(bytes.PoolUnknown)),
 				slog.Int("byte_constraint_unsettled", len(bytes.Unsettled)),
+				slog.Uint64("byte_constraint_unread_estimate_bytes", bytes.UnreadEstimate),
 				slog.Any("byte_constraint_overloaded", bytes.Overloaded),
 				slog.Int("byte_constraint_planned_moves", bytes.PlannedMoves),
 				slog.Int("byte_constraint_published_moves", bytes.PublishedMoves),
@@ -690,6 +857,45 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 				slog.Any("shard_unaware", gate.Unaware),
 				slog.Int("shard_splits_held", gate.SplitsHeld),
 			)
+		}
+	}
+	if observation.AwaitingView {
+		attributes = append(attributes, slog.Bool("awaiting_view", true))
+	}
+	if facts := observation.ExecutionHung; facts != nil {
+		attributes = append(attributes,
+			slog.String("hung_outcome", facts.Outcome),
+			slog.String("hung_stage", facts.Stage),
+			slog.Int64("hung_deadline_ms", facts.DeadlineUnixMilli),
+			slog.Int64("hung_past_deadline_ms", facts.PastDeadlineMS),
+			slog.Int64("hung_ms", facts.HungMS),
+		)
+	}
+	if facts := observation.SlotDrain; facts != nil {
+		attributes = append(attributes,
+			slog.String("drain_site", facts.Site),
+			slog.String("drain_outcome", facts.Outcome),
+			slog.Int("drain_waited", facts.Waited),
+			slog.Int("drain_cancelled", facts.Cancelled),
+			slog.Int64("drain_wait_ms", facts.WaitMS),
+		)
+	}
+	if facts := observation.AssignmentApplied; facts != nil {
+		attributes = append(attributes,
+			slog.Int("assignment_lost", facts.Lost),
+			slog.Int("assignment_acquired", facts.Acquired),
+			slog.Int("assignment_failed", facts.Failed),
+		)
+		for _, list := range []struct {
+			key    string
+			sample []string
+		}{{"assignment_lost_sample", facts.LostSample}, {"assignment_acquired_sample", facts.AcquiredSample}, {"assignment_failed_sample", facts.FailedSample}} {
+			if len(list.sample) > 0 {
+				attributes = append(attributes, slog.String(list.key, strings.Join(list.sample, ",")))
+			}
+		}
+		if facts.Truncated {
+			attributes = append(attributes, slog.Bool("assignment_samples_truncated", true))
 		}
 	}
 	if facts := observation.AssignmentSweep; facts != nil {
@@ -731,7 +937,11 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.String("cursor_advance_status", facts.Status),
 			slog.String("cursor_advance_refusal", facts.Refusal),
 			slog.Int64("cursor_advance_in_flight_slot", facts.InFlightSlot),
+			slog.String("cursor_advance_reason", facts.Reason),
 		)
+		if facts.RepairedAtUnixMilli > 0 {
+			attributes = append(attributes, slog.Int64("cursor_advance_repaired_at_ms", facts.RepairedAtUnixMilli))
+		}
 	}
 	if facts := observation.SourceRefresh; facts != nil {
 		attributes = append(attributes,
@@ -754,6 +964,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		if facts.RetainedStaleRevisions > 0 {
 			attributes = append(attributes, slog.Int("source_retained_stale_revisions", facts.RetainedStaleRevisions))
 		}
+		if facts.LastGoodIdentityChanged > 0 {
+			attributes = append(attributes, slog.Int("source_last_good_identity_changed", facts.LastGoodIdentityChanged))
+		}
 		if facts.ReadMode != "" {
 			attributes = append(attributes,
 				slog.String("source_read_mode", string(facts.ReadMode)),
@@ -765,23 +978,8 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 				attributes = append(attributes, slog.Int64("source_change_signal_age_seconds", facts.ChangeSignalAgeSeconds))
 			}
 		}
-		// Named apart from snapshot_revision on purpose: a round that published
-		// nothing still knows what the fleet is executing, and writing that under
-		// the published name is what makes a normal lag read as a stall.
-		if facts.ActivatedRevision != "" {
-			attributes = append(attributes, slog.String("activated_snapshot_revision", facts.ActivatedRevision))
-		}
-		if facts.ActivatedEpoch > 0 {
-			attributes = append(attributes, slog.Uint64("activated_publication_epoch", facts.ActivatedEpoch))
-		}
-		if facts.ActivationCaughtUp {
-			attributes = append(attributes, slog.Bool("activation_caught_up", true))
-		}
 		if facts.ActivationRebuilt {
 			attributes = append(attributes, slog.Bool("activation_rebuilt", true))
-		}
-		if facts.ActiveQueryGroupsKnown {
-			attributes = append(attributes, slog.Int("active_query_groups", facts.ActiveQueryGroups))
 		}
 		if facts.CountsKnown {
 			attributes = append(attributes,
@@ -826,87 +1024,6 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if len(observation.LevelOutcomes) > 0 {
 		attributes = append(attributes, slog.Any("level_outcomes", observation.LevelOutcomes))
 	}
-	if facts := observation.Shardability; facts != nil {
-		// The denominator first: a count of strategies that cannot be split
-		// says nothing without how many there are.
-		attributes = append(attributes,
-			slog.Int("shardable_plans", facts.Plans),
-			slog.Int("shardable_splittable", facts.Splittable),
-			slog.Int("shardable_disjunctive", facts.Disjunctive),
-			slog.Int("shardable_not_structured", facts.NotStructured),
-			slog.Int("shardable_no_queries", facts.NoQueries),
-		)
-	}
-	if facts := observation.SplitPlan; facts != nil {
-		// The decision and every reading it was judged from. "This object was
-		// not split" is the same line for an object under its share and one
-		// whose heaviest value cannot be divided, and those call for opposite
-		// answers, so the numbers travel with the word.
-		attributes = append(attributes,
-			slog.String("split_outcome", facts.Outcome),
-			slog.Uint64("split_peak_bytes", facts.PeakBytes),
-			slog.Uint64("split_share_bytes", facts.ShareBytes),
-			slog.Int("split_shards", facts.Shards),
-			slog.Int("split_carrying_shards", facts.Carrying),
-			slog.Bool("split_shards_capped", facts.ShardsCapped),
-			slog.String("split_dimension", facts.Dimension),
-			slog.Int("split_dimension_candidates", facts.Candidates),
-			slog.Uint64("split_series", uint64(facts.Series)),
-			slog.Int64("split_census_age_seconds", facts.CensusAgeSeconds),
-			slog.Int64("split_census_age_bound_seconds", facts.CensusAgeBoundSeconds),
-			slog.String("split_census_age_bound_source", facts.CensusAgeBoundSource),
-			slog.String("split_census_source", facts.CensusSource),
-			slog.Uint64("split_heaviest_value_series", uint64(facts.HeaviestValueSeries)),
-			slog.Uint64("split_target_series", uint64(facts.TargetSeries)),
-			slog.Uint64("split_tail_series", uint64(facts.TailSeries)),
-			slog.Int("split_skew_percent", facts.SkewPercent),
-			slog.Uint64("split_largest_shard_series", uint64(facts.LargestShardSeries)),
-			slog.Uint64("split_smallest_shard_series", uint64(facts.SmallestShardSeries)),
-			slog.Int("split_plans_in_group", facts.PlansInGroup),
-			slog.Bool("split_dry_run", facts.DryRun),
-		)
-	}
-	if facts := observation.ShardQuery; facts != nil {
-		attributes = append(attributes,
-			slog.String("shard_query_outcome", facts.Outcome),
-			slog.Int("shard_query_shards", facts.Shards),
-			slog.Int("shard_query_built", facts.Built),
-			slog.Int("shard_query_values", facts.Values),
-			slog.Int("shard_query_fallback_values", facts.FallbackValues),
-			slog.Int("shard_query_queries", facts.Queries),
-		)
-		if facts.Detail != "" {
-			attributes = append(attributes, slog.String("shard_query_detail", facts.Detail))
-		}
-	}
-	if facts := observation.SplitRound; facts != nil {
-		// The round's own three, with their denominator: skipped alone
-		// cannot say whether a zero means nothing was left out or nothing
-		// was looked at.
-		attributes = append(attributes,
-			slog.Int("split_round_over_share", facts.OverShare),
-			slog.Int("split_round_examined", facts.Examined),
-			slog.Int("split_round_skipped", facts.Skipped),
-		)
-	}
-	if facts := observation.DimensionCensus; facts != nil {
-		// The gate's two numbers go out with the census itself: a census that
-		// appears, or stops appearing, is a candidate decision, and the
-		// decision cannot be checked afterwards from the census alone.
-		attributes = append(attributes,
-			slog.String("census_source", facts.Source),
-			slog.String("census_status", facts.Status),
-			slog.Uint64("census_series", uint64(facts.Series)),
-			slog.Int("census_dimensions", facts.Dimensions),
-			slog.Int("census_values", facts.Values),
-			slog.Uint64("census_overflow_values", uint64(facts.OverflowValues)),
-			slog.Uint64("census_overflow_series", uint64(facts.OverflowSeries)),
-			slog.Int("census_bytes", facts.Bytes),
-			slog.Int("census_limit", facts.Limit),
-			slog.Uint64("census_peak_bytes", facts.PeakBytes),
-			slog.Uint64("census_share_bytes", facts.ShareBytes),
-		)
-	}
 	if observation.Err != nil {
 		attributes = append(attributes,
 			slog.String("error_type", fmt.Sprintf("%T", observation.Err)),
@@ -925,10 +1042,7 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if admission.SuppressedEvicted > 0 {
 		attributes = append(attributes, slog.Uint64("suppressed_logs_evicted", admission.SuppressedEvicted))
 	}
-	level := slog.LevelInfo
-	if observation.Result == Result(ResultFailed) || observation.Result == Result(ResultTimeout) {
-		level = slog.LevelError
-	}
+	level := observationLevel(observation)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1046,8 +1160,7 @@ func appendObservationCounts(attributes []slog.Attr, counts Counts) []slog.Attr 
 	}{
 		{"messages", counts.Messages}, {"records", counts.Records}, {"plans", counts.Plans},
 		{"levels", counts.Levels}, {"events", counts.Events}, {"bytes", counts.Bytes},
-		{"keys", counts.Keys}, {"state_bytes", counts.StateBytes}, {"envelope_reads", counts.EnvelopeReads},
-		{"envelope_reads_apply", counts.EnvelopeReadsApply},
+		{"keys", counts.Keys}, {"state_bytes", counts.StateBytes},
 	}
 	for _, value := range values {
 		if value.value > 0 {
@@ -1057,32 +1170,14 @@ func appendObservationCounts(attributes []slog.Attr, counts Counts) []slog.Attr 
 	return attributes
 }
 
-// appendEnvelopePassCounts writes the four the state preflight's second pass
-// splits into, at every value including zero.
-//
-// Zero included, unlike every other count on the line, because these are the
-// only ones whose zero is the answer: the migration is over when
-// envelope_answered is zero and stays there, and the two corruption counts
-// are read to confirm they are zero. A count that appears only when non-zero
-// cannot say "none of these happened" -- it reads identically to "nobody
-// counted", which is how envelope_reads spent a release being invisible on
-// every line where it was zero.
-//
-// Gated on the stage rather than on the values, because gating on the values
-// is the same omission in another shape. Only the preflight line produces
-// them, so only it carries them: four keys on every observation in the
-// process would be most of a log line spent restating zeros nobody asked.
-func appendEnvelopePassCounts(attributes []slog.Attr, observation Observation) []slog.Attr {
+// appendStatePreflightTiming writes the state preflight's fetch and decode
+// split, at every value including zero. Gated on the stage: only the preflight
+// line produces them.
+func appendStatePreflightTiming(attributes []slog.Attr, observation Observation) []slog.Attr {
 	if observation.Stage != StageStatePreflight {
 		return attributes
 	}
 	return append(attributes,
-		slog.Int64("envelope_answered", observation.Counts.EnvelopeAnswered),
-		slog.Int64("envelope_corrupt", observation.Counts.EnvelopeCorrupt),
-		slog.Int64("no_record_yet", observation.Counts.NoRecordYet),
-		slog.Int64("frame_corrupt_rescued", observation.Counts.FrameCorruptRescued),
-		slog.Int64("frame_corrupt_lost", observation.Counts.FrameCorruptLost),
-		slog.Int64("unclassified", observation.Counts.Unclassified),
 		slog.Int64("fetch_ms", observation.Counts.StateFetchMillis),
 		slog.Int64("decode_ms", observation.Counts.StateDecodeMillis))
 }
@@ -1127,10 +1222,17 @@ func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
 
 func mandatoryLogStage(stage Stage) bool {
 	switch stage {
-	case StageStartup, StageConfigLoaded, StageKafkaAssigned, StageShutdown, StageFatal:
+	case StageStartup, StageConfigLoaded, StageShutdown, StageFatal:
 		return true
-	case StageSnapshotRefreshed, StageSnapshotUnavailable, StageAssignmentAcquired, StageAssignmentLost,
-		StageTakeoverStarted, StageTakeoverCompleted:
+	case StageSnapshotRefreshed, StageSnapshotUnavailable:
+		return true
+	case StageAssignmentApplied:
+		// One line per assignment change in place of one per Query Group
+		// acquired, lost or taken over: about 2,100 a Pod at every start.
+		return true
+	case StageWarmingPeak:
+		// One line an hour per replica, and only for an hour that had a
+		// warming write: the one account of whose burst it was.
 		return true
 	case StageAssignmentSwept, StageViewPublished, StageViewSession, StageViewInstalled:
 		// Once per term, or once per Worker per connection: rare, and the
@@ -1160,7 +1262,7 @@ func mandatoryLogStage(stage Stage) bool {
 
 func repeatedLogObservation(observation Observation) bool {
 	switch observation.Stage {
-	case StageOffsetGap, StageResourceSoft, StageResourceHard, StageResourceResumed, StageRestartRecovered:
+	case StageResourceHard:
 		return true
 	default:
 		return isPhaseTwoWorkflowStage(observation.Stage) || observation.Result == ResultResumed || exceptionalLogResult(observation.Result)

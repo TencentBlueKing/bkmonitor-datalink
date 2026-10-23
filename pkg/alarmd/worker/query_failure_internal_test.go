@@ -23,6 +23,72 @@ func TestQueryFailureWrappedBudgetWinsOverProviderDiagnostic(t *testing.T) {
 	}
 }
 
+// A provider whose answer stopped partway reaches the failure facts as the
+// timeout it was, beside its body detail and its timing, and the line's
+// reason is that timeout rather than internal_unknown - through the Source's
+// wrapping, which is how the error arrives. Another category keeps the
+// reason it had.
+func TestABodyThatStoppedPartwayReportsItsTimeoutAndTiming(t *testing.T) {
+	var got observability.Observation
+	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
+	timing := execution.AttemptTiming{SettleMillis: 30_000, StartLateMillis: 1_000, BudgetMillis: 9_000, ElapsedMillis: 9_004, LocalMillis: 7_500}
+	named := fmt.Errorf("alarmd access: execute physical query: %w", providerBodyError{error: errors.New("context deadline exceeded"), timing: timing})
+	c.observeQueryFailure(context.Background(), execution.OperationNormal, time.Now(), "execute", named)
+	want := observability.QueryTiming{SettleMillis: 30_000, StartLateMillis: 1_000, BudgetMillis: 9_000, ElapsedMillis: 9_004, LocalMillis: 7_500}
+	if got.QueryFailure == nil || got.QueryFailure.Category != observability.QueryFailureCategoryProviderTransport ||
+		got.QueryFailure.Code != contract.ReasonQueryTimeout || got.QueryFailure.Detail != "body=timeout" ||
+		got.QueryFailure.Timing == nil || *got.QueryFailure.Timing != want {
+		t.Fatalf("failure facts = %+v, want the body timeout with its detail and timing %+v", got.QueryFailure, want)
+	}
+	if got.ReasonCode != observability.ReasonCode(contract.ReasonQueryTimeout) {
+		t.Fatalf("reason = %q, want the provider's timeout", got.ReasonCode)
+	}
+
+	c.observeQueryFailure(context.Background(), execution.OperationNormal, time.Now(), "execute", providerLikeBudgetError{errors.New("status")})
+	if got.ReasonCode != observability.ReasonInternalUnknown || got.QueryFailure.Timing != nil {
+		t.Fatalf("a source_backend failure = reason %q timing %+v, want its reason unchanged and no timing", got.ReasonCode, got.QueryFailure.Timing)
+	}
+}
+
+// A query that never reached its backend because the permit wait ran out
+// names that on the line's reason, through the Source's wrapping, not
+// internal_unknown; the failure facts carried the code all along.
+func TestAPermitWaitThatRanOutNamesItselfOnTheQueryLine(t *testing.T) {
+	var got observability.Observation
+	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
+	named := fmt.Errorf("alarmd access: acquire physical query permit: %w", permitDeadlineError{errors.New("context deadline exceeded")})
+	c.observeQueryFailure(context.Background(), execution.OperationNormal, time.Now(), "execute", named)
+	if got.QueryFailure == nil || got.QueryFailure.Category != observability.QueryFailureCategoryAdmission ||
+		got.QueryFailure.Code != "QUERY_PERMIT_DEADLINE" {
+		t.Fatalf("failure facts = %+v, want admission / QUERY_PERMIT_DEADLINE", got.QueryFailure)
+	}
+	if got.ReasonCode != "QUERY_PERMIT_DEADLINE" {
+		t.Fatalf("reason = %q, want QUERY_PERMIT_DEADLINE rather than internal_unknown", got.ReasonCode)
+	}
+}
+
+type permitDeadlineError struct{ error }
+
+func (e permitDeadlineError) Unwrap() error { return e.error }
+func (permitDeadlineError) QueryFailure() (string, string) {
+	return observability.QueryFailureCategoryAdmission, "QUERY_PERMIT_DEADLINE"
+}
+
+type providerBodyError struct {
+	error
+	timing execution.AttemptTiming
+}
+
+func (e providerBodyError) Unwrap() error { return e.error }
+func (providerBodyError) QueryFailure() (string, string) {
+	return observability.QueryFailureCategoryProviderTransport, contract.ReasonQueryTimeout
+}
+func (providerBodyError) QueryFailureDetail() string { return "body=timeout" }
+func (e providerBodyError) QueryFailureTiming() *execution.AttemptTiming {
+	timing := e.timing
+	return &timing
+}
+
 type providerLikeBudgetError struct{ error }
 
 func (e providerLikeBudgetError) Unwrap() error { return e.error }
@@ -67,8 +133,10 @@ func TestProviderFailureFactsProjectLastFailedAttempt(t *testing.T) {
 	unavailable := execution.PhysicalQueryCompletion{
 		Completeness: execution.CompletenessUnavailable,
 		RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{
-			{AttemptNo: 1, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), Detail: execution.HTTPStatusRouteDetail(502)},
-			{AttemptNo: 2, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryTimeout), Detail: execution.TransportRouteDetail(execution.TransportFailureTimeout)},
+			{AttemptNo: 1, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), Detail: execution.HTTPStatusRouteDetail(502),
+				Timing: &execution.AttemptTiming{SettleMillis: 4, StartLateMillis: 1, BudgetMillis: 2, ElapsedMillis: 3}},
+			{AttemptNo: 2, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryTimeout), Detail: execution.TransportRouteDetail(execution.TransportFailureTimeout),
+				Timing: &execution.AttemptTiming{SettleMillis: 30_000, StartLateMillis: 11_000, BudgetMillis: 9_000, ElapsedMillis: 9_004}},
 		}},
 	}
 	if facts := providerFailureFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{full}}); facts != nil {
@@ -76,12 +144,35 @@ func TestProviderFailureFactsProjectLastFailedAttempt(t *testing.T) {
 	}
 	facts := providerFailureFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{full, unavailable}})
 	want := observability.QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: contract.ReasonQueryTimeout, Detail: "transport=timeout"}
-	if facts == nil || *facts != want {
+	// The last failed attempt's timing, beside its detail: the attempt the
+	// row reads is the one that was timed.
+	wantTiming := observability.QueryTiming{SettleMillis: 30_000, StartLateMillis: 11_000, BudgetMillis: 9_000, ElapsedMillis: 9_004}
+	if facts == nil || facts.Timing == nil || *facts.Timing != wantTiming {
+		t.Fatalf("facts=%+v, want the last attempt's timing %+v", facts, wantTiming)
+	}
+	facts.Timing = nil
+	if *facts != want {
 		t.Fatalf("facts=%+v, want %+v", facts, want)
 	}
+	// The status is the last failed attempt's, as the timing is: a 503
+	// followed by a replayed attempt the backend refused with 400 reads 400.
+	refused := execution.PhysicalQueryCompletion{
+		Completeness: execution.CompletenessUnavailable,
+		RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{
+			{AttemptNo: 1, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), Detail: execution.HTTPStatusRouteDetail(503), HTTPStatus: 503},
+			{AttemptNo: 2, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), Detail: execution.HTTPStatusRouteDetail(400), HTTPStatus: 400},
+		}},
+	}
+	facts = providerFailureFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{refused}})
+	if facts == nil || facts.HTTPStatus != 400 || facts.Detail != "http_status=400" {
+		t.Fatalf("facts=%+v, want the last attempt's status 400", facts)
+	}
+	// A query that was never sent names that, not the fallback the binding
+	// carries: read as the backend's word, it filed the round under the
+	// backend.
 	bare := execution.PhysicalQueryCompletion{Completeness: execution.CompletenessUnavailable}
 	facts = providerFailureFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{bare}})
-	want = observability.QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: contract.ReasonQueryUnavailable}
+	want = observability.QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: string(execution.ReasonQueryNotAttempted)}
 	if facts == nil || *facts != want {
 		t.Fatalf("bare facts=%+v, want %+v", facts, want)
 	}
@@ -118,16 +209,41 @@ func TestProviderUnavailableFactsCountEveryUnavailablePhysicalQuery(t *testing.T
 			t.Fatalf("entry %d = %q, want %q", index, entry.Attribution, want[index])
 		}
 	}
+	for index, class := range []string{"none", "none", "none", "none"} {
+		if facts[index].HTTPClass != class {
+			t.Fatalf("entry %d class %q, want %q: none of them got an HTTP answer", index, facts[index].HTTPClass, class)
+		}
+	}
+	// The class is the last failed attempt's answer: 4xx, 5xx, another
+	// status, or none when the last attempt got no HTTP answer.
+	status := func(codes ...int) execution.PhysicalQueryCompletion {
+		item := execution.PhysicalQueryCompletion{Completeness: execution.CompletenessUnavailable}
+		for index, code := range codes {
+			item.RouteFacts.Attempts = append(item.RouteFacts.Attempts, execution.RouteAttemptFact{AttemptNo: uint32(index + 1), Result: execution.RouteAttemptFailed,
+				ReasonCode: execution.ReasonCode(contract.ReasonQueryUnavailable), HTTPStatus: code})
+		}
+		return item
+	}
+	classes := providerUnavailableFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{
+		status(503, 400), status(400, 503), status(302), status(503, 0)}})
+	for index, class := range []string{"4xx", "5xx", "other", "none"} {
+		if classes[index].HTTPClass != class {
+			t.Fatalf("entry %d class %q, want %q", index, classes[index].HTTPClass, class)
+		}
+	}
 	if healthy := providerUnavailableFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{full}}); healthy != nil {
 		t.Fatalf("a completion without unavailable queries produced facts: %+v", healthy)
 	}
 	// The code the binding carries is unchanged by the attribution: the last
-	// classified attempt names it, else the fallback.
-	if code := physicalFailureReason(named.RouteFacts); code != execution.ReasonCode(contract.ReasonQueryTimeout) {
-		t.Fatalf("named code = %s", code)
+	// classified attempt names it, else the fallback. The binding keeps where
+	// it came from beside it.
+	if code, from := physicalFailureReason(named.RouteFacts); code != execution.ReasonCode(contract.ReasonQueryTimeout) ||
+		from != execution.UnavailableFromAttempt {
+		t.Fatalf("named code = %s from %s", code, from)
 	}
-	if code := physicalFailureReason(neverSent.RouteFacts); code != execution.ReasonCode(contract.ReasonQueryUnavailable) {
-		t.Fatalf("fallback code = %s", code)
+	if code, from := physicalFailureReason(neverSent.RouteFacts); code != execution.ReasonCode(contract.ReasonQueryUnavailable) ||
+		from != execution.UnavailableNoAttempts {
+		t.Fatalf("fallback code = %s from %s", code, from)
 	}
 }
 
@@ -142,7 +258,7 @@ func TestProviderUnavailableFactsCountEveryUnavailablePhysicalQuery(t *testing.T
 // and the Level's own UNKNOWN reason are now the same function of the same
 // inputs.
 func TestInputsThatFailedDifferentlyFoldToOneReason(t *testing.T) {
-	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9022"}
+	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "857"}
 	due := execution.DuePlan{Identity: plan}
 	consumer := execution.ConsumerRef{Plan: plan, LevelID: 1, HasLevel: true}
 	previous := execution.NamedInputBinding{Consumer: consumer, RequirementID: "req-previous", DatasetName: "previous",
@@ -214,7 +330,7 @@ func TestLoadedFactDispositionRefusalKeepsItsCodeThroughTheEvaluationWrapper(t *
 // function of the same inputs as everywhere else, so no round can be refused
 // for the two derivations disagreeing.
 func TestTheNoSeriesPathTakesTheFoldAndLeavesThePlanResultAlone(t *testing.T) {
-	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9022"}
+	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "857"}
 	due := execution.DuePlan{Identity: plan}
 	consumer := execution.ConsumerRef{Plan: plan, LevelID: 1, HasLevel: true}
 	primary := execution.NamedInputBinding{Consumer: consumer, RequirementID: "req-primary", DatasetName: "primary",
@@ -227,5 +343,29 @@ func TestTheNoSeriesPathTakesTheFoldAndLeavesThePlanResultAlone(t *testing.T) {
 	if err != nil || len(reasons) != 1 || reasons[level] != "QUERY_UNAVAILABLE" {
 		t.Fatalf("no-series shape: reasons = %v, err = %v; want the fold of the scope's inputs and not "+
 			"whichever one the merge happened to report", reasons, err)
+	}
+}
+
+// A query stopped by the cancellation of the Slot's own context names that,
+// on the query line and on any other stage the coordinator observes; a
+// cancellation error under a live context keeps internal_unknown.
+func TestAQueryCancelledFromAboveSaysSo(t *testing.T) {
+	var got observability.Observation
+	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := fmt.Errorf("alarmd access: execute physical query: alarmd access uq: execute request: %w", context.Canceled)
+	c.observeQueryFailure(cancelled, execution.OperationNormal, time.Now(), "execute", err)
+	if got.ReasonCode != observability.ReasonSlotCancelled {
+		t.Fatalf("query cancelled from above: reason = %q, want %q", got.ReasonCode, observability.ReasonSlotCancelled)
+	}
+	c.observeQueryFailure(context.Background(), execution.OperationNormal, time.Now(), "execute", err)
+	if got.ReasonCode != observability.ReasonInternalUnknown {
+		t.Fatalf("cancellation under a live context: reason = %q, want internal_unknown", got.ReasonCode)
+	}
+	c.observe(cancelled, observability.ComponentEvaluation, observability.StageEvaluationCompleted, execution.OperationNormal, time.Now(), "", "",
+		fmt.Errorf("alarmd worker: evaluate series: %w", context.Canceled))
+	if got.ReasonCode != observability.ReasonSlotCancelled {
+		t.Fatalf("evaluation cancelled from above: reason = %q, want %q", got.ReasonCode, observability.ReasonSlotCancelled)
 	}
 }

@@ -86,6 +86,23 @@ type HostBusiness interface {
 	HostIndexResolved() bool
 }
 
+// TenantHostBusiness is a HostBusiness that answers each tenant from its own
+// CMDB cache: a Plan's hosts are its tenant's, and another tenant's are under
+// keys of their own.
+type TenantHostBusiness interface {
+	HostBusiness
+	ForTenant(tenant string) HostBusiness
+}
+
+// HostBusinessFor is the tenant's view of hosts: its own answers when hosts
+// answers per tenant, hosts itself otherwise.
+func HostBusinessFor(hosts HostBusiness, tenant string) HostBusiness {
+	if tenants, ok := hosts.(TenantHostBusiness); ok {
+		return tenants.ForTenant(tenant)
+	}
+	return hosts
+}
+
 // PlanNoDataStore holds what each Plan remembers about absence between Slots.
 type PlanNoDataStore interface {
 	LoadNoData(context.Context, NoDataLoadRequest) (NoDataLoadResult, error)

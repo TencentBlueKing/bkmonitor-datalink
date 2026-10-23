@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -19,7 +20,7 @@ import (
 // scheduler planning a batch of moves it does not publish.
 func skewedRound(at time.Time) *RebalanceFacts {
 	return &RebalanceFacts{PlannedAt: at, ReadyWorkers: 2, Assigned: 2370, Target: 1185, MostOwned: 2370, LeastOwned: 0,
-		MostOwnedBy: "pod-a", LeastOwnedBy: "pod-b", Batch: 23, PlannedMoves: 23, StopSpreadPercent: 5, Shadow: true}
+		MostOwnedBy: "pod-a", LeastOwnedBy: "pod-b", Batch: 23, PlannedMoves: 23, StopSpreadPercent: 5}
 }
 
 // The leader's round is the deployment's, kept whole on the view with the
@@ -37,12 +38,12 @@ func TestAggregateCarriesTheNewestRebalanceRound(t *testing.T) {
 		{Replica: "pod-b", TakenAt: now, Owned: 0, Determined: 0, Rebalance: older},
 	}
 	view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness)
-	if view.Rebalance == nil || *view.Rebalance != *newer || view.RebalanceReplica != "pod-a" {
+	if view.Rebalance == nil || !reflect.DeepEqual(*view.Rebalance, *newer) || view.RebalanceReplica != "pod-a" {
 		t.Fatalf("view rebalance = %+v from %q, want pod-a's newer round, whole", view.Rebalance, view.RebalanceReplica)
 	}
 	// The same two snapshots in the other order reach the same round.
 	reversed := Aggregate(Expectation{Known: true, QueryGroups: 2}, []Snapshot{snapshots[1], snapshots[0]}, []string{"pod-b", "pod-a"}, now, freshness)
-	if reversed.Rebalance == nil || *reversed.Rebalance != *newer || reversed.RebalanceReplica != "pod-a" {
+	if reversed.Rebalance == nil || !reflect.DeepEqual(*reversed.Rebalance, *newer) || reversed.RebalanceReplica != "pod-a" {
 		t.Fatalf("reversed: view rebalance = %+v from %q, want the same newer round", reversed.Rebalance, reversed.RebalanceReplica)
 	}
 	// The view's copy is its own: a later change to the snapshot's facts
@@ -75,7 +76,7 @@ func TestOwnershipSkewIsAStandingDecidedByTheSchedulersRound(t *testing.T) {
 	}
 	skew := reports[1]
 	if skew.Owner != OwnerAlarmd || skew.GroupBy != GroupByReplica || skew.Objects != 0 || skew.Current != 0 ||
-		skew.Replica != "pod-a" || skew.Rebalance == nil || *skew.Rebalance != *view.Rebalance {
+		skew.Replica != "pod-a" || skew.Rebalance == nil || !reflect.DeepEqual(*skew.Rebalance, *view.Rebalance) {
 		t.Fatalf("OWNERSHIP_SKEWED = %+v, want ours, folded on replica, no objects, the leader's round whole", skew)
 	}
 	if len(skew.Groups) != 1 || skew.Groups[0].Key != "pod-a" || len(skew.Groups[0].Replicas) != 2 ||

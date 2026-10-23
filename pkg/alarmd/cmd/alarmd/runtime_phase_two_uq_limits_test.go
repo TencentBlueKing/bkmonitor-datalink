@@ -30,11 +30,13 @@ func TestPhaseTwoUQLimitsCapBodyIndependentlyOfRetainedBudget(t *testing.T) {
 			cfg := config.Default()
 			cfg.PhaseTwo.Coordinator.MaxRetainedBytes = test.retained
 			limits := phaseTwoUQLimits(cfg)
-			wantRecords := cfg.PhaseTwo.Coordinator.MaxSeries * cfg.Limits.Detect.MaxRecordsPerSeries
+			// The counts in one answer are what its body can hold at the
+			// smallest a series and a record encode.
+			wantSeries, wantRecords := uint64(test.wantBody)/config.MinimumSeriesBytes, uint64(test.wantBody)/config.MinimumRecordBytes
 			if limits.MaxBodyBytes != test.wantBody || limits.MaxSeriesBytes != test.wantSeriesMax ||
-				limits.MaxSeries != cfg.PhaseTwo.Coordinator.MaxSeries || limits.MaxRecords != wantRecords {
+				limits.MaxSeries != wantSeries || limits.MaxRecords != wantRecords {
 				t.Fatalf("phaseTwoUQLimits(retained=%d) = %+v, want body=%d series_bytes=%d series=%d records=%d",
-					test.retained, limits, test.wantBody, test.wantSeriesMax, cfg.PhaseTwo.Coordinator.MaxSeries, wantRecords)
+					test.retained, limits, test.wantBody, test.wantSeriesMax, wantSeries, wantRecords)
 			}
 			if _, err := accessuq.NewClientWithLimits("http://uq.invalid", "alarmd-test", &http.Client{}, limits); err != nil {
 				t.Fatalf("derived limits rejected by the UQ client: %v", err)

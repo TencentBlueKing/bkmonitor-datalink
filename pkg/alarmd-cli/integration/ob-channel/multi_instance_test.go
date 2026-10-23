@@ -291,7 +291,7 @@ return 1`
 	nodes["worker"].channel.Store(makeChannel("worker", "worker-boot-2", true))
 	beforeRuns = nodes["worker"].runs.Load()
 	result = h.run("multi-mixed-catalog", 1, "", "invoke", "runtime.get", "--env", environment, "--input", `{"replica":"worker"}`)
-	assertRoutingError(t, result, "target_catalog_mismatch")
+	assertRoutingError(t, result, "target_operation_contract_mismatch")
 	if nodes["worker"].runs.Load() != beforeRuns || nodes["entry"].runs.Load() != 0 || nodes["leader"].runs.Load() != 0 {
 		t.Fatal("failed target executed or silently fell back")
 	}
@@ -324,7 +324,7 @@ func assertRoutingError(t *testing.T, result map[string]any, code string) {
 	if result["status"] != "error" || failure["code"] != code {
 		t.Fatalf("expected explicit routing error %s", code)
 	}
-	if code == "target_catalog_mismatch" && strings.Contains(stringMustJSON(result["next_call"]), `"describe"`) {
+	if (code == "target_catalog_mismatch" || code == "target_operation_contract_mismatch") && strings.Contains(stringMustJSON(result["next_call"]), `"describe"`) {
 		t.Fatal("catalog mismatch suggested an ingress describe retry loop")
 	}
 }

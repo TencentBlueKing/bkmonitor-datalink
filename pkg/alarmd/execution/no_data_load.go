@@ -65,6 +65,8 @@ const (
 type NoDataApplyRequest struct {
 	Contract FrozenExecutionContractRef
 	Items    []PlanNoDataMutation
+	// Retention is what the written memory lives for; see GenerationRetention.
+	Retention GenerationRetention
 }
 
 type NoDataApplyItemResult struct {
@@ -122,20 +124,14 @@ const (
 	// partition adds up -- every load lands on exactly one of these, and a
 	// reader can check that against the number of Plans that were asked for.
 	NoDataRepresentationNone NoDataRepresentation = "NONE"
-	// NoDataRepresentationWholeMemory is the single-value record this build
-	// reads and no longer writes. A Plan on it has not written since the
-	// upgrade, or has been back to an older build since.
-	NoDataRepresentationWholeMemory NoDataRepresentation = "WHOLE_MEMORY"
 	// NoDataRepresentationPerGroup is the record this build writes.
 	NoDataRepresentationPerGroup NoDataRepresentation = "PER_GROUP"
 )
 
 // NoDataRepresentations is every value the label may take, for the metric to
-// pre-create and bound itself by. The zero reading is the one that matters
-// here: WHOLE_MEMORY falling to zero is what says the fleet has finished
-// rolling, and a series that is absent rather than zero cannot say that.
+// pre-create and bound itself by.
 var NoDataRepresentations = []NoDataRepresentation{
-	NoDataRepresentationNone, NoDataRepresentationWholeMemory, NoDataRepresentationPerGroup,
+	NoDataRepresentationNone, NoDataRepresentationPerGroup,
 }
 
 // NoDataRecordKind names which record a size refusal measured.
@@ -246,16 +242,9 @@ type NoDataMemorySnapshot struct {
 	SchemaVersion        NoDataMemorySchema
 	LastScheduleRevision PlanScheduleRevision
 	RosterVersion        string
-	// Representation says which of the two stored shapes this snapshot was read
-	// from, and travels with the snapshot rather than being worked out again by
-	// a reader: the choice is made once, inside the store, from two records
-	// only it saw.
-	//
-	// It is the one reading that says how far the rollout has got. A fleet
-	// still on the whole-memory record and one fully moved over look identical
-	// from every other signal -- the memory is read, the Plan evaluates, the
-	// write goes through -- and the difference is exactly what decides whether
-	// the cleanup may run.
+	// Representation says whether this snapshot was read from the per-group
+	// record or from none, and travels with the snapshot so the write knows
+	// whether its statement is a delta or replaces the whole record.
 	Representation NoDataRepresentation
 	// PresentAsOf is the round the record says the Plan last had data in.
 	//

@@ -145,9 +145,11 @@ type latestPublicationMemo struct {
 // object keys puts the whole fleet on it at once, which is the shape of the
 // incident this cache was written for.
 //
-// It is not used by the paths that ask whether the manifest is still in the
-// store: renewal and the activation's existence check read through, because
-// there the answer they want is about Redis rather than about the content.
+// It is not used alone by the paths that ask whether the manifest is still in
+// the store, because there the answer they want is about Redis rather than
+// about the content: the activation's existence check reads through, and
+// renewal goes through retainedCatalogManifest, which asks the store with an
+// existence check before it answers from here.
 //
 // The hit and the miss are both counted, on the same series the Worker's other
 // object reads use. The hit rate is the whole point of this cache, and a hit

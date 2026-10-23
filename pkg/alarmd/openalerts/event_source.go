@@ -65,7 +65,7 @@ var ErrNoEventSource = errors.New("the target's event source is not known yet")
 func (reader *HTTPReconciler) EventSource(ctx context.Context) (EventSourceKeying, error) {
 	keying, err := reader.eventSource(ctx)
 	at := reader.now()
-	reader.calls.record(ConsoleOpEventSource, at, err)
+	reader.record(ConsoleOpEventSource, at, err)
 	if err == nil {
 		reader.calls.mu.Lock()
 		reader.calls.eventSource, reader.calls.eventSourceReadAt = keying.clone(), at

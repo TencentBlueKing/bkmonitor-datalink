@@ -10,11 +10,28 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 )
 
 // renderObservation returns the line the logger actually writes.
 //
+// renderTo writes the line the logger renders for an observation, whatever
+// lets it through: the renderer alone, after the normalization every
+// observation goes through. A workflow stage's routine success is counted and
+// not written, so a case about which keys a line carries reads the renderer,
+// and the policy's own cases read the policy.
+func renderTo(output *bytes.Buffer, observation Observation) {
+	New(ComponentScheduler, output).logObservation(context.Background(), NormalizeObservation(observation), LogAdmission{Allowed: true})
+}
+
+// rendererObserver writes every observation it is given through the
+// renderer (renderTo), for the cases that read the keys a sequence of lines
+// carries rather than which lines the policy lets through.
+type rendererObserver struct{ output *bytes.Buffer }
+
+func (r rendererObserver) Observe(_ context.Context, observation Observation) {
+	renderTo(r.output, observation)
+}
+
 // Every case in this file reads the rendered line rather than the fact
 // struct. A field can be set on the struct, carried all the way to the
 // observer, and never appear on any line -- the renderer here emits a chosen
@@ -26,15 +43,7 @@ import (
 func renderObservation(t *testing.T, observation Observation) map[string]any {
 	t.Helper()
 	var output bytes.Buffer
-	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1000})
-	if err != nil {
-		t.Fatalf("NewWindowLogLimiter() error = %v", err)
-	}
-	policy, err := NewBoundedLogPolicy(limiter)
-	if err != nil {
-		t.Fatalf("NewBoundedLogPolicy() error = %v", err)
-	}
-	NewLoggingObserver(New(ComponentScheduler, &output), policy).Observe(context.Background(), observation)
+	renderTo(&output, observation)
 	if output.Len() == 0 {
 		t.Fatal("the observation was not written at all")
 	}
@@ -67,6 +76,34 @@ func TestTheRangeGateBoundsAreOnTheRenderedLine(t *testing.T) {
 	} {
 		if event[key] != want {
 			t.Fatalf("line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
+		}
+	}
+}
+
+// A range given up on for distance says what sized it: how far behind the
+// head and past its own deadline, which bound held, how wide it was built,
+// from which Slot and at what interval, against how many Slots a replay may
+// cover. Each value is distinct so a key rendered from the wrong field shows.
+func TestTheRangeDistanceFactsAreOnTheRenderedLine(t *testing.T) {
+	event := renderObservation(t, Observation{
+		Component: ComponentScheduler, Stage: StageRangeDistanceExpired, Result: ResultDegraded,
+		RangeDistance: &RangeDistanceFacts{
+			HeadSteps: 41, DeadlineSteps: 3, Steps: 5, SlotCount: 6, FirstEvaluationTime: 1700000060,
+			IntervalSeconds: 15, MaxReplaySlots: 7, BoundBy: RangeBoundByDeadline,
+		},
+	})
+	for key, want := range map[string]any{
+		"range_bound_by":              RangeBoundByDeadline,
+		"range_head_steps":            float64(41),
+		"range_deadline_steps":        float64(3),
+		"range_steps":                 float64(5),
+		"range_slot_count":            float64(6),
+		"range_first_evaluation_time": float64(1700000060),
+		"range_interval_seconds":      float64(15),
+		"range_max_replay_slots":      float64(7),
+	} {
+		if event[key] != want {
+			t.Errorf("line[%q] = %#v, want %#v; line=%#v", key, event[key], want, event)
 		}
 	}
 }

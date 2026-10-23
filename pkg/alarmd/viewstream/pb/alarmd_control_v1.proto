@@ -47,6 +47,11 @@ message EvidenceRequest {
   string owner_query_group = 12;
   uint64 owner_epoch = 13;
   uint64 control_epoch = 14;
+  // Empty retains legacy whole-catalog validation. New callers bind only the
+  // registered operation execution contract, allowing role-specific catalogs.
+  string operation_contract_revision = 15;
+  bool control_leader_target = 16;
+  string caller_incarnation = 17;
 }
 
 message EvidenceResult {

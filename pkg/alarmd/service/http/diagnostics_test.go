@@ -69,6 +69,35 @@ func TestThePageDoesNotShadowTheQuerySurfaceRoutes(t *testing.T) {
 	}
 }
 
+// The scrape carries each family's first sentence, the whole Help being in
+// metric/METRICS.md and the CLI's metrics.list.
+func TestTheScrapeCarriesEachFamilysFirstSentence(t *testing.T) {
+	recorder := metric.NewRecorder(metric.BuildInfo{})
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(recorder, WithDiagnosticsAddress("127.0.0.1:0"))
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := response.Body.String()
+	checked := 0
+	for _, family := range families {
+		whole := family.GetHelp()
+		short := metric.ShortHelp(whole)
+		if short == whole || len(family.GetMetric()) == 0 || strings.ContainsAny(whole, "\\\n") {
+			continue
+		}
+		if !strings.Contains(body, "# HELP "+family.GetName()+" "+short+"\n") {
+			t.Fatalf("/metrics does not carry %s's first sentence %q", family.GetName(), short)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no family with a series has a Help longer than its first sentence, so nothing was checked")
+	}
+}
+
 func TestDiagnosticsSurfaceServesPprof(t *testing.T) {
 	server := New(metric.NewRecorder(metric.BuildInfo{}))
 	response := httptest.NewRecorder()

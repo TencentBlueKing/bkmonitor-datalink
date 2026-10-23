@@ -43,6 +43,7 @@ func TestTheProductionPublisherIsGivenItsOverdueSourceAndStrategyNames(t *testin
 	for _, wire := range []struct{ field, why string }{
 		{"overdue:", "the due index, without which the page reports 未启用 on a running index"},
 		{"strategies:", "strategy names, without which parked objects arrive as bare hashes"},
+		{"lateSeries: lookbackLateSeries(", "the late series the supplements could not recover, without which their rows never appear"},
 	} {
 		if !strings.Contains(literal, wire.field) {
 			t.Errorf("the production publisher is not given %s -- %s", wire.field, wire.why)

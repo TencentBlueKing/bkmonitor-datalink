@@ -43,8 +43,8 @@ type ViewStreamFacts struct {
 	Revision     uint64 `json:"revision"`
 	Sessions     int    `json:"sessions"`
 	// The current version's ledger: Expected receivers, and how many have
-	// been Sent it, Acked it, Installed it, Switched to it. Installed over
-	// Expected is the reading; Switched stays zero while Workers shadow.
+	// been Sent it, Acked it, Installed it, Switched to it. Switched over
+	// Expected is the reading.
 	Expected  int `json:"expected"`
 	Sent      int `json:"sent"`
 	Acked     int `json:"acked"`
@@ -57,9 +57,10 @@ type ViewStreamFacts struct {
 	Lagging []ViewStreamLagging `json:"lagging"`
 	// NotSwitched lists the Workers that installed the current version but
 	// do not yet execute every one of its Query Groups from it, each with
-	// the count it does (decision-016 batch 4). Empty is every installed
-	// Worker switched; in the shadow step it is every installed Worker. The
-	// batch 4a drill reads this going empty after a rollout and a cutover.
+	// the count it does. Empty is every installed Worker switched; a Worker
+	// that stays here holds a Query Group the view carries without content
+	// (draining, or a Segment without an object), or one whose lease is
+	// missing or does not agree with its entry.
 	NotSwitched []ViewStreamLagging `json:"not_switched"`
 	// Objects is what the Workers that installed the current version said
 	// about their objects, the Leader's account of it: how many probed and

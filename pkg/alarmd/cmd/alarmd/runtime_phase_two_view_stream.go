@@ -27,8 +27,8 @@ import (
 // The Leader's side of decision-016's view stream, wired into the
 // reconcile round: the round that placed every Query Group hands the
 // stream the desired set it arrived at, and the stream projects it per
-// Worker. Nothing in execution reads the stream in this step (the shadow
-// of 016 section 7.1); a failure anywhere in it is reported and the round
+// Worker. Workers execute from the installed view through their view gate
+// (016 batch 4); a failure anywhere in the stream is reported and the round
 // stands.
 
 // viewStreamRegistry is what admission reads: the Worker's own
@@ -188,16 +188,11 @@ type viewSource interface {
 	// ActivationBlocked is the Query Groups a cutover held back: the view
 	// gives each the content its open Segment names, not the manifest's.
 	ActivationBlocked(context.Context) ([]controlplane.BlockedQueryGroup, error)
-	// ApplyCutoverProgress is the content the Query Groups run while a
-	// cutover is in progress: what each open Segment names. Without
-	// progress it returns the content as given.
-	ApplyCutoverProgress(context.Context, controlplane.ActivationState, map[execution.QueryGroupIdentity]controlplane.ContentEntry) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error)
 }
 
 // runningViewContent is what each Query Group of the activation runs, which
 // is what the view gives it: the published content, a held-back Query Group
-// on its open Segment instead, and every Query Group on its open Segment
-// while a cutover is in progress.
+// on its open Segment instead.
 func runningViewContent(
 	ctx context.Context, source viewSource, state controlplane.ActivationState,
 ) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
@@ -209,11 +204,7 @@ func runningViewContent(
 	if err != nil {
 		return nil, fmt.Errorf("read held-back Query Groups: %w", err)
 	}
-	running := controlplane.ApplyBlockedToContent(published.Groups, blocked)
-	if running, err = source.ApplyCutoverProgress(ctx, state, running); err != nil {
-		return nil, fmt.Errorf("read the content a cutover in progress runs: %w", err)
-	}
-	return running, nil
+	return controlplane.ApplyBlockedToContent(published.Groups, blocked), nil
 }
 
 // costLedgerSink hands each heartbeat's costs to the Leader's ledger: the
@@ -301,11 +292,32 @@ func (runtime *productionPhaseTwoOwnership) publishView(
 	// previews that Segment's content so a Worker executing from the view
 	// finishes them (decision-016 batch 4b). Read only for the draining
 	// ones, which are few and go away as their timelines retire.
+	//
+	// A timeline that does not decode is its own Query Group's fault and
+	// reads the same every round: that Query Group stays in its Worker's
+	// view without content, which is not executed, and the rest of the set
+	// is published - a missing object makes only its own Query Group
+	// unexecutable (decision-016 section 4.1), a deterministic error ends
+	// only its own Plan (02 section 10). It is counted under the reason a
+	// failed read has, and named on the line. Any other error says nothing
+	// about the Query Group - a store that does not answer - and the set is
+	// not published: the view the Workers hold stands until a read succeeds.
 	for identity := range records {
 		if _, published := desired.Content[identity]; published {
 			continue
 		}
 		digest, refs, draining, err := source.DrainingContent(ctx, identity)
+		var undecodable *controlplane.DeterministicScheduleError
+		if errors.As(err, &undecodable) {
+			stream.NotePublishFailure(viewstream.PublishFailureDrainingUnreadable)
+			observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+				Component: observability.ComponentOwnership, Stage: observability.StageViewPublished,
+				Result: observability.ResultDegraded, ReasonCode: observability.ReasonContractDeterministic, Err: err,
+				ViewStream: &observability.ViewStreamFacts{Event: viewstream.PublishFailureDrainingUnreadable, ControlEpoch: authority.Fence.OwnerEpoch,
+					Reason: fmt.Sprintf("draining %s left without content: %v", identity, err)},
+			})
+			continue
+		}
 		if err != nil {
 			stream.NotePublishFailure(viewstream.PublishFailureDrainingUnreadable)
 			report(fmt.Errorf("read draining content %s: %w", identity, err))
@@ -341,16 +353,16 @@ func (runtime *productionPhaseTwoOwnership) publishView(
 	}
 }
 
-// viewStreamDiscovery finds the Leader's stream from the records that
-// already exist: the control leader lease names who leads, that worker's
-// own registration names where. A Leader whose registration carries no
-// endpoint is a binary from before the stream, and "not found" until it
-// is replaced.
+// viewStreamDiscovery reads the control instance named by the leader lease.
+// A leader from before role registration is discovered through its Worker
+// registration. A present instance record is authoritative, including when
+// it has expired or does not declare the control role.
 type viewStreamDiscovery struct {
 	store interface {
 		ReadControlLeader(context.Context) (ownership.ControlLeader, bool, error)
 		ReadWorker(context.Context, string) (ownership.WorkerRegistration, bool, error)
 	}
+	now func() time.Time
 }
 
 // Leader names each way of not finding one apart: the three are read by
@@ -369,6 +381,30 @@ func (discovery viewStreamDiscovery) Leader(ctx context.Context) (viewstream.Lea
 	}
 	if !found {
 		return viewstream.LeaderEndpoint{}, viewstream.MissNoLeader, nil
+	}
+	if instances, ok := discovery.store.(interface {
+		ReadInstance(context.Context, string) (ownership.InstanceRegistration, bool, error)
+	}); ok {
+		instance, present, err := instances.ReadInstance(ctx, leader.OwnerID)
+		if err != nil {
+			return viewstream.LeaderEndpoint{}, "", err
+		}
+		if present {
+			if err := instance.Validate(); err != nil {
+				return viewstream.LeaderEndpoint{}, "", err
+			}
+			at := time.Now()
+			if discovery.now != nil {
+				at = discovery.now()
+			}
+			if instance.InstanceID != leader.OwnerID || !instance.ExpiresAt.After(at) || !instance.ControlCapable() {
+				return viewstream.LeaderEndpoint{}, viewstream.MissLeaderUnregistered, nil
+			}
+			if instance.Endpoint == "" {
+				return viewstream.LeaderEndpoint{}, viewstream.MissLeaderNoEndpoint, nil
+			}
+			return viewstream.LeaderEndpoint{WorkerID: leader.OwnerID, ControlEpoch: leader.OwnerEpoch, Endpoint: instance.Endpoint}, "", nil
+		}
 	}
 	registration, found, err := discovery.store.ReadWorker(ctx, leader.OwnerID)
 	if err != nil {
@@ -396,9 +432,9 @@ func newViewStreamIncarnation() (string, error) {
 
 // runViewClient keeps the Worker's stream to the Leader up for the life of
 // the bundle. Its failures are its own: nothing in execution waits on it.
-func (bundle *phaseTwoWorkerBundle) runViewClient() {
+func (bundle *phaseTwoWorkerBundle) runViewClient(ctx context.Context) {
 	defer bundle.maintenanceWG.Done()
-	_ = bundle.dependencies.ViewClient.Run(bundle.maintenanceCtx)
+	_ = bundle.dependencies.ViewClient.Run(ctx)
 }
 
 // activeQueryGroupSetSource is the view source's reader of the activation's

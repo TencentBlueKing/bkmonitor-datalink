@@ -230,7 +230,7 @@ func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *el
 				metadata.MsgQueryES,
 				"索引查询异常: %+v",
 				aliases,
-			).Error(ctx, err)
+			).Error(ctx, withBackendStatus(err))
 		}
 
 		for index, r := range res {
@@ -351,6 +351,9 @@ func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFac
 	}
 
 	source := elastic.NewSearchSource()
+	if qb.ExactTotal {
+		source.TrackTotalHits(true)
+	}
 	for _, order := range fact.Orders() {
 		fs := elastic.NewFieldSort(order.Name).Order(order.Ast)
 		unmappedType := order.UnmappedType
@@ -438,7 +441,7 @@ func (i *Instance) executeESQuery(
 	qbString, _ := json.Marshal(qb)
 	span.Set("metadata-query", qbString)
 	span.Set("query-connect", qo.conn.String())
-	span.Set("query-headers", i.headers)
+	span.Set("query-header-count", len(i.headers))
 	span.Set("query-indexes", qo.indexes)
 	span.Set("query-body", bodyString)
 
@@ -1120,7 +1123,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	searchResult, err := cli.Search().Index(aliases...).SearchSource(source).Do(ctx)
 	if err != nil {
-		return nil, err
+		return nil, withBackendStatus(err)
 	}
 
 	if searchResult.Aggregations == nil {

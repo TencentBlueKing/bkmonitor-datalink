@@ -25,7 +25,7 @@ func TestTheAbsenceLineRendersEveryCountUnderItsOwnKey(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentEvaluation, Stage: StageNoDataDecided, Result: ResultSuccess,
 		Trace: TraceFields{StrategyID: "4101", BusinessID: "7", QueryGroupKey: "qg-absence", EvaluationTime: 600},
 		NoDataAbsence: &NoDataAbsenceFacts{

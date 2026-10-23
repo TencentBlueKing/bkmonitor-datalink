@@ -24,19 +24,19 @@ import (
 // in. Instance 7 runs on the spare host, instance 8 on the live one.
 const (
 	instanceOnSpareHost = `{"bk_biz_id":999,"id":7,"service_instance_id":7,"name":"gateway","bk_module_id":85,
-"bk_host_id":700001,"service_template_id":0,"process_instances":null,"ip":"10.0.0.7","bk_cloud_id":0,
+"bk_host_id":700001,"service_template_id":0,"process_instances":null,"ip":"192.0.2.147","bk_cloud_id":0,
 "topo_link":{"module|85":[{"bk_obj_id":"module","bk_inst_id":85},{"bk_obj_id":"set","bk_inst_id":12},{"bk_obj_id":"biz","bk_inst_id":999}]}}`
 	instanceOnLiveHost = `{"bk_biz_id":999,"id":8,"service_instance_id":8,"name":"api","bk_module_id":91,
-"bk_host_id":700002,"ip":"10.0.0.8","bk_cloud_id":0,
+"bk_host_id":700002,"ip":"192.0.2.148","bk_cloud_id":0,
 "topo_link":{"module|91":[{"bk_obj_id":"module","bk_inst_id":91},{"bk_obj_id":"biz","bk_inst_id":999}]}}`
 )
 
 func TestAServiceInstanceRecordDecodesToItsHostAndModuleChain(t *testing.T) {
-	facts, err := decodeServiceInstance(instanceOnSpareHost)
+	facts, _, err := decodeServiceInstance(instanceOnSpareHost)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if facts.ID != "7" || facts.HostID != "700001" || facts.IP != "10.0.0.7" || facts.CloudID != "0" {
+	if facts.ID != "7" || facts.HostID != "700001" || facts.IP != "192.0.2.147" || facts.CloudID != "0" {
 		t.Fatalf("facts = %+v", facts)
 	}
 	nodes := append([]string(nil), facts.TopoNodes...)
@@ -45,7 +45,7 @@ func TestAServiceInstanceRecordDecodesToItsHostAndModuleChain(t *testing.T) {
 	}
 	// A record without a cloud is in the direct area, as a host without one
 	// is.
-	bare, err := decodeServiceInstance(`{"service_instance_id":9,"bk_host_id":1,"ip":"10.0.0.9"}`)
+	bare, _, err := decodeServiceInstance(`{"service_instance_id":9,"bk_host_id":1,"ip":"192.0.2.9"}`)
 	if err != nil || bare.CloudID != "0" {
 		t.Fatalf("bare instance = %+v, %v", bare, err)
 	}
@@ -105,7 +105,7 @@ func (client *hashClient) HKeys(_ context.Context, key string) *redis.StringSlic
 // under a module the host has since left.
 func TestLoadReadsHostsAndServiceInstancesIntoOneSnapshot(t *testing.T) {
 	client := &hashClient{hashes: map[string][]string{
-		"bk_monitorv3.ce.cache.cmdb.host":             {"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost},
+		"bk_monitorv3.ce.cache.cmdb.host":             {"192.0.2.147|0", disabledByAddressHost, "700001", disabledByAddressHost},
 		"bk_monitorv3.ce.cache.cmdb.service_instance": {"7", instanceOnSpareHost},
 		"bk_monitorv3.ce.cache.cmdb.topo":             {"set|12", `{"bk_obj_id":"set","bk_inst_id":12}`},
 	}}
@@ -120,13 +120,15 @@ func TestLoadReadsHostsAndServiceInstancesIntoOneSnapshot(t *testing.T) {
 	if index.Hosts() != 1 || index.ServiceInstances() != 1 {
 		t.Fatalf("index holds %d hosts and %d instances", index.Hosts(), index.ServiceInstances())
 	}
-	if !reflect.DeepEqual(client.scans, []string{"bk_monitorv3.ce.cache.cmdb.host", "bk_monitorv3.ce.cache.cmdb.service_instance", "bk_monitorv3.ce.cache.cmdb.topo"}) {
+	if !reflect.DeepEqual(client.scans, []string{"bk_monitorv3.ce.cache.cmdb.host", "bk_monitorv3.ce.cache.cmdb.service_instance",
+		"bk_monitorv3.ce.cache.cmdb.topo", "bk_monitorv3.ce.cache.cmdb.bcs_cluster_business",
+		"bk_monitorv3.ce.cache.cmdb.bcs_namespace_business", "bk_monitorv3.ce.cache.cmdb.agent_id"}) {
 		t.Fatalf("scanned %v", client.scans)
 	}
 	if index.TopologyNodes() != 1 {
 		t.Fatalf("topology nodes = %d, want the one the cache lists", index.TopologyNodes())
 	}
-	store := &Store{index: index, now: time.Now, maxAge: time.Hour, interval: time.Minute}
+	store := &Store{index: index, now: index.BuiltAt, maxAge: time.Hour}
 	if health := store.Health(); health.Hosts != 1 || health.ServiceInstances != 1 {
 		t.Fatalf("health = %+v", health)
 	}
@@ -136,10 +138,7 @@ func instanceChain(t *testing.T, store *Store, disabledStates ...string) *admiss
 	t.Helper()
 	filters := []admission.Filter{admission.TargetScopeFilter{}}
 	if len(disabledStates) > 0 {
-		statusFilter, installed := admission.NewHostStatusFilter(disabledStates)
-		if !installed {
-			t.Fatal("NewHostStatusFilter declined to install")
-		}
+		statusFilter := admission.NewHostStatusFilter(disabledStates)
 		filters = append(filters, statusFilter)
 	}
 	return admission.NewChain(
@@ -153,7 +152,7 @@ func storeWith(hostFields []string, instanceFields []string) *Store {
 	builder := newIndexBuilder(builtAt)
 	builder.addFields(hostFields)
 	builder.addServiceInstanceFields(instanceFields)
-	return &Store{index: builder.index, now: func() time.Time { return builtAt }, maxAge: time.Hour, interval: time.Minute}
+	return &Store{index: builder.index, now: func() time.Time { return builtAt }, maxAge: time.Hour}
 }
 
 // A series that names only a service instance is placed under the instance's
@@ -163,7 +162,7 @@ func storeWith(hostFields []string, instanceFields []string) *Store {
 // them back. The dimensions are not written here.
 func TestAServiceInstanceSeriesIsPlacedUnderItsModuleAndJudgedByItsHost(t *testing.T) {
 	store := storeWith(
-		[]string{"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost, "10.0.0.8|0", monitoredByIDHost, "700002", monitoredByIDHost},
+		[]string{"192.0.2.147|0", disabledByAddressHost, "700001", disabledByAddressHost, "192.0.2.148|0", monitoredByIDHost, "700002", monitoredByIDHost},
 		[]string{"7", instanceOnSpareHost, "8", instanceOnLiveHost},
 	)
 	chain := instanceChain(t, store, "备用机")
@@ -176,14 +175,14 @@ func TestAServiceInstanceSeriesIsPlacedUnderItsModuleAndJudgedByItsHost(t *testi
 	// By address only: Python's instance branch writes bk_target_ip and
 	// bk_target_cloud_id and never bk_host_id, so the instance's own host id
 	// is not a key the record can be matched by.
-	if got := facts.HostKeys(); !reflect.DeepEqual(got, []string{"10.0.0.7|0"}) {
+	if got := facts.HostKeys(); !reflect.DeepEqual(got, []string{"192.0.2.147|0"}) {
 		t.Fatalf("host keys = %v, want the instance's host by address only", got)
 	}
 	if !facts.HostResolved || facts.HostState != "备用机" || facts.HostBusinessID != "999" {
 		t.Fatalf("facts = %+v, want the instance's host resolved", facts)
 	}
 	naming := facts.HostNaming
-	if !naming.NamedAddress || !naming.NamedCloud || !naming.Usable || naming.AddressKey != "10.0.0.7|0" || naming.IDKey != "" {
+	if !naming.NamedAddress || !naming.NamedCloud || !naming.Usable || naming.AddressKey != "192.0.2.147|0" || naming.IDKey != "" {
 		t.Fatalf("naming = %+v, want the record named by the instance's address", naming)
 	}
 	if len(dimensions) != 1 {
@@ -242,10 +241,10 @@ func TestAServiceInstanceSeriesIsPlacedUnderItsModuleAndJudgedByItsHost(t *testi
 	if decision := scope.Admit(hostTarget(admission.TargetScopeExclude, "700002"), &live); !decision.Admit {
 		t.Fatalf("a host exclusion frozen as the instance's host id alone dropped an instance-only series: %+v", decision)
 	}
-	if decision := scope.Admit(hostTarget(admission.TargetScopeInclude, "700002", "10.0.0.8|0"), &live); !decision.Admit {
+	if decision := scope.Admit(hostTarget(admission.TargetScopeInclude, "700002", "192.0.2.148|0"), &live); !decision.Admit {
 		t.Fatalf("a host target frozen with the address refused the instance on it: %+v", decision)
 	}
-	if decision := scope.Admit(hostTarget(admission.TargetScopeExclude, "700002", "10.0.0.8|0"), &live); decision.Admit {
+	if decision := scope.Admit(hostTarget(admission.TargetScopeExclude, "700002", "192.0.2.148|0"), &live); decision.Admit {
 		t.Fatalf("a host exclusion frozen with the address admitted the instance on it: %+v", decision)
 	}
 }
@@ -256,7 +255,7 @@ func TestAServiceInstanceSeriesIsPlacedUnderItsModuleAndJudgedByItsHost(t *testi
 // the address's, because Python assigns bk_topo_node from the instance.
 func TestTheInstanceIsConsultedOnlyWhereTheHostByIDWasNot(t *testing.T) {
 	store := storeWith(
-		[]string{"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost, "10.0.0.8|0", monitoredByIDHost, "700002", monitoredByIDHost},
+		[]string{"192.0.2.147|0", disabledByAddressHost, "700001", disabledByAddressHost, "192.0.2.148|0", monitoredByIDHost, "700002", monitoredByIDHost},
 		[]string{"7", instanceOnSpareHost},
 	)
 	chain := instanceChain(t, store)
@@ -272,13 +271,13 @@ func TestTheInstanceIsConsultedOnlyWhereTheHostByIDWasNot(t *testing.T) {
 	}
 
 	byAddress := chain.Enrich(map[string]json.RawMessage{
-		"bk_target_ip": json.RawMessage(`"10.0.0.8"`), "bk_target_cloud_id": json.RawMessage(`0`),
+		"bk_target_ip": json.RawMessage(`"192.0.2.148"`), "bk_target_cloud_id": json.RawMessage(`0`),
 		"bk_target_service_instance_id": json.RawMessage(`7`),
 	})
 	if got := byAddress.TopoNodes(); !reflect.DeepEqual(got, []string{"biz|999", "module|85", "set|12"}) {
 		t.Fatalf("topo nodes = %v, want the instance's chain over the address's", got)
 	}
-	if got := byAddress.HostKeys(); !reflect.DeepEqual(got, []string{"10.0.0.7|0"}) {
+	if got := byAddress.HostKeys(); !reflect.DeepEqual(got, []string{"192.0.2.147|0"}) {
 		t.Fatalf("host keys = %v, want the instance's address, not the address the record arrived with and not the instance's host id", got)
 	}
 	if byAddress.HostState != "备用机" {
@@ -297,7 +296,7 @@ func TestTheInstanceIsConsultedOnlyWhereTheHostByIDWasNot(t *testing.T) {
 	if unknownID.HostResolved || unknownID.HostNaming.IDKey != "700009" {
 		t.Fatalf("facts = %+v, want the unknown id kept as the host Python looks up", unknownID)
 	}
-	if got := unknownID.HostKeys(); !reflect.DeepEqual(got, []string{"10.0.0.7|0", "700009"}) {
+	if got := unknownID.HostKeys(); !reflect.DeepEqual(got, []string{"192.0.2.147|0", "700009"}) {
 		t.Fatalf("host keys = %v, want the record's id kept beside the instance's address", got)
 	}
 	judged := instanceChain(t, store, "备用机")
@@ -310,12 +309,12 @@ func TestTheInstanceIsConsultedOnlyWhereTheHostByIDWasNot(t *testing.T) {
 // left it, and a record that names no instance is not touched at all.
 func TestAnUnknownInstanceLeavesTheRecordAsItWas(t *testing.T) {
 	store := storeWith(
-		[]string{"10.0.0.8|0", monitoredByIDHost, "700002", monitoredByIDHost},
+		[]string{"192.0.2.148|0", monitoredByIDHost, "700002", monitoredByIDHost},
 		[]string{"7", instanceOnSpareHost},
 	)
 	chain := instanceChain(t, store)
 	facts := chain.Enrich(map[string]json.RawMessage{
-		"bk_target_ip": json.RawMessage(`"10.0.0.8"`), "bk_target_cloud_id": json.RawMessage(`0`),
+		"bk_target_ip": json.RawMessage(`"192.0.2.148"`), "bk_target_cloud_id": json.RawMessage(`0`),
 		"bk_target_service_instance_id": json.RawMessage(`99`),
 	})
 	if got := facts.TopoNodes(); !reflect.DeepEqual(got, []string{"biz|999", "module|91"}) {
@@ -324,7 +323,7 @@ func TestAnUnknownInstanceLeavesTheRecordAsItWas(t *testing.T) {
 	if facts.HostState != "运营中[需告警]" || facts.HostFactsUnavailable {
 		t.Fatalf("facts = %+v", facts)
 	}
-	hostOnly := chain.Enrich(map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"10.0.0.8"`)})
+	hostOnly := chain.Enrich(map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"192.0.2.148"`)})
 	if hostOnly.HostFactsUnavailable || len(hostOnly.ServiceInstanceKeys()) != 0 {
 		t.Fatalf("a record naming no instance was touched: %+v", hostOnly)
 	}
@@ -336,7 +335,7 @@ func TestAnUnknownInstanceLeavesTheRecordAsItWas(t *testing.T) {
 // record is admitted and the gap is counted under its own reason; a record
 // that names no instance is unaffected.
 func TestAnEmptyInstanceCacheIsNamedApartFromAnEmptyHostCache(t *testing.T) {
-	store := storeWith([]string{"10.0.0.8|0", monitoredByIDHost, "700002", monitoredByIDHost}, nil)
+	store := storeWith([]string{"192.0.2.148|0", monitoredByIDHost, "700002", monitoredByIDHost}, nil)
 	chain := instanceChain(t, store, "备用机")
 	facts := chain.Enrich(map[string]json.RawMessage{"bk_target_service_instance_id": json.RawMessage(`7`)})
 	if !facts.HostFactsUnavailable || facts.FactsUnavailableReason() != admission.FactsUnavailableServiceInstanceIndex {
@@ -356,7 +355,7 @@ func TestAnEmptyInstanceCacheIsNamedApartFromAnEmptyHostCache(t *testing.T) {
 	if health := store.Health(); health.Degraded || health.ServiceInstances != 0 {
 		t.Fatalf("health = %+v", health)
 	}
-	hostSeries := chain.Enrich(map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"10.0.0.8"`), "bk_target_cloud_id": json.RawMessage(`0`)})
+	hostSeries := chain.Enrich(map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"192.0.2.148"`), "bk_target_cloud_id": json.RawMessage(`0`)})
 	if hostSeries.HostFactsUnavailable {
 		t.Fatalf("a host series was affected by the empty instance cache: %+v", hostSeries)
 	}
@@ -369,27 +368,6 @@ func TestAnEmptyInstanceCacheIsNamedApartFromAnEmptyHostCache(t *testing.T) {
 	}
 }
 
-// The scalar fields of the resolved host are readable as host attributes
-// without any of them being copied per series; nested fields are not.
-func TestTheResolvedHostsScalarFieldsAreExposedAsAttributes(t *testing.T) {
-	store := storeWith([]string{"10.0.0.8|0", monitoredByIDHost, "700002", monitoredByIDHost}, nil)
-	chain := instanceChain(t, store)
-	facts := chain.Enrich(map[string]json.RawMessage{"bk_host_id": json.RawMessage(`700002`)})
-	for attribute, want := range map[string]string{
-		"bk_state": "运营中[需告警]", "display_name": "live", "bk_host_id": "700002", "bk_biz_id": "999", "bk_cloud_id": "0",
-	} {
-		if got := facts.Candidates(contract.AttributeHostPrefix + attribute); !reflect.DeepEqual(got, []string{want}) {
-			t.Errorf("host attribute %s = %v, want %q", attribute, got, want)
-		}
-	}
-	if got := facts.Candidates(contract.AttributeHostPrefix + "topo_link"); got != nil {
-		t.Fatalf("a nested field was flattened into an attribute: %v", got)
-	}
-	if _, copied := facts.Attributes[contract.AttributeHostPrefix+"bk_state"]; copied {
-		t.Fatal("host attributes were copied into the per-series map")
-	}
-}
-
 // The separation the whole design rests on: what enrichment learns from CMDB
 // changes when CMDB changes, and none of it may reach the series the alert
 // is identified by. The same record is enriched against three snapshots -
@@ -398,7 +376,7 @@ func TestTheResolvedHostsScalarFieldsAreExposedAsAttributes(t *testing.T) {
 // byte for byte what they were, while the facts did change.
 func TestCMDBChangesNeverReachTheFingerprintOrTheDimensions(t *testing.T) {
 	dimensions := map[string]json.RawMessage{
-		"bk_target_ip": json.RawMessage(`"10.0.0.7"`), "bk_target_cloud_id": json.RawMessage(`0`),
+		"bk_target_ip": json.RawMessage(`"192.0.2.147"`), "bk_target_cloud_id": json.RawMessage(`0`),
 		"bk_target_service_instance_id": json.RawMessage(`7`), "device": json.RawMessage(`"eth0"`),
 	}
 	identity := contract.MonitorOutputIdentity{DimensionFields: []string{"bk_target_ip", "bk_target_cloud_id", "bk_target_service_instance_id", "device"}}
@@ -425,13 +403,13 @@ func TestCMDBChangesNeverReachTheFingerprintOrTheDimensions(t *testing.T) {
 		return strings.Replace(document, `"module|85":[{"bk_obj_id":"module","bk_inst_id":85}`, `"module|86":[{"bk_obj_id":"module","bk_inst_id":86}`, 1)
 	}
 	movedHost, movedHostInstance := moduleMove(disabledByAddressHost), moduleMove(instanceOnSpareHost)
-	movedInstance := strings.Replace(strings.Replace(instanceOnSpareHost, `"bk_host_id":700001`, `"bk_host_id":700002`, 1), `"ip":"10.0.0.7"`, `"ip":"10.0.0.8"`, 1)
+	movedInstance := strings.Replace(strings.Replace(instanceOnSpareHost, `"bk_host_id":700001`, `"bk_host_id":700002`, 1), `"ip":"192.0.2.147"`, `"ip":"192.0.2.148"`, 1)
 	changedHost := strings.Replace(disabledByAddressHost, `"bk_state":"备用机"`, `"bk_state":"运营中[需告警]"`, 1)
 	snapshots := map[string]*Store{
-		"baseline":                storeWith([]string{"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost}, []string{"7", instanceOnSpareHost}),
-		"host moved modules":      storeWith([]string{"10.0.0.7|0", movedHost, "700001", movedHost}, []string{"7", movedHostInstance}),
-		"instance moved hosts":    storeWith([]string{"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost, "10.0.0.8|0", monitoredByIDHost, "700002", monitoredByIDHost}, []string{"7", movedInstance}),
-		"host attributes changed": storeWith([]string{"10.0.0.7|0", changedHost, "700001", changedHost}, []string{"7", instanceOnSpareHost}),
+		"baseline":                storeWith([]string{"192.0.2.147|0", disabledByAddressHost, "700001", disabledByAddressHost}, []string{"7", instanceOnSpareHost}),
+		"host moved modules":      storeWith([]string{"192.0.2.147|0", movedHost, "700001", movedHost}, []string{"7", movedHostInstance}),
+		"instance moved hosts":    storeWith([]string{"192.0.2.147|0", disabledByAddressHost, "700001", disabledByAddressHost, "192.0.2.148|0", monitoredByIDHost, "700002", monitoredByIDHost}, []string{"7", movedInstance}),
+		"host attributes changed": storeWith([]string{"192.0.2.147|0", changedHost, "700001", changedHost}, []string{"7", instanceOnSpareHost}),
 	}
 	seen := make(map[string]string, len(snapshots))
 	for name, store := range snapshots {

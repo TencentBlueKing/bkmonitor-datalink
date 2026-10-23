@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
 )
 
 // Paging is mandatory rather than optional. An endpoint that returns everything
@@ -222,12 +224,25 @@ type HealthResponse struct {
 	// spans differ by orders of magnitude between a cursor that fell a minute
 	// behind and one that fell a day behind.
 	PrunedSkips []PrunedSkipRef `json:"pruned_skips,omitempty"`
+	// PrunedSkipsTotal, RetainedShareTotal and ReadEarlyTotal are how many
+	// objects each of the three lists has; each list carries the first
+	// FirstScreenListBound of them in its order, and the objects route lists
+	// them all under their checks. Uncapped, a list grew with the deployment
+	// and every page refresh carried all of it.
+	PrunedSkipsTotal int `json:"pruned_skips_total,omitempty"`
 	// RetainedShare is the objects whose latest completed Slot held at least
 	// RetainedShareApproachPercent of the one-object share of the retained
 	// pool, fullest first. In no column and no total: they are detecting. A
 	// list, because what a reader acts on is which strategy and how close,
 	// and the refusal it warns of stops that strategy whole.
-	RetainedShare []RetainedShareRef `json:"retained_share,omitempty"`
+	RetainedShare      []RetainedShareRef `json:"retained_share,omitempty"`
+	RetainedShareTotal int                `json:"retained_share_total,omitempty"`
+	// ReadEarly is the objects the late-data lookback found read before
+	// their data was complete in two samples in a row, with the time_delay
+	// that would have read them complete. In no column and no total: they
+	// are detecting, from data that was not all there.
+	ReadEarly      []ReadEarlyRef `json:"read_early,omitempty"`
+	ReadEarlyTotal int            `json:"read_early_total,omitempty"`
 	// PublishedVersion and Workers are the acknowledgement view: which
 	// Activation the control plane published and how many counted replicas
 	// have applied it. Per-replica versions are on PerReplica.
@@ -242,6 +257,10 @@ type HealthResponse struct {
 	// values file on a machine the reader could not reach. Per strategy, the
 	// frozen format is on the directory route's effective_output.
 	OutputProtocols []OutputProtocolGroup `json:"output_protocols"`
+	// Retentions is which retention lengths each counted replica runs with,
+	// and their inputs, grouped the same way: what runtime.get answers on
+	// the CLI channel, for a deployment read only through its pages.
+	Retentions []RetentionGroup `json:"retentions"`
 	// OutputPath is whether any event can leave as the standard raw event
 	// under those choices, from the leader's Plan counts: the first-screen
 	// sentence a two-line, one-Kafka-read investigation reduced to.
@@ -265,6 +284,10 @@ type HealthResponse struct {
 	// states none has frozen, and which layer set it (DEFAULT, VALUES or
 	// DYNAMIC). A Plan with its own says STRATEGY on its tracking row.
 	NoDataHorizon *NoDataHorizonFacts `json:"no_data_horizon,omitempty"`
+	// PlatformSettingFields is every platform setting's effective value and
+	// the layer it came from (DYNAMIC, VALUES, DEFAULT), as a named replica
+	// resolves them, and the first replica that resolved other values.
+	PlatformSettingFields *PlatformSettingFieldsFacts `json:"platform_setting_fields,omitempty"`
 	// Load is the operating judgment the capacity panel opens with: on
 	// time, backlog, loss, bottleneck, with the numbers each was read from
 	// and the limits it holds under. Decided here, once, from the same view
@@ -306,6 +329,9 @@ type HealthResponse struct {
 	// whether the cache can update the run, and the two sentences the first
 	// screen shows for the run and for the cache. Absent without a round.
 	SourceStanding *SourceStanding `json:"source_standing,omitempty"`
+	// ControlFacts is where the Control Leader's facts came from, and why the
+	// current term's record was not it.
+	ControlFacts *ControlFactsStanding `json:"control_facts,omitempty"`
 	// NoDataTracking is the fleet's one line on the no-data tracking horizon:
 	// how many Plans decide against which kind of horizon and what their last
 	// deciding rounds counted, summed over the counted replicas. Absent when
@@ -331,6 +357,9 @@ type HealthResponse struct {
 	// when the sets were available to compare. It is the difference between a
 	// verdict a reader can act on and one that only says "do not trust this".
 	Coverage *Disagreement `json:"coverage"`
+	// Handover is the note beside the numbers read from the replicas' parts
+	// while an object is held by more than one replica: absent when none is.
+	Handover *HandoverMarker `json:"handover,omitempty"`
 	// PerReplica breaks the deployment back down. Present on the verdict route
 	// because that is where a reader lands first, and "which replica" is the
 	// question the totals raise and cannot answer.
@@ -340,6 +369,29 @@ type HealthResponse struct {
 	// above is unreadable: a build that suppresses nothing reports the same zero
 	// as one where every object is being reached on time.
 	Dispatch *DispatchSuppression `json:"dispatch"`
+	// AddressDiffers names the latest records, across the replicas, whose
+	// host CMDB placed by id or agent at another address than their own:
+	// which strategy, Query Group and host, and both addresses. The count
+	// admission_cmdb_address_differs_total says how often.
+	AddressDiffers []AddressDiffersSample `json:"address_differs_samples,omitempty"`
+	// TrackerDropped is what the replicas' object tables lost because they
+	// were full: rounds, truncations and ranges never recorded, with the
+	// latest objects named. Absent while nothing was lost.
+	TrackerDropped *TrackerDropped `json:"tracker_dropped,omitempty"`
+	// EffectiveTimeUnread is the business timezones and calendars that
+	// could not be read and are no longer trusted: every Plan naming one
+	// resolves EFFECTIVE_TIME_UNKNOWN and is not judged. Oldest failure
+	// first, with the class of the latest failure and the last good read;
+	// effective_time_refresh_total counts the reads.
+	EffectiveTimeUnread      []strategycache.EffectiveTimeUnread `json:"effective_time_unread,omitempty"`
+	EffectiveTimeUnreadTotal int                                 `json:"effective_time_unread_total,omitempty"`
+	// AwaitingFirstRound is the objects only waiting for their first round
+	// since their replica took them over, by period; they are covered and not
+	// counted in unknown. Undetermined names the objects unknown does count,
+	// longest owned first and bounded, with the total.
+	AwaitingFirstRound *FirstRoundWaits     `json:"awaiting_first_round,omitempty"`
+	Undetermined       []UndeterminedObject `json:"undetermined_objects,omitempty"`
+	UndeterminedTotal  int                  `json:"undetermined_objects_total,omitempty"`
 	// Schedule is the census the first sentence of the page is built from:
 	// waiting, late, overdue, never yet evaluated, and the on-time rates over
 	// two windows. Absent when no replica has a due index, and the page then
@@ -595,7 +647,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			// HISTORY_GAPPED: data that arrived and then had holes, told back
 			// to the reader as "this series does not live long enough to fill
 			// its window", which is a different thing and sends them nowhere.
-			if undecidableReason(anomaly.CauseReason) && anomaly.Coverage.Persistent() {
+			if windowNeverFillsReason(anomaly.CauseReason) && anomaly.Coverage.Persistent() {
 				neverFills++
 				// A subset of a subset, and the only one of these with a named
 				// owner. Persistent() says the shortfall will not resolve; it is
@@ -782,6 +834,24 @@ func rank(counts map[string]int) Distribution {
 type DetailResponse struct {
 	Found   bool     `json:"found"`
 	Anomaly *Anomaly `json:"anomaly,omitempty"`
+	// Tracked is the answering replica's live row for an object it tracks
+	// and does not list -- a healthy object, which no snapshot carries a row
+	// for -- in the listed rows' shape with listed false. Absent when the
+	// object has a listed row, which Anomaly and Facts carry.
+	Tracked *Anomaly `json:"tracked,omitempty"`
+	// LastQueryRanges is what the object's latest round's primary queries
+	// were sent asking for, from the replica that answers - present when it
+	// tracks the object, as the routed read's owner does. A grouped event
+	// count that does not recover is read against its strategy's windows
+	// here: it asks N + R periods and accepts one.
+	LastQueryRanges *QueryRanges `json:"last_query_ranges,omitempty"`
+	// TrackedBy is the replica whose latest snapshot lists the object as
+	// owned, when the answering replica does not track it, and
+	// TrackedByAsOf that snapshot's time. Best effort: right after the
+	// object moves it can still name the old owner; read another pod, or use
+	// the routed read, which goes by the lease.
+	TrackedBy     string     `json:"tracked_by,omitempty"`
+	TrackedByAsOf *time.Time `json:"tracked_by_as_of,omitempty"`
 	// Anomaly is the first matching fact for old clients. Facts preserves
 	// coexisting facts, capped by MaxPageSize; FactsTotal reports the full count.
 	Facts      []Anomaly `json:"facts"`
@@ -805,10 +875,14 @@ type DetailResponse struct {
 	RecordsStatus   string                 `json:"records_status"`
 	RecordsScope    string                 `json:"records_scope,omitempty"`
 	RecoveryContext *ObjectRecoveryContext `json:"recovery_context,omitempty"`
-	Health          Health                 `json:"health"`
-	Gaps            []Gap                  `json:"gaps,omitempty"`
-	Complete        bool                   `json:"view_complete"`
-	QueryGroup      string                 `json:"query_group"`
+	// Health is the deployment's verdict, not the object's. On an object
+	// proven absent it moves to DeploymentHealth: beside existence "absent"
+	// a bare "health": "HEALTHY" read as the object being healthy.
+	Health           Health `json:"health,omitempty"`
+	DeploymentHealth Health `json:"deployment_health,omitempty"`
+	Gaps             []Gap  `json:"gaps,omitempty"`
+	Complete         bool   `json:"view_complete"`
+	QueryGroup       string `json:"query_group"`
 	// Records is what an observation window captured for this object, present
 	// only when the caller asked for it. Its health travels with it so an empty
 	// list can be read correctly: "nothing happened" and "nothing was recorded"
@@ -840,8 +914,8 @@ type ObjectRecoveryContext struct {
 // answers samples= (criterion samples), and the windows take mode=sample.
 // Each is recorded in the observability handoff
 // contract, each is wrapped around this handler by the runtime rather than
-// added here, and each is off until an operator allocates the diagnostics a
-// share (phase_two.observation.memory_percent). A mode that is not in that
+// added here, and its memory grows under the runtime memory line rather than
+// a share an operator allocates. A mode that is not in that
 // contract is a sixth capability wearing a query parameter.
 //
 // Windows are the one place this API writes. The write is scoped to diagnostics
@@ -891,57 +965,101 @@ func NewHandler(
 		})
 	}
 	mux.HandleFunc("/api/health", func(response http.ResponseWriter, request *http.Request) {
-		view := service.View(request.Context())
-		// The columns as the first screen partitions them, so the cohort and
-		// cooling arithmetic here is over the same rows, with the same
-		// findings, as the lines the list route draws.
+		// From the replicas' summaries: what the rows give is the parts they
+		// add up to, and a snapshot is read only for a replica that published
+		// no summary.
+		view, part := service.Summarized(request.Context(), stallAfter)
+		if request.Context().Err() != nil {
+			// The caller has gone: there is nobody to answer, and what it
+			// stopped waiting for is no verdict to record.
+			return
+		}
 		at := now()
-		Decide(&view, at, stallAfter)
-		service.RecordVerdict(&view, at)
+		service.RecordSummarizedVerdict(&view, part, at)
 		history, since := service.VerdictHistory()
-		columns := Report(&view, at).Columns
-		writeJSON(response, http.StatusOK, HealthResponse{
-			Cohorts: cohortList(Cohorts(&view, columns)), Cooling: Cooling(&view, columns, at),
-			Health: view.Health, Expected: view.Expected, Covered: view.Covered,
-			Determined: view.Determined, Unknown: view.Unknown, Healthy: view.Healthy,
-			AnomaliesTotal: view.AnomaliesTotal, DemotedTotal: view.DemotedTotal,
-			UndecidableTotal: view.UndecidableTotal, ByDesignTotal: view.ByDesignTotal,
-			EmptyEveryRoundTotal: view.EmptyEveryRoundTotal,
-			Ours:                 OursCount(view.Anomalies),
-			Unattributed:         UnattributedCount(view.Anomalies),
-			Impact:               ImpactOf(view, now()),
-			StrategyLinkBase:     strategyLinkBase,
-			DemotedDue:           view.DemotedDue, DemotedDueOldestSeconds: view.DemotedDueOldestSeconds,
-			DemotionEntries:    view.DemotionEntries,
-			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
-			DemotionRestored: view.DemotionRestored, DemotionHandovers: view.DemotionHandovers,
-			DemotionReentries: view.DemotionReentries,
-			LastDemotionExit:  momentOrNil(view.LastDemotionExit),
-			PrunedSkips:       prunedSkipList(view.PrunedSkips),
-			RetainedShare:     retainedShareList(view.RetainedShare),
-			Coverage:          view.Coverage, PerReplica: view.PerReplica,
-			PublishedVersion: view.PublishedVersion, Workers: view.Workers, Builds: view.Builds,
-			OutputProtocols: outputProtocolList(view.OutputProtocols),
-			OutputPath:      OutputPathOf(&view),
-			Degradations:    degradationList(view.Degradations),
-			Activation:      view.Activation, ActivationReplica: view.ActivationReplica,
-			NoDataHorizon: view.NoDataHorizon,
-			Rebalance:     view.Rebalance, RebalanceReplica: view.RebalanceReplica,
-			AssignmentScope: view.AssignmentScope, AssignmentScopeReplica: view.AssignmentScopeReplica,
-			AssignmentSweep: view.AssignmentSweep, AssignmentSweepReplica: view.AssignmentSweepReplica,
-			LeaderRound: view.LeaderRound, LeaderRoundReplica: view.LeaderRoundReplica,
-			ViewStream: view.ViewStream, ViewStreamReplica: view.ViewStreamReplica,
-			Source: view.Source, SourceReplica: view.SourceReplica, SourceStanding: view.SourceStanding,
-			NoDataTracking: view.NoDataTracking,
-			Dependencies:   dependencyList(view.Dependencies), DependenciesReplica: view.DependenciesReplica,
-			DependenciesReplicas: view.DependenciesReplicas, LinkdConsole: view.LinkdConsole, ReplicasNotReady: view.ReplicasNotReady,
-			Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule,
-			Gaps: view.Gaps, Capacity: view.Capacity,
-			Load:           LoadOf(&view, now()),
-			VerdictHistory: history, VerdictHistorySince: momentOrNil(since), VerdictHistoryReplica: service.VerdictReplica(),
-		})
+		health := healthOf(&view, part, at)
+		health.StrategyLinkBase = strategyLinkBase
+		health.VerdictHistory, health.VerdictHistorySince, health.VerdictHistoryReplica = history, momentOrNil(since), service.VerdictReplica()
+		writeJSON(response, http.StatusOK, health)
 	})
 	return mux, nil
+}
+
+// healthOf is the health route's answer from a view of the replicas'
+// summaries and the part their rows add up to (Summarized), at the moment
+// of the read. The check lines and the to-do are the list route's, and
+// this route answers neither.
+func healthOf(view *View, part ReplicaPart, at time.Time) HealthResponse {
+	return HealthResponse{
+		Cohorts: cohortList(part.Cohorts(view.Schedule)), Cooling: part.CoolingAt(view.Schedule, at),
+		Health: view.Health, Expected: view.Expected, Covered: view.Covered,
+		Determined: view.Determined, Unknown: view.Unknown, Healthy: view.Healthy,
+		AnomaliesTotal: view.AnomaliesTotal, DemotedTotal: view.DemotedTotal,
+		UndecidableTotal: view.UndecidableTotal, ByDesignTotal: view.ByDesignTotal,
+		EmptyEveryRoundTotal: view.EmptyEveryRoundTotal,
+		Ours:                 part.Attribution.Ours,
+		Unattributed:         part.Attribution.Unknown,
+		Impact:               part.Impact.Impact(),
+		DemotedDue:           view.DemotedDue, DemotedDueOldestSeconds: view.DemotedDueOldestSeconds,
+		DemotionEntries:    view.DemotionEntries,
+		DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
+		DemotionRestored: view.DemotionRestored, DemotionHandovers: view.DemotionHandovers,
+		DemotionReentries: view.DemotionReentries,
+		LastDemotionExit:  momentOrNil(view.LastDemotionExit),
+		PrunedSkips:       part.PrunedSkips, PrunedSkipsTotal: part.PrunedSkipsTotal,
+		RetainedShare: part.RetainedShare, RetainedShareTotal: part.RetainedShareTotal,
+		ReadEarly: part.ReadEarly, ReadEarlyTotal: part.ReadEarlyTotal,
+		Coverage: view.Coverage, Handover: handoverOf(view.Coverage), PerReplica: view.PerReplica,
+		PublishedVersion: view.PublishedVersion, Workers: view.Workers, Builds: view.Builds,
+		OutputProtocols: outputProtocolList(view.OutputProtocols),
+		Retentions:      retentionList(view.Retentions),
+		OutputPath:      OutputPathOf(view),
+		Degradations:    degradationList(view.Degradations),
+		Activation:      view.Activation, ActivationReplica: view.ActivationReplica,
+		NoDataHorizon: view.NoDataHorizon, PlatformSettingFields: view.PlatformSettingFields,
+		Rebalance: view.Rebalance, RebalanceReplica: view.RebalanceReplica,
+		AssignmentScope: view.AssignmentScope, AssignmentScopeReplica: view.AssignmentScopeReplica,
+		AssignmentSweep: view.AssignmentSweep, AssignmentSweepReplica: view.AssignmentSweepReplica,
+		LeaderRound: view.LeaderRound, LeaderRoundReplica: view.LeaderRoundReplica,
+		ViewStream: view.ViewStream, ViewStreamReplica: view.ViewStreamReplica,
+		Source: view.Source, SourceReplica: view.SourceReplica, SourceStanding: view.SourceStanding, ControlFacts: view.ControlFacts,
+		NoDataTracking: view.NoDataTracking,
+		Dependencies:   dependencyList(view.Dependencies), DependenciesReplica: view.DependenciesReplica,
+		DependenciesReplicas: view.DependenciesReplicas, LinkdConsole: view.LinkdConsole, ReplicasNotReady: view.ReplicasNotReady,
+		Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule, AddressDiffers: view.AddressDiffers, TrackerDropped: view.TrackerDropped,
+		EffectiveTimeUnread: view.EffectiveTimeUnread, EffectiveTimeUnreadTotal: view.EffectiveTimeUnreadTotal,
+		AwaitingFirstRound: view.AwaitingFirstRound, Undetermined: view.Undetermined, UndeterminedTotal: view.UndeterminedTotal,
+		Gaps: view.Gaps, Capacity: view.Capacity,
+		Load: part.Load(view),
+	}
+}
+
+// HandoverMarker is the note beside the numbers the health route reads from
+// the replicas' parts while an object is held by more than one replica.
+// Each holder's part counts it, so the counts may run high for that moment,
+// and a skip the old holder records while the new one has pooled the object
+// reads as a loss in progress (ReplicaPart). Objects is how many are held
+// by several; null when some replica's owned set was not read whole, which
+// says it may be happening without saying how much. The catalogue plays no
+// part: whether an object is held twice is the owned sets' alone. The page
+// words it.
+type HandoverMarker struct {
+	Objects *int `json:"objects"`
+}
+
+// handoverOf is the marker the coverage calls for, or nil when no object is
+// held by several replicas.
+func handoverOf(coverage *Disagreement) *HandoverMarker {
+	switch {
+	case coverage == nil:
+		return nil
+	case !coverage.setsWhole:
+		return &HandoverMarker{}
+	case coverage.HeldBySeveralTotal > 0:
+		objects := coverage.HeldBySeveralTotal
+		return &HandoverMarker{Objects: &objects}
+	}
+	return nil
 }
 
 // cohortList is the cohorts as an empty list rather than null: no period seen
@@ -959,6 +1077,15 @@ func cohortList(cohorts []CohortView) []CohortView {
 func outputProtocolList(groups []OutputProtocolGroup) []OutputProtocolGroup {
 	if groups == nil {
 		return []OutputProtocolGroup{}
+	}
+	return groups
+}
+
+// retentionList is the view's retention groups as an empty list rather than
+// null, as outputProtocolList is.
+func retentionList(groups []RetentionGroup) []RetentionGroup {
+	if groups == nil {
+		return []RetentionGroup{}
 	}
 	return groups
 }
@@ -1016,7 +1143,11 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	if order == "" {
 		order = OrderOldest
 	}
-	view := service.View(request.Context())
+	// Held on the memory line until this page's answer is written: the
+	// snapshots and the view built of them are garbage then.
+	pageCtx, release := withPageHolds(request.Context())
+	defer release()
+	view := service.View(pageCtx)
 	// Marked and settled before filtering, so a filtered response reports the
 	// same flag for the same object as an unfiltered one, and before a column
 	// is served, always on the anomaly list. Settling used to run after the
@@ -1163,7 +1294,7 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// view and stay; a reader who wants the rows of another column asks
 	// for that column, and gets them paged.
 	view.Demoted, view.Undecidable, view.ByDesign, view.NoData, view.NoDataMemory = []Anomaly{}, []Anomaly{}, []Anomaly{}, []Anomaly{}, []Anomaly{}
-	view.RetainedShare = []Anomaly{}
+	view.RetainedShare, view.ReadEarly, view.ReadHeld, view.LateSeries = []Anomaly{}, []Anomaly{}, []Anomaly{}, []Anomaly{}
 	view.GapSkips, view.PrunedSkips = map[string]SkippedSpan{}, map[string]PrunedSkip{}
 	// Each replica's dependency record is the verdict route's; here it would
 	// ride on every thirty-second poll for rows this request is not about.
@@ -1209,7 +1340,11 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 		return
 	}
 	records, health, recordErr := objectRecords(request, queryGroup, diagnostics)
-	view := service.View(request.Context())
+	// Held on the memory line until this page's answer is written: the
+	// snapshots and the view built of them are garbage then.
+	pageCtx, release := withPageHolds(request.Context())
+	defer release()
+	view := service.View(pageCtx)
 	at := now()
 	Decide(&view, at, stallAfter)
 	body := DetailResponse{
@@ -1245,6 +1380,22 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 	if len(body.Facts) > 0 {
 		body.Anomaly = &body.Facts[0]
 	}
+	if ranges, known := service.LocalQueryRanges(queryGroup); known {
+		body.LastQueryRanges = &ranges
+	}
+	// A healthy object has a row in no snapshot. The replica that tracks it
+	// builds one on request; another replica says which one does.
+	if len(body.Facts) == 0 && check == "" {
+		if row, tracked := service.LocalRow(queryGroup); tracked {
+			body.Tracked = &row
+		} else if owner, at, owned := view.OwnerOf(queryGroup); owned {
+			body.TrackedBy = owner
+			if !at.IsZero() {
+				asOf := at
+				body.TrackedByAsOf = &asOf
+			}
+		}
+	}
 	// Whether the object is observed is asked of every fact, not of the ones
 	// under the named check: a check the object has left still leaves the
 	// object observed, and the context says it did not match.
@@ -1276,6 +1427,8 @@ func objectDetail(response http.ResponseWriter, request *http.Request, service *
 		writeJSON(response, http.StatusServiceUnavailable, body)
 		return
 	}
+	// Proven absent: the verdict stays, named as the deployment's.
+	body.DeploymentHealth, body.Health = body.Health, ""
 	writeJSON(response, http.StatusNotFound, body)
 }
 
@@ -1521,7 +1674,7 @@ type RetainedShareRef struct {
 	ThresholdPercent    uint64 `json:"threshold_percent"`
 }
 
-// retainedShareList keeps the view's order, which is fullest first.
+// retainedShareList orders the objects fullest first, across replicas.
 func retainedShareList(rows []Anomaly) []RetainedShareRef {
 	if len(rows) == 0 {
 		return nil
@@ -1541,10 +1694,66 @@ func retainedShareList(rows []Anomaly) []RetainedShareRef {
 			ThresholdPercent: facts.ThresholdPercent,
 		})
 	}
-	sort.SliceStable(list, func(left, right int) bool {
-		return list[left].PercentOfShare > list[right].PercentOfShare
-	})
+	list = latestPerObject(list, func(ref RetainedShareRef) (string, time.Time) { return ref.QueryGroup, ref.Since }, retainedShareBefore)
+	sort.Slice(list, func(left, right int) bool { return retainedShareBefore(list[left], list[right]) })
 	return list
+}
+
+// retainedShareBefore is the list's order, the one each replica's own list
+// is in (RetainedShareAnomalies): fullest first, then by object, then -- for
+// the two entries of one object during a handover -- by replica.
+func retainedShareBefore(left, right RetainedShareRef) bool {
+	if left.PercentOfShare != right.PercentOfShare {
+		return left.PercentOfShare > right.PercentOfShare
+	}
+	if left.QueryGroup != right.QueryGroup {
+		return left.QueryGroup < right.QueryGroup
+	}
+	return left.Replica < right.Replica
+}
+
+// ReadEarlyRef is one object read before its data was complete, as the
+// health response carries it: which object, whose strategies, and the
+// time_delay it runs under beside the one that would have read it complete.
+type ReadEarlyRef struct {
+	QueryGroup            string        `json:"query_group"`
+	Strategies            []StrategyRef `json:"strategies,omitempty"`
+	Replica               string        `json:"replica,omitempty"`
+	CurrentDelaySeconds   int64         `json:"current_time_delay_seconds"`
+	SuggestedDelaySeconds int64         `json:"suggested_time_delay_seconds"`
+	Since                 time.Time     `json:"since"`
+}
+
+// readEarlyList orders the objects furthest from their suggestion first,
+// across replicas.
+func readEarlyList(rows []Anomaly) []ReadEarlyRef {
+	if len(rows) == 0 {
+		return nil
+	}
+	list := make([]ReadEarlyRef, 0, len(rows))
+	for _, row := range rows {
+		if facts := row.ReadEarly; facts != nil {
+			list = append(list, ReadEarlyRef{QueryGroup: row.QueryGroup, Strategies: row.Strategies, Replica: row.Replica,
+				CurrentDelaySeconds: facts.CurrentDelaySeconds, SuggestedDelaySeconds: facts.SuggestedDelaySeconds, Since: facts.Since})
+		}
+	}
+	list = latestPerObject(list, func(ref ReadEarlyRef) (string, time.Time) { return ref.QueryGroup, ref.Since }, readEarlyBefore)
+	sort.Slice(list, func(left, right int) bool { return readEarlyBefore(list[left], list[right]) })
+	return list
+}
+
+// readEarlyBefore is the list's order, the one each replica's own list is
+// in (ReadEarlyAnomalies): the furthest from its suggestion first, then by
+// object, then -- for the two entries of one object during a handover -- by
+// replica.
+func readEarlyBefore(left, right ReadEarlyRef) bool {
+	if lg, rg := left.SuggestedDelaySeconds-left.CurrentDelaySeconds, right.SuggestedDelaySeconds-right.CurrentDelaySeconds; lg != rg {
+		return lg > rg
+	}
+	if left.QueryGroup != right.QueryGroup {
+		return left.QueryGroup < right.QueryGroup
+	}
+	return left.Replica < right.Replica
 }
 
 // PrunedSkipRef is one object's lost span, as the page receives it.
@@ -1557,6 +1766,11 @@ type PrunedSkipRef struct {
 	SpanSeconds   int64     `json:"span_seconds"`
 	At            time.Time `json:"at"`
 	DiscardedSlot int64     `json:"discarded_slot,omitempty"`
+	// Reason is the word the span was lost under (PrunedSkip.Code): a pruned
+	// timeline, or one that would not decode and was rewritten at
+	// RewrittenAt.
+	Reason      string     `json:"reason,omitempty"`
+	RewrittenAt *time.Time `json:"rewritten_at,omitempty"`
 }
 
 // prunedSkipList orders the lost spans longest first, because the length of the
@@ -1569,14 +1783,57 @@ func prunedSkipList(skips map[string]PrunedSkip) []PrunedSkipRef {
 	for queryGroup, skip := range skips {
 		list = append(list, PrunedSkipRef{
 			QueryGroup: queryGroup, SpanSeconds: int64(skip.Spanning() / time.Second),
-			At: skip.At, DiscardedSlot: skip.DiscardedSlot,
+			At: skip.At, DiscardedSlot: skip.DiscardedSlot, Reason: skip.Code(), RewrittenAt: skip.RewrittenAt,
 		})
 	}
-	sort.Slice(list, func(left, right int) bool {
-		if list[left].SpanSeconds != list[right].SpanSeconds {
-			return list[left].SpanSeconds > list[right].SpanSeconds
+	sort.Slice(list, func(left, right int) bool { return prunedSkipBefore(list[left], list[right]) })
+	return list
+}
+
+// prunedSkipBefore is the list's order: the longest span first, then by
+// object, then -- for the two entries of one object during a handover -- by
+// the Slot discarded.
+func prunedSkipBefore(left, right PrunedSkipRef) bool {
+	if left.SpanSeconds != right.SpanSeconds {
+		return left.SpanSeconds > right.SpanSeconds
+	}
+	if left.QueryGroup != right.QueryGroup {
+		return left.QueryGroup < right.QueryGroup
+	}
+	return left.DiscardedSlot < right.DiscardedSlot
+}
+
+// latestPerObject keeps one entry per object, the later one, as the view
+// keeps one record of an object's pruned span: during a handover two replicas
+// can list the same object, and the list names objects, not replicas' rows.
+// Of two at the same moment it keeps the one first in the list's order, so
+// which is kept does not depend on the order the replicas' entries came in.
+func latestPerObject[T any](list []T, keyOf func(T) (string, time.Time), before func(T, T) bool) []T {
+	kept := make(map[string]int, len(list))
+	out := make([]T, 0, len(list))
+	for _, entry := range list {
+		key, at := keyOf(entry)
+		if index, seen := kept[key]; seen {
+			if _, kept := keyOf(out[index]); at.After(kept) || (at.Equal(kept) && before(entry, out[index])) {
+				out[index] = entry
+			}
+			continue
 		}
-		return list[left].QueryGroup < list[right].QueryGroup
-	})
+		kept[key] = len(out)
+		out = append(out, entry)
+	}
+	return out
+}
+
+// FirstScreenListBound is how many objects each of the health route's
+// object lists carries: the first screen reads the first of one of them,
+// and the objects route lists every one.
+const FirstScreenListBound = 8
+
+// firstScreenList is the first FirstScreenListBound of a list in its order.
+func firstScreenList[T any](list []T) []T {
+	if len(list) > FirstScreenListBound {
+		return list[:FirstScreenListBound]
+	}
 	return list
 }

@@ -28,16 +28,20 @@ import (
 func TestTheCursorAdvanceNamesWhyItMoved(t *testing.T) {
 	at := time.Unix(661, 0)
 	for name, test := range map[string]struct {
-		cause error
-		want  execution.ReasonCode
+		cause    error
+		want     execution.ReasonCode
+		anchored bool
 	}{
+		// Unanchored: the shape production reaches the advance with for a
+		// cursor no Segment holds (an anchored one is continued by the
+		// catalog at the next Segment and never fails here).
 		"the timeline no longer holds the cursor": {
 			cause: &SourceBlockedError{Err: ErrProgressOffSchedule},
 			want:  execution.ReasonCode(contract.ReasonSchedulePruned),
 		},
 		"the segment holds it but no Plan is due": {
 			cause: &SourceBlockedError{Err: ErrNoPlanDueInSegment},
-			want:  execution.ReasonCode(contract.ReasonPlanNotActive),
+			want:  execution.ReasonCode(contract.ReasonPlanNotActive), anchored: true,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -45,7 +49,9 @@ func TestTheCursorAdvanceNamesWhyItMoved(t *testing.T) {
 				schedules: []execution.FrozenQueryGroupSchedule{schedulerSchedule(t, 60, 600, nil, "snapshot-1", 1)}}
 			progress := execution.ScheduleProgress{
 				Identity: execution.ProgressIdentity{QueryGroup: "query-group-1"}, NextSlot: 120,
-				LastFullSlot: 60, LastCompletionKind: execution.CompletionFull,
+			}
+			if test.anchored {
+				progress.LastFullSlot, progress.LastCompletionKind = 60, execution.CompletionFull
 			}
 			reader := &advancingProgressReader{
 				fakeProgressReader: &fakeProgressReader{
@@ -66,6 +72,11 @@ func TestTheCursorAdvanceNamesWhyItMoved(t *testing.T) {
 			}
 			if got := resumed.CurrentOrRecentGap.ReasonCode; got != test.want {
 				t.Fatalf("the advance recorded %q, want %q", got, test.want)
+			}
+			// And the store is told the same word: it persists what it is
+			// given, and what it persists is what every later reader sees.
+			if len(reader.requests) != 1 || reader.requests[0].Reason != test.want {
+				t.Fatalf("the store was asked to record %+v, want one skip under %q", reader.requests, test.want)
 			}
 			// Whatever the reason, the Progress must still read as a forward
 			// skip: it carries no completion to navigate from, and anchoring

@@ -248,15 +248,10 @@ func (repository *RedisCatalogRepository) ensureObjectCatalog(ctx context.Contex
 	}
 	started := time.Now()
 	facts := &observability.ObjectCatalogFacts{Operation: "write", Result: "failure", QueryGroups: len(catalog.QueryGroups)}
-	// Counted here because this is the one place a whole publication is in
-	// hand: how much of the fleet a value-list split could be expressed for
-	// at all, which is the number that decides whether hashing is the main
-	// road (decision-020 section 4.7.2). One pass over what is already held.
-	shardability := Shardability(catalog.QueryGroups)
 	defer func() {
 		facts.Duration = time.Since(started)
 		repository.observe(ctx, observability.Observation{Component: observability.ComponentControlPlane, Stage: observability.StageObjectCatalog,
-			Result: observability.Result(facts.Result), ObjectCatalog: facts, Shardability: &shardability})
+			Result: observability.Result(facts.Result), ObjectCatalog: facts})
 	}()
 	if err := repository.writeObjectCatalog(ctx, catalog, facts); err != nil {
 		return fmt.Errorf("alarmd controlplane: write object catalog: %w", err)

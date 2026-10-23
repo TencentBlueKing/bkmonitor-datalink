@@ -1,11 +1,13 @@
 package main
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/go-redis/redis/v8"
 )
@@ -30,44 +32,88 @@ type linkdIndex struct {
 	Location *linkdLocationSwitch
 }
 
+// consoleFailureLine writes the console_call_failed line: an operation's
+// failures starting, or changing class, with the class and the failures so
+// far, never the address. The record and linkd_console_failures_total
+// count every one.
+func consoleFailureLine(logger *observability.Logger) func(op, class string, failures uint64) {
+	return func(op, class string, failures uint64) {
+		logger.Warn("console_call_failed", "failed", 0, 0, slog.String("op", op), slog.String("class", class),
+			slog.Uint64("failures", failures))
+	}
+}
+
+// effectiveTimeFailureLine writes a failed effective-time read, at most
+// once a minute for each business timezone or calendar, with the failures
+// since the last line.
+func effectiveTimeFailureLine(logger *observability.Logger) func(dependency, class string, failures uint64) {
+	return func(dependency, class string, failures uint64) {
+		logger.Warn("effective_time_refresh_failed", "failed", 0, 0, slog.String("dependency", dependency),
+			slog.String("class", class), slog.Uint64("failures", failures))
+	}
+}
+
 func newLinkdIndex(cfg config.Config, client redis.UniversalClient, connection config.RedisConnectionConfig,
-	discovery *fleet.LinkdDiscoveryFacts, open func(config.RedisConnectionConfig) (redis.UniversalClient, bool), now func() time.Time) (linkdIndex, error) {
+	discovery *fleet.LinkdDiscoveryFacts, open func(config.RedisConnectionConfig) (redis.UniversalClient, bool), now func() time.Time,
+	logger *observability.Logger) (linkdIndex, error) {
 	capacity := config.DeriveLinkdCapacity(config.DetectCapacityInputs())
 	settings := cfg.PhaseTwo.Linkd
 	// One read cannot monopolize the allowance for the whole worker. These
 	// are scan bounds, not an assertion that an oversized SET was empty.
-	limits := openalerts.ReadLimits{MaxMembers: max(1, capacity.Members/4), MaxBytes: max(1, capacity.Bytes/4), MaxPages: 100, PageSize: 256}
-	binding, err := newLinkdBinding(client, connection, settings.Prefix(), limits)
-	if err != nil {
-		return linkdIndex{}, err
+	limits := openalerts.ReadLimits{MaxMembers: max(1, capacity.Members/4), MaxBytes: max(1, capacity.Bytes/4), PageSize: 256,
+		MaxLargeRead: config.LinkdCalibrationInterval / 4}
+	// The sets are read only where the Console named them: a connection its
+	// target named at startup (adopted), or one the deployment stated, which
+	// the first reconciliation then confirms or not. Otherwise nothing is
+	// bound and nothing is read until the Console names a place.
+	var binding linkdBinding
+	index := openalerts.IndexLocation{KeyPrefix: settings.Prefix(), Address: "unbound"}
+	if settings.ConsoleURL != "" && settings.Connection != nil {
+		var err error
+		if binding, err = newLinkdBinding(client, connection, settings.Prefix(), limits); err != nil {
+			return linkdIndex{}, err
+		}
+		index = openalerts.IndexLocation{KeyPrefix: settings.Prefix(), Address: linkdLocation(connection), Database: connection.DB}
 	}
-	location := &linkdLocationSwitch{current: binding, replaced: make(chan struct{}), limits: limits, open: open}
+	location := &linkdLocationSwitch{current: binding, replaced: make(chan struct{}), limits: limits, open: open, cfg: cfg}
 	if discovery != nil {
 		location.discovery = *discovery
 	}
+	adopted := discovery != nil && discovery.Outcome == fleet.LinkdDiscoveryAdopted
 	var reconciler openalerts.Reconciler
 	var console *openalerts.HTTPReconciler
+	var facts openalerts.ConsoleFacts
+	var err error
 	if settings.ConsoleURL != "" {
-		// Which of the link's targets is this deployment's, and its source
-		// scope, are read from the Console; the configuration only narrows the
-		// choice when the link maintains more than one target.
+		// The link's target, and its source scope, are read from the
+		// Console, which lists one target for a link alarmd reads.
 		console, err = openalerts.NewHTTPReconciler(openalerts.HTTPReconcilerOptions{BaseURL: settings.ConsoleURL,
 			Username: settings.Username, Password: settings.Password, Client: &http.Client{Timeout: 5 * time.Second}, MaxResponseBytes: int64(capacity.Bytes / 4),
-			Now: now, Select: openalerts.TargetSelector{EventSourceID: settings.EventSourceID, HookName: settings.HookName},
-			Index: openalerts.IndexLocation{KeyPrefix: settings.Prefix(), Address: linkdLocation(connection), Database: connection.DB}})
+			Now: now, Index: index, LocationConfirmed: adopted, OnLocationMismatch: location.relocate,
+			KeyingEvery: config.LinkdCalibrationInterval, OnFailure: consoleFailureLine(logger)})
 		if err != nil {
 			return linkdIndex{}, err
 		}
-		reconciler = console
+		reconciler, facts = console, console
 		location.console = console
 	}
+	// The calibration rate is not written here. ReconcileBatch is only the
+	// floor, and what a round calibrates before any Console call has been
+	// timed; each round then calibrates what covers every tracked strategy
+	// within the calibration interval, at the pace the Console's measured p90
+	// allows inside half of CycleTimeout (openalerts calibrationPlan), and a
+	// shortfall is reported as calibration_short. RefreshInterval is the
+	// round's cadence and CycleTimeout bounds one round.
 	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: location, Subscriber: location, Reconciler: reconciler, Now: now,
 		Policy: openalerts.PolicySelfMaintain, MaxStrategies: capacity.Strategies, MaxMembers: capacity.Members, MaxBytes: capacity.Bytes,
 		MaxLocalEntries: capacity.LocalEntries, ReadBatch: capacity.ReadBatch, ReconcileBatch: 1, RefreshInterval: time.Second,
-		IndexInterval: time.Minute, ReconcileInterval: settings.CalibrationInterval(), CalibrationMaxAge: 2 * settings.CalibrationInterval(),
-		LocalRetention: time.Minute, CycleTimeout: 5 * time.Second})
+		IndexInterval: time.Minute, ReconcileInterval: config.LinkdCalibrationInterval, CalibrationMaxAge: 2 * config.LinkdCalibrationInterval,
+		LocalRetention: time.Minute, CycleTimeout: 5 * time.Second, Facts: facts})
 	if err != nil {
 		return linkdIndex{}, err
 	}
+	location.mu.Lock()
+	location.calibrate = cache.LocationMoved
+	location.mu.Unlock()
 	return linkdIndex{Cache: cache, Source: binding.source, Alerts: reconciler, Console: console, Location: location}, nil
 }

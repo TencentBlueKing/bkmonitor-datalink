@@ -65,28 +65,26 @@ func TestTheRangeGateAndReplayExpiryLinesCarryTheirWordAsTheReasonCode(t *testin
 // A cooldown transition is a line with a result and a reason, not a bare
 // event: entering and extending degrade the Query Group for QUERY_UNAVAILABLE,
 // a query that answers resumes it from that reason, and a configuration
-// change or the policy being switched off carry no reason at all -- none of
-// them reads _other or reason_not_reported.
+// change carries no reason at all -- none of them reads _other or
+// reason_not_reported.
 func TestACooldownTransitionCarriesAResultAndAReason(t *testing.T) {
 	now := time.Unix(100, 0)
 	var seen []observability.Observation
 	runner := &Runner{queryGroup: "qg", now: func() time.Time { return now }, flights: &FlightCoordinator{
-		limits:   RecoveryLimits{QueryUnavailableCooldown: true},
+		limits:   RecoveryLimits{},
 		observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { seen = append(seen, o) }),
 	}}
 	slot := frozenSlot("qg")
 	for i := 0; i < 4; i++ {
 		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), slot, unavailableResult(), 60)
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	}
 	slot.Contract.Slot.EvaluationTime++
-	runner.recordQueryAvailability(context.Background(), slot, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60)
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	for i := 0; i < 3; i++ {
 		slot.Contract.Slot.EvaluationTime++
-		runner.recordQueryAvailability(context.Background(), slot, unavailableResult(), 60)
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, unavailableResult(), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
 	}
-	runner.flights.limits.QueryUnavailableCooldown = false
-	runner.deferUnavailableQuery(context.Background(), slot)
 
 	want := []struct {
 		event  string
@@ -98,7 +96,6 @@ func TestACooldownTransitionCarriesAResultAndAReason(t *testing.T) {
 		{"recovered", observability.ResultResumed, observability.ReasonCode(contract.ReasonQueryUnavailable)},
 		// Back within the re-entry window of the exit above.
 		{"reentered", observability.ResultDegraded, observability.ReasonCode(contract.ReasonQueryUnavailable)},
-		{"disabled", observability.ResultSuccess, observability.ReasonNone},
 	}
 	var lines []observability.Observation
 	for _, observation := range seen {
@@ -120,6 +117,83 @@ func TestACooldownTransitionCarriesAResultAndAReason(t *testing.T) {
 		if normalized.Result == observability.ResultOther || unclassified(normalized.ReasonCode) {
 			t.Fatalf("line %d (%s) reads as unclassified: %s/%s", i, want[i].event, normalized.Result, normalized.ReasonCode)
 		}
+	}
+}
+
+// A cooldown line names the reason its query failed with, not the backend's
+// word for every failure: a Query Group whose table does not route enters
+// the pool for that, an extension carries the latest failure's reason, the
+// exit carries the reason it resumed from, and the record carries it across
+// a restart. A record kept before records carried one says the reason was
+// not recorded.
+func TestACooldownLineCarriesTheReasonItsQueryFailedWith(t *testing.T) {
+	now := time.Unix(100, 0)
+	store := newMemoryCooldownStore()
+	var seen []observability.Observation
+	newRunner := func() *Runner {
+		runner := &Runner{queryGroup: "qg", now: func() time.Time { return now }, flights: &FlightCoordinator{
+			limits:   RecoveryLimits{},
+			observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { seen = append(seen, o) }),
+		}}
+		runner = runner.WithQueryCooldownStore(store)
+		runner.restoreQueryCooldown(context.Background(), fenceAt(1))
+		return runner
+	}
+	failed := func(reason string) execution.SlotExecutionResult {
+		return execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityUnavailable,
+			QueryUnavailableReason: execution.ReasonCode(reason)}
+	}
+	lastLine := func() (string, observability.ReasonCode) {
+		t.Helper()
+		for index := len(seen) - 1; index >= 0; index-- {
+			if seen[index].QueryCooldown != nil {
+				normalized := observability.NormalizeObservation(seen[index])
+				if unclassified(normalized.ReasonCode) {
+					t.Fatalf("%s line normalizes to %q", seen[index].QueryCooldown.Event, normalized.ReasonCode)
+				}
+				return seen[index].QueryCooldown.Event, normalized.ReasonCode
+			}
+		}
+		t.Fatal("no cooldown line")
+		return "", ""
+	}
+	slot := frozenSlot("qg")
+	runner := newRunner()
+	for i := 0; i < unavailableThreshold; i++ {
+		slot.Contract.Slot.EvaluationTime++
+		runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, failed(contract.ReasonQueryTargetMissing), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
+	}
+	if event, reason := lastLine(); event != QueryCooldownEntered || reason != contract.ReasonQueryTargetMissing {
+		t.Fatalf("entry = %s/%s, want entered for %s", event, reason, contract.ReasonQueryTargetMissing)
+	}
+	slot.Contract.Slot.EvaluationTime++
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, failed(contract.ReasonQueryUnavailable), 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
+	if event, reason := lastLine(); event != QueryCooldownExtended || reason != contract.ReasonQueryUnavailable {
+		t.Fatalf("extension = %s/%s, want extended for the latest failure, %s", event, reason, contract.ReasonQueryUnavailable)
+	}
+	if record := store.records["qg"]; record.Reason != contract.ReasonQueryUnavailable {
+		t.Fatalf("record reason = %q, want %s kept with the pool", record.Reason, contract.ReasonQueryUnavailable)
+	}
+
+	// A restart comes back in the pool for the reason it was in it, and
+	// leaves it from that reason.
+	runner = newRunner()
+	if event, reason := lastLine(); event != QueryCooldownRestored || reason != contract.ReasonQueryUnavailable {
+		t.Fatalf("restore = %s/%s, want restored for %s", event, reason, contract.ReasonQueryUnavailable)
+	}
+	slot.Contract.Slot.EvaluationTime++
+	runner.recordQueryAvailability(context.Background(), slot, execution.OperationNormal, execution.SlotExecutionResult{Completed: true, QueryAvailability: execution.QueryAvailabilityAvailable}, 60, runner.queryCooldownDecidedBy(execution.OperationNormal))
+	if event, reason := lastLine(); event != QueryCooldownRecovered || reason != contract.ReasonQueryUnavailable {
+		t.Fatalf("exit = %s/%s, want recovered from %s", event, reason, contract.ReasonQueryUnavailable)
+	}
+
+	// A record kept before records carried a reason.
+	record := store.records["qg"]
+	record.Until, record.Reason = now.Add(time.Minute), ""
+	store.records["qg"] = record
+	newRunner()
+	if event, reason := lastLine(); event != QueryCooldownRestored || reason != observability.ReasonCode(execution.ReasonQueryReasonUnrecorded) {
+		t.Fatalf("restore of a record without a reason = %s/%s, want %s", event, reason, execution.ReasonQueryReasonUnrecorded)
 	}
 }
 

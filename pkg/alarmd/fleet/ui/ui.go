@@ -42,13 +42,37 @@ var pageCLI []byte
 // and the binary's own version is what an operator checks.
 var modified = time.Unix(0, 0)
 
+// Option configures what the pages say about this deployment.
+type Option func(*options)
+
+type options struct {
+	adminKeySecret AdminKeySecret
+}
+
+// WithAdminKeySecret tells the login page where the administrator key is
+// kept, so it can show the command that reads it. Without it every part of
+// that command is a placeholder.
+func WithAdminKeySecret(secret AdminKeySecret) Option {
+	return func(o *options) { o.adminKeySecret = secret }
+}
+
 // Handler serves the page at the root of whatever it is mounted under.
 //
 // Only the page itself is served. A host that proxies a prefix here will send
 // every unmatched path through, and answering all of them with the page would
 // turn a typo in an API path into a silent HTML body that the caller parses as
 // JSON and reports as a decode error rather than as a 404.
-func Handler() http.Handler {
+//
+// The login page is rendered once, here: what it says about the deployment
+// is read at startup and does not change while the process runs.
+func Handler(configure ...Option) http.Handler {
+	var o options
+	for _, option := range configure {
+		if option != nil {
+			option(&o)
+		}
+	}
+	login := renderCLIPage(pageCLI, o.adminKeySecret)
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		body, name := page, "index.html"
 		switch path := strings.TrimSuffix(request.URL.Path, "/"); path {
@@ -56,7 +80,7 @@ func Handler() http.Handler {
 		case "/v2", "/v2.html":
 			body, name = pageV2, "v2.html"
 		case "/cli", "/cli.html":
-			body, name = pageCLI, "cli.html"
+			body, name = login, "cli.html"
 			response.Header().Set("Cache-Control", "no-store")
 		default:
 			http.NotFound(response, request)

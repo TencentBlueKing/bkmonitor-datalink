@@ -58,19 +58,32 @@ func newDiagnosisRig(t *testing.T, facts map[string]StrategyLookupFacts, progres
 // (4101's object on pod-b) before the service is built.
 func newDiagnosisRigWith(t *testing.T, facts map[string]StrategyLookupFacts, progress ProgressReader, shape func(*Anomaly)) *diagnosisRig {
 	t.Helper()
-	rig := &diagnosisRig{clock: now}
-	snapshots := healthySnapshots()
-	snapshots[0].Owned, snapshots[0].Determined = 2, 2
-	snapshots[0].OwnedObjects = []string{"qg-4101-a", "qg-other"}
-	snapshots[1].Owned, snapshots[1].Determined = 1, 1
-	snapshots[1].OwnedObjects = []string{"qg-4101-b"}
 	row := anomaly("qg-4101-b")
 	row.Replica = "pod-b"
 	if shape != nil {
 		shape(&row)
 	}
-	snapshots[1].Anomalies = []Anomaly{row}
-	snapshots[1].TotalAnomalies = 1
+	return newDiagnosisRigHolding(t, facts, progress, nil, []Anomaly{row})
+}
+
+// newDiagnosisRigHolding is the rig with the anomaly rows each replica holds:
+// pod-a owns qg-4101-a and qg-other, pod-b owns qg-4101-b.
+func newDiagnosisRigHolding(t *testing.T, facts map[string]StrategyLookupFacts, progress ProgressReader, onA, onB []Anomaly) *diagnosisRig {
+	t.Helper()
+	snapshots := healthySnapshots()
+	snapshots[0].Owned, snapshots[0].Determined = 2, 2
+	snapshots[0].OwnedObjects = []string{"qg-4101-a", "qg-other"}
+	snapshots[0].Anomalies, snapshots[0].TotalAnomalies = onA, len(onA)
+	snapshots[1].Owned, snapshots[1].Determined = 1, 1
+	snapshots[1].OwnedObjects = []string{"qg-4101-b"}
+	snapshots[1].Anomalies, snapshots[1].TotalAnomalies = onB, len(onB)
+	return newDiagnosisRigFrom(t, facts, progress, snapshots)
+}
+
+// newDiagnosisRigFrom is the rig over the given replicas' snapshots.
+func newDiagnosisRigFrom(t *testing.T, facts map[string]StrategyLookupFacts, progress ProgressReader, snapshots []Snapshot) *diagnosisRig {
+	t.Helper()
+	rig := &diagnosisRig{clock: now}
 	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 3, Known: true, IDs: []string{"qg-4101-a", "qg-4101-b", "qg-other"}}},
 		stubRegistry{replicas: replicas()}, stubSnapshots{snapshots: snapshots})
 	lookup := func(id string) StrategyLookupFacts {
@@ -140,7 +153,7 @@ func TestTheDiagnosisGivesEveryListedStrategyOneRowFromTheExistingWords(t *testi
 		attribution string
 	}{
 		"4101": {StateDefect, ActionServiceFix, "", ""},
-		"4102": {StateNotDetecting, ActionServiceFix, "ALGORITHM_NOT_MIGRATED", "alarmd"},
+		"4102": {StateNotDetecting, ActionNone, "ALGORITHM_NOT_MIGRATED", "capability"},
 		"4103": {StateDetecting, ActionNone, "", "strategy"},
 		"4105": {DiagnosisUnknown, "", UnknownNotYetPublished, ""},
 		"4109": {StateNotDetecting, ActionCacheWriterFill, "EFFECTIVE_TIME_SNAPSHOT_UNAVAILABLE", "writer"},
@@ -275,7 +288,7 @@ func TestALaterPageThatRereadsSaysSoAndNamesAChangedUniverse(t *testing.T) {
 // and neither changes a verdict.
 func TestDiagnosisProgressFillsSlotsAndNamesWhatItCouldNotRead(t *testing.T) {
 	var asked [][]string
-	rig := newDiagnosisRig(t, diagnosisFacts(), func(_ context.Context, groups []string) (map[string]ProgressFacts, map[string]bool, error) {
+	rig := newDiagnosisRig(t, diagnosisFacts(), func(_ context.Context, groups []string) (map[string]ProgressFacts, map[string]string, error) {
 		asked = append(asked, groups)
 		return map[string]ProgressFacts{"qg-4101-a": {LastFullSlot: 1790150400, NextSlot: 1790150460}}, nil, nil
 	})
@@ -292,15 +305,15 @@ func TestDiagnosisProgressFillsSlotsAndNamesWhatItCouldNotRead(t *testing.T) {
 		t.Errorf("row = %+v, want b's progress unknown and the verdict unchanged", row)
 	}
 
-	oneFailed := newDiagnosisRig(t, diagnosisFacts(), func(context.Context, []string) (map[string]ProgressFacts, map[string]bool, error) {
-		return map[string]ProgressFacts{}, map[string]bool{"qg-4101-a": true}, nil
+	oneFailed := newDiagnosisRig(t, diagnosisFacts(), func(context.Context, []string) (map[string]ProgressFacts, map[string]string, error) {
+		return map[string]ProgressFacts{}, map[string]string{"qg-4101-a": ProgressReadFailed}, nil
 	})
 	oneFailed.universe = []string{"4103"}
 	if body = oneFailed.page(t, "", 0); !hasPart(body.Strategies[0], "qg-4101-a progress", ProgressReadFailed) {
 		t.Errorf("a failed object read = %+v, want PROGRESS_READ_FAILED apart from not found", body.Strategies[0].UnknownParts)
 	}
 
-	failing := newDiagnosisRig(t, diagnosisFacts(), func(context.Context, []string) (map[string]ProgressFacts, map[string]bool, error) {
+	failing := newDiagnosisRig(t, diagnosisFacts(), func(context.Context, []string) (map[string]ProgressFacts, map[string]string, error) {
 		return nil, nil, errors.New("down")
 	})
 	failing.universe = []string{"4103"}
@@ -430,5 +443,67 @@ func TestNormalizeUniverseDigestIsPinned(t *testing.T) {
 	ids, digest := NormalizeUniverse([]string{"10", "2", "2", "1", "379"})
 	if strings.Join(ids, ",") != "1,2,10,379" || digest != "5fa412068ab113ae" {
 		t.Fatalf("ids %v digest %s", ids, digest)
+	}
+}
+
+// One pass over the rows lists every global strategy: the row carries the
+// source's mark whatever the verdict, a withheld global strategy as surely as
+// a running one, and the field is left out for every other strategy so the
+// rows of a deployment without global strategies read as they always did.
+func TestADiagnosisRowMarksAStrategyTheSourceMarksGlobal(t *testing.T) {
+	facts := diagnosisFacts()
+	withheld := facts["4102"]
+	withheld.Global = true
+	facts["4102"] = withheld
+	rig := newDiagnosisRig(t, facts, nil)
+	rig.universe = []string{"4101", "4102"}
+	w := httptest.NewRecorder()
+	rig.handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/diagnose", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var body DiagnosisResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	global := map[string]bool{}
+	for _, row := range body.Strategies {
+		global[row.StrategyID] = row.Global
+	}
+	if !global["4102"] || global["4101"] || len(global) != 2 {
+		t.Fatalf("global marks = %v, want 4102 marked and 4101 not", global)
+	}
+	if n := strings.Count(w.Body.String(), `"global":true`); n != 1 {
+		t.Fatalf(`"global":true appears %d times, want once: the field is left out when false`, n)
+	}
+	if strings.Contains(w.Body.String(), `"global":false`) {
+		t.Fatal(`"global":false was written: the field is omitted for ordinary strategies`)
+	}
+}
+
+// Progress the memory line had no room for is deferred on its row, not
+// missing and not failed, and the page says how much of it was left: the
+// objects it asked about and how many it did not read.
+func TestADiagnosisPageSaysHowMuchProgressItLeftUnread(t *testing.T) {
+	rig := newDiagnosisRig(t, diagnosisFacts(), func(_ context.Context, groups []string) (map[string]ProgressFacts, map[string]string, error) {
+		return map[string]ProgressFacts{"qg-4101-a": {LastFullSlot: 1790150400, NextSlot: 1790150460}},
+			map[string]string{"qg-4101-b": ProgressDeferred}, nil
+	})
+	rig.universe = []string{"4101"}
+	body := rig.page(t, "", 0)
+	if body.Progress != "partial" || body.ProgressObjects != 2 || body.ProgressDeferred != 1 {
+		t.Fatalf("progress %q objects %d deferred %d, want partial with one of two left", body.Progress, body.ProgressObjects,
+			body.ProgressDeferred)
+	}
+	if row := body.Strategies[0]; !hasPart(row, "qg-4101-b progress", ProgressDeferred) {
+		t.Fatalf("row parts %+v, want the deferred object's progress unknown as deferred", row.UnknownParts)
+	}
+	// Nothing deferred is a read page, and says nothing more.
+	whole := newDiagnosisRig(t, diagnosisFacts(), func(context.Context, []string) (map[string]ProgressFacts, map[string]string, error) {
+		return map[string]ProgressFacts{}, map[string]string{}, nil
+	})
+	whole.universe = []string{"4101"}
+	if body := whole.page(t, "", 0); body.Progress != "read" || body.ProgressObjects != 0 || body.ProgressDeferred != 0 {
+		t.Fatalf("progress %q objects %d deferred %d, want read and nothing more", body.Progress, body.ProgressObjects, body.ProgressDeferred)
 	}
 }

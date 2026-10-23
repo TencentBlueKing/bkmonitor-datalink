@@ -42,7 +42,7 @@ func TestEvaluateSeriesProducesOneAbnormalAndRecoveryForNamedInputs(t *testing.T
 	}
 
 	history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("d", 64), SourceTime: 39,
-		Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous}}}}
+		Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous}}}}
 	recoveryRequest := requestFixtureForPlan(t, plan, []contract.CanonicalRecordV2{g4Record(99, `100`, nil)}, history)
 	recoveryInput := g4Input(t, recoveryRequest, map[string][]contract.CanonicalRecordV2{
 		"primary":  {g4Record(99, `100`, nil)},
@@ -99,7 +99,7 @@ func TestEvaluateSeriesPreservesActiveStateGuardReasonForEveryUnknownOutcome(t *
 	guard := execution.ReasonCode(contract.ReasonSnapshotUnavailable)
 	normal := func(plan *strategy.CompiledPlan, id string, sourceTime int64) execution.StateHistoryPoint {
 		return execution.StateHistoryPoint{RecordID: strings.Repeat(id, 64), SourceTime: sourceTime,
-			Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactNormal}}}
+			Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactNormal}}}
 	}
 	tests := []struct {
 		name         string
@@ -258,7 +258,7 @@ func primaryOnlyInput(request execution.EvaluationRequest, record contract.Canon
 func g4Input(t *testing.T, request execution.EvaluationRequest, records map[string][]contract.CanonicalRecordV2) execution.SeriesEvaluationInputRequest {
 	t.Helper()
 	consumer := execution.ConsumerRef{Plan: request.Header.DuePlans[0].Identity, LevelID: 5, HasLevel: true}
-	algorithm := request.Header.DuePlans[0].CompiledPlan.Levels()[0].Algorithms()[0]
+	algorithm := request.Header.DuePlans[0].CompiledPlan.Levels().At(0).Algorithms().At(0)
 	input := execution.SeriesEvaluationInputRequest{Contract: request.Header.Contract, Consumer: consumer,
 		SeriesIdentity: execution.SeriesIdentityDigest(request.State.Items[0].Identity.SeriesIdentityDigest)}
 	for _, requirement := range algorithm.InputRequirements() {

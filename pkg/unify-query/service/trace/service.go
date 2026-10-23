@@ -11,6 +11,7 @@ package trace
 
 import (
 	"context"
+	"github.com/spf13/viper"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,9 @@ func (s *Service) newHTTPClient() otlptrace.Client {
 			MaxElapsedTime:  5,
 		}),
 	}
+	if viper.GetBool("kms.enabled") {
+		opts = append(opts, otlptracehttp.WithHeaders(viper.GetStringMapString("trace.otlp.headers")))
+	}
 	client := otlptracehttp.NewClient(opts...)
 	return client
 }
@@ -63,6 +67,9 @@ func (s *Service) newGrpcClient() otlptrace.Client {
 	opts := []otlptracegrpc.Option{
 		otlptracegrpc.WithEndpoint(strings.Join([]string{otlpHost, otlpPort}, ":")),
 		otlptracegrpc.WithInsecure(),
+	}
+	if viper.GetBool("kms.enabled") {
+		opts = append(opts, otlptracegrpc.WithHeaders(viper.GetStringMapString("trace.otlp.headers")))
 	}
 	client := otlptracegrpc.NewClient(opts...)
 	return client
@@ -100,6 +107,8 @@ func (s *Service) Start(ctx context.Context) {
 
 	exporter, err = otlptrace.New(ctx, client)
 	if err != nil {
+		// Exporter errors may contain request headers; report the failed stage only.
+		log.Errorf(ctx, "trace exporter initialization failed (protocol=%s)", OtlpType)
 		return
 	}
 

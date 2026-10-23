@@ -6,8 +6,10 @@
 package contract
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sort"
 	"strings"
 )
@@ -37,6 +39,15 @@ type TargetPlanV1 struct {
 	// StaticKeys are the member keys of the static targets, already in the
 	// key form the rule defines, sorted and unique.
 	StaticKeys []string `json:"static_keys"`
+	// StaticBusinesses is the business the writer configured on a
+	// Kubernetes static target, by that target's key. It is what a global
+	// business Plan attributes an event on that target to. Only the static
+	// targets that carry a business are here, and a key two targets give
+	// different businesses is left out: neither is the target's business,
+	// and the event falls through to the next source instead of taking one
+	// of them by document order. Absent on every other plan, so their bytes
+	// are what they were.
+	StaticBusinesses map[string]string `json:"static_businesses,omitempty"`
 	// StaticMembers are the static targets of a model_inst_id plan read by
 	// host identity: the (model, instance) pairs as the writer spelled them,
 	// sorted and unique, which the worker maps to host ids through the host
@@ -44,10 +55,28 @@ type TargetPlanV1 struct {
 	// only the cache knows it - so they live apart from StaticKeys, which is
 	// empty on such a plan.
 	StaticMembers []TargetPlanMemberV1 `json:"static_members,omitempty"`
+	// ExcludeKeys and ExcludeMembers use the same identity as the included
+	// static targets. Exclusions apply after all sources are resolved.
+	ExcludeKeys    []string             `json:"exclude_keys,omitempty"`
+	ExcludeMembers []TargetPlanMemberV1 `json:"exclude_members,omitempty"`
+	// ExcludeHosts are ip_cloud exclusions by host id, resolved to addresses
+	// from the same snapshot as the included hosts.
+	ExcludeHosts []string `json:"exclude_hosts,omitempty"`
 	// DynamicGroups are the dynamic group ids referenced, sorted and unique.
 	DynamicGroups []string `json:"dynamic_groups,omitempty"`
 	// DynamicTopologies are the topology node references, sorted and unique.
 	DynamicTopologies []TargetPlanTopologyV1 `json:"dynamic_topologies,omitempty"`
+	// TenantID is the tenant an ip_cloud plan's hosts and groups belong to,
+	// the strategy's own: an address is a host only inside one tenant, so
+	// the worker reads addresses, and checks hosts and groups, under it.
+	// Absent on every other rule, so their bytes are what they were.
+	TenantID string `json:"bk_tenant_id,omitempty"`
+	// StaticHosts are the static targets of an ip_cloud plan: host ids, as
+	// the writer names them, sorted and unique. The key is the host's
+	// address, which only the host cache knows and which moves when the
+	// host is readdressed, so the worker maps them once per Slot and they
+	// live apart from StaticKeys, which is empty on such a plan.
+	StaticHosts []string `json:"static_hosts,omitempty"`
 }
 
 // TargetPlanRule names which dimensions a result table identifies its
@@ -56,12 +85,28 @@ type TargetPlanV1 struct {
 type TargetPlanRule string
 
 const (
-	TargetPlanRuleHostID           TargetPlanRule = "host_id"
-	TargetPlanRuleModelInstID      TargetPlanRule = "model_inst_id"
-	TargetPlanRuleK8sCluster       TargetPlanRule = "k8s_cluster"
-	TargetPlanRuleK8sNode          TargetPlanRule = "k8s_node"
-	TargetPlanRuleK8sWorkload      TargetPlanRule = "k8s_workload"
+	TargetPlanRuleHostID      TargetPlanRule = "host_id"
+	TargetPlanRuleModelInstID TargetPlanRule = "model_inst_id"
+	TargetPlanRuleK8sCluster  TargetPlanRule = "k8s_cluster"
+	TargetPlanRuleK8sNode     TargetPlanRule = "k8s_node"
+	TargetPlanRuleK8sWorkload TargetPlanRule = "k8s_workload"
+	// TargetPlanRuleIPCloud reads a host by its IPv4 address and cloud area:
+	// the rule of a host query that carries neither a host id nor an object
+	// identity. Its members are hosts named by id, and the worker maps them
+	// to addresses under the plan's tenant.
+	TargetPlanRuleIPCloud          TargetPlanRule = "ip_cloud"
 	TargetPlanFailurePolicyNoMatch                = "no_match"
+)
+
+// The record dimensions an ip_cloud key is read from, and the aliases the
+// protocol takes as the same inputs. HostModelID is the one model an
+// ip_cloud plan names.
+const (
+	IPCloudIPDimension         = "bk_target_ip"
+	IPCloudCloudDimension      = "bk_target_cloud_id"
+	IPCloudIPAliasDimension    = "ip"
+	IPCloudCloudAliasDimension = "bk_cloud_id"
+	HostModelID                = "cw-Host"
 )
 
 // TargetPlanKeySeparator joins the parts of a member key and of a record
@@ -91,6 +136,12 @@ type TargetPlanIdentityV1 struct {
 	// and the host cache maps them to host ids. Dimensions is bk_host_id on
 	// such an identity, which is how a no-data group of it is addressed.
 	HostIdentity bool `json:"host_identity,omitempty"`
+	// Address says the key is the record's IPv4 address and cloud area,
+	// read by ReadIPCloudKey: from the protocol's dimensions or their
+	// aliases, strictly, rather than as text by name. It is the identity of
+	// the ip_cloud rule; Dimensions is bk_target_ip, bk_target_cloud_id,
+	// which is how a no-data group of it is addressed.
+	Address bool `json:"address,omitempty"`
 }
 
 // TargetPlanMemberV1 is one static member of a model_inst_id plan as the
@@ -130,6 +181,7 @@ var targetPlanRules = map[TargetPlanRule]targetPlanRuleFacts{
 	TargetPlanRuleK8sCluster:  {Dimensions: []string{"bcs_cluster_id"}},
 	TargetPlanRuleK8sNode:     {Dimensions: []string{"bcs_cluster_id", "node"}},
 	TargetPlanRuleK8sWorkload: {Dimensions: []string{"bcs_cluster_id", "namespace", "workload_kind", "workload_name"}},
+	TargetPlanRuleIPCloud:     {Dimensions: []string{IPCloudIPDimension, IPCloudCloudDimension}, Dynamic: true},
 }
 
 // TargetPlanRules lists the rules in a stable order, for tests and reports.
@@ -289,6 +341,44 @@ func (plan *TargetPlanV1) Validate() error {
 	if err := canonicalTargetPlanList("static keys", plan.StaticKeys); err != nil {
 		return err
 	}
+	if err := canonicalTargetPlanList("exclude keys", plan.ExcludeKeys); err != nil {
+		return err
+	}
+	if plan.HasExclusions() && !facts.Dynamic {
+		return fmt.Errorf("alarmd contract: rule %s carries no exclusions", plan.Rule)
+	}
+	if plan.Rule == TargetPlanRuleModelInstID && plan.Identity.HostIdentity && len(plan.ExcludeKeys) > 0 {
+		return errors.New("alarmd contract: model_inst_id exclusions read by host identity must name model members")
+	}
+	if (plan.Rule == TargetPlanRuleIPCloud) != plan.Identity.Address {
+		return fmt.Errorf("alarmd contract: rule %s and only it reads a record's address", TargetPlanRuleIPCloud)
+	}
+	if plan.Rule == TargetPlanRuleIPCloud {
+		if plan.ModelID != HostModelID || strings.TrimSpace(plan.TenantID) == "" || plan.Identity.HostIdentity {
+			return fmt.Errorf("alarmd contract: an %s plan names %s, its tenant, and no host identity", TargetPlanRuleIPCloud, HostModelID)
+		}
+		if len(plan.StaticKeys) > 0 || len(plan.ExcludeKeys) > 0 {
+			return fmt.Errorf("alarmd contract: an %s plan names its static targets by host, not by key", TargetPlanRuleIPCloud)
+		}
+		if err := canonicalTargetPlanList("static hosts", plan.StaticHosts); err != nil {
+			return err
+		}
+		for _, host := range plan.StaticHosts {
+			if !canonicalDecimalPattern.MatchString(host) || host == "0" {
+				return errors.New("alarmd contract: a static host is a positive decimal id")
+			}
+		}
+		if err := canonicalTargetPlanList("excluded hosts", plan.ExcludeHosts); err != nil {
+			return err
+		}
+		for _, host := range plan.ExcludeHosts {
+			if !canonicalDecimalPattern.MatchString(host) || host == "0" {
+				return errors.New("alarmd contract: an excluded host is a positive decimal id")
+			}
+		}
+	} else if plan.TenantID != "" || len(plan.StaticHosts) > 0 || len(plan.ExcludeHosts) > 0 {
+		return fmt.Errorf("alarmd contract: only %s carries a tenant and static hosts", TargetPlanRuleIPCloud)
+	}
 	if plan.Identity.HostIdentity {
 		if plan.Rule != TargetPlanRuleHostID && plan.Rule != TargetPlanRuleModelInstID {
 			return fmt.Errorf("alarmd contract: rule %s does not read a host identity", plan.Rule)
@@ -319,6 +409,32 @@ func (plan *TargetPlanV1) Validate() error {
 			}
 		}
 	}
+	if len(plan.StaticBusinesses) > 0 {
+		if facts.Dynamic {
+			return fmt.Errorf("alarmd contract: rule %s takes a target's business from the host, not the plan", plan.Rule)
+		}
+		for key, business := range plan.StaticBusinesses {
+			if !containsSortedKey(plan.StaticKeys, key) {
+				return errors.New("alarmd contract: a static business names a static key of the plan")
+			}
+			if !canonicalDecimalPattern.MatchString(business) || business == "0" {
+				return errors.New("alarmd contract: a static business is a positive decimal")
+			}
+		}
+	}
+	if len(plan.ExcludeMembers) > 0 {
+		if plan.Rule != TargetPlanRuleModelInstID || !plan.Identity.HostIdentity || len(plan.ExcludeKeys) > 0 {
+			return errors.New("alarmd contract: excluded members belong to a model_inst_id plan read by host identity")
+		}
+		for index, member := range plan.ExcludeMembers {
+			if member.ModelID != plan.ModelID || strings.TrimSpace(member.ModelInstID) == "" {
+				return errors.New("alarmd contract: an excluded member names the plan's model and a non-empty instance")
+			}
+			if index > 0 && !plan.ExcludeMembers[index-1].less(member) {
+				return errors.New("alarmd contract: excluded members must be canonically ordered and unique")
+			}
+		}
+	}
 	if err := canonicalTargetPlanList("dynamic groups", plan.DynamicGroups); err != nil {
 		return err
 	}
@@ -333,10 +449,16 @@ func (plan *TargetPlanV1) Validate() error {
 			return errors.New("alarmd contract: topology references must be canonically ordered and unique")
 		}
 	}
-	if len(plan.StaticKeys) == 0 && len(plan.StaticMembers) == 0 && len(plan.DynamicGroups) == 0 && len(plan.DynamicTopologies) == 0 {
+	if len(plan.StaticKeys) == 0 && len(plan.StaticMembers) == 0 && len(plan.StaticHosts) == 0 &&
+		len(plan.DynamicGroups) == 0 && len(plan.DynamicTopologies) == 0 {
 		return errors.New("alarmd contract: a target plan that names nothing matches nothing and is refused at compile time")
 	}
 	return nil
+}
+
+// HasExclusions reports whether an older object reader would widen this plan.
+func (plan *TargetPlanV1) HasExclusions() bool {
+	return plan != nil && (len(plan.ExcludeKeys) > 0 || len(plan.ExcludeMembers) > 0 || len(plan.ExcludeHosts) > 0)
 }
 
 func (member TargetPlanMemberV1) less(other TargetPlanMemberV1) bool {
@@ -377,6 +499,21 @@ func SortTargetPlanTopologies(nodes []TargetPlanTopologyV1) {
 	sort.Slice(nodes, func(left, right int) bool { return nodes[left].less(nodes[right]) })
 }
 
+func containsSortedKey(keys []string, key string) bool {
+	index := sort.SearchStrings(keys, key)
+	return index < len(keys) && keys[index] == key
+}
+
+// StaticBusiness is the business configured on the static target a record
+// key names, and false when that target carries none.
+func (plan *TargetPlanV1) StaticBusiness(key string) (string, bool) {
+	if plan == nil {
+		return "", false
+	}
+	business, found := plan.StaticBusinesses[key]
+	return business, found
+}
+
 func canonicalTargetPlanList(what string, values []string) error {
 	for index, value := range values {
 		if strings.TrimSpace(value) == "" {
@@ -387,4 +524,85 @@ func canonicalTargetPlanList(what string, values []string) error {
 		}
 	}
 	return nil
+}
+
+// IPCloudKey is the member key of an address: the IPv4 address and the
+// cloud area, both canonical, in rule order.
+func IPCloudKey(ip, cloud string) string {
+	return TargetPlanMemberKey(ip, cloud)
+}
+
+// ReadIPCloudKey reads a record's ip_cloud key from its dimensions as raw
+// JSON, and false when the record cannot be placed. Each half is read from
+// the protocol's dimension or its alias (ip, bk_cloud_id): when both are
+// present both must read and agree, and a present value that does not read
+// - null, a boolean, a fraction, a negative cloud area, text that is not a
+// dotted IPv4 address in canonical form - places nothing, even beside an
+// alias that reads. A record missing either half has no key. The cloud
+// area 0 is a cloud area.
+func ReadIPCloudKey(dimension func(name string) (json.RawMessage, bool)) (string, bool) {
+	ip, ok := readIPCloudHalf(dimension, IPCloudIPDimension, IPCloudIPAliasDimension, CanonicalIPv4)
+	if !ok {
+		return "", false
+	}
+	cloud, ok := readIPCloudHalf(dimension, IPCloudCloudDimension, IPCloudCloudAliasDimension, CanonicalCloudArea)
+	if !ok {
+		return "", false
+	}
+	return IPCloudKey(ip, cloud), true
+}
+
+func readIPCloudHalf(dimension func(name string) (json.RawMessage, bool), name, alias string,
+	parse func(json.RawMessage) (string, bool),
+) (string, bool) {
+	raw, present := dimension(name)
+	aliasRaw, aliasPresent := dimension(alias)
+	switch {
+	case present && aliasPresent:
+		value, ok := parse(raw)
+		aliasValue, aliasOK := parse(aliasRaw)
+		if !ok || !aliasOK || value != aliasValue {
+			return "", false
+		}
+		return value, true
+	case present:
+		return parse(raw)
+	case aliasPresent:
+		return parse(aliasRaw)
+	}
+	return "", false
+}
+
+// CanonicalIPv4 reads a JSON string holding a dotted IPv4 address in its
+// canonical form, and false for anything else: another type, an IPv6
+// address, leading zeros, surrounding space.
+func CanonicalIPv4(raw json.RawMessage) (string, bool) {
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return "", false
+	}
+	// ParseAddr takes an IPv4 address only in its canonical dotted form: no
+	// leading zeros, four octets, nothing around them.
+	address, err := netip.ParseAddr(text)
+	if err != nil || !address.Is4() {
+		return "", false
+	}
+	return text, true
+}
+
+// CanonicalCloudArea reads a cloud area: a non-negative integer, as a JSON
+// integer or a JSON string of decimal digits, in canonical decimal. Null, a
+// boolean, a fraction, a negative number and text that is not a decimal do
+// not read.
+func CanonicalCloudArea(raw json.RawMessage) (string, bool) {
+	text := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(text, `"`) {
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return "", false
+		}
+	}
+	if !canonicalDecimalPattern.MatchString(text) {
+		return "", false
+	}
+	return text, true
 }

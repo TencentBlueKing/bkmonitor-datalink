@@ -11,8 +11,8 @@ import (
 )
 
 func newQueryFailureTestObserver(output *bytes.Buffer) *LoggingObserver {
-	l, _ := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
-	p, _ := NewBoundedLogPolicy(l)
+	l, _ := NewScopedLogLimiter(ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 10, MaxScopes: 1024})
+	p, _ := NewScopedBoundedLogPolicy(l)
 	return NewLoggingObserver(New("alarmd", output), p)
 }
 
@@ -72,6 +72,9 @@ func TestQueryFailureCodesFollowBoundedGrammarInsteadOfWhitelist(t *testing.T) {
 		{"provider detail kept", QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: "QUERY_UNAVAILABLE", Detail: "transport=connection_refused"}, QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: "QUERY_UNAVAILABLE", Detail: "transport=connection_refused"}},
 		{"http detail kept", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}},
 		{"free text detail dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "body: {\"error\":\"table x\"}"}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
+		{"http status kept", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 400}},
+		{"status outside HTTP dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 700}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
+		{"status below HTTP dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 99}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
 		{"long detail dropped", QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: strings.Repeat("a", 97)}, QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -85,14 +88,14 @@ func TestQueryFailureCodesFollowBoundedGrammarInsteadOfWhitelist(t *testing.T) {
 			}
 		})
 	}
-	if got := normalizeQueryFailure(ComponentDetect, StageDetectCompleted, &QueryFailureFacts{Stage: "execute"}); got != nil {
+	if got := normalizeQueryFailure(ComponentRuntime, StageStartup, &QueryFailureFacts{Stage: "execute"}); got != nil {
 		t.Fatalf("facts outside the Access query boundary were kept: %+v", got)
 	}
 }
 
 func TestQueryFailureFactsSurviveWithoutErrorForDegradedProviderResults(t *testing.T) {
 	var output bytes.Buffer
-	facts := QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}
+	facts := QueryFailureFacts{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=503", HTTPStatus: 503}
 	newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{
 		Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
 		ReasonCode: "QUERY_UNAVAILABLE", QueryFailure: &facts,
@@ -105,6 +108,7 @@ func TestQueryFailureFactsSurviveWithoutErrorForDegradedProviderResults(t *testi
 	for field, want := range map[string]any{
 		"failure_stage": "provider", "failure_category": "source_backend", "failure_code": "QUERY_UNAVAILABLE",
 		"failure_detail": "http_status=503", "reason_code": "QUERY_UNAVAILABLE", "query_group_key": "query-group-1",
+		"failure_http_status": float64(503),
 	} {
 		if event[field] != want {
 			t.Fatalf("event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)
@@ -112,6 +116,53 @@ func TestQueryFailureFactsSurviveWithoutErrorForDegradedProviderResults(t *testi
 	}
 	if _, exists := event["error"]; exists {
 		t.Fatalf("degraded provider line invented an error: %#v", event)
+	}
+}
+
+// A timed-out query's line carries the numbers its row reads the timeout
+// by: the settling wait, how late after it the query began, what it was
+// given, what it used and how much of that was alarmd's own - a query begun
+// past its deadline too, whose budget is below zero. A line without a timing carries none of them rather
+// than zeros.
+func TestATimedOutQueryLogsItsBudgetBesideItsDetail(t *testing.T) {
+	var output bytes.Buffer
+	facts := QueryFailureFacts{Stage: "provider", Category: "provider_transport", Code: "QUERY_TIMEOUT", Detail: "transport=timeout",
+		Timing: &QueryTiming{SettleMillis: 30_000, StartLateMillis: 11_000, BudgetMillis: 9_000, ElapsedMillis: 9_004, LocalMillis: 7_500}}
+	observer := newQueryFailureTestObserver(&output)
+	observer.Observe(context.Background(), Observation{Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_TIMEOUT", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-1"}})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	for field, want := range map[string]any{"failure_settle_ms": 30_000.0, "failure_start_late_ms": 11_000.0, "failure_budget_ms": 9_000.0,
+		"failure_elapsed_ms": 9_004.0, "failure_local_ms": 7_500.0} {
+		if event[field] != want {
+			t.Fatalf("event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)
+		}
+	}
+	output.Reset()
+	facts.Timing = &QueryTiming{SettleMillis: 30_000, StartLateMillis: 32_000, BudgetMillis: -2_000, ElapsedMillis: 0}
+	observer.Observe(context.Background(), Observation{Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_TIMEOUT", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-late"}})
+	event = nil
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode: %v; log=%s", err, output.String())
+	}
+	for field, want := range map[string]any{"failure_settle_ms": 30_000.0, "failure_start_late_ms": 32_000.0, "failure_budget_ms": -2_000.0, "failure_elapsed_ms": 0.0} {
+		if event[field] != want {
+			t.Fatalf("begun past its deadline: event[%q]=%#v, want %#v; event=%#v", field, event[field], want, event)
+		}
+	}
+	output.Reset()
+	facts.Timing = nil
+	observer.Observe(context.Background(), Observation{Component: ComponentAccess, Stage: StageQueryCompleted, Result: ResultDegraded,
+		ReasonCode: "QUERY_TIMEOUT", QueryFailure: &facts, Trace: TraceFields{QueryGroupKey: "query-group-2"}})
+	if !strings.Contains(output.String(), "query-group-2") {
+		t.Fatalf("setup: the untimed failure's line was not written: %q", output.String())
+	}
+	if strings.Contains(output.String(), "failure_budget_ms") {
+		t.Fatalf("an untimed failure logged a budget: %s", output.String())
 	}
 }
 

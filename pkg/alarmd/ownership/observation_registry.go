@@ -8,6 +8,7 @@ package ownership
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strconv"
 	"time"
 
@@ -17,6 +18,9 @@ import (
 // ObservationRegistryLimits bounds one diagnostic read, independently of the
 // control-plane reader. Commands counts submitted commands, so the diagnostic
 // client must disable automatic retries and bound its transport timeouts.
+// Zero Bytes, Commands or Rows leave that dimension to the registry itself:
+// every registration after the offset, as far as Timeout reaches; the cursor
+// carries a read the timeout cut to the next one.
 type ObservationRegistryLimits struct {
 	Bytes    int64
 	Commands int
@@ -61,9 +65,18 @@ func (store *RedisStore) ReadObservationRegistry(
 		result.Reason = "invalid_request"
 		return result
 	}
-	if limits.Bytes <= 0 || limits.Commands <= 0 || limits.Rows <= 0 || limits.Timeout <= 0 {
+	if limits.Bytes < 0 || limits.Commands < 0 || limits.Rows < 0 || limits.Timeout <= 0 {
 		result.Reason = "disabled"
 		return result
+	}
+	if limits.Bytes == 0 {
+		limits.Bytes = math.MaxInt64
+	}
+	if limits.Commands == 0 {
+		limits.Commands = math.MaxInt
+	}
+	if limits.Rows == 0 {
+		limits.Rows = math.MaxInt
 	}
 	ctx, cancel := context.WithTimeout(ctx, limits.Timeout)
 	defer cancel()

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -16,26 +17,69 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
 )
 
+// Limits is what the evaluator is bounded by beyond what each request says
+// of itself. How many records one series may carry is not here; see
+// commonPrimaryRecords.
 type Limits struct {
-	MaxPlans, MaxRecords, MaxLevels uint64
-	Trigger                         trigger.EvaluationLimitsV2
+	MaxLevels uint64
+	Trigger   trigger.EvaluationLimitsV2
 }
 
 type Evaluator struct {
 	detect  *detect.Evaluator
 	limits  Limits
 	samples *observability.SeriesSampler
+	// lookups and observeAttribution serve global business Plans: the host
+	// cache and the cluster mapping an event is attributed through, and the
+	// counter of where each attribution came from. Any may be nil; a nil
+	// cache answers for nothing it would have held.
+	lookups            admission.BusinessLookups
+	observeAttribution func(source string)
+	// rebuildGuardWindow makes the first record build its own window instead
+	// of taking the guard's. It exists for the tests that hold the two to the
+	// same result, and only they set it: no constructor, option or
+	// configuration may, because production setting it would put the second
+	// window build back and gain nothing.
+	rebuildGuardWindow bool
+}
+
+// WithBusinessAttribution gives the evaluator what a global business Plan's
+// events are attributed through: the host cache and the cluster mapping,
+// read when the event is built, and a callback counting each attribution by
+// its source.
+func (e *Evaluator) WithBusinessAttribution(lookups admission.BusinessLookups, observe func(source string)) *Evaluator {
+	if e != nil {
+		e.lookups, e.observeAttribution = lookups, observe
+	}
+	return e
+}
+
+// attributeBusiness files a global business Plan's event under the business
+// it is about. It runs where the event is built, once per event, so a
+// threshold event and a no-data event take the same reading of the same
+// configuration.
+func (e *Evaluator) attributeBusiness(event *contract.TriggerEventV1, plan *strategy.CompiledPlan) {
+	if event == nil || !plan.GlobalBusiness() {
+		return
+	}
+	attribution := admission.AttributeBusiness(
+		plan.TargetPlan(), plan.Projection().DimensionFields, event.BusinessID, event.RecordRef.Dimensions, e.lookups.For(event.TenantID),
+	)
+	event.AttributedBusinessID = attribution.BusinessID
+	if e.observeAttribution != nil {
+		e.observeAttribution(attribution.Source)
+	}
 }
 
 func New(detector *detect.Evaluator, limits Limits) (*Evaluator, error) {
-	if detector == nil || limits.MaxPlans == 0 || limits.MaxRecords == 0 || limits.MaxLevels == 0 {
+	if detector == nil || limits.MaxLevels == 0 {
 		return nil, errors.New("alarmd evaluation: evaluator and positive limits are required")
 	}
 	return &Evaluator{detect: detector, limits: limits}, nil
 }
 
 func (e *Evaluator) Evaluate(ctx context.Context, request execution.EvaluationRequest) (execution.EvaluationResult, error) {
-	if e == nil || len(request.Inputs) == 0 || e.limits.MaxPlans < 1 {
+	if e == nil || len(request.Inputs) == 0 {
 		return execution.EvaluationResult{}, errors.New("alarmd evaluation: invalid or over-budget request")
 	}
 	plan, err := e.evaluateSeries(ctx, request.Header, request.Inputs, request.State, request.Gaps, request.OpenAlerts)
@@ -73,11 +117,11 @@ func (e *Evaluator) Evaluate(ctx context.Context, request execution.EvaluationRe
 // Slot that evaluated series. The gate is what a series-bearing Slot has to
 // show for itself: a state mutation, meaning at least one series carried its
 // round forward. A Slot with no series at all never reaches here at all -- the
-// worker's Slot wrap-up decides that one, under the Plan-scope reach.
+// worker's Slot wrap-up decides that one, on the Plan's inputs being whole.
 //
 // The arithmetic is not repeated here. Both callers ask
-// execution.PlanGapRecoveryMutation, and differ only in the reach they pass,
-// so "how far does one healthy Slot move a warmup count" has one definition.
+// execution.PlanGapRecoveryMutation, so "how far does one healthy Slot move a
+// warmup count" has one definition.
 func planGapRecoveryMutation(
 	request execution.EvaluationRequest,
 	due execution.DuePlan,
@@ -86,7 +130,7 @@ func planGapRecoveryMutation(
 	if !hasStateMutation {
 		return nil, nil
 	}
-	return execution.PlanGapRecoveryMutation(request.Header.Contract, due, request.Gaps, execution.GapRecoverEveryScope)
+	return execution.PlanGapRecoveryMutation(request.Header.Contract, due, request.Gaps)
 }
 
 type recordResult struct {
@@ -119,6 +163,8 @@ func countOpenAlertGate(counts *execution.OpenAlertGateCounts, gate trigger.Reco
 	switch gate.OpenAlertGate {
 	case trigger.OpenAlertGatePassed:
 		counts.Passed++
+	case trigger.OpenAlertGatePassedOneTimeClose:
+		counts.PassedOneTimeClose++
 	case trigger.OpenAlertGateHeldNoOpenAlert:
 		counts.HeldNoOpenAlert++
 	case trigger.OpenAlertGateHeldFingerprintUnknown:
@@ -132,7 +178,11 @@ func countOpenAlertGate(counts *execution.OpenAlertGateCounts, gate trigger.Reco
 
 type recordDetector func() ([]detect.LevelFact, []detect.ProjectedValue, error)
 
-func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, guardConvergence map[uint32]bool, sample *observability.SeriesSampleReservation, run recordDetector) (recordResult, error) {
+// guardWindow, when not nil, is the window guardConvergenceAllowed built from
+// this same view: the Plan's Level requirements with view.History applied.
+// The record takes it instead of building the same window a second time, and
+// applies its own point to it, so it must be this view's and used once.
+func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView, guardConvergence map[uint32]bool, guardWindow *state.Window, sample *observability.SeriesSampleReservation, run recordDetector) (recordResult, error) {
 	series := execution.SeriesIdentityDigest(record.DimensionIdentityDigest())
 	identity := execution.StateKeyIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration, SeriesIdentityDigest: series}
 	if view.Identity != identity {
@@ -142,17 +192,19 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		return e.constrainedRecord(request, due, record, view)
 	}
 	levels := due.CompiledPlan.Levels()
-	reqs, err := planLevelRequirements(due.CompiledPlan)
-	if err != nil {
-		return recordResult{}, err
-	}
-	window, err := state.NewWindow(reqs)
-	if err != nil {
-		return recordResult{}, err
-	}
-	if len(view.History) > 0 {
-		if _, err = window.Apply(toStatePoints(view.History)); err != nil {
+	window := guardWindow
+	if window == nil {
+		reqs, err := planLevelRequirements(due.CompiledPlan)
+		if err != nil {
 			return recordResult{}, err
+		}
+		if window, err = state.NewWindow(reqs); err != nil {
+			return recordResult{}, err
+		}
+		if len(view.History) > 0 {
+			if _, err = window.Apply(toStatePoints(view.History)); err != nil {
+				return recordResult{}, err
+			}
 		}
 	}
 	facts, projected, err := run()
@@ -167,8 +219,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	if _, err = window.Apply([]state.StatePoint{point}); err != nil {
 		return recordResult{}, err
 	}
-	histories := make([]trigger.LevelHistory, len(levels))
-	historyCompleteness := make(map[uint32]execution.HistoryCompleteness, len(levels))
+	histories := make([]trigger.LevelHistory, levels.Len())
+	historyCompleteness := make(map[uint32]execution.HistoryCompleteness, levels.Len())
 	// durableGuardReasons holds, per Level, the reason of the guard that is
 	// active in durable state before this record: the loaded Level's WARMING or
 	// GAPPED reason, superseded by a loaded Plan or Level gap marker. It is the
@@ -176,8 +228,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	// a WARMING Level whose loaded history already allows convergence: a record
 	// that does not converge it leaves that guard in place, and every UNKNOWN
 	// outcome under it must preserve its reason.
-	durableGuardReasons := make(map[uint32]execution.ReasonCode, len(levels))
-	effective := make([]trigger.LevelEffectiveTimeFact, len(levels))
+	durableGuardReasons := make(map[uint32]execution.ReasonCode, levels.Len())
+	effective := make([]trigger.LevelEffectiveTimeFact, levels.Len())
 	// Observation only. Summarize is the one place that knows both how much of
 	// the window arrived and how much was asked for, and until now it kept both
 	// and published neither -- which is why a permanently short window and a
@@ -203,7 +255,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			unusable[f.Definition.LevelID] = f.ReasonCode
 		}
 	}
-	for i, l := range levels {
+	for i, l := range levels.All() {
 		h, _ := window.History(l.Definition().LevelID)
 		completeness := ""
 		if current, found := levelState(view, l.Definition().LevelID); found {
@@ -239,6 +291,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		// time the summary is returned the forced value and the computed one are
 		// the same field.
 		coverage.Observe(summary.ValidPositions, summary.RequiredPositions, completeness != "", fresh)
+		coverage.ObserveWindowStart(summary.WindowStart)
 		if record.SourceTime() > coverage.End {
 			coverage.End = record.SourceTime()
 		}
@@ -305,7 +358,45 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	for i, v := range projected {
 		tvalues[i] = trigger.ProjectedValue{CanonicalDecimal: v.CanonicalDecimal, Available: v.Available, ReasonCode: v.ReasonCode}
 	}
-	tr, err := trigger.EvaluateV2(trigger.EvaluationRequestV2{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan, Record: trigger.DetectionRecord{RecordID: record.RecordID(), SourceTime: record.SourceTime(), ProjectedValues: tvalues, LevelFacts: tfacts}, RecordRef: contract.TriggerRecordRefV1{RecordID: record.RecordID(), SourceTime: record.SourceTime(), DimensionIdentityDigest: string(series), Dimensions: record.Dimensions()}, Observed: contract.TriggerObservedV1{Values: record.Values()}, Histories: histories, EffectiveTimeFacts: effective, EvaluationTime: int64(request.Header.Contract.Slot.EvaluationTime), ExecutionID: request.Header.ExecutionID, Limits: e.limits.Trigger, OpenAlerts: request.OpenAlerts})
+	// The request's named inputs, which the held recovery, the effective
+	// time's check and the freeze below all judge a Level by: concatenated
+	// at most once for the record, and not at all for a record none of them
+	// asks about - every Level in its hours and decided, the common round.
+	var bindings []execution.NamedInputBinding
+	bindingsRead := false
+	inputs := func() []execution.NamedInputBinding {
+		if !bindingsRead {
+			bindings, bindingsRead = evaluationBindings(request), true
+		}
+		return bindings
+	}
+	// A recovery reached on a round whose own inputs were incomplete is held,
+	// and carries the reason of the guard this round proposes.
+	//
+	// decision-022 relaxed one gate and only one: an incomplete *history*
+	// no longer stands in the way of closing what is open, because the
+	// recovery walk now reads the positions it actually observed. The
+	// completeness of *this round's inputs* is a different question with
+	// the same shape, and the trigger cannot see it - it is handed facts,
+	// not the bindings they were detected from. The newest position the
+	// walk counts is this record's own fact, so a fact detected on a
+	// dependency that came back empty would be counted as observed
+	// evidence when it is exactly the thing that was not observed.
+	//
+	// Held inside the trigger, not folded on its result: the record's
+	// result, the recovery gate and the envelope are derived from the
+	// Levels' verdicts there, and a RECOVERY rewritten after the envelope
+	// was built left the envelope saying RECOVERY beside an UNKNOWN
+	// outcome, which the result contract refuses for the whole Slot.
+	//
+	// ABNORMAL is deliberately not held: a degraded input may still have
+	// crossed a threshold, and refusing to say so is the one direction of
+	// this rule that loses an alert.
+	holdRecovery := func(levelID uint32) (string, bool) {
+		folded, proposed := execution.RoundGuardReasonForLevel(inputs(), due.Identity, levelID)
+		return string(folded), proposed
+	}
+	tr, err := trigger.EvaluateV2(trigger.EvaluationRequestV2{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan, Record: trigger.DetectionRecord{RecordID: record.RecordID(), SourceTime: record.SourceTime(), ProjectedValues: tvalues, LevelFacts: tfacts}, RecordRef: contract.TriggerRecordRefV1{RecordID: record.RecordID(), SourceTime: record.SourceTime(), DimensionIdentityDigest: string(series), Dimensions: record.Dimensions()}, Observed: contract.TriggerObservedV1{Values: record.Values()}, Histories: histories, EffectiveTimeFacts: effective, EvaluationTime: int64(request.Header.Contract.Slot.EvaluationTime), ExecutionID: request.Header.ExecutionID, Limits: e.limits.Trigger, OpenAlerts: request.OpenAlerts, HoldRecovery: holdRecovery})
 	if err != nil {
 		return recordResult{}, err
 	}
@@ -332,29 +423,10 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	for i, o := range tr.LevelOutcomes {
 		kind := execution.LevelOutcomeKind(o.Result)
 		reason := execution.ReasonCode(observability.ReasonNone)
-		// A recovery reached on a round whose own inputs were incomplete is
-		// held, and carries the reason of the guard this round proposes.
-		//
-		// decision-022 relaxed one gate and only one: an incomplete *history*
-		// no longer stands in the way of closing what is open, because the
-		// recovery walk now reads the positions it actually observed. The
-		// completeness of *this round's inputs* is a different question with
-		// the same shape, and the trigger cannot see it - it is handed facts,
-		// not the bindings they were detected from. The newest position the
-		// walk counts is this record's own fact, so a fact detected on a
-		// dependency that came back empty would be counted as observed
-		// evidence when it is exactly the thing that was not observed.
-		//
-		// ABNORMAL is deliberately not held here: a degraded input may still
-		// have crossed a threshold, and refusing to say so is the one
-		// direction of this rule that loses an alert.
-		if kind == execution.LevelOutcomeRecovery {
-			if folded, proposed := execution.RoundGuardReasonForLevel(
-				evaluationBindings(request), due.Identity, o.LevelID,
-			); proposed {
-				kind, reason = execution.LevelOutcomeUnknown, folded
-			}
-		}
+		// guardTail: the UNKNOWN below carries a standing guard's reason
+		// because of that guard alone, this round adding nothing of its own
+		// (unknownOnlyForItsHistory).
+		guardTail := false
 		if kind == "" {
 			kind = execution.LevelOutcomeUnknown
 			reason = execution.ReasonCode(o.UnavailableReason)
@@ -362,11 +434,25 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 				reason = execution.ReasonCode(o.SuppressedReason)
 			}
 			// The result contract requires an UNKNOWN outcome under an active
-			// guard to carry that guard's reason, whether the trigger, a missing
-			// dependency point or the EffectiveTime made it UNKNOWN. Only a
-			// record that converges the guard keeps its own local reason.
-			if guarded, found := durableGuardReasons[o.LevelID]; found && guardStaysActive(o, historyCompleteness[o.LevelID]) {
-				reason = guarded
+			// guard to carry that guard's reason, whether the trigger or a
+			// missing dependency point made it UNKNOWN. Only a record that
+			// converges the guard keeps its own local reason.
+			//
+			// And a Level its effective time suppressed: it was not evaluated
+			// because it was outside its hours, and that is what its outcome
+			// says, guard or no guard, as long as its inputs were whole - the
+			// contract's own predicate, so the two read one round alike. Its
+			// history still advances and keeps its completeness, and the guard
+			// its reason, on the Level's state. Taking the guard's reason here
+			// made every out-of-hours round of a gapped history read as a gap,
+			// and a window of nothing but such rounds read as data that did
+			// not arrive.
+			suppressed := o.UnavailableReason == "" && o.SuppressedReason == contract.ReasonEffectiveTimeInactive &&
+				execution.InputAllowsStateAdvance(inputs(), execution.LevelOutcome{
+					Plan: due.Identity, LevelID: o.LevelID, SeriesIdentityDigest: series,
+					Record: execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()}, Outcome: kind})
+			if guarded, found := durableGuardReasons[o.LevelID]; found && !suppressed && guardStaysActive(o, historyCompleteness[o.LevelID]) {
+				reason, guardTail = guarded, unknownOnlyForItsHistory(o)
 				// Unless this round has incomplete inputs of its own for the
 				// Level. Then the guard that ends up covering this outcome is
 				// the one this round proposes, carrying the fold of those
@@ -378,9 +464,9 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 				// contract compares. The stored reason stays for a round that
 				// adds nothing: it is still the reason the guard is up.
 				if folded, proposed := execution.RoundGuardReasonForLevel(
-					evaluationBindings(request), due.Identity, o.LevelID,
+					inputs(), due.Identity, o.LevelID,
 				); proposed {
-					reason = folded
+					reason, guardTail = folded, false
 				}
 			}
 		}
@@ -388,7 +474,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			// The result contract expects one envelope per record with a
 			// business outcome. A record the recovery gate held has RECOVERY
 			// outcomes and no envelope, and says so on each of them.
-			EnvelopeHeld: tr.RecoveryGate.Held && kind == execution.LevelOutcomeRecovery}
+			EnvelopeHeld: tr.RecoveryGate.Held && kind == execution.LevelOutcomeRecovery,
+			GuardTail:    guardTail}
 	}
 	// A Level the trigger would advance while its outcome is UNKNOWN records
 	// a business fact into a history the guard has not yet released. The
@@ -402,8 +489,11 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		if outcome.StateDisposition != trigger.StateAdvance || outcomes[i].Outcome != execution.LevelOutcomeUnknown {
 			continue
 		}
-		if !execution.InputAllowsStateAdvance(evaluationBindings(request), outcomes[i]) {
+		if !execution.InputAllowsStateAdvance(inputs(), outcomes[i]) {
 			tr.LevelOutcomes[i].StateDisposition = trigger.StateFreeze
+			// A frozen Level does not warm its guard, so it is not the
+			// guard's tail whatever made it UNKNOWN (unknownOnlyForItsHistory).
+			outcomes[i].GuardTail = false
 		}
 	}
 	advance := false
@@ -422,7 +512,8 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 			}
 		}
 	}
-	events, withoutMessage := keptEvents(tr.TriggerEvent)
+	e.attributeBusiness(tr.TriggerEvent, due.CompiledPlan)
+	events, withoutMessage := keptEvents(tr, execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()})
 	result := recordResult{outcomes: outcomes, gate: tr.RecoveryGate, coverage: coverage}
 	if advance || len(missingInputGuards) > 0 {
 		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, durableGuardReasons, missingInputGuards)
@@ -436,22 +527,18 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 }
 
 // keptEvents is what the series keeps of the event its record decided: the
-// event, or - when the sink would take it and send nothing - its identity
-// only. The event is built either way, so what it is and whether it builds
-// are unchanged; what changes is that one the sink would drop is garbage from
-// here rather than from the sink, and it was the largest thing the Slot held
-// for such a series.
-func keptEvents(event *contract.TriggerEventV1) ([]contract.TriggerEventV1, []execution.EventWithoutMessage) {
+// event, or - when its protocol has no message for it, so the trigger did not
+// build it - its identity only: the record, the kind and the format. The
+// identity is what the result contract and the output line count it by, as
+// they did when the envelope was built and dropped here.
+func keptEvents(tr trigger.EvaluationResultV2, record execution.RecordAnchor) ([]contract.TriggerEventV1, []execution.EventWithoutMessage) {
 	switch {
-	case event == nil:
+	case tr.WithoutMessageFormat != "":
+		return nil, []execution.EventWithoutMessage{{Record: record, EventKind: tr.RecordResult, Format: tr.WithoutMessageFormat}}
+	case tr.TriggerEvent == nil:
 		return nil, nil
-	case contract.DroppedAtSink(event):
-		return nil, []execution.EventWithoutMessage{{
-			Record:    execution.RecordAnchor{RecordID: event.RecordRef.RecordID, SourceTime: event.RecordRef.SourceTime},
-			EventKind: event.EventKind, Format: contract.OutputWireFormatOf(event),
-		}}
 	default:
-		return []contract.TriggerEventV1{*event}, nil
+		return []contract.TriggerEventV1{*tr.TriggerEvent}, nil
 	}
 }
 
@@ -500,7 +587,7 @@ func (e *Evaluator) evaluateSeries(
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
-	if uint64(len(due.CompiledPlan.Levels())) > e.limits.MaxLevels {
+	if uint64(due.CompiledPlan.Levels().Len()) > e.limits.MaxLevels {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named input Plan is over budget")
 	}
 	byLevel := make(map[uint32]execution.SeriesEvaluationInputRequest, len(inputs))
@@ -515,11 +602,11 @@ func (e *Evaluator) evaluateSeries(
 		byLevel[input.Consumer.LevelID] = input
 	}
 	levels := due.CompiledPlan.Levels()
-	if len(byLevel) != len(levels) {
+	if len(byLevel) != levels.Len() {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs do not exactly cover compiled Levels")
 	}
-	ordered := make([]execution.SeriesEvaluationInputRequest, len(levels))
-	for index, level := range levels {
+	ordered := make([]execution.SeriesEvaluationInputRequest, levels.Len())
+	for index, level := range levels.All() {
 		if inputs[index].Consumer.LevelID != level.Definition().LevelID {
 			return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs are not in compiled Level order")
 		}
@@ -529,7 +616,7 @@ func (e *Evaluator) evaluateSeries(
 		}
 		ordered[index] = input
 	}
-	primaryRecords, err := commonPrimaryRecords(ordered, e.limits.MaxRecords)
+	primaryRecords, err := commonPrimaryRecords(ordered)
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
@@ -545,7 +632,7 @@ func (e *Evaluator) evaluateSeries(
 	if !ok {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: runtime state missing")
 	}
-	converged, err := guardConvergenceAllowed(view, due.CompiledPlan)
+	converged, guardWindow, err := guardConvergenceAllowed(view, due.CompiledPlan)
 	if err != nil {
 		return execution.PlanEvaluationResult{}, err
 	}
@@ -589,7 +676,14 @@ func (e *Evaluator) evaluateSeries(
 		if recordIndex == 0 && e.samples != nil {
 			sample = e.reserveSeriesSample(ctx, header, due, ordered, record, view)
 		}
-		one, runErr := e.evaluateRecordWith(ctx, legacy, due, record, view, converged, sample, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
+		// The first record reads the loaded view, so it takes the window the
+		// guard already built from it; a later record reads the provisional
+		// view the records before it left, and builds its own.
+		var reuse *state.Window
+		if recordIndex == 0 && !e.rebuildGuardWindow {
+			reuse, guardWindow = guardWindow, nil
+		}
+		one, runErr := e.evaluateRecordWith(ctx, legacy, due, record, view, converged, reuse, sample, func() ([]detect.LevelFact, []detect.ProjectedValue, error) {
 			facts, projected, _, detectErr := e.detect.EvaluatePreparedSeriesRecord(ctx, prepared, ordered, record)
 			return facts, projected, detectErr
 		})
@@ -722,8 +816,8 @@ func constrainedOutcomes(
 	due execution.DuePlan, record execution.RecordView, series execution.SeriesIdentityDigest,
 	kind execution.LevelOutcomeKind, reason execution.ReasonCode,
 ) []execution.LevelOutcome {
-	outcomes := make([]execution.LevelOutcome, 0, len(due.CompiledPlan.Levels()))
-	for _, level := range due.CompiledPlan.Levels() {
+	outcomes := make([]execution.LevelOutcome, 0, due.CompiledPlan.Levels().Len())
+	for _, level := range due.CompiledPlan.Levels().All() {
 		outcomes = append(outcomes, execution.LevelOutcome{
 			Plan: due.Identity, LevelID: level.Definition().LevelID, SeriesIdentityDigest: series,
 			Record:  execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()},
@@ -733,7 +827,15 @@ func constrainedOutcomes(
 	return outcomes
 }
 
-func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest, maxRecords uint64) ([]execution.RecordView, error) {
+// commonPrimaryRecords is the one record set every Level's PRIMARY view
+// shares. It counts no records against a budget of its own. A fixed 500 per
+// series did once, which refused every evaluation of a Plan whose window holds
+// more points -- an hourly window at a ten-second step, a day at a minute --
+// while the compiler had admitted it. The records are in memory before they
+// get here, already bounded where they are decoded (the provider's record
+// cap, from its body bytes) and held (the coordinator's retained bytes); a
+// count per series bounded nothing those do not.
+func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest) ([]execution.RecordView, error) {
 	var canonical []execution.RecordView
 	for _, input := range inputs {
 		var primary *execution.DatasetView
@@ -751,9 +853,6 @@ func commonPrimaryRecords(inputs []execution.SeriesEvaluationInputRequest, maxRe
 		}
 		if primary == nil {
 			return nil, errors.New("alarmd evaluation: PRIMARY named input is missing")
-		}
-		if uint64(primary.Len()) > maxRecords {
-			return nil, errors.New("alarmd evaluation: named-input record budget exceeded")
 		}
 		records := make([]execution.RecordView, primary.Len())
 		for index := range records {
@@ -808,11 +907,11 @@ func planLevelRequirements(plan *strategy.CompiledPlan) ([]state.LevelRequiremen
 		return nil, err
 	}
 	levels := plan.Levels()
-	if len(retention) != len(levels) {
+	if len(retention) != levels.Len() {
 		return nil, errors.New("alarmd evaluation: Plan retention is not aligned with its Levels")
 	}
-	requirements := make([]state.LevelRequirement, len(levels))
-	for index, level := range levels {
+	requirements := make([]state.LevelRequirement, levels.Len())
+	for index, level := range levels.All() {
 		if retention[index].LevelID != level.Definition().LevelID {
 			return nil, errors.New("alarmd evaluation: Plan retention is not aligned with its Levels")
 		}
@@ -827,23 +926,31 @@ func planLevelRequirements(plan *strategy.CompiledPlan) ([]state.LevelRequiremen
 // already forms the required full window at the last processed record, so a
 // WARMING or GAPPED Level guard may converge on the next FULL record. A Level
 // whose live window still lacks points stays guarded.
-func guardConvergenceAllowed(view execution.RuntimeStateView, plan *strategy.CompiledPlan) (map[uint32]bool, error) {
+//
+// It returns the window it built as well: the Plan's Level requirements with
+// the loaded history applied, which is exactly the window the first record
+// of this series starts from. Only read here, never written, so the first
+// record takes it rather than building it again -- the second build was a
+// whole copy of the history, per series per round. The window is built here
+// whatever the Levels' states, so every error the loaded history can raise
+// is raised where it was, on every path, the constrained ones included.
+func guardConvergenceAllowed(view execution.RuntimeStateView, plan *strategy.CompiledPlan) (map[uint32]bool, *state.Window, error) {
 	levels := plan.Levels()
-	allowed := make(map[uint32]bool, len(levels))
+	allowed := make(map[uint32]bool, levels.Len())
 	requirements, err := planLevelRequirements(plan)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	window, err := state.NewWindow(requirements)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(view.History) > 0 {
 		if _, err = window.Apply(toStatePoints(view.History)); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	for _, level := range levels {
+	for _, level := range levels.All() {
 		current, found := levelState(view, level.Definition().LevelID)
 		if !found || current.LastProcessedEventTime <= 0 ||
 			(current.HistoryCompleteness != execution.HistoryWarming && current.HistoryCompleteness != execution.HistoryGapped) {
@@ -856,7 +963,7 @@ func guardConvergenceAllowed(view execution.RuntimeStateView, plan *strategy.Com
 		summary := history.Summarize(current.LastProcessedEventTime, level.RequiredDetectHistoryPoints())
 		allowed[level.Definition().LevelID] = summary.Completeness == state.HistoryFull
 	}
-	return allowed, nil
+	return allowed, window, nil
 }
 
 func (e *Evaluator) constrainedRecord(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView, view execution.RuntimeStateView) (recordResult, error) {
@@ -869,7 +976,7 @@ func (e *Evaluator) constrainedRecord(request execution.EvaluationRequest, due e
 	// outcomes without an evaluation behind them, and the coverage a reader
 	// sees is otherwise silent about it.
 	out := recordResult{coverage: execution.HistoryCoverage{Constrained: 1}}
-	for _, l := range due.CompiledPlan.Levels() {
+	for _, l := range due.CompiledPlan.Levels().All() {
 		out.outcomes = append(out.outcomes, execution.LevelOutcome{Plan: due.Identity, LevelID: l.Definition().LevelID, SeriesIdentityDigest: view.Identity.SeriesIdentityDigest, Record: execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()}, Outcome: kind, ReasonCode: view.ReasonCode})
 	}
 	return out, nil
@@ -968,6 +1075,23 @@ func stateFact(v string) state.LevelFactResult {
 	default:
 		return state.LevelFactUnavailable
 	}
+}
+
+// unknownOnlyForItsHistory says whether the trigger left a Level UNKNOWN only
+// because its window's history is short - WARMING or GAPPED - and not because
+// this record could not be judged. Only then is an UNKNOWN under a standing
+// guard the guard's tail: the record advances State, the guard's warmup
+// counts it, and the Level is decided once enough such rounds pass.
+//
+// The trigger's other UNKNOWNs are this record's own: a detection fact it
+// could not use (a dependency point missing for this series although the
+// query answered) or an EffectiveTime it could not resolve. Neither advances
+// State, so a guard over them never warms, and calling them warming would say
+// "nothing to do" for as long as the point stays missing. The trigger sets
+// HistoryCompleteness on an UNKNOWN only on the history path; the others
+// return before it.
+func unknownOnlyForItsHistory(outcome trigger.LevelOutcomeV2) bool {
+	return outcome.HistoryCompleteness != ""
 }
 
 // guardStaysActive reports whether the durable Level guard survives this
@@ -1095,7 +1219,7 @@ func planRetentionPoints(due execution.DuePlan) uint32 {
 	if due.CompiledPlan == nil {
 		return 0
 	}
-	for _, l := range due.CompiledPlan.Levels() {
+	for _, l := range due.CompiledPlan.Levels().All() {
 		if l.StateRequirement().RetentionPoints > retain {
 			retain = l.StateRequirement().RetentionPoints
 		}

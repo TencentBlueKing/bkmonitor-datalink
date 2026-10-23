@@ -10,8 +10,12 @@
 package featureFlag
 
 import (
+	"bytes"
 	"context"
+	stdjson "encoding/json"
+	"fmt"
 	"sync"
+	"time"
 
 	ffclient "github.com/thomaspoignant/go-feature-flag"
 	"github.com/thomaspoignant/go-feature-flag/exporter"
@@ -23,9 +27,17 @@ import (
 )
 
 var (
-	featureFlag *FeatureFlag
-	once        sync.Once
+	featureFlag      *FeatureFlag
+	once             sync.Once
+	clientAccessLock sync.RWMutex
 )
+
+// WithClientLock 串行替换 go-feature-flag 全局客户端；Variation 调用会在替换完成后继续。
+func WithClientLock(fn func() error) error {
+	clientAccessLock.Lock()
+	defer clientAccessLock.Unlock()
+	return fn()
+}
 
 // FeatureFlag
 type FeatureFlag struct {
@@ -33,15 +45,69 @@ type FeatureFlag struct {
 	flags []byte
 }
 
+type snapshotRetriever struct {
+	flags []byte
+}
+
+func (r snapshotRetriever) Retrieve(context.Context) ([]byte, error) {
+	return r.flags, nil
+}
+
+// ValidateFeatureFlagSnapshot 校验完整的 JSON 快照，供配置读取、迁移和设置入口复用。
+func ValidateFeatureFlagSnapshot(data []byte) error {
+	if !stdjson.Valid(data) {
+		return fmt.Errorf("invalid feature flag JSON")
+	}
+
+	var flags map[string]stdjson.RawMessage
+	if err := stdjson.Unmarshal(data, &flags); err != nil || flags == nil {
+		return fmt.Errorf("feature flag snapshot must be a JSON object")
+	}
+	client, err := ffclient.New(ffclient.Config{
+		Context:         context.Background(),
+		PollingInterval: time.Hour,
+		Retriever:       snapshotRetriever{flags: data},
+		FileFormat:      "json",
+	})
+	if err != nil {
+		return fmt.Errorf("invalid feature flag snapshot: %w", err)
+	}
+	defer client.Close()
+	cachedFlags, err := client.GetFlagsFromCache()
+	if err != nil {
+		return fmt.Errorf("invalid feature flag snapshot: %w", err)
+	}
+	// SDK 同时支持新旧格式，但会静默跳过无效开关；所有输入都必须成功载入。
+	for name := range flags {
+		if _, ok := cachedFlags[name]; !ok {
+			return fmt.Errorf("invalid feature flag %q: SDK rejected configuration", name)
+		}
+	}
+	return nil
+}
+
 // ReloadFeatureFlags
 func ReloadFeatureFlags(data []byte) error {
+	_, err := ReloadFeatureFlagsIfChanged(data)
+	return err
+}
+
+// ReloadFeatureFlagsIfChanged 更新 Retriever 的配置快照，并返回内容是否变化。
+// 调用方可据此同步刷新 go-feature-flag 的内部缓存，避免仅等待轮询周期。
+func ReloadFeatureFlagsIfChanged(data []byte) (bool, error) {
 	if data == nil {
-		return nil
+		return false, nil
+	}
+	if err := ValidateFeatureFlagSnapshot(data); err != nil {
+		return false, err
 	}
 	featureFlag.lock.Lock()
 	defer featureFlag.lock.Unlock()
-	featureFlag.flags = data
-	return nil
+	if bytes.Equal(featureFlag.flags, data) {
+		return false, nil
+	}
+	featureFlag.flags = append([]byte(nil), data...)
+	return true, nil
 }
 
 // Print
@@ -51,6 +117,8 @@ func Print() string {
 
 // StringVariation
 func StringVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue string) string {
+	clientAccessLock.RLock()
+	defer clientAccessLock.RUnlock()
 	res, err := ffclient.StringVariation(flagKey, user, defaultValue)
 	if err != nil {
 		_ = metadata.NewMessage(
@@ -65,6 +133,8 @@ func StringVariation(ctx context.Context, user ffuser.User, flagKey string, defa
 
 // IntVariation
 func IntVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue int) int {
+	clientAccessLock.RLock()
+	defer clientAccessLock.RUnlock()
 	res, err := ffclient.IntVariation(flagKey, user, defaultValue)
 	if err != nil {
 		return defaultValue
@@ -74,6 +144,8 @@ func IntVariation(ctx context.Context, user ffuser.User, flagKey string, default
 
 // BoolVariation
 func BoolVariation(ctx context.Context, user ffuser.User, flagKey string, defaultValue bool) bool {
+	clientAccessLock.RLock()
+	defer clientAccessLock.RUnlock()
 	res, err := ffclient.BoolVariation(flagKey, user, defaultValue)
 	if err != nil {
 		return defaultValue

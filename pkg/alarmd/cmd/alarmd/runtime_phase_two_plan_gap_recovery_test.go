@@ -147,7 +147,6 @@ func TestProductionPhaseTwoPlanGapMarkerRecoversUnderEveryReasonAndScheduleRevis
 			cutoverStallTriggerWindow = variant.triggerWindow
 			t.Cleanup(func() { cutoverStallTriggerWindow = previousWindow })
 			fixture := newCutoverStalledFixture(t, func(cfg *config.Config) {
-				cfg.PhaseTwo.Scheduler.ExpiredRangeEnabled = true
 			})
 			ctx := context.Background()
 			requiredFullSlots := fixture.requiredFullSlots(ctx)
@@ -186,7 +185,6 @@ func TestProductionPhaseTwoPlanGapMarkerRecoversUnderEveryReasonAndScheduleRevis
 // the Query Group keeps its guard instead of reaching FULL.
 func TestProductionPhaseTwoPlanGapMarkerSurvivesPartialData(t *testing.T) {
 	fixture := newCutoverStalledFixture(t, func(cfg *config.Config) {
-		cfg.PhaseTwo.Scheduler.ExpiredRangeEnabled = true
 	})
 	ctx := context.Background()
 	requiredFullSlots := fixture.requiredFullSlots(ctx)

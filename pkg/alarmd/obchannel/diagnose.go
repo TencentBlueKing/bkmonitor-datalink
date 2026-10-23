@@ -37,7 +37,7 @@ const DiagnoseDefaultRows = 2000
 var healthKeys = []string{"health", "expected", "covered", "determined", "unknown", "replicas_not_ready",
 	"activation", "activation_replica", "view_stream", "assignment_scope", "rebalance", "degradations",
 	"dependencies", "dependencies_replicas", "source_standing", "gaps", "linkd_console", "workers", "builds",
-	"leader_round", "leader_round_replica"}
+	"leader_round", "leader_round_replica", "overdue", "platform_setting_fields"}
 
 // DeploymentFinding is one named fact about the deployment the diagnosis
 // found, from a closed list.

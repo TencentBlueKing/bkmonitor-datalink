@@ -292,7 +292,13 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 			// ObjectRetention is how long the content is kept, not what it is:
 			// digested, a strategy's cadence change elsewhere would move every
 			// object's digest. It is stored beside the manifest instead.
-			neither: []string{"ObservationID", "SnapshotRevision", "Dispositions", "RetainedStaleRevisions", "Retention", "ObjectRetention"},
+			// GlobalStrategies is a count's input like RetainedStaleRevisions:
+			// the leader's composition reads it and nothing persists it, and
+			// what it says per strategy is in the dispositions already.
+			// LastGoodIdentityChanged is a build count like
+			// RetainedStaleRevisions, for the same reason.
+			neither: []string{"ObservationID", "SnapshotRevision", "Dispositions", "RetainedStaleRevisions", "LastGoodIdentityChanged",
+				"Retention", "ObjectRetention", "GlobalStrategies"},
 		},
 		reflect.TypeOf(controlplane.QueryGroup{}): {
 			execution: []string{"Identity", "QueryPlan", "MembershipDigest", "ScheduleRevision"},
@@ -331,7 +337,11 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 			// signal_type sits with wire_format: both describe the event this
 			// Plan publishes rather than what the Slot executes, and both are
 			// decided once when the Plan is built.
-			context: []string{"source_compatibility", "subject_facts", "legacy_output", "wire_format", "signal_type"},
+			// global_business joins them: it decides which business an
+			// event is filed under, read when the event is built. What it
+			// does to the query is QueryPlanFacts' GlobalBusiness, execution
+			// content in the Query Group's facts.
+			context: []string{"source_compatibility", "subject_facts", "legacy_output", "wire_format", "signal_type", "global_business"},
 			split:   []string{"strategy_ref", "strategy_ir"},
 		},
 		reflect.TypeOf(contract.StrategyIRV2{}): {

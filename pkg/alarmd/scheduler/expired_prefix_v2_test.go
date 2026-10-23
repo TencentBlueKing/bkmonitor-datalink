@@ -18,7 +18,7 @@ func TestRecoveryAgeClassificationMatchesQueryFreeBoundary(t *testing.T) {
 		want   ReplayDisposition
 	}{{1794999, ReplayEligible}, {1795000, ReplayExpired}, {1795001, ReplayExpired}} {
 		// Real 600-second schedule deadline: 600 + 600 - 5 seconds.
-		_, facts, err := source.classifyRecovery(context.Background(), 600, 1195000, time.UnixMilli(tc.millis))
+		_, facts, err := source.classifyRecovery(context.Background(), 600, 1195000, 0, time.UnixMilli(tc.millis), execution.OwnerFence{})
 		if err != nil || facts.Disposition != tc.want {
 			t.Fatalf("at %d: %+v err=%v want=%s", tc.millis, facts, err, tc.want)
 		}
@@ -29,7 +29,6 @@ func TestDistanceExpiredPrefixRetainsReplayTail(t *testing.T) {
 	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 	source := newProductionSlotSourceWithRecoveryForTest(t, catalog, foundProgress(120, 60), time.Unix(700, 0), testRecoveryLimits())
-	source.expiredRangeEnabled = true
 	ctx := context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
 	slot, due, _, err := source.Next(ctx, "query-group-1")
 	if err != nil || !due {
@@ -61,7 +60,6 @@ func TestDistanceExpiredPrefixKeepsBoundaryAndOriginalPending(t *testing.T) {
 			catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 			load := foundProgress(tc.next, 60)
 			source := newProductionSlotSourceWithRecoveryForTest(t, catalog, load, time.Unix(700, 0), testRecoveryLimits())
-			source.expiredRangeEnabled = true
 			ctx := context.WithValue(context.Background(), rangeFlightContextKey{}, execution.QueryGroupIdentity("query-group-1"))
 			slot, due, _, err := source.Next(ctx, "query-group-1")
 			if err != nil || !due || (slot.ExpiredRange != nil) != tc.wantRange || slot.Recovery.Disposition != tc.wantDisposition {

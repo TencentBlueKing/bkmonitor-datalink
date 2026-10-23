@@ -25,12 +25,6 @@ func rangeFitsProgress(current execution.ScheduleProgress, proof *execution.Expi
 	return err == nil && len(raw) <= execution.MaxExpiredRangeProjectionBytes-128
 }
 
-func WithExpiredRangeCreation(enabled bool) ProductionSlotSourceOption {
-	return func(source *ProductionSlotSource) error { source.expiredRangeEnabled = enabled; return nil }
-}
-
-func (source *ProductionSlotSource) RangeCreationEnabled() bool { return source.expiredRangeEnabled }
-
 // rangeBuildRefusal is why the builder produced no range, and the two
 // candidate bounds behind it when the branch that computes them was reached.
 //
@@ -85,7 +79,9 @@ func (source *ProductionSlotSource) buildExpiredRange(ctx context.Context, first
 		if at.UnixMilli() < first.EarliestQueryDeadlineUnixMilli {
 			return FrozenSlot{}, refusedRange(observability.RangeGateDeadlineNotReached), nil
 		}
-		headSteps := (at.Unix() - int64(start)) / spec.EvaluationIntervalSeconds
+		// Counted on the clock the first Slot's read hold shifts, as
+		// replayDistance counts: its grid points are read that much later.
+		headSteps := (at.Add(-time.Duration(first.Contract.ReadHoldMillis)*time.Millisecond).Unix() - int64(start)) / spec.EvaluationIntervalSeconds
 		if schedule.Segment.End != nil {
 			endSteps := (int64(*schedule.Segment.End) - 1 - int64(start)) / spec.EvaluationIntervalSeconds
 			if endSteps < headSteps {
@@ -139,8 +135,18 @@ func (source *ProductionSlotSource) buildExpiredRange(ctx context.Context, first
 		return FrozenSlot{}, rangeBuildRefusal{}, ErrSlotContractDrift
 	}
 	last := execution.EvaluationTime(int64(start) + steps*spec.EvaluationIntervalSeconds)
+	// last is frozen here for the first time, with the hold Next would freeze
+	// it with - asked, not frozen: the answer is only compared with the
+	// first Slot's, and a freeze would record the hold as in force from last.
+	hold, err := source.peekSlotReadHoldMillis(schedule, last)
+	if err != nil || hold != first.Contract.ReadHoldMillis {
+		// The range arithmetic uses one hold. A transition is handled by
+		// the existing single-Slot path rather than sealing a false suffix.
+		return FrozenSlot{}, refusedRange(observability.RangeGateFreezeFailed), nil
+	}
 	freeze := execution.FreezeSlotContractRequest{QueryGroup: source.queryGroup, ScheduleRevision: schedule.Segment.ScheduleRevision,
-		ScheduleSegmentStart: schedule.Segment.Start, EvaluationTime: last, DuePlans: schedule.DuePlanRefs(last)}
+		ScheduleSegmentStart: schedule.Segment.Start, EvaluationTime: last, DuePlans: schedule.DuePlanRefs(last),
+		ReadHoldMillis: hold}
 	fact, err := source.catalog.FreezeSlotContract(ctx, freeze)
 	if err != nil {
 		return FrozenSlot{}, refusedRange(observability.RangeGateFreezeFailed), nil
@@ -333,8 +339,6 @@ func rangeGateRefusal(
 	queryGroup execution.QueryGroupIdentity,
 ) string {
 	switch {
-	case !source.expiredRangeEnabled:
-		return observability.RangeGateCreationDisabled
 	case load.Progress == nil:
 		return observability.RangeGateProgressMissing
 	case load.Progress.NextSlot != nextSlot:
@@ -373,10 +377,9 @@ func (source *ProductionSlotSource) observeRangeGate(
 	defer func() { _ = recover() }()
 	facts := &observability.RangeGateFacts{
 		Outcome: outcome.word, ExpectedNextSlot: int64(nextSlot),
-		RangeCreationEnabled: source.expiredRangeEnabled,
-		BoundsKnown:          outcome.boundsKnown,
-		DistanceBound:        outcome.distanceBound,
-		DeadlineBound:        outcome.deadlineBound,
+		BoundsKnown:   outcome.boundsKnown,
+		DistanceBound: outcome.distanceBound,
+		DeadlineBound: outcome.deadlineBound,
 	}
 	if load.Progress != nil {
 		facts.ProgressPresent = true

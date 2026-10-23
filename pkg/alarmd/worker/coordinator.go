@@ -20,6 +20,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -69,12 +70,6 @@ type Ports struct {
 	// window reads as never evaluated. A deployment without it loses a reading,
 	// not a detection.
 	ExecutionEvidence execution.SlotExecutionEvidenceStore
-	// Census is where a Slot leaves the dimension census of a candidate Plan
-	// (decision-020 section 4.7.3). Optional, and the optionality is the
-	// point: a worker without it takes no census, which is exactly what
-	// every build before this one did, and nothing else about the Slot
-	// changes.
-	Census execution.PlanCensusStore
 	// Targets resolves a Plan's target plan for one Slot (decision-017). It
 	// is optional the way ExecutionEvidence is, and for a safer reason: a
 	// worker without it does not run target-plan Plans on no target, it
@@ -82,16 +77,31 @@ type Ports struct {
 	// of their absence (SKIPPED_TARGET_SELECTOR_UNAVAILABLE), both by name.
 	// Plans without a target plan never touch it.
 	Targets TargetResolver
+	// ScopeGroups reads the dynamic groups a Plan's target scope names, for
+	// one Slot. Optional as Targets is: a worker without it admits none of
+	// those conditions' records (dynamic_group_unavailable), by name. Plans
+	// whose targets name no dynamic group never touch it.
+	ScopeGroups ScopeGroupResolver
+}
+
+// ScopeGroupResolver reads one dynamic group a target scope names for one
+// Slot. cmdbcache's platform group stores implement it; they read nothing
+// from Redis on the Slot path but a group's first reference.
+type ScopeGroupResolver interface {
+	// ResolveScopeGroup answers one group of a tenant; interval is the
+	// asking Plan's evaluation period, which bounds how long the group is
+	// kept without being asked for.
+	ResolveScopeGroup(ctx context.Context, tenant, id string, interval time.Duration) targetplan.SelectorResult
 }
 
 // TargetResolver resolves one target plan for one Slot. cmdbcache's
 // resolver implements it; it reads nothing from Redis on the Slot path but
 // a group's first reference.
 type TargetResolver interface {
-	// Resolve answers one plan for one Slot; interval is the Plan's
-	// evaluation period, which bounds how long its groups are kept without
-	// being asked for.
-	Resolve(ctx context.Context, plan *contract.TargetPlanV1, interval time.Duration) *targetplan.Resolution
+	// ResolveFor answers one plan of a tenant for one Slot, against that
+	// tenant's CMDB cache; interval is the Plan's evaluation period, which
+	// bounds how long its groups are kept without being asked for.
+	ResolveFor(ctx context.Context, tenant string, plan *contract.TargetPlanV1, interval time.Duration) *targetplan.Resolution
 }
 
 type SlotExecutionCoordinator struct {
@@ -102,48 +112,10 @@ type SlotExecutionCoordinator struct {
 	// One per process, because a streak is about rounds rather than about one
 	// Slot. See no_data_skip_streak.go.
 	noDataSkips noDataSkipStreaks
-	// censusPeaks is the retained bytes each owned Query Group's last Slot
-	// held, which is what decides whether its Plans are worth a dimension
-	// census. Per process rather than per Slot because a Slot cannot judge
-	// itself: what it will hold is only known once it has held it, and a
-	// census has to be counted while the series go past. A Query Group's
-	// first Slot after a restart takes no census and the next one decides
-	// on its reading, which is the same one-round lag the byte constraint
-	// plans placement on.
-	censusPeaks slotRetainedPeaks
-}
-
-// slotRetainedPeaks remembers one number per Query Group: what its last Slot
-// on this replica retained.
-//
-// A Query Group that moves to another replica leaves its entry behind, the
-// way the no-data skip streaks do and for the same reason: the entry is only
-// ever read as the gate on a Slot of that Query Group running here again, so
-// a stale one costs a map entry and nothing else, and the first Slot after it
-// comes back reads the last thing it did hold here rather than nothing.
-// Entries are replaced rather than accumulated, so the map is bounded by the
-// Query Groups this replica has owned.
-type slotRetainedPeaks struct {
-	mu    sync.Mutex
-	peaks map[execution.QueryGroupIdentity]uint64
-}
-
-func (peaks *slotRetainedPeaks) record(queryGroup execution.QueryGroupIdentity, retained uint64) {
-	if queryGroup == "" {
-		return
-	}
-	peaks.mu.Lock()
-	defer peaks.mu.Unlock()
-	if peaks.peaks == nil {
-		peaks.peaks = make(map[execution.QueryGroupIdentity]uint64)
-	}
-	peaks.peaks[queryGroup] = retained
-}
-
-func (peaks *slotRetainedPeaks) read(queryGroup execution.QueryGroupIdentity) uint64 {
-	peaks.mu.Lock()
-	defer peaks.mu.Unlock()
-	return peaks.peaks[queryGroup]
+	// effectiveSeen is when each Plan's effective-time requirement came into
+	// effect for this process, the bound below which a window hole's minute
+	// is not judged against the schedule. See out_of_hours.go.
+	effectiveSeen effectiveTimeSeen
 }
 
 type processProvisionalReservations struct {
@@ -207,11 +179,14 @@ func NewSlotExecutionCoordinator(ports Ports, budget ProvisionalBudget) (*SlotEx
 func (coordinator *SlotExecutionCoordinator) acquireProvisional(series, retainedBytes uint64, stream *streamedExecution, phase string) error {
 	coordinator.reservations.mu.Lock()
 	defer coordinator.reservations.mu.Unlock()
-	if series > coordinator.budget.MaxSeries-coordinator.reservations.series {
-		return budgetRejection(observability.CapacityBudgetSeries, phase, coordinator.reservations.series, series, coordinator.budget.MaxSeries, stream.ownBudget(observability.CapacityBudgetSeries), stream.ownBudgetUsage(coordinator.budget))
-	}
+	// The bytes are the budget and are judged first; the series count is a
+	// guardrail at the smallest a series can encode, which binds only when
+	// the byte accounting has gone wrong.
 	if retainedBytes > coordinator.budget.MaxRetainedBytes-coordinator.reservations.retainedBytes {
 		return budgetRejection(observability.CapacityBudgetRetainedBytes, phase, coordinator.reservations.retainedBytes, retainedBytes, coordinator.budget.MaxRetainedBytes, stream.ownBudget(observability.CapacityBudgetRetainedBytes), stream.ownBudgetUsage(coordinator.budget))
+	}
+	if series > coordinator.budget.MaxSeries-coordinator.reservations.series {
+		return budgetRejection(observability.CapacityBudgetSeries, phase, coordinator.reservations.series, series, coordinator.budget.MaxSeries, stream.ownBudget(observability.CapacityBudgetSeries), stream.ownBudgetUsage(coordinator.budget))
 	}
 	coordinator.reservations.series += series
 	coordinator.reservations.retainedBytes += retainedBytes
@@ -223,6 +198,125 @@ func (coordinator *SlotExecutionCoordinator) releaseProvisional(series, retained
 	coordinator.reservations.series -= series
 	coordinator.reservations.retainedBytes -= retainedBytes
 	coordinator.reservations.mu.Unlock()
+}
+
+// tryAcquireRetained reserves bytes against the retained budget when they fit
+// and reports false, reserving nothing, when they do not. For memory a Slot
+// may hold or do without: it never refuses the Slot, it only declines.
+func (coordinator *SlotExecutionCoordinator) tryAcquireRetained(retainedBytes uint64) bool {
+	coordinator.reservations.mu.Lock()
+	defer coordinator.reservations.mu.Unlock()
+	if retainedBytes > coordinator.budget.MaxRetainedBytes-coordinator.reservations.retainedBytes {
+		return false
+	}
+	coordinator.reservations.retainedBytes += retainedBytes
+	return true
+}
+
+// RetainedReserved is what the Slots running on coordinator hold reserved
+// against MaxRetainedBytes at the moment of the call: the pool's usage, where
+// the completion rows carry each Slot's share only after the fact. The
+// reservation is checked and moved under one lock, so it is read under that
+// lock as well rather than from a second copy every site that moves it would
+// have to keep in step; the lock is only ever held for a comparison and an
+// addition. A function rather than a method: Execute is the coordinator's
+// one way in, and a reading of its pool is not a way in.
+func RetainedReserved(coordinator *SlotExecutionCoordinator) uint64 {
+	coordinator.reservations.mu.Lock()
+	defer coordinator.reservations.mu.Unlock()
+	return coordinator.reservations.retainedBytes
+}
+
+// admittedState is what admission measured for one mutation: its stored size,
+// and the frame the store encoded to measure it, while the Slot holds that
+// frame for the write.
+type admittedState struct {
+	bytes int64
+	frame *execution.EncodedStateFrame
+}
+
+// frameHeaderBytes is what a kept frame holds beside its bytes: the frame
+// itself, which admission hands back with them.
+var frameHeaderBytes = uint64(unsafe.Sizeof(execution.EncodedStateFrame{}))
+
+// frameRetainedBytes is what one kept frame holds of the retained budget:
+// the encoded record as allocated, and the frame around it.
+func frameRetainedBytes(frame *execution.EncodedStateFrame) uint64 {
+	return uint64(cap(frame.Bytes)) + frameHeaderBytes
+}
+
+// heldFrames is one Plan's admitted frames kept for its write, reserved
+// against the retained budget from the moment admission hands each chunk
+// back until the write is over.
+//
+// They used to be reserved once, after the last chunk: until then a Plan's
+// frames -- whole encoded records, the history the loaded state's own charge
+// already covers encoded again beside it -- were held on no reservation at
+// all, and with every running Slot admitting at once that was up to a quarter
+// of the retained budget on a busy replica. The frame around each record was
+// not counted either.
+type heldFrames struct {
+	coordinator *SlotExecutionCoordinator
+	bytes       uint64
+	// refused is set once the budget did not take a chunk: the Plan keeps
+	// the frames reserved before it and lets every later one go.
+	refused  bool
+	released bool
+}
+
+// keep reserves one admission chunk's frames as the chunk comes back, or
+// lets them go when the retained budget cannot take them -- and every frame
+// of the Plan after them. A frame let go is only encoded again by the write,
+// as it was before frames were kept; the Slot is neither refused nor
+// delayed for it, and admission is the same either way.
+func (held *heldFrames) keep(chunk []admittedState) {
+	var total uint64
+	for _, state := range chunk {
+		if state.frame != nil {
+			total += frameRetainedBytes(state.frame)
+		}
+	}
+	if total == 0 {
+		return
+	}
+	if !held.refused && held.coordinator.tryAcquireRetained(total) {
+		held.bytes += total
+		return
+	}
+	held.refused = true
+	for index := range chunk {
+		chunk[index].frame = nil
+	}
+}
+
+// settle keeps the reservation to the frames the write still has: a
+// mutation admission refused, or a series the output dropped, gives its
+// frame's bytes back now rather than when the Plan's write is over.
+func (held *heldFrames) settle(kept []admittedState) {
+	if held == nil || held.released {
+		return
+	}
+	var total uint64
+	for _, state := range kept {
+		if state.frame != nil {
+			total += frameRetainedBytes(state.frame)
+		}
+	}
+	if total < held.bytes {
+		held.coordinator.releaseProvisional(0, held.bytes-total)
+		held.bytes = total
+	}
+}
+
+// release returns the frames' reservation. Called once the write is over or
+// the Plan stops short of it, and deferred beside that for the exits that
+// return; only the first call releases.
+func (held *heldFrames) release() {
+	if held == nil || held.released {
+		return
+	}
+	held.released = true
+	held.coordinator.releaseProvisional(0, held.bytes)
 }
 
 // Execute performs one already-scheduled attempt. normal, retry, replay and
@@ -241,6 +335,11 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	if err := request.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid execution request: %w", err)
 	}
+	if request.Supplement != nil {
+		// Before the evidence mark is armed: a supplement neither begins nor
+		// completes its Slot, so it has nothing of either to leave behind.
+		return coordinator.executeSupplement(withSlotTrace(ctx, request), request)
+	}
 	ctx, applied := withAppliedPlans(ctx)
 	// On the way out, and only when this attempt wrote state and then could not
 	// write the Slot down. Best-effort by construction: the mark is what lets a
@@ -248,16 +347,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	// leave it costs that completion its evidence -- it must not also change
 	// what this attempt reports to the scheduler, which is about the Slot.
 	defer func() { coordinator.recordExecutionEvidence(ctx, request, applied) }()
-	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{
-		QueryGroupKey:        string(request.Contract.Slot.QueryGroup),
-		SnapshotRevision:     string(request.Contract.SnapshotRevision),
-		QueryRevision:        string(request.Contract.QueryRevision),
-		ScheduleRevision:     string(request.Contract.ScheduleRevision),
-		ScheduleSegmentStart: int64(request.Contract.ScheduleSegmentStart),
-		DuePlanSetDigest:     string(request.Contract.DuePlanSetDigest),
-		OwnerID:              request.OwnerFence.OwnerID, OwnerEpoch: request.OwnerFence.OwnerEpoch,
-		EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
-	})
+	ctx = withSlotTrace(ctx, request)
 	if request.ExpiredRange != nil {
 		return coordinator.executeExpiredRange(ctx, request)
 	}
@@ -311,6 +401,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	queryRequest := execution.QueryExecutionRequest{
 		Contract: request.Contract, Operation: request.Operation, AttemptNo: request.AttemptNo,
 	}
+	execution.MarkStage(ctx, execution.SlotStageQuery)
 	completion, err := coordinator.ports.Query.Execute(ctx, queryRequest, stream)
 	if err != nil {
 		if isReadinessDeferred(err) {
@@ -339,20 +430,8 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		// day was a state read of ours timing out, with the query fine.
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: complete Slot: %w", err)
 	}
-	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
-		if c.InputCompleted != nil {
-			c.InputCompleted(completion)
-		}
-	})
 	queryResult, queryReason := provisionalResult(stream.evaluated)
 	coordinator.observeQueryCompleted(ctx, request.Operation, started, queryResult, queryReason, completion, stream.evaluated)
-	// The census of what this Slot saw, before the round's own writes: it is
-	// a planning input, not part of the round, so it neither holds up the
-	// sequencing nor fails the Slot. The Slot's own retained bytes are
-	// recorded here, whether or not it took one: that reading is what
-	// decides the next Slot of this Query Group.
-	stream.writeCensuses(ctx)
-	coordinator.censusPeaks.record(stream.header.Contract.Slot.QueryGroup, stream.retainedTotal())
 	if len(stream.evaluated.Plans) == 0 {
 		// The timing travels with the usage here for the same reason it does at
 		// the other exit: this Slot ran. A round that produced no Plan result
@@ -360,7 +439,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		// budgets it used beside an empty clock would read as a Slot that was
 		// never measured rather than one that found nothing to decide.
 		return execution.SlotExecutionResult{Result: queryResult, ReasonCode: queryReason,
-			Usage: stream.budgetUsage(), Timing: stream.timing()}, nil
+			Usage: stream.budgetUsage(), Timing: stream.timing(), InPlaceWait: completion.InPlaceWait}, nil
 	}
 
 	var result execution.SlotExecutionResult
@@ -368,7 +447,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		var executeErr error
 		result, executeErr = coordinator.finalizePreparedWithGaps(
 			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated,
-			stream.noDataMutations, stream.queryEvidence.availability(), stream.seriesCensus, stream.targetSummaries(),
+			stream.noDataMutations, stream.queryEvidence, stream.seriesCensus, stream.targetSummaries(),
 		)
 		return executeErr
 	})
@@ -379,6 +458,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 			if convergeErr != nil {
 				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: converge changed activation: %w", convergeErr)
 			}
+			result.InPlaceWait = completion.InPlaceWait
 			return result, nil
 		}
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: execute frozen Slot: %w", err)
@@ -388,7 +468,23 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	// rather than a usage of zero, and the two must not arrive as one number.
 	result.Usage = stream.budgetUsage()
 	result.Timing = stream.timing()
+	result.InPlaceWait = completion.InPlaceWait
 	return result, nil
+}
+
+// withSlotTrace puts the Slot's coordinates on every line this execution
+// emits.
+func withSlotTrace(ctx context.Context, request execution.SlotExecutionRequest) context.Context {
+	return observability.ContextWithTraceFields(ctx, observability.TraceFields{
+		QueryGroupKey:        string(request.Contract.Slot.QueryGroup),
+		SnapshotRevision:     string(request.Contract.SnapshotRevision),
+		QueryRevision:        string(request.Contract.QueryRevision),
+		ScheduleRevision:     string(request.Contract.ScheduleRevision),
+		ScheduleSegmentStart: int64(request.Contract.ScheduleSegmentStart),
+		DuePlanSetDigest:     string(request.Contract.DuePlanSetDigest),
+		OwnerID:              request.OwnerFence.OwnerID, OwnerEpoch: request.OwnerFence.OwnerEpoch,
+		EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
+	})
 }
 
 // timing is where this execution's wall clock went, for the completion row.
@@ -516,7 +612,7 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 			Contract: request.Contract, Kind: completionKind,
 			Result: observability.ResultDegraded, ReasonCode: finalization.ReasonCode,
 			Evidence: evidence,
-		}, execution.CompletionAttribution{})
+		}, execution.CompletionAttribution{Cause: finalization.Cause})
 		return err
 	})
 	if err != nil {
@@ -1017,7 +1113,10 @@ func (coordinator *SlotExecutionCoordinator) applyActivatedPlanGaps(
 	extensions ...map[execution.PlanGapIdentity]*observability.GapExtensionFacts,
 ) (bool, error) {
 	allAlready := len(items) > 0
-	err := coordinator.applyGapChunks(ctx, operation, contractRef, items, "activated Plan gap guard",
+	// These markers are written from the activation record alone, which
+	// carries no retention: the request says so, and the store writes them
+	// for its ceiling, which outlives any Plan's next round.
+	err := coordinator.applyGapChunks(ctx, operation, contractRef, items, execution.GenerationRetention{Unknown: true}, "activated Plan gap guard",
 		func(item execution.GapGuardApplyItemResult) error {
 			if item.Status != execution.GapGuardAlreadyApplied {
 				allAlready = false
@@ -1046,6 +1145,7 @@ func (coordinator *SlotExecutionCoordinator) applyGapChunks(
 	operation execution.Operation,
 	contractRef execution.FrozenExecutionContractRef,
 	items []execution.PlanGapMutation,
+	retention execution.GenerationRetention,
 	subject string,
 	accept func(execution.GapGuardApplyItemResult) error,
 	extensionMaps ...map[execution.PlanGapIdentity]*observability.GapExtensionFacts,
@@ -1062,8 +1162,15 @@ func (coordinator *SlotExecutionCoordinator) applyGapChunks(
 				}
 			}
 		}
+		// Gap marks are written for the output and State that follow them,
+		// and the store takes them by contract, not by owner fence: a
+		// declined execution writing them would be a second writer of the
+		// markers the next holder is writing for the same Slot.
+		if err := execution.EnterCommit(ctx, execution.SlotStageState); err != nil {
+			return err
+		}
 		chunkStarted := time.Now()
-		result, err := coordinator.ports.GapGuard.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: contractRef, Items: chunkItems})
+		result, err := coordinator.ports.GapGuard.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: contractRef, Items: chunkItems, Retention: retention})
 		var reason execution.ReasonCode
 		if err == nil {
 			if err = result.Validate(); err == nil {
@@ -1092,7 +1199,7 @@ func (coordinator *SlotExecutionCoordinator) applyGapChunks(
 		}
 		totals.keys += int64(len(chunkItems))
 		coordinator.observeChunk(ctx, observability.StageGapGuardCommitted, operation, chunkStarted, started, "", reason,
-			chunk, totals, observability.Counts{}, err, nil, nil, 0, extensions...)
+			chunk, totals, observability.Counts{}, err, nil, nil, "", 0, extensions...)
 		return err
 	})
 }
@@ -1120,7 +1227,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 ) (execution.SlotExecutionResult, error) {
 	return coordinator.finalizePreparedWithGaps(
 		ctx, request, header, bindings, loadedState, execution.GapLoadResult{}, evaluated, nil,
-		execution.QueryAvailabilityUnknown,
+		queryAvailabilityEvidence{},
 		// The census a caller with no stream can state: the loaded views are
 		// the series it read, and it meant to evaluate exactly those.
 		seriesCensus{Due: len(loadedState.Items), Read: len(loadedState.Items)},
@@ -1137,7 +1244,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	loadedGaps execution.GapLoadResult,
 	evaluated execution.EvaluationResult,
 	noDataMemory []execution.PlanNoDataMutation,
-	queryAvailability execution.QueryAvailability,
+	query queryAvailabilityEvidence,
 	census seriesCensus,
 	targets []execution.TargetResolutionSummary,
 ) (execution.SlotExecutionResult, error) {
@@ -1192,16 +1299,33 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	// this Slot's keys were read and not written, and a Plan is not a
 	// population anyone reads that against.
 	var frozenRenewals observability.FrozenStateRenewalFacts
+	// The Plans whose output did not all land this attempt. Their no-data
+	// memory is not applied: the memory follows the output exactly as State
+	// does (output acknowledged, then State and memory, then Progress), and
+	// the round that decides them again has to decide from the memory the
+	// unsent decision started from. Applied anyway, a closing NORMAL that
+	// deletes a group would be gone for good - the next round finds no group
+	// and says nothing, and the alert stays open.
+	withheldNoData := make(map[execution.PlanIdentity]struct{})
 	for _, planResult := range planResults {
 		due, ok := duePlan(header.DuePlans, planResult.Plan)
 		if !ok {
 			return execution.SlotExecutionResult{}, errors.New("alarmd worker: evaluated plan is not due")
 		}
 		if _, changed := changedPlans[due.Key()]; changed {
+			withheldNoData[planResult.Plan] = struct{}{}
 			continue
 		}
 		if err := coordinator.admit(ctx, request, due); err != nil {
 			return execution.SlotExecutionResult{}, err
+		}
+		// What this Plan's gap markers live for, read only when it has any.
+		var gapRetention execution.GenerationRetention
+		if len(planResult.GuardBeforeEvents) > 0 || len(planResult.GuardAfterState) > 0 {
+			var retentionErr error
+			if gapRetention, retentionErr = generationRetentionOf(due); retentionErr != nil {
+				return execution.SlotExecutionResult{}, retentionErr
+			}
 		}
 		// Gap statements commit independently from series State. This also
 		// covers retries whose query became partial or exceeded its budget,
@@ -1218,7 +1342,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		// the retry recovers into one that does not run.
 		coordinator.observeDuplicatedGapStatements(ctx, request, planResult)
 
-		if err := coordinator.applyGap(ctx, request.Operation, request.Contract, planResult.GuardBeforeEvents, GapSiteBeforeEvents); err != nil {
+		if err := coordinator.applyGap(ctx, request.Operation, request.Contract, planResult.GuardBeforeEvents, gapRetention, GapSiteBeforeEvents); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}
 
@@ -1246,10 +1370,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			classified := execution.ClassifyStateMutationDetail(view, stateResult.Mutation)
 			switch classified.Disposition {
 			case execution.StateProceed:
-				reuseClass, reuseReason := execution.ClassifyStateWriteReuse(view, stateResult.Mutation)
 				writeReuse.Record(
-					observability.StateWriteReuseClass(reuseClass),
-					observability.StateWriteChangeReason(reuseReason),
+					observability.StateWriteReuseClass(execution.ClassifyStateWriteReuse(view, stateResult.Mutation)),
 					storedStateLabel(view.Status),
 				)
 				coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared, request.Operation, started, observability.ResultSuccess, observability.ReasonNone, nil)
@@ -1261,11 +1383,6 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			case execution.StateAlreadyApplied:
 				alreadyApplied.Record(observability.StateAlreadyAppliedAtPreflight, observability.StateAlreadyAppliedKind(classified.AlreadyApplied),
 					string(stateResult.Mutation.Identity.SeriesIdentityDigest), stateResult.Mutation.ExpectedBlobRevision, view.BlobRevision)
-				execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
-					if c.PriorStateApplied != nil {
-						c.PriorStateApplied()
-					}
-				})
 				coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared, request.Operation, started, observability.ResultSuccess, observability.ReasonNone, nil)
 				continue
 			case execution.StateStaleVersion, execution.StateVersionConflict:
@@ -1337,22 +1454,34 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			if err := coordinator.admit(ctx, request, due); err != nil {
 				return execution.SlotExecutionResult{}, err
 			}
-			rejected, encodedBytes, err := coordinator.admitState(ctx, request.Operation, request.Contract, retention, horizon, mutations)
+			// Under the Plan's strategy, so the refusal is filed under the
+			// Plan it refused rather than the Query Group alone.
+			planCtx := observability.ContextWithTraceFields(ctx, observability.TraceFields{
+				StrategyID: planResult.Plan.StrategyID, BusinessID: planResult.Plan.BusinessID})
+			rejected, encodedBytes, held, err := coordinator.admitState(planCtx, request.Operation, request.Contract, retention, horizon, mutations)
 			if err != nil {
 				return execution.SlotExecutionResult{}, err
 			}
+			// The frames admission kept wait for the write under the
+			// reservation admission took for them, released when this Plan's
+			// write is over or it stops short of one; deferred as well, for
+			// the exits that return from the Slot.
+			defer held.release()
 			accepted := make([]execution.StateMutation, 0, len(mutations)-len(rejected))
-			acceptedBytes := make([]int64, 0, len(mutations)-len(rejected))
+			acceptedBytes := make([]admittedState, 0, len(mutations)-len(rejected))
 			for index, mutation := range mutations {
 				if reason, terminal := rejected[mutation.Identity]; terminal {
 					if deterministicTerminalReason == "" {
 						deterministicTerminalReason = reason
 					}
+					// Its series' events are not sent either.
+					withheldNoData[planResult.Plan] = struct{}{}
 					continue
 				}
 				accepted = append(accepted, mutation)
 				acceptedBytes = append(acceptedBytes, encodedBytes[index])
 			}
+			held.settle(acceptedBytes)
 			events, withoutMessage := outputsOf(accepted, eventsByState, withoutMessageByState)
 			sortTriggerEvents(events)
 			if err := coordinator.writeEvents(ctx, request.Operation, planResult.Plan, events, withoutMessage); err != nil {
@@ -1372,7 +1501,9 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 					if reason, rejected := outputRejectionReason(err); rejected && deterministicTerminalReason == "" {
 						deterministicTerminalReason = reason
 					}
+					withheldNoData[planResult.Plan] = struct{}{}
 					accepted, acceptedBytes = kept, keptBytes
+					held.settle(acceptedBytes)
 				} else if reason, deferred := outputDeferralReason(err); deferred {
 					// The sink did not start the batch: the lease has less
 					// life left than one batch needs to land. Nothing is
@@ -1381,6 +1512,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 					if retryPendingReason == "" {
 						retryPendingReason = reason
 					}
+					withheldNoData[planResult.Plan] = struct{}{}
+					held.release()
 					continue
 				} else if reason, rejected := outputRejectionReason(err); rejected {
 					// Decided in this process, from this Plan's own decisions
@@ -1394,6 +1527,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 					if deterministicTerminalReason == "" {
 						deterministicTerminalReason = reason
 					}
+					withheldNoData[planResult.Plan] = struct{}{}
+					held.release()
 					continue
 				} else {
 					if !isRetryableOutputDependency(err) {
@@ -1405,12 +1540,15 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 					// Event acknowledgement is Plan-local. Keep the Slot retryable and
 					// continue healthy sibling Plans, but do not apply this Plan's State
 					// or advance Progress until the stable event identity is replayed.
+					withheldNoData[planResult.Plan] = struct{}{}
+					held.release()
 					continue
 				}
 			}
 			if len(accepted) > 0 {
 				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, request.OwnerFence, request.ContentScope, retention, horizon, accepted, acceptedBytes)
 				if err != nil {
+					coordinator.observeOutputUnapplied(planCtx, request.Operation, accepted, eventsByState, withoutMessageByState, err)
 					return execution.SlotExecutionResult{}, err
 				}
 				// Counted after the write, not from the mutations built: a
@@ -1428,9 +1566,13 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 					)
 				}
 			}
+			// The write is over, or a partial output left no series to write;
+			// the frames go either way. An apply that failed returned above,
+			// and the deferred release has them.
+			held.release()
 		}
 		coordinator.observeGapScheduleRestart(ctx, request.Operation, loadedGaps, planResult.GuardAfterState)
-		if err := coordinator.applyGap(ctx, request.Operation, request.Contract, planResult.GuardAfterState, GapSiteAfterState); err != nil {
+		if err := coordinator.applyGap(ctx, request.Operation, request.Contract, planResult.GuardAfterState, gapRetention, GapSiteAfterState); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}
 		if planResult.Disposition == execution.PlanRetryPending && retryPendingReason == "" {
@@ -1439,11 +1581,12 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	}
 	frozenRenewals.RecordCensus(census.Due, census.Read, census.Written)
 	coordinator.observeFrozenStateRenewal(ctx, request.Operation, frozenRenewals)
-	// After every Plan's state and gap, inside the same sequenced scope. The
-	// memory only changes what the next round reports as a duration and which
-	// groups it expects, never whether this round fired - so it follows the
-	// writes that do decide that, rather than racing them.
-	if err := coordinator.applyNoDataMemory(ctx, request, noDataMemory); err != nil {
+	// After every Plan's state and gap, inside the same sequenced scope, and
+	// only for the Plans whose output landed. The memory decides which groups
+	// the next round expects and what it says about them, so it follows the
+	// writes that carry this round's decisions rather than racing them.
+	if err := coordinator.applyNoDataMemory(ctx, request, header.DuePlans,
+		withoutWithheldNoData(noDataMemory, withheldNoData)); err != nil {
 		return execution.SlotExecutionResult{}, err
 	}
 	if retryPendingReason != "" {
@@ -1455,6 +1598,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	if err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive PRIMARY input fact: %w", err)
 	}
+	primary.EmptiedByTarget = query.emptiedByTarget(primary)
+	primary.QuietWhenEmpty = query.quietWhenEmpty(primary, header.Requirements)
 	completion := execution.SlotCompletion{Contract: request.Contract, Primary: &primary, TargetResolutions: targets}
 	// Observation only. The cause is deliberately not put on
 	// completion.ReasonCode, which is persisted and decides how consecutive gaps
@@ -1470,8 +1615,9 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			classifyActivationChange(header.DuePlans, guardActivations, loadedGaps))
 		attribution.Cause = cause
 	} else {
-		completion.Kind, attribution.Cause, attribution.Reason, err =
-			execution.DeriveStreamingCompletionDetail(header, bindings, evaluated)
+		var derived execution.CompletionAttribution
+		completion.Kind, derived, err = execution.DeriveStreamingCompletionAttribution(header, bindings, evaluated)
+		attribution.Cause, attribution.Reason, attribution.Scope = derived.Cause, derived.Reason, derived.Scope
 		if err != nil {
 			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: derive completion: %w", err)
 		}
@@ -1524,9 +1670,12 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		return execution.SlotExecutionResult{}, err
 	}
 
+	coordinator.markOutOfHours(ctx, header, &attribution.Coverage)
 	result, err := coordinator.commitProgress(ctx, request, completion, attribution)
 	if err == nil && result.Completed {
-		result.QueryAvailability = queryAvailability
+		result.QueryAvailability, result.QueryUnavailableReason = query.availability(), query.unavailableReason()
+		result.QueryUnknownReason = query.unknownReason()
+		result.PrimaryQueryClock = query.clock
 	}
 	return result, err
 }
@@ -1565,6 +1714,9 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 	completion execution.SlotCompletion,
 	completionCause execution.CompletionAttribution,
 ) (execution.SlotExecutionResult, error) {
+	if err := execution.EnterCommit(ctx, execution.SlotStageProgress); err != nil {
+		return execution.SlotExecutionResult{}, err
+	}
 	if request.ExpiredRange != nil {
 		return coordinator.commitExpiredRange(ctx, request, completion)
 	}
@@ -1586,8 +1738,12 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: commit progress: %w", err)
 	}
 	if progress.Status != execution.ProgressCommitted {
-		err = fmt.Errorf("progress not committed: %s", progress.Status)
-		coordinator.observe(ctx, observability.ComponentProgress, observability.StageProgressCommitted, request.Operation, started, "", progress.ReasonCode, err)
+		err = progressNotCommitted(progress.Status)
+		reason := progress.ReasonCode
+		if refusal, refused := ownership.RefusalReason(err); refused {
+			reason = execution.ReasonCode(refusal)
+		}
+		coordinator.observe(ctx, observability.ComponentProgress, observability.StageProgressCommitted, request.Operation, started, "", reason, err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: %w", err)
 	}
 	// The Slot is written down. Whatever this attempt applied is now recorded
@@ -1600,15 +1756,22 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		observationResult = observability.ResultDegraded
 		observationReason = completion.ReasonCode
 	}
-	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
-		if c.ProgressCommitted != nil {
-			c.ProgressCommitted(progressRequest, progress)
-		}
-	})
 	coordinator.observeCommittedProgress(ctx, request.Operation, started, observationResult, observationReason,
-		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason), completionCause.Coverage,
-		completion.Evidence, completion.Primary)
+		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason), completionScopeFacts(completionCause),
+		completionCause.Coverage, completion.Evidence, completion.Primary)
 	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
+}
+
+// progressNotCommitted is the error for a Progress commit the store did not
+// take. A stale owner is the handover's refusal -- the Query Group moved
+// while the Slot ran and the fence the commit carried is no longer the
+// owner's -- and wraps the ownership word, so the Slot names it as the
+// handover does; the other statuses keep theirs.
+func progressNotCommitted(status execution.ProgressCommitStatus) error {
+	if status == execution.ProgressStaleOwner {
+		return fmt.Errorf("progress not committed: %s: %w", status, ownership.ErrStaleFence)
+	}
+	return fmt.Errorf("progress not committed: %s", status)
 }
 
 func (coordinator *SlotExecutionCoordinator) admit(
@@ -1681,9 +1844,10 @@ func (coordinator *SlotExecutionCoordinator) applyGap(
 	operation execution.Operation,
 	contractRef execution.FrozenExecutionContractRef,
 	items []execution.PlanGapMutation,
+	retention execution.GenerationRetention,
 	site string,
 ) error {
-	err := coordinator.applyGapChunks(ctx, operation, contractRef, items, "gap guard",
+	err := coordinator.applyGapChunks(ctx, operation, contractRef, items, retention, "gap guard",
 		func(item execution.GapGuardApplyItemResult) error {
 			if item.Status != execution.GapGuardApplied && item.Status != execution.GapGuardAlreadyApplied {
 				return &GapApplyRefusal{Stage: "gap guard did not complete", Status: item.Status, Site: site,
@@ -1712,17 +1876,15 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	if len(events) == 0 && len(withoutMessage) == 0 {
 		return nil
 	}
+	if err := execution.EnterCommit(ctx, execution.SlotStageOutput); err != nil {
+		return err
+	}
 	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{StrategyID: plan.StrategyID, BusinessID: plan.BusinessID})
 	// The sink's own count of what it handed the broker, for the line: a
 	// batch the protocol has no message for is a success that wrote nothing.
 	ctx, outputWrite := observability.ContextWithOutputWriteReport(ctx)
 	started := time.Now()
 	err := coordinator.ports.Events.WriteBatch(ctx, events)
-	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
-		if c.OutputWritten != nil {
-			c.OutputWritten(events, err)
-		}
-	})
 	reason := execution.ReasonCode(observability.ReasonNone)
 	var rejection *observability.OutputRejectionFacts
 	if err != nil {
@@ -1770,12 +1932,20 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 		// counted anything said nothing about these either.
 		written = withoutMessageReported(written, withoutMessage)
 	}
+	// The kind the sink's error says it is, by its type: which of the
+	// failures that share a reason this one was. Empty on a success.
+	failureKind := ""
+	if err != nil {
+		failureKind = observability.OutputFailureKindOf(err)
+	}
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started),
 		Counts: observability.Counts{Events: int64(len(events) + len(withoutMessage))}, Err: err, OutputRejection: rejection,
-		OutputWrite: written, OutputWireFormats: formats, OutputEventKinds: kinds,
+		OutputFailureKind: failureKind,
+		OutputWrite:       written, OutputWireFormats: formats, OutputEventKinds: kinds,
+		NoDataEmission: noDataEmissionOf(events, err),
 	})
 	acked := events
 	if notWritten, partial := outputNotWritten(err); partial {
@@ -1829,12 +1999,12 @@ func outputNotWritten(err error) (map[string]struct{}, bool) {
 // consumer holds, and that is refused here rather than applied.
 func withoutSeriesNotWritten(
 	accepted []execution.StateMutation,
-	acceptedBytes []int64,
+	acceptedBytes []admittedState,
 	events map[execution.StateKeyIdentity][]contract.TriggerEventV1,
 	notWritten map[string]struct{},
-) ([]execution.StateMutation, []int64, error) {
+) ([]execution.StateMutation, []admittedState, error) {
 	kept := make([]execution.StateMutation, 0, len(accepted))
-	keptBytes := make([]int64, 0, len(acceptedBytes))
+	keptBytes := make([]admittedState, 0, len(acceptedBytes))
 	for index, mutation := range accepted {
 		held, sent := 0, 0
 		for _, event := range events[mutation.Identity] {
@@ -1952,7 +2122,11 @@ func outputRejectionReason(err error) (execution.ReasonCode, bool) {
 
 // admitState admits one Plan's mutations in Store-sized chunks. It returns the
 // deterministic rejections by identity and, aligned with mutations, the
-// encoded size the store measured for each admitted mutation.
+// encoded size the store measured for each admitted mutation and the frame it
+// measured, when the store kept one and the retained budget took it; and the
+// reservation those frames are held under, which the caller releases. An
+// admission that does not complete -- a chunk that fails, a context that ends
+// between chunks -- releases every frame it had reserved before it returns.
 func (coordinator *SlotExecutionCoordinator) admitState(
 	ctx context.Context,
 	operation execution.Operation,
@@ -1960,10 +2134,11 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 	retention []execution.StateRetentionRequirement,
 	horizon int64,
 	mutations []execution.StateMutation,
-) (map[execution.StateKeyIdentity]execution.ReasonCode, []int64, error) {
+) (map[execution.StateKeyIdentity]execution.ReasonCode, []admittedState, *heldFrames, error) {
 	started := time.Now()
 	deterministic := make(map[execution.StateKeyIdentity]execution.ReasonCode)
-	encodedBytes := make([]int64, len(mutations))
+	encodedBytes := make([]admittedState, len(mutations))
+	held := &heldFrames{coordinator: coordinator}
 	var totals applyTotals
 	err := forEachChunk(ctx, len(mutations), coordinator.applyChunkItems(coordinator.budget.MaxStateMutations), func(chunk applyChunk) error {
 		chunkItems := mutations[chunk.start:chunk.end]
@@ -1976,6 +2151,7 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 		rejected := 0
 		chunkLegacyIDs := 0
 		var refusalRules []string
+		var refusalText string
 		if err == nil {
 			if err = result.Validate(); err == nil {
 				actual := make([]execution.StateKeyIdentity, len(result.Items))
@@ -1993,16 +2169,26 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 				for _, item := range result.Items {
 					switch item.Status {
 					case execution.StateAdmissionAccepted:
-						encodedBytes[position[item.Identity]] = int64(item.EncodedBytes)
+						encodedBytes[position[item.Identity]] = admittedState{bytes: int64(item.EncodedBytes), frame: item.Frame}
 						chunkBytes += int64(item.EncodedBytes)
 						chunkLegacyIDs += item.LegacyRecordIDs
 					case execution.StateAdmissionDeterministicInvalid:
 						deterministic[item.Identity] = item.ReasonCode
 						refusalRules = addRefusalRule(refusalRules, item.RefusalRule)
+						// The first sentence of the chunk: a Plan refused
+						// whole says the same one for every mutation.
+						if refusalText == "" {
+							refusalText = item.RefusalText
+						}
 						rejected++
 					default:
 						err = fmt.Errorf("state admission did not complete: %s", item.Status)
 					}
+				}
+				if err == nil {
+					// Reserved as the chunk comes back, not after the last
+					// one: the frames are held from here on.
+					held.keep(encodedBytes[chunk.start:chunk.end])
 				}
 			}
 		}
@@ -2013,13 +2199,15 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 		totals.keys += int64(len(chunkItems))
 		totals.bytes += chunkBytes
 		coordinator.observeChunk(ctx, observability.StageStateAdmission, operation, chunkStarted, started, observationResult, reason,
-			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err, nil, refusalRules, chunkLegacyIDs)
+			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err, nil, refusalRules,
+			observability.SanitizeErrorText(refusalText), chunkLegacyIDs)
 		return err
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("alarmd worker: state admission: %w", err)
+		held.release()
+		return nil, nil, nil, fmt.Errorf("alarmd worker: state admission: %w", err)
 	}
-	return deterministic, encodedBytes, nil
+	return deterministic, encodedBytes, held, nil
 }
 
 // applyState writes the accepted mutations of one Plan in Store-sized chunks
@@ -2032,7 +2220,8 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 // earlier chunks stay written, later chunks are not sent, and the Plan
 // neither advances State nor commits Progress until the Slot is re-run, when
 // the written keys read back ALREADY_APPLIED. encodedBytes, aligned with
-// mutations, only feeds the observation and may be nil.
+// mutations, feeds the observation and hands the store the frames admission
+// kept, and may be nil.
 func (coordinator *SlotExecutionCoordinator) applyState(
 	ctx context.Context,
 	operation execution.Operation,
@@ -2042,8 +2231,11 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 	retention []execution.StateRetentionRequirement,
 	horizon int64,
 	mutations []execution.StateMutation,
-	encodedBytes []int64,
+	encodedBytes []admittedState,
 ) (map[execution.StateKeyIdentity]execution.ReasonCode, error) {
+	if err := execution.EnterCommit(ctx, execution.SlotStageState); err != nil {
+		return nil, err
+	}
 	started := time.Now()
 	fenced, ok := coordinator.ports.State.(execution.FencedStateStore)
 	useFence := ok && fence.Validate(contractRef) == nil
@@ -2081,6 +2273,13 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 			expectedRevisions[mutation.Identity] = mutation.ExpectedBlobRevision
 		}
 		applyRequest := execution.StateApplyRequest{Contract: contractRef, Retention: retention, Items: chunkItems, HorizonSeconds: horizon}
+		if len(encodedBytes) == len(mutations) {
+			frames := make([]*execution.EncodedStateFrame, 0, len(chunkItems))
+			for _, admitted := range encodedBytes[chunk.start:chunk.end] {
+				frames = append(frames, admitted.frame)
+			}
+			applyRequest.Frames = frames
+		}
 		chunkStarted := time.Now()
 		var result execution.StateApplyResult
 		var err error
@@ -2159,8 +2358,8 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 		}
 		var chunkBytes int64
 		if len(encodedBytes) == len(mutations) {
-			for _, size := range encodedBytes[chunk.start:chunk.end] {
-				chunkBytes += size
+			for _, admitted := range encodedBytes[chunk.start:chunk.end] {
+				chunkBytes += admitted.bytes
 			}
 		}
 		observationResult := observability.Result(observability.ResultSuccess)
@@ -2190,9 +2389,8 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 			conflictFacts = &conflicts
 		}
 		coordinator.observeChunk(ctx, observability.StageStateApplied, operation, chunkStarted, started, observationResult, reason,
-			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes,
-				EnvelopeReadsApply: int64(result.EnvelopeReads)}, err, conflictFacts,
-			applyRefusalRules, chunkLegacyIDs)
+			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err, conflictFacts,
+			applyRefusalRules, "", chunkLegacyIDs)
 		return err
 	})
 	if !alreadyApplied.Empty() {
@@ -2283,11 +2481,46 @@ func (coordinator *SlotExecutionCoordinator) observeWithCounts(
 // emitObservation applies the shared result and reason defaults of internal
 // stage observations and hands the observation to the Observer; an observer
 // panic never fails the Slot.
+// observeOutputUnapplied writes the one line a Slot leaves when the broker
+// acknowledged its events and the ownership store then refused their State:
+// the Slot stops, Progress stays, and the next owner redoes the Slot from
+// Progress and sends the same events again. A refusal with no event before it
+// sent nothing and is not this; nor is a State write that failed for any other
+// reason, which the same owner retries.
+func (coordinator *SlotExecutionCoordinator) observeOutputUnapplied(
+	ctx context.Context,
+	operation execution.Operation,
+	accepted []execution.StateMutation,
+	eventsByState map[execution.StateKeyIdentity][]contract.TriggerEventV1,
+	withoutMessageByState map[execution.StateKeyIdentity][]execution.EventWithoutMessage,
+	err error,
+) {
+	refusal, refused := ownership.RefusalReason(err)
+	if !refused {
+		return
+	}
+	sent, _ := outputsOf(accepted, eventsByState, withoutMessageByState)
+	if len(sent) == 0 {
+		return
+	}
+	coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentState, Stage: observability.StageOutputUnapplied,
+		Result: observability.ResultFailed, Operation: observability.Operation(operation),
+		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonCode(refusal),
+		Counts: observability.Counts{Events: int64(len(sent))}, Err: err,
+	})
+}
+
 func (coordinator *SlotExecutionCoordinator) emitObservation(ctx context.Context, observation observability.Observation) {
 	if observation.Err != nil {
 		observation.Result = observability.Result(observability.ResultFailed)
 		if observation.ReasonCode == "" || observation.ReasonCode == observability.ReasonNone {
 			observation.ReasonCode = observability.ReasonInternalUnknown
+		}
+		// Any stage of a Slot stopped by its context's cancellation from
+		// above -- the process stopping or the Query Group leaving -- says so.
+		if observation.ReasonCode == observability.ReasonInternalUnknown && observability.CancelledFromAbove(ctx, observation.Err) {
+			observation.ReasonCode = observability.ReasonSlotCancelled
 		}
 	} else {
 		if observation.Result == "" {
@@ -2430,6 +2663,21 @@ func sequencingScope(
 	return execution.SequencingScope{Slot: header.Contract.Slot, StateKeys: states, GapKeys: gaps}
 }
 
+// generationRetentionOf is what the gap markers and no-data memory of these
+// due Plans live for when this Slot writes them: each Plan's own state
+// retention, the one their loads renew them to.
+func generationRetentionOf(dues ...execution.DuePlan) (execution.GenerationRetention, error) {
+	byPlan := make(map[execution.PlanIdentity][]execution.StateRetentionRequirement, len(dues))
+	for _, due := range dues {
+		retention, err := execution.DeriveStateRetentionRequirement(due.CompiledPlan)
+		if err != nil {
+			return execution.GenerationRetention{}, fmt.Errorf("alarmd worker: %w", err)
+		}
+		byPlan[due.Identity] = retention
+	}
+	return execution.GenerationRetention{ByPlan: byPlan}, nil
+}
+
 func duePlan(plans []execution.DuePlan, identity execution.PlanIdentity) (execution.DuePlan, bool) {
 	for _, plan := range plans {
 		if plan.Identity == identity {
@@ -2518,7 +2766,7 @@ func indexStatePreflight(result execution.StatePreflightResult) map[execution.St
 }
 
 // Called only after this invocation received and validated ProgressCommitted.
-func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string, coverage execution.HistoryCoverage, evidence *execution.ExecutionEvidence, primary *execution.PrimaryInputFact) {
+func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string, scope *observability.CompletionScopeFacts, coverage execution.HistoryCoverage, evidence *execution.ExecutionEvidence, primary *execution.PrimaryInputFact) {
 	if reason == "" {
 		reason = observability.ReasonNone
 	}
@@ -2539,11 +2787,22 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		Result: result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
-		ProgressCompletionCause: cause, ProgressCompletionReason: causeReason,
+		ProgressCompletionCause: cause, ProgressCompletionReason: causeReason, ProgressCompletionScope: scope,
 		HistoryCoverage: coverageFacts, ExecutionEvidence: executionEvidenceFacts(evidence),
 		PrimaryInput: primaryInputFacts(primary),
 		HeldBy:       heldBy,
 	})
+}
+
+// completionScopeFacts is where a completion's cause was found, for the
+// completion's observation; nil when there is no cause or no scope.
+func completionScopeFacts(attribution execution.CompletionAttribution) *observability.CompletionScopeFacts {
+	scope := attribution.Scope
+	if attribution.Cause == "" || !scope.HasPlan && scope.PhysicalQuery == "" {
+		return nil
+	}
+	return &observability.CompletionScopeFacts{TenantID: scope.Plan.TenantID, BusinessID: scope.Plan.BusinessID,
+		StrategyID: scope.Plan.StrategyID, LevelID: scope.LevelID, HasLevel: scope.HasLevel, PhysicalQuery: string(scope.PhysicalQuery)}
 }
 
 // executionEvidenceFacts carries what an earlier attempt got to onto the
@@ -2589,7 +2848,14 @@ func historyCoverageFacts(coverage execution.HistoryCoverage) *observability.His
 		Fresh:   coverage.Fresh, ShortFresh: coverage.ShortFresh,
 		Abnormal: coverage.Abnormal, AbnormalOnIncomplete: coverage.AbnormalOnIncomplete,
 		Unusable: coverage.Unusable, UnusableReason: coverage.UnusableReason,
-		End: coverage.End,
+		MissingMinutes:          append([]int64(nil), coverage.MissingMinutes...),
+		MissingMinutesTruncated: coverage.MissingMinutesTruncated,
+		ShortUnusable:           coverage.ShortUnusable,
+		End:                     coverage.End,
+		WindowStart:             coverage.WindowStart,
+	}
+	if len(facts.MissingMinutes) == 0 {
+		facts.MissingMinutes = nil
 	}
 	for _, window := range coverage.Windows {
 		facts.Windows = append(facts.Windows, observability.HistoryWindowFact{
@@ -2597,7 +2863,8 @@ func historyCoverageFacts(coverage execution.HistoryCoverage) *observability.His
 			Series: string(window.Series), Level: window.LevelID, Valid: window.Valid, Required: window.Required, End: window.End,
 			Missing: append([]int64(nil), window.Missing...), MissingTotal: window.MissingTotal,
 			Unusable: append([]int64(nil), window.Unusable...), UnusableTotal: window.UnusableTotal,
-			Guarded: window.Guarded, GuardReason: string(window.GuardReason), Fresh: window.Fresh,
+			Inactive: append([]int64(nil), window.Inactive...),
+			Guarded:  window.Guarded, GuardReason: string(window.GuardReason), Fresh: window.Fresh,
 		})
 	}
 	return facts
@@ -2611,7 +2878,8 @@ func primaryInputFacts(primary *execution.PrimaryInputFact) *observability.Prima
 	if primary == nil {
 		return nil
 	}
-	return &observability.PrimaryInputFacts{Completeness: string(primary.Completeness), DataState: string(primary.DataState)}
+	return &observability.PrimaryInputFacts{Completeness: string(primary.Completeness), DataState: string(primary.DataState),
+		EmptiedByTarget: primary.EmptiedByTarget, QuietWhenEmpty: primary.QuietWhenEmpty}
 }
 
 // configDriftCompletion builds the completion of a Slot whose activations moved
@@ -2633,9 +2901,9 @@ func primaryInputFacts(primary *execution.PrimaryInputFact) *observability.Prima
 // a fix to the first does not reach. Two places that must agree about an
 // invariant will eventually stop agreeing.
 // The cause is returned beside the kind rather than derived by the caller for
-// the reason DeriveCompletion gives: two functions that must agree about the
-// same Slot will eventually disagree, and then the page explains a completion
-// that did not happen. Here the two answers come from the one fact this
+// the reason DeriveCompletionAttribution derives both in one traversal: two
+// functions that must agree about the same Slot will eventually disagree, and
+// then the page explains a completion that did not happen. Here the two answers come from the one fact this
 // constructor already reads.
 //
 // With a usable primary the Slot completes as COMPLETED_WITH_PARTIAL_GAP and

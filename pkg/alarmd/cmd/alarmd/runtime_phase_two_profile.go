@@ -13,6 +13,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/automaxprocs/maxprocs"
 
@@ -84,15 +85,15 @@ func applyPhaseTwoGoRuntime(derived config.DerivedGoRuntime, setters goRuntimeBu
 // Match the pinned library's diagnostic formats without retaining raw values
 // from environment variables in startup evidence.
 func configurePhaseTwoCPUWith(set func(func(string, ...interface{})) error) (string, error) {
-	source := "runtime_default"
+	source := observability.CPUSourceRuntimeDefault
 	err := set(func(format string, _ ...interface{}) {
 		switch {
 		case strings.Contains(format, "Honoring GOMAXPROCS"):
-			source = "environment_override"
+			source = observability.CPUSourceEnvironmentOverride
 		case strings.Contains(format, "determined from CPU quota"):
-			source = "cpu_quota"
+			source = observability.CPUSourceQuota
 		case strings.Contains(format, "using minimum allowed GOMAXPROCS"):
-			source = "cpu_quota_minimum"
+			source = observability.CPUSourceQuotaMinimum
 		}
 	})
 	if err != nil {
@@ -115,9 +116,6 @@ func configurePhaseTwoCPUWith(set func(func(string, ...interface{})) error) (str
 // GOMAXPROCS came from, so a table printed outside the Pod says so itself
 // rather than passing the host's core count off as the container's.
 func printResolvedRuntimeFacts(cfg config.Config, stdout io.Writer) error {
-	if cfg.Input.Mode != config.InputModeGoAccess {
-		return nil
-	}
 	cpuSource, err := configurePhaseTwoCPU()
 	if err != nil {
 		return err
@@ -156,11 +154,42 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 			DynamicGroupKeyPrefix:     targetGroupPrefix(cfg),
 			PlatformSettingsKeyPrefix: cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix,
 		},
+		Linkd:     observability.RuntimeLinkdFacts{ConsoleConfigured: cfg.PhaseTwo.Linkd.ConsoleURL != ""},
+		UQCodec:   phaseTwoUQCodecFacts(),
+		Retention: phaseTwoRuntimeRetention(cfg),
+	}
+	for _, role := range cfg.EffectiveRoles() {
+		facts.Roles = append(facts.Roles, string(role))
 	}
 	// Digest the exact logged safe values, with the digest field still empty.
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-config-v2", facts)
 	facts.Digest = digest
 	return facts, err
+}
+
+func phaseTwoUQCodecFacts() observability.RuntimeUQCodecFacts {
+	return observability.RuntimeUQCodecFacts{Mode: "shared_schema", Scope: "ordinary_execute_non_polling"}
+}
+
+// phaseTwoRuntimeRetention is the retention lengths from the functions the
+// deployment is assembled with, and their inputs, so the facts cannot say
+// one thing while the Slot source and admission use another.
+func phaseTwoRuntimeRetention(cfg config.Config) observability.RuntimeRetentionFacts {
+	seconds := func(duration time.Duration) int64 { return int64(duration / time.Second) }
+	reserve := cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
+	return observability.RuntimeRetentionFacts{
+		CatalogSeconds:                    seconds(phaseTwoCatalogRetention(cfg)),
+		ObjectLimitSeconds:                seconds(phaseTwoObjectRetentionLimit(cfg)),
+		SnapshotMinimumSeconds:            seconds(phaseTwoSnapshotMinimumRetention(cfg, phaseTwoMaxSupportedEvaluationInterval-reserve)),
+		CatalogKeyCadenceSeconds:          seconds(phaseTwoMaxSupportedEvaluationInterval),
+		CatalogTTLSeconds:                 seconds(cfg.PhaseTwo.Control.CatalogTTL.Duration()),
+		RedisMaxTTLSeconds:                seconds(cfg.Redis.MaxTTL.Duration()),
+		RedisRestartMarginSeconds:         seconds(cfg.Redis.RestartMargin.Duration()),
+		DownstreamExecutionReserveSeconds: seconds(reserve),
+		PublicationDelayAllowanceSeconds:  seconds(phaseTwoPublicationDelayAllowance(cfg)),
+		MaxReplayAgeSeconds:               seconds(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration()),
+		PostRecoveryTerminalDelaySeconds:  seconds(phaseTwoPostRecoveryTerminalDelay(cfg)),
+	}
 }
 
 // phaseTwoRuntimeCapacity takes the container inputs as well as the
@@ -175,11 +204,8 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 	timelineCache := config.DeriveControlTimelineCache(inputs)
 	goRuntime := config.DeriveGoRuntime(inputs)
 	return observability.RuntimeCapacityFacts{
-		ExpiredRangeEnabled:       s.ExpiredRangeEnabled,
-		QueryUnavailableCooldown:  s.QueryUnavailableCooldown,
-		CanonicalEncoding:         cfg.PhaseTwo.Canonical.SelectedMode(),
-		CanonicalShadowStride:     cfg.PhaseTwo.Canonical.Stride(),
 		DerivedActiveExecutions:   s.ActiveExecutionLimit,
+		ActiveExecutionCeiling:    s.ActiveExecutionCeiling,
 		EffectiveActiveExecutions: min(s.ActiveExecutionLimit, s.ReadyQueueCapacity),
 		QueryPermits:              s.ProcessQueryPermits, RecoveryQueryPermits: s.RecoveryQueryPermits,
 		RedisPoolSize: cfg.Redis.PoolSize,
@@ -196,8 +222,7 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 		ControlTimelineCacheEntries: timelineCache.MaxEntries,
 		GoMemoryLimitBytes:          goRuntime.MemoryLimitBytes,
 		GoGCPercent:                 goRuntime.GCPercent,
-		EvaluatorMaxPlans:           cfg.Limits.Detect.MaxPlans, EvaluatorMaxRecords: cfg.Limits.Detect.MaxRecordsPerSeries,
-		EvaluatorMaxLevels: uint64(cfg.Limits.Compiler.MaxLevelsPerPlan), EvidenceBytes: cfg.TriggerLimits().MaxEvidenceBytesPerEvent,
+		EvaluatorMaxLevels:          uint64(cfg.Limits.Compiler.MaxLevelsPerPlan), EvidenceBytes: cfg.TriggerLimits().MaxEvidenceBytesPerEvent,
 		OutputMessageBytes: cfg.Kafka.TriggerEvent.MaxMessageBytes,
 		UQBodyBytes:        uq.MaxBodyBytes, UQSeriesBytes: uq.MaxSeriesBytes, UQSeries: uq.MaxSeries, UQRecords: uq.MaxRecords,
 	}

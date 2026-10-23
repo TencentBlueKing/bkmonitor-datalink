@@ -39,8 +39,7 @@ func TestHandleClientError(t *testing.T) {
 			name:             "context canceled for ES",
 			url:              "http://elasticsearch.example.com:9200/logs/_search",
 			inputError:       context.Canceled,
-			expectedContains: "查询 http://elasticsearch.example.com:9200/logs/_search 超时",
-			expectedStatus:   metadata.StorageTimeout,
+			expectedContains: "查询 http://elasticsearch.example.com:9200/logs/_search 被取消",
 		},
 		{
 			name:             "context deadline exceeded for Doris",

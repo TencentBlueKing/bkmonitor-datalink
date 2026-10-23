@@ -12,7 +12,7 @@ package contract
 import (
 	"bytes"
 	"math"
-	"sort"
+	"slices"
 	"strconv"
 	"sync"
 	"unicode/utf16"
@@ -333,8 +333,13 @@ func (s *canonicalStream) object(dst []byte, depth int) ([]byte, bool) {
 		break
 	}
 	key := func(m canonicalMember) []byte { return keys[m.keyStart:m.keyEnd] }
-	sort.Slice(members, func(i, j int) bool {
-		return bytes.Compare(key(members[i]), key(members[j])) < 0
+	// A typed sort. sort.Slice builds a reflective swapper for every object it
+	// sorts, and objects are what this runs on: on a profiled replica that
+	// swapper was the largest allocation site by count. The order is the same
+	// bytewise order; two keys compare equal only when they are one key, which
+	// is refused below whichever of them the sort put first.
+	slices.SortFunc(members, func(a, b canonicalMember) int {
+		return bytes.Compare(key(a), key(b))
 	})
 	dst = append(dst, '{')
 	for index, member := range members {

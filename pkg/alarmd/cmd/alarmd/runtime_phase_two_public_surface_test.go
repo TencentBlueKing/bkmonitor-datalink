@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -71,7 +72,7 @@ func restrictedCLIConfig(t *testing.T) (config.Config, *redis.Client) {
 	cfg := config.Default()
 	cfg.Redis.Address = address
 	cfg.PhaseTwo.Worker.ID = "test-worker"
-	cfg.CLI = config.CLIConfig{Enabled: true, EnvironmentID: "test", EnvironmentName: "Test",
+	cfg.CLI = config.CLIConfig{EnvironmentID: "test", EnvironmentName: "Test",
 		PublicBaseURL: "https://ob.example/alarmd/", AdminKey: strings.Repeat("k", 40)}
 	return cfg, client
 }
@@ -305,29 +306,22 @@ func cliInvoke(t *testing.T, h http.Handler, token, revision, op string) obchann
 		"params": map[string]any{}, "expected_catalog_revision": revision})
 }
 
-// Without a key, or with the CLI off -- the configuration a deployment with
+// Without a key -- the configuration a deployment with
 // no cli block renders -- the public surface is the API itself, byte for
 // byte, on every route but one; the public windows handler is not used. The
 // one is the diagnosis's first page, which keeps every byte and gains the
 // deployment section, so a deployment read without the CLI still sees its
 // Redis and Pod findings.
 func TestNoKeyLeavesThePublicSurfaceByteForByte(t *testing.T) {
-	enabled := config.Default()
-	// A CLI that comes up in full without a key: the case that must not
-	// restrict, not one that fails before the question is asked.
-	enabled.CLI = config.CLIConfig{Enabled: true, EnvironmentID: "test", EnvironmentName: "Test", PublicBaseURL: "https://ob.example/alarmd/"}
-	keyOff := config.Default()
-	keyOff.CLI = config.CLIConfig{EnvironmentID: "test", EnvironmentName: "Test", AdminKey: strings.Repeat("k", 40)}
-	for name, cfg := range map[string]config.Config{"no cli block": config.Default(), "CLI on without a key": enabled, "key with the CLI off": keyOff} {
+	// Everything the CLI needs but its key: without the key there is no CLI,
+	// whatever else is stated.
+	stated := config.Default()
+	stated.CLI = config.CLIConfig{EnvironmentID: "test", EnvironmentName: "Test", PublicBaseURL: "https://ob.example/alarmd/"}
+	for name, cfg := range map[string]config.Config{"no cli block": config.Default(), "everything but the key": stated} {
 		h, closeCLI, restricted := buildPhaseTwoCLI(cfg, standInAPI(), nil, nil, nil, func() *observability.RuntimeConfigFacts { return nil },
 			cliControlBinding{Incarnation: "test-process", PublicWindows: windowsStandIn})
 		if restricted {
 			t.Errorf("%s: restricted", name)
-		}
-		if name == "CLI on without a key" {
-			if got := publicCall(h, http.MethodGet, "/api/cli/auth/grants"); got.Code != http.StatusServiceUnavailable || !strings.Contains(got.Body.String(), "admin_not_configured") {
-				t.Fatalf("%s: the CLI did not come up: %d %s", name, got.Code, got.Body.String())
-			}
 		}
 		for _, path := range append(append([]string{}, restrictedRoutes...), "/api/health", "/api/windows") {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
@@ -364,7 +358,7 @@ func assertOnlyTheDeploymentSectionAdded(t *testing.T, name string, got, want *h
 // is not configured, and the standing names CLI_AUTH_UNAVAILABLE.
 func TestAFailedCLILeavesTheSurfaceOpenAndSaysSo(t *testing.T) {
 	cfg := config.Default()
-	cfg.CLI = config.CLIConfig{Enabled: true, EnvironmentID: "test", EnvironmentName: "Test",
+	cfg.CLI = config.CLIConfig{EnvironmentID: "test", EnvironmentName: "Test",
 		PublicBaseURL: "not a url", AdminKey: strings.Repeat("k", 40)}
 	h, closeCLI, restricted := buildPhaseTwoCLI(cfg, standInAPI(), nil, nil, nil, func() *observability.RuntimeConfigFacts { return nil },
 		cliControlBinding{Incarnation: "test-process", PublicWindows: windowsStandIn})
@@ -389,20 +383,18 @@ func TestThePublicSurfaceStanding(t *testing.T) {
 	key := strings.Repeat("k", 40)
 	for _, tc := range []struct {
 		name                    string
-		enabled                 bool
-		key, internal           string
+		key, listener           string
 		restricted              bool
 		unexported, unavailable bool
 	}{
-		{name: "no key", enabled: true},
-		{name: "key with the CLI off", key: key},
-		{name: "restricted with an internal listener", enabled: true, key: key, internal: "0.0.0.0:8081", restricted: true},
-		{name: "restricted without one", enabled: true, key: key, restricted: true, unexported: true},
-		{name: "CLI failed", enabled: true, key: key, internal: "0.0.0.0:8081", unavailable: true},
-		{name: "CLI failed without an internal listener", enabled: true, key: key, unavailable: true},
+		{name: "no key"},
+		{name: "restricted with an internal listener", key: key, listener: "0.0.0.0:8081", restricted: true},
+		{name: "restricted without one", key: key, restricted: true, unexported: true},
+		{name: "CLI failed", key: key, listener: "0.0.0.0:8081", unavailable: true},
+		{name: "CLI failed without an internal listener", key: key, unavailable: true},
 	} {
 		cfg := config.Default()
-		cfg.CLI.Enabled, cfg.CLI.AdminKey, cfg.HTTP.InternalListen = tc.enabled, tc.key, tc.internal
+		cfg.CLI.AdminKey, cfg.HTTP.InternalListen = tc.key, tc.listener
 		standing := publicSurfaceStandingOf(cfg, tc.restricted)
 		if standing.MetricsUnexported != tc.unexported || standing.CLIUnavailable != tc.unavailable {
 			t.Errorf("%s: %+v", tc.name, standing)
@@ -444,9 +436,38 @@ func TestTheProductionListenerIsSettledByTheRuntime(t *testing.T) {
 		}
 	}
 	cfg := config.Default()
-	cfg.CLI.Enabled, cfg.CLI.AdminKey = true, strings.Repeat("k", 40)
+	cfg.CLI.AdminKey = strings.Repeat("k", 40)
 	if !httpSurfaceOf(cfg).Restricted {
 		t.Error("the configuration's request does not reach the listener")
+	}
+}
+
+// The login page is public, and it names where the administrator key is
+// kept so the command to read it can be pasted as it stands. The production
+// listener carries the configuration's names to it -- the namespace, the
+// Secret and its key -- and never the key itself, in any spelling.
+func TestTheLoginPageNamesTheAdminKeySecretButNeverTheKey(t *testing.T) {
+	const key = "sample-admin-key-0123456789abcdef0123456789abcdef"
+	cfg := config.Default()
+	cfg.CLI.AdminKey = key
+	cfg.CLI.AdminKeySecret = config.CLIAdminKeySecret{Namespace: "ops-alarmd", Name: "alarmd-cli-admin", Key: "admin-key"}
+	runtime, err := defaultPhaseTwoApplicationDependencies().newHTTP(metric.NewRecorder(metric.BuildInfo{}),
+		observability.NewHealthTracker(observability.HealthSnapshot{}), httpSurfaceOf(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/cli", "/cli.html"} {
+		got := publicCall(runtime.(*httpservice.Server).Handler(), http.MethodGet, path)
+		page := html.UnescapeString(got.Body.String())
+		if got.Code != http.StatusOK ||
+			!strings.Contains(page, `kubectl -n ops-alarmd get secret alarmd-cli-admin -o jsonpath='{.data.admin-key}' | base64 -d`) {
+			t.Fatalf("%s = %d: the page does not give this deployment's command", path, got.Code)
+		}
+		for _, spelling := range []string{key, base64.StdEncoding.EncodeToString([]byte(key)), key[:16]} {
+			if strings.Contains(page, spelling) || strings.Contains(got.Body.String(), spelling) {
+				t.Fatalf("%s carries the administrator key (%q)", path, spelling)
+			}
+		}
 	}
 }
 

@@ -58,7 +58,7 @@ type phaseTwoLiveness struct {
 	judging    bool
 	loops      map[string]*livenessLoop
 	slots      int
-	executions map[uint64]time.Time
+	executions map[uint64]livenessExecution
 	nextToken  uint64
 	lastReturn time.Time
 	reported   map[string]bool
@@ -71,7 +71,7 @@ type livenessLoop struct {
 
 func newPhaseTwoLiveness(now func() time.Time, recorder *metric.Recorder) *phaseTwoLiveness {
 	liveness := &phaseTwoLiveness{now: now, recorder: recorder, judging: true,
-		loops: make(map[string]*livenessLoop), executions: make(map[uint64]time.Time), reported: make(map[string]bool)}
+		loops: make(map[string]*livenessLoop), executions: make(map[uint64]livenessExecution), reported: make(map[string]bool)}
 	recorder.SetLivenessSource(liveness.reading)
 	return liveness
 }
@@ -130,16 +130,42 @@ func (liveness *phaseTwoLiveness) setSlots(slots int) {
 	liveness.mu.Unlock()
 }
 
+// livenessExecution is one execution in a slot: the deadline it was queued
+// by, and how to read the deadline it runs under once it has one.
+type livenessExecution struct {
+	queued time.Time
+	own    func() time.Time
+}
+
+// deadline is what the execution is judged by: the later of the deadline it
+// was queued by and its own. A replay of a taken-over Slot is queued by its
+// frozen Slot's first-attempt deadline and runs minutes after it, under the
+// deadline access derives from its arrival; judged by the queued one alone,
+// every late replay read as past its deadline. An execution with no deadline
+// of its own yet (in its source, or a recovery before access derived one)
+// keeps the queued one, so the probe still sees every slot wedged there.
+func (execution livenessExecution) deadline() time.Time {
+	deadline := execution.queued
+	if execution.own != nil {
+		if own := execution.own(); own.After(deadline) {
+			deadline = own
+		}
+	}
+	return deadline
+}
+
 // executionStarted records an execution entering a slot under the deadline
-// it was queued by; the zero deadline is one the probe cannot judge.
-func (liveness *phaseTwoLiveness) executionStarted(deadline time.Time) uint64 {
+// it was queued by, and own, which reads the deadline it runs under (zero
+// while it has none); a zero deadline both ways is one the probe cannot
+// judge.
+func (liveness *phaseTwoLiveness) executionStarted(queued time.Time, own func() time.Time) uint64 {
 	if liveness == nil {
 		return 0
 	}
 	liveness.mu.Lock()
 	defer liveness.mu.Unlock()
 	liveness.nextToken++
-	liveness.executions[liveness.nextToken] = deadline
+	liveness.executions[liveness.nextToken] = livenessExecution{queued: queued, own: own}
 	return liveness.nextToken
 }
 
@@ -188,7 +214,8 @@ func (liveness *phaseTwoLiveness) executionsStuckSinceLocked() (time.Time, bool)
 		return time.Time{}, false
 	}
 	var since time.Time
-	for _, deadline := range liveness.executions {
+	for _, execution := range liveness.executions {
+		deadline := execution.deadline()
 		if deadline.IsZero() {
 			return time.Time{}, false
 		}
@@ -230,8 +257,8 @@ func (liveness *phaseTwoLiveness) reading() metric.LivenessReading {
 	for loop, state := range liveness.loops {
 		reading.TurnAge[loop] = now.Sub(state.last)
 	}
-	for _, deadline := range liveness.executions {
-		if !deadline.IsZero() && now.After(deadline.Add(executionPastDeadlineGrace)) {
+	for _, execution := range liveness.executions {
+		if deadline := execution.deadline(); !deadline.IsZero() && now.After(deadline.Add(executionPastDeadlineGrace)) {
 			reading.ExecutionsPastDeadline++
 		}
 	}

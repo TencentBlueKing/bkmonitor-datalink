@@ -21,7 +21,8 @@ import (
 // process opened and the set does not carry is held, counted as the
 // replica's own held, and kept whole -- with the other strategy whose set
 // carries the same fingerprint named, which is what a lookup keyed
-// differently from the sets looks like.
+// differently from the sets looks like. (The next calibration then lets the
+// alert go from the record, as one the set shows closed.)
 func TestTheGateSaysWhichHeldLookupsWereItsOwnAlerts(t *testing.T) {
 	ours := sentFingerprints(3)
 	c := &clock{at: time.Unix(1700000000, 0)}
@@ -32,16 +33,19 @@ func TestTheGateSaysWhichHeldLookupsWereItsOwnAlerts(t *testing.T) {
 	options.Reconciler = reconcilerFunc(func(_ context.Context, key StrategyKey) (Reconciliation, error) {
 		return Reconciliation{Members: append([]string(nil), sets[key]...)}, nil
 	})
-	f := &disjointFixture{c: c, cache: mustIndex(t, options)}
+	f := &setFixture{c: c, cache: mustIndex(t, options)}
 	if err := f.cache.SetTracked([]StrategyKey{keyA, keyB}); err != nil {
 		t.Fatal(err)
 	}
-	f.cache.Refresh(context.Background())
+	// The first read and calibration come after the sends, so they still
+	// hold the alerts as just sent; past the retention a read alone, with no
+	// calibration since, no longer counts them as sent.
 	f.send(ours...)
-	c.advance(SentConfirmAfter + time.Second)
+	c.advance(time.Second)
+	f.cache.Refresh(context.Background())
+	c.advance(options.LocalRetention + time.Second)
 	for _, key := range []StrategyKey{keyA, keyB} {
 		f.cache.indexChanged(key)
-		f.cache.RequestReconcile(key)
 	}
 	f.cache.Refresh(context.Background())
 
@@ -100,19 +104,11 @@ func TestTheGateSaysWhichHeldLookupsWereItsOwnAlerts(t *testing.T) {
 	}
 }
 
-// Both copies say since when the own split counts: it starts with the
-// process, whichever copy the deployment runs.
-func TestBothCopiesSaySinceWhenTheOwnSplitCounts(t *testing.T) {
+// The copy says since when the own split counts: it starts with the process.
+func TestTheCopySaysSinceWhenTheOwnSplitCounts(t *testing.T) {
 	c := &clock{at: time.Unix(1700000000, 0)}
-	plain, err := New(Options{Source: &fakeSource{}, Now: c.now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := plain.Stats().GateSince; !got.Equal(c.at) {
-		t.Fatalf("plain copy gate since %v, want its start %v", got, c.at)
-	}
 	indexed := mustIndex(t, indexOptions(c))
 	if got := indexed.Stats().GateSince; !got.Equal(c.at) {
-		t.Fatalf("index copy gate since %v, want its start %v", got, c.at)
+		t.Fatalf("gate since %v, want the copy's start %v", got, c.at)
 	}
 }

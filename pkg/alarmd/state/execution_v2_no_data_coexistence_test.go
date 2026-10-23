@@ -27,16 +27,26 @@ func coexistenceApplyVersion(rounds int64) execution.ApplyVersion {
 	return version
 }
 
-// wholeMemoryRecord is what a build that only knows the single-value shape
-// leaves behind.
-func wholeMemoryRecord(
-	t *testing.T, revision uint64, version execution.ApplyVersion, groups ...execution.NoDataGroupMemory,
-) []byte {
+// legacyNoDataKey is where builds before the per-group record kept a Plan's
+// single-value no-data memory. Nothing writes or reads it any more; tests seed
+// it to show it is left alone.
+func legacyNoDataKey(t *testing.T) string {
 	t.Helper()
-	encoded, err := json.Marshal(noDataEnvelope{
-		Schema: executionNoDataSchema, Version: execution.NoDataMemorySchemaV1, Identity: noDataIdentityV2(),
-		MarkerRevision: revision, ApplyVersion: version, MutationDigest: "blob-digest",
-		ScheduleRevision: "plan-r1", RosterVersion: "TARGET_STATIC/1", Groups: groups,
+	identity := noDataIdentityV2()
+	if err := validatePlanIdentity("alarmd", identity.Plan, identity.StateGeneration); err != nil {
+		t.Fatal(err)
+	}
+	return executionKey("alarmd", "nodata", identity.Plan, identity.StateGeneration, "")
+}
+
+// legacyWholeMemoryRecord is a single-value record of the shape those builds
+// wrote, at the given apply version.
+func legacyWholeMemoryRecord(t *testing.T, version execution.ApplyVersion, groups ...execution.NoDataGroupMemory) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]any{
+		"schema": executionNoDataSchema, "version": execution.NoDataMemorySchemaV1, "identity": noDataIdentityV2(),
+		"marker_revision": 4, "apply_version": version, "mutation_digest": "blob-digest",
+		"schedule_revision": "plan-r1", "roster_version": "TARGET_STATIC/1", "groups": groups,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -87,88 +97,32 @@ func loadOneNoDataMemory(t *testing.T, store *ExecutionStore) execution.NoDataMe
 	return loaded.Items[0]
 }
 
-// During a rollout a Plan can have both records, and which one is its memory is
-// decided by which round wrote it - not by which shape it is in.
-//
-// A build that writes the per-group record never writes the other one, so it is
-// tempting to read the per-group one whenever it exists. That is wrong in the
-// direction that loses data: a Plan can move back to a build that only knows
-// the single-value shape - a rollback, or a rebalance onto a worker not yet
-// upgraded - and that build then writes a record newer than the one left in the
-// hash. Reading the hash because it is the new shape would silently discard
-// every round that happened while the Plan was over there.
-func TestTheNewerOfTheTwoRecordsIsTheMemory(t *testing.T) {
-	blobKey, err := PlanNoDataKeyV2("alarmd", noDataIdentityV2())
-	if err != nil {
-		t.Fatal(err)
-	}
+// The single-value record builds before the per-group one wrote is not read,
+// newer or not: no build since writes it, the previous upstream snapshot
+// included. A Plan holding only that record reads as having no memory, and one
+// holding both reads the per-group record.
+func TestASingleValueRecordIsNotRead(t *testing.T) {
 	older, newer := coexistenceApplyVersion(0), coexistenceApplyVersion(1)
-
-	for _, test := range []struct {
-		name       string
-		blob       []byte
-		hash       map[string][]byte
-		wantGroups []string
-	}{
-		{
-			name: "the per-group record is newer",
-			blob: wholeMemoryRecord(t, 4, older, execution.NoDataGroupMemory{GroupKey: "from-blob", FirstAbsent: 900}),
-			hash: perGroupRecord(t, 2, newer, 940,
-				execution.NoDataGroupMemory{GroupKey: "from-hash", FirstAbsent: 920}),
-			wantGroups: []string{"from-hash"},
-		},
-		{
-			name: "the single-value record is newer, because the Plan went back to an older build",
-			blob: wholeMemoryRecord(t, 4, newer, execution.NoDataGroupMemory{GroupKey: "from-blob", FirstAbsent: 900}),
-			hash: perGroupRecord(t, 2, older, 940,
-				execution.NoDataGroupMemory{GroupKey: "from-hash", FirstAbsent: 920}),
-			wantGroups: []string{"from-blob"},
-		},
-		{
-			name:       "only the single-value record exists, which is every Plan on the first round after the upgrade",
-			blob:       wholeMemoryRecord(t, 4, older, execution.NoDataGroupMemory{GroupKey: "from-blob", FirstAbsent: 900}),
-			hash:       nil,
-			wantGroups: []string{"from-blob"},
-		},
-		{
-			name:       "only the per-group record exists, which is every Plan once it has written once",
-			blob:       nil,
-			hash:       perGroupRecord(t, 2, older, 940, execution.NoDataGroupMemory{GroupKey: "from-hash", FirstAbsent: 920}),
-			wantGroups: []string{"from-hash"},
-		},
-		{
-			name: "both state the same round, which one Slot cannot do",
-			blob: wholeMemoryRecord(t, 4, older, execution.NoDataGroupMemory{GroupKey: "from-blob", FirstAbsent: 900}),
-			hash: perGroupRecord(t, 2, older, 940,
-				execution.NoDataGroupMemory{GroupKey: "from-hash", FirstAbsent: 920}),
-			// The shape the fleet is moving to wins the tie. It cannot happen
-			// with one Slot per round, and a tie that had no rule would be
-			// decided by whichever read came back first.
-			wantGroups: []string{"from-hash"},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			backend := &casMemoryBackend{values: make(map[string][]byte)}
-			if test.blob != nil {
-				backend.values[blobKey] = test.blob
-			}
-			if test.hash != nil {
-				backend.hashes = map[string]map[string][]byte{noDataHashKey(t): test.hash}
-			}
-			snapshot := loadOneNoDataMemory(t, generationStore(t, backend))
-			if snapshot.Status != execution.NoDataMemoryFound {
-				t.Fatalf("status = %q, want the memory found", snapshot.Status)
-			}
-			if len(snapshot.Groups) != len(test.wantGroups) {
-				t.Fatalf("groups = %+v, want %v", snapshot.Groups, test.wantGroups)
-			}
-			for index, want := range test.wantGroups {
-				if snapshot.Groups[index].GroupKey != want {
-					t.Fatalf("groups = %+v, want %v: the wrong record was read", snapshot.Groups, test.wantGroups)
-				}
-			}
-		})
-	}
+	t.Run("only the single-value record", func(t *testing.T) {
+		backend := &casMemoryBackend{values: map[string][]byte{
+			legacyNoDataKey(t): legacyWholeMemoryRecord(t, older, execution.NoDataGroupMemory{GroupKey: "from-blob", FirstAbsent: 900}),
+		}}
+		snapshot := loadOneNoDataMemory(t, generationStore(t, backend))
+		if snapshot.Status != execution.NoDataMemoryMissing || snapshot.Representation != execution.NoDataRepresentationNone {
+			t.Fatalf("snapshot = %s %s, want MISSING read as NONE", snapshot.Status, snapshot.Representation)
+		}
+	})
+	t.Run("a newer single-value record beside the per-group one", func(t *testing.T) {
+		backend := &casMemoryBackend{values: map[string][]byte{
+			legacyNoDataKey(t): legacyWholeMemoryRecord(t, newer, execution.NoDataGroupMemory{GroupKey: "from-blob", FirstAbsent: 900}),
+		}}
+		backend.hashes = map[string]map[string][]byte{noDataHashKey(t): perGroupRecord(t, 2, older, 940,
+			execution.NoDataGroupMemory{GroupKey: "from-hash", FirstAbsent: 920})}
+		snapshot := loadOneNoDataMemory(t, generationStore(t, backend))
+		if snapshot.Status != execution.NoDataMemoryFound || len(snapshot.Groups) != 1 || snapshot.Groups[0].GroupKey != "from-hash" {
+			t.Fatalf("snapshot = %+v, want the per-group record", snapshot)
+		}
+	})
 }
 
 // A group written as present reads back with the round the header names as its
@@ -282,7 +236,7 @@ func TestAWriteReadsTheHeaderAndNotTheRecord(t *testing.T) {
 	}
 	backend.commands = nil
 
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(),
 		Items: []execution.PlanNoDataMutation{noDataMutationFrom(t, execution.PlanNoDataMemoryUpdate{
 			DerivedFrom: execution.NoDataRepresentationPerGroup, LoadedApplyVersion: coexistenceApplyVersion(0),

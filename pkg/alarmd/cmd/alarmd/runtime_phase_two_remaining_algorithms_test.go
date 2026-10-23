@@ -125,7 +125,7 @@ func TestProductionRemainingAlgorithms(t *testing.T) {
 							defer mu.Unlock()
 							observations = append(observations, observability.NormalizeObservation(observation))
 						}),
-						OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
+						PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil }),
 					})
 				if err != nil {
 					t.Fatal(err)

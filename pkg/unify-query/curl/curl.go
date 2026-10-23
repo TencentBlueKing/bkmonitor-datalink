@@ -21,6 +21,7 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -104,8 +105,10 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}()
 
 	client := http.Client{
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-		Timeout:   opt.Timeout,
+		Transport: otelhttp.NewTransport(http.DefaultTransport, otelhttp.WithFilter(func(req *http.Request) bool {
+			return !credential.HasURLCredentials(req.URL.String())
+		})),
+		Timeout: opt.Timeout,
 	}
 
 	if opt.UrlPath == "" {
@@ -118,6 +121,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	req, err := http.NewRequestWithContext(ctx, method, opt.UrlPath, bytes.NewBuffer(opt.Body))
 	if err != nil {
+		err = fmt.Errorf("invalid request URL")
 		return size, metadata.NewMessage(
 			metadata.MsgHttpCurl,
 			"%s",
@@ -130,12 +134,13 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}
 
 	span.Set("req-http-method", method)
-	span.Set("req-http-path", opt.UrlPath)
+	safeURL := credential.RedactURL(opt.UrlPath)
+	span.Set("req-http-path", safeURL)
 
 	metadata.NewMessage(
 		metadata.MsgHttpCurl,
 		"%s [%s] body_bytes: %d",
-		method, opt.UrlPath, len(opt.Body),
+		method, safeURL, len(opt.Body),
 	).Info(ctx)
 
 	for k, v := range opt.Headers {
@@ -163,11 +168,13 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return size, metadata.NewMessage(
+		// 文本照旧，后端的状态码作为类型化原因保留，供失败响应按状态分类。
+		statusErr := metadata.NewMessage(
 			metadata.MsgHttpCurl,
 			"http code error: %s in %s",
-			resp.Status, opt.UrlPath,
+			resp.Status, safeURL,
 		).Error(ctx, err)
+		return size, metadata.ErrorWithCauses(statusErr.Error(), &metadata.BackendStatusError{Status: resp.StatusCode})
 	}
 
 	readBody = true

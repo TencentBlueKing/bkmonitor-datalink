@@ -31,9 +31,9 @@ func TestARefusedNoDataMemoryWriteLineNamesTheComparisonItLost(t *testing.T) {
 	observer := refusalLogObserver(&output, t)
 	observer.Observe(context.Background(), Observation{
 		Component: ComponentState, Stage: StageNoDataMemoryWritten, Result: ResultDegraded,
-		Trace: TraceFields{StrategyID: "11550", BusinessID: "10"},
+		Trace: TraceFields{StrategyID: "859", BusinessID: "10"},
 		NoDataMemoryWrite: &NoDataMemoryWriteFacts{
-			Outcome: "CONFLICT", Stored: false, DerivedFrom: "WHOLE_MEMORY",
+			Outcome: "CONFLICT", Stored: false, DerivedFrom: "PER_GROUP",
 			Conflict: &NoDataMemoryConflictFacts{
 				Kind: "MISSING", Persisted: "stored-digest", Proposed: "proposed-digest",
 				ExpectedRevision: 7, StoredRevision: 0,
@@ -52,12 +52,12 @@ func TestARefusedNoDataMemoryWriteLineNamesTheComparisonItLost(t *testing.T) {
 		"no_data_memory_outcome":           "CONFLICT",
 		"no_data_memory_stored":            false,
 		"no_data_memory_conflict":          "MISSING",
-		"no_data_memory_derived_from":      "WHOLE_MEMORY",
+		"no_data_memory_derived_from":      "PER_GROUP",
 		"no_data_memory_expected_revision": float64(7),
 		"no_data_memory_stored_revision":   float64(0),
 		"no_data_memory_persisted_digest":  "stored-digest",
 		"no_data_memory_proposed_digest":   "proposed-digest",
-		"strategy_id":                      "11550",
+		"strategy_id":                      "859",
 	} {
 		if line[field] != want {
 			t.Fatalf("line[%q] = %#v, want %#v; a refusal nobody can read is a refusal nobody can act "+

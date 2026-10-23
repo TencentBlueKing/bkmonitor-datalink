@@ -19,29 +19,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// The live error chain of a client that refuses to send: the worker's
-// wrapping, the sink's, the decision sink's batch description, and the
-// client's own configuration error at the end.
-const clientRefusalText = "alarmd worker: acknowledge events: kafka trigger event sink: publish batch: kafka decision sink: send batch: " +
-	"1 of 1 messages failed, first: kafka: Failed to produce message to topic alarmd_event: kafka: invalid configuration " +
-	"(Producing headers requires Kafka at least v0.11) (kafka: Failed to deliver 1 messages.)"
-
-// The live error chain of a broker that could not be reached.
-const brokerErrorText = "alarmd worker: acknowledge events: kafka trigger event sink: publish batch: kafka decision sink: send batch: " +
-	"kafka: client has run out of available brokers to talk to (Is your cluster reachable?)"
-
 // outputFailingObject runs an object through rounds whose event write fails
-// with the given words, the way the coordinator emits them: the event_acked
-// observation carrying the error and the round's reason, then the terminal
-// naming the reason alone.
-func outputFailingObject(t *testing.T, text string) Anomaly {
+// with the given words and kind, the way the coordinator emits them: the
+// event_acked observation carrying the error, the round's reason and the
+// kind the sink's error said, then the terminal naming the reason alone.
+func outputFailingObject(t *testing.T, text, kind string) Anomaly {
 	t.Helper()
 	tracker := newTracker(t, &clock{at: now})
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		slot := int64(1_700_000_000 + 60*round)
 		tracker.Observe(context.Background(), observability.Observation{
 			Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
-			Result: observability.ResultFailed, ReasonCode: "OUTPUT_ACK_UNKNOWN", Err: errors.New(text),
+			Result: observability.ResultFailed, ReasonCode: "OUTPUT_ACK_UNKNOWN", Err: errors.New(text), OutputFailureKind: kind,
 			Trace: observability.TraceFields{QueryGroupKey: "qg-output", EvaluationTime: slot},
 		})
 		tracker.Observe(context.Background(), observability.Observation{
@@ -57,78 +46,78 @@ func outputFailingObject(t *testing.T, text string) Anomaly {
 	return anomalies[0]
 }
 
-// The words of a failed event write travel to the row as its failure, at the
-// output stage, and decide the reading: a client that refused to send is this
-// deployment's own defect with no dependency named, a broker that did not
-// answer is the dependency's. Both arrive under the same code, and read by
-// the code alone the two were one line for an afternoon.
-func TestAFailedEventWriteIsReadByItsWordsNotItsCode(t *testing.T) {
-	refused := outputFailingObject(t, clientRefusalText)
-	if refused.Failure == nil || refused.Failure.Stage != observability.QueryFailureStageOutput ||
-		refused.Failure.Category != observability.QueryFailureCategoryOutput || refused.Failure.Code != "OUTPUT_ACK_UNKNOWN" {
-		t.Fatalf("failure = %+v, want the output stage under the round's code", refused.Failure)
-	}
-	if !strings.Contains(refused.Failure.Text, "Producing headers requires Kafka at least v0.11") {
-		t.Fatalf("failure text = %q, want the client's own sentence", refused.Failure.Text)
-	}
-	if refused.Internal == nil || refused.Internal.Text != refused.Failure.Text {
-		t.Fatalf("internal failure = %+v, want the refusal filed as this deployment's own", refused.Internal)
-	}
-	if refused.Finding.Check != CheckDefect || refused.Finding.Owner != OwnerAlarmd {
-		t.Fatalf("finding = %+v, want the client's refusal on the defect line, ours", refused.Finding)
-	}
-	if b := refused.Blocked; b == nil || b.Stage != StageCommit || b.Class != ClassContract || b.Dependency != DependencyNone ||
-		b.DependencyEvidence != OutputFailureClientRejected || b.Code != "OUTPUT_ACK_UNKNOWN" {
-		t.Fatalf("blocked = %+v, want commit / contract / no dependency, evidence client_rejected", refused.Blocked)
-	}
-
-	unreachable := outputFailingObject(t, brokerErrorText)
-	if unreachable.Internal != nil {
-		t.Fatalf("a broker that did not answer was filed as this deployment's own: %+v", unreachable.Internal)
-	}
-	if unreachable.Finding.Check != CheckDependencyDown {
-		t.Fatalf("finding = %+v, want the broker on the dependency line", unreachable.Finding)
-	}
-	if b := unreachable.Blocked; b == nil || b.Stage != StageCommit || b.Class != ClassUnavailable || b.Dependency != DependencyKafka ||
-		b.DependencyEvidence != OutputFailureBrokerError {
-		t.Fatalf("blocked = %+v, want commit / unavailable / kafka, evidence broker_error", unreachable.Blocked)
-	}
-
-	// Words nobody has a signature for: not the broker's by default, and not
-	// ours either -- unlocated, and the code's own line.
-	strange := outputFailingObject(t, "alarmd worker: acknowledge events: something new happened")
-	if b := strange.Blocked; b == nil || b.DependencyEvidence != OutputFailureUnknown || b.Dependency != DependencyUnlocated {
-		t.Fatalf("blocked = %+v, want evidence unknown, dependency unlocated", strange.Blocked)
-	}
-	if strange.Finding.Check != CheckDependencyDown {
-		t.Fatalf("finding = %+v, want the code's own line when the words decide nothing", strange.Finding)
+// A failed event write is read by the kind the sink's error carried, not by
+// its words and not by its code: every case below arrives under the same
+// OUTPUT_ACK_UNKNOWN, and its words are chosen to say the opposite of its
+// kind - the words used to decide, and a Redis's EOF read as Kafka's.
+func TestAFailedEventWriteIsReadByItsKindNotItsWords(t *testing.T) {
+	for _, test := range []struct {
+		name, text, kind string
+		dependency       Dependency
+		class            Class
+		ours             bool
+	}{
+		{"the client refused, words of a broker", "kafka server: Request was for a topic or partition that does not exist",
+			observability.OutputFailureClientRejected, DependencyNone, ClassContract, true},
+		{"no answer, words of a client refusal", "kafka: invalid configuration (Producing headers requires Kafka at least v0.11)",
+			observability.OutputFailureAckUnknown, DependencyKafka, ClassUnavailable, false},
+		{"the broker answered no", "kafka server: The client is not authorized to access this topic.",
+			observability.OutputFailureBrokerRefused, DependencyKafka, ClassUnavailable, false},
+		{"the sink was not open", "output sink is not open",
+			observability.OutputFailureSinkNotOpen, DependencyKafka, ClassUnavailable, false},
+		{"the snapshot store, words of a broker connection", "legacy conversion failed: EOF",
+			observability.OutputFailureSnapshotStore, DependencyRedis, ClassUnavailable, false},
+		{"no kind, words of a broker connection", "dial tcp 192.0.2.10:9092: connect: connection refused",
+			"", DependencyUnlocated, ClassUnlocated, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			row := outputFailingObject(t, test.text, test.kind)
+			if row.Failure == nil || row.Failure.Stage != observability.QueryFailureStageOutput || row.Failure.Code != "OUTPUT_ACK_UNKNOWN" ||
+				row.Failure.Text != test.text {
+				t.Fatalf("failure = %+v, want the output stage under the round's code with the words kept for the reader", row.Failure)
+			}
+			if row.Failure.Kind != test.kind {
+				t.Fatalf("failure kind %q, want %q", row.Failure.Kind, test.kind)
+			}
+			want := test.kind
+			if want == "" {
+				want = observability.OutputFailureUnknown
+			}
+			b := row.Blocked
+			if b == nil || b.Stage != StageCommit || b.Dependency != test.dependency || b.Class != test.class || b.DependencyEvidence != want {
+				t.Fatalf("blocked = %+v, want commit / %s / %s, evidence %s", b, test.class, test.dependency, want)
+			}
+			if (row.Internal != nil) != test.ours {
+				t.Fatalf("internal failure = %+v, want filed as this deployment's own: %v", row.Internal, test.ours)
+			}
+			wantCheck := CheckDependencyDown
+			if test.ours {
+				wantCheck = CheckDefect
+			}
+			if row.Finding.Check != wantCheck {
+				t.Fatalf("finding = %+v, want %s", row.Finding, wantCheck)
+			}
+		})
 	}
 }
 
-// The reading's vocabulary is closed and every word has a producer: each
-// signature list reaches its kind, and the evidence list is exactly the two
-// naming words plus the three kinds.
-func TestOutputFailureKindsAreClosedAndEachHasASignature(t *testing.T) {
-	for _, signature := range outputClientSignatures {
-		if OutputFailureKind("x "+signature+" y") != OutputFailureClientRejected {
-			t.Errorf("client signature %q does not read as client_rejected", signature)
+// The reading's vocabulary is closed: the evidence list is the two naming
+// words and the sink's kinds, and the word the text reading used for a
+// broker is gone.
+func TestTheOutputEvidenceWordsAreClosed(t *testing.T) {
+	want := append([]string{"code", "text"}, observability.OutputFailureKinds...)
+	if strings.Join(DependencyEvidences, ",") != strings.Join(want, ",") {
+		t.Fatalf("DependencyEvidences = %v, want %v", DependencyEvidences, want)
+	}
+	for _, word := range DependencyEvidences {
+		if word == "broker_error" {
+			t.Fatal("the retired text-reading word broker_error is still an evidence word")
 		}
 	}
-	for _, signature := range outputBrokerSignatures {
-		if OutputFailureKind("x "+signature+" y") != OutputFailureBrokerError {
-			t.Errorf("broker signature %q does not read as broker_error", signature)
+	for kind := range outputFailureReading {
+		if !validOutputFailureKind(kind) || kind == observability.OutputFailureUnknown {
+			t.Errorf("reading table names %q, which is not a located kind", kind)
 		}
-	}
-	if OutputFailureKind("") != OutputFailureUnknown || OutputFailureKind("nothing anyone wrote") != OutputFailureUnknown {
-		t.Error("words without a signature must read unknown")
-	}
-	// A refused batch carries both a delivery failure and the refusal; the
-	// refusal is the cause and wins.
-	if OutputFailureKind(clientRefusalText) != OutputFailureClientRejected {
-		t.Error("a delivery failure wrapping a client refusal must read as the refusal")
-	}
-	if len(DependencyEvidences) != 5 {
-		t.Fatalf("DependencyEvidences = %v, want code, text and the three kinds", DependencyEvidences)
 	}
 }
 
@@ -179,9 +168,6 @@ func TestTheSinksOwnRefusalIsCarriedAsFactsAndDecidesTheKind(t *testing.T) {
 		{contract.ReasonOutputClientRejected, "Message was too large, the client refused it before sending", ClassConfig},
 	} {
 		t.Run(test.word, func(t *testing.T) {
-			if OutputFailureKind(test.sentence) != OutputFailureUnknown {
-				t.Fatalf("fixture sentence %q matches a signature; the test needs one no signature knows", test.sentence)
-			}
 			row := statedRefusal(t, test.word, test.sentence)
 			if row.Failure == nil || row.Failure.Code != test.word || row.Failure.Text != test.sentence {
 				t.Fatalf("failure = %+v, want the sink's word and its bare sentence, not the chain", row.Failure)
@@ -191,12 +177,41 @@ func TestTheSinksOwnRefusalIsCarriedAsFactsAndDecidesTheKind(t *testing.T) {
 			}
 			// The word decides the kind; the word's own reading in the table
 			// -- commit, no dependency, its class -- stands.
-			if b := row.Blocked; b == nil || b.DependencyEvidence != OutputFailureClientRejected || b.Dependency != DependencyNone || b.Class != test.class || b.Stage != StageCommit {
+			if b := row.Blocked; b == nil || b.DependencyEvidence != observability.OutputFailureClientRejected || b.Dependency != DependencyNone || b.Class != test.class || b.Stage != StageCommit {
 				t.Fatalf("blocked = %+v, want client_rejected by the sink's own word with the word's reading (%s)", row.Blocked, test.class)
 			}
 			if row.Finding.Check != CheckDefect || row.Finding.Owner != OwnerAlarmd {
 				t.Fatalf("finding = %+v, want the sink's refusal on the defect line", row.Finding)
 			}
 		})
+	}
+}
+
+// A lease too short to start a batch is the sink's own named code and
+// carries no kind: its row keeps the code's reading - commit, unavailable -
+// and no evidence word, rather than an "unknown" that would claim more than
+// the code does.
+func TestALeaseDeferralRowIsReadByItsCodeWithNoEvidenceWord(t *testing.T) {
+	tracker := newTracker(t, &clock{at: now})
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		slot := int64(1_700_000_000 + 60*round)
+		tracker.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
+			Result: observability.ResultFailed, ReasonCode: "OUTPUT_LEASE_EXPIRING", Err: errors.New("the lease has 1s left and the batch needs 1m"),
+			Trace: observability.TraceFields{QueryGroupKey: "qg-lease", EvaluationTime: slot},
+		})
+		tracker.Observe(context.Background(), observability.Observation{
+			ExecuteOutcome: "error", ReasonCode: "OUTPUT_LEASE_EXPIRING", Err: errors.New("the lease has 1s left and the batch needs 1m"),
+			Trace: observability.TraceFields{QueryGroupKey: "qg-lease", EvaluationTime: slot},
+		})
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 {
+		t.Fatalf("anomalies = %+v", anomalies)
+	}
+	Attribute(anomalies, now)
+	b := anomalies[0].Blocked
+	if b == nil || b.Stage != StageCommit || b.Class != ClassUnavailable || b.DependencyEvidence != "" {
+		t.Fatalf("blocked = %+v, want commit / unavailable by the code, and no evidence word", b)
 	}
 }

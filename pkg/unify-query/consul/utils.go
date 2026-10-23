@@ -10,29 +10,10 @@
 package consul
 
 import (
-	"bytes"
-	"crypto/sha1"
 	"encoding/gob"
-	"fmt"
 )
 
-// HashIt : hash an object
-func HashIt(object any) string {
-	var (
-		buf     bytes.Buffer
-		encoder = gob.NewEncoder(&buf)
-	)
-
-	err := encoder.Encode(object)
-	if err != nil {
-		panic(err)
-	}
-	return fmt.Sprintf("%x", sha1.Sum(buf.Bytes()))
-}
-
-// init
+// init 注册 consul.Storage 类型到 gob，用于 utils.HashIt 函数
 func init() {
-	// 类型在gob中未注册，显示注册
-	gob.Register([]any{})
-	gob.Register(map[string]any{})
+	gob.Register(&Storage{})
 }

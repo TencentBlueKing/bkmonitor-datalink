@@ -52,7 +52,7 @@ func TestWhatTheEvaluatorReturnsForANoDataSeriesValidates(t *testing.T) {
 func TestAGapScopeOnEitherKindOfLevelValidatesForEitherKindOfSeries(t *testing.T) {
 	plan := noDataCompiled(t, 1)
 	var realLevel uint32
-	for _, level := range plan.Levels() {
+	for _, level := range plan.Levels().All() {
 		realLevel = level.Definition().LevelID
 	}
 	noDataLevel := plan.NoDataLevel().Definition().LevelID

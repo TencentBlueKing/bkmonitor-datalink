@@ -75,7 +75,7 @@ func TestNamedWindowsThatCannotDescribeTheRoundAreDropped(t *testing.T) {
 func TestTheCompletionLineNamesTheWorstWindowAndThePrimaryAnswer(t *testing.T) {
 	t.Parallel()
 	var output bytes.Buffer
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentProgress, Stage: StageProgressCommitted, Result: ResultSuccess,
 		Trace:           TraceFields{StrategyID: "4101", BusinessID: "7", QueryGroupKey: "qg-window", EvaluationTime: 600},
 		HistoryCoverage: &HistoryCoverageFacts{Levels: 3, Short: 2, WorstValid: 6, WorstRequired: 9, Windows: []HistoryWindowFact{namedWindow(), namedWindow()}},
@@ -108,7 +108,7 @@ func TestTheCompletionLineNamesTheWorstWindowAndThePrimaryAnswer(t *testing.T) {
 	// A refused coverage leaves its rule on the line where the reading
 	// would have been, and none of the worst-window keys.
 	output.Reset()
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentProgress, Stage: StageProgressCommitted, Result: ResultSuccess,
 		Trace:           TraceFields{StrategyID: "4101", BusinessID: "7", QueryGroupKey: "qg-window", EvaluationTime: 600},
 		HistoryCoverage: &HistoryCoverageFacts{Levels: 3, Short: 1, WorstValid: 6, WorstRequired: 9, Windows: []HistoryWindowFact{{Series: "abc", Level: 5, Valid: 6, Required: 9, MissingTotal: 5}}},

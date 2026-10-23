@@ -16,37 +16,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
-
-func TestLifecycleReadinessAndMetricUseTheSameSource(t *testing.T) {
-	t.Parallel()
-
-	source := &mutableLifecycleSource{}
-	recorder := metric.NewRecorder(metric.BuildInfo{})
-	server, err := NewWithLifecycle(recorder, source)
-	if err != nil {
-		t.Fatalf("NewWithLifecycle() error = %v", err)
-	}
-	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
-	server.SetReady(true)
-	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
-
-	source.Set(lifecycle.Snapshot{Ready: true, ConsumerLagKnown: true})
-	assertStatus(t, server.Handler(), "/readyz", http.StatusOK)
-	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, request)
-	if !strings.Contains(response.Body.String(), "bkmonitor_alarmd_ready 1") {
-		t.Fatalf("ready metric did not use the readiness source:\n%s", response.Body.String())
-	}
-}
 
 func TestProbeStateTransitions(t *testing.T) {
 	server := New(metric.NewRecorder(metric.BuildInfo{}))
@@ -92,6 +67,22 @@ func TestHealthSnapshotControlsReadinessAndResponse(t *testing.T) {
 	if !snapshot.Ready || snapshot.State != observability.HealthDegraded {
 		t.Fatalf("readiness snapshot = %#v", snapshot)
 	}
+	// The body says the readiness rule's inputs and the last recovery, and
+	// nothing else.
+	var keys map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &keys); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"state", "ready", "reasons", "config_loaded", "schema_ready", "assignment_ready",
+		"runtime_state_ready", "output_sink_ready", "draining", "last_recovery_at"} {
+		if _, found := keys[key]; !found {
+			t.Errorf("the readiness body has no %s: %s", key, response.Body.String())
+		}
+		delete(keys, key)
+	}
+	if len(keys) != 0 {
+		t.Errorf("the readiness body says more than the rule reads: %v", keys)
+	}
 
 	source.Update(observability.HealthSnapshot{State: observability.HealthNotReady})
 	assertStatus(t, server.Handler(), "/readyz", http.StatusServiceUnavailable)
@@ -100,7 +91,7 @@ func TestHealthSnapshotControlsReadinessAndResponse(t *testing.T) {
 	assertStatus(t, server.Handler(), "/healthz", http.StatusOK)
 }
 
-func TestNewWithHealthRequiresInputsAndSingleBinding(t *testing.T) {
+func TestNewWithHealthRequiresARecorderAndASource(t *testing.T) {
 	t.Parallel()
 
 	source := observability.NewHealthTracker(observability.HealthSnapshot{})
@@ -110,12 +101,8 @@ func TestNewWithHealthRequiresInputsAndSingleBinding(t *testing.T) {
 	if _, err := NewWithHealth(metric.NewRecorder(metric.BuildInfo{}), nil); err == nil {
 		t.Fatal("NewWithHealth(recorder, nil) returned nil")
 	}
-	recorder := metric.NewRecorder(metric.BuildInfo{})
-	if _, err := NewWithHealth(recorder, source); err != nil {
-		t.Fatalf("first NewWithHealth() error = %v", err)
-	}
-	if _, err := NewWithHealth(recorder, source); err == nil {
-		t.Fatal("second NewWithHealth() returned nil")
+	if _, err := NewWithHealth(metric.NewRecorder(metric.BuildInfo{}), source); err != nil {
+		t.Fatalf("NewWithHealth() error = %v", err)
 	}
 }
 
@@ -262,21 +249,4 @@ func assertStatus(t *testing.T, handler http.Handler, path string, want int) {
 	if response.Code != want {
 		t.Fatalf("%s status = %d, want %d", path, response.Code, want)
 	}
-}
-
-type mutableLifecycleSource struct {
-	mu       sync.Mutex
-	snapshot lifecycle.Snapshot
-}
-
-func (s *mutableLifecycleSource) LifecycleSnapshot() lifecycle.Snapshot {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.snapshot
-}
-
-func (s *mutableLifecycleSource) Set(snapshot lifecycle.Snapshot) {
-	s.mu.Lock()
-	s.snapshot = snapshot
-	s.mu.Unlock()
 }

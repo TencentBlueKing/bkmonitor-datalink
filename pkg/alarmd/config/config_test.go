@@ -12,13 +12,12 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"runtime"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
 func TestRedisConnectionSupportsStandaloneAndSentinel(t *testing.T) {
@@ -107,9 +106,6 @@ func TestPhaseTwoRuntimePrefixCannotOverlapCanonicalStrategyCache(t *testing.T) 
 func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 	cfg := Default()
 
-	if cfg.Input.Mode != InputModeGoAccess {
-		t.Fatalf("default input = %+v, want Go Access without compatibility coordinates", cfg.Input)
-	}
 	if cfg.HTTP.Listen == "" || cfg.ShutdownTimeout.Duration() <= 0 {
 		t.Fatal("default local HTTP and shutdown budgets must be usable")
 	}
@@ -126,21 +122,6 @@ func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "broker") {
 		t.Fatalf("default configuration error = %v, want missing Kafka broker", err)
-	}
-}
-
-// The consumer-side Kafka fields survive the input runtime that filled them.
-// This pins that a valid configuration leaves every one of them empty and
-// validates with no receipt budget at all, so the fields cannot quietly come
-// back into use without an assertion noticing.
-func TestValidConfigurationLeavesConsumerKafkaFieldsEmpty(t *testing.T) {
-	cfg := validGoAccessConfigObject()
-
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-	if cfg.Kafka.InputTopic != "" || cfg.Kafka.GroupID != "" || cfg.Kafka.InitialOffset != "" {
-		t.Fatalf("a valid configuration carries consumer-side Kafka assets: %+v", cfg.Kafka)
 	}
 }
 
@@ -185,9 +166,9 @@ func TestLoadRejectsLegacyAndPhaseTwoFields(t *testing.T) {
 		"state CAS":     {contents: "state_cas: true\n", field: "state_cas"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, testCase.contents))
+			_, err := LoadWithRoles(writeConfig(t, testCase.contents), nil)
 			if err == nil || !strings.Contains(err.Error(), testCase.field) {
-				t.Fatalf("Load() error = %v, want strict rejection of %q", err, testCase.field)
+				t.Fatalf("LoadWithRoles(, nil) error = %v, want strict rejection of %q", err, testCase.field)
 			}
 		})
 	}
@@ -219,9 +200,7 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		"negative restart margin": func(cfg *Config) {
 			cfg.Redis.RestartMargin = Duration(-time.Second)
 		},
-		"zero reader budget":   func(cfg *Config) { cfg.Limits.Reader.MaxEnvelopeBytes = 0 },
 		"zero compiler budget": func(cfg *Config) { cfg.Limits.Compiler.MaxPlanBytes = 0 },
-		"zero detect budget":   func(cfg *Config) { cfg.Limits.Detect.MaxPlans = 0 },
 		"zero trigger budget":  func(cfg *Config) { cfg.Limits.Trigger.MaxLevels = 0 },
 		"compiler levels exceed trigger event": func(cfg *Config) {
 			cfg.Limits.Trigger.MaxLevelResultsPerEvent = uint32(cfg.Limits.Compiler.MaxLevelsPerPlan - 1)
@@ -231,7 +210,7 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		// budget above it would be met one dropped alert at a time.
 		"compiler levels exceed the standard output's evaluations": func(cfg *Config) {
 			over := linkdoutput.MaxEvaluations + 1
-			cfg.Limits.Reader.MaxLevelsPerPlan, cfg.Limits.Compiler.MaxLevelsPerPlan = over, over
+			cfg.Limits.Compiler.MaxLevelsPerPlan = over
 			cfg.Limits.Trigger.MaxLevels, cfg.Limits.Trigger.MaxLevelResultsPerEvent = uint32(over), uint32(over)
 			cfg.Limits.Codec.MaxLevels = over
 		},
@@ -280,9 +259,9 @@ func TestTheDynamicGroupKeyPrefixIsAbsentOrSpelledAsTheWriterSpellsIt(t *testing
 func TestLoadRejectsRetiredModeKey(t *testing.T) {
 	for _, mode := range []string{"shadow", "owner"} {
 		t.Run(mode, func(t *testing.T) {
-			_, err := Load(writeConfig(t, "mode: "+mode+"\n"))
+			_, err := LoadWithRoles(writeConfig(t, "mode: "+mode+"\n"), nil)
 			if err == nil || !strings.Contains(err.Error(), "mode") {
-				t.Fatalf("Load() error = %v, want retired key rejection", err)
+				t.Fatalf("LoadWithRoles(, nil) error = %v, want retired key rejection", err)
 			}
 		})
 	}
@@ -299,8 +278,8 @@ func TestLoadRejectsInvalidHTTPAndTimeout(t *testing.T) {
 
 	for name, contents := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(writeConfig(t, contents)); err == nil {
-				t.Fatalf("Load() accepted invalid %s", name)
+			if _, err := LoadWithRoles(writeConfig(t, contents), nil); err == nil {
+				t.Fatalf("LoadWithRoles(, nil) accepted invalid %s", name)
 			}
 		})
 	}
@@ -319,16 +298,6 @@ func TestDurationRejectsInvalidText(t *testing.T) {
 	}
 }
 
-type staticRouter struct{}
-
-func (staticRouter) Route(_, _ string) (state.StorageTarget, error) {
-	return state.StorageTarget{Name: "primary", Backend: nil}, nil
-}
-
-func (staticRouter) Targets() []state.StorageTarget {
-	return []state.StorageTarget{{Name: "primary", Backend: nil}}
-}
-
 // withCompatibilityServiceRedis gives a configuration the service Redis the
 // built-in Python-compatible protocol needs. Every deployment needs it, because
 // a strategy without a frozen revision selects that protocol and its snapshot
@@ -345,12 +314,47 @@ func withCompatibilityServiceRedis(cfg *Config, address string) {
 	}
 }
 
+// A key kept "for one release" is gone once retired: decoding is strict, so
+// values that still carry one refuse to load, and the refusal names it.
+func TestRetiredKeysAreRefusedByName(t *testing.T) {
+	for _, retired := range []struct{ yaml, name string }{
+		{"phase_two:\n  control:\n    legacy_query_runtime:\n      access_bk_data: true\n", "legacy_query_runtime"},
+		{"phase_two:\n  access:\n    host_disable_monitor_states: [a]\n", "host_disable_monitor_states"},
+		{"phase_two:\n  access:\n    uq_shared_schema_query_groups: []\n", "uq_shared_schema_query_groups"},
+		{"phase_two:\n  observation:\n    memory_percent: 30\n", "observation"},
+		{"phase_two:\n  canonical:\n    mode: stream\n", "canonical"},
+		{"kafka:\n  allowed_output_topics: [a]\n", "allowed_output_topics"},
+		{"kafka:\n  input_topic: \"\"\n", "input_topic"},
+		{"kafka:\n  group_id: \"\"\n", "group_id"},
+		{"kafka:\n  initial_offset: \"\"\n", "initial_offset"},
+		{"limits:\n  reader:\n    max_envelope_bytes: 1\n", "reader"},
+		{"phase_two:\n  linkd:\n    absent_close_send: true\n", "absent_close_send"},
+		// The link's coordinates come from its Console; values keep only the
+		// Console's address and credentials.
+		{"phase_two:\n  linkd:\n    connection:\n      address: stated:6379\n", "connection"},
+		{"phase_two:\n  linkd:\n    key_prefix: stated\n", "key_prefix"},
+		{"phase_two:\n  linkd:\n    event_source_id: \"42\"\n", "event_source_id"},
+		{"phase_two:\n  linkd:\n    hook_name: active\n", "hook_name"},
+		{"phase_two:\n  linkd:\n    reconcile_interval: 10m\n", "reconcile_interval"},
+		{"phase_two:\n  scheduler:\n    query_unavailable_cooldown: false\n", "query_unavailable_cooldown"},
+		{"cli:\n  enabled: true\n", "enabled"},
+		{"input:\n  mode: go_access\n", "input"},
+		{"phase_two:\n  scheduler:\n    expired_range_enabled: false\n", "expired_range_enabled"},
+		// A derived value spelled run together, which an untagged field took.
+		{"phase_two:\n  scheduler:\n    maxreplayage: 1h\n", "maxreplayage"},
+		{"phase_two:\n  scheduler:\n    processquerypermits: 999\n", "processquerypermits"},
+	} {
+		_, err := LoadWithRoles(writeConfig(t, retired.yaml), nil)
+		if err == nil || !strings.Contains(err.Error(), "field "+retired.name+" not found") {
+			t.Errorf("values carrying %s loaded with %v, want it refused by name", retired.name, err)
+		}
+	}
+}
+
 func validGoAccessConfigObject() Config {
 	cfg := Default()
-	accessBKData := false
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"
-	cfg.Kafka.AllowedOutputTopics = []string{"alarmd-trigger-event", cfg.Kafka.LegacyAdapter.Topic}
 	withCompatibilityServiceRedis(&cfg, "redis.test:6379")
 	cfg.Kafka.ClientID = "alarmd"
 	cfg.Kafka.BrokerVersion = "2.6.0"
@@ -360,10 +364,6 @@ func validGoAccessConfigObject() Config {
 	cfg.PhaseTwo.Control.StrategyCachePrefix = "alarm-config"
 	cfg.PhaseTwo.Control.ProviderRoute = "unify-query-primary"
 	cfg.PhaseTwo.Control.Timezone = "Asia/Shanghai"
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = &accessBKData
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = []string{}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter = PhaseTwoRuntimeFilterConfig{FieldName: "device_type", Values: []string{}}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemNetworkFilter = PhaseTwoRuntimeFilterConfig{FieldName: "device_name", Values: []string{}}
 	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query.service"
 	cfg.PhaseTwo.Access.QuerySource = "alarmd"
 	return cfg
@@ -379,66 +379,62 @@ func writeConfig(t *testing.T, contents string) string {
 	return path
 }
 
-// Zero no longer means "unset and invalid": it means the pool follows the CPU
-// budget the container was given. The cases below pin the floor a one-core
-// deployment keeps, the production sizes, and the ceiling that stops one Worker
-// from opening an unreasonable number of connections to a shared Redis.
-func TestDeriveRedisPoolSizeFollowsCPUBudget(t *testing.T) {
-	tests := []struct {
-		name      string
-		cpuBudget int
-		want      int
-	}{
-		{"a single core keeps the floor", 1, 64},
-		{"the floor still covers four cores", 4, 64},
-		{"the production budget scales past the floor", 8, 128},
-		{"a larger budget keeps scaling", 16, 256},
-		{"the ceiling bounds the connection count", 64, 512},
-		{"an unreported budget still yields a usable pool", 0, 64},
+// Zero no longer means "unset and invalid": it means the pool covers every
+// execution slot the container can run, plus a floor for what runs outside a
+// slot. The cases pin that across container sizes; the cores beside them do
+// not move it.
+func TestDeriveRedisPoolSizeCoversTheExecutionCeiling(t *testing.T) {
+	for _, inputs := range []CapacityInputs{
+		{CPUBudget: 1, MemoryLimitBytes: 256 << 20},
+		{CPUBudget: 4, MemoryLimitBytes: 4 << 30},
+		{CPUBudget: 64, MemoryLimitBytes: 4 << 30},
+		{CPUBudget: 8, MemoryLimitBytes: 32 << 30},
+		{},
+	} {
+		ceiling := DeriveScheduler(inputs).ActiveExecutionCeiling
+		if got := DeriveRedisPoolSize(inputs); got != ceiling+redisPoolMinimum {
+			t.Fatalf("%d MiB, %d CPU: pool %d, want the %d execution slots and the %d floor",
+				inputs.MemoryLimitBytes>>20, inputs.CPUBudget, got, ceiling, redisPoolMinimum)
+		}
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := DeriveRedisPoolSize(test.cpuBudget); got != test.want {
-				t.Fatalf("DeriveRedisPoolSize(%d) = %d, want %d", test.cpuBudget, got, test.want)
-			}
-		})
+	if got := DeriveRedisPoolSize(CapacityInputs{MemoryLimitBytes: 4 << 30}); got != 341+redisPoolMinimum {
+		t.Fatalf("4 GiB pool = %d, want 341 slots and the floor", got)
 	}
 }
 
 func TestEffectivePoolSizeKeepsExplicitOverride(t *testing.T) {
+	inputs := CapacityInputs{CPUBudget: 8, MemoryLimitBytes: 4 << 30}
 	connection := RedisConnectionConfig{PoolSize: 3}
-	if got := connection.EffectivePoolSize(8); got != 3 {
+	if got := connection.EffectivePoolSize(inputs); got != 3 {
 		t.Fatalf("explicit pool_size was not honoured: got %d", got)
 	}
 	connection.PoolSize = 0
-	if got := connection.EffectivePoolSize(8); got != 128 {
+	if got := connection.EffectivePoolSize(inputs); got != DeriveRedisPoolSize(inputs) {
 		t.Fatalf("zero pool_size did not derive: got %d", got)
 	}
 }
 
 // The pool exists so that queueing for a connection never becomes the process's
-// execution gate. The Slot source reads the control plane for every ready
-// runner without holding a query permit, so covering the permits is necessary
-// but nowhere near sufficient; the derived pool must clear them with room left
-// for that fan-out at every budget a container can be given.
+// execution gate: it has to clear every execution slot and every permit the
+// container can have, with room for the reads made outside a slot.
 func TestDerivedRedisPoolClearsAdmittedConcurrencyWithRoom(t *testing.T) {
-	cfg := Default()
-	admitted := cfg.AdmittedQueryConcurrency()
-	for cpuBudget := 0; cpuBudget <= 64; cpuBudget++ {
-		if got := DeriveRedisPoolSize(cpuBudget); got <= admitted {
-			t.Fatalf("pool %d at %d CPU does not exceed admitted concurrency %d", got, cpuBudget, admitted)
+	for memory := uint64(64 << 20); memory <= 512<<30; memory *= 2 {
+		inputs := CapacityInputs{MemoryLimitBytes: memory}
+		derived := DeriveScheduler(inputs)
+		if got := DeriveRedisPoolSize(inputs); got < derived.ActiveExecutionCeiling+redisPoolMinimum || got <= derived.AdmittedConcurrency() {
+			t.Fatalf("pool %d at %d MiB does not clear %d slots and %d permits", got, memory>>20,
+				derived.ActiveExecutionCeiling, derived.AdmittedConcurrency())
 		}
 	}
 }
 
 func TestWithResolvedRedisPoolSizeResolvesEveryConnection(t *testing.T) {
 	cfg := Default()
-	cfg.Input.Mode = InputModeGoAccess
 	platformCache := cfg.Redis.Connection()
 	cfg.PlatformCache.Strategy = &platformCache
 	cfg.PlatformCache.CMDB = &platformCache
 	resolved := cfg.WithResolvedRedisPoolSize()
-	want := DeriveRedisPoolSize(runtime.GOMAXPROCS(0))
+	want := DeriveRedisPoolSize(DetectCapacityInputs())
 	if resolved.Redis.PoolSize != want {
 		t.Fatalf("own store pool size = %d, want %d", resolved.Redis.PoolSize, want)
 	}
@@ -460,7 +456,7 @@ func TestWithResolvedRedisPoolSizeResolvesEveryConnection(t *testing.T) {
 // error - it returns nothing, which reads back as "no strategies" or "no
 // hosts". Each therefore has its own stated location.
 func TestEachPlatformCacheIsReadWhereThePlatformWritesIt(t *testing.T) {
-	loaded, err := Load(writeConfig(t, platformCacheConfigContents(`
+	loaded, err := LoadWithRoles(writeConfig(t, platformCacheConfigContents(`
 platform_cache:
   strategy:
     mode: standalone
@@ -470,9 +466,9 @@ platform_cache:
     mode: standalone
     address: cmdb-cache:6379
     db: 8
-`)))
+`)), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	if got := loaded.StrategySourceRedis().Address; got != "strategy-cache:6379" {
 		t.Fatalf("strategy source = %q, want the stated strategy cache", got)
@@ -503,9 +499,9 @@ platform_cache:
 // resolved configuration a release check reads says where each read went
 // instead of saying "inherited".
 func TestAnUnstatedPlatformCacheResolvesToTheTopLevelConnection(t *testing.T) {
-	loaded, err := Load(writeConfig(t, platformCacheConfigContents("")))
+	loaded, err := LoadWithRoles(writeConfig(t, platformCacheConfigContents("")), nil)
 	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v", err)
 	}
 	if loaded.PlatformCache.Strategy == nil || loaded.PlatformCache.CMDB == nil {
 		t.Fatalf("platform cache = %+v, want both resolved rather than left unstated", loaded.PlatformCache)
@@ -521,15 +517,12 @@ func TestAnUnstatedPlatformCacheResolvesToTheTopLevelConnection(t *testing.T) {
 }
 
 func platformCacheConfigContents(platformCache string) string {
-	return `input:
-  mode: go_access
-http:
+	return `http:
   listen: 127.0.0.1:8080
 kafka:
   brokers: [127.0.0.1:9092]
   trigger_event:
     topic: alarmd-trigger-event
-  allowed_output_topics: [alarmd-trigger-event, alarmd_0bkmonitor_backend_event]
   legacy_adapter:
     topic: alarmd_0bkmonitor_backend_event
     snapshot_prefix: alarmd-test
@@ -547,12 +540,6 @@ phase_two:
   control:
     strategy_cache_prefix: alarm-config
     timezone: Asia/Shanghai
-    legacy_query_runtime:
-      access_bk_data: false
-      bkdata_cmdb_level_tables: []
-      system_disk_filter:
-        field_name: device_type
-        values: []
   access:
     uq_endpoint: http://unify-query.service
     query_source: alarmd
@@ -592,12 +579,12 @@ func TestTheResolvedDestinationNamesCoordinatesAndNoCredentials(t *testing.T) {
 // keys stayed under the key it moved away from, so accepting it quietly would
 // write to the new instance with the old instance's shape.
 func TestTheRemovedRuntimeRedisKeyIsRefusedRatherThanIgnored(t *testing.T) {
-	_, err := Load(writeConfig(t, platformCacheConfigContents("")+`  runtime_redis:
+	_, err := LoadWithRoles(writeConfig(t, platformCacheConfigContents("")+`  runtime_redis:
     mode: standalone
     address: somewhere-else:6379
-`))
+`), nil)
 	if err == nil || !strings.Contains(err.Error(), "runtime_redis") {
-		t.Fatalf("Load() error = %v, want the removed key named", err)
+		t.Fatalf("LoadWithRoles(, nil) error = %v, want the removed key named", err)
 	}
 }
 
@@ -642,5 +629,38 @@ func TestTheOutputProtocolIsOneOfThreeWords(t *testing.T) {
 	cfg := validGoAccessConfigObject()
 	if got := cfg.OutputProtocol(); got != "auto" {
 		t.Fatalf("default protocol = %q, want auto", got)
+	}
+}
+
+// The compatibility topic carries the prefix the output requires when it
+// opens. Without it the configuration used to pass --check-config and the
+// replica never became ready; now it is refused at load, by name. A topic
+// with the prefix passes the same check.
+func TestTheCompatibilityTopicMustCarryThePrefixTheOutputRequires(t *testing.T) {
+	cfg := validGoAccessConfigObject()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	if !strings.HasPrefix(cfg.Kafka.LegacyAdapter.Topic, LegacyTopicPrefix) {
+		t.Fatalf("fixture: topic %q, want one with the prefix", cfg.Kafka.LegacyAdapter.Topic)
+	}
+	cfg.Kafka.LegacyAdapter.Topic = "bkmonitor_backend_event"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "legacy_adapter.topic must start with") {
+		t.Fatalf("Validate() = %v, want the topic refused for its prefix", err)
+	}
+}
+
+// The deployment's namespace list is read from the environment when asked:
+// split on commas and spaces, empty and repeated entries dropped, and a name
+// that is not a namespace name kept for the read to report.
+func TestObservedNamespacesSplitsTheListTheChartRenders(t *testing.T) {
+	t.Setenv(ObserveNamespacesEnvironment, " kingdom, other  kingdom,,Bad_Name ")
+	if got, want := ObservedNamespaces(), []string{"kingdom", "other", "Bad_Name"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ObservedNamespaces() = %v, want %v", got, want)
+	}
+	t.Setenv(ObserveNamespacesEnvironment, "")
+	if got := ObservedNamespaces(); len(got) != 0 {
+		t.Fatalf("unset list = %v, want none", got)
 	}
 }

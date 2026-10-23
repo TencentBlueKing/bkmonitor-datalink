@@ -11,8 +11,6 @@ package detect
 
 import (
 	"fmt"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 // InternalError reports a broken module invariant. It is not a business
@@ -38,52 +36,6 @@ func (e *InternalError) Unwrap() error {
 		return nil
 	}
 	return e.Err
-}
-
-type BudgetScope string
-
-const (
-	BudgetScopeMessage BudgetScope = "MESSAGE"
-	BudgetScopePlan    BudgetScope = "PLAN"
-)
-
-// BudgetError reports a deterministic execution budget rejection. The caller
-// must not commit a partial DetectionBatch. A PLAN rejection may be isolated
-// by removing the Plan identified by PlanID from the request and retrying; a
-// MESSAGE rejection cannot.
-type BudgetError struct {
-	Scope      BudgetScope
-	PlanID     string
-	ReasonCode string
-	Budget     string
-	Limit      uint64
-	Actual     uint64
-}
-
-func (e *BudgetError) Error() string {
-	if e == nil {
-		return "alarmd detect: execution budget exceeded"
-	}
-	if e.PlanID == "" {
-		return fmt.Sprintf("alarmd detect: budget exceeded: scope=%s budget=%s actual=%d limit=%d reason=%s",
-			e.Scope, e.Budget, e.Actual, e.Limit, e.ReasonCode)
-	}
-	return fmt.Sprintf("alarmd detect: budget exceeded: scope=%s plan_id=%s budget=%s actual=%d limit=%d reason=%s",
-		e.Scope, e.PlanID, e.Budget, e.Actual, e.Limit, e.ReasonCode)
-}
-
-func messageBudgetExceeded(name string, limit, actual uint64) error {
-	return &BudgetError{
-		Scope: BudgetScopeMessage, ReasonCode: contract.ReasonMessageBudgetExceeded,
-		Budget: name, Limit: limit, Actual: actual,
-	}
-}
-
-func planBudgetExceeded(planID, name string, limit, actual uint64) error {
-	return &BudgetError{
-		Scope: BudgetScopePlan, PlanID: planID, ReasonCode: contract.ReasonPlanBudgetExceeded,
-		Budget: name, Limit: limit, Actual: actual,
-	}
 }
 
 // ControlledError is an executor-declared, record-local failure. Only reason

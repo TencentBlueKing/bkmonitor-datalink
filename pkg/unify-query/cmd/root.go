@@ -37,13 +37,15 @@ var rootCmd = &cobra.Command{
 	Use:   "run",
 	Short: "start unify-query module for bk-monitor",
 	Long:  `start unify-query module for bk-monitor`,
-	Run: func(cmd *cobra.Command, args []string) {
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.InitConfigWithWriter(cmd.ErrOrStderr()); err != nil {
+			return err
+		}
 		var (
 			serviceList     []define.Service
 			ctx, cancelFunc = context.WithCancel(context.Background())
 			sc              = make(chan os.Signal, 1)
 		)
-		config.InitConfig()
 
 		ctx = metadata.InitHashID(ctx)
 
@@ -67,16 +69,23 @@ var rootCmd = &cobra.Command{
 
 		// 注册信号（重载配置文件 & 停止）
 		signal.Notify(sc, syscall.SIGUSR1, syscall.SIGTERM, syscall.SIGINT)
+		for _, service := range serviceList {
+			service.Reload(ctx)
+		}
+		log.Infof(ctx, "reload done")
 	LOOP:
 		for {
-			for _, service := range serviceList {
-				service.Reload(ctx)
-			}
-			log.Infof(ctx, "reload done")
 			switch <-sc {
 			case syscall.SIGUSR1:
 				// 触发配置重载动作
-				config.InitConfig()
+				if err := config.ReloadConfigWithWriter(cmd.ErrOrStderr()); err != nil {
+					log.Errorf(ctx, "config reload rejected: %s", err)
+					continue
+				}
+				for _, service := range serviceList {
+					service.Reload(ctx)
+				}
+				log.Infof(ctx, "reload done")
 				log.Debugf(ctx, "SIGUSR1 signal got, will reload server")
 			case syscall.SIGTERM, syscall.SIGINT:
 				log.Debugf(ctx, "shutdown signal got, will shutdown server")
@@ -95,7 +104,7 @@ var rootCmd = &cobra.Command{
 			log.Warnf(ctx, "waiting for service:%s done", service.Type())
 		}
 		log.Debugf(ctx, "all service exit, server exit now.")
-		os.Exit(0)
+		return nil
 	},
 }
 

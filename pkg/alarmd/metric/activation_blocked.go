@@ -23,7 +23,6 @@ import (
 var ActivationBlockedReasons = []string{
 	controlplane.CutoverReasonActivationRecordMissing, controlplane.CutoverReasonTimelineMissing,
 	controlplane.CutoverReasonOpenSegmentClosed, controlplane.CutoverReasonOpenDigestMismatch,
-	controlplane.CutoverReasonLegacyRevisionMismatch,
 }
 
 // activationBlockedCollector reads the Control Leader's last cutover at
@@ -45,8 +44,8 @@ func newActivationBlockedCollector() *activationBlockedCollector {
 		blocked: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "activation_blocked_query_groups"),
 			"Query Groups the Control Leader's last cutover held back, by reason. A held-back Query Group keeps the "+
 				"records it had and runs what its open Segment names; the rest of the publication was activated. "+
-				"It is judged again at every cutover; the repair subcommand fixes what a write outside the cutover "+
-				"broke. Zero on a deployment nothing outside the control plane writes to.", []string{"reason"}, nil),
+				"It is judged again at every cutover; deleting its timeline key lets the next cutover open it again. "+
+				"Zero on a deployment nothing outside the control plane writes to.", []string{"reason"}, nil),
 		accounting: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "activation_blocked_set_total"),
 			"Cutovers by how the persisted set of held-back Query Groups compared with the activation body. lost: the "+
 				"body counts entries the set does not hold (evicted, or lost in a failover). unaccounted: the set holds "+

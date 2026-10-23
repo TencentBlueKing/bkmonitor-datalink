@@ -11,6 +11,7 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -21,7 +22,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 )
 
-var once sync.Once
+var (
+	once           sync.Once
+	outputOverride io.Writer
+)
+
+// SetOutput 为 CLI 指定日志输出；nil 恢复配置中的日志路径。
+// 应在初始化配置之前调用，服务默认仍使用配置中的日志路径。
+func SetOutput(output io.Writer) {
+	outputOverride = output
+}
 
 // setDefaultConfig
 func setDefaultConfig() {
@@ -59,7 +69,9 @@ func initLogConfig() {
 
 	// 日志路径及轮转配置
 	var writeSyncer zapcore.WriteSyncer
-	if viper.GetString(PathConfigPath) == "" {
+	if outputOverride != nil {
+		writeSyncer = zapcore.Lock(zapcore.AddSync(outputOverride))
+	} else if viper.GetString(PathConfigPath) == "" {
 		writeSyncer = zapcore.Lock(os.Stdout)
 	} else {
 		if syncer, err = NewReopenableWriteSyncer(viper.GetString(PathConfigPath)); err != nil {

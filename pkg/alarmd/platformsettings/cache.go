@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 // Mode is the state of the process copy. It is a state, read at scrape and
@@ -53,6 +55,11 @@ type UnavailableReason string
 const (
 	// UnavailableReadError: the read did not happen.
 	UnavailableReadError UnavailableReason = "read_error"
+	// UnavailableRevisionMoved: the read happened and the revision changed
+	// during it on both tries (ErrRevisionMoved), so its fields may be of two
+	// publications. The store answered; a publisher is writing faster than a
+	// round trip.
+	UnavailableRevisionMoved UnavailableReason = "revision_moved"
 	// UnavailableUnpublished: the revision key is absent. Per protocol
 	// nothing was ever published, and the field keys beside it are not read
 	// as "no override": "never published" and "override removed" have to
@@ -65,7 +72,7 @@ const (
 )
 
 // UnavailableReasons is the closed set.
-var UnavailableReasons = []UnavailableReason{UnavailableReadError, UnavailableUnpublished, UnavailableDecodeError}
+var UnavailableReasons = []UnavailableReason{UnavailableReadError, UnavailableRevisionMoved, UnavailableUnpublished, UnavailableDecodeError}
 
 // DefaultStalenessBound is how long the copy may answer from a publication
 // the source no longer yields before the deployment is degraded for it. The
@@ -89,6 +96,9 @@ type Stats struct {
 	LoadedAt    time.Time
 	Unavailable map[UnavailableReason]uint64
 	Refreshes   map[string]uint64
+	// Retries counts the reads whose first try was torn and that were tried
+	// again (Publication.Retried), whatever the second try came to.
+	Retries uint64
 	// Changes counts, per field, the refreshes on which the effective value
 	// changed: the count an operator's page edit produces exactly once.
 	Changes map[Field]uint64
@@ -96,6 +106,10 @@ type Stats struct {
 	// counts because a decode error names the field and the value shape,
 	// which the counter cannot.
 	LastUnavailable string
+	// Settings is the effective value of every field, and Sources the layer
+	// each one came from (ResolveSources).
+	Settings Settings
+	Sources  map[Field]HorizonSource
 }
 
 // Cache is the process copy.
@@ -109,11 +123,13 @@ type Cache struct {
 
 	mode            Mode
 	current         Settings
+	sources         map[Field]HorizonSource
 	platform        *Layer
 	revision        string
 	loadedAt        time.Time
 	unavailable     map[UnavailableReason]uint64
 	refreshes       map[string]uint64
+	retries         uint64
 	changes         map[Field]uint64
 	lastUnavailable string
 }
@@ -141,7 +157,7 @@ func New(options Options) (*Cache, error) {
 		options.StalenessBound = DefaultStalenessBound
 	}
 	cache := &Cache{
-		source: options.Source, deployment: options.Deployment, defaults: CodeDefaults(),
+		source: options.Source, deployment: deploymentLayer(options.Deployment), defaults: CodeDefaults(),
 		now: options.Now, bound: options.StalenessBound,
 		mode:        ModeNeverLoaded,
 		unavailable: make(map[UnavailableReason]uint64, len(UnavailableReasons)),
@@ -151,7 +167,7 @@ func New(options Options) (*Cache, error) {
 	if options.Source == nil {
 		cache.mode = ModeNotConfigured
 	}
-	cache.current = Resolve(cache.defaults, cache.deployment)
+	cache.current, cache.sources = ResolveSources(cache.defaults, cache.deployment)
 	return cache, nil
 }
 
@@ -171,6 +187,15 @@ func (cache *Cache) Refresh(ctx context.Context) {
 		return
 	}
 	publication, err := cache.source.Read(ctx, Fields)
+	if publication.Retried {
+		cache.mu.Lock()
+		cache.retries++
+		cache.mu.Unlock()
+	}
+	if errors.Is(err, ErrRevisionMoved) {
+		cache.becomeUnavailable(UnavailableRevisionMoved, err.Error())
+		return
+	}
 	if err != nil {
 		cache.becomeUnavailable(UnavailableReadError, err.Error())
 		return
@@ -199,14 +224,14 @@ func (cache *Cache) becomeUnavailable(reason UnavailableReason, text string) {
 }
 
 func (cache *Cache) becomeAuthoritative(revision string, platform Layer) {
-	resolved := Resolve(cache.defaults, platform, cache.deployment)
+	resolved, sources := ResolveSources(cache.defaults, platform, cache.deployment)
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	cache.refreshes["authoritative"]++
 	for _, field := range cache.current.ChangedFields(resolved) {
 		cache.changes[field]++
 	}
-	cache.current = resolved
+	cache.current, cache.sources = resolved, sources
 	cache.platform = &platform
 	cache.revision = revision
 	cache.loadedAt = cache.now()
@@ -220,6 +245,8 @@ func (cache *Cache) Stats() Stats {
 	defer cache.mu.RUnlock()
 	stats := Stats{
 		Mode: cache.mode, Revision: cache.revision, LoadedAt: cache.loadedAt, LastUnavailable: cache.lastUnavailable,
+		Retries:  cache.retries,
+		Settings: cache.current, Sources: make(map[Field]HorizonSource, len(cache.sources)),
 		Unavailable: make(map[UnavailableReason]uint64, len(UnavailableReasons)),
 		Refreshes:   make(map[string]uint64, 2),
 		Changes:     make(map[Field]uint64, len(Fields)),
@@ -229,6 +256,9 @@ func (cache *Cache) Stats() Stats {
 	}
 	for result, count := range cache.refreshes {
 		stats.Refreshes[result] = count
+	}
+	for field, source := range cache.sources {
+		stats.Sources[field] = source
 	}
 	for field, count := range cache.changes {
 		stats.Changes[field] = count
@@ -290,6 +320,27 @@ func decodeLayer(values map[Field]json.RawMessage) (Layer, error) {
 	return layer, nil
 }
 
+// CheckFieldValue checks one field's distributed JSON by the rules a layer is
+// decoded with (decodeLayer), for a reader that shows the fields one at a
+// time: what it refuses is what the runtime refuses, and nothing else. A
+// reader keeping its own copy of the rules is how a valid horizon came to
+// read as invalid_document.
+func CheckFieldValue(field Field, raw json.RawMessage) error {
+	if !ValidField(field) {
+		return fmt.Errorf("alarmd platformsettings: unknown field %s", field)
+	}
+	var err error
+	switch field {
+	case FieldNoDataTrackingHorizonSeconds:
+		_, _, err = decodeHorizon(raw)
+	case FieldIsAccessBKData:
+		_, err = decodeBool(raw)
+	default:
+		_, err = decodeStringList(raw)
+	}
+	return err
+}
+
 var jsonNull = []byte("null")
 
 // decodeHorizon reads the horizon by presence: a JSON null states nothing
@@ -305,6 +356,10 @@ func decodeHorizon(raw json.RawMessage) (int64, bool, error) {
 	var value int64
 	if err := json.Unmarshal(trimmed, &value); err != nil || value < 1 {
 		return 0, false, fmt.Errorf("%q is not a positive whole number of seconds", shorten(trimmed))
+	}
+	if value > contract.MaxNoDataTrackingHorizonSeconds {
+		return 0, false, fmt.Errorf("%q is past the largest horizon a lifetime can hold, %d seconds",
+			shorten(trimmed), contract.MaxNoDataTrackingHorizonSeconds)
 	}
 	return value, true, nil
 }
@@ -348,4 +403,11 @@ func shorten(raw []byte) string {
 		return string(raw)
 	}
 	return string(raw[:limit]) + "..."
+}
+
+// deploymentLayer is the deployment's own layer, named as the layer it is
+// whatever its builder wrote: a field read from it says it came from VALUES.
+func deploymentLayer(layer Layer) Layer {
+	layer.Origin = HorizonSourceValues
+	return layer
 }

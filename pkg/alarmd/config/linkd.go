@@ -4,41 +4,30 @@ import (
 	"errors"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 )
 
-// LinkdConfig is the alert link as this deployment reaches it. The Console
-// address and its credentials are the whole of it in the usual case: which of
-// the link's targets is this deployment's - its source, hook, prefix, where
-// its sets are and which sources share them - is read from the Console.
-// EventSourceID and HookName only narrow that choice when the link maintains
-// more than one target. An omitted connection and prefix are where this
-// process reads the sets from, its runtime Redis and alarmd:open_alerts, and
-// the Console is asked whether that is where the link writes them.
+// LinkdConfig is the alert link as this deployment reaches it: the Console's
+// address and its credentials, and nothing else. The link's target - its
+// source, hook, prefix, where its sets are and which sources share them - is
+// read from the Console, which lists exactly one target for a link alarmd
+// reads; nothing is read until the Console names the place.
+//
+// Connection and KeyPrefix are where discovery found the sets, written back
+// once the Console has named them, and are never decoded from the file.
 type LinkdConfig struct {
-	Connection        *RedisConnectionConfig `yaml:"connection"`
-	KeyPrefix         string                 `yaml:"key_prefix"`
-	ConsoleURL        string                 `yaml:"console_url"`
-	EventSourceID     string                 `yaml:"event_source_id"`
-	HookName          string                 `yaml:"hook_name"`
-	Username          string                 `yaml:"username"`
-	Password          string                 `yaml:"password"`
-	ReconcileInterval Duration               `yaml:"reconcile_interval"`
-	// AbsentCloseSend arms the close for strategies that no longer exist.
-	// False, the default, takes the difference and reports every reading
-	// without sending one close: the strategies it would have closed are
-	// counted, the alerts are not.
-	//
-	// It is a setting rather than a program constant because what it decides
-	// is not a fact about the program. The difference's gates are ours to
-	// get right; whether this deployment's numbers - how many strategies it
-	// let go, how many of those still hold alerts - are the numbers whoever
-	// runs it expects, is theirs, and nothing inside the process can answer
-	// it. A capability that makes alerts disappear is armed once those
-	// numbers have been read, not once the code is believed.
-	AbsentCloseSend bool `yaml:"absent_close_send"`
+	Connection *RedisConnectionConfig `yaml:"-"`
+	KeyPrefix  string                 `yaml:"-"`
+	ConsoleURL string                 `yaml:"console_url"`
+	Username   string                 `yaml:"username"`
+	Password   string                 `yaml:"password"`
 }
+
+// LinkdCalibrationInterval is how often the copy calibrates against the
+// link's full sets, and asks the Console again how they are keyed. A
+// program constant: the deployment knows no better than this how often that
+// should be.
+const LinkdCalibrationInterval = 30 * time.Minute
 
 // The Console's Basic Auth may come from the environment instead of the file,
 // so that a deployment can hand alarmd the same Secret the alert link's own
@@ -76,28 +65,10 @@ func (c LinkdConfig) Prefix() string {
 	return c.KeyPrefix
 }
 
-func (c LinkdConfig) CalibrationInterval() time.Duration {
-	if c.ReconcileInterval == 0 {
-		return 30 * time.Minute
-	}
-	return c.ReconcileInterval.Duration()
-}
-
 func (c LinkdConfig) Validate() error {
-	if strings.TrimSpace(c.Prefix()) != c.Prefix() || strings.ContainsAny(c.Prefix(), "\r\n\x00") {
-		return errors.New("linkd key_prefix is invalid")
-	}
-	if c.CalibrationInterval() < time.Minute {
-		return errors.New("linkd reconcile_interval must be at least one minute")
-	}
-	if c.Connection != nil {
-		if err := c.Connection.validate("phase_two.linkd.connection"); err != nil {
-			return err
-		}
-	}
 	if c.ConsoleURL == "" {
-		if c.EventSourceID != "" || c.HookName != "" || c.Username != "" || c.Password != "" {
-			return errors.New("linkd console_url is required for source binding and credentials")
+		if c.Username != "" || c.Password != "" {
+			return errors.New("linkd console_url is required for credentials")
 		}
 		return nil
 	}

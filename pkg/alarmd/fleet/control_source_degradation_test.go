@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A control source that has not refreshed successfully past the staleness
@@ -133,5 +134,84 @@ func TestAStalePlatformSettingsCopyDegradesTheVerdictOnItsOwn(t *testing.T) {
 				t.Fatalf("degradations = %+v, want none", view.Degradations)
 			}
 		})
+	}
+}
+
+// The platform's settings as the deployment resolves them: the first counted
+// replica that reports them speaks for it, named; a replica whose copy
+// resolved other values is named beside it, and replicas that agree are
+// not.
+func TestThePlatformSettingsAreTheFirstReplicasAndADifferingOneIsNamed(t *testing.T) {
+	enabled, disabled, three := true, false, 3
+	fields := func(on *bool) []PlatformSettingField {
+		return []PlatformSettingField{{Field: "is_access_bk_data", Source: "VALUES", Enabled: on},
+			{Field: "host_disable_monitor_states", Source: "DEFAULT", Entries: &three}}
+	}
+	snapshots := healthySnapshots()
+	for i := range snapshots {
+		snapshots[i].PlatformSettings = &PlatformSettingsFacts{Mode: "not_configured", Fields: fields(&enabled)}
+	}
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+	first := replicas()[0]
+	if got := view.PlatformSettingFields; got == nil || got.Replica != first || got.Differing != "" || len(got.Fields) != 2 {
+		t.Fatalf("settings %+v, want the first replica's with no replica differing", got)
+	}
+	snapshots[len(snapshots)-1].PlatformSettings = &PlatformSettingsFacts{Mode: "not_configured", Fields: fields(&disabled)}
+	view = Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+	if got := view.PlatformSettingFields; got == nil || got.Replica != first || got.Differing != replicas()[len(snapshots)-1] {
+		t.Fatalf("settings %+v, want the replica that resolved other values named", got)
+	}
+	if health := healthOf(&view, ReplicaPart{}, now); health.PlatformSettingFields != view.PlatformSettingFields {
+		t.Fatalf("the health route carries %+v, want the view's settings", health.PlatformSettingFields)
+	}
+}
+
+func TestEveryWayAReplicasSettingsCanDifferNamesIt(t *testing.T) {
+	on, off, three, four := true, false, 3, 4
+	fields := func() []PlatformSettingField {
+		return []PlatformSettingField{{Field: "is_access_bk_data", Source: "VALUES", Enabled: &on},
+			{Field: "host_disable_monitor_states", Source: "DEFAULT", Entries: &three}}
+	}
+	cases := map[string]func([]PlatformSettingField) []PlatformSettingField{
+		"field": func(f []PlatformSettingField) []PlatformSettingField {
+			f[1].Field = "file_system_type_ignore"
+			return f
+		},
+		"source":        func(f []PlatformSettingField) []PlatformSettingField { f[1].Source = "DYNAMIC"; return f },
+		"entries":       func(f []PlatformSettingField) []PlatformSettingField { f[1].Entries = &four; return f },
+		"entries unset": func(f []PlatformSettingField) []PlatformSettingField { f[1].Entries = nil; return f },
+		"enabled":       func(f []PlatformSettingField) []PlatformSettingField { f[0].Enabled = &off; return f },
+		"enabled unset": func(f []PlatformSettingField) []PlatformSettingField { f[0].Enabled = nil; return f },
+		"one fewer":     func(f []PlatformSettingField) []PlatformSettingField { return f[:1] },
+		"one more": func(f []PlatformSettingField) []PlatformSettingField {
+			return append(f, PlatformSettingField{Field: "file_system_type_ignore", Source: "DEFAULT", Entries: &three})
+		},
+	}
+	for name, change := range cases {
+		snapshots := healthySnapshots()
+		snapshots[0].PlatformSettings = &PlatformSettingsFacts{Fields: fields()}
+		snapshots[1].PlatformSettings = &PlatformSettingsFacts{Fields: change(fields())}
+		view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+		if got := view.PlatformSettingFields; got == nil || got.Differing != "pod-b" {
+			t.Fatalf("%s: settings %+v, want pod-b named as differing", name, got)
+		}
+	}
+}
+
+func TestAReplicaWithoutSettingsDoesNotSpeakAndTheFirstDifferingOneStaysNamed(t *testing.T) {
+	on, off := true, false
+	fields := func(enabled *bool) []PlatformSettingField {
+		return []PlatformSettingField{{Field: "is_access_bk_data", Source: "VALUES", Enabled: enabled}}
+	}
+	snapshots := append(healthySnapshots(),
+		Snapshot{Replica: "pod-c", TakenAt: now.Add(-10 * time.Second)},
+		Snapshot{Replica: "pod-d", TakenAt: now.Add(-10 * time.Second)})
+	snapshots[0].PlatformSettings = &PlatformSettingsFacts{Mode: "not_configured"}
+	snapshots[1].PlatformSettings = &PlatformSettingsFacts{Fields: fields(&on)}
+	snapshots[2].PlatformSettings = &PlatformSettingsFacts{Fields: fields(&off)}
+	snapshots[3].PlatformSettings = &PlatformSettingsFacts{Fields: fields(nil)}
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, []string{"pod-a", "pod-b", "pod-c", "pod-d"}, now, freshness)
+	if got := view.PlatformSettingFields; got == nil || got.Replica != "pod-b" || got.Differing != "pod-c" {
+		t.Fatalf("settings %+v, want pod-b speaking and pod-c named as the first that differs", got)
 	}
 }

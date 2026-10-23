@@ -5,7 +5,7 @@
 本记录只保存不可逆的结构统计，不保存原始日志、trace ID、内部路由值或真实查询内容。
 
 - 采样来源：目标生产环境的历史 UQ 日志。
-- 时间范围：原有 4 个互不重叠的历史 10 分钟窗口记为 W1～W4；2026-07-23 继续采集 W5（13:25～13:35 UTC）和 W6（13:35～13:45 UTC），2026-07-24 采集 W7（02:50～03:00 UTC）；三个窗口均已结束且互不重叠。
+- 时间范围：原有 4 个互不重叠的历史 10 分钟窗口记为 W1～W4；2026-07-23 继续采集 W5（13:25～13:35 UTC）和 W6（13:35～13:45 UTC），2026-07-24 采集 W7（02:50～03:00 UTC）；三个窗口均已结束且互不重叠；2026-10-17 的 W8 增量与证据边界见下文。
 - 样本规模：对能够稳定关联 input/output 的分类，每个窗口最终取 20 条通过结构判定的可用样本；VM 因 W5 首次出现 instant，range/instant 分层各取 20 条。宽检索误命中只留在本地候选池。InfluxDB 的例外单列在后文，不计入该收敛口径。
 - 去重单位：会改变 UQ 下游请求构造的形似特征，而不是指标名、表名、标签名或字面值。
 - 收尾条件：最后一个窗口中的可用样本全部能由正式 case 的形似覆盖。
@@ -120,6 +120,34 @@ W7 以包含上述四个新增 case 的 34 case 数据集作为覆盖基线，�
 Doris 首批 30 个候选只有 14 条通过 gate，因此继续分页并按 trace 去重，将候选扩大到 60 条后取得 27 条可用请求。最终每类固定选取 20 条进行形似判断。
 
 W7 的 VM range 选取样本包含结构化和 PromQL 入口，VM instant 选取样本包含 5 条结构化入口和 15 条 PromQL 入口；两类的 handler、instant/range 和 VM query/query_range 构造均已有 case 约束。ES 观察到一条单 reference 经 51 条 ES 路由生成 51 组 mapping/search 请求；这是 W6 已见同后端多路由机制的数量扩大，不增加新的路由或 backend 阶段。Doris 仍为单/双 reference、单路由、同存储多路由和跨存储展开的既有组合；TSpider、HDFS 仍为已有 reference 放大与 schema/query 两阶段组合。按正交因素覆盖且不枚举特征笛卡尔积的口径，六层选取样本的新增未覆盖形似均为 0。
+
+## W8 增量采样（2026-10-17）
+
+采样窗口为 2026-10-17 08:40～08:50 UTC，已结束且与 W1～W7 不重叠。查询的是历史 UQ trace；原始证据只保存在本地受控缓存。回放 Git 基线为 `ec97e499e`，包含 #1533 和 #1534。trace 未记录服务源码 revision，因此不据此判断这两个 PR 是否已部署。
+
+本轮从四组检索各取 20 个不同 trace，共 80 个候选；BKSQL 按实际构造路径重新分类，不把检索标签或下游 `device` 直接当作 builder 分类。可用样本要求同 trace 只有一个 UQ handler、入口 HTTP 200、无错误、下游请求 payload 与各阶段完整。部分 range trace 未保留中间父 span，关联依据是唯一入口及完整的逐路请求阶段，不声称完整 span 树均已采集。
+
+| 分类 | 候选数 | 可用数 | 已覆盖形似的样本数 | 新增形似数 |
+| --- | ---: | ---: | ---: | ---: |
+| VM range | 20 | 19 | 16 | 3 |
+| ES aggregate | 20 | 20 | 20 | 0 |
+| ES raw | 20 | 1 | 1 | 0 |
+| Doris | 4 | 4 | 4 | 0 |
+| TSpider builder | 16 | 16 | 11 | 1（5 个样本命中） |
+| HDFS | 0 | 0 | 0 | 未判定 |
+| InfluxDB HTTP | 0 | 0 | 0 | 未判定 |
+
+VM 的 1 个候选和 ES raw 的 19 个候选含多个 UQ handler，全部丢弃。TSpider builder 的 16 个样本中，下游执行端 `device` 分别为 TSpider 12 个、MySQL 4 个；后 4 个同样走无 measurement 后缀的 TSpider 构造路径，不计为 HDFS。按存储 span 名检索没有取得 HDFS/InfluxDB 的可用样本，不据此判断没有流量。VM instant 本窗口未做分层补齐。
+
+ES aggregate 的每条输入均产生 1 个 mapping + 1 个 search 请求，search 无 failed shard 或 timeout。唯一可用 ES raw 输入展开 5 路、产生 5 个 mapping + 5 个 search，未开启 batch；W6 已覆盖这种同存储路由放大与 raw/query_string 的正交组合，不重复物化。
+
+新增 3 个 VM case 均为一个成功 PromQL range 入口和一个合并后的 VM 请求。它们补充直方图分位数、带字符串参数的标签替换和子查询、显式标签匹配的集合运算。新 case 的 expected 由真实 handler 捕获，并与脱敏后的生产 `query-match`、时间/步长/缓存参数、路由映射和逐路过滤条件独立核对。最终 `vm-data-sql` 处于下游渲染阶段，另有正则包裹和转义转换；golden 锁定的是 UQ 发出的 BKBase 请求协议，不把渲染后的 SQL 文本当成同一协议。固定依赖只返回空 matrix，不验证生产返回的数据点。
+
+Doris 的 4 个输入共 28 对 schema/query、56 个 outputs，均属于既有七路聚合与分组特征组合。TSpider builder 的 16 个输入共 39 对 schema/query、78 个 outputs，其中 5 个样本出现未下推聚合而生成 `SELECT *` 的路径，归并为 1 个新形似；其余聚合名称和多 reference 组合沿用既有正交覆盖。新增 TSpider case 用 PromQL 入口固定这项选择，区别于显式 raw 接口的字段投影。
+
+本轮输入中未取得可用于补充 #1533 用户 SQL 语义或 #1534 `exact_total=true` 的成功关联样本；这两项仍由对应单测验证，不能把新增 VM case 作为它们的专项覆盖。
+
+本轮新增 VM 与 TSpider 形似已物化；分类采样尚未达到新窗口每层 20 条且新增为零的收敛条件。后续优先补齐 ES raw 的唯一关联证据、VM instant、Doris/TSpider 的样本量，以及 HDFS/InfluxDB 的真实下游序列。
 
 ## 修复驱动扩充
 
@@ -256,6 +284,6 @@ one logical request
 
 ## 收尾状态
 
-- VM、ES、Doris、TSpider、HDFS：W5 新增形似已物化，W6 和 W7 每层选取的 20 条可用样本新增未覆盖形似均为 0，本轮采集收尾。
+- VM、ES、Doris、TSpider、HDFS：W5 新增形似已物化，W6 和 W7 每层选取的 20 条可用样本新增未覆盖形似均为 0，历史窗口采集已收尾。W8 新增 3 个 VM 形似和 1 个 TSpider 形似，各层缺口见上文。
 - InfluxDB：离线 case 已覆盖，直接生产 output 采样证据尚未达到收敛，边界如上。
 - 后续问题修复：不受本轮收尾状态限制，必须新增对应回归 case。

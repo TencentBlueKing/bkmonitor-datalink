@@ -31,6 +31,13 @@ type TargetScopeCondition struct {
 	// IdentityFields are the (model, instance) dimension pairs an
 	// OBJECT_MODEL_INST record is identified by; see the contract.
 	IdentityFields [][2]string
+	// GroupIDs are the groups a DYNAMIC_GROUP condition names. Its Keys are
+	// the host ids those groups held when the Slot read them
+	// (WithGroupMemberships), and MembershipUnknown says a group among them
+	// could not be read: the keys are then the members known, a lower bound.
+	// Converted from the contract and not yet read, every group is unknown.
+	GroupIDs          []string
+	MembershipUnknown bool
 }
 
 type TargetScopeField string
@@ -38,9 +45,68 @@ type TargetScopeField string
 const (
 	TargetScopeTopoNode        TargetScopeField = TargetScopeField(contract.TargetScopeTopoNode)
 	TargetScopeHost            TargetScopeField = TargetScopeField(contract.TargetScopeHost)
+	TargetScopeDynamicGroup    TargetScopeField = TargetScopeField(contract.TargetScopeDynamicGroup)
 	TargetScopeServiceInstance TargetScopeField = TargetScopeField(contract.TargetScopeServiceInstance)
 	TargetScopeObjectModelInst TargetScopeField = TargetScopeField(contract.TargetScopeObjectModelInst)
 )
+
+// GroupMembership is one dynamic group as a Slot read it: the host ids it
+// holds, and whether that is the group. Known false - the group was not read,
+// is not in the cache, is not a group of hosts, or is past its staleness
+// bound - means HostIDs are at most what was last known of it.
+type GroupMembership struct {
+	HostIDs []string
+	Known   bool
+}
+
+// WithGroupMemberships is the scope with each DYNAMIC_GROUP condition's keys
+// read from its groups' memberships: the union of the host ids they hold, the
+// reduction Python makes at match time. A group the lookup does not answer,
+// or answers as not known, leaves the condition's membership unknown, keeping
+// the hosts it does know. A scope with no such condition is returned as is.
+func (scope *TargetScope) WithGroupMemberships(lookup func(id string) (GroupMembership, bool)) *TargetScope {
+	if scope == nil {
+		return nil
+	}
+	resolved := scope
+	for groupIndex, group := range scope.Groups {
+		for conditionIndex, condition := range group.Conditions {
+			if condition.Field != TargetScopeDynamicGroup {
+				continue
+			}
+			if resolved == scope {
+				resolved = scope.copyGroups()
+			}
+			keys := make(map[string]struct{})
+			unknown := false
+			for _, id := range condition.GroupIDs {
+				membership, answered := GroupMembership{}, false
+				if lookup != nil {
+					membership, answered = lookup(id)
+				}
+				if !answered || !membership.Known {
+					unknown = true
+				}
+				for _, host := range membership.HostIDs {
+					keys[host] = struct{}{}
+				}
+			}
+			target := &resolved.Groups[groupIndex].Conditions[conditionIndex]
+			target.Keys, target.MembershipUnknown = keys, unknown
+		}
+	}
+	return resolved
+}
+
+// copyGroups copies the groups and their condition slices, sharing what the
+// conditions point at; only the copy's conditions are then rewritten.
+func (scope *TargetScope) copyGroups() *TargetScope {
+	copied := &TargetScope{Groups: make([]TargetScopeGroup, len(scope.Groups))}
+	for index, group := range scope.Groups {
+		copied.Groups[index].Conditions = append([]TargetScopeCondition(nil), group.Conditions...)
+	}
+	return copied
+}
 
 type TargetScopeMethod string
 
@@ -141,6 +207,10 @@ type matchTrace struct {
 	// that field's reason instead of the plain one.
 	uniform  bool
 	failures int
+	// undecided records that an alternative failed on a dynamic group whose
+	// membership was not read: the record may be in that group, so the
+	// rejection is named after the group and not after the target.
+	undecided bool
 	// objectIdentityHit records that the group that matched did so through
 	// an OBJECT_MODEL_INST condition, which the reporter needs to tell a
 	// target that never matches from one that merely rejects some records.
@@ -170,6 +240,9 @@ func (trace *matchTrace) fail(condition *TargetScopeCondition, absent bool, cand
 // is nothing about its representation to report; it is simply outside the
 // target, whatever the attribute.
 func (trace *matchTrace) reason() string {
+	if trace.undecided {
+		return contract.TargetScopeReasonDynamicGroupUnavailable
+	}
 	if !trace.uniform || trace.failed == nil {
 		return contract.TargetScopeReasonOutOfScope
 	}
@@ -228,6 +301,17 @@ func (group TargetScopeGroup) matches(facts *Facts, trace *matchTrace) bool {
 				break
 			}
 		}
+		if condition.MembershipUnknown {
+			// Only a member the groups are known to hold decides, and only
+			// for an inclusion: anything else depends on a group that was not
+			// read, and waits for it rather than being called outside.
+			if condition.Method == TargetScopeInclude && hit {
+				continue
+			}
+			trace.undecided = true
+			trace.fail(condition, false, candidates)
+			return false
+		}
 		if condition.Method == TargetScopeExclude {
 			hit = !hit
 		}
@@ -279,53 +363,6 @@ func objectIdentityKeys(facts *Facts, pairs [][2]string) []string {
 		}
 	}
 	return keys
-}
-
-// ResolvesToNoHost reports whether no host in the index can satisfy the scope.
-//
-// This is the one place a scope is evaluated ahead of the data, and it answers
-// exactly one question: may the query be skipped entirely? It never decides
-// whether a series is admitted - that stays with Admit, so there is only ever
-// one implementation of the predicate that can drift.
-//
-// It can only be answered for a scope whose every condition reads facts a
-// host carries. A condition built from the record's own dimensions has no
-// candidate on any host, and its absence fails the group, so evaluating such
-// a scope against hosts would answer "no host can satisfy it" for every
-// object-model target and skip every one of their queries. For those the
-// answer is false: not "some host can", but "this cannot be known ahead of
-// the data".
-func (scope *TargetScope) ResolvesToNoHost(candidates func(func(*Facts) bool)) bool {
-	if scope == nil || !scope.decidableFromHosts() {
-		return false
-	}
-	matched := false
-	candidates(func(facts *Facts) bool {
-		var trace matchTrace
-		for _, group := range scope.Groups {
-			if group.matches(facts, &trace) {
-				matched = true
-				return false
-			}
-		}
-		return true
-	})
-	return !matched
-}
-
-// decidableFromHosts reports whether every condition in the scope reads an
-// attribute a host fact can carry, so that evaluating the scope against the
-// host index is evaluating it at all.
-func (scope *TargetScope) decidableFromHosts() bool {
-	for _, group := range scope.Groups {
-		for _, condition := range group.Conditions {
-			attribute, known := contract.TargetScopeAttributeFor(contract.TargetScopeField(condition.Field))
-			if !known || attribute.Source != contract.TargetScopeSourceFacts {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // dimensionNames lists a record's dimension names for a report. Names are

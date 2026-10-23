@@ -259,13 +259,18 @@ func noDataTagged(event contract.TriggerEventV1) bool {
 const noDataConfiguredLevelID = uint32(1)
 
 type noDataFixture struct {
-	t        *testing.T
-	base     int64
-	clock    *atomic.Int64
-	hasData  *atomic.Bool
+	t       *testing.T
+	base    int64
+	clock   *atomic.Int64
+	hasData *atomic.Bool
+	// partial makes the query answer is_partial: a round whose query is not
+	// FULL, which no-data does not judge.
+	partial  *atomic.Bool
 	runner   phaseTwoQueryGroupRuntime
 	events   *recordingPhaseTwoEventSink
 	interval int64
+	// readAt is when in its period the Query Group is read.
+	readAt func(evaluationAt int64) int64
 	// acked is every event_acked line, for what the rounds decided whether
 	// or not their protocol had a message for it.
 	ackedMu sync.Mutex
@@ -336,7 +341,7 @@ func (fixture *noDataFixture) openAndClose(t *testing.T) (contract.TriggerEventV
 // runSlot moves the clock one period on and runs whatever is due.
 func (fixture *noDataFixture) runSlot(ctx context.Context, round int64) {
 	fixture.t.Helper()
-	fixture.clock.Store((fixture.base + round*fixture.interval + fixture.interval/2) * 1000)
+	fixture.clock.Store(fixture.readAt(fixture.base + round*fixture.interval))
 	for attempt := 0; attempt < 4; attempt++ {
 		_, attempted, err := fixture.runner.RunOne(ctx)
 		if err != nil {
@@ -348,11 +353,6 @@ func (fixture *noDataFixture) runSlot(ctx context.Context, round int64) {
 	}
 }
 
-func startNoDataFixture(t *testing.T) *noDataFixture {
-	t.Helper()
-	return startNoDataFixtureOn(t, "")
-}
-
 // startNoDataFixtureOn is the same fixture on a stated output protocol. The
 // two are different questions: on the native protocol the record's own
 // identity digest is what pairs an alert with its recovery, and on the
@@ -360,6 +360,12 @@ func startNoDataFixture(t *testing.T) *noDataFixture {
 // alert raised during the shadow period is closed by the second, so both have
 // to be exercised and neither stands in for the other.
 func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
+	t.Helper()
+	return startNoDataFixtureWith(t, protocol, noDataContinuous)
+}
+
+// startNoDataFixtureWith is the fixture with the strategy's continuous stated.
+func startNoDataFixtureWith(t *testing.T, protocol string, continuous int) *noDataFixture {
 	t.Helper()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
@@ -370,16 +376,17 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 	if protocol == config.OutputProtocolNative {
 		revision = 7
 	}
-	installNoDataStrategy(t, ctx, redisClient, revision)
+	installNoDataStrategy(t, ctx, redisClient, revision, continuous)
 
 	const interval = int64(60)
 	base := time.Now().Unix()
 	base += interval - base%interval
-	fixture := &noDataFixture{t: t, base: base, clock: &atomic.Int64{}, hasData: &atomic.Bool{}, interval: interval}
+	fixture := &noDataFixture{t: t, base: base, clock: &atomic.Int64{}, hasData: &atomic.Bool{}, partial: &atomic.Bool{}, interval: interval}
 	fixture.clock.Store(base * 1000)
 	now := func() time.Time { return time.UnixMilli(fixture.clock.Load()) }
 
 	uqServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
 		var payload struct {
 			EndTime string `json:"end_time"`
 		}
@@ -398,7 +405,7 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 				strconv.FormatInt((end-1)*1000, 10) + `,5]]}`
 		}
 		_, _ = writer.Write([]byte(`{"series":[` + series + `],"status":null,"trace_id":"no-data-round",` +
-			`"is_partial":false,"result_table_id":["system.cpu"]}`))
+			`"is_partial":` + strconv.FormatBool(fixture.partial.Load()) + `,"result_table_id":["system.cpu"]}`))
 	}))
 	t.Cleanup(uqServer.Close)
 
@@ -425,7 +432,7 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 		},
 		phaseTwoProductionExternalDependencies{
 			Now: now, HTTPClient: uqServer.Client(),
-			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
+			PrepareEvents: preparedEvents(func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil }),
 			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 				if observation.Stage != observability.StageEventACKed {
 					return
@@ -453,6 +460,9 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 	queryGroup := bundle.queryGroups[0]
 	fixture.runner = settledRunner(bundle, queryGroup)
 	fixture.events = events
+	fixture.readAt = func(evaluationAt int64) int64 {
+		return roundReadAtMillis(bundle.dependencies.Config, queryGroup, evaluationAt, fixture.interval)
+	}
 
 	// The Plan must actually carry no-data detection, or every round below
 	// would pass by judging nothing at all.
@@ -464,7 +474,7 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 	return fixture
 }
 
-func installNoDataStrategy(t *testing.T, ctx context.Context, redisClient *redis.Client, revision int64) {
+func installNoDataStrategy(t *testing.T, ctx context.Context, redisClient *redis.Client, revision int64, continuous int) {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
 	if err != nil {
@@ -495,7 +505,7 @@ func installNoDataStrategy(t *testing.T, ctx context.Context, redisClient *redis
 	// backend reports when an item has no data at all. It needs no roster
 	// history, so the first absent round already has something to judge.
 	item["no_data_config"] = map[string]any{
-		"is_enabled": true, "continuous": noDataContinuous,
+		"is_enabled": true, "continuous": continuous,
 		"level": noDataConfiguredLevelID, "agg_dimension": []any{},
 	}
 	for _, detect := range document["detects"].([]any) {

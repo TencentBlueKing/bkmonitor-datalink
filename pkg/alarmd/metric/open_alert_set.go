@@ -23,16 +23,14 @@ import (
 // count the copy already keeps, so nothing here is incremented on a path;
 // the collector asks and reports.
 //
-// The age of the last authoritative publication is emitted only once there
-// has been one. Before that the series does not exist: a zero would read as
-// "loaded just now" and a large number as "lost long ago", and a copy that
-// never loaded is neither -- the publisher may not be deployed, which the
-// mode gauge says on its own.
+// The calibration age is emitted only once a calibration has completed.
+// Before that the series does not exist: a zero would read as "calibrated
+// just now" and a large number as "lost long ago", and a copy that has not
+// calibrated yet is neither.
 type openAlertSetCollector struct {
 	mu          sync.Mutex
 	source      func() openalerts.Stats
 	now         func() time.Time
-	mode        *prometheus.Desc
 	age         *prometheus.Desc
 	unavailable *prometheus.Desc
 	refreshes   *prometheus.Desc
@@ -40,8 +38,8 @@ type openAlertSetCollector struct {
 	entries     *prometheus.Desc
 	tracked     *prometheus.Desc
 	evictions   *prometheus.Desc
-	sent        *prometheus.Desc
-	disjoint    *prometheus.Desc
+	refused     *prometheus.Desc
+	coverage    *prometheus.Desc
 }
 
 func newOpenAlertSetCollector() *openAlertSetCollector {
@@ -50,55 +48,51 @@ func newOpenAlertSetCollector() *openAlertSetCollector {
 	}
 	return &openAlertSetCollector{
 		now: time.Now,
-		mode: descriptor("open_alert_set_mode",
-			"Which state the process copy of the consumer's open alert set is in, 1 on the current one and 0 on "+
-				"the others. authoritative: the consumer's publication was read and is fresh. self_maintained: it "+
-				"was read once and the latest read found it missing, stale, unreadable, under another fingerprint "+
-				"algorithm, or failed; the copy answers from the last publication plus what this process sent. "+
-				"never_loaded: nothing read since the process started, which is the state before the publisher is "+
-				"deployed and is not a fault on its own. Moving in and out of self_maintained without anyone noticing "+
-				"is the failure this gauge exists for.", "mode"),
 		age: descriptor("open_alert_set_authoritative_age_seconds",
-			"Seconds since the last authoritative publication was read. Absent until there has been one. Past "+
-				"open_alert_set_staleness_cycles times the publisher's cycle the copy is stale and fleet health "+
-				"degrades; that bound is also how long a recovery this process sent but the consumer never "+
-				"received stays held before the publication corrects the copy."),
+			"Seconds since the oldest calibration among the tracked strategies' sets completed: a full read of "+
+				"the consumer's open alerts for a strategy, reconciled against its index. Absent until one has."),
 		unavailable: descriptor("open_alert_set_unavailable_total",
-			"Refreshes that did not yield an authoritative publication, by why: read_error (the read failed), "+
-				"heartbeat_missing (no heartbeat key), heartbeat_unreadable (a heartbeat field missing or malformed), "+
-				"heartbeat_stale (older than the staleness bound), fingerprint_version (the publisher computes "+
-				"fingerprints under another algorithm; every lookup would miss, so it is not read as empty), "+
-				"members_disjoint (counted once on entering the state open_alert_set_disjoint reports).", "reason"),
+			"Why the copy could not answer from the consumer's sets: read_error (an index read or a calibration "+
+				"failed, each time), too_large (a strategy's set larger than this process's read budget - members or "+
+				"bytes, from its memory - each time, refused before it is scanned once a member's weight is known; "+
+				"fleet.get names these strategies), location_unconfirmed (the link's Console has not named where the sets are) and "+
+				"keying_unconfirmed (it has not said they are keyed by the alert ids this process sends), each "+
+				"counted once on entering the state; fleet health degrades with OPEN_ALERT_SET_UNCONFIRMED while "+
+				"either lasts. A deployment without the Console counts nothing here.", "reason"),
 		refreshes: descriptor("open_alert_set_refresh_total",
-			"Refreshes by result: authoritative or unavailable. One per publisher cycle; a flat line is the "+
-				"refresh loop not running.", "result"),
+			"Refreshes by result: index (a strategy's index read), authoritative (a calibration completed), "+
+				"unavailable (either failed). A flat line is the refresh loop not running.", "result"),
 		lookups: descriptor("open_alert_set_lookup_total",
-			"Lookups by how they were answered. authoritative_member and authoritative_absent are the "+
-				"publication's word; recently_sent is a fingerprint this process sent ABNORMAL for inside the "+
-				"publisher's lag; not_yet_loaded is a strategy first asked about after the last read; "+
-				"self_maintained and passed_through are the unavailable policy answering, and which of the two "+
-				"appears is the policy in force.", "answer"),
+			"Lookups by how they were answered. index_member and index_absent are the consumer's index; "+
+				"recently_sent is a fingerprint the index does not carry yet that this process sent ABNORMAL for "+
+				"within its lag, the copy's word and not the consumer's; self_maintained and passed_through are "+
+				"the unavailable policy answering, and which of the two appears is the policy in force. index_stale "+
+				"is a set read once whose last successful read or calibration is older than 3 x (the index interval "+
+				"+ ceil(tracked strategies / read batch) x the refresh interval), answered by the same policy as a "+
+				"set never read; the bound grows with the strategies tracked, so it differs between deployments.", "answer"),
 		entries: descriptor("open_alert_set_entries",
 			"What the copy holds: member is fingerprints from the last publication, sent_open those this "+
-				"process sent ABNORMAL for and has not sent RECOVERY for since, sent_closed the reverse.", "kind"),
+				"process sent ABNORMAL for within the local retention.", "kind"),
 		tracked: descriptor("open_alert_set_tracked_strategies",
 			"Strategies the copy reads on each refresh: those evaluated by this worker within the tracking "+
 				"window. Read against worker_owned_query_groups; well above it is strategies this worker lost "+
 				"still inside the window."),
 		evictions: descriptor("open_alert_set_evictions_total",
 			"Fingerprints this process sent that were dropped from the copy to stay inside its bound, oldest "+
-				"first. In self_maintained mode each one is an alert whose recovery now waits for the publication."),
-		sent: descriptor("open_alert_set_sent_alerts",
-			"Alerts this process sent ABNORMAL for and has not sent RECOVERY for, by whether the latest read of "+
-				"their strategy's set carries them (in_set=yes|no). Only alerts first sent at least five minutes "+
-				"before that read are counted, so the consumer has had time to open them. Some no is an alert the "+
-				"consumer closed on its own; all no and none yes is the sets keyed differently from this process's "+
-				"lookups, which open_alert_set_disjoint reports.", "in_set"),
-		disjoint: descriptor("open_alert_set_disjoint",
-			"1 while none of the alerts this process sent is in the consumer's sets (see "+
-				"open_alert_set_sent_alerts); it ends when one of them is found or none is left open. Every lookup against such sets would miss and hold the recovery, so "+
-				"while this is 1 the gate answers from what this process sent instead, and fleet health degrades "+
-				"with OPEN_ALERT_SET_DISJOINT."),
+				"first."),
+		coverage: descriptor("linkd_calibration_coverage",
+			"Tracked strategies by whether calibration at the Console's measured pace reaches them within the "+
+				"calibration interval: covered, or short. A round calibrates enough strategies to cover every tracked "+
+				"one with a quarter to spare, bounded by how many calls the Console answers in half a refresh cycle "+
+				"(from the latest calls' p90); short is the strategies an interval at that bound cannot reach, whose "+
+				"open-alert sets go unjudged and so unclosed. fleet.get names the strategies past their calibration "+
+				"age. Absent without a Console.", "state"),
+		refused: descriptor("open_alert_set_notices_refused_total",
+			"Change notices on the link's channel this process dropped, by why: oversized (past 64 KiB), "+
+				"undecodable (not a notice under the strict shape: a field this build does not know, a wrong type, "+
+				"content after it), invalid_key (the tenant or strategy it names is not a valid one). A dropped "+
+				"notice costs delay only: the strategy is read on the next periodic read. A steady rate is the "+
+				"link publishing a notice this build does not read. Read with alarmd-cli invoke metrics.get.", "reason"),
 	}
 }
 
@@ -114,7 +108,6 @@ func (r *Recorder) SetOpenAlertSetSource(source func() openalerts.Stats) {
 }
 
 func (c *openAlertSetCollector) Describe(ch chan<- *prometheus.Desc) {
-	ch <- c.mode
 	ch <- c.age
 	ch <- c.unavailable
 	ch <- c.refreshes
@@ -122,8 +115,8 @@ func (c *openAlertSetCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.entries
 	ch <- c.tracked
 	ch <- c.evictions
-	ch <- c.sent
-	ch <- c.disjoint
+	ch <- c.refused
+	ch <- c.coverage
 }
 
 func (c *openAlertSetCollector) Collect(ch chan<- prometheus.Metric) {
@@ -134,13 +127,6 @@ func (c *openAlertSetCollector) Collect(ch chan<- prometheus.Metric) {
 		return
 	}
 	stats := source()
-	for _, mode := range openalerts.Modes {
-		value := 0.0
-		if stats.Mode == mode {
-			value = 1
-		}
-		ch <- prometheus.MustNewConstMetric(c.mode, prometheus.GaugeValue, value, string(mode))
-	}
 	if !stats.LoadedAt.IsZero() {
 		ch <- prometheus.MustNewConstMetric(c.age, prometheus.GaugeValue, now().Sub(stats.LoadedAt).Seconds())
 	}
@@ -155,14 +141,13 @@ func (c *openAlertSetCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(stats.Members), "member")
 	ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(stats.Added), "sent_open")
-	ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(stats.Removed), "sent_closed")
 	ch <- prometheus.MustNewConstMetric(c.tracked, prometheus.GaugeValue, float64(stats.Tracked))
-	ch <- prometheus.MustNewConstMetric(c.evictions, prometheus.CounterValue, float64(stats.Evictions))
-	ch <- prometheus.MustNewConstMetric(c.sent, prometheus.GaugeValue, float64(stats.SentInSet), "yes")
-	ch <- prometheus.MustNewConstMetric(c.sent, prometheus.GaugeValue, float64(stats.SentNotInSet), "no")
-	disjoint := 0.0
-	if stats.Disjoint {
-		disjoint = 1
+	if stats.CalibrationConfigured {
+		ch <- prometheus.MustNewConstMetric(c.coverage, prometheus.GaugeValue, float64(max(0, stats.Tracked-stats.CalibrationShort)), "covered")
+		ch <- prometheus.MustNewConstMetric(c.coverage, prometheus.GaugeValue, float64(stats.CalibrationShort), "short")
 	}
-	ch <- prometheus.MustNewConstMetric(c.disjoint, prometheus.GaugeValue, disjoint)
+	ch <- prometheus.MustNewConstMetric(c.evictions, prometheus.CounterValue, float64(stats.Evictions))
+	for _, reason := range openalerts.NoticeRefusals {
+		ch <- prometheus.MustNewConstMetric(c.refused, prometheus.CounterValue, float64(stats.NoticesRefused[reason]), string(reason))
+	}
 }

@@ -85,7 +85,7 @@ func TestALevelWithoutItsOwnTriggerRunsOnTheFirstOne(t *testing.T) {
 		if recovery["consecutive_windows"] != float64(5) || recovery["enabled"] != true {
 			t.Fatalf("recovery=%v, want the platform's default five windows", recovery)
 		}
-		want := controlplane.ObjectDisposition{SourceID: "1", Scope: "LEVEL", LevelID: 2, Disposition: controlplane.DispositionConfigNormalized,
+		want := controlplane.ObjectDisposition{SourceID: "1", Scope: "LEVEL", LevelID: 2, Disposition: controlplane.DispositionConfigNoted,
 			Reason: controlplane.ReasonLevelTriggerBorrowed, Detail: "trigger_from_level=1"}
 		if records := borrowedRecords(catalog); len(records) != 1 || records[0] != want {
 			t.Fatalf("records=%#v, want one %#v", records, want)
@@ -111,12 +111,60 @@ func TestALevelWithoutItsOwnTriggerRunsOnTheFirstOne(t *testing.T) {
 		missing(t, build(t, `{"level":1,"trigger_config":{"count":1,"check_window":5}},{"level":1,"trigger_config":{"count":3,"check_window":5}}`))
 	})
 
+	// A writer that publishes one detect per algorithm writes a level with
+	// two algorithms twice, the same both times. The platform keys detects by
+	// level, so that is one trigger, and it is read as one; the level is not
+	// refused and nothing is named.
+	t.Run("a level written twice the same is one trigger", func(t *testing.T) {
+		const twice = `{"level":2,"connector":"and","trigger_config":{"count":2,"check_window":6,` + allDay + `},"recovery_config":{"check_window":3}}`
+		const reordered = `{"recovery_config":{"check_window":3},"trigger_config":{` + allDay + `,"check_window":6,"count":2},"connector":"and","level":2}`
+		catalog := build(t, twice+`,`+reordered)
+		_, trigger, recovery := levelOf(t, catalog)
+		if trigger["required_anomalies"] != float64(2) || trigger["window_size"] != float64(6) || recovery["consecutive_windows"] != float64(3) {
+			t.Fatalf("trigger=%v recovery=%v, want level 2's own", trigger, recovery)
+		}
+		for _, disposition := range catalog.Dispositions {
+			if disposition.Disposition != controlplane.DispositionAccepted {
+				t.Fatalf("a level written twice the same was named: %#v", catalog.Dispositions)
+			}
+		}
+	})
+
+	// Detects are compared by what the platform reads of them: two that
+	// differ only in a key it passes over are one trigger.
+	t.Run("a level written twice differing only in a key the platform does not read is one trigger", func(t *testing.T) {
+		const ownKey = `"uptime":{"calendars":[],"time_ranges":[{"start":"09:00","end":"18:00"}],"own_calendars":[7]}`
+		catalog := build(t, `{"level":2,"connector":"and","trigger_config":{"count":2,"check_window":6,`+allDay+`},"recovery_config":{"check_window":3}},`+
+			`{"level":2,"connector":"and","trigger_config":{"count":2,"check_window":6,`+ownKey+`},"recovery_config":{"check_window":3}}`)
+		_, trigger, _ := levelOf(t, catalog)
+		if trigger["uptime"] == nil {
+			t.Fatalf("trigger=%v", trigger)
+		}
+		for _, disposition := range catalog.Dispositions {
+			if disposition.Disposition != controlplane.DispositionAccepted {
+				t.Fatalf("two detects saying the same thing were refused: %#v", catalog.Dispositions)
+			}
+		}
+	})
+
+	t.Run("a level written twice with different recoveries is refused", func(t *testing.T) {
+		missing(t, build(t, `{"level":2,"trigger_config":{"count":1,"check_window":5},"recovery_config":{"check_window":3}},`+
+			`{"level":2,"trigger_config":{"count":1,"check_window":5},"recovery_config":{"check_window":4}}`))
+	})
+
+	t.Run("a level written twice with different effective times is refused", func(t *testing.T) {
+		missing(t, build(t, `{"level":2,"trigger_config":{"count":1,"check_window":5,`+allDay+`}},`+
+			`{"level":2,"trigger_config":{"count":1,"check_window":5,"uptime":{"calendars":[],"time_ranges":[]}}}`))
+	})
+
 	t.Run("no trigger at all", func(t *testing.T) {
 		missing(t, build(t, ``))
 	})
 
+	// Every detect carries a recovery the platform reads: one that did not
+	// would default every level's, this one's included (recover.py:253-267).
 	t.Run("a level with its own trigger is read as written", func(t *testing.T) {
-		catalog := build(t, `{"level":2,"trigger_config":{"count":2,"check_window":6},"recovery_config":{"check_window":3}},{"level":1,"trigger_config":{"count":1,"check_window":5}}`)
+		catalog := build(t, `{"level":2,"trigger_config":{"count":2,"check_window":6},"recovery_config":{"check_window":3}},{"level":1,"trigger_config":{"count":1,"check_window":5},"recovery_config":{"check_window":5}}`)
 		_, trigger, recovery := levelOf(t, catalog)
 		if trigger["required_anomalies"] != float64(2) || trigger["window_size"] != float64(6) || recovery["consecutive_windows"] != float64(3) {
 			t.Fatalf("trigger=%v recovery=%v, want level 2's own", trigger, recovery)
@@ -126,7 +174,7 @@ func TestALevelWithoutItsOwnTriggerRunsOnTheFirstOne(t *testing.T) {
 		}
 	})
 
-	key := controlplane.WithheldKey{Disposition: controlplane.DispositionConfigNormalized, Reason: controlplane.ReasonLevelTriggerBorrowed}
+	key := controlplane.WithheldKey{Disposition: controlplane.DispositionConfigNoted, Reason: controlplane.ReasonLevelTriggerBorrowed}
 	if count, reported := controlplane.ComposeCatalog(build(t, `{"level":2,"trigger_config":{"count":1,"check_window":5}}`)).Withheld[key]; !reported || count != 0 {
 		t.Fatalf("LEVEL_TRIGGER_BORROWED reported=%v count=%d, want a published zero", reported, count)
 	}

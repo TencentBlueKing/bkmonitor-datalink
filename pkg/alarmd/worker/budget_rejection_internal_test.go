@@ -14,8 +14,8 @@ import (
 
 func TestBudgetRejectionLogsSnapshotWithoutMutatingSibling(t *testing.T) {
 	var output bytes.Buffer
-	limiter, _ := observability.NewWindowLogLimiter(observability.WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
-	policy, _ := observability.NewBoundedLogPolicy(limiter)
+	limiter, _ := observability.NewScopedLogLimiter(observability.ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 10, MaxScopes: 1024})
+	policy, _ := observability.NewScopedBoundedLogPolicy(limiter)
 	co := &SlotExecutionCoordinator{budget: ProvisionalBudget{MaxSeries: 10, MaxRetainedBytes: 100}, ports: Ports{Observer: observability.NewLoggingObserver(observability.New("alarmd", &output), policy)}}
 	sibling := &streamedExecution{coordinator: co, began: true}
 	if err := sibling.reserveProvisional(context.Background(), 1, 60); err != nil {

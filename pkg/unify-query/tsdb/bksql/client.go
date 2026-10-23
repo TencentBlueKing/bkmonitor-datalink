@@ -122,5 +122,6 @@ func (c *Client) failed(ctx context.Context, err error) *Result {
 		Result:  false,
 		Message: err.Error(),
 		Code:    StatusFailed,
+		Err:     err,
 	}
 }

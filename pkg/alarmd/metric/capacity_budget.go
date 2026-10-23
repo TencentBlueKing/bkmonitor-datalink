@@ -13,6 +13,8 @@ import (
 	"errors"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // CapacityLoad is what the process was given and what it is using.
@@ -127,11 +129,13 @@ func (c *capacityLoadCollector) Collect(metrics chan<- prometheus.Metric) {
 }
 
 // capacitySources is closed for the same reason every other label set here is:
-// a value invented upstream would silently widen the family.
-var capacitySources = []string{
-	"pod_limit", "cgroup_v2", "cgroup_v1", "fallback_default", "product_reference",
-	"environment_override", "runtime",
-}
+// a value invented upstream would silently widen the family. The memory
+// limit's sources, then the CPU budget's, which come from the words the
+// resolver writes: written here by hand, the quota a container's budget is
+// read from was missing from the list, and every replica's
+// container_cpu_cores read source="other".
+var capacitySources = append([]string{"pod_limit", "cgroup_v2", "cgroup_v1", "fallback_default", "product_reference"},
+	observability.CPUSources...)
 
 func boundedSource(source string) string {
 	for _, known := range capacitySources {

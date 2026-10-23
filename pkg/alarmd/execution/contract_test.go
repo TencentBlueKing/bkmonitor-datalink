@@ -27,7 +27,12 @@ import (
 
 func TestFrozenExecutionContractRefContainsOnlyFrozenSemantics(t *testing.T) {
 	ref := frozenContract()
-	wantFields := []string{"Slot", "SnapshotRevision", "QueryRevision", "ScheduleRevision", "ScheduleSegmentStart", "DuePlanSetDigest"}
+	// ReadHoldMillis is frozen semantics too: it moves the due Plans'
+	// deadlines, which DuePlanSetDigest covers, and every freeze of the Slot
+	// passes it back. It is not a runtime selector: a Slot keeps the hold it
+	// was frozen with, whatever its Query Group's is later.
+	wantFields := []string{"Slot", "SnapshotRevision", "QueryRevision", "ScheduleRevision", "ScheduleSegmentStart", "DuePlanSetDigest",
+		"ReadHoldMillis"}
 	typeOfRef := reflect.TypeOf(ref)
 	if typeOfRef.NumField() != len(wantFields) {
 		t.Fatalf("FrozenExecutionContractRef fields=%d, want=%d", typeOfRef.NumField(), len(wantFields))
@@ -102,49 +107,6 @@ func TestResultReasonUsesFrozenObservationCatalog(t *testing.T) {
 		if err := execution.ValidateResultReason(test.result, test.reason); err == nil {
 			t.Fatalf("ValidateResultReason(%q, %q) error=nil", test.result, test.reason)
 		}
-	}
-}
-
-func TestInternalExecutionKeepsPlanDatasetCompletenessAndStateFacts(t *testing.T) {
-	executionInput := validInternalExecution()
-	if err := executionInput.Validate(frozenContract()); err != nil {
-		t.Fatalf("Validate() error=%v", err)
-	}
-	if executionInput.Inputs[0].Dataset == nil || executionInput.Inputs[0].Dataset.Len() != 1 {
-		t.Fatal("FULL+DATA must carry its immutable record")
-	}
-
-	unavailable := executionInput
-	unavailable.Inputs = append([]execution.NamedInputBinding(nil), executionInput.Inputs...)
-	unavailable.Inputs[0].Completeness = execution.CompletenessUnavailable
-	unavailable.Inputs[0].DataState = execution.DataStateUnknown
-	unavailable.Inputs[0].Disposition = execution.AccessUnavailable
-	unavailable.Inputs[0].ReasonCode = execution.ReasonCode(contract.ReasonQueryUnavailable)
-	unavailable.Inputs[0].Dataset = nil
-	unavailable.Inputs[0].View = nil
-	unavailable.StatePreflight = nil
-	unavailable.EffectiveTimeFacts = nil
-	if err := unavailable.Validate(frozenContract()); err != nil {
-		t.Fatalf("UNAVAILABLE Validate() error=%v", err)
-	}
-
-	invalid := executionInput
-	invalid.Inputs = append([]execution.NamedInputBinding(nil), executionInput.Inputs...)
-	invalid.Inputs[0].Dataset = nil
-	if err := invalid.Validate(frozenContract()); err == nil {
-		t.Fatal("FULL binding with nil dataset must fail")
-	}
-
-	duplicateState := executionInput
-	duplicateState.StatePreflight = append(append([]execution.StatePreflightItem(nil), executionInput.StatePreflight...), executionInput.StatePreflight[0])
-	if err := duplicateState.Validate(frozenContract()); err == nil {
-		t.Fatal("duplicate state preflight identity must fail before keyed sequencing")
-	}
-
-	duplicateGap := executionInput
-	duplicateGap.GapPreflight = append(append([]execution.PlanGapLoadItem(nil), executionInput.GapPreflight...), executionInput.GapPreflight[0])
-	if err := duplicateGap.Validate(frozenContract()); err == nil {
-		t.Fatal("duplicate gap preflight identity must fail before keyed sequencing")
 	}
 }
 
@@ -279,41 +241,23 @@ func TestGapLoadPreservesUnavailableAndTerminalFacts(t *testing.T) {
 	}
 }
 
-func TestApplyVersionMustMatchFrozenSlotAndPlan(t *testing.T) {
-	input := validInternalExecution()
-	input.StatePreflight[0].ApplyVersion.SlotDigest = "drift"
-	if err := input.Validate(frozenContract()); err == nil {
-		t.Fatal("state ApplyVersion drift must fail")
-	}
-	input = validInternalExecution()
-	input.GapPreflight[0].ApplyVersion.EvaluationTime++
-	if err := input.Validate(frozenContract()); err == nil {
-		t.Fatal("gap ApplyVersion drift must fail")
-	}
-	input = validInternalExecution()
-	input.GapPreflight[0].ScheduleRevision = "another"
-	if err := input.Validate(frozenContract()); err == nil {
-		t.Fatal("gap plan schedule revision drift must fail")
-	}
-}
-
 func TestCompletionKindFoldsInputAndPlanFacts(t *testing.T) {
 	input := validInternalExecution()
 	result := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{Plan: input.DuePlans[0].Identity, Disposition: execution.PlanDecided}}}
-	if got, err := execution.DeriveCompletionKind(input, result); err != nil || got != execution.CompletionFull {
+	if got, err := deriveCompletionKind(input, result); err != nil || got != execution.CompletionFull {
 		t.Fatalf("FULL+DATA completion=%q error=%v", got, err)
 	}
 	result.Plans[0].Disposition = execution.PlanUnavailable
 	result.Plans[0].GuardBeforeEvents = []execution.PlanGapMutation{{}}
-	if got, err := execution.DeriveCompletionKind(input, result); err != nil || got != execution.CompletionUnavailable {
+	if got, err := deriveCompletionKind(input, result); err != nil || got != execution.CompletionUnavailable {
 		t.Fatalf("UNAVAILABLE completion=%q error=%v", got, err)
 	}
 	result.Plans[0].Disposition = execution.PlanTerminal
-	if got, err := execution.DeriveCompletionKind(input, result); err != nil || got != execution.CompletionTerminal {
+	if got, err := deriveCompletionKind(input, result); err != nil || got != execution.CompletionTerminal {
 		t.Fatalf("TERMINAL completion=%q error=%v", got, err)
 	}
 	result.Plans[0].Disposition = execution.PlanReadinessGap
-	if got, err := execution.DeriveCompletionKind(input, result); err != nil || got != execution.CompletionUnavailable {
+	if got, err := deriveCompletionKind(input, result); err != nil || got != execution.CompletionUnavailable {
 		t.Fatalf("READINESS_GAP completion=%q error=%v", got, err)
 	}
 }
@@ -366,15 +310,12 @@ func TestDependencyCompletenessDoesNotReplacePrimaryCompletionFact(t *testing.T)
 		t.Fatal(err)
 	}
 	input.Contract.DuePlanSetDigest = digest
-	if err := input.Validate(input.Contract); err != nil {
-		t.Fatalf("InternalExecution.Validate() error=%v", err)
-	}
 	primary, err := execution.DerivePrimaryInputFact(input)
 	if err != nil || primary.Completeness != execution.CompletenessFull || primary.DataState != execution.DataStateData {
 		t.Fatalf("PRIMARY fact=%+v error=%v", primary, err)
 	}
 	result := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{Plan: input.DuePlans[0].Identity, Disposition: execution.PlanDecided}}}
-	if got, err := execution.DeriveCompletionKind(input, result); err != nil || got != execution.CompletionFull {
+	if got, err := deriveCompletionKind(input, result); err != nil || got != execution.CompletionFull {
 		t.Fatalf("completion=%q error=%v", got, err)
 	}
 }
@@ -410,33 +351,12 @@ func TestPrimaryInputFactIsOrderIndependent(t *testing.T) {
 	}
 }
 
-func TestEveryDuePlanRequiresPrimaryInput(t *testing.T) {
-	input := validInternalExecution()
-	input.Inputs[0].Role = execution.InputRoleAlgorithmDependency
-	if err := input.Validate(frozenContract()); err == nil {
-		t.Fatal("due Plan without PRIMARY input must fail")
-	}
-}
-
-func TestOptionalLevelIdentityIsCanonical(t *testing.T) {
-	for _, mutate := range []func(*execution.InternalExecution){
-		func(input *execution.InternalExecution) { input.Inputs[0].Consumer.LevelID = 5 },
-		func(input *execution.InternalExecution) { input.Inputs[0].Consumer.HasLevel = true },
-	} {
-		input := validInternalExecution()
-		mutate(&input)
-		if err := input.Validate(frozenContract()); err == nil {
-			t.Fatal("ConsumerRef with inconsistent HasLevel/LevelID must fail")
-		}
-	}
-}
-
 func TestCompletionFoldDoesNotGuessLoadedGuardFacts(t *testing.T) {
 	input := validInternalExecution()
 	result := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{
 		Plan: input.DuePlans[0].Identity, Disposition: execution.PlanUnavailable,
 	}}}
-	if got, err := execution.DeriveCompletionKind(input, result); err != nil || got != execution.CompletionUnavailable {
+	if got, err := deriveCompletionKind(input, result); err != nil || got != execution.CompletionUnavailable {
 		t.Fatalf("completion=%q error=%v", got, err)
 	}
 }
@@ -636,7 +556,7 @@ func TestEvaluationAllowsFullInactiveStateAdvance(t *testing.T) {
 	))
 	facts, err := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{
 		TenantID: "tenant", BusinessID: "2", EvaluationTime: int64(input.Contract.Slot.EvaluationTime),
-		Requirement: compiled.Levels()[0].EffectiveTimeRequirement(),
+		Requirement: compiled.Levels().At(0).EffectiveTimeRequirement(),
 	}})
 	if err != nil || len(facts) != 1 || facts[0].Status() != strategy.EffectiveTimeInactive {
 		t.Fatalf("inactive EffectiveTime fact = %+v, %v", facts, err)
@@ -708,6 +628,27 @@ func TestEvaluationRejectsWrongUnknownReasonAfterLoadedSeriesWarmingCompletes(t 
 	}
 }
 
+// EFFECTIVE_TIME_INACTIVE beside a guard is the effective time's word only
+// when its fact says so: the same round inside the Level's hours, under a
+// guard that has not completed, has to carry the guard's reason.
+func TestAnOutOfHoursReasonInsideTheLevelsHoursKeepsTheGuardsRule(t *testing.T) {
+	result, request := loadedSeriesWarmingCompletionWithin(t, "00:00", "23:59", strategy.EffectiveTimeActive)
+	mutation := result.Plans[0].StateResults[0].Mutation
+	mutation.Levels = append([]execution.RuntimeLevelStateMutation(nil), mutation.Levels...)
+	mutation.Levels[0].HistoryCompleteness = execution.HistoryWarming
+	mutation.Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryWarming)
+	mutation.MutationDigest = ""
+	result.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
+	if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active guard reason") {
+		t.Fatalf("an out-of-hours reason inside the Level's hours left its guard's reason: %v", err)
+	}
+}
+
+// Under a guard that has not completed, an UNKNOWN outcome carries the
+// guard's reason - except a Level its effective time suppressed on whole
+// inputs, which says it was out of its hours: that is why it was not
+// evaluated, and the guard stays on its state where the exact-guard rules
+// read it. Every other reason is still refused.
 func TestEvaluationRejectsUnknownWhenLoadedSeriesWarmingIsNotCompleted(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -770,6 +711,13 @@ func TestEvaluationRejectsUnknownWhenLoadedSeriesWarmingIsNotCompleted(t *testin
 		t.Run(test.name, func(t *testing.T) {
 			result, request := loadedSeriesWarmingInactiveCompletion(t)
 			test.mutate(&result, &request)
+			if err := result.Validate(request); err != nil {
+				t.Fatalf("an out-of-hours outcome on whole inputs under an incomplete guard was refused: %v", err)
+			}
+			result, request = loadedSeriesWarmingInactiveCompletion(t)
+			test.mutate(&result, &request)
+			other := execution.ReasonCode(contract.ReasonQueryEmpty)
+			result.ReasonCode, result.Plans[0].ReasonCode, result.Plans[0].LevelOutcomes[0].ReasonCode = other, other, other
 			if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active guard reason") {
 				t.Fatalf("incomplete loaded WARMING proof must preserve its active reason, got %v", err)
 			}
@@ -936,10 +884,21 @@ func loadedSeriesWarmingInactiveCompletion(
 	t testing.TB,
 ) (execution.EvaluationResult, execution.EvaluationRequest) {
 	t.Helper()
+	return loadedSeriesWarmingCompletionWithin(t, "00:00", "00:01", strategy.EffectiveTimeInactive)
+}
+
+// loadedSeriesWarmingCompletionWithin is the loaded-WARMING round whose one
+// Level is UNKNOWN for EFFECTIVE_TIME_INACTIVE, under a schedule active
+// between start and end; status is what that schedule resolves to at the
+// round's Slot.
+func loadedSeriesWarmingCompletionWithin(
+	t testing.TB, start, end, status string,
+) (execution.EvaluationResult, execution.EvaluationRequest) {
+	t.Helper()
 	input := validInternalExecution()
 	compiled := compiledPlanWithTriggerConfig(t, json.RawMessage(`{
 		"window_size":1,"required_anomalies":1,"step_seconds":60,"timezone_ref":"BUSINESS_LOCAL",
-		"uptime":{"time_ranges":[{"start":"00:00","end":"00:01"}]}
+		"uptime":{"time_ranges":[{"start":"`+start+`","end":"`+end+`"}]}
 	}`))
 	input.DuePlans[0].CompiledPlan = compiled
 	provider := strategy.NewStaticScheduleProvider(strategy.TimezoneResolverFunc(
@@ -947,10 +906,10 @@ func loadedSeriesWarmingInactiveCompletion(
 	))
 	facts, err := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{
 		TenantID: "tenant", BusinessID: "2", EvaluationTime: int64(input.Contract.Slot.EvaluationTime),
-		Requirement: compiled.Levels()[0].EffectiveTimeRequirement(),
+		Requirement: compiled.Levels().At(0).EffectiveTimeRequirement(),
 	}})
-	if err != nil || len(facts) != 1 || facts[0].Status() != strategy.EffectiveTimeInactive {
-		t.Fatalf("inactive EffectiveTime fact = %+v, %v", facts, err)
+	if err != nil || len(facts) != 1 || facts[0].Status() != status {
+		t.Fatalf("EffectiveTime fact = %+v, %v, want %s", facts, err, status)
 	}
 	input.EffectiveTimeFacts[0].Fact = facts[0]
 
@@ -1256,67 +1215,6 @@ func TestQueryExecutionRequestRequiresTypedAttemptFacts(t *testing.T) {
 	}
 }
 
-func TestLocalizedBadSeriesRequiresStatePreflightOutsideDataset(t *testing.T) {
-	input := validInternalExecution()
-	badSeries := execution.SeriesIdentityDigest(strings.Repeat("d", 64))
-	terminal := execution.InputTerminal{
-		ReasonCode: execution.ReasonCode(contract.ReasonRecordInvalid), ImpactScope: execution.ImpactSeries,
-		RecordID: strings.Repeat("f", 64), SourceTime: 1_788_000_001, SeriesIdentity: badSeries,
-	}
-	input.Inputs[0].Disposition = execution.AccessDegraded
-	input.Inputs[0].ReasonCode = execution.ReasonCode(contract.ReasonQueryPartial)
-	input.Inputs[0].Terminals = []execution.InputTerminal{terminal}
-	badPreflight := input.StatePreflight[0]
-	badPreflight.Identity.SeriesIdentityDigest = badSeries
-	input.StatePreflight = append(input.StatePreflight, badPreflight)
-	badEffectiveTime := input.EffectiveTimeFacts[0]
-	badEffectiveTime.SeriesIdentity = badSeries
-	input.EffectiveTimeFacts = append(input.EffectiveTimeFacts, badEffectiveTime)
-
-	if err := input.Validate(frozenContract()); err != nil {
-		t.Fatalf("localized bad series contract error=%v", err)
-	}
-
-	missing := input
-	missing.StatePreflight = missing.StatePreflight[:1]
-	if err := missing.Validate(frozenContract()); err == nil {
-		t.Fatal("localized bad series without State preflight must fail")
-	}
-}
-
-func TestInternalExecutionDataStateMatchesDatasetCardinality(t *testing.T) {
-	input := validInternalExecution()
-	input.Inputs[0].DataState = execution.DataStateEmpty
-	if err := input.Validate(frozenContract()); err == nil {
-		t.Fatal("EMPTY binding with records must fail")
-	}
-	input = validInternalExecution()
-	if err := input.Validate(frozenContract()); err != nil {
-		t.Fatalf("DATA binding with one record error=%v", err)
-	}
-}
-
-// The gap preflight of a piece of a split strategy is the piece's own. A
-// preflight that names the Plan and the generation but another piece - or no
-// piece - loaded another marker, and the execution would judge this piece's
-// warming against it.
-func TestGapPreflightMustNameTheDuePlansOwnPiece(t *testing.T) {
-	piece := execution.ShardRef{Dimension: "bk_target_ip", Index: 1, Count: 2, MatcherDigest: strings.Repeat("d", 64)}
-	input := validInternalExecution()
-	input.DuePlans[0].Shard = piece
-	if err := input.Validate(frozenContract()); err == nil {
-		t.Fatal("a piece's execution accepted the unsplit Plan's gap preflight")
-	}
-	input.GapPreflight[0].Identity.Shard = execution.ShardRef{Dimension: "bk_target_ip", Index: 0, Count: 2, MatcherDigest: strings.Repeat("e", 64)}
-	if err := input.Validate(frozenContract()); err == nil {
-		t.Fatal("a piece's execution accepted a sibling piece's gap preflight")
-	}
-	input.GapPreflight[0].Identity = input.DuePlans[0].GapIdentity()
-	if err := input.Validate(frozenContract()); err != nil {
-		t.Fatalf("a piece's execution refused its own gap preflight: %v", err)
-	}
-}
-
 func TestStoreAndProgressReceiptStatusReasonContracts(t *testing.T) {
 	stateIdentity := validStateMutation().Identity
 	gapIdentity := validInternalExecution().GapPreflight[0].Identity
@@ -1544,7 +1442,7 @@ func evaluationRequest(
 	binding := input.Inputs[0]
 	consumer := binding.Consumer
 	if !consumer.HasLevel {
-		consumer = execution.ConsumerRef{Plan: consumer.Plan, LevelID: input.DuePlans[0].CompiledPlan.Levels()[0].Definition().LevelID, HasLevel: true}
+		consumer = execution.ConsumerRef{Plan: consumer.Plan, LevelID: input.DuePlans[0].CompiledPlan.Levels().At(0).Definition().LevelID, HasLevel: true}
 		binding.Consumer = consumer
 	}
 	series := execution.SeriesIdentityDigest(strings.Repeat("c", 64))
@@ -1831,7 +1729,7 @@ func baseDuePlanAndRequirements() ([]execution.DuePlan, []execution.DataRequirem
 }
 
 func effectiveTimeFactForTest(plan *strategy.CompiledPlan) strategy.EffectiveTimeFact {
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	provider := strategy.NewStaticScheduleProvider(nil)
 	facts, err := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{
 		TenantID: "tenant", BusinessID: "2", EvaluationTime: int64(frozenContract().Slot.EvaluationTime),
@@ -1915,7 +1813,7 @@ func compiledPlanWith(t testing.TB, triggerConfig json.RawMessage, threshold str
 	if !ok {
 		panic("test plan did not compile")
 	}
-	if len(compiled.Levels()) == 0 {
+	if compiled.Levels().Len() == 0 {
 		panic(fmt.Sprintf("test plan has no compiled Levels: %+v", result.LevelTerminals()))
 	}
 	return compiled

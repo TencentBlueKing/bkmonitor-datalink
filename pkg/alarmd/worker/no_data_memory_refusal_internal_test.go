@@ -64,6 +64,16 @@ func noDataRefusalFixture(store *refusingNoDataStore) (*SlotExecutionCoordinator
 	return coordinator, &observed
 }
 
+// refusedMemoryDue is the due Plan the refused memory belongs to: the write
+// reads what the memory lives for from it.
+func refusedMemoryDue(t *testing.T) []execution.DuePlan {
+	t.Helper()
+	return []execution.DuePlan{{
+		Identity:     execution.PlanIdentity{TenantID: "tenant", BusinessID: "10", StrategyID: "856"},
+		CompiledPlan: internalCompiledPlan(t, "856", 1, 60),
+	}}
+}
+
 func refusedMemoryMutation(t *testing.T) execution.PlanNoDataMutation {
 	t.Helper()
 	mutation, err := execution.BuildPlanNoDataMutation(execution.PlanNoDataMemoryUpdate{
@@ -71,7 +81,7 @@ func refusedMemoryMutation(t *testing.T) execution.PlanNoDataMutation {
 		LoadedApplyVersion:     execution.ApplyVersion{StateApplyEpoch: 1, EvaluationTime: 60, SlotDigest: "slot"},
 		ExpectedMarkerRevision: 1,
 		Identity: execution.PlanNoDataIdentity{
-			Plan:            execution.PlanIdentity{TenantID: "tenant", BusinessID: "10", StrategyID: "8946"},
+			Plan:            execution.PlanIdentity{TenantID: "tenant", BusinessID: "10", StrategyID: "856"},
 			StateGeneration: "generation",
 		},
 		ApplyVersion:     execution.ApplyVersion{StateApplyEpoch: 1, EvaluationTime: 60, SlotDigest: "slot"},
@@ -104,7 +114,7 @@ func TestARefusedNoDataMemoryIsReportedRatherThanFailingTheSlot(t *testing.T) {
 
 	err := coordinator.applyNoDataMemory(context.Background(), execution.SlotExecutionRequest{
 		Operation: execution.OperationNormal,
-	}, []execution.PlanNoDataMutation{refusedMemoryMutation(t)})
+	}, refusedMemoryDue(t), []execution.PlanNoDataMutation{refusedMemoryMutation(t)})
 	if err != nil {
 		t.Fatalf("a deterministic refusal failed the Slot: %v", err)
 	}
@@ -132,7 +142,7 @@ func TestARefusedNoDataMemoryIsReportedRatherThanFailingTheSlot(t *testing.T) {
 	if *facts != want {
 		t.Fatalf("refusal facts = %+v, want %+v", *facts, want)
 	}
-	if refusals[0].Trace.StrategyID != "8946" {
+	if refusals[0].Trace.StrategyID != "856" {
 		t.Fatalf("refusal strategy = %q, want the Plan whose memory was refused", refusals[0].Trace.StrategyID)
 	}
 	if refusals[0].ReasonCode != observability.ReasonCode(contract.ReasonStateBudgetExceeded) {
@@ -152,7 +162,7 @@ func TestANoDataRefusalWithoutASizeReportsNoNumbers(t *testing.T) {
 
 	if err := coordinator.applyNoDataMemory(context.Background(), execution.SlotExecutionRequest{
 		Operation: execution.OperationNormal,
-	}, []execution.PlanNoDataMutation{refusedMemoryMutation(t)}); err != nil {
+	}, refusedMemoryDue(t), []execution.PlanNoDataMutation{refusedMemoryMutation(t)}); err != nil {
 		t.Fatalf("a deterministic refusal failed the Slot: %v", err)
 	}
 
@@ -183,7 +193,7 @@ func TestANoDataStoreThatDidNotAnswerStillFailsTheSlot(t *testing.T) {
 	}}
 	err := coordinator.applyNoDataMemory(context.Background(), execution.SlotExecutionRequest{
 		Operation: execution.OperationNormal,
-	}, []execution.PlanNoDataMutation{refusedMemoryMutation(t)})
+	}, refusedMemoryDue(t), []execution.PlanNoDataMutation{refusedMemoryMutation(t)})
 	if err == nil {
 		t.Fatal("a store that did not answer was contained as if it had refused")
 	}

@@ -11,35 +11,23 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// A legacy activation whose publication has no manifest is upgraded from a
-// scan of the Schedule timelines: the scan honours cancellation and its
-// deadline without touching Activation or Schedule, fails closed when the
-// key budget overflows, and reports each attempt. With a manifest the scan
-// is never entered (the sibling test asserts that), so this is the one
-// place the scan's guarantees are exercised.
-func TestScheduleActivationReconcilerUpgradesLegacyByScanWhenNoManifestExists(t *testing.T) {
+// The v1 body a development build wrote before the first release is refused
+// by name, not upgraded: every reader says which schema it found, and the
+// Control Leader's round writes nothing over it.
+func TestAV1ActivationBodyIsRefusedByName(t *testing.T) {
 	client := newControlplaneRedis(t)
 	ctx := context.Background()
-	prefix := "alarmd:control:legacy-scan-without-manifest"
+	prefix := "alarmd:control:v1-body-refused"
 	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
 	if err != nil {
-		t.Fatal(err)
-	}
-	var migrationObservations []observability.Observation
-	repository.ConfigureObserver(observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
-		if observation.LegacyMigration != nil {
-			migrationObservations = append(migrationObservations, observation)
-		}
-	}))
-	if err := repository.ConfigureLegacyMigration(50000, 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	oldCatalog := catalogWithSchedule(t, validCatalog(t, 80), 60, 0)
@@ -53,79 +41,78 @@ func TestScheduleActivationReconcilerUpgradesLegacyByScanWhenNoManifestExists(t 
 	if err != nil {
 		t.Fatal(err)
 	}
+	const v1 = "alarmd-control-activation-v1"
 	legacy := oldState
-	legacy.SchemaVersion = "alarmd-control-activation-v1"
+	legacy.SchemaVersion = v1
 	legacy.ActiveQGSetRef = controlplane.ActiveQueryGroupSetRef{}
 	legacyPayload, _ := json.Marshal(legacy)
 	if err := client.Set(ctx, prefix+":activation", legacyPayload, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	// A publication from before the object catalog has no manifest; the
-	// timelines are all that name its population.
-	revision := string(oldSnapshot.Publication.SnapshotRevision)
-	if err := client.Del(ctx, prefix+":manifest:"+revision).Err(); err != nil {
-		t.Fatal(err)
-	}
-	emptyCatalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{}}
-	emptyCatalog.SnapshotRevision = execution.SnapshotRevision(mustDigest(t, "alarmd-strategy-snapshot-v1", emptyCatalog.QueryGroups))
-	emptySnapshot, _, err := repository.PublishCatalog(ctx, emptyCatalog)
+	newSnapshot, _, err := repository.PublishCatalog(ctx, catalogWithSchedule(t, validCatalog(t, 81), 60, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	activationBefore, _ := client.Get(ctx, prefix+":activation").Bytes()
 	scheduleKey := prefix + ":schedule_timeline:" + string(oldCatalog.QueryGroups[0].Identity)
 	scheduleBefore, _ := client.Get(ctx, scheduleKey).Bytes()
-	unchanged := func(step string) {
-		t.Helper()
-		activation, _ := client.Get(ctx, prefix+":activation").Bytes()
-		schedule, _ := client.Get(ctx, scheduleKey).Bytes()
-		if !bytes.Equal(activationBefore, activation) || !bytes.Equal(scheduleBefore, schedule) {
-			t.Fatalf("%s changed Activation or Schedule", step)
-		}
-	}
-	canceledCtx, cancel := context.WithCancel(ctx)
-	cancel()
-	canceledReconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
-	if _, err := canceledReconciler.Ensure(canceledCtx, emptySnapshot.Publication); !errors.Is(err, context.Canceled) {
-		t.Fatalf("parent context cancellation error=%v", err)
-	}
-	unchanged("parent context cancellation")
-	if err := repository.ConfigureLegacyMigration(50000, time.Nanosecond); err != nil {
-		t.Fatal(err)
-	}
-	timeoutReconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
-	if _, err := timeoutReconciler.Ensure(ctx, emptySnapshot.Publication); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("migration timeout error=%v", err)
-	}
-	unchanged("migration timeout")
-	if err := client.Set(ctx, prefix+":schedule_timeline:extra", `{}`, 0).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := repository.ConfigureLegacyMigration(1, 30*time.Second); err != nil {
-		t.Fatal(err)
-	}
-	reconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
-	if _, err := reconciler.Ensure(ctx, emptySnapshot.Publication); err == nil {
-		t.Fatal("max_scan_keys overflow must fail closed")
-	}
-	unchanged("scan overflow")
-	_ = client.Del(ctx, prefix+":schedule_timeline:extra").Err()
-	_ = repository.ConfigureLegacyMigration(50000, 30*time.Second)
-	state, err := reconciler.Ensure(ctx, emptySnapshot.Publication)
+
+	reader, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Current != emptySnapshot.Publication || state.SchemaVersion != "alarmd-control-activation-v2" || len(state.Plans) != 0 {
-		t.Fatalf("migration state=%#v", state)
+	var corrupt *controlplane.PersistedActivationCorruptError
+	if _, err := reader.LoadActivationHead(ctx); !errors.As(err, &corrupt) || !strings.Contains(err.Error(), v1) {
+		t.Fatalf("a reader of a v1 body = %v, want it refused as corrupt naming %s", err, v1)
 	}
-	groups, err := repository.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
-	if err != nil || len(groups) != 0 {
-		t.Fatalf("active set=(%#v,%v)", groups, err)
+	reconciler, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time { return time.Unix(180, 0) })
+	_, err = reconciler.Ensure(ctx, newSnapshot.Publication)
+	if err == nil || !strings.Contains(err.Error(), v1) {
+		t.Fatalf("the Control Leader's round over a v1 body = %v, want it refused naming %s", err, v1)
 	}
-	if len(migrationObservations) != 3 || migrationObservations[0].LegacyMigration.Result != "canceled" ||
-		migrationObservations[1].LegacyMigration.Result != "fail_closed" || migrationObservations[2].LegacyMigration.Result != "success" ||
-		migrationObservations[2].LegacyMigration.ScanKeys == 0 {
-		t.Fatalf("legacy migration observations=%#v", migrationObservations)
+	if failure, ok := controlplane.ActivationFailureFromError(err); !ok || failure.Class != controlplane.ActivationFailureClassCorrupt {
+		t.Fatalf("the refusal is classed %+v (%t), want corrupt: a body no writer of this build can fix is not a retry", failure, ok)
+	}
+	activation, _ := client.Get(ctx, prefix+":activation").Bytes()
+	schedule, _ := client.Get(ctx, scheduleKey).Bytes()
+	if !bytes.Equal(activation, legacyPayload) || !bytes.Equal(schedule, scheduleBefore) {
+		t.Fatal("the refused round wrote the activation or the timeline")
+	}
+}
+
+// A head body carries no records, so the active set reference is what names
+// its population: a head without one is refused as corrupt, not read as an
+// activation of nothing.
+func TestAHeadWithoutItsActiveSetReferenceIsRefused(t *testing.T) {
+	client := newControlplaneRedis(t)
+	ctx := context.Background()
+	prefix := "alarmd:control:head-without-set"
+	repository, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, err := repository.PublishCatalog(ctx, catalogWithSchedule(t, validCatalog(t, 80), 60, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, semantics := runtimePlanCompiler(t)
+	initial, _ := controlplane.NewInitialScheduleActivator(repository, compiler, semantics, func() time.Time { return time.Unix(83, 0) })
+	state, err := initial.Ensure(ctx, snapshot.Publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := state
+	head.SchemaVersion, head.Plans, head.ActiveQGSetRef = "alarmd-control-activation-v3", nil, controlplane.ActiveQueryGroupSetRef{}
+	payload, _ := json.Marshal(head)
+	if err := client.Set(ctx, prefix+":activation", payload, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := controlplane.NewRedisCatalogRepository(client, prefix, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corrupt *controlplane.PersistedActivationCorruptError
+	if _, err := reader.LoadActivationHead(ctx); !errors.As(err, &corrupt) || !strings.Contains(err.Error(), "active Query Group set reference") {
+		t.Fatalf("a head without its set reference read as %v, want it refused as corrupt naming the reference", err)
 	}
 }
 

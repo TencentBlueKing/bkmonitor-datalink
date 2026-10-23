@@ -263,7 +263,7 @@ func TestDataArrivingRestartsTrackingFromNothing(t *testing.T) {
 	stopped := map[string]GroupMemory{group.Key(): {FirstAbsent: 800, SuppressedAt: 920}}
 
 	back := evaluate(t, horizonRound(1000, staticRoster("v1", group), groupSet(group), stopped))
-	wantVerdicts(t, back, map[string]Verdict{group.Key(): VerdictNormal})
+	wantVerdicts(t, back, map[string]Verdict{group.Key(): VerdictNormal, WholeItemGroup().Key(): VerdictNormal})
 	wantMemory(t, back, group.Key(), GroupMemory{LastSeen: 1000})
 	wantTrackingFacts(t, back, 0, 0)
 
@@ -279,8 +279,9 @@ func TestDataArrivingRestartsTrackingFromNothing(t *testing.T) {
 }
 
 // The same, for a history roster that the horizon had emptied: the group comes
-// back, is only remembered, is judged from the next round, and is reported when
-// it fails again.
+// back and is recovered in that round although no roster expects it - the
+// horizon forgot it, and an alert may still be standing on it - is in the
+// roster from the next round, and is reported when it fails again.
 func TestAnExhaustedHistoryPlanTracksAGroupThatComesBack(t *testing.T) {
 	group := hostGroup(t, "10.0.0.1")
 	exhausted := horizonRound(1000, Roster{Version: "v1", Source: RosterHistory, Groups: nil},
@@ -288,6 +289,7 @@ func TestAnExhaustedHistoryPlanTracksAGroupThatComesBack(t *testing.T) {
 	exhausted.TrackingExhaustedAt = 920
 
 	back := evaluate(t, exhausted)
+	wantVerdicts(t, back, map[string]Verdict{group.Key(): VerdictNormal, WholeItemGroup().Key(): VerdictNormal})
 	wantMemory(t, back, group.Key(), GroupMemory{LastSeen: 1000})
 	if back.TrackingExhaustedAt != 0 {
 		t.Fatalf("tracking-exhausted = %d, want it cleared once a group came back", back.TrackingExhaustedAt)
@@ -295,7 +297,7 @@ func TestAnExhaustedHistoryPlanTracksAGroupThatComesBack(t *testing.T) {
 
 	// Second round: the group is in the history roster now and reported.
 	second := evaluate(t, horizonRound(1060, historyRoster("v2", group), groupSet(group), back.Memory))
-	wantVerdicts(t, second, map[string]Verdict{group.Key(): VerdictNormal})
+	wantVerdicts(t, second, map[string]Verdict{group.Key(): VerdictNormal, WholeItemGroup().Key(): VerdictNormal})
 
 	third := evaluate(t, horizonRound(1120, historyRoster("v2", group), nil, second.Memory))
 	wantVerdicts(t, third, map[string]Verdict{group.Key(): VerdictAnomaly})

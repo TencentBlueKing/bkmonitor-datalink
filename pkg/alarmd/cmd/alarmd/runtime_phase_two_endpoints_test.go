@@ -38,6 +38,9 @@ func TestResolvedEndpointsNameSharingAndCarryNoCredential(t *testing.T) {
 		Username: "alarmd", Password: "top-secret", SentinelPassword: "sentinel-secret", DB: 8}
 	cfg.Redis.StatePrefix = "alarmd:phase2:g2:runtime:v1"
 	cfg.Kafka.LegacyAdapter.SnapshotPrefix = "bk_monitorv3.ee.cache"
+	// Apart from the platform prefix, so the strategy row is seen to name
+	// the one its reader uses.
+	cfg.PhaseTwo.Control.StrategyCachePrefix = "bk_monitorv3.ee.strategy"
 	cfg.Kafka.Brokers = []string{"kafka-0:9092", "kafka-1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "0bkmonitor_backend_event"
 	cfg.PhaseTwo.Access.UQEndpoint = "http://unify-query:10205"
@@ -65,10 +68,10 @@ func TestResolvedEndpointsNameSharingAndCarryNoCredential(t *testing.T) {
 		t.Errorf("state redis = %+v", state)
 	}
 	strategy := byRole[fleet.EndpointStrategyCache]
-	if strategy.DB == nil || *strategy.DB != 0 || strategy.Prefix != "bk_monitorv3.ee.cache" || strategy.SharedWith != "" {
+	if strategy.DB == nil || *strategy.DB != 0 || strategy.Prefix != "bk_monitorv3.ee.strategy" || strategy.SharedWith != "" {
 		t.Errorf("strategy cache = %+v", strategy)
 	}
-	if cmdb := byRole[fleet.EndpointCMDBCache]; cmdb.SharedWith != fleet.EndpointStrategyCache {
+	if cmdb := byRole[fleet.EndpointCMDBCache]; cmdb.SharedWith != fleet.EndpointStrategyCache || cmdb.Prefix != "bk_monitorv3.ee.cache" {
 		t.Errorf("cmdb cache does not say it shares the strategy cache's connection: %+v", cmdb)
 	}
 	if dynamic := byRole[fleet.EndpointDynamicConfig]; dynamic.Configured || dynamic.Address != "" {
@@ -565,10 +568,9 @@ func TestTheOpenAlertPublicationHasADependencyRowWithTheReadersAccount(t *testin
 	cfg.Redis.DB = 8
 	cfg.Redis.StatePrefix = "alarmd:phase2:g2:runtime:v1"
 	sharing := endpointSharing{runtimeIsSource: false}
-	heartbeat, members := 42.0, 517
-	account := &fleet.OpenAlertSetFacts{Mode: "self_maintained", Available: false, UnavailableReason: "heartbeat_stale",
-		HeartbeatAgeSeconds: &heartbeat, CycleSeconds: 60, FingerprintVersion: "md5_v1", ReaderFingerprintVersion: "md5_v1",
-		TrackedSets: 6, LoadedSets: 6, Members: members, Lookups: map[string]uint64{"authoritative_member": 3, "self_maintained": 1}}
+	members := 517
+	account := &fleet.OpenAlertSetFacts{Available: false, UnavailableReason: "read_error",
+		TrackedSets: 6, LoadedSets: 6, Members: members, Lookups: map[string]uint64{"index_member": 3, "self_maintained": 1}}
 	loaded := 300.0
 	account.AuthoritativeAgeSeconds = &loaded
 	facts := endpointFactsSource(cfg, sharing, nil, nil, nil, func() *fleet.SourceFacts { return nil }, nil,
@@ -589,19 +591,10 @@ func TestTheOpenAlertPublicationHasADependencyRowWithTheReadersAccount(t *testin
 	if row.Prefix == cfg.Redis.StatePrefix || strings.HasPrefix(row.Prefix, cfg.Redis.StatePrefix) {
 		t.Fatalf("prefix %q is derived from the state prefix; the contract's prefix is fixed so the writer need not learn this deployment's configuration", row.Prefix)
 	}
-	if row.Writer == nil || !row.Writer.Present || row.Writer.Count != members || row.Writer.AgeSeconds == nil || *row.Writer.AgeSeconds != heartbeat ||
-		row.Writer.State != "self_maintained:heartbeat_stale" {
-		t.Fatalf("writer = %+v, want present, %d members, the publisher's heartbeat %.0f s old, the mode with why it is unavailable", row.Writer, members, heartbeat)
-	}
-	if row.OpenAlertSet != account {
-		t.Fatalf("the full account is not on the row: %+v", row.OpenAlertSet)
-	}
-	never := &fleet.OpenAlertSetFacts{Mode: "never_loaded", ReaderFingerprintVersion: "md5_v1", Lookups: map[string]uint64{"passed_through": 9}}
-	for _, entry := range endpointFactsSource(cfg, sharing, nil, nil, nil, func() *fleet.SourceFacts { return nil }, nil,
-		func() *fleet.OpenAlertSetFacts { return never }, time.Now)() {
-		if entry.Role == fleet.EndpointOpenAlertSet && (entry.Writer == nil || entry.Writer.Present || entry.Writer.AgeSeconds != nil || entry.Writer.State != "never_loaded") {
-			t.Fatalf("a copy that never loaded = %+v, want absent, no age, the mode as the state", entry.Writer)
-		}
+	// No writer row: the consumer publishes no heartbeat, and a read is not
+	// evidence of a recent writer. The account rides on the row whole.
+	if row.Writer != nil || row.OpenAlertSet != account {
+		t.Fatalf("row writer %+v account %+v, want no writer and the full account", row.Writer, row.OpenAlertSet)
 	}
 	for _, entry := range endpointFactsSource(cfg, sharing, nil, nil, nil, func() *fleet.SourceFacts { return nil }, nil, nil, time.Now)() {
 		if entry.Role == fleet.EndpointOpenAlertSet && (entry.Writer != nil || entry.OpenAlertSet != nil || !entry.Configured) {
@@ -613,7 +606,7 @@ func TestTheOpenAlertPublicationHasADependencyRowWithTheReadersAccount(t *testin
 func TestOpenAlertIndexReadDoesNotBecomeWriterHeartbeat(t *testing.T) {
 	cfg := config.Default()
 	age := 2.0
-	account := &fleet.OpenAlertSetFacts{IndexProtocol: true, IndexReadAgeSeconds: &age, SubscriptionReady: true, Members: 3}
+	account := &fleet.OpenAlertSetFacts{IndexReadAgeSeconds: &age, SubscriptionReady: true, Members: 3}
 	rows := endpointFactsSource(cfg, endpointSharing{}, nil, nil, nil, func() *fleet.SourceFacts { return nil }, nil, func() *fleet.OpenAlertSetFacts { return account }, time.Now)()
 	for _, row := range rows {
 		if row.Role == fleet.EndpointOpenAlertSet {
@@ -624,4 +617,45 @@ func TestOpenAlertIndexReadDoesNotBecomeWriterHeartbeat(t *testing.T) {
 		}
 	}
 	t.Fatal("missing open alert endpoint")
+}
+
+// The workload read's dependencies are the endpoint list's addresses, one
+// per host: each sentinel of a sentinel deployment (the master name is not an
+// address), each Kafka broker, the query backend's URL, and nothing for an
+// endpoint the configuration does not name. No credential rides along.
+func TestWorkloadDependenciesAreTheEndpointsHostsOnePerHost(t *testing.T) {
+	cfg := config.Default()
+	cfg.Redis.RedisConnectionConfig = config.RedisConnectionConfig{Mode: config.RedisModeSentinel, MasterName: "mymaster",
+		SentinelAddress: []string{"sentinel-0.storage.svc.cluster.local:26379", "sentinel-1.storage.svc.cluster.local:26379"},
+		Password:        "top-secret", SentinelPassword: "sentinel-secret"}
+	cfg.Kafka.Brokers = []string{"kafka-0.queue.svc:9092", "192.0.2.20:9092"}
+	cfg.PhaseTwo.Access.UQEndpoint = "http://query-http.monitoring.svc.cluster.local:10205"
+	// The compatibility output's service Redis is an address this process
+	// connects to like any other, and is read like one.
+	cfg.Kafka.LegacyAdapter.ServiceRedis = config.RedisConnectionConfig{Mode: config.RedisModeStandalone,
+		Address: "compat-redis.legacy.svc:6379"}
+	got := map[string]bool{}
+	for _, dependency := range workloadDependencies(cfg) {
+		got[dependency.Name+" "+dependency.Address] = true
+		if strings.Contains(dependency.Address, "secret") || strings.Contains(dependency.Address, "@") {
+			t.Fatalf("dependency %+v carries more than a host", dependency)
+		}
+	}
+	for _, want := range []string{
+		fleet.EndpointStateRedis + " sentinel-0.storage.svc.cluster.local:26379",
+		fleet.EndpointStateRedis + " sentinel-1.storage.svc.cluster.local:26379",
+		fleet.EndpointOutputKafka + " kafka-0.queue.svc:9092",
+		fleet.EndpointOutputKafka + " 192.0.2.20:9092",
+		fleet.EndpointQueryBackend + " http://query-http.monitoring.svc.cluster.local:10205",
+		fleet.EndpointCompatOutput + " compat-redis.legacy.svc:6379",
+	} {
+		if !got[want] {
+			t.Errorf("missing dependency %q in %v", want, got)
+		}
+	}
+	for key := range got {
+		if strings.HasPrefix(key, fleet.EndpointLinkdConsole+" ") {
+			t.Errorf("an unconfigured linkd Console added %q", key)
+		}
+	}
 }

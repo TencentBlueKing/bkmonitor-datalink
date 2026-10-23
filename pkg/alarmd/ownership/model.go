@@ -63,7 +63,10 @@ type WorkerRegistration struct {
 	DependencyStatus    DependencyStatus    `json:"dependency_status"`
 	DeploymentProfile   string              `json:"deployment_profile"`
 	CapabilitiesDigest  string              `json:"capabilities_digest"`
-	ExpiresAt           time.Time           `json:"expires_at"`
+	// ExecutionContractDigest describes execution capabilities independently
+	// of resource budgets and role composition. Empty on older registrations.
+	ExecutionContractDigest string    `json:"execution_contract_digest,omitempty"`
+	ExpiresAt               time.Time `json:"expires_at"`
 	// Capabilities names the control contracts this binary takes part in,
 	// by word (CapabilityContentScope, ...). A leader writes a contract's
 	// facts only once every ready worker declares it: the digest above says
@@ -87,7 +90,59 @@ type WorkerRegistration struct {
 	// unknown and never as lagging or idle. Nothing in routing reads them.
 	Applied *AppliedControlFacts `json:"applied,omitempty"`
 	Load    *WorkerLoad          `json:"load,omitempty"`
+	// Declined names the Query Groups this worker will not run while an
+	// execution of theirs is hung here - past its deadline and its grace,
+	// ignoring its cancellation (design 02 section 6.5) - with the stage it
+	// is stuck in. The worker let each one's lease go; a leader places it on
+	// another worker and never back here while it is named. Each entry holds
+	// one of the worker's execution slots until its execution returns, so
+	// there are never more than the worker's ActiveExecutionLimit. Absent
+	// from a binary that does not decline, and ignored by a leader from
+	// before it, which leaves the Query Group where it is as before.
+	Declined []DeclinedQueryGroup `json:"declined,omitempty"`
+	// UnreadableTimelines names the Query Groups whose last round here met a
+	// Schedule timeline that does not decode (SCHEDULE_UNREADABLE) or whose
+	// key is not there at all (SCHEDULE_MISSING), the first
+	// MaxReportedUnreadableTimelines of them in Query Group order, and
+	// UnreadableTimelinesTotal how many there are in all. A name is a request
+	// to look, not a verdict: a leader reads each named timeline again,
+	// rewrites the ones it cannot decode either and opens again the ones it
+	// finds absent;
+	// before this, nothing told it and the Query Group ran nothing for as
+	// long as the timeline's key lived. A name is dropped by the first later
+	// round of that Query Group that runs a Slot. Absent from a binary that
+	// does not report, and ignored by a leader from before it, which leaves
+	// the timeline as it is until a cutover reads it.
+	UnreadableTimelines      []string `json:"unreadable_timelines,omitempty"`
+	UnreadableTimelinesTotal int      `json:"unreadable_timelines_total,omitempty"`
 }
+
+// DeclinedQueryGroup is one Query Group a worker declines, and the stage its
+// hung execution last entered (execution.SlotStages).
+type DeclinedQueryGroup struct {
+	QueryGroup string `json:"query_group"`
+	Stage      string `json:"stage,omitempty"`
+}
+
+// Declines says whether the worker declines queryGroup.
+func (worker WorkerRegistration) Declines(queryGroup execution.QueryGroupIdentity) bool {
+	for _, declined := range worker.Declined {
+		if declined.QueryGroup == string(queryGroup) {
+			return true
+		}
+	}
+	return false
+}
+
+// MaxReportedUnreadableTimelines bounds the names a registration carries. A
+// fleet-wide decode failure - a rollout whose new timelines the old build
+// cannot read - would otherwise put every owned Query Group on every
+// heartbeat; the total still says how many.
+//
+// Retire when: the upstream snapshot after the one that adds this field is
+// merged, the rollout case above is gone; the bound stays for a decode
+// failure that spans a fleet for any other reason.
+const MaxReportedUnreadableTimelines = 64
 
 // AppliedControlFacts says which version of each versioned control fact the
 // worker executes by. ActivationRecordRevision is the record revision of the
@@ -102,6 +157,13 @@ type AppliedControlFacts struct {
 // WorkerLoad is the worker's own occupancy at the heartbeat, copied from the
 // capacity its fleet snapshot already reports; it adds no measurement. It is
 // written for a scheduler that will weigh it later, and read by nothing yet.
+//
+// Placement must not read PermitBudget, or anything else here that the
+// worker re-derives while it runs: the query budget is sized from the work
+// the worker owns once a minute (config.DeriveSchedulerShape), so placing by
+// it would move work every time the budget followed the work, and the next
+// derivation would move it back. Only RetainedPoolBytes, which is fixed by
+// the container, is read (the cost ledger's byte constraint).
 type WorkerLoad struct {
 	OwnedQueryGroups int     `json:"owned_query_groups"`
 	PermitsHeld      int     `json:"permits_held"`
@@ -133,8 +195,9 @@ func (load *WorkerLoad) validate() error {
 // Rendezvous routing. It deliberately excludes runtime health and Worker
 // identity so dependency degradation does not cause ownership churn.
 type WorkerCompatibility struct {
-	DeploymentProfile  string
-	CapabilitiesDigest string
+	DeploymentProfile       string
+	CapabilitiesDigest      string
+	ExecutionContractDigest string
 }
 
 func (compatibility WorkerCompatibility) Validate() error {
@@ -147,7 +210,26 @@ func (compatibility WorkerCompatibility) Validate() error {
 func (worker WorkerRegistration) Compatibility() WorkerCompatibility {
 	return WorkerCompatibility{
 		DeploymentProfile: worker.DeploymentProfile, CapabilitiesDigest: worker.CapabilitiesDigest,
+		ExecutionContractDigest: worker.ExecutionContractDigest,
 	}
+}
+
+// Matches compares the execution contract when both peers declare it. Mixed
+// versions use the existing capability digest; a declared contract mismatch
+// never falls back to that legacy comparison.
+//
+// Retire the fallback once the previous upstream snapshot declares
+// ExecutionContractDigest: a peer that does not declare it is then older
+// than anything an upgrade starts from. The legacy CapabilitiesDigest
+// comparison, and the digest itself, go with it.
+func (compatibility WorkerCompatibility) Matches(other WorkerCompatibility) bool {
+	if compatibility.DeploymentProfile != other.DeploymentProfile {
+		return false
+	}
+	if compatibility.ExecutionContractDigest != "" && other.ExecutionContractDigest != "" {
+		return compatibility.ExecutionContractDigest == other.ExecutionContractDigest
+	}
+	return compatibility.CapabilitiesDigest == other.CapabilitiesDigest
 }
 
 func (worker WorkerRegistration) Validate() error {

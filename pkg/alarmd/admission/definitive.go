@@ -45,10 +45,15 @@ func RejectionStandingOf(plan PlanContext, facts *Facts, filter, reason string) 
 		if facts == nil || facts.HostFactsUnavailable {
 			return StandingCacheUnavailable
 		}
+		// A dynamic group the target names was not read: the record may be
+		// one of its hosts.
+		if reason == contract.TargetScopeReasonDynamicGroupUnavailable {
+			return StandingCacheUnavailable
+		}
 		if reason != contract.TargetScopeReasonOutOfScope {
 			return StandingIndefinite
 		}
-		if _, named := facts.HostNaming.LookupKey(); named && !facts.HostResolved {
+		if hostNotPlaced(facts) {
 			return StandingCacheUnavailable
 		}
 		return StandingDefinitive
@@ -56,8 +61,20 @@ func RejectionStandingOf(plan PlanContext, facts *Facts, filter, reason string) 
 		if facts == nil || facts.HostFactsUnavailable || plan.TargetPlan == nil || plan.TargetPlan.Members == nil {
 			return StandingCacheUnavailable
 		}
+		// A selector that could not answer is facts not read, as a
+		// resolution that is not definitive is below.
+		if reason == TargetPlanReasonSelectorUnavailable {
+			return StandingCacheUnavailable
+		}
 		if reason != TargetPlanReasonOutOfTarget {
 			return StandingIndefinite
+		}
+		// Keys read off a host - its id, or its address - are only a verdict
+		// when the cache placed that host. One it does not know may be a host
+		// it has not learned yet, or one a writer's static list names and the
+		// cache lost: either way the target was decided without it.
+		if identity := plan.TargetPlan.Identity; (identity.HostIdentity || identity.Address) && hostNotPlaced(facts) {
+			return StandingCacheUnavailable
 		}
 		membership, knows := plan.TargetPlan.Members.(DefinitiveMembership)
 		if !knows || !membership.Definitive() {
@@ -66,6 +83,18 @@ func RejectionStandingOf(plan PlanContext, facts *Facts, filter, reason string) 
 		return StandingDefinitive
 	}
 	return StandingNotTarget
+}
+
+// hostNotPlaced is whether the host the record names was decided without the
+// cache knowing it: the fuller placed it nowhere (HostUnresolved), or the
+// host the status filter would look up - by id, or by an address with its
+// cloud - was not found.
+func hostNotPlaced(facts *Facts) bool {
+	if facts.HostUnresolved {
+		return true
+	}
+	_, named := facts.HostNaming.LookupKey()
+	return named && !facts.HostResolved
 }
 
 // DefinitelyOutside reports whether a rejection is the monitoring target
@@ -80,9 +109,10 @@ func RejectionStandingOf(plan PlanContext, facts *Facts, filter, reason string) 
 //     object identity could not be built, or a target nobody resolved, is a
 //     gap on some side, not a record placed outside;
 //   - the facts it was decided on must have been read. A host the record
-//     names and the host cache did not find may be a host the cache has not
-//     learned yet, and a target plan whose selectors did not all answer
-//     from fresh facts is a lower bound, not the target.
+//     names - by id, address, alias or service instance - and the host
+//     cache did not place may be a host the cache has not learned yet, on
+//     either path, and a target plan whose selectors did not all answer from
+//     fresh facts is a lower bound, not the target.
 //
 // Every "no" here costs a close that could have been sent; every wrong
 // "yes" closes an alert that is still in scope. The rule leans to the first.

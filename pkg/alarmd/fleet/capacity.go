@@ -9,7 +9,11 @@
 
 package fleet
 
-import "sort"
+import (
+	"encoding/json"
+	"sort"
+	"time"
+)
 
 // Capacity is one replica's answer to "how close am I to my limits".
 //
@@ -102,6 +106,60 @@ type Capacity struct {
 	// Pulled is how much this replica actually read. Absent on a replica that
 	// does not report it.
 	Pulled *SeriesPull `json:"pulled,omitempty"`
+	// Shape is the scheduler shape this replica derived from its own work and
+	// what it derived it from. Absent before the first derivation.
+	Shape *SchedulerShape `json:"scheduler_shape,omitempty"`
+}
+
+// SchedulerShape is one replica's query budget, execution slots and queues
+// as it last derived them from the work it owns (config.DeriveSchedulerShape),
+// beside the inputs: the peaks it measured, the hold and execution length it
+// sized them by, and the ceiling its memory set.
+type SchedulerShape struct {
+	Replica                string    `json:"replica,omitempty"`
+	DerivedAt              time.Time `json:"derived_at"`
+	Applied                bool      `json:"applied"`
+	ProcessQueryPermits    int       `json:"process_query_permits"`
+	RecoveryQueryPermits   int       `json:"recovery_query_permits"`
+	ActiveExecutions       int       `json:"active_executions"`
+	ReadyQueueCapacity     int       `json:"ready_queue_capacity"`
+	RecoveryQueueCapacity  int       `json:"recovery_queue_capacity"`
+	ActiveExecutionCeiling int       `json:"active_execution_ceiling"`
+	PeakQueriesPerSecond   float64   `json:"peak_queries_per_second"`
+	ReplayQueriesPerSecond float64   `json:"replay_queries_per_second"`
+	PeakSlotsPerSecond     float64   `json:"peak_slots_per_second"`
+	HoldMillis             int64     `json:"hold_ms"`
+	ExecutionMillis        int64     `json:"execution_ms"`
+	OwnedQueryGroups       int       `json:"owned_query_groups"`
+}
+
+// MarshalJSON keeps a measured zero on the wire. throttled_seconds and
+// memory_limit_hits are omitted while zero, which is right when nothing was
+// read and wrong when the flag beside them says something was: a reader told
+// "measured" and handed no value cannot tell "never throttled" from a field
+// this build does not send. The outer fields shadow the embedded ones of the
+// same name, and decoding needs no counterpart. memory_oom_kills keeps its
+// omission: no flag says it was read, and cgroup v1 has no kill count.
+func (capacity Capacity) MarshalJSON() ([]byte, error) {
+	type wire Capacity
+	return json.Marshal(struct {
+		wire
+		ThrottledSeconds *float64 `json:"throttled_seconds,omitempty"`
+		MemoryLimitHits  *uint64  `json:"memory_limit_hits,omitempty"`
+	}{
+		wire:             wire(capacity),
+		ThrottledSeconds: measured(capacity.ThrottledKnown, capacity.ThrottledSeconds),
+		MemoryLimitHits:  measured(capacity.MemoryLimitKnown, capacity.MemoryLimitHits),
+	})
+}
+
+// measured is a counter as the wire carries it: present whenever it was read,
+// even at zero, and otherwise present only when it is not zero, as before.
+func measured[T float64 | uint64](known bool, value T) *T {
+	if !known && value == 0 {
+		return nil
+	}
+	return &value
 }
 
 // Rotation is one pass of the dispatcher over everything a replica owns.
@@ -179,13 +237,19 @@ func (rotation *Rotation) fold(other Rotation) {
 // spread over them; the ceilings are reported as one value because every
 // replica derives them from the same container shape, and a replica that
 // disagrees is reported rather than averaged away.
+//
+// A summed value and the ceiling it is read against say which they are in
+// their names - _total and _per_replica - because the object is read raw as
+// well as through the page: one reader divided the summed memory by one
+// replica's limit and reported a deployment at a quarter of its memory as
+// nearly full. MemoryUsedShareMax is that ratio done per replica.
 type CapacityView struct {
 	Replicas      int     `json:"replicas"`
-	PermitsHeld   int     `json:"permits_held"`
-	PermitBudget  int     `json:"permit_budget"`
+	PermitsHeld   int     `json:"permits_held_total"`
+	PermitBudget  int     `json:"permit_budget_per_replica"`
 	PermitSeconds float64 `json:"permit_seconds"`
-	Waiting       int     `json:"waiting"`
-	QueueBudget   int     `json:"queue_budget"`
+	Waiting       int     `json:"waiting_total"`
+	QueueBudget   int     `json:"queue_budget_per_replica"`
 	// PermitAcquires and PermitWaits are the only pair here that can answer
 	// whether the permit budget is the constraint. PermitsHeld and Waiting are
 	// instants, and a caller queueing behind a full budget and then being
@@ -194,16 +258,16 @@ type CapacityView struct {
 	// ruling it out with an instrument that cannot see it.
 	PermitAcquires   uint64            `json:"permit_acquires"`
 	PermitWaits      uint64            `json:"permit_waits"`
-	MemoryUsed       uint64            `json:"memory_used_bytes,omitempty"`
-	MemoryLimit      uint64            `json:"memory_limit_bytes,omitempty"`
+	MemoryUsed       uint64            `json:"memory_used_bytes_total,omitempty"`
+	MemoryLimit      uint64            `json:"memory_limit_bytes_per_replica,omitempty"`
 	MemorySource     string            `json:"memory_source,omitempty"`
 	MemoryLimitHits  uint64            `json:"memory_limit_hits,omitempty"`
 	MemoryOOMKills   uint64            `json:"memory_oom_kills,omitempty"`
 	MemoryLimitKnown bool              `json:"memory_limit_known,omitempty"`
 	ThrottledKnown   bool              `json:"throttled_known,omitempty"`
 	ThrottledSeconds float64           `json:"throttled_seconds,omitempty"`
-	CPUSeconds       float64           `json:"cpu_seconds,omitempty"`
-	CPUCores         int               `json:"cpu_cores,omitempty"`
+	CPUSeconds       float64           `json:"cpu_seconds_total,omitempty"`
+	CPUCores         int               `json:"cpu_cores_per_replica,omitempty"`
 	CPUSource        string            `json:"cpu_source,omitempty"`
 	Budgets          map[string]uint64 `json:"budgets,omitempty"`
 	Rejections       map[string]uint64 `json:"rejections,omitempty"`
@@ -214,10 +278,40 @@ type CapacityView struct {
 	// Pulled adds up across replicas: the work is split between them, so what
 	// the deployment read is what its replicas read.
 	Pulled *SeriesPull `json:"pulled,omitempty"`
+	// PermitBudgetTotal and QueueBudgetTotal add up the replicas' budgets in
+	// force: each replica sizes its own from the work it owns, so they differ
+	// by design and are summed, not held to one value. Shapes is each
+	// replica's derivation, in replica order.
+	PermitBudgetTotal int              `json:"permit_budget_total"`
+	QueueBudgetTotal  int              `json:"queue_budget_total"`
+	Shapes            []SchedulerShape `json:"scheduler_shapes,omitempty"`
 	// Disagreement names ceilings the replicas do not agree on. Two replicas
 	// running different limits is a real condition -- a half-finished rollout --
 	// and averaging it would hide exactly the thing worth seeing.
 	Disagreement []string `json:"disagreement,omitempty"`
+
+	// MemoryUsedShareMax is the largest share of its own memory limit any
+	// replica that knows its limit is using, and MemoryUsedShareMaxReplica
+	// which replica. Absent when no replica knows its limit.
+	MemoryUsedShareMax        float64 `json:"memory_used_share_max,omitempty"`
+	MemoryUsedShareMaxReplica string  `json:"memory_used_share_max_replica,omitempty"`
+}
+
+// MarshalJSON keeps a measured zero on the wire, for the same reason as
+// Capacity's: the deployment's throttled_known and memory_limit_known each
+// hold only when every replica measured, and then the summed count is a
+// reading even when it is zero.
+func (capacity CapacityView) MarshalJSON() ([]byte, error) {
+	type wire CapacityView
+	return json.Marshal(struct {
+		wire
+		ThrottledSeconds *float64 `json:"throttled_seconds,omitempty"`
+		MemoryLimitHits  *uint64  `json:"memory_limit_hits,omitempty"`
+	}{
+		wire:             wire(capacity),
+		ThrottledSeconds: measured(capacity.ThrottledKnown, capacity.ThrottledSeconds),
+		MemoryLimitHits:  measured(capacity.MemoryLimitKnown, capacity.MemoryLimitHits),
+	})
 }
 
 func aggregateCapacity(view *View, snapshots []Snapshot) {
@@ -255,9 +349,27 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 				disagreed[name] = struct{}{}
 			}
 		}
-		setCeiling("permit_budget", &capacity.PermitBudget, facts.PermitBudget)
-		setCeiling("queue_budget", &capacity.QueueBudget, facts.QueueBudget)
-		setCeiling("cpu_cores", &capacity.CPUCores, facts.CPUCores)
+		// The permit and queue budgets are derived per replica from its own
+		// work, so replicas differ by design: summed, and the largest kept
+		// under the per-replica names for the readers that still use them.
+		capacity.PermitBudgetTotal += facts.PermitBudget
+		capacity.QueueBudgetTotal += facts.QueueBudget
+		capacity.PermitBudget, capacity.QueueBudget = max(capacity.PermitBudget, facts.PermitBudget), max(capacity.QueueBudget, facts.QueueBudget)
+		if facts.Shape != nil {
+			shape := *facts.Shape
+			shape.Replica = snapshot.Replica
+			capacity.Shapes = append(capacity.Shapes, shape)
+		}
+		setCeiling("cpu_cores_per_replica", &capacity.CPUCores, facts.CPUCores)
+		// Two replicas at one share name the one whose name sorts first, so
+		// the replica named does not follow the order the replicas were read.
+		if facts.MemoryLimitKnown && facts.MemoryLimit > 0 {
+			share := float64(facts.MemoryUsed) / float64(facts.MemoryLimit)
+			if share > capacity.MemoryUsedShareMax || (share == capacity.MemoryUsedShareMax &&
+				(capacity.MemoryUsedShareMaxReplica == "" || snapshot.Replica < capacity.MemoryUsedShareMaxReplica)) {
+				capacity.MemoryUsedShareMax, capacity.MemoryUsedShareMaxReplica = share, snapshot.Replica
+			}
+		}
 		if capacity.Replicas == 1 {
 			capacity.MemoryLimit, capacity.MemorySource = facts.MemoryLimit, facts.MemorySource
 			capacity.CPUSource = facts.CPUSource
@@ -270,7 +382,7 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 			capacity.MemoryLimitKnown = capacity.MemoryLimitKnown && facts.MemoryLimitKnown
 			capacity.ThrottledKnown = capacity.ThrottledKnown && facts.ThrottledKnown
 			if capacity.MemoryLimit != facts.MemoryLimit {
-				disagreed["memory_limit"] = struct{}{}
+				disagreed["memory_limit_bytes_per_replica"] = struct{}{}
 			}
 			// Named even when the core counts agree. Two replicas that arrived
 			// at the same number by different routes -- one reading the quota,

@@ -12,6 +12,9 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,11 +27,14 @@ import (
 
 // rebindFixture is a process whose runtime Redis is one server and whose
 // link writes its sets to another it already holds a connection to, and
-// whose startup could not ask the Console: it reads the fallback location.
+// whose startup could not ask the Console: it reads nothing. The Console
+// refuses until answering is set - when the background discovery reaches
+// it - and then answers with the link's target.
 type rebindFixture struct {
 	cfg         config.Config
 	linkdClient *redis.Client
 	index       linkdIndex
+	answering   atomic.Bool
 }
 
 func newRebindFixture(t *testing.T) *rebindFixture {
@@ -40,7 +46,19 @@ func newRebindFixture(t *testing.T) *rebindFixture {
 	prefix := "platform"
 	cfg.PlatformCache.DynamicGroupKeyPrefix = &prefix
 	cfg.PlatformCache.TargetGroup = &config.RedisConnectionConfig{Mode: config.RedisModeStandalone, Address: linkdAddress}
-	cfg.PhaseTwo.Linkd.ConsoleURL = "http://console/base"
+	f := &rebindFixture{}
+	target := openalerts.TargetBinding{EventSourceID: "source", HookName: "active", KeyPrefix: "hook:open", Address: linkdAddress,
+		Database: 0, Sources: []string{"source"}}
+	answer := consoleFor(target)
+	console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !f.answering.Load() {
+			http.Error(w, "unavailable", http.StatusBadGateway)
+			return
+		}
+		answer(w, r)
+	}))
+	t.Cleanup(console.Close)
+	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL
 	cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
 	startup := &fleet.LinkdDiscoveryFacts{Outcome: fleet.LinkdDiscoveryFailed, Attempts: linkdDiscoveryAttempts, Error: "console unreachable"}
 	open := func(connection config.RedisConnectionConfig) (redis.UniversalClient, bool) {
@@ -49,7 +67,7 @@ func newRebindFixture(t *testing.T) *rebindFixture {
 		}
 		return redis.NewClient(&redis.Options{Addr: connection.Address, DB: connection.DB}), true
 	}
-	index, err := newLinkdIndex(cfg, runtimeClient, cfg.RuntimeStoreRedis(), startup, open, time.Now)
+	index, err := newLinkdIndex(cfg, runtimeClient, cfg.RuntimeStoreRedis(), startup, open, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,12 +76,13 @@ func newRebindFixture(t *testing.T) *rebindFixture {
 			_ = owned.Close()
 		}
 	})
-	return &rebindFixture{cfg: cfg, linkdClient: linkdClient, index: index}
+	f.cfg, f.linkdClient, f.index = cfg, linkdClient, index
+	return f
 }
 
 func (f *rebindFixture) target() openalerts.TargetBinding {
 	return openalerts.TargetBinding{EventSourceID: "source", HookName: "active", KeyPrefix: "hook:open",
-		Address: f.cfg.PlatformCache.TargetGroup.Address, Database: 0}
+		Address: f.cfg.PlatformCache.TargetGroup.Address, Database: 0, Sources: []string{"source"}}
 }
 
 func waitUntil(t *testing.T, within time.Duration, what string, condition func() bool) {
@@ -77,11 +96,11 @@ func waitUntil(t *testing.T, within time.Duration, what string, condition func()
 	}
 }
 
-// The production shape of A3: the Console did not answer at startup, so the
-// sets were read from the fallback location, where they are not. Before this
-// change that held until someone restarted the pod. Now the background
-// discovery finds the link, the reads move, and the copy sees the alert the
-// link holds - in the same process, with nothing restarted.
+// The production shape of A3: the Console did not answer at startup. The
+// sets are not read at all meanwhile - no fallback location, which answered
+// for nobody - and the copy says the location is unconfirmed. The background
+// discovery then finds the link, the reads move there, and the copy reads
+// the set the link holds - in the same process, with nothing restarted.
 func TestAProcessThatCouldNotAskAtStartupMovesItsReadsWhenTheConsoleAnswers(t *testing.T) {
 	f := newRebindFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -94,10 +113,13 @@ func TestAProcessThatCouldNotAskAtStartupMovesItsReadsWhenTheConsoleAnswers(t *t
 	if err := cache.SetTracked([]openalerts.StrategyKey{key}); err != nil {
 		t.Fatal(err)
 	}
+	if current, _ := f.index.Location.binding(); current.bound() {
+		t.Fatal("a location the Console did not name was bound")
+	}
 	go func() { _ = cache.Run(ctx) }()
-	waitUntil(t, 5*time.Second, "the fallback location is read", func() bool { return cache.Stats().Loaded == 1 })
-	if cache.Contains(key.TenantID, key.StrategyID, "fp-open") {
-		t.Fatal("setup: the fallback location already holds the link's set")
+	time.Sleep(300 * time.Millisecond)
+	if stats := cache.Stats(); stats.Loaded != 0 || stats.UnavailableReason != openalerts.UnavailableLocationUnconfirmed {
+		t.Fatalf("loaded %d reason %q before the Console answered, want nothing read and the location unconfirmed", stats.Loaded, stats.UnavailableReason)
 	}
 
 	failures := 2
@@ -106,12 +128,14 @@ func TestAProcessThatCouldNotAskAtStartupMovesItsReadsWhenTheConsoleAnswers(t *t
 			failures--
 			return openalerts.TargetBinding{}, errors.New("console unreachable")
 		}
+		f.answering.Store(true)
 		return f.target(), nil
 	}
 	go f.index.Location.retry(ctx, f.cfg, discover, 10*time.Millisecond, 20*time.Millisecond)
 
 	waitUntil(t, 10*time.Second, "the copy reads the link's set after the move", func() bool {
-		return cache.Contains(key.TenantID, key.StrategyID, "fp-open")
+		stats := cache.Stats()
+		return stats.Loaded == 1 && stats.Members == 1 && stats.LocationConfirmed
 	})
 	facts := f.index.Location.Discovery()
 	if facts.Outcome != fleet.LinkdDiscoveryAdopted || facts.Attempts != linkdDiscoveryAttempts+3 || facts.Error != "" ||
@@ -124,12 +148,12 @@ func TestAProcessThatCouldNotAskAtStartupMovesItsReadsWhenTheConsoleAnswers(t *t
 	}
 }
 
-// Only a failed startup discovery is asked again. An adopted location and a
-// stated connection are answers, and a Console that answers with a Redis this
+// Only a failed startup discovery is asked again. An adopted location is an
+// answer, and a Console that answers with a Redis this
 // process holds no connection to is an answer too: it is recorded and the
 // retry stops, rather than asking the same question forever.
 func TestOnlyAFailedDiscoveryIsAskedAgainAndAnAnswerEndsIt(t *testing.T) {
-	for _, outcome := range []string{fleet.LinkdDiscoveryAdopted, fleet.LinkdDiscoveryConnectionStated, fleet.LinkdDiscoveryNoHeldConnection} {
+	for _, outcome := range []string{fleet.LinkdDiscoveryAdopted, fleet.LinkdDiscoveryNoHeldConnection} {
 		calls := 0
 		location := &linkdLocationSwitch{discovery: fleet.LinkdDiscoveryFacts{Outcome: outcome}, replaced: make(chan struct{})}
 		location.retry(context.Background(), linkdLocationConfig(), func(context.Context, openalerts.HTTPReconcilerOptions) (openalerts.TargetBinding, error) {
@@ -146,8 +170,8 @@ func TestOnlyAFailedDiscoveryIsAskedAgainAndAnAnswerEndsIt(t *testing.T) {
 		calls++
 		return openalerts.TargetBinding{KeyPrefix: "hook:open", Address: "elsewhere:6379", Database: 2}, nil
 	}, time.Millisecond, time.Millisecond)
-	if facts := location.Discovery(); calls != 1 || facts.Outcome != fleet.LinkdDiscoveryNoHeldConnection {
-		t.Fatalf("calls %d facts %+v, want one call ending in no_held_connection", calls, facts)
+	if facts := location.Discovery(); calls != 1 || facts.Outcome != fleet.LinkdDiscoveryNoHeldConnection || facts.TargetCount != 1 {
+		t.Fatalf("calls %d facts %+v, want one call ending in no_held_connection, the one target listed", calls, facts)
 	}
 	if _, _, moved := location.Location(); moved {
 		t.Fatal("a location this process holds no connection to was moved to")
@@ -193,5 +217,102 @@ func TestTheEndpointListFollowsAMove(t *testing.T) {
 	entry = withLinkdConsole(endpoints, console, location, time.Now)()[0]
 	if entry.Address != "platform-redis:6379" || entry.DB == nil || *entry.DB != 3 || entry.Prefix != "hook:open" || entry.SharedWith != "" {
 		t.Fatalf("after a move: %+v", entry)
+	}
+}
+
+// A move of the reads forgets what the copy held from before it: a
+// strategy's calibration made at the place the Console named is gone the
+// moment the reads move elsewhere, before anything is read there, so no
+// strategy answers from the old place as the link's word.
+func TestAMoveOfTheReadsForgetsWhatTheCopyHeld(t *testing.T) {
+	f := newRebindFixture(t)
+	f.answering.Store(true)
+	ctx := context.Background()
+	cache := f.index.Cache
+	if err := cache.SetTracked([]openalerts.StrategyKey{{TenantID: "tenant", StrategyID: "1001"}}); err != nil {
+		t.Fatal(err)
+	}
+	// The first round finds the link's place and moves there; a later one
+	// confirms it and calibrates the strategy at it.
+	waitUntil(t, 5*time.Second, "the strategy calibrated at the place the Console names", func() bool {
+		cache.RequestCalibration()
+		cache.Refresh(ctx)
+		return cache.Stats().Calibrated == 1
+	})
+	if err := f.index.Location.rebind(f.cfg.RuntimeStoreRedis(), "elsewhere:open"); err != nil {
+		t.Fatal(err)
+	}
+	if stats := cache.Stats(); stats.Calibrated != 0 || stats.Members != 0 {
+		t.Fatalf("calibrated %d members %d right after the move, want nothing held from the old place", stats.Calibrated, stats.Members)
+	}
+}
+
+// The Console comes back and a reconciliation finds the link before the
+// startup retry asks again: the reconciliation moves the reads, and the
+// retry, waking later, stops without asking and without moving the reads to
+// the same place a second time - which would forget everything read there.
+func TestARetryAfterAReconciliationFoundTheLinkLeavesTheReadsAlone(t *testing.T) {
+	f := newRebindFixture(t)
+	f.answering.Store(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cache := f.index.Cache
+	if err := cache.SetTracked([]openalerts.StrategyKey{{TenantID: "tenant", StrategyID: "1001"}}); err != nil {
+		t.Fatal(err)
+	}
+	var asked atomic.Int64
+	discover := func(context.Context, openalerts.HTTPReconcilerOptions) (openalerts.TargetBinding, error) {
+		asked.Add(1)
+		return f.target(), nil
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.index.Location.retry(ctx, f.cfg, discover, 300*time.Millisecond, time.Second)
+	}()
+	waitUntil(t, 5*time.Second, "the reconciliation moved the reads and the strategy is calibrated there", func() bool {
+		cache.RequestCalibration()
+		cache.Refresh(ctx)
+		return cache.Stats().Calibrated == 1
+	})
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the retry kept running after a reconciliation found the link")
+	}
+	if got := asked.Load(); got != 0 {
+		t.Fatalf("the retry asked the Console %d times after the reads had moved, want none", got)
+	}
+	if stats := cache.Stats(); stats.Calibrated != 1 {
+		t.Fatalf("calibrated %d after the retry, want the calibration made at the place kept", stats.Calibrated)
+	}
+	if facts := f.index.Location.Discovery(); facts.Outcome != fleet.LinkdDiscoveryAdopted {
+		t.Fatalf("discovery outcome %q, want adopted", facts.Outcome)
+	}
+}
+
+// A reconciliation can move the reads while the retry is asking the
+// Console: the retry then finds them already where the answer names and
+// does not move them again - the connection the move opened is the one kept.
+func TestARetryAnsweredWhileAReconciliationMovedTheReadsDoesNotMoveThemAgain(t *testing.T) {
+	f := newRebindFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var moved redis.UniversalClient
+	discover := func(context.Context, openalerts.HTTPReconcilerOptions) (openalerts.TargetBinding, error) {
+		// The reconciliation lands between the retry's question and its move.
+		f.index.Location.relocate(f.target())
+		moved = f.index.Location.OwnedClient()
+		return f.target(), nil
+	}
+	f.index.Location.retry(ctx, f.cfg, discover, time.Millisecond, time.Millisecond)
+	if moved == nil {
+		t.Fatal("fixture: the reconciliation did not move the reads to the link's Redis")
+	}
+	if f.index.Location.OwnedClient() != moved {
+		t.Fatal("the retry moved the reads again to where they already were")
+	}
+	if facts := f.index.Location.Discovery(); facts.Outcome != fleet.LinkdDiscoveryAdopted {
+		t.Fatalf("discovery outcome %q, want adopted", facts.Outcome)
 	}
 }

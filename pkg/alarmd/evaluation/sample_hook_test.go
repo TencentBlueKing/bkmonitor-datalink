@@ -18,10 +18,7 @@ import (
 
 func evaluatorSampler(t testing.TB, req execution.EvaluationRequest) (*observability.SeriesSampler, observability.SeriesSampleSelection) {
 	t.Helper()
-	s, err := observability.NewSeriesSampler(observability.SeriesSampleLimits{RecordsPerMinute: 8, BytesPerMinute: 8 * observability.SeriesSampleMaxBytes, QueueCapacity: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := observability.NewAdmittedSeriesSampler(func(uint64) bool { return true })
 	due := req.Header.DuePlans[0]
 	now := time.Now()
 	v := observability.SeriesSampleSelection{QueryGroup: string(req.Header.Contract.Slot.QueryGroup), WindowID: "test-window", OpenedAt: now, ExpiresAt: now.Add(time.Minute), TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, StrategyID: due.Identity.StrategyID, StateGeneration: string(due.StateGeneration), PlanScheduleRevision: string(due.ScheduleRevision), SeriesDigest: string(req.Inputs[0].SeriesIdentity), SeriesKind: string(req.Inputs[0].Kind)}
@@ -112,7 +109,7 @@ func TestSeriesSampleExplainsRecoveryGateAndTwoLevels(t *testing.T) {
 		p.StrategyIR.StrategyRef.SnapshotRevision = 7
 		p.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
 	})
-	history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous}, {LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous}}}}
+	history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous}, {LevelID: 6, DetectFingerprint: plan.Levels().At(1).Fingerprints().Detect, Result: execution.LevelFactAnomalous}}}}
 	req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
 	req.OpenAlerts = openAlertSetStub{}
 	_, sample := equivalentSample(t, req)
@@ -288,7 +285,6 @@ func BenchmarkSeriesSampleEvaluator(b *testing.B) {
 				for _, mode := range []string{"disabled", "sibling", "exhausted"} {
 					b.Run(mode, func(b *testing.B) {
 						e := newEvaluator(b)
-						e.limits.MaxRecords = uint64(count)
 						if mode != "disabled" {
 							s, v := evaluatorSampler(b, req)
 							if mode == "sibling" {

@@ -11,6 +11,9 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisatomic"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 // A process's exit leaves no trace a reader can reach once its Pod is gone:
@@ -47,7 +50,23 @@ type lifecycleEntry struct {
 	Build   string    `json:"build"`
 	Reason  string    `json:"reason,omitempty"`
 	Error   string    `json:"error,omitempty"`
+	// Drain is how a stop's wait for its running Slots ended: finished, or
+	// cancelled at the drain deadline, with how many were waited for and
+	// cancelled. A Slot cancelled there can have had its events acknowledged
+	// and not its State, and the next owner sends them again. Absent on a
+	// start, and on a stop whose process never ran its scheduler.
+	Drain *observability.SlotDrainFacts `json:"drain,omitempty"`
 }
+
+// lifecycleRecordWrite adds an entry, cuts the list to its bound and renews
+// its life, as one script rather than a MULTI/EXEC (see redisatomic for why).
+// One key, so it is in one slot on any deployment.
+var lifecycleRecordWrite = redisatomic.New(`
+redis.call('LPUSH', KEYS[1], ARGV[1])
+redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]))
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return 1
+`)
 
 type lifecycleRecord struct {
 	client  redis.UniversalClient
@@ -55,6 +74,8 @@ type lifecycleRecord struct {
 	replica string
 	build   string
 	now     func() time.Time
+	// failed, when set, hears the reason of a write the store did not take.
+	failed func(reason string)
 }
 
 func lifecycleRecordKey(cfg config.Config) string {
@@ -79,9 +100,10 @@ func (record *lifecycleRecord) start() {
 }
 
 // stop records why the process stopped. err is the error it stops with,
-// when there is one.
-func (record *lifecycleRecord) stop(reason string, err error) {
-	entry := lifecycleEntry{Event: "stop", Reason: reason}
+// when there is one, and drain how its running Slots drained, when it ran
+// any scheduler.
+func (record *lifecycleRecord) stop(reason string, err error, drain *observability.SlotDrainFacts) {
+	entry := lifecycleEntry{Event: "stop", Reason: reason, Drain: drain}
 	if err != nil {
 		text := err.Error()
 		if len(text) > lifecycleErrorBytes {
@@ -103,12 +125,19 @@ func (record *lifecycleRecord) write(entry lifecycleEntry) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), lifecycleWriteTimeout)
 	defer cancel()
-	_, _ = record.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.LPush(ctx, record.key, encoded)
-		pipe.LTrim(ctx, record.key, 0, lifecycleRecordEntries-1)
-		pipe.Expire(ctx, record.key, lifecycleRecordTTL)
-		return nil
-	})
+	err = record.append(ctx, encoded)
+	// The write still costs the process nothing when it fails -- a start or
+	// stop goes on regardless -- but it is counted by why, since a record the
+	// store never took reads later as an unclean restart.
+	if err != nil && record.failed != nil {
+		record.failed(redisfailure.Reason(err))
+	}
+}
+
+// append adds one encoded entry to the record, bounded and with its life.
+func (record *lifecycleRecord) append(ctx context.Context, encoded []byte) error {
+	return lifecycleRecordWrite.Run(ctx, record.client, []string{record.key},
+		encoded, lifecycleRecordEntries-1, int64(lifecycleRecordTTL/time.Second))
 }
 
 func (record *lifecycleRecord) close() {

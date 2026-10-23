@@ -36,6 +36,14 @@ func TargetScopeFromContract(source *contract.TargetScopeV2) *TargetScope {
 				Keys:           keys,
 				IdentityFields: pairs,
 			})
+			if condition.Field == contract.TargetScopeDynamicGroup {
+				// The contract's keys are the group ids; the hosts are read
+				// per Slot (TargetScope.WithGroupMemberships), and until then
+				// no member is known.
+				dynamic := &converted.Conditions[len(converted.Conditions)-1]
+				dynamic.GroupIDs = append([]string(nil), condition.Keys...)
+				dynamic.Keys, dynamic.MembershipUnknown = map[string]struct{}{}, len(condition.Keys) > 0
+			}
 		}
 		scope.Groups = append(scope.Groups, converted)
 	}

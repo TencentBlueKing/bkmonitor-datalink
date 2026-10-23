@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/storage"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/bkapi"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/curl"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb/decoder"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
@@ -546,7 +547,7 @@ func (i *Instance) vmQuery(
 	span.Set("query-space-uid", user.SpaceUID)
 	span.Set("query-username", user.Name)
 
-	span.Set("query-address", i.url)
+	span.Set("query-address", credential.RedactURL(i.url))
 
 	headers := metadata.Headers(ctx, i.headers)
 

@@ -53,6 +53,9 @@ const (
 
 	// query router 配置
 	QueryRouterForceVmClusterNameConfigPath = "query_router.force_vm_cluster_name"
+
+	// storage 数据源配置
+	StorageSourceConfigPath = "storage.source" // 可选值: consul(默认) 或 redis
 )
 
 var (
@@ -92,4 +95,7 @@ var (
 	EsMaxSize    int
 
 	QueryRouterForceVmClusterName string
+
+	// storage 数据源
+	StorageSource string // consul 或 redis，默认为 consul
 )

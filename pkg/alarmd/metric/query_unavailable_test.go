@@ -18,11 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-func unavailableObservation(attributions ...string) observability.Observation {
-	facts := make([]observability.QueryUnavailableFacts, 0, len(attributions))
-	for _, attribution := range attributions {
-		facts = append(facts, observability.QueryUnavailableFacts{Attribution: attribution})
-	}
+func unavailableObservation(facts ...observability.QueryUnavailableFacts) observability.Observation {
 	return observability.Observation{
 		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
 		Operation: observability.OperationNormal, Result: observability.ResultFailed,
@@ -32,36 +28,44 @@ func unavailableObservation(attributions ...string) observability.Observation {
 
 // Three situations, one code: only counting them apart says whether a wave of
 // QUERY_UNAVAILABLE objects is a provider fault or queries that were never
-// sent. Every series is pre-created so a fallback that never fires is a zero,
-// not an absent series, and one completion with several unavailable Plans
-// counts once per Plan.
+// sent; and of those that got an answer, whether the backend refused them
+// (4xx) or failed (5xx). Every series is pre-created so a fallback that never
+// fires is a zero, not an absent series, and one completion with several
+// unavailable Plans counts once per Plan.
 func TestQueryUnavailableCountsEachAttributionPerPhysicalQuery(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
+	cell := func(attribution, class string) float64 {
+		return testutil.ToFloat64(recorder.phaseTwo.queryUnavailable.attributions.WithLabelValues(attribution, class))
+	}
 	for _, attribution := range observability.QueryUnavailableAttributions {
-		if got := testutil.ToFloat64(recorder.phaseTwo.queryUnavailable.attributions.WithLabelValues(attribution)); got != 0 {
-			t.Fatalf("%s starts at %v, want a pre-created zero", attribution, got)
+		for _, class := range observability.QueryHTTPClasses {
+			if got := cell(attribution, class); got != 0 {
+				t.Fatalf("%s/%s starts at %v, want a pre-created zero", attribution, class, got)
+			}
 		}
 	}
+	none, refused, failed := observability.QueryHTTPClassNone, observability.QueryHTTPClass4xx, observability.QueryHTTPClass5xx
 	recorder.Observe(context.Background(), unavailableObservation(
-		observability.QueryUnavailableNoAttempts, observability.QueryUnavailableNoAttempts, observability.QueryUnavailableFromAttempt))
-	recorder.Observe(context.Background(), unavailableObservation("not_a_declared_attribution"))
+		observability.QueryUnavailableFacts{Attribution: observability.QueryUnavailableNoAttempts, HTTPClass: none},
+		observability.QueryUnavailableFacts{Attribution: observability.QueryUnavailableNoAttempts, HTTPClass: none},
+		observability.QueryUnavailableFacts{Attribution: observability.QueryUnavailableFromAttempt, HTTPClass: refused},
+		observability.QueryUnavailableFacts{Attribution: observability.QueryUnavailableFromAttempt, HTTPClass: failed}))
+	recorder.Observe(context.Background(), unavailableObservation(observability.QueryUnavailableFacts{Attribution: "not_a_declared_attribution", HTTPClass: "3xx"}))
 
-	counts := map[string]float64{}
+	want := map[[2]string]float64{
+		{observability.QueryUnavailableNoAttempts, none}:                         2,
+		{observability.QueryUnavailableFromAttempt, refused}:                     1,
+		{observability.QueryUnavailableFromAttempt, failed}:                      1,
+		{observability.QueryUnavailableOther, observability.QueryHTTPClassOther}: 1,
+	}
 	for _, attribution := range observability.QueryUnavailableAttributions {
-		counts[attribution] = testutil.ToFloat64(recorder.phaseTwo.queryUnavailable.attributions.WithLabelValues(attribution))
-	}
-	want := map[string]float64{
-		observability.QueryUnavailableNoAttempts:      2,
-		observability.QueryUnavailableFromAttempt:     1,
-		observability.QueryUnavailableNoAttemptReason: 0,
-		observability.QueryUnavailableOther:           1,
-	}
-	for attribution, expected := range want {
-		if counts[attribution] != expected {
-			t.Fatalf("%s = %v, want %v (all: %v)", attribution, counts[attribution], expected, counts)
+		for _, class := range observability.QueryHTTPClasses {
+			if got := cell(attribution, class); got != want[[2]string{attribution, class}] {
+				t.Fatalf("%s/%s = %v, want %v", attribution, class, got, want[[2]string{attribution, class}])
+			}
 		}
 	}
-	if invented := testutil.ToFloat64(recorder.phaseTwo.queryUnavailable.attributions.WithLabelValues("not_a_declared_attribution")); invented != 0 {
-		t.Fatalf("an undeclared attribution became its own series: %v", invented)
+	if invented := cell("not_a_declared_attribution", "3xx"); invented != 0 {
+		t.Fatalf("an undeclared label became its own series: %v", invented)
 	}
 }

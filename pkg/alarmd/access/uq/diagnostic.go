@@ -14,15 +14,20 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
+// DiagnosticTimeout is the least a diagnostic query is given; a caller that
+// knows the query's own budget gives it that instead (Query's budget).
 const (
 	DiagnosticTimeout        = 3 * time.Second
 	DiagnosticMaxOutputBytes = 1 << 20
 )
 
-// DiagnosticLimits are independent of the production query budgets. Output
-// selection never changes the provider request or its upstream query cost.
+// DiagnosticLimits are the production query's own decode bounds: a re-query
+// reads what the Slot read, however large, and keeps only the selected
+// series, so only the output is bounded apart (DiagnosticMaxOutputBytes,
+// the selection). Output selection never changes the provider request or
+// its upstream query cost.
 func DiagnosticLimits() Limits {
-	return Limits{MaxBodyBytes: 4 << 20, MaxSeriesBytes: 512 << 10, MaxSeries: 1000, MaxRecords: 20000}
+	return DefaultLimits()
 }
 
 type DiagnosticPreview struct {
@@ -34,7 +39,10 @@ type DiagnosticPreview struct {
 
 type DiagnosticSelection struct {
 	SeriesDigest string `json:"series_digest,omitempty"`
-	MaxSeries    int    `json:"max_series,omitempty"`
+	// Offset is how many matching series to pass over before returning
+	// any: the next page of a re-query whose earlier page was full.
+	Offset    int `json:"offset,omitempty"`
+	MaxSeries int `json:"max_series,omitempty"`
 	// MaxPoints bounds all returned series together, not each series.
 	MaxPoints int `json:"max_points,omitempty"`
 }
@@ -47,6 +55,9 @@ type DiagnosticScan struct {
 	// was decoded. It does not mean the provider declared complete evidence.
 	Complete   bool `json:"complete"`
 	statusCode string
+	// errorExcerpt is the start of the body of an answer that was not 200,
+	// sanitized (providerErrorExcerpt): kept for the diagnostic read alone.
+	errorExcerpt string
 }
 
 type DiagnosticPoint struct {
@@ -62,13 +73,18 @@ type DiagnosticSeries struct {
 }
 
 // DiagnosticCompletion projects the final production-normalized completion.
-// Endpoint URLs and raw upstream error messages never leave this boundary.
+// Endpoint URLs and raw upstream error messages never leave this boundary,
+// with one exception: ErrorExcerpt, the start of the body of an answer that
+// was not 200, sanitized (providerErrorExcerpt), for an operator asking why
+// the provider refused a query. Only this read keeps it: detection drains
+// and drops such a body, and it reaches no log or published snapshot.
 type DiagnosticCompletion struct {
 	Completeness   execution.Completeness `json:"completeness"`
 	DataState      execution.DataState    `json:"data_state"`
 	Status         *DiagnosticStatus      `json:"status,omitempty"`
 	ResultTableIDs []string               `json:"result_table_ids"`
 	RouteDetails   []string               `json:"route_details"`
+	ErrorExcerpt   string                 `json:"error_excerpt,omitempty"`
 }
 
 type DiagnosticStatus struct {
@@ -83,9 +99,12 @@ type DiagnosticResult struct {
 	Scan           DiagnosticScan        `json:"scan"`
 	MatchedSeries  uint64                `json:"matched_series"`
 	ReturnedPoints int                   `json:"returned_points"`
-	Truncated      bool                  `json:"truncated"`
-	Complete       bool                  `json:"complete"`
-	Limitations    []string              `json:"limitations"`
+	// NextOffset is the offset of the next page when matching series were
+	// left after this one, zero when this page was the last.
+	NextOffset  int      `json:"next_offset,omitempty"`
+	Truncated   bool     `json:"truncated"`
+	Complete    bool     `json:"complete"`
+	Limitations []string `json:"limitations"`
 }
 
 // DiagnosticError contains only a fixed safe code. No endpoint, expression,
@@ -105,13 +124,17 @@ type DiagnosticClient struct {
 // never request-supplied URLs or headers. The caller should provide a dedicated
 // small transport pool. Redirects are disabled and no query retry is performed.
 func NewDiagnosticClient(endpoint, querySource string, httpClient *http.Client) (*DiagnosticClient, error) {
+	return newDiagnosticClient(endpoint, querySource, httpClient, DiagnosticLimits())
+}
+
+func newDiagnosticClient(endpoint, querySource string, httpClient *http.Client, limits Limits) (*DiagnosticClient, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || httpClient == nil {
 		return nil, &DiagnosticError{Code: "diagnostic_config_invalid"}
 	}
 	bounded := *httpClient
 	bounded.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	client, err := NewClientWithLimits(endpoint, querySource, &bounded, DiagnosticLimits())
+	client, err := NewClientWithLimits(endpoint, querySource, &bounded, limits)
 	if err != nil {
 		return nil, &DiagnosticError{Code: "diagnostic_config_invalid"}
 	}
@@ -126,8 +149,8 @@ func (client *DiagnosticClient) Preview(spec execution.PhysicalQuerySpec) (Diagn
 	if err != nil {
 		return DiagnosticPreview{}, &DiagnosticError{Code: "query_spec_invalid"}
 	}
-	headers := map[string]string{"Content-Type": "application/json", headerQuerySource: client.client.querySource,
-		headerTenant: spec.PlanFacts.TenantID, headerSpace: spec.PlanFacts.SpaceScope}
+	headers := scopeHeaders(spec.PlanFacts)
+	headers["Content-Type"], headers[headerQuerySource] = "application/json", client.client.querySource
 	// The digest covers the exact provider path/body and semantic headers, not
 	// the current endpoint, secrets or output selection. The preview preserves
 	// business conditions and expressions so operators can inspect the query.
@@ -143,9 +166,12 @@ func (client *DiagnosticClient) Preview(spec execution.PhysicalQuerySpec) (Diagn
 	return DiagnosticPreview{Path: path, Body: body, Headers: headers, RequestDigest: hex.EncodeToString(digest[:])}, nil
 }
 
-func (client *DiagnosticClient) Query(ctx context.Context, spec execution.PhysicalQuerySpec, selection DiagnosticSelection) (DiagnosticResult, error) {
+// Query re-runs spec and returns the selected series. budget is how long the
+// query may take - the Slot's own query budget, so a slow Slot can be read
+// again - at least DiagnosticTimeout.
+func (client *DiagnosticClient) Query(ctx context.Context, spec execution.PhysicalQuerySpec, selection DiagnosticSelection, budget time.Duration) (DiagnosticResult, error) {
 	result := DiagnosticResult{Series: []DiagnosticSeries{}, Limitations: []string{}}
-	ctx, cancel := context.WithTimeout(ctx, DiagnosticTimeout)
+	ctx, cancel := context.WithTimeout(ctx, max(DiagnosticTimeout, budget))
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return result, diagnosticError(err)
@@ -161,7 +187,7 @@ func (client *DiagnosticClient) Query(ctx context.Context, spec execution.Physic
 	if selection.MaxPoints == 0 {
 		selection.MaxPoints = 100
 	}
-	if selection.MaxSeries < 1 || selection.MaxSeries > 10 || selection.MaxPoints < 1 || selection.MaxPoints > 500 {
+	if selection.MaxSeries < 1 || selection.MaxSeries > 10 || selection.MaxPoints < 1 || selection.MaxPoints > 500 || selection.Offset < 0 {
 		return result, &DiagnosticError{Code: "query_selection_invalid"}
 	}
 	if selection.SeriesDigest != "" {
@@ -216,6 +242,7 @@ func (client *DiagnosticClient) Query(ctx context.Context, spec execution.Physic
 			final.RouteDetails = append(final.RouteDetails, attempt.Detail)
 		}
 	}
+	final.ErrorExcerpt = result.Scan.errorExcerpt
 	result.Completion = final
 	if completion.Completeness != execution.CompletenessFull {
 		result.Limitations = append(result.Limitations, "provider_"+strings.ToLower(string(completion.Completeness)))
@@ -270,7 +297,14 @@ func (sink *diagnosticSink) ConsumeProviderSeries(ctx context.Context, batch exe
 		return nil
 	}
 	sink.result.MatchedSeries++
+	if int(sink.result.MatchedSeries) <= sink.selection.Offset {
+		return nil
+	}
 	if len(sink.result.Series) >= sink.selection.MaxSeries || sink.result.ReturnedPoints >= sink.selection.MaxPoints {
+		// A page is full: what is left is the next page, not lost.
+		if sink.result.NextOffset == 0 {
+			sink.result.NextOffset = sink.selection.Offset + len(sink.result.Series)
+		}
 		sink.truncate()
 		return nil
 	}

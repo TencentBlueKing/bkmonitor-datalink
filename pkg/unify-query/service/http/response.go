@@ -35,7 +35,7 @@ func (r *response) failed(ctx context.Context, err error) {
 		return
 	}
 
-	r.c.JSON(http.StatusBadRequest, ErrResponse{
+	r.c.JSON(metadata.FailureStatus(err), ErrResponse{
 		TraceID: trace.TraceIDFromContext(ctx),
 		Err:     err.Error(),
 	})
@@ -60,6 +60,7 @@ func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {
 // ListData 数据返回格式
 type ListData struct {
 	Total              int64                       `json:"total"`
+	TotalExact         bool                        `json:"total_exact,omitempty"`
 	List               []map[string]any            `json:"list"`
 	Done               bool                        `json:"done"`
 	TraceID            string                      `json:"trace_id,omitempty"`

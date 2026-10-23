@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 // longHistoryPoints is a day-long window at a minute's cadence: the shape of
@@ -97,11 +98,11 @@ func TestTheStoreDecodesAFramedRecordOnce(t *testing.T) {
 	request := execution.StatePreflightRequest{Contract: frozenRef(), Items: []execution.StatePreflightItem{item}}
 	decode := testing.AllocsPerRun(5, func() { _ = decodeRuntime(raw, identity, frozenRef(), next) })
 	read := testing.AllocsPerRun(5, func() {
-		if view, fallback := store.readFramedRecord(request, item, raw); fallback || len(view.History) != longHistoryPoints {
-			t.Fatalf("read back %d points (fallback %v)", len(view.History), fallback)
+		if view := store.readFramedRecord(request, item, raw); len(view.History) != longHistoryPoints {
+			t.Fatalf("read back %d points", len(view.History))
 		}
 	})
-	if read > decode*1.25 {
+	if !racedetector.Enabled && read > decode*1.25 {
 		t.Fatalf("reading the record allocated %.0f times against %.0f for one decode: the frame is decoded more than once", read, decode)
 	}
 }

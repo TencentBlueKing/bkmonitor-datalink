@@ -79,7 +79,7 @@ func TestASyntheticClosingRecoveryCarriesTheGroupItCloses(t *testing.T) {
 		Roster:   roster,
 	}
 
-	series := SyntheticSeriesFor(SyntheticInput{
+	series := mustSynthetic(t, SyntheticInput{
 		EvaluationTime: absenceRound2, PeriodSeconds: absencePeriod,
 		Result: result, Memory: result.Memory, Roster: roster,
 	})

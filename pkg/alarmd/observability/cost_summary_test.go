@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/racedetector"
 )
 
 var costA = CostPlanIdentity{"tenant", "business", "healthy-large"}
@@ -162,7 +164,7 @@ func TestCostSummaryRotationRevisionsEvictionAndMetadataBounds(t *testing.T) {
 		t.Fatal("revision reused old cost or silently dropped stale event")
 	}
 	c.Reconcile(nil, true)
-	if len(c.groups) != 0 {
+	if len(c.scope.Load().groups) != 0 {
 		t.Fatal("retired objects retained")
 	}
 	c.options.MetadataBytes = 1
@@ -237,7 +239,8 @@ func TestCostSummaryConcurrentObserveReconcilePublish(t *testing.T) {
 
 func TestCostSummaryObserveNeverWaitsForPublisher(t *testing.T) {
 	c, now, _ := costFixture()
-	c.mu.Lock()
+	account := c.scope.Load().groups["shared"].account
+	account.mu.Lock()
 	done := make(chan struct{})
 	go func() {
 		c.Observe(context.Background(), costObservation(StageSlotCompleted))
@@ -246,10 +249,10 @@ func TestCostSummaryObserveNeverWaitsForPublisher(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		c.mu.Unlock()
+		account.mu.Unlock()
 		t.Fatal("execution waited for summary publication")
 	}
-	c.mu.Unlock()
+	account.mu.Unlock()
 	c.Publish(*now)
 	if c.Snapshot().Coverage.ContentionDroppedTotal != 1 || !c.Snapshot().Coverage.Incomplete {
 		t.Fatal("contention drop hidden")
@@ -270,7 +273,7 @@ func TestCostSummaryObserveAllocations(t *testing.T) {
 			case "irrelevant":
 				o.Stage = StageOther
 			}
-			if got := testing.AllocsPerRun(1000, func() { c.Observe(context.Background(), o) }); got != 0 {
+			if got := testing.AllocsPerRun(1000, func() { c.Observe(context.Background(), o) }); !racedetector.Enabled && got != 0 {
 				t.Fatalf("hot observation allocated: %v", got)
 			}
 		})

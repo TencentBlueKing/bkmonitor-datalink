@@ -73,12 +73,26 @@ const heldByCooldown = "query_cooldown"
 // mechanisms that are not the restart's. It travels on the response.
 const RestartCatchUpGrace = 5 * time.Minute
 
-// RecentSkipWindow is the bound on "still happening". A record younger than
-// this is a loss in progress; older, it is history. Ten minutes is several
-// rounds of any object this deployment schedules, so a record that old
-// belongs to an object that has since run clean for that many rounds. It
-// travels on the response, so the page prints it rather than assuming it.
+// RecentSkipWindow is the least bound on "still happening": a record younger
+// than RecentWindow of its object is a loss in progress; older, it is
+// history. Ten minutes is several rounds of a minute object; an object with
+// a longer period gets recentWindowStrides of its own periods, so an hourly
+// object's skip is not history ten minutes after it happened, while the
+// object has not even had its next round. It travels on the response, so
+// the page prints it rather than assuming it.
 const RecentSkipWindow = 10 * time.Minute
+
+// recentWindowStrides is how many of an object's periods a record of it is
+// read as still happening for, the same count an empty run is judged stalled
+// after (emptyRunStrideStall).
+const recentWindowStrides = 3
+
+// RecentWindow is how long a record of an object with this period is read
+// as still happening: recentWindowStrides of its periods, at least
+// RecentSkipWindow; RecentSkipWindow when the period is not known.
+func RecentWindow(intervalSeconds int64) time.Duration {
+	return max(RecentSkipWindow, time.Duration(recentWindowStrides*intervalSeconds)*time.Second)
+}
 
 // GroupByLoss folds the two record checks on what each record is: the
 // loss kinds above for records, the deciding code for the objects a column
@@ -91,11 +105,11 @@ const GroupByLoss GroupBy = "loss"
 // grace. Order: the pool first (the record is its line's consequence),
 // then the window (a stopped loss is history whatever held it), then what
 // the record says held the Slot, then the restart, then what is left.
-func lossOf(demoted, heldByCooldown, afterRestart bool, at, now time.Time) Loss {
+func lossOf(demoted, heldByCooldown, afterRestart bool, at, now time.Time, intervalSeconds int64) Loss {
 	switch {
 	case demoted:
 		return LossWhileDemoted
-	case now.Sub(at) > RecentSkipWindow:
+	case now.Sub(at) > RecentWindow(intervalSeconds):
 		return LossHistorical
 	case heldByCooldown:
 		return LossAfterCooldown
@@ -158,9 +172,9 @@ type Consequence struct {
 	SkippedNewest *time.Time `json:"skipped_newest,omitempty"`
 }
 
-func (consequence *Consequence) note(at, now time.Time) {
+func (consequence *Consequence) note(at, now time.Time, intervalSeconds int64) {
 	consequence.Skipped++
-	if now.Sub(at) <= RecentSkipWindow {
+	if now.Sub(at) <= RecentWindow(intervalSeconds) {
 		consequence.SkippedRecent++
 	}
 	if consequence.SkippedNewest == nil || at.After(*consequence.SkippedNewest) {
@@ -221,7 +235,8 @@ func lossRecords(view *View, now time.Time, visit func(queryGroup string, check,
 		consequence := isDemoted && object.line != "" && !skip.At.Before(object.since)
 		grace := restartGraceOf(starts, skip)
 		skip.RestartOffsetSeconds, skip.TakeoverOffsetSeconds = grace.restartOffset, grace.takeoverOffset
-		loss := lossOf(consequence, skip.HeldBy == heldByCooldown, grace.inGrace, skip.At, now)
+		loss := lossOf(consequence, skip.HeldBy == heldByCooldown, grace.inGrace, skip.At, now, skip.IntervalSeconds)
+		skip.RecentWindowSeconds = int64(RecentWindow(skip.IntervalSeconds) / time.Second)
 		line := Check("")
 		if loss == LossWhileDemoted {
 			line = object.line
@@ -235,33 +250,29 @@ func lossRecords(view *View, now time.Time, visit func(queryGroup string, check,
 			// not detection given up, bookkeeping interrupted.
 			check = CheckBookkeepingAbandoned
 		}
-		each(queryGroup, check, "GAP_SKIPPED", skip)
+		// An expired replay's span is recorded under its own word; a gap skip's
+		// Reason is what came before the skip, not the skip's code, and may
+		// itself read SNAPSHOT_UNAVAILABLE, so the span's kind decides.
+		code := "GAP_SKIPPED"
+		if skip.Kind == SkipKindExpiredReplay {
+			code = snapshotUnavailableCompletion
+		}
+		each(queryGroup, check, code, skip)
 	}
 	for queryGroup, pruned := range view.PrunedSkips {
-		each(queryGroup, CheckTimelinePruned, "SCHEDULE_PRUNED", SkippedSpan{FirstSlot: pruned.From, LastSlot: pruned.To,
-			At: pruned.At, Replica: pruned.Replica, Strategies: pruned.Strategies, IntervalSeconds: pruned.IntervalSeconds})
-	}
-}
-
-// LossCensus counts the view's retained records by what each is, every kind
-// present at zero, and how many could not be judged against a restart for
-// want of an anchor. Distinct records, one per object per record kind, the
-// same walk the lines make -- so the family a scrape exports and the counts
-// the page prints come from one reading. Bookkeeping records are not losses
-// of detection and are left out, as the lines leave them out.
-func LossCensus(view *View, now time.Time) (byLoss map[Loss]int, graceUnknown int) {
-	byLoss = make(map[Loss]int, len(Losses))
-	for _, loss := range Losses {
-		byLoss[loss] = 0
-	}
-	lossRecords(view, now, func(_ string, check, _ Check, _ string, skip SkippedSpan, loss Loss, unknown bool) {
-		if check == CheckBookkeepingAbandoned {
-			return
+		// The record's own word decides where it is filed, so a span lost to
+		// a rewritten timeline carries SCHEDULE_REPAIRED and its facets, not
+		// retention's; both are spans the timeline lost, on the same line.
+		code := pruned.Code()
+		check := CheckTimelinePruned
+		if verdict, known := codeChecks[code]; known {
+			if verdict.normal {
+				continue
+			}
+			check = verdict.check
 		}
-		byLoss[loss]++
-		if unknown && now.Sub(skip.At) <= RecentSkipWindow {
-			graceUnknown++
-		}
-	})
-	return byLoss, graceUnknown
+		each(queryGroup, check, code, SkippedSpan{FirstSlot: pruned.From, LastSlot: pruned.To,
+			At: pruned.At, Replica: pruned.Replica, Strategies: pruned.Strategies, IntervalSeconds: pruned.IntervalSeconds,
+			RewrittenAt: pruned.RewrittenAt})
+	}
 }

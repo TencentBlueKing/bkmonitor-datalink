@@ -100,7 +100,7 @@ func setupTimeGraphInfluxDeadline(t *testing.T, handlers ...http.HandlerFunc) *a
 	require.NoError(t, err)
 	redisServer.HSet("strict-causes:cluster_info", "strict", string(cluster))
 	redisServer.HSet("strict-causes:host_info", "strict", string(hostConfig))
-	require.NoError(t, uqredis.SetInstance(context.Background(), "strict-causes", &goredis.UniversalOptions{Addrs: []string{redisServer.Addr()}}))
+	require.NoError(t, uqredis.SetInstance(context.Background(), "", "strict-causes", &goredis.UniversalOptions{Addrs: []string{redisServer.Addr()}}))
 	router := influxrouter.GetInfluxDBRouter()
 	require.NoError(t, router.ReloadRouter(context.Background(), "strict-causes", nil))
 	t.Cleanup(func() { require.NoError(t, router.Stop()) })

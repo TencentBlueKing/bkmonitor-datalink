@@ -97,9 +97,6 @@ func TestAMovedGenerationCarriesOnlyWhatDetectionLeftUnchanged(t *testing.T) {
 			compiler, semantics := runtimePlanCompiler(t)
 			publish := func(t *testing.T, reconciler *controlplane.SourceReconciler) controlplane.SnapshotPublicationRef {
 				t.Helper()
-				if result, err := reconciler.Refresh(ctx, source, planner); err != nil || result.Status != controlplane.SourceRefreshPendingConfirmation {
-					t.Fatalf("pending = (%+v, %v)", result, err)
-				}
 				result, err := reconciler.Refresh(ctx, source, planner)
 				if err != nil || result.Status != controlplane.SourceRefreshPublished {
 					t.Fatalf("publish = (%+v, %v)", result, err)

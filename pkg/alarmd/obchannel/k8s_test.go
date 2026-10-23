@@ -7,6 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,7 +24,7 @@ func TestK8sFailuresReachTheCLIByName(t *testing.T) {
 	dir := t.TempDir()
 	reader := k8sread.New(k8sread.Options{PodName: "p", Host: "127.0.0.1", Port: "1",
 		TokenPath: filepath.Join(dir, "token"), CAPath: filepath.Join(dir, "ca"), NamespacePath: filepath.Join(dir, "ns")})
-	ops := K8sOperations(reader)
+	ops := K8sOperations(reader, nil, nil)
 	ids := map[string]Operation{}
 	for _, op := range ops {
 		ids[op.ID] = op
@@ -75,4 +79,62 @@ func TestAScanStoppedShortIsPartialAndSaysWhere(t *testing.T) {
 	if got := logOutcome(k8sread.LogResult{Contains: []string{"schedule_cutover"}, MatchedLines: 3, ScanComplete: &complete}, nil); !got.Complete {
 		t.Fatalf("whole scan %+v", got)
 	}
+}
+
+// k8s.workloads: without a namespace it is the named failure; with one it
+// reads the deployment's list at each call, and a namespace RBAC refuses
+// makes the answer partial and says which, beside the read's own boundary.
+func TestK8sWorkloadsIsPartialWhereANamespaceWasRefusedAndReadsTheListAtEachCall(t *testing.T) {
+	dir := t.TempDir()
+	missing := k8sread.New(k8sread.Options{PodName: "p", Host: "127.0.0.1", Port: "1",
+		TokenPath: filepath.Join(dir, "token"), CAPath: filepath.Join(dir, "ca"), NamespacePath: filepath.Join(dir, "ns")})
+	if out := workloadsOp(t, missing, nil).Run(context.Background(), Params{}); out.Error == nil ||
+		out.Error.Code != "k8s_"+k8sread.CodeNoServiceAccount || out.Complete || out.Value != nil {
+		t.Fatalf("without a namespace: %+v", out)
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/namespaces/refused/") {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{"kind": "Status", "message": "forbidden"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}, "metadata": map[string]any{}})
+	}))
+	t.Cleanup(server.Close)
+	host, port, _ := net.SplitHostPort(strings.TrimPrefix(server.URL, "https://"))
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	reader := k8sread.New(k8sread.Options{PodName: "p", Host: host, Port: port, Client: server.Client(),
+		TokenPath: write("token", "t"), CAPath: write("ca", ""), NamespacePath: write("ns", "own")})
+	listed := []string{}
+	op := workloadsOp(t, reader, func() []string { return listed })
+	if out := op.Run(context.Background(), Params{}); out.Error != nil || !out.Complete || !strings.Contains(strings.Join(out.Limitations, "\n"), "ALARMD_OBSERVE_NAMESPACES") {
+		t.Fatalf("own namespace alone: %+v", out)
+	}
+	listed = []string{"refused"}
+	out := op.Run(context.Background(), Params{})
+	result, ok := out.Value.(k8sread.WorkloadsResult)
+	if out.Error != nil || out.Complete || !ok || len(result.Namespaces) != 2 ||
+		!strings.Contains(strings.Join(out.Limitations, "\n"), "Namespace refused: a list failed") {
+		t.Fatalf("with a refused listed namespace: %+v", out)
+	}
+}
+
+func workloadsOp(t *testing.T, reader *k8sread.Reader, configured func() []string) Operation {
+	t.Helper()
+	for _, op := range K8sOperations(reader, nil, configured) {
+		if op.ID == "k8s.workloads" {
+			if op.EvidenceScope != "namespace_workloads" || op.Targetable {
+				t.Fatalf("k8s.workloads scope %q targetable %t", op.EvidenceScope, op.Targetable)
+			}
+			return op
+		}
+	}
+	t.Fatal("no k8s.workloads")
+	return Operation{}
 }

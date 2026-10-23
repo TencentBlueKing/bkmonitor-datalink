@@ -60,7 +60,7 @@ func targetScopeCloseFor(cfg config.Config, now func() time.Time) (*scopeclose.C
 		return nil, nil
 	}
 	budget := config.DeriveLinkdCapacity(config.DetectCapacityInputs())
-	closer := scopeclose.New(scopeclose.Options{Send: cfg.PhaseTwo.Linkd.AbsentCloseSend, Now: now,
+	closer := scopeclose.New(scopeclose.Options{Now: now,
 		MaxEntries: budget.LocalEntries, Batch: budget.CloseBatch})
 	return closer, scopeDropSink{closer: closer}
 }
@@ -90,7 +90,7 @@ func (sink scopeDropSink) Screen(plan execution.PlanIdentity) string {
 func (sink scopeDropSink) Observe(drop access.ScopeDrop) {
 	sink.closer.Observe(scopeclose.Drop{TenantID: drop.Plan.TenantID, BusinessID: drop.Plan.BusinessID,
 		StrategyID: drop.Plan.StrategyID, Fingerprint: drop.Fingerprint, StrategyRevision: drop.StrategyRevision,
-		Round: drop.Round})
+		Round: drop.Round, IntervalSeconds: drop.IntervalSeconds, ReadOffset: drop.ReadOffset})
 }
 
 func (sink scopeDropSink) Count(reporter access.ScopeDropReporter, word string, n int) {
@@ -124,7 +124,7 @@ func withTargetScopeClose(source func() *fleet.OpenAlertSetFacts, closer *scopec
 
 // targetScopeCloseFacts carries the close's facts field for field.
 func targetScopeCloseFacts(facts scopeclose.Facts) *fleet.TargetScopeCloseFacts {
-	result := &fleet.TargetScopeCloseFacts{Armed: facts.Armed, Pending: facts.Pending, Confirmed: facts.Confirmed,
+	result := &fleet.TargetScopeCloseFacts{Pending: facts.Pending, Confirmed: facts.Confirmed,
 		MaxEntries: facts.MaxEntries, Outcomes: facts.Outcomes}
 	for _, row := range facts.Strategies {
 		result.Strategies = append(result.Strategies, fleet.TargetScopeCloseStrategy{TenantID: row.TenantID,

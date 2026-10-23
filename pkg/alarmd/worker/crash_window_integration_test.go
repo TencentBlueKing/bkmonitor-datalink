@@ -12,11 +12,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -128,11 +127,15 @@ func TestG3ACrashWindowChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventSink, err := enginekafka.OpenTriggerEventSink(enginekafka.DecisionSinkConfig{
+	eventOpener, err := enginekafka.PrepareTriggerEventSink(enginekafka.DecisionSinkConfig{
 		Brokers: []string{os.Getenv(g3aChildKafkaBroker)}, OutputTopic: os.Getenv(g3aChildKafkaTopic),
 		ClientID:      "alarmd-g3a-crash-child",
 		BrokerVersion: "2.1.0", MaxMessageBytes: 512 << 10,
 	})
+	if err != nil {
+		t.Fatalf("prepare real TriggerEvent sink: %v", err)
+	}
+	eventSink, err := eventOpener.Open()
 	if err != nil {
 		t.Fatalf("open real TriggerEvent sink: %v", err)
 	}
@@ -199,8 +202,13 @@ func runG3ACrashWindow(t *testing.T, redisAddress string, index int, test crashW
 		t.Fatalf("acquire old owner: %v", err)
 	}
 
+	// The crashing owner's lease is renewed for as long as it runs, as its
+	// own process would renew it; the lapse the next owner waits out starts
+	// at the crash, not at the parent's acquire.
+	stopRenewing := renewG3ALeaseWhileRunning(t, ownerStore, oldLease)
 	crashOutput := runG3AChild(t, redisAddress, kafkaBroker, ownerPrefix, statePrefix, progressPrefix,
 		topic, test.stage, oldLease.Fence, true)
+	oldLease = stopRenewing()
 	beforeEvents := g3aEventsAtBroker(t, broker)
 	if beforeEvents != test.wantEventsBefore {
 		t.Fatalf("events after crash=%d, want=%d", beforeEvents, test.wantEventsBefore)
@@ -553,11 +561,15 @@ func assertG3AAppliedState(t *testing.T, got execution.RuntimeStateView) {
 // went on describing a version of the worker that no longer existed. It is
 // also the stronger statement: a crash that had committed something would
 // satisfy "missing" only by losing the record entirely.
-// g3aCrashedLeaseTTL is how long the owner that crashes holds its lease.
+// g3aCrashedLeaseTTL is how long the owner that crashes holds its lease past
+// its last renewal.
 //
-// Short because the next owner has to wait it out for real. Long enough that
-// the child, which takes a fraction of it, never has a fenced write refused
-// for a lease that expired underneath it.
+// Short because the next owner has to wait it out for real. The lease is
+// renewed while the crashing child runs (renewG3ALeaseWhileRunning), as its
+// own process would renew it: a child slowed past one TTL - a loaded machine
+// running the whole module under the race detector took longer than 2 s to
+// reach its side effects - is not refused for a lease that expired underneath
+// it, and the lapse starts at the crash.
 //
 // It is shorter than the per-batch output admission needs (decision-016 batch
 // 2 wants OutputAdmissionMargin + OutputBatchBound, eleven seconds, left on
@@ -568,6 +580,39 @@ func assertG3AAppliedState(t *testing.T, got execution.RuntimeStateView) {
 // windows would go quiet rather than red -- so that change has to raise this
 // TTL above the admission window with it.
 const g3aCrashedLeaseTTL = 2 * time.Second
+
+// renewG3ALeaseWhileRunning renews lease every quarter of its TTL until the
+// returned stop is called, and stop returns the last lease held: its
+// deadline is where the lapse after the crash ends. A renewal that fails
+// ends the renewing; the child then meets the refusal it would in production.
+func renewG3ALeaseWhileRunning(t *testing.T, store *ownership.RedisStore, lease ownership.Lease) func() ownership.Lease {
+	t.Helper()
+	done := make(chan struct{})
+	result := make(chan ownership.Lease, 1)
+	go func() {
+		ticker := time.NewTicker(g3aCrashedLeaseTTL / 4)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				result <- lease
+				return
+			case <-ticker.C:
+				renewed, err := store.Renew(context.Background(), lease.Fence, time.Now(), g3aCrashedLeaseTTL)
+				if err != nil {
+					<-done
+					result <- lease
+					return
+				}
+				lease = renewed
+			}
+		}
+	}()
+	return func() ownership.Lease {
+		close(done)
+		return <-result
+	}
+}
 
 // acquireG3AAfterLeaseLapse takes the Query Group over the way a survivor
 // does after a crash: by waiting out the dead owner's lease.
@@ -736,100 +781,7 @@ func g3aEventsAtBroker(t *testing.T, broker *sarama.MockBroker) int {
 
 func startG3ARedis(t *testing.T) string {
 	t.Helper()
-	// Skipped rather than failed when redis-server is missing, which is how
-	// every other real-Redis case in this tree behaves: the machine either
-	// has it and the windows run, or it does not and nothing here can be
-	// decided. A failure would only teach people to set a flag again.
-	redisServer, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
-	address := reserveG3AAddress(t)
-	_, port, err := net.SplitHostPort(address)
-	if err != nil {
-		t.Fatalf("split Redis address %q: %v", address, err)
-	}
-	process := startG3AProcess(t, redisServer, nil,
-		"--bind", "127.0.0.1", "--port", port, "--save", "", "--appendonly", "no", "--protected-mode", "no")
-	waitG3ATCP(t, address, process, 10*time.Second)
-	return address
-}
-
-type lockedBuffer struct {
-	mu     sync.Mutex
-	buffer bytes.Buffer
-}
-
-func (buffer *lockedBuffer) Write(value []byte) (int, error) {
-	buffer.mu.Lock()
-	defer buffer.mu.Unlock()
-	return buffer.buffer.Write(value)
-}
-
-func (buffer *lockedBuffer) String() string {
-	buffer.mu.Lock()
-	defer buffer.mu.Unlock()
-	return buffer.buffer.String()
-}
-
-type g3aProcess struct {
-	command  *exec.Cmd
-	output   *lockedBuffer
-	stopOnce sync.Once
-}
-
-func startG3AProcess(t *testing.T, executable string, environment []string, arguments ...string) *g3aProcess {
-	t.Helper()
-	command := exec.Command(executable, arguments...)
-	if environment != nil {
-		command.Env = environment
-	}
-	output := &lockedBuffer{}
-	command.Stdout = output
-	command.Stderr = output
-	if err := command.Start(); err != nil {
-		t.Fatalf("start %s: %v", executable, err)
-	}
-	process := &g3aProcess{command: command, output: output}
-	t.Cleanup(process.Stop)
-	return process
-}
-
-func (process *g3aProcess) Stop() {
-	if process == nil || process.command == nil || process.command.Process == nil {
-		return
-	}
-	process.stopOnce.Do(func() {
-		_ = process.command.Process.Kill()
-		_ = process.command.Wait()
-	})
-}
-
-func waitG3ATCP(t *testing.T, address string, process *g3aProcess, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
-		if err == nil {
-			_ = connection.Close()
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	t.Fatalf("process did not listen on %s within %s\n%s", address, timeout, process.output.String())
-}
-
-func reserveG3AAddress(t *testing.T) string {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve TCP address: %v", err)
-	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatalf("release reserved TCP address: %v", err)
-	}
-	return address
+	return redistest.Start(t, "--protected-mode", "no").Addr
 }
 
 var _ execution.EventSink = (*g3aCrashEventSink)(nil)

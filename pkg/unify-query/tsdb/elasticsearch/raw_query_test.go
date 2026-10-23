@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jarcoal/httpmock"
+	elastic "github.com/olivere/elastic/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -513,4 +514,93 @@ func drainRawRows(rows <-chan map[string]any) []map[string]any {
 		result = append(result, row)
 	}
 	return result
+}
+
+func exactTotalTestInstance(t *testing.T) *Instance {
+	t.Helper()
+	mock.Init()
+	instance, err := NewInstance(metadata.InitHashID(context.Background()), &InstanceOption{
+		Connect: Connect{Address: mock.EsUrl}, MaxSize: 100, Timeout: 3 * time.Second,
+	})
+	require.NoError(t, err)
+	return instance
+}
+
+func exactTotalTestQuery(exact bool) *metadata.Query {
+	return &metadata.Query{
+		DB: "es_index", Field: "a", TableID: "result_table.es", StorageID: "3",
+		StorageType: metadata.ElasticsearchStorageType, Size: 2, ExactTotal: exact,
+		TimeField: metadata.TimeField{Name: "dtEventTimeStamp", Type: TimeFieldTypeTime, Unit: "millisecond"},
+	}
+}
+
+func TestPrepareRawQuery_ExactTotalOnlyWhenRequested(t *testing.T) {
+	instance := exactTotalTestInstance(t)
+	ctx := metadata.InitHashID(context.Background())
+	start, end := time.UnixMilli(1723593608000), time.UnixMilli(1723679962000)
+
+	query := &metadata.Query{}
+	require.NoError(t, json.Unmarshal([]byte(`{"exact_total":true}`), query))
+	require.True(t, query.ExactTotal)
+	prepared, err := instance.PrepareRawQuery(ctx, exactTotalTestQuery(true), start, end, nil)
+	require.NoError(t, err)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal([]byte(prepared.body), &body))
+	assert.Equal(t, true, body["track_total_hits"])
+
+	// default queries keep their request body unchanged
+	prepared, err = instance.PrepareRawQuery(ctx, exactTotalTestQuery(false), start, end, nil)
+	require.NoError(t, err)
+	assert.NotContains(t, prepared.body, "track_total_hits")
+}
+
+func TestDecodePreparedRawResult_ExactTotalRejectsApproximateHits(t *testing.T) {
+	instance := exactTotalTestInstance(t)
+	prepared, err := instance.PrepareRawQuery(metadata.InitHashID(context.Background()), exactTotalTestQuery(true),
+		time.UnixMilli(1723593608000), time.UnixMilli(1723679962000), nil)
+	require.NoError(t, err)
+	_, _, _, err = decodePreparedRawResult(prepared, nil, make(chan map[string]any, 1))
+	require.ErrorContains(t, err, "exact total")
+	var response elastic.SearchResult
+	require.NoError(t, json.Unmarshal([]byte(`{"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"hits":[]}}`), &response))
+	_, _, _, err = decodePreparedRawResult(prepared, &response, make(chan map[string]any, 1))
+	require.ErrorContains(t, err, "exact total")
+
+	prepared.query.ExactTotal = false
+	_, total, _, err := decodePreparedRawResult(prepared, &response, make(chan map[string]any, 1))
+	require.NoError(t, err)
+	assert.Equal(t, int64(10000), total)
+}
+
+func TestDecodePreparedRawResult_ExactTotalRequiresCompleteSearch(t *testing.T) {
+	instance := exactTotalTestInstance(t)
+	prepared, err := instance.PrepareRawQuery(metadata.InitHashID(context.Background()), exactTotalTestQuery(false),
+		time.UnixMilli(1723593608000), time.UnixMilli(1723679962000), nil)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, response string
+		complete       bool
+	}{
+		{"complete", `{"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`, true},
+		{"timeout", `{"timed_out":true,"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`, false},
+		{"missing shards", `{"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`, false},
+		{"failed shard", `{"_shards":{"total":2,"successful":1,"failed":1},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`, false},
+		{"shard failure detail", `{"_shards":{"total":1,"successful":1,"failed":0,"failures":[{"reason":{"type":"error","reason":"partial"}}]},"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var response elastic.SearchResult
+			require.NoError(t, json.Unmarshal([]byte(tc.response), &response))
+			prepared.query.ExactTotal = true
+			_, _, _, err := decodePreparedRawResult(prepared, &response, make(chan map[string]any, 1))
+			if tc.complete {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "exact total")
+			}
+			// without exact_total the same responses decode as before
+			prepared.query.ExactTotal = false
+			_, _, _, err = decodePreparedRawResult(prepared, &response, make(chan map[string]any, 1))
+			require.NoError(t, err)
+		})
+	}
 }

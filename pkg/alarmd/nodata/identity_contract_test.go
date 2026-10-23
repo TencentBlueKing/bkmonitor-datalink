@@ -55,7 +55,7 @@ func TestSyntheticDimensionsHashLikePythonNoDataIdentity(t *testing.T) {
 // check_timestamp is the previous whole period.
 func TestSyntheticSeriesSourceTimeIsThePeriodDecided(t *testing.T) {
 	whole := WholeItemGroup().Key()
-	series := SyntheticSeriesFor(SyntheticInput{
+	series := mustSynthetic(t, SyntheticInput{
 		EvaluationTime: absenceRound2, PeriodSeconds: absencePeriod,
 		Result: AbsenceResult{Verdicts: map[string]Verdict{whole: VerdictAnomaly}},
 		Memory: map[string]GroupMemory{whole: {FirstAbsent: absenceRound2}},

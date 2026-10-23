@@ -73,8 +73,15 @@ func (spec ScheduleSpec) nextAtOrAfter(at EvaluationTime) (EvaluationTime, bool)
 	return EvaluationTime(int64(at) + increment), true
 }
 
-func (spec ScheduleSpec) completionDeadlineUnixMilli(at EvaluationTime) (int64, bool) {
-	return spec.CompletionDeadlineUnixMilli(at)
+// HeldCompletionDeadlineUnixMilli is the completion deadline of the Slot at
+// at read readHoldMillis later than its schedule says: the deadline a frozen
+// contract with that read hold carries.
+func (spec ScheduleSpec) HeldCompletionDeadlineUnixMilli(at EvaluationTime, readHoldMillis int64) (int64, bool) {
+	deadline, ok := spec.CompletionDeadlineUnixMilli(at)
+	if !ok || readHoldMillis < 0 || readHoldMillis > MaxReadHoldMillis || deadline > math.MaxInt64-readHoldMillis {
+		return 0, false
+	}
+	return deadline + readHoldMillis, true
 }
 
 // MinimumSettlingWaitSeconds is the shortest wait this product has ever
@@ -491,35 +498,6 @@ func (fact InitialScheduleActivationFact) Validate(schedule FrozenQueryGroupSche
 	return nil
 }
 
-// ScheduleCutoverFact atomically closes OldSegment and opens NewSegment at one
-// boundary. It records immutable facts and does not introduce a state machine.
-type ScheduleCutoverFact struct {
-	OldSegment ScheduleSegmentFact
-	NewSegment ScheduleSegmentFact
-}
-
-func (fact ScheduleCutoverFact) Validate(oldSchedule, newSchedule FrozenQueryGroupSchedule) error {
-	if err := oldSchedule.Validate(); err != nil {
-		return err
-	}
-	if err := newSchedule.Validate(); err != nil {
-		return err
-	}
-	if !sameScheduleSegment(fact.OldSegment, oldSchedule.Segment) ||
-		!sameScheduleSegment(fact.NewSegment, newSchedule.Segment) {
-		return errors.New("alarmd execution: cutover Segments do not match frozen schedules")
-	}
-	if fact.OldSegment.QueryGroup != fact.NewSegment.QueryGroup || fact.OldSegment.End == nil ||
-		*fact.OldSegment.End != fact.NewSegment.Start || fact.NewSegment.End != nil {
-		return errors.New("alarmd execution: cutover requires adjacent half-open Segments on one Query Group timeline")
-	}
-	if fact.NewSegment.Publication.PublicationEpoch <= fact.OldSegment.Publication.PublicationEpoch ||
-		fact.NewSegment.Publication.SnapshotRevision == fact.OldSegment.Publication.SnapshotRevision {
-		return errors.New("alarmd execution: cutover publication must advance content and epoch")
-	}
-	return nil
-}
-
 // FreezeSlotContractRequest is the exact Scheduler-to-Catalog request. It has
 // no latest selector, local time, ownership, assignment or execution identity.
 type FreezeSlotContractRequest struct {
@@ -528,12 +506,19 @@ type FreezeSlotContractRequest struct {
 	ScheduleSegmentStart EvaluationTime
 	EvaluationTime       EvaluationTime
 	DuePlans             []FrozenPlanScheduleRef
+	// ReadHoldMillis is the Slot's read hold (FrozenExecutionContractRef):
+	// the Query Group's current one for a Slot frozen for the first time,
+	// and the contract's own for every later freeze of it.
+	ReadHoldMillis int64
 }
 
 func (request FreezeSlotContractRequest) Validate() error {
 	if request.QueryGroup == "" || request.ScheduleRevision == "" || request.ScheduleSegmentStart <= 0 ||
 		request.EvaluationTime < request.ScheduleSegmentStart || len(request.DuePlans) == 0 {
 		return errors.New("alarmd execution: complete frozen Slot request is required")
+	}
+	if request.ReadHoldMillis < 0 || request.ReadHoldMillis > MaxReadHoldMillis {
+		return errors.New("alarmd execution: frozen Slot request read hold is out of range")
 	}
 	seen := make(map[PlanIdentity]struct{}, len(request.DuePlans))
 	for _, due := range request.DuePlans {
@@ -561,6 +546,40 @@ func (fact FrozenSlotContractFact) DeriveDuePlanSetDigest() (DuePlanSetDigest, e
 }
 
 func (fact FrozenSlotContractFact) Validate(request FreezeSlotContractRequest) error {
+	if err := fact.validateAgainst(request); err != nil {
+		return err
+	}
+	digest, err := fact.DeriveDuePlanSetDigest()
+	if err != nil {
+		return err
+	}
+	if digest != fact.Contract.DuePlanSetDigest {
+		return errors.New("alarmd execution: frozen due Plan digest cannot be independently reproduced")
+	}
+	return nil
+}
+
+// SealFrozenSlotContractFact is how the freeze that builds a fact finishes
+// it: the due Plan set digest derived here, once, from the fact's own due
+// Plans and requirements, and every other rule Validate holds a fact to. The
+// freeze used to derive the digest, then validate the fact, which derived it
+// again from the same slices a line later -- the whole of the due Plans'
+// canonical encoding twice per Slot, for a comparison that could not fail.
+// Validate stays what a fact arriving from anywhere else is held to.
+func SealFrozenSlotContractFact(fact FrozenSlotContractFact, request FreezeSlotContractRequest) (FrozenSlotContractFact, error) {
+	digest, err := fact.DeriveDuePlanSetDigest()
+	if err != nil {
+		return FrozenSlotContractFact{}, err
+	}
+	fact.Contract.DuePlanSetDigest = digest
+	if err := fact.validateAgainst(request); err != nil {
+		return FrozenSlotContractFact{}, err
+	}
+	return fact, nil
+}
+
+// validateAgainst is every rule Validate holds a fact to but the digest.
+func (fact FrozenSlotContractFact) validateAgainst(request FreezeSlotContractRequest) error {
 	if err := request.Validate(); err != nil {
 		return err
 	}
@@ -570,7 +589,8 @@ func (fact FrozenSlotContractFact) Validate(request FreezeSlotContractRequest) e
 	if fact.Contract.Slot.QueryGroup != request.QueryGroup ||
 		fact.Contract.ScheduleRevision != request.ScheduleRevision ||
 		fact.Contract.ScheduleSegmentStart != request.ScheduleSegmentStart ||
-		fact.Contract.Slot.EvaluationTime != request.EvaluationTime {
+		fact.Contract.Slot.EvaluationTime != request.EvaluationTime ||
+		fact.Contract.ReadHoldMillis != request.ReadHoldMillis {
 		return errors.New("alarmd execution: frozen Slot contract differs from requested Segment or time")
 	}
 	if len(fact.DuePlans) != len(request.DuePlans) {
@@ -589,7 +609,7 @@ func (fact FrozenSlotContractFact) Validate(request FreezeSlotContractRequest) e
 		if err != nil {
 			return err
 		}
-		deadline, ok := due.ScheduleSpec.completionDeadlineUnixMilli(request.EvaluationTime)
+		deadline, ok := due.ScheduleSpec.HeldCompletionDeadlineUnixMilli(request.EvaluationTime, request.ReadHoldMillis)
 		if !ok || revision != due.ScheduleRevision || !due.ScheduleSpec.IsAligned(request.EvaluationTime) ||
 			deadline != due.CompletionDeadlineUnixMilli {
 			return errors.New("alarmd execution: frozen due Plan ScheduleSpec or deadline is invalid")
@@ -603,12 +623,85 @@ func (fact FrozenSlotContractFact) Validate(request FreezeSlotContractRequest) e
 		}
 		seen[due.Identity] = struct{}{}
 	}
-	digest, err := fact.DeriveDuePlanSetDigest()
-	if err != nil {
-		return err
-	}
-	if digest != fact.Contract.DuePlanSetDigest {
-		return errors.New("alarmd execution: frozen due Plan digest cannot be independently reproduced")
-	}
 	return nil
+}
+
+// ReadWaitWithinQueryBudget is how long after its window closes a Query
+// Group's Slot is read: the settling wait, then the group's own phase.
+//
+// Without the phase every group on a schedule is read in the same second.
+// Measured on a deployment where 88% of groups run every minute, about 80% of
+// a minute's queries became ready at second 30: every query permit was held
+// and a further 160 to 184 queries waited for one, for four to five seconds,
+// while the fleet held permits 11.7% of the minute. The downstream answered
+// that second at twice its usual latency. Nothing was short of capacity; the
+// reads were synchronized.
+//
+// The phase spreads each schedule's groups over readPhaseSpread. It only ever
+// delays a read - the settling wait stays the floor, so no window is read
+// before the deployment says its data has landed - and it is a pure function
+// of the group and its budget, so a restarted process and the replica a group
+// is handed to read it at the same moment, with nothing stored.
+//
+// Every place that asks when a Slot is read asks here: access to read it, the
+// scheduler to judge whether a replay can still be read inside its distance,
+// and the read holds to measure lateness from the moment the group actually
+// reads. A place that added the settling wait itself would disagree with the
+// read by up to the phase.
+//
+// The settling wait here is the floor, MinimumSettlingWait, or the
+// deployment's own wait when that is shorter: how much longer a group's data
+// takes to land is measured per group and read as its read hold (readhold),
+// which starts a group nothing has measured at the deployment's wait.
+func ReadWaitWithinQueryBudget(queryGroup QueryGroupIdentity, queryBudget, configured time.Duration) time.Duration {
+	settle := SettlingFloorWithinQueryBudget(queryBudget, configured)
+	return settle + readPhase(queryGroup, readPhaseSpread(queryBudget, settle))
+}
+
+// SettlingFloorWithinQueryBudget is the settling wait every group reads
+// past: the floor, MinimumSettlingWait, or the deployment's wait as the
+// budget allows it when that is shorter. A group's read hold is reckoned
+// from it - how much later than the floor the group's data lands - and the
+// group's phase comes after both, so groups whose data lands at one moment
+// still read at their own seconds.
+func SettlingFloorWithinQueryBudget(queryBudget, configured time.Duration) time.Duration {
+	return min(SettlingWaitWithinQueryBudget(queryBudget, configured), MinimumSettlingWait)
+}
+
+// Of the budget left after the settling wait, a phase takes at most two
+// fifths. The rest is the query's and the evaluation's: the slow groups
+// already answer close to the whole budget, and half would leave a one-minute
+// group 12.5 seconds where it has 25 today.
+const (
+	readPhaseBudgetShareNumerator   = 2
+	readPhaseBudgetShareDenominator = 5
+)
+
+// readPhaseSpread is how far a schedule's phases spread: two fifths of what
+// the settling wait leaves of the budget, and never more than the settling
+// wait itself, so a long schedule's first read is at most twice as late as
+// its data needs rather than a third of its period. A one-minute schedule
+// spreads over 10 seconds, a 30-second one over 6, anything of two minutes or
+// more over 30; an inert schedule, whose settling wait already exceeds its
+// budget, not at all.
+func readPhaseSpread(queryBudget, settle time.Duration) time.Duration {
+	if queryBudget <= settle {
+		return 0
+	}
+	return min((queryBudget-settle)*readPhaseBudgetShareNumerator/readPhaseBudgetShareDenominator, settle)
+}
+
+// readPhase is the group's place in the spread, to the millisecond: FNV-1a
+// of its identity, computed inline so the call allocates nothing.
+func readPhase(queryGroup QueryGroupIdentity, spread time.Duration) time.Duration {
+	millis := uint64(spread / time.Millisecond)
+	if millis == 0 {
+		return 0
+	}
+	hash := uint64(14695981039346656037)
+	for i := 0; i < len(queryGroup); i++ {
+		hash ^= uint64(queryGroup[i])
+		hash *= 1099511628211
+	}
+	return time.Duration(hash%millis) * time.Millisecond
 }

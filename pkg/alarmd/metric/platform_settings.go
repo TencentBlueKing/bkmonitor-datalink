@@ -34,6 +34,7 @@ type platformSettingsCollector struct {
 	age         *prometheus.Desc
 	refreshes   *prometheus.Desc
 	unavailable *prometheus.Desc
+	retries     *prometheus.Desc
 	changes     *prometheus.Desc
 }
 
@@ -61,10 +62,18 @@ func newPlatformSettingsCollector() *platformSettingsCollector {
 			"Reads of the distribution by result: authoritative (a publication, every field decoded) or "+
 				"unavailable. One per minute; a flat line is the refresh loop not running.", "result"),
 		unavailable: descriptor("platform_settings_unavailable_total",
-			"Reads that yielded no publication, by why: read_error (the read did not happen), unpublished (the "+
+			"Reads that yielded no publication, by why: read_error (the read did not happen), revision_moved (the "+
+				"store answered and the revision changed during the read on both tries, so the fields may be of two "+
+				"publications and are not used -- a publisher writing faster than a round trip, not the store being "+
+				"down), unpublished (the "+
 				"revision key is absent -- nothing was ever published, and the field keys beside it are not read "+
 				"as no override), decode_error (a field is not of its declared type; the whole publication is "+
 				"refused rather than half of it, and the log line names the field and the value).", "reason"),
+		retries: descriptor("platform_settings_read_retry_total",
+			"Reads of the distribution whose first try was torn -- the revision changed between its first and "+
+				"last command, a publication landing meanwhile -- and that were tried again, whatever the second "+
+				"try came to. A second try torn as well is also counted in platform_settings_unavailable_total "+
+				"under revision_moved."),
 		changes: descriptor("platform_settings_change_total",
 			"Reads on which the effective value of a field changed, by field: what one edit on the platform's "+
 				"page produces exactly once on every replica. The effective value is the publication resolved "+
@@ -78,6 +87,7 @@ func (c *platformSettingsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.age
 	ch <- c.refreshes
 	ch <- c.unavailable
+	ch <- c.retries
 	ch <- c.changes
 }
 
@@ -109,6 +119,7 @@ func (c *platformSettingsCollector) Collect(ch chan<- prometheus.Metric) {
 	for _, reason := range platformsettings.UnavailableReasons {
 		ch <- prometheus.MustNewConstMetric(c.unavailable, prometheus.CounterValue, float64(stats.Unavailable[reason]), string(reason))
 	}
+	ch <- prometheus.MustNewConstMetric(c.retries, prometheus.CounterValue, float64(stats.Retries))
 	for _, field := range platformsettings.Fields {
 		ch <- prometheus.MustNewConstMetric(c.changes, prometheus.CounterValue, float64(stats.Changes[field]), string(field))
 	}

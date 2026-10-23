@@ -47,15 +47,20 @@ type TraditionalComparisonParameters struct {
 
 type TraditionalComparisonConfig struct {
 	TraditionalComparisonParameters
-	ValueField           string                   `json:"value_field"`
-	DataUnit             string                   `json:"data_unit"`
-	AlgorithmUnit        string                   `json:"algorithm_unit"`
-	Precision            int                      `json:"precision"`
-	MissingHistoryAsZero bool                     `json:"missing_history_as_zero,omitempty"`
-	AggregationInterval  int64                    `json:"aggregation_interval"`
-	DataConversion       ComparisonUnitConversion `json:"data_conversion"`
-	AlgorithmConversion  ComparisonUnitConversion `json:"algorithm_conversion"`
-	ThresholdConversion  ComparisonUnitConversion `json:"threshold_conversion"`
+	ValueField           string `json:"value_field"`
+	DataUnit             string `json:"data_unit"`
+	AlgorithmUnit        string `json:"algorithm_unit"`
+	Precision            int    `json:"precision"`
+	MissingHistoryAsZero bool   `json:"missing_history_as_zero,omitempty"`
+	// AggregationInterval is the step between the history points the
+	// algorithm keys: the evaluation step. The name and its encoding predate
+	// detect_interval, when the step was always the aggregation interval;
+	// they are kept so a configuration compiled without the field keeps its
+	// bytes.
+	AggregationInterval int64                    `json:"aggregation_interval"`
+	DataConversion      ComparisonUnitConversion `json:"data_conversion"`
+	AlgorithmConversion ComparisonUnitConversion `json:"algorithm_conversion"`
+	ThresholdConversion ComparisonUnitConversion `json:"threshold_conversion"`
 }
 
 // ComparisonUnitConversion freezes the multiplication order as well as the
@@ -273,7 +278,10 @@ func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx Alg
 	if uint64(count) > uint64(ctx.Limits.MaxRequiredHistoryPoints) {
 		return AlgorithmCompileResult{}, configErrorf("history point budget exceeded")
 	}
-	offsets, err := TraditionalHistoryOffsets(raw.Type, params, int64(ctx.ExecutionSemantics.AggregationInterval))
+	// Offsets count detections, an evaluation step each; windows are an
+	// aggregation interval long. The two are one number unless the item
+	// configures a detect_interval.
+	offsets, err := TraditionalHistoryOffsets(raw.Type, params, int64(ctx.ExecutionSemantics.EvaluationInterval))
 	if err != nil {
 		return AlgorithmCompileResult{}, configErrorf("%v", err)
 	}
@@ -357,7 +365,7 @@ func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx Alg
 			return AlgorithmCompileResult{}, configErrorf("invalid comparison method")
 		}
 	}
-	config := &TraditionalComparisonConfig{TraditionalComparisonParameters: params, ValueField: wire.InputProjection.ValueFields[0], DataUnit: wire.DataUnit, AlgorithmUnit: wire.AlgorithmUnit, Precision: wire.Precision, AggregationInterval: int64(ctx.ExecutionSemantics.AggregationInterval), DataConversion: dataConversion, AlgorithmConversion: algorithmConversion, ThresholdConversion: thresholdConversion}
+	config := &TraditionalComparisonConfig{TraditionalComparisonParameters: params, ValueField: wire.InputProjection.ValueFields[0], DataUnit: wire.DataUnit, AlgorithmUnit: wire.AlgorithmUnit, Precision: wire.Precision, AggregationInterval: int64(ctx.ExecutionSemantics.EvaluationInterval), DataConversion: dataConversion, AlgorithmConversion: algorithmConversion, ThresholdConversion: thresholdConversion}
 	config.MissingHistoryAsZero = wire.MissingHistoryAsZero
 	return g4CompileResult(compiledAlgorithmConfig{TraditionalComparison: config}, wire.InputProjection, requirements, "traditional-comparison-compiler-v1", "python-ordered-history-v1", len(offsets)+1), nil
 }

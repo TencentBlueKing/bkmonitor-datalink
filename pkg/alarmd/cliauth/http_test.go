@@ -64,7 +64,8 @@ func TestGrantTrustAndRequestValidation(t *testing.T) {
 		{"two MIME", func(r *http.Request) { r.Header.Add("Content-Type", "application/json") }, `{"confirm":true}`, 415, "invalid_content_type"},
 		{"no confirmation", nil, `{}`, 400, "invalid_request"},
 		{"false confirmation", nil, `{"confirm":false}`, 400, "invalid_request"},
-		{"unknown field", nil, `{"confirm":true,"scope":"admin"}`, 400, "invalid_request"},
+		{"unknown field", nil, `{"confirm":true,"other":true}`, 400, "invalid_request"},
+		{"invalid scope", nil, `{"confirm":true,"scope":"admin"}`, 400, "invalid_scope"},
 		{"wrong type", nil, `{"confirm":"true"}`, 400, "invalid_request"},
 		{"trailing JSON", nil, `{"confirm":true}{}`, 400, "invalid_request"},
 		{"oversize trailing whitespace", nil, `{"confirm":true}` + strings.Repeat(" ", maxBodyBytes), 413, "request_too_large"},
@@ -117,11 +118,6 @@ func TestPreviewDoesNotCreateGrantOrUseRedis(t *testing.T) {
 	}
 	if m.grantWindow.count != 0 {
 		t.Fatal("preview consumed issuance budget")
-	}
-	m.adminConfigured = false
-	response := authRequest(m, http.MethodGet, grantsPath, "", true)
-	if response.Code != 503 || !strings.Contains(response.Body.String(), "admin_not_configured") {
-		t.Fatal("unconfigured administrator accepted")
 	}
 }
 
@@ -194,16 +190,13 @@ func TestNewValidatesCoordinatesWithoutExposingSecrets(t *testing.T) {
 		func(o *Options) { o.EnvironmentID = "" },
 		func(o *Options) { o.EnvironmentName = "" },
 		func(o *Options) { o.AdminKey = "weak" },
+		func(o *Options) { o.AdminKey = "" },
 	} {
 		opts := base
 		mutate(&opts)
 		if _, err := New(opts); err == nil {
 			t.Fatal("invalid options accepted")
 		}
-	}
-	base.AdminKey = ""
-	if _, err := New(base); err != nil {
-		t.Fatalf("disabled issuance rejected: %v", err)
 	}
 	base.EnvironmentID = "env{unexpected-slot}"
 	m, err = New(base)
@@ -490,7 +483,7 @@ func TestAdministratorKeyHeaderCompatibleBounds(t *testing.T) {
 		key string
 		ok  bool
 	}{
-		{strings.Repeat("a", 32), true}, {strings.Repeat("~", 256), true},
+		{"", false}, {strings.Repeat("a", 32), true}, {strings.Repeat("~", 256), true},
 		{strings.Repeat("a", 31), false}, {strings.Repeat("a", 257), false},
 		{strings.Repeat("a", 32) + " b", false}, {strings.Repeat("a", 32) + "中", false},
 		{strings.Repeat("a", 32) + "\x7f", false},

@@ -180,6 +180,17 @@ func TestSlotExecutionCoordinatorCompletesSlotBeyondItsOwnBudgetAsUnavailable(t 
 			rejection = &(*fixture.observations)[index]
 		}
 	}
+	// The Slot still reports its no-data census, on this path as on the
+	// ordinary one, so a replaced Slot is not silent about its Plans.
+	census := false
+	for _, observation := range *fixture.observations {
+		if observation.NoDataCensus != nil {
+			census = true
+		}
+	}
+	if !census {
+		t.Fatal("the over-budget Slot reported no no-data census")
+	}
 	if rejection == nil || rejection.CapacityBudget != observability.CapacityBudgetStateMutations ||
 		rejection.ReasonCode != execution.ReasonCode(contract.ReasonSlotBudgetExceeded) {
 		t.Fatalf("capacity rejection = %+v, want the per-Slot budget reason", rejection)
@@ -947,6 +958,47 @@ func TestSlotExecutionCoordinatorIsolatesDeterministicStateAdmission(t *testing.
 	}
 }
 
+// A refused admission is refused under its Plan's strategy, with the rule and
+// the store's sentence on the admission line. The object row files the
+// refusal under the Plan, and the line named only the Query Group: the
+// tracker had nothing to file it under. The sentence is sanitized like any
+// error text on a line.
+func TestAnAdmissionRefusalCarriesItsPlanItsRuleAndItsSentence(t *testing.T) {
+	type seen struct {
+		observation observability.Observation
+		trace       observability.TraceFields
+	}
+	var admissions []seen
+	observer := observability.ObserverFunc(func(ctx context.Context, observation observability.Observation) {
+		if observation.Stage == observability.StageStateAdmission {
+			admissions = append(admissions, seen{observability.NormalizeObservation(observation), observability.TraceFieldsFromContext(ctx)})
+		}
+	})
+	fixture := newFixtureWithObserver(t, true, "", observer)
+	fixture.ports.stateAdmissionDeterministic = true
+	fixture.ports.stateAdmissionRule = "lifetime_past_ceiling"
+	fixture.ports.stateAdmissionText = "required TTL 840h0m0s exceeds maximum 720h0m0s at http://store.example.test/key"
+	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal))
+	if err != nil || !result.Completed || result.Result != observability.ResultTerminal {
+		t.Fatalf("Execute() result=%+v error=%v", result, err)
+	}
+	if len(admissions) != 1 {
+		t.Fatalf("%d admission lines, want one", len(admissions))
+	}
+	admission := admissions[0]
+	if plan := planIdentity(); admission.trace.StrategyID != plan.StrategyID || admission.trace.BusinessID != plan.BusinessID {
+		t.Fatalf("admission trace = %+v, want the Plan's strategy %s", admission.trace, plan.StrategyID)
+	}
+	chunk := admission.observation.StateApplyChunk
+	if admission.observation.Result != observability.ResultTerminal || chunk == nil ||
+		!reflect.DeepEqual(chunk.RefusalRules, []string{"lifetime_past_ceiling"}) {
+		t.Fatalf("admission = %+v, want terminal under the store's rule", admission.observation)
+	}
+	if !strings.Contains(chunk.RefusalText, "required TTL 840h0m0s exceeds maximum 720h0m0s") || strings.Contains(chunk.RefusalText, "store.example.test") {
+		t.Fatalf("refusal text = %q, want the store's sentence with its numbers and without the address", chunk.RefusalText)
+	}
+}
+
 func TestSlotExecutionCoordinatorRejectsDeterministicStateApplyAsContractViolation(t *testing.T) {
 	fixture := newFixture(t, true, "")
 	fixture.ports.stateApplyDeterministic = true
@@ -1258,6 +1310,7 @@ func (ports *recordingPorts) ResolveFinalization(
 		// A query-free finalization carries the due Plans it is finalizing:
 		// that frozen set is the only thing the path has to work from.
 		finalization.Targets = request.DuePlanTargets
+		finalization.Cause = execution.CauseExpiredReplay
 		finalization.ReasonCode = execution.ReasonCode(contract.ReasonGapSkipped)
 		if mode == execution.FinalizationSnapshotUnavailable {
 			finalization.ReasonCode = execution.ReasonCode(contract.ReasonSnapshotUnavailable)
@@ -1350,6 +1403,9 @@ type recordingPorts struct {
 	// eventRejection, when set with failStage event_ack, makes the event
 	// write fail as the sink's own refusal rather than a retryable dependency.
 	eventRejection *eventRejectionShape
+	// eventFailureKind is the kind a failed write's dependency error says,
+	// as the sink's errors do; empty says none.
+	eventFailureKind string
 	// outputWrite, when set, is the count the fake sink reports for every
 	// batch, the way the real sink counts what a batch became.
 	outputWrite    *observability.OutputWriteFacts
@@ -1361,15 +1417,19 @@ type recordingPorts struct {
 	// stateApplyAlreadyApplied makes every state write report that an earlier
 	// attempt had already written it, which is what a retry of a Slot whose
 	// first attempt got that far actually sees.
-	stateApplyAlreadyApplied        bool
-	degraded                        bool
-	completionCompleteness          execution.Completeness
-	wrongGapIdentity                bool
-	wrongStateAdmissionIdentity     bool
-	wrongStateApplyIdentity         bool
-	progressConflict                bool
-	reverseStateReceipts            bool
-	unboundEffectiveTimeFacts       bool
+	stateApplyAlreadyApplied    bool
+	degraded                    bool
+	completionCompleteness      execution.Completeness
+	wrongGapIdentity            bool
+	wrongStateAdmissionIdentity bool
+	wrongStateApplyIdentity     bool
+	progressConflict            bool
+	reverseStateReceipts        bool
+	unboundEffectiveTimeFacts   bool
+	// withheld, when set, makes the primary answer FULL and EMPTY with these
+	// two counts: the series the query returned that every Plan refused,
+	// and those it refused as outside the target.
+	withheld                        *[2]uint64
 	stateAdmissionDeterministic     bool
 	stateApplyDeterministic         bool
 	stateAdmissionDeterministicLast bool
@@ -1418,8 +1478,16 @@ type recordingPorts struct {
 	eventCount              int
 	gapMutations            []execution.PlanGapMutation
 	executeOverride         func(context.Context, execution.QueryExecutionRequest, execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error)
-	queryAfterSeriesError   error
-	queryDeliveryBytes      []uint64
+	// queryTakes is how long the default query answer takes once it has
+	// begun, so a Slot measured in whole milliseconds measures more than
+	// zero; the in-memory answer is otherwise often done within one.
+	queryTakes            time.Duration
+	queryAfterSeriesError error
+	queryDeliveryBytes    []uint64
+
+	// stateAdmissionRule and stateAdmissionText go on the refused admission
+	// item, as the store names its rule and says its sentence.
+	stateAdmissionRule, stateAdmissionText string
 }
 
 func (ports *recordingPorts) Execute(ctx context.Context, request execution.QueryExecutionRequest, consumer execution.QueryExecutionConsumer) (execution.QueryExecutionCompletion, error) {
@@ -1494,8 +1562,23 @@ func (ports *recordingPorts) Execute(ctx context.Context, request execution.Quer
 	if err := consumer.Begin(ctx, header); err != nil {
 		return execution.QueryExecutionCompletion{}, err
 	}
+	if ports.queryTakes > 0 {
+		time.Sleep(ports.queryTakes)
+	}
 	if err := ports.fail("query"); err != nil {
 		return execution.QueryExecutionCompletion{}, err
+	}
+	if ports.withheld != nil {
+		binding := input.Inputs[0]
+		binding.Dataset = execution.NewDataset(nil)
+		binding.View, _ = execution.NewDatasetView(binding.Dataset, []uint32{})
+		binding.Completeness, binding.DataState, binding.Disposition = execution.CompletenessFull, execution.DataStateEmpty, execution.AccessAvailable
+		return execution.QueryExecutionCompletion{AllRequiredCompleted: true, CompletionBindings: []execution.NamedInputBinding{binding},
+			PhysicalQueries: []execution.PhysicalQueryCompletion{{
+				Ref: "provider-result-1", PhysicalQuery: "physical-query-1", QueryRevision: queryRevision,
+				Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
+				Withheld: ports.withheld[0], WithheldOutsideTarget: ports.withheld[1],
+			}}}, nil
 	}
 	if !ports.ready {
 		binding := input.Inputs[0]
@@ -1898,7 +1981,7 @@ func (ports *recordingPorts) WriteBatch(ctx context.Context, events []contract.T
 			// retryable dependency, and named by reason word and sentence.
 			return &outputRejectedTestError{err: err, reason: ports.eventRejection.reason, detail: ports.eventRejection.detail}
 		}
-		return &retryableOutputTestError{err: err}
+		return &retryableOutputTestError{err: err, kind: ports.eventFailureKind}
 	}
 	return nil
 }
@@ -1916,15 +1999,22 @@ func (err *outputRejectedTestError) Error() string {
 }
 func (err *outputRejectedTestError) Unwrap() error                 { return err.err }
 func (err *outputRejectedTestError) OutputRejectionReason() string { return err.reason }
+func (err *outputRejectedTestError) OutputFailureKind() string {
+	return observability.OutputFailureClientRejected
+}
 func (err *outputRejectedTestError) OutputRejectionDetail() string { return err.detail }
 
 type eventRejectionShape struct{ reason, detail string }
 
-type retryableOutputTestError struct{ err error }
+type retryableOutputTestError struct {
+	err  error
+	kind string
+}
 
 func (err *retryableOutputTestError) Error() string              { return err.err.Error() }
 func (err *retryableOutputTestError) Unwrap() error              { return err.err }
 func (err *retryableOutputTestError) RetryableOutputDependency() {}
+func (err *retryableOutputTestError) OutputFailureKind() string  { return err.kind }
 
 func (ports *recordingPorts) AdmitRuntime(_ context.Context, request execution.StateApplyRequest) (execution.StateAdmissionResult, error) {
 	ports.record("state_admission")
@@ -1942,6 +2032,7 @@ func (ports *recordingPorts) AdmitRuntime(_ context.Context, request execution.S
 		if ports.stateAdmissionDeterministic && ports.stateAdmissionCalls == 1 && index == deterministicIndex {
 			items[index].Status = execution.StateAdmissionDeterministicInvalid
 			items[index].ReasonCode = execution.ReasonCode(contract.ReasonRecordInvalid)
+			items[index].RefusalRule, items[index].RefusalText = ports.stateAdmissionRule, ports.stateAdmissionText
 		}
 	}
 	if ports.reverseStateReceipts && len(items) > 1 {
@@ -2138,7 +2229,7 @@ func baseDuePlanAndRequirements() ([]execution.DuePlan, []execution.DataRequirem
 }
 
 func effectiveTimeFactForTest(plan *strategy.CompiledPlan) strategy.EffectiveTimeFact {
-	level := plan.Levels()[0]
+	level := plan.Levels().At(0)
 	provider := strategy.NewStaticScheduleProvider(nil)
 	facts, err := provider.Resolve(context.Background(), []strategy.EffectiveTimeRequest{{
 		TenantID: "tenant", BusinessID: "2", EvaluationTime: int64(frozenContract().Slot.EvaluationTime),
@@ -2226,10 +2317,6 @@ func validLevelOutcome(kind execution.LevelOutcomeKind, reason execution.ReasonC
 	return outcome
 }
 
-func validTriggerEvent() contract.TriggerEventV1 {
-	return validTriggerEventFor(derivedTestRecordID(), strings.Repeat("c", 64))
-}
-
 func validTriggerEventFor(recordID, seriesDigest string) contract.TriggerEventV1 {
 	compiled := compiledPlanForTest(nil)
 	fingerprints := compiled.Fingerprints()
@@ -2280,6 +2367,10 @@ func compiledPlanForStrategyTest(t testing.TB, strategyID string) *strategy.Comp
 
 // compiledPlanWithTargetForTest is the test Plan carrying a target plan.
 func compiledPlanWithTargetForTest(t testing.TB, strategyID string, target *contract.TargetPlanV1) *strategy.CompiledPlan {
+	return compiledPlanWithTargetShapedForTest(t, strategyID, target, nil)
+}
+
+func compiledPlanWithTargetShapedForTest(t testing.TB, strategyID string, target *contract.TargetPlanV1, shape func(*contract.EvaluationPlanV2)) *strategy.CompiledPlan {
 	if t != nil {
 		t.Helper()
 	}
@@ -2317,6 +2408,9 @@ func compiledPlanWithTargetForTest(t testing.TB, strategyID string, target *cont
 				RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
 			}},
 		},
+	}
+	if shape != nil {
+		shape(&plan)
 	}
 	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{
 		Plan: plan,

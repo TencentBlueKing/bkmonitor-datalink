@@ -47,28 +47,13 @@ var kafkaTopicNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // output policy for the isolated Shadow decision producer.
 type DecisionSinkConfig struct {
 	Brokers         []string
-	InputTopic      string
 	OutputTopic     string
 	ClientID        string
 	BrokerVersion   string
 	MaxMessageBytes int
 }
 
-func (c DecisionSinkConfig) Validate() error {
-	if err := c.ValidateProducerOnly(); err != nil {
-		return err
-	}
-	if err := validateKafkaTopicName("input_topic", c.InputTopic); err != nil {
-		return err
-	}
-	if c.InputTopic == c.OutputTopic {
-		return errors.New("kafka decision producer: input_topic and output_topic must differ")
-	}
-	return nil
-}
-
-// ValidateProducerOnly validates the output producer without requiring the
-// phase-one input topic. Input topology remains the responsibility of Validate.
+// ValidateProducerOnly validates the output producer's coordinates.
 func (c DecisionSinkConfig) ValidateProducerOnly() error {
 	if len(c.Brokers) == 0 {
 		return errors.New("kafka decision producer: at least one broker is required")
@@ -98,15 +83,6 @@ func (c DecisionSinkConfig) ValidateProducerOnly() error {
 		return err
 	}
 	return nil
-}
-
-// NewDecisionProducerConfig fixes all acknowledgement, retry and timeout
-// invariants required by the isolated Shadow decision sink.
-func NewDecisionProducerConfig(coordinates DecisionSinkConfig) (*sarama.Config, error) {
-	if err := coordinates.Validate(); err != nil {
-		return nil, err
-	}
-	return newDecisionProducerConfig(coordinates)
 }
 
 // NewDecisionProducerOnlyConfig builds the synchronous output producer used

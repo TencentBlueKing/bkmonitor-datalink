@@ -156,8 +156,8 @@ func TestTheActiveSetIsCheckedByReferenceAndReadOncePerDigest(t *testing.T) {
 	}
 }
 
-// A timeline rewritten under an unchanged header - the repair subcommand
-// does that - is what a head's records are read back from, not a copy the
+// A timeline rewritten under an unchanged header - a write outside the
+// cutover does that - is what a head's records are read back from, not a copy the
 // timeline cache took before the rewrite: those records decide the next
 // activation.
 func TestAHeadIsReadBackFromTheTimelineAsItIsNotAsCached(t *testing.T) {

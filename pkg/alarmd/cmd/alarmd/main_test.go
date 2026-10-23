@@ -126,19 +126,36 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 	}
 }
 
+func TestRunRoleFlagOverridesYAMLBeforeDependencyValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "alarmd.yaml")
+	contents := "roles: [control]\nredis:\n  address: 127.0.0.1:6379\nphase_two:\n  worker:\n    id: channel-fixture\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, selected := range []string{"channel", "", "unknown", "worker,worker"} {
+		t.Run(selected, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := runWithRuntimeModeDependencies(context.Background(),
+				[]string{"--check-config", "--config", path, "--roles=" + selected}, &stdout, &stderr, runtimeModeDependencies{})
+			if selected == "channel" {
+				if code != 0 {
+					t.Fatalf("role override failed: code=%d stderr=%s", code, &stderr)
+				}
+			} else if code != 2 || !strings.Contains(stderr.String(), "roles") {
+				t.Fatalf("invalid roles were accepted: code=%d stderr=%s", code, &stderr)
+			}
+		})
+	}
+}
+
 func validGoAccessApplicationYAML() string {
 	return `http:
   listen: 127.0.0.1:8080
-shutdown_timeout: 1s
 kafka:
   brokers:
     - 127.0.0.1:9092
   trigger_event:
     topic: alarmd-shadow-trigger-event-v2
-    max_message_bytes: 524288
-  allowed_output_topics:
-    - alarmd-shadow-trigger-event-v2
-    - alarmd_0bkmonitor_backend_event
   legacy_adapter:
     topic: alarmd_0bkmonitor_backend_event
     snapshot_prefix: alarmd-compatibility-test
@@ -154,12 +171,6 @@ phase_two:
   control:
     strategy_cache_prefix: alarm-config
     timezone: Asia/Shanghai
-    legacy_query_runtime:
-      access_bk_data: false
-      bkdata_cmdb_level_tables: []
-      system_disk_filter:
-        field_name: device_type
-        values: []
   access:
     uq_endpoint: http://unify-query.service
     query_source: alarmd

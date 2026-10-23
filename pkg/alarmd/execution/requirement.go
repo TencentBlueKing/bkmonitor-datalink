@@ -202,6 +202,14 @@ type DataRequirement struct {
 	PointOffsetsSeconds []int64
 	NamedPoints         []NamedInputPoint
 	Consumers           []DataRequirementConsumer
+	// ProviderLeadSeconds is how far before the window the provider is asked
+	// from, the window itself staying what is accepted (ProviderWindow): an
+	// event count's group comes back from the provider only while it holds
+	// an event inside the range asked, with zeros for the empty steps, so a
+	// range of the trigger and recovery windows keeps a group that went
+	// quiet in the answer until it can recover. Zero for every other
+	// requirement; a whole number of steps.
+	ProviderLeadSeconds int64 `json:",omitempty"`
 }
 
 func (requirement DataRequirement) Validate(plans map[PlanIdentity]DuePlan) error {
@@ -216,6 +224,10 @@ func (requirement DataRequirement) Validate(plans map[PlanIdentity]DuePlan) erro
 	}
 	if requirement.StepMillis <= 0 || requirement.AlignmentMillis <= 0 || requirement.ResultWindowPolicy != ResultWindowExactHalfOpen {
 		return errors.New("alarmd execution: invalid DataRequirement result window contract")
+	}
+	if requirement.ProviderLeadSeconds < 0 || requirement.ProviderLeadSeconds*1000%requirement.StepMillis != 0 ||
+		requirement.ProviderLeadSeconds > 0 && requirement.Role != InputRolePrimary {
+		return errors.New("alarmd execution: a provider lead is a whole number of steps, on a primary requirement")
 	}
 	if requirement.ReadinessClass != ReadinessEager && requirement.ReadinessClass != ReadinessFinalizedRequired {
 		return errors.New("alarmd execution: invalid DataRequirement readiness class")
@@ -312,4 +324,12 @@ func (requirement DataRequirement) AbsoluteWindow(evaluationTime EvaluationTime)
 		Start: int64(evaluationTime) + requirement.RelativeWindow.StartOffsetSeconds,
 		End:   int64(evaluationTime) + requirement.RelativeWindow.EndOffsetSeconds,
 	}
+}
+
+// ProviderWindow is the range the provider is asked for: the window, begun
+// ProviderLeadSeconds earlier. Only the window is accepted from the answer.
+func (requirement DataRequirement) ProviderWindow(evaluationTime EvaluationTime) QueryWindow {
+	window := requirement.AbsoluteWindow(evaluationTime)
+	window.Start -= requirement.ProviderLeadSeconds
+	return window
 }

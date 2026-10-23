@@ -40,7 +40,7 @@ func (c AESCipher) AESDecrypt(encryptedPwd string) (string, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
-			logger.Warnf("AESDecrypt：decrypt password [%v] failed, return '', %v\n%s", encryptedPwd, r, stack)
+			logger.Warnf("AESDecrypt: decrypt failed\n%s", stack)
 		}
 	}()
 	// 非加密串返回原密码
@@ -90,7 +90,7 @@ func (c AESCipher) AESEncrypt(raw string) string {
 	defer func() {
 		if r := recover(); r != nil {
 			stack := debug.Stack()
-			logger.Warnf("AESEncrypt：encrypt password [%v] failed, return '', %v\n%s", raw, r, stack)
+			logger.Warnf("AESEncrypt: encrypt failed\n%s", stack)
 		}
 	}()
 	rawBytes := []byte(raw)
@@ -140,8 +140,8 @@ var aesOnce sync.Once
 // GetDBAESCipher 获取db中AES字段的AESCipher
 func GetDBAESCipher() *AESCipher {
 	aesOnce.Do(func() {
-		// 从配置文件中获取AESKey,AESKey为空时会产生异常
-		logger.Infof("GetDBAESCipher：config.AesKey -> [%v], AESPrefix -> [%v]", config.AesKey, AESPrefix)
+		// The existing SHA-256 derivation also supports an explicitly empty key.
+		logger.Info("GetDBAESCipher: initialize AES cipher")
 		dbAESCipher = NewAESCipher(config.AesKey, AESPrefix, nil)
 	})
 	return dbAESCipher

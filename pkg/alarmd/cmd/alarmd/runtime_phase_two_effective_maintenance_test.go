@@ -49,7 +49,7 @@ func (s maintenanceTestIndex) Reconcile(ctx context.Context, key openalerts.Stra
 	members, _ := s.ReadSet(ctx, key)
 	return openalerts.Reconciliation{Members: members, Alerts: s.alerts}, nil
 }
-func (s maintenanceTestIndex) Watch(ctx context.Context, ready func(bool), _ func(openalerts.StrategyKey)) error {
+func (s maintenanceTestIndex) Watch(ctx context.Context, ready func(bool), _ func(openalerts.StrategyKey), _ func(openalerts.NoticeRefusal)) error {
 	ready(true)
 	<-ctx.Done()
 	return ctx.Err()
@@ -58,9 +58,14 @@ func (s maintenanceTestIndex) Watch(ctx context.Context, ready func(bool), _ fun
 type maintenanceTestWriter struct {
 	batches [][]linkdoutput.CloseRequest
 	err     error
+	// onWrite, when set, runs as a batch is sent.
+	onWrite func()
 }
 
 func (w *maintenanceTestWriter) WriteCloseBatch(_ context.Context, requests []linkdoutput.CloseRequest) error {
+	if w.onWrite != nil {
+		w.onWrite()
+	}
 	w.batches = append(w.batches, append([]linkdoutput.CloseRequest(nil), requests...))
 	return w.err
 }
@@ -132,7 +137,7 @@ func newMaintenanceTestFixture(t *testing.T, snapshot string, at time.Time, aler
 		t.Fatal(err)
 	}
 	compiled, ok := result.Plan()
-	if !ok || len(compiled.Levels()) == 0 {
+	if !ok || compiled.Levels().Len() == 0 {
 		t.Fatalf("compile terminal=%+v levels=%+v", result.PlanTerminal(), result.LevelTerminals())
 	}
 	source := maintenanceTestIndex{alerts: alerts}
@@ -327,7 +332,8 @@ func TestEffectiveMaintenanceSharesExecutionTrackingWithoutLosingACK(t *testing.
 	f.m.registerExecutedPlans(qg, []execution.PlanIdentity{plan})
 	fingerprint := strings.Repeat("b", 32)
 	f.m.cache.Acknowledged([]contract.TriggerEventV1{{EventKind: contract.TriggerEventAbnormal, TenantID: plan.TenantID, DedupeMD5: fingerprint,
-		PlanRef: contract.RuntimePlanRefV1{StrategyID: plan.StrategyID}, StrategyRef: &contract.StrategySnapshotRef{TenantID: plan.TenantID, BusinessID: 2, StrategyID: 123, Revision: 4}}})
+		PlanRef: contract.RuntimePlanRefV1{StrategyID: plan.StrategyID}, StrategyRef: &contract.StrategySnapshotRef{TenantID: plan.TenantID, BusinessID: 2, StrategyID: 123, Revision: 4},
+		LevelResults: []contract.LevelResultV1{{LevelID: 1, Priority: 1, Result: contract.LevelResultAbnormal}}}})
 	if !f.m.cache.Contains(plan.TenantID, plan.StrategyID, fingerprint) {
 		t.Fatal("first ACK was lost before maintenance tracking")
 	}

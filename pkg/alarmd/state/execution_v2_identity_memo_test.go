@@ -37,13 +37,13 @@ func TestRuntimeStateKeyIsUnchangedByTheSegmentMemo(t *testing.T) {
 		t.Fatalf("derive series digest: %v", err)
 	}
 	expected := strings.Join([]string{
-		"bkmonitor:alarmd", "runtime", "v2", tenant[:32],
+		"bkmonitor:alarmd", "runtime3", "v2", tenant[:32],
 		identity.Plan.BusinessID, identity.Plan.StrategyID, generation[:32], series[:32],
 	}, ":")
 
 	// Derived many times so both the first miss and later hits are covered.
 	for attempt := 0; attempt < 3; attempt++ {
-		key, err := RuntimeStateKeyV2("bkmonitor:alarmd", identity)
+		key, err := RuntimeStateKeyV3("bkmonitor:alarmd", identity)
 		if err != nil {
 			t.Fatalf("runtime state key: %v", err)
 		}
@@ -51,8 +51,8 @@ func TestRuntimeStateKeyIsUnchangedByTheSegmentMemo(t *testing.T) {
 			t.Fatalf("runtime state key changed:\n got %s\nwant %s", key, expected)
 		}
 	}
-	const pinned = "bkmonitor:alarmd:runtime:v2:77678a44bdef4cc8e4d15adb81944d1f:2:104857:28682c24e924a0b91cc4d92e21770244:0b5ef30c19994e74e9624e70eba9ceb9"
-	key, err := RuntimeStateKeyV2("bkmonitor:alarmd", identity)
+	const pinned = "bkmonitor:alarmd:runtime3:v2:77678a44bdef4cc8e4d15adb81944d1f:2:104857:28682c24e924a0b91cc4d92e21770244:0b5ef30c19994e74e9624e70eba9ceb9"
+	key, err := RuntimeStateKeyV3("bkmonitor:alarmd", identity)
 	if err != nil {
 		t.Fatalf("runtime state key: %v", err)
 	}
@@ -66,13 +66,13 @@ func TestRuntimeStateKeyIsUnchangedByTheSegmentMemo(t *testing.T) {
 // state generation must not share a key.
 func TestKeySegmentMemoSeparatesDomainsAndValues(t *testing.T) {
 	base := memoTestIdentity()
-	baseKey, err := RuntimeStateKeyV2("bkmonitor:alarmd", base)
+	baseKey, err := RuntimeStateKeyV3("bkmonitor:alarmd", base)
 	if err != nil {
 		t.Fatalf("base key: %v", err)
 	}
 	otherTenant := memoTestIdentity()
 	otherTenant.Plan.TenantID = "tenant-two"
-	otherTenantKey, err := RuntimeStateKeyV2("bkmonitor:alarmd", otherTenant)
+	otherTenantKey, err := RuntimeStateKeyV3("bkmonitor:alarmd", otherTenant)
 	if err != nil {
 		t.Fatalf("other tenant key: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestKeySegmentMemoSeparatesDomainsAndValues(t *testing.T) {
 	}
 	otherGeneration := memoTestIdentity()
 	otherGeneration.StateGeneration = execution.StateGeneration("3a7d2e0f5b8c1d4e7f0a3b6c9d2e5f8a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e")
-	otherGenerationKey, err := RuntimeStateKeyV2("bkmonitor:alarmd", otherGeneration)
+	otherGenerationKey, err := RuntimeStateKeyV3("bkmonitor:alarmd", otherGeneration)
 	if err != nil {
 		t.Fatalf("other generation key: %v", err)
 	}

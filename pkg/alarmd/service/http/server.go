@@ -30,7 +30,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet/ui"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/publicsurface"
@@ -59,9 +58,11 @@ type Server struct {
 	internalAddress string
 	restricted      atomic.Bool
 	ready           atomic.Bool
-	source          lifecycle.Source
 	healthSource    observability.HealthSource
 	liveness        atomic.Pointer[livenessHolder]
+	// adminKeySecret is what the login page says about where the
+	// administrator key is kept: names only.
+	adminKeySecret ui.AdminKeySecret
 }
 
 // Stall is one reason the process is not making progress: a named loop that
@@ -111,6 +112,13 @@ func WithInternalAddress(address string) Option {
 // coordinate is public before the CLI is known to be there or not.
 func WithRestrictedPublicSurface() Option {
 	return func(server *Server) { server.restricted.Store(true) }
+}
+
+// WithAdminKeySecret tells the login page where the CLI administrator key is
+// kept -- its namespace, Secret and key -- so the page can show the command
+// that reads it. The key itself is never passed here.
+func WithAdminKeySecret(secret ui.AdminKeySecret) Option {
+	return func(server *Server) { server.adminKeySecret = secret }
 }
 
 // SetPublicSurfaceRestricted settles whether the query surface is restricted.
@@ -203,20 +211,7 @@ func (s *Server) serveAPI(response http.ResponseWriter, request *http.Request) {
 }
 
 func New(recorder *metric.Recorder, options ...Option) *Server {
-	return newServer(recorder, nil, options...)
-}
-
-func NewWithLifecycle(recorder *metric.Recorder, source lifecycle.Source, options ...Option) (*Server, error) {
-	if recorder == nil {
-		return nil, errors.New("HTTP service: metric recorder is required")
-	}
-	if source == nil {
-		return nil, errors.New("HTTP service: lifecycle source is required")
-	}
-	if err := recorder.BindLifecycle(source); err != nil {
-		return nil, err
-	}
-	return newServer(recorder, source, options...), nil
+	return newServer(recorder, options...)
 }
 
 func NewWithHealth(recorder *metric.Recorder, source observability.HealthSource, options ...Option) (*Server, error) {
@@ -226,22 +221,21 @@ func NewWithHealth(recorder *metric.Recorder, source observability.HealthSource,
 	if source == nil {
 		return nil, errors.New("HTTP service: health source is required")
 	}
-	if err := recorder.BindHealth(source); err != nil {
-		return nil, err
-	}
-	server := newServer(recorder, nil, options...)
+	server := newServer(recorder, options...)
 	server.healthSource = source
 	return server, nil
 }
 
-func newServer(recorder *metric.Recorder, source lifecycle.Source, options ...Option) *Server {
-	server := &Server{source: source}
+func newServer(recorder *metric.Recorder, options ...Option) *Server {
+	server := &Server{}
 	for _, option := range options {
 		if option != nil {
 			option(server)
 		}
 	}
-	metrics := promhttp.HandlerFor(recorder.Gatherer(), promhttp.HandlerOpts{})
+	// A scrape carries each family's first sentence; metric/METRICS.md and the
+	// CLI's metrics.list carry the whole Help.
+	metrics := promhttp.HandlerFor(recorder.ScrapeGatherer(), promhttp.HandlerOpts{})
 	internal := http.NewServeMux()
 	internal.HandleFunc("/healthz", server.health)
 	internal.HandleFunc("/readyz", server.readiness)
@@ -273,7 +267,7 @@ func newServer(recorder *metric.Recorder, source lifecycle.Source, options ...Op
 	// says which channel cannot answer, which is the degradation it was designed
 	// for. "/" is the least specific pattern, so it cannot shadow the routes
 	// above.
-	mux.Handle("/", ui.Handler())
+	mux.Handle("/", ui.Handler(ui.WithAdminKeySecret(server.adminKeySecret)))
 	server.handler = mux
 
 	// Allocation and CPU attribution has no in-process answer today: the
@@ -491,7 +485,11 @@ func (w *statusOnly) status() int {
 	return w.code
 }
 
-func (s *Server) readiness(response http.ResponseWriter, _ *http.Request) {
+func (s *Server) readiness(response http.ResponseWriter, request *http.Request) {
+	if values, selected := request.URL.Query()["roles"]; selected {
+		s.roleReadiness(response, values)
+		return
+	}
 	ready := s.ready.Load()
 	if s.healthSource != nil {
 		snapshot := observability.NormalizeHealthSnapshot(s.healthSource.HealthSnapshot())
@@ -504,12 +502,63 @@ func (s *Server) readiness(response http.ResponseWriter, _ *http.Request) {
 		}
 		return
 	}
-	if s.source != nil {
-		ready = s.source.LifecycleSnapshot().Ready
-	}
 	if !ready {
 		response.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	response.WriteHeader(http.StatusOK)
+}
+
+// roleReadiness checks only the requested roles, so routing the channel does
+// not wait for worker assignments or business caches. Process-wide shutdown,
+// fatal errors and configuration loading still gate every role.
+func (s *Server) roleReadiness(response http.ResponseWriter, values []string) {
+	if len(values) != 1 {
+		http.Error(response, "roles must be specified once", http.StatusBadRequest)
+		return
+	}
+	selected := strings.Split(values[0], ",")
+	seen := make(map[string]bool, len(selected))
+	for index, role := range selected {
+		role = strings.TrimSpace(role)
+		if role == "" || seen[role] {
+			http.Error(response, "roles must contain unique non-empty names", http.StatusBadRequest)
+			return
+		}
+		seen[role] = true
+		selected[index] = role
+	}
+	if s.healthSource == nil {
+		response.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+
+	snapshot := s.healthSource.HealthSnapshot()
+	body := struct {
+		Ready         bool              `json:"ready"`
+		ConfigLoaded  bool              `json:"config_loaded"`
+		Draining      bool              `json:"draining"`
+		Fatal         bool              `json:"fatal"`
+		RoleReadiness map[string]string `json:"role_readiness"`
+	}{
+		ConfigLoaded:  snapshot.ConfigLoaded,
+		Draining:      snapshot.Draining || snapshot.State == observability.HealthDraining,
+		Fatal:         snapshot.State == observability.HealthFatal,
+		RoleReadiness: make(map[string]string, len(selected)),
+	}
+	body.Ready = body.ConfigLoaded && !body.Draining && !body.Fatal
+	for _, role := range selected {
+		state, found := snapshot.RoleReadiness[role]
+		if found {
+			body.RoleReadiness[role] = state
+		}
+		if !found || (state != string(observability.HealthReady) && state != string(observability.HealthDegraded)) {
+			body.Ready = false
+		}
+	}
+	response.Header().Set("Content-Type", "application/json")
+	if !body.Ready {
+		response.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(response).Encode(body)
 }

@@ -124,6 +124,10 @@ func (desired Desired) Fingerprint() uint64 {
 			write("a", assignment.DesiredWorkerID, assignment.ContentScope, assignment.PendingContentScope)
 			writeUint(assignment.Revision)
 			writeUint(uint64(assignment.EffectiveAtMs))
+			// Stamped onto a record without moving its revision - by the
+			// cutover beside the timeline, by placement on a record that
+			// had not said - so the revision above does not stand for it.
+			writeUint(assignment.TimelineRecordRevision)
 		}
 		if content, ok := desired.Content[identity]; ok {
 			write("c", string(content.ObjectDigest))

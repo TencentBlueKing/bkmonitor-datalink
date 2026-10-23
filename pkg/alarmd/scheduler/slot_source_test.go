@@ -171,11 +171,11 @@ func TestSlotFreezeFailureScheduleDueLineCarriesClassStageAndCause(t *testing.T)
 	})
 	blocked := &SourceBlockedError{Err: cause}
 	var output bytes.Buffer
-	limiter, err := observability.NewWindowLogLimiter(observability.WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
+	limiter, err := observability.NewScopedLogLimiter(observability.ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 10, MaxScopes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy, err := observability.NewBoundedLogPolicy(limiter)
+	policy, err := observability.NewScopedBoundedLogPolicy(limiter)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,6 +210,33 @@ func TestProductionSlotSourceRejectsCandidateOutsideSnapshotRetention(t *testing
 	source.publicationDelayAllowance = time.Minute
 	if _, _, _, err := source.Next(context.Background(), "query-group-1"); !errors.Is(err, ErrSnapshotRetentionInsufficient) {
 		t.Fatalf("Next(insufficient retention) error=%v", err)
+	}
+}
+
+// A Plan evaluated every sixty hours needs its Snapshot for about sixty hours
+// past the Slot. At exactly what its recovery contract asks the Slot is
+// served; a second less and it is refused. The source checks the same sum the
+// admission serves the Plan under, so the two can only agree on this boundary.
+func TestProductionSlotSourceServesASixtyHourSlotAtItsRequiredRetention(t *testing.T) {
+	const interval = 216000
+	schedule := schedulerSchedule(t, interval, interval, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+	limits := testRecoveryLimits()
+	allowance := time.Minute
+	// The query deadline is the completion offset less the reserve, and the
+	// terminal delay is the one the test source is built with.
+	required := allowance + interval*time.Second - 5*time.Second + limits.MaxReplayAge + time.Minute
+	for _, tc := range []struct {
+		retention time.Duration
+		refused   bool
+	}{{required, false}, {required - time.Second, true}} {
+		source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(interval+56, 0), limits)
+		source.snapshotRetention = tc.retention
+		source.publicationDelayAllowance = allowance
+		_, _, _, err := source.Next(context.Background(), "query-group-1")
+		if refused := errors.Is(err, ErrSnapshotRetentionInsufficient); refused != tc.refused {
+			t.Fatalf("retention %s (required %s): refused=%t err=%v, want refused=%t", tc.retention, required, refused, err, tc.refused)
+		}
 	}
 }
 
@@ -350,25 +377,53 @@ func TestProductionSlotSourcePrefersValidProgressCursorWhenCompletedSegmentIsUna
 	}
 }
 
+// A cursor no Plan is due at is never run itself. Anchored on a completion,
+// the Slot is the one the catalog continues the anchor to - with no Segment
+// holding the anchor, the first Slot of the first Segment after it, which is
+// what production answers - and the cursor's own value is advisory. With no
+// Segment after the anchor either, nothing proves a successor and the source
+// fails closed without guessing a Slot.
+//
+// This used to assert the refusal for the first shape too, because the fake
+// catalog refused an anchor no Segment holds; production never did.
 func TestProductionSlotSourceBlocksInvalidProgressCursorWithoutSuccessorProof(t *testing.T) {
-	currentSchedule := schedulerSchedule(t, 60, 180, nil, "snapshot-current", 8)
-	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{currentSchedule}}
-	source := newProductionSlotSourceForTest(t, catalog, foundProgress(210, 60), time.Unix(240, 0))
+	t.Run("a Segment after the anchor continues it", func(t *testing.T) {
+		currentSchedule := schedulerSchedule(t, 60, 180, nil, "snapshot-current", 8)
+		catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{currentSchedule}}
+		source := newProductionSlotSourceForTest(t, catalog, foundProgress(210, 60), time.Unix(240, 0))
 
-	_, due, _, err := source.Next(context.Background(), "query-group-1")
-	var blocked *SourceBlockedError
-	if due || !errors.As(err, &blocked) || !errors.Is(err, ErrProgressOffSchedule) {
-		t.Fatalf("Next(invalid cursor) due=%v error=%T %v, want typed fail-closed progress error", due, err, err)
-	}
-	if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{210}) {
-		t.Fatalf("ReadFrozenSchedule times = %v, want only invalid Progress cursor 210", catalog.readTimes)
-	}
-	if !reflect.DeepEqual(catalog.nextSlotAfterCalls, []execution.EvaluationTime{60}) {
-		t.Fatalf("NextSlotAfter calls = %v, want one bounded successor-proof attempt from 60", catalog.nextSlotAfterCalls)
-	}
-	if len(catalog.requests) != 0 {
-		t.Fatalf("FreezeSlotContract requests = %#v, want no guessed Slot or Gap", catalog.requests)
-	}
+		slot, due, _, err := source.Next(context.Background(), "query-group-1")
+		if err != nil || !due || slot.ExpectedNextSlot != 180 || slot.Contract.Slot.EvaluationTime != 180 {
+			t.Fatalf("Next(off-grid cursor) = (slot %d, due %v, error %v), want the anchor's continuation at 180",
+				slot.Contract.Slot.EvaluationTime, due, err)
+		}
+		// The first read is the navigation's, from the anchor; the recovery
+		// classification walks the grid after it.
+		if len(catalog.nextSlotAfterCalls) == 0 || catalog.nextSlotAfterCalls[0] != 60 {
+			t.Fatalf("NextSlotAfter calls = %v, want the navigation to read from the anchor 60 first", catalog.nextSlotAfterCalls)
+		}
+	})
+	t.Run("nothing after the anchor proves no successor", func(t *testing.T) {
+		end := execution.EvaluationTime(30)
+		closedSchedule := schedulerSchedule(t, 60, 1, &end, "snapshot-current", 8)
+		catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{closedSchedule}}
+		source := newProductionSlotSourceForTest(t, catalog, foundProgress(210, 60), time.Unix(240, 0))
+
+		_, due, _, err := source.Next(context.Background(), "query-group-1")
+		var blocked *SourceBlockedError
+		if due || !errors.As(err, &blocked) {
+			t.Fatalf("Next(cursor with no successor proof) due=%v error=%T %v, want typed fail-closed error", due, err, err)
+		}
+		if !reflect.DeepEqual(catalog.readTimes, []execution.EvaluationTime{210}) {
+			t.Fatalf("ReadFrozenSchedule times = %v, want only the Progress cursor 210", catalog.readTimes)
+		}
+		if !reflect.DeepEqual(catalog.nextSlotAfterCalls, []execution.EvaluationTime{60}) {
+			t.Fatalf("NextSlotAfter calls = %v, want one bounded successor-proof attempt from 60", catalog.nextSlotAfterCalls)
+		}
+		if len(catalog.requests) != 0 {
+			t.Fatalf("FreezeSlotContract requests = %#v, want no guessed Slot or Gap", catalog.requests)
+		}
+	})
 }
 
 func TestProductionSlotSourceDoesNotMaskCorruptProgressCursorSchedule(t *testing.T) {
@@ -835,6 +890,8 @@ func (session *sequenceOwnerSession) ValidateCurrent(context.Context, time.Time)
 
 func (session *sequenceOwnerSession) Deadline() time.Time { return time.Time{} }
 
+func (session *sequenceOwnerSession) NoteContentScope(string) {}
+
 func (session *sequenceOwnerSession) ValidateCurrentWithAssignment(
 	context.Context,
 	time.Time,
@@ -853,6 +910,30 @@ type fakeSlotCatalog struct {
 	progressIdentity   execution.ProgressIdentity
 	retiredAt          *execution.EvaluationTime
 	freezeErr          error
+	// repairs are the Segments, by start, that carry the Control Leader's
+	// repair mark; repairErr fails every read of one.
+	repairs   map[execution.EvaluationTime]execution.SegmentRepair
+	repairErr error
+	// timelineErr fails every read of the timeline itself, the way a timeline
+	// whose bytes do not decode fails them all.
+	timelineErr error
+}
+
+func (catalog *fakeSlotCatalog) ReadSegmentRepair(
+	_ context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	segmentStart execution.EvaluationTime,
+) (execution.SegmentRepair, bool, error) {
+	if catalog.repairErr != nil {
+		return execution.SegmentRepair{}, false, catalog.repairErr
+	}
+	for _, schedule := range catalog.schedules {
+		if schedule.Segment.QueryGroup == queryGroup && schedule.Segment.Start == segmentStart {
+			repair, marked := catalog.repairs[segmentStart]
+			return repair, marked, nil
+		}
+	}
+	return execution.SegmentRepair{}, false, nil
 }
 
 func (catalog *fakeSlotCatalog) ReadInitialFrozenSchedule(
@@ -860,6 +941,9 @@ func (catalog *fakeSlotCatalog) ReadInitialFrozenSchedule(
 	queryGroup execution.QueryGroupIdentity,
 ) (execution.FrozenQueryGroupSchedule, error) {
 	catalog.initialReads++
+	if catalog.timelineErr != nil {
+		return execution.FrozenQueryGroupSchedule{}, catalog.timelineErr
+	}
 	if len(catalog.schedules) == 0 || catalog.schedules[0].Segment.QueryGroup != queryGroup {
 		return execution.FrozenQueryGroupSchedule{}, ErrScheduleFactsInvalid
 	}
@@ -872,6 +956,9 @@ func (catalog *fakeSlotCatalog) ReadFrozenSchedule(
 	at execution.EvaluationTime,
 ) (execution.FrozenQueryGroupSchedule, error) {
 	catalog.readTimes = append(catalog.readTimes, at)
+	if catalog.timelineErr != nil {
+		return execution.FrozenQueryGroupSchedule{}, catalog.timelineErr
+	}
 	for _, schedule := range catalog.schedules {
 		if schedule.Segment.QueryGroup == queryGroup && schedule.Segment.Contains(at) {
 			return schedule, nil
@@ -916,6 +1003,9 @@ func (catalog *fakeSlotCatalog) ReadScheduleRetirement(
 	context.Context,
 	execution.QueryGroupIdentity,
 ) (execution.EvaluationTime, bool, error) {
+	if catalog.timelineErr != nil {
+		return 0, false, catalog.timelineErr
+	}
 	if catalog.retiredAt == nil {
 		return 0, false, nil
 	}
@@ -941,10 +1031,26 @@ func (catalog *fakeSlotCatalog) NextSlotAfter(
 			}
 		}
 	}
+	// No Segment holds the anchor. Production continues at the first Segment
+	// that starts after it (RedisCatalogRuntime.NextSlotAfter), which is what
+	// a retirement's hole, a pruned prefix and a rewritten timeline all look
+	// like from here; this fake used to refuse instead, and the pruned-cursor
+	// cases it fed tested a refusal production never makes.
+	for index, schedule := range catalog.schedules {
+		if schedule.Segment.QueryGroup != queryGroup || schedule.Segment.Start <= completed {
+			continue
+		}
+		for candidate := index; candidate < len(catalog.schedules); candidate++ {
+			if next, ok := catalog.schedules[candidate].FirstSlot(); ok && next > completed {
+				return next, nil
+			}
+		}
+		break
+	}
 	if catalog.retiredAt != nil && *catalog.retiredAt > completed {
 		return *catalog.retiredAt, nil
 	}
-	return 0, ErrProgressOffSchedule
+	return 0, controlplane.ErrScheduleUnavailable
 }
 
 func frozenSlotContractFact(
@@ -964,7 +1070,10 @@ func frozenSlotContractFact(
 				break
 			}
 		}
-		deadline := (int64(request.EvaluationTime) + spec.EvaluationIntervalSeconds) * 1000
+		deadline, ok := spec.HeldCompletionDeadlineUnixMilli(request.EvaluationTime, request.ReadHoldMillis)
+		if !ok {
+			t.Fatal("invalid held fixture deadline")
+		}
 		plans[index] = execution.DuePlan{
 			Identity: ref.Identity, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
 			ScheduleRevision: ref.ScheduleRevision, ScheduleSpec: spec, CompletionDeadlineUnixMilli: deadline,
@@ -991,7 +1100,7 @@ func frozenSlotContractFact(
 			Slot:             execution.SlotIdentity{QueryGroup: request.QueryGroup, EvaluationTime: request.EvaluationTime},
 			SnapshotRevision: schedule.Segment.Publication.SnapshotRevision, QueryRevision: schedule.Segment.QueryRevision,
 			ScheduleRevision: request.ScheduleRevision, ScheduleSegmentStart: request.ScheduleSegmentStart,
-			DuePlanSetDigest: digest,
+			DuePlanSetDigest: digest, ReadHoldMillis: request.ReadHoldMillis,
 		},
 		DuePlans: plans, Requirements: requirements,
 	}

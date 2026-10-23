@@ -28,7 +28,7 @@ func TestTheWireFormatIsOnTheEvaluationAndACKLines(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentEvaluation, Stage: StageEvaluationCompleted, Result: ResultSuccess,
 		Trace:            TraceFields{StrategyID: "4101", QueryGroupKey: "qg-wire", EvaluationTime: 600},
 		OutputWireFormat: contract.WireFormatStandardRawEvent,
@@ -46,7 +46,7 @@ func TestTheWireFormatIsOnTheEvaluationAndACKLines(t *testing.T) {
 	// The count, zero included: a Plan bound to no series is the reading.
 	zero := 0
 	output.Reset()
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentEvaluation, Stage: StageEvaluationCompleted, Result: ResultSuccess,
 		Trace:             TraceFields{StrategyID: "4102", QueryGroupKey: "qg-wire", EvaluationTime: 600},
 		PlanSeriesMatched: &zero,
@@ -60,7 +60,7 @@ func TestTheWireFormatIsOnTheEvaluationAndACKLines(t *testing.T) {
 	}
 
 	output.Reset()
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentOutput, Stage: StageEventACKed, Result: ResultSuccess,
 		Trace:             TraceFields{StrategyID: "4101", QueryGroupKey: "qg-wire", EvaluationTime: 600},
 		OutputWireFormats: OutputWireFormatCounts{contract.WireFormatPythonCompatible: 12, contract.WireFormatStandardRawEvent: 1},
@@ -89,7 +89,7 @@ func TestTheWireFormatIsOnTheEvaluationAndACKLines(t *testing.T) {
 	// A line with neither says neither: no empty key, no zero the reader
 	// learns to skip.
 	output.Reset()
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentOutput, Stage: StageEventACKed, Result: ResultSuccess,
 		Trace: TraceFields{StrategyID: "4101", QueryGroupKey: "qg-wire", EvaluationTime: 660},
 	})
@@ -110,7 +110,7 @@ func TestTheACKLineRendersWhichProtocolDroppedWhichKind(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	withheldObserver(t, &output).Observe(context.Background(), Observation{
+	rendererObserver{output: &output}.Observe(context.Background(), Observation{
 		Component: ComponentOutput, Stage: StageEventACKed, Result: ResultSuccess,
 		Trace: TraceFields{StrategyID: "4101", QueryGroupKey: "qg-wire", EvaluationTime: 600},
 		OutputWrite: &OutputWriteFacts{Published: 2, WithoutMessage: 3, WithoutMessageBy: []OutputWithoutMessage{

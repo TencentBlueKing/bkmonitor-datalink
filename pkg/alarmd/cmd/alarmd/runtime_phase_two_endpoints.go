@@ -98,7 +98,10 @@ func redisEndpoint(role string, connection config.RedisConnectionConfig, prefix 
 func resolveEndpoints(cfg config.Config, sharing endpointSharing) []fleet.Endpoint {
 	endpoints := []fleet.Endpoint{
 		redisEndpoint(fleet.EndpointStateRedis, cfg.RuntimeStoreRedis(), cfg.Redis.StatePrefix),
-		redisEndpoint(fleet.EndpointStrategyCache, cfg.StrategySourceRedis(), cfg.PlatformKeyPrefix()),
+		// The prefix the strategy source reads under, which the chart renders
+		// on its own and which need not be the platform's key prefix: showing
+		// the platform's here named a key space the reader never looks at.
+		redisEndpoint(fleet.EndpointStrategyCache, cfg.StrategySourceRedis(), cfg.PhaseTwo.Control.StrategyCachePrefix),
 		redisEndpoint(fleet.EndpointCMDBCache, cfg.CMDBCacheRedis(), cfg.PlatformKeyPrefix()),
 	}
 	if sharing.runtimeIsSource {
@@ -229,12 +232,24 @@ func endpointFactsSource(
 				if cmdb != nil {
 					health := cmdb.Health()
 					writer := &fleet.WriterEvidence{Present: health.Loaded, Count: health.Hosts, State: health.DegradedReason}
-					if health.Loaded && health.SourceAge > 0 {
+					// The writer's age is its publish time when it says, which
+					// staleness is judged on; else the other writer's last
+					// attempt, shown only.
+					if health.Loaded && health.Published {
+						age := health.PublishedAge.Seconds()
+						writer.AgeSeconds = &age
+					} else if health.Loaded && health.SourceAge > 0 {
 						age := health.SourceAge.Seconds()
 						writer.AgeSeconds = &age
 					}
 					if writer.State == "" && health.Loaded {
 						writer.State = "loaded"
+					}
+					if health.Loaded {
+						refused := health.Refused
+						writer.Refused = &fleet.RefusedRecords{
+							Host: refused.Hosts, ServiceInstance: refused.ServiceInstances, TopoNode: refused.TopoNodes,
+						}
 					}
 					entry.Writer = writer
 				}
@@ -251,22 +266,9 @@ func endpointFactsSource(
 			case fleet.EndpointOpenAlertSet:
 				if openAlerts != nil {
 					if facts := openAlerts(); facts != nil {
-						// The short form every reading role has: present once
-						// a publication was read, the members as the count,
-						// the publisher's own heartbeat as the age, the mode
-						// -- or why it is unavailable -- as the state. The
-						// full account rides beside it.
-						writer := &fleet.WriterEvidence{Present: facts.AuthoritativeAgeSeconds != nil, Count: facts.Members,
-							AgeSeconds: facts.HeartbeatAgeSeconds, State: facts.Mode}
-						if facts.UnavailableReason != "" {
-							writer.State = facts.Mode + ":" + facts.UnavailableReason
-						}
-						entry.Writer = writer
-						// A successful read is not evidence of a recent writer.
-						// The index protocol has no publisher heartbeat.
-						if facts.IndexProtocol {
-							entry.Writer = nil
-						}
+						// No writer row: the consumer publishes no heartbeat,
+						// and a successful read is not evidence of a recent
+						// writer. The full account rides beside the row.
 						entry.OpenAlertSet = facts
 					}
 				}

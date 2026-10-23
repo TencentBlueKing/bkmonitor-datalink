@@ -39,10 +39,15 @@ type SlotRetention struct {
 	// TerminalDelay is how long after the replay window a Slot's facts are
 	// still read before they are terminal.
 	TerminalDelay time.Duration
+	// ReadHoldBound is the longest read hold a Slot can have been frozen
+	// with: a Segment's keep-until is judged by Segment and not by Slot, so
+	// it takes every Slot as held that long. Zero holds none.
+	ReadHoldBound time.Duration
 }
 
 func (retention SlotRetention) Validate() error {
-	if retention.QueryReserve <= 0 || retention.MaxReplayAge <= 0 || retention.TerminalDelay <= 0 {
+	if retention.QueryReserve <= 0 || retention.MaxReplayAge <= 0 || retention.TerminalDelay <= 0 ||
+		retention.ReadHoldBound < 0 || retention.ReadHoldBound.Milliseconds() > MaxReadHoldMillis {
 		return ErrSlotRetentionInvalid
 	}
 	return nil
@@ -109,6 +114,9 @@ func SegmentKeepUntilUnixMilli(schedule FrozenQueryGroupSchedule, retention Slot
 		if err != nil {
 			return 0, err
 		}
+		// Every Slot taken as held as long as any can be: which hold each
+		// was frozen with is its contract's, not the Segment's.
+		deadline += retention.ReadHoldBound.Milliseconds()
 		_, slotKeepUntil, err := SlotRecoveryBoundaries(deadline, retention.MaxReplayAge, retention.TerminalDelay)
 		if err != nil {
 			return 0, err

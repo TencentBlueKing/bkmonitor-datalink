@@ -8,6 +8,7 @@ package access
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -20,9 +21,10 @@ import (
 //
 // It is split in two because enrichment is per series and admission is per
 // plan. One series commonly feeds several plans, and deriving its facts once
-// per plan would repeat the CMDB lookup for every one of them.
+// per plan would repeat the CMDB lookup for every one of them. Enrichment is
+// for a tenant: the CMDB facts are read from that tenant's cache.
 type SeriesAdmission interface {
-	Enrich(dimensions map[string]json.RawMessage) admission.Facts
+	EnrichFor(tenant string, dimensions map[string]json.RawMessage) admission.Facts
 	Admit(plan admission.PlanContext, facts *admission.Facts) (bool, string, string)
 }
 
@@ -43,6 +45,11 @@ type ScopeDrop struct {
 	// Round is the Slot's evaluation time: two drops of one fingerprint are
 	// two observations only when they come from two Slots.
 	Round int64
+	// IntervalSeconds is the Plan's evaluation period, and ReadOffset how
+	// long after Round the Slot was frozen to read: together, when the next
+	// observation can come.
+	IntervalSeconds int64
+	ReadOffset      time.Duration
 }
 
 // The words the access path counts rejections under by itself, before the
@@ -124,6 +131,8 @@ type planOutput struct {
 	multiInput bool
 	// shard is the Plan's piece of a split strategy, for the reporter.
 	shard execution.ShardRef
+	// intervalSeconds is the Plan's evaluation period.
+	intervalSeconds int64
 }
 
 type planOutputs map[execution.PlanIdentity]planOutput
@@ -148,9 +157,25 @@ func buildPlanOutputs(duePlans []execution.DuePlan, queries []PlannedQuery) plan
 		}
 		ref := due.CompiledPlan.StrategyRef()
 		outputs[due.Identity] = planOutput{strategyID: ref.StrategyID, revision: int64(ref.SnapshotRevision), shard: due.Shard,
-			identity: due.CompiledPlan.OutputIdentity(), multiInput: len(inputs[due.Identity]) > 1}
+			identity: due.CompiledPlan.OutputIdentity(), multiInput: len(inputs[due.Identity]) > 1,
+			intervalSeconds: due.ScheduleSpec.EvaluationIntervalSeconds}
 	}
 	return outputs
+}
+
+// groupsByTargetIP is whether the query groups by bk_target_ip: its
+// dataset's identity fields, which every Plan it feeds builds its alert
+// identity from under either protocol (the output identity, or the
+// compatible output's dimension fields), as Python builds its target and
+// tags from the strategy's agg_dimension. Those Plans are the ones whose
+// identity Python's rewrite of that dimension to CMDB's address reaches.
+func (query PlannedQuery) groupsByTargetIP() bool {
+	for _, field := range query.Spec.PlanFacts.Normalization.DatasetContract.IdentityFields {
+		if field == "bk_target_ip" {
+			return true
+		}
+	}
+	return false
 }
 
 // fingerprint is trigger.EvaluateV2's dedupe identity for a record of this
@@ -220,8 +245,12 @@ func (adapter *seriesAdapter) reportScopeDrop(identity execution.PlanIdentity, p
 		adapter.tallyScopeDrop(identity, ScopeDropNoFingerprint)
 		return
 	}
+	var readOffset time.Duration
+	if ready := adapter.query.ReadyAtUnixMilli; ready > 0 {
+		readOffset = max(0, time.Duration(ready-adapter.round*1000)*time.Millisecond)
+	}
 	adapter.scopeSink.Observe(ScopeDrop{Plan: identity, Filter: filter, Reason: reason, Fingerprint: fingerprint,
-		StrategyRevision: output.revision, Round: adapter.round})
+		StrategyRevision: output.revision, Round: adapter.round, IntervalSeconds: output.intervalSeconds, ReadOffset: readOffset})
 }
 
 func (adapter *seriesAdapter) tallyScopeDrop(plan execution.PlanIdentity, word string) {
@@ -257,14 +286,22 @@ func flushScopeDrops(sink ScopeDropSink, adapters []*seriesAdapter, slot executi
 // execution. It is built once per execution rather than looked up per series.
 type planScopes map[execution.PlanIdentity]admission.PlanContext
 
-func buildPlanScopes(duePlans []execution.DuePlan, targets execution.TargetMemberships) planScopes {
+func buildPlanScopes(duePlans []execution.DuePlan, targets execution.TargetMemberships, groups execution.ScopeGroupMemberships) planScopes {
 	scopes := make(planScopes, len(duePlans))
 	for _, due := range duePlans {
+		tenant := due.Identity.TenantID
+		// A dynamic group condition matches the hosts this Slot read its
+		// groups to hold; one the Slot did not read knows no host.
+		scope := admission.TargetScopeFromContract(due.CompiledPlan.TargetScope()).WithGroupMemberships(
+			func(id string) (admission.GroupMembership, bool) {
+				read, found := groups[execution.ScopeGroupRef{TenantID: tenant, GroupID: id}]
+				return admission.GroupMembership{HostIDs: read.HostIDs, Known: read.Known}, found
+			})
 		context := admission.PlanContext{
-			TenantID:    due.Identity.TenantID,
+			TenantID:    tenant,
 			BusinessID:  due.Identity.BusinessID,
 			StrategyID:  due.Identity.StrategyID,
-			TargetScope: admission.TargetScopeFromContract(due.CompiledPlan.TargetScope()),
+			TargetScope: scope,
 		}
 		if plan := due.CompiledPlan.TargetPlan(); plan != nil {
 			// The resolution is the Slot's, looked up by Plan; a Plan the Slot

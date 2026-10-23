@@ -113,10 +113,9 @@ func TestAnActivationHoldsTwoPiecesOfOneStrategy(t *testing.T) {
 	}
 }
 
-// Records decoded from the same bytes compare equal, and an unchanged piece
-// is not reported as changed outside the affected Query Groups. The shard
-// is a pointer on the wire; a comparison by address here would refuse every
-// activation transition of a split strategy as a change nobody made.
+// Records decoded from the same bytes compare equal. The shard is a pointer
+// on the wire; a comparison by address here would read every activation
+// record of a split strategy as a change nobody made.
 func TestDecodedPieceRecordsCompareByContent(t *testing.T) {
 	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
 	publication := SnapshotPublicationRef{SnapshotRevision: "s1", PublicationEpoch: 1}
@@ -133,13 +132,15 @@ func TestDecodedPieceRecordsCompareByContent(t *testing.T) {
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateUnchangedActivationRecords(state, decoded, map[execution.PlanKey]struct{}{}); err != nil {
-		t.Fatalf("an activation re-read from its own bytes reads as changed: %v", err)
+	for index := range state.Plans {
+		if !decoded.Plans[index].Equal(state.Plans[index]) {
+			t.Fatalf("piece %d re-read from its own bytes reads as changed", index)
+		}
 	}
-	// And a piece that did change outside the affected set is still caught:
-	// the comparison is by content, not by nothing.
+	// And a piece that did change is still told apart: the comparison is by
+	// content, not by nothing.
 	decoded.Plans[1].Fact.Selected.StateApplyEpoch = 2
-	if err := validateUnchangedActivationRecords(state, decoded, map[execution.PlanKey]struct{}{}); err == nil {
-		t.Fatal("a piece changed outside the affected Query Groups was not reported")
+	if decoded.Plans[1].Equal(state.Plans[1]) {
+		t.Fatal("a changed piece compared equal")
 	}
 }

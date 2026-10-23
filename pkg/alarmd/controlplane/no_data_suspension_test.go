@@ -186,7 +186,8 @@ func onlyPlan(t *testing.T, catalog controlplane.Catalog) controlplane.FrozenPla
 func wantNotWithheld(t *testing.T, catalog controlplane.Catalog) {
 	t.Helper()
 	for _, disposition := range catalog.Dispositions {
-		if disposition.Disposition != controlplane.DispositionAccepted {
+		// A note is served, not withheld, as the fleet reads it (isWithheld).
+		if disposition.Disposition != controlplane.DispositionAccepted && disposition.Disposition != controlplane.DispositionConfigNoted {
 			t.Fatalf("the strategy is filed as %+v; a suspended no-data half is not a withheld object, "+
 				"and counting it as one is what took the thresholds down with it", disposition)
 		}
@@ -233,5 +234,45 @@ func TestSuspendedStrategiesAreNamedAndNotRepeated(t *testing.T) {
 	working := controlplane.ComposeCatalog(buildSuspensionCatalog(t, `{"is_enabled":true,"continuous":3}`, nil))
 	if len(working.SuspendedNoDataObjects) != 0 {
 		t.Fatalf("a working strategy is named as suspended: %+v", working.SuspendedNoDataObjects)
+	}
+}
+
+// Each setting P1 cannot accept suspends only no-data and names it, and the
+// accepted values beside it compile: a level outside the backend's three
+// (AB/constants.py:61) on either side, a continuous missing (strategy.py
+// subscripts it, int(cfg["continuous"]), and raises) or zero. The levels at
+// the edges of the range, 1 and 3, attach no-data at that level.
+func TestEachNoDataSettingOutsideP1SuspendsOnlyNoDataByName(t *testing.T) {
+	for _, test := range []struct {
+		section   string
+		suspended bool
+		level     uint32
+	}{
+		{section: `{"is_enabled":true,"continuous":3,"level":0}`, suspended: true},
+		{section: `{"is_enabled":true,"continuous":3,"level":1}`, level: 1},
+		{section: `{"is_enabled":true,"continuous":3,"level":3}`, level: 3},
+		{section: `{"is_enabled":true,"continuous":3,"level":4}`, suspended: true},
+		{section: `{"is_enabled":true,"level":2}`, suspended: true},
+		{section: `{"is_enabled":true,"continuous":0}`, suspended: true},
+	} {
+		t.Run(test.section, func(t *testing.T) {
+			catalog := buildSuspensionCatalog(t, test.section, nil)
+			plan := onlyPlan(t, catalog)
+			if len(plan.Plan.StrategyIR.Levels) == 0 {
+				t.Fatal("the thresholds went with the no-data section")
+			}
+			wantNotWithheld(t, catalog)
+			if test.suspended {
+				if plan.Plan.NoData != nil || plan.NoDataSuspended != "NO_DATA_CONFIG_INVALID" {
+					t.Fatalf("no_data=%+v suspended=%q, want the section dropped and NO_DATA_CONFIG_INVALID named",
+						plan.Plan.NoData, plan.NoDataSuspended)
+				}
+				return
+			}
+			if plan.NoDataSuspended != "" || plan.Plan.NoData == nil || plan.Plan.NoData.Level != test.level {
+				t.Fatalf("no_data=%+v suspended=%q, want no-data attached at level %d",
+					plan.Plan.NoData, plan.NoDataSuspended, test.level)
+			}
+		})
 	}
 }

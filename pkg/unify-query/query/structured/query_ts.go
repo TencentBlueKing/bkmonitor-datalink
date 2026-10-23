@@ -623,6 +623,8 @@ type Query struct {
 	Limit int `json:"limit,omitempty" example:"0"`
 	// From 翻页开启数字
 	From int `json:"from,omitempty" example:"0"`
+	// ExactTotal 显式请求 ES 返回精确命中总数（track_total_hits）；默认关闭
+	ExactTotal bool `json:"exact_total,omitempty"`
 	// Timestamp @-modifier 标记
 	Timestamp *int64 `json:"timestamp,omitempty"`
 	// StartOrEnd @-modifier 标记，start or end
@@ -1499,6 +1501,7 @@ func (q *Query) BuildMetadataQuery(
 
 	query.Size = q.Limit
 	query.From = q.From
+	query.ExactTotal = q.ExactTotal
 
 	if len(q.OrderBy) > 0 {
 		query.Orders = q.OrderBy.Orders()

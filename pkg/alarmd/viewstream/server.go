@@ -82,7 +82,7 @@ type Stats struct {
 	// NotSwitched lists the Workers that installed the current version but
 	// do not yet execute every one of its Query Groups from it, each with
 	// the count it does (decision-016 batch 4). Empty is every installed
-	// Worker switched; in the shadow step it is every installed Worker.
+	// Worker switched.
 	NotSwitched []LaggingReceiver
 	// Counters since the process started.
 	Publications        uint64

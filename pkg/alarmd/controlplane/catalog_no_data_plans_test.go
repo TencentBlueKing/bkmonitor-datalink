@@ -159,3 +159,32 @@ func TestNoDataPlansCountAnUnclassifiablePlanRatherThanDropIt(t *testing.T) {
 			got, want)
 	}
 }
+
+// noDataReasons is the set of reasons that withhold a Plan from no-data
+// detection. The partition below sums over them.
+var noDataReasons = []string{"NO_DATA_CONFIG_INVALID", "NO_DATA_ROSTER_UNSUPPORTED"}
+
+// NoDataPlansPartition is how many items asked for no-data detection: the ones
+// that got it, by source, plus the ones a no-data reason withheld.
+//
+// The withheld half is summed by reason across dispositions rather than read at
+// one of them. A strategy refused for the first time is CONFIG_REJECTED, and
+// the same strategy is STALE_CONFIG once a previous good Plan is retained for
+// it - same reason, different disposition, on different rounds. Reading only
+// CONFIG_REJECTED would make the total drop by one the round a strategy starts
+// running its last good Plan, which reads as a gauge that lost a count rather
+// than as a strategy that changed state.
+func (composition CatalogComposition) NoDataPlansPartition() int {
+	total := composition.NoDataPlansUnclassified
+	for _, count := range composition.NoDataPlans {
+		total += count
+	}
+	for key, count := range composition.Withheld {
+		for _, reason := range noDataReasons {
+			if key.Reason == reason {
+				total += count
+			}
+		}
+	}
+	return total
+}

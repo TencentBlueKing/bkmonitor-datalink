@@ -85,7 +85,7 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 	for _, definition := range catalogue {
 		known[definition.Code] = true
 	}
-	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions, ResultContractRefusals} {
+	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions, ResultContractRefusals, FiledCauses} {
 		for _, word := range vocabulary {
 			known[word] = true
 		}
@@ -160,7 +160,7 @@ func TestOnlyWhatThisDeploymentCouldPreventDecidesTheVerdict(t *testing.T) {
 		t.Errorf("health = %q with one budget exhaustion among four external anomalies, want %q",
 			view.Health, HealthDegraded)
 	}
-	if got := OursCount(view.Anomalies); got != 1 {
+	if got := attributed(view.Anomalies, AttributionOurs); got != 1 {
 		t.Errorf("ours = %d, want exactly the one budget exhaustion", got)
 	}
 }
@@ -282,10 +282,10 @@ func TestObjectsWeCannotYetSpeakForMakeTheVerdictUnknownNotDegraded(t *testing.T
 		t.Errorf("health = %q, want %q: the evidence about this object was never recorded, "+
 			"which is not evidence of a fault and not evidence of health", view.Health, HealthUnknown)
 	}
-	if got := UnattributedCount(view.Anomalies); got != 1 {
+	if got := attributed(view.Anomalies, AttributionUnknown); got != 1 {
 		t.Errorf("unattributed = %d, want 1", got)
 	}
-	if got := OursCount(view.Anomalies); got != 0 {
+	if got := attributed(view.Anomalies, AttributionOurs); got != 0 {
 		t.Errorf("ours = %d, want 0: it must not be counted against the deployment", got)
 	}
 }
@@ -766,4 +766,15 @@ func TestABudgetRejectionIsCapacityNotAFault(t *testing.T) {
 	if row.Attribution != AttributionOurs || row.Unclassified {
 		t.Fatalf("attribution = %q unclassified = %v: capacity counts against the deployment, and the row is classified", row.Attribution, row.Unclassified)
 	}
+}
+
+// attributed is how many of anomalies carry attribution.
+func attributed(anomalies []Anomaly, attribution Attribution) int {
+	count := 0
+	for _, anomaly := range anomalies {
+		if anomaly.Attribution == attribution {
+			count++
+		}
+	}
+	return count
 }

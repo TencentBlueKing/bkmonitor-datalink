@@ -32,7 +32,7 @@ const (
 // is silent -- a kind the page has no word for renders as whichever word the
 // fallback happens to be, which reads as an ordinary row of a familiar kind.
 // That is worse than showing the raw name, so the page is checked against this.
-var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown, KindSkippedSpan, KindNoData, KindEmptyEveryRound, KindRetainedShareApproaching}
+var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown, KindSkippedSpan, KindNoData, KindEmptyEveryRound, KindQuiet, KindAnswerTruncated, KindRetainedShareApproaching, KindReadBeforeComplete, KindReadHeld, KindLatePastRound, KindLateSeriesMissed}
 
 // SinceSources is the closed set of start-time provenances this build produces.
 //
@@ -112,8 +112,8 @@ func MetricKind(kind string) string {
 func MetricGapKind(kind GapKind) string {
 	switch kind {
 	case GapDenominatorUnavailable, GapReplicaMissing, GapSnapshotStale, GapListTruncated,
-		GapOwnershipShortfall, GapCoverageInconsistent, GapNoReplicas, GapUndetermined,
-		GapRegistryUnavailable, GapSnapshotsUnreadable:
+		GapOwnershipShortfall, GapCoverageInconsistent, GapNoReplicas, GapUndetermined, GapControlFactsUnavailable,
+		GapRegistryUnavailable, GapSnapshotsUnreadable, GapSnapshotsDeferred:
 		return string(kind)
 	default:
 		return LabelOther

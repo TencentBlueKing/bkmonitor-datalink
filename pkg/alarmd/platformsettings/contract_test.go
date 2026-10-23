@@ -121,3 +121,31 @@ func TestChangedFieldsNamesEveryDifference(t *testing.T) {
 		t.Fatal("nil and empty read as different lists")
 	}
 }
+
+// Every field reads the layer its effective value came from. A layer that
+// states the code default falls through under the protocol's rule, and the
+// source says so: a platform publishing false beside a deployment stating
+// true is true, from VALUES - the platform's own consumers resolve its DB
+// and deployment layers the same way. A platform stating a value nothing
+// below overrides is DYNAMIC, and nothing stated anywhere is DEFAULT.
+func TestEachSettingNamesTheLayerItCameFrom(t *testing.T) {
+	yes, no := true, false
+	tables := []string{"system.cpu_detail_cmdb_level"}
+	platform := Layer{Origin: HorizonSourceDynamic, IsAccessBKData: &no, BKDataCMDBLevelTables: &tables}
+	deployment := Layer{Origin: HorizonSourceValues, IsAccessBKData: &yes}
+	settings, sources := ResolveSources(CodeDefaults(), platform, deployment)
+	if !settings.IsAccessBKData || sources[FieldIsAccessBKData] != HorizonSourceValues {
+		t.Fatalf("is_access_bk_data = %v from %s, want true from VALUES: the platform's false is the default and falls through",
+			settings.IsAccessBKData, sources[FieldIsAccessBKData])
+	}
+	if sources[FieldBKDataCMDBLevelTables] != HorizonSourceDynamic || sources[FieldFileSystemTypeIgnore] != HorizonSourceDefault {
+		t.Fatalf("sources %v, want the tables from DYNAMIC and the file system types from DEFAULT", sources)
+	}
+	// The platform stating the default with nothing below it: its own word.
+	if _, sources := ResolveSources(CodeDefaults(), platform); sources[FieldIsAccessBKData] != HorizonSourceDynamic {
+		t.Fatalf("a platform stating false alone reads %s, want DYNAMIC", sources[FieldIsAccessBKData])
+	}
+	if _, sources := ResolveSources(CodeDefaults()); len(sources) != len(Fields) || sources[FieldIsAccessBKData] != HorizonSourceDefault {
+		t.Fatalf("no layers = %v, want every field from DEFAULT", sources)
+	}
+}

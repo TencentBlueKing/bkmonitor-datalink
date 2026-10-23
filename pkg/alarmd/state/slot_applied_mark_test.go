@@ -11,11 +11,11 @@ package state
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 // recordingSlotAppliedBackend keeps what the store asked of it: the members
@@ -94,10 +94,7 @@ func TestTheMarkLivesToTheSlotsKeepUntilNotToItsRecoveryUntil(t *testing.T) {
 // On a real store, the mark written before the recovery boundary is still
 // read as STATE_APPLIED after it -- the reading the finalization makes.
 func TestOnRedisTheMarkIsStillReadAfterTheRecoveryBoundary(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
 	backend, err := NewRedisBackend(RedisBackendOptions{Address: address, DialTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, PoolSize: 2})

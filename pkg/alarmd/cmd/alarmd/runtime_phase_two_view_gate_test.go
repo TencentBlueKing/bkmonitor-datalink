@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -154,7 +155,14 @@ func TestTheGatedCatalogHintsOnlyWhenTheGateLetsTheReadThrough(t *testing.T) {
 	if gate.SwitchedQueryGroups([]execution.QueryGroupIdentity{"qg-1"}) != 0 || gate.Counts()[string(viewGateTimelineMismatch)] != 1 {
 		t.Fatalf("after a refused read the gate counts %d switched, %v", gate.SwitchedQueryGroups([]execution.QueryGroupIdentity{"qg-1"}), gate.Counts())
 	}
-	gate.forget("qg-1")
+	// A Runner lost and released after the next one judged the Query Group
+	// releases its own outcome only: here none, the outcome is the other
+	// session's.
+	gate.forget("qg-1", &ownership.Session{})
+	if counts := gate.Counts(); counts[string(viewGateTimelineMismatch)] != 1 {
+		t.Fatalf("a release by another Runner's session dropped this one's outcome: %v", counts)
+	}
+	gate.forget("qg-1", session)
 	if counts := gate.Counts(); counts[string(viewGateTimelineMismatch)] != 0 {
 		t.Fatalf("a forgotten Query Group still counts: %v", counts)
 	}
@@ -332,6 +340,9 @@ func TestARefusalFromTheGateIsObservedByNameOnBothPaths(t *testing.T) {
 		t.Fatalf("Next() error = %v, want the refusal passed through", err)
 	}
 	due := observationAt(t, observations, observability.StageScheduleDue)
+	if due.AwaitingView {
+		t.Fatalf("schedule_due line = %+v, want not awaiting the view: the refusal named another check", due)
+	}
 	if due.Result != observability.ResultRetrying || due.ReasonCode != observability.ReasonCode(contract.ReasonViewNotExecutable) ||
 		due.Err == nil || !strings.Contains(due.Err.Error(), "scope_mismatch") || due.Trace.QueryGroupKey != "query-group-1" {
 		t.Fatalf("schedule_due line = %+v, want retrying %s carrying the gate's word", due, contract.ReasonViewNotExecutable)
@@ -363,4 +374,124 @@ func observationAt(t *testing.T, observations []observability.Observation, stage
 	}
 	t.Fatalf("no %s observation in %+v", stage, observations)
 	return observability.Observation{}
+}
+
+// A Worker whose view has not carried a Query Group it holds the lease of
+// refuses the round as not in the view: the wait every Worker starts with,
+// since production attaches the view client before any view reaches it,
+// and the one every move brings, since the record arrives by renewal and
+// the view by delta. The refusal says so, and both lines carry it. Any other
+// refusal -- here the view carrying the Query Group with another scope --
+// does not.
+func TestARefusalWhileTheViewHasNotCarriedTheQueryGroupSaysItIsAwaitingIt(t *testing.T) {
+	ctx := context.Background()
+	store := newViewGateTestStore(t)
+	session, _ := openViewGateTestSessionWithAuthority(t, store, "qg-1", 12, "obj-a")
+	// Wired as the bundle wires it: the client attached before it has
+	// received anything.
+	client, err := viewstream.NewClient(viewstream.ClientIdentity{WorkerID: "worker-1", Incarnation: "i1"},
+		viewStreamDiscovery{store: store}, nil, nil, viewstream.ClientOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := newViewExecutionGate()
+	gate.attach(client)
+	_, err = gateContext(ctx, gate, "qg-1", session, nil)
+	var refusal *scheduler.ViewNotExecutableError
+	if !errors.As(err, &refusal) || refusal.Reason != string(viewGateNotInView) || !refusal.AwaitingView {
+		t.Fatalf("refusal before the view carried the Query Group = %v, want not_in_view awaiting the view", err)
+	}
+	gate.attach(mapView{})
+	if _, err = gateContext(ctx, gate, "qg-1", session, nil); !errors.As(err, &refusal) || !refusal.AwaitingView {
+		t.Fatalf("refusal from a view without the Query Group = %v, want awaiting the view", err)
+	}
+	gate.attach(mapView{"qg-1": viewstream.Entry{QueryGroup: "qg-1", Content: &viewstream.Content{ObjectDigest: "obj-b"},
+		Assignment: viewstream.Assignment{DesiredWorkerID: "worker-1", Revision: 3, ContentScope: "obj-b", TimelineRecordRevision: 12}}})
+	if _, err = gateContext(ctx, gate, "qg-1", session, nil); !errors.As(err, &refusal) || refusal.Reason != string(viewGateScopeMismatch) || refusal.AwaitingView {
+		t.Fatalf("refusal from a view carrying the Query Group with another scope = %v, want scope_mismatch not awaiting", err)
+	}
+	// Without the lease the refusal is the lease's, whatever the view lacks:
+	// the wait for the view is a wait only while the record already gives
+	// the Worker the Query Group.
+	gate.attach(client)
+	if err := session.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = gateContext(ctx, gate, "qg-1", session, nil); !errors.As(err, &refusal) || refusal.Reason != string(viewGateNoLease) || refusal.AwaitingView {
+		t.Fatalf("refusal without the lease from a view lacking the Query Group = %v, want no_lease not awaiting", err)
+	}
+
+	var observations []observability.Observation
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		observations = append(observations, observation)
+	})
+	awaiting := &scheduler.ViewNotExecutableError{Reason: "not_in_view", AwaitingView: true}
+	source := observedProductionSlotSource{
+		next: slotSourceFunc(func(context.Context, execution.QueryGroupIdentity) (scheduler.FrozenSlot, bool, scheduler.SlotDueFacts, error) {
+			return scheduler.FrozenSlot{}, false, scheduler.SlotDueFacts{}, awaiting
+		}),
+		observer: observer,
+	}
+	_, _, _, _ = source.Next(ctx, "qg-1")
+	executor := observedProductionSlotExecutor{
+		next: slotExecutorFunc(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+			return execution.SlotExecutionResult{}, awaiting
+		}),
+		observer: observer,
+	}
+	_, _ = executor.Execute(ctx, execution.SlotExecutionRequest{})
+	for _, stage := range []observability.Stage{observability.StageScheduleDue, observability.StageSlotCompleted} {
+		if line := observationAt(t, observations, stage); !line.AwaitingView ||
+			line.ReasonCode != observability.ReasonCode(contract.ReasonViewNotExecutable) {
+			t.Fatalf("%s line = %+v, want %s awaiting the view", stage, line, contract.ReasonViewNotExecutable)
+		}
+	}
+}
+
+// A Slot stopped by its own context's cancellation -- the process stopping
+// or its Query Group leaving, every rollout's outgoing replicas -- completes
+// as SLOT_CANCELLED, not an internal error. A cancellation error under a
+// live context keeps internal_unknown.
+func TestASlotCancelledFromAboveSaysSo(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		want observability.ReasonCode
+	}{
+		{"cancelled from above", cancelled, observability.ReasonSlotCancelled},
+		{"a cancellation under a live context", context.Background(), observability.ReasonInternalUnknown},
+	} {
+		var observations []observability.Observation
+		executor := observedProductionSlotExecutor{
+			next: slotExecutorFunc(func(context.Context, execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: query: %w", context.Canceled)
+			}),
+			observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				observations = append(observations, observation)
+			}),
+		}
+		_, _ = executor.Execute(tc.ctx, execution.SlotExecutionRequest{})
+		if line := observationAt(t, observations, observability.StageSlotCompleted); line.ReasonCode != tc.want {
+			t.Fatalf("%s: slot_completed reason = %q, want %q", tc.name, line.ReasonCode, tc.want)
+		}
+	}
+}
+
+// Every refusal names the renewal interval as the longest the round waits
+// before asking again: what it waits for arrives by the view's delta or the
+// lease's renewal (B4 §2), and the Runner caps its backoff there.
+func TestARefusalNamesTheRenewalIntervalAsItsLongestWait(t *testing.T) {
+	ctx := context.Background()
+	store := newViewGateTestStore(t)
+	session, _ := openViewGateTestSessionWithAuthority(t, store, "qg-1", 12, "obj-a")
+	gate := newViewExecutionGate()
+	gate.retryWithin = 10 * time.Second
+	gate.attach(mapView{})
+	_, err := gateContext(ctx, gate, "qg-1", session, nil)
+	var refusal *scheduler.ViewNotExecutableError
+	if !errors.As(err, &refusal) || refusal.RetryWithin != 10*time.Second {
+		t.Fatalf("refusal = %v, want it to name the renewal interval", err)
+	}
 }

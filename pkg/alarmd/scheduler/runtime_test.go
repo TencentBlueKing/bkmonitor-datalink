@@ -222,9 +222,10 @@ func TestRunnerNamesAnExecutionTheViewDoesNotAllowWithoutCountingAnAttempt(t *te
 		t.Fatal(err)
 	}
 	var outcomes []string
+	var refusals []error
 	flights.observer = observability.ObserverFunc(func(_ context.Context, o observability.Observation) {
 		if o.Stage == observability.StageRunnerReturned {
-			outcomes = append(outcomes, o.RunOutcome)
+			outcomes, refusals = append(outcomes, o.RunOutcome), append(refusals, o.Err)
 		}
 	})
 	runner, err := NewRunner("query-group-1", &fakeSession{fence: slot.Dispatch.OwnerFence}, source, executor, flights, clock.Now)
@@ -241,6 +242,9 @@ func TestRunnerNamesAnExecutionTheViewDoesNotAllowWithoutCountingAnAttempt(t *te
 	}
 	if len(outcomes) != 1 || outcomes[0] != "view_not_executable" {
 		t.Fatalf("runner outcomes = %v, want view_not_executable", outcomes)
+	}
+	if refused := executor.err; refusals[0] == nil || refusals[0].Error() != refused.Error() {
+		t.Fatalf("runner refusal = %v, want the executor's %v", refusals[0], refused)
 	}
 	if _, attempted, err = runner.RunOne(context.Background()); err != nil || attempted || executor.calls != 1 {
 		t.Fatalf("RunOne(within backoff) attempted=%t calls=%d err=%v, want no second execution inside the backoff", attempted, executor.calls, err)
@@ -319,6 +323,11 @@ func TestRunnerReusesDelayedReadyAtForExecutionReadiness(t *testing.T) {
 	}
 	if got := runner.NextReadyAt(); !got.Equal(readyAt) {
 		t.Fatalf("NextReadyAt()=%s, want %s", got, readyAt)
+	}
+	// The bound says the deferral is the frozen Slot waiting for its data,
+	// and which Slot: its grid point, not when it becomes runnable.
+	if bound := runner.DueBound(); !bound.Deferred || !bound.ReadinessHold || bound.NextSlotUnix != int64(slot.Contract.Slot.EvaluationTime) {
+		t.Fatalf("readiness bound = %+v, want a readiness hold on Slot %d", bound, slot.Contract.Slot.EvaluationTime)
 	}
 	if _, attempted, denied, err = runner.RunOneAdmitted(context.Background(), admission); err != nil || attempted || denied ||
 		executor.calls != 1 || admissions != 1 || releases != 1 {
@@ -404,6 +413,8 @@ type fakeSession struct {
 	assignment ownership.AssignmentRecord
 	err        error
 	deadline   time.Time
+	// noted is every content scope the Runner told the session it runs.
+	noted []string
 }
 
 func (session *fakeSession) ValidateCurrent(context.Context, time.Time) (execution.OwnerFence, error) {
@@ -415,6 +426,10 @@ func (session *fakeSession) Deadline() time.Time { return session.deadline }
 // The zero Assignment record is deliberate: this fake has no Assignment facts,
 // so the Runner has nothing worth handing to the source and the source reads
 // for itself, which is what these tests have always exercised.
+func (session *fakeSession) NoteContentScope(scope string) {
+	session.noted = append(session.noted, scope)
+}
+
 func (session *fakeSession) ValidateCurrentWithAssignment(
 	context.Context,
 	time.Time,

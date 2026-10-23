@@ -350,7 +350,7 @@ func newDueIndexAuditOvershoot() *prometheus.HistogramVec {
 			"the Slot's evaluation time is not read here and does not enter this number. " +
 			"Over the audited dispatches only -- one Query Group per generation, never the whole " +
 			"population -- which is why this is not a cell on due_index_prediction_total, whose four " +
-			"cells mix that sample with the full population. Observed on the violation alone, so its " +
+			"cells mix that sample with the full population. Observed on those mispredicted dispatches alone, so its " +
 			"count is the same population as that counter's not_due/due cell. " +
 			"Read against the duration of one walk over the owned set rather than against zero: mass " +
 			"below one walk is the boundary being crossed between the prediction and the verdict, and " +

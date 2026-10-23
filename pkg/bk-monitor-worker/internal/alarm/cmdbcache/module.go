@@ -110,7 +110,7 @@ func getModuleListByBizID(ctx context.Context, bkTenantId string, bizID int) ([]
 			return result.Data.Count, nil
 		},
 		func(page int) define.Operation {
-			return cmdbApi.SearchModule().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "bk_set_id": "0"}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]int{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize}})
+			return cmdbApi.SearchModule().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bizID), "bk_set_id": "0"}).SetBody(map[string]any{"bk_biz_id": bizID, "page": map[string]any{"start": page * cmdbApiPageSize, "limit": cmdbApiPageSize, "sort": "bk_module_id"}})
 		},
 		10,
 	)

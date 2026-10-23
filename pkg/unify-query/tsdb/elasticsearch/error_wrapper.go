@@ -134,7 +134,22 @@ func handleESError(ctx context.Context, url string, err error, res *elastic.Sear
 		}
 	}
 
-	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, errors.New(msgBuilder.String()))
+	// 文本照旧；ES 自己的错误（含其状态码）和传输错误作为原因保留，供失败响应按类型分类。
+	var cause error
+	if err != nil && !isTypedNilError(err) {
+		cause = withBackendStatus(err)
+	}
+	return metadata.NewMessage(metadata.MsgQueryES, "es 查询失败").Error(ctx, metadata.ErrorWithCauses(msgBuilder.String(), cause))
+}
+
+// withBackendStatus 在 err 带有 ES 自己的错误（*elastic.Error）时，把它的状态码作为类型化原因附上，
+// 文本不变；没有时原样返回。凡是把 ES 客户端错误交给上层的地方都经过它。
+func withBackendStatus(err error) error {
+	var esErr *elastic.Error
+	if err == nil || !errors.As(err, &esErr) || esErr == nil {
+		return err
+	}
+	return metadata.ErrorWithCauses(err.Error(), err, &metadata.BackendStatusError{Status: esErr.Status})
 }
 
 func isTypedNilError(err error) bool {

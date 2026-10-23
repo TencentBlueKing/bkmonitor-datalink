@@ -24,6 +24,7 @@ type controlFactsMetrics struct {
 	rebuilt     *prometheus.CounterVec
 	applied     *prometheus.CounterVec
 	invalid     *prometheus.CounterVec
+	transitions *prometheus.CounterVec
 }
 
 // controlFactNames is the closed set of control-plane facts a replica reads
@@ -56,6 +57,23 @@ var controlHealthStatuses = []string{"healthy", "degraded_last_good", "invalid"}
 // controlHealthInvalidFields name the field that was wrong, because "invalid"
 // alone sends a reader to read all of them.
 var controlHealthInvalidFields = []string{"status", "source_kind", "reason_code", "cause", "query_groups"}
+
+// controlLeaderTransitions are the moves of the control lease a process can
+// make, each as the class the lease moves to and why. Each reason has one
+// class, so the pairs are listed rather than crossed: a cell that cannot be
+// written would read as a zero somebody checked.
+//
+//	preferred acquire_free       a preferred candidate took a lease nobody held.
+//	fallback  fallback_takeover  a fallback candidate took it, having found no
+//	                             live, ready preferred candidate.
+//	preferred handback           a fallback Leader gave it up because a
+//	                             preferred candidate had been ready for the
+//	                             stability window.
+//	none      release            a Leader gave it up at shutdown, with nobody
+//	                             named to take it.
+var controlLeaderTransitions = [][2]string{
+	{"preferred", "acquire_free"}, {"fallback", "fallback_takeover"}, {"preferred", "handback"}, {"none", "release"},
+}
 
 func newControlFactsMetrics() controlFactsMetrics {
 	metrics := controlFactsMetrics{
@@ -95,6 +113,20 @@ func newControlFactsMetrics() controlFactsMetrics {
 				"control_health_facts_total, which grows on every round; this one is zero on a correct " +
 				"program, and naming the field is what makes it actionable rather than a thing to watch.",
 		}, []string{"field"}),
+		transitions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_leader_transitions_total",
+			Help: "Control Leader lease moves this process made, by the class the lease moved to (preferred, " +
+				"fallback, or none for a release nobody was named to take) and why: acquire_free (a preferred " +
+				"candidate took a free lease), fallback_takeover (a Worker without the control role took it because " +
+				"no preferred candidate was live and ready), handback (a fallback Leader gave it back once a " +
+				"preferred candidate had been ready for a whole instance record lifetime), release (given up at " +
+				"shutdown). Summed over the processes: fallback_takeover without a handback later is a deployment " +
+				"whose control process has not come back; handback rising faster than fallback_takeover cannot " +
+				"happen, and the two rising together every few minutes is a control process that keeps dying.",
+		}, []string{"to_class", "reason"}),
+	}
+	for _, transition := range controlLeaderTransitions {
+		metrics.transitions.WithLabelValues(transition[0], transition[1])
 	}
 	for _, fact := range controlFactNames {
 		metrics.read.WithLabelValues(fact)
@@ -113,7 +145,7 @@ func newControlFactsMetrics() controlFactsMetrics {
 }
 
 func (m controlFactsMetrics) collectors() []prometheus.Collector {
-	return []prometheus.Collector{m.read, m.unavailable, m.rebuilt, m.applied, m.invalid}
+	return []prometheus.Collector{m.read, m.unavailable, m.rebuilt, m.applied, m.invalid, m.transitions}
 }
 
 // RecordControlFactRebuilt counts one control-plane fact the Control Leader
@@ -160,6 +192,20 @@ func (r *Recorder) RecordControlHealthInvalid(field string) {
 		return
 	}
 	r.phaseTwo.controlFacts.invalid.WithLabelValues(field).Inc()
+}
+
+// RecordControlLeaderTransition counts one move of the Control Leader lease
+// this process made.
+func (r *Recorder) RecordControlLeaderTransition(toClass, reason string) {
+	if r == nil {
+		return
+	}
+	for _, transition := range controlLeaderTransitions {
+		if transition[0] == toClass && transition[1] == reason {
+			r.phaseTwo.controlFacts.transitions.WithLabelValues(toClass, reason).Inc()
+			return
+		}
+	}
 }
 
 func knownLabel(known []string, value string) bool {

@@ -102,7 +102,7 @@ func compilerLimits() strategy.Limits {
 
 func newTestEvaluator(t testing.TB) *Evaluator {
 	t.Helper()
-	evaluator, err := NewEvaluator(NewDefaultRegistry(), nil)
+	evaluator, err := NewEvaluator(NewDefaultRegistry())
 	if err != nil {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
@@ -176,4 +176,15 @@ type thresholdTestGroup []thresholdTestCondition
 type thresholdTestCondition struct {
 	operator  string
 	threshold string
+}
+
+// recordValueMap is a record's values by name, the view a fixture hands the
+// evaluator.
+type recordValueMap map[string]json.RawMessage
+
+var _ RecordValueView = recordValueMap(nil)
+
+func (m recordValueMap) Value(name string) (json.RawMessage, bool) {
+	value, ok := m[name]
+	return value, ok
 }

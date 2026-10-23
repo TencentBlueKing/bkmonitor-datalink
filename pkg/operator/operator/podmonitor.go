@@ -274,7 +274,7 @@ func ifRejectPodMonitor(monitor *promv1.PodMonitor) bool {
 		if !rule.Validate() {
 			continue
 		}
-		if utils.LowerEq(rule.Kind, monitor.Kind) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
+		if utils.LowerEq(rule.Kind, monitorKindPodMonitor) && rule.Namespace == monitor.Namespace && rule.Name == monitor.Name {
 			return true
 		}
 	}

@@ -3,6 +3,7 @@ package uq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -30,8 +31,7 @@ func TestPollingPythonOracle(t *testing.T) {
 	if err = json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	storage := execution.QueryStorage{TableID: "events", StorageID: "17", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__", TimeField: execution.QueryTimeField{Name: "time", Type: "date", Unit: "millisecond"}}
-	planner, _ := controlplane.NewLegacyPrimaryQueryCompiler("uq", "Asia/Shanghai", controlplane.LegacyQueryRuntimeFacts{FTAEventStorage: &storage})
+	planner, _ := controlplane.NewLegacyPrimaryQueryCompiler("uq", "Asia/Shanghai", controlplane.LegacyQueryRuntimeFacts{})
 	checked := 0
 	for _, tc := range fixture.Cases {
 		selected := tc.Stage == "source_intrinsic_filters" || tc.Stage == "promql_api_request" || tc.Stage == "uq_query_config" && (strings.HasPrefix(tc.ID, "bk_monitor-") && !strings.Contains(tc.ID, "log-") || strings.HasPrefix(tc.ID, "custom-") && !strings.Contains(tc.ID, "event-") || strings.HasPrefix(tc.ID, "bk_log_search-") && strings.HasSuffix(tc.ID, "True"))
@@ -104,6 +104,15 @@ func TestPollingPythonOracle(t *testing.T) {
 			}
 			configRaw, _ := json.Marshal(config)
 			facts, err := planner.CompilePrimaryQuery(context.Background(), controlplane.PrimaryQuerySource{Identity: controlplane.SourceIdentity{TenantID: "tenant", BusinessID: "2", SpaceScope: "bkcc__2"}, StrategyID: "14", ItemID: "3", QueryMD5: "oracle", Expression: "a", QueryConfigs: []json.RawMessage{configRaw}})
+			if strings.HasPrefix(tc.ID, "fta-") {
+				// FTA event sources are not supported: every one the oracle
+				// describes is refused by name.
+				var failure *controlplane.QueryPlanCompileError
+				if !errors.As(err, &failure) || failure.Disposition != controlplane.DispositionUnsupported || failure.Reason != "QUERY_FTA_UNSUPPORTED" {
+					t.Fatalf("FTA source: %v, want refused as unsupported", err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,13 +126,6 @@ func TestPollingPythonOracle(t *testing.T) {
 			if tc.Stage == "source_intrinsic_filters" {
 				conditions := facts.QueryList[0].Conditions
 				expected := want.(map[string]any)
-				if strings.HasPrefix(tc.ID, "fta-") {
-					conditions = *facts.QueryList[0].SourceConditions
-					expected = expected["filter_dict"].(map[string]any)
-					if facts.QueryList[0].TimeAggregation.Window != fmt.Sprintf("%.0fs", want.(map[string]any)["interval_minutes"].(float64)*60) {
-						t.Fatal("FTA minute bucket changed")
-					}
-				}
 				got := map[string]string{}
 				for _, field := range conditions.Fields {
 					key := strings.TrimPrefix(field.Field, "dimensions.")

@@ -4,6 +4,7 @@
 package fleet
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -14,15 +15,124 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
+// StrategyDirectory is the strategy directory as the control Leader answers
+// it from the catalog it published (controlplane.DirectoryView). Available
+// is false on every other process, which hands the request to the Leader.
+type StrategyDirectory interface {
+	Available() bool
+	Page(ctx context.Context, at time.Time, tenant, business, strategy string, offset, limit int) controlplane.StrategyDirectorySnapshot
+	ResolveCurrent(ctx context.Context, at time.Time, tenant, business, strategy, group string, expectedRevision ...string) (controlplane.StrategyDirectoryRow, error)
+	EffectivePlan(ctx context.Context, row controlplane.StrategyDirectoryRow) (controlplane.QueryGroupPlanObject, error)
+	EffectiveOutput(ctx context.Context, row controlplane.StrategyDirectoryRow) controlplane.OutputFormatFacts
+	// StrategyCatalog is a page of every strategy the published catalog
+	// accepted, read from memory.
+	StrategyCatalog(offset, limit int) controlplane.StrategyCatalogPage
+}
+
+// toLeader hands a directory request this process cannot answer to the
+// Leader. It reports whether the response is written: forwarded, or refused
+// because there is no Leader to forward to. A request already forwarded is
+// answered here, as not ready, and never handed on again.
+func toLeader(w http.ResponseWriter, r *http.Request, directory StrategyDirectory, forward LeaderForward) bool {
+	if directory.Available() || forward == nil || r.Header.Get(forwardedHeader) != "" {
+		return false
+	}
+	forwarded, refusal := forward(w, r)
+	if forwarded {
+		return true
+	}
+	if refusal != "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "LEADER_UNAVAILABLE", "reason": refusal})
+		return true
+	}
+	return false
+}
+
 // WithStrategyDirectory extends the existing object endpoint without changing
 // its default anomaly-list meaning. The wrapper needs no second HTTP server.
-func WithStrategyDirectory(next http.Handler, directory *controlplane.ObservationDirectory, now func() time.Time) http.Handler {
+// Only the control Leader answers; a follower forwards the request to it. A
+// process that holds no catalog answers not ready with why (absence), read
+// from the control plane now.
+//
+// One page is built at a time: a page's reads go through the runtime's own
+// connections, and a second request while one is in flight is refused as
+// busy rather than queued behind it.
+// StrategyCatalogResponse is one catalog page and the cursor of the next,
+// empty on the last page.
+type StrategyCatalogResponse struct {
+	controlplane.StrategyCatalogPage
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// serveStrategyCatalog pages every strategy the published catalog accepted,
+// on the Leader, with a cursor naming the publication it was read from: a
+// page ends between strategies, and a cursor from a replaced publication is
+// refused as CURSOR_STALE rather than read against the new one.
+func serveStrategyCatalog(w http.ResponseWriter, r *http.Request, directory StrategyDirectory, forward LeaderForward) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if directory == nil {
+		writeJSON(w, 503, map[string]string{"error": "DIRECTORY_RESOURCE_OR_STORE_UNAVAILABLE"})
+		return
+	}
+	if toLeader(w, r, directory, forward) {
+		return
+	}
+	q := r.URL.Query()
+	limit := 50
+	if raw := q.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 200 {
+			writeJSON(w, 400, map[string]string{"error": "INVALID_LIMIT"})
+			return
+		}
+		limit = n
+	}
+	offset, revision := 0, ""
+	if cursor := q.Get("cursor"); cursor != "" {
+		b, err := base64.RawURLEncoding.DecodeString(cursor)
+		parts := strings.Split(string(b), "\n")
+		if err != nil || len(parts) != 2 {
+			writeJSON(w, 400, map[string]string{"error": "INVALID_CURSOR"})
+			return
+		}
+		revision = parts[0]
+		if offset, err = strconv.Atoi(parts[1]); err != nil || offset < 0 {
+			writeJSON(w, 400, map[string]string{"error": "INVALID_CURSOR"})
+			return
+		}
+	}
+	page := directory.StrategyCatalog(offset, limit)
+	if page.Reason != "" {
+		writeJSON(w, http.StatusServiceUnavailable, page)
+		return
+	}
+	if revision != "" && revision != page.Revision {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "CURSOR_STALE"})
+		return
+	}
+	body := StrategyCatalogResponse{StrategyCatalogPage: page}
+	if next := offset + len(page.Strategies); len(page.Strategies) > 0 && next < page.Total {
+		body.NextCursor = base64.RawURLEncoding.EncodeToString([]byte(page.Revision + "\n" + strconv.Itoa(next)))
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+func WithStrategyDirectory(next http.Handler, directory StrategyDirectory, forward LeaderForward, absence CatalogAbsenceFunc,
+	replica string, now func() time.Time) http.Handler {
+	pageRead := make(chan struct{}, 1)
 	// Configuration reads are point reads but can decode a large shared group.
 	// Only one may run per process; the diagnostic request is rejected instead
 	// of occupying more execution connections or keeping a waiting queue.
 	configRead := make(chan struct{}, 1)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
+		if r.URL.Path == "/api/objects" && q.Get("scope") == "strategy_catalog" {
+			serveStrategyCatalog(w, r, directory, forward)
+			return
+		}
 		if r.URL.Path != "/api/objects" || q.Get("scope") != "strategies" {
 			next.ServeHTTP(w, r)
 			return
@@ -33,6 +143,16 @@ func WithStrategyDirectory(next http.Handler, directory *controlplane.Observatio
 		}
 		if directory == nil {
 			writeJSON(w, 503, map[string]string{"error": "DIRECTORY_RESOURCE_OR_STORE_UNAVAILABLE"})
+			return
+		}
+		if toLeader(w, r, directory, forward) {
+			return
+		}
+		select {
+		case pageRead <- struct{}{}:
+			defer func() { <-pageRead }()
+		default:
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "OBSERVATION_BUSY"})
 			return
 		}
 		limit := 20
@@ -61,7 +181,7 @@ func WithStrategyDirectory(next http.Handler, directory *controlplane.Observatio
 				return
 			}
 		}
-		snapshot := directory.Page(now(), tenant, business, strategy, offset, limit+1)
+		snapshot := directory.Page(r.Context(), now(), tenant, business, strategy, offset, limit+1)
 		if len(snapshot.Unattributed) > limit {
 			snapshot.Unattributed = snapshot.Unattributed[:limit]
 			snapshot.SourceTruncated = true
@@ -88,13 +208,25 @@ func WithStrategyDirectory(next http.Handler, directory *controlplane.Observatio
 			// purpose, and the question "what did the deployment's choice come
 			// out as for this strategy" is asked with the configuration.
 			EffectiveOutput *controlplane.OutputFormatFacts `json:"effective_output,omitempty"`
+			// NotReady is why this process holds no catalog to answer from,
+			// on a not-ready answer: not the Leader, a round still to come or
+			// failing, in the words a strategy's standing refuses with.
+			NotReady *CatalogAbsence `json:"not_ready,omitempty"`
 		}{StrategyDirectorySnapshot: snapshot, NextCursor: nextCursor}
+		if snapshot.Reason == "LEADER_CATALOG_NOT_READY" {
+			facts := CatalogAbsenceFacts{}
+			if absence != nil {
+				facts = absence()
+			}
+			notReady := catalogAbsenceOf(facts, replica, absence != nil)
+			body.NotReady = &notReady
+		}
 		if include := q.Get("include"); include != "" {
 			if include != "effective_config" || strategy == "" || offset != 0 {
 				writeJSON(w, 400, map[string]string{"error": "INVALID_CONFIG_REQUEST"})
 				return
 			}
-			selected, resolveErr := directory.ResolveCurrent(now(), tenant, business, strategy, q.Get("query_group"), snapshot.Revision)
+			selected, resolveErr := directory.ResolveCurrent(r.Context(), now(), tenant, business, strategy, q.Get("query_group"), snapshot.Revision)
 			if resolveErr != nil {
 				if errors.Is(resolveErr, controlplane.ErrObservationChanged) {
 					writeJSON(w, 409, map[string]string{"error": "CURSOR_STALE"})
@@ -114,11 +246,7 @@ func WithStrategyDirectory(next http.Handler, directory *controlplane.Observatio
 			}
 			plan, err := directory.EffectivePlan(r.Context(), selected)
 			if err != nil {
-				code := "CONFIG_UNAVAILABLE"
-				if errors.Is(err, controlplane.ErrObservationBudget) {
-					code = "RESOURCE_BUDGET"
-				}
-				writeJSON(w, 503, map[string]string{"error": code})
+				writeJSON(w, 503, map[string]string{"error": "CONFIG_UNAVAILABLE"})
 				return
 			}
 			body.EffectiveConfig = plan

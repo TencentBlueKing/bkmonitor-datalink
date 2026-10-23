@@ -556,6 +556,50 @@ func (r *RDB) Requeue(ctx context.Context, msg *task.TaskMessage) error {
 	return r.runScript(ctx, op, requeueCmd, keys, msg.ID)
 }
 
+// RecoverExpired checks the lease and queue membership in one Redis script,
+// so a concurrent lease extension cannot cause a live task to be requeued.
+var recoverExpiredCmd = redis.NewScript(`
+local ids = redis.call("ZRANGEBYSCORE", KEYS[2], "-inf", ARGV[1], "LIMIT", 0, 100)
+local recovered = 0
+for _, id in ipairs(ids) do
+  local taskKey = ARGV[2] .. id
+  if redis.call("HGET", taskKey, "state") == "active" then
+    if redis.call("LREM", KEYS[1], 0, id) > 0 then
+      redis.call("ZREM", KEYS[2], id)
+      redis.call("RPUSH", KEYS[3], id)
+      redis.call("HSET", taskKey, "state", "pending", "pending_since", ARGV[3])
+      recovered = recovered + 1
+    else
+      -- Drop orphaned leases so they cannot fill every bounded scan.
+      redis.call("ZREM", KEYS[2], id)
+    end
+  else
+    -- Completed or missing tasks must not hide later expired active tasks.
+    redis.call("ZREM", KEYS[2], id)
+  end
+end
+return recovered`)
+
+// RecoverExpired returns active tasks whose leases have elapsed to pending.
+func (r *RDB) RecoverExpired(cutoff time.Time, qnames ...string) (int, error) {
+	var op errors.Op = "rdb.RecoverExpired"
+	total := 0
+	for _, qname := range qnames {
+		keys := []string{
+			common.ActiveKey(qname),
+			common.LeaseKey(qname),
+			common.PendingKey(qname),
+		}
+		count, err := recoverExpiredCmd.Run(context.Background(), r.client, keys,
+			cutoff.Unix(), common.TaskKeyPrefix(qname), cutoff.UnixNano()).Int()
+		if err != nil {
+			return total, errors.E(op, errors.Internal, fmt.Sprintf("redis eval error: %v", err))
+		}
+		total += count
+	}
+	return total, nil
+}
+
 // KEYS[1] -> bmw:{<qname>}:t:<task_id>
 // KEYS[2] -> bmw:{<qname>}:scheduled
 // -------

@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"testing"
+	"time"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
-	"testing"
-	"time"
 )
 
 func TestWorkflowExecutorReturnClassifications(t *testing.T) {

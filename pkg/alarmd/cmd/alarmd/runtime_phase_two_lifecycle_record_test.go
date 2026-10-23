@@ -14,8 +14,10 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 func lifecycleTestRecord(t *testing.T, replica string) (*lifecycleRecord, config.Config, redis.UniversalClient) {
@@ -39,12 +41,14 @@ func TestTheLifecycleRecordOutlivesTheProcess(t *testing.T) {
 	at := time.Date(2026, 9, 24, 6, 0, 0, 0, time.UTC)
 	record.now = func() time.Time { at = at.Add(time.Second); return at }
 	record.start()
-	record.stop(lifecycleStopSignal, nil)
+	record.stop(lifecycleStopSignal, nil, &observability.SlotDrainFacts{
+		Site: observability.SlotDrainSiteShutdown, Outcome: observability.SlotDrainDeadline, Waited: 3, Cancelled: 1, WaitMS: 10000,
+	})
 	other := *record
 	other.replica = "pod-b"
 	other.start()
 	other.start() // pod-b's first process died without a stop
-	other.stop(lifecycleStopWorkerStopped, errors.New("the worker stopped: "+strings.Repeat("x", 2*lifecycleErrorBytes)))
+	other.stop(lifecycleStopWorkerStopped, errors.New("the worker stopped: "+strings.Repeat("x", 2*lifecycleErrorBytes)), nil)
 
 	reading, err := readLifecycle(context.Background(), reader, lifecycleRecordKey(cfg))
 	if err != nil {
@@ -53,6 +57,14 @@ func TestTheLifecycleRecordOutlivesTheProcess(t *testing.T) {
 	if len(reading.Entries) != 5 || reading.Entries[0].Replica != "pod-b" || reading.Entries[0].Event != "stop" ||
 		len(reading.Entries[0].Error) != lifecycleErrorBytes || reading.Entries[0].Build == "" {
 		t.Fatalf("entries %+v, want five, newest first, the error bounded", reading.Entries)
+	}
+	// A stop carries how its Slots drained, read back after the Pod is gone.
+	if drain := reading.Entries[3].Drain; reading.Entries[3].Replica != "pod-a" || drain == nil ||
+		drain.Outcome != observability.SlotDrainDeadline || drain.Waited != 3 || drain.Cancelled != 1 || drain.WaitMS != 10000 {
+		t.Fatalf("pod-a's stop = %+v, want its drain read back", reading.Entries[3])
+	}
+	if reading.Entries[0].Drain != nil {
+		t.Fatalf("pod-b's stop = %+v, want no drain on a stop that ran none", reading.Entries[0])
 	}
 	byReplica := map[string]lifecycleReplica{}
 	for _, summary := range reading.Replicas {
@@ -131,4 +143,61 @@ func TestTheApplicationWritesItsStartAndStop(t *testing.T) {
 		reading.Entries[0].Reason != lifecycleStopSignal || reading.Entries[0].Replica != "pod-app" {
 		t.Fatalf("entries %+v, want a start then a stop on the signal", reading.Entries)
 	}
+}
+
+// A start or stop the store did not take is reported by why: the record is
+// what later reads as an unclean restart, and a write that never landed
+// must be told from one that did.
+func TestALifecycleWriteTheStoreDidNotTakeSaysWhy(t *testing.T) {
+	dead := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
+	t.Cleanup(func() { _ = dead.Close() })
+	var heard []string
+	record := &lifecycleRecord{client: dead, key: "alarmd.lifecycle", replica: "replica", build: "test", now: time.Now,
+		failed: func(reason string) { heard = append(heard, reason) }}
+	record.start()
+	if len(heard) != 1 || heard[0] != redisfailure.ConnectionRefused {
+		t.Fatalf("heard %v, want one connection_refused", heard)
+	}
+}
+
+// The record's script on a real server, with the record's own key and
+// arguments: it adds the entry, keeps the list to its bound and renews its
+// life, on a cold, warm and flushed script cache, and a server that refuses
+// it reaches the record's failure count as the server's refusal.
+func TestTheLifecycleRecordScriptRunsAsTheRecordCallsIt(t *testing.T) {
+	const key = "alarmd:lifecycle"
+	const entry = `{"event":"start"}`
+	newRecord := func(client *redis.Client, failed func(string)) *lifecycleRecord {
+		return &lifecycleRecord{client: client, key: key, replica: "pod-a", build: "test", now: time.Now, failed: failed}
+	}
+	redistest.CheckScriptSite(t, redistest.ScriptSite{
+		// A full list, so the trim has one to cut.
+		Prepare: func(t *testing.T, client *redis.Client) {
+			for i := 0; i < lifecycleRecordEntries; i++ {
+				if err := client.LPush(context.Background(), key, "older").Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+		},
+		Call: func(client *redis.Client) error {
+			return newRecord(client, nil).append(context.Background(), []byte(entry))
+		},
+		Written: func(t *testing.T, client *redis.Client) {
+			ctx := context.Background()
+			entries := client.LRange(ctx, key, 0, -1).Val()
+			if len(entries) != lifecycleRecordEntries || entries[0] != entry || entries[len(entries)-1] != "older" {
+				t.Fatalf("entries %d, newest first %v; want %d, the new one first", len(entries), entries[:1], lifecycleRecordEntries)
+			}
+			if ttl := client.TTL(ctx, key).Val(); ttl <= lifecycleRecordTTL-time.Minute || ttl > lifecycleRecordTTL {
+				t.Fatalf("ttl %v, want the record's %v", ttl, lifecycleRecordTTL)
+			}
+		},
+		Refused: func(t *testing.T, client *redis.Client, _ error) {
+			var reasons []string
+			newRecord(client, func(reason string) { reasons = append(reasons, reason) }).start()
+			if len(reasons) != 1 || reasons[0] != redisfailure.ServerError {
+				t.Fatalf("a refused write counted %v, want one %s", reasons, redisfailure.ServerError)
+			}
+		},
+	})
 }

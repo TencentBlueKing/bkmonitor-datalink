@@ -35,33 +35,25 @@ func recoveryFixture(observed uint32, markerSchedule execution.PlanScheduleRevis
 	}}}
 }
 
-// The reach is the only difference between the two callers: what one healthy
-// Slot does to a warmup count is decided once, and a Slot with no series says
-// it about the Plan's scopes and about nothing below them.
-func TestGapRecoveryReachDecidesWhichScopesAHealthySlotMoves(t *testing.T) {
+// One healthy Slot moves every scope of the marker, the Plan's and each
+// Level's, one slot closer to its requirement.
+func TestAHealthySlotMovesEveryScope(t *testing.T) {
 	due, gaps := recoveryFixture(0, due0ScheduleRevision(t))
-	for name, testCase := range map[string]struct {
-		reach  execution.GapRecoveryReach
-		scopes int
-	}{
-		"a Slot that evaluated series moves every scope": {execution.GapRecoverEveryScope, 2},
-		"a Slot with no series moves the Plan's only":    {execution.GapRecoverPlanScopeOnly, 1},
-	} {
-		mutation, err := execution.PlanGapRecoveryMutation(frozenContract(), due, gaps, testCase.reach)
-		if err != nil || mutation == nil {
-			t.Fatalf("%s: PlanGapRecoveryMutation() = %+v, %v", name, mutation, err)
+	mutation, err := execution.PlanGapRecoveryMutation(frozenContract(), due, gaps)
+	if err != nil || mutation == nil {
+		t.Fatalf("PlanGapRecoveryMutation() = %+v, %v", mutation, err)
+	}
+	levels := 0
+	for _, scope := range mutation.Scopes {
+		if scope.Kind != execution.GapWarmup {
+			t.Fatalf("scope=%+v, want a warmup at 0 of 3", scope)
 		}
-		if len(mutation.Scopes) != testCase.scopes {
-			t.Fatalf("%s: scopes=%+v, want %d", name, mutation.Scopes, testCase.scopes)
+		if scope.Scope.HasLevel {
+			levels++
 		}
-		for _, scope := range mutation.Scopes {
-			if scope.Kind != execution.GapWarmup {
-				t.Fatalf("%s: scope=%+v, want a warmup at 0 of 3", name, scope)
-			}
-			if testCase.reach == execution.GapRecoverPlanScopeOnly && scope.Scope.HasLevel {
-				t.Fatalf("%s: reached a Level scope: %+v", name, scope)
-			}
-		}
+	}
+	if len(mutation.Scopes) != 2 || levels != 1 {
+		t.Fatalf("scopes=%+v, want the Plan scope and the Level scope", mutation.Scopes)
 	}
 }
 
@@ -73,7 +65,7 @@ func TestGapRecoveryReachDecidesWhichScopesAHealthySlotMoves(t *testing.T) {
 // has already thrown away.
 func TestAMarkerUnderAnOlderScheduleRevisionRestartsItsWarmup(t *testing.T) {
 	due, gaps := recoveryFixture(2, "some-older-schedule")
-	mutation, err := execution.PlanGapRecoveryMutation(frozenContract(), due, gaps, execution.GapRecoverEveryScope)
+	mutation, err := execution.PlanGapRecoveryMutation(frozenContract(), due, gaps)
 	if err != nil || mutation == nil {
 		t.Fatalf("PlanGapRecoveryMutation() = %+v, %v", mutation, err)
 	}
@@ -85,7 +77,7 @@ func TestAMarkerUnderAnOlderScheduleRevisionRestartsItsWarmup(t *testing.T) {
 	// The same count under the current revision is one short of the
 	// requirement, so it clears. The two cases differ only in the revision.
 	current, currentGaps := recoveryFixture(2, due0ScheduleRevision(t))
-	mutation, err = execution.PlanGapRecoveryMutation(frozenContract(), current, currentGaps, execution.GapRecoverEveryScope)
+	mutation, err = execution.PlanGapRecoveryMutation(frozenContract(), current, currentGaps)
 	if err != nil || mutation == nil {
 		t.Fatalf("PlanGapRecoveryMutation() = %+v, %v", mutation, err)
 	}
@@ -105,13 +97,13 @@ func TestOnlyAStandingMarkerIsRecovered(t *testing.T) {
 	} {
 		due, gaps := recoveryFixture(0, due0ScheduleRevision(t))
 		gaps.Items[0].Status = status
-		mutation, err := execution.PlanGapRecoveryMutation(frozenContract(), due, gaps, execution.GapRecoverEveryScope)
+		mutation, err := execution.PlanGapRecoveryMutation(frozenContract(), due, gaps)
 		if err != nil || mutation != nil {
 			t.Fatalf("%s: PlanGapRecoveryMutation() = %+v, %v, want nothing proposed", status, mutation, err)
 		}
 	}
 	due, _ := recoveryFixture(0, due0ScheduleRevision(t))
-	mutation, err := execution.PlanGapRecoveryMutation(frozenContract(), due, execution.GapLoadResult{}, execution.GapRecoverEveryScope)
+	mutation, err := execution.PlanGapRecoveryMutation(frozenContract(), due, execution.GapLoadResult{})
 	if err != nil || mutation != nil {
 		t.Fatalf("with no marker loaded: PlanGapRecoveryMutation() = %+v, %v, want nothing proposed", mutation, err)
 	}

@@ -49,7 +49,6 @@ func fourBehindSource(t *testing.T, observer *gateObserver, withRangeFlight bool
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 	source := newProductionSlotSourceWithRecoveryForTest(
 		t, catalog, foundProgress(firstSlot, firstSlot-execution.EvaluationTime(interval)), at, testRecoveryLimits())
-	source.expiredRangeEnabled = true
 	source.observer = observer
 	ctx := context.Background()
 	if withRangeFlight {
@@ -79,9 +78,8 @@ func TestARoundThatGivesUpOnASlotSaysWhatTheCatchUpPathDid(t *testing.T) {
 		}
 		// The values behind the word. A reader has to be able to rule the
 		// other conditions out from the line itself.
-		if !facts.ProgressPresent || !facts.RangeCreationEnabled {
-			t.Fatalf("facts = %+v, want Progress present and range creation enabled, so the word cannot be "+
-				"confused with those two refusals", facts)
+		if !facts.ProgressPresent {
+			t.Fatalf("facts = %+v, want Progress present, so the word cannot be confused with that refusal", facts)
 		}
 		if facts.ProgressNextSlot != facts.ExpectedNextSlot {
 			t.Fatalf("progress next slot %d against expected %d: these two being equal is what rules out "+
@@ -89,20 +87,6 @@ func TestARoundThatGivesUpOnASlotSaysWhatTheCatchUpPathDid(t *testing.T) {
 		}
 		if facts.UnfinishedSlotPresent {
 			t.Fatalf("facts = %+v, want no unfinished Slot, which is what rules out that refusal", facts)
-		}
-	})
-
-	t.Run("range creation switched off is a different word", func(t *testing.T) {
-		observer := &gateObserver{}
-		source, ctx := fourBehindSource(t, observer, true)
-		source.expiredRangeEnabled = false
-		if _, _, _, err := source.Next(ctx, "query-group-1"); err != nil {
-			t.Fatalf("Next() error = %v", err)
-		}
-		facts := observer.gate(t)
-		if facts.Outcome != observability.RangeGateCreationDisabled || facts.RangeCreationEnabled {
-			t.Fatalf("outcome = %q enabled=%v, want %q with the flag reported false",
-				facts.Outcome, facts.RangeCreationEnabled, observability.RangeGateCreationDisabled)
 		}
 	})
 
@@ -149,23 +133,20 @@ func TestTheRefusalNamerAgreesWithTheGateConditionByCondition(t *testing.T) {
 
 	for _, testCase := range []struct {
 		name     string
-		enabled  bool
 		load     execution.ProgressLoadResult
 		ctx      context.Context
 		nextSlot execution.EvaluationTime
 		want     string
 	}{
-		{"creation disabled outranks everything", false, progress(nextSlot, false), flight, nextSlot,
-			observability.RangeGateCreationDisabled},
-		{"no Progress record", true, execution.ProgressLoadResult{}, flight, nextSlot,
+		{"no Progress record", execution.ProgressLoadResult{}, flight, nextSlot,
 			observability.RangeGateProgressMissing},
-		{"the cursor moved under the round", true, progress(nextSlot+15, false), flight, nextSlot,
+		{"the cursor moved under the round", progress(nextSlot+15, false), flight, nextSlot,
 			observability.RangeGateNextSlotMoved},
-		{"a Slot is still held", true, progress(nextSlot, true), flight, nextSlot,
+		{"a Slot is still held", progress(nextSlot, true), flight, nextSlot,
 			observability.RangeGateUnfinishedSlotPresent},
-		{"no range flight", true, progress(nextSlot, false), context.Background(), nextSlot,
+		{"no range flight", progress(nextSlot, false), context.Background(), nextSlot,
 			observability.RangeGateNoRangeFlight},
-		{"every condition holds, so the namer must not invent one", true, progress(nextSlot, false), flight, nextSlot,
+		{"every condition holds, so the namer must not invent one", progress(nextSlot, false), flight, nextSlot,
 			observability.RangeGateUnexplained},
 		// Order, not just membership. The gate is one short-circuiting
 		// expression, so "which condition refused it" is only meaningful as
@@ -173,16 +154,14 @@ func TestTheRefusalNamerAgreesWithTheGateConditionByCondition(t *testing.T) {
 		// namer that checks the same five in a different order still returns
 		// a true statement about the round while blaming the wrong thing.
 		// Every pair below has two conditions false at once.
-		{"a moved cursor is blamed before a held Slot", true, progress(nextSlot+15, true), flight, nextSlot,
+		{"a moved cursor is blamed before a held Slot", progress(nextSlot+15, true), flight, nextSlot,
 			observability.RangeGateNextSlotMoved},
-		{"a held Slot is blamed before a missing flight", true, progress(nextSlot, true), context.Background(), nextSlot,
+		{"a held Slot is blamed before a missing flight", progress(nextSlot, true), context.Background(), nextSlot,
 			observability.RangeGateUnfinishedSlotPresent},
-		{"a missing Progress is blamed before a missing flight", true, execution.ProgressLoadResult{},
+		{"a missing Progress is blamed before a missing flight", execution.ProgressLoadResult{},
 			context.Background(), nextSlot, observability.RangeGateProgressMissing},
-		{"creation disabled is blamed before all of them", false, execution.ProgressLoadResult{},
-			context.Background(), nextSlot, observability.RangeGateCreationDisabled},
 	} {
-		source := &ProductionSlotSource{expiredRangeEnabled: testCase.enabled, queryGroup: queryGroup}
+		source := &ProductionSlotSource{queryGroup: queryGroup}
 		got := rangeGateRefusal(source, testCase.load, testCase.nextSlot, testCase.ctx, queryGroup)
 		if got != testCase.want {
 			t.Fatalf("%s: rangeGateRefusal() = %q, want %q", testCase.name, got, testCase.want)

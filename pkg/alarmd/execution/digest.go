@@ -96,8 +96,8 @@ func DeriveDuePlanSetDigest(plans []DuePlan, requirements []DataRequirement) (Du
 			capabilities[capability.LevelID] = capability
 		}
 		levels := plan.CompiledPlan.Levels()
-		levelEntries := make([]duePlanDigestLevel, len(levels))
-		for levelIndex, level := range levels {
+		levelEntries := make([]duePlanDigestLevel, levels.Len())
+		for levelIndex, level := range levels.All() {
 			definition := level.Definition()
 			levelFingerprints := level.Fingerprints()
 			levelEntries[levelIndex] = duePlanDigestLevel{

@@ -30,6 +30,8 @@ type PlanSlotInput struct {
 	// worker resolved it to this Slot; both nil for a Plan without one.
 	Plan             *contract.TargetPlanV1
 	TargetResolution *TargetResolution
+	// AnswerTruncated is SlotInput.AnswerTruncated, forwarded.
+	AnswerTruncated  bool
 	Identity         execution.PlanNoDataIdentity
 	Snapshot         execution.NoDataMemorySnapshot
 	ApplyVersion     execution.ApplyVersion
@@ -103,6 +105,7 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 		HostsResolved:    input.HostsResolved,
 		OutOfBusiness:    input.OutOfBusiness,
 		TargetResolution: input.TargetResolution,
+		AnswerTruncated:  input.AnswerTruncated,
 		Memory:           memory,
 		// The Plan-level fact comes out of the record, never out of the groups:
 		// the round it describes is one where there are no groups left to
@@ -122,13 +125,16 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 		// absence clocks must not move on evidence the round did not have.
 		return slot, nil
 	}
-	slot.Series = SyntheticSeriesFor(SyntheticInput{
+	slot.Series, err = SyntheticSeriesFor(SyntheticInput{
 		EvaluationTime: input.EvaluationTime,
 		PeriodSeconds:  input.PeriodSeconds,
 		Result:         result,
 		Memory:         result.Memory,
 		Roster:         result.Roster,
 	})
+	if err != nil {
+		return PlanSlotResult{}, err
+	}
 
 	groups := storedGroups(result.Memory)
 	presentAsOf := presentAsOf(groups, input.Snapshot.PresentAsOf, input.EvaluationTime, result.WholeItemPresent)
@@ -156,10 +162,9 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 	}
 	mutation, err := execution.BuildPlanNoDataMutation(execution.PlanNoDataMemoryUpdate{
 		Identity: input.Identity,
-		// Which record the revision and the loaded groups below came out of.
-		// Without it the statement claims to be a delta against the per-group
-		// record whatever it was actually derived from, and a Plan still on
-		// the whole-memory record can never write one.
+		// Which record the revision and the loaded groups below came out of:
+		// a statement derived from no record replaces the whole record rather
+		// than claiming to be a delta against one.
 		DerivedFrom:            input.Snapshot.Representation,
 		LoadedApplyVersion:     input.Snapshot.PersistedApplyVersion,
 		ExpectedMarkerRevision: input.Snapshot.MarkerRevision,

@@ -42,7 +42,7 @@ func (r *response) failed(ctx context.Context, err error) {
 		return
 	}
 
-	proxy.WriteJSON(ctx, r.c, http.StatusBadRequest, ErrResponse{
+	proxy.WriteJSON(ctx, r.c, metadata.FailureStatus(err), ErrResponse{
 		Err: err.Error(),
 	})
 }

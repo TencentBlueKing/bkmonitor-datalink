@@ -17,10 +17,10 @@ import "testing"
 // -- anywhere else they would be a label with no writer.
 func TestNormalizeQueryUnavailableKeepsEveryEntryAndBoundsTheSet(t *testing.T) {
 	input := []QueryUnavailableFacts{
-		{Attribution: QueryUnavailableNoAttempts},
-		{Attribution: QueryUnavailableNoAttempts},
-		{Attribution: QueryUnavailableFromAttempt},
-		{Attribution: "something_this_build_never_declared"},
+		{Attribution: QueryUnavailableNoAttempts, HTTPClass: QueryHTTPClassNone},
+		{Attribution: QueryUnavailableNoAttempts, HTTPClass: QueryHTTPClassNone},
+		{Attribution: QueryUnavailableFromAttempt, HTTPClass: QueryHTTPClass4xx},
+		{Attribution: "something_this_build_never_declared", HTTPClass: "3xx"},
 	}
 	got := NormalizeObservation(Observation{
 		Component: ComponentAccess, Stage: StageQueryCompleted, Operation: OperationNormal, Result: ResultFailed,
@@ -30,9 +30,15 @@ func TestNormalizeQueryUnavailableKeepsEveryEntryAndBoundsTheSet(t *testing.T) {
 	if len(got) != len(want) {
 		t.Fatalf("normalized %d entries, want %d: %+v", len(got), len(want), got)
 	}
+	wantClass := []string{QueryHTTPClassNone, QueryHTTPClassNone, QueryHTTPClass4xx, QueryHTTPClassOther}
 	for index, facts := range got {
-		if facts.Attribution != want[index] {
-			t.Fatalf("entry %d = %q, want %q", index, facts.Attribution, want[index])
+		if facts.Attribution != want[index] || facts.HTTPClass != wantClass[index] {
+			t.Fatalf("entry %d = %q/%q, want %q/%q", index, facts.Attribution, facts.HTTPClass, want[index], wantClass[index])
+		}
+	}
+	for status, class := range map[int]string{0: QueryHTTPClassNone, 400: QueryHTTPClass4xx, 499: QueryHTTPClass4xx, 500: QueryHTTPClass5xx, 599: QueryHTTPClass5xx, 302: QueryHTTPClassOther, 600: QueryHTTPClassOther} {
+		if got := QueryHTTPClassOf(status); got != class {
+			t.Fatalf("QueryHTTPClassOf(%d) = %q, want %q", status, got, class)
 		}
 	}
 	elsewhere := NormalizeObservation(Observation{

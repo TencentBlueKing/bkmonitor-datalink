@@ -49,18 +49,18 @@ func TestSourceRefreshReportsWhatItCompiledAndWhatItReused(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := reconciler.Refresh(ctx, source, planner)
-	if err != nil || first.Status != controlplane.SourceRefreshPendingConfirmation {
+	if err != nil || first.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("first refresh = (%+v, %v)", first, err)
 	}
 	if first.CompiledStrategies != 2 || first.ReusedStrategies != 0 {
 		t.Fatalf("first round compiled=%d reused=%d, want both documents compiled", first.CompiledStrategies, first.ReusedStrategies)
 	}
 	second, err := reconciler.Refresh(ctx, source, planner)
-	if err != nil || second.Status != controlplane.SourceRefreshPublished {
-		t.Fatalf("confirming refresh = (%+v, %v)", second, err)
+	if err != nil || second.Status != controlplane.SourceRefreshUnchanged {
+		t.Fatalf("second refresh = (%+v, %v)", second, err)
 	}
 	if second.CompiledStrategies != 0 || second.ReusedStrategies != 2 {
-		t.Fatalf("confirming round compiled=%d reused=%d, want nothing compiled for an unchanged source", second.CompiledStrategies, second.ReusedStrategies)
+		t.Fatalf("second round compiled=%d reused=%d, want nothing compiled for an unchanged source", second.CompiledStrategies, second.ReusedStrategies)
 	}
 	changed := bytes.Replace(documents[1], []byte(`"threshold":90`), []byte(`"threshold":95`), 1)
 	if bytes.Equal(changed, documents[1]) {
@@ -70,7 +70,7 @@ func TestSourceRefreshReportsWhatItCompiledAndWhatItReused(t *testing.T) {
 		t.Fatal(err)
 	}
 	third, err := reconciler.Refresh(ctx, source, planner)
-	if err != nil || third.Status != controlplane.SourceRefreshPendingConfirmation {
+	if err != nil || third.Status != controlplane.SourceRefreshPublished {
 		t.Fatalf("refresh after the edit = (%+v, %v)", third, err)
 	}
 	if third.CompiledStrategies != 1 || third.ReusedStrategies != 1 {

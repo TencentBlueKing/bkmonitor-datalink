@@ -322,11 +322,11 @@ func workerAlgorithmObservationCoordinator(
 	observe func(observability.Observation),
 ) (*recordingPorts, *worker.SlotExecutionCoordinator) {
 	t.Helper()
-	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
+	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
-	evaluator, err := evaluation.New(detector, evaluation.Limits{MaxPlans: 4, MaxRecords: 16, MaxLevels: 16,
+	evaluator, err := evaluation.New(detector, evaluation.Limits{MaxLevels: 16,
 		Trigger: trigger.EvaluationLimitsV2{MaxLevels: 16, MaxTriggerWindowSize: 16,
 			MaxRecoveryConsecutiveWindows: 16, MaxRequiredHistoryPoints: 32,
 			MaxLevelResultsPerEvent: 16, MaxEvidenceBytesPerEvent: 1 << 20, MaxComputeCost: 1 << 20}})

@@ -9,7 +9,7 @@ import (
 )
 
 func TestQueryCooldownPreservesFailureUntilRealRecovery(t *testing.T) {
-	for _, exit := range []string{"recovered", "query_revision_changed", "disabled"} {
+	for _, exit := range []string{"recovered", "query_revision_changed"} {
 		t.Run(exit, func(t *testing.T) {
 			at := time.Unix(1000, 0)
 			tracker := NewTracker(nil, "replica", func() time.Time { return at })
@@ -54,7 +54,7 @@ func TestQueryCooldownPreservesFailureUntilRealRecovery(t *testing.T) {
 
 func TestQueryCooldownMetadataDoesNotDetermineHealth(t *testing.T) {
 	tracker := NewTracker(nil, "replica", nil)
-	for _, event := range []string{"entered", "extended", "query_revision_changed", "disabled", "recovered"} {
+	for _, event := range []string{"entered", "extended", "query_revision_changed", "recovered"} {
 		tracker.Observe(context.Background(), observability.Observation{Trace: observability.TraceFields{QueryGroupKey: "qg"}, QueryCooldown: &observability.QueryCooldownFacts{Event: event}})
 		if tracker.Determined() != 0 || tracker.HasConclusion("qg") {
 			t.Fatalf("%s invented a conclusion", event)

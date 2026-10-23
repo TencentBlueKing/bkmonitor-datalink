@@ -167,12 +167,12 @@ func TestMetricMetadataHTTPFailureRetryAndCancellation(t *testing.T) {
 }
 
 func TestExporterConcurrentLifecycleDisabled(t *testing.T) {
-	e, err := New(confengine.MustLoadConfigContent(`exporter: {metric_metadata: {enabled: false}}`))
+	e, err := New(confengine.MustLoadConfigContent(`exporter: {}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if e.metricMetadata != nil {
-		t.Fatal("feature must honor explicit disable")
+		t.Fatal("feature must default off")
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {

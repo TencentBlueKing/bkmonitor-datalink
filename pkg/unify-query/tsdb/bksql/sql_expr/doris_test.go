@@ -386,7 +386,7 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 					},
 				},
 			},
-			want: "(CAST(object['field'] AS STRING) MATCH_PHRASE 'What''s UP' OR CAST(object['field'] AS STRING) = 'What''s UP' AND `tag` != 'test')",
+			want: "(CAST(object['field'] AS STRING) LIKE '%What''s UP%' OR CAST(object['field'] AS STRING) = 'What''s UP' AND `tag` != 'test')",
 		},
 		{
 			name: "doris test object field condition",
@@ -1026,6 +1026,24 @@ func TestDorisSQLExpr_ParserAllConditions(t *testing.T) {
 				},
 			},
 			want: "`host` LIKE '%srv%'",
+		},
+		{
+			name: "doris 不分词字段 contains 按子串匹配并转义 LIKE 元字符",
+			condition: metadata.AllConditions{
+				{
+					{
+						DimensionName: "host",
+						Value:         []string{"Go", `a_b%c\`},
+						Operator:      metadata.ConditionContains,
+					},
+					{
+						DimensionName: "host",
+						Value:         []string{"Task"},
+						Operator:      metadata.ConditionNotContains,
+					},
+				},
+			},
+			want: "(`host` LIKE '%Go%' OR `host` LIKE '%a\\_b\\%c\\\\\\\\%') AND `host` NOT LIKE '%Task%'",
 		},
 	}
 

@@ -733,8 +733,9 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				op = "MATCH_PHRASE_PREFIX"
 			} else if c.IsSuffix {
 				op = "MATCH_PHRASE_EDGE"
-			} else if c.Operator == metadata.ConditionContains {
-				op = "MATCH_PHRASE"
+			} else if c.Operator == metadata.ConditionContains && !d.isAnalyzed(c.DimensionName) {
+				// 不分词字段上 MATCH_PHRASE 等同整值匹配，与 ES keyword 的 *value* 对齐为子串匹配
+				op = "LIKE"
 			} else if d.isAnalyzed(c.DimensionName) {
 				op = "MATCH_PHRASE"
 			} else {
@@ -744,6 +745,8 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			for _, v := range values {
 				if c.IsWildcard {
 					v = d.likeValue(v)
+				} else if op == "LIKE" {
+					v = substringLikeValue(v)
 				} else if key == metadata.Null {
 					// key 为 null 时，根据 IsPrefix/IsSuffix 转换值
 					if c.IsPrefix {
@@ -796,7 +799,9 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 				op = "NOT MATCH_PHRASE_PREFIX"
 			} else if c.IsSuffix {
 				op = "NOT MATCH_PHRASE_EDGE"
-			} else if c.Operator == metadata.ConditionNotContains || d.isAnalyzed(c.DimensionName) {
+			} else if c.Operator == metadata.ConditionNotContains && !d.isAnalyzed(c.DimensionName) {
+				op = "NOT LIKE"
+			} else if d.isAnalyzed(c.DimensionName) {
 				op = "NOT MATCH_PHRASE"
 			} else {
 				op = "!="
@@ -805,6 +810,8 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 			for _, v := range values {
 				if c.IsWildcard {
 					v = d.likeValue(v)
+				} else if op == "NOT LIKE" {
+					v = substringLikeValue(v)
 				}
 				filter = append(filter, fmt.Sprintf("%s %s '%s'", key, op, v))
 			}
@@ -874,6 +881,14 @@ func (d *DorisSQLExpr) isText(k string) bool {
 
 func (d *DorisSQLExpr) isAnalyzed(k string) bool {
 	return d.getFieldType(k).IsAnalyzed
+}
+
+// 反斜杠先被 Doris 字符串字面量消费一次，再作为 LIKE 转义符，所以字面反斜杠要写 4 个
+var likeMetaEscaper = strings.NewReplacer(`\`, `\\\\`, "%", `\%`, "_", `\_`)
+
+// substringLikeValue 把字面值包成 LIKE 子串模式，值里的 \、% 和 _ 按字面匹配
+func substringLikeValue(s string) string {
+	return "%" + likeMetaEscaper.Replace(s) + "%"
 }
 
 func (d *DorisSQLExpr) likeValue(s string) string {

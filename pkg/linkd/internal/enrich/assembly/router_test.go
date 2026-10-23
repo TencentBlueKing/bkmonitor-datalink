@@ -12,6 +12,7 @@ package assembly
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -384,11 +385,12 @@ func assertBaseCollectEnrichment(t *testing.T, payload enrich.Payload) {
 	}
 	resource := payload.Processors[1]["resource"].Value
 	if string(resource["model_id"]) != `"cw-Host"` || string(resource["bk_inst_id"]) != "101" ||
-		string(resource["bk_biz_name"]) != `"业务 2"` {
+		string(resource["bk_biz_name"]) != `"业务 2"` || string(resource["bk_host_id"]) != "101" ||
+		string(resource["bk_host_name"]) != `"host-101"` {
 		t.Fatalf("resource=%#v", resource)
 	}
 	display := payload.Processors[2]["display"].Value
-	if string(display["title"]) != `"CPU 使用率过高"` || string(display["object"]) != `"10.0.0.1"` ||
+	if string(display["title"]) != `"CPU 使用率过高"` || string(display["object"]) != `"host-101"` ||
 		string(display["dimension_text"]) != `"bk_host_id(101)"` {
 		t.Fatalf("display=%#v", display)
 	}
@@ -515,7 +517,12 @@ func (baseCollectOneModel) FindInstance(
 	if err := ctx.Err(); err != nil {
 		return enrich.Instance{}, false, err
 	}
-	if tenantID != datasources.SampleTenantID || query.ModelCode != "cw-Host" || query.InstanceID != "101" {
+	identityQuery := enrich.InstanceQuery{ModelCode: rules.HostModelCode, InstanceID: "101"}
+	addressQuery := enrich.InstanceQuery{ModelCode: rules.HostModelCode, AttributeFilters: []enrich.InstanceAttributeFilter{
+		{Field: rules.FieldBKHostInnerIP, Type: enrich.InstanceAttributeKeyword, Value: "10.0.0.1"},
+		{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: int64(0)},
+	}}
+	if tenantID != datasources.SampleTenantID || (!reflect.DeepEqual(query, identityQuery) && !reflect.DeepEqual(query, addressQuery)) {
 		return enrich.Instance{}, false, nil
 	}
 	return enrich.Instance{
@@ -526,7 +533,7 @@ func (baseCollectOneModel) FindInstance(
 		},
 		Attributes: map[string]any{
 			"bk_obj_id": "host", "bk_host_id": int64(101), "bk_biz_id": int64(2), "bk_biz_name": "业务 2",
-			"bk_host_innerip": "10.0.0.1", "bk_cloud_id": int64(0), "bk_cloud_name": "默认区域",
+			"bk_host_name": "host-101", "bk_host_innerip": "10.0.0.1", "bk_cloud_id": int64(0), "bk_cloud_name": "默认区域",
 		},
 	}, true, nil
 }

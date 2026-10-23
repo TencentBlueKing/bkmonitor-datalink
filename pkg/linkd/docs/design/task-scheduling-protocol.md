@@ -19,6 +19,10 @@ worker ID 是本次进程会话。all-in-one 显式聚合两种角色为一个 a
 worker 每 3 秒发送独立心跳，带会话、递增请求序号、任务代次、阶段与实际 partition；RPC 超时 2 秒。
 中心原子检查 Leader 身份与完整旧协调快照，再保存转移和新授权。迟到/重复序号不会延长租约。
 
+每个任务的 `heartbeat_at` 保存中心最近接受该 Worker、该执行代次的活动任务报告的时间，
+与新事件、消费速率和处理结果无关。未收到报告时不提供该字段；任务停止后保留最后活动心跳，
+停止后的报告不再刷新，新代次从未上报开始。它证明 Worker 仍在报告任务存活，不证明处理链路没有阻塞或下游已成功。
+
 ```text
 preparing → worker 加载固定 Release → prepared 报告
           → 中心记录 starting 授权 → worker 启动 → running 报告

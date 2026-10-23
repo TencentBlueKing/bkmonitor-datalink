@@ -234,6 +234,10 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 			if !ok || t.Worker != w.ID || t.Epoch != r.Epoch {
 				continue
 			}
+			// 独立于业务事件记录活动报告，停止任务不能被进程后续心跳伪装成存活。
+			if t.Phase != "stopped" && r.Phase != "stopped" {
+				t.HeartbeatAt = now
+			}
 			if len(r.Recovered) > 0 {
 				t.Retired = slices.DeleteFunc(t.Retired, func(owner string) bool { return slices.Contains(r.Recovered, owner) })
 				s.Tasks[t.ID] = t

@@ -122,6 +122,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | TaskKey | 带 deployment、管理/租户作用域、模块与稳定资源/分片身份的互斥执行单元 |
 | assignment_epoch | 同一 TaskKey 的执行代次，每次重新分配递增，不等于来源发布版本 |
 | session_id | 本次 worker 进程启动的会话身份，重启不可复用 |
+| heartbeat_at | 控制面最近接受对应任务代次的活动报告的时间，不依赖新事件；停止后保留最后活动时间 |
 | StoppedConfirmed | 中心原子确认旧任务已停止，允许后续分配 |
 | ForcedStopped | 授权到期及安全余量后完成必要隔离的强切决议，不伪造为 worker 的停止报告 |
 | FastRestart | 满足模块停止契约后快速完成停止、确认和新分配，不跳过互斥交接 |

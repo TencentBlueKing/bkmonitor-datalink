@@ -663,6 +663,8 @@ func (d *DorisSQLExpr) buildCondition(c metadata.ConditionField) (string, error)
 
 	oldKey = c.DimensionName
 	key, _ = d.dimTransform(oldKey)
+	// 字段属性（分词、数组）须按 dimTransform 解析出的物理字段读取
+	c.DimensionName = d.physicalFieldName(oldKey)
 
 	// 对值进行转义处理。不要改写 c.Value，它可能与上游 Query 被多个并发路由共享。
 	values := make([]string, len(c.Value))
@@ -970,6 +972,14 @@ func (d *DorisSQLExpr) getField(s string) (metadata.FieldOption, bool) {
 	}
 
 	return fo, false
+}
+
+func (d *DorisSQLExpr) physicalFieldName(s string) string {
+	s = normalizeDorisFieldName(s)
+	if alias, ok := d.fieldAlias[s]; ok {
+		return alias
+	}
+	return s
 }
 
 func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {

@@ -10,7 +10,7 @@
 # 在 pkg/linkd 目录构建：make image
 # 或 docker build --build-arg VERSION=<version> -t linkd:<tag> .
 
-ARG GO_IMAGE=golang:1.26.7
+ARG GO_IMAGE=golang:1.26.10
 ARG RUNTIME_IMAGE=tencentos/tencentos4-minimal
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
 

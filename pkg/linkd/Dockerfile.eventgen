@@ -9,7 +9,7 @@
 
 # 独立模拟器镜像，仅通过 make eventgen-image 或 workflow 显式选择构建。
 
-ARG GO_IMAGE=golang:1.26.7
+ARG GO_IMAGE=golang:1.26.10
 ARG RUNTIME_IMAGE=tencentos/tencentos4-minimal
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
 

@@ -1,6 +1,6 @@
 # 在自建构建机发布镜像与 Chart
 
-使用 `scripts/ci-release.sh` 将镜像编译放在现有 Dockerfile 内执行。宿主机需要 Bash、Git、Docker Engine 及 Buildx 插件；打包 Chart 的机器还需要 Helm、curl 和 sha256sum。Go 1.26.7、Node 24、pnpm 11.24.0 由构建镜像提供，不要求宿主机安装。DevOps Agent 所需的 JDK 由构建机自身管理。
+使用 `scripts/ci-release.sh` 将镜像编译放在现有 Dockerfile 内执行。宿主机需要 Bash、Git、Docker Engine 及 Buildx 插件；打包 Chart 的机器还需要 Helm、curl 和 sha256sum。Go 1.26.10、Node 24、pnpm 11.24.0 由构建镜像提供，不要求宿主机安装。DevOps Agent 所需的 JDK 由构建机自身管理。
 
 amd64 和 arm64 各自在原生 Linux 构建机上执行，不需要 QEMU。每种架构生成 `linkd` 和 `linkd-console` 两个镜像。脚本校验 Docker 服务端架构、成品镜像架构，以及两个镜像的 `version` 命令输出。
 
@@ -14,7 +14,7 @@ export TARGET_ARCH=amd64
 export PACKAGE_VERSION=0.1.0-ci.123
 export IMAGE_REPOSITORY=registry.example.com/project/images
 # 从 CI 凭据管理绑定 REGISTRY_USER、REGISTRY_PASSWORD。
-export GO_IMAGE=golang:1.26.7
+export GO_IMAGE=golang:1.26.10
 export RUNTIME_IMAGE=tencentos/tencentos4-minimal
 export NODE_IMAGE=node:24-bookworm-slim
 export GOPROXY=https://proxy.golang.org,direct

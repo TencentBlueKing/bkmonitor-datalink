@@ -1,6 +1,6 @@
 module linkd
 
-go 1.26.7
+go 1.26.10
 
 require (
 	github.com/dlclark/regexp2/v2 v2.9.1

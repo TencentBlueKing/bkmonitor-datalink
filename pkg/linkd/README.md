@@ -99,7 +99,7 @@ Event/Alert 保存实际使用的 event_source_version，来源级 Stream 支持
 
 ## 本地开发
 
-要求 Go 1.26.7、golangci-lint v2.13.2，以及已安装依赖的 Node.js/pnpm 环境。
+要求 Go 1.26.10、golangci-lint v2.13.2，以及已安装依赖的 Node.js/pnpm 环境。
 
 ```bash
 go run ./cmd/linkd config validate --config ./configs/linkd.yaml

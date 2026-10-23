@@ -258,6 +258,19 @@ default:
           burst: {{ qps_config.qps }}
 {%- endif %}
 
+{% if traffic_limiter_config is defined %}
+      - name: '{{ traffic_limiter_config.name }}'
+        config:
+          bytes_per_second: {{ traffic_limiter_config.bytes_per_second }}
+          burst_bytes: {{ traffic_limiter_config.burst_bytes }}
+{%- if traffic_limiter_config.weights is defined %}
+          weights:
+            traces: {{ traffic_limiter_config.weights.traces | default(1, true) }}
+            metrics: {{ traffic_limiter_config.weights.metrics | default(1, true) }}
+            logs: {{ traffic_limiter_config.weights.logs | default(1, true) }}
+{%- endif %}
+{%- endif %}
+
 {% if resource_filter_config is defined %}
       - name: '{{ resource_filter_config.name }}'
         config:
@@ -457,6 +470,19 @@ service:
         config:
           type: '{{ service_config.sampler_config.type }}'
           sampling_percentage: {{ service_config.sampler_config.sampling_percentage }}
+{%- endif %}
+
+{% if service_config.traffic_limiter_config is defined %}
+      - name: '{{ service_config.traffic_limiter_config.name }}'
+        config:
+          bytes_per_second: {{ service_config.traffic_limiter_config.bytes_per_second }}
+          burst_bytes: {{ service_config.traffic_limiter_config.burst_bytes }}
+{%- if service_config.traffic_limiter_config.weights is defined %}
+          weights:
+            traces: {{ service_config.traffic_limiter_config.weights.traces | default(1, true) }}
+            metrics: {{ service_config.traffic_limiter_config.weights.metrics | default(1, true) }}
+            logs: {{ service_config.traffic_limiter_config.weights.logs | default(1, true) }}
+{%- endif %}
 {%- endif %}
 {%- endfor %}
 {%- endif %}

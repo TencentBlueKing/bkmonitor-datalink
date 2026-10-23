@@ -1004,6 +1004,21 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			CostProfile:   costProfile,
 		}
 
+		// SaaS 把计算平台指标的 eq/neq 映射成 contains/ncontains，这里保持多值精确匹配，不走 Doris 的子串匹配
+		for _, conds := range query.AllConditions {
+			for i := range conds {
+				if conds[i].IsWildcard || conds[i].IsPrefix || conds[i].IsSuffix {
+					continue
+				}
+				switch conds[i].Operator {
+				case metadata.ConditionContains:
+					conds[i].Operator = metadata.ConditionEqual
+				case metadata.ConditionNotContains:
+					conds[i].Operator = metadata.ConditionNotEqual
+				}
+			}
+		}
+
 		query.SQL = q.SQL
 		query.QueryString = q.QueryString
 		query.IsPrefix = q.IsPrefix

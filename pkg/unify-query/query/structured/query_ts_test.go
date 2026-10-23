@@ -786,6 +786,38 @@ func TestBkData_SQL_ToFinalSQL(t *testing.T) {
 	}
 }
 
+func TestBkData_ContainsKeepsExactMatch(t *testing.T) {
+	mock.Init()
+	ctx := md.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+
+	q := &Query{
+		DataSource:    BkData,
+		TableID:       "2_bklog_unit_test.doris",
+		FieldName:     "gseIndex",
+		ReferenceName: "a",
+		Conditions: Conditions{
+			FieldList: []ConditionField{
+				{DimensionName: "env", Value: []string{"prod", "test"}, Operator: ConditionContains},
+				{DimensionName: "env", Value: []string{"dev"}, Operator: ConditionNotContains},
+				{DimensionName: "env", Value: []string{"*pr*"}, Operator: ConditionContains, IsWildcard: true},
+				{DimensionName: "env", Value: []string{"pr", "te"}, Operator: ConditionContains, IsPrefix: true},
+			},
+			ConditionList: []string{"and", "and", "and"},
+		},
+	}
+	metric, err := q.ToQueryMetric(ctx, influxdb.SpaceUid, nil)
+	require.NoError(t, err)
+	require.Len(t, metric.QueryList, 1)
+
+	var ops []string
+	for _, c := range metric.QueryList[0].AllConditions[0] {
+		ops = append(ops, c.Operator)
+	}
+	assert.Equal(t, []string{md.ConditionEqual, md.ConditionNotEqual, md.ConditionContains, md.ConditionContains}, ops)
+	assert.Equal(t, ConditionContains, q.Conditions.FieldList[0].Operator, "不得改写调用方的条件")
+}
+
 // TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList 端到端：Query 带 TableIDConditions → ToQueryMetric(tsDBs=nil) → GetTsDBList 选表，链路打通；mock 下无匹配 Labels 时 QueryList 为空
 func TestE2E_Query_TableIDConditions_ToQueryMetric_GetTsDBList(t *testing.T) {
 	mock.Init()

@@ -12,6 +12,7 @@ package converter
 import (
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/elastic/beats/libbeat/common"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 type metricsEvent struct {
@@ -31,7 +33,7 @@ func (e metricsEvent) RecordType() define.RecordType {
 	return define.RecordMetrics
 }
 
-type metricsConverter struct{}
+type metricsConverter struct{ metadata metricmeta.Observer }
 
 func (c metricsConverter) Clean() {}
 
@@ -42,8 +44,6 @@ func (c metricsConverter) ToEvent(token define.Token, dataId int32, data common.
 func (c metricsConverter) ToDataID(record *define.Record) int32 {
 	return record.Token.MetricsDataId
 }
-
-
 
 func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 	pdMetrics := record.Data.(pmetric.Metrics)
@@ -62,10 +62,21 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 			scopeMetric := scopeMetricsSlice.At(j)
 			dimensions := pcommon.NewMap()
 			rs.CopyTo(dimensions)
-            utils.InsertString(dimensions, "scope_name", scopeMetric.Scope().Name())
+			utils.InsertString(dimensions, "scope_name", scopeMetric.Scope().Name())
 			metrics := scopeMetric.Metrics()
 			for k := 0; k < metrics.Len(); k++ {
-				for _, dp := range c.Extract(metrics.At(k), dimensions) {
+				metric := metrics.At(k)
+				originalName := metric.Name()
+				for _, dp := range c.Extract(metric, dimensions) {
+					if c.metadata != nil {
+						for name := range dp["metrics"].(map[string]float64) {
+							if value, ok := otlpMetadata(metric, originalName, name); ok {
+								observeMetadata(c.metadata, dataId, dp["dimension"].(map[string]string), name, value)
+							} else {
+								metadataDropped.WithLabelValues("unknown_semantics").Inc()
+							}
+						}
+					}
 					events = append(events, c.ToEvent(record.Token, dataId, dp))
 				}
 			}
@@ -74,6 +85,49 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 			f(events...)
 		}
 	}
+}
+
+func otlpMetadata(m pmetric.Metric, originalName, output string) (metricmeta.Value, bool) {
+	typ, original, temporality, usage, unit := "counter", "", "delta", "sum", m.Unit()
+	var aggregation pmetric.MetricAggregationTemporality
+	switch m.Type() {
+	case pmetric.MetricTypeSum:
+		original, aggregation = "sum", m.Sum().AggregationTemporality()
+		if !m.Sum().IsMonotonic() {
+			typ = "gauge"
+		}
+	case pmetric.MetricTypeGauge:
+		original, typ, usage = "gauge", "gauge", "last"
+	case pmetric.MetricTypeHistogram:
+		original, aggregation = "histogram", m.Histogram().AggregationTemporality()
+		if strings.HasSuffix(output, "_min") {
+			typ, usage = "gauge", "min"
+		}
+		if strings.HasSuffix(output, "_max") {
+			typ, usage = "gauge", "max"
+		}
+	case pmetric.MetricTypeSummary:
+		original, temporality = "summary", "cumulative"
+		if output == m.Name() {
+			typ, temporality, usage = "gauge", "delta", "last"
+		}
+	default:
+		return metricmeta.Value{}, false
+	}
+	if original == "sum" || original == "histogram" {
+		switch aggregation {
+		case pmetric.MetricAggregationTemporalityDelta:
+			temporality = "delta"
+		case pmetric.MetricAggregationTemporalityCumulative:
+			temporality = "cumulative"
+		default:
+			return metricmeta.Value{}, false
+		}
+	}
+	if (original == "histogram" || original == "summary") && (output == m.Name()+"_count" || output == m.Name()+"_bucket") {
+		unit = "1"
+	}
+	return metadataValue(originalName, original, typ, temporality, usage, unit, m.Description()), true
 }
 
 type otMetricMapper struct {

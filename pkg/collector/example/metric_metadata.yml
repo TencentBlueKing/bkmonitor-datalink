@@ -1,0 +1,28 @@
+# 合并到主配置；默认通过 /metrics 暴露元信息 info 指标。
+bk-collector:
+  exporter:
+    metric_metadata:
+      enabled: false
+      endpoint: "" # 可选 HTTP 接收地址；非空时替代 info 指标导出。
+      info_retention: 2m # 应至少覆盖两次采集间隔。
+      flush_interval: 1m
+      full_report_interval: 2h
+      bloom_capacity: 100000
+      bloom_error_rate: 0.000001
+      max_pending_entries: 100000
+      max_entry_bytes: 4096
+      export_batch_size: 1000
+      export_batch_bytes: 262144
+      export_min_interval: 100ms
+      export_timeout: 5s
+      debounce_interval: 1m
+      debounce_max_wait: 10m
+      circuit_window: 1m
+      max_updates: 100000
+      max_updates_per_dataid: 10000
+      blocked_dataids: []
+      # 独立限额覆盖默认 DataID 配额；max_updates 为 0 时禁用该 DataID。
+      dataid_limits: []
+      # dataid_limits:
+      #   - dataid: 1001
+      #     max_updates: 1000

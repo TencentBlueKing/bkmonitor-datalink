@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/converter"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/exporter/queue"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 // 不同类型的数据大小不同 所以队列大小要单独调整
@@ -30,9 +31,18 @@ const (
 )
 
 type Config struct {
-	MaxMessageBytes int              `config:"max_message_bytes"`
-	Queue           queue.Config     `config:"queue"`
-	Converter       converter.Config `config:"converter"`
+	MetricMetadata  MetricMetadataConfig `config:"metric_metadata"`
+	MaxMessageBytes int                  `config:"max_message_bytes"`
+	Queue           queue.Config         `config:"queue"`
+	Converter       converter.Config     `config:"converter"`
+}
+
+// MetricMetadataConfig 控制元信息准入与导出；Endpoint 为空时发布 info 指标。
+type MetricMetadataConfig struct {
+	Enabled           bool          `config:"enabled"`
+	Endpoint          string        `config:"endpoint"`
+	InfoRetention     time.Duration `config:"info_retention"`
+	metricmeta.Config `config:",inline"`
 }
 
 func (c *Config) Validate() {

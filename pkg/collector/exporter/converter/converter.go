@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 var converterSpanKindTotal = promauto.NewCounterVec(
@@ -49,19 +50,24 @@ type EventConverter interface {
 }
 
 func NewCommonConverter(conf *Config) Converter {
+	return NewCommonConverterWithMetadata(conf, nil)
+}
+
+// NewCommonConverterWithMetadata 为各协议注入元信息观察器，nil 保持原转换行为。
+func NewCommonConverterWithMetadata(conf *Config, observer metricmeta.Observer) Converter {
 	return commonConverter{
 		traces:      tracesConverter{},
-		metrics:     metricsConverter{},
+		metrics:     metricsConverter{metadata: observer},
 		logs:        logsConverter{},
-		pushGateway: pushGatewayConverter{},
-		remoteWrite: remoteWriteConverter{},
+		pushGateway: pushGatewayConverter{metadata: observer},
+		remoteWrite: remoteWriteConverter{metadata: observer},
 		proxy:       proxyConverter{},
 		pingserver:  pingserverConverter{},
 		profiles:    profilesConverter{},
 		fta:         ftaConverter{},
 		beat:        beatConverter{},
 		logPush:     logPushConverter{},
-		tars:        newTarsConverter(conf.Tars),
+		tars:        newTarsConverterWithMetadata(conf.Tars, observer),
 	}
 }
 

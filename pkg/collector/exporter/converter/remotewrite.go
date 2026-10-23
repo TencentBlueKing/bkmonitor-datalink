@@ -15,6 +15,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 type remoteWriteEvent struct {
@@ -25,7 +26,7 @@ func (e remoteWriteEvent) RecordType() define.RecordType {
 	return define.RecordRemoteWrite
 }
 
-type remoteWriteConverter struct{}
+type remoteWriteConverter struct{ metadata metricmeta.Observer }
 
 func (c remoteWriteConverter) Clean() {}
 
@@ -40,6 +41,10 @@ func (c remoteWriteConverter) ToDataID(record *define.Record) int32 {
 func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc) {
 	rwData := record.Data.(*define.RemoteWriteData)
 	dataId := c.ToDataID(record)
+	aligned := len(rwData.MetricDescriptors) == len(rwData.Timeseries)
+	if c.metadata != nil && len(rwData.MetricDescriptors) > 0 && !aligned {
+		metadataDropped.WithLabelValues("descriptor_mismatch").Inc()
+	}
 	events := make([]define.Event, 0)
 	for i := 0; i < len(rwData.Timeseries); i++ {
 		ts := rwData.Timeseries[i]
@@ -49,10 +54,15 @@ func (c remoteWriteConverter) Convert(record *define.Record, f define.GatherFunc
 			target = define.Identity()
 		}
 		samples := ts.GetSamples()
+		registered := false
 		for j := 0; j < len(samples); j++ {
 			sample := samples[j]
 			if !utils.IsValidFloat64(sample.GetValue()) {
 				continue
+			}
+			if c.metadata != nil && aligned && !registered && rwData.MetricDescriptors[i] != nil {
+				observeMetadata(c.metadata, dataId, dims, name, *rwData.MetricDescriptors[i])
+				registered = true
 			}
 
 			pm := promMapper{

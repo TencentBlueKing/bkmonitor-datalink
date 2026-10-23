@@ -80,6 +80,35 @@ func TestBucketRouterRejectsFutureEvent(t *testing.T) {
 	}
 }
 
+func TestBucketRouterRoutesLegacyIDs(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 2, 16, 0, 0, 0, time.UTC)
+	router, err := newBucketRouter("linkd-test", BucketConfig{
+		EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 14,
+		ActiveAlertRefreshInterval: 5 * time.Second,
+	}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyID := "20260902160000.tenant-1.source-1.9491b949a3d482c4"
+	eventRoute, err := router.EventRoute(t.Context(), legacyID)
+	if err != nil || eventRoute.WriteTarget != "linkd-test-events-write-20260831" {
+		t.Fatalf("legacy event route=%#v err=%v", eventRoute, err)
+	}
+	alertRoute, err := router.AlertRoute(t.Context(), legacyID)
+	if err != nil || len(alertRoute.ReadTargets) != 2 || alertRoute.ReadTargets[1] != "linkd-test-alert-history-write-20260831" {
+		t.Fatalf("legacy alert route=%#v err=%v", alertRoute, err)
+	}
+	historyRoute, err := router.AlertHistoryRoute(t.Context(), legacyID)
+	if err != nil || historyRoute.WriteTarget != "linkd-test-alert-history-write-20260831" {
+		t.Fatalf("legacy history route=%#v err=%v", historyRoute, err)
+	}
+	logRoute, err := router.AlertLogReadRoute(t.Context(), legacyID)
+	if err != nil || len(logRoute.ReadTargets) != 1 || logRoute.ReadTargets[0] != "linkd-test-alert-logs-write-20260831" {
+		t.Fatalf("legacy alert log route=%#v err=%v", logRoute, err)
+	}
+}
+
 func TestBucketRouterConfiguresReplicaCountForNewIndices(t *testing.T) {
 	t.Parallel()
 	zero := 0

@@ -1375,9 +1375,7 @@ func assertEvents(
 			t.Fatalf("standard source field mapping mismatch: event=%#v raw=%#v", event, raw)
 		}
 		parsedID, err := domain.ParseEventID(event.EventID)
-		if err != nil || parsedID.BKTenantID != event.BKTenantID ||
-			parsedID.EventSourceID != event.EventSourceID ||
-			!parsedID.Timestamp.Equal(event.ReceivedAt.Truncate(time.Second)) {
+		if err != nil || !parsedID.Timestamp.Equal(event.ReceivedAt.Truncate(time.Second)) {
 			t.Fatalf("Event ID %q is not a valid deterministic route: %#v, %v", event.EventID, parsedID, err)
 		}
 	}

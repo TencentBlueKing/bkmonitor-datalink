@@ -96,9 +96,6 @@ func (r *Repository) prepareBulkAlertLog(ctx context.Context, log domain.AlertLo
 	if err := validateIdentity(normalized.BKTenantID, "alert_id", normalized.AlertID); err != nil {
 		return bulkAlertLogCreateItem{}, err
 	}
-	if err := validateBucketAlertReference(r.router, normalized.BKTenantID, normalized.AlertID); err != nil {
-		return bulkAlertLogCreateItem{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
-	}
 	if err := validateDateNanos("alert log created_time", normalized.CreatedTime); err != nil {
 		return bulkAlertLogCreateItem{}, err
 	}

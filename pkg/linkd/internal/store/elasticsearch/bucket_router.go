@@ -305,9 +305,8 @@ func validateBucketEventIdentity(router Router, event domain.Event) error {
 	if err != nil {
 		return err
 	}
-	if parsed.BKTenantID != event.BKTenantID || parsed.EventSourceID != event.EventSourceID ||
-		!parsed.Timestamp.Equal(event.ReceivedAt.UTC().Truncate(time.Second)) {
-		return fmt.Errorf("event id route does not match bk_tenant_id, event_source_id, or received_at")
+	if !parsed.Timestamp.Equal(event.ReceivedAt.UTC().Truncate(time.Second)) {
+		return fmt.Errorf("event id route does not match received_at")
 	}
 	return nil
 }
@@ -320,23 +319,8 @@ func validateBucketAlertIdentity(router Router, alert domain.Alert) error {
 	if err != nil {
 		return err
 	}
-	if parsed.BKTenantID != alert.BKTenantID || parsed.EventSourceID != alert.EventSourceID ||
-		!parsed.Timestamp.Equal(alert.CreateAt.UTC().Truncate(time.Second)) {
-		return fmt.Errorf("alert id route does not match bk_tenant_id, event_source_id, or create_at")
-	}
-	return nil
-}
-
-func validateBucketAlertReference(router Router, bkTenantID, alertID string) error {
-	if _, ok := router.(*BucketRouter); !ok {
-		return nil
-	}
-	parsed, err := domain.ParseAlertID(alertID)
-	if err != nil {
-		return err
-	}
-	if parsed.BKTenantID != bkTenantID {
-		return fmt.Errorf("alert id route does not match bk_tenant_id")
+	if !parsed.Timestamp.Equal(alert.CreateAt.UTC().Truncate(time.Second)) {
+		return fmt.Errorf("alert id route does not match create_at")
 	}
 	return nil
 }

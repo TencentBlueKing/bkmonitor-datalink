@@ -26,7 +26,7 @@ func TestDeterministicAlertID(t *testing.T) {
 	second, _ := generator.Generate(event)
 	parsed, parseErr := domain.ParseAlertID(first)
 	if first != second || first == "" || len(first) > domain.EntityIDMaxBytes || parseErr != nil ||
-		parsed.BKTenantID != event.BKTenantID || parsed.EventSourceID != event.EventSourceID {
+		!parsed.Timestamp.Equal(event.CreateAt.UTC().Truncate(time.Second)) {
 		t.Fatalf("ids=%q,%q", first, second)
 	}
 	event.EventID = "event-2"

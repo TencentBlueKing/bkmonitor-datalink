@@ -121,7 +121,7 @@ KAC `AlarmEvent` ES 模型已声明 `bk_tenant_id`，见
   "item": "CPU 使用率",
   "metric_name": "usage",
   "name": "CPU 使用率过高",
-  "event_id": "linkd-20260901000002.tenant-1.built_in_bk.a1b2c3d4e5f60708",
+  "event_id": "linkd-alert-20260901000002-k7m2q5n4r6t3a",
   "alarm_time": "2026-09-01 08:00:00",
   "content": "Host 10.0.0.1 CPU usage reached 92.5%",
   "action": "firing",
@@ -183,9 +183,10 @@ KAC `AlarmEvent` ES 模型已声明 `bk_tenant_id`，见
 
 ### 4.2 身份、动作与时间
 
-临时兼容说明：KAC 详情及相关 URL 路由当前使用 `[\w-]` 形式的路径参数约束，Linkd AlertID 中的句点无法匹配。
-KAC Hook 因此将 `alarm_id` 改写为带 `linkd-` 前缀的稳定 UUID；`event_id` 继续保留 Linkd AlertID，
-用于 KAC 按事件关联 firing 与 resolved/close。KAC 路由放宽后可再评估是否恢复直接使用 Linkd AlertID。
+KAC Hook 的 `alarm_id` 继续使用带 `linkd-` 前缀的稳定 UUID；该映射最初用于兼容
+KAC `[\w-]` 路由无法接收旧 Linkd Alert ID 点号的问题。新的 `alert-` 格式使用连字符，
+但本次不改变既有 KAC 文档身份映射。`event_id` 继续保留 `linkd-` 加 Linkd Alert ID，
+用于 KAC 按事件关联 firing 与 resolved/close。
 
 | KAC 字段/Record 属性 | 建议规则 | 理由 |
 | --- | --- | --- |

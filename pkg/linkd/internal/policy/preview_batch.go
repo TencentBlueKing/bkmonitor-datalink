@@ -63,7 +63,7 @@ func (p *Previewer) PreviewBatch(ctx context.Context, request BatchPreviewReques
 		return BatchPreviewResponse{}, fmt.Errorf("%w: time shield spec and 1..32 alert_ids required", ErrInvalid)
 	}
 	for _, id := range request.AlertIDs {
-		// AlertID 是带点号分隔的完整实体身份，不能使用租户/来源片段的字符限制。
+		// AlertID 是完整实体身份，不能使用租户/来源片段的字符限制。
 		// 与其他按 ID 查询入口一致，仅约束请求长度，归属由下方事实读取确认。
 		if id == "" || len(id) > domain.EntityIDMaxBytes {
 			return BatchPreviewResponse{}, fmt.Errorf("%w: invalid alert_id", ErrInvalid)

@@ -162,7 +162,7 @@ reason、groups（逐条件结果）及可用的 group_key。`evaluated=false` �
 `{mode:"matching_only",at,items:[{alert_id,severity,evaluated,matched,reason,fields}]}`；
 缺失记录或字段不可用逐项标记，租户不符拒绝请求。展示字段只读取已注册的有效事实，不能返回原始载荷。
 KAC 在调用前裁剪用户权限，Linkd 保留租户门禁；接口不扫描租户全部告警，不产生屏蔽绑定或其它写入。
-`alert_ids` 接收实际存储的完整 Alert ID（包括点号分隔格式），每项 1 至 160 字节；不得使用租户或来源身份片段的字符限制。
+`alert_ids` 接收实际存储的完整 Alert ID（新 `alert-` 格式或存量点号格式），每项 1 至 160 字节；不得使用租户或来源身份片段的字符限制。
 
 时间屏蔽支持有效 target_descriptor 配合空 policy，依赖屏蔽仍要求非空主／子条件。
 屏蔽主、子条件及引用替换统一使用 regexp2，不提供引擎配置项。

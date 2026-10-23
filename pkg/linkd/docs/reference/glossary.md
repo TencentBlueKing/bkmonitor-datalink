@@ -25,6 +25,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | SourceCleaner   | 由 EventSource 选择的来源解析器，只把 payload 中的来源事实解析为 EventDraft                       |
 | EventDraft      | Cleaner 提取的来源事实，不含 EventFactory 独占的身份、标准化结果和原始快照                         |
 | Event           | 标准化后的不可变来源事实；生命周期只允许补写 `related_alert_ids`                                   |
+| Event ID        | Linkd 事件身份，格式为 `event-<YYYYMMDDHHMMSS>-<13 位小写 Base32 摘要>`；时间为 UTC 接收时间，租户和来源参与摘要但不明文展示 |
 | source_raw_data | Event 保存的完整来源 payload 的 JSON 对象快照，创建后不可修改，定位为人工追溯资料；本次丰富迁移尽量不读取它，不将其作为默认输入或缺字段兜底 |
 | extra_data      | Event 中不进入核心字段的来源扩展数据，创建时确定并保持不可变；不承担丰富结果或处理工作区的职责      |
 | 无数据周期数（no_data_periods） | alarmd 检测时按 LastSeen 或 FirstAbsent 选定并冻结的无数据周期数，标准输入保存在 extra_data；不是配置 continuous、滚动窗口异常数或旧 bk-monitor 的延时周期数。文案边界见[标准事件](contracts/standard-event.md#无数据描述的检测事实)。 |
@@ -35,6 +36,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | 内容文案算法等级映射 | 丰富侧声明的策略内容文案算法等级到 Linkd Severity 名称的对应关系，用于选择本次告警的文案加工算法；默认 1→critical、2→warning、3→info，不由排序 priority 推断；智能算法专用图表增强不在本次范围 |
 | source_event_id | 来源提供的原始事件编号，允许触发与恢复复用；内部 Event ID 按稳定输入记录身份生成 |
 | Alert           | 从首个 triggered Event 创建的一次异常生命周期；继承字段创建后永久锁定                             |
+| Alert ID        | Linkd 告警生命周期身份，格式为 `alert-<YYYYMMDDHHMMSS>-<13 位小写 Base32 摘要>`；时间为 opening Event 的 UTC 创建锚点，不等同于异常发生时间 |
 | test（丰富处理器） | 通过进程内 datasource 模拟随机延迟、调用超时和概率故障的负载处理器；成功后写入固定 JSON 字段，调用进入统一数据源指标 |
 | 告警丰富        | 依据告警特征及依赖数据生成补充信息，结果按 evaluation 保存在 Event.enrich；Alert 复制 opening Event 结果，不覆盖来源事实 |
 | 丰富分类        | 用于选择一个告警丰富主处理路径的分类，各分类可有内部特殊分支并共用依赖数据；不等同于 EventSource、告警等级或生命周期状态 |

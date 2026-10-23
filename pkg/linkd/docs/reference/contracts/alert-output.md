@@ -7,11 +7,11 @@
   "message_id": "<opaque-digest>",
   "schema_version": "1",
   "bk_tenant_id": "system",
-  "alert_id": "<opaque-digest>",
+  "alert_id": "alert-20260901000000-k7m2q5n4r6t3a",
   "update_at": "2026-09-01T00:00:00Z",
   "cause": {
     "type": "source_event",
-    "id": "<opaque-digest>"
+    "id": "event-20260901000000-f4r6m2q7n5t3a"
   },
   "enrich_status": "succeeded",
   "alert": {
@@ -22,6 +22,9 @@
 ```
 
 `cause.type` 只允许 `source_event | user_operation | system_operation`，`cause.id` 是对应 Event ID 或稳定 operation ID。Kafka headers 同步携带 `message_id`、`schema_version`、`bk_tenant_id`、`alert_id`、`cause_type` 和 `cause_id`。
+
+新生成的 Alert ID 与 Event ID 使用单词前缀、UTC 秒级时间和 13 位小写 Base32 摘要，均为 34 个字符；
+具体身份规则见[身份与租户](../../design/architecture.md#身份与租户)。存量快照继续携带原有 ID，消费者应将完整 ID 作为不透明字符串使用。
 
 `message_id` 由租户、`alert_id` 和 `update_at` 确定性生成；partition key 由租户和 `alert_id` 确定性生成。生产端等待 all-ISR ACK，失败不伪装成已投递。
 

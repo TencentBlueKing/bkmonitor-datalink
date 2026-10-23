@@ -63,8 +63,8 @@ func TestMapperBuildsStableEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	parsedID, parseErr := domain.ParseEventID(first.EventID)
-	if first.EventID != second.EventID || parseErr != nil || parsedID.BKTenantID != first.BKTenantID ||
-		parsedID.EventSourceID != source.EventSourceID || first.EventSourceID != source.EventSourceID ||
+	if first.EventID != second.EventID || parseErr != nil || !parsedID.Timestamp.Equal(first.ReceivedAt.Truncate(time.Second)) ||
+		first.EventSourceID != source.EventSourceID ||
 		first.Fingerprint != "source-alert-1" || first.Evaluations[0].Severity != "warning" || len(first.RelatedAlertIDs) != 0 {
 		t.Fatalf("event=%#v", first)
 	}

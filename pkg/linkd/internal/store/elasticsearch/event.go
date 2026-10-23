@@ -502,9 +502,6 @@ func (r *Repository) ListEventsByAlert(
 	if err := validateIdentity(bkTenantID, "alert_id", alertID); err != nil {
 		return store.EventPage{}, err
 	}
-	if err := validateBucketAlertReference(r.router, bkTenantID, alertID); err != nil {
-		return store.EventPage{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
-	}
 	alert, err := r.GetAlert(ctx, bkTenantID, alertID)
 	if err != nil {
 		return store.EventPage{}, err

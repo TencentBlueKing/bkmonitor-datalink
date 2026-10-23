@@ -62,7 +62,7 @@ func TestGeneratedContentOnlyRunsOnCreation(t *testing.T) {
 			persistAndProcess(t, repo, processor, repeat)
 			higher := testEvent("upgrade", "critical")
 			higher.Content = "upgraded source text"
-			upgrade := persistAndProcess(t, repo, processor, higher)
+			persistAndProcess(t, repo, processor, higher)
 			old, err := repo.GetAlert(context.Background(), opening.BKTenantID, created.AlertIDs[0])
 			wantOldContent := repeat.Content
 			if policy == "update_current" {
@@ -79,7 +79,9 @@ func TestGeneratedContentOnlyRunsOnCreation(t *testing.T) {
 			if policy == "close_and_create" {
 				wantCalls, wantContent = 2, "generated:upgrade"
 			}
-			current, err := repo.GetAlert(context.Background(), opening.BKTenantID, upgrade.AlertIDs[len(upgrade.AlertIDs)-1])
+			current, err := repo.FindActiveAlert(context.Background(), store.ActiveAlertKey{
+				BKTenantID: opening.BKTenantID, EventSourceID: opening.EventSourceID, Fingerprint: opening.Fingerprint,
+			})
 			if err != nil || current.Alert.Content != wantContent || calls != wantCalls {
 				t.Fatalf("current content %q calls %d error %v", current.Alert.Content, calls, err)
 			}

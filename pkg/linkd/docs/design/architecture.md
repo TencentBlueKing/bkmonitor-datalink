@@ -190,9 +190,14 @@ flowchart TB
 ## 身份与租户
 
 - 所有数据、查询、锁、信号和缓存键都带租户作用域。
-- EventID/AlertID 使用 `<YYYYMMDDHHMMSS>.<tenant>.<event_source_id>.<16 hex>`；时间固定按 UTC 秒解析，
-  摘要使用不同 domain seed 的 SHA-256 前 64 bit。Event 摘要包含完整 received_at 和稳定来源身份，Alert
-  摘要包含 opening Event，因此重投不变。
+- EventID 使用 `event-<YYYYMMDDHHMMSS>-<digest>`，AlertID 使用 `alert-<YYYYMMDDHHMMSS>-<digest>`，
+  均为 34 个字符。时间固定按 UTC 秒展示：Event 使用 received_at，Alert 使用 opening Event 的 create_at，
+  不等同于异常发生时间。digest 是不同 domain seed 的 SHA-256 前 64 bit，以 13 位小写 Base32
+  （`a-z2-7`、无 padding）编码。租户和来源仍参与摘要，但不明文拼接；Event 摘要包含完整 received_at
+  和稳定来源身份，Alert 摘要包含 opening Event 与完整创建锚点，同一格式下的重投保持身份稳定。
+- ID 解析仅供时间路由使用：按 `event-` / `alert-` 前缀读取新格式时间，旧点号格式继续读取首段 UTC 时间。
+  租户隔离使用对象字段、租户作用域文档键和查询条件，不从 ID 还原租户或来源，也不验证摘要。
+  存量 ID 不改写；此兼容仅保证旧 ID 的时间路由，不提供旧原始消息按新格式重放时的跨格式去重。
 - fingerprint 只由 EventSource 配置的稳定 Event 字段生成；`source_alert_id` 只能作为 fingerprint 输入，不能形成查询旁路。
 - `related_tenant_id` 非空时强制覆盖租户；否则优先读取 payload 的 `bk_tenant_id`，缺失时使用信封租户，两处非空且不一致则拒绝。
 

@@ -11,8 +11,8 @@ package domain
 
 import (
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"hash"
 	"regexp"
@@ -31,16 +31,13 @@ const (
 
 var (
 	identityPartPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	hexDigestPattern    = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	entityIDEncoding    = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 )
 
-// ParsedEntityID 是 EventID 或 AlertID 中可逆解析的路由信息。
-// Timestamp 固定按 UTC 秒解释；Digest 是稳定身份摘要，不包含可逆的来源业务 ID。
+// ParsedEntityID 是 EventID 或 AlertID 中按 UTC 秒解释的路由时间。
+// 租户和来源使用对象字段及仓储作用域，不从 ID 推断。
 type ParsedEntityID struct {
-	Timestamp     time.Time
-	BKTenantID    string
-	EventSourceID string
-	Digest        string
+	Timestamp time.Time
 }
 
 // GenerateEventID 根据稳定接收时间与来源身份生成可解析且可重放的 EventID。
@@ -53,11 +50,10 @@ func GenerateEventID(
 	}
 	receivedAt = receivedAt.Round(0).UTC()
 	return formatEntityID(
+		"event",
 		receivedAt,
-		bkTenantID,
-		eventSourceID,
 		digestEntityID(eventIDDomain, bkTenantID, eventSourceID, stableSourceID, receivedAt.Format(time.RFC3339Nano)),
-	)
+	), nil
 }
 
 // GenerateAlertID 根据 opening Event 与稳定创建锚点生成可解析且可重放的 AlertID。
@@ -70,32 +66,31 @@ func GenerateAlertID(event Event, createAt time.Time) (string, error) {
 	}
 	createAt = createAt.Round(0).UTC()
 	return formatEntityID(
+		"alert",
 		createAt,
-		event.BKTenantID,
-		event.EventSourceID,
 		digestEntityID(alertIDDomain, event.BKTenantID, event.EventSourceID, event.EventID, createAt.Format(time.RFC3339Nano)),
-	)
+	), nil
 }
 
-// ParseEventID 解析 EventID 中的时间、租户、来源和摘要。
+// ParseEventID 读取 EventID 的 UTC 路由时间，兼容旧点号格式；不验证身份摘要。
 func ParseEventID(value string) (ParsedEntityID, error) {
-	parsed, err := parseEntityID(value)
+	parsed, err := parseEntityID(value, "event")
 	if err != nil {
 		return ParsedEntityID{}, fmt.Errorf("parse event id: %w", err)
 	}
 	return parsed, nil
 }
 
-// ParseAlertID 解析 AlertID 中的时间、租户、来源和摘要。
+// ParseAlertID 读取 AlertID 的 UTC 路由时间，兼容旧点号格式；不验证身份摘要。
 func ParseAlertID(value string) (ParsedEntityID, error) {
-	parsed, err := parseEntityID(value)
+	parsed, err := parseEntityID(value, "alert")
 	if err != nil {
 		return ParsedEntityID{}, fmt.Errorf("parse alert id: %w", err)
 	}
 	return parsed, nil
 }
 
-// ValidateIdentityPart 校验可直接出现在结构化 ID 中的租户或来源片段。
+// ValidateIdentityPart 校验租户、来源等作用域标识的长度和字符范围。
 func ValidateIdentityPart(name, value string, maximum int) error {
 	if len(value) < 1 || len(value) > maximum {
 		return fmt.Errorf("%s length must be between 1 and %d bytes", name, maximum)
@@ -122,43 +117,28 @@ func validateEntityIDInput(bkTenantID, eventSourceID, stableSourceID string, tim
 	return nil
 }
 
-func formatEntityID(timestamp time.Time, bkTenantID, eventSourceID, digest string) (string, error) {
-	value := strings.Join([]string{
-		timestamp.UTC().Format(entityIDTimeLayout),
-		bkTenantID,
-		eventSourceID,
-		digest,
-	}, ".")
-	if len(value) > EntityIDMaxBytes {
-		return "", fmt.Errorf("entity id exceeds %d bytes", EntityIDMaxBytes)
-	}
-	return value, nil
+func formatEntityID(kind string, timestamp time.Time, digest string) string {
+	return kind + "-" + timestamp.UTC().Format(entityIDTimeLayout) + "-" + digest
 }
 
-func parseEntityID(value string) (ParsedEntityID, error) {
+func parseEntityID(value, kind string) (ParsedEntityID, error) {
 	if len(value) < 1 || len(value) > EntityIDMaxBytes {
 		return ParsedEntityID{}, fmt.Errorf("entity id length must be between 1 and %d bytes", EntityIDMaxBytes)
 	}
-	parts := strings.Split(value, ".")
-	if len(parts) != 4 {
-		return ParsedEntityID{}, fmt.Errorf("entity id must contain timestamp, tenant, source, and digest")
+	// 新 ID 通过对象前缀定位时间；旧 ID 仅保留首段时间的读取能力，供存量索引路由使用。
+	// 此处不还原租户或来源，也不校验摘要，避免把路由解析变成业务身份判定。
+	timestampText, _, found := strings.Cut(value, ".")
+	if rest, ok := strings.CutPrefix(value, kind+"-"); ok {
+		timestampText, _, found = strings.Cut(rest, "-")
 	}
-	timestamp, err := time.ParseInLocation(entityIDTimeLayout, parts[0], time.UTC)
-	if err != nil || timestamp.Format(entityIDTimeLayout) != parts[0] {
-		return ParsedEntityID{}, fmt.Errorf("entity id timestamp is invalid: %q", parts[0])
+	if !found {
+		return ParsedEntityID{}, fmt.Errorf("entity id must contain a %s prefix or a legacy timestamp", kind)
 	}
-	if err := ValidateIdentityPart("bk_tenant_id", parts[1], 64); err != nil {
-		return ParsedEntityID{}, err
+	timestamp, err := time.ParseInLocation(entityIDTimeLayout, timestampText, time.UTC)
+	if err != nil || timestamp.Format(entityIDTimeLayout) != timestampText {
+		return ParsedEntityID{}, fmt.Errorf("entity id timestamp is invalid: %q", timestampText)
 	}
-	if err := ValidateIdentityPart("event_source_id", parts[2], 32); err != nil {
-		return ParsedEntityID{}, err
-	}
-	if !hexDigestPattern.MatchString(parts[3]) {
-		return ParsedEntityID{}, fmt.Errorf("entity id digest must contain 16 lowercase hexadecimal characters")
-	}
-	return ParsedEntityID{
-		Timestamp: timestamp, BKTenantID: parts[1], EventSourceID: parts[2], Digest: parts[3],
-	}, nil
+	return ParsedEntityID{Timestamp: timestamp}, nil
 }
 
 func digestEntityID(values ...string) string {
@@ -166,7 +146,7 @@ func digestEntityID(values ...string) string {
 	for _, value := range values {
 		writeIdentityPart(digest, value)
 	}
-	return hex.EncodeToString(digest.Sum(nil)[:entityIDDigestBytes])
+	return entityIDEncoding.EncodeToString(digest.Sum(nil)[:entityIDDigestBytes])
 }
 
 func writeIdentityPart(destination hash.Hash, value string) {

@@ -10,6 +10,7 @@
 package domain_test
 
 import (
+	"encoding/base32"
 	"strings"
 	"testing"
 	"time"
@@ -19,29 +20,45 @@ import (
 
 func TestEventIDRoundTripAndDeterminism(t *testing.T) {
 	t.Parallel()
-	receivedAt := time.Date(2026, 9, 2, 16, 32, 12, 345678901, time.UTC)
+	receivedAt := time.Date(2026, 9, 3, 0, 32, 12, 345678901, time.FixedZone("east", 8*3600))
 	first, err := domain.GenerateEventID("tenant-infra", "standard-infra", "source-event-1", receivedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := domain.GenerateEventID("tenant-infra", "standard-infra", "source-event-1", receivedAt)
+	second, err := domain.GenerateEventID("tenant-infra", "standard-infra", "source-event-1", receivedAt.UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != second || first != "20260902163212.tenant-infra.standard-infra."+first[len(first)-16:] {
+	if first != second || len(first) != 34 || !strings.HasPrefix(first, "event-20260902163212-") {
 		t.Fatalf("event ids=%q,%q", first, second)
 	}
 	parsed, err := domain.ParseEventID(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !parsed.Timestamp.Equal(receivedAt.Truncate(time.Second)) || parsed.BKTenantID != "tenant-infra" ||
-		parsed.EventSourceID != "standard-infra" || len(parsed.Digest) != 16 {
+	if !parsed.Timestamp.Equal(receivedAt.Truncate(time.Second)) {
 		t.Fatalf("parsed=%#v", parsed)
 	}
-	other, err := domain.GenerateEventID("tenant-infra", "standard-infra", "source-event-2", receivedAt)
-	if err != nil || other == first {
-		t.Fatalf("other=%q err=%v", other, err)
+	digest := strings.TrimPrefix(first, "event-20260902163212-")
+	rawDigest, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(digest))
+	if err != nil || len(rawDigest) != 8 || digest != strings.ToLower(digest) {
+		t.Fatalf("event digest=%q decoded=%x err=%v", digest, rawDigest, err)
+	}
+	for _, test := range []struct {
+		name, tenant, source, record string
+		receivedAt                   time.Time
+	}{
+		{"another tenant", "tenant-other", "standard-infra", "source-event-1", receivedAt},
+		{"another source", "tenant-infra", "standard-other", "source-event-1", receivedAt},
+		{"another record", "tenant-infra", "standard-infra", "source-event-2", receivedAt},
+		{"same second different nanosecond", "tenant-infra", "standard-infra", "source-event-1", receivedAt.Add(time.Nanosecond)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			other, err := domain.GenerateEventID(test.tenant, test.source, test.record, test.receivedAt)
+			if err != nil || other == first {
+				t.Fatalf("other=%q err=%v", other, err)
+			}
+		})
 	}
 }
 
@@ -56,22 +73,70 @@ func TestAlertIDUsesOpeningAnchorAndSeparateDomain(t *testing.T) {
 	if alertID == event.EventID {
 		t.Fatal("event and alert ID domains produced the same identity")
 	}
+	second, err := domain.GenerateAlertID(event, event.CreateAt)
+	if err != nil || second != alertID || len(alertID) != 34 ||
+		!strings.HasPrefix(alertID, "alert-"+event.CreateAt.UTC().Format("20060102150405")+"-") {
+		t.Fatalf("alert ids=%q,%q err=%v", alertID, second, err)
+	}
 	parsed, err := domain.ParseAlertID(alertID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !parsed.Timestamp.Equal(event.CreateAt.Truncate(time.Second)) || parsed.BKTenantID != event.BKTenantID ||
-		parsed.EventSourceID != event.EventSourceID {
+	if !parsed.Timestamp.Equal(event.CreateAt.Truncate(time.Second)) {
 		t.Fatalf("parsed=%#v", parsed)
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*domain.Event)
+	}{
+		{"another tenant", func(e *domain.Event) { e.BKTenantID = "tenant-other" }},
+		{"another source", func(e *domain.Event) { e.EventSourceID = "source-other" }},
+		{"another opening event", func(e *domain.Event) { e.EventID += "-other" }},
+		{"another creation anchor", func(e *domain.Event) { e.CreateAt = e.CreateAt.Add(time.Nanosecond) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed := event
+			test.change(&changed)
+			other, err := domain.GenerateAlertID(changed, changed.CreateAt)
+			if err != nil || other == alertID {
+				t.Fatalf("other=%q err=%v", other, err)
+			}
+		})
+	}
+}
+
+func TestEntityIDTimeRouteCompatibility(t *testing.T) {
+	t.Parallel()
+	want := time.Date(2026, 9, 2, 16, 32, 12, 0, time.UTC)
+	for _, test := range []struct {
+		name, value string
+		parse       func(string) (domain.ParsedEntityID, error)
+	}{
+		{"new event", "event-20260902163212-k7m2q5n4r6t3a", domain.ParseEventID},
+		{"new alert", "alert-20260902163212-k7m2q5n4r6t3a", domain.ParseAlertID},
+		{"legacy event", "20260902163212.tenant.source.0000000000000000", domain.ParseEventID},
+		{"legacy alert", "20260902163212.tenant.source.0000000000000000", domain.ParseAlertID},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parsed, err := test.parse(test.value)
+			if err != nil || !parsed.Timestamp.Equal(want) {
+				t.Fatalf("parsed=%#v err=%v", parsed, err)
+			}
+		})
+	}
+	if _, err := domain.ParseAlertID("event-20260902163212-k7m2q5n4r6t3a"); err == nil {
+		t.Fatal("event ID accepted as alert ID")
+	}
+	if _, err := domain.ParseEventID("alert-20260902163212-k7m2q5n4r6t3a"); err == nil {
+		t.Fatal("alert ID accepted as event ID")
 	}
 }
 
 func TestEntityIDValidation(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{
-		"", "20260902163212.tenant.source", "20260902163212.bad.tenant.source.0000000000000000",
+		"", "event-20260902163212", "event-20261302163212-k7m2q5n4r6t3a",
 		"20261302163212.tenant.source.0000000000000000",
-		"20260902163212.tenant.source.000000000000000g",
 		strings.Repeat("x", domain.EntityIDMaxBytes+1),
 	} {
 		if _, err := domain.ParseEventID(value); err == nil {
@@ -80,5 +145,8 @@ func TestEntityIDValidation(t *testing.T) {
 	}
 	if _, err := domain.GenerateEventID("bad.tenant", "source", "stable", time.Now()); err == nil {
 		t.Fatal("unsafe tenant accepted")
+	}
+	if _, err := domain.GenerateAlertID(validEvent(), time.Time{}); err == nil {
+		t.Fatal("missing creation anchor accepted")
 	}
 }

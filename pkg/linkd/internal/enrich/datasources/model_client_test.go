@@ -98,3 +98,42 @@ func TestModelClientPropagatesCancellation(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 }
+
+func TestModelClientCMDBObjectMapping(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                 string
+		count                int
+		tenant, object       string
+		wantFound, wantError bool
+	}{
+		{name: "unique mapping", count: 1, tenant: "tenant-a", object: "host", wantFound: true},
+		{name: "missing"},
+		{name: "ambiguous", count: 2, tenant: "tenant-a", object: "host", wantError: true},
+		{name: "wrong tenant", count: 1, tenant: "tenant-b", object: "host", wantError: true},
+		{name: "wrong object", count: 1, tenant: "tenant-a", object: "biz", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database := openReaderTestDB(t, func(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+				if !strings.Contains(query, "bk_tenant_id = ? AND bk_cmdb_obj_id = ?") || len(args) != 3 || args[0].Value != "tenant-a" || args[1].Value != "host" || args[2].Value != int64(2) {
+					t.Fatalf("query=%s args=%v", query, args)
+				}
+				rows := &readerTestRows{columns: []string{"object_model_id", "bk_tenant_id", "model_id", "model_name", "bk_cmdb_obj_id"}}
+				for i := 0; i < tc.count; i++ {
+					rows.values = append(rows.values, []driver.Value{int64(i + 1), tc.tenant, "cw-Host", "主机", tc.object})
+				}
+				return rows, nil
+			})
+			client, _ := NewModelClient(ModelClientConfig{DB: database})
+			model, found, err := client.GetModelByCMDBObjectID(t.Context(), "tenant-a", "host")
+			if found != tc.wantFound || errors.Is(err, enrich.ErrInvalidDataSourceResponse) != tc.wantError || found && model.ModelCode != "cw-Host" {
+				t.Fatalf("model=%+v found=%t err=%v", model, found, err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			if _, _, err := client.GetModelByCMDBObjectID(ctx, "tenant-a", "host"); !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation=%v", err)
+			}
+		})
+	}
+}

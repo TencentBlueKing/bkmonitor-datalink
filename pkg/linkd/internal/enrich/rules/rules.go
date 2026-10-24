@@ -22,14 +22,15 @@ import (
 )
 
 const (
-	LogProcessor      = "log"
-	K8sProcessor      = "k8s"
-	APMProcessor      = "apm"
-	StrategyProcessor = "strategy"
-	ResourceProcessor = "resource"
-	DisplayProcessor  = "display"
-	MetricProcessor   = "metric"
-	SourceProcessor   = "source"
+	LogProcessor             = "log"
+	K8sProcessor             = "k8s"
+	APMProcessor             = "apm"
+	StrategyProcessor        = "strategy"
+	ResourceProcessor        = "resource"
+	MonitorResourceProcessor = "monitor-resource"
+	DisplayProcessor         = "display"
+	MetricProcessor          = "metric"
+	SourceProcessor          = "source"
 	// TestProcessor 是不访问外部数据源的可配置负载模拟器。
 	TestProcessor = "test"
 )

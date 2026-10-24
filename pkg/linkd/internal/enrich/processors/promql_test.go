@@ -257,7 +257,7 @@ func TestPromQLPublishedSnapshotEnrichChain(t *testing.T) {
 	original := event.Clone()
 	reader := &promQLSnapshotReader{fixture: fixture, strategy: fixture.strategy()}
 	chain, err := enrich.NewChain(
-		[]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}},
+		[]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}, EventSource{}},
 		enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, CollectTopology: reader, Metric: reader, AlarmSource: reader},
 	)
 	if err != nil {
@@ -281,7 +281,7 @@ func TestPromQLPublishedSnapshotEnrichChain(t *testing.T) {
 	if result.Status != domain.EnrichStatusSucceeded {
 		t.Fatalf("status=%s", result.Status)
 	}
-	resource := payload.Processors[1][rules.ResourceProcessor]
+	resource := payload.Processors[1][rules.MonitorResourceProcessor]
 	var resourceValues models.ResourceValues
 	if err := json.Unmarshal(mustRawObject(t, resource.Value), &resourceValues); err != nil {
 		t.Fatal(err)
@@ -373,7 +373,7 @@ func TestPromQLWithoutCatalogKeepsDeclaredIdentity(t *testing.T) {
 	event.SubjectSystem, event.SubjectType, event.SubjectID = "", "", ""
 	reader := &promQLSnapshotReader{fixture: fixture, strategy: fixture.strategy(), withoutMetric: true}
 	chain, err := enrich.NewChain(
-		[]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}},
+		[]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}},
 		enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, CollectTopology: reader, Metric: reader},
 	)
 	if err != nil {
@@ -387,7 +387,7 @@ func TestPromQLWithoutCatalogKeepsDeclaredIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource := payload.Processors[1][rules.ResourceProcessor]
+	resource := payload.Processors[1][rules.MonitorResourceProcessor]
 	if resource.Status != domain.EnrichStatusPartial || len(resource.Diagnostics) != 1 ||
 		resource.Diagnostics[0].Code != enrich.DiagnosticCodeMissingField ||
 		resource.Diagnostics[0].Dependency != "" {
@@ -509,7 +509,7 @@ func TestPromQLCatalogAmbiguityFallback(t *testing.T) {
 			strategy.Spec.StrategyItem.QueryConfigs[0].MetricRefID = tc.metricID
 			reader := &promQLSnapshotReader{fixture: fixture, strategy: strategy, metricErr: tc.readErr}
 			logger := &promQLFallbackLogger{}
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, CollectTopology: reader, Metric: reader}, enrich.WithLogger(logger))
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, CollectTopology: reader, Metric: reader}, enrich.WithLogger(logger))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -554,7 +554,7 @@ func TestPromQLCatalogAmbiguityFallback(t *testing.T) {
 					t.Fatalf("display=%#v", display)
 				}
 				var resource models.ResourceValues
-				if err := json.Unmarshal(mustRawObject(t, payload.Processors[1][rules.ResourceProcessor].Value), &resource); err != nil {
+				if err := json.Unmarshal(mustRawObject(t, payload.Processors[1][rules.MonitorResourceProcessor].Value), &resource); err != nil {
 					t.Fatal(err)
 				}
 				if resource.ModelInstID != fixture.Host.Instance.InstanceID {
@@ -573,7 +573,7 @@ func TestPromQLMixedSeriesEnrich(t *testing.T) {
 	expression := "bkmonitor:system:cpu_summary:usage / process_cpu_seconds_total"
 	strategy.Spec.StrategyItem.QueryConfigs[0].PromQL = expression
 	reader := &promQLSnapshotReader{fixture: fixture, strategy: strategy}
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, CollectTopology: reader, Metric: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, CollectTopology: reader, Metric: reader})
 	if err != nil {
 		t.Fatal(err)
 	}

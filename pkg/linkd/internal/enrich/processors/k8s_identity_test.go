@@ -27,7 +27,7 @@ func TestResourceThenK8sPreservesHostIdentity(t *testing.T) {
 			event := processorBaseTargetAlert(t, domain.DimensionMap{
 				rules.FieldBKInstID: processorNumber(t, 101), rules.FieldService: domain.NewStringScalar(service),
 			})
-			chain, err := enrich.NewChain([]enrich.Processor{Resource{}, K8s{}}, enrich.Sources{
+			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, K8s{}}, enrich.Sources{
 				CWStrategy: processorBaseTargetStrategy{modelCode: rules.HostModelCode},
 				Model:      reader, OneModel: reader, CollectTopology: reader, K8s: k8sReader,
 			})

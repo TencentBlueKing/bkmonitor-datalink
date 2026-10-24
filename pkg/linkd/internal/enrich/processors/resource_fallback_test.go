@@ -28,7 +28,7 @@ func TestNoDataHostOriginalDimensionsFlow(t *testing.T) {
 	event.SubjectSystem, event.SubjectType, event.SubjectID, event.SubjectName = "cmdb", "host", "101", ""
 	original := event.Clone()
 	reader := processorHostReader()
-	chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: rules.HostModelCode}, Metric: processorBaseTargetMetric{}, Model: reader, OneModel: reader, CollectTopology: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: rules.HostModelCode}, Metric: processorBaseTargetMetric{}, Model: reader, OneModel: reader, CollectTopology: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestNoDataHostOriginalDimensionsFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource := payload.Processors[0][rules.ResourceProcessor]
+	resource := payload.Processors[0][rules.MonitorResourceProcessor]
 	display := payload.Processors[1][rules.DisplayProcessor]
 	metric := payload.Processors[2][rules.MetricProcessor]
 	if result.Status != domain.EnrichStatusSucceeded || string(resource.Value["model_inst_id"]) != `"101"` || string(display.Value["object"]) != `"主机 101"` || string(metric.Value["where_condition"]) != `""` || !reflect.DeepEqual(event, original) {
@@ -68,7 +68,7 @@ func TestResourceBusinessCompensationPreservesModelWithoutBinding(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := (Resource{}).Process(t.Context(), scope)
+			result, err := (MonitorResource{}).Process(t.Context(), scope)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +112,7 @@ func TestDataDisplayKeepsValidatedInstanceName(t *testing.T) {
 	t.Parallel()
 	reader := &dataSliceReader{model: "cw-MySQL", found: true, instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-MySQL", InstanceID: "17", Attributes: map[string]any{"bk_inst_id": int64(17), "bk_biz_id": int64(2), "bk_inst_display_name": "订单数据库"}}}
 	event := processorBaseTargetAlert(t, domain.DimensionMap{"model_id": domain.NewStringScalar("cw-MySQL"), "model_inst_id": domain.NewStringScalar("17")})
-	chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestHostDisplayKeepsSourceIPOnInstanceFailure(t *testing.T) {
 	reader.instanceFound = false
 	event := processorBaseTargetAlert(t, domain.DimensionMap{"ip": domain.NewStringScalar("192.0.2.11"), "bk_cloud_id": processorNumber(t, 0)})
 	event.SubjectName = ""
-	chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: rules.HostModelCode}, Metric: processorBaseTargetMetric{}, Model: reader, OneModel: reader, CollectTopology: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: rules.HostModelCode}, Metric: processorBaseTargetMetric{}, Model: reader, OneModel: reader, CollectTopology: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestBusinessCompensationSurvivesModelAndInstanceFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := (Resource{}).Process(t.Context(), scope)
+	result, err := (MonitorResource{}).Process(t.Context(), scope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestNoDataK8sKeepsNaturalIdentity(t *testing.T) {
 	k8sReader := &k8sTestReader{instance: enrich.Instance{TenantID: "tenant-a", ModelCode: code, InstanceID: "cluster-1|node-1", Attributes: map[string]any{"bk_biz_id": int64(2), "bk_biz_name": "业务", "display_name": "node-1"}}, found: true}
 	event := processorBaseTargetAlert(t, domain.DimensionMap{"__NO_DATA_DIMENSION__": domain.NewBoolScalar(true), "bcs_cluster_id": domain.NewStringScalar("cluster-1"), "node": domain.NewStringScalar("node-1")})
 	event.SubjectName = ""
-	chain, err := enrich.NewChain([]enrich.Processor{Resource{}, K8s{}, Display{}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: code}, Metric: processorBaseTargetMetric{}, Model: reader, OneModel: reader, K8s: k8sReader})
+	chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, K8s{}, Display{}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: code}, Metric: processorBaseTargetMetric{}, Model: reader, OneModel: reader, K8s: k8sReader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestNoDataK8sKeepsNaturalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != domain.EnrichStatusSucceeded || string(payload.Processors[0][rules.ResourceProcessor].Value["model_inst_id"]) != `"cluster-1|node-1"` || string(payload.Processors[2][rules.DisplayProcessor].Value["object"]) != `"node-1"` {
+	if result.Status != domain.EnrichStatusSucceeded || string(payload.Processors[0][rules.MonitorResourceProcessor].Value["model_inst_id"]) != `"cluster-1|node-1"` || string(payload.Processors[2][rules.DisplayProcessor].Value["object"]) != `"node-1"` {
 		t.Fatalf("payload=%#v", payload)
 	}
 	count := 0

@@ -21,6 +21,7 @@ import (
 	"path"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,7 +155,7 @@ func TestKACBaseTargetFixtures(t *testing.T) {
 				t.Fatalf("classified branch=%q, fixture branch=%q", branch, fixture.Branch)
 			}
 			reader := &kacFixtureReader{fixture: fixture}
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
 				CWStrategy: reader, Model: reader, OneModel: reader, CollectConfig: reader, CollectTopology: reader,
 				Uptime: reader, UptimeNode: reader,
 				Metric: reader, AlarmSource: reader,
@@ -176,7 +177,18 @@ func TestKACBaseTargetFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// 历史 fixture 不改写；只把已迁移处理器的注册名还原后比较其业务输出。
+			for _, entry := range payload.Processors {
+				if value, ok := entry[rules.MonitorResourceProcessor]; ok {
+					entry[rules.ResourceProcessor] = value
+					delete(entry, rules.MonitorResourceProcessor)
+				}
+			}
 			assertKACProjection(t, payload, fixture.ExpectedKAC)
+			for _, evaluation := range result.Data.Evaluations {
+				raw := evaluation.Data["processors"]
+				evaluation.Data["processors"] = json.RawMessage(strings.ReplaceAll(string(raw), `"monitor-resource":`, `"resource":`))
+			}
 			assertJSONEqual(t, fixture.ExpectedData, mustJSON(t, result.Data.Evaluations[0].Data))
 		})
 	}

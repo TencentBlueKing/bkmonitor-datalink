@@ -176,8 +176,9 @@ SourceRawData、ExtraData 保持不变。已创建 Alert 在后续同级触发�
 `name`，不要伪造 `system/type/id`。对象未定位不影响来源事件本身的记录。
 
 当前 Linkd 将 `subject` 原样投影为 Event 的 `subject_system/type/id/name`，创建 Alert 时继承；
-`subject_system` 尚无 `cmdb/onemodel` 枚举校验，`system` 的取值本身也不会自动触发对应数据源查询。
-资源丰富仍按场景、策略和维度中的可信身份定位实例；查不到实例时保留来源事实，
+`subject_system` 在接入层尚无枚举校验；配置通用 `resource` 后支持 `cmdb/onemodel`，其他命名空间记录无效身份诊断。
+`onemodel.type/id` 按 canonical 模型和实例查询；`cmdb.type` 通过租户模型目录的 `bk_cmdb_obj_id` 唯一映射，再按 CMDB 主键属性查询 OneModel。通用资源解析不读取监控策略。
+监控场景推断由 `monitor-resource` 承接；查不到实例时保留来源事实，
 由 Processor 返回相应诊断或降级结果。若 EventSource 把 `subject_system/type/id` 配为
 fingerprint 字段，被引用的字段就必须非空且在同一告警的后续事件中稳定；未定位实例的来源
 应改用稳定的 `source_alert_id` 等可用身份。字段含义见[核心模型](../../design/define.md)，

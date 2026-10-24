@@ -107,7 +107,7 @@ func TestBaseCollectRawEventRunsLifecycleEnrichment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index, name := range []string{"strategy", "resource", "display", "metric", "source"} {
+	for index, name := range []string{"strategy", "monitor-resource", "display", "metric", "source"} {
 		if envelope, exists := payload.Processors[index][name]; !exists || envelope.Status != domain.EnrichStatusSucceeded {
 			t.Fatalf("processors[%d]=%#v", index, payload.Processors[index])
 		}
@@ -203,7 +203,7 @@ func TestStandardNoDataMarkerReachesEnrich(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resource := results.Processors[1][rules.ResourceProcessor]
+			resource := results.Processors[1][rules.MonitorResourceProcessor]
 			if test.markerInDimensions {
 				if resource.Status != domain.EnrichStatusSucceeded || string(resource.Value["model_inst_id"]) != `"101"` {
 					t.Fatalf("resource=%#v", resource)
@@ -224,7 +224,7 @@ func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 	sources := []config.EventSource{{
 		EventSourceID: "built_in_bk",
 		Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{
-			{Type: "strategy"}, {Type: "resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"},
+			{Type: "strategy"}, {Type: "monitor-resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"},
 		}},
 	}, {EventSourceID: "disabled-source"}}
 	dataSources := (&datasources.Mock{}).Sources()
@@ -248,7 +248,7 @@ func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 	if result.Status != domain.EnrichStatusSucceeded || len(payload.Processors) != 5 {
 		t.Fatalf("result=%#v payload=%#v", result, payload)
 	}
-	for index, name := range []string{"strategy", "resource", "display", "metric", "source"} {
+	for index, name := range []string{"strategy", "monitor-resource", "display", "metric", "source"} {
 		if _, exists := payload.Processors[index][name]; !exists {
 			t.Fatalf("processors[%d]=%#v", index, payload.Processors[index])
 		}
@@ -356,7 +356,7 @@ func baseCollectEventSource() config.EventSource {
 		FingerprintMode: config.FingerprintModeField, FingerprintField: "source_alert_id",
 		DefaultSeverity: "warning",
 		Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{
-			{Type: "strategy"}, {Type: "resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"},
+			{Type: "strategy"}, {Type: "monitor-resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"},
 		}},
 		Storage: config.EventSourceStorageConfig{Type: config.StorageTypeKafka, Kafka: config.KafkaStorageConfig{
 			Brokers: []string{"127.0.0.1:9092"}, Topic: "linkd-base-collect",
@@ -383,7 +383,7 @@ func assertBaseCollectEnrichment(t *testing.T, payload enrich.Payload) {
 		string(strategy["strategy_config_id"]) != `"strategyconfig1"` {
 		t.Fatalf("strategy=%#v", strategy)
 	}
-	resource := payload.Processors[1]["resource"].Value
+	resource := payload.Processors[1]["monitor-resource"].Value
 	if string(resource["model_id"]) != `"cw-Host"` || string(resource["bk_inst_id"]) != "101" ||
 		string(resource["bk_biz_name"]) != `"业务 2"` || string(resource["bk_host_id"]) != "101" ||
 		string(resource["bk_host_name"]) != `"host-101"` {

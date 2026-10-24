@@ -59,7 +59,7 @@ func TestAPMResourceModelName(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := (Resource{}).Process(t.Context(), scope)
+			result, err := (MonitorResource{}).Process(t.Context(), scope)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +99,7 @@ func TestAPMResourceModelLookupCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Resource{}).Process(ctx, scope); !errors.Is(err, context.Canceled) {
+	if _, err := (MonitorResource{}).Process(ctx, scope); !errors.Is(err, context.Canceled) {
 		t.Fatalf("error=%v, want context.Canceled", err)
 	}
 }

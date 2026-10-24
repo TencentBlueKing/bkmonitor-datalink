@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "bk_tenant_id": "system",
+      "model_id": "cw-Host",
+      "model_inst_id": "10",
+      "entity_uid": "cw-Host|10",
+      "display_name": "host-10",
+      "attributes": {
+        "bk_host_id": 10
+      }
+    },
+    {
+      "bk_tenant_id": "system",
+      "model_id": "cw-Host",
+      "model_inst_id": "1000",
+      "entity_uid": "cw-Host|1000",
+      "display_name": "host-1000",
+      "attributes": {
+        "bk_host_id": 1000
+      }
+    }
+  ],
+  "provenance": "2026-10-24 kingeye-admin linkd.onemodel.search, tenant system, limit 2; only identity fields retained; display names replaced",
+  "model_catalog": "Model lookup is isolated with a fixed tenant-scoped cw-Host/host mapping; this fixture does not prove live model-directory or deployment behavior."
+}

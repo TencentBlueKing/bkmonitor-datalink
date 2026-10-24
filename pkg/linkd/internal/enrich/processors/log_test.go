@@ -28,7 +28,7 @@ func TestLogDisplayWithoutCatalogReference(t *testing.T) {
 		t.Run(string(itemType), func(t *testing.T) {
 			strategy := &logTestReader{strategy: logStrategy(itemType, "error")}
 			metric := &unavailableLogMetricReader{}
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: strategy, Metric: metric})
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}}, enrich.Sources{CWStrategy: strategy, Metric: metric})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +64,7 @@ func TestLogInvalidRelatedInfoReturnsPartial(t *testing.T) {
 	reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLogKeyword, "error"), source: models.AlarmSource{Id: "log_source", Name: "日志源"}}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{})
 	alert.ExtraData = domain.JSONObject{"log_related_info": json.RawMessage(`"text"`)}
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestLogThemeReaderOverridesAndValidatesStrategyFallback(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLog, "error"), source: models.AlarmSource{Id: "log_source", Name: "日志源"}, theme: tc.theme, themeFound: tc.found}
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader, LogTheme: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader, LogTheme: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -169,7 +169,7 @@ func TestLogMetricFixtureProjection(t *testing.T) {
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{})
 	alert.Content = "AVG(服务器发送字节数) >= 2.0, 当前值1189.352608,关联信息：host=web"
 	alert.SubjectName = "寒江孤影"
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 			if tc.related != "" {
 				alert.ExtraData["log_related_info"] = json.RawMessage(tc.related)
 			}
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -234,7 +234,7 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resource := payload.Processors[1][rules.ResourceProcessor]
+			resource := payload.Processors[1][rules.MonitorResourceProcessor]
 			if resource.Status != domain.EnrichStatusSucceeded || len(resource.Diagnostics) != 0 {
 				t.Fatalf("resource=%#v", resource)
 			}
@@ -301,7 +301,7 @@ func TestLogMetricTitleLegacyRules(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{PreserveContent: tc.preserveContent}}, enrich.Sources{CWStrategy: reader, Metric: reader, LogTheme: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{PreserveContent: tc.preserveContent}}, enrich.Sources{CWStrategy: reader, Metric: reader, LogTheme: reader})
 			if err != nil {
 				t.Fatal(err)
 			}

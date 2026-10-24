@@ -231,6 +231,12 @@ func processorPaths(name string) []jsonpath.Target {
 	var value any
 	switch name {
 	case "resource":
+		paths := []jsonpath.Target{pathFor("subject_name")}
+		for _, field := range []string{"model_id", "model_inst_id", "model_name", "bk_obj_id", "bk_inst_id"} {
+			paths = append(paths, pathFor("labels", field), pathFor("extra_data", field))
+		}
+		return paths
+	case "monitor-resource":
 		value = models.ResourceValues{}
 	case "strategy":
 		value = models.StrategyValues{}

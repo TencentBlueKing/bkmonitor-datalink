@@ -41,7 +41,7 @@ func TestBaseTargetFullProcessorPayloads(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			alert := processorBaseTargetAlert(t, test.dimensions)
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
 				CWStrategy: processorBaseTargetStrategy{modelCode: test.modelCode}, Metric: processorBaseTargetMetric{},
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader,
 				AlarmSource: processorBaseTargetAlarmSource{},
@@ -60,12 +60,12 @@ func TestBaseTargetFullProcessorPayloads(t *testing.T) {
 			if result.Status != test.wantStatus || len(payload.Processors) != 5 {
 				t.Fatalf("status=%q processors=%#v", result.Status, payload.Processors)
 			}
-			for index, name := range []string{rules.StrategyProcessor, rules.ResourceProcessor, rules.DisplayProcessor, rules.MetricProcessor, rules.SourceProcessor} {
+			for index, name := range []string{rules.StrategyProcessor, rules.MonitorResourceProcessor, rules.DisplayProcessor, rules.MetricProcessor, rules.SourceProcessor} {
 				if _, exists := payload.Processors[index][name]; !exists {
 					t.Fatalf("processors[%d]=%#v", index, payload.Processors[index])
 				}
 			}
-			resource := payload.Processors[1][rules.ResourceProcessor]
+			resource := payload.Processors[1][rules.MonitorResourceProcessor]
 			if resource.Status != test.wantStatus || len(resource.Value) == 0 ||
 				string(payload.Processors[4][rules.SourceProcessor].Value["source_name"]) != `"鲸眼监控"` {
 				t.Fatalf("resource=%#v source=%#v", resource, payload.Processors[4])
@@ -93,7 +93,7 @@ func TestBaseTargetBranchesFlowThroughResourceAndDisplay(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			alert := processorBaseTargetAlert(t, test.dimensions)
 			original := alert.Clone()
-			chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{}}, enrich.Sources{
+			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}}, enrich.Sources{
 				CWStrategy: processorBaseTargetStrategy{modelCode: test.modelCode}, Metric: processorBaseTargetMetric{},
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader,
 			})
@@ -108,7 +108,7 @@ func TestBaseTargetBranchesFlowThroughResourceAndDisplay(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resource := payload.Processors[0][rules.ResourceProcessor]
+			resource := payload.Processors[0][rules.MonitorResourceProcessor]
 			display := payload.Processors[1][rules.DisplayProcessor]
 			if resource.Status != test.wantStatus || string(resource.Value["model_inst_id"]) != `"`+test.wantInst+`"` ||
 				string(display.Value["object"]) != `"`+test.wantObject+`"` {
@@ -147,7 +147,7 @@ func TestNoDataFiveProcessorFailures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			alert := processorBaseTargetAlert(t, test.dimensions)
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
 				CWStrategy: processorBaseTargetStrategy{modelCode: modelCode}, Metric: processorBaseTargetMetric{},
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader, AlarmSource: processorBaseTargetAlarmSource{},
 			})
@@ -162,7 +162,7 @@ func TestNoDataFiveProcessorFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resource := payload.Processors[1][rules.ResourceProcessor]
+			resource := payload.Processors[1][rules.MonitorResourceProcessor]
 			display := payload.Processors[2][rules.DisplayProcessor]
 			if result.Status != domain.EnrichStatusPartial || resource.Status != test.wantStatus ||
 				string(display.Value["object"]) != `"`+test.wantObject+`"` || len(resource.Diagnostics) != 1 ||
@@ -219,7 +219,7 @@ func TestBaseTargetFiveProcessorFailureBoundaries(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			alert := processorBaseTargetAlert(t, test.dimensions)
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
 				CWStrategy: processorBaseTargetStrategy{modelCode: test.modelCode}, Metric: processorBaseTargetMetric{},
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader, AlarmSource: processorBaseTargetAlarmSource{},
 			})
@@ -234,7 +234,7 @@ func TestBaseTargetFiveProcessorFailureBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			resource := payload.Processors[1][rules.ResourceProcessor]
+			resource := payload.Processors[1][rules.MonitorResourceProcessor]
 			wantResourceStatus := test.wantResourceStatus
 			if wantResourceStatus == "" {
 				wantResourceStatus = domain.EnrichStatusPartial

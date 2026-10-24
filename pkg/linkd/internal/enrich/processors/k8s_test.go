@@ -118,7 +118,7 @@ func containsString(values []string, want string) bool {
 func TestK8sFullProcessorPayload(t *testing.T) {
 	t.Parallel()
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{rules.FieldBCSClusterID: domain.NewStringScalar("cluster-1"), rules.FieldNamespace: domain.NewStringScalar("default"), rules.FieldService: domain.NewStringScalar("web")})
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, K8s{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: k8sStrategyReader{}})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, K8s{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: k8sStrategyReader{}})
 	if err != nil {
 		t.Fatal(err)
 	}

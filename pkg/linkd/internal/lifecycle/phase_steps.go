@@ -24,7 +24,7 @@ var phaseSteps = [...]struct {
 }{
 	{phaseOther, "other"}, {phaseOther, "event_reload"},
 	{phaseEnrich, "other"}, {phaseEnrich, "chain"}, {phaseEnrich, "persist"},
-	{phaseEnrich, "strategy"}, {phaseEnrich, "resource"}, {phaseEnrich, "display"},
+	{phaseEnrich, "strategy"}, {phaseEnrich, "resource"}, {phaseEnrich, "monitor-resource"}, {phaseEnrich, "display"},
 	{phaseEnrich, "metric"}, {phaseEnrich, "source"}, {phaseEnrich, "log"},
 	{phaseEnrich, "k8s"}, {phaseEnrich, "apm"}, {phaseEnrich, "test"}, {phaseEnrich, "custom"}, {phaseEnrich, "cmdb-access"}, {phaseEnrich, "cloud_resource"},
 	{phasePolicySnapshot, "other"}, {phasePolicySnapshot, "read"},
@@ -68,7 +68,7 @@ func (p *Processor) measureStep(phase int, name string) func() {
 
 func (p *Processor) measureEnrichProcessor(name string) func() {
 	switch name {
-	case "strategy", "resource", "display", "metric", "source", "log", "k8s", "apm", "test", "cmdb-access", "cloud_resource":
+	case "strategy", "resource", "monitor-resource", "display", "metric", "source", "log", "k8s", "apm", "test", "cmdb-access", "cloud_resource":
 	default:
 		name = "custom"
 	}

@@ -26,7 +26,7 @@ func (c *StrategyContext) JSONObject() (domain.JSONObject, error) {
 	return valuesObject(c.Values)
 }
 
-// ResourceContext 只持有 resource Processor 的输出。
+// ResourceContext 保存资源身份；monitor-resource 还提供监控场景属性供后续展示使用。
 type ResourceContext struct{ Values models.ResourceValues }
 
 func (c *ResourceContext) Set(values models.ResourceValues) { c.Values = values }

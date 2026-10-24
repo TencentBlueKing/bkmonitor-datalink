@@ -152,7 +152,7 @@ event_sources:
     enrich:
       processors:
         - type: strategy
-        - { type: resource }
+        - { type: monitor-resource }
         - { type: display }
         - { type: metric }
         - { type: source }
@@ -173,7 +173,7 @@ Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。`s
 [KAC 投影契约](../reference/contracts/kac-alert-projection-v1.md)。`test` 支持下述负载模拟参数；其余 Processor 当前只接受空 config。
 
 `event_sources[].enrich.processors` 是每条 Event 在策略前执行的有序丰富链。当前注册名为
-`strategy/resource/display/metric/source/log/cloud_resource/k8s/apm/test/cmdb/fields/cmdb-access`；空列表输出 `{"processors":[]}`。
+`strategy/resource/monitor-resource/display/metric/source/log/cloud_resource/k8s/apm/test/cmdb/fields/cmdb-access`；空列表输出 `{"processors":[]}`。
 
 `k8s` 通过 OneModel 定位实例。维度缺失、实例未命中、查询错误或返回身份校验失败时，保留对应诊断；
 当前有效视图只有模型或只有实例时，显式清空 `labels.model_id` 和 `labels.model_inst_id`，避免输出残缺身份。
@@ -229,7 +229,7 @@ enrich:
 
 第三方只读资源统一由顶层 `resources` 配置：`mysql` 供 Kingeye 元数据 Reader 使用，
 `onemodel` 供统一实例、关联和业务拓扑查询使用，`kingeye_display` 供展示缓存转换使用，
-`dynamic_group` 供 resource 和 cmdb-access 从 Kingeye 已物化的 Redis hash 读取分组归属。
+`dynamic_group` 供 monitor-resource 和 cmdb-access 从 Kingeye 已物化的 Redis hash 读取分组归属。
 KAC 兼容存储与处置凭据使用下节的 `plugins.kac`，不参与丰富查询。
 所有 EventSource、丰富预览及 OneModel 查询复用同一套资源定义；连接仍按实际依赖初始化，来源任务退出时关闭。
 OneModel 默认使用 Elasticsearch，实例读取 `kingeye_all_instance`，关联边固定读取 `kingeye_topo`；业务拓扑读取
@@ -291,7 +291,7 @@ MySQL 模型定义、CMDB APIGW、动态分组 Redis 的职责不变。KAC alarm
 
 ### 动态分组 Redis 投影
 
-启用 `resource` 或 `cmdb-access` Processor 时可选配置 `resources.dynamic_group`。当前读端对齐 Kingeye
+启用 `monitor-resource` 或 `cmdb-access` Processor 时可选配置 `resources.dynamic_group`。当前读端对齐 Kingeye
 `get_dynamic_inst_group_cache_key` 写入格式：Redis hash key 为
 `<key_prefix>dynamic_inst_group:<model_id>`，field 为 canonical `model_inst_id`，
 value 为 `{"group_ids":[整数分组 ID...]}`。Linkd 只读取该投影，不计算成员关系。
@@ -595,7 +595,8 @@ linkd run all-in-one --config /etc/linkd/linkd.yaml
 | Processor | 必需连接 | 逻辑 Reader |
 | --- | --- | --- |
 | `strategy` | `mysql`、`onemodel` | CW Strategy、OneModel |
-| `resource` | `mysql`、`onemodel` | CW Strategy、OneModel |
+| `resource` | `mysql`、`onemodel` | 租户模型目录、OneModel 实例；不依赖监控策略 |
+| `monitor-resource` | `mysql`、`onemodel` | 监控策略及场景资源推断 |
 | `display` | `mysql` | CW Strategy、指标目录 |
 | `metric` | `mysql` | CW Strategy、指标目录 |
 | `source` | `mysql` | AlarmSource |

@@ -115,7 +115,7 @@ func enrichChainKind(kind enrich.ChainKind) string {
 
 func enrichProcessor(name string) string {
 	switch name {
-	case rules.StrategyProcessor, rules.ResourceProcessor, rules.DisplayProcessor, rules.MetricProcessor, rules.SourceProcessor, rules.TestProcessor:
+	case rules.StrategyProcessor, rules.ResourceProcessor, rules.MonitorResourceProcessor, rules.DisplayProcessor, rules.MetricProcessor, rules.SourceProcessor, rules.TestProcessor:
 		return name
 	default:
 		return "unknown"

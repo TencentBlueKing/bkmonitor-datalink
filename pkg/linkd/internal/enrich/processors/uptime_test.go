@@ -39,7 +39,7 @@ func TestUptimeScenarioFlowsThroughResourceAndDisplay(t *testing.T) {
 		},
 	}
 	chain, err := enrich.NewChain(
-		[]enrich.Processor{Resource{}, Display{}},
+		[]enrich.Processor{MonitorResource{}, Display{}},
 		enrich.Sources{
 			CWStrategy: processorUptimeStrategy{}, Metric: processorUptimeMetric{},
 			Model: reader, OneModel: reader, Uptime: reader, UptimeNode: reader,
@@ -59,7 +59,7 @@ func TestUptimeScenarioFlowsThroughResourceAndDisplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource := payload.Processors[0][rules.ResourceProcessor]
+	resource := payload.Processors[0][rules.MonitorResourceProcessor]
 	if resource.Status != domain.EnrichStatusSucceeded ||
 		string(resource.Value["model_id"]) != `"cw-web_service"` ||
 		string(resource.Value["model_inst_id"]) != `"55"` ||
@@ -97,7 +97,7 @@ func TestUptimeMissingTaskKeepsDisplayFallback(t *testing.T) {
 	alert := uptimeProcessorAlert(t)
 	reader := &processorUptimeReader{taskFound: boolPointer(false)}
 	chain, err := enrich.NewChain(
-		[]enrich.Processor{Resource{}, Display{}},
+		[]enrich.Processor{MonitorResource{}, Display{}},
 		enrich.Sources{
 			CWStrategy: processorUptimeStrategy{}, Metric: processorUptimeMetric{},
 			Model: reader, OneModel: reader, Uptime: reader, UptimeNode: reader,
@@ -114,7 +114,7 @@ func TestUptimeMissingTaskKeepsDisplayFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource := payload.Processors[0][rules.ResourceProcessor]
+	resource := payload.Processors[0][rules.MonitorResourceProcessor]
 	if resource.Status != domain.EnrichStatusPartial || len(resource.Diagnostics) != 1 ||
 		resource.Diagnostics[0].Dependency != rules.DependencyUptime ||
 		string(resource.Value["model_id"]) != `"cw-web_service"` ||

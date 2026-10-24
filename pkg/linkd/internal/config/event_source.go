@@ -103,7 +103,7 @@ func (c EnrichConfig) validate() error {
 			}
 		}
 		switch processor.Type {
-		case "cmdb-access", "cmdb", "fields", "test", "strategy", "resource", "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
+		case "cmdb-access", "cmdb", "fields", "test", "strategy", "resource", "monitor-resource", "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
 		default:
 			return fmt.Errorf("enrich processor type is not registered: %q", processor.Type)
 		}
@@ -128,6 +128,10 @@ func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConf
 			return selected, fmt.Errorf("resources.mysql is required by bkmonitor_description")
 		}
 		selected.MySQL = configured.MySQL
+	}
+	legacyMonitor := false
+	for _, processor := range c.Processors {
+		legacyMonitor = legacyMonitor || processor.Type == "strategy"
 	}
 	for _, processor := range c.Processors {
 		switch processor.Type {
@@ -156,7 +160,7 @@ func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConf
 			selected.DynamicGroup = configured.DynamicGroup
 		case "test":
 			// 测试处理器只生成固定字段和等待，不需要外部连接。
-		case "strategy", "resource":
+		case "strategy", "resource", "monitor-resource":
 			if configured.MySQL == nil {
 				return ResourcesConfig{}, fmt.Errorf("resources.mysql is required by configured enrich processors")
 			}
@@ -164,7 +168,8 @@ func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConf
 				return ResourcesConfig{}, fmt.Errorf("resources.onemodel is required by configured enrich processors")
 			}
 			selected.MySQL, selected.OneModel = configured.MySQL, configured.OneModel
-			if processor.Type == "resource" {
+			// 冻结监控链仍使用 strategy/resource，其分组连接不能在升级后消失。
+			if processor.Type == "monitor-resource" || processor.Type == "resource" && legacyMonitor {
 				selected.DynamicGroup = configured.DynamicGroup
 			}
 		case "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":

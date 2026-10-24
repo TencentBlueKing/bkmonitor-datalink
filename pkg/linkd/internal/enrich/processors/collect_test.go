@@ -43,7 +43,7 @@ func TestCollectScenarioFlowsThroughResourceAndDisplay(t *testing.T) {
 		},
 	}
 	chain, err := enrich.NewChain(
-		[]enrich.Processor{Resource{}, Display{}},
+		[]enrich.Processor{MonitorResource{}, Display{}},
 		enrich.Sources{
 			CWStrategy: processorCollectStrategy{}, Metric: processorCollectMetric{},
 			CollectConfig: reader, Model: reader, OneModel: reader,
@@ -64,7 +64,7 @@ func TestCollectScenarioFlowsThroughResourceAndDisplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource := payload.Processors[0][rules.ResourceProcessor]
+	resource := payload.Processors[0][rules.MonitorResourceProcessor]
 	if resource.Status != domain.EnrichStatusSucceeded ||
 		string(resource.Value["model_id"]) != `"cw-Service"` ||
 		string(resource.Value["model_inst_id"]) != `"2"` ||
@@ -96,7 +96,7 @@ func TestCollectDynamicGroupFailureKeepsResource(t *testing.T) {
 		config:   models.CollectConfig{UID: "collect-uid", BKTenantID: "tenant-a", BKCollectTaskID: "collect-1", BKObjectCode: "cw-Service", BKInstID: 2},
 		instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-Service", InstanceID: "2", Fields: map[string]any{rules.FieldBKBizID: int64(3)}},
 	}
-	chain, err := enrich.NewChain([]enrich.Processor{Resource{}}, enrich.Sources{
+	chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}}, enrich.Sources{
 		CWStrategy: processorCollectStrategy{}, CollectConfig: reader, Model: reader, OneModel: reader,
 		DynamicGroup: processorDynamicGroups{err: errors.New("redis unavailable")},
 	})
@@ -111,7 +111,7 @@ func TestCollectDynamicGroupFailureKeepsResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource := payload.Processors[0][rules.ResourceProcessor]
+	resource := payload.Processors[0][rules.MonitorResourceProcessor]
 	if resource.Status != domain.EnrichStatusPartial || string(resource.Value["model_inst_id"]) != `"2"` || string(resource.Value["dynamic_group_id"]) != `[]` ||
 		len(resource.Diagnostics) == 0 || resource.Diagnostics[len(resource.Diagnostics)-1].Dependency != rules.DependencyDynamicGroup {
 		t.Fatalf("resource=%#v", resource)

@@ -347,7 +347,7 @@ func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
 			}
 			for _, diagnostic := range envelope.Diagnostics {
 				switch diagnostic.Code {
-				case "missing_field", "invalid_field", "dependency_invalid", "classification_failed":
+				case "missing_field", "invalid_field", "dependency_invalid", "classification_failed", "identity_conflict":
 				default:
 					return fmt.Errorf("alert enrich processors[%d] diagnostic code is invalid: %q", index, diagnostic.Code)
 				}

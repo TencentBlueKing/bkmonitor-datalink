@@ -1,0 +1,13 @@
+{
+  "provenance": "2026-10-24 kingeye-admin linkd.onemodel.search tenant system limit 1; identity fields retained, display_name replaced; model catalog remains a fixed test mapping",
+  "instance": {
+    "bk_tenant_id": "system",
+    "model_id": "cw-Host",
+    "model_inst_id": "10",
+    "entity_uid": "cw-Host|10",
+    "display_name": "host-10",
+    "attributes": {
+      "bk_host_id": 10
+    }
+  }
+}

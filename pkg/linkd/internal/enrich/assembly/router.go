@@ -76,10 +76,14 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 		digest := sha256.Sum256(encoded)
 		digests[source.EventSourceID] = hex.EncodeToString(digest[:])
 		chainProcessors := make([]enrich.Processor, 0, len(source.Enrich.Processors))
+		legacyMonitor := legacyMonitorResource(source)
 		for processorIndex, processorConfig := range source.Enrich.Processors {
 			processor, err := newProcessor(processorConfig)
 			if err != nil {
 				return nil, fmt.Errorf("event_sources[%d].enrich.processors[%d]: %w", sourceIndex, processorIndex, err)
+			}
+			if legacyMonitor && processorConfig.Type == rules.ResourceProcessor {
+				processor = frozenMonitorResource{}
 			}
 			if processorConfig.Type == rules.DisplayProcessor && route.builder != nil {
 				processor = processors.Display{PreserveContent: true}
@@ -100,6 +104,30 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 	}
 	return &Router{routes: routes, chainKinds: chainKinds, contentRoutes: contentRoutes, digests: digests}, nil
 }
+
+// 真实发布的监控 Release 保存了旧 resource 名称，不能因升级改变其执行语义。
+// 新 KAC 配置显式选择 monitor-resource；REST 和未发布的通用资源链均不走此分派。
+func legacyMonitorResource(source config.EventSource) bool {
+	if source.Version <= 0 || source.EventSourceID != "built_in_bk" {
+		return false
+	}
+	strategy, resource := false, false
+	for _, processor := range source.Enrich.Processors {
+		switch processor.Type {
+		case rules.MonitorResourceProcessor:
+			return false
+		case rules.StrategyProcessor:
+			strategy = true
+		case rules.ResourceProcessor:
+			resource = true
+		}
+	}
+	return strategy && resource
+}
+
+type frozenMonitorResource struct{ processors.MonitorResource }
+
+func (frozenMonitorResource) Name() string { return rules.ResourceProcessor }
 
 // RebuildContentOnTrigger 标明来源是否需要在持续触发时重新生成描述。
 // source 模式继续直接采用 Event.content，不改变空串语义。
@@ -171,6 +199,8 @@ func newProcessor(config config.EnrichProcessorConfig) (enrich.Processor, error)
 		return processors.NewTest(config.Config)
 	case rules.StrategyProcessor:
 		return processors.NewStrategy(config.Config)
+	case rules.MonitorResourceProcessor:
+		return processors.MonitorResource{}, nil
 	case rules.ResourceProcessor:
 		return processors.Resource{}, nil
 	case rules.DisplayProcessor:

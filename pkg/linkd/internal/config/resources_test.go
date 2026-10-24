@@ -68,7 +68,7 @@ func TestDynamicGroupResourceTenantKeyspacesAndRedaction(t *testing.T) {
 		"tenant-a": {Redis: RedisConfig{Address: "redis.example.com:6379", Password: "secret", Database: 1}, KeyPrefix: "bk_monitor:"},
 		"tenant-b": {Redis: RedisConfig{Address: "redis.example.com:6379", Password: "other", Database: 2}, KeyPrefix: "bk_monitor:"},
 	}}
-	selected, err := (EnrichConfig{Processors: []EnrichProcessorConfig{{Type: "resource"}}}).SelectResources(resources)
+	selected, err := (EnrichConfig{Processors: []EnrichProcessorConfig{{Type: "monitor-resource"}}}).SelectResources(resources)
 	if err != nil || selected.DynamicGroup == nil {
 		t.Fatalf("selected=%#v error=%v", selected, err)
 	}

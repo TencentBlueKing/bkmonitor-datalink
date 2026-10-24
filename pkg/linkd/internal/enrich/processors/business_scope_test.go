@@ -14,7 +14,7 @@ import (
 
 func TestCatalogProcessorsDoNotRequireSourceBusiness(t *testing.T) {
 	for _, biz := range []string{"missing", "negative", "different", "invalid"} {
-		for _, processor := range []enrich.Processor{Resource{}, Display{}, Metric{}} {
+		for _, processor := range []enrich.Processor{MonitorResource{}, Display{}, Metric{}} {
 			t.Run(biz+"/"+processor.Name(), func(t *testing.T) {
 				reader := &metricLocationReader{dataSliceReader: dataSliceReader{model: "cw-K8s_Container"}, metadata: models.MetricMetadata{Kind: "native", ObjectModelCode: "cw-K8s_Container", FieldName: "usage", TableID: "k8s", PhysicalField: "usage", Unit: "percent"}}
 				reader.strategy = reader.strategyForTest()
@@ -121,7 +121,7 @@ func TestUnrelatedProcessorsSkipWithoutBusiness(t *testing.T) {
 }
 
 func TestAPMBranchStillRequiresBusiness(t *testing.T) {
-	for _, p := range []enrich.Processor{APM{}, Resource{}} {
+	for _, p := range []enrich.Processor{APM{}, MonitorResource{}} {
 		t.Run(p.Name(), func(t *testing.T) {
 			reader := &dataSliceReader{table: "namespace_bkapm_metric_app.service", model: rules.APMApplicationModelCode}
 			event := processorBaseTargetAlert(t, domain.DimensionMap{})

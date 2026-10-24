@@ -145,7 +145,7 @@ func TestAPMResourceProjectionFromDimensions(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{"apm_app_id": domain.NewStringScalar("17"), rules.FieldServiceName: domain.NewStringScalar("checkout"), rules.FieldAPMInstanceID: domain.NewStringScalar("instance-a")})
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestAPMResourceProjectionFromDimensions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource := payload.Processors[1][rules.ResourceProcessor]
+	resource := payload.Processors[1][rules.MonitorResourceProcessor]
 	if string(resource.Value["model_id"]) != `"cw-service_instance"` || string(resource.Value["model_inst_id"]) != `"17|checkout|instance-a"` {
 		t.Fatalf("resource=%#v", resource)
 	}
@@ -187,7 +187,7 @@ func TestAPMRealAlarmResolvesApplicationFromAdditionalDimensions(t *testing.T) {
 		"additional_dimensions": json.RawMessage(`{"app_name":"test223"}`),
 	}
 	chain, err := enrich.NewChain(
-		[]enrich.Processor{Strategy{}, Resource{}, Display{}, APM{}},
+		[]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}},
 		enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Metric: reader},
 	)
 	if err != nil {
@@ -201,7 +201,7 @@ func TestAPMRealAlarmResolvesApplicationFromAdditionalDimensions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resource := payload.Processors[1][rules.ResourceProcessor]
+	resource := payload.Processors[1][rules.MonitorResourceProcessor]
 	if resource.Status != domain.EnrichStatusSucceeded || string(resource.Value["model_id"]) != `"cw-service_instance"` || string(resource.Value["model_inst_id"]) != `"29|account|639ae1548b6140f0aad74d9a2d06ecfd@10.0.7.193"` {
 		t.Fatalf("resource=%#v", resource)
 	}
@@ -240,7 +240,7 @@ func TestAPMCompletePayloadCoversAllIdentityLevels(t *testing.T) {
 			if tc.instance != "" {
 				dimensions[rules.FieldAPMInstanceID] = domain.NewStringScalar(tc.instance)
 			}
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, APM{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -255,7 +255,7 @@ func TestAPMCompletePayloadCoversAllIdentityLevels(t *testing.T) {
 			if len(payload.Processors) != 6 {
 				t.Fatalf("processors=%d", len(payload.Processors))
 			}
-			resource := payload.Processors[1][rules.ResourceProcessor]
+			resource := payload.Processors[1][rules.MonitorResourceProcessor]
 			if string(resource.Value["model_id"]) != `"`+tc.model+`"` || string(resource.Value["model_inst_id"]) != `"`+tc.id+`"` {
 				t.Fatalf("resource=%#v", resource)
 			}
@@ -270,7 +270,7 @@ func TestAPMCompleteProcessorChainPreservesAPMContext(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{apps: []models.APMApplication{{TenantID: "tenant-a", ID: 17, Name: "demo", Alias: "Demo", BKBizID: 2}}}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{rules.FieldServiceName: domain.NewStringScalar("checkout"), rules.FieldAPMInstanceID: domain.NewStringScalar("instance-a")})
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, APM{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)
 	}

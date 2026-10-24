@@ -1,0 +1,51 @@
+{
+  "provenance": {
+    "captured_on": "2026-10-24",
+    "alert_id": "20261023104431.system.built_in_rest.ffa9a89a5aed8ac7",
+    "source": "kingeye-admin linkd.events.get; tenant system",
+    "redaction": "Only identity-related raw fields retained; fingerprint/title/content replaced. Subject and resource identity maps are unchanged; no resource identity added."
+  },
+  "events": [
+    {
+      "event_id": "20261023104431.system.built_in_rest.638faabfe17f053e",
+      "received_at": "2026-10-23T10:44:31.58Z",
+      "raw": {
+        "bk_tenant_id": "system",
+        "event_id": "",
+        "fingerprint": "captured-rest-fingerprint",
+        "evaluations": [
+          {
+            "action": "triggered",
+            "action_reason": "",
+            "severity": "warning"
+          }
+        ],
+        "title": "captured REST replay",
+        "content": "redacted"
+      }
+    },
+    {
+      "event_id": "20261023104856.system.built_in_rest.d9e70a3561900881",
+      "received_at": "2026-10-23T10:48:56.752Z",
+      "raw": {
+        "bk_tenant_id": "system",
+        "event_id": "",
+        "fingerprint": "captured-rest-fingerprint",
+        "evaluations": [
+          {
+            "action": "triggered",
+            "action_reason": "",
+            "severity": "warning"
+          }
+        ],
+        "subject": {},
+        "labels": {},
+        "dimensions": {},
+        "extra_data": {},
+        "values": {},
+        "title": "captured REST replay",
+        "content": "redacted"
+      }
+    }
+  ]
+}

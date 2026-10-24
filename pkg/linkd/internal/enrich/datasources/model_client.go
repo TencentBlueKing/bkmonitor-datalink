@@ -78,6 +78,10 @@ func (c *ModelClient) GetModelByCode(ctx context.Context, tenantID, modelCode st
 	if err != nil {
 		return enrich.Model{}, false, fmt.Errorf("query object model: %w", err)
 	}
+	return modelFromRow(row, tenantID, modelCode)
+}
+
+func modelFromRow(row objectModelRow, tenantID, modelCode string) (enrich.Model, bool, error) {
 	if row.ObjectModelID <= 0 || row.BKTenantID != tenantID || row.ModelID != modelCode || row.ModelName == "" {
 		return enrich.Model{}, false, fmt.Errorf("%w: object model identity or name is invalid", enrich.ErrInvalidDataSourceResponse)
 	}
@@ -99,4 +103,28 @@ func (c *ModelClient) GetModelByCode(ctx context.Context, tenantID, modelCode st
 	return enrich.Model{
 		TenantID: tenantID, ModelID: fmt.Sprint(row.ObjectModelID), ModelCode: modelCode, Fields: fields,
 	}, true, nil
+}
+
+// GetModelByCMDBObjectID 只接受同租户唯一映射，不按名称猜测 canonical 模型编码。
+func (c *ModelClient) GetModelByCMDBObjectID(ctx context.Context, tenantID, objectID string) (enrich.Model, bool, error) {
+	if ctx == nil || strings.TrimSpace(tenantID) == "" || strings.TrimSpace(objectID) == "" {
+		return enrich.Model{}, false, fmt.Errorf("get model by CMDB object: context, tenant and object ID are required")
+	}
+	if err := ctx.Err(); err != nil {
+		return enrich.Model{}, false, err
+	}
+	var rows []objectModelRow
+	err := c.db.WithContext(ctx).Table(objectModelTable).
+		Select("object_model_id, bk_tenant_id, model_id, model_name, bk_cmdb_obj_id, display_fields, inst_display_name, host_related_field").
+		Where("bk_tenant_id = ? AND bk_cmdb_obj_id = ?", tenantID, objectID).Limit(2).Find(&rows).Error
+	if err != nil {
+		return enrich.Model{}, false, fmt.Errorf("query CMDB model: %w", err)
+	}
+	if len(rows) == 0 {
+		return enrich.Model{}, false, nil
+	}
+	if len(rows) != 1 || rows[0].BKCMDBObjectID != objectID || rows[0].ModelID == "" {
+		return enrich.Model{}, false, fmt.Errorf("%w: CMDB model mapping is ambiguous or invalid", enrich.ErrInvalidDataSourceResponse)
+	}
+	return modelFromRow(rows[0], tenantID, rows[0].ModelID)
 }

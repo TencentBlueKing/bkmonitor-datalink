@@ -52,7 +52,7 @@ func TestResourceHostAddressContext(t *testing.T) {
 			}
 			event := processorBaseTargetAlert(t, dims)
 			original := event.Clone()
-			chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, CollectTopology: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func TestResourceHostContextFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := (Resource{}).Process(t.Context(), scope)
+			result, err := (MonitorResource{}).Process(t.Context(), scope)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,11 +170,11 @@ func TestResourceHostContextCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = (Resource{}).Process(ctx, scope); !errors.Is(err, context.Canceled) {
+	if _, err = (MonitorResource{}).Process(ctx, scope); !errors.Is(err, context.Canceled) {
 		t.Fatalf("error=%v", err)
 	}
 	reader.cancel = nil
-	if result, err := (Resource{}).Process(t.Context(), scope); err != nil || result.Status != domain.EnrichStatusSucceeded || reader.hostCalls != 2 {
+	if result, err := (MonitorResource{}).Process(t.Context(), scope); err != nil || result.Status != domain.EnrichStatusSucceeded || reader.hostCalls != 2 {
 		t.Fatalf("retry=%#v err=%v calls=%d", result, err, reader.hostCalls)
 	}
 }
@@ -202,7 +202,7 @@ func TestResourceHostCanonicalIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := (Resource{}).Process(t.Context(), scope)
+			result, err := (MonitorResource{}).Process(t.Context(), scope)
 			if err != nil {
 				t.Fatal(err)
 			}

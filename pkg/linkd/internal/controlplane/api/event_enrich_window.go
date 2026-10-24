@@ -263,7 +263,7 @@ func projectEventWindowItem(stored store.StoredEvent, evaluation domain.EventEva
 				step.Rules = map[string]string{}
 			}
 			if kind != "fields" && kind != "cmdb" {
-				names := map[string]string{"strategy": "策略丰富", "resource": "资源丰富", "k8s": "Kubernetes 丰富", "apm": "APM 丰富", "log": "日志丰富", "display": "展示信息丰富", "metric": "指标丰富", "source": "告警源丰富", "cmdb-access": "对象权限丰富"}
+				names := map[string]string{"strategy": "策略丰富", "resource": "资源丰富", "monitor-resource": "监控资源丰富", "k8s": "Kubernetes 丰富", "apm": "APM 丰富", "log": "日志丰富", "display": "展示信息丰富", "metric": "指标丰富", "source": "告警源丰富", "cmdb-access": "对象权限丰富"}
 				name := names[kind]
 				if name == "" {
 					name = kind

@@ -22,6 +22,7 @@ import (
 type DiagnosticCode string
 
 const (
+	DiagnosticCodeIdentityConflict     DiagnosticCode = "identity_conflict"
 	DiagnosticCodeMissingField         DiagnosticCode = "missing_field"
 	DiagnosticCodeInvalidField         DiagnosticCode = "invalid_field"
 	DiagnosticCodeDependencyInvalid    DiagnosticCode = "dependency_invalid"
@@ -144,7 +145,7 @@ func DecodePayload(object domain.JSONObject) (Payload, error) {
 func (c DiagnosticCode) Valid() bool {
 	switch c {
 	case DiagnosticCodeMissingField, DiagnosticCodeInvalidField,
-		DiagnosticCodeDependencyInvalid, DiagnosticCodeClassificationFailed:
+		DiagnosticCodeDependencyInvalid, DiagnosticCodeClassificationFailed, DiagnosticCodeIdentityConflict:
 		return true
 	default:
 		return false
@@ -184,7 +185,7 @@ func (e ProcessorEnvelope) MarshalJSON() ([]byte, error) {
 func processorValueView(name string, patches []domain.EnrichPatch) domain.JSONObject {
 	var value any = map[string]any{}
 	switch name {
-	case "resource":
+	case "monitor-resource":
 		value = models.ResourceValues{CWLabels: []string{}, DynamicGroupID: []string{}}
 	case "display":
 		value = models.DisplayValues{}

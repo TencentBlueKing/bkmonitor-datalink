@@ -92,7 +92,7 @@ func TestCanonicalHostIdentityChecksConflicts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := (Resource{}).Process(t.Context(), scope)
+			result, err := (MonitorResource{}).Process(t.Context(), scope)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -180,7 +180,7 @@ func canonicalResourceEvent(t *testing.T, task string) domain.Event {
 
 func runCanonicalResource(t *testing.T, event domain.Event, reader *canonicalIdentityReader) (enrich.ProcessorEnvelope, enrich.ProcessorEnvelope) {
 	t.Helper()
-	chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{}}, enrich.Sources{
+	chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}}, enrich.Sources{
 		CWStrategy: processorBaseTargetStrategy{modelCode: "cw-MySQL"}, Metric: processorBaseTargetMetric{},
 		Model: reader, OneModel: reader, CollectConfig: reader, CollectTopology: reader,
 	})
@@ -195,7 +195,7 @@ func runCanonicalResource(t *testing.T, event domain.Event, reader *canonicalIde
 	if err != nil {
 		t.Fatal(err)
 	}
-	return payload.Processors[0][rules.ResourceProcessor], payload.Processors[1][rules.DisplayProcessor]
+	return payload.Processors[0][rules.MonitorResourceProcessor], payload.Processors[1][rules.DisplayProcessor]
 }
 
 type canonicalIdentityReader struct {

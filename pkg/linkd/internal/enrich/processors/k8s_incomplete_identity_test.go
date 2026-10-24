@@ -51,7 +51,7 @@ func TestResourceThenK8sRequiresCompleteNodeIdentity(t *testing.T) {
 					data := &dataSliceReader{model: rules.K8sNodeModelCode}
 					sources.CWStrategy, sources.Metric = data, data
 				}
-				chain, err := enrich.NewChain([]enrich.Processor{Resource{}, K8s{}}, sources)
+				chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, K8s{}}, sources)
 				if err != nil {
 					t.Fatal(err)
 				}

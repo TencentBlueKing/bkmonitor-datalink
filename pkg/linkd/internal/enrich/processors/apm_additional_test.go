@@ -33,7 +33,7 @@ func TestAPMServiceFromAdditionalDimensions(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Metric: reader})
+				chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Metric: reader})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -49,12 +49,12 @@ func TestAPMServiceFromAdditionalDimensions(t *testing.T) {
 				if instance != "" {
 					model, id = "cw-service_instance", id+"|"+instance
 				}
-				for i, name := range []string{rules.StrategyProcessor, rules.ResourceProcessor, rules.DisplayProcessor, rules.APMProcessor} {
+				for i, name := range []string{rules.StrategyProcessor, rules.MonitorResourceProcessor, rules.DisplayProcessor, rules.APMProcessor} {
 					envelope := payload.Processors[i][name]
 					if envelope.Status != domain.EnrichStatusSucceeded {
 						t.Fatalf("%s: %+v", name, envelope)
 					}
-					if name == rules.ResourceProcessor || name == rules.APMProcessor {
+					if name == rules.MonitorResourceProcessor || name == rules.APMProcessor {
 						if string(envelope.Value["model_id"]) != `"`+model+`"` || string(envelope.Value["model_inst_id"]) != `"`+id+`"` {
 							t.Fatalf("%s: %+v", name, envelope)
 						}
@@ -78,7 +78,7 @@ func TestAPMRejectsConflictingOrInvalidAdditionalDimensions(t *testing.T) {
 			reader := apmTestReader{}
 			event := processorBaseTargetAlert(t, domain.DimensionMap{rules.FieldServiceName: domain.NewStringScalar("checkout")})
 			event.ExtraData = domain.JSONObject{"additional_dimensions": json.RawMessage(raw)}
-			chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader, Metric: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader, Metric: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -90,7 +90,7 @@ func TestAPMRejectsConflictingOrInvalidAdditionalDimensions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for i, name := range []string{rules.ResourceProcessor, rules.DisplayProcessor, rules.APMProcessor} {
+			for i, name := range []string{rules.MonitorResourceProcessor, rules.DisplayProcessor, rules.APMProcessor} {
 				envelope := payload.Processors[i][name]
 				if envelope.Status != domain.EnrichStatusFailed || len(envelope.Diagnostics) == 0 || envelope.Diagnostics[0].Code != enrich.DiagnosticCodeInvalidField {
 					t.Fatalf("%s: %+v", name, envelope)

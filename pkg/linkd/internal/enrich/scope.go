@@ -188,6 +188,11 @@ type ModelReader interface {
 	GetModelByCode(ctx context.Context, tenantID, modelCode string) (Model, bool, error)
 }
 
+// CMDBModelReader 按租户和 CMDB 对象代码解析唯一 canonical 模型；歧义必须返回错误。
+type CMDBModelReader interface {
+	GetModelByCMDBObjectID(ctx context.Context, tenantID, objectID string) (Model, bool, error)
+}
+
 type modelResult struct {
 	value Model
 	found bool
@@ -632,6 +637,26 @@ func (s *Scope) ModelByCode(ctx context.Context, modelCode string) (returned Mod
 	}
 	if ctx.Err() == nil {
 		s.models[modelCode] = result
+	}
+	return result.value, result.found, result.err
+}
+
+// ModelByCMDBObjectID 缓存本次事件的 CMDB 映射，取消结果不进入缓存。
+func (s *Scope) ModelByCMDBObjectID(ctx context.Context, objectID string) (returned Model, found bool, err error) {
+	defer func() { s.recordDependencyError("onemodel_model", err) }()
+	// 模型编码不能包含控制字符，前缀因此不会与 canonical 查询缓存冲突。
+	key := "\x00cmdb:" + objectID
+	if result, exists := s.models[key]; exists {
+		return result.value, result.found, result.err
+	}
+	result := modelResult{}
+	if reader, ok := s.sources.Model.(CMDBModelReader); ok {
+		result.value, result.found, result.err = reader.GetModelByCMDBObjectID(ctx, s.original.BKTenantID, objectID)
+	} else {
+		result.err = fmt.Errorf("CMDB model reader is unavailable")
+	}
+	if ctx.Err() == nil {
+		s.models[key] = result
 	}
 	return result.value, result.found, result.err
 }

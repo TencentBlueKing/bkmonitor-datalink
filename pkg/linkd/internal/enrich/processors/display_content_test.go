@@ -37,7 +37,7 @@ func TestDisplayKeepsK8sNodeNameAcrossBasicTarget(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			event := processorBaseTargetAlert(t, tc.dimensions)
 			event.SubjectName = tc.subject
-			chain, err := enrich.NewChain([]enrich.Processor{Resource{}, Display{PreserveContent: true}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: rules.K8sNodeModelCode}, Metric: processorBaseTargetMetric{}})
+			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{PreserveContent: true}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: rules.K8sNodeModelCode}, Metric: processorBaseTargetMetric{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -84,7 +84,7 @@ func TestDisplayPreservesCreatedContentForDataAndLogs(t *testing.T) {
 			alert.Content = content
 			alert.SubjectName = "日志主题"
 			for _, preserve := range []bool{false, true} {
-				chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{PreserveContent: preserve}}, sources)
+				chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{PreserveContent: preserve}}, sources)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -160,7 +160,7 @@ func TestDisplayCreatedContentAcrossResourceScenes(t *testing.T) {
 			}
 			alert.Content = "AVG(usage) >= 1%, 当前值 2%,关联信息：保留原文"
 			original := alert.Clone()
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{PreserveContent: true}}, sources)
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{PreserveContent: true}}, sources)
 			if err != nil {
 				t.Fatal(err)
 			}

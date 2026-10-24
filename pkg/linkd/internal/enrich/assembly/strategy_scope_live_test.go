@@ -186,7 +186,7 @@ func TestStrategySpaceLiveEnrich(t *testing.T) {
 				if name == "apm" || name == "log" {
 					expected = domain.EnrichStatusSkipped
 				}
-				if (name == "resource" || name == "k8s") && !instanceFound {
+				if (name == "monitor-resource" || name == "k8s") && !instanceFound {
 					expected = domain.EnrichStatusPartial
 				}
 				if output.Status != expected {

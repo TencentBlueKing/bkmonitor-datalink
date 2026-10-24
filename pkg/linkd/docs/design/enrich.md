@@ -6,7 +6,7 @@
 状态：内置丰富场景与 KAC 迁移基线；自定义规则、补丁、预览和配置转换以[自定义丰富开发规格](custom-enrichment.md)为准。
 
 适用代码：`internal/enrich`、`internal/lifecycle/process`、`internal/config`、`internal/telemetry`
-事实基线：当前工作区代码、测试与 `go test ./...` 结果
+事实基线：当前工作区代码与针对性普通、竞态回归；不代表完整 make check 或线上验收
 
 本文统一描述 Linkd Event Enrich 的现行契约、实现边界、KAC 行为迁移状态和后续顺序。代码与本文发生差异时，以代码和测试判断当前已实现行为，并同步修正文档。
 
@@ -29,7 +29,7 @@ close_and_create 新 Alert 使用本次 Event 的新快照。
 当前可配置生产链由 EventSource 按需组合，核心链为：
 
 ```text
-strategy → resource → display → metric → source
+strategy → monitor-resource → display → metric → source
 ```
 
 日志、Cloud、K8s、APM 可分别插入 `log`、`cloud_resource`、`k8s`、`apm` Processor。
@@ -128,7 +128,7 @@ Lifecycle 将冻结对象绑定到实际保存的等级 payload，策略读取�
 enrich:
   processors:
     - type: strategy
-    - type: resource
+    - type: monitor-resource
     - type: display
     - type: metric
     - type: source
@@ -140,14 +140,14 @@ enrich:
 - 同一类型最多出现一次。
 - 空列表使用 Noop，结果为 succeeded 且 `processors` 为空。
 - 未注册 Processor 或非法配置使 Release 校验失败。
-- `strategy`、`resource` 当前要求 MySQL 与 Elasticsearch；`display`、`metric`、`source` 要求 MySQL。
+- `strategy`、`monitor-resource` 当前要求 MySQL 与 Elasticsearch；`display`、`metric`、`source` 要求 MySQL。
 - `configs/linkd.pm2.yaml` 当前示例使用空链；生产启用需要在 EventSource Release 中配置处理器。
 
 当前 Router 注册：
 
 ```text
 strategy
-resource
+monitor-resource
 display
 metric
 log
@@ -167,7 +167,7 @@ source
 {
   "processors": [
     {
-      "resource": {
+      "monitor-resource": {
         "status": "partial",
         "patches": [],
         "diagnostics": [
@@ -257,7 +257,7 @@ data_source
 实现见 [Strategy Processor](../../internal/enrich/processors/strategy.go)、
 [处理侧字段读取](../../internal/policy/view.go)和 [KAC 输出适配](../../internal/lifecycle/kachook/message.go)。
 
-### 6.2 resource
+### 6.2 monitor-resource
 
 适用场景：BaseTarget、DATA、Cloud/APM 等需要资源身份的链路。Resource 只在取得可信模型和实例身份后生成实例级标签；场景级 Processor 可在 Resource 之外补充专用资源投影。
 
@@ -533,7 +533,7 @@ Event.Dimensions.bk_collect_config_id
 → CollectConfigReader
 → bk_object_code + bk_inst_id
 → OneModelReader.FindInstance
-→ resource + display
+→ monitor-resource + display
 ```
 
 已实现：
@@ -575,7 +575,7 @@ Event.Dimensions.task_id
 → 数据库 task_id 查询
 → 记录主键 id 作为 model_inst_id
 → UptimeNodeReader(node_id=plat_id:ip)
-→ resource + display
+→ monitor-resource + display
 ```
 
 已实现：
@@ -670,7 +670,7 @@ APM 第一轮纵切已完成：
 - 投影 application/service/instance/span/net_peer 字段；
 - 应用未命中、非精确匹配、租户或业务不匹配返回 partial；旧 `dimensions.apm_app_id` 仅保留为兼容回退；
 - `service_name` 统一从 `dimensions` 与 `extra_data.additional_dimensions` 的合并视图读取，供 Resource、Display、APM 共同使用；重名或非法附加维度产生 `invalid_field`，不静默选择一份。原始 Event 的两组维度保持不变；
-- Resource Processor 与 APM Processor 共用应用解析和请求内缓存，按 `app_id + service_name + bk_instance_id` 生成 application/service/service-instance 资源身份，并补齐业务/应用标签；即使 EventSource 尚未配置 `apm` Processor，现有 `resource` Processor 也能生成 APM 对象身份；
+- Resource Processor 与 APM Processor 共用应用解析和请求内缓存，按 `app_id + service_name + bk_instance_id` 生成 application/service/service-instance 资源身份，并补齐业务/应用标签；即使 EventSource 尚未配置 `apm` Processor，现有 `monitor-resource` Processor 也能生成 APM 对象身份；
 - APM Resource 按已确认的模型代码读取同租户模型注册表中的名称，补齐 `model_name`；模型未命中、身份不匹配、名称缺失或读取失败时保留 APM 资源身份并标记部分成功，取消继续向调用方传播；
 - 已覆盖 ApplicationReader 未命中、非精确匹配、租户不匹配、Reader 错误、缺少应用 ID、重复精确匹配和完整 Processor 链测试；
 - 已用 alarmd 真实 APM 字段布局补充回归测试，覆盖 `additional_dimensions.app_name`、`service_name`、`bk_instance_id` 和 `net_peer_name`；
@@ -1033,3 +1033,22 @@ Kingeye / OneModel / 其他来源
 4. BaseTarget 与 Collect 共用关联主机云区域补偿：资源自身区域优先，只为同一云区域补名称；关联主机必须属于当前租户。拨测已有任务删除回退、业务名称与可信地址云区域补偿继续沿用。
 5. 实例展示名缺失时保留来源 Subject、主机 IP 或 K8s node 回退。DATA 已确认实例的展示名不再被空结果清除。所有补偿保留原始 Event 维度，不从 SourceRawData 读兜底，也不向指标维度注入身份。
 6. 已增加原生/规范身份、冲突/非法/部分身份、跨租户、实例缺失、模型保留、拓扑与云区域补偿、DATA/Collect 展示回退、K8s 自然维度与单次查询复用、无数据查询条件隔离的构造数据回归。当前真实回放以指定 test-bkee5-vpn Event 为准，其他类型与 Redis 展示/动态分组仍需要真实验证；不重写历史 Alert。
+## 通用资源身份解析（2026-10-24）
+
+`resource` 只解析对象模型和实例，不读取监控策略、采集任务、指标目录，不生成业务拓扑、权限标签或动态分组。
+原监控资源处理迁至 `monitor-resource`，保留已有监控场景与输出；新监控来源显式发布该处理器。
+已发布 `built_in_bk` 的旧链仍含 `strategy/resource` 时，装配边界保留旧监控语义，避免改变冻结 Release。
+
+通用定位依次选择同一位置的 canonical `model_id/model_inst_id`、`subject`、旧 `bk_obj_id/bk_inst_id`。
+字段位置按有效视图的 `labels`、`extra_data`、`dimensions` 排序，不跨位置拼接。已经声明但不完整、非法、查询失败的身份不得降级换对象。
+完整声明解析后冲突时记录诊断，不提交新资源身份。只有 `subject.name` 不构成身份声明。
+OneModel subject 的 type 是模型编码；CMDB subject 的 type 按同租户 `bk_cmdb_obj_id` 反查唯一模型。
+实例统一走 OneModel，CMDB 主机/业务/集群/模块按各自 CMDB 主键属性查询，其余 CMDB 对象按 `bk_inst_id` 查询。
+模型和实例返回后复核租户、模型、实例及 entity_uid，不猜模型名、不将未查到的来源 ID 当成定位结果。
+模型已确认而实例未命中时仅提交已确认模型字段并记录部分成功；来源 subject 和原始数据保持不变。
+
+KAC REST 默认发布 `source/resource`，再执行自定义 CMDB/字段规则，最后执行已有 `cmdb-access`。
+REST 接入只归一化顶层旧资源字段到 extra_data，不查询依赖、不扩大为旧完整报文协议。
+本次不回填历史 Alert 或 KAC 记录；部署验收必须与本地测试、只读数据重放区分。
+
+部署顺序：先升级支持 monitor-resource 且保留冻结监控 Release 语义的 Linkd，再升级 KAC 并发布来源配置；旧 Linkd 不认识新监控处理器名称。

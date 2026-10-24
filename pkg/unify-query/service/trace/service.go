@@ -11,11 +11,13 @@ package trace
 
 import (
 	"context"
-	"github.com/spf13/viper"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -27,6 +29,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
 // Service
@@ -36,6 +39,46 @@ type Service struct {
 	wg         sync.WaitGroup
 	ctx        context.Context
 	cancelFunc context.CancelFunc
+}
+
+type instanceIdentity struct {
+	podUID, containerID, hostname, ip string
+	inKubernetes, inDocker            bool
+}
+
+func (identity instanceIdentity) value(serviceName string) string {
+	if podUID := strings.TrimSpace(identity.podUID); podUID != "" {
+		return "k8s_" + podUID
+	}
+	containerID := strings.TrimSpace(identity.containerID)
+	if !identity.inKubernetes && (identity.inDocker || isDockerContainerID(containerID)) {
+		if isDockerContainerID(containerID) {
+			return "docker_" + containerID
+		}
+		if isDockerContainerID(identity.hostname) {
+			return "docker_" + identity.hostname
+		}
+		return ""
+	}
+	if identity.ip != "" {
+		return serviceName + "@" + identity.ip
+	}
+	if identity.hostname != "" {
+		return serviceName + "@" + identity.hostname
+	}
+	return ""
+}
+
+func isDockerContainerID(value string) bool {
+	if len(value) < 12 || len(value) > 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // Type
@@ -77,11 +120,27 @@ func (s *Service) newGrpcClient() otlptrace.Client {
 
 // newResource
 func (s *Service) newResource() *resource.Resource {
-	return resource.NewWithAttributes(
-		semconv.SchemaURL,
+	attributes := []attribute.KeyValue{
 		semconv.ServiceNameKey.String(ServiceName),
 		attribute.Key("bk.data.token").String(otlpToken),
-	)
+	}
+	hostname, ip := metadata.GetLocalHost()
+	_, dockerErr := os.Stat("/.dockerenv")
+	identity := instanceIdentity{
+		// UQ_POD_UID 由 Kubernetes Downward API 注入；自定义 Docker hostname 时需显式提供 UQ_CONTAINER_ID。
+		podUID:       os.Getenv("UQ_POD_UID"),
+		containerID:  os.Getenv("UQ_CONTAINER_ID"),
+		hostname:     hostname,
+		ip:           ip,
+		inKubernetes: os.Getenv("KUBERNETES_SERVICE_HOST") != "",
+		inDocker:     dockerErr == nil,
+	}
+	if instanceID := identity.value(ServiceName); instanceID != "" {
+		attributes = append(attributes, attribute.String("service.instance.id", instanceID))
+	} else if identity.inDocker && !identity.inKubernetes {
+		log.Errorf(context.TODO(), "Docker container ID unavailable; set UQ_CONTAINER_ID when hostname is customized")
+	}
+	return resource.NewWithAttributes(semconv.SchemaURL, attributes...)
 }
 
 // Start
@@ -115,11 +174,10 @@ func (s *Service) Start(ctx context.Context) {
 	// 这里的wg不是用于goroutine运行判断，需要注意
 	s.wg.Add(1)
 
-	s.tracerProvider = sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithBatcher(exporter),
-		sdktrace.WithResource(s.newResource()),
-	)
+	s.tracerProvider, err = newTracerProvider(exporter, s.newResource())
+	if err != nil {
+		panic(err)
+	}
 	otel.SetTracerProvider(s.tracerProvider)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
@@ -149,4 +207,31 @@ func (s *Service) Close() {
 // Wait
 func (s *Service) Wait() {
 	s.wg.Wait()
+}
+
+// newSampler 按配置构造采样器。always 记录所有请求；parent_based 时带上游 traceparent 的请求按其
+// sampled 标志决定，标志为 00 的请求只建不记录的 span，span context 仍带上游的 trace id，
+// 日志行照样能用它关联；没有上游的请求照旧全记录。
+func newSampler(name string) (sdktrace.Sampler, error) {
+	switch name {
+	case "", SamplerAlways:
+		return sdktrace.AlwaysSample(), nil
+	case SamplerParentBased:
+		return sdktrace.ParentBased(sdktrace.AlwaysSample()), nil
+	default:
+		return nil, fmt.Errorf("unknown trace sampler %q: want %s or %s", name, SamplerAlways, SamplerParentBased)
+	}
+}
+
+// newTracerProvider 按当前配置（trace.sampler）构造 provider，Start 与用例走同一处。
+func newTracerProvider(exporter sdktrace.SpanExporter, res *resource.Resource) (*sdktrace.TracerProvider, error) {
+	sampler, err := newSampler(Sampler)
+	if err != nil {
+		return nil, err
+	}
+	return sdktrace.NewTracerProvider(
+		sdktrace.WithSampler(sampler),
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+	), nil
 }

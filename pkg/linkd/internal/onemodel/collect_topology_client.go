@@ -75,22 +75,23 @@ func (c *Client) FindRelatedHost(
 	return Instance{}, false, nil
 }
 
-// FindHostTopology 读取主机 membership 和祖先节点，生成业务、集群和模块投影。
+// FindHostTopology 读取主机 membership；includeSetModule 开启时额外读取祖先节点，生成业务、集群和模块投影。
 // 旧 KAC 回调投影首条路径；ES 命中顺序不稳定，因此按祖先节点 sort_order 与
 // 路径 ID 确定稳定的首路径。同一主机可有多个合法模块，但所有 membership 必须先通过身份校验。
 func (c *Client) FindHostTopology(
 	ctx context.Context,
 	tenantID, hostID string,
+	includeSetModule bool,
 ) (ResourceTopology, bool, error) {
-	return c.findHostTopology(ctx, tenantID, hostID, false)
+	return c.findHostTopology(ctx, tenantID, hostID, false, includeSetModule)
 }
 
 // FindCMDBTopology 返回同一业务下全部集群和模块，供旧 CMDB 丰富补全缺失字段。
 func (c *Client) FindCMDBTopology(ctx context.Context, tenantID, hostID string) (ResourceTopology, bool, error) {
-	return c.findHostTopology(ctx, tenantID, hostID, true)
+	return c.findHostTopology(ctx, tenantID, hostID, true, true)
 }
 
-func (c *Client) findHostTopology(ctx context.Context, tenantID, hostID string, all bool) (ResourceTopology, bool, error) {
+func (c *Client) findHostTopology(ctx context.Context, tenantID, hostID string, all, includeSetModule bool) (ResourceTopology, bool, error) {
 	if ctx == nil {
 		return ResourceTopology{}, false, fmt.Errorf("find host topology: context must not be nil")
 	}
@@ -112,6 +113,11 @@ func (c *Client) findHostTopology(ctx context.Context, tenantID, hostID string, 
 	businessID, err := validateHostMemberships(memberships, tenantID, hostID)
 	if err != nil {
 		return ResourceTopology{}, false, err
+	}
+	// 业务归属已经由全部 membership 确认，关闭集群、模块时不依赖祖先节点的可用性。
+	// 业务名称由监控链现有的同租户 cw-biz 查询补偿。
+	if !includeSetModule {
+		return ResourceTopology{BKBizID: businessID}, true, nil
 	}
 	// 同业务的多条路径依次按根至叶节点的 sort_order 排序；路径 ID 用于并列顺序兜底。
 	// 先批量读取所有候选祖先，避免 membership 增长时产生逐节点往返。

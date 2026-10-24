@@ -75,7 +75,7 @@ func TestBaseTargetBranches(t *testing.T) {
 			original := alert.Clone()
 			scope, err := enrich.NewScope(alert, enrich.Sources{
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader,
-			})
+			}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -111,7 +111,7 @@ func TestMonitorSourceServiceInstanceUsesBusinessContext(t *testing.T) {
 	reader := serviceReader()
 	dimensions := domain.DimensionMap{rules.FieldBKInstID: number(t, 2)}
 	alert := baseTargetAlert(t, dimensions)
-	scope, _ := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+	scope, _ := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	modelCode := rules.ServiceInstanceModelCode
 	_, err := Enrich(context.Background(), scope, rules.Classification{Main: rules.MainTarget, BaseTarget: rules.BaseTargetMonitorSource}, models.CWStrategy{ObjectModelCode: &modelCode}, dimensions, 2, alert.SubjectName)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestNoDataIdentityContract(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			reader := serviceReader()
 			alert := baseTargetAlert(t, test.dimensions)
-			scope, err := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+			scope, err := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,7 +196,7 @@ func TestBaseTargetIdentityMismatchAndTopologyMiss(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			alert := baseTargetAlert(t, test.dimensions)
-			scope, err := enrich.NewScope(alert, enrich.Sources{Model: test.reader, OneModel: test.reader, CollectTopology: test.reader})
+			scope, err := enrich.NewScope(alert, enrich.Sources{Model: test.reader, OneModel: test.reader, CollectTopology: test.reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -236,7 +236,7 @@ func TestSystemMetricAddressResolutionStatus(t *testing.T) {
 			}
 			dimensions := domain.DimensionMap{rules.FieldBKTargetIP: domain.NewStringScalar("10.0.0.1"), rules.FieldBKTargetCloudID: number(t, 0)}
 			event := baseTargetAlert(t, dimensions)
-			scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+			scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -264,7 +264,7 @@ func TestBaseTargetCanceledLookupDoesNotReuseScenario(t *testing.T) {
 	reader := &cancelOnceModelReader{baseTargetReader: hostReader()}
 	dimensions := domain.DimensionMap{rules.FieldBKInstID: number(t, 101)}
 	alert := baseTargetAlert(t, dimensions)
-	scope, err := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+	scope, err := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestBaseTargetRejectsForeignRelatedHost(t *testing.T) {
 			reader.relatedHost, reader.relatedFound = test.host, true
 			dimensions := domain.DimensionMap{rules.FieldBKInstID: number(t, 2)}
 			alert := baseTargetAlert(t, dimensions)
-			scope, err := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+			scope, err := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -334,7 +334,7 @@ func TestBaseTargetCancelDuringTopologyLookup(t *testing.T) {
 	reader := &cancelingTopologyReader{baseTargetReader: hostReader(), cancel: cancel}
 	dimensions := domain.DimensionMap{rules.FieldBKInstID: number(t, 101)}
 	alert := baseTargetAlert(t, dimensions)
-	scope, err := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+	scope, err := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ type cancelingTopologyReader struct {
 	cancel context.CancelFunc
 }
 
-func (r *cancelingTopologyReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
+func (r *cancelingTopologyReader) FindHostTopology(context.Context, string, string, bool) (models.ResourceTopology, bool, error) {
 	r.cancel()
 	return models.ResourceTopology{}, false, context.Canceled
 }
@@ -358,7 +358,7 @@ func TestBaseTargetContextCancellation(t *testing.T) {
 	t.Parallel()
 	reader := hostReader()
 	alert := baseTargetAlert(t, domain.DimensionMap{rules.FieldBKInstID: number(t, 101)})
-	scope, _ := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+	scope, _ := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	modelCode := rules.HostModelCode
@@ -373,7 +373,7 @@ func TestBaseTargetDependencyFailurePreservesInstance(t *testing.T) {
 	reader.topologyErr = errors.New("unavailable")
 	dimensions := domain.DimensionMap{rules.FieldBKInstID: number(t, 101)}
 	alert := baseTargetAlert(t, dimensions)
-	scope, _ := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+	scope, _ := enrich.NewScope(alert, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	modelCode := rules.HostModelCode
 	result, err := Enrich(context.Background(), scope, rules.Classification{Main: rules.MainTarget, BaseTarget: rules.BaseTargetMonitorSource}, models.CWStrategy{ObjectModelCode: &modelCode}, dimensions, 2, alert.SubjectName)
 	if err != nil {
@@ -444,7 +444,7 @@ func (r *baseTargetReader) FindRelatedHost(context.Context, string, string, stri
 	return r.relatedHost, r.relatedFound, r.relatedErr
 }
 
-func (r *baseTargetReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
+func (r *baseTargetReader) FindHostTopology(context.Context, string, string, bool) (models.ResourceTopology, bool, error) {
 	r.topologyCalls++
 	return r.topology, r.topologyFound, r.topologyErr
 }
@@ -483,7 +483,7 @@ func TestServiceInstanceWithoutBusinessNeverQueriesUnscoped(t *testing.T) {
 			event := baseTargetAlert(t, domain.DimensionMap{rules.FieldBKInstID: domain.NewStringScalar("2")})
 			delete(event.Labels, "bk_biz_id")
 			reader := &baseTargetReader{}
-			scope, err := enrich.NewScope(event, enrich.Sources{OneModel: reader, Model: reader})
+			scope, err := enrich.NewScope(event, enrich.Sources{OneModel: reader, Model: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}

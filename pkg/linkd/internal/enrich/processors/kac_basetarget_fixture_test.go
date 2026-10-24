@@ -159,7 +159,7 @@ func TestKACBaseTargetFixtures(t *testing.T) {
 				CWStrategy: reader, Model: reader, OneModel: reader, CollectConfig: reader, CollectTopology: reader,
 				Uptime: reader, UptimeNode: reader,
 				Metric: reader, AlarmSource: reader,
-			})
+			}, enrich.WithCMDBSetModuleEnabled(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -372,7 +372,7 @@ func (r *kacFixtureReader) GetUptimeNode(_ context.Context, tenantID, nodeID str
 	return models.UptimeNode{ID: v.ID, Name: v.Name, PlatID: v.PlatID, IP: v.IP, BKTenantID: tenantID}, true, nil
 }
 
-func (r *kacFixtureReader) FindHostTopology(_ context.Context, tenantID, hostID string) (models.ResourceTopology, bool, error) {
+func (r *kacFixtureReader) FindHostTopology(_ context.Context, tenantID, hostID string, _ bool) (models.ResourceTopology, bool, error) {
 	if tenantID != "tenant-a" || hostID != r.fixture.Topology.HostID {
 		return models.ResourceTopology{}, false, fmt.Errorf("unexpected topology query tenant=%s host=%s", tenantID, hostID)
 	}

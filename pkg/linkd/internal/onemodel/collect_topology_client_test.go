@@ -113,7 +113,7 @@ func TestClientFindHostTopology(t *testing.T) {
 		}
 	})
 	client, _ := NewClient(ClientConfig{Transport: transport})
-	topology, found, err := client.FindHostTopology(context.Background(), "tenant-a", "101")
+	topology, found, err := client.FindHostTopology(context.Background(), "tenant-a", "101", true)
 	if err != nil || !found || topology.BKBizID != 2 || topology.BKBizName != "订单业务" ||
 		topology.BKSetID != 3 || topology.BKSetName != "生产集群" ||
 		topology.BKModuleID != 7 || topology.BKModuleName != "订单模块" {
@@ -167,7 +167,7 @@ func TestClientFindHostTopologySelectsStablePath(t *testing.T) {
 				}
 			})
 			client, _ := NewClient(ClientConfig{Transport: transport})
-			topology, found, err := client.FindHostTopology(context.Background(), "tenant-a", "101")
+			topology, found, err := client.FindHostTopology(context.Background(), "tenant-a", "101", true)
 			if err != nil || !found || topology.BKBizName != "订单业务" || topology.BKSetID != 3 || topology.BKModuleID != 7 {
 				t.Fatalf("FindHostTopology()=%#v,%t,%v", topology, found, err)
 			}
@@ -209,7 +209,7 @@ func TestClientFindHostTopologyRejectsInvalidNodes(t *testing.T) {
 				}
 			})
 			client, _ := NewClient(ClientConfig{Transport: transport})
-			_, found, err := client.FindHostTopology(context.Background(), "tenant-a", "101")
+			_, found, err := client.FindHostTopology(context.Background(), "tenant-a", "101", true)
 			if found || !errors.Is(err, ErrInvalidDataSourceResponse) {
 				t.Fatalf("found=%t err=%v", found, err)
 			}
@@ -250,9 +250,11 @@ func TestClientFindHostTopologyRejectsInvalidMembership(t *testing.T) {
 				return topologySearchResponse(test.memberships...), nil
 			})
 			client, _ := NewClient(ClientConfig{Transport: transport})
-			_, found, err := client.FindHostTopology(context.Background(), "tenant-a", "101")
-			if found || !errors.Is(err, ErrInvalidDataSourceResponse) {
-				t.Fatalf("found=%t err=%v", found, err)
+			for _, includeSetModule := range []bool{false, true} {
+				_, found, err := client.FindHostTopology(context.Background(), "tenant-a", "101", includeSetModule)
+				if found || !errors.Is(err, ErrInvalidDataSourceResponse) {
+					t.Fatalf("includeSetModule=%t found=%t err=%v", includeSetModule, found, err)
+				}
 			}
 		})
 	}

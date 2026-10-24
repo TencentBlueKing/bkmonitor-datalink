@@ -497,7 +497,7 @@ func (baseCollectTopology) FindRelatedHost(context.Context, string, string, stri
 	return enrich.Instance{}, false, nil
 }
 
-func (baseCollectTopology) FindHostTopology(ctx context.Context, tenantID, hostID string) (models.ResourceTopology, bool, error) {
+func (baseCollectTopology) FindHostTopology(ctx context.Context, tenantID, hostID string, _ bool) (models.ResourceTopology, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return models.ResourceTopology{}, false, err
 	}

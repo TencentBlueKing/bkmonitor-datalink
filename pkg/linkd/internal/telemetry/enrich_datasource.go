@@ -240,9 +240,9 @@ func (r *observedCollectTopologyReader) FindRelatedHost(ctx context.Context, ten
 	return value, found, err
 }
 
-func (r *observedCollectTopologyReader) FindHostTopology(ctx context.Context, tenantID, hostID string) (models.ResourceTopology, bool, error) {
+func (r *observedCollectTopologyReader) FindHostTopology(ctx context.Context, tenantID, hostID string, includeSetModule bool) (models.ResourceTopology, bool, error) {
 	startedAt := time.Now()
-	value, found, err := r.next.FindHostTopology(ctx, tenantID, hostID)
+	value, found, err := r.next.FindHostTopology(ctx, tenantID, hostID, includeSetModule)
 	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCollectTopology, "find_host_topology", startedAt, found, err)
 	return value, found, err
 }

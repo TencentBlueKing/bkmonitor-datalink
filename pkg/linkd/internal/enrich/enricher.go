@@ -30,10 +30,11 @@ type Processor interface {
 
 // Chain 按固定顺序执行一组 Processor，并编码为 Event.enrich 的逐等级 payload。
 type Chain struct {
-	processors []Processor
-	sources    Sources
-	observer   Observer
-	logger     Logger
+	cmdbSetModuleEnabled bool
+	processors           []Processor
+	sources              Sources
+	observer             Observer
+	logger               Logger
 }
 
 // NewChain 创建不可变的 Processor 执行链。
@@ -86,6 +87,7 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 	statuses := make([]domain.EnrichStatus, 0, len(event.Evaluations))
 	for _, evaluation := range event.Evaluations {
 		scope := newOwnedScope(&event, evaluation, c.sources, cache)
+		scope.cmdbSetModuleEnabled = c.cmdbSetModuleEnabled
 		evaluated, err := c.enrichEvaluation(ctx, scope, budget)
 		if err != nil {
 			return Result{}, err

@@ -90,7 +90,7 @@ func TestResolverAndProjectors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			scope, err := enrich.NewScope(collectAlert(t, test.dimensions), enrich.Sources{
 				CollectConfig: test.reader, Model: test.reader, OneModel: test.reader,
-			})
+			}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +135,7 @@ func TestCollectUsesOneModelHostForCloudName(t *testing.T) {
 				instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-Service", InstanceID: "2", Fields: map[string]any{rules.FieldBKBizID: int64(3)}}, instanceFound: true,
 				secondaryInstance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.HostModelCode, InstanceID: "101", Attributes: map[string]any{rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "默认区域"}}, secondaryFound: true,
 			}
-			scope, err := enrich.NewScope(collectAlert(t, test.dimensions), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader})
+			scope, err := enrich.NewScope(collectAlert(t, test.dimensions), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -164,7 +164,7 @@ func TestServiceInstanceUsesFinalBizIDInInstanceQuery(t *testing.T) {
 			Fields: map[string]any{rules.FieldCWBIZID: int64(9)},
 		}, instanceFound: true,
 	}
-	scope, err := enrich.NewScope(collectAlert(t, dimensions), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader})
+	scope, err := enrich.NewScope(collectAlert(t, dimensions), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestRemoteCollectTopologyFailurePreservesResourceAndReportsDependency(t *te
 	}
 	scope, err := enrich.NewScope(collectAlert(t, dimensions), enrich.Sources{
 		CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader,
-	})
+	}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestCollectAppliesRelatedHostCloudContext(t *testing.T) {
 				relatedHost: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.HostModelCode, InstanceID: "101", Fields: hostFields}, relatedFound: true,
 				topology: models.ResourceTopology{BKBizID: 9}, topologyFound: true,
 			}
-			scope, err := enrich.NewScope(collectAlert(t, dimensions), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader})
+			scope, err := enrich.NewScope(collectAlert(t, dimensions), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -296,7 +296,7 @@ func TestRemoteCollectAppliesRelatedHostTopologyAndLabels(t *testing.T) {
 	}
 	scope, err := enrich.NewScope(collectAlert(t, dimensions), enrich.Sources{
 		CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader,
-	})
+	}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestResolverCachesDependenciesAndKeepsAlertUnchanged(t *testing.T) {
 	}
 	scope, err := enrich.NewScope(alert, enrich.Sources{
 		CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader,
-	})
+	}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,8 +392,11 @@ func (r *collectReader) FindRelatedHost(context.Context, string, string, string,
 	return r.relatedHost, r.relatedFound, r.relatedErr
 }
 
-func (r *collectReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
+func (r *collectReader) FindHostTopology(_ context.Context, _, _ string, includeSetModule bool) (models.ResourceTopology, bool, error) {
 	r.topologyCalls++
+	if !includeSetModule {
+		return models.ResourceTopology{BKBizID: r.topology.BKBizID}, r.topologyFound, r.topologyErr
+	}
 	return r.topology, r.topologyFound, r.topologyErr
 }
 

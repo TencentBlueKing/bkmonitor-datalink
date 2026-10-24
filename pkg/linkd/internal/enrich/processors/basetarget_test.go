@@ -45,7 +45,7 @@ func TestBaseTargetFullProcessorPayloads(t *testing.T) {
 				CWStrategy: processorBaseTargetStrategy{modelCode: test.modelCode}, Metric: processorBaseTargetMetric{},
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader,
 				AlarmSource: processorBaseTargetAlarmSource{},
-			})
+			}, enrich.WithCMDBSetModuleEnabled(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +96,7 @@ func TestBaseTargetBranchesFlowThroughResourceAndDisplay(t *testing.T) {
 			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}}, enrich.Sources{
 				CWStrategy: processorBaseTargetStrategy{modelCode: test.modelCode}, Metric: processorBaseTargetMetric{},
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader,
-			})
+			}, enrich.WithCMDBSetModuleEnabled(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -150,7 +150,7 @@ func TestNoDataFiveProcessorFailures(t *testing.T) {
 			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
 				CWStrategy: processorBaseTargetStrategy{modelCode: modelCode}, Metric: processorBaseTargetMetric{},
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader, AlarmSource: processorBaseTargetAlarmSource{},
-			})
+			}, enrich.WithCMDBSetModuleEnabled(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -222,7 +222,7 @@ func TestBaseTargetFiveProcessorFailureBoundaries(t *testing.T) {
 			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, Metric{}, EventSource{}}, enrich.Sources{
 				CWStrategy: processorBaseTargetStrategy{modelCode: test.modelCode}, Metric: processorBaseTargetMetric{},
 				Model: test.reader, OneModel: test.reader, CollectTopology: test.reader, AlarmSource: processorBaseTargetAlarmSource{},
-			})
+			}, enrich.WithCMDBSetModuleEnabled(true))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -327,7 +327,7 @@ func (*processorBaseTargetReader) FindRelatedHost(context.Context, string, strin
 	return enrich.Instance{}, false, nil
 }
 
-func (r *processorBaseTargetReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
+func (r *processorBaseTargetReader) FindHostTopology(context.Context, string, string, bool) (models.ResourceTopology, bool, error) {
 	r.topologyCalls++
 	return r.topology, r.topologyFound, r.topologyErr
 }

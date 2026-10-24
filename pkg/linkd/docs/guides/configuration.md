@@ -150,6 +150,7 @@ event_sources:
       P2: warning
     default_severity: warning
     enrich:
+      cmdb_set_module_enabled: false
       processors:
         - type: strategy
         - { type: monitor-resource }
@@ -171,6 +172,15 @@ Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。`s
 `web_saas_module_url` 是否存在、是否为 URL 或字符串均不影响装配与丰富，不保留旧 Release 的专门兼容校验。
 新发布器不携带此键。KAC 详情读取时生成链接及兼容历史 URL，具体字段见
 [KAC 投影契约](../reference/contracts/kac-alert-projection-v1.md)。`test` 支持下述负载模拟参数；其余 Processor 当前只接受空 config。
+
+`event_sources[].enrich.cmdb_set_module_enabled` 控制监控场景额外补充 CMDB 集群和模块，默认 `false`。
+两个字段组一起开启或关闭。关闭时仍保留实例文档自带的 `bk_set_id/name`、`bk_module_id/name`，
+以及业务、主机、云区域、动态分组等丰富；已有唯一业务归属的主机跳过拓扑查询，缺少业务时只读取
+主机 membership，不读取集群、模块祖先节点，业务名称仍通过同租户业务实例补偿。关闭不会清理原始字段
+或回填历史结果，也不会因主动跳过集群、模块而报告依赖失败；必要的业务归属查询失败仍保留诊断。
+显式设为 `true` 恢复完整拓扑补充（包括集群权限标签）。实例自带集群仍按既有规则生成权限标签。
+此开关作用于 `monitor-resource`、已发布 `built_in_bk` 的旧 `resource` 监控链以及共享场景解析的 Display，
+不限制显式配置的自定义 CMDB 规则。修改后发布来源新版本生效。
 
 `event_sources[].enrich.processors` 是每条 Event 在策略前执行的有序丰富链。当前注册名为
 `strategy/resource/monitor-resource/display/metric/source/log/cloud_resource/k8s/apm/test/cmdb/fields/cmdb-access`；空列表输出 `{"processors":[]}`。

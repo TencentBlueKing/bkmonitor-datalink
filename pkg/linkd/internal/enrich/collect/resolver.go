@@ -145,8 +145,12 @@ func resolve(
 		resolution.relatedHost = resolution.instance
 		resolution.relatedHostFound = resolution.instanceFound && resolution.instanceErr == nil
 		resolution.relatedHostErr = resolution.instanceErr
+		host := enrich.Instance{}
+		if resolution.relatedHostFound {
+			host = resolution.instance
+		}
 		resolution.hostTopology, resolution.hostTopologyFound, resolution.hostTopologyErr = scope.HostTopology(
-			ctx, strconv.FormatInt(resolution.config.BKInstID, 10),
+			ctx, strconv.FormatInt(resolution.config.BKInstID, 10), host,
 		)
 		if err := ctx.Err(); err != nil {
 			return Resolution{}, err
@@ -162,7 +166,7 @@ func resolve(
 				resolution.relatedHost.TenantID == resolution.tenantID && resolution.relatedHost.ModelCode == rules.HostModelCode && resolution.relatedHost.InstanceID != "" {
 				hostID := rules.FirstStringFieldValue(resolution.relatedHost.Fields, rules.FieldBKHostID, rules.FieldBKInstID, rules.FieldModelInstID)
 				if hostID != "" {
-					resolution.hostTopology, resolution.hostTopologyFound, resolution.hostTopologyErr = scope.HostTopology(ctx, hostID)
+					resolution.hostTopology, resolution.hostTopologyFound, resolution.hostTopologyErr = scope.HostTopology(ctx, hostID, resolution.relatedHost)
 				}
 			}
 		}

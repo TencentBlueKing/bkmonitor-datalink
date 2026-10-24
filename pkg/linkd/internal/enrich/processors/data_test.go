@@ -712,6 +712,6 @@ func (*dataSliceReader) FindRelatedHost(context.Context, string, string, string,
 	return enrich.Instance{}, false, nil
 }
 
-func (*dataSliceReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
+func (*dataSliceReader) FindHostTopology(context.Context, string, string, bool) (models.ResourceTopology, bool, error) {
 	return models.ResourceTopology{BKBizID: 2, BKBizName: "业务"}, true, nil
 }

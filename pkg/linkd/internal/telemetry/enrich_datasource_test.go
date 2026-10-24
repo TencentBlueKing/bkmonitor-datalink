@@ -51,7 +51,7 @@ func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 	if _, found, err := sources.CollectConfig.GetCollectConfig(context.Background(), "tenant", "collect-1"); !found || err != nil {
 		t.Fatalf("collect config found=%t err=%v", found, err)
 	}
-	if _, found, err := sources.CollectTopology.FindHostTopology(context.Background(), "tenant", "101"); !found || err != nil {
+	if _, found, err := sources.CollectTopology.FindHostTopology(context.Background(), "tenant", "101", true); !found || err != nil {
 		t.Fatalf("topology found=%t err=%v", found, err)
 	}
 	if _, found, err := sources.Uptime.GetUptimeTask(context.Background(), "tenant", "7"); !found || err != nil {
@@ -132,7 +132,7 @@ func (testCollectTopologyReader) FindRelatedHost(context.Context, string, string
 	return enrich.Instance{}, true, nil
 }
 
-func (testCollectTopologyReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
+func (testCollectTopologyReader) FindHostTopology(context.Context, string, string, bool) (models.ResourceTopology, bool, error) {
 	return models.ResourceTopology{}, true, nil
 }
 

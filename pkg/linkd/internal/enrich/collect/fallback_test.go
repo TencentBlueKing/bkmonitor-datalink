@@ -27,7 +27,7 @@ func TestCollectFailurePreservesModelAndHostTopology(t *testing.T) {
 		topology: models.ResourceTopology{BKBizID: 2, BKBizName: "来源业务", BKSetID: 3, BKSetName: "来源集群"}, topologyFound: true,
 	}
 	dims := domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewStringScalar("task-1")}
-	scope, err := enrich.NewScope(collectAlert(t, dims), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader})
+	scope, err := enrich.NewScope(collectAlert(t, dims), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestCollectRejectsForeignRelatedHostCompensation(t *testing.T) {
 		relatedHost: enrich.Instance{TenantID: "tenant-b", ModelCode: rules.HostModelCode, InstanceID: "101", Fields: map[string]any{rules.FieldBKHostID: int64(101), rules.FieldBKCloudID: int64(0), rules.FieldBKCloudName: "外部租户云区域"}}, relatedFound: true,
 	}
 	dims := domain.DimensionMap{rules.FieldBKCollectConfigID: domain.NewStringScalar("task-1")}
-	scope, err := enrich.NewScope(collectAlert(t, dims), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader})
+	scope, err := enrich.NewScope(collectAlert(t, dims), enrich.Sources{CollectConfig: reader, Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

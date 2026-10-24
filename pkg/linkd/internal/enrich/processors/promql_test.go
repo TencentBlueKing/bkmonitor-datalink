@@ -210,7 +210,7 @@ func (*promQLSnapshotReader) FindRelatedHost(context.Context, string, string, st
 	return enrich.Instance{}, false, nil
 }
 
-func (r *promQLSnapshotReader) FindHostTopology(_ context.Context, tenantID, hostID string) (models.ResourceTopology, bool, error) {
+func (r *promQLSnapshotReader) FindHostTopology(_ context.Context, tenantID, hostID string, _ bool) (models.ResourceTopology, bool, error) {
 	if hostID != r.fixture.Host.Instance.InstanceID {
 		return models.ResourceTopology{}, false, nil
 	}

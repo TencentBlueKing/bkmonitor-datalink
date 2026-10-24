@@ -182,7 +182,7 @@ func resolve(
 		// 不生成实例绑定，也不在错误响应或跨身份结果后继续补偿。
 		if result.modelCode == rules.HostModelCode && result.instanceID != "" &&
 			!errors.Is(result.instanceErr, enrich.ErrInvalidDataSourceResponse) {
-			result.topology, result.topologyFound, result.topologyErr = scope.HostTopology(ctx, result.instanceID)
+			result.topology, result.topologyFound, result.topologyErr = scope.HostTopology(ctx, result.instanceID, enrich.Instance{})
 			if err := ctx.Err(); err != nil {
 				return resolution{}, err
 			}
@@ -205,7 +205,7 @@ func resolve(
 	}
 	if result.modelCode == rules.HostModelCode {
 		result.relatedHost, result.relatedHostFound = result.instance, true
-		result.topology, result.topologyFound, result.topologyErr = scope.HostTopology(ctx, result.instance.InstanceID)
+		result.topology, result.topologyFound, result.topologyErr = scope.HostTopology(ctx, result.instance.InstanceID, result.instance)
 		if err := ctx.Err(); err != nil {
 			return resolution{}, err
 		}
@@ -218,7 +218,7 @@ func resolve(
 			)
 			if result.relatedHostErr == nil && result.relatedHostFound &&
 				result.relatedHost.TenantID == result.tenantID && result.relatedHost.ModelCode == rules.HostModelCode && result.relatedHost.InstanceID != "" {
-				result.topology, result.topologyFound, result.topologyErr = scope.HostTopology(ctx, result.relatedHost.InstanceID)
+				result.topology, result.topologyFound, result.topologyErr = scope.HostTopology(ctx, result.relatedHost.InstanceID, result.relatedHost)
 			}
 		}
 	}

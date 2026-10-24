@@ -1001,7 +1001,7 @@ func (r *run) lookup(ctx context.Context, rule Rule, result *RuntimeResult) (any
 	}
 	if rule.Topology {
 		reader, ok := r.sources.Instances.(interface {
-			FindHostTopology(context.Context, string, string) (onemodel.ResourceTopology, bool, error)
+			FindHostTopology(context.Context, string, string, bool) (onemodel.ResourceTopology, bool, error)
 		})
 		if !ok || len(items) != 1 || items[0].ModelCode != "cw-Host" {
 			return nil, len(items), fmt.Errorf("topology requires a unique host")
@@ -1009,7 +1009,7 @@ func (r *run) lookup(ctx context.Context, rule Rule, result *RuntimeResult) (any
 		if err := r.externalCall(); err != nil {
 			return nil, len(items), err
 		}
-		top, found, err := reader.FindHostTopology(ctx, r.tenant, items[0].InstanceID)
+		top, found, err := reader.FindHostTopology(ctx, r.tenant, items[0].InstanceID, true)
 		if err != nil {
 			return nil, len(items), err
 		}

@@ -39,6 +39,7 @@ KAC 新建告警源时只生成 `linkd_source_id` 和 `linkd_channel.config.topi
 | `severity_mapping`   | 来源值 → 已定义 Severity name            | 来源等级映射                                    |
 | `default_severity`   | 已定义 Severity name                     | 来源值无法映射为标准 name 时的兜底              |
 | `hooks` | 可选有序列表，最多 16 项，name 唯一 | 来源发布中的输出插件；空列表不输出，详见 [Lifecycle](lifecycle.md#24-enricher-与-finalhook) |
+| `enrich.cmdb_set_module_enabled` | bool，默认 `false` | 控制监控场景额外查询并补充 CMDB 集群和模块；保留实例自带属性及业务、主机等丰富 |
 | `enrich.processors`  | 有序且 type 不重复                       | 每条 Event 在策略前执行的丰富链                 |
 | `storage.type`       | `kafka/internal_merge`                       | 外部订阅或系统内部合并输入                      |
 | `storage.kafka`      | brokers/topic/consumer_group/security    | Kafka subscription 与认证配置                   |

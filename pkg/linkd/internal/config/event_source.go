@@ -52,6 +52,8 @@ type EventSource struct {
 
 // EnrichConfig 定义该来源每条 Event 在策略裁决前执行的丰富链；资源由部署配置注入。
 type EnrichConfig struct {
+	// CMDBSetModuleEnabled 控制监控场景额外查询并补充集群、模块；默认关闭，实例自带属性仍保留。
+	CMDBSetModuleEnabled bool `yaml:"cmdb_set_module_enabled,omitempty" json:"cmdb_set_module_enabled,omitempty"`
 	// ContentMode 决定新建和持续触发时的内容来源；空值等价于 source。
 	// bkmonitor_description 必须显式启用，不以策略标签推断。
 	ContentMode string                  `yaml:"content_mode,omitempty" json:"content_mode,omitempty"`

@@ -54,7 +54,7 @@ func TestScopeCachesReadersByStableQueryKey(t *testing.T) {
 		_, _, _ = scope.UptimeTask(ctx, "7")
 		_, _, _ = scope.UptimeNode(ctx, "0:10.0.0.8")
 		_, _, _ = scope.RelatedHost(ctx, "cw-Service", "1", "service_run_host")
-		_, _, _ = scope.HostTopology(ctx, "101")
+		_, _, _ = scope.HostTopology(ctx, "101", Instance{})
 	}
 	if reader.instanceCalls != 2 || reader.modelCalls != 1 || reader.metricCalls != 1 ||
 		reader.collectCalls != 1 || reader.uptimeCalls != 1 || reader.nodeCalls != 1 ||
@@ -135,7 +135,7 @@ func (r *scopeCacheReader) FindRelatedHost(context.Context, string, string, stri
 	return Instance{}, true, nil
 }
 
-func (r *scopeCacheReader) FindHostTopology(context.Context, string, string) (models.ResourceTopology, bool, error) {
+func (r *scopeCacheReader) FindHostTopology(context.Context, string, string, bool) (models.ResourceTopology, bool, error) {
 	r.topologyCalls++
 	return models.ResourceTopology{}, true, nil
 }

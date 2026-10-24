@@ -71,3 +71,8 @@ func startProcessorTiming(ctx context.Context, name string) func() {
 	}
 	return func() {}
 }
+
+// WithCMDBSetModuleEnabled 控制监控场景的集群、模块拓扑补充；业务归属与实例属性不受影响。
+func WithCMDBSetModuleEnabled(enabled bool) ChainOption {
+	return func(chain *Chain) { chain.cmdbSetModuleEnabled = enabled }
+}

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -132,7 +133,8 @@ type UptimeNodeReader interface {
 // CollectTopologyReader 读取采集对象关联主机及其业务拓扑。
 type CollectTopologyReader interface {
 	FindRelatedHost(ctx context.Context, tenantID, modelCode, instanceID, hostRelatedField string) (Instance, bool, error)
-	FindHostTopology(ctx context.Context, tenantID, hostID string) (models.ResourceTopology, bool, error)
+	// includeSetModule=false 时仅查询业务 membership，不读取祖先节点。
+	FindHostTopology(ctx context.Context, tenantID, hostID string, includeSetModule bool) (models.ResourceTopology, bool, error)
 }
 
 // APMApplicationReader 按租户、业务和应用名称读取 APM 应用候选项。
@@ -273,15 +275,16 @@ func (s *Scope) CloudResource(ctx context.Context, cloudID, resourceType, instan
 }
 
 type Scope struct {
-	degradedDiagnostics []Diagnostic
-	dependencyErrors    []error
-	dependencies        []string
-	original            *domain.Event
-	state               *domain.EnrichEvaluation
-	running             bool
-	evaluation          domain.EventEvaluation
-	sources             Sources
-	enrichContext       *EnrichContext
+	cmdbSetModuleEnabled bool
+	degradedDiagnostics  []Diagnostic
+	dependencyErrors     []error
+	dependencies         []string
+	original             *domain.Event
+	state                *domain.EnrichEvaluation
+	running              bool
+	evaluation           domain.EventEvaluation
+	sources              Sources
+	enrichContext        *EnrichContext
 
 	*requestCache
 }
@@ -314,12 +317,22 @@ type scenarioResult struct {
 	err   error
 }
 
+// ScopeOptions 配置独立 Scope 的监控拓扑补充，零值关闭集群和模块补充。
+type ScopeOptions struct {
+	// CMDBSetModuleEnabled 启用额外的集群、模块拓扑读取。
+	CMDBSetModuleEnabled bool
+}
+
 // NewScope 创建单 evaluation Event 的隔离上下文；多等级输入必须由 Chain 逐级执行。
-func NewScope(event domain.Event, sources Sources) (*Scope, error) {
+func NewScope(event domain.Event, sources Sources, options ...ScopeOptions) (*Scope, error) {
 	if len(event.Evaluations) != 1 {
 		return nil, fmt.Errorf("standalone scope requires exactly one evaluation")
 	}
-	return newScope(event, event.Evaluations[0], sources, false, newRequestCache())
+	scope, err := newScope(event, event.Evaluations[0], sources, false, newRequestCache())
+	if err == nil && len(options) > 0 {
+		scope.cmdbSetModuleEnabled = options[len(options)-1].CMDBSetModuleEnabled
+	}
+	return scope, err
 }
 
 func newRequestCache() *requestCache {
@@ -682,9 +695,16 @@ func (s *Scope) RelatedHost(ctx context.Context, modelCode, instanceID, relation
 	return result.value, result.found, result.err
 }
 
-// HostTopology 读取主机业务拓扑。
-func (s *Scope) HostTopology(ctx context.Context, hostID string) (returned models.ResourceTopology, found bool, err error) {
+// HostTopology 读取监控所需的主机拓扑；关闭集群、模块时优先复用已验证实例的业务归属。
+// 实例没有唯一业务时仍校验 membership，避免把停止补充误报为依赖失败或丢失业务补偿。
+func (s *Scope) HostTopology(ctx context.Context, hostID string, host Instance) (returned models.ResourceTopology, found bool, err error) {
 	defer func() { s.recordDependencyError("host_topology", err) }()
+	if !s.cmdbSetModuleEnabled && host.TenantID == s.original.BKTenantID && host.ModelCode == "cw-Host" && host.InstanceID == hostID {
+		values := ResourceValuesFromInstance(host, 0)
+		if id, parseErr := strconv.ParseInt(fmt.Sprint(values.BKBizID), 10, 64); parseErr == nil && id > 0 {
+			return models.ResourceTopology{BKBizID: id, BKBizName: values.BKBizName}, true, nil
+		}
+	}
 	if result, exists := s.topologies[hostID]; exists {
 		return result.value, result.found, result.err
 	}
@@ -692,7 +712,7 @@ func (s *Scope) HostTopology(ctx context.Context, hostID string) (returned model
 	if s.sources.CollectTopology == nil {
 		result.err = fmt.Errorf("collect topology reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.CollectTopology.FindHostTopology(ctx, s.original.BKTenantID, hostID)
+		result.value, result.found, result.err = s.sources.CollectTopology.FindHostTopology(ctx, s.original.BKTenantID, hostID, s.cmdbSetModuleEnabled)
 	}
 	if ctx.Err() == nil {
 		s.topologies[hostID] = result

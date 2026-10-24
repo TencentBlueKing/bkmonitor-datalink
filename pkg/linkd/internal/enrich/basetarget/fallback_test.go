@@ -52,7 +52,7 @@ func TestNoDataHostNativeIdentity(t *testing.T) {
 			event.SubjectSystem, event.SubjectType, event.SubjectID = "cmdb", "host", test.subjectID
 			original := event.Clone()
 			reader := hostReader()
-			scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+			scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,7 +85,7 @@ func TestBaseTargetModelAndTopologyCompensation(t *testing.T) {
 			reader.instanceFound = false
 			dims := domain.DimensionMap{"bk_inst_id": number(t, 101), "model_id": domain.NewStringScalar(rules.HostModelCode), "model_inst_id": number(t, 101)}
 			event := baseTargetAlert(t, dims)
-			scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+			scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestBaseTargetModelAndTopologyCompensation(t *testing.T) {
 	reader.instanceFound = false
 	dims := domain.DimensionMap{"bk_host_id": number(t, 101)}
 	event := baseTargetAlert(t, dims)
-	scope, _ := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader})
+	scope, _ := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader, CollectTopology: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 	code := rules.HostModelCode
 	result, err := Enrich(t.Context(), scope, rules.Classification{Main: rules.MainTarget, BaseTarget: rules.BaseTargetSystemMetric}, models.CWStrategy{ObjectModelCode: &code}, dims, 2, event.SubjectName)
 	if err != nil || reader.topologyCalls != 0 || result.Resource.ModelInstID != "" {
@@ -124,7 +124,7 @@ func TestHostSubjectFallbackRequiresCMDBHost(t *testing.T) {
 		event := baseTargetAlert(t, domain.DimensionMap{})
 		event.SubjectSystem, event.SubjectType, event.SubjectID = subject.system, subject.typ, subject.id
 		reader := hostReader()
-		scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader})
+		scope, err := enrich.NewScope(event, enrich.Sources{Model: reader, OneModel: reader}, enrich.ScopeOptions{CMDBSetModuleEnabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}

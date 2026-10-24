@@ -235,7 +235,7 @@ func TestDorisCancellationDoesNotCancelOtherQueries(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if _, _, err := c.FindHostTopology(t.Context(), "tenant", "fast"); !errors.Is(err, ErrDataSourceUnavailable) {
+	if _, _, err := c.FindHostTopology(t.Context(), "tenant", "fast", true); !errors.Is(err, ErrDataSourceUnavailable) {
 		t.Fatal("missing topology invented a result", err)
 	}
 }

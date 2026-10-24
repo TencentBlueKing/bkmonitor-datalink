@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/output/gse"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 func init() {
@@ -30,13 +31,17 @@ func init() {
 }
 
 type Exporter struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	converter converter.Converter
-	queue     queue.Queue
-	cfg       *Config
-	batches   map[string]queue.Config // 无并发读写 无需锁保护
+	metricMetadata  *metricmeta.Exporter
+	lifecycleMu     sync.Mutex
+	started, closed bool
+	stopOnce        sync.Once
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	converter       converter.Converter
+	queue           queue.Queue
+	cfg             *Config
+	batches         map[string]queue.Config // 无并发读写 无需锁保护
 }
 
 var globalRecords = define.NewRecordQueue(define.PushModeGuarantee)
@@ -54,7 +59,7 @@ func PublishEvents(events ...define.Event) {
 var SentFunc = beat.Send
 
 func New(conf *confengine.Config) (*Exporter, error) {
-	c := &Config{}
+	c := &Config{MetricMetadata: MetricMetadataConfig{Config: metricmeta.DefaultConfig(), InfoRetention: 2 * time.Minute}}
 	if err := conf.UnpackChild(define.ConfigFieldExporter, c); err != nil {
 		return nil, err
 	}
@@ -68,12 +73,31 @@ func New(conf *confengine.Config) (*Exporter, error) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
+	var metadata *metricmeta.Exporter
+	var observer metricmeta.Observer
+	if c.MetricMetadata.Enabled {
+		var err error
+		metadata, err = newMetricMetadataExporter(c.MetricMetadata)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		observer = metadata.Store()
+		metadataStats.Store(metadata.Store())
+	}
+	if metadata == nil {
+		metadataStats.Store(nil)
+	}
+	if !c.MetricMetadata.Enabled || c.MetricMetadata.Endpoint != "" {
+		metadataInfo.Store(nil)
+	}
 	exp := &Exporter{
-		ctx:       ctx,
-		cancel:    cancel,
-		converter: converter.NewCommonConverter(&c.Converter),
-		cfg:       c,
-		batches:   LoadConfigFrom(conf),
+		ctx:            ctx,
+		cancel:         cancel,
+		converter:      converter.NewCommonConverterWithMetadata(&c.Converter, observer),
+		metricMetadata: metadata,
+		cfg:            c,
+		batches:        LoadConfigFrom(conf),
 	}
 	exp.queue = queue.NewBatchQueue(c.Queue, func(s string) queue.Config {
 		return exp.batches[s]
@@ -82,12 +106,30 @@ func New(conf *confengine.Config) (*Exporter, error) {
 }
 
 func (e *Exporter) Start() error {
+	e.lifecycleMu.Lock()
+	defer e.lifecycleMu.Unlock()
+	if e.closed {
+		return metricmeta.ErrClosed
+	}
+	if e.started {
+		return nil
+	}
+	if e.metricMetadata != nil {
+		if err := e.metricMetadata.Start(); err != nil {
+			return err
+		}
+	}
+	e.started = true
 	logger.Info("exporter start working...")
 
 	for i := 0; i < define.Concurrency(); i++ {
-		go wait.Until(e.ctx, e.consumeRecords)
-		go wait.Until(e.ctx, e.consumeEvents)
-		go wait.Until(e.ctx, e.sendEvents)
+		for _, consume := range []func(){e.consumeRecords, e.consumeEvents, e.sendEvents} {
+			e.wg.Add(1)
+			go func(consume func()) {
+				defer e.wg.Done()
+				wait.Until(e.ctx, consume)
+			}(consume)
+		}
 	}
 	return nil
 }
@@ -97,9 +139,6 @@ func (e *Exporter) Reload(conf *confengine.Config) {
 }
 
 func (e *Exporter) consumeEvents() {
-	e.wg.Add(1)
-	defer e.wg.Done()
-
 	for {
 		select {
 		case events := <-globalEvents.Get():
@@ -117,9 +156,6 @@ func (e *Exporter) consumeEvents() {
 }
 
 func (e *Exporter) consumeRecords() {
-	e.wg.Add(1)
-	defer e.wg.Done()
-
 	for {
 		select {
 		case record := <-globalRecords.Get():
@@ -132,9 +168,6 @@ func (e *Exporter) consumeRecords() {
 }
 
 func (e *Exporter) sendEvents() {
-	e.wg.Add(1)
-	defer e.wg.Done()
-
 	for {
 		select {
 		case event := <-e.queue.Pop():
@@ -151,7 +184,17 @@ func (e *Exporter) sendEvents() {
 }
 
 func (e *Exporter) Stop() {
-	e.converter.Clean()
-	e.cancel()
-	e.wg.Wait()
+	e.stopOnce.Do(func() {
+		e.lifecycleMu.Lock()
+		e.closed = true
+		e.lifecycleMu.Unlock()
+		e.converter.Clean()
+		e.cancel()
+		e.wg.Wait()
+		if e.metricMetadata != nil {
+			if err := e.metricMetadata.Stop(); err != nil {
+				logger.Warnf("stop metric metadata exporter: %v", err)
+			}
+		}
+	})
 }

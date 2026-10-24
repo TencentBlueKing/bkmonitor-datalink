@@ -7,7 +7,7 @@ require (
 	github.com/TarsCloud/TarsGo v1.4.5
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse v1.7.0
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/operator v1.0.0
-	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.3.0
+	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils v0.4.0-rc.1
 	github.com/apache/thrift v0.17.0
 	github.com/bytedance/sonic v1.13.3
 	github.com/cespare/xxhash/v2 v2.2.0
@@ -36,7 +36,7 @@ require (
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/prometheus v1.99.0
 	github.com/rs/cors v1.8.2
-	github.com/spf13/cast v1.5.0
+	github.com/spf13/cast v1.10.0
 	github.com/stretchr/testify v1.9.0
 	go.opentelemetry.io/collector/pdata v0.61.0
 	go.opentelemetry.io/collector/semconv v0.61.0

@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 type pushGatewayEvent struct {
@@ -30,7 +31,7 @@ func (e pushGatewayEvent) RecordType() define.RecordType {
 	return define.RecordPushGateway
 }
 
-type pushGatewayConverter struct{}
+type pushGatewayConverter struct{ metadata metricmeta.Observer }
 
 func (c pushGatewayConverter) Clean() {}
 
@@ -56,6 +57,7 @@ type promMapper struct {
 	Timestamp  int64
 	Dimensions map[string]string
 	Exemplar   *dto.Exemplar
+	metadata   *metricmeta.Value
 }
 
 // AsMapStr 转换为 beat 框架要求的 MapStr 对象
@@ -128,6 +130,7 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 	metrics := pd.MetricFamilies.Metric
 	pms := make([]*promMapper, 0)
 	for _, metric := range metrics {
+		first := len(pms)
 		ts := getTimestamp(now, metric.TimestampMs)
 		lbs := make(map[string]string)
 		for k, v := range pd.Labels {
@@ -256,6 +259,16 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 				})
 			}
 		}
+		if c.metadata != nil {
+			for _, pm := range pms[first:] {
+				// 一个 mapper 中 sum/count 的单位不同，登记放在最终输出处逐项计算。
+				if value, ok := prometheusMetadata(pd.MetricFamilies, metric, pm.Dimensions); ok {
+					pm.metadata = &value
+				} else {
+					metadataDropped.WithLabelValues("unknown_semantics").Inc()
+				}
+			}
+		}
 	}
 
 	pms = c.compactTrpcOTFilter(pms)
@@ -265,9 +278,74 @@ func (c pushGatewayConverter) publishEventsFromMetricFamily(token define.Token, 
 
 	events := make([]define.Event, 0, len(pms))
 	for _, pm := range pms {
+		if pm.metadata != nil {
+			base := name
+			if pm.metadata.Name != name && strings.HasPrefix(name, "trpc_") {
+				base = utils.NormalizeName(pm.metadata.Name)
+			}
+			for metric := range pm.Metrics {
+				value := *pm.metadata
+				if (value.OriginalType == "histogram" || value.OriginalType == "summary") && (metric == base+"_count" || metric == base+"_bucket") {
+					value.Unit, value.Present = "1", value.Present|metricmeta.PresentUnit
+				}
+				if value.OriginalType == "summary" && metric == base {
+					value.Type, value.Temporality, value.Usage = "gauge", "delta", "last"
+				}
+				observeMetadata(c.metadata, dataId, pm.Dimensions, metric, value)
+			}
+		}
 		events = append(events, c.ToEvent(token, dataId, pm.AsMapStr()))
 	}
 	f(events...)
+}
+
+func prometheusMetadata(mf *dto.MetricFamily, metric *dto.Metric, dims map[string]string) (metricmeta.Value, bool) {
+	name, original, typ, temporality, usage := mf.GetName(), "unknown", "unknown", "delta", ""
+	// 不将矛盾的 MetricFamily 类型和数据字段解释成可靠元信息。
+	fields := 0
+	for _, present := range []bool{metric.Counter != nil, metric.Gauge != nil, metric.Histogram != nil, metric.Summary != nil, metric.Untyped != nil} {
+		if present {
+			fields++
+		}
+	}
+	if mf.Type == nil || fields != 1 {
+		return metricmeta.Value{}, false
+	}
+	switch mf.GetType() {
+	case dto.MetricType_COUNTER:
+		if metric.Counter == nil {
+			return metricmeta.Value{}, false
+		}
+		original, typ, temporality, usage = "counter", "counter", "cumulative", "sum"
+	case dto.MetricType_GAUGE:
+		if metric.Gauge == nil {
+			return metricmeta.Value{}, false
+		}
+		original, typ, usage = "gauge", "gauge", "last"
+	case dto.MetricType_HISTOGRAM:
+		if metric.Histogram == nil {
+			return metricmeta.Value{}, false
+		}
+		original, typ, temporality, usage = "histogram", "counter", "cumulative", "sum"
+	case dto.MetricType_SUMMARY:
+		if metric.Summary == nil {
+			return metricmeta.Value{}, false
+		}
+		original, typ, temporality, usage = "summary", "counter", "cumulative", "sum"
+	case dto.MetricType_UNTYPED:
+		if metric.Untyped == nil {
+			return metricmeta.Value{}, false
+		}
+	default:
+		return metricmeta.Value{}, false
+	}
+	if dims["_name"] != "" && dims["_type"] != "" && strings.HasPrefix(name, "trpc_") {
+		if dims["_type"] != original || (original != "gauge" && original != "counter" && original != "histogram") {
+			return metricmeta.Value{}, false
+		}
+		name = dims["_name"]
+	}
+	return metadataValue(name, original, typ, temporality, usage, "", mf.GetHelp()), true
 }
 
 // compactTrpcOTFilter 兼容 trpc 框架 OTfilter 指标格式
@@ -327,6 +405,7 @@ func (c pushGatewayConverter) compactTrpcOTFilter(pms []*promMapper) []*promMapp
 			Timestamp:  pm.Timestamp,
 			Dimensions: dims,
 			Exemplar:   pm.Exemplar,
+			metadata:   pm.metadata,
 		})
 	}
 	return ret

@@ -29,6 +29,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/tokenparser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
 
 const (
@@ -271,16 +272,18 @@ type statPK struct {
 }
 
 type stat struct {
-	token        define.Token
-	role         string
-	target       string
-	timestamp    int64
-	execCount    int32
-	timeoutCount int32
-	successCount int32
-	totalRspTime int64
-	bucketMap    map[int32]int32
-	dimensions   map[string]string
+	metadata         metricmeta.Observer
+	metadataInterval time.Duration
+	token            define.Token
+	role             string
+	target           string
+	timestamp        int64
+	execCount        int32
+	timeoutCount     int32
+	successCount     int32
+	totalRspTime     int64
+	bucketMap        map[int32]int32
+	dimensions       map[string]string
 }
 
 // newStat 创建一个新的 stat 实例
@@ -312,16 +315,18 @@ func (s *stat) PK() statPK {
 // Copy 创建一个新的 stat 实例，并复制当前实例的内容
 func (s *stat) Copy() *stat {
 	newStat := &stat{
-		token:        s.token,
-		role:         s.role,
-		target:       s.target,
-		timestamp:    s.timestamp,
-		execCount:    s.execCount,
-		timeoutCount: s.timeoutCount,
-		successCount: s.successCount,
-		totalRspTime: s.totalRspTime,
-		dimensions:   utils.CloneMap(s.dimensions),
-		bucketMap:    make(map[int32]int32, len(s.bucketMap)),
+		metadata:         s.metadata,
+		metadataInterval: s.metadataInterval,
+		token:            s.token,
+		role:             s.role,
+		target:           s.target,
+		timestamp:        s.timestamp,
+		execCount:        s.execCount,
+		timeoutCount:     s.timeoutCount,
+		successCount:     s.successCount,
+		totalRspTime:     s.totalRspTime,
+		dimensions:       utils.CloneMap(s.dimensions),
+		bucketMap:        make(map[int32]int32, len(s.bucketMap)),
 	}
 	for k, v := range s.bucketMap {
 		newStat.bucketMap[k] = v
@@ -398,6 +403,22 @@ func (s *stat) ToEvents(metricPrefix string) []define.Event {
 
 	var events []define.Event
 	for _, pm := range pms {
+		if s.metadata != nil {
+			for metric := range pm.Metrics {
+				name, original, unit := histogramMetric, "histogram", "1"
+				if strings.HasSuffix(metric, "_total") {
+					name, original = metric, "counter"
+				}
+				if strings.HasSuffix(metric, "_sum") {
+					unit = "s"
+				}
+				value := metadataValue(name, original, "counter", "delta", "sum", unit, "")
+				if s.metadataInterval > 0 {
+					value.Interval, value.Present = s.metadataInterval.Milliseconds(), value.Present|metricmeta.PresentInterval
+				}
+				observeMetadata(s.metadata, s.GetDataID(), pm.Dimensions, metric, value)
+			}
+		}
 		events = append(events, TarsEvent{define.NewCommonEvent(s.token, s.GetDataID(), pm.AsMapStr())})
 	}
 	return events
@@ -411,6 +432,7 @@ type aggregator struct {
 	buffer                map[statPK]*stat
 	interval              time.Duration
 	setGatherFuncOnce     sync.Once
+	gatherMu              sync.RWMutex
 	gatherFunc            define.GatherFunc
 	scopeNameToIgnoreTags map[string][]string
 }
@@ -437,7 +459,11 @@ func newAggregator(interval time.Duration, scopeNameToIgnoreTags map[string][]st
 
 // SetGatherFunc 设置聚合器的 GatherFunc
 func (a *aggregator) SetGatherFunc(f define.GatherFunc) {
-	a.setGatherFuncOnce.Do(func() { a.gatherFunc = f })
+	a.setGatherFuncOnce.Do(func() {
+		a.gatherMu.Lock()
+		defer a.gatherMu.Unlock()
+		a.gatherFunc = f
+	})
 }
 
 // Run 启动聚合器
@@ -464,7 +490,10 @@ func (a *aggregator) Stop() {
 
 // Aggregate 接收 stat 并将其发送到聚合器通道
 func (a *aggregator) Aggregate(s *stat) {
-	a.ch <- s
+	select {
+	case a.ch <- s:
+	case <-a.ctx.Done():
+	}
 }
 
 // aggregate 样本点聚合
@@ -482,21 +511,30 @@ func (a *aggregator) aggregate(s *stat) {
 func (a *aggregator) exportAndClean() {
 	var events []define.Event
 	for pk, s := range a.buffer {
+		s.metadataInterval = a.interval
 		events = append(events, s.ToEvents(metricAggregatePrefix)...)
 		delete(a.buffer, pk)
 	}
 
-	if a.gatherFunc != nil && len(events) > 0 {
-		a.gatherFunc(events...)
+	a.gatherMu.RLock()
+	gather := a.gatherFunc
+	a.gatherMu.RUnlock()
+	if gather != nil && len(events) > 0 {
+		gather(events...)
 	}
 }
 
 type tarsConverter struct {
+	metadata   metricmeta.Observer
 	conf       *TarsConfig
 	aggregator *aggregator
 }
 
 func newTarsConverter(config *TarsConfig) EventConverter {
+	return newTarsConverterWithMetadata(config, nil)
+}
+
+func newTarsConverterWithMetadata(config *TarsConfig, observer metricmeta.Observer) EventConverter {
 	if config == nil {
 		config = &TarsConfig{}
 	}
@@ -508,10 +546,11 @@ func newTarsConverter(config *TarsConfig) EventConverter {
 	}
 
 	if config.DisableAggregate {
-		return tarsConverter{conf: config, aggregator: nil}
+		return tarsConverter{conf: config, metadata: observer}
 	}
 
 	return tarsConverter{
+		metadata:   observer,
 		conf:       config,
 		aggregator: newAggregator(config.AggregateInterval, scopeNameToIgnoreTags),
 	}
@@ -581,6 +620,7 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 	for head, body := range sd.Stats {
 		dims := statHeadToDims(&head, role, ip, token.AppName)
 		stat := newStat(token, role, ip, data.Timestamp, dims, body)
+		stat.metadata = c.metadata
 		events = append(events, c.statToEvents(stat)...)
 
 		// 背景：部分应用缺失被调实际的指标上报，为此增加从主调视角推导出被调视角指标的功能。
@@ -603,6 +643,7 @@ func (c tarsConverter) handleStat(token define.Token, ip string, data *define.Ta
 			)
 			// 从 Client 切换成 Server 视角，target 取值从 ip 调整为 calleeIp，避免 target x calleeIp 不一致导致高基数。
 			serverStatFromClient := newStat(token, statTagRoleServer, calleeIp, data.Timestamp, serverDims, body)
+			serverStatFromClient.metadata = c.metadata
 			events = append(events, c.statToEvents(serverStatFromClient)...)
 		}
 	}
@@ -648,7 +689,28 @@ func (c tarsConverter) handleProp(token define.Token, dataID int32, ip string, d
 
 	events := make([]define.Event, 0, len(pms))
 	for _, pm := range pms {
+		if c.metadata != nil {
+			for metric := range pm.Metrics {
+				value := tarsPropertyMetadata(pm.Dimensions[propertyTagPropertyName], pm.Dimensions[propertyTagPropertyPolicy])
+				observeMetadata(c.metadata, dataID, pm.Dimensions, metric, value)
+			}
+		}
 		events = append(events, c.ToEvent(token, dataID, pm.AsMapStr()))
 	}
 	return events
+}
+
+func tarsPropertyMetadata(name, policy string) metricmeta.Value {
+	original, typ, usage, unit := "unknown", "unknown", "", ""
+	switch policy {
+	case "Sum":
+		original, typ, usage = "sum", "counter", "sum"
+	case "Count":
+		original, typ, usage, unit = "counter", "counter", "sum", "1"
+	case "Distr":
+		original, typ, usage, unit = "histogram", "counter", "sum", "1"
+	case "Min", "Max", "Avg":
+		original, typ, usage = "gauge", "gauge", strings.ToLower(policy)
+	}
+	return metadataValue(name, original, typ, "delta", usage, unit, "")
 }

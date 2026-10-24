@@ -24,6 +24,21 @@ var metadataDropped = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name:      "metric_metadata_source_dropped_total", Help: "Metric metadata source drops",
 }, []string{"reason"})
 
+// metadataScopeCache 仅在一次转换内复用上一组最终身份，不保留高基数映射。
+type metadataScopeCache struct {
+	serviceName, scopeName string
+	scope                  metricmeta.Scope
+}
+
+func (c *metadataScopeCache) scopeFor(dimensions map[string]string) metricmeta.Scope {
+	service, scope := dimensions["service_name"], dimensions["scope_name"]
+	if c.scope.Type == "" || service != c.serviceName || scope != c.scopeName {
+		c.serviceName, c.scopeName = service, scope
+		c.scope = metadataScope(dimensions)
+	}
+	return c.scope
+}
+
 func metadataScope(dimensions map[string]string) metricmeta.Scope {
 	service, scope := dimensions["service_name"], dimensions["scope_name"]
 	if service == "" {

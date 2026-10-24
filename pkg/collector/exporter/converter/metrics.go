@@ -52,6 +52,7 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 		return
 	}
 	dataId := c.ToDataID(record)
+	var scopeCache metadataScopeCache
 
 	for i := 0; i < resourceMetricsSlice.Len(); i++ {
 		resourceMetrics := resourceMetricsSlice.At(i)
@@ -71,7 +72,8 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 					if c.metadata != nil {
 						for name := range dp["metrics"].(map[string]float64) {
 							if value, ok := otlpMetadata(metric, originalName, name); ok {
-								observeMetadata(c.metadata, dataId, dp["dimension"].(map[string]string), name, value)
+								scope := scopeCache.scopeFor(dp["dimension"].(map[string]string))
+								c.metadata.Observe(metricmeta.NewKey(dataId, scope, name), value)
 							} else {
 								metadataDropped.WithLabelValues("unknown_semantics").Inc()
 							}

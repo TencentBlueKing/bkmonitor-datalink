@@ -10,6 +10,8 @@
 package converter
 
 import (
+	"context"
+	"fmt"
 	"math"
 	"reflect"
 	"sync"
@@ -24,6 +26,54 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/define"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/metricmeta"
 )
+
+func BenchmarkMetadataOTLP(b *testing.B) {
+	for _, enabled := range []bool{false, true} {
+		b.Run(fmt.Sprintf("enabled=%t", enabled), func(b *testing.B) {
+			metrics := pmetric.NewMetrics()
+			rm := metrics.ResourceMetrics().AppendEmpty()
+			rm.Resource().Attributes().PutString("service_name", "metricmeta-scale-00")
+			sm := rm.ScopeMetrics().AppendEmpty()
+			sm.Scope().SetName("metadata-benchmark-00")
+			for i := 0; i < 1000; i++ {
+				m := sm.Metrics().AppendEmpty()
+				m.SetName(fmt.Sprintf("metricmeta_acceptance_%d", i))
+				m.SetDescription("acceptance version 0")
+				m.SetUnit("1")
+				m.SetEmptyGauge().DataPoints().AppendEmpty().SetIntValue(1)
+			}
+			record := &define.Record{Token: define.Token{MetricsDataId: 7}, Data: metrics}
+			gather := func(...define.Event) {}
+			var conv metricsConverter
+			if enabled {
+				cfg := metricmeta.DefaultConfig()
+				cfg.DebounceInterval = 0
+				exporter, err := metricmeta.NewExporter(cfg, func(context.Context, []byte) error { return nil })
+				if err != nil {
+					b.Fatal(err)
+				}
+				b.Cleanup(func() {
+					if err := exporter.Stop(); err != nil {
+						b.Error(err)
+					}
+				})
+				conv.metadata = exporter.Store()
+				conv.Convert(record, gather)
+				if err := exporter.Flush(context.Background()); err != nil {
+					b.Fatal(err)
+				}
+				if got := exporter.Store().Stats().BloomVersions; got != 1000 {
+					b.Fatalf("Bloom versions = %d, want 1000", got)
+				}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				conv.Convert(record, gather)
+			}
+		})
+	}
+}
 
 type metadataRecorder struct {
 	mu      sync.Mutex
@@ -102,6 +152,51 @@ func TestMetadataOTLPOutputAndIsolation(t *testing.T) {
 	}
 	if metadataScope(map[string]string{"service_name": "a-b", "scope_name": "c"}) == metadataScope(map[string]string{"service_name": "a", "scope_name": "b-c"}) {
 		t.Fatal("ambiguous scope")
+	}
+}
+
+func TestMetadataOTLPChangingPointIdentity(t *testing.T) {
+	r := &metadataRecorder{}
+	metrics := pmetric.NewMetrics()
+	rm := metrics.ResourceMetrics().AppendEmpty()
+	for _, scopeName := range []string{"group-a", "group-b"} {
+		sm := rm.ScopeMetrics().AppendEmpty()
+		sm.Scope().SetName(scopeName)
+		m := sm.Metrics().AppendEmpty()
+		m.SetName("value")
+		gauge := m.SetEmptyGauge()
+		for _, service := range []string{"", "service-a", "service-a", "service-b", ""} {
+			dp := gauge.DataPoints().AppendEmpty()
+			dp.SetIntValue(1)
+			dp.Attributes().PutString("service_name", service)
+		}
+	}
+	record := &define.Record{Token: define.Token{MetricsDataId: 7}, Data: metrics}
+	var enabled, disabled []common.MapStr
+	metricsConverter{metadata: r}.Convert(record, func(events ...define.Event) {
+		for _, event := range events {
+			enabled = append(enabled, event.Data())
+		}
+	})
+	metricsConverter{}.Convert(record, func(events ...define.Event) {
+		for _, event := range events {
+			disabled = append(disabled, event.Data())
+		}
+	})
+	if len(enabled) != 10 || !reflect.DeepEqual(enabled, disabled) {
+		t.Fatal("metadata changed numeric output")
+	}
+	if len(r.entries) != 6 {
+		t.Fatalf("metadata identities = %d, want 6", len(r.entries))
+	}
+	for _, scopeName := range []string{"group-a", "group-b"} {
+		for _, service := range []string{"", "service-a", "service-b"} {
+			scope := metadataScope(map[string]string{"service_name": service, "scope_name": scopeName})
+			key := metricmeta.NewKey(7, scope, "value")
+			if _, ok := r.entries[key]; !ok {
+				t.Errorf("missing final identity: %+v", key)
+			}
+		}
 	}
 }
 

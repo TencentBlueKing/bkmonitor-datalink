@@ -241,7 +241,7 @@ func TestThePhaseTwoRuntimeProfileSaysWhetherTheLinkIsConfigured(t *testing.T) {
 	if off.Linkd != (observability.RuntimeLinkdFacts{}) {
 		t.Fatalf("default linkd facts = %+v, want nothing configured", off.Linkd)
 	}
-	cfg.PhaseTwo.Linkd.ConsoleURL = "http://DO_NOT_LOG_CONSOLE:8080"
+	cfg.PhaseTwo.Linkd.ConsoleURL = "http://DO_NOT_LOG_CONSOLE:8080/api/modules/linkd"
 	on, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	if err != nil {
 		t.Fatal(err)

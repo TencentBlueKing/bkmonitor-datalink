@@ -37,10 +37,15 @@ func resumedSeriesResult(header execution.InternalExecutionHeader, due execution
 	plan.HistoryCoverage.Resumed = 1
 	for _, level := range view.Levels {
 		reason := execution.ReasonCode("")
+		// The reason a resumed Level reports is its stored guard's. It is
+		// this Slot's own only when this Slot stamped it (its origin names
+		// this Slot); otherwise it was carried into this Slot from an earlier
+		// one, or its origin was never recorded.
+		origin := execution.ReasonOrigin{}
 		switch level.HistoryCompleteness {
 		case execution.HistoryFull:
 		case execution.HistoryWarming, execution.HistoryGapped:
-			reason = level.GapReasonCode
+			reason, origin = level.GapReasonCode, level.ReasonOrigin()
 			if reason == "" {
 				return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed incomplete Level has no reason")
 			}
@@ -59,14 +64,22 @@ func resumedSeriesResult(header execution.InternalExecutionHeader, due execution
 			}
 		}
 		if reason != "" {
+			if reason != level.GapReasonCode {
+				// The series guard's reason: no Level origin describes it.
+				origin = execution.ReasonOrigin{}
+			}
+			carried := !origin.Known() || origin.Slot != header.Contract.Slot.EvaluationTime
 			plan.Disposition = execution.PlanDecidedDegraded
 			if plan.ReasonCode == observability.ReasonNone {
 				plan.ReasonCode = reason
+				plan.ReasonCarried, plan.ReasonOrigin = carried, origin
 			}
-			plan.LevelOutcomes = append(plan.LevelOutcomes, execution.LevelOutcome{Plan: due.Identity, LevelID: level.LevelID, SeriesIdentityDigest: view.Identity.SeriesIdentityDigest, Outcome: execution.LevelOutcomeUnknown, ReasonCode: reason})
+			plan.LevelOutcomes = append(plan.LevelOutcomes, execution.LevelOutcome{Plan: due.Identity, LevelID: level.LevelID, SeriesIdentityDigest: view.Identity.SeriesIdentityDigest, Outcome: execution.LevelOutcomeUnknown, ReasonCode: reason,
+				ReasonCarried: carried}.WithReasonOrigin(origin))
 			if result.Result == observability.ResultSuccess {
 				result.Result = observability.ResultDegraded
 				result.ReasonCode = reason
+				result.ReasonCarried, result.ReasonOrigin = carried, origin
 			}
 		}
 	}

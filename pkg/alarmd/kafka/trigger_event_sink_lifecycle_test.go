@@ -22,6 +22,7 @@ import (
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func TestTriggerEventSinkCancellationUsesBrokerResultBoundary(t *testing.T) {
@@ -57,7 +58,7 @@ func TestTriggerEventSinkCancellationUsesBrokerResultBoundary(t *testing.T) {
 	select {
 	case err := <-done:
 		t.Fatalf("WriteBatch() returned while broker result was unknown: %v", err)
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(20 * time.Millisecond): // fixed-wait: a window in which WriteBatch must not return while the broker result is unknown; an absence sends no signal to wait on
 	}
 	release <- nil
 	if err := <-done; err != nil {
@@ -207,11 +208,11 @@ func TestTriggerEventSinkShutdownDeadlineStartsClientCloseAttempt(t *testing.T) 
 	go func() { writeDone <- sink.WriteBatch(context.Background(), batch) }()
 	select {
 	case <-sendStarted:
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("producer send did not start")
 	}
 
-	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond) // fixed-wait: the shutdown budget the case runs out
 	defer cancelShutdown()
 	started := time.Now()
 	err := sink.Shutdown(shutdownContext)
@@ -226,7 +227,7 @@ func TestTriggerEventSinkShutdownDeadlineStartsClientCloseAttempt(t *testing.T) 
 		if !errors.Is(err, sarama.ErrClosedClient) {
 			t.Fatalf("inflight WriteBatch() error = %v, want closed client", err)
 		}
-	case <-time.After(eventWatchdog):
+	case <-testwait.Expired(t):
 		t.Fatal("test producer did not observe the client-close attempt")
 	}
 	if err := sink.Close(); err != nil {
@@ -254,7 +255,7 @@ func TestTriggerEventSinkShutdownDeadlineBoundsBlockedClientClose(t *testing.T) 
 		return nil
 	}}
 	sink := newTriggerEventSinkForTest(t, producer, client)
-	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond) // fixed-wait: the shutdown budget the case runs out
 	defer cancelShutdown()
 	started := time.Now()
 	err := sink.Shutdown(shutdownContext)
@@ -266,7 +267,7 @@ func TestTriggerEventSinkShutdownDeadlineBoundsBlockedClientClose(t *testing.T) 
 	}
 	select {
 	case <-clientCloseStarted:
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("client close did not start")
 	}
 	if err := sink.WriteBatch(context.Background(), []contract.TriggerEventV1{triggerEventGolden(t)}); !errors.Is(err, ErrDecisionSinkClosed) {
@@ -303,17 +304,17 @@ func TestTriggerEventSinkForcedShutdownDoesNotHideProducerCloseFailure(t *testin
 	}()
 	select {
 	case <-sendStarted:
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("producer send did not start")
 	}
-	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Millisecond) // fixed-wait: the shutdown budget the case runs out
 	defer cancelShutdown()
 	if err := sink.Shutdown(shutdownContext); !errors.Is(err, ErrDecisionSinkShutdownTimeout) {
 		t.Fatalf("Shutdown() error = %v, want shutdown timeout", err)
 	}
 	select {
 	case <-writeDone:
-	case <-time.After(eventWatchdog):
+	case <-testwait.Expired(t):
 		t.Fatal("test producer did not observe the client-close attempt")
 	}
 	if err := sink.Close(); !errors.Is(err, want) {
@@ -399,13 +400,13 @@ func TestTriggerEventSinkSupportsConcurrentClaims(t *testing.T) {
 			}
 		}()
 	}
-	deadline := time.After(time.Second)
+	deadline := testwait.Expired(t)
 	for maximum.Load() < 2 {
 		select {
 		case <-deadline:
 			t.Fatal("producer writes were serialized")
 		default:
-			time.Sleep(time.Millisecond)
+			time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		}
 	}
 	close(release)
@@ -560,7 +561,7 @@ func newTriggerEventSinkForTest(t *testing.T, producer syncMessageProducer, clie
 
 func waitForTriggerEventSinkClosing(t *testing.T, sink *TriggerEventSink) {
 	t.Helper()
-	deadline := time.After(time.Second)
+	deadline := testwait.Expired(t)
 	for {
 		sink.core.mu.Lock()
 		closing := sink.core.closing
@@ -572,11 +573,7 @@ func waitForTriggerEventSinkClosing(t *testing.T, sink *TriggerEventSink) {
 		case <-deadline:
 			t.Fatal("sink did not enter closing state")
 		default:
-			time.Sleep(time.Millisecond)
+			time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		}
 	}
 }
-
-// eventWatchdog bounds a wait for something the test expects to happen: a
-// hang, not a speed. See the same constant in cmd/alarmd's tests.
-const eventWatchdog = 10 * time.Second

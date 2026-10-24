@@ -114,7 +114,7 @@ func (store *redisQueryCooldownStore) LoadQueryCooldown(ctx context.Context, que
 		result = "failed"
 		observeRuntime(ctx, store.observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageQueryCooldown,
-			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			Result:     observability.ResultFailed,
 			ReasonCode: observability.ReasonContractRetryable, Err: fmt.Errorf("load query cooldown record: %w", err),
 			Trace: observability.TraceFields{QueryGroupKey: string(queryGroup)},
 		})
@@ -154,7 +154,7 @@ func (store *redisQueryCooldownStore) SaveQueryCooldown(ctx context.Context, fen
 		result = "failed"
 		observeRuntime(ctx, store.observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: observability.StageQueryCooldown,
-			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			Result:     observability.ResultFailed,
 			ReasonCode: observability.ReasonContractRetryable, Err: fmt.Errorf("save query cooldown record: %w", err),
 			Trace: observability.TraceFields{QueryGroupKey: string(record.QueryGroup)},
 		})

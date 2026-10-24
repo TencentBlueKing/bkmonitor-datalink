@@ -251,3 +251,62 @@ func TestAnAddressesBusinessIsItsOneHostsInsideTheTenant(t *testing.T) {
 		}
 	}
 }
+
+// A group's dropped members are named with why, the document's refusals
+// first and then the hosts it could not place, so an Incomplete selector
+// says which members to look at; at most targetplan.MaxNamedDroppedMembers.
+func TestAGroupsDroppedMembersAreNamedWithWhy(t *testing.T) {
+	plan, sampleHost, _ := ipCloudSample(t)
+	now := time.Unix(1000, 0)
+	clock := func() time.Time { return now }
+	hosts := hostStore(t, clock, hostFields(map[int]string{
+		501: sampleHost,
+		503: addressedHost(503, "tenant-b", "192.0.2.3|0", 2, ""),
+		504: addressedHost(504, "tenant-a", "192.0.2.44|0", 2, ""),
+		505: addressedHost(505, "tenant-a", "192.0.2.44|0", 2, ""),
+	}), []string{"{}"})
+	members := []map[string]any{{"model_id": "cw-Other", "model_inst_id": "other-1", "bk_host_id": 9}}
+	ids := []string{"other-1", "777"}
+	for _, host := range []int{501, 503, 504, 505, 506} {
+		members = append(members, map[string]any{"model_id": "cw-Host", "model_inst_id": fmt.Sprint(host), "bk_host_id": host})
+		ids = append(ids, fmt.Sprint(host))
+	}
+	document, _ := json.Marshal(map[string]any{"model_id": "cw-Host", "bk_tenant_id": "tenant-a", "model_inst_ids": ids, "member_list": members})
+	many := []map[string]any{}
+	manyIDs := []string{}
+	for host := 600; host < 612; host++ {
+		many = append(many, map[string]any{"model_id": "cw-Host", "model_inst_id": fmt.Sprint(host), "bk_host_id": host})
+		manyIDs = append(manyIDs, fmt.Sprint(host))
+	}
+	manyDocument, _ := json.Marshal(map[string]any{"model_id": "cw-Host", "bk_tenant_id": "tenant-a", "model_inst_ids": manyIDs, "member_list": many})
+	client := &groupClient{values: map[string]string{"cw:dynamic_group:1": string(document), "cw:dynamic_group:many": string(manyDocument)}}
+	reader, _ := NewGroupReader(client, "cw:")
+	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := NewTargetResolver(groups, hosts, clock)
+	scoped := *plan
+	scoped.StaticHosts = nil
+	scoped.DynamicGroups = []string{"1", "many"}
+	resolution := resolver.Resolve(context.Background(), &scoped, time.Minute)
+
+	got := selector(resolution, targetplan.SelectorKindGroup, "1")
+	want := []targetplan.DroppedMember{
+		{ID: "other-1", Reason: targetplan.DroppedMemberInvalid},
+		{ID: "777", Reason: targetplan.DroppedMemberLost},
+		{ID: "503", Reason: targetplan.DroppedHostOtherTenant},
+		{ID: "504", Reason: targetplan.DroppedAddressShared},
+		{ID: "505", Reason: targetplan.DroppedAddressShared},
+		{ID: "506", Reason: targetplan.DroppedHostUnindexed},
+	}
+	if got.State != targetplan.SelectorIncomplete || got.Kept != 1 || got.Dropped != len(want) || !reflect.DeepEqual(got.DroppedMembers, want) {
+		t.Fatalf("group 1 = %s kept %d dropped %d named %v, want Incomplete, 1 kept, %d dropped named %v",
+			got.State, got.Kept, got.Dropped, got.DroppedMembers, len(want), want)
+	}
+	bounded := selector(resolution, targetplan.SelectorKindGroup, "many")
+	if bounded.Dropped != 12 || len(bounded.DroppedMembers) != targetplan.MaxNamedDroppedMembers || bounded.DroppedMembers[0].ID != "600" {
+		t.Fatalf("group many dropped %d named %v, want 12 dropped and the first %d named from 600",
+			bounded.Dropped, bounded.DroppedMembers, targetplan.MaxNamedDroppedMembers)
+	}
+}

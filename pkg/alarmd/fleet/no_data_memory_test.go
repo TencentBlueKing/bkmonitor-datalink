@@ -24,7 +24,7 @@ import (
 func memoryRefused(ctx context.Context, tracker *Tracker, bytes int) {
 	tracker.Observe(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageNoDataMemoryRefused,
-		Result: observability.ResultDegraded, ReasonCode: "STATE_BUDGET_EXCEEDED", Direction: observability.DirectionInternal,
+		Result: observability.ResultDegraded, ReasonCode: "STATE_BUDGET_EXCEEDED",
 		Trace:               observability.TraceFields{StrategyID: "s-1", BusinessID: "2"},
 		NoDataMemoryRefusal: &observability.NoDataMemoryRefusalFacts{Reason: "STATE_BUDGET_EXCEEDED", Record: "GROUPS", Groups: bytes, Limit: 65536},
 	})
@@ -95,7 +95,6 @@ func memoryWritten(ctx context.Context, tracker *Tracker, outcome string, stored
 	}
 	tracker.Observe(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageNoDataMemoryWritten, Result: result,
-		Direction:         observability.DirectionInternal,
 		Trace:             observability.TraceFields{StrategyID: "s-1", BusinessID: "2"},
 		NoDataMemoryWrite: &observability.NoDataMemoryWriteFacts{Outcome: outcome, Stored: stored},
 	})

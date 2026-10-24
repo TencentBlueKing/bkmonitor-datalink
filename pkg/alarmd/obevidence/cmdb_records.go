@@ -181,7 +181,7 @@ func readHashField(ctx context.Context, source string, binding RedisBinding, key
 		return r, nil
 	}
 	if size > int64(MaxDocumentBytes) {
-		r.Status, r.Reason = "budget_exceeded", "document_bytes"
+		r.Status, r.Reason = "document_too_large", "document_bytes"
 		return r, nil
 	}
 	r.Limits.Commands++
@@ -200,7 +200,7 @@ func readHashField(ctx context.Context, source string, binding RedisBinding, key
 	// Grown past the limit between the length and the read: refused as it
 	// would have been, rather than handed on whole.
 	if len(value) > MaxDocumentBytes {
-		r.Status, r.Reason = "budget_exceeded", "document_bytes"
+		r.Status, r.Reason = "document_too_large", "document_bytes"
 		return r, nil
 	}
 	r.Status, r.Complete = "ok", true

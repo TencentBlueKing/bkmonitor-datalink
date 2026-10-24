@@ -30,7 +30,7 @@ type logLinesCollector struct {
 }
 
 func newLogLinesCollector() *logLinesCollector {
-	return &logLinesCollector{lines: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "log_lines_total"),
+	return &logLinesCollector{lines: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "log_lines_total"),
 		"Lines the process's log observer wrote (admission=written), held back (admission=limited) or counted without "+
 			"writing (admission=unwritten: a routine stage's success, a Control Leader round that changed nothing), by "+
 			"stage; a stage outside the closed list counts as _other. Which stage fills the log is read here rather than "+

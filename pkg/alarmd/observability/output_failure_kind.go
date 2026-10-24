@@ -36,12 +36,7 @@ const (
 	// no broker was asked.
 	OutputFailureSinkNotOpen = "sink_not_open"
 	// OutputFailureUnknown: the error carries no kind - the caller's own
-	// context, a failure from outside the sink, or a row from a publisher
-	// that predates the kinds. No claim beyond that.
-	//
-	// Retire when: the upstream snapshot after the one that adds the kinds is
-	// merged, the older-publisher case is gone; the word stays for errors
-	// that carry no kind.
+	// context, or a failure from outside the sink. No claim beyond that.
 	OutputFailureUnknown = "unknown"
 )
 

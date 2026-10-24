@@ -28,20 +28,21 @@ type sreActionMetrics struct {
 
 func newSREActionMetrics() *sreActionMetrics {
 	return &sreActionMetrics{actions: prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "sre_actions_total",
+		Subsystem: metricSubsystem, Name: "sre_actions_total",
 		Help: "Execution, management and Secret-read calls the SRE channel made, by operation (pod.exec, pod.delete, " +
-			"workload.restart, workload.scale, secret.get, configmap.get, workload.set_image, and workload.revert - a " +
-			"revert the channel wrote itself when a changed image did not become ready) and result: done; target_changed (the Pod or workload was " +
+			"workload.restart, workload.scale, workload.set_image, workload.revert, secret.get, configmap.get, and " +
+			"k8s.list when it lists Secrets) and result: done; target_changed (the Pod or workload was " +
 			"replaced since it was read, and nothing was changed); forbidden (the apiserver refused the " +
 			"ServiceAccount); refused (an invalid or unsupported request, a busy provider, or a command that " +
 			"could not start - nothing ran); failed (an apiserver or transport failure); unknown (an execution " +
-			"whose remote end is unconfirmed). Each call also writes one sre_action line naming the session, " +
+			"whose remote end is unconfirmed). A workload.revert is one the channel wrote itself when a changed " +
+			"image did not become ready. Each call also writes one sre_action line naming the session, " +
 			"the request, the namespace and object and the result. Every cell exists once the channel is " +
-			"wired: eight operations by six results, 48 series. A secret.get line names the Secret and whether its " +
-			"values were revealed, never a value.",
+			"wired: nine operations by six results, 54 series. A secret.get line names the Secret and a Secret " +
+			"listing's line the Secrets it returned; neither carries a value, and no Secret read returns one.",
 	}, []string{"op", "result"}),
 		rollouts: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "sre_rollouts_total",
+			Subsystem: metricSubsystem, Name: "sre_rollouts_total",
 			Help: "Image changes made through the SRE channel that ended, by final state, counted by the process that " +
 				"ended them: unchanged (the container already ran the image), not_applied (the image was not written), " +
 				"complete, reverted (the new image did not become ready and the previous one is back), revert_failed " +
@@ -52,7 +53,7 @@ func newSREActionMetrics() *sreActionMetrics {
 		}, []string{"state"}),
 		receipts: func() *prometheus.CounterVec {
 			v := prometheus.NewCounterVec(prometheus.CounterOpts{
-				Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "sre_receipts_write_total",
+				Subsystem: metricSubsystem, Name: "sre_receipts_write_total",
 				Help: "Receipts of SRE actions written to the shared store sre.receipts reads, by result: ok, or error (the " +
 					"store refused or did not answer within its half second; the action itself went ahead, and its sre_action " +
 					"line is the only record). Both cells exist from the start.",
@@ -62,7 +63,7 @@ func newSREActionMetrics() *sreActionMetrics {
 			return v
 		}(),
 		watched: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "sre_rollouts_watched",
+			Subsystem: metricSubsystem, Name: "sre_rollouts_watched",
 			Help: "Image-change receipts this process is watching now: zero but in one process during a rollout. Summed " +
 				"over the processes, more than the changes in progress would be a receipt watched twice.",
 		}),

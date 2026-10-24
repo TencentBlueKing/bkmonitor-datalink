@@ -14,7 +14,7 @@ import (
 func TestAnAuthStoreFailureIsLoggedWithItsText(t *testing.T) {
 	var output bytes.Buffer
 	newQueryFailureTestObserver(&output).Observe(context.Background(), Observation{Component: ComponentRuntime, Stage: StageAuthStore,
-		Result: ResultFailed, Direction: DirectionInternal, ReasonCode: ReasonContractRetryable,
+		Result: ResultFailed, ReasonCode: ReasonContractRetryable,
 		Err: errors.New("authorization store sentinel_unreachable: redis: all sentinels specified in configuration are unreachable")})
 	var event map[string]any
 	if err := json.Unmarshal(output.Bytes(), &event); err != nil {

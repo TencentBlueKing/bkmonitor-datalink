@@ -114,7 +114,7 @@ func TestAnInPlaceReadinessWaitIsOnTheSlotLineAndCounted(t *testing.T) {
 		t.Fatalf("the wait on the line %+v, want one of about 200 ms after the history query was sent, holding the history "+
 			"answer that came back during it, with a prepared estimate", wait)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_access_inplace_readiness_waits_total", map[string]string{"wait": "le5s"}); got != 1 {
+	if got := counterValue(t, recorder, "alarmd_access_inplace_readiness_waits_total", map[string]string{"wait": "le5s"}); got != 1 {
 		t.Fatalf("access_inplace_readiness_waits_total{wait=le5s} = %v, want 1", got)
 	}
 }

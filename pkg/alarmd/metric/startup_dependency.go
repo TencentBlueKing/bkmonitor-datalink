@@ -21,7 +21,7 @@ var StartupDependencies = []string{
 
 func newStartupDependencyWaits() *prometheus.CounterVec {
 	waits := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "startup_dependency_wait_total",
+		Subsystem: metricSubsystem, Name: "startup_dependency_wait_total",
 		Help: "Startup attempts on a dependency that did not answer and were retried in place, by dependency. " +
 			"The replica stays alive and not ready while this rises; a dependency that answers again ends it " +
 			"without a restart. Rising without stopping names the dependency a replica that never joined is " +

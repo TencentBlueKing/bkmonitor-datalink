@@ -4,7 +4,6 @@
 package openalerts
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -45,11 +44,11 @@ func TestHTTPReconcilerChecksBindingQueryAuthAndRetainsMetadata(t *testing.T) {
 			t.Error("BasicAuth missing")
 		}
 		requests = append(requests, r.URL.Path)
-		if r.URL.Path == "/local-api/strategy-index/targets" {
+		if r.URL.Path == "/api/modules/linkd/strategy-index/targets" {
 			_ = json.NewEncoder(w).Encode([]TargetBinding{testBinding()})
 			return
 		}
-		if r.URL.Path == "/local-api/event-sources/source" {
+		if r.URL.Path == "/api/modules/linkd/event-sources/source" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": "source", "revision": 3, "published": 3,
 				"spec": map[string]any{"fingerprint_mode": "field", "fingerprint_field": "source_alert_id"}})
 			return
@@ -61,11 +60,11 @@ func TestHTTPReconcilerChecksBindingQueryAuthAndRetainsMetadata(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(reconciliationJSON())
 	}))
 	defer server.Close()
-	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "user", Password: "secret", Index: testIndex(), MaxResponseBytes: 1 << 20})
+	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "user", Password: "secret", Index: testIndex(), MaxResponseBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := reader.Reconcile(context.Background(), keyA)
+	result, err := reader.Reconcile(consoleCtx(), keyA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,17 +76,19 @@ func TestHTTPReconcilerChecksBindingQueryAuthAndRetainsMetadata(t *testing.T) {
 	}
 	// A reconciliation also reads the event source's keying, once until it
 	// is due again: the Console's word on how the link keys our alerts.
-	if !reflect.DeepEqual(requests, []string{"/local-api/strategy-index/targets", "/local-api/event-sources/source", "/local-api/strategy-index/reconcile"}) {
+	if !reflect.DeepEqual(requests, []string{"/api/modules/linkd/strategy-index/targets", "/api/modules/linkd/event-sources/source", "/api/modules/linkd/strategy-index/reconcile"}) {
 		t.Fatalf("requests %v", requests)
 	}
 	if keyed, _, known := reader.KeyedByAlertID(); !keyed || !known || !reader.LocationConfirmed() {
 		t.Fatalf("keyed %v known %v location %v, want both facts confirmed by the reconciliation", keyed, known, reader.LocationConfirmed())
 	}
-	if _, err := reader.Reconcile(context.Background(), keyA); err != nil {
+	if _, err := reader.Reconcile(consoleCtx(), keyA); err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 5 {
-		t.Fatalf("requests %v, want the second reconciliation without another event source read", requests)
+	// The second reconciliation reuses the target and reads neither the
+	// target list nor the event source again: one request.
+	if len(requests) != 4 || requests[3] != "/api/modules/linkd/strategy-index/reconcile" {
+		t.Fatalf("requests %v, want the second reconciliation as one reconcile request", requests)
 	}
 }
 
@@ -121,11 +122,11 @@ func TestHTTPReconcilerRejectsPartialAndInvalidScope(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(m)
 			}))
 			defer server.Close()
-			reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "u", Password: "p", Index: testIndex(), MaxResponseBytes: 1 << 20})
+			reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "u", Password: "p", Index: testIndex(), MaxResponseBytes: 1 << 20})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := reader.Reconcile(context.Background(), keyA); err == nil {
+			if _, err := reader.Reconcile(consoleCtx(), keyA); err == nil {
 				t.Fatal("invalid response accepted as a baseline")
 			}
 		})
@@ -152,12 +153,12 @@ func TestTheTargetIsReadFromTheLinkAndNeverGuessed(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(tc.targets)
 			}))
 			defer server.Close()
-			reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "private-user",
+			reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "private-user",
 				Password: "private-password", Index: testIndex(), MaxResponseBytes: 1 << 20})
 			if err != nil {
 				t.Fatal(err)
 			}
-			binding, err := reader.Binding(context.Background())
+			binding, err := reader.Binding(consoleCtx())
 			if tc.ok != (err == nil) {
 				t.Fatalf("binding=%+v err=%v", binding, err)
 			}
@@ -198,8 +199,8 @@ func TestATargetWritingElsewhereIsRefusedByName(t *testing.T) {
 				_ = json.NewEncoder(w).Encode([]TargetBinding{elsewhere})
 			}))
 			defer server.Close()
-			reader, _ := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "u", Password: "p", Index: testIndex(), MaxResponseBytes: 1 << 20})
-			_, err := reader.Binding(context.Background())
+			reader, _ := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "u", Password: "p", Index: testIndex(), MaxResponseBytes: 1 << 20})
+			_, err := reader.Binding(consoleCtx())
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "this process reads redis:6379 db 3 prefix test:active") {
 				t.Fatalf("err = %v", err)
 			}
@@ -209,8 +210,8 @@ func TestATargetWritingElsewhereIsRefusedByName(t *testing.T) {
 		_ = json.NewEncoder(w).Encode([]TargetBinding{testBinding()})
 	}))
 	defer server.Close()
-	reader, _ := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "u", Password: "p", Index: testIndex(), MaxResponseBytes: 1})
-	if _, err := reader.Reconcile(context.Background(), keyA); !errors.Is(err, ErrIncomplete) {
+	reader, _ := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "u", Password: "p", Index: testIndex(), MaxResponseBytes: 1})
+	if _, err := reader.Reconcile(consoleCtx(), keyA); !errors.Is(err, ErrIncomplete) {
 		t.Fatalf("body bound error = %v", err)
 	}
 }
@@ -219,13 +220,13 @@ func TestATargetWritingElsewhereIsRefusedByName(t *testing.T) {
 // today: it is how the process learns where to read.
 func TestDiscoveryReadsTheTargetWithoutAskingWhereThisProcessReads(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/local-api/strategy-index/targets" {
+		if r.URL.Path != "/api/modules/linkd/strategy-index/targets" {
 			t.Errorf("path %s", r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode([]TargetBinding{testBinding()})
 	}))
 	defer server.Close()
-	target, err := DiscoverTarget(context.Background(), HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "user", Password: "secret", MaxResponseBytes: 1 << 20,
+	target, err := DiscoverTarget(consoleCtx(), HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "user", Password: "secret", MaxResponseBytes: 1 << 20,
 		Index: IndexLocation{KeyPrefix: "elsewhere", Address: "other:6379", Database: 9}})
 	if err != nil || target.Address != "redis:6379" || target.Database != 3 || target.KeyPrefix != "test:active" {
 		t.Fatalf("target %+v err %v", target, err)
@@ -241,11 +242,11 @@ func TestAReaderMovedToWhereTheLinkWritesResolves(t *testing.T) {
 	}))
 	defer server.Close()
 	fallback := IndexLocation{KeyPrefix: "alarmd:open_alerts", Address: "runtime:6379", Database: 8}
-	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "u", Password: "p", Index: fallback, MaxResponseBytes: 1 << 20})
+	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "u", Password: "p", Index: fallback, MaxResponseBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reader.Binding(context.Background()); err == nil || !strings.Contains(err.Error(), "this process reads runtime:6379 db 8") {
+	if _, err := reader.Binding(consoleCtx()); err == nil || !strings.Contains(err.Error(), "this process reads runtime:6379 db 8") {
 		t.Fatalf("before the move: %v", err)
 	}
 	if err := reader.SetIndexLocation(IndexLocation{KeyPrefix: "test:active", Address: "", Database: 0}); err == nil {
@@ -254,7 +255,7 @@ func TestAReaderMovedToWhereTheLinkWritesResolves(t *testing.T) {
 	if err := reader.SetIndexLocation(testIndex()); err != nil {
 		t.Fatal(err)
 	}
-	if binding, err := reader.Binding(context.Background()); err != nil || binding.Address != testBinding().Address {
+	if binding, err := reader.Binding(consoleCtx()); err != nil || binding.Address != testBinding().Address {
 		t.Fatalf("after the move: %+v %v", binding, err)
 	}
 }

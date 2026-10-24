@@ -136,6 +136,11 @@ func TestRoleSpecificBusinessDependenciesAndLeaseBudgets(t *testing.T) {
 	if err := control.Validate(); err != nil {
 		t.Fatalf("Control required Worker-only dependencies: %v", err)
 	}
+	withTrends := control
+	withTrends.PhaseTwo.Access.UQEndpoint = "http://uq.example.invalid:10205"
+	if err := withTrends.Validate(); err != nil {
+		t.Fatalf("Control with valid UQ coordinates for trends: %v", err)
+	}
 	worker := validGoAccessConfigObject()
 	worker.Roles = roles.Set{roles.Worker}
 	worker.PhaseTwo.Control.StrategyCachePrefix = ""
@@ -155,6 +160,12 @@ func TestRoleSpecificBusinessDependenciesAndLeaseBudgets(t *testing.T) {
 		{"Control compiler", control, func(c *Config) { c.Limits.Compiler.MaxPlanBytes = 0 }, "limits.compiler"},
 		{"Control global-close Kafka", control, func(c *Config) { c.Kafka.Brokers = nil }, "broker"},
 		{"Control global-close Linkd", control, func(c *Config) { c.PhaseTwo.Linkd.ConsoleURL = "invalid" }, "linkd"},
+		// A control process reads trends through the UQ endpoint when one is
+		// set, so the coordinates are checked here, not at startup.
+		{"Control trends query source", control, func(c *Config) {
+			c.PhaseTwo.Access.UQEndpoint = "http://uq.example.invalid:10205"
+			c.PhaseTwo.Access.QuerySource = ""
+		}, "trends"},
 		{"Control leader lease", control, func(c *Config) {
 			c.PhaseTwo.Ownership.ControlLeaderRenewInterval = c.PhaseTwo.Ownership.ControlLeaderTTL
 		}, "ownership TTL"},
@@ -233,4 +244,10 @@ func TestChannelAuthenticationAndPublicSurface(t *testing.T) {
 	if cfg.PublicSurfaceRestrictionRequested() {
 		t.Fatal("Worker-only public surface was restricted by an unused CLI key")
 	}
+}
+
+// LoadWithRoles is LoadWithCredentials reading the credential references the
+// selected roles use, as the process does.
+func LoadWithRoles(path string, override roles.Set) (Config, error) {
+	return LoadWithCredentials(path, override, CredentialsForRoles)
 }

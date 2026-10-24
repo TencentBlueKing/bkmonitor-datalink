@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -294,7 +295,7 @@ func runG3AChild(
 	if err != nil {
 		t.Fatalf("encode owner fence: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithCancel(testwait.Context(t))
 	defer cancel()
 	command := exec.CommandContext(ctx, testBinary, "-test.run=^TestG3ACrashWindowChild$", "-test.count=1")
 	command.Env = append(os.Environ(),
@@ -590,7 +591,7 @@ func renewG3ALeaseWhileRunning(t *testing.T, store *ownership.RedisStore, lease 
 	done := make(chan struct{})
 	result := make(chan ownership.Lease, 1)
 	go func() {
-		ticker := time.NewTicker(g3aCrashedLeaseTTL / 4)
+		ticker := time.NewTicker(g3aCrashedLeaseTTL / 4) // fixed-wait: the renewal cadence production keeps, a quarter of the lease's TTL
 		defer ticker.Stop()
 		for {
 			select {
@@ -625,7 +626,7 @@ func renewG3ALeaseWhileRunning(t *testing.T, store *ownership.RedisStore, lease 
 // is also what actually happens in production.
 func acquireG3AAfterLeaseLapse(t *testing.T, store *ownership.RedisStore, workerID string) ownership.Lease {
 	t.Helper()
-	deadline := time.Now().Add(g3aCrashedLeaseTTL + 10*time.Second)
+	deadline := testwait.Deadline(t)
 	for {
 		lease, err := store.Acquire(context.Background(), frozenContract().Slot.QueryGroup,
 			workerID, time.Now(), 2*time.Minute)
@@ -636,9 +637,9 @@ func acquireG3AAfterLeaseLapse(t *testing.T, store *ownership.RedisStore, worker
 			t.Fatalf("acquire new owner: %v", err)
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the crashed owner's lease was still held %s after its TTL", g3aCrashedLeaseTTL)
+			t.Fatalf("the crashed owner's lease (TTL %s) was still held at the test's deadline", g3aCrashedLeaseTTL)
 		}
-		time.Sleep(25 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 }
 

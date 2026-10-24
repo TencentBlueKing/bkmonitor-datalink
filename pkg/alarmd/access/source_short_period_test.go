@@ -26,7 +26,7 @@ func TestShortPeriodNormalAndAbsoluteRecoveryUseDifferentBudgets(t *testing.T) {
 		}
 		start := time.UnixMilli(eval + 50000)
 		request := execution.QueryExecutionRequest{Contract: ref, Operation: execution.OperationReplay, AttemptNo: 1}
-		deadline, err := deriveRecoveryQueryDeadline(request, frozen, start)
+		deadline, err := deriveRecoveryQueryDeadline(request, frozen, start, nil)
 		if err != nil || deadline != start.Add(time.Duration(interval-5)*time.Second) {
 			t.Fatalf("recovery took completion offset: %v %v", deadline, err)
 		}

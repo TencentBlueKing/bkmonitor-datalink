@@ -189,3 +189,38 @@ func TestTheNoDataAndThresholdAlertsOfOneSeriesCarryPythonsTwoFingerprints(t *te
 		t.Fatal("the two Python fingerprints are equal, so this case could not tell the alerts apart")
 	}
 }
+
+// Two no-data groups that differ only in a field of the no-data agg_dimension
+// outside the item's own dimensions are two alerts: the no-data event is
+// fingerprinted with the no-data view's identity, which reads every
+// dimension the group carries. Hashed with the Plan's identity they would
+// collapse into one - the fingerprint anything recomputing a no-data
+// event's has to avoid, so it asks NoDataOutputIdentity.
+func TestNoDataGroupsDifferingInANoDataOnlyFieldAreTwoAlerts(t *testing.T) {
+	plan := identityPlan(t, "tenant-a")
+	dimensions := func(zone string) map[string]json.RawMessage {
+		return map[string]json.RawMessage{"host": json.RawMessage(`"192.0.2.40"`), "zone": json.RawMessage(`"` + zone + `"`),
+			contract.NoDataDimensionTag: json.RawMessage(`true`)}
+	}
+	identity := plan.NoDataOutputIdentity()
+	view := plan.NoDataView().OutputIdentity()
+	if identity == nil || view == nil || identity.DynamicDimensions != view.DynamicDimensions || len(identity.DimensionFields) != len(view.DimensionFields) {
+		t.Fatalf("no-data identity %+v, the view the trigger evaluates no-data series with has %+v", identity, view)
+	}
+	first, err := contract.MonitorDedupeMD5("1001", "2", dimensions("zone-a"), *identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := contract.MonitorDedupeMD5("1001", "2", dimensions("zone-b"), *identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("two no-data groups differing in zone share fingerprint %s", first)
+	}
+	collapsedFirst, _ := contract.MonitorDedupeMD5("1001", "2", dimensions("zone-a"), *plan.OutputIdentity())
+	collapsedSecond, _ := contract.MonitorDedupeMD5("1001", "2", dimensions("zone-b"), *plan.OutputIdentity())
+	if collapsedFirst != collapsedSecond {
+		t.Fatal("fixture: the Plan's own identity reads zone, so this case could not show the collapse it guards against")
+	}
+}

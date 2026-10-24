@@ -21,7 +21,7 @@ import (
 
 // The server's account maps onto the fleet's shape field for field -- every
 // number under its own key, the lagging Workers in the server's order with
-// their connection and failure -- and the sentence is composed from it. A
+// their connection and failure, the Workers that left -- and the sentence is composed from it. A
 // runtime without the stream publishes nothing.
 func TestTheViewStreamAccountReachesTheFleetFieldForField(t *testing.T) {
 	at := time.Unix(1_700_000_000, 0)
@@ -35,6 +35,7 @@ func TestTheViewStreamAccountReachesTheFleetFieldForField(t *testing.T) {
 			{WorkerID: "w23", Incarnation: "i-23", Failure: "DELTA_DIGEST_MISMATCH", Connected: true},
 			{WorkerID: "w31", Incarnation: "i-31", Connected: true},
 		},
+		Departed: []viewstream.LaggingReceiver{{WorkerID: "w60", Incarnation: "i-60", Failure: "STREAM_CUT"}},
 		// The installed Workers' word on their objects: sixty probed, one
 		// of them missing forty; one could not probe, and is named.
 		Objects:      viewstream.ObjectsSummary{Probed: 60, Unprobed: 1, Missing: 40, UnprobedWorkers: []string{"w40"}},
@@ -50,9 +51,10 @@ func TestTheViewStreamAccountReachesTheFleetFieldForField(t *testing.T) {
 			{WorkerID: "w23", Incarnation: "i-23", Failure: "DELTA_DIGEST_MISMATCH", Connected: true},
 			{WorkerID: "w31", Incarnation: "i-31", Connected: true},
 		},
+		Departed:     []fleet.ViewStreamLagging{{WorkerID: "w60", Incarnation: "i-60", Failure: "STREAM_CUT"}},
 		Objects:      fleet.ViewStreamObjects{Probed: 60, Unprobed: 1, Missing: 40, UnprobedWorkers: []string{"w40"}},
 		Publications: 100, PublicationsSkipped: 5, SnapshotChunksSent: 20, DeltasSent: 80, EmptyDeltasSent: 60, DeltasOversized: 7, Refusals: 1,
-		Line: "视图已装载 62/64，版本 12；缺对象 40（60 个副本探到）；1 个副本未探到对象（w40）；落后：w17（未连接）、w23（DELTA_DIGEST_MISMATCH） 等 3 个",
+		Line: "视图已装载 62/64，版本 12；缺对象 40（60 个副本探到）；1 个副本未探到对象（w40）；落后：w17（未连接）、w23（DELTA_DIGEST_MISMATCH） 等 3 个；已离开：w60",
 	}
 	got := viewStreamFacts(stats, at)
 	if !reflect.DeepEqual(got, want) {

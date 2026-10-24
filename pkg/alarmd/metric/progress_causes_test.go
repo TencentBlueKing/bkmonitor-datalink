@@ -13,6 +13,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -39,7 +40,7 @@ func TestAShortCompletionIsCountedByItsCauseAndReason(t *testing.T) {
 	}
 	counts := map[string]float64{}
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_progress_completion_causes_total" {
+		if family.GetName() != "alarmd_progress_completion_causes_total" {
 			continue
 		}
 		for _, series := range family.GetMetric() {
@@ -56,6 +57,53 @@ func TestAShortCompletionIsCountedByItsCauseAndReason(t *testing.T) {
 		"COMPLETED_WITH_UNAVAILABLE/GAP_GUARD_WARMING/HISTORY_GAPPED":                         1,
 		"COMPLETED_WITH_PARTIAL_GAP/NONE/" + notReported:                                      1,
 		"COMPLETED_WITH_UNAVAILABLE/" + string(observability.ReasonOther) + "/" + notReported: 1,
+	}
+	if len(counts) != len(want) {
+		t.Fatalf("cells %v, want %v", counts, want)
+	}
+	for cell, value := range want {
+		if counts[cell] != value {
+			t.Fatalf("%s = %v, want %v; all %v", cell, counts[cell], value, counts)
+		}
+	}
+}
+
+// A primary input that timed out this round and a Level that only repeats
+// the QUERY_TIMEOUT a stored guard raised earlier are two cells: the reading
+// "QUERY_TIMEOUT" under origin=physical is this round's failures alone.
+func TestACarriedCompletionReasonIsCountedApartFromAPhysicalOne(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	commit := func(cause string, carried *observability.CarriedReasonFacts) {
+		r.Observe(context.Background(), observability.Observation{Component: observability.ComponentProgress,
+			Stage: observability.StageProgressCommitted, Result: observability.ResultSuccess,
+			ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE", ProgressCompletionCause: cause,
+			ProgressCompletionReason: contract.ReasonQueryTimeout, CarriedReason: carried})
+	}
+	commit("PRIMARY_INPUT_UNAVAILABLE", nil)
+	commit("LEVEL_OUTCOME_UNKNOWN", &observability.CarriedReasonFacts{OriginSlot: 1_700_000_040, OriginCause: contract.ReasonQueryTimeout})
+	commit("LEVEL_OUTCOME_UNKNOWN", &observability.CarriedReasonFacts{})
+	commit("LEVEL_OUTCOME_UNKNOWN", nil)
+	families, err := r.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "alarmd_progress_completion_causes_total" {
+			continue
+		}
+		for _, series := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range series.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			counts[labels["cause"]+"/"+labels["reason"]+"/"+labels["origin"]] = series.GetCounter().GetValue()
+		}
+	}
+	want := map[string]float64{
+		"PRIMARY_INPUT_UNAVAILABLE/QUERY_TIMEOUT/physical": 1,
+		"LEVEL_OUTCOME_UNKNOWN/QUERY_TIMEOUT/carried":      2,
+		"LEVEL_OUTCOME_UNKNOWN/QUERY_TIMEOUT/physical":     1,
 	}
 	if len(counts) != len(want) {
 		t.Fatalf("cells %v, want %v", counts, want)

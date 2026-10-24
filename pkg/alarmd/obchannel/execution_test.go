@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -202,10 +203,19 @@ func TestExecuteEvidenceRejectsBeforeRunAndDoesNotUseCLIAuth(t *testing.T) {
 	}
 }
 
-func TestRemoteCallDoesNotHoldEntryExecutionSlot(t *testing.T) {
+// A remote read and another local read both run beside a local read still
+// running.
+func TestRemoteAndLocalReadsRunBesideARunningOne(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	auth := &testAuth{}
-	op := targetOperation(func(context.Context, Params) Outcome { close(entered); <-release; return Outcome{Complete: true} })
+	var first atomic.Bool
+	op := targetOperation(func(context.Context, Params) Outcome {
+		if first.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+		return Outcome{Complete: true}
+	})
 	c := newTargetChannel(t, Options{Auth: auth, EnvironmentID: "test", Replica: "worker-a", Operations: []Operation{op}, Route: func(context.Context, Invocation) Response {
 		return Response{Status: "ok", Evidence: Evidence{Complete: true}, Meta: Meta{Version: Version, Revision: "target-revision", EnvironmentID: "test", AnsweredBy: "worker-b"}}
 	}})
@@ -217,8 +227,8 @@ func TestRemoteCallDoesNotHoldEntryExecutionSlot(t *testing.T) {
 		t.Errorf("remote route was blocked by local slot: %d %+v", status, out)
 	}
 	status, _ = call(t, c, envelope(c, "invoke", "process.read", Params{"id": "other-local"}))
-	if status != 429 || auth.calls.Load() != 2 {
-		t.Error("remote route released or bypassed local execution budget")
+	if status != 200 || auth.calls.Load() != 3 {
+		t.Errorf("a second local read beside a running one = %d, want run", status)
 	}
 	close(release)
 	<-done
@@ -249,16 +259,21 @@ func TestInvalidRouteAndRevokedAdmissionNeverDispatch(t *testing.T) {
 	}
 }
 
-func TestInternalExecutionHonorsContextAndSharedExecutionBudget(t *testing.T) {
+// An internal read runs beside another still running, and a canceled
+// context ends one without evidence past the channel deadline.
+func TestInternalExecutionHonorsContextAndRunsBesideOthers(t *testing.T) {
 	entered := make(chan struct{})
+	var enter sync.Once
+	hold := make(chan struct{})
 	auth := &testAuth{}
 	op := targetOperation(func(ctx context.Context, _ Params) Outcome {
 		deadline, ok := ctx.Deadline()
 		if !ok || time.Until(deadline) > RequestTimeout {
 			t.Error("unbounded execution context")
 		}
-		close(entered)
+		enter.Do(func() { close(entered) })
 		<-ctx.Done()
+		<-hold
 		return Outcome{Complete: true, Value: map[string]any{"points_read_before_timeout": 2}}
 	})
 	c := newTargetChannel(t, Options{Auth: auth, EnvironmentID: "test", Replica: "worker-b", Incarnation: "process-b", Operations: []Operation{op}})
@@ -267,15 +282,15 @@ func TestInternalExecutionHonorsContextAndSharedExecutionBudget(t *testing.T) {
 	done := make(chan Response, 1)
 	go func() { done <- c.ExecuteEvidence(ctx, internalInvocation(c)) }()
 	<-entered
-	response := c.ExecuteEvidence(context.Background(), internalInvocation(c))
-	if response.Error == nil || response.Error.Code != "request_budget_exceeded" {
-		t.Fatal("internal read bypassed execution slots")
+	// The second read runs (its own short context ends it), rather than being
+	// refused while the first holds anything.
+	second, cancelSecond := context.WithTimeout(context.Background(), 50*time.Millisecond) // fixed-wait: the second read's own short deadline, which the case expects it to run out
+	go func() { <-second.Done(); close(hold) }()
+	response := c.ExecuteEvidence(second, internalInvocation(c))
+	cancelSecond()
+	if response.Error == nil || response.Error.Code != "request_timeout" {
+		t.Fatalf("a read beside a running one = %+v, want it run until its own deadline", response.Error)
 	}
-	status, _ := call(t, c, envelope(c, "invoke", "process.read", Params{"id": "object"}))
-	if status != 429 || auth.calls.Load() != 0 {
-		t.Fatal("external local read bypassed shared execution slots")
-	}
-	cancel()
 	response = <-done
 	if response.Error == nil || response.Error.Code != "request_timeout" || response.Evidence.Complete || response.Result != nil {
 		t.Fatal("cancelled read returned evidence beyond the channel deadline")
@@ -309,11 +324,96 @@ func TestTargetedNextCallsPinActualProcessWithoutTargetingCommonReads(t *testing
 
 func TestInternalEvidenceUsesSameResponseBudget(t *testing.T) {
 	op := targetOperation(func(context.Context, Params) Outcome {
-		return Outcome{Complete: true, Value: strings.Repeat("x", MaxResponseBytes)}
+		return Outcome{Complete: true, Value: strings.Repeat("x", MaxResponseBytes())}
 	})
 	c := newTargetChannel(t, Options{Auth: &internalAuthProbe{}, EnvironmentID: "test", Replica: "worker-b", Incarnation: "process-b", Operations: []Operation{op}})
 	out := c.ExecuteEvidence(context.Background(), internalInvocation(c))
 	if out.Error == nil || out.Error.Code != "response_budget_exceeded" || out.Evidence.Complete || out.Result != nil || out.Meta.RespondedAt.IsZero() {
 		t.Fatalf("unbounded internal evidence: %+v", out)
+	}
+}
+
+// A routed read runs with its operation's own time inside what the caller
+// has left, not a hop's 3 s: an operation of 20 s asked with 30 s left gets
+// 20 s; asked with 5 s left, 5 s.
+func TestARoutedReadKeepsItsOperationsTime(t *testing.T) {
+	deadlines := make(chan time.Duration, 1)
+	op := targetOperation(func(ctx context.Context, _ Params) Outcome {
+		deadline, _ := ctx.Deadline()
+		deadlines <- time.Until(deadline)
+		return Outcome{Complete: true, Value: map[string]any{}}
+	})
+	op.ExecutionTimeout = 20 * time.Second
+	c := newTargetChannel(t, Options{Auth: &testAuth{}, EnvironmentID: "test", Replica: "worker-b", Incarnation: "process-b", Operations: []Operation{op}})
+	for _, tc := range []struct{ left, want time.Duration }{{30 * time.Second, 20 * time.Second}, {5 * time.Second, 5 * time.Second}} {
+		ctx, cancel := context.WithTimeout(context.Background(), tc.left) // fixed-wait: the caller's time left, the value the case checks the read is given
+		if response := c.ExecuteEvidence(ctx, internalInvocation(c)); response.Error != nil {
+			t.Fatalf("with %v left: %+v", tc.left, response.Error)
+		}
+		cancel()
+		if got := <-deadlines; got > tc.want || got < tc.want-time.Second {
+			t.Errorf("with %v left the read had %v, want about %v", tc.left, got, tc.want)
+		}
+	}
+}
+
+// A caller's deadline is kept; only a caller without one gets the fallback.
+func TestCallerBoundedKeepsTheCallersDeadline(t *testing.T) {
+	long, cancelLong := context.WithTimeout(context.Background(), time.Minute) // fixed-wait: the caller's one-minute deadline, the value the case checks is kept
+	defer cancelLong()
+	kept, cancel := CallerBounded(long, RequestTimeout)
+	defer cancel()
+	if deadline, _ := kept.Deadline(); time.Until(deadline) < 50*time.Second {
+		t.Fatalf("a one-minute caller was cut to %v", time.Until(deadline))
+	}
+	unbounded, cancelUnbounded := CallerBounded(context.Background(), RequestTimeout)
+	defer cancelUnbounded()
+	if deadline, ok := unbounded.Deadline(); !ok || time.Until(deadline) > RequestTimeout {
+		t.Fatalf("a caller without a deadline got %v", time.Until(deadline))
+	}
+}
+
+// A read that answers in parts keeps what it read when its time runs out,
+// incomplete and saying so; any other read past its time is dropped.
+func TestAPartialOnTimeoutReadKeepsWhatItRead(t *testing.T) {
+	for _, partial := range []bool{true, false} {
+		op := targetOperation(func(ctx context.Context, _ Params) Outcome {
+			<-ctx.Done()
+			return Outcome{Complete: true, Value: map[string]any{"read": 2, "failed": []string{"ns-c"}}}
+		})
+		op.PartialOnTimeout = partial
+		c := newTargetChannel(t, Options{Auth: &testAuth{}, EnvironmentID: "test", Replica: "worker-b", Incarnation: "process-b", Operations: []Operation{op}})
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) // fixed-wait: the caller's deadline the case runs out
+		response := c.ExecuteEvidence(ctx, internalInvocation(c))
+		cancel()
+		switch {
+		case partial && (response.Error != nil || response.Result == nil || response.Evidence.Complete):
+			t.Fatalf("partial read: %+v", response)
+		case !partial && (response.Error == nil || response.Error.Code != "request_timeout"):
+			t.Fatalf("ordinary read past its time: %+v", response.Error)
+		}
+	}
+}
+
+// The reads that answer in parts -- a section per namespace, a failure per
+// object -- say so, so a read whose time runs out keeps what it read.
+func TestTheSectionedK8sReadsAnswerInParts(t *testing.T) {
+	want := map[string]bool{"k8s.workloads": true, "k8s.events": true}
+	for _, op := range K8sOperations(nil, nil, nil) {
+		if want[op.ID] && !op.PartialOnTimeout {
+			t.Errorf("%s does not keep what it read when its time runs out", op.ID)
+		}
+		delete(want, op.ID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("operations missing: %v", want)
+	}
+}
+
+// The hops' return margins come out of the entry's write allowance, not the
+// operation's time: the longest route's margins fit inside it.
+func TestTheRouteAllowanceFitsTheTransportMargin(t *testing.T) {
+	if RouteAllowance != RouteHops*HopReturnMargin || RouteAllowance >= TransportMargin {
+		t.Fatalf("route allowance %v for %d hops of %v, want it inside the %v transport margin", RouteAllowance, RouteHops, HopReturnMargin, TransportMargin)
 	}
 }

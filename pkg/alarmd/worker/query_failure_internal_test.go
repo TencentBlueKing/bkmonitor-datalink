@@ -10,6 +10,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
 func TestQueryFailureWrappedBudgetWinsOverProviderDiagnostic(t *testing.T) {
@@ -367,5 +368,144 @@ func TestAQueryCancelledFromAboveSaysSo(t *testing.T) {
 		fmt.Errorf("alarmd worker: evaluate series: %w", context.Canceled))
 	if got.ReasonCode != observability.ReasonSlotCancelled {
 		t.Fatalf("evaluation cancelled from above: reason = %q, want %q", got.ReasonCode, observability.ReasonSlotCancelled)
+	}
+}
+
+// The refusal an attempt kept rides on the failure facts beside its status:
+// the class, the provider's trace id and the sanitized excerpt.
+func TestProviderFailureFactsCarryTheRejection(t *testing.T) {
+	refused := execution.PhysicalQueryCompletion{
+		Completeness: execution.CompletenessUnavailable,
+		RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{{
+			AttemptNo: 1, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryRejected),
+			Detail: execution.HTTPStatusRouteDetail(400), HTTPStatus: 400,
+			Rejection: &execution.ProviderRejection{Class: "PROMQL_PARSE", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", Excerpt: "parse error"},
+		}}},
+	}
+	facts := providerFailureFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{refused}})
+	if facts == nil || facts.Code != contract.ReasonQueryRejected || facts.Rejection == nil ||
+		*facts.Rejection != (observability.QueryRejection{Class: "PROMQL_PARSE", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", Excerpt: "parse error"}) {
+		t.Fatalf("facts %+v", facts)
+	}
+}
+
+// A query whose deadline passed while alarmd was decoding the answer that
+// had begun names alarmd's own timeout on the line, not internal_unknown, and
+// says how far the answer got; like a lost round, it carries the decision
+// that let it run and the budget it ran under.
+func TestADeliveryTimeoutNamesItselfAndHowFarTheAnswerGot(t *testing.T) {
+	var got observability.Observation
+	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
+	ctx := observability.ContextWithDivertDecision(context.Background(), observability.DivertDecisionFacts{
+		ClassifiedAtUnixMilli: 1_700_000_000_000, FrozenDeadlineUnixMilli: 1_700_000_009_000, LiveDeadlineUnixMilli: 1_700_000_009_000,
+		BoundMillis: 5_000, BoundSource: "fallback", RemainingMillis: 9_000})
+	ctx, capture := observability.ContextWithBudgetCapture(ctx)
+	capture.Record(observability.QueryBudgetFacts{ConsumerDeadlineUnixMilli: 1_700_000_010_000, LiveQueryDeadlineUnixMilli: 1_700_000_009_000})
+	named := fmt.Errorf("alarmd access: execute physical query: %w", deliveryTimeoutError{error: errors.New("context deadline exceeded")})
+	c.observeQueryFailure(ctx, execution.OperationNormal, time.Now(), "execute", named)
+	if got.ReasonCode != observability.ReasonCode(contract.ReasonQueryDeliveryTimeout) {
+		t.Fatalf("reason = %q, want QUERY_DELIVERY_TIMEOUT rather than internal_unknown", got.ReasonCode)
+	}
+	if f := got.QueryFailure; f == nil || f.Category != observability.QueryFailureCategoryDelivery || f.Code != contract.ReasonQueryDeliveryTimeout ||
+		f.Volume == nil || *f.Volume != (observability.QueryVolume{BytesRead: 48_213, SeriesDelivered: 151}) {
+		t.Fatalf("failure facts = %+v, want delivery / QUERY_DELIVERY_TIMEOUT with the volume read", got.QueryFailure)
+	}
+	if got.DivertDecision == nil || got.DivertDecision.BoundSource != "fallback" || got.QueryBudget == nil ||
+		got.QueryBudget.ConsumerDeadlineUnixMilli != 1_700_000_010_000 {
+		t.Fatalf("decision %+v budget %+v, want both carried on the failed query's line", got.DivertDecision, got.QueryBudget)
+	}
+}
+
+type deliveryTimeoutError struct{ error }
+
+func (e deliveryTimeoutError) Unwrap() error { return e.error }
+func (deliveryTimeoutError) QueryFailure() (string, string) {
+	return observability.QueryFailureCategoryDelivery, observability.QueryFailureCodeDeliveryTimeout
+}
+func (deliveryTimeoutError) QueryFailureDetail() string { return "delivery=timeout" }
+func (deliveryTimeoutError) QueryFailureVolume() *observability.QueryVolume {
+	return &observability.QueryVolume{BytesRead: 48_213, SeriesDelivered: 151}
+}
+
+// A degraded query line carries the decision and budget it ran under, as a
+// failed one does; a successful line carries neither, so ordinary lines stay
+// as they were.
+func TestOnlyALostQueryLineCarriesItsDecisionAndBudget(t *testing.T) {
+	for _, tc := range []struct {
+		result       observability.Result
+		completeness execution.Completeness
+		want         bool
+	}{
+		{observability.ResultDegraded, execution.CompletenessUnavailable, true},
+		{observability.ResultSuccess, execution.CompletenessFull, false},
+		// An evaluation degraded over a query that answered whole lost no
+		// query: no decision, no budget.
+		{observability.ResultDegraded, execution.CompletenessFull, false},
+	} {
+		var got observability.Observation
+		c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = o })}}
+		ctx := observability.ContextWithDivertDecision(context.Background(), observability.DivertDecisionFacts{
+			ClassifiedAtUnixMilli: 1_700_000_000_000, BoundSource: "fallback"})
+		ctx, capture := observability.ContextWithBudgetCapture(ctx)
+		capture.Record(observability.QueryBudgetFacts{ConsumerDeadlineUnixMilli: 1_700_000_010_000})
+		c.observeQueryCompleted(ctx, execution.OperationNormal, time.Now(),
+			execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{{Completeness: tc.completeness}}},
+			execution.EvaluationResult{Result: tc.result})
+		if carried := got.DivertDecision != nil && got.QueryBudget != nil; carried != tc.want ||
+			(!tc.want && (got.DivertDecision != nil || got.QueryBudget != nil)) {
+			t.Fatalf("%s: decision %+v budget %+v, want carried %v", tc.result, got.DivertDecision, got.QueryBudget, tc.want)
+		}
+	}
+}
+
+type seriesIdentityError struct{}
+
+func (seriesIdentityError) Error() string { return "a host-placed series has no CMDB index" }
+func (seriesIdentityError) QueryFailure() (string, string) {
+	return observability.QueryFailureCategorySeriesIdentity, contract.ReasonQueryUnavailable
+}
+
+// A query failed because a host-placed series' alert identity could not be
+// read yet names that on the query line, not internal_unknown.
+func TestASeriesIdentityFailureNamesItselfOnTheQueryLine(t *testing.T) {
+	var got observability.Observation
+	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
+	c.observeQueryFailure(context.Background(), execution.OperationNormal, time.Now(), "execute",
+		fmt.Errorf("alarmd access: execute physical query: %w", seriesIdentityError{}))
+	if got.ReasonCode != observability.ReasonCode(contract.ReasonQueryUnavailable) {
+		t.Fatalf("reason = %q, want QUERY_UNAVAILABLE rather than internal_unknown", got.ReasonCode)
+	}
+	if f := got.QueryFailure; f == nil || f.Category != observability.QueryFailureCategorySeriesIdentity {
+		t.Fatalf("failure facts = %+v, want series_identity", got.QueryFailure)
+	}
+}
+
+// A query whose permit was refused because the permit queue was full -
+// during replay, where its query_admission line says QUERY_PERMIT_QUEUE_FULL -
+// completes with that word as its reason and the admission category and
+// code on its failure facts, not internal_unknown and other/OTHER; and so
+// does one refused because recovery permits are off.
+func TestAPermitRefusedForRoomNamesItselfOnTheQueryLine(t *testing.T) {
+	for _, testCase := range []struct {
+		err  error
+		code string
+	}{
+		{scheduler.ErrQueryPermitQueueFull, "QUERY_PERMIT_QUEUE_FULL"},
+		{scheduler.ErrRecoveryPermitsOff, "QUERY_PERMIT_RECOVERY_OFF"},
+	} {
+		var got observability.Observation
+		c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
+		named := fmt.Errorf("alarmd access: acquire physical query permit: %w", testCase.err)
+		c.observeQueryFailure(context.Background(), execution.OperationReplay, time.Now(), "execute", named)
+		if got.QueryFailure == nil || got.QueryFailure.Category != observability.QueryFailureCategoryAdmission ||
+			got.QueryFailure.Code != testCase.code {
+			t.Fatalf("failure facts = %+v, want admission / %s", got.QueryFailure, testCase.code)
+		}
+		if got.ReasonCode != observability.ReasonCode(testCase.code) {
+			t.Fatalf("reason = %q, want %s rather than internal_unknown", got.ReasonCode, testCase.code)
+		}
+		if !errors.Is(named, testCase.err) {
+			t.Fatalf("%v no longer is %v", named, testCase.err)
+		}
 	}
 }

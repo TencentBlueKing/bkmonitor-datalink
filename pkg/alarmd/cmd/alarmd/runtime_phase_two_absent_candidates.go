@@ -86,6 +86,7 @@ type absentCandidateRow struct {
 	outcome     string
 	outcomeAt   time.Time
 	absentSince time.Time
+	refused     string
 	execution   *absentExecution
 	sends       int
 	firstSentAt time.Time
@@ -160,7 +161,8 @@ func (table *absentCandidateTable) rebuild(at time.Time, result absentalerts.Res
 			i++
 			before := previousAt(decision.Key)
 			row := absentCandidateRow{key: decision.Key, outcome: decision.Outcome, outcomeAt: at,
-				absentSince: decision.AbsentSince, execution: before.execution, sends: before.sends, firstSentAt: before.firstSentAt}
+				absentSince: decision.AbsentSince, refused: decision.Refused, execution: before.execution, sends: before.sends,
+				firstSentAt: before.firstSentAt}
 			row.members, row.readable = roster[decision.Key], true
 			if decision.Outcome == absentalerts.OutcomeCloseDecided {
 				row.execution = &absentExecution{decidedAt: at, word: fleet.AbsentExecutionNotRun}
@@ -396,6 +398,7 @@ func absentRowFacts(row absentCandidateRow) fleet.AbsentCandidateRow {
 	if !row.absentSince.IsZero() {
 		facts.AbsentSince = row.absentSince.UTC().Format(time.RFC3339)
 	}
+	facts.RefusedFor = row.refused
 	facts.Sends = row.sends
 	if row.sends > 0 {
 		facts.FirstSentAt = row.firstSentAt.UTC().Format(time.RFC3339)

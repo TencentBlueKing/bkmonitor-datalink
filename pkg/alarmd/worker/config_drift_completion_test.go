@@ -47,7 +47,8 @@ func TestConfigDriftCompletionDoesNotHideAnUnavailablePrimary(t *testing.T) {
 	} {
 		t.Run(one.name, func(t *testing.T) {
 			primary := execution.PrimaryInputFact{Completeness: one.completeness}
-			got, cause := configDriftCompletion(execution.FrozenExecutionContractRef{}, &primary)
+			got, attribution := configDriftCompletion(execution.FrozenExecutionContractRef{}, &primary, nil, nil)
+			cause := attribution.Cause
 			if got.Kind != one.want {
 				t.Errorf("completion kind = %q, want %q", got.Kind, one.want)
 			}

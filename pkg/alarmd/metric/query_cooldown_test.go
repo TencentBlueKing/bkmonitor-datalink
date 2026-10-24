@@ -19,7 +19,7 @@ func TestQueryCooldownMetricHasOnlyBoundedEvent(t *testing.T) {
 	}
 	found := false
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_query_cooldown_events_total" {
+		if family.GetName() != "alarmd_query_cooldown_events_total" {
 			continue
 		}
 		found = true
@@ -52,7 +52,7 @@ func TestQueryCooldownDispatchIsNotNotDue(t *testing.T) {
 }
 
 func TestFleetCooldownCountRequiresEvidence(t *testing.T) {
-	const name = "bkmonitor_alarmd_fleet_query_cooldown_objects"
+	const name = "alarmd_fleet_query_cooldown_objects"
 	if _, ok := gatherFleet(t, FleetVerdict{Health: "UNKNOWN"})[name]; ok {
 		t.Fatal("unmeasured cooldown published as zero")
 	}
@@ -66,7 +66,7 @@ func TestFleetCooldownCountRequiresEvidence(t *testing.T) {
 func TestQueryCooldownEventsArePreCreated(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
 	counts := map[string]float64{}
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_query_cooldown_events_total") {
+	for _, m := range gatherFamily(t, r, "alarmd_query_cooldown_events_total") {
 		counts[m.GetLabel()[0].GetValue()] = m.GetCounter().GetValue()
 	}
 	for _, event := range append(append([]string(nil), observability.QueryCooldownEvents...), "other") {

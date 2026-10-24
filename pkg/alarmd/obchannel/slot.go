@@ -115,13 +115,25 @@ func SlotOperations(options SlotOptions) []Operation {
 			"evaluation_time": integer("Slot Unix秒，不是查询发起时间或毫秒。", 1, 4102444800),
 		}
 	}
-	limits := map[string]any{"timeout_ms": RequestTimeout.Milliseconds(), "response_bytes": MaxResponseBytes, "physical_queries_per_call": 1, "query_plans": 32,
+	limits := map[string]any{"timeout_ms": RequestTimeout.Milliseconds(), "response_bytes": MaxResponseBytes(), "physical_queries_per_call": 1, "query_plans": 32,
 		"uq_body_bytes": 4 << 20, "uq_series_bytes": 512 << 10, "uq_series": 1000, "uq_records": 20000, "returned_series": 10, "returned_points_total": 500,
 		"selected_series_bytes": uq.DiagnosticMaxOutputBytes, "provider_metadata_bytes": 16 << 10,
 		"contract_redis":                map[string]int{"commands": 64, "bytes": 4 << 20, "document_bytes": 1 << 20},
 		"query_concurrency_per_process": 1, "retained_records_scan": 200, "retained_samples_scan": 50,
 		"retained_redis": map[string]int{"commands": 64, "bytes": 4 << 20, "record_bytes": 4 << 10},
 		"population":     "Series selection occurs after the original query and normalization; small output does not limit upstream computation."}
+	// slot.query is bounded by what it enforces, not by slot.get's catalog
+	// reads: the Slot's frozen budget plus requeryMargin up to
+	// MaxExecutionTimeout, and the production decode limits.
+	decode := uq.DiagnosticLimits()
+	queryLimits := make(map[string]any, len(limits)+1)
+	for key, value := range limits {
+		queryLimits[key] = value
+	}
+	queryLimits["timeout_ms"] = (MaxExecutionTimeout - requeryMargin).Milliseconds()
+	queryLimits["requery_timeout"] = "the Slot's frozen query budget plus " + requeryMargin.String() + ", at most " + (MaxExecutionTimeout - requeryMargin).String()
+	queryLimits["uq_body_bytes"], queryLimits["uq_series_bytes"] = decode.MaxBodyBytes, decode.MaxSeriesBytes
+	queryLimits["uq_series"], queryLimits["uq_records"] = decode.MaxSeries, decode.MaxRecords
 	availability := func() Availability {
 		if options.Resolve != nil && options.UQ != nil {
 			return Availability{Available: true}
@@ -198,7 +210,7 @@ func SlotOperations(options SlotOptions) []Operation {
 	fields["series_offset"] = integer("从第几个匹配的时序开始返回，默认0；下一页用上一页 next_call 的值。", 0, 1000000)
 	query := Operation{ID: "slot.query", Summary: "对指定历史Slot的一个物理查询执行有界UQ重查；结果为requery_now。重查可用的时间是这个Slot冻结的查询预算加5秒，最长2分钟；解码上限与生产查询相同，返回的时序按 series_offset 分页，还有下一页时给出 next_call。只用诊断专用的单个并发位，不占正式查询的许可。", EvidenceScope: "current_worker_requery", Targetable: true, DefaultOwnerParam: "query_group",
 		ExecutionTimeout: MaxExecutionTimeout,
-		Fields:           fields, Required: []string{"query_group", "evaluation_time", "contract_digest", "physical_query_digest", "request_digest"}, OutputSchema: SchemaOf(SlotQueryResult{}), Limits: limits, Availability: availability}
+		Fields:           fields, Required: []string{"query_group", "evaluation_time", "contract_digest", "physical_query_digest", "request_digest"}, OutputSchema: SchemaOf(SlotQueryResult{}), Limits: queryLimits, Availability: availability}
 	query.Run = func(ctx context.Context, p Params) Outcome {
 		plan, failure := resolveSlot(ctx, options, p)
 		if failure != nil {

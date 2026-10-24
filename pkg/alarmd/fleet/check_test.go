@@ -213,8 +213,28 @@ func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
 	// that wait follows every Worker's start and every move by design, and
 	// filed as DEPENDENCY_DOWN it put a batch of objects there for the
 	// seconds the view took while a wait that really stuck read the same.
-	if got := len(Checks()); got != 40 || len(checkAnswers) != 40 {
-		t.Errorf("the check table has %d rows in order and %d answered, want 40: a new check has to "+
+	// Forty: IDENTITY_UNMATCHED is a rule over a dimension the rows did not
+	// carry before - whether an empty round's every withheld series was one
+	// the target's identity could not read (target_key_missing) - because
+	// such data arrived and names its instance in labels the target does
+	// not read, and filed as EMPTY_EVERY_ROUND it waited an hour, read
+	// CAUSE_UNKNOWN and sent the strategy's owner to a source that was
+	// fine, or filed nowhere at all (leader 10-17, design 582cf16b).
+	// Forty-one: SERIES_SPARSER_THAN_WINDOW is a rule over dimensions the
+	// rows already carry - the worst window's and each named window's valid
+	// count against its positions, and the holes' verdicts - because a
+	// long-lived series that reports less often than its window has
+	// positions never fills a window yet has its recovery decided, as
+	// Python's is, and it sat on the undecidable column and the data's
+	// SERIES_SPARSE line as if one of those were true of it (leader 10-20).
+	// Forty-two: LOG_COUNT_EMPTY is a rule over a dimension the rows did not
+	// carry before - whether an empty round's primary is a grouped count its
+	// provider does not zero-fill - because a log count's empty answer is
+	// the same for a quiet group and a missing one, and NO_DATA_PERSISTENT or
+	// EMPTY_EVERY_ROUND told it back as data missing (leader 10-20: log
+	// counts are not widened, the diagnosis is made honest instead).
+	if got := len(Checks()); got != 43 || len(checkAnswers) != 43 {
+		t.Errorf("the check table has %d rows in order and %d answered, want 43: a new check has to "+
 			"be a rule over the existing dimensions or a named standing, and the design says which", got, len(checkAnswers))
 	}
 	seen := map[Check]bool{}
@@ -235,7 +255,7 @@ func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
 	// This deployment's own before undetermined before the others, and the
 	// undetermined ones before what is confirmed as somebody else's: the order
 	// is the order the reader acts in.
-	rank := map[Owner]int{OwnerPlatform: 0, OwnerAlarmd: 0, OwnerUndetermined: 1, OwnerData: 2, OwnerStrategy: 2}
+	rank := map[Owner]int{OwnerPlatform: 0, OwnerAlarmd: 0, OwnerUndetermined: 1, OwnerData: 2, OwnerStrategy: 2, OwnerStrategyOrCollection: 2}
 	previous := -1
 	for _, check := range Checks() {
 		if r := rank[checkAnswers[check].Owner]; r < previous {
@@ -285,7 +305,9 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 		CheckNoDataPersistent:    {Kind: KindNoData},
 		CheckEmptyEveryRound:     {Kind: KindEmptyEveryRound, EmptyEveryRound: &EmptyEveryRoundFacts{Rounds: 240, NeverSawData: true, Cause: EmptyEveryRoundCauseUnknown}},
 		CheckEmptyAfterTarget:    {Kind: KindEmptyEveryRound, EmptyEveryRound: &EmptyEveryRoundFacts{Rounds: 240, NeverSawData: true, Cause: EmptyEveryRoundCauseOutsideTarget}},
+		CheckIdentityUnmatched:   {Kind: KindIdentityUnmatched, IdentityUnmatched: &IdentityUnmatchedFacts{Rounds: 3, Withheld: 2, KeyMissing: 2}},
 		CheckQuiet:               {Kind: KindQuiet},
+		CheckLogCountEmpty:       {Kind: KindLogCountEmpty},
 		CheckAnswerTruncated:     {Kind: KindAnswerTruncated},
 		CheckNoDataMemoryRefused: {Kind: KindNoDataMemoryRefused, ReasonCode: "STATE_BUDGET_EXCEEDED"},
 		CheckRetainedShareApproaching: {Kind: KindRetainedShareApproaching,
@@ -306,6 +328,12 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 		CheckSeriesSparse: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
 			Levels: 9, Short: 1, WorstValid: 2, WorstRequired: 9, ShortRounds: 40, Windows: []WindowRow{{
 				Verdict: VerdictDataAbsentWhenQueried, MissingTotal: 2, HolesBy: WindowHoleCounts{AnsweredWithoutSeries: 2}}}}},
+		// A point every five minutes under a nine position window: two of
+		// nine valid, and every hole a minute answered without the series.
+		CheckSeriesSparserThanWindow: {Kind: KindDegradedRun, CauseReason: "HISTORY_GAPPED", Coverage: &HistoryCoverage{
+			Levels: 9, Short: 1, WorstValid: 2, WorstRequired: 9, ShortRounds: 40, Windows: []WindowRow{{
+				Valid: 2, Required: 9, Verdict: VerdictDataAbsentWhenQueried, MissingTotal: 7,
+				HolesBy: WindowHoleCounts{AnsweredWithoutSeries: 7}}}}},
 		CheckWindowUndecided: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
 			Levels: 3, Short: 2, Empty: 2, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40}},
 		CheckCoverageReadingRefused: {Kind: KindDegradedRun, CauseReason: "HISTORY_GAPPED",

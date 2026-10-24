@@ -14,6 +14,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -89,6 +90,28 @@ func LoweredReadHold(hold, step time.Duration) time.Duration {
 		return 0
 	}
 	return half
+}
+
+// CandidateReadHold is the hold the next earlier-read trial tries under hold,
+// and false when there is none to try. floor, when floored, is the largest
+// candidate already shown too early under this hold: data still changing
+// there. Without one the step is LoweredReadHold, half the hold. With one the
+// candidate is halfway between the floor and the hold, so a group whose data
+// lands anywhere between the two is found by halving the gap, not by trying
+// half the hold again and again; once the gap is no wider than a step there
+// is nothing left a read can tell apart, and nothing is tried. A floor at or
+// past the hold says nothing about it.
+func CandidateReadHold(hold, floor time.Duration, floored bool, step time.Duration) (time.Duration, bool) {
+	if hold <= 0 {
+		return 0, false
+	}
+	if !floored || floor < 0 || floor >= hold {
+		return LoweredReadHold(hold, step), true
+	}
+	if hold-floor <= step {
+		return 0, false
+	}
+	return floor + time.Duration((hold-floor).Milliseconds()/2)*time.Millisecond, true
 }
 
 func (ref FrozenExecutionContractRef) Validate() error {
@@ -186,7 +209,12 @@ type SlotExecutionRequest struct {
 	KeepUntilUnixMilli             int64
 	// ReplayExpired is a non-identity scheduler fact. Finalization still uses
 	// RecoveryUntilUnixMilli to distinguish distance expiry from age expiry.
-	ReplayExpired    bool
+	ReplayExpired bool
+	// ShareExceeded is a non-identity scheduler fact, like ReplayExpired: the
+	// Runner saw this Slot refused for its Query Group's retained-byte share
+	// (ShareRefusal) and decided no retry can fit it. Finalization then names
+	// the Slot RESOURCE_SHARE_EXCEEDED and runs no query.
+	ShareExceeded    bool
 	Operation        Operation
 	AttemptNo        uint32
 	OwnerFence       OwnerFence
@@ -221,6 +249,9 @@ func (request SlotExecutionRequest) Validate() error {
 	}
 	if request.ReplayExpired && request.Operation != OperationNormal {
 		return errors.New("alarmd execution: replay-expired Slot must use normal dispatch")
+	}
+	if request.ShareExceeded && (request.ExpiredRange != nil || request.Supplement != nil || request.ReplayExpired) {
+		return errors.New("alarmd execution: a share refusal finalizes one live Slot, never a range, a supplement or an expired replay")
 	}
 	if err := request.Operation.Validate(); err != nil {
 		return err
@@ -825,12 +856,17 @@ type StateGuardFact struct {
 }
 
 type RuntimeLevelStateView struct {
-	LevelID                 uint32
+	LevelID uint32
+	// GapReasonOriginSlot: see RuntimeLevelStateMutation. Zero on a record
+	// that does not carry it, and then left out of any encoding of the view.
+	GapReasonOriginSlot     uint32 `json:",omitempty"`
 	LevelStateCompatibility string
 	HistoryCompleteness     HistoryCompleteness
 	GapReasonCode           ReasonCode
 	WarmupRequirementRef    string
 	LastProcessedEventTime  int64
+	// LastRealPointTime: see RuntimeLevelStateMutation. Zero when not known.
+	LastRealPointTime int64 `json:",omitempty"`
 }
 
 // StateRepresentation names the on-disk shape a Runtime State record was read
@@ -1237,8 +1273,18 @@ func gapSnapshotHasPayload(item GapGuardSnapshot) bool {
 type EvaluationRequest struct {
 	Header InternalExecutionHeader
 	Inputs []SeriesEvaluationInputRequest
-	State  StatePreflightResult
-	Gaps   GapLoadResult
+	// HostOverlay is the series' dimensions as the platform's fuller writes
+	// them for a host CMDB placed by id with another address: read by the
+	// alert identity in place of the record's own, never by the series'
+	// identity or its State. Nil for nearly every series.
+	HostOverlay map[string]json.RawMessage
+	// NamedOutputs is the named outputs the Plan's primary query aligned to
+	// its records, by RecordID (PhysicalQueryCompletion.NamedOutputs): read
+	// by the detection snapshot an event carries, never by detection, the
+	// series' identity or its State. Nil for a Plan without named outputs.
+	NamedOutputs *NamedOutputRecords
+	State        StatePreflightResult
+	Gaps         GapLoadResult
 	// OpenAlerts is the consumer's open alert set the recovery gate asks. The worker passes it on every request; nil is a caller with no
 	// gate and is counted as such, see OpenAlertGateCounts.NotConfigured.
 	OpenAlerts contract.OpenAlertSet
@@ -1488,6 +1534,9 @@ func decisionStateChanged(view RuntimeStateView, mutation StateMutation) bool {
 			stored.HistoryCompleteness != level.HistoryCompleteness || stored.GapReasonCode != level.GapReasonCode ||
 			stored.WarmupRequirementRef != level.WarmupRequirementRef ||
 			stored.LastProcessedEventTime != level.LastProcessedEventTime {
+			// The guard's reason origin is not compared: it describes the
+			// guard and changes nothing a later round decides on, as the
+			// digest leaves it out (digestLevelState).
 			return true
 		}
 	}
@@ -1542,6 +1591,15 @@ type GapScopeState struct {
 	ReasonCode        ReasonCode
 	RequiredFullSlots uint32
 	ObservedFullSlots uint32
+	// ReasonOriginSlot and ReasonOriginCause are where ReasonCode came from:
+	// the Slot whose write opened the scope and the reason it opened it with
+	// (StampGapScopeOrigins). Optional: absent on a marker written before
+	// they existed or by a build that does not write them. The JSON keys are
+	// the Go names, as the fields beside them are; omitempty keeps a marker
+	// without them byte-identical. Not in the Plan gap mutation digest,
+	// which is over the mutation, not the stored scopes.
+	ReasonOriginSlot  EvaluationTime `json:",omitempty"`
+	ReasonOriginCause ReasonCode     `json:",omitempty"`
 }
 
 type GapScopeMutation struct {
@@ -1688,6 +1746,11 @@ type PlanNoDataMutation struct {
 	// reading the groups - so the writer, which has the whole memory in hand,
 	// states the number the group bound is checked against.
 	GroupCount uint32
+	// GroupLimit is the Plan's own bound on GroupCount, from its item's
+	// max_groups, and zero for the deployment's. It is not part of the
+	// statement - the digest is of what is written, not of the bound it is
+	// written under - so it is carried beside it for the store to check.
+	GroupLimit uint32
 	Set        []NoDataGroupDelta
 	Del        []string
 }
@@ -1777,6 +1840,10 @@ type PlanEvaluationResult struct {
 	GuardAfterState   []PlanGapMutation
 	RecoveryGate      RecoveryGateCounts
 	OpenAlertGate     OpenAlertGateCounts
+	// NoDataEnds is what this evaluation said about the no-data end index
+	// (NoDataEndIndex): one update per series and level written to end on no
+	// data. Empty for every Plan without such a level.
+	NoDataEnds []NoDataEndUpdate
 	// HistoryCoverage is observation only. It lives here and nowhere else: a
 	// second copy on the enclosing result would be one more pair of numbers
 	// that have to agree about the same evaluation, and the first time they
@@ -1784,6 +1851,12 @@ type PlanEvaluationResult struct {
 	// Validate does not check it -- nothing decides anything from it, and a
 	// sound decision must not be rejected over a wrong count beside it.
 	HistoryCoverage HistoryCoverage
+	// ReasonCarried and ReasonOrigin say whether ReasonCode is a stored
+	// guard's, carried by the Level outcome it was folded from
+	// (LevelOutcome.ReasonCarried), and where that guard came from.
+	// Observation only, like HistoryCoverage.
+	ReasonCarried bool
+	ReasonOrigin  ReasonOrigin
 }
 
 // HistoryCoverage is how far the detection window fell short of the points the
@@ -2264,6 +2337,11 @@ type EvaluationResult struct {
 	Plans      []PlanEvaluationResult
 	Result     Result
 	ReasonCode ReasonCode
+	// ReasonCarried and ReasonOrigin travel with ReasonCode: whether it is a
+	// stored guard's reason rather than this round's (PlanEvaluationResult),
+	// and where that guard came from. Observation only.
+	ReasonCarried bool
+	ReasonOrigin  ReasonOrigin
 }
 
 func buildEvaluationInternalExecution(request EvaluationRequest) (InternalExecution, error) {
@@ -3303,6 +3381,12 @@ type PrimaryInputFact struct {
 	// target: the data was there, the target selected none of it. Set by
 	// the worker from the query completions.
 	EmptiedByTarget bool
+	// Identity says a FULL, EMPTY primary was empty because every series
+	// its queries returned was one the target's identity could not read
+	// (target_key_missing), with the counts and samples; nil otherwise. Set
+	// by the worker from the query completions, observation only like the
+	// two flags beside it.
+	Identity *IdentityEvidence
 	// QuietWhenEmpty says a FULL, EMPTY primary is an event count of groups
 	// that came back with no group: no event in the range asked. Set by the
 	// worker the same way.
@@ -3314,6 +3398,11 @@ type PrimaryInputFact struct {
 	// round's - its target - so they go stale when the content moves, and a
 	// reader trusts the copy only under the same content.
 	QuietWhenEmpty bool
+	// UnfilledWhenEmpty says a FULL, EMPTY primary is a count its provider
+	// does not zero-fill (DataRequirement.UnfilledCounts), grouped or not: the
+	// answer is empty, and a quiet group and a missing one look the same.
+	// Set by the worker the same way, observation only.
+	UnfilledWhenEmpty bool
 }
 
 func DerivePrimaryInputFact(input InternalExecution) (PrimaryInputFact, error) {
@@ -3451,11 +3540,21 @@ const (
 	// CauseResolveFailedPastBound is any other failure to resolve the frozen
 	// Slot that lasted until its recovery bound passed.
 	CauseResolveFailedPastBound CompletionCause = "RESOLVE_FAILED_PAST_BOUND"
+	// CauseResourceShareExceeded is a Slot whose own retained bytes exceed
+	// the share one Query Group may hold of the replica's pool
+	// (QG_BUDGET_SHARE_EXCEEDED with no shared usage behind it), refused
+	// identically - twice for the group's first such Slot, once for each
+	// later one - and then finalized without querying again: no
+	// retry in this process can make the same window smaller, and every
+	// retry re-read the whole window from the backend only to be refused.
+	// A capacity defect of the strategy - it has to be sharded - and every
+	// later Slot of the group meets it until it is.
+	CauseResourceShareExceeded CompletionCause = "RESOURCE_SHARE_EXCEEDED"
 )
 
 // QueryFreeCauses are the causes a query-free finalization may name.
 var QueryFreeCauses = []CompletionCause{CauseExpiredReplay, CauseSnapshotCorrupt, CauseSnapshotUnavailablePastBound,
-	CauseResolveFailedPastBound}
+	CauseResolveFailedPastBound, CauseResourceShareExceeded}
 
 // CompletionAttribution is why a Slot completed the way it did: the condition
 // that folded into the kind, and that condition's own reason.
@@ -3484,6 +3583,29 @@ type CompletionAttribution struct {
 	// one, so a round that did not answer whole names the Level or the query
 	// that did not.
 	Scope CompletionScope
+	// ReasonCarried says Reason is a stored guard's, carried by the Level
+	// outcome the cause was found on (LevelOutcome.ReasonCarried), not
+	// anything this round's inputs said; ReasonOrigin is where that guard
+	// came from. A primary input's reason is never carried.
+	ReasonCarried bool
+	ReasonOrigin  ReasonOrigin
+}
+
+// SlotCompletionCause is the part of a CompletionAttribution the Slot's
+// completion line reports: the cause, its reason, and whether that reason was
+// carried and from where. The scope and coverage stay on the progress line,
+// which already carries them.
+type SlotCompletionCause struct {
+	Cause         CompletionCause
+	Reason        ReasonCode
+	ReasonCarried bool
+	ReasonOrigin  ReasonOrigin
+}
+
+// SlotCause is the attribution as the Slot's completion line reports it.
+func (attribution CompletionAttribution) SlotCause() SlotCompletionCause {
+	return SlotCompletionCause{Cause: attribution.Cause, Reason: attribution.Reason,
+		ReasonCarried: attribution.ReasonCarried, ReasonOrigin: attribution.ReasonOrigin}
 }
 
 // CompletionScope is the part of a Slot a completion cause was found in.
@@ -3532,9 +3654,20 @@ func deriveCompletionAttribution(input InternalExecution, result EvaluationResul
 	// they were.
 	reason := ReasonCode("")
 	var scope CompletionScope
+	// carried and origin belong to the reason: whether it is a stored guard's
+	// rather than this round's, and where that guard came from. Only a Level
+	// outcome's reason can be carried.
+	carried, origin := false, ReasonOrigin{}
 	note := func(candidate CompletionCause, candidateReason ReasonCode, candidateScope CompletionScope) {
 		if causeRank(candidate) > causeRank(cause) {
 			cause, reason, scope = candidate, candidateReason, candidateScope
+			carried, origin = false, ReasonOrigin{}
+		}
+	}
+	noteOutcome := func(candidate CompletionCause, outcome LevelOutcome, candidateScope CompletionScope) {
+		if causeRank(candidate) > causeRank(cause) {
+			cause, reason, scope = candidate, outcome.ReasonCode, candidateScope
+			carried, origin = outcome.ReasonCarried, outcome.ReasonOrigin()
 		}
 	}
 	hasPartial := primary.Completeness == CompletenessPartial
@@ -3542,13 +3675,7 @@ func deriveCompletionAttribution(input InternalExecution, result EvaluationResul
 	// A primary input short or missing names the binding that was, with the
 	// reason access gave it: the query and why, not only that one was.
 	primaryAt := func(completeness Completeness) (ReasonCode, CompletionScope) {
-		for _, binding := range input.Inputs {
-			if binding.Role == InputRolePrimary && binding.Completeness == completeness {
-				return AttributedReason(binding.ReasonCode, binding.UnavailableAttribution), CompletionScope{Plan: binding.Consumer.Plan, HasPlan: true,
-					LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel, PhysicalQuery: binding.Provenance.PhysicalQuery}
-			}
-		}
-		return "", CompletionScope{}
+		return PrimaryBindingAttribution(input.Inputs, completeness)
 	}
 	if hasUnavailable {
 		bindingReason, bindingScope := primaryAt(CompletenessUnavailable)
@@ -3593,9 +3720,9 @@ func deriveCompletionAttribution(input InternalExecution, result EvaluationResul
 					hasUnavailable = true
 					levelScope := CompletionScope{Plan: outcome.Plan, HasPlan: true, LevelID: outcome.LevelID, HasLevel: true}
 					if wholeness.UnknownIsGuardTail(outcome) {
-						note(CauseGapGuardWarming, outcome.ReasonCode, levelScope)
+						noteOutcome(CauseGapGuardWarming, outcome, levelScope)
 					} else {
-						note(CauseLevelOutcomeUnknown, outcome.ReasonCode, levelScope)
+						noteOutcome(CauseLevelOutcomeUnknown, outcome, levelScope)
 					}
 				}
 			}
@@ -3603,7 +3730,7 @@ func deriveCompletionAttribution(input InternalExecution, result EvaluationResul
 			return "", CompletionAttribution{}, errors.New("alarmd execution: invalid Plan disposition for completion")
 		}
 	}
-	attributed := CompletionAttribution{Cause: cause, Reason: reason, Scope: scope}
+	attributed := CompletionAttribution{Cause: cause, Reason: reason, Scope: scope, ReasonCarried: carried, ReasonOrigin: origin}
 	switch {
 	case hasTerminal:
 		return CompletionTerminal, CompletionAttribution{}, nil
@@ -4074,9 +4201,18 @@ type LastCompletionSummary struct {
 // round's word, so a reader trusts them only while the object runs the same
 // content, and a commit that declares no content writes none.
 type EmptyRoundSummary struct {
-	Quiet           bool   `json:"quiet,omitempty"`
-	EmptiedByTarget bool   `json:"emptied_by_target,omitempty"`
-	ContentScope    string `json:"content_scope,omitempty"`
+	Quiet           bool `json:"quiet,omitempty"`
+	EmptiedByTarget bool `json:"emptied_by_target,omitempty"`
+	// Unfilled is PrimaryInputFact.UnfilledWhenEmpty, kept for the row a
+	// restarted replica restores, like Quiet.
+	Unfilled     bool   `json:"unfilled,omitempty"`
+	ContentScope string `json:"content_scope,omitempty"`
+	// IdentityRounds is how many rounds in a row, this one included, came
+	// back empty because every series was one the target's identity could
+	// not read (PrimaryInputFact.Identity), under this content; zero for
+	// any other empty round. Kept so a restart resumes the count rather
+	// than starting it again.
+	IdentityRounds uint32 `json:"identity_rounds,omitempty"`
 }
 
 type UnfinishedSlotProjection struct {
@@ -4356,6 +4492,21 @@ type SlotExecutionResult struct {
 	Result         Result
 	ReasonCode     ReasonCode
 	SourceRetry    bool
+	// QueryFreeCause is the cause of a query-free finalization this call
+	// wrote down -- GAP_SKIPPED or SNAPSHOT_UNAVAILABLE, one Slot or a range
+	// -- and empty on every other result, a range an earlier attempt already
+	// committed included. Observation only: the Runner reports each such
+	// Slot given up on, once.
+	QueryFreeCause CompletionCause
+	// CompletionCause is why the Slot completed the way it did, for its
+	// completion line (slot_completed): the same attribution the Progress
+	// commit reported. Zero on a Slot that did not commit.
+	CompletionCause SlotCompletionCause
+	// PhysicalQueryLoss says a physical query of the round answered short of
+	// FULL - PARTIAL or UNAVAILABLE - by the rule the query line reports it
+	// by. Observation only: it decides whether the completion line explains
+	// a lost query, whatever cause outranked it in the attribution.
+	PhysicalQueryLoss bool
 	// Usage is what this Slot took of each budget, carried out so the
 	// completion row can report it.
 	//
@@ -4461,4 +4612,20 @@ type SlotBudgetUsage struct {
 	// because the share's rule belongs to the producer that refuses by it,
 	// and a second copy of that rule elsewhere is one that can drift.
 	RetainedShareBytes uint64
+}
+
+// PrimaryBindingAttribution is the reason and the scope a completion names
+// for a primary input short or missing: the first primary binding at that
+// completeness, with the reason access gave it and the Plan, Level and
+// physical query it was bound for. Empty when no primary binding is at it.
+// The derivation of a completion and the completion of a Slot whose
+// activation changed under it both name a missing primary input by it.
+func PrimaryBindingAttribution(bindings []NamedInputBinding, completeness Completeness) (ReasonCode, CompletionScope) {
+	for _, binding := range bindings {
+		if binding.Role == InputRolePrimary && binding.Completeness == completeness {
+			return AttributedReason(binding.ReasonCode, binding.UnavailableAttribution), CompletionScope{Plan: binding.Consumer.Plan, HasPlan: true,
+				LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel, PhysicalQuery: binding.Provenance.PhysicalQuery}
+		}
+	}
+	return "", CompletionScope{}
 }

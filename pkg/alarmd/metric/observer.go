@@ -28,7 +28,6 @@ var observationDurationBuckets = []float64{0.005, 0.01, 0.05, 0.1, 1, 30}
 func newObservationMetrics() observationMetrics {
 	total := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: metricNamespace,
 			Subsystem: metricSubsystem,
 			Name:      "observation_total",
 			Help:      "Bounded alarmd observations by pipeline stage and result.",
@@ -37,7 +36,6 @@ func newObservationMetrics() observationMetrics {
 	)
 	operations := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: metricNamespace,
 			Subsystem: metricSubsystem,
 			Name:      "operation_total",
 			Help:      "Bounded alarmd observations by operation and result.",
@@ -46,7 +44,6 @@ func newObservationMetrics() observationMetrics {
 	)
 	duration := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: metricNamespace,
 			Subsystem: metricSubsystem,
 			Name:      "observation_duration_seconds",
 			Help:      "Bounded alarmd observation duration by pipeline stage.",

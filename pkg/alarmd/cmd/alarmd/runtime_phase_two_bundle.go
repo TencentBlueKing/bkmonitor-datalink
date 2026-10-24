@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -42,6 +43,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategycache"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/tracing"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
@@ -238,7 +240,20 @@ func openProductionPhaseTwoBundleAssembly(
 	// Where the link writes its open alert sets is the link's answer; it is
 	// read before anything connects, so the index, the difference and the
 	// endpoint list all read the one location.
-	cfg, linkdDiscovery := adoptLinkdLocation(ctx, cfg, openalerts.DiscoverTarget)
+	linkdTokens, linkdTokenClient, err := openLinkdTokens(cfg, recorder.RedisHook("linkd"), external.Now)
+	if err != nil {
+		return nil, err
+	}
+	linkdTokensClosed := false
+	defer func() {
+		if resultErr != nil && linkdTokenClient != nil && !linkdTokensClosed {
+			resultErr = errors.Join(resultErr, linkdTokenClient.Close())
+		}
+	}()
+	discoverLinkd := withLinkdToken(openalerts.DiscoverTarget, linkdTokenSource(linkdTokens))
+	cfg, linkdDiscovery := adoptLinkdLocation(ctx, cfg, discoverLinkd)
+	logLinkdDiscovery(logger, linkdDiscovery)
+	logNoDataGroupBound(logger, cfg)
 	// Phase two limits repeated diagnostics per (reason, Query Group) bucket
 	// and reports suppressed counts; the phase-one per-reason budget hid every
 	// other Query Group's coordinates once one object became noisy.
@@ -246,6 +261,26 @@ func openProductionPhaseTwoBundleAssembly(
 	if err != nil {
 		return nil, err
 	}
+	traces, err := tracing.New(tracing.Config{Endpoint: cfg.PhaseTwo.Tracing.OTLPEndpoint, Token: cfg.PhaseTwo.Tracing.Token,
+		SampleRatio: cfg.TraceSampleRatio(), MaxTracesPerSecond: cfg.TraceMaxTracesPerSecond(),
+		ServiceVersion: recorder.Build().Version, InstanceID: cfg.PhaseTwo.Worker.ID,
+		ExportFailed: func(err error) {
+			observeRuntime(context.Background(), baseObserver, observability.Observation{Component: observability.ComponentRuntime,
+				Stage: observability.StageTraceExport, Result: observability.ResultFailed, ReasonCode: observability.ReasonTraceExportFailed, Err: err})
+		}}, recorder)
+	if err != nil {
+		return nil, err
+	}
+	// Whether this process exports, said in one read: a gauge and the fleet
+	// facts, so an export that is off is not read as one with nothing to
+	// sample.
+	tracingFacts := fleetTracingFacts(cfg, traces != nil)
+	recorder.SetTraceExportState(tracingFacts.State)
+	defer func() {
+		if resultErr != nil {
+			_ = shutdownTraces(context.Background(), traces)
+		}
+	}()
 	// The tracker reads the stream the replica already emits, so building the
 	// anomaly list costs no reads of its own. It forwards every observation
 	// untouched: diagnostics must not change what the pipeline reports.
@@ -260,6 +295,9 @@ func openProductionPhaseTwoBundleAssembly(
 	fleetTracker.SetAwaitingViewBound(cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration() +
 		cfg.PhaseTwo.Control.RefreshInterval.Duration() + cfg.PhaseTwo.Ownership.LeaseRenewInterval.Duration() +
 		cfg.PhaseTwo.Control.ReconcileInterval.Duration())
+	// A span of Slots given up is attributed to a store outage seen up to one
+	// replay window before it: how long after its round a Slot is given up.
+	fleetTracker.SetSkipDependencyWindow(cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration())
 	recorder.SetRoundMemorySource(fleetTracker.RoundMemory)
 	var observer observability.Observer = fleetTracker
 	targetFlow, err := observability.NewTargetFlow(logger)
@@ -297,6 +335,9 @@ func openProductionPhaseTwoBundleAssembly(
 	// Whose burst of writes to warming series an hour's busiest minute was:
 	// one line an hour, through the observer it is a member of.
 	warmingPeak := observability.NewWarmingPeak(external.Now)
+	// What each round decided, for the lookback to write beside a round it
+	// later finds read early; the lookback is built below and set then.
+	decisions := &lookbackDecisionTap{}
 	// Each member named, so that a panic in one is counted under it while the
 	// others still receive the observation.
 	observer = observability.Multi(observability.Named(observability.ObserverTracker, observer),
@@ -305,7 +346,8 @@ func openProductionPhaseTwoBundleAssembly(
 		observability.Named(observability.ObserverRejectionTally, rejectionTally),
 		observability.Named(observability.ObserverCostSummary, costSummary),
 		observability.Named(observability.ObserverRetainedPeaks, retainedPeaks),
-		observability.Named(observability.ObserverWarmingPeak, warmingPeak))
+		observability.Named(observability.ObserverWarmingPeak, warmingPeak),
+		observability.Named(observability.ObserverLookbackDecisions, decisions))
 	observer = phaseTwoRuntimeObserver(observer)
 	warmingPeak.SetEmit(observer)
 
@@ -324,6 +366,13 @@ func openProductionPhaseTwoBundleAssembly(
 	}()
 	runtimeClient := controlClient
 	runtimeClientIsSource := reflect.DeepEqual(runtimeConnection, sourceConnection)
+	// The flow reads the runtime store's round trips under the hook label of
+	// the client that serves it: the source's when the two share it.
+	if runtimeClientIsSource {
+		recorder.SetRuntimeRedisClient("source")
+	} else {
+		recorder.SetRuntimeRedisClient("runtime")
+	}
 	sharing := endpointSharing{runtimeIsSource: runtimeClientIsSource, compatOutputPresent: true}
 	if !runtimeClientIsSource {
 		runtimeClient, err = wait.openRedis(ctx, "redis_runtime", runtimeConnection, recorder.RedisHook("runtime"))
@@ -489,6 +538,9 @@ func openProductionPhaseTwoBundleAssembly(
 		return nil, err
 	}
 	queryClient.WithNow(external.QueryClock)
+	queryClient.WithAPMObserver(func(response accessuq.APMCarriedResponse) {
+		recorder.ObserveAPMCarriedResponse(response.Table, response.NotUnique, response.Bytes)
+	})
 	flights, err := scheduler.NewFlightCoordinatorWithRecovery(recoveryLimits, external.Now, observer)
 	if err != nil {
 		return nil, err
@@ -548,9 +600,13 @@ func openProductionPhaseTwoBundleAssembly(
 	if err != nil {
 		return nil, err
 	}
+	decisions.engine.Store(lookbackEngine)
 	// The latest records whose address is not their host's, for fleet.get to
 	// name beside the count.
 	addressDiffers := &fleet.AddressDiffersSamples{}
+	// One runtime, one measured post-query tail: its shaper publishes it, its
+	// access source sizes query deadlines from it.
+	liveReserve := newRuntimeLiveReserve(flights, recorder)
 	querySource, err := access.NewSource(frozen, queryClient, productionQueryPermitAcquirer{flights: flights}, access.Config{
 		MinReadyDelay:             cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
 		Now:                       external.Now,
@@ -559,9 +615,11 @@ func openProductionPhaseTwoBundleAssembly(
 		ObserveAdmission:          recorder.RecordSeriesAdmission,
 		ObserveHostPlacement:      hostPlacementObserver(recorder, addressDiffers, external.Now),
 		ObserveDownstreamDistress: recorder.RecordDownstreamDistress,
+		ObserveQuery:              recorder.RecordPhysicalQuery,
 		ScopeDrops:                scopeDrops,
 		ObserveSeriesPulled:       seriesPullTally.Add,
 		Lookback:                  lookbackEngine,
+		LiveReserve:               liveReserve,
 	})
 	if err != nil {
 		return nil, err
@@ -581,6 +639,7 @@ func openProductionPhaseTwoBundleAssembly(
 	// and for the cluster mapping read in the same snapshot.
 	hostBusiness := tenantHostLookup{cmdbcache.NewHostBusinessLookup(cmdbIndex)}
 	evaluator.WithBusinessAttribution(businessAttributionLookups(hostBusiness.HostBusinessLookup), recorder.ObserveEventBusinessAttribution)
+	evaluator.WithDetectionSnapshots(recorder.ObserveDetectionSnapshot)
 	sequencer, err := worker.NewKeyedSideEffectSequencer(cfg.PhaseTwo.Coordinator.MaxSequencerReservations)
 	if err != nil {
 		return nil, err
@@ -700,7 +759,7 @@ func openProductionPhaseTwoBundleAssembly(
 		client.AddHook(recorder.RedisHook("linkd"))
 		return client, true
 	}
-	linkd, err := newLinkdIndex(cfg, linkdClient, linkdConnection, linkdDiscovery, openLinkdClient, external.Now, logger)
+	linkd, err := newLinkdIndex(cfg, linkdClient, linkdConnection, linkdDiscovery, openLinkdClient, linkdTokenSource(linkdTokens), external.Now, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -713,8 +772,9 @@ func openProductionPhaseTwoBundleAssembly(
 	recorder.SetActivationBlockedSource(repository.ActivationBlockedReading)
 	recorder.SetActivationBodyBytesSource(repository.ActivationBodyBytes)
 	linkdBudget := config.DeriveLinkdCapacity(config.DetectCapacityInputs())
+	calendarEntries, calendarBytes := config.DeriveCalendarCacheCapacity(config.DetectCapacityInputs())
 	legacyTime := strategycache.NewLegacyEffectiveTime(redisForCaller(controlClient, redisfailure.CallerLegacyEffectiveTime),
-		redisForCaller(cmdbClient, redisfailure.CallerLegacyEffectiveTime), cfg.PlatformKeyPrefix(), external.Now, linkdBudget.Strategies, linkdBudget.Bytes/4)
+		redisForCaller(cmdbClient, redisfailure.CallerLegacyEffectiveTime), cfg.PlatformKeyPrefix(), external.Now, calendarEntries, calendarBytes)
 	legacyTime.SetFailureLine(effectiveTimeFailureLine(logger))
 	recorder.SetEffectiveTimeRefreshSource(legacyTime.RefreshCounts)
 	// The mark a failed attempt leaves behind. Wired here and asserted by a
@@ -728,12 +788,15 @@ func openProductionPhaseTwoBundleAssembly(
 		return nil, err
 	}
 	workerPorts := worker.Ports{
+		Now:           time.Now,
 		EffectiveTime: legacyTime.Provider(),
 		Finalization:  frozen, Activation: repository, Query: querySource, Sequencer: sequencer,
 		Evaluator: evaluator, Admission: admitter, GapGuard: executionStore, Events: events,
-		NoData: executionStore, Hosts: hostBusiness, State: executionStore, Progress: progressStore, Observer: observer,
+		NoData: executionStore, NoDataEnds: executionStore, NoDataManualCloses: executionStore, Hosts: hostBusiness, State: executionStore, Progress: progressStore, Observer: observer,
 		ExecutionEvidence: slotAppliedMarks,
-		OpenAlerts:        &openAlertCopyPort{cache: openAlertCopy},
+		// Linked only with the link's Console: without it the copy is never
+		// read and can never judge, and the worker keeps no no-data end index.
+		OpenAlerts: &openAlertCopyPort{cache: openAlertCopy, linked: cfg.PhaseTwo.Linkd.ConsoleURL != ""},
 		// The horizon the platform settings copy resolves now, read per Slot:
 		// runtime state lives at most this long past a series' last write.
 		StateHorizon: func() int64 { return platformSettings.Current().NoDataTrackingHorizonSeconds },
@@ -824,9 +887,14 @@ func openProductionPhaseTwoBundleAssembly(
 		SteppedDownAsLeader: controlLeaderSteppedDown(reconciler, recorder),
 		QueryCooldowns:      newProductionQueryCooldownStore(cfg, redisForCaller(runtimeClient, redisfailure.CallerQueryCooldown), recorder, observer),
 		ReadHolds:           readHolds,
+		Traces:              traces,
+		DecisionLag:         recorder.RecordDecisionLag,
 		Store:               ownershipStore, WorkerID: cfg.PhaseTwo.Worker.ID, Catalog: catalog, Progress: progressStore,
 		Executor: executor, Now: external.Now, ControlLeaderTTL: cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
 		Observer: observer, Reconcile: assignmentReconciler, Flights: flights, RecoveryLimits: recoveryLimits,
+		QueryLatency:              lookbackQueryLatency(lookbackEngine),
+		LookbackBusy:              lookbackBusy(lookbackEngine),
+		InheritedQueryLatency:     readHoldInheritedQueryLatency(readHolds),
 		PostRecoveryTerminalDelay: retention.TerminalDelay,
 		QueryDeadlineReserve:      retention.QueryReserve,
 		SettlingWait:              cfg.PhaseTwo.Access.MinReadyDelay.Duration(),
@@ -868,7 +936,7 @@ func openProductionPhaseTwoBundleAssembly(
 	viewClient, err := viewstream.NewClient(
 		viewstream.ClientIdentity{WorkerID: cfg.PhaseTwo.Worker.ID, Incarnation: incarnation, StreamToken: streamIdentity.Token},
 		viewStreamDiscovery{store: ownershipStore}, repository, observer, viewstream.ClientOptions{Now: external.Now, Switched: viewGate,
-			Costs: workerCosts},
+			Costs: workerCosts, LookbackPlans: lookbackPlansInto(lookbackEngine)},
 	)
 	if err != nil {
 		return nil, err
@@ -905,13 +973,15 @@ func openProductionPhaseTwoBundleAssembly(
 	// everything else on this connection, so its traffic is invisible in the
 	// per-connection counters; these are written by it alone.
 	fleetStore.Meter(recorder)
-	// A whole view a reader asks for is read only when the memory line has
-	// room for what its snapshots decode to; refused, the view is a gap, not
-	// half of one. A page holds it until its answer is written, and a view
-	// kept in the diagnoses' cache is admitted as it is kept. The verdict
+	// A whole view a reader asks for is an operator's read: the memory line
+	// counts what its snapshots decode to and reports a view read past it,
+	// never refuses it. A page holds it until its answer is written, and a
+	// view kept in the diagnoses' cache is counted as it is kept. The verdict
 	// scrape reads without asking.
-	fleetStore.AdmitLoads(observationAdmit(observationMemory, memoryline.ConsumerFleetView))
-	fleetStore.HoldLoads(observationHold(observationMemory, memoryline.ConsumerFleetView))
+	operatorFleetLoads(fleetStore, observationMemory)
+	// The Leader's lookback planning reads the Workers' late lists and keeps
+	// its plan set in the same store; a fallback Leader pauses it.
+	productionOwnership.WithLookbackPlanner(fleetStore, phaseTwoControlCandidacy(cfg) == ownership.ControlCandidacyPreferred, recorder)
 	// Freshness has to be shorter than the snapshot TTL, or a replica that
 	// stops publishing goes straight from fresh to absent and the stale branch
 	// never fires. The two say different things: stale means alive but stuck,
@@ -996,7 +1066,7 @@ func openProductionPhaseTwoBundleAssembly(
 	// happens before the bundle that owns that state is built.
 	var bundle *phaseTwoWorkerBundle
 	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now, stallAfter,
-		fleetRangeProvider(queryClient, cfg.PhaseTwo.Access.SelfMetricsSpaceUID), diagnostics,
+		fleetTrends(queryClient, config.ProcessNamespace(), external.Now), diagnostics,
 		cfg.PhaseTwo.Access.MonitorWebBaseURL)
 	if err != nil {
 		return nil, err
@@ -1005,7 +1075,7 @@ func openProductionPhaseTwoBundleAssembly(
 	// published: no copy, no refresh, rows built for the page asked. A
 	// follower forwards to the Leader; a Leader before its first round
 	// answers not ready.
-	directoryView, err := controlplane.NewDirectoryView(reconciler, repository, directoryReadTimeout)
+	directoryView, err := controlplane.NewDirectoryView(reconciler, repository)
 	if err != nil {
 		return nil, err
 	}
@@ -1029,10 +1099,10 @@ func openProductionPhaseTwoBundleAssembly(
 	// process takes the catalog over, on the fleet publish cadence below, so
 	// the first page asked after a hand-over is not the process's first read.
 	diagnosisWarmer := fleet.NewDiagnosisWarmer(fleetService, strategyLookupSource(reconciler),
-		diagnosisUniverse(strategySource), diagnosisProgress(progressStore, observationAdmit(observationMemory, memoryline.ConsumerDiagnosisProgress)), external.Now, stallAfter)
+		diagnosisUniverse(strategySource), diagnosisProgress(progressStore, operatorProgressReads(observationMemory)), external.Now, stallAfter)
 	fleetAPI = fleet.WithDiagnosis(fleetAPI, fleetService, strategyLookupSource(reconciler),
 		leaderForwarderWithin(viewStreamDiscovery{store: ownershipStore}, cfg.PhaseTwo.Worker.ID, nil, diagnosisForwardTimeout, "diagnosis", recorder.ObserveLeaderForward),
-		diagnosisUniverse(strategySource), diagnosisProgress(progressStore, observationAdmit(observationMemory, memoryline.ConsumerDiagnosisProgress)),
+		diagnosisUniverse(strategySource), diagnosisProgress(progressStore, operatorProgressReads(observationMemory)),
 		strategyStandingReplica(cfg.PhaseTwo.Worker.ID), external.Now, stallAfter, diagnosisWarmer)
 	costCandidatesCache := fleet.NewCostCandidatesCache(external.Now, 3*cfg.PhaseTwo.Control.RefreshInterval.Duration())
 	var costRefresh *observationCostRefresh
@@ -1059,6 +1129,8 @@ func openProductionPhaseTwoBundleAssembly(
 		leaderForwarderWithin(viewStreamDiscovery{store: ownershipStore}, cfg.PhaseTwo.Worker.ID, nil, absentForwardTimeout, absentForwardRoute, recorder.ObserveLeaderForward),
 		cfg.PhaseTwo.Worker.ID)
 	fleetAPI = fleet.WithSeriesSamples(fleetAPI, directory, directoryForward, windowStore, diagnostics, seriesSampler, external.Now)
+	// A request a follower handed on answers by the deadline its hop carries.
+	fleetAPI = fleet.WithForwardedDeadline(fleetAPI)
 	observationRefresh := &observationRefresh{cost: costSummary, now: external.Now,
 		interval: cfg.PhaseTwo.Control.RefreshInterval.Duration(), identity: repository.CachedExecutionIdentity}
 	// The same judgment the page shows, exported so the host writes alert rules
@@ -1087,10 +1159,11 @@ func openProductionPhaseTwoBundleAssembly(
 		}
 		return bundle.runtimeConfig
 	}
-	cliBinding := cliControlBinding{Incarnation: incarnation, StreamToken: streamIdentity.Token, Server: viewServer, Metrics: recorder.Gatherer(),
+	cliBinding := cliControlBinding{Rejections: fleetTracker.LocalRejection, Incarnation: incarnation, StreamToken: streamIdentity.Token, Server: viewServer, Metrics: recorder.Gatherer(),
 		PublicWindows: fleet.NewPublicWindowsHandler(windowStore, external.Now), RedisFailures: cliRedisFailures(recorder, observer),
-		RedisDialRetries: recorder.ObserveDiagnosticRedisDialRetry,
-		Lookback:         lookbackEngine, LookbackStanding: lookbackState, ReadHolds: readHolds, Maintenance: maintenanceReadings}
+		RedisDialRetries: recorder.ObserveDiagnosticRedisDialRetry, AuthEvents: cliAuthEvents(recorder), RosterApplied: recorder.SetCLIRosterApplied,
+		Lookback: lookbackEngine, LookbackStanding: lookbackState, ReadHolds: readHolds, Maintenance: maintenanceReadings,
+		LinkdConsole: linkd.Console}
 	var closeCLI func() error
 	var publicRestricted bool
 	var channelBinding *ChannelBinding
@@ -1111,6 +1184,7 @@ func openProductionPhaseTwoBundleAssembly(
 	surface.warn(logger)
 	bundle, err = newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Flights:           flights,
+		LiveReserve:       liveReserve,
 		Lookback:          lookbackEngine,
 		ReadHolds:         readHolds,
 		ActivationBlocked: repository.ActivationBlockedReading,
@@ -1119,7 +1193,8 @@ func openProductionPhaseTwoBundleAssembly(
 		Config:            cfg, Health: health, Control: control, Ownership: productionOwnership,
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
 		FleetAPI: fleetAPI, PublicSurfaceRestricted: publicRestricted,
-		ControlStream: controlStream, StreamIdentity: streamIdentity, ViewStreamStats: viewServer.Stats, ViewClient: viewClient,
+		NoDataCloseAPI: noDataCloseAPIOf(core.NoDataCloses, external.Now),
+		ControlStream:  controlStream, StreamIdentity: streamIdentity, ViewStreamStats: viewServer.Stats, ViewClient: viewClient,
 		PublishFleet: func(ctx context.Context) {
 			publishRoleControlFacts(ctx, bundle, fleetStore, external.RoleRuntime)
 			observationRefresh.publish(ctx)
@@ -1136,7 +1211,7 @@ func openProductionPhaseTwoBundleAssembly(
 		RunOpenAlerts: func(runCtx context.Context) error {
 			// A process whose startup discovery failed keeps asking in the
 			// background, on the same lifetime as the copy it may rebind.
-			go linkd.Location.retry(runCtx, cfg, openalerts.DiscoverTarget, linkdRetryFirst, linkdRetryCeiling)
+			go linkd.Location.retry(runCtx, cfg, discoverLinkd, linkdRetryFirst, linkdRetryCeiling)
 			return openAlertCopy.Run(runCtx)
 		},
 		RefreshPlatformSettings: platformSettingsRefresher(platformSettings, hostStatus, recorder),
@@ -1154,12 +1229,16 @@ func openProductionPhaseTwoBundleAssembly(
 			stopCMDBIndex()
 			viewServer.Close()
 			eventsClosed = true
-			closers := []error{events.Shutdown(shutdownCtx), closeCLI()}
+			closers := []error{events.Shutdown(shutdownCtx), closeCLI(), shutdownTraces(shutdownCtx, traces)}
 			if moved := linkd.Location.OwnedClient(); moved != nil {
 				closers = append(closers, moved.Close())
 			}
 			if linkdClientOwned {
 				closers = append(closers, linkdClient.Close())
+			}
+			if linkdTokenClient != nil {
+				linkdTokensClosed = true
+				closers = append(closers, linkdTokenClient.Close())
 			}
 			if !runtimeClientIsSource {
 				closers = append(closers, runtimeClient.Close())
@@ -1185,17 +1264,28 @@ func openProductionPhaseTwoBundleAssembly(
 	// soon as the hold ends, not at its next turn.
 	flights.OnTurnedAwayReleased(bundle.noticeFlightReleased)
 	bundle.workerPorts = workerPorts
+	bundle.cmdbIndex = cmdbIndex
 	maintenance := &effectiveMaintenance{bundle: bundle, catalog: catalog, cache: openAlertCopy, writer: events,
 		capacity: linkdBudget, legacy: legacyTime.Provider(), legacyCache: legacyTime}
+	// One memory of which business each alert was filed under, for every
+	// close that carries a global business Plan's alert.
+	var alertBusinesses *openalerts.AlertBusinesses
 	if linkd.Console != nil {
+		alertBusinesses = openalerts.NewAlertBusinesses(linkd.Console.AlertRecord)
+		maintenance.businesses = alertBusinesses
 		maintenance.sourceOf = func(ctx context.Context) (string, error) {
-			binding, err := linkd.Console.Binding(ctx)
+			// Answered from the client's copy within bindingReuse; past it,
+			// each request the read makes is bounded by the Console's own
+			// speed, within the coverage.
+			ctx, cancel := context.WithTimeout(ctx, effectiveSourceCoverage)
+			defer cancel()
+			binding, err := linkd.Console.Binding(openalerts.WithRequestCoverage(ctx, effectiveSourceCoverage))
 			return binding.EventSourceID, err
 		}
 	}
 	bundle.dependencies.RunEffectiveTime = maintenance.run
 	maintenanceReadings.bind(maintenance)
-	bindTargetScopeClose(bundle, scopeClose, openAlertCopy, events, recorder)
+	bindTargetScopeClose(bundle, scopeClose, openAlertCopy, events, alertBusinesses, recorder)
 	openAlertFacts := withTargetScopeClose(openAlertSetFactsSource(openAlertCopy, external.Now), scopeClose)
 	// The control leader's difference against the strategies that no longer
 	// exist. It runs on every replica's loop and does nothing on a follower;
@@ -1206,6 +1296,7 @@ func openProductionPhaseTwoBundleAssembly(
 	if absentCloseWired(cfg, linkd.Console != nil) {
 		absentClose := newAbsentStrategyClose(bundle, reconciler, linkd.Console, events)
 		absentClose.documents, _ = strategySource.(controlplane.StrategyDocumentPresence)
+		absentClose.businesses = alertBusinesses
 		absentPage.bind(absentClose)
 		bundle.dependencies.RunAbsentClose = absentClose.run
 		recorder.SetAbsentCloseSource(absentClose.Stats, absentClose.Rounds, absentClose.Difference)
@@ -1264,16 +1355,22 @@ func openProductionPhaseTwoBundleAssembly(
 		// cursor older than that describes an object that stopped rather than
 		// one between rounds.
 		capacity:  capacitySnapshotSource(flights, cfg, rejectionTally, bundle.rotationFacts, seriesPullTally, bundle.shaper.facts),
+		flow:      flowFactsSource(recorder, cfg.EffectiveRoles()),
 		readEarly: lookbackReadEarly(lookbackEngine, readHolds), lateSeries: lookbackLateSeries(lookbackEngine, readHolds),
-		readHolds: readHolds.fleetFacts,
-		holdOf:    readHolds.holdOf, onOverdue: overdueEpisodeObserver(logger, recorder),
-		applied: repository.AppliedActivationRevision,
+		lookbackLate: lookbackLateRungs(lookbackEngine),
+		readHolds:    readHolds.fleetFacts,
+		holdOf:       readHolds.holdOf, onOverdue: overdueEpisodeObserver(logger, recorder),
+		onRestoreUnread: recorder.FleetRestoreUnread,
+		applied:         repository.AppliedActivationRevision,
 		// The due index is the only thing that knows an object was passed over
 		// rather than evaluated. It lives on the bundle precisely so a reader
 		// outside the dispatch loop can ask it.
-		overdue:    bundle.ensureDueIndex(),
-		schedule:   bundle.ensureDueIndex(),
-		strategies: fleetTracker.StrategiesFor,
+		overdue:  bundle.ensureDueIndex(),
+		schedule: bundle.ensureDueIndex(),
+		// The census just taken, as the series the trends chart late objects
+		// from: the same counts the snapshot carries, at the same instant.
+		scheduleObjects: recorder.SetScheduleObjects,
+		strategies:      fleetTracker.StrategiesFor,
 		// Whether anything can be parked at all, from the same bundle. The
 		// overdue count above is only readable next to this: on a build that
 		// suppresses nothing it can only be zero.
@@ -1284,6 +1381,7 @@ func openProductionPhaseTwoBundleAssembly(
 		staleAfter:          stallAfter,
 		restoreBudget:       fleetRestoreBudgetPerPublish,
 		openAlerts:          openAlertFacts,
+		openAlertCounts:     openAlertCountsSource(openAlertCopy),
 		controlSource:       bundle.controlSourceFleetFacts,
 		platformSettings:    platformSettingsFactsSource(platformSettings, external.Now),
 		publicSurface:       surface,
@@ -1308,6 +1406,10 @@ func openProductionPhaseTwoBundleAssembly(
 		// The same facts the runtime profile reports, from the same
 		// functions the Slot source and admission are assembled with.
 		retention: fleetRetentionFacts(cfg),
+		// The export built above, on or off.
+		tracing: tracingFacts,
+		// The coordinator that owns the pool the retained gauge reads.
+		retainedHolders: retainedHolderFacts(coordinator, fleetTracker.StrategiesFor),
 	}
 	// The heartbeat reports the same acknowledgement and occupancy the fleet
 	// snapshot publishes, from the same sources.
@@ -1354,22 +1456,22 @@ func observationWindowObserver(observer observability.Observer) func(int, int, i
 			failing = true
 			observeRuntime(context.Background(), observer, observability.Observation{
 				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
-				Result: observability.ResultFailed, Direction: observability.DirectionInternal, Err: err,
+				Result: observability.ResultFailed, Err: err,
 			})
 		case dropped > 0:
 			failing = false
 			applied, requested = nowApplied, nowRequested
 			observeRuntime(context.Background(), observer, observability.Observation{
 				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
-				Result: observability.ResultDegraded, Direction: observability.DirectionInternal,
-				Err: fmt.Errorf("observation windows exceed the diagnostic budget: %d of %d requested objects are not observed", dropped, nowRequested),
+				Result: observability.ResultDegraded,
+				Err:    fmt.Errorf("observation windows exceed the diagnostic budget: %d of %d requested objects are not observed", dropped, nowRequested),
 			})
 		case failing || nowApplied != applied || nowRequested != requested:
 			failing = false
 			applied, requested = nowApplied, nowRequested
 			observeRuntime(context.Background(), observer, observability.Observation{
 				Component: observability.ComponentRuntime, Stage: observability.StageObservationWindow,
-				Result: observability.Result(observability.ResultSuccess), Direction: observability.DirectionInternal,
+				Result: observability.Result(observability.ResultSuccess),
 			})
 		}
 	}
@@ -1383,13 +1485,13 @@ func publishOutcomeObserver(observer observability.Observer) func(error) {
 			failing = true
 			observeRuntime(context.Background(), observer, observability.Observation{
 				Component: observability.ComponentRuntime, Stage: observability.StageFleetSnapshotPublish,
-				Result: observability.ResultFailed, Direction: observability.DirectionInternal, Err: err,
+				Result: observability.ResultFailed, Err: err,
 			})
 		case failing:
 			failing = false
 			observeRuntime(context.Background(), observer, observability.Observation{
 				Component: observability.ComponentRuntime, Stage: observability.StageFleetSnapshotPublish,
-				Result: observability.ResultResumed, Direction: observability.DirectionInternal,
+				Result: observability.ResultResumed,
 			})
 		}
 	}
@@ -1595,6 +1697,19 @@ func maxDuration(values ...time.Duration) time.Duration {
 type openAlertCopyPort struct {
 	cache         *openalerts.Cache
 	registerOwned func(execution.QueryGroupIdentity, []execution.PlanIdentity)
+	// linked is whether the deployment has the link's Console, the only way
+	// the copy is ever read (execution.OpenAlertLink).
+	linked bool
+}
+
+// Linked says whether a consumer's set stands behind the copy.
+func (port openAlertCopyPort) Linked() bool {
+	return port.linked
+}
+
+// Holds is the copy's judged membership (execution.OpenAlertJudge).
+func (port openAlertCopyPort) Holds(tenantID, strategyID, fingerprint string) (bool, bool) {
+	return port.cache.Holds(openalerts.StrategyKey{TenantID: tenantID, StrategyID: strategyID}, fingerprint)
 }
 
 func (port openAlertCopyPort) Contains(tenantID, strategyID, fingerprint string) bool {
@@ -1626,6 +1741,57 @@ func openAlertSetFactsSource(cache *openalerts.Cache, now func() time.Time) func
 	}
 }
 
+// openAlertCountsSource reads the copy's open-alert counts for the snapshot.
+func openAlertCountsSource(cache *openalerts.Cache) func([]string) *fleet.OpenAlertCounts {
+	if cache == nil {
+		return nil
+	}
+	return func(owned []string) *fleet.OpenAlertCounts {
+		counts, unknown := cache.OpenCounts()
+		return openAlertCountsOf(counts, unknown, owned)
+	}
+}
+
+// openAlertCountsOf is the copy's counts by strategy id, sorted, zeros left
+// out. One id under two tenants takes the larger count, and an id unknown
+// under any tenant stays unknown even when another tenant counts it: the
+// unread tenant could hold more, and count beside unknown reads at least. A
+// strategy of an owned object the copy tracks under no tenant is unknown, and
+// owned nil -- the strategies could not be named -- says so instead.
+// Strategy refs carry no tenant, so an owned id tracked under one tenant is
+// taken as tracked.
+func openAlertCountsOf(counts map[openalerts.StrategyKey]int, unknown []openalerts.StrategyKey, owned []string) *fleet.OpenAlertCounts {
+	byStrategy, tracked := map[string]int{}, map[string]bool{}
+	for key, count := range counts {
+		tracked[key.StrategyID] = true
+		if count > byStrategy[key.StrategyID] {
+			byStrategy[key.StrategyID] = count
+		}
+	}
+	answer := &fleet.OpenAlertCounts{OwnedUnnamed: owned == nil}
+	for strategy, count := range byStrategy {
+		if count > 0 {
+			answer.Counts = append(answer.Counts, fleet.StrategyOpenCount{Strategy: strategy, Count: count})
+		}
+	}
+	sort.Slice(answer.Counts, func(i, j int) bool { return answer.Counts[i].Strategy < answer.Counts[j].Strategy })
+	seen := map[string]bool{}
+	for _, key := range unknown {
+		if !seen[key.StrategyID] {
+			seen[key.StrategyID] = true
+			answer.Unknown = append(answer.Unknown, key.StrategyID)
+		}
+	}
+	for _, strategy := range owned {
+		if !tracked[strategy] && !seen[strategy] {
+			seen[strategy] = true
+			answer.Unknown = append(answer.Unknown, strategy)
+		}
+	}
+	sort.Strings(answer.Unknown)
+	return answer
+}
+
 // openAlertSetFacts is the copy's stats as the replica publishes them.
 func openAlertSetFacts(stats openalerts.Stats, staleBeyondBound bool, at time.Time) *fleet.OpenAlertSetFacts {
 	facts := &fleet.OpenAlertSetFacts{StaleBeyondBound: staleBeyondBound,
@@ -1644,6 +1810,7 @@ func openAlertSetFacts(stats openalerts.Stats, staleBeyondBound bool, at time.Ti
 	}
 	facts.IndexStaleAfterSeconds, facts.StaleSets = stats.StaleAfter.Seconds(), stats.Stale
 	facts.CalibrationNeeded, facts.CalibrationCapacity, facts.CalibrationShort = stats.CalibrationNeeded, stats.CalibrationCapacity, stats.CalibrationShort
+	facts.RoundsSkipped = stats.RoundsSkipped
 	for _, large := range stats.TooLarge {
 		facts.TooLarge = append(facts.TooLarge, fleet.TooLargeSetRow{TenantID: large.Strategy.TenantID, StrategyID: large.Strategy.StrategyID,
 			Members: large.Refusal.Members, Bytes: large.Refusal.Bytes, MaxMembers: large.Refusal.MaxMembers, MaxBytes: large.Refusal.MaxBytes})
@@ -1761,4 +1928,15 @@ func controlLeaderSteppedDown(reconciler interface{ StepDown() }, recorder *metr
 		reconciler.StepDown()
 		recorder.ControlLeaderStepDown()
 	}
+}
+
+// traceShutdownBound is how long shutdown waits for the span export to send
+// what it has queued: a part of the shutdown, so a collector that does not
+// answer costs the spans and not the process's exit.
+const traceShutdownBound = 3 * time.Second
+
+func shutdownTraces(ctx context.Context, traces *tracing.Exporter) error {
+	ctx, cancel := context.WithTimeout(ctx, traceShutdownBound)
+	defer cancel()
+	return traces.Shutdown(ctx)
 }

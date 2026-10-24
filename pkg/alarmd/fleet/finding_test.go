@@ -238,26 +238,24 @@ func TestARejectedQueryIsNotFiledAsTheBackendsAvailability(t *testing.T) {
 		// the target is missing, with no detail needed to read it.
 		{"degraded under the target-missing word", Anomaly{Kind: KindDegradedRun, CauseReason: "QUERY_TARGET_MISSING"},
 			CheckQueryTargetMissing, OwnerStrategy},
-		// A status this build has no reading of: refused, and the query is
-		// what was refused. It is the strategy's line: on one deployment every
-		// refused query the platform's own detector sent for the same strategy
-		// was refused the same way (a condition value the storage rejects, an
-		// expression that does not parse). A query this deployment built wrong
-		// would read here too, which only comparing the two requests tells.
-		{"cooldown on an unknown provider status", cooldown("response=status_other"), CheckQueryRefused, OwnerStrategy},
+		// A status this build has no reading of: refused, and the status
+		// alone does not say whose it is -- the strategy's input, or a backend
+		// fault the provider reports the same way -- so it stays undetermined,
+		// as the provider not answering does.
+		{"cooldown on an unknown provider status", cooldown("response=status_other"), CheckQueryRefused, OwnerUndetermined},
 		// An HTTP 4xx is the same statement in the transport's vocabulary.
-		{"cooldown on a 4xx", cooldown("http_status=400"), CheckQueryRefused, OwnerStrategy},
+		{"cooldown on a 4xx", cooldown("http_status=400"), CheckQueryRefused, OwnerUndetermined},
 		// A timeout or a 5xx is the backend not answering: the data's.
 		{"cooldown on a timeout", cooldown("transport=timeout"), CheckBackendNotAnswering, OwnerUndetermined},
 		{"degraded on a 503", degraded("http_status=503"), CheckBackendNotAnswering, OwnerUndetermined},
 		// The status is read as the number the provider decided on, not
 		// parsed out of the text written for a person.
 		{"cooldown on a 403 without its text", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE",
-			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 403}}, CheckQueryRefused, OwnerStrategy},
+			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", HTTPStatus: 403}}, CheckQueryRefused, OwnerUndetermined},
 		// A row from a replica of an earlier build carries the text alone,
 		// and is still read as refused while the rollout replaces it.
 		{"cooldown on the text of a 4xx from an earlier build", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE",
-			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}}, CheckQueryRefused, OwnerStrategy},
+			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}}, CheckQueryRefused, OwnerUndetermined},
 		// Where the number is there, it decides over the text.
 		{"cooldown whose number is a 5xx", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE",
 			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: "http_status=400", HTTPStatus: 503}}, CheckBackendNotAnswering, OwnerUndetermined},

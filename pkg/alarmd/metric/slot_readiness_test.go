@@ -107,7 +107,7 @@ func readinessSlackCount(t *testing.T, recorder *Recorder) uint64 {
 		t.Fatal(err)
 	}
 	for _, family := range gathered {
-		if family.GetName() != metricNamespace+"_"+metricSubsystem+"_slot_readiness_slack_seconds" {
+		if family.GetName() != metricSubsystem+"_slot_readiness_slack_seconds" {
 			continue
 		}
 		for _, metric := range family.GetMetric() {

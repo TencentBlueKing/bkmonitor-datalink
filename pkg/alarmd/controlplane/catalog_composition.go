@@ -491,6 +491,14 @@ var AlwaysReportedWithheld = []WithheldKey{
 	// "No strategy here has a no-data trigger the tracking horizon stops
 	// before it can fire."
 	{Disposition: DispositionConfigNoted, Reason: ReasonNoDataTriggerBeyondHorizon},
+	// "No strategy here pays a one-off Redis cost for a no-data group bound
+	// above the default."
+	{Disposition: DispositionConfigNoted, Reason: ReasonNoDataGroupBoundAboveDefault},
+	// "No strategy here ends its alerts other than as it wrote."
+	{Disposition: DispositionConfigNoted, Reason: ReasonRecoveryStatusSetterDefaulted},
+	// "No strategy here keeps its alerts open past recovery: every one
+	// recovers on its own."
+	{Disposition: DispositionConfigNoted, Reason: ReasonRecoveryDisabledByConfig},
 }
 
 // WithheldKey pairs what happened to an object with why. Neither half answers

@@ -73,4 +73,11 @@ func TestWhetherAnyoneWaitedForAPermitReachesTheCapacityView(t *testing.T) {
 		t.Errorf("permit_waits crossed as %d, want %d -- dropped, it reads as nobody having waited",
 			capacity.PermitWaits, occupancy.Queued)
 	}
+	// The minute's peak is what the page reads the memory ceiling against; a
+	// permit is held, so a dropped peak arrives as zero and the card says
+	// nothing ran.
+	if occupancy.PeakHeld != 1 || capacity.PermitsPeak != occupancy.PeakHeld {
+		t.Errorf("permits_peak crossed as %d from a peak of %d, want 1 with one permit held",
+			capacity.PermitsPeak, occupancy.PeakHeld)
+	}
 }

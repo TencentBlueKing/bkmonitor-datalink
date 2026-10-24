@@ -46,12 +46,12 @@ type queryPermitCollector struct {
 
 func newQueryPermitCollector(source QueryPermitOccupancySource) *queryPermitCollector {
 	descriptor := func(name, help string, labels []string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	return &queryPermitCollector{
 		source: source,
 		inflight: descriptor("worker_query_permits_held",
-			"Query permits held at the moment of the scrape, by operation. This is an instant, "+
+			"Query permits held at the moment of the scrape, by holder: each operation, and the lookback. This is an instant, "+
 				"not an average: a scrape that lands between two queries reports what is running then, "+
 				"which is why it must NOT be used to judge whether the budget is full. Use the rate of "+
 				"worker_query_permit_seconds_total for that.",
@@ -62,7 +62,7 @@ func newQueryPermitCollector(source QueryPermitOccupancySource) *queryPermitColl
 				"caller that is admitted immediately never appears here.",
 			[]string{"queue"}),
 		heldSeconds: descriptor("worker_query_permit_seconds_total",
-			"Cumulative permit-hold time by operation, including permits still held. Its rate over a "+
+			"Cumulative permit-hold time by holder - each operation, and the lookback - including permits still held. Its rate over a "+
 				"window is the mean number of permits occupied in that window, so rate divided by "+
 				"worker_query_permit_budget is the fraction of the budget in use. Permits that are never "+
 				"released keep raising it, which is the intended behaviour: a stuck query should look "+
@@ -84,10 +84,10 @@ func (c *queryPermitCollector) Describe(descriptions chan<- *prometheus.Desc) {
 
 func (c *queryPermitCollector) Collect(metrics chan<- prometheus.Metric) {
 	occupancy := c.source()
-	// Every operation is published even at zero. An absent series and a zero
+	// Every holder is published even at zero. An absent series and a zero
 	// series read the same on a dashboard but not in an alert: "no retries are
 	// running" and "retries stopped being reported" need to be distinguishable.
-	for _, kind := range phaseTwoQueryInflightKinds {
+	for _, kind := range phaseTwoQueryPermitKinds {
 		metrics <- prometheus.MustNewConstMetric(
 			c.inflight, prometheus.GaugeValue, float64(occupancy.Inflight[kind]), kind)
 		metrics <- prometheus.MustNewConstMetric(

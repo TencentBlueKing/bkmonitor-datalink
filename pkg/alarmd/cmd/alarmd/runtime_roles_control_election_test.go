@@ -24,7 +24,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
@@ -128,10 +130,68 @@ func newElectionFixture(t *testing.T, strategies int, prefix string) *electionFi
 
 func (fixture *electionFixture) now() time.Time { return time.UnixMilli(fixture.clockMillis.Load()) }
 
-// advance moves the injected clock and gives the real-clock lease renewals a
-// beat to restate their deadlines on it, as production's would have.
+// advance moves the injected clock. A case that moves it past the leases'
+// deadlines lets their renewals restate them (awaitRenewals) before it ticks.
 func (fixture *electionFixture) advance(step time.Duration) {
 	fixture.clockMillis.Add(step.Milliseconds())
+}
+
+// leasesRunPastNow reports whether every lease a live process holds runs past
+// the injected clock by its own reckoning: the Control Leader's authority,
+// and each Query Group session that still admits work. Those deadlines are
+// what the processes check, and their renewal loops restate them each second
+// of real time from the injected clock.
+func (fixture *electionFixture) leasesRunPastNow() bool {
+	now := fixture.now()
+	for _, process := range fixture.alive() {
+		process.bundle.mu.RLock()
+		leading := process.bundle.controlLeader
+		var sessions []*ownership.Session
+		for _, lifecycle := range process.bundle.runners {
+			if runtime, ok := lifecycle.runner.(*productionPhaseTwoQueryGroup); ok {
+				sessions = append(sessions, runtime.session)
+			}
+		}
+		process.bundle.mu.RUnlock()
+		if production, ok := process.bundle.dependencies.Ownership.(*productionPhaseTwoOwnership); ok && leading {
+			production.mu.Lock()
+			authority := production.authority
+			production.mu.Unlock()
+			if authority.Fence.QueryGroup != "" && !authority.Deadline.After(now) {
+				return false
+			}
+		}
+		for _, session := range sessions {
+			if lease, admits := session.Current(); admits && !lease.Deadline.After(now) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// awaitRenewals waits for the real-clock renewal loops to restate every held
+// lease past a clock the fixture just moved: production's clock and its
+// renewals move together, so a tick there never finds its own lease lapsed
+// on a clock that jumped past it.
+func (fixture *electionFixture) awaitRenewals() {
+	fixture.t.Helper()
+	testwait.Until(fixture.t, "every held lease restated past the moved clock by its renewal", fixture.leasesRunPastNow)
+}
+
+// awaitControlLeaseFree waits for a dead Control Leader's lease to run out on
+// the Redis server's clock, which the fixture cannot move: the free lease is
+// what the case goes on to contend for.
+func (fixture *electionFixture) awaitControlLeaseFree() {
+	fixture.t.Helper()
+	store, err := ownership.NewRedisStoreWithClient(fixture.redis, productionPhaseTwoPrefix(fixture.prefix, "ownership"))
+	if err != nil {
+		fixture.t.Fatal(err)
+	}
+	testwait.Until(fixture.t, "the dead Control Leader's lease running out on the Redis clock", func() bool {
+		_, live, err := store.ReadActiveControlLeader(fixture.ctx)
+		return err == nil && !live
+	})
 }
 
 func (fixture *electionFixture) observer() observability.Observer {
@@ -259,22 +319,32 @@ func (fixture *electionFixture) alive() []*electionProcess {
 }
 
 // renewRecords restates every live process's registrations on the injected
-// clock, which the real-clock renewal loops do not follow.
+// clock, which the real-clock renewal loops do not follow. A registration
+// left unrenewed lapses on that clock, and the rounds after it would place
+// Query Groups around a live Worker the case never stopped.
 func (fixture *electionFixture) renewRecords() {
+	fixture.t.Helper()
 	for _, process := range fixture.alive() {
-		_ = process.bundle.register(fixture.ctx, ownership.WorkerReady)
+		if err := process.bundle.register(fixture.ctx, ownership.WorkerReady); err != nil {
+			fixture.t.Fatalf("%s register at %s: %v", process.name, fixture.now().UTC().Format(time.TimeOnly), err)
+		}
 		process.runtime.writeInstance(fixture.ctx, process.health, "disabled", false)
 	}
 }
 
 // tick is one reconcile tick on every live process, in order, with the
-// single-Leader invariant checked after each.
+// single-Leader invariant checked after each. What these cases put a live
+// process through is handled inside its tick - a contention whose lease read
+// failed is counted, a publication a newer Leader fenced off makes it a
+// follower - so an error out of the tick is the fixture's store, clock or
+// source gone wrong, and every round after it would judge a fleet that did
+// not reconcile.
 func (fixture *electionFixture) tick() {
 	fixture.t.Helper()
 	fixture.renewRecords()
 	for _, process := range fixture.alive() {
 		if err := process.bundle.refreshAndReconcile(fixture.ctx, false); err != nil {
-			fixture.t.Logf("%s reconcile: %v", process.name, err)
+			fixture.t.Fatalf("%s reconcile at %s: %v", process.name, fixture.now().UTC().Format(time.TimeOnly), err)
 		}
 		fixture.assertOneLeaderAtMost()
 	}
@@ -322,7 +392,7 @@ func (fixture *electionFixture) assertOneLeaderAtMost() { fixture.leader() }
 func (fixture *electionFixture) transitions(toClass, reason string) float64 {
 	total := 0.0
 	for _, process := range fixture.processes {
-		total += counterValue(fixture.t, process.recorder, "bkmonitor_alarmd_control_leader_transitions_total",
+		total += counterValue(fixture.t, process.recorder, "alarmd_control_leader_transitions_total",
 			map[string]string{"to_class": toClass, "reason": reason})
 	}
 	return total
@@ -335,7 +405,7 @@ func (fixture *electionFixture) transitions(toClass, reason string) float64 {
 func (fixture *electionFixture) pass(r int64, settled bool, want int) int {
 	fixture.t.Helper()
 	fixture.clockMillis.Store((fixture.base + r*electionPeriod + 1) * 1000)
-	time.Sleep(1200 * time.Millisecond)
+	fixture.awaitRenewals()
 	fixture.tick()
 	evaluation := fixture.base + (r-1)*electionPeriod
 	completed := func() int {
@@ -348,6 +418,11 @@ func (fixture *electionFixture) pass(r int64, settled bool, want int) int {
 			if !process.bundle.dependencies.Config.HasRole(roles.Worker) {
 				continue
 			}
+			// A Slot's own failure is the dispatcher's to handle and never
+			// comes back here; what does is the pass itself not running
+			// (a draining bundle, an ended context, a target never
+			// dispatched), and the count it returns would then be the
+			// passes before it.
 			var err error
 			if settled {
 				err = runScheduledOnceSettled(fixture.ctx, process.bundle)
@@ -355,7 +430,7 @@ func (fixture *electionFixture) pass(r int64, settled bool, want int) int {
 				err = process.bundle.runScheduledOnce(fixture.ctx)
 			}
 			if err != nil {
-				fixture.t.Logf("%s pass %d: %v", process.name, r, err)
+				fixture.t.Fatalf("%s pass %d: %v", process.name, r, err)
 			}
 		}
 	}
@@ -368,8 +443,8 @@ func (fixture *electionFixture) balance(queryGroups int) {
 	fixture.t.Helper()
 	for attempt := 0; attempt < 120; attempt++ {
 		fixture.advance(time.Second)
+		fixture.awaitRenewals()
 		fixture.tick()
-		time.Sleep(250 * time.Millisecond)
 		var shares []int
 		total := 0
 		for _, process := range fixture.alive() {
@@ -397,7 +472,14 @@ func (fixture *electionFixture) balance(queryGroups int) {
 // through the Leader's instance record), returning the class it states. A
 // Worker-only process serves the restricted public surface, which leaves the
 // control facts out, so the view's own source is read rather than the route.
-func (fixture *electionFixture) leaderClassSeen(leader *electionProcess) string {
+func (fixture *electionFixture) leaderClassSeen(process *electionProcess) string {
+	fixture.t.Helper()
+	return fixture.controlFactsSeen(process).CandidacyClass
+}
+
+// controlFactsSeen is the Leader's control record of this term as the view
+// reads it, written by the Leader's own publish.
+func (fixture *electionFixture) controlFactsSeen(leader *electionProcess) fleet.ControlFacts {
 	fixture.t.Helper()
 	leader.bundle.dependencies.PublishFleet(fixture.ctx)
 	registry, err := ownership.NewRedisStoreWithClient(fixture.redis, productionPhaseTwoPrefix(fixture.prefix, "ownership"))
@@ -416,7 +498,7 @@ func (fixture *electionFixture) leaderClassSeen(leader *electionProcess) string 
 	if err != nil || !found || reading.Term != fleet.ControlTermCurrent || reading.Facts.Replica != leader.name {
 		fixture.t.Fatalf("control facts as the view reads them = (%+v, %v, %v), want %s's record of this term", reading, found, err, leader.name)
 	}
-	return reading.Facts.CandidacyClass
+	return reading.Facts
 }
 
 // TestAWorkerLeadsWhileTheControlProcessIsGoneAndHandsBackOnceItIsSteady is
@@ -448,13 +530,31 @@ func TestAWorkerLeadsWhileTheControlProcessIsGoneAndHandsBackOnceItIsSteady(t *t
 	if got := fixture.pass(1, true, queryGroups); got != queryGroups {
 		t.Fatalf("Slot 0 with the control process up: %d of %d Query Groups completed", got, queryGroups)
 	}
+	// The lookback planning is the control process's: a kept plan set it
+	// starts from, and a set sent to every Worker.
+	planKey := productionPhaseTwoPrefix(control.bundle.dependencies.Config.Redis.StatePrefix, "fleet") + ":lookback-plan"
+	if err := fixture.redis.Set(fixture.ctx, planKey, `{"qg-kept":{"rung":2,"expires_at_ms":`+
+		strconv.FormatInt(fixture.now().Add(lookback.PlanLife).UnixMilli(), 10)+`}}`, time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	fixture.tick()
+	kept := fixture.redis.Get(fixture.ctx, planKey).Val()
+	plansBefore := map[string]uint64{}
+	waitPhaseTwoCondition(t, "every Worker has a plan set from the control process", func() bool {
+		for _, worker := range workers {
+			if plansBefore[worker.name] = worker.bundle.dependencies.ViewClient.Stats().LookbackPlanSets; plansBefore[worker.name] == 0 {
+				return false
+			}
+		}
+		return true
+	})
 
 	// The control process dies. Its lease runs out on the Redis clock; its
 	// record says ready until T after its last write.
 	fixture.renewRecords()
 	crashedAt := fixture.now()
 	fixture.crash(control)
-	time.Sleep(3500 * time.Millisecond)
+	fixture.awaitControlLeaseFree()
 	for _, offset := range []time.Duration{5 * time.Second, 30 * time.Second, 55 * time.Second} {
 		fixture.clockMillis.Store(crashedAt.Add(offset).UnixMilli())
 		fixture.tick()
@@ -477,7 +577,7 @@ func TestAWorkerLeadsWhileTheControlProcessIsGoneAndHandsBackOnceItIsSteady(t *t
 	}
 	// Every Worker finds the fallback Leader's view stream through its
 	// instance record, as it found the control process's.
-	waitPhaseTwoCondition(t, 15*time.Second, "Workers stream from the fallback Leader", func() bool {
+	waitPhaseTwoCondition(t, "Workers stream from the fallback Leader", func() bool {
 		for _, worker := range workers {
 			stats := worker.bundle.dependencies.ViewClient.Stats()
 			if !stats.Connected || stats.Leader.WorkerID != fallbackLeader.name || stats.Leader.ControlEpoch != fallbackEpoch ||
@@ -489,6 +589,22 @@ func TestAWorkerLeadsWhileTheControlProcessIsGoneAndHandsBackOnceItIsSteady(t *t
 	})
 	if got := fixture.pass(2, false, queryGroups); got != queryGroups {
 		t.Fatalf("Slot 1 across the takeover: %d of %d Query Groups completed", got, queryGroups)
+	}
+	// The fallback Leader plans nothing: it counts the rounds it paused,
+	// leaves the kept set as the control process left it, and sends no plan
+	// set, so every Worker keeps what it was sent.
+	fixture.tick()
+	if paused := counterValue(t, fallbackLeader.recorder, "alarmd_control_tier_paused_total",
+		map[string]string{"function": metric.ControlTierLookbackPlanning}); paused == 0 {
+		t.Fatal("the fallback Leader's rounds were not counted as lookback planning paused")
+	}
+	if now := fixture.redis.Get(fixture.ctx, planKey).Val(); now != kept {
+		t.Fatalf("the fallback term changed the kept plan set:\n%s\n%s", kept, now)
+	}
+	for _, worker := range workers {
+		if sets := worker.bundle.dependencies.ViewClient.Stats().LookbackPlanSets; sets != plansBefore[worker.name] {
+			t.Fatalf("%s received %d plan sets under the fallback Leader, want none beyond the %d before", worker.name, sets, plansBefore[worker.name])
+		}
 	}
 
 	// A control process comes back. It cannot take a live lease, and the
@@ -504,15 +620,35 @@ func TestAWorkerLeadsWhileTheControlProcessIsGoneAndHandsBackOnceItIsSteady(t *t
 	// would read as a break in the window and start it again.
 	for offset := 5 * time.Second; offset < window; offset += 5 * time.Second {
 		fixture.clockMillis.Store(firstSeen.Add(offset).UnixMilli())
-		time.Sleep(1200 * time.Millisecond)
+		fixture.awaitRenewals()
 		fixture.tick()
 		if leader, epoch := fixture.leader(); leader != fallbackLeader || epoch != fallbackEpoch {
 			t.Fatalf("leader %s into the window = %v epoch %d, want the fallback still", offset, leader, epoch)
 		}
+		if offset == 5*time.Second {
+			// One read says why the lease is still the fallback's: the
+			// returned process is ready and when it is due.
+			handback := fixture.controlFactsSeen(fallbackLeader).Handback
+			if handback == nil || len(handback.Ready) != 1 || handback.Ready[0].Instance != returned.name ||
+				!handback.Ready[0].DueAt.Equal(firstSeen.Add(window)) || handback.LastReadingAt == nil ||
+				!handback.LastReadingAt.Equal(firstSeen.Add(offset)) {
+				t.Fatalf("handback in the fallback's record = %+v, want %s due at %s, read at %s",
+					handback, returned.name, firstSeen.Add(window), firstSeen.Add(offset))
+			}
+		}
 	}
 	fixture.clockMillis.Store(firstSeen.Add(window).UnixMilli())
-	time.Sleep(1200 * time.Millisecond)
-	fixture.tick()
+	fixture.awaitRenewals()
+	// Only a round that published considers the handback, and a round that
+	// could not read the active set returns before it publishes, with
+	// nothing the fixture sees. Production's next round would hand back, so
+	// the fixture ticks again at the same instant until one has rather than
+	// read a single round as the answer; a handback that never comes still
+	// fails here, and the rounds above still hold that none came early.
+	waitPhaseTwoCondition(t, "the fallback Leader hands back once the window has passed", func() bool {
+		fixture.tick()
+		return fixture.transitions("preferred", "handback") >= 1
+	})
 	if fixture.transitions("preferred", "handback") != 1 {
 		t.Fatalf("handbacks once the window passed = %v, want 1", fixture.transitions("preferred", "handback"))
 	}
@@ -532,11 +668,21 @@ func TestAWorkerLeadsWhileTheControlProcessIsGoneAndHandsBackOnceItIsSteady(t *t
 	if got := fixture.pass(3, false, queryGroups); got != queryGroups {
 		t.Fatalf("Slot 2 across the handback: %d of %d Query Groups completed", got, queryGroups)
 	}
+	// Handed back, the control process plans again and every Worker gets its
+	// set on the stream it opened to it.
+	waitPhaseTwoCondition(t, "every Worker has a plan set from the returned control process", func() bool {
+		for _, worker := range workers {
+			if worker.bundle.dependencies.ViewClient.Stats().LookbackPlanSets <= plansBefore[worker.name] {
+				return false
+			}
+		}
+		return true
+	})
 
 	// Steady from here: no further moves of the lease.
 	for step := 0; step < 6; step++ {
 		fixture.advance(20 * time.Second)
-		time.Sleep(1100 * time.Millisecond)
+		fixture.awaitRenewals()
 		fixture.tick()
 	}
 	if leader, epoch := fixture.leader(); leader != returned || epoch != preferredEpoch {
@@ -664,7 +810,7 @@ func TestWorkersRacingForAFreeLeaseEndWithOneLeader(t *testing.T) {
 			fixture.transitions("fallback", "fallback_takeover"))
 	}
 	fixture.crash(winner)
-	time.Sleep(3500 * time.Millisecond)
+	fixture.awaitControlLeaseFree()
 	fixture.advance(controlCandidacyWindow(winner.bundle.dependencies.Config))
 	for round := 0; round < 5; round++ {
 		fixture.advance(time.Second)
@@ -674,7 +820,11 @@ func TestWorkersRacingForAFreeLeaseEndWithOneLeader(t *testing.T) {
 			ticked.Add(1)
 			go func(process *electionProcess) {
 				defer ticked.Done()
-				_ = process.bundle.refreshAndReconcile(fixture.ctx, false)
+				// Losing the race is not an error: the lease read and the
+				// lost publication are handled inside the tick.
+				if err := process.bundle.refreshAndReconcile(fixture.ctx, false); err != nil {
+					t.Errorf("%s reconcile in round %d: %v", process.name, round, err)
+				}
 			}(process)
 		}
 		ticked.Wait()
@@ -717,7 +867,7 @@ func TestTheDefaultFormElectsAsBeforeButNeverAProcessThatIsStartingOrStopping(t 
 		if outcome != "" {
 			t.Fatalf("an unstarted process contended: %s", outcome)
 		}
-	case <-time.After(10 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("an unstarted process contended and did not return")
 	}
 	if leader, _ := fixture.leader(); leader != nil {
@@ -757,7 +907,7 @@ func TestTheDefaultFormElectsAsBeforeButNeverAProcessThatIsStartingOrStopping(t 
 		t.Fatal(err)
 	}
 	first.alive = false
-	if got := counterValue(t, first.recorder, "bkmonitor_alarmd_control_leader_transitions_total",
+	if got := counterValue(t, first.recorder, "alarmd_control_leader_transitions_total",
 		map[string]string{"to_class": "none", "reason": "release"}); got != 1 {
 		t.Fatalf("releases counted at shutdown = %v, want 1", got)
 	}
@@ -797,7 +947,7 @@ func TestAWorkerLeadingAsTheFallbackRunsTheDeletedStrategyClose(t *testing.T) {
 	const deletedTenant, deletedStrategy = "system", "9999"
 	var rosterReads atomic.Int64
 	console := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/local-api/strategy-index/browse" {
+		if r.URL.Path != "/api/modules/linkd/strategy-index/browse" {
 			link(w, r)
 			return
 		}
@@ -809,7 +959,7 @@ func TestAWorkerLeadingAsTheFallbackRunsTheDeletedStrategyClose(t *testing.T) {
 	}))
 	t.Cleanup(console.Close)
 	fixture.configure = func(cfg *config.Config) {
-		cfg.PhaseTwo.Linkd.ConsoleURL = console.URL
+		cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
 		cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
 	}
 	leading := fixture.open("absent-worker-1", roles.Set{roles.Worker}, true)
@@ -823,18 +973,18 @@ func TestAWorkerLeadingAsTheFallbackRunsTheDeletedStrategyClose(t *testing.T) {
 		}
 	}
 	outcome := func(process *electionProcess, word string) float64 {
-		return counterValue(t, process.recorder, "bkmonitor_alarmd_absent_strategy_close_total", map[string]string{"outcome": word})
+		return counterValue(t, process.recorder, "alarmd_absent_strategy_close_total", map[string]string{"outcome": word})
 	}
 	rounds := func(process *electionProcess) float64 {
 		total := 0.0
 		for _, refusal := range absentalerts.Refusals {
-			total += counterValue(t, process.recorder, "bkmonitor_alarmd_absent_strategy_round_total", map[string]string{"disposition": refusal})
+			total += counterValue(t, process.recorder, "alarmd_absent_strategy_round_total", map[string]string{"disposition": refusal})
 		}
 		return total
 	}
 	// Each loop takes its first round when the process starts; the next is
 	// five minutes away. Both have run by the time the counts move.
-	waitPhaseTwoCondition(t, 10*time.Second, "the Leader's first deleted-strategy round", func() bool {
+	waitPhaseTwoCondition(t, "the Leader's first deleted-strategy round", func() bool {
 		return rounds(leading) >= 1 && outcome(following, absentalerts.OutcomeNotLeader) >= 1
 	})
 	if got := outcome(leading, absentalerts.OutcomeNotLeader); got != 0 {
@@ -843,7 +993,7 @@ func TestAWorkerLeadingAsTheFallbackRunsTheDeletedStrategyClose(t *testing.T) {
 	if rosterReads.Load() == 0 {
 		t.Fatal("the fallback Leader's round never read the link's roster")
 	}
-	if got := counterValue(t, leading.recorder, "bkmonitor_alarmd_absent_strategy_difference", map[string]string{"side": "roster_strategies"}); got != 1 {
+	if got := counterValue(t, leading.recorder, "alarmd_absent_strategy_difference", map[string]string{"side": "roster_strategies"}); got != 1 {
 		t.Fatalf("roster strategies the Leader's round read = %v, want the deleted strategy", got)
 	}
 	if decided := outcome(leading, absentalerts.OutcomeWithinGrace) + outcome(leading, absentalerts.OutcomeCloseDecided); decided < 1 {
@@ -881,11 +1031,11 @@ func TestAControlProcessInACrashLoopLeavesTheLeaseToAFallbackUntilItIsSteady(t *
 	if got := fixture.pass(1, true, queryGroups); got != queryGroups {
 		t.Fatalf("Slot 0 with the control process up: %d of %d Query Groups completed", got, queryGroups)
 	}
-	// One round at a time on the injected clock, with a beat of real time
-	// for the lease renewals to restate their deadlines on it.
+	// One round at a time on the injected clock, once the lease renewals
+	// have restated their deadlines on it.
 	round := func() {
 		fixture.advance(5 * time.Second)
-		time.Sleep(1200 * time.Millisecond)
+		fixture.awaitRenewals()
 		fixture.tick()
 	}
 	restart := func() {
@@ -899,7 +1049,7 @@ func TestAControlProcessInACrashLoopLeavesTheLeaseToAFallbackUntilItIsSteady(t *
 	// there, so it leaves the lease to the fallback.
 	fixture.renewRecords()
 	fixture.crash(control)
-	time.Sleep(3500 * time.Millisecond)
+	fixture.awaitControlLeaseFree()
 	control = fixture.open(controlName, roles.Set{roles.Control}, true)
 	if leader, _ := fixture.leader(); leader != nil {
 		t.Fatalf("%s took the free lease on starting; a control process not yet stable waits for a ready fallback", leader.name)
@@ -968,4 +1118,46 @@ func TestAControlProcessInACrashLoopLeavesTheLeaseToAFallbackUntilItIsSteady(t *
 			t.Fatalf("%s did not stay up", worker.name)
 		}
 	}
+}
+
+// The lookback plan crosses the production wiring end to end: a plan set the
+// Leader keeps for a Query Group its Worker owns reaches that Worker over the
+// view stream and is held by the Worker's own lookback engine, which reads
+// the Query Group directed from its next first read (lookback's own cases).
+// One process of the default form is both.
+func TestALeadersLookbackPlanReachesTheOwningWorkersLookbackOverTheViewStream(t *testing.T) {
+	const queryGroups = 2
+	fixture := newElectionFixture(t, queryGroups, "alarmd:phase-two:election-lookback-plan")
+	process := fixture.open("default-1", nil, true)
+	if leader, _ := fixture.leader(); leader != process {
+		t.Fatalf("leader = %v, want the one process", leader)
+	}
+	fixture.balance(queryGroups)
+	if got := fixture.pass(1, true, queryGroups); got != queryGroups {
+		t.Fatalf("Slot 0: %d of %d Query Groups completed", got, queryGroups)
+	}
+	view, installed := process.bundle.dependencies.ViewClient.Installed()
+	if !installed || len(view.Entries) == 0 {
+		t.Fatalf("installed view %+v (%t), want the process's Query Groups", view, installed)
+	}
+	held := func() float64 {
+		return counterValue(t, process.recorder, "alarmd_lookback_plan_entries", nil)
+	}
+	if got := held(); got != 0 {
+		t.Fatalf("plan entries held before any was planned = %v, want 0", got)
+	}
+	planned := string(view.Entries[0].QueryGroup)
+	planKey := productionPhaseTwoPrefix(process.bundle.dependencies.Config.Redis.StatePrefix, "fleet") + ":lookback-plan"
+	if err := fixture.redis.Set(fixture.ctx, planKey, `{"`+planned+`":{"rung":1,"expires_at_ms":`+
+		strconv.FormatInt(fixture.now().Add(lookback.PlanLife).UnixMilli(), 10)+`}}`, time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	// The kept set is read at the start of a term: start one.
+	ownershipRuntime, ok := process.bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
+	if !ok || ownershipRuntime.lookbackPlanner == nil {
+		t.Fatalf("ownership %T has no lookback planner", process.bundle.dependencies.Ownership)
+	}
+	ownershipRuntime.lookbackPlanner.newTerm()
+	fixture.tick()
+	waitPhaseTwoCondition(t, "the Worker's lookback holds the planned entry", func() bool { return held() == 1 })
 }

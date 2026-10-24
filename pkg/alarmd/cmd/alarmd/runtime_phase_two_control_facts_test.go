@@ -95,8 +95,8 @@ func TestProductionPhaseTwoControlRebuildsAMissingActivationFromTheLatestPublica
 				t.Fatalf("source refresh facts = %+v, want rebuilt with every Query Group added", facts)
 			}
 			for name, labels := range map[string]map[string]string{
-				"bkmonitor_alarmd_control_facts_unavailable_total": {"fact": "activation", "reason": "missing"},
-				"bkmonitor_alarmd_control_facts_rebuilt_total":     {"fact": "activation"},
+				"alarmd_control_facts_unavailable_total": {"fact": "activation", "reason": "missing"},
+				"alarmd_control_facts_rebuilt_total":     {"fact": "activation"},
 			} {
 				if got := counterValue(t, recorder, name, labels); got != 1 {
 					t.Fatalf("%s%v = %v, want 1", name, labels, got)
@@ -130,10 +130,10 @@ func TestProductionPhaseTwoControlCountsAFirstActivationAsNoRebuild(t *testing.T
 	if len(published) != 1 || published[0].SourceRefresh.ActivationRebuilt {
 		t.Fatalf("published observations = %#v, want one and no rebuild", published)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_facts_rebuilt_total", map[string]string{"fact": "activation"}); got != 0 {
+	if got := counterValue(t, recorder, "alarmd_control_facts_rebuilt_total", map[string]string{"fact": "activation"}); got != 0 {
 		t.Fatalf("control_facts_rebuilt_total{activation} = %v, want 0", got)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_facts_unavailable_total", map[string]string{"fact": "activation", "reason": "missing"}); got != 1 {
+	if got := counterValue(t, recorder, "alarmd_control_facts_unavailable_total", map[string]string{"fact": "activation", "reason": "missing"}); got != 1 {
 		t.Fatalf("control_facts_unavailable_total{activation,missing} = %v, want 1", got)
 	}
 }
@@ -212,7 +212,7 @@ func TestPhaseTwoWorkerBundleFollowerWaitsForControlFactsInsteadOfExiting(t *tes
 	if len(bundle.runners) != 0 {
 		t.Fatalf("runners after start = %d, want none", len(bundle.runners))
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_health_facts_total", map[string]string{"status": "degraded_last_good"}); got != 1 {
+	if got := counterValue(t, recorder, "alarmd_control_health_facts_total", map[string]string{"status": "degraded_last_good"}); got != 1 {
 		t.Fatalf("control_health_facts_total{degraded_last_good} = %v, want 1", got)
 	}
 
@@ -227,7 +227,7 @@ func TestPhaseTwoWorkerBundleFollowerWaitsForControlFactsInsteadOfExiting(t *tes
 	if got := lastRegistration(owner); got != ownership.WorkerReady {
 		t.Fatalf("registration after recovery = %s, want READY written on the tick that read the facts", got)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_health_facts_total", map[string]string{"status": "healthy"}); got != 1 {
+	if got := counterValue(t, recorder, "alarmd_control_health_facts_total", map[string]string{"status": "healthy"}); got != 1 {
 		t.Fatalf("control_health_facts_total{healthy} = %v, want 1", got)
 	}
 }
@@ -306,7 +306,7 @@ func TestPhaseTwoWorkerBundleLeaderKeepsItsQueryGroupsWhenTheActivationGoesMissi
 	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthReady {
 		t.Fatalf("health after recovery = %+v, want ready", snapshot)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_health_facts_total", map[string]string{"status": "degraded_last_good"}); got != 2 {
+	if got := counterValue(t, recorder, "alarmd_control_health_facts_total", map[string]string{"status": "degraded_last_good"}); got != 2 {
 		t.Fatalf("control_health_facts_total{degraded_last_good} = %v, want 2", got)
 	}
 }
@@ -340,7 +340,7 @@ func TestPhaseTwoWorkerBundleKeepsTheLastHealthFactWhenARefreshReturnsAnInvalidO
 		if err := bundle.refreshAndReconcile(context.Background(), true); err != nil {
 			t.Fatalf("refreshAndReconcile(invalid %s) error = %v, want the previous fact kept", field, err)
 		}
-		if got := counterValue(t, recorder, "bkmonitor_alarmd_control_health_invalid_total", map[string]string{"field": field}); got != 1 {
+		if got := counterValue(t, recorder, "alarmd_control_health_invalid_total", map[string]string{"field": field}); got != 1 {
 			t.Fatalf("control_health_invalid_total{field=%s} = %v, want 1", field, got)
 		}
 		if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthReady || !snapshot.Ready {
@@ -353,7 +353,7 @@ func TestPhaseTwoWorkerBundleKeepsTheLastHealthFactWhenARefreshReturnsAnInvalidO
 			t.Fatalf("after invalid %s query groups/runners = %v/%d, want the owned set kept", field, groups, runners)
 		}
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_control_health_facts_total", map[string]string{"status": "invalid"}); got != 3 {
+	if got := counterValue(t, recorder, "alarmd_control_health_facts_total", map[string]string{"status": "invalid"}); got != 3 {
 		t.Fatalf("control_health_facts_total{invalid} = %v, want 3", got)
 	}
 }

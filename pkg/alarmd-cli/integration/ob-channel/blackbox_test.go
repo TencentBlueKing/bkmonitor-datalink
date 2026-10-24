@@ -229,11 +229,11 @@ func newHarness(t *testing.T, mode string) *harness {
 	}
 	h.manager = manager
 	service := obevidence.New(obevidence.Options{SourceStrategy: obevidence.RedisBinding{Client: h.redis, Location: obevidence.Location{Role: "strategy_cache", Address: h.redis.Options().Addr, Mode: "single", DB: 0, Prefix: "fixture"}}})
-	operations := append(obchannel.NativeOperations(http.HandlerFunc(nativeFixture)), obchannel.StoreOperations(service)...)
+	operations := append(obchannel.NativeOperationsWith(http.HandlerFunc(nativeFixture), obchannel.NativeOptions{}), obchannel.StoreOperations(service)...)
 	operations = append(operations, obchannel.Operation{ID: "runtime.get", Summary: "Fixture answering-process runtime facts; transport acceptance only.", Fields: map[string]obchannel.Field{}, OutputSchema: obchannel.SchemaOf(observability.RuntimeConfigFacts{}), Run: func(context.Context, obchannel.Params) obchannel.Outcome {
 		return obchannel.Outcome{Complete: true, Value: map[string]any{"scope": "answering_replica", "config": observability.RuntimeConfigFacts{Profile: "fixture", Source: "blackbox-fixture", GOMAXPROCS: 2, Digest: "fixture-digest"}}}
 	}})
-	channel, err = obchannel.New(obchannel.Options{Auth: manager, EnvironmentID: environment, Replica: "fixture-replica", Build: "blackbox-fixture", Concurrency: 1, Operations: operations})
+	channel, err = obchannel.New(obchannel.Options{Auth: manager, EnvironmentID: environment, Replica: "fixture-replica", Build: "blackbox-fixture", Operations: operations})
 	if err != nil {
 		t.Fatal("cannot initialize real OB channel")
 	}

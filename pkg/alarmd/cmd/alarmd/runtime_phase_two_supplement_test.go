@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -86,6 +87,8 @@ func TestTheLookbacksSupplementsRunOnTheirQueryGroupsRunner(t *testing.T) {
 			lookback.SupplementOutcome{Refused: lookback.DirectedFlightBusy}, []time.Duration{20 * time.Second}},
 		{"expired", []error{scheduler.ErrSupplementContractExpired}, lookback.SupplementOutcome{Refused: lookback.DirectedContractExpired}, nil},
 		{"failed", []error{errors.New("redis: connection refused")}, lookback.SupplementOutcome{Refused: lookback.DirectedFailed}, nil},
+		{"kept read absent", []error{fmt.Errorf("alarmd worker: supplement query: %w", execution.ErrSupplementKeptReadAbsent)},
+			lookback.SupplementOutcome{Refused: lookback.DirectedKeptReadAbsent}, nil},
 	} {
 		runner := &supplementingQueryGroup{answers: tc.answers}
 		var waits []time.Duration

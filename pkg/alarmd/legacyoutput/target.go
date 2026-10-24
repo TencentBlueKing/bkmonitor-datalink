@@ -44,7 +44,6 @@ type TargetProjection struct {
 
 var apmAppLabel = regexp.MustCompile(`^APM-APP\((.*?)\)`)
 var apmServiceLabel = regexp.MustCompile(`^APM-SERVICE\((.*?)\)`)
-var apmTable = regexp.MustCompile(`^(?:space_)?\d+_bkapm_(?:metric|trace)_([a-zA-Z0-9_-]+)\.__default__$`)
 
 // ProjectTarget preserves the Python target ordering and enrichment boundaries.
 // Hosts, services, topology and APM require no external metadata calls.
@@ -56,8 +55,10 @@ func ProjectTarget(ctx context.Context, scope TargetScope, strategy json.RawMess
 	return plan.Project(ctx, scope, dimensions, fields, pods)
 }
 
-// PreparedTarget holds immutable per-strategy APM fallback fields for a batch.
-type PreparedTarget struct{ labelApp, labelService, tableApp json.RawMessage }
+// PreparedTarget holds immutable per-strategy APM fallback fields for a batch:
+// the strategy's labels. Not its result table, whose name is the application's
+// normalised form and cannot be read back (contract.ProjectMonitorSubject).
+type PreparedTarget struct{ labelApp, labelService json.RawMessage }
 
 func (plan *PreparedTarget) Project(ctx context.Context, scope TargetScope, dimensions map[string]json.RawMessage, fields []string, pods PodResolver) (TargetProjection, error) {
 	kind, target, data, err := contract.ProjectMonitorTarget(dimensions, contract.MonitorOutputIdentity{DimensionFields: fields})
@@ -83,7 +84,7 @@ func (plan *PreparedTarget) Project(ctx context.Context, scope TargetScope, dime
 	if _, ok := data["bcs_cluster_id"]; ok {
 		return projectK8S(ctx, scope, p, pods)
 	}
-	return plan.projectAPM(p)
+	return plan.projectAPM(p, dimensions)
 }
 
 func rawString(value string) json.RawMessage { raw, _ := json.Marshal(value); return raw }
@@ -184,11 +185,6 @@ func projectK8S(ctx context.Context, scope TargetScope, p TargetProjection, pods
 // targetStrategy is what PrepareTarget reads from a frozen strategy.
 type targetStrategy struct {
 	Labels []string `json:"labels"`
-	Items  []struct {
-		QueryConfigs []struct {
-			ResultTableID string `json:"result_table_id"`
-		} `json:"query_configs"`
-	} `json:"items"`
 }
 
 func PrepareTarget(strategy json.RawMessage) (*PreparedTarget, error) {
@@ -205,26 +201,22 @@ func PrepareTarget(strategy json.RawMessage) (*PreparedTarget, error) {
 		}
 		return nil
 	}
-	plan := &PreparedTarget{labelApp: labelValue(apmAppLabel), labelService: labelValue(apmServiceLabel)}
-	if len(config.Items) > 0 && len(config.Items[0].QueryConfigs) > 0 {
-		match := apmTable.FindStringSubmatch(config.Items[0].QueryConfigs[0].ResultTableID)
-		if len(match) > 1 {
-			plan.tableApp = rawString(match[1])
-		}
-	}
-	return plan, nil
+	return &PreparedTarget{labelApp: labelValue(apmAppLabel), labelService: labelValue(apmServiceLabel)}, nil
 }
 
-func (plan *PreparedTarget) projectAPM(p TargetProjection) (TargetProjection, error) {
+// projectAPM places an APM record. The application the record carries
+// beside its identity dimensions (the APM query asks for it, access/uq
+// carriesAPMApp) comes before the strategy's label.
+func (plan *PreparedTarget) projectAPM(p TargetProjection, dimensions map[string]json.RawMessage) (TargetProjection, error) {
 	app, service := p.Dimensions["app_name"], p.Dimensions["service_name"]
+	if !truthy(app) {
+		app = dimensions["app_name"]
+	}
 	if !truthy(app) {
 		app = plan.labelApp
 	}
 	if !truthy(service) {
 		service = plan.labelService
-	}
-	if !truthy(app) {
-		app = plan.tableApp
 	}
 	if !truthy(app) || !truthy(service) {
 		return p, nil

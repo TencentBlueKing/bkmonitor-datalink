@@ -25,7 +25,6 @@ type Stage string
 type Result string
 type Operation string
 type ReasonCode string
-type Direction string
 type CapacityBudget string
 type SourceKind string
 type QueryQueueKind string
@@ -67,6 +66,13 @@ const (
 	StageObjectRead           = "object_read"
 	StageFrozenPlanGeneration = "frozen_plan_generation"
 	StageActivationHold       = "activation_hold"
+	// StageControlHandbackWatch names a fallback Leader's handback watch
+	// starting over (control_handback_watch_resets_total): the round could
+	// not read the candidates, or went too long without a reading.
+	StageControlHandbackWatch = "control_handback_watch"
+	// StageTraceExport names a batch of alarmd's own spans the collector
+	// did not take (trace_spans_dropped_total{reason="export_failed"}).
+	StageTraceExport = "trace_export"
 	// StageStateCarryDecided is the Control Leader deciding what an
 	// activation whose state generation moved may carry; StageStateCarried
 	// is a Worker carrying it for each series. See StateCarryFacts.
@@ -112,18 +118,26 @@ const (
 	StageScheduleCursorAdvanced = "schedule_cursor_advanced"
 	StageReplayExpired          = "replay_expired"
 	StageReplayTakeover         = "replay_takeover"
+	StageSlotDiverted           = "slot_diverted"
 	StageRangeDistanceExpired   = "range_distance_expired"
+	StageSlotSkipped            = "slot_skipped"
 	StageRangeGateDecided       = "range_gate_decided"
 	StageSlotWait               = "slot_wait"
 	StageQueryAdmission         = "query_admission"
 	StageFleetSnapshotPublish   = "fleet_snapshot_publish"
-	StageObservationWindow      = "observation_window"
-	StageQueryCompleted         = "query_completed"
-	StageQueryBudgetResolved    = "query_budget_resolved"
-	StageSlotReadinessArrival   = "slot_readiness_arrival"
-	StageStatePreflight         = "state_preflight"
-	StageGapLoaded              = "gap_loaded"
-	StageNoDataDecided          = "no_data_decided"
+	// StageFleetControlFactsPublish is the control leader's write of its
+	// control facts for the fleet view, beside each replica's snapshot.
+	StageFleetControlFactsPublish = "fleet_control_facts_publish"
+	StageObservationWindow        = "observation_window"
+	StageQueryCompleted           = "query_completed"
+	StageQueryBudgetResolved      = "query_budget_resolved"
+	StageSlotReadinessArrival     = "slot_readiness_arrival"
+	StageStatePreflight           = "state_preflight"
+	StageGapLoaded                = "gap_loaded"
+	StageNoDataDecided            = "no_data_decided"
+	// StageNoDataEnd names what one Plan's no-data end index did this round,
+	// one outcome a line (NoDataEndOutcomes), counted in Keys.
+	StageNoDataEnd = "no_data_end"
 	// StageTargetResolved names what one Plan's target plan resolved to in
 	// one Slot: the state the admission filter and the absence judgement
 	// both read, and each selector's answer by name (decision-017).
@@ -189,10 +203,14 @@ const (
 	// StageWarmingPeak names a replica's hourly line on its state writes to
 	// series still warming their history: the busiest minute and the groups
 	// behind it (WarmingPeak).
-	StageWarmingPeak       = "state_warming_peak"
-	StageEventACKed        = "event_acked"
-	StageStateApplied      = "state_applied"
-	StageProgressCommitted = "progress_committed"
+	StageWarmingPeak = "state_warming_peak"
+	StageEventACKed  = "event_acked"
+	// StageNoDataManualCloseChecked names the output's manual-close check of
+	// one Plan's batch, written only when it held an alert back or could not
+	// read the closes (NoDataManualClose).
+	StageNoDataManualCloseChecked = "no_data_manual_close_checked"
+	StageStateApplied             = "state_applied"
+	StageProgressCommitted        = "progress_committed"
 	// StageExecutionEvidenceWritten names the mark an attempt leaves when it
 	// wrote state and then could not write the Slot down. It is the only sign
 	// that the mark-writing works at all: nothing downstream fails when it does
@@ -251,11 +269,6 @@ const (
 	OperationProbe              = "probe"
 	OperationSupplement         = "supplement"
 	OperationOther              = "_other"
-
-	DirectionInput    Direction = "input"
-	DirectionOutput   Direction = "output"
-	DirectionInternal Direction = "internal"
-	DirectionOther    Direction = "_other"
 
 	CapacityBudgetSeries         CapacityBudget = "series"
 	CapacityBudgetRetainedBytes  CapacityBudget = "retained_bytes"
@@ -427,6 +440,9 @@ type TargetSelectorFacts struct {
 	// business only. Both are carried to the object row as they are.
 	NodeMissing bool
 	NodeForeign bool
+	// DroppedMembers names the first dropped members as "<id>:<reason>"
+	// (targetplan.MaxNamedDroppedMembers at most): which members to look at.
+	DroppedMembers []string
 }
 
 // NoDataSlotFacts is what happened to one Plan's no-data detection in one Slot.
@@ -532,6 +548,9 @@ type NoDataAbsenceFacts struct {
 	Dropped       uint64
 	Expired       uint64
 	Suppressed    uint64
+	// ManualClosed is the absences this round stopped because a user closed
+	// their alert by hand (decision-024).
+	ManualClosed uint64
 	// AbsentAges is Absent by how long each absence has been open at this
 	// round -- this round, under an hour, under a day, a day or more -- as
 	// the evaluation filed them from the same start the horizon reads. They
@@ -554,7 +573,7 @@ type NoDataAbsentAges struct {
 // the metric creates them, so a label nothing ever wrote can be told from one
 // that wrote zero.
 var NoDataAbsenceOutcomes = []string{
-	"expected", "present", "absent", "unavailable", "dropped", "expired", "suppressed",
+	"expected", "present", "absent", "unavailable", "dropped", "expired", "suppressed", "manual_closed",
 }
 
 // NoDataMemoryRefusalFacts is one Plan's refused absence-memory write: why the
@@ -618,6 +637,9 @@ type NoDataMemoryReadFacts struct {
 	// so the three add up to the Plans that were asked for, and a reader can
 	// check that rather than assume it.
 	Representation string
+	// ManualClosesUnread is a memory that was read when its strategy's manual
+	// closes could not be: the round ran without them.
+	ManualClosesUnread bool
 }
 
 // NoDataMemoryRenewalFacts is what one renewal did.
@@ -725,6 +747,9 @@ type NoDataMemoryRefusalFacts struct {
 	Record string
 	Groups int
 	Limit  int
+	// LimitSource is whose Limit is: platform (the deployment's) or strategy
+	// (the item's own max_groups).
+	LimitSource string
 }
 
 // NoDataCensusFacts is how many Plans this Slot had that detect no-data, before
@@ -1185,6 +1210,10 @@ var SlotWaits = []string{SlotWaitProgressBegin, SlotWaitFinalization, SlotWaitOb
 // to land is long enough to be the answer to "why did this Slot take so long".
 const SlowSlotWait = 10 * time.Second
 
+// ReasonSlotWaitSlow is a slot_wait line's reason: one wait inside a Slot
+// attempt that took SlowSlotWait or longer.
+const ReasonSlotWaitSlow ReasonCode = "SLOT_WAIT_SLOW"
+
 // ReplayExpiryReasons is the closed vocabulary of why a replay expired. The
 // scheduler's typed constants are held to this list by a test rather than by
 // hand, so a new reason cannot arrive without a series to count it.
@@ -1202,20 +1231,115 @@ var ReplayExpiryReasons = []string{
 // failed replay is not reported again, and one replayed and later given up
 // on for its age is reported under each. A Query Group the degraded pool
 // holds reports none: its Slots are given up on for distance as before.
+//
+// A diverted Slot is one not yet at its query deadline but with less budget
+// left than its query takes (RemainingSeconds below FloorSeconds), sent to
+// replay before it starts; FloorSource says whether the floor was the
+// group's own reading, the previous owner's as the group's read-hold record
+// keeps it, or the configured fallback.
 type ReplayTakeoverFacts struct {
 	Outcome               string  `json:"outcome"`
 	AgeSeconds            float64 `json:"age_seconds"`
 	TakeoverOffsetSeconds float64 `json:"takeover_offset_seconds"`
+	RemainingSeconds      float64 `json:"remaining_seconds,omitempty"`
+	FloorSeconds          float64 `json:"floor_seconds,omitempty"`
+	FloorSource           string  `json:"floor_source,omitempty"`
 }
 
 // The outcomes of a Slot due before a takeover, closed.
 const (
 	ReplayTakeoverReplayed    = "replayed"
 	ReplayTakeoverAgeExceeded = "age_exceeded"
+	ReplayTakeoverDiverted    = "diverted"
+)
+
+// Where a diverted Slot's floor came from: the group's own reading here, the
+// previous owner's reading its read-hold record keeps, or the fallback.
+const (
+	TakeoverFloorObserved  = "observed"
+	TakeoverFloorInherited = "inherited"
+	TakeoverFloorFallback  = "fallback"
 )
 
 // ReplayTakeoverOutcomes is every outcome, for the metric to pre-create.
-var ReplayTakeoverOutcomes = []string{ReplayTakeoverReplayed, ReplayTakeoverAgeExceeded}
+var ReplayTakeoverOutcomes = []string{ReplayTakeoverReplayed, ReplayTakeoverAgeExceeded, ReplayTakeoverDiverted}
+
+// SlotDiversionFacts is one live Slot of a Query Group this process holds
+// that was sent to replay before its normal read started, because the read
+// would have started with less time before its query deadline than the
+// group's query takes: RemainingSeconds below BoundSeconds, the bound the
+// group's own reading, the previous owner's its read-hold record keeps, or
+// the configured fallback (BoundSource, one of the TakeoverFloor words).
+// Reported once per Slot. A Slot due before a takeover is reported under
+// ReplayTakeoverFacts instead, as diverted there.
+// DivertDecisionFacts is what the scheduler judged when it let a Slot run as
+// a normal round rather than send it to replay: when it judged, the frozen
+// query deadline and the one the read is cut at under the measured
+// post-query tail, the time a read was taken to need and where that came
+// from, and what was left by the deadline it judged against. A round that
+// then times out carries them on its completion line, so the line says
+// whether the round should have been sent away and on what reading.
+type DivertDecisionFacts struct {
+	ClassifiedAtUnixMilli   int64  `json:"classified_at_ms"`
+	FrozenDeadlineUnixMilli int64  `json:"frozen_deadline_ms"`
+	LiveDeadlineUnixMilli   int64  `json:"live_deadline_ms"`
+	BoundMillis             int64  `json:"bound_ms"`
+	BoundSource             string `json:"bound_source"`
+	RemainingMillis         int64  `json:"remaining_ms"`
+}
+
+// QueryBudgetFacts is the query budget of a round's binding consumer - the
+// one whose deadline its read is cut at - as access resolved it: the
+// consumer deadline, the frozen downstream reserve and the measured one in
+// force (zero when none is published or it fell back), when the consumer's
+// data is due, and the query deadlines under each reserve. The window a read
+// has is from ReadyAt to LiveQueryDeadline.
+type QueryBudgetFacts struct {
+	ConsumerDeadlineUnixMilli    int64 `json:"consumer_deadline_ms"`
+	FrozenReserveMillis          int64 `json:"frozen_reserve_ms"`
+	LiveReserveMillis            int64 `json:"live_reserve_ms"`
+	ReadyAtUnixMilli             int64 `json:"ready_at_ms"`
+	FrozenQueryDeadlineUnixMilli int64 `json:"frozen_query_deadline_ms"`
+	LiveQueryDeadlineUnixMilli   int64 `json:"live_query_deadline_ms"`
+	// QueryDeadlineUnixMilli is the deadline the read actually ran under: the
+	// live one for a normal round, the recovery deadline access derived for
+	// a replay, retry or probe, whose budget is RecoveryBudgetMillis.
+	QueryDeadlineUnixMilli int64 `json:"query_deadline_ms"`
+	RecoveryBudgetMillis   int64 `json:"recovery_budget_ms,omitempty"`
+	// QueryStartedAtUnixMilli is when the round's last query was sent: the
+	// gap from its classification to here is time it spent before reading.
+	QueryStartedAtUnixMilli int64 `json:"query_started_at_ms,omitempty"`
+	// FailedRequest and FailedPlanned are the round's first failed physical
+	// query's request deadline facts and own plan, so the round's line says
+	// which query was cut and under which deadline; nil when none failed.
+	FailedRequest *QueryRequestFacts `json:"-"`
+	FailedPlanned *QueryPlannedFacts `json:"-"`
+}
+
+// Where a divert decision's bound came from: the Query Group's own measured
+// query duration, the previous owner's its read-hold record keeps, the
+// configured fallback, or none (no bound applied).
+const (
+	DivertBoundQueryDuration = "query_duration"
+	DivertBoundInherited     = "inherited"
+	DivertBoundFallback      = "fallback"
+	DivertBoundNone          = "none"
+)
+
+type SlotDiversionFacts struct {
+	Reason           string  `json:"reason"`
+	RemainingSeconds float64 `json:"remaining_seconds"`
+	BoundSeconds     float64 `json:"bound_seconds"`
+	BoundSource      string  `json:"bound_source"`
+}
+
+// SlotDiversionReadinessLate is a Slot whose readiness - its settling wait
+// and read hold - landed so near its query deadline that the read could not
+// finish before it.
+const SlotDiversionReadinessLate = "readiness_late"
+
+// SlotDiversionReasons is every reason, for the metric to pre-create.
+var SlotDiversionReasons = []string{SlotDiversionReadinessLate}
 
 // ObjectCatalogFacts describe one write or renewal of the content-addressed
 // Query Group objects, output contexts and the manifest that names them for
@@ -1629,7 +1753,10 @@ type ViewStreamFacts struct {
 	ControlEpoch uint64 `json:"control_epoch"`
 	Revision     uint64 `json:"revision,omitempty"`
 	Reason       string `json:"reason,omitempty"`
-	Affected     int    `json:"affected,omitempty"`
+	// Endpoint is the Leader address a Worker dialled, on the events about
+	// reaching it; never in Reason, which is a word.
+	Endpoint string `json:"endpoint,omitempty"`
+	Affected int    `json:"affected,omitempty"`
 	// Closed is the revision whose ledger this publication closed, with
 	// its four numbers as they stood; zero when none was closed.
 	Closed    uint64 `json:"closed,omitempty"`
@@ -2049,7 +2176,13 @@ type AlgorithmEvaluationFact struct {
 	DetectorKind          AlgorithmDetectorKind     `json:"detector_kind"`
 	Result                AlgorithmEvaluationResult `json:"result"`
 	ReasonCode            ReasonCode                `json:"reason_code"`
-	Provenance            AlgorithmProvenance       `json:"provenance,omitempty"`
+	// ReasonCarried says the unavailable result's reason is the Level's
+	// stored guard's, copied from its UNKNOWN outcome, and not anything the
+	// algorithm met this round: an algorithm that detected nothing because a
+	// guard held its Level reads "unavailable QUERY_TIMEOUT" over a query
+	// that answered whole.
+	ReasonCarried bool                `json:"reason_carried,omitempty"`
+	Provenance    AlgorithmProvenance `json:"provenance,omitempty"`
 }
 
 // RecoveryGateCause is the state of the first other Level a RECOVERY record
@@ -2077,6 +2210,63 @@ type RecoveryGateFact struct {
 	Records uint64            `json:"records"`
 }
 
+// RecoveryWithheldReason is why a Level outcome that met its recovery
+// windows was not recovered. The set is closed, the contract's
+// (contract.RecoveryWithheldReasons): it is a metric label.
+type RecoveryWithheldReason string
+
+// RecoveryWithheldZeroCount: the round's own value was a count of zero from
+// a source whose zero is no observation.
+const RecoveryWithheldZeroCount RecoveryWithheldReason = contract.RecoveryWithheldZeroCount
+
+// RecoveryWithheldReasons lists every reason, for the metric that
+// pre-creates them all.
+var RecoveryWithheldReasons = []RecoveryWithheldReason{RecoveryWithheldZeroCount, RecoveryWithheldNoDataLastPointUnknown}
+
+// RecoveryWithheldNoDataLastPointUnknown: as zero_count, on a Level written to
+// end on no data whose last real point is not known, so no data ends nothing.
+const RecoveryWithheldNoDataLastPointUnknown RecoveryWithheldReason = contract.RecoveryWithheldNoDataLastPointUnknown
+
+// The outcomes of the no-data end index (worker), closed: a metric label.
+const (
+	// NoDataEndSent counts series whose end went out: absent through the
+	// recovery span on complete rounds, alert still open.
+	NoDataEndSent = "sent"
+	// NoDataEndNotOpen counts entries removed because the consumer's set no
+	// longer holds their alert - closed by hand, by effective time, by the
+	// absent or superseded-identity close - so nothing is sent for them.
+	NoDataEndNotOpen = "not_open"
+	// NoDataEndOverflow counts open alerts not indexed because the Plan's
+	// index was full (MaxNoDataEndEntriesPerPlan): such an alert is not
+	// ended on no data while its group is absent, and stays open.
+	NoDataEndOverflow = "overflow"
+	// NoDataEndUnavailable counts Plans whose index could not be read or
+	// written this round: nothing is decided on it.
+	NoDataEndUnavailable = "unavailable"
+	// NoDataEndSendFailed counts series whose end the sink did not take; the
+	// entry stays and the next complete round sends again.
+	NoDataEndSendFailed = "send_failed"
+	// NoDataEndUndecodable counts entries this build could not read; they
+	// are left to the alert's own end.
+	NoDataEndUndecodable = "undecodable"
+	// NoDataEndUnjudged counts absent entries a complete round could not
+	// decide on because the consumer's set could not be judged - not read yet
+	// after a handover, or no Console to read it from; nothing is sent or
+	// removed, and the next round with a judged set decides.
+	NoDataEndUnjudged = "unjudged"
+)
+
+// NoDataEndOutcomes is the closed list.
+var NoDataEndOutcomes = []string{NoDataEndSent, NoDataEndNotOpen, NoDataEndOverflow, NoDataEndUnavailable,
+	NoDataEndSendFailed, NoDataEndUndecodable, NoDataEndUnjudged}
+
+// RecoveryWithheldFact counts, for one evaluation, the Level outcomes whose
+// recovery was withheld for one reason.
+type RecoveryWithheldFact struct {
+	Reason RecoveryWithheldReason `json:"reason"`
+	Levels uint64                 `json:"levels"`
+}
+
 // LevelOutcomeFact is one cell of an evaluation's Level outcomes: the
 // outcome kind, the reason for an UNKNOWN or TERMINAL one (empty for the
 // business outcomes, which carry none), and how many Level outcomes fell in
@@ -2086,6 +2276,10 @@ type RecoveryGateFact struct {
 type LevelOutcomeFact struct {
 	Outcome string `json:"outcome"`
 	Reason  string `json:"reason,omitempty"`
+	// Carried says the reason is a stored guard's, repeated on this round,
+	// not anything this round's inputs said (execution.LevelOutcome's
+	// ReasonCarried). Only an UNKNOWN outcome's reason can be.
+	Carried bool   `json:"carried,omitempty"`
 	Count   uint64 `json:"count"`
 }
 
@@ -2150,6 +2344,9 @@ func normalizeLevelOutcomeFacts(observation Observation) []LevelOutcomeFact {
 			}
 		} else {
 			fact.Reason = ""
+		}
+		if fact.Outcome != "UNKNOWN" {
+			fact.Carried = false
 		}
 		facts = append(facts, fact)
 	}
@@ -2282,6 +2479,9 @@ type Observation struct {
 	// NoDataEmission is what the write did with the no-data events in it, on
 	// the write's own observation; nil when it carried none.
 	NoDataEmission *NoDataEmissionFacts
+	// NoDataManualClose is the output's manual-close check of a batch, on its
+	// own observation.
+	NoDataManualClose *NoDataManualCloseFacts
 	// PlanSeriesMatched is how many PRIMARY series this Slot's query bound to
 	// the Plan an evaluation line is about, on every evaluation line of that
 	// Plan and on the completion-only line of a Plan bound to none. A Plan
@@ -2310,6 +2510,27 @@ type Observation struct {
 	// ProgressCompletionScope is where that cause was found: the Plan, and the
 	// Level or the physical query. Nil when the completion carried no cause.
 	ProgressCompletionScope *CompletionScopeFacts
+	// EvaluationResult and EvaluationReason are the round's evaluation
+	// outcome on the query_completed line, beside the physical query's own
+	// Result and ReasonCode (evaluation_outcome.go). Empty elsewhere.
+	EvaluationResult Result
+	EvaluationReason ReasonCode
+	// CarriedReason says the line's evaluation reason - EvaluationReason on
+	// query_completed, ReasonCode on evaluation_completed - or its completion
+	// reason - on slot_completed and progress_committed - is a stored guard's
+	// rather than anything the round's inputs said, and where that guard
+	// came from. Nil when it is not carried.
+	CarriedReason *CarriedReasonFacts
+	// SlotCompletionCause and SlotCompletionReason are the completion's
+	// cause and its reason on the slot_completed line: the attribution the
+	// Progress commit reported as ProgressCompletionCause and
+	// ProgressCompletionReason. Separate fields so nothing that reads the
+	// progress line's cause counts a Slot twice.
+	SlotCompletionCause  string
+	SlotCompletionReason string
+	// ReadinessDeferral is what a Slot turned away as not ready waits for, on
+	// its QUERY_NOT_READY query_completed and slot_completed lines.
+	ReadinessDeferral *ReadinessDeferralFacts
 	// HistoryCoverage says how far short of the required window the series in
 	// this run actually were. HISTORY_WARMING alone cannot tell a series two
 	// rounds into its life, which converges by itself, from a series whose
@@ -2340,7 +2561,6 @@ type Observation struct {
 	Stage             Stage
 	Result            Result
 	Operation         Operation
-	Direction         Direction
 	ReasonCode        ReasonCode
 	Duration          time.Duration
 	Counts            Counts
@@ -2375,8 +2595,13 @@ type Observation struct {
 	SegmentContent      *SegmentContentFacts
 	RuntimeConfig       *RuntimeConfigFacts
 	QueryFailure        *QueryFailureFacts
-	QueryStatus         []QueryStatusFacts
-	QueryCodec          []QueryCodecFacts
+	// QueryRequest is the request a degraded or failed query_completed
+	// line's answer came from, for a line whose failure facts name none: a
+	// partial or empty answer, which the provider gave without failing. It
+	// is log-only and renders the same keys a failure's request does.
+	QueryRequest *QueryRequestFacts
+	QueryStatus  []QueryStatusFacts
+	QueryCodec   []QueryCodecFacts
 	// QueryTruncation is every physical query of the completion whose
 	// answer may have been cut by the query service's terms cap.
 	QueryTruncation []QueryTruncationFacts
@@ -2397,6 +2622,7 @@ type Observation struct {
 	ScheduleCutover      *ScheduleCutoverFacts
 	ReplayExpiry         *ReplayExpiryFacts
 	ReplayTakeover       *ReplayTakeoverFacts
+	SlotDiversion        *SlotDiversionFacts
 	// HeldBy is what the round before this one did with the Query Group. It
 	// sits on the Observation rather than inside one cohort's fact bundle:
 	// it first shipped inside ShortPeriodCompletionFacts, and every Query
@@ -2404,6 +2630,12 @@ type Observation struct {
 	// whose Slots are being skipped -- has no such bundle, so their
 	// completion lines carried no cause at all.
 	HeldBy *HeldByFacts
+	// DivertDecision is the decision that let a timed-out round run as a
+	// normal one; set only on such a round's completion.
+	DivertDecision *DivertDecisionFacts
+	// QueryBudget is the binding consumer's query budget, set only on the
+	// completion of a round that ended degraded.
+	QueryBudget *QueryBudgetFacts
 	// SlotCompletionKind is the completion the Slot reached, beside the reason
 	// the line reports.
 	//
@@ -2414,8 +2646,10 @@ type Observation struct {
 	// before it ran, and the two want opposite investigations. Its own field
 	// rather than ProgressCompletionKind, which target flow reads to fill
 	// Completion on a line that already emits its own.
-	SlotCompletionKind  string
-	RangeDistance       *RangeDistanceFacts
+	SlotCompletionKind string
+	RangeDistance      *RangeDistanceFacts
+	// SlotSkipped is one Slot, or range, finalised as skipped.
+	SlotSkipped         *SlotSkippedFacts
 	RangeGate           *RangeGateFacts
 	SlotWait            *SlotWaitFacts
 	ObjectCatalog       *ObjectCatalogFacts
@@ -2440,7 +2674,17 @@ type Observation struct {
 	// already holds its lease: the record arrives by renewal and the view by
 	// delta, at every Worker's start and on every move. A Query Group that
 	// stays there is counted on the gate's not_in_view gauge.
-	AwaitingView         bool
+	AwaitingView bool
+	// RetryingAfterFailure says a Slot's attempt failed and its Runner backs
+	// off and retries it: the line is retrying, with the failure's reason and
+	// error, at WARN, not the Slot's end at ERROR.
+	RetryingAfterFailure bool
+	// ReadAtLimit says a Slot's round was read at its Query Group's read hold
+	// limit while the group's data was measured landing past it: the round
+	// was decided before all of its data was there, and nothing holds it
+	// longer. Set only on slot_completed, and a successful line that carries
+	// it is written, not counted as routine (readAtLimitRound).
+	ReadAtLimit          bool
 	ViewStream           *ViewStreamFacts
 	CursorAdvance        *CursorAdvanceFacts
 	SourceRefresh        *SourceRefreshFacts
@@ -2448,7 +2692,10 @@ type Observation struct {
 	AlgorithmEvaluations []AlgorithmEvaluationFact
 	AlgorithmInputs      []AlgorithmInputFact
 	RecoveryGates        []RecoveryGateFact
-	OpenAlertGates       []OpenAlertGateFact
+	RecoveryWithheld     []RecoveryWithheldFact
+	// NoDataEnd is the outcome of a no_data_end line (NoDataEndOutcomes).
+	NoDataEnd      string `json:"no_data_end,omitempty"`
+	OpenAlertGates []OpenAlertGateFact
 	// LevelOutcomes is what the evaluation concluded per Level outcome and
 	// reason, on an evaluation_completed line: how many Level outcomes were
 	// NORMAL, ABNORMAL, RECOVERY, and for UNKNOWN and TERMINAL by which
@@ -2518,13 +2765,10 @@ func NormalizeObservation(observation Observation) Observation {
 	}
 	rawReason := observation.ReasonCode
 	observation.Component, observation.Stage = NormalizeComponentStage(observation.Component, observation.Stage)
-	if observation.Component != ComponentControlPlane || observation.Result != Result(ResultRecovered) {
-		observation.Result = NormalizeResult(observation.Result)
-	}
+	observation.Result = NormalizeResult(observation.Result)
 	observation.stageReasonBucket = rawReason == "" ||
 		(rawReason == ReasonNone && !resultAllowsNone(observation.Result))
 	observation.Operation = NormalizeOperation(observation.Operation)
-	observation.Direction = NormalizeDirection(observation.Direction)
 	observation.SourceKind = NormalizeSourceKind(observation.SourceKind)
 	if observation.Component == ComponentControlPlane && observation.SourceKind != "" && isSourceReasonClass(observation.ReasonCode) {
 		observation.ReasonCode = rawReason
@@ -2546,6 +2790,13 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ShortPeriodCompletion = normalizeShortPeriodCompletion(observation)
 	observation.StateApplyChunk = normalizeStateApplyChunk(observation)
 	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.QueryFailure)
+	observation = normalizeEvaluationOutcome(observation)
+	observation.ReadinessDeferral = normalizeReadinessDeferral(observation)
+	if observation.Component != ComponentAccess || observation.Stage != StageQueryCompleted ||
+		(observation.QueryFailure != nil && observation.QueryFailure.Request != nil) {
+		observation.QueryRequest = nil
+	}
+	observation.QueryRequest = normalizeQueryRequest(observation.QueryRequest)
 	observation.QueryStatus = normalizeQueryStatus(observation.Component, observation.Stage, observation.QueryStatus)
 	observation.QueryCodec = normalizeQueryCodec(observation.Component, observation.Stage, observation.QueryCodec)
 	observation.QueryTruncation = normalizeQueryTruncation(observation.QueryTruncation)
@@ -2570,6 +2821,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.Rebalance = normalizeRebalanceFacts(observation.Rebalance)
 	observation.ControlReads = normalizeControlReadFacts(observation.ControlReads)
 	observation.RangeDistance = normalizeRangeDistanceFacts(observation.RangeDistance)
+	observation.SlotSkipped = normalizeSlotSkippedFacts(observation.SlotSkipped)
 	observation.RangeGate = normalizeRangeGateFacts(observation.RangeGate)
 	observation.HeldBy = normalizeHeldByFacts(observation.HeldBy)
 	if observation.ReplayExpiry != nil {
@@ -2585,6 +2837,10 @@ func NormalizeObservation(observation Observation) Observation {
 	)
 	observation.AlgorithmEvaluations, observation.AlgorithmInputs = normalizeAlgorithmFacts(observation)
 	observation.RecoveryGates = normalizeRecoveryGateFacts(observation)
+	observation.RecoveryWithheld = normalizeRecoveryWithheldFacts(observation)
+	if observation.Stage != StageNoDataEnd || !slices.Contains(NoDataEndOutcomes, observation.NoDataEnd) {
+		observation.NoDataEnd = ""
+	}
 	observation.LevelOutcomes = normalizeLevelOutcomeFacts(observation)
 	observation.OpenAlertGates = normalizeOpenAlertGateFacts(observation)
 	observation.ControlSourceRound = normalizeControlSourceRoundFacts(observation)
@@ -2751,6 +3007,24 @@ func normalizeRecoveryGateFacts(observation Observation) []RecoveryGateFact {
 		}
 		switch fact.Cause {
 		case RecoveryGateLevelUnavailable, RecoveryGateLevelRecovering, RecoveryGateLevelWithoutRecovery:
+			facts = append(facts, fact)
+		}
+	}
+	if len(facts) == 0 {
+		return nil
+	}
+	return facts
+}
+
+// normalizeRecoveryWithheldFacts is normalizeRecoveryGateFacts for withheld
+// recoveries: same stage, the contract's closed set, zero counts dropped.
+func normalizeRecoveryWithheldFacts(observation Observation) []RecoveryWithheldFact {
+	if observation.Component != ComponentEvaluation || observation.Stage != StageEvaluationCompleted {
+		return nil
+	}
+	facts := make([]RecoveryWithheldFact, 0, len(observation.RecoveryWithheld))
+	for _, fact := range observation.RecoveryWithheld {
+		if fact.Levels > 0 && slices.Contains(RecoveryWithheldReasons, fact.Reason) {
 			facts = append(facts, fact)
 		}
 	}
@@ -3230,13 +3504,6 @@ func NormalizeCapacityBudget(budget CapacityBudget) CapacityBudget {
 	}
 }
 
-func NormalizeDirection(direction Direction) Direction {
-	if _, ok := directionSet[direction]; ok {
-		return direction
-	}
-	return DirectionOther
-}
-
 func NormalizeComponentStage(component Component, stage Stage) (Component, Stage) {
 	if _, ok := componentStageSet[ComponentStage{Component: component, Stage: stage}]; ok {
 		return component, stage
@@ -3406,6 +3673,10 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentControlPlane, StageAbsentStrategyClose},
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentControlPlane, StageActivationFailed},
+	// A failed write of the leader's control facts. It was written as
+	// fleet/control_facts, words no catalogue names, and read _other/_other;
+	// its own family (fleet_control_facts_writes_total) counts every write.
+	{ComponentRuntime, StageFleetControlFactsPublish},
 	// The catalog's three stages were emitted from the day the catalog
 	// existed and listed nowhere, so NormalizeComponentStage folded every one
 	// of them to (_other, _other) and the generic counter admitted them as
@@ -3428,7 +3699,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentOwnership, StageControlReadsSpent},
 	{ComponentOwnership, StageAssignmentIndexWritten}, {ComponentOwnership, StageAssignmentIndexRead},
 	{ComponentOwnership, StageAssignmentSwept}, {ComponentOwnership, StageAssignmentApplied},
-	{ComponentOwnership, StageHandoverDrained},
+	{ComponentOwnership, StageHandoverDrained}, {ComponentRuntime, StageShutdownDrainBegan},
 	{ComponentOwnership, StageViewPublished}, {ComponentOwnership, StageViewSession}, {ComponentOwnership, StageViewInstalled},
 	{ComponentOwnership, StageTakeoverStarted}, {ComponentOwnership, StageTakeoverCompleted},
 	{ComponentOwnership, StageLeaseRenewed}, {ComponentOwnership, StageFenceChecked},
@@ -3441,7 +3712,9 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
 	{ComponentScheduler, StageScheduleCursorAdvanced}, {ComponentScheduler, StageReplayExpired},
 	{ComponentScheduler, StageReplayTakeover},
+	{ComponentScheduler, StageSlotDiverted},
 	{ComponentScheduler, StageRangeDistanceExpired},
+	{ComponentScheduler, StageSlotSkipped},
 	{ComponentScheduler, StageRangeGateDecided},
 	{ComponentScheduler, StageSlotWait},
 	{ComponentAccess, StageQueryCompleted},
@@ -3451,6 +3724,7 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentState, StageStatePreflight}, {ComponentState, StageGapLoaded},
 	{ComponentState, StageGapGuardProgress},
 	{ComponentEvaluation, StageNoDataDecided},
+	{ComponentState, StageNoDataEnd},
 	{ComponentAccess, StageTargetResolved},
 	{ComponentProgress, StageExecutionEvidenceWritten},
 	{ComponentState, StageNoDataMemoryRead},
@@ -3460,10 +3734,12 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentState, StageNoDataMemoryWritten},
 	{ComponentControlPlane, StageSourceWithheld},
 	{ComponentControlPlane, StageNoDataSuspended},
+	{ComponentControlPlane, StageControlHandbackWatch},
+	{ComponentRuntime, StageTraceExport},
 	{ComponentState, StageSideEffectAdmission}, {ComponentState, StageGapGuardCommitted},
 	{ComponentState, StageMutationCompared}, {ComponentState, StageStateAdmission}, {ComponentState, StageWarmingPeak},
 	{ComponentState, StageStateApplied}, {ComponentState, StageOutputUnapplied},
-	{ComponentOutput, StageEventACKed},
+	{ComponentOutput, StageEventACKed}, {ComponentOutput, StageNoDataManualCloseChecked},
 	{ComponentProgress, StageProgressCommitted},
 }
 
@@ -3472,9 +3748,15 @@ var allComponentStages = append(
 	phaseTwoComponentStages...,
 )
 
+// allResults is every result an observation may carry. skipped is a Slot or
+// a supplement that ran nothing by name (held for a supplement or for
+// maintenance, a kept read that does not hold the query); recovered is the
+// control plane's end of a degraded episode. Both were written and folded to
+// _other on every line and cell until listed here.
 var allResults = []Result{
 	Result(ResultStarted), Result(ResultSuccess), ResultTerminal, ResultRetrying, ResultPaused,
-	ResultResumed, ResultDegraded, Result(ResultTimeout), Result(ResultFailed), ResultOther,
+	ResultResumed, ResultDegraded, Result(ResultTimeout), Result(ResultFailed),
+	Result(ResultSkipped), Result(ResultRecovered), ResultOther,
 }
 
 var metricOperations = []Operation{
@@ -3487,13 +3769,15 @@ var metricOperations = []Operation{
 var phaseTwoOperations = []Operation{OperationNormal, OperationRetry, OperationReplay, OperationProbe, OperationSupplement}
 var allOperations = append(append([]Operation(nil), metricOperations...), phaseTwoOperations...)
 
-var allDirections = []Direction{DirectionInput, DirectionOutput, DirectionInternal, DirectionOther}
-
 // unclassifiedReasons are the reasons that carry no classification of their
 // own: the absence of one, a site that says it does not know, and a site that
 // did not say. They are listed once and shared, so adding one cannot silently
 // change what counts as a resource reason.
 var unclassifiedReasons = []ReasonCode{ReasonNone, ReasonInternalUnknown, ReasonNotReported}
+
+// ReasonTraceExportFailed is the trace_export line's reason: a batch of
+// alarmd's own spans the collector did not take, the error beside it.
+const ReasonTraceExportFailed ReasonCode = "trace_export_failed"
 
 // The effective-time maintenance's outcomes: the closed list of what one
 // maintenance step does to a Query Group, an alert or a close batch. They
@@ -3546,6 +3830,21 @@ const (
 	// time its batch was ready. The batch is not sent, and the step goes on
 	// to the Query Group's next Plan.
 	EffectiveCloseBoundaryActive ReasonCode = "close_boundary_active"
+	// EffectiveCloseBusinessUnknown is an alert of a global business Plan
+	// whose record could not be read or names no business. Such a Plan's
+	// alerts are each filed under the business they are about, and a close
+	// must carry it; the alert is not closed this round. Counts alerts.
+	EffectiveCloseBusinessUnknown ReasonCode = "close_business_unknown"
+	// EffectiveCloseSourceLastKnown is a step whose read of this
+	// deployment's event source failed, or waited out its back-off, and
+	// whose closes were decided on the source last read: a deployment
+	// property that an outage of the alert link's Console does not change.
+	// One per step, not per Query Group.
+	EffectiveCloseSourceLastKnown ReasonCode = "source_last_known"
+	// EffectiveCloseSourceUnknown is a step whose closes were deferred: the
+	// event source could not be read and none has been read yet, by this
+	// loop or by the open-alert copy. One per step.
+	EffectiveCloseSourceUnknown ReasonCode = "source_unknown"
 )
 
 // EffectiveCloseOutcomes is every outcome, for the metric to pre-create each
@@ -3555,6 +3854,7 @@ var EffectiveCloseOutcomes = []ReasonCode{
 	EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
 	EffectiveCloseEffectiveTimeUnknown, EffectiveCloseLegacyUnavailable, EffectiveCloseUnavailable, EffectiveCloseUnsupportedRunner,
 	EffectiveCloseViewNotExecutable, EffectiveCloseCalendarDeletionUnsettled, EffectiveCloseBoundaryActive,
+	EffectiveCloseBusinessUnknown, EffectiveCloseSourceLastKnown, EffectiveCloseSourceUnknown,
 }
 
 // Maintenance details are bounded log reasons, not new metric label dimensions.
@@ -3612,6 +3912,17 @@ var ViewStreamReasons = []ReasonCode{
 	// a live deployment they shared one, and the one word sent the reader to
 	// the lease when the endpoint was what was missing.
 	"NO_LEADER", "LEADER_UNREGISTERED", "LEADER_NO_ENDPOINT", "DISCOVERY_FAILED", "LEADER_SILENT", "STREAM_CLOSED", "RECV_FAILED",
+	// The Leader's send to a Worker failing: the session's end on the
+	// Leader's side, as RECV_FAILED is on the Worker's.
+	"SEND_FAILED",
+	// The Worker's Hello not sent to the Leader it reached: a failure to
+	// join, not a session's end.
+	"HELLO_SEND_FAILED",
+	// A Worker that found its Leader and could not reach it: the address
+	// refused or unreachable (LEADER_UNAVAILABLE), the client not built for
+	// it (DIAL_FAILED), or the stream not opened for another cause
+	// (CONNECT_FAILED). The address itself is the line's endpoint.
+	"LEADER_UNAVAILABLE", "DIAL_FAILED", "CONNECT_FAILED",
 	// A process that cannot advertise an endpoint of its own, said once at
 	// startup rather than by every other Worker every discovery.
 	"LISTENER_UNPARSABLE", "NO_ROUTE",
@@ -3654,6 +3965,29 @@ var SchedulerDecisionReasons = func() []ReasonCode {
 	return reasons
 }()
 
+// SlotPathReasons are the words the Slot path's own lines name as their
+// reason that no other list holds: a Runner round's outcome on its
+// runner_returned line (RunOutcomes), which said terminal with no reason,
+// and the refusal a store found against skipping a pruned cursor
+// (CursorRefusals), which said retrying with none; and a slow wait inside a
+// Slot attempt, which said degraded with none; and an execution declined as
+// hung, which said failed with none.
+var SlotPathReasons = func() []ReasonCode {
+	reasons := make([]ReasonCode, 0, len(RunOutcomes)+len(CursorRefusals)+2)
+	reasons = append(reasons, ReasonSlotWaitSlow, ReasonExecutionHung)
+	for _, outcome := range RunOutcomes {
+		reasons = append(reasons, ReasonCode(outcome))
+	}
+	for _, refusal := range CursorRefusals {
+		if refusal != CursorRefusalOther {
+			reasons = append(reasons, ReasonCode(refusal))
+		}
+	}
+	return reasons
+}()
+
+var slotPathReasonSet = makeReasonSet(SlotPathReasons)
+
 var allCommonReasons = joinReasons(unclassifiedReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 var allResourceReasons = joinReasons(
 	unclassifiedReasons, resourceOnlyReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
@@ -3661,14 +3995,13 @@ var allResourceReasons = joinReasons(
 // allLogReasons is every reason NormalizeReason can return: the limiter keeps
 // a bucket for each, and refuses a reason it has none for, so a catalogue
 // NormalizeReason accepts and this list leaves out has its lines dropped.
-var allLogReasons = joinReasons(unclassifiedReasons, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, effectiveMaintenanceReasons, AbsentCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+var allLogReasons = joinReasons(unclassifiedReasons, []ReasonCode{ReasonTraceExportFailed}, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, SlotPathReasons, effectiveMaintenanceReasons, AbsentCloseReasons, CompletionAttributionReasons, AdmissionFailureReasons, NoDataStallReasons, contractClassReasons, []ReasonCode{ReasonHeldBySupplement, ReasonHeldByMaintenance, ReasonSlotCancelled}, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
 var resultSet = makeResultSet(allResults)
 var operationSet = makeOperationSet(allOperations)
 var metricOperationSet = makeOperationSet(metricOperations)
-var directionSet = makeDirectionSet(allDirections)
 var logReasonSet = makeReasonSet(AllLogReasons())
 var commonReasonSet = makeReasonSet(joinReasons(unclassifiedReasons, []ReasonCode{ReasonStateAlreadyAppliedBeforeEvaluation}))
 var resourceReasonSet = makeReasonSet(resourceOnlyReasons)
@@ -3697,14 +4030,6 @@ func makeResultSet(values []Result) map[Result]struct{} {
 
 func makeOperationSet(values []Operation) map[Operation]struct{} {
 	result := make(map[Operation]struct{}, len(values))
-	for _, value := range values {
-		result[value] = struct{}{}
-	}
-	return result
-}
-
-func makeDirectionSet(values []Direction) map[Direction]struct{} {
-	result := make(map[Direction]struct{}, len(values))
 	for _, value := range values {
 		result[value] = struct{}{}
 	}
@@ -3800,17 +4125,18 @@ func ObserveSlotWait(
 	if elapsed < 0 {
 		return
 	}
-	result := Result(ResultSuccess)
+	result, reason := Result(ResultSuccess), ReasonNone
 	if elapsed >= SlowSlotWait {
 		// Not a failure -- nothing went wrong and nothing will report one.
 		// Degraded is what a Slot attempt that spent this long waiting is,
-		// and it is what keeps the line out of the success population.
-		result = Result(ResultDegraded)
+		// and it is what keeps the line out of the success population; its
+		// reason says that, and not that the site failed to report one.
+		result, reason = Result(ResultDegraded), ReasonSlotWaitSlow
 	}
 	// Observability is a fail-open side channel, as at every other boundary.
 	defer func() { _ = recover() }()
 	observer.Observe(ctx, Observation{
-		Component: ComponentScheduler, Stage: StageSlotWait, Result: result, Operation: operation,
-		Direction: DirectionInternal, Duration: elapsed, SlotWait: &SlotWaitFacts{Wait: wait},
+		Component: ComponentScheduler, Stage: StageSlotWait, Result: result, ReasonCode: reason, Operation: operation,
+		Duration: elapsed, SlotWait: &SlotWaitFacts{Wait: wait},
 	})
 }

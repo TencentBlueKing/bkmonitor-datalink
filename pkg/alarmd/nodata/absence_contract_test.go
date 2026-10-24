@@ -110,7 +110,8 @@ func copyGroups(groups map[string]Group) map[string]Group {
 //   - in a FULL round every group of this item's own that reported is NORMAL,
 //     and the whole item is NORMAL when anything reported: the retention
 //     proposal's section 4 item 2, and the backend's whole-item recovery on
-//     any data (nodata.py:85, :100);
+//     any data (nodata.py:85, :100) - unless recovery is disabled, where such
+//     a group has no verdict at all and is remembered as seen this round;
 //   - when the roster is not empty, every roster group has a verdict - a
 //     group that is expected and gets no answer is the silent gap the
 //     completeness gate exists to prevent;
@@ -142,7 +143,20 @@ func evaluate(t *testing.T, input AbsenceInput) AbsenceResult {
 		}
 		t.Fatalf("Evaluate() gave verdict %q to %q, which is neither a roster group, the whole-item group, a group that reported, nor an open absence being closed", verdict, key)
 	}
-	if input.Completeness == execution.CompletenessFull {
+	if input.Completeness == execution.CompletenessFull && input.RecoveryDisabled {
+		for key := range input.Present {
+			if _, foreign := input.OutOfBusiness[key]; foreign || key == whole {
+				continue
+			}
+			if got, judged := result.Verdicts[key]; judged || result.Memory[key].LastSeen != input.EvaluationTime {
+				t.Fatalf("Evaluate() gave %q (judged %v) to %q, which reported with recovery disabled; want no verdict, seen this round",
+					got, judged, key)
+			}
+		}
+		if got, judged := result.Verdicts[whole]; len(input.Present) > 0 && judged && got != VerdictNormal {
+			t.Fatalf("Evaluate() gave the whole item %q in a FULL round with data and recovery disabled; want no verdict", got)
+		}
+	} else if input.Completeness == execution.CompletenessFull {
 		for key := range input.Present {
 			if _, foreign := input.OutOfBusiness[key]; foreign {
 				continue
@@ -169,6 +183,11 @@ func evaluate(t *testing.T, input AbsenceInput) AbsenceResult {
 			// silent gap this check exists to catch.
 			entry, remembered := result.Memory[key]
 			if remembered && entry.SuppressedAt != 0 {
+				continue
+			}
+			// Present with recovery disabled: answered by being seen, with no
+			// verdict, so no NORMAL ends an alert its absence opened.
+			if _, present := input.Present[key]; present && input.RecoveryDisabled && remembered && entry.LastSeen == input.EvaluationTime {
 				continue
 			}
 			if !remembered && input.Roster.Source == RosterHistory && input.TrackingHorizonSeconds > 0 {

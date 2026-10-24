@@ -24,6 +24,11 @@ type DepartedStrategy struct {
 	StrategyID string
 	BusinessID int64
 	Revision   int64
+	// GlobalBusiness is the Plan's global business switch. Such a strategy's
+	// alerts are each filed under the business they are about, and
+	// BusinessID is only the strategy's own; a close reads each alert's
+	// from its record.
+	GlobalBusiness bool
 	// At is when the catalog stopped publishing the strategy - which is
 	// already past the removal grace and two observations of the source, so
 	// it is a confirmed departure rather than a first sighting.
@@ -157,7 +162,7 @@ func publishedIdentities(groups []QueryGroup) map[string]DepartedStrategy {
 				business = 0
 			}
 			identities[key] = DepartedStrategy{TenantID: plan.Identity.TenantID, StrategyID: plan.Identity.StrategyID,
-				BusinessID: business, Revision: plan.Plan.StrategyRef.SnapshotRevision}
+				BusinessID: business, Revision: plan.Plan.StrategyRef.SnapshotRevision, GlobalBusiness: plan.Plan.GlobalBusiness}
 		}
 	}
 	return identities

@@ -58,7 +58,7 @@ func TestTheProductionFleetRouteServesAHealthyObjectsLiveRow(t *testing.T) {
 	traced := observability.ContextWithTraceFields(ctx, observability.TraceFields{QueryGroupKey: "qg-healthy"})
 	bundle.dependencies.Observer.Observe(traced, observability.Observation{
 		Component: observability.ComponentEvaluation, Stage: observability.StageNoDataDecided,
-		Direction: observability.DirectionInternal, Result: observability.ResultSuccess,
+		Result:        observability.ResultSuccess,
 		Trace:         observability.TraceFields{StrategyID: "4101", BusinessID: "2", EvaluationTime: 600},
 		NoDataAbsence: &observability.NoDataAbsenceFacts{Outcome: "EVALUATED", RosterSource: "HISTORY", Expected: 2, Present: 1, Absent: 1},
 	})

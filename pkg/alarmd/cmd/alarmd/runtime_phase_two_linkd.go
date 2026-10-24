@@ -54,8 +54,8 @@ func effectiveTimeFailureLine(logger *observability.Logger) func(dependency, cla
 }
 
 func newLinkdIndex(cfg config.Config, client redis.UniversalClient, connection config.RedisConnectionConfig,
-	discovery *fleet.LinkdDiscoveryFacts, open func(config.RedisConnectionConfig) (redis.UniversalClient, bool), now func() time.Time,
-	logger *observability.Logger) (linkdIndex, error) {
+	discovery *fleet.LinkdDiscoveryFacts, open func(config.RedisConnectionConfig) (redis.UniversalClient, bool), token openalerts.TokenSource,
+	now func() time.Time, logger *observability.Logger) (linkdIndex, error) {
 	capacity := config.DeriveLinkdCapacity(config.DetectCapacityInputs())
 	settings := cfg.PhaseTwo.Linkd
 	// One read cannot monopolize the allowance for the whole worker. These
@@ -86,11 +86,19 @@ func newLinkdIndex(cfg config.Config, client redis.UniversalClient, connection c
 	var err error
 	if settings.ConsoleURL != "" {
 		// The link's target, and its source scope, are read from the
-		// Console, which lists one target for a link alarmd reads.
+		// Console, which lists one target for a link alarmd reads. The
+		// client has no timeout of its own: each call is bounded by its
+		// caller's deadline (a calibration's derived one, a page's, the
+		// absent-close round's), which the client requires (ErrNoDeadline).
+		// A client-wide 5 s used to cut every one of them, longer ones
+		// included.
 		console, err = openalerts.NewHTTPReconciler(openalerts.HTTPReconcilerOptions{BaseURL: settings.ConsoleURL,
-			Username: settings.Username, Password: settings.Password, Client: &http.Client{Timeout: 5 * time.Second}, MaxResponseBytes: int64(capacity.Bytes / 4),
+			Username: settings.Username, Password: settings.Password, Token: token, Client: &http.Client{}, MaxResponseBytes: int64(capacity.Bytes / 4),
 			Now: now, Index: index, LocationConfirmed: adopted, OnLocationMismatch: location.relocate,
-			KeyingEvery: config.LinkdCalibrationInterval, OnFailure: consoleFailureLine(logger)})
+			KeyingEvery: config.LinkdCalibrationInterval, OnFailure: consoleFailureLine(logger),
+			// The source this deployment's events arrive under is the one
+			// subscribed to the topic they are written to.
+			OutputTopic: cfg.Kafka.TriggerEvent.Topic})
 		if err != nil {
 			return linkdIndex{}, err
 		}
@@ -101,9 +109,12 @@ func newLinkdIndex(cfg config.Config, client redis.UniversalClient, connection c
 	// floor, and what a round calibrates before any Console call has been
 	// timed; each round then calibrates what covers every tracked strategy
 	// within the calibration interval, at the pace the Console's measured p90
-	// allows inside half of CycleTimeout (openalerts calibrationPlan), and a
-	// shortfall is reported as calibration_short. RefreshInterval is the
-	// round's cadence and CycleTimeout bounds one round.
+	// allows before the next round is due (openalerts calibrationPlan), and a
+	// shortfall is reported as calibration_short. Calibration runs in its own
+	// loop, each call under a deadline derived from the Console's measured
+	// tail (openalerts calibrationDeadline). RefreshInterval is both rounds'
+	// cadence; CycleTimeout now bounds only the index round's Redis
+	// reads, left for the timeout audit.
 	cache, err := openalerts.NewIndex(openalerts.IndexOptions{Source: location, Subscriber: location, Reconciler: reconciler, Now: now,
 		Policy: openalerts.PolicySelfMaintain, MaxStrategies: capacity.Strategies, MaxMembers: capacity.Members, MaxBytes: capacity.Bytes,
 		MaxLocalEntries: capacity.LocalEntries, ReadBatch: capacity.ReadBatch, ReconcileBatch: 1, RefreshInterval: time.Second,

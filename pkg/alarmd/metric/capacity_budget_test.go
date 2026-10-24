@@ -62,7 +62,7 @@ func fullCapacityLoad() CapacityLoad {
 // to end -- the limit was previously only printed once at startup.
 func TestCapacityBudgetsUseTheSameLabelsAsRejections(t *testing.T) {
 	gathered := gatherCapacity(t, fullCapacityLoad())
-	budgets := gathered["bkmonitor_alarmd_capacity_budget"]
+	budgets := gathered["alarmd_capacity_budget"]
 	for _, budget := range phaseTwoBudgets {
 		if budget == "other" {
 			// "other" collects unknown budgets on the rejection side; there is
@@ -86,18 +86,18 @@ func TestCapacityBudgetsUseTheSameLabelsAsRejections(t *testing.T) {
 // every budget derived from it look authoritative.
 func TestCapacityLoadCarriesTheSourceOfEveryLimit(t *testing.T) {
 	gathered := gatherCapacity(t, fullCapacityLoad())
-	if got := gathered["bkmonitor_alarmd_container_memory_limit_bytes"]["pod_limit"]; got != 8589934592 {
+	if got := gathered["alarmd_container_memory_limit_bytes"]["pod_limit"]; got != 8589934592 {
 		t.Fatalf("memory limit not labelled with its source: %v",
-			gathered["bkmonitor_alarmd_container_memory_limit_bytes"])
+			gathered["alarmd_container_memory_limit_bytes"])
 	}
-	if got := gathered["bkmonitor_alarmd_container_cpu_cores"]["environment_override"]; got != 8 {
-		t.Fatalf("cpu cores not labelled with its source: %v", gathered["bkmonitor_alarmd_container_cpu_cores"])
+	if got := gathered["alarmd_container_cpu_cores"]["environment_override"]; got != 8 {
+		t.Fatalf("cpu cores not labelled with its source: %v", gathered["alarmd_container_cpu_cores"])
 	}
 	// A source this build does not know must land in a visible bucket rather
 	// than opening a new series.
 	invented := fullCapacityLoad()
 	invented.MemorySource = "a_source_from_the_future"
-	if got := gatherCapacity(t, invented)["bkmonitor_alarmd_container_memory_limit_bytes"]["other"]; got == 0 {
+	if got := gatherCapacity(t, invented)["alarmd_container_memory_limit_bytes"]["other"]; got == 0 {
 		t.Fatal("an unknown limit source escaped the closed label set")
 	}
 }
@@ -110,8 +110,8 @@ func TestEveryCPUSourceIsItsOwnLabel(t *testing.T) {
 	for _, source := range []string{"cpu_quota", "cpu_quota_minimum", "environment_override", "runtime_default"} {
 		load := fullCapacityLoad()
 		load.CPUSource = source
-		if got := gatherCapacity(t, load)["bkmonitor_alarmd_container_cpu_cores"][source]; got != 8 {
-			t.Fatalf("CPU source %s read as %v, want its own label", source, gatherCapacity(t, load)["bkmonitor_alarmd_container_cpu_cores"])
+		if got := gatherCapacity(t, load)["alarmd_container_cpu_cores"][source]; got != 8 {
+			t.Fatalf("CPU source %s read as %v, want its own label", source, gatherCapacity(t, load)["alarmd_container_cpu_cores"])
 		}
 	}
 }
@@ -123,15 +123,15 @@ func TestCapacityLoadLeavesUnreadableUsageAbsentRatherThanZero(t *testing.T) {
 	load := fullCapacityLoad()
 	load.MemoryUsedKnown, load.ThrottledKnown = false, false
 	gathered := gatherCapacity(t, load)
-	if _, present := gathered["bkmonitor_alarmd_container_memory_used_bytes"]; present {
+	if _, present := gathered["alarmd_container_memory_used_bytes"]; present {
 		t.Fatal("unreadable memory usage was published as a value")
 	}
-	if _, present := gathered["bkmonitor_alarmd_container_cpu_throttled_seconds_total"]; present {
+	if _, present := gathered["alarmd_container_cpu_throttled_seconds_total"]; present {
 		t.Fatal("unreadable throttling was published as a value")
 	}
 	// The limits are still published: what the process was given is known even
 	// where what it uses is not.
-	if len(gathered["bkmonitor_alarmd_container_memory_limit_bytes"]) != 1 {
+	if len(gathered["alarmd_container_memory_limit_bytes"]) != 1 {
 		t.Fatalf("limits disappeared with the usage: %v", gathered)
 	}
 }

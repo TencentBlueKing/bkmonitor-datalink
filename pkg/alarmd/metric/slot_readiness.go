@@ -28,8 +28,8 @@ var slotReadinessSlackBuckets = []float64{0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120
 func newSlotReadinessMetrics() slotReadinessMetrics {
 	return slotReadinessMetrics{
 		slack: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem,
-			Name: "slot_readiness_slack_seconds",
+			Subsystem: metricSubsystem,
+			Name:      "slot_readiness_slack_seconds",
 			Help: "How long a Slot's data had already been readable when an execution arrived to read " +
 				"it, for normal operations whose queries share one readiness moment. Arriving early is " +
 				"turned away before this point and counted as a deferral, so this measures the other " +
@@ -40,8 +40,8 @@ func newSlotReadinessMetrics() slotReadinessMetrics {
 			Buckets: slotReadinessSlackBuckets,
 		}),
 		boundary: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Namespace: metricNamespace, Subsystem: metricSubsystem,
-			Name: "slot_readiness_boundary_total",
+			Subsystem: metricSubsystem,
+			Name:      "slot_readiness_boundary_total",
 			Help: "Normal executions by whether their queries agree on one moment the data becomes " +
 				"readable. Only a unified boundary contributes to slot_readiness_slack_seconds, so this " +
 				"is what says how much of the population that histogram covers: a mixed Slot has no one " +

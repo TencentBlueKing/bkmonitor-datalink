@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // fakeCluster is one Deployment and a controller the test moves by hand.
@@ -119,9 +121,7 @@ func run(t *testing.T, d *Driver) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { d.Run(ctx); close(done) }()
-	for d.runContext() != ctx {
-		time.Sleep(time.Millisecond)
-	}
+	testwait.Until(t, "the driver running on its context", func() bool { return d.runContext() == ctx })
 	var once sync.Once
 	stop := func() { once.Do(func() { cancel(); <-done }) }
 	t.Cleanup(stop)
@@ -131,12 +131,12 @@ func run(t *testing.T, d *Driver) func() {
 // waitState waits for a receipt to reach a state, by reading the store.
 func waitState(t *testing.T, store *Store, id, state string) Record {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if entry, err := store.Get(context.Background(), id); err == nil && entry.Record.State == state {
 			return entry.Record
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	entry, err := store.Get(context.Background(), id)
 	t.Fatalf("receipt %s never reached %s: %+v %v", id, state, entry.Record, err)
@@ -148,12 +148,12 @@ func waitState(t *testing.T, store *Store, id, state string) Record {
 // the states that follow it too.
 func waitStateIn(t *testing.T, store *Store, id string, states ...string) Record {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if entry, err := store.Get(context.Background(), id); err == nil && slices.Contains(states, entry.Record.State) {
 			return entry.Record
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	entry, err := store.Get(context.Background(), id)
 	t.Fatalf("receipt %s never reached any of %v: %+v %v", id, states, entry.Record, err)
@@ -202,20 +202,20 @@ func TestASelfUpdateIsFinishedByTheProcessThatTakesItOver(t *testing.T) {
 // waitFinals waits for the final callback to have run n times.
 func waitFinals(t *testing.T, f *finals, n int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for f.count() < n && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 }
 
 func waitDriving(t *testing.T, d *Driver, n int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for d.Driving() != n {
 		if time.Now().After(deadline) {
 			t.Fatalf("driving %d, want %d", d.Driving(), n)
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 }
 
@@ -248,12 +248,12 @@ func TestARolloutPastItsDeadlineIsReverted(t *testing.T) {
 
 func waitWrites(t *testing.T, cluster *fakeCluster, n int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for len(cluster.imageWrites()) < n {
 		if time.Now().After(deadline) {
 			t.Fatalf("image writes %v, want %d", cluster.imageWrites(), n)
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 }
 
@@ -324,7 +324,10 @@ func TestARevertAlreadyWrittenByALostHolderEndsReverted(t *testing.T) {
 	d, _ := testDriver(t, store, cluster, "pod-b/1")
 	run(t, d)
 	waitState(t, store, "r1", StateReverting)
-	time.Sleep(50 * time.Millisecond)
+	testwait.Until(t, "the successor finding the revert already landed", func() bool {
+		entry, err := store.Get(context.Background(), "r1")
+		return err == nil && entry.Record.RevertSent
+	})
 	cluster.set(finish)
 	final := waitState(t, store, "r1", StateReverted)
 	if len(cluster.imageWrites()) != 0 || final.Generation != 3 {
@@ -395,7 +398,12 @@ func TestAPendingReceiptIsDecidedByTheImage(t *testing.T) {
 			if err := store.Create(context.Background(), testRecord("r1"), "pod-a/1"); err != nil {
 				t.Fatal(err)
 			}
-			_ = store.Release(context.Background(), "r1", "pod-a/1")
+			// The receipt is left pending by a released lease, which the
+			// next driver takes at once; one still held would be taken only
+			// once it ran out.
+			if err := store.Release(context.Background(), "r1", "pod-a/1"); err != nil {
+				t.Fatal(err)
+			}
 			d, _ := testDriver(t, store, cluster, "pod-b/1")
 			run(t, d)
 			waitStateIn(t, store, "r1", tc.states...)
@@ -430,7 +438,7 @@ func TestASlowRolloutThatKeepsMovingCompletes(t *testing.T) {
 	}
 	// One replica every 50 ms: a second in all, against a 150 ms bound.
 	for updated := int32(1); updated <= 20; updated++ {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond) // fixed-wait: the controller's pace, one replica every 50 ms against the 150 ms bound, which the case sets
 		cluster.set(func(dep *Deployment) { dep.Updated, dep.Available = updated, updated })
 	}
 	cluster.set(finish)
@@ -450,7 +458,7 @@ func TestAPausedRolloutIsNotReverted(t *testing.T) {
 	d.margin = 50 * time.Millisecond
 	run(t, d)
 	receipt, _ := d.Start(context.Background(), request())
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond) // fixed-wait: a window in which the paused rollout must not be reverted; 300 ms is six times its 50 ms bound; an absence sends no signal to wait on
 	if entry, _ := store.Get(context.Background(), receipt.ID); entry.Record.State != StateRollingOut || len(cluster.imageWrites()) != 1 {
 		t.Fatalf("paused: %+v writes %v, want still rolling out", entry.Record, cluster.imageWrites())
 	}
@@ -498,7 +506,7 @@ func TestARolloutWithOldPodsLeftIsNotComplete(t *testing.T) {
 	run(t, d)
 	receipt, _ := d.Start(context.Background(), request())
 	cluster.set(func(dep *Deployment) { finish(dep); dep.StatusReplicas = 2 })
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // fixed-wait: a window in which the rollout must not complete with an old Pod left; 100 ms is ten 10 ms polls; an absence sends no signal to wait on
 	if entry, _ := store.Get(context.Background(), receipt.ID); entry.Record.State != StateRollingOut {
 		t.Fatalf("with an old Pod left: %+v", entry.Record)
 	}
@@ -519,7 +527,7 @@ func TestADeadlineFromThePreviousGenerationIsNotThisRollouts(t *testing.T) {
 		dep.ObservedGeneration = dep.Generation - 1
 		dep.Progressing.Status, dep.Progressing.Reason = "False", "ProgressDeadlineExceeded"
 	})
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // fixed-wait: a window in which the stale deadline must not revert the rollout; 100 ms is ten 10 ms polls; an absence sends no signal to wait on
 	if entry, _ := store.Get(context.Background(), receipt.ID); entry.Record.State != StateRollingOut || len(cluster.imageWrites()) != 1 {
 		t.Fatalf("a stale deadline: %+v writes %v", entry.Record, cluster.imageWrites())
 	}
@@ -534,7 +542,7 @@ func TestAPausedRolloutIsNotRevertedOnAStaleDeadline(t *testing.T) {
 	run(t, d)
 	receipt, _ := d.Start(context.Background(), request())
 	cluster.set(func(dep *Deployment) { exceed(dep); dep.Paused = true })
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // fixed-wait: a window in which the paused rollout must not be reverted on the stale deadline; 100 ms is ten 10 ms polls; an absence sends no signal to wait on
 	if entry, _ := store.Get(context.Background(), receipt.ID); entry.Record.State != StateRollingOut || len(cluster.imageWrites()) != 1 {
 		t.Fatalf("paused: %+v writes %v", entry.Record, cluster.imageWrites())
 	}
@@ -555,12 +563,11 @@ func TestAProcessThatLostItsReceiptWritesNoRevert(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster.set(exceed)
-	time.Sleep(150 * time.Millisecond)
+	// Once it stops driving the receipt it can write nothing more: a revert
+	// it was going to write is either among the writes by then or never.
+	testwait.Until(t, "the process that lost the receipt stopping driving it", func() bool { return d.Driving() == 0 })
 	if writes := cluster.imageWrites(); len(writes) != 1 {
 		t.Fatalf("writes %v, want no revert from the process that lost the receipt", writes)
-	}
-	if d.Driving() != 0 {
-		t.Fatal("the process that lost the receipt is still driving it")
 	}
 }
 
@@ -606,10 +613,12 @@ func TestAHungReadDoesNotHoldTheDriverPastItsLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster.hang.Store(true)
-	time.Sleep(700 * time.Millisecond)
+	// Each hung read is bounded, so the driver comes back to read again.
+	testwait.Until(t, "the driver reading again past its hung reads", func() bool { return cluster.reads.Load() >= 3 })
+	time.Sleep(700 * time.Millisecond) // fixed-wait: an absence window over two 300 ms leases; a driver that does not renew between its hung reads lets the lease lapse inside one
 	entry, _ := store.Get(context.Background(), receipt.ID)
-	if entry.DrivenBy != "pod-a/1" || entry.LeaseExpired() || cluster.reads.Load() < 3 {
-		t.Fatalf("after a hung read: driven by %q, lease expired %v, %d reads", entry.DrivenBy, entry.LeaseExpired(), cluster.reads.Load())
+	if entry.DrivenBy != "pod-a/1" || entry.LeaseExpired() {
+		t.Fatalf("after hung reads: driven by %q, lease expired %v, %d reads", entry.DrivenBy, entry.LeaseExpired(), cluster.reads.Load())
 	}
 	cluster.hang.Store(false)
 	cluster.set(finish)
@@ -626,27 +635,27 @@ func TestAPauseIsWrittenOnceNotEveryPoll(t *testing.T) {
 	run(t, d)
 	receipt, _ := d.Start(context.Background(), request())
 	cluster.set(func(dep *Deployment) { dep.Paused = true })
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	var paused Record
 	for time.Now().Before(deadline) {
 		if entry, _ := store.Get(context.Background(), receipt.ID); entry.Record.Paused {
 			paused = entry.Record
 			break
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if !paused.Paused {
 		t.Fatal("the pause was never written")
 	}
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(150 * time.Millisecond) // fixed-wait: a window in which the paused record must not be rewritten; 150 ms is fifteen 10 ms polls; an absence sends no signal to wait on
 	if entry, _ := store.Get(context.Background(), receipt.ID); entry.Record.LastProgressAt != paused.LastProgressAt {
 		t.Fatalf("the record was rewritten during the pause: %d then %d", paused.LastProgressAt, entry.Record.LastProgressAt)
 	}
 	cluster.set(func(dep *Deployment) { dep.Paused = false })
-	time.Sleep(100 * time.Millisecond)
-	if entry, _ := store.Get(context.Background(), receipt.ID); entry.Record.Paused || entry.Record.LastProgressAt <= paused.LastProgressAt {
-		t.Fatalf("the resume was not written: %+v", entry.Record)
-	}
+	testwait.Until(t, "the resume being written", func() bool {
+		entry, _ := store.Get(context.Background(), receipt.ID)
+		return !entry.Record.Paused && entry.Record.LastProgressAt > paused.LastProgressAt
+	})
 }
 
 // The apiserver refusing the service account is named, not an api_error.

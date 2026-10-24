@@ -8,7 +8,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -21,8 +20,9 @@ func TestAConfigurationNamingTheFTAEventStorageIsRefused(t *testing.T) {
 	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadWithRoles(path, nil)
-	if err == nil || !strings.Contains(err.Error(), "legacy_query_runtime") {
-		t.Fatalf("LoadWithRoles(, nil) = %v, want the group that held fta_event_storage refused", err)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
+	requireIgnored(t, unknownKeysOf(t, string(raw)), "legacy_query_runtime")
 }

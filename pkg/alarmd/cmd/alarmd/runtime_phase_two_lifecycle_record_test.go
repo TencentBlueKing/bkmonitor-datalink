@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
@@ -200,4 +201,37 @@ func TestTheLifecycleRecordScriptRunsAsTheRecordCallsIt(t *testing.T) {
 			}
 		},
 	})
+}
+
+// changes.list as wired: the replica's starts and stops from the lifecycle
+// record and the channel's change receipts, written by their own writers
+// under their own keys, read by any replica.
+func TestChangesReadTheLifecycleRecordAndTheChannelsReceiptsAsWired(t *testing.T) {
+	record, cfg, reader := lifecycleTestRecord(t, "pod-a")
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	record.now = func() time.Time { at = at.Add(time.Second); return at }
+	record.start()
+	record.stop(lifecycleStopSignal, nil, nil)
+	binding := ChannelBinding{EnvironmentID: "env-a"}
+	writer := obchannel.NewSREReceipts(reader, sreKeyPrefix(cfg, binding)+"receipts", nil, nil)
+	writer.Record(obchannel.SREAction{Op: obchannel.OpSetImage, Kind: "Deployment", Namespace: "ns", Name: "uq", Result: obchannel.SREResultDone, At: at.Add(time.Second)})
+
+	out := changesOperation(cfg, binding, reader).Run(context.Background(), obchannel.Params{})
+	answer, ok := out.Value.(obchannel.ChangesAnswer)
+	if out.Error != nil || !ok || !out.Complete {
+		t.Fatalf("outcome %+v", out)
+	}
+	var kinds []string
+	for _, row := range answer.Rows {
+		kinds = append(kinds, row.Kind+":"+row.Pod+row.Op)
+	}
+	if strings.Join(kinds, ",") != "release:workload.set_image,stop:pod-a,start:pod-a" || answer.Rows[1].StopReason != lifecycleStopSignal || answer.Rows[2].Build == "" {
+		t.Fatalf("rows %v %+v", kinds, answer.Rows)
+	}
+	if answer.Coverage.Lifecycle.Cap != lifecycleRecordEntries || answer.Coverage.Lifecycle.Kept != 2 {
+		t.Fatalf("lifecycle reach %+v", answer.Coverage.Lifecycle)
+	}
+	if out := changesOperation(cfg, binding, nil).Run(context.Background(), obchannel.Params{}); out.Complete {
+		t.Fatal("no runtime store, and the answer says it is complete")
+	}
 }

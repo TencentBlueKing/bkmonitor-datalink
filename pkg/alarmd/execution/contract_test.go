@@ -279,6 +279,32 @@ func TestPlanGapOpenAndStrengthenShareIdempotentDigest(t *testing.T) {
 	}
 }
 
+// A gap scope that opens, strengthens or warms names its reason: one built
+// without is refused, so the scopes a snapshot reports, written only from such
+// mutations, never put an empty reason on gap_guard_scope_rounds_total.
+func TestAGapScopeThatIsNotAClearCannotBeBuiltWithoutAReason(t *testing.T) {
+	input := validInternalExecution()
+	for _, kind := range []execution.GapMutationKind{execution.GapOpen, execution.GapStrengthen, execution.GapWarmup} {
+		_, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
+			Identity: input.GapPreflight[0].Identity, ApplyVersion: input.GapPreflight[0].ApplyVersion,
+			ScheduleRevision: input.GapPreflight[0].ScheduleRevision,
+			Scopes:           []execution.GapScopeMutation{{Kind: kind, RequiredFullSlots: 1}},
+		})
+		if err == nil {
+			t.Errorf("%s scope without a reason was built", kind)
+		}
+		if _, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
+			Identity: input.GapPreflight[0].Identity, ApplyVersion: input.GapPreflight[0].ApplyVersion,
+			ScheduleRevision: input.GapPreflight[0].ScheduleRevision,
+			Scopes: []execution.GapScopeMutation{{
+				Kind: kind, ReasonCode: execution.ReasonCode(contract.ReasonQueryPartial), RequiredFullSlots: 1,
+			}},
+		}); err != nil {
+			t.Errorf("%s scope with a reason was refused: %v", kind, err)
+		}
+	}
+}
+
 func TestDependencyCompletenessDoesNotReplacePrimaryCompletionFact(t *testing.T) {
 	input := validInternalExecution()
 	dependency := input.Inputs[0]
@@ -1657,7 +1683,7 @@ func triggerEventForOutcome(input execution.InternalExecution, outcomeKind execu
 				HistoryCompleteness: "FULL",
 				WindowEvidence:      contract.WindowEvidenceV1{AnomalyTimestampsDigest: strings.Repeat("9", 64)},
 			},
-			DetectEvidence: contract.DetectEvidenceV1{
+			DetectEvidence: &contract.DetectEvidenceV1{
 				DetectionResult: "ANOMALOUS", PredicateDigest: strings.Repeat("8", 64),
 				NormalizedValue: json.RawMessage(`50.1`), EffectiveTimeStatus: "ACTIVE",
 			},

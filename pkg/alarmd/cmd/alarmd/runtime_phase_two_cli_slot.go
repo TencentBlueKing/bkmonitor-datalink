@@ -22,10 +22,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
+// A Slot read is bounded so one request cannot take the process's memory
+// or answer past the channel's smallest response bound, not by a count an
+// investigation meets: its commands are a handful next to the business's
+// thousands a second.
 const (
-	cliSlotDocumentBytes = 1 << 20
-	cliSlotReadBytes     = 4 << 20
-	cliSlotReadCommands  = 64
+	cliSlotDocumentBytes = 8 << 20
+	cliSlotReadBytes     = 16 << 20
+	cliSlotReadCommands  = 1024
 	cliSlotRecordLimit   = 200
 	cliSlotSampleLimit   = 50
 )

@@ -117,20 +117,54 @@ func (store *ExecutionStore) loadOneNoDataHash(
 		return execution.NoDataMemorySnapshot{Identity: item.Identity, Status: execution.NoDataMemoryTerminal,
 			ReasonCode: execution.ReasonCode(contract.ReasonStateCorrupt)}, nil, true
 	}
-	fields, readErr := backend.ReadHash(ctx, key)
+	fields, closes, closesUnread, readErr := store.readNoDataHashAndCloses(ctx, backend, key, item)
 	if readErr != nil {
 		return execution.NoDataMemorySnapshot{Identity: item.Identity, Status: execution.NoDataMemoryUnavailable,
 			ReasonCode: execution.ReasonCode(contract.ReasonRedisUnavailable)}, nil, true
 	}
 	if len(fields) == 0 {
+		// No memory, so nothing is open for a close to stop.
 		return execution.NoDataMemorySnapshot{Identity: item.Identity, Status: execution.NoDataMemoryMissing}, nil, true
 	}
 	// Renewed before the record is decoded, and for a record this build cannot
 	// read just as much as for one it can: a paused Plan's memory must not
 	// expire while the rollback it is waiting out is still going on.
 	renewal := store.renewNoDataHash(ctx, target, item, key)
-	return store.validatedNoData(request, item,
-		named(decodeNoDataHash(fields, item.Identity), execution.NoDataRepresentationPerGroup)), renewal, true
+	snapshot := store.validatedNoData(request, item,
+		named(decodeNoDataHash(fields, item.Identity), execution.NoDataRepresentationPerGroup))
+	if snapshot.Status == execution.NoDataMemoryFound {
+		snapshot.ManualCloses, snapshot.ManualClosesUnread = closes, closesUnread
+	}
+	return snapshot, renewal, true
+}
+
+// readNoDataHashAndCloses reads a Plan's memory and its strategy's manual
+// closes in one round trip when the backend can; a backend that holds no
+// closes reads the memory alone.
+//
+// Closes that cannot be read cost only themselves: the memory is returned
+// with no closes and closesUnread set, and the round goes on as though nobody
+// had closed anything. A close is a user's request to stop one alert, and
+// failing the whole Plan's no-data detection over it would stop every other
+// one; the output check and the next round still honour the close.
+func (store *ExecutionStore) readNoDataHashAndCloses(
+	ctx context.Context, backend NoDataHashBackend, key string, item execution.PlanNoDataLoadItem,
+) (fields map[string][]byte, closes map[string]int64, closesUnread bool, err error) {
+	pair, ok := backend.(NoDataManualCloseBackend)
+	closeKey, keyErr := NoDataManualCloseKey(store.options.Prefix, item.Identity.Plan.TenantID, item.Identity.Plan.StrategyID)
+	if !ok || keyErr != nil {
+		// A key that cannot be built is one no close was ever recorded under.
+		fields, err = backend.ReadHash(ctx, key)
+		return fields, nil, false, err
+	}
+	fields, closeFields, closeErr, err := pair.ReadHashPair(ctx, key, closeKey)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if closeErr != nil {
+		return fields, nil, true, nil
+	}
+	return fields, parseNoDataManualCloses(closeFields), false, nil
 }
 
 // renewNoDataHash keeps a record that was read alive through the renewal gate.
@@ -251,7 +285,11 @@ func (store *ExecutionStore) applyOneNoData(
 	if err := mutation.ValidateDigest(); err != nil {
 		return reject(contract.ReasonStateCorrupt)
 	}
-	if int(mutation.GroupCount) > store.options.MaxNoDataGroups {
+	limit, source := store.options.MaxNoDataGroups, execution.NoDataLimitPlatform
+	if mutation.GroupLimit > 0 {
+		limit, source = int(mutation.GroupLimit), execution.NoDataLimitStrategy
+	}
+	if int(mutation.GroupCount) > limit {
 		// The one bound left on a memory, and it is a guard rather than a
 		// working limit: the representation has no size ceiling any more, so
 		// this only catches an expected set that has run away. It is refused
@@ -259,7 +297,7 @@ func (store *ExecutionStore) applyOneNoData(
 		// because a Plan whose memory is refused goes on evaluating and only
 		// stops remembering.
 		return tooLarge(execution.NoDataRecordGroups, execution.NoDataRecordSize{
-			Groups: int(mutation.GroupCount), Limit: store.options.MaxNoDataGroups,
+			Groups: int(mutation.GroupCount), Limit: limit, LimitSource: source,
 		})
 	}
 	key, err := PlanNoDataHashKeyV2(store.options.Prefix, mutation.Identity)

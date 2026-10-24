@@ -20,10 +20,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
+// An operator's store read is bounded only so that one request cannot take
+// the process's memory or answer past the channel's own response bound: its
+// commands are a handful next to the business's thousands a second, so
+// 1024 commands (a few hundred keys) per read, a document up to 8 MiB, and
+// 16 MiB in all, the floor of the channel's response bound, so any answer
+// fits it.
 const (
-	MaxCommands          = 32
-	MaxDocumentBytes     = 256 << 10
-	MaxBytes             = 1 << 20
+	MaxCommands          = 1024
+	MaxDocumentBytes     = 8 << 20
+	MaxBytes             = 16 << 20
 	ReadTimeout          = 2 * time.Second
 	FamilySourceStrategy = "source_strategy"
 	FamilyTargetGroup    = "target_group"

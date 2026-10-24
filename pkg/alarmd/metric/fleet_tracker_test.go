@@ -15,7 +15,7 @@ func TestFleetTrackerDroppedIsReadAtScrape(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
 	read := func() map[string]float64 {
 		out := map[string]float64{}
-		for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_fleet_tracker_dropped_total") {
+		for _, m := range gatherFamily(t, r, "alarmd_fleet_tracker_dropped_total") {
 			out[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 		}
 		return out

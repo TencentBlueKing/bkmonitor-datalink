@@ -264,60 +264,57 @@ func TestTheSchedulerShapeDoesNotReadTheCPU(t *testing.T) {
 	}
 }
 
-// The bounds follow the work: each is the demand's rate times what one unit
-// holds it for, twice over, inside the container's ceiling. The figures are a
-// production replica's: 58 queries ready in its busiest second, a 90 ms
-// answer, half a replay a second, 15 Slots ready in a second running 1.5 s,
-// 700 owned Query Groups.
-func TestTheSchedulerShapeFollowsTheDemand(t *testing.T) {
+// The query permits are the memory ceiling's query share and do not move
+// with the demand. The figures are a production replica's - 58 queries ready
+// in its busiest second, a 90 ms answer, half a replay a second, 15 Slots
+// ready in a second running 1.5 s, 700 owned Query Groups - beside no demand
+// at all and a flood: the permits are the same in all three, and only the
+// queues follow the owned Query Groups.
+func TestThePermitsAreTheMemoryShareWhateverTheDemand(t *testing.T) {
 	ceiling := DeriveScheduler(CapacityInputs{MemoryLimitBytes: 4 << 30})
-	demand := SchedulerDemand{PeakQueriesPerSecond: 58, ReplayQueriesPerSecond: 0.5, PeakSlotsPerSecond: 15,
-		Hold: 90 * time.Millisecond, Execution: 1500 * time.Millisecond, OwnedQueryGroups: 700, MaxQueuedItemsPerQG: 16}
-	got := DeriveSchedulerShape(ceiling, demand, DerivedScheduler{}, 0)
-	want := DerivedScheduler{ProcessQueryPermits: 11, RecoveryQueryPermits: 1, ActiveExecutions: ceiling.ActiveExecutionCeiling,
-		ReadyQueueCapacity: 700*16 + 1, RecoveryQueueCapacity: 700*16 + 1, ActiveExecutionCeiling: ceiling.ActiveExecutionCeiling}
-	if got != want {
-		t.Fatalf("shape %+v, want %+v", got, want)
-	}
-	// A slower service does not raise the budget: the hold is the caller's
-	// lowest hourly median, and the same demand at the same hold is the same
-	// shape however slow the last answers were.
-	if again := DeriveSchedulerShape(ceiling, demand, DerivedScheduler{}, 0); again != got {
-		t.Fatalf("the same demand derived %+v and then %+v", got, again)
+	for _, demand := range []SchedulerDemand{
+		{MaxQueuedItemsPerQG: 16},
+		{PeakQueriesPerSecond: 58, ReplayQueriesPerSecond: 0.5, PeakSlotsPerSecond: 15,
+			Hold: 90 * time.Millisecond, Execution: 1500 * time.Millisecond, OwnedQueryGroups: 700, MaxQueuedItemsPerQG: 16},
+		{PeakQueriesPerSecond: 1e9, ReplayQueriesPerSecond: 1e9, PeakSlotsPerSecond: 1e9,
+			Hold: time.Second, Execution: time.Second, OwnedQueryGroups: 10, MaxQueuedItemsPerQG: 16},
+	} {
+		got := DeriveSchedulerShape(ceiling, demand)
+		queue := max(demand.OwnedQueryGroups, 1)*demand.MaxQueuedItemsPerQG + 1
+		want := DerivedScheduler{ProcessQueryPermits: ceiling.ProcessQueryPermits, RecoveryQueryPermits: ceiling.RecoveryQueryPermits,
+			ActiveExecutions: ceiling.ActiveExecutionCeiling, ReadyQueueCapacity: queue, RecoveryQueueCapacity: queue,
+			ActiveExecutionCeiling: ceiling.ActiveExecutionCeiling}
+		if got != want {
+			t.Fatalf("demand %+v derived %+v, want %+v", demand, got, want)
+		}
 	}
 }
 
-// Both sides of every bound: no demand still leaves the smallest shape that
-// runs - one recovery permit, one process permit above it, an execution for
-// each and one more, a queue one deeper than a Query Group may queue - and a
-// demand past
-// the container's memory is held at its ceiling, permits never above the
-// slots that feed them.
-func TestTheSchedulerShapeStaysInsideItsBounds(t *testing.T) {
-	ceiling := DeriveScheduler(CapacityInputs{MemoryLimitBytes: 4 << 30})
-	floor := DeriveSchedulerShape(ceiling, SchedulerDemand{MaxQueuedItemsPerQG: 16}, DerivedScheduler{}, 0)
-	if floor.RecoveryQueryPermits != 1 || floor.ProcessQueryPermits != 2 || floor.ActiveExecutions != ceiling.ActiveExecutionCeiling || floor.ReadyQueueCapacity != 17 {
-		t.Fatalf("no demand from nothing derived %+v, want 1/2, the slot ceiling and a queue of 17", floor)
-	}
-	flood := DeriveSchedulerShape(ceiling, SchedulerDemand{PeakQueriesPerSecond: 1e9, ReplayQueriesPerSecond: 1e9,
-		PeakSlotsPerSecond: 1e9, Hold: time.Second, Execution: time.Second, OwnedQueryGroups: 10, MaxQueuedItemsPerQG: 16}, DerivedScheduler{}, 0)
-	top := ceiling.ActiveExecutionCeiling
-	if flood.ActiveExecutions != top || flood.RecoveryQueryPermits+flood.ProcessQueryPermits != top-1 {
-		t.Fatalf("a flood derived %+v against a ceiling of %d, want every slot and all but one permit at it", flood, top)
-	}
-	// What the coordinator requires of any shape it runs under.
-	for _, shape := range []DerivedScheduler{floor, flood} {
+// The share is half the execution slots, a quarter of that for recovery:
+// the containers alarmd runs in today and the smallest that can run. The
+// smallest is the floor the coordinator itself needs, one recovery permit
+// and one process permit above it; nothing smaller is ever derived.
+func TestThePermitShareAtEachContainerSize(t *testing.T) {
+	for _, c := range []struct {
+		memory            uint64
+		process, recovery int
+	}{
+		{1 << 30, 32, 10},  // 85 slots, 42 queries
+		{4 << 30, 128, 42}, // 341 slots, 170 queries
+		{8 << 30, 256, 85}, // 682 slots, 341 queries
+		{1 << 20, 2, 1},    // the smallest shape: 4 slots
+	} {
+		ceiling := DeriveScheduler(CapacityInputs{MemoryLimitBytes: c.memory})
+		shape := DeriveSchedulerShape(ceiling, SchedulerDemand{MaxQueuedItemsPerQG: 16})
+		if shape.ProcessQueryPermits != c.process || shape.RecoveryQueryPermits != c.recovery {
+			t.Fatalf("%d MiB: %d/%d permits, want %d/%d", c.memory>>20, shape.ProcessQueryPermits, shape.RecoveryQueryPermits, c.process, c.recovery)
+		}
+		// What the coordinator requires of any shape it runs under.
 		if shape.RecoveryQueryPermits < 1 || shape.RecoveryQueryPermits >= shape.ProcessQueryPermits ||
 			shape.ActiveExecutions <= shape.ProcessQueryPermits+shape.RecoveryQueryPermits ||
 			shape.ReadyQueueCapacity <= 16 || shape.RecoveryQueueCapacity <= 16 {
-			t.Fatalf("derived %+v, a shape the coordinator refuses", shape)
+			t.Fatalf("%d MiB derived %+v, a shape the coordinator refuses", c.memory>>20, shape)
 		}
-	}
-	// Until a hold is measured a query is taken to hold its permit for half a
-	// second.
-	cold := DeriveSchedulerShape(ceiling, SchedulerDemand{PeakQueriesPerSecond: 10, MaxQueuedItemsPerQG: 16}, DerivedScheduler{}, 0)
-	if cold.ProcessQueryPermits != 10 {
-		t.Fatalf("10 queries a second with no measured hold derived %d permits, want 10", cold.ProcessQueryPermits)
 	}
 }
 
@@ -346,12 +343,23 @@ func TestGoRuntimeBudgetFollowsTheContainerAndClearsItsOwnCeilings(t *testing.T)
 			t.Fatalf("%d MiB container: soft limit %d does not clear the timeline cache budget",
 				inputs.MemoryLimitBytes>>20, derived.MemoryLimitBytes)
 		}
-		// And it has to leave the container enough room that the runtime's own
-		// collector CPU limiter can overshoot into the remainder instead of the
-		// kernel reclaiming the process.
-		if uint64(derived.MemoryLimitBytes) > inputs.MemoryLimitBytes/2 {
-			t.Fatalf("%d MiB container: soft limit %d leaves no reserve",
+		// And it has to leave the container room for what the limit does not
+		// cover - measured at about 11 percent of a 4 GiB container in non-heap
+		// memory, plus a sampling allowance of up to 7 percent - and for the
+		// collector's CPU limiter to overshoot into, instead of the kernel
+		// reclaiming the process: at least a quarter of the container.
+		if inputs.MemoryLimitBytes-uint64(derived.MemoryLimitBytes) < inputs.MemoryLimitBytes/4 {
+			t.Fatalf("%d MiB container: soft limit %d leaves less than a quarter of the container",
 				inputs.MemoryLimitBytes>>20, derived.MemoryLimitBytes)
+		}
+		// The soft limit is five eighths of the container (decision-019
+		// §5.2): neither the half it was nor the three quarters the
+		// derivation rejects for the container's margin.
+		if want := inputs.MemoryLimitBytes / 8 * 5; uint64(derived.MemoryLimitBytes) != want {
+			t.Fatalf("%d MiB container: soft limit %d, want five eighths, %d", inputs.MemoryLimitBytes>>20, derived.MemoryLimitBytes, want)
+		}
+		if derived.GCPercent != 300 {
+			t.Fatalf("%d MiB container: GC percent %d, want the fixed 300 whatever the limit", inputs.MemoryLimitBytes>>20, derived.GCPercent)
 		}
 	}
 }
@@ -508,35 +516,8 @@ func TestExecutionSlotsStayAtTheMemoryCeiling(t *testing.T) {
 		{MaxQueuedItemsPerQG: 16},
 		{PeakQueriesPerSecond: 60, PeakSlotsPerSecond: 580, Hold: 54 * time.Millisecond, Execution: 4 * time.Millisecond, MaxQueuedItemsPerQG: 16},
 	} {
-		if got := DeriveSchedulerShape(ceiling, demand, DerivedScheduler{}, 0).ActiveExecutions; got != ceiling.ActiveExecutionCeiling {
+		if got := DeriveSchedulerShape(ceiling, demand).ActiveExecutions; got != ceiling.ActiveExecutionCeiling {
 			t.Fatalf("demand %+v derived %d execution slots, want the %d ceiling", demand, got, ceiling.ActiveExecutionCeiling)
 		}
-	}
-}
-
-// The permit budget comes down by at most half a derivation and never below
-// the permits held now: a minute that measured little - a replica just
-// started, a lull - does not take the budget from a full one to its floor in
-// one step, and lowering never takes back what is running.
-func TestThePermitBudgetComesDownByHalvesAndNotBelowWhatIsHeld(t *testing.T) {
-	ceiling := DeriveScheduler(CapacityInputs{MemoryLimitBytes: 4 << 30})
-	previous := ceiling
-	previous.ProcessQueryPermits = 64
-	idle := SchedulerDemand{Hold: 50 * time.Millisecond, MaxQueuedItemsPerQG: 16}
-	if got := DeriveSchedulerShape(ceiling, idle, previous, 0).ProcessQueryPermits; got != 32 {
-		t.Fatalf("an idle minute after 64 permits derived %d, want 32", got)
-	}
-	if got := DeriveSchedulerShape(ceiling, idle, previous, 40).ProcessQueryPermits; got != 40 {
-		t.Fatalf("with 40 permits held an idle minute derived %d, want 40", got)
-	}
-	busy := idle
-	busy.PeakQueriesPerSecond = 1000
-	if got := DeriveSchedulerShape(ceiling, busy, previous, 0).ProcessQueryPermits; got != 100 {
-		t.Fatalf("1000 queries a second at 50 ms derived %d permits, want 100 at once", got)
-	}
-	// The recovery permits come down the same way.
-	previous.RecoveryQueryPermits = 16
-	if got := DeriveSchedulerShape(ceiling, idle, previous, 0).RecoveryQueryPermits; got != 8 {
-		t.Fatalf("an idle minute after 16 recovery permits derived %d, want 8", got)
 	}
 }

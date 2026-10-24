@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -43,6 +44,10 @@ const (
 	cmdbIndexRefreshInterval         = time.Minute
 	cmdbIndexStalenessBound          = 10 * cmdbIndexRefreshInterval
 	cmdbIndexPublishedStalenessBound = 15 * time.Minute
+	// cmdbIndexPublishedStalenessCap is the most the published bound is
+	// derived to from the writer's observed gaps (cmdbcache.StoreOptions):
+	// a writer that stops is stale within two hours whatever its history.
+	cmdbIndexPublishedStalenessCap = 2 * time.Hour
 )
 
 // How often one plan may describe its object-identity rejections in the log.
@@ -72,10 +77,12 @@ func buildSeriesAdmission(
 	// it, so the CMDB cache key comes from that one spelling; another
 	// tenant's keys carry the tenant in front of it (cmdbcache.TenantStores).
 	stores, err := cmdbcache.NewTenantStores(client, cfg.PlatformKeyPrefix(), cmdbcache.StoreOptions{
-		RefreshInterval: cmdbIndexRefreshInterval,
-		MaxAge:          cmdbIndexStalenessBound,
-		PublishedMaxAge: cmdbIndexPublishedStalenessBound,
-		ObserveRead:     recorder.RecordCMDBIndexRead,
+		RefreshInterval:    cmdbIndexRefreshInterval,
+		MaxAge:             cmdbIndexStalenessBound,
+		PublishedMaxAge:    cmdbIndexPublishedStalenessBound,
+		PublishedMaxAgeCap: cmdbIndexPublishedStalenessCap,
+		ObserveRead:        recorder.RecordCMDBIndexRead,
+		OnTransition:       cmdbIndexTransitionLine(logger),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -108,6 +115,71 @@ func buildSeriesAdmission(
 		filters,
 	)
 	return chain, stores, nil
+}
+
+// cmdbIndexTransitionLine writes one WARN line each time a tenant's CMDB index
+// goes into or out of stale, empty or never loaded: the store tells it at a
+// refresh, once a minute at most, and only when the judgement changed. While
+// it is out, the filters admit by name and the alert identity of host-placed
+// series is read from the last index that held their hosts.
+func cmdbIndexTransitionLine(logger *observability.Logger) func(cmdbcache.Transition) {
+	return cmdbIndexTransitionLineAt(logger, time.Now)
+}
+
+// cmdbIndexTransitionInterval is the least time between two lines of the
+// same transition of one tenant: a writer flapping across the bound would
+// otherwise write one a minute. The next line written carries how many were
+// held back.
+const cmdbIndexTransitionInterval = 10 * time.Minute
+
+// cmdbIndexTransitionLineAt is cmdbIndexTransitionLine on a stated clock.
+func cmdbIndexTransitionLineAt(logger *observability.Logger, now func() time.Time) func(cmdbcache.Transition) {
+	if logger == nil {
+		return nil
+	}
+	type key struct{ tenant, from, to string }
+	type written struct {
+		at         time.Time
+		suppressed int
+	}
+	var mu sync.Mutex
+	last := map[key]*written{}
+	word := func(reason string) string {
+		if reason == "" {
+			return "usable"
+		}
+		return reason
+	}
+	return func(transition cmdbcache.Transition) {
+		k, at := key{transition.Tenant, transition.From, transition.To}, now()
+		mu.Lock()
+		entry := last[k]
+		if entry != nil && at.Sub(entry.at) < cmdbIndexTransitionInterval {
+			entry.suppressed++
+			mu.Unlock()
+			return
+		}
+		suppressed := 0
+		if entry != nil {
+			suppressed = entry.suppressed
+		}
+		last[k] = &written{at: at}
+		mu.Unlock()
+		// Into usable is the index coming back, or the first load at start:
+		// a line to read, not a warning. Into stale, empty or never loaded
+		// is the warning.
+		write, result := logger.Warn, observability.ResultDegraded
+		if transition.To == "" {
+			write, result = logger.Info, observability.ResultSuccess
+		}
+		write("cmdb_index_transition", result, 0, 0,
+			slog.Int("suppressed", suppressed),
+			slog.String("bk_tenant_id", transition.Tenant),
+			slog.String("from", word(transition.From)), slog.String("to", word(transition.To)),
+			slog.Float64("published_age_seconds", transition.PublishedAge.Seconds()),
+			slog.Float64("stale_bound_seconds", transition.Bound.Seconds()),
+			slog.Float64("publish_max_gap_seconds", transition.MaxGap.Seconds()))
+	}
 }
 
 // newIdentityReporter writes one plan's object-identity rejections as a log
@@ -176,6 +248,7 @@ func maintainCMDBIndex(ctx context.Context, stores *cmdbcache.TenantStores, reco
 
 func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 	health := store.Health()
+	recorder.SetCMDBHostIndexPublish(health.PublishedBound.Seconds(), health.PublishMaxGap.Seconds())
 	recorder.SetCMDBHostIndex(
 		health.Hosts, health.Age.Seconds(), health.PublishedAge.Seconds(), health.SourceAge.Seconds(), health.Degraded, health.DegradedReason,
 	)

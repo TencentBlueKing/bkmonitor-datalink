@@ -36,11 +36,11 @@ func compositionSeries(t *testing.T, r *Recorder, family, label string) map[stri
 // one -- would be a deployment-wide alarm made of nothing.
 func TestCatalogCompositionIsSilentWithoutABuiltCatalog(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	if got := compositionSeries(t, r, "bkmonitor_alarmd_catalog_query_groups", "source_semantics"); len(got) != 0 {
+	if got := compositionSeries(t, r, "alarmd_catalog_query_groups", "source_semantics"); len(got) != 0 {
 		t.Fatalf("unbound collector emitted %v", got)
 	}
 	r.SetCatalogCompositionSource(func() *controlplane.CatalogComposition { return nil })
-	if got := compositionSeries(t, r, "bkmonitor_alarmd_catalog_query_groups", "source_semantics"); len(got) != 0 {
+	if got := compositionSeries(t, r, "alarmd_catalog_query_groups", "source_semantics"); len(got) != 0 {
 		t.Fatalf("a replica with no Catalog emitted %v", got)
 	}
 }
@@ -60,7 +60,7 @@ func TestCatalogCompositionReportsEverySupportedSource(t *testing.T) {
 	composition.Plans["bk_monitor/log"] = 30
 	r.SetCatalogCompositionSource(func() *controlplane.CatalogComposition { return &composition })
 
-	groups := compositionSeries(t, r, "bkmonitor_alarmd_catalog_query_groups", "source_semantics")
+	groups := compositionSeries(t, r, "alarmd_catalog_query_groups", "source_semantics")
 	for _, semantics := range controlplane.SupportedSourceSemantics {
 		if _, present := groups[semantics]; !present {
 			t.Fatalf("%q has no series: a source that compiles nothing must read as zero", semantics)
@@ -72,11 +72,11 @@ func TestCatalogCompositionReportsEverySupportedSource(t *testing.T) {
 	if groups["prometheus/time_series"] != 0 {
 		t.Fatalf("prometheus/time_series=%v, want a pre-created 0", groups["prometheus/time_series"])
 	}
-	if plans := compositionSeries(t, r, "bkmonitor_alarmd_catalog_plans", "source_semantics"); plans["bk_monitor/log"] != 30 {
+	if plans := compositionSeries(t, r, "alarmd_catalog_plans", "source_semantics"); plans["bk_monitor/log"] != 30 {
 		t.Fatalf("bk_monitor/log plans=%v, want 30", plans["bk_monitor/log"])
 	}
 
-	objects := compositionSeries(t, r, "bkmonitor_alarmd_catalog_objects", "disposition")
+	objects := compositionSeries(t, r, "alarmd_catalog_objects", "disposition")
 	if objects[string(controlplane.DispositionUnsupported)] != 1 {
 		t.Fatalf("objects=%v", objects)
 	}
@@ -103,14 +103,14 @@ func TestCatalogCompositionReportsGlobalStrategiesByOutcomeAndRefusal(t *testing
 		}})
 	r.SetCatalogCompositionSource(func() *controlplane.CatalogComposition { return &composition })
 
-	outcomes := compositionSeries(t, r, "bkmonitor_alarmd_catalog_global_strategies", "outcome")
+	outcomes := compositionSeries(t, r, "alarmd_catalog_global_strategies", "outcome")
 	want := map[string]float64{"accepted": 1, "global_unsupported": 4, "withheld": 1}
 	if !reflect.DeepEqual(outcomes, want) {
 		t.Fatalf("outcomes = %v, want %v", outcomes, want)
 	}
 	pairs := map[string]float64{}
 	sum := 0.0
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_catalog_global_strategies_unsupported") {
+	for _, m := range gatherFamily(t, r, "alarmd_catalog_global_strategies_unsupported") {
 		labels := map[string]string{}
 		for _, l := range m.Label {
 			labels[l.GetName()] = l.GetValue()
@@ -127,7 +127,7 @@ func TestCatalogCompositionReportsGlobalStrategiesByOutcomeAndRefusal(t *testing
 	empty := controlplane.ComposeCatalog(controlplane.Catalog{})
 	r.SetCatalogCompositionSource(func() *controlplane.CatalogComposition { return &empty })
 	zero := map[string]float64{"accepted": 0, "global_unsupported": 0, "withheld": 0}
-	if got := compositionSeries(t, r, "bkmonitor_alarmd_catalog_global_strategies", "outcome"); !reflect.DeepEqual(got, zero) {
+	if got := compositionSeries(t, r, "alarmd_catalog_global_strategies", "outcome"); !reflect.DeepEqual(got, zero) {
 		t.Fatalf("outcomes without global strategies = %v, want %v", got, zero)
 	}
 }

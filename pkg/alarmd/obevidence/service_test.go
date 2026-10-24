@@ -147,7 +147,7 @@ func TestRedisTypesAbsenceLimitsAndFailure(t *testing.T) {
 	log.assertBounded(t)
 	cases := []struct{ name, value, status string }{
 		{"missing", "", "missing"}, {"empty", "", "empty"}, {"corrupt", "{", "invalid_document"},
-		{"large", strings.Repeat("x", MaxDocumentBytes+1000), "budget_exceeded"},
+		{"large", strings.Repeat("x", MaxDocumentBytes+1000), "document_too_large"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

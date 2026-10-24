@@ -137,7 +137,7 @@ func TestActualCLIMultiInstanceControlRPC(t *testing.T) {
 			prefix = "worker-fixture"
 		}
 		service := obevidence.New(obevidence.Options{SourceStrategy: obevidence.RedisBinding{Client: h.redis, Location: obevidence.Location{Role: "strategy_cache", Address: h.redis.Options().Addr, Mode: "single", Prefix: prefix}}})
-		operations := append(obchannel.NativeOperations(http.HandlerFunc(nativeFixture)), obchannel.StoreOperations(service)...)
+		operations := append(obchannel.NativeOperationsWith(http.HandlerFunc(nativeFixture), obchannel.NativeOptions{}), obchannel.StoreOperations(service)...)
 		fields := map[string]obchannel.Field{}
 		if changedCatalog {
 			fields["new_optional_field"] = obchannel.Field{Type: "string", Description: "Constructed mixed-version contract."}

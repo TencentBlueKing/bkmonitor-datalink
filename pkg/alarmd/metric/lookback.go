@@ -40,6 +40,8 @@ type lookbackCollector struct {
 	yields     *prometheus.Desc
 	refused    *prometheus.Desc
 	faults     *prometheus.Desc
+	plans      *prometheus.Desc
+	planHeld   *prometheus.Desc
 	// The directed reads of series_late Query Groups and the supplements of
 	// their Slots.
 	supplementWindows    *prometheus.Desc
@@ -50,27 +52,45 @@ type lookbackCollector struct {
 	supplementHold       *prometheus.Desc
 	supplementHoldMax    *prometheus.Desc
 	// The early reads of directed Slots, before their next Slot reads.
-	earlyReads          *prometheus.Desc
-	earlyUndecided      *prometheus.Desc
-	earlyBytes          *prometheus.Desc
-	earlierBytes        *prometheus.Desc
-	holdIgnored         *prometheus.Desc
-	readHoldTransition  *prometheus.Desc
-	readHoldOvertaken   *prometheus.Desc
-	readHoldPredecessor *prometheus.Desc
-	readHoldSeed        *prometheus.Desc
-	readHoldClamped     *prometheus.Desc
-	readHoldCorrupt     *prometheus.Desc
-	readHoldRetireClose *prometheus.Desc
-	readHoldCloseSkip   *prometheus.Desc
-	readHoldDegraded    *prometheus.Desc
-	readHoldGroups      *prometheus.Desc
-	readHoldMax         *prometheus.Desc
+	earlyReads            *prometheus.Desc
+	earlyUndecided        *prometheus.Desc
+	earlyBytes            *prometheus.Desc
+	earlierBytes          *prometheus.Desc
+	earlierReads          *prometheus.Desc
+	earlierOvertaken      *prometheus.Desc
+	earlierPreparedLate   *prometheus.Desc
+	earlierAhead          *prometheus.Desc
+	earlierSkipped        *prometheus.Desc
+	probationRereads      *prometheus.Desc
+	probationCaught       *prometheus.Desc
+	probationGroups       *prometheus.Desc
+	floorProbeRounds      *prometheus.Desc
+	floorProbes           *prometheus.Desc
+	floorProbeGroups      *prometheus.Desc
+	floorProbeChanges     *prometheus.Desc
+	readHoldFloorProbes   *prometheus.Desc
+	readHoldProbeProgress *prometheus.Desc
+	readHoldFindings      *prometheus.Desc
+	holdIgnored           *prometheus.Desc
+	readHoldTransition    *prometheus.Desc
+	readHoldOvertaken     *prometheus.Desc
+	readHoldPredecessor   *prometheus.Desc
+	readHoldSeed          *prometheus.Desc
+	readHoldDuration      *prometheus.Desc
+	readHoldEarlierSkip   *prometheus.Desc
+	roundsReadAtLimit     *prometheus.Desc
+	readHoldClamped       *prometheus.Desc
+	readHoldCorrupt       *prometheus.Desc
+	readHoldRetireClose   *prometheus.Desc
+	readHoldCloseSkip     *prometheus.Desc
+	readHoldDegraded      *prometheus.Desc
+	readHoldGroups        *prometheus.Desc
+	readHoldMax           *prometheus.Desc
 }
 
 func newLookbackCollector() *lookbackCollector {
 	desc := func(name, help string, labels ...string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	return &lookbackCollector{
 		readHoldTransition: desc("read_hold_transition_total", "Slots whose first readiness preserves a preceding segment's completion deadline."),
@@ -80,6 +100,56 @@ func newLookbackCollector() *lookbackCollector {
 				"old group's closed record, exactly), zero (no record: a group never held), or -- each read as the hold "+
 				"bound, which costs the successor's first Slots a later read and never a Slot -- record_open, "+
 				"record_corrupt, record_unreadable; and the links it skipped: self_link, invalid_link, expired.", "reason"),
+		roundsReadAtLimit: desc("rounds_read_at_limit_total",
+			"Decided rounds (normal and retry) read at their Query Group's read hold limit while the group's data "+
+				"lands past it, by the source the group reads (other while it is not known yet): each round was "+
+				"decided before all of its data was there, and the hold waits no longer. A round is judged on its "+
+				"group's record as it completes: the first round after a raise to the limit is marked on the "+
+				"arrival that raised it, and a group quiet for its bar is tried lower and no longer counted. Every "+
+				"such round's slot_completed line carries read_at_limit; the group's row on the strategy page "+
+				"names the arrival age, the limit and the time_delay that would read it whole. Every source "+
+				"exists from the start.", "source"),
+		readHoldEarlierSkip: desc("read_hold_earlier_skipped_total",
+			"Earlier-read trials not run, by why, one per Slot a trial would have been reserved for (its group's "+
+				"sampling rest over, nothing of it in flight): at_limit (the group is held at its limit and was read "+
+				"early within its quiet bar, so its data arrives past the longest hold it may have; a read below "+
+				"the hold and the formal read both come before the data, and their agreeing would say nothing of "+
+				"it). A group counted here keeps its hold at the limit; its trials resume once an arrival reading "+
+				"wants a hold below the limit, or once it has gone its quiet bar without being read early. "+
+				"search_done (the search below the hold has run out: the gap between its floor and the hold is no "+
+				"wider than a step; the group's read-hold record says when the floor was learned, earlier_floor_at_ms). "+
+				"A group whose floor is being probed is counted under neither: its Slots are "+
+				"lookback_earlier_skipped_total{reason=\"floor_probe\"}. Every reason exists from the start.", "reason"),
+		readHoldFindings: desc("read_hold_probation_findings_total",
+			"Probation findings the read-hold controller took - a lowered group's reread that found its round read "+
+				"early, whatever arrived - by what it made of them: undone (the lowering put back to the hold it came "+
+				"from, the lowered hold the floor, the quiet started over) and quiet (the group was not lowered: its quiet "+
+				"started over, no trial lowers it until it is quiet for its bar). Against "+
+				"lookback_probation_rereads_total{outcome=\"window_read_early\"}, every one of which should be here. "+
+				"Every outcome exists from the start.", "outcome"),
+		readHoldFloorProbes: desc("read_hold_floor_probes_total",
+			"Shadow probes whose end the read-hold controller took, by kind - verify (the candidate three trials in a "+
+				"row chose, read before the hold moves; every lowering now comes through one), midpoint (halfway between "+
+				"a floor and the hold), floor (the floor itself) - and what it made of it: lowered (the probe read "+
+				"lookback.ProbationRounds rounds in a row the same at its hold as at the group's, and the hold comes down "+
+				"to it, a probation after it as after every lowering), relearned (a round read differently at the floor: "+
+				"the floor stays, dated now, and stands twice as long as before before the next probe), floor_raised (a "+
+				"round read differently at the candidate or a midpoint: that hold is the floor now, and the next probe "+
+				"reads the midpoint above it), stale (the record had moved since the probe began - its hold, its floor "+
+				"or its search - and the probe changed nothing), moot (verify: the candidate was no longer below the hold "+
+				"and above the floor, and was cleared unread). Probes that did not end are on "+
+				"lookback_floor_probes_total. Every kind and outcome exists from the start.", "kind", "outcome"),
+		readHoldProbeProgress: desc("read_hold_floor_probe_progress_writes_total",
+			"Writes keeping a running shadow probe's clean rounds in its group's record, every "+
+				"lookback.FloorProbeProgressEvery of them, so the probe goes on from them after a rollout or a takeover, by "+
+				"what came of them: written, stale (the record's probe had ended or moved first, nothing written) and "+
+				"conflict (the compare lost to another write, the progress dropped, the move that won kept). A probe that "+
+				"goes on from them is lookback_floor_probes_total{event=\"resumed\"}. Every outcome exists from the start.", "outcome"),
+		readHoldDuration: desc("read_hold_query_duration_writes_total",
+			"Read-hold records written for the query duration they keep, by why: changed (the owner's measured "+
+				"duration moved by a second, a minute or more after the last write) or refreshed (the same reading "+
+				"rewritten at half its 24-hour life). A process that takes a group over judges its first rounds by "+
+				"that reading. Read it as the write rate the reading costs.", "reason"),
 		readHoldSeed: desc("read_hold_seeds_total",
 			"Query Groups with no read-hold record of their own that started from a seeded arrival age, by where it "+
 				"came from: peer (the 90th percentile of what the groups reading the same tables and data sources "+
@@ -108,10 +178,13 @@ func newLookbackCollector() *lookbackCollector {
 			"Query Groups this replica holds, by the source they read and their read hold: held (a hold of more than "+
 				"none), at_limit (held at the group's limit), unknown (its hold not yet known - not counted under the "+
 				"other two). Each replica counts only its own groups: the deployment's is the sum. Absent while the "+
-				"replica holds none.", "source", "kind"),
+				"replica holds none. The source partition covers groups that have prepared a Schedule; "+
+				"alarmd_worker_owned_query_groups counts every owned group.", "source", "kind"),
 		readHoldMax: desc("read_hold_max_seconds",
 			"The largest known read hold among the Query Groups this replica holds that read the source; the "+
-				"deployment's is the max. Absent for a source none of whose groups here has a known hold.", "source"),
+				"deployment's is the max. Absent for a source none of whose groups here has a known hold. The source "+
+				"partition covers groups that have prepared a Schedule; alarmd_worker_owned_query_groups counts every "+
+				"owned group.", "source"),
 		readHoldRetireClose: desc("read_hold_retire_close_failed_total",
 			"Retired Query Groups whose read hold closing failed; they retire all the same, and a successor reads the "+
 				"unclosed record as the hold bound."),
@@ -146,11 +219,13 @@ func newLookbackCollector() *lookbackCollector {
 		supplementWindows: desc("lookback_supplement_windows_total",
 			"Slots of series_late Query Groups read again for their late series, by source and what they came to: "+
 				"supplemented (the supplement ran), nothing_late, flight_busy (the group's own Slot was executing), "+
-				"contract_expired, failed, unobserved (not read). Coverage is supplemented over supplemented and "+
+				"contract_expired, kept_read_absent (the kept read did not hold the Slot's planned query, so nothing ran; "+
+				"SUPPLEMENT_KEPT_READ_ABSENT on the supplement's line), failed, unobserved (not read). Coverage is "+
+				"supplemented over supplemented and "+
 				"unobserved.", "source", "outcome"),
 		supplementUnobserved: desc("lookback_supplement_unobserved_total",
 			"Slots of series_late Query Groups not read again, by source and why: yielded, read_failed, "+
-				"first_read_incomplete, multi_query, memory_refused.", "source", "reason"),
+				"first_read_incomplete, multi_query, memory_refused, named_outputs.", "source", "reason"),
 		supplementSeries: desc("lookback_supplement_series_total",
 			"(Plan, series) pairs the supplements that ran were given, by source and what each came to: candidates "+
 				"in all, and admitted, crossed_t, no_data_fact, config_drift, input_incomplete, withheld.",
@@ -171,7 +246,7 @@ func newLookbackCollector() *lookbackCollector {
 		earlyReads: desc("lookback_directed_early_total",
 			"Directed Slots by what their early read -- once more before the Query Group's next Slot reads -- came "+
 				"to, by source and group: before_next, a supplement that ran with no later Slot of the group begun; "+
-				"not_ahead, attempted and not ahead; outside_mechanism, not attempted. The mechanism works as far as "+
+				"not_ahead, attempted and not ahead; outside_mechanism, did not apply. The mechanism works as far as "+
 				"before_next is of before_next and not_ahead. Each outcome is in /api/lookback's early_reads.",
 			"source", "group"),
 		earlyUndecided: desc("lookback_directed_early_undecided_total",
@@ -181,7 +256,71 @@ func newLookbackCollector() *lookbackCollector {
 			"Bytes the early reads delivered, by source: part of lookback_directed_read_bytes_total, the bytes reading "+
 				"early added.", "source"),
 		earlierBytes: desc("lookback_earlier_read_bytes_total", "Bytes candidate h/2 reads delivered, by source.", "source"),
-		holdIgnored:  desc("lookback_read_hold_ignored_total", "Findings that cannot raise a whole-window read hold, by source and reason.", "source", "reason"),
+		earlierReads: desc("lookback_earlier_reads_total",
+			"Candidate h/2 read trials by how they ended, by source: equal or different from the formal first read, or why they supplied no evidence. "+
+				"Reader: the read-hold acceptance after each deploy, which needs completed trials (equal plus different) above zero; "+
+				"a deployment without the CLI reads it only here, since its lookback route is not public.",
+			"source", "outcome"),
+		earlierOvertaken: desc("lookback_earlier_overtaken_total",
+			"Candidate h/2 read trials that ended overtaken, by source and what overtook them first. "+
+				"Reader: the same acceptance, which names the cause when trials do not complete.", "source", "path"),
+		earlierPreparedLate: desc("lookback_earlier_prepared_late_max_seconds",
+			"The furthest past its candidate readiness point a trial's Slot was prepared since process start, by source; it never decays, and is zero while none was. "+
+				"Reader: the same acceptance, beside prepared_after_readiness: how late the Slots arrive.", "source"),
+		earlierAhead: desc("lookback_earlier_ahead_total",
+			"Candidate h/2 read trials reserved at an earlier Slot's first attempt, by source and how many Slots ahead (1, 2, 3, 4+). "+
+				"Reader: the same acceptance, which shows which sources' holds needed a trial reserved further than the next Slot.", "source", "slots"),
+		earlierSkipped: desc("lookback_earlier_skipped_total",
+			"Held Slots whose first attempt reserved no earlier-read trial, once a Slot, by source and why: "+
+				"not_owned (the group is not this process's; counted at each attempt), no_hold (its hold came down "+
+				"to none since the Slot was frozen), backend_failing (its queries are failing), no_candidate (the "+
+				"read-hold controller gave none; read_hold_earlier_skipped_total says why), trial_reserved (a trial "+
+				"is reserved for a later Slot), sample_in_flight (its sample is being taken or read), resting (its "+
+				"sample rests past the Slot's readiness), floor_probe (its search has run out and its floor is being "+
+				"probed: the Slot has a probe round, lookback_floor_probe_rounds_total). Reader: why a held group is "+
+				"not tried; the group's own counts are on its lookback reading.", "source", "reason"),
+		probationRereads: desc("lookback_probation_rereads_total",
+			"Rounds of Query Groups in probation - their hold lowered, and not yet read clean lookback.ProbationRounds times - "+
+				"read again at their first rung, by source and what they came to: clean, window_read_early (raises the hold when "+
+				"the whole window came later), skipped_for_permits, read_failed, unclassified. Only clean counts towards the end "+
+				"of a probation. Reader: what probation costs and what it catches.", "source", "outcome"),
+		probationCaught: desc("lookback_probation_caught_total",
+			"Rounds read early that probation caught - a reread at the first rung that found the whole window came "+
+				"later, raising the hold - by source and the lowering the probation followed: verified (a hold a shadow "+
+				"probe read clean round by round first, passed by chance; the lowered hold becomes a floor a probe failed "+
+				"at) and trial (a lowering on earlier-read trials alone, as builds before every lowering was verified "+
+				"made). Each is one round decided on data not yet "+
+				"whole. Reader: how often a verified lowering was wrong, against how many there were "+
+				"(read_hold_floor_probes_total{outcome=\"lowered\"}). Every value exists from the start.", "source", "after"),
+		probationGroups: desc("lookback_probation_groups",
+			"The source's Query Groups in probation now: their hold lowered, each of their rounds read again until "+
+				"lookback.ProbationRounds of them read clean.", "source"),
+		floorProbeRounds: desc("lookback_floor_probe_rounds_total",
+			"Rounds of Query Groups whose floor is being probed - their search below the hold run out at a floor that "+
+				"has stood long enough - read at the floor beside the formal read at the hold, which decides the round, "+
+				"by source and what they came to: clean (the same as the formal read), different (ends the probe; the "+
+				"floor stands longer), and, no evidence either way, skipped_for_permits, read_failed, unclassified (the "+
+				"formal read not whole or a series table refused) and overtaken (not read in time, or its Slot froze "+
+				"otherwise than it was reserved for). Reader: what the probes cost and how often their rounds count; "+
+				"their reads' bytes are in lookback_earlier_read_bytes_total.", "source", "outcome"),
+		floorProbes: desc("lookback_floor_probes_total",
+			"Shadow probes by source, kind - verify (the candidate a group's trials chose, read before its hold "+
+				"moves), midpoint (halfway between a floor and the hold), floor (the floor itself) - and what happened "+
+				"to them: started, passed (lookback.ProbationRounds rounds in a row clean, more near a floor a probe "+
+				"failed at), failed (a round different), hold_moved (the hold, the floor or the search under them moved "+
+				"before the probe ended), owner_lost (the group left this process). A probe whose process stops first "+
+				"ends with none of them: started rising while passed and failed do not is probes that never live to "+
+				"finish, as under rollouts more frequent than a probe's rounds. Every lowering starts as a verify probe, "+
+				"so verify started tracks the lowerings on their way.", "source", "kind", "event"),
+		floorProbeGroups: desc("lookback_floor_probe_groups",
+			"The source's Query Groups whose floor is being probed now.", "source"),
+		floorProbeChanges: desc("lookback_floor_probe_changes_total",
+			"Buckets the formal read of a different probe round differed in from the read at the probe's hold, by "+
+				"source and change: points_added (the formal read had points the probe's read did not - a series or a "+
+				"point not yet there, as a source that shows a point only seconds after its time reads), points_removed, "+
+				"series_changed, values_changed. Reader: why probes fail; the failing round's are on its "+
+				"floor_probe_ended line.", "source", "change"),
+		holdIgnored: desc("lookback_read_hold_ignored_total", "Findings that cannot raise a whole-window read hold, by source and reason.", "source", "reason"),
 		readBytes: desc("lookback_first_read_bytes_total",
 			"Bytes the formal first reads delivered, by source, counted as the rechecks' are.", "source"),
 		checkBytes: desc("lookback_recheck_bytes_total",
@@ -211,14 +350,23 @@ func newLookbackCollector() *lookbackCollector {
 		faults: desc("lookback_faults_total",
 			"Reads not kept for a defect, by reason. Normal running never meets one; any count is a defect to fix.",
 			"reason"),
+		plans: desc("lookback_plan_total",
+			"Control-plane lookback plan entries by what became of them: seeded (a Query Group read directed "+
+				"at the plan's rung from its first read here), kept_local (its own samples here decide it), expired "+
+				"(a seeded Query Group none of whose samples here saw late series left directed reading when its "+
+				"entry expired or was withdrawn).",
+			"outcome"),
+		planHeld: desc("lookback_plan_entries",
+			"Entries of the control plane's lookback plan set this process holds now: the Query Groups it was "+
+				"told read late series. Zero where no Leader plans, or before the first set arrives."),
 	}
 }
 
 func (c *lookbackCollector) Describe(ch chan<- *prometheus.Desc) {
 	for _, desc := range []*prometheus.Desc{c.firstReads, c.checks, c.changed, c.changes, c.classes, c.readEarly, c.seriesLate, c.supplementWindows, c.supplementUnobserved, c.supplementSeries,
-		c.supplementPoints, c.directedBytes, c.supplementHold, c.supplementHoldMax, c.earlyReads, c.earlyUndecided, c.earlyBytes, c.earlierBytes, c.holdIgnored, c.readBytes, c.checkBytes, c.unknown, c.coverage,
-		c.pending, c.yields, c.refused, c.faults, c.readHoldTransition, c.readHoldOvertaken,
-		c.readHoldPredecessor, c.readHoldSeed, c.readHoldClamped, c.readHoldCorrupt, c.readHoldRetireClose, c.readHoldCloseSkip, c.readHoldDegraded,
+		c.supplementPoints, c.directedBytes, c.supplementHold, c.supplementHoldMax, c.earlyReads, c.earlyUndecided, c.earlyBytes, c.earlierBytes, c.earlierReads, c.earlierOvertaken, c.earlierPreparedLate, c.earlierAhead, c.earlierSkipped, c.probationRereads, c.probationCaught, c.probationGroups, c.floorProbeRounds, c.floorProbes, c.floorProbeGroups, c.floorProbeChanges, c.holdIgnored, c.readBytes, c.checkBytes, c.unknown, c.coverage,
+		c.pending, c.yields, c.refused, c.faults, c.plans, c.planHeld, c.readHoldTransition, c.readHoldOvertaken,
+		c.readHoldPredecessor, c.readHoldSeed, c.readHoldDuration, c.readHoldEarlierSkip, c.readHoldFloorProbes, c.readHoldProbeProgress, c.readHoldFindings, c.roundsReadAtLimit, c.readHoldClamped, c.readHoldCorrupt, c.readHoldRetireClose, c.readHoldCloseSkip, c.readHoldDegraded,
 		c.readHoldGroups, c.readHoldMax} {
 		ch <- desc
 	}
@@ -249,6 +397,26 @@ func (c *lookbackCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	for _, origin := range readhold.SeedOrigins {
 		counter(c.readHoldSeed, stats.ReadHoldSeeds[origin], origin)
+	}
+	for _, reason := range readhold.QueryDurationWriteReasons {
+		counter(c.readHoldDuration, stats.ReadHoldQueryDurationWrites[reason], reason)
+	}
+	for _, reason := range readhold.EarlierSkipReasons {
+		counter(c.readHoldEarlierSkip, stats.ReadHoldEarlierSkipped[reason], reason)
+	}
+	for _, kind := range readhold.FloorProbeKinds {
+		for _, outcome := range readhold.FloorProbeOutcomes {
+			counter(c.readHoldFloorProbes, stats.ReadHoldFloorProbesByKind[kind][outcome], kind, outcome)
+		}
+	}
+	for _, outcome := range readhold.ProbationFindingOutcomes {
+		counter(c.readHoldFindings, stats.ReadHoldProbationFindings[outcome], outcome)
+	}
+	for _, outcome := range readhold.ProbeProgressOutcomes {
+		counter(c.readHoldProbeProgress, stats.ReadHoldFloorProbeProgress[outcome], outcome)
+	}
+	for _, source := range lookback.Sources {
+		counter(c.roundsReadAtLimit, stats.RoundsReadAtLimit[source], source)
 	}
 	for _, source := range readhold.ClampSources {
 		counter(c.readHoldClamped, stats.ReadHoldClamped[source], source)
@@ -303,6 +471,38 @@ func (c *lookbackCollector) Collect(ch chan<- prometheus.Metric) {
 		counter(c.earlyUndecided, source.EarlyUndecided, name)
 		counter(c.earlyBytes, source.EarlyReadBytes, name)
 		counter(c.earlierBytes, source.EarlierReadBytes, name)
+		for _, outcome := range lookback.EarlierReadOutcomes {
+			counter(c.earlierReads, source.EarlierReads[outcome], name, outcome)
+		}
+		for _, path := range lookback.EarlierOvertakenPaths {
+			counter(c.earlierOvertaken, source.EarlierOvertaken[path], name, path)
+		}
+		for _, outcome := range lookback.ProbationOutcomes {
+			counter(c.probationRereads, source.ProbationRereads[outcome], name, outcome)
+		}
+		for _, after := range lookback.ProbationAfters {
+			counter(c.probationCaught, source.ProbationCaught[after], name, after)
+		}
+		gauge(c.probationGroups, float64(source.ProbationGroups), name)
+		for _, outcome := range lookback.FloorProbeRoundOutcomes {
+			counter(c.floorProbeRounds, source.FloorProbeRounds[outcome], name, outcome)
+		}
+		for _, kind := range lookback.FloorProbeKinds {
+			for _, event := range lookback.FloorProbeEvents {
+				counter(c.floorProbes, source.FloorProbesByKind[kind][event], name, kind, event)
+			}
+		}
+		gauge(c.floorProbeGroups, float64(source.FloorProbeGroups), name)
+		for _, change := range lookback.Changes {
+			counter(c.floorProbeChanges, source.FloorProbeChanges[change], name, change)
+		}
+		gauge(c.earlierPreparedLate, source.EarlierPreparedLateMaxSeconds, name)
+		for _, slots := range lookback.EarlierAheadSlots {
+			counter(c.earlierAhead, source.EarlierAhead[slots], name, slots)
+		}
+		for _, reason := range lookback.EarlierSkipReasons {
+			counter(c.earlierSkipped, source.EarlierSkipped[reason], name, reason)
+		}
 		for _, reason := range lookback.ReadHoldIgnoredReasons {
 			if reason == lookback.ClassPartialRevised {
 				// Every one of these is a partial_revised sample, counted in
@@ -343,6 +543,10 @@ func (c *lookbackCollector) Collect(ch chan<- prometheus.Metric) {
 	for reason, n := range stats.Faults {
 		counter(c.faults, n, reason)
 	}
+	for outcome, n := range stats.Plans {
+		counter(c.plans, n, outcome)
+	}
+	gauge(c.planHeld, float64(stats.PlanEntries))
 	gauge(c.coverage, float64(stats.Coverage.Owned), "owned")
 	gauge(c.coverage, float64(stats.Coverage.Covered), "covered")
 	gauge(c.coverage, float64(stats.Coverage.NeverCompleteFirstRead), "never_complete_first_read")

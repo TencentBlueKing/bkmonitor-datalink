@@ -57,6 +57,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 			}
 			req := requestFixtureForPlan(t, plan, records, nil)
 			req.Header.Contract.Slot.EvaluationTime = 1000080
+			req.Header.DecisionTime = 1000080
 			req.Header.DeadlineUnixMilli = 1000120000
 			req.Header.DuePlans[0].CompletionDeadlineUnixMilli = 1000120000
 			req.Header.Requirements[0].LogicalQueryRef = "query"
@@ -230,7 +231,7 @@ func TestCapacityProfileLegalSeries(t *testing.T) {
 					select {
 					case <-stop:
 						return
-					case <-time.After(time.Millisecond):
+					case <-time.After(time.Millisecond): // fixed-wait: the heap sampler's period; it samples until stopped and waits for nothing
 						var m runtime.MemStats
 						runtime.ReadMemStats(&m)
 						for old := peak.Load(); m.HeapAlloc > old; old = peak.Load() {

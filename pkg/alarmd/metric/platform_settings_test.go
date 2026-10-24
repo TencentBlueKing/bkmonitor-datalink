@@ -26,12 +26,12 @@ func TestPlatformSettingsRetriesAndRevisionMovedAreExported(t *testing.T) {
 			Unavailable: map[platformsettings.UnavailableReason]uint64{platformsettings.UnavailableRevisionMoved: 2, platformsettings.UnavailableReadError: 1},
 		}
 	})
-	retries := gatherFamily(t, r, "bkmonitor_alarmd_platform_settings_read_retry_total")
+	retries := gatherFamily(t, r, "alarmd_platform_settings_read_retry_total")
 	if len(retries) != 1 || retries[0].GetCounter().GetValue() != 7 {
 		t.Fatalf("read_retry_total = %v, want one cell at 7", retries)
 	}
 	reasons := map[string]float64{}
-	for _, cell := range gatherFamily(t, r, "bkmonitor_alarmd_platform_settings_unavailable_total") {
+	for _, cell := range gatherFamily(t, r, "alarmd_platform_settings_unavailable_total") {
 		reasons[cell.GetLabel()[0].GetValue()] = cell.GetCounter().GetValue()
 	}
 	want := map[string]float64{"read_error": 1, "revision_moved": 2, "unpublished": 0, "decode_error": 0}

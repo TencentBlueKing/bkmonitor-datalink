@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -189,7 +190,7 @@ func TestCostProjectionTotalBytesAreSharedAndBusyRefreshDoesNotWait(t *testing.T
 		if view.Complete || view.ReadCommands != 0 || view.Deferred != 1 || view.Gaps[0].Reason != "PROJECTION_UNAVAILABLE" {
 			t.Fatalf("busy refresh hidden: %+v", view)
 		}
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("busy refresh waited for in-flight Redis read")
 	}
 }
@@ -202,7 +203,13 @@ func TestCostProjectionConcurrentPublicationAndRead(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for n := 0; n < 10; n++ {
-				_, _ = s.Publish(context.Background(), "a", at, projectionSnapshot(at))
+				// A refused publication leaves "a" missing, which the
+				// assertion below accepts as readily as a read beside a
+				// write: the case would race nothing.
+				if _, err := s.Publish(context.Background(), "a", at, projectionSnapshot(at)); err != nil {
+					t.Errorf("concurrent publish %d: %v", n, err)
+					return
+				}
 				view := s.Load(context.Background(), []string{"a", "missing"}, true, at)
 				if view.ReadBytes > s.limits.ReadBytes || view.ReadCommands > s.limits.ReadCommands || view.Complete {
 					t.Errorf("concurrent read exceeded allowance or hid missing replica: %+v", view)

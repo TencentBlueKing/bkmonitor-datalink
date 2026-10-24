@@ -25,7 +25,7 @@ import (
 // that are not ACKs add nothing.
 func TestOutputEventsByWireFormatAreSeriesFromStartupAndSumTheACKLines(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	const family = "bkmonitor_alarmd_output_events_by_wire_format_total"
+	const family = "alarmd_output_events_by_wire_format_total"
 	if before := gatherFamily(t, r, family); len(before) != len(observability.WireFormats) {
 		t.Fatalf("%d series before any ACK, want every format (%d) so a standard_raw_event nobody sent reads as zero",
 			len(before), len(observability.WireFormats))
@@ -67,7 +67,7 @@ func TestCatalogPlansByWireFormatArePublishedFromTheComposition(t *testing.T) {
 		contract.WireFormatPythonCompatible: 12, contract.WireFormatStandardRawEvent: 0, observability.WireFormatOther: 0,
 	}}
 	r.SetCatalogCompositionSource(func() *controlplane.CatalogComposition { return composition })
-	const family = "bkmonitor_alarmd_catalog_plans_by_wire_format"
+	const family = "alarmd_catalog_plans_by_wire_format"
 	series := gatherFamily(t, r, family)
 	if len(series) != len(observability.WireFormats) {
 		t.Fatalf("%d series, want one per format (%d) with the zeros published", len(series), len(observability.WireFormats))
@@ -91,7 +91,7 @@ func TestCatalogPlansByWireFormatArePublishedFromTheComposition(t *testing.T) {
 // the build does not name folds, and a line without a breakdown adds nothing.
 func TestOutputEventsWithoutMessageAreSeriesFromStartupAndSumTheSinksBreakdown(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	const family = "bkmonitor_alarmd_output_events_without_message_total"
+	const family = "alarmd_output_events_without_message_total"
 	cells := len(observability.WireFormats) * len(observability.OutputEventKinds)
 	if before := gatherFamily(t, r, family); len(before) != cells {
 		t.Fatalf("%d series before any ACK, want every format x kind (%d) so a protocol that dropped nothing reads as zero", len(before), cells)
@@ -138,7 +138,7 @@ func TestOutputEventsWithoutMessageAreSeriesFromStartupAndSumTheSinksBreakdown(t
 // family exists for.
 func TestOutputEventsByKindAreSeriesFromStartupAndSumTheACKLines(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	const family = "bkmonitor_alarmd_output_events_by_kind_total"
+	const family = "alarmd_output_events_by_kind_total"
 	cells := len(observability.WireFormats) * len(observability.OutputEventKinds)
 	if before := gatherFamily(t, r, family); len(before) != cells {
 		t.Fatalf("%d series before any ACK, want every format x kind (%d)", len(before), cells)

@@ -54,14 +54,40 @@ type counters struct {
 	// directedBytes, apart so the early read's own cost can be read.
 	earlyBytes   map[string]uint64
 	earlierReads map[string]uint64
-	earlierBytes map[string]uint64
-	holdIgnored  map[string]uint64
+	// earlierOvertaken is source|path: what overtook the trials counted
+	// overtaken; earlierPreparedLateMax, per source, the furthest past its
+	// candidate readiness point a trial's Slot was prepared.
+	earlierOvertaken       map[string]uint64
+	earlierPreparedLateMax map[string]time.Duration
+	// earlierAhead is source|slots: trials reserved ahead, by how many Slots
+	// ahead (EarlierAheadSlots).
+	earlierAhead map[string]uint64
+	// earlierSkipped is source|reason: held Slots Prepare reserved no trial
+	// for, by why (EarlierSkipReasons).
+	earlierSkipped map[string]uint64
+	earlierBytes   map[string]uint64
+	// probations is source|outcome: probation rereads by what they came to
+	// (ProbationOutcomes); probationCaught source|after: the rounds read
+	// early it caught, by the lowering it followed (ProbationAfters).
+	probations      map[string]uint64
+	probationCaught map[string]uint64
+	// floorProbeRounds is source|outcome: shadow probe rounds by what they
+	// came to (FloorProbeRoundOutcomes); floorProbes source|kind|event:
+	// probes started and ended (FloorProbeKinds, FloorProbeEvents).
+	floorProbeRounds map[string]uint64
+	floorProbes      map[string]uint64
+	// floorProbeChanges is source|change: the buckets the formal reads of
+	// different probe rounds differed in from the read at the probe's hold,
+	// by change class (Changes).
+	floorProbeChanges map[string]uint64
+	holdIgnored       map[string]uint64
 	// source|outcome and source|age: completed samples whose first read was
 	// empty, and when those whose data arrived later were complete.
 	emptyFirstReads map[string]uint64
 	emptyCompletion map[string]uint64
 	refusals        map[string]uint64 // reason: permits refused
 	faults          map[string]uint64 // reason
+	plans           map[string]uint64 // outcome (PlanOutcomes)
 	// Per source: the latest completion seen, the bytes rechecks read back,
 	// and samples whose query's lookback could not be read.
 	maxCompletion   map[string]time.Duration
@@ -83,7 +109,10 @@ func newCounters(sources, refusals []string) counters {
 		supplementHold: map[string]uint64{}, supplementHoldMax: map[string]time.Duration{},
 		early: map[string]uint64{}, earlyUndecided: map[string]uint64{}, earlyBytes: map[string]uint64{},
 		earlierReads: map[string]uint64{}, earlierBytes: map[string]uint64{}, holdIgnored: map[string]uint64{},
-		emptyCompletion: map[string]uint64{}, refusals: map[string]uint64{RefusedOther: 0}, faults: map[string]uint64{},
+		earlierOvertaken: map[string]uint64{}, earlierPreparedLateMax: map[string]time.Duration{}, earlierAhead: map[string]uint64{},
+		earlierSkipped: map[string]uint64{}, probations: map[string]uint64{}, probationCaught: map[string]uint64{},
+		floorProbeRounds: map[string]uint64{}, floorProbes: map[string]uint64{}, floorProbeChanges: map[string]uint64{},
+		emptyCompletion: map[string]uint64{}, refusals: map[string]uint64{RefusedOther: 0}, faults: map[string]uint64{}, plans: map[string]uint64{},
 		maxCompletion: map[string]time.Duration{}, recheckBytes: map[string]uint64{}, unknownLookback: map[string]uint64{},
 		yieldReleases: map[string]uint64{}, yieldReleaseSeconds: map[string]float64{}, yieldReleaseMax: map[string]time.Duration{}}
 	for _, reason := range refusals {
@@ -91,6 +120,9 @@ func newCounters(sources, refusals []string) counters {
 	}
 	for _, fault := range Faults {
 		c.faults[fault] = 0
+	}
+	for _, outcome := range PlanOutcomes {
+		c.plans[outcome] = 0
 	}
 	for _, source := range sources {
 		c.firstReads[source] = 0
@@ -133,6 +165,33 @@ func newCounters(sources, refusals []string) counters {
 		for _, outcome := range EarlierReadOutcomes {
 			c.earlierReads[key2(source, outcome)] = 0
 		}
+		for _, path := range EarlierOvertakenPaths {
+			c.earlierOvertaken[key2(source, path)] = 0
+		}
+		for _, outcome := range ProbationOutcomes {
+			c.probations[key2(source, outcome)] = 0
+		}
+		for _, after := range ProbationAfters {
+			c.probationCaught[key2(source, after)] = 0
+		}
+		for _, outcome := range FloorProbeRoundOutcomes {
+			c.floorProbeRounds[key2(source, outcome)] = 0
+		}
+		for _, kind := range FloorProbeKinds {
+			for _, event := range FloorProbeEvents {
+				c.floorProbes[key3(source, kind, event)] = 0
+			}
+		}
+		for _, change := range Changes {
+			c.floorProbeChanges[key2(source, change)] = 0
+		}
+		for _, slots := range EarlierAheadSlots {
+			c.earlierAhead[key2(source, slots)] = 0
+		}
+		for _, reason := range EarlierSkipReasons {
+			c.earlierSkipped[key2(source, reason)] = 0
+		}
+		c.earlierPreparedLateMax[source] = 0
 		c.earlierBytes[source] = 0
 		for _, reason := range ReadHoldIgnoredReasons {
 			c.holdIgnored[key2(source, reason)] = 0
@@ -167,6 +226,29 @@ type Stats struct {
 	// ReadHoldSeeds is the groups that started from a seeded arrival age, by
 	// where it came from: peer or cold_start.
 	ReadHoldSeeds map[string]uint64 `json:"read_hold_seeds,omitempty"`
+	// ReadHoldQueryDurationWrites is the read-hold records written for the
+	// query duration they keep for a successor: changed or refreshed.
+	ReadHoldQueryDurationWrites map[string]uint64 `json:"read_hold_query_duration_writes,omitempty"`
+	// ReadHoldEarlierSkipped is the earlier-read trials not run, by why:
+	// at_limit, a group held at its limit, whose data arrives past the
+	// longest hold it may have.
+	ReadHoldEarlierSkipped map[string]uint64 `json:"read_hold_earlier_skipped,omitempty"`
+	// ReadHoldFloorProbes is the shadow probes whose end the controller took,
+	// by what it made of them (readhold.FloorProbeOutcomes), every kind
+	// together, and ReadHoldFloorProbesByKind by kind and outcome.
+	ReadHoldFloorProbes       map[string]uint64            `json:"read_hold_floor_probes,omitempty"`
+	ReadHoldFloorProbesByKind map[string]map[string]uint64 `json:"read_hold_floor_probes_by_kind,omitempty"`
+	// ReadHoldFloorProbeProgress is the writes keeping a running probe's clean
+	// rounds, by what came of them: written, stale, conflict.
+	ReadHoldFloorProbeProgress map[string]uint64 `json:"read_hold_floor_probe_progress,omitempty"`
+	// ReadHoldProbationFindings is the probation findings the controller
+	// took, by what it made of them: undone, quiet.
+	ReadHoldProbationFindings map[string]uint64 `json:"read_hold_probation_findings,omitempty"`
+	// RoundsReadAtLimit is the decided rounds read at their group's hold
+	// limit while its data was measured landing past it, by the source the
+	// group reads (Sources): each a round decided before its data was all
+	// there.
+	RoundsReadAtLimit map[string]uint64 `json:"rounds_read_at_limit,omitempty"`
 	// ReadHoldClamped is the Slots frozen at the hold limit because a
 	// transition asked for more: known or fallback.
 	ReadHoldClamped map[string]uint64 `json:"read_hold_transition_clamped,omitempty"`
@@ -194,10 +276,15 @@ type Stats struct {
 	// Faults: reason -> reads not kept for a defect. Always 0 in normal
 	// running; anything else is a defect to fix.
 	Faults map[string]uint64 `json:"faults"`
+	// Plans: outcome -> plan entries by what became of them (PlanOutcomes).
+	Plans map[string]uint64 `json:"plans"`
 	// Pending is the samples in flight - one at most per Query Group, and
 	// one waiting for its deep recheck - and PendingBytes what their
 	// summaries hold: computed, not a budget.
-	Pending      int `json:"pending"`
+	Pending int `json:"pending"`
+	// PlanEntries is how many entries of the control plane's plan set this
+	// process holds now, expired ones gone.
+	PlanEntries  int `json:"plan_entries"`
 	PendingBytes int `json:"pending_bytes"`
 	// Latest is the measured Query Groups whose data was complete latest,
 	// latest first, at most maxLatest.
@@ -314,9 +401,46 @@ type SourceStats struct {
 	// DirectedReadBytes: the bytes reading early added.
 	EarlyReadBytes uint64 `json:"early_read_bytes"`
 	// EarlierReads compares h/2 samples only with their formal first reads.
-	EarlierReads     map[string]uint64 `json:"earlier_reads"`
+	EarlierReads map[string]uint64 `json:"earlier_reads"`
+	// EarlierOvertaken is what overtook the trials EarlierReads counts as
+	// overtaken (EarlierOvertakenPaths), and EarlierPreparedLateMaxSeconds
+	// the furthest past its candidate readiness point a trial's Slot was
+	// prepared since the process started; it never decays.
+	EarlierOvertaken              map[string]uint64 `json:"earlier_overtaken"`
+	EarlierPreparedLateMaxSeconds float64           `json:"earlier_prepared_late_max_seconds"`
+	// EarlierAhead is trials reserved ahead by how many Slots ahead
+	// (EarlierAheadSlots): a group whose hold is far past its period needs
+	// more than one.
+	EarlierAhead map[string]uint64 `json:"earlier_ahead"`
+	// EarlierSkipped is held Slots whose first attempt reserved no trial, by
+	// why (EarlierSkipReasons).
+	EarlierSkipped   map[string]uint64 `json:"earlier_skipped"`
 	EarlierReadBytes uint64            `json:"earlier_read_bytes"`
 	ReadHoldIgnored  map[string]uint64 `json:"read_hold_ignored"`
+	// ProbationRereads is the rounds of Query Groups in probation read again,
+	// by what they came to (ProbationOutcomes), and ProbationGroups the
+	// source's Query Groups in probation now: what probation costs and what
+	// it catches.
+	ProbationRereads map[string]uint64 `json:"probation_rereads"`
+	ProbationGroups  uint64            `json:"probation_groups"`
+	// ProbationCaught is the rounds read early probation caught, by the
+	// lowering it followed (ProbationAfters): after verified, a shadow probe
+	// that passed by chance.
+	ProbationCaught map[string]uint64 `json:"probation_caught"`
+	// FloorProbeRounds is the rounds of Query Groups whose floor is probed,
+	// read at the floor beside the formal read, by what they came to
+	// (FloorProbeRoundOutcomes); FloorProbes the probes started and ended
+	// (FloorProbeEvents), every kind together, and FloorProbesByKind by kind
+	// (FloorProbeKinds) and event; FloorProbeGroups the source's Query Groups
+	// with a probe now.
+	FloorProbeRounds  map[string]uint64            `json:"floor_probe_rounds"`
+	FloorProbes       map[string]uint64            `json:"floor_probes"`
+	FloorProbesByKind map[string]map[string]uint64 `json:"floor_probes_by_kind"`
+	FloorProbeGroups  uint64                       `json:"floor_probe_groups"`
+	// FloorProbeChanges is the buckets the formal reads of different probe
+	// rounds differed in from the read at the probe's hold, by change class
+	// (Changes): what a failed probe found not yet there.
+	FloorProbeChanges map[string]uint64 `json:"floor_probe_changes"`
 	// EmptyFirstReads: outcome -> completed samples whose first read was
 	// complete and held no point - arrived when data came at a later rung,
 	// stayed_empty when none did - and EmptyFirstReadCompletion when those
@@ -366,7 +490,9 @@ type GroupLateness struct {
 var GroupReadHoldClasses = []string{"h0", "h_positive"}
 
 // groupCounts has only the closed dimensions: two hold classes, six rungs,
-// five sample classes, two ignored reasons and eight earlier-read outcomes.
+// five sample classes, two ignored reasons, eight earlier-read outcomes, six
+// paths an earlier-read trial is overtaken by, four distances ahead, eight
+// reasons a held Slot reserved no trial and six probe round outcomes.
 // It belongs to the live group and is discarded by Forget, like supplements.
 type groupCounts struct {
 	since        time.Time
@@ -375,6 +501,10 @@ type groupCounts struct {
 	classes      [5]uint64
 	ignored      [2]uint64
 	earlier      [8]uint64
+	overtaken    [6]uint64
+	ahead        [4]uint64
+	skipped      [8]uint64
+	probeRounds  [6]uint64
 	earlierBytes uint64
 }
 
@@ -400,15 +530,30 @@ func wordIndex(words []string, wanted string) int {
 // only closed, classified samples. Refused earlier reads count as unobserved
 // outcomes, and their delivered bytes are counted even when comparison fails.
 type GroupReading struct {
-	QueryGroup       execution.QueryGroupIdentity `json:"query_group"`
-	Source           string                       `json:"source"`
-	Since            time.Time                    `json:"since"`
-	Compared         map[string]map[string]uint64 `json:"compared"`
-	ChangedWindows   map[string]map[string]uint64 `json:"changed_windows"`
-	Classes          map[string]uint64            `json:"classes"`
-	ReadHoldIgnored  map[string]uint64            `json:"read_hold_ignored"`
-	EarlierReads     map[string]uint64            `json:"earlier_reads"`
-	EarlierReadBytes uint64                       `json:"earlier_read_bytes"`
+	QueryGroup      execution.QueryGroupIdentity `json:"query_group"`
+	Source          string                       `json:"source"`
+	Since           time.Time                    `json:"since"`
+	Compared        map[string]map[string]uint64 `json:"compared"`
+	ChangedWindows  map[string]map[string]uint64 `json:"changed_windows"`
+	Classes         map[string]uint64            `json:"classes"`
+	ReadHoldIgnored map[string]uint64            `json:"read_hold_ignored"`
+	EarlierReads    map[string]uint64            `json:"earlier_reads"`
+	// EarlierOvertaken is what overtook the group's trials counted overtaken
+	// (EarlierOvertakenPaths): whether its data was late or its trials could
+	// not be tried in time is told group by group.
+	EarlierOvertaken map[string]uint64 `json:"earlier_overtaken"`
+	// EarlierAhead is the group's trials reserved ahead by how many Slots
+	// ahead (EarlierAheadSlots).
+	EarlierAhead map[string]uint64 `json:"earlier_ahead"`
+	// EarlierSkipped is the group's held Slots whose first attempt reserved
+	// no trial, by why (EarlierSkipReasons): a group never lowered says here
+	// what stood in its trials' way.
+	EarlierSkipped   map[string]uint64 `json:"earlier_skipped"`
+	EarlierReadBytes uint64            `json:"earlier_read_bytes"`
+	// FloorProbeRounds is the group's probe rounds by what they came to
+	// (FloorProbeRoundOutcomes), and FloorProbe its probe now, if any.
+	FloorProbeRounds map[string]uint64 `json:"floor_probe_rounds"`
+	FloorProbe       *GroupFloorProbe  `json:"floor_probe,omitempty"`
 }
 
 // ReadHoldGroups is one source's Query Groups this process holds by their
@@ -453,14 +598,20 @@ func (engine *Engine) GroupReading(queryGroup execution.QueryGroupIdentity) (Gro
 		return GroupReading{}, false
 	}
 	counts, source := state.reading, state.source
+	var probe *GroupFloorProbe
+	if current := state.floorProbe; current != nil {
+		probe = &GroupFloorProbe{FloorMillis: current.floor.Milliseconds(), Kind: current.kind, HoldMillis: current.hold.Milliseconds(),
+			Clean: current.clean, Rounds: engine.probeRounds(current), Started: current.started, ResumedFrom: current.resumedFrom,
+			Reserved: len(current.reserved)}
+	}
 	engine.mu.Unlock()
 	if !engine.options.Owns(queryGroup) {
 		return GroupReading{}, false
 	}
 	reading := GroupReading{QueryGroup: queryGroup, Source: source, Since: counts.since,
 		Compared: map[string]map[string]uint64{}, ChangedWindows: map[string]map[string]uint64{},
-		Classes: map[string]uint64{}, ReadHoldIgnored: map[string]uint64{}, EarlierReads: map[string]uint64{},
-		EarlierReadBytes: counts.earlierBytes}
+		Classes: map[string]uint64{}, ReadHoldIgnored: map[string]uint64{}, EarlierReads: map[string]uint64{}, EarlierOvertaken: map[string]uint64{},
+		EarlierAhead: map[string]uint64{}, EarlierSkipped: map[string]uint64{}, EarlierReadBytes: counts.earlierBytes}
 	for hold, name := range GroupReadHoldClasses {
 		reading.Compared[name], reading.ChangedWindows[name] = map[string]uint64{}, map[string]uint64{}
 		for rung, word := range RungNames {
@@ -477,13 +628,26 @@ func (engine *Engine) GroupReading(queryGroup execution.QueryGroupIdentity) (Gro
 	for index, word := range EarlierReadOutcomes {
 		reading.EarlierReads[word] = counts.earlier[index]
 	}
+	for index, path := range EarlierOvertakenPaths {
+		reading.EarlierOvertaken[path] = counts.overtaken[index]
+	}
+	for index, slots := range EarlierAheadSlots {
+		reading.EarlierAhead[slots] = counts.ahead[index]
+	}
+	for index, reason := range EarlierSkipReasons {
+		reading.EarlierSkipped[reason] = counts.skipped[index]
+	}
+	reading.FloorProbeRounds, reading.FloorProbe = map[string]uint64{}, probe
+	for index, outcome := range FloorProbeRoundOutcomes {
+		reading.FloorProbeRounds[outcome] = counts.probeRounds[index]
+	}
 	return reading, true
 }
 
 // Stats reads the lookback now. Ownership is asked outside the engine's
 // lock: the Runner set that answers it calls Forget while holding its own.
 func (engine *Engine) Stats() Stats {
-	stats := Stats{Sources: map[string]SourceStats{}, PermitRefusals: map[string]uint64{}, Faults: map[string]uint64{},
+	stats := Stats{Sources: map[string]SourceStats{}, PermitRefusals: map[string]uint64{}, Faults: map[string]uint64{}, Plans: map[string]uint64{},
 		Latest: []GroupLateness{}, ReadEarly: []ReadEarlyReading{}, Recent: []Recent{}, NeverCompleteFirstRead: []NeverCompleteGroup{},
 		Supplements: []SupplementReading{}, LatePastRound: []LatePastRoundReading{}, ResidualMisses: []ResidualMissReading{}}
 	if engine == nil {
@@ -570,7 +734,7 @@ func (engine *Engine) Stats() Stats {
 				CompletionSeconds: int64(state.completion / time.Second), StepSeconds: int64(state.step / time.Second),
 				MeasuredAt: state.measuredAt}
 		}
-		for _, pending := range [...]*sample{state.sample, state.probe} {
+		for _, pending := range append([]*sample{state.sample, state.probe}, state.probations...) {
 			if pending != nil {
 				stats.Pending++
 				stats.PendingBytes += pending.last.bytes() + len(pending.first)*seriesEntryBytes
@@ -578,6 +742,8 @@ func (engine *Engine) Stats() Stats {
 		}
 		candidates = append(candidates, entry)
 	}
+	probationGroups := engine.probationGroupsLocked()
+	floorProbeGroups := engine.floorProbeGroupsLocked()
 	for _, source := range Sources {
 		entry := SourceStats{FirstReads: engine.counts.firstReads[source], FirstReadBytes: engine.firstReadBytes[source].Load(),
 			RecheckBytes: engine.counts.recheckBytes[source], UnknownLookback: engine.counts.unknownLookback[source],
@@ -598,6 +764,44 @@ func (engine *Engine) Stats() Stats {
 		}
 		for _, outcome := range EarlierReadOutcomes {
 			entry.EarlierReads[outcome] = engine.counts.earlierReads[key2(source, outcome)]
+		}
+		entry.EarlierOvertaken = map[string]uint64{}
+		for _, path := range EarlierOvertakenPaths {
+			entry.EarlierOvertaken[path] = engine.counts.earlierOvertaken[key2(source, path)]
+		}
+		entry.EarlierPreparedLateMaxSeconds = engine.counts.earlierPreparedLateMax[source].Seconds()
+		entry.EarlierAhead = map[string]uint64{}
+		for _, slots := range EarlierAheadSlots {
+			entry.EarlierAhead[slots] = engine.counts.earlierAhead[key2(source, slots)]
+		}
+		entry.EarlierSkipped = map[string]uint64{}
+		for _, reason := range EarlierSkipReasons {
+			entry.EarlierSkipped[reason] = engine.counts.earlierSkipped[key2(source, reason)]
+		}
+		entry.ProbationRereads, entry.ProbationGroups = map[string]uint64{}, probationGroups[source]
+		for _, outcome := range ProbationOutcomes {
+			entry.ProbationRereads[outcome] = engine.counts.probations[key2(source, outcome)]
+		}
+		entry.ProbationCaught = map[string]uint64{}
+		for _, after := range ProbationAfters {
+			entry.ProbationCaught[after] = engine.counts.probationCaught[key2(source, after)]
+		}
+		entry.FloorProbeRounds, entry.FloorProbes, entry.FloorProbeGroups = map[string]uint64{}, map[string]uint64{}, floorProbeGroups[source]
+		for _, outcome := range FloorProbeRoundOutcomes {
+			entry.FloorProbeRounds[outcome] = engine.counts.floorProbeRounds[key2(source, outcome)]
+		}
+		entry.FloorProbesByKind = make(map[string]map[string]uint64, len(FloorProbeKinds))
+		for _, kind := range FloorProbeKinds {
+			entry.FloorProbesByKind[kind] = make(map[string]uint64, len(FloorProbeEvents))
+			for _, event := range FloorProbeEvents {
+				count := engine.counts.floorProbes[key3(source, kind, event)]
+				entry.FloorProbesByKind[kind][event] = count
+				entry.FloorProbes[event] += count
+			}
+		}
+		entry.FloorProbeChanges = map[string]uint64{}
+		for _, change := range Changes {
+			entry.FloorProbeChanges[change] = engine.counts.floorProbeChanges[key2(source, change)]
 		}
 		for _, outcome := range EarlyOutcomes {
 			entry.EarlyReads[outcome] = engine.counts.early[key2(source, outcome)]
@@ -665,6 +869,10 @@ func (engine *Engine) Stats() Stats {
 	for reason, n := range engine.counts.refusals {
 		stats.PermitRefusals[reason] = n
 	}
+	for outcome, n := range engine.counts.plans {
+		stats.Plans[outcome] = n
+	}
+	stats.PlanEntries = len(engine.plans)
 	for reason, n := range engine.counts.faults {
 		stats.Faults[reason] = n
 	}

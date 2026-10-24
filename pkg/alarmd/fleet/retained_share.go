@@ -52,12 +52,14 @@ type RetainedShareFacts struct {
 	// ThresholdPercent is the threshold the row was listed at, carried so the
 	// page does not state a number of its own.
 	ThresholdPercent uint64 `json:"threshold_percent"`
-	// refused marks an object whose latest round was refused at its share. It
-	// is on the refusal's line then, not on this one; the reading is kept so
-	// the next completion still knows since when the object has been near the
-	// wall - refusals come and go, and clearing the reading on each one would
-	// restart Since every time and hide an object growing into its share.
-	refused bool
+	// Refused marks a reading taken from a Slot given up at the share, not
+	// from a completed one: RetainedBytes is then what the Slot held plus
+	// what it asked for when the share refused it, ShareBytes that share,
+	// and the phase split above is absent (zero) - the refusal reports no
+	// split. The object stays on this row: an object refused on every Slot
+	// completes none, and this row is where it has to be seen, beside its
+	// share_refusal on the round's own row.
+	Refused bool `json:"refused,omitempty"`
 }
 
 // noteShareUsage keeps the latest completed Slot's reading. Only a Slot that
@@ -84,18 +86,39 @@ func (state *queryGroupState) noteShareUsage(usage *observability.SlotBudgetUsag
 	state.shareUsage = next
 }
 
-// RetainedShare is every object whose latest completed Slot held at least
+// noteShareRefusedUsage keeps, as the object's reading, the bytes of a Slot
+// given up at its share. It keeps the Since an earlier reading at or past
+// the threshold had, so an object that grew into its share and is now
+// refused reads as near the wall since it first got there.
+func (state *queryGroupState) noteShareRefusedUsage(share *observability.SlotSkipShareFacts, slot int64, at time.Time) {
+	if share == nil || share.LimitBytes == 0 {
+		return
+	}
+	retained := share.OwnUsedBytes + share.RequestedBytes
+	next := &RetainedShareFacts{
+		RetainedBytes: retained, ShareBytes: share.LimitBytes, PercentOfShare: retained * 100 / share.LimitBytes,
+		Slot: slot, At: at, Since: at, ThresholdPercent: RetainedShareApproachPercent, Refused: true,
+	}
+	if previous := state.shareUsage; previous != nil &&
+		observability.RetainedShareApproaching(previous.RetainedBytes, previous.ShareBytes) {
+		next.Since = previous.Since
+	}
+	state.shareUsage = next
+}
+
+// RetainedShare is every object whose latest reading held at least
 // RetainedShareApproachPercent of its one-object share of the retained pool,
-// fullest first. Its rounds complete and its results stand; listed because
-// the refusal at the share stops the strategy whole, and this is the only
-// place it can be seen coming.
+// fullest first: a completed Slot near the share, whose results stand, or a
+// Slot given up at it (Refused), whose strategy is stopped until it is
+// sharded. Listed because the refusal stops the strategy whole: this is the
+// place it can be seen coming, and where it stays once it has come.
 func (tracker *Tracker) RetainedShare() []Anomaly {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 	anomalies := make([]Anomaly, 0)
 	for queryGroup, state := range tracker.groups {
 		usage := state.shareUsage
-		if usage == nil || usage.refused || !observability.RetainedShareApproaching(usage.RetainedBytes, usage.ShareBytes) {
+		if usage == nil || !observability.RetainedShareApproaching(usage.RetainedBytes, usage.ShareBytes) {
 			continue
 		}
 		facts := *usage
@@ -118,4 +141,44 @@ func (tracker *Tracker) RetainedShare() []Anomaly {
 		return anomalies[left].QueryGroup < anomalies[right].QueryGroup
 	})
 	return anomalies
+}
+
+// ShareRefusalFacts is what a row filed under RESOURCE_SHARE_EXCEEDED says for
+// itself: the object's Slots are being finalized without a query because each
+// one's own retained bytes are over the share one object may hold, and these
+// are the bytes of the latest refusal against that share. One row per object,
+// however many of its Slots are given up: until the strategy is sharded every
+// Slot of it lands here, and a line per Slot would bury the one fact.
+type ShareRefusalFacts struct {
+	// Phase is where the reservation was refused (normal_input,
+	// normal_output, normal_gap); OwnUsedBytes what the Slot held there,
+	// RequestedBytes what it asked for on top, LimitBytes the share.
+	Phase          string `json:"phase"`
+	OwnUsedBytes   uint64 `json:"own_used_bytes"`
+	RequestedBytes uint64 `json:"requested_bytes"`
+	LimitBytes     uint64 `json:"limit_bytes"`
+	// Refusals is how many identical refusals the latest Slot took before
+	// it was given up.
+	Refusals uint32 `json:"refusals"`
+	// Slots is how many of the object's Slots this process has given up for
+	// the share since FirstSlot, the latest being LastSlot.
+	Slots     int       `json:"slots"`
+	FirstSlot int64     `json:"first_slot"`
+	LastSlot  int64     `json:"last_slot"`
+	Since     time.Time `json:"since"`
+	At        time.Time `json:"at"`
+}
+
+// noteShareRefusal folds one RESOURCE_SHARE_EXCEEDED skip into the object's
+// share refusal. Called with the lock held.
+func (state *queryGroupState) noteShareRefusal(share *observability.SlotSkipShareFacts, first, last int64, slots uint32, at time.Time) {
+	facts := state.shareRefusal
+	if facts == nil {
+		facts = &ShareRefusalFacts{FirstSlot: first, Since: at}
+		state.shareRefusal = facts
+	}
+	facts.Phase, facts.OwnUsedBytes, facts.RequestedBytes, facts.LimitBytes = share.Phase, share.OwnUsedBytes, share.RequestedBytes, share.LimitBytes
+	facts.Refusals = share.Refusals
+	facts.Slots += int(max(slots, 1))
+	facts.LastSlot, facts.At = last, at
 }

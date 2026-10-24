@@ -20,7 +20,7 @@ type fleetTrackerCollector struct {
 }
 
 func newFleetTrackerCollector() *fleetTrackerCollector {
-	return &fleetTrackerCollector{dropped: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "fleet_tracker_dropped_total"),
+	return &fleetTrackerCollector{dropped: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "fleet_tracker_dropped_total"),
 		"Facts the replica's fleet object table dropped because it was full, by what: observation (a new object's "+
 			"round never recorded), truncation, range. The table holds four times the objects the replica owns, at "+
 			"least 16384; anything here is an object the page and fleet.get cannot speak for, and fleet.get names "+

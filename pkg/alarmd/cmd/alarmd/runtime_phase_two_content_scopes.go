@@ -96,7 +96,7 @@ func (runtime *productionPhaseTwoOwnership) PublishContentScopes(
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentOwnership, Stage: observability.StageAssignmentAcquired,
 			Result: observability.ResultDegraded, Operation: observability.OperationTransition,
-			Direction: observability.DirectionInternal, ReasonCode: ownershipObservationReason(err), Err: err,
+			ReasonCode: ownershipObservationReason(err), Err: err,
 		})
 	}
 	authority, err := runtime.ensureControlAuthority(ctx, at)

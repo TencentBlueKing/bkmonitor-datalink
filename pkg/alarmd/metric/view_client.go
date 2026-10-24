@@ -75,7 +75,7 @@ type viewClientCollector struct {
 }
 
 func newViewClientCollector() *viewClientCollector {
-	name := func(suffix string) string { return prometheus.BuildFQName(metricNamespace, metricSubsystem, suffix) }
+	name := func(suffix string) string { return prometheus.BuildFQName("", metricSubsystem, suffix) }
 	return &viewClientCollector{
 		connected: prometheus.NewDesc(name("view_client_connected"),
 			"1 while this Worker holds an admitted stream to the Control Leader, else 0. Read the fleet's sum against "+

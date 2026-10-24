@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
@@ -55,12 +56,12 @@ func addMaintenancePlan(t *testing.T, f *maintenanceTestFixture, strategyID int6
 	if err := f.m.cache.TrackOwned(key); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := testwait.Deadline(t)
 	for !f.m.cache.Snapshot(key).Calibrated {
 		if time.Now().After(deadline) {
 			t.Fatal("cache did not calibrate the second Plan")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	catalogRead := f.m.catalog.(*maintenanceTestCatalog)
 	catalogRead.plans = append(catalogRead.plans, controlplane.MaintenancePlan{Identity: p.Identity, Compiled: compiled})

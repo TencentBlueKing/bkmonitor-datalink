@@ -213,12 +213,19 @@ var failureFacets = map[string]facets{
 	// The object is too big for one replica's share; no dependency is involved
 	// and waiting does not help.
 	"QG_BUDGET_SHARE_EXCEEDED": {StageEvaluate, ClassCapacity, DependencyNone},
-	"KAFKA_UNAVAILABLE":        {StageCommit, ClassUnavailable, DependencyKafka},
-	"STATE_WRITE_RETRYABLE":    {StageCommit, ClassUnavailable, ""},
-	"OUTPUT_ACK_UNKNOWN":       {StageCommit, ClassUnavailable, DependencyKafka},
-	"SNAPSHOT_UNAVAILABLE":     {StageConfig, ClassUnavailable, ""},
-	"SNAPSHOT_RETRY_PENDING":   {StageConfig, ClassUnavailable, ""},
-	"ACTIVATION_READ_FAILED":   {StageConfig, ClassUnavailable, ""},
+	// A supplement planned a query its kept read did not hold: the query
+	// stage, as this deployment's own contract between plan and read.
+	"SUPPLEMENT_KEPT_READ_ABSENT": {StageQuery, ClassContract, DependencyNone},
+	// The Slot given up for that refusal (finding.go has the why).
+	"RESOURCE_SHARE_EXCEEDED":       {StageEvaluate, ClassCapacity, DependencyNone},
+	"KAFKA_UNAVAILABLE":             {StageCommit, ClassUnavailable, DependencyKafka},
+	"STATE_WRITE_RETRYABLE":         {StageCommit, ClassUnavailable, ""},
+	"OUTPUT_ACK_UNKNOWN":            {StageCommit, ClassUnavailable, DependencyKafka},
+	"SNAPSHOT_UNAVAILABLE":          {StageConfig, ClassUnavailable, ""},
+	"TARGET_RESOLUTION_INCOMPLETE":  {StageQuery, ClassConfig, DependencyNone},
+	"TARGET_RESOLUTION_UNAVAILABLE": {StageQuery, ClassUnavailable, DependencyNone},
+	"SNAPSHOT_RETRY_PENDING":        {StageConfig, ClassUnavailable, ""},
+	"ACTIVATION_READ_FAILED":        {StageConfig, ClassUnavailable, ""},
 	// The store answered and the activation record was not in it: the
 	// configuration step with nothing to load. The code names the record
 	// and the store it lives in, so the dependency is named by it; whether
@@ -331,6 +338,9 @@ var failureFacets = map[string]facets{
 	"BUDGET_GAP_MUTATIONS":   {StageEvaluate, ClassCapacity, DependencyNone},
 	"BUDGET_OTHER":           {StageEvaluate, ClassCapacity, DependencyNone},
 	"QUERY_PERMIT_DEADLINE":  {StageQuery, ClassTimeout, DependencyNone},
+	// The backend answered and the deadline passed while this deployment
+	// was decoding and delivering it: a timeout of its own, no dependency's.
+	"QUERY_DELIVERY_TIMEOUT": {StageQuery, ClassTimeout, DependencyNone},
 
 	// Budgets the compiler applies to a definition.
 	"PLAN_BUDGET_EXCEEDED":  {StageConfig, ClassConfig, DependencyNone},
@@ -340,12 +350,19 @@ var failureFacets = map[string]facets{
 	// or a partial answer does not say where the time went.
 	"QUERY_TIMEOUT":     {StageQuery, ClassTimeout, ""},
 	"QUERY_UNAVAILABLE": {StageQuery, ClassUnavailable, ""},
+	// Answered and refused as written: the provider read the query and will
+	// not run it (a client error other than 408 and 429). The strategy's,
+	// not the storage's.
+	"QUERY_REJECTED": {StageQuery, ClassRefused, ""},
 	// Answered and refused: the table or field does not route in the space.
 	"QUERY_TARGET_MISSING": {StageQuery, ClassRefused, ""},
 	// The answer came back bucketed on the aggregation grid, which a Plan
 	// detected every step cannot use: refused for the strategy's step.
 	"DETECT_INTERVAL_STORAGE_NOT_SLIDING": {StageQuery, ClassRefused, ""},
-	"QUERY_PARTIAL":                       {StageQuery, ClassUnavailable, ""},
+	// An output of a query with named outputs answered twice at one time and
+	// labels: the outputs cannot be aligned, refused for the strategy as written.
+	"QUERY_NAMED_OUTPUT_DUPLICATE_KEY": {StageQuery, ClassRefused, ""},
+	"QUERY_PARTIAL":                    {StageQuery, ClassUnavailable, ""},
 	// The backend answered, completely, with nothing: the dependency data is
 	// not there. Not unavailable -- the query succeeded -- and where the data
 	// went is not this deployment's to say.
@@ -434,7 +451,7 @@ var failureFacets = map[string]facets{
 // wait that ended at the query deadline. They have a reading here and no
 // row in codeChecks, and the test that holds the two tables together knows
 // them by name.
-var failureRefCodes = []string{"EVALUATION_FAILED", "GAP_SCOPE_REASON_CONFLICT", "QUERY_PERMIT_DEADLINE"}
+var failureRefCodes = []string{"EVALUATION_FAILED", "GAP_SCOPE_REASON_CONFLICT", "QUERY_PERMIT_DEADLINE", "QUERY_DELIVERY_TIMEOUT"}
 
 // categoryStages reads the step from a query failure's category when no
 // code named it: the categories are the pipeline's own words for where the
@@ -443,6 +460,7 @@ var categoryStages = map[string]Stage{
 	"source_backend":      StageQuery,
 	"provider_transport":  StageQuery,
 	"admission":           StageQuery,
+	"delivery":            StageQuery,
 	"series_identity":     StageEvaluate,
 	"named_input":         StageEvaluate,
 	"completion_contract": StageEvaluate,
@@ -469,7 +487,7 @@ var dependencySignatures = []struct {
 // no failure: a normal object, or one whose data stopped, which is not
 // this deployment stuck anywhere.
 func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
-	if anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound || anomaly.Kind == KindQuiet || anomaly.Kind == KindAnswerTruncated || anomaly.Kind == KindRetainedShareApproaching ||
+	if anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound || anomaly.Kind == KindQuiet || anomaly.Kind == KindLogCountEmpty || anomaly.Kind == KindAnswerTruncated || anomaly.Kind == KindRetainedShareApproaching ||
 		anomaly.Kind == KindReadBeforeComplete || anomaly.Kind == KindReadHeld || anomaly.Kind == KindLatePastRound ||
 		anomaly.Kind == KindLateSeriesMissed {
 		return nil

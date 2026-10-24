@@ -27,7 +27,7 @@ func startSlotTiming(ctx context.Context, observer observability.Observer, stage
 		// where they happen. A duration record has no outcome to add.
 		observeRuntime(ctx, observer, observability.Observation{
 			Component: observability.ComponentScheduler, Stage: stage,
-			Result: observability.ResultSuccess, Direction: observability.DirectionInternal,
+			Result:   observability.ResultSuccess,
 			Duration: now().Sub(started),
 		})
 	}

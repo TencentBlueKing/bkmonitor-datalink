@@ -52,7 +52,13 @@ func TestTheShutdownTimeoutIsDerivedFromTheGraceTheChartPasses(t *testing.T) {
 			t.Fatalf("no grace: shutdown timeout = %s, %v; want %s", cfg.ShutdownTimeout.Duration(), err, DefaultShutdownTimeout)
 		}
 	})
-	if _, err := load(t, "shutdown_timeout: 10s\n"); err == nil || !strings.Contains(err.Error(), "shutdown_timeout") {
-		t.Fatalf("shutdown_timeout in a values file: error = %v, want it refused by name", err)
+	t.Setenv(TerminationGraceEnvironment, "30")
+	cfg, err := load(t, "shutdown_timeout: 10s\n")
+	if err != nil {
+		t.Fatalf("shutdown_timeout in a values file refused the load: %v", err)
+	}
+	requireIgnored(t, cfg.UnknownKeys, "shutdown_timeout")
+	if cfg.ShutdownTimeout.Duration() != 13500*time.Millisecond {
+		t.Fatalf("shutdown_timeout in a values file was obeyed: %s", cfg.ShutdownTimeout.Duration())
 	}
 }

@@ -10,7 +10,7 @@
 package metric
 
 import (
-	"strings"
+	"regexp"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
@@ -29,7 +29,7 @@ func TestTheSelectorCounterHelpNamesEveryClosedReason(t *testing.T) {
 	}
 	help := ""
 	for _, family := range families {
-		if family.GetName() == "bkmonitor_alarmd_target_selector_resolutions_total" {
+		if family.GetName() == "alarmd_target_selector_resolutions_total" {
 			help = family.GetHelp()
 		}
 	}
@@ -40,7 +40,8 @@ func TestTheSelectorCounterHelpNamesEveryClosedReason(t *testing.T) {
 		if reason == targetplan.ReasonNone {
 			continue
 		}
-		if !strings.Contains(help, reason) {
+		// A word of its own: "stale" inside "staleness" is not the reason named.
+		if !regexp.MustCompile(`(^|[^A-Za-z0-9_])` + regexp.QuoteMeta(reason) + `([^A-Za-z0-9_]|$)`).MatchString(help) {
 			t.Errorf("the selector counter's help does not name %q", reason)
 		}
 	}

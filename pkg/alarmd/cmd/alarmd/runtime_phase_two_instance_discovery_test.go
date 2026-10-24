@@ -34,7 +34,7 @@ func (store *instanceDiscoveryStore) ReadWorker(ctx context.Context, id string) 
 func TestDiscoveryPrefersControlInstanceAndLimitsLegacyFallback(t *testing.T) {
 	at := time.Unix(1700000000, 0)
 	valid := ownership.InstanceRegistration{InstanceID: "leader", Roles: roles.Set{roles.Control},
-		Endpoint: "192.0.2.2:8080", Incarnation: "control-process", ExpiresAt: at.Add(time.Minute)}
+		Endpoint: "192.0.2.2:8080", Incarnation: "control-process", InternalToken: "instance-token", ExpiresAt: at.Add(time.Minute)}
 	for name, test := range map[string]struct {
 		mutate func(*instanceDiscoveryStore)
 		miss   string
@@ -54,7 +54,7 @@ func TestDiscoveryPrefersControlInstanceAndLimitsLegacyFallback(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := &instanceDiscoveryStore{fakeDiscoveryStore: fakeDiscoveryStore{
 				leader: ownership.ControlLeader{OwnerID: "leader", OwnerEpoch: 9}, leaderFound: true,
-				registrations: map[string]ownership.WorkerRegistration{"leader": {WorkerID: "leader", Endpoint: "192.0.2.1:8080"}},
+				registrations: map[string]ownership.WorkerRegistration{"leader": {WorkerID: "leader", Endpoint: "192.0.2.1:8080", StreamToken: "worker-token"}},
 			}, instance: valid, present: true}
 			if test.mutate != nil {
 				test.mutate(store)
@@ -68,6 +68,10 @@ func TestDiscoveryPrefersControlInstanceAndLimitsLegacyFallback(t *testing.T) {
 			}
 			if test.found != "" && (leader.WorkerID != "leader" || leader.ControlEpoch != 9) {
 				t.Fatalf("leader identity = %+v", leader)
+			}
+			// A hop presents the token of the registration it was found by.
+			if want := map[bool]string{false: "instance-token", true: "worker-token"}[test.legacy]; test.found != "" && leader.InternalToken != want {
+				t.Fatalf("leader token = %q, want %q", leader.InternalToken, want)
 			}
 		})
 	}

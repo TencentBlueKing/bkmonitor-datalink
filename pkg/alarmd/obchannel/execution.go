@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Invocation is the bounded operation contract carried by an authenticated
@@ -54,11 +55,23 @@ func (c *EvidenceExecutor) localMeta(requestID string) Meta {
 	return Meta{Version: Version, Revision: c.revision, EnvironmentID: c.options.EnvironmentID, AnsweredBy: c.options.Replica, Build: c.options.Build, Incarnation: c.options.Incarnation, Roles: c.options.Roles, RequestID: requestID}
 }
 
+// CallerBounded is ctx bounded by its caller's deadline when it has one --
+// the operation's own, set where the request came in and carried across
+// every hop (gRPC sends what is left) -- and by fallback only when it has
+// none. A hop that set its own short deadline again would cut an operation
+// that was given longer, which is how a routed slot.query got under 3 s.
+func CallerBounded(ctx context.Context, fallback time.Duration) (context.Context, context.CancelFunc) {
+	if _, bounded := ctx.Deadline(); bounded {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, fallback)
+}
+
 // ExecuteEvidence executes only a local registered read. Its caller must first
 // authenticate the internal Worker RPC; it is not an HTTP or CLI auth bypass.
 // This method neither authenticates a CLI session nor renews or forwards it.
 func (c *EvidenceExecutor) ExecuteEvidence(ctx context.Context, invocation Invocation) Response {
-	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
+	ctx, cancel := CallerBounded(ctx, RequestTimeout)
 	defer cancel()
 	meta := c.localMeta(invocation.RequestID)
 	fail := func(code, message string) Response { return c.prepareResponse(failure(meta, code, message)) }
@@ -103,14 +116,12 @@ func (c *EvidenceExecutor) ExecuteEvidence(ctx context.Context, invocation Invoc
 	if availability := available(op); !availability.Available {
 		return fail("operation_unavailable", availability.Reason)
 	}
+	// The operation's own time, inside what the caller has left: a routed
+	// read runs as long as it would run where it was asked.
+	ctx, cancelOp := context.WithTimeout(ctx, op.ExecutionTimeout)
+	defer cancelOp()
 	if ctx.Err() != nil {
 		return fail("request_timeout", "Evidence execution context ended before execution.")
-	}
-	select {
-	case c.slots <- struct{}{}:
-		defer func() { <-c.slots }()
-	default:
-		return fail("request_budget_exceeded", "Target evidence readers are busy; retry this read later.")
 	}
 	return c.prepareResponse(c.run(ctx, op, invocation.Params, invocation.Target, meta))
 }
@@ -124,7 +135,12 @@ func (c *EvidenceExecutor) run(ctx context.Context, op Operation, params Params,
 		return failure(meta, "request_timeout", "Evidence execution context ended before execution.")
 	}
 	out := op.Run(ctx, params)
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && op.PartialOnTimeout && op.Effect != "exec" && out.Value != nil && out.Error == nil {
+		// The parts it read stand; the ones it did not name their failure
+		// in the answer.
+		out.Complete = false
+		out.Limitations = append(out.Limitations, "The operation's time ran out; the parts not read are named in the answer.")
+	} else if ctx.Err() != nil {
 		if op.Effect != "exec" || out.Value == nil {
 			return failure(meta, "request_timeout", "Evidence execution exceeded its request context; no complete result is returned.")
 		}

@@ -6,6 +6,7 @@
 package scheduler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -265,13 +267,15 @@ func TestQueryPermitDeadlineRemovesQueuedWaiterBeforeGrant(t *testing.T) {
 			time.Now().Add(100*time.Millisecond))
 		done <- acquireErr
 	}()
-	waitForPermitQueue(t, flights, 1, 0)
+	// It waits queued for at most its 100 ms, which a poll of the queue can
+	// miss; the count of callers that ever queued stays.
+	testwait.Until(t, "the expiring caller queued", func() bool { return flights.QueryPermitOccupancy().Queued >= 1 })
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("AcquireQueryPermit(expiring) error = %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("queued permit did not expire at its business deadline")
 	}
 	if snapshot := flights.queryPermitSnapshot(); snapshot.NormalWaiting != 0 || snapshot.Inflight != 1 {
@@ -645,13 +649,13 @@ func equalOperations(left, right []execution.Operation) bool {
 
 func waitForPermitQueue(t *testing.T, flights *FlightCoordinator, normal, recovery int) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		snapshot := flights.queryPermitSnapshot()
 		if snapshot.NormalWaiting == normal && snapshot.RecoveryWaiting == recovery {
 			return
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatalf("permit queue did not settle: %+v", flights.queryPermitSnapshot())
 }
@@ -661,8 +665,121 @@ func receivePermit(t *testing.T, permits <-chan *QueryPermit) *QueryPermit {
 	select {
 	case permit := <-permits:
 		return permit
-	case <-time.After(time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("timed out waiting for query permit")
 		return nil
+	}
+}
+
+// A permit wait's line says how the wait ended: granted, or the word its
+// query_admission line names - the queue full, recovery permits off, the
+// deadline, the wait cancelled. It said terminal with no reason whatever
+// happened. The line feeds the wait histogram and is not written, so the
+// words move no line's level.
+func TestAPermitWaitLineSaysHowTheWaitEnded(t *testing.T) {
+	var mu sync.Mutex
+	var waits []observability.Observation
+	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		if observation.Stage != observability.StageQueryPermitWait {
+			return
+		}
+		mu.Lock()
+		waits = append(waits, observability.NormalizeObservation(observation))
+		mu.Unlock()
+	})
+	limits := testRecoveryLimits()
+	limits.ProcessQueryPermits = 1
+	limits.RecoveryQueryPermits = 0
+	limits.MaxQueuedItemsPerQG = 1
+	flights, err := NewFlightCoordinatorWithRecovery(limits, time.Now, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	deadline := time.Now().Add(time.Minute)
+	holder, err := flights.AcquireQueryPermit(ctx, execution.SlotIdentity{QueryGroup: "holder", EvaluationTime: 60}, execution.OperationNormal, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		_, waitErr := flights.AcquireQueryPermit(waiting, execution.SlotIdentity{QueryGroup: "hot", EvaluationTime: 60}, execution.OperationNormal, deadline)
+		done <- waitErr
+	}()
+	waitForPermitQueue(t, flights, 1, 0)
+	if _, err := flights.AcquireQueryPermit(ctx, execution.SlotIdentity{QueryGroup: "hot", EvaluationTime: 120}, execution.OperationNormal, deadline); !errors.Is(err, ErrQueryPermitQueueFull) {
+		t.Fatalf("second waiter = %v, want the queue full", err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter = %v", err)
+	}
+	holder.Release()
+	if _, err := flights.AcquireRecoveryChannels(ctx, execution.SlotIdentity{QueryGroup: "late", EvaluationTime: 60}, execution.OperationRetry, time.Now().Add(-time.Second), 1); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a channel past its deadline = %v", err)
+	}
+	if _, err := flights.AcquireRecoveryChannels(ctx, execution.SlotIdentity{QueryGroup: "off", EvaluationTime: 60}, execution.OperationReplay, deadline, 1); !errors.Is(err, ErrRecoveryPermitsOff) {
+		t.Fatalf("a channel with recovery permits off = %v", err)
+	}
+	// A recovery round's channel, and the physical permit drawn on it.
+	recovery, err := NewFlightCoordinatorWithRecovery(testRecoveryLimits(), time.Now, observer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot := execution.SlotIdentity{QueryGroup: "replayed", EvaluationTime: 60}
+	channels, err := recovery.AcquireRecoveryChannels(ctx, slot, execution.OperationReplay, deadline, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit, err := channels.AcquireQueryPermit(ctx, slot, execution.OperationReplay, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	permit.Release()
+	channels.Release()
+	mu.Lock()
+	defer mu.Unlock()
+	got := map[observability.ReasonCode]observability.Result{}
+	for _, observation := range waits {
+		got[observation.ReasonCode] = observation.Result
+		if observation.Result == observability.ResultTerminal {
+			t.Errorf("a wait line still reads terminal: %+v", observation)
+		}
+	}
+	if len(waits) != 7 {
+		t.Errorf("%d wait lines, want 7: the holder, the queue full, the cancelled, the deadline, recovery off, "+
+			"and the recovery channel and the permit drawn on it", len(waits))
+	}
+	want := map[observability.ReasonCode]observability.Result{
+		observability.ReasonNone:    observability.ResultSuccess,
+		"QUERY_PERMIT_QUEUE_FULL":   observability.ResultFailed,
+		"QUERY_PERMIT_CANCELLED":    observability.ResultPaused,
+		"QUERY_PERMIT_DEADLINE":     observability.Result(observability.ResultTimeout),
+		"QUERY_PERMIT_RECOVERY_OFF": observability.ResultFailed,
+	}
+	for reason, result := range want {
+		if got[reason] != result {
+			t.Errorf("a wait ending %s read %q, want %q (all: %v)", reason, got[reason], result, got)
+		}
+	}
+	if _, unreported := got[observability.ReasonNotReported]; unreported {
+		t.Errorf("a wait line still reads reason_not_reported: %v", got)
+	}
+	var output bytes.Buffer
+	limiter, err := observability.NewScopedLogLimiter(observability.ScopedLogLimiterConfig{Window: time.Hour, MaxEvents: 100, MaxScopes: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := observability.NewScopedBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logging := observability.NewLoggingObserver(observability.New("alarmd", &output), policy)
+	for _, observation := range waits {
+		logging.Observe(ctx, observation)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("a permit wait line was written: %s", output.String())
 	}
 }

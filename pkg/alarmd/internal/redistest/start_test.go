@@ -62,15 +62,17 @@ func TestStartingOnAnAddressAnotherServerHoldsIsRefused(t *testing.T) {
 }
 
 // A server that exits before it answers is reported at once, with what it
-// wrote, rather than after ReadyWithin: a bad argument is the server's own
-// complaint, not a slow start.
+// wrote, rather than at the test's deadline: a bad argument is the server's
+// own complaint, not a slow start.
 func TestAServerThatExitsBeforeAnsweringIsReportedAtOnce(t *testing.T) {
 	started := time.Now()
 	instance, reason := TryStartAt(t, FreeAddress(t), "--no-such-option", "x")
 	if instance != nil || reason == "" {
 		t.Fatalf("TryStartAt with a bad option = %v, %q; want refused", instance, reason)
 	}
-	if elapsed := time.Since(started); elapsed > ReadyWithin/3 {
+	// Read from its exit it takes milliseconds; waited out, the deadline's two
+	// minutes. Ten seconds tells the two apart on any host.
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
 		t.Fatalf("the refusal took %s, want it as soon as the server exits", elapsed)
 	}
 	if !strings.Contains(reason, "exited before it answered") || !strings.Contains(strings.ToLower(reason), "no-such-option") {

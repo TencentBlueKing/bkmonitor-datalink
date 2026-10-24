@@ -61,7 +61,7 @@ func (hook *controlGetCountingHook) BeforeProcess(ctx context.Context, cmd redis
 	delay := hook.manifestDelay
 	hook.mu.Unlock()
 	if kind == "manifest" && delay > 0 {
-		time.Sleep(delay)
+		time.Sleep(delay) // fixed-wait: the hook's manifest read delay, which the case sets
 	}
 	return ctx, nil
 }

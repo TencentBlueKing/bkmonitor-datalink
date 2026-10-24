@@ -30,6 +30,39 @@ type PrimaryInputFacts struct {
 	// that came back with no group: no group had an event in the range
 	// asked - quiet, not absent.
 	QuietWhenEmpty bool `json:"quiet_when_empty,omitempty"`
+	// UnfilledWhenEmpty says an EMPTY primary is a count its provider does
+	// not zero-fill - a log count, grouped or not - so the answer is empty
+	// and a quiet group and a missing one look the same.
+	UnfilledWhenEmpty bool `json:"unfilled_when_empty,omitempty"`
+	// Identity says an EMPTY primary returned data its target's identity
+	// could read none of -- every series was refused because its key could
+	// not be built or its model gate did not hold -- with the counts by
+	// reason and a few series' identity fields, names and values only.
+	Identity *IdentityFacts `json:"identity,omitempty"`
+}
+
+// IdentityFacts is an empty round's identity evidence.
+type IdentityFacts struct {
+	Withheld      uint64           `json:"withheld"`
+	OutsideTarget uint64           `json:"outside_target"`
+	KeyMissing    uint64           `json:"key_missing"`
+	Samples       []IdentitySample `json:"samples,omitempty"`
+}
+
+// IdentitySample is one withheld series' identity fields.
+type IdentitySample struct {
+	Fields []IdentityField `json:"fields"`
+}
+
+// IdentityField is one field: Expected for the target's model gate, Actual
+// when the series carries it, Canonical for the instance fields beside the
+// target's own.
+type IdentityField struct {
+	Name      string `json:"name"`
+	Expected  string `json:"expected,omitempty"`
+	Actual    string `json:"actual,omitempty"`
+	Present   bool   `json:"present"`
+	Canonical bool   `json:"canonical,omitempty"`
 }
 
 // PrimaryCompletenesses and PrimaryDataStates are the closed lists a
@@ -57,8 +90,13 @@ func normalizePrimaryInputFacts(facts *PrimaryInputFacts) *PrimaryInputFacts {
 	// Emptied by the target is a claim about an empty primary and nothing
 	// else.
 	copied.EmptiedByTarget = copied.EmptiedByTarget && copied.DataState == "EMPTY"
+	// So is the identity evidence.
+	if copied.DataState != "EMPTY" {
+		copied.Identity = nil
+	}
 	// And quiet is a claim about a whole, empty one.
 	copied.QuietWhenEmpty = copied.QuietWhenEmpty && copied.Completeness == "FULL" && copied.DataState == "EMPTY"
+	copied.UnfilledWhenEmpty = copied.UnfilledWhenEmpty && copied.Completeness == "FULL" && copied.DataState == "EMPTY"
 	return &copied
 }
 

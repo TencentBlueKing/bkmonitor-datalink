@@ -34,7 +34,7 @@ var StatePreflightResults = []Result{
 // rather than REDIS_UNAVAILABLE) could not be verified from metrics at all.
 var StatePreflightReasons = []ReasonCode{
 	ReasonNone, ReasonInternalUnknown,
-	ReasonCode(contract.ReasonStateReadTimeout), ReasonCode(contract.ReasonRedisUnavailable),
+	ReasonCode(contract.ReasonStateReadTimeout), ReasonCode(contract.ReasonStateReadDeadline), ReasonCode(contract.ReasonRedisUnavailable),
 	ReasonCode(contract.ReasonStateCorrupt), ReasonCode(contract.ReasonStateBudgetExceeded),
 	ReasonOther,
 }

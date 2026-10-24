@@ -143,6 +143,39 @@ func productionLookbackStats(engine *lookback.Engine, holds *productionReadHolds
 		for _, origin := range readhold.SeedOrigins {
 			stats.ReadHoldSeeds[origin] = controller.Seeds[origin]
 		}
+		stats.ReadHoldEarlierSkipped = make(map[string]uint64, len(readhold.EarlierSkipReasons))
+		for _, reason := range readhold.EarlierSkipReasons {
+			stats.ReadHoldEarlierSkipped[reason] = controller.EarlierSkipped[reason]
+		}
+		stats.ReadHoldFloorProbes = make(map[string]uint64, len(readhold.FloorProbeOutcomes))
+		for _, outcome := range readhold.FloorProbeOutcomes {
+			stats.ReadHoldFloorProbes[outcome] = controller.FloorProbes[outcome]
+		}
+		stats.ReadHoldFloorProbesByKind = make(map[string]map[string]uint64, len(readhold.FloorProbeKinds))
+		for _, kind := range readhold.FloorProbeKinds {
+			stats.ReadHoldFloorProbesByKind[kind] = make(map[string]uint64, len(readhold.FloorProbeOutcomes))
+			for _, outcome := range readhold.FloorProbeOutcomes {
+				stats.ReadHoldFloorProbesByKind[kind][outcome] = controller.FloorProbesByKind[kind][outcome]
+			}
+		}
+		stats.ReadHoldFloorProbeProgress = make(map[string]uint64, len(readhold.ProbeProgressOutcomes))
+		for _, outcome := range readhold.ProbeProgressOutcomes {
+			stats.ReadHoldFloorProbeProgress[outcome] = controller.ProbeProgress[outcome]
+		}
+		stats.ReadHoldProbationFindings = make(map[string]uint64, len(readhold.ProbationFindingOutcomes))
+		for _, outcome := range readhold.ProbationFindingOutcomes {
+			stats.ReadHoldProbationFindings[outcome] = controller.ProbationFindings[outcome]
+		}
+		stats.RoundsReadAtLimit = make(map[string]uint64, len(lookback.Sources))
+		holds.readAtLimitMu.Lock()
+		for _, source := range lookback.Sources {
+			stats.RoundsReadAtLimit[source] = holds.readAtLimit[source]
+		}
+		holds.readAtLimitMu.Unlock()
+		stats.ReadHoldQueryDurationWrites = make(map[string]uint64, len(readhold.QueryDurationWriteReasons))
+		for _, reason := range readhold.QueryDurationWriteReasons {
+			stats.ReadHoldQueryDurationWrites[reason] = controller.QueryDurationWrites[reason]
+		}
 		stats.ReadHoldClamped = map[string]uint64{readhold.ClampKnown: controller.Clamped[readhold.ClampKnown],
 			readhold.ClampFallback: controller.Clamped[readhold.ClampFallback]}
 		stats.ReadHoldOwnCorrupt, stats.ReadHoldRetireCloseFailed = controller.OwnCorrupt, holds.retireCloseFailed.Load()
@@ -161,12 +194,18 @@ func productionLookbackStats(engine *lookback.Engine, holds *productionReadHolds
 // groupsBySource counts the Query Groups this process holds by their
 // source and read hold, from the same state the lookback's group page reads,
 // with the hold known as that page knows it. A group the lookback has not
-// seen yet is under other. Nil when it holds none.
+// sampled is counted under the source its query plan names, read when its
+// Schedule was prepared; one not prepared yet since this process took it has
+// no source to be counted under and is left out until it is, rather than
+// put under other, which is a source that compiles without a name. Nil when
+// it holds none.
 func (holds *productionReadHolds) groupsBySource(engine *lookback.Engine) map[string]lookback.ReadHoldGroups {
 	holds.mu.Lock()
 	groups := make([]execution.QueryGroupIdentity, 0, len(holds.groups))
-	for qg := range holds.groups {
+	semantics := make(map[execution.QueryGroupIdentity]string, len(holds.groups))
+	for qg, group := range holds.groups {
 		groups = append(groups, qg)
+		semantics[qg] = group.semantics
 	}
 	holds.mu.Unlock()
 	groups = slices.DeleteFunc(groups, func(qg execution.QueryGroupIdentity) bool {
@@ -181,7 +220,10 @@ func (holds *productionReadHolds) groupsBySource(engine *lookback.Engine) map[st
 	for _, qg := range groups {
 		source := sources[qg]
 		if source == "" {
-			source = lookback.SourceOther
+			source = semantics[qg]
+		}
+		if source == "" {
+			continue
 		}
 		entry := counts[source]
 		inspection := holds.controller.Inspect(qg)
@@ -194,7 +236,7 @@ func (holds *productionReadHolds) groupsBySource(engine *lookback.Engine) map[st
 		if hold > 0 {
 			entry.Held++
 		}
-		if inspection.Record.AtLimit {
+		if inspection.Record.HeldAtLimit() {
 			entry.AtLimit++
 		}
 		if !entry.MaxKnown || hold > entry.MaxMillis {
@@ -256,12 +298,13 @@ func (holds *productionReadHolds) fleetFacts() map[string]fleet.ReadHoldFacts {
 		millis := reading.millis
 		entry := fleet.ReadHoldFacts{Millis: millis, BaseMillis: base, TransitionMillis: reading.transition,
 			ArrivalAgeMillis: record.ArrivalAgeMillis, LimitMillis: record.LimitMillis,
-			AtLimit: record.AtLimit, RaisedAfterLowering: record.RaisedAfterLowering, NoWholeWindowArrival: record.Noise, Rung: record.Rung,
+			AtLimit: record.AtLimitHeld(qg, holds.now().UnixMilli()), RaisedAfterLowering: record.RaisedAfterLowering, NoWholeWindowArrival: record.Noise, Rung: record.Rung,
 			Buckets:    append([]int64(nil), record.Buckets[:min(len(record.Buckets), fleet.MaxReadEarlyBuckets)]...),
 			Annotation: reading.annotation}
 		if record.HoldMillis > 0 {
 			entry.HeldSince = int64(record.SinceSlot)
 		}
+		entry.QueryDurationMillis, entry.QueryDurationAtMillis = record.QueryDurationMillis, record.QueryDurationAtMillis
 		if basis := bases[qg]; basis.known {
 			entry.DelaySeconds = int64(basis.delay / time.Second)
 			entry.SettlingWaitSeconds = int64(basis.settlingWait / time.Second)

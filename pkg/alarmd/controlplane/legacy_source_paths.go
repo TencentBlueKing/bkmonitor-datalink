@@ -66,8 +66,8 @@ func LegacySourceReads() []SourceRead {
 		{"items.target", []string{"value"}},
 		// objectModelInstanceKey.
 		{"items.target.value", []string{defaultObjectModelField, defaultObjectModelInstField}},
-		// legacyRecoveryWindow.
-		{"detects.recovery_config", []string{"check_window"}},
+		// legacyRecoveryWindow; readLegacyRecoveryStatusSetter; legacyRecoveryDisabled.
+		{"detects.recovery_config", []string{"check_window", "status_setter", "disable_recovery"}},
 		// isAlwaysActiveUptime.
 		{"detects.trigger_config.uptime", []string{"calendars", "active_calendars", "time_ranges.start", "time_ranges.end"}},
 

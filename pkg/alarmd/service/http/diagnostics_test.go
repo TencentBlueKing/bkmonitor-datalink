@@ -11,15 +11,18 @@ package httpservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 )
 
@@ -204,7 +207,7 @@ func reserveAddress(t *testing.T) string {
 
 func waitForStatus(t *testing.T, url string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		response, err := http.Get(url) //nolint:noctx // short-lived readiness probe in a test
 		if err == nil {
@@ -214,7 +217,7 @@ func waitForStatus(t *testing.T, url string, want int) {
 				return
 			}
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatal(fmt.Sprintf("%s did not reach status %d before the deadline", url, want))
 }
@@ -271,27 +274,31 @@ func TestQueryListenerDrainsWhileTheDiagnosticsDrainIsStillWaiting(t *testing.T)
 	}()
 	select {
 	case <-entered:
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("diagnostics request did not enter its handler")
 	}
 	cancel()
-	deadline := time.NewTimer(2 * time.Second)
-	defer deadline.Stop()
-	ticker := time.NewTicker(time.Millisecond)
-	defer ticker.Stop()
-	client := &http.Client{Timeout: time.Second}
-	for {
-		response, err := client.Get("http://" + queryAddress + "/healthz") //nolint:noctx // probe
+	// Stopped means refused: a probe that times out or meets a closing
+	// connection says nothing about the listener. Each probe dials anew, so
+	// none rides a connection kept from the one before. No bound short of the
+	// test's deadline is needed for the order: drained one after the other,
+	// the query listener stops only once the diagnostics drain gives up at
+	// the end of the shared budget, by force-closing the request still in its
+	// handler, and that request then ends in an error below, not on release.
+	probe := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	probeCtx := testwait.Context(t)
+	testwait.Until(t, "the query listener refusing connections while the diagnostics handler is blocked", func() bool {
+		request, err := http.NewRequestWithContext(probeCtx, http.MethodGet, "http://"+queryAddress+"/healthz", nil)
 		if err != nil {
-			break
+			t.Fatal(err)
+		}
+		response, err := probe.Do(request)
+		if err != nil {
+			return errors.Is(err, syscall.ECONNREFUSED)
 		}
 		response.Body.Close()
-		select {
-		case <-ticker.C:
-		case <-deadline.C:
-			t.Fatal("query listener kept accepting while the diagnostics handler was blocked")
-		}
-	}
+		return false
+	})
 	select {
 	case err := <-requestDone:
 		t.Fatalf("diagnostics request ended before release: %v", err)
@@ -308,7 +315,7 @@ func TestQueryListenerDrainsWhileTheDiagnosticsDrainIsStillWaiting(t *testing.T)
 		if err != nil {
 			t.Fatalf("diagnostics request: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("diagnostics request did not finish after release")
 	}
 	select {
@@ -316,7 +323,7 @@ func TestQueryListenerDrainsWhileTheDiagnosticsDrainIsStillWaiting(t *testing.T)
 		if err != nil {
 			t.Fatalf("run: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("Run did not finish after diagnostics drained")
 	}
 }

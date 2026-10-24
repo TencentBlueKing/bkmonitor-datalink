@@ -373,3 +373,37 @@ func TestTheViewSaysWhichClassOfLeaderWroteTheControlRecord(t *testing.T) {
 		}
 	}
 }
+
+// The view's control standing carries the handback watch of the record it
+// used, current term or previous, so the one read an operator makes says why
+// the lease has not been given back; a record a preferred Leader wrote has
+// none.
+func TestTheViewCarriesTheHandbackWatchOfTheRecordItUsed(t *testing.T) {
+	since := now.Add(-20 * time.Second)
+	watch := &HandbackFacts{WindowSeconds: 60, LastReadingAt: &now,
+		Ready:  []HandbackCandidate{{Instance: "control", Incarnation: "7", ReadySince: since, DueAt: since.Add(time.Minute)}},
+		Resets: map[string]uint64{"list_failed": 1, "gap": 0}}
+	for _, testCase := range []struct {
+		term     ControlTerm
+		class    string
+		handback *HandbackFacts
+	}{
+		{term: ControlTermCurrent, class: ownership.ControlCandidacyFallback, handback: watch},
+		{term: ControlTermPrevious, class: ownership.ControlCandidacyFallback, handback: watch},
+		{term: ControlTermCurrent, class: ownership.ControlCandidacyPreferred},
+	} {
+		facts := controlFixture(now)
+		if testCase.term == ControlTermPrevious {
+			facts = controlFixture(now.Add(-90 * time.Second))
+		}
+		facts.Activation, facts.CandidacyClass, facts.Handback = nil, testCase.class, testCase.handback
+		service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
+			stubRegistry{replicas: replicas()}, stubSnapshots{snapshots: healthySnapshots()})
+		service.SetControlFactsSource(stubControlFacts{facts: facts, term: testCase.term, found: true})
+		summary, part := service.Summarized(context.Background(), time.Minute)
+		standing := healthOf(&summary, part, now).ControlFacts
+		if standing == nil || !reflect.DeepEqual(standing.Handback, testCase.handback) {
+			t.Fatalf("%s record of a %q Leader: standing handback = %+v, want %+v", testCase.term, testCase.class, standing, testCase.handback)
+		}
+	}
+}

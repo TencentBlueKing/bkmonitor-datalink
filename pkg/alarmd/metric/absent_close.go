@@ -37,24 +37,27 @@ var differenceSides = []string{"roster_strategies", "roster_unreadable", "roster
 
 func newAbsentCloseCollector() *absentCloseCollector {
 	return &absentCloseCollector{
-		outcomeIs: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "absent_strategy_close_total"),
+		outcomeIs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "absent_strategy_close_total"),
 			"What the control leader's difference against disabled or deleted strategies decided, by outcome. "+
-				"Counted per strategy except close_sent, send_failed, producer_foreign and producer_unknown, "+
+				"Counted per strategy except close_sent, send_failed, producer_foreign, producer_unknown and "+
+				"business_unknown, "+
 				"which count alerts. close_decided counts decisions and close_sent counts what went out, "+
 				"acknowledged by the broker; neither says the link closed anything, which absent.list reads "+
 				"per strategy as the alerts its reconcile still lists active after an earlier send. "+
 				"identity_unknown and revision_unknown are strategies decided and not sent because no business or "+
-				"revision could be found for them. Why a whole round decided nothing is "+
+				"revision could be found for them; business_unknown are alerts of a global business strategy not "+
+				"closed that round because their record names no business they were filed under. Why a whole round "+
+				"decided nothing is "+
 				"absent_strategy_round_total, not a cell here. Every cell exists from the start so a zero is a "+
 				"reading and not an absence.", []string{"outcome"}, nil),
-		roundIs: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "absent_strategy_round_total"),
+		roundIs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "absent_strategy_round_total"),
 			"How each round of the difference ended: none is a round that decided, and the rest name the fact "+
 				"that was not good enough to decide on - link_unavailable (the alert link's roster could not be "+
 				"read), link_unhealthy (the link says its own set maintenance is failing or has not succeeded "+
 				"recently), snapshot_unusable (the source was not observed this round), snapshot_empty and "+
 				"snapshot_stale. Rounds, not strategies. none is the denominator the outcome family is read against.",
 			[]string{"disposition"}, nil),
-		sides: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "absent_strategy_difference"),
+		sides: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "absent_strategy_difference"),
 			"The sizes the last round decided on: roster_strategies is the strategies the alert link listed "+
 				"with an unrecovered alert, roster_unreadable the ones it listed and could not read, roster_pages "+
 				"and roster_complete how far the walk of its roster got, candidates the difference itself, "+

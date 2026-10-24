@@ -12,6 +12,7 @@ package uq
 import (
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -37,13 +38,20 @@ var (
 		`(\\"(?:[^"\\]|\\[^"])*?\\"|"(?:[^"\\]|\\.)*"|'[^']*'|(?:bearer|basic|token)\s+[^\s,;&}"\\]+|"[^"]*$|[^\s,;&}"\\]+)`)
 	// address is where something runs: an IPv4 address, an IPv6 one in
 	// brackets, or a dotted host name with a port.
-	address     = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b|\[[0-9A-Fa-f:.]+\](?::\d+)?|\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+:\d{2,5}\b`)
+	address = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b|\[[0-9A-Fa-f:.]+\](?::\d+)?|\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+:\d{2,5}\b`)
+	// hostName is a dotted name of three labels or more with a letter in it,
+	// with no port: a host a resolver or a certificate check names, as in
+	// "lookup a.b.example.test: no such host" or "certificate is valid
+	// for x.example.test". Two labels are left: they are Go identifiers
+	// (context.DeadlineExceeded, url.Error) and field paths far more often
+	// than hosts.
+	hostName    = regexp.MustCompile(`\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+){2,}\b`)
 	whitespaces = regexp.MustCompile(`\s+`)
 )
 
 // providerErrorExcerpt is the start of an error body, as an operator may
 // read it: valid UTF-8, whitespace folded, every URL, credential value and
-// address (IPv4, bracketed IPv6, host:port) replaced, its body cut to
+// address (IPv4, bracketed IPv6, host:port) and dotted host name replaced, its body cut to
 // errorExcerptBytes on a rune boundary and the cut marked "...".
 func providerErrorExcerpt(body []byte) string {
 	if len(body) == 0 {
@@ -53,6 +61,12 @@ func providerErrorExcerpt(body []byte) string {
 	text = whitespaces.ReplaceAllString(text, " ")
 	text = credentialPair.ReplaceAllString(text, "${1}<redacted>")
 	text = address.ReplaceAllString(text, "<address>")
+	text = hostName.ReplaceAllStringFunc(text, func(name string) string {
+		if strings.IndexFunc(name, unicode.IsLetter) < 0 {
+			return name
+		}
+		return "<host>"
+	})
 	text = strings.TrimSpace(observability.SanitizeErrorText(text))
 	if len(text) <= errorExcerptBytes {
 		return text

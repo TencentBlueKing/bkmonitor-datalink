@@ -348,21 +348,32 @@ func TestTheInvocationGateForgetsPastMinutes(t *testing.T) {
 	}
 }
 
-func TestBudgetsAndStoreOutage(t *testing.T) {
+// A second invocation runs beside one still running, and an unavailable
+// store is said as such.
+func TestInvocationsRunTogetherAndAStoreOutageIsSaid(t *testing.T) {
 	a := &testAuth{}
+	var first atomic.Bool
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	op := Operation{ID: "wait", Summary: "Bounded read", Run: func(context.Context, Params) Outcome { close(entered); <-release; return Outcome{Complete: true} }}
+	op := Operation{ID: "wait", Summary: "Bounded read", Run: func(context.Context, Params) Outcome {
+		if first.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+		return Outcome{Complete: true}
+	}}
 	c := testChannel(t, a, op)
-	done := make(chan struct{})
-	go func() { defer close(done); call(t, c, envelope(c, "invoke", "wait", nil)) }()
+	done := make(chan int, 1)
+	go func() { status, _ := call(t, c, envelope(c, "invoke", "wait", nil)); done <- status }()
 	<-entered
 	status, _ := call(t, c, envelope(c, "invoke", "wait", nil))
-	if status != 429 || a.calls.Load() != 1 {
-		t.Fatal("busy invocation admitted")
+	if status != 200 || a.calls.Load() != 2 {
+		t.Fatalf("second invocation beside a running one = %d (%d admitted), want it run", status, a.calls.Load())
 	}
 	close(release)
-	<-done
+	if first := <-done; first != 200 {
+		t.Fatalf("first invocation = %d", first)
+	}
 	a.err = &cliauth.Error{Code: "auth_store_unavailable", HTTPStatus: 503}
 	status, out := call(t, c, envelope(c, "discover", "", nil))
 	if status != 503 || out.Error.Code != "auth_store_unavailable" {
@@ -492,7 +503,7 @@ func TestNativeKeepsDomainFactsAndNoCredentialForwarding(t *testing.T) {
 
 func TestResponseCapAndMissingStoreAreNotSuccess(t *testing.T) {
 	c := testChannel(t, &testAuth{}, Operation{ID: "large", Summary: "Large", Run: func(context.Context, Params) Outcome {
-		return Outcome{Complete: true, Value: strings.Repeat("a", MaxResponseBytes)}
+		return Outcome{Complete: true, Value: strings.Repeat("a", MaxResponseBytes())}
 	}})
 	status, out := call(t, c, envelope(c, "invoke", "large", nil))
 	if status != 502 || out.Evidence.Complete || out.Result != nil {
@@ -529,7 +540,9 @@ type closingBody struct {
 func (b closingBody) Read([]byte) (int, error) { return 0, io.EOF }
 func (b closingBody) Close() error             { b.entered <- struct{}{}; <-b.release; return nil }
 
-func TestRouteSlotsIncludeBodyCleanupAndMethodRejection(t *testing.T) {
+// Requests still draining their bodies hold nothing: another is served
+// beside them.
+func TestDrainingRequestsDoNotHoldOthersBack(t *testing.T) {
 	c := testChannel(t, &testAuth{})
 	entered := make(chan struct{}, 4)
 	release := make(chan struct{})
@@ -550,16 +563,12 @@ func TestRouteSlotsIncludeBodyCleanupAndMethodRejection(t *testing.T) {
 		<-entered
 	}
 	status, _ := call(t, c, envelope(c, "discover", "", nil))
-	if status != 429 {
-		t.Errorf("cleanup released a slot prematurely: %d", status)
+	if status != 200 {
+		t.Errorf("a request beside four draining ones = %d, want served", status)
 	}
 	close(release)
 	for i := 0; i < 4; i++ {
 		<-done
-	}
-	status, _ = call(t, c, envelope(c, "discover", "", nil))
-	if status != 200 {
-		t.Fatalf("cleanup leaked a slot: %d", status)
 	}
 }
 
@@ -611,4 +620,9 @@ func TestObjectGetSummarySaysHowMuchOfTheObjectTheFactCovers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// NativeOperations is NativeOperationsWith adding nothing from this process.
+func NativeOperations(handler http.Handler) []Operation {
+	return NativeOperationsWith(handler, NativeOptions{})
 }

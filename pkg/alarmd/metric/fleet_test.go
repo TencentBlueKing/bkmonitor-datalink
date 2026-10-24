@@ -6,8 +6,10 @@
 package metric
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
+	"strings"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func gatherFleet(t *testing.T, verdict FleetVerdict) map[string]map[string]float64 {
@@ -23,7 +25,7 @@ func gatherFleet(t *testing.T, verdict FleetVerdict) map[string]map[string]float
 	gathered := map[string]map[string]float64{}
 	for _, family := range families {
 		name := family.GetName()
-		if len(name) < 17 || name[:17] != "bkmonitor_alarmd_" {
+		if !strings.HasPrefix(name, "alarmd_") {
 			continue
 		}
 		for _, series := range family.Metric {
@@ -52,10 +54,10 @@ func TestFleetVerdictIsExportedAsTheJudgmentItself(t *testing.T) {
 		Gaps:      []FleetCount{{Value: "UNDETERMINED", Count: 1}},
 	})
 
-	if got := gathered["bkmonitor_alarmd_fleet_health"]["DEGRADED"]; got != 1 {
-		t.Fatalf("judgment not exported: %v", gathered["bkmonitor_alarmd_fleet_health"])
+	if got := gathered["alarmd_fleet_health"]["DEGRADED"]; got != 1 {
+		t.Fatalf("judgment not exported: %v", gathered["alarmd_fleet_health"])
 	}
-	objects := gathered["bkmonitor_alarmd_fleet_objects"]
+	objects := gathered["alarmd_fleet_objects"]
 	for state, want := range map[string]float64{
 		"expected": 949, "covered": 949, "determined": 941, "unknown": 8,
 	} {
@@ -63,18 +65,18 @@ func TestFleetVerdictIsExportedAsTheJudgmentItself(t *testing.T) {
 			t.Fatalf("objects[%s] = %v, want %v", state, objects[state], want)
 		}
 	}
-	if got := gathered["bkmonitor_alarmd_fleet_stalled_objects"][""]; got != 4 {
+	if got := gathered["alarmd_fleet_stalled_objects"][""]; got != 4 {
 		t.Fatalf("stalled = %v, want 4", got)
 	}
-	if got := gathered["bkmonitor_alarmd_fleet_anomalies"]["DEGRADED_RUN"]; got != 140 {
+	if got := gathered["alarmd_fleet_anomalies"]["DEGRADED_RUN"]; got != 140 {
 		t.Fatalf("anomalies = %v, want 140", got)
 	}
-	if got := gathered["bkmonitor_alarmd_fleet_anomaly_oldest_age_seconds"]["DEGRADED_RUN"]; got != 3600 {
+	if got := gathered["alarmd_fleet_anomaly_oldest_age_seconds"]["DEGRADED_RUN"]; got != 3600 {
 		t.Fatalf("oldest age = %v, want 3600", got)
 	}
 	// The gaps are the judgment's own reasons. Exporting them is what lets an
 	// alert say why the answer is UNKNOWN instead of only that it is.
-	if got := gathered["bkmonitor_alarmd_fleet_gaps"]["UNDETERMINED"]; got != 1 {
+	if got := gathered["alarmd_fleet_gaps"]["UNDETERMINED"]; got != 1 {
 		t.Fatalf("gaps = %v, want 1", got)
 	}
 }
@@ -83,10 +85,10 @@ func TestFleetVerdictIsExportedAsTheJudgmentItself(t *testing.T) {
 // an unreadable denominator must be absent rather than zero.
 func TestFleetVerdictOmitsTheDenominatorItCouldNotRead(t *testing.T) {
 	gathered := gatherFleet(t, FleetVerdict{Health: "UNKNOWN", Covered: 12, Determined: 12})
-	if _, present := gathered["bkmonitor_alarmd_fleet_objects"]["expected"]; present {
+	if _, present := gathered["alarmd_fleet_objects"]["expected"]; present {
 		t.Fatal("an unreadable denominator was exported as a number")
 	}
-	if got := gathered["bkmonitor_alarmd_fleet_objects"]["covered"]; got != 12 {
+	if got := gathered["alarmd_fleet_objects"]["covered"]; got != 12 {
 		t.Fatalf("covered = %v, want 12", got)
 	}
 }
@@ -135,7 +137,7 @@ func TestFleetVerdictExportsTheWorkerAcknowledgementByState(t *testing.T) {
 		Health:  "HEALTHY",
 		Workers: []FleetCount{{Value: "acked", Count: 2}, {Value: "lagging", Count: 1}, {Value: "unknown", Count: 0}},
 	})
-	workers := gathered["bkmonitor_alarmd_fleet_workers"]
+	workers := gathered["alarmd_fleet_workers"]
 	for state, want := range map[string]float64{"acked": 2, "lagging": 1, "unknown": 0} {
 		if got, ok := workers[state]; !ok || got != want {
 			t.Fatalf("fleet_workers[%s] = %v (present %v), want %v", state, got, ok, want)
@@ -161,7 +163,7 @@ func TestTheColumnsThatPartitionDeterminedAreExported(t *testing.T) {
 		Healthy: 844, Anomalous: 90, Demoted: 33, Undecidable: 12, ByDesign: 0,
 	}
 	gathered := gatherFleet(t, before)
-	objects := gathered["bkmonitor_alarmd_fleet_partition_objects"]
+	objects := gathered["alarmd_fleet_partition_objects"]
 	for state, want := range map[string]float64{
 		"healthy": 844, "anomalous": 90, "demoted": 33, "undecidable": 12, "by_design": 0,
 		"unknown": 0,
@@ -190,7 +192,7 @@ func TestTheColumnsThatPartitionDeterminedAreExported(t *testing.T) {
 	// does not: fleet_objects holds overlapping coverage states, so a reader
 	// who sums the family gets a plausible number that means nothing. Mixing
 	// them under one name is how that happens.
-	coverage := gathered["bkmonitor_alarmd_fleet_objects"]
+	coverage := gathered["alarmd_fleet_objects"]
 	for _, column := range []string{"healthy", "anomalous", "demoted", "undecidable", "by_design"} {
 		if _, leaked := coverage[column]; leaked {
 			t.Errorf("fleet_objects carries the %q column; that family's states overlap, and a "+
@@ -205,7 +207,7 @@ func TestTheColumnsThatPartitionDeterminedAreExported(t *testing.T) {
 	after := before
 	after.Anomalous -= 6
 	after.ByDesign += 6
-	moved := gatherFleet(t, after)["bkmonitor_alarmd_fleet_partition_objects"]
+	moved := gatherFleet(t, after)["alarmd_fleet_partition_objects"]
 	if moved["anomalous"] != objects["anomalous"]-6 || moved["by_design"] != objects["by_design"]+6 {
 		t.Fatalf("a move between columns did not show as one falling and the other rising: %v", moved)
 	}
@@ -236,7 +238,7 @@ func TestCheckLinesAndDegradationKindsAreExportedAtZero(t *testing.T) {
 		Losses: []FleetCount{{Value: "ONGOING", Count: 3}, {Value: "AFTER_COOLDOWN", Count: 0}, {Value: "GRACE_UNKNOWN", Count: 1}},
 	})
 
-	checks := gathered["bkmonitor_alarmd_fleet_checks"]
+	checks := gathered["alarmd_fleet_checks"]
 	for code, want := range map[string]float64{
 		"CUTOVER_FAILING": 1, "REPLICA_DEGRADED": 0, "SLOTS_OVERDUE": 14, "DETECTION_ABANDONED": 0,
 	} {
@@ -245,7 +247,7 @@ func TestCheckLinesAndDegradationKindsAreExportedAtZero(t *testing.T) {
 			t.Errorf("fleet_checks{code=%s} = %v (present=%v), want %v as a series", code, got, present, want)
 		}
 	}
-	degradations := gathered["bkmonitor_alarmd_fleet_degradations"]
+	degradations := gathered["alarmd_fleet_degradations"]
 	for kind, want := range map[string]float64{"ACTIVATION_BEHIND": 1, "OPEN_ALERT_SET_STALE": 0} {
 		got, present := degradations[kind]
 		if !present || got != want {
@@ -254,7 +256,7 @@ func TestCheckLinesAndDegradationKindsAreExportedAtZero(t *testing.T) {
 	}
 	// The loss kinds likewise, zero included: DETECTION_ABANDONED's count
 	// alone cannot tell a rollout's tail from a loss in progress.
-	losses := gathered["bkmonitor_alarmd_fleet_losses"]
+	losses := gathered["alarmd_fleet_losses"]
 	for loss, want := range map[string]float64{"ONGOING": 3, "AFTER_COOLDOWN": 0, "GRACE_UNKNOWN": 1} {
 		got, present := losses[loss]
 		if !present || got != want {
@@ -271,11 +273,11 @@ func TestFleetHandoverAndUnknownRowsAreExportedAsTheyAre(t *testing.T) {
 	zero := 0
 	known := gatherFleet(t, FleetVerdict{Health: "HEALTHY", HandoverObjects: &zero,
 		Checks: []FleetCount{{Value: "DEFECT", Count: 0}}})
-	if value, ok := known["bkmonitor_alarmd_fleet_handover_objects"][""]; !ok || value != 0 {
-		t.Fatalf("handover %v, want zero emitted", known["bkmonitor_alarmd_fleet_handover_objects"])
+	if value, ok := known["alarmd_fleet_handover_objects"][""]; !ok || value != 0 {
+		t.Fatalf("handover %v, want zero emitted", known["alarmd_fleet_handover_objects"])
 	}
 	unknown := gatherFleet(t, FleetVerdict{Health: "HEALTHY"})
-	if _, ok := unknown["bkmonitor_alarmd_fleet_handover_objects"]; ok {
+	if _, ok := unknown["alarmd_fleet_handover_objects"]; ok {
 		t.Fatal("handover emitted while unknown")
 	}
 	rows := gatherFleet(t, FleetVerdict{Health: "UNKNOWN", RowsUnknown: true, Stalled: 0,
@@ -283,12 +285,12 @@ func TestFleetHandoverAndUnknownRowsAreExportedAsTheyAre(t *testing.T) {
 		Losses:       []FleetCount{{Value: "ONGOING", Count: 0}},
 		Workers:      []FleetCount{{Value: "acked", Count: 2}},
 		Degradations: []FleetCount{{Value: "OPEN_ALERT_SET_STALE", Count: 0}}})
-	for _, family := range []string{"bkmonitor_alarmd_fleet_stalled_objects", "bkmonitor_alarmd_fleet_checks", "bkmonitor_alarmd_fleet_losses"} {
+	for _, family := range []string{"alarmd_fleet_stalled_objects", "alarmd_fleet_checks", "alarmd_fleet_losses"} {
 		if _, ok := rows[family]; ok {
 			t.Fatalf("%s exported with the rows' counts unknown: %v", family, rows[family])
 		}
 	}
-	if rows["bkmonitor_alarmd_fleet_health"]["UNKNOWN"] != 1 || rows["bkmonitor_alarmd_fleet_workers"]["acked"] != 2 {
+	if rows["alarmd_fleet_health"]["UNKNOWN"] != 1 || rows["alarmd_fleet_workers"]["acked"] != 2 {
 		t.Fatalf("judgment or workers lost with the rows unknown: %v", rows)
 	}
 }
@@ -298,14 +300,14 @@ func TestFleetHandoverAndUnknownRowsAreExportedAsTheyAre(t *testing.T) {
 // them, and must not read as none running.
 func TestFleetRunningStrategiesAreAbsentUnlessKnown(t *testing.T) {
 	known := gatherFleet(t, FleetVerdict{Health: "HEALTHY", RunningStrategies: []FleetCount{{Value: "DETECTING", Count: 120}, {Value: "DATA_ABSENT", Count: 0}}})
-	running := known["bkmonitor_alarmd_fleet_running_strategies"]
+	running := known["alarmd_fleet_running_strategies"]
 	if running["DETECTING"] != 120 || len(running) != 2 {
 		t.Fatalf("running %v, want DETECTING 120 and DATA_ABSENT 0", running)
 	}
 	if value, ok := running["DATA_ABSENT"]; !ok || value != 0 {
 		t.Fatalf("a state at zero was left out: %v", running)
 	}
-	if unknown := gatherFleet(t, FleetVerdict{Health: "HEALTHY"}); len(unknown["bkmonitor_alarmd_fleet_running_strategies"]) != 0 {
-		t.Fatalf("running strategies emitted while unknown: %v", unknown["bkmonitor_alarmd_fleet_running_strategies"])
+	if unknown := gatherFleet(t, FleetVerdict{Health: "HEALTHY"}); len(unknown["alarmd_fleet_running_strategies"]) != 0 {
+		t.Fatalf("running strategies emitted while unknown: %v", unknown["alarmd_fleet_running_strategies"])
 	}
 }

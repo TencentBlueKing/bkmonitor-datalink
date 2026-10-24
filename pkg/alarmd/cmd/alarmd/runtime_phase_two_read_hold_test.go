@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
@@ -234,11 +235,47 @@ func TestARetireCloseFailureIsExportedWithTheReadHoldCounters(t *testing.T) {
 	}
 }
 
+// An earlier-read trial a group held at its limit does not run is exported
+// with the read hold's counters, by its reason, and every reason is exported
+// at zero before any is counted.
+func TestASkippedEarlierTrialIsExportedWithTheReadHoldCounters(t *testing.T) {
+	h, c, at := runtimeTestHolds(t)
+	h.links = map[string]uint64{}
+	engine, err := lookback.New(lookback.Options{Now: h.now,
+		Recheck: func(context.Context, execution.PhysicalQuerySpec, execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+			return execution.ProviderCompletion{}, nil
+		},
+		Permit: func() (func(), <-chan struct{}, string) { return func() {}, nil, "" },
+		Owns:   func(execution.QueryGroupIdentity) bool { return true }, Owned: func() int { return 1 }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := productionLookbackStats(engine, h).ReadHoldEarlierSkipped; len(got) != len(readhold.EarlierSkipReasons) || got[readhold.EarlierSkipAtLimit] != 0 {
+		t.Fatalf("skipped trials before any %v, want every reason at zero", got)
+	}
+	limited, _ := json.Marshal(readhold.Record{SinceSlot: 1, HoldMillis: 600000, AtLimit: true, LimitMillis: 600000})
+	c.values["limited"] = limited
+	session, err := ownership.OpenSession(context.Background(), &fakePhaseTwoOwnershipStore{}, "limited", "worker", *at, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.bind("limited", session)
+	h.restore(context.Background(), []execution.QueryGroupIdentity{"limited"})
+	if hold, ok := h.controller.EarlierCandidate("limited"); ok {
+		t.Fatalf("a group held at its limit offered a %v trial", hold)
+	}
+	h.controller.EarlierRefused("limited")
+	if got := productionLookbackStats(engine, h).ReadHoldEarlierSkipped; got[readhold.EarlierSkipAtLimit] != 1 {
+		t.Fatalf("skipped trials %v, want one at_limit", got)
+	}
+}
+
 // The read hold counts by source are the group page's own facts: a corrupt
 // or unseeded record is a hold not yet known, a known one is counted held
 // when more than none and at its limit when marked so, and the largest
-// known one is kept. A group the lookback has not seen is under other; a
-// group this process no longer holds is not counted.
+// known one is kept. A group the lookback has not sampled is counted under
+// the source its prepared query plan names; a group this process no longer
+// holds is not counted.
 func TestRuntimeReadHoldGroupsCountWhatTheGroupPageKnows(t *testing.T) {
 	h, c, at := runtimeTestHolds(t)
 	held, _ := json.Marshal(readhold.Record{SinceSlot: 1, HoldMillis: 120000})
@@ -257,10 +294,16 @@ func TestRuntimeReadHoldGroupsCountWhatTheGroupPageKnows(t *testing.T) {
 		h.bind(qg, session)
 	}
 	h.restore(context.Background(), groups)
+	const source = "bk_monitor/time_series"
+	h.mu.Lock()
+	for _, qg := range groups {
+		h.groups[qg].semantics = source
+	}
+	h.mu.Unlock()
 	counts := h.groupsBySource(nil)
 	// Unknown is the record that did not decode; the group with none holds
 	// nothing.
-	want := map[string]lookback.ReadHoldGroups{lookback.SourceOther: {Held: 3, AtLimit: 1, Unknown: 1, MaxMillis: 600000, MaxKnown: true}}
+	want := map[string]lookback.ReadHoldGroups{source: {Held: 3, AtLimit: 1, Unknown: 1, MaxMillis: 600000, MaxKnown: true}}
 	if !reflect.DeepEqual(counts, want) {
 		t.Fatalf("counts %+v, want %+v", counts, want)
 	}
@@ -271,7 +314,7 @@ func TestRuntimeReadHoldGroupsCountWhatTheGroupPageKnows(t *testing.T) {
 			known++
 		}
 	}
-	if entry := counts[lookback.SourceOther]; len(page.Groups)-known != entry.Unknown {
+	if entry := counts[source]; len(page.Groups)-known != entry.Unknown {
 		t.Fatalf("counts %+v disagree with the group page %+v", entry, page)
 	}
 	// Published, the record that did not decode is listed unknown, and the
@@ -477,4 +520,54 @@ func TestRuntimeAHeldGroupsSuggestionIsRoundedAsItsDelayWas(t *testing.T) {
 			t.Fatalf("unit %v: suggestion %d, want %d", test.unit, got, test.want)
 		}
 	}
+}
+
+// A group restored at takeover whose Schedule has not been prepared since has
+// no source read yet: it is left out of read_hold_groups' source partition,
+// not put under other, the word for a source that compiles without a name.
+// It is still a group this replica holds - bound with its runner, whose count
+// is worker_owned_query_groups - and its hold is still known.
+func TestRuntimeReadHoldGroupNotPreparedIsHeldAndOutOfTheSourcePartition(t *testing.T) {
+	h, c, at := runtimeTestHolds(t)
+	held, _ := json.Marshal(readhold.Record{SinceSlot: 1, HoldMillis: 120000})
+	c.values["prepared"], c.values["restored"] = held, held
+	groups := []execution.QueryGroupIdentity{"prepared", "restored"}
+	for _, qg := range groups {
+		session, err := ownership.OpenSession(context.Background(), &fakePhaseTwoOwnershipStore{}, qg, "worker", *at, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.bind(qg, session)
+	}
+	h.restore(context.Background(), groups)
+	// Preparing a Schedule reads the group's query plan, and with it the
+	// source the group is counted under.
+	schedule := runtimeTestHoldSchedule(t, "prepared")
+	schedule.Segment.ObjectDigest = "digest-prepared"
+	h.repository = semanticsCatalog{object: controlplane.QueryGroupObject{Identity: "prepared",
+		QueryPlan: execution.QueryPlanFacts{SourceSemantics: []string{"bk_log_search/log"}, StepMillis: 60000}}}
+	if _, _, _, err := h.queryBasis(context.Background(), schedule); err != nil {
+		t.Fatal(err)
+	}
+	counts := h.groupsBySource(nil)
+	want := map[string]lookback.ReadHoldGroups{"bk_log_search/log": {Held: 1, MaxMillis: 120000, MaxKnown: true}}
+	if !reflect.DeepEqual(counts, want) {
+		t.Fatalf("counts %+v, want %+v: the group not prepared is in no source, other included", counts, want)
+	}
+	if _, owned := h.owner("restored"); owned != nil {
+		t.Fatalf("the restored group is not held: %v", owned)
+	}
+	if millis, known := h.holdOf("restored"); !known || millis != 120000 {
+		t.Fatalf("the restored group's hold %d known %t, want 120000 known", millis, known)
+	}
+}
+
+// semanticsCatalog answers one Query Group object, whatever digest is asked.
+type semanticsCatalog struct {
+	readHoldCatalog
+	object controlplane.QueryGroupObject
+}
+
+func (catalog semanticsCatalog) LoadQueryGroupObject(context.Context, execution.ObjectDigest) (controlplane.QueryGroupObject, error) {
+	return catalog.object, nil
 }

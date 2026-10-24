@@ -16,6 +16,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -133,21 +134,21 @@ type leaderDiscovery interface {
 	Leader(ctx context.Context) (viewstream.LeaderEndpoint, string, error)
 }
 
-// strategyStandingForwardTimeout bounds the one hop. The Leader answers from
-// memory; a hop that takes longer is a Leader that is not answering, and
-// the reader is told that rather than kept waiting.
-const strategyStandingForwardTimeout = 2 * time.Second
-
-// directoryReadTimeout bounds the reads one directory request makes on the
-// Leader: the activation header, a carried publication's content when the
-// activation round has not already read it, and the objects of the rows
-// the page returns. directoryForwardTimeout bounds a follower's hop to it,
-// above the Leader's own bound so the Leader's answer, not the hop's, is
-// what a slow read comes back as.
+// strategyStandingForwardTimeout and directoryForwardTimeout bound a hop
+// to the Leader only for a reader that set no deadline of its own (a plain
+// HTTP request); a reader with one -- every CLI and admin read, through the
+// channel's operation context -- bounds the hop by it (leaderForwarderWithin).
+// A standing is the Leader's memory read; a directory page reads objects,
+// and its own time is the reader's (controlplane.NewDirectoryView).
 const (
-	directoryReadTimeout    = 2 * time.Second
-	directoryForwardTimeout = 2500 * time.Millisecond
+	strategyStandingForwardTimeout = 2 * time.Second
+	directoryForwardTimeout        = 2500 * time.Millisecond
 )
+
+// forwardReturnMargin is what a hop keeps back from the reader's deadline
+// for the Leader's answer to come back: one transit on the cluster network
+// and the copy of the body to the reader.
+const forwardReturnMargin = time.Second
 
 // forwardBodyBytes bounds the body a hop carries: the one request that has
 // one, a sample window's open, is itself read within the same bound.
@@ -168,17 +169,38 @@ func leaderForwarder(discovery leaderDiscovery, replica string, client *http.Cli
 // (metric.LeaderForwardResults) and how long the replica waited on it.
 type forwardObserver func(route, result string, waited time.Duration)
 
-// leaderForwarderWithin is leaderForwarder with the hop's own bound, and the
-// route its hops are recorded under. Every hop is recorded, answered or not:
+// leaderForwarderWithin is leaderForwarder with the route its hops are
+// recorded under, and timeout, the hop's bound for a reader that set no
+// deadline. A reader with a deadline bounds the hop by it, and the Leader is
+// told how long it has (fleet.WithForwardedDeadline): that deadline less
+// forwardReturnMargin, so it answers -- partial where it has to -- before
+// the reader's wait ends. A fixed bound per hop used to be the cut whatever
+// the reader allowed. Every hop is recorded, answered or not:
 // the reply only ever said FORWARD_FAILED, and a Leader that timed out, one
 // not listening and one that reset the connection are three different
 // things to go and look at.
+//
+// A request is handed on only by a process that cannot answer it: no
+// catalog (a standing, a diagnosis page), no directory, not leading (the
+// absent candidates). The Leader itself is in that state before its first
+// successful refresh round, which with a source that fails from the start
+// is for as long as it fails (2026-10-19: the strategy cache had lapsed
+// and the restarted Leader never got a catalog). Discovery then names
+// this replica, and the hop went to its own listener; on a deployment
+// whose public surface is restricted that listener refuses the route, so
+// every such read answered "moved behind the CLI" instead of why there is
+// no catalog. A Leader that is this replica is never dialed: the forward
+// reports nothing sent and no refusal, and the caller answers here.
+//
+// A hop to another replica presents the Leader's internal token, the one
+// its registration carries and the evidence RPC is admitted by, so a
+// restricted listener can tell a peer from the public.
 func leaderForwarderWithin(discovery leaderDiscovery, replica string, client *http.Client, timeout time.Duration, route string, observe forwardObserver) fleet.LeaderForward {
 	if discovery == nil {
 		return nil
 	}
 	if client == nil {
-		client = &http.Client{Timeout: timeout}
+		client = &http.Client{}
 	}
 	if observe == nil {
 		observe = func(string, string, time.Duration) {}
@@ -194,6 +216,10 @@ func leaderForwarderWithin(discovery leaderDiscovery, replica string, client *ht
 			observe(route, "no_leader", time.Since(started))
 			return false, miss
 		}
+		if self := strategyStandingReplica(replica); self != "" && strategyStandingReplica(leader.WorkerID) == self {
+			observe(route, "self", time.Since(started))
+			return false, ""
+		}
 		if _, _, splitErr := net.SplitHostPort(leader.Endpoint); splitErr != nil {
 			observe(route, "no_leader", time.Since(started))
 			return false, viewstream.MissLeaderNoEndpoint
@@ -207,23 +233,38 @@ func leaderForwarderWithin(discovery leaderDiscovery, replica string, client *ht
 			}
 			body = bytes.NewReader(payload)
 		}
-		ctx, cancel := context.WithTimeout(request.Context(), timeout)
-		defer cancel()
+		ctx, budget := request.Context(), time.Duration(0)
+		if deadline, bounded := ctx.Deadline(); bounded {
+			if budget = time.Until(deadline) - forwardReturnMargin; budget <= 0 {
+				observe(route, "timeout", time.Since(started))
+				return false, fleet.ForwardFailed
+			}
+		} else {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
 		forwarded, err := http.NewRequestWithContext(ctx, request.Method, "http://"+leader.Endpoint+request.URL.RequestURI(), body)
 		if err != nil {
 			observe(route, "error", time.Since(started))
 			return false, fleet.ForwardFailed
 		}
+		if budget > 0 {
+			forwarded.Header.Set(fleet.ForwardedDeadlineHeader(), strconv.FormatInt(budget.Milliseconds(), 10))
+		}
 		if contentType := request.Header.Get("Content-Type"); contentType != "" && body != nil {
 			forwarded.Header.Set("Content-Type", contentType)
 		}
 		forwarded.Header.Set(fleet.ForwardedHeader(), replica)
+		if leader.InternalToken != "" {
+			forwarded.Header.Set(fleet.ForwardTokenHeader(), leader.InternalToken)
+		}
 		reply, err := client.Do(forwarded)
 		if err != nil {
 			// The reader leaving first is not the Leader failing: a CLI
 			// giving up, or its own deadline, cancels this hop too.
 			result := forwardFailureOf(err)
-			if request.Context().Err() != nil {
+			if errors.Is(request.Context().Err(), context.Canceled) {
 				result = "canceled"
 			}
 			observe(route, result, time.Since(started))

@@ -38,11 +38,11 @@ func TestTheObservationMemoryLineIsReadAtEachScrape(t *testing.T) {
 		for _, family := range families {
 			for _, series := range family.GetMetric() {
 				switch family.GetName() {
-				case "bkmonitor_alarmd_observation_memory_headroom_bytes":
+				case "alarmd_observation_memory_headroom_bytes":
 					headroom = series.GetGauge().GetValue()
-				case "bkmonitor_alarmd_observation_memory_refused_total":
+				case "alarmd_observation_memory_refused_total":
 					refused[series.GetLabel()[0].GetValue()] = series.GetCounter().GetValue()
-				case "bkmonitor_alarmd_observation_memory_admitted_bytes_total":
+				case "alarmd_observation_memory_admitted_bytes_total":
 					admitted[series.GetLabel()[0].GetValue()] = series.GetCounter().GetValue()
 				}
 			}
@@ -79,9 +79,9 @@ func TestEachDetectionBudgetIsReadByName(t *testing.T) {
 	for _, family := range families {
 		for _, series := range family.GetMetric() {
 			switch family.GetName() {
-			case "bkmonitor_alarmd_observation_memory_budget_size_bytes":
+			case "alarmd_observation_memory_budget_size_bytes":
 				size[series.GetLabel()[0].GetValue()] = series.GetGauge().GetValue()
-			case "bkmonitor_alarmd_observation_memory_budget_held_bytes":
+			case "alarmd_observation_memory_budget_held_bytes":
 				held[series.GetLabel()[0].GetValue()] = series.GetGauge().GetValue()
 			}
 		}
@@ -104,7 +104,7 @@ func TestWhatObservationHoldsIsReadAtEachScrape(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, family := range families {
-		if family.GetName() == "bkmonitor_alarmd_observation_memory_held_bytes" {
+		if family.GetName() == "alarmd_observation_memory_held_bytes" {
 			if got := family.GetMetric()[0].GetGauge().GetValue(); got != 7<<20 {
 				t.Fatalf("held = %v, want the reading's 7 MiB", got)
 			}

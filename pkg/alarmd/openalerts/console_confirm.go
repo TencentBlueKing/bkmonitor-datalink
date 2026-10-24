@@ -67,7 +67,7 @@ func (reader *HTTPReconciler) KeyingAsked() bool {
 // bindingReuse, and reads the keying with it. A strategy's calibration
 // resolves too; this is the path that does not wait for one.
 func (reader *HTTPReconciler) Refresh(ctx context.Context) {
-	if reader == nil {
+	if reader == nil || requireDeadline(ctx) != nil {
 		return
 	}
 	reader.mu.Lock()

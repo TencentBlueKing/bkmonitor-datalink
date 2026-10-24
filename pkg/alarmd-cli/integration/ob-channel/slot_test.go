@@ -44,7 +44,7 @@ func TestActualCLISlotEvidenceAndOwnerRequery(t *testing.T) {
 		if err != nil {
 			t.Fatal("cannot initialize real UQ diagnostic client")
 		}
-		operations := obchannel.NativeOperations(http.HandlerFunc(slotNativeFixture))
+		operations := obchannel.NativeOperationsWith(http.HandlerFunc(slotNativeFixture), obchannel.NativeOptions{})
 		return append(operations, obchannel.SlotOperations(obchannel.SlotOptions{
 			UQ: client,
 			Resolve: func(_ context.Context, slot execution.SlotIdentity) (obchannel.SlotPlan, error) {

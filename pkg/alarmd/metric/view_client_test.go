@@ -46,20 +46,20 @@ func TestTheWorkerPublishesObjectsMissingAsUnknownWhenItCouldNotProbe(t *testing
 	probed := gather(ViewClientCounts{Connected: true, InstalledRevision: 9, ObjectsMissing: 3, ObjectsProbed: true,
 		Installs: map[string]uint64{"snapshot": 1, "delta": 4, "weird": 2}, InstallFailures: map[string]uint64{"DELTA_BASE_MISMATCH": 1},
 		Refusals: map[string]uint64{"NOT_LEADER": 2}})
-	if probed["bkmonitor_alarmd_view_objects_missing"][""] != 3 || probed["bkmonitor_alarmd_view_installed_revision"][""] != 9 || probed["bkmonitor_alarmd_view_client_connected"][""] != 1 {
-		t.Fatalf("probed gauges = %v %v %v", probed["bkmonitor_alarmd_view_objects_missing"], probed["bkmonitor_alarmd_view_installed_revision"], probed["bkmonitor_alarmd_view_client_connected"])
+	if probed["alarmd_view_objects_missing"][""] != 3 || probed["alarmd_view_installed_revision"][""] != 9 || probed["alarmd_view_client_connected"][""] != 1 {
+		t.Fatalf("probed gauges = %v %v %v", probed["alarmd_view_objects_missing"], probed["alarmd_view_installed_revision"], probed["alarmd_view_client_connected"])
 	}
-	if installs := probed["bkmonitor_alarmd_view_install_total"]; installs["snapshot"] != 1 || installs["delta"] != 4 || installs["empty_delta"] != 0 || installs["other"] != 2 || len(installs) != 4 {
+	if installs := probed["alarmd_view_install_total"]; installs["snapshot"] != 1 || installs["delta"] != 4 || installs["empty_delta"] != 0 || installs["other"] != 2 || len(installs) != 4 {
 		t.Fatalf("installs = %v", installs)
 	}
-	if failures := probed["bkmonitor_alarmd_view_install_failure_total"]; failures["DELTA_BASE_MISMATCH"] != 1 || failures["SNAPSHOT_INVALID"] != 0 || len(failures) != len(viewClientInstallFailures)+1 {
+	if failures := probed["alarmd_view_install_failure_total"]; failures["DELTA_BASE_MISMATCH"] != 1 || failures["SNAPSHOT_INVALID"] != 0 || len(failures) != len(viewClientInstallFailures)+1 {
 		t.Fatalf("failures = %v", failures)
 	}
-	if refusals := probed["bkmonitor_alarmd_view_client_refusal_total"]; refusals["NOT_LEADER"] != 2 || len(refusals) != len(viewClientRefusals)+1 {
+	if refusals := probed["alarmd_view_client_refusal_total"]; refusals["NOT_LEADER"] != 2 || len(refusals) != len(viewClientRefusals)+1 {
 		t.Fatalf("refusals = %v", refusals)
 	}
 	unprobed := gather(ViewClientCounts{Connected: true, ObjectsMissing: 0, ObjectsProbed: false})
-	if value := unprobed["bkmonitor_alarmd_view_objects_missing"][""]; !math.IsNaN(value) {
+	if value := unprobed["alarmd_view_objects_missing"][""]; !math.IsNaN(value) {
 		t.Fatalf("objects missing without a probe = %v, want NaN", value)
 	}
 }

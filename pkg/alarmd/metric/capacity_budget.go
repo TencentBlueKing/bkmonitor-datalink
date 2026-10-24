@@ -56,7 +56,7 @@ type capacityLoadCollector struct {
 
 func newCapacityLoadCollector(source CapacityLoadSource) *capacityLoadCollector {
 	descriptor := func(name, help string, labels []string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	return &capacityLoadCollector{
 		source: source,

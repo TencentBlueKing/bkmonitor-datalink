@@ -84,8 +84,9 @@ func TestCheckConfigReportsSettingsTheFileNeverMentions(t *testing.T) {
 }
 
 // The Ownership compatibility identity is not configurable: a values file
-// carrying the retired worker field fails loudly, and the value every process
-// registers is the one deployed Workers already persisted.
+// carrying the retired worker field loads with the field ignored and named on
+// stderr, and the value every process registers is the one deployed Workers
+// already persisted.
 func TestDeploymentProfileIsNotConfigurable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
 	contents := strings.Replace(
@@ -102,11 +103,11 @@ func TestDeploymentProfileIsNotConfigurable(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"--check-config", "--config", path}, &stdout, &stderr); code != 1 {
-		t.Fatalf("run() code = %d, want rejection; stderr = %q", code, stderr.String())
+	if code := run(context.Background(), []string{"--check-config", "--config", path}, &stdout, &stderr); code != checkConfigUnknownKeys {
+		t.Fatalf("run() code = %d, want the retired field named and the preflight not passed; stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "deployment_profile") {
-		t.Fatalf("rejection does not name the retired field: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "ignored") || !strings.Contains(stderr.String(), "deployment_profile") {
+		t.Fatalf("stderr does not name the ignored field: %q", stderr.String())
 	}
 
 	// "shadow" is what every deployed Worker wrote into its registration when

@@ -240,6 +240,10 @@ var EndpointRoles = []string{
 type LinkdConsoleFacts struct {
 	// State is one of LinkdConsoleStates.
 	State string `json:"state"`
+	// UnansweredRequests is how many Console requests failed before any
+	// answer and before their deadline (refused, unresolved, reset); they
+	// are not samples of the Console's latency.
+	UnansweredRequests uint64 `json:"unanswered_requests,omitempty"`
 	// Reason says which part: for unreadable the first failing operation,
 	// for link_unhealthy the link's own word (discovery_failing,
 	// discovery_never_succeeded, discovery_stale).
@@ -273,6 +277,34 @@ type LinkdConsoleFacts struct {
 	// lookup's key has to agree with. Absent until read; the control leader
 	// reads it at the start of each roster walk.
 	EventSource *LinkdEventSourceFacts `json:"event_source,omitempty"`
+	// SourceByTopic is how the event source was chosen among the target's:
+	// the one subscribed to the topic this deployment writes to. Absent
+	// until a resolution has run.
+	SourceByTopic *LinkdSourceByTopicFacts `json:"source_by_topic,omitempty"`
+}
+
+// LinkdSourceByTopicFacts is how this deployment's event source was chosen.
+// Listed is the link's own name for the target, EventSourceID the source the
+// binding carries; resolved means one candidate reads Topic, unresolved names
+// Reason and keeps the source the binding had.
+type LinkdSourceByTopicFacts struct {
+	Outcome       string                 `json:"outcome"`
+	Topic         string                 `json:"topic,omitempty"`
+	Listed        string                 `json:"listed,omitempty"`
+	EventSourceID string                 `json:"event_source_id,omitempty"`
+	Reason        string                 `json:"reason,omitempty"`
+	Candidates    []LinkdSourceCandidate `json:"candidates,omitempty"`
+}
+
+// LinkdSourceCandidate is one of the target's sources as its definition
+// reads; no broker or credential is part of it.
+type LinkdSourceCandidate struct {
+	EventSourceID string `json:"event_source_id"`
+	Topic         string `json:"topic,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	Published     int64  `json:"published"`
+	Deleted       bool   `json:"deleted,omitempty"`
+	Unreadable    bool   `json:"unreadable,omitempty"`
 }
 
 // LinkdEventSourceFacts is the link's definition of this deployment's
@@ -311,10 +343,14 @@ type LinkdTargetFacts struct {
 // credentials looked afterwards exactly like one never asked.
 type LinkdDiscoveryFacts struct {
 	// Outcome is one of LinkdDiscoveryOutcomes.
-	Outcome  string            `json:"outcome"`
-	Attempts int               `json:"attempts"`
-	Error    string            `json:"error,omitempty"`
-	Target   *LinkdTargetFacts `json:"target,omitempty"`
+	Outcome  string `json:"outcome"`
+	Attempts int    `json:"attempts"`
+	Error    string `json:"error,omitempty"`
+	// Class is the failure's class on a failed discovery, one of
+	// openalerts.ConsoleFailureClasses: not_api is a Console URL that is not
+	// the link's API root, status 401 a credential the server refused.
+	Class  string            `json:"class,omitempty"`
+	Target *LinkdTargetFacts `json:"target,omitempty"`
 	// TargetCount and TargetNames are what the Console listed when it was
 	// asked: one on adoption, and on a refusal however many it listed, with
 	// their names (source/hook, the first MaxLinkdTargetNames of them), so a

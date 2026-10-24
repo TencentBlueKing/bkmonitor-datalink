@@ -94,6 +94,8 @@ type objectReadCache struct {
 	working cacheWorkingSet
 	// hits, misses and evictions are its outcomes since it was configured.
 	hits, misses, evictions uint64
+	// clears is how many times a term ending dropped it whole.
+	clears uint64
 	// decoded is the running process's reading of the decoded charge.
 	decoded decodedSampler
 }
@@ -158,6 +160,32 @@ func (cache *objectReadCache) store(reading *cacheReading, key string, value any
 	cache.working.storedLocked(reading, bytes)
 }
 
+// clear drops every cached object, in place and under the lock, keeping
+// the budget, the outcome counters and the working set: a read announced
+// before it still stores what it read and settles as it would have.
+func (cache *objectReadCache) clear() {
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.entries = make(map[string]*list.Element)
+	cache.order.Init()
+	cache.bytes = 0
+	cache.clears++
+}
+
+// ForgetCachedObjects drops the catalog objects and output contexts this
+// process keeps decoded. A Leader reads them for the whole publication; as
+// a Worker it reads only its own Query Groups', which it reads again on its
+// next Slots.
+func (repository *RedisCatalogRepository) ForgetCachedObjects() {
+	if repository == nil {
+		return
+	}
+	repository.objects().clear()
+}
+
 type objectReadFlight struct {
 	done  chan struct{}
 	value any
@@ -220,7 +248,9 @@ func (repository *RedisCatalogRepository) ObjectCacheBudget() (size, held uint64
 // in stored bytes.
 type ObjectCacheStats struct {
 	Hits, Misses, Evictions uint64
-	Occupancy               ControlTimelineCacheOccupancy
+	// Clears counts the whole-cache drops a term ending makes.
+	Clears    uint64
+	Occupancy ControlTimelineCacheOccupancy
 }
 
 // ObjectCacheStats reads the object cache in force, zero before one is
@@ -233,7 +263,7 @@ func (repository *RedisCatalogRepository) ObjectCacheStats() ObjectCacheStats {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	return ObjectCacheStats{
-		Hits: cache.hits, Misses: cache.misses, Evictions: cache.evictions,
+		Hits: cache.hits, Misses: cache.misses, Evictions: cache.evictions, Clears: cache.clears,
 		Occupancy: ControlTimelineCacheOccupancy{
 			Entries: cache.order.Len(), Bytes: cache.bytes,
 			MaxEntries: cache.maxEntries, MaxBytes: cache.maxBytes, Evictions: cache.evictions,

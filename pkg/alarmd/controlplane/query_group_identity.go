@@ -72,6 +72,12 @@ type queryGroupIdentityFacts struct {
 	// ordinary Plan of the same business asking the same thing: one skips
 	// the space and the other is scoped to it, so they are two queries.
 	GlobalBusiness bool `json:"global_business,omitempty"`
+	// NamedOutputs are the outputs the query asks for beside its own value.
+	// A query that asks for them is a different request with a different
+	// answer, so it is its own group, as the platform keys it (its
+	// query_md5 carries query_output_config only when present). Omitted when
+	// nil, so every group without them stays where it was.
+	NamedOutputs *execution.NamedOutputs `json:"named_outputs,omitempty"`
 }
 
 // queryGroupIdentityFactsOf projects a Plan's facts onto the identity. The
@@ -85,7 +91,7 @@ func queryGroupIdentityFactsOf(facts execution.QueryPlanFacts) queryGroupIdentit
 		DownSample: facts.DownSampleRange, Timezone: facts.Timezone, NotTimeAlign: facts.NotTimeAlign,
 		Normalization: facts.Normalization, QueryDelay: facts.QueryDelaySeconds,
 		SourceSemantics: facts.SourceSemantics, PromQL: facts.PromQL, TSDBMap: facts.TSDBMap,
-		Shard: facts.Shard, GlobalBusiness: facts.GlobalBusiness,
+		Shard: facts.Shard, GlobalBusiness: facts.GlobalBusiness, NamedOutputs: facts.NamedOutputs,
 	}
 }
 

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // holdRanking makes the next Publish stop between its copy and its ranking,
@@ -52,7 +54,7 @@ func finishes(t *testing.T, release func(), what string, call func()) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-testwait.Expired(t):
 		release()
 		t.Fatalf("%s waited for the publication's ranking", what)
 	}

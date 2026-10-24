@@ -51,12 +51,8 @@ func (err *SourceBlockedError) Unwrap() error { return err.Err }
 // SCHEDULE_MISSING when the timeline's key is not there at all, and
 // BLOCKED_EXACT_SET_UNAVAILABLE for the rest. The timeline case used to read
 // as the other word, which says the control plane handed nothing to run;
-// told apart, a rollout's old build that cannot read its new timelines is a
-// reading rather than an inference.
-//
-// Retire when: the upstream snapshot after the one that adds this word is
-// merged, its rollout reading is gone; the word stays for timelines whose
-// bytes are corrupt.
+// told apart, a timeline whose bytes are corrupt is a reading rather than an
+// inference.
 func (err *SourceBlockedError) ReasonCode() execution.ReasonCode {
 	var undecodable *controlplane.DeterministicScheduleError
 	if err != nil && errors.As(err.Err, &undecodable) {
@@ -298,10 +294,20 @@ type FlightCoordinator struct {
 	now             func() time.Time
 	// holds is the last day's normal permit holds (HoldReference).
 	holds HourlyDurations
+	// postQueryTails is the last day's post-query tails: from a Slot's query
+	// returning to the Slot returning (PostQueryTail).
+	postQueryTails HourlyDurations
+	// live is the runtime's live reserve, which also keeps each Query
+	// Group's own tails and the Slots that overran (SetLiveReserve); nil
+	// keeps only the pooled tails.
+	live *execution.LiveReserve
 	// recoveryAcquires is the part of permitAcquires asked by a recovery
 	// operation; normalRequests the normal ones by second.
-	recoveryAcquires       uint64
-	normalRequests         SecondPeak
+	recoveryAcquires uint64
+	normalRequests   SecondPeak
+	// heldPeak is the most permits held at once, lookback included, by
+	// second over the last minute.
+	heldPeak               SecondMax
 	normalWaiters          []*queryPermitWaiter
 	recoveryWaiters        []*queryPermitWaiter
 	recoveryChannelWaiters []*recoveryChannelWaiter
@@ -405,6 +411,11 @@ type QueryPermitOccupancy struct {
 	// normal's or recovery's.
 	LookbackInflight    int
 	LookbackHeldSeconds float64
+	// PeakHeld is the most permits held at once in the last minute, the
+	// lookback's included. Inflight is an instant and the held seconds a
+	// mean; this is the one of the three that says how close the work came to
+	// the budget, which is what a reader compares the budget against.
+	PeakHeld int
 }
 
 // QueryPermitOccupancySource reports live occupancy.
@@ -441,6 +452,9 @@ func (coordinator *FlightCoordinator) QueryPermitOccupancy() QueryPermitOccupanc
 		}
 	}
 	occupancy.LookbackInflight, occupancy.LookbackHeldSeconds = coordinator.lookbackInflight, coordinator.lookbackSeconds
+	// A permit taken more than a minute ago and still held is not in the
+	// minute's grants, and is still part of the peak.
+	occupancy.PeakHeld = max(coordinator.heldPeak.Max(at), coordinator.queryInflight)
 	for _, held := range coordinator.lookbackHeld {
 		if elapsed := at.Sub(held.since); elapsed > 0 {
 			occupancy.LookbackHeldSeconds += elapsed.Seconds()
@@ -545,14 +559,17 @@ type Runner struct {
 	// a round still waiting for the flight, or a supplement holding it, is
 	// never judged by the last execution's deadline. Read from the
 	// watchdog's goroutine.
-	stage          execution.StageMarker
-	queryGroup     execution.QueryGroupIdentity
-	session        OwnerSession
-	source         SlotSource
-	executor       Executor
-	flights        *FlightCoordinator
-	now            func() time.Time
-	attempt        *recoveryAttempt
+	stage      execution.StageMarker
+	queryGroup execution.QueryGroupIdentity
+	session    OwnerSession
+	source     SlotSource
+	executor   Executor
+	flights    *FlightCoordinator
+	now        func() time.Time
+	attempt    *recoveryAttempt
+	// shareRefusal counts the deterministic share refusals of the Slot this
+	// Runner is retrying (share_refusal.go): in memory, beside attempt.
+	shareRefusal   *shareRefusalState
 	sourceFailures uint32
 	sourceNextAt   time.Time
 	// lastExecutionReturnedAt is when this Runner's latest execution came
@@ -574,6 +591,10 @@ type Runner struct {
 	// the far side of the source call, which is why it has to survive the
 	// round that produced it rather than being passed down it.
 	heldBy observability.HeldByFacts
+	// skipObserver and lookbackBusy report the Slots this Runner's rounds
+	// finalise as skipped (WithSlotSkipReport); nil reports none.
+	skipObserver observability.Observer
+	lookbackBusy LookbackBusy
 	// nextDeadline is the query deadline of the Slot this Runner froze and did
 	// not complete -- deferred for readiness, refused admission, or failed and
 	// backing off -- so a dispatcher can order it against the others by when
@@ -829,7 +850,9 @@ func (runner *Runner) runOne(ctx context.Context, admission ExecutionAdmission) 
 			defer func() { _ = recover() }()
 			runner.flights.observer.Observe(ctx, observability.Observation{
 				Component: observability.ComponentScheduler, Stage: observability.StageRunnerReturned,
-				Result: observability.ResultTerminal, RunOutcome: outcome, Attempted: attempted, Err: refusal,
+				// The outcome is why the round returned, and so its reason.
+				Result: observability.ResultTerminal, RunOutcome: outcome, ReasonCode: observability.ReasonCode(outcome),
+				Attempted: attempted, Err: refusal,
 				// The view's one wait, kept apart from its other refusals:
 				// the fleet reads it here, the line it decides a blocked
 				// round on.
@@ -892,6 +915,7 @@ func (runner *Runner) runOneTracked(
 	// called because the source is where the decision to give up is taken, and
 	// again available to the executor below, which reports the completion.
 	ctx = withHeldBy(ctx, runner.heldBy)
+	ctx = runner.withLookbackBusy(ctx)
 	if err := ctx.Err(); err != nil {
 		decision = "cancelled"
 		return execution.SlotExecutionResult{}, false, err
@@ -1018,7 +1042,10 @@ func (runner *Runner) runOneTracked(
 		RecoveryUntilUnixMilli:         slot.RecoveryUntilUnixMilli,
 		KeepUntilUnixMilli:             slot.KeepUntilUnixMilli,
 		ReplayExpired:                  slot.Recovery.Disposition == ReplayExpired,
-		Operation:                      operation, AttemptNo: runner.attemptNo(slot), OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
+		// Decided on the Slot's refusals so far (noteShareRefusal); an
+		// expired replay or range is finalized query-free by its own rule.
+		ShareExceeded: runner.shareExceeded(slot) && slot.Recovery.Disposition != ReplayExpired && slot.ExpiredRange == nil,
+		Operation:     operation, AttemptNo: runner.attemptNo(slot), OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
 		ContentScope: slot.Dispatch.ContentScope,
 	}
 	if err := request.Validate(); err != nil {
@@ -1046,17 +1073,35 @@ func (runner *Runner) runOneTracked(
 	}
 	executeCtx := execution.WithFollowingSlot(execution.ContextWithLeaseAuthority(ctx, runner.session), slot.FollowingSlot)
 	executeCtx = execution.WithStageMarker(executeCtx, &runner.stage)
-	decidesPool := runner.queryCooldownDecidedBy(operation)
+	if decision := slot.Recovery.Decision; decision != nil {
+		executeCtx = observability.ContextWithDivertDecision(executeCtx, *decision)
+	} else if operation != execution.OperationNormal {
+		// A replay, retry or probe is not judged by the divert, and its line
+		// still says when it was taken up and from which frozen deadline, so
+		// a lost one shows the time between there and its send. Its remaining
+		// time is against the recovery deadline access derives, filled in on
+		// the completion line.
+		executeCtx = observability.ContextWithDivertDecision(executeCtx, observability.DivertDecisionFacts{
+			ClassifiedAtUnixMilli: runner.now().UnixMilli(), FrozenDeadlineUnixMilli: slot.EarliestQueryDeadlineUnixMilli,
+			BoundSource: observability.DivertBoundNone})
+	}
+	executeCtx = execution.WithBackendFailing(executeCtx, runner.queryCooldown.failures > 0)
+	if runner.flights.recoveryEnabled {
+		executeCtx = WithFailureRetried(executeCtx)
+	}
 	busyUntil := runner.lastExecutionReturnedAt
 	result, err := runner.executor.Execute(executeCtx, request)
 	runner.lastExecutionReturnedAt = runner.now()
-	poolResult := result
-	if decidesPool && runner.queryCooldownExcusesItsOwnDelay(result, busyUntil) {
-		decidesPool = false
-	} else if decidesPool && runner.queryCooldownCountsALateTimeout(result) {
-		poolResult.QueryAvailability = execution.QueryAvailabilityUnavailable
-		poolResult.QueryUnavailableReason = execution.ReasonCode(contract.ReasonQueryTimeout)
+	if err == nil && result.Completed && result.QueryFreeCause != "" {
+		runner.observeSlotSkipped(ctx, slot, operation, fence, result)
 	}
+	if queried := runner.stage.QueryReturnedAt(); err == nil && !queried.IsZero() {
+		runner.flights.RecordPostQueryTail(runner.lastExecutionReturnedAt, runner.queryGroup, runner.lastExecutionReturnedAt.Sub(queried))
+	}
+	if due := runner.stage.CompletionDeadline(); !due.IsZero() && runner.lastExecutionReturnedAt.After(due) {
+		runner.flights.CountOverrun()
+	}
+	decidesPool, poolResult := runner.queryCooldownDecision(operation, result, busyUntil)
 	if err != nil {
 		// The gate is asked again at execution, and a lease that moved
 		// between the source's reads and here is refused by the same name:
@@ -1077,13 +1122,21 @@ func (runner *Runner) runOneTracked(
 				return execution.SlotExecutionResult{}, true, nil
 			}
 		} else if executionErrorBacksOff(ctx, err) {
-			runner.recordExecutionFailure(slot, runner.now())
+			// A Slot refused for its share the same way again is not backed
+			// off: the next round finalizes it without a query, and waiting
+			// for that would only hold the Query Group's next Slot back.
+			if !runner.noteShareRefusal(slot, err) {
+				runner.recordExecutionFailure(slot, runner.now())
+			}
 		}
 	}
 	if err == nil {
 		runner.nextDeadline = time.Time{}
 		runner.recordResult(slot, result, runner.now())
 		runner.recordQueryAvailability(ctx, slot, operation, poolResult, sourceFacts.IntervalSeconds, decidesPool)
+		if result.Completed {
+			runner.shareSlotCompleted(slot, result)
+		}
 	}
 	decision = "execution_returned"
 	return result, true, err

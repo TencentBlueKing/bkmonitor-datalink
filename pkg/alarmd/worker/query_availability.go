@@ -23,6 +23,16 @@ type queryAvailabilityEvidence struct {
 	// unproven.
 	primaryEmptiedOutside    bool
 	primaryWithheldOtherwise bool
+	// primaryEmptiedIdentity says a primary query came back empty because
+	// every series it returned was withheld as one the target's identity
+	// could not read (target_key_missing); primaryWithheldNotIdentity that a
+	// primary query withheld a series for any other reason, which leaves
+	// the claim unproven. withheld, withheldOutside and withheldKeyMissing
+	// add up the primary queries' counts, and identitySamples keeps a few.
+	primaryEmptiedIdentity                        bool
+	primaryWithheldNotIdentity                    bool
+	withheld, withheldOutside, withheldKeyMissing uint64
+	identitySamples                               []execution.IdentitySample
 	// clock is the slowest primary query's budget and elapsed time.
 	clock *execution.PhysicalQueryClock
 	// sentLateTimeout says a primary query timed out after being sent late
@@ -55,6 +65,19 @@ func (e *queryAvailabilityEvidence) observe(binding execution.NamedInputBinding,
 	} else if physical.Withheld > 0 && physical.DataState == execution.DataStateEmpty {
 		e.primaryEmptiedOutside = true
 	}
+	if physical.Withheld > physical.WithheldKeyMissing {
+		e.primaryWithheldNotIdentity = true
+	} else if physical.Withheld > 0 && physical.DataState == execution.DataStateEmpty {
+		e.primaryEmptiedIdentity = true
+	}
+	e.withheld += physical.Withheld
+	e.withheldOutside += physical.WithheldOutsideTarget
+	e.withheldKeyMissing += physical.WithheldKeyMissing
+	for _, sample := range physical.IdentitySamples {
+		if len(e.identitySamples) < execution.IdentitySamplesPerQuery {
+			e.identitySamples = append(e.identitySamples, sample)
+		}
+	}
 	if physical.Completeness == execution.CompletenessUnavailable && e.reason == "" {
 		e.reason = execution.AttributedReason(binding.ReasonCode, binding.UnavailableAttribution)
 	}
@@ -82,6 +105,24 @@ func (e queryAvailabilityEvidence) emptiedByTarget(primary execution.PrimaryInpu
 		e.primaryEmptiedOutside && !e.primaryWithheldOtherwise
 }
 
+// emptiedByIdentity says a FULL, EMPTY primary was empty because every series
+// its queries returned was one the target's identity could not read: data
+// arrived and none of it built the target's key or passed its model gate.
+func (e queryAvailabilityEvidence) emptiedByIdentity(primary execution.PrimaryInputFact) bool {
+	return primary.Completeness == execution.CompletenessFull && primary.DataState == execution.DataStateEmpty &&
+		e.primaryEmptiedIdentity && !e.primaryWithheldNotIdentity
+}
+
+// identityEvidence is what a round emptied by identity carries: the withheld
+// counts by reason and the samples; nil for any other round.
+func (e queryAvailabilityEvidence) identityEvidence(primary execution.PrimaryInputFact) *execution.IdentityEvidence {
+	if !e.emptiedByIdentity(primary) {
+		return nil
+	}
+	return &execution.IdentityEvidence{Withheld: e.withheld, OutsideTarget: e.withheldOutside, KeyMissing: e.withheldKeyMissing,
+		Samples: append([]execution.IdentitySample(nil), e.identitySamples...)}
+}
+
 // quietWhenEmpty says a FULL, EMPTY primary is an event count of groups that
 // came back with no group at all: none had an event in the range asked, the
 // state an event stream spends most of its time in - quiet, not absent. An
@@ -97,6 +138,28 @@ func (e queryAvailabilityEvidence) quietWhenEmpty(primary execution.PrimaryInput
 	}
 	for _, requirement := range requirements {
 		if requirement.Role == execution.InputRolePrimary && requirement.ProviderLeadSeconds > 0 && len(requirement.RequiredColumns) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// unfilledWhenEmpty says a FULL, EMPTY primary is a count its provider does
+// not zero-fill (DataRequirement.UnfilledCounts): a log count whose groups
+// are absent, not zero, while they have no document, so the empty answer
+// cannot say whether a group was quiet or its data missing. Grouped or not:
+// most ungrouped log counts come back with explicit zeros when quiet, which
+// are points and never empty, but some come back with no series at all for
+// a range with no document, and that empty is as ambiguous as a group's.
+// Withholding rules as for quiet: a group the target turned away is the
+// target's empty, and any other withholding leaves the answer unproven.
+func (e queryAvailabilityEvidence) unfilledWhenEmpty(primary execution.PrimaryInputFact, requirements []execution.DataRequirement) bool {
+	if primary.Completeness != execution.CompletenessFull || primary.DataState != execution.DataStateEmpty ||
+		e.primaryEmptiedOutside || e.primaryWithheldOtherwise {
+		return false
+	}
+	for _, requirement := range requirements {
+		if requirement.Role == execution.InputRolePrimary && requirement.UnfilledCounts {
 			return true
 		}
 	}

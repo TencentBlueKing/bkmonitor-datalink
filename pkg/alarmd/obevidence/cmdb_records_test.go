@@ -126,7 +126,7 @@ func TestACMDBRecordIsReadAsWrittenAndAsAlarmdDecodesIt(t *testing.T) {
 		t.Fatalf("a record alarmd cannot decode = %+v value %+v, want it as text with the decode error", r, r.Value)
 	}
 	before := hgetCalls(ctx, t, client)
-	if r := host("103"); r.Status != "budget_exceeded" || r.Reason != "document_bytes" || r.Value != nil || r.Limits.Commands != 4 {
+	if r := host("103"); r.Status != "document_too_large" || r.Reason != "document_bytes" || r.Value != nil || r.Limits.Commands != 4 {
 		t.Fatalf("a record past the document limit = %+v, want refused unread", r)
 	}
 	if calls := hgetCalls(ctx, t, client) - before; calls != 0 {
@@ -211,7 +211,7 @@ func TestACMDBRecordGrownBetweenItsTwoReadsIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := New(Options{CMDBCache: RedisBinding{Client: grownRecord{client}, Location: Location{Role: "cmdb_cache", Prefix: "bk_test.ee"}}})
-	if r := service.Store(ctx, StoreRequest{Family: FamilyCMDBHost, Host: "101"}); r.Status != "budget_exceeded" || r.Reason != "document_bytes" || r.Value != nil {
+	if r := service.Store(ctx, StoreRequest{Family: FamilyCMDBHost, Host: "101"}); r.Status != "document_too_large" || r.Reason != "document_bytes" || r.Value != nil {
 		t.Fatalf("a record grown past the limit = %+v, want refused", r)
 	}
 }

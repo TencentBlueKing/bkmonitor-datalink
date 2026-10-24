@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ type App struct {
 	Version  string
 	Store    Store
 	HTTP     *http.Client
+	// home and workdir stand in for the user's home and working directories
+	// when set; skills install resolves its targets from them.
+	home, workdir string
 }
 
 func New(in io.Reader, out, stderr io.Writer, version string) *App {
@@ -43,11 +47,15 @@ type options struct {
 	url, port, state      string
 	timeout               time.Duration
 	expectBuild           string
-	window                time.Duration
-	hasWindow             bool
-	hasInput, rebind      bool
-	insecureTLS           bool
-	args                  []string
+	out, snapshot         string
+	// entry is --entry: alarmd sends the call through the fallback entry
+	// the server declared, for an operator re-running deliberately.
+	entry            string
+	window           time.Duration
+	hasWindow        bool
+	hasInput, rebind bool
+	insecureTLS      bool
+	args             []string
 }
 
 func parse(args []string) (options, error) {
@@ -57,7 +65,7 @@ func parse(args []string) (options, error) {
 		arg := args[i]
 		name, value, equal := strings.Cut(arg, "=")
 		if name == "--env" || name == "--input" || name == "--ca-cert" || name == "--url" || name == "--port" || name == "--state" || name == "--timeout" ||
-			name == "--expect-build" || name == "--window" || name == "--params-file" || name == "--stdin-file" || name == "--script-file" {
+			name == "--expect-build" || name == "--window" || name == "--params-file" || name == "--stdin-file" || name == "--script-file" || name == "--out" || name == "--snapshot" || name == "--entry" {
 			if seen[name] {
 				return o, errors.New("flags may only be provided once")
 			}
@@ -74,6 +82,15 @@ func parse(args []string) (options, error) {
 			}
 			if name == "--expect-build" {
 				o.expectBuild = value
+			} else if name == "--entry" {
+				if value != entryAlarmd {
+					return o, errors.New("--entry takes alarmd: the deployment's own entry its server declared")
+				}
+				o.entry = value
+			} else if name == "--out" {
+				o.out = value
+			} else if name == "--snapshot" {
+				o.snapshot = value
 			} else if name == "--params-file" {
 				o.paramsFile = value
 			} else if name == "--stdin-file" || name == "--script-file" {
@@ -144,6 +161,9 @@ func (a *App) Run(args []string) int {
 	if len(args) == 0 {
 		return a.help(nil)
 	}
+	if args[0] == "skills" {
+		return a.skills(args[1:])
+	}
 	o, err := parse(args)
 	if err != nil {
 		return a.fail("invalid_input", err.Error(), 2)
@@ -164,11 +184,20 @@ func (a *App) Run(args []string) int {
 	if (o.url != "" || o.port != "" || o.state != "" || o.timeout != 0) && command != "auth listen" {
 		return a.fail("invalid_input", "--url, --port, --state and --timeout are only valid with auth listen", 2)
 	}
+	if o.snapshot != "" && command != "discover" && command != "describe" && command != "invoke" && command != "diagnose" {
+		return a.fail("invalid_input", "--snapshot is only valid with discover, describe, invoke and diagnose", 2)
+	}
+	if o.out != "" && command != "snapshot" {
+		return a.fail("invalid_input", "--out is only valid with snapshot", 2)
+	}
 	if (o.expectBuild != "" || o.hasWindow) && command != "accept" {
 		return a.fail("invalid_input", "--expect-build and --window are only valid with accept", 2)
 	}
 	if o.hasInput && command != "invoke" {
 		return a.fail("invalid_input", "--input is only valid with invoke", 2)
+	}
+	if o.entry != "" && command != "invoke" {
+		return a.fail("invalid_input", "--entry is only valid with invoke", 2)
 	}
 	if (o.paramsFile != "" || o.stdinFile != "") && command != "invoke" {
 		return a.fail("invalid_input", "--params-file, --stdin-file and --script-file are only valid with invoke", 2)
@@ -186,8 +215,8 @@ func (a *App) Run(args []string) int {
 	}
 	switch command {
 	case "auth login", "auth listen", "profile list", "profile use":
-	case "auth status", "auth logout", "discover", "describe", "invoke", "diagnose", "accept":
-		if o.env == "" {
+	case "auth status", "auth logout", "discover", "describe", "invoke", "diagnose", "accept", "snapshot":
+		if o.env == "" && o.snapshot == "" {
 			return a.fail("invalid_input", "remote commands require explicit --env <environment_id>; run profile list", 2)
 		}
 	default:
@@ -234,6 +263,13 @@ func (a *App) Run(args []string) int {
 			return a.fail("invalid_input", err.Error(), 2)
 		}
 	}
+	if o.snapshot != "" {
+		operation := ""
+		if len(o.args) > 0 {
+			operation = o.args[0]
+		}
+		return a.fromSnapshot(command, operation, params, o)
+	}
 	p, err := a.Store.get(o.env)
 	if err != nil {
 		return a.fail("configuration_error", err.Error(), 1)
@@ -263,6 +299,9 @@ func (a *App) Run(args []string) int {
 	if command == "diagnose" {
 		return a.diagnose(p)
 	}
+	if command == "snapshot" {
+		return a.snapshot(p, o.out)
+	}
 	if command == "accept" {
 		window := acceptDefaultWindow
 		if o.hasWindow {
@@ -273,6 +312,9 @@ func (a *App) Run(args []string) int {
 	operation := ""
 	if len(o.args) > 0 {
 		operation = o.args[0]
+	}
+	if command == "discover" {
+		a.versionCheck(p)
 	}
 	return a.channel(command, operation, params, p, o)
 }
@@ -295,13 +337,13 @@ func (a *App) inputObject(o options) (map[string]any, error) {
 			return nil, errors.New("cannot read --input file")
 		}
 		defer f.Close()
-		data, err = io.ReadAll(io.LimitReader(f, (1<<20)+1))
+		data, err = io.ReadAll(io.LimitReader(f, maxInputBytes+1))
 		if err != nil {
 			return nil, errors.New("cannot read --input file")
 		}
 	}
-	if len(data) > 1<<20 {
-		return nil, errors.New("--input exceeds 1 MiB")
+	if len(data) > maxInputBytes {
+		return nil, errors.New("--input exceeds 16 MiB")
 	}
 	result, err := decodeObject(data)
 	if err != nil {
@@ -396,6 +438,7 @@ func (a *App) login(o options) int {
 	if failure != "" {
 		return a.fail(failure, message, 1)
 	}
+	a.versionCheck(p)
 	return a.print(map[string]any{"status": "ok", "summary": "Environment imported. Run discover with explicit --env.", "session": session})
 }
 
@@ -459,6 +502,10 @@ func (a *App) session(command string, p Profile) int {
 }
 
 func (a *App) channel(mode, operation string, params map[string]any, p Profile, o options) int {
+	p, err := onEntry(p, o.entry)
+	if err != nil {
+		return a.fail("invalid_input", err.Error(), 2)
+	}
 	revision := ""
 	timeout := 30 * time.Second // Legacy servers do not describe their deadline.
 	exec := false
@@ -485,23 +532,25 @@ func (a *App) channel(mode, operation string, params map[string]any, p Profile, 
 		if required != "" && !allowsScope(p.Scope, required) {
 			return a.fail("permission_denied", "Operation requires "+required+", which this earlier server grants only on a separate login; authorize again from its page.", 1)
 		}
+		// A newer server may advertise larger limits than this CLI knows:
+		// it waits as long as the server says the operation runs, and only
+		// a malformed value is refused.
 		if advertised, exists := contract["execution_timeout_ms"]; exists {
 			ms, ok := advertised.(json.Number)
 			v, err := ms.Int64()
-			if !ok || err != nil || v < 1 || v > 120000 {
+			if !ok || err != nil || v < 1 {
 				return a.fail("protocol_error", "Operation execution timeout is invalid.", 1)
 			}
 			admissionMS, marginMS := int64(0), int64(5000)
 			limits := objectField(contract, "request_limits")
 			for _, budget := range []struct {
-				key     string
-				maximum int64
-				value   *int64
-			}{{"admission_timeout_ms", 10000, &admissionMS}, {"transport_margin_ms", 30000, &marginMS}} {
+				key   string
+				value *int64
+			}{{"admission_timeout_ms", &admissionMS}, {"transport_margin_ms", &marginMS}} {
 				if declared, exists := limits[budget.key]; exists {
 					number, ok := declared.(json.Number)
 					ms, err := number.Int64()
-					if !ok || err != nil || ms < 1 || ms > budget.maximum {
+					if !ok || err != nil || ms < 1 {
 						return a.fail("protocol_error", "Operation "+budget.key+" is invalid.", 1)
 					}
 					*budget.value = ms
@@ -517,19 +566,19 @@ func (a *App) channel(mode, operation string, params map[string]any, p Profile, 
 		if maximum, exists := contract["request_max_bytes"]; exists {
 			n, ok := maximum.(json.Number)
 			limit, err := n.Int64()
-			if !ok || err != nil || limit < 1 || limit > 1<<20 {
+			if !ok || err != nil || limit < 1 {
 				return a.fail("protocol_error", "Operation request byte limit is invalid.", 1)
 			}
 			body := channelBody(mode, operation, params, revision)
 			encoded, err := json.Marshal(body)
-			if err != nil || int64(len(encoded)) > limit {
+			if err != nil || int64(len(encoded)) > requestBound(limit) {
 				return a.fail("invalid_input", "Input exceeds the described operation request byte limit.", 2)
 			}
 		}
 	}
 	fmt.Fprintln(a.Err, "Calling the OB channel...")
 	started := time.Now().UTC()
-	m, status, err := a.channelRequestTimeout(mode, operation, params, revision, p, timeout)
+	m, status, err := a.channelRequestTimeout(mode, operation, params, revision, p, timeout, exec)
 	if err != nil {
 		var unsent *requestNotSent
 		if exec && !errors.As(err, &unsent) {
@@ -541,8 +590,8 @@ func (a *App) channel(mode, operation string, params map[string]any, p Profile, 
 	// the pairing; an unpaired one is reported as it is.
 	if status == http.StatusUnauthorized && p.RefreshToken != "" && !exec {
 		if renewed, renewErr := a.ensureSession(p.EnvironmentID, true); renewErr == nil {
-			p = renewed
-			m, status, err = a.channelRequestTimeout(mode, operation, params, revision, p, timeout)
+			p, _ = onEntry(renewed, o.entry)
+			m, status, err = a.channelRequestTimeout(mode, operation, params, revision, p, timeout, exec)
 			if err != nil {
 				return a.fail("request_failed", err.Error(), 1)
 			}
@@ -568,12 +617,15 @@ func (a *App) channel(mode, operation string, params map[string]any, p Profile, 
 }
 
 func (a *App) channelRequest(mode, operation string, params map[string]any, revision string, p Profile) (map[string]any, int, error) {
-	return a.channelRequestTimeout(mode, operation, params, revision, p, 30*time.Second)
+	return a.channelRequestTimeout(mode, operation, params, revision, p, 30*time.Second, false)
 }
 
-func (a *App) channelRequestTimeout(mode, operation string, params map[string]any, revision string, p Profile, timeout time.Duration) (map[string]any, int, error) {
+// channelRequestTimeout is one channel call. exec says it executes
+// something, which moves to a fallback entry only when it was never sent
+// (requestVia).
+func (a *App) channelRequestTimeout(mode, operation string, params map[string]any, revision string, p Profile, timeout time.Duration, exec bool) (map[string]any, int, error) {
 	body := channelBody(mode, operation, params, revision)
-	m, status, err := a.requestTimeout(p, http.MethodPost, "api/cli/channel", body, timeout)
+	m, status, err := a.requestVia(p, http.MethodPost, "api/cli/channel", body, timeout, exec)
 	if err != nil {
 		return m, status, err
 	}
@@ -586,6 +638,17 @@ func (a *App) channelRequestTimeout(mode, operation string, params map[string]an
 	s := objectField(objectField(m, "meta"), "session")
 	if err := a.Store.updateExpiry(p, stringField(s, "expires_at")); err != nil {
 		fmt.Fprintln(a.Err, "Warning: server response received, but local expiry hint could not be saved.")
+	}
+	// The fallback entry the server declares on every answer: a session
+	// renewed in-band learns it as a login would, under the same checks.
+	if raw, declared := s["fallback_base_urls"]; declared {
+		if primary, err := normalizedURL(p.PublicBaseURL); err == nil {
+			if list, err := fallbackEntries(raw, primary); err == nil && !slices.Equal(list, p.FallbackBaseURLs) {
+				if err := a.Store.updateFallback(p, list); err != nil {
+					fmt.Fprintln(a.Err, "Warning: server response received, but the fallback entry could not be saved.")
+				}
+			}
+		}
 	}
 	return m, status, nil
 }
@@ -601,4 +664,18 @@ func channelBody(mode, operation string, params map[string]any, revision string)
 		body["renew_if_due"] = true
 	}
 	return body
+}
+
+// onEntry is p sent through the entry --entry names: the first fallback
+// entry its server declared, marked so the request says so. An empty entry
+// is p as it is.
+func onEntry(p Profile, entry string) (Profile, error) {
+	if entry == "" {
+		return p, nil
+	}
+	if len(p.FallbackBaseURLs) == 0 {
+		return p, errors.New("this session's server declared no other entry; --entry alarmd needs a session issued through the admin")
+	}
+	p.PublicBaseURL, p.FallbackBaseURLs, p.via = p.FallbackBaseURLs[0], nil, entryAlarmd
+	return p, nil
 }

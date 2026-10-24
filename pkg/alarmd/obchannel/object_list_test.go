@@ -174,7 +174,7 @@ func TestObjectListInputBounds(t *testing.T) {
 		{Params{"column": "by_design", "order": "newest", "offset": json.Number("0"), "limit": json.Number("200")}, true},
 		{Params{}, false},
 		{Params{"column": "pool"}, false},
-		{Params{"column": "demoted", "limit": json.Number("201")}, false},
+		{Params{"column": "demoted", "limit": json.Number("2001")}, false},
 		{Params{"column": "demoted", "limit": json.Number("0")}, false},
 		{Params{"column": "demoted", "offset": json.Number("-1")}, false},
 		{Params{"column": "demoted", "order": "random"}, false},
@@ -227,7 +227,7 @@ func TestObjectListSaysPagesAreSeparateReads(t *testing.T) {
 type oversizedRoute struct{}
 
 func (oversizedRoute) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	_, _ = w.Write([]byte(`{"anomalies":["` + strings.Repeat("x", MaxResponseBytes) + `"]}`))
+	_, _ = w.Write([]byte(`{"anomalies":["` + strings.Repeat("x", MaxResponseBytes()) + `"]}`))
 }
 
 func TestObjectListOverBudgetOffersHalfThePage(t *testing.T) {

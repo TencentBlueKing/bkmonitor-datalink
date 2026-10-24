@@ -21,8 +21,8 @@ type queryTruncationMetrics struct {
 
 func newQueryTruncationMetrics() queryTruncationMetrics {
 	truncated := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: metricNamespace, Subsystem: metricSubsystem,
-		Name: "uq_answer_truncated_total",
+		Subsystem: metricSubsystem,
+		Name:      "uq_answer_truncated_total",
 		Help: "UQ answers that may have been cut, by source: a terms level of the Elasticsearch aggregation " +
 			"held exactly UQ's bucket cap (EsMaxSize, 10000 by default), and UQ drops the groups past the " +
 			"cap without marking the answer. The series it returned are evaluated as they are; the groups " +

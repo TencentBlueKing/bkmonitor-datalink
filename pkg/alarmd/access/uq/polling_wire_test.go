@@ -10,13 +10,21 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
+// A strategy with no filter sends an empty match, not "{}": the provider
+// parses any match it is given as a selector and refuses "{}".
 func TestPollingPromQLWireAndDynamicSeries(t *testing.T) {
+	for _, match := range []string{"{job='api'}", ""} {
+		t.Run("match="+match, func(t *testing.T) { testPollingPromQLWire(t, match) })
+	}
+}
+
+func testPollingPromQLWire(t *testing.T, match string) {
 	attempt := noDimensionAttempt(t)
 	facts := attempt.Spec.PlanFacts
 	facts.QueryRevision = ""
 	facts.QueryList = nil
 	facts.MetricMerge = ""
-	facts.PromQL = &execution.PromQLQuery{Expression: "up", Match: "{job='api'}"}
+	facts.PromQL = &execution.PromQLQuery{Expression: "up", Match: match}
 	facts.Normalization.DatasetContract.DynamicDimensions = true
 	var err error
 	facts, err = execution.BuildQueryPlanFacts(facts)
@@ -36,6 +44,9 @@ func TestPollingPromQLWireAndDynamicSeries(t *testing.T) {
 		// label condition, which a custom-reported metric never matches.
 		if r.URL.Path != "/query/ts/promql" || body["promql"] != "up" || body["query_list"] != nil || body["start"] == nil || body["bk_biz_ids"] != nil {
 			t.Errorf("path=%s body=%v", r.URL.Path, body)
+		}
+		if body["match"] != match {
+			t.Errorf("match=%v, want %q", body["match"], match)
 		}
 		if r.Header.Get(headerSpace) == "" {
 			t.Errorf("space header missing: the scope has to travel there once it no longer travels in the body")

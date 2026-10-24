@@ -465,6 +465,11 @@ func (e eventObject) event() Event {
 	return out
 }
 
+// eventReadsAtOnce is how many event reads one answer runs at a time:
+// courtesy to the apiserver across a long object list, never a refusal. The
+// reader keeps as many idle connections, so each round reuses them.
+const eventReadsAtOnce = 16
+
 // Events reads the events on the Deployment, its ReplicaSets (newest
 // MaxReplicaSets) and its Pods; with pod set, on that Pod only.
 func (r *Reader) Events(ctx context.Context, pod string) (EventsResult, error) {
@@ -512,7 +517,7 @@ func (r *Reader) Events(ctx context.Context, pod string) (EventsResult, error) {
 	result := EventsResult{Scope: scope, Objects: objects, Events: []Event{}}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	slots := make(chan struct{}, 4)
+	slots := make(chan struct{}, eventReadsAtOnce)
 	for _, object := range objects {
 		wg.Add(1)
 		go func(object ObjectRef) {

@@ -18,6 +18,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func indexRedis(t *testing.T) *redis.Client {
@@ -44,13 +45,13 @@ func startRedisServer(t *testing.T, _ string, address string) {
 func waitRedisReady(t *testing.T, client *redis.Client) {
 	t.Helper()
 	// The server answered before StartAt returned; what is left is this
-	// client's own connection, under the same bound.
-	deadline := time.Now().Add(redistest.ReadyWithin)
+	// client's own connection, bounded by the test's deadline.
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if err := client.Ping(context.Background()).Err(); err == nil {
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatal("redis-server did not become ready")
 }
@@ -117,7 +118,7 @@ func TestRedisSubscriberAcknowledgesReconnectAndFiltersInvalidNotices(t *testing
 			if actual != wanted {
 				t.Fatalf("ready %v want %v", actual, wanted)
 			}
-		case <-time.After(3 * time.Second):
+		case <-testwait.Expired(t):
 			t.Fatal("no subscription acknowledgement")
 		}
 	}
@@ -141,7 +142,7 @@ func TestRedisSubscriberAcknowledgesReconnectAndFiltersInvalidNotices(t *testing
 		if key != keyA {
 			t.Fatalf("unexpected notice %+v", key)
 		}
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("valid notice lost")
 	}
 	refusedMu.Lock()
@@ -166,7 +167,7 @@ func TestRedisSubscriberAcknowledgesReconnectAndFiltersInvalidNotices(t *testing
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("subscriber did not close")
 	}
 }
@@ -306,14 +307,14 @@ func TestASetTooSlowForTheRoundIsReadOnItsOwn(t *testing.T) {
 		client.SAdd(ctx, key, "member-"+strconv.Itoa(index))
 	}
 	source, _ := NewSetSource(client, "test:index", ReadLimits{MaxMembers: 1000, MaxBytes: 1 << 20, PageSize: 1, MaxLargeRead: time.Minute})
-	short, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	short, cancel := context.WithTimeout(ctx, 100*time.Millisecond) // fixed-wait: the round's deadline the case sets; 50 pages at the 20 ms default page time need 2 s, so the set is handed back before any page is read, whatever the host's speed
 	defer cancel()
 	_, err := source.ReadSet(short, keyA)
 	var large *LargeSetError
 	if !errors.As(err, &large) || large.Members != 50 || large.Budget < 2500*time.Millisecond || large.Budget > time.Minute {
 		t.Fatalf("a slow set in a short round = %+v (%v), want handed back with its budget", large, err)
 	}
-	own, cancelOwn := context.WithTimeout(WithLargeRead(ctx), large.Budget)
+	own, cancelOwn := context.WithTimeout(WithLargeRead(ctx), large.Budget) // fixed-wait: the budget the source handed back, which the case reads under as its caller would; it is what the case says suffices
 	defer cancelOwn()
 	if members, err := source.ReadSet(own, keyA); err != nil || len(members) != 50 {
 		t.Fatalf("read on its own: %d members, %v", len(members), err)
@@ -354,6 +355,21 @@ func (stallingScan) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context
 	return ctx, nil
 }
 
+// signallingScan is a stallingScan that closes scanning when the first
+// SSCAN is in flight.
+type signallingScan struct {
+	stallingScan
+	scanning chan struct{}
+	once     *sync.Once
+}
+
+func (h signallingScan) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	if cmd.Name() == "sscan" {
+		h.once.Do(func() { close(h.scanning) })
+	}
+	return h.stallingScan.BeforeProcess(ctx, cmd)
+}
+
 // A page the deadline cut is timed too: an average that learned only from
 // the pages fast enough to finish would keep giving a slow set too little.
 func TestAPageTheDeadlineCutIsTimed(t *testing.T) {
@@ -362,7 +378,7 @@ func TestAPageTheDeadlineCutIsTimed(t *testing.T) {
 	client.SAdd(ctx, "test:index:"+keyA.TenantID+":"+keyA.StrategyID, "member-1")
 	source, _ := NewSetSource(client, "test:index", ReadLimits{MaxMembers: 100, MaxBytes: 1 << 20, PageSize: 100})
 	client.AddHook(stallingScan{sscanCounter{pages: &atomic.Int64{}}})
-	short, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	short, cancel := context.WithTimeout(ctx, 200*time.Millisecond) // fixed-wait: the deadline the case is about: the stalled page it cuts must be timed
 	defer cancel()
 	if _, err := source.ReadSet(short, keyA); err == nil {
 		t.Fatal("a stalled page was read")
@@ -382,11 +398,26 @@ func TestAPageTheCallerCancelledIsNotTimed(t *testing.T) {
 	ctx := context.Background()
 	client.SAdd(ctx, "test:index:"+keyA.TenantID+":"+keyA.StrategyID, "member-1")
 	source, _ := NewSetSource(client, "test:index", ReadLimits{MaxMembers: 100, MaxBytes: 1 << 20, PageSize: 100})
-	client.AddHook(stallingScan{sscanCounter{pages: &atomic.Int64{}}})
+	scanning := make(chan struct{})
+	client.AddHook(signallingScan{stallingScan: stallingScan{sscanCounter{pages: &atomic.Int64{}}}, scanning: scanning, once: &sync.Once{}})
 	cancelled, cancel := context.WithCancel(ctx)
-	time.AfterFunc(100*time.Millisecond, cancel)
+	defer cancel()
+	// The cancel lands on the page, once it is in flight: one that landed on
+	// the SCARD before it would leave no page to time, and pass for nothing.
+	go func() {
+		select {
+		case <-scanning:
+		case <-cancelled.Done():
+		}
+		cancel()
+	}()
 	if _, err := source.ReadSet(cancelled, keyA); err == nil {
 		t.Fatal("a stalled page was read")
+	}
+	select {
+	case <-scanning:
+	default:
+		t.Fatal("the read ended before a page was in flight: the cancel did not land on a page")
 	}
 	if page := source.pageNanos.Load(); page != 0 {
 		t.Fatalf("page time %v, want none from a cancelled page", time.Duration(page))

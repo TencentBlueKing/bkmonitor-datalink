@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -89,7 +90,7 @@ func collectDispatches(t *testing.T, started <-chan execution.QueryGroupIdentity
 		select {
 		case queryGroup := <-started:
 			order = append(order, queryGroup)
-		case <-time.After(2 * time.Second):
+		case <-testwait.Expired(t):
 			t.Fatalf("dispatched %v, want %d dispatches", order, count)
 		}
 	}
@@ -104,7 +105,7 @@ func stopDeadlineDispatcher(t *testing.T, cancel context.CancelFunc, done <-chan
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(signalWaitBound):
+	case <-testwait.Expired(t):
 		t.Fatal("dispatcher did not stop after cancellation")
 	}
 }
@@ -191,7 +192,7 @@ func TestPhaseTwoDispatcherFullReadyQueueGivesUpTheLatestDeadlineForAnEarlierOne
 		{"normal_queue_full", "10s"}:      0,
 		{"normal_queue_evicted", "10s"}:   0,
 	} {
-		got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_queue_turnaways_total", map[string]string{"outcome": labels[0], "cohort": labels[1]})
+		got := counterValue(t, recorder, "alarmd_dispatch_queue_turnaways_total", map[string]string{"outcome": labels[0], "cohort": labels[1]})
 		if got != want {
 			t.Fatalf("dispatch_queue_turnaways_total%v = %v, want %v", labels, got, want)
 		}
@@ -231,7 +232,7 @@ func TestAOneShotRunEvictsAsProductionDoesAndRunsTheEvictedAtTheNextTick(t *test
 		if err != nil {
 			t.Fatalf("runScheduledOnce() error = %v", err)
 		}
-	case <-time.After(signalWaitBound):
+	case <-testwait.Expired(t):
 		t.Fatal("the one-shot run did not end")
 	}
 	order := collectDispatches(t, started, len(runners))
@@ -239,7 +240,7 @@ func TestAOneShotRunEvictsAsProductionDoesAndRunsTheEvictedAtTheNextTick(t *test
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("dispatch order = %v, want %v: the evicted Query Group runs at the next tick, after the generation it was evicted from", order, want)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_queue_turnaways_total",
+	if got := counterValue(t, recorder, "alarmd_dispatch_queue_turnaways_total",
 		map[string]string{"outcome": "normal_queue_evicted", "cohort": "other"}); got != 1 {
 		t.Fatalf("normal_queue_evicted = %v, want 1", got)
 	}

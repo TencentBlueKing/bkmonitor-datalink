@@ -41,7 +41,7 @@ var publicHealthFields = map[string]bool{
 var redactedHealthFields = map[string]bool{
 	"Impact": true, "StrategyLinkBase": true, "PrunedSkips": true, "RetainedShare": true, "ReadEarly": true, "Workers": true,
 	"PrunedSkipsTotal": true, "RetainedShareTotal": true, "ReadEarlyTotal": true,
-	"Builds": true, "OutputProtocols": true, "Retentions": true, "OutputPath": true, "Cooling": true, "Degradations": true,
+	"Builds": true, "OutputProtocols": true, "Tracings": true, "Retentions": true, "OutputPath": true, "Cooling": true, "Degradations": true,
 	"Activation": true, "NoDataHorizon": true, "Load": true, "ActivationReplica": true, "Rebalance": true,
 	"RebalanceReplica": true, "AssignmentScope": true, "AssignmentScopeReplica": true, "AssignmentSweep": true,
 	"AssignmentSweepReplica": true, "ViewStream": true, "ViewStreamReplica": true, "Source": true,

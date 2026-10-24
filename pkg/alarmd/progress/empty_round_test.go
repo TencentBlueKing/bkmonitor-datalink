@@ -87,3 +87,36 @@ func TestTheSummaryOfAnEmptyRoundKeepsWhatItSaidAndUnderWhichContent(t *testing.
 		})
 	}
 }
+
+// A round emptied by identity continues the count of the round before it
+// when that round was the same kind of empty under the same content, and
+// starts it at one otherwise; any other round carries no count, so a restart
+// resumes exactly where the rounds left off.
+func TestAnIdentityEmptyRoundCountsTheRunItContinues(t *testing.T) {
+	identity := &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty,
+		Identity: &execution.IdentityEvidence{Withheld: 1, KeyMissing: 1}}
+	outside := &execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateEmpty, EmptiedByTarget: true}
+	for _, tc := range []struct {
+		name     string
+		primary  *execution.PrimaryInputFact
+		previous *execution.EmptyRoundSummary
+		want     uint32
+	}{
+		{"first", identity, nil, 1},
+		{"continues", identity, &execution.EmptyRoundSummary{ContentScope: "c", IdentityRounds: 2}, 3},
+		{"other content", identity, &execution.EmptyRoundSummary{ContentScope: "other", IdentityRounds: 2}, 1},
+		{"after another empty", identity, &execution.EmptyRoundSummary{ContentScope: "c", EmptiedByTarget: true}, 1},
+		{"another empty after a run", outside, &execution.EmptyRoundSummary{ContentScope: "c", IdentityRounds: 5}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			summary := emptyRoundOf(tc.primary, "c", tc.previous)
+			if summary == nil || summary.IdentityRounds != tc.want {
+				t.Fatalf("summary %+v, want identity rounds %d", summary, tc.want)
+			}
+		})
+	}
+	if summary := emptyRoundOf(&execution.PrimaryInputFact{Completeness: execution.CompletenessFull, DataState: execution.DataStateData,
+		Identity: identity.Identity}, "c", nil); summary != nil {
+		t.Fatalf("a round with records wrote %+v", summary)
+	}
+}

@@ -35,9 +35,9 @@ func TestTheScrapeReadsTheObjectCachesDecodedRatio(t *testing.T) {
 		}
 	}
 	for key, want := range map[string]float64{
-		"bkmonitor_alarmd_object_cache_decoded_ratio/last":    1.1,
-		"bkmonitor_alarmd_object_cache_decoded_ratio/max":     1.4,
-		"bkmonitor_alarmd_object_cache_decoded_samples_total": 3,
+		"alarmd_object_cache_decoded_ratio/last":    1.1,
+		"alarmd_object_cache_decoded_ratio/max":     1.4,
+		"alarmd_object_cache_decoded_samples_total": 3,
 	} {
 		if readings[key] != want {
 			t.Errorf("%s = %v, want %v", key, readings[key], want)

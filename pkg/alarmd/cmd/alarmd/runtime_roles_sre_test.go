@@ -32,7 +32,7 @@ func TestSREProvidersAreRegisteredOnlyByTheChannelRole(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer runtime.Close()
-			for _, operation := range []string{"pod.targets", "pod.get", "pod.logs", "pod.exec", "pod.delete", "workload.restart", "workload.scale", "secret.get", "configmap.get", "uq.egresses", "uq.query", "uq.trace"} {
+			for _, operation := range []string{"node.exec", "node.execution.get", "node.execution.cancel", "pod.targets", "pod.get", "pod.logs", "pod.exec", "pod.delete", "workload.restart", "workload.scale", "secret.get", "configmap.get", "uq.egresses", "uq.query", "uq.trace", "log.count", "log.search"} {
 				present := runtime.Executor.OperationContractRevision(operation) != ""
 				if present != cfg.HasRole(roles.Channel) {
 					t.Fatalf("%s registered in roles %v: %v", operation, selected, present)
@@ -75,8 +75,8 @@ func TestSREQueryReusesCurrentUQEndpointAndSource(t *testing.T) {
 }
 
 // The audit sink writes one sre_action line per call, Info when it was done
-// and Warn otherwise, with who, what and where, and counts it under its
-// operation and result; every cell of the count exists once it is wired.
+// and Warn otherwise, with who, what and where -- an execution's command
+// line too -- and counts it under its operation and result; every cell of the count exists once it is wired.
 func TestTheSREAuditSinkWritesALineAndCountsTheCall(t *testing.T) {
 	var out bytes.Buffer
 	recorder := metric.NewRecorder(metric.BuildInfo{})
@@ -88,13 +88,21 @@ func TestTheSREAuditSinkWritesALineAndCountsTheCall(t *testing.T) {
 			t.Fatalf("line lacks %s: %s", part, line)
 		}
 	}
+	if strings.Contains(line, `"argv"`) {
+		t.Fatalf("a call without a command line writes argv: %s", line)
+	}
+	out.Reset()
+	sink(obchannel.SREAction{Op: "pod.exec", Namespace: "fixture", Kind: "Pod", Name: "web-0/web", Result: obchannel.SREResultDone, Argv: "/bin/sh -s"})
+	if line := out.String(); !strings.Contains(line, `"argv":"/bin/sh -s"`) {
+		t.Fatalf("an execution's line lacks its command line: %s", line)
+	}
 	families, err := recorder.Gatherer().Gather()
 	if err != nil {
 		t.Fatal(err)
 	}
 	cells, counted := 0, 0.0
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_sre_actions_total" {
+		if family.GetName() != "alarmd_sre_actions_total" {
 			continue
 		}
 		for _, series := range family.Metric {
@@ -134,7 +142,7 @@ func TestTheRolloutSinkWritesALineAndCountsTheEnd(t *testing.T) {
 	}
 	cells, counted := 0, 0.0
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_sre_rollouts_total" {
+		if family.GetName() != "alarmd_sre_rollouts_total" {
 			continue
 		}
 		for _, series := range family.Metric {

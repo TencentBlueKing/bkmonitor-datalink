@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdtoken"
 )
 
 // The Console operations this process calls, closed. Each has its own
@@ -33,27 +34,39 @@ const (
 )
 
 // The classes of a Console failure that are not the transport's: an answer
-// other than 200, and a body that could not be read whole or decoded.
+// other than 200, a body that could not be read whole or decoded, and a web
+// page where the API was asked for (ErrNotAPI: the URL is not the API root).
 const (
 	ConsoleFailureStatus     = "status"
 	ConsoleFailureIncomplete = "incomplete"
+	ConsoleFailureNotAPI     = "not_api"
+	// ConsoleFailureNoToken is a call not made for want of a usable token:
+	// none handed over yet, expired, or refused by the admin.
+	ConsoleFailureNoToken = "no_token"
 )
 
 // ConsoleFailureClasses is every class a Console failure is counted under:
-// the transport's words (execution.TransportFailureWords), then status and
-// incomplete. Any other failure of an operation is other.
+// the transport's words (execution.TransportFailureWords), then status,
+// incomplete, not_api and no_token. Any other failure of an operation is
+// other.
 var ConsoleFailureClasses = append(append([]string(nil), execution.TransportFailureWords...),
-	ConsoleFailureStatus, ConsoleFailureIncomplete)
+	ConsoleFailureStatus, ConsoleFailureIncomplete, ConsoleFailureNotAPI, ConsoleFailureNoToken)
 
-// consoleFailureClass is the class err is counted under.
-func consoleFailureClass(err error) string {
+// ConsoleFailureClass is the class err is counted under (ConsoleFailureClasses).
+// An object-missing answer is a status here: only the alert record reads it
+// as an answer, before it is counted.
+func ConsoleFailureClass(err error) string {
 	var transport transportError
 	var status statusError
 	switch {
 	case errors.As(err, &transport):
 		return string(transport)
-	case errors.As(err, &status):
+	case errors.As(err, &status), errors.Is(err, errObjectMissing):
 		return ConsoleFailureStatus
+	case errors.Is(err, ErrNotAPI):
+		return ConsoleFailureNotAPI
+	case errors.As(err, new(linkdtoken.ErrNoToken)):
+		return ConsoleFailureNoToken
 	case errors.Is(err, ErrIncomplete):
 		return ConsoleFailureIncomplete
 	}
@@ -62,7 +75,7 @@ func consoleFailureClass(err error) string {
 
 // ConsoleOps is every operation a ConsoleRecord carries, in the order a
 // reader shows them.
-var ConsoleOps = []string{ConsoleOpRoster, ConsoleOpReconcile, ConsoleOpAlertRecord, ConsoleOpEventSource}
+var ConsoleOps = []string{ConsoleOpRoster, ConsoleOpReconcile, ConsoleOpAlertRecord, ConsoleOpEventSource, ConsoleOpAlertRead}
 
 // ConsoleCall is what this process has seen of one operation: how many
 // calls and failures, when it last completed, when it last failed and what
@@ -99,6 +112,11 @@ type ConsoleRecord struct {
 	// read, and EventSourceReadAt when; zero until read.
 	EventSource       EventSourceKeying
 	EventSourceReadAt time.Time
+	// SourceByTopic is how the last resolution chose the event source.
+	SourceByTopic SourceByTopic
+	// UnansweredRequests is how many requests failed before the Console
+	// answered and before their deadline (ConsoleLatency.Unanswered).
+	UnansweredRequests uint64
 }
 
 type consoleCalls struct {
@@ -126,7 +144,7 @@ func (calls *consoleCalls) record(op string, at time.Time, err error) (tell bool
 	if err == nil {
 		call.LastSuccessAt = at
 	} else {
-		class = consoleFailureClass(err)
+		class = ConsoleFailureClass(err)
 		call.Failures++
 		call.LastFailureAt, call.LastFailure, call.LastFailureClass = at, err.Error(), class
 		// A new map each time: Record hands the map out, and one it has
@@ -162,6 +180,11 @@ func (calls *consoleCalls) observeLink(health LinkHealth, at time.Time) {
 // operation has an entry, zero included, so an operation never called reads
 // as never called rather than as missing.
 func (reader *HTTPReconciler) Record() ConsoleRecord {
+	// The choice is under the reader's lock, taken and let go before the
+	// calls' lock, never inside it.
+	reader.mu.Lock()
+	choice := reader.sourceChoice.clone()
+	reader.mu.Unlock()
 	reader.calls.mu.Lock()
 	defer reader.calls.mu.Unlock()
 	record := ConsoleRecord{Calls: make(map[string]ConsoleCall, len(ConsoleOps)),
@@ -170,6 +193,8 @@ func (reader *HTTPReconciler) Record() ConsoleRecord {
 	for _, op := range ConsoleOps {
 		record.Calls[op] = reader.calls.calls[op]
 	}
+	record.SourceByTopic = choice
+	record.UnansweredRequests = reader.latency.Unanswered()
 	return record
 }
 
@@ -190,6 +215,9 @@ func (reader *HTTPReconciler) now() time.Time {
 
 // Reconcile reads one strategy's reconciliation from the link's Console.
 func (reader *HTTPReconciler) Reconcile(ctx context.Context, key StrategyKey) (Reconciliation, error) {
+	if err := requireDeadline(ctx); err != nil {
+		return Reconciliation{}, err
+	}
 	result, err := reader.reconcile(ctx, key)
 	reader.record(ConsoleOpReconcile, reader.now(), err)
 	return result, err
@@ -198,6 +226,9 @@ func (reader *HTTPReconciler) Reconcile(ctx context.Context, key StrategyKey) (R
 // Roster reads one page of the link's strategy list. An empty cursor starts
 // a walk.
 func (reader *HTTPReconciler) Roster(ctx context.Context, cursor string) (RosterPage, error) {
+	if err := requireDeadline(ctx); err != nil {
+		return RosterPage{}, err
+	}
 	page, err := reader.roster(ctx, cursor)
 	at := reader.now()
 	reader.record(ConsoleOpRoster, at, err)
@@ -209,6 +240,9 @@ func (reader *HTTPReconciler) Roster(ctx context.Context, cursor string) (Roster
 
 // AlertRecord reads one alert's record from the link's Console.
 func (reader *HTTPReconciler) AlertRecord(ctx context.Context, tenantID, alertID string) (AlertRecord, error) {
+	if err := requireDeadline(ctx); err != nil {
+		return AlertRecord{}, err
+	}
 	record, err := reader.alertRecord(ctx, tenantID, alertID)
 	outcome := err
 	if errors.Is(err, ErrAlertNotFound) {

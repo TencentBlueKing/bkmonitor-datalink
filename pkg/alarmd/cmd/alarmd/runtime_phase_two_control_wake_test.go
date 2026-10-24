@@ -17,6 +17,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 type blockedWakeControl struct {
@@ -92,7 +93,7 @@ func TestPhaseTwoWorkerBundleNormalTicksContinueDuringBlockedControl(t *testing.
 					if err != nil {
 						t.Errorf("Run(cancel) = %v", err)
 					}
-				case <-time.After(signalWaitBound):
+				case <-testwait.Expired(t):
 					t.Error("Run did not join scheduler after cancellation")
 				}
 			}()
@@ -100,12 +101,11 @@ func TestPhaseTwoWorkerBundleNormalTicksContinueDuringBlockedControl(t *testing.
 			before := calls.Load()
 			// Eight generations cannot come from the one buffered pre-control wake
 			// or the single active QG. Wait on progress, not a fixed execution speed.
-			deadline := time.NewTimer(time.Second)
-			defer deadline.Stop()
+			deadline := testwait.Expired(t)
 			for calls.Load() < before+8 {
 				select {
 				case <-changed:
-				case <-deadline.C:
+				case <-deadline:
 					t.Fatalf("normal scheduling stopped during %s: calls %d -> %d", stage, before, calls.Load())
 				}
 			}

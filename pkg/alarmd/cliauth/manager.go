@@ -50,9 +50,16 @@ const (
 	// device that stopped asking: a month covers a holiday and not a
 	// forgotten laptop.
 	PairingIdleLifetime = 30 * 24 * time.Hour
-	// MaxPairings bounds the renewal credentials one environment holds. Past
-	// it an exchange still logs in, without renewal, and says so.
-	MaxPairings = 64
+	// MaxPairings bounds the renewal credentials one environment holds, a
+	// few hundred bytes of Redis each. Past it an exchange still logs in,
+	// without renewal, and says so.
+	MaxPairings = 1024
+	// AuthEventsPerMinute is each authorization route's rate per replica:
+	// grants, exchanges, renewals and named grants. The secrets are random
+	// and long, so the rate does not stand between them and a guess; it only
+	// stops a client looping without pause, at ten a second, far above
+	// people and agents logging in or renewing together.
+	AuthEventsPerMinute = 600
 )
 
 // ValidScope is whether an operation may require scope: there is one.
@@ -80,6 +87,10 @@ type Options struct {
 	// error's own bounded text. The text never reaches an answer: this
 	// route is public, and the text can name an address.
 	OnStoreFailure func(reason, detail string)
+	// OnEvent, when set, hears every counted event (Counts) with how many;
+	// OnRosterApplied when a new roster was applied.
+	OnEvent         func(event string, n uint64)
+	OnRosterApplied func(at time.Time)
 }
 
 type Session struct {
@@ -88,9 +99,29 @@ type Session struct {
 	Scope         string    `json:"scope"`
 	ExpiresAt     time.Time `json:"expires_at"`
 	Renewed       bool      `json:"renewed"`
-	TokenHash     string    `json:"-"`
-	pairingID     string
+	// Operator is the admin user the session was issued to through the
+	// front surface; empty for one paired with the key on the /cli page.
+	Operator string `json:"operator,omitempty"`
+	// IssuedVia is the route that issued it: IssuedViaFront or
+	// IssuedViaAdminKey; empty on a session from before 0.4.
+	IssuedVia string `json:"issued_via,omitempty"`
+	// FallbackBaseURLs is the deployment's own address for a session issued
+	// through the admin (fallbackFor), carried on every channel answer so a
+	// session kept alive in-band learns it without a new login.
+	FallbackBaseURLs []string `json:"fallback_base_urls,omitempty"`
+	TokenHash        string   `json:"-"`
+	pairingID        string
+	publicBaseURL    string
 }
+
+// The routes a credential is issued through.
+const (
+	// IssuedViaFront is the front surface: the admin server, for a named user.
+	IssuedViaFront = "front"
+	// IssuedViaAdminKey is the authorization page, the key typed in: the
+	// deployment administrator.
+	IssuedViaAdminKey = "admin_key"
+)
 
 // Error contains a safe public message, never an underlying Redis error or a
 // credential. HTTPStatus is also available to the channel handler.
@@ -140,21 +171,29 @@ func (m *Manager) storeFailed(reason, detail string) *Error {
 }
 
 type Manager struct {
+	// linkdTokens is the token the front surface takes for the link's API;
+	// nil keeps none (ServeLinkdTokens).
+	linkdTokens     LinkdTokens
 	client          redis.UniversalClient
 	prefix          string
 	environmentID   string
 	environmentName string
 	publicBaseURL   string
 	origin          string
-	adminHash       [sha256.Size]byte
-	now             func() time.Time
-	httpSlots       chan struct{}
-	limitMu         sync.Mutex
-	grantWindow     rateWindow
-	exchangeWindow  rateWindow
-	refreshWindow   rateWindow
-	counts          counters
-	onStoreFailure  func(reason, detail string)
+	// crossOrigin logs, once per process, a fallback not declared because
+	// this deployment's address is on another origin than the admin entry.
+	crossOrigin      sync.Once
+	adminHash        [sha256.Size]byte
+	now              func() time.Time
+	limitMu          sync.Mutex
+	grantWindow      rateWindow
+	exchangeWindow   rateWindow
+	refreshWindow    rateWindow
+	frontGrantWindow rateWindow
+	counts           counters
+	onStoreFailure   func(reason, detail string)
+	onEvent          func(event string, n uint64)
+	onRosterApplied  func(at time.Time)
 }
 
 // New validates deployment coordinates without contacting Redis. An empty
@@ -169,17 +208,9 @@ func New(o Options) (*Manager, error) {
 	if !validText(o.EnvironmentID, 256) || !validText(o.EnvironmentName, 256) {
 		return nil, errors.New("cliauth: environment identity and name are required, at most 256 bytes")
 	}
-	u, err := url.Parse(o.PublicBaseURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
-		return nil, errors.New("cliauth: PublicBaseURL must be an HTTP(S) URL without userinfo, query or fragment")
-	}
-	if strings.Contains(u.Path, "\\") {
-		return nil, errors.New("cliauth: PublicBaseURL path is invalid")
-	}
-	for _, segment := range strings.Split(u.Path, "/") {
-		if segment == "." || segment == ".." || strings.ContainsAny(segment, "\r\n\x00") {
-			return nil, errors.New("cliauth: PublicBaseURL path is invalid")
-		}
+	publicBaseURL, origin, err := canonicalBaseURL(o.PublicBaseURL)
+	if err != nil {
+		return nil, errors.New("cliauth: PublicBaseURL " + err.Error())
 	}
 	// The key is what makes a session possible, and the process serves the
 	// CLI exactly when one is configured: a manager without it could issue
@@ -189,6 +220,33 @@ func New(o Options) (*Manager, error) {
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	return &Manager{
+		onStoreFailure: o.OnStoreFailure, onEvent: o.OnEvent, onRosterApplied: o.OnRosterApplied,
+		client:        o.Redis,
+		prefix:        o.Prefix + ".cli:{" + digest(o.EnvironmentID) + "}:",
+		environmentID: o.EnvironmentID, environmentName: o.EnvironmentName,
+		publicBaseURL: publicBaseURL, origin: origin,
+		adminHash: sha256.Sum256([]byte(o.AdminKey)),
+		now:       o.Now,
+	}, nil
+}
+
+// canonicalBaseURL is the deployment URL a CLI is told to use, as the
+// configuration or the front surface gives it, with the origin a browser
+// sends for it.
+func canonicalBaseURL(raw string) (string, string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
+		return "", "", errors.New("must be an HTTP(S) URL without userinfo, query or fragment")
+	}
+	if strings.Contains(u.Path, "\\") {
+		return "", "", errors.New("path is invalid")
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if segment == "." || segment == ".." || strings.ContainsAny(segment, "\r\n\x00") {
+			return "", "", errors.New("path is invalid")
+		}
 	}
 	// Browsers serialize origins with lowercase hosts and without default ports.
 	u.Host = strings.ToLower(u.Host)
@@ -200,15 +258,7 @@ func New(o Options) (*Manager, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/"
 	u.RawPath = ""
-	return &Manager{
-		onStoreFailure: o.OnStoreFailure,
-		client:         o.Redis,
-		prefix:         o.Prefix + ".cli:{" + digest(o.EnvironmentID) + "}:",
-		environmentID:  o.EnvironmentID, environmentName: o.EnvironmentName,
-		publicBaseURL: u.String(), origin: u.Scheme + "://" + u.Host,
-		adminHash: sha256.Sum256([]byte(o.AdminKey)),
-		now:       o.Now, httpSlots: make(chan struct{}, 4),
-	}, nil
+	return u.String(), u.Scheme + "://" + u.Host, nil
 }
 
 func validAdminKey(key string) bool {
@@ -260,11 +310,22 @@ type storedRecord struct {
 	// CodeChallenge is a grant's PKCE challenge when the CLI asked for one:
 	// the exchange must then carry the verifier. Never on a session.
 	CodeChallenge string `json:"code_challenge,omitempty"`
+	// Operator, IssuedVia and PublicBaseURL are set when a grant is issued
+	// and carried unchanged to its session, its pairing and every renewal.
+	// PublicBaseURL is set only for the front surface, whose CLI reaches the
+	// deployment through the admin; the others use the configured one.
+	Operator      string `json:"operator,omitempty"`
+	IssuedVia     string `json:"issued_via,omitempty"`
+	PublicBaseURL string `json:"public_base_url,omitempty"`
+	// IssuedAtMS is when a grant or session was made: an operator's
+	// revocation ends what was issued to them at or before it.
+	IssuedAtMS int64 `json:"issued_at_ms,omitempty"`
 }
 
 func (r storedRecord) session(hash string, renewed bool) Session {
 	return Session{ID: r.SessionID, EnvironmentID: r.EnvironmentID,
-		Scope: r.Scope, ExpiresAt: time.UnixMilli(r.ExpiresAtMS).UTC(), Renewed: renewed, TokenHash: hash, pairingID: r.PairingID}
+		Scope: r.Scope, ExpiresAt: time.UnixMilli(r.ExpiresAtMS).UTC(), Renewed: renewed, TokenHash: hash, pairingID: r.PairingID,
+		Operator: r.Operator, IssuedVia: r.IssuedVia, publicBaseURL: r.PublicBaseURL}
 }
 
 func (m *Manager) run(ctx context.Context, script string, keys []string, args ...interface{}) ([]interface{}, error) {
@@ -328,7 +389,7 @@ func (m *Manager) Admit(ctx context.Context, session Session, renew bool) (Sessi
 }
 
 func (m *Manager) sessionOperation(ctx context.Context, hash, expectedID, action string) (Session, error) {
-	result, err := m.run(ctx, sessionScript, []string{m.prefix + "session:" + hash, m.epochKey()},
+	result, err := m.run(ctx, sessionScript, []string{m.prefix + "session:" + hash, m.epochKey(), m.revokedKey()},
 		m.environmentID, expectedID, action, ScopeReadonly, SessionLifetime.Milliseconds(), RenewalThreshold.Milliseconds())
 	if err != nil {
 		return Session{}, err
@@ -337,7 +398,9 @@ func (m *Manager) sessionOperation(ctx context.Context, hash, expectedID, action
 	if err != nil {
 		return Session{}, err
 	}
-	return record.session(hash, renewed), nil
+	session := record.session(hash, renewed)
+	session.FallbackBaseURLs = m.fallbackFor(record.PublicBaseURL)
+	return session, nil
 }
 
 type rateWindow struct {

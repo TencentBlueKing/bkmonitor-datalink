@@ -21,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/clirelease"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/cmdbcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
@@ -29,12 +31,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet/ui"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/storecensus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -101,12 +105,14 @@ type httpSurface struct {
 	Internal       string
 	Restricted     bool
 	AdminKeySecret ui.AdminKeySecret
+	CLIRelease     *clirelease.Release
 }
 
 func httpSurfaceOf(cfg config.Config) httpSurface {
 	secret := cfg.CLI.AdminKeySecret
 	return httpSurface{Diagnostics: cfg.HTTP.DiagnosticsListen, Internal: cfg.HTTP.InternalListen, Restricted: cfg.PublicSurfaceRestrictionRequested(),
-		AdminKeySecret: ui.AdminKeySecret{Namespace: secret.Namespace, Name: secret.Name, Key: secret.Key}}
+		AdminKeySecret: ui.AdminKeySecret{Namespace: secret.Namespace, Name: secret.Name, Key: secret.Key},
+		CLIRelease:     embeddedCLIRelease()}
 }
 
 type runtimeModeDependencies struct {
@@ -121,7 +127,7 @@ func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {
 		openRoles: openPhaseTwoRoleRuntime, openRoleBundle: openProductionRoleBundle,
 		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, surface httpSurface) (httpRuntime, error) {
 			options := []httpservice.Option{httpservice.WithDiagnosticsAddress(surface.Diagnostics), httpservice.WithInternalAddress(surface.Internal),
-				httpservice.WithAdminKeySecret(surface.AdminKeySecret)}
+				httpservice.WithAdminKeySecret(surface.AdminKeySecret), httpservice.WithCLIRelease(surface.CLIRelease)}
 			if surface.Restricted {
 				options = append(options, httpservice.WithRestrictedPublicSurface())
 			}
@@ -193,6 +199,9 @@ func runPhaseTwoApplicationWithDependencies(
 	// --check-config reports the derived pair without being the process that
 	// has to run under it.
 	applyPhaseTwoGoRuntime(config.DeriveGoRuntime(config.DetectCapacityInputs()), runtimeGoBudgetSetters())
+	// The OB channel's one bound on a request is its answer's size, a share
+	// of the container's memory.
+	obchannel.SetMemoryLimit(config.DetectCapacityInputs().MemoryLimitBytes)
 	// Resolve the pool before the profile is derived so the startup facts carry
 	// the concrete size rather than the zero that means "derive".
 	cfg = cfg.WithResolvedRedisPoolSize()
@@ -231,6 +240,15 @@ func runPhaseTwoApplicationWithDependencies(
 			slog.String("established", divergence.Established))
 	})
 
+	// The distribution routes answer 503 without a usable release; this line
+	// is where an operator reading the Pod finds out which of the two it is.
+	if err := embeddedCLIRelease().Problem(); err != nil {
+		result := "unavailable"
+		if errors.Is(err, clirelease.ErrInvalid) {
+			result = "invalid"
+		}
+		logger.Warn("cli_release", result, 0, 0, slog.String("error", err.Error()))
+	}
 	server, err := dependencies.newHTTP(recorder, application, httpSurfaceOf(cfg))
 	if err != nil {
 		return err
@@ -278,6 +296,9 @@ func runPhaseTwoApplicationWithDependencies(
 		// "not ready" until here rather than pretending to have no data.
 		server.SetPublicSurfaceRestricted(bundle.dependencies.PublicSurfaceRestricted)
 		server.SetAPI(bundle.dependencies.FleetAPI)
+	}
+	if err == nil && bundle != nil && bundle.dependencies.NoDataCloseAPI != nil {
+		server.SetInternalAPI(bundle.dependencies.NoDataCloseAPI)
 	}
 	if err == nil && bundle != nil && bundle.dependencies.ControlStream != nil {
 		// The same for the control stream: a Worker that connects before
@@ -622,13 +643,17 @@ type phaseTwoWorkerBundleDependencies struct {
 	// Flights is the process's query coordinator, whose budget the bundle
 	// sizes from the work it owns (schedulerShaper); nil keeps the startup
 	// shape.
-	Flights    *scheduler.FlightCoordinator
-	Health     *phaseTwoApplicationHealth
-	Control    phaseTwoControlRuntime
-	Ownership  phaseTwoOwnershipRuntime
-	Recorder   *metric.Recorder
-	Observer   observability.Observer
-	TargetFlow *observability.TargetFlow
+	Flights *scheduler.FlightCoordinator
+	// LiveReserve is this runtime's measured post-query tail, published by the
+	// bundle's shaper and read by its access source when it sizes query
+	// deadlines; nil runs queries under the frozen reserve.
+	LiveReserve *execution.LiveReserve
+	Health      *phaseTwoApplicationHealth
+	Control     phaseTwoControlRuntime
+	Ownership   phaseTwoOwnershipRuntime
+	Recorder    *metric.Recorder
+	Observer    observability.Observer
+	TargetFlow  *observability.TargetFlow
 	// FleetAPI serves the object facts once this runtime is open, and
 	// RefreshOpenAlerts reads the consumer's open alert publication into the
 	// process copy; run once at start and then on its own cadence.
@@ -656,6 +681,10 @@ type phaseTwoWorkerBundleDependencies struct {
 	RefreshPlatformSettings func(context.Context)
 	// PublishFleet writes this replica's contribution to them.
 	FleetAPI http.Handler
+	// NoDataCloseAPI records manual closes of no-data alerts (decision-024),
+	// served on the cluster-only listener; nil for a process without the
+	// control role.
+	NoDataCloseAPI http.Handler
 	// PublicSurfaceRestricted is whether the listener's public surface is
 	// restricted: asked for by the configuration and the CLI came up.
 	PublicSurfaceRestricted bool
@@ -703,6 +732,13 @@ type phaseTwoWorkerBundleDependencies struct {
 }
 
 type phaseTwoWorkerBundle struct {
+	// targetScopeClose is the fact-close of alerts nothing evaluates any
+	// more (scopeclose), nil without the alert link's Console. Kept so a
+	// test can step it rather than wait for its loop.
+	targetScopeClose *scopeclose.Closer
+	// cmdbIndex is the CMDB host index of every tenant the admission step
+	// reads. Kept so a test can refresh it rather than wait for its loop.
+	cmdbIndex     *cmdbcache.TenantStores
 	runtimeConfig *observability.RuntimeConfigFacts
 	dependencies  phaseTwoWorkerBundleDependencies
 	// liveness is what the liveness probe judges; see phaseTwoLiveness.
@@ -1076,6 +1112,16 @@ func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*ph
 	if err := dependencies.Config.Validate(); err != nil {
 		return nil, err
 	}
+	// A publish keeps cursors and caches between calls; the maintenance
+	// ticker and anyone asking for a publish now take turns.
+	if publish := dependencies.PublishFleet; publish != nil {
+		var publishing sync.Mutex
+		dependencies.PublishFleet = func(ctx context.Context) {
+			publishing.Lock()
+			defer publishing.Unlock()
+			publish(ctx)
+		}
+	}
 	bundle := &phaseTwoWorkerBundle{dependencies: dependencies, outputSinkReady: true,
 		candidacy:      phaseTwoControlCandidacy(dependencies.Config),
 		flightReleased: make(chan execution.QueryGroupIdentity, flightReleasedNotices),
@@ -1084,6 +1130,7 @@ func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*ph
 		liveness:       newPhaseTwoLiveness(dependencies.Now, dependencies.Recorder)}
 	if dependencies.Flights != nil {
 		bundle.shaper = newSchedulerShaper(dependencies.Flights, dependencies.Config, dependencies.Now)
+		bundle.shaper.live = dependencies.LiveReserve
 	}
 	if dependencies.Recorder != nil {
 		dependencies.Recorder.SetOwnedQueryGroups(0)
@@ -2235,9 +2282,8 @@ func (dispatcher *phaseTwoRunnerDispatcher) handleResult(
 			observeRuntime(ctx, dispatcher.bundle.dependencies.Observer, observability.Observation{
 				Component: observability.ComponentScheduler, Stage: observability.StageScheduleDue,
 				Result: outcome, ReasonCode: reason,
-				Direction: observability.DirectionInternal,
-				Trace:     observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)},
-				Err:       result.err,
+				Trace: observability.TraceFields{QueryGroupKey: string(scheduled.queryGroup)},
+				Err:   result.err,
 			})
 			if yielded != "" && requeue {
 				dispatcher.turnedAwayByHold(scheduled)
@@ -2786,7 +2832,7 @@ func (bundle *phaseTwoWorkerBundle) Shutdown(ctx context.Context) error {
 		bundle.mu.RUnlock()
 		observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentRuntime, Stage: observability.StageShutdown, Result: shutdownResult,
-			Direction: observability.DirectionInternal, Err: bundle.shutdownErr, SlotDrain: drain,
+			Err: bundle.shutdownErr, SlotDrain: drain,
 		})
 	})
 	return bundle.shutdownErr
@@ -2821,6 +2867,14 @@ func (bundle *phaseTwoWorkerBundle) drainSlots(
 ) error {
 	began := time.Now()
 	drain := observability.SlotDrainFacts{Site: observability.SlotDrainSiteShutdown, Waited: bundle.runningSlots()}
+	// Said before the wait: a stop killed before its drain ends still says
+	// how many Slots it was waiting on; the shutdown line says how it ended.
+	observeRuntime(context.Background(), bundle.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentRuntime, Stage: observability.StageShutdownDrainBegan,
+		Result:    observability.ResultStarted,
+		SlotDrain: &observability.SlotDrainFacts{Site: drain.Site, Waited: drain.Waited},
+		Trace:     observability.TraceFields{OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID},
+	})
 	var schedulerErr error
 	select {
 	case schedulerErr = <-schedulerDone:
@@ -3451,8 +3505,8 @@ func (bundle *phaseTwoWorkerBundle) observeAssignmentApplied(ctx context.Context
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentApplied,
 		Result: observability.ResultSuccess, Operation: observability.OperationTransition,
-		Direction: observability.DirectionInternal, AssignmentApplied: &facts,
-		Trace: observability.TraceFields{OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID},
+		AssignmentApplied: &facts,
+		Trace:             observability.TraceFields{OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID},
 	})
 }
 
@@ -3491,7 +3545,7 @@ func (bundle *phaseTwoWorkerBundle) clearControlDependencyDegraded(ctx context.C
 	bundle.mu.Unlock()
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
-		Result: observability.Result(observability.ResultRecovered), Direction: observability.DirectionInternal,
+		Result:     observability.Result(observability.ResultRecovered),
 		ReasonCode: phaseTwoControlDependencyReason,
 	})
 }
@@ -3517,7 +3571,7 @@ func (bundle *phaseTwoWorkerBundle) scopeControlError(
 	}
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: component, Stage: stage, Result: observability.ResultFailed,
-		Direction: observability.DirectionInternal, ReasonCode: phaseTwoControlDependencyReason, Err: err,
+		ReasonCode: phaseTwoControlDependencyReason, Err: err,
 	})
 	bundle.markControlDependencyDegraded()
 	return nil
@@ -3642,8 +3696,8 @@ func (bundle *phaseTwoWorkerBundle) recordHandoverDrain(queryGroup execution.Que
 	observeRuntime(context.Background(), bundle.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageHandoverDrained,
 		Result: observability.ResultSuccess, Operation: observability.OperationTransition,
-		Direction: observability.DirectionInternal, SlotDrain: &drain,
-		Trace: observability.TraceFields{QueryGroupKey: string(queryGroup), OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID},
+		SlotDrain: &drain,
+		Trace:     observability.TraceFields{QueryGroupKey: string(queryGroup), OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID},
 	})
 }
 
@@ -4054,13 +4108,15 @@ func (bundle *phaseTwoWorkerBundle) recordHungExecution(
 		facts.HungMS = now.Sub(entry.since).Milliseconds()
 	}
 	bundle.dependencies.Recorder.RecordExecutionHung(outcome)
-	result := observability.Result(observability.ResultFailed)
+	// A decline is a failure of this deployment's own and says which; the
+	// execution's return after one is not.
+	result, reason := observability.Result(observability.ResultFailed), observability.ReasonExecutionHung
 	if outcome == observability.ExecutionHungReturned {
-		result = observability.ResultSuccess
+		result, reason = observability.ResultSuccess, observability.ReasonNone
 	}
 	observeRuntime(context.Background(), bundle.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageExecutionHung,
-		Result: result, Direction: observability.DirectionInternal, ExecutionHung: &facts, Err: err,
+		Result: result, ReasonCode: reason, ExecutionHung: &facts, Err: err,
 		Trace: observability.TraceFields{QueryGroupKey: string(queryGroup), OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID},
 	})
 }
@@ -4335,7 +4391,7 @@ func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
 		bundle.dependencies.Recorder.RecordControlHealthInvalid(field)
 		observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
-			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			Result:     observability.ResultFailed,
 			ReasonCode: observability.ReasonInternalUnknown,
 			Err:        fmt.Errorf("phase-two Control refresh returned an invalid health fact: %s", field),
 		})
@@ -4387,7 +4443,7 @@ func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
 	}
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: stage, Result: transitionResult,
-		Direction: observability.DirectionInternal, ReasonCode: transitionReason, Err: transitionCause,
+		ReasonCode: transitionReason, Err: transitionCause,
 		SourceKind: transitionSource,
 	})
 	return nil
@@ -4427,7 +4483,7 @@ func (bundle *phaseTwoWorkerBundle) observe(
 ) {
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: component, Stage: stage, Result: result,
-		Direction: observability.DirectionInternal, Err: err,
+		Err: err,
 	})
 }
 
@@ -4445,7 +4501,7 @@ func (bundle *phaseTwoWorkerBundle) observeRegistrationRenewal(result observabil
 	}
 	observeRuntime(context.Background(), bundle.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageLeaseRenewed, Result: result,
-		Direction: observability.DirectionInternal, ReasonCode: reason, Err: err,
+		ReasonCode: reason, Err: err,
 	})
 }
 
@@ -4459,7 +4515,7 @@ func (bundle *phaseTwoWorkerBundle) observeOwnership(
 	reason := ownershipObservationReason(err)
 	observeRuntime(ctx, bundle.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: stage, Result: result,
-		Operation: observability.OperationTransition, Direction: observability.DirectionInternal,
+		Operation:  observability.OperationTransition,
 		ReasonCode: reason, Trace: observability.TraceFields{
 			QueryGroupKey: string(queryGroup), OwnerID: bundle.dependencies.Config.PhaseTwo.Worker.ID,
 		}, Err: err,
@@ -4492,7 +4548,7 @@ func phaseTwoRuntimeObserver(observer observability.Observer) observability.Obse
 		}
 		observeRuntime(ctx, observer, observability.Observation{
 			Component: observability.ComponentOwnership, Stage: observability.StageFenceChecked,
-			Result: observation.Result, Operation: observation.Operation, Direction: observability.DirectionInternal,
+			Result: observation.Result, Operation: observation.Operation,
 			ReasonCode: observation.ReasonCode, Duration: observation.Duration, Trace: observation.Trace, Err: observation.Err,
 		})
 	})
@@ -4642,6 +4698,9 @@ type httpRuntime interface {
 	// SetAPI installs the observability API once the runtime that produces the
 	// object facts is open. The listener starts before that runtime does.
 	SetAPI(http.Handler)
+	// SetInternalAPI installs what the cluster-only listener serves under
+	// /internal/ once the stores it writes are open.
+	SetInternalAPI(http.Handler)
 	// SetGRPC installs the control stream the same way.
 	SetGRPC(http.Handler)
 	// SetLiveness installs what /healthz judges, once the loops it judges

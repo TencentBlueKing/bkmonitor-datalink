@@ -126,7 +126,7 @@ func (stream *streamedExecution) observeSnapshotProgress(ctx context.Context, sn
 		stream.coordinator.emitObservation(ctx, observability.Observation{
 			Component: observability.ComponentState, Stage: observability.StageGapGuardProgress,
 			Operation: observability.Operation(stream.request.Operation),
-			Direction: observability.DirectionInternal, Result: observability.ResultSuccess,
+			Result:    observability.ResultSuccess,
 			Trace: observability.TraceFields{
 				StrategyID: snapshot.Identity.Plan.StrategyID,
 				BusinessID: snapshot.Identity.Plan.BusinessID,

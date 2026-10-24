@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -50,9 +51,9 @@ const (
 	// lifecycleInterval is the item's aggregation interval, which is the
 	// period no-data is judged at.
 	lifecycleInterval = int64(60)
-	// lifecycleWatchdog bounds every wait on something the bundle does in
-	// its own goroutines. It is generous because the machine running these is
-	// shared; nothing here measures time against it.
+	// lifecycleWatchdog is how long the follows-output sink holds a write
+	// whose gate a case never opens, before letting it go. No wait on the
+	// bundle is bounded by it: those run to the test's deadline (testwait).
 	lifecycleWatchdog = 10 * time.Second
 )
 
@@ -70,9 +71,19 @@ type lifecycleStrategy struct {
 	horizon int64
 	// noDataOff leaves the no-data section out.
 	noDataOff bool
+	// unrevisioned leaves strategy_revision out of the document, as the
+	// platform's legacy document has none.
+	unrevisioned bool
 	// edit is applied to the item last, for a target shape the fields above
 	// do not express.
 	edit func(item map[string]any)
+	// statusSetter, when set, is every level's recovery_config.status_setter.
+	statusSetter string
+	// disableRecovery writes every level's recovery_config.disable_recovery
+	// as true.
+	disableRecovery bool
+	// global makes it a global business strategy (is_global_strategy).
+	global bool
 }
 
 type lifecycleFixture struct {
@@ -161,7 +172,7 @@ func startLifecycleFixtureOn(t *testing.T, address string, client *redis.Client,
 	// cases that publish an open alert and wait for it to be read need it.
 	console := httptest.NewServer(lifecycleConsole(address, client))
 	t.Cleanup(console.Close)
-	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL
+	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
 	cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
 	if configure != nil {
 		configure(&cfg)
@@ -271,7 +282,13 @@ func (fixture *lifecycleFixture) install(strategy lifecycleStrategy) {
 	}
 	document["update_time"] = 1725000000 + strategy.revision
 	document["strategy_revision"] = strategy.revision
+	if strategy.unrevisioned {
+		delete(document, "strategy_revision")
+	}
 	document["name"] = "no data lifecycle"
+	if strategy.global {
+		document["is_global_strategy"] = true
+	}
 	document["scenario"] = "os"
 	item := document["items"].([]any)[0].(map[string]any)
 	item["name"] = "CPU usage"
@@ -299,6 +316,12 @@ func (fixture *lifecycleFixture) install(strategy lifecycleStrategy) {
 	}
 	for _, detect := range document["detects"].([]any) {
 		detect.(map[string]any)["trigger_config"].(map[string]any)["check_window"] = 1
+		if strategy.statusSetter != "" {
+			detect.(map[string]any)["recovery_config"].(map[string]any)["status_setter"] = strategy.statusSetter
+		}
+		if strategy.disableRecovery {
+			detect.(map[string]any)["recovery_config"].(map[string]any)["disable_recovery"] = true
+		}
 	}
 	if strategy.edit != nil {
 		strategy.edit(item)
@@ -361,7 +384,7 @@ func (fixture *lifecycleFixture) open(workerID string, client *http.Client) {
 	// and the Worker holds its lease, which the bundle's own loops do on the
 	// wall clock.
 	want := max(fixture.queryGroups, 1)
-	deadline := time.Now().Add(lifecycleWatchdog)
+	deadline := testwait.Deadline(fixture.t)
 	for {
 		bundle.mu.RLock()
 		groups := append([]execution.QueryGroupIdentity(nil), bundle.queryGroups...)
@@ -378,12 +401,12 @@ func (fixture *lifecycleFixture) open(workerID string, client *http.Client) {
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the bundle of %s owns %v after %s, want %d Query Groups", workerID, groups, lifecycleWatchdog, want)
+			t.Fatalf("the bundle of %s owns %v at the test's deadline, want %d Query Groups", workerID, groups, want)
 		}
 		if err := bundle.refreshAndReconcile(ctx, true); err != nil {
 			t.Fatalf("reconcile the bundle of %s: %v", workerID, err)
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 }
 
@@ -621,7 +644,7 @@ func (fixture *lifecycleFixture) change(strategy lifecycleStrategy, after int64)
 			t.Fatalf("refresh after the change: %v", err)
 		}
 	}
-	for deadline := time.Now().Add(lifecycleWatchdog); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+	for deadline := testwait.Deadline(fixture.t); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		for round := after + 1; round <= after+30; round++ {
 			schedule, err := catalog.ReadFrozenSchedule(ctx, fixture.queryGroup, execution.EvaluationTime(fixture.evaluationAt(round)))
 			if err == nil && schedule.Segment.ObjectDigest != first.Segment.ObjectDigest {
@@ -629,7 +652,7 @@ func (fixture *lifecycleFixture) change(strategy lifecycleStrategy, after int64)
 			}
 		}
 	}
-	t.Fatalf("no Segment carried the changed strategy within %s", lifecycleWatchdog)
+	t.Fatal("no Segment carried the changed strategy before the test's deadline")
 	return 0
 }
 
@@ -676,6 +699,22 @@ func (fixture *lifecycleFixture) publishOpenAlert(dedupeMD5 string) {
 	}
 }
 
+// withdrawOpenAlert takes one alert out of the consumer's open alert set, as
+// the consumer does when the alert is closed by hand, and says so on the
+// change channel.
+func (fixture *lifecycleFixture) withdrawOpenAlert(dedupeMD5 string) {
+	fixture.t.Helper()
+	ctx := context.Background()
+	prefix := lifecycleLinkPrefix
+	if err := fixture.redis.SRem(ctx, prefix+":tenant-a:"+lifecycleStrategyID, dedupeMD5).Err(); err != nil {
+		fixture.t.Fatal(err)
+	}
+	notice := `{"bk_tenant_id":"tenant-a","strategy_id":"` + lifecycleStrategyID + `"}`
+	if err := fixture.redis.Publish(ctx, prefix+":changes", notice).Err(); err != nil {
+		fixture.t.Fatal(err)
+	}
+}
+
 // waitOpenAlertSetRead waits until the current process's copy of the open
 // alert set holds the published member, which its own loop reads once the
 // strategy is registered. The loop decides a read is due by the bundle's
@@ -688,16 +727,16 @@ func (fixture *lifecycleFixture) waitOpenAlertSetRead(round int64) {
 		fixture.t.Fatalf("the open alert port is %T", fixture.bundle.workerPorts.OpenAlerts)
 	}
 	attemptedAt := (fixture.evaluationAt(round) + fixture.interval/2) * 1000
-	for deadline, step := time.Now().Add(lifecycleWatchdog), int64(1); ; step++ {
+	for deadline, step := testwait.Deadline(fixture.t), int64(1); ; step++ {
 		if stats := port.cache.Stats(); stats.Loaded >= 1 && stats.Members >= 1 {
 			return
 		}
 		if step < fixture.interval/2 {
 			fixture.clock.Store(attemptedAt + step*1000)
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		if time.Now().After(deadline) {
-			fixture.t.Fatalf("the open alert copy has not read the strategy's set after %s: %+v", lifecycleWatchdog, port.cache.Stats())
+			fixture.t.Fatalf("the open alert copy has not read the strategy's set by the test's deadline: %+v", port.cache.Stats())
 		}
 	}
 }
@@ -753,9 +792,9 @@ func lifecycleConsole(address string, client *redis.Client) http.HandlerFunc {
 		Address: address, Database: 0, Sources: []string{"source"}}
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/local-api/strategy-index/targets":
+		case "/api/modules/linkd/strategy-index/targets":
 			_ = json.NewEncoder(w).Encode([]openalerts.TargetBinding{target})
-		case "/local-api/event-sources/" + target.EventSourceID:
+		case "/api/modules/linkd/event-sources/" + target.EventSourceID:
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": target.EventSourceID, "revision": 1, "published": 1,
 				"spec": map[string]any{"fingerprint_mode": "field", "fingerprint_field": "source_alert_id"}})
 		default:

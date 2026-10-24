@@ -41,7 +41,7 @@ type livenessCollector struct {
 
 func newLivenessCollector() *livenessCollector {
 	durations := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "loop_turn_duration_seconds",
+		Subsystem: metricSubsystem, Name: "loop_turn_duration_seconds",
 		Help: "How long one turn of a long-running loop took, by loop, failed turns included. control is the " +
 			"refresh and reconcile loop; dispatch is the scheduler's queue loop, measured up to the wait. " +
 			"The liveness bound on a loop is judged against the longest turn this shows.",
@@ -51,10 +51,10 @@ func newLivenessCollector() *livenessCollector {
 		durations.WithLabelValues(loop)
 	}
 	return &livenessCollector{
-		turnAge: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "loop_turn_age_seconds"),
+		turnAge: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "loop_turn_age_seconds"),
 			"Seconds since a long-running loop last finished a turn, successful or not, by loop. A loop past its "+
 				"bound fails the liveness probe. Absent until the loop starts.", []string{"loop"}, nil),
-		pastLimit: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "executions_past_deadline"),
+		pastLimit: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "executions_past_deadline"),
 			"Slot executions that have run more than a minute past their deadline and not returned. An execution "+
 				"that honours its context returns at the deadline, so anything here ignored it. When every execution "+
 				"slot holds one for five minutes the liveness probe fails.", nil, nil),

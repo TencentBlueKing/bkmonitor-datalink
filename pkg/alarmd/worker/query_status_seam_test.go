@@ -42,7 +42,7 @@ func TestQueryCompletedObservationCarriesTheProjectedStatuses(t *testing.T) {
 			Status: &execution.ProviderStatusFact{Code: "STORAGE_TIMEOUT"}}},
 	}}
 	coordinator.observeQueryCompleted(context.Background(), execution.OperationNormal,
-		time.Now(), observability.ResultSuccess, "", completion, execution.EvaluationResult{})
+		time.Now(), completion, execution.EvaluationResult{})
 
 	if len(captured) != 1 {
 		t.Fatalf("observations = %d, want the one query_completed boundary", len(captured))
@@ -70,7 +70,7 @@ func TestQueryCompletedObservationCarriesNoStatusWhenNoneWasReported(t *testing.
 		})
 
 	coordinator.observeQueryCompleted(context.Background(), execution.OperationNormal,
-		time.Now(), observability.ResultSuccess, "",
+		time.Now(),
 		execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{{}, {}}},
 		execution.EvaluationResult{})
 

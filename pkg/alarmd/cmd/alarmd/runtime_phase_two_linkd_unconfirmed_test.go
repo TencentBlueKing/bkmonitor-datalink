@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -54,7 +55,7 @@ func TestAnUnconfirmedSetLocationIsNotRead(t *testing.T) {
 	cfg.Redis.Address = address
 	withCompatibilityOutput(&cfg, address)
 	cfg.Redis.StatePrefix = "alarmd:phase-two:unconfirmed-location"
-	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL
+	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
 	cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "reader", "secret"
 	key := openalerts.StrategyKey{TenantID: "tenant-a", StrategyID: "123"}
 	// The fallback location holds a set for the strategy: a process reading
@@ -92,12 +93,13 @@ func TestAnUnconfirmedSetLocationIsNotRead(t *testing.T) {
 	if err := copy.TrackOwned(key); err != nil {
 		t.Fatal(err)
 	}
-	// Give the copy every chance to read: rounds until its subscription has
-	// had time to come up and a read of a reachable location would land.
+	// Give the copy every chance to read: rounds for two seconds, time for its
+	// subscription to come up and a read of a reachable location to land. A
+	// read that must not happen sends nothing to wait on.
 	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	for time.Now().Before(deadline) { // fixed-wait: the two-second absence window above
 		copy.Refresh(ctx)
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // fixed-wait: spaces the refreshes inside the absence window
 	}
 	if copy.Contains(key.TenantID, key.StrategyID, "theirs") {
 		t.Fatal("the gate answered from the fallback location's set, which the Console never named")
@@ -130,9 +132,9 @@ func consoleAt(t *testing.T, target openalerts.TargetBinding) *httptest.Server {
 func consoleFor(target openalerts.TargetBinding) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/local-api/strategy-index/targets":
+		case "/api/modules/linkd/strategy-index/targets":
 			_ = json.NewEncoder(w).Encode([]openalerts.TargetBinding{target})
-		case "/local-api/event-sources/" + target.EventSourceID:
+		case "/api/modules/linkd/event-sources/" + target.EventSourceID:
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": target.EventSourceID, "revision": 1, "published": 1,
 				"spec": map[string]any{"fingerprint_mode": "field", "fingerprint_field": "source_alert_id"}})
 		default:
@@ -152,8 +154,11 @@ func consoleFor(target openalerts.TargetBinding) http.HandlerFunc {
 // reconciliation that sees it withdraws the confirmation and moves the reads
 // to the place the Console now names; the calibration that follows is asked
 // for at once, not after the 30-minute interval, and confirms it. Until
-// then the gate answers from what this process sent, and the move is
-// counted as an entry into location_unconfirmed.
+// then the gate answers from what this process sent. The move is read from
+// the location itself (moved, at the Console's prefix): whether a read round
+// falls inside the brief unconfirmed span -- and so counts an entry into
+// location_unconfirmed -- depends on which round sees the move first, and
+// the Console round now runs on its own, usually before any read.
 func TestAReconciliationThatFindsTheLinkElsewhereMovesTheReads(t *testing.T) {
 	runtimeAddress, runtimeClient := startPhaseTwoRedis(t)
 	linkdAddress, linkdClient := startPhaseTwoRedis(t)
@@ -167,7 +172,7 @@ func TestAReconciliationThatFindsTheLinkElsewhereMovesTheReads(t *testing.T) {
 	prefix := "platform"
 	cfg.PlatformCache.DynamicGroupKeyPrefix = &prefix
 	cfg.PlatformCache.TargetGroup = &config.RedisConnectionConfig{Mode: config.RedisModeStandalone, Address: linkdAddress}
-	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL
+	cfg.PhaseTwo.Linkd.ConsoleURL = console.URL + testLinkdAPIRoot
 	cfg.PhaseTwo.Linkd.Username, cfg.PhaseTwo.Linkd.Password = "user", "secret"
 	// Adopted at startup: the runtime Redis under the old prefix.
 	adopted := cfg.RuntimeStoreRedis()
@@ -184,7 +189,7 @@ func TestAReconciliationThatFindsTheLinkElsewhereMovesTheReads(t *testing.T) {
 		return redis.NewClient(&redis.Options{Addr: connection.Address, DB: connection.DB}), true
 	}
 	startup := &fleet.LinkdDiscoveryFacts{Outcome: fleet.LinkdDiscoveryAdopted, Attempts: 1}
-	index, err := newLinkdIndex(cfg, runtimeClient, adopted, startup, open, time.Now, nil)
+	index, err := newLinkdIndex(cfg, runtimeClient, adopted, startup, open, nil, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +203,7 @@ func TestAReconciliationThatFindsTheLinkElsewhereMovesTheReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	go func() { _ = cache.Run(ctx) }()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := testwait.Deadline(t)
 	for {
 		stats := cache.Stats()
 		if stats.LocationConfirmed && stats.Available && stats.Members == 1 {
@@ -208,13 +213,16 @@ func TestAReconciliationThatFindsTheLinkElsewhereMovesTheReads(t *testing.T) {
 			t.Fatalf("not moved and confirmed: confirmed %v available %v members %d loaded %d reason %q discovery %+v console %+v",
 				stats.LocationConfirmed, stats.Available, stats.Members, stats.Loaded, stats.UnavailableReason, index.Location.Discovery(), index.Console.Record())
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if !cache.Contains(key.TenantID, key.StrategyID, "fp-open") {
 		t.Fatal("after the move the gate did not answer from the link's set")
 	}
-	if got := cache.Stats().Unavailable[openalerts.UnavailableLocationUnconfirmed]; got != 1 {
-		t.Fatalf("location_unconfirmed counted %d, want the move counted once", got)
+	if _, prefix, moved := index.Location.Location(); !moved || prefix != "hook:open" {
+		t.Fatalf("location moved %v to prefix %q, want moved to the Console's hook:open", moved, prefix)
+	}
+	if got := cache.Stats().Unavailable[openalerts.UnavailableLocationUnconfirmed]; got > 1 {
+		t.Fatalf("location_unconfirmed counted %d for one move, want at most one entry", got)
 	}
 	if commands := linkCommands(); len(commands) == 0 {
 		t.Fatal("the link's Redis ran no command at its prefix: the reads did not move, or the count sees nothing")
@@ -247,7 +255,7 @@ func TestACopyWithoutAConsoleReadsNothingAndCountsNothing(t *testing.T) {
 	}
 	setCommands := redisCommandsOn(t, runtimeAddress, "alarmd:open_alerts")
 	open := func(config.RedisConnectionConfig) (redis.UniversalClient, bool) { return runtimeClient, false }
-	index, err := newLinkdIndex(cfg, runtimeClient, cfg.RuntimeStoreRedis(), nil, open, time.Now, nil)
+	index, err := newLinkdIndex(cfg, runtimeClient, cfg.RuntimeStoreRedis(), nil, open, nil, time.Now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +270,7 @@ func TestACopyWithoutAConsoleReadsNothingAndCountsNothing(t *testing.T) {
 	defer func() { cancel(); <-done }()
 	for round := 0; round < 5; round++ {
 		cache.Refresh(ctx)
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // fixed-wait: spaces the refreshes of a case asserting nothing is read; the rounds are the bound
 	}
 	stats := cache.Stats()
 	if stats.Configured || stats.Loaded != 0 || stats.UnavailableReason != "" {
@@ -294,7 +302,7 @@ func TestAnUnboundLocationWaitsInsteadOfSubscribing(t *testing.T) {
 	select {
 	case err := <-done:
 		t.Fatalf("Watch returned %v on an unbound location", err)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): // fixed-wait: Watch must not return on an unbound location; 100 ms is many times its first decision
 	}
 	if _, err := location.ReadSet(ctx, openalerts.StrategyKey{TenantID: "t", StrategyID: "1"}); err != openalerts.ErrLocationUnconfirmed {
 		t.Fatalf("ReadSet = %v, want the location named unconfirmed", err)
@@ -335,7 +343,7 @@ func TestALinkMovedOutOfReachUnbindsTheReads(t *testing.T) {
 	for round := 0; round < 5; round++ {
 		f.index.Cache.RequestCalibration()
 		f.index.Cache.Refresh(ctx)
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) // fixed-wait: spaces the refreshes of a case asserting no command runs; the rounds are the bound
 	}
 	if commands := oldCommands(); len(commands) != 0 {
 		t.Fatalf("the unbound place ran %d commands, want none: %v", len(commands), commands)
@@ -396,7 +404,7 @@ func redisCommandsOn(t *testing.T, address, prefix string) (stop func() []string
 		}
 		select {
 		case <-collected:
-		case <-time.After(5 * time.Second):
+		case <-testwait.Expired(t):
 			t.Fatal("MONITOR never streamed the end marker")
 		}
 		return named
@@ -424,7 +432,7 @@ func TestARefusedNoticeReachesTheCopyThroughTheLocationSwitch(t *testing.T) {
 	}()
 	select {
 	case <-ready:
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the bound subscriber was not acknowledged")
 	}
 	if err := client.Publish(ctx, "test.linkd:changes", `{"bk_tenant_id":"t","strategy_id":"1","key":"foreign"}`).Err(); err != nil {
@@ -435,7 +443,7 @@ func TestARefusedNoticeReachesTheCopyThroughTheLocationSwitch(t *testing.T) {
 		if reason != openalerts.NoticeUndecodable {
 			t.Fatalf("refused %q, want undecodable", reason)
 		}
-	case <-time.After(3 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the refusal did not reach the copy through the switch")
 	}
 	cancel()

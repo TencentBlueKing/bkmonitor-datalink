@@ -1012,17 +1012,19 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"CHECKS ::", "alarmd 自己的依赖没答，1 个对象受影响（1 种）——配置获取 · 依赖待定位 · 不可用（source_blocked 1）：1 个，仍然受阻，最近失败 17:59:30"},
 		{"CHECKS ::", "；GAP_SCOPE_REASON_CONFLICT（内部错误，第二事实）：1 个，仍然受阻"},
 		{"GOV ::", "2 个对象的查询被后端回\"表或字段不存在\""},
-		// A refused query is the strategy's too: governance, not 待确认.
-		{"GOV ::", "后端拒绝了 1 个对象的查询"},
-		{"GOV ::", "证据：分组的后端回答只有状态码/状态词（非 200 的响应正文当前不保留，\"最近一次错误\"是结束这一轮的 alarmd 错误，不是后端原文）"},
-		{"GOV ::", "若平台检测器对同一条策略的查询能过，就是 alarmd 构造的问题，回 alarmd"},
+		// A bare refusal does not say whose it is: 待确认, beside the provider
+		// not answering, not governance.
+		{"PENDING ::", "待确认后端拒绝了 1 个对象的查询"},
+		{"PENDING ::", "读后端原话之前不交给策略负责人"},
+		{"PENDING ::", "证据：分组的后端回答：状态码、拒绝类别与后端 trace_id（行上\"最近一次错误\"带类别与 trace_id；遮蔽后的后端原文片段只留在持有该组的副本上，经 OB 通道的 strategy.get 读，不上公开页面）"},
+		{"PENDING ::", "按行上的拒绝类别与后端 trace_id 读后端的原话：原话片段只在持有该组的副本上，经 OB 通道（alarmd-cli）对行上那个副本调 strategy.get 读，或拿 trace_id 查查询服务自己的日志与调用链；是条件值、表达式这类请求的问题，转策略负责人改；是后端自己的错误，找查询服务"},
 		// The timeout and the short old-series window are not the data side's
 		// until the query path and the fetch are ruled out: both are here, not
 		// under governance.
 		{"PENDING ::", "查询没有得到应答，5 个对象受影响（2 种症状，1 条策略）——客户端超时或 5xx，查询预算、网络、后端耗时哪一环还分不出"},
 		{"PENDING ::", "下一步：先查查询链路：超时看查询预算、网络、后端耗时哪一环超了"},
 		{"PENDING ::", "恢复所需的老序列数据不完整（1 条策略），恢复判不了——是数据没到还是 alarmd 没取到还分不出"},
-		{"GOV ::", "恢复标准：策略改好后冷却到期自动重试成功，对象离开降级池；核出是 alarmd 构造的转到 alarmd"},
+		{"PENDING ::", "恢复标准：分出是谁的之后转到对应的人；后端不再拒绝后冷却到期自动重试成功，对象离开降级池"},
 		{"HISTORY COUNT ::", "漏检记录 2 个对象，其中 1 个最近 1 小时内还发生过，最后一次 "},
 		{"HISTORY COUNT ::", "；记账被打断（检测做过了）：当前可观测副本自各自启动以来累计 9 个 Slot（3 个对象），最近 17:30:00"},
 		// The two records: every Slot executed whole, said so with no Blocked
@@ -1059,9 +1061,9 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// and -- the verdict here is UNKNOWN for a coverage gap -- that the
 		// verdict is about the second clause. Same words whichever response
 		// rendered last.
-		{"BLOCKED SENTENCE ::", "受阻：环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询 · 依赖待定位 · 超时（QUERY_TIMEOUT 4） 4 个，正在恢复；配置获取 · 依赖待定位 · 不可用（source_blocked 1） 1 个，仍然受阻；另 3 组共 3 个，见各行"},
+		{"BLOCKED SENTENCE ::", "受阻：环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询 · 依赖待定位 · 超时（QUERY_TIMEOUT 4） 4 个，正在恢复；配置获取 · 依赖待定位 · 不可用（source_blocked 1） 1 个，仍然受阻；另 4 组共 4 个，见各行"},
 		{"BLOCKED SENTENCE ::", "；待确认：8 个对象说不出结论（没留下成因，各自再跑完一轮就补上）；判定停在 UNKNOWN 说的是这一句，不抵消前一句"},
-		{"BLOCKED SENTENCE BEFORE HEALTH ::", "另 3 组共 3 个，见各行"},
+		{"BLOCKED SENTENCE BEFORE HEALTH ::", "另 4 组共 4 个，见各行"},
 		{"BLOCKED SENTENCE AFTER HEALTH ::", "受阻：环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询 · 依赖待定位 · 超时（QUERY_TIMEOUT 4） 4 个，正在恢复；"},
 		{"BLOCKED SENTENCE AFTER HEALTH ::", "；待确认：8 个对象说不出结论"},
 		// The problems that recovered within the hour, on the history side:
@@ -1078,7 +1080,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"GOV ::", "2 个对象的查询被后端回\"表或字段不存在\"（1 种回答，1 条策略，1 个业务）——按策略引用核，未逐个核过实际请求与元数据前不认定是策略写错；其中 1 个已降级，不再反复查；其中 1 个在被拒期间还跳过了检测（最近 10 分钟内 1 个）——冷却让旧轮次超出重放范围，首要原因是查询不可用，扩容无用"},
 		{"GOV ::", "策略侧"},
 		{"ACTION ::", "现在要做的：找策略缓存的写入方（bk-monitor 后台的 cache 进程，或替代它的模块）：缺身份字段的要写方按合同补 bk_tenant_id / space_uid"},
-		{"ACTION ::", "（策略缓存里 60 条策略的文档不满足合同，没有进入检测（2 种原因）——是写入方写的内容缺东西，不是策略配置错）；之后还有 10 类，按顺序在下面；待归因 4 类另看，别交出去"},
+		{"ACTION ::", "（策略缓存里 60 条策略的文档不满足合同，没有进入检测（2 种原因）——是写入方写的内容缺东西，不是策略配置错）；之后还有 10 类，按顺序在下面；待归因 5 类另看，别交出去"},
 		// A record line's folds name what each loss is; the refusal's object
 		// row says what it lost while under its line.
 		// Every fold with object rows carries the problem's state and its
@@ -1248,7 +1250,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// none), and one retained record made an hour ago.
 		// Three parts from the server's arithmetic, then what is being lost
 		// now and what the refused objects lost, apart from the record.
-		"需要处理：现在要处理 11 类（18 个对象，去重；其中平台写入方 1 类（60 条策略），按策略计不按对象计）；待归因 4 类（16 个对象）；业务侧已确认 5 类（5 个对象）在运营治理。正在漏检 1 个对象（最近 10 分钟内跳过，最近一次 ",
+		"需要处理：现在要处理 11 类（18 个对象，去重；其中平台写入方 1 类（60 条策略），按策略计不按对象计）；待归因 5 类（17 个对象）；业务侧已确认 4 类（4 个对象）在运营治理。正在漏检 1 个对象（最近 10 分钟内跳过，最近一次 ",
 		"另有 1 个是滚动后的追赶漏检（副本启动或首次接手 5 分钟内），看它还有没有新增",
 		"被拒的对象里 1 个在冷却期间跳过了检测（最近 10 分钟内 1 个），首要原因是查询不可用；已停止的漏检记录 2 个对象另列",
 		// On time, and on a stale publication: both true at once, and the
@@ -1542,6 +1544,16 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"一次都没等过才是真的有余量，这一支要和上一支说相反的话"},
 		{"PERMIT nothing-asked ::", "无从谈起", "不是约束",
 			"零次取位子里零次等待不是有余量，是什么都没量到"},
+		// The ceiling is the memory's share and no longer follows the load, so
+		// the card reads the minute's peak against it and says where it comes
+		// from; the old wording said the ceiling was derived from each
+		// replica's load.
+		{"PERMIT peak-reported ::", "峰值 9 / 上限 64（按内存）", "按各自负载",
+			"上限按内存算，卡片读最近一分钟的峰值对上限，不再说按负载推导"},
+		{"PERMIT peak-reported ::", "每个副本按自己的内存算，2 个副本相加", "",
+			"总上限是各副本内存份额之和，要说清怎么加起来的"},
+		{"PERMIT never-waited ::", "（按内存）", "undefined",
+			"峰值字段总在汇总里，卡片不能出现 undefined"},
 	} {
 		line := lineStarting(text, want.prefix)
 		if line == "" {
@@ -1892,6 +1904,11 @@ const permitShapes = {
   // A replica that has not run a query yet. Zero waits out of zero asks is not
   // "there is room", it is nothing measured.
   'nothing-asked': {permit_acquires: 0, permit_waits: 0, waiting: 0},
+  // The ceiling is each replica's memory share, two replicas of 32; the peak
+  // is the most held at once in the last minute, which is what it is read
+  // against.
+  'peak-reported': {permit_acquires: 40000, permit_waits: 2, waiting: 0, replicas: 2,
+    permits_peak_total: 9, permit_budget_total: 64, permit_budget_per_replica: 32},
 };
 for (const [name, override] of Object.entries(permitShapes)) {
   store['capCards'].textContent = '';

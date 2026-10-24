@@ -55,9 +55,9 @@ const (
 	VerificationTimeout = 3 * time.Second
 	TerminationGrace    = 4 * time.Second
 	// StartupAllowance bounds connection setup and the supervisor's start
-	// before its started report. With VerificationTimeout before and after,
-	// the longest execution fits the exec operation's 45 s budget:
-	// 3 + 4 + 30 + 4 + 3 = 44 s.
+	// before its started report. With VerificationTimeout before and after
+	// and TerminationGrace after the command, it is what the operation
+	// ceiling keeps back from the command (MaxExecTimeout).
 	StartupAllowance = 4 * time.Second
 	RemoteNotStarted = "remote_not_started"
 	RemoteCompleted  = "remote_completed"
@@ -70,13 +70,15 @@ const (
 	CodeNotInScope         = "not_in_scope"
 	CodeTargetChanged      = "target_changed"
 	CodeTargetNotRunning   = "target_not_running"
-	CodeBusy               = "provider_busy"
 	CodeTimeoutUnsupported = "remote_timeout_unsupported"
 	CodeCommandStartFailed = "command_start_failed"
 	CodeAPIError           = "apiserver_error"
 	CodeForbidden          = "rbac_forbidden"
 	CodeNotFound           = "not_found"
-	CodeCanceled           = "request_canceled"
+	// CodeKindNotInstalled is a custom resource kind whose CRD the cluster
+	// does not have.
+	CodeKindNotInstalled = "kind_not_installed"
+	CodeCanceled         = "request_canceled"
 )
 
 // Error deliberately omits raw API/transport errors, which can contain URLs,
@@ -151,20 +153,38 @@ type Options struct {
 	ConfigMaps ConfigMapReader
 	// Resources reads the kinds k8s.list serves; nil leaves it unavailable.
 	Resources ResourceReader
+	// DryRun is k8s.dry_run's Kubernetes access; nil leaves it unavailable.
+	DryRun DryRunner
+	// Writer is k8s.apply's and k8s.delete's Kubernetes write; nil leaves
+	// them unavailable.
+	Writer Writer
 	// DefaultNamespace is the namespace a request that names none reads:
 	// this process's own. Empty means a request must name one.
 	DefaultNamespace string
 	// ModuleLabel is the label key a target's module is read from and a
 	// discovery's module filter matches; DefaultModuleLabel when empty.
 	ModuleLabel                   string
-	Concurrency                   int
 	DefaultTimeout, MaxTimeout    time.Duration
 	MaxOutputBytes, MaxStdinBytes int64
 	MaxPods                       int
 	// LiteralSecrets supplements the documented credential_fields_v1 redactor.
 	// Secrets stay in memory and are never included in an observation or receipt.
 	LiteralSecrets []string
-	Now            func() time.Time
+	// FingerprintKey keys the fingerprint every Secret value, and every
+	// value masked under a credential name, is shown as: HMAC-SHA256 under
+	// a key local to the deployment, so a fingerprint compares values within
+	// it and cannot be checked against a table of common values made
+	// elsewhere. Never output. Empty, the process makes its own and
+	// FingerprintScope reads "process".
+	FingerprintKey []byte
+	// FingerprintScope is where fingerprints compare: "deployment" for a
+	// key every replica shares, "process" for one this process made.
+	FingerprintScope string
+	// FingerprintKeySource, when FingerprintKey is empty, is asked once, at
+	// the first fingerprint, for the deployment's key: building the provider
+	// does no I/O. Nil from it, the process makes its own key.
+	FingerprintKeySource func() []byte
+	Now                  func() time.Time
 	// startupAllowance replaces StartupAllowance when set; only tests about
 	// what a run reports, not how long its start may take, set it.
 	startupAllowance time.Duration
@@ -181,7 +201,10 @@ type Target struct {
 	ImageID     string `json:"image_id"`
 }
 type Observation struct {
-	Target             Target       `json:"target"`
+	Target Target `json:"target"`
+	// Init says the container is an init container of the Pod; its
+	// identity and state are its init-container status.
+	Init               bool         `json:"init,omitempty"`
 	Release            string       `json:"release,omitempty"`
 	Module             string       `json:"module,omitempty"`
 	Workload           Workload     `json:"workload"`
@@ -212,7 +235,6 @@ type Condition struct {
 	Reason string `json:"reason,omitempty"`
 }
 type Limits struct {
-	Concurrency      int   `json:"concurrency"`
 	DefaultTimeoutMS int64 `json:"default_timeout_ms"`
 	MaxTimeoutMS     int64 `json:"max_timeout_ms"`
 	MaxOutputBytes   int64 `json:"max_output_bytes"`
@@ -244,6 +266,12 @@ type LogsRequest struct {
 	SinceSeconds int64  `json:"since_seconds,omitempty"`
 	Previous     bool   `json:"previous,omitempty"`
 	OutputBytes  int64  `json:"output_bytes,omitempty"`
+	// Contains keeps only the lines holding it, and SinceTime and UntilTime
+	// only those written in that span; the lines are scanned here, as they
+	// stream, and only the kept ones are held.
+	Contains  string    `json:"contains,omitempty"`
+	SinceTime time.Time `json:"since_time,omitempty"`
+	UntilTime time.Time `json:"until_time,omitempty"`
 }
 type LogsReceipt struct {
 	Target            Target       `json:"target"`
@@ -255,8 +283,16 @@ type LogsReceipt struct {
 	EvidenceScope     string       `json:"evidence_scope"`
 	RedactionContract string       `json:"redaction_contract"`
 	ObservedAt        time.Time    `json:"observed_at"`
+	// ScannedLines and MatchedLines are what a filtered read went through
+	// and kept; absent on an unfiltered read.
+	ScannedLines int64 `json:"scanned_lines,omitempty"`
+	MatchedLines int64 `json:"matched_lines,omitempty"`
 }
 type ExecRequest struct {
+	// RequestID is the channel request the call came in on, so the receipt
+	// and the audit record carry one identity. Empty, the receipt gets its
+	// own.
+	RequestID   string   `json:"request_id,omitempty"`
 	Target      Target   `json:"target"`
 	Argv        []string `json:"argv"`
 	Stdin       string   `json:"stdin,omitempty"`

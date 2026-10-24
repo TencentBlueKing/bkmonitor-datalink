@@ -10,6 +10,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
@@ -158,7 +159,7 @@ func TestDueIndexSuppressesParkedQueryGroups(t *testing.T) {
 		t.Fatalf("the walk offered %d turns while suppressing and %d while not",
 			seeded.rotation.offered, empty.rotation.offered)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_skipped_total",
+	if got := counterValue(t, recorder, "alarmd_dispatch_skipped_total",
 		map[string]string{"reason": "not_due"}); got != float64(len(owned)-1) {
 		t.Fatalf("dispatch_skipped_total{not_due} = %v, want %d", got, len(owned)-1)
 	}
@@ -228,7 +229,7 @@ func TestDueIndexAuditKeepsTheFalsifierReachable(t *testing.T) {
 		}
 	}
 	if want := float64(passes * len(owned)); counterValue(t, recorder,
-		"bkmonitor_alarmd_due_index_prediction_total",
+		"alarmd_due_index_prediction_total",
 		map[string]string{"prediction": "not_due", "actual": "due"}) < want {
 		t.Fatalf("prediction=not_due actual=due counted less than %v: with dispatch "+
 			"suppressed this series is the only thing that can still contradict the index, and a "+
@@ -279,7 +280,7 @@ func TestDueIndexSuppressionSeparatesBackoffFromIdle(t *testing.T) {
 		reason string
 		count  float64
 	}{{"not_due", 1}, {"backoff", 2}} {
-		if got := counterValue(t, recorder, "bkmonitor_alarmd_dispatch_skipped_total",
+		if got := counterValue(t, recorder, "alarmd_dispatch_skipped_total",
 			map[string]string{"reason": want.reason}); got != want.count {
 			t.Errorf("dispatch_skipped_total{%s} = %v, want %v", want.reason, got, want.count)
 		}
@@ -345,7 +346,7 @@ func TestDueIndexPredictionCounterReachesEveryOutcome(t *testing.T) {
 		drainQueues(t, dispatcher)
 	}
 
-	const name = "bkmonitor_alarmd_due_index_prediction_total"
+	const name = "alarmd_due_index_prediction_total"
 	for _, want := range []struct {
 		prediction, actual string
 		atLeast            float64
@@ -408,7 +409,7 @@ func TestDueIndexFailsOpenWhenTheHeaderCannotBeRead(t *testing.T) {
 	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); due {
 		t.Fatal("a stable header dropped a bound that is still ten minutes away")
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_version_check_total",
+	if got := counterValue(t, recorder, "alarmd_due_index_version_check_total",
 		map[string]string{"result": "unchanged"}); got < 1 {
 		t.Fatalf("unchanged header comparisons counted %v, want at least 1: without this, "+
 			"a zero unknown count cannot be told apart from a check that never ran", got)
@@ -420,11 +421,11 @@ func TestDueIndexFailsOpenWhenTheHeaderCannotBeRead(t *testing.T) {
 	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("an unreadable header left the Query Group parked on a bound it cannot vouch for")
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
+	if got := counterValue(t, recorder, "alarmd_due_index_recomputed_total",
 		map[string]string{"trigger": "version_unknown"}); got < 1 {
 		t.Fatalf("version_unknown counted %v, want at least 1", got)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_version_check_total",
+	if got := counterValue(t, recorder, "alarmd_due_index_version_check_total",
 		map[string]string{"result": "unknown"}); got < 1 {
 		t.Fatalf("unknown header comparisons counted %v, want at least 1", got)
 	}
@@ -465,11 +466,11 @@ func TestDueIndexPublicationDropsScheduleBoundsAndKeepsBackoff(t *testing.T) {
 	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-backoff", backoff, clock.at); due {
 		t.Fatal("a publication cancelled a Runner's own backoff, which it says nothing about")
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
+	if got := counterValue(t, recorder, "alarmd_due_index_recomputed_total",
 		map[string]string{"trigger": "version_change"}); got < 1 {
 		t.Fatalf("version_change counted %v, want at least 1", got)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_version_check_total",
+	if got := counterValue(t, recorder, "alarmd_due_index_version_check_total",
 		map[string]string{"result": "changed"}); got < 1 {
 		t.Fatalf("changed header comparisons counted %v, want at least 1", got)
 	}
@@ -534,7 +535,7 @@ func TestDueIndexDropsEntriesForAReplacedLifecycle(t *testing.T) {
 	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", replacement, clock.at); !due {
 		t.Fatal("a Query Group with no bound of its own was not treated as due")
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
+	if got := counterValue(t, recorder, "alarmd_due_index_recomputed_total",
 		map[string]string{"trigger": "ownership"}); got < 1 {
 		t.Fatalf("ownership counted %v, want at least 1", got)
 	}
@@ -569,7 +570,7 @@ func TestDueIndexBoundsTheRetiredRecheck(t *testing.T) {
 		t.Fatalf("a retired Query Group was not rechecked after %d seconds, so a revoked "+
 			"retirement would never resume", dueIndexRetiredRecheckSeconds)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
+	if got := counterValue(t, recorder, "alarmd_due_index_recomputed_total",
 		map[string]string{"trigger": "retired_ttl"}); got < 1 {
 		t.Fatalf("retired_ttl counted %v, want at least 1", got)
 	}
@@ -765,13 +766,13 @@ func TestDueIndexRecomputeTriggersAreAllReachable(t *testing.T) {
 		"absent", "attempt", "execute", "deferral", "retired_ttl",
 		"version_change", "version_unknown", "ownership",
 	} {
-		if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
+		if got := counterValue(t, recorder, "alarmd_due_index_recomputed_total",
 			map[string]string{"trigger": trigger}); got < 1 {
 			t.Errorf("trigger %s counted %v, want at least 1; a trigger nothing can produce is a "+
 				"series that reads as permanently healthy", trigger, got)
 		}
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_entries", nil); got < 1 {
+	if got := counterValue(t, recorder, "alarmd_due_index_entries", nil); got < 1 {
 		t.Errorf("due_index_entries = %v, want the bounds actually held", got)
 	}
 }
@@ -803,7 +804,7 @@ func TestDispatcherReadsTheActivationHeaderWithoutBlockingTheLoop(t *testing.T) 
 	dispatcher.start(ctx)
 	defer dispatcher.stop()
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := testwait.Deadline(t)
 	for {
 		if sample := dispatcher.controlVersion.Load(); sample != nil {
 			if !sample.known || sample.tag != "publication-1" {
@@ -815,11 +816,11 @@ func TestDispatcherReadsTheActivationHeaderWithoutBlockingTheLoop(t *testing.T) 
 			t.Fatal("the dispatcher never read the activation header, so no publication could ever " +
 				"drop a bound and nothing in the metrics would say so")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	dispatcher.beginGeneration()
 	if got := counterValue(t, bundle.dependencies.Recorder,
-		"bkmonitor_alarmd_due_index_version_check_total", map[string]string{"result": "changed"}); got < 1 {
+		"alarmd_due_index_version_check_total", map[string]string{"result": "changed"}); got < 1 {
 		t.Fatalf("the first header reading was not compared: changed = %v", got)
 	}
 }

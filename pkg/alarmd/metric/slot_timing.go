@@ -17,7 +17,7 @@ var slotWaitBuckets = []float64{0.001, 0.01, 0.1, 1, 5, 10, 30, 60}
 
 func newSlotWaitMetrics() *prometheus.HistogramVec {
 	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "slot_wait_duration_seconds",
+		Subsystem: metricSubsystem, Name: "slot_wait_duration_seconds",
 		Help: "Blocking waits inside one Slot attempt, by which wait. progress_begin is the fenced " +
 			"Progress write that opens the Slot; finalization is deciding whether the Slot needs a " +
 			"query, which reads the frozen Plan and the Segment's content objects; object_share is " +
@@ -37,7 +37,7 @@ func (m phaseTwoMetrics) observeSlotWait(o observability.Observation) {
 
 func newSlotTimingMetrics() *prometheus.HistogramVec {
 	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "slot_operation_duration_seconds",
+		Subsystem: metricSubsystem, Name: "slot_operation_duration_seconds",
 		Help:    "Nested wall durations of RunOne, SlotSource.Next and Executor.Execute; not additive and excluding dispatcher queue waiting.",
 		Buckets: []float64{0.001, 0.01, 0.1, 1, 5, 15, 30, 60},
 	}, []string{"stage"})

@@ -47,15 +47,20 @@ const (
 	NamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 )
 
-// Bounds. A read returns at most this much whatever the cluster holds.
+// Bounds. A read returns at most this much whatever the cluster holds. They
+// keep one read's size in hand, never a count of reads: an operator's reads
+// are a few GETs next to what the API server serves the cluster, so they
+// are generous.
 const (
-	MaxPods         = 32
-	MaxReplicaSets  = 8
-	MaxEvents       = 200
+	MaxPods         = 500
+	MaxReplicaSets  = 64
+	MaxEvents       = 2000
 	MaxMessageBytes = 512
 	DefaultLogLines = 200
-	MaxLogLines     = 1000
-	MaxLogBytes     = 256 << 10
+	MaxLogLines     = 100000
+	// MaxLogBytes is half the channel's smallest response bound, so a log
+	// and its envelope always fit an answer.
+	MaxLogBytes = 8 << 20
 	// A filtered read streams the log and keeps only the matching lines, so
 	// what it scans is not bounded by what it returns. Without a window it
 	// scans the last DefaultScanLines lines; ScanLines asks for another
@@ -73,12 +78,12 @@ const (
 	MaxLogFilters     = 4
 	MaxLogFilterBytes = 128
 	// MaxLogSinceSeconds bounds how far back a read may start.
-	MaxLogSinceSeconds = 24 * 60 * 60
+	MaxLogSinceSeconds = 7 * 24 * 60 * 60
 	// maxAPIBytes bounds one API response body before it is decoded.
-	maxAPIBytes = 8 << 20
+	maxAPIBytes = 64 << 20
 	// maxLogReadBytes bounds the whole tail read before its newest
 	// MaxLogBytes are kept.
-	maxLogReadBytes = 8 << 20
+	maxLogReadBytes = 64 << 20
 	// scopeTTL is how long the resolved Deployment is reused. A rollout
 	// keeps the Deployment, so this only saves three GETs per read.
 	scopeTTL = 5 * time.Minute
@@ -207,7 +212,7 @@ func (r *Reader) httpClient() (*http.Client, error) {
 	}
 	r.client = &http.Client{
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
-			DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext, MaxIdleConnsPerHost: 2,
+			DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext, MaxIdleConnsPerHost: eventReadsAtOnce,
 			IdleConnTimeout: 30 * time.Second, TLSHandshakeTimeout: 2 * time.Second},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}

@@ -44,6 +44,7 @@ func TestTheProductionPublisherIsGivenItsOverdueSourceAndStrategyNames(t *testin
 		{"overdue:", "the due index, without which the page reports 未启用 on a running index"},
 		{"strategies:", "strategy names, without which parked objects arrive as bare hashes"},
 		{"lateSeries: lookbackLateSeries(", "the late series the supplements could not recover, without which their rows never appear"},
+		{"scheduleObjects: recorder.SetScheduleObjects", "the census as alarmd_schedule_objects, without which the trends' late-objects chart reads no series"},
 	} {
 		if !strings.Contains(literal, wire.field) {
 			t.Errorf("the production publisher is not given %s -- %s", wire.field, wire.why)

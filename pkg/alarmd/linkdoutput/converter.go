@@ -14,7 +14,9 @@
 // here and no state is kept for it.
 //
 // The field names, the action words and the value rules are the consumer's,
-// copied from pkg/linkd/internal/cleaner/raw_event.go and its domain package
+// copied from pkg/linkd/internal/cleaner/raw_event.go and its domain package on
+// the consumer's own branch, upstream feat/linkd-dev (1e9617f2; this tree's
+// pkg/linkd is an older copy and not the deployed consumer),
 // rather than chosen here. Where the consumer is strict this side is strict
 // before it: a null dimension, a duplicate key between the two dimension maps
 // or a non-numeric value would have the whole message refused there, one
@@ -36,10 +38,11 @@ import (
 
 // The two actions this process produces, out of the consumer's three.
 //
-// Detector conversion does not emit closed; ConvertClose handles explicit
-// effective-time maintenance separately. Closing is a lifetime decision made on
-// a timeout this process does not observe. A repeated triggered is how a
-// continuing anomaly is stated.
+// Detector conversion emits closed only for a level written to end its alert
+// closed (status_setter close: LevelAction, ActionReasonRecoveryClose);
+// ConvertClose handles the control-plane closes - effective time, absence,
+// scope, identity, an unsupported strategy - separately. A repeated triggered
+// is how a continuing anomaly is stated.
 const (
 	ActionTriggered = "triggered"
 	ActionResolved  = "resolved"
@@ -117,8 +120,10 @@ type Event struct {
 type wireEvaluation struct {
 	Severity string `json:"severity"`
 	Action   string `json:"action"`
-	// Empty on purpose: the reason an alert resolved is not a fact this
-	// process establishes, and a guess here would be read as one.
+	// Empty for triggered and resolved on purpose: the reason an alert
+	// resolved is not a fact this process establishes, and a guess here would
+	// be read as one. A level that recovered and ends closed says
+	// ActionReasonRecoveryClose: that it was written to end closed is a fact.
 	ActionReason string `json:"action_reason"`
 }
 
@@ -158,6 +163,10 @@ type wireExtraData struct {
 	SignalType           string                     `json:"signal_type,omitempty"`
 	EvaluationFamily     string                     `json:"evaluation_family"`
 	Unit                 string                     `json:"unit,omitempty"`
+	// DetectionSnapshot is the decision's detection snapshot, as the event
+	// carries it (contract.DetectionSnapshotV1): only on the events of a
+	// strategy with named outputs, absent from every other message.
+	DetectionSnapshot json.RawMessage `json:"detection_snapshot,omitempty"`
 }
 
 type wireEvent struct {
@@ -233,6 +242,11 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 	if err != nil {
 		return Event{}, reject(RuleLevelsInvalid, err)
 	}
+	if action == ActionResolved {
+		// The primary Level's own ending: closed for a Level written to end
+		// its alert closed (LevelAction).
+		action = LevelAction(primary)
+	}
 	businessID, err := strconv.ParseInt(labelBusiness(event), 10, 64)
 	if err != nil {
 		return Event{}, reject(RuleBusinessIdentity, fmt.Errorf("alarmd linkdoutput: business identity %q: %w", labelBusiness(event), err))
@@ -278,6 +292,7 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 			EventSemanticDigest: event.EventSemanticDigest,
 			SignalType:          event.SignalType,
 			EvaluationFamily:    evaluationFamilyMetricAlgorithm,
+			DetectionSnapshot:   event.DetectionSnapshot,
 		},
 	}
 	if begin := primary.DecisionWindow.Trigger.AnomalyBeginTime; begin > 0 {
@@ -350,7 +365,11 @@ func (converter *Converter) evaluations(event *contract.TriggerEventV1) ([]wireE
 			return nil, reject(RuleLevelsInvalid, fmt.Errorf("alarmd linkdoutput: two levels of one decision share the severity %q", severity))
 		}
 		seen[severity] = struct{}{}
-		evaluations = append(evaluations, wireEvaluation{Severity: severity, Action: action})
+		reason := ""
+		if action == ActionClosed {
+			reason = ActionReasonRecoveryClose
+		}
+		evaluations = append(evaluations, wireEvaluation{Severity: severity, Action: action, ActionReason: reason})
 	}
 	if len(evaluations) == 0 {
 		return nil, reject(RuleLevelsInvalid, errors.New("alarmd linkdoutput: a decision with no decided level has nothing to say"))
@@ -468,18 +487,29 @@ func soleObservedValue(observed contract.TriggerObservedV1) json.RawMessage {
 }
 
 // LevelAction is what the consumer is told about one level: triggered for
-// ABNORMAL, resolved for RECOVERY, and nothing ("") for a level that decided
-// nothing this round. See evaluations for why the last is left out; whoever
-// models what the consumer does with a message reads it through this too.
+// ABNORMAL, resolved for RECOVERY - closed, with ActionReasonRecoveryClose,
+// for a level written to end its alert closed (status_setter close) - and
+// nothing ("") for a level that decided nothing this round. See evaluations
+// for why the last is left out; whoever models what the consumer does with a
+// message reads it through this too.
 func LevelAction(level contract.LevelResultV1) string {
 	switch level.Result {
 	case contract.LevelResultAbnormal:
 		return ActionTriggered
 	case contract.LevelResultRecovery:
+		if level.DecisionWindow.Recovery.End == contract.RecoveryEndClose {
+			return ActionClosed
+		}
 		return ActionResolved
 	}
 	return ""
 }
+
+// ActionReasonRecoveryClose is the action_reason of a level that recovered
+// and ends its alert closed, as its owner wrote: the platform's close, not a
+// control-plane close (CloseReason*), and not a recovery the consumer would
+// count as one.
+const ActionReasonRecoveryClose = "recovery_close"
 
 // primaryLevel returns the level the event was aggregated to. The aggregation
 // already happened - lowest priority among the levels that agree with the
@@ -530,6 +560,13 @@ func SeverityIsBuiltIn(level contract.LevelResultV1) bool {
 	return builtIn || levelCodeCarriable(level.LevelCode)
 }
 
+// positiveHostID is a host id as the consumer accepts one: a positive int64
+// that reads back to the same text (linkd's positiveIntegerIdentity).
+func positiveHostID(id string) bool {
+	value, err := strconv.ParseInt(id, 10, 64)
+	return err == nil && value > 0 && strconv.FormatInt(value, 10) == id
+}
+
 // wireSubjectFor writes the object in the consumer's spelling.
 //
 // Every type the projection can produce has a spelling in subjectSystems -
@@ -537,9 +574,18 @@ func SeverityIsBuiltIn(level contract.LevelResultV1) bool {
 // unknown branch is the empty type: a record with no object, which is a real
 // answer (custom reporting with no target dimensions has none), and no
 // subject says so. Inventing one would attach the alert to something.
+//
+// A host is a subject only by its host id. The consumer reads a cmdb/host
+// subject as one and refuses anything else as an invalid id, without falling
+// back to the address and cloud it would otherwise resolve the host from; a
+// host placed by "<ip>|<cloud>" therefore writes no subject, and the record's
+// dimensions, which carry the address and cloud whole, name it.
 func wireSubjectFor(subject contract.MonitorSubject) *wireSubject {
 	naming, known := subjectSystems[subject.Type]
 	if !known || subject.ID == "" {
+		return nil
+	}
+	if subject.Type == contract.MonitorSubjectHost && !positiveHostID(subject.ID) {
 		return nil
 	}
 	return &wireSubject{System: naming.System, Type: naming.Type, ID: subject.ID}
@@ -556,6 +602,12 @@ func title(event *contract.TriggerEventV1, primary contract.LevelResultV1, actio
 	return fmt.Sprintf("Strategy %d level %d %s", event.StrategyRef.StrategyID, primary.LevelID, action)
 }
 
+// The content of a level that no data ended, as the platform writes it.
+const (
+	noDataEndRecovered = "在恢复检测周期内无数据上报，告警已恢复"
+	noDataEndClosed    = "在恢复检测周期内无数据上报，告警已关闭"
+)
+
 func content(event *contract.TriggerEventV1, primary contract.LevelResultV1, noData bool) string {
 	window := primary.DecisionWindow.Trigger
 	if noData {
@@ -571,6 +623,16 @@ func content(event *contract.TriggerEventV1, primary contract.LevelResultV1, noD
 			"no data for %s periods, as of %s",
 			noDataPeriods(event.Observed), wireTime(event.RecordRef.SourceTime),
 		)
+	}
+	// A level that no data ended says so, in the words the platform's own
+	// recovery check uses (recover.py:191-197): the point it was decided on
+	// is the zero that is no observation, and the window line would read as
+	// an ordinary recovery.
+	if event.EventKind == contract.TriggerEventRecovery && primary.DecisionWindow.Recovery.EndedBy == contract.RecoveryEndedByNoData {
+		if primary.DecisionWindow.Recovery.End == contract.RecoveryEndClose {
+			return noDataEndClosed
+		}
+		return noDataEndRecovered
 	}
 	values := renderedValues(event.Observed)
 	if values == "" {

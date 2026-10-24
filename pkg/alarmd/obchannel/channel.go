@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -29,26 +30,42 @@ import (
 )
 
 const (
-	Version          = "alarmd-ob/v1"
-	MaxRequestBytes  = 64 << 10
-	MaxResponseBytes = 2 << 20
-	RequestTimeout   = 3 * time.Second
-	// EnvelopeMaxBytes is the transport ceiling. Each operation keeps its
-	// own smaller request bound; existing reads remain at MaxRequestBytes.
-	EnvelopeMaxBytes    = 1 << 20
-	TransportMargin     = 5 * time.Second
+	Version         = "alarmd-ob/v1"
+	MaxRequestBytes = 64 << 10
+	RequestTimeout  = 3 * time.Second
+	// RequestReadTimeout bounds reading a request and admitting it:
+	// authentication and the envelope's decode. Thirty seconds lets a 16 MiB
+	// envelope arrive over a slow link; a stalled client holds nothing but
+	// its own connection while it waits.
+	RequestReadTimeout = 30 * time.Second
+	// EnvelopeMaxBytes is the transport ceiling, large enough for a whole
+	// chart's manifests in one dry run or apply. Each operation keeps its
+	// own request bound; discovery and description stay at MaxRequestBytes.
+	EnvelopeMaxBytes = 16 << 20
+	TransportMargin  = 5 * time.Second
+	// HopReturnMargin is what each hop of a routed read keeps back from the
+	// time it hands on, for the answer to come back: one transit on the
+	// cluster network and the copy of the body. Without it the target runs
+	// to the instant its caller stops waiting, and an answer kept on timeout
+	// (PartialOnTimeout) arrives after the wait for it has ended.
+	HopReturnMargin = time.Second
+	// RouteHops is the longest route a read takes: entry, Control Leader,
+	// target.
+	RouteHops = 2
+	// RouteAllowance is what the entry waits past the operation's own time
+	// for a routed read, so the target still has the operation's time and
+	// every hop its margin. It fits inside TransportMargin, the entry's
+	// allowance for writing the answer.
+	RouteAllowance      = RouteHops * HopReturnMargin
 	MaxExecutionTimeout = 2 * time.Minute
 	// InvokesPerSessionPerMinute is one session's budget of executed
-	// invocations in a clock minute. Every native invocation is one whole
-	// fleet snapshot read on the replica that answers, bounded only per
-	// request (MaxResponseBytes, RequestTimeout) and by the one execution
-	// slot; nothing bounded how many of them one credential could line up,
-	// so a looping client held the slot against every other session for as
-	// long as it looped. An investigation asks a handful of questions a
-	// minute; thirty is well above that and caps a loop at thirty
-	// snapshot reads a minute. Discovery, description, refused inputs and
-	// refused budgets do not spend it: they read no evidence.
-	InvokesPerSessionPerMinute = 30
+	// invocations in a clock minute. The channel's traffic is a few people
+	// and agents, nothing next to the business queries, and it has no
+	// concurrency bound; this is only the stop for a client looping without
+	// pause. Ten a second is far above any person's or agent's pace (a
+	// busy investigation runs a few a minute). Discovery, description and
+	// refused inputs do not spend it: they read no evidence.
+	InvokesPerSessionPerMinute = 600
 	// sessionWindowSweep is how many sessions the gate remembers before it
 	// forgets the ones whose minute has passed. It is not a bound: a sweep
 	// forgets only past minutes, so a thousand sessions all live in the
@@ -58,6 +75,34 @@ const (
 	// carrying every session that ever was for the life of the process.
 	sessionWindowSweep = 1024
 )
+
+// The response bound is the one thing that keeps a single request from
+// taking the process's memory: an answer sits in memory about three times
+// over while it is built, encoded and written. It is a 32nd of the
+// container's memory, between 16 MiB and 256 MiB, so a handful of the
+// largest answers at once stay well inside the pod: 32 MiB at 1 GiB, 64 MiB
+// at 2 GiB, 256 MiB from 8 GiB.
+const (
+	responseShare      = 32
+	minResponseBytes   = 16 << 20
+	MaxResponseCeiling = 256 << 20
+)
+
+var maxResponseBytes atomic.Int64
+
+func init() { maxResponseBytes.Store(int64(ResponseCap(2 << 30))) }
+
+// ResponseCap is the response bound for a container of memoryLimit bytes.
+func ResponseCap(memoryLimit uint64) int {
+	return int(min(max(memoryLimit/responseShare, minResponseBytes), MaxResponseCeiling))
+}
+
+// SetMemoryLimit sets the response bound from the container's memory, once
+// at start before the channel is built.
+func SetMemoryLimit(memoryLimit uint64) { maxResponseBytes.Store(int64(ResponseCap(memoryLimit))) }
+
+// MaxResponseBytes is the most one answer may carry.
+func MaxResponseBytes() int { return int(maxResponseBytes.Load()) }
 
 type Authorizer interface {
 	Authenticate(context.Context, string) (cliauth.Session, error)
@@ -132,6 +177,10 @@ type Operation struct {
 	Effect           string
 	RequiredScope    string
 	ExecutionTimeout time.Duration
+	// PartialOnTimeout says a read answers in parts that each name their own
+	// failure (a namespace, an object): when its time runs out, what it did
+	// read is returned, incomplete, rather than dropped with the rest.
+	PartialOnTimeout bool
 	RequestMaxBytes  int
 	// ExecutionPool is evidence, sre or exec. Exec cannot enter an internal
 	// Worker route; SRE providers use their own local admission budget.
@@ -170,9 +219,6 @@ type Options struct {
 	EnvironmentID        string
 	Replica              string
 	Build                string
-	Concurrency          int
-	SREConcurrency       int
-	ExecConcurrency      int
 	Operations           []Operation
 	Now                  func() time.Time
 	Incarnation          string
@@ -184,8 +230,7 @@ type Options struct {
 }
 type Channel struct {
 	*EvidenceExecutor
-	options   Options
-	httpSlots chan struct{}
+	options Options
 	// windows is each session's spend of its invocation budget in the
 	// current clock minute, keyed by session ID; see allowInvoke.
 	windowsMu sync.Mutex
@@ -201,10 +246,8 @@ type sessionWindow struct {
 
 // allowInvoke spends one of the session's invocations for this minute and
 // says whether there was one to spend, with the seconds left in the minute
-// when there was not. Same shape as the authorization gate's rate window,
-// per session rather than per process, because the thing being protected --
-// the one execution slot and the snapshot read behind it -- is shared by
-// every session, and one session must not be able to spend it all.
+// when there was not: the stop for a client looping without pause, per
+// session.
 func (c *Channel) allowInvoke(sessionID string) (allowed bool, retryAfter time.Duration) {
 	now := c.options.Now()
 	minute := now.Unix() / 60
@@ -245,6 +288,9 @@ type SessionMeta struct {
 	ID        string    `json:"session_id"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Renewed   bool      `json:"renewed"`
+	// FallbackBaseURLs is the session's fallback entry (cliauth), on every
+	// answer, so a session renewed in-band learns it without a new login.
+	FallbackBaseURLs []string `json:"fallback_base_urls,omitempty"`
 }
 type Meta struct {
 	Version       string       `json:"channel_version"`
@@ -300,14 +346,14 @@ func New(options Options) (*Channel, error) {
 	if executor == nil {
 		var err error
 		executor, err = NewEvidenceExecutor(ExecutorOptions{EnvironmentID: options.EnvironmentID, Replica: options.Replica, Build: options.Build,
-			Incarnation: options.Incarnation, Concurrency: options.Concurrency, SREConcurrency: options.SREConcurrency, ExecConcurrency: options.ExecConcurrency, Operations: options.Operations, Now: options.Now, Roles: options.Roles})
+			Incarnation: options.Incarnation, Operations: options.Operations, Now: options.Now, Roles: options.Roles})
 		if err != nil {
 			return nil, err
 		}
 	} else if executor.options.EnvironmentID != options.EnvironmentID || executor.options.Replica != options.Replica || executor.options.Incarnation != options.Incarnation {
 		return nil, errors.New("OB channel and evidence executor identities must match")
 	}
-	c := &Channel{EvidenceExecutor: executor, options: options, httpSlots: make(chan struct{}, 4), windows: make(map[string]*sessionWindow)}
+	c := &Channel{EvidenceExecutor: executor, options: options, windows: make(map[string]*sessionWindow)}
 	return c, nil
 }
 
@@ -322,11 +368,10 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Error: &Failure{Code: cliauth.ErrorCode(err), Message: message, Reason: authReason(err)}, Meta: meta})
 	}
 	controller := http.NewResponseController(w)
-	_ = controller.SetReadDeadline(time.Now().Add(RequestTimeout))
-	_ = controller.SetWriteDeadline(time.Now().Add(RequestTimeout + TransportMargin))
-	admitted := false
-	// The slot and deadlines include draining and flushing, not just the
-	// handler body. Global deadlines would break the shared h2c streams.
+	_ = controller.SetReadDeadline(time.Now().Add(RequestReadTimeout))
+	_ = controller.SetWriteDeadline(time.Now().Add(RequestReadTimeout + TransportMargin))
+	// The deadlines include draining and flushing, not just the handler
+	// body. Global deadlines would break the shared h2c streams.
 	defer func() {
 		if r.Body != nil {
 			_ = r.Body.Close()
@@ -334,23 +379,12 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = controller.Flush()
 		_ = controller.SetReadDeadline(time.Time{})
 		_ = controller.SetWriteDeadline(time.Time{})
-		if admitted {
-			<-c.httpSlots
-		}
 	}()
-	select {
-	case c.httpSlots <- struct{}{}:
-		admitted = true
-	default:
-		_ = controller.SetReadDeadline(time.Now())
-		fail(429, "request_budget_exceeded", "OB channel request slots are busy.")
-		return
-	}
 	if r.Method != http.MethodPost {
 		fail(405, "method_not_allowed", "Use POST for the OB channel.")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), RequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), RequestReadTimeout)
 	defer cancel()
 	values := r.Header.Values("Authorization")
 	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
@@ -371,7 +405,7 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(403, "permission_denied", "Session does not authorize this deployment.")
 		return
 	}
-	meta.Session = &SessionMeta{ID: session.ID, ExpiresAt: session.ExpiresAt}
+	meta.Session = &SessionMeta{ID: session.ID, ExpiresAt: session.ExpiresAt, FallbackBaseURLs: session.FallbackBaseURLs}
 	var req request
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, EnvelopeMaxBytes))
 	if err != nil {
@@ -454,16 +488,18 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Input/authentication retains its short admission deadline. Execution
 	// starts from the request's original context so a longer operation is not
 	// accidentally capped by the legacy three-second context.
-	executionContext := func() (context.Context, context.CancelFunc) {
+	// A routed read waits RouteAllowance past the operation's time, inside
+	// the write allowance, so its hops' return margins come out of the
+	// transport's time and not the operation's.
+	executionContext := func(allowance time.Duration) (context.Context, context.CancelFunc) {
 		_ = controller.SetReadDeadline(time.Time{})
 		_ = controller.SetWriteDeadline(time.Now().Add(op.ExecutionTimeout + TransportMargin))
-		return context.WithTimeout(r.Context(), op.ExecutionTimeout)
+		return context.WithTimeout(r.Context(), op.ExecutionTimeout+allowance)
 	}
 	// The session's own budget, spent only by an invocation that would
 	// execute, here or on the replica it targets: a refused input, an
 	// unavailable operation or a missing route cost nothing and count for
-	// nothing. Spent before the slot, so a session over budget never contends
-	// for it, and before admission, so it never renews. The target executes
+	// nothing. Spent before admission, so a session over budget never renews. The target executes
 	// without the session and spends none, so a read routed back to this
 	// replica is counted once. A target that answers unavailable has still
 	// been asked, and the read is counted.
@@ -498,7 +534,7 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(403, "permission_denied", "Routing admission ended or no longer authorizes this operation.")
 			return
 		}
-		routeCtx, routeCancel := executionContext()
+		routeCtx, routeCancel := executionContext(RouteAllowance)
 		defer routeCancel()
 		out := c.options.Route(routeCtx, Invocation{EnvironmentID: c.options.EnvironmentID, Version: req.Version, Revision: req.Revision, OperationContractRevision: c.OperationContractRevision(op.ID), Operation: req.Operation, RequestID: meta.RequestID, Params: params, Target: target})
 		out.Meta.Revision = c.revision
@@ -518,14 +554,6 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if overBudget() {
 		return
 	}
-	pool := c.executionSlots(op)
-	select {
-	case pool <- struct{}{}:
-		defer func() { <-pool }()
-	default:
-		fail(429, "request_budget_exceeded", "OB evidence readers are busy; retry this read later.")
-		return
-	}
 	// Final admission checks revocation again. Discovery, invalid inputs and
 	// rejected budgets do not count as activity and cannot prolong a session.
 	session, err = c.options.Auth.Admit(ctx, session, req.Renew)
@@ -533,7 +561,7 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		failAuth(err, "Session unavailable at execution admission.")
 		return
 	}
-	meta.Session = &SessionMeta{ID: session.ID, ExpiresAt: session.ExpiresAt, Renewed: session.Renewed}
+	meta.Session = &SessionMeta{ID: session.ID, ExpiresAt: session.ExpiresAt, Renewed: session.Renewed, FallbackBaseURLs: session.FallbackBaseURLs}
 	if ctx.Err() != nil {
 		fail(408, "request_timeout", "Admission context ended before operation execution.")
 		return
@@ -542,10 +570,21 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(403, "permission_denied", "The admitted session does not authorize this operation.")
 		return
 	}
-	execCtx, execCancel := executionContext()
+	execCtx, execCancel := executionContext(0)
 	defer execCancel()
 	// Who asked, for the audit record of an execution or management call.
-	execCtx = WithCaller(execCtx, Caller{SessionID: session.ID, RequestID: meta.RequestID})
+	execCtx = WithCaller(execCtx, Caller{SessionID: session.ID, RequestID: meta.RequestID, Operator: session.Operator, IssuedVia: session.IssuedVia, Entry: EntryOf(r)})
+	out := c.runHere(execCtx, op, req, params, meta)
+	code := 200
+	if out.Status == "error" {
+		code = 502
+	}
+	c.write(w, code, out)
+}
+
+// runHere runs op on this replica and, when its answer says the read is
+// held by another replica's lease, reads it there instead.
+func (c *Channel) runHere(execCtx context.Context, op Operation, req request, params Params, meta Meta) Response {
 	out := c.run(execCtx, op, params, Target{}, meta)
 	if op.RouteWhenElsewhere != nil && c.options.Route != nil && out.Status != "error" {
 		if group, elsewhere := op.RouteWhenElsewhere(params, out.Result); elsewhere {
@@ -572,11 +611,7 @@ func (c *Channel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	code := 200
-	if out.Status == "error" {
-		code = 502
-	}
-	c.write(w, code, out)
+	return out
 }
 
 func (c *Channel) write(w http.ResponseWriter, status int, response Response) {
@@ -602,7 +637,7 @@ func (c *EvidenceExecutor) prepareResponse(response Response) Response {
 		response.Next = []Call{}
 	}
 	encoded, err := json.Marshal(response)
-	if err != nil || len(encoded) > MaxResponseBytes {
+	if err != nil || len(encoded) > MaxResponseBytes() {
 		response.Status = "error"
 		response.Summary = "Evidence exceeds the response budget or cannot be encoded."
 		response.Result = nil
@@ -664,6 +699,9 @@ func describe(op Operation) map[string]any {
 		input["allOf"] = rules
 	}
 	value := map[string]any{"operation": op.ID, "summary": op.Summary, "evidence_scope": op.EvidenceScope, "targetable": op.Targetable, "contract_version": op.ContractVersion, "effect": op.Effect, "required_scope": op.RequiredScope, "execution_timeout_ms": op.ExecutionTimeout.Milliseconds(), "execution_pool": op.ExecutionPool, "request_max_bytes": op.RequestMaxBytes, "input_schema": input, "output_schema": op.OutputSchema, "examples": examples, "limits": op.Limits, "time_semantics": "meta.responded_at is response time; source observation times and versions remain in result. Multiple reads are not an atomic snapshot."}
+	if op.PartialOnTimeout {
+		value["partial_on_timeout"] = true
+	}
 	if op.DefaultOwnerParam != "" {
 		value["default_owner_parameter"] = op.DefaultOwnerParam
 	}
@@ -675,6 +713,9 @@ func describe(op Operation) map[string]any {
 func validate(op Operation, params Params) error {
 	for _, name := range op.Required {
 		if _, ok := params[name]; !ok {
+			if source := op.Fields[name].Source; source != "" {
+				return fmt.Errorf("required parameter: %s (read it from %s)", name, source)
+			}
 			return fmt.Errorf("required parameter: %s", name)
 		}
 	}

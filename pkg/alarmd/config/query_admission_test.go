@@ -11,8 +11,13 @@ func TestExecutionGuardIsNotAnEnvironmentKnob(t *testing.T) {
 	for _, written := range []string{"0", "2", "17", "-1", "true", `"unlimited"`} {
 		text := validGoAccessRuntimeConfigYAML("admission-worker") +
 			"  scheduler:\n    active_execution_limit: " + written + "\n"
-		if _, err := LoadWithRoles(writeConfig(t, text), nil); err == nil {
-			t.Fatalf("written execution guard %s accepted", written)
+		loaded, err := LoadWithRoles(writeConfig(t, text), nil)
+		if err != nil {
+			t.Fatalf("written execution guard %s refused the load: %v", written, err)
+		}
+		requireIgnored(t, loaded.UnknownKeys, "active_execution_limit")
+		if derived := DeriveScheduler(DetectCapacityInputs()); loaded.PhaseTwo.Scheduler.ActiveExecutionLimit != derived.ActiveExecutionCeiling {
+			t.Fatalf("written execution guard %s was obeyed: %d", written, loaded.PhaseTwo.Scheduler.ActiveExecutionLimit)
 		}
 	}
 

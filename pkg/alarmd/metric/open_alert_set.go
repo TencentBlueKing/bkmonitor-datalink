@@ -44,7 +44,7 @@ type openAlertSetCollector struct {
 
 func newOpenAlertSetCollector() *openAlertSetCollector {
 	descriptor := func(name, help string, labels ...string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	return &openAlertSetCollector{
 		now: time.Now,

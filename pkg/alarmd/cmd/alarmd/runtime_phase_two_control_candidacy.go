@@ -6,9 +6,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
@@ -169,8 +174,14 @@ func preferredContentionAllowed(stable, leaseLive, fallbackReady bool) bool {
 // that comes more than the allowed gap after it starts every window again
 // rather than counting rounds nobody read as unbroken readiness.
 type controlHandbackWatch struct {
+	// mu guards the watch: the reconcile round writes it and the fleet
+	// record's publisher reads it, on another goroutine.
+	mu         sync.Mutex
 	readySince map[string]time.Time
 	observedAt time.Time
+	// resets counts the start-overs of this process's watch by reason, for
+	// the fleet record beside the counter.
+	resets map[string]uint64
 }
 
 func controlHandbackKey(instance ownership.InstanceRegistration) string {
@@ -182,6 +193,8 @@ func controlHandbackKey(instance ownership.InstanceRegistration) string {
 func (watch *controlHandbackWatch) observe(candidates []ownership.InstanceRegistration, self string, at time.Time,
 	window, maxGap time.Duration,
 ) (string, bool) {
+	watch.mu.Lock()
+	defer watch.mu.Unlock()
 	if !watch.observedAt.IsZero() && maxGap > 0 && at.Sub(watch.observedAt) > maxGap {
 		watch.readySince = nil
 	}
@@ -209,9 +222,74 @@ func (watch *controlHandbackWatch) observe(candidates []ownership.InstanceRegist
 	return "", false
 }
 
+// lapsed says whether this reading comes too long after the last one for a
+// window being counted to carry on, and how long it has been: observe will
+// start such a window again, and a watch with nothing counted loses nothing.
+func (watch *controlHandbackWatch) lapsed(at time.Time, maxGap time.Duration) (time.Duration, bool) {
+	watch.mu.Lock()
+	defer watch.mu.Unlock()
+	if len(watch.readySince) == 0 || watch.observedAt.IsZero() || maxGap <= 0 {
+		return 0, false
+	}
+	gap := at.Sub(watch.observedAt)
+	return gap, gap > maxGap
+}
+
+// noteReset tallies one start-over of the watch by reason.
+func (watch *controlHandbackWatch) noteReset(reason string) {
+	watch.mu.Lock()
+	defer watch.mu.Unlock()
+	if watch.resets == nil {
+		watch.resets = map[string]uint64{}
+	}
+	watch.resets[reason]++
+}
+
+// facts is the watch as the fleet record carries it: the candidates being
+// counted, earliest due first and at most fleet.MaxHandbackCandidates, the
+// last reading and the start-overs so far.
+func (watch *controlHandbackWatch) facts(window time.Duration) *fleet.HandbackFacts {
+	watch.mu.Lock()
+	defer watch.mu.Unlock()
+	facts := &fleet.HandbackFacts{WindowSeconds: int64(window / time.Second), Ready: []fleet.HandbackCandidate{},
+		Resets: map[string]uint64{}}
+	for _, reason := range metric.ControlHandbackWatchResetReasons {
+		facts.Resets[reason] = watch.resets[reason]
+	}
+	if !watch.observedAt.IsZero() {
+		at := watch.observedAt
+		facts.LastReadingAt = &at
+	}
+	for key, since := range watch.readySince {
+		instance, incarnation, _ := strings.Cut(key, "\x00")
+		facts.Ready = append(facts.Ready, fleet.HandbackCandidate{Instance: instance, Incarnation: incarnation,
+			ReadySince: since, DueAt: since.Add(window)})
+	}
+	sort.Slice(facts.Ready, func(i, j int) bool {
+		if !facts.Ready[i].DueAt.Equal(facts.Ready[j].DueAt) {
+			return facts.Ready[i].DueAt.Before(facts.Ready[j].DueAt)
+		}
+		return facts.Ready[i].Instance+facts.Ready[i].Incarnation < facts.Ready[j].Instance+facts.Ready[j].Incarnation
+	})
+	if len(facts.Ready) > fleet.MaxHandbackCandidates {
+		facts.Ready = facts.Ready[:fleet.MaxHandbackCandidates]
+	}
+	return facts
+}
+
+// noteHandbackWatchReset counts one start-over of the handback watch and
+// writes the line that says why.
+func (bundle *phaseTwoWorkerBundle) noteHandbackWatchReset(ctx context.Context, reason string, result observability.Result, err error) {
+	bundle.handback.noteReset(reason)
+	bundle.dependencies.Recorder.RecordControlHandbackWatchReset(reason)
+	bundle.observe(ctx, observability.ComponentControlPlane, observability.StageControlHandbackWatch, result, err)
+}
+
 // reset forgets every window: a round that could not read the candidates
 // knows of no unbroken readiness, and a new term starts watching afresh.
 func (watch *controlHandbackWatch) reset() {
+	watch.mu.Lock()
+	defer watch.mu.Unlock()
 	watch.readySince, watch.observedAt = nil, time.Time{}
 }
 
@@ -336,10 +414,17 @@ func (bundle *phaseTwoWorkerBundle) considerHandback(ctx context.Context) {
 	candidates, err := reader.ListPreferredControlCandidates(ctx, at)
 	if err != nil {
 		bundle.handback.reset()
+		bundle.noteHandbackWatchReset(ctx, metric.ControlHandbackWatchResetListFailed, observability.ResultFailed,
+			fmt.Errorf("read the preferred control candidates: %w", err))
 		return
 	}
+	maxGap := controlHandbackMaxGap(bundle.dependencies.Config)
+	if gap, lapsed := bundle.handback.lapsed(at, maxGap); lapsed {
+		bundle.noteHandbackWatchReset(ctx, metric.ControlHandbackWatchResetGap, observability.ResultDegraded,
+			fmt.Errorf("no candidate reading for %s, past the %s a handback watch may go without one", gap, maxGap))
+	}
 	successor, due := bundle.handback.observe(candidates, bundle.dependencies.Config.PhaseTwo.Worker.ID, at,
-		controlCandidacyWindow(bundle.dependencies.Config), controlHandbackMaxGap(bundle.dependencies.Config))
+		controlCandidacyWindow(bundle.dependencies.Config), maxGap)
 	if !due {
 		return
 	}

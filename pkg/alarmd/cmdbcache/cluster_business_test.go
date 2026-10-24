@@ -112,7 +112,7 @@ type failingHashClient struct {
 
 func (client *failingHashClient) HScan(ctx context.Context, key string, cursor uint64, match string, count int64) *redis.ScanCmd {
 	if err, failing := client.fail[key]; failing {
-		client.scans = append(client.scans, key)
+		client.noteScan(key)
 		return redis.NewScanCmdResult(nil, 0, err)
 	}
 	return client.hashClient.HScan(ctx, key, cursor, match, count)

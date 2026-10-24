@@ -27,7 +27,10 @@ import (
 // copy that never loaded is not a fault on its own -- the publisher may not
 // be deployed, which the mode says.
 type platformSettingsCollector struct {
-	mu          sync.Mutex
+	mu sync.Mutex
+	// offRole is a process none of whose roles keeps a copy of the platform
+	// settings: it says so (RoleNotApplicable) instead of emitting nothing.
+	offRole     bool
 	source      func() platformsettings.Stats
 	now         func() time.Time
 	mode        *prometheus.Desc
@@ -40,14 +43,15 @@ type platformSettingsCollector struct {
 
 func newPlatformSettingsCollector() *platformSettingsCollector {
 	descriptor := func(name, help string, labels ...string) *prometheus.Desc {
-		return prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, name), help, labels, nil)
+		return prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, name), help, labels, nil)
 	}
 	return &platformSettingsCollector{
 		now: time.Now,
 		mode: descriptor("platform_settings_mode",
 			"Which state the process copy of the platform's settings (host_disable_monitor_states, "+
 				"is_access_bk_data, bkdata_cmdb_level_tables, file_system_type_ignore) is in, 1 on the current one "+
-				"and 0 on the others; read each scrape from the copy's state. not_configured: the deployment "+
+				"and 0 on the others; read each scrape from the copy's state. off_role is a cell on every process: 1 on one "+
+				"with neither the control nor the worker role, which keeps no copy (the rest 0), else 0. not_configured: the deployment "+
 				"renders no distribution source, the copy answers from its own configuration and the platform's "+
 				"code defaults, which is what alarmd did before it could read the platform, and is not a fault. "+
 				"never_loaded: a source is configured and no read has found a publication since the process "+
@@ -93,9 +97,17 @@ func (c *platformSettingsCollector) Describe(ch chan<- *prometheus.Desc) {
 
 func (c *platformSettingsCollector) Collect(ch chan<- prometheus.Metric) {
 	c.mu.Lock()
-	source, now := c.source, c.now
+	source, now, offRole := c.source, c.now, c.offRole
 	c.mu.Unlock()
+	// Every process exposes the same cells, off_role among them: 1 on a
+	// process whose roles keep no copy, 0 on one that keeps it.
 	if source == nil {
+		if offRole {
+			for _, mode := range platformsettings.Modes {
+				ch <- prometheus.MustNewConstMetric(c.mode, prometheus.GaugeValue, 0, string(mode))
+			}
+			ch <- prometheus.MustNewConstMetric(c.mode, prometheus.GaugeValue, 1, RoleNotApplicable)
+		}
 		return
 	}
 	stats := source()
@@ -106,6 +118,7 @@ func (c *platformSettingsCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		ch <- prometheus.MustNewConstMetric(c.mode, prometheus.GaugeValue, value, string(mode))
 	}
+	ch <- prometheus.MustNewConstMetric(c.mode, prometheus.GaugeValue, 0, RoleNotApplicable)
 	if !stats.LoadedAt.IsZero() {
 		age := now().Sub(stats.LoadedAt).Seconds()
 		if age < 0 {

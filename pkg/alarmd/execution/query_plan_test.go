@@ -282,3 +282,29 @@ func validQueryPlanFacts() execution.QueryPlanFacts {
 		},
 	}
 }
+
+// A named output's reference name is at most 64 characters, the legacy
+// output's as much as the others, as the compiler refuses a longer one: a
+// plan of 64 builds, a plan of 65 is refused.
+func TestANamedOutputRefLongerThanTheCompilerAllowsIsRefused(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		legacy bool
+	}{{"the legacy output", true}, {"another output", false}} {
+		for length, wantErr := range map[int]bool{execution.MaxNamedOutputRefLength: false, execution.MaxNamedOutputRefLength + 1: true} {
+			ref := "r" + strings.Repeat("x", length-1)
+			facts := validQueryPlanFacts()
+			legacy, other := "a", ref
+			if testCase.legacy {
+				legacy, other = ref, "b"
+			}
+			facts.NamedOutputs = &execution.NamedOutputs{LegacyRef: legacy, Outputs: []execution.NamedOutput{
+				{Ref: legacy, Expression: facts.MetricMerge}, {Ref: other, Expression: "a * 2"},
+			}}
+			_, err := execution.BuildQueryPlanFacts(facts)
+			if (err != nil) != wantErr {
+				t.Errorf("%s, a %d-character name: error %v, want refused %t", testCase.name, length, err, wantErr)
+			}
+		}
+	}
+}

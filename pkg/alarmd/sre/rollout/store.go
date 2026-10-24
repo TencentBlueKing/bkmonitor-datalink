@@ -61,8 +61,11 @@ type Record struct {
 	Warnings  []string `json:"warnings,omitempty"`
 	SessionID string   `json:"session_id,omitempty"`
 	RequestID string   `json:"request_id,omitempty"`
-	StartedAt int64    `json:"started_at_ms"`
-	EndedAt   int64    `json:"ended_at_ms,omitempty"`
+	// Operator and IssuedVia are who asked, as the SRE receipt names them.
+	Operator  string `json:"operator,omitempty"`
+	IssuedVia string `json:"issued_via,omitempty"`
+	StartedAt int64  `json:"started_at_ms"`
+	EndedAt   int64  `json:"ended_at_ms,omitempty"`
 	// Generation is the Deployment generation the change (or, once
 	// reverting, the revert) was written at; the rollout is judged at it.
 	Generation int64 `json:"generation,omitempty"`

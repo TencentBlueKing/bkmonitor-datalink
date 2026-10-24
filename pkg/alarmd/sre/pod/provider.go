@@ -4,11 +4,19 @@
 package pod
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,15 +25,45 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/sre/redact"
 )
 
 type Provider struct {
 	options  Options
-	permits  chan struct{}
 	redactor *redactor
+	// keyMu guards the fingerprint key (fingerprintKey): the key, where it
+	// compares, and when the deployment's was last asked for.
+	keyMu    sync.Mutex
+	key      []byte
+	keyScope string
+	keyAsked time.Time
 	// shellless is the containers found without /bin/sh.
 	shellless shelllessMemo
 }
+
+// The provider's per-request bounds: how long one execution may run (what the
+// channel's two-minute operation ceiling leaves once the checks before and
+// after, the start and the termination grace are kept back), how much one answer may carry
+// (the channel sets it from the pod's memory; DefaultOutputBytes until it
+// does), how much stdin one execution takes, and how many targets one page
+// lists. There is no bound on how many requests run at once.
+const (
+	// ExecOperationCeiling is the channel's operation ceiling the whole run
+	// fits in (obchannel.MaxExecutionTimeout; a test keeps the two equal).
+	ExecOperationCeiling = 2 * time.Minute
+	// MaxExecTimeout is the command's share: 120 - (3 + 4 + 4 + 3) = 106 s.
+	// It was 110 s, and a command run that long had its termination record
+	// and final check cut by the operation's deadline (timeout audit D08).
+	MaxExecTimeout     = ExecOperationCeiling - (2*VerificationTimeout + StartupAllowance + TerminationGrace)
+	DefaultOutputBytes = 64 << 20
+	MaxOutputCeiling   = 256 << 20
+	MaxStdinBytes      = 1 << 20
+	MaxPodsPerPage     = 500
+	// MaxLogLines and MaxLogWindow bound how far back one log read scans.
+	MaxLogLines  = 100000
+	MaxLogWindow = 7 * 24 * time.Hour
+)
 
 // DefaultNamespace is the namespace a request that names none reads.
 func (p *Provider) DefaultNamespace() string { return p.options.DefaultNamespace }
@@ -34,7 +72,7 @@ func (p *Provider) DefaultNamespace() string { return p.options.DefaultNamespace
 func (p *Provider) ModuleLabel() string { return p.options.ModuleLabel }
 
 func (p *Provider) Limits() Limits {
-	return Limits{Concurrency: p.options.Concurrency, DefaultTimeoutMS: p.options.DefaultTimeout.Milliseconds(), MaxTimeoutMS: p.options.MaxTimeout.Milliseconds(), MaxOutputBytes: p.options.MaxOutputBytes, MaxStdinBytes: p.options.MaxStdinBytes, MaxPods: p.options.MaxPods}
+	return Limits{DefaultTimeoutMS: p.options.DefaultTimeout.Milliseconds(), MaxTimeoutMS: p.options.MaxTimeout.Milliseconds(), MaxOutputBytes: p.options.MaxOutputBytes, MaxStdinBytes: p.options.MaxStdinBytes, MaxPods: p.options.MaxPods}
 }
 
 func New(options Options) (*Provider, error) {
@@ -50,32 +88,108 @@ func New(options Options) (*Provider, error) {
 	if options.DefaultNamespace != "" && len(validation.IsDNS1123Label(options.DefaultNamespace)) != 0 {
 		return nil, invalid("default namespace is not a namespace name")
 	}
-	if options.Concurrency == 0 {
-		options.Concurrency = 1
-	}
 	if options.DefaultTimeout == 0 {
 		options.DefaultTimeout = 30 * time.Second
 	}
 	if options.MaxTimeout == 0 {
-		options.MaxTimeout = 30 * time.Second
+		options.MaxTimeout = MaxExecTimeout
 	}
 	if options.MaxOutputBytes == 0 {
-		options.MaxOutputBytes = 512 << 10
+		options.MaxOutputBytes = DefaultOutputBytes
 	}
 	if options.MaxStdinBytes == 0 {
-		options.MaxStdinBytes = 32 << 10
+		options.MaxStdinBytes = MaxStdinBytes
 	}
 	if options.MaxPods == 0 {
-		options.MaxPods = 32
+		options.MaxPods = MaxPodsPerPage
 	}
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	if options.Concurrency < 1 || options.Concurrency > 64 || options.DefaultTimeout <= 0 || options.DefaultTimeout > options.MaxTimeout || options.MaxTimeout > 30*time.Second || options.MaxOutputBytes < 1 || options.MaxOutputBytes > 512<<10 || options.MaxStdinBytes < 1 || options.MaxStdinBytes > 32<<10 || options.MaxPods < 1 || options.MaxPods > 128 {
+	if options.DefaultTimeout <= 0 || options.DefaultTimeout > options.MaxTimeout || options.MaxTimeout > MaxExecTimeout || options.MaxOutputBytes < 1 || options.MaxOutputBytes > MaxOutputCeiling || options.MaxStdinBytes < 1 || options.MaxStdinBytes > MaxStdinBytes || options.MaxPods < 1 || options.MaxPods > MaxPodsPerPage {
 		return nil, invalid("provider budgets exceed supported bounds")
 	}
 	options.LiteralSecrets = append([]string(nil), options.LiteralSecrets...)
-	return &Provider{options: options, permits: make(chan struct{}, options.Concurrency), redactor: newRedactor(options.LiteralSecrets)}, nil
+	options.FingerprintKey = append([]byte(nil), options.FingerprintKey...)
+	if len(options.FingerprintKey) > 0 && options.FingerprintScope == "" {
+		options.FingerprintScope = FingerprintScopeDeployment
+	}
+	return &Provider{options: options, redactor: newRedactor(options.LiteralSecrets)}, nil
+}
+
+// Where fingerprints compare (Options.FingerprintScope).
+const (
+	FingerprintScopeDeployment = "deployment"
+	FingerprintScopeProcess    = "process"
+)
+
+// fingerprintKeyRetry is how long a process that had to make its own key
+// waits before asking for the deployment's again: a runtime store that did
+// not answer at the first fingerprint is asked again, at most this often,
+// until it does.
+const fingerprintKeyRetry = time.Minute
+
+// fingerprintKey is the key fingerprints are made under and where they
+// compare: the configured key; else the deployment's, asked for at the first
+// fingerprint and again at most every fingerprintKeyRetry while it has not
+// come; else one this process made. The source is asked under the lock, so
+// a slow store holds fingerprinting back for one bounded read a minute.
+func (p *Provider) fingerprintKey() ([]byte, string) {
+	p.keyMu.Lock()
+	defer p.keyMu.Unlock()
+	if len(p.options.FingerprintKey) > 0 {
+		return p.options.FingerprintKey, p.options.FingerprintScope
+	}
+	if p.keyScope == FingerprintScopeDeployment {
+		return p.key, p.keyScope
+	}
+	if source := p.options.FingerprintKeySource; source != nil {
+		if now := p.options.Now(); p.keyAsked.IsZero() || now.Sub(p.keyAsked) >= fingerprintKeyRetry {
+			p.keyAsked = now
+			if key := source(); len(key) > 0 {
+				p.key, p.keyScope = key, FingerprintScopeDeployment
+				return p.key, p.keyScope
+			}
+		}
+	}
+	if len(p.key) == 0 {
+		p.key, p.keyScope = make([]byte, 32), FingerprintScopeProcess
+		_, _ = rand.Read(p.key)
+	}
+	return p.key, p.keyScope
+}
+
+// fingerprints is one answer's fingerprinting. It takes the key at the
+// answer's first fingerprint and keeps it, so every fingerprint in one answer
+// is made under one key and the scope the answer reports is that key's.
+type fingerprints struct {
+	p     *Provider
+	key   []byte
+	scope string
+}
+
+func (p *Provider) newFingerprints() *fingerprints { return &fingerprints{p: p} }
+
+func (f *fingerprints) take() {
+	if f.key == nil {
+		f.key, f.scope = f.p.fingerprintKey()
+	}
+}
+
+// Scope is where this answer's fingerprints compare.
+func (f *fingerprints) Scope() string {
+	f.take()
+	return f.scope
+}
+
+// sum is a value as it is shown when it may not be: HMAC-SHA256 under the
+// answer's key, the first 16 hex digits. It tells two equal values and a
+// changed one apart and gives nothing else.
+func (f *fingerprints) sum(value []byte) string {
+	f.take()
+	mac := hmac.New(sha256.New, f.key)
+	mac.Write(value)
+	return hex.EncodeToString(mac.Sum(nil))[:16]
 }
 
 func invalid(message string) error { return &Error{Code: CodeInvalidRequest, Message: message} }
@@ -97,19 +211,48 @@ func apiError(err error) error {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		code = CodeCanceled
 	}
-	return &Error{Code: code, Message: "Kubernetes evidence request did not succeed"}
+	return &Error{Code: code, Message: "Kubernetes evidence request did not succeed" + statusWords(err)}
 }
 
+// statusScrubber clears the common credential shapes from an apiserver's
+// words; maxStatusWords bounds them.
+var statusScrubber = redact.New()
+
+const maxStatusWords = 512
+
+// statusWords is an apiserver refusal's own reason and message, scrubbed and
+// bounded, so the reader is told why ("previous terminated container ... not
+// found"); an error that is no apiserver status adds nothing.
+func statusWords(err error) string {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return ""
+	}
+	words := strings.TrimSpace(status.Status().Message)
+	if reason := string(status.Status().Reason); reason != "" && words != "" {
+		words = reason + ": " + words
+	} else if reason != "" {
+		words = reason
+	}
+	if words == "" {
+		return ""
+	}
+	words = statusScrubber.Text(words)
+	if len(words) > maxStatusWords {
+		// Cut on a character boundary: a webhook's denial may be in Chinese.
+		words = strings.ToValidUTF8(words[:maxStatusWords], "") + "..."
+	}
+	return ": " + words
+}
+
+// acquire admits a call whose caller is still there. How many run at once
+// is the channel's admission, by the observation memory line; the provider
+// keeps no count of its own, which refused reads the channel had admitted.
 func (p *Provider) acquire(ctx context.Context) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, apiError(err)
 	}
-	select {
-	case p.permits <- struct{}{}:
-		return func() { <-p.permits }, nil
-	default:
-		return nil, &Error{Code: CodeBusy, Message: "diagnostic concurrency budget is occupied"}
-	}
+	return func() {}, nil
 }
 func (p *Provider) readContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, p.options.MaxTimeout)
@@ -173,9 +316,15 @@ func (p *Provider) Discover(ctx context.Context, request DiscoverRequest) (Disco
 	if len(pods.Items) > limit {
 		return result, &Error{Code: CodeAPIError, Message: "API ignored the discovery limit"}
 	}
+	// One discovery reads each owner once: replicas of a workload share
+	// their ReplicaSet and Deployment. Nothing is kept past the request.
+	owners := map[string]OwnerResource{}
 	for i := range pods.Items {
 		obj := &pods.Items[i]
-		observations, err := p.observe(ctx, obj, "")
+		if request.Workload != "" && !mayLeadTo(obj.OwnerReferences, request.Workload) {
+			continue
+		}
+		observations, err := p.observe(ctx, obj, "", owners)
 		if err != nil {
 			var failure *Error
 			if errors.As(err, &failure) && failure.Code == CodeNotInScope {
@@ -225,7 +374,7 @@ func (p *Provider) resolve(ctx context.Context, target Target, strict bool) (Obs
 	if err != nil {
 		return Observation{}, apiError(err)
 	}
-	observations, err := p.observe(ctx, obj, target.Container)
+	observations, err := p.observe(ctx, obj, target.Container, nil)
 	if err != nil {
 		return Observation{}, err
 	}
@@ -238,18 +387,33 @@ func (p *Provider) resolve(ctx context.Context, target Target, strict bool) (Obs
 
 // observe reads a Pod's containers with the owner chain verified against
 // the live resources. The release and module are the Pod's own labels.
-func (p *Provider) observe(ctx context.Context, obj *corev1.Pod, container string) ([]Observation, error) {
-	chain, _, err := p.ownerChain(ctx, obj)
+func (p *Provider) observe(ctx context.Context, obj *corev1.Pod, container string, owners map[string]OwnerResource) ([]Observation, error) {
+	chain, _, err := p.ownerChain(ctx, obj, owners)
 	if err != nil {
 		return nil, err
 	}
 	root := chain[len(chain)-1]
 	var observations []Observation
+	// Init containers are targets too, each with its own status: a stuck or
+	// failing init is read by its logs like any container.
+	type candidate struct {
+		spec     corev1.Container
+		statuses []corev1.ContainerStatus
+		init     bool
+	}
+	var candidates []candidate
 	for _, spec := range obj.Spec.Containers {
+		candidates = append(candidates, candidate{spec, obj.Status.ContainerStatuses, false})
+	}
+	for _, spec := range obj.Spec.InitContainers {
+		candidates = append(candidates, candidate{spec, obj.Status.InitContainerStatuses, true})
+	}
+	for _, each := range candidates {
+		spec := each.spec
 		if container != "" && container != spec.Name {
 			continue
 		}
-		observation := Observation{Target: Target{Namespace: obj.Namespace, Pod: obj.Name, UID: string(obj.UID), Container: spec.Name}, Release: obj.Labels[ReleaseLabel], Module: obj.Labels[p.options.ModuleLabel], Workload: root, OwnerChain: chain, Image: spec.Image, Phase: string(obj.Status.Phase), Conditions: []Condition{}, NodeName: obj.Spec.NodeName, ObservedAt: p.options.Now().UTC()}
+		observation := Observation{Init: each.init, Target: Target{Namespace: obj.Namespace, Pod: obj.Name, UID: string(obj.UID), Container: spec.Name}, Release: obj.Labels[ReleaseLabel], Module: obj.Labels[p.options.ModuleLabel], Workload: root, OwnerChain: chain, Image: spec.Image, Phase: string(obj.Status.Phase), Conditions: []Condition{}, NodeName: obj.Spec.NodeName, ObservedAt: p.options.Now().UTC()}
 		if obj.DeletionTimestamp != nil {
 			deletedAt := obj.DeletionTimestamp.Time.UTC()
 			observation.DeletionTimestamp = &deletedAt
@@ -260,7 +424,7 @@ func (p *Provider) observe(ctx context.Context, obj *corev1.Pod, container strin
 			}
 			observation.Conditions = append(observation.Conditions, Condition{Type: boundedStatus(string(condition.Type)), Status: string(condition.Status), Reason: boundedStatus(condition.Reason)})
 		}
-		for _, status := range obj.Status.ContainerStatuses {
+		for _, status := range each.statuses {
 			if status.Name == spec.Name {
 				observation.Target.ContainerID = status.ContainerID
 				observation.Target.ImageID = status.ImageID
@@ -278,7 +442,7 @@ func (p *Provider) observe(ctx context.Context, obj *corev1.Pod, container strin
 		observations = append(observations, observation)
 	}
 	if len(observations) == 0 {
-		return nil, denied("container is not a regular container of this pod")
+		return nil, denied("container is not a container or init container of this pod")
 	}
 	return observations, nil
 }
@@ -311,14 +475,30 @@ func controller(owners []metav1.OwnerReference) (metav1.OwnerReference, error) {
 func rootKind(kind string) bool {
 	return kind == "Deployment" || kind == "StatefulSet" || kind == "DaemonSet" || kind == "CronJob" || kind == "Job"
 }
-func (p *Provider) ownerChain(ctx context.Context, obj *corev1.Pod) ([]Workload, []map[string]string, error) {
-	owners := obj.OwnerReferences
+
+// mayLeadTo says whether a Pod's controller could have workload at the root
+// of its chain: a StatefulSet, DaemonSet, Job or bare ReplicaSet is the name
+// itself, a Deployment's ReplicaSet and a CronJob's Job are the name and a
+// dash. It only spares the owner reads of Pods that cannot match; those that
+// can are still checked through the whole chain.
+func mayLeadTo(owners []metav1.OwnerReference, workload string) bool {
+	ref, err := controller(owners)
+	if err != nil {
+		return true
+	}
+	return ref.Name == workload || strings.HasPrefix(ref.Name, workload+"-")
+}
+
+// ownerChain reads a Pod's owners up to its workload. owners, when not nil,
+// holds those this request has read already, by kind, name and UID.
+func (p *Provider) ownerChain(ctx context.Context, obj *corev1.Pod, owners map[string]OwnerResource) ([]Workload, []map[string]string, error) {
+	refs := obj.OwnerReferences
 	var chain []Workload
 	var ownerLabels []map[string]string
 	childKind := "Pod"
 	childLabels := obj.Labels
 	for depth := 0; depth < 3; depth++ {
-		ref, err := controller(owners)
+		ref, err := controller(refs)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -326,9 +506,16 @@ func (p *Provider) ownerChain(ctx context.Context, obj *corev1.Pod) ([]Workload,
 		if !valid {
 			return nil, nil, denied("unsupported workload owner chain")
 		}
-		owner, err := p.options.Client.GetOwner(ctx, obj.Namespace, ref)
-		if err != nil {
-			return nil, nil, apiError(err)
+		key := obj.Namespace + "/" + ref.APIVersion + "/" + ref.Kind + "/" + ref.Name + "/" + string(ref.UID)
+		owner, read := owners[key]
+		if !read {
+			owner, err = p.options.Client.GetOwner(ctx, obj.Namespace, ref)
+			if err != nil {
+				return nil, nil, apiError(err)
+			}
+			if owners != nil {
+				owners[key] = owner
+			}
 		}
 		if owner.Namespace != obj.Namespace || owner.Name != ref.Name || owner.Kind != ref.Kind || owner.UID != string(ref.UID) {
 			return nil, nil, denied("owner reference identity does not match the live resource")
@@ -347,7 +534,7 @@ func (p *Provider) ownerChain(ctx context.Context, obj *corev1.Pod) ([]Workload,
 		if rootKind(ref.Kind) && len(owner.Owners) == 0 {
 			return chain, ownerLabels, nil
 		}
-		owners = owner.Owners
+		refs = owner.Owners
 		childKind = owner.Kind
 		childLabels = owner.Labels
 	}
@@ -397,7 +584,9 @@ func (p *Provider) Logs(ctx context.Context, request LogsRequest) (LogsReceipt, 
 	if request.TailLines == 0 {
 		request.TailLines = 200
 	}
-	if request.TailLines < 1 || request.TailLines > 1000 || request.SinceSeconds < 0 || request.SinceSeconds > 86400 {
+	filtered := request.Contains != "" || !request.SinceTime.IsZero() || !request.UntilTime.IsZero()
+	if request.TailLines < 1 || request.TailLines > MaxLogLines || request.SinceSeconds < 0 || request.SinceSeconds > int64(MaxLogWindow/time.Second) ||
+		(request.SinceSeconds > 0 && !request.SinceTime.IsZero()) || (!request.UntilTime.IsZero() && request.UntilTime.Before(request.SinceTime)) {
 		return result, invalid("log window exceeds supported bounds")
 	}
 	limit, err := p.outputLimit(request.OutputBytes)
@@ -414,12 +603,28 @@ func (p *Provider) Logs(ctx context.Context, request LogsRequest) (LogsReceipt, 
 	if request.SinceSeconds > 0 {
 		options.SinceSeconds = &request.SinceSeconds
 	}
+	if filtered {
+		// The scan is bounded by its lines and the read's deadline, not by
+		// bytes: only the kept lines are held.
+		options.LimitBytes = nil
+		options.Timestamps = !request.UntilTime.IsZero()
+		if !request.SinceTime.IsZero() {
+			since := metav1.NewTime(request.SinceTime)
+			options.SinceTime = &since
+		}
+	}
 	stream, err := p.options.Client.OpenLogs(ctx, request.Target.Namespace, request.Target.Pod, options)
 	if err != nil {
 		return result, apiError(err)
 	}
 	defer stream.Close()
-	data, readErr := io.ReadAll(io.LimitReader(stream, limit+1))
+	var data []byte
+	var readErr error
+	if filtered {
+		data, result.ScannedLines, result.MatchedLines, readErr = scanLogs(stream, request, limit)
+	} else {
+		data, readErr = io.ReadAll(io.LimitReader(stream, limit+1))
+	}
 	result.Truncated = int64(len(data)) > limit
 	if result.Truncated {
 		data = data[:limit]
@@ -435,6 +640,48 @@ func (p *Provider) Logs(ctx context.Context, request LogsRequest) (LogsReceipt, 
 		return result, &Error{Code: CodeTargetChanged, Message: "target identity changed while logs were read"}
 	}
 	return result, nil
+}
+
+// scanLogs keeps the lines of a log stream that the request's filters let
+// through, one past limit bytes at most so the caller sees the cut; it says
+// how many lines it scanned and kept. With UntilTime the stream carries
+// each line's timestamp, which decides and is then dropped.
+func scanLogs(stream io.Reader, request LogsRequest, limit int64) ([]byte, int64, int64, error) {
+	reader := bufio.NewReaderSize(stream, 64<<10)
+	var kept bytes.Buffer
+	var scanned, matched int64
+	for {
+		line, err := reader.ReadString('\n')
+		if line != "" {
+			scanned++
+			text := line
+			keep := true
+			if !request.UntilTime.IsZero() {
+				stamp, rest, found := strings.Cut(text, " ")
+				at, parseErr := time.Parse(time.RFC3339Nano, stamp)
+				if found && parseErr == nil {
+					text = rest
+					keep = !at.After(request.UntilTime)
+				}
+			}
+			if keep && request.Contains != "" {
+				keep = strings.Contains(text, request.Contains)
+			}
+			if keep {
+				matched++
+				kept.WriteString(text)
+				if int64(kept.Len()) > limit {
+					return kept.Bytes(), scanned, matched, nil
+				}
+			}
+		}
+		if err == io.EOF {
+			return kept.Bytes(), scanned, matched, nil
+		}
+		if err != nil {
+			return kept.Bytes(), scanned, matched, err
+		}
+	}
 }
 
 // String keeps a formatted Provider to its two plain settings: printed with

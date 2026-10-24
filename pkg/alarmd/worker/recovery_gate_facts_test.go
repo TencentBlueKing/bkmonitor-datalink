@@ -54,3 +54,31 @@ func TestRecoveryGateFactsCarryEveryNonZeroCause(t *testing.T) {
 		t.Fatalf("facts for another Plan = %+v, want none", got)
 	}
 }
+
+// The evaluator's count of recoveries withheld on a zero reaches the observer
+// as one fact, for the Plan the observation is about, and none at zero.
+func TestRecoveryWithheldFactsCarryTheZeroCount(t *testing.T) {
+	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
+	due := execution.DuePlan{Identity: identity}
+	evaluated := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{
+		Plan: identity, LevelOutcomes: []execution.LevelOutcome{
+			{Outcome: execution.LevelOutcomeNormal, RecoveryWithheld: execution.RecoveryWithheldZeroCount},
+			{Outcome: execution.LevelOutcomeNormal},
+			{Outcome: execution.LevelOutcomeNormal, RecoveryWithheld: execution.RecoveryWithheldNoDataLastPointUnknown},
+			{Outcome: execution.LevelOutcomeNormal, RecoveryWithheld: execution.RecoveryWithheldZeroCount},
+		},
+	}}}
+	want := []observability.RecoveryWithheldFact{{Reason: observability.RecoveryWithheldZeroCount, Levels: 2},
+		{Reason: observability.RecoveryWithheldNoDataLastPointUnknown, Levels: 1}}
+	if got := recoveryWithheldFacts(due, evaluated); !reflect.DeepEqual(got, want) {
+		t.Fatalf("facts = %+v, want %+v", got, want)
+	}
+	other := execution.DuePlan{Identity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "8"}}
+	if got := recoveryWithheldFacts(other, evaluated); got != nil {
+		t.Fatalf("facts for another Plan = %+v, want none", got)
+	}
+	evaluated.Plans[0].LevelOutcomes = []execution.LevelOutcome{{Outcome: execution.LevelOutcomeRecovery}}
+	if got := recoveryWithheldFacts(due, evaluated); got != nil {
+		t.Fatalf("facts with nothing withheld = %+v, want none", got)
+	}
+}

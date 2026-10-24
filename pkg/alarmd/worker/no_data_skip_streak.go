@@ -129,8 +129,8 @@ func (stream *streamedExecution) noteNoDataStreak(ctx context.Context, due execu
 	}
 	stream.coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentEvaluation, Stage: observability.StageNoDataDecided,
-		Operation: observability.Operation(stream.request.Operation),
-		Direction: observability.DirectionInternal, Result: observability.ResultDegraded,
+		Operation:  observability.Operation(stream.request.Operation),
+		Result:     observability.ResultDegraded,
 		ReasonCode: observability.ReasonCode(outcome),
 		Trace: observability.TraceFields{
 			StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID,

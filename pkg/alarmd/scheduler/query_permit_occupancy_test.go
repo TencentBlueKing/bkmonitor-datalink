@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -237,12 +238,12 @@ func TestQueryPermitOccupancyCountsWhoHadToWait(t *testing.T) {
 	}()
 	// Wait for the third caller to be queued before freeing a permit, so the
 	// test is not racing the goroutine into an immediate grant.
-	deadlineAt := time.Now().Add(2 * time.Second)
+	deadlineAt := testwait.Deadline(t)
 	for flights.QueryPermitOccupancy().Acquires < 3 {
 		if time.Now().After(deadlineAt) {
 			t.Fatal("the third caller never reached the permit queue, so the branch under test did not run")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	held[0].Release()
 	if err := <-granted; err != nil {

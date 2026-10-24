@@ -20,6 +20,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // Use the publisher's literal keys rather than deriving fixtures from DBKey:
@@ -284,13 +285,13 @@ func startRedisServer(t *testing.T, _ string, address string) {
 func waitRedisReady(t *testing.T, client *redis.Client) {
 	t.Helper()
 	// The server answered before StartAt returned; what is left is this
-	// client's own connection, under the same bound.
-	deadline := time.Now().Add(redistest.ReadyWithin)
+	// client's own connection, bounded by the test's deadline.
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if err := client.Ping(context.Background()).Err(); err == nil {
 			return
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatal("redis-server did not become ready")
 }

@@ -3,6 +3,7 @@ package execution
 import (
 	"errors"
 	"fmt"
+	"regexp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
@@ -176,6 +177,68 @@ type QueryPlanFacts struct {
 	// the Query Group's identity. Omitted when false, so every other Plan's
 	// facts serialize exactly as they did.
 	GlobalBusiness bool `json:"GlobalBusiness,omitempty"`
+	// NamedOutputs asks the provider for named outputs beside the query's
+	// own value (UQ named_outputs/v1); nil for a strategy without
+	// query_output_config. A pointer, omitted when nil, so the facts of
+	// every other Plan serialize exactly as they did: a struct value would
+	// encode itself when empty and move every revision.
+	NamedOutputs *NamedOutputs `json:"NamedOutputs,omitempty"`
+}
+
+// NamedOutputsContract is the response contract named outputs are asked under.
+const NamedOutputsContract = "named_outputs/v1"
+
+// MaxNamedOutputs is the most named outputs one query may ask for: the
+// provider's own max_outputs and the platform's NAMED_OUTPUT_MAX_COUNT, both
+// 4 by default.
+const MaxNamedOutputs = 4
+
+// NamedOutputs are the outputs a query asks for, as the provider takes them.
+// LegacyRef names the output that is the query's own value - the one
+// detection reads - and its expression is the query's: the PromQL it runs,
+// or the structured query's metric_merge. Every other output is one of the
+// query's inputs: a full PromQL, or a query_list reference name.
+type NamedOutputs struct {
+	LegacyRef string
+	Outputs   []NamedOutput
+}
+
+// NamedOutput is one requested output.
+type NamedOutput struct {
+	Ref        string
+	Expression string
+}
+
+var namedOutputRefPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// MaxNamedOutputRefLength is the longest reference name a named output may
+// have, the legacy output's included: the compiler refuses a longer one,
+// and a plan that carries one is refused here as well.
+const MaxNamedOutputRefLength = 64
+
+func (outputs NamedOutputs) validate(facts QueryPlanFacts) error {
+	if len(outputs.Outputs) == 0 || len(outputs.Outputs) > MaxNamedOutputs {
+		return fmt.Errorf("alarmd execution: %d named outputs, want 1 to %d", len(outputs.Outputs), MaxNamedOutputs)
+	}
+	legacy := facts.MetricMerge
+	if facts.PromQL != nil {
+		legacy = facts.PromQL.Expression
+	}
+	seen := make(map[string]bool, len(outputs.Outputs))
+	for _, output := range outputs.Outputs {
+		if len(output.Ref) > MaxNamedOutputRefLength || !namedOutputRefPattern.MatchString(output.Ref) || seen[output.Ref] ||
+			output.Expression == "" {
+			return errors.New("alarmd execution: invalid or duplicate named output")
+		}
+		seen[output.Ref] = true
+		if output.Ref == outputs.LegacyRef && output.Expression != legacy {
+			return errors.New("alarmd execution: the legacy named output is not the query's own expression")
+		}
+	}
+	if !seen[outputs.LegacyRef] {
+		return errors.New("alarmd execution: the legacy named output is not among the outputs")
+	}
+	return nil
 }
 
 func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
@@ -206,6 +269,11 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 	}
 	if err := facts.Normalization.Validate(); err != nil {
 		return QueryPlanFacts{}, err
+	}
+	if facts.NamedOutputs != nil {
+		if err := facts.NamedOutputs.validate(facts); err != nil {
+			return QueryPlanFacts{}, err
+		}
 	}
 	for _, clause := range facts.QueryList {
 		if clause.Driver == "" || clause.TimeField == "" {
@@ -332,6 +400,21 @@ func (facts QueryPlanFacts) Validate() error {
 		return errors.New("alarmd execution: query revision does not match query plan facts")
 	}
 	return nil
+}
+
+// WithoutNamedOutputs is the same query asking for its own value alone: the
+// facts without NamedOutputs, under the revision they then have. The facts
+// themselves when they ask for none.
+func (facts QueryPlanFacts) WithoutNamedOutputs() (QueryPlanFacts, error) {
+	if facts.NamedOutputs == nil {
+		return facts, nil
+	}
+	if err := facts.Validate(); err != nil {
+		return QueryPlanFacts{}, err
+	}
+	facts.QueryRevision = ""
+	facts.NamedOutputs = nil
+	return BuildQueryPlanFacts(facts)
 }
 
 // WithMetricMerge derives an immutable logical query variant. It is used when

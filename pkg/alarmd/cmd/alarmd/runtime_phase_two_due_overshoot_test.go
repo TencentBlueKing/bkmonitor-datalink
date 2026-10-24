@@ -78,7 +78,7 @@ func TestTheOvershootIsObservedOnlyWhenTheIndexWasWrong(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, family := range families {
-			if family.GetName() != "bkmonitor_alarmd_due_index_audit_overshoot_seconds" {
+			if family.GetName() != "alarmd_due_index_audit_overshoot_seconds" {
 				continue
 			}
 			for _, series := range family.Metric {
@@ -97,7 +97,7 @@ func TestTheOvershootIsObservedOnlyWhenTheIndexWasWrong(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, family := range families {
-			if family.GetName() != "bkmonitor_alarmd_due_index_audit_overshoot_seconds" {
+			if family.GetName() != "alarmd_due_index_audit_overshoot_seconds" {
 				continue
 			}
 			for _, series := range family.Metric {

@@ -114,6 +114,29 @@ func TestAStrategyTheSnapshotListsIsNotACandidate(t *testing.T) {
 	}
 }
 
+// A strategy the snapshot lists and the publication refused for a capability
+// is a candidate as an absent one is, and its close names the capability; a
+// listed strategy refused for nothing is not; and a refused strategy the
+// snapshot no longer lists closes as gone.
+func TestAStrategyRefusedForACapabilityIsClosedAsNoLongerDetected(t *testing.T) {
+	refused, live, gone := key("10"), key("11"), key("12")
+	round := roundFor(set(refused, live, gone), ripe(refused, live, gone))
+	round.SnapshotStrategies[refused] = struct{}{}
+	round.SnapshotStrategies[live] = struct{}{}
+	round.Refused = map[string]string{"10": "QUERY_SOURCE_RETIRED", "12": "QUERY_SOURCE_RETIRED"}
+	result := Compute(round, testBounds())
+	closed := map[Key]string{}
+	for _, absent := range result.Close {
+		closed[absent.Key] = absent.Refused
+	}
+	if len(closed) != 2 || closed[refused] != "QUERY_SOURCE_RETIRED" || closed[gone] != "" {
+		t.Fatalf("closes = %+v, want the refused strategy closed naming its capability and the gone one closed as gone", result.Close)
+	}
+	if _, closedLive := closed[live]; closedLive || result.Counts.Candidates != 2 {
+		t.Fatalf("a listed strategy nothing refused was a candidate: %+v", result)
+	}
+}
+
 // Not read is not empty. The count is reported so that it is a reading.
 func TestAStrategyTheLinkCouldNotReadIsReportedNotClosed(t *testing.T) {
 	round := roundFor(set(), nil)

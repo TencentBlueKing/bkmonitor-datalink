@@ -97,6 +97,10 @@ type receiverState struct {
 	// switchedQueryGroups is the Worker's latest count of Query Groups it
 	// executes from the view, whether or not that reached switched.
 	switchedQueryGroups int
+	// departed is a receiver that left before it installed: out of the
+	// round's ready set with no stream. It is out of the counts and not
+	// lagging; its facts stay, and it is counted again if it comes back.
+	departed bool
 }
 
 type versionLedger struct {
@@ -111,8 +115,12 @@ type versionLedger struct {
 }
 
 func (ledger *versionLedger) counts() Counts {
-	counts := Counts{Expected: len(ledger.receivers)}
+	counts := Counts{}
 	for _, state := range ledger.receivers {
+		if state.departed {
+			continue
+		}
+		counts.Expected++
 		if state.sent {
 			counts.Sent++
 		}
@@ -151,8 +159,8 @@ func NewLedger(now func() time.Time) *Ledger {
 
 // Open starts following a version with the receivers the publication
 // expects and the digest each one's view has, frozen here: a Worker that
-// appears later is not added to this version's denominator and a Worker
-// that leaves is not removed from it. The version before the previous one,
+// appears later is not added to this version's denominator, and a Worker
+// that leaves stays in it until SetDeparted says it left before installing. The version before the previous one,
 // if still open, is closed as superseded and its Outcome returned for the
 // caller to log.
 func (ledger *Ledger) Open(version Key, digests map[string]string) []Outcome {
@@ -293,14 +301,59 @@ func (ledger *Ledger) record(receipt Receipt, objectsReported bool) Recorded {
 	if receipt.Installed && objectsReported {
 		state.objectsProbed, state.objectsMissing = receipt.ObjectsProbed, receipt.ObjectsMissing
 	}
-	recorded := Recorded{Attributed: true, Version: entry.version, Expected: len(entry.receivers)}
-	if entry.installedByAllAt.IsZero() {
-		if counts := entry.counts(); counts.Expected > 0 && counts.Installed == counts.Expected {
-			entry.installedByAllAt = ledger.now()
-			recorded.InstalledByAll, recorded.Elapsed = true, entry.installedByAllAt.Sub(entry.openedAt)
-		}
+	// A receiver that reports is there.
+	state.departed = false
+	recorded := ledger.settle(entry)
+	recorded.Attributed = true
+	return recorded
+}
+
+// settle records the moment every receiver still counted holds the
+// version, once: set, it stays, whoever comes back short of it later.
+func (ledger *Ledger) settle(entry *versionLedger) Recorded {
+	counts := entry.counts()
+	recorded := Recorded{Version: entry.version, Expected: counts.Expected}
+	if entry.installedByAllAt.IsZero() && counts.Expected > 0 && counts.Installed == counts.Expected {
+		entry.installedByAllAt = ledger.now()
+		recorded.InstalledByAll, recorded.Elapsed = true, entry.installedByAllAt.Sub(entry.openedAt)
 	}
 	return recorded
+}
+
+// SetDeparted takes which receivers have left -- out of the round's ready
+// set and with no stream, as the server sees it -- and marks those of the
+// current version that had not installed. One that installed before it
+// went stays counted: it did install. A receiver not named is counted
+// again. It returns what settling the version did, so the moment the
+// remaining receivers all hold it is reported like any other.
+func (ledger *Ledger) SetDeparted(gone func(worker string) bool) Recorded {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	if ledger.current == nil {
+		return Recorded{}
+	}
+	for worker, state := range ledger.current.receivers {
+		state.departed = gone(worker) && !(state.sent && state.acked && state.installed)
+	}
+	return ledger.settle(ledger.current)
+}
+
+// Departed lists the receivers of the current version that left before
+// installing it, sorted.
+func (ledger *Ledger) Departed() []LaggingReceiver {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	if ledger.current == nil {
+		return nil
+	}
+	var departed []LaggingReceiver
+	for worker, state := range ledger.current.receivers {
+		if state.departed {
+			departed = append(departed, LaggingReceiver{WorkerID: worker, Incarnation: state.incarnation, Failure: state.failure})
+		}
+	}
+	sort.Slice(departed, func(left, right int) bool { return departed[left].WorkerID < departed[right].WorkerID })
+	return departed
 }
 
 // countDigestMismatch counts a claim of a version of this term that names
@@ -391,6 +444,9 @@ func (ledger *Ledger) Lagging(stage string) []LaggingReceiver {
 	}
 	var lagging []LaggingReceiver
 	for worker, state := range ledger.current.receivers {
+		if state.departed {
+			continue
+		}
 		reached := map[string]bool{
 			"sent": state.sent, "acked": state.sent && state.acked,
 			"installed": state.sent && state.acked && state.installed,

@@ -14,12 +14,14 @@ import (
 
 // stopLikeAPod stops a process the way SIGTERM does: the run context goes
 // first, which ends the role runtime and its record, then the bundle drains
-// and releases what it holds.
+// and releases what it holds. The stop is what the case is about, not a
+// cleanup: a Shutdown that failed may have left its leases to run out by TTL,
+// and the rounds after it would read that instead of a release.
 func (fixture *electionFixture) stopLikeAPod(process *electionProcess) {
 	fixture.t.Helper()
 	_ = process.runtime.Close()
 	if err := process.bundle.Shutdown(context.Background()); err != nil {
-		fixture.t.Logf("%s Shutdown: %v", process.name, err)
+		fixture.t.Fatalf("%s Shutdown: %v", process.name, err)
 	}
 	process.alive = false
 }
@@ -37,7 +39,7 @@ func TestAWholeDeploymentRollingAtOnceElectsTheControlProcessInOneEpoch(t *testi
 	fixture := newElectionFixture(t, queryGroups, "alarmd:phase-two:election-cutover")
 	round := func() {
 		fixture.advance(5 * time.Second)
-		time.Sleep(1200 * time.Millisecond)
+		fixture.awaitRenewals()
 		fixture.tick()
 	}
 	old := fixture.open("cutover-old", roles.Set{roles.Control, roles.Worker}, true)
@@ -91,7 +93,7 @@ func TestAWholeDeploymentRollingAtOnceElectsTheControlProcessInOneEpoch(t *testi
 		t.Fatalf("fallback takeovers %v and handbacks %v over the cut-over, want none", takeovers, handbacks)
 	}
 	for _, worker := range workers {
-		if got := counterValue(t, worker.recorder, "bkmonitor_alarmd_control_leader_transitions_total",
+		if got := counterValue(t, worker.recorder, "alarmd_control_leader_transitions_total",
 			map[string]string{"to_class": "fallback", "reason": "fallback_takeover"}); got != 0 {
 			t.Fatalf("%s took the lease %v times", worker.name, got)
 		}

@@ -89,3 +89,26 @@ func TestOnlyADiagnosticReadKeepsTheErrorBody(t *testing.T) {
 		t.Fatalf("diagnostic %+v error %v, want the status beside the body's excerpt", result.Completion, err)
 	}
 }
+
+// A host a resolver or a certificate check names is not kept, port or no
+// port; a Go identifier of two labels is.
+func TestAnExcerptKeepsNoHostNameWithoutAPort(t *testing.T) {
+	for _, body := range []string{
+		"dial tcp: lookup query-svc.monitor.example.test on 192.0.2.53:53: no such host",
+		"x509: certificate is valid for other.example.test, not uq.example.test",
+	} {
+		excerpt := providerErrorExcerpt([]byte(body))
+		for _, host := range []string{"query-svc.monitor.example.test", "other.example.test", "uq.example.test", "192.0.2.53"} {
+			if strings.Contains(excerpt, host) {
+				t.Errorf("%q kept %q: %s", body, host, excerpt)
+			}
+		}
+		if !strings.Contains(excerpt, "<host>") {
+			t.Errorf("%q: no <host> in %s", body, excerpt)
+		}
+	}
+	if excerpt := providerErrorExcerpt([]byte("context.DeadlineExceeded from url.Error at step 1.2.3")); !strings.Contains(excerpt, "context.DeadlineExceeded") ||
+		!strings.Contains(excerpt, "url.Error") || !strings.Contains(excerpt, "1.2.3") {
+		t.Errorf("identifiers or numbers lost: %s", excerpt)
+	}
+}

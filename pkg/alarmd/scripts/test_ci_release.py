@@ -32,6 +32,10 @@ elif a[:2] == ['buildx', 'build']:
 elif a[:2] == ['image', 'inspect']:
     if a[-1] not in images: sys.exit(1)
     print('linux/amd64' if a[3] == '{{.Os}}/{{.Architecture}}' else images[a[-1]])
+elif a[:1] == ['run'] and a[-1] == '--check-cli-release':
+    if os.environ.get('BAD_CLI_RELEASE'): sys.exit(1)
+    version = os.environ.get('FAKE_CLI_VERSION', os.environ['FAKE_EXPECTED_VERSION'])
+    print(f"alarmd-cli release version={version} targets=darwin-arm64,darwin-x64,linux-arm64,linux-x64")
 elif a[:1] == ['run']:
     commit = '0'*40 if os.environ.get('BAD_VERSION') else '1'*40
     print(f"alarmd version={os.environ['FAKE_EXPECTED_VERSION']} commit={commit} schema_version={os.environ['FAKE_SCHEMA']}")
@@ -72,6 +76,10 @@ class ReleaseTest(unittest.TestCase):
         # 版本线与 schema 从真实文件抄，脚本对着它们校验。
         (module / "VERSION").write_text((MODULE / "VERSION").read_text())
         (module / "SCHEMA_VERSION").write_text((MODULE / "SCHEMA_VERSION").read_text())
+        # alarmd-cli 源码与模块同级，脚本把它作为具名构建上下文带进镜像构建。
+        self.cli_source = self.root / "alarmd-cli"
+        self.cli_source.mkdir()
+        (self.cli_source / "go.mod").write_text("module example.test/alarmd-cli\n")
         self.version_line = (MODULE / "VERSION").read_text().strip()
         major_minor = self.version_line[: self.version_line.rindex(".")]
         binary = self.root / "bin"
@@ -125,8 +133,22 @@ class ReleaseTest(unittest.TestCase):
         self.run_script("build")
         calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
         runs = [c for c in calls if c[:1] == ["run"]]
-        self.assertEqual(len(runs), 1)
-        self.assertEqual(runs[0][-1], "--version")
+        self.assertEqual([r[-1] for r in runs], ["--version", "--check-cli-release"])
+        build = next(c for c in calls if c[:2] == ["buildx", "build"])
+        self.assertIn(f"alarmd-cli={self.cli_source}", build[build.index("--build-context") + 1 :][:1])
+
+    def test_build_refuses_an_image_without_this_versions_cli_release(self):
+        self.run_script("build", success=False, BAD_CLI_RELEASE="1")
+        self.assertFalse((self.state / "built").exists())
+        result = self.run_script("build", success=False, FAKE_CLI_VERSION=f"{self.major_minor}.0-ci.122")
+        self.assertIn("alarmd-cli 发行物不匹配", result.stderr)
+        self.assertFalse((self.state / "built").exists())
+
+    def test_build_needs_the_cli_source_beside_the_module(self):
+        shutil.rmtree(self.cli_source)
+        result = self.run_script("build", success=False)
+        self.assertIn("找不到 alarmd-cli 源码", result.stderr)
+        self.assertNotIn('["buildx", "build"', (self.root / "calls").read_text())
 
     def test_source_tag_is_the_only_version_coordinate(self):
         # 按 tag 发布：只给 SOURCE_TAG，镜像 tag 就是去掉 pkg/alarmd/v 的那段，HEAD 必须是 tag 指向的提交

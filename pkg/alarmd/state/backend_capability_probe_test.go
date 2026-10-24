@@ -139,8 +139,13 @@ func TestTheSlotAppliedMarkStoreRefusesToOpenWithoutItsBackend(t *testing.T) {
 func TestEveryPointOfUseAssertionIsProbedAtOpen(t *testing.T) {
 	probed := map[string]bool{
 		"CompareAndSetBackend": true, "LifetimeBackend": true, "NoDataHashBackend": true, "SlotAppliedBackend": true,
+		"NoDataEndBackend": true,
 		// Optional by design: the sequential path is its fallback.
 		"FencedBatchBackend": true,
+		// Optional by design: without it the no-data load reads the memory
+		// alone and a manual close is refused as store_unavailable, so the
+		// gap is a named refusal at the caller, never a silent stop.
+		"NoDataManualCloseBackend": true,
 	}
 	// The names above are the ones backendHas maps to capabilities; a name
 	// added here without a backendHas branch would pass the scan and probe
@@ -148,6 +153,7 @@ func TestEveryPointOfUseAssertionIsProbedAtOpen(t *testing.T) {
 	for name, capability := range map[string]BackendCapability{
 		"CompareAndSetBackend": CapabilityCompareAndSet, "LifetimeBackend": CapabilityLifetime,
 		"NoDataHashBackend": CapabilityNoDataHash, "SlotAppliedBackend": CapabilitySlotApplied,
+		"NoDataEndBackend": CapabilityNoDataEnd,
 	} {
 		if backendHas(&readOnlyBackend{}, capability) {
 			t.Fatalf("backendHas says a read-only backend has %s (%s)", capability, name)
@@ -176,7 +182,7 @@ func TestEveryPointOfUseAssertionIsProbedAtOpen(t *testing.T) {
 			}
 		}
 	}
-	for _, required := range []string{"CompareAndSetBackend", "LifetimeBackend", "NoDataHashBackend", "SlotAppliedBackend"} {
+	for _, required := range []string{"CompareAndSetBackend", "LifetimeBackend", "NoDataHashBackend", "SlotAppliedBackend", "NoDataEndBackend"} {
 		if !seen[required] {
 			t.Errorf("no point of use asserts %s any more; drop it from the probe or the scan is stale", required)
 		}

@@ -34,6 +34,17 @@ type NoDataEmissionFacts struct {
 	LastRecovery *NoDataEmittedEvent
 }
 
+// NoDataManualCloseFacts is what the output's manual-close check did with one
+// Plan's batch before it went to the sink (decision-024): how many no-data
+// alerts it held back because a user closed their absence while the round
+// ran, or that the closes could not be read and the batch went on unchecked.
+// On its own line, never on the write's: a batch the check emptied is not a
+// write, and the write's line is read as one.
+type NoDataManualCloseFacts struct {
+	Dropped     uint32
+	CheckFailed bool
+}
+
 // NoDataEmittedEvent is one acknowledged no-data event as a reader looks it
 // up downstream: the Slot that decided it, the key its message was written
 // under -- the alert id under the standard protocol, the dedupe md5 of the

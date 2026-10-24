@@ -24,7 +24,7 @@ import (
 func TestOnlyACancellationOfTheCallersOwnContextReadsAsCancelledFromAbove(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	expired, stop := context.WithDeadline(context.Background(), time.Unix(1, 0))
+	expired, stop := context.WithDeadline(context.Background(), time.Unix(1, 0)) // fixed-wait: a deadline set in the past, the expired context the case reads
 	defer stop()
 	wrapped := fmt.Errorf("alarmd worker: query: %w", context.Canceled)
 	for _, tc := range []struct {

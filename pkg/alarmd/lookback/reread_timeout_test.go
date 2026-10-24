@@ -106,7 +106,7 @@ func TestADirectedGroupsReadsAreGivenWhatItsQueryHasTaken(t *testing.T) {
 	took := 20 * time.Second
 	readAt := f.earlyFirstRead(slot, took)
 
-	f.clock.set(f.engine.nextEarlyWake())
+	f.clock.set(f.engine.NextEarlyWake())
 	f.answers <- delivered(point(slot, "1"), dataset("h2", map[int64]string{slot - 60: "5"}))
 	f.engine.Step(context.Background())
 	f.waitFor(func(stats Stats) bool { return stats.Sources[sourceLog].EarlyReads[EarlyBeforeNext] == 1 })

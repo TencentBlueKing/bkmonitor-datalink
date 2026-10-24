@@ -36,8 +36,8 @@ func callerCounts(t *testing.T, r *Recorder, family string) map[string]float64 {
 }
 
 const (
-	callerOperationFamily = "bkmonitor_alarmd_redis_caller_operation_total"
-	callerReasonFamily    = "bkmonitor_alarmd_redis_caller_failure_reason_total"
+	callerOperationFamily = "alarmd_redis_caller_operation_total"
+	callerReasonFamily    = "alarmd_redis_caller_failure_reason_total"
 )
 
 // The diagnostics client's jobs each have their cells from startup, so a
@@ -170,7 +170,7 @@ func TestAFailureOnTheCallersSpentDeadlineIsNamedByTheDeadline(t *testing.T) {
 	cancelled, cancel := context.WithCancel(refresh)
 	cancel()
 	withTime := func(d time.Duration) context.Context {
-		ctx, cancel := context.WithTimeout(refresh, d)
+		ctx, cancel := context.WithTimeout(refresh, d) // fixed-wait: the caller's time left, which each call below sets
 		t.Cleanup(cancel)
 		return ctx
 	}
@@ -198,7 +198,7 @@ func TestAFailureOnTheCallersSpentDeadlineIsNamedByTheDeadline(t *testing.T) {
 		t.Errorf("the client's own reasons = %v, want the same naming", got)
 	}
 	var timed uint64
-	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_redis_command_duration_seconds") {
+	for _, m := range gatherFamily(t, r, "alarmd_redis_command_duration_seconds") {
 		labels := map[string]string{}
 		for _, label := range m.GetLabel() {
 			labels[label.GetName()] = label.GetValue()

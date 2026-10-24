@@ -26,14 +26,14 @@ type timelineRepairCollector struct {
 }
 
 func newTimelineRepairCollector() *timelineRepairCollector {
-	return &timelineRepairCollector{repairs: prometheus.NewDesc(prometheus.BuildFQName(metricNamespace, metricSubsystem, "timeline_repairs_total"),
+	return &timelineRepairCollector{repairs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "timeline_repairs_total"),
 		"Schedule timelines the Control Leader looked at because a Worker reported them unreadable or missing "+
 			"(SCHEDULE_UNREADABLE, SCHEDULE_MISSING), or because a cutover read bytes that did not decode, by what became "+
 			"of each. rewritten: still unreadable, "+
 			"rewritten as one Segment from the Leader's boundary on the content and the activation records the Query "+
 			"Group runs, marked so its Worker records the Slots lost with the old timeline (SCHEDULE_REPAIRED). "+
 			"decodes_again: the Leader decoded it and left it; a Worker's report outlives the rewrite until its next Slot "+
-			"runs, and a Worker of another build may report a timeline this one reads. conflict: the rewrite lost its "+
+			"runs. conflict: the rewrite lost its "+
 			"compare-and-set and wrote nothing; the report stands and the next round tries again. failed: the replacement "+
 			"could not be built; a line names the Query Group and why. other_schema: the bytes are a timeline of another "+
 			"schema version, written by a build that reads them, and left alone. reopened: the key was not there at all, "+
@@ -68,7 +68,7 @@ func (c *timelineRepairCollector) Collect(ch chan<- prometheus.Metric) {
 
 func newTimelineUnreadableReports() prometheus.Counter {
 	return prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "timeline_unreadable_reports_total",
+		Subsystem: metricSubsystem, Name: "timeline_unreadable_reports_total",
 		Help: "Owned Query Groups this replica began naming on its registration because a round met a Schedule timeline " +
 			"that does not decode or whose key is gone (SCHEDULE_UNREADABLE, SCHEDULE_MISSING): one per Query Group each " +
 			"time it goes from unnamed to named. " +

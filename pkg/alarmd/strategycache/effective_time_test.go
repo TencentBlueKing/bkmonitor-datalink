@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/go-redis/redis/v8"
 )
@@ -367,7 +368,7 @@ func TestARefreshWithNothingDueTakesNoWriteLock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("a refresh with nothing due waited for the write lock behind a reader")
 	}
 	if source.calls != 2 {

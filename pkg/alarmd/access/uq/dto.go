@@ -16,6 +16,20 @@ type request struct {
 	DownSampleRange string                              `json:"down_sample_range"`
 	Timezone        string                              `json:"timezone"`
 	NotTimeAlign    bool                                `json:"not_time_align"`
+	// The named-outputs request (UQ named_outputs/v1). All three are omitted
+	// for a query without NamedOutputs, so its body is byte for byte what it
+	// was.
+	ResponseContract string            `json:"response_contract,omitempty"`
+	LegacyOutputRef  string            `json:"legacy_output_ref,omitempty"`
+	OutputList       []outputListEntry `json:"output_list,omitempty"`
+}
+
+// outputListEntry is one output_list entry: on the structured path a
+// non-legacy output's expression is its query_list reference, on the PromQL
+// path a full PromQL; the legacy output's is the query's own expression.
+type outputListEntry struct {
+	ReferenceName string `json:"reference_name"`
+	Expression    string `json:"expression"`
 }
 
 type queryClause struct {

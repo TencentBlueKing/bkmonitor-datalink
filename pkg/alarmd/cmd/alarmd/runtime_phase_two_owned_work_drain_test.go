@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lookback"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
@@ -68,7 +69,7 @@ func supplementRefusedWithin(t *testing.T, supplement func(context.Context, look
 	select {
 	case outcome := <-got:
 		return outcome
-	case <-time.After(signalWaitBound):
+	case <-testwait.Expired(t):
 		t.Fatalf("%s ran instead of being refused", what)
 		return lookback.SupplementOutcome{}
 	}
@@ -82,9 +83,9 @@ func drainingNow(bundle *phaseTwoWorkerBundle) bool {
 
 func waitForRelease(t *testing.T, runner *fakePhaseTwoQueryGroup) int {
 	t.Helper()
-	deadline := time.Now().Add(signalWaitBound)
+	deadline := testwait.Deadline(t)
 	for runner.releaseCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	return runner.releaseCount()
 }
@@ -133,7 +134,7 @@ func TestAReassignedQueryGroupIsReleasedOnlyAfterItsSupplementReturns(t *testing
 	if calls := first.supplementCalls(); calls != 1 {
 		t.Fatalf("supplements run = %d, want only the one in flight", calls)
 	}
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // fixed-wait: the lease must not be released while the supplement sends; 100 ms is many release checks
 	if released := first.releaseCount(); released != 0 {
 		t.Fatalf("lease released %d time(s) while its supplement was still sending", released)
 	}
@@ -174,19 +175,19 @@ func TestAStopWaitsForTheSupplementMidSendBeforeReleasing(t *testing.T) {
 	waitSignal(t, first.started, "the supplement mid-send")
 
 	bound := 2*cfg.ShutdownTimeout.Duration() + 3*time.Second
-	stopCtx, cancel := context.WithTimeout(context.Background(), bound)
+	stopCtx, cancel := context.WithTimeout(context.Background(), bound) // fixed-wait: the shutdown bound under test, derived from the configured shutdown timeout
 	defer cancel()
 	stopped := make(chan error, 1)
 	began := time.Now()
 	go func() { stopped <- bundle.Shutdown(stopCtx) }()
-	deadline := time.Now().Add(signalWaitBound)
+	deadline := testwait.Deadline(t)
 	for !drainingNow(bundle) && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	if refused := supplementRefusedWithin(t, supplement, supplementJobFor(queryGroup), "a supplement while draining"); refused.Ran {
 		t.Fatalf("a supplement while draining = %+v, want it refused", refused)
 	}
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // fixed-wait: the lease must not be released while the supplement sends; 100 ms is many release checks
 	if released := first.releaseCount(); released != 0 {
 		t.Fatalf("lease released %d time(s) while its supplement was still sending", released)
 	}

@@ -119,7 +119,7 @@ func TestOrderedKeyGateCancelRemovesPendingReservation(t *testing.T) {
 
 func assertReservationBlocked(t *testing.T, reservation *KeyReservation) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond) // fixed-wait: a window in which the reservation must not acquire its key; an absence sends no signal to wait on
 	defer cancel()
 	if err := reservation.Wait(ctx); err == nil {
 		t.Fatal("reservation acquired a key before the earlier registered owner released it")

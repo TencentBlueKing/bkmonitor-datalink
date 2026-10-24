@@ -135,13 +135,8 @@ func (worker WorkerRegistration) Declines(queryGroup execution.QueryGroupIdentit
 }
 
 // MaxReportedUnreadableTimelines bounds the names a registration carries. A
-// fleet-wide decode failure - a rollout whose new timelines the old build
-// cannot read - would otherwise put every owned Query Group on every
-// heartbeat; the total still says how many.
-//
-// Retire when: the upstream snapshot after the one that adds this field is
-// merged, the rollout case above is gone; the bound stays for a decode
-// failure that spans a fleet for any other reason.
+// decode failure that spans a fleet would otherwise put every owned Query
+// Group on every heartbeat; the total still says how many.
 const MaxReportedUnreadableTimelines = 64
 
 // AppliedControlFacts says which version of each versioned control fact the
@@ -158,12 +153,12 @@ type AppliedControlFacts struct {
 // capacity its fleet snapshot already reports; it adds no measurement. It is
 // written for a scheduler that will weigh it later, and read by nothing yet.
 //
-// Placement must not read PermitBudget, or anything else here that the
-// worker re-derives while it runs: the query budget is sized from the work
-// the worker owns once a minute (config.DeriveSchedulerShape), so placing by
-// it would move work every time the budget followed the work, and the next
-// derivation would move it back. Only RetainedPoolBytes, which is fixed by
-// the container, is read (the cost ledger's byte constraint).
+// Placement reads only RetainedPoolBytes, which is fixed by the container
+// (the cost ledger's byte constraint). The query budget is the memory's share
+// and fixed too, but it says how much the worker may run at once, not how much
+// work it should be given; anything here the worker re-derives from the work
+// it owns (the queues, config.DeriveSchedulerShape) would move work every time
+// it followed the work, and the next derivation would move it back.
 type WorkerLoad struct {
 	OwnedQueryGroups int     `json:"owned_query_groups"`
 	PermitsHeld      int     `json:"permits_held"`

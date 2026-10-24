@@ -86,6 +86,14 @@ type persistedScheduleSegment struct {
 	Repair *execution.SegmentRepair `json:"repair,omitempty"`
 }
 
+// persistedScheduleTimeline is the stored shape every build of a deployment
+// reads: an unreadable timeline is read as corrupt bytes
+// (SCHEDULE_UNREADABLE) and rewritten by the Leader, never as another
+// build's. A change to this shape, its Segments, or the validation a decode
+// runs that an earlier build cannot read must bring its own rollout handling
+// - a new schema version an earlier Leader leaves alone (other_schema), or a
+// reading of the mixed fleet during the rollout - because nothing here tells
+// an earlier build's Worker from corrupt bytes.
 type persistedScheduleTimeline struct {
 	SchemaVersion  string                       `json:"schema_version"`
 	RecordRevision uint64                       `json:"record_revision"`
@@ -2550,6 +2558,10 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 	planByID map[execution.PlanIdentity]FrozenPlan,
 ) ([]execution.DataRequirement, error) {
 	byID := make(map[execution.RequirementID]*execution.DataRequirement)
+	// templateFacts is the query each template-bound primary reads, for the
+	// count words and the event lead the threshold path sets on its own
+	// primary (countPrimary).
+	templateFacts := make(map[execution.RequirementID]execution.QueryPlanFacts)
 	legacyDuePlans := make([]execution.DuePlan, 0, len(duePlans))
 	legacyLevels := make(map[execution.PlanIdentity]map[uint32]struct{}, len(duePlans))
 
@@ -2641,6 +2653,9 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 				return nil, errors.New("alarmd controlplane: frozen QueryPlanFacts differ from logical query reference")
 			}
 			templates[originalID] = rebuilt
+			if rebuilt.Role == execution.InputRolePrimary {
+				templateFacts[originalID] = facts
+			}
 		}
 
 		for identity, levelID := range expected {
@@ -2659,6 +2674,12 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 				copy := bound
 				byID[identity] = &copy
 			}
+		}
+	}
+
+	for identity, facts := range templateFacts {
+		if requirement := byID[identity]; requirement != nil {
+			countPrimary(requirement, facts, duePlans)
 		}
 	}
 
@@ -2749,6 +2770,12 @@ func (runtime *RedisCatalogRuntime) readPersistedSegment(
 // custom/event and nothing else: a log count is read as a time series, whose
 // empty answer does not recover, and every other source answers without
 // zero-filled groups to keep. Rounded up to a whole number of steps.
+//
+// A level written to end on no data (strategy.RecoveryPlan.MissingData)
+// ends on the round (R + T + 1) periods after the group's last event, and
+// only while the group is in the answer to say its count is zero, so that
+// round's range has to reach back to the event: R + T + 1 windows before it.
+// The window accepted is the same, so the trigger reads what it read.
 func eventCountProviderLeads(query execution.QueryPlanFacts, duePlans []execution.DuePlan) map[int64]int64 {
 	if !readsEventCountOnly(query) {
 		return nil
@@ -2757,15 +2784,62 @@ func eventCountProviderLeads(query execution.QueryPlanFacts, duePlans []executio
 	for _, due := range duePlans {
 		window := int64(due.CompiledPlan.EvaluationSemantics().QueryWindow)
 		for _, level := range due.CompiledPlan.Levels().All() {
-			histories = append(histories, levelHistory{window: window, points: int64(level.RequiredDetectHistoryPoints())})
+			histories = append(histories, levelHistory{window: window, points: eventLeadPoints(level)})
 		}
 	}
 	return providerLeads(query.StepMillis, histories)
 }
 
+// countPrimary gives a template-bound primary what the threshold path gives
+// its own (primaryRequirements): the count words, read off the query it
+// binds - UnfilledCounts, ZeroIsNoObservation - and, for an event count, the
+// provider lead its consumers' Levels need, from the template's own window.
+// Whichever algorithm a Level runs - a ring ratio, a comparison - a count is
+// read as a count: its zero ends no alert, and its quiet groups stay in the
+// answer until they can. The requirement's identity is the template's and is
+// not changed.
+func countPrimary(requirement *execution.DataRequirement, facts execution.QueryPlanFacts, duePlans []execution.DuePlan) {
+	requirement.UnfilledCounts = readsUnfilledCounts(facts)
+	requirement.ZeroIsNoObservation = readsZeroAsNoObservation(facts)
+	if !readsEventCountOnly(facts) || requirement.StepMillis <= 0 {
+		return
+	}
+	window := requirement.RelativeWindow.EndOffsetSeconds - requirement.RelativeWindow.StartOffsetSeconds
+	var histories []levelHistory
+	plans := make(map[execution.PlanIdentity]execution.DuePlan, len(duePlans))
+	for _, due := range duePlans {
+		plans[due.Identity] = due
+	}
+	for _, consumer := range requirement.Consumers {
+		due, found := plans[consumer.Consumer.Plan]
+		if !found {
+			continue
+		}
+		for _, level := range due.CompiledPlan.Levels().All() {
+			if level.Definition().LevelID != consumer.Consumer.LevelID {
+				continue
+			}
+			histories = append(histories, levelHistory{window: window, points: eventLeadPoints(level)})
+		}
+	}
+	requirement.ProviderLeadSeconds = providerLeads(requirement.StepMillis, histories)[window]
+}
+
 // levelHistory is one due Level's requirement window and the history points
 // its trigger reads back.
 type levelHistory struct{ window, points int64 }
+
+// eventLeadPoints is how many windows before the accepted one an event
+// count's range has to reach for one Level: the history its recovery reads
+// back, and for a Level written to end on no data, the R + T + 1 windows to
+// the group's last event on the round that ends it.
+func eventLeadPoints(level strategy.CompiledLevel) int64 {
+	points := int64(level.RequiredDetectHistoryPoints())
+	if recovery := level.Recovery(); recovery.MissingData == contract.RecoveryMissingDataEvaluateAsZero {
+		points = max(points, int64(recovery.ConsecutiveWindows)+int64(level.Trigger().WindowSize)+1)
+	}
+	return points
+}
 
 // readsEventCountOnly is whether a query reads custom/event and nothing else.
 func readsEventCountOnly(query execution.QueryPlanFacts) bool {
@@ -2787,6 +2861,66 @@ func providerLeads(stepMillis int64, histories []levelHistory) map[int64]int64 {
 		}
 	}
 	return leads
+}
+
+// readsZeroAsNoObservation is whether a query's count of zero is no
+// observation (DataRequirement.ZeroIsNoObservation): an event count, grouped
+// or not, or a log count whose clauses group by nothing.
+func readsZeroAsNoObservation(query execution.QueryPlanFacts) bool {
+	if readsEventCountOnly(query) {
+		return true
+	}
+	if !readsUnfilledCounts(query) {
+		return false
+	}
+	for _, clause := range query.QueryList {
+		if len(clause.Dimensions) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// readsUnfilledCounts is whether a query's one source answers counts its
+// provider does not zero-fill: a log count (bk_log_search/log, bk_monitor/log)
+// or a log time series aggregated by count or a count-like distinct
+// (bk_log_search/time_series), all read from an Elasticsearch date histogram
+// whose groups are absent rather than zero while they have no document. Its
+// range is not widened as an event count's is - the store already refuses
+// the largest log groups at one period - so its empty answer is labelled for
+// what it is instead. avg, sum, max and the rest keep their diagnosis.
+func readsUnfilledCounts(query execution.QueryPlanFacts) bool {
+	if len(query.SourceSemantics) != 1 {
+		return false
+	}
+	switch query.SourceSemantics[0] {
+	case "bk_log_search/log", "bk_monitor/log":
+		return true
+	case "bk_log_search/time_series":
+		return countsEveryClause(query.QueryList)
+	}
+	return false
+}
+
+// countsEveryClause is whether every clause of a query is aggregated by count
+// or a count-like distinct: count_over_time or distinct_over_time over time,
+// or count without time (compileAggregation).
+func countsEveryClause(clauses []execution.QueryClause) bool {
+	if len(clauses) == 0 {
+		return false
+	}
+	for _, clause := range clauses {
+		switch clause.TimeAggregation.Method {
+		case "count_over_time", "distinct_over_time":
+			continue
+		case "":
+			if len(clause.Functions) == 1 && clause.Functions[0].Method == "count" {
+				continue
+			}
+		}
+		return false
+	}
+	return true
 }
 
 // eventCountSourceSemantics is the source an event count reads.
@@ -2830,7 +2964,9 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(
 				return nil, err
 			}
 			requirement = &execution.DataRequirement{RequirementID: execution.RequirementID(identity), ProviderLeadSeconds: lead,
-				DatasetName: execution.DatasetName("primary:" + identity), Role: execution.InputRolePrimary,
+				UnfilledCounts:      readsUnfilledCounts(group.QueryPlan),
+				ZeroIsNoObservation: readsZeroAsNoObservation(group.QueryPlan),
+				DatasetName:         execution.DatasetName("primary:" + identity), Role: execution.InputRolePrimary,
 				LogicalQueryRef: execution.LogicalQueryRef(group.QueryPlan.QueryRevision),
 				RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -group.QueryPlan.QueryDelaySeconds - window, EndOffsetSeconds: -group.QueryPlan.QueryDelaySeconds, HalfOpen: true},
 				StepMillis:      group.QueryPlan.StepMillis, AlignmentMillis: group.QueryPlan.AlignmentMillis,

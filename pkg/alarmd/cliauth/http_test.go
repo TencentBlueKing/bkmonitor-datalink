@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 func noStoreManager(t *testing.T) *Manager {
@@ -124,18 +126,18 @@ func TestPreviewDoesNotCreateGrantOrUseRedis(t *testing.T) {
 func TestHTTPBudgetsAndMethodBoundaries(t *testing.T) {
 	client := startRedis(t)
 	m := newTestManager(t, client)
-	for i := 0; i < 6; i++ {
+	for i := 0; i < AuthEventsPerMinute; i++ {
 		issue(t, m)
 	}
-	if seventh := authRequest(m, http.MethodPost, grantsPath, `{"confirm":true}`, true); seventh.Code != 429 {
-		t.Fatalf("issuance budget status=%d", seventh.Code)
+	if past := authRequest(m, http.MethodPost, grantsPath, `{"confirm":true}`, true); past.Code != 429 {
+		t.Fatalf("issuance budget status=%d", past.Code)
 	}
-	if count := len(client.Keys(context.Background(), m.prefix+"grant:*").Val()); count != 6 {
+	if count := len(client.Keys(context.Background(), m.prefix+"grant:*").Val()); count != AuthEventsPerMinute {
 		t.Fatalf("issued %d grants", count)
 	}
 	m.now = func() time.Time { return time.Unix(61, 0) }
 	issue(t, m)
-	for i := 0; i < 60; i++ {
+	for i := 0; i < AuthEventsPerMinute; i++ {
 		response := authRequest(m, http.MethodPost, exchangePath, `{}`, false)
 		if response.Code != 401 {
 			t.Fatalf("exchange attempt %d status=%d", i, response.Code)
@@ -143,15 +145,6 @@ func TestHTTPBudgetsAndMethodBoundaries(t *testing.T) {
 	}
 	if response := authRequest(m, http.MethodPost, exchangePath, `{}`, false); response.Code != 429 {
 		t.Fatal("exchange budget not enforced")
-	}
-	for i := 0; i < cap(m.httpSlots); i++ {
-		m.httpSlots <- struct{}{}
-	}
-	if response := authRequest(m, http.MethodGet, grantsPath, "", true); response.Code != 429 {
-		t.Fatal("concurrency budget not enforced")
-	}
-	for i := 0; i < cap(m.httpSlots); i++ {
-		<-m.httpSlots
 	}
 	for _, path := range []string{grantsPath, exchangePath, sessionPath} {
 		if response := authRequest(m, http.MethodOptions, path, "", true); response.Code != 405 || response.Header().Get("Access-Control-Allow-Origin") != "" {
@@ -386,7 +379,8 @@ func TestSlowBodyReleasesHTTPAdmissionSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	// The answer the case waits for comes by the test's deadline or not at all.
+	if err := conn.SetDeadline(testwait.Deadline(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: example.test\r\nOrigin: https://example.test\r\nAuthorization: Bearer %s\r\nContent-Type: application/json\r\nContent-Length: 16\r\n\r\n{", grantsPath, testAdminKey)
@@ -402,42 +396,8 @@ func TestSlowBodyReleasesHTTPAdmissionSlot(t *testing.T) {
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("slow body status=%d", response.StatusCode)
 	}
-	if len(m.httpSlots) != 0 {
-		t.Fatal("slow body retained an authorization slot")
-	}
 }
 
-func TestSaturatedHandlerDoesNotWaitForRejectedBody(t *testing.T) {
-	m := noStoreManager(t)
-	for i := 0; i < cap(m.httpSlots); i++ {
-		m.httpSlots <- struct{}{}
-	}
-	server := httptest.NewServer(m.Handler())
-	defer server.Close()
-	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	_, err = fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: example.test\r\nContent-Length: 16\r\n\r\n{", grantsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
-	if err != nil {
-		t.Fatalf("busy handler waited for body: %v", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("busy status=%d", response.StatusCode)
-	}
-}
-
-// Only the Authorization header carries the administrator key; the key is
-// never echoed back.
 func TestTheGrantPreviewNeedsTheAdministratorKeyAndNeverEchoesIt(t *testing.T) {
 	m := noStoreManager(t)
 	for _, authenticated := range []bool{false, true} {

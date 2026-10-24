@@ -44,7 +44,7 @@ func TestAWorkerConnectsWithinAReconnectMinOfANewLeaderTerm(t *testing.T) {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
-				case <-time.After(time.Millisecond):
+				case <-time.After(time.Millisecond): // fixed-wait: the stub Sleep's real pause for each wait the client asks; the case's clock moves by the wait asked, not by this
 				}
 				clock.Add(wait.Milliseconds())
 				return nil

@@ -31,7 +31,7 @@ import (
 func TestControlCachePublishesOnlyResultsSomethingCanProduce(t *testing.T) {
 	gathered := gatherControlCache(t, []ControlCacheCounts{{Object: "version"}})
 	published := map[string]bool{}
-	for key := range gathered["bkmonitor_alarmd_control_cache_total"] {
+	for key := range gathered["alarmd_control_cache_total"] {
 		parts := strings.Split(key, "/")
 		published[parts[len(parts)-1]] = true
 	}
@@ -92,7 +92,7 @@ func TestControlCachePublishesOccupancyBesideItsBudget(t *testing.T) {
 		{Object: "timeline", Hits: 497, Misses: 340, Refreshes: 0, Evictions: 12,
 			Occupancy: &ControlCacheOccupancy{Entries: 931, Bytes: 160 << 20, BytesLimit: 512 << 20}},
 	})
-	outcomes := gathered["bkmonitor_alarmd_control_cache_total"]
+	outcomes := gathered["alarmd_control_cache_total"]
 	for key, want := range map[string]float64{
 		"timeline/hit": 497, "timeline/miss": 340, "timeline/refresh": 0, "timeline/evict": 12,
 		"version/hit": 5, "version/miss": 1, "version/evict": 0,
@@ -102,9 +102,9 @@ func TestControlCachePublishesOccupancyBesideItsBudget(t *testing.T) {
 		}
 	}
 	for name, want := range map[string]float64{
-		"bkmonitor_alarmd_control_cache_entries":     931,
-		"bkmonitor_alarmd_control_cache_bytes":       160 << 20,
-		"bkmonitor_alarmd_control_cache_bytes_limit": 512 << 20,
+		"alarmd_control_cache_entries":     931,
+		"alarmd_control_cache_bytes":       160 << 20,
+		"alarmd_control_cache_bytes_limit": 512 << 20,
 	} {
 		if got, ok := gathered[name]["timeline"]; !ok || got != want {
 			t.Fatalf("%s{object=timeline} = %v (present=%v), want %v", name, got, ok, want)

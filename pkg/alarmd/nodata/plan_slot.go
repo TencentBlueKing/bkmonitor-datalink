@@ -56,6 +56,12 @@ type PlanSlotInput struct {
 	// decides what the effective horizon is, and the two would disagree the
 	// moment either changed.
 	TrackingHorizonSeconds int64
+	// MaxGroups is the Plan's own bound on its memory's groups, frozen by
+	// compilation from the item's max_groups, zero for the deployment's.
+	// Forwarded to the store, which is where the bound is checked.
+	MaxGroups uint32
+	// ManualCloses is SlotInput.ManualCloses, forwarded.
+	ManualCloses *ManualCloses
 }
 
 // PlanSlotResult is everything the worker needs from one Plan's no-data round.
@@ -112,6 +118,7 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 		// derive it from.
 		TrackingHorizonSeconds: input.TrackingHorizonSeconds,
 		TrackingExhaustedAt:    input.Snapshot.TrackingExhaustedAt,
+		ManualCloses:           input.ManualCloses,
 	})
 	if err != nil {
 		return PlanSlotResult{}, err
@@ -161,7 +168,8 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 		return slot, nil
 	}
 	mutation, err := execution.BuildPlanNoDataMutation(execution.PlanNoDataMemoryUpdate{
-		Identity: input.Identity,
+		Identity:   input.Identity,
+		GroupLimit: input.MaxGroups,
 		// Which record the revision and the loaded groups below came out of:
 		// a statement derived from no record replaces the whole record rather
 		// than claiming to be a delta against one.

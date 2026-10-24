@@ -25,7 +25,7 @@ func TestTheReasonsTheSetsCouldNotAnswerAreScrapedEachAtZero(t *testing.T) {
 	r.SetOpenAlertSetSource(func() openalerts.Stats { return stats })
 	read := func() map[string]float64 {
 		reasons := map[string]float64{}
-		for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_unavailable_total") {
+		for _, m := range gatherFamily(t, r, "alarmd_open_alert_set_unavailable_total") {
 			reasons[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 		}
 		return reasons

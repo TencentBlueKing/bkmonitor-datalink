@@ -23,9 +23,11 @@ type alwaysEffectiveTimeTarget struct {
 	series   execution.SeriesIdentityDigest
 }
 
-// PrepareEffectiveTimeFacts runs once per Plan/Slot, before binding real series.
+// PrepareEffectiveTimeFacts runs once per Plan/Slot, before binding real series,
+// judging every Level's effective time at the wall clock at (Unix seconds):
+// the decision's, not the Slot's evaluation time (InternalExecutionHeader.DecisionTime).
 // legacy is consulted only by Plans without a complete frozen snapshot.
-func PrepareEffectiveTimeFacts(ctx context.Context, header execution.InternalExecutionHeader, legacy strategy.EffectiveTimeProvider) (map[execution.ConsumerRef]strategy.EffectiveTimeFact, error) {
+func PrepareEffectiveTimeFacts(ctx context.Context, header execution.InternalExecutionHeader, legacy strategy.EffectiveTimeProvider, at int64) (map[execution.ConsumerRef]strategy.EffectiveTimeFact, error) {
 	facts := make(map[execution.ConsumerRef]strategy.EffectiveTimeFact)
 	for _, due := range header.DuePlans {
 		if due.CompiledPlan == nil {
@@ -37,7 +39,7 @@ func PrepareEffectiveTimeFacts(ctx context.Context, header execution.InternalExe
 			fact, ok := byRequirement[requirement.Digest()]
 			if !ok {
 				var err error
-				fact, err = due.CompiledPlan.ResolveEffectiveTimeRequirement(ctx, strategy.EffectiveTimeRequest{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, EvaluationTime: int64(header.Contract.Slot.EvaluationTime), Requirement: requirement}, legacy)
+				fact, err = due.CompiledPlan.ResolveEffectiveTimeRequirement(ctx, strategy.EffectiveTimeRequest{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, EvaluationTime: at, Requirement: requirement}, legacy)
 				if err != nil {
 					return nil, err
 				}
@@ -47,6 +49,18 @@ func PrepareEffectiveTimeFacts(ctx context.Context, header execution.InternalExe
 		}
 	}
 	return facts, nil
+}
+
+// effectiveFactsHoldAt says every prepared fact is valid at at: judged for an
+// interval that contains it. A fact whose interval at has left - its window
+// boundary crossed between preparing and deciding - has to be judged again.
+func effectiveFactsHoldAt(prepared map[execution.ConsumerRef]strategy.EffectiveTimeFact, at int64) bool {
+	for _, fact := range prepared {
+		if fact.ValidFrom() > at || fact.ValidUntil() <= at {
+			return false
+		}
+	}
+	return true
 }
 
 // bindAlwaysEffectiveTimeFacts binds the facts prepared once per Slot only

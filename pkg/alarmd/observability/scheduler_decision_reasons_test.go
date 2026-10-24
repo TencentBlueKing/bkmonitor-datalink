@@ -69,13 +69,13 @@ func TestTheRangeGateLineWritesItsWordInBothPlaces(t *testing.T) {
 	observer := NewLoggingObserver(New("alarmd", &output), policy)
 	observer.Observe(context.Background(), Observation{
 		Component: ComponentScheduler, Stage: StageRangeGateDecided, Result: ResultDegraded,
-		ReasonCode: ReasonCode(RangeGateStepsBelowOne), Direction: DirectionInternal,
-		Trace:     TraceFields{QueryGroupKey: "qg-a"},
-		RangeGate: &RangeGateFacts{Outcome: RangeGateStepsBelowOne, BoundsKnown: true, DeadlineBound: 2},
+		ReasonCode: ReasonCode(RangeGateStepsBelowOne),
+		Trace:      TraceFields{QueryGroupKey: "qg-a"},
+		RangeGate:  &RangeGateFacts{Outcome: RangeGateStepsBelowOne, BoundsKnown: true, DeadlineBound: 2},
 	})
 	observer.Observe(context.Background(), Observation{
 		Component: ComponentScheduler, Stage: StageReplayExpired, Result: ResultDegraded,
-		ReasonCode: ReasonCode(ReplayExpiryReasons[1]), Direction: DirectionInternal,
+		ReasonCode:   ReasonCode(ReplayExpiryReasons[1]),
 		Trace:        TraceFields{QueryGroupKey: "qg-a"},
 		ReplayExpiry: &ReplayExpiryFacts{Reason: ReplayExpiryReasons[1], Distance: 7},
 	})

@@ -47,23 +47,23 @@ import (
 // rather than as a name the process does not have.
 
 // MetricNamePattern is the names metrics.get accepts: alarmd's own families.
-var MetricNamePattern = regexp.MustCompile(`^bkmonitor_alarmd_[a-z0-9_]+$`)
+var MetricNamePattern = regexp.MustCompile(`^alarmd_[a-z0-9_]+$`)
 
 // MaxMetricNames bounds one read's names, MaxMetricSeries each family's
 // series and MaxMetricLabelFilters the label filter.
 const (
-	// MaxListedPageBytes bounds one metrics.list page: its families as they
-	// are encoded, which is what the bound is for. A count would be a guess
-	// at it that a longer help or a growing registry outruns; the families
-	// past one page are on the next, from next_cursor. MaxListedHelpBytes
-	// bounds each family's help text in it.
-	MaxListedPageBytes = 256 << 10
 	MaxListedHelpBytes = 320
 
-	MaxMetricNames        = 20
-	MaxMetricSeries       = 500
+	MaxMetricNames        = 200
+	MaxMetricSeries       = 5000
 	MaxMetricLabelFilters = 8
 )
+
+// MaxListedPageBytes bounds one metrics.list page: its families as they are
+// encoded, which is what the bound is for. A count would be a guess at it
+// that a longer help or a growing registry outruns; the families past one
+// page are on the next, from next_cursor. A test lowers it.
+var MaxListedPageBytes = 8 << 20
 
 // MetricSeries is one series: its labels and its value, or for a histogram
 // its cumulative buckets, count and sum.
@@ -137,7 +137,7 @@ func MetricsOperations(gatherer prometheus.Gatherer) []Operation {
 	filter := Field{Type: "string", Pattern: `^[a-zA-Z_][a-zA-Z0-9_]*=.{0,256}$`, MinLength: 2, MaxLength: 320}
 	fields := map[string]Field{
 		"names": {Type: "array", Items: &one, MaxItems: MaxMetricNames, UniqueItems: true,
-			Description: "指标族全名，含 bkmonitor_alarmd_ 前缀，从 metrics.list 抄，不自行拼写。", Source: "metrics.list families[].name"},
+			Description: "指标族全名，含 alarmd_ 前缀，从 metrics.list 抄，不自行拼写。", Source: "metrics.list families[].name"},
 		"labels": {Type: "array", Items: &filter, MaxItems: MaxMetricLabelFilters, UniqueItems: true,
 			Description: "可选：按标签精确匹配筛选序列，每项写成 name=value，只保留每项都相等的序列。"},
 	}
@@ -198,7 +198,7 @@ func MetricsOperations(gatherer prometheus.Gatherer) []Operation {
 		Required:      []string{"names"},
 		Limits:        map[string]any{"names": MaxMetricNames, "series_per_family": MaxMetricSeries, "label_filters": MaxMetricLabelFilters, "scope": "answering_replica"},
 		OutputSchema:  SchemaOf(MetricsResult{}),
-		Examples:      []Params{{"names": []any{"bkmonitor_alarmd_source_refresh_total"}}, {"names": []any{"bkmonitor_alarmd_source_refresh_total"}, "control_leader": true}},
+		Examples:      []Params{{"names": []any{"alarmd_source_refresh_total"}}, {"names": []any{"alarmd_source_refresh_total"}, "control_leader": true}},
 		Availability:  available,
 		Validate: func(p Params) error {
 			names, _ := p["names"].([]any)

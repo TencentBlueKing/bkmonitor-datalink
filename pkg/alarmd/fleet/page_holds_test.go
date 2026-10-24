@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 // heldLine is a memory line that says what is held now, how many holds it
@@ -157,14 +159,11 @@ func TestASharedReadHoldsUntilItsLastUserLetsGo(t *testing.T) {
 	go func() { answers <- reads.do(first, "k", read, gone) }()
 	<-started
 	go func() { answers <- reads.do(second, "k", read, gone) }()
-	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+	testwait.Until(t, "both requests on the one read in flight", func() bool {
 		reads.mu.Lock()
-		joined := reads.flights["k"] != nil && reads.flights["k"].waiters == 2
-		reads.mu.Unlock()
-		if joined {
-			break
-		}
-	}
+		defer reads.mu.Unlock()
+		return reads.flights["k"] != nil && reads.flights["k"].waiters == 2
+	})
 	close(finish)
 	<-answers
 	<-answers
@@ -191,7 +190,7 @@ func TestASharedReadHoldsUntilItsLastUserLetsGo(t *testing.T) {
 		t.Fatalf("the caller that left got %v", answer.err)
 	}
 	close(finish)
-	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+	for deadline := testwait.Deadline(t); time.Now().Before(deadline); time.Sleep(time.Millisecond) { // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 		if held, _ := line.reading(); held == 0 {
 			return
 		}
@@ -295,20 +294,22 @@ func TestARequestWaitingOnAReadThatPanicsIsAnswered(t *testing.T) {
 	}()
 	<-reading
 	waited := make(chan *diagnosisEntry, 1)
+	// It calls Done first as it waits on the entry being read.
+	waiting := &doneWatch{Context: context.Background()}
 	go func() {
-		entry, _ := cache.get(context.Background(), "d-1", now, func(context.Context) *diagnosisEntry {
+		entry, _ := cache.get(waiting, "d-1", now, func(context.Context) *diagnosisEntry {
 			return &diagnosisEntry{readError: "a second read"}
 		})
 		waited <- entry
 	}()
-	time.Sleep(100 * time.Millisecond)
+	testwait.Until(t, "the second request waiting on the read in progress", func() bool { return waiting.calls.Load() > 0 })
 	close(fail)
 	select {
 	case entry := <-waited:
 		if entry.readError != "a second read" {
 			t.Fatalf("the waiting request got %q, want its own read after the failed one", entry.readError)
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the request waiting on a read that panicked was never answered")
 	}
 }

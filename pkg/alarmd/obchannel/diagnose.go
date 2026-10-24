@@ -16,6 +16,10 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 )
 
 // The environment diagnosis over the channel: the strategy pages come from
@@ -81,10 +85,21 @@ func DiagnoseOperation(native http.Handler, existing []Operation) Operation {
 	cursor := Field{Type: "string", MinLength: 1, MaxLength: 512, Pattern: "^[A-Za-z0-9_-]+$",
 		Description: "上一页返回的 next_cursor，原样传回；首页省略。", Source: "diagnose.environment next_cursor"}
 	var minRows, maxRows int64 = 1, 2000
+	// The operation's time is the sum of its parts' own: the diagnosis read,
+	// then the deployment parts, which run side by side, each under its own
+	// operation's time. It ran under the channel's 3 s default, which the
+	// parts alone exceed, and a slow part dropped the whole page.
+	parts := RequestTimeout // the health read, a native read with the channel's default
+	for _, id := range []string{"k8s.pods", "store.info"} {
+		if op, ok := byID[id]; ok {
+			parts = max(parts, partTimeout(op))
+		}
+	}
 	return Operation{
-		ID:            "diagnose.environment",
-		Summary:       "对环境做一次全量诊断：以策略缓存的活动集为全集，每条策略一行结论，首页附部署层；按页自证覆盖，跨页汇总由 CLI 核对。",
-		EvidenceScope: "deployment",
+		ID:               "diagnose.environment",
+		ExecutionTimeout: fleet.DiagnosisReadTimeout + parts,
+		Summary:          "对环境做一次全量诊断：以策略缓存的活动集为全集，每条策略一行结论，首页附部署层；按页自证覆盖，跨页汇总由 CLI 核对。",
+		EvidenceScope:    "deployment",
 		Fields: map[string]Field{
 			"cursor": cursor,
 			"limit":  {Type: "integer", Minimum: &minRows, Maximum: &maxRows, Description: "本页最多行数；默认 2000，实际按 1 MiB 字节上限截断。"},
@@ -141,26 +156,39 @@ func diagnosisPageSummary(page map[string]any) string {
 	return fmt.Sprintf("全集 %v 条；本页应覆盖 %v 条、写出 %v 条", universe["count"], body["ids_expected"], body["rows"])
 }
 
-// deploymentSection reads the deployment through the existing reads. Every
-// part is present: read, or unreadable with the reason.
+// deploymentSection reads the deployment through the existing reads, side
+// by side, each under its own time. Every part is present: read, or
+// unreadable with the reason, and a part that runs out of time is that
+// part's finding, not the page's.
 func deploymentSection(ctx context.Context, native http.Handler, ops map[string]Operation) map[string]any {
 	section := map[string]any{}
-	findings := []DeploymentFinding{}
-	health := invokeNative(ctx, native, "/api/health", url.Values{})
-	if health.Error != nil {
-		section["fleet"] = map[string]any{"status": "unreadable", "reason": health.Error.Code}
-		findings = append(findings, DeploymentFinding{Code: FindingPartUnreadable, Scope: "fleet", Detail: health.Error.Code})
-	} else if value, ok := health.Value.(map[string]any); ok {
-		kept := map[string]any{}
-		for _, key := range healthKeys {
-			if v, found := value[key]; found {
-				kept[key] = v
+	var healthFindings, podFindings, infoFindings []DeploymentFinding
+	var replicas, info any
+	var wait sync.WaitGroup
+	wait.Add(3)
+	go func() {
+		defer wait.Done()
+		partCtx, cancel := context.WithTimeout(ctx, RequestTimeout)
+		defer cancel()
+		health := invokeNative(partCtx, native, "/api/health", url.Values{})
+		if health.Error != nil {
+			section["fleet"] = map[string]any{"status": "unreadable", "reason": health.Error.Code}
+			healthFindings = append(healthFindings, DeploymentFinding{Code: FindingPartUnreadable, Scope: "fleet", Detail: health.Error.Code})
+		} else if value, ok := health.Value.(map[string]any); ok {
+			kept := map[string]any{}
+			for _, key := range healthKeys {
+				if v, found := value[key]; found {
+					kept[key] = v
+				}
 			}
+			section["fleet"] = kept
 		}
-		section["fleet"] = kept
-	}
-	section["replicas"] = runPart(ctx, ops, "k8s.pods", &findings)
-	info := runPart(ctx, ops, "store.info", &findings)
+	}()
+	go func() { defer wait.Done(); replicas = runPart(ctx, ops, "k8s.pods", &podFindings) }()
+	go func() { defer wait.Done(); info = runPart(ctx, ops, "store.info", &infoFindings) }()
+	wait.Wait()
+	findings := append(append(append([]DeploymentFinding{}, healthFindings...), podFindings...), infoFindings...)
+	section["replicas"] = replicas
 	section["store_info"] = info
 	redis, memory := redisFindings(info)
 	findings = append(findings, redis...)
@@ -169,6 +197,15 @@ func deploymentSection(ctx context.Context, native http.Handler, ops map[string]
 	}
 	section["findings"] = findings
 	return section
+}
+
+// partTimeout is the time an existing operation gets where it runs: its own
+// ExecutionTimeout, or the channel's default for one that names none.
+func partTimeout(op Operation) time.Duration {
+	if op.ExecutionTimeout > 0 {
+		return op.ExecutionTimeout
+	}
+	return RequestTimeout
 }
 
 // runPart runs an existing operation in process; an absent or failing one is
@@ -185,7 +222,9 @@ func runPart(ctx context.Context, ops map[string]Operation, id string, findings 
 			return map[string]any{"status": "unreadable", "reason": availability.Reason}
 		}
 	}
-	result := op.Run(ctx, Params{})
+	partCtx, cancel := context.WithTimeout(ctx, partTimeout(op))
+	defer cancel()
+	result := op.Run(partCtx, Params{})
 	if result.Error != nil {
 		*findings = append(*findings, DeploymentFinding{Code: FindingPartUnreadable, Scope: id, Detail: result.Error.Code})
 		return map[string]any{"status": "unreadable", "reason": result.Error.Code, "message": result.Error.Message}

@@ -158,6 +158,29 @@ func (backend *casMemoryBackend) ReadHash(_ context.Context, key string) (map[st
 	return copied, nil
 }
 
+func (backend *casMemoryBackend) ScanHash(ctx context.Context, key string, _ int64) (map[string][]byte, error) {
+	fields, err := backend.ReadHash(ctx, key)
+	backend.commands[len(backend.commands)-1] = "HSCAN"
+	return fields, err
+}
+
+func (backend *casMemoryBackend) WriteHashFields(_ context.Context, key string, puts map[string][]byte, deletes []string, _ time.Duration) error {
+	backend.commands = append(backend.commands, "HSET")
+	if backend.hashes == nil {
+		backend.hashes = map[string]map[string][]byte{}
+	}
+	if backend.hashes[key] == nil {
+		backend.hashes[key] = map[string][]byte{}
+	}
+	for field, value := range puts {
+		backend.hashes[key][field] = append([]byte(nil), value...)
+	}
+	for _, field := range deletes {
+		delete(backend.hashes[key], field)
+	}
+	return nil
+}
+
 func (backend *casMemoryBackend) ApplyHashDelta(
 	_ context.Context, write HashDeltaWrite,
 ) (HashDeltaOutcome, error) {

@@ -16,7 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-const stateAlreadyAppliedMetric = "bkmonitor_alarmd_state_already_applied_total"
+const stateAlreadyAppliedMetric = "alarmd_state_already_applied_total"
 
 func gatherStateAlreadyApplied(t *testing.T, observations ...observability.Observation) map[string]float64 {
 	t.Helper()

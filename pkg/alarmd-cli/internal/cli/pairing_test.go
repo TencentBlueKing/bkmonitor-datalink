@@ -32,8 +32,10 @@ const testRefresh = "test-refresh-credential-0123456789abcdef"
 // renewal credential, refresh rolls it, forget and pair are served. It
 // checks a verifier against the challenge the listener announced.
 type pairingServer struct {
-	t         *testing.T
-	mu        sync.Mutex
+	t  *testing.T
+	mu sync.Mutex
+	// served is the version api/cli/version answers; empty answers 404.
+	served    string
 	p         Profile
 	challenge string
 	refreshes []string
@@ -130,6 +132,12 @@ func (s *pairingServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(s.t, w, map[string]any{"session_id": s.p.SessionID, "revoked": true, "environment_id": s.p.EnvironmentID, "scope": sessionScope, "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+	case "/ob/api/cli/version":
+		if s.served == "" {
+			w.WriteHeader(404)
+			return
+		}
+		_, _ = w.Write([]byte(s.served + "\n"))
 	case "/ob/api/cli/channel":
 		if s.channelRefused != "" {
 			w.WriteHeader(401)
@@ -168,10 +176,16 @@ func (l *listening) stderr() string { return l.errout.String() }
 
 func startListen(t *testing.T, store Store, client *http.Client, base string, timeout string) *listening {
 	t.Helper()
+	return startListenAs(t, "test", store, client, base, timeout)
+}
+
+// startListenAs is startListen for a CLI stamped with version.
+func startListenAs(t *testing.T, version string, store Store, client *http.Client, base string, timeout string) *listening {
+	t.Helper()
 	l := &listening{port: freePort(t), state: strings.Repeat("s", 43), done: make(chan int, 1), stdout: &bytes.Buffer{}, errout: &bytes.Buffer{}}
 	u, _ := baseURL(base)
 	l.origin = u.Scheme + "://" + u.Host
-	a := New(strings.NewReader(""), l.stdout, l.errout, "test")
+	a := New(strings.NewReader(""), l.stdout, l.errout, version)
 	a.Store, a.HTTP = store, client
 	args := []string{"auth", "listen", "--url", base, "--port", strconv.Itoa(l.port), "--state", l.state}
 	if timeout != "" {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
@@ -181,4 +182,45 @@ func TestProductionSlotSourceAdvancesACursorTheTimelineNoLongerHolds(t *testing.
 			t.Fatalf("Next() = (due %v, facts %+v, error %v, requests %d), want retired after the advance", due, facts, err, len(reader.requests))
 		}
 	})
+}
+
+// A skip of a pruned cursor that did not go through names why on its line:
+// the refusal the store found, the owner's fence moved, the store not
+// answering, a store error it could not classify. Each said retrying or
+// failed with no reason and read reason_not_reported.
+func TestARefusedCursorSkipNamesWhy(t *testing.T) {
+	at := time.Unix(661, 0)
+	pruned := execution.ProgressLoadResult{Status: execution.ProgressFound, Progress: &execution.ScheduleProgress{
+		Identity: execution.ProgressIdentity{QueryGroup: "query-group-1"}, NextSlot: 120,
+	}}
+	for _, testCase := range []struct {
+		name   string
+		result execution.ProgressSkipResult
+		err    error
+		want   observability.Result
+		reason observability.ReasonCode
+	}{
+		{"a compare-and-set lost", execution.ProgressSkipResult{Status: execution.ProgressConflict, Refusal: execution.SkipRefusalCASConflict},
+			nil, observability.ResultRetrying, "CAS_CONFLICT"},
+		{"a range in flight", execution.ProgressSkipResult{Status: execution.ProgressConflict, Refusal: execution.SkipRefusalRangeInFlight},
+			nil, observability.ResultRetrying, "RANGE_IN_FLIGHT"},
+		{"the owner's fence moved", execution.ProgressSkipResult{Status: execution.ProgressStaleOwner},
+			nil, observability.ResultRetrying, observability.ReasonCode(contract.ReasonOwnershipStaleFence)},
+		{"the store not answering", execution.ProgressSkipResult{Status: execution.ProgressRetryableIO},
+			nil, observability.ResultRetrying, observability.ReasonCode(contract.ReasonRedisUnavailable)},
+		{"a store error", execution.ProgressSkipResult{}, errors.New("script failed"), observability.ResultFailed, observability.ReasonInternalUnknown},
+	} {
+		catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedulerSchedule(t, 60, 600, nil, "snapshot-1", 1)}}
+		reader := &advancingProgressReader{fakeProgressReader: &fakeProgressReader{result: pruned, catalog: catalog}, result: testCase.result, err: testCase.err}
+		var observed []observability.Observation
+		source := prunedCursorSource(t, catalog, reader, at, observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			if observation.Stage == observability.StageScheduleCursorAdvanced {
+				observed = append(observed, observability.NormalizeObservation(observation))
+			}
+		}))
+		_, _, _, _ = source.Next(context.Background(), "query-group-1")
+		if len(observed) != 1 || observed[0].Result != testCase.want || observed[0].ReasonCode != testCase.reason {
+			t.Errorf("%s: cursor advance observed %+v, want %s with %s", testCase.name, observed, testCase.want, testCase.reason)
+		}
+	}
 }

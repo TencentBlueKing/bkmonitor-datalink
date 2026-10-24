@@ -147,8 +147,10 @@ type GroupSnapshot struct {
 	// says none. An ip_cloud plan reads a group only of its own tenant.
 	TenantID string
 	Members  []GroupMember
-	// Dropped counts the members refused by the plan-independent checks.
-	Dropped int
+	// Dropped counts the members refused by the plan-independent checks,
+	// and DroppedNamed names the first of them (targetplan.NameDropped).
+	Dropped      int
+	DroppedNamed []targetplan.DroppedMember
 
 	mu   sync.Mutex
 	keys map[string]*groupKeys
@@ -157,6 +159,7 @@ type GroupSnapshot struct {
 type groupKeys struct {
 	members map[string]struct{}
 	dropped int
+	named   []targetplan.DroppedMember
 }
 
 // Keys returns the group's member keys under a plan's identity and rule,
@@ -166,10 +169,7 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 	if snapshot == nil || plan == nil {
 		return nil, 0
 	}
-	signature := string(plan.Rule) + "\x00" + plan.ModelID + "\x00" + strings.Join(plan.Identity.Dimensions, ",") + "\x00" + plan.Identity.ModelDimension + "\x00" + plan.Identity.ModelValue
-	if plan.Identity.HostIdentity {
-		signature += "\x00host"
-	}
+	signature := groupKeySignature(plan)
 	snapshot.mu.Lock()
 	defer snapshot.mu.Unlock()
 	if cached, found := snapshot.keys[signature]; found {
@@ -179,6 +179,7 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 	for _, member := range snapshot.Members {
 		if member.ModelID != plan.ModelID {
 			built.dropped++
+			built.named = targetplan.NameDropped(built.named, member.ModelInstID, targetplan.DroppedModelMismatch)
 			continue
 		}
 		switch {
@@ -189,6 +190,7 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 			// writer put no host id on cannot be placed and is dropped.
 			if member.HostID == "" {
 				built.dropped++
+				built.named = targetplan.NameDropped(built.named, member.ModelInstID, targetplan.DroppedNoHostID)
 				continue
 			}
 			built.members[plan.Identity.HostKey(member.HostID)] = struct{}{}
@@ -201,6 +203,36 @@ func (snapshot *GroupSnapshot) Keys(plan *contract.TargetPlanV1) (map[string]str
 	}
 	snapshot.keys[signature] = built
 	return built.members, built.dropped
+}
+
+// groupKeySignature is what a plan's key set is memoised under: the plan
+// fields that decide which members a group yields and under which keys.
+func groupKeySignature(plan *contract.TargetPlanV1) string {
+	signature := string(plan.Rule) + "\x00" + plan.ModelID + "\x00" + strings.Join(plan.Identity.Dimensions, ",") + "\x00" + plan.Identity.ModelDimension + "\x00" + plan.Identity.ModelValue
+	if plan.Identity.HostIdentity {
+		signature += "\x00host"
+	}
+	return signature
+}
+
+// NamedDrops names the first members the group dropped for plan: those the
+// document's checks refused, then those the plan's rule refused, at most
+// targetplan.MaxNamedDroppedMembers.
+func (snapshot *GroupSnapshot) NamedDrops(plan *contract.TargetPlanV1) []targetplan.DroppedMember {
+	if snapshot == nil || plan == nil {
+		return nil
+	}
+	snapshot.Keys(plan)
+	signature := groupKeySignature(plan)
+	snapshot.mu.Lock()
+	defer snapshot.mu.Unlock()
+	named := append([]targetplan.DroppedMember(nil), snapshot.DroppedNamed...)
+	if built := snapshot.keys[signature]; built != nil {
+		for _, member := range built.named {
+			named = targetplan.NameDropped(named, member.ID, member.Reason)
+		}
+	}
+	return named
 }
 
 // decodeGroup reads one group document per the protocol: an object with
@@ -254,11 +286,13 @@ func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 		}
 		if wire.ModelID != document.ModelID || instance == "" {
 			snapshot.Dropped++
+			snapshot.DroppedNamed = targetplan.NameDropped(snapshot.DroppedNamed, instance, targetplan.DroppedMemberInvalid)
 			continue
 		}
 		if listed != nil {
 			if _, found := listed[instance]; !found {
 				snapshot.Dropped++
+				snapshot.DroppedNamed = targetplan.NameDropped(snapshot.DroppedNamed, instance, targetplan.DroppedMemberUnlisted)
 				continue
 			}
 		}
@@ -268,10 +302,17 @@ func decodeGroup(id string, payload []byte, readAt time.Time) *GroupSnapshot {
 		}
 		snapshot.Members = append(snapshot.Members, GroupMember{ModelID: wire.ModelID, ModelInstID: instance, HostID: host})
 	}
+	lost := make([]string, 0)
 	for instance := range listed {
 		if _, found := carried[instance]; !found {
 			snapshot.Dropped++
+			lost = append(lost, instance)
 		}
+	}
+	// In id order, so the names a round shows do not change with map order.
+	sort.Strings(lost)
+	for _, instance := range lost {
+		snapshot.DroppedNamed = targetplan.NameDropped(snapshot.DroppedNamed, instance, targetplan.DroppedMemberLost)
 	}
 	return snapshot
 }

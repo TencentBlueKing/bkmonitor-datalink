@@ -57,7 +57,8 @@ func auditFixture(t *testing.T) (*Channel, *[]SREAction, *auditManager) {
 // Every execution and management call is heard once, after it ends, with who
 // asked (the admitted session and the request), what, where and how it
 // ended; an execution's record carries the digest of its script and its
-// stdin's length, never the stdin's text. A read is not an action.
+// stdin's length, never the stdin's text, and the receipt the caller gets
+// back names the same request. A read is not an action.
 func TestEveryExecutionAndManagementCallIsAudited(t *testing.T) {
 	channel, actions, manager := auditFixture(t)
 	target := map[string]any{"namespace": "fixture", "pod": "web-0", "uid": "pod-uid", "container": "web", "container_id": "containerd://fixture", "image_id": "sha256:fixture"}
@@ -75,6 +76,12 @@ func TestEveryExecutionAndManagementCallIsAudited(t *testing.T) {
 	if exec.Op != "pod.exec" || exec.Namespace != "fixture" || exec.Name != "web-0/web" || exec.UID != "pod-uid" || exec.Result != SREResultDone ||
 		exec.SessionID != "post-observation-session" || exec.RequestID == "" || exec.RequestID != response.Meta.RequestID {
 		t.Fatalf("exec record %+v", exec)
+	}
+	// The receipt the caller holds names the request its record is filed
+	// under, so sre.receipts finds it by the id the reply gave.
+	var receipt pod.ExecReceipt
+	if encoded, err := json.Marshal(response.Result); err != nil || json.Unmarshal(encoded, &receipt) != nil || receipt.RequestID != exec.RequestID {
+		t.Fatalf("exec reply request_id %q, the record's %q", receipt.RequestID, exec.RequestID)
 	}
 	if !strings.Contains(exec.Detail, "sha256:") || !strings.Contains(exec.Detail, "stdin_bytes 18") || strings.Contains(exec.Detail, "secret-script-text") {
 		t.Fatalf("exec detail %q, want the digest and stdin length and not its text", exec.Detail)
@@ -96,6 +103,31 @@ func TestEveryExecutionAndManagementCallIsAudited(t *testing.T) {
 	}
 }
 
+// The audit record of an execution carries the command line it ran, with
+// credentials redacted and the length capped, for the sre_action line; the
+// stored receipt keeps only the script's digest, never the command line.
+func TestAnExecutionsAuditCarriesItsRedactedCappedArgvAndTheReceiptDoesNot(t *testing.T) {
+	channel, actions, _ := auditFixture(t)
+	target := map[string]any{"namespace": "fixture", "pod": "web-0", "uid": "pod-uid", "container": "web", "container_id": "containerd://fixture", "image_id": "sha256:fixture"}
+	long := strings.Repeat("x", 4096)
+	argv := []any{"/bin/sh", "-c", "curl -H 'Authorization: Bearer abc123' http://svc; echo password=hunter2", long}
+	if status, response := call(t, channel, envelope(channel, "invoke", "pod.exec", Params{"target": target, "argv": argv})); status != 200 || response.Error != nil {
+		t.Fatalf("exec: HTTP %d %+v", status, response)
+	}
+	exec := (*actions)[0]
+	if !strings.HasPrefix(exec.Argv, "/bin/sh -c ") || !strings.Contains(exec.Argv, "<redacted>") ||
+		strings.Contains(exec.Argv, "abc123") || strings.Contains(exec.Argv, "hunter2") {
+		t.Fatalf("audited argv %q, want the command line with its credentials redacted", exec.Argv)
+	}
+	if len(exec.Argv) > pod.AuditArgvBytes+len(pod.AuditArgvTruncated) || !strings.HasSuffix(exec.Argv, pod.AuditArgvTruncated) {
+		t.Fatalf("audited argv is %d bytes ending %q, want at most %d and marked cut", len(exec.Argv), exec.Argv[max(0, len(exec.Argv)-20):], pod.AuditArgvBytes)
+	}
+	stored, err := json.Marshal(exec)
+	if err != nil || strings.Contains(string(stored), "argv") || strings.Contains(string(stored), "/bin/sh") {
+		t.Fatalf("the stored receipt carries the command line: %s (%v)", stored, err)
+	}
+}
+
 // The result vocabulary is closed: each provider code lands in one result,
 // and a failure without a named code is failed.
 func TestEverySREOutcomeLandsInOneResult(t *testing.T) {
@@ -106,7 +138,7 @@ func TestEverySREOutcomeLandsInOneResult(t *testing.T) {
 		pod.RemoteUnknown:          SREResultUnknown,
 		pod.CodeInvalidRequest:     SREResultRefused,
 		pod.CodeCommandStartFailed: SREResultRefused,
-		pod.CodeBusy:               SREResultRefused,
+		pod.CodeKindNotInstalled:   SREResultRefused,
 		pod.CodeAPIError:           SREResultFailed,
 	}
 	for code, want := range cases {
@@ -132,14 +164,13 @@ func TestEverySREOutcomeLandsInOneResult(t *testing.T) {
 	}
 }
 
-// A Secret read is audited by namespace and name, with whether its values
-// were revealed, and never with a value. Without reveal the answer carries no
-// value; revealed, a plain key's value shows and a credential-named key's
-// stays masked.
+// A Secret read is audited by namespace and name and never with a value, and
+// its answer carries none: neither a credential-named key's nor a plain one's.
+// Asking for the values is not a parameter the read has.
 func TestASecretReadIsAuditedByNameNeverByValue(t *testing.T) {
 	controller := true
 	client := &postObservationClient{target: corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "fixture", Name: "web-0", UID: "pod-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "StatefulSet", Name: "web", UID: "workload-uid", Controller: &controller}}}}}
-	secrets := secretStore{"fixture/app-redis": {ObjectMeta: metav1.ObjectMeta{Namespace: "fixture", Name: "app-redis", UID: "secret-uid"}, Data: map[string][]byte{"password": []byte("value-never-logged"), "host": []byte("host-shown-on-reveal")}}}
+	secrets := secretStore{"fixture/app-redis": {ObjectMeta: metav1.ObjectMeta{Namespace: "fixture", Name: "app-redis", UID: "secret-uid"}, Data: map[string][]byte{"password": []byte("value-never-logged"), "host": []byte("host-never-shown")}}}
 	provider, err := pod.New(pod.Options{Client: client, Secrets: secrets, DefaultNamespace: "fixture"})
 	if err != nil {
 		t.Fatal(err)
@@ -149,24 +180,22 @@ func TestASecretReadIsAuditedByNameNeverByValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, reveal := range []bool{false, true} {
-		status, response := call(t, channel, envelope(channel, "invoke", pod.OpReadSecret, Params{"name": "app-redis", "reveal": reveal}))
-		if status != 200 || response.Error != nil {
-			t.Fatalf("reveal=%v: HTTP %d %+v", reveal, status, response)
-		}
-		encoded, _ := json.Marshal(response.Result)
-		// The credential-named key stays masked even revealed; a plain key
-		// shows only when revealed.
-		if strings.Contains(string(encoded), "value-never-logged") || strings.Contains(string(encoded), "host-shown-on-reveal") != reveal {
-			t.Fatalf("reveal=%v answer %s", reveal, encoded)
-		}
+	status, response := call(t, channel, envelope(channel, "invoke", pod.OpReadSecret, Params{"name": "app-redis"}))
+	if status != 200 || response.Error != nil {
+		t.Fatalf("HTTP %d %+v", status, response)
 	}
-	if len(actions) != 2 || actions[0].Op != pod.OpReadSecret || actions[0].Namespace != "fixture" || actions[0].Name != "app-redis" ||
-		actions[0].Detail != "values not revealed" || actions[1].Detail != "values revealed on request" {
+	encoded, _ := json.Marshal(response)
+	if strings.Contains(string(encoded), "value-never-logged") || strings.Contains(string(encoded), "host-never-shown") || !strings.Contains(string(encoded), `"fingerprint"`) {
+		t.Fatalf("answer %s", encoded)
+	}
+	if status, response := call(t, channel, envelope(channel, "invoke", pod.OpReadSecret, Params{"name": "app-redis", "reveal": true})); status != 400 || response.Error == nil {
+		t.Fatalf("reveal: HTTP %d %+v, want it refused as a parameter the read does not have", status, response)
+	}
+	if len(actions) != 1 || actions[0].Op != pod.OpReadSecret || actions[0].Namespace != "fixture" || actions[0].Name != "app-redis" || actions[0].Detail != "keys 2, no values" {
 		t.Fatalf("audit %+v", actions)
 	}
 	for _, action := range actions {
-		if encoded, _ := json.Marshal(action); strings.Contains(string(encoded), "value-never-logged") || strings.Contains(string(encoded), "host-shown-on-reveal") {
+		if encoded, _ := json.Marshal(action); strings.Contains(string(encoded), "value-never-logged") || strings.Contains(string(encoded), "host-never-shown") {
 			t.Fatalf("an audit record carries a value: %s", encoded)
 		}
 	}

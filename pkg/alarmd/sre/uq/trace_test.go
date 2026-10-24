@@ -6,6 +6,7 @@ package uq
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -153,9 +154,9 @@ func TestTraceRejectedBodiesDoNoIO(t *testing.T) {
 		{"offset", "invalid_input", func(r *TraceRequest) { r.Body["from"] = -1 }},
 		{"fractional limit", "uq_trace_page_exceeded", func(r *TraceRequest) { r.Body["limit"] = json.Number("2.5") }},
 		{"timestamp ms", "invalid_input", func(r *TraceRequest) { r.Body["start_time"] = "1700000000000" }},
-		{"24h window", "uq_window_exceeded", func(r *TraceRequest) { r.Body["end_time"] = "1700086401" }},
+		{"30 day window", "uq_window_exceeded", func(r *TraceRequest) { r.Body["end_time"] = "1702592001" }},
 		{"reversed window", "uq_window_exceeded", func(r *TraceRequest) { r.Body["start_time"] = "1700000061" }},
-		{"timeout", "invalid_input", func(r *TraceRequest) { r.TimeoutMS = 30001 }},
+		{"timeout", "invalid_input", func(r *TraceRequest) { r.TimeoutMS = MaxTimeout.Milliseconds() + 1 }},
 		{"request budget", "uq_request_bytes_exceeded", func(r *TraceRequest) { traceQuery(r)["query_string"] = strings.Repeat("x", MaxBodyBytes) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -248,7 +249,7 @@ func TestTraceTargetConfigurationAndDiscoveryCopies(t *testing.T) {
 	}
 }
 
-func TestTraceAndOldQueryShareTransportBudgetButKeepLogProjection(t *testing.T) {
+func TestTraceAndOldQueryRunTogetherAndKeepLogProjection(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/query/ts/raw" {
@@ -263,8 +264,9 @@ func TestTraceAndOldQueryShareTransportBudgetButKeepLogProjection(t *testing.T) 
 	done := make(chan error, 1)
 	go func() { _, err := p.Trace(context.Background(), traceRequest(false)); done <- err }()
 	<-started
-	if _, err := p.Query(context.Background(), request()); code(err) != "uq_busy" {
-		t.Fatalf("Trace/query budget split unexpectedly: %v", err)
+	// A query runs while the Trace read is still in flight.
+	if _, err := p.Query(context.Background(), request()); err != nil {
+		t.Fatalf("a query beside an unfinished Trace read: %v", err)
 	}
 	close(release)
 	if err := <-done; err != nil {
@@ -273,5 +275,44 @@ func TestTraceAndOldQueryShareTransportBudgetButKeepLogProjection(t *testing.T) 
 	got, err := p.Query(context.Background(), request())
 	if err != nil || got.ContentOmitted != "log_masking_boundary" || strings.Contains(string(got.Native), "unmasked-log") || got.TracePage != nil {
 		t.Fatalf("old log query changed: %+v err=%v", got, err)
+	}
+}
+
+// pages reads consecutive pages of the same query as one answer: the rows
+// in order from the first offset, the total, and whether more remain.
+func TestTracePagesReadsConsecutivePagesAsOne(t *testing.T) {
+	var offsets []float64
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		from, _ := body["from"].(float64)
+		offsets = append(offsets, from)
+		rows := []map[string]any{}
+		for i := 0; i < 2 && int(from)+i < 5; i++ {
+			rows = append(rows, map[string]any{"span_id": fmt.Sprintf("s%d", int(from)+i)})
+		}
+		encoded, _ := json.Marshal(map[string]any{"list": rows, "total": 5})
+		_, _ = w.Write(encoded)
+	}))
+	defer s.Close()
+	p, _ := NewWithQuerySource(traceFixture(s.URL, false), nil, "alarmd-sre")
+	defer p.Close()
+	request := traceRequest(false)
+	request.Body["limit"] = 2
+	receipt, err := p.TracePages(context.Background(), request, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := traceRows(receipt.Native)
+	if len(rows) != 5 || fmt.Sprint(offsets) != "[0 2 4]" || receipt.TracePage.Returned != 5 || receipt.TracePage.More || !receipt.Complete {
+		t.Fatalf("rows %d offsets %v page %+v complete %v, want all five over three pages", len(rows), offsets, receipt.TracePage, receipt.Complete)
+	}
+	offsets = nil
+	receipt, err = p.TracePages(context.Background(), request, 2)
+	if rows, _ = traceRows(receipt.Native); err != nil || len(rows) != 4 || !receipt.TracePage.More || receipt.Complete {
+		t.Fatalf("two pages: rows %d page %+v err %v, want four and more remaining", len(rows), receipt.TracePage, err)
+	}
+	if _, err := p.TracePages(context.Background(), request, MaxTracePages+1); code(err) != "invalid_input" {
+		t.Fatalf("pages past the bound: %v", err)
 	}
 }

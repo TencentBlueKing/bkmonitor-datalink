@@ -135,6 +135,68 @@ func (p *Provider) Trace(ctx context.Context, request TraceRequest) (Receipt, er
 	return receipt, nil
 }
 
+// MaxTracePages is how many consecutive pages one TracePages call reads.
+const MaxTracePages = 10
+
+// TracePages reads up to pages consecutive pages of the same fixed raw Span
+// query, from its offset on, and answers them as one: the rows in order,
+// the first page's offset, and whether more remain. It stops early at the
+// last row, at the response bound, or at the first failure, which it
+// returns with the rows read before it.
+func (p *Provider) TracePages(ctx context.Context, request TraceRequest, pages int) (Receipt, error) {
+	if pages < 1 || pages > MaxTracePages {
+		return Receipt{Egress: request.Egress, Limitations: []string{}}, fail("invalid_input", fmt.Sprintf("pages must be 1 to %d.", MaxTracePages))
+	}
+	first, err := p.Trace(ctx, request)
+	if err != nil || pages == 1 || first.TracePage == nil || !first.TracePage.More {
+		return first, err
+	}
+	rows, _ := traceRows(first.Native)
+	merged, from := first, first.TracePage.From
+	page := *first.TracePage
+	for read := 1; read < pages && page.More; read++ {
+		body := make(map[string]any, len(request.Body))
+		for key, value := range request.Body {
+			body[key] = value
+		}
+		body["from"] = page.From + int64(page.Returned)
+		next, err := p.Trace(ctx, TraceRequest{Egress: request.Egress, Target: request.Target, Body: body, TimeoutMS: request.TimeoutMS})
+		if err != nil {
+			merged.Limitations = append(merged.Limitations, fmt.Sprintf("page %d failed (%v); the rows before it are kept", read+1, err))
+			break
+		}
+		more, _ := traceRows(next.Native)
+		size := 0
+		for _, row := range rows {
+			size += len(row)
+		}
+		for _, row := range more {
+			size += len(row)
+		}
+		if size > p.ResponseBytes() {
+			merged.Limitations = append(merged.Limitations, "the pages read stop at the response bound; continue from the next offset")
+			break
+		}
+		rows = append(rows, more...)
+		page = *next.TracePage
+	}
+	native, _ := json.Marshal(map[string]any{"list": rows, "total": page.Total})
+	merged.Native, merged.ResponseBytes = native, len(native)
+	merged.TracePage = &page
+	merged.TracePage.From, merged.TracePage.Returned = from, len(rows)
+	merged.TracePage.More = from+int64(len(rows)) < page.Total
+	merged.Complete = from == 0 && !merged.TracePage.More
+	return merged, nil
+}
+
+func traceRows(native json.RawMessage) ([]json.RawMessage, error) {
+	var response struct {
+		List []json.RawMessage `json:"list"`
+	}
+	err := json.Unmarshal(native, &response)
+	return response.List, err
+}
+
 func validateTraceBody(body map[string]any, target TraceTarget) (*TracePage, error) {
 	if body == nil {
 		return nil, fail("invalid_input", "A native raw Span query object is required.")
@@ -144,7 +206,7 @@ func validateTraceBody(body map[string]any, target TraceTarget) (*TracePage, err
 	if err := traceKeys(body, "query_list", "start_time", "end_time", "from", "limit", "order_by", "bk_biz_id", "space_uid", "bk_tenant_id", "tenant_id", "tenant", "metric_merge", "step", "timezone"); err != nil {
 		return nil, err
 	}
-	if err := validateScopeBody(body, target.Tenant, target.Space); err != nil {
+	if err := validateScopeBody(body, target.Tenant, target.Space, false); err != nil {
 		return nil, err
 	}
 	if value, exists := body["bk_biz_id"]; exists {

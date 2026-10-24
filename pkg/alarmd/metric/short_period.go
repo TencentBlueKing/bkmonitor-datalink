@@ -21,7 +21,7 @@ var shortPeriodBuckets = []float64{0.01, 0.1, 1, 5, 10, 12, 15, 20, 25, 30, 60}
 
 func newShortPeriodMetrics() shortPeriodMetrics {
 	metrics := shortPeriodMetrics{
-		completed: prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "short_period_slot_completions_total", Help: "Acknowledged short-period Slot Progress completions by actual completion kind."}, []string{"cohort", "operation", "completion_kind"}),
+		completed: prometheus.NewCounterVec(prometheus.CounterOpts{Subsystem: metricSubsystem, Name: "short_period_slot_completions_total", Help: "Acknowledged short-period Slot Progress completions by actual completion kind."}, []string{"cohort", "operation", "completion_kind"}),
 		// Both histograms are told apart by completion kind. A query-free
 		// closure -- GAP_SKIPPED, SNAPSHOT_UNAVAILABLE -- has a lag of how late
 		// the skip was booked and a duration of nearly nothing, and in one
@@ -29,8 +29,8 @@ func newShortPeriodMetrics() shortPeriodMetrics {
 		// lag p99 a statistic of skips and their duration p99 a statistic of
 		// almost-zeros. Read the executed kinds for how detection is doing
 		// and the skips for how late the scheduler books what it gives up.
-		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "short_period_slot_execution_duration_seconds", Help: "Duration of the committed executor call, excluding SlotSource preparation and earlier attempts, by the completion kind it committed.", Buckets: shortPeriodBuckets}, []string{"cohort", "completion_kind"}),
-		lag:      prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "short_period_slot_completion_lag_seconds", Help: "Elapsed wall time from Slot EvaluationTime to acknowledged completion, including backlog, by the completion kind committed; a query-free kind's lag is how late the skip was booked, not an execution.", Buckets: shortPeriodBuckets}, []string{"cohort", "completion_kind"}),
+		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Subsystem: metricSubsystem, Name: "short_period_slot_execution_duration_seconds", Help: "Duration of the committed executor call, excluding SlotSource preparation and earlier attempts, by the completion kind it committed.", Buckets: shortPeriodBuckets}, []string{"cohort", "completion_kind"}),
+		lag:      prometheus.NewHistogramVec(prometheus.HistogramOpts{Subsystem: metricSubsystem, Name: "short_period_slot_completion_lag_seconds", Help: "Elapsed wall time from Slot EvaluationTime to acknowledged completion, including backlog, by the completion kind committed; a query-free kind's lag is how late the skip was booked, not an execution.", Buckets: shortPeriodBuckets}, []string{"cohort", "completion_kind"}),
 	}
 	// Every combination exists from construction, so a kind that has never
 	// completed publishes a zero and "no skips" can be told from "not wired".

@@ -52,12 +52,16 @@ func TestTheTakeoverClockTellsATakeoverFromARebuild(t *testing.T) {
 }
 
 type takeoverObserver struct {
-	facts []observability.ReplayTakeoverFacts
+	facts      []observability.ReplayTakeoverFacts
+	diversions []observability.SlotDiversionFacts
 }
 
 func (observer *takeoverObserver) Observe(_ context.Context, observation observability.Observation) {
 	if observation.ReplayTakeover != nil {
 		observer.facts = append(observer.facts, *observation.ReplayTakeover)
+	}
+	if observation.SlotDiversion != nil {
+		observer.diversions = append(observer.diversions, *observation.SlotDiversion)
 	}
 }
 

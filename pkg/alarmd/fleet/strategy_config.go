@@ -42,11 +42,6 @@ import (
 // the handler needs neither Redis nor the repository type.
 type StrategyObjectLoader func(ctx context.Context, objectDigest string) (controlplane.QueryGroupObject, error)
 
-// MaxStrategyConfigReads bounds the object reads one request may cost. A
-// strategy is one Query Group per (tenant, business) in practice; a request
-// that would read more says so and stops.
-const MaxStrategyConfigReads = 8
-
 // StrategyConfigReadTimeout bounds the whole of a request's reads. The
 // object store answers a point read in milliseconds; a request that takes
 // longer is a store that is not answering, and the reader is told that.
@@ -57,8 +52,7 @@ const StrategyConfigReadTimeout = 2 * time.Second
 const (
 	IncludeConfig = "config"
 
-	ConfigLoaderNotWired    = "LOADER_NOT_WIRED"
-	ConfigReadBoundExceeded = "READ_BOUND_EXCEEDED"
+	ConfigLoaderNotWired = "LOADER_NOT_WIRED"
 	// The three ways a read comes back without an object, told apart
 	// because they are three different people's problems: the store did
 	// not answer (a dependency), the digest the catalog names is not in the
@@ -73,7 +67,7 @@ const (
 )
 
 // ConfigRefusals is the closed list, for the page's wording table.
-var ConfigRefusals = []string{ConfigLoaderNotWired, ConfigReadBoundExceeded, ConfigObjectUnreadable, ConfigObjectMissing, ConfigObjectCorrupt, ConfigPlanNotInObject, ConfigNoObjectDigest}
+var ConfigRefusals = []string{ConfigLoaderNotWired, ConfigObjectUnreadable, ConfigObjectMissing, ConfigObjectCorrupt, ConfigPlanNotInObject, ConfigNoObjectDigest}
 
 // StrategyPlanConfigs is what one Plan reference's include=config carries:
 // the Plans of this strategy inside the object (one per item), or the reason
@@ -97,6 +91,9 @@ type StrategyPlanConfig struct {
 	Levels             []StrategyLevelConfig    `json:"levels"`
 	Requirements       []StrategyRequirementRef `json:"requirements,omitempty"`
 	TerminalReasonCode string                   `json:"terminal_reason_code,omitempty"`
+	// EffectiveTimeConfigured says the plan carries calendar rules for when it
+	// detects; the rules themselves are not projected.
+	EffectiveTimeConfigured bool `json:"effective_time_configured,omitempty"`
 }
 
 // StrategyScheduleConfig is how often and when the Plan is evaluated.
@@ -236,6 +233,9 @@ type StrategyNoDataConfig struct {
 	// TrackingHorizonSeconds is the effective horizon compilation froze into
 	// the Plan, the platform's or the item's own; zero is none.
 	TrackingHorizonSeconds int64 `json:"tracking_horizon_seconds,omitempty"`
+	// MaxGroups is the item's own bound on its no-data groups, frozen into
+	// the Plan; absent when the item states none and the deployment's applies.
+	MaxGroups uint32 `json:"max_groups,omitempty"`
 }
 
 // StrategyLevelConfig is one level: its definition, how its algorithms
@@ -321,15 +321,16 @@ func strategyPlanConfigOf(object controlplane.QueryGroupObject, plan controlplan
 			IntervalSeconds: plan.ScheduleSpec.EvaluationIntervalSeconds, AlignmentSeconds: int64(plan.ScheduleSpec.Alignment),
 			Timezone: plan.ScheduleSpec.Timezone, CompletionOffsetSeconds: plan.ScheduleSpec.CompletionDeadlineOffsetSeconds,
 		},
-		Query:              strategyQueryConfigOf(object.QueryPlan, plan.QueryPlans),
-		Target:             strategyTargetConfigOf(plan.TargetScope, plan.TargetPlan),
-		Levels:             []StrategyLevelConfig{},
-		TerminalReasonCode: plan.TerminalReasonCode,
+		Query:                   strategyQueryConfigOf(object.QueryPlan, plan.QueryPlans),
+		Target:                  strategyTargetConfigOf(plan.TargetScope, plan.TargetPlan),
+		Levels:                  []StrategyLevelConfig{},
+		TerminalReasonCode:      plan.TerminalReasonCode,
+		EffectiveTimeConfigured: len(plan.EffectiveTimeSnapshot) > 0 && string(plan.EffectiveTimeSnapshot) != "null",
 	}
 	if plan.NoData != nil {
 		config.NoData = &StrategyNoDataConfig{Continuous: plan.NoData.Continuous, Level: plan.NoData.Level,
 			AggDimension:           append([]string(nil), plan.NoData.AggDimension...),
-			TrackingHorizonSeconds: plan.NoData.TrackingHorizonSeconds}
+			TrackingHorizonSeconds: plan.NoData.TrackingHorizonSeconds, MaxGroups: plan.NoData.MaxGroups}
 	}
 	for _, level := range plan.StrategyIR.Levels {
 		entry := StrategyLevelConfig{
@@ -498,7 +499,14 @@ func strategyTargetConfigOf(scope *contract.TargetScopeV2, plan *contract.Target
 func attachStrategyConfigs(ctx context.Context, standing *StrategyStanding, loader StrategyObjectLoader) {
 	ctx, cancel := context.WithTimeout(ctx, StrategyConfigReadTimeout)
 	defer cancel()
-	reads := 0
+	// Every Plan is read: a count would leave a strategy with many Plans
+	// unread for being large, while what bounds a request is its time and
+	// the response it fits in. Plans in one object read it once.
+	type loaded struct {
+		object controlplane.QueryGroupObject
+		err    error
+	}
+	objects := map[string]loaded{}
 	for index := range standing.Plans {
 		plan := &standing.Plans[index]
 		configs := StrategyPlanConfigs{Redacted: true}
@@ -507,21 +515,22 @@ func attachStrategyConfigs(ctx context.Context, standing *StrategyStanding, load
 			configs.Refusal = ConfigLoaderNotWired
 		case plan.ObjectDigest == "":
 			configs.Refusal = ConfigNoObjectDigest
-		case reads >= MaxStrategyConfigReads:
-			configs.Refusal = ConfigReadBoundExceeded
 		default:
-			reads++
-			object, err := loader(ctx, plan.ObjectDigest)
-			if err != nil {
-				configs.Refusal = configReadRefusal(err)
-				if errors.Is(err, context.DeadlineExceeded) {
+			read, seen := objects[plan.ObjectDigest]
+			if !seen {
+				read.object, read.err = loader(ctx, plan.ObjectDigest)
+				objects[plan.ObjectDigest] = read
+				if errors.Is(read.err, context.DeadlineExceeded) {
 					// The deadline is the request's: every Plan after this
 					// one would wait on the same store, so they are told the
 					// same thing without being tried.
 					cancel()
 				}
+			}
+			if read.err != nil {
+				configs.Refusal = configReadRefusal(read.err)
 			} else {
-				configs = StrategyPlanConfigsOf(object, standing.StrategyID, plan.Business)
+				configs = StrategyPlanConfigsOf(read.object, standing.StrategyID, plan.Business)
 			}
 		}
 		plan.Config = &configs

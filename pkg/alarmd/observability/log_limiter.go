@@ -12,6 +12,7 @@ package observability
 import (
 	"container/list"
 	"errors"
+	"hash/fnv"
 	"sync"
 	"time"
 )
@@ -34,6 +35,11 @@ type LogAdmission struct {
 	Suppressed        uint64
 	SuppressedEvicted uint64
 	Sampled           bool
+	// SampleWindowStart is when the window a sampled line was admitted in
+	// began: the line is the first of its bucket's since then, and the
+	// boundary a reader counts the merged lines from. Zero on a line not
+	// sampled.
+	SampleWindowStart time.Time
 	// Candidate is an observation the policy decides a line for: written,
 	// held back by its limiter, or counted and not written. A routine
 	// success outside the workflow stages is not one.
@@ -41,6 +47,11 @@ type LogAdmission struct {
 	// Unwritten is a workflow stage's routine success, or a Control Leader
 	// round that changed nothing: counted, never written.
 	Unwritten bool
+	// ReasonChanged marks the evaluation its Query Group's reason changed on
+	// from the group's previous Slot, written whatever its result, and
+	// PreviousReasons is what that Slot's evaluations ended with.
+	ReasonChanged   bool
+	PreviousReasons []ReasonCode
 }
 
 // RoutineLogSample is the budget of every result that is neither a success
@@ -68,7 +79,11 @@ type logBucketKey struct {
 
 func limiterBucketKey(observation Observation) logBucketKey {
 	key := logBucketKey{reason: observation.ReasonCode}
-	if observation.stageReasonBucket {
+	if evaluationHeldQuery(observation) {
+		// A query that answered whole under an evaluation that did not: the
+		// evaluation's reason is the word that repeats.
+		key.reason = observation.EvaluationReason
+	} else if observation.stageReasonBucket {
 		key.reason = ReasonNone
 		key.stage = observation.Stage
 	}
@@ -186,6 +201,15 @@ func (l *ScopedLogLimiter) Admit(observation Observation) LogAdmission {
 	bucket := l.bucketFor(reasonKey, scope)
 	if bucket.windowStart.IsZero() || now.Before(bucket.windowStart) || now.Sub(bucket.windowStart) >= window {
 		bucket.windowStart = now
+		if sampled {
+			// The sample's windows are set on the hour at a point of the
+			// bucket's own (sampleWindowStart), not from its first line: every
+			// Query Group's first line comes in the minute a process starts or
+			// takes them over, and windows begun there would all end together,
+			// an hour on, every hour - a burst of lines with no burst of what
+			// they stand for.
+			bucket.windowStart = sampleWindowStart(now, window, bucket.key)
+		}
 		bucket.used = 0
 	}
 	if bucket.used >= maxEvents {
@@ -194,9 +218,32 @@ func (l *ScopedLogLimiter) Admit(observation Observation) LogAdmission {
 	}
 	bucket.used++
 	admission := LogAdmission{Allowed: true, Suppressed: bucket.suppressed, SuppressedEvicted: l.evicted[reasonKey], Sampled: sampled}
+	if sampled {
+		admission.SampleWindowStart = bucket.windowStart
+	}
 	bucket.suppressed = 0
 	delete(l.evicted, reasonKey)
 	return admission
+}
+
+// sampleWindowStart is the start of the window of window's length that holds
+// now, the windows of key set at an offset into each window given by a hash
+// of key: buckets keyed alike keep their windows, and buckets begun in one
+// minute end theirs spread over the window rather than in that minute.
+func sampleWindowStart(now time.Time, window time.Duration, key scopedLogBucketKey) time.Time {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(string(key.reason.reason)))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(string(key.reason.stage)))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(key.scope))
+	length := int64(window)
+	offset := int64(hash.Sum64() % uint64(length))
+	into := (now.UnixNano() - offset) % length
+	if into < 0 {
+		into += length
+	}
+	return time.Unix(0, now.UnixNano()-into).In(now.Location())
 }
 
 func (l *ScopedLogLimiter) bucketFor(reasonKey logBucketKey, scope string) *scopedLogBucket {

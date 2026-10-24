@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 )
 
 type setReaderFunc func(context.Context, StrategyKey) ([]string, error)
@@ -336,7 +337,7 @@ func TestIndexRunWaitsForSubscribeACKAndReconnectRereads(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- cache.Run(ctx) }()
 	defer func() { cancel(); <-done }()
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(30 * time.Millisecond) // fixed-wait: a window of three refresh intervals in which no read must happen before the subscription ACK; an absence sends no signal to wait on
 	mu.Lock()
 	before := reads
 	mu.Unlock()
@@ -352,12 +353,12 @@ func TestIndexRunWaitsForSubscribeACKAndReconnectRereads(t *testing.T) {
 
 func waitIndexCondition(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := testwait.Deadline(t)
 	for time.Now().Before(deadline) {
 		if condition() {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	t.Fatal("condition did not become true")
 }

@@ -42,7 +42,8 @@ func marshalledRetainedSize(bindings []execution.NamedInputBinding, delivery exe
 // retainedSizeTexts are the strings whose encoding differs between the
 // settings an encoder can have: HTML characters Marshal escapes, the line
 // separators it escapes too, quotes and controls, and text outside ASCII.
-var retainedSizeTexts = []string{"", "plain", "<tag>&amp;", "a>b", "业务", "line sep", "para sep", `quo"te`, "tab\there", "\x01ctl", "é"}
+var retainedSizeTexts = []string{"", "plain", "<tag>&amp;", "a>b", "业务", "line sep", "para sep", `quo"te`, "tab\there", "\x01ctl", "é",
+	"\b\f\n\r\\", "bad\xffutf8", "\xe4\xb8"}
 
 // fillRetained sets every field reachable from value to something drawn from
 // random: strings from the texts above, numbers, slices and maps of up to two

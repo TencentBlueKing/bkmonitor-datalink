@@ -26,7 +26,7 @@ import (
 func admitted(ctx context.Context, tracker *Tracker, strategy string, slot int64, refused bool, rule, text string) {
 	observation := observability.Observation{
 		Component: observability.ComponentState, Stage: observability.StageStateAdmission,
-		Direction: observability.DirectionInternal, Result: observability.Result(observability.ResultSuccess),
+		Result:          observability.Result(observability.ResultSuccess),
 		ReasonCode:      observability.ReasonNone,
 		StateApplyChunk: &observability.StateApplyChunkFacts{Count: 1},
 	}

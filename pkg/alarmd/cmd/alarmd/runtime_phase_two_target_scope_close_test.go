@@ -11,6 +11,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
@@ -75,7 +76,7 @@ func calibratedCopy(t *testing.T, key openalerts.StrategyKey, index scopeCloseIn
 	// need the change subscription ready. Calibration does not wait for it:
 	// TrackOwned's wake can calibrate before the Watch goroutine has called
 	// ready(true), so waiting on Calibrated alone races the subscription.
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := testwait.Deadline(t)
 	for {
 		_, judged := cache.MemberCount(key)
 		if judged && cache.Snapshot(key).Calibrated {
@@ -84,7 +85,7 @@ func calibratedCopy(t *testing.T, key openalerts.StrategyKey, index scopeCloseIn
 		if time.Now().After(deadline) {
 			t.Fatal("copy did not calibrate with its subscription ready")
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond) // fixed-wait: the poll interval of a condition wait bounded by the test deadline
 	}
 	return cache
 }
@@ -198,7 +199,7 @@ func TestTheTargetScopeCloseIsNotWiredWithoutTheLinkConsole(t *testing.T) {
 	}
 	recorder := metric.NewRecorder(metric.BuildInfo{})
 	bundle := &phaseTwoWorkerBundle{}
-	bindTargetScopeClose(bundle, closer, nil, &maintenanceTestWriter{}, recorder)
+	bindTargetScopeClose(bundle, closer, nil, &maintenanceTestWriter{}, nil, recorder)
 	if bundle.dependencies.RunTargetScopeClose != nil {
 		t.Fatal("a loop was wired without a Console")
 	}
@@ -208,7 +209,7 @@ func TestTheTargetScopeCloseIsNotWiredWithoutTheLinkConsole(t *testing.T) {
 	}
 	found := 0
 	for _, family := range families {
-		if family.GetName() != "bkmonitor_alarmd_target_scope_close_total" {
+		if family.GetName() != "alarmd_target_scope_close_total" {
 			continue
 		}
 		for _, m := range family.GetMetric() {
@@ -222,12 +223,12 @@ func TestTheTargetScopeCloseIsNotWiredWithoutTheLinkConsole(t *testing.T) {
 		t.Fatalf("%d outcome cells on /metrics, want every one of %d pre-registered", found, len(scopeclose.Outcomes))
 	}
 
-	cfg.PhaseTwo.Linkd.ConsoleURL = "https://console.example.test"
+	cfg.PhaseTwo.Linkd.ConsoleURL = "https://console.example.test/local-api"
 	closer, sink = targetScopeCloseFor(cfg, time.Now)
 	if closer == nil || sink == nil {
 		t.Fatal("with a Console the close was not built")
 	}
-	bindTargetScopeClose(bundle, closer, nil, &maintenanceTestWriter{}, recorder)
+	bindTargetScopeClose(bundle, closer, nil, &maintenanceTestWriter{}, nil, recorder)
 	if bundle.dependencies.RunTargetScopeClose == nil {
 		t.Fatal("with a Console no loop was wired")
 	}

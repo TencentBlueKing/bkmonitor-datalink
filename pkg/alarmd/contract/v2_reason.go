@@ -113,11 +113,18 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonQueryEmpty:       {ReasonQueryEmpty, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryTimeout:     {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryUnavailable: {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryRejected:    {ReasonQueryRejected, ReasonClassCoverage, reasonQueryDomainsV2},
+	// Retryable and observed only: a failed attempt's word, never a query
+	// result's, so it has no rank in GapReasonFoldOrder.
+	ReasonQueryDeliveryTimeout: {ReasonQueryDeliveryTimeout, ReasonClassRetryable, reasonMessageDomainsV2},
 	ReasonQueryTargetMissing: {
 		ReasonQueryTargetMissing, ReasonClassCoverage, reasonQueryDomainsV2,
 	},
 	ReasonDetectIntervalStorageNotSliding: {
 		ReasonDetectIntervalStorageNotSliding, ReasonClassCoverage, reasonQueryDomainsV2,
+	},
+	ReasonQueryNamedOutputDuplicateKey: {
+		ReasonQueryNamedOutputDuplicateKey, ReasonClassCoverage, reasonQueryDomainsV2,
 	},
 	ReasonReadinessBudgetInvalid: {
 		ReasonReadinessBudgetInvalid, ReasonClassCoverage, reasonQueryDomainsV2,
@@ -167,10 +174,17 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	// every time until the strategy's shape changes, so calling it retryable
 	// would have the scheduler back off and re-run it forever.
 	ReasonQGBudgetShareExceeded: {ReasonQGBudgetShareExceeded, ReasonClassDeterministic, ReasonDomainObservation},
-	ReasonProviderUnavailable:   {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonProgressBeginRejected: {ReasonProgressBeginRejected, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonProgressBeginFailed:   {ReasonProgressBeginFailed, ReasonClassDeterministic, ReasonDomainObservation},
-	ReasonActivationReadFailed:  {ReasonActivationReadFailed, ReasonClassRetryable, ReasonDomainObservation},
+	// Deterministic: the kept read is the one the lookback made, and a retry
+	// of the supplement asks it for the same query it does not hold.
+	ReasonSupplementKeptReadAbsent: {ReasonSupplementKeptReadAbsent, ReasonClassDeterministic, ReasonDomainObservation},
+	// Coverage: the target is read from the CMDB caches as they stand, and
+	// the round runs on what resolved.
+	ReasonTargetResolutionIncomplete:  {ReasonTargetResolutionIncomplete, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonTargetResolutionUnavailable: {ReasonTargetResolutionUnavailable, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonProviderUnavailable:         {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonProgressBeginRejected:       {ReasonProgressBeginRejected, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonProgressBeginFailed:         {ReasonProgressBeginFailed, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonActivationReadFailed:        {ReasonActivationReadFailed, ReasonClassRetryable, ReasonDomainObservation},
 	// Retryable rather than deterministic: the record is absent now, and the
 	// Control Leader's next round writes it back from the published Catalog.
 	// Repeating the read is what finds it there.

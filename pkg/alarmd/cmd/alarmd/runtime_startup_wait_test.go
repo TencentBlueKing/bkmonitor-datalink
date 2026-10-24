@@ -16,13 +16,42 @@ import (
 	"io"
 	"net"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
+
+// lineSignal is a log writer that closes seen once count lines holding
+// every one of markers have been written (count 0 is one). The logger
+// writes each line in one call, synchronously, so seen closes before the
+// logging call returns.
+type lineSignal struct {
+	markers []string
+	count   int
+	seen    chan struct{}
+	mu      sync.Mutex
+	lines   int
+}
+
+func (w *lineSignal) Write(p []byte) (int, error) {
+	for _, marker := range w.markers {
+		if !strings.Contains(string(p), marker) {
+			return len(p), nil
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.lines++; w.lines == max(w.count, 1) {
+		close(w.seen)
+	}
+	return len(p), nil
+}
 
 // serverReply is a reply the Redis server sent, as go-redis types it.
 type serverReply string
@@ -116,7 +145,7 @@ func TestTheStartupWaitRetriesCountsAndStopsOnAnAnswerOrARefusal(t *testing.T) {
 	if err != nil || attempts != 4 {
 		t.Fatalf("err %v after %d attempts, want an answer on the fourth", err, attempts)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_startup_dependency_wait_total", map[string]string{"dependency": "redis_runtime"}); got != 3 {
+	if got := counterValue(t, recorder, "alarmd_startup_dependency_wait_total", map[string]string{"dependency": "redis_runtime"}); got != 3 {
 		t.Fatalf("startup_dependency_wait_total{redis_runtime} = %v, want 3", got)
 	}
 
@@ -126,7 +155,7 @@ func TestTheStartupWaitRetriesCountsAndStopsOnAnAnswerOrARefusal(t *testing.T) {
 	if !errors.Is(err, refusal) || attempts != 1 {
 		t.Fatalf("err %v after %d attempts, want the refusal on the first", err, attempts)
 	}
-	if got := counterValue(t, recorder, "bkmonitor_alarmd_startup_dependency_wait_total", map[string]string{"dependency": "state_store"}); got != 0 {
+	if got := counterValue(t, recorder, "alarmd_startup_dependency_wait_total", map[string]string{"dependency": "state_store"}); got != 0 {
 		t.Fatalf("a refusal was counted as a wait: %v", got)
 	}
 }
@@ -161,20 +190,31 @@ func TestTheStartupWaitBacksOffToItsCeiling(t *testing.T) {
 // Stopping the process ends the wait within one backoff, with an error that
 // names the dependency it was waiting on.
 func TestTheStartupWaitEndsWithTheProcess(t *testing.T) {
-	waiter := startupWaiter{initial: time.Hour, ceiling: time.Hour}
+	// The waiter writes its "dependency_waiting" line after the failed
+	// attempt and right before it pauses: the cancel goes in on that line,
+	// so it lands in the hour-long pause rather than beside the attempt.
+	pausing := &lineSignal{markers: []string{"dependency_waiting"}, seen: make(chan struct{})}
+	waiter := startupWaiter{initial: time.Hour, ceiling: time.Hour, logger: observability.New(observability.ComponentRuntime, pausing)}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
 		done <- waiter.await(ctx, "cmdb_index", func(context.Context) error { return io.EOF })
 	}()
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-pausing.seen:
+	case err := <-done:
+		t.Fatalf("the wait ended before its first pause: %v", err)
+	case <-testwait.Expired(t):
+		t.Fatal("the wait never reached its first pause")
+	}
 	cancel()
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) || !errors.Is(err, io.EOF) {
 			t.Fatalf("err = %v, want the cancellation and the last failure", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-testwait.Expired(t):
 		t.Fatal("the wait did not end with its context")
 	}
 }

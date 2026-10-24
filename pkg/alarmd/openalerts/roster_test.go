@@ -4,7 +4,6 @@
 package openalerts
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -44,7 +43,7 @@ func rosterServer(t *testing.T, respond func(w http.ResponseWriter, r *http.Requ
 		respond(w, r)
 	}))
 	t.Cleanup(server.Close)
-	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL, Client: server.Client(), Username: "user", Password: "secret", Index: testIndex(), MaxResponseBytes: 1 << 20})
+	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "user", Password: "secret", Index: testIndex(), MaxResponseBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +53,7 @@ func rosterServer(t *testing.T, respond func(w http.ResponseWriter, r *http.Requ
 func TestTheRosterIsReadInTheLinksOwnShape(t *testing.T) {
 	reader := rosterServer(t, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if r.URL.Path != "/local-api/strategy-index/browse" || q.Get("event_source_id") != "source" || q.Get("hook_name") != "active" ||
+		if r.URL.Path != "/api/modules/linkd/strategy-index/browse" || q.Get("event_source_id") != "source" || q.Get("hook_name") != "active" ||
 			q.Get("count") != "200" || q.Get("cursor") != "next-page" {
 			t.Errorf("request %s %v", r.URL.Path, q)
 		}
@@ -63,7 +62,7 @@ func TestTheRosterIsReadInTheLinksOwnShape(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(browseJSON())
 	})
-	page, err := reader.Roster(context.Background(), "next-page")
+	page, err := reader.Roster(consoleCtx(), "next-page")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +86,7 @@ func TestTheLastRosterPageEndsTheWalk(t *testing.T) {
 		body["health"].(map[string]any)["error"] = "discovery_failed"
 		_ = json.NewEncoder(w).Encode(body)
 	})
-	page, err := reader.Roster(context.Background(), "")
+	page, err := reader.Roster(consoleCtx(), "")
 	if err != nil || page.Next != "" || page.Health.Error != "discovery_failed" {
 		t.Fatalf("page %+v err %v", page, err)
 	}
@@ -111,7 +110,7 @@ func TestARosterOfAnotherTargetOrWithoutHealthIsRefused(t *testing.T) {
 			mutate(body)
 			_ = json.NewEncoder(w).Encode(body)
 		})
-		if _, err := reader.Roster(context.Background(), ""); err == nil {
+		if _, err := reader.Roster(consoleCtx(), ""); err == nil {
 			t.Fatalf("%s: accepted", name)
 		}
 	}
@@ -130,12 +129,12 @@ func alertJSON() map[string]any {
 
 func TestAnAlertRecordCarriesTheIdentityItWasCreatedWith(t *testing.T) {
 	reader := rosterServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/local-api/alerts/alert-1" || r.URL.Query().Get("bk_tenant_id") != "system" {
+		if r.URL.Path != "/api/modules/linkd/alerts/alert-1" || r.URL.Query().Get("bk_tenant_id") != "system" {
 			t.Errorf("request %s %v", r.URL.Path, r.URL.Query())
 		}
 		_ = json.NewEncoder(w).Encode(alertJSON())
 	})
-	record, err := reader.AlertRecord(context.Background(), "system", "alert-1")
+	record, err := reader.AlertRecord(consoleCtx(), "system", "alert-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,15 +151,15 @@ func TestAnAlertRecordReadsTextLabelsAndLeavesMissingOnesZero(t *testing.T) {
 		body["payload"].(map[string]any)["labels"] = map[string]any{"strategy_id": "10", "bk_biz_id": "2"}
 		_ = json.NewEncoder(w).Encode(body)
 	})
-	record, err := reader.AlertRecord(context.Background(), "system", "alert-1")
+	record, err := reader.AlertRecord(consoleCtx(), "system", "alert-1")
 	if err != nil || record.StrategyID != "10" || record.BusinessID != 2 || record.Revision != 0 {
 		t.Fatalf("record %+v err %v", record, err)
 	}
 }
 
 func TestAMissingAlertIsNamedAndAnotherAlertIsRefused(t *testing.T) {
-	missing := rosterServer(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) })
-	if _, err := missing.AlertRecord(context.Background(), "system", "alert-1"); !errors.Is(err, ErrAlertNotFound) {
+	missing := rosterServer(t, objectMissingAnswer)
+	if _, err := missing.AlertRecord(consoleCtx(), "system", "alert-1"); !errors.Is(err, ErrAlertNotFound) {
 		t.Fatalf("a 404 was not read as a missing alert: %v", err)
 	}
 	other := rosterServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -168,11 +167,11 @@ func TestAMissingAlertIsNamedAndAnotherAlertIsRefused(t *testing.T) {
 		body["payload"].(map[string]any)["alert_id"] = "alert-2"
 		_ = json.NewEncoder(w).Encode(body)
 	})
-	if _, err := other.AlertRecord(context.Background(), "system", "alert-1"); err == nil {
+	if _, err := other.AlertRecord(consoleCtx(), "system", "alert-1"); err == nil {
 		t.Fatal("the record of another alert was accepted")
 	}
 	failing := rosterServer(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
-	if _, err := failing.AlertRecord(context.Background(), "system", "alert-1"); err == nil || errors.Is(err, ErrAlertNotFound) {
+	if _, err := failing.AlertRecord(consoleCtx(), "system", "alert-1"); err == nil || errors.Is(err, ErrAlertNotFound) {
 		t.Fatalf("a failing Console was read as a missing alert: %v", err)
 	}
 }

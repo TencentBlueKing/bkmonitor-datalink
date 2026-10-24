@@ -118,6 +118,27 @@ var withheldReasonWords = map[string]WithheldReasonWords{
 		What:   "无数据告警要连续缺席的时长达到或超过追踪期限：第 N 个连续缺席点出现在首次缺席后（连续周期数−1）×周期 秒，而追踪在缺席满追踪期限的那一轮停止且不出裁决，所以这条无数据永远发不出告警（详情里写明连续周期数、周期、最早可告警时刻、追踪期限及其来源）——策略在检测，阈值检测和无数据的追踪、停止、恢复都照常，不是被扣住",
 		Next:   "策略负责人把连续周期数调小，或调大追踪期限（来源是 STRATEGY 时改策略的无数据配置，是 PLATFORM 时改平台配置）；改好后下一轮刷新这一行消失",
 		Action: ActionStrategyEdit},
+	// Under CONFIG_NOTED too: the level recovers as the platform reads what
+	// was written, and the ending it was written with is said.
+	"RECOVERY_STATUS_SETTER_DEFAULTED": {Kind: WithheldStrategyDefinition,
+		What:   "这一级别恢复配置的 status_setter 不是 recovery、close、recovery-nodata、close-nodata 之一，已按平台的读法读：\"-\" 前是 close 就按关闭结束，否则按恢复结束（详情里写明原值与读法）——策略在检测，不是被扣住",
+		Next:   "策略负责人把 status_setter 改成四个取值之一；改好后下一轮刷新这一行消失",
+		Action: ActionStrategyEdit},
+	// Under CONFIG_NOTED too: the level runs as written, with automatic
+	// recovery off as its owner chose. Nobody is asked to act; an owner who
+	// did not mean it reads Next.
+	"RECOVERY_DISABLED_BY_CONFIG": {Kind: WithheldStrategyDefinition,
+		What:   "这一级别的恢复配置关闭了自动恢复（disable_recovery），alarmd 按写的执行：告警不按恢复周期恢复，也不因无数据结束；这一项的无数据告警在数据重新上报后也不自动恢复。告警只在人工关闭，或策略删除或停用、监控目标移除、能力不支持、生效时间外这些关闭时结束——策略在检测，不是被扣住",
+		Next:   "这是策略负责人有意关闭的就不需要处理；要自动恢复时在策略的检测配置里打开自动恢复，下一轮刷新按恢复周期恢复，这一行消失",
+		Action: ActionNone},
+	// Under CONFIG_NOTED too: the Plan runs with the bound its owner raised,
+	// and the words state the one-off cost that was chosen with it. Nobody is
+	// asked to act: the cost was the owner's choice, and an owner who did not
+	// mean it reads Next.
+	"NO_DATA_GROUP_BOUND_ABOVE_DEFAULT": {Kind: WithheldStrategyDefinition,
+		What:   "策略的无数据配置把分组上限设在默认值之上。这条策略的无数据记忆在每个状态代次的首次写入是整份写，会让 Redis 阻塞一次：测得 10 万组约 120–180 ms、20 万组约 610 ms、100 万组约 2.9 s（详情里写明设的上限、默认值与这组测量值）；之后每轮只写变化的分组，不受影响——策略在检测，不是被扣住",
+		Next:   "这是策略负责人有意设的就不需要处理；不需要这么多分组时把 max_groups 调到默认值以下或删掉，下一轮刷新这一行消失",
+		Action: ActionNone},
 	// The detect_interval readings, under CONFIG_NOTED: the Plan runs,
 	// at the step written or at the aggregation interval, and the words say
 	// which and what follows from it.
@@ -184,9 +205,20 @@ var withheldReasonWords = map[string]WithheldReasonWords{
 	"QUERY_FTA_UNSUPPORTED": {Kind: WithheldStrategyDefinition,
 		What: "FTA 告警事件类数据源不支持：这类查询要用查询服务没有的字段，不带这些字段就会把整张表的告警都算进来，所以一律不编译",
 		Next: "不会在这里检测，也没有开关可开；需要检测的话，策略负责人改用其它数据源"},
+	// Retired by the platform, not still to come: no build carries them, and
+	// the strategy owner rewrites the strategy into the form that replaced it.
+	"QUERY_SOURCE_RETIRED": {Kind: WithheldStrategyDefinition,
+		What: "GSE 系统事件（bk_monitor 事件、system.event）这条旧链路平台已退役，由自定义事件链路取代",
+		Next: "策略改写为自定义事件策略（custom/event，如 AgentLost、DiskReadonly、DiskFull、CoreFile、OOM）后即在这里检测；不会有构建再支持旧链路"},
+	"QUERY_PROMQL_FORM_RETIRED": {Kind: WithheldStrategyDefinition,
+		What: "未标记 expression_mode 的多条 PromQL 写法已停用：各查询独立出数、表达式不生效，不迁移也不自动转换",
+		Next: "策略负责人改写为三者之一：一条合并后的 PromQL（同一规则下的多组序列）；带 expression_mode 的多 PromQL 表达式（跨查询计算）；拆成多条策略（各自独立告警与恢复）"},
 	"QUERY_SOURCE_NOT_MIGRATED": {Kind: WithheldBuildCapability,
 		What: "该数据源的查询还没迁到 Go 侧",
 		Next: "等带该数据源的构建；改部署参数没有用"},
+	"QUERY_OUTPUT_CONFIG_NOT_MIGRATED": {Kind: WithheldBuildCapability,
+		What: "命名输出的某个输入在本构建里对不上唯一一个查询引用",
+		Next: "等支持它的构建；改部署参数没有用"},
 	"QUERY_MIXED_PROMQL_NOT_MIGRATED": {Kind: WithheldBuildCapability,
 		What: "混合 PromQL 的查询还没迁到 Go 侧",
 		Next: "等带它的构建；改部署参数没有用"},

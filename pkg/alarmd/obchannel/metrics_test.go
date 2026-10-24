@@ -27,15 +27,15 @@ import (
 func metricsRegistry(t *testing.T) *prometheus.Registry {
 	t.Helper()
 	registry := prometheus.NewRegistry()
-	rounds := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bkmonitor_alarmd_source_refresh_total", Help: "rounds"}, []string{"status"})
+	rounds := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "alarmd_source_refresh_total", Help: "rounds"}, []string{"status"})
 	rounds.WithLabelValues("UNCHANGED").Add(1925)
 	rounds.WithLabelValues("PUBLISHED").Add(168)
-	size := prometheus.NewGauge(prometheus.GaugeOpts{Name: "bkmonitor_alarmd_redis_pool_size", Help: "size"})
+	size := prometheus.NewGauge(prometheus.GaugeOpts{Name: "alarmd_redis_pool_size", Help: "size"})
 	size.Set(64)
-	latency := prometheus.NewHistogram(prometheus.HistogramOpts{Name: "bkmonitor_alarmd_loop_turn_duration_seconds", Help: "turns", Buckets: []float64{1, 10}})
+	latency := prometheus.NewHistogram(prometheus.HistogramOpts{Name: "alarmd_loop_turn_duration_seconds", Help: "turns", Buckets: []float64{1, 10}})
 	latency.Observe(0.5)
 	latency.Observe(30)
-	wide := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bkmonitor_alarmd_wide_total", Help: "wide"}, []string{"k"})
+	wide := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "alarmd_wide_total", Help: "wide"}, []string{"k"})
 	for i := 0; i < MaxMetricSeries+5; i++ {
 		wide.WithLabelValues(strconv.Itoa(i)).Inc()
 	}
@@ -59,9 +59,9 @@ func invokeMetrics(t *testing.T, c *Channel, params Params) (int, Response, Metr
 // name the process does not register said as absent, not answered empty.
 func TestMetricsGetReadsTheProcesssOwnFamiliesByName(t *testing.T) {
 	c := testChannel(t, &testAuth{}, MetricsOperations(metricsRegistry(t))...)
-	status, out, result := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_source_refresh_total",
-		"bkmonitor_alarmd_redis_pool_size", "bkmonitor_alarmd_loop_turn_duration_seconds", "bkmonitor_alarmd_not_registered_total"}})
-	if status != 200 || out.Evidence.Complete || len(result.Absent) != 1 || result.Absent[0] != "bkmonitor_alarmd_not_registered_total" {
+	status, out, result := invokeMetrics(t, c, Params{"names": []any{"alarmd_source_refresh_total",
+		"alarmd_redis_pool_size", "alarmd_loop_turn_duration_seconds", "alarmd_not_registered_total"}})
+	if status != 200 || out.Evidence.Complete || len(result.Absent) != 1 || result.Absent[0] != "alarmd_not_registered_total" {
 		t.Fatalf("status %d complete %v absent %v", status, out.Evidence.Complete, result.Absent)
 	}
 	if len(result.Families) != 3 {
@@ -84,11 +84,11 @@ func TestMetricsGetReadsTheProcesssOwnFamiliesByName(t *testing.T) {
 // more series than the bound says it was cut and how many matched.
 func TestMetricsGetFiltersByLabelAndSaysWhenItCut(t *testing.T) {
 	c := testChannel(t, &testAuth{}, MetricsOperations(metricsRegistry(t))...)
-	_, _, filtered := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_source_refresh_total"}, "labels": []any{"status=UNCHANGED"}})
+	_, _, filtered := invokeMetrics(t, c, Params{"names": []any{"alarmd_source_refresh_total"}, "labels": []any{"status=UNCHANGED"}})
 	if s := filtered.Families[0].Series; len(s) != 1 || *s[0].Value != 1925 || filtered.Families[0].Matched != 1 {
 		t.Errorf("filtered = %+v", filtered.Families[0])
 	}
-	_, out, wide := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_wide_total"}})
+	_, out, wide := invokeMetrics(t, c, Params{"names": []any{"alarmd_wide_total"}})
 	if f := wide.Families[0]; !f.Truncated || len(f.Series) != MaxMetricSeries || f.Matched != MaxMetricSeries+5 || out.Evidence.Complete {
 		t.Errorf("wide = truncated %v series %d matched %d complete %v", f.Truncated, len(f.Series), f.Matched, out.Evidence.Complete)
 	}
@@ -98,13 +98,13 @@ func TestMetricsGetFiltersByLabelAndSaysWhenItCut(t *testing.T) {
 // registry lists the operation as unavailable with its reason.
 func TestMetricsGetRefusesOtherNamesAndSaysWhenNotWired(t *testing.T) {
 	c := testChannel(t, &testAuth{}, MetricsOperations(metricsRegistry(t))...)
-	for _, names := range [][]any{{"go_goroutines"}, {"bkmonitor_alarmd_x", "process_open_fds"}, {}} {
+	for _, names := range [][]any{{"go_goroutines"}, {"alarmd_x", "process_open_fds"}, {}} {
 		if status, _, _ := invokeMetrics(t, c, Params{"names": names}); status != 400 {
 			t.Errorf("names %v: status %d, want refused", names, status)
 		}
 	}
 	unwired := testChannel(t, &testAuth{}, MetricsOperations(nil)...)
-	if status, out, _ := invokeMetrics(t, unwired, Params{"names": []any{"bkmonitor_alarmd_redis_pool_size"}}); status == 200 && out.Status == "ok" {
+	if status, out, _ := invokeMetrics(t, unwired, Params{"names": []any{"alarmd_redis_pool_size"}}); status == 200 && out.Status == "ok" {
 		t.Errorf("unwired answered ok: %+v", out)
 	}
 }
@@ -125,12 +125,12 @@ var errFailingCollector = errors.New("collector read failed")
 // reads on the same series; a NaN gauge says NaN rather than nothing.
 func TestMetricsGetSaysWhenACollectorFailedAndKeepsNonFiniteValues(t *testing.T) {
 	registry := metricsRegistry(t)
-	registry.MustRegister(failingCollector{desc: prometheus.NewDesc("bkmonitor_alarmd_broken_total", "broken", nil, nil)})
-	nan := prometheus.NewGauge(prometheus.GaugeOpts{Name: "bkmonitor_alarmd_ratio", Help: "ratio"})
+	registry.MustRegister(failingCollector{desc: prometheus.NewDesc("alarmd_broken_total", "broken", nil, nil)})
+	nan := prometheus.NewGauge(prometheus.GaugeOpts{Name: "alarmd_ratio", Help: "ratio"})
 	nan.Set(math.NaN())
 	registry.MustRegister(nan)
 	c := testChannel(t, &testAuth{}, MetricsOperations(registry)...)
-	status, out, result := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_broken_total", "bkmonitor_alarmd_redis_pool_size", "bkmonitor_alarmd_ratio"}})
+	status, out, result := invokeMetrics(t, c, Params{"names": []any{"alarmd_broken_total", "alarmd_redis_pool_size", "alarmd_ratio"}})
 	if status != 200 || out.Evidence.Complete || !strings.Contains(result.GatherError, "collector read failed") {
 		t.Fatalf("status %d complete %v gather_error %q", status, out.Evidence.Complete, result.GatherError)
 	}
@@ -140,17 +140,17 @@ func TestMetricsGetSaysWhenACollectorFailedAndKeepsNonFiniteValues(t *testing.T)
 	// The failed collector's family is registered and was not read: it is
 	// unrecorded, and the read does not call it a counter that never moved.
 	limits := strings.Join(out.Evidence.Limitations, "\n")
-	if len(result.Unrecorded) != 1 || result.Unrecorded[0] != "bkmonitor_alarmd_broken_total" || len(result.Absent) != 0 ||
+	if len(result.Unrecorded) != 1 || result.Unrecorded[0] != "alarmd_broken_total" || len(result.Absent) != 0 ||
 		!strings.Contains(limits, "were not read") || strings.Contains(limits, "has not moved") {
 		t.Errorf("unrecorded %v absent %v limitations %q, want the unread family said to be unread", result.Unrecorded, result.Absent, limits)
 	}
 	// Asked only for families that answered, the read is still not
 	// complete: which families the failed collector owns is not known.
-	if _, out, only := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_redis_pool_size"}}); out.Evidence.Complete || len(only.Absent) != 0 || only.GatherError == "" {
+	if _, out, only := invokeMetrics(t, c, Params{"names": []any{"alarmd_redis_pool_size"}}); out.Evidence.Complete || len(only.Absent) != 0 || only.GatherError == "" {
 		t.Errorf("read beside a failed collector: complete %v absent %v gather_error %q", out.Evidence.Complete, only.Absent, only.GatherError)
 	}
-	_, _, first := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_wide_total"}})
-	_, _, second := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_wide_total"}})
+	_, _, first := invokeMetrics(t, c, Params{"names": []any{"alarmd_wide_total"}})
+	_, _, second := invokeMetrics(t, c, Params{"names": []any{"alarmd_wide_total"}})
 	for i := range first.Families[0].Series {
 		if first.Families[0].Series[i].Labels["k"] != second.Families[0].Series[i].Labels["k"] {
 			t.Fatalf("two reads cut different series at %d", i)
@@ -165,7 +165,7 @@ func TestMetricsGetSaysWhenACollectorFailedAndKeepsNonFiniteValues(t *testing.T)
 func TestMetricsListNamesTheFamiliesSoNamesAreNotGuessed(t *testing.T) {
 	registry := metricsRegistry(t)
 	foreign := prometheus.NewGauge(prometheus.GaugeOpts{Name: "go_goroutines_fixture", Help: "not ours"})
-	long := prometheus.NewCounter(prometheus.CounterOpts{Name: "bkmonitor_alarmd_long_help_total", Help: strings.Repeat("长", MaxListedHelpBytes)})
+	long := prometheus.NewCounter(prometheus.CounterOpts{Name: "alarmd_long_help_total", Help: strings.Repeat("长", MaxListedHelpBytes)})
 	registry.MustRegister(foreign, long)
 	c := testChannel(t, &testAuth{}, MetricsOperations(registry)...)
 	status, out := call(t, c, envelope(c, "invoke", "metrics.list", Params{}))
@@ -181,22 +181,22 @@ func TestMetricsListNamesTheFamiliesSoNamesAreNotGuessed(t *testing.T) {
 	for _, family := range result.Families {
 		names = append(names, family.Name)
 	}
-	want := []string{"bkmonitor_alarmd_long_help_total", "bkmonitor_alarmd_loop_turn_duration_seconds", "bkmonitor_alarmd_redis_pool_size",
-		"bkmonitor_alarmd_source_refresh_total", "bkmonitor_alarmd_wide_total"}
+	want := []string{"alarmd_long_help_total", "alarmd_loop_turn_duration_seconds", "alarmd_redis_pool_size",
+		"alarmd_source_refresh_total", "alarmd_wide_total"}
 	if strings.Join(names, ",") != strings.Join(want, ",") || result.Matched != len(want) {
 		t.Fatalf("listed %v (matched %d), want %v and nothing outside alarmd's namespace", names, result.Matched, want)
 	}
 	for _, family := range result.Families {
 		switch family.Name {
-		case "bkmonitor_alarmd_source_refresh_total":
+		case "alarmd_source_refresh_total":
 			if family.Type != "COUNTER" || family.Help != "rounds" || family.Series != 2 {
 				t.Fatalf("refresh family = %+v", family)
 			}
-		case "bkmonitor_alarmd_loop_turn_duration_seconds":
+		case "alarmd_loop_turn_duration_seconds":
 			if family.Type != "HISTOGRAM" || family.Series != 1 {
 				t.Fatalf("histogram family = %+v", family)
 			}
-		case "bkmonitor_alarmd_long_help_total":
+		case "alarmd_long_help_total":
 			if len(family.Help) > MaxListedHelpBytes+3 || !strings.HasSuffix(family.Help, "...") || !utf8.ValidString(family.Help) {
 				t.Fatalf("long help not cut on a character boundary: %d bytes %q", len(family.Help), family.Help[len(family.Help)-8:])
 			}
@@ -206,14 +206,14 @@ func TestMetricsListNamesTheFamiliesSoNamesAreNotGuessed(t *testing.T) {
 	encoded, _ = json.Marshal(narrowed.Result)
 	var only MetricsListResult
 	_ = json.Unmarshal(encoded, &only)
-	if len(only.Families) != 1 || only.Families[0].Name != "bkmonitor_alarmd_source_refresh_total" {
+	if len(only.Families) != 1 || only.Families[0].Name != "alarmd_source_refresh_total" {
 		t.Fatalf("contains matched help case-insensitively? got %+v", only.Families)
 	}
-	_, got, _ := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_recovery_total"}})
+	_, got, _ := invokeMetrics(t, c, Params{"names": []any{"alarmd_recovery_total"}})
 	if len(got.Next) != 1 || got.Next[0].Operation != "metrics.list" {
 		t.Fatalf("a name the process does not register gave no way to find the right one: %+v", got.Next)
 	}
-	_, known, _ := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_source_refresh_total"}})
+	_, known, _ := invokeMetrics(t, c, Params{"names": []any{"alarmd_source_refresh_total"}})
 	for _, next := range known.Next {
 		if next.Operation == "metrics.list" {
 			t.Fatal("a read of a registered family pointed at metrics.list")
@@ -232,23 +232,23 @@ func TestMetricsListNamesTheFamiliesSoNamesAreNotGuessed(t *testing.T) {
 // registry does not describe is absent and points at metrics.list.
 func TestARegisteredFamilyWithoutSeriesIsUnrecordedNotAbsent(t *testing.T) {
 	registry := metricsRegistry(t)
-	failures := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bkmonitor_alarmd_redis_command_failure_total", Help: "failed commands"}, []string{"reason"})
+	failures := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "alarmd_redis_command_failure_total", Help: "failed commands"}, []string{"reason"})
 	registry.MustRegister(failures)
 	c := testChannel(t, &testAuth{}, MetricsOperations(registry)...)
 	_, out := call(t, c, envelope(c, "invoke", "metrics.list", Params{"contains": "failure"}))
 	encoded, _ := json.Marshal(out.Result)
 	var listed MetricsListResult
 	_ = json.Unmarshal(encoded, &listed)
-	if !listed.Described || len(listed.Families) != 1 || listed.Families[0].Name != "bkmonitor_alarmd_redis_command_failure_total" ||
+	if !listed.Described || len(listed.Families) != 1 || listed.Families[0].Name != "alarmd_redis_command_failure_total" ||
 		listed.Families[0].Series != 0 || listed.Families[0].Type != "" || listed.Families[0].Help != "failed commands" {
 		t.Fatalf("an empty registered family is not listed as such: %+v", listed)
 	}
-	_, got, result := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_redis_command_failure_total", "bkmonitor_alarmd_not_registered_total"}})
-	if len(result.Unrecorded) != 1 || result.Unrecorded[0] != "bkmonitor_alarmd_redis_command_failure_total" ||
-		len(result.Absent) != 1 || result.Absent[0] != "bkmonitor_alarmd_not_registered_total" {
+	_, got, result := invokeMetrics(t, c, Params{"names": []any{"alarmd_redis_command_failure_total", "alarmd_not_registered_total"}})
+	if len(result.Unrecorded) != 1 || result.Unrecorded[0] != "alarmd_redis_command_failure_total" ||
+		len(result.Absent) != 1 || result.Absent[0] != "alarmd_not_registered_total" {
 		t.Fatalf("unrecorded %v absent %v, want the empty family unrecorded and only the unknown name absent", result.Unrecorded, result.Absent)
 	}
-	_, onlyEmpty, _ := invokeMetrics(t, c, Params{"names": []any{"bkmonitor_alarmd_redis_command_failure_total"}})
+	_, onlyEmpty, _ := invokeMetrics(t, c, Params{"names": []any{"alarmd_redis_command_failure_total"}})
 	for _, next := range onlyEmpty.Next {
 		if next.Operation == "metrics.list" {
 			t.Fatal("a registered name without series was sent to look for its name")
@@ -270,7 +270,7 @@ func TestARegisteredFamilyWithoutSeriesIsUnrecordedNotAbsent(t *testing.T) {
 		t.Fatalf("a listing without descriptions did not say what it leaves out: %+v %v", partial.Described, out.Evidence.Limitations)
 	}
 	for _, family := range partial.Families {
-		if family.Name == "bkmonitor_alarmd_redis_command_failure_total" {
+		if family.Name == "alarmd_redis_command_failure_total" {
 			t.Fatal("an undescribed listing claimed a family it cannot see")
 		}
 	}
@@ -298,7 +298,7 @@ func TestTheProductionRegistryIsListedWhole(t *testing.T) {
 		}
 		name := text[start+len(marker):]
 		name = name[:strings.IndexByte(name, '"')]
-		if strings.HasPrefix(name, "bkmonitor_alarmd_") {
+		if strings.HasPrefix(name, "alarmd_") {
 			want[name] = true
 		}
 	}
@@ -332,10 +332,13 @@ func TestTheProductionRegistryIsListedWhole(t *testing.T) {
 func TestMetricsListPagesARegistryLargerThanAPage(t *testing.T) {
 	registry := metricsRegistry(t)
 	help := strings.Repeat("h", MaxListedHelpBytes)
+	pageBytes := MaxListedPageBytes
+	MaxListedPageBytes = 256 << 10
+	t.Cleanup(func() { MaxListedPageBytes = pageBytes })
 	const extra = 900
 	for i := 0; i < extra; i++ {
 		registry.MustRegister(prometheus.NewCounter(prometheus.CounterOpts{
-			Name: fmt.Sprintf("bkmonitor_alarmd_paged_%04d_total", i), Help: help}))
+			Name: fmt.Sprintf("alarmd_paged_%04d_total", i), Help: help}))
 	}
 	c := testChannel(t, &testAuth{}, MetricsOperations(registry)...)
 	seen := map[string]bool{}

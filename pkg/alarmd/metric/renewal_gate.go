@@ -26,7 +26,7 @@ type renewalGateCollector struct {
 func newRenewalGateCollector() *renewalGateCollector {
 	return &renewalGateCollector{
 		resets: prometheus.NewDesc(
-			prometheus.BuildFQName(metricNamespace, metricSubsystem, "state_renewal_gate_resets_total"),
+			prometheus.BuildFQName("", metricSubsystem, "state_renewal_gate_resets_total"),
 			"Times this process forgot every generation-scoped key life it had remembered, because the "+
 				"keys it is being asked about no longer fit. Renewal hangs on the load, so without the "+
 				"memory every Plan sends one EVAL per Slot to decide something that changes twice a day; "+

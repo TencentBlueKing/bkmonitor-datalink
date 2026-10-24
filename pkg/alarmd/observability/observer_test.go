@@ -29,7 +29,6 @@ func TestNormalizeObservationBoundsCatalogAndCounts(t *testing.T) {
 		Stage:     Stage("dynamic-stage"),
 		Result:    Result("dynamic-result"),
 		Operation: Operation("dynamic-operation"),
-		Direction: Direction("dynamic-direction"),
 		ReasonCode: ReasonCode(
 			"dynamic-reason",
 		),
@@ -43,8 +42,8 @@ func TestNormalizeObservationBoundsCatalogAndCounts(t *testing.T) {
 	if got.Component != ComponentOther || got.Stage != StageOther || got.Result != ResultOther {
 		t.Fatalf("normalized identity = %q/%q/%q", got.Component, got.Stage, got.Result)
 	}
-	if got.Operation != OperationOther || got.Direction != DirectionOther || got.ReasonCode != ReasonOther {
-		t.Fatalf("normalized operation/direction/reason = %q/%q/%q", got.Operation, got.Direction, got.ReasonCode)
+	if got.Operation != OperationOther || got.ReasonCode != ReasonOther {
+		t.Fatalf("normalized operation/reason = %q/%q", got.Operation, got.ReasonCode)
 	}
 	if got.Duration != -time.Second || got.Counts.Messages != 0 || got.Counts.Records != 2 {
 		t.Fatalf("normalized duration/counts = %v/%#v", got.Duration, got.Counts)
@@ -396,7 +395,6 @@ func TestObservationLoggerUsesBoundedEnvelope(t *testing.T) {
 		Stage:      StageResourceHard,
 		Result:     ResultTerminal,
 		Operation:  OperationTransition,
-		Direction:  DirectionOutput,
 		ReasonCode: ReasonRSS,
 		Duration:   1500 * time.Millisecond,
 		Counts: Counts{
@@ -419,7 +417,6 @@ func TestObservationLoggerUsesBoundedEnvelope(t *testing.T) {
 		"stage":          string(StageResourceHard),
 		"result":         string(ResultTerminal),
 		"operation":      string(OperationTransition),
-		"direction":      string(DirectionOutput),
 		"reason_code":    string(ReasonRSS),
 		"duration_ms":    float64(1500),
 		"records":        float64(2),

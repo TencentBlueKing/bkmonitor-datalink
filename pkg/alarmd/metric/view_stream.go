@@ -54,7 +54,7 @@ type viewStreamCollector struct {
 }
 
 func newViewStreamCollector() *viewStreamCollector {
-	name := func(suffix string) string { return prometheus.BuildFQName(metricNamespace, metricSubsystem, suffix) }
+	name := func(suffix string) string { return prometheus.BuildFQName("", metricSubsystem, suffix) }
 	return &viewStreamCollector{
 		leading: prometheus.NewDesc(name("view_stream_leading"),
 			"1 while this process is the Control Leader of the view stream and holds a publisher for its term, else 0. "+

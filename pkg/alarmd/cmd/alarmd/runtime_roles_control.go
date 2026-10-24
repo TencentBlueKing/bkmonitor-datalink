@@ -13,6 +13,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"google.golang.org/grpc"
 
+	accessuq "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access/uq"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
@@ -49,7 +50,20 @@ func openProductionControlRoleBundle(
 	}
 	cfg = cfg.WithResolvedRedisPoolSize()
 	wait := external.startupWaiter(recorder, logger, health)
-	cfg, linkdDiscovery := adoptLinkdLocation(ctx, cfg, openalerts.DiscoverTarget)
+	linkdTokens, linkdTokenClient, err := openLinkdTokens(cfg, recorder.RedisHook("linkd"), external.Now)
+	if err != nil {
+		return nil, err
+	}
+	// Closed here until the owned clients take it over below.
+	linkdTokensOwned := false
+	defer func() {
+		if resultErr != nil && linkdTokenClient != nil && !linkdTokensOwned {
+			resultErr = errors.Join(resultErr, linkdTokenClient.Close())
+		}
+	}()
+	discoverLinkd := withLinkdToken(openalerts.DiscoverTarget, linkdTokenSource(linkdTokens))
+	cfg, linkdDiscovery := adoptLinkdLocation(ctx, cfg, discoverLinkd)
+	logLinkdDiscovery(logger, linkdDiscovery)
 	baseObserver, err := newPhaseTwoRuntimeObserver(recorder, logger)
 	if err != nil {
 		return nil, err
@@ -62,6 +76,9 @@ func openProductionControlRoleBundle(
 		return nil, err
 	}
 	var ownedClients []redis.UniversalClient
+	if linkdTokenClient != nil {
+		ownedClients, linkdTokensOwned = append(ownedClients, linkdTokenClient), true
+	}
 	closeOwned := func() error {
 		var errs []error
 		for _, client := range ownedClients {
@@ -201,7 +218,7 @@ func openProductionControlRoleBundle(
 			ownedClients = append(ownedClients, linkdClient)
 		}
 	}
-	linkd, err := newLinkdIndex(cfg, linkdClient, linkdConnection, linkdDiscovery, openLinkd, external.Now, logger)
+	linkd, err := newLinkdIndex(cfg, linkdClient, linkdConnection, linkdDiscovery, openLinkd, linkdTokenSource(linkdTokens), external.Now, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +302,9 @@ func openProductionControlRoleBundle(
 		return nil, err
 	}
 	fleetStore.Meter(recorder)
-	fleetStore.HoldLoads(observationHold(observationMemory, memoryline.ConsumerFleetView))
+	operatorFleetLoads(fleetStore, observationMemory)
+	// A control process is the preferred candidate: it plans the lookback.
+	controlOwnership.WithLookbackPlanner(fleetStore, true, recorder)
 	service, err := fleet.NewService(controlPlaneExpectation{repository: core.Repository}, registryReplicas{store: core.Ownership},
 		fleetStore, 6*cfg.PhaseTwo.Control.ReconcileInterval.Duration(), external.Now)
 	if err != nil {
@@ -303,13 +322,17 @@ func openProductionControlRoleBundle(
 	if err != nil {
 		return nil, err
 	}
-	native, err := fleet.NewHandler(service, windows, external.Now, cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(), nil, nil,
+	trends, err := controlTrends(cfg, external)
+	if err != nil {
+		return nil, err
+	}
+	native, err := fleet.NewHandler(service, windows, external.Now, cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(), trends, nil,
 		cfg.PhaseTwo.Access.MonitorWebBaseURL)
 	if err != nil {
 		return nil, err
 	}
 	var bundle *phaseTwoWorkerBundle
-	directory, err := controlplane.NewDirectoryView(core.Reconciler, core.Repository, directoryReadTimeout)
+	directory, err := controlplane.NewDirectoryView(core.Reconciler, core.Repository)
 	if err != nil {
 		return nil, err
 	}
@@ -322,19 +345,22 @@ func openProductionControlRoleBundle(
 		leaderForwarder(discovery, cfg.PhaseTwo.Worker.ID, nil, recorder.ObserveLeaderForward), strategyObjectLoader(core.Repository),
 		absence, strategyStandingReplica(cfg.PhaseTwo.Worker.ID), external.Now, cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration())
 	diagnosisWarmer := fleet.NewDiagnosisWarmer(service, strategyLookupSource(core.Reconciler),
-		diagnosisUniverse(core.StrategySource), diagnosisProgress(core.Progress, observationAdmit(observationMemory, memoryline.ConsumerDiagnosisProgress)), external.Now, stallAfter)
+		diagnosisUniverse(core.StrategySource), diagnosisProgress(core.Progress, operatorProgressReads(observationMemory)), external.Now, stallAfter)
 	native = fleet.WithDiagnosis(native, service, strategyLookupSource(core.Reconciler),
 		leaderForwarderWithin(discovery, cfg.PhaseTwo.Worker.ID, nil, diagnosisForwardTimeout, "diagnosis", recorder.ObserveLeaderForward),
-		diagnosisUniverse(core.StrategySource), diagnosisProgress(core.Progress, observationAdmit(observationMemory, memoryline.ConsumerDiagnosisProgress)),
+		diagnosisUniverse(core.StrategySource), diagnosisProgress(core.Progress, operatorProgressReads(observationMemory)),
 		strategyStandingReplica(cfg.PhaseTwo.Worker.ID), external.Now, stallAfter, diagnosisWarmer)
 	absentPage := &absentCandidatePage{}
 	native = fleet.WithAbsentCandidates(native, absentPage.source,
 		leaderForwarderWithin(discovery, cfg.PhaseTwo.Worker.ID, nil, absentForwardTimeout, absentForwardRoute, recorder.ObserveLeaderForward), cfg.PhaseTwo.Worker.ID)
+	// A request a follower handed on answers by the deadline its hop carries.
+	native = fleet.WithForwardedDeadline(native)
 	var closeCLI = func() error { return nil }
 	publicRestricted := false
 	binding := cliControlBinding{Incarnation: incarnation, StreamToken: streamIdentity.Token, Server: viewServer,
 		Metrics: recorder.Gatherer(), PublicWindows: fleet.NewPublicWindowsHandler(windows, external.Now),
-		RedisFailures: cliRedisFailures(recorder, observer), RedisDialRetries: recorder.ObserveDiagnosticRedisDialRetry}
+		RedisFailures: cliRedisFailures(recorder, observer), RedisDialRetries: recorder.ObserveDiagnosticRedisDialRetry,
+		AuthEvents: cliAuthEvents(recorder), RosterApplied: recorder.SetCLIRosterApplied, LinkdConsole: linkd.Console}
 	facts := func() *observability.RuntimeConfigFacts {
 		if bundle == nil {
 			return nil
@@ -361,10 +387,11 @@ func openProductionControlRoleBundle(
 	bundle, err = newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: health, Control: core.Control, Ownership: controlOwnership, Recorder: recorder, Observer: observer, Now: external.Now,
 		FleetAPI: native, PublicSurfaceRestricted: publicRestricted, ControlStream: controlStream, StreamIdentity: streamIdentity,
+		NoDataCloseAPI:  noDataCloseAPIOf(core.NoDataCloses, external.Now),
 		ViewStreamStats: viewServer.Stats, ActivationBlocked: core.Repository.ActivationBlockedReading,
 		ActivationSkipped: core.Repository.SkippedTimelinesReading, ActivationHeader: core.Repository.ActivationHeaderReading,
 		RunOpenAlerts: func(runCtx context.Context) error {
-			go linkd.Location.retry(runCtx, cfg, openalerts.DiscoverTarget, linkdRetryFirst, linkdRetryCeiling)
+			go linkd.Location.retry(runCtx, cfg, discoverLinkd, linkdRetryFirst, linkdRetryCeiling)
 			return linkd.Cache.Run(runCtx)
 		},
 		RefreshPlatformSettings: func(refreshCtx context.Context) { settings.Refresh(refreshCtx) },
@@ -402,4 +429,22 @@ func openProductionControlRoleBundle(
 		external.RoleRuntime.Channel.Bind(*channelBinding)
 	}
 	return bundle, nil
+}
+
+// controlTrends gives a control process the trends a process running every
+// role serves: in the split topology the control process hosts the channel,
+// and trends.get reads them from the handler it binds. The client is the
+// trends' own, at the UQ client's default limits; a control process builds
+// no query execution. Without a UQ endpoint there are no trends.
+func controlTrends(cfg config.Config, external phaseTwoProductionExternalDependencies) (*fleet.Trends, error) {
+	if cfg.PhaseTwo.Access.UQEndpoint == "" {
+		return nil, nil
+	}
+	client, err := accessuq.NewClientWithLimits(cfg.PhaseTwo.Access.UQEndpoint, cfg.PhaseTwo.Access.QuerySource,
+		external.HTTPClient, accessuq.DefaultLimits())
+	if err != nil {
+		return nil, err
+	}
+	client.WithNow(external.QueryClock)
+	return fleetTrends(client, config.ProcessNamespace(), external.Now), nil
 }

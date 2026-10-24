@@ -13,6 +13,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/roles"
 )
@@ -72,7 +73,7 @@ func TestControlRoleStopsRenewalAndWaitsForControlWritesBeforeRelease(t *testing
 			go func() { done <- bundle.runControlRole(ctx) }()
 			select {
 			case <-control.entered:
-			case <-time.After(time.Second):
+			case <-testwait.Expired(t):
 				t.Fatal("control round did not enter")
 			}
 			cancel()
@@ -81,12 +82,12 @@ func TestControlRoleStopsRenewalAndWaitsForControlWritesBeforeRelease(t *testing
 				if ignoreCancel != errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("shutdown error = %v", err)
 				}
-			case <-time.After(time.Second):
+			case <-testwait.Expired(t):
 				t.Fatal("control role shutdown exceeded its budget")
 			}
 			select {
 			case <-owner.stopped:
-			case <-time.After(time.Second):
+			case <-testwait.Expired(t):
 				t.Fatal("control lease renewal continued")
 			}
 			if owner.released.Load() == ignoreCancel {
@@ -97,7 +98,7 @@ func TestControlRoleStopsRenewalAndWaitsForControlWritesBeforeRelease(t *testing
 			}
 			select {
 			case <-control.returned:
-			case <-time.After(time.Second):
+			case <-testwait.Expired(t):
 				t.Fatal("control round leaked after unblocking")
 			}
 			if err := waitPhaseTwoGroup(context.Background(), &bundle.maintenanceWG); err != nil {
@@ -160,7 +161,7 @@ func TestBusinessRoleCombinationsKeepExecutionAndControlOwnershipSeparate(t *tes
 			} else if len(owner.registrationStates()) != 0 || owner.opens != 0 || len(bundle.runners) != 0 {
 				t.Fatal("control-only process entered the Worker population or acquired a QG lease")
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithCancel(testwait.Context(t))
 			defer cancel()
 			if err := bundle.Shutdown(ctx); err != nil {
 				t.Fatal(err)

@@ -78,7 +78,7 @@ func TestASlotOnAPythonCalendarIsJudgedNotFrozen(t *testing.T) {
 			Contract: execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{EvaluationTime: execution.EvaluationTime(tt.at.Unix())}},
 			DuePlans: []execution.DuePlan{{Identity: identity, CompiledPlan: compiled}},
 		}
-		facts, err := PrepareEffectiveTimeFacts(context.Background(), header, legacy.Provider())
+		facts, err := PrepareEffectiveTimeFacts(context.Background(), header, legacy.Provider(), int64(header.Contract.Slot.EvaluationTime))
 		if err != nil {
 			t.Fatalf("%s: %v", tt.name, err)
 		}
@@ -98,7 +98,7 @@ func TestASlotOnAPythonCalendarIsJudgedNotFrozen(t *testing.T) {
 		Contract: execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{EvaluationTime: execution.EvaluationTime(now.Unix())}},
 		DuePlans: []execution.DuePlan{{Identity: identity, CompiledPlan: compiled}},
 	}
-	facts, err := PrepareEffectiveTimeFacts(context.Background(), header, empty.Provider())
+	facts, err := PrepareEffectiveTimeFacts(context.Background(), header, empty.Provider(), int64(header.Contract.Slot.EvaluationTime))
 	if err != nil {
 		t.Fatal(err)
 	}

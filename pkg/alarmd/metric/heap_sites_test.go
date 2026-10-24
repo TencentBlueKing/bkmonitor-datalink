@@ -68,27 +68,27 @@ func TestHeapSitesChargeAPlantedRetentionToTheFunctionThatAllocatedIt(t *testing
 
 	gathered := gatherHeapSites(t, newHeapSiteCollector(time.Now))
 	const site = "metric.retainHeapSiteBallast"
-	bytes, ok := gathered["bkmonitor_alarmd_heap_inuse_site_bytes"][site]
+	bytes, ok := gathered["alarmd_heap_inuse_site_bytes"][site]
 	if !ok {
-		t.Fatalf("planted retention was not charged to its function; sites: %v", gathered["bkmonitor_alarmd_heap_inuse_site_bytes"])
+		t.Fatalf("planted retention was not charged to its function; sites: %v", gathered["alarmd_heap_inuse_site_bytes"])
 	}
 	if bytes < size || bytes > size*1.1 {
 		t.Fatalf("planted %d bytes, charged %.0f", size, bytes)
 	}
-	objects := gathered["bkmonitor_alarmd_heap_inuse_site_objects"][site]
+	objects := gathered["alarmd_heap_inuse_site_objects"][site]
 	if objects < 1 || objects > 1.1 {
 		t.Fatalf("planted one object, charged %.2f", objects)
 	}
-	if sites := len(gathered["bkmonitor_alarmd_heap_inuse_site_bytes"]); sites > heapSiteTop {
+	if sites := len(gathered["alarmd_heap_inuse_site_bytes"]); sites > heapSiteTop {
 		t.Fatalf("published %d sites, the instrument keeps %d", sites, heapSiteTop)
 	}
-	if profiled := gathered["bkmonitor_alarmd_heap_inuse_profiled_bytes"][""]; profiled < bytes {
+	if profiled := gathered["alarmd_heap_inuse_profiled_bytes"][""]; profiled < bytes {
 		t.Fatalf("profiled total %.0f is below the one site it includes, %.0f", profiled, bytes)
 	}
-	if live := gathered["bkmonitor_alarmd_heap_inuse_live_bytes"][""]; live < size {
+	if live := gathered["alarmd_heap_inuse_live_bytes"][""]; live < size {
 		t.Fatalf("runtime live heap %.0f is below the %d bytes kept alive", live, size)
 	}
-	if records := gathered["bkmonitor_alarmd_heap_inuse_profile_records"][""]; records < 1 {
+	if records := gathered["alarmd_heap_inuse_profile_records"][""]; records < 1 {
 		t.Fatalf("profile records %.0f", records)
 	}
 }
@@ -119,15 +119,15 @@ func TestHeapSitesDescribeThePresentHeapNotTheProfileOfTwoCollectionsAgo(t *test
 	heapSiteBallast = []([]byte){retainHeapSiteReplacement(size)}
 
 	gathered := gatherHeapSites(t, newHeapSiteCollector(time.Now))
-	sites := gathered["bkmonitor_alarmd_heap_inuse_site_bytes"]
+	sites := gathered["alarmd_heap_inuse_site_bytes"]
 	if got := sites["metric.retainHeapSiteReplacement"]; got < size || got > size*1.1 {
 		t.Fatalf("the live replacement was charged %.0f bytes, want about %d; sites: %v", got, size, sites)
 	}
 	if dead := sites["metric.retainHeapSiteBallast"]; dead >= size/2 {
 		t.Fatalf("the dropped ballast is still charged %.0f bytes", dead)
 	}
-	profiled := gathered["bkmonitor_alarmd_heap_inuse_profiled_bytes"][""]
-	live := gathered["bkmonitor_alarmd_heap_inuse_live_bytes"][""]
+	profiled := gathered["alarmd_heap_inuse_profiled_bytes"][""]
+	live := gathered["alarmd_heap_inuse_live_bytes"][""]
 	if ratio := profiled / live; ratio < 0.8 || ratio > 1.25 {
 		t.Fatalf("profiled %.0f over live %.0f = %.2f, want the two totals to describe the same cycle", profiled, live, ratio)
 	}
@@ -270,7 +270,7 @@ func TestRecorderPublishesHeapSites(t *testing.T) {
 	for _, family := range families {
 		found[family.GetName()] = true
 	}
-	for _, name := range []string{"bkmonitor_alarmd_heap_inuse_profiled_bytes", "bkmonitor_alarmd_heap_inuse_profile_records", "bkmonitor_alarmd_heap_inuse_live_bytes"} {
+	for _, name := range []string{"alarmd_heap_inuse_profiled_bytes", "alarmd_heap_inuse_profile_records", "alarmd_heap_inuse_live_bytes"} {
 		if !found[name] {
 			t.Fatalf("%s is not published by the recorder", name)
 		}

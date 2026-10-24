@@ -14,12 +14,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/TencentBlueKing/bk-apigateway-sdks/core/define"
 	gomonkey "github.com/agiledragon/gomonkey/v2"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/metadata/models/space"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
@@ -188,22 +186,49 @@ var DemoSpaces = []space.Space{
 
 func TestBusinessCacheManager(t *testing.T) {
 	// mock相关接口调用与数据库查询
-	batchApiRequestPatch := gomonkey.ApplyFunc(api.BatchApiRequest, func(pageSize int, getTotalFunc func(any) (int, error), getReqFunc func(page int) define.Operation, concurrency int) ([]any, error) {
-		result := make([]any, len(DemoBusinesses))
-		for i, v := range DemoBusinesses {
-			result[i] = v
-		}
-		return result, nil
+	getBusinessListPatch := gomonkey.ApplyFunc(getBusinessList, func(ctx context.Context, bkTenantId string) ([]map[string]any, error) {
+		return []map[string]any{
+			{
+				"bk_tenant_id":      tenant.DefaultTenantId,
+				"bk_biz_id":         2.0,
+				"bk_biz_name":       "BlueKing",
+				"bk_biz_developer":  []string{"admin"},
+				"bk_biz_productor":  []string{"admin", "user1"},
+				"bk_biz_tester":     []string{"admin", "user1"},
+				"bk_biz_maintainer": []string{"admin", "user2"},
+				"operator":          []string{"admin"},
+				"time_zone":         "Asia/Shanghai",
+				"language":          "1",
+				"life_cycle":        "2",
+				"bk_pmp_qa":         []string{"user1", "user2"},
+				"bk_pmp_qa2":        "user1,user2",
+			},
+			{
+				"bk_tenant_id":      tenant.DefaultTenantId,
+				"bk_biz_id":         3.0,
+				"bk_biz_name":       "Test",
+				"bk_biz_developer":  []string{"user1"},
+				"bk_biz_productor":  []string{"user1"},
+				"bk_biz_tester":     []string{"user1", "user2"},
+				"bk_biz_maintainer": []string{},
+				"operator":          []string{"user1"},
+				"time_zone":         "Asia/Shanghai",
+				"language":          "1",
+				"life_cycle":        "2",
+			},
+		}, nil
 	})
-	defer batchApiRequestPatch.Reset()
-	getBusinessAttributePatch := gomonkey.ApplyFunc(getBusinessAttribute, func(ctx context.Context) ([]cmdb.SearchObjectAttributeData, error) {
-		return BusinessAttrs, nil
-	})
-	defer getBusinessAttributePatch.Reset()
+	defer getBusinessListPatch.Reset()
 	getSpaceListPatch := gomonkey.ApplyFunc(getSpaceList, func() ([]space.Space, error) {
 		return DemoSpaces, nil
 	})
 	defer getSpaceListPatch.Reset()
+	listTenantPatch := gomonkey.ApplyFunc(tenant.GetTenantList, func() ([]tenant.ListTenantData, error) {
+		return []tenant.ListTenantData{
+			{Id: tenant.DefaultTenantId, Name: "System", Status: "normal"},
+		}, nil
+	})
+	defer listTenantPatch.Reset()
 
 	rOpts := &redis.Options{
 		Mode:  "standalone",

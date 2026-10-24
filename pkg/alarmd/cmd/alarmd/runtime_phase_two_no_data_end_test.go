@@ -11,12 +11,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/testwait"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
@@ -354,4 +357,129 @@ func keysNotIn(before, after []string) []string {
 		}
 	}
 	return added
+}
+
+// wireBusiness is the business the link output files an event's alert under:
+// its labels' bk_biz_id, as the converter writes it.
+func wireBusiness(t *testing.T, event contract.TriggerEventV1) int64 {
+	t.Helper()
+	converter, err := linkdoutput.NewConverter(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := converter.Convert(&event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Labels struct {
+			BusinessID int64 `json:"bk_biz_id"`
+		} `json:"labels"`
+	}
+	if err := json.Unmarshal(message.Payload, &wire); err != nil {
+		t.Fatal(err)
+	}
+	return wire.Labels.BusinessID
+}
+
+// A global business strategy of business 2 whose host B is in business 11:
+// B's alert is raised under 11, and when B stops reporting its absent end
+// goes under 11 too - the business B was attributed to while it reported,
+// kept in the index beside its entry - not under the strategy's own. An
+// entry written before the business was kept ends under the strategy's
+// business, as every absent end did before. An ordinary strategy's index
+// entries and ends carry no business of their own, so their bytes are what
+// they were.
+func TestAnAbsentSeriesEndIsFiledUnderTheBusinessItsAlertWasRaisedUnder(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		global     bool
+		preUpgrade bool
+		// raised is the business B's alert is filed under, ended the one its
+		// end is, and attributed what the end names beside the Plan's.
+		raised, ended int64
+		attributed    string
+	}{
+		{name: "global", global: true, raised: 11, ended: 11, attributed: "11"},
+		{name: "global, entry written before the business was kept", global: true, preUpgrade: true, raised: 11, ended: 2},
+		{name: "ordinary", raised: 2, ended: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			records := lifecycleHostRecords("")
+			if tc.global {
+				for _, field := range []string{lifecycleHostB + "|0", "2"} {
+					records[field] = strings.Replace(records[field], `"bk_biz_id":2`, `"bk_biz_id":11`, 1)
+				}
+			}
+			// Hosts 1 and 2 by a target plan: a global strategy's target is
+			// never the old form, and a host target attributes a series to its
+			// host's business even when the series names the host by address.
+			strategy := lifecycleStrategy{revision: 7, noDataOff: true, statusSetter: "recovery-nodata", global: tc.global,
+				edit: func(item map[string]any) {
+					item["target"] = []any{}
+					item["target_plan"] = map[string]any{
+						"schema_version": 1, "model_id": "cw-Host", "target_rule": "host_id", "failure_policy": "no_match",
+						"static_targets":     []any{map[string]any{"bk_host_id": 1}, map[string]any{"bk_host_id": 2}},
+						"dynamic_groups":     []any{},
+						"dynamic_topologies": []any{},
+					}
+				}}
+			fixture := startLifecycleFixture(t, strategy, records)
+			fixture.serve(false, 90, lifecycleHostA, lifecycleHostB)
+			fixture.mustAttempt(1)
+			opened := fixture.thresholdEventsFor(lifecycleHostB)
+			if len(opened) != 1 || opened[0].EventKind != contract.TriggerEventAbnormal || wireBusiness(t, opened[0]) != tc.raised {
+				t.Fatalf("round 1 sent B %+v, want one ABNORMAL filed under %d", opened, tc.raised)
+			}
+			fixture.publishOpenAlert(opened[0].DedupeMD5)
+			fixture.serve(false, 90, lifecycleHostA)
+			fixture.mustAttempt(2)
+			fixture.waitOpenAlertSetRead(2)
+
+			key := fixture.noDataEndKeys()[0]
+			values, err := fixture.redis.HGetAll(context.Background(), key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			field := ""
+			for name := range values {
+				if fieldNamesSeriesOf(fixture, name, opened[0]) {
+					field = name
+				}
+			}
+			var stored map[string]json.RawMessage
+			if field == "" || json.Unmarshal([]byte(values[field]), &stored) != nil {
+				t.Fatalf("B's entry is not indexed: %v", values)
+			}
+			if business, kept := stored["b"]; tc.global != kept || kept && string(business) != `"11"` {
+				t.Fatalf("B's entry keeps business %s (kept %v), want 11 only for the global strategy", business, kept)
+			}
+			if tc.preUpgrade {
+				delete(stored, "b")
+				older, err := json.Marshal(stored)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := fixture.redis.HSet(context.Background(), key, field, older).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			for round := int64(3); round <= 6 && len(recoveriesOf(fixture.thresholdEventsFor(lifecycleHostB))) == 0; round++ {
+				fixture.mustAttempt(round)
+			}
+			ends := recoveriesOf(fixture.thresholdEventsFor(lifecycleHostB))
+			if len(ends) != 1 || !ends[0].RecordRef.Absent || ends[0].DedupeMD5 != opened[0].DedupeMD5 {
+				t.Fatalf("B's ends = %+v, want one absent RECOVERY under its alert", ends)
+			}
+			end := ends[0]
+			if end.BusinessID != "2" || end.AttributedBusinessID != tc.attributed || wireBusiness(t, end) != tc.ended {
+				t.Fatalf("B's end is the Plan's %s, attributed %q, filed under %d; want attributed %q, filed under %d",
+					end.BusinessID, end.AttributedBusinessID, wireBusiness(t, end), tc.attributed, tc.ended)
+			}
+			if encoded, err := json.Marshal(end); err != nil || !tc.global && strings.Contains(string(encoded), "attributed_business_id") {
+				t.Fatalf("the ordinary strategy's end carries a business of its own: %s (%v)", encoded, err)
+			}
+		})
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -409,6 +410,7 @@ func (p *Provider) shown(object *unstructured.Unstructured, fingerprints *finger
 	for _, field := range []string{"managedFields", "resourceVersion", "generation", "uid", "creationTimestamp"} {
 		unstructured.RemoveNestedField(cleaned, "metadata", field)
 	}
+	dropEmptyAnnotations(cleaned)
 	delete(cleaned, "status")
 	return cleaned
 }
@@ -429,15 +431,31 @@ func (p *Provider) stored(object *unstructured.Unstructured, fingerprints *finge
 		unstructured.RemoveNestedField(raw, "metadata", field)
 	}
 	unstructured.RemoveNestedField(raw, "metadata", "annotations", lastAppliedAnnotation)
+	dropEmptyAnnotations(raw)
 	delete(raw, "status")
 	return raw
 }
 
+// dropEmptyAnnotations removes an annotations map the last-applied
+// annotation alone held: with that annotation taken out it is empty, and an
+// empty map is a leaf of its own (flattenBounded), so a write that removed
+// only that annotation would read as a change. An empty annotations map is
+// the same metadata as none.
+func dropEmptyAnnotations(object map[string]any) {
+	metadata, _ := object["metadata"].(map[string]any)
+	if annotations, ok := metadata["annotations"].(map[string]any); ok && len(annotations) == 0 {
+		delete(metadata, "annotations")
+	}
+}
+
 // writeChanges lists what a write changed, before (nil when it created the
-// object) to after. A path is a change when its stored value differs, so a
-// value changed past maxChangeValueBytes or inside a masked span counts; the
-// values are printed as k8s.list shows them, and when the two print the same
-// the change carries the stored values' fingerprints to tell them apart.
+// object) to after. A path is a change when it is on one side only, its
+// JSON type differs, or its stored value differs, so a key added or
+// removed with an empty value counts, as does the string "1" become the
+// number 1, or a value changed past maxChangeValueBytes or inside a masked
+// span; the values are printed as k8s.list shows them, a string quoted when
+// the other side is of another type, and when the two print the same the
+// change carries the stored values' fingerprints to tell them apart.
 func (p *Provider) writeChanges(before, after *unstructured.Unstructured, fingerprints *fingerprints) ([]FieldChange, int) {
 	var shownBefore map[string]any
 	if before != nil {
@@ -447,8 +465,9 @@ func (p *Provider) writeChanges(before, after *unstructured.Unstructured, finger
 	flatten("", shownBefore, left)
 	flatten("", p.shown(after, fingerprints), right)
 	storedLeft, storedRight := map[string]string{}, map[string]string{}
-	flattenWhole("", p.stored(before, fingerprints), storedLeft)
-	flattenWhole("", p.stored(after, fingerprints), storedRight)
+	kindsLeft, kindsRight := map[string]string{}, map[string]string{}
+	flattenWhole("", p.stored(before, fingerprints), storedLeft, kindsLeft)
+	flattenWhole("", p.stored(after, fingerprints), storedRight, kindsRight)
 	paths := map[string]bool{}
 	for _, leaves := range []map[string]string{left, right, storedLeft, storedRight} {
 		for path := range leaves {
@@ -457,10 +476,26 @@ func (p *Provider) writeChanges(before, after *unstructured.Unstructured, finger
 	}
 	var listed []FieldChange
 	for path := range paths {
-		if left[path] == right[path] && storedLeft[path] == storedRight[path] {
+		// A missing path reads as "", and a value prints as its text whatever
+		// its type, so the type is compared apart from the value, a missing
+		// path having none: a key added or removed with an empty value prints
+		// the same, as do the string "1" and the number 1, or the string "{}"
+		// and an empty map.
+		kindLeft, kindRight := kindsLeft[path], kindsRight[path]
+		if kindLeft == kindRight && left[path] == right[path] && storedLeft[path] == storedRight[path] {
+			continue
+		}
+		if kindLeft == kindRight && (kindLeft == "{}" || kindLeft == "[]") {
+			// The same container on both sides, empty on one: it was filled or
+			// emptied, and the leaves it holds on the other side are the change.
 			continue
 		}
 		change := FieldChange{Path: path, Before: left[path], After: right[path]}
+		if kindLeft != "" && kindRight != "" && kindLeft != kindRight {
+			// The type changed: the string side is printed quoted, so it reads
+			// apart from the number, bool, null or container on the other.
+			change.Before, change.After = quotedIfString(change.Before, kindLeft), quotedIfString(change.After, kindRight)
+		}
 		if change.Before == change.After {
 			// The shown values print the same (both cut, both masked, or a key
 			// added or removed with an empty value): only the fingerprint, taken
@@ -485,23 +520,66 @@ func (p *Provider) writeChanges(before, after *unstructured.Unstructured, finger
 // flatten is an object's leaves by path as a receipt prints them, each value
 // cut at maxChangeValueBytes.
 func flatten(prefix string, value any, into map[string]string) {
-	flattenBounded(prefix, value, into, maxChangeValueBytes)
+	flattenBounded(prefix, value, into, nil, maxChangeValueBytes)
 }
 
-// flattenWhole is an object's leaves by path, each value whole.
-func flattenWhole(prefix string, value any, into map[string]string) {
-	flattenBounded(prefix, value, into, 0)
+// flattenWhole is an object's leaves by path, each value whole, and the JSON
+// type of every value in it by path, leaf or not (kindOf).
+func flattenWhole(prefix string, value any, into, kinds map[string]string) {
+	flattenBounded(prefix, value, into, kinds, 0)
 }
 
-func flattenBounded(prefix string, value any, into map[string]string, bound int) {
+// kindOf is a value's JSON type as writeChanges compares it: "{}" and "[]"
+// for a map and a list, empty or not, then "string", "bool", "null" and
+// "number".
+func kindOf(value any) string {
+	switch value.(type) {
+	case map[string]any:
+		return "{}"
+	case []any:
+		return "[]"
+	case string:
+		return "string"
+	case bool:
+		return "bool"
+	case nil:
+		return "null"
+	default:
+		return "number"
+	}
+}
+
+// quotedIfString is a printed value of the given kind, quoted when it is a
+// string.
+func quotedIfString(text, kind string) string {
+	if kind != "string" {
+		return text
+	}
+	return strconv.Quote(text)
+}
+
+// flattenBounded writes an empty map or list below the root as a leaf of its
+// own, "{}" or "[]": a field set to one where it was absent is a change (a
+// NetworkPolicy's ingress: [{}] admits all traffic, none without it; a
+// PodDisruptionBudget's selector: {} selects every Pod, none without it).
+func flattenBounded(prefix string, value any, into, kinds map[string]string, bound int) {
+	if kinds != nil {
+		kinds[prefix] = kindOf(value)
+	}
 	switch v := value.(type) {
 	case map[string]any:
+		if len(v) == 0 && prefix != "" {
+			into[prefix] = "{}"
+		}
 		for key, item := range v {
-			flattenBounded(join(prefix, key), item, into, bound)
+			flattenBounded(join(prefix, key), item, into, kinds, bound)
 		}
 	case []any:
+		if len(v) == 0 && prefix != "" {
+			into[prefix] = "[]"
+		}
 		for index, item := range v {
-			flattenBounded(fmt.Sprintf("%s[%d]", prefix, index), item, into, bound)
+			flattenBounded(fmt.Sprintf("%s[%d]", prefix, index), item, into, kinds, bound)
 		}
 	case nil:
 		if prefix != "" {

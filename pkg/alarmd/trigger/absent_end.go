@@ -42,6 +42,10 @@ type AbsentNoDataEndV1 struct {
 	ExecutionID                string
 	LevelIDs                   []uint32
 	MaxEvidenceBytes           int
+	// AttributedBusinessID is the business a global business Plan attributed
+	// the series to while it reported (execution.NoDataEndEntry), which the
+	// end is filed under as the alert was; empty files it under BusinessID.
+	AttributedBusinessID string
 }
 
 // emptyAnomalyDigest is the anomaly digest of a window with no anomaly in it,
@@ -105,7 +109,7 @@ func BuildAbsentNoDataEndV1(input AbsentNoDataEndV1) (*contract.TriggerEventV1, 
 	if dimensions == nil {
 		dimensions = map[string]json.RawMessage{}
 	}
-	return contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
+	event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
 		StrategyRef: &contract.StrategySnapshotRef{TenantID: ref.TenantID, BusinessID: businessID, StrategyID: strategyID, Revision: ref.SnapshotRevision},
 		DedupeMD5:   input.DedupeMD5, EventKind: contract.TriggerEventRecovery,
 		TenantID: input.TenantID, BusinessID: input.BusinessID, PlanRef: input.Plan.PlanRef(),
@@ -116,4 +120,12 @@ func BuildAbsentNoDataEndV1(input AbsentNoDataEndV1) (*contract.TriggerEventV1, 
 		DetectPlanFingerprint: fingerprints.Detect, TriggerStateFingerprint: fingerprints.Trigger,
 		ExecutionID: input.ExecutionID, MaxEvidenceBytes: input.MaxEvidenceBytes,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Set beside the built event, as the evaluator sets it on every other
+	// event of a global business Plan: it is where the output files the
+	// alert, not part of the event's identity.
+	event.AttributedBusinessID = input.AttributedBusinessID
+	return event, nil
 }

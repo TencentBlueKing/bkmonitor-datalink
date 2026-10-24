@@ -74,16 +74,30 @@ func (e *Evaluator) WithDetectionSnapshots(observe func(states []string, result 
 // threshold event and a no-data event take the same reading of the same
 // configuration.
 func (e *Evaluator) attributeBusiness(event *contract.TriggerEventV1, plan *strategy.CompiledPlan) {
-	if event == nil || !plan.GlobalBusiness() {
+	if event == nil {
 		return
 	}
-	attribution := admission.AttributeBusiness(
-		plan.TargetPlan(), plan.Projection().DimensionFields, event.BusinessID, event.RecordRef.Dimensions, e.lookups.For(event.TenantID),
-	)
+	attribution, global := e.businessAttribution(plan, event.TenantID, event.BusinessID, event.RecordRef.Dimensions)
+	if !global {
+		return
+	}
 	event.AttributedBusinessID = attribution.BusinessID
 	if e.observeAttribution != nil {
 		e.observeAttribution(attribution.Source)
 	}
+}
+
+// businessAttribution is the business a global business Plan's record with
+// these alert dimensions is about (admission.AttributeBusiness), and false
+// for every other Plan: the one reading an event and a no-data end entry
+// both take.
+func (e *Evaluator) businessAttribution(plan *strategy.CompiledPlan, tenantID, businessID string,
+	dimensions map[string]json.RawMessage) (admission.BusinessAttribution, bool) {
+	if !plan.GlobalBusiness() {
+		return admission.BusinessAttribution{}, false
+	}
+	return admission.AttributeBusiness(plan.TargetPlan(), plan.Projection().DimensionFields, businessID, dimensions,
+		e.lookups.For(tenantID)), true
 }
 
 func New(detector *detect.Evaluator, limits Limits) (*Evaluator, error) {
@@ -613,7 +627,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	}
 	events, withoutMessage := keptEvents(tr, execution.RecordAnchor{RecordID: record.RecordID(), SourceTime: record.SourceTime()})
 	result := recordResult{outcomes: outcomes, gate: tr.RecoveryGate, coverage: coverage,
-		noDataEnds: noDataEndUpdates(request, due, record, view, tr.LevelOutcomes)}
+		noDataEnds: e.noDataEndUpdates(request, due, record, view, tr.LevelOutcomes)}
 	if advance || len(missingInputGuards) > 0 {
 		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness,
 			durableGuards{reasons: durableGuardReasons, origins: durableGuardOrigins}, missingInputGuards)
@@ -1171,8 +1185,10 @@ func lastRealPointAfter(due execution.DuePlan, gaps execution.GapLoadResult, vie
 // last real point. None where the Plan names no alert identity or has no
 // consumer's set to judge by (a Plan that publishes no RECOVERY message), and
 // none for a Level whose last real point is not known: it cannot be timed,
-// and the round that brings a real point writes it.
-func noDataEndUpdates(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView,
+// and the round that brings a real point writes it. A global business
+// Plan's entry keeps the business the record is attributed to, as its
+// events are (attributeBusiness).
+func (e *Evaluator) noDataEndUpdates(request execution.EvaluationRequest, due execution.DuePlan, record execution.RecordView,
 	view execution.RuntimeStateView, outcomes []trigger.LevelOutcomeV2) []execution.NoDataEndUpdate {
 	plan := due.CompiledPlan
 	identity := plan.OutputIdentity()
@@ -1182,7 +1198,7 @@ func noDataEndUpdates(request execution.EvaluationRequest, due execution.DuePlan
 	}
 	var updates []execution.NoDataEndUpdate
 	var dimensions map[string]json.RawMessage
-	fingerprint := ""
+	fingerprint, attributed := "", ""
 	for _, outcome := range outcomes {
 		if !endsOnNoData(plan, outcome.LevelID) || (outcome.Result == "" && !outcome.RealPoint) {
 			continue
@@ -1194,6 +1210,9 @@ func noDataEndUpdates(request execution.EvaluationRequest, due execution.DuePlan
 				return nil
 			}
 			fingerprint = computed
+			if attribution, global := e.businessAttribution(plan, due.Identity.TenantID, due.Identity.BusinessID, dimensions); global {
+				attributed = attribution.BusinessID
+			}
 		}
 		last := lastRealPointAfter(due, request.Gaps, view, record, outcomes, outcome.LevelID)
 		if last <= 0 {
@@ -1212,7 +1231,7 @@ func noDataEndUpdates(request execution.EvaluationRequest, due execution.DuePlan
 		}
 		updates = append(updates, execution.NoDataEndUpdate{Open: open, Judged: judged, Entry: execution.NoDataEndEntry{
 			Series: execution.SeriesIdentityDigest(record.DimensionIdentityDigest()), LevelID: outcome.LevelID,
-			Fingerprint: fingerprint, Dimensions: dimensions, LastRealPoint: last}})
+			Fingerprint: fingerprint, Dimensions: dimensions, LastRealPoint: last, AttributedBusinessID: attributed}})
 	}
 	return updates
 }

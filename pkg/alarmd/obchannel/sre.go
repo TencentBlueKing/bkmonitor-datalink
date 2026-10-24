@@ -726,6 +726,42 @@ func SREOperations(options SREOptions) []Operation {
 			return out
 		},
 	})
+	maxSearchLines, maxSearchLineBytes, maxSearchTotalBytes := int64(uq.LogSearchMaxLines), int64(uq.LogSearchMaxLineBytes), int64(uq.LogSearchMaxTotalBytes)
+	ops = append(ops, Operation{ID: OpLogSearch, Summary: "读一个日志结果表在 UTC 时间窗里的日志正文，一次调用一页：按 query_string 筛选（原样下推，Doris 存储按内容查写 log:*关键字*），order 为 desc（新的在前，默认）或 asc；每行给时间、少数元数据字段与正文，正文与字段值按脱敏合同逐行脱敏后再截到 line_bytes。行数、单行字节、整页字节与时间窗都有上限，触到哪个就在应答里写明（stopped_at、truncated_lines、redacted_lines、limitations）；next_cursor 是 UQ 自己的翻页位置（search_after 或 offset），原样传回读下一页，窗口随游标固定。与 pod.logs 同一脱敏合同，平台日志主题的脱敏规则不在此执行。",
+		EvidenceScope: "sre_uq_log_search", ExecutionPool: "sre", ExecutionTimeout: uq.MaxTimeout + 5*time.Second, Availability: queryAvailable,
+		Limits: map[string]any{"max_lines": uq.LogSearchMaxLines, "default_lines": uq.LogSearchDefaultLines, "max_line_bytes": uq.LogSearchMaxLineBytes, "default_line_bytes": uq.LogSearchDefaultLineBytes,
+			"max_total_bytes": uq.LogSearchMaxTotalBytes, "default_total_bytes": uq.LogSearchDefaultTotalBytes, "max_window_seconds": int64(uq.MaxWindow / time.Second), "default_window": "1h",
+			"max_cursor_bytes": uq.LogSearchMaxCursorBytes, "pagination": "native UQ search_after or offset cursor; one page per invocation", "redaction_contract": redact.Contract,
+			"content":   "log text and allowed metadata fields, each redacted under the contract before it is cut; the platform's log topic desensitization is not applied, as for pod.logs",
+			"authority": "deployment_operator_readonly; page_user_authorization_not_replayed"},
+		Fields: map[string]Field{"egress": text, "tenant": text, "space": text,
+			"table_id":     {Type: "string", MinLength: 1, MaxLength: 256, Description: "<business>_bklog.<name>"},
+			"query_string": {Type: "string", MaxLength: 8192},
+			"window":       {Type: "string", MaxLength: 16, Description: "a duration from 1m to 30d ending at end; omit with cursor"},
+			"end":          {Type: "string", MaxLength: 64, Description: "RFC 3339 UTC; omit with cursor"},
+			"order":        {Type: "string", Enum: []string{"desc", "asc"}, Description: "desc reads newest first (default); keep it the same across pages"},
+			"lines":        {Type: "integer", Minimum: &positive, Maximum: &maxSearchLines},
+			"line_bytes":   {Type: "integer", Minimum: &positive, Maximum: &maxSearchLineBytes},
+			"total_bytes":  {Type: "integer", Minimum: &positive, Maximum: &maxSearchTotalBytes},
+			"cursor":       {Type: "string", MaxLength: uq.LogSearchMaxCursorBytes, Description: "next_cursor of the previous page"}},
+		Required: []string{"egress", "tenant", "space", "table_id"}, OutputSchema: SchemaOf(uq.LogPage{}),
+		Run: func(ctx context.Context, p Params) Outcome {
+			v, err := queries.LogSearch(ctx, uq.LogSearchRequest{Egress: p.String("egress"), Tenant: p.String("tenant"), Space: p.String("space"),
+				TableID: p.String("table_id"), QueryString: p.String("query_string"), Window: p.String("window"), End: p.String("end"), Order: p.String("order"),
+				Lines: p.Int("lines", 0), LineBytes: p.Int("line_bytes", 0), TotalBytes: p.Int("total_bytes", 0), Cursor: p.String("cursor"), Redact: scrubber.Text})
+			v.RedactionContract = redact.Contract
+			out := Outcome{Value: v, Complete: err == nil && !v.Partial && v.TruncatedLines == 0, Limitations: v.Limitations}
+			if err != nil {
+				var named *uq.Error
+				if errors.As(err, &named) {
+					out.Error = &Failure{Code: named.Code, Message: named.Message}
+				} else {
+					out.Error = &Failure{Code: "uq_provider_failed", Message: "Native query did not complete."}
+				}
+			}
+			return out
+		},
+	})
 	receiptsAvailable := func() Availability {
 		if options.Receipts == nil {
 			reason := options.ReceiptsReason
@@ -917,6 +953,9 @@ const OpTraceTopFailures = "trace.top_failures"
 
 // OpLogCount counts a log table's lines by fields, without the log text.
 const OpLogCount = "log.count"
+
+// OpLogSearch reads one page of a log table's lines, redacted, with UQ's own cursor.
+const OpLogSearch = "log.search"
 
 // topFailureMessageBytes bounds a group's message for its reader.
 const topFailureMessageBytes = 200

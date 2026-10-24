@@ -51,7 +51,9 @@ type RetainedInputReporter interface {
 // what was reserved and is no longer held. Whatever is still reserved when
 // the execution ends is released with it. Safe to call from any query of
 // the execution while its series are delivered. A provider's sink that is
-// one is what a query with named outputs reserves its alignment through.
+// one is what a query with named outputs reserves its alignment through, and
+// what a query that holds its series until its response is whole (an APM
+// application carried) reserves them through until it hands them on.
 type RetainedBytesReserver interface {
 	ReserveRetainedBytes(ctx context.Context, bytes uint64) error
 	ReleaseRetainedBytes(bytes uint64)

@@ -115,11 +115,14 @@ func noDataEndField(key execution.NoDataEndEntryKey) string {
 }
 
 // noDataEndValue is an entry's value, the alert's fingerprint, dimensions and
-// the last real point's source time.
+// the last real point's source time, and a global business Plan's attributed
+// business, omitted on every other Plan's entries. Read with a plain decode,
+// so a build that does not know a field passes over it.
 type noDataEndValue struct {
-	Fingerprint   string                     `json:"f"`
-	Dimensions    map[string]json.RawMessage `json:"d"`
-	LastRealPoint int64                      `json:"t"`
+	Fingerprint          string                     `json:"f"`
+	Dimensions           map[string]json.RawMessage `json:"d"`
+	LastRealPoint        int64                      `json:"t"`
+	AttributedBusinessID string                     `json:"b,omitempty"`
 }
 
 func decodeNoDataEndEntry(field string, value []byte) (execution.NoDataEndEntry, bool) {
@@ -136,7 +139,8 @@ func decodeNoDataEndEntry(field string, value []byte) (execution.NoDataEndEntry,
 		return execution.NoDataEndEntry{}, false
 	}
 	return execution.NoDataEndEntry{Series: execution.SeriesIdentityDigest(series), LevelID: uint32(levelID),
-		Fingerprint: decoded.Fingerprint, Dimensions: decoded.Dimensions, LastRealPoint: decoded.LastRealPoint}, true
+		Fingerprint: decoded.Fingerprint, Dimensions: decoded.Dimensions, LastRealPoint: decoded.LastRealPoint,
+		AttributedBusinessID: decoded.AttributedBusinessID}, true
 }
 
 // LoadNoDataEnds reads each Plan's index. A Plan whose index cannot be read
@@ -181,7 +185,8 @@ func (store *ExecutionStore) ApplyNoDataEnds(ctx context.Context, write executio
 	}
 	puts := make(map[string][]byte, len(write.Puts))
 	for _, entry := range write.Puts {
-		value, err := json.Marshal(noDataEndValue{Fingerprint: entry.Fingerprint, Dimensions: entry.Dimensions, LastRealPoint: entry.LastRealPoint})
+		value, err := json.Marshal(noDataEndValue{Fingerprint: entry.Fingerprint, Dimensions: entry.Dimensions, LastRealPoint: entry.LastRealPoint,
+			AttributedBusinessID: entry.AttributedBusinessID})
 		if err != nil {
 			return fmt.Errorf("state: encode no-data end entry: %w", err)
 		}

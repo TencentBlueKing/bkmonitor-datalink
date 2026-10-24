@@ -32,6 +32,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/sdk"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -75,7 +76,9 @@ type Config struct {
 	SampleRatio        float64
 	MaxTracesPerSecond int
 	ServiceVersion     string
-	InstanceID         string
+	// InstanceID is the span resource's service.instance.id when the
+	// environment's resource does not name one (environmentInstance).
+	InstanceID string
 	// ExportFailed hears a batch the collector did not take, beside its
 	// count; the process writes it as a bounded line. Nil hears nothing.
 	ExportFailed func(err error)
@@ -141,7 +144,17 @@ func newExporter(cfg Config, counters Counters, exporter sdktrace.SpanExporter) 
 	attributes := []attribute.KeyValue{
 		attribute.String("service.name", "alarmd"),
 		attribute.String("service.version", cfg.ServiceVersion),
-		attribute.String("service.instance.id", cfg.InstanceID),
+		// The SDK the spans come from, named as the SDK's own default
+		// resource names it. A provider given a resource of its own keeps
+		// that and the environment's (OTEL_RESOURCE_ATTRIBUTES), not the
+		// default, so without these the spans would not say which SDK made
+		// them.
+		attribute.String("telemetry.sdk.name", "opentelemetry"),
+		attribute.String("telemetry.sdk.language", "go"),
+		attribute.String("telemetry.sdk.version", sdk.Version()),
+	}
+	if !environmentInstance() {
+		attributes = append(attributes, attribute.String(instanceAttribute, cfg.InstanceID))
 	}
 	if cfg.Token != "" {
 		attributes = append(attributes, attribute.String(TokenAttribute, cfg.Token))
@@ -156,6 +169,21 @@ func newExporter(cfg Config, counters Counters, exporter sdktrace.SpanExporter) 
 	return &Exporter{provider: provider, tracer: provider.Tracer("alarmd"), processor: processor,
 		ratio: cfg.SampleRatio, bucket: newTokenBucket(cfg.MaxTracesPerSecond, time.Now), counters: counters,
 		random: randomFraction}
+}
+
+// instanceAttribute is the resource attribute naming the process.
+const instanceAttribute = "service.instance.id"
+
+// environmentInstance says whether the environment's resource
+// (OTEL_RESOURCE_ATTRIBUTES, read as sdktrace.WithResource reads it to
+// merge under the resource built here) names a service.instance.id. Then
+// the instance is the deployment's: it names the Pod in terms a trace
+// backend links to the Pod by, beside the k8s.* attributes it sets with it,
+// which the worker id alone cannot. The worker id is the instance of a
+// process the deployment does not name, and of one it names as empty.
+func environmentInstance() bool {
+	value, named := resource.Environment().Set().Value(instanceAttribute)
+	return named && value.AsString() != ""
 }
 
 // Shutdown sends what is queued, within ctx.

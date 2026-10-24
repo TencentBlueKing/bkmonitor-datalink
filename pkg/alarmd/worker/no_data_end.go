@@ -374,7 +374,7 @@ func (coordinator *SlotExecutionCoordinator) sendNoDataEnds(ctx context.Context,
 			TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan,
 			DimensionIdentityDigest: string(digest), Dimensions: entries[0].Dimensions, DedupeMD5: entries[0].Fingerprint,
 			SourceTime: sourceTime, EvaluationTime: now, ExecutionID: executionID,
-			LevelIDs: levels, MaxEvidenceBytes: noDataEndMaxEvidenceBytes,
+			LevelIDs: levels, MaxEvidenceBytes: noDataEndMaxEvidenceBytes, AttributedBusinessID: entries[0].AttributedBusinessID,
 		})
 		if err != nil {
 			failed++

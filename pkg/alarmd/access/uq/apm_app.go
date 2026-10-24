@@ -116,9 +116,18 @@ func (client *Client) WithAPMObserver(observe func(APMCarriedResponse)) *Client 
 // records carry no app_name, so no APM object is named from a guess either.
 //
 // The series wait for the whole response, bounded by the response limits
-// every read has; APMCarriedResponse reports what that held.
+// every read has; APMCarriedResponse reports what that held. While they
+// wait they are held to the Slot's retained budget as the series of a
+// plain read are: each is reserved through the sink as it arrives
+// (execution.RetainedBytesReserver), and the read is refused, with the
+// Slot's own refusal, at the first one the Slot has no room for, not once
+// the whole response is in. A series' reservation is given back the moment
+// it is handed on, when the sink takes its own charge for it, and whatever
+// is still reserved is given back when the read ends, before a read again.
 func (client *Client) executeCarryingAPMApp(callerCtx, ctx context.Context, attempt queryIdentity, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
-	held := &apmHeldSeries{seen: map[string]struct{}{}}
+	reserver, _ := sink.(execution.RetainedBytesReserver)
+	held := &apmHeldSeries{seen: map[string]struct{}{}, reserver: reserver}
+	defer held.release()
 	completion, err := client.executeRequest(callerCtx, ctx, attempt, held, nil)
 	if client.observeAPM != nil {
 		client.observeAPM(APMCarriedResponse{Table: apmTableKind(attempt.Spec), Series: uint64(len(held.batches)), Bytes: held.bytes, NotUnique: held.repeated})
@@ -127,11 +136,12 @@ func (client *Client) executeCarryingAPMApp(callerCtx, ctx context.Context, atte
 		return completion, err
 	}
 	if held.repeated {
+		held.release()
 		attempt.NoAppCarry = true
 		return client.executeRequest(callerCtx, ctx, attempt, sink, nil)
 	}
-	for _, batch := range held.batches {
-		if err := sink.ConsumeProviderSeries(ctx, batch); err != nil {
+	for index := range held.batches {
+		if err := sink.ConsumeProviderSeries(ctx, held.handOff(index)); err != nil {
 			return execution.ProviderCompletion{}, err
 		}
 	}
@@ -148,14 +158,26 @@ func apmTableKind(spec execution.PhysicalQuerySpec) string {
 }
 
 // apmHeldSeries keeps a carried response's series until it is known whole.
+// reserver is what they are reserved through, nil for a sink that reserves
+// nothing, and reserved what is still reserved for the series not yet
+// handed on: each series' delivered bytes, what the sink charges for its
+// data when it takes it.
 type apmHeldSeries struct {
 	batches  []execution.ProviderSeriesBatch
 	seen     map[string]struct{}
 	bytes    uint64
 	repeated bool
+	reserver execution.RetainedBytesReserver
+	reserved uint64
 }
 
-func (held *apmHeldSeries) ConsumeProviderSeries(_ context.Context, batch execution.ProviderSeriesBatch) error {
+func (held *apmHeldSeries) ConsumeProviderSeries(ctx context.Context, batch execution.ProviderSeriesBatch) error {
+	if held.reserver != nil {
+		if err := held.reserver.ReserveRetainedBytes(ctx, batch.Delivery.Bytes); err != nil {
+			return err
+		}
+		held.reserved += batch.Delivery.Bytes
+	}
 	held.bytes += batch.Delivery.Bytes
 	if records := batch.Dataset.Records(); len(records) > 0 {
 		identity := records[0].DimensionIdentity.Digest
@@ -166,4 +188,32 @@ func (held *apmHeldSeries) ConsumeProviderSeries(_ context.Context, batch execut
 	}
 	held.batches = append(held.batches, batch)
 	return nil
+}
+
+// handOff is the series held at index, let go of here and its reservation
+// given back, for the sink it is handed to to charge as its own. Given back
+// first rather than after: kept until the sink had charged it, the series
+// would be counted twice for a moment, and a Slot with room for it once
+// refused.
+func (held *apmHeldSeries) handOff(index int) execution.ProviderSeriesBatch {
+	batch := held.batches[index]
+	held.batches[index] = execution.ProviderSeriesBatch{}
+	held.giveBack(batch.Delivery.Bytes)
+	return batch
+}
+
+// release lets go of every series still held and gives back what is still
+// reserved for them.
+func (held *apmHeldSeries) release() {
+	held.giveBack(held.reserved)
+	held.batches, held.seen = nil, nil
+}
+
+func (held *apmHeldSeries) giveBack(bytes uint64) {
+	bytes = min(bytes, held.reserved)
+	if bytes == 0 {
+		return
+	}
+	held.reserved -= bytes
+	held.reserver.ReleaseRetainedBytes(bytes)
 }

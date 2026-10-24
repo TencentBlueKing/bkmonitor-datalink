@@ -1621,8 +1621,9 @@ func (consumer *serializedQueryConsumer) ReleaseRetainedBytes(bytes uint64) {
 
 // ReserveRetainedBytes and ReleaseRetainedBytes reserve, through the
 // consumer its series are delivered to, what the provider holds beside the
-// series of a query with named outputs - their alignment - so it is held to
-// the same share and pool as the Slot's series, as it grows
+// series it has handed on - the alignment of a query with named outputs, the
+// series a carried APM read holds until its response is whole - so it is
+// held to the same share and pool as the Slot's series, as it grows
 // (execution.RetainedBytesReserver). A consumer that reserves nothing
 // refuses nothing.
 func (adapter *seriesAdapter) ReserveRetainedBytes(ctx context.Context, bytes uint64) error {

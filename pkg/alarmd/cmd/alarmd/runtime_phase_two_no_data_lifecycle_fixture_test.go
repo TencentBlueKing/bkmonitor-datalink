@@ -82,6 +82,8 @@ type lifecycleStrategy struct {
 	// disableRecovery writes every level's recovery_config.disable_recovery
 	// as true.
 	disableRecovery bool
+	// global makes it a global business strategy (is_global_strategy).
+	global bool
 }
 
 type lifecycleFixture struct {
@@ -284,6 +286,9 @@ func (fixture *lifecycleFixture) install(strategy lifecycleStrategy) {
 		delete(document, "strategy_revision")
 	}
 	document["name"] = "no data lifecycle"
+	if strategy.global {
+		document["is_global_strategy"] = true
+	}
 	document["scenario"] = "os"
 	item := document["items"].([]any)[0].(map[string]any)
 	item["name"] = "CPU usage"

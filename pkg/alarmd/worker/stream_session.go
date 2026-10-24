@@ -126,8 +126,10 @@ type streamedExecution struct {
 	// snapshots of their Plans' events. Nil for a Slot whose queries asked
 	// for none.
 	namedOutputs map[execution.PhysicalQueryDigest]*execution.NamedOutputRecords
-	// namedReserved is what this execution's queries reserved for their
-	// named outputs (ReserveRetainedBytes) and still hold: part of the input
+	// namedReserved is what this execution's queries reserved beside their
+	// series (ReserveRetainedBytes) and still hold - named outputs'
+	// alignments, and series a carried APM read holds until its response is
+	// whole, which it gives back as it hands them on: part of the input
 	// phase, settled to the aligned tables at the completion.
 	namedReserved uint64
 	// supplement is set on a supplement execution and nil on every Slot.
@@ -245,7 +247,8 @@ func (stream *streamedExecution) RetainedInputBytesNow() uint64 {
 }
 
 // ReserveRetainedBytes reserves bytes a query of this execution holds
-// beside its series - a named-outputs alignment as its answer is read -
+// beside its series - a named-outputs alignment as its answer is read, or
+// the series a carried APM read holds before it hands them on -
 // against the same budget its series are reserved against, judged the same
 // way: the share one Query Group's Slot may hold, by this execution's own
 // total, then the pool (reserveRetainedInput). It refuses at once, as a

@@ -33,12 +33,20 @@ type NoDataEndKey struct {
 // fingerprint, the alert dimensions the series' last record had, and the
 // source time of its last real point (RuntimeLevelStateMutation
 // .LastRealPointTime) - a source time, not the round that read it.
+//
+// AttributedBusinessID is, for a global business Plan, the business its
+// last record was attributed to (TriggerEventV1.AttributedBusinessID), read
+// while the series still reported: the business its alert was raised under,
+// which the series' absent end is filed under too. Empty on every other
+// Plan's entries, and on an entry written before it was kept, whose end is
+// then filed under the Plan's own business.
 type NoDataEndEntry struct {
-	Series        SeriesIdentityDigest
-	LevelID       uint32
-	Fingerprint   string
-	Dimensions    map[string]json.RawMessage
-	LastRealPoint int64
+	Series               SeriesIdentityDigest
+	LevelID              uint32
+	Fingerprint          string
+	Dimensions           map[string]json.RawMessage
+	LastRealPoint        int64
+	AttributedBusinessID string
 }
 
 // NoDataEndEntryKey names one entry of a Plan's index.

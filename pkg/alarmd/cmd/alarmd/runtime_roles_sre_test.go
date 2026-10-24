@@ -32,7 +32,7 @@ func TestSREProvidersAreRegisteredOnlyByTheChannelRole(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer runtime.Close()
-			for _, operation := range []string{"node.exec", "node.execution.get", "node.execution.cancel", "pod.targets", "pod.get", "pod.logs", "pod.exec", "pod.delete", "workload.restart", "workload.scale", "secret.get", "configmap.get", "uq.egresses", "uq.query", "uq.trace"} {
+			for _, operation := range []string{"node.exec", "node.execution.get", "node.execution.cancel", "pod.targets", "pod.get", "pod.logs", "pod.exec", "pod.delete", "workload.restart", "workload.scale", "secret.get", "configmap.get", "uq.egresses", "uq.query", "uq.trace", "log.count", "log.search"} {
 				present := runtime.Executor.OperationContractRevision(operation) != ""
 				if present != cfg.HasRole(roles.Channel) {
 					t.Fatalf("%s registered in roles %v: %v", operation, selected, present)

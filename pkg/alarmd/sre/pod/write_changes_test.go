@@ -6,6 +6,7 @@ package pod
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -173,4 +174,312 @@ func mustJSON(t *testing.T, value any) string {
 		t.Fatal(err)
 	}
 	return string(encoded)
+}
+
+func changePaths(changes []FieldChange) string {
+	paths := make([]string, 0, len(changes))
+	for _, change := range changes {
+		paths = append(paths, change.Path)
+	}
+	return strings.Join(paths, " ")
+}
+
+// A key patched in or out with an empty value is a change: a missing key
+// reads as "", so presence is compared apart from the value. Both values
+// print as "", so the change carries the fingerprint of the side that holds
+// the key and none for the side without it. The receipt names what the dry
+// run's comparison names for the same two objects.
+func TestAKeyPatchedInOrOutWithAnEmptyValueIsAChange(t *testing.T) {
+	cases := []struct {
+		name         string
+		data         map[string]any
+		labels       map[string]any
+		op           PatchOp
+		path         string
+		before       string
+		after        string
+		fingerprints string
+	}{
+		{"data add empty", map[string]any{"a": "1"}, nil, PatchOp{Op: "add", Path: "/data/e", Value: raw(`""`)}, "data.e", "", "", "after"},
+		{"data remove empty", map[string]any{"a": "1", "e": ""}, nil, PatchOp{Op: "remove", Path: "/data/e"}, "data.e", "", "", "before"},
+		{"label add empty", map[string]any{"a": "1"}, map[string]any{"app": "web"}, PatchOp{Op: "add", Path: "/metadata/labels/flag", Value: raw(`""`)}, "metadata.labels.flag", "", "", "after"},
+		{"label remove empty", map[string]any{"a": "1"}, map[string]any{"app": "web", "flag": ""}, PatchOp{Op: "remove", Path: "/metadata/labels/flag"}, "metadata.labels.flag", "", "", "before"},
+		{"data add value", map[string]any{"a": "1"}, nil, PatchOp{Op: "add", Path: "/data/e", Value: raw(`"x"`)}, "data.e", "", "x", ""},
+		{"data remove value", map[string]any{"a": "1", "e": "x"}, nil, PatchOp{Op: "remove", Path: "/data/e"}, "data.e", "x", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			object := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap",
+				"metadata": map[string]any{"name": "conf", "namespace": "ns1", "uid": "uid-conf"}, "data": c.data}}
+			if c.labels != nil {
+				object.Object["metadata"].(map[string]any)["labels"] = c.labels
+			}
+			before := object.DeepCopy()
+			provider, runner := configMapPatchProvider(t, object)
+			receipt, err := provider.PatchObject(context.Background(), ObjectPatchRequest{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns1", Name: "conf", UID: "uid-conf",
+				Patch: []PatchOp{c.op}})
+			if err != nil || len(receipt.Objects) != 1 {
+				t.Fatalf("receipt %+v err %v", receipt, err)
+			}
+			after := runner.live["ns1/conf"]
+			if reflect.DeepEqual(before.Object, after.Object) {
+				t.Fatalf("the patch did not change the object")
+			}
+			o := receipt.Objects[0]
+			if o.Outcome != WriteUpdated || changePaths(o.Changes) != c.path {
+				t.Fatalf("outcome %s changes %+v, want updated on %s", o.Outcome, o.Changes, c.path)
+			}
+			if dryRun := strings.Join(changedPaths(cleanForCompare(before), cleanForCompare(after), ""), " "); dryRun != c.path {
+				t.Fatalf("the dry run's comparison names %q, the receipt %q", dryRun, c.path)
+			}
+			change := o.Changes[0]
+			if change.Before != c.before || change.After != c.after {
+				t.Fatalf("change %+v, want %q to %q", change, c.before, c.after)
+			}
+			if got := map[bool]string{true: "before"}[change.BeforeFingerprint != ""] + map[bool]string{true: "after"}[change.AfterFingerprint != ""]; got != c.fingerprints {
+				t.Fatalf("change %+v carries fingerprints %q, want %q", change, got, c.fingerprints)
+			}
+			if receipt.Counts[WriteUnchanged] != 0 || receipt.Counts[WriteUpdated] != 1 {
+				t.Fatalf("counts %v", receipt.Counts)
+			}
+		})
+	}
+
+	// A patch that leaves an empty value as it was is still unchanged.
+	object := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "conf", "namespace": "ns1", "uid": "uid-conf"}, "data": map[string]any{"a": "1", "e": ""}}}
+	provider, _ := configMapPatchProvider(t, object)
+	receipt, err := provider.PatchObject(context.Background(), ObjectPatchRequest{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns1", Name: "conf", UID: "uid-conf",
+		Patch: []PatchOp{{Op: "replace", Path: "/data/e", Value: raw(`""`)}}})
+	if err != nil || receipt.Objects[0].Outcome != WriteUnchanged || len(receipt.Objects[0].Changes) != 0 {
+		t.Fatalf("a patch to the empty value already there: %+v err %v", receipt.Objects, err)
+	}
+}
+
+// emptyValueRunner serves the kinds the empty-value applies write, with the
+// objects as live. Neither the live objects nor the manifests carry a uid,
+// so the dry run, which compares uids, sees only what the manifest changes.
+func emptyValueRunner(live ...*unstructured.Unstructured) *fakeDryRunner {
+	runner := &fakeDryRunner{live: map[string]*unstructured.Unstructured{}, mappings: map[string]schema.GroupVersionResource{
+		"v1/ConfigMap":                            {Version: "v1", Resource: "configmaps"},
+		"policy/v1/PodDisruptionBudget":           {Group: "policy", Version: "v1", Resource: "poddisruptionbudgets"},
+		"networking.k8s.io/v1/NetworkPolicy":      {Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"},
+		"monitoring.coreos.com/v1/ServiceMonitor": {Group: "monitoring.coreos.com", Version: "v1", Resource: "servicemonitors"},
+	}}
+	for _, object := range live {
+		runner.live[object.GetNamespace()+"/"+object.GetName()] = object
+	}
+	return runner
+}
+
+// applyAndDryRun applies one manifest over live and dry-runs the same
+// manifest over the same live object: the receipt's object and the dry
+// run's.
+func applyAndDryRun(t *testing.T, live, manifest *unstructured.Unstructured) (WriteObject, DryRunObject) {
+	t.Helper()
+	manifests := mustJSON(t, manifest.Object)
+	dryRun, err := dryRunProvider(t, emptyValueRunner(live.DeepCopy())).DryRun(context.Background(), DryRunRequest{Manifests: manifests})
+	if err != nil || len(dryRun.Objects) != 1 {
+		t.Fatalf("dry run %+v err %v", dryRun, err)
+	}
+	receipt, err := writeProvider(t, emptyValueRunner(live.DeepCopy()), &fakeWriter{}).Apply(context.Background(), ApplyRequest{Manifests: manifests})
+	if err != nil || len(receipt.Objects) != 1 {
+		t.Fatalf("receipt %+v err %v", receipt, err)
+	}
+	return receipt.Objects[0], dryRun.Objects[0]
+}
+
+// An apply that adds or removes a key with an empty value is an update, and
+// the receipt names the fields the dry run names for the same manifest; an
+// apply of the object as it is, empty value and all, is unchanged.
+func TestAnApplyAddingOrRemovingAnEmptyValueIsAnUpdate(t *testing.T) {
+	withLabels := func(object *unstructured.Unstructured, labels map[string]string) *unstructured.Unstructured {
+		object.SetLabels(labels)
+		return object
+	}
+	cases := []struct {
+		name           string
+		live, manifest *unstructured.Unstructured
+		path           string
+	}{
+		{"data add empty", configMap("ns1", "conf", map[string]any{"a": "1"}), configMap("ns1", "conf", map[string]any{"a": "1", "e": ""}), "data.e"},
+		{"data remove empty", configMap("ns1", "conf", map[string]any{"a": "1", "e": ""}), configMap("ns1", "conf", map[string]any{"a": "1"}), "data.e"},
+		{"label add empty", withLabels(configMap("ns1", "conf", map[string]any{"a": "1"}), map[string]string{"app": "web"}),
+			withLabels(configMap("ns1", "conf", map[string]any{"a": "1"}), map[string]string{"app": "web", "flag": ""}), "metadata.labels.flag"},
+		{"label remove empty", withLabels(configMap("ns1", "conf", map[string]any{"a": "1"}), map[string]string{"app": "web", "flag": ""}),
+			withLabels(configMap("ns1", "conf", map[string]any{"a": "1"}), map[string]string{"app": "web"}), "metadata.labels.flag"},
+		{"data add value", configMap("ns1", "conf", map[string]any{"a": "1"}), configMap("ns1", "conf", map[string]any{"a": "1", "e": "x"}), "data.e"},
+		{"data remove value", configMap("ns1", "conf", map[string]any{"a": "1", "e": "x"}), configMap("ns1", "conf", map[string]any{"a": "1"}), "data.e"},
+		{"the same, empty value and all", configMap("ns1", "conf", map[string]any{"a": "1", "e": ""}), configMap("ns1", "conf", map[string]any{"a": "1", "e": ""}), ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			written, dryRun := applyAndDryRun(t, c.live, c.manifest)
+			outcome, verdict := WriteUpdated, DryRunWouldUpdate
+			if c.path == "" {
+				outcome, verdict = WriteUnchanged, DryRunUnchanged
+			}
+			if written.Outcome != outcome || changePaths(written.Changes) != c.path {
+				t.Fatalf("outcome %s changes %+v, want %s on %q", written.Outcome, written.Changes, outcome, c.path)
+			}
+			if dryRun.Verdict != verdict || strings.Join(dryRun.ChangedPaths, " ") != c.path {
+				t.Fatalf("the dry run says %s on %v, the receipt %s on %q", dryRun.Verdict, dryRun.ChangedPaths, written.Outcome, c.path)
+			}
+		})
+	}
+}
+
+// A field set to an empty map or list where it was absent, or taken away
+// when it was one, is a change: a PodDisruptionBudget's selector: {}
+// selects every Pod and none without it, a NetworkPolicy's ingress: [{}]
+// admits all traffic and none without it, and a custom resource keeps an
+// empty list as written. An empty map on both sides is not, and a map or
+// list filled or emptied is listed by the leaves it gains or loses, not as
+// the container.
+func TestAFieldSetToAnEmptyMapOrListIsAChange(t *testing.T) {
+	budget := func(selector any) *unstructured.Unstructured {
+		spec := map[string]any{"minAvailable": int64(1)}
+		if selector != nil {
+			spec["selector"] = selector
+		}
+		return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "policy/v1", "kind": "PodDisruptionBudget",
+			"metadata": map[string]any{"name": "web", "namespace": "ns1"}, "spec": spec}}
+	}
+	matchWeb := map[string]any{"matchLabels": map[string]any{"app": "web"}}
+	monitor := func(targetLabels any) *unstructured.Unstructured {
+		spec := map[string]any{"endpoints": []any{map[string]any{"port": "web"}}}
+		if targetLabels != nil {
+			spec["targetLabels"] = targetLabels
+		}
+		return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "monitoring.coreos.com/v1", "kind": "ServiceMonitor",
+			"metadata": map[string]any{"name": "web", "namespace": "ns1"}, "spec": spec}}
+	}
+	cases := []struct {
+		name           string
+		live, manifest *unstructured.Unstructured
+		paths, dryRun  string
+		before, after  string
+	}{
+		{"selector set to {}", budget(nil), budget(map[string]any{}), "spec.selector", "spec.selector", "", "{}"},
+		{"selector {} taken away", budget(map[string]any{}), budget(nil), "spec.selector", "spec.selector", "{}", ""},
+		{"selector {} on both sides", budget(map[string]any{}), budget(map[string]any{}), "", "", "", ""},
+		{"selector {} filled", budget(map[string]any{}), budget(matchWeb), "spec.selector.matchLabels.app", "spec.selector.matchLabels", "", "web"},
+		{"selector emptied to {}", budget(matchWeb), budget(map[string]any{}), "spec.selector.matchLabels.app", "spec.selector.matchLabels", "web", ""},
+		{"list set to []", monitor(nil), monitor([]any{}), "spec.targetLabels", "spec.targetLabels", "", "[]"},
+		{"list [] taken away", monitor([]any{}), monitor(nil), "spec.targetLabels", "spec.targetLabels", "[]", ""},
+		{"list [] filled", monitor([]any{}), monitor([]any{"team"}), "spec.targetLabels[0]", "spec.targetLabels", "", "team"},
+		{"list emptied to []", monitor([]any{"team"}), monitor([]any{}), "spec.targetLabels[0]", "spec.targetLabels", "team", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			written, dryRun := applyAndDryRun(t, c.live, c.manifest)
+			outcome := WriteUpdated
+			if c.paths == "" {
+				outcome = WriteUnchanged
+			}
+			if written.Outcome != outcome || changePaths(written.Changes) != c.paths {
+				t.Fatalf("outcome %s changes %+v, want %s on %q", written.Outcome, written.Changes, outcome, c.paths)
+			}
+			if c.paths != "" && (written.Changes[0].Before != c.before || written.Changes[0].After != c.after) {
+				t.Fatalf("change %+v, want %q to %q", written.Changes[0], c.before, c.after)
+			}
+			// The dry run names a map that appears or goes, or a list that
+			// changes length, as the container; the receipt names the
+			// leaves, each with its values.
+			if strings.Join(dryRun.ChangedPaths, " ") != c.dryRun {
+				t.Fatalf("the dry run names %v, want %q", dryRun.ChangedPaths, c.dryRun)
+			}
+		})
+	}
+
+	// The patch path: ingress: [{}] added to a NetworkPolicy that had none.
+	policy := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+		"metadata": map[string]any{"name": "web", "namespace": "ns1", "uid": "uid-web"},
+		"spec":     map[string]any{"podSelector": map[string]any{}, "policyTypes": []any{"Ingress"}}}}
+	runner := emptyValueRunner(policy)
+	writer := &patchingWriter{}
+	provider := writeProvider(t, runner, &writer.fakeWriter)
+	writer.runner = runner
+	provider.options.Writer = writer
+	receipt, err := provider.PatchObject(context.Background(), ObjectPatchRequest{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "ns1", Name: "web", UID: "uid-web",
+		Patch: []PatchOp{{Op: "add", Path: "/spec/ingress", Value: raw(`[{}]`)}}})
+	if err != nil || len(receipt.Objects) != 1 {
+		t.Fatalf("receipt %+v err %v", receipt, err)
+	}
+	if o := receipt.Objects[0]; o.Outcome != WriteUpdated || changePaths(o.Changes) != "spec.ingress[0]" || o.Changes[0].After != "{}" {
+		t.Fatalf("ingress: [{}] added: %+v", o)
+	}
+}
+
+// A value whose JSON type changes is a change though it prints the same:
+// the string "{}" and an empty map, "[]" and an empty list, "1" and the
+// number 1, "true" and true. The string side is printed quoted, so the two
+// read apart, and the receipt names what the dry run names.
+func TestAValueWhoseTypeChangesIsAChange(t *testing.T) {
+	monitor := func(probe any) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "monitoring.coreos.com/v1", "kind": "ServiceMonitor",
+			"metadata": map[string]any{"name": "web", "namespace": "ns1"},
+			"spec":     map[string]any{"endpoints": []any{map[string]any{"port": "web"}}, "probe": probe}}}
+	}
+	cases := []struct {
+		name          string
+		live, applied any
+		before, after string
+	}{
+		{"string {} to an empty map", "{}", map[string]any{}, `"{}"`, "{}"},
+		{"an empty map to string {}", map[string]any{}, "{}", "{}", `"{}"`},
+		{"string [] to an empty list", "[]", []any{}, `"[]"`, "[]"},
+		{"string 1 to the number 1", "1", int64(1), `"1"`, "1"},
+		{"the number 1 to string 1", int64(1), "1", "1", `"1"`},
+		{"string true to true", "true", true, `"true"`, "true"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			written, dryRun := applyAndDryRun(t, monitor(c.live), monitor(c.applied))
+			if written.Outcome != WriteUpdated || changePaths(written.Changes) != "spec.probe" {
+				t.Fatalf("outcome %s changes %+v, want updated on spec.probe", written.Outcome, written.Changes)
+			}
+			if change := written.Changes[0]; change.Before != c.before || change.After != c.after {
+				t.Fatalf("change %+v, want %s to %s", change, c.before, c.after)
+			}
+			if dryRun.Verdict != DryRunWouldUpdate || strings.Join(dryRun.ChangedPaths, " ") != "spec.probe" {
+				t.Fatalf("the dry run says %s on %v", dryRun.Verdict, dryRun.ChangedPaths)
+			}
+		})
+	}
+
+	// The same string on both sides is unchanged, quoted nowhere.
+	written, _ := applyAndDryRun(t, monitor("1"), monitor("1"))
+	if written.Outcome != WriteUnchanged || len(written.Changes) != 0 {
+		t.Fatalf("the same string: %+v", written)
+	}
+	// A string the other side holds as a filled map: the string is quoted,
+	// the map listed by its leaves.
+	written, _ = applyAndDryRun(t, monitor("{}"), monitor(map[string]any{"path": "/healthz"}))
+	if written.Outcome != WriteUpdated || changePaths(written.Changes) != "spec.probe spec.probe.path" ||
+		written.Changes[0].Before != `"{}"` || written.Changes[0].After != "" || written.Changes[1].After != "/healthz" {
+		t.Fatalf("string {} to a filled map: %+v", written.Changes)
+	}
+}
+
+// The last-applied annotation is neither shown nor compared, and an
+// annotations map it alone held is the same metadata as none: a patch that
+// removes that map changes nothing the receipt judges.
+func TestRemovingAnnotationsOnlyTheLastAppliedOneHeldIsUnchanged(t *testing.T) {
+	object := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"name": "conf", "namespace": "ns1", "uid": "uid-conf",
+			"annotations": map[string]any{lastAppliedAnnotation: `{"data":{"a":"1"}}`}},
+		"data": map[string]any{"a": "1"}}}
+	provider, runner := configMapPatchProvider(t, object)
+	receipt, err := provider.PatchObject(context.Background(), ObjectPatchRequest{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns1", Name: "conf", UID: "uid-conf",
+		Patch: []PatchOp{{Op: "remove", Path: "/metadata/annotations"}}})
+	if err != nil || len(receipt.Objects) != 1 {
+		t.Fatalf("receipt %+v err %v", receipt, err)
+	}
+	if _, present := runner.live["ns1/conf"].Object["metadata"].(map[string]any)["annotations"]; present {
+		t.Fatalf("the patch did not remove the annotations")
+	}
+	if o := receipt.Objects[0]; o.Outcome != WriteUnchanged || len(o.Changes) != 0 {
+		t.Fatalf("the last-applied annotation alone removed: %+v", o)
+	}
 }

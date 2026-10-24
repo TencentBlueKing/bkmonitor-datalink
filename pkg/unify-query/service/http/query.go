@@ -976,9 +976,18 @@ func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.
 	// 在生成 PromQL 前固定路由摘要，后续存储查询结果不参与推导。
 	routeInfo = queryRef.CollectRouteInfo()
 
-	if metadata.GetQueryParams(ctx).IsDirectQuery() {
+	directQuery := metadata.GetQueryParams(ctx).IsDirectQuery()
+	if !directQuery {
+		promExprOpt.IgnoreTimeAggregationEnable = true
+	}
+	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
+	if err != nil {
+		return instance, stmt, routeInfo, err
+	}
+
+	if directQuery {
 		// 判断是否是直查
-		vmExpand := query.ToVmExpand(ctx, queryRef)
+		vmExpand := query.ToVmExpandForExpression(ctx, queryRef, expr)
 		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			// 兼容 storage 结构体，用于单元测试
@@ -986,9 +995,6 @@ func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.
 			StorageType: metadata.VictoriaMetricsStorageType,
 		})
 	} else {
-		// 非直查开启忽略时间聚合函数判断
-		promExprOpt.IgnoreTimeAggregationEnable = true
-
 		span.Set("query-max-routing", QueryMaxRouting)
 		span.Set("singleflight-timeout", SingleflightTimeout.String())
 
@@ -997,11 +1003,6 @@ func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.
 			Timeout:         SingleflightTimeout,
 			SelectorCache:   selectorCache,
 		}, lookBackDelta, QueryMaxRouting)
-	}
-
-	expr, err := queryTs.ToPromExpr(ctx, promExprOpt)
-	if err != nil {
-		return instance, stmt, routeInfo, err
 	}
 
 	stmt = expr.String()
@@ -1165,8 +1166,6 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 	promExprOption := &structured.PromExprOption{}
 	if queryParams.IsDirectQuery() {
 		executionMode = uqMetric.NamedOutputsModeDirect
-		vmExpand := query.ToVmExpand(ctx, queryRef)
-		metadata.SetExpand(ctx, vmExpand)
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			StorageID:   metadata.VictoriaMetricsStorageType,
 			StorageType: metadata.VictoriaMetricsStorageType,
@@ -1192,7 +1191,11 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 		return compileAndExecuteNamedOutput(
 			outputCtx,
 			func() (fmt.Stringer, error) {
-				return queryTs.ToPromExprFor(outputCtx, output.Expression, promExprOption)
+				expr, err := queryTs.ToPromExprFor(outputCtx, output.Expression, promExprOption)
+				if err == nil && executionMode == uqMetric.NamedOutputsModeDirect {
+					metadata.SetExpand(outputCtx, query.ToVmExpandForExpression(outputCtx, queryRef, expr))
+				}
+				return expr, err
 			},
 			func(executeCtx context.Context, stmt string) (any, bool, error) {
 				if executionMode == uqMetric.NamedOutputsModeDirect {

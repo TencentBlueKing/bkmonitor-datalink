@@ -43,7 +43,7 @@ type ParamsQuery struct {
 	APIParams        struct {
 		Query   string `json:"query"`
 		Time    int64  `json:"time"`
-		Timeout int64  `json:"timeout"`
+		Timeout *int64 `json:"timeout,omitempty"`
 	} `json:"api_params"`
 	ResultTableList       []string          `json:"result_table_list,omitempty"`
 	MetricFilterCondition map[string]string `json:"metric_filter_condition,omitempty"`

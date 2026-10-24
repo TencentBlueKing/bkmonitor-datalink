@@ -11,6 +11,7 @@ package influxdb
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -128,7 +129,7 @@ func (i *Instance) QueryExemplar(ctx context.Context, fields []string, query *me
 		where = fmt.Sprintf("%s and %s", where, query.Condition)
 	}
 
-	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
+	limit, slimit := i.getLimitAndSlimit(ctx, query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 	if limit > 0 {
 		sLimitStr = fmt.Sprintf(" slimit %d", slimit)
 	}
@@ -301,7 +302,10 @@ func (i *Instance) getRawData(columns []string, data []any) (time.Time, float64,
 }
 
 // getLimitAndSlimit 获取真实的 limit 和 slimit
-func (i *Instance) getLimitAndSlimit(limit, slimit int) (int64, int64) {
+func (i *Instance) getLimitAndSlimit(ctx context.Context, limit, slimit int) (int64, int64) {
+	if promPromql.QueryLimitsDisabled(ctx) {
+		return int64(max(limit, 0)), int64(max(slimit, 0))
+	}
 	var resultLimit, resultSLimit int
 
 	if limit > 0 {
@@ -374,7 +378,7 @@ func (i *Instance) makeSQL(
 	sqlBuilder.WriteString("SELECT ")
 	sqlBuilder.WriteString(strings.Join(selectList, ", ") + " ")
 	sqlBuilder.WriteString("FROM " + influxql.QuoteIdent(query.Measurement) + " ")
-	sqlBuilder.WriteString("WHERE " + fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano()))
+	sqlBuilder.WriteString("WHERE " + seriesTimeCondition(ctx, start, end))
 	if query.Condition != "" {
 		sqlBuilder.WriteString(" AND (" + query.Condition + ")")
 	}
@@ -382,7 +386,7 @@ func (i *Instance) makeSQL(
 		sqlBuilder.WriteString(" GROUP BY " + strings.Join(groupList, ", "))
 	}
 
-	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
+	limit, slimit := i.getLimitAndSlimit(ctx, query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 	if limit > 0 {
 		sqlBuilder.WriteString(fmt.Sprintf(` LIMIT %d`, limit))
 	}
@@ -445,7 +449,11 @@ func (i *Instance) query(
 	span.Set("query-params", values.Encode())
 	span.Set("http-url", urlPath)
 
-	ctx, cancel = context.WithTimeout(ctx, i.timeout)
+	if promPromql.QueryLimitsDisabled(ctx) {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, i.timeout)
+	}
 	defer cancel()
 	startAnaylize = time.Now()
 
@@ -564,10 +572,10 @@ func (i *Instance) query(
 		})
 	}
 
-	if pointNum > i.maxLimit {
+	if !promPromql.QueryLimitsDisabled(ctx) && pointNum > i.maxLimit {
 		metadata.SetStatus(ctx, metadata.ExceedsMaximumLimit, fmt.Sprintf("query points > max: %d", i.maxLimit))
 	}
-	if seriesNum > i.maxSLimit {
+	if !promPromql.QueryLimitsDisabled(ctx) && seriesNum > i.maxSLimit {
 		metadata.SetStatus(ctx, metadata.ExceedsMaximumSlimit, fmt.Sprintf("query series > max: %d", i.maxSLimit))
 	}
 
@@ -631,9 +639,18 @@ func (i *Instance) grpcStream(
 			"查询异常 %+v",
 			req,
 		).Error(ctx, err)
+		if metadata.IsStrictQueryFailures(ctx) {
+			return storage.ErrSeriesSet(err)
+		}
 		return storage.EmptySeriesSet()
 	}
-	limiter := rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
+	timeout := i.timeout
+	var limiter *rate.Limiter
+	if promPromql.QueryLimitsDisabled(ctx) {
+		timeout = 0
+	} else {
+		limiter = rate.NewLimiter(rate.Limit(i.readRateLimit), int(i.readRateLimit))
+	}
 
 	name := fmt.Sprintf("%s://%s", i.protocol, i.host)
 
@@ -644,12 +661,21 @@ func (i *Instance) grpcStream(
 			Span:       span,
 			Stream:     stream,
 			Limiter:    limiter,
-			Timeout:    i.timeout,
+			Timeout:    timeout,
 			MetricName: metricName,
 		},
 	)
 
 	return seriesSet
+}
+
+// seriesTimeCondition preserves the inclusive bounds supplied by the local engine.
+// For left-open windows the engine already advances the lower bound by one millisecond.
+func seriesTimeCondition(ctx context.Context, start, end time.Time) string {
+	if metadata.IsLeftOpenTimeWindow(ctx) {
+		return fmt.Sprintf("time >= %d and time <= %d", start.UnixNano(), end.UnixNano())
+	}
+	return fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano())
 }
 
 // QuerySeriesSet 给 PromEngine 提供查询接口
@@ -664,12 +690,12 @@ func (i *Instance) QuerySeriesSet(
 	ctx, span := trace.NewSpan(ctx, "influxdb-query-raw")
 	defer span.End(&err)
 
-	where := fmt.Sprintf("time > %d and time < %d", start.UnixNano(), end.UnixNano())
+	where := seriesTimeCondition(ctx, start, end)
 	if query.Condition != "" {
 		where = fmt.Sprintf("%s and %s", where, query.Condition)
 	}
 
-	limit, slimit := i.getLimitAndSlimit(query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
+	limit, slimit := i.getLimitAndSlimit(ctx, query.OffsetInfo.Limit, query.OffsetInfo.SLimit)
 
 	user := metadata.GetUser(ctx)
 	span.Set("query-space-uid", user.SpaceUID)
@@ -695,12 +721,20 @@ func (i *Instance) QuerySeriesSet(
 	span.Set("query-where", where)
 
 	var sets []storage.SeriesSet
+	var queryFailures []error
+	strict := metadata.IsStrictQueryFailures(ctx)
+	if strict && ctx.Err() != nil {
+		return storage.ErrSeriesSet(ctx.Err())
+	}
 	// 在指标模糊匹配的情况下，需要检索符合条件的 Measures + Fields，这时候会有多个，最后合并结果输出
 	multiFieldsFlag := len(query.Measurements) > 1 || len(query.Fields) > 1
 
 	var metricIdx int
 	for _, measurement := range query.Measurements {
 		for _, field := range query.Fields {
+			if strict && ctx.Err() != nil {
+				return storage.ErrSeriesSet(ctx.Err())
+			}
 			var (
 				set        storage.SeriesSet
 				metricName string
@@ -714,6 +748,12 @@ func (i *Instance) QuerySeriesSet(
 			// 判断是否进入降采样逻辑：sum(sum_over_time), count(count_over_time) 等等
 			if len(query.Aggregates) == 0 && i.protocol == influxdb.GRPC {
 				set = i.grpcStream(ctx, query.DB, query.RetentionPolicy, measurement, field, where, metricName, slimit, limit)
+				if strict {
+					if streamErr := set.Err(); streamErr != nil {
+						queryFailures = append(queryFailures, streamErr)
+						continue
+					}
+				}
 			} else {
 				// 复制 ToVmExpand 对象，简化 field、measure 取值，传入查询方法
 				mq := &metadata.Query{
@@ -739,6 +779,9 @@ func (i *Instance) QuerySeriesSet(
 						"查询异常 %+v",
 						mq,
 					).Error(ctx, err)
+					if strict {
+						queryFailures = append(queryFailures, err)
+					}
 					continue
 				}
 				set = promRemote.FromQueryResult(true, res)
@@ -746,11 +789,26 @@ func (i *Instance) QuerySeriesSet(
 			sets = append(sets, set)
 		}
 	}
+	if strict {
+		if ctx.Err() != nil {
+			return storage.ErrSeriesSet(ctx.Err())
+		}
+		if len(queryFailures) > 0 {
+			if len(sets) == 0 {
+				err = errors.WithMessage(stderrors.Join(queryFailures...), "influxdb subqueries failed")
+				return storage.ErrSeriesSet(err)
+			}
+			message := "influxdb_subquery_failed"
+			if status := metadata.GetStatus(ctx); status != nil && status.Message != "" {
+				message = status.Message + "; " + message
+			}
+			metadata.SetStatus(ctx, metadata.QueryTsPartial, message)
+		}
+	}
 	if len(sets) == 0 {
 		return storage.EmptySeriesSet()
-	} else {
-		return storage.NewMergeSeriesSet(sets, storage.ChainedSeriesMerge)
 	}
+	return storage.NewMergeSeriesSet(sets, storage.ChainedSeriesMerge)
 }
 
 // QueryRange 查询范围数据

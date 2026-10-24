@@ -544,7 +544,12 @@ func (ng *Engine) exec(ctx context.Context, q *query) (v parser.Value, ws storag
 	ng.metrics.currentQueries.Inc()
 	defer ng.metrics.currentQueries.Dec()
 
-	ctx, cancel := context.WithTimeout(ctx, ng.timeout)
+	var cancel context.CancelFunc
+	if QueryLimitsDisabled(ctx) {
+		ctx, cancel = context.WithCancel(ctx)
+	} else {
+		ctx, cancel = context.WithTimeout(ctx, ng.timeout)
+	}
 	q.cancel = cancel
 
 	defer func() {
@@ -585,7 +590,7 @@ func (ng *Engine) exec(ctx context.Context, q *query) (v parser.Value, ws storag
 	queueSpanTimer, _ := q.stats.GetSpanTimer(ctx, stats.ExecQueueTime, ng.metrics.queryQueueTime)
 	// Log query in active log. The active log guarantees that we don't run over
 	// MaxConcurrent queries.
-	if ng.activeQueryTracker != nil {
+	if ng.activeQueryTracker != nil && !QueryLimitsDisabled(ctx) {
 		queryIndex, err := ng.activeQueryTracker.Insert(ctx, q.q)
 		if err != nil {
 			queueSpanTimer.Finish()
@@ -642,6 +647,10 @@ func (ng *Engine) execEvalStmt(ctx context.Context, query *query, s *parser.Eval
 	// w.r.t. the start time since only 1 evaluation will be done on them.
 	setOffsetForAtModifier(timeMilliseconds(s.Start), s.Expr)
 	evalSpanTimer, ctxInnerEval := query.stats.GetSpanTimer(ctx, stats.InnerEvalTime, ng.metrics.queryInnerEval)
+	maxSamples := ng.maxSamplesPerQuery
+	if QueryLimitsDisabled(ctx) {
+		maxSamples = int(^uint(0) >> 1)
+	}
 	// Instant evaluation. This is executed as a range evaluation with one step.
 	if s.Start == s.End && s.Interval == 0 {
 		start := timeMilliseconds(s.Start)
@@ -650,7 +659,7 @@ func (ng *Engine) execEvalStmt(ctx context.Context, query *query, s *parser.Eval
 			endTimestamp:             start,
 			interval:                 1,
 			ctx:                      ctxInnerEval,
-			maxSamples:               ng.maxSamplesPerQuery,
+			maxSamples:               maxSamples,
 			logger:                   ng.logger,
 			lookbackDelta:            s.LookbackDelta,
 			samplesStats:             query.sampleStats,
@@ -703,7 +712,7 @@ func (ng *Engine) execEvalStmt(ctx context.Context, query *query, s *parser.Eval
 		endTimestamp:             timeMilliseconds(s.End),
 		interval:                 durationMilliseconds(s.Interval),
 		ctx:                      ctxInnerEval,
-		maxSamples:               ng.maxSamplesPerQuery,
+		maxSamples:               maxSamples,
 		logger:                   ng.logger,
 		lookbackDelta:            s.LookbackDelta,
 		samplesStats:             query.sampleStats,

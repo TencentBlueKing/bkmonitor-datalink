@@ -11,14 +11,67 @@ package query
 
 import (
 	"context"
-	"sort"
-	"strings"
 	"testing"
 
+	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
+
+func TestVmExpandUsesOnlyExpressionSelectors(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	qr := metadata.QueryReference{}
+	for _, ref := range []string{"a", "b"} {
+		qr[ref] = []*metadata.QueryMetric{{QueryList: []*metadata.Query{{
+			TableID: "table-" + ref, VmRt: "rt-" + ref, StorageName: "storage-" + ref,
+			VmCondition: metadata.VmCondition("filter-" + ref),
+		}}}}
+	}
+	for _, tc := range []struct {
+		expr string
+		refs []string
+	}{
+		{"a", []string{"a"}},
+		{`count_over_time({__name__=~"a"}[5m])`, []string{"a"}},
+		{"count_over_time(a[5m]) or b", []string{"a", "b"}},
+		{`label_replace(a, "label", "b", "source", ".*")`, []string{"a"}},
+		{"sum_over_time((a offset 1m)[5m:1m])", []string{"a"}},
+		{"vector(1)", nil},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			expr, err := parser.ParseExpr(tc.expr)
+			require.NoError(t, err)
+			expand := ToVmExpandForExpression(ctx, qr, expr)
+			require.NotNil(t, expand)
+			if tc.refs == nil {
+				require.Equal(t, []string{"rt-a", "rt-b"}, expand.ResultTableList)
+				require.Empty(t, expand.RtDetailList, "constants have no storage coverage requirement")
+			} else {
+				require.Len(t, expand.ResultTableList, len(tc.refs))
+				require.Len(t, expand.RtDetailList, len(tc.refs))
+				require.Len(t, expand.MetricFilterCondition, len(tc.refs))
+				for _, ref := range tc.refs {
+					require.Contains(t, expand.ResultTableList, "rt-"+ref)
+					require.Equal(t, metadata.RtDetail{TableID: "table-" + ref, StorageName: "storage-" + ref}, expand.RtDetailList["rt-"+ref])
+					require.Equal(t, "filter-"+ref, expand.MetricFilterCondition[ref])
+				}
+				if len(tc.refs) == 1 {
+					require.Equal(t, "storage-"+tc.refs[0], expand.ClusterName)
+				} else {
+					require.Empty(t, expand.ClusterName)
+				}
+			}
+			// Building or mutating one envelope must not change another output.
+			delete(expand.RtDetailList, "rt-a")
+			delete(expand.MetricFilterCondition, "a")
+			full := ToVmExpand(ctx, qr)
+			require.Len(t, full.RtDetailList, 2)
+			require.Equal(t, "filter-a", full.MetricFilterCondition["a"])
+		})
+	}
+}
 
 func TestVmExpand(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
@@ -188,17 +241,10 @@ func TestVmExpand(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			VmExpand := ToVmExpand(ctx, c.queryRef)
-
-			//
-			for k, v := range VmExpand.MetricFilterCondition {
-				or := " or "
-				arr := strings.Split(v, or)
-				sort.Strings(arr)
-				VmExpand.MetricFilterCondition[k] = strings.Join(arr, or)
+			for i := 0; i < 64; i++ {
+				vmExpand := ToVmExpand(ctx, c.queryRef)
+				assert.Equal(t, c.VmExpand, vmExpand, "VM condition order changed at iteration %d", i)
 			}
-
-			assert.Equal(t, c.VmExpand, VmExpand)
 		})
 	}
 }

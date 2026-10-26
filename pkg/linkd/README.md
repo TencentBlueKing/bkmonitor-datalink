@@ -79,6 +79,8 @@ tests/       数据生成和 all-in-one E2E
 边界见 [`docs/design/deployment.md`](docs/design/deployment.md)。
 
 开发维护人员通过 Kingeye Admin 及其 CLI 查询和管理 Linkd。
+Elasticsearch 模式提供[通用告警 DSL 检索](docs/reference/contracts/alert-search.md)及
+[按条件批量关闭](docs/reference/contracts/alert-close.md#按-filter-批量关闭)，复用控制面管理 JWT。
 
 ## 动态来源与任务调度
 

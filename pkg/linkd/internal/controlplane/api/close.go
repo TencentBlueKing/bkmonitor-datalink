@@ -25,30 +25,36 @@ type AlertCloser interface {
 	CloseAlert(context.Context, lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error)
 }
 
+type closeAlertInput struct {
+	TenantID        string              `json:"bk_tenant_id"`
+	OperationID     string              `json:"operation_id"`
+	OperatorKind    domain.OperatorKind `json:"operator_kind"`
+	OperationSource string              `json:"operation_source"`
+	OperatorID      string              `json:"operator_id"`
+	Reason          string              `json:"reason"`
+	EffectiveAt     time.Time           `json:"effective_at"`
+}
+
+func (input closeAlertInput) command(alertID string) lifecycle.CloseAlertCommand {
+	if input.OperatorKind == "" {
+		input.OperatorKind = domain.OperatorKindUser
+	}
+	return lifecycle.CloseAlertCommand{BKTenantID: input.TenantID, AlertID: alertID, OperationID: input.OperationID, OperatorID: input.OperatorID, OperatorKind: input.OperatorKind, OperationSource: input.OperationSource, Reason: input.Reason, EffectiveAt: input.EffectiveAt}
+}
+
 func (a *API) closeAlert(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if a.AlertCloser == nil {
 		http.Error(w, "close is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	var input struct {
-		TenantID        string              `json:"bk_tenant_id"`
-		OperationID     string              `json:"operation_id"`
-		OperatorKind    domain.OperatorKind `json:"operator_kind"`
-		OperationSource string              `json:"operation_source"`
-		OperatorID      string              `json:"operator_id"`
-		Reason          string              `json:"reason"`
-		EffectiveAt     time.Time           `json:"effective_at"`
-	}
+	var input closeAlertInput
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := decode(r, &input); err != nil {
 		http.Error(w, "invalid close command", http.StatusBadRequest)
 		return
 	}
-	if input.OperatorKind == "" {
-		input.OperatorKind = domain.OperatorKindUser
-	}
-	result, err := a.AlertCloser.CloseAlert(r.Context(), lifecycle.CloseAlertCommand{BKTenantID: input.TenantID, AlertID: r.PathValue("id"), OperationID: input.OperationID, OperatorID: input.OperatorID, OperatorKind: input.OperatorKind, OperationSource: input.OperationSource, Reason: input.Reason, EffectiveAt: input.EffectiveAt})
+	result, err := a.AlertCloser.CloseAlert(r.Context(), input.command(r.PathValue("id")))
 	if err != nil {
 		var classified *lifecycleprocess.CloseError
 		if errors.As(err, &classified) {

@@ -1,6 +1,6 @@
 # Alert 主动关闭 API
 
-状态：2026-10-14。接口复用 Lifecycle 的 `CloseAlert`，支持显式人工和系统关闭。
+状态：2026-10-26。接口复用 Lifecycle 的 `CloseAlert`，支持显式人工、系统关闭和按条件批量关闭。
 
 `POST /api/v1/alerts/{alert_id}/close` 使用控制面管理 JWT（`Internal-Token: Bearer <JWT>`）；worker token 无权调用。
 Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也不能获取管理 JWT。
@@ -61,6 +61,82 @@ Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也
 清理由 Linkd 推进，KAC 不再直接修改兼容告警的生命周期字段。
 
 KAC 收到 close 动作后只执行后续处置，不再次据此生成关闭命令，避免终结操作回流。
+
+## 按 filter 批量关闭
+
+`POST /api/v1/alerts/close` 使用相同管理 JWT。`filter` 使用
+[通用检索的 Elasticsearch JSON Query DSL](alert-search.md)，必填且必须为对象。
+服务端额外限制 `bk_tenant_id` 和 `status=active`；不能通过 DSL 扩大租户范围或关闭其他终态。
+当前仅支持 Elasticsearch Repository，MySQL 返回 `501`。
+
+```json
+{
+  "bk_tenant_id": "tenant-a",
+  "filter": {
+    "bool": {
+      "filter": [
+        {"term": {"event_source_id": "built_in_bk"}},
+        {"term": {"labels.strategy_id": "123"}}
+      ]
+    }
+  },
+  "operation_id": "close-strategy-123-20261026",
+  "operator_id": "operator-a",
+  "operator_kind": "user",
+  "operation_source": "manual",
+  "reason": "人工确认结束",
+  "effective_at": "2026-10-26T04:00:00Z",
+  "limit": 100,
+  "dry_run": false
+}
+```
+
+操作字段与单条关闭完全相同。一次批量操作在所有目标上使用同一个 `operation_id`、操作者、原因和
+`effective_at`；既有关闭日志身份已包含 Alert ID，不额外生成随机身份或操作摘要。
+可先设置 `dry_run=true` 只查询本批目标，此时可省略所有关闭操作字段，也不要求关闭器已配置。
+显式使用 `filter={"match_all":{}}` 选择该租户全部可搜索的活动候选。
+
+每次最多枚举 `limit` 个目标，省略为 100，允许 1–500，按 Alert ID 升序分页。
+非空 `next` 传入下次请求的 `after` 后继续下一批，其他条件和操作字段保持不变。
+一次请求不自动扫描全部历史，也不创建后台任务。
+
+成功枚举后返回 `200` 和逐项结果，例如：
+
+```json
+{
+  "items": [
+    {"alert_id": "alert-a", "status": 200},
+    {"alert_id": "alert-b", "status": 429, "error_code": "busy", "message": "alert is being processed; retry the same operation"}
+  ],
+  "next": "alert-b",
+  "dry_run": false,
+  "closed": 1,
+  "failed": 1
+}
+```
+
+`status` 是单条关闭的 HTTP 状态语义。`closed` 统计成功关闭及原命令幂等补齐的数量；
+相同命令已关闭时该项带 `already_closed=true`。`failed` 包括执行失败与未开始执行的项。
+`dry_run=true` 的每项 `status=200` 仅表示候选，`closed/failed` 均为 0。
+空匹配返回空 `items`、空 `next` 和零计数。
+
+批量入口顺序调用既有单条关闭器，继续使用租约、实时读取、CAS、缓存修复、流水、FinalHook 和
+启用的 KAC 同步投影；不直接批量修改 ES 状态。过滤仅在候选读取时求值，不保证条件在执行关闭时
+仍未变化；关闭器继续检查实时生命周期与操作身份。它不是多告警事务，部分成功不会回滚。
+
+请求共用通用检索的并发槽和正文预算；查询阶段使用 `dispatch.alert_search.timeout_seconds`，
+全部关闭共享管理 API 十秒总预算。到期后不再启动新的关闭；未执行项返回 `status=504` 和
+`error_code=not_attempted`。已开始的失败项可能已经保存终态，按原关闭器返回结果不确定错误。
+
+**失败项和未执行项必须使用原操作字段，按其 `alert_id` 调用单条关闭接口重试。**
+`next` 只用于继续枚举本批之后的候选，不代表失败项已经处理完成。
+不能只重新执行 active filter：CAS 成功但输出失败的告警已经不再匹配 active，仍需要按 ID 补齐输出。
+请求丢失响应时，筛选重试也不保证重新找到全部原目标；需要可靠追踪的调用方应先用 dry-run 保存本批 ID，
+再按这些 ID 调用单条关闭。多次请求不持有固定快照，也不冻结批次成员。
+
+鉴权、DSL、容量和搜索阶段错误使用[检索接口状态码](alert-search.md#预算与错误)，并且不会执行任何关闭。
+缺少关闭器返回 `503`；缺少操作字段等返回 `400`。一旦开始逐条执行，顶层 `200` 只表示返回本批结果，
+不能据此判断全部成功。
 
 ## alarmd 无数据关闭联动
 

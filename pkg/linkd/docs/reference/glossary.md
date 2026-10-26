@@ -36,6 +36,7 @@
 | source_event_id | 来源提供的原始事件编号，允许触发与恢复复用；内部 Event ID 按稳定输入记录身份生成 |
 | Alert           | 从首个 triggered Event 创建的一次异常生命周期；继承字段创建后永久锁定                             |
 | Alert ID        | Linkd 告警生命周期身份，格式为 `alert-<YYYYMMDDHHMMSS>-<13 位小写 Base32 摘要>`；时间为 opening Event 的 UTC 创建锚点，不等同于异常发生时间 |
+| 告警查询 DSL | 通用告警检索的 Elasticsearch JSON Query DSL 子句，按请求租户检索原生 Alert；也用于批量关闭的 `filter` 候选条件，见[检索契约](contracts/alert-search.md) |
 | test（丰富处理器） | 通过进程内 datasource 模拟随机延迟、调用超时和概率故障的负载处理器；成功后写入固定 JSON 字段，调用进入统一数据源指标 |
 | 告警丰富        | 依据告警特征及依赖数据生成补充信息，结果按 evaluation 保存在 Event.enrich；Alert 复制 opening Event 结果，不覆盖来源事实 |
 | 丰富分类        | 用于选择一个告警丰富主处理路径的分类，各分类可有内部特殊分支并共用依赖数据；不等同于 EventSource、告警等级或生命周期状态 |

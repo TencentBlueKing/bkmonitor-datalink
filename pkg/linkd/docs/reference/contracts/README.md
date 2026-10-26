@@ -11,6 +11,7 @@
 | [policy-api.md](policy-api.md) | 三类告警策略配置发布 v1、租户作用域、幂等重试与分页 |
 | [policy-runtime-api.md](policy-runtime-api.md) | 三类策略运行态有界查询、清理明细、抑制对账、屏蔽复查及原版本保护的合并接续/关系检查 |
 | [alert-close.md](alert-close.md) | 管理 API 主动关闭 Alert、操作身份与部分成功重试 |
+| [alert-search.md](alert-search.md) | 原生 Alert 的租户级 Elasticsearch JSON Query DSL 检索与分页 |
 | [task-resume.md](task-resume.md) | 确定性任务失败暂停、代次校验和管理 API 显式恢复 |
 | [tenant-directory.md](tenant-directory.md) | 通过用户管理实时查询全局租户目录，仅管理 JWT 可访问 |
 | [module-info.md](module-info.md) | 模块部署、真实存储查询目标、能力与管理端显式连接发现 |

@@ -55,6 +55,7 @@ type API struct {
 	AlertCloser   AlertCloser
 	KACCloser     KACCloser
 	SourceAlerts  *SourceAlerts
+	AlertSearch   *AlertSearch
 	EnrichRecords *EnrichRecords
 	Previewer     interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
@@ -111,6 +112,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
 	mux.HandleFunc("POST /api/v1/ingest/preview", a.previewIngest)
 	mux.HandleFunc("GET /api/v1/alerts", a.listSourceAlerts)
+	mux.HandleFunc("POST /api/v1/alerts/search", a.searchAlerts)
+	mux.HandleFunc("POST /api/v1/alerts/close", a.closeAlertsByFilter)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/enrich-records", a.queryEnrichRecords)
 	mux.HandleFunc("POST /api/v1/events/enrich-records/query", a.queryEventEnrichWindow)
 	mux.HandleFunc("POST /api/v1/events/{id}/enrich-record", a.queryEventEnrichDetail)

@@ -18,6 +18,8 @@ import (
 
 // DispatchConfig 定义静态中心连接和控制协议预算；业务配置不从启动 YAML 导入。
 type DispatchConfig struct {
+	// AlertSearch 限制通用告警检索对控制面和 Elasticsearch 的资源占用。
+	AlertSearch AlertSearchConfig `yaml:"alert_search" json:"alert_search"`
 	// EventgenEnabled 仅在测试部署显式启用生成器管理；默认不打开其存储或后台任务。
 	EventgenEnabled bool   `yaml:"eventgen_enabled" json:"eventgen_enabled"`
 	Deployment      string `yaml:"deployment" json:"deployment"`
@@ -57,6 +59,9 @@ func (d DispatchConfig) WithDefaults() DispatchConfig {
 // Validate 校验启动控制连接，正式控制面另外要求 JWT 密钥和独立 Worker Token。
 func (d DispatchConfig) Validate() error {
 	d = d.WithDefaults()
+	if err := d.AlertSearch.Validate(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(d.JWT.Username) == "" {
 		return fmt.Errorf("dispatch.jwt.username must not be blank")
 	}

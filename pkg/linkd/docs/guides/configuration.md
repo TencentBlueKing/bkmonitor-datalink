@@ -776,6 +776,11 @@ dispatch:
   listen: 127.0.0.1:8090
   url: http://127.0.0.1:8090
   max_tasks: 0 # 不限制进程任务数
+  alert_search:
+    max_concurrent: 2 # 每进程通用检索与 filter 批量关闭共用的请求槽
+    timeout_seconds: 5 # 查询阶段超时，允许 1–10 秒；关闭阶段使用管理接口剩余预算
+    max_request_bytes: 1048576
+    max_response_bytes: 8388608 # 通用检索返回完整 Alert 的结果页大小
 worker:
   labels:
     pool: ingestion

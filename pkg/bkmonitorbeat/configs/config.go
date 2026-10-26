@@ -72,12 +72,13 @@ type Config struct {
 	TaskTypeMapping      map[string]define.TaskMetaConfig `config:"_"`
 	tenantDataIDResolver tenant.DataIDResolver
 
-	CheckInterval    time.Duration `config:"check_interval" validate:"positive"`
-	CleanUpTimeout   time.Duration `config:"clean_up_timeout" validate:"min=1s"`
-	EventBufferSize  int           `config:"event_buffer_size" validate:"positive"`
-	Mode             string        `config:"mode" validate:"regexp=(daemon|check|cron)"`
-	KeepOneDimension bool          `config:"keep_one_dimension"`
-	MetricsBatchSize int           `config:"metrics_batch_size"`
+	CheckInterval      time.Duration `config:"check_interval" validate:"positive"`
+	ClockJumpThreshold time.Duration `config:"clock_jump_threshold" validate:"min=0s"`
+	CleanUpTimeout     time.Duration `config:"clean_up_timeout" validate:"min=1s"`
+	EventBufferSize    int           `config:"event_buffer_size" validate:"positive"`
+	Mode               string        `config:"mode" validate:"regexp=(daemon|check|cron)"`
+	KeepOneDimension   bool          `config:"keep_one_dimension"`
+	MetricsBatchSize   int           `config:"metrics_batch_size"`
 	// 最大批次数，单个任务最大只能上报该批次*batch_size量级的数据
 	MaxMetricBatches int    `config:"max_metric_batches"`
 	AdminAddr        string `config:"admin_addr"`
@@ -141,14 +142,15 @@ type TenantDataIDResolverSetter interface {
 // NewConfig : new config struct
 func NewConfig() *Config {
 	config := &Config{
-		TaskTypeMapping:  make(map[string]define.TaskMetaConfig),
-		CheckInterval:    500 * time.Millisecond,
-		CleanUpTimeout:   time.Second,
-		EventBufferSize:  10,
-		Mode:             "check",
-		KeepOneDimension: false,
-		HeartBeat:        NewHeartBeatConfig(),
-		GatherUpBeat:     NewGatherUpBeatConfig(),
+		TaskTypeMapping:    make(map[string]define.TaskMetaConfig),
+		CheckInterval:      500 * time.Millisecond,
+		ClockJumpThreshold: 10 * time.Minute,
+		CleanUpTimeout:     time.Second,
+		EventBufferSize:    10,
+		Mode:               "check",
+		KeepOneDimension:   false,
+		HeartBeat:          NewHeartBeatConfig(),
+		GatherUpBeat:       NewGatherUpBeatConfig(),
 	}
 	config.TCPTask = NewTCPTaskMetaConfig(config)
 	config.UDPTask = NewUDPTaskMetaConfig(config)

@@ -41,8 +41,12 @@ import (
 )
 
 const (
-	CMDBLevelKey = "bk_cmdb_level"
+	CMDBLevelKey           = "bk_cmdb_level"
+	clockJumpCheckInterval = time.Second
 )
+
+// ErrClockJumpRestart 表示检测到系统时间大幅跳变，需要在清理完成后由外部进程管理器重启。
+var ErrClockJumpRestart = errors.New("restart requested after system clock jump")
 
 // beaterState beater运行状态
 type beaterState struct {
@@ -585,6 +589,18 @@ func (bt *MonitorBeater) Run() error {
 		bt.PublishHeartBeat(time.Now())
 	}
 
+	var (
+		clockTicker      *time.Ticker
+		clockTickerC     <-chan time.Time
+		lastClockCheck   = time.Now()
+		clockJumpRestart bool
+		lastClockJump    time.Duration
+	)
+	if bt.config.Mode == "daemon" {
+		clockTicker = time.NewTicker(clockJumpCheckInterval)
+		clockTickerC = clockTicker.C
+	}
+
 loop:
 	for bt.status == define.BeaterStatusRunning {
 		select {
@@ -604,7 +620,29 @@ loop:
 			if ok {
 				bt.PublishHeartBeat(now)
 			}
+		case clockNow, ok := <-clockTickerC:
+			if !ok {
+				continue
+			}
+			if bt.config.Mode != "daemon" {
+				continue
+			}
+			jump := measureClockJump(wallClockDelta(lastClockCheck, clockNow), clockNow.Sub(lastClockCheck))
+			lastClockCheck = clockNow
+			if exceedClockJumpThreshold(jump, bt.config.ClockJumpThreshold) {
+				lastClockJump = jump
+				clockJumpRestart = true
+				logger.Errorf(
+					"system clock jump detected: jump=%s threshold=%s, exiting for restart",
+					jump,
+					bt.config.ClockJumpThreshold,
+				)
+				break loop
+			}
 		}
+	}
+	if clockTicker != nil {
+		clockTicker.Stop()
 	}
 	logger.Infof("beater break loop with status: %v", bt.status)
 
@@ -617,8 +655,28 @@ loop:
 	}
 	bt.status = define.BeaterStatusTerminated
 
+	if clockJumpRestart {
+		return fmt.Errorf("%w: jump=%s threshold=%s", ErrClockJumpRestart, lastClockJump, bt.config.ClockJumpThreshold)
+	}
 	logger.Info("MonitorBeater exit")
 	return nil
+}
+
+func wallClockDelta(prev, now time.Time) time.Duration {
+	// UnixNano only uses the wall-clock reading and deliberately ignores the monotonic component.
+	return time.Duration(now.UnixNano() - prev.UnixNano())
+}
+
+func measureClockJump(wallDelta, monotonicDelta time.Duration) time.Duration {
+	// A host clock adjustment changes wallDelta but not monotonicDelta.
+	return wallDelta - monotonicDelta
+}
+
+func exceedClockJumpThreshold(jump, threshold time.Duration) bool {
+	if threshold <= 0 {
+		return false
+	}
+	return jump >= threshold || jump <= -threshold
 }
 
 // Stop : stop beater

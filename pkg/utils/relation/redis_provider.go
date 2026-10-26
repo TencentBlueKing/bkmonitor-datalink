@@ -30,6 +30,7 @@ const (
 	defaultRedisReconnectInterval = 5 * time.Second
 	defaultRedisReconnectMaxRetry = 10
 	defaultRedisReconcileInterval = time.Minute
+	RelationSchemaReadyKey        = "bkmonitorv3:entity:v1beta3:schema_ready"
 )
 
 // RedisProviderConfig Redis Provider 配置
@@ -86,6 +87,8 @@ type RedisProvider struct {
 	// Serializes full snapshots and Pub/Sub reloads so an older snapshot cannot
 	// overwrite a newer namespace update.
 	reloadMu sync.Mutex
+	// Protected by mu; any background reload invalidates the request barrier.
+	ensuredVersion string
 
 	// 订阅回调列表，在数据变更时通知
 	callbacks []SchemaChangeCallback
@@ -192,20 +195,36 @@ func (rp *RedisProvider) normalizeNamespace(namespace string) string {
 // snapshot. Missing fields must remove cached namespaces after a lost Pub/Sub
 // deletion, while a read failure must leave the previous snapshot untouched.
 func (rp *RedisProvider) loadAllEntities() error {
+	return rp.loadAllEntitiesWithContext(rp.ctx, false)
+}
+
+func (rp *RedisProvider) loadAllEntitiesWithContext(ctx context.Context, strict bool) error {
 	rp.reloadMu.Lock()
 	defer rp.reloadMu.Unlock()
+	return rp.loadAllEntitiesLocked(ctx, strict)
+}
 
-	resourceFields, err := rp.client.HGetAll(rp.ctx, RedisKeyPrefix+":"+KindResourceDefinition).Result()
+// Caller holds reloadMu across snapshot reads, cache replacement and callbacks.
+func (rp *RedisProvider) loadAllEntitiesLocked(ctx context.Context, strict bool) error {
+	resourceFields, err := rp.client.HGetAll(ctx, RedisKeyPrefix+":"+KindResourceDefinition).Result()
 	if err != nil {
 		return fmt.Errorf("failed to load resource definitions: %w", err)
 	}
-	relationFields, err := rp.client.HGetAll(rp.ctx, RedisKeyPrefix+":"+KindRelationDefinition).Result()
+	relationFields, err := rp.client.HGetAll(ctx, RedisKeyPrefix+":"+KindRelationDefinition).Result()
 	if err != nil {
 		return fmt.Errorf("failed to load relation definitions: %w", err)
 	}
 
 	resources, invalidResources := rp.decodeResourceFields(resourceFields)
 	relations, invalidRelations := rp.decodeRelationFields(relationFields)
+	if strict {
+		if len(invalidResources) > 0 || len(invalidRelations) > 0 {
+			return fmt.Errorf("invalid relation schema snapshot: resources=%d relations=%d", len(invalidResources), len(invalidRelations))
+		}
+		if len(resources[NamespaceAll]) == 0 || len(relations[NamespaceAll]) == 0 {
+			return fmt.Errorf("shared relation schema is incomplete")
+		}
+	}
 
 	rp.mu.Lock()
 	for namespace := range invalidResources {
@@ -222,6 +241,7 @@ func (rp *RedisProvider) loadAllEntities() error {
 	relationChanges := changedNamespaces(rp.relationDefinitions, relations)
 	rp.resourceDefinitions = resources
 	rp.relationDefinitions = relations
+	rp.ensuredVersion = ""
 	rp.mu.Unlock()
 
 	for _, namespace := range resourceChanges {
@@ -234,6 +254,67 @@ func (rp *RedisProvider) loadAllEntities() error {
 		rp.config.Logger.Infof("reconciled Redis definitions: resources=%d relations=%d changed_namespaces=%d",
 			len(resources), len(relations), changed)
 	}
+	return nil
+}
+
+// EnsureVersion guarantees that this process has loaded the schema snapshot
+// published before the requested rollout version became ready.
+func (rp *RedisProvider) EnsureVersion(ctx context.Context, version string) error {
+	if version == "" {
+		return fmt.Errorf("relation schema version is empty")
+	}
+
+	readVersion := func() (string, error) {
+		payload, err := rp.client.Get(ctx, RelationSchemaReadyKey).Bytes()
+		if err != nil {
+			return "", fmt.Errorf("read relation schema readiness: %w", err)
+		}
+		var ready struct {
+			Version string `json:"version"`
+		}
+		if err := json.Unmarshal(payload, &ready); err != nil {
+			return "", fmt.Errorf("decode relation schema readiness: %w", err)
+		}
+		return ready.Version, nil
+	}
+
+	currentVersion, err := readVersion()
+	if err != nil {
+		return err
+	}
+	if currentVersion != version {
+		return fmt.Errorf("relation schema version changed before query: requested=%s current=%s", version, currentVersion)
+	}
+	rp.mu.RLock()
+	loaded := rp.ensuredVersion == version
+	rp.mu.RUnlock()
+	if loaded {
+		return nil
+	}
+
+	// Serialize cold loads only. Healthy requests perform their Redis readiness
+	// check concurrently instead of queuing behind every other request's I/O.
+	rp.reloadMu.Lock()
+	defer rp.reloadMu.Unlock()
+	rp.mu.RLock()
+	loaded = rp.ensuredVersion == version
+	rp.mu.RUnlock()
+	if loaded {
+		return nil
+	}
+	if err := rp.loadAllEntitiesLocked(ctx, true); err != nil {
+		return err
+	}
+	currentVersion, err = readVersion()
+	if err != nil {
+		return err
+	}
+	if currentVersion != version {
+		return fmt.Errorf("relation schema version changed while loading: requested=%s current=%s", version, currentVersion)
+	}
+	rp.mu.Lock()
+	rp.ensuredVersion = version
+	rp.mu.Unlock()
 	return nil
 }
 
@@ -253,9 +334,13 @@ func (rp *RedisProvider) decodeResourceFields(fields map[string]string) (map[str
 			var definition ResourceDefinition
 			if err := json.Unmarshal(data, &definition); err != nil {
 				rp.config.Logger.Warnf("invalid resource definition %s:%s: %v", namespace, name, err)
-				continue
+				invalid[namespace] = struct{}{}
+				break
 			}
 			parsed[name] = &definition
+		}
+		if _, bad := invalid[namespace]; bad {
+			continue
 		}
 		definitions[namespace] = parsed
 	}
@@ -278,9 +363,13 @@ func (rp *RedisProvider) decodeRelationFields(fields map[string]string) (map[str
 			var definition RelationDefinition
 			if err := json.Unmarshal(data, &definition); err != nil {
 				rp.config.Logger.Warnf("invalid relation definition %s:%s: %v", namespace, name, err)
-				continue
+				invalid[namespace] = struct{}{}
+				break
 			}
 			parsed[name] = &definition
+		}
+		if _, bad := invalid[namespace]; bad {
+			continue
 		}
 		definitions[namespace] = parsed
 	}
@@ -333,6 +422,7 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 	if errors.Is(err, redis.Nil) {
 		// namespace 已不存在，清空缓存
 		rp.mu.Lock()
+		rp.ensuredVersion = ""
 		switch kind {
 		case KindResourceDefinition:
 			delete(rp.resourceDefinitions, normalizedNs)
@@ -364,6 +454,7 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 			newMap[name] = &def
 		}
 		rp.mu.Lock()
+		rp.ensuredVersion = ""
 		rp.resourceDefinitions[normalizedNs] = newMap
 		rp.mu.Unlock()
 
@@ -378,6 +469,7 @@ func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
 			newMap[name] = &def
 		}
 		rp.mu.Lock()
+		rp.ensuredVersion = ""
 		rp.relationDefinitions[normalizedNs] = newMap
 		rp.mu.Unlock()
 	}

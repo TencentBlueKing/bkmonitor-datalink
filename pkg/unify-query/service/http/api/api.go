@@ -358,6 +358,10 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 		}
 	)
 
+	if fallbackRelationSchema(c, HandlerAPIRelationMultiResource) {
+		return
+	}
+
 	ctx, span := trace.NewSpan(ctx, "handler-api-relation-multi-resource-v1beta3")
 	defer span.End(&err)
 
@@ -493,6 +497,10 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 			c: c,
 		}
 	)
+
+	if fallbackRelationSchema(c, HandlerAPIRelationMultiResourceRange) {
+		return
+	}
 
 	ctx, span := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range-v1beta3")
 	defer span.End(&err)

@@ -10,6 +10,7 @@
 package v1beta3
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -79,6 +80,20 @@ func GetSchemaProvider() SchemaProvider {
 	defaultSchemaProviderMu.RLock()
 	defer defaultSchemaProviderMu.RUnlock()
 	return defaultSchemaProvider
+}
+
+// EnsureSchemaVersion checks the rollout token and synchronously loads Redis
+// definitions before the first request for a newly published schema version.
+func EnsureSchemaVersion(ctx context.Context, version string) error {
+	adapter, ok := GetSchemaProvider().(*v1beta3SchemaProviderAdapter)
+	if !ok {
+		return fmt.Errorf("relation schema rollout requires the Redis schema provider")
+	}
+	provider, ok := adapter.provider.(*relation.RedisProvider)
+	if !ok {
+		return fmt.Errorf("relation schema rollout requires the Redis schema provider")
+	}
+	return provider.EnsureVersion(ctx, version)
 }
 
 var relationSchemaOrder = map[RelationType]int{

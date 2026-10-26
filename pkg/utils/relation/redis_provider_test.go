@@ -23,6 +23,7 @@ type snapshotRedisClient struct {
 	redis.UniversalClient
 	fields      map[string]map[string]string
 	relationErr error
+	ready       string
 }
 
 func (client *snapshotRedisClient) HGetAll(ctx context.Context, key string) *redis.StringStringMapCmd {
@@ -30,6 +31,13 @@ func (client *snapshotRedisClient) HGetAll(ctx context.Context, key string) *red
 		return redis.NewStringStringMapResult(nil, client.relationErr)
 	}
 	return redis.NewStringStringMapResult(client.fields[key], nil)
+}
+
+func (client *snapshotRedisClient) Get(ctx context.Context, key string) *redis.StringCmd {
+	if key != RelationSchemaReadyKey || client.ready == "" {
+		return redis.NewStringResult("", redis.Nil)
+	}
+	return redis.NewStringResult(client.ready, nil)
 }
 
 func TestRedisProviderFullReloadRetainsSnapshotOnReadFailure(t *testing.T) {
@@ -72,4 +80,76 @@ func TestRedisProviderFullReloadRetainsSnapshotOnReadFailure(t *testing.T) {
 	require.ErrorIs(t, err, ErrResourceDefinitionNotFound)
 	_, err = provider.GetRelationDefinition("bkcc__2", "calls")
 	require.ErrorIs(t, err, ErrRelationDefinitionNotFound)
+}
+
+func TestRedisProviderEnsureVersionLoadsPublishedSchemaBeforeQuery(t *testing.T) {
+	ctx := context.Background()
+	resourceKey := RedisKeyPrefix + ":" + KindResourceDefinition
+	relationKey := RedisKeyPrefix + ":" + KindRelationDefinition
+	encode := func(definitions any) string {
+		t.Helper()
+		data, err := json.Marshal(definitions)
+		require.NoError(t, err)
+		return string(data)
+	}
+	client := &snapshotRedisClient{fields: map[string]map[string]string{
+		resourceKey: {NamespaceAll: encode(map[string]*ResourceDefinition{
+			"service": {Namespace: NamespaceAll, Name: "service", Fields: []FieldDefinition{{Name: "shared_id", Required: true}}},
+		})},
+		relationKey: {NamespaceAll: encode(map[string]*RelationDefinition{
+			"calls": {Namespace: NamespaceAll, Name: "calls", FromResource: "service", ToResource: "service"},
+		})},
+	}}
+	provider := &RedisProvider{
+		client: client, config: DefaultRedisProviderConfig(), ctx: ctx,
+		resourceDefinitions: make(map[string]map[string]*ResourceDefinition),
+		relationDefinitions: make(map[string]map[string]*RelationDefinition),
+	}
+	require.NoError(t, provider.loadAllEntities())
+
+	client.fields[resourceKey]["bkcc__2"] = encode(map[string]*ResourceDefinition{
+		"service": {Namespace: "bkcc__2", Name: "service", Fields: []FieldDefinition{{Name: "business_id", Required: true}}},
+	})
+	client.fields[relationKey]["bkcc__2"] = encode(map[string]*RelationDefinition{
+		"business_calls": {Namespace: "bkcc__2", Name: "business_calls", FromResource: "service", ToResource: "service"},
+	})
+	client.ready = `{"biz_ids":[2],"version":"version-1"}`
+	require.ErrorContains(t, provider.EnsureVersion(ctx, "old-version"), "version changed")
+	require.NoError(t, provider.EnsureVersion(ctx, "version-1"))
+	resource, err := provider.GetResourceDefinition("bkcc__2", "service")
+	require.NoError(t, err)
+	require.Equal(t, "business_id", resource.Fields[0].Name)
+	relation, err := provider.GetRelationDefinition("bkcc__2", "business_calls")
+	require.NoError(t, err)
+	require.Equal(t, "business_calls", relation.Name)
+
+	client.fields[resourceKey]["bkcc__2"] = `{"service":true}`
+	client.ready = `{"biz_ids":[2],"version":"version-2"}`
+	require.ErrorContains(t, provider.EnsureVersion(ctx, "version-2"), "invalid relation schema snapshot")
+	resource, err = provider.GetResourceDefinition("bkcc__2", "service")
+	require.NoError(t, err)
+	require.Equal(t, "business_id", resource.Fields[0].Name)
+
+	client.ready = ""
+	require.ErrorContains(t, provider.EnsureVersion(ctx, "version-1"), "read relation schema readiness")
+}
+
+func TestRedisProviderBackgroundReloadInvalidatesVerifiedVersion(t *testing.T) {
+	ctx := context.Background()
+	client := &snapshotRedisClient{ready: `{"version":"v1"}`, fields: map[string]map[string]string{
+		RedisKeyPrefix + ":" + KindResourceDefinition: {NamespaceAll: `{"service":{"name":"service"}}`},
+		RedisKeyPrefix + ":" + KindRelationDefinition: {NamespaceAll: `{"calls":{"name":"calls","from_resource":"service","to_resource":"service"}}`},
+	}}
+	provider := &RedisProvider{
+		client: client, config: DefaultRedisProviderConfig(), ctx: ctx,
+		resourceDefinitions: make(map[string]map[string]*ResourceDefinition),
+		relationDefinitions: make(map[string]map[string]*RelationDefinition),
+	}
+	require.NoError(t, provider.EnsureVersion(ctx, "v1"))
+	// A background reconcile observes lost hashes while the ready key survives.
+	// The previous request barrier must not certify this now-empty cache.
+	client.fields = map[string]map[string]string{}
+	require.NoError(t, provider.loadAllEntities())
+	require.ErrorContains(t, provider.EnsureVersion(ctx, "v1"), "incomplete")
+	require.Empty(t, provider.ensuredVersion)
 }

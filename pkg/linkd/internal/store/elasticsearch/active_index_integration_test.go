@@ -25,7 +25,8 @@ import (
 	"linkd/internal/store/storetest"
 )
 
-func TestActiveIndexElasticsearchIntegration(t *testing.T) {
+func activeIndexIntegrationRepository(t *testing.T) (*Repository, context.Context) {
+	t.Helper()
 	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
 	if endpoint == "" {
 		t.Skip("LINKD_TEST_ELASTICSEARCH_URL is not set")
@@ -44,8 +45,8 @@ func TestActiveIndexElasticsearchIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
-	defer cancel()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	t.Cleanup(cancel)
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stop()
@@ -64,6 +65,11 @@ func TestActiveIndexElasticsearchIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	return r, ctx
+}
+
+func TestActiveIndexElasticsearchIntegration(t *testing.T) {
+	r, ctx := activeIndexIntegrationRepository(t)
 	for _, test := range []struct{ tenant, source, id, label string }{{"tenant", "a", "one", "123"}, {"tenant", "b", "two", "123"}, {"tenant", "a", "three", "00123"}, {"other", "a", "four", "123"}} {
 		a := storetest.Alert(test.tenant, test.id, "event", test.id, "warning")
 		a.EventSourceID = test.source
@@ -79,8 +85,8 @@ func TestActiveIndexElasticsearchIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	q := activeindex.Query{Sources: []string{"a", "b"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, MaxRows: 10, MaxBytes: 4096}
-	rows, err := r.ReadActiveIndex(ctx, q)
+	q := activeindex.Query{Sources: []string{"a", "b"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, PageSize: 10, MaxBytes: 4096}
+	rows, err := readActiveIndex(r, ctx, q)
 	if err != nil || len(rows) != 3 {
 		t.Fatalf("tenant rows=%v error=%v", rows, err)
 	}
@@ -94,22 +100,22 @@ func TestActiveIndexElasticsearchIntegration(t *testing.T) {
 		t.Fatalf("exact strategy members=%v error=%v", groups, err)
 	}
 	q.Scope, q.BKTenantID = nil, "tenant"
-	rows, err = r.ReadActiveIndex(ctx, q)
+	rows, err = readActiveIndex(r, ctx, q)
 	if err != nil || len(rows) != 3 {
 		t.Fatalf("tenant batch rows=%v error=%v", rows, err)
 	}
 	q.BKTenantID = ""
-	q.MaxRows = 1
-	if rows, err := r.ReadActiveIndex(ctx, q); err == nil || rows != nil {
-		t.Fatal("truncated snapshot accepted")
+	q.PageSize = 1
+	if rows, err := readActiveIndex(r, ctx, q); err != nil || len(rows) != 4 {
+		t.Fatalf("small pages truncated full scan: rows=%d err=%v", len(rows), err)
 	}
-	q.MaxRows = 10
+	q.PageSize = 10
 	q.MaxBytes = 1
-	if rows, err := r.ReadActiveIndex(ctx, q); err == nil || rows != nil {
+	if rows, err := readActiveIndex(r, ctx, q); err == nil || rows != nil {
 		t.Fatal("oversize snapshot accepted")
 	}
 	q.MaxBytes = 4096
-	rows, err = r.ReadActiveIndex(ctx, q)
+	rows, err = readActiveIndex(r, ctx, q)
 	if err != nil || len(rows) != 4 {
 		t.Fatalf("discovery rows=%v error=%v", rows, err)
 	}

@@ -72,7 +72,7 @@ func taskCatalog(cfg config.Config, providers int) *taskstate.Registry {
 	if cfg.ControlPlane != nil && cfg.ControlPlane.ActiveIndex != nil {
 		ai = cfg.ControlPlane.ActiveIndex.WithDefaults()
 	}
-	tasks = append(tasks, makeTask("active-alert-indexes", "策略活跃索引维护", "投影与配置", "periodic", "发现已发布 Hook 目标，独立初始化并刷新到期策略；无目标时正常空闲。", true, 5, 0, "default", map[string]any{"pollIntervalSeconds": ai.PollIntervalSeconds, "reconcileIntervalSeconds": ai.ReconcileIntervalSeconds, "operationTimeoutSeconds": ai.OperationTimeoutSeconds, "batchSize": ai.BatchSize, "maxRows": ai.MaxRows, "maxBytes": ai.MaxBytes, "maxTargets": 32}))
+	tasks = append(tasks, makeTask("active-alert-indexes", "策略活跃索引维护", "投影与配置", "periodic", "发现已发布 Hook 目标，独立初始化并刷新到期策略；无目标时正常空闲。", true, 5, 0, "default", map[string]any{"pollIntervalSeconds": ai.PollIntervalSeconds, "reconcileIntervalSeconds": ai.ReconcileIntervalSeconds, "operationTimeoutSeconds": ai.OperationTimeoutSeconds, "pageSize": ai.PageSize, "maxBytes": ai.MaxBytes, "maxTargets": 32}))
 	dynamic := makeTask("dynamic-config", "动态配置同步", "投影与配置", "notification", "合并上游通知并周期补读，校验和持久化后发布有效配置。", false, 0, 0, "explicit", map[string]any{})
 	dynamic.DisabledReason = "未启用 control_plane.dynamic_config"
 	if c := cfg.ControlPlane; c != nil && c.DynamicConfig != nil && c.DynamicConfig.Enabled && c.DynamicConfig.Bindings.Severity != nil {

@@ -17,13 +17,14 @@ import (
 	"linkd/internal/activeindex"
 )
 
-// ReadActiveIndex 用单条一致性 SELECT 读取窄投影；超限时不返回部分集合。
-func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) ([]activeindex.Row, error) {
+// ScanActiveIndex 用单条一致性 SELECT 流式读取，逐批交付并释放窄投影。
+// 不使用 OFFSET 或多条 SELECT，避免翻页期间数据变化造成重复和遗漏。
+func (r *Repository) ScanActiveIndex(ctx context.Context, q activeindex.Query, consume func([]activeindex.Row) error) error {
 	if err := q.Validate(); err != nil {
-		return nil, err
+		return err
 	}
 	label := "JSON_EXTRACT(payload, '$.labels.strategy_id')"
-	//nolint:gosec // 仅拼接固定列和有界占位符；来源、租户、策略及 LIMIT 均使用绑定参数。
+	//nolint:gosec // 仅拼接固定列和有界占位符；来源和租户使用绑定参数。
 	query := "SELECT bk_tenant_id,event_source_id,fingerprint," + label + ",JSON_EXTRACT(payload, '$.enrich') FROM linkd_alerts WHERE status='active' AND event_source_id IN (" + placeholders(len(q.Sources)) + ")"
 	args := make([]any, 0, len(q.Sources)+4)
 	for _, source := range q.Sources {
@@ -34,47 +35,55 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 		args = append(args, tenant)
 	}
 
-	query += " LIMIT ?"
-	args = append(args, q.MaxRows+1)
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { _ = rows.Close() }()
-	result := make([]activeindex.Row, 0)
+	page := make([]activeindex.Row, 0, q.PageSize)
 	bytes := 0
 	for rows.Next() {
 		var row activeindex.Row
 		var labelJSON, enrichJSON []byte
 		if err := rows.Scan(&row.BKTenantID, &row.EventSourceID, &row.Fingerprint, &labelJSON, &enrichJSON); err != nil {
-			return nil, err
+			return err
 		}
 		if len(labelJSON) != 0 && string(labelJSON) != "null" {
 			if err := json.Unmarshal(append(append([]byte(`{"strategy_id":`), labelJSON...), '}'), &row.Labels); err != nil {
-				return nil, fmt.Errorf("invalid strategy label")
+				return fmt.Errorf("invalid strategy label")
 			}
 		}
 		if len(enrichJSON) > 0 && string(enrichJSON) != "null" {
 			if err := json.Unmarshal(enrichJSON, &row.Enrich); err != nil {
-				return nil, fmt.Errorf("invalid enrichment payload")
+				return fmt.Errorf("invalid enrichment payload")
 			}
 		}
 		row, err = row.Projection()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		projection, err := json.Marshal(row)
 		if err != nil {
-			return nil, err
+			return err
 		}
+		if len(projection) > q.MaxBytes {
+			return fmt.Errorf("active index row exceeds page byte limit")
+		}
+		if len(page) > 0 && (len(page) >= q.PageSize || bytes+len(projection) > q.MaxBytes) {
+			if err := consume(page); err != nil {
+				return err
+			}
+			page = make([]activeindex.Row, 0, q.PageSize)
+			bytes = 0
+		}
+		page = append(page, row)
 		bytes += len(projection)
-		if len(result) >= q.MaxRows || bytes > q.MaxBytes {
-			return nil, fmt.Errorf("active index snapshot exceeds limits")
-		}
-		result = append(result, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return err
 	}
-	return result, nil
+	if len(page) > 0 {
+		return consume(page)
+	}
+	return nil
 }

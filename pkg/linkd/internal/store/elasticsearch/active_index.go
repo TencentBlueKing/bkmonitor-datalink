@@ -20,18 +20,18 @@ import (
 	"linkd/internal/activeindex"
 )
 
-// ReadActiveIndex 在一个 PIT 中分页读取 active alias；缺索引和部分结果不能解释为空集合。
-func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) ([]activeindex.Row, error) {
+// ScanActiveIndex 在同一 PIT 中逐页交付窄投影；缺索引和部分结果不能解释为空集合。
+func (r *Repository) ScanActiveIndex(ctx context.Context, q activeindex.Query, consume func([]activeindex.Row) error) error {
 	if err := q.Validate(); err != nil {
-		return nil, err
+		return err
 	}
 	targets, err := r.router.ActiveAlertTargets(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	targets, err = normalizeTargets(targets, r.config.MaxReadTargets)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var opened pointInTimeResponse
 	// ES 7.17 的 PIT 创建不接受 allow_partial_search_results；拒绝缺失目标，
@@ -46,10 +46,10 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 		}
 	}()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if pit == "" {
-		return nil, fmt.Errorf("empty active index PIT")
+		return fmt.Errorf("empty active index PIT")
 	}
 	filters := []any{map[string]any{"term": map[string]any{"status": "active"}}, map[string]any{"terms": map[string]any{"event_source_id": q.Sources}}}
 	if tenant := q.TenantID(); tenant != "" {
@@ -57,42 +57,54 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 		filters = append(filters, map[string]any{"term": map[string]any{"bk_tenant_id": tenant}})
 	}
 	// 只读取还原有效策略标签所需的补丁和历史 value，不传输 trace、诊断和其他历史值。
-	body := map[string]any{"size": 500, "track_total_hits": false, "_source": []string{"bk_tenant_id", "event_source_id", "fingerprint", "labels.strategy_id", "enrich.processors.*.status", "enrich.processors.*.patches", "enrich.processors.*.value.strategy_id"}, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
-	result := make([]activeindex.Row, 0)
-	bytes := 0
+	body := map[string]any{"size": q.PageSize, "track_total_hits": false, "_source": []string{"bk_tenant_id", "event_source_id", "fingerprint", "labels.strategy_id", "enrich.processors.*.status", "enrich.processors.*.patches", "enrich.processors.*.value.strategy_id"}, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
 	for {
 		response, next, err := r.searchWithPIT(ctx, targets, pit, body)
 		if next != "" {
 			pit = next
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
+		page := make([]activeindex.Row, 0, len(response.Hits.Hits))
+		bytes := 0
 		for _, hit := range response.Hits.Hits {
 			var row activeindex.Row
 			if err := json.Unmarshal(hit.Source, &row); err != nil {
-				return nil, fmt.Errorf("invalid active index row")
+				return fmt.Errorf("invalid active index row")
 			}
 			row, err = row.Projection()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			projection, err := json.Marshal(row)
 			if err != nil {
-				return nil, err
+				return err
 			}
+			if len(projection) > q.MaxBytes {
+				return fmt.Errorf("active index row exceeds page byte limit")
+			}
+			if len(page) > 0 && bytes+len(projection) > q.MaxBytes {
+				if err := consume(page); err != nil {
+					return err
+				}
+				page = make([]activeindex.Row, 0, len(response.Hits.Hits))
+				bytes = 0
+			}
+			page = append(page, row)
 			bytes += len(projection)
-			if len(result) >= q.MaxRows || bytes > q.MaxBytes {
-				return nil, fmt.Errorf("active index snapshot exceeds limits")
-			}
-			result = append(result, row)
 		}
-		if len(response.Hits.Hits) < 500 {
-			return result, nil
+		if len(page) > 0 {
+			if err := consume(page); err != nil {
+				return err
+			}
+		}
+		if len(response.Hits.Hits) < q.PageSize {
+			return nil
 		}
 		last := response.Hits.Hits[len(response.Hits.Hits)-1]
 		if len(last.Sort) != 3 {
-			return nil, fmt.Errorf("invalid active index cursor")
+			return fmt.Errorf("invalid active index cursor")
 		}
 		body["search_after"] = last.Sort
 	}

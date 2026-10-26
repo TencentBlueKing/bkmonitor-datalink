@@ -232,8 +232,8 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 					logger.WarnContext(ctx, "active index client initialization failed", "module", "controlplane", "operation", "active_index_client", "error", err)
 					continue
 				}
-				cache := activeindex.NewRedisCache(client, target.Prefix, settings.MaxRows, settings.MaxBytes)
-				manager, err := activeindex.NewManager(reader, cache, target.Sources, activeindex.Settings{PollInterval: time.Duration(settings.PollIntervalSeconds) * time.Second, ReconcileInterval: time.Duration(settings.ReconcileIntervalSeconds) * time.Second, OperationTimeout: time.Duration(settings.OperationTimeoutSeconds) * time.Second, BatchSize: settings.BatchSize, MaxRows: settings.MaxRows, MaxBytes: settings.MaxBytes}, logger.With("index_target", id))
+				cache := activeindex.NewRedisCache(client, target.Prefix, settings.PageSize, settings.MaxBytes)
+				manager, err := activeindex.NewManager(reader, cache, target.Sources, activeindex.Settings{PollInterval: time.Duration(settings.PollIntervalSeconds) * time.Second, ReconcileInterval: time.Duration(settings.ReconcileIntervalSeconds) * time.Second, OperationTimeout: time.Duration(settings.OperationTimeoutSeconds) * time.Second, PageSize: settings.PageSize, MaxBytes: settings.MaxBytes}, logger.With("index_target", id))
 				if err != nil {
 					_ = client.Close()
 					initFailures++

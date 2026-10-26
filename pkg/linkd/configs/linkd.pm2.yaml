@@ -86,9 +86,8 @@ control_plane:
   active_index:
     poll_interval_seconds: 1
     reconcile_interval_seconds: 60
-    operation_timeout_seconds: 10
-    batch_size: 16
-    max_rows: 100000
+    operation_timeout_seconds: 60
+    page_size: 2000
     max_bytes: 33554432
   elasticsearch:
     schema_and_active_reconcile_interval_seconds: 3600

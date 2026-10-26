@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -63,22 +62,23 @@ type Cache interface {
 	Discover(context.Context) ([]Scope, error)
 	Enqueue(context.Context, Scope) error
 	Pending(context.Context, int) ([]Pending, error)
-	Acquire(context.Context, Scope, time.Duration) (string, error)
-	Release(context.Context, Scope, string) error
-	Publish(context.Context, Pending, string, []string) error
+	Acquire(context.Context, time.Duration) (string, error)
+	Release(context.Context, string, []Scope) error
+	Append(context.Context, Scope, string, []string) (int64, error)
+	Publish(context.Context, Pending, string, int64) error
 	Failed(context.Context, Pending, string, string) error
 }
 
 // RedisCache 持有目标客户端，连接由控制面装配层关闭。
 type RedisCache struct {
-	client            *redis.Client
-	prefix            string
-	maxRows, maxBytes int
+	client             *redis.Client
+	prefix             string
+	pageSize, maxBytes int
 }
 
-// NewRedisCache 设置集合完整读取及构建的硬资源边界。
-func NewRedisCache(client *redis.Client, prefix string, maxRows, maxBytes int) *RedisCache {
-	return &RedisCache{client: client, prefix: prefix, maxRows: maxRows, maxBytes: maxBytes}
+// NewRedisCache 设置成员比较和写入的分页预算，不限制完整集合的成员数。
+func NewRedisCache(client *redis.Client, prefix string, pageSize, maxBytes int) *RedisCache {
+	return &RedisCache{client: client, prefix: prefix, pageSize: pageSize, maxBytes: maxBytes}
 }
 
 // Enqueue 合并提示；重复提示不延后最早刷新时间。
@@ -110,19 +110,56 @@ func (r *RedisCache) scopeKey(s Scope, suffix string) string {
 	return MetadataPrefix(r.prefix) + ":" + suffix + ":" + s.BKTenantID + ":" + s.StrategyID
 }
 
-// Acquire 为一个策略取得有期限的发布权；查询必须发生在取得租约之后。
-func (r *RedisCache) Acquire(ctx context.Context, s Scope, ttl time.Duration) (string, error) {
+// Acquire 为整个目标取得有期限的发布权；所有读取和暂存必须发生在取得租约之后。
+func (r *RedisCache) Acquire(ctx context.Context, ttl time.Duration) (string, error) {
 	token := uuid.NewString()
-	ok, err := r.client.SetNX(ctx, r.scopeKey(s, "lease"), token, ttl).Result()
+	ok, err := r.client.SetNX(ctx, MetadataPrefix(r.prefix)+":lease", token, ttl).Result()
 	if err != nil || !ok {
 		return "", err
 	}
 	return token, nil
 }
 
-// Release 只释放自身租约，过期任务不能删除继任者的所有权。
-func (r *RedisCache) Release(ctx context.Context, s Scope, token string) error {
-	return r.client.Eval(ctx, `if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) end; return 0`, []string{r.scopeKey(s, "lease")}, token).Err()
+// Release 清理本轮临时集合，只释放自身租约；失租任务不能删除继任者的所有权。
+func (r *RedisCache) Release(ctx context.Context, token string, scopes []Scope) error {
+	pipe := r.client.Pipeline()
+	for start := 0; start < len(scopes); start += 256 {
+		keys := make([]string, 0, min(256, len(scopes)-start))
+		for _, scope := range scopes[start:min(start+256, len(scopes))] {
+			keys = append(keys, r.stagingKey(scope, token))
+		}
+		pipe.Unlink(ctx, keys...)
+	}
+	pipe.Eval(ctx, `if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) end; return 0`, []string{MetadataPrefix(r.prefix) + ":lease"}, token)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func (r *RedisCache) stagingKey(scope Scope, lease string) string {
+	return r.scopeKey(scope, "staging") + ":" + lease
+}
+
+// Append 把当前页加入本轮临时集合，Redis Set 跨页去重，不改动正式集合。
+// 返回临时集合去重后的累计成员数，供发布时沿用完整集合基数检查。
+// 临时集合只属于本轮租约；失败或取消后由 Release 清理，进程退出则由 TTL 回收。
+func (r *RedisCache) Append(ctx context.Context, scope Scope, lease string, members []string) (int64, error) {
+	var count int64
+	batchSize := min(r.pageSize, 1000)
+	for start := 0; start < len(members); start += batchSize {
+		args := []any{lease}
+		for _, member := range members[start:min(start+batchSize, len(members))] {
+			args = append(args, member)
+		}
+		n, err := r.client.Eval(ctx, `if redis.call('GET',KEYS[1])~=ARGV[1] then return -1 end; redis.call('SADD',KEYS[2],unpack(ARGV,2)); redis.call('PEXPIRE',KEYS[2],120000); return redis.call('SCARD',KEYS[2])`, []string{MetadataPrefix(r.prefix) + ":lease", r.stagingKey(scope, lease)}, args...).Int64()
+		if err != nil {
+			return 0, err
+		}
+		if n < 0 {
+			return 0, fmt.Errorf("projection lease lost")
+		}
+		count = n
+	}
+	return count, nil
 }
 
 // Discover 扫描正式集合，包括数据库已无 active 的残留策略；SCAN 不是快照，因此每轮重复校准。
@@ -130,12 +167,12 @@ func (r *RedisCache) Discover(ctx context.Context) ([]Scope, error) {
 	pattern := strings.NewReplacer(`\`, `\\`, `*`, `\*`, `?`, `\?`, `[`, `\[`, `]`, `\]`).Replace(r.prefix) + ":*"
 	seen := map[Scope]bool{}
 	var cursor uint64
-	bytes := 0
 	for range 1000 {
 		keys, next, err := r.client.Scan(ctx, cursor, pattern, 200).Result()
 		if err != nil {
 			return nil, err
 		}
+		bytes := 0
 		for _, key := range keys {
 			bytes += len(key)
 			if bytes > r.maxBytes {
@@ -160,44 +197,53 @@ func (r *RedisCache) Discover(ctx context.Context) ([]Scope, error) {
 	return nil, fmt.Errorf("strategy discovery exceeds scan limit")
 }
 
-func (r *RedisCache) members(ctx context.Context, key string) ([]string, error) {
-	count, err := r.client.SCard(ctx, key).Result()
-	if err != nil {
-		return nil, err
+// sameMembers 先比较基数，再逐页查询成员归属，不把整个旧集合载入进程内存。
+// 目标租约隔离所有正式写入者；成员不变时避免重复通知，比较期间失租由提交脚本拒绝发布。
+func (r *RedisCache) sameMembers(ctx context.Context, key, temp string, count int64) (bool, error) {
+	oldCount, err := r.client.SCard(ctx, key).Result()
+	if err != nil || oldCount != count {
+		return false, err
 	}
-	if count > int64(r.maxRows) {
-		return nil, fmt.Errorf("cached members exceed limit")
+	if count == 0 {
+		return true, nil
 	}
-	seen := map[string]bool{}
-	bytes := 0
 	var cursor uint64
-	for range 10000 {
-		values, next, err := r.client.SScan(ctx, key, cursor, "", 256).Result()
+	for {
+		values, next, err := r.client.SScan(ctx, key, cursor, "", int64(r.pageSize)).Result()
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-		for _, v := range values {
-			bytes += len(v)
-			seen[v] = true
-			if bytes > r.maxBytes || len(seen) > r.maxRows {
-				return nil, fmt.Errorf("cached members exceed limit")
+		bytes := 0
+		for _, value := range values {
+			bytes += len(value)
+		}
+		if bytes > r.maxBytes {
+			return false, fmt.Errorf("cached member page exceeds byte limit")
+		}
+		if len(values) > 0 {
+			args := make([]any, len(values))
+			for i, value := range values {
+				args[i] = value
+			}
+			matches, err := r.client.SMIsMember(ctx, temp, args...).Result()
+			if err != nil {
+				return false, err
+			}
+			for _, match := range matches {
+				if !match {
+					return false, nil
+				}
 			}
 		}
 		cursor = next
 		if cursor == 0 {
-			out := make([]string, 0, len(seen))
-			for v := range seen {
-				out = append(out, v)
-			}
-			slices.Sort(out)
-			return out, nil
+			return true, nil
 		}
 	}
-	return nil, fmt.Errorf("cached members exceed scan limit")
 }
 
 // 发布不先删除正式集合，否则 RENAME 被 ACL 拒绝会把局部错误变成缓存丢失。
-// RENAME 覆盖旧集合的释放成本受完整读取预算限制，大策略仍需单独做延迟压测。
+// 大集合替换依赖 Redis lazyfree-lazy-server-del，仍需按部署配置验证服务端延迟。
 // 脚本执行错误不等于回滚；通知使用 pcall，失败写入状态，集合成功不撤销。
 const publishScript = `
 if redis.call('GET',KEYS[1]) ~= ARGV[1] then return -1 end
@@ -231,55 +277,23 @@ func (r *RedisCache) ReportDiscovery(ctx context.Context, success bool) error {
 	return r.client.HSet(ctx, key, values).Err()
 }
 
-// Publish 对比完整成员并构建带 TTL 的临时集合；只有仍持有租约才原子发布。
-// 返回错误时调用方保留提示并重读事实，不能从响应丢失推断写入未发生。
-func (r *RedisCache) Publish(ctx context.Context, p Pending, lease string, members []string) error {
+// Publish 仅在完整扫描成功后调用；逐页比较后原子发布整个临时集合。
+// 返回错误时保留提示并重读事实，不能从响应丢失推断写入未发生。
+func (r *RedisCache) Publish(ctx context.Context, p Pending, lease string, count int64) error {
 	key := p.Scope.Key(r.prefix)
-	old, err := r.members(ctx, key)
+	temp := r.stagingKey(p.Scope, lease)
+
+	same, err := r.sameMembers(ctx, key, temp, count)
 	if err != nil {
 		return err
 	}
-	slices.Sort(members)
-	members = slices.Compact(members)
-	if len(members) > r.maxRows {
-		return fmt.Errorf("members exceed limit")
-	}
-	bytes := 0
-	for _, m := range members {
-		bytes += len(m)
-	}
-	if bytes > r.maxBytes {
-		return fmt.Errorf("members exceed byte limit")
-	}
-	changed := !slices.Equal(old, members)
-	temp := r.scopeKey(p.Scope, "staging") + ":" + lease
-	defer func() {
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
-		defer cancel()
-		_ = r.client.Unlink(cleanup, temp).Err()
-	}()
-	if changed {
-		for start := 0; start < len(members); start += 256 {
-			args := []any{lease}
-			for _, v := range members[start:min(start+256, len(members))] {
-				args = append(args, v)
-			}
-			n, err := r.client.Eval(ctx, `if redis.call('GET',KEYS[1])~=ARGV[1] then return -1 end; redis.call('SADD',KEYS[2],unpack(ARGV,2)); redis.call('PEXPIRE',KEYS[2],120000); return 1`, []string{r.scopeKey(p.Scope, "lease"), temp}, args...).Int()
-			if err != nil {
-				return err
-			}
-			if n != 1 {
-				return fmt.Errorf("projection lease lost")
-			}
-		}
-	}
 	notice, _ := json.Marshal(p.Scope)
 	flag := "0"
-	if changed {
+	if !same {
 		flag = "1"
 	}
 	hint := HintKeys(r.prefix)
-	n, err := r.client.Eval(ctx, publishScript, []string{r.scopeKey(p.Scope, "lease"), key, temp, hint[0], hint[1], r.scopeKey(p.Scope, "status")}, lease, p.Token, flag, len(members), time.Now().UTC().Format(time.RFC3339Nano), r.prefix+":changes", string(notice)).Int()
+	n, err := r.client.Eval(ctx, publishScript, []string{MetadataPrefix(r.prefix) + ":lease", key, temp, hint[0], hint[1], r.scopeKey(p.Scope, "status")}, lease, p.Token, flag, count, time.Now().UTC().Format(time.RFC3339Nano), r.prefix+":changes", string(notice)).Int()
 	if err != nil {
 		return err
 	}
@@ -295,7 +309,7 @@ func (r *RedisCache) Publish(ctx context.Context, p Pending, lease string, membe
 // Failed 保存脱敏原因，并仅延后本次提示；新的提示不会被旧失败覆盖。
 func (r *RedisCache) Failed(ctx context.Context, p Pending, lease, reason string) error {
 	hint := HintKeys(r.prefix)
-	return r.client.Eval(ctx, `if redis.call('GET',KEYS[1])~=ARGV[1] then return 0 end; redis.call('HSET',KEYS[2],'last_attempt',ARGV[2],'error',ARGV[3]); if redis.call('EXISTS',ARGV[4])==1 then redis.call('PERSIST',KEYS[2]) else redis.call('EXPIRE',KEYS[2],86400) end; if redis.call('HGET',KEYS[4],ARGV[4])==ARGV[5] then local t=redis.call('TIME'); redis.call('ZADD',KEYS[3],'XX',t[1]*1000+math.floor(t[2]/1000)+5000,ARGV[4]) end; return 1`, []string{r.scopeKey(p.Scope, "lease"), r.scopeKey(p.Scope, "status"), hint[0], hint[1]}, lease, time.Now().UTC().Format(time.RFC3339Nano), reason, p.Scope.Key(r.prefix), p.Token).Err()
+	return r.client.Eval(ctx, `if redis.call('GET',KEYS[1])~=ARGV[1] then return 0 end; redis.call('HSET',KEYS[2],'last_attempt',ARGV[2],'error',ARGV[3]); if redis.call('EXISTS',ARGV[4])==1 then redis.call('PERSIST',KEYS[2]) else redis.call('EXPIRE',KEYS[2],86400) end; if redis.call('HGET',KEYS[4],ARGV[4])==ARGV[5] then local t=redis.call('TIME'); redis.call('ZADD',KEYS[3],'XX',t[1]*1000+math.floor(t[2]/1000)+5000,ARGV[4]) end; return 1`, []string{MetadataPrefix(r.prefix) + ":lease", r.scopeKey(p.Scope, "status"), hint[0], hint[1]}, lease, time.Now().UTC().Format(time.RFC3339Nano), reason, p.Scope.Key(r.prefix), p.Token).Err()
 }
 
 // ReadStatus 读取最近发布状态，缺失表示尚未校准或状态元数据已过期。

@@ -119,14 +119,14 @@ type Query struct {
 	Scope   *Scope
 	// BKTenantID 用于同租户多策略共享快照，不能与 Scope 同时指定。
 	BKTenantID string
-	MaxRows    int
-	// MaxBytes 限制累计保留的身份投影 JSON 字节，不累计已释放的丰富结果。
+	PageSize   int
+	// MaxBytes 限制每批交给消费方的身份投影 JSON 字节，不限制扫描总量。
 	MaxBytes int
 }
 
-// Validate 校验扫描硬上限，禁止空来源变成全库扫描。
+// Validate 校验分页资源预算，禁止空来源变成全库扫描。
 func (q Query) Validate() error {
-	if len(q.Sources) == 0 || len(q.Sources) > 64 || q.MaxRows < 1 || q.MaxRows > 1000000 || q.MaxBytes < 1 || q.MaxBytes > 64<<20 {
+	if len(q.Sources) == 0 || len(q.Sources) > 64 || q.PageSize < 1 || q.PageSize > 10000 || q.MaxBytes < 1 || q.MaxBytes > 64<<20 {
 		return fmt.Errorf("invalid active index query limits")
 	}
 	for _, s := range q.Sources {
@@ -196,10 +196,11 @@ func Group(q Query, rows []Row) (map[Scope][]string, error) {
 	return groups, nil
 }
 
-// Reader 成功时必须返回整个查询范围的一致读取快照；超限、缺索引、部分分片失败均返回错误。
+// Reader 在同一快照内逐批交付窄投影，回调返回后即可释放该批；不累计完整告警列表。
+// 只有返回 nil 才表示整个扫描完成，回调失败或后续页失败时已经交付的批次不能发布。
 // Elasticsearch 快照只覆盖已经 refresh 的数据，不承诺读到最近一次写入。
 type Reader interface {
-	ReadActiveIndex(context.Context, Query) ([]Row, error)
+	ScanActiveIndex(context.Context, Query, func([]Row) error) error
 }
 
 // NumericStrategy 仅对规范数字文本允许数值匹配，避免 "00123" 与 123 混淆。

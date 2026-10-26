@@ -39,7 +39,7 @@ func BenchmarkRefreshStrategies(b *testing.B) {
 		reader.rows = append(reader.rows, row)
 	}
 	cache := &fakeCache{values: map[Scope][]string{}, pending: map[Scope]string{}}
-	manager, err := NewManager(reader, cache, []string{"source-a"}, Settings{PollInterval: time.Second, ReconcileInterval: time.Minute, OperationTimeout: time.Minute, BatchSize: 16, MaxRows: 1000, MaxBytes: 1 << 20}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	manager, err := NewManager(reader, cache, []string{"source-a"}, Settings{PollInterval: time.Second, ReconcileInterval: time.Minute, OperationTimeout: time.Minute, PageSize: 1000, MaxBytes: 1 << 20}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		b.Fatal(err)
 	}

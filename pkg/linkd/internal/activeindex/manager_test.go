@@ -23,41 +23,37 @@ import (
 )
 
 type fakeReader struct {
-	rows          []Row
-	fail          bool
-	failDiscovery bool
-	block         bool
-	calls         int
+	rows  []Row
+	fail  bool
+	block bool
+	calls int
 }
 
-func (r *fakeReader) ReadActiveIndex(ctx context.Context, q Query) ([]Row, error) {
+func (r *fakeReader) ScanActiveIndex(ctx context.Context, q Query, consume func([]Row) error) error {
 	r.calls++
 	if r.block {
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
-	if r.fail || (q.TenantID() == "" && r.failDiscovery) {
-		return nil, errors.New("partial snapshot")
+	if r.fail {
+		return errors.New("partial snapshot")
 	}
-	result := []Row{}
+	page := make([]Row, 0, q.PageSize)
 	for _, row := range r.rows {
 		if slices.Contains(q.Sources, row.EventSourceID) && (q.TenantID() == "" || q.TenantID() == row.BKTenantID) {
-			result = append(result, row)
+			page = append(page, row)
+			if len(page) == q.PageSize {
+				if err := consume(page); err != nil {
+					return err
+				}
+				page = make([]Row, 0, q.PageSize)
+			}
 		}
 	}
-	return result, nil
-}
-
-func TestFailedGlobalDiscoveryStillRepairsKnownStrategies(t *testing.T) {
-	s := Scope{"tenant", "123"}
-	c := &fakeCache{values: map[Scope][]string{s: {"stale"}}, pending: map[Scope]string{}}
-	m := testManager(t, &fakeReader{failDiscovery: true}, c)
-	if err := m.Step(t.Context()); err == nil {
-		t.Fatal("global discovery failure not reported")
+	if len(page) > 0 {
+		return consume(page)
 	}
-	if len(c.values[s]) != 0 {
-		t.Fatal("global discovery failure blocked complete per-strategy repair")
-	}
+	return nil
 }
 
 type fakeCache struct {
@@ -66,6 +62,7 @@ type fakeCache struct {
 	failure  bool
 	during   func()
 	failures int
+	staged   map[Scope][]string
 }
 
 func (c *fakeCache) ReportDiscovery(context.Context, bool) error { return nil }
@@ -91,22 +88,26 @@ func (c *fakeCache) Pending(_ context.Context, limit int) ([]Pending, error) {
 	return out, nil
 }
 
-func (c *fakeCache) Acquire(context.Context, Scope, time.Duration) (string, error) {
+func (c *fakeCache) Acquire(context.Context, time.Duration) (string, error) {
+	c.staged = map[Scope][]string{}
 	return "lease", nil
 }
-
-func (c *fakeCache) Release(context.Context, Scope, string) error { return nil }
-
+func (c *fakeCache) Release(context.Context, string, []Scope) error        { c.staged = nil; return nil }
 func (c *fakeCache) Failed(context.Context, Pending, string, string) error { c.failures++; return nil }
-
-func (c *fakeCache) Publish(_ context.Context, p Pending, _ string, members []string) error {
+func (c *fakeCache) Append(_ context.Context, scope Scope, _ string, members []string) (int64, error) {
+	c.staged[scope] = append(c.staged[scope], members...)
+	slices.Sort(c.staged[scope])
+	c.staged[scope] = slices.Compact(c.staged[scope])
+	return int64(len(c.staged[scope])), nil
+}
+func (c *fakeCache) Publish(_ context.Context, p Pending, _ string, _ int64) error {
 	if c.failure {
 		return errors.New("unavailable")
 	}
 	if c.during != nil {
 		c.during()
 	}
-	c.values[p.Scope] = slices.Clone(members)
+	c.values[p.Scope] = slices.Clone(c.staged[p.Scope])
 	if c.pending[p.Scope] == p.Token {
 		delete(c.pending, p.Scope)
 	}
@@ -115,7 +116,7 @@ func (c *fakeCache) Publish(_ context.Context, p Pending, _ string, members []st
 
 func testManager(t *testing.T, r Reader, c Cache) *Manager {
 	t.Helper()
-	m, err := NewManager(r, c, []string{"source-a", "source-b"}, Settings{PollInterval: time.Millisecond, ReconcileInterval: time.Minute, OperationTimeout: 20 * time.Millisecond, BatchSize: 16, MaxRows: 1000, MaxBytes: 1 << 20}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m, err := NewManager(r, c, []string{"source-a", "source-b"}, Settings{PollInterval: time.Millisecond, ReconcileInterval: time.Minute, OperationTimeout: 20 * time.Millisecond, PageSize: 1000, MaxBytes: 1 << 20}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +241,7 @@ func TestScopeAndNumericBoundaries(t *testing.T) {
 
 func TestGroupUsesEnrichedStrategyInsteadOfRawLabel(t *testing.T) {
 	row := Row{BKTenantID: "t", EventSourceID: "host", Fingerprint: "fp", Labels: domain.DimensionMap{"strategy_id": domain.NewStringScalar("old")}, Enrich: domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.extra_data.items[0].name","value":"renamed"},{"op":"set","path":"$.labels.strategy_id","value":"new"}]}}]`)}}
-	q := Query{Sources: []string{"host"}, Scope: &Scope{BKTenantID: "t", StrategyID: "new"}, MaxRows: 10, MaxBytes: 1024}
+	q := Query{Sources: []string{"host"}, Scope: &Scope{BKTenantID: "t", StrategyID: "new"}, PageSize: 10, MaxBytes: 1024}
 	groups, err := Group(q, []Row{row})
 	if err != nil || len(groups[*q.Scope]) != 1 {
 		t.Fatalf("groups=%v err=%v", groups, err)

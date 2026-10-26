@@ -83,8 +83,8 @@ func TestActiveIndexMySQLIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	q := activeindex.Query{Sources: []string{"a", "b"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, MaxRows: 10, MaxBytes: 4096}
-	rows, err := r.ReadActiveIndex(ctx, q)
+	q := activeindex.Query{Sources: []string{"a", "b"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, PageSize: 10, MaxBytes: 4096}
+	rows, err := readActiveIndex(r, ctx, q)
 	if err != nil || len(rows) != 3 {
 		t.Fatalf("tenant rows=%v error=%v", rows, err)
 	}
@@ -98,23 +98,32 @@ func TestActiveIndexMySQLIntegration(t *testing.T) {
 		t.Fatalf("exact strategy members=%v error=%v", groups, err)
 	}
 	q.Scope, q.BKTenantID = nil, "tenant"
-	rows, err = r.ReadActiveIndex(ctx, q)
+	rows, err = readActiveIndex(r, ctx, q)
 	if err != nil || len(rows) != 3 {
 		t.Fatalf("tenant batch rows=%v error=%v", rows, err)
 	}
 	q.BKTenantID = ""
-	q.MaxRows = 1
-	if rows, err := r.ReadActiveIndex(ctx, q); err == nil || rows != nil {
-		t.Fatal("truncated snapshot accepted")
+	q.PageSize = 1
+	if rows, err := readActiveIndex(r, ctx, q); err != nil || len(rows) != 4 {
+		t.Fatalf("small pages truncated full scan: rows=%d err=%v", len(rows), err)
 	}
-	q.MaxRows = 10
+	q.PageSize = 10
 	q.MaxBytes = 1
-	if rows, err := r.ReadActiveIndex(ctx, q); err == nil || rows != nil {
+	if rows, err := readActiveIndex(r, ctx, q); err == nil || rows != nil {
 		t.Fatal("oversize snapshot accepted")
 	}
 	q.MaxBytes = 4096
-	rows, err = r.ReadActiveIndex(ctx, q)
+	rows, err = readActiveIndex(r, ctx, q)
 	if err != nil || len(rows) != 4 {
 		t.Fatalf("discovery rows=%v error=%v", rows, err)
 	}
+}
+
+func readActiveIndex(r *mysqlstore.Repository, ctx context.Context, q activeindex.Query) ([]activeindex.Row, error) {
+	var rows []activeindex.Row
+	err := r.ScanActiveIndex(ctx, q, func(page []activeindex.Row) error { rows = append(rows, page...); return nil })
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

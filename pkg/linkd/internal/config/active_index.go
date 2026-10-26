@@ -16,8 +16,7 @@ type ActiveIndexConfig struct {
 	PollIntervalSeconds      int `yaml:"poll_interval_seconds"`
 	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds"`
 	OperationTimeoutSeconds  int `yaml:"operation_timeout_seconds"`
-	BatchSize                int `yaml:"batch_size"`
-	MaxRows                  int `yaml:"max_rows"`
+	PageSize                 int `yaml:"page_size"`
 	MaxBytes                 int `yaml:"max_bytes"`
 }
 
@@ -30,13 +29,10 @@ func (c ActiveIndexConfig) WithDefaults() ActiveIndexConfig {
 		c.ReconcileIntervalSeconds = 60
 	}
 	if c.OperationTimeoutSeconds == 0 {
-		c.OperationTimeoutSeconds = 10
+		c.OperationTimeoutSeconds = 60
 	}
-	if c.BatchSize == 0 {
-		c.BatchSize = 16
-	}
-	if c.MaxRows == 0 {
-		c.MaxRows = 100000
+	if c.PageSize == 0 {
+		c.PageSize = 2000
 	}
 	if c.MaxBytes == 0 {
 		c.MaxBytes = 32 << 20
@@ -44,10 +40,10 @@ func (c ActiveIndexConfig) WithDefaults() ActiveIndexConfig {
 	return c
 }
 
-// Validate 限制单目标吞吐与内存；不允许无限扫描或无限重试。
+// Validate 限制分页内存和单轮时限；告警总量不作为扫描准入上限。
 func (c ActiveIndexConfig) Validate() error {
 	c = c.WithDefaults()
-	if c.PollIntervalSeconds < 1 || c.PollIntervalSeconds > 60 || c.ReconcileIntervalSeconds < c.PollIntervalSeconds || c.ReconcileIntervalSeconds > 3600 || c.OperationTimeoutSeconds < 1 || c.OperationTimeoutSeconds > 60 || c.BatchSize < 1 || c.BatchSize > 100 || c.MaxRows < 1 || c.MaxRows > 1000000 || c.MaxBytes < 1024 || c.MaxBytes > 64<<20 {
+	if c.PollIntervalSeconds < 1 || c.PollIntervalSeconds > 60 || c.ReconcileIntervalSeconds < c.PollIntervalSeconds || c.ReconcileIntervalSeconds > 3600 || c.OperationTimeoutSeconds < 1 || c.OperationTimeoutSeconds > 60 || c.PageSize < 1 || c.PageSize > 10000 || c.MaxBytes < 1024 || c.MaxBytes > 64<<20 {
 		return fmt.Errorf("invalid active_index limits")
 	}
 	return nil

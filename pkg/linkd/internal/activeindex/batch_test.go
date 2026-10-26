@@ -12,46 +12,53 @@ package activeindex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
 )
 
-type batchReader func(context.Context, Query) ([]Row, error)
+type batchReader func(context.Context, Query, func([]Row) error) error
 
-func (f batchReader) ReadActiveIndex(ctx context.Context, q Query) ([]Row, error) { return f(ctx, q) }
+func (f batchReader) ScanActiveIndex(ctx context.Context, q Query, consume func([]Row) error) error {
+	return f(ctx, q, consume)
+}
 
 type batchCache struct {
 	*fakeCache
-	held map[Scope]string
-	busy Scope
+	held string
+	busy bool
 	fail Scope
 }
 
-func (c *batchCache) Acquire(_ context.Context, scope Scope, _ time.Duration) (string, error) {
-	if scope == c.busy {
+func (c *batchCache) Acquire(ctx context.Context, ttl time.Duration) (string, error) {
+	if c.busy {
 		return "", nil
 	}
-	c.held[scope] = "lease"
-	return "lease", nil
+	token, err := c.fakeCache.Acquire(ctx, ttl)
+	c.held = token
+	return token, err
 }
-
-func (c *batchCache) Release(_ context.Context, scope Scope, token string) error {
-	if c.held[scope] == token {
-		delete(c.held, scope)
+func (c *batchCache) Release(ctx context.Context, token string, scopes []Scope) error {
+	if c.held == token {
+		c.held = ""
 	}
-	return nil
+	return c.fakeCache.Release(ctx, token, scopes)
 }
-
-func (c *batchCache) Publish(ctx context.Context, p Pending, lease string, members []string) error {
-	if c.held[p.Scope] != lease || p.Scope == c.fail {
+func (c *batchCache) Append(ctx context.Context, scope Scope, lease string, members []string) (int64, error) {
+	if c.held != lease || scope == c.fail {
+		return 0, errors.New("lease lost or staging unavailable")
+	}
+	return c.fakeCache.Append(ctx, scope, lease, members)
+}
+func (c *batchCache) Publish(ctx context.Context, p Pending, lease string, count int64) error {
+	if c.held != lease || p.Scope == c.fail {
 		return errors.New("lease lost or publish unavailable")
 	}
-	return c.fakeCache.Publish(ctx, p, lease, members)
+	return c.fakeCache.Publish(ctx, p, lease, count)
 }
-
 func newBatchCache(scopes ...Scope) *batchCache {
-	c := &batchCache{fakeCache: &fakeCache{values: map[Scope][]string{}, pending: map[Scope]string{}}, held: map[Scope]string{}}
+	c := &batchCache{fakeCache: &fakeCache{values: map[Scope][]string{}, pending: map[Scope]string{}}}
 	for _, scope := range scopes {
 		c.pending[scope] = "old"
 		c.values[scope] = []string{"stale"}
@@ -59,129 +66,165 @@ func newBatchCache(scopes ...Scope) *batchCache {
 	return c
 }
 
-func TestBatchReadsOncePerTenantAfterAcquiringAllLeases(t *testing.T) {
-	a, b, closed, other := Scope{"tenant", "a"}, Scope{"tenant", "b"}, Scope{"tenant", "closed"}, Scope{"other", "a"}
-	cache := newBatchCache(a, b, closed, other)
-	reads := map[string]int{}
-	reader := batchReader(func(_ context.Context, q Query) ([]Row, error) {
-		if q.Validate() != nil || q.Scope != nil || q.BKTenantID == "" {
-			t.Fatal("batch did not use a bounded tenant query")
+func TestLargeScanSharedAcrossStrategiesAndTenants(t *testing.T) {
+	const total = 200000
+	scopes := make([]Scope, 128)
+	for i := range scopes {
+		scopes[i] = Scope{fmt.Sprintf("tenant-%d", i%4), fmt.Sprint(i)}
+	}
+	closed := Scope{"tenant-0", "closed"}
+	cache := newBatchCache(append(scopes, closed)...)
+	calls, pages := 0, 0
+	reader := batchReader(func(ctx context.Context, q Query, consume func([]Row) error) error {
+		calls++
+		if cache.held == "" || q.Scope != nil || q.BKTenantID != "" {
+			t.Fatal("scan did not hold target lease or share all tenants")
 		}
-		reads[q.BKTenantID]++
-		for _, scope := range []Scope{a, b, closed, other} {
-			if scope.BKTenantID == q.BKTenantID {
-				if cache.held[scope] == "" {
-					t.Fatal("snapshot read before acquiring all publishing leases")
-				}
-				cache.pending[scope] = "new"
+		for start := 0; start < total; start += q.PageSize {
+			page := make([]Row, 0, q.PageSize)
+			for i := start; i < min(start+q.PageSize, total); i++ {
+				scope := scopes[i%len(scopes)]
+				page = append(page, activeRow("source-a", scope.BKTenantID, scope.StrategyID, fmt.Sprint(i)))
+			}
+			pages++
+			if err := consume(page); err != nil {
+				return err
+			}
+			// 正式集合在最后一页返回之前保持旧值。
+			if !slices.Equal(cache.values[scopes[0]], []string{"stale"}) {
+				t.Fatal("partial scan published")
 			}
 		}
-		return []Row{activeRow("source-a", q.BKTenantID, "a", "fp-a"), activeRow("source-b", q.BKTenantID, "b", "fp-b")}, nil
+		for _, scope := range scopes {
+			cache.pending[scope] = "new"
+		}
+		return ctx.Err()
 	})
 	manager := testManager(t, reader, cache)
-	manager.nextDiscovery = time.Now().Add(time.Hour)
+	manager.settings.OperationTimeout = time.Minute
+	manager.settings.PageSize = 2000
 	if err := manager.Step(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if reads["tenant"] != 1 || reads["other"] != 1 || len(cache.held) != 0 {
-		t.Fatalf("reads=%v leases=%v", reads, cache.held)
+	if calls != 1 || pages != 100 || cache.held != "" || len(cache.values[closed]) != 0 {
+		t.Fatalf("calls=%d pages=%d lease=%s", calls, pages, cache.held)
 	}
-	if !slices.Equal(cache.values[a], []string{"fp-a"}) || !slices.Equal(cache.values[b], []string{"fp-b"}) || len(cache.values[closed]) != 0 || !slices.Equal(cache.values[other], []string{"fp-a"}) {
-		t.Fatal("batch mixed or lost strategy membership")
-	}
-	if _, published := cache.values[Scope{"other", "b"}]; published {
-		t.Fatal("published an unleased strategy from the shared snapshot")
-	}
-	for _, scope := range []Scope{a, b, closed, other} {
+	members := 0
+	for _, scope := range scopes {
+		members += len(cache.values[scope])
 		if cache.pending[scope] != "new" {
-			t.Fatal("hint arriving during shared scan was acknowledged")
+			t.Fatal("new hint acknowledged")
 		}
+	}
+	if members != total {
+		t.Fatalf("members=%d", members)
 	}
 }
 
-func TestBatchBusyOrLostLeaseCannotPublish(t *testing.T) {
-	busy, lost, ready := Scope{"t", "busy"}, Scope{"t", "lost"}, Scope{"t", "ready"}
-	cache := newBatchCache(busy, lost, ready)
-	cache.busy = busy
-	reads := 0
-	reader := batchReader(func(context.Context, Query) ([]Row, error) {
-		reads++
-		cache.held[lost] = "successor"
-		return nil, nil
-	})
-	manager := testManager(t, reader, cache)
-	manager.nextDiscovery = time.Now().Add(time.Hour)
-	if err := manager.Step(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if reads != 1 || cache.failures != 1 || cache.held[lost] != "successor" || len(cache.values[ready]) != 0 {
-		t.Fatal("lease loss affected independent strategy or released successor")
-	}
-	for _, scope := range []Scope{busy, lost} {
-		if !slices.Equal(cache.values[scope], []string{"stale"}) || cache.pending[scope] == "" {
-			t.Fatal("unleased strategy changed or its hint was lost")
-		}
-	}
-}
-
-func TestBatchReadFailureAndPublishFailureIsolation(t *testing.T) {
-	for _, mode := range []string{"partial", "wrong-tenant", "publish"} {
+func TestScanFailuresPreserveSnapshotsAndIsolateStrategies(t *testing.T) {
+	for _, mode := range []string{"later-page", "invalid", "staging", "publish", "lease-lost"} {
 		t.Run(mode, func(t *testing.T) {
-			a, b := Scope{"t", "a"}, Scope{"t", "b"}
+			a, b := Scope{"t", "a"}, Scope{"other", "b"}
 			cache := newBatchCache(a, b)
-			reader := batchReader(func(context.Context, Query) ([]Row, error) {
-				if mode == "partial" {
-					return []Row{activeRow("source-a", "t", "a", "fp")}, errors.New("partial snapshot")
+			reader := batchReader(func(_ context.Context, _ Query, consume func([]Row) error) error {
+				if mode == "staging" {
+					cache.fail = a
 				}
-				if mode == "wrong-tenant" {
-					return []Row{activeRow("source-a", "other", "", "fp")}, nil
+				if err := consume([]Row{activeRow("source-a", "t", "a", "fp-a"), activeRow("source-b", "other", "b", "fp-b")}); err != nil {
+					return err
 				}
-				cache.fail = a
-				return nil, nil
+				switch mode {
+				case "later-page":
+					return errors.New("second page failed")
+				case "invalid":
+					return consume([]Row{activeRow("source-a", "t", "a", "")})
+				case "publish":
+					cache.fail = a
+				case "lease-lost":
+					cache.held = "successor"
+				}
+				return nil
 			})
 			manager := testManager(t, reader, cache)
 			manager.nextDiscovery = time.Now().Add(time.Hour)
-			if err := manager.Step(t.Context()); err != nil {
-				t.Fatal(err)
+			err := manager.Step(t.Context())
+			if (err != nil) != (mode == "later-page" || mode == "invalid") {
+				t.Fatalf("scan error=%v", err)
 			}
-			wantFailed := 2
-			if mode == "publish" {
-				wantFailed = 1
-				if len(cache.values[b]) != 0 || cache.pending[b] != "" {
-					t.Fatal("one publish failure blocked the other strategy")
+			if !slices.Equal(cache.values[a], []string{"stale"}) || cache.pending[a] == "" {
+				t.Fatal("failure lost old snapshot or pending hint")
+			}
+			isolated := mode == "staging" || mode == "publish"
+			if isolated {
+				if !slices.Equal(cache.values[b], []string{"fp-b"}) || cache.failures != 1 {
+					t.Fatal("one strategy blocked another")
 				}
-			} else if !slices.Equal(cache.values[b], []string{"stale"}) {
-				t.Fatal("incomplete snapshot erased a strategy")
+			} else if !slices.Equal(cache.values[b], []string{"stale"}) || cache.failures != 2 {
+				t.Fatal("partial or unleased scan published")
 			}
-			if cache.failures != wantFailed || !slices.Equal(cache.values[a], []string{"stale"}) || cache.pending[a] == "" || len(cache.held) != 0 {
-				t.Fatal("failure lost snapshot, hint, or lease cleanup")
+			if mode == "lease-lost" && cache.held != "successor" {
+				t.Fatal("released successor")
+			}
+			if cache.staged != nil {
+				t.Fatal("temporary sets leaked")
 			}
 		})
 	}
 }
 
-func TestBatchCancellationReleasesLeases(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	cache := newBatchCache(Scope{"t", "a"}, Scope{"t", "b"})
-	reader := batchReader(func(context.Context, Query) ([]Row, error) { cancel(); return nil, ctx.Err() })
+func TestTargetLeaseAndIdleRoundsAvoidScanning(t *testing.T) {
+	cache := newBatchCache(Scope{"t", "a"})
+	reader := &fakeReader{}
 	manager := testManager(t, reader, cache)
-	manager.nextDiscovery = time.Now().Add(time.Hour)
+	cache.busy = true
+	if err := manager.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != 0 {
+		t.Fatal("concurrent owner scanned")
+	}
+	cache.busy = false
+	if err := manager.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != 1 {
+		t.Fatal("discovery and refresh scanned separately")
+	}
+	if err := manager.Step(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if reader.calls != 1 {
+		t.Fatal("idle round scanned")
+	}
+}
+
+func TestScanCancellationReleasesLeaseAndStaging(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cache := newBatchCache(Scope{"t", "a"})
+	reader := batchReader(func(_ context.Context, _ Query, consume func([]Row) error) error {
+		if err := consume([]Row{activeRow("source-a", "t", "a", "new")}); err != nil {
+			return err
+		}
+		cancel()
+		return ctx.Err()
+	})
+	manager := testManager(t, reader, cache)
 	if err := manager.Step(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel=%v", err)
 	}
-	if len(cache.held) != 0 || len(cache.pending) != 2 {
-		t.Fatal("cancellation leaked leases or acknowledged pending work")
+	if cache.held != "" || cache.staged != nil || len(cache.pending) != 1 || cache.values[Scope{"t", "a"}][0] != "stale" {
+		t.Fatal("cancel lost work or leaked lease")
 	}
 }
 
 func TestTenantQueryScopeValidation(t *testing.T) {
-	query := Query{Sources: []string{"source"}, BKTenantID: "tenant", MaxRows: 10, MaxBytes: 1024}
+	query := Query{Sources: []string{"source"}, BKTenantID: "tenant", PageSize: 10, MaxBytes: 1024}
 	if err := query.Validate(); err != nil || query.TenantID() != "tenant" {
 		t.Fatalf("tenant query=%v", err)
 	}
 	query.Scope = &Scope{"other", "strategy"}
 	if err := query.Validate(); err == nil {
-		t.Fatal("conflicting tenant and strategy scopes accepted")
+		t.Fatal("conflicting tenant and strategy accepted")
 	}
 	query.Scope, query.BKTenantID = nil, "tenant:invalid"
 	if err := query.Validate(); err == nil {

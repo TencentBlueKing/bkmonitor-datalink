@@ -16,10 +16,10 @@ func TestActiveIndexDefaultsAndLimits(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if c.PollIntervalSeconds != 1 || c.ReconcileIntervalSeconds != 60 {
+	if c.PollIntervalSeconds != 1 || c.ReconcileIntervalSeconds != 60 || c.PageSize != 2000 || c.OperationTimeoutSeconds != 60 {
 		t.Fatal("unexpected defaults")
 	}
-	for _, bad := range []ActiveIndexConfig{{MaxRows: -1}, {MaxBytes: 65 << 20}, {BatchSize: 101}, {OperationTimeoutSeconds: 61}, {PollIntervalSeconds: 61}} {
+	for _, bad := range []ActiveIndexConfig{{PageSize: -1}, {MaxBytes: 65 << 20}, {PageSize: 10001}, {OperationTimeoutSeconds: 61}, {PollIntervalSeconds: 61}} {
 		if err := bad.Validate(); err == nil {
 			t.Fatalf("accepted %+v", bad)
 		}

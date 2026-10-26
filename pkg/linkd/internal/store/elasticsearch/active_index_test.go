@@ -10,7 +10,9 @@
 package elasticsearchstore
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,7 +45,7 @@ func TestActiveIndexPaginationKeepsOneSnapshot(t *testing.T) {
 			return jsonResponse(t, map[string]any{"succeeded": true}), nil
 		}
 		pages++
-		count := 500
+		count := 2000
 		pit := "middle"
 		if pages == 2 {
 			count = 1
@@ -61,8 +63,8 @@ func TestActiveIndexPaginationKeepsOneSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := r.ReadActiveIndex(t.Context(), activeindex.Query{Sources: []string{"source"}, MaxRows: 1000, MaxBytes: 1 << 20})
-	if err != nil || len(rows) != 501 || pages != 2 || !closed {
+	rows, err := readActiveIndex(r, t.Context(), activeindex.Query{Sources: []string{"source"}, PageSize: 2000, MaxBytes: 1 << 20})
+	if err != nil || len(rows) != 2001 || pages != 2 || !closed {
 		t.Fatalf("rows=%d pages=%d closed=%v err=%v", len(rows), pages, closed, err)
 	}
 }
@@ -89,8 +91,8 @@ func TestActiveIndexBudgetOnlyRetainsStrategyProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := activeindex.Query{Sources: []string{"source"}, MaxRows: 10, MaxBytes: 512}
-	rows, err := r.ReadActiveIndex(t.Context(), q)
+	q := activeindex.Query{Sources: []string{"source"}, PageSize: 10, MaxBytes: 512}
+	rows, err := readActiveIndex(r, t.Context(), q)
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("rows=%d err=%v", len(rows), err)
 	}
@@ -145,7 +147,7 @@ func TestActiveIndexPITCompleteness(t *testing.T) {
 				}
 				hits := []any{map[string]any{"_source": map[string]any{"bk_tenant_id": "tenant", "event_source_id": "source", "fingerprint": "fp", "labels": map[string]any{"strategy_id": 123}}}}
 				if mode == "over-limit" {
-					hits = append(hits, hits[0])
+					hits[0].(map[string]any)["_source"].(map[string]any)["fingerprint"] = strings.Repeat("x", 2048)
 				}
 				response := map[string]any{"pit_id": "pit", "hits": map[string]any{"hits": hits}}
 				if mode == "partial" {
@@ -159,11 +161,11 @@ func TestActiveIndexPITCompleteness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			query := activeindex.Query{Sources: []string{"source"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, MaxRows: 1, MaxBytes: 1024}
+			query := activeindex.Query{Sources: []string{"source"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, PageSize: 10, MaxBytes: 1024}
 			if mode == "tenant-batch" {
 				query.Scope, query.BKTenantID = nil, "tenant"
 			}
-			rows, err := r.ReadActiveIndex(t.Context(), query)
+			rows, err := readActiveIndex(r, t.Context(), query)
 			if (err == nil) != (mode == "success" || mode == "tenant-batch") {
 				t.Fatalf("rows=%v err=%v", rows, err)
 			}
@@ -172,6 +174,77 @@ func TestActiveIndexPITCompleteness(t *testing.T) {
 			}
 			if err != nil && rows != nil {
 				t.Fatal("partial snapshot escaped")
+			}
+		})
+	}
+}
+
+func readActiveIndex(r *Repository, ctx context.Context, q activeindex.Query) ([]activeindex.Row, error) {
+	var rows []activeindex.Row
+	err := r.ScanActiveIndex(ctx, q, func(page []activeindex.Row) error { rows = append(rows, page...); return nil })
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func TestActiveIndexPageBudgetsAndCallbackFailure(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(strconv.FormatBool(fail), func(t *testing.T) {
+			router, err := NewStaticRouter("linkd-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			searches, delivered := 0, 0
+			closed := false
+			stopped := errors.New("stop consuming")
+			repository, err := New(transportFunc(func(req *http.Request) (*http.Response, error) {
+				if req.Method == http.MethodDelete {
+					closed = true
+					return jsonResponse(t, map[string]any{"succeeded": true}), nil
+				}
+				if req.URL.Path == "/linkd-test-alerts/_pit" {
+					return jsonResponse(t, map[string]any{"id": "pit"}), nil
+				}
+				searches++
+				hits := []any{}
+				if searches <= 3 {
+					for i := range 3 {
+						hits = append(hits, map[string]any{"_source": activeindex.Row{BKTenantID: "tenant", EventSourceID: "source", Fingerprint: strconv.Itoa(i), Labels: domain.DimensionMap{"strategy_id": domain.NewStringScalar("s")}}, "sort": []any{"tenant", strconv.Itoa(i), "index"}})
+					}
+				}
+				return jsonResponse(t, map[string]any{"pit_id": "pit", "hits": map[string]any{"hits": hits}}), nil
+			}), router, DefaultConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = repository.ScanActiveIndex(t.Context(), activeindex.Query{Sources: []string{"source"}, PageSize: 3, MaxBytes: 200}, func(rows []activeindex.Row) error {
+				bytes := 0
+				for _, row := range rows {
+					projection, err := json.Marshal(row)
+					if err != nil {
+						t.Fatal(err)
+					}
+					bytes += len(projection)
+				}
+				if len(rows) > 3 || bytes > 200 {
+					t.Fatalf("page budget not applied: rows=%d bytes=%d", len(rows), bytes)
+				}
+				delivered += len(rows)
+				if fail {
+					return stopped
+				}
+				return nil
+			})
+			if !closed {
+				t.Fatal("PIT not closed")
+			}
+			if fail {
+				if !errors.Is(err, stopped) || searches != 1 || delivered == 0 {
+					t.Fatalf("failed callback continued: %v searches=%d delivered=%d", err, searches, delivered)
+				}
+			} else if err != nil || searches != 4 || delivered != 9 {
+				t.Fatalf("scan=%v searches=%d delivered=%d", err, searches, delivered)
 			}
 		})
 	}

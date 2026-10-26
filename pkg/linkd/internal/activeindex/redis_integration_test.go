@@ -12,6 +12,7 @@ package activeindex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"slices"
 	"sync"
@@ -80,18 +81,18 @@ func TestRedisProjectionIntegration(t *testing.T) {
 	if err != nil || len(p) != 1 {
 		t.Fatalf("pending=%v %v", p, err)
 	}
-	lease, err := c.Acquire(ctx, s, time.Minute)
+	lease, err := c.Acquire(ctx, time.Minute)
 	if err != nil || lease == "" {
 		t.Fatal(err)
 	}
-	if other, err := c.Acquire(ctx, s, time.Minute); err != nil || other != "" {
+	if other, err := c.Acquire(ctx, time.Minute); err != nil || other != "" {
 		t.Fatal("two writers acquired lease")
 	}
-	if err := c.Publish(ctx, p[0], lease, []string{"fp", "fp"}); err != nil {
+	if err := publishMembers(ctx, c, p[0], lease, []string{"fp", "fp"}); err != nil {
 		t.Fatal(err)
 	}
 	// 重复提交模拟“服务端成功但响应丢失”，不产生重复变更通知。
-	if err := c.Publish(ctx, p[0], lease, []string{"fp"}); err != nil {
+	if err := publishMembers(ctx, c, p[0], lease, []string{"fp"}); err != nil {
 		t.Fatal(err)
 	}
 	if ttl, err := c.client.TTL(ctx, key).Result(); err != nil || ttl != -1 {
@@ -107,7 +108,7 @@ func TestRedisProjectionIntegration(t *testing.T) {
 	if err := c.Enqueue(ctx, s); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Publish(ctx, p[0], lease, []string{"fp"}); err != nil {
+	if err := publishMembers(ctx, c, p[0], lease, []string{"fp"}); err != nil {
 		t.Fatal(err)
 	}
 	newPending, err := c.Pending(ctx, 10)
@@ -122,7 +123,7 @@ func TestRedisProjectionIntegration(t *testing.T) {
 	if err := c.client.Set(ctx, status, "wrong-type", 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Publish(ctx, newPending[0], lease, nil); err == nil {
+	if err := publishMembers(ctx, c, newPending[0], lease, nil); err == nil {
 		t.Fatal("invalid metadata accepted")
 	}
 	if n, err := c.client.SCard(ctx, key).Result(); err != nil || n != 1 {
@@ -132,19 +133,19 @@ func TestRedisProjectionIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 模拟失租和新持有者，旧任务不能发布也不能释放继任者。
-	if err := c.client.Set(ctx, c.scopeKey(s, "lease"), "replacement", time.Minute).Err(); err != nil {
+	if err := c.client.Set(ctx, MetadataPrefix(c.prefix)+":lease", "replacement", time.Minute).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Publish(ctx, newPending[0], lease, nil); err == nil {
+	if err := publishMembers(ctx, c, newPending[0], lease, nil); err == nil {
 		t.Fatal("stale writer published")
 	}
-	if err := c.Release(ctx, s, lease); err != nil {
+	if err := c.Release(ctx, lease, []Scope{s}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := c.client.Get(ctx, c.scopeKey(s, "lease")).Result(); err != nil || got != "replacement" {
+	if got, err := c.client.Get(ctx, MetadataPrefix(c.prefix)+":lease").Result(); err != nil || got != "replacement" {
 		t.Fatal("stale release removed successor")
 	}
-	if err := c.Publish(ctx, newPending[0], "replacement", nil); err != nil {
+	if err := publishMembers(ctx, c, newPending[0], "replacement", nil); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := c.client.Exists(ctx, key).Result(); err != nil || n != 0 {
@@ -267,15 +268,77 @@ func TestRedisRenamePermissionFailurePreservesSnapshotIntegration(t *testing.T) 
 	if err != nil || len(p) != 1 {
 		t.Fatal(err)
 	}
-	lease, err := limited.Acquire(ctx, s, time.Minute)
+	lease, err := limited.Acquire(ctx, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := limited.Publish(ctx, p[0], lease, []string{"new"}); err == nil {
+	if err := publishMembers(ctx, limited, p[0], lease, []string{"new"}); err == nil {
 		t.Fatal("rename denial ignored")
 	}
 	values, err := c.client.SMembers(ctx, key).Result()
 	if err != nil || !slices.Equal(values, []string{"old"}) {
 		t.Fatal("failed rename removed current snapshot")
+	}
+}
+
+func publishMembers(ctx context.Context, c *RedisCache, p Pending, lease string, members []string) error {
+	defer func() { _ = c.client.Unlink(ctx, c.stagingKey(p.Scope, lease)).Err() }()
+	count, err := c.Append(ctx, p.Scope, lease, members)
+	if err != nil {
+		return err
+	}
+	return c.Publish(ctx, p, lease, count)
+}
+
+func TestRedisPartialScanAndLostStagingPreserveSnapshotIntegration(t *testing.T) {
+	cache := integrationCache(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	scope := Scope{"tenant", "s"}
+	if err := cache.client.SAdd(ctx, scope.Key(cache.prefix), "old").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Enqueue(ctx, scope); err != nil {
+		t.Fatal(err)
+	}
+	reader := batchReader(func(_ context.Context, _ Query, consume func([]Row) error) error {
+		if err := consume([]Row{activeRow("source-a", "tenant", "s", "new")}); err != nil {
+			return err
+		}
+		return errors.New("later page failed")
+	})
+	manager := testManager(t, reader, cache)
+	manager.settings.OperationTimeout = time.Second
+	if err := manager.Step(ctx); err == nil {
+		t.Fatal("partial scan succeeded")
+	}
+	members, err := cache.client.SMembers(ctx, scope.Key(cache.prefix)).Result()
+	if err != nil || !slices.Equal(members, []string{"old"}) {
+		t.Fatalf("partial snapshot published: %v %v", members, err)
+	}
+	keys, _, err := cache.client.Scan(ctx, 0, cache.scopeKey(scope, "staging")+"*", 100).Result()
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("staging not cleaned: %v %v", keys, err)
+	}
+	lease, err := cache.Acquire(ctx, time.Minute)
+	if err != nil || lease == "" {
+		t.Fatal("lease leaked", err)
+	}
+	count, err := cache.Append(ctx, scope, lease, []string{"new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.client.Unlink(ctx, cache.stagingKey(scope, lease)).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cache.Publish(ctx, Pending{Scope: scope}, lease, count); err == nil {
+		t.Fatal("lost staging published")
+	}
+	members, err = cache.client.SMembers(ctx, scope.Key(cache.prefix)).Result()
+	if err != nil || !slices.Equal(members, []string{"old"}) {
+		t.Fatal("lost staging damaged formal set", err)
+	}
+	if err := cache.Release(ctx, lease, []Scope{scope}); err != nil {
+		t.Fatal(err)
 	}
 }

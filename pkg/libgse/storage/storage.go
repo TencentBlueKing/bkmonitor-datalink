@@ -37,9 +37,12 @@ type Storage interface {
 // Init : init storage
 // path is a filepath
 func Init(path string, config *StorageConfig) error {
-	var err error
-	_storage, err = NewLocalStorage(path)
-	return err
+	storage, err := NewLocalStorage(path)
+	if err != nil {
+		return err
+	}
+	_storage = storage
+	return nil
 }
 
 // Get get value. will return error=ErrNotFound if key not exist
@@ -70,11 +73,19 @@ func SetFlushInterval(interval time.Duration) {
 	_storage.SetFlushInterval(interval)
 }
 
+// Close closes the package level storage. It is safe to call before Init
+// succeeded, so partial initialization cleanup paths do not panic.
 func Close() {
+	if _storage == nil {
+		return
+	}
 	_storage.Close()
 }
 
 // Destroy remove files
 func Destroy() error {
+	if _storage == nil {
+		return nil
+	}
 	return _storage.Destroy()
 }

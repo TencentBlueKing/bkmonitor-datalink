@@ -31,6 +31,8 @@ LINKD_TEST_REDIS_ADDRESS=127.0.0.1:16397 go test ./internal/activeindex \
 
 复现时使用独立临时 Redis；集成用例只清理自身随机部署/前缀，不使用 FLUSHDB。
 
+后续在 test 隔离实例完成的真实消息链路验证见[独立来源验证](2026-10-26-active-alert-soft-limit-test.md)；以下未验证边界仅对应本地门禁与微基准。
+
 ## 验证边界
 
 普通测试和 race 覆盖配置、控制面补齐及不重复发版、已有规则/显式关闭、Provider 共用发布入口、

@@ -118,6 +118,9 @@ control_plane:
 Redis 丢失后可从数据库 active 重建。停用/删除来源的现存告警仍由真实终态决定是否离开集合。
 每页和每来源有预算；修复可能因存储延迟、锁竞争或故障推迟，不承诺固定恢复时限。
 
+`page_size` 同时作为 Redis SCAN/SSCAN 的 COUNT 提示。SCAN MATCH 仍遍历所选 Redis DB，成本取决于整个 DB 的 key 数量，
+不能按单个来源的告警量估计；共享 DB 中不宜把该值调得很小。轮次超时只结束本轮，下一轮继续，不阻塞主流程。
+
 观察控制面任务 `active-alert-indexes`、`source-limit-defaults`，以及
 `linkd.active_alert_cache.operations` 的更新、修复、限流、缺失字段和降级结果。
 指标不包含租户、策略或 fingerprint 等高基数字段。错误日志保留底层错误及已有身份，不记录正文和凭据。

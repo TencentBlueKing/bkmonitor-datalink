@@ -1,0 +1,36 @@
+{
+  "source_id": "limit-test-efce93c76",
+  "published": 2,
+  "enabled": false,
+  "active_alerts": 0,
+  "group_members": {
+    "linkd:active-alerts:bGltaXQtZTJlLWVmY2U5M2M3Ng:limit-test-efce93c76:rule:source-total:system": [],
+    "linkd:active-alerts:bGltaXQtZTJlLWVmY2U5M2M3Ng:limit-test-efce93c76:rule:strategy:system:A": [],
+    "linkd:active-alerts:bGltaXQtZTJlLWVmY2U5M2M3Ng:limit-test-efce93c76:rule:strategy:system:B": [],
+    "linkd:active-alerts:bGltaXQtZTJlLWVmY2U5M2M3Ng:limit-test-efce93c76:rule:strategy:system:C": []
+  },
+  "reconcile": {
+    "execution": {
+      "canceled": 0,
+      "durationSeconds": 3.937968104,
+      "failed": 0,
+      "failures": 0,
+      "finishedAt": "2026-10-26T12:16:17.936087963Z",
+      "id": "active-alert-indexes",
+      "lastSuccess": "2026-10-26T12:16:17.936087963Z",
+      "name": "活跃告警缓存修复",
+      "outcome": "idle",
+      "running": false,
+      "startedAt": "2026-10-26T12:16:13.998117087Z",
+      "succeeded": 84,
+      "work": 0
+    },
+    "settings": {
+      "maxBytes": 33554432,
+      "operationTimeoutSeconds": 60,
+      "pageSize": 2000,
+      "pollIntervalSeconds": 1,
+      "reconcileIntervalSeconds": 3
+    }
+  }
+}

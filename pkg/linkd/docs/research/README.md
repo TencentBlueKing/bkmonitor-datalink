@@ -6,6 +6,7 @@
 
 - 背景、问题和不在本次范围内的事项；
 - 调研日期、目标版本、源码提交或资料链接；
+- 验证报告及配套原始输出不保留实际环境域名、IP、镜像仓库地址或凭据；使用组件名称、版本或占位符说明环境；
 - 候选方案、评价维度和可复现证据；
 - 推荐结论、适用边界、风险及未决问题；
 - 结论落地后对应的设计文档、模块文档或代码位置。
@@ -16,6 +17,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-10-26-active-alert-soft-limit-test.md](2026-10-26-active-alert-soft-limit-test.md) | test 隔离来源的真实 Kafka、生命周期、ES/Redis 软限流及故障修复验证 |
 | [2026-10-26-active-alert-soft-limit-validation.md](2026-10-26-active-alert-soft-limit-validation.md) | 活跃缓存与软限流的隔离 Redis 回归、热路径微基准及未验证边界 |
 | [2026-10-21-multi-query-legacy-compatibility.md](2026-10-21-multi-query-legacy-compatibility.md) | 单个监控项多 query 的首查询兼容字段、旧 KAC 对照及策略 45/46 只读重放 |
 | [2026-10-21-dataset-enrich-validation.md](2026-10-21-dataset-enrich-validation.md) | 历史 dataset 语义字段到物理查询的绑定、当前策略清单及策略 18/73 完整链只读重放 |

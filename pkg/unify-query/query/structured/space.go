@@ -110,6 +110,23 @@ func (s *SpaceFilter) getTsDBWithResultTableDetail(t query.TsDBV2, d *routerInfl
 	return t
 }
 
+func mayMatchApplication(rt *routerInfluxdb.ResultTableDetail, metricName string, conditions AllConditions) (bool, error) {
+	// 按平台内置关系指标的语义，bk-monitor-worker 生成的这三种指标应用名与表归属一致。
+	// 普通指标可能上报不同的 apm_application_name，不能仅凭表归属排除。
+	switch metricName {
+	case "apm_service_with_apm_service_instance_relation",
+		"apm_service_instance_with_pod_relation",
+		"apm_service_instance_with_system_relation":
+	default:
+		return true, nil
+	}
+	applicationName := rt.Labels[ApmApplicationName]
+	if applicationName == "" {
+		return true, nil
+	}
+	return conditions.MayMatchLabel(ApmApplicationName, applicationName)
+}
+
 func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fieldNameExp *regexp.Regexp, allConditions AllConditions,
 	fieldName, tableID string, isK8s, isK8sFeatureFlag, isSkipField, isFieldMissingFallback bool, tableIDConditions AllConditions,
 ) ([]*query.TsDBV2, error) {
@@ -191,6 +208,16 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在
 	if isSkipField {
+		// 未展开的指标正则可能同时命中普通指标，不能以其字符串排除整张表。
+		if fieldNameExp == nil {
+			possible, err := mayMatchApplication(rtDetail, fieldName, allConditions)
+			if err != nil {
+				return nil, err
+			}
+			if !possible {
+				return tsDBs, nil
+			}
+		}
 		defaultTsDB.ExpandMetricNames = []string{fieldName}
 		tsDBs = append(tsDBs, &defaultTsDB)
 		return tsDBs, nil
@@ -207,6 +234,13 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		// 显式 table_id/data_label 场景下，Fields 只作为辅助展开索引；未命中时按候选 RT 兜底。
 		// 但正则未命中时不能把正则串当字面 metric/measurement 下推。
 		if isFieldMissingFallback && fieldName != "" && fieldNameExp == nil {
+			possible, err := mayMatchApplication(rtDetail, fieldName, allConditions)
+			if err != nil {
+				return nil, err
+			}
+			if !possible {
+				return tsDBs, nil
+			}
 			defaultTsDB.ExpandMetricNames = []string{fieldName}
 			tsDBs = append(tsDBs, &defaultTsDB)
 
@@ -223,20 +257,36 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		return tsDBs, nil
 	}
 
-	if defaultTsDB.IsSplit() {
-		// 独立指标 RT 作为补充路由，不能排除 data_label / table_id 正常索引到的 RT。
-		for _, mName := range metricNames {
+	matchedMetricNames := make([]string, 0, len(metricNames))
+	for _, mName := range metricNames {
+		if defaultTsDB.IsSplit() {
+			// 独立指标 RT 单独判断归属；默认 RT 不匹配时仍需发现并保留匹配的补充路由。
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
-				sepTsDB := s.getTsDBWithResultTableDetail(baseTsDB, sepRt)
-				sepTsDB.ExpandMetricNames = []string{mName}
-				tsDBs = append(tsDBs, &sepTsDB)
+				possible, err := mayMatchApplication(sepRt, mName, allConditions)
+				if err != nil {
+					return nil, err
+				}
+				if possible {
+					sepTsDB := s.getTsDBWithResultTableDetail(baseTsDB, sepRt)
+					sepTsDB.ExpandMetricNames = []string{mName}
+					tsDBs = append(tsDBs, &sepTsDB)
+				}
 			}
+		}
+		possible, err := mayMatchApplication(rtDetail, mName, allConditions)
+		if err != nil {
+			return nil, err
+		}
+		if possible {
+			matchedMetricNames = append(matchedMetricNames, mName)
 		}
 	}
 
-	defaultTsDB.ExpandMetricNames = metricNames
-	tsDBs = append(tsDBs, &defaultTsDB)
+	if len(matchedMetricNames) > 0 {
+		defaultTsDB.ExpandMetricNames = matchedMetricNames
+		tsDBs = append(tsDBs, &defaultTsDB)
+	}
 
 	return tsDBs, nil
 }

@@ -672,6 +672,13 @@ func (s *SpacePusher) composeMetricTableIdDetail(
 	for _, dsrt := range dsrtList {
 		tableIdDataIdMap[dsrt.TableId] = dsrt.BkDataId
 	}
+	applicationNames, err := loadAPMApplicationNames(db, bkTenantId, tableIdRtMap, dsrtList)
+	if err != nil {
+		// Ownership is optional: an unavailable APM schema must not block ordinary
+		// metric routes. Rebuild labels without ownership so stale values are cleared.
+		logger.Warnf("PushTableIdDetail: load APM application ownership failed, tenant [%s], continuing without ownership labels: %s", bkTenantId, err)
+		applicationNames = nil
+	}
 
 	// 获取结果表对应的类型
 	measurementTypeMap, err := s.getMeasurementTypeByTableId(bkTenantId, tableIds, rtList, tableIdDataIdMap)
@@ -703,11 +710,10 @@ func (s *SpacePusher) composeMetricTableIdDetail(
 		rt, ok := tableIdRtMap[tableId]
 		if !ok {
 			detail["data_label"] = ""
-			detail["labels"] = map[string]any{}
 		} else {
 			detail["data_label"] = rt.DataLabel
-			detail["labels"] = normalizeResultTableLabels(tableId, rt.Labels)
 		}
+		detail["labels"] = metricRouteLabels(tableId, rt, applicationNames[tableId])
 		detail["measurement_type"] = measurementTypeMap[tableId]
 		detail["bcs_cluster_id"] = tableIdClusterIdMap[tableId]
 		detail["bk_data_id"] = tableIdDataIdMap[tableId]

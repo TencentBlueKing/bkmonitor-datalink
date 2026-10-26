@@ -13,9 +13,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"linkd/internal/activeindex"
+	"linkd/internal/domain"
 )
 
 func TestActiveIndexPaginationKeepsOneSnapshot(t *testing.T) {
@@ -62,6 +64,42 @@ func TestActiveIndexPaginationKeepsOneSnapshot(t *testing.T) {
 	rows, err := r.ReadActiveIndex(t.Context(), activeindex.Query{Sources: []string{"source"}, MaxRows: 1000, MaxBytes: 1 << 20})
 	if err != nil || len(rows) != 501 || pages != 2 || !closed {
 		t.Fatalf("rows=%d pages=%d closed=%v err=%v", len(rows), pages, closed, err)
+	}
+}
+
+func TestActiveIndexBudgetOnlyRetainsStrategyProjection(t *testing.T) {
+	router, err := NewStaticRouter("linkd-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(transportFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodDelete {
+			return jsonResponse(t, map[string]any{"succeeded": true}), nil
+		}
+		if req.URL.Path == "/linkd-test-alerts/_pit" {
+			return jsonResponse(t, map[string]any{"id": "pit"}), nil
+		}
+		row := activeindex.Row{
+			BKTenantID: "tenant", EventSourceID: "source", Fingerprint: "fp",
+			Labels: domain.DimensionMap{"strategy_id": domain.NewStringScalar("raw")},
+			Enrich: domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.content","value":"` + strings.Repeat("x", 4096) + `"},{"op":"set","path":"$.labels.strategy_id","value":"effective"}]}}]`)},
+		}
+		return jsonResponse(t, map[string]any{"pit_id": "pit", "hits": map[string]any{"hits": []any{map[string]any{"_source": row}}}}), nil
+	}), router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := activeindex.Query{Sources: []string{"source"}, MaxRows: 10, MaxBytes: 512}
+	rows, err := r.ReadActiveIndex(t.Context(), q)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%d err=%v", len(rows), err)
+	}
+	groups, err := activeindex.Group(q, rows)
+	if err != nil || len(groups[activeindex.Scope{BKTenantID: "tenant", StrategyID: "effective"}]) != 1 {
+		t.Fatalf("groups=%v err=%v", groups, err)
+	}
+	if len(rows[0].Enrich) != 0 {
+		t.Fatal("snapshot retained unrelated enrichment")
 	}
 }
 

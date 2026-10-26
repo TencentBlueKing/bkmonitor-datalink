@@ -56,7 +56,8 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 		// strategy_id 可能被补丁覆盖，必须在读取 enrich 后按有效值过滤。
 		filters = append(filters, map[string]any{"term": map[string]any{"bk_tenant_id": tenant}})
 	}
-	body := map[string]any{"size": 500, "track_total_hits": false, "_source": []string{"bk_tenant_id", "event_source_id", "fingerprint", "labels.strategy_id", "enrich"}, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
+	// 只读取还原有效策略标签所需的补丁和历史 value，不传输 trace、诊断和其他历史值。
+	body := map[string]any{"size": 500, "track_total_hits": false, "_source": []string{"bk_tenant_id", "event_source_id", "fingerprint", "labels.strategy_id", "enrich.processors.*.status", "enrich.processors.*.patches", "enrich.processors.*.value.strategy_id"}, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
 	result := make([]activeindex.Row, 0)
 	bytes := 0
 	for {
@@ -68,13 +69,21 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 			return nil, err
 		}
 		for _, hit := range response.Hits.Hits {
-			bytes += len(hit.Source)
-			if len(result) >= q.MaxRows || bytes > q.MaxBytes {
-				return nil, fmt.Errorf("active index snapshot exceeds limits")
-			}
 			var row activeindex.Row
 			if err := json.Unmarshal(hit.Source, &row); err != nil {
 				return nil, fmt.Errorf("invalid active index row")
+			}
+			row, err = row.Projection()
+			if err != nil {
+				return nil, err
+			}
+			projection, err := json.Marshal(row)
+			if err != nil {
+				return nil, err
+			}
+			bytes += len(projection)
+			if len(result) >= q.MaxRows || bytes > q.MaxBytes {
+				return nil, fmt.Errorf("active index snapshot exceeds limits")
 			}
 			result = append(result, row)
 		}

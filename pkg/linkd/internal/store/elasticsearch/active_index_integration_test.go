@@ -11,9 +11,11 @@ package elasticsearchstore
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,8 +68,12 @@ func TestActiveIndexElasticsearchIntegration(t *testing.T) {
 		a := storetest.Alert(test.tenant, test.id, "event", test.id, "warning")
 		a.EventSourceID = test.source
 		a.Labels["strategy_id"] = domain.NewStringScalar(test.label)
+		if test.id == "one" {
+			a.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.content","value":"` + strings.Repeat("x", 8192) + `"},{"op":"set","path":"$.labels.strategy_id","value":"123"}]}}]`)}
+		}
 		if test.id == "two" {
 			a.Labels["strategy_id"], _ = domain.NewNumberScalar(123)
+			a.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"strategy":{"status":"succeeded","value":{"strategy_id":123,"unrelated":"` + strings.Repeat("x", 8192) + `"}}}]`)}
 		}
 		if _, err := r.CreateAlert(ctx, a); err != nil {
 			t.Fatal(err)

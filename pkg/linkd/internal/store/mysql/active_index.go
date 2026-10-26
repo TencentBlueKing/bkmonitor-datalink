@@ -49,10 +49,6 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 		if err := rows.Scan(&row.BKTenantID, &row.EventSourceID, &row.Fingerprint, &labelJSON, &enrichJSON); err != nil {
 			return nil, err
 		}
-		bytes += len(row.BKTenantID) + len(row.EventSourceID) + len(row.Fingerprint) + len(labelJSON) + len(enrichJSON)
-		if len(result) >= q.MaxRows || bytes > q.MaxBytes {
-			return nil, fmt.Errorf("active index snapshot exceeds limits")
-		}
 		if len(labelJSON) != 0 && string(labelJSON) != "null" {
 			if err := json.Unmarshal(append(append([]byte(`{"strategy_id":`), labelJSON...), '}'), &row.Labels); err != nil {
 				return nil, fmt.Errorf("invalid strategy label")
@@ -62,6 +58,18 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 			if err := json.Unmarshal(enrichJSON, &row.Enrich); err != nil {
 				return nil, fmt.Errorf("invalid enrichment payload")
 			}
+		}
+		row, err = row.Projection()
+		if err != nil {
+			return nil, err
+		}
+		projection, err := json.Marshal(row)
+		if err != nil {
+			return nil, err
+		}
+		bytes += len(projection)
+		if len(result) >= q.MaxRows || bytes > q.MaxBytes {
+			return nil, fmt.Errorf("active index snapshot exceeds limits")
 		}
 		result = append(result, row)
 	}

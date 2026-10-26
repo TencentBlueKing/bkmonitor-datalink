@@ -98,6 +98,21 @@ type Row struct {
 	Labels        domain.DimensionMap `json:"labels"`
 }
 
+// Projection 提取有效策略标签后释放丰富结果，只保留构建策略集合需要的身份。
+// 存储按页/行调用，避免无关正文、资源属性和调试信息累积进完整快照预算。
+func (r Row) Projection() (Row, error) {
+	strategy, exists, err := view.EnrichedLabel(r.Labels, r.Enrich, "strategy_id")
+	if err != nil {
+		return Row{}, err
+	}
+	r.Enrich = nil
+	r.Labels = nil
+	if exists {
+		r.Labels = domain.DimensionMap{"strategy_id": strategy}
+	}
+	return r, nil
+}
+
 // Query 限定完整读取范围；Scope 和 BKTenantID 均为空时周期发现所有租户和策略。
 type Query struct {
 	Sources []string
@@ -105,7 +120,8 @@ type Query struct {
 	// BKTenantID 用于同租户多策略共享快照，不能与 Scope 同时指定。
 	BKTenantID string
 	MaxRows    int
-	MaxBytes   int
+	// MaxBytes 限制累计保留的身份投影 JSON 字节，不累计已释放的丰富结果。
+	MaxBytes int
 }
 
 // Validate 校验扫描硬上限，禁止空来源变成全库扫描。

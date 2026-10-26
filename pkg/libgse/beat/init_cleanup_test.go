@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/logp"
 	reloader2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/reloader"
 	bkstorage "github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/storage"
 )
@@ -23,7 +24,12 @@ import (
 func resetBeatState(t *testing.T) {
 	t.Helper()
 
+	// Stop() clears the package level logger when it runs; save the current
+	// logger so the cleanup below restores it and tests stay order independent.
+	savedLogger := logp.L
 	t.Cleanup(func() {
+		logp.SetLogger(savedLogger)
+
 		resourceMutex.Lock()
 		pidLocked = false
 		storageInited = false

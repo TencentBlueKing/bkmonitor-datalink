@@ -36,6 +36,11 @@ type BKBeat struct {
 	Finished    bool
 	Done        chan struct{}
 
+	// clientMu protects Client. Send/SendEvent may run concurrently with the
+	// framework shutdown path; reading and clearing the pointer without a lock
+	// races with BKBeat.Stop and can dereference nil.
+	clientMu sync.RWMutex
+
 	// finishOnce makes the teardown idempotent: the framework shutdown path
 	// and Stop may both try to finish the same beater.
 	finishOnce sync.Once
@@ -72,16 +77,23 @@ func (bkb *BKBeat) Run(b *beat.Beat) error {
 			ACKEvents: publishConfig.ACKEvents,
 		})
 		if err != nil {
-			bkb.Client = nil
+			bkb.setClient(nil)
 			return err
 		}
 	}
-	client, err := commonBKBeat.Beat.Publisher.ConnectWith(publishConfig)
+	// The ACK callback is installed globally above. Passing the same callback
+	// through the client config would invoke it a second time for every batch:
+	// the pipeline calls the pipeline-level callback before the client-level
+	// one. Keep a single callback so state updates and preview accounting are
+	// not applied twice. WaitClose does not depend on this field.
+	clientConfig := publishConfig
+	clientConfig.ACKEvents = nil
+	client, err := commonBKBeat.Beat.Publisher.ConnectWith(clientConfig)
 	if nil != err {
-		bkb.Client = nil
+		bkb.setClient(nil)
 		return err
 	}
-	bkb.Client = &client
+	bkb.setClient(&client)
 	wg.Done()
 	close(errorMessageChan)
 	select {
@@ -91,16 +103,49 @@ func (bkb *BKBeat) Run(b *beat.Beat) error {
 	}
 }
 
+func (bkb *BKBeat) getClient() *beat.Client {
+	bkb.clientMu.RLock()
+	defer bkb.clientMu.RUnlock()
+	return bkb.Client
+}
+
+func (bkb *BKBeat) setClient(client *beat.Client) {
+	bkb.clientMu.Lock()
+	bkb.Client = client
+	bkb.clientMu.Unlock()
+}
+
+// stopPublish releases the publisher client exactly once. It is separate from
+// Stop so the managed preview can keep the client alive while it drains and
+// close it only after Registrar.Stop.
+func (bkb *BKBeat) stopPublish() {
+	bkb.clientMu.Lock()
+	client := bkb.Client
+	bkb.Client = nil
+	bkb.clientMu.Unlock()
+
+	if client != nil {
+		(*client).Close()
+	}
+}
+
 // Stop
 func (bkb *BKBeat) Stop() {
 	if BeaterRunning != commonBKBeat.BeaterState {
 		return
 	}
 	bkb.finishOnce.Do(func() {
-		if bkb.Client != nil {
-			(*bkb.Client).Close()
-			bkb.Client = nil
+		if managedPreview.isEnabled() {
+			// Managed preview: signal the beater loop only. The coordinator
+			// stops Kafka production, drains the pipeline, then closes the
+			// client and releases storage after Registrar.Stop.
+			if bkb.Done != nil {
+				close(bkb.Done)
+			}
+			return
 		}
+
+		bkb.stopPublish()
 		if bkb.Done != nil {
 			close(bkb.Done)
 		}

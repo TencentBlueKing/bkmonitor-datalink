@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"sync"
 	"time"
 
@@ -27,12 +29,14 @@ const (
 	// 内部默认值
 	defaultRedisReconnectInterval = 5 * time.Second
 	defaultRedisReconnectMaxRetry = 10
+	defaultRedisReconcileInterval = time.Minute
 )
 
 // RedisProviderConfig Redis Provider 配置
 type RedisProviderConfig struct {
 	ReconnectInterval time.Duration
 	ReconnectMaxRetry int
+	ReconcileInterval time.Duration
 	ReloadOnStart     bool
 	Logger            Logger // 日志接口
 }
@@ -50,6 +54,7 @@ func DefaultRedisProviderConfig() *RedisProviderConfig {
 	return &RedisProviderConfig{
 		ReconnectInterval: defaultRedisReconnectInterval,
 		ReconnectMaxRetry: defaultRedisReconnectMaxRetry,
+		ReconcileInterval: defaultRedisReconcileInterval,
 		ReloadOnStart:     true,
 		Logger:            &noopLogger{},
 	}
@@ -64,7 +69,7 @@ func (l *noopLogger) Errorf(format string, args ...interface{}) {}
 func (l *noopLogger) Debugf(format string, args ...interface{}) {}
 
 // RedisProvider 通用 Redis Schema 提供器
-// 从 Redis 动态加载资源和关联定义，支持 Pub/Sub 热更新
+// 从 Redis 动态加载资源和关联定义，支持 Pub/Sub 热更新与周期性收敛
 //
 // Redis 数据结构:
 //   - key:   bkmonitorv3:entity:ResourceDefinition
@@ -78,6 +83,9 @@ type RedisProvider struct {
 	resourceDefinitions map[string]map[string]*ResourceDefinition
 	relationDefinitions map[string]map[string]*RelationDefinition
 	mu                  sync.RWMutex
+	// Serializes full snapshots and Pub/Sub reloads so an older snapshot cannot
+	// overwrite a newer namespace update.
+	reloadMu sync.Mutex
 
 	// 订阅回调列表，在数据变更时通知
 	callbacks []SchemaChangeCallback
@@ -113,6 +121,14 @@ func WithReconnectConfig(interval time.Duration, maxRetry int) RedisProviderOpti
 	}
 }
 
+// WithReconcileInterval sets the interval for recovering missed Pub/Sub updates.
+// A non-positive interval disables periodic reconciliation.
+func WithReconcileInterval(interval time.Duration) RedisProviderOption {
+	return func(config *RedisProviderConfig) {
+		config.ReconcileInterval = interval
+	}
+}
+
 // NewRedisProvider 创建 Redis Provider
 func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ...RedisProviderOption) (*RedisProvider, error) {
 	config := DefaultRedisProviderConfig()
@@ -139,6 +155,10 @@ func NewRedisProvider(ctx context.Context, client redis.UniversalClient, opts ..
 
 	provider.wg.Add(1)
 	go provider.subscribeEntities()
+	if config.ReconcileInterval > 0 {
+		provider.wg.Add(1)
+		go provider.reconcilePeriodically()
+	}
 
 	return provider, nil
 }
@@ -168,86 +188,144 @@ func (rp *RedisProvider) normalizeNamespace(namespace string) string {
 	return namespace
 }
 
-// loadAllEntities 启动时全量加载所有实体
+// loadAllEntities atomically replaces both kinds after reading a complete Redis
+// snapshot. Missing fields must remove cached namespaces after a lost Pub/Sub
+// deletion, while a read failure must leave the previous snapshot untouched.
 func (rp *RedisProvider) loadAllEntities() error {
-	if err := rp.loadEntitiesByKind(KindResourceDefinition); err != nil {
+	rp.reloadMu.Lock()
+	defer rp.reloadMu.Unlock()
+
+	resourceFields, err := rp.client.HGetAll(rp.ctx, RedisKeyPrefix+":"+KindResourceDefinition).Result()
+	if err != nil {
 		return fmt.Errorf("failed to load resource definitions: %w", err)
 	}
-	if err := rp.loadEntitiesByKind(KindRelationDefinition); err != nil {
+	relationFields, err := rp.client.HGetAll(rp.ctx, RedisKeyPrefix+":"+KindRelationDefinition).Result()
+	if err != nil {
 		return fmt.Errorf("failed to load relation definitions: %w", err)
 	}
 
-	resourceCount := 0
-	for _, nsMap := range rp.resourceDefinitions {
-		resourceCount += len(nsMap)
-	}
-	relationCount := 0
-	for _, nsMap := range rp.relationDefinitions {
-		relationCount += len(nsMap)
-	}
+	resources, invalidResources := rp.decodeResourceFields(resourceFields)
+	relations, invalidRelations := rp.decodeRelationFields(relationFields)
 
-	rp.config.Logger.Infof("loaded %d resource definitions, %d relation definitions", resourceCount, relationCount)
+	rp.mu.Lock()
+	for namespace := range invalidResources {
+		if previous, ok := rp.resourceDefinitions[namespace]; ok {
+			resources[namespace] = previous
+		}
+	}
+	for namespace := range invalidRelations {
+		if previous, ok := rp.relationDefinitions[namespace]; ok {
+			relations[namespace] = previous
+		}
+	}
+	resourceChanges := changedNamespaces(rp.resourceDefinitions, resources)
+	relationChanges := changedNamespaces(rp.relationDefinitions, relations)
+	rp.resourceDefinitions = resources
+	rp.relationDefinitions = relations
+	rp.mu.Unlock()
+
+	for _, namespace := range resourceChanges {
+		rp.triggerCallbacks(KindResourceDefinition, namespace)
+	}
+	for _, namespace := range relationChanges {
+		rp.triggerCallbacks(KindRelationDefinition, namespace)
+	}
+	if changed := len(resourceChanges) + len(relationChanges); changed > 0 {
+		rp.config.Logger.Infof("reconciled Redis definitions: resources=%d relations=%d changed_namespaces=%d",
+			len(resources), len(relations), changed)
+	}
 	return nil
 }
 
-// loadEntitiesByKind 按 Kind 全量加载实体
-// Redis 结构: {prefix}:{kind} -> namespace -> {name: JSON, ...}
-func (rp *RedisProvider) loadEntitiesByKind(kind string) error {
-	redisKey := RedisKeyPrefix + ":" + kind
-
-	result, err := rp.client.HGetAll(rp.ctx, redisKey).Result()
-	if err != nil {
-		return fmt.Errorf("failed to hgetall %s: %w", redisKey, err)
-	}
-
-	for namespace, entitiesJSON := range result {
-		var entities map[string]json.RawMessage
-		if unmarshalErr := json.Unmarshal([]byte(entitiesJSON), &entities); unmarshalErr != nil {
-			rp.config.Logger.Warnf("failed to unmarshal entities for namespace %s: %v", namespace, unmarshalErr)
+func (rp *RedisProvider) decodeResourceFields(fields map[string]string) (map[string]map[string]*ResourceDefinition, map[string]struct{}) {
+	definitions := make(map[string]map[string]*ResourceDefinition, len(fields))
+	invalid := make(map[string]struct{})
+	for field, value := range fields {
+		namespace := rp.normalizeNamespace(field)
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(value), &entries); err != nil {
+			rp.config.Logger.Warnf("invalid resource definitions for namespace %s: %v", namespace, err)
+			invalid[namespace] = struct{}{}
 			continue
 		}
-		for name, jsonData := range entities {
-			if loadErr := rp.loadEntityByKind(kind, namespace, name, string(jsonData)); loadErr != nil {
-				rp.config.Logger.Warnf("failed to load %s %s:%s: %v", kind, namespace, name, loadErr)
+		parsed := make(map[string]*ResourceDefinition, len(entries))
+		for name, data := range entries {
+			var definition ResourceDefinition
+			if err := json.Unmarshal(data, &definition); err != nil {
+				rp.config.Logger.Warnf("invalid resource definition %s:%s: %v", namespace, name, err)
+				continue
+			}
+			parsed[name] = &definition
+		}
+		definitions[namespace] = parsed
+	}
+	return definitions, invalid
+}
+
+func (rp *RedisProvider) decodeRelationFields(fields map[string]string) (map[string]map[string]*RelationDefinition, map[string]struct{}) {
+	definitions := make(map[string]map[string]*RelationDefinition, len(fields))
+	invalid := make(map[string]struct{})
+	for field, value := range fields {
+		namespace := rp.normalizeNamespace(field)
+		var entries map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(value), &entries); err != nil {
+			rp.config.Logger.Warnf("invalid relation definitions for namespace %s: %v", namespace, err)
+			invalid[namespace] = struct{}{}
+			continue
+		}
+		parsed := make(map[string]*RelationDefinition, len(entries))
+		for name, data := range entries {
+			var definition RelationDefinition
+			if err := json.Unmarshal(data, &definition); err != nil {
+				rp.config.Logger.Warnf("invalid relation definition %s:%s: %v", namespace, name, err)
+				continue
+			}
+			parsed[name] = &definition
+		}
+		definitions[namespace] = parsed
+	}
+	return definitions, invalid
+}
+
+func changedNamespaces[T any](previous, current map[string]map[string]*T) []string {
+	namespaces := make(map[string]struct{}, len(previous)+len(current))
+	for namespace := range previous {
+		namespaces[namespace] = struct{}{}
+	}
+	for namespace := range current {
+		namespaces[namespace] = struct{}{}
+	}
+	changed := make([]string, 0)
+	for namespace := range namespaces {
+		if !reflect.DeepEqual(previous[namespace], current[namespace]) {
+			changed = append(changed, namespace)
+		}
+	}
+	sort.Strings(changed)
+	return changed
+}
+
+func (rp *RedisProvider) reconcilePeriodically() {
+	defer rp.wg.Done()
+	ticker := time.NewTicker(rp.config.ReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-rp.ctx.Done():
+			return
+		case <-ticker.C:
+			if err := rp.loadAllEntities(); err != nil && rp.ctx.Err() == nil {
+				rp.config.Logger.Errorf("periodic Redis schema reconciliation failed: %v", err)
 			}
 		}
 	}
-	return nil
-}
-
-// loadEntityByKind 加载单个实体到缓存
-func (rp *RedisProvider) loadEntityByKind(kind, namespace, name, jsonData string) error {
-	normalizedNs := rp.normalizeNamespace(namespace)
-	switch kind {
-	case KindResourceDefinition:
-		var def ResourceDefinition
-		if err := json.Unmarshal([]byte(jsonData), &def); err != nil {
-			return fmt.Errorf("failed to unmarshal ResourceDefinition: %w", err)
-		}
-		rp.mu.Lock()
-		if _, ok := rp.resourceDefinitions[normalizedNs]; !ok {
-			rp.resourceDefinitions[normalizedNs] = make(map[string]*ResourceDefinition)
-		}
-		rp.resourceDefinitions[normalizedNs][name] = &def
-		rp.mu.Unlock()
-
-	case KindRelationDefinition:
-		var def RelationDefinition
-		if err := json.Unmarshal([]byte(jsonData), &def); err != nil {
-			return fmt.Errorf("failed to unmarshal RelationDefinition: %w", err)
-		}
-		rp.mu.Lock()
-		if _, ok := rp.relationDefinitions[normalizedNs]; !ok {
-			rp.relationDefinitions[normalizedNs] = make(map[string]*RelationDefinition)
-		}
-		rp.relationDefinitions[normalizedNs][name] = &def
-		rp.mu.Unlock()
-	}
-	return nil
 }
 
 // reloadNamespace 按 namespace 全量重建该 kind 的本地缓存
 func (rp *RedisProvider) reloadNamespace(kind, namespace string) error {
+	rp.reloadMu.Lock()
+	defer rp.reloadMu.Unlock()
+
 	redisKey := RedisKeyPrefix + ":" + kind
 	normalizedNs := rp.normalizeNamespace(namespace)
 
@@ -338,6 +416,10 @@ func (rp *RedisProvider) subscribeEntities() {
 		go func() {
 			defer close(done)
 			ch := pubsub.Channel()
+			// Subscribe first, then reconcile changes missed while disconnected.
+			if err := rp.loadAllEntities(); err != nil && rp.ctx.Err() == nil {
+				rp.config.Logger.Errorf("Redis schema reconciliation after subscription failed: %v", err)
+			}
 			for {
 				select {
 				case <-rp.ctx.Done():

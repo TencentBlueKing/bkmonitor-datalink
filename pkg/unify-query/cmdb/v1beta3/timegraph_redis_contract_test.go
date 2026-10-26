@@ -154,6 +154,83 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 	}
 }
 
+func TestRedisSchemaReconcilesMissedPubSubChanges(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	resourceKey := relation.RedisKeyPrefix + ":" + relation.KindResourceDefinition
+	relationKey := relation.RedisKeyPrefix + ":" + relation.KindRelationDefinition
+	write := func(key, namespace string, definitions any) {
+		t.Helper()
+		data, err := json.Marshal(definitions)
+		require.NoError(t, err)
+		require.NoError(t, client.HSet(ctx, key, namespace, data).Err())
+	}
+	sharedResource := &relation.ResourceDefinition{
+		Namespace: relation.NamespaceAll, Name: "service",
+		Fields: []relation.FieldDefinition{{Name: "shared_id", Required: true}},
+	}
+	businessResource := &relation.ResourceDefinition{
+		Namespace: "bkcc__2", Name: "service",
+		Fields: []relation.FieldDefinition{{Name: "business_id", Required: true}},
+	}
+	write(resourceKey, relation.NamespaceAll, map[string]*relation.ResourceDefinition{"service": sharedResource})
+	write(resourceKey, "bkcc__2", map[string]*relation.ResourceDefinition{"service": businessResource})
+	write(relationKey, relation.NamespaceAll, map[string]*relation.RelationDefinition{
+		"shared_relation": {Namespace: relation.NamespaceAll, Name: "shared_relation", FromResource: "service", ToResource: "service"},
+	})
+	write(relationKey, "bkcc__2", map[string]*relation.RelationDefinition{
+		"business_relation": {Namespace: "bkcc__2", Name: "business_relation", FromResource: "service", ToResource: "service"},
+	})
+
+	provider, err := relation.NewRedisProvider(ctx, client, relation.WithReconcileInterval(20*time.Millisecond))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, provider.Close()) })
+	changes := make(chan string, 4)
+	require.NoError(t, provider.Subscribe(func(kind, namespace string) {
+		if namespace == "bkcc__2" {
+			changes <- kind
+		}
+	}))
+
+	resource, err := provider.GetResourceDefinition("bkcc__2", "service")
+	require.NoError(t, err)
+	require.Equal(t, "business_id", resource.Fields[0].Name)
+	relations, err := provider.ListRelationDefinitions("bkcc__2")
+	require.NoError(t, err)
+	require.Len(t, relations, 2)
+
+	// Simulate a completed HDEL whose Pub/Sub notification was lost. The next
+	// reconciliation must clear both cached kinds and notify model subscribers.
+	require.NoError(t, client.HDel(ctx, resourceKey, "bkcc__2").Err())
+	require.NoError(t, client.HDel(ctx, relationKey, "bkcc__2").Err())
+	require.Eventually(t, func() bool {
+		resource, resourceErr := provider.GetResourceDefinition("bkcc__2", "service")
+		relations, relationErr := provider.ListRelationDefinitions("bkcc__2")
+		return resourceErr == nil && relationErr == nil && resource.Fields[0].Name == "shared_id" &&
+			len(relations) == 1 && relations[0].Name == "shared_relation"
+	}, 3*time.Second, 10*time.Millisecond)
+
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case kind := <-changes:
+			seen[kind] = true
+		case <-time.After(3 * time.Second):
+			t.Fatalf("missing schema change callbacks: %v", seen)
+		}
+	}
+	require.True(t, seen[relation.KindResourceDefinition])
+	require.True(t, seen[relation.KindRelationDefinition])
+	select {
+	case kind := <-changes:
+		t.Fatalf("unchanged schema emitted another callback for %s", kind)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestTimeGraphBusinessRelationNameMatchesStaticAndRedis(t *testing.T) {
 	ctx := initTimeGraphQueryTestEnvironment()
 	server := miniredis.RunT(t)

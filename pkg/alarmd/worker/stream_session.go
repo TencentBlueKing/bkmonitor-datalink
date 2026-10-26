@@ -67,7 +67,7 @@ type streamedExecution struct {
 	// answerTruncated is the Plans a primary query of which came back with a
 	// suspected cut on its route: whole by its own account, and possibly
 	// missing groups the query service dropped at its cap. Absence is not
-	// judged for them this Slot (nodata.OutcomeSkippedAnswerTruncated).
+	// judged for them this Slot, presence is (nodata.OutcomeSkippedAnswerTruncated).
 	answerTruncated map[execution.PlanIdentity]bool
 	// scopeGroups is what this Slot read the dynamic groups its Plans'
 	// target scopes name to, by tenant and group, read once at Begin for

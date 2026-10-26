@@ -487,7 +487,8 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 				"canonical identity on its records. A group whose writer states member_list [] is OKEmpty. The last three are ip_cloud plans: " +
 				"tenant_mismatch is a referenced group of another tenant, address_unresolved a selector none of " +
 				"whose hosts has an address inside the plan's tenant yet, address_ambiguous members left out " +
-				"because another host of the tenant shares their address. An unavailable exclusion blocks the whole " +
+				"because another host of the tenant shares their address (on an exclude, OK: the shared address is " +
+				"excluded, and with it every host at it). An unavailable exclusion blocks the whole " +
 				"target; excluded_absent is a normal no-op from a complete host snapshot.",
 		}, []string{"kind", "state", "reason"}),
 		targetExcludedAbsentMembers: prometheus.NewCounter(prometheus.CounterOpts{
@@ -499,7 +500,9 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Subsystem: metricSubsystem, Name: "worker_no_data_slot_plans_total",
 			Help: "Plans that detect no-data, counted once per Slot by what happened to that detection. " +
 				"The outcomes partition: every such Plan lands on exactly one every Slot, so their sum is " +
-				"the no-data Plans this worker evaluated. EVALUATED is the only one that judged anything. " +
+				"the no-data Plans this worker evaluated. EVALUATED is the only one that judged absence; " +
+				"SKIPPED_QUERY_NOT_FULL and SKIPPED_ANSWER_TRUNCATED still judge the groups that arrived " +
+				"present, and judge no group absent. " +
 				"The others are different kinds of not judging and must be read apart, because once " +
 				"the round is over they look identical. Among them: SKIPPED_QUERY_NOT_FULL is a query that did not " +
 				"cover the period and resolves itself next round; SKIPPED_MEMORY_UNREADABLE is a record " +
@@ -1807,7 +1810,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		{targetplan.SelectorKindExclude, string(targetplan.SelectorUnavailable), targetplan.ReasonReadFailed},
 		{targetplan.SelectorKindExclude, string(targetplan.SelectorUnavailable), targetplan.ReasonStale},
 		{targetplan.SelectorKindExclude, string(targetplan.SelectorUnavailable), targetplan.ReasonAddressUnresolved},
-		{targetplan.SelectorKindExclude, string(targetplan.SelectorUnavailable), targetplan.ReasonAddressAmbiguous},
+		{targetplan.SelectorKindExclude, string(targetplan.SelectorOK), targetplan.ReasonAddressAmbiguous},
 		{targetplan.SelectorKindExclude, string(targetplan.SelectorOK), targetplan.ReasonExcludedAbsent},
 		{targetplan.SelectorKindExclude, string(targetplan.SelectorOKEmpty), targetplan.ReasonExcludedAbsent},
 	} {

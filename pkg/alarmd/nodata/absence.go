@@ -96,6 +96,10 @@ type AbsenceInput struct {
 	// (closeDroppedAbsences), one in another business (A6) - as the control
 	// plane's closes do elsewhere.
 	RecoveryDisabled bool
+	// AnswerTruncated is SlotInput.AnswerTruncated: the answer says it is
+	// full and may have been cut at the query service's group cap. Judged as
+	// a round that is not FULL (A1).
+	AnswerTruncated bool
 }
 
 // trackingExpired says whether an absence that began at firstAbsent has run
@@ -299,14 +303,33 @@ func evaluateAbsence(input AbsenceInput) AbsenceResult {
 		},
 	}
 
-	// A1. Not FULL: every expected group is unavailable, and nothing is
-	// learned - not even about a group that did arrive, because a partial
-	// answer is not evidence about what it left out either. An absence the
-	// roster has stopped expecting is not closed here either: the roster
-	// change is known, but closing is a verdict, and a round that did not look
-	// gives no verdicts. The next FULL round closes it.
-	if input.Completeness != execution.CompletenessFull {
+	// A1. Not FULL, or full by its own account and possibly cut at the query
+	// service's group cap: an answer that may have left groups out is no
+	// evidence about the ones it left out, so every expected group that did
+	// not arrive is unavailable - no absence is raised, kept or aged on it.
+	// A group that did arrive is a different fact: its data is in the answer,
+	// and an answer cannot hold a series that was not sent. So it is judged
+	// present exactly as in a FULL round (judgePresent, and A6 for one in
+	// another business), which is what recovers its absence. Skipping it too
+	// left a strategy whose answer is always cut - one at the group cap, which
+	// is its size and not a blip - with absences that never recover however
+	// much data comes back. An absence the roster has stopped expecting is not
+	// closed here: the roster change is known, but that close is an absence
+	// verdict, and the next FULL round makes it.
+	if input.Completeness != execution.CompletenessFull || input.AnswerTruncated {
+		judgePresent(&result, input)
 		for key := range input.Roster.Groups {
+			if _, present := input.Present[key]; present {
+				if _, foreign := input.OutOfBusiness[key]; foreign && input.Memory[key].SuppressedAt == 0 {
+					// A6 for a group judgePresent has just forgotten: its
+					// recovery is said here, or its alert stays open with
+					// nothing left to close it.
+					result.Verdicts[key] = VerdictNormal
+				}
+				if _, judged := result.Verdicts[key]; judged || heldPresent(input, key) || input.Memory[key].SuppressedAt != 0 {
+					continue
+				}
+			}
 			result.Verdicts[key] = VerdictUnavailable
 			result.Facts.Unavailable++
 		}

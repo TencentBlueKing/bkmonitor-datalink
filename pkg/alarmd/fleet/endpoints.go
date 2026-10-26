@@ -411,7 +411,7 @@ const (
 	LinkdConsoleUnreadable = "unreadable"
 	// LinkdConsoleLinkUnhealthy: the Console answered and the link says its
 	// set maintenance is failing, never succeeded or is behind. The close
-	// refuses every round in this state.
+	// still runs on the roster it lists, which may miss strategies.
 	LinkdConsoleLinkUnhealthy = "link_unhealthy"
 	// LinkdConsoleReachable: every operation called answered on its latest
 	// call, and the link's own account, where read, is healthy.

@@ -166,9 +166,9 @@ const (
 	CheckLogCountEmpty Check = "LOG_COUNT_EMPTY"
 	// AnswerTruncated is an answer that may have been cut at the query
 	// service's terms cap: thresholds evaluate the groups that came back,
-	// and a Plan that detects no data judges nothing that round
-	// (SKIPPED_ANSWER_TRUNCATED). The strategy groups by something wider than
-	// the cap.
+	// and a Plan that detects no data judges no absence that round
+	// (SKIPPED_ANSWER_TRUNCATED) - the groups that came back are judged
+	// present. The strategy groups by something wider than the cap.
 	CheckAnswerTruncated Check = "ANSWER_TRUNCATED"
 	CheckSeriesChurning  Check = "SERIES_CHURNING"
 	// SeriesSparserThanWindow is a long-lived series that reports less often

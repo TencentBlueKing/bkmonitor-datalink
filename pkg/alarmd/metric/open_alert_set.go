@@ -61,13 +61,16 @@ func newOpenAlertSetCollector() *openAlertSetCollector {
 				"either lasts. A deployment without the Console counts nothing here.", "reason"),
 		refreshes: descriptor("open_alert_set_refresh_total",
 			"Refreshes by result: index (a strategy's index read), authoritative (a calibration completed), "+
+				"truncated (a calibration whose answer the link marked incomplete or that passed this process's caps "+
+				"of 10000 rows or 5000 active alerts: what it listed is added and its alerts are closed where due, "+
+				"nothing unlisted is taken as gone, and it is asked again on the calibration cadence), "+
 				"unavailable (either failed). A flat line is the refresh loop not running.", "result"),
 		lookups: descriptor("open_alert_set_lookup_total",
 			"Lookups by how they were answered. index_member and index_absent are the consumer's index; "+
 				"recently_sent is a fingerprint the index does not carry yet that this process sent ABNORMAL for "+
 				"within its lag, the copy's word and not the consumer's; self_maintained and passed_through are "+
 				"the unavailable policy answering, and which of the two appears is the policy in force. index_stale "+
-				"is a set read once whose last successful read or calibration is older than 3 x (the index interval "+
+				"is a set read once whose last successful read or calibration (complete or truncated) is older than 3 x (the index interval "+
 				"+ ceil(tracked strategies / read batch) x the refresh interval), answered by the same policy as a "+
 				"set never read; the bound grows with the strategies tracked, so it differs between deployments.", "answer"),
 		entries: descriptor("open_alert_set_entries",
@@ -133,7 +136,7 @@ func (c *openAlertSetCollector) Collect(ch chan<- prometheus.Metric) {
 	for _, reason := range openalerts.UnavailableReasons {
 		ch <- prometheus.MustNewConstMetric(c.unavailable, prometheus.CounterValue, float64(stats.Unavailable[reason]), string(reason))
 	}
-	for _, result := range []string{"authoritative", "unavailable", "index"} {
+	for _, result := range []string{"authoritative", "truncated", "unavailable", "index"} {
 		ch <- prometheus.MustNewConstMetric(c.refreshes, prometheus.CounterValue, float64(stats.Refreshes[result]), result)
 	}
 	for _, answer := range openalerts.Answers {

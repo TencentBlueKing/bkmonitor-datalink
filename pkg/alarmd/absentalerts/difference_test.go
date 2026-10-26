@@ -11,8 +11,7 @@ import (
 var testNow = time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
 func testBounds() Bounds {
-	return Bounds{Grace: 10 * time.Minute, MaxSnapshotAge: 30 * time.Minute, MaxLinkHealthAge: 15 * time.Minute,
-		MaxCloseStrategies: 4}
+	return Bounds{Grace: 10 * time.Minute, MaxSnapshotAge: 30 * time.Minute, MaxCloseStrategies: 4}
 }
 
 func key(id string) Key { return Key{TenantID: "system", StrategyID: id} }
@@ -69,7 +68,7 @@ func roundFor(roster map[Key]struct{}, absences map[Key]Absence) Round {
 	for k := range roster {
 		members[k] = 1
 	}
-	return Round{LinkRead: true, Roster: members, RosterComplete: true, LinkLastSuccess: testNow.Add(-time.Minute),
+	return Round{LinkRead: true, Roster: members, RosterComplete: true,
 		SnapshotStrategies: filled(200), SnapshotUsable: true, SnapshotObservation: "observation-now",
 		FirstAbsent: absences, Now: testNow}
 }
@@ -154,39 +153,6 @@ func TestAnUnreadRosterClosesNothing(t *testing.T) {
 	round.LinkRead = false
 	if result := Compute(round, testBounds()); result.Refusal != RefusalLinkUnavailable || len(result.Close) != 0 {
 		t.Fatalf("a round without the roster decided something: %+v", result)
-	}
-}
-
-// The link's own account of its maintenance gates the round: a latest
-// discovery that failed, and one that never succeeded, both refuse it.
-func TestALinkThatSaysItsMaintenanceFailedRefusesTheRound(t *testing.T) {
-	k := key("10")
-	for name, mutate := range map[string]func(*Round){
-		"latest discovery failed": func(r *Round) { r.LinkError = "discovery_failed" },
-		"never succeeded":         func(r *Round) { r.LinkLastSuccess = time.Time{} },
-	} {
-		round := roundFor(set(k), ripe(k))
-		mutate(&round)
-		if result := Compute(round, testBounds()); result.Refusal != RefusalLinkUnhealthy || len(result.Close) != 0 {
-			t.Fatalf("%s: an unhealthy link was decided on: %+v", name, result)
-		}
-	}
-}
-
-// The health age bound, both sides of it: a discovery a minute inside the
-// bound decides, one a minute past it does not.
-func TestTheLinkHealthBoundIsABoundaryOnBothSides(t *testing.T) {
-	k := key("10")
-	bounds := testBounds()
-	inside := roundFor(set(k), ripe(k))
-	inside.LinkLastSuccess = testNow.Add(-bounds.MaxLinkHealthAge + time.Minute)
-	if result := Compute(inside, bounds); result.Refusal != RefusalNone || result.Counts.CloseDecided != 1 {
-		t.Fatalf("a link inside its bound was refused: %+v", result)
-	}
-	past := roundFor(set(k), ripe(k))
-	past.LinkLastSuccess = testNow.Add(-bounds.MaxLinkHealthAge - time.Minute)
-	if result := Compute(past, bounds); result.Refusal != RefusalLinkUnhealthy {
-		t.Fatalf("a link past its bound was decided on: %+v", result)
 	}
 }
 
@@ -333,7 +299,7 @@ func TestARefusedRoundDoesNotStartOrAgeAClock(t *testing.T) {
 	k := key("10")
 	tracker := NewTracker(100)
 	refused := roundFor(set(k), nil)
-	refused.LinkError = "discovery_failed"
+	refused.SnapshotUsable = false
 	tracker.Round(refused, testBounds())
 	if tracker.Tracked() != 0 {
 		t.Fatal("a refused round started a candidate's clock")

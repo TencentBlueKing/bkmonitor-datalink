@@ -140,8 +140,13 @@ func readLinkdReconcile(ctx context.Context, console linkdReconcileReader, p obc
 	counts := answer.Counts
 	answer.Line = fmt.Sprintf("alarmd 未恢复 %d、Linkd 活跃 %d；两边都有 %d、只在 alarmd %d、只在 Linkd %d",
 		counts.AlarmdOpen, counts.LinkdActive, counts.Both, counts.OnlyAlarmd, counts.OnlyLinkd)
-	out := obchannel.Outcome{Value: answer, Summary: answer.Line, Complete: !answer.AlertIDsCut}
-	if answer.AlertIDsCut {
+	if result.Truncated {
+		answer.Line += "（Linkd 回答不完整或超过 10000 行 / 5000 条活跃告警，只数到已收到的部分）"
+	}
+	out := obchannel.Outcome{Value: answer, Summary: answer.Line, Complete: !answer.AlertIDsCut && !result.Truncated}
+	if result.Truncated {
+		out.Limitations = append(out.Limitations, "Linkd's answer was incomplete or over 10000 rows / 5000 active alerts: the counts are of what was received, a lower bound.")
+	} else if answer.AlertIDsCut {
 		out.Limitations = append(out.Limitations, "Linkd alert ids stop at their share of the response budget; the counts are whole.")
 	}
 	return out

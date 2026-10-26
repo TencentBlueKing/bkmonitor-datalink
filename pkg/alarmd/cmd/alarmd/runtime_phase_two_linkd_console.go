@@ -93,10 +93,10 @@ func withLinkdConsole(endpoints func() []fleet.Endpoint, console *openalerts.HTT
 // linkdConsoleFacts decides the Console's state from its call record. The
 // order is the order a reader acts in: nothing to call, a call that fails,
 // a link that answers and says it is behind, nothing called yet, and only
-// then reachable. The link's own word comes from the same function the
-// close's link_unhealthy refusal reads, under the same bound.
+// then reachable. The link's own word is absentalerts.LinkHealthWord under
+// linkHealthMaxAge.
 func linkdConsoleFacts(console *openalerts.HTTPReconciler, at time.Time) *fleet.LinkdConsoleFacts {
-	facts := &fleet.LinkdConsoleFacts{MaxLinkHealthAgeSeconds: int(absentCloseMaxLinkHealthAge / time.Second),
+	facts := &fleet.LinkdConsoleFacts{MaxLinkHealthAgeSeconds: int(linkHealthMaxAge / time.Second),
 		Calls: make([]fleet.ConsoleCallFacts, 0, len(openalerts.ConsoleOps))}
 	var record openalerts.ConsoleRecord
 	if console != nil {
@@ -138,7 +138,7 @@ func linkdConsoleFacts(console *openalerts.HTTPReconciler, at time.Time) *fleet.
 			health := at.Sub(record.Link.LastSuccess).Seconds()
 			facts.LinkHealthAgeSeconds = &health
 		}
-		linkWord = absentalerts.LinkHealthWord(record.Link.LastSuccess, record.Link.Error, at, absentCloseMaxLinkHealthAge)
+		linkWord = absentalerts.LinkHealthWord(record.Link.LastSuccess, record.Link.Error, at, linkHealthMaxAge)
 	}
 	switch {
 	case console == nil:

@@ -255,36 +255,85 @@ func wantMemory(t *testing.T, result AbsenceResult, key string, want GroupMemory
 	}
 }
 
-// A1. A Slot that is not FULL cannot tell absence from a query that did not
-// return: every expected group is UNAVAILABLE and the memory is left exactly
-// as it was - including the LastSeen of a group that did show up, because a
-// partial answer is not evidence about what it did not contain either.
-func TestAbsence_A1_NonFullSlotIsUnavailableAndLeavesMemoryAlone(t *testing.T) {
+// A1. A Slot that is not FULL, or full by its own account and possibly cut
+// at the group cap, cannot tell absence from a group the answer left out:
+// every expected group that did not arrive is UNAVAILABLE and keeps its
+// memory exactly as it was. A group that did arrive is in the answer, so it
+// is judged present: its open absence recovers (NORMAL), its LastSeen is this
+// round, and the whole item is present. The same round read as FULL is the
+// control: there the silent group is absent.
+func TestAbsence_A1_NonFullSlotJudgesOnlyWhatArrived(t *testing.T) {
 	seen, gone := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
 	before := map[string]GroupMemory{
-		seen.Key(): {LastSeen: absenceRound1 - absencePeriod},
+		// Both were absent: the one that reports again recovers.
+		seen.Key(): {LastSeen: absenceRound1 - 3*absencePeriod, FirstAbsent: absenceRound1 - 2*absencePeriod},
 		gone.Key(): {LastSeen: absenceRound1 - 3*absencePeriod, FirstAbsent: absenceRound1 - 2*absencePeriod},
 	}
-	for name, completeness := range map[string]execution.Completeness{
-		"partial":     execution.CompletenessPartial,
-		"unavailable": execution.CompletenessUnavailable,
+	for name, mutate := range map[string]func(*AbsenceInput){
+		"partial":     func(in *AbsenceInput) { in.Completeness = execution.CompletenessPartial },
+		"unavailable": func(in *AbsenceInput) { in.Completeness = execution.CompletenessUnavailable },
 		// A completeness the evaluation does not recognise is not FULL
 		// either; the gate fails closed rather than reading an unknown
 		// word as a complete answer.
-		"unset": "",
+		"unset":           func(in *AbsenceInput) { in.Completeness = "" },
+		"full but cut":    func(in *AbsenceInput) { in.AnswerTruncated = true },
+		"partial and cut": func(in *AbsenceInput) { in.Completeness, in.AnswerTruncated = execution.CompletenessPartial, true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := fullRound(absenceRound1, staticRoster("v1", seen, gone), groupSet(seen), copyMemory(before))
-			input.Completeness = completeness
+			mutate(&input)
 			result := evaluate(t, input)
-			wantVerdicts(t, result, map[string]Verdict{seen.Key(): VerdictUnavailable, gone.Key(): VerdictUnavailable})
-			if !reflect.DeepEqual(result.Memory, before) {
-				t.Fatalf("Memory = %+v, want the input memory %+v untouched", result.Memory, before)
+			wantVerdicts(t, result, map[string]Verdict{
+				seen.Key(): VerdictNormal, gone.Key(): VerdictUnavailable, WholeItemGroup().Key(): VerdictNormal,
+			})
+			wantMemory(t, result, seen.Key(), GroupMemory{LastSeen: absenceRound1})
+			wantMemory(t, result, gone.Key(), before[gone.Key()])
+			if result.Facts.Unavailable != 1 || result.Facts.Absent != 0 {
+				t.Fatalf("Facts = %+v, want one unavailable and nothing absent", result.Facts)
 			}
 			if result.Facts.RosterSource != RosterTargetStatic {
 				t.Fatalf("Facts.RosterSource = %q, want the input's %q", result.Facts.RosterSource, RosterTargetStatic)
 			}
 		})
+	}
+	control := evaluate(t, fullRound(absenceRound1, staticRoster("v1", seen, gone), groupSet(seen), copyMemory(before)))
+	wantVerdicts(t, control, map[string]Verdict{
+		seen.Key(): VerdictNormal, gone.Key(): VerdictAnomaly, WholeItemGroup().Key(): VerdictNormal,
+	})
+}
+
+// A1 with nothing present: every expected group is UNAVAILABLE and the
+// memory is the input's, untouched.
+func TestAbsence_A1_NonFullSlotWithNothingPresentLeavesMemoryAlone(t *testing.T) {
+	seen, gone := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
+	before := map[string]GroupMemory{
+		seen.Key(): {LastSeen: absenceRound1 - absencePeriod},
+		gone.Key(): {LastSeen: absenceRound1 - 3*absencePeriod, FirstAbsent: absenceRound1 - 2*absencePeriod},
+	}
+	input := fullRound(absenceRound1, staticRoster("v1", seen, gone), nil, copyMemory(before))
+	input.AnswerTruncated = true
+	result := evaluate(t, input)
+	wantVerdicts(t, result, map[string]Verdict{seen.Key(): VerdictUnavailable, gone.Key(): VerdictUnavailable})
+	if !reflect.DeepEqual(result.Memory, before) {
+		t.Fatalf("Memory = %+v, want the input memory %+v untouched", result.Memory, before)
+	}
+}
+
+// A1 and A6: a group in another business that arrives in a partial answer
+// recovers and is forgotten, as in a FULL round - forgotten without its
+// NORMAL, its alert would stay open with nothing left to close it.
+func TestAbsence_A1_ForeignGroupThatArrivesRecoversAndIsForgotten(t *testing.T) {
+	foreign, gone := hostGroup(t, "192.0.2.1"), hostGroup(t, "192.0.2.2")
+	before := map[string]GroupMemory{foreign.Key(): {FirstAbsent: absenceRound1 - absencePeriod}}
+	input := fullRound(absenceRound1, staticRoster("v1", foreign, gone), groupSet(foreign), copyMemory(before))
+	input.Completeness = execution.CompletenessPartial
+	input.OutOfBusiness = map[string]struct{}{foreign.Key(): {}}
+	result := evaluate(t, input)
+	wantVerdicts(t, result, map[string]Verdict{
+		foreign.Key(): VerdictNormal, gone.Key(): VerdictUnavailable, WholeItemGroup().Key(): VerdictNormal,
+	})
+	if _, kept := result.Memory[foreign.Key()]; kept {
+		t.Fatalf("Memory = %+v, want the foreign group forgotten", result.Memory)
 	}
 }
 
@@ -538,15 +587,15 @@ func TestAbsence_A9_LongAbsentHistoryGroupIsStillExpected(t *testing.T) {
 
 // A1 then FULL. An unavailable round is not an absent round: the group that
 // was missing from the partial answer starts its absence clock at the first
-// FULL round it is missing from, and the group that was in the partial answer
-// has its LastSeen stamped only by the FULL round.
+// FULL round it is missing from. The group that was in the partial answer is
+// stamped seen by it.
 func TestAbsence_UnavailableRoundDoesNotCountAsAbsence(t *testing.T) {
 	seen, gone := hostGroup(t, "10.0.0.1"), hostGroup(t, "10.0.0.2")
 	partial := fullRound(absenceRound1, staticRoster("v1", seen, gone), groupSet(seen), map[string]GroupMemory{})
 	partial.Completeness = execution.CompletenessPartial
 	first := evaluate(t, partial)
-	if len(first.Memory) != 0 {
-		t.Fatalf("Memory after the partial round = %+v, want empty", first.Memory)
+	if want := map[string]GroupMemory{seen.Key(): {LastSeen: absenceRound1}}; !reflect.DeepEqual(first.Memory, want) {
+		t.Fatalf("Memory after the partial round = %+v, want %+v", first.Memory, want)
 	}
 	second := evaluate(t, fullRound(absenceRound2, staticRoster("v1", seen, gone), groupSet(seen), first.Memory))
 	wantVerdicts(t, second, map[string]Verdict{seen.Key(): VerdictNormal, gone.Key(): VerdictAnomaly, WholeItemGroup().Key(): VerdictNormal})

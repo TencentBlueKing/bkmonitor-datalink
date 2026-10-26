@@ -30,7 +30,7 @@ type absentCloseCollector struct {
 
 // differenceSides is the closed list of denominators, so every one of them
 // has a cell from the first scrape.
-var differenceSides = []string{"roster_strategies", "roster_unreadable", "roster_pages", "roster_complete",
+var differenceSides = []string{"roster_strategies", "roster_unreadable", "roster_invalid", "roster_pages", "roster_complete",
 	"candidates", "snapshot_strategies", "remembered_identities",
 	"snapshot_age_seconds", "max_snapshot_age_seconds", "link_health_age_seconds", "max_link_health_age_seconds",
 	"link_pending"}
@@ -46,27 +46,31 @@ func newAbsentCloseCollector() *absentCloseCollector {
 				"per strategy as the alerts its reconcile still lists active after an earlier send. "+
 				"identity_unknown and revision_unknown are strategies decided and not sent because no business or "+
 				"revision could be found for them; business_unknown are alerts of a global business strategy not "+
-				"closed that round because their record names no business they were filed under. Why a whole round "+
+				"closed that round because their record names no business they were filed under. evidence_truncated "+
+				"is a strategy whose alerts the link answered incomplete or past 10000 rows / 5000 active alerts: "+
+				"the alerts it listed are closed as usual and the rest wait for a later round. Why a whole round "+
 				"decided nothing is "+
 				"absent_strategy_round_total, not a cell here. Every cell exists from the start so a zero is a "+
 				"reading and not an absence.", []string{"outcome"}, nil),
 		roundIs: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "absent_strategy_round_total"),
 			"How each round of the difference ended: none is a round that decided, and the rest name the fact "+
 				"that was not good enough to decide on - link_unavailable (the alert link's roster could not be "+
-				"read), link_unhealthy (the link says its own set maintenance is failing or has not succeeded "+
-				"recently), snapshot_unusable (the source was not observed this round), snapshot_empty and "+
+				"read), snapshot_unusable (the source was not observed this round), snapshot_empty and "+
 				"snapshot_stale. Rounds, not strategies. none is the denominator the outcome family is read against.",
 			[]string{"disposition"}, nil),
 		sides: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "absent_strategy_difference"),
 			"The sizes the last round decided on: roster_strategies is the strategies the alert link listed "+
-				"with an unrecovered alert, roster_unreadable the ones it listed and could not read, roster_pages "+
+				"with an unrecovered alert, roster_unreadable the ones it listed and could not read, roster_invalid "+
+				"the rows its walk skipped as naming no strategy of this binding (a smaller roster, never a failed page), roster_pages "+
 				"and roster_complete how far the walk of its roster got, candidates the difference itself, "+
 				"snapshot_strategies the strategy cache it was judged against, remembered_identities "+
 				"the strategies the catalog let go and still knows the business of. "+
 				"Each age is reported beside its bound - snapshot_age_seconds beside max_snapshot_age_seconds, "+
 				"link_health_age_seconds (since the link's last successful discovery) beside "+
-				"max_link_health_age_seconds - so a refused round can be read as the side falling behind rather "+
-				"than as a bound that does not fit. link_pending is the link's own refresh backlog.",
+				"max_link_health_age_seconds, past which the health page calls the link's maintenance stale - so a "+
+				"refused round, or a roster that stopped growing, can be read as the side falling behind rather "+
+				"than as a bound that does not fit. The link's age never refuses a round: an old roster can only "+
+				"miss a strategy. link_pending is the link's own refresh backlog.",
 			[]string{"side"}, nil),
 	}
 }

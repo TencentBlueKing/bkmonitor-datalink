@@ -74,8 +74,9 @@ const (
 	// tenant's. Not an empty target.
 	ReasonAddressUnresolved = "address_unresolved"
 	// ReasonAddressAmbiguous is an ip_cloud member at an address another
-	// host of the tenant shares: the address names neither host, and the
-	// member is left out rather than matched against both.
+	// host of the tenant shares: the address names neither host. An included
+	// member is left out rather than matched against both; an excluded one
+	// excludes the address, and with it every host at it.
 	ReasonAddressAmbiguous = "address_ambiguous"
 )
 

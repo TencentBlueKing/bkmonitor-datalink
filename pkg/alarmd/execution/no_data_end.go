@@ -74,9 +74,10 @@ type NoDataEndUpdate struct {
 
 // OpenAlertJudge is an open alert set that can say whether its answer is a
 // judgement: held is membership, judged whether the set was read whole and
-// recently enough to answer for the strategy at all. The no-data end index
-// acts only on judged answers: "not in a set nobody has read yet" is not
-// "closed".
+// recently enough to answer for the strategy at all - or, after an answer
+// that was cut, whether the fingerprint is among what it listed, which judges
+// held and never "not held". The no-data end index acts only on judged
+// answers: "not in a set nobody has read yet" is not "closed".
 type OpenAlertJudge interface {
 	Holds(tenantID, strategyID, fingerprint string) (held, judged bool)
 }

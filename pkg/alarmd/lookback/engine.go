@@ -323,11 +323,17 @@ type Engine struct {
 	// a group in probation keeps it.
 	probationGroups sync.Map
 
-	mu     sync.Mutex
-	groups map[execution.QueryGroupIdentity]*group
-	counts counters
-	recent []Recent
-	nextID uint64
+	mu sync.Mutex
+	// stepping holds one pass over the samples (Step) at a time. A pass
+	// reads which samples are due under mu and launches them after taking
+	// permits outside it; two passes at once would both launch the same due
+	// sample, and the read that finished first moves it past its last rung
+	// before the other reads it.
+	stepping sync.Mutex
+	groups   map[execution.QueryGroupIdentity]*group
+	counts   counters
+	recent   []Recent
+	nextID   uint64
 	// earlyPending is the directed Slots waiting for their early read,
 	// holdMax the longest supplement hold this process has seen, and woken
 	// the loop's wake-up when a read ends (early.go).
@@ -1002,7 +1008,14 @@ func (engine *Engine) Run(ctx context.Context, tick time.Duration) {
 // again if a permit is free, and one past its window without a permit is
 // counted as yielded, the window as not read there, and the next rung
 // planned.
+//
+// A pass that comes while another is still running does nothing: the one
+// running reads every sample due, and the next pass reads what it left.
 func (engine *Engine) Step(ctx context.Context) {
+	if !engine.stepping.TryLock() {
+		return
+	}
+	defer engine.stepping.Unlock()
 	defer engine.publishReadHold()
 	now := engine.options.Now()
 	engine.mu.Lock()
@@ -1101,8 +1114,9 @@ func (engine *Engine) Step(ctx context.Context) {
 			continue
 		}
 		candidate.running = true
+		rung := candidate.rung
 		engine.mu.Unlock()
-		go engine.recheck(ctx, candidate, release, yield)
+		go engine.recheck(ctx, candidate, rung, release, yield)
 	}
 	engine.StepEarly(ctx)
 }
@@ -1267,7 +1281,9 @@ func recheckFrom(candidate *sample) int64 {
 	return max(candidate.spec.LogicalWindow.Start, candidate.keptFrom-int64(candidate.lookback/time.Second))
 }
 
-func (engine *Engine) recheck(ctx context.Context, candidate *sample, release func(), yield <-chan struct{}) {
+// rung is the sample's rung as it was launched, read under the lock: the
+// sample is not read outside it while the reread runs.
+func (engine *Engine) recheck(ctx context.Context, candidate *sample, at int, release func(), yield <-chan struct{}) {
 	defer engine.publishReadHold()
 	readCtx, cancel := context.WithTimeout(ctx, engine.rereadTimeout(candidate.queryGroup))
 	// The watcher waits for the read to come back, not for the read's
@@ -1310,7 +1326,7 @@ func (engine *Engine) recheck(ctx context.Context, candidate *sample, release fu
 	close(back)
 	cancel()
 	engine.releasedAfterYield(candidate, released, watched)
-	rung := RungNames[candidate.rung]
+	rung := RungNames[at]
 	if (err != nil || completion.Completeness != execution.CompletenessFull) && closed(yield) {
 		// Stopped for a formal query, not a read that failed: the rung keeps
 		// its window and is tried again, counted once by what it comes to.

@@ -94,7 +94,8 @@ const (
 	// OutcomeEvaluated means absence was judged this Slot.
 	OutcomeEvaluated SlotOutcome = "EVALUATED"
 	// OutcomeSkippedQueryNotFull means the Slot did not see the whole period,
-	// so absence is not evidence and nothing was judged or remembered.
+	// so absence is not evidence and no absence was judged. The groups that
+	// did arrive are judged present and remembered (A1).
 	OutcomeSkippedQueryNotFull SlotOutcome = "SKIPPED_QUERY_NOT_FULL"
 	// OutcomeSkippedSlotBudget means the Slot could not carry this Plan's
 	// no-data work. The evaluation never produces it - the budget is the
@@ -166,8 +167,9 @@ const (
 	// service's group cap. A group missing from it may be one the cap
 	// dropped, so absence is not evidence: judged anyway, every dropped
 	// group would read as gone, raise or keep open its absence, and recover
-	// when the cut moved elsewhere. Nothing is judged and nothing is
-	// remembered. It is named apart from SKIPPED_QUERY_NOT_FULL because it
+	// when the cut moved elsewhere. No absence is judged; the groups that
+	// did arrive are judged present and remembered (A1), or a strategy at the
+	// cap would never recover any. It is named apart from SKIPPED_QUERY_NOT_FULL because it
 	// does not clear next round: it lasts as long as the groups stay at the
 	// cap, which is the strategy's size, not a blip.
 	OutcomeSkippedAnswerTruncated SlotOutcome = "SKIPPED_ANSWER_TRUNCATED"
@@ -220,9 +222,10 @@ type TargetResolution struct {
 // starts being evaluated without the caller changing.
 //
 // The outcome says whether absence was judged. A Slot that did not see the
-// whole period still produces a result - every expected group is UNAVAILABLE
-// and the memory comes back untouched - and the outcome is what distinguishes
-// that from a round that judged and found nothing absent.
+// whole period, or whose answer may have been cut, still produces a result -
+// every expected group that did not arrive is UNAVAILABLE with its memory
+// untouched, and the ones that arrived are judged present - and the outcome is
+// what distinguishes that from a round that judged and found nothing absent.
 func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 	if input.Plan == nil || input.Plan.NoData == nil {
 		return AbsenceResult{}, OutcomeNone, nil
@@ -260,12 +263,6 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 		// the index is cold.
 		return AbsenceResult{}, OutcomeSkippedHostsUnresolved, nil
 	}
-	if input.AnswerTruncated && input.Completeness == execution.CompletenessFull {
-		// An answer that is not full is skipped below under its own name,
-		// which is the stronger statement; this is the answer that says it is
-		// full and may not be.
-		return AbsenceResult{}, OutcomeSkippedAnswerTruncated, nil
-	}
 	tally := ProjectSeries(input.Series, config.AggDimension)
 	// Before the roster: a history roster is derived from the memory, and a
 	// closed group has to be gone from it by then.
@@ -281,9 +278,16 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 	if err != nil {
 		return AbsenceResult{}, OutcomeNone, err
 	}
+	// Neither of the two below judges absence; both still judge the groups
+	// that arrived (A1). An answer that is not full is named as such, which
+	// is the stronger statement; truncated is the answer that says it is
+	// full and may not be.
 	outcome := OutcomeEvaluated
-	if input.Completeness != execution.CompletenessFull {
+	switch {
+	case input.Completeness != execution.CompletenessFull:
 		outcome = OutcomeSkippedQueryNotFull
+	case input.AnswerTruncated:
+		outcome = OutcomeSkippedAnswerTruncated
 	}
 	result := Evaluate(AbsenceInput{
 		EvaluationTime:         input.EvaluationTime,
@@ -297,6 +301,7 @@ func EvaluateSlot(input SlotInput) (AbsenceResult, SlotOutcome, error) {
 		TrackingHorizonSeconds: input.TrackingHorizonSeconds,
 		TrackingExhaustedAt:    input.TrackingExhaustedAt,
 		RecoveryDisabled:       config.RecoveryDisabled,
+		AnswerTruncated:        input.AnswerTruncated,
 	})
 	result.Facts.ManualClosed = manualClosed
 	return result, outcome, nil

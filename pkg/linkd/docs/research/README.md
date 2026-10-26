@@ -17,6 +17,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [2026-10-26-alert-search-test.md](2026-10-26-alert-search-test.md) | test 控制面 DSL 检索、租户隔离、dry-run、分页关闭、幂等重试与测试数据收尾 |
 | [2026-10-26-active-alert-soft-limit-test.md](2026-10-26-active-alert-soft-limit-test.md) | test 隔离来源的真实 Kafka、生命周期、ES/Redis 软限流及故障修复验证 |
 | [2026-10-26-active-alert-soft-limit-validation.md](2026-10-26-active-alert-soft-limit-validation.md) | 活跃缓存与软限流的隔离 Redis 回归、热路径微基准及未验证边界 |
 | [2026-10-21-multi-query-legacy-compatibility.md](2026-10-21-multi-query-legacy-compatibility.md) | 单个监控项多 query 的首查询兼容字段、旧 KAC 对照及策略 45/46 只读重放 |

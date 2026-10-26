@@ -1,0 +1,39 @@
+{
+  "observed_at": "2026-10-26T22:37:40.559023+08:00",
+  "namespace": "kingeye",
+  "deployment": "linkd-control-plane",
+  "feature_commit": "b7e5beddf767f2092a5f9eb508caead1e4f73a6f",
+  "base_commit": "3853110dae0047741bff8f6621639b14b0b9a745",
+  "image_version": "0.1.0-test.20261026.alert-search.1",
+  "image_manifest": "sha256:2a5b23bebed1403b30500af0357f4f1485b1c38d934058b770575fa06951cbe7",
+  "binary_git_commit": "3853110dae0047741bff8f6621639b14b0b9a745-dirty",
+  "control_plane": {
+    "name": "linkd-control-plane-6d8599bf5f-bvcz6",
+    "status": "Running",
+    "ready": 1,
+    "total": 1,
+    "restarts": 0
+  },
+  "processes": [
+    {
+      "role": "lifecycle",
+      "version": "0.1.0-test.20261026.shield.2",
+      "up": true
+    },
+    {
+      "role": "cleaner",
+      "version": "0.1.0-test.20261026.shield.2",
+      "up": true
+    },
+    {
+      "role": "control-plane",
+      "version": "0.1.0-test.20261026.alert-search.1",
+      "up": true
+    }
+  ],
+  "test_source": {
+    "id": "api-dsl-test-20261026",
+    "published": 6,
+    "enabled": false
+  }
+}

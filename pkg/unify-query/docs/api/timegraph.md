@@ -165,6 +165,10 @@ compact 版本为 `version:1`；timestamps 是整份网格，节点/边按属性
 
 后一个示例来自本地将执行槽/队列设为 1 的验收，不是部署默认配置。
 
+`path_resources` / `path_resources_range` 的必需关系缺物理路由时，同样返回 HTTP 200、对应单项 `code=400`，不会将未执行的查询解释为完整空结果。旧 `multi_resource` / `multi_resource_range` 的 v1beta3 适配仍按兼容合同保留已有结果并标记 partial。
+
+新 path 接口自动发现路径时，如果普通模式的搜索深度预算截断了候选，成功项会带 `partial=true`、`partial_reason=path_search_depth_limit`；已有结果和空结果都适用。多目标查询累计全部目标的截断状态和已有质量原因，后续健康项不继承前一项的状态。显式且已完整覆盖的路径、未触及预算的查询、YOLO 完整搜索不因此标记 partial；所有目标均无可查询路径时仍返回单项失败。
+
 <a id="schema-and-routing"></a>
 ## Schema、指标与空间路由
 

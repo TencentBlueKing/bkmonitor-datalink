@@ -8,6 +8,7 @@ package v1beta3
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -121,7 +122,7 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if err != nil {
 		return "", nil, errors.WithMessage(err, "to query reference")
 	}
-	if (metadata.IsExactTimeGrid(ctx) || timeGraphLegacyCompatibility(ctx)) && timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
+	if timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
 		return "", nil, &relationNoPhysicalRouteError{metric: timeGraphLoadMetricName(queryTs)}
 	}
 	if timeGraphQueryStage(ctx) == "source-info" && queryRef.Count() == 0 {
@@ -1249,6 +1250,16 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 			return nil, err
 		}
 		graphPaths, err := pathFinder.FindAllPathsContext(ctx, ResourceType(sourceType), ResourceType(targetType), nil)
+		// Each search resets depthLimited, including searches with no bounded
+		// candidate. Preserve its quality before processing the next target.
+		if pathFinder.depthLimited {
+			reasons := []string{"path_search_depth_limit"}
+			if status := metadata.GetStatus(ctx); status != nil && status.Code == metadata.QueryTsPartial && status.Message != "" {
+				reasons = append(reasons, strings.Split(status.Message, ";")...)
+			}
+			sort.Strings(reasons)
+			metadata.SetStatus(ctx, metadata.QueryTsPartial, strings.Join(slices.Compact(reasons), ";"))
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()

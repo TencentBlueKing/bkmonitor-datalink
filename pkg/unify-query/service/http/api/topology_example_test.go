@@ -199,6 +199,123 @@ func TestTopologyConsumerExampleHTTP(t *testing.T) {
 	}
 }
 
+func TestPathResourcesHTTPQualityIsolation(t *testing.T) {
+	for _, yolo := range []bool{false, true} {
+		t.Run(fmt.Sprintf("yolo=%t", yolo), func(t *testing.T) {
+			mock.Init()
+			promql.MockEngine()
+			ctx := metadata.InitHashID(context.Background())
+			influxdb.MockSpaceRouter(ctx)
+			oldYolo := viper.GetBool(v1beta3.YoloModeConfigPath)
+			viper.Set(v1beta3.YoloModeConfigPath, yolo)
+			v1beta3.LoadConfig()
+			t.Cleanup(func() { viper.Set(v1beta3.YoloModeConfigPath, oldYolo); v1beta3.LoadConfig() })
+			model, err := v1beta3.GetModel(ctx)
+			require.NoError(t, err)
+			provider := v1beta3.NewStaticSchemaProvider()
+			model.(*v1beta3.Model).SetSchemaProvider(provider)
+			t.Cleanup(func() { model.(*v1beta3.Model).SetSchemaProvider(v1beta3.GetSchemaProvider()) })
+			router, err := influxdb.GetSpaceTsDbRouter()
+			require.NoError(t, err)
+			const spaceName = "example-path-quality"
+			space := ir.Space{influxdb.ResultTableVM: &ir.SpaceResultTable{TableId: influxdb.ResultTableVM}}
+			require.NoError(t, router.Add(ctx, ir.SpaceToResultTableKey, spaceName, &space))
+			previous := router.GetResultTable(ctx, influxdb.ResultTableVM, false)
+			t.Cleanup(func() {
+				require.NoError(t, router.Add(ctx, ir.ResultTableDetailKey, influxdb.ResultTableVM, previous))
+				require.NoError(t, router.Delete(ctx, ir.SpaceToResultTableKey, spaceName))
+			})
+			var fields []string
+			for _, schema := range provider.ListRelationSchemas(spaceName) {
+				metricName := schema.MetricName
+				if metricName == "" {
+					metricName = string(schema.RelationType) + "_relation"
+				}
+				if metricName != "service_to_service_flow" {
+					fields = append(fields, metricName)
+				}
+			}
+			for _, resource := range provider.ListResourceTypes(spaceName) {
+				fields = append(fields, string(resource)+"_info_relation")
+			}
+			require.NoError(t, router.Add(ctx, ir.ResultTableDetailKey, influxdb.ResultTableVM, &ir.ResultTableDetail{
+				StorageId: 2, TableId: influxdb.ResultTableVM, VmRt: "example_relations", Fields: fields,
+				MeasurementType: redis.BkSplitMeasurement, StorageType: metadata.VictoriaMetricsStorageType,
+			}))
+			matcher := httpmock.NewMatcher("path-quality", func(r *http.Request) bool {
+				return metadata.GetUser(r.Context()).SpaceUID == spaceName
+			})
+			httpmock.RegisterMatcherResponder(http.MethodPost, mock.BkBaseUrl, matcher, func(r *http.Request) (*http.Response, error) {
+				return exampleVMResponse(r, exampleRelationSeries())
+			})
+			t.Cleanup(func() { httpmock.RegisterMatcherResponder(http.MethodPost, mock.BkBaseUrl, matcher, nil) })
+			gin.SetMode(gin.ReleaseMode)
+			route := gin.New()
+			group := route.Group("/")
+			group.Use(middleware.MetaData(&middleware.Params{}), middleware.JwtAuthMiddleware(false, "", nil))
+			RegisterRelation(endpoint.NewRegisterHandler(ctx, group))
+			for _, path := range []string{RelationPathResources, RelationPathResourcesRange} {
+				t.Run(path, func(t *testing.T) {
+					item := func(source string, targets []string, paths [][]string, matcher map[string]string) map[string]any {
+						return map[string]any{
+							"source_type": source, "target_types": targets, "path_resources": paths, "matcher": matcher,
+							"timestamp": 1700000000, "start_time": 1700000000, "end_time": 1700000120, "step": "1m", "look_back_delta": "5m",
+						}
+					}
+					healthy := item("node", []string{"pod"}, [][]string{{"node", "pod"}}, map[string]string{"node": "node-a"})
+					body, err := json.Marshal(map[string]any{"query_list": []any{
+						healthy,
+						item("service", []string{"service"}, [][]string{{"service", "service"}}, nil),
+						item("deployment", []string{"datasource"}, nil, map[string]string{"deployment": "web"}),
+						item("deployment", []string{"datasource", "replicaset"}, nil, map[string]string{"deployment": "web"}),
+						healthy,
+						item("deployment", []string{"replicaset"}, [][]string{{"deployment", "replicaset"}}, map[string]string{"deployment": "absent"}),
+					}})
+					require.NoError(t, err)
+					request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+					request.Header.Set("X-Bk-Scope-Space-Uid", spaceName)
+					response := httptest.NewRecorder()
+					route.ServeHTTP(response, request)
+					require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+					var decoded struct {
+						Data []struct {
+							Code          int               `json:"code"`
+							Message       string            `json:"message"`
+							Partial       bool              `json:"partial"`
+							PartialReason string            `json:"partial_reason"`
+							Results       []json.RawMessage `json:"results"`
+						} `json:"data"`
+					}
+					require.NoError(t, json.Unmarshal(response.Body.Bytes(), &decoded))
+					require.Len(t, decoded.Data, 6)
+					require.Equal(t, http.StatusOK, decoded.Data[0].Code, response.Body.String())
+					require.NotEmpty(t, decoded.Data[0].Results)
+					require.False(t, decoded.Data[0].Partial)
+					require.Equal(t, decoded.Data[0], decoded.Data[4], "failure and partial items must not contaminate later healthy items")
+					require.Equal(t, http.StatusBadRequest, decoded.Data[1].Code)
+					require.Contains(t, decoded.Data[1].Message, "required relation has no physical query route")
+					require.Empty(t, decoded.Data[1].Results)
+					require.Equal(t, http.StatusOK, decoded.Data[2].Code, decoded.Data[2].Message)
+					require.Empty(t, decoded.Data[2].Results)
+					require.Equal(t, !yolo, decoded.Data[2].Partial)
+					if !yolo {
+						require.Equal(t, "path_search_depth_limit", decoded.Data[2].PartialReason)
+					}
+					require.Equal(t, http.StatusOK, decoded.Data[3].Code, decoded.Data[3].Message)
+					require.NotEmpty(t, decoded.Data[3].Results)
+					require.Equal(t, !yolo, decoded.Data[3].Partial)
+					if !yolo {
+						require.Equal(t, "path_search_depth_limit", decoded.Data[3].PartialReason)
+					}
+					require.Equal(t, http.StatusOK, decoded.Data[5].Code)
+					require.Empty(t, decoded.Data[5].Results)
+					require.False(t, decoded.Data[5].Partial)
+				})
+			}
+		})
+	}
+}
+
 func runTopologyConsumerExampleHTTP(t *testing.T, yolo bool) {
 	t.Helper()
 	node, err := exec.LookPath("node")

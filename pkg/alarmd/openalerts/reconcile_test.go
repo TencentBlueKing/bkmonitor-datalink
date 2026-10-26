@@ -6,6 +6,7 @@ package openalerts
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -95,9 +96,6 @@ func TestHTTPReconcilerChecksBindingQueryAuthAndRetainsMetadata(t *testing.T) {
 func TestHTTPReconcilerRejectsPartialAndInvalidScope(t *testing.T) {
 	for name, mutate := range map[string]func(map[string]any){
 		"missing rows":   func(m map[string]any) { delete(m, "rows") },
-		"partial":        func(m map[string]any) { m["complete"] = false },
-		"partial Redis":  func(m map[string]any) { m["redis"] = map[string]any{"complete": false} },
-		"partial alerts": func(m map[string]any) { m["alerts"] = map[string]any{"complete": false} },
 		"other tenant":   func(m map[string]any) { m["tenantId"] = "other" },
 		"other strategy": func(m map[string]any) { m["strategyId"] = "other" },
 		"wrong key":      func(m map[string]any) { m["key"] = "other" },
@@ -130,6 +128,142 @@ func TestHTTPReconcilerRejectsPartialAndInvalidScope(t *testing.T) {
 				t.Fatal("invalid response accepted as a baseline")
 			}
 		})
+	}
+}
+
+// reconcileServer answers every reconcile with body, the tests' one target
+// otherwise, with room for answers past the reader's row cap.
+func reconcileServer(t *testing.T, body func() map[string]any) *HTTPReconciler {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/targets") {
+			_ = json.NewEncoder(w).Encode([]TargetBinding{testBinding()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(body())
+	}))
+	t.Cleanup(server.Close)
+	reader, err := NewHTTPReconciler(HTTPReconcilerOptions{BaseURL: server.URL + testLinkdAPIRoot, Client: server.Client(), Username: "u", Password: "p", Index: testIndex(), MaxResponseBytes: 16 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reader
+}
+
+// matchedRows is n matched rows of our source, alerts alerts each, with
+// fingerprints f00000, f00001, ...
+func matchedRows(n, alerts int) []any {
+	rows := make([]any, 0, n)
+	for i := 0; i < n; i++ {
+		fingerprint := fmt.Sprintf("f%05d", i)
+		list := make([]Alert, 0, alerts)
+		for j := 0; j < alerts; j++ {
+			list = append(list, Alert{AlertID: fmt.Sprintf("%s-%d", fingerprint, j), EventSourceID: "source", Fingerprint: fingerprint})
+		}
+		rows = append(rows, map[string]any{"fingerprint": fingerprint, "status": "matched", "alerts": list})
+	}
+	return rows
+}
+
+// An answer the link marked incomplete is read as far as it goes and marked
+// Truncated: every row it lists is real, and refusing it left a strategy
+// whose set the link cannot answer whole with no close at all.
+func TestAnIncompleteAnswerIsReadAndMarkedTruncated(t *testing.T) {
+	for name, mutate := range map[string]func(map[string]any){
+		"partial":        func(m map[string]any) { m["complete"] = false },
+		"partial Redis":  func(m map[string]any) { m["redis"] = map[string]any{"complete": false} },
+		"partial alerts": func(m map[string]any) { m["alerts"] = map[string]any{"complete": false} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader := reconcileServer(t, func() map[string]any { m := reconciliationJSON(); mutate(m); return m })
+			result, err := reader.Reconcile(consoleCtx(), keyA)
+			if err != nil || !result.Truncated {
+				t.Fatalf("result %+v err %v, want the rows read and marked truncated", result, err)
+			}
+			if len(result.Members) != 2 || len(result.Missing) != 1 || len(result.Suppressed) != 1 || len(result.Alerts) != 2 {
+				t.Fatalf("the rows received were not all kept: %+v", result)
+			}
+		})
+	}
+	reader := reconcileServer(t, reconciliationJSON)
+	if result, err := reader.Reconcile(consoleCtx(), keyA); err != nil || result.Truncated {
+		t.Fatalf("a complete answer reads as %+v, %v; want it complete", result, err)
+	}
+}
+
+// Past the reader's caps the answer is cut at a row boundary, and what is
+// kept is the first rows: 6000 alerts in rows of 3 keep 1666 rows (4998
+// alerts), and 10001 rows of one alert keep 10000. At the caps exactly,
+// nothing is cut.
+func TestAnAnswerPastTheCapsIsCutAtARowAndMarkedTruncated(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		rows, alerts         int
+		keptRows, keptAlerts int
+		truncated            bool
+	}{
+		{"6000 alerts", 2000, 3, 1666, 4998, true},
+		{"5000 alerts exactly", 1000, 5, 1000, 5000, false},
+		{"10001 rows", 10001, 0, 10000, 0, true},
+		{"10000 rows exactly", 10000, 0, 10000, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := reconcileServer(t, func() map[string]any {
+				m := reconciliationJSON()
+				if tc.alerts == 0 {
+					rows := make([]any, 0, tc.rows)
+					for i := 0; i < tc.rows; i++ {
+						rows = append(rows, map[string]any{"fingerprint": fmt.Sprintf("s%05d", i), "status": "redis_only", "alerts": []Alert{}})
+					}
+					m["rows"] = rows
+				} else {
+					m["rows"] = matchedRows(tc.rows, tc.alerts)
+				}
+				return m
+			})
+			result, err := reader.Reconcile(consoleCtx(), keyA)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kept := len(result.Members) + len(result.Suppressed)
+			if result.Truncated != tc.truncated || kept != tc.keptRows || len(result.Alerts) != tc.keptAlerts {
+				t.Fatalf("truncated %v, rows %d, alerts %d; want %v, %d, %d", result.Truncated, kept, len(result.Alerts),
+					tc.truncated, tc.keptRows, tc.keptAlerts)
+			}
+			if tc.alerts > 0 && (result.Members[0] != "f00000" || result.Members[kept-1] != fmt.Sprintf("f%05d", kept-1)) {
+				t.Fatalf("not the first rows kept: %s .. %s", result.Members[0], result.Members[kept-1])
+			}
+		})
+	}
+}
+
+// A cut answer is still checked whole: a contradiction in a row past the cut
+// refuses it, as one in a complete answer does.
+func TestACutAnswerThatContradictsItselfIsStillRefused(t *testing.T) {
+	for name, bad := range map[string]map[string]any{
+		"mismatched fingerprint": {"fingerprint": "late", "status": "matched", "alerts": []Alert{{AlertID: "x", EventSourceID: "source", Fingerprint: "other"}}},
+		"duplicate fingerprint":  {"fingerprint": "f00000", "status": "matched", "alerts": []Alert{{AlertID: "x", EventSourceID: "source", Fingerprint: "f00000"}}},
+		"unknown status":         {"fingerprint": "late", "status": "unknown", "alerts": []Alert{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader := reconcileServer(t, func() map[string]any {
+				m := reconciliationJSON()
+				m["complete"] = false
+				m["rows"] = append(matchedRows(2000, 3), bad)
+				return m
+			})
+			if result, err := reader.Reconcile(consoleCtx(), keyA); err == nil {
+				t.Fatalf("a cut answer with %s was accepted: truncated %v", name, result.Truncated)
+			}
+		})
+	}
+	reader := reconcileServer(t, func() map[string]any {
+		m := reconciliationJSON()
+		m["complete"], m["tenantId"] = false, "other"
+		return m
+	})
+	if _, err := reader.Reconcile(consoleCtx(), keyA); err == nil {
+		t.Fatal("a cut answer for another strategy was accepted")
 	}
 }
 

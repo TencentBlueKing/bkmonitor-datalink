@@ -10,16 +10,18 @@
 package nodata
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
-// An answer that may have been cut at the query service's group cap judges
-// nothing, produces no series and writes nothing. The same round read as
-// whole is the control: one host reported and one did not, so it judges the
-// silent one absent and stores both - which is exactly the reading a cut
-// answer must not get, because the silent host may be one the cap dropped.
+// An answer that may have been cut at the query service's group cap judges no
+// absence: the silent host may be one the cap dropped, so it gets no series
+// and keeps its memory. The host that reported is in the answer and is judged
+// present - a recovery series and its last-seen written - or a strategy whose
+// answer is always cut would never recover any group. The same round read as
+// whole is the control: there the silent one is judged absent.
 func TestAnAnswerThatMayHaveBeenCutJudgesNoAbsence(t *testing.T) {
 	// Two hosts of its own, in the documentation range: the target names
 	// both, the index knows both, the memory saw both last round, and the
@@ -48,12 +50,44 @@ func TestAnAnswerThatMayHaveBeenCutJudgesNoAbsence(t *testing.T) {
 	if cut.Outcome != OutcomeSkippedAnswerTruncated {
 		t.Fatalf("outcome = %q, want %q", cut.Outcome, OutcomeSkippedAnswerTruncated)
 	}
-	if len(cut.Series) != 0 || cut.Mutation != nil {
-		t.Fatalf("a round whose answer may have been cut produced %d series and mutation %+v, want neither",
-			len(cut.Series), cut.Mutation)
+	reported := hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"}).Key()
+	silent := hostTargetGroup(HostIdentity{IP: "192.0.2.2", CloudID: "0"}).Key()
+	values := map[string]int{}
+	for _, series := range cut.Series {
+		values[series.Group.Key()] = series.Value
 	}
-	if cut.Facts != (AbsenceFacts{}) {
-		t.Fatalf("a round that judged nothing reported absence facts %+v", cut.Facts)
+	if want := map[string]int{reported: PresentValue, WholeItemGroup().Key(): PresentValue}; !reflect.DeepEqual(values, want) {
+		t.Fatalf("a cut round produced series %v, want the reporting host and the whole item present, nothing for %s",
+			values, silent)
+	}
+	if cut.Mutation == nil || cut.Mutation.PresentAsOf != 1000 || cut.Mutation.GroupCount != 2 {
+		t.Fatalf("a cut round wrote %+v, want both hosts kept and the reporting one present as of 1000", cut.Mutation)
+	}
+	for _, delta := range cut.Mutation.Set {
+		if delta.GroupKey == silent && (delta.Absent == nil || delta.Absent.LastSeen != 940 || delta.Absent.FirstAbsent != 0) {
+			t.Fatalf("the silent host was written as %+v, want it last seen at 940 and not absent", delta.Absent)
+		}
+	}
+	if cut.Facts.Absent != 0 || cut.Facts.Unavailable != 1 {
+		t.Fatalf("a cut round reported absence facts %+v, want one unavailable and none absent", cut.Facts)
+	}
+}
+
+// A cut round where nothing reported writes nothing and says nothing.
+func TestACutAnswerWithNothingPresentWritesNothing(t *testing.T) {
+	input := planSlotInput(storedSnapshot(t, 940,
+		execution.NoDataGroupMemory{GroupKey: hostTargetGroup(HostIdentity{IP: "192.0.2.1", CloudID: "0"}).Key(), LastSeen: 940},
+	))
+	input.Scope = hostScope("192.0.2.1|0")
+	input.KnownHosts = knownHosts("192.0.2.1|0")
+	input.AnswerTruncated = true
+	cut, err := EvaluatePlanSlot(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cut.Outcome != OutcomeSkippedAnswerTruncated || len(cut.Series) != 0 || cut.Mutation != nil {
+		t.Fatalf("a cut round with nothing present = %q with %d series and mutation %v, want neither",
+			cut.Outcome, len(cut.Series), cut.Mutation != nil)
 	}
 }
 

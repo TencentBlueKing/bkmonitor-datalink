@@ -50,6 +50,9 @@ type absentTestLink struct {
 	failAfter int
 	alerts    []openalerts.Alert
 	alertsErr error
+	// truncated marks the reconcile answer cut (openalerts.Reconciliation.
+	// Truncated): alerts is then the part received.
+	truncated bool
 	records   map[string]openalerts.AlertRecord
 	reads     int
 	// perRound, when set, is how many pages a round has time for: the page
@@ -82,7 +85,7 @@ func (link *absentTestLink) Reconcile(context.Context, openalerts.StrategyKey) (
 	if link.alertsErr != nil {
 		return openalerts.Reconciliation{}, link.alertsErr
 	}
-	return openalerts.Reconciliation{EventSourceID: "native", Alerts: link.alerts}, nil
+	return openalerts.Reconciliation{EventSourceID: "native", Alerts: link.alerts, Truncated: link.truncated}, nil
 }
 
 func (link *absentTestLink) AlertRecord(_ context.Context, _, alertID string) (openalerts.AlertRecord, error) {
@@ -469,20 +472,88 @@ func TestAnUnreachableLinkRefusesTheRoundByName(t *testing.T) {
 	}
 }
 
-// The link's own health, read off the same response as the roster.
-func TestALinkWhoseMaintenanceFailedRefusesTheRound(t *testing.T) {
-	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
-	fixture.link.pages[0].Health.Error = "discovery_failed"
-	ctx := context.Background()
-	fixture.loop.step(ctx)
-	fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
-	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
-	fixture.loop.step(ctx)
-	if len(fixture.writer.batches) != 0 || fixture.loop.Rounds()[absentalerts.RefusalLinkUnhealthy] != 2 {
-		t.Fatalf("an unhealthy link was decided on: %+v", fixture.loop.Rounds())
+// A link that says its own maintenance is failing, never succeeded or is
+// behind still has its roster decided on: absence comes from the snapshot,
+// an old roster can only miss a strategy, and a close for an alert already
+// gone is a no-op on the link. Refusing here once deadlocked a deployment:
+// one strategy's flood of alerts broke the link's maintenance, and the close
+// that would have removed the flood was refused every round. The roster in
+// each case still lists strategy 10, which the snapshot no longer does.
+func TestALinkWhoseMaintenanceIsUnhealthyStillHasItsRosterClosed(t *testing.T) {
+	cases := []struct {
+		name   string
+		health func(*openalerts.LinkHealth, time.Time)
+		word   string
+	}{
+		{"latest discovery failed", func(h *openalerts.LinkHealth, _ time.Time) { h.Error = "discovery_failed" },
+			absentalerts.LinkDiscoveryFailing},
+		{"never succeeded", func(h *openalerts.LinkHealth, _ time.Time) { h.LastSuccess = time.Time{} },
+			absentalerts.LinkDiscoveryNeverSucceeded},
+		{"last success an hour ago", func(h *openalerts.LinkHealth, now time.Time) { h.LastSuccess = now.Add(-time.Hour) },
+			absentalerts.LinkDiscoveryStale},
 	}
-	if fixture.loop.Difference()["link_health_age_seconds"] == 0 {
-		t.Fatal("the refused round did not say how old the link's last success was")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+			ctx := context.Background()
+			// Both rounds read the unhealthy link: the first starts the grace,
+			// the second, past it under a new observation, decides.
+			for round := 0; round < 2; round++ {
+				if round == 1 {
+					fixture.now = fixture.now.Add(absentCloseGrace + time.Minute)
+					fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 100)
+				}
+				for i := range fixture.link.pages {
+					c.health(&fixture.link.pages[i].Health, fixture.now)
+				}
+				health := fixture.link.pages[0].Health
+				if word := absentalerts.LinkHealthWord(health.LastSuccess, health.Error, fixture.now, linkHealthMaxAge); word != c.word {
+					t.Fatalf("round %d does not read the link word the case names: %q, want %q", round, word, c.word)
+				}
+				fixture.loop.step(ctx)
+			}
+			if fixture.loop.Rounds()[absentalerts.RefusalNone] != 2 {
+				t.Fatalf("a round with an unhealthy link did not decide: %+v", fixture.loop.Rounds())
+			}
+			if len(fixture.writer.batches) != 1 || fixture.loop.Stats()[absentalerts.OutcomeCloseSent] != 1 {
+				t.Fatalf("strategy 10's alert was not closed: batches %+v, stats %+v", fixture.writer.batches, fixture.loop.Stats())
+			}
+		})
+	}
+}
+
+// Rows the link listed that name no strategy of this binding are skipped by
+// the reader and counted; the walk they came in still closes what it read.
+func TestInvalidRosterRowsAreCountedAndTheWalkStillCloses(t *testing.T) {
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	fixture.link.pages[0].Invalid, fixture.link.pages[1].Invalid = 2, 1
+	fixture.mature(context.Background())
+	if len(fixture.writer.batches) != 1 || fixture.loop.Stats()[absentalerts.OutcomeCloseSent] != 1 {
+		t.Fatalf("strategy 10 was not closed beside invalid rows: %+v", fixture.loop.Stats())
+	}
+	if got := fixture.loop.Difference()["roster_invalid"]; got != 3 {
+		t.Fatalf("roster_invalid = %d, want the 3 rows the walk skipped", got)
+	}
+}
+
+// A strategy whose alerts the link answered cut still has the alerts it
+// listed closed, and says the answer was cut. When none listed is ours, the
+// page does not say the strategy has none of ours: the rest were not read.
+func TestACutAnswerClosesWhatItListsAndSaysItWasCut(t *testing.T) {
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	fixture.link.truncated = true
+	fixture.mature(context.Background())
+	stats := fixture.loop.Stats()
+	if len(fixture.writer.batches) != 1 || stats[absentalerts.OutcomeCloseSent] != 1 || stats[absentalerts.OutcomeEvidenceTruncated] != 1 {
+		t.Fatalf("a cut answer did not close what it listed and count the cut: batches %d, stats %+v", len(fixture.writer.batches), stats)
+	}
+
+	foreign := newAbsentFixture(t, []openalerts.Alert{{AlertID: "theirs", EventSourceID: "another-source", Fingerprint: "1123456789abcdef0123456789abcdef"}})
+	foreign.link.truncated = true
+	foreign.mature(context.Background())
+	execution := absentRowOf(t, readAbsentPage(t, foreign.loop, fleet.AbsentCandidateQuery{}), "10").Execution
+	if len(foreign.writer.batches) != 0 || execution == nil || execution.Word != absentalerts.OutcomeEvidenceTruncated {
+		t.Fatalf("a cut answer with nothing of ours listed reads as %+v (batches %d), want evidence_truncated", execution, len(foreign.writer.batches))
 	}
 }
 

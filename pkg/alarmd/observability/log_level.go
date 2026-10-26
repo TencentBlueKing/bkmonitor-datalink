@@ -116,7 +116,7 @@ var warnMaintenanceReasons = makeReasonSet([]ReasonCode{
 // deferred, within its grace, or refused by design.
 var warnAbsentCloseReasons = makeReasonSet([]ReasonCode{
 	"index_unreadable", "evidence_unavailable", "send_failed", "memory_full", "link_unavailable",
-	"link_unhealthy", "snapshot_unusable", "snapshot_empty", "snapshot_stale",
+	"snapshot_unusable", "snapshot_empty", "snapshot_stale",
 })
 
 // ReasonLogLevel is the level a result that is neither a success nor a

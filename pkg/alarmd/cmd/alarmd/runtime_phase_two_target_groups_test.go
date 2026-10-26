@@ -16,11 +16,10 @@ import (
 )
 
 // A replica's target group endpoint says, in one read, that its refreshes
-// fail, since when and why, and its metrics count every group it holds as
-// served past them: here a group whose key comes to hold another type,
-// which Redis answers WRONGTYPE. A refresh reads every group or none, so the
-// group beside it is served past the failure too. Read again, the failure
-// clears.
+// fail, since when and why, and its metrics count the groups it holds past
+// a failed read: here a group whose key comes to hold another type, which
+// Redis answers WRONGTYPE. That group alone is served past the failure; the
+// group beside it is read. Read again, the failure clears.
 func TestTheTargetGroupEndpointSaysSinceWhenAndWhyItsRefreshesFail(t *testing.T) {
 	_, client := startPhaseTwoRedis(t)
 	ctx := context.Background()
@@ -76,7 +75,7 @@ func TestTheTargetGroupEndpointSaysSinceWhenAndWhyItsRefreshesFail(t *testing.T)
 		t.Fatalf("evidence with group 2 answered WRONGTYPE = %+v", writer)
 	}
 	reading := targetGroupReading(groups.Health())
-	if reading.Groups["failing"] != 2 || reading.Groups["loaded"] != 2 || reading.Groups["referenced"] != 2 || !reading.RefreshFailed {
+	if reading.Groups["failing"] != 1 || reading.Groups["loaded"] != 2 || reading.Groups["referenced"] != 2 || !reading.RefreshFailed {
 		t.Fatalf("metric reading with group 2 answered WRONGTYPE = %+v", reading)
 	}
 
@@ -96,14 +95,15 @@ func TestTheTargetGroupEndpointSaysSinceWhenAndWhyItsRefreshesFail(t *testing.T)
 
 // Each count of the store's health lands under its own name, and the state
 // says a failed refresh before a store with nothing referenced: every count
-// differs here, so none can stand in for another. While the refreshes fail
-// every group held is failing, and the evidence says since when and why.
+// differs here, so none can stand in for another. failing is the store's
+// count of groups held past a failed read, and the evidence says since when
+// and why.
 func TestTargetGroupHealthIsReadUnderItsOwnNames(t *testing.T) {
 	at := time.Unix(10_000, 0)
-	health := cmdbcache.GroupHealth{Referenced: 9, Loaded: 5, Unavailable: 2,
+	health := cmdbcache.GroupHealth{Referenced: 9, Loaded: 5, Unavailable: 2, Failing: 6,
 		RefreshFailed: true, FailingSince: at.Add(-300 * time.Second), FailureReason: "transport"}
 	reading := targetGroupReading(health)
-	want := map[string]int{"referenced": 9, "loaded": 5, "unavailable": 2, "failing": 7}
+	want := map[string]int{"referenced": 9, "loaded": 5, "unavailable": 2, "failing": 6}
 	for state, count := range want {
 		if reading.Groups[state] != count {
 			t.Fatalf("%s = %d, want %d (%+v)", state, reading.Groups[state], count, reading)

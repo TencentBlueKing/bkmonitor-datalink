@@ -171,8 +171,12 @@ func readLinkdAlerts(ctx context.Context, console linkdConsoleReader, p obchanne
 		if answer.Strategy.Alerts == nil {
 			answer.Strategy.Alerts = []openalerts.Alert{}
 		}
-		return obchannel.Outcome{Value: answer, Complete: true, Limitations: []string{
-			"Active alerts only: a recovered or closed alert is no longer listed. Read it by alert_id or source_alert_id; an empty strategy does not mean closed."}}
+		limitations := []string{
+			"Active alerts only: a recovered or closed alert is no longer listed. Read it by alert_id or source_alert_id; an empty strategy does not mean closed."}
+		if result.Truncated {
+			limitations = append(limitations, "Linkd's answer was incomplete or over 10000 rows / 5000 active alerts: only the first part is listed, and an alert not listed may still be active.")
+		}
+		return obchannel.Outcome{Value: answer, Complete: !result.Truncated, Limitations: limitations}
 	}
 	answer.Mode = "alert"
 	query := url.Values{"bk_tenant_id": {tenant}, "event_source_id": {binding.EventSourceID}}

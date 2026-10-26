@@ -125,11 +125,16 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 	}
 
 	slot := PlanSlotResult{Outcome: outcome, Facts: result.Facts}
-	if outcome != OutcomeEvaluated {
+	partial := outcome == OutcomeSkippedQueryNotFull || outcome == OutcomeSkippedAnswerTruncated
+	if outcome != OutcomeEvaluated && (!partial || !judgedPresent(result, input.EvaluationTime)) {
 		// A round that judged nothing writes nothing. The memory it would write
 		// is the memory it started with, and writing it back would burn a state
 		// mutation to store what is already there - but more importantly, the
 		// absence clocks must not move on evidence the round did not have.
+		//
+		// A partial round that judged groups present (A1) goes on: their
+		// NORMAL and their last-seen are evidence it had. Its unavailable
+		// groups produce no series and keep their memory as loaded.
 		return slot, nil
 	}
 	slot.Series, err = SyntheticSeriesFor(SyntheticInput{
@@ -144,8 +149,14 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 	}
 
 	groups := storedGroups(result.Memory)
+	rosterVersion := result.Roster.Version
+	if partial && input.Snapshot.RosterVersion != "" {
+		// A partial round decided nothing about the expected set, so it does
+		// not restate which derivation the record was judged against.
+		rosterVersion = input.Snapshot.RosterVersion
+	}
 	presentAsOf := presentAsOf(groups, input.Snapshot.PresentAsOf, input.EvaluationTime, result.WholeItemPresent)
-	if sameStoredGroups(groups, input.Snapshot.Groups) && input.Snapshot.RosterVersion == result.Roster.Version &&
+	if sameStoredGroups(groups, input.Snapshot.Groups) && input.Snapshot.RosterVersion == rosterVersion &&
 		presentAsOf == input.Snapshot.PresentAsOf &&
 		result.TrackingExhaustedAt == input.Snapshot.TrackingExhaustedAt {
 		// Nothing moved. Sending the mutation anyway would be correct and
@@ -178,7 +189,7 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 		ExpectedMarkerRevision: input.Snapshot.MarkerRevision,
 		ApplyVersion:           input.ApplyVersion,
 		ScheduleRevision:       input.ScheduleRevision,
-		RosterVersion:          result.Roster.Version,
+		RosterVersion:          rosterVersion,
 		PresentAsOf:            presentAsOf,
 		Memory:                 groups,
 		Loaded:                 input.Snapshot.Groups,
@@ -194,6 +205,22 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 	}
 	slot.Mutation = &mutation
 	return slot, nil
+}
+
+// judgedPresent says a partial round (A1) saw a group of this item's own
+// this round: a last-seen it wrote now, or the whole item present. With
+// recovery enabled each such group also carries its NORMAL; with it disabled
+// the last-seen is still news.
+func judgedPresent(result AbsenceResult, evaluationTime int64) bool {
+	if result.WholeItemPresent {
+		return true
+	}
+	for _, entry := range result.Memory {
+		if entry.FirstAbsent == 0 && entry.LastSeen == evaluationTime {
+			return true
+		}
+	}
+	return false
 }
 
 // presentAsOf is the round this Plan last had data in.

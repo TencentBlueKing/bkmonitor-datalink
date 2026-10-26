@@ -68,9 +68,9 @@ var removedFamilies = []string{
 	// How long a source change had waited for a second identical read. A
 	// change is published by the round that reads it, so nothing waits.
 	"source_pending_confirmation_age_seconds",
-	// Per-group failure detail of the target group store: a refresh reads
-	// every group or none, and the replica's dependencies say since when and
-	// why the refreshes fail.
+	// Per-group failure detail of the target group store: target_group_groups
+	// counts the groups held past a failed read (failing), and the replica's
+	// dependencies say since when and why the refreshes fail.
 	"target_group_unanswered_reads_total", "target_group_oldest_failing_seconds",
 	// The inference that the sets were keyed another way, from none of this
 	// process's alerts being found in them: one alert the link closed on its

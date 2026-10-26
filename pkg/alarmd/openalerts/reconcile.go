@@ -21,7 +21,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
-// Reconciliation is a complete alert-store observation. Missing and Suppressed
+// Reconciliation is an alert-store observation. Missing and Suppressed
 // are the index differences to preserve across ordinary SET reads.
 type Reconciliation struct {
 	// EventSourceID is the source of the target that answered: this
@@ -31,7 +31,25 @@ type Reconciliation struct {
 	Missing       []string
 	Suppressed    []string
 	Alerts        []Alert
+	// Truncated is an answer the link marked incomplete, or one past this
+	// reader's caps (maxReconcileRows rows, maxReconcileAlerts active
+	// alerts): what is listed is what was received up to the caps, every row
+	// of it checked as a complete answer's is, so each listed alert is a real
+	// active one; what is not listed may still be open. It may add to what is
+	// known and act on what it lists - a close of a listed alert, bounded,
+	// with the rest left for a later round - and never says that anything
+	// unlisted is gone.
+	Truncated bool
 }
+
+// The caps on one reconciliation this reader keeps. An answer over either is
+// cut at a row boundary and marked Truncated rather than refused: refusing
+// it left a strategy with a flood of alerts with no close at all, while the
+// rows received are real and closing them is what shrinks the flood.
+const (
+	maxReconcileRows   = 10000
+	maxReconcileAlerts = 5000
+)
 
 // Severity is optional in older Console responses. Its absence never prevents
 // membership recovery, but cannot be used as a fabricated close severity.
@@ -457,12 +475,12 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 		}
 	}
 	reader.refreshKeying(ctx, b)
-	response, err := reader.askReconcile(ctx, b, key)
+	response, truncated, err := reader.askReconcile(ctx, b, key)
 	if err == nil && reused && !sameTarget(b, response.Target) {
 		if b, err = reader.resolve(ctx); err != nil {
 			return Reconciliation{}, err
 		}
-		response, err = reader.askReconcile(ctx, b, key)
+		response, truncated, err = reader.askReconcile(ctx, b, key)
 	}
 	if err != nil {
 		return Reconciliation{}, err
@@ -470,9 +488,13 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 	if !sameTarget(b, response.Target) || response.TenantID != key.TenantID || response.StrategyID != key.StrategyID || response.Key != b.KeyPrefix+":"+key.TenantID+":"+key.StrategyID {
 		return Reconciliation{}, errors.New("alarmd openalerts: reconciliation identity mismatch")
 	}
-	result := Reconciliation{EventSourceID: b.EventSourceID}
+	result := Reconciliation{EventSourceID: b.EventSourceID, Truncated: truncated}
 	seen := make(map[string]struct{}, len(response.Rows))
-	activeCount := 0
+	// Every row received is checked, kept or not: an answer that contradicts
+	// itself - a repeated fingerprint, an alert of another fingerprint or
+	// source, a status that does not match its alerts - is not one to act
+	// on any part of. Only what is kept is cut, at a row boundary.
+	rows, active, full := 0, 0, false
 	for _, row := range response.Rows {
 		if row.Fingerprint == "" || len(row.Fingerprint) > 4096 || row.Alerts == nil {
 			return Reconciliation{}, ErrIncomplete
@@ -482,8 +504,7 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 		}
 		seen[row.Fingerprint] = struct{}{}
 		for _, alert := range row.Alerts {
-			activeCount++
-			if activeCount > 5000 || alert.AlertID == "" || alert.Fingerprint != row.Fingerprint || !containsSource(b.Sources, alert.EventSourceID) {
+			if alert.AlertID == "" || alert.Fingerprint != row.Fingerprint || !containsSource(b.Sources, alert.EventSourceID) {
 				return Reconciliation{}, ErrIncomplete
 			}
 		}
@@ -492,18 +513,26 @@ func (reader *HTTPReconciler) reconcile(ctx context.Context, key StrategyKey) (R
 			if len(row.Alerts) == 0 {
 				return Reconciliation{}, ErrIncomplete
 			}
-			result.Members = append(result.Members, row.Fingerprint)
-			result.Alerts = append(result.Alerts, row.Alerts...)
-			if row.Status == "missing_redis" {
-				result.Missing = append(result.Missing, row.Fingerprint)
-			}
 		case "redis_only":
 			if len(row.Alerts) != 0 {
 				return Reconciliation{}, ErrIncomplete
 			}
-			result.Suppressed = append(result.Suppressed, row.Fingerprint)
 		default:
 			return Reconciliation{}, ErrIncomplete
+		}
+		if full || rows == maxReconcileRows || active+len(row.Alerts) > maxReconcileAlerts {
+			full, result.Truncated = true, true
+			continue
+		}
+		rows, active = rows+1, active+len(row.Alerts)
+		if row.Status == "redis_only" {
+			result.Suppressed = append(result.Suppressed, row.Fingerprint)
+			continue
+		}
+		result.Members = append(result.Members, row.Fingerprint)
+		result.Alerts = append(result.Alerts, row.Alerts...)
+		if row.Status == "missing_redis" {
+			result.Missing = append(result.Missing, row.Fingerprint)
 		}
 	}
 	return result, nil
@@ -529,17 +558,19 @@ type reconcileResponse struct {
 	} `json:"rows"`
 }
 
-// askReconcile is one reconcile request for the strategy against b.
-func (reader *HTTPReconciler) askReconcile(ctx context.Context, b TargetBinding, key StrategyKey) (reconcileResponse, error) {
+// askReconcile is one reconcile request for the strategy against b, and
+// whether the link marked its answer incomplete. An answer without rows is
+// refused: there is nothing in it to act on.
+func (reader *HTTPReconciler) askReconcile(ctx context.Context, b TargetBinding, key StrategyKey) (reconcileResponse, bool, error) {
 	var response reconcileResponse
 	query := url.Values{"event_source_id": {b.EventSourceID}, "hook_name": {b.HookName}, "bk_tenant_id": {key.TenantID}, "strategy_id": {key.StrategyID}}
 	if err := reader.get(ctx, "reconcile", query, &response); err != nil {
-		return reconcileResponse{}, err
+		return reconcileResponse{}, false, err
 	}
-	if !response.Complete || !response.Redis.Complete || !response.Alerts.Complete || response.Rows == nil || len(response.Rows) > 10000 {
-		return reconcileResponse{}, ErrIncomplete
+	if response.Rows == nil {
+		return reconcileResponse{}, false, ErrIncomplete
 	}
-	return response, nil
+	return response, !response.Complete || !response.Redis.Complete || !response.Alerts.Complete, nil
 }
 
 // transportError is a Console request that got no answer, named by the

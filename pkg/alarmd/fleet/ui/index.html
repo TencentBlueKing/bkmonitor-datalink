@@ -798,7 +798,7 @@ var CHECK = {
   IDENTITY_UNMATCHED:    '{n} 个对象的查询有数据，但数据的身份标签建不出策略要的对象（{s} 条策略）：数据在，但身份标签对不上，请策略或采集方对齐身份标签',
   QUIET:                 '{n} 个对象是分组的事件计数，这一轮查询完整、没有任何分组在问的范围里有事件（{s} 条策略）：检测在跑，事件流在静止，不是无数据',
   LOG_COUNT_EMPTY:       '{n} 个对象是日志计数（分组或不分组），查询完整但回答为空（{s} 条策略）：空；日志计数不补零，安静和缺数据看起来一样——不当作无数据',
-  ANSWER_TRUNCATED:      '{n} 个对象最近一轮回答可能被 UQ 截断（{s} 条策略）：某个分组维度在一层里恰好有一万个取值，是 UQ 每层的分组上限；回来的分组照常做阈值检测，配了无数据检测的这一轮整轮不判无数据（SKIPPED_ANSWER_TRUNCATED），回来的分组也不判',
+  ANSWER_TRUNCATED:      '{n} 个对象最近一轮回答可能被 UQ 截断（{s} 条策略）：某个分组维度在一层里恰好有一万个取值，是 UQ 每层的分组上限；回来的分组照常做阈值检测，配了无数据检测的这一轮不判缺失（SKIPPED_ANSWER_TRUNCATED），回来的分组照常判为有数据、可恢复',
   SERIES_CHURNING:       '{n} 个对象的序列活不过检测窗口（{s} 条策略），恢复判不了',
   SERIES_SPARSER_THAN_WINDOW: '{n} 个对象的序列上报间隔比检测窗口稀（{g} 种间隔，{s} 条策略）：窗口永远填不满，但恢复照常判定、与 Python 同一时刻恢复，只是不会出 NORMAL——按配置工作，不是故障',
   SERIES_DATA_MISSING:   '{n} 个对象恢复所需的老序列数据不完整（{s} 条策略），恢复判不了——是数据没到还是 alarmd 没取到还分不出',
@@ -1678,7 +1678,7 @@ var CONSOLE_STATE = {
   not_configured: '未配置告警链路 Console（phase_two.linkd.console_url）：集合校准、已停用/删除策略的告警关闭都不运行',
   not_called: '已配置，本副本还没调用过',
   unreadable: '已配置但读不到：两项关闭每轮都在尝试、都没成',
-  link_unhealthy: '读得到，但 linkd 自报集合维护不健康：已停用/删除策略的关闭每轮拒绝（link_unhealthy）',
+  link_unhealthy: '读得到，但 linkd 自报集合维护不健康：名册可能缺策略，已停用/删除策略的关闭照常按名册执行、可能漏关（link_unhealthy）',
   reachable: '可达'
 };
 var CONSOLE_OP = { roster: '名册', reconcile: '校准对账', alert_record: '单条告警记录', event_source: '事件源键规则', alert_read: '运维告警查询' };
@@ -2331,7 +2331,7 @@ var SELECTOR_REASON = {
   model_representation_unresolved: '按模型实例（model_inst_id）给出的静态成员，主机缓存里查不到对应主机身份——不是主机模型，或缓存没带规范身份字段',
   tenant_mismatch: '分组不是计划所属租户的（或没写租户）：按地址（ip_cloud）选的目标只读本租户的分组',
   address_unresolved: '这些主机在主机缓存里都没有本租户的目标地址（target_address）：写入方还没按完整地址刷新，或是别的租户的主机；不是空目标',
-  address_ambiguous: '有成员所在的地址被本租户另一台主机共用，地址指不出是哪台，这些成员不计入'
+  address_ambiguous: '有成员所在的地址被本租户另一台主机共用，地址指不出是哪台：纳入的这些成员不计入；排除的则排除整个地址，共用它的主机一并排除'
 };
 function targetResolutionWords(resolution) {
   var parts = [RESOLUTION_STATE[resolution.state] || resolution.state];

@@ -299,11 +299,11 @@ func TestARefusedRoundLeavesTheRowsAndSaysHowOldTheyAre(t *testing.T) {
 	fixture.mature(context.Background())
 	decided := fixture.now
 	fixture.now = fixture.now.Add(absentCloseInterval)
-	fixture.link.pages[0].Health.Error = "discovery_failed"
+	fixture.link.rosterErr = errors.New("console down")
 	fixture.loop.step(context.Background())
 
 	page := readAbsentPage(t, fixture.loop, fleet.AbsentCandidateQuery{})
-	if page.LastRound == nil || page.LastRound.Refusal != absentalerts.RefusalLinkUnhealthy || page.LastRound.At != stamp(fixture.now) {
+	if page.LastRound == nil || page.LastRound.Refusal != absentalerts.RefusalLinkUnavailable || page.LastRound.At != stamp(fixture.now) {
 		t.Fatalf("the refused round is not the latest round: %+v", page.LastRound)
 	}
 	if page.Table == nil || page.Table.At != stamp(decided) || page.Table.CloseDecided != 1 {

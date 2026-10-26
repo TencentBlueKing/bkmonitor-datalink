@@ -54,7 +54,8 @@ func newLinkdConsoleCollector() *linkdConsoleCollector {
 				"the close of disabled or deleted strategies' alerts runs; by design on a deployment whose events "+
 				"all go the Python-compatible way), not_called, unreadable (the latest call of some operation "+
 				"failed), link_unhealthy (the Console answered and the link says its own set maintenance is "+
-				"failing, never succeeded or is behind; the close refuses every round), reachable, and off_role, a cell on every "+
+				"failing, never succeeded or is behind; its roster may then miss strategies the close would take, "+
+				"and the close still runs on what it lists), reachable, and off_role, a cell on every "+
 				"process: 1 on one with neither the control nor the worker role (the rest 0), else 0.",
 			[]string{"state"}, nil),
 		calls: prometheus.NewDesc(prometheus.BuildFQName("", metricSubsystem, "linkd_console_calls_total"),

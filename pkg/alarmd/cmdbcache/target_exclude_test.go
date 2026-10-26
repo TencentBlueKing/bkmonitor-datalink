@@ -472,7 +472,8 @@ func TestIPCloudAbsentExclusionsStayUsableAndUnreadableAddressesDoNot(t *testing
 	}{
 		{"deleted hosts", "", targetplan.ReasonExcludedAbsent, []string{"101", "198", "199"}, false},
 		{"other tenant sharing address", addressedHost(104, "tenant-b", "192.0.2.1|0", 3, ""), targetplan.ReasonNone, []string{"101"}, false},
-		{"same tenant sharing address", addressedHost(104, "tenant-a", "192.0.2.1|0", 2, ""), targetplan.ReasonAddressAmbiguous, []string{"101"}, true},
+		// A same-tenant shared address is TestAnExcludedSharedAddressExcludesEveryHostAtItAndAdmitsTheRest:
+		// here 101 is also included, and its include side drops it as shared.
 		{"present host without address", addressedHost(104, "tenant-a", "", 2, ""), targetplan.ReasonAddressUnresolved, []string{"101", "104"}, true},
 		{"present host in another tenant", addressedHost(104, "tenant-b", "192.0.2.4|0", 3, ""), targetplan.ReasonAddressUnresolved, []string{"101", "104"}, true},
 		// The writer publishes host records from typed structures; one the
@@ -504,6 +505,58 @@ func TestIPCloudAbsentExclusionsStayUsableAndUnreadableAddressesDoNot(t *testing
 				t.Fatalf("absent members counted as %d, want %d", exclusion.Dropped, len(test.excluded)-1)
 			}
 		})
+	}
+}
+
+// One excluded host shares its address with another host of the tenant.
+// The address names neither, so excluding it excludes both, and the rest of
+// the plan is still admitted: refusing the exclusion made the whole strategy
+// admit nothing over one shared address. On the include side the same
+// sharing still leaves the member out, and an excluded host with no address
+// still blocks the plan.
+func TestAnExcludedSharedAddressExcludesEveryHostAtItAndAdmitsTheRest(t *testing.T) {
+	now := time.Unix(1000, 0)
+	clock := func() time.Time { return now }
+	records := map[int]string{
+		101: addressedHost(101, "tenant-a", "192.0.2.1|0", 2, ""),
+		102: addressedHost(102, "tenant-a", "192.0.2.2|0", 2, ""),
+		103: addressedHost(103, "tenant-a", "192.0.2.3|0", 2, ""),
+		104: addressedHost(104, "tenant-a", "192.0.2.1|0", 2, ""),
+		105: addressedHost(105, "tenant-a", "", 2, ""),
+	}
+	hosts := hostStore(t, clock, hostFields(records), nil)
+	plan := func(static, excluded []string) *contract.TargetPlanV1 {
+		return &contract.TargetPlanV1{SchemaVersion: 1, ModelID: "cw-Host", Rule: contract.TargetPlanRuleIPCloud,
+			Identity: contract.TargetPlanIdentityV1{Dimensions: []string{"bk_target_ip", "bk_target_cloud_id"}, Address: true}, TenantID: "tenant-a",
+			StaticKeys: []string{}, StaticHosts: static, ExcludeHosts: excluded}
+	}
+	resolver := NewTargetResolver(nil, hosts, clock)
+
+	got := resolver.Resolve(context.Background(), plan([]string{"102", "103"}, []string{"101"}), time.Minute)
+	exclusion := selector(got, targetplan.SelectorKindExclude, "cw-Host")
+	if got.ExclusionUnavailable || got.State != targetplan.ResolutionComplete || exclusion.State != targetplan.SelectorOK ||
+		exclusion.Reason != targetplan.ReasonAddressAmbiguous {
+		t.Fatalf("a shared excluded address blocked the plan or went unnamed: %+v exclusion %+v", got, exclusion)
+	}
+	if !reflect.DeepEqual(got.Members(), []string{"192.0.2.2|0", "192.0.2.3|0"}) {
+		t.Fatalf("the rest of the plan was not admitted: %v", got.Members())
+	}
+	if _, found := got.Excluded["192.0.2.1|0"]; !found || got.Contains("192.0.2.1|0") {
+		t.Fatalf("the shared address, and so hosts 101 and 104, was not excluded: excluded %v", got.Excluded)
+	}
+
+	// Include side unchanged: the shared address alone is still no target.
+	got = resolver.Resolve(context.Background(), plan([]string{"104"}, nil), time.Minute)
+	if include := selector(got, targetplan.SelectorKindStatic, "cw-Host"); include.State != targetplan.SelectorUnavailable ||
+		include.Reason != targetplan.ReasonAddressAmbiguous || got.Contains("192.0.2.1|0") {
+		t.Fatalf("an included shared address was admitted: %+v include %+v", got, include)
+	}
+
+	// An excluded host the cache has no address for still blocks the plan.
+	got = resolver.Resolve(context.Background(), plan([]string{"102", "103"}, []string{"105"}), time.Minute)
+	if exclusion := selector(got, targetplan.SelectorKindExclude, "cw-Host"); !got.ExclusionUnavailable ||
+		exclusion.Reason != targetplan.ReasonAddressUnresolved || len(got.Members()) != 0 {
+		t.Fatalf("an unresolvable exclusion admitted members: %+v exclusion %+v", got, exclusion)
 	}
 }
 

@@ -630,9 +630,9 @@ func endpointState(endpoint Endpoint) string {
 	case !endpoint.Configured:
 		return OverviewNotConfigured
 	case endpoint.Console != nil && (endpoint.Console.State == LinkdConsoleUnreadable || endpoint.Console.State == LinkdConsoleLinkUnhealthy):
-		// The Console's own word: an operation whose latest call failed, or
-		// a link that says it is behind, fails a close whatever answered
-		// last.
+		// The Console's own word: an operation whose latest call failed
+		// fails a close whatever answered last, and a link that says it is
+		// behind lists a roster that may miss strategies.
 		return OverviewAttention
 	case endpoint.LastFailureAgeSeconds != nil && (endpoint.LastSuccessAgeSeconds == nil || *endpoint.LastFailureAgeSeconds < *endpoint.LastSuccessAgeSeconds):
 		return OverviewAttention

@@ -61,11 +61,13 @@ const absentCloseAlertBatch = 64
 // not label them.
 const absentCloseIdentityReads = 3
 
-// absentCloseMaxLinkHealthAge is how long ago the link's last successful
-// full discovery may be. The link runs one a minute by default and retries a
-// failure within seconds, so a quarter of an hour without one is a
-// maintenance process that has stopped, not one that is slow.
-const absentCloseMaxLinkHealthAge = 15 * time.Minute
+// linkHealthMaxAge is how long ago the link's last successful full
+// discovery may be before the health page calls its maintenance stale. The
+// link runs one a minute by default and retries a failure within seconds, so
+// a quarter of an hour without one is a maintenance process that has
+// stopped, not one that is slow. The close does not read it: a stale roster
+// can only miss a strategy (absentalerts' package doc).
+const linkHealthMaxAge = 15 * time.Minute
 
 // absentStrategyClose closes the unrecovered alerts of strategies that no
 // longer exist. See package absentalerts for what the difference is and
@@ -108,10 +110,12 @@ type absentStrategyClose struct {
 type absentRoundSizes struct {
 	counts absentalerts.Counts
 	// snapshotAge and linkAge are how old the two sides were, reported
-	// beside their bounds so that a stale or unhealthy round can be read as
-	// the side falling behind rather than as a bound that does not fit.
+	// beside their bounds so that a stale snapshot or a link whose
+	// maintenance stopped can be read as the side falling behind rather than
+	// as a bound that does not fit.
 	snapshotAge, linkAge int
 	rosterPages          int
+	rosterInvalid        int
 	rosterComplete       bool
 	linkPending          int
 	identities           int
@@ -158,7 +162,6 @@ func newAbsentStrategyClose(bundle *phaseTwoWorkerBundle, control absentCloseCon
 			// source is slower than whatever number was written here. Five
 			// reads' worth of slack.
 			MaxSnapshotAge:     5 * controlplane.SourceFullReadInterval,
-			MaxLinkHealthAge:   absentCloseMaxLinkHealthAge,
 			MaxCloseStrategies: 8,
 		},
 		counts:     make(map[string]uint64),
@@ -202,11 +205,11 @@ func (loop *absentStrategyClose) Difference() map[string]int {
 	last := loop.last
 	return map[string]int{
 		"roster_strategies": last.counts.Roster, "roster_unreadable": last.counts.RosterUnreadable,
-		"roster_pages": last.rosterPages, "roster_complete": boolSide(last.rosterComplete),
+		"roster_pages": last.rosterPages, "roster_invalid": last.rosterInvalid, "roster_complete": boolSide(last.rosterComplete),
 		"candidates": last.counts.Candidates, "snapshot_strategies": last.counts.SnapshotStrategies,
 		"remembered_identities": last.identities,
 		"snapshot_age_seconds":  last.snapshotAge, "max_snapshot_age_seconds": int(loop.bounds.MaxSnapshotAge / time.Second),
-		"link_health_age_seconds": last.linkAge, "max_link_health_age_seconds": int(loop.bounds.MaxLinkHealthAge / time.Second),
+		"link_health_age_seconds": last.linkAge, "max_link_health_age_seconds": int(linkHealthMaxAge / time.Second),
 		"link_pending": last.linkPending,
 	}
 }
@@ -290,7 +293,7 @@ func (loop *absentStrategyClose) step(ctx context.Context) {
 	}
 	var health openalerts.LinkHealth
 	var unreadable []absentalerts.Key
-	health, unreadable, sizes.rosterPages = loop.readRoster(ctx, &round)
+	health, unreadable, sizes.rosterPages, sizes.rosterInvalid = loop.readRoster(ctx, &round)
 	sizes.rosterComplete, sizes.linkPending = round.RosterComplete, health.PendingCount
 	if !health.LastSuccess.IsZero() {
 		sizes.linkAge = int(now.Sub(health.LastSuccess) / time.Second)
@@ -328,6 +331,9 @@ type rosterWalk struct {
 	pages      int
 	roster     map[absentalerts.Key]int
 	unreadable map[absentalerts.Key]struct{}
+	// invalid is how many rows the walk's pages skipped as naming no
+	// strategy of this binding (openalerts.RosterPage.Invalid).
+	invalid int
 }
 
 func newRosterWalk() *rosterWalk {
@@ -344,8 +350,9 @@ func newRosterWalk() *rosterWalk {
 // what this walk has read so far, incomplete. A failure after the first page
 // ends the round's part of the walk, which the next round carries on; a
 // smaller roster can only cost closes. The strategies the link listed and
-// could not read come back in key order, for the candidate page to name.
-func (loop *absentStrategyClose) readRoster(ctx context.Context, round *absentalerts.Round) (openalerts.LinkHealth, []absentalerts.Key, int) {
+// could not read come back in key order, for the candidate page to name,
+// beside how many rows the decided walk skipped as invalid.
+func (loop *absentStrategyClose) readRoster(ctx context.Context, round *absentalerts.Round) (openalerts.LinkHealth, []absentalerts.Key, int, int) {
 	if reader, ok := loop.link.(eventSourceReader); ok {
 		_, _ = reader.EventSource(ctx)
 	}
@@ -369,10 +376,10 @@ func (loop *absentStrategyClose) readRoster(ctx context.Context, round *absental
 		if pages == 0 {
 			health = page.Health
 			round.LinkRead = true
-			round.LinkLastSuccess, round.LinkError = health.LastSuccess, health.Error
 		}
 		pages++
 		loop.walk.pages++
+		loop.walk.invalid += page.Invalid
 		for _, row := range page.Rows {
 			key := absentalerts.Key{TenantID: row.TenantID, StrategyID: row.StrategyID}
 			switch {
@@ -416,7 +423,7 @@ func (loop *absentStrategyClose) readRoster(ctx context.Context, round *absental
 	}
 	round.RosterUnreadable = len(keys)
 	sort.Slice(keys, func(i, j int) bool { return absentalerts.LessKey(keys[i], keys[j]) })
-	return health, keys, pages
+	return health, keys, pages, decided.invalid
 }
 
 // closeStrategy reads the strategy's active alerts from the link and closes
@@ -453,6 +460,15 @@ func (loop *absentStrategyClose) closeStrategy(ctx context.Context, absent absen
 	}
 	loop.count(absentalerts.OutcomeProducerForeign, foreign)
 	loop.count(absentalerts.OutcomeProducerUnknown, unknown)
+	if reconciliation.Truncated {
+		// The listed alerts are closed below; the rest wait for the round
+		// that decides this strategy again.
+		loop.count(absentalerts.OutcomeEvidenceTruncated, 1)
+		if len(own) == 0 {
+			execution.word = absentalerts.OutcomeEvidenceTruncated
+			return execution
+		}
+	}
 	if len(own) == 0 {
 		// Nothing of this deployment's to close, so nothing to address and no
 		// record to read; what the catalog remembers is still the answer to

@@ -120,9 +120,9 @@ const (
 	// KindAnswerTruncated: an object whose latest answered query came back
 	// with a terms level of its Elasticsearch aggregation holding exactly
 	// the query service's bucket cap - a suspected cut. Thresholds evaluate
-	// the groups that came back; a Plan that detects no data judges nothing
-	// that round (SKIPPED_ANSWER_TRUNCATED), the groups the answer shows
-	// included. Listed while the latest answered round says so.
+	// the groups that came back; a Plan that detects no data judges no
+	// absence that round (SKIPPED_ANSWER_TRUNCATED) and judges the groups
+	// the answer shows present. Listed while the latest answered round says so.
 	KindAnswerTruncated = "ANSWER_TRUNCATED"
 )
 

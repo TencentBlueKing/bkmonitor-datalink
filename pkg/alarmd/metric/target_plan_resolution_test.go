@@ -48,7 +48,7 @@ func TestTheSelectorCellsAnOperatorActsOnArePublishedAtZeroAsOneSet(t *testing.T
 		"exclude|Unavailable|read_failed",
 		"exclude|Unavailable|stale",
 		"exclude|Unavailable|address_unresolved",
-		"exclude|Unavailable|address_ambiguous",
+		"exclude|OK|address_ambiguous",
 		"exclude|OK|excluded_absent",
 		"exclude|OKEmpty|excluded_absent",
 	}

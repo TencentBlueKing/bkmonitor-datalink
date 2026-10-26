@@ -250,6 +250,7 @@ func (resolver *TargetResolver) resolveExclusions(plan *contract.TargetPlanV1, i
 		}
 		result.Members[plan.Identity.HostKey(hostID)] = struct{}{}
 	}
+	shared := false
 	for _, host := range plan.ExcludeHosts {
 		if _, found := index.byHostID[host]; !found {
 			result.Dropped++
@@ -262,11 +263,15 @@ func (resolver *TargetResolver) resolveExclusions(plan *contract.TargetPlanV1, i
 			result.Kept = len(result.Members)
 			return result
 		}
+		// An address another host of the tenant shares names neither host,
+		// and the data keyed by it cannot be told apart: excluding the
+		// address excludes every host at it. That only ever admits less, so
+		// it is applied rather than refused - refusing made the whole
+		// strategy admit nothing over one shared address in its exclude
+		// list. It is named (address_ambiguous) so the wider exclusion is
+		// a reading, not a silence.
 		if _, sharing := index.AddressHost(tenant, key); sharing > 1 {
-			result.State, result.Reason = targetplan.SelectorUnavailable, targetplan.ReasonAddressAmbiguous
-			result.Dropped++
-			result.Kept = len(result.Members)
-			return result
+			shared = true
 		}
 		result.Members[key] = struct{}{}
 	}
@@ -274,8 +279,13 @@ func (resolver *TargetResolver) resolveExclusions(plan *contract.TargetPlanV1, i
 	if result.Kept == 0 {
 		result.State = targetplan.SelectorOKEmpty
 	}
-	if result.Dropped > 0 {
+	// excluded_absent is preferred when both apply: its Dropped count is
+	// what the worker reads under it.
+	switch {
+	case result.Dropped > 0:
 		result.Reason = targetplan.ReasonExcludedAbsent
+	case shared:
+		result.Reason = targetplan.ReasonAddressAmbiguous
 	}
 	return result
 }

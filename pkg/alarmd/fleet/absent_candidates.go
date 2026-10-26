@@ -74,7 +74,8 @@ const (
 // AbsentExecutions is every word a row's execution takes.
 var AbsentExecutions = []string{AbsentExecutionNotRun,
 	absentalerts.OutcomeCloseSent, absentalerts.OutcomeSendFailed, AbsentExecutionNoOwnAlerts,
-	absentalerts.OutcomeIdentityUnknown, absentalerts.OutcomeRevisionUnknown, absentalerts.OutcomeEvidenceUnavailable}
+	absentalerts.OutcomeIdentityUnknown, absentalerts.OutcomeRevisionUnknown, absentalerts.OutcomeEvidenceUnavailable,
+	absentalerts.OutcomeEvidenceTruncated}
 
 // Where a close's business and revision came from. Closed.
 const (

@@ -96,13 +96,10 @@ func TestTheLastRosterPageEndsTheWalk(t *testing.T) {
 // is not read.
 func TestARosterOfAnotherTargetOrWithoutHealthIsRefused(t *testing.T) {
 	for name, mutate := range map[string]func(map[string]any){
-		"other database": func(m map[string]any) { b := testBinding(); b.Database++; m["target"] = b },
-		"no health":      func(m map[string]any) { delete(m, "health") },
-		"no rows":        func(m map[string]any) { delete(m, "rows") },
-		"unknown phase":  func(m map[string]any) { m["phase"] = "other" },
-		"key of another prefix": func(m map[string]any) {
-			m["rows"].([]any)[0].(map[string]any)["key"] = "other:system:10"
-		},
+		"other database":   func(m map[string]any) { b := testBinding(); b.Database++; m["target"] = b },
+		"no health":        func(m map[string]any) { delete(m, "health") },
+		"no rows":          func(m map[string]any) { delete(m, "rows") },
+		"unknown phase":    func(m map[string]any) { m["phase"] = "other" },
 		"unparseable time": func(m map[string]any) { m["health"].(map[string]any)["lastSuccess"] = "yesterday" },
 	} {
 		reader := rosterServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +110,32 @@ func TestARosterOfAnotherTargetOrWithoutHealthIsRefused(t *testing.T) {
 		if _, err := reader.Roster(consoleCtx(), ""); err == nil {
 			t.Fatalf("%s: accepted", name)
 		}
+	}
+}
+
+// A row that names no strategy of this binding is skipped and counted, and
+// the rest of the page is still read: failing the page for one row would
+// leave every other strategy on it unclosed while the row stays.
+func TestARosterRowNamingNoStrategyOfTheBindingIsSkippedAndCounted(t *testing.T) {
+	reader := rosterServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body := browseJSON()
+		row := func(tenant, strategy, key string) map[string]any {
+			return map[string]any{"tenantId": tenant, "strategyId": strategy, "key": key, "members": 1, "pending": false,
+				"lastSuccess": nil, "lastAttempt": nil, "error": nil}
+		}
+		body["rows"] = append(body["rows"].([]any),
+			row("system", "12", "other:system:12"),         // another prefix
+			row("system", "13", "test:active:system:14"),   // key of another strategy
+			row("sys:tem", "15", "test:active:sys:tem:15"), // a delimiter in the tenant
+			row("system", "", "test:active:system:"))
+		_ = json.NewEncoder(w).Encode(body)
+	})
+	page, err := reader.Roster(consoleCtx(), "")
+	if err != nil {
+		t.Fatalf("a page with invalid rows failed: %v", err)
+	}
+	if page.Invalid != 4 || len(page.Rows) != 2 || page.Rows[0].StrategyID != "10" || page.Rows[1].StrategyID != "11" {
+		t.Fatalf("invalid %d rows %+v, want 4 skipped and strategies 10 and 11 kept", page.Invalid, page.Rows)
 	}
 }
 

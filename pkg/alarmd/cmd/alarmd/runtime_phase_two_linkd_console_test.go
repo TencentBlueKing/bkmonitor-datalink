@@ -105,9 +105,7 @@ func TestADeploymentWithoutAConsoleSaysSoFromTheStart(t *testing.T) {
 }
 
 // The readings a configured Console can give, each its own word, and the
-// link's own word decided by the same function and bound the close's
-// link_unhealthy refusal reads -- checked against the close itself on both
-// sides of the bound.
+// link's own word on both sides of the bound.
 func TestAConsoleReadsAsNotCalledUnreadableUnhealthyOrReachable(t *testing.T) {
 	if facts := linkdConsoleFacts(consoleTestServer(t, http.NotFound), consoleTestNow); facts.State != fleet.LinkdConsoleNotCalled {
 		t.Fatalf("a Console never called reads as %+v", facts)
@@ -118,7 +116,7 @@ func TestAConsoleReadsAsNotCalledUnreadableUnhealthyOrReachable(t *testing.T) {
 		facts.Calls[0].LastFailureClass != openalerts.ConsoleFailureStatus {
 		t.Fatalf("a refused roster reads as %+v", facts)
 	}
-	bound := absentCloseMaxLinkHealthAge
+	bound := linkHealthMaxAge
 	atBound, pastBound := consoleTestNow.Add(-bound), consoleTestNow.Add(-bound-time.Second)
 	cases := []struct {
 		name        string
@@ -141,14 +139,6 @@ func TestAConsoleReadsAsNotCalledUnreadableUnhealthyOrReachable(t *testing.T) {
 		}
 		if facts.LinkPending == nil || *facts.LinkPending != 4 || facts.MaxLinkHealthAgeSeconds != int(bound/time.Second) {
 			t.Errorf("%s: the link's reading is not beside its bound: %+v", c.name, facts)
-		}
-		round := absentalerts.Round{LinkRead: true, LinkError: c.linkError, Now: consoleTestNow}
-		if c.lastSuccess != nil {
-			round.LinkLastSuccess = *c.lastSuccess
-		}
-		_, _, refusal := absentalerts.Candidates(round, absentalerts.Bounds{MaxLinkHealthAge: bound})
-		if (refusal == absentalerts.RefusalLinkUnhealthy) != (facts.State == fleet.LinkdConsoleLinkUnhealthy) {
-			t.Errorf("%s: the page says %q and the close's round says %q", c.name, facts.State, refusal)
 		}
 	}
 }

@@ -477,6 +477,9 @@ func (s *Shielder) keepDependencyBinding(ctx context.Context, tenant string, ale
 		return true, "binding_event_unavailable", nil
 	}
 	original, err := s.Events(ctx, tenant, b.SourceEventID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, "binding_event_missing", nil
+	}
 	if errors.Is(err, processingerror.ErrControlPlaneUnavailable) || errors.Is(err, policy.ErrAccess) {
 		return true, "", err
 	}

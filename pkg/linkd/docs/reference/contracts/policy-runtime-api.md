@@ -382,6 +382,11 @@ Kingeye Admin 的运行态、成员、控制点和请求共用两路代理及最
 以下路径以 `/api/v1/policy-runtime/shield/alerts/{id}` 开头。读取前均确认该租户的真实 Alert 存在；
 `id` 为 URL 编码的 Alert ID。复查使用 Lifecycle 的原始绑定、最新已发布策略和 fingerprint lease；绑定中的旧策略版本仅供历史追溯。
 
+自动绑定引用的原 Event 确认不存在时，只解除对应绑定，并在 `decision.steps` 记录
+`released / binding_event_missing`；其余绑定继续复查。全部原事件缺失时清空绑定和计划复查时间，
+经既有状态 CAS、同步和解除流水完成清理，不触发处置。超时、连接失败等不可用错误保留原状态；
+手动绑定继续按最新策略的启用状态及有效期复查，不因原事件缺失而清理。
+
 | 方法/路径 | 参数与结果 |
 | --- | --- |
 | `GET /check` | 仅 `bk_tenant_id`；返回 `{bk_tenant_id, alert_id, check}`，尚无记录时 `check=null` |

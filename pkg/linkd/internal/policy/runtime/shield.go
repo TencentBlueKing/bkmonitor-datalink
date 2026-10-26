@@ -96,15 +96,19 @@ func (s *Shielder) withEventReads() *Shielder {
 	}
 	local := *s
 	type eventKey struct{ tenant, id string }
-	events := map[eventKey]store.StoredEvent{}
+	type eventRead struct {
+		event store.StoredEvent
+		err   error
+	}
+	events := map[eventKey]eventRead{}
 	local.Events = func(ctx context.Context, tenant, id string) (store.StoredEvent, error) {
 		key := eventKey{tenant, id}
-		if event, ok := events[key]; ok {
-			return event, nil
+		if read, ok := events[key]; ok {
+			return read.event, read.err
 		}
 		event, err := s.Events(ctx, tenant, id)
-		if err == nil {
-			events[key] = event
+		if err == nil || errors.Is(err, store.ErrNotFound) {
+			events[key] = eventRead{event, err}
 		}
 		return event, err
 	}
@@ -270,7 +274,7 @@ func shieldBindingID(tenant, alertID string, b domain.ShieldBinding) string {
 }
 
 // retain 按最新已发布策略复查既有绑定；绑定中的版本只保留建立时的历史事实。
-// 目标/配置/事件读取失败无法证明可以解除，必须继续保留，不能把失败当成条件未命中。
+// 原 Event 确认不存在时清理对应自动绑定；目标、配置或事件暂时不可读时继续保留。
 func (s *Shielder) retain(ctx context.Context, tenant string, alert domain.Alert, snapshot *store.PolicyContext, level func(string) (string, error)) (domain.AlertShield, []store.ShieldStep, error) {
 	result := alert.Shield.Clone()
 	result.Bindings = nil
@@ -358,6 +362,9 @@ func (s *Shielder) keepBinding(ctx context.Context, tenant string, alert domain.
 		return true, "binding_event_unavailable", ref, nil
 	}
 	original, err := s.Events(ctx, tenant, b.SourceEventID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, "binding_event_missing", ref, nil
+	}
 	if err != nil {
 		return true, "binding_event_unavailable", ref, nil
 	}
@@ -417,10 +424,32 @@ func (s *Shielder) Recheck(ctx context.Context, alert domain.Alert, at time.Time
 	if s.Events == nil || s.Loader == nil {
 		return lifecycle.ShieldEvaluation{}, policy.ErrUnavailable
 	}
-	binding := alert.Shield.Bindings[0]
-	source, err := s.Events(ctx, alert.BKTenantID, binding.SourceEventID)
-	if err != nil {
-		return lifecycle.ShieldEvaluation{}, err
+	var binding domain.ShieldBinding
+	var source store.StoredEvent
+	missing := []store.ShieldStep{}
+	// 原 Event 可能早于活跃告警被清理。跳过已确认缺失的绑定，使用仍可读的
+	// 原事件建立本次复查上下文，避免第一条悬空绑定阻止其余绑定复查。
+	for _, candidate := range alert.Shield.Bindings {
+		var err error
+		source, err = s.Events(ctx, alert.BKTenantID, candidate.SourceEventID)
+		if errors.Is(err, store.ErrNotFound) {
+			missing = append(missing, store.ShieldStep{
+				Policy:    store.PolicyReleaseRef{Kind: "shield", ID: candidate.Policy.ID, Version: candidate.Policy.Version, Digest: candidate.Policy.Digest},
+				BindingID: candidate.BindingID, FromBinding: true, Outcome: "released", ReasonCode: "binding_event_missing",
+			})
+			continue
+		}
+		if err != nil {
+			return lifecycle.ShieldEvaluation{}, err
+		}
+		binding = candidate
+		break
+	}
+	if len(missing) == len(alert.Shield.Bindings) {
+		for i, step := range missing {
+			s.observe(ctx, alert.BKTenantID, alert.AlertID, alert.Shield.Bindings[i].SourceEventID, step)
+		}
+		return lifecycle.ShieldEvaluation{Shield: domain.AlertShield{}, Decision: &store.ShieldDecision{Severity: alert.Severity, Steps: missing}}, nil
 	}
 	if source.Event.BKTenantID != alert.BKTenantID || source.Event.EventID != binding.SourceEventID {
 		return lifecycle.ShieldEvaluation{}, policy.ErrAccess

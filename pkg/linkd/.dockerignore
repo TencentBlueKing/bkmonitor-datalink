@@ -6,7 +6,7 @@ README.md
 *.md
 bin/
 dist/
-console/
+scripts/node_modules/
 docs/
 tests/
 configs/*.local.yaml

@@ -1,7 +1,7 @@
 # 手动构建与发布镜像和 Chart
 
 仓库根目录的 [Linkd images workflow](../../../../.github/workflows/linkd-images.yml) 复用
-各组件的 Dockerfile，默认构建 Linkd 和 Console 的 `linux/amd64`、`linux/arm64` 镜像并推送到 GitHub Container Registry（GHCR）。
+各组件的 Dockerfile，默认构建 Linkd 的 `linux/amd64`、`linux/arm64` 镜像并推送到 GitHub Container Registry（GHCR）。
 `linkd-eventgen` 是独立版本的可选镜像，只有显式选择该组件才构建，不包含在 `all` 中。
 每个组件的两个架构共用同一个标签，拉取时按运行节点架构选择镜像，无需设置架构专用 tag。
 Workflow 在 amd64 runner 上配置 QEMU，支持 ARM 构建及版本查询；双架构构建超时为 90 分钟。
@@ -28,8 +28,8 @@ GHCR 权限见 [GitHub 镜像发布说明](https://docs.github.com/en/actions/tu
 
 | 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `component` | `all` | `all` 只构建 Linkd 和 Console；`linkd` / `linkd-console` / `linkd-eventgen` 只构建所选镜像；`helm` 只打包 Chart |
-| `version` | 空 | 仅用于 Linkd / Console 的 Docker tag，例如 `v0.1.1-rc.1`；留空只发布唯一构建标签 |
+| `component` | `all` | `all` 只构建 Linkd；`linkd` / `linkd-eventgen` 只构建所选镜像；`helm` 只打包 Chart |
+| `version` | 空 | 仅用于 Linkd 的 Docker tag，例如 `v0.1.1-rc.1`；留空只发布唯一构建标签 |
 | `eventgen_version` | `0.1.1` | 仅用于 `linkd-eventgen` 的独立 Docker tag；留空只发布唯一构建标签，不继承 `version` |
 
 两个版本字段都只允许合法 Docker tag：最长 128 字符，仅含字母、数字、下划线、点和连字符，首字符不能为点或连字符。
@@ -41,18 +41,16 @@ gh workflow run linkd-images.yml --ref <branch-or-tag> \
   -f component=all -f version=v0.1.0-rc.1
 ```
 
-两个构建使用本次触发确定的同一个完整 Git SHA；分支后续推进不会改变本次构建的源码。
+镜像构建使用本次触发确定的同一个完整 Git SHA；分支后续推进不会改变本次构建的源码。
 产物地址以当前执行 workflow 的仓库为准（owner 和 repository 均转为小写）：
 
 ```text
 ghcr.io/<owner>/<repository>/linkd:<tag>
-ghcr.io/<owner>/<repository>/linkd-console:<tag>
 ghcr.io/<owner>/<repository>/linkd-eventgen:<eventgen-tag>
 ```
 
 每个成功的构建都会在 Actions Summary 中输出镜像标签、多架构 index digest、平台和源码 SHA。
-选择 `all` 时两个组件独立执行；一个失败不会撤销另一个已推送的镜像。成套部署前应确认两个 job 均成功，
-并记录各自 digest。流程只构建和推送镜像，不执行 `make check`，发布前应在待发布提交上完成质量门禁。
+部署前应确认目标镜像 job 成功，并记录 digest。流程只构建和推送镜像，不执行 `make check`，发布前应在待发布提交上完成质量门禁。
 
 独立构建模拟器的 `0.1.1` 版本：
 
@@ -62,12 +60,12 @@ gh workflow run linkd-images.yml --repo TencentBlueKing/bkmonitor-datalink \
 ```
 
 模拟器使用 `Dockerfile.eventgen`，同样生成双架构镜像、记录 OCI 标签，并运行 `version` 校验完整 Git SHA。
-此选择不构建 Linkd、Console 或 Chart；Helm 的模拟器默认关闭，可显式配置多个实例。
+此选择不构建 Linkd 或 Chart；Helm 的模拟器默认关闭，可显式配置多个实例。
 用法见 [Standard Event 模拟器](event-generator.md) 和 [Helm 可选 Event Generator](helm.md#可选-event-generator)。
 
 ## 版本建议
 
-Linkd 当前处于早期开发阶段，建议 Linkd 与 Console 使用同一套交付版本，便于成套部署和回滚：
+Linkd 当前处于早期开发阶段，建议每次交付使用明确版本，便于部署和回滚：
 
 | 用途 | 标签示例 | 使用方式 |
 | --- | --- | --- |
@@ -79,14 +77,12 @@ Linkd 当前处于早期开发阶段，建议 Linkd 与 Console 使用同一套�
 不要复用已交付版本。构建标签区分重跑，但 registry 没有由此获得不可变策略，严格固定产物应使用 digest。
 同一源码重建时基础镜像或外部依赖可能变化，不能把相同 Git SHA 当成镜像字节一致的保证。
 
-两个镜像均记录 OCI version、revision（完整 Git SHA）和 source 标签，Workflow 将同一个 SHA
+Linkd 与 Eventgen 镜像均记录 OCI version、revision（完整 Git SHA）和 source 标签，Workflow 将同一个 SHA
 通过 `GIT_COMMIT` 构建参数写入镜像内部。两个镜像的 `version` 命令同时显示版本号和 commit；
-查询不需要配置文件或连接中间件。Console 的 package.json 版本不参与镜像版本推导，构建信息保存在
-镜像内 `build-info.json`，不使用运行时环境变量覆盖。
+查询不需要配置文件或连接中间件。
 
 ```bash
 docker run --rm ghcr.io/tencentblueking/bkmonitor-datalink/linkd:<tag> version
-docker run --rm ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:<tag> version
 ```
 
 ```text
@@ -94,14 +90,12 @@ version: <version-or-build-tag>
 git_commit: <full-git-sha>
 ```
 
-Console 提供受 Basic Auth 保护的 `GET /local-api/version`，返回 `version` 和 `git_commit`。
-这与 `/local-api/capabilities` 中的接口 schema version 是不同字段。每次镜像构建结束后，Workflow
+每次镜像构建结束后，Workflow
 从产物 index digest 中解析各架构的子 manifest digest，分别以 `--platform linux/amd64` 和 `--platform linux/arm64` 拉起无网络版本查询，
 校验两个架构的镜像内版本及 commit 均与本次构建一致。
 未注入构建信息的开发产物显示 `dev` / `unknown`；已发布镜像不会因 Workflow 修改而变化。
 
-Helm 的 `image.tag` / `console.image.tag` 使用同一交付标签；需要精确回滚时分别填写
-`image.digest` / `console.image.digest`。镜像仓库与拉取配置见 [Helm 部署](helm.md)。
+Helm 的 `image.tag` 使用交付标签；需要精确回滚时填写 `image.digest`。镜像仓库与拉取配置见 [Helm 部署](helm.md)。
 
 ## Helm Chart 打包
 
@@ -113,7 +107,7 @@ gh workflow run linkd-images.yml --ref feat/linkd-dev \
   -f component=helm
 ```
 
-流程固定使用 Helm 3.17.3，先用仓库的外部服务、worker 分组、Console 和 ServiceMonitor 示例执行
+流程固定使用 Helm 3.17.3，先用仓库的外部服务、worker 分组和 ServiceMonitor 示例执行
 `helm lint --strict` 和 `helm template`，随后打包 Chart 源目录。示例仅用于校验，不写入包内默认 values，
 也不会把渲染出来的 Secret 上传到 Artifacts。验证不连接 Kubernetes 或真实中间件。
 

@@ -12,7 +12,7 @@ Linkd 项目仍处于早期开发阶段。文档中心区分当前代码、测�
 - [KAC 告警源插件调试接入 Linkd 方案](design/kac-alarm-source-debug-preview.md)：首版代码已实现；保留原 KAC 字段与调试步骤，
   复用 verification 索引、不执行丰富并同步 HTTP 返回；本地 HTTP/索引及原调试组件已联调，全主站验收待验证。
 - [Event 丰富与抑制、屏蔽、合并开发方案](design/event-enrich-and-alarm-policies.md)：Event Enrich 前移、
-  字段变更、KAC 三类策略配置与行为、控制面任务、Console、可靠输出与降级及验收矩阵。
+  字段变更、KAC 三类策略配置与行为、控制面任务、管理接口、可靠输出与降级及验收矩阵。
   当前代码流程见上述图解；业务决策、历史实施证据和
   [当前能力与剩余差距](design/event-enrich-and-alarm-policies.md#112-当前能力与剩余差距2026-10-08)分别标明。
 

@@ -1,3 +1,12 @@
+# Tencent is pleased to support the open source community by making
+# 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+# Copyright (C) 2026 Tencent. All rights reserved.
+# Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at http://opensource.org/licenses/MIT
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+# an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
 """CI 编排回归测试：用隔离的假 Docker 验证副作用，不访问本机 Docker。"""
 import json
 import os
@@ -20,8 +29,8 @@ elif a[:1] == ['info']: print(os.environ.get('FAKE_ARCH', 'linux/amd64'))
 elif a[:1] == ['login']: sys.stdin.read()
 elif a[:2] == ['buildx', 'build']:
     ref = a[a.index('--tag')+1]
-    if os.environ.get('FAIL_BUILD') and 'console' in ref: sys.exit(1)
-    images[ref] = 'sha256:' + ('b'*64 if 'console' in ref else 'a'*64)
+    if os.environ.get('FAIL_BUILD'): sys.exit(1)
+    images[ref] = 'sha256:' + 'a'*64
 elif a[:2] == ['image', 'inspect']:
     if a[-1] not in images: sys.exit(1)
     print('linux/amd64' if a[3] == '{{.Os}}/{{.Architecture}}' else images[a[-1]])
@@ -73,12 +82,12 @@ class ReleaseTest(unittest.TestCase):
         (self.root / 'images.json').write_text(json.dumps({'unrelated:keep': 'sha256:'+'c'*64}))
         self.run_script('build')
         self.run_script('push')
-        self.assertEqual(len(self.images()), 5)
+        self.assertEqual(len(self.images()), 3)
         self.run_script('cleanup')
         self.assertEqual(list(self.images()), ['unrelated:keep'])
         self.assertFalse(self.state.exists())
 
-    def test_partial_build_cannot_push_and_is_cleaned(self):
+    def test_failed_build_cannot_push_and_is_cleaned(self):
         self.run_script('build', success=False, FAIL_BUILD='1')
         self.run_script('push', success=False)
         self.run_script('cleanup')
@@ -111,7 +120,7 @@ class ReleaseTest(unittest.TestCase):
     def test_cleanup_preserves_in_use_and_replaced_tags(self):
         self.run_script('build')
         self.run_script('cleanup', IN_USE='1')
-        self.assertEqual(len(self.images()), 2)
+        self.assertEqual(len(self.images()), 1)
         self.run_script('build')
         images = self.images()
         replaced = next(iter(images))

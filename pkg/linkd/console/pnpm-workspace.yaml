@@ -1,5 +1,0 @@
-allowBuilds:
-  esbuild: true
-  msw: false
-confirmModulesPurge: false
-nodeLinker: isolated

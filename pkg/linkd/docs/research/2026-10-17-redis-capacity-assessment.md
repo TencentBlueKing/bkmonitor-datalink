@@ -30,7 +30,7 @@
 
 W 不是 TCP 包数：分包、协议握手、重连、失败重试会改变实际网络流量。本文的源码计数默认连接已建立、脚本缓存已热、没有失败重试；`NOSCRIPT` 回退会额外增加客户端命令。
 
-Console 的操作速率来自实例级 `INFO stats.instantaneous_ops_per_sec`，不是所选来源、DB 或 Event 的处理速率。源码见 [Redis 页面取值](../../console/src/server/redis.ts)。Redis 服务端的执行计数包含 Lua 内部命令，参见 [Redis 7.2.7 server.c](https://github.com/redis/redis/blob/7.2.7/src/server.c#L3394)。
+Console 的操作速率来自实例级 `INFO stats.instantaneous_ops_per_sec`，不是所选来源、DB 或 Event 的处理速率。源码见 `console/src/server/redis.ts`（当时源码，独立 Console 已移除）。Redis 服务端的执行计数包含 Lua 内部命令，参见 [Redis 7.2.7 server.c](https://github.com/redis/redis/blob/7.2.7/src/server.c#L3394)。
 
 **C 相同不代表成本相同。** `HGETALL` 读取 10 万个成员仍是一条命令，但 CPU、返回字节和事件循环占用与一个单字段 `HGET` 差别很大。容量规划必须同时记录 R、C、字节数、脚本耗时、客户端等待和积压。
 

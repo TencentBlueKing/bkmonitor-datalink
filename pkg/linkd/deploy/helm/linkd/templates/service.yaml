@@ -1,7 +1,7 @@
 {{- range $w := (include "linkd.workloads" . | fromYaml).items }}
 {{- $ctx := dict "root" $ "workload" $w }}
-{{- if or (eq $w.component "control-plane") (eq $w.component "console") }}
-{{- $s := ternary $.Values.console.service $.Values.service (eq $w.component "console") }}
+{{- if eq $w.component "control-plane" }}
+{{- $s := $.Values.service }}
 ---
 apiVersion: v1
 kind: Service
@@ -22,7 +22,7 @@ spec:
       port: {{ $s.port }}
       targetPort: http
 {{- end }}
-{{- if and $.Values.metrics.enabled (ne $w.component "console") }}
+{{- if $.Values.metrics.enabled }}
 ---
 apiVersion: v1
 kind: Service

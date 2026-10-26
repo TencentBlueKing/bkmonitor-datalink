@@ -43,51 +43,6 @@ LINKD_E2E=1 go test -count=1 -run '^TestAllInOneMySQLE2E$' -v ./tests/e2e/allino
 
 连接可由 `LINKD_E2E_ELASTICSEARCH_URL`、`LINKD_E2E_REDIS_ADDRESS`、`LINKD_E2E_REDIS_PASSWORD`、`LINKD_E2E_REDIS_DATABASE`、`LINKD_E2E_KAFKA_BROKER`、`LINKD_E2E_MYSQL_ADDRESS`、`LINKD_E2E_MYSQL_USERNAME` 和 `LINKD_E2E_MYSQL_PASSWORD` 覆盖。
 
-## Console 真实后端浏览器验收
-
-[`TestAllInOneConsolePoliciesE2E`](console_test.go) 另需显式 `LINKD_E2E_CONSOLE=1`。
-先安装 Console 的现有依赖并确保本机 Chrome 可由 Playwright 启动；该用例自动构建 Console 和 Linkd，
-分别为 ES/MySQL 创建隔离策略数据，再用同一份临时 YAML 启动真实 Console 服务。
-测试使用 `/real-console` 挂载前缀，浏览器直接访问正式页面、连接层及控制面，不使用 route/fulfill。
-
-```bash
-LINKD_E2E=1 LINKD_E2E_CONSOLE=1 go test -race -count=1 -timeout 25m \
-  -run '^TestAllInOneConsolePoliciesE2E$' -v ./tests/e2e/allinone
-```
-
-连接和版本仍使用本页上述环境变量。普通 `make check` 不启用外部服务或 Chrome。
-该用例覆盖发布版本与真实 Event 匹配预览、Event 丰富与历史抑制诊断、防抖计数、跨来源聚合成员、
-屏蔽原版本复查、待裁决窗口、固定合并成员快照，以及从浏览器关闭父 Alert 后的关系解除。
-防抖详情还提交受控对账：未绑定计数得到 retained/unbound_counter，实际请求的操作者和原因持久保存，
-浏览器结束后由正式管理 API 核对结果与计数不变。
-合并关系详情提交原版本检查得到 unchanged/no_progress，再由 Go 核对持久操作者、原因和正式步骤调用标记；
-随后人工关闭父，仍只解除关系，下一条子 Event 才获准处置。
-投影页面额外覆盖真实管理查询、按需读取冻结快照、填写原因恢复失败任务及刷新后读取最新恢复记录。
-动作页面同时验证原请求摘要、队首观察、原 CAS 失败恢复和服务端操作者；任务在测试专属 action
-集合中构造，不修改真实 Alert 绑定、不发送 KAC HTTP 请求，不代表正式动作生产/发送已经启用。
-投影失败任务由测试直接写入本次部署的隔离任务集合，不修改真实 Alert 绑定；这是管理链路测试，
-不代表正式生产器或自动投递器已接通。测试断言任务仅恢复为 pending、原快照摘要不变、操作者为 console-local。
-浏览器结束后再次读取真实业务数据，并从 Kafka 核对处置：手动复查无额外 action，父关闭仅解除，
-下一条子触发才放行；读取页面不增加计数或成员，恢复投影任务也不会增加旧 KAC Kafka action。
-父关闭后还通过真实 Console 查询独立抑制清理历史，读取原终态原因与确认结果；该读取不会重新清理 Redis。
-
-截图和不含凭据的合成 fixture 位于日志报告的 `console/test-results/real-<backend>-<token>/`。
-配置、后台进程、数据库、索引、topic 和 Redis 状态在测试结束时清理；不会留下可继续操作的 Console 服务。
-Go race 仅覆盖测试进程；真实 Linkd/Console 是普通构建，不能把测试命令的 race 标记当作子进程竞态检测。
-2026-10-05 首轮完整通过：ES 约 102 秒，MySQL 约 70 秒；Chrome 本身约 16/29 秒，各核对 4 条真实 KAC action。
-真实浏览器曾复现屏蔽详情多查询导致的 429，已通过共用有界代理队列修正，最终用例要求所有业务 HTTP 响应无错误。
-同日扩展投影任务管理后再次通过：ES 约 107 秒、MySQL 约 71 秒；Chrome 本身约 22/30 秒，仍各核对 4 条 action。
-
-2026-10-06 扩展动作投递管理后的真实 Chrome 验收通过：ES 约 142 秒、MySQL 约 68 秒，浏览器本身
-约 48/27 秒，各核对 4 条原 KAC Kafka action。恢复后验证 pending/generation=2/attempts=0，原完整
-request_hash 未变，最近恢复保留 console-local、原 CAS 和“真实 Console 恢复原动作”原因。
-入队、受理、处置完成在页面分开展示；该管理场景没有配置可靠出口凭据，自动动作发送保持停用，不能把它当作新协议端到端发送证明。
-同日扩展抑制受控对账后通过：ES 约 137 秒、MySQL 约 71 秒；Chrome 本身约 22/30 秒，仍各核对 4 条 action。
-此轮真实浏览器先于候选占位保护和最终按钮展示调整，新增候选分支由下述真实 API 用例覆盖，最终界面另有模拟浏览器复验。
-后续 Playwright 运行会清理其输出目录，需保留当次截图时应在下一次浏览器测试前归档。
-同日增加合并关系显式检查后，ES 约 107 秒、MySQL 约 68 秒通过；Chrome 本身约 22/28 秒，各仍核对四条
-action。命令响应不确定后跨刷新重投由独立模拟 API 浏览器用例验证，不能与真实服务场景混为同一证据。
-
 ## 可靠 KAC 后台投递
 
 [`TestAllInOneKACDeliveryE2E`](kac_delivery_test.go) 启动真实 all-in-one 进程，以显式投递凭据启用
@@ -182,31 +137,6 @@ HTTP 接收端仍为协议模拟，实际 KAC 接入另行验证。
 LINKD_E2E=1 go test -race -count=1 -timeout 22m \
   -run '^TestAllInOneKACMergeParentDeliveryE2E$' -v ./tests/e2e/allinone
 ```
-
-## Console 可靠投递的真实时序
-
-在可靠投递用例上设置 `LINKD_E2E_CONSOLE_DELIVERY=1`，额外构建并启动真实 Console 和 Chrome，
-以及一个本次专属的 Prometheus 容器。需要本机 Apple Container、已准备的 Prometheus 镜像、Chrome
-及 Console 依赖；`LINKD_E2E_PROMETHEUS_SCRAPE_HOST` 必须显式设置为容器可访问的宿主 IP。
-测试 exporter 使用临时端口监听宿主网络，Prometheus 管理端口仅发布到宿主回环地址，退出清理独立容器
-和测试数据；既有 Prometheus 的配置与时序不变。可用 LINKD_E2E_PROMETHEUS_IMAGE 指定镜像，默认
-docker.io/prom/prometheus:latest，实际版本从运行中的 buildinfo 接口记录。
-
-```bash
-LINKD_E2E=1 LINKD_E2E_CONSOLE_DELIVERY=1 \
-LINKD_E2E_PROMETHEUS_SCRAPE_HOST=192.168.65.1 \
-go test -race -count=1 -timeout 15m \
-  -run '^TestAllInOneKACDeliveryE2E$' -v ./tests/e2e/allinone
-```
-
-示例 IP 需按本机网络替换。浏览器使用独立的 playwright.delivery.config.ts，不使用 route/fulfill。
-验收包括正式任务目录、动作受理与投影确认、七个投影图表和七个有数据动作图表；未制造未知接收结果，
-对应第八个动作面板必须明确无数据，不能补零。进程筛选、时间范围、无数据再恢复、显式刷新、折叠、
-深浅主题及 850px 布局均校验。浏览器不能发送业务写入，观察期间也不能增加实际动作 HTTP 次数。
-结果截图位于本次 `console/test-results/delivery-<backend>-<token>`，不包含配置凭据。
-
-2026-10-06 最终 ES/MySQL 场景约 60.97/49.01 秒通过，Chrome 各约四秒；版本查询确认临时
-Prometheus 为 3.14.0。真实截图同时验证孤立零值点、查询起止时间和刻度避让，未修改既有 Prometheus。
 
 ## 启用告警策略的自动流程
 
@@ -391,7 +321,6 @@ CMDB 依赖；业务空间、模型映射、静态目标、主机/交换机实�
 2026-10-05 的复查版本验证分别约 177 秒（ES）/96 秒（MySQL）。同轮启用三类策略用例约 267/168 秒，
 分别仍为 14 条 action 消息；新增手动复查没有放行处置。这里是实际管理 API 与后台任务的测试，
 该依赖场景的诊断/重试浏览器测试使用模拟接口，不与 API 用例合称真实浏览器联调；
-另有上文独立的真实 Console 用例，覆盖时间屏蔽 retained 复查及三类运行态。
 
 测试代理仅将 `kingeye_all_instance`、`kingeye_topo` 映射到本轮独立索引；故障场景暂时对关系查询返回 503，
 其余实例、关系及 PIT 查询都由真实 Elasticsearch 执行。不会修改共享 OneModel 别名、Kingeye 表或生产配置。

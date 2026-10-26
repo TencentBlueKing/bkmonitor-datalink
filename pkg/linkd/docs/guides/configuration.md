@@ -83,7 +83,7 @@ lifecycle:
 
 主控制面在本进程内存拆批，按并发预算启动 goroutine 并直接汇总结果，不另部署成员 Worker。
 进程重启从持久关系重建未确认阶段，可按新的批次预算重新拆分。
-`read_wait_milliseconds` 同样是派生字段，不接受 YAML 手动配置；Console 生效配置展示上述四项值。
+`read_wait_milliseconds` 同样是派生字段，不接受 YAML 手动配置；Kingeye Admin 生效配置展示上述四项值。
 当前不是热更新：调整并发后需重启。
 调用取消不会取消其他调用已经发送的批次；该调用不继续 ACK，按可能部分成功重试。
 关闭时取消未完成批次并等待 worker 退出后关闭连接池。设 `enabled: false` 可做同并发对照。
@@ -100,7 +100,7 @@ chmod 600 ./configs/linkd.local.yaml
 go run ./cmd/linkd config validate --config ./configs/linkd.local.yaml
 ```
 
-`configs/*.local.yaml` 和 `.env*` 已被 Git 忽略。普通命令使用 `--config` 选择本地文件；PM2 和 Console
+`configs/*.local.yaml` 和 `.env*` 已被 Git 忽略。普通命令使用 `--config` 选择本地文件；PM2
 也可以通过 `LINKD_CONFIG` 使用同一份 YAML。当前 Linkd 进程不提供逐项环境变量或 secret-file 覆盖，
 生产部署必须把配置文件作为受权限保护的 Secret 挂载，且不得提交包含凭据的副本。
 
@@ -371,7 +371,7 @@ resources:
 
 单次用户查询或 CMDB HTTP 请求的排队与网络预算均为 3 秒，共用四个 HTTP 配额；身份解析先于
 CMDB 配额申请，不嵌套持有信号量。完整 CMDB 组合读取仍受 10 秒及上游更短截止时间限制。
-请求不跟随重定向，错误不回显凭据、URL 或响应体；Go/Console 配置展示隐藏 `blueking.app_secret`。
+请求不跟随重定向，错误不回显凭据、URL 或响应体；Go/Kingeye Admin 配置展示隐藏 `blueking.app_secret`。
 
 配置 CMDB 时，主机缓存有成员沿用 OneModel；空集合、节点缺失或读取失败时回源。回源按真实业务树、
 内置空闲模块及租户模型目录验证 locator。服务实例直接读取服务详情与所属主机，显式选择要求具体
@@ -441,7 +441,7 @@ HTTP 优雅退出预算 30 秒，Helm terminationGracePeriodSeconds 默认 60 �
 旧任务数据不迁移、不自动删除。完整行为见[动作 V3](../reference/contracts/kac-action-delivery-v3.md)。
 
 `resources.kac_delivery`、`event_sources[].kac_targets`、`projection_endpoint` 及 `plugins.kac.internal_token` 均已移除，旧字段明确拒绝。
-连接和凭据只保存在部署配置及运行时内存，Go/Console 展示均脱敏。
+连接和凭据只保存在部署配置及运行时内存，Go/Kingeye Admin 展示均脱敏。
 Helm 仅允许公共 `configuration.plugins.kac`，不接受角色、Worker 组或 migrate 覆盖；独立配置文件需保持一致，
 变更后重启相关进程。Kingeye/KAC 需使用配套 V3 接收端，并停止旧告警状态写入。
 
@@ -753,7 +753,7 @@ linkd storage prepare --config /etc/linkd/linkd.yaml \
 4. 清理或更换 Redis Mailbox/Signal 中引用旧 EventID 的状态；
 5. 先启动 `linkd run control-plane`，确认 schema、Active 索引、当前及相邻桶和 alias 对账成功；
 6. 再启动 cleaner/lifecycle；使用 all-in-one 时首次对账会在接管消息前同步完成；
-7. 检查 Console Elasticsearch 拓扑后恢复上游流量。
+7. 检查 Kingeye Admin Elasticsearch 拓扑后恢复上游流量。
 
 删除操作不可恢复。本仓库不提供旧 schema 的 reindex、双读或双写逻辑，也不会在启动时替操作者执行
 删除。本轮不自动执行 retention；达到 `max_buckets_per_entity` 时 Bucket Manager 会失败并要求人工处理。
@@ -911,7 +911,7 @@ Hook 只提交刷新提示，控制面完整查询已落库 Active Alert 并原�
 
 集合成员和失败边界以 [Lifecycle 插件行为](../modules/lifecycle.md#24-enricher-与-finalhook) 为准。
 接入示例、Redis 查询和排障见 [Redis 策略活跃告警 hook](active-alert-by-strategy.md)。
-Console Kafka 页面按来源和实例展示输出目标；动态管理接口中的连接凭据已脱敏，因此该模式只展示
+Kingeye Admin Kafka 页面按来源和实例展示输出目标；动态管理接口中的连接凭据已脱敏，因此该模式只展示
 目标声明，不使用脱敏凭据探测输出集群 metadata，也不将其标记为已验证可用。
 
 ### 全局级别升级策略

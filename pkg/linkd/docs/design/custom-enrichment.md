@@ -1,5 +1,7 @@
 # Linkd 自定义丰富开发规格
 
+> 2026-10-26：独立 Linkd Console 已移除，运行观测和管理统一使用 Kingeye Admin。下文 Console 实施与验收记录仅保留历史事实。
+
 日期：2026-09-30。状态：已确认开发目标；实现进度见文末。
 
 本文是 CMDB/常规丰富、补丁、配置转换和执行预览的权威规格。代码职责与依赖边界见[包结构](package-structure.md)。已有业务场景见
@@ -411,7 +413,7 @@ SDK：租户、唯一/多命中、关系方向、超限、部分 ES 失败、取
 | 展示值转换 | [display_client.go](../../internal/enrich/datasources/display_client.go) |
 | 不保存预览用例 | [enrich/preview/service.go](../../internal/enrich/preview/service.go) |
 | API | [controlplane/api/http.go](../../internal/controlplane/api/http.go) |
-| Console 页面 | [EnrichPreviewPage.tsx](../../console/src/web/pages/EnrichPreviewPage.tsx) |
+| Console 页面 | Kingeye Admin 的丰富预览页面 |
 | 离线转换 | [enrich/kingeye/convert/convert.go](../../internal/enrich/kingeye/convert/convert.go) |
 
 ### 9.3 旧 CMDB 单模型行为验证（2026-10-08）

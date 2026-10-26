@@ -38,7 +38,7 @@ test("workflow remains manual and default all excludes eventgen", () => {
   assert.equal(inputs.eventgen_version.default, "0.1.1");
   const result = execute(metadata.run, {COMPONENT: inputs.component.default, VERSION: "0.1.1", EVENTGEN_VERSION: "0.1.0"});
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.values.matrix).component, ["linkd", "linkd-console"]);
+  assert.deepEqual(JSON.parse(result.values.matrix).component, ["linkd"]);
   assert.equal(result.values.version, "0.1.1");
 });
 
@@ -61,7 +61,7 @@ test("invalid selected versions and unknown components fail before building", ()
     assert.notEqual(result.status, 0);
     assert.equal(result.values.matrix, undefined);
   }
-  assert.notEqual(execute(metadata.run, {COMPONENT: "unexpected", VERSION: "", EVENTGEN_VERSION: "0.1.0"}).status, 0);
+  assert.notEqual(execute(metadata.run, {COMPONENT: "linkd-console", VERSION: "", EVENTGEN_VERSION: "0.1.0"}).status, 0);
   const helm = execute(metadata.run, {COMPONENT: "helm", VERSION: "", EVENTGEN_VERSION: "0.1.0"});
   assert.equal(helm.status, 0, helm.stderr);
   assert.deepEqual(JSON.parse(helm.values.matrix).component, []);
@@ -70,7 +70,6 @@ test("invalid selected versions and unknown components fail before building", ()
 test("each optional image resolves its real build context and Dockerfile", () => {
   for (const [component, directory, file] of [
     ["linkd", "pkg/linkd", "Dockerfile"],
-    ["linkd-console", "pkg/linkd/console", "Dockerfile"],
     ["linkd-eventgen", "pkg/linkd", "Dockerfile.eventgen"],
   ]) {
     const result = execute(context.run, {COMPONENT: component});

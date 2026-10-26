@@ -76,10 +76,9 @@ Stream 管理器按来源清单有界遍历，只裁剪已确认前缀。
 - `linkd event-source import --file <yaml>`：通过 API 增加/更新文件中的 event_sources，不删除遗漏项。
 
 来源列表和单条读取支持管理端显式传入 `include_secrets=true` 获取完整配置；默认读取仍脱敏，
-历史 Release 读取接口保持脱敏。用途及 Console 服务端凭据边界见
-[动态来源的 Kafka 查询](../guides/console.md#动态来源的-kafka-查询)。
+历史 Release 读取接口保持脱敏。完整配置仅供管理服务端使用，凭据不返回浏览器。
 
-常驻进程不自动加载 YAML 来源。YAML 保留静态连接、认证、预算和可显式导入的来源清单；优先用 API/Console 修改来源。
+常驻进程不自动加载 YAML 来源。YAML 保留静态连接、认证、预算和可显式导入的来源清单；优先用 API/Kingeye Admin 修改来源。
 API 保存成功返回 202，不代表所有 Flow 已切换；查看目标与实际任务状态判断应用结果。
 配置 token 与 worker token 必须不同，worker 仅能读取分配给当前会话的 Release。管理编辑省略输入 Kafka security 时保留旧凭据。
 Hook 编辑按实例 `name + type` 匹配既有凭据，列表重排不影响匹配。Kafka/KAC 的 SASL 密码、

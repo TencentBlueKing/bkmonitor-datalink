@@ -13,7 +13,7 @@
 ## 整体架构
 
 核心后端由 Cleaner、Lifecycle、Control Plane 三个角色组成，可以独立部署，也可以通过
-`all-in-one` 在同一进程运行。Console 是独立服务；屏蔽复查、合并裁决、存储维护与可靠投递
+`all-in-one` 在同一进程运行。管理界面使用 Kingeye Admin；屏蔽复查、合并裁决、存储维护与可靠投递
 属于控制面内部任务，不需要额外部署同名常驻进程。
 
 合并成员由单主控制面在内存拆批，按空闲并发名额启动 goroutine，结果直接回报并推进下一阶段。
@@ -23,7 +23,7 @@
 
 ```mermaid
 flowchart TB
-    Console["Console / CLI / API<br/>配置、调试、受控操作"]
+    Admin["Kingeye Admin / CLI / API<br/>配置、调试、受控操作"]
     CP["Control Plane<br/>配置发布、Worker 调度<br/>屏蔽复查、合并推进、存储维护"]
     Kafka[("Kafka<br/>上游原始事件")]
     Cleaner["Cleaner Worker<br/>清洗与标准化<br/>先保存 Event，再入队"]
@@ -37,8 +37,8 @@ flowchart TB
     KACAction["KAC 处置入口<br/>HTTP 幂等受理"]
     Metrics["Prometheus / 日志<br/>各进程观测信息"]
 
-    Console --> CP
-    Console -.->|"观测查询"| Metrics
+    Admin --> CP
+    Admin -.->|"观测查询"| Metrics
     CP -.->|"配置与调度"| Cleaner
     CP -.->|"配置与调度"| Lifecycle
     Kafka --> Cleaner -->|"入队"| Redis -->|"领取"| Lifecycle
@@ -59,7 +59,7 @@ flowchart TB
     class KACES,KACAction external;
 ```
 
-图中省略重复的存储访问线：Console 直接只读查询业务存储与 Redis；控制面使用 Redis 调度、
+图中省略重复的存储访问线：Kingeye Admin 直接只读查询业务存储与 Redis；控制面使用 Redis 调度、
 读取策略窗口，并通过持久存储保存配置、关系和可靠投递进度。KAC 插件从这些持久待办继续推进。
 普通 Hooks 包括 Kafka 快照、活跃策略索引及旧 KAC Hook；旧 KAC Hook 与插件可靠处置受互斥约束。
 
@@ -184,7 +184,7 @@ flowchart TB
 - `internal/blueking` 统一 APIGW 身份解析与租户用户缓存；`internal/cmdb` 负责 CMDB 请求及完整性检查。
 - `internal/kaccompat` 直接维护 KAC 兼容索引和文档，`internal/projection` 与 `internal/actiondelivery`
   分别推进持久同步和获准动作，不由普通 Hook 承担可靠重试。
-- `console` 通过正式 API 管理 EventSource、预览策略和提交受控命令；业务存储、运行态与指标查询只读。
+- Kingeye Admin 通过正式 API 管理 EventSource、预览策略和提交受控命令；业务存储、运行态与指标查询只读。
   策略编辑仍由外部配置管理方负责。
 
 ## 身份与租户
@@ -226,7 +226,7 @@ Mailbox 数据安全依赖 Redis 自身持久化和复制。并发、批次、�
 
 当前已实现领域对象、配置、`standard` Cleaner、内存/MySQL/Elasticsearch Repository、Redis
 Mailbox、Event Enrich、三类策略、生命周期、管理 API 人工关闭、普通 Hooks、可靠动作意图、控制面
-补扫及重试、rawgen 和 Console。蓝鲸调用已有全局配置和 APIGW 客户端；KAC 插件已有直接写兼容
+补扫及重试、rawgen 和 Kingeye Admin。蓝鲸调用已有全局配置和 APIGW 客户端；KAC 插件已有直接写兼容
 Elasticsearch 及 HTTP 处置通知的装配，具体范围见[全局兼容插件](kac-compatibility-plugin.md)。
 
 当前代码接线不等于外部系统已接入：KAC 的策略同步、生命周期命令转发、旧状态写入退出和处置入口
@@ -248,4 +248,4 @@ Lifecycle、控制面（API / Leader / Manager）三进程模式。常驻进程�
 - [核心存储契约](core-storage-contract.md)：Repository、批量创建和 CAS；
 - [Event 丰富与告警策略](event-enrich-and-alarm-policies.md)：字段、三类策略和验收边界；
 - [KAC 全局兼容插件](kac-compatibility-plugin.md)：兼容存储、字段所有权与可靠处置；
-- [Console](../guides/console.md)：查询、调试、受控操作与观测入口。
+- Kingeye Admin：查询、调试、受控操作与观测入口。

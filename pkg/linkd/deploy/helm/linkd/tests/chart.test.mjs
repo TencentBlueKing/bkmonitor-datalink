@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 
 const chart = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(chart, "../../..");
-const require = createRequire(join(root, "console/package.json"));
+const require = createRequire(join(root, "scripts/package.json"));
 const { parse, parseAllDocuments, stringify } = require("yaml");
 const base = parse(readFileSync(join(chart, "examples/external-services.yaml"), "utf8"));
 let scratch, binary;
@@ -58,24 +58,6 @@ test("eventgen stays disabled by default", () => {
   assert.equal(docs.filter(d => d.metadata.labels?.["app.kubernetes.io/component"] === "eventgen").length, 0);
   assert.equal(parse(configFor(docs, byComponent(docs, "control-plane"))).dispatch.eventgen_enabled, undefined);
 });
-test("Console KAC links are tenant-scoped configuration, emitted only to Console", () => {
-  const links = {"tenant-a": {shield: "https://kac.example/#/kac/editAlarmShield?id={policy_id}"}};
-  const console = {enabled: true, basicAuth: {existingSecret: "console-auth"}, kacPolicyLinks: links};
-  const docs = render({...base, console});
-  for (const deployment of deployments(docs)) {
-    const env = deployment.spec.template.spec.containers[0].env.find(e => e.name === "LINKD_CONSOLE_KAC_POLICY_LINKS");
-    if (deployment.metadata.labels["app.kubernetes.io/component"] === "console") assert.deepEqual(JSON.parse(env.value), links);
-    else assert.equal(env, undefined);
-  }
-  for (const invalid of [{"tenant-a": {other: "https://kac.example/"}}, {"tenant/a": {}}, {"tenant-a": {merge: "javascript:alert(1)"}}]) {
-    const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, console: {...console, kacPolicyLinks: invalid}}), encoding: "utf8"});
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /kacPolicyLinks/);
-  }
-  const conflict = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, console, extraEnvVars: [{name: "LINKD_CONSOLE_KAC_POLICY_LINKS", value: "{}"}]}), encoding: "utf8"});
-  assert.notEqual(conflict.status, 0);
-  assert.match(conflict.stderr, /LINKD_CONSOLE_KAC_POLICY_LINKS/);
-});
 test("managed eventgen waits for Admin and uses Worker Token with one process", () => {
   const docs = render({...base,eventgen:{enabled:true,pollInterval:"5s"},auth:{existingSecret:"linkd-auth"}});
   const deployment = byComponent(docs,"eventgen");
@@ -98,22 +80,6 @@ test("legacy generation parameters are rejected", () => {
 test("packaged eventgen source example passes Linkd config validation", () => {
   execFileSync(binary, ["config", "validate", "--config", join(chart, "examples/eventgen-config.yaml")], {stdio: "pipe"});
 });
-test("Console HTTP subpath config reaches both Ingress and application", () => {
-  const basePath = "/apps/linkd";
-  const consoleValues = {enabled: true, basePath, basicAuth: {existingSecret: "linkd-console-auth"}, ingress: {enabled: true, ingressClassName: "nginx", hostname: "apps.example.com", tls: []}};
-  const docs = render({...base, console: consoleValues});
-  const ingress = docs.find(d => d.kind === "Ingress");
-  assert.equal(ingress.spec.rules[0].http.paths[0].path, basePath);
-  assert.equal(ingress.spec.rules[0].http.paths[0].pathType, "Prefix");
-  assert.equal(ingress.spec.tls, undefined);
-  const env = byComponent(docs, "console").spec.template.spec.containers[0].env;
-  assert.equal(env.find(e => e.name === "LINKD_CONSOLE_BASE_PATH").value, basePath);
-  for (const invalid of ["", "linkd", "//host", "/a/", "/a/../b", "/a%2Fb", "/a?b", "/" + "a".repeat(256)]) {
-    const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, console: {...consoleValues, basePath: invalid}}), encoding: "utf8"});
-    assert.notEqual(result.status, 0, invalid);
-    assert.match(result.stderr, /basePath/);
-  }
-});
 test("storage-only values enable Signal backpressure and preserve explicit settings", () => {
   const minimal = {auth: base.auth, configuration: {storage: base.configuration.storage}};
   const docs = render(minimal);
@@ -135,11 +101,11 @@ test("Signal backpressure watermarks can be changed or disabled", () => {
     validateConfigs(docs);
   }
 });
-test("default GHCR release images reach all roles, Console and migration", () => {
-  const docs = render({...base, console: {enabled: true, basicAuth: {existingSecret: "linkd-console-auth"}}});
+test("default GHCR release images reach all roles and migration", () => {
+  const docs = render(base);
   const prefix = "ghcr.io/tencentblueking/bkmonitor-datalink/";
-  for (const role of ["control-plane", "cleaner", "lifecycle", "console"]) {
-    const name = role === "console" ? "linkd-console" : "linkd";
+  for (const role of ["control-plane", "cleaner", "lifecycle"]) {
+    const name = "linkd";
     assert.equal(byComponent(docs, role).spec.template.spec.containers[0].image, prefix + name + ":0.1.11");
   }
   assert.equal(docs.find(d => d.kind === "Job").spec.template.spec.containers[0].image, prefix + "linkd:0.1.11");
@@ -147,10 +113,8 @@ test("default GHCR release images reach all roles, Console and migration", () =>
 test("explicit image registry, tag and digest override release defaults", () => {
   const digest = "sha256:" + "b".repeat(64);
   const docs = render({...base, global: {imageRegistry: "mirror.example.com"},
-    image: {registry: "ignored.example.com", repository: "custom/linkd", tag: "custom", digest},
-    console: {enabled: true, image: {repository: "custom/console", tag: "console-test"}, basicAuth: {existingSecret: "linkd-console-auth"}}});
+    image: {registry: "ignored.example.com", repository: "custom/linkd", tag: "custom", digest}});
   assert.equal(byComponent(docs, "cleaner").spec.template.spec.containers[0].image, "mirror.example.com/custom/linkd@" + digest);
-  assert.equal(byComponent(docs, "console").spec.template.spec.containers[0].image, "mirror.example.com/custom/console:console-test");
   const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {
     input: stringify({...base, image: {tag: "", digest: ""}}), encoding: "utf8"});
   assert.notEqual(result.status, 0);
@@ -190,20 +154,6 @@ test("existing Secret can share different keys across groups, labels reach actua
   const effective = execFileSync(binary, ["config", "print", "--config", path], {env: {...process.env, LINKD_WORKER_LABELS: env.value}, encoding: "utf8"});
   assert.deepEqual(parse(effective).worker.labels, {pool: "alarmd"});
 });
-test("Console Ingress uses authenticated Service and server-only secrets", () => {
-  const values = parse(readFileSync(join(chart, "examples/console-ingress.yaml"), "utf8"));
-  const docs = render({...base, ...values});
-  const dev = byComponent(docs, "console");
-  const env = Object.fromEntries(dev.spec.template.spec.containers[0].env.map(e => [e.name, e]));
-  assert.equal(env.LINKD_CONSOLE_BASIC_AUTH_ENABLED.value, "true");
-  assert.equal(env.LINKD_CONSOLE_BASIC_AUTH_PASSWORD.valueFrom.secretKeyRef.name, "linkd-console-auth");
-  assert.equal(env.LINKD_WORKER_TOKEN, undefined);
-  const ingress = docs.find(d => d.kind === "Ingress");
-  assert.equal(ingress.spec.rules[0].http.paths[0].backend.service.name, dev.metadata.name);
-  assert.equal(ingress.spec.rules[0].http.paths[0].path, "/");
-  assert.equal(ingress.spec.tls[0].secretName, "linkd-console-tls");
-  assert.equal(docs.filter(d => d.kind === "Ingress").length, 1);
-});
 test("zero replicas, metrics disabled, digest, checksum and bounded names", () => {
   const values = {...base, metrics: {enabled: false}, image: {repository: "linkd", digest: "sha256:" + "a".repeat(64)}, clusters: {default: {cleaner: {replicas: 0}}}};
   const docs = render(values, "a".repeat(53));
@@ -223,8 +173,6 @@ test("invalid values fail before installation", () => {
     {clusters: {default: {labels: {pool: 12}}}},
     {clusters: {default: {cleaner: {replicas: -1}}}},
     {clusters: {default: {secretKeys: {cleaner: "same.yaml", lifecycle: "same.yaml"}}}},
-    {console: {enabled: true, image: {tag: "test"}}},
-    {console: {ingress: {enabled: true, hostname: "test.example"}}},
     {metrics: {enabled: false, serviceMonitor: {enabled: true}}},
     {extraEnvVars: [{name: "LINKD_WORKER_LABELS", value: "{}"}]},
     {controlPlane: {existingSecret: "conflict"}},
@@ -297,7 +245,7 @@ test("migration validates bounds and prevents reserved environment overrides", (
 test("ServiceMonitor discovers every worker group and control-plane metrics endpoint only", () => {
   const clusters = parse(readFileSync(join(chart,"examples/clusters.yaml"),"utf8"));
   const metrics = parse(readFileSync(join(chart,"examples/servicemonitor.yaml"),"utf8"));
-  const docs = render({...base,...clusters,...metrics,console:{enabled:true,image:{tag:"test"},basicAuth:{existingSecret:"console-auth"}}});
+  const docs = render({...base,...clusters,...metrics});
   const monitor = docs.find(d => d.kind === "ServiceMonitor");
   assert.equal(monitor.metadata.labels.release,"kube-prometheus-stack");
   assert.deepEqual(monitor.spec.namespaceSelector.matchNames,["test"]);
@@ -389,7 +337,6 @@ test("role and cluster BlueKing mode overrides are rejected", () => {
 
 test("JWT secret is injected only into management consumers", () => {
   const values = structuredClone(base);
-  values.console = {...values.console, enabled:true, basicAuth:{...values.console?.basicAuth, existingSecret:"console-auth"}};
   values.auth.jwtSecretKey = "custom-jwt-key";
   values.configuration.dispatch = {jwt:{secret_key:"must-not-render", username:"service"}};
   const docs = render(values);
@@ -397,7 +344,7 @@ test("JWT secret is injected only into management consumers", () => {
     const role = deploy.metadata.labels["app.kubernetes.io/component"];
     const env = deploy.spec.template.spec.containers[0].env;
     const jwt = env.find(e => e.name === "LINKD_JWT_SECRET_KEY");
-    assert.equal(Boolean(jwt), ["control-plane", "console"].includes(role));
+    assert.equal(Boolean(jwt), role === "control-plane");
     if (jwt) assert.deepEqual(jwt.valueFrom.secretKeyRef, {name:values.auth.existingSecret, key:"custom-jwt-key"});
     assert.equal(env.some(e => e.name === "LINKD_API_TOKEN"), false);
     const config = parse(configFor(docs, deploy));
@@ -427,37 +374,19 @@ test("global KAC plugin reaches every role and cannot be overridden",()=>{
  }
 });
 
-test("optional global KAC alert navigation is only injected into Console", () => {
-  const url = "https://kac.example/#/kac/alarmDetail?type=all&id={alarm_id}&tenant={bk_tenant_id}";
-  for (const value of ["", url]) {
-    const docs = render({...base, console: {enabled: true, basicAuth: {existingSecret: "console-auth"}, kacAlertUrlTemplate: value}});
-    for (const deployment of deployments(docs)) {
-      const env = deployment.spec.template.spec.containers[0].env.find(e => e.name === "LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE");
-      if (value && deployment.metadata.labels["app.kubernetes.io/component"] === "console") assert.equal(env.value, value);
-      else assert.equal(env, undefined);
-    }
-  }
-});
-
 test("direct authentication values reach roles and both migration modes without an auth Secret", () => {
   const values = structuredClone(base);
   values.auth = {jwtSecret: "synthetic-jwt-key", workerToken: "synthetic-worker-token"};
-  values.console = {enabled: true, basicAuth: {username: "operator", password: 'test: "quoted" $value # password'}};
   for (const watch of [true, false]) {
     values.migrate = {watch};
     const docs = render(values);
     for (const doc of docs.filter(d => d.kind === "Deployment" || d.kind === "Job")) {
       const role = doc.metadata.labels["app.kubernetes.io/component"];
       const env = Object.fromEntries(doc.spec.template.spec.containers[0].env.map(e => [e.name, e]));
-      if (["control-plane", "console", "migrate"].includes(role)) {
+      if (["control-plane", "migrate"].includes(role)) {
         assert.deepEqual(env.LINKD_JWT_SECRET_KEY, {name: "LINKD_JWT_SECRET_KEY", value: "synthetic-jwt-key"});
       }
-      if (role !== "console") {
-        assert.deepEqual(env.LINKD_WORKER_TOKEN, {name: "LINKD_WORKER_TOKEN", value: "synthetic-worker-token"});
-      } else {
-        assert.equal(env.LINKD_CONSOLE_BASIC_AUTH_USERNAME.value, "operator");
-        assert.equal(env.LINKD_CONSOLE_BASIC_AUTH_PASSWORD.value, values.console.basicAuth.password);
-      }
+      assert.deepEqual(env.LINKD_WORKER_TOKEN, {name: "LINKD_WORKER_TOKEN", value: "synthetic-worker-token"});
     }
     validateConfigs(docs);
   }
@@ -466,33 +395,23 @@ test("direct authentication values reach roles and both migration modes without 
 test("existing authentication Secrets override direct values and retain custom keys", () => {
   const values = structuredClone(base);
   values.auth = {...values.auth, jwtSecret: "unused-direct", workerToken: "unused-direct", jwtSecretKey: "jwt", workerTokenKey: "worker"};
-  values.console = {enabled: true, basicAuth: {existingSecret: "console-auth", usernameKey: "user", passwordKey: "pass", username: "unused-user", password: "unused-password"}};
   const docs = render(values);
   assert.equal(JSON.stringify(docs).includes("unused-"), false);
   for (const doc of docs.filter(d => d.kind === "Deployment" || d.kind === "Job")) {
     const env = Object.fromEntries(doc.spec.template.spec.containers[0].env.map(e => [e.name, e]));
     if (env.LINKD_JWT_SECRET_KEY) assert.deepEqual(env.LINKD_JWT_SECRET_KEY.valueFrom.secretKeyRef, {name: values.auth.existingSecret, key: "jwt"});
     if (env.LINKD_WORKER_TOKEN) assert.deepEqual(env.LINKD_WORKER_TOKEN.valueFrom.secretKeyRef, {name: values.auth.existingSecret, key: "worker"});
-    if (env.LINKD_CONSOLE_BASIC_AUTH_USERNAME) {
-      assert.deepEqual(env.LINKD_CONSOLE_BASIC_AUTH_USERNAME.valueFrom.secretKeyRef, {name: "console-auth", key: "user"});
-      assert.deepEqual(env.LINKD_CONSOLE_BASIC_AUTH_PASSWORD.valueFrom.secretKeyRef, {name: "console-auth", key: "pass"});
-    }
   }
 });
 
 test("direct authentication rejects missing fields, matching tokens and invalid types", () => {
-  const auth = {jwtSecret: "synthetic-jwt", workerToken: "synthetic-worker"};
-  for (const [credentials, basicAuth, expected] of [
-    [{workerToken: "worker"}, undefined, /auth.jwtSecret/],
-    [{jwtSecret: "jwt"}, undefined, /auth.workerToken/],
-    [{jwtSecret: "same", workerToken: "same"}, undefined, /必须不同/],
-    [{jwtSecret: 123, workerToken: "worker"}, undefined, /jwtSecret/],
-    [auth, {password: "password"}, /basicAuth.username/],
-    [auth, {username: "operator"}, /basicAuth.password/],
-    [auth, {username: "operator", password: 123}, /password/],
+  for (const [credentials, expected] of [
+    [{workerToken: "worker"}, /auth.jwtSecret/],
+    [{jwtSecret: "jwt"}, /auth.workerToken/],
+    [{jwtSecret: "same", workerToken: "same"}, /必须不同/],
+    [{jwtSecret: 123, workerToken: "worker"}, /jwtSecret/],
   ]) {
     const values = {...base, auth: credentials};
-    if (basicAuth) values.console = {enabled: true, basicAuth};
     const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify(values), encoding: "utf8"});
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, expected);

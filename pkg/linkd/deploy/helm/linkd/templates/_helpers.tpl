@@ -53,10 +53,6 @@ linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
 {{- $list = append $list (dict "name" (printf "%s-%s-%s" $name $group $role) "component" $role "group" $group "cluster" $cluster "settings" $settings "labels" ($cluster.labels | default dict) "secret" ($cluster.existingSecret | default (printf "%s-%s-config" $name $group)) "key" (index $keys $role | default (printf "%s.yaml" $role)) "external" (not (empty $cluster.existingSecret))) -}}
 {{- end -}}
 {{- end -}}
-{{- if .Values.console.enabled -}}
-{{- $dt := .Values.console -}}
-{{- $list = append $list (dict "name" (printf "%s-console" $name) "component" "console" "settings" $dt "secret" ($dt.existingSecret | default (printf "%s-console" $name)) "key" $dt.secretKey "external" (not (empty $dt.existingSecret))) -}}
-{{- end -}}
 {{- dict "items" $list | toYaml -}}
 {{- end -}}
 
@@ -143,23 +139,12 @@ value: {{ .value | quote }}
 {{- $_ := required "auth.workerToken 必须配置（或设置 auth.existingSecret）" .Values.auth.workerToken -}}
 {{- if eq .Values.auth.jwtSecret .Values.auth.workerToken }}{{ fail "auth.jwtSecret 与 auth.workerToken 必须不同" }}{{ end -}}
 {{- end -}}
-{{- if .Values.console.enabled -}}
-{{- if not .Values.console.basicAuth.existingSecret -}}
-{{- $_ := required "console.basicAuth.username 必须配置（或设置 console.basicAuth.existingSecret）" .Values.console.basicAuth.username -}}
-{{- $_ := required "console.basicAuth.password 必须配置（或设置 console.basicAuth.existingSecret）" .Values.console.basicAuth.password -}}
-{{- end -}}
-{{- end -}}
-
-{{- if .Values.console.ingress.enabled -}}
-{{- if not .Values.console.enabled }}{{ fail "Ingress 要求 console.enabled=true" }}{{ end -}}
-{{- $_ := required "Ingress 要求 console.ingress.hostname" .Values.console.ingress.hostname -}}
-{{- end -}}
 {{- if and .Values.metrics.serviceMonitor.enabled (not .Values.metrics.enabled) }}{{ fail "ServiceMonitor 要求 metrics.enabled=true" }}{{ end -}}
 {{- range $w := (include "linkd.workloads" . | fromYaml).items -}}
 {{- $bk := ($w.settings.configuration | default dict).blueking | default dict -}}
 {{- if hasKey (($w.settings.configuration | default dict).plugins | default dict) "kac" }}{{ fail "KAC 插件只能配置于公共 configuration.plugins.kac" }}{{ end -}}
 {{- if hasKey $bk "enable_multi_tenant_mode" }}{{ fail "多租户开关只能配置于 configuration.blueking.enable_multi_tenant_mode" }}{{ end -}}
-{{- $reserved := list "LINKD_CONTROL_PLANE_URL" "LINKD_JWT_SECRET_KEY" "LINKD_WORKER_TOKEN" "LINKD_WORKER_LABELS" "LINKD_CONFIG" "LINKD_CONSOLE_MODE" "LINKD_CONSOLE_HOST" "LINKD_CONSOLE_PORT" "LINKD_CONSOLE_BASIC_AUTH_ENABLED" "LINKD_CONSOLE_BASIC_AUTH_USERNAME" "LINKD_CONSOLE_BASIC_AUTH_PASSWORD" "LINKD_CONSOLE_PROMETHEUS_URL" "LINKD_CONSOLE_KAC_POLICY_LINKS" "LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE" -}}
+{{- $reserved := list "LINKD_CONTROL_PLANE_URL" "LINKD_JWT_SECRET_KEY" "LINKD_WORKER_TOKEN" "LINKD_WORKER_LABELS" "LINKD_CONFIG" -}}
 {{- $seen := dict -}}
 {{- range $env := concat $.Values.extraEnvVars ($w.settings.extraEnvVars | default list) -}}
 {{- if or (has $env.name $reserved) (hasKey $seen $env.name) }}{{ fail (printf "%s: extraEnvVars 不得覆盖保留变量或重复声明 %s" $w.name $env.name) }}{{ end -}}

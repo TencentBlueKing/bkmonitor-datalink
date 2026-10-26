@@ -2,8 +2,8 @@
 
 Chart 位于 [deploy/helm/linkd](../../deploy/helm/linkd/README.md)。使用 Helm 3，
 默认部署一个 Control Plane 和多个 worker 组；每组各有一个 Cleaner、Lifecycle Deployment。
-Console 和多个独立 Event Generator 实例按需启用。
-没有 all-in-one 参数。Redis、Elasticsearch/MySQL、Kafka、Prometheus 和 Ingress Controller 由部署方管理。
+管理界面使用 Kingeye Admin；Event Generator 按需启用。
+没有 all-in-one 参数。Redis、Elasticsearch/MySQL、Kafka和 Prometheus 由部署方管理。
 
 外部 Elasticsearch 最低要求 **7.10**；Redis 建议使用 **7.2 系列**，支持单节点或 Sentinel，
 不支持原生 Redis Cluster。Redis 命令下限与已验证版本有区别，部署前请查阅
@@ -11,11 +11,10 @@ Console 和多个独立 Event Generator 实例按需启用。
 
 ## 构建镜像与准备配置
 
-Chart 默认使用 GHCR 的两个 `0.1.10` 镜像：
+Chart 默认使用 GHCR 的 Linkd 镜像：
 
 ```text
-ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.10
-ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.10
+ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.11
 ```
 
 Chart 生成的配置在缺省时自动包含 `lifecycle: {}`，使用程序默认值；可用
@@ -26,14 +25,10 @@ Chart 不修改 Secret 内容，需自行在配置文件中提供 `lifecycle` �
 
 ```bash
 make image IMAGE=registry.example.com/linkd IMAGE_TAG=<tag>
-make console-image CONSOLE_IMAGE=registry.example.com/linkd-console IMAGE_TAG=<tag>
 ```
 
-两个 Makefile 入口优先使用 Docker，也可通过 `CONTAINER=container` 选择 Apple Container。
-Console 也可直接执行 `docker build -t linkd-console:<tag> console`；构建上下文必须是 `console`。
-构建器建议至少 4 GiB 内存，TypeScript 构建默认最多使用 3 GiB V8 heap，可用构建参数
-`NODE_BUILD_OPTIONS` 调整；该参数不进入运行镜像。
-可通过 `image` 和 `console.image` 覆盖默认 registry、repository、tag 或 digest。
+Makefile 优先使用 Docker，也可通过 `CONTAINER=container` 选择 Apple Container。
+可通过 `image` 覆盖默认 registry、repository、tag 或 digest。
 如果显式清空 tag，必须提供 digest；使用私有镜像时配置 imagePullSecrets。
 显式 digest 优先于 tag，`global.imageRegistry` 优先于各镜像 registry。
 GitHub Actions 支持单独打包 Chart 并下载 `.tgz`，见[手动构建与发布](image-release.md#helm-chart-打包)。
@@ -50,16 +45,10 @@ Chart 支持直接在 values 填写认证凭据，无需提前创建认证 Secre
 auth:
   jwtSecret: replace-with-shared-kingeye-jwt-secret
   workerToken: replace-with-independent-worker-token
-console:
-  enabled: true
-  basicAuth:
-    username: operator
-    password: replace-with-console-password
 ```
 
 `auth.existingSecret` 非空时优先使用该 Secret，忽略 `auth.jwtSecret` 和 `auth.workerToken`；
 否则两项必须非空且不同。`auth.jwtSecretKey` / `workerTokenKey` 仍表示 Secret 中的 key 名。
-Console 启用时，`console.basicAuth.existingSecret` 同样优先；未配置时 username/password 必须非空。
 直接配置通过环境变量注入对应角色及初始化 Job，Helm 升级修改值会触发相关 Deployment 更新。
 values 中的认证凭据会进入 Helm release 记录和 Pod manifest；配置文件中的存储凭据仍由配置 Secret 挂载。
 完整无外部认证 Secret 示例见 [直接认证配置](../../deploy/helm/linkd/examples/direct-auth.yaml)。
@@ -137,7 +126,7 @@ kubectl -n linkd get deployment,pod -l linkd/worker-group=alarmd
 
 默认每组创建独立 Secret `<fullname>-<group>-config`，包含
 `cleaner.yaml` 和 `lifecycle.yaml`；各 Deployment 只投影自身使用的 key。
-Control Plane 和 Console 各有独立配置 Secret。
+Control Plane 有独立配置 Secret。
 
 内联配置按以下顺序合并：公共 `configuration` → 组 `configuration` →
 角色配置（先 workerDefaults，再组内角色覆盖）。
@@ -175,70 +164,6 @@ clusters:
 Severity 配置；控制面设置 `dispatch.listen: 0.0.0.0:8090`。
 开启指标时设置 Prometheus exporter 和 `0.0.0.0:9464`。
 worker.labels 仍由 Chart 的环境变量覆盖，控制面 URL 也通过环境变量指向内部 Service。
-
-## Console、Basic Auth 与 Ingress
-
-```bash
-kubectl -n linkd create secret generic linkd-console-auth \
-  --from-file=username=/secure/console-username \
-  --from-file=password=/secure/console-password
-```
-
-```yaml
-console:
-  enabled: true
-  basicAuth:
-    existingSecret: linkd-console-auth
-    usernameKey: username
-    passwordKey: password
-  prometheusUrl: http://prometheus:9090
-  ingress:
-    enabled: true
-    ingressClassName: "<集群中的 IngressClass>"
-    hostname: linkd.example.com
-    tls:
-      - hosts: [linkd.example.com]
-        secretName: linkd-console-tls
-```
-
-Ingress 使用 `console.basePath`（默认 `/`）和 Prefix 匹配，只暴露 Console。
-子路径同时配置到 Console 服务端，页面资源、浏览器路由和 API 自动使用同一前缀；Ingress 必须保留完整路径，不配置 rewrite-target。
-路径段仅支持字母、数字、下划线、连字符，总长度不超过 256；除根路径外不能以 `/` 结尾。
-
-同域名下使用 HTTP 子路径的示例（与其他 values 合并）：
-
-```yaml
-console:
-  enabled: true
-  basePath: /apps/linkd
-  ingress:
-    enabled: true
-    ingressClassName: nginx
-    hostname: apps.example.com
-    tls: []
-```
-
-访问 `http://apps.example.com/apps/linkd/`。
-同一镜像可通过运行时配置切换根路径和子路径，无需为每个路径重新构建。
-可叠加使用 [HTTP 子路径示例](../../deploy/helm/linkd/examples/console-subpath.yaml)。
-TLS Secret、DNS 和 Controller 由部署方准备，HTTPS 和跳转策略按所用 Controller 配置。
-Basic Auth 不提供传输加密，远程访问应使用 HTTPS。
-
-Console Service 是 ClusterIP，Basic Auth 在 Node 服务执行，直连 Service 也需要认证。
-所有页面、静态资源和 local-api 都受保护。凭据可直接填写或来自已有 Secret，只配置单个运维账户，
-该账户具有 Console 现有管理权限，不代表提供按用户划分的租户权限。
-
-Console 以 server 模式监听 `0.0.0.0:4399`，该模式强制 Basic Auth。
-本地开发仍默认 local 模式，仅允许回环监听。浏览器认证信息不会转发给控制面；
-控制面请求使用服务端 API token，基础设施凭据不会发送给浏览器。
-
-Console 可配置自己的 configuration / existingSecret、资源、调度参数和 extraEnvVars，
-通过既有只读凭据环境变量覆盖数据库或 Prometheus 连接凭据。其配置 Secret 需包含有效的存储配置，
-不需要 worker token。
-
-`console.kacPolicyLinks` 按租户设置抑制、屏蔽、合并的 KAC 页面入口，仅注入 Console 的
-`LINKD_CONSOLE_KAC_POLICY_LINKS`。配置结构、占位符及路由示例见
-[KAC 配置入口](console.md#kac-配置入口)。该变量不能通过 extraEnvVars 重复覆盖，不发送管理凭据到 KAC。
 
 ## 可选 Event Generator
 
@@ -284,7 +209,7 @@ Chart 不安装 Prometheus Operator 或修改 Prometheus 实例；这些是 Oper
 
 单个 ServiceMonitor 通过 release 标签与 `linkd/metrics: "true"` 选择当前 release 的所有指标 Service，
 固定采集 HTTP `/metrics`；Operator 发现各 Service 后采集其对应的 Pod endpoint，而不是通过
-Service 负载均衡只采一份副本。Control Plane API Service、Console 和 migrate Job 不纳入采集。
+Service 负载均衡只采一份副本。Control Plane API Service 和 migrate Job 不纳入采集。
 关闭 `metrics.enabled` 时必须同时关闭 ServiceMonitor。
 
 ServiceMonitor 默认创建在 Linkd namespace。若设置 `metrics.serviceMonitor.namespace: monitoring`，
@@ -411,16 +336,12 @@ kubectl -n linkd rollout restart deployment -l linkd/worker-group=alarmd
 
 `metrics.enabled` 默认开启；`metrics.serviceMonitor.enabled` 默认关闭，启用前需要安装对应 CRD。
 Linkd 当前没有专用健康接口，默认不配置探针，可在角色中自定义。
-Console 默认 TCP 探针只判断端口存活，不代表外部依赖健康。
 
 在模块根目录执行：
 
 ```bash
 make check
 make helm-check
-cd console
-pnpm build
-pnpm exec playwright test --config playwright.auth.config.ts
 ```
 
 Helm 测试检查渲染、配置加载、组隔离和错误参数，不连接真实集群。
@@ -437,7 +358,7 @@ Helm 测试检查渲染、配置加载、组隔离和错误参数，不连接真
 不探测 Kingeye 上游。数据库故障时可从快照恢复；关闭开关后不读取这些快照，也不会删除它们。
 来源示例见[配置指南](configuration.md#动态配置)。
 
-管理认证可直接配置 `auth.jwtSecret`；已有 Secret 模式使用 `jwt-secret-key`（可通过 `auth.jwtSecretKey` 指定已有 key），其值与 Kingeye 的 `BKAPP_JWT_SECRET_KEY` 相同。Chart 仅向控制面、Console 和迁移 Job 注入 `LINKD_JWT_SECRET_KEY`；Worker 继续独立使用 `worker-token`。`configuration.dispatch.jwt.username` 可设置签发用户名，默认 `admin`。升级时同步更新 Secret、Chart、控制面、Console 和来源导入 CLI；旧 `auth.apiTokenKey` 已移除，不支持混用旧管理 Token。修改 Secret 后需重启消费它的进程。
+管理认证可直接配置 `auth.jwtSecret`；已有 Secret 模式使用 `jwt-secret-key`（可通过 `auth.jwtSecretKey` 指定已有 key），其值与 Kingeye 的 `BKAPP_JWT_SECRET_KEY` 相同。Chart 仅向控制面和迁移 Job 注入 `LINKD_JWT_SECRET_KEY`；Worker 继续独立使用 `worker-token`。`configuration.dispatch.jwt.username` 可设置签发用户名，默认 `admin`。升级时同步更新 Secret、Chart、控制面和来源导入 CLI；旧 `auth.apiTokenKey` 已移除，不支持混用旧管理 Token。修改 Secret 后需重启消费它的进程。
 
 ## 蓝鲸全局调用配置
 
@@ -476,9 +397,3 @@ configuration:
 该片段合入完整插件配置；`secret_key` 与 KAC 的 `BKAPP_JWT_SECRET_KEY` 相同。
 控制面每次请求及重试重新签发五分钟有效的 JWT。旧 `plugins.kac.internal_token` 明确拒绝，
 升级时须用 `jwt.secret_key` 替换，不能直接复制旧 JWT。已有配置 Secret 也需同步更新并重启相关进程。
-
-### 可选 KAC 告警跳转
-
-`console.kacAlertUrlTemplate` 默认空，仅向 Console 注入 `LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE`。
-省略时没有 KAC 告警跳转入口；不影响 `configuration.plugins.kac` 的兼容存储或动作投递。
-占位符、校验和登录租户边界见[可选告警详情入口](console.md#可选-kac-告警详情入口)。

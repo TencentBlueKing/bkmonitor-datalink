@@ -101,8 +101,7 @@ Event 内部分段使用 `linkd_lifecycle_event_phase_duration_seconds`，每次
 分子、分母与子步骤覆盖率必须使用同一条件。未过滤时仍按尝试次数跨来源/Worker 加权，旧的无来源
 标签样本仅参与汇总，不能追溯拆分。不增加租户、Event ID、fingerprint 或来源版本维度。
 使用单调时间计时，不依赖业务时钟，也不改变失败、重试和持久化语义。
-该指标与 ES 物理批次指标的采样单位不同，不相加。Console 展示口径及各环节范围见
-[单 Event 耗时分布](../guides/console.md#指标边界)。
+该指标与 ES 物理批次指标的采样单位不同，不相加。指标展示由 Kingeye Admin 提供，口径以本节为准。
 
 以下指标统一以 `linkd_elasticsearch_write_batch_` 为前缀，
 `linkd_batch_kind=read|write` 区分 `_mget` 与 `_bulk`。跨来源请求不添加租户、Event ID 或来源标签。
@@ -214,7 +213,7 @@ Go/process 自动发现先保证新增项可见，现有指标有中文短名称
 标题并保留上游 HELP；后续可完善中文说明。Resource 和抓取标签与业务维度分开说明，不伪造不存在
 的 tenant、Alert ID 标签。
 
-API、鉴权和页面使用说明统一见 [Console 指标边界](../guides/console.md#指标边界)。
+运行观测页面由 Kingeye Admin 提供。
 
 ## 已实现 Metric
 
@@ -307,7 +306,7 @@ EventSource ID、固定 Processor、固定 DataSource/operation、状态和原�
 当前任务状态由 `internal/controlplane/taskstate` 显式注入装配和管理 API，使用有锁、有界的内存快照；
 最多每任务 64 个子流程，不保存原始错误、凭据或业务载荷。API 返回单进程 owner、启动和采样时间，
 启用配置、生命周期、完整轮次和子流程结果彼此独立。Prometheus 负责跨重启的历史趋势，不作为当前 owner
-唯一来源。具体展示和缺失值语义见 [Console 指南](../guides/console.md)。
+唯一来源。运行状态由 Kingeye Admin 展示。
 
 轮次口径：调度为一次 tick；Provider 为一次 Pull 与完整 Apply；动态配置为读取到安装完整轮次；
 策略索引主任务为目标发现/初始化轮次，目标子项保留逐策略刷新数量与失败数；Redis 主任务为来源分页扫描，

@@ -22,21 +22,18 @@ for (const arch of ['amd64', 'arm64']) {
     const values = YAML.parse(fs.readFileSync(path.join(chart, 'values.yaml'), 'utf8'));
     assert.equal(values.image.registry, 'registry.example');
     assert.equal(values.image.repository, `project/images-${arch}/linkd`);
-    assert.equal(values.console.image.repository, `project/images-${arch}/linkd-console`);
     assert.equal(values.image.tag, '1.2.3-ci.4');
     assert.equal(values.nodeSelector['kubernetes.io/arch'], arch);
     assert.deepEqual(values.clusters, YAML.parse(original).clusters);
     assert.equal(fs.readFileSync(path.join(source, 'values.yaml'), 'utf8'), original);
     const override = YAML.parse(fs.readFileSync(path.join(chart, `values-${peer}.yaml`), 'utf8'));
     assert.equal(override.image.repository, `project/images-${peer}/linkd`);
-    assert.equal(override.console.image.tag, '1.2.3-ci.4');
     assert.equal(override.nodeSelector['kubernetes.io/arch'], peer);
-    const args = ['external-services', 'clusters', 'console-ingress', 'servicemonitor']
+    const args = ['external-services', 'clusters', 'servicemonitor']
       .flatMap(name => ['-f', path.join(chart, 'examples', name + '.yaml')]);
     try { execFileSync('helm', ['lint', '--strict', chart, ...args], { encoding: 'utf8' }); } catch (error) { throw new Error(error.stdout + error.stderr); }
     const rendered = execFileSync('helm', ['template', 'linkd', chart, ...args, '-f', path.join(chart, `values-${peer}.yaml`)], { encoding: 'utf8' });
     assert.ok(rendered.includes(`registry.example/project/images-${peer}/linkd:1.2.3-ci.4`));
-    assert.ok(rendered.includes(`registry.example/project/images-${peer}/linkd-console:1.2.3-ci.4`));
     assert.ok(rendered.includes(`kubernetes.io/arch: ${peer}`));
     execFileSync('helm', ['package', chart, '--version', '1.2.3-ci.4', '--app-version', '1.2.3-ci.4', '-d', directory]);
     const metadata = YAML.parse(execFileSync('helm', ['show', 'chart', path.join(directory, 'linkd-1.2.3-ci.4.tgz')], { encoding: 'utf8' }));

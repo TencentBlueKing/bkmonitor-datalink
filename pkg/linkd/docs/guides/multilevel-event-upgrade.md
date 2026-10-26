@@ -18,7 +18,7 @@ mapping。更新 ES 模板不等于更新已有索引；仅升级镜像或仅清
 
 ## 2. 准备交付物和配置
 
-先构建并发布包含本次改造的 Linkd 与 Console 镜像；如使用 Eventgen，也准备其独立的新镜像。
+先构建并发布包含本次改造的 Linkd 镜像；如使用 Eventgen，也准备其独立的新镜像。
 仓库默认 tag 不表示本地变更已经发布。流程见[镜像发布](image-release.md)和[自建构建机发布](ci-release.md)。
 
 保存本次 release 的原始 values，记录所有启用来源的 Kafka topic/consumer_group 及 Redis hook 配置。
@@ -31,10 +31,6 @@ mapping。更新 ES 模板不等于更新已有索引；仅升级镜像或仅清
 image:
   tag: "<包含本次改造的新 Linkd 标签>"
   digest: ""
-console:
-  image:
-    tag: "<包含本次改造的新 Console 标签>"
-    digest: ""
 eventgen:
   enabled: false
 migrate:
@@ -55,7 +51,7 @@ configuration:
 ```
 
 - 保留原有地址、认证、资源预算与正常副本数，保持 release、namespace 和 dispatch.deployment 不变。
-- 所有 Cleaner/Lifecycle/Control Plane 必须使用一致的新前缀，Console 读取同一 ES 前缀；检查组或角色覆盖。
+- 所有 Cleaner/Lifecycle/Control Plane 必须使用一致的新前缀，Kingeye Admin 读取同一 ES 前缀；检查组或角色覆盖。
 - 使用 existingSecret 时修改对应 key 内的完整 Linkd YAML，不要同时设置内联 configuration；已有 Secret
   必须在 migrate Hook 启动前更新。Secret 变化不产生配置 checksum，停机后要确保所有实例以新配置重建。
 - 代码默认值见[配置指南](configuration.md#全局级别升级策略)，本例的新前缀不是代码默认值。
@@ -76,7 +72,7 @@ kubectl -n "$NS" delete job \
   --ignore-not-found
 
 kubectl -n "$NS" wait --for=delete pod \
-  -l "app.kubernetes.io/instance=$RELEASE,app.kubernetes.io/component in (control-plane,cleaner,lifecycle,console,eventgen)" \
+  -l "app.kubernetes.io/instance=$RELEASE,app.kubernetes.io/component in (control-plane,cleaner,lifecycle,eventgen)" \
   --timeout=180s
 ```
 
@@ -118,7 +114,7 @@ helm upgrade "$RELEASE" ./linkd-<新 Chart 版本>.tgz \
 2. 上游全部发送新版 evaluations；Eventgen 使用包含本次输入格式变更的镜像后再启用。
 3. 如启用 active-alert-by-strategy，先通过来源 API 或 event-source import 将其 key_prefix 切换为
    本次测试专用前缀，并同步读取该索引的消费者；等待来源新 Release 生效。不能把旧策略集合当作新环境状态。
-4. Console 指向新的业务索引，来源配置和认证仍可使用。
+4. Kingeye Admin 指向新的业务索引，来源配置和认证仍可使用。
 
 ## 5. 验收和旧资源清理
 
@@ -128,7 +124,7 @@ helm upgrade "$RELEASE" ./linkd-<新 Chart 版本>.tgz \
 - 同一 fingerprint 最多一个 active Alert；close_and_create 产生旧、新两个 Alert，update_current 保持 ID。
 - 高级别触发优先于旧级别恢复；最终 critical 进入 recovered。
 - 没有输入丢弃、strict mapping 错误或旧 Event ID 找不到导致的队首重试。
-- Kafka lag 和新 Mailbox 正常推进，Console 可关联到全部受影响 Alert。
+- Kafka lag 和新 Mailbox 正常推进，Kingeye Admin 可关联到全部受影响 Alert。
 
 验收后按明确资源清单清理旧业务索引和旧队列键；不要仅凭广泛通配符删除共享 ES/Redis 数据。
 保留 EventSource records/releases、认证 Secret 和调度状态。旧策略 hook 集合只在确认无人再使用后清理。

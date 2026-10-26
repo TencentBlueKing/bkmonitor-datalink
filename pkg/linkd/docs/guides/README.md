@@ -8,16 +8,14 @@
 - [项目 README 的容器镜像](../../README.md#容器镜像)：在 `pkg/linkd` 独立构建 `tencentos/tencentos4-minimal` 运行时镜像；
 - [版本提升、打包与 Helm 部署](version-upgrade-and-deployment.md)：从提升版本、构建制品到部署验证和回滚的完整操作手册；
 - [自建构建机发布](ci-release.md)：原生 amd64 / arm64 镜像构建、Chart 上传和任务清理；
-- [手动构建与发布镜像](image-release.md)：GitHub Actions 手动构建 Linkd / Console、GHCR 权限与版本标签；
+- [手动构建与发布镜像](image-release.md)：GitHub Actions 手动构建 Linkd / Eventgen、GHCR 权限与版本标签；
 - [配置与启动](configuration.md)；
 - [Redis 策略活跃告警 hook](active-alert-by-strategy.md)：来源配置、集合查询、一致性边界与排障；
-- [Elasticsearch 版本兼容](elasticsearch-compatibility.md)：Linkd 与 Console 的 ES 7.10+/8/9 范围及验证；
-- [Helm 部署与 worker 分组](helm.md)：三角色部署、独立配置 Secret、可选 Console 与认证入口；
+- [Elasticsearch 版本兼容](elasticsearch-compatibility.md)：Linkd 的 ES 7.10+/8/9 范围及验证；
+- [Helm 部署与 worker 分组](helm.md)：三角色部署、独立配置 Secret、初始化与指标采集；
 - [多级别事件测试环境重置升级](multilevel-event-upgrade.md)：ES + Helm 下允许丢弃测试数据时的停机切换；
 - [Standard Event 模拟器](event-generator.md)；
 - [使用 PM2 托管本地 Linkd 拓扑](pm2.md)；
-- [Linkd Console 运维调试工具](console.md)；
-- [AI 调试运维 CLI 与 Skill](ai-cli.md)：独立客户端、多环境凭据、默认只读接口和最终人工确认流程；
 - [主机推送告警 Enrich 示例](host-alert-enrich-example.md)；
 - [核心任务调度验证流程](task-scheduling-validation.md)。
 
@@ -28,3 +26,5 @@
 - 生产可观测性、日常运维和故障排查。
 
 面向内部开发者的模块实现细节应放在 [功能模块](../modules/README.md)，跨模块方案应放在 [设计文档](../design/README.md)。
+
+运行观测、来源管理及调试统一使用 Kingeye Admin；本仓库不再提供独立 Console。

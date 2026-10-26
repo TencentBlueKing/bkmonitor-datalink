@@ -225,12 +225,9 @@ Lifecycle 在当前处理调用内使用 evaluated_at 和候选发布引用（ty
 新选主排除字段无法求值的单条候选；查询、业务范围或目标解析失败仍跳过策略，已绑定原主无法求值则保留绑定等待重查。
 `alarm_tags` 为不重复的正整数 ID，单策略最多 128 个且小于 2^53；Alert 的策略标签累计上限 256，超出时跳过受影响新策略。
 
-## Console 只读入口
+## 管理界面
 
-Console 的 /local-api/policies 代理 GET 列表、记录、精确 Release 与 POST preview；不开放 PUT/DELETE。
-输入约束及响应字段复用前后端共享 schema，返回记录和 pending 均复核租户/类型/身份。
-Console 列表预算为每页 8 条，仍遵守原始扫描游标规则；不更改本契约直接 API 的 16 条上限。
-页面行为见[Console 指南](../../guides/console.md#告警策略与只读匹配)。
+管理界面由 Kingeye Admin 提供，代理路由与页面行为由 Admin 项目维护；Linkd 控制面接口以上文为准。
 
 ## 隔离状态模拟
 

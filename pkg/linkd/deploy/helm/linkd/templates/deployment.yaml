@@ -1,8 +1,7 @@
 {{- range $w := (include "linkd.workloads" . | fromYaml).items }}
 {{- $ctx := dict "root" $ "workload" $w }}
 {{- $s := $w.settings }}
-{{- $console := eq $w.component "console" }}
-{{- $image := ternary $.Values.console.image $.Values.image $console }}
+{{- $image := $.Values.image }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -58,20 +57,18 @@ spec:
         - name: {{ $w.component }}
           image: {{ include "linkd.image" (dict "root" $ "image" $image) | quote }}
           imagePullPolicy: {{ $image.pullPolicy }}
-          {{- if not $console }}
           args: ["run", {{ $w.component | quote }}, "--config", "/data/linkd/configs/linkd.yaml"]
-          {{- end }}
           securityContext:
             {{- toYaml ($s.containerSecurityContext | default $.Values.containerSecurityContext) | nindent 12 }}
           resources:
             {{- toYaml $s.resources | nindent 12 }}
-          {{- if or $console $.Values.metrics.enabled (eq $w.component "control-plane") }}
+          {{- if or $.Values.metrics.enabled (eq $w.component "control-plane") }}
           ports:
-            {{- if or $console (eq $w.component "control-plane") }}
+            {{- if eq $w.component "control-plane" }}
             - name: http
-              containerPort: {{ ternary 4399 8090 $console }}
+              containerPort: 8090
             {{- end }}
-            {{- if and $.Values.metrics.enabled (not $console) }}
+            {{- if $.Values.metrics.enabled }}
             - name: metrics
               containerPort: 9464
             {{- end }}
@@ -79,47 +76,15 @@ spec:
           env:
             - name: LINKD_CONTROL_PLANE_URL
               value: {{ printf "http://%s-control-plane:%v" (include "linkd.fullname" $) $.Values.service.port | quote }}
-            {{- if or $console (eq $w.component "control-plane") }}
+            {{- if eq $w.component "control-plane" }}
             - name: LINKD_JWT_SECRET_KEY
               {{- include "linkd.credential" (dict "secret" $.Values.auth.existingSecret "key" $.Values.auth.jwtSecretKey "value" $.Values.auth.jwtSecret) | nindent 14 }}
             {{- end }}
-            {{- if not $console }}
             - name: LINKD_WORKER_TOKEN
               {{- include "linkd.credential" (dict "secret" $.Values.auth.existingSecret "key" $.Values.auth.workerTokenKey "value" $.Values.auth.workerToken) | nindent 14 }}
-            {{- end }}
             {{- if $w.group }}
             - name: LINKD_WORKER_LABELS
               value: {{ $w.labels | toJson | quote }}
-            {{- end }}
-            {{- if $console }}
-            - name: LINKD_CONFIG
-              value: /data/linkd/configs/linkd.yaml
-            - name: LINKD_CONSOLE_MODE
-              value: server
-            - name: LINKD_CONSOLE_HOST
-              value: "0.0.0.0"
-            - name: LINKD_CONSOLE_PORT
-              value: "4399"
-            - name: LINKD_CONSOLE_BASE_PATH
-              value: {{ $.Values.console.basePath | quote }}
-            - name: LINKD_CONSOLE_BASIC_AUTH_ENABLED
-              value: "true"
-            - name: LINKD_CONSOLE_BASIC_AUTH_USERNAME
-              {{- include "linkd.credential" (dict "secret" $.Values.console.basicAuth.existingSecret "key" $.Values.console.basicAuth.usernameKey "value" $.Values.console.basicAuth.username) | nindent 14 }}
-            - name: LINKD_CONSOLE_BASIC_AUTH_PASSWORD
-              {{- include "linkd.credential" (dict "secret" $.Values.console.basicAuth.existingSecret "key" $.Values.console.basicAuth.passwordKey "value" $.Values.console.basicAuth.password) | nindent 14 }}
-            {{- with $.Values.console.prometheusUrl }}
-            - name: LINKD_CONSOLE_PROMETHEUS_URL
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with $.Values.console.kacAlertUrlTemplate }}
-            - name: LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with $.Values.console.kacPolicyLinks }}
-            - name: LINKD_CONSOLE_KAC_POLICY_LINKS
-              value: {{ . | toJson | quote }}
-            {{- end }}
             {{- end }}
             {{- with concat $.Values.extraEnvVars ($s.extraEnvVars | default list) }}
             {{- toYaml . | nindent 12 }}

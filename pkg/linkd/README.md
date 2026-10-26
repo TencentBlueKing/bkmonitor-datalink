@@ -55,8 +55,8 @@ MQ delivery
   裁剪所有 Group 都已确认的连续前缀；未读和 Pending Signal 不会为满足长度目标而删除。
 
 Linkd 核心处理和 KAC 兼容插件已有本地验收；KAC 策略同步、真实处置接收端、生命周期命令转交及
-旧状态写入/索引维护退出仍需跨仓接入。Console 已有策略与运行态诊断、受控检查和可靠任务管理；
-状态序列模拟、逐策略统计及 KAC 告警详情直达尚未实现。当前能力与验收边界统一见
+旧状态写入/索引维护退出仍需跨仓接入。运行观测和管理统一使用 Kingeye Admin，Linkd 不再提供独立 Console。
+当前能力与验收边界统一见
 [开发方案的差距清单](docs/design/event-enrich-and-alarm-policies.md#112-当前能力与剩余差距2026-10-08)。
 
 ## 目录
@@ -65,7 +65,6 @@ Linkd 核心处理和 KAC 兼容插件已有本地验收；KAC 策略同步、�
 cmd/linkd/            Linkd 服务进程入口
 cmd/linkd-eventgen/   测试环境可选的配置驱动事件生成器入口
 configs/     示例配置
-console/     运行观测与来源管理控制台
 internal/    领域、Cleaner、生命周期、存储和运行时实现
 docs/        设计、配置、协议、调研和审查记录
 tests/       数据生成和 all-in-one E2E
@@ -78,14 +77,14 @@ tests/       数据生成和 all-in-one E2E
 `all-in-one`，以及 Cleaner、Lifecycle、控制面（API / Leader / Manager）三进程模式；本次多级别事件改造的测试环境升级见[重置升级指南](docs/guides/multilevel-event-upgrade.md)。当前实现与目标
 边界见 [`docs/design/deployment.md`](docs/design/deployment.md)。
 
-开发维护人员可使用 [AI 调试运维 CLI 与 Skill](docs/guides/ai-cli.md) 连接 Console 排障，默认只读，操作前由 AI 展示最终方案并取得确认。
+开发维护人员通过 Kingeye Admin 及其 CLI 查询和管理 Linkd。
 
 ## 动态来源与任务调度
 
 EventSource 通过控制面 API/自定义 provider 管理，显式 `linkd event-source import --file <yaml>` 导入；常驻进程不自动加载文件中的来源。
 Cleaner/Lifecycle 按来源和标签分配多副本，数量默认 all，支持 0 和 enabled 总开关；Cleaner 自动受 Kafka partition 数限制。
 Event/Alert 保存实际使用的 event_source_version，来源级 Stream 支持多个 Lifecycle consumer。
-启动前设置不同的 LINKD_JWT_SECRET_KEY / LINKD_WORKER_TOKEN；管理调用使用 [Kingeye 兼容 JWT](docs/reference/contracts/internal-token.md)。Console 的 Event Sources 页面通过正式 API 修改配置。
+启动前设置不同的 LINKD_JWT_SECRET_KEY / LINKD_WORKER_TOKEN；管理调用使用 [Kingeye 兼容 JWT](docs/reference/contracts/internal-token.md)。Kingeye Admin 的 Event Sources 页面通过正式 API 修改配置。
 
 实现和边界见[来源管理](docs/design/event-source-dynamic-configuration.md)与[调度协议](docs/design/task-scheduling-protocol.md)。
 
@@ -99,7 +98,7 @@ Event/Alert 保存实际使用的 event_source_version，来源级 Stream 支持
 
 ## 本地开发
 
-要求 Go 1.26.10、golangci-lint v2.13.2，以及已安装依赖的 Node.js/pnpm 环境。
+要求 Go 1.26.10、golangci-lint v2.13.2、Helm 和 Node.js/pnpm。Node.js 仅用于 Helm 与发布脚本检查，先执行 `pnpm --dir scripts install --frozen-lockfile` 安装其 YAML 依赖。
 
 ```bash
 go run ./cmd/linkd config validate --config ./configs/linkd.yaml
@@ -139,15 +138,15 @@ docker build -t linkd:dev --build-arg VERSION=$(git rev-parse --short HEAD) .
 
 以上示例统一构建 `linkd:dev`，二进制版本使用当前 Git 短哈希。不指定 `IMAGE_TAG` 时，
 `make image` 默认以当前 Git 短哈希作为镜像标签，运行时应使用对应标签。
-`make image` 和 `make console-image` 都自动传入完整 `GIT_COMMIT`，并将 VERSION 与 commit 写入产物。
+`make image` 和 `make eventgen-image` 都自动传入完整 `GIT_COMMIT`，并将 VERSION 与 commit 写入产物。
 直接使用 Docker 构建时，需同时传入 `--build-arg VERSION=<version>` 和 `--build-arg GIT_COMMIT=<full-sha>`。
 两个镜像都支持追加 `version` 查询版本号及 commit；未注入的构建信息显示 dev / unknown。
 
 构建缓存：两个 Go 镜像的依赖下载层不依赖版本、commit 或目标架构；依赖文件和基础镜像等
 输入不变且缓存可用时，`go mod download` 应显示 `CACHED`。Go 编译使用 BuildKit cache mount，
 同一 builder 可复用编译缓存；GitHub Actions 的 `type=gha` 默认只恢复镜像层，不恢复 cache mount，
-因此临时 runner 上的 Go 增量编译缓存仍需额外配置。Console 将生产依赖裁剪与源码编译分开缓存，
-仅修改版本信息不会重新安装依赖或编译前端。构建日志会列出缓存命中的步骤，不能仅凭步骤名称判断重新执行。
+因此临时 runner 上的 Go 增量编译缓存仍需额外配置。
+构建日志会列出缓存命中的步骤，不能仅凭步骤名称判断重新执行。
 
 默认启动 `run all-in-one`。镜像不包含可用配置，必须把配置文件挂载到
 `/data/linkd/configs/linkd.yaml`，或用 `--config` 指定其他路径：
@@ -162,13 +161,9 @@ docker run --rm linkd:dev version
 容器终止宽限期建议至少 60 秒。当前镜像只提供与本地进程相同的启动入口，不表示生产部署方案已完成。
 
 Kubernetes 部署见 [Helm 指南](docs/guides/helm.md)：Chart 仅支持三角色独立部署，
-可按 worker 组配置标签、副本、资源与 Secret，另外提供可选 Console、Ingress 和 Basic Auth。
+可按 worker 组配置标签、副本、资源与 Secret，管理界面使用 Kingeye Admin。
 
-Linkd Console 使用独立镜像，在当前目录执行 `make console-image IMAGE_TAG=dev` 构建
-`linkd-console:dev`；也可执行 `docker build -t linkd-console:dev console`。
-配置挂载和启动方式见 [Console README](console/README.md#容器镜像)。
-
-GitHub Actions 支持手动选择构建 Linkd、Console 或两个镜像并推送到 GHCR；没有自动触发事件。
+GitHub Actions 支持手动选择构建 Linkd 或独立 Eventgen 镜像并推送到 GHCR；没有自动触发事件。
 参数、权限和版本标签约定见 [手动构建与发布镜像](docs/guides/image-release.md)。
 
 KAC 输出的重启边界和真实本地验收见[输出 V3 验收记录](docs/research/2026-10-14-kac-output-v3-validation.md)。

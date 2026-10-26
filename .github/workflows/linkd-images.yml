@@ -5,17 +5,16 @@ on:
   workflow_dispatch:
     inputs:
       component:
-        description: 构建目标（all 仅含 Linkd 和 Console；eventgen、helm 单独选择）
+        description: 构建目标（all 仅含 Linkd；eventgen、helm 单独选择）
         type: choice
         options:
           - all
           - linkd
-          - linkd-console
           - linkd-eventgen
           - helm
         default: all
       version:
-        description: Linkd / Console 可选版本标签；留空仅发布唯一构建标签
+        description: Linkd 可选版本标签；留空仅发布唯一构建标签
         type: string
         default: ""
       eventgen_version:
@@ -51,9 +50,8 @@ jobs:
         run: |
           set -euo pipefail
           case "$COMPONENT" in
-            all) components='["linkd","linkd-console"]' ;;
+            all) components='["linkd"]' ;;
             linkd) components='["linkd"]' ;;
-            linkd-console) components='["linkd-console"]' ;;
             linkd-eventgen) components='["linkd-eventgen"]'; VERSION="$EVENTGEN_VERSION" ;;
             helm) components='[]' ;;
             *) echo '::error::未知的 component'; exit 1 ;;
@@ -101,7 +99,6 @@ jobs:
           context=pkg/linkd
           dockerfile=Dockerfile
           case "$COMPONENT" in
-            linkd-console) context=pkg/linkd/console ;;
             linkd-eventgen) dockerfile=Dockerfile.eventgen ;;
             linkd) ;;
             *) echo '::error::未知的镜像组件'; exit 1 ;;
@@ -133,7 +130,7 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
-      # Console 的依赖安装和构建在目标架构执行；版本查询也需要运行 ARM 镜像。
+      # 版本查询需要运行 ARM 镜像。
       - name: Set up QEMU for ARM64
         uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
         with:
@@ -249,7 +246,6 @@ jobs:
           values=(
             -f "$chart/examples/external-services.yaml"
             -f "$chart/examples/clusters.yaml"
-            -f "$chart/examples/console-ingress.yaml"
             -f "$chart/examples/servicemonitor.yaml"
           )
           helm lint --strict "$chart" "${values[@]}"

@@ -2,13 +2,7 @@
 /.release/
 /bin/
 /dist/
-/console/dist/
-/console/dist-server/
-/console/node_modules/
-/console/coverage/
-/console/playwright-report/
-/console/test-results/
-/console/console.config.yaml
+/scripts/node_modules/
 /.pnpm-store/
 *.test
 *.out

@@ -18,5 +18,4 @@ cd "$(dirname "$0")/.."
 for endpoint in "$@"; do
   export LINKD_TEST_ELASTICSEARCH_URL="$endpoint"
   go test -count=1 ./internal/store/elasticsearch ./internal/eventsource/storage ./internal/enrich/datasources ./internal/onemodel
-  (cd console && ./node_modules/.bin/vitest run src/server/elasticsearch.integration.test.ts)
 done

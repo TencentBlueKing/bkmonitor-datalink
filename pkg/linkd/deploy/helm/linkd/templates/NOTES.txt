@@ -17,15 +17,6 @@ kubectl -n {{ .Release.Namespace }} logs job/{{ include "linkd.migrateName" . }}
 {{ end -}}
 {{ end -}}
 
-{{ if .Values.console.enabled -}}
-Console 使用 Basic Auth，凭据来自 {{ if .Values.console.basicAuth.existingSecret }}已有 Secret {{ .Values.console.basicAuth.existingSecret }}{{ else }}直接配置的 values{{ end }}。
-{{ if .Values.console.ingress.enabled -}}
-Console 地址：{{ if .Values.console.ingress.tls }}https{{ else }}http{{ end }}://{{ .Values.console.ingress.hostname }}{{ .Values.console.basePath }}；部署方须配置 DNS 和 Ingress Controller，保留完整路径转发。
-{{ else -}}
-kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "linkd.fullname" . }}-console 8080:{{ .Values.console.service.port }}
-{{ end -}}
-{{ end -}}
-
 {{ if .Values.eventgen.enabled -}}
 Event Generator 已启用：cycles=0 持续推送，正数为有限 Job；Helm 升级会创建新一轮有限任务。
 请确认配置 Secret 中的来源与控制面登记的 Kafka topic 一致。

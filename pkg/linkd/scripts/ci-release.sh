@@ -84,13 +84,9 @@ build)
     case $daemon in linux/x86_64) daemon=linux/amd64 ;; linux/aarch64) daemon=linux/arm64 ;; esac
     [[ $daemon == "linux/$TARGET_ARCH" ]] || fail "需要原生 linux/$TARGET_ARCH 构建机，实际为 $daemon"
     login
-    for component in linkd linkd-console; do
+    for component in linkd; do
         context=$module
         args=(--build-arg "GO_IMAGE=${GO_IMAGE:-golang:1.26.10}" --build-arg "RUNTIME_IMAGE=${RUNTIME_IMAGE:-tencentos/tencentos4-minimal}" --build-arg "GOPROXY=${GOPROXY:-direct}")
-        if [[ $component == linkd-console ]]; then
-            context=$module/console
-            args=(--build-arg "NODE_IMAGE=${NODE_IMAGE:-node:24-bookworm-slim}" --build-arg "NPM_REGISTRY=${NPM_REGISTRY:-https://registry.npmjs.org}")
-        fi
         ref=$(local_image "$component")
         docker buildx build --load --platform "linux/$TARGET_ARCH" --progress plain \
             --build-arg "VERSION=$PACKAGE_VERSION" --build-arg "GIT_COMMIT=$revision" \
@@ -107,9 +103,9 @@ build)
     ;;
 push)
     rm -f -- "$state/pushed"
-    [[ -f $state/built ]] || fail '两个镜像必须先全部构建并验证成功'
+    [[ -f $state/built ]] || fail 'Linkd 镜像必须先构建并验证成功'
     login
-    for component in linkd linkd-console; do
+    for component in linkd; do
         ref=$(release_image "$component")
         docker tag "$(local_image "$component")" "$ref"
         record_image "$ref"
@@ -135,13 +131,8 @@ chart)
     mkdir -p "$state/chart" "$state/artifacts"
     rm -rf -- "$chart"
     cp -R "$module/deploy/helm/linkd" "$chart"
-    docker run --rm --network none --user "$(id -u):$(id -g)" \
-        --mount "type=bind,src=$chart,dst=/chart" \
-        -e PACKAGE_VERSION -e IMAGE_REPOSITORY -e TARGET_ARCH -e "PEER_IMAGE_REPOSITORY=${PEER_IMAGE_REPOSITORY:-}" \
-        --mount "type=bind,src=$module/scripts/prepare-release-chart.cjs,dst=/prepare.cjs,readonly" \
-        -e NODE_PATH=/app/node_modules \
-        --entrypoint node "$(local_image linkd-console)" /prepare.cjs
-    values=(-f "$chart/examples/external-services.yaml" -f "$chart/examples/clusters.yaml" -f "$chart/examples/console-ingress.yaml" -f "$chart/examples/servicemonitor.yaml")
+    node "$module/scripts/prepare-release-chart.cjs" "$chart"
+    values=(-f "$chart/examples/external-services.yaml" -f "$chart/examples/clusters.yaml" -f "$chart/examples/servicemonitor.yaml")
     helm lint --strict "$chart" "${values[@]}"
     helm template linkd "$chart" "${values[@]}" > "$state/rendered.yaml"
     for arch_values in "$chart"/values-*.yaml; do

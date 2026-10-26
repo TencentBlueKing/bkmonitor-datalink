@@ -130,8 +130,10 @@
 
 ## 来源输出插件
 
-- **具名 hook**：`EventSource.hooks` 中按顺序执行的插件实例，`name` 是该来源内唯一的稳定实例身份，`type` 是内置注册名，`config` 是该插件的参数。当前内置 `kafka` 与 `active-alert-by-strategy`。
-- **活跃告警策略索引**：由控制面统一将已落库 Active Alert 的 fingerprint 并集投影到 Redis Set，按租户和 `labels.strategy_id` 分组；Hook 仅提交刷新提示，周期校准恢复遗漏。它是可重建、允许传播延迟的查询缓存，不是 Alert 权威状态。
+- **具名 hook**：`EventSource.hooks` 中按顺序执行的插件实例，`name` 是该来源内唯一的稳定实例身份，`type` 是内置注册名，`config` 是该插件的参数。当前普通输出使用 `kafka`，旧 `kac` 传输保留受控兼容。
+- **活跃告警缓存**：Lifecycle 以创建/终结事实增量维护内部 Redis 规则分组 Set（成员仅为 fingerprint），控制面差异修复；不是持久化 Alert 的替代。
+- **活跃告警软限流**：来源的 `active_alert_limits` 按分组近似数量限制新的 fingerprint；已活跃、恢复/关闭及缓存降级放行，允许采样和在途事件超量。
+- **活跃告警策略索引**：上述缓存的策略分组集合；built_in_bk 的默认配置供 alarmd 查询 fingerprint 和订阅成员变化，不跨来源聚合。
 - **策略索引变更通知**：集合成员实际新增或移除时，自动向 `<key_prefix>:changes` 发布的 Redis Pub/Sub 提示，只携带 `bk_tenant_id` 和 `strategy_id`；消费者收到提示后重新读取策略索引集合，不作为心跳或历史事件日志。
 
 动态配置的最后有效快照用于上游异常和进程重启恢复，不是事件历史配置版本。

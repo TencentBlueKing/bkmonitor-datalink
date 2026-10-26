@@ -83,39 +83,35 @@ func TestActiveIndexMySQLIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	q := activeindex.Query{Sources: []string{"a", "b"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, PageSize: 10, MaxBytes: 4096}
+
+	q := activeindex.Query{Sources: []string{"a", "b"}, Fields: []string{"labels.strategy_id"}, PageSize: 2, MaxBytes: 4096}
 	rows, err := readActiveIndex(r, ctx, q)
-	if err != nil || len(rows) != 3 {
-		t.Fatalf("tenant rows=%v error=%v", rows, err)
-	}
-	groups, err := activeindex.Group(q, rows)
-	if err != nil || len(groups[*q.Scope]) != 2 {
-		t.Fatalf("effective strategy members=%v error=%v", groups, err)
-	}
-	q.Scope.StrategyID = "00123"
-	groups, err = activeindex.Group(q, rows)
-	if err != nil || len(groups[*q.Scope]) != 1 {
-		t.Fatalf("exact strategy members=%v error=%v", groups, err)
-	}
-	q.Scope, q.BKTenantID = nil, "tenant"
-	rows, err = readActiveIndex(r, ctx, q)
-	if err != nil || len(rows) != 3 {
-		t.Fatalf("tenant batch rows=%v error=%v", rows, err)
-	}
-	q.BKTenantID = ""
-	q.PageSize = 1
-	if rows, err := readActiveIndex(r, ctx, q); err != nil || len(rows) != 4 {
-		t.Fatalf("small pages truncated full scan: rows=%d err=%v", len(rows), err)
-	}
-	q.PageSize = 10
-	q.MaxBytes = 1
-	if rows, err := readActiveIndex(r, ctx, q); err == nil || rows != nil {
-		t.Fatal("oversize snapshot accepted")
-	}
-	q.MaxBytes = 4096
-	rows, err = readActiveIndex(r, ctx, q)
 	if err != nil || len(rows) != 4 {
-		t.Fatalf("discovery rows=%v error=%v", rows, err)
+		t.Fatalf("rows=%v err=%v", rows, err)
+	}
+	labels := map[string]int{}
+	for _, row := range rows {
+		v, _ := row.Labels["strategy_id"].StringValue()
+		if v != "" {
+			labels[v]++
+		}
+		if row.AlertID == "" {
+			t.Fatal("repair lost Alert ID")
+		}
+	}
+	if labels["00123"] != 1 {
+		t.Fatal("lost original label", labels)
+	}
+	q.Sources = []string{"a"}
+	q.BKTenantID = "tenant"
+	q.Fingerprints = []string{"one", "four"}
+	filtered, err := readActiveIndex(r, ctx, q)
+	if err != nil || len(filtered) != 1 || filtered[0].AlertID != "one" {
+		t.Fatal("member batch lost tenant/source scope", filtered, err)
+	}
+	q.MaxBytes = 1
+	if _, err := readActiveIndex(r, ctx, q); err == nil {
+		t.Fatal("ignored byte budget")
 	}
 }
 

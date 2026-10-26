@@ -16,6 +16,7 @@ import (
 	"time"
 
 	redis "github.com/redis/go-redis/v9"
+	"linkd/internal/activeindex"
 	"linkd/internal/config"
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
@@ -203,7 +204,7 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	}
 	observed := metrics.ObserveRepository(runtime.Repository)
 	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: configuredCleanupRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Index: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
-	opts = append(opts, lifecycle.WithAlertChangePublisher(changePublisher(cfg, client, metrics)))
+	opts = append(opts, lifecycle.WithAlertChangePublisher(changePublisher(cfg, client, metrics)), lifecycle.WithActiveAlertCache(activeindex.New(client, cfg.Dispatch.WithDefaults().Deployment, release.Spec, metrics)))
 	if configure != nil {
 		opts = append(opts, configure(observed, policyState)...)
 	}

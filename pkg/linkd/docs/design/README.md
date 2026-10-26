@@ -26,7 +26,7 @@
 | [alert-content-generation.md](alert-content-generation.md) | 新 Alert 内容生成迁移的实施草案、数据前置条件和验收范围 |
 | [custom-enrichment.md](custom-enrichment.md) | 自定义 CMDB/字段规则、补丁、SDK、预览和转换 |
 | [event-source-dynamic-configuration.md](event-source-dynamic-configuration.md) | EventSource 管理、发布、多副本与分片上限 |
-| [active-alert-index.md](active-alert-index.md) | 控制面统一维护策略缓存、原子发布与故障恢复 |
+| [active-alert-index.md](active-alert-index.md) | 主流程增量维护活跃缓存、Cleaner 软限流与控制面差异修复 |
 | [dynamic-configuration.md](dynamic-configuration.md)             | Severity 来源同步、持久化恢复与在线应用，默认关闭 |
 | [task-scheduling-protocol.md](task-scheduling-protocol.md)         | 中心调度、停止握手、有界自停和多副本；跨模块复用 |
 

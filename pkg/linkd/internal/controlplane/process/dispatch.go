@@ -84,7 +84,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	}
 	policies := policy.NewService(policyDocs)
 	severity := runtimeconfig.NewSeverity(cfg.Severity)
-	sources := eventsource.New(docs, cfg.Severity, eventsource.Options{Cleaner: cfg.Cleaner, Resources: cfg.Resources})
+	sources := eventsource.New(docs, cfg.Severity, eventsource.Options{Cleaner: cfg.Cleaner, Resources: cfg.Resources, SourceDefaults: sourceLimitDefaults})
 	sources.UseSeverity(severity)
 	mergeJournal, err := mergeflow.NewJournal(policyDocs)
 	if err != nil {
@@ -366,6 +366,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		}
 	}}}
 
+	tasks = append(tasks, taskgroup.Task{Name: "source-limit-defaults", Run: func(ctx context.Context) error { return runSourceLimitDefaults(ctx, sources, logger, registry) }})
 	if generatorDocs != nil {
 		// 测试工具的集合准备独立重试，不阻塞正常来源初始化、调度和 API。
 		tasks = append(tasks, taskgroup.Task{Name: "eventgen-storage", Run: func(ctx context.Context) error {

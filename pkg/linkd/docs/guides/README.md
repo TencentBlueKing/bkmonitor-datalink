@@ -10,7 +10,7 @@
 - [自建构建机发布](ci-release.md)：原生 amd64 / arm64 镜像构建、Chart 上传和任务清理；
 - [手动构建与发布镜像](image-release.md)：GitHub Actions 手动构建 Linkd / Eventgen、GHCR 权限与版本标签；
 - [配置与启动](configuration.md)；
-- [Redis 策略活跃告警 hook](active-alert-by-strategy.md)：来源配置、集合查询、一致性边界与排障；
+- [活跃告警缓存与软限流](active-alert-by-strategy.md)：来源配置、集合查询、一致性边界与排障；
 - [Elasticsearch 版本兼容](elasticsearch-compatibility.md)：Linkd 的 ES 7.10+/8/9 范围及验证；
 - [Helm 部署与 worker 分组](helm.md)：三角色部署、独立配置 Secret、初始化与指标采集；
 - [多级别事件测试环境重置升级](multilevel-event-upgrade.md)：ES + Helm 下允许丢弃测试数据时的停机切换；

@@ -1,210 +1,149 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
 // Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
+// Licensed under the MIT License.
 
-// Package activeindex 由控制面把持久化 Active Alert 投影为 Redis 策略集合。
-// Hook 只提交可合并的刷新提示；完整读取和单写入者发布共同保证最终一致性。
+// Package activeindex 维护限流规则的活跃字段分组集合，供 Cleaner 软限流及外部成员查询共享。
+// 主流程尽力增量更新，后台只修复差异；缓存故障不得阻断告警生命周期。
 package activeindex
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-	"math"
-	"slices"
+	"encoding/base64"
+	"encoding/json"
 	"strconv"
 	"strings"
 
+	"linkd/internal/config"
 	"linkd/internal/domain"
-	"linkd/internal/enrich/view"
+	"linkd/internal/store"
 )
 
-// Scope 是集合的租户和策略身份，沿用对外通知协议。
-type Scope struct {
-	BKTenantID string `json:"bk_tenant_id"`
-	StrategyID string `json:"strategy_id"`
+// Row 是来源活跃告警的窄投影，使用存储边界的原始字段类型。
+type Row = store.ActiveIndexRow
+
+// RepairCandidate 保存待修复的分组成员，只在单次修复调用中使用。
+// GroupKey 和通知内容来自规则，不持久化独立的反向索引。
+type RepairCandidate struct {
+	Row
+	GroupKey      string
+	NotifyChannel string
+	NotifyMessage string
 }
 
-// ValidatePrefix 保留内部元数据命名空间，避免正式集合扫描与元数据互相覆盖。
-func ValidatePrefix(prefix string) error {
-	const reserved = "linkd:active-index:"
-	if prefix == "" || strings.TrimSpace(prefix) != prefix || len(prefix) > 256 {
-		return fmt.Errorf("key_prefix must be 1 to 256 bytes without surrounding whitespace")
-	}
-	if strings.HasPrefix(reserved, prefix+":") || strings.HasPrefix(prefix+":", reserved) {
-		return fmt.Errorf("key_prefix overlaps reserved active index metadata namespace")
-	}
-	return nil
+// AlertRow 提取 opening Event 的原始归组字段，不应用丰富补丁。
+func AlertRow(a domain.Alert) Row {
+	return Row{BKTenantID: a.BKTenantID, EventSourceID: a.EventSourceID, AlertID: a.AlertID, Fingerprint: a.Fingerprint, Labels: a.Labels, Dimensions: a.Dimensions, SubjectSystem: a.SubjectSystem, SubjectType: a.SubjectType, SubjectID: a.SubjectID}
 }
 
-// Validate 拒绝不满足集合身份及资源边界的作用域。
-func (s Scope) Validate() error {
-	if err := domain.ValidateIdentityPart("bk_tenant_id", s.BKTenantID, 64); err != nil {
-		return err
-	}
-	if s.StrategyID == "" || len(s.StrategyID) > 1024 {
-		return fmt.Errorf("invalid strategy_id")
-	}
-	return nil
+// EventRow 仅用于 Cleaner 判定，尚无 AlertID。
+func EventRow(e domain.Event) Row {
+	return Row{BKTenantID: e.BKTenantID, EventSourceID: e.EventSourceID, Fingerprint: e.Fingerprint, Labels: e.Labels, Dimensions: e.Dimensions, SubjectSystem: e.SubjectSystem, SubjectType: e.SubjectType, SubjectID: e.SubjectID}
 }
 
-// Key 返回既有对外集合键，不改变 fingerprint 消费协议。
-func (s Scope) Key(prefix string) string { return prefix + ":" + s.BKTenantID + ":" + s.StrategyID }
+// Query 限定存储扫描字段与单页预算。
+type Query = store.ActiveIndexQuery
 
-// ParseKey 只解析指定前缀的正式集合，租户身份不允许冒号。
-func ParseKey(prefix, key string) (Scope, error) {
-	v, ok := strings.CutPrefix(key, prefix+":")
-	tenant, strategy, split := strings.Cut(v, ":")
-	s := Scope{tenant, strategy}
-	if !ok || !split {
-		return s, fmt.Errorf("invalid strategy key")
-	}
-	return s, s.Validate()
+// Reader 是只读存储投影端口，不引入配置或运行时依赖。
+type Reader = store.ActiveIndexReader
+
+// Observer 使用低基数操作和结果记录缓存降级、跳过规则与拦截。
+type Observer interface {
+	ObserveActiveAlertCache(context.Context, string, string, int)
 }
 
-// MetadataPrefix 隔离内部队列、租约及状态，不与正式集合扫描混用。
-func MetadataPrefix(prefix string) string {
-	sum := sha256.Sum256([]byte(prefix))
-	return "linkd:active-index:" + hex.EncodeToString(sum[:])
+type group struct {
+	Key     string
+	Channel string
+	Message string
 }
 
-// StrategyID 与 Hook 及查询适配器共用标签转换规则；缺省或空字符串跳过。
-func StrategyID(labels domain.DimensionMap) (string, bool, error) {
-	scalar, exists := labels["strategy_id"]
-	if !exists {
-		return "", true, nil
+func scalar(v domain.Scalar) string {
+	if s, ok := v.StringValue(); ok {
+		return s
 	}
-	if v, ok := scalar.StringValue(); ok {
-		return v, v == "", nil
+	if n, ok := v.NumberValue(); ok {
+		return strconv.FormatFloat(n, 'f', -1, 64)
 	}
-	if v, ok := scalar.NumberValue(); ok && scalar.Valid() {
-		return strconv.FormatFloat(v, 'f', -1, 64), false, nil
+	if b, ok := v.BoolValue(); ok {
+		return strconv.FormatBool(b)
 	}
-	return "", false, fmt.Errorf("strategy_id must be a string or finite number")
+	return ""
 }
 
-// Row 是仅供缓存投影使用的窄告警快照，不读取告警正文。
-type Row struct {
-	Enrich        domain.JSONObject   `json:"enrich,omitempty"`
-	BKTenantID    string              `json:"bk_tenant_id"`
-	EventSourceID string              `json:"event_source_id"`
-	Fingerprint   string              `json:"fingerprint"`
-	Labels        domain.DimensionMap `json:"labels"`
+func field(r Row, path string) string {
+	switch path {
+	case "bk_tenant_id":
+		return r.BKTenantID
+	case "event_source_id":
+		return r.EventSourceID
+	case "subject_system":
+		return r.SubjectSystem
+	case "subject_type":
+		return r.SubjectType
+	case "subject_id":
+		return r.SubjectID
+	}
+	if k, ok := strings.CutPrefix(path, "labels."); ok {
+		return scalar(r.Labels[k])
+	}
+	if k, ok := strings.CutPrefix(path, "dimensions."); ok {
+		return scalar(r.Dimensions[k])
+	}
+	return ""
 }
 
-// Projection 提取有效策略标签后释放丰富结果，只保留构建策略集合需要的身份。
-// 存储按页/行调用，避免无关正文、资源属性和调试信息累积进完整快照预算。
-func (r Row) Projection() (Row, error) {
-	strategy, exists, err := view.EnrichedLabel(r.Labels, r.Enrich, "strategy_id")
-	if err != nil {
-		return Row{}, err
-	}
-	r.Enrich = nil
-	r.Labels = nil
-	if exists {
-		r.Labels = domain.DimensionMap{"strategy_id": strategy}
-	}
-	return r, nil
-}
+func encode(v string) string { return base64.RawURLEncoding.EncodeToString([]byte(v)) }
 
-// Query 限定完整读取范围；Scope 和 BKTenantID 均为空时周期发现所有租户和策略。
-type Query struct {
-	Sources []string
-	Scope   *Scope
-	// BKTenantID 用于同租户多策略共享快照，不能与 Scope 同时指定。
-	BKTenantID string
-	PageSize   int
-	// MaxBytes 限制每批交给消费方的身份投影 JSON 字节，不限制扫描总量。
-	MaxBytes int
-}
-
-// Validate 校验分页资源预算，禁止空来源变成全库扫描。
-func (q Query) Validate() error {
-	if len(q.Sources) == 0 || len(q.Sources) > 64 || q.PageSize < 1 || q.PageSize > 10000 || q.MaxBytes < 1 || q.MaxBytes > 64<<20 {
-		return fmt.Errorf("invalid active index query limits")
+// groupKey 是 Cleaner 热路径，只在联合分组时编码数组，不构造通知或诊断 map。
+func (s *Store) groupKey(r Row, rule config.ActiveAlertLimitRule) (string, bool) {
+	prefix := rule.KeyPrefix
+	if prefix == "" {
+		prefix = s.namespace + ":rule:" + rule.Name
 	}
-	for _, s := range q.Sources {
-		if err := domain.ValidateIdentityPart("event_source_id", s, 32); err != nil {
-			return err
+	key := prefix + ":" + r.BKTenantID
+	switch len(rule.GroupBy) {
+	case 0:
+		return key, true
+	case 1:
+		value := field(r, rule.GroupBy[0])
+		if value == "" {
+			return "", false
 		}
-	}
-	if q.Scope != nil {
-		if q.BKTenantID != "" {
-			return fmt.Errorf("active index query cannot combine tenant and strategy scope")
-		}
-		return q.Scope.Validate()
-	}
-	if q.BKTenantID != "" {
-		return domain.ValidateIdentityPart("bk_tenant_id", q.BKTenantID, 64)
-	}
-	return nil
-}
-
-// TenantID 返回单策略或批次查询的租户；空值仅用于全局周期发现。
-func (q Query) TenantID() string {
-	if q.Scope != nil {
-		return q.Scope.BKTenantID
-	}
-	return q.BKTenantID
-}
-
-// Group 再次核对存储作用域并按租户、策略去重。任意非法行都拒绝整个快照。
-func Group(q Query, rows []Row) (map[Scope][]string, error) {
-	groups := make(map[Scope][]string)
-	for _, row := range rows {
-		if tenant := q.TenantID(); tenant != "" && row.BKTenantID != tenant {
-			return nil, fmt.Errorf("active index tenant mismatch")
-		}
-		if !slices.Contains(q.Sources, row.EventSourceID) || row.Fingerprint == "" || len(row.Fingerprint) > 128 {
-			return nil, fmt.Errorf("invalid active index row")
-		}
-		effective, exists, err := view.EnrichedLabel(row.Labels, row.Enrich, "strategy_id")
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			continue
-		}
-		strategy, skip, err := StrategyID(domain.DimensionMap{"strategy_id": effective})
-		if err != nil {
-			return nil, err
-		}
-		if skip {
-			continue
-		}
-		scope := Scope{row.BKTenantID, strategy}
-		if err := scope.Validate(); err != nil {
-			return nil, err
-		}
-		if q.Scope != nil {
-			if scope.StrategyID != q.Scope.StrategyID {
-				continue
+		return key + ":" + value, true
+	default:
+		values := make([]string, len(rule.GroupBy))
+		for i, path := range rule.GroupBy {
+			values[i] = field(r, path)
+			if values[i] == "" {
+				return "", false
 			}
 		}
-		groups[scope] = append(groups[scope], row.Fingerprint)
+		encoded, _ := json.Marshal(values)
+		return key + ":" + string(encoded), true
 	}
-	for scope, members := range groups {
-		slices.Sort(members)
-		groups[scope] = slices.Compact(members)
-	}
-	return groups, nil
 }
 
-// Reader 在同一快照内逐批交付窄投影，回调返回后即可释放该批；不累计完整告警列表。
-// 只有返回 nil 才表示整个扫描完成，回调失败或后续页失败时已经交付的批次不能发布。
-// Elasticsearch 快照只覆盖已经 refresh 的数据，不承诺读到最近一次写入。
-type Reader interface {
-	ScanActiveIndex(context.Context, Query, func([]Row) error) error
+func groupFields(r Row, rule config.ActiveAlertLimitRule) map[string]string {
+	fields := make(map[string]string, len(rule.GroupBy))
+	for _, path := range rule.GroupBy {
+		fields[path] = field(r, path)
+	}
+	return fields
 }
 
-// NumericStrategy 仅对规范数字文本允许数值匹配，避免 "00123" 与 123 混淆。
-func NumericStrategy(strategy string) (float64, bool) {
-	n, err := strconv.ParseFloat(strategy, 64)
-	return n, err == nil && !math.IsInf(n, 0) && !math.IsNaN(n) && strconv.FormatFloat(n, 'f', -1, 64) == strategy
+func (s *Store) ruleGroup(r Row, rule config.ActiveAlertLimitRule) (group, bool) {
+	key, ok := s.groupKey(r, rule)
+	if !ok {
+		return group{}, false
+	}
+	g := group{Key: key}
+	if n := rule.Notify; n != nil {
+		payload := map[string]string{}
+		for name, path := range n.Fields {
+			payload[name] = field(r, path)
+		}
+		encoded, _ := json.Marshal(payload)
+		g.Channel = n.Channel
+		g.Message = string(encoded)
+	}
+	return g, true
 }

@@ -14,13 +14,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"math"
 	"reflect"
 	"regexp"
-	"time"
 
 	"go.yaml.in/yaml/v3"
-	"linkd/internal/activeindex"
 	"linkd/internal/enrich/kingeye"
 	"linkd/internal/kafkaclient"
 )
@@ -30,8 +27,6 @@ const (
 	HookTypeKAC = "kac"
 	// HookTypeKafka 注册完整 Alert V1 Kafka 输出。
 	HookTypeKafka = "kafka"
-	// HookTypeActiveAlertByStrategy 注册按策略维护活跃 fingerprint 的 Redis 输出。
-	HookTypeActiveAlertByStrategy = "active-alert-by-strategy"
 	// MaxHooksPerSource 限制每个任务持有的插件、连接和单次输出数量。
 	MaxHooksPerSource = 16
 )
@@ -49,19 +44,19 @@ type HookConfig struct {
 }
 
 // HookParameters 是内置插件参数的封闭联合；ValidateHooks 拒绝其他插件的参数。
-// Redis 和 TimeoutMilliseconds 使用指针区分缺省与显式空配置、零超时。
+// 历史 Redis 索引参数只用于读取存量配置，ValidateHooks 禁止再次发布或执行。
 type HookParameters struct {
-	FieldMappings       map[string]string          `yaml:"field_mappings,omitempty" json:"field_mappings,omitempty"`
-	Brokers             []string                   `yaml:"brokers,omitempty" json:"brokers,omitempty"`
-	Topic               string                     `yaml:"topic,omitempty" json:"topic,omitempty"`
-	ClientID            string                     `yaml:"client_id,omitempty" json:"client_id,omitempty"`
-	MaxMessageBytes     int                        `yaml:"max_message_bytes,omitempty" json:"max_message_bytes,omitempty"`
-	Security            kafkaclient.SecurityConfig `yaml:"security,omitempty" json:"security,omitzero"`
-	Redis               *RedisConfig               `yaml:"redis,omitempty" json:"redis,omitempty"`
-	KeyPrefix           string                     `yaml:"key_prefix,omitempty" json:"key_prefix,omitempty"`
-	TimeoutMilliseconds *int64                     `yaml:"timeout_milliseconds,omitempty" json:"timeout_milliseconds,omitempty"`
-	// PoolSize 限制策略索引 Hook 的 Redis 连接数；零值使用 16。
-	PoolSize int `yaml:"pool_size,omitempty" json:"pool_size,omitempty"`
+	FieldMappings   map[string]string          `yaml:"field_mappings,omitempty" json:"field_mappings,omitempty"`
+	Brokers         []string                   `yaml:"brokers,omitempty" json:"brokers,omitempty"`
+	Topic           string                     `yaml:"topic,omitempty" json:"topic,omitempty"`
+	ClientID        string                     `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+	MaxMessageBytes int                        `yaml:"max_message_bytes,omitempty" json:"max_message_bytes,omitempty"`
+	Security        kafkaclient.SecurityConfig `yaml:"security,omitempty" json:"security,omitzero"`
+	// 以下参数仅用于读取、脱敏已有 Record/历史 Release。新发布均拒绝，运行时没有旧索引 Hook。
+	Redis               *RedisConfig `yaml:"redis,omitempty" json:"redis,omitempty"`
+	KeyPrefix           string       `yaml:"key_prefix,omitempty" json:"key_prefix,omitempty"`
+	TimeoutMilliseconds *int64       `yaml:"timeout_milliseconds,omitempty" json:"timeout_milliseconds,omitempty"`
+	PoolSize            int          `yaml:"pool_size,omitempty" json:"pool_size,omitempty"`
 }
 
 // UnmarshalJSON 对插件参数执行严格解码，provider 和管理 API 使用相同字段边界。
@@ -74,9 +69,7 @@ func (c *HookParameters) UnmarshalJSON(data []byte) error {
 	if fields == nil {
 		return fmt.Errorf("hook config must be an object")
 	}
-	if raw, exists := fields["timeout_milliseconds"]; exists && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return fmt.Errorf("timeout_milliseconds must be a positive integer")
-	}
+
 	var decoded plain
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -87,17 +80,13 @@ func (c *HookParameters) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalYAML 与 JSON 保持严格字段及显式 null 超时的处理一致。
+// UnmarshalYAML 与 JSON 使用相同的严格字段边界。
 func (c *HookParameters) UnmarshalYAML(node *yaml.Node) error {
 	type plain HookParameters
 	if node.Kind != yaml.MappingNode {
 		return fmt.Errorf("hook config must be an object")
 	}
-	for i := 0; i < len(node.Content); i += 2 {
-		if node.Content[i].Value == "timeout_milliseconds" && node.Content[i+1].Tag == "!!null" {
-			return fmt.Errorf("timeout_milliseconds must be a positive integer")
-		}
-	}
+
 	data, err := yaml.Marshal(node)
 	if err != nil {
 		return err
@@ -117,13 +106,14 @@ func (h HookConfig) clone() HookConfig {
 	h.Config.Brokers = append([]string(nil), h.Config.Brokers...)
 	h.Config.Security = h.Config.Security.Clone()
 	if h.Config.Redis != nil {
-		r := h.Config.Redis.clone()
-		h.Config.Redis = &r
+		value := h.Config.Redis.clone()
+		h.Config.Redis = &value
 	}
 	if h.Config.TimeoutMilliseconds != nil {
-		ms := *h.Config.TimeoutMilliseconds
-		h.Config.TimeoutMilliseconds = &ms
+		value := *h.Config.TimeoutMilliseconds
+		h.Config.TimeoutMilliseconds = &value
 	}
+
 	return h
 }
 
@@ -136,18 +126,7 @@ func (h HookConfig) WithDefaults() HookConfig {
 			h.Config.MaxMessageBytes = 1 << 20
 		}
 		h.Config.Security = h.Config.Security.WithDefaults()
-	case HookTypeActiveAlertByStrategy:
-		if h.Config.PoolSize == 0 {
-			h.Config.PoolSize = 16
-		}
-		if h.Config.TimeoutMilliseconds == nil {
-			ms := int64(1000)
-			h.Config.TimeoutMilliseconds = &ms
-		}
-		if h.Config.Redis != nil {
-			r := h.Config.Redis.WithDefaults()
-			h.Config.Redis = &r
-		}
+
 	}
 	return h
 }
@@ -184,14 +163,7 @@ func (s EventSource) WithPreservedHookSecrets(previous EventSource) EventSource 
 					currentSecurity.TLS.ClientKeyPEM = oldSecurity.TLS.ClientKeyPEM
 				}
 			}
-			if current, oldRedis := hook.Config.Redis, old.Config.Redis; current != nil && oldRedis != nil {
-				if current.Password == redactedSecret {
-					current.Password = oldRedis.Password
-				}
-				if current.Sentinel != nil && oldRedis.Sentinel != nil && current.Sentinel.Password == redactedSecret {
-					current.Sentinel.Password = oldRedis.Sentinel.Password
-				}
-			}
+
 			break
 		}
 	}
@@ -233,9 +205,7 @@ func (h HookConfig) validate() error {
 	// API 在发布前恢复既有实例；无法恢复的占位符不能成为真实凭据，
 	// YAML/provider 入口同样不能把脱敏配置误发布为可运行配置。
 	if (c.Security.SASL != nil && c.Security.SASL.Password == redactedSecret) ||
-		(c.Security.TLS != nil && c.Security.TLS.ClientKeyPEM == redactedSecret) ||
-		(c.Redis != nil && (c.Redis.Password == redactedSecret ||
-			(c.Redis.Sentinel != nil && c.Redis.Sentinel.Password == redactedSecret))) {
+		(c.Security.TLS != nil && c.Security.TLS.ClientKeyPEM == redactedSecret) {
 		return fmt.Errorf("redacted hook credentials must be replaced with actual credentials")
 	}
 	if len(c.FieldMappings) > 0 {
@@ -249,29 +219,10 @@ func (h HookConfig) validate() error {
 	switch h.Type {
 	case HookTypeKafka, HookTypeKAC:
 		if c.Redis != nil || c.KeyPrefix != "" || c.TimeoutMilliseconds != nil || c.PoolSize != 0 {
-			return fmt.Errorf("%s does not accept redis index parameters", h.Type)
+			return fmt.Errorf("removed Redis hook parameters cannot be published")
 		}
 		return h.KafkaConfig().Validate()
-	case HookTypeActiveAlertByStrategy:
-		if c.PoolSize < 1 {
-			return fmt.Errorf("pool_size must be positive")
-		}
-		if len(c.Brokers) != 0 || c.Topic != "" || c.ClientID != "" || c.MaxMessageBytes != 0 || !reflect.ValueOf(c.Security).IsZero() {
-			return fmt.Errorf("active-alert-by-strategy does not accept kafka parameters")
-		}
-		if c.Redis == nil {
-			return fmt.Errorf("redis is required")
-		}
-		if err := c.Redis.Validate(); err != nil {
-			return fmt.Errorf("redis: %w", err)
-		}
-		if err := activeindex.ValidatePrefix(c.KeyPrefix); err != nil {
-			return err
-		}
-		if *c.TimeoutMilliseconds <= 0 || *c.TimeoutMilliseconds > math.MaxInt64/int64(time.Millisecond) {
-			return fmt.Errorf("timeout_milliseconds must be positive and fit time.Duration")
-		}
-		return nil
+
 	default:
 		return fmt.Errorf("unknown hook type")
 	}

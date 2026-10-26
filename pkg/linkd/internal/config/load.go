@@ -43,6 +43,7 @@ type fileConfig struct {
 }
 
 type fileEventSource struct {
+	ActiveAlertLimits *ActiveAlertLimits `yaml:"active_alert_limits"`
 	Scheduling        SourceScheduling   `yaml:"scheduling"`
 	EventSourceID     string             `yaml:"event_source_id"`
 	RelatedTenantID   string             `yaml:"related_tenant_id"`
@@ -207,6 +208,7 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 		}
 		sources[index] = EventSource{
 			Hooks:             source.Hooks,
+			ActiveAlertLimits: source.ActiveAlertLimits,
 			EventSourceID:     source.EventSourceID,
 			Scheduling:        source.Scheduling,
 			RelatedTenantID:   source.RelatedTenantID,

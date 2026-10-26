@@ -87,7 +87,7 @@ lifecycle:
     retry_delay_milliseconds: 500
     release_timeout_seconds: 3
 control_plane:
-  # 配置策略 Hook 时自动维护；正式 Redis 集合由控制面统一写入。
+  # 配置 active_alert_limits 时由主流程增量维护，控制面周期修复。
   active_index:
     poll_interval_seconds: 1
     reconcile_interval_seconds: 60

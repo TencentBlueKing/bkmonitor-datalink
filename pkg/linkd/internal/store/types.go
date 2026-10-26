@@ -34,7 +34,9 @@ func (t VersionToken) String() string { return t.value }
 
 // EventProcessing 是 Event JSON 之外的生命周期处理元数据。
 type EventProcessing struct {
-	PolicyDecision *PolicyDecision `json:"policy_decision,omitempty"`
+	// ActiveAlertLimit 仅保存 Cleaner 终结本事件时的软限流诊断。
+	ActiveAlertLimit *ActiveAlertLimitDecision `json:"active_alert_limit,omitempty"`
+	PolicyDecision   *PolicyDecision           `json:"policy_decision,omitempty"`
 	// Evaluations 保存逐级最终结果，事件级 State 是聚合结果。
 	Evaluations []EvaluationResult       `json:"evaluations,omitempty"`
 	State       domain.EventProcessState `json:"state"`
@@ -60,7 +62,7 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 		p.ProcessedAt = &value
 	}
 	if p.State == domain.EventProcessStateUnprocessed {
-		if p.Outcome != "" || p.ReasonCode != "" || p.ProcessedAt != nil || len(p.Evaluations) > 0 || p.PolicyDecision != nil {
+		if p.Outcome != "" || p.ReasonCode != "" || p.ProcessedAt != nil || len(p.Evaluations) > 0 || p.PolicyDecision != nil || p.ActiveAlertLimit != nil {
 			return EventProcessing{}, fmt.Errorf("%w: unprocessed event must not contain process result", ErrInvalidEventProcessing)
 		}
 		return p, nil
@@ -72,6 +74,7 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 }
 
 func (p EventProcessing) Clone() EventProcessing {
+	p.ActiveAlertLimit = p.ActiveAlertLimit.Clone()
 	p.PolicyDecision = p.PolicyDecision.Clone()
 	p.Evaluations = cloneEvaluationResults(p.Evaluations)
 	if p.ProcessedAt != nil {
@@ -218,18 +221,19 @@ type AlertLogPage struct {
 
 // EventResult 是一次生命周期裁决写回 Event 的完整结果。
 type EventResult struct {
-	PolicyDecision  *PolicyDecision
-	Evaluations     []EvaluationResult
-	State           domain.EventProcessState
-	RelatedAlertIDs []string
-	Outcome         string
-	ReasonCode      string
-	ProcessedAt     time.Time
+	ActiveAlertLimit *ActiveAlertLimitDecision
+	PolicyDecision   *PolicyDecision
+	Evaluations      []EvaluationResult
+	State            domain.EventProcessState
+	RelatedAlertIDs  []string
+	Outcome          string
+	ReasonCode       string
+	ProcessedAt      time.Time
 }
 
 // Processing 返回与本次 CAS 对应的技术状态，未处理结果不带完成时间。
 func (r EventResult) Processing() EventProcessing {
-	p := EventProcessing{PolicyDecision: r.PolicyDecision.Clone(), State: r.State, Outcome: r.Outcome, ReasonCode: r.ReasonCode, Evaluations: cloneEvaluationResults(r.Evaluations)}
+	p := EventProcessing{ActiveAlertLimit: r.ActiveAlertLimit.Clone(), PolicyDecision: r.PolicyDecision.Clone(), State: r.State, Outcome: r.Outcome, ReasonCode: r.ReasonCode, Evaluations: cloneEvaluationResults(r.Evaluations)}
 	if r.State != domain.EventProcessStateUnprocessed {
 		at := r.ProcessedAt
 		p.ProcessedAt = &at

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"linkd/internal/activeindex"
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
@@ -218,6 +219,7 @@ func Run(
 			lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: suppressor, Events: observedRepository.GetEvent, Candidates: observedRepository.(store.ActiveAlertReader), CurrentAlert: suppressor.CurrentAlert, Dependency: policyState, Index: policyState, Hints: policyState, Relations: policyDependencies.Dependencies, Logger: logger, Observer: telemetryRuntime}),
 			lifecycle.WithSeverityUpgradePolicy(lifecycleConfig.SeverityUpgradePolicy),
 			lifecycle.WithAlertContentBuilder(enricher),
+			lifecycle.WithActiveAlertCache(activeindex.New(lockClient, cfg.Dispatch.WithDefaults().Deployment, source, telemetryRuntime)),
 		)
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle processor: %w", err)

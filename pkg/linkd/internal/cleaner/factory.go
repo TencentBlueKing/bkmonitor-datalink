@@ -22,6 +22,7 @@ import (
 
 // Factory 为每个启用 EventSource 创建独立 Kafka Session、Mapper、Handler 和 Runtime。
 type Factory struct {
+	limitChecker    ActiveAlertLimitChecker
 	events          EventBatchWriter
 	mailboxes       MailboxWriter
 	receiveGate     ReceiveGate
@@ -106,6 +107,7 @@ func (f *Factory) NewFlow(ctx context.Context, source config.EventSource) (Flow,
 		_ = session.Close(context.Background())
 		return nil, err
 	}
+	runtime.limitChecker = f.limitChecker
 	runtime.sourceID, runtime.sourceVersion = source.EventSourceID, source.Version
 	return FlowFunc(runtime.Run), nil
 }
@@ -130,3 +132,6 @@ func sourceClientID(source config.EventSource) string {
 	}
 	return "linkd-cleaner-" + source.EventSourceID
 }
+
+// UseActiveAlertLimits 在来源 Flow 启动前注入共享批量判定器。
+func (f *Factory) UseActiveAlertLimits(c ActiveAlertLimitChecker) { f.limitChecker = c }

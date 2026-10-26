@@ -29,6 +29,7 @@ MQ delivery
   → 控制面 64 通道批量写 KAC → 独立 refresh 与 64 并发动作投递
 ```
 
+- 来源可通过 `active_alert_limits` 配置按字段分组的活跃告警软限额；Cleaner 提前过滤，Lifecycle 增量维护内部 Redis，控制面差异修复。详见[配置与升级](docs/guides/active-alert-by-strategy.md)。
 - Event 使用 evaluations 记录多个级别的 `triggered | resolved | closed` 判定，values 记录本次数值。
 - Alert status 仅 `active | recovered | closed`，后两者不可重新打开。
 - 同一 fingerprint 最多一个活动 Alert；更高级别触发优先，可全局配置原地升级或关闭后新建；普通恢复/关闭只匹配当前级别，`__ALL__/closed` 可关闭任意当前级别。
@@ -39,7 +40,7 @@ MQ delivery
   生命周期、屏蔽、合并、处置准入和同步水位分别保存。定时解除屏蔽或父关闭解联只更新关系，等待下一条触发 Event。
 - `plugins.kac` 全局开启兼容存储和处置通知，覆盖普通来源、内置合并来源及各租户；
   `alarm_event` 沿用 KAC 原索引定义，一个 Alert 生命周期对应一条稳定文档。
-  普通来源 Hook（Kafka V1 / Redis 活跃策略索引等）保留自己的输出保证；全局 KAC 插件启用时跳过旧 KAC Kafka Hook。
+  普通来源 Hook（Kafka V1 等）保留自己的输出保证；全局 KAC 插件启用时跳过旧 KAC Kafka Hook。
 - MySQL 和 Elasticsearch 都只承诺单对象 CAS；跨对象步骤依赖稳定身份和幂等流水恢复。Cleaner 确认
   原消息后不再扫描 Event 补发 Signal，因此 Redis Mailbox 必须依靠自身持久化和复制保证已确认数据。
 - Elasticsearch Event create 使用 `refresh=false`；Cleaner 在主分片确认后入 Mailbox，Lifecycle 和重复

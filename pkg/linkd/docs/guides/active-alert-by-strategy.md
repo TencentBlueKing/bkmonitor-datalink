@@ -1,39 +1,102 @@
-# Redis 策略活跃告警缓存
+# 活跃告警缓存与软限流
 
-`active-alert-by-strategy` 在 Alert 落库后提交策略刷新提示，控制面统一读取持久化 Active Alert，
-按租户和策略生成 fingerprint 并集并发布到 Redis。数据库是事实来源，缓存可重建，允许短暂传播延迟。
-本文依据 2026-09-22 实现整理；目标环境容量和端到端延迟需要独立验证。
+EventSource 的 `active_alert_limits` 同时声明活跃集合、软限流和可选成员变化通知。所有角色复用
+`storage.redis`，不配置独立 Redis，不再使用 `active-alert-by-strategy` Hook。
+Alert 存储是事实来源；Lifecycle 尽力增量维护缓存，控制面定期修复。
 
-## 1. 配置与生效
+## 1. 来源配置
 
-来源配置继续声明输出目标；控制面读取已发布 Release，包含停用和 tombstone 来源，不使用尚未发布的编辑版本。
+将以下片段合并到已有 EventSource，保留原 Kafka、清洗、丰富和其他输出配置，随后通过管理 API、
+provider 或显式 `linkd event-source import --file <yaml>` 发布。常驻进程不会自动导入 YAML 来源。
 
 ```yaml
-hooks:
-  - name: active-by-strategy
-    type: active-alert-by-strategy
-    config:
-      redis:
-        mode: standalone
-        address: 127.0.0.1:6379
-        password: ${ACTIVE_ALERT_REDIS_PASSWORD}
-        database: 8
+event_source_id: built_in_bk
+active_alert_limits:
+  enabled: true
+  count_cache_ttl_milliseconds: 1000
+  count_cache_max_groups: 4096
+  timeout_milliseconds: 100
+  rules:
+    - name: strategy
+      group_by: [labels.strategy_id]
+      max_active: 5000
       key_prefix: alarmd:open_alerts
-      timeout_milliseconds: 1000
-      pool_size: 16
+      notify:
+        channel: alarmd:open_alerts:changes
+        fields:
+          bk_tenant_id: bk_tenant_id
+          strategy_id: labels.strategy_id
 ```
 
-环境变量占位符仅适用于支持环境展开的进程 YAML 加载入口；通过管理 API 提交 JSON 时传入真实配置值，
-不能假定 API 会展开 `${...}`。支持 Sentinel，其认证字段与 `storage.redis` 相同；此处连接独立配置。
-Hook 缺省超时 1000ms，只限制提交提示。普通失败记录 `hook_failed` 后继续主流程，由周期校准恢复。
-`hook_succeeded` 表示提示已提交，不表示缓存已经发布。
+控制面在同步、发布前，仅为已有且启用的 `built_in_bk` 补齐缺失的单字段
+`labels.strategy_id` 规则。默认阈值为 5000，前缀和通知如上；已有策略规则不覆盖，显式
+`enabled: false` 不强行补齐。已停用或删除的来源不会重新启用，不存在的来源不会自动创建。
+启动及每 30 秒检查存量来源，通过同一 Record/Release 发布流程补齐；配置相同不重复发布。
+Cleaner、Lifecycle 和通用配置默认值中没有来源名称判断。以后 KAC 显式发布完整规则后可以删除控制面的补齐逻辑。
 
-每个来源任务的 Hook Redis 连接池默认最多 16 个连接，可用 `pool_size` 调整，零值采用默认值。
-等待连接和 Redis I/O 共用上述超时。连接池过小会使并发事件的提示排队，Redis 本身正常时也可能
-超时；应结合事件突发并发与 Redis 往返耗时设置预算，增加超时时间不能消除排队。
-该预算仅用于 Lifecycle 的提示客户端，不改变控制面每个目标 4 个连接的维护池。
+其他来源可配置来源总量及每条策略的软限额：
 
-有此类 Hook 时控制面自动启动投影任务，不需要额外启用开关。可选调整：
+```yaml
+event_source_id: source_demo
+active_alert_limits:
+  enabled: true
+  rules:
+    - name: source-total
+      group_by: []
+      max_active: 1000
+    - name: strategy
+      group_by: [labels.strategy_id]
+      max_active: 200
+```
+
+- `enabled` 省略时为 true；false 只关闭拦截，仍维护已配置规则的集合与通知。
+- 普通来源省略整个配置时不启用该能力；清空规则后停止维护原集合；修改或移除前缀后，原前缀按需人工清理。
+- `name` 在来源内唯一；`max_active` 为正整数，不用特殊阈值表示关闭。
+- `group_by` 支持 `labels.*`、`dimensions.*`、`subject_system`、`subject_type`、`subject_id`。
+  空数组表示来源总量；多个字段组成联合分组。字段缺失或为空时跳过该规则并记录指标。
+- 分组使用 opening Event 的原始字段，不使用 Enrich 补丁。分组值转换为文本，数字 123 和字符串
+  `"123"` 同组，`"00123"` 独立。后续事件不改变已存在 Alert 的归组。
+- `key_prefix` 省略时派生部署、来源和规则作用域；自定义前缀必须由一个来源规则独占，不与其他规则嵌套或复用。
+- `notify` 可省略；配置时必须给出 `channel` 和 `fields`。字段只直接映射租户、来源或分组路径，输出为字符串；不支持模板和表达式。
+
+## 2. 集合与通知
+
+集合类型为 Redis Set，成员为 fingerprint，没有活跃成员 TTL。缺少事件不能证明告警已经结束。
+
+| 分组 | 集合 key |
+| --- | --- |
+| 无字段 | `<key_prefix>:<bk_tenant_id>` |
+| 单字段 | `<key_prefix>:<bk_tenant_id>:<value>` |
+| 多字段 | `<key_prefix>:<bk_tenant_id>:<JSON字符串数组>` |
+
+默认 `built_in_bk` 策略集合为 `alarmd:open_alerts:<bk_tenant_id>:<strategy_id>`，只包含该来源。
+成员实际增删时向 `alarmd:open_alerts:changes` 发布两字段 JSON；持续触发、重复更新和同组等级轮换不发送通知。
+其他来源可以配置自己的集合和通知，运行时实现不判断 `built_in_bk`。
+完整对外约定见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
+
+本能力只保存上述分组 Set，member 只有 fingerprint，不存 Alert ID 或反向分组信息。
+默认前缀为 `linkd:active-alerts:<base64url(deployment)>:<event_source_id>:rule:<name>`。
+不增加成员 Hash、租户目录、就绪标记、临时集合、独立计数或修复来源锁。
+通知 channel 是 Pub/Sub 频道，不是 Redis key；修复复用原有 fingerprint 锁，不另建一套锁。
+
+## 3. Cleaner 和故障行为
+
+Cleaner 在 Event 幂等落库后、Mailbox 入队前判断，只对首次创建的纯 triggered Event 执行：
+
+1. 同批按分组去重读取数量，来源任务内默认缓存 1000ms，最多 4096 个组；两项均可配置。
+2. 分组未满直接放行，不查询 fingerprint；任一规则已满时，对各自分组 Set 批量查询 fingerprint 成员关系。
+3. 对应满额分组中已存在的 fingerprint 放行，新 fingerprint 保存 `suppressed / alert_limited` 终态，原因是
+   `active_alert_limit_exceeded`，诊断保存在 `processing.active_alert_limit`，包含规则、分组、数量和阈值。
+4. 限流 Event 不进入 Mailbox、Enrich，正常确认消息；重投复用终态。既有 unprocessed Event 不因重投时额度变化被丢弃。
+
+含 resolved/closed 的事件整条放行，包括混合触发；Lifecycle 不做第二次配额检查，也不预占额度。
+查询失败时放行；缓存丢失或尚未补齐时按现有 Set 数量判断，允许重建期间超量。缓存写失败记录边界错误，不影响已经持久化的生命周期，由任务修复。
+主流程缓存操作默认最多 100ms，不增加应用层重试；连接池与内部 Redis 客户端共用。
+
+这是软限额：例如已有 199 条，一批 20 个新 fingerprint 可以全部通过。数量缓存、并发和在途事件均可能造成超量，
+Redis 故障时也会放行，不保证固定超量上界。它减少后续丰富和生命周期开销，不限制 Event 存储写入量。
+
+## 4. 后台修复与运维
 
 ```yaml
 control_plane:
@@ -45,228 +108,27 @@ control_plane:
     max_bytes: 33554432
 ```
 
-每个 Redis 目标独立运行。取得目标租约后，所有到期策略与周期发现共用一次存储扫描，
-每页按租户和策略分组后写入临时 Set，不再每 16 个策略重新扫描整个租户。
-完整扫描成功后才发布各策略集合；读取失败、后续页失败或超时均保留旧集合。
-比较旧集合也按页执行，内容不变时不发通知；暂存失败只影响对应策略。
+启动及周期读取已发布来源。每来源在有界扫描中读取租户、Alert ID、fingerprint 和配置的原始分组字段，
+不读取 Enrich 或正文；ES 使用 PIT 分页，MySQL 单条 SELECT 流式交付。
+先批量比较 active 与 Set，补齐缺失成员；再扫描当前规则前缀下的 Set，将成员按租户与来源分批回查存储。
+只有缺失、残留或归组不符的成员才取得现有 fingerprint lease 并读取当前 Alert 后修复；健康成员不逐条查询或重复写入。
+不维护临时 Redis 集合，不整体替换在线集合，不另建来源修复锁。存储查询失败时停止本轮，不能当作不存在。
+扫描期间的新建告警即使不在批量结果中，也经锁内当前状态读取后决定是否保留。
 
-`page_size` 默认 2000，可设置 1～10000；`max_bytes` 默认 32 MiB，可设置 1 KiB～64 MiB，
-约束单批交付的身份投影 JSON。多行累计超预算时拆批，单行超预算时报错。
-已移除 `batch_size` 和 `max_rows`，升级配置应删去这两个字段；不再因总告警超过 10 万条而拒绝刷新。
-ES 的原始分页响应仍受仓储响应体预算限制，包含较大标签补丁时可降低 `page_size`。
-整个目标的一轮扫描和发布默认共用 60 秒期限，可通过 `operation_timeout_seconds` 设置 1～60 秒。
-数据量仍受扫描耗时、Redis 容量和下游吞吐影响，分页不能消除这些成本。
+Redis 丢失后可从数据库 active 重建。停用/删除来源的现存告警仍由真实终态决定是否离开集合。
+每页和每来源有预算；修复可能因存储延迟、锁竞争或故障推迟，不承诺固定恢复时限。
 
-提示合并等待约 1 秒，持续触发不会不断延后最早执行时间。正常传播延迟包含存储可见性、
-合并等待、排队和查询；ES 活跃索引默认刷新周期为 5 秒，不能承诺 1 秒可见。
-完整周期校准每 60 秒发起，积压和失败会延长完成时间，这不是恢复时限保证。
-当前最多 32 个目标、512 个来源、每目标 64 个共享来源、10000 个策略，Redis 池限制 4 个连接。
-进程内存主要保存单页和策略元数据；Redis 需要同时容纳旧集合与临时集合。
-没有此类 Hook 时不打开额外告警仓储或目标 Redis。
+观察控制面任务 `active-alert-indexes`、`source-limit-defaults`，以及
+`linkd.active_alert_cache.operations` 的更新、修复、限流、缺失字段和降级结果。
+指标不包含租户、策略或 fingerprint 等高基数字段。错误日志保留底层错误及已有身份，不记录正文和凭据。
 
-从逐策略租约版本升级时，先停止旧控制面再启动新控制面，避免不同租约粒度的版本并行发布。
-切换此实现时应先停止仍直接执行 SADD/SREM 的旧版本 Worker，再启动新控制面和 Worker。
-正式集合必须由当前 Linkd 部署独占维护；其他系统或另一部署需要互不嵌套的前缀。
-同实例、同 DB 下禁止同时使用 `open` 与 `open:source-a` 这类父子前缀，否则父前缀扫描可能误认子集合。
-控制面发现已发布目标存在此冲突时停止发布并记录 `overlapping_prefixes`，保留已有缓存。
-`linkd:active-index:` 是内部保留命名空间，配置前缀不能与它重叠。不要将新投影任务与旧写入者混跑。
-修改连接、DB 或前缀会为新目标回填当前活跃告警，旧目标不会自动迁移或清理；退出的旧目标需单独处理。
+## 5. 从旧 Hook 配置升级
 
-## 2. 集合与标签
+停止旧版 Cleaner/Lifecycle 和策略投影写入者，将来源中的 `active-alert-by-strategy` Hook 删除，
+改为本页 `active_alert_limits`。将原 key 前缀和 channel 写入规则；alarmd 改为读取与 Linkd
+`storage.redis` 相同的实例及 DB，然后启动新版控制面与 Worker。
+不保留独立输出 Redis、旧 Hook 运行时或双写兼容。历史 Release 不回写；更新来源发布新 Release。旧参数仅保留历史读取与脱敏，任何新发布都拒绝旧 Hook。
+如果原来源仍声明已删除 Hook，先通过新版管理 API 替换配置，再启动该来源 Worker。
 
-```text
-类型：set
-key：<key_prefix>:<bk_tenant_id>:<strategy_id>
-member：<fingerprint>
-```
-
-集合包含同一配置目标下所有已发布绑定来源的 Active Alert 的 fingerprint 并集。
-A、B 来源共享 fingerprint 时，A 关闭且 B 仍活跃，成员继续保留。最后一个相关告警结束后，
-下一次完整刷新移除成员。成员数是去重数量，不能等同于 Alert 记录数。
-
-使用经过丰富补丁覆盖后的有效 `labels.strategy_id`；只提取目标标签，不重放无关正文或扩展字段。
-字符串原样使用，有限数字转为非指数十进制文本。
-字符串 `"123"` 与数字 `123` 共用集合；`"00123"` 独立。缺失或空字符串跳过，不回退 `bk_strategy_id`。
-非法类型使 Hook 失败；非法存储结果使本次快照失败。策略字符串最多 1024 字节。
-正式集合不设置 TTL；仅凭一段时间没有事件不能认定告警结束。
-
-### 集合变更通知
-
-通知始终启用，不接受 `notify_channel` 配置。channel 固定为 `<key_prefix>:changes`。
-**由控制面在正式集合实际变化后发布**，一次完整替换产生一次通知，内容相同不通知。
-
-```json
-{"bk_tenant_id":"system","strategy_id":"123"}
-```
-
-消费者使用预先配置的 Redis 连接、DB 和前缀拼接集合 key，再读取最新成员。
-Pub/Sub 不按 DB 隔离，跨环境或需要区分的 DB 使用不同前缀。
-
-```bash
-redis-cli -h 127.0.0.1 -p 6379 SUBSCRIBE 'alarmd:open_alerts:changes'
-```
-
-这是失效提示，不是心跳或可靠队列。订阅确认、重连后补读，并保留周期补读。
-控制面通知失败不回滚已经发布的集合；之后相同内容不会补发通知。
-完整协议见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
-
-## 3. 校准、错误与恢复
-
-控制面持有策略租约后查询完整快照：MySQL 单条一致性 SELECT，ES 在一个 PIT 内有界分页。
-读取成功后先构建带 TTL 的临时 Set，再用 Lua 验证租约、切换正式集合并条件通知。
-空结果必须来自成功完成的查询；超时、缺索引、部分分片失败、超限都不解释为空。
-
-| 场景 | 行为 |
-| --- | --- |
-| Hook 丢失、队列已满或进程在落库后崩溃 | 周期扫描数据库活跃策略及 Redis 已有集合，重新排队 |
-| 共享来源中仍有 active 告警 | 并集继续保留成员，不按单条关闭 Hook 删除 |
-| 查询或临时写入失败 | 保留旧集合，失败策略约 5 秒后重试，其他策略继续 |
-| 刷新期间收到新提示 | 本次提交只确认领取时的 token，新提示留待下一轮 |
-| 任务失租或控制面切换 | 最终提交拒绝旧持有者，继任任务重新查询 |
-| 配置列表或 Release 读取失败 | 停止受管投影任务，恢复完整配置后重启；不按部分来源执行删除 |
-| Redis 数据丢失 | 从数据库重新发现、回填；重建期间空集合不证明没有告警 |
-| 发布成功但响应丢失 | 重新读取、计算；内容不变时不重复通知 |
-| 通知失败 | 保留发布结果，记录投影失败；消费者靠周期补读恢复 |
-
-周期发现失败约 5 秒后重试，已排队策略以及另一侧成功发现的策略仍可独立处理。Redis 原有残留集合也参与发现，
-因此能删除最后一条告警关闭但提示丢失的成员。旧前缀、已移除的目标和外部写入不属于自动迁移范围。
-ES PIT 只覆盖已经 refresh 的数据，短暂旧快照由后续提示或周期校准修复；不对告警主流程强制 refresh。
-
-内部键使用 `linkd:active-index:<sha256(key_prefix)>` 命名空间，包含合并队列、短期 token、
-策略租约、临时集合和发布状态；不保留每个历史 fingerprint 的版本。临时集合 120 秒过期，
-租约是操作期限加 5 秒，非空集合的发布状态不过期，空集合状态保留 24 小时。正式集合不会因上游故障过期。
-Redis ACL 需允许内部命名空间中的队列、Hash、租约、临时 Set 命令，以及 `EVAL`、`SCAN`、
-`SSCAN`、`SMISMEMBER`（Redis 6.2+）、`SCARD`、`RENAME`、`UNLINK`、`PERSIST`、过期命令和对应 channel 的 `PUBLISH`。
-仅授予原来的 SADD/SREM 权限不足以运行新控制面。
-
-## 4. 查询与接入验收
-
-### Kingeye Admin 查询与对账
-
-打开 Kingeye Admin「核心数据 → 策略活跃索引」（`/strategy-index`），页面自动选择已配置的缓存目标，
-列出实际存在的租户、策略组合。共享同一 Redis 实例、DB 和前缀的 Hook 合并为一个目标，
-不需要先填写租户或策略 ID；点击行内「查看对账」读取成员、相关 Active Alert 和详情链接。
-
-列表按游标逐批读取：先对当前前缀执行 `SCAN ... TYPE set`，再以 `ZSCAN` 补充尚未建好集合的待刷新组合。
-不会使用 KEYS、一次性加载全部策略或逐行读取完整成员集；每行只查询成员数、待刷新标记和发布状态。
-默认 COUNT 提示为 50，可选 10～200；COUNT 不是严格页长，因此保留 Redis 返回的整批 key，
-不会截断后推进游标。每次最多八次空扫描、一批最多 1000 个 key、累计 2 MiB key 文本，
-超限返回错误并保留当前游标，不能将超限解释为扫描完成。
-
-支持「上一批」「下一批」「重新扫描」。游标绑定当前目标及共享来源范围，配置范围变化后需重新扫描。
-SCAN 不是固定快照，允许跨批重复；列表不展示伪造的总条数或总页数。Redis 重启、切换或数据显著变化后重新扫描。
-只列出已缓存或已排队的组合，上游发现异常时不能据此认定数据库没有其他活跃策略。
-
-页面顶部的「缓存维护任务」展示最近完整发现时间、最近发现结果、待刷新数量和最早计划刷新时间。
-没有记录显示「尚无执行记录」，不等同于关闭；历史成功记录也不能证明进程当前仍然存活。
-控制面 Redis Stream Manager 管理 Lifecycle Signal Stream，与这里的活跃告警缓存投影属于不同任务。
-
-### 整体活跃告警对账
-
-点击「开始整体对账」检查当前缓存目标的全部租户、策略和共享来源。后台先分页扫描 Active Alert，
-再通过 SCAN 发现 Redis 组合并以 SSCAN 读取成员；最后逐个核验数据库有、Redis 未发现整个集合的策略。
-同一 fingerprint 被多个来源引用时按并集比较。结果汇总匹配、Redis 缺失、Redis 多余及无法确认的组合，
-提供差异样本和单策略详情入口。全量任务不受交互详情页 5000 条展示上限影响。
-
-只有两侧完整读取且没有异常，才显示「本轮读取一致」或「发现不一致」。数据库扫描失败、配置范围变化、
-成员扫描期间发生变化、资源超限或取消都不能得出全量一致。比较不是跨存储事务快照，ES refresh 延迟和
-并发变更可能造成短暂差异；整个流程只读，不会自动修复缓存。
-
-任务属于 Kingeye Admin 当前进程，最多同时运行一个、保留最近四份结果；进度每两秒更新，支持取消，
-返回页面可以继续查看最近任务。Kingeye Admin 重启后需要重新执行，多副本 Kingeye Admin 需要将请求固定到同一实例。
-扫描每批最多 1000 条 Active Alert，单任务最多 500000 条、10000 个组合、预计 128 MiB 身份数据、10 分钟，
-单策略最多 100000 个 Redis 成员。超过限制明确显示未完成；最多保留 500 条差异样本，汇总计数仍覆盖已完成范围。
-
-连接参数来自控制面已发布来源配置，凭据只在 Kingeye Admin 服务端使用；未配置控制面时使用本地来源配置。
-该连接独立于 Kingeye Admin 的 `storage.redis`，支持 standalone 与 Sentinel。读取控制面失败不回退旧配置。
-同一配置目标（实例定位、DB、前缀）的来源合并对账，包括暂时停用和 tombstone 来源。
-不同 DNS 别名、不同 Sentinel 入口或外部写入者不能仅凭配置识别为同一个实例，需人工核对范围。
-
-| 结果 | 含义 |
-| --- | --- |
-| 一致 | 同一 fingerprint 在两侧本轮读取中均存在；可关联多个来源的 Alert |
-| Redis 缺失 | 已找到该策略的活动告警，但完整读取的 Redis 集合中没有成员 |
-| Redis 独有 | Redis 中存在，但完整读取的当前关联来源中没有相应策略的活动告警；不能直接认定可删除 |
-| 无法确认 | 对应另一侧读取失败或超限，不能据此推断缺失 |
-
-MySQL 查询当前 `status=active` 记录，Elasticsearch 只查询 `<index_prefix>-alerts-active`，
-不套用 Explorer 的默认时间窗口，不读取历史索引。策略标签按 Hook 规则比较：字符串原样，
-有限数字转为非指数十进制，布尔值、缺失和空字符串不匹配。对账以 fingerprint 集合为准，
-集合成员数不等于 Alert 条数。
-
-先在存储侧按租户、共享来源、active 状态和策略标签筛选，再按 Hook 规则核验。
-一次最多读取 5000 条候选 Active Alert；Redis
-最多读 5000 个成员、100 轮 SSCAN、累计 2 MiB 成员内容。每次最多 64 个共享来源，配置列表
-最多 512 个此类 Hook，同时最多 4 个查询；超限或错误显示不完整。页面每页显示 100 个 fingerprint。
-对账不提供任意地址或 key 输入，不执行 SADD、SREM、删除、回填或修复。
-
-这是一次只读观察，不是跨存储事务快照。ES 刷新延迟、并发告警变更、来源发布传播、历史前缀及
-已删除来源都可能造成差异。Kingeye Admin 同时核对扫描前后的发布时间及成员数；外部绕过控制面修改仍可能造成差异。
-
-### Redis 命令与接入验收
-
-下面是针对示例 standalone 地址和 database 的只读查询。使用真实环境时替换连接参数和 key；认证通过受控环境提供，不把密码写入命令历史。
-
-```bash
-# 查询某个 fingerprint 是否在集合中。
-redis-cli -h 127.0.0.1 -p 6379 -n 8 SISMEMBER \
-  'alarmd:open_alerts:tenant-a:123' 'fp-host-01'
-
-# 查询该策略下去重后的 fingerprint 数量。
-redis-cli -h 127.0.0.1 -p 6379 -n 8 SCARD \
-  'alarmd:open_alerts:tenant-a:123'
-
-# 分批读取成员，继续使用返回的游标，直到游标为 0。
-redis-cli -h 127.0.0.1 -p 6379 -n 8 SSCAN \
-  'alarmd:open_alerts:tenant-a:123' 0 COUNT 100
-```
-
-建议在测试来源上通过正常事件链路依次验证：创建 active 告警后成员存在；重复更新后不增加重复成员；恢复或关闭后成员移除。
-再使用另一租户验证 key 隔离，并确认失败 Redis 实例不会阻断后面的正常 hook。
-同时核对 Alert 状态和对应 push 流水，避免把手工 Redis 写入当成端到端接入验证。
-
-## 5. 运行状态与排障
-
-Kingeye Admin 同时展示策略最近成功校准时间、快照年龄、失败原因、是否待刷新，以及目标最近完整发现时间。
-没有成功校准记录时显示尚未校准，不能把 Redis 空集合当作确定没有活动告警。
-仅使用原始 SMEMBERS/SISMEMBER 的消费者无法识别重建状态；对空结果敏感的消费者应同时检查发布状态。
-
-| 现象 | 检查 |
-| --- | --- |
-| Hook 成功但集合暂未变化 | 控制面任务、待刷新状态、查询失败、ES refresh 延迟 |
-| 出现 `read_failed` | 告警存储连接、完整分页、来源范围、资源上限 |
-| 出现 `invalid_snapshot` | 存储中策略标签、租户、fingerprint 是否符合约束 |
-| 出现 `publish_failed` | Redis 权限、键类型、连接、租约及临时集合预算 |
-| 出现 `discovery_failed` | 完整扫描是否超限、告警仓储和 Redis 是否可达 |
-| 成员长时间未修复 | 最近成功时间、完整发现时间、积压、当前发布目标是否改变 |
-
-控制面日志不透传 Redis/数据库原始错误文本；包含目标摘要，策略失败另含租户和策略。
-Hook 指标仍表示提示提交成功率；缓存是否健康应结合控制面投影状态，而不是只看 Hook p95。
-
-## 6. 实现与验证入口
-
-- [控制面装配](../../internal/controlplane/process/active_index.go)。
-- [投影任务与失败恢复](../../internal/activeindex/manager.go)。
-- [Redis 租约、队列与原子发布](../../internal/activeindex/redis.go)。
-- [Hook 刷新提示](../../internal/lifecycle/strategyhook/hook.go)。
-- [设计与一致性边界](../design/active-alert-index.md)。
-
-普通测试使用假来源和内存缓存。真实专项测试显式启用：
-
-```bash
-LINKD_TEST_REDIS_ADDRESS=127.0.0.1:6379 go test -race ./internal/activeindex -run Integration
-LINKD_TEST_MYSQL_DSN='root@tcp(127.0.0.1:3306)/?parseTime=true' go test -race ./internal/store/mysql -run TestActiveIndexMySQLIntegration
-LINKD_TEST_ELASTICSEARCH_URL=http://127.0.0.1:9200 go test -race ./internal/store/elasticsearch -run TestActiveIndexElasticsearchIntegration
-```
-
-仅使用专用测试实例，MySQL 测试需要建库权限；用例创建并清理独立前缀资源。
-这些测试不等同于 Kingeye 目标环境联调、生产容量验证或完整事件链路压测。
-
-容量集成测试使用独立临时索引及 Redis 前缀，写入 20 万条测试告警，验证单策略 15 万成员和两轮完整刷新：
-
-```bash
-LINKD_TEST_ACTIVE_INDEX_SCALE=1 \
-LINKD_TEST_ELASTICSEARCH_URL=http://127.0.0.1:9200 \
-LINKD_TEST_REDIS_ADDRESS=127.0.0.1:6379 \
-go test -race ./internal/store/elasticsearch -run '^TestActiveIndexScaleIntegration$' -count=1 -v
-```
+在 alarmd 使用数据前确认后台修复成功。重建期间空 key 不能证明没有活跃告警，不能据此批量关闭告警。
+本地门禁和隔离 Redis 测试不代表目标环境已完成 alarmd 接入或生产容量验证。

@@ -260,12 +260,13 @@ func eventProperties() map[string]any {
 		"labels":          flattenedProperty(),
 		"extra_data":      opaqueObjectProperty(),
 		"processing": strictObjectProperty(map[string]any{
-			"policy_decision": opaqueObjectProperty(),
-			"evaluations":     map[string]any{"type": "object", "enabled": false},
-			"state":           keywordProperty(),
-			"outcome":         keywordProperty(),
-			"reason_code":     keywordProperty(),
-			"processed_at":    dateNanosProperty(),
+			"policy_decision":    opaqueObjectProperty(),
+			"active_alert_limit": opaqueObjectProperty(),
+			"evaluations":        map[string]any{"type": "object", "enabled": false},
+			"state":              keywordProperty(),
+			"outcome":            keywordProperty(),
+			"reason_code":        keywordProperty(),
+			"processed_at":       dateNanosProperty(),
 		}),
 	}
 	for name, property := range eventEnrichmentProperties() {

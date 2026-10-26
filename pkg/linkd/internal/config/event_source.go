@@ -32,6 +32,7 @@ const (
 
 // EventSource 是一个全局唯一、供进程调度和事件标准化使用的事件源定义。
 type EventSource struct {
+	ActiveAlertLimits *ActiveAlertLimits `yaml:"active_alert_limits,omitempty" json:"active_alert_limits,omitempty"`
 	// RuntimeClientID 由任务代次注入，不属于可编辑配置或发布摘要。
 	RuntimeClientID   string                   `yaml:"-" json:"-"`
 	Version           int64                    `yaml:"-" json:"-"`
@@ -319,6 +320,10 @@ func (s EventSource) Redacted() EventSource {
 
 func (s EventSource) clone() EventSource {
 	cloned := s
+	if s.ActiveAlertLimits != nil {
+		v := s.ActiveAlertLimits.WithDefaults()
+		cloned.ActiveAlertLimits = &v
+	}
 	cloned.Hooks = make([]HookConfig, len(s.Hooks))
 	for i := range s.Hooks {
 		cloned.Hooks[i] = s.Hooks[i].clone()
@@ -378,6 +383,11 @@ func ValidateEventSources(sources []EventSource, severity SeverityConfig) error 
 }
 
 func (s EventSource) validate(severity SeverityConfig) error {
+	if s.ActiveAlertLimits != nil {
+		if err := s.ActiveAlertLimits.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := s.Scheduling.Validate(); err != nil {
 		return err
 	}
@@ -482,6 +492,11 @@ func (s EventSource) validateFingerprint() error {
 // ValidateNormalization 只验证事件标准化字段，不要求消息消费、丰富或输出资源。
 // 调用方必须自行保证配置来源可信；该验证不构成正式 EventSource 发布准入。
 func (s EventSource) ValidateNormalization(severity SeverityConfig) error {
+	if s.ActiveAlertLimits != nil {
+		if err := s.ActiveAlertLimits.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := domain.ValidateIdentityPart("event_source_id", s.EventSourceID, 32); err != nil {
 		return err
 	}

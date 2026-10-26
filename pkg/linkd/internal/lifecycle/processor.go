@@ -78,6 +78,7 @@ func (p *Processor) createAlertAfterActiveLookup(
 		}
 	}
 	if err == nil {
+		p.observeActiveAlert(ctx, result.Alert)
 		err = p.observeDependencyIndex(ctx, result.Alert)
 	}
 	return result, err
@@ -101,6 +102,9 @@ func (p *Processor) compareAndSetAlert(
 		updated, err = p.compareAndSetAlertWithoutSnapshot(ctx, current, replacement)
 	}
 	if err == nil {
+		if current.Alert.Status != updated.Alert.Status {
+			p.observeActiveAlert(ctx, updated.Alert)
+		}
 		err = p.observeDependencyIndex(ctx, updated.Alert)
 	}
 	if !errors.Is(err, store.ErrVersionConflict) {

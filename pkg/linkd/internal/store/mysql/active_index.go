@@ -1,11 +1,5 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
 // Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
+// Licensed under the MIT License.
 
 package mysqlstore
 
@@ -13,71 +7,111 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
-	"linkd/internal/activeindex"
+	"linkd/internal/domain"
+	"linkd/internal/store"
 )
 
-// ScanActiveIndex 用单条一致性 SELECT 流式读取，逐批交付并释放窄投影。
-// 不使用 OFFSET 或多条 SELECT，避免翻页期间数据变化造成重复和遗漏。
-func (r *Repository) ScanActiveIndex(ctx context.Context, q activeindex.Query, consume func([]activeindex.Row) error) error {
+// ScanActiveIndex 在单条 SELECT 中读取身份和所需原始字段；没有逐行 SQL 或 Enrich 解码。
+func (r *Repository) ScanActiveIndex(ctx context.Context, q store.ActiveIndexQuery, consume func([]store.ActiveIndexRow) error) error {
 	if err := q.Validate(); err != nil {
 		return err
 	}
-	label := "JSON_EXTRACT(payload, '$.labels.strategy_id')"
-	//nolint:gosec // 仅拼接固定列和有界占位符；来源和租户使用绑定参数。
-	query := "SELECT bk_tenant_id,event_source_id,fingerprint," + label + ",JSON_EXTRACT(payload, '$.enrich') FROM linkd_alerts WHERE status='active' AND event_source_id IN (" + placeholders(len(q.Sources)) + ")"
-	args := make([]any, 0, len(q.Sources)+4)
+	query := "SELECT bk_tenant_id,event_source_id,alert_id,fingerprint"
+	args := []any{}
+	for _, field := range q.Fields {
+		path := "$." + field
+		if k, ok := strings.CutPrefix(field, "labels."); ok {
+			quoted, _ := json.Marshal(k)
+			path = "$.labels." + string(quoted)
+		}
+		if k, ok := strings.CutPrefix(field, "dimensions."); ok {
+			quoted, _ := json.Marshal(k)
+			path = "$.dimensions." + string(quoted)
+		}
+		query += ",JSON_EXTRACT(payload,?)"
+		args = append(args, path)
+	}
+	query += " FROM linkd_alerts WHERE status='active' AND event_source_id IN (" + placeholders(len(q.Sources)) + ")"
 	for _, source := range q.Sources {
 		args = append(args, source)
 	}
-	if tenant := q.TenantID(); tenant != "" {
+	if q.BKTenantID != "" {
 		query += " AND bk_tenant_id=?"
-		args = append(args, tenant)
+		args = append(args, q.BKTenantID)
 	}
-
+	if len(q.Fingerprints) > 0 {
+		//nolint:gosec // 这里只拼接占位符，fingerprint、来源、租户及 JSON 路径均使用绑定参数。
+		query += " AND fingerprint IN (" + placeholders(len(q.Fingerprints)) + ")"
+		for _, fp := range q.Fingerprints {
+			args = append(args, fp)
+		}
+	}
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
-	page := make([]activeindex.Row, 0, q.PageSize)
+	page := make([]store.ActiveIndexRow, 0, q.PageSize)
 	bytes := 0
 	for rows.Next() {
-		var row activeindex.Row
-		var labelJSON, enrichJSON []byte
-		if err := rows.Scan(&row.BKTenantID, &row.EventSourceID, &row.Fingerprint, &labelJSON, &enrichJSON); err != nil {
+		var row store.ActiveIndexRow
+		raw := make([][]byte, len(q.Fields))
+		dest := []any{&row.BKTenantID, &row.EventSourceID, &row.AlertID, &row.Fingerprint}
+		for i := range raw {
+			dest = append(dest, &raw[i])
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return err
 		}
-		if len(labelJSON) != 0 && string(labelJSON) != "null" {
-			if err := json.Unmarshal(append(append([]byte(`{"strategy_id":`), labelJSON...), '}'), &row.Labels); err != nil {
-				return fmt.Errorf("invalid strategy label")
+		for i, path := range q.Fields {
+			if len(raw[i]) == 0 || string(raw[i]) == "null" {
+				continue
+			}
+			switch path {
+			case "subject_system":
+				err = json.Unmarshal(raw[i], &row.SubjectSystem)
+			case "subject_type":
+				err = json.Unmarshal(raw[i], &row.SubjectType)
+			case "subject_id":
+				err = json.Unmarshal(raw[i], &row.SubjectID)
+			default:
+				var v domain.Scalar
+				err = json.Unmarshal(raw[i], &v)
+				if k, ok := strings.CutPrefix(path, "labels."); ok {
+					if row.Labels == nil {
+						row.Labels = domain.DimensionMap{}
+					}
+					row.Labels[k] = v
+				}
+				if k, ok := strings.CutPrefix(path, "dimensions."); ok {
+					if row.Dimensions == nil {
+						row.Dimensions = domain.DimensionMap{}
+					}
+					row.Dimensions[k] = v
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("decode active index field %s: %w", path, err)
 			}
 		}
-		if len(enrichJSON) > 0 && string(enrichJSON) != "null" {
-			if err := json.Unmarshal(enrichJSON, &row.Enrich); err != nil {
-				return fmt.Errorf("invalid enrichment payload")
-			}
-		}
-		row, err = row.Projection()
+		encoded, err := json.Marshal(row)
 		if err != nil {
 			return err
 		}
-		projection, err := json.Marshal(row)
-		if err != nil {
-			return err
-		}
-		if len(projection) > q.MaxBytes {
+		if len(encoded) > q.MaxBytes {
 			return fmt.Errorf("active index row exceeds page byte limit")
 		}
-		if len(page) > 0 && (len(page) >= q.PageSize || bytes+len(projection) > q.MaxBytes) {
+		if len(page) > 0 && (len(page) >= q.PageSize || bytes+len(encoded) > q.MaxBytes) {
 			if err := consume(page); err != nil {
 				return err
 			}
-			page = make([]activeindex.Row, 0, q.PageSize)
+			page = make([]store.ActiveIndexRow, 0, q.PageSize)
 			bytes = 0
 		}
 		page = append(page, row)
-		bytes += len(projection)
+		bytes += len(encoded)
 	}
 	if err := rows.Err(); err != nil {
 		return err

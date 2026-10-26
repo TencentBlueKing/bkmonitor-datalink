@@ -1,105 +1,77 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
 // Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
+// Licensed under the MIT License.
 package controlplaneprocess
 
 import (
 	"context"
-	"errors"
-	"io"
-	"log/slog"
+	"os"
 	"testing"
-	"time"
 
+	"github.com/google/uuid"
+	redis "github.com/redis/go-redis/v9"
+	"linkd/internal/activeindex"
 	"linkd/internal/config"
-	"linkd/internal/eventsource"
+	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/store/memory"
+	"linkd/internal/store/storetest"
 )
 
-type indexSourceStub struct {
-	records  []eventsource.Record
-	releases map[string]eventsource.Release
-	err      error
+type activeRows []activeindex.Row
+
+func (rows activeRows) ScanActiveIndex(_ context.Context, _ activeindex.Query, consume func([]activeindex.Row) error) error {
+	return consume(rows)
 }
 
-func (s indexSourceStub) List(context.Context, string, int) ([]eventsource.Record, error) {
-	return s.records, s.err
-}
-
-func (s indexSourceStub) GetRelease(_ context.Context, id string, _ int64) (eventsource.Release, error) {
-	r, ok := s.releases[id]
-	if !ok {
-		return r, errors.New("release missing")
+func TestActiveIndexRepairReusesLifecycleLock(t *testing.T) {
+	address := os.Getenv("LINKD_TEST_REDIS_ADDRESS")
+	if address == "" {
+		t.Skip("LINKD_TEST_REDIS_ADDRESS is not set")
 	}
-	return r, nil
-}
-
-func indexSpec(source, password string) config.EventSource {
-	return config.EventSource{EventSourceID: source, Hooks: []config.HookConfig{{Name: "active", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "redis:6379", Password: password, Database: 8}, KeyPrefix: "active"}}}}
-}
-
-func TestIndexTargetsUsePublishedUnion(t *testing.T) {
-	s := indexSourceStub{records: []eventsource.Record{{ID: "a", Published: 1, Spec: indexSpec("a", "draft")}, {ID: "b", Published: 2, Deleted: true}}, releases: map[string]eventsource.Release{"a": {Spec: indexSpec("a", "one")}, "b": {Spec: indexSpec("b", "two"), Deleted: true}}}
-	targets, err := loadIndexTargets(t.Context(), s)
+	client := redis.NewClient(&redis.Options{Addr: address, ContextTimeoutEnabled: true, MaxRetries: -1})
+	t.Cleanup(func() { _ = client.Close() })
+	id := uuid.NewString()
+	prefix := "linkd-limit-repair-test:" + id
+	source := config.EventSource{EventSourceID: "source", ActiveAlertLimits: &config.ActiveAlertLimits{Rules: []config.ActiveAlertLimitRule{{Name: "total", MaxActive: 1, KeyPrefix: prefix}}}}
+	cfg := config.Config{Storage: &config.StorageConfig{Repository: config.RepositoryTypeMySQL}, Lifecycle: &config.LifecycleConfig{Lock: config.LifecycleLockConfig{KeyPrefix: prefix + ":lock"}}}
+	repository := memory.New()
+	a := storetest.Alert("tenant", "active", "event", "fp", "warning")
+	a.EventSourceID = source.EventSourceID
+	if _, err := repository.CreateAlert(t.Context(), a); err != nil {
+		t.Fatal(err)
+	}
+	cache := activeindex.New(client, id, source, nil)
+	settings := config.ActiveIndexConfig{}.WithDefaults()
+	// 与 Worker 使用相同的 ForSource 作用域；锁忙时不能改集合，下一轮再补齐。
+	locker, err := scheduler.NewRedisLocker(client, cfg.Lifecycle.ForSource(cfg.Dispatch.WithDefaults().Deployment, source.EventSourceID).SchedulerConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(targets) != 1 {
-		t.Fatalf("targets=%d", len(targets))
-	}
-	for _, target := range targets {
-		if len(target.Sources) != 2 || target.Redis.Password != "one" {
-			t.Fatal("did not use published shared scope")
-		}
-	}
-	s.releases["a"] = eventsource.Release{Spec: indexSpec("a", "rotated")}
-	after, err := loadIndexTargets(t.Context(), s)
+	lease, err := locker.Acquire(t.Context(), scheduler.CorrelationKey(a.BKTenantID, a.EventSourceID, a.Fingerprint))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for id := range targets {
-		if _, ok := after[id]; !ok {
-			t.Fatal("credential rotation changed target identity")
-		}
+	t.Cleanup(func() {
+		_ = locker.Release(context.Background(), lease)
+		_ = client.Del(context.Background(), prefix+":tenant").Err()
+	})
+	rows := activeRows{activeindex.AlertRow(a)}
+	if err := reconcileActiveSource(t.Context(), cfg, source, cache, rows, repository, client, settings); err != nil {
+		t.Fatal(err)
 	}
-	delete(s.releases, "b")
-	if _, err := loadIndexTargets(t.Context(), s); err == nil {
-		t.Fatal("accepted incomplete shared scope")
+	if client.Exists(t.Context(), prefix+":tenant").Val() != 0 {
+		t.Fatal("repair bypassed existing fingerprint lock")
 	}
-}
-
-func TestNoIndexHooksDoesNotOpenStorage(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		done <- runActiveIndexes(ctx, config.Config{}, indexSourceStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), taskCatalog(config.Config{}, 0), nil)
-	}()
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("task did not stop")
+	if err := locker.Release(t.Context(), lease); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestIndexTargetsRejectNestedPrefixes(t *testing.T) {
-	a, b := indexSpec("a", "one"), indexSpec("b", "two")
-	b.Hooks[0].Config.KeyPrefix = "active:source-b"
-	s := indexSourceStub{records: []eventsource.Record{{ID: "a", Published: 1}, {ID: "b", Published: 1}}, releases: map[string]eventsource.Release{"a": {Spec: a}, "b": {Spec: b}}}
-	if _, err := loadIndexTargets(t.Context(), s); err == nil {
-		t.Fatal("parent prefix could delete nested target")
+	if err := reconcileActiveSource(t.Context(), cfg, source, cache, rows, repository, client, settings); err != nil {
+		t.Fatal(err)
 	}
-	b.Hooks[0].Config.Redis.Database = 9
-	s.releases["b"] = eventsource.Release{Spec: b}
-	if _, err := loadIndexTargets(t.Context(), s); err != nil {
-		t.Fatal("different databases do not overlap")
+	if !client.SIsMember(t.Context(), prefix+":tenant", a.Fingerprint).Val() {
+		t.Fatal("missing member not repaired")
+	}
+	keys, err := client.Keys(t.Context(), prefix+"*").Result()
+	if err != nil || len(keys) != 1 || keys[0] != prefix+":tenant" {
+		t.Fatal("unexpected repair keys", keys, err)
 	}
 }

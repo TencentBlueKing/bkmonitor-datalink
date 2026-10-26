@@ -58,10 +58,10 @@ func TestHookSecretsSurviveConsoleEdit(t *testing.T) {
 	spec := config.EventSource{EventSourceID: "review-source", Enabled: true,
 		Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "review"}},
 		Hooks: []config.HookConfig{
-			{Name: "index", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "redis:6379", Password: "synthetic-redis-secret"}, KeyPrefix: "review"}},
+
 			{Name: "output", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "test", Password: "synthetic-kafka-secret"}}}},
 		}}.WithDefaults()
-	kac := spec.Hooks[1]
+	kac := spec.Hooks[0]
 	kac.Name = "kac-output"
 	kac.Type = config.HookTypeKAC
 	spec.Hooks = append(spec.Hooks, kac)
@@ -100,13 +100,11 @@ func TestHookSecretsSurviveConsoleEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Spec.Hooks[0].Config.Redis.Password != spec.Hooks[0].Config.Redis.Password {
-		t.Errorf("Redis hook password overwritten with %q", saved.Spec.Hooks[0].Config.Redis.Password)
-	}
-	if saved.Spec.Hooks[2].Config.Security.SASL.Password != spec.Hooks[2].Config.Security.SASL.Password {
+
+	if saved.Spec.Hooks[1].Config.Security.SASL.Password != spec.Hooks[1].Config.Security.SASL.Password {
 		t.Fatal("KAC hook password overwritten")
 	}
-	if saved.Spec.Hooks[1].Config.Security.SASL.Password != spec.Hooks[1].Config.Security.SASL.Password {
+	if saved.Spec.Hooks[0].Config.Security.SASL.Password != spec.Hooks[0].Config.Security.SASL.Password {
 		t.Errorf("Kafka hook password overwritten with %q", saved.Spec.Hooks[1].Config.Security.SASL.Password)
 	}
 }
@@ -114,7 +112,7 @@ func TestHookSecretsSurviveConsoleEdit(t *testing.T) {
 func TestAPIRejectsUnmatchedMaskedHookCredentials(t *testing.T) {
 	docs := &hookDocuments{map[string]json.RawMessage{}, map[string]int{}}
 	svc := eventsource.New(docs, config.SeverityConfig{})
-	spec := config.EventSource{EventSourceID: "source", Enabled: true, Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "review"}}, Hooks: []config.HookConfig{{Name: "index", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "redis:6379", Password: "******"}, KeyPrefix: "review"}}}}.WithDefaults()
+	spec := config.EventSource{EventSourceID: "source", Enabled: true, Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "review"}}, Hooks: []config.HookConfig{{Name: "index", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "******"}}}}}}.WithDefaults()
 	api := (&API{Sources: svc, Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "synthetic-admin"}}}).Handler()
 	body, err := json.Marshal(Mutation{Spec: spec})
 	if err != nil {

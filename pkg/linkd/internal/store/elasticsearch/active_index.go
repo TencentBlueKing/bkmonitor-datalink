@@ -17,11 +17,11 @@ import (
 	"net/url"
 	"time"
 
-	"linkd/internal/activeindex"
+	"linkd/internal/store"
 )
 
 // ScanActiveIndex 在同一 PIT 中逐页交付窄投影；缺索引和部分结果不能解释为空集合。
-func (r *Repository) ScanActiveIndex(ctx context.Context, q activeindex.Query, consume func([]activeindex.Row) error) error {
+func (r *Repository) ScanActiveIndex(ctx context.Context, q store.ActiveIndexQuery, consume func([]store.ActiveIndexRow) error) error {
 	if err := q.Validate(); err != nil {
 		return err
 	}
@@ -52,12 +52,17 @@ func (r *Repository) ScanActiveIndex(ctx context.Context, q activeindex.Query, c
 		return fmt.Errorf("empty active index PIT")
 	}
 	filters := []any{map[string]any{"term": map[string]any{"status": "active"}}, map[string]any{"terms": map[string]any{"event_source_id": q.Sources}}}
-	if tenant := q.TenantID(); tenant != "" {
-		// strategy_id 可能被补丁覆盖，必须在读取 enrich 后按有效值过滤。
-		filters = append(filters, map[string]any{"term": map[string]any{"bk_tenant_id": tenant}})
+
+	if q.BKTenantID != "" {
+		filters = append(filters, map[string]any{"term": map[string]any{"bk_tenant_id": q.BKTenantID}})
 	}
-	// 只读取还原有效策略标签所需的补丁和历史 value，不传输 trace、诊断和其他历史值。
-	body := map[string]any{"size": q.PageSize, "track_total_hits": false, "_source": []string{"bk_tenant_id", "event_source_id", "fingerprint", "labels.strategy_id", "enrich.processors.*.status", "enrich.processors.*.patches", "enrich.processors.*.value.strategy_id"}, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
+	if len(q.Fingerprints) > 0 {
+		filters = append(filters, map[string]any{"terms": map[string]any{"fingerprint": q.Fingerprints}})
+	}
+
+	fields := []string{"bk_tenant_id", "event_source_id", "alert_id", "fingerprint"}
+	fields = append(fields, q.Fields...)
+	body := map[string]any{"size": q.PageSize, "track_total_hits": false, "_source": fields, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
 	for {
 		response, next, err := r.searchWithPIT(ctx, targets, pit, body)
 		if next != "" {
@@ -66,17 +71,14 @@ func (r *Repository) ScanActiveIndex(ctx context.Context, q activeindex.Query, c
 		if err != nil {
 			return err
 		}
-		page := make([]activeindex.Row, 0, len(response.Hits.Hits))
+		page := make([]store.ActiveIndexRow, 0, len(response.Hits.Hits))
 		bytes := 0
 		for _, hit := range response.Hits.Hits {
-			var row activeindex.Row
+			var row store.ActiveIndexRow
 			if err := json.Unmarshal(hit.Source, &row); err != nil {
 				return fmt.Errorf("invalid active index row")
 			}
-			row, err = row.Projection()
-			if err != nil {
-				return err
-			}
+
 			projection, err := json.Marshal(row)
 			if err != nil {
 				return err
@@ -88,7 +90,7 @@ func (r *Repository) ScanActiveIndex(ctx context.Context, q activeindex.Query, c
 				if err := consume(page); err != nil {
 					return err
 				}
-				page = make([]activeindex.Row, 0, len(response.Hits.Hits))
+				page = make([]store.ActiveIndexRow, 0, len(response.Hits.Hits))
 				bytes = 0
 			}
 			page = append(page, row)

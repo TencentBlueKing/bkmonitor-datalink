@@ -59,6 +59,7 @@ type Release struct {
 
 // Service 将 API、provider 和显式导入统一成来源发布用例。
 type Service struct {
+	sourceDefaults  func(config.EventSource) config.EventSource
 	runtimeSeverity *runtimeconfig.Severity
 	docs            Documents
 	severity        config.SeverityConfig
@@ -71,8 +72,10 @@ func (s *Service) UseSeverity(state *runtimeconfig.Severity) { s.runtimeSeverity
 
 // Options 注入进程级处理预算和共享资源；服务只保存隔离副本。
 type Options struct {
-	Cleaner   config.CleanerRuntimeConfig
-	Resources config.ResourcesConfig
+	// SourceDefaults 由控制面注入，发布前补充已有来源的配置；不在 Worker 隐式执行。
+	SourceDefaults func(config.EventSource) config.EventSource
+	Cleaner        config.CleanerRuntimeConfig
+	Resources      config.ResourcesConfig
 }
 
 // ApplyOptions 仅授权本次发布的维护操作，不保存到 Record 或 Release。
@@ -87,7 +90,7 @@ func New(d Documents, severity config.SeverityConfig, options ...Options) *Servi
 	if len(options) > 0 {
 		settings = options[0]
 	}
-	return &Service{docs: d, severity: severity, cleaner: settings.Cleaner.WithDefaults(), resources: settings.Resources.Clone()}
+	return &Service{sourceDefaults: settings.SourceDefaults, docs: d, severity: severity, cleaner: settings.Cleaner.WithDefaults(), resources: settings.Resources.Clone()}
 }
 
 // Get 读取当前编辑记录。
@@ -139,6 +142,9 @@ func releaseKey(id string, v int64) string { return id + ":" + strconv.FormatInt
 
 // Apply 预留版本后完成发布；发生部分成功时后续 Recover 可继续，不能撤销已写事实。
 func (s *Service) Apply(ctx context.Context, spec config.EventSource, expected int64, deleted bool, actor string, options ...ApplyOptions) (Record, error) {
+	if !deleted && s.sourceDefaults != nil {
+		spec = s.sourceDefaults(spec)
+	}
 	spec = spec.WithDefaults()
 	if err := spec.Cleaner.RuntimeConfig(s.cleaner).Validate(); err != nil {
 		return Record{}, err

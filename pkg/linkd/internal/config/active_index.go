@@ -11,7 +11,7 @@ package config
 
 import "fmt"
 
-// ActiveIndexConfig 配置控制面策略缓存投影；有对应 Hook 时默认启用。
+// ActiveIndexConfig 配置控制面活跃告警缓存差异修复；来源规则随 Release 发布。
 type ActiveIndexConfig struct {
 	PollIntervalSeconds      int `yaml:"poll_interval_seconds"`
 	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds"`
@@ -20,7 +20,7 @@ type ActiveIndexConfig struct {
 	MaxBytes                 int `yaml:"max_bytes"`
 }
 
-// WithDefaults 返回有界资源配置；全量校准恢复未成功提交的 Hook 提示。
+// WithDefaults 返回有界资源配置；周期扫描恢复主流程未成功提交的缓存更新。
 func (c ActiveIndexConfig) WithDefaults() ActiveIndexConfig {
 	if c.PollIntervalSeconds == 0 {
 		c.PollIntervalSeconds = 1

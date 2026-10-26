@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/kafkaclient"
 )
 
 type memoryDocs struct {
@@ -229,12 +230,12 @@ func TestPublicationPreservesHookParametersAndIsolation(t *testing.T) {
 	ctx := context.Background()
 	service := New(newDocs(), config.SeverityConfig{})
 	spec := sample()
-	spec.Hooks = []config.HookConfig{{Name: "active", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "redis:6379", Password: "private"}, KeyPrefix: "first"}}}
+	spec.Hooks = []config.HookConfig{{Name: "active", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "first", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "u", Password: "private"}}}}}
 	record, err := service.Apply(ctx, spec, 0, false, "api")
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec.Hooks[0].Config.KeyPrefix = "second"
+	spec.Hooks[0].Config.Topic = "second"
 	if _, err := service.Apply(ctx, spec, record.Revision, false, "provider"); err != nil {
 		t.Fatal(err)
 	}
@@ -243,11 +244,11 @@ func TestPublicationPreservesHookParametersAndIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(release.Spec.Hooks) != 1 || release.Spec.Hooks[0].Config.KeyPrefix != want || *release.Spec.Hooks[0].Config.TimeoutMilliseconds != 1000 || release.Spec.Hooks[0].Config.Redis.Password != "private" {
+		if len(release.Spec.Hooks) != 1 || release.Spec.Hooks[0].Config.Topic != want || release.Spec.Hooks[0].Config.Security.SASL.Password != "private" {
 			t.Fatal("release lost hook configuration")
 		}
 	}
-	if record.Redacted().Spec.Hooks[0].Config.Redis.Password == "private" {
+	if record.Redacted().Spec.Hooks[0].Config.Security.SASL.Password == "private" {
 		t.Fatal("management record leaked hook password")
 	}
 	spec.Hooks[0].Type = "unknown"

@@ -107,6 +107,7 @@ type PolicySnapshotter interface {
 }
 
 type Processor struct {
+	activeAlerts       ActiveAlertCache
 	closePreparation   func(context.Context, domain.Alert, domain.AlertEndOperation) error
 	contentBuilder     AlertContentBuilder
 	publisher          AlertChangePublisher

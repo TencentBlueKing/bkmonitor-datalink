@@ -42,10 +42,10 @@ func (d publishedDocuments) Get(ctx context.Context, collection, key string) (js
 }
 
 func TestPublishedSourceListPreservesScopeAndRedaction(t *testing.T) {
-	draft := config.EventSource{EventSourceID: "source", Hooks: []config.HookConfig{{Name: "active", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "redis:6379", Password: "draft-secret"}, KeyPrefix: "draft"}}}}
+	draft := config.EventSource{EventSourceID: "source", Hooks: []config.HookConfig{{Name: "active", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"kafka:9092"}, Topic: "draft", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "u", Password: "draft-secret"}}}}}}
 	released := draft.WithDefaults()
-	released.Hooks[0].Config.KeyPrefix = "published"
-	released.Hooks[0].Config.Redis.Password = "release-secret"
+	released.Hooks[0].Config.Topic = "published"
+	released.Hooks[0].Config.Security.SASL.Password = "release-secret"
 	docs := publishedDocuments{configurationDocuments: configurationDocuments{record: eventsource.Record{ID: "source", Published: 1, Deleted: true, Spec: draft}}, release: eventsource.Release{ID: "source", Version: 1, Spec: released}}
 	handler := (&API{Sources: eventsource.New(docs, config.SeverityConfig{}), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()
 	for _, query := range []string{"?published=true", "?published=true&include_secrets=true"} {
@@ -57,7 +57,7 @@ func TestPublishedSourceListPreservesScopeAndRedaction(t *testing.T) {
 		if err := json.Unmarshal(out.Body.Bytes(), &records); err != nil {
 			t.Fatal(err)
 		}
-		if out.Code != 200 || len(records) != 1 || !records[0].Deleted || records[0].Spec.Hooks[0].Config.KeyPrefix != "published" {
+		if out.Code != 200 || len(records) != 1 || !records[0].Deleted || records[0].Spec.Hooks[0].Config.Topic != "published" {
 			t.Fatalf("unexpected list status=%d", out.Code)
 		}
 		if strings.Contains(out.Body.String(), "draft-secret") || strings.Contains(out.Body.String(), "release-secret") != strings.Contains(query, "include_secrets=true") {

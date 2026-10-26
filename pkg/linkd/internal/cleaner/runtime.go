@@ -61,6 +61,8 @@ type cleanerEntry struct {
 	event             domain.Event
 	discard           error
 	stored            bool
+	limitPending      bool
+	storedSnapshot    store.StoredEvent
 	mailbox           bool
 	skipMailbox       bool
 	terminal          bool
@@ -99,6 +101,7 @@ type laneBatchResult struct {
 
 // Runtime 实现消息队列无关的 n→*→n Cleaner：并发纯计算，按 lane 连续批量执行副作用与确认。
 type Runtime struct {
+	limitChecker  ActiveAlertLimitChecker
 	sourceID      string
 	sourceVersion int64
 	config        config.CleanerRuntimeConfig
@@ -658,6 +661,10 @@ func (r *Runtime) runLaneBatch(ctx context.Context, lane string, entries []*clea
 		for index, item := range items {
 			entry := storeEntries[index]
 			if item.Err == nil {
+				entry.limitPending = r.limitChecker != nil && item.Result.Created && !item.Result.Processing.State.Terminal()
+				if entry.limitPending {
+					entry.storedSnapshot = item.Result.StoredEvent
+				}
 				entry.event = item.Result.Event
 				entry.stored = true
 				entry.skipMailbox = item.Result.Processing.State.Terminal()
@@ -681,6 +688,7 @@ func (r *Runtime) runLaneBatch(ctx context.Context, lane string, entries []*clea
 		for outcome, count := range outcomes {
 			r.observeStep(ctx, "event_store", outcome, count, time.Since(startedAt))
 		}
+		r.applyActiveAlertLimits(ctx, storeEntries)
 		if firstItemErr != nil {
 			return r.finishLanePrefix(ctx, lane, entries, firstItemErr)
 		}

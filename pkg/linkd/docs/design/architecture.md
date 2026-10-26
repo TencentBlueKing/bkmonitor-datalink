@@ -61,7 +61,7 @@ flowchart TB
 
 图中省略重复的存储访问线：Kingeye Admin 直接只读查询业务存储与 Redis；控制面使用 Redis 调度、
 读取策略窗口，并通过持久存储保存配置、关系和可靠投递进度。KAC 插件从这些持久待办继续推进。
-普通 Hooks 包括 Kafka 快照、活跃策略索引及旧 KAC Hook；旧 KAC Hook 与插件可靠处置受互斥约束。
+普通 Hooks 包括 Kafka 快照及旧 KAC Hook；活跃集合与软限流由来源 active_alert_limits 统一声明；旧 KAC Hook 与插件可靠处置受互斥约束。
 
 Linkd 的 ES/MySQL Repository 保存告警事实与持久控制进度；外部 Kingeye MySQL、OneModel 和展示
 缓存提供只读信息。KAC `alarm_event` 是独立兼容存储，即使 Linkd Repository 选择 MySQL，也仍由

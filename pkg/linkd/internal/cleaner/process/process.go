@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"linkd/internal/activeindex"
 	"linkd/internal/cleaner"
 	"linkd/internal/config"
 	"linkd/internal/consume"
@@ -60,7 +61,7 @@ func Run(
 	observedRepository := telemetryRuntime.ObserveRepository(repositoryRuntime.Repository)
 
 	redisConfig := cfg.Storage.Redis
-	redisClient, err := redisclient.New(redisConfig.ClientOptions())
+	redisClient, err := redisclient.New(activeCacheRedisOptions(*redisConfig))
 	if err != nil {
 		return fmt.Errorf("initialize cleaner redis: %w", err)
 	}
@@ -108,6 +109,9 @@ func Run(
 			return err
 		}
 		factory.UseSeverity(severityState)
+		if source.ActiveAlertLimits != nil && source.ActiveAlertLimits.IsEnabled() && len(source.ActiveAlertLimits.Rules) > 0 {
+			factory.UseActiveAlertLimits(activeindex.NewChecker(activeindex.New(redisClient, cfg.Dispatch.WithDefaults().Deployment, source, telemetryRuntime, logger)))
+		}
 		stage = "flow"
 		flow, err := factory.NewFlow(taskCtx, source)
 		if err != nil {
@@ -157,3 +161,9 @@ func (o telemetryBackpressureObserver) BackpressureTransition(ctx context.Contex
 }
 
 var _ cleaner.BackpressureObserver = telemetryBackpressureObserver{}
+
+func activeCacheRedisOptions(c config.RedisConfig) redisclient.Options {
+	o := c.ClientOptions()
+	o.ContextTimeoutEnabled = true
+	return o
+}

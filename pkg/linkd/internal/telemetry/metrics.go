@@ -17,6 +17,7 @@ import (
 )
 
 type instruments struct {
+	activeAlertCache        metric.Int64Counter
 	mergeBatchPhase         metric.Float64Histogram
 	mergePoolWaits          metric.Int64Gauge
 	mergePoolWaitDuration   metric.Float64Gauge
@@ -338,6 +339,9 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 		return nil, err
 	}
 
+	if result.activeAlertCache, err = meter.Int64Counter("linkd.active_alert_cache.operations", describeMetric("活跃缓存与限流结果", "lifecycle", "throughput", "linkd.operation", "linkd.outcome"), metric.WithUnit("{operation}"), metric.WithDescription("活跃缓存更新、修复、软限流及放行降级次数")); err != nil {
+		return nil, err
+	}
 	if result.cleanerStepItems, err = meter.Int64Counter(
 		"linkd.cleaner.step.items", describeMetric("清洗步骤处理结果", "cleaner", "throughput", "linkd.stage", "messaging.system", "linkd.event_source_id", "linkd.step", "linkd.outcome"), metric.WithUnit("{item}"),
 		metric.WithDescription("Cleaner 各可靠性步骤处理结果"),

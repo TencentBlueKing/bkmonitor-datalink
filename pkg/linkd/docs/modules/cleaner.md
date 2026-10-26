@@ -18,11 +18,12 @@ MQ Delivery
 payload 不能覆盖来源、稳定接收时间或内部消息身份。租户支持 payload/header 输入：两处非空时须一致；来源 related_tenant_id 可强制覆盖。EventSource 的详细边界见
 [EventSource](event-source.md)，当前 `standard` payload 见[Linkd 标准事件](../reference/contracts/standard-event.md)。
 
-Cleaner 的成功终态有三种：
+Cleaner 的成功终态包括：
 
 - 新建或幂等命中 `unprocessed` Event，并成功加入对应 Redis Mailbox；
 - Repository 返回的幂等 Event 已是终态，跳过 Mailbox；
-- 输入属于确定性无效数据，已得到允许确认的 Discard 结果。
+- 输入属于确定性无效数据，已得到允许确认的 Discard 结果；
+- 首次 Event 被软限流，已保存带诊断的 suppressed 终态，不进入 Mailbox。
 
 处理超时、存储错误、Mailbox 错误和确认错误都不是 Discard。
 
@@ -199,3 +200,12 @@ Cleaner 不扫描 unprocessed Event 补发 Mailbox。确认后 Redis 整体丢�
 ### 当前错误与容量策略
 
 Cleaner 实例数不超过 Kafka Topic 分区数。每个任务默认以 512 条未确认消息及载荷字节软背压，确认后释放计数；Helm 默认按下游 Signal 的 `lag + pending` 启用 2048/1024 高低水位背压，可通过 values 修改或设为 0/0 关闭；直接运行的水位缺省仍为 0/0。关闭背压控制后仍采样 Signal 积压供 Admin 观测，不限制持久 Mailbox 数量。普通处理错误直接进入丢弃并可确认的前缀，当前没有默认可重试错误白名单；显式标记的错误最多尝试三次。单条计算和批次调用捕获 panic，失败不取消其他 lane 或来源。Kafka 确认仍只推进连续完成前缀；确认结果未知不重新执行已完成业务，也不伪造成功 offset。见[运行容量与恢复](../design/runtime-capacity-and-recovery.md)。
+
+## 活跃告警软限流
+
+EventSource `active_alert_limits` 配置使用内部 Redis，在 Event 批量幂等落库后、Mailbox 入队前执行。
+对新建的纯触发 Event 按组批量读取近似数量；满额才批量检查对应分组 Set 的 fingerprint，已有成员继续通过。
+恢复/关闭、含终结判定的混合事件及既有 unprocessed 重投不拦截。缓存异常时放行；重建期间依据当前集合数量判断，允许超量。
+限流 Event 保存 `processing.active_alert_limit`，状态 suppressed、outcome alert_limited，正常确认原消息。
+未满、放行路径不额外写准入记录，Lifecycle 不二次检查。配置和预算见
+[活跃告警缓存与软限流](../guides/active-alert-by-strategy.md)。

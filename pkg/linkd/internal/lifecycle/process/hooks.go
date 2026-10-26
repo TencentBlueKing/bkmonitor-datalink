@@ -13,14 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"linkd/internal/config"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/kachook"
 	"linkd/internal/lifecycle/kafkahook"
-	"linkd/internal/lifecycle/strategyhook"
-	"linkd/internal/redisclient"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/telemetry"
 )
@@ -108,23 +105,7 @@ func openHook(spec config.HookConfig) (lifecycle.FinalHook, func() error, error)
 			return nil, nil, err
 		}
 		return hook, func() error { hook.Close(); return nil }, nil
-	case config.HookTypeActiveAlertByStrategy:
-		options := spec.Config.Redis.ClientOptions()
-		options.ContextTimeoutEnabled = true
-		// 一个任务并发处理多个 Event；两个固定连接会把突发提示串行排队到超时。
-		// 连接上限由来源预算控制，等待连接和 Redis I/O 共用 Hook 的截止时间。
-		options.PoolSize = spec.Config.PoolSize
-		client, err := redisclient.New(options)
-		if err != nil {
-			return nil, nil, err
-		}
-		// go-redis 默认 socket deadline 不追随调用方 context；为毫秒级插件单独启用。
-		// 专用构造入口负责在创建连接池前设置选项。
-		hook, err := strategyhook.New(client, strategyhook.Config{KeyPrefix: spec.Config.KeyPrefix, Timeout: time.Duration(*spec.Config.TimeoutMilliseconds) * time.Millisecond})
-		if err != nil {
-			return nil, nil, errors.Join(err, client.Close())
-		}
-		return hook, client.Close, nil
+
 	default:
 		return nil, nil, fmt.Errorf("unregistered hook type")
 	}

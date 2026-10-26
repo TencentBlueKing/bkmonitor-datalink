@@ -1,0 +1,14 @@
+goos: darwin
+goarch: arm64
+pkg: linkd/internal/activeindex
+cpu: Apple M4 Pro
+BenchmarkChecker/disabled-14         	 3549914	       163.3 ns/op	         0 cache_batches/event	    1152 B/op	       1 allocs/op
+BenchmarkChecker/below-14            	   44055	     13371 ns/op	         0.0000002 cache_batches/event	   22720 B/op	     263 allocs/op
+BenchmarkChecker/full-14             	   12723	     43940 ns/op	         0.007814 cache_batches/event	   98440 B/op	     670 allocs/op
+BenchmarkChecker/existing-14         	   20577	     29934 ns/op	         0.007813 cache_batches/event	   49288 B/op	     286 allocs/op
+BenchmarkRedisChecker/disabled-14    	 3512704	       171.7 ns/op	         0 redis_commands/event	    1152 B/op	       1 allocs/op
+BenchmarkRedisChecker/below-14       	   41944	     13744 ns/op	         0 redis_commands/event	   22720 B/op	     263 allocs/op
+BenchmarkRedisChecker/full-14        	    6484	     94304 ns/op	         0.007812 redis_commands/event	  105536 B/op	     813 allocs/op
+BenchmarkRedisChecker/existing-14    	   13796	     44161 ns/op	         0.007812 redis_commands/event	   24009 B/op	     284 allocs/op
+PASS
+ok  	linkd/internal/activeindex	7.269s

@@ -56,7 +56,7 @@ func TestActiveIndexPaginationKeepsOneSnapshot(t *testing.T) {
 		}
 		hits := make([]any, count)
 		for i := range count {
-			hits[i] = map[string]any{"_source": map[string]any{"bk_tenant_id": "tenant", "event_source_id": "source", "fingerprint": strconv.Itoa(i), "labels": map[string]any{"strategy_id": "123"}}, "sort": []any{"tenant", strconv.Itoa(i), "index", i}}
+			hits[i] = map[string]any{"_source": map[string]any{"bk_tenant_id": "tenant", "event_source_id": "source", "fingerprint": strconv.Itoa(i), "labels": map[string]any{"strategy_id": "123"}}, "sort": []any{"tenant", strconv.Itoa(i), "index"}}
 		}
 		return jsonResponse(t, map[string]any{"pit_id": pit, "hits": map[string]any{"hits": hits}}), nil
 	}), router, DefaultConfig())
@@ -69,39 +69,37 @@ func TestActiveIndexPaginationKeepsOneSnapshot(t *testing.T) {
 	}
 }
 
-func TestActiveIndexBudgetOnlyRetainsStrategyProjection(t *testing.T) {
-	router, err := NewStaticRouter("linkd-test")
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestActiveIndexOnlyReadsOriginalGroupingFields(t *testing.T) {
+	router, _ := NewStaticRouter("linkd-test")
 	r, err := New(transportFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method == http.MethodDelete {
 			return jsonResponse(t, map[string]any{"succeeded": true}), nil
 		}
-		if req.URL.Path == "/linkd-test-alerts/_pit" {
+		if strings.HasSuffix(req.URL.Path, "/_pit") {
 			return jsonResponse(t, map[string]any{"id": "pit"}), nil
 		}
-		row := activeindex.Row{
-			BKTenantID: "tenant", EventSourceID: "source", Fingerprint: "fp",
-			Labels: domain.DimensionMap{"strategy_id": domain.NewStringScalar("raw")},
-			Enrich: domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.content","value":"` + strings.Repeat("x", 4096) + `"},{"op":"set","path":"$.labels.strategy_id","value":"effective"}]}}]`)},
+		var body map[string]any
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatal(err)
 		}
-		return jsonResponse(t, map[string]any{"pit_id": "pit", "hits": map[string]any{"hits": []any{map[string]any{"_source": row}}}}), nil
+		for _, f := range body["_source"].([]any) {
+			if strings.HasPrefix(f.(string), "enrich") {
+				t.Fatal("enrich read")
+			}
+		}
+		row := map[string]any{"bk_tenant_id": "tenant", "event_source_id": "source", "alert_id": "a", "fingerprint": "fp", "labels": map[string]any{"strategy_id": "raw"}, "enrich": map[string]any{"strategy_id": "overridden"}}
+		return jsonResponse(t, map[string]any{"hits": map[string]any{"hits": []any{map[string]any{"_source": row}}}}), nil
 	}), router, DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := activeindex.Query{Sources: []string{"source"}, PageSize: 10, MaxBytes: 512}
-	rows, err := readActiveIndex(r, t.Context(), q)
+	rows, err := readActiveIndex(r, t.Context(), activeindex.Query{Sources: []string{"source"}, Fields: []string{"labels.strategy_id"}, PageSize: 10, MaxBytes: 1024})
 	if err != nil || len(rows) != 1 {
-		t.Fatalf("rows=%d err=%v", len(rows), err)
+		t.Fatal(rows, err)
 	}
-	groups, err := activeindex.Group(q, rows)
-	if err != nil || len(groups[activeindex.Scope{BKTenantID: "tenant", StrategyID: "effective"}]) != 1 {
-		t.Fatalf("groups=%v err=%v", groups, err)
-	}
-	if len(rows[0].Enrich) != 0 {
-		t.Fatal("snapshot retained unrelated enrichment")
+	v, _ := rows[0].Labels["strategy_id"].StringValue()
+	if v != "raw" {
+		t.Fatal("used enrichment", v)
 	}
 }
 
@@ -140,11 +138,15 @@ func TestActiveIndexPITCompleteness(t *testing.T) {
 				if body["pit"] == nil || body["_source"] == nil {
 					t.Fatal("unbounded full-document read")
 				}
-				filters := body["query"].(map[string]any)["bool"].(map[string]any)["filter"].([]any)
-				last := filters[len(filters)-1].(map[string]any)["term"].(map[string]any)
-				if last["bk_tenant_id"] != "tenant" {
-					t.Fatal("query lost tenant isolation")
+
+				if mode == "tenant-batch" {
+					filters := body["query"].(map[string]any)["bool"].(map[string]any)["filter"].([]any)
+					raw, _ := json.Marshal(filters)
+					if !strings.Contains(string(raw), `{"term":{"bk_tenant_id":"tenant"}}`) || !strings.Contains(string(raw), `{"terms":{"fingerprint":["fp","second"]}}`) {
+						t.Fatal("member batch lost isolation", string(raw))
+					}
 				}
+
 				hits := []any{map[string]any{"_source": map[string]any{"bk_tenant_id": "tenant", "event_source_id": "source", "fingerprint": "fp", "labels": map[string]any{"strategy_id": 123}}}}
 				if mode == "over-limit" {
 					hits[0].(map[string]any)["_source"].(map[string]any)["fingerprint"] = strings.Repeat("x", 2048)
@@ -161,9 +163,11 @@ func TestActiveIndexPITCompleteness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			query := activeindex.Query{Sources: []string{"source"}, Scope: &activeindex.Scope{BKTenantID: "tenant", StrategyID: "123"}, PageSize: 10, MaxBytes: 1024}
+			query := activeindex.Query{Sources: []string{"source"}, Fields: []string{"labels.strategy_id"}, PageSize: 10, MaxBytes: 1024}
+
 			if mode == "tenant-batch" {
-				query.Scope, query.BKTenantID = nil, "tenant"
+				query.BKTenantID = "tenant"
+				query.Fingerprints = []string{"fp", "second"}
 			}
 			rows, err := readActiveIndex(r, t.Context(), query)
 			if (err == nil) != (mode == "success" || mode == "tenant-batch") {

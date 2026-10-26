@@ -887,30 +887,15 @@ hooks:
       max_message_bytes: 1048576
       security:
         protocol: plaintext
-  - name: active-by-strategy
-    type: active-alert-by-strategy
-    config:
-      redis:
-        mode: standalone
-        address: 127.0.0.1:6379
-        database: 0
-      key_prefix: linkd:active-alert-by-strategy
-      timeout_milliseconds: 1000
+
 ```
 
 实例名在来源内唯一，由 1～64 个字母、数字、下划线或连字符组成，首字符为字母或数字。
 每个来源至多 16 个 hook，未知类型和错误参数在发布前拒绝。
-Redis 连接参数独立于 `storage.redis`，同样支持 Sentinel 及两侧认证；密码在管理展示中脱敏。
-`key_prefix` 必填，不自动添加来源 ID；`timeout_milliseconds` 为正整数毫秒，默认 1000，
-可使用 100、500 等值，禁止零、负值、null、Duration 溢出及旧秒级字段。
-集合变更通知始终启用，channel 固定为 `<key_prefix>:changes`，无需也不接受 `notify_channel` 配置；
-Hook 只提交刷新提示，控制面完整查询已落库 Active Alert 并原子发布；仅成员实际变化时通知，同前缀的所有租户与策略共享该 channel。
-投影任务默认启用，可通过 `control_plane.active_index` 调整轮询、周期校准和资源预算。
-消息格式及 Redis DB 隔离要求见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
-运行时输出 Redis 不可达不阻止来源装配，每次实际调用按超时记录失败。
+`active-alert-by-strategy` 已从 Hook 中移除；活跃集合、限流与成员变化通知统一使用来源的
+`active_alert_limits`，复用 `storage.redis`。完整格式、built_in_bk 默认 5000、禁用和升级步骤见
+[活跃告警缓存与软限流](active-alert-by-strategy.md)。
 
-集合成员和失败边界以 [Lifecycle 插件行为](../modules/lifecycle.md#24-enricher-与-finalhook) 为准。
-接入示例、Redis 查询和排障见 [Redis 策略活跃告警 hook](active-alert-by-strategy.md)。
 Kingeye Admin Kafka 页面按来源和实例展示输出目标；动态管理接口中的连接凭据已脱敏，因此该模式只展示
 目标声明，不使用脱敏凭据探测输出集群 metadata，也不将其标记为已验证可用。
 

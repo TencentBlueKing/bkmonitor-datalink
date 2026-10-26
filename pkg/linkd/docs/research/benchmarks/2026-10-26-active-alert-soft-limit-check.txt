@@ -1,0 +1,264 @@
+/Library/Developer/CommandLineTools/usr/bin/make fmt-check
+/Library/Developer/CommandLineTools/usr/bin/make test
+go test ./...
+?   	linkd/cmd/linkd	[no test files]
+ok  	linkd/cmd/linkd-cli	(cached)
+ok  	linkd/cmd/linkd-eventgen	(cached)
+ok  	linkd/internal/activeindex	0.469s
+ok  	linkd/internal/aicli	(cached)
+?   	linkd/internal/alertqueue	[no test files]
+ok  	linkd/internal/blueking	(cached)
+ok  	linkd/internal/cleaner	(cached)
+ok  	linkd/internal/cleaner/process	(cached)
+ok  	linkd/internal/cli	1.556s
+ok  	linkd/internal/cmdb	(cached)
+ok  	linkd/internal/config	(cached)
+ok  	linkd/internal/consume	(cached)
+ok  	linkd/internal/consume/kafka	(cached)
+ok  	linkd/internal/consume/rabbitmq	(cached)
+ok  	linkd/internal/consume/redisstream	(cached)
+ok  	linkd/internal/controlplane/api	2.284s
+ok  	linkd/internal/controlplane/process	2.010s
+ok  	linkd/internal/controlplane/redisstream	(cached)
+ok  	linkd/internal/controlplane/taskstate	(cached)
+ok  	linkd/internal/domain	(cached)
+ok  	linkd/internal/dynamicconfig	(cached)
+ok  	linkd/internal/dynamicconfig/storage	(cached)
+ok  	linkd/internal/enrich	(cached)
+ok  	linkd/internal/enrich/assembly	(cached)
+ok  	linkd/internal/enrich/basetarget	(cached)
+ok  	linkd/internal/enrich/collect	(cached)
+ok  	linkd/internal/enrich/custom	(cached)
+ok  	linkd/internal/enrich/datasources	(cached)
+ok  	linkd/internal/enrich/description	(cached)
+?   	linkd/internal/enrich/kingeye	[no test files]
+ok  	linkd/internal/enrich/kingeye/convert	(cached)
+ok  	linkd/internal/enrich/models	(cached)
+ok  	linkd/internal/enrich/preview	(cached)
+ok  	linkd/internal/enrich/processors	(cached)
+ok  	linkd/internal/enrich/rules	(cached)
+ok  	linkd/internal/enrich/uptime	(cached)
+ok  	linkd/internal/enrich/view	(cached)
+ok  	linkd/internal/eventgen	(cached)
+ok  	linkd/internal/eventgen/storage	(cached)
+ok  	linkd/internal/eventsource	(cached)
+ok  	linkd/internal/eventsource/storage	(cached)
+ok  	linkd/internal/ingestpreview	(cached)
+ok  	linkd/internal/internaltoken	(cached)
+ok  	linkd/internal/jsonpath	(cached)
+ok  	linkd/internal/kaccompat	(cached)
+ok  	linkd/internal/kafkaclient	(cached)
+ok  	linkd/internal/lifecycle	(cached)
+ok  	linkd/internal/lifecycle/kachook	(cached)
+ok  	linkd/internal/lifecycle/kafkahook	(cached)
+ok  	linkd/internal/lifecycle/mailbox	(cached)
+ok  	linkd/internal/lifecycle/process	2.120s
+ok  	linkd/internal/lifecycle/recentalert	(cached)
+ok  	linkd/internal/lifecycle/scheduler	(cached)
+ok  	linkd/internal/logging	(cached)
+ok  	linkd/internal/merge	(cached)
+ok  	linkd/internal/onemodel	(cached)
+ok  	linkd/internal/onemodel/assembly	(cached)
+ok  	linkd/internal/onemodel/metadatastore	(cached)
+ok  	linkd/internal/onemodel/queryservice	(cached)
+ok  	linkd/internal/policy	(cached)
+ok  	linkd/internal/policy/redisstate	(cached)
+ok  	linkd/internal/policy/runtime	(cached)
+ok  	linkd/internal/policy/simulation	(cached)
+ok  	linkd/internal/policy/storage	(cached)
+ok  	linkd/internal/processingerror	(cached)
+ok  	linkd/internal/redisclient	(cached)
+ok  	linkd/internal/runtimeconfig	(cached)
+ok  	linkd/internal/shieldcheck	(cached)
+ok  	linkd/internal/store	(cached)
+ok  	linkd/internal/store/assembly	(cached)
+ok  	linkd/internal/store/elasticsearch	(cached)
+ok  	linkd/internal/store/memory	(cached)
+ok  	linkd/internal/store/mysql	2.334s
+?   	linkd/internal/store/storetest	[no test files]
+ok  	linkd/internal/suppressioncheck	(cached)
+ok  	linkd/internal/suppressioncleanup	(cached)
+ok  	linkd/internal/taskdispatch	(cached)
+?   	linkd/internal/taskdispatch/observation	[no test files]
+ok  	linkd/internal/taskgroup	(cached)
+ok  	linkd/internal/telemetry	2.612s
+ok  	linkd/internal/testkit/rawgen	(cached)
+ok  	linkd/internal/textregexp	(cached)
+ok  	linkd/tests/e2e/allinone	(cached)
+ok  	linkd/tests/tools/rawgen	(cached)
+/Library/Developer/CommandLineTools/usr/bin/make vet
+go vet ./...
+/Library/Developer/CommandLineTools/usr/bin/make race
+go test -race ./...
+?   	linkd/cmd/linkd	[no test files]
+ok  	linkd/cmd/linkd-cli	(cached)
+ok  	linkd/cmd/linkd-eventgen	(cached)
+ok  	linkd/internal/activeindex	1.476s
+ok  	linkd/internal/aicli	(cached)
+?   	linkd/internal/alertqueue	[no test files]
+ok  	linkd/internal/blueking	(cached)
+ok  	linkd/internal/cleaner	(cached)
+ok  	linkd/internal/cleaner/process	(cached)
+ok  	linkd/internal/cli	2.665s
+ok  	linkd/internal/cmdb	(cached)
+ok  	linkd/internal/config	(cached)
+ok  	linkd/internal/consume	(cached)
+ok  	linkd/internal/consume/kafka	(cached)
+ok  	linkd/internal/consume/rabbitmq	(cached)
+ok  	linkd/internal/consume/redisstream	(cached)
+ok  	linkd/internal/controlplane/api	4.668s
+ok  	linkd/internal/controlplane/process	2.947s
+ok  	linkd/internal/controlplane/redisstream	(cached)
+ok  	linkd/internal/controlplane/taskstate	(cached)
+ok  	linkd/internal/domain	(cached)
+ok  	linkd/internal/dynamicconfig	(cached)
+ok  	linkd/internal/dynamicconfig/storage	(cached)
+ok  	linkd/internal/enrich	(cached)
+ok  	linkd/internal/enrich/assembly	(cached)
+ok  	linkd/internal/enrich/basetarget	(cached)
+ok  	linkd/internal/enrich/collect	(cached)
+ok  	linkd/internal/enrich/custom	(cached)
+ok  	linkd/internal/enrich/datasources	(cached)
+ok  	linkd/internal/enrich/description	(cached)
+?   	linkd/internal/enrich/kingeye	[no test files]
+ok  	linkd/internal/enrich/kingeye/convert	(cached)
+ok  	linkd/internal/enrich/models	(cached)
+ok  	linkd/internal/enrich/preview	(cached)
+ok  	linkd/internal/enrich/processors	(cached)
+ok  	linkd/internal/enrich/rules	(cached)
+ok  	linkd/internal/enrich/uptime	(cached)
+ok  	linkd/internal/enrich/view	(cached)
+ok  	linkd/internal/eventgen	(cached)
+ok  	linkd/internal/eventgen/storage	(cached)
+ok  	linkd/internal/eventsource	(cached)
+ok  	linkd/internal/eventsource/storage	(cached)
+ok  	linkd/internal/ingestpreview	(cached)
+ok  	linkd/internal/internaltoken	(cached)
+ok  	linkd/internal/jsonpath	(cached)
+ok  	linkd/internal/kaccompat	(cached)
+ok  	linkd/internal/kafkaclient	(cached)
+ok  	linkd/internal/lifecycle	(cached)
+ok  	linkd/internal/lifecycle/kachook	(cached)
+ok  	linkd/internal/lifecycle/kafkahook	(cached)
+ok  	linkd/internal/lifecycle/mailbox	(cached)
+ok  	linkd/internal/lifecycle/process	3.111s
+ok  	linkd/internal/lifecycle/recentalert	(cached)
+ok  	linkd/internal/lifecycle/scheduler	(cached)
+ok  	linkd/internal/logging	(cached)
+ok  	linkd/internal/merge	(cached)
+ok  	linkd/internal/onemodel	(cached)
+ok  	linkd/internal/onemodel/assembly	(cached)
+ok  	linkd/internal/onemodel/metadatastore	(cached)
+ok  	linkd/internal/onemodel/queryservice	(cached)
+ok  	linkd/internal/policy	(cached)
+ok  	linkd/internal/policy/redisstate	(cached)
+ok  	linkd/internal/policy/runtime	(cached)
+ok  	linkd/internal/policy/simulation	(cached)
+ok  	linkd/internal/policy/storage	(cached)
+ok  	linkd/internal/processingerror	(cached)
+ok  	linkd/internal/redisclient	(cached)
+ok  	linkd/internal/runtimeconfig	(cached)
+ok  	linkd/internal/shieldcheck	(cached)
+ok  	linkd/internal/store	(cached)
+ok  	linkd/internal/store/assembly	(cached)
+ok  	linkd/internal/store/elasticsearch	(cached)
+ok  	linkd/internal/store/memory	(cached)
+ok  	linkd/internal/store/mysql	3.317s
+?   	linkd/internal/store/storetest	[no test files]
+ok  	linkd/internal/suppressioncheck	(cached)
+ok  	linkd/internal/suppressioncleanup	(cached)
+ok  	linkd/internal/taskdispatch	(cached)
+?   	linkd/internal/taskdispatch/observation	[no test files]
+ok  	linkd/internal/taskgroup	(cached)
+ok  	linkd/internal/telemetry	4.306s
+ok  	linkd/internal/testkit/rawgen	(cached)
+ok  	linkd/internal/textregexp	(cached)
+ok  	linkd/tests/e2e/allinone	(cached)
+ok  	linkd/tests/tools/rawgen	(cached)
+/Library/Developer/CommandLineTools/usr/bin/make lint
+golangci-lint run ./...
+0 issues.
+/Library/Developer/CommandLineTools/usr/bin/make helm-check
+helm lint --strict deploy/helm/linkd -f deploy/helm/linkd/examples/external-services.yaml -f deploy/helm/linkd/examples/clusters.yaml -f deploy/helm/linkd/examples/servicemonitor.yaml
+==> Linting deploy/helm/linkd
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed
+helm lint --strict deploy/helm/linkd -f deploy/helm/linkd/examples/existing-secrets.yaml
+engine.go:227: [INFO] Fail: test-release-linkd-control-plane: existingSecret 与适用的内联 configuration 互斥
+engine.go:227: [INFO] Fail: test-release-linkd-alarmd-cleaner: existingSecret 与适用的内联 configuration 互斥
+engine.go:227: [INFO] Fail: test-release-linkd-alarmd-lifecycle: existingSecret 与适用的内联 configuration 互斥
+engine.go:227: [INFO] Fail: test-release-linkd-default-cleaner: existingSecret 与适用的内联 configuration 互斥
+engine.go:227: [INFO] Fail: test-release-linkd-default-lifecycle: existingSecret 与适用的内联 configuration 互斥
+==> Linting deploy/helm/linkd
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed
+node --test deploy/helm/linkd/tests/chart.test.mjs
+✔ default three roles, stable selectors and valid runtime configs (713.982666ms)
+✔ eventgen stays disabled by default (38.996333ms)
+✔ managed eventgen waits for Admin and uses Worker Token with one process (34.871584ms)
+✔ legacy generation parameters are rejected (24.013792ms)
+✔ packaged eventgen source example passes Linkd config validation (7.622625ms)
+✔ storage-only values enable Signal backpressure and preserve explicit settings (83.472625ms)
+✔ Signal backpressure watermarks can be changed or disabled (104.003917ms)
+✔ default GHCR release images reach all roles and migration (32.10075ms)
+✔ explicit image registry, tag and digest override release defaults (57.346459ms)
+✔ worker groups isolate labels, replicas, resources and config Secrets (73.065958ms)
+✔ existing Secret can share different keys across groups, labels reach actual config loader (41.448542ms)
+✔ zero replicas, metrics disabled, digest, checksum and bounded names (115.058667ms)
+✔ invalid values fail before installation (222.092625ms)
+✔ watch migration has self-contained pre hooks with ordered Secret and ServiceAccount (63.31725ms)
+✔ async migration uses regular revision Job and config snapshot, disabled emits nothing (63.402333ms)
+✔ migration mounts pre-existing config and account without creating hook replacements (35.823083ms)
+✔ migration validates bounds and prevents reserved environment overrides (120.307625ms)
+✔ ServiceMonitor discovers every worker group and control-plane metrics endpoint only (44.533083ms)
+✔ ServiceMonitor supports discovery namespace, annotations, labels and relabeling configuration (41.720583ms)
+✔ ServiceMonitor remains opt-in and rejects invalid configuration (160.894125ms)
+✔ shared resources reach control plane and lifecycle without source credentials (32.895542ms)
+✔ global BlueKing mode and credentials reach every role (54.820459ms)
+✔ role and cluster BlueKing mode overrides are rejected (165.543209ms)
+✔ JWT secret is injected only into management consumers (31.999458ms)
+✔ global KAC plugin reaches every role and cannot be overridden (137.348291ms)
+✔ direct authentication values reach roles and both migration modes without an auth Secret (106.367125ms)
+✔ existing authentication Secrets override direct values and retain custom keys (31.667084ms)
+✔ direct authentication rejects missing fields, matching tokens and invalid types (105.193209ms)
+ℹ tests 28
+ℹ suites 0
+ℹ pass 28
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5736.249916
+/Library/Developer/CommandLineTools/usr/bin/make release-check
+python3 scripts/test_ci_release.py
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 3.756s
+
+OK
+node --test scripts/test-prepare-release-chart.cjs
+✔ Chart 默认 amd64，另一架构覆盖仓库及节点选择 (173.25075ms)
+✔ Chart 默认 arm64，另一架构覆盖仓库及节点选择 (172.687ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 386.013709
+node --test scripts/test-image-workflow.cjs
+✔ workflow remains manual and default all excludes eventgen (5.990667ms)
+✔ eventgen uses only its own version, including the unique-tag fallback (16.956458ms)
+✔ invalid selected versions and unknown components fail before building (27.445ms)
+✔ each optional image resolves its real build context and Dockerfile (12.947709ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 109.98425

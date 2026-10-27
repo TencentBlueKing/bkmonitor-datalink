@@ -488,8 +488,8 @@ func TestRawBatchSpanRecordsMemberDiagnosticsWithoutConnectionDetails(t *testing
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(
 			writer,
-			`{"responses":[`+
-				`{"took":932,"timed_out":true,"_shards":{"total":8,"successful":7,"failed":1},`+
+			`{"took":1200,"responses":[`+
+				`{"took":932,"timed_out":true,"_shards":{"total":8,"successful":7,"skipped":3,"failed":1},`+
 				`"hits":{"total":{"value":23,"relation":"eq"},"hits":[]}},`+
 				`{"took":41,"timed_out":false,"status":404,"_shards":{"total":4,"successful":4,"failed":0},`+
 				`"error":{"type":"index_not_found_exception","reason":"must-not-leak"}}]}`,
@@ -523,6 +523,12 @@ func TestRawBatchSpanRecordsMemberDiagnosticsWithoutConnectionDetails(t *testing
 
 	attributes := endedSpanAttrs(t, recorder)
 	renderedAttributes := fmt.Sprint(attributes)
+	batchTook, ok := esSpanAttrInt(attributes, "es_batch_took_millis")
+	require.True(t, ok)
+	assert.EqualValues(t, 1200, batchTook)
+	childShardsSkipped, ok := esSpanAttrIntSlice(attributes, "es_batch_child_shards_skipped")
+	require.True(t, ok)
+	assert.Equal(t, []int64{3, 0}, childShardsSkipped)
 	for _, sentinel := range []string{
 		server.URL,
 		firstIndexSentinel,
@@ -875,4 +881,75 @@ func rawBatchMetricHistogramCount(t *testing.T, metricName string) uint64 {
 		return count
 	}
 	return 0
+}
+
+func TestRawBatchSearchStageTimings(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		status        int
+		body          string
+		clientFailure bool
+		wantErr       string
+		wantDecode    bool
+		wantTook      bool
+		wantProcess   bool
+	}{
+		{name: "success", status: 200, body: `{"took":7,"responses":[{"took":3,"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}]}`, wantDecode: true, wantTook: true, wantProcess: true},
+		{name: "took_omitted", status: 200, body: `{"responses":[{"hits":{"total":{"value":0,"relation":"eq"},"hits":[]}}]}`, wantDecode: true, wantProcess: true},
+		{name: "http_failure", status: 403, body: `{}`, wantErr: "request"},
+		{name: "invalid_json", status: 200, body: `{`, wantErr: "decode", wantDecode: true},
+		{name: "response_count_mismatch", status: 200, body: `{"took":7,"responses":[]}`, wantErr: "response_count_mismatch", wantDecode: true, wantTook: true},
+		{name: "client_failure", clientFailure: true, wantErr: "client"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := setupESTraceRecorder(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(2 * time.Millisecond)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			connect := Connect{Address: server.URL}
+			if test.clientFailure {
+				connect.Address = "://invalid"
+			}
+			batch := rawSingleBatch(t, rawBatchPrepared(t, connect, []string{"index-a"}, `{}`, 0))
+			_, err := rawBatchInstance(t, connect).ExecuteRawBatch(context.Background(), batch, 4)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				var transportErr *RawBatchTransportError
+				require.ErrorAs(t, err, &transportErr)
+				require.Equal(t, test.wantErr, transportErr.Kind)
+			}
+			attrs := make(map[string]attribute.Value)
+			for _, attr := range endedSpanAttrs(t, recorder) {
+				attrs[string(attr.Key)] = attr.Value
+			}
+			for key, expected := range map[string]bool{
+				"es_batch_client_duration_ms":         true,
+				"es_batch_request_duration_ms":        !test.clientFailure,
+				"es_batch_decode_duration_ms":         test.wantDecode,
+				"es_batch_result_process_duration_ms": test.wantProcess,
+			} {
+				value, present := attrs[key]
+				require.Equal(t, expected, present, key)
+				if present {
+					require.Equal(t, attribute.FLOAT64, value.Type(), key)
+					require.GreaterOrEqual(t, value.AsFloat64(), float64(0), key)
+					span := recorder.Ended()[0]
+					require.LessOrEqual(t, value.AsFloat64(), float64(span.EndTime().Sub(span.StartTime()))/float64(time.Millisecond), key)
+				}
+			}
+			if !test.clientFailure {
+				require.GreaterOrEqual(t, attrs["es_batch_request_duration_ms"].AsFloat64(), 2.0)
+			}
+			took, present := attrs["es_batch_took_millis"]
+			require.Equal(t, test.wantTook, present)
+			if present {
+				require.EqualValues(t, 7, took.AsInt64())
+			}
+		})
+	}
 }

@@ -404,40 +404,46 @@ func executeRawESBatchPreGroup(
 		stats.batchCount += delta.batchCount
 		stats.singleCount += delta.singleCount
 	}
+	var preparations sync.WaitGroup
+	preparations.Add(len(preGroup.members))
+	prepareMember := func(member *rawESBatchRuntimeMember) *rawESReadyGroup {
+		// Publish preparation completion before executing any detached batch,
+		// including single fallbacks. Errors and panics must release this barrier.
+		defer preparations.Done()
+		prepareRawESBatchMember(ctx, queryTs, qb, member, sink)
+		if member.prepared == nil {
+			return nil
+		}
+		fingerprint, err := elasticsearch.PreparedRawQueryFingerprint(member.prepared)
+		if err != nil {
+			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerFingerprintFallback)
+			return &rawESReadyGroup{members: []*rawESBatchRuntimeMember{member}}
+		}
+		lock.Lock()
+		defer lock.Unlock()
+		group := groups[fingerprint]
+		if group == nil {
+			group = &rawESReadyGroup{}
+			groups[fingerprint] = group
+			groupOrder = append(groupOrder, fingerprint)
+		}
+		group.totalMembers++
+		group.members = append(group.members, member)
+		if len(group.members) < settings.maxMembers {
+			return nil
+		}
+		ready := &rawESReadyGroup{members: group.members}
+		if len(group.members) == 1 {
+			group.singleChunks++
+		}
+		group.members = nil
+		return ready
+	}
 	preparationTasks := make([]func(), 0, len(preGroup.members))
 	for _, plannedMember := range preGroup.members {
 		member := runtimeByLoc[plannedMember.location]
 		preparationTasks = append(preparationTasks, sink.guardTask(func() {
-			prepareRawESBatchMember(ctx, queryTs, qb, member, sink)
-			if member.prepared == nil {
-				return
-			}
-			fingerprint, err := elasticsearch.PreparedRawQueryFingerprint(member.prepared)
-			if err != nil {
-				metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerSingle)
-				metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerFingerprintFallback)
-				mergeStats(rawESBatchGroupExecutionStats{singleCount: 1})
-				executeRawPreparedMember(ctx, member, sink)
-				return
-			}
-			lock.Lock()
-			group := groups[fingerprint]
-			if group == nil {
-				group = &rawESReadyGroup{}
-				groups[fingerprint] = group
-				groupOrder = append(groupOrder, fingerprint)
-			}
-			group.totalMembers++
-			group.members = append(group.members, member)
-			var ready *rawESReadyGroup
-			if len(group.members) >= settings.maxMembers {
-				ready = &rawESReadyGroup{members: group.members}
-				if len(group.members) == 1 {
-					group.singleChunks++
-				}
-				group.members = nil
-			}
-			lock.Unlock()
+			ready := prepareMember(member)
 			if ready != nil {
 				tasks, delta := rawESReadyExecutionTasks(ctx, settings, []*rawESReadyGroup{ready}, sink)
 				mergeStats(delta)
@@ -447,15 +453,23 @@ func executeRawESBatchPreGroup(
 			}
 		}))
 	}
-	dispatcher.run(preparationTasks)
-	// Every inline execution has completed before tails are flushed. Empty groups
-	// remain in the map so each final fingerprint is counted only once.
+	executionsDone := make(chan struct{})
+	go func() {
+		defer close(executionsDone)
+		dispatcher.run(preparationTasks)
+	}()
+	defer func() { <-executionsDone }()
+	preparations.Wait()
+	tailReadyAt := time.Now()
+	// No preparation can mutate groups now. Inline searches may still be running;
+	// submit tails from this coordinator so they can use any free shared worker.
 	stats.finalGroupCount = len(groups)
 	metric.QueryRawESBatchEventAdd(ctx, metric.QueryRawESBatchEventPlannerFinalGroup, len(groups))
 	tails := make([]*rawESReadyGroup, 0, len(groups))
 	for _, fingerprint := range groupOrder {
 		group := groups[fingerprint]
 		if len(group.members) > 0 {
+			group.tailReadyAt = tailReadyAt
 			tails = append(tails, group)
 		}
 		if len(group.members) == 1 {
@@ -473,6 +487,7 @@ func executeRawESBatchPreGroup(
 	tasks, delta := rawESReadyExecutionTasks(ctx, settings, tails, sink)
 	mergeStats(delta)
 	dispatcher.run(tasks)
+	<-executionsDone
 	return stats
 }
 
@@ -480,6 +495,26 @@ type rawESReadyGroup struct {
 	members      []*rawESBatchRuntimeMember
 	totalMembers int
 	singleChunks int
+	tailReadyAt  time.Time
+}
+
+func (g *rawESReadyGroup) executionTask(
+	ctx context.Context,
+	sink *rawQueryExecutionSink,
+	execute func(context.Context),
+) func() {
+	return sink.guardTask(func() {
+		executionCtx := ctx
+		if !g.tailReadyAt.IsZero() {
+			var span *trace.Span
+			var spanErr error
+			executionCtx, span = trace.NewSpan(ctx, "query-raw-es-tail-execute")
+			span.Set("es_batch_tail_ready_unix_millis", g.tailReadyAt.UnixMilli())
+			span.Set("es_batch_tail_wait_duration_ms", float64(time.Since(g.tailReadyAt))/float64(time.Millisecond))
+			defer span.End(&spanErr)
+		}
+		execute(executionCtx)
+	})
 }
 
 func prepareRawESBatchMember(
@@ -539,7 +574,7 @@ func rawESReadyExecutionTasks(
 			member := finalGroup.members[0]
 			stats.singleCount++
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerSingle)
-			executionTasks = append(executionTasks, sink.guardTask(func() {
+			executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 				executeRawPreparedMember(ctx, member, sink)
 			}))
 			continue
@@ -572,7 +607,7 @@ func rawESReadyExecutionTasks(
 			)
 			for _, member := range finalGroup.members {
 				member := member
-				executionTasks = append(executionTasks, sink.guardTask(func() {
+				executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 					executeRawPreparedMember(ctx, member, sink)
 				}))
 			}
@@ -586,14 +621,14 @@ func rawESReadyExecutionTasks(
 				stats.singleCount++
 				metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerSingle)
 				metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerPackedSingle)
-				executionTasks = append(executionTasks, sink.guardTask(func() {
+				executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 					executeRawPreparedMember(ctx, member, sink)
 				}))
 				continue
 			}
 			stats.batchCount++
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerBatch)
-			executionTasks = append(executionTasks, sink.guardTask(func() {
+			executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 				results, batchErr := finalGroup.members[0].es.ExecuteRawBatch(
 					ctx, batch, settings.maxConcurrentSearches,
 				)
@@ -619,7 +654,7 @@ func rawESReadyExecutionTasks(
 			stats.singleCount++
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerSingle)
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerBodyOversized)
-			executionTasks = append(executionTasks, sink.guardTask(func() {
+			executionTasks = append(executionTasks, finalGroup.executionTask(ctx, sink, func(ctx context.Context) {
 				executeRawPreparedMember(ctx, member, sink)
 			}))
 		}

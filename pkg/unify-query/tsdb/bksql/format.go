@@ -386,6 +386,13 @@ func (f *QueryFactory) FormatDataToQueryResult(
 
 		// 遇到 json.Number 类型，需要先转换成 float64 之后再转换成 int64，不然就会失败
 		vt = cast.ToInt64(cast.ToFloat64(vtLong))
+		if f.query.IsRangeAggregation && vvDouble == nil {
+			// 空路由的 MIN/MAX/AVG 没有贡献，不能将 NULL 转成 0 参与跨路由比较。
+			switch strings.ToLower(f.query.Aggregates.OuterAggName()) {
+			case function.Min, function.Max, function.Avg:
+				continue
+			}
+		}
 		vv = cast.ToFloat64(vvDouble)
 
 		// 如果是非时间聚合计算，则无需进行指标名的拼接作用
@@ -530,6 +537,10 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 	var s []string
 
 	s = append(s, f.expr.ParserRangeTime(f.timeField, f.start, f.end))
+	if f.query.RangeEndExclusive {
+		// Doris 的时间范围原本包含终点；迁移切换点只能由后一路贡献。
+		s = append(s, fmt.Sprintf("`%s` < %d", f.timeField, f.end.UnixMilli()))
+	}
 	theDateFilter, err := f.getTheDateIndexFilters()
 	if err != nil {
 		return "", err

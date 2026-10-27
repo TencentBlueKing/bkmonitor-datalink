@@ -1048,3 +1048,47 @@ func TestFormatDataToQueryResultDynamicLabelsIncreaseSeriesRowsRatio(t *testing.
 	require.Equal(t, 5, dynamicPoints)
 	require.Greater(t, dynamicLabelBytes, stableLabelBytes)
 }
+
+func TestRangeAggregateDorisExclusiveBoundary(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	start, end := time.Unix(1700000000, 0), time.Unix(1700003600, 0)
+	for _, exclusive := range []bool{false, true} {
+		query := &metadata.Query{Measurement: "doris", TimeField: metadata.TimeField{Name: "dtEventTimeStamp"}, RangeEndExclusive: exclusive}
+		where, err := bksql.NewQueryFactory(ctx, query).WithRangeTime(start, end).BuildWhere()
+		require.NoError(t, err)
+		assert.Contains(t, where, fmt.Sprintf("`dtEventTimeStamp` >= %d", start.UnixMilli()))
+		boundary := fmt.Sprintf("`dtEventTimeStamp` < %d", end.UnixMilli())
+		if exclusive {
+			assert.Contains(t, where, boundary)
+		} else {
+			assert.NotContains(t, where, boundary)
+			assert.Contains(t, where, fmt.Sprintf("`dtEventTimeStamp` <= %d", end.UnixMilli()))
+		}
+	}
+}
+
+func TestRangeAggregateDorisNullValue(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.GetQueryParams(ctx).SetIsReference(true)
+	for _, method := range []string{"min", "max", "avg", "sum"} {
+		t.Run(method, func(t *testing.T) {
+			query := &metadata.Query{
+				Measurement: "doris", Field: "value", IsRangeAggregation: true,
+				Aggregates: metadata.Aggregates{{Name: method, Dimensions: []string{"group"}}},
+			}
+			result, err := bksql.NewQueryFactory(ctx, query).FormatDataToQueryResult(ctx, []map[string]any{
+				{"group": "empty", "_value_": nil},
+				{"group": "data", "_value_": 10.0},
+			})
+			require.NoError(t, err)
+			if method == "sum" {
+				require.Len(t, result.Timeseries, 2)
+			} else {
+				require.Len(t, result.Timeseries, 1)
+				assert.Equal(t, 10.0, result.Timeseries[0].Samples[0].Value)
+			}
+		})
+	}
+}

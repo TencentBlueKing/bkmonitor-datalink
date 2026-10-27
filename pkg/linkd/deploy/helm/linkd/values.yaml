@@ -11,7 +11,7 @@ commonAnnotations: {}
 image:
   registry: ghcr.io
   repository: tencentblueking/bkmonitor-datalink/linkd
-  tag: "0.1.11"
+  tag: "0.1.13"
   digest: ""
   pullPolicy: IfNotPresent
   pullSecrets: []

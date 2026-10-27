@@ -14,7 +14,7 @@ Chart 位于 [deploy/helm/linkd](../../deploy/helm/linkd/README.md)。使用 Hel
 Chart 默认使用 GHCR 的 Linkd 镜像：
 
 ```text
-ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.11
+ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.13
 ```
 
 Chart 生成的配置在缺省时自动包含 `lifecycle: {}`，使用程序默认值；可用

@@ -6,7 +6,7 @@ Event Generator 和 ServiceMonitor 可选，管理界面使用 Kingeye Admin，�
 外部 Elasticsearch 最低要求 **7.10**；Redis 建议使用 **7.2 系列**（单节点或 Sentinel）。
 完整版本边界与实测范围见 [中间件版本要求](../../../docs/guides/configuration.md#中间件版本要求)。
 
-Chart 版本为 `0.1.12`。Linkd 的默认镜像为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.11`；可选模拟器使用独立的 `linkd-eventgen:0.2.0`。
+Chart 版本为 `0.1.13`。Linkd 的默认镜像为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.13`；可选模拟器使用独立的 `linkd-eventgen:0.2.0`。
 镜像仓库与版本均可通过 values 覆盖。
 手动打包与 GitHub Actions Artifacts 下载见[发布指南](../../../docs/guides/image-release.md#helm-chart-打包)。
 

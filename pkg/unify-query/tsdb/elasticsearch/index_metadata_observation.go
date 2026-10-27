@@ -18,9 +18,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-// indexMetadataDecoder preserves elastic's default JSON semantics and measures
-// only decoding, without recording response contents. Its duration is included
-// in index-get/get-mapping duration, not an additional sequential phase.
+// indexMetadataDecoder 保持 elastic 默认的 JSON 解码语义，只统计解码耗时，不记录响应内容。
+// 解码耗时已包含在 index-get/get-mapping 耗时内，不能作为独立阶段重复累加。
 type indexMetadataDecoder struct {
 	duration atomic.Int64
 	bytes    atomic.Int64
@@ -39,8 +38,8 @@ func (d *indexMetadataDecoder) Decode(data []byte, target any) error {
 
 func (d *indexMetadataDecoder) record(span *trace.Span) {
 	span.Set("mapping-decode-duration-ms", float64(d.duration.Load())/float64(time.Millisecond))
-	// Counts only payloads passed to the decoder, excluding HTTP error bodies,
-	// headers and compression overhead; this is not a wire-byte measurement.
+	// 只统计传给解码器的响应体大小，不含 HTTP 错误响应体、响应头和压缩开销，
+	// 因此不能作为实际网络传输字节数。
 	span.Set("mapping-response-bytes", d.bytes.Load())
 	span.Set("mapping-decode-count", d.calls.Load())
 }

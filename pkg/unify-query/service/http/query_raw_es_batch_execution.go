@@ -391,9 +391,8 @@ func executeRawESBatchPreGroup(
 	dispatcher *rawQueryDispatcher,
 	sink *rawQueryExecutionSink,
 ) rawESBatchGroupExecutionStats {
-	// Each full batch runs in the worker that completed its preparation. Submitting
-	// it back to the dispatcher could deadlock at limit=1 or let slow preparations
-	// take every slot before the ready search is dispatched.
+	// 满批直接在完成准备的 worker 中执行。重新提交到调度器会在并发上限为 1 时死锁，
+	// 也可能让慢准备任务占满槽位，阻塞已就绪的搜索。
 	var lock sync.Mutex
 	var stats rawESBatchGroupExecutionStats
 	groups := make(map[string]*rawESReadyGroup)
@@ -407,8 +406,8 @@ func executeRawESBatchPreGroup(
 	var preparations sync.WaitGroup
 	preparations.Add(len(preGroup.members))
 	prepareMember := func(member *rawESBatchRuntimeMember) *rawESReadyGroup {
-		// Publish preparation completion before executing any detached batch,
-		// including single fallbacks. Errors and panics must release this barrier.
+		// 执行取出的批次或单成员回退前，先通知准备完成。
+		// 准备失败或 panic 时也必须通知，避免尾批一直等待。
 		defer preparations.Done()
 		prepareRawESBatchMember(ctx, queryTs, qb, member, sink)
 		if member.prepared == nil {
@@ -461,8 +460,8 @@ func executeRawESBatchPreGroup(
 	defer func() { <-executionsDone }()
 	preparations.Wait()
 	tailReadyAt := time.Now()
-	// No preparation can mutate groups now. Inline searches may still be running;
-	// submit tails from this coordinator so they can use any free shared worker.
+	// 所有准备任务已结束，分组不会再变化，但满批搜索可能仍在执行。
+	// 由协调器提交尾批，使其能使用共享调度器中的空闲 worker。
 	stats.finalGroupCount = len(groups)
 	metric.QueryRawESBatchEventAdd(ctx, metric.QueryRawESBatchEventPlannerFinalGroup, len(groups))
 	tails := make([]*rawESReadyGroup, 0, len(groups))
@@ -475,9 +474,8 @@ func executeRawESBatchPreGroup(
 		if len(group.members) == 1 {
 			group.singleChunks++
 		}
-		// A one-member flush is a final-body split only if no later member has
-		// the same fingerprint. In particular, maxMembers=1 is packing, not a
-		// new final group for each prepared member.
+		// 仅当后续也没有相同指纹的成员时，单成员批次才计为最终请求体分组拆分。
+		// maxMembers=1 只是打包限制，不能把每个成员都计为新的最终分组。
 		if group.totalMembers == 1 {
 			metric.QueryRawESBatchEventInc(ctx, metric.QueryRawESBatchEventPlannerFinalSplit)
 		} else {
@@ -565,8 +563,8 @@ func rawESReadyExecutionTasks(
 	var stats rawESBatchGroupExecutionStats
 	var executionTasks []func()
 	for _, finalGroup := range groups {
-		// Completion order can differ from route order. Keep each wire batch's
-		// ordinals deterministic and decode responses against that exact order.
+		// 准备完成顺序可能与路由顺序不同；批内按稳定序号排序，
+		// 并按发送顺序解码响应，保证成员与结果对应。
 		sort.Slice(finalGroup.members, func(i, j int) bool {
 			return rawESBatchMemberLocationLess(finalGroup.members[i].location, finalGroup.members[j].location)
 		})

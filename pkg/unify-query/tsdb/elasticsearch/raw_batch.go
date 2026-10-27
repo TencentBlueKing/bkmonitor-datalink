@@ -367,7 +367,7 @@ func (i *Instance) ExecuteRawBatch(
 			}
 		}
 	}
-	// Includes result conversion and any existing missing-mapping child fallback.
+	// 包含结果转换，以及子请求沿用的缺失 mapping 回退耗时。
 	span.Set("es_batch_result_process_duration_ms", float64(time.Since(processStartedAt))/float64(time.Millisecond))
 
 	metric.QueryRawESBatchEventAdd(

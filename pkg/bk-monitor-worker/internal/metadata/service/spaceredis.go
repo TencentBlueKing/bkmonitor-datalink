@@ -498,38 +498,65 @@ func getDataLabelTableIds(db *gorm.DB, bkTenantId *string, dataLabelList, tableI
 		chunks = [][]string{nil}
 	}
 	for _, chunk := range chunks {
-		query := db.Table("metadata_resulttable AS rt").
-			Select("rt.table_id, rt.bk_tenant_id, rt.data_label, COALESCE(aliases.value, '[]') AS aliases").
-			Joins("LEFT JOIN metadata_resulttableoption AS aliases ON aliases.table_id = rt.table_id AND aliases.bk_tenant_id = rt.bk_tenant_id AND aliases.name = ? AND aliases.value_type = ?", resulttable.OptionDataLabelAliases, "list")
+		optionQuery := db.Model(&resulttable.ResultTableOption{}).
+			Select("table_id, bk_tenant_id, value").
+			Where("name = ? AND value_type = ?", resulttable.OptionDataLabelAliases, "list")
+		rtQuery := db.Model(&resulttable.ResultTable{}).
+			Select("table_id, bk_tenant_id, data_label")
 		if bkTenantId != nil {
-			query = query.Where("rt.bk_tenant_id = ?", *bkTenantId)
+			optionQuery = optionQuery.Where("bk_tenant_id = ?", *bkTenantId)
+			rtQuery = rtQuery.Where("bk_tenant_id = ?", *bkTenantId)
 		}
+		var labelConditions []string
+		var labelArgs []interface{}
 		if len(tableIdList) != 0 {
 			// 保留停用、删除 RT 的标签，以便定向刷新时清理它们的旧映射。
-			query = query.Where("rt.table_id IN (?)", chunk)
+			optionQuery = optionQuery.Where("table_id IN (?)", chunk)
+			rtQuery = rtQuery.Where("table_id IN (?)", chunk)
 		} else {
-			query = query.Where("rt.is_enable = ? AND rt.is_deleted = ?", true, false)
-		}
-		if len(tableIdList) == 0 && len(chunk) != 0 {
-			conditions := make([]string, 0, len(chunk))
-			args := make([]interface{}, 0, len(chunk)*2)
-			for _, label := range chunk {
-				jsonLabel, err := jsonx.MarshalString(label)
-				if err != nil {
-					return nil, err
+			rtQuery = rtQuery.Where("is_enable = ? AND is_deleted = ?", true, false)
+			if len(chunk) != 0 {
+				var aliasConditions []string
+				var aliasArgs []interface{}
+				for _, label := range chunk {
+					jsonLabel, err := jsonx.MarshalString(label)
+					if err != nil {
+						return nil, err
+					}
+					// 非法 JSON 按空列表处理，避免单条异常 Option 导致整批查询失败。
+					aliasConditions = append(aliasConditions, "JSON_CONTAINS(IF(JSON_VALID(value), value, '[]'), ?)")
+					aliasArgs = append(aliasArgs, jsonLabel)
+					labelConditions = append(labelConditions, "FIND_IN_SET(?, data_label) > 0")
+					labelArgs = append(labelArgs, label)
 				}
-				conditions = append(conditions, "FIND_IN_SET(?, rt.data_label) > 0 OR JSON_CONTAINS(aliases.value, ?)")
-				args = append(args, label, jsonLabel)
+				optionQuery = optionQuery.Where("("+strings.Join(aliasConditions, " OR ")+")", aliasArgs...)
 			}
-			query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
 		}
-		var rows []struct {
-			TableId    string
-			BkTenantId string
-			DataLabel  *string
-			Aliases    string
+
+		// 全量时只按 Option 名称、类型和租户查询，不拼接 RT 或标签过滤条件。
+		var options []resulttable.ResultTableOption
+		if err := optionQuery.Find(&options).Error; err != nil {
+			return nil, err
 		}
-		if err := query.Scan(&rows).Error; err != nil {
+		// 清理任务会跨租户读取，关联键同时包含租户和 table_id。
+		aliases := make(map[[2]string]string, len(options))
+		var aliasTableIds []string
+		for _, option := range options {
+			aliases[[2]string{option.BkTenantId, option.TableID}] = option.Value
+			if len(labelConditions) != 0 {
+				aliasTableIds = append(aliasTableIds, option.TableID)
+			}
+		}
+		if len(labelConditions) != 0 {
+			if len(aliasTableIds) != 0 {
+				labelConditions = append(labelConditions, "table_id IN (?)")
+				labelArgs = append(labelArgs, aliasTableIds)
+			}
+			rtQuery = rtQuery.Where("("+strings.Join(labelConditions, " OR ")+")", labelArgs...)
+		}
+
+		var rows []resulttable.ResultTable
+		if err := rtQuery.Find(&rows).Error; err != nil {
 			return nil, err
 		}
 		chunkLabels := make(map[string]bool, len(chunk))
@@ -538,8 +565,11 @@ func getDataLabelTableIds(db *gorm.DB, bkTenantId *string, dataLabelList, tableI
 		}
 		for _, row := range rows {
 			var rowLabels []string
-			if err := jsonx.UnmarshalString(row.Aliases, &rowLabels); err != nil {
-				return nil, errors.Wrapf(err, "decode data label aliases for table %s", row.TableId)
+			if value, ok := aliases[[2]string{row.BkTenantId, row.TableId}]; ok {
+				if err := jsonx.UnmarshalString(value, &rowLabels); err != nil {
+					logger.Warnf("skip invalid data label aliases, tenant [%s], table_id [%s], error: %s", row.BkTenantId, row.TableId, err)
+					rowLabels = nil
+				}
 			}
 			if row.DataLabel != nil {
 				rowLabels = append(strings.Split(*row.DataLabel, ","), rowLabels...)

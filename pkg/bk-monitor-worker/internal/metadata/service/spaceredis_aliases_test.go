@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/agiledragon/gomonkey/v2"
@@ -30,11 +31,15 @@ import (
 	redisUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/redis"
 )
 
-type dataLabelQueryCounter struct{ count int }
+type dataLabelQueryCounter struct {
+	count   int
+	queries []string
+}
 
 func (c *dataLabelQueryCounter) Print(values ...interface{}) {
 	if len(values) > 0 && values[0] == "sql" {
 		c.count++
+		c.queries = append(c.queries, values[3].(string))
 	}
 }
 
@@ -94,15 +99,23 @@ func TestDataLabelAliasRoutes(t *testing.T) {
 		"alias_only": {"test.alias_only"}, "quote\"label": {"test.alias_only"},
 		"empty_alias": {"test.empty"},
 	}
-	t.Run("full_refresh_one_query", func(t *testing.T) {
+	t.Run("full_refresh_two_queries", func(t *testing.T) {
 		counter.count = 0
+		counter.queries = nil
 		actual, err := getDataLabelTableIds(db, &tenantId, nil, nil)
 		require.NoError(t, err)
 		assert.Len(t, actual, len(expected))
 		for label, tableIds := range expected {
 			assert.ElementsMatch(t, tableIds, actual[label], label)
 		}
-		assert.Equal(t, 1, counter.count)
+		assert.Equal(t, 2, counter.count)
+		for _, query := range counter.queries {
+			sql := strings.ToUpper(query)
+			assert.NotContains(t, sql, "JOIN")
+			assert.NotContains(t, sql, " IN (")
+			assert.NotContains(t, sql, "JSON_CONTAINS")
+			assert.NotContains(t, sql, "FIND_IN_SET")
+		}
 	})
 	t.Run("requested_labels", func(t *testing.T) {
 		actual, err := getDataLabelTableIds(db, &tenantId, []string{"primary,shared", "legacy", "quote\"label", "missing", "prim", "disabled_alias"}, nil)
@@ -133,7 +146,7 @@ func TestDataLabelAliasRoutes(t *testing.T) {
 		require.NoError(t, err)
 		assert.ElementsMatch(t, expected["primary"], actual["primary"])
 		assert.ElementsMatch(t, expected["legacy"], actual["legacy"])
-		assert.Equal(t, 2, counter.count)
+		assert.Equal(t, 4, counter.count)
 	})
 
 	server := miniredis.RunT(t)
@@ -157,6 +170,55 @@ func TestDataLabelAliasRoutes(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(value), &tableIds))
 		return tableIds
 	}
+	t.Run("invalid_options_do_not_block_routes", func(t *testing.T) {
+		cases := []struct {
+			tableId string
+			label   string
+			value   string
+		}{
+			{"bad.json", "bad_json_primary", `["broken"`},
+			{"bad.object", "bad_object_primary", `{"key":"legacy"}`},
+			{"bad.scalar", "bad_scalar_primary", `"legacy"`},
+			{"bad.mixed", "bad_mixed_primary", `["legacy",123]`},
+			{"bad.alias_only", "", `not-json`},
+		}
+		var tableIds []string
+		labels := []string{"legacy", "broken"}
+		for _, c := range cases {
+			require.NoError(t, db.Exec(`INSERT INTO metadata_resulttable (table_id, data_label, is_enable, is_deleted) VALUES (?, ?, 1, 0)`, c.tableId, c.label).Error)
+			require.NoError(t, db.Exec(`INSERT INTO metadata_resulttableoption (table_id, name, value_type, value) VALUES (?, 'data_label_aliases', 'list', ?)`, c.tableId, c.value).Error)
+			tableIds = append(tableIds, c.tableId)
+			if c.label != "" {
+				labels = append(labels, c.label)
+			}
+		}
+		t.Cleanup(func() {
+			require.NoError(t, db.Exec("DELETE FROM metadata_resulttableoption WHERE table_id IN (?)", tableIds).Error)
+			require.NoError(t, db.Exec("DELETE FROM metadata_resulttable WHERE table_id IN (?)", tableIds).Error)
+		})
+		for _, requested := range [][]string{nil, labels} {
+			actual, err := getDataLabelTableIds(db, &tenantId, requested, nil)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, expected["legacy"], actual["legacy"])
+			assert.Empty(t, actual["broken"])
+			for _, c := range cases {
+				if c.label != "" {
+					assert.Equal(t, []string{c.tableId}, actual[c.label])
+				}
+			}
+		}
+		actual, err := getDataLabelTableIds(db, &tenantId, nil, append(tableIds, "test.first"))
+		require.NoError(t, err)
+		assert.Equal(t, []string{"test.first"}, actual["legacy"])
+		server.FlushAll()
+		require.NoError(t, pusher.PushDataLabelTableIds(tenantId, nil, true))
+		assert.ElementsMatch(t, expected["legacy"], readRoute(t, "legacy"))
+		assert.Equal(t, []string{"bad.json"}, readRoute(t, "bad_json_primary"))
+		clearer := &SpaceRedisClearer{redisClient: client, dbClient: db}
+		clearer.ClearDataLabelToRt()
+		assert.ElementsMatch(t, expected["legacy"], readRoute(t, "legacy"))
+		assert.Equal(t, []string{"bad.mixed"}, readRoute(t, "bad_mixed_primary"))
+	})
 	t.Run("publish_full_and_by_table", func(t *testing.T) {
 		require.NoError(t, pusher.PushDataLabelTableIds(tenantId, nil, true))
 		assert.ElementsMatch(t, expected["legacy"], readRoute(t, "legacy"))
@@ -173,7 +235,7 @@ func TestDataLabelAliasRoutes(t *testing.T) {
 		counter.count = 0
 		require.NoError(t, pusher.PushDataLabelTableIds(tenantId, []string{"test.no_labels"}, true))
 		assert.Empty(t, server.Keys())
-		assert.Equal(t, 1, counter.count)
+		assert.Equal(t, 2, counter.count)
 	})
 	t.Run("disabled_table_refresh_clears_old_routes", func(t *testing.T) {
 		server.FlushAll()

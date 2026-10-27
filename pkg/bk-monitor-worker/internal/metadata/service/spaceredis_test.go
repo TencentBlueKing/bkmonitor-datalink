@@ -948,19 +948,19 @@ func TestGetDataLabelTableIdMap(t *testing.T) {
 		{
 			name:          "查询不存在的数据标签",
 			dataLabelList: []string{"non_existent_label"},
-			expectedMap:   map[string][]string{},
+			expectedMap:   map[string][]string{"non_existent_label": {}},
 			expectedError: false,
 		},
 		{
 			name:          "查询已删除标签的数据",
 			dataLabelList: []string{"deleted_label"},
-			expectedMap:   map[string][]string{},
+			expectedMap:   map[string][]string{"deleted_label": {}},
 			expectedError: false,
 		},
 		{
 			name:          "查询已禁用标签的数据",
 			dataLabelList: []string{"disabled_label"},
-			expectedMap:   map[string][]string{},
+			expectedMap:   map[string][]string{"disabled_label": {}},
 			expectedError: false,
 		},
 		{

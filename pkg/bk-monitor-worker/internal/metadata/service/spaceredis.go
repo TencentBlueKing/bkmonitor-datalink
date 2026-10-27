@@ -498,6 +498,7 @@ func getDataLabelTableIds(db *gorm.DB, bkTenantId *string, dataLabelList, tableI
 		chunks = [][]string{nil}
 	}
 	for _, chunk := range chunks {
+		fullRefresh := len(tableIdList) == 0 && len(chunk) == 0
 		optionQuery := db.Model(&resulttable.ResultTableOption{}).
 			Select("table_id, bk_tenant_id, value").
 			Where("name = ? AND value_type = ?", resulttable.OptionDataLabelAliases, "list")
@@ -541,9 +542,12 @@ func getDataLabelTableIds(db *gorm.DB, bkTenantId *string, dataLabelList, tableI
 		// 清理任务会跨租户读取，关联键同时包含租户和 table_id。
 		aliases := make(map[[2]string]string, len(options))
 		var aliasTableIds []string
+		aliasTableIdsByTenant := make(map[string][]string)
 		for _, option := range options {
 			aliases[[2]string{option.BkTenantId, option.TableID}] = option.Value
-			if len(labelConditions) != 0 {
+			if fullRefresh {
+				aliasTableIdsByTenant[option.BkTenantId] = append(aliasTableIdsByTenant[option.BkTenantId], option.TableID)
+			} else if len(labelConditions) != 0 {
 				aliasTableIds = append(aliasTableIds, option.TableID)
 			}
 		}
@@ -556,8 +560,25 @@ func getDataLabelTableIds(db *gorm.DB, bkTenantId *string, dataLabelList, tableI
 		}
 
 		var rows []resulttable.ResultTable
-		if err := rtQuery.Find(&rows).Error; err != nil {
+		query := rtQuery
+		if fullRefresh {
+			query = query.Where("data_label IS NOT NULL AND data_label <> ''")
+		}
+		if err := query.Find(&rows).Error; err != nil {
 			return nil, err
+		}
+		if fullRefresh {
+			// 只补查 Option 关联的无旧标签 RT，不加载整个无标签目录。
+			// 旧标签 RT 已在前一条查询中读取，避免同一张表被重复组装。
+			for tenantId, tableIds := range aliasTableIdsByTenant {
+				for _, chunkTableIds := range slicex.ChunkSlice(tableIds, 0) {
+					var aliasOnlyRows []resulttable.ResultTable
+					if err := rtQuery.Where("bk_tenant_id = ? AND (data_label IS NULL OR data_label = '') AND table_id IN (?)", tenantId, chunkTableIds).Find(&aliasOnlyRows).Error; err != nil {
+						return nil, err
+					}
+					rows = append(rows, aliasOnlyRows...)
+				}
+			}
 		}
 		chunkLabels := make(map[string]bool, len(chunk))
 		for _, label := range chunk {

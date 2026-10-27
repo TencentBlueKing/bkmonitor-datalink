@@ -34,12 +34,14 @@ import (
 type dataLabelQueryCounter struct {
 	count   int
 	queries []string
+	rows    []int64
 }
 
 func (c *dataLabelQueryCounter) Print(values ...interface{}) {
 	if len(values) > 0 && values[0] == "sql" {
 		c.count++
 		c.queries = append(c.queries, values[3].(string))
+		c.rows = append(c.rows, values[5].(int64))
 	}
 }
 
@@ -99,7 +101,7 @@ func TestDataLabelAliasRoutes(t *testing.T) {
 		"alias_only": {"test.alias_only"}, "quote\"label": {"test.alias_only"},
 		"empty_alias": {"test.empty"},
 	}
-	t.Run("full_refresh_two_queries", func(t *testing.T) {
+	t.Run("full_refresh_scoped_queries", func(t *testing.T) {
 		counter.count = 0
 		counter.queries = nil
 		actual, err := getDataLabelTableIds(db, &tenantId, nil, nil)
@@ -108,13 +110,58 @@ func TestDataLabelAliasRoutes(t *testing.T) {
 		for label, tableIds := range expected {
 			assert.ElementsMatch(t, tableIds, actual[label], label)
 		}
-		assert.Equal(t, 2, counter.count)
+		assert.Equal(t, 3, counter.count)
+		// Option 仍然只读一次，全量时不拼接 RT 或标签筛选。
+		assert.NotContains(t, strings.ToUpper(counter.queries[0]), " IN (")
 		for _, query := range counter.queries {
 			sql := strings.ToUpper(query)
 			assert.NotContains(t, sql, "JOIN")
-			assert.NotContains(t, sql, " IN (")
 			assert.NotContains(t, sql, "JSON_CONTAINS")
 			assert.NotContains(t, sql, "FIND_IN_SET")
+		}
+	})
+	t.Run("full_refresh_skips_unlabeled_catalog", func(t *testing.T) {
+		var placeholders []string
+		var args []interface{}
+		var tableIds []string
+		for i := 0; i < 600; i++ {
+			tableId := fmt.Sprintf("unlabeled.%d", i)
+			tableIds = append(tableIds, tableId)
+			placeholders = append(placeholders, "(?, NULL, 1, 0)")
+			args = append(args, tableId)
+		}
+		require.NoError(t, db.Exec("INSERT INTO metadata_resulttable (table_id, data_label, is_enable, is_deleted) VALUES "+strings.Join(placeholders, ","), args...).Error)
+		// 同名 RT 在其他租户没有 Option，也不应被清理任务的补查读回。
+		require.NoError(t, db.Exec(`INSERT INTO metadata_resulttable VALUES ('test.empty', NULL, 1, 0, 'no-option-tenant')`).Error)
+		t.Cleanup(func() {
+			require.NoError(t, db.Exec("DELETE FROM metadata_resulttable WHERE table_id IN (?)", tableIds).Error)
+			require.NoError(t, db.Exec("DELETE FROM metadata_resulttable WHERE bk_tenant_id = ?", "no-option-tenant").Error)
+		})
+		for _, tenant := range []*string{&tenantId, nil} {
+			counter.count = 0
+			counter.queries, counter.rows = nil, nil
+			actual, err := getDataLabelTableIds(db, tenant, nil, nil)
+			require.NoError(t, err)
+			if tenant != nil {
+				assert.Equal(t, 3, counter.count)
+			} else {
+				assert.Equal(t, 4, counter.count)
+			}
+			var resultTableRows int64
+			for i, query := range counter.queries {
+				if !strings.Contains(query, "metadata_resulttableoption") {
+					resultTableRows += counter.rows[i]
+				}
+			}
+			if tenant != nil {
+				assert.Equal(t, int64(5), resultTableRows)
+				assert.ElementsMatch(t, expected["legacy"], actual["legacy"])
+			} else {
+				assert.Equal(t, int64(6), resultTableRows)
+				assert.Contains(t, actual, "other_alias")
+			}
+			assert.Equal(t, []string{"test.alias_only"}, actual["alias_only"])
+			assert.Equal(t, []string{"test.empty"}, actual["empty_alias"])
 		}
 	})
 	t.Run("requested_labels", func(t *testing.T) {

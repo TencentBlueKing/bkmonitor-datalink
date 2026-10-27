@@ -283,11 +283,11 @@ func TestMissingPublicationFallsBackToOriginalContentAndFreezesPlan(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	enriched, err := processor.enrichEvent(t.Context(), created.StoredEvent)
+	enriched, err := processor.enrichEvent(t.Context(), created.StoredEvent, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := processor.preparePlan(t.Context(), enriched.Event, nil)
+	plan, err := processor.preparePlan(t.Context(), enriched.Event, nil, store.StoredAlert{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,11 +325,11 @@ func TestDescriptionFactFailuresFallBackToSourceAndKeepCreatedContent(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			enriched, err := processor.enrichEvent(t.Context(), created.StoredEvent)
+			enriched, err := processor.enrichEvent(t.Context(), created.StoredEvent, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan, err := processor.preparePlan(t.Context(), enriched.Event, nil)
+			plan, err := processor.preparePlan(t.Context(), enriched.Event, nil, store.StoredAlert{})
 			if err != nil {
 				t.Fatal(err)
 			}

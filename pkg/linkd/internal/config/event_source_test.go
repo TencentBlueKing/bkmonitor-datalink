@@ -50,7 +50,7 @@ func TestEnrichProcessorConfigJSONYAMLRoundTrip(t *testing.T) {
 		t.Run(codec.name, func(t *testing.T) {
 			source := validEventSource()
 			source.Enrich.Processors = []EnrichProcessorConfig{{
-				Type: "strategy", Config: map[string]any{"web_saas_module_url": "https://example.com/kingeye/"},
+				Type: "strategy", ReuseOnActive: true, Config: map[string]any{"web_saas_module_url": "https://example.com/kingeye/"},
 			}}
 			data, err := codec.marshal(source)
 			if err != nil {
@@ -62,6 +62,9 @@ func TestEnrichProcessorConfigJSONYAMLRoundTrip(t *testing.T) {
 			}
 			if got := restored.Enrich.Processors[0].Config["web_saas_module_url"]; got != "https://example.com/kingeye/" {
 				t.Fatalf("processor config=%#v", restored.Enrich.Processors[0].Config)
+			}
+			if !restored.Enrich.Processors[0].ReuseOnActive || !restored.WithDefaults().Enrich.Processors[0].ReuseOnActive {
+				t.Fatal("reuse_on_active was lost during configuration round trip or clone")
 			}
 		})
 	}

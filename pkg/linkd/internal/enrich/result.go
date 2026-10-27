@@ -46,6 +46,8 @@ type ProcessorResult struct {
 	applied        bool
 	Trace          []Trace
 	Diagnostics    []Diagnostic
+	// ReusedFromAlertID 标识结果来自哪个活跃 Alert，本次没有执行 Match/Process。
+	ReusedFromAlertID string
 }
 
 // ProcessorEnvelope 是 Alert.enrich 中一个 Processor 的结果信封。
@@ -55,6 +57,8 @@ type ProcessorEnvelope struct {
 	Patches     []domain.EnrichPatch `json:"patches,omitempty"`
 	Trace       []Trace              `json:"trace,omitempty"`
 	Diagnostics []Diagnostic         `json:"diagnostics,omitempty"`
+	// ReusedFromAlertID 保留复用来源；Trace 沿用该快照的原始执行记录。
+	ReusedFromAlertID string `json:"reused_from_alert_id,omitempty"`
 }
 
 // ProcessorEntry 保证 processors 数组的每项以 Processor 名称作为唯一 key。
@@ -171,11 +175,12 @@ type Trace struct {
 func (e ProcessorEnvelope) MarshalJSON() ([]byte, error) {
 	if e.Patches != nil {
 		return json.Marshal(struct {
-			Status      domain.EnrichStatus  `json:"status"`
-			Patches     []domain.EnrichPatch `json:"patches"`
-			Trace       []Trace              `json:"trace,omitempty"`
-			Diagnostics []Diagnostic         `json:"diagnostics,omitempty"`
-		}{e.Status, e.Patches, e.Trace, e.Diagnostics})
+			Status            domain.EnrichStatus  `json:"status"`
+			Patches           []domain.EnrichPatch `json:"patches"`
+			Trace             []Trace              `json:"trace,omitempty"`
+			Diagnostics       []Diagnostic         `json:"diagnostics,omitempty"`
+			ReusedFromAlertID string               `json:"reused_from_alert_id,omitempty"`
+		}{e.Status, e.Patches, e.Trace, e.Diagnostics, e.ReusedFromAlertID})
 	}
 	type legacy ProcessorEnvelope
 	return json.Marshal(legacy(e))

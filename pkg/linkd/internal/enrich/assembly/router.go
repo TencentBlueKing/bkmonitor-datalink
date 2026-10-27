@@ -76,6 +76,7 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 		digest := sha256.Sum256(encoded)
 		digests[source.EventSourceID] = hex.EncodeToString(digest[:])
 		chainProcessors := make([]enrich.Processor, 0, len(source.Enrich.Processors))
+		var reuseOnActive []string
 		legacyMonitor := legacyMonitorResource(source)
 		for processorIndex, processorConfig := range source.Enrich.Processors {
 			processor, err := newProcessor(processorConfig)
@@ -89,13 +90,16 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 				processor = processors.Display{PreserveContent: true}
 			}
 			chainProcessors = append(chainProcessors, processor)
+			if processorConfig.ReuseOnActive {
+				reuseOnActive = append(reuseOnActive, processor.Name())
+			}
 		}
 		if len(chainProcessors) == 0 {
 			routes[source.EventSourceID] = enrich.NoopEnricher{}
 			chainKinds[source.EventSourceID] = enrich.ChainNoop
 			continue
 		}
-		chain, err := enrich.NewChain(chainProcessors, dataSources, enrich.WithObserver(settings.observer), enrich.WithLogger(settings.logger), enrich.WithCMDBSetModuleEnabled(source.Enrich.CMDBSetModuleEnabled))
+		chain, err := enrich.NewChain(chainProcessors, dataSources, enrich.WithObserver(settings.observer), enrich.WithLogger(settings.logger), enrich.WithCMDBSetModuleEnabled(source.Enrich.CMDBSetModuleEnabled), enrich.WithReuseOnActive(reuseOnActive...))
 		if err != nil {
 			return nil, fmt.Errorf("event_sources[%d].enrich: %w", sourceIndex, err)
 		}

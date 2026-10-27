@@ -37,6 +37,7 @@ func TestManagerUpgradesExistingActiveOperationFields(t *testing.T) {
 	properties := alertProperties()
 	delete(properties, "end_operation")
 	delete(properties, "last_shield_operation")
+	delete(properties, "enrich_severity")
 	transport.properties[index] = properties
 	for range 2 {
 		if err := manager.ReconcileSchemaAndActive(t.Context()); err != nil {
@@ -51,6 +52,9 @@ func TestManagerUpgradesExistingActiveOperationFields(t *testing.T) {
 	}
 	if len(transport.mappingUpdates) != 1 || transport.mappingUpdates[0] != index {
 		t.Fatalf("upgrade is not additive and idempotent: %v", transport.mappingUpdates)
+	}
+	if mapping := transport.properties[index]["enrich_severity"].(map[string]any); mapping["type"] != "keyword" {
+		t.Fatalf("existing active mapping lacks enrich snapshot severity: %v", mapping)
 	}
 }
 

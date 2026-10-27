@@ -239,9 +239,12 @@ type FinalHook interface {
 ```
 
 Enricher 对每条不同 Event 在裁决前同步执行；逐 evaluation 保存结果，共享本次 Event 的查询缓存。
+Lifecycle 先在 fingerprint lease 内完成一次活跃 Alert 查询，并将命中或未命中结果传给 Enricher 和计划准备。
+Processor 可通过 `reuse_on_active` 沿用活跃快照的成功步骤；详见[复用边界](../design/enrich.md#25-活跃告警丰富复用)。
 结果专用 CAS 一旦成功，处理计划失败或重投均复用该结果。error、panic、非法状态/数据降级为 failed，父取消停止处理。
 恢复/关闭和低等级被抑制 Event 也保存丰富结果。创建 Alert 时直接复制 opening Event 对应等级的 data；
-后续 Event 不刷新既有 Alert 的丰富快照。`trigger_event_id` 是稳定的首次丰富来源，无需再增加重复的 enrich_event_id。
+后续 Event 不刷新既有 Alert 的丰富快照；`enrich_severity` 记录该快照的原始等级，原地升级不改变它。
+`trigger_event_id` 是稳定的首次丰富来源，无需再增加重复的 enrich_event_id。
 
 输入为 `enrich.Input{Event}`；Scope 返回隔离的 Event 与显式 evaluation，未构造虚拟 Alert。
 运行时统一复用当前任务加载的来源配置及连接，积压 Event 不再回读接入时的历史 Release，也不创建临时运行时。

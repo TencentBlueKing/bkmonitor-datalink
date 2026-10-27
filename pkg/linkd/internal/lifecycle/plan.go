@@ -76,8 +76,20 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 			return processResult(stored), nil
 		}
 		if plan == nil {
-			var err error
-			stored, err = p.enrichEvent(ctx, stored)
+			// 活跃查询本来属于计划准备；在同一 fingerprint lease 内提前一次，并把
+			// 未命中结果也传给计划，避免丰富优化反而增加 Redis/存储查询。
+			active, err := p.findActiveAlert(ctx, store.ActiveAlertKey{BKTenantID: stored.Event.BKTenantID, EventSourceID: stored.Event.EventSourceID, Fingerprint: stored.Event.Fingerprint})
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return ProcessResult{}, fmt.Errorf("find active alert: %w", err)
+			}
+			var enrichSnapshot *domain.Alert
+			if err == nil {
+				// 已移除的当前等级会在计划中系统关闭；随后创建的新生命周期重新丰富。
+				if _, known := p.severity.Priority(active.Alert.Severity); known {
+					enrichSnapshot = &active.Alert
+				}
+			}
+			stored, err = p.enrichEvent(ctx, stored, enrichSnapshot)
 			if err != nil {
 				if errors.Is(err, store.ErrVersionConflict) {
 					lastErr = err
@@ -94,7 +106,7 @@ func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent)
 				}
 				return ProcessResult{}, fmt.Errorf("read policies: %w", err)
 			}
-			plan, err = p.preparePlan(ctx, stored.Event, snapshot)
+			plan, err = p.preparePlan(ctx, stored.Event, snapshot, active)
 			if err != nil {
 				return ProcessResult{}, fmt.Errorf("prepare lifecycle plan: %w", err)
 			}
@@ -137,17 +149,17 @@ func (p *Processor) writeEventResult(ctx context.Context, stored store.StoredEve
 	return updated, nil
 }
 
-func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapshot *store.PolicyContext) (*store.EventPlan, error) {
+func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapshot *store.PolicyContext, active store.StoredAlert) (*store.EventPlan, error) {
 	defer p.measurePhase(phasePlan)()
 	if err := domain.ValidateEvaluations(event.Evaluations); err != nil {
 		return nil, err
 	}
 	plan := &store.EventPlan{ConfigDigest: p.configDigest, UpgradePolicy: p.upgradePolicy, State: domain.EventProcessStateOrphaned, Outcome: string(OutcomeEventOrphaned), ReasonCode: ReasonActiveAlertNotFound}
-	active, err := p.findActiveAlert(ctx, store.ActiveAlertKey{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint})
-	if err == nil && (active.Alert.PolicyChange != nil || active.Alert.MergeChange != nil) {
+	var err error
+	if active.Alert.PolicyChange != nil || active.Alert.MergeChange != nil {
 		active, err = p.finishPendingChanges(ctx, active)
 	}
-	hasActive := err == nil
+	hasActive := err == nil && active.Alert.AlertID != ""
 	associatedActive := domain.Alert{}
 	if hasActive {
 		associatedActive = active.Alert
@@ -424,6 +436,7 @@ func (p *Processor) planNewAlert(ctx context.Context, plan *store.EventPlan, eve
 		return domain.Alert{}, fmt.Errorf("opening event has no enrich result for selected severity")
 	}
 	alert.EnrichStatus, alert.Enrich = enriched.Status, enriched.Data.Clone()
+	alert.EnrichSeverity = evaluation.Severity
 	// Event 丰富已冻结；只有真正创建的候选才生成核心内容。文案失败降级并冻结，
 	// 事件身份非法或 Context 取消仍不能推进业务计划。
 	alert.Content, err = p.buildAlertContent(ctx, event, evaluation, alert)

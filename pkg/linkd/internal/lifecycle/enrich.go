@@ -28,7 +28,7 @@ type EventEnricher interface {
 }
 
 // enrichEvent 先冻结结果再允许计划/策略产生副作用。CAS 失败交由外层重读，已提交结果绝不重算。
-func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (store.StoredEvent, error) {
+func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent, active *domain.Alert) (store.StoredEvent, error) {
 	defer p.measurePhase(phaseEnrich)()
 	event := stored.Event
 	if event.EnrichStatus != "" && event.EnrichStatus != domain.EnrichStatusPending {
@@ -42,7 +42,7 @@ func (p *Processor) enrichEvent(ctx context.Context, stored store.StoredEvent) (
 	p.enrichObserver.Started(ctx, event.EventSourceID)
 	observation := EnrichObservation{EventSourceID: event.EventSourceID, Status: domain.EnrichStatusFailed, Outcome: EnrichOutcomeError, ChainKind: chainKind}
 	defer func() { observation.Duration = time.Since(startedAt); p.enrichObserver.Finished(ctx, observation) }()
-	result, failureReason, failure := p.callEnricher(ctx, enrich.Input{Event: event.Clone()})
+	result, failureReason, failure := p.callEnricher(ctx, enrich.Input{Event: event.Clone(), ActiveAlert: active})
 	if errors.Is(failure, processingerror.ErrControlPlaneUnavailable) {
 		return store.StoredEvent{}, failure
 	}

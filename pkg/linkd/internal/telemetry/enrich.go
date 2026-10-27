@@ -124,7 +124,7 @@ func enrichProcessor(name string) string {
 
 func enrichProcessorOutcome(outcome string) string {
 	switch outcome {
-	case enrich.ProcessorOutcomeCompleted, enrich.ProcessorOutcomeMatchError, enrich.ProcessorOutcomeProcessError,
+	case enrich.ProcessorOutcomeCompleted, enrich.ProcessorOutcomeReused, enrich.ProcessorOutcomeMatchError, enrich.ProcessorOutcomeProcessError,
 		enrich.ProcessorOutcomePanic, enrich.ProcessorOutcomeInvalidResult:
 		return outcome
 	default:

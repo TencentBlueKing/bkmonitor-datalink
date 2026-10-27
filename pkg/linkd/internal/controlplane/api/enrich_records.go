@@ -60,11 +60,12 @@ type enrichRecordRequest struct {
 }
 
 type enrichMeasure struct {
-	ID     string              `json:"id"`
-	Type   string              `json:"type"`
-	Name   string              `json:"name"`
-	Status domain.EnrichStatus `json:"status"`
-	Code   string              `json:"code,omitempty"`
+	ID                string              `json:"id"`
+	Type              string              `json:"type"`
+	Name              string              `json:"name"`
+	Status            domain.EnrichStatus `json:"status"`
+	Code              string              `json:"code,omitempty"`
+	ReusedFromAlertID string              `json:"reused_from_alert_id,omitempty"`
 }
 
 type enrichFieldChange struct {
@@ -257,10 +258,16 @@ func projectEventEnrichment(event domain.Event, release eventsource.Release, sev
 					if trace.OperationID != "" || strings.HasPrefix(trace.RuleID, "kac_custom_catalog") {
 						continue
 					}
-					if _, exists := names[trace.RuleID]; !exists {
+					name, exists := names[trace.RuleID]
+					// 复用事实可能来自旧规则，不能用当前 Release 的名称冒充原执行配置。
+					// 保留原规则 ID 和来源 Alert，不为展示增加历史查询。
+					if envelope.ReusedFromAlertID != "" {
+						name, exists = trace.RuleID, true
+					}
+					if !exists {
 						continue
 					}
-					result.Enrichments = append(result.Enrichments, enrichMeasure{ID: kind + ":" + trace.RuleID, Type: kind, Name: names[trace.RuleID], Status: trace.Status, Code: trace.Code})
+					result.Enrichments = append(result.Enrichments, enrichMeasure{ID: kind + ":" + trace.RuleID, Type: kind, Name: name, Status: trace.Status, Code: trace.Code, ReusedFromAlertID: envelope.ReusedFromAlertID})
 				}
 			}
 			// 仅成功或部分成功的已提交补丁参与重放；规则失败和回滚不会有生效字段。

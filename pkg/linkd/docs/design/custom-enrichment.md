@@ -38,7 +38,7 @@
 2. 自定义丰富只需一个 cmdb Processor、一个 fields Processor，各自包含多条 rules。
 3. 原始 Alert/Event 不修改；enrich 记录各 Processor 的有序 JSONPath 补丁，读取时动态合成。
 4. 不保存最终 values，不把 enrich 当成另一份业务数据空间。
-5. 每条不同 Event 在裁决前执行并冻结；多等级共享查询、结果独立。Alert 固定复制 opening Event 的选中等级结果。
+5. 每条不同 Event 在裁决前生成并冻结结果；多等级共享查询、结果独立。默认执行全部步骤，显式配置 `reuse_on_active` 时按[活跃告警丰富复用](enrich.md#25-活跃告警丰富复用)沿用指定步骤成功结果。Alert 固定复制 opening Event 的选中等级结果。
 6. 处理规则随 EventSource Release 动态发布；连接来自顶层 resources 启动配置，API/YAML/Provider 共用校验。
 7. 新建独立内部 OneModel SDK，第一版读 ES，接口支持后续替换后端。
 8. 提供不保存的 API 预览，支持 Event ID 和 Event JSON；Console 提供专用调试页。

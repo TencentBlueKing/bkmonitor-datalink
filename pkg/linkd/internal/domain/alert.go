@@ -71,6 +71,9 @@ type Alert struct {
 
 	EnrichStatus EnrichStatus `json:"enrich_status"`
 	Enrich       JSONObject   `json:"enrich,omitempty"`
+	// EnrichSeverity 是 opening Event 被选中快照的等级，原地升级不改变它。
+	// 空值表示没有可识别的快照等级，不用于跨 Event 丰富复用。
+	EnrichSeverity string `json:"enrich_severity,omitempty"`
 }
 
 // Normalize 用于新建或外部写入，规范动态 JSON 并检查完整载荷。

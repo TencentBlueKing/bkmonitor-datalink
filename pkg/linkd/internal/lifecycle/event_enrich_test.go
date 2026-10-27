@@ -139,7 +139,7 @@ func TestFrozenHistoricalEnrichmentIsReusedWithoutPayloadValidation(t *testing.T
 	event.EnrichStatus = domain.EnrichStatusSucceeded
 	event.Enrich.Evaluations = []domain.EvaluationEnrich{{Severity: "warning", Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{"legacy": json.RawMessage(`{"old":true}`)}}}
 	stored := store.StoredEvent{Event: event, Processing: store.NewUnprocessedEventProcessing(), Version: store.NewVersionToken("old")}
-	actual, err := processor.enrichEvent(t.Context(), stored)
+	actual, err := processor.enrichEvent(t.Context(), stored, nil)
 	if err != nil || len(engine.events) != 0 || !reflect.DeepEqual(actual, stored) {
 		t.Fatalf("frozen result was rejected or recomputed: %v", err)
 	}

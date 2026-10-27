@@ -20,10 +20,11 @@ Event.enrich.evaluations[].{severity,status,data}
 data.processors[] = 有序处理器信封
 ```
 
-每个 evaluation 有独立文案、补丁和诊断，同一 Event 共享只读查询缓存；不同 Event 不共享缓存。
+每个 evaluation 有独立文案、补丁和诊断，同一 Event 共享只读查询缓存；不同 Event 不共享查询缓存。
+Processor 可显式复用活跃 Alert 已保存的成功结果，见 [2.5](#25-活跃告警丰富复用)。
 结果通过专用 CAS 完成后固定，包括 partial/failed；已完成处理的重投不重新丰富。
-创建 Alert 时复制 opening Event 对应等级的 data，`trigger_event_id` 同时标识丰富来源。
-后续触发、低等级抑制、原地升级和终态 Event 仍各自丰富，但不刷新该 Alert 的来源/展示/丰富快照。
+创建 Alert 时复制 opening Event 对应等级的 data，`trigger_event_id` 同时标识丰富来源，`enrich_severity` 固定记录快照等级。
+后续触发、低等级抑制、原地升级和终态 Event 仍各自保存完整丰富结果，默认执行全部步骤，也可按配置复用部分步骤；不刷新该 Alert 的来源/展示/丰富快照。
 close_and_create 新 Alert 使用本次 Event 的新快照。
 
 当前可配置生产链由 EventSource 按需组合，核心链为：
@@ -86,13 +87,40 @@ KAC 独立指标及邮件使用已保存参数调用来源插件，不新增历�
 Linkd 准确执行历史读取、文案降级、恢复事件冻结事实及场景修复保留；参数兼容与部署验收见 Kingeye
 `docs/specs/kac-linkd-integration.md` 第 8.6、8.7 节。
 
+### 2.5 活跃告警丰富复用
+
+2026-10-27：`enrich.processors[].reuse_on_active` 默认 `false`。显式开启表示接受该步骤的匹配条件和输出
+在同一告警生命周期、同一快照等级内固定，跳过该步骤的 Match、外部查询和 Process。
+
+- Lifecycle 在 fingerprint lease 内提前执行原有活跃 Alert 查询，结果（包括未命中）直接传给 Enrich 和计划准备。
+  Redis/存储故障沿用原有失败语义；不会把查询失败解释成未命中。
+- 复用按 `bk_tenant_id/event_source_id/fingerprint` 隔离，并且只适用于 `Alert.enrich_severity` 对应的 evaluation。
+  原地升级只改变当前 severity，不改变快照等级；其他等级正常执行。
+  同条 Event 全等级关闭后再触发，或当前等级被移除而系统关闭时，新生命周期不沿用旧快照。
+- 只有指定 Processor 的 `succeeded` 结果可复用；缺少步骤、快照等级或成功结果时正常执行。
+  `partial/failed/skipped` 不作为后续新 Event 的复用来源。缺少元信息的现有 Alert 不补查 opening Event、不回填。
+  Elasticsearch 的 `enrich_severity` 映射由既有索引对账追加，MySQL 沿用 Alert JSON payload，不新增表或回填任务。
+- 在当前链的原位置应用保存的补丁，并恢复内置处理器的类型化上下文，保证后续字段、展示和指标步骤能够读取它。
+  原始 Event、已有 Alert 和其他等级的结果保持独立。
+- 当前 Event 保存完整的逐等级处理器结果。复用步骤仍是 `succeeded`，通过 `reused_from_alert_id` 标识来源 Alert，
+  规则 Trace 沿用原始执行记录；不能把历史耗时解释为本次真实执行耗时。步骤指标以 `outcome=reused` 区分。
+- 步骤保持启用复用时，修改规则不会自动刷新活跃 Alert 快照；新生命周期使用新配置。关闭复用后，下一条新 Event
+  正常执行。已经冻结结果的同一 Event 重投始终沿用已保存事实，包括之前的失败或复用结果。
+- 调试模拟不查活跃 Alert，始终执行当前配置；历史事实查询保留复用来源。复用规则用原规则 ID 标识，
+  避免把当前发布中的规则名称冒充原执行名称，也不为展示增加历史配置查询。
+
+资源、CMDB 属性可按业务需要启用；这同时意味着接受拓扑、动态分组等结果在本生命周期内固定。
+依赖本次数值、发生时间、动作或文案的规则应保持默认执行；例如 Metric 包含当次异常开始时间，Display 会加工当前内容。
+该优化减少重复依赖查询和计算，不减少 Event 丰富结果的持久化次数，也不新增独立缓存或后台刷新任务。
+
 ## 3. 运行架构
 
 ```text
 Repository 读取并恢复标准 Event，Lifecycle 直接使用
+  → 在 fingerprint lease 内一次查询活跃 Alert，供 Enrich 和计划共用
   → 按 EventSourceID 复用当前任务的丰富配置和运行时，积压事件不回读历史来源版本
   → 保留 EventSourceVersion 作为接入事实，记录 enrich_source_version 作为实际丰富配置版本
-  → 逐 evaluation 执行 Processor，各等级共享请求缓存
+  → 逐 evaluation 执行或复用 Processor，各等级共享请求缓存
   → 保存完整 Event 丰富结果 CAS
   → 冻结生命周期计划并创建/推进 Alert
   → 新 Alert 复制 opening Event 的选中等级结果

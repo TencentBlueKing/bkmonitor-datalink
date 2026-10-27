@@ -18,6 +18,7 @@ import (
 
 const (
 	ProcessorOutcomeCompleted     = "completed"
+	ProcessorOutcomeReused        = "reused"
 	ProcessorOutcomeMatchError    = "match_error"
 	ProcessorOutcomeProcessError  = "process_error"
 	ProcessorOutcomePanic         = "panic"

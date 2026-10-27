@@ -68,10 +68,11 @@ type eventWindowDiagnostic struct {
 
 // eventWindowStep 保留处理阶段及其逐次生效变化，展示范围由调用方决定。
 type eventWindowStep struct {
-	Processor string                  `json:"processor"`
-	Status    domain.EnrichStatus     `json:"status"`
-	Rules     map[string]string       `json:"rules"`
-	Changes   []eventWindowStepChange `json:"changes"`
+	Processor         string                  `json:"processor"`
+	Status            domain.EnrichStatus     `json:"status"`
+	Rules             map[string]string       `json:"rules"`
+	Changes           []eventWindowStepChange `json:"changes"`
+	ReusedFromAlertID string                  `json:"reused_from_alert_id,omitempty"`
 }
 
 type eventWindowStepChange struct {
@@ -258,7 +259,13 @@ func projectEventWindowItem(stored store.StoredEvent, evaluation domain.EventEva
 	// 2. 沿已保存顺序应用赋值；只计算中间展示值，不执行规则或依赖查询。
 	for _, entry := range payload.Processors {
 		for kind, envelope := range entry {
-			step := eventWindowStep{Processor: kind, Status: envelope.Status, Rules: rules[kind], Changes: []eventWindowStepChange{}}
+			step := eventWindowStep{Processor: kind, Status: envelope.Status, Rules: rules[kind], Changes: []eventWindowStepChange{}, ReusedFromAlertID: envelope.ReusedFromAlertID}
+			if envelope.ReusedFromAlertID != "" {
+				step.Rules = map[string]string{}
+				for _, trace := range envelope.Trace {
+					step.Rules[trace.RuleID] = trace.RuleID
+				}
+			}
 			if step.Rules == nil {
 				step.Rules = map[string]string{}
 			}

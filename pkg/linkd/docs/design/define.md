@@ -140,7 +140,7 @@ Alert 是一次异常的当前生命周期快照。它从 opening Event 创建�
 | 当前进度 | `latest_event_id`、`last_occurred_at`、`update_at`                                             | 最近被接受 Event 及严格单调的服务端快照时间           |
 | 创建锚点 | `trigger_event_id`、`begin_at`、`create_at`                                                    | `create_at` 继承 opening Event 创建时间，创建后不变   |
 | 终态     | `end_at`、`end_type`、`end_reason`                                                             | active 时必须为空；终态时必须完整                     |
-| 丰富     | `enrich_status`、`enrich`                                                                      | 从 opening Event 对应等级复制，不覆盖来源事实                |
+| 丰富     | `enrich_status`、`enrich`、`enrich_severity`                                                    | 从 opening Event 对应等级复制，快照等级不随原地升级改变，不覆盖来源事实 |
 
 `end_type` 只允许 `source/user/system/severity_upgrade`。来源恢复的 end_type 为 source；
 内置合并父告警的全部成员已终结时，允许 recovered + system，固定 end_reason=merge_members_ended。closed

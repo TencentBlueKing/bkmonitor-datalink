@@ -21,8 +21,8 @@ MQ delivery
   → 各 lane 将仍为 unprocessed 的 Event ID 写入 Redis Mailbox
   → 确认原 MQ 消息
   → Mailbox Signal + fingerprint lease
+  → 查询活跃 Alert（Elasticsearch 使用 Recent Alert 缓存优先）
   → Event Enrich 并 CAS 冻结结果、策略版本与裁决上下文
-  → Elasticsearch Recent Alert 缓存优先裁决
   → 新告警抑制 / Alert 生命周期 / 屏蔽判定 / 合并入窗 / 处置准入
   → Alert / AlertLog / 轻量 Redis Streams 通知
   → 控制面独立推进屏蔽复查、合并裁决及父子关系
@@ -35,7 +35,8 @@ MQ delivery
 - 同一 fingerprint 最多一个活动 Alert；更高级别触发优先，可全局配置原地升级或关闭后新建；普通恢复/关闭只匹配当前级别，`__ALL__/closed` 可关闭任意当前级别。
 - Event 保存逐 evaluation 结果；防抖未达阈值时可为 suppressed 且没有关联 Alert，诊断仍可查询。
 - 每条不同 Event 在策略裁决前执行并冻结 Enrich，重投复用已保存结果；Alert 固定复制 opening Event
-  的丰富与展示快照。未配置规则视为 succeeded 空结果，错误降级为 failed。
+  的丰富与展示快照。Processor 可显式配置 `reuse_on_active`，沿用同一活跃告警、同快照等级的该步骤成功结果；
+  见[丰富复用](docs/design/enrich.md#25-活跃告警丰富复用)。未配置规则视为 succeeded 空结果，错误降级为 failed。
 - 防抖与跨来源聚合只约束没有活动 Alert 的候选；活动 Alert 的更新与升级绕过这两项策略。
   生命周期、屏蔽、合并、处置准入和同步水位分别保存。定时解除屏蔽或父关闭解联只更新关系，等待下一条触发 Event。
 - `plugins.kac` 全局开启兼容存储和处置通知，覆盖普通来源、内置合并来源及各租户；

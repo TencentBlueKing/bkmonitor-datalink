@@ -278,8 +278,8 @@ func TestResumePartiallyCreatedAlert(t *testing.T) {
 	processor := newTestProcessor(t, repo, &recordingHook{})
 	event := testEvent("event-1", "warning")
 	stored, _ := repo.CreateEvent(context.Background(), event)
-	stored.StoredEvent, _ = processor.enrichEvent(context.Background(), stored.StoredEvent)
-	plan, err := processor.preparePlan(context.Background(), stored.Event, nil)
+	stored.StoredEvent, _ = processor.enrichEvent(context.Background(), stored.StoredEvent, nil)
+	plan, err := processor.preparePlan(context.Background(), stored.Event, nil, store.StoredAlert{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +585,11 @@ func TestProcessEventAfterAppliedTerminalMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := processor.preparePlan(ctx, created.Event, nil)
+	active, err := processor.findActiveAlert(ctx, activeKeyForTest(event))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := processor.preparePlan(ctx, created.Event, nil, active)
 	if err != nil {
 		t.Fatal(err)
 	}

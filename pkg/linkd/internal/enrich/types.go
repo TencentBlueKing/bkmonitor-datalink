@@ -14,6 +14,8 @@ import "linkd/internal/domain"
 // Input 是丰富执行可读取但不得修改的 Event 副本，由正式处理和预览复用。
 type Input struct {
 	Event domain.Event
+	// ActiveAlert 是本次 fingerprint lease 内已查询的活跃快照；预览不使用它。
+	ActiveAlert *domain.Alert
 	// Preview 只放宽未持久化调试输入的生命周期元数据校验，不放宽字段写入限制。
 	Preview bool
 }

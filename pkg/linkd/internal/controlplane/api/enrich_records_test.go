@@ -89,6 +89,37 @@ func TestEnrichRecordUsesExecutedSourceVersion(t *testing.T) {
 	}
 }
 
+func TestEnrichRecordPreservesReusedRuleAfterConfigurationChanges(t *testing.T) {
+	alert, event, release := enrichRecordFixture(t)
+	payload, err := enrich.DecodePayload(event.Enrich.Evaluations[0].Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := payload.Processors[0]["fields"]
+	step.ReusedFromAlertID = "opening-alert"
+	step.Trace[0].RuleID = "previous-title-rule"
+	for index := range step.Patches {
+		step.Patches[index].RuleID = "previous-title-rule"
+	}
+	payload.Processors[0]["fields"] = step
+	event.Enrich.Evaluations[0].Data, err = payload.JSONObject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := projectEnrichRecord(alert, event, release, true)
+	if err != nil || len(result.Enrichments) != 1 || result.Enrichments[0].ReusedFromAlertID != "opening-alert" || result.Enrichments[0].Name != "previous-title-rule" {
+		t.Fatalf("reused rule was lost or relabeled as current configuration: %+v %v", result, err)
+	}
+	item := projectEventWindowItem(store.StoredEvent{Event: event}, event.Evaluations[0], release, true)
+	if item.Unavailable || item.Steps == nil || len(*item.Steps) != 1 {
+		t.Fatalf("reused step unavailable: %+v", item)
+	}
+	savedStep := (*item.Steps)[0]
+	if savedStep.ReusedFromAlertID != "opening-alert" || savedStep.Rules["previous-title-rule"] != "previous-title-rule" || len(savedStep.Changes) == 0 {
+		t.Fatalf("reused provenance or changes missing: %+v", savedStep)
+	}
+}
+
 func TestEnrichRecordRejectsWrongVersionDigestTenantAndSeverity(t *testing.T) {
 	for _, kind := range []string{"version", "digest", "tenant", "severity", "time"} {
 		t.Run(kind, func(t *testing.T) {

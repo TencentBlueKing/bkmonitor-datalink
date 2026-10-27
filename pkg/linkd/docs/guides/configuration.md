@@ -185,6 +185,24 @@ Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。`s
 `event_sources[].enrich.processors` 是每条 Event 在策略前执行的有序丰富链。当前注册名为
 `strategy/resource/monitor-resource/display/metric/source/log/cloud_resource/k8s/apm/test/cmdb/fields/cmdb-access`；空列表输出 `{"processors":[]}`。
 
+Processor 可选配置 `reuse_on_active`，默认 `false`。例如仅复用同一活跃告警的资源丰富，展示和指标仍按当前 Event 执行：
+
+```yaml
+enrich:
+  processors:
+    - type: strategy
+    - type: monitor-resource
+      reuse_on_active: true
+    - type: display
+    - type: metric
+    - type: source
+```
+
+复用使用已有活跃 Alert 查询返回的结果，不新增查询或独立缓存。没有对应快照等级的成功结果时照常执行。
+开启即接受本生命周期内该步骤结果固定，包括资源属性、拓扑和分组；修改步骤规则不会刷新已活跃快照，
+关闭后下一条新 Event 正常执行。配置变更仍需发布来源并等待任务切换。
+多等级、失败结果、重投及预览语义见[丰富设计](../design/enrich.md#25-活跃告警丰富复用)。
+
 `k8s` 通过 OneModel 定位实例。维度缺失、实例未命中、查询错误或返回身份校验失败时，保留对应诊断；
 当前有效视图只有模型或只有实例时，显式清空 `labels.model_id` 和 `labels.model_inst_id`，避免输出残缺身份。
 清理结果使用 `partial`，保证补丁进入有效视图和 KAC 输出；已有完整身份继续保留，没有身份需要清理时沿用原失败状态。

@@ -97,6 +97,8 @@ type ProcessorTrace struct {
 	Status      domain.EnrichStatus `json:"status"`
 	Rules       []enrich.Trace      `json:"rules"`
 	Diagnostics []enrich.Diagnostic `json:"diagnostics,omitempty"`
+	// ReusedFromAlertID 区分已保存的复用事实与本轮模拟执行记录。
+	ReusedFromAlertID string `json:"reused_from_alert_id,omitempty"`
 }
 
 // SourceReader 只能读取已发布配置，不能发布或修改配置。
@@ -354,7 +356,7 @@ func compose(original map[string]any, payload domain.JSONObject) (map[string]any
 	}
 	for _, entry := range parsed.Processors {
 		for name, result := range entry {
-			trace = append(trace, ProcessorTrace{Processor: name, Status: result.Status, Rules: result.Trace, Diagnostics: result.Diagnostics})
+			trace = append(trace, ProcessorTrace{Processor: name, Status: result.Status, Rules: result.Trace, Diagnostics: result.Diagnostics, ReusedFromAlertID: result.ReusedFromAlertID})
 			if result.Status != domain.EnrichStatusSucceeded && result.Status != domain.EnrichStatusPartial {
 				continue
 			}

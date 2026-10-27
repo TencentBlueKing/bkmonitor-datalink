@@ -8,6 +8,9 @@
 
 响应 `items` 每项包含 `alert_id/event_id/severity/enriched_at/status/enrichment_count/changed_field_count/enrichments`；`detail=true` 另带 `field_changes`。措施包含 `id/type/name/status/code`，来自 CMDB/fields 的实际规则 trace；来源规则 `name` 和 `field_labels` 属于不可变发布配置展示元信息，不复制到 AlertLog。内部字段目录冻结规则不作为业务丰富措施。
 
+复用步骤的措施另含 `reused_from_alert_id`，规则 trace 来自活跃 Alert 快照，name 使用原始规则 ID，
+即使该规则已从当前发布移除也保留其措施和已提交变化。该读取不补查复用来源或重跑规则。
+
 字段变化来自已提交补丁，按顺序从原 Event 重放赋值，包含前序处理器有效贡献；绝不重新查 CMDB 或执行表达式。失败和回滚的尝试不冒充生效。相同路径只展示第一次业务修改前与最后提交后值，未发生净变化的不计入数量；关联全部参与措施。`field/display/before_present/before/after_present/after/measures` 区分未设置、null、空字符串、0、false。字段值只在详情返回，超响应预算明确失败，不截断后声称完整。新 API 不返回原始 Event 或发布配置正文。
 
 KAC 对首次触发/恢复的丰富生成独立派生节点；持续更新丰富仅附加到对应明细，保留分组。新弹窗仅展示措施结果和字段对比，屏蔽/合并/抑制和更新明细仍不增加详情入口。未准入告警不因此获得处置或关闭动作，不回填历史日志。

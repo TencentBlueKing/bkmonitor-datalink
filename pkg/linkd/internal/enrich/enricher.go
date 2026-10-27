@@ -31,6 +31,7 @@ type Processor interface {
 // Chain 按固定顺序执行一组 Processor，并编码为 Event.enrich 的逐等级 payload。
 type Chain struct {
 	cmdbSetModuleEnabled bool
+	reuseOnActive        map[string]bool
 	processors           []Processor
 	sources              Sources
 	observer             Observer
@@ -82,13 +83,21 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 		return Result{}, err
 	}
 	result := Result{Evaluations: map[string]*domain.EnrichEvaluation{}, Data: domain.EventEnrichData{Evaluations: make([]domain.EvaluationEnrich, 0, len(event.Evaluations))}}
+	reusable, err := c.activeProcessorResults(input)
+	if err != nil {
+		return Result{}, err
+	}
 	cache := newRequestCache()
 	budget := &chainBudget{}
 	statuses := make([]domain.EnrichStatus, 0, len(event.Evaluations))
 	for _, evaluation := range event.Evaluations {
 		scope := newOwnedScope(&event, evaluation, c.sources, cache)
 		scope.cmdbSetModuleEnabled = c.cmdbSetModuleEnabled
-		evaluated, err := c.enrichEvaluation(ctx, scope, budget)
+		var previous map[string]ProcessorEnvelope
+		if reusable != nil && evaluation.Severity == input.ActiveAlert.EnrichSeverity {
+			previous = reusable
+		}
+		evaluated, err := c.enrichEvaluation(ctx, scope, budget, previous, input.ActiveAlert)
 		if err != nil {
 			return Result{}, err
 		}
@@ -107,7 +116,7 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 
 type chainBudget struct{ patchCount, payloadBytes int }
 
-func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chainBudget) (domain.EvaluationEnrich, error) {
+func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chainBudget, previous map[string]ProcessorEnvelope, active *domain.Alert) (domain.EvaluationEnrich, error) {
 	results := make([]ProcessorResult, 0, len(c.processors))
 	entries := make([]map[string]json.RawMessage, 0, len(c.processors))
 	for _, processor := range c.processors {
@@ -119,7 +128,22 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 		scope.dependencyErrors = nil
 		scope.dependencies = nil
 		scope.running = true
-		result, outcome, failure := runProcessor(ctx, processor, scope)
+		var result ProcessorResult
+		var outcome string
+		var failure error
+		if saved, ok := previous[processor.Name()]; ok {
+			finish := startProcessorTiming(ctx, processor.Name())
+			result = ProcessorResult{Status: saved.Status, Value: saved.Value, Patches: saved.Patches, Trace: saved.Trace, Diagnostics: cloneDiagnostics(saved.Diagnostics), ReusedFromAlertID: active.AlertID}
+			failure = restoreProcessorContext(scope.Context(), processor.Name(), saved)
+			outcome = ProcessorOutcomeReused
+			finish()
+			if failure != nil {
+				result = failedProcessorResult(processor.Name())
+				outcome = ProcessorOutcomeInvalidResult
+			}
+		} else {
+			result, outcome, failure = runProcessor(ctx, processor, scope)
+		}
 		scope.running = false
 		if len(scope.degradedDiagnostics) != 0 {
 			result.Diagnostics = append(result.Diagnostics, scope.degradedDiagnostics...)
@@ -180,7 +204,7 @@ func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chai
 			}
 			patches = append(patches, patch)
 		}
-		envelope := ProcessorEnvelope{Status: result.Status, Patches: patches, Trace: result.Trace, Diagnostics: cloneDiagnostics(result.Diagnostics)}
+		envelope := ProcessorEnvelope{Status: result.Status, Patches: patches, Trace: result.Trace, Diagnostics: cloneDiagnostics(result.Diagnostics), ReusedFromAlertID: result.ReusedFromAlertID}
 		encoded, err := json.Marshal(envelope)
 		if err != nil {
 			return domain.EvaluationEnrich{}, fmt.Errorf("enrich processor %s result: %w", processor.Name(), err)

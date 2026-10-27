@@ -32,7 +32,7 @@ type EventEnrichData struct {
 }
 
 // EventEnrichment 是一次 Event 丰富的完整提交。完成后，包括失败结果在内均不可覆盖。
-// EnrichedAt 是提交时间，不参与业务身份；ConfigDigest 标识实际执行的不可变配置。
+// EnrichedAt 是提交时间，不参与业务身份；ConfigDigest 标识本次处理链配置，复用步骤另记录来源 Alert。
 type EventEnrichment struct {
 	EnrichStatus       EnrichStatus    `json:"enrich_status"`
 	Enrich             EventEnrichData `json:"enrich"`

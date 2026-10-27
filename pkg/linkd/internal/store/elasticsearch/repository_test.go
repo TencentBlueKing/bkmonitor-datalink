@@ -184,6 +184,7 @@ func TestMappings(t *testing.T) {
 	assertMappingFields(t, processing, reflect.TypeFor[store.EventProcessing]())
 	assertMappingFields(t, alerts, reflect.TypeFor[domain.Alert](), "merge_work", "shield_main_alert_ids")
 	assertPropertyTypes(t, alerts, "keyword", "shield_main_alert_ids")
+	assertPropertyTypes(t, alerts, "keyword", "enrich_severity")
 	assertPropertyTypes(t, alerts, "boolean", "merge_work")
 	assertMappingFields(t, logs, reflect.TypeFor[domain.AlertLog]())
 

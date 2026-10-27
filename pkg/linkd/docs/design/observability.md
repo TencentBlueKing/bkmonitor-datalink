@@ -292,7 +292,9 @@ Enrich 使用 `linkd_enrich_attempts_total`、`linkd_enrich_attempt_duration_sec
 EventSource ID、固定 Processor、固定 DataSource/operation、状态和原因枚举；租户、实体 ID、查询字段、
 错误全文和 payload 不进入指标。
 
-丰富指标按实际调用尝试记录，不是新建 Alert 数量：尚未完成丰富的触发、恢复、关闭 Event 都会执行，
+丰富指标按处理步骤记录，不是新建 Alert 数量：尚未完成丰富的触发、恢复、关闭 Event 都会生成逐等级结果，
+显式启用的活跃快照复用步骤使用 Processor `outcome=reused`，保留 `status=succeeded`，耗时记录本次恢复结果的时间；
+其余步骤仍正常执行，DataSource 只记录实际发生的查询。
 已冻结结果的重投直接复用；多个 evaluation 的结果保存在同一 Event 信封。该结果指标不证明后续
 丰富 CAS、策略裁决或 Alert 持久化已经成功，完整处理仍看 Lifecycle 与 Repository 指标。
 

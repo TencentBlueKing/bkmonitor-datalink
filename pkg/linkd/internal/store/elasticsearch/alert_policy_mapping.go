@@ -23,6 +23,7 @@ func alertPolicyProperties() map[string]map[string]any {
 		"end_operation":         opaqueObjectProperty(),
 		"last_shield_operation": opaqueObjectProperty(),
 		"revision":              {"type": "long"},
+		"enrich_severity":       keywordProperty(),
 		"merge_work":            {"type": "boolean"},
 		"merge_change":          {"properties": map[string]any{"log_params": opaqueObjectProperty(), "kind": keywordProperty(), "relation_id": keywordProperty(), "operation_id": keywordProperty(), "window_id": keywordProperty(), "effective_at": dateNanosProperty(), "before": opaqueObjectProperty(), "after": opaqueObjectProperty(), "action_ready": map[string]any{"type": "boolean"}}},
 		"merge":                 {"properties": map[string]any{"role": keywordProperty(), "state": keywordProperty(), "pending": opaqueObjectProperty(), "relation_ids": keywordProperty(), "operation_id": keywordProperty(), "relations_ready": map[string]any{"type": "boolean"}}},

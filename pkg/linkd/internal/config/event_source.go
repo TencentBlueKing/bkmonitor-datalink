@@ -192,6 +192,8 @@ func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConf
 type EnrichProcessorConfig struct {
 	Type   string         `yaml:"type" json:"type"`
 	Config map[string]any `yaml:"config,omitempty" json:"config,omitempty"`
+	// ReuseOnActive 在同一活跃告警的快照等级上复用本步骤成功结果；默认每条 Event 执行。
+	ReuseOnActive bool `yaml:"reuse_on_active,omitempty" json:"reuse_on_active,omitempty"`
 }
 
 func (c EnrichProcessorConfig) clone() EnrichProcessorConfig {

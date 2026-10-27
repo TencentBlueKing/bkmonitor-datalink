@@ -39,6 +39,7 @@
 | 告警查询 DSL | 通用告警检索的 Elasticsearch JSON Query DSL 子句，按请求租户检索原生 Alert；也用于批量关闭的 `filter` 候选条件，见[检索契约](contracts/alert-search.md) |
 | test（丰富处理器） | 通过进程内 datasource 模拟随机延迟、调用超时和概率故障的负载处理器；成功后写入固定 JSON 字段，调用进入统一数据源指标 |
 | 告警丰富        | 依据告警特征及依赖数据生成补充信息，结果按 evaluation 保存在 Event.enrich；Alert 复制 opening Event 结果，不覆盖来源事实 |
+| 活跃告警丰富复用 | Processor 显式启用 `reuse_on_active` 后，在同租户、来源、fingerprint 及快照等级上沿用活跃 Alert 的该步骤成功结果；当前 Event 仍保存完整结果，详见[丰富设计](../design/enrich.md#25-活跃告警丰富复用) |
 | 丰富分类        | 用于选择一个告警丰富主处理路径的分类，各分类可有内部特殊分支并共用依赖数据；不等同于 EventSource、告警等级或生命周期状态 |
 | CMDB 身份绑定 | CMDB 规则按入口身份分组和对象条件确定模型、实例，将结果作为业务补丁供后续规则、策略及 KAC 输出使用；不改 Event 的主体或指纹 |
 | first（实例选择） | 后端按 canonical 模型/实例身份排序只读取首条，显式允许多实例命中；one 继续要求唯一结果 |

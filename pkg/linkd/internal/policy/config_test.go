@@ -122,7 +122,7 @@ func TestPolicyRejectsInvalidConfigurations(t *testing.T) {
 		{"invalid business code", Suppression, func(s map[string]any) { s["space_code"] = "bkcc__0" }},
 		{"missing updated time", Suppression, func(s map[string]any) { delete(s, "updated_at") }},
 		{"bad timezone", Suppression, func(s map[string]any) { s["timezone"] = "Somewhere/Else" }},
-		{"model without target", Suppression, func(s map[string]any) { s["model_id"] = "cmdb.host" }},
+		{"target without model", Shield, func(s map[string]any) { delete(s, "model_id") }},
 		{"empty expression", Suppression, func(s map[string]any) { s["policy"] = map[string]any{} }},
 		{"zero duration", Suppression, func(s map[string]any) {
 			s["scheme"] = []Scheme{{Type: "clip", Duration: 0, DurationType: "second", Count: 1}}

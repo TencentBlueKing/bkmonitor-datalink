@@ -56,8 +56,8 @@ type Verdict struct {
 	GroupKey  string       `json:"group_key,omitempty"`
 }
 
-// EvaluateConditions 应用启用/时段、业务范围、完整目标与逐组条件，不计算分组字段。
-// rely=true 只用于依赖屏蔽被屏蔽候选；目标描述约束主候选，子候选仍受同一业务范围约束。
+// EvaluateConditions 应用启用/时段、业务范围、模型/实例范围与逐组条件，不计算分组字段。
+// rely=true 只用于依赖屏蔽被屏蔽候选；模型/目标约束主候选，子候选仍受同一业务范围约束。
 func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled, view *FactView, targets TargetReader, at time.Time, rely bool) (Verdict, error) {
 	result := Verdict{Evaluated: true, Groups: []GroupMatch{}}
 	if err := ctx.Err(); err != nil {
@@ -93,7 +93,29 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		result.Reason = reason
 		return result, nil
 	}
-	// 先排除不具备目标身份的事件，避免无意义的全局范围与目标 I/O。
+	// 仅限定模型时不读取实例身份；具体目标继续要求完整身份。
+	// 两种范围都先排除模型不符的候选，避免无意义的空间/成员 I/O。
+	if compiled.Common.Targets == nil && compiled.Common.ModelID != "" && !rely {
+		model, err := view.Field(ctx, "model_id")
+		if err != nil {
+			if errors.Is(err, ErrAccess) {
+				return result, err
+			}
+			return skip("model_field_unavailable", err)
+		}
+		if !model.Present || model.Data == nil || model.Data == "" {
+			result.Reason = "model_field_missing"
+			return result, nil
+		}
+		id, ok := model.Data.(string)
+		if !ok || !validModelID(id) {
+			return skip("model_field_invalid", ErrUnavailable)
+		}
+		if id != compiled.Common.ModelID {
+			result.Reason = "outside_target_model"
+			return result, nil
+		}
+	}
 	var candidate onemodel.InstanceRef
 	if compiled.Common.Targets != nil && !rely {
 		var found bool

@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"linkd/internal/domain"
 	"linkd/internal/jsonpath"
@@ -226,8 +227,11 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 		result.Common.Timezone = "Asia/Shanghai"
 	}
 	result.Common.UpdatedAt = result.Common.UpdatedAt.UTC()
-	if (result.Common.ModelID == "") != (result.Common.Targets == nil) {
-		return nil, fmt.Errorf("model_id and target_descriptor must be provided together")
+	if result.Common.ModelID != "" && !validModelID(result.Common.ModelID) {
+		return nil, fmt.Errorf("invalid model_id")
+	}
+	if result.Common.ModelID == "" && result.Common.Targets != nil {
+		return nil, fmt.Errorf("target_descriptor requires model_id")
 	}
 	if result.Common.Targets != nil {
 		if result.Common.Targets.ModelID != result.Common.ModelID {
@@ -273,7 +277,7 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 		return nil, fmt.Errorf("policy requires 1..32 condition groups")
 	}
 	for i, rawPolicy := range policies {
-		// 仅实例抑制/时间屏蔽仍经过空间、目标及时间门禁；依赖主条件不可为空。
+		// 实例或模型范围仍经过空间、范围及时间门禁；依赖主条件不可为空。
 		if result.targetOnlyAllowed() && string(rawPolicy) == "{}" {
 			continue
 		}
@@ -329,9 +333,6 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 	case Shield:
 		spec := result.Shield
 		spec.CommonSpec = result.Common
-		if spec.Targets == nil {
-			return nil, fmt.Errorf("shield requires target_descriptor")
-		}
 		if len(spec.Reason) > 4096 || spec.Before < 0 || spec.Before > 65535 || spec.After < 0 || spec.After > 65535 {
 			return nil, fmt.Errorf("shield reason/time range exceeds budget")
 		}
@@ -387,7 +388,20 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 }
 
 func (c *Compiled) targetOnlyAllowed() bool {
-	return c.Common.Targets != nil && (c.Kind == Suppression || (c.Shield != nil && c.Shield.ShieldType == "time_shield"))
+	return (c.Common.ModelID != "" || c.Common.Targets != nil) && (c.Kind == Suppression || (c.Shield != nil && c.Shield.ShieldType == "time_shield"))
+}
+
+// 模型范围沿用 canonical 模型标识的预算和分隔符约束，无须构造虚假的实例目标。
+func validModelID(value string) bool {
+	if strings.TrimSpace(value) == "" || len(value) > 128 || strings.Contains(value, "|") {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) || r == unicode.ReplacementChar {
+			return false
+		}
+	}
+	return true
 }
 
 func durationSeconds(value int64, unit string) (int64, error) {

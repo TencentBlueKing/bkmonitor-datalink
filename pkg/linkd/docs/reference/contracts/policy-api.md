@@ -9,7 +9,7 @@ API 成功表示配置已发布，不表示全部 Worker 已加载或相关运�
 
 ## KAC 抑制配置适配（2026-10-17）
 
-- `suppression` 在具有有效实例目标时允许空 `policy={}`；无目标且无条件仍拒绝。
+- `suppression` 在具有有效实例目标或明确模型范围时允许空 `policy={}`；无模型、无目标且无条件仍拒绝。
 - `field_mappings` 可声明 `read_path`，例如 `$['extra_data','labels']['strategy_name']`。
   读取支持有序名称/下标选择，采用第一个存在的节点；显式 null、空串、0 和 false 保留。
   `path` 继续表示原有精确路径，供未声明 `read_path` 的读取及模板输出使用；不按字段名硬编码回退。
@@ -20,6 +20,41 @@ API 成功表示配置已发布，不表示全部 Worker 已加载或相关运�
   负 ID 只代表对应空间，不代表全局。实例和动态组按同一归属过滤；CMDB 专用读取继续要求正业务。
 
 合并模板输出的 name/object 统一保留前 2000 个 Unicode 字符，超出直接截断；Event、Alert、丰富赋值、合并关系和 KAC 投影沿用同一结果，不为截断新增序列化。content 的 1 MiB 上限与整体模板／对象预算保持不变。
+
+## 可选实例范围（2026-10-27）
+
+KAC 选择对象模型后可以明确不筛选实例。三类策略复用 `model_id`、`target_descriptor`：
+
+| 配置 | 含义 |
+| --- | --- |
+| 无 `model_id`，目标省略或 `null` | 不加模型/成员过滤；仍要求该类型原有有效条件 |
+| 非空合法 `model_id`，目标省略或 `null` | 仅匹配该模型，不解析或枚举模型实例，不要求告警有 `model_inst_id/entity_uid` |
+| 非空合法 `model_id`，完整目标 | 模型与 OneModel 成员共同约束，保持严格目标校验 |
+
+KAC 持久化空对象，但发布 JSON 使用 `target_descriptor:null`；Linkd 不将 `{}`、错误类型或空 `selectors` 当作无目标。
+无模型却提供目标、模型与目标不一致仍拒绝。`model_id` 沿用 canonical 字符串及 128 字节上限，不允许 `|`、控制字符或空白值。
+模型范围不改变原有配置的规范 JSON/摘要；新范围的规范结果保留模型，空目标可省略，不改写历史 Release。
+
+时间屏蔽与抑制允许仅模型配合空 `policy={}`；合并仍必须有有效条件组、分组及模板。
+依赖屏蔽仍需有效主/子条件；`model_id` 和目标仅限制主告警，子告警按原 `rely_policy`、业务、窗口、引用和关系判断。
+CMDB 关系依然需要主告警的真实 canonical 实例；不能因为配置不选成员而猜测关系起点。
+无模型时间屏蔽可使用有效高级筛选；无模型、无目标、无条件仍拒绝。
+
+正式匹配、单条/批量预览及状态模拟使用相同范围判定。模型缺失、类型非法/字段不可读或模型不同均不能命中指定模型；
+合法目标解析为空集合仍不匹配，解析失败不放宽范围。真实全局空间、具体/非 BKCC 空间、租户、时段及其他条件继续生效。
+模型缺失返回正常未命中 `model_field_missing`，模型字段非法/不可读分别返回不可求值的 `model_field_invalid`/`model_field_unavailable`；模型不同沿用 `outside_target_model`。
+模型范围只读取业务空间，不发起目标准备、目标成员解析或成员查询。候选索引保守保留无条件模型范围，不改变原排序。
+KAC 在保存和预览候选阶段校验操作者及模型全部实例权限；Linkd 继续保留管理 JWT、显式租户和业务范围边界。
+
+实施与部署边界：当前改造遵循 Kingeye 的 `docs/specs/kac-instance-filtering.md`，对应 KAC Draft MR !15915。
+先部署支持新组合的 Linkd，再开放对应 KAC 保存/页面。回退前停止新增并盘点模型空目标配置，不通过清空模型扩大范围。
+本次实现基于 `feat/linkd-dev` 的 `ec55128e`，本地验证如下，不代表部署或跨系统端到端验收。
+
+- 新增 9 个 `TestModelScope*` 测试组，覆盖编译/规范化、非法目标、模型/租户/业务/字段可用性、候选、单条/批量预览、屏蔽/抑制执行、CMDB 关系起点及合并状态模拟。
+- 最小回归命令：`go test ./internal/policy ./internal/policy/runtime ./internal/policy/simulation -run TestModelScope -count=1`，三个包通过。
+- 同时复核既有完整目标/空成员、目标读取错误、空间与权限、配置拒绝、空条件和模拟并发隔离用例；相关选择集的 `go test -race` 通过。
+- 三个受影响包的 `go vet` 与 `golangci-lint run` 通过（0 issues）；`make fmt-check` 与受影响文档本地链接检查通过。
+- 按本轮最小回归范围，未运行全量 `make check`，未访问真实 CMDB/Redis/ES、发布远端配置或执行历史回放。
 
 ## 路径和请求
 
@@ -164,7 +199,7 @@ reason、groups（逐条件结果）及可用的 group_key。`evaluated=false` �
 KAC 在调用前裁剪用户权限，Linkd 保留租户门禁；接口不扫描租户全部告警，不产生屏蔽绑定或其它写入。
 `alert_ids` 接收实际存储的完整 Alert ID（新 `alert-` 格式或存量点号格式），每项 1 至 160 字节；不得使用租户或来源身份片段的字符限制。
 
-时间屏蔽支持有效 target_descriptor 配合空 policy，依赖屏蔽仍要求非空主／子条件。
+时间屏蔽支持有效 target_descriptor 或明确模型范围配合空 policy，依赖屏蔽仍要求非空主／子条件。
 屏蔽主、子条件及引用替换统一使用 regexp2，不提供引擎配置项。
 前后依赖窗口最大 65535 分钟。以上不改写已发布的旧版本和已有绑定。
 

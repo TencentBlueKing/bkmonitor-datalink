@@ -289,7 +289,9 @@ func (i *Instance) ExecuteRawBatch(
 		claimedMembers = append(claimedMembers, member.Prepared)
 	}
 
+	clientStartedAt := time.Now()
 	client, err := i.getClient(ctx, connect)
+	span.Set("es_batch_client_duration_ms", float64(time.Since(clientStartedAt))/float64(time.Millisecond))
 	if err != nil {
 		return nil, newRawBatchTransportError("client", 0, err)
 	}
@@ -302,6 +304,7 @@ func (i *Instance) ExecuteRawBatch(
 	wireAttempted = true
 	metric.QueryRawESBatchMemberCountObserve(ctx, batch.MemberCount())
 	metric.QueryRawESBatchBodyBytesObserve(ctx, batch.BodyBytes())
+	requestStartedAt := time.Now()
 	response, err := client.PerformRequest(ctx, elastic.PerformRequestOptions{
 		Method:      http.MethodGet,
 		Path:        "/_msearch",
@@ -309,6 +312,7 @@ func (i *Instance) ExecuteRawBatch(
 		Body:        batch.ndjson,
 		ContentType: rawBatchContentType,
 	})
+	span.Set("es_batch_request_duration_ms", float64(time.Since(requestStartedAt))/float64(time.Millisecond))
 	if err != nil {
 		status := 0
 		if response != nil {
@@ -320,9 +324,18 @@ func (i *Instance) ExecuteRawBatch(
 		return nil, newRawBatchTransportError("empty_response", 0, nil)
 	}
 
-	var multiSearchResult elastic.MultiSearchResult
-	if err := json.Unmarshal(response.Body, &multiSearchResult); err != nil {
-		return nil, newRawBatchTransportError("decode", response.StatusCode, err)
+	var multiSearchResult struct {
+		TookInMillis *int64                  `json:"took"`
+		Responses    []*elastic.SearchResult `json:"responses"`
+	}
+	decodeStartedAt := time.Now()
+	decodeErr := json.Unmarshal(response.Body, &multiSearchResult)
+	span.Set("es_batch_decode_duration_ms", float64(time.Since(decodeStartedAt))/float64(time.Millisecond))
+	if decodeErr != nil {
+		return nil, newRawBatchTransportError("decode", response.StatusCode, decodeErr)
+	}
+	if multiSearchResult.TookInMillis != nil {
+		span.Set("es_batch_took_millis", *multiSearchResult.TookInMillis)
 	}
 	if len(multiSearchResult.Responses) != len(batch.members) {
 		return nil, &RawBatchTransportError{
@@ -332,6 +345,7 @@ func (i *Instance) ExecuteRawBatch(
 	}
 	recordRawBatchResponseTrace(span, batch.members, multiSearchResult.Responses)
 
+	processStartedAt := time.Now()
 	results = make([]RawBatchMemberResult, len(batch.members))
 	childErrors := 0
 	fallbackAttempted := 0
@@ -353,6 +367,8 @@ func (i *Instance) ExecuteRawBatch(
 			}
 		}
 	}
+	// 包含结果转换，以及子请求沿用的缺失 mapping 回退耗时。
+	span.Set("es_batch_result_process_duration_ms", float64(time.Since(processStartedAt))/float64(time.Millisecond))
 
 	metric.QueryRawESBatchEventAdd(
 		ctx,
@@ -446,6 +462,7 @@ func recordRawBatchResponseTrace(
 	shardsTotal := make([]int64, len(children))
 	shardsSuccessful := make([]int64, len(children))
 	shardsFailed := make([]int64, len(children))
+	shardsSkipped := make([]int64, len(children))
 	errorTypes := make([]string, len(children))
 	timedOutOrdinals := make([]int64, 0)
 
@@ -470,6 +487,7 @@ func recordRawBatchResponseTrace(
 			shardsTotal[index] = int64(child.Shards.Total)
 			shardsSuccessful[index] = int64(child.Shards.Successful)
 			shardsFailed[index] = int64(child.Shards.Failed)
+			shardsSkipped[index] = int64(child.Shards.Skipped)
 		}
 		var childError *RawBatchChildError
 		if errors.As(rawBatchChildError(child), &childError) {
@@ -484,6 +502,7 @@ func recordRawBatchResponseTrace(
 	span.Set("es_batch_child_shards_total", shardsTotal)
 	span.Set("es_batch_child_shards_successful", shardsSuccessful)
 	span.Set("es_batch_child_shards_failed", shardsFailed)
+	span.Set("es_batch_child_shards_skipped", shardsSkipped)
 	span.Set("es_batch_child_error_types", errorTypes)
 }
 

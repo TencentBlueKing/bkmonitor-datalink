@@ -323,6 +323,9 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 			logger.Errorf("PushDataLabelTableIds end, get data label by table id error->[%s]", err)
 			return err
 		}
+		if len(dataLabels) == 0 {
+			return nil
+		}
 		dlRtsMap, err = s.getDataLabelTableIdMap(bkTenantId, dataLabels)
 		if err != nil {
 			logger.Errorf("PushDataLabelTableIds error->[%s]", err)
@@ -377,142 +380,40 @@ func (s *SpacePusher) PushDataLabelTableIds(bkTenantId string, tableIdList []str
 	return nil
 }
 
-// getDataLabelTableIdMap 获取数据标签和结果表的映射关系
+// getDataLabelTableIdMap 获取数据标签和结果表的映射关系。
 func (s *SpacePusher) getDataLabelTableIdMap(bkTenantId string, dataLabelList []string) (map[string][]string, error) {
 	if len(dataLabelList) == 0 {
 		return nil, errors.New("data label is null")
 	}
-
-	// dataLabelList 可能存在重复，需要去重
-	dataLabelSet := make(map[string]struct{})
-	for _, dataLabel := range dataLabelList {
-		dataLabelSet[dataLabel] = struct{}{}
-	}
-
-	var rts []resulttable.ResultTable
-
-	// 由于 data_label 可能存在逗号分隔传多个标签的情况，所以无法直接搜索，只能先查询全部结果表，再过滤数据标签
-	if err := resulttable.NewResultTableQuerySet(mysql.GetDBSession().DB).Select(resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel, resulttable.ResultTableDBSchema.BkTenantId).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).BkTenantIdEq(bkTenantId).All(&rts); err != nil {
-		logger.Errorf("get table id by data label error, %s", err)
-		return nil, errors.Wrap(err, "get table id by data label error")
-	}
-
-	// 如果结果表为空，则直接返回
-	if len(rts) == 0 {
-		return nil, errors.Errorf("not found table id by data label, data labels: %v", dataLabelList)
-	}
-
-	dlRtsMap := make(map[string][]string)
-	for _, rt := range rts {
-		// 如果数据标签为空，则跳过
-		if rt.DataLabel == nil || *rt.DataLabel == "" {
-			continue
-		}
-
-		// 数据标签可能存在多个，需要拆分
-		for _, dataLabel := range strings.Split(*rt.DataLabel, ",") {
-			// 如果数据标签为空，则跳过
-			if dataLabel == "" {
-				continue
-			}
-
-			// 判断是否在 dataLabelSet 中
-			if _, ok := dataLabelSet[dataLabel]; !ok {
-				continue
-			}
-
-			var key string
-			// 多租户模式下，需要加上租户ID后缀
-			if cfg.EnableMultiTenantMode {
-				key = fmt.Sprintf("%s|%s", dataLabel, rt.BkTenantId)
-			} else {
-				key = dataLabel
-			}
-			if rts, ok := dlRtsMap[key]; ok {
-				dlRtsMap[key] = append(rts, rt.TableId)
-			} else {
-				dlRtsMap[key] = []string{rt.TableId}
-			}
-		}
-	}
-	return dlRtsMap, nil
+	return getDataLabelTableIds(mysql.GetDBSession().DB, &bkTenantId, dataLabelList, nil)
 }
 
-// getDataLabelByTableId 获取结果表对应的数据标签
+// getDataLabelByTableId 获取结果表对应的旧标签和 Option 别名。
 func (s *SpacePusher) getDataLabelByTableId(bkTenantId string, tableIdList []string) ([]string, error) {
 	if len(tableIdList) == 0 {
-		return nil, errors.Errorf("table id is null")
+		return nil, errors.New("table id is null")
 	}
-	db := mysql.GetDBSession().DB
-	var dataLabels []resulttable.ResultTable
-	for _, chunkTableIds := range slicex.ChunkSlice(tableIdList, 0) {
-		var tempList []resulttable.ResultTable
-		if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.DataLabel, resulttable.ResultTableDBSchema.BkTenantId).DataLabelNe("").DataLabelIsNotNull().BkTenantIdEq(bkTenantId).TableIdIn(chunkTableIds...).All(&tempList); err != nil {
-			logger.Errorf("get table id by data label error, %s", err)
-			continue
+	labelTableIds, err := getDataLabelTableIds(mysql.GetDBSession().DB, &bkTenantId, nil, tableIdList)
+	if err != nil {
+		return nil, err
+	}
+	var dataLabels []string
+	for label := range labelTableIds {
+		if cfg.EnableMultiTenantMode {
+			label = strings.TrimSuffix(label, "|"+bkTenantId)
 		}
-		dataLabels = append(dataLabels, tempList...)
+		dataLabels = append(dataLabels, label)
 	}
-	if len(dataLabels) == 0 {
-		return nil, errors.Errorf("not found data label by table id, table ids: %v", tableIdList)
-	}
-	var dataLabelList []string
-	for _, dl := range dataLabels {
-		// 如果数据标签为空，则跳过
-		if dl.DataLabel == nil || *dl.DataLabel == "" {
-			continue
-		}
-		for _, dataLabel := range strings.Split(*dl.DataLabel, ",") {
-			// 如果数据标签为空，则跳过
-			if dataLabel == "" {
-				continue
-			}
-			dataLabelList = append(dataLabelList, dataLabel)
-		}
-	}
-	dataLabelList = slicex.RemoveDuplicate(&dataLabelList)
-	return dataLabelList, nil
+	slices.Sort(dataLabels)
+	return dataLabels, nil
 }
 
 // 获取所有标签和结果表的映射关系
 func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]string, error) {
-	// 获取所有可用的结果表
 	db := mysql.GetDBSession().DB
-	var rtList []resulttable.ResultTable
-	// 过滤为结果表可用，标签不为空和null的数据记录
-	if err := resulttable.NewResultTableQuerySet(db).Select(resulttable.ResultTableDBSchema.BkTenantId, resulttable.ResultTableDBSchema.TableId, resulttable.ResultTableDBSchema.DataLabel).BkTenantIdEq(bkTenantId).IsEnableEq(true).IsDeletedEq(false).DataLabelIsNotNull().DataLabelNe("").All(&rtList); err != nil {
-		logger.Errorf("get all data label and table id map error, %s", err)
+	dataLabelTableIdMap, err := getDataLabelTableIds(db, &bkTenantId, nil, nil)
+	if err != nil {
 		return nil, err
-	}
-	// 获取结果表
-	dataLabelTableIdMap := make(map[string][]string)
-	for _, rt := range rtList {
-		// 如果数据标签为空，则跳过
-		if rt.DataLabel == nil || *rt.DataLabel == "" {
-			continue
-		}
-
-		// 数据标签可能存在多个，需要拆分
-		dataLabels := strings.Split(*rt.DataLabel, ",")
-		for _, dataLabel := range dataLabels {
-			// 如果数据标签为空，则跳过
-			if dataLabel == "" {
-				continue
-			}
-
-			var key string
-			if cfg.EnableMultiTenantMode {
-				key = fmt.Sprintf("%s|%s", dataLabel, bkTenantId)
-			} else {
-				key = dataLabel
-			}
-
-			if rts, ok := dataLabelTableIdMap[key]; ok {
-				dataLabelTableIdMap[key] = append(rts, rt.TableId)
-			} else {
-				dataLabelTableIdMap[key] = []string{rt.TableId}
-			}
-		}
 	}
 
 	// 多租户模式特殊处理 -- 内置系统数据路由
@@ -565,6 +466,98 @@ func (s *SpacePusher) getAllDataLabelTableId(bkTenantId string) (map[string][]st
 	}
 
 	return dataLabelTableIdMap, nil
+}
+
+// getDataLabelTableIds 批量读取旧标签和列表 Option，发布和清理使用相同的标签来源。
+// bkTenantId 为 nil 时仅供清理任务读取所有租户；发布时始终传入当前租户。
+func getDataLabelTableIds(db *gorm.DB, bkTenantId *string, dataLabelList, tableIdList []string) (map[string][]string, error) {
+	requestedLabels := make(map[string]bool)
+	var labels []string
+	for _, value := range dataLabelList {
+		for _, label := range strings.Split(value, ",") {
+			if label != "" && !requestedLabels[label] {
+				requestedLabels[label] = true
+				labels = append(labels, label)
+			}
+		}
+	}
+	labelTableIds := make(map[string][]string)
+	for _, label := range labels {
+		// 标签已移除时也发布空列表，清掉查询端的旧映射。
+		labelTableIds[composeTenantRedisKey(label, *bkTenantId)] = []string{}
+	}
+	if len(dataLabelList) != 0 && len(labels) == 0 {
+		return labelTableIds, nil
+	}
+
+	chunks := slicex.ChunkSlice(labels, 0)
+	if len(tableIdList) != 0 {
+		chunks = slicex.ChunkSlice(tableIdList, 0)
+	}
+	if len(chunks) == 0 {
+		chunks = [][]string{nil}
+	}
+	for _, chunk := range chunks {
+		query := db.Table("metadata_resulttable AS rt").
+			Select("rt.table_id, rt.bk_tenant_id, rt.data_label, COALESCE(aliases.value, '[]') AS aliases").
+			Joins("LEFT JOIN metadata_resulttableoption AS aliases ON aliases.table_id = rt.table_id AND aliases.bk_tenant_id = rt.bk_tenant_id AND aliases.name = ? AND aliases.value_type = ?", resulttable.OptionDataLabelAliases, "list")
+		if bkTenantId != nil {
+			query = query.Where("rt.bk_tenant_id = ?", *bkTenantId)
+		}
+		if len(tableIdList) != 0 {
+			// 保留停用、删除 RT 的标签，以便定向刷新时清理它们的旧映射。
+			query = query.Where("rt.table_id IN (?)", chunk)
+		} else {
+			query = query.Where("rt.is_enable = ? AND rt.is_deleted = ?", true, false)
+		}
+		if len(tableIdList) == 0 && len(chunk) != 0 {
+			conditions := make([]string, 0, len(chunk))
+			args := make([]interface{}, 0, len(chunk)*2)
+			for _, label := range chunk {
+				jsonLabel, err := jsonx.MarshalString(label)
+				if err != nil {
+					return nil, err
+				}
+				conditions = append(conditions, "FIND_IN_SET(?, rt.data_label) > 0 OR JSON_CONTAINS(aliases.value, ?)")
+				args = append(args, label, jsonLabel)
+			}
+			query = query.Where("("+strings.Join(conditions, " OR ")+")", args...)
+		}
+		var rows []struct {
+			TableId    string
+			BkTenantId string
+			DataLabel  *string
+			Aliases    string
+		}
+		if err := query.Scan(&rows).Error; err != nil {
+			return nil, err
+		}
+		chunkLabels := make(map[string]bool, len(chunk))
+		for _, label := range chunk {
+			chunkLabels[label] = true
+		}
+		for _, row := range rows {
+			var rowLabels []string
+			if err := jsonx.UnmarshalString(row.Aliases, &rowLabels); err != nil {
+				return nil, errors.Wrapf(err, "decode data label aliases for table %s", row.TableId)
+			}
+			if row.DataLabel != nil {
+				rowLabels = append(strings.Split(*row.DataLabel, ","), rowLabels...)
+			}
+			for _, label := range slicex.RemoveDuplicate(&rowLabels) {
+				if label == "" || (len(labels) != 0 && !requestedLabels[label]) {
+					continue
+				}
+				// 同一 RT 可能命中多批标签，每批只组装当前批次的映射。
+				if len(tableIdList) == 0 && len(chunk) != 0 && !chunkLabels[label] {
+					continue
+				}
+				key := composeTenantRedisKey(label, row.BkTenantId)
+				labelTableIds[key] = append(labelTableIds[key], row.TableId)
+			}
+		}
+	}
+	return labelTableIds, nil
 }
 
 // refineTableIds 只保留当前租户具备 AccessVMRecord 或 ESStorage 链路的结果表。
@@ -3346,22 +3339,15 @@ func (s *SpaceRedisClearer) ClearDataLabelToRt() {
 		logger.Errorf("clear data label to rt router, get redis key error, %s", err)
 		return
 	}
-	// 获取真实存在的数据标签
-	var rtList []resulttable.ResultTable
-	if err := resulttable.NewResultTableQuerySet(s.dbClient).Select(resulttable.ResultTableDBSchema.DataLabel, resulttable.ResultTableDBSchema.BkTenantId).DataLabelNe("").DataLabelIsNotNull().IsDeletedEq(false).IsEnableEq(true).All(&rtList); err != nil {
+	// 同时保留旧标签和 Option 别名，并沿用各租户的 Redis key 格式。
+	labelTableIds, err := getDataLabelTableIds(s.dbClient, nil, nil, nil)
+	if err != nil {
 		logger.Errorf("clear data label to rt router, get data label list error, %s", err)
 		return
 	}
 	var datalabelList []string
-	for _, rt := range rtList {
-		if rt.DataLabel != nil && *rt.DataLabel != "" {
-			// 多租户模式下，需要加上租户ID后缀
-			if cfg.EnableMultiTenantMode {
-				datalabelList = append(datalabelList, fmt.Sprintf("%s|%s", *rt.DataLabel, rt.BkTenantId))
-			} else {
-				datalabelList = append(datalabelList, *rt.DataLabel)
-			}
-		}
+	for label := range labelTableIds {
+		datalabelList = append(datalabelList, label)
 	}
 	// 获取存在于redis，而不在db中的数据，然后针对key进行删除
 	fieldSet := slicex.StringList2Set(fields)

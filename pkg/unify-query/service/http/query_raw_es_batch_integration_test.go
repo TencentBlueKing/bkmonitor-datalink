@@ -902,15 +902,22 @@ func TestQueryRawESBatchPackingFallsBackToPreparedSingles(t *testing.T) {
 		httpmock.RegisterResponder(
 			http.MethodGet,
 			esURL+"/_msearch?max_concurrent_searches=4",
-			func(*http.Request) (*http.Response, error) {
+			func(request *http.Request) (*http.Response, error) {
 				multiSearchCalls.Add(1)
-				return httpmock.NewStringResponse(
-					http.StatusOK,
-					`{"responses":[`+
-						`{"status":200,"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"trace_pack_first","_id":"first","_source":{"start_time":3,"trace_id":"`+traceID+`"}}]}},`+
-						`{"status":200,"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"trace_pack_second","_id":"second","_source":{"start_time":2,"trace_id":"`+traceID+`"}}]}}`+
-						`]}`,
-				), nil
+				body, err := io.ReadAll(request.Body)
+				require.NoError(t, err)
+				lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+				require.Len(t, lines, 4)
+				responses := make([]string, 0, 2)
+				for offset := 0; offset < len(lines); offset += 2 {
+					var header struct {
+						Index []string `json:"index"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(lines[offset]), &header))
+					require.Len(t, header.Index, 1)
+					responses = append(responses, `{"status":200,"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"`+header.Index[0]+`","_id":"`+header.Index[0]+`","_source":{"start_time":1,"trace_id":"`+traceID+`"}}]}}`)
+				}
+				return httpmock.NewStringResponse(http.StatusOK, `{"responses":[`+strings.Join(responses, ",")+`]}`), nil
 			},
 		)
 		for _, route := range routes {
@@ -920,12 +927,6 @@ func TestQueryRawESBatchPackingFallsBackToPreparedSingles(t *testing.T) {
 				esURL+"/"+route.index+"/_search",
 				func(*http.Request) (*http.Response, error) {
 					singleSearchCalls.Add(1)
-					if route.tableID != "trace.third" {
-						return httpmock.NewStringResponse(
-							http.StatusInternalServerError,
-							`{"error":{"type":"unexpected_single_search"}}`,
-						), nil
-					}
 					return httpmock.NewStringResponse(
 						http.StatusOK,
 						`{"_shards":{"total":1,"successful":1,"failed":0},"hits":{"total":{"value":1,"relation":"eq"},"hits":[{"_index":"`+route.index+`","_id":"third","_source":{"start_time":1,"trace_id":"`+traceID+`"}}]}}`,
@@ -941,6 +942,11 @@ func TestQueryRawESBatchPackingFallsBackToPreparedSingles(t *testing.T) {
 		require.NoError(t, err)
 		assert.EqualValues(t, 3, total)
 		assert.Len(t, list, 3)
+		for _, row := range list {
+			index := row["__index"]
+			expectedTables := map[string]string{"trace_pack_first": "trace.first", "trace_pack_second": "trace.second", "trace_pack_third": "trace.third"}
+			assert.Equal(t, expectedTables[index.(string)], row[metadata.KeyTableID])
+		}
 		assert.Len(t, options, 3)
 		assert.Len(t, routeInfo, 3)
 		assert.EqualValues(t, 1, multiSearchCalls.Load())

@@ -123,7 +123,7 @@ func NewInstance(ctx context.Context, opt *InstanceOption) (*Instance, error) {
 	return ins, nil
 }
 
-func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Client, error) {
+func (i *Instance) getClient(ctx context.Context, connect Connect, options ...elastic.ClientOptionFunc) (*elastic.Client, error) {
 	cliOpts := []elastic.ClientOptionFunc{
 		elastic.SetURL(connect.Address),
 		elastic.SetSniff(false),
@@ -148,6 +148,7 @@ func (i *Instance) getClient(ctx context.Context, connect Connect) (*elastic.Cli
 		)
 	}
 
+	cliOpts = append(cliOpts, options...)
 	return elastic.DialContext(ctx, cliOpts...)
 }
 
@@ -209,7 +210,9 @@ func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *el
 	mappings := make(map[string]map[string]any)
 
 	span.Set("get-indexes", aliases)
+	indexStartedAt := time.Now()
 	indices, indicesErr := cli.IndexGet(aliases...).Do(ctx)
+	span.Set("index-get-duration-ms", float64(time.Since(indexStartedAt))/float64(time.Millisecond))
 	span.Set("index-get-fallback", indicesErr != nil)
 	if indicesErr != nil {
 		indexGetError := truncateString(indicesErr.Error(), esIndexMetadataErrorMaxLength)
@@ -223,7 +226,9 @@ func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *el
 		).Warn(ctx)
 
 		span.Set("get-mapping", aliases)
+		mappingStartedAt := time.Now()
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
+		span.Set("get-mapping-duration-ms", float64(time.Since(mappingStartedAt))/float64(time.Millisecond))
 		if err != nil {
 			span.Set("get-mapping-error", truncateString(err.Error(), esIndexMetadataErrorMaxLength))
 			return nil, metadata.NewMessage(
@@ -280,7 +285,11 @@ func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metad
 		span.End(&err)
 	}()
 	span.Set("aliases", aliases)
-	cli, err := i.getClient(ctx, i.connect)
+	decoder := &indexMetadataDecoder{}
+	defer decoder.record(span)
+	clientStartedAt := time.Now()
+	cli, err := i.getClient(ctx, i.connect, elastic.SetDecoder(decoder))
+	span.Set("mapping-client-duration-ms", float64(time.Since(clientStartedAt))/float64(time.Millisecond))
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("get client error: %w", err)
 	}
@@ -294,6 +303,10 @@ func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metad
 	span.Set("mapping-length", len(mappings))
 	span.Set("physical-index-length", len(physicalIndexes))
 
+	parseStartedAt := time.Now()
+	defer func() {
+		span.Set("mapping-field-parse-duration-ms", float64(time.Since(parseStartedAt))/float64(time.Millisecond))
+	}()
 	iof := NewIndexOptionFormat(fieldAlias)
 	indexFields := &collapseIndexMetadata{fields: make(map[string]map[string]bool, len(mappings)), directQuerySafe: snapshot.directQuerySafe}
 

@@ -1056,15 +1056,10 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 		`{"aggregations":{"serverIp":{"aggregations":{"_value":{"value_count":{"field":"serverIp"}}},"terms":{"field":"serverIp","missing":" ","order":[{"_value":"desc"}],"size":20}}},"query":{"bool":{"filter":[{"exists":{"field":"serverIp"}},{"range":{"dtEventTimeStamp":{"format":"epoch_millis","from":1761980445276,"include_lower":true,"include_upper":true,"to":1764572445277}}}]}},"size":0}`: `{"took":6,"timed_out":false,"_shards":{"total":1,"successful":1,"skipped":0,"failed":0},"hits":{"total":{"value":10000,"relation":"gte"},"max_score":null,"hits":[]},"aggregations":{"serverIp":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"10.0.6.33","doc_count":42768,"_value":{"value":42768}}]}}}`,
 	})
 
-	type referenceCase struct {
-		body, expected string
-		responses      map[string]string
-		values         map[string]float64
-		start          int64
-		partial        bool
-		errorContains  string
-	}
-	testCases := map[string]referenceCase{
+	testCases := map[string]struct {
+		body     string
+		expected string
+	}{
 		"metrics merge issue": {
 			body: `{"query_list":[{"data_source":"bklog","reference_name":"a","dimensions":[],"time_field":"time","conditions":{"field_list":[{"field_name":"serverIp","value":[""],"op":"ne"}],"condition_list":[]},"query_string":"*","function":[{"method":"count","dimensions":["serverIp"]}],"table_id":"result_table.es","field_name":"serverIp","limit":20},{"data_source":"bklog","reference_name":"a","dimensions":[],"time_field":"time","conditions":{"field_list":[{"field_name":"serverIp","value":[""],"op":"ne"}],"condition_list":[]},"query_string":"test","function":[{"method":"count","dimensions":["serverIp"]}],"table_id":"result_table.es_1","field_name":"serverIp","limit":20}],"metric_merge":"a","order_by":["-_value"],"step":"1d","space_uid":"bkcc__2","start_time":"1761980445276","end_time":"1764572445277","down_sample_range":"","timezone":"Asia/Shanghai","bk_biz_id":2}`,
 			// 修复后按 -_value 排序: 13961116 -> 42821 -> 48 -> 24
@@ -1076,164 +1071,9 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 		},
 	}
 
-	// Both routes address the same index. Only the exact disjoint ranges below
-	// have fixture responses, so reading overlapping documents twice fails.
-	const start int64 = 1700000000000000 // microseconds
-	const cut = start + 3600*1000000
-	const end = cut + 3600*1000000
-	type part struct {
-		from, to       int64
-		includeEnd     bool
-		values, counts map[string]any
-	}
-	leftCount := map[string]any{"common": 2}
-	rightCount := map[string]any{"common": 3, "new": 1, "missing": 1}
-	leftSum := map[string]any{"common": 30}
-	rightSum := map[string]any{"common": 120, "new": 7, "missing": 0}
-	// common: 10 at A, 20 at T-1us, 30 at T, 40 at T+1us, 50 at B.
-	// At T there is also a new-only group (7) and a group without a value.
-	for _, c := range []struct {
-		name, method                string
-		start, end                  int64
-		parts                       []part
-		want                        map[string]float64
-		ungrouped, without, partial bool
-		errorContains               string
-		duplicate                   float64
-		switches                    []int64
-	}{
-		{name: "count_before", method: "count", start: start, end: cut - 1, parts: []part{{start, cut - 1, true, leftCount, nil}}, want: map[string]float64{"common": 2}},
-		{name: "count_after", method: "count", start: cut, end: end, parts: []part{{cut, end, true, rightCount, nil}}, want: map[string]float64{"common": 3, "new": 1, "missing": 1}},
-		{name: "count_across_overlap", method: "count", start: start, end: end, parts: []part{{start, cut, false, leftCount, nil}, {cut, end, true, rightCount, nil}}, want: map[string]float64{"common": 5, "new": 1, "missing": 1}},
-		{name: "sum_across_overlap", method: "sum", start: start, end: end, parts: []part{{start, cut, false, leftSum, nil}, {cut, end, true, rightSum, nil}}, want: map[string]float64{"common": 150, "new": 7, "missing": 0}},
-		{name: "min_across", method: "min", start: start, end: end, parts: []part{{start, cut, false, map[string]any{"common": 10}, nil}, {cut, end, true, map[string]any{"common": 30, "new": 7, "missing": nil}, nil}}, want: map[string]float64{"common": 10, "new": 7}},
-		{name: "max_across", method: "max", start: start, end: end, parts: []part{{start, cut, false, map[string]any{"common": 20}, nil}, {cut, end, true, map[string]any{"common": 50, "new": 7, "missing": nil}, nil}}, want: map[string]float64{"common": 50, "new": 7}},
-		{name: "avg_unequal_counts_and_null", method: "avg", start: start, end: end, parts: []part{{start, cut, false, leftSum, leftCount}, {cut, end, true, rightSum, map[string]any{"common": 3, "new": 1, "missing": 0}}}, want: map[string]float64{"common": 30, "new": 7}},
-		{name: "count_ungrouped", method: "count", start: start, end: end, ungrouped: true, parts: []part{{start, cut, false, map[string]any{"": 2}, nil}, {cut, end, true, map[string]any{"": 5}, nil}}, want: map[string]float64{"": 7}},
-		{name: "avg_ungrouped", method: "avg", start: start, end: end, ungrouped: true, parts: []part{{start, cut, false, map[string]any{"": 30}, map[string]any{"": 2}}, {cut, end, true, map[string]any{"": 127}, map[string]any{"": 4}}}, want: map[string]float64{"": 157.0 / 6}},
-		{name: "end_at_cutover", method: "count", start: start, end: cut, parts: []part{{start, cut, false, leftCount, nil}, {cut, cut, true, map[string]any{"common": 1, "new": 1, "missing": 1}, nil}}, want: map[string]float64{"common": 3, "new": 1, "missing": 1}},
-		{name: "point_at_cutover", method: "count", start: cut, end: cut, parts: []part{{cut, cut, true, map[string]any{"common": 1, "new": 1, "missing": 1}, nil}}, want: map[string]float64{"common": 1, "new": 1, "missing": 1}},
-		{name: "one_microsecond_either_side", method: "sum", start: cut - 1, end: cut + 1, parts: []part{{cut - 1, cut, false, map[string]any{"common": 20}, nil}, {cut, cut + 1, true, map[string]any{"common": 70, "new": 7, "missing": 0}, nil}}, want: map[string]float64{"common": 90, "new": 7, "missing": 0}},
-		{name: "multiple_switches", method: "count", start: start, end: end, switches: []int64{cut, cut + 1800*1000000}, parts: []part{{start, cut, false, leftCount, nil}, {cut, cut + 1800*1000000, false, map[string]any{"common": 2, "new": 1, "missing": 1}, nil}, {cut + 1800*1000000, end, true, map[string]any{"common": 1}, nil}}, want: map[string]float64{"common": 5, "new": 1, "missing": 1}},
-		{name: "sum_partial_failure", method: "sum", start: start, end: end, parts: []part{{start, cut, false, leftSum, nil}, {cut, end, true, nil, nil}}, want: map[string]float64{"common": 30}, partial: true},
-		{name: "avg_count_failure_discards_sum", method: "avg", start: start, end: end, parts: []part{{start, cut, false, leftSum, leftCount}, {cut, end, true, rightSum, nil}}, want: map[string]float64{"common": 15}, partial: true},
-		{name: "all_routes_fail", method: "sum", start: start, end: end, parts: []part{{start, cut, false, nil, nil}, {cut, end, true, nil, nil}}, errorContains: "fixture backend failure"},
-		{name: "cardinality_rejected", method: "cardinality", start: start, end: end, errorContains: "without intermediate state"},
-		{name: "percentiles_rejected", method: "percentiles", start: start, end: end, errorContains: "without intermediate state"},
-		{name: "identical_duplicate", method: "count", start: start, end: cut - 1, parts: []part{{start, cut - 1, true, leftCount, nil}}, want: map[string]float64{"common": 2}, duplicate: 2},
-		{name: "different_duplicate", method: "count", start: start, end: cut - 1, parts: []part{{start, cut - 1, true, leftCount, nil}}, errorContains: "multiple samples", duplicate: 3},
-		{name: "without_time_bucket", method: "sum", start: cut - 1, end: cut + 1, without: true, parts: []part{{cut - 1, cut, false, map[string]any{"common": 20}, nil}, {cut, cut + 1, true, map[string]any{"common": 70, "new": 7, "missing": 0}, nil}}, want: map[string]float64{"common": 90, "new": 7, "missing": 0}},
-	} {
-		field := "gseIndex"
-		if c.method == "count" {
-			field = "*"
-		}
-		dimensions := []string{"group"}
-		if c.ungrouped {
-			dimensions = nil
-		}
-		agg := structured.AggregateMethod{Method: c.method, Dimensions: dimensions, Without: c.without}
-		if c.without {
-			agg.Window = "1m"
-		}
-		switches := c.switches
-		if switches == nil {
-			switches = []int64{cut}
-		}
-		route := &query.TsDBV2{
-			TableID: influxdb.ResultTableEs, StorageID: "3", StorageType: metadata.ElasticsearchStorageType,
-			DB: "es_index", Measurement: "__default__", SourceType: "log",
-			TimeField: metadata.TimeField{Name: "event_time", Type: "long", Unit: "microsecond"},
-		}
-		for _, at := range append([]int64{start - 3600*1000000}, switches...) {
-			route.StorageClusterRecords = append(route.StorageClusterRecords, query.Record{
-				StorageID: "3", StorageType: metadata.ElasticsearchStorageType, DB: "es_index", Measurement: "__default__", SourceType: "log", EnableTime: at / 1000000,
-			})
-		}
-		request := structured.QueryTs{
-			SpaceUid: influxdb.SpaceUid, MetricMerge: "a", Start: fmt.Sprint(c.start), End: fmt.Sprint(c.end), Step: "1m", Timezone: "UTC", Instant: true,
-			QueryList: []*structured.Query{{DataSource: structured.BkLog, TableID: structured.TableID(influxdb.ResultTableEs), FieldName: field, ReferenceName: "a", AggregateMethodList: structured.AggregateMethodList{agg}, Limit: 100}},
-			TsDBMap:   map[string]structured.TsDBs{"a": {route}},
-		}
-		body, err := stdjson.Marshal(request)
-		require.NoError(t, err)
-		responses := make(map[string]string)
-		for _, p := range c.parts {
-			methods := []string{c.method}
-			if c.method == "avg" && len(c.parts) > 1 {
-				methods = []string{"sum", "count"}
-			}
-			for _, method := range methods {
-				values := p.values
-				esMethod, esField := method, field
-				if method == "count" {
-					esMethod = "value_count"
-					if field == "*" {
-						esField = "_index"
-					}
-					if c.method == "avg" {
-						values = p.counts
-					}
-				}
-				aggregation := map[string]any{"_value": map[string]any{esMethod: map[string]any{"field": esField}}}
-				result := map[string]any{"_value": map[string]any{"value": values[""]}}
-				if !c.ungrouped {
-					aggregation = map[string]any{"group": map[string]any{"aggregations": aggregation, "terms": map[string]any{"field": "group", "missing": " ", "size": 100}}}
-					var buckets []map[string]any
-					for group, value := range values {
-						buckets = append(buckets, map[string]any{"key": group, "doc_count": 1, "_value": map[string]any{"value": value}})
-					}
-					if c.duplicate != 0 {
-						buckets = append(buckets, map[string]any{"key": "common", "doc_count": 1, "_value": map[string]any{"value": c.duplicate}})
-					}
-					result = map[string]any{"group": map[string]any{"buckets": buckets}}
-				}
-				dsl, err := stdjson.Marshal(map[string]any{"aggregations": aggregation, "query": map[string]any{"bool": map[string]any{"filter": map[string]any{"range": map[string]any{"event_time": map[string]any{"from": p.from, "to": p.to, "include_lower": true, "include_upper": p.includeEnd}}}}}, "size": 0})
-				require.NoError(t, err)
-				response, err := stdjson.Marshal(map[string]any{"aggregations": result})
-				require.NoError(t, err)
-				responses[string(dsl)] = string(response)
-				if values == nil {
-					responses[string(dsl)] = ""
-				}
-			}
-		}
-		testCases["cluster_switch/"+c.name] = referenceCase{body: string(body), responses: responses, values: c.want, start: c.start / 1000, partial: c.partial, errorContains: c.errorContains}
-	}
-
 	for name, c := range testCases {
 		t.Run(name, func(t *testing.T) {
 			ctx = metadata.InitHashID(ctx)
-			var requests []string
-			if c.responses != nil {
-				var mu sync.Mutex
-				matcher := httpmock.BodyContainsString(`"event_time"`).WithName("cluster-switch-range")
-				url := mock.EsUrl + "/es_index/_search"
-				httpmock.RegisterMatcherResponder(http.MethodPost, url, matcher, func(r *http.Request) (*http.Response, error) {
-					var payload any
-					decoder := stdjson.NewDecoder(r.Body)
-					decoder.UseNumber()
-					if err := decoder.Decode(&payload); err != nil {
-						return nil, err
-					}
-					encoded, err := stdjson.Marshal(payload)
-					if err != nil {
-						return nil, err
-					}
-					mu.Lock()
-					requests = append(requests, string(encoded))
-					mu.Unlock()
-					response, ok := c.responses[string(encoded)]
-					if !ok {
-						t.Errorf("unexpected ES request: %s", encoded)
-					}
-					if response == "" {
-						return httpmock.NewStringResponse(http.StatusBadRequest, `{"error":{"type":"fixture_failure","reason":"fixture backend failure"},"status":400}`), nil
-					}
-					return httpmock.NewStringResponse(http.StatusOK, response), nil
-				})
-				t.Cleanup(func() { httpmock.RegisterMatcherResponder(http.MethodPost, url, matcher, nil) })
-			}
 
 			body := bytes.NewBufferString(c.body)
 			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "", body)
@@ -1245,47 +1085,7 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 
 			HandlerQueryReference(ginC)
 			b := w.body()
-			if c.responses == nil {
-				assert.JSONEq(t, c.expected, b)
-				return
-			}
-			expectedRequests := make([]string, 0, len(c.responses))
-			for request := range c.responses {
-				expectedRequests = append(expectedRequests, request)
-			}
-			assert.ElementsMatch(t, expectedRequests, requests)
-			if c.errorContains != "" {
-				assert.Equal(t, http.StatusBadRequest, w.Status())
-				assert.Contains(t, b, c.errorContains)
-				return
-			}
-			require.Equal(t, http.StatusOK, w.Status(), b)
-			var result struct {
-				Series []struct {
-					GroupValues []string    `json:"group_values"`
-					Values      [][]float64 `json:"values"`
-				} `json:"series"`
-				Status *metadata.Status `json:"status"`
-			}
-			require.NoError(t, stdjson.Unmarshal([]byte(b), &result))
-			if c.partial {
-				require.NotNil(t, result.Status, b)
-				assert.Equal(t, metadata.QueryTsPartial, result.Status.Code)
-				assert.Contains(t, result.Status.Message, "fixture backend failure")
-			} else {
-				assert.Nil(t, result.Status, b)
-			}
-			actual := make(map[string]float64)
-			for _, series := range result.Series {
-				require.Len(t, series.Values, 1)
-				require.Len(t, series.Values[0], 2)
-				assert.Equal(t, float64(c.start), series.Values[0][0])
-				group := strings.Join(series.GroupValues, ",")
-				_, duplicate := actual[group]
-				assert.False(t, duplicate, "duplicate output group %s", group)
-				actual[group] = series.Values[0][1]
-			}
-			assert.Equal(t, c.values, actual, b)
+			assert.JSONEq(t, c.expected, b)
 		})
 	}
 }

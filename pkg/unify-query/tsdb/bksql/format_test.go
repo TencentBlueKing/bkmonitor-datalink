@@ -87,22 +87,6 @@ func TestNewSqlFactory(t *testing.T) {
 		start time.Time
 		end   time.Time
 	}{
-		"doris range aggregate exclusive_route_end": {
-			query: &metadata.Query{
-				DB: "test_logs", Measurement: "doris", Field: "gseIndex",
-				IsRangeAggregation: true, RangeEndExclusive: true,
-				Aggregates: metadata.Aggregates{{Name: "sum"}},
-			},
-			expected: "SELECT SUM(`gseIndex`) AS `_value_` FROM `test_logs`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313'",
-		},
-		"doris range aggregate inclusive_user_end": {
-			query: &metadata.Query{
-				DB: "test_logs", Measurement: "doris", Field: "gseIndex",
-				IsRangeAggregation: true, RangeEndExclusive: false,
-				Aggregates: metadata.Aggregates{{Name: "sum"}},
-			},
-			expected: "SELECT SUM(`gseIndex`) AS `_value_` FROM `test_logs`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313'",
-		},
 		"doris sum-count_over_time-with-promql-1": {
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",

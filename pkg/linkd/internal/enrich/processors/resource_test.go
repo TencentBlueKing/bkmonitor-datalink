@@ -27,7 +27,7 @@ func TestAppendAdditionalDisplayDimensions(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("duplicate entries=%#v", entries)
 	}
-	text := buildDimensionText(entries, rules.DisplayBase, models.ResourceValues{}, "system.cpu", domain.DimensionMap{"bk_host_id": value})
+	text := buildDimensionText(entries, rules.DisplayBase, models.ResourceValues{}, models.StrategyQueryConfig{ResultTableID: "system.cpu"}, domain.DimensionMap{"bk_host_id": value})
 	if text != "bk_host_id(101)" {
 		t.Fatalf("dimension text=%q", text)
 	}

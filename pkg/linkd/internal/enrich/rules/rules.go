@@ -418,3 +418,8 @@ func FirstField(fields map[string]any, candidates ...string) (any, bool) {
 func IsAPMTable(tableID string) bool {
 	return strings.Contains(tableID, APMTableMarker)
 }
+
+// IsAPMQuery 按指标集或结果表识别 APM；目录衍生指标无需伪造物理表名。
+func IsAPMQuery(query models.StrategyQueryConfig) bool {
+	return query.MetricsetCode == "apm" || IsAPMTable(query.ResultTableID)
+}

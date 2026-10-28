@@ -429,7 +429,7 @@ Workload 的 `workload_name`、Pod 的 `pod_name`、Container 的 `container_nam
 | CloudResource | 已装配 | MySQL Reader 已接入 `enrich.Sources.CloudResource`，按接口入参租户和 `cloud_id + type + instanceid` 查询并关联云平台名称；当前 CloudResource 表为空 |
 | CloudPlugin / SysSetting | 已移出当前 Cloud 主链 | 当前 Cloud/VMWARE 契约不依赖 CloudPlugin、SysSetting，不阻塞资源丰富 |
 | K8s Reader | 已装配 | `OneModelK8sReader` 复用 `onemodel.Client` 查询 `kingeye_all_instance`，按租户、模型和 K8s 属性过滤并复核实例身份；不直接读取 `kmc_k8s_*` |
-| APM Application Reader | 已装配 | MySQL Reader 按接口入参租户、业务和应用名精确查询 `kapm_namespace` 未删除记录，并复核返回身份 |
+| APM Application Reader | 已装配 | MySQL Reader 按租户、业务范围和应用名精确查询 `kapm_namespace` 未删除记录，并复核返回身份；全局业务在同租户内要求名称唯一 |
 
 ### 7.3 OneModel 实例协议
 
@@ -687,13 +687,15 @@ Event.Dimensions.task_id
 
 APM 第一轮纵切已完成：
 
-- 新增 `APMApplicationReader`，按租户、业务和应用名称读取候选应用；生产实现从 Kingeye `kapm_namespace` 表按 `namespace` 或 `normalized_name` 精确查询未删除应用，返回名称保留请求拼写，并复用 Enrich MySQL 连接池；
+- 新增 `APMApplicationReader`，按租户、业务范围和应用名称读取候选应用；生产实现从 Kingeye `kapm_namespace` 表按 `namespace` 或 `normalized_name` 精确查询未删除应用，返回名称保留请求拼写，并复用 Enrich MySQL 连接池；
+- APM 应用定位通过 `Scope.IsGlobalBusiness` 读取 `metadata_space.is_global`：普通业务精确限定 `bk_biz_id`；全局业务只放开同租户内的业务限制，最多读取两条以检查名称唯一性。业务不存在、读取失败或同租户应用重名时保留诊断，不任选一条，不跨租户；
+- 命中应用后，APM、Resource 的 `bk_biz_id`、业务名称和 `cw_labels` 使用应用记录的实际业务。原始 Event 的业务标签与策略历史快照保持不变；全局业务未命中应用时，不把管理业务当成资源业务兜底；
 - 精确匹配应用名称后投影应用 ID、别名和业务；
 - 生成 application/service/service-instance 模型身份与 `cw_labels`；
 
 - 新增 `apm` Processor 与 Router/配置注册；
-- 识别 `bkapm` 结果表；
-- 应用名称优先读取 alarmd 真实输入 `extra_data.additional_dimensions.app_name`，缺失时再按 `data_source=应用-<name>` 或 `_bkapm_metric_<name>` 推导；
+- 资源、APM 和展示处理统一识别 `query_configs[].metricset_code=apm` 或 `bkapm` 结果表。APM 目录衍生指标可以没有物理结果表和目录 `model_id`，直接按 APM 应用维度定位资源，不进入要求目录模型的普通 DATA 分支；
+- 应用名称读取 `dimensions` 与 `extra_data.additional_dimensions` 合并视图中的 `app_name`，两处冲突时拒绝处理；缺失时再按 `data_source=应用-<name>` 或 `_bkapm_metric_<name>` 推导；
 - application 身份为 `<app_id>`，service 身份为 `<app_id>|<service>`，service-instance 身份为 `<app_id>|<service>|<instance>`；
 - 投影 application/service/instance/span/net_peer 字段；
 - 应用未命中、非精确匹配、租户或业务不匹配返回 partial；旧 `dimensions.apm_app_id` 仅保留为兼容回退；
@@ -702,7 +704,7 @@ APM 第一轮纵切已完成：
 - APM Resource 按已确认的模型代码读取同租户模型注册表中的名称，补齐 `model_name`；模型未命中、身份不匹配、名称缺失或读取失败时保留 APM 资源身份并标记部分成功，取消继续向调用方传播；
 - 已覆盖 ApplicationReader 未命中、非精确匹配、租户不匹配、Reader 错误、缺少应用 ID、重复精确匹配和完整 Processor 链测试；
 - 已用 alarmd 真实 APM 字段布局补充回归测试，覆盖 `additional_dimensions.app_name`、`service_name`、`bk_instance_id` 和 `net_peer_name`；
-- 已补完整 Processor 链测试、application/service/service-instance 三种身份 payload、应用非精确匹配、租户不匹配、Reader 错误和重复精确匹配矩阵；重复匹配当前沿用 Reader 返回顺序的第一条精确结果。
+- 已补完整 Processor 链测试、application/service/service-instance 三种身份 payload、应用非精确匹配、租户不匹配、Reader 错误和重复精确匹配矩阵；普通业务的重复匹配沿用 Reader 返回顺序的第一条精确结果，全局业务的重名匹配拒绝生成身份。
 
 Cloud 第一轮纵切已完成：
 

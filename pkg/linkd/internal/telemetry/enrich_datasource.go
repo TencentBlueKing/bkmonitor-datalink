@@ -178,9 +178,9 @@ type observedAPMApplicationReader struct {
 	metrics *instruments
 }
 
-func (r *observedAPMApplicationReader) FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string) ([]models.APMApplication, error) {
+func (r *observedAPMApplicationReader) FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string, global bool) ([]models.APMApplication, error) {
 	startedAt := time.Now()
-	values, err := r.next.FindAPMApplications(ctx, tenantID, bizID, name)
+	values, err := r.next.FindAPMApplications(ctx, tenantID, bizID, name, global)
 	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceAPMApplication, "find_apm_applications", startedAt, len(values) != 0, err)
 	return values, err
 }

@@ -206,6 +206,9 @@ KAC 在调用前裁剪用户权限，Linkd 保留租户门禁；接口不扫描�
 `name/content` 来自保存补丁合成的 title/content。旧清洗同名 `extra_data.object/item/meta_info/strategy_id/dimension_info`
 优先使用有效视图中的值；显式空值、0、false 不触发回退。没有旧字段时，object 使用 subject_name/subject_id，
 meta_info 使用有效同名丰富值或 source_event_id。
+`object` 没有显式覆盖时，`subject_name` 因丰富失败不可用也允许回退到非空的 `subject_id`；
+不读取失败处理器留下的名称。没有可用身份时仍不可求值，不能把失败降成空字符串用于聚合。
+显式 `extra_data.object` 本身不可用，或自定义处理器失败导致该路径不可用时，仍返回不可求值，不绕过覆盖字段回退。
 其他内置字段优先读取有效 labels，再读取有效 extra_data；`bk_biz_id` 在不存在丰富覆盖时可使用来源
 `dimensions.bk_biz_id`。`source_id/source_name` 不回退到 Linkd EventSourceID。
 `strategy` 对应 strategy_name，`strategy_id` 对应 monitor_template_id，`dimension_info` 对应 dimension_text，

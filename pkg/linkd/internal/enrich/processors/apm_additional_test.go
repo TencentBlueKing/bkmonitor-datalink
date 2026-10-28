@@ -33,7 +33,7 @@ func TestAPMServiceFromAdditionalDimensions(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Metric: reader})
+				chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Business: reader, Metric: reader})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -78,7 +78,7 @@ func TestAPMRejectsConflictingOrInvalidAdditionalDimensions(t *testing.T) {
 			reader := apmTestReader{}
 			event := processorBaseTargetAlert(t, domain.DimensionMap{rules.FieldServiceName: domain.NewStringScalar("checkout")})
 			event.ExtraData = domain.JSONObject{"additional_dimensions": json.RawMessage(raw)}
-			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader, Metric: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, Display{}, APM{}}, enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader, Business: reader, Metric: reader})
 			if err != nil {
 				t.Fatal(err)
 			}

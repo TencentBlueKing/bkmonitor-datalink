@@ -46,7 +46,7 @@ func TestAPMResourceModelName(t *testing.T) {
 			if tc.change != nil {
 				tc.change(&model)
 			}
-			sources := enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader}
+			sources := enrich.Sources{CWStrategy: reader, OneModel: reader, APMApplication: reader, Business: reader}
 			if !tc.noReader {
 				sources.Model = apmModelNameReader(func(_ context.Context, tenant, code string) (enrich.Model, bool, error) {
 					if tenant != event.BKTenantID || code != "cw-service_instance" {
@@ -90,7 +90,7 @@ func TestAPMResourceModelLookupCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	scope, err := enrich.NewScope(processorBaseTargetAlert(t, nil), enrich.Sources{
-		CWStrategy: reader, OneModel: reader, APMApplication: reader,
+		CWStrategy: reader, OneModel: reader, APMApplication: reader, Business: reader,
 		Model: apmModelNameReader(func(context.Context, string, string) (enrich.Model, bool, error) {
 			cancel()
 			return enrich.Model{}, false, context.Canceled

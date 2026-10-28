@@ -54,7 +54,7 @@ func TestAPMApplicationClientMatchesStoredApplicationNames(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			apps, err := client.FindAPMApplications(context.Background(), "system", 2, test.queryName)
+			apps, err := client.FindAPMApplications(context.Background(), "system", 2, test.queryName, false)
 			if test.wantInvalid {
 				if !errors.Is(err, enrich.ErrInvalidDataSourceResponse) || len(apps) != 0 {
 					t.Fatalf("apps=%#v err=%v", apps, err)
@@ -97,7 +97,7 @@ func TestAPMApplicationClientScopesQueryByTenantBusinessAndName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	apps, err := client.FindAPMApplications(context.Background(), "system", 10, "test223")
+	apps, err := client.FindAPMApplications(context.Background(), "system", 10, "test223", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestAPMApplicationClientPreservesQueryError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if apps, err := client.FindAPMApplications(context.Background(), "system", 2, "cross_bank_trade"); !errors.Is(err, queryErr) || len(apps) != 0 {
+			if apps, err := client.FindAPMApplications(context.Background(), "system", 2, "cross_bank_trade", false); !errors.Is(err, queryErr) || len(apps) != 0 {
 				t.Fatalf("apps=%#v err=%v", apps, err)
 			}
 		})
@@ -147,7 +147,7 @@ func TestAPMApplicationClientRejectsInvalidRequestsWithoutQuery(t *testing.T) {
 		{name: "empty name", ctx: context.Background(), tenantID: "system", bizID: 10},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := client.FindAPMApplications(test.ctx, test.tenantID, test.bizID, test.appName); err == nil {
+			if _, err := client.FindAPMApplications(test.ctx, test.tenantID, test.bizID, test.appName, false); err == nil {
 				t.Fatal("invalid request accepted")
 			}
 		})
@@ -166,7 +166,54 @@ func TestAPMApplicationClientRejectsMismatchedResponseIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.FindAPMApplications(context.Background(), "system", 10, "test223"); !errors.Is(err, enrich.ErrInvalidDataSourceResponse) {
+	if _, err := client.FindAPMApplications(context.Background(), "system", 10, "test223", false); !errors.Is(err, enrich.ErrInvalidDataSourceResponse) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestAPMApplicationClientGlobalBusinessScope(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		rows      [][]driver.Value
+		wantCount int
+		invalid   bool
+	}{
+		{name: "application in real business", rows: [][]driver.Value{{"system", int64(54), "testbkee5-kingeye", "testbkee5_kingeye", "Kingeye", int64(2)}}, wantCount: 1},
+		{name: "missing"},
+		{name: "ambiguous across businesses", rows: [][]driver.Value{{"system", int64(54), "testbkee5-kingeye", "testbkee5_kingeye", "Kingeye", int64(2)}, {"system", int64(55), "testbkee5-kingeye", "testbkee5_kingeye", "Kingeye", int64(3)}}, invalid: true},
+		{name: "other tenant", rows: [][]driver.Value{{"other", int64(54), "testbkee5-kingeye", "testbkee5_kingeye", "Kingeye", int64(2)}}, invalid: true},
+		{name: "invalid resource business", rows: [][]driver.Value{{"system", int64(54), "testbkee5-kingeye", "testbkee5_kingeye", "Kingeye", int64(0)}}, invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openReaderTestDB(t, func(_ context.Context, sql string, args []driver.NamedValue) (driver.Rows, error) {
+				if strings.Contains(sql, "bk_biz_id =") || !strings.Contains(sql, "bk_tenant_id = ?") || !strings.Contains(sql, "is_deleted = ?") || !strings.Contains(sql, "LIMIT ?") {
+					t.Fatalf("invalid global query: %s", sql)
+				}
+				want := []driver.Value{"system", "testbkee5-kingeye", "testbkee5-kingeye", false, int64(2)}
+				if len(args) != len(want) {
+					t.Fatalf("args=%v", args)
+				}
+				for i, v := range want {
+					if args[i].Value != v {
+						t.Fatalf("args[%d]=%v, want %v", i, args[i].Value, v)
+					}
+				}
+				return &readerTestRows{columns: []string{"bk_tenant_id", "namespace_id", "namespace", "normalized_name", "namespace_alias", "bk_biz_id"}, values: tc.rows}, nil
+			})
+			client, err := NewAPMApplicationClient(APMApplicationClientConfig{DB: db})
+			if err != nil {
+				t.Fatal(err)
+			}
+			apps, err := client.FindAPMApplications(t.Context(), "system", 524, "testbkee5-kingeye", true)
+			if tc.invalid {
+				if !errors.Is(err, enrich.ErrInvalidDataSourceResponse) || len(apps) != 0 {
+					t.Fatalf("apps=%v error=%v", apps, err)
+				}
+			} else if err != nil || len(apps) != tc.wantCount {
+				t.Fatalf("apps=%v error=%v", apps, err)
+			} else if len(apps) > 0 && apps[0].BKBizID != 2 {
+				t.Fatalf("application business=%d", apps[0].BKBizID)
+			}
+		})
 	}
 }

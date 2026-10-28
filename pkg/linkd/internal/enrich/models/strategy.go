@@ -35,8 +35,10 @@ type StrategyQueryConfig struct {
 	Unit            string            `json:"unit"`
 	Alias           string            `json:"alias"`
 	// MetricRefID 引用指标目录主键；MetricID 仍保留检测面的字符串标识。
-	MetricRefID     int64             `json:"metric_ref_id"`
-	MetricID        string            `json:"metric_id"`
+	MetricRefID int64  `json:"metric_ref_id"`
+	MetricID    string `json:"metric_id"`
+	// MetricsetCode 保留发布快照中的指标集身份；APM 目录指标可能没有物理结果表。
+	MetricsetCode   string            `json:"metricset_code"`
 	MetricSource    string            `json:"metric_source"`
 	SourceConfig    domain.JSONObject `json:"source_config"`
 	AggregateMethod string            `json:"agg_method"`

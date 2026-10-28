@@ -156,7 +156,7 @@ func TestDisplayCreatedContentAcrossResourceScenes(t *testing.T) {
 			case "apm":
 				alert.Dimensions = domain.DimensionMap{"apm_app_id": domain.NewStringScalar("17"), rules.FieldServiceName: domain.NewStringScalar("checkout"), rules.FieldAPMInstanceID: domain.NewStringScalar("instance-a")}
 				reader := apmTestReader{}
-				sources = enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, APMApplication: reader}
+				sources = enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, APMApplication: reader, Business: reader}
 			}
 			alert.Content = "AVG(usage) >= 1%, 当前值 2%,关联信息：保留原文"
 			original := alert.Clone()

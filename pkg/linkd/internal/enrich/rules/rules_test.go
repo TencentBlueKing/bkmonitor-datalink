@@ -38,6 +38,25 @@ func TestClassifyCachesBaseTargetBranchOnlyForTargetStrategies(t *testing.T) {
 	}
 }
 
+func TestIsAPMQuery(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		query models.StrategyQueryConfig
+		want  bool
+	}{
+		{name: "catalog without table", query: models.StrategyQueryConfig{MetricsetCode: "apm"}, want: true},
+		{name: "legacy table", query: models.StrategyQueryConfig{ResultTableID: "2_bkapm_metric_demo.__default__"}, want: true},
+		{name: "other catalog", query: models.StrategyQueryConfig{MetricsetCode: "system"}},
+		{name: "missing identity"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsAPMQuery(tc.query); got != tc.want {
+				t.Fatalf("IsAPMQuery(%+v)=%t, want %t", tc.query, got, tc.want)
+			}
+		})
+	}
+}
+
 func numberScalar(t *testing.T, value float64) domain.Scalar {
 	t.Helper()
 	result, err := domain.NewNumberScalar(value)

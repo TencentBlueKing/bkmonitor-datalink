@@ -44,7 +44,7 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
 	projection, err := strategy.StrategyItemProjection()
-	if err != nil || !rules.IsAPMTable(projection.QueryConfigs[0].ResultTableID) {
+	if err != nil || !rules.IsAPMQuery(projection.QueryConfigs[0]) {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
 	}
 	bizID, diagnostics := enrich.ValidateBusinessID(alert)
@@ -60,6 +60,7 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		return enrich.ProcessorResult{}, err
 	}
 	diagnostics = append(diagnostics, applicationDiagnostics...)
+	bizID = application.BKBizID
 	service := dimensionText(dimensions, rules.FieldServiceName)
 	instance := dimensionText(dimensions, rules.FieldAPMInstanceID)
 	modelID, modelInstID := apmModelIdentity(application.ID, service, instance)
@@ -84,38 +85,53 @@ func apmLabels(bizID int64, appID string) []string {
 }
 
 type apmApplicationProjection struct {
-	ID    string
-	Name  string
-	Alias string
+	ID      string
+	Name    string
+	Alias   string
+	BKBizID int64
 }
 
-// resolveAPMApplication 使用 alarmd 实际输入中的 additional_dimensions.app_name
-// 定位租户和业务内的 APM 应用；旧 dimensions.apm_app_id 仅保留为兼容回退。
+// resolveAPMApplication 使用 dimensions 或 additional_dimensions 中的 app_name
+// 定位已确认业务范围内的 APM 应用；两处维度冲突时不得任选其一。
+// 全局业务在同租户内要求名称唯一，资源业务取自命中的应用记录。
+// 旧 dimensions.apm_app_id 仅保留为兼容回退。
 func resolveAPMApplication(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, tableID string, bizID int64) (apmApplicationProjection, []enrich.Diagnostic, error) {
 	alert := scope.Facts()
-	projection := apmApplicationProjection{ID: dimensionText(alert.Dimensions, rules.FieldAPMAppID)}
+	projection := apmApplicationProjection{ID: dimensionText(alert.Dimensions, rules.FieldAPMAppID), BKBizID: bizID}
 	diagnostics := []enrich.Diagnostic{}
-	additional, err := additionalDimensions(alert.ExtraData)
+	dimensions, err := combinedDimensions(alert)
 	if err != nil {
 		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"}})
 	} else {
-		projection.Name = dimensionText(additional, "app_name")
+		projection.Name = dimensionText(dimensions, "app_name")
 	}
 	if projection.Name == "" {
 		projection.Name = apmApplicationName(strategy, tableID)
 	}
-	if projection.Name == "" {
-		if projection.ID == "" {
-			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"extra_data.additional_dimensions.app_name"}})
-		}
-		return projection, diagnostics, nil
-	}
-	// APM 应用名称只在真实业务内唯一；无业务时不能退化为跨业务查询。
+	// 先验证业务身份，再明确查询范围；不能把缺失业务当成全局业务。
 	if bizID <= 0 {
 		_, businessDiagnostics := enrich.ValidateBusinessID(alert)
 		return projection, append(diagnostics, businessDiagnostics...), nil
 	}
-	apps, readErr := scope.APMApplications(ctx, bizID, projection.Name)
+	global, businessFound, businessErr := scope.IsGlobalBusiness(ctx, bizID)
+	if err := ctx.Err(); err != nil {
+		return apmApplicationProjection{}, nil, err
+	}
+	if businessErr != nil || !businessFound {
+		projection.ID, projection.BKBizID = "", 0
+		return projection, append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyBusiness}), nil
+	}
+	if global {
+		// 全局业务只界定查询范围，不能作为应用所属业务写回资源。
+		projection.ID, projection.BKBizID = "", 0
+	}
+	if projection.Name == "" {
+		if projection.ID == "" {
+			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"dimensions.app_name", "extra_data.additional_dimensions.app_name"}})
+		}
+		return projection, diagnostics, nil
+	}
+	apps, readErr := scope.APMApplications(ctx, bizID, projection.Name, global)
 	if err := ctx.Err(); err != nil {
 		return apmApplicationProjection{}, nil, err
 	}
@@ -123,12 +139,16 @@ func resolveAPMApplication(ctx context.Context, scope *enrich.Scope, strategy mo
 		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyAPMApplication})
 		return projection, diagnostics, nil
 	}
+	if global && len(apps) > 1 {
+		return projection, append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyAPMApplication}), nil
+	}
 	for _, app := range apps {
-		if app.TenantID != alert.BKTenantID || app.BKBizID != bizID || app.Name != projection.Name || app.ID <= 0 {
+		if app.TenantID != alert.BKTenantID || app.BKBizID <= 0 || (!global && app.BKBizID != bizID) || app.Name != projection.Name || app.ID <= 0 {
 			continue
 		}
 		projection.ID = fmt.Sprint(app.ID)
 		projection.Alias = app.Alias
+		projection.BKBizID = app.BKBizID
 		return projection, diagnostics, nil
 	}
 	diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyAPMApplication})

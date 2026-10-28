@@ -29,7 +29,7 @@ func TestAPMProjectsDimensionsAndIdentity(t *testing.T) {
 	}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{"apm_app_id": domain.NewStringScalar("17"), rules.FieldServiceName: domain.NewStringScalar("checkout"), rules.FieldAPMInstanceID: domain.NewStringScalar("instance-a"), rules.FieldAPMSpanName: domain.NewStringScalar("GET /pay"), rules.FieldAPMNetPeerName: domain.NewStringScalar("db")})
 	reader := apmTestReader{}
-	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Business: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestAPMApplicationReaderProjectsAliasAndIdentity(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{rules.FieldServiceName: domain.NewStringScalar("checkout")})
-	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Business: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestAPMApplicationReaderProjectsAliasAndIdentity(t *testing.T) {
 func TestAPMApplicationReaderTenantMismatchReturnsPartial(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{apps: []models.APMApplication{{TenantID: "tenant-b", ID: 17, Name: "demo", Alias: "Other", BKBizID: 2}}}
-	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Business: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestAPMApplicationReaderTenantMismatchReturnsPartial(t *testing.T) {
 func TestAPMApplicationReaderErrorReturnsPartial(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{appErr: errors.New("apm unavailable")}
-	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Business: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestAPMApplicationReaderErrorReturnsPartial(t *testing.T) {
 func TestAPMApplicationReaderDuplicateExactMatchUsesFirstStableResult(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{apps: []models.APMApplication{{TenantID: "tenant-a", ID: 17, Name: "demo", Alias: "First", BKBizID: 2}, {TenantID: "tenant-a", ID: 18, Name: "demo", Alias: "Second", BKBizID: 2}}}
-	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Business: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestAPMApplicationReaderDuplicateExactMatchUsesFirstStableResult(t *testing
 func TestAPMApplicationReaderNonExactMatchReturnsPartial(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{apps: []models.APMApplication{{TenantID: "tenant-a", ID: 17, Name: "other", Alias: "Other", BKBizID: 2}}}
-	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{APM{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Business: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestAPMResourceProjectionFromDimensions(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{"apm_app_id": domain.NewStringScalar("17"), rules.FieldServiceName: domain.NewStringScalar("checkout"), rules.FieldAPMInstanceID: domain.NewStringScalar("instance-a")})
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, APM{}}, enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Business: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestAPMRealAlarmResolvesApplicationFromAdditionalDimensions(t *testing.T) {
 	}
 	chain, err := enrich.NewChain(
 		[]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}},
-		enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Metric: reader},
+		enrich.Sources{CWStrategy: reader, Model: reader, OneModel: reader, APMApplication: reader, Business: reader, Metric: reader},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestAPMCompletePayloadCoversAllIdentityLevels(t *testing.T) {
 			if tc.instance != "" {
 				dimensions[rules.FieldAPMInstanceID] = domain.NewStringScalar(tc.instance)
 			}
-			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Business: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -270,7 +270,7 @@ func TestAPMCompleteProcessorChainPreservesAPMContext(t *testing.T) {
 	t.Parallel()
 	reader := apmTestReader{apps: []models.APMApplication{{TenantID: "tenant-a", ID: 17, Name: "demo", Alias: "Demo", BKBizID: 2}}}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{rules.FieldServiceName: domain.NewStringScalar("checkout"), rules.FieldAPMInstanceID: domain.NewStringScalar("instance-a")})
-	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
+	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, MonitorResource{}, Display{}, APM{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, APMApplication: reader, Business: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func (r apmTestReader) GetAlarmSource(context.Context, string, string) (models.A
 	return models.AlarmSource{Id: "source", Name: "Source"}, true, nil
 }
 
-func (r apmTestReader) FindAPMApplications(context.Context, string, int64, string) ([]models.APMApplication, error) {
+func (r apmTestReader) FindAPMApplications(context.Context, string, int64, string, bool) ([]models.APMApplication, error) {
 	if r.applicationReads != nil {
 		(*r.applicationReads)++
 	}
@@ -365,4 +365,8 @@ func (r apmTestReader) GetByStrategyID(context.Context, models.StrategyRevisionQ
 		tableID = "2_bkapm_metric_demo.__default__"
 	}
 	return models.CWStrategy{BKBizID: &biz, Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, DataSource: dataSource, StrategyItem: &models.CWStrategyItem{QueryConfigs: []models.StrategyQueryConfig{{ResultTableID: tableID, MetricField: "duration"}}}}}, true, nil
+}
+
+func (apmTestReader) IsGlobalBusiness(context.Context, string, int64) (bool, bool, error) {
+	return false, true, nil
 }

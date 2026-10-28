@@ -45,7 +45,7 @@ func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 	if _, found, err := sources.Model.GetModelByCode(context.Background(), "tenant", "cw-Host"); !found || err != nil {
 		t.Fatalf("model found=%t err=%v", found, err)
 	}
-	if applications, err := sources.APMApplication.FindAPMApplications(context.Background(), "tenant", 2, "demo"); err != nil || len(applications) != 1 {
+	if applications, err := sources.APMApplication.FindAPMApplications(context.Background(), "tenant", 2, "demo", false); err != nil || len(applications) != 1 {
 		t.Fatalf("APM applications=%#v err=%v", applications, err)
 	}
 	if _, found, err := sources.CollectConfig.GetCollectConfig(context.Background(), "tenant", "collect-1"); !found || err != nil {
@@ -116,7 +116,7 @@ func (testOneModelReader) FindInstance(context.Context, string, enrich.InstanceQ
 
 type testAPMApplicationReader struct{}
 
-func (testAPMApplicationReader) FindAPMApplications(context.Context, string, int64, string) ([]models.APMApplication, error) {
+func (testAPMApplicationReader) FindAPMApplications(context.Context, string, int64, string, bool) ([]models.APMApplication, error) {
 	return []models.APMApplication{{TenantID: "tenant", ID: 17, Name: "demo", BKBizID: 2}}, nil
 }
 

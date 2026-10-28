@@ -128,7 +128,7 @@ func TestPromQLDisplayUsesReturnedDimensions(t *testing.T) {
 			if !reflect.DeepEqual(keys, tc.wantKeys) || !reflect.DeepEqual(names, tc.wantNames) {
 				t.Fatalf("keys=%v names=%v; want keys=%v names=%v", keys, names, tc.wantKeys, tc.wantNames)
 			}
-			text := buildDimensionText(got, rules.MainData, models.ResourceValues{}, "", additional)
+			text := buildDimensionText(got, rules.MainData, models.ResourceValues{}, models.StrategyQueryConfig{}, additional)
 			if len(tc.wantKeys) > 0 && !strings.Contains(text, tc.wantNames[0]) {
 				t.Fatalf("dimension text is missing returned label: %q", text)
 			}

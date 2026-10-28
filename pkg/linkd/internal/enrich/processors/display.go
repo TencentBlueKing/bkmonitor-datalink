@@ -84,7 +84,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 			return enrich.ProcessorResult{}, err
 		}
 		resultTableID := projection.QueryConfigs[0].ResultTableID
-		if rules.IsAPMTable(resultTableID) {
+		if rules.IsAPMQuery(projection.QueryConfigs[0]) {
 			objectName = rules.DimensionText(alertDimensions, rules.FieldServiceName)
 		} else if strings.HasPrefix(resultTableID, "uptimecheck") {
 			result, uptimeErr := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, alert.Dimensions, bizID)
@@ -165,7 +165,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		dimensions,
 		classification.Main,
 		scope.Context().Resource.Values,
-		projection.QueryConfigs[0].ResultTableID,
+		projection.QueryConfigs[0],
 		additional,
 	)
 	content := alert.Content
@@ -417,7 +417,11 @@ func cleanDisplayObject(
 			return resourceName
 		}
 	}
-	if rules.IsAPMTable(strategy.Spec.TableID) {
+	query := models.StrategyQueryConfig{ResultTableID: strategy.Spec.TableID}
+	if projection, err := strategy.StrategyItemProjection(); err == nil {
+		query = projection.QueryConfigs[0]
+	}
+	if rules.IsAPMQuery(query) {
 		if dimensions, err := combinedDimensions(alert); err == nil {
 			if serviceName := rules.DimensionText(dimensions, rules.FieldServiceName); serviceName != "" {
 				return serviceName
@@ -612,14 +616,14 @@ func buildDimensionText(
 	entries []models.DimensionDisplay,
 	classification rules.DisplayClassification,
 	resource models.ResourceValues,
-	resultTableID string,
+	query models.StrategyQueryConfig,
 	additional domain.DimensionMap,
 ) string {
 	copied := append([]models.DimensionDisplay(nil), entries...)
 	sort.SliceStable(copied, func(i, j int) bool { return copied[i].Name < copied[j].Name })
 	parts := make([]string, 0, len(copied))
 	for _, entry := range copied {
-		if entry.Name == rules.FieldBKBizID || excludeAPMDimension(entry, resultTableID) {
+		if entry.Name == rules.FieldBKBizID || excludeAPMDimension(entry, query) {
 			continue
 		}
 		if entry.RealKey != nil {
@@ -637,8 +641,8 @@ func buildDimensionText(
 	return text
 }
 
-func excludeAPMDimension(entry models.DimensionDisplay, resultTableID string) bool {
-	if !rules.IsAPMTable(resultTableID) || entry.RealKey == nil {
+func excludeAPMDimension(entry models.DimensionDisplay, query models.StrategyQueryConfig) bool {
+	if !rules.IsAPMQuery(query) || entry.RealKey == nil {
 		return false
 	}
 	return rules.IsAPMDimension(*entry.RealKey)

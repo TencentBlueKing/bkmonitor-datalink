@@ -45,9 +45,10 @@ func NewAPMApplicationClient(config APMApplicationClientConfig) (*APMApplication
 	return &APMApplicationClient{db: config.DB}, nil
 }
 
-// FindAPMApplications 按租户、业务精确匹配未删除应用的 namespace 或 normalized_name。
+// FindAPMApplications 按租户和业务范围精确匹配未删除应用的 namespace 或 normalized_name。
+// global=true 时不以管理业务过滤资源业务；最多读两条以识别同租户重名，不任选一个业务。
 // 返回的 Name 保留请求拼写，供下游校验告警中的应用名称；不自行推导规范化规则。
-func (c *APMApplicationClient) FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string) ([]models.APMApplication, error) {
+func (c *APMApplicationClient) FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string, global bool) ([]models.APMApplication, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("find APM applications: context must not be nil")
 	}
@@ -61,18 +62,24 @@ func (c *APMApplicationClient) FindAPMApplications(ctx context.Context, tenantID
 		return nil, fmt.Errorf("find APM applications: name is required")
 	}
 	var rows []apmApplicationRow
-	err := c.db.WithContext(ctx).
+	query := c.db.WithContext(ctx).
 		Table(apmApplicationTable).
-		Select("bk_tenant_id", "namespace_id", "namespace", "normalized_name", "namespace_alias", "bk_biz_id").
-		Where("bk_tenant_id = ? AND bk_biz_id = ? AND (namespace = ? OR normalized_name = ?) AND is_deleted = ?", tenantID, bizID, name, name, false).
-		Order("namespace_id ASC").
-		Find(&rows).Error
+		Select("bk_tenant_id", "namespace_id", "namespace", "normalized_name", "namespace_alias", "bk_biz_id")
+	if global {
+		query = query.Where("bk_tenant_id = ? AND (namespace = ? OR normalized_name = ?) AND is_deleted = ?", tenantID, name, name, false).Limit(2)
+	} else {
+		query = query.Where("bk_tenant_id = ? AND bk_biz_id = ? AND (namespace = ? OR normalized_name = ?) AND is_deleted = ?", tenantID, bizID, name, name, false)
+	}
+	err := query.Order("namespace_id ASC").Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("query APM applications: %w", err)
 	}
+	if global && len(rows) > 1 {
+		return nil, fmt.Errorf("%w: APM application name is ambiguous in global business", enrich.ErrInvalidDataSourceResponse)
+	}
 	applications := make([]models.APMApplication, 0, len(rows))
 	for _, row := range rows {
-		if row.TenantID != tenantID || row.BKBizID != bizID || (row.Name != name && row.NormalizedName != name) || row.ID <= 0 {
+		if row.TenantID != tenantID || row.BKBizID <= 0 || (!global && row.BKBizID != bizID) || (row.Name != name && row.NormalizedName != name) || row.ID <= 0 {
 			return nil, fmt.Errorf("%w: APM application identity does not match query", enrich.ErrInvalidDataSourceResponse)
 		}
 		applications = append(applications, models.APMApplication{

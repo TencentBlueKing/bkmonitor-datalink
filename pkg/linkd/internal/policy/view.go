@@ -12,6 +12,7 @@ package policy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -357,13 +358,23 @@ func (v *FactView) Field(ctx context.Context, name string) (Value, error) {
 		return v.readPath(pathFor("content"))
 	case "object":
 		value, err := v.readPath(pathFor("subject_name"))
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrUnavailable) {
 			return Value{}, err
 		}
-		if value.Present && value.Data != "" {
+		if err == nil && value.Present && value.Data != "" {
 			return value, nil
 		}
-		return v.readPath(pathFor("subject_id"))
+		// 名称丰富失败不使来源身份失效；只能回退到非空 subject_id，
+		// 避免把不可用名称降成空字符串，让不相关告警进入同一聚合分组。
+		// 显式 extra_data.object 的读取失败已在上面返回，不绕过其失败边界。
+		identity, identityErr := v.readPath(pathFor("subject_id"))
+		if identityErr != nil {
+			return Value{}, identityErr
+		}
+		if err != nil && (!identity.Present || identity.Data == "") {
+			return Value{}, err
+		}
+		return identity, nil
 	case "item":
 		first, err := v.flat("display_name")
 		if err != nil {

@@ -137,9 +137,10 @@ type CollectTopologyReader interface {
 	FindHostTopology(ctx context.Context, tenantID, hostID string, includeSetModule bool) (models.ResourceTopology, bool, error)
 }
 
-// APMApplicationReader 按租户、业务和应用名称读取 APM 应用候选项。
+// APMApplicationReader 按租户、业务范围和应用名称读取 APM 应用候选项。
+// global 只能来自已确认的业务全局标记；全局查询仍不得跨租户。
 type APMApplicationReader interface {
-	FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string) ([]models.APMApplication, error)
+	FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string, global bool) ([]models.APMApplication, error)
 }
 
 // K8sReader 按租户、对象模型和 K8s 维度读取统一实例身份。
@@ -238,8 +239,9 @@ type instanceResult struct {
 }
 
 type apmApplicationQuery struct {
-	bizID int64
-	name  string
+	bizID  int64
+	name   string
+	global bool
 }
 
 type apmApplicationResult struct {
@@ -486,10 +488,10 @@ func (s *Scope) OptionalMetricMetadata(ctx context.Context, query models.MetricQ
 	return models.MetricMetadata{}, false, nil
 }
 
-// APMApplications 按业务和名称读取租户内 APM 应用候选项，并在单次 Enrich 内复用结果。
-func (s *Scope) APMApplications(ctx context.Context, bizID int64, name string) (returned []models.APMApplication, err error) {
+// APMApplications 按已确认的业务范围和名称读取租户内应用，并在单次 Enrich 内复用结果。
+func (s *Scope) APMApplications(ctx context.Context, bizID int64, name string, global bool) (returned []models.APMApplication, err error) {
 	defer func() { s.recordDependencyError("apm_application", err) }()
-	query := apmApplicationQuery{bizID: bizID, name: name}
+	query := apmApplicationQuery{bizID: bizID, name: name, global: global}
 	if result, exists := s.apmApplications[query]; exists {
 		return append([]models.APMApplication(nil), result.values...), result.err
 	}
@@ -497,7 +499,7 @@ func (s *Scope) APMApplications(ctx context.Context, bizID int64, name string) (
 	if s.sources.APMApplication == nil {
 		result.err = fmt.Errorf("apm application reader is unavailable")
 	} else {
-		result.values, result.err = s.sources.APMApplication.FindAPMApplications(ctx, s.original.BKTenantID, bizID, name)
+		result.values, result.err = s.sources.APMApplication.FindAPMApplications(ctx, s.original.BKTenantID, bizID, name, global)
 	}
 	if ctx.Err() == nil {
 		result.values = append([]models.APMApplication(nil), result.values...)

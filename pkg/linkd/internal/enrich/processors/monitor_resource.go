@@ -182,7 +182,7 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 		}
 		return resourceScenarioResult(scope, result.Resource, result.ResourceDiagnostics, false)
 	}
-	if rules.IsAPMTable(query.ResultTableID) {
+	if rules.IsAPMQuery(query) {
 		return processAPMResource(ctx, scope, strategy, query, bizID)
 	}
 	modelCode := dataObjectModelCode(strategy, scope.Facts().Dimensions)
@@ -305,6 +305,7 @@ func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy model
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
+	bizID = application.BKBizID
 	service := rules.DimensionText(dimensions, rules.FieldServiceName)
 	instance := rules.DimensionText(dimensions, rules.FieldAPMInstanceID)
 	modelID, modelInstID := apmModelIdentity(application.ID, service, instance)

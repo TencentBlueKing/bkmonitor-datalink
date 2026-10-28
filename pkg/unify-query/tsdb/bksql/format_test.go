@@ -87,6 +87,22 @@ func TestNewSqlFactory(t *testing.T) {
 		start time.Time
 		end   time.Time
 	}{
+		"doris range aggregate exclusive_route_end": {
+			query: &metadata.Query{
+				DB: "test_logs", Measurement: "doris", Field: "gseIndex",
+				IsRangeAggregation: true, RangeEndExclusive: true,
+				Aggregates: metadata.Aggregates{{Name: "sum"}},
+			},
+			expected: "SELECT SUM(`gseIndex`) AS `_value_` FROM `test_logs`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313'",
+		},
+		"doris range aggregate inclusive_user_end": {
+			query: &metadata.Query{
+				DB: "test_logs", Measurement: "doris", Field: "gseIndex",
+				IsRangeAggregation: true, RangeEndExclusive: false,
+				Aggregates: metadata.Aggregates{{Name: "sum"}},
+			},
+			expected: "SELECT SUM(`gseIndex`) AS `_value_` FROM `test_logs`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313'",
+		},
 		"doris sum-count_over_time-with-promql-1": {
 			query: &metadata.Query{
 				DB:          "5000140_bklog_container_log_demo_analysis",
@@ -920,6 +936,38 @@ func TestFormatDataToQueryResult_ValueParsing(t *testing.T) {
 		list     []map[string]any
 		expected map[int64]float64
 	}{
+		"range min skips empty contribution": {
+			query: &metadata.Query{Measurement: "doris", Field: "value", IsRangeAggregation: true, Aggregates: metadata.Aggregates{{Name: "min"}}},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"range max skips empty contribution": {
+			query: &metadata.Query{Measurement: "doris", Field: "value", IsRangeAggregation: true, Aggregates: metadata.Aggregates{{Name: "max"}}},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"range avg skips empty contribution": {
+			query: &metadata.Query{Measurement: "doris", Field: "value", IsRangeAggregation: true, Aggregates: metadata.Aggregates{{Name: "avg"}}},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776759000000: 10},
+		},
+		"range sum retains zero contribution": {
+			query: &metadata.Query{Measurement: "doris", Field: "value", IsRangeAggregation: true, Aggregates: metadata.Aggregates{{Name: "sum"}}},
+			list: []map[string]any{
+				{"_timestamp_": int64(1776758700000), "_value_": nil},
+				{"_timestamp_": int64(1776759000000), "_value_": 10.0},
+			},
+			expected: map[int64]float64{1776758700000: 0, 1776759000000: 10},
+		},
 		"first _value_ is nil": {
 			query: baseQuery(),
 			list: []map[string]any{
@@ -1047,48 +1095,4 @@ func TestFormatDataToQueryResultDynamicLabelsIncreaseSeriesRowsRatio(t *testing.
 	require.Equal(t, 5, stablePoints)
 	require.Equal(t, 5, dynamicPoints)
 	require.Greater(t, dynamicLabelBytes, stableLabelBytes)
-}
-
-func TestRangeAggregateDorisExclusiveBoundary(t *testing.T) {
-	metadata.InitMetadata()
-	ctx := metadata.InitHashID(context.Background())
-	start, end := time.Unix(1700000000, 0), time.Unix(1700003600, 0)
-	for _, exclusive := range []bool{false, true} {
-		query := &metadata.Query{Measurement: "doris", TimeField: metadata.TimeField{Name: "dtEventTimeStamp"}, RangeEndExclusive: exclusive}
-		where, err := bksql.NewQueryFactory(ctx, query).WithRangeTime(start, end).BuildWhere()
-		require.NoError(t, err)
-		assert.Contains(t, where, fmt.Sprintf("`dtEventTimeStamp` >= %d", start.UnixMilli()))
-		boundary := fmt.Sprintf("`dtEventTimeStamp` < %d", end.UnixMilli())
-		if exclusive {
-			assert.Contains(t, where, boundary)
-		} else {
-			assert.NotContains(t, where, boundary)
-			assert.Contains(t, where, fmt.Sprintf("`dtEventTimeStamp` <= %d", end.UnixMilli()))
-		}
-	}
-}
-
-func TestRangeAggregateDorisNullValue(t *testing.T) {
-	metadata.InitMetadata()
-	ctx := metadata.InitHashID(context.Background())
-	metadata.GetQueryParams(ctx).SetIsReference(true)
-	for _, method := range []string{"min", "max", "avg", "sum"} {
-		t.Run(method, func(t *testing.T) {
-			query := &metadata.Query{
-				Measurement: "doris", Field: "value", IsRangeAggregation: true,
-				Aggregates: metadata.Aggregates{{Name: method, Dimensions: []string{"group"}}},
-			}
-			result, err := bksql.NewQueryFactory(ctx, query).FormatDataToQueryResult(ctx, []map[string]any{
-				{"group": "empty", "_value_": nil},
-				{"group": "data", "_value_": 10.0},
-			})
-			require.NoError(t, err)
-			if method == "sum" {
-				require.Len(t, result.Timeseries, 2)
-			} else {
-				require.Len(t, result.Timeseries, 1)
-				assert.Equal(t, 10.0, result.Timeseries[0].Samples[0].Value)
-			}
-		})
-	}
 }

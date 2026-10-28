@@ -1078,28 +1078,26 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 		},
 	}
 
-	// Both stores contain the same logical documents. Match the destination and
-	// exact disjoint range so overlapping reads or a wrong store fail the test.
-	const start int64 = 1700000000000000 // microseconds
+	// 新旧存储使用相同的数据点模拟数据重叠；请求必须匹配目标存储和互斥时间范围。
+	const start int64 = 1700000000000000 // 微秒
 	const cut = start + 3600*1000000
 	const end = cut + 3600*1000000
 	const oldURL = mock.EsUrl + "/es_index/_search"
 	const newURL = mock.BkBaseUrl + "/es/es_index/_search"
-	type part struct {
-		url            string
-		from, to       int64
-		includeEnd     bool
-		values, counts map[string]any
+	type point struct {
+		timestamp int64
+		value     any // 数值为 float64，nil 表示文档缺少待聚合字段。
 	}
-	leftCount := map[string]any{"common": 2}
-	rightCount := map[string]any{"common": 3, "new": 1, "missing": 1}
-	leftSum := map[string]any{"common": 30}
-	rightSum := map[string]any{"common": 120, "new": 7, "missing": 0}
-	// common: 10 at A, 20 at T-1us, 30 at T, 40 at T+1us, 50 at B.
-	// At T there is also a new-only group (7) and a group without a value.
+	type part struct {
+		url        string
+		from, to   int64
+		includeEnd bool
+	}
+	// 每个用例直接列出完整输入：common 跨两段，new 只出现在新段，missing 的数值为空。
 	for _, c := range []struct {
 		name, method string
 		start, end   int64
+		series       map[string][]point
 		parts        []part
 		want         map[string]float64
 		ungrouped    bool
@@ -1109,8 +1107,23 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "count",
 			start:  start,
 			end:    cut - 1,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut - 1, true, leftCount, nil},
+				{url: oldURL, from: start, to: cut - 1, includeEnd: true},
 			},
 			want: map[string]float64{"common": 2},
 		},
@@ -1119,8 +1132,23 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "count",
 			start:  cut,
 			end:    end,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{newURL, cut, end, true, rightCount, nil},
+				{url: newURL, from: cut, to: end, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common":  3,
@@ -1133,9 +1161,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "count",
 			start:  start,
 			end:    end,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut, false, leftCount, nil},
-				{newURL, cut, end, true, rightCount, nil},
+				{url: oldURL, from: start, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: end, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common":  5,
@@ -1148,9 +1191,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "sum",
 			start:  start,
 			end:    end,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut, false, leftSum, nil},
-				{newURL, cut, end, true, rightSum, nil},
+				{url: oldURL, from: start, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: end, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common":  150,
@@ -1163,9 +1221,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "min",
 			start:  start,
 			end:    end,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut, false, map[string]any{"common": 10}, nil},
-				{newURL, cut, end, true, map[string]any{"common": 30, "new": 7, "missing": nil}, nil},
+				{url: oldURL, from: start, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: end, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common": 10,
@@ -1177,9 +1250,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "max",
 			start:  start,
 			end:    end,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut, false, map[string]any{"common": 20}, nil},
-				{newURL, cut, end, true, map[string]any{"common": 50, "new": 7, "missing": nil}, nil},
+				{url: oldURL, from: start, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: end, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common": 50,
@@ -1191,9 +1279,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "avg",
 			start:  start,
 			end:    end,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut, false, leftSum, leftCount},
-				{newURL, cut, end, true, rightSum, map[string]any{"common": 3, "new": 1, "missing": 0}},
+				{url: oldURL, from: start, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: end, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common": 30,
@@ -1206,9 +1309,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			start:     start,
 			end:       end,
 			ungrouped: true,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut, false, map[string]any{"": 2}, nil},
-				{newURL, cut, end, true, map[string]any{"": 5}, nil},
+				{url: oldURL, from: start, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: end, includeEnd: true},
 			},
 			want: map[string]float64{"": 7},
 		},
@@ -1218,9 +1336,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			start:     start,
 			end:       end,
 			ungrouped: true,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut, false, map[string]any{"": 30}, map[string]any{"": 2}},
-				{newURL, cut, end, true, map[string]any{"": 127}, map[string]any{"": 4}},
+				{url: oldURL, from: start, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: end, includeEnd: true},
 			},
 			want: map[string]float64{"": 157.0 / 6},
 		},
@@ -1229,9 +1362,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "count",
 			start:  start,
 			end:    cut,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, start, cut, false, leftCount, nil},
-				{newURL, cut, cut, true, map[string]any{"common": 1, "new": 1, "missing": 1}, nil},
+				{url: oldURL, from: start, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: cut, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common":  3,
@@ -1244,8 +1392,23 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "count",
 			start:  cut,
 			end:    cut,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{newURL, cut, cut, true, map[string]any{"common": 1, "new": 1, "missing": 1}, nil},
+				{url: newURL, from: cut, to: cut, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common":  1,
@@ -1258,9 +1421,24 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 			method: "sum",
 			start:  cut - 1,
 			end:    cut + 1,
+			series: map[string][]point{
+				"common": {
+					{timestamp: start, value: 10.0},
+					{timestamp: cut - 1, value: 20.0},
+					{timestamp: cut, value: 30.0},
+					{timestamp: cut + 1, value: 40.0},
+					{timestamp: end, value: 50.0},
+				},
+				"new": {
+					{timestamp: cut, value: 7.0},
+				},
+				"missing": {
+					{timestamp: cut, value: nil},
+				},
+			},
 			parts: []part{
-				{oldURL, cut - 1, cut, false, map[string]any{"common": 20}, nil},
-				{newURL, cut, cut + 1, true, map[string]any{"common": 70, "new": 7, "missing": 0}, nil},
+				{url: oldURL, from: cut - 1, to: cut, includeEnd: false},
+				{url: newURL, from: cut, to: cut + 1, includeEnd: true},
 			},
 			want: map[string]float64{
 				"common":  90,
@@ -1296,20 +1474,71 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 		require.NoError(t, err)
 		responses := make(map[esRequest]string)
 		for _, p := range c.parts {
+			// 按用例声明的范围选择输入点；实际下游请求仍须逐项匹配完整 DSL。
+			pointsByGroup := make(map[string][]point)
+			for group, points := range c.series {
+				if c.ungrouped {
+					group = ""
+				}
+				for _, sample := range points {
+					if sample.timestamp < p.from || sample.timestamp > p.to ||
+						(sample.timestamp == p.to && !p.includeEnd) {
+						continue
+					}
+					pointsByGroup[group] = append(pointsByGroup[group], sample)
+				}
+			}
 			methods := []string{c.method}
 			if c.method == "avg" && len(c.parts) > 1 {
 				methods = []string{"sum", "count"}
 			}
 			for _, method := range methods {
-				values := p.values
+				// 只生成模拟存储的局部响应；最终合并结果独立写在用例的 want 中。
+				values := make(map[string]any)
+				for group, points := range pointsByGroup {
+					var sum, minimum, maximum float64
+					validCount := 0
+					for _, sample := range points {
+						if sample.value == nil {
+							continue
+						}
+						value, ok := sample.value.(float64)
+						require.True(t, ok, "%s：数据点必须为 float64 或 nil", c.name)
+						if validCount == 0 || value < minimum {
+							minimum = value
+						}
+						if validCount == 0 || value > maximum {
+							maximum = value
+						}
+						sum += value
+						validCount++
+					}
+					values[group] = nil
+					switch method {
+					case "count":
+						values[group] = validCount
+						if field == "*" {
+							values[group] = len(points)
+						}
+					case "sum":
+						values[group] = sum
+					case "min":
+						if validCount > 0 {
+							values[group] = minimum
+						}
+					case "max":
+						if validCount > 0 {
+							values[group] = maximum
+						}
+					default:
+						t.Fatalf("%s：模拟响应不支持聚合 %s", c.name, method)
+					}
+				}
 				esMethod, esField := method, field
 				if method == "count" {
 					esMethod = "value_count"
 					if field == "*" {
 						esField = "_index"
-					}
-					if c.method == "avg" {
-						values = p.counts
 					}
 				}
 				aggregation := map[string]any{"_value": map[string]any{esMethod: map[string]any{"field": esField}}}
@@ -1318,7 +1547,7 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 					aggregation = map[string]any{"group": map[string]any{"aggregations": aggregation, "terms": map[string]any{"field": "group", "missing": " ", "size": 100}}}
 					var buckets []map[string]any
 					for group, value := range values {
-						buckets = append(buckets, map[string]any{"key": group, "doc_count": 1, "_value": map[string]any{"value": value}})
+						buckets = append(buckets, map[string]any{"key": group, "doc_count": len(pointsByGroup[group]), "_value": map[string]any{"value": value}})
 					}
 					result = map[string]any{"group": map[string]any{"buckets": buckets}}
 				}

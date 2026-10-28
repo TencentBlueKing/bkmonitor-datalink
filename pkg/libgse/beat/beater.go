@@ -129,6 +129,23 @@ func (bkb *BKBeat) stopPublish() {
 	}
 }
 
+// StopPublish closes and clears the shared publisher client without stopping
+// the reloader, releasing the storage or closing the beat Done channel.
+//
+// It exists for managed preview coordinators: when an output stops consuming
+// (for example a console writer blocked by an unread stdout pipe), a Task or
+// Sender goroutine can wait forever inside Publish on a full queue. Closing the
+// client is the only operation that releases that wait, and it must happen
+// before the coordinator stops the Task. Storage is still released by the
+// regular Stop path after Registrar.Stop.
+//
+// StopPublish is idempotent and safe when the beat was never initialized and
+// when it is called before or after Stop. Stop keeps closing whatever is left
+// exactly once.
+func StopPublish() {
+	commonBKBeat.stopPublish()
+}
+
 // Stop
 func (bkb *BKBeat) Stop() {
 	if BeaterRunning != commonBKBeat.BeaterState {

@@ -349,7 +349,7 @@ func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFac
 	}
 
 	// 查询时间生成 elastic.query
-	rangeQuery, err := fact.RangeQuery()
+	rangeQuery, err := fact.rangeQuery(qb.RangeEndExclusive)
 	if err != nil {
 		return nil, nil, "", err
 	}

@@ -151,6 +151,10 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 
 	referenceName, queryList := q.getQueryList(matchers)
 	span.Set("reference_name", referenceName)
+	if qp.IsReference && queryList.hasRoutedRangeAggregate() {
+		span.Set("range_aggregation", true)
+		return q.selectRangeAggregate(ctx, queryList)
+	}
 	mergeFunc := queryList.mergeFuncName(hints)
 	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step)
 	span.Set("merge_func", mergeFunc)

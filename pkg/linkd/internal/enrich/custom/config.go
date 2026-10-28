@@ -353,8 +353,8 @@ func (p *Program) compileRule(r *Rule) error {
 			if err := p.compileValue(o.Source, 0); err != nil {
 				return err
 			}
-			if o.MatchMode != "" && o.MatchMode != "first" && o.MatchMode != "all" || o.MatchIndex < 0 || o.MatchIndex >= 1024 {
-				return fmt.Errorf("extract requires first/all match mode and match index in 0..1023")
+			if o.MatchMode != "" && o.MatchMode != "first" && o.MatchMode != "all" && o.MatchMode != "findall" || o.MatchIndex < 0 || o.MatchIndex >= 1024 {
+				return fmt.Errorf("extract requires first/all/findall match mode and match index in 0..1023")
 			}
 			re, err := textregexp.Compile(o.Pattern)
 			if err != nil {

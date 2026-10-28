@@ -396,7 +396,11 @@ func (r *run) operation(ctx context.Context, op Operation) ([]domain.EnrichAssig
 		if !ok {
 			return nil, fmt.Errorf("extract source is not text")
 		}
+		// 1. 多捕获组的 findall 只使用第一次匹配；其他模式保留既有选择规则。
 		limit := 1025
+		if op.MatchMode == "findall" && op.regex.NumSubexp() > 1 {
+			limit = 1
+		}
 		if op.MatchMode == "first" || (op.MatchMode == "" && op.MatchIndex > 0) {
 			limit = op.MatchIndex + 1
 		}
@@ -417,17 +421,46 @@ func (r *run) operation(ctx context.Context, op Operation) ([]domain.EnrichAssig
 		if op.MatchMode == "all" {
 			return r.assignAllMatches(ctx, op, env, items)
 		}
-		if op.MatchMode == "first" || op.MatchIndex > 0 {
+		if op.MatchMode == "first" || (op.MatchMode == "" && op.MatchIndex > 0) {
 			if op.MatchIndex >= len(items) {
 				return nil, ErrMissing
 			}
 			items = items[op.MatchIndex : op.MatchIndex+1]
 		}
-		env["extraction"] = map[string]any{"matches": items}
+		// 2. findall 按捕获组数量生成有序值，不改变原始 matches 的分组含义。
+		extraction := map[string]any{"matches": items}
+		if op.MatchMode == "findall" {
+			extraction["values"] = findAllValues(matches)
+		}
+		// 3. 所有字段共享同次提取结果，模板只求值并提交一次。
+		env["extraction"] = extraction
 		return r.assign(ctx, op.Assignments, env)
 	default:
 		return nil, fmt.Errorf("unknown operation")
 	}
+}
+
+// findAllValues 将零/单捕获组按匹配次数展开，多捕获组取第一次匹配的各组。
+// 未参与匹配的组按 findall 语义输出空字符串，原始 matches 仍保留 nil。
+func findAllValues(matches []textregexp.Match) []any {
+	values := matches[0].Groups
+	if len(values) <= 1 {
+		values = make([]any, len(matches))
+		for index, match := range matches {
+			values[index] = match.Text
+			if len(match.Groups) == 1 {
+				values[index] = match.Groups[0]
+			}
+		}
+	} else {
+		values = append([]any(nil), values...)
+	}
+	for index, value := range values {
+		if value == nil {
+			values[index] = ""
+		}
+	}
+	return values
 }
 
 // assignAllMatches 逐字段累计匹配结果，复用既有 1 MiB 补丁预算后一次提交。

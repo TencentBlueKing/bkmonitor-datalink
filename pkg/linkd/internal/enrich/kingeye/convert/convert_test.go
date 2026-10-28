@@ -45,7 +45,7 @@ func TestKingeyeNormalFixtureKeepsGroupingAndOrder(t *testing.T) {
 }
 
 func TestCaptureNumberingAndUnsupportedAreReported(t *testing.T) {
-	for _, tc := range []struct{ pattern, source, template, want string }{{`[0-9]+`, `x12 y34`, `$0`, `12`}, {`([0-9]+)`, `x12 y34`, `$1`, `12`}, {`([a-z]+)=([0-9]+)`, `a=12 b=34`, `$1/$2`, `a/12`}} {
+	for _, tc := range []struct{ pattern, source, template, want string }{{`[0-9]+`, `x12 y34`, `$0`, `12`}, {`[0-9]+`, `x12 y34`, `$2`, `34`}, {`([0-9]+)`, `x12 y34`, `$1/$2`, `12/34`}, {`([a-z]+)=([0-9]+)`, `a=12 b=34`, `$1/$2`, `a/12`}} {
 		raw, _ := json.Marshal(map[string]any{"enrich_settings": []any{map[string]any{"type": "extract", "rules": []any{map[string]any{"field": "content", "value": tc.pattern}}, "fields": []any{map[string]any{"key": "name", "value": tc.template}}}}})
 		r, err := Convert(Input{NormalRules: []json.RawMessage{raw}})
 		if err != nil || len(r.Enrich.Processors) != 1 {
@@ -65,7 +65,7 @@ func TestCaptureNumberingAndUnsupportedAreReported(t *testing.T) {
 			t.Fatalf("%s: %v %v", tc.pattern, effective, err)
 		}
 	}
-	r, err := Convert(Input{NormalRules: []json.RawMessage{json.RawMessage(`{"enrich_settings":[{"type":"extract","rules":[{"field":"content","value":"(?<=x)y"}],"fields":[{"key":"name","value":"$1"}]}]}`)}})
+	r, err := Convert(Input{NormalRules: []json.RawMessage{json.RawMessage(`{"enrich_settings":[{"type":"extract","rules":[{"field":"content","value":"("}],"fields":[{"key":"name","value":"$1"}]}]}`)}})
 	if err != nil || len(r.Enrich.Processors) != 0 || r.Report[0].Status != "unsupported" || r.Report[0].Path != "$.normal_rules[0]" {
 		t.Fatalf("%+v %v", r, err)
 	}

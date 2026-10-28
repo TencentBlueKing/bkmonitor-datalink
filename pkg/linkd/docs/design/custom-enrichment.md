@@ -17,7 +17,7 @@
 - 固定采用 github.com/dlclark/regexp2/v2 v2.9.1（MIT），默认模式加 OptionMaintainCaptureOrder，
   显式配置 MatchTimeout；标准库缺少断言/反向引用，升级需回归语义、并发和错误。用户说明采用 .NET 风格，
   不承诺 Python/.NET 全量等价，不使用 RE2 兼容开关或双引擎回退。
-- $0 为整段匹配，$n 固定为捕获组，匹配序号/全部匹配显式表达；允许捕获与告警字段混合模板。
+- Linkd 原生提取保留指定匹配和全部匹配拼接；通用 `findall` 模式按捕获组数量提供有序 values，供 KAC 保持原有 `$n` 编号且不增加页面选项。$0 为第一次完整匹配，允许混合告警字段模板。
   提取后比较明确选择整段/分组；无匹配、分组未参与和空匹配分别处理，错误不伪装为条件不成立。
 - 文字替换对步骤原输入执行一次，按位置及规则顺序选择，新生成文本不再次替换；保留操作原子提交。
 - KAC 将多模型链和关联字段转换为现有 relations，明确链路节点、关系、方向和属性所属模型。
@@ -212,8 +212,10 @@ transforms 包括类型转换、join、字典映射、正则提取和展示值�
 - replace：目标已有字符串，按 replacements 做文字替换。旧 is_regex 不影响 KAC 当前实际替换语义。
 - extract：source 只读一次，find-all 返回 matches[].text/groups/named_groups；多个赋值使用同一提取结果。
 - 用户表达式采用 regexp2/v2 v2.9.1 默认模式加 OptionMaintainCaptureOrder；支持 Unicode、断言和反向引用，不启用 RE2 模式。
-- KAC `$0` 始终为完整匹配，`$n` 始终为捕获组；`match_mode: first` 配合从 0 开始的 `match_index` 选择一次匹配，`all` 逐次渲染后用 `separator` 拼接。原生 API 省略模式时仍可直接读取 matches 数组。
-- 表达式内引用使用 `\1`/`\k<name>`，命名组为 `(?<name>...)`，模板内 `${field}` 为告警字段。可选组未参与匹配视为缺失，成功空捕获保留。
+- `match_mode: first` 配合从 0 开始的 `match_index` 选择一次匹配，`all` 逐次渲染后用 `separator` 拼接；省略模式仍可直接读取 matches 数组。
+- 通用 `match_mode: findall` 额外提供 `$.extraction.values`：无捕获组为各次完整匹配，单捕获组为各次捕获内容，多个捕获组为第一次匹配的各组内容；未参与匹配的可选组输出空字符串。输出模板只求值一次，不使用 match_index 或 separator。零/单捕获组沿用 1024 次匹配预算，多捕获组只扫描第一次匹配。
+- KAC 在线发布与离线转换固定使用 findall，`$n` 读取 values[n-1]，`$0` 读取 matches[0].text；页面不提供匹配序号或全部匹配。Linkd 应先于 KAC 升级；已有来源下一次发布后生效，历史 Release/事件结果不重写。
+- 表达式内引用使用 `\1`/`\k<name>`，命名组为 `(?<name>...)`，模板内 `${field}` 为告警字段。原生 matches 中可选组未参与匹配视为缺失，成功空捕获保留；findall 的 values 按上述规则归一为空字符串。
 - 可选捕获组与关联分支的缺失判断使用解析后的 JSONPath，点号和 bracket notation 等价，显式 null 的普通事件字段语义不变。
 - `all` 边渲染边累计输出，使用既有 1 MiB 补丁预算；名称/对象只保存前 2000 个 Unicode 字符。截断后仍求值后续匹配，任何取值失败或取消均不提交当前操作的部分补丁。
 - 每次引擎匹配预算 100ms，使用原生超时，精度受引擎周期影响。超时是失败，不经取反变为命中；错误日志不包含输入原文。

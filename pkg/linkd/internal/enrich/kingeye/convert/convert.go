@@ -74,12 +74,9 @@ type normal struct {
 	Name     string                     `json:"name"`
 	Match    map[string]json.RawMessage `json:"match_rules"`
 	Settings []struct {
-		Type       string        `json:"type"`
-		MatchMode  string        `json:"match_mode,omitempty"`
-		MatchIndex int           `json:"match_index,omitempty"`
-		Separator  *string       `json:"separator,omitempty"`
-		Fields     []field       `json:"fields"`
-		Rules      []settingRule `json:"rules"`
+		Type   string        `json:"type"`
+		Fields []field       `json:"fields"`
+		Rules  []settingRule `json:"rules"`
 	} `json:"enrich_settings"`
 }
 
@@ -198,7 +195,7 @@ func (c converter) source(field string) (custom.Value, error) {
 
 var variables = regexp.MustCompile(`\$\{([^}]+)\}|\$([0-9]+)`)
 
-func (c converter) template(text string, captures int) (custom.Value, error) {
+func (c converter) template(text string, extract bool) (custom.Value, error) {
 	vars := map[string]custom.Value{}
 	var failure error
 	converted := variables.ReplaceAllStringFunc(text, func(token string) string {
@@ -213,12 +210,12 @@ func (c converter) template(text string, captures int) (custom.Value, error) {
 			}
 		} else {
 			index, _ := strconv.Atoi(parts[2])
-			if captures < 0 || index > captures {
+			if !extract {
 				failure = fmt.Errorf("invalid extraction reference %q", token)
 			}
 			path := "$.extraction.matches[0].text"
 			if index > 0 {
-				path = fmt.Sprintf("$.extraction.matches[0].groups[%d]", index-1)
+				path = fmt.Sprintf("$.extraction.values[%d]", index-1)
 			}
 
 			v = custom.Value{JSONPath: path}
@@ -269,7 +266,7 @@ func (c converter) normal(raw json.RawMessage, id string) (custom.Rule, error) {
 				if err != nil {
 					return rule, err
 				}
-				value, err := c.template(f.Value, -1)
+				value, err := c.template(f.Value, false)
 				if err != nil {
 					return rule, err
 				}
@@ -280,29 +277,20 @@ func (c converter) normal(raw json.RawMessage, id string) (custom.Rule, error) {
 				return rule, fmt.Errorf("extract needs exactly one regex")
 			}
 			r := setting.Rules[0]
-			pattern, err := textregexp.Compile(r.Value)
-			if err != nil {
+			if _, err := textregexp.Compile(r.Value); err != nil {
 				return rule, fmt.Errorf("invalid enrichment regex: %w", err)
 			}
 			source, err := c.source(r.Field)
 			if err != nil {
 				return rule, err
 			}
-			mode := setting.MatchMode
-			if mode == "" {
-				mode = "first"
-			}
-			separator := ","
-			if setting.Separator != nil {
-				separator = *setting.Separator
-			}
-			op := custom.Operation{ID: base, Type: "extract", Source: &source, Pattern: r.Value, MatchMode: mode, MatchIndex: setting.MatchIndex, Separator: separator}
+			op := custom.Operation{ID: base, Type: "extract", Source: &source, Pattern: r.Value, MatchMode: "findall"}
 			for _, f := range setting.Fields {
 				target, err := c.path(f.Key)
 				if err != nil {
 					return rule, err
 				}
-				value, err := c.template(f.Value, pattern.NumSubexp())
+				value, err := c.template(f.Value, true)
 				if err != nil {
 					return rule, err
 				}

@@ -720,6 +720,18 @@ Cloud 主链已完成收敛：业务 ID统一使用 Kafka `labels.bk_biz_id`，C
 
 ### 9.8 K8s
 
+2026-10-28 修复约定：主实例查验与 Namespace / Cluster 上下文查询独立完成。
+所有查询结果均复核租户、模型和非空实例身份；无效结果不能参与名称、业务或标签计算。
+主实例失败时不发布新实例身份，仍按原规则保留已有完整身份或清理残缺身份；
+上下文查验成功只补充业务与集群名称，不能把主实例失败改成成功。
+任一必需查询失败保留 `partial / dependency_invalid / onemodel`，`fields` 列出失败模型，
+不把未命中、查询异常与身份不符臆断成容器已删除；底层错误仍由依赖边界日志记录。
+取消必须向调用方传播。缺少主实例定位维度仍走原 missing_field 分支，不发残缺查询。
+
+集群名称独立于业务选择：仅 Cluster 可用 `name/display_name` 回退，Namespace 与叶实例
+只能贡献显式 `cluster_name`，避免将命名空间或容器名当成集群名称；名称缺失不清空输入名称。
+业务优先级保持 Namespace → Cluster → 已校验主实例 → 来源业务。
+
 K8s 已完成 OneModel Reader 主流程接入，复用统一实例索引 `kingeye_all_instance`；不直接读取 `kmc_k8s_*` 专用索引。
 
 已完成：

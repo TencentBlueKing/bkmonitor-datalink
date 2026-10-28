@@ -1,0 +1,1123 @@
+{
+  "alert": {
+    "revision": 6,
+    "event_source_version": 35,
+    "alert_id": "alert-20261027073759-34ehhne7pqlem",
+    "bk_tenant_id": "system",
+    "event_source_id": "built_in_bk",
+    "fingerprint": "5cba6656bf33d9f6f2e743fca640ddf1",
+    "title": "Strategy 146 level 1 triggered",
+    "content": "限制CPU使用率 >= 80.0, 当前值82.647398%",
+    "severity": "critical",
+    "dimensions": {
+      "bcs_cluster_id": "BCS-K8S-00000",
+      "container_name": "flink-main-container",
+      "namespace": "kingeye",
+      "pod_name": "trace-fe44b270e9e5-taskmanager-1-6"
+    },
+    "subject_system": "bcs",
+    "subject_type": "pod",
+    "subject_id": "trace-fe44b270e9e5-taskmanager-1-6",
+    "subject_name": "",
+    "source_event_id": "0c26029c458a44a8d0402dc74c7a8ce45275e447746debdcfd762d4453357978",
+    "source_alert_id": "5cba6656bf33d9f6f2e743fca640ddf1",
+    "labels": {
+      "bk_biz_id": -255,
+      "strategy_id": 146,
+      "strategy_version": 5
+    },
+    "extra_data": {
+      "anomaly_begin_time": "2026-10-27T07:36:00Z",
+      "evaluation_family": "metric_algorithm",
+      "event_semantic_digest": "20e4e38fa43028a0edb7c5d7b5382c605230200e9a9f947e1583f36aa7695a10",
+      "signal_type": "metric",
+      "strategy_facts": {
+        "condition_basis": "snapshot_user",
+        "condition_md5": "4a9031297eb2b5f8f7aae3af652c454a",
+        "dimension_digest": "c0cb9a35be541cf033a133fb6a4da7ed",
+        "metric_digest": "5f8c390a39b0a92e9830c8ad5a6ba904",
+        "schema": "v2"
+      },
+      "window": {
+        "anomalies": 1,
+        "required": 1,
+        "size": 5
+      }
+    },
+    "shield": {
+      "active": false
+    },
+    "admission": {
+      "admitted_at": "2026-10-27T07:37:59.61000811Z",
+      "severity": "critical",
+      "cause_type": "source_event",
+      "cause_id": "event-20261027073759-4zlieipovcd7u"
+    },
+    "status": "recovered",
+    "latest_event_id": "event-20261027153602-lq6rnt7fcf4lo",
+    "last_occurred_at": "2026-10-27T15:34:00Z",
+    "update_at": "2026-10-27T15:36:03.075957349Z",
+    "trigger_event_id": "event-20261027073759-4zlieipovcd7u",
+    "begin_at": "2026-10-27T07:36:00Z",
+    "create_at": "2026-10-27T07:37:59.386Z",
+    "end_at": "2026-10-27T15:34:00Z",
+    "end_type": "source",
+    "enrich_status": "succeeded",
+    "enrich": {
+      "processors": [
+        {
+          "strategy": {
+            "patches": [
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"data_source\"]",
+                "value": "指标目录"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"is_default\"]",
+                "value": true
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"monitor_template_id\"]",
+                "value": 172
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"strategy_config_id\"]",
+                "value": "4c279bb9b541459496eb76274e411b88"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"strategy_id\"]",
+                "value": 146
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"strategy_kind\"]",
+                "value": "Strategy"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"strategy_name\"]",
+                "value": "蓝鲸容器集群基础 CPU 和内存告警-指标丨限制CPU使用率 (container_cpu_limits_ratio)"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"strategy_version\"]",
+                "value": 5
+              }
+            ],
+            "status": "succeeded"
+          }
+        },
+        {
+          "resource": {
+            "patches": [
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_biz_id\"]",
+                "value": "2"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_biz_name\"]",
+                "value": "蓝鲸2修改"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_cloud_name\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_module_name\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_set_name\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"extra_data\"][\"cw_labels\"]",
+                "value": [
+                  "bk_biz_id",
+                  "bk_biz_id|2",
+                  "cw-K8s_Container",
+                  "cw-K8s_Container|BCS-K8S-00000|kingeye|trace-fe44b270e9e5-taskmanager-1-6|flink-main-container"
+                ]
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"model_id\"]",
+                "value": "cw-K8s_Container"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"model_inst_id\"]",
+                "value": "BCS-K8S-00000|kingeye|trace-fe44b270e9e5-taskmanager-1-6|flink-main-container"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"model_name\"]",
+                "value": "K8s容器"
+              }
+            ],
+            "status": "succeeded"
+          }
+        },
+        {
+          "k8s": {
+            "patches": [
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bcs_cluster_id\"]",
+                "value": "BCS-K8S-00000"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_biz_id\"]",
+                "value": "2"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"bk_biz_name\"]",
+                "value": "蓝鲸2修改"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"cluster_name\"]",
+                "value": "蓝鲸7.0"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"container_name\"]",
+                "value": "flink-main-container"
+              },
+              {
+                "op": "set",
+                "path": "$[\"extra_data\"][\"cw_labels\"]",
+                "value": [
+                  "bk_biz_id",
+                  "bk_biz_id|2",
+                  "cluster_id",
+                  "cluster_id|BCS-K8S-00000",
+                  "namespace_id",
+                  "cluster_id|BCS-K8S-00000&namespace_id|kingeye"
+                ]
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"model_id\"]",
+                "value": "cw-K8s_Container"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"model_inst_id\"]",
+                "value": "BCS-K8S-00000|kingeye|trace-fe44b270e9e5-taskmanager-1-6|flink-main-container"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"namespace\"]",
+                "value": "kingeye"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"pod_name\"]",
+                "value": "trace-fe44b270e9e5-taskmanager-1-6"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"service\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"workload_kind\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"workload_name\"]",
+                "value": ""
+              }
+            ],
+            "status": "succeeded"
+          }
+        },
+        {
+          "apm": {
+            "patches": [],
+            "status": "skipped"
+          }
+        },
+        {
+          "log": {
+            "patches": [],
+            "status": "skipped"
+          }
+        },
+        {
+          "display": {
+            "patches": [
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"dimension_text\"]",
+                "value": "pod名称=trace-fe44b270e9e5-taskmanager-1-6 | 命名空间=kingeye | 容器名称=flink-main-container | 集群id=BCS-K8S-00000"
+              },
+              {
+                "op": "set",
+                "path": "$[\"extra_data\"][\"dimensions\"]",
+                "value": [
+                  {
+                    "name": "集群id",
+                    "real_key": "bcs_cluster_id",
+                    "real_value": "BCS-K8S-00000",
+                    "value": "BCS-K8S-00000"
+                  },
+                  {
+                    "name": "容器名称",
+                    "real_key": "container_name",
+                    "real_value": "flink-main-container",
+                    "value": "flink-main-container"
+                  },
+                  {
+                    "name": "命名空间",
+                    "real_key": "namespace",
+                    "real_value": "kingeye",
+                    "value": "kingeye"
+                  },
+                  {
+                    "name": "pod名称",
+                    "real_key": "pod_name",
+                    "real_value": "trace-fe44b270e9e5-taskmanager-1-6",
+                    "value": "trace-fe44b270e9e5-taskmanager-1-6"
+                  }
+                ]
+              },
+              {
+                "op": "set",
+                "path": "$.subject_name",
+                "value": "flink-main-container"
+              },
+              {
+                "op": "set",
+                "path": "$.title",
+                "value": "CPU容器告警"
+              }
+            ],
+            "status": "succeeded"
+          }
+        },
+        {
+          "metric": {
+            "patches": [
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"aggregate_func\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"anomaly_begin_time\"]",
+                "value": "2026-10-27T07:36:00Z"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"display_name\"]",
+                "value": "限制CPU使用率"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"metric_name\"]",
+                "value": "container_cpu_limits_ratio"
+              },
+              {
+                "op": "set",
+                "path": "$[\"extra_data\"][\"metric_query_params\"]",
+                "value": {
+                  "bk_biz_id": 2,
+                  "expression": "",
+                  "field_tag": "derived_metric",
+                  "function": {
+                    "time_compare": []
+                  },
+                  "functions": [],
+                  "query_configs": [
+                    {
+                      "bk_biz_id": 2,
+                      "custom_event_name": "",
+                      "data_source_label": "bk_monitor",
+                      "data_type_label": "time_series",
+                      "extend_fields": {},
+                      "filter_dict": {},
+                      "functions": [],
+                      "group_by": [
+                        "bcs_cluster_id",
+                        "container_name",
+                        "namespace",
+                        "pod_name"
+                      ],
+                      "index_set_id": 0,
+                      "interval": 60,
+                      "metrics": [
+                        {
+                          "alias": "a",
+                          "field": "container_cpu_limits_ratio",
+                          "method": ""
+                        }
+                      ],
+                      "promql": "",
+                      "query_string": "",
+                      "table": "",
+                      "time_field": null,
+                      "where": [
+                        {
+                          "key": "bcs_cluster_id",
+                          "method": "eq",
+                          "value": [
+                            "BCS-K8S-00000"
+                          ]
+                        },
+                        {
+                          "condition": "and",
+                          "key": "container_name",
+                          "method": "eq",
+                          "value": [
+                            "flink-main-container"
+                          ]
+                        },
+                        {
+                          "condition": "and",
+                          "key": "namespace",
+                          "method": "eq",
+                          "value": [
+                            "kingeye"
+                          ]
+                        },
+                        {
+                          "condition": "and",
+                          "key": "pod_name",
+                          "method": "eq",
+                          "value": [
+                            "trace-fe44b270e9e5-taskmanager-1-6"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"metric_unique_id\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"result_table_id\"]",
+                "value": ""
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"time_interval\"]",
+                "value": 60
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"unit\"]",
+                "value": "percent"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"where_condition\"]",
+                "value": "bcs_cluster_id='BCS-K8S-00000' and container_name='flink-main-container' and namespace='kingeye' and pod_name='trace-fe44b270e9e5-taskmanager-1-6'"
+              }
+            ],
+            "status": "succeeded"
+          }
+        },
+        {
+          "source": {
+            "patches": [
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"meta_info\"]",
+                "value": "0c26029c458a44a8d0402dc74c7a8ce45275e447746debdcfd762d4453357978"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"source_id\"]",
+                "value": "built_in_bk"
+              },
+              {
+                "op": "set",
+                "path": "$[\"labels\"][\"source_name\"]",
+                "value": "鲸眼监控"
+              }
+            ],
+            "status": "succeeded"
+          }
+        },
+        {
+          "fields": {
+            "patches": [
+              {
+                "op": "set",
+                "operation_id": "clear_untrusted_catalog",
+                "path": "$[\"extra_data\"][\"__kac_custom_fields\"]",
+                "rule_id": "kac_custom_catalog_empty",
+                "value": []
+              },
+              {
+                "op": "set",
+                "operation_id": "step_1_1",
+                "path": "$[\"labels\"][\"model_name\"]",
+                "rule_id": "fields_1_t0",
+                "value": "K8s容器+_copy"
+              },
+              {
+                "op": "set",
+                "operation_id": "freeze_catalog",
+                "path": "$[\"extra_data\"][\"__kac_custom_fields\"]",
+                "rule_id": "kac_custom_catalog_t0",
+                "value": [
+                  "alarm_details_link",
+                  "cmdb_host_name_p0",
+                  "cmdb_nonmatch_p0",
+                  "current_values",
+                  "e2e_after_2112",
+                  "e2e_capture_2112",
+                  "e2e_cloud_2112",
+                  "e2e_empty_branch_2112",
+                  "e2e_empty_capture_2112",
+                  "e2e_false_2112",
+                  "e2e_group12_2112",
+                  "e2e_hostname_2112",
+                  "e2e_modules_2112",
+                  "e2e_mysql_bool_2220",
+                  "e2e_mysql_name_2220",
+                  "e2e_regex_timeout_2112",
+                  "e2e_relation_all_2220",
+                  "e2e_relation_empty_2220",
+                  "e2e_relation_main_2220",
+                  "e2e_relation_one_2220",
+                  "e2e_reverse_name_2220",
+                  "e2e_unicode_2112",
+                  "e2e_zero_2112",
+                  "node",
+                  "pod_ip"
+                ]
+              }
+            ],
+            "status": "succeeded",
+            "trace": [
+              {
+                "duration_milliseconds": 0,
+                "operation_id": "clear_untrusted_catalog",
+                "rule_id": "kac_custom_catalog_empty",
+                "status": "succeeded"
+              },
+              {
+                "duration_milliseconds": 0,
+                "rule_id": "kac_custom_catalog_empty",
+                "status": "succeeded"
+              },
+              {
+                "duration_milliseconds": 0,
+                "operation_id": "step_1_1",
+                "rule_id": "fields_1_t0",
+                "status": "succeeded"
+              },
+              {
+                "duration_milliseconds": 0,
+                "rule_id": "fields_1_t0",
+                "status": "succeeded"
+              },
+              {
+                "duration_milliseconds": 0,
+                "operation_id": "freeze_catalog",
+                "rule_id": "kac_custom_catalog_t0",
+                "status": "succeeded"
+              },
+              {
+                "duration_milliseconds": 0,
+                "rule_id": "kac_custom_catalog_t0",
+                "status": "succeeded"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "merge_work": false
+  },
+  "recovery": {
+    "enrich_status": "partial",
+    "enrich": {
+      "evaluations": [
+        {
+          "severity": "critical",
+          "data": {
+            "processors": [
+              {
+                "strategy": {
+                  "patches": [
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"data_source\"]",
+                      "value": "指标目录"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"is_default\"]",
+                      "value": true
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"monitor_template_id\"]",
+                      "value": 172
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"strategy_config_id\"]",
+                      "value": "4c279bb9b541459496eb76274e411b88"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"strategy_id\"]",
+                      "value": 146
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"strategy_kind\"]",
+                      "value": "Strategy"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"strategy_name\"]",
+                      "value": "蓝鲸容器集群基础 CPU 和内存告警-指标丨限制CPU使用率 (container_cpu_limits_ratio)"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"strategy_version\"]",
+                      "value": 5
+                    }
+                  ],
+                  "status": "succeeded"
+                }
+              },
+              {
+                "resource": {
+                  "diagnostics": [
+                    {
+                      "code": "dependency_invalid",
+                      "dependency": "onemodel"
+                    }
+                  ],
+                  "patches": [
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"bk_biz_id\"]",
+                      "value": 0
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"bk_biz_name\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"bk_cloud_name\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"bk_module_name\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"bk_set_name\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"model_id\"]",
+                      "value": "cw-K8s_Container"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"model_inst_id\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"model_name\"]",
+                      "value": "K8s容器"
+                    }
+                  ],
+                  "status": "partial"
+                }
+              },
+              {
+                "k8s": {
+                  "diagnostics": [
+                    {
+                      "code": "dependency_invalid",
+                      "dependency": "onemodel"
+                    }
+                  ],
+                  "patches": [
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"bcs_cluster_id\"]",
+                      "value": "BCS-K8S-00000"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"bk_biz_name\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"cluster_name\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"container_name\"]",
+                      "value": "flink-main-container"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"model_id\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"model_inst_id\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"namespace\"]",
+                      "value": "kingeye"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"pod_name\"]",
+                      "value": "trace-fe44b270e9e5-taskmanager-1-6"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"service\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"workload_kind\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"workload_name\"]",
+                      "value": ""
+                    }
+                  ],
+                  "status": "partial"
+                }
+              },
+              {
+                "apm": {
+                  "patches": [],
+                  "status": "skipped"
+                }
+              },
+              {
+                "log": {
+                  "patches": [],
+                  "status": "skipped"
+                }
+              },
+              {
+                "display": {
+                  "patches": [
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"dimension_text\"]",
+                      "value": "pod名称=trace-fe44b270e9e5-taskmanager-1-6 | 命名空间=kingeye | 容器名称=flink-main-container | 集群id=BCS-K8S-00000"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"extra_data\"][\"dimensions\"]",
+                      "value": [
+                        {
+                          "real_value": "BCS-K8S-00000",
+                          "name": "集群id",
+                          "value": "BCS-K8S-00000",
+                          "real_key": "bcs_cluster_id"
+                        },
+                        {
+                          "real_value": "flink-main-container",
+                          "name": "容器名称",
+                          "value": "flink-main-container",
+                          "real_key": "container_name"
+                        },
+                        {
+                          "real_value": "kingeye",
+                          "name": "命名空间",
+                          "value": "kingeye",
+                          "real_key": "namespace"
+                        },
+                        {
+                          "real_value": "trace-fe44b270e9e5-taskmanager-1-6",
+                          "name": "pod名称",
+                          "value": "trace-fe44b270e9e5-taskmanager-1-6",
+                          "real_key": "pod_name"
+                        }
+                      ]
+                    },
+                    {
+                      "op": "set",
+                      "path": "$.title",
+                      "value": "CPU容器告警"
+                    }
+                  ],
+                  "status": "succeeded"
+                }
+              },
+              {
+                "metric": {
+                  "patches": [
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"aggregate_func\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"display_name\"]",
+                      "value": "限制CPU使用率"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"metric_name\"]",
+                      "value": "container_cpu_limits_ratio"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"extra_data\"][\"metric_query_params\"]",
+                      "value": {
+                        "expression": "",
+                        "functions": [],
+                        "query_configs": [
+                          {
+                            "promql": "",
+                            "data_type_label": "time_series",
+                            "functions": [],
+                            "bk_biz_id": 0,
+                            "filter_dict": {},
+                            "time_field": null,
+                            "index_set_id": 0,
+                            "custom_event_name": "",
+                            "group_by": [
+                              "bcs_cluster_id",
+                              "container_name",
+                              "namespace",
+                              "pod_name"
+                            ],
+                            "extend_fields": {},
+                            "interval": 60,
+                            "where": [
+                              {
+                                "method": "eq",
+                                "value": [
+                                  "BCS-K8S-00000"
+                                ],
+                                "key": "bcs_cluster_id"
+                              },
+                              {
+                                "condition": "and",
+                                "method": "eq",
+                                "value": [
+                                  "flink-main-container"
+                                ],
+                                "key": "container_name"
+                              },
+                              {
+                                "condition": "and",
+                                "method": "eq",
+                                "value": [
+                                  "kingeye"
+                                ],
+                                "key": "namespace"
+                              },
+                              {
+                                "condition": "and",
+                                "method": "eq",
+                                "value": [
+                                  "trace-fe44b270e9e5-taskmanager-1-6"
+                                ],
+                                "key": "pod_name"
+                              }
+                            ],
+                            "metrics": [
+                              {
+                                "field": "container_cpu_limits_ratio",
+                                "method": "",
+                                "alias": "a"
+                              }
+                            ],
+                            "data_source_label": "bk_monitor",
+                            "query_string": "",
+                            "table": ""
+                          }
+                        ],
+                        "bk_biz_id": 0,
+                        "function": {
+                          "time_compare": []
+                        },
+                        "field_tag": "derived_metric"
+                      }
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"metric_unique_id\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"result_table_id\"]",
+                      "value": ""
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"time_interval\"]",
+                      "value": 60
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"unit\"]",
+                      "value": "percent"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"where_condition\"]",
+                      "value": "bcs_cluster_id='BCS-K8S-00000' and container_name='flink-main-container' and namespace='kingeye' and pod_name='trace-fe44b270e9e5-taskmanager-1-6'"
+                    }
+                  ],
+                  "status": "succeeded"
+                }
+              },
+              {
+                "source": {
+                  "patches": [
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"meta_info\"]",
+                      "value": "9ec0ea9db30c6768292721a20638d8ffedbc1ac29aa266c9819c6b72bb2f628a"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"source_id\"]",
+                      "value": "built_in_bk"
+                    },
+                    {
+                      "op": "set",
+                      "path": "$[\"labels\"][\"source_name\"]",
+                      "value": "鲸眼监控"
+                    }
+                  ],
+                  "status": "succeeded"
+                }
+              },
+              {
+                "fields": {
+                  "trace": [
+                    {
+                      "rule_id": "kac_custom_catalog_empty",
+                      "duration_milliseconds": 0,
+                      "operation_id": "clear_untrusted_catalog",
+                      "status": "succeeded"
+                    },
+                    {
+                      "rule_id": "kac_custom_catalog_empty",
+                      "duration_milliseconds": 0,
+                      "status": "succeeded"
+                    },
+                    {
+                      "rule_id": "fields_1_t0",
+                      "duration_milliseconds": 0,
+                      "operation_id": "step_1_1",
+                      "status": "succeeded"
+                    },
+                    {
+                      "rule_id": "fields_1_t0",
+                      "duration_milliseconds": 0,
+                      "status": "succeeded"
+                    },
+                    {
+                      "rule_id": "kac_custom_catalog_t0",
+                      "duration_milliseconds": 0,
+                      "operation_id": "freeze_catalog",
+                      "status": "succeeded"
+                    },
+                    {
+                      "rule_id": "kac_custom_catalog_t0",
+                      "duration_milliseconds": 0,
+                      "status": "succeeded"
+                    }
+                  ],
+                  "patches": [
+                    {
+                      "rule_id": "kac_custom_catalog_empty",
+                      "op": "set",
+                      "path": "$[\"extra_data\"][\"__kac_custom_fields\"]",
+                      "operation_id": "clear_untrusted_catalog",
+                      "value": []
+                    },
+                    {
+                      "rule_id": "fields_1_t0",
+                      "op": "set",
+                      "path": "$[\"labels\"][\"model_name\"]",
+                      "operation_id": "step_1_1",
+                      "value": "K8s容器+_copy"
+                    },
+                    {
+                      "rule_id": "kac_custom_catalog_t0",
+                      "op": "set",
+                      "path": "$[\"extra_data\"][\"__kac_custom_fields\"]",
+                      "operation_id": "freeze_catalog",
+                      "value": [
+                        "alarm_details_link",
+                        "cmdb_host_name_p0",
+                        "cmdb_nonmatch_p0",
+                        "current_values",
+                        "e2e_after_2112",
+                        "e2e_capture_2112",
+                        "e2e_cloud_2112",
+                        "e2e_empty_branch_2112",
+                        "e2e_empty_capture_2112",
+                        "e2e_false_2112",
+                        "e2e_group12_2112",
+                        "e2e_hostname_2112",
+                        "e2e_modules_2112",
+                        "e2e_mysql_bool_2220",
+                        "e2e_mysql_name_2220",
+                        "e2e_regex_timeout_2112",
+                        "e2e_relation_all_2220",
+                        "e2e_relation_empty_2220",
+                        "e2e_relation_main_2220",
+                        "e2e_relation_one_2220",
+                        "e2e_reverse_name_2220",
+                        "e2e_unicode_2112",
+                        "e2e_zero_2112",
+                        "node",
+                        "pod_ip"
+                      ]
+                    }
+                  ],
+                  "status": "succeeded"
+                }
+              }
+            ]
+          },
+          "status": "partial"
+        }
+      ]
+    },
+    "event_source_version": 35,
+    "bk_tenant_id": "system",
+    "event_source_id": "built_in_bk",
+    "event_id": "event-20261027153602-lq6rnt7fcf4lo",
+    "fingerprint": "5cba6656bf33d9f6f2e743fca640ddf1",
+    "title": "Strategy 146 level 1 resolved",
+    "content": "value=54.901244583333344 at 2026-10-27T15:34:00Z; 0 of 5 points in the window were anomalous",
+    "evaluations": [
+      {
+        "severity": "critical",
+        "action": "resolved",
+        "action_reason": ""
+      }
+    ],
+    "dimensions": {
+      "bcs_cluster_id": "BCS-K8S-00000",
+      "container_name": "flink-main-container",
+      "namespace": "kingeye",
+      "pod_name": "trace-fe44b270e9e5-taskmanager-1-6"
+    },
+    "values": {
+      "value": 54.901244583333344
+    },
+    "subject_system": "bcs",
+    "subject_type": "pod",
+    "subject_id": "trace-fe44b270e9e5-taskmanager-1-6",
+    "subject_name": "",
+    "occurred_at": "2026-10-27T15:34:00Z",
+    "produced_at": "2026-10-27T15:35:00Z",
+    "received_at": "2026-10-27T15:36:02.929Z",
+    "create_at": "2026-10-27T15:36:02.929Z",
+    "source_event_id": "9ec0ea9db30c6768292721a20638d8ffedbc1ac29aa266c9819c6b72bb2f628a",
+    "source_alert_id": "5cba6656bf33d9f6f2e743fca640ddf1",
+    "labels": {
+      "bk_biz_id": -255,
+      "strategy_facts_digest": "b4d0bfee331c84aa26c44a7e124b34de",
+      "strategy_id": 146,
+      "strategy_version": 5
+    },
+    "extra_data": {
+      "evaluation_family": "metric_algorithm",
+      "event_semantic_digest": "02e04928130216438f4265272c88b1e4e75e5dcdeab4f497d091ddfc99797c99",
+      "signal_type": "metric",
+      "strategy_facts": {
+        "condition_basis": "snapshot_user",
+        "condition_md5": "4a9031297eb2b5f8f7aae3af652c454a",
+        "dimension_digest": "c0cb9a35be541cf033a133fb6a4da7ed",
+        "metric_digest": "5f8c390a39b0a92e9830c8ad5a6ba904",
+        "schema": "v2"
+      },
+      "window": {
+        "anomalies": 0,
+        "required": 1,
+        "size": 5
+      }
+    },
+    "enrich_source_version": 35,
+    "enriched_at": "2026-10-27T15:36:03.03965855Z",
+    "enrich_config_digest": "81fd9f695bc6be25976b3ccee2c136fa54e758b2786136a328107e46adca3f04",
+    "related_alert_ids": [
+      "alert-20261027073759-34ehhne7pqlem"
+    ]
+  },
+  "instances": [
+    {
+      "bk_tenant_id": "system",
+      "model_id": "cw-K8s_Namespace",
+      "model_inst_id": "BCS-K8S-00000|kingeye",
+      "attributes": {
+        "bk_biz_id": "2",
+        "bk_biz_name": "蓝鲸2修改",
+        "cluster_id": "BCS-K8S-00000",
+        "cluster_name": "蓝鲸7.0",
+        "name": "kingeye",
+        "namespace": "kingeye"
+      }
+    },
+    {
+      "bk_tenant_id": "system",
+      "model_id": "cw-K8s_Cluster",
+      "model_inst_id": "BCS-K8S-00000",
+      "attributes": {
+        "bk_biz_id": "2",
+        "bk_biz_name": "蓝鲸2修改",
+        "cluster_id": "BCS-K8S-00000",
+        "cluster_name": "蓝鲸7.0",
+        "name": "蓝鲸7.0"
+      }
+    }
+  ]
+}

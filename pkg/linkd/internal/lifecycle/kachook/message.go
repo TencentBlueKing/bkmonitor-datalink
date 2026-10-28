@@ -36,6 +36,7 @@ type enrichValues struct {
 	metric   models.MetricValues
 	log      models.LogValues
 	apm      models.APMValues
+	k8s      models.K8sValues
 	source   models.SourceValues
 }
 
@@ -110,13 +111,17 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 		AggregateFunc: values.metric.AggregateFunc, WhereCondition: values.metric.WhereCondition,
 		Unit: values.metric.Unit, DataSource: values.strategy.DataSource,
 		FieldExtraInfo:    strategyFieldExtraInfo(input.Alert.BKTenantID, values.strategy),
-		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.apm.CWLabels, values.resource.CWLabels),
+		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.apm.CWLabels, values.k8s.CWLabels, values.resource.CWLabels),
 		LogThemeID: scalarInt64(values.log.LogThemeID), LogThemeName: values.log.LogThemeName,
 		LogQueryString: values.log.LogQueryString, LogRelateInfo: values.log.LogRelateInfo,
 		APMAppID: scalarInt64(values.apm.APMAppID), APMAppName: values.apm.APMAppName,
 		APMAppAlias: values.apm.APMAppAlias, APMServiceName: values.apm.APMServiceName,
 		APMInstanceName: values.apm.APMInstanceName, APMInterfaceName: values.apm.APMInterfaceName,
 		APMNetPeerName: values.apm.APMNetPeerName,
+		BCSClusterID:   values.k8s.BCSClusterID, ClusterName: values.k8s.ClusterName,
+		K8sNamespace: values.k8s.Namespace, Service: values.k8s.Service,
+		WorkloadKind: values.k8s.WorkloadKind, WorkloadName: values.k8s.WorkloadName,
+		PodName: values.k8s.PodName, ContainerName: values.k8s.ContainerName,
 	}
 	if input.Alert.Status.Terminal() {
 		closeTime := input.Alert.EndAt.In(kacTimeZone).Format(kacTimeLayout)
@@ -354,7 +359,7 @@ func decodeEffectiveEnrich(labels domain.DimensionMap, extra domain.JSONObject) 
 		}
 	}
 	var values enrichValues
-	for _, target := range []any{&values.strategy, &values.resource, &values.display, &values.metric, &values.log, &values.apm, &values.source} {
+	for _, target := range []any{&values.strategy, &values.resource, &values.display, &values.metric, &values.log, &values.apm, &values.k8s, &values.source} {
 		if err := decodeProcessorValue(flat, target); err != nil {
 			return values, err
 		}

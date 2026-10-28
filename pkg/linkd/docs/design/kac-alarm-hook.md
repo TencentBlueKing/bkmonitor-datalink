@@ -310,7 +310,7 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 ### 5.4 场景扩展字段
 
 KAC ES 模型允许动态字段，旧 Cleaner 按告警场景追加日志、APM、K8s 和云平台字段。
-Linkd KAC Hook 当前读取 `log` 和 `apm` Processor 的类型化输出，只发送其中非零、非空的扩展字段。
+Linkd KAC Hook 当前读取 `log`、`apm` 和 `k8s` 的有效丰富字段，只发送其中非零、非空的扩展字段。
 Processor 未配置、失败、跳过或没有对应值时，这些字段不进入 Kafka payload，KAC 也不会因收到占位空值而将其展示在详情中。
 例如日志 Processor 提供有效值时，可发送：
 
@@ -322,7 +322,9 @@ Processor 未配置、失败、跳过或没有对应值时，这些字段不进�
 }
 ```
 
-APM 扩展字段同样按值输出；目前 Hook 尚未映射 K8s 专用字段和 `resource.cloud_plat_id`，因此不会发送这些字段。
+APM 与 K8s 扩展字段同样按值输出；K8s 的小写 `namespace` 与旧大写 `Namespace` 分开，
+字段列表和既有文档边界见 [KAC 投影合同](../reference/contracts/kac-alert-projection-v1.md#k8s-固定字段2026-10-28)。
+`resource.cloud_plat_id` 仍未映射。
 基础字段沿用各自约定，例如有效的 `bk_cloud_id="0"` 仍发送，`dynamic_group_id` 和 `cw_labels` 空数组仍发送。
 诊断、Processor status、完整 Alert、ExtraData 和任意未知 Enrich 字段保持在 Linkd 内部。
 
@@ -342,8 +344,8 @@ APM 扩展字段同样按值输出；目前 Hook 尚未映射 K8s 专用字段�
    不承诺带上 latest Event 的新文案；
 6. 直接关闭只有 Alert 和 operation cause，依然可以生成 KAC close；`meta_info` 保留 opening source
    event 身份，close 原因来自 Alert.EndReason；
-7. KAC Hook 已读取 `log/apm` Processor 的真实值；未配置、失败或跳过时保留固定类型默认值。K8s 专用字段
-   当前仍使用默认值，待 KAC 映射与真实回放闭环。
+7. KAC Hook 已读取 `log/apm/k8s` 的有效丰富字段；空扩展值不发送。
+   K8s 固定字段映射有本地回归，部署、既有文档回填与页面验收需另行验证。
 
 ## 6. Hook 配置
 

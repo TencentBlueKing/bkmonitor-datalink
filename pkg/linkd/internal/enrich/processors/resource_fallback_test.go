@@ -177,7 +177,7 @@ func TestNoDataK8sKeepsNaturalIdentity(t *testing.T) {
 	t.Parallel()
 	code := rules.K8sNodeModelCode
 	reader := &processorBaseTargetReader{model: processorModel("tenant-a", code, "K8s节点", ""), modelFound: true}
-	k8sReader := &k8sTestReader{instance: enrich.Instance{TenantID: "tenant-a", ModelCode: code, InstanceID: "cluster-1|node-1", Attributes: map[string]any{"bk_biz_id": int64(2), "bk_biz_name": "业务", "display_name": "node-1"}}, found: true}
+	k8sReader := &k8sTestReader{contexts: k8sTestContexts(), instance: enrich.Instance{TenantID: "tenant-a", ModelCode: code, InstanceID: "cluster-1|node-1", Attributes: map[string]any{"bk_biz_id": int64(2), "bk_biz_name": "业务", "display_name": "node-1"}}, found: true}
 	event := processorBaseTargetAlert(t, domain.DimensionMap{"__NO_DATA_DIMENSION__": domain.NewBoolScalar(true), "bcs_cluster_id": domain.NewStringScalar("cluster-1"), "node": domain.NewStringScalar("node-1")})
 	event.SubjectName = ""
 	chain, err := enrich.NewChain([]enrich.Processor{MonitorResource{}, K8s{}, Display{}}, enrich.Sources{CWStrategy: processorBaseTargetStrategy{modelCode: code}, Metric: processorBaseTargetMetric{}, Model: reader, OneModel: reader, K8s: k8sReader})

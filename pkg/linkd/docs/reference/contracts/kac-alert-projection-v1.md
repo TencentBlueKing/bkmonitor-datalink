@@ -9,6 +9,17 @@ namespace 使用 URL，name 为紧凑 JSON 数组 `["linkd:kac-alert-projection:
 身份不随告警版本、动作或 rollover 改变，ES `_id` 使用相同值。
 主流程保存 Alert 后向部署专属 Redis Stream 发布租户、Alert ID 和必要动作信息，不做同步 KAC HTTP 调用。
 
+## K8s 固定字段（2026-10-28）
+
+创建 KAC 文档时，从 opening Alert 冻结的有效 labels / extra_data 投影
+`bcs_cluster_id`、`cluster_name`、小写 `namespace`、`service`、`workload_kind`、
+`workload_name`、`pod_name`、`container_name`。遵循 labels 优先、空字符串不发送的规则，
+不依赖自定义字段目录。大写 `Namespace` 保持旧协议语义，不用于 K8s 命名空间。
+K8s 的 `cw_labels` 与其他场景一样承接有效丰富结果。
+
+本地回放不更新远端既有文档。后续普通同步仍遵守丰富字段只在新建时写入的所有权，
+修复代码不会自动回填已有 KAC 文档；回填、重建或共享环境重放必须另行明确授权。
+
 ## 批量写入
 
 控制面按租户与 Alert 固定分配到 64 个通道，同一告警串行，不同告警并发。

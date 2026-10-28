@@ -84,18 +84,33 @@ func (K8s) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if missing := k8sMissingIdentityFields(modelCode, alert.Dimensions); len(missing) != 0 {
 		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusFailed, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: missing})
 	}
+	// 1. 主实例身份只由本次查验成功的结果发布，不能借用上下文身份。
 	instance, found, err := scope.K8sInstance(ctx, modelCode, alert.Dimensions)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return enrich.ProcessorResult{}, ctxErr
 	}
-	if err != nil || !found || instance.TenantID != alert.BKTenantID || instance.ModelCode != modelCode || instance.InstanceID == "" {
-		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel})
+	invalidModels := []string{}
+	if err != nil || !found || !validK8sInstance(instance, alert.BKTenantID, modelCode) {
+		invalidModels = append(invalidModels, modelCode)
+		instance = enrich.Instance{}
+	} else {
+		values.ModelID, values.ModelInstID = instance.ModelCode, instance.InstanceID
+		if name := k8sClusterName(instance); name != "" {
+			values.ClusterName = name
+		}
 	}
-	values.ModelID, values.ModelInstID = instance.ModelCode, instance.InstanceID
-	values.ClusterName = firstInstanceText(instance, "cluster_name", "name", "display_name")
-	values.BKBizID, values.BKBizName, values.ClusterName = resolveK8sBusiness(ctx, scope, modelCode, alert.Dimensions, instance, values.ClusterName)
+	// 2. 集群和命名空间按自身定位条件独立查询；主实例失效不阻断上下文。
+	invalidContext, err := resolveK8sBusiness(ctx, scope, modelCode, alert.Dimensions, instance, &values)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
+	}
+	invalidModels = append(invalidModels, invalidContext...)
 	values.CWLabels = k8sLabels(values)
 	scope.Context().K8s.Set(values)
+	// 3. 发布已验证的上下文，同时保留失败模型及原有身份清理规则。
+	if len(invalidModels) != 0 {
+		return k8sValuesDiagnostic(scope, values, domain.EnrichStatusPartial, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel, Fields: invalidModels})
+	}
 	return k8sValuesResult(scope.Context().K8s.Values)
 }
 
@@ -105,6 +120,10 @@ func k8sValuesDiagnostic(scope *enrich.Scope, values models.K8sValues, status do
 		return enrich.ProcessorResult{}, err
 	}
 	result.Status, result.Diagnostics = status, []enrich.Diagnostic{diagnostic}
+	if values.ModelID != "" && values.ModelInstID != "" {
+		// 仅上下文降级时，已查验成功的主实例身份必须保留。
+		return result, nil
+	}
 	state, err := scope.EvaluationState()
 	if err != nil {
 		return enrich.ProcessorResult{}, err
@@ -222,38 +241,67 @@ func firstInstanceText(instance enrich.Instance, fields ...string) string {
 	return ""
 }
 
-func resolveK8sBusiness(ctx context.Context, scope *enrich.Scope, modelCode string, dimensions domain.DimensionMap, instance enrich.Instance, clusterName string) (any, string, string) {
+func validK8sInstance(instance enrich.Instance, tenant, model string) bool {
+	return instance.TenantID == tenant && instance.ModelCode == model && instance.InstanceID != ""
+}
+
+func k8sClusterName(instance enrich.Instance) string {
+	if instance.ModelCode == "cw-K8s_Cluster" {
+		return firstInstanceText(instance, "cluster_name", "name", "display_name")
+	}
+	// Namespace、Pod 和容器的 name 是对象名，不是集群名。
+	return firstInstanceText(instance, "cluster_name")
+}
+
+func resolveK8sBusiness(ctx context.Context, scope *enrich.Scope, modelCode string, dimensions domain.DimensionMap, instance enrich.Instance, values *models.K8sValues) ([]string, error) {
 	candidates := make([]enrich.Instance, 0, 3)
-	if modelCode == "cw-K8s_Namespace" {
+	invalidModels := []string{}
+	for _, contextModel := range []string{"cw-K8s_Namespace", "cw-K8s_Cluster"} {
+		if contextModel == modelCode {
+			if instance.InstanceID != "" {
+				candidates = append(candidates, instance)
+			}
+			continue
+		}
+		if len(k8sMissingIdentityFields(contextModel, dimensions)) != 0 {
+			continue
+		}
+		value, found, err := scope.K8sInstance(ctx, contextModel, dimensions)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if err != nil || !found || !validK8sInstance(value, scope.Facts().BKTenantID, contextModel) {
+			invalidModels = append(invalidModels, contextModel)
+			continue
+		}
+		candidates = append(candidates, value)
+	}
+	if instance.InstanceID != "" && modelCode != "cw-K8s_Namespace" && modelCode != "cw-K8s_Cluster" {
 		candidates = append(candidates, instance)
 	}
-	if dimensionText(dimensions, rules.FieldNamespace) != "" && modelCode != "cw-K8s_Namespace" {
-		if value, found, err := scope.K8sInstance(ctx, "cw-K8s_Namespace", dimensions); err == nil && found {
-			candidates = append(candidates, value)
+	// 名称与业务分别选择；业务缺失不能阻止集群取名，也不能返回对象 name。
+	for _, candidate := range candidates {
+		if name := k8sClusterName(candidate); name != "" {
+			values.ClusterName = name
+			break
 		}
 	}
-	if modelCode == "cw-K8s_Cluster" {
-		candidates = append(candidates, instance)
-	} else if dimensionText(dimensions, rules.FieldBCSClusterID) != "" {
-		if value, found, err := scope.K8sInstance(ctx, "cw-K8s_Cluster", dimensions); err == nil && found {
-			candidates = append(candidates, value)
-		}
-	}
-	candidates = append(candidates, instance)
 	for _, candidate := range candidates {
 		if bizID := firstInstanceValue(candidate, "bk_biz_id"); bizID != nil {
-			return bizID, firstInstanceText(candidate, "bk_biz_name"), firstInstanceText(candidate, "cluster_name", "name", "display_name")
+			values.BKBizID, values.BKBizName = bizID, firstInstanceText(candidate, "bk_biz_name")
+			return invalidModels, nil
 		}
 	}
 	for _, candidate := range candidates {
 		if bizID := firstUniqueBusinessID(firstInstanceValue(candidate, "bk_biz_ids")); bizID != nil {
-			return bizID, firstInstanceText(candidate, "bk_biz_name"), firstInstanceText(candidate, "cluster_name", "name", "display_name")
+			values.BKBizID, values.BKBizName = bizID, firstInstanceText(candidate, "bk_biz_name")
+			return invalidModels, nil
 		}
 	}
 	if value, exists := scope.Facts().Labels[rules.FieldBKBizID]; exists {
-		return scalarAsIdentity(value), "", clusterName
+		values.BKBizID = scalarAsIdentity(value)
 	}
-	return nil, "", clusterName
+	return invalidModels, nil
 }
 
 func scalarAsIdentity(value domain.Scalar) any {

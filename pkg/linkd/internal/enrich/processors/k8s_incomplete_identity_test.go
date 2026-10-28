@@ -28,7 +28,7 @@ func TestResourceThenK8sRequiresCompleteNodeIdentity(t *testing.T) {
 			wantCode   enrich.DiagnosticCode
 			wantStatus domain.EnrichStatus
 		}{
-			{name: "node found", reader: k8sTestReader{found: true, instance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.K8sNodeModelCode, InstanceID: "cluster-1|node-1"}}, wantID: "cluster-1|node-1", wantStatus: domain.EnrichStatusSucceeded},
+			{name: "node found", reader: k8sTestReader{contexts: k8sTestContexts(), found: true, instance: enrich.Instance{TenantID: "tenant-a", ModelCode: rules.K8sNodeModelCode, InstanceID: "cluster-1|node-1"}}, wantID: "cluster-1|node-1", wantStatus: domain.EnrichStatusSucceeded},
 			{name: "missing node", missing: "node", wantCode: enrich.DiagnosticCodeMissingField, wantStatus: domain.EnrichStatusPartial},
 			{name: "missing cluster", missing: rules.FieldBCSClusterID, wantCode: enrich.DiagnosticCodeMissingField, wantStatus: domain.EnrichStatusPartial},
 			{name: "node not found", wantCode: enrich.DiagnosticCodeDependencyInvalid, wantStatus: domain.EnrichStatusPartial},

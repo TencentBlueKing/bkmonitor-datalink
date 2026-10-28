@@ -24,7 +24,7 @@ import (
 func TestK8sWorkloadPodUsesPodModel(t *testing.T) {
 	t.Parallel()
 	dimensions := domain.DimensionMap{rules.FieldBCSClusterID: domain.NewStringScalar("cluster-1"), rules.FieldNamespace: domain.NewStringScalar("default"), rules.FieldWorkloadKind: domain.NewStringScalar("Pod"), rules.FieldWorkloadName: domain.NewStringScalar("pod-1"), rules.FieldPodName: domain.NewStringScalar("pod-1")}
-	reader := &k8sTestReader{instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-K8s_Pod", InstanceID: "pod-instance"}, found: true}
+	reader := &k8sTestReader{contexts: k8sTestContexts(), instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-K8s_Pod", InstanceID: "pod-instance"}, found: true}
 	chain, err := enrich.NewChain([]enrich.Processor{K8s{}}, enrich.Sources{K8s: reader})
 	if err != nil {
 		t.Fatal(err)
@@ -93,6 +93,7 @@ func TestK8sIdentityResponseMismatchReturnsPartial(t *testing.T) {
 }
 
 type k8sTestReader struct {
+	contexts  map[string]enrich.Instance
 	instance  enrich.Instance
 	found     bool
 	err       error
@@ -103,7 +104,18 @@ type k8sTestReader struct {
 func (r *k8sTestReader) FindK8sInstance(_ context.Context, _ string, modelCode string, _ domain.DimensionMap) (enrich.Instance, bool, error) {
 	r.modelCode = modelCode
 	r.models = append(r.models, modelCode)
+	if instance, ok := r.contexts[modelCode]; ok {
+		return instance, true, nil
+	}
 	return r.instance, r.found, r.err
+}
+
+// 上下文请求必须返回对应模型，不能复用 Pod / Node 响应假装查询成功。
+func k8sTestContexts() map[string]enrich.Instance {
+	return map[string]enrich.Instance{
+		"cw-K8s_Namespace": {TenantID: "tenant-a", ModelCode: "cw-K8s_Namespace", InstanceID: "cluster-1|default"},
+		"cw-K8s_Cluster":   {TenantID: "tenant-a", ModelCode: "cw-K8s_Cluster", InstanceID: "cluster-1"},
+	}
 }
 
 func containsString(values []string, want string) bool {

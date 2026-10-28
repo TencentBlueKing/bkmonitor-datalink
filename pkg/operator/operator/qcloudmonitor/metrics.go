@@ -27,14 +27,7 @@ var (
 		},
 		[]string{"name"},
 	)
-	reconcileQCloudMonitorFailed = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: define.MonitorNamespace,
-			Name:      "reconcile_qcloudmonitor_failed_total",
-			Help:      "reconcile qcloudmonitor failed counter",
-		},
-		[]string{"name"},
-	)
+
 	reconcileQCloudMonitorDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitorNamespace,
@@ -56,10 +49,6 @@ type metricMonitor struct{}
 
 func (m *metricMonitor) IncReconcileQCloudMonitorSuccessCounter(name string) {
 	reconcileQCloudMonitorSuccess.WithLabelValues(name).Inc()
-}
-
-func (m *metricMonitor) IncReconcileQCloudMonitorFailedCounter(name string) {
-	reconcileQCloudMonitorFailed.WithLabelValues(name).Inc()
 }
 
 func (m *metricMonitor) ObserveReconcileQCloudMonitorDuration(name string, duration time.Duration) {

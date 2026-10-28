@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	routerInfluxdb "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/router/influxdb"
 )
 
 const (
@@ -44,6 +45,10 @@ const (
 const (
 	RedisRouterLoadResultSuccess = "success"
 	RedisRouterLoadResultFailure = "failure"
+
+	SpaceRouterLookupResultHit   = "hit"
+	SpaceRouterLookupResultMiss  = "miss"
+	SpaceRouterLookupResultError = "error"
 )
 
 const (
@@ -177,6 +182,25 @@ var (
 		[]string{"route_key", "result", "version", "commit_id"},
 	)
 
+	redisRouterLoadSeconds = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "redis_router_load_seconds",
+			Help:      "unify-query space_tsdb: full LoadRouter duration from Redis (HScan)",
+			Buckets:   secondsBuckets,
+		},
+		[]string{"route_key", "version", "commit_id"},
+	)
+
+	spaceRouterLookupTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "space_router_lookup_total",
+			Help:      "unify-query space router lookup outcomes by route key",
+		},
+		[]string{"route_key", "result", "version", "commit_id"},
+	)
+
 	cmdbRelationRouteTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
@@ -285,6 +309,29 @@ func RedisRouterLoadResultInc(ctx context.Context, routeKey, result string) {
 	}
 	params := append([]string{}, routeKey, result, config.Version, config.CommitHash)
 	metric, _ := redisRouterLoadTotal.GetMetricWithLabelValues(params...)
+	counterInc(ctx, metric)
+}
+
+// RedisRouterLoadSecond 记录一次 SpaceTSDB 全量路由加载耗时。
+func RedisRouterLoadSecond(ctx context.Context, duration time.Duration, routeKey string) {
+	if !routerInfluxdb.IsSpaceAllRouterKey(routeKey) {
+		return
+	}
+	params := append([]string{}, routeKey, config.Version, config.CommitHash)
+	metric, _ := redisRouterLoadSeconds.GetMetricWithLabelValues(params...)
+	observe(ctx, metric, duration.Seconds())
+}
+
+// SpaceRouterLookupInc 记录 SpaceTSDB 本地路由读取结果，route_key 仅使用固定的路由类型。
+func SpaceRouterLookupInc(ctx context.Context, routeKey, result string) {
+	if !routerInfluxdb.IsSpaceAllRouterKey(routeKey) {
+		return
+	}
+	if result != SpaceRouterLookupResultHit && result != SpaceRouterLookupResultMiss && result != SpaceRouterLookupResultError {
+		return
+	}
+	params := append([]string{}, routeKey, result, config.Version, config.CommitHash)
+	metric, _ := spaceRouterLookupTotal.GetMetricWithLabelValues(params...)
 	counterInc(ctx, metric)
 }
 

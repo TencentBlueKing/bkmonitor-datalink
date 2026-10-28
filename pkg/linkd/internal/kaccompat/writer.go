@@ -48,39 +48,17 @@ for (tag in params.tags) { if (!ctx._source.tag_info.contains(tag)) { ctx._sourc
 func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh bool) []WriteResult {
 	results := make([]WriteResult, len(alerts))
 	ids := make([]string, len(alerts))
-	missing := make([]string, 0, len(alerts))
-	locations := make(map[string]string, len(alerts))
+	keys := make([]alarmKey, len(alerts))
 	for i, a := range alerts {
-		ids[i], _ = kachook.AlarmID(a.BKTenantID, a.AlertID)
+		keys[i] = alarmKey{tenant: a.BKTenantID, alert: a.AlertID}
+		ids[i] = a.AlertID
 	}
-	c.mu.Lock()
-	for _, id := range ids {
-		if index := c.locations[id]; index != "" {
-			locations[id] = index
-		} else {
-			missing = append(missing, id)
+	locations, err := c.locate(ctx, keys)
+	if err != nil {
+		for i := range results {
+			results[i].Err = err
 		}
-	}
-	c.mu.Unlock()
-	if len(missing) > 0 {
-		var response struct {
-			Hits struct {
-				Hits []struct {
-					ID    string `json:"_id"`
-					Index string `json:"_index"`
-				} `json:"hits"`
-			} `json:"hits"`
-		}
-		body := map[string]any{"size": len(missing), "_source": false, "query": map[string]any{"ids": map[string]any{"values": missing}}}
-		if err := c.request(ctx, http.MethodPost, "/"+url.PathEscape(c.config.AlarmEventIndex)+"/_search", nil, body, &response); err != nil {
-			for i := range results {
-				results[i].Err = err
-			}
-			return results
-		}
-		for _, hit := range response.Hits.Hits {
-			locations[hit.ID] = hit.Index
-		}
+		return results
 	}
 	writeIndex := ""
 	var raw bytes.Buffer
@@ -114,7 +92,7 @@ func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh 
 					results[pos].Err = httpFailure{item.Status}
 					if item.Status == 404 {
 						c.mu.Lock()
-						delete(c.locations, ids[pos])
+						delete(c.locations, keys[pos])
 						c.mu.Unlock()
 					}
 					continue
@@ -124,7 +102,7 @@ func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh 
 				if len(c.locations) >= 100000 {
 					clear(c.locations)
 				}
-				c.locations[ids[pos]] = item.Index
+				c.locations[keys[pos]] = item.Index
 				c.mu.Unlock()
 			}
 		}
@@ -132,7 +110,7 @@ func (c *Client) WriteBatch(ctx context.Context, alerts []domain.Alert, refresh 
 		positions = nil
 	}
 	for i, a := range alerts {
-		index, exists := locations[ids[i]]
+		index, exists := locations[keys[i]]
 		fields, mode, err := c.fields(ctx, a, !exists)
 		if err != nil {
 			results[i].Err = err
@@ -251,11 +229,7 @@ func (c *Client) fields(ctx context.Context, a domain.Alert, create bool) (map[s
 				return nil, "", fmt.Errorf("KAC merge relation scope mismatch")
 			}
 			if a.Merge.Role == "original" {
-				parent, e := kachook.AlarmID(a.BKTenantID, relation.ParentAlertID)
-				if e != nil {
-					return nil, "", e
-				}
-				parents[parent] = true
+				parents[relation.ParentAlertID] = true
 			} else {
 				if relation.ParentAlertID != a.AlertID {
 					return nil, "", fmt.Errorf("KAC merge relation scope mismatch")

@@ -27,7 +27,8 @@ KAC 路由为 `/kac/internal/linkd/action/`，部署前缀由实际部署确定�
 
 `action` 支持 firing/resolved/close。`cause.type` 支持 source_event/user_operation/system_operation。
 终态附带原业务实际使用的 `end_operation`（存在时）、`severity`、`end_type`，供 KAC 终态审计消费。
-KAC 按租户和 Linkd Alert ID 自行计算稳定 `alarm_id`；请求不包含 `alert`、版本确认、目标、内容摘要或回执证明。
+HTTP 字段不变，Celery 消息的 `alarm_id` 直接等于 `linkd_alert_id`；KAC Worker 仅按租户和原生 ID 读取文档并执行处置。
+旧 UUID 消息不兼容，切换前暂停 Linkd 投影和动作投递并完成在途请求及旧 Celery 动作；请求不包含 `alert`、版本确认、目标、内容摘要或回执证明。
 
 KAC 同步投递 Celery，成功返回 HTTP 200：
 

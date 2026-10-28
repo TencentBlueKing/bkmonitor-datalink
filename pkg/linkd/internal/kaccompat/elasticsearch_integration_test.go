@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 	"linkd/internal/config"
 	"linkd/internal/domain"
-	"linkd/internal/lifecycle/kachook"
 	"linkd/internal/store/storetest"
 )
 
@@ -51,7 +50,7 @@ func integrationClient(t *testing.T) *Client {
 
 func readAlarm(t *testing.T, c *Client, index string, a domain.Alert) map[string]any {
 	t.Helper()
-	id, _ := kachook.AlarmID(a.BKTenantID, a.AlertID)
+	id := a.AlertID
 	var response struct {
 		Source map[string]any `json:"_source"`
 	}
@@ -69,7 +68,7 @@ func TestElasticsearchBulkLifecycleAndDisposition(t *testing.T) {
 		t.Fatal("create", result[0].Err)
 	}
 	index := result[0].Index
-	id, _ := kachook.AlarmID(alert.BKTenantID, alert.AlertID)
+	id := alert.AlertID
 	if err := client.request(t.Context(), http.MethodPost, "/"+index+"/_update/"+id, nil, map[string]any{"doc": map[string]any{"status": "executing", "conductor": []string{"operator"}, "tag_info": []string{"kac-tag"}, "field_extra_info": map[string]any{"snapshot": "kac-snapshot"}}}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +103,7 @@ func TestElasticsearchBulkLifecycleAndDisposition(t *testing.T) {
 		t.Fatal(out[0].Err)
 	}
 	merged := readAlarm(t, client, index, alert)
-	parentID, _ := kachook.AlarmID(alert.BKTenantID, "parent")
+	parentID := "parent"
 	if merged["status"] != "merged_into" || merged["associate_alarm_id"].([]any)[0] != parentID {
 		t.Fatal("merge projection", merged["status"])
 	}
@@ -177,9 +176,9 @@ func TestElasticsearchBulkPartialFailureAndByteSplit(t *testing.T) {
 		}
 	}
 	// 一个物理位置失效不能吞掉同批其他项目的成功。
-	badID, _ := kachook.AlarmID(alerts[0].BKTenantID, alerts[0].AlertID)
+	badKey := alarmKey{tenant: alerts[0].BKTenantID, alert: alerts[0].AlertID}
 	client.mu.Lock()
-	client.locations[badID] = client.config.AlarmEventIndex + "-absent"
+	client.locations[badKey] = client.config.AlarmEventIndex + "-absent"
 	client.mu.Unlock()
 	results := client.WriteBatch(t.Context(), alerts, true)
 	if results[0].Err == nil || results[1].Err != nil {

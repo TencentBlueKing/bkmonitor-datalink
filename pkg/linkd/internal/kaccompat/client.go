@@ -41,7 +41,7 @@ type Client struct {
 	level     func(string) (string, error)
 	relations Relations
 	mu        sync.Mutex
-	locations map[string]string
+	locations map[alarmKey]string
 }
 
 // Open 装配连接；索引维护和写入使用同一 Client。
@@ -62,7 +62,7 @@ func Open(c config.KACPluginConfig, level func(string) (string, error), relation
 }
 
 func newClient(c config.KACPluginConfig, tr Transport, closeFn func(), level func(string) (string, error)) *Client {
-	return &Client{transport: tr, close: closeFn, config: c.WithDefaults(), level: level, locations: make(map[string]string)}
+	return &Client{transport: tr, close: closeFn, config: c.WithDefaults(), level: level, locations: make(map[alarmKey]string)}
 }
 
 // Close 在运行器与同步请求退出后释放连接。

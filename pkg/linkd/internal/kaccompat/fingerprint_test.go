@@ -12,7 +12,6 @@ import (
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
-	"linkd/internal/lifecycle/kachook"
 	"linkd/internal/store/storetest"
 )
 
@@ -28,11 +27,10 @@ func TestWriteBatchIncludesFingerprintOnCreateAndUpdate(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/alarm/_search":
-					hits := []map[string]string{}
+					hits := []map[string]any{}
 					if exists {
 						for _, alert := range alerts {
-							id, _ := kachook.AlarmID(alert.BKTenantID, alert.AlertID)
-							hits = append(hits, map[string]string{"_id": id, "_index": "alarm-000001"})
+							hits = append(hits, map[string]any{"_id": alert.AlertID, "_index": "alarm-000001", "_source": map[string]string{"bk_tenant_id": alert.BKTenantID}})
 						}
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"hits": map[string]any{"hits": hits}})

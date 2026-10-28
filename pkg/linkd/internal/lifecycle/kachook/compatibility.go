@@ -6,9 +6,6 @@
 package kachook
 
 import (
-	"encoding/json"
-
-	"github.com/google/uuid"
 	"linkd/internal/domain"
 	"linkd/internal/enrich/kingeye"
 	"linkd/internal/enrich/view"
@@ -25,7 +22,7 @@ func CompatibilityPayload(a domain.Alert, level func(string) (string, error)) ([
 	return mappedPayload(message, a, nil)
 }
 
-// CompatibilityMessage 复用 KAC 字段转换，但使用一个 Alert 一条文档的稳定身份。
+// CompatibilityMessage 复用 KAC 字段转换，使用原生告警及首次触发事件身份。
 // 该纯转换不触发旧 Kafka Hook，也不代表告警已获准处置。
 func CompatibilityMessage(a domain.Alert, level func(string) (string, error)) (kingeye.AlarmMessage, error) {
 	outcome := lifecycle.OutcomeAlertUpdated
@@ -40,10 +37,7 @@ func CompatibilityMessage(a domain.Alert, level func(string) (string, error)) (k
 	if err != nil {
 		return m, err
 	}
-	m.AlarmID, err = AlarmID(a.BKTenantID, a.AlertID)
-	if err != nil {
-		return m, err
-	}
+	m.AlarmID, m.EventID = a.AlertID, a.TriggerEventID
 	effective, err := view.EnrichedAlert(a)
 	if err != nil {
 		return m, err
@@ -55,13 +49,4 @@ func CompatibilityMessage(a domain.Alert, level func(string) (string, error)) (k
 	m.SourceName = firstNonEmpty(values.source.SourceName, a.EventSourceID)
 	m.SourceID = firstNonEmpty(values.source.SourceID, a.EventSourceID)
 	return m, nil
-}
-
-// AlarmID 由租户与 Alert ID 定位一个 KAC 告警，沿用既有文档身份。
-func AlarmID(tenant, alert string) (string, error) {
-	raw, err := json.Marshal([]string{"linkd:kac-alert-projection:v1", tenant, alert})
-	if err != nil {
-		return "", err
-	}
-	return "linkd-" + uuid.NewSHA1(uuid.NameSpaceURL, raw).String(), nil
 }

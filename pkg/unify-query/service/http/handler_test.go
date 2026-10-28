@@ -1104,18 +1104,170 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 		want         map[string]float64
 		ungrouped    bool
 	}{
-		{name: "count_before", method: "count", start: start, end: cut - 1, parts: []part{{oldURL, start, cut - 1, true, leftCount, nil}}, want: map[string]float64{"common": 2}},
-		{name: "count_after", method: "count", start: cut, end: end, parts: []part{{newURL, cut, end, true, rightCount, nil}}, want: map[string]float64{"common": 3, "new": 1, "missing": 1}},
-		{name: "count_across_overlap", method: "count", start: start, end: end, parts: []part{{oldURL, start, cut, false, leftCount, nil}, {newURL, cut, end, true, rightCount, nil}}, want: map[string]float64{"common": 5, "new": 1, "missing": 1}},
-		{name: "sum_across_overlap", method: "sum", start: start, end: end, parts: []part{{oldURL, start, cut, false, leftSum, nil}, {newURL, cut, end, true, rightSum, nil}}, want: map[string]float64{"common": 150, "new": 7, "missing": 0}},
-		{name: "min_across", method: "min", start: start, end: end, parts: []part{{oldURL, start, cut, false, map[string]any{"common": 10}, nil}, {newURL, cut, end, true, map[string]any{"common": 30, "new": 7, "missing": nil}, nil}}, want: map[string]float64{"common": 10, "new": 7}},
-		{name: "max_across", method: "max", start: start, end: end, parts: []part{{oldURL, start, cut, false, map[string]any{"common": 20}, nil}, {newURL, cut, end, true, map[string]any{"common": 50, "new": 7, "missing": nil}, nil}}, want: map[string]float64{"common": 50, "new": 7}},
-		{name: "avg_unequal_counts_and_null", method: "avg", start: start, end: end, parts: []part{{oldURL, start, cut, false, leftSum, leftCount}, {newURL, cut, end, true, rightSum, map[string]any{"common": 3, "new": 1, "missing": 0}}}, want: map[string]float64{"common": 30, "new": 7}},
-		{name: "count_ungrouped", method: "count", start: start, end: end, ungrouped: true, parts: []part{{oldURL, start, cut, false, map[string]any{"": 2}, nil}, {newURL, cut, end, true, map[string]any{"": 5}, nil}}, want: map[string]float64{"": 7}},
-		{name: "avg_ungrouped", method: "avg", start: start, end: end, ungrouped: true, parts: []part{{oldURL, start, cut, false, map[string]any{"": 30}, map[string]any{"": 2}}, {newURL, cut, end, true, map[string]any{"": 127}, map[string]any{"": 4}}}, want: map[string]float64{"": 157.0 / 6}},
-		{name: "end_at_cutover", method: "count", start: start, end: cut, parts: []part{{oldURL, start, cut, false, leftCount, nil}, {newURL, cut, cut, true, map[string]any{"common": 1, "new": 1, "missing": 1}, nil}}, want: map[string]float64{"common": 3, "new": 1, "missing": 1}},
-		{name: "point_at_cutover", method: "count", start: cut, end: cut, parts: []part{{newURL, cut, cut, true, map[string]any{"common": 1, "new": 1, "missing": 1}, nil}}, want: map[string]float64{"common": 1, "new": 1, "missing": 1}},
-		{name: "one_microsecond_either_side", method: "sum", start: cut - 1, end: cut + 1, parts: []part{{oldURL, cut - 1, cut, false, map[string]any{"common": 20}, nil}, {newURL, cut, cut + 1, true, map[string]any{"common": 70, "new": 7, "missing": 0}, nil}}, want: map[string]float64{"common": 90, "new": 7, "missing": 0}},
+		{
+			name:   "切换前仅查询旧存储",
+			method: "count",
+			start:  start,
+			end:    cut - 1,
+			parts: []part{
+				{oldURL, start, cut - 1, true, leftCount, nil},
+			},
+			want: map[string]float64{"common": 2},
+		},
+		{
+			name:   "切换后仅查询新存储",
+			method: "count",
+			start:  cut,
+			end:    end,
+			parts: []part{
+				{newURL, cut, end, true, rightCount, nil},
+			},
+			want: map[string]float64{
+				"common":  3,
+				"new":     1,
+				"missing": 1,
+			},
+		},
+		{
+			name:   "跨切换点计数不重复",
+			method: "count",
+			start:  start,
+			end:    end,
+			parts: []part{
+				{oldURL, start, cut, false, leftCount, nil},
+				{newURL, cut, end, true, rightCount, nil},
+			},
+			want: map[string]float64{
+				"common":  5,
+				"new":     1,
+				"missing": 1,
+			},
+		},
+		{
+			name:   "跨切换点求和不重复",
+			method: "sum",
+			start:  start,
+			end:    end,
+			parts: []part{
+				{oldURL, start, cut, false, leftSum, nil},
+				{newURL, cut, end, true, rightSum, nil},
+			},
+			want: map[string]float64{
+				"common":  150,
+				"new":     7,
+				"missing": 0,
+			},
+		},
+		{
+			name:   "跨切换点取最小值",
+			method: "min",
+			start:  start,
+			end:    end,
+			parts: []part{
+				{oldURL, start, cut, false, map[string]any{"common": 10}, nil},
+				{newURL, cut, end, true, map[string]any{"common": 30, "new": 7, "missing": nil}, nil},
+			},
+			want: map[string]float64{
+				"common": 10,
+				"new":    7,
+			},
+		},
+		{
+			name:   "跨切换点取最大值",
+			method: "max",
+			start:  start,
+			end:    end,
+			parts: []part{
+				{oldURL, start, cut, false, map[string]any{"common": 20}, nil},
+				{newURL, cut, end, true, map[string]any{"common": 50, "new": 7, "missing": nil}, nil},
+			},
+			want: map[string]float64{
+				"common": 50,
+				"new":    7,
+			},
+		},
+		{
+			name:   "跨切换点按有效值数量加权平均",
+			method: "avg",
+			start:  start,
+			end:    end,
+			parts: []part{
+				{oldURL, start, cut, false, leftSum, leftCount},
+				{newURL, cut, end, true, rightSum, map[string]any{"common": 3, "new": 1, "missing": 0}},
+			},
+			want: map[string]float64{
+				"common": 30,
+				"new":    7,
+			},
+		},
+		{
+			name:      "跨切换点无分组计数",
+			method:    "count",
+			start:     start,
+			end:       end,
+			ungrouped: true,
+			parts: []part{
+				{oldURL, start, cut, false, map[string]any{"": 2}, nil},
+				{newURL, cut, end, true, map[string]any{"": 5}, nil},
+			},
+			want: map[string]float64{"": 7},
+		},
+		{
+			name:      "跨切换点无分组加权平均",
+			method:    "avg",
+			start:     start,
+			end:       end,
+			ungrouped: true,
+			parts: []part{
+				{oldURL, start, cut, false, map[string]any{"": 30}, map[string]any{"": 2}},
+				{newURL, cut, end, true, map[string]any{"": 127}, map[string]any{"": 4}},
+			},
+			want: map[string]float64{"": 157.0 / 6},
+		},
+		{
+			name:   "结束时间等于切换点",
+			method: "count",
+			start:  start,
+			end:    cut,
+			parts: []part{
+				{oldURL, start, cut, false, leftCount, nil},
+				{newURL, cut, cut, true, map[string]any{"common": 1, "new": 1, "missing": 1}, nil},
+			},
+			want: map[string]float64{
+				"common":  3,
+				"new":     1,
+				"missing": 1,
+			},
+		},
+		{
+			name:   "仅查询切换点",
+			method: "count",
+			start:  cut,
+			end:    cut,
+			parts: []part{
+				{newURL, cut, cut, true, map[string]any{"common": 1, "new": 1, "missing": 1}, nil},
+			},
+			want: map[string]float64{
+				"common":  1,
+				"new":     1,
+				"missing": 1,
+			},
+		},
+		{
+			name:   "切换点前后各一微秒",
+			method: "sum",
+			start:  cut - 1,
+			end:    cut + 1,
+			parts: []part{
+				{oldURL, cut - 1, cut, false, map[string]any{"common": 20}, nil},
+				{newURL, cut, cut + 1, true, map[string]any{"common": 70, "new": 7, "missing": 0}, nil},
+			},
+			want: map[string]float64{
+				"common":  90,
+				"new":     7,
+				"missing": 0,
+			},
+		},
 	} {
 		field := "gseIndex"
 		if c.method == "count" {
@@ -1177,7 +1329,12 @@ func TestQueryReferenceWithHandler(t *testing.T) {
 				responses[esRequest{p.url, string(dsl)}] = string(response)
 			}
 		}
-		testCases["cluster_switch/"+c.name] = referenceCase{body: string(body), responses: responses, values: c.want, start: c.start / 1000}
+		testCases["存储切换/"+c.name] = referenceCase{
+			body:      string(body),
+			responses: responses,
+			values:    c.want,
+			start:     c.start / 1000,
+		}
 	}
 
 	for name, c := range testCases {
